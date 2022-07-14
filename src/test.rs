@@ -158,7 +158,7 @@ fn cpu_execute() {
     // carry
     cpu.a = 0xFF;
     cpu.write_byte(0x1000, 10);
-    cpu.execute(Instruction::Add(Add(Agu::Absolute(0x1000))), &mut cycle_sync);
+    cpu.execute(Instruction::Adc(Adc(Agu::Absolute(0x1000))), &mut cycle_sync);
     assert_eq!(cpu.a, 9);
     assert!(cpu.flag(CarryFlag));
     assert_eq!(cpu.pc, 3);
@@ -166,7 +166,7 @@ fn cpu_execute() {
 
     // reset carry if no overflow
     cpu.a = 1;
-    cpu.execute(Instruction::Add(Add(Agu::Literal(10))), &mut cycle_sync);
+    cpu.execute(Instruction::Adc(Adc(Agu::Literal(10))), &mut cycle_sync);
     assert_eq!(cpu.a, 11);
     assert!(!cpu.flag(CarryFlag));
     assert_eq!(cpu.pc, 5);

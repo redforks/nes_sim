@@ -49,7 +49,7 @@ impl Agu {
 }
 
 enum Instruction {
-    Add(Add),
+    Adc(Adc),
     // AddFromZeroPage(u8),
     // AddFromZeroPageX(u8),
     // AddFromAbsolute(u16),
@@ -75,9 +75,9 @@ struct Cpu {
     memory: [u8; 0x10000],
 }
 
-struct Add(Agu);
+struct Adc(Agu);
 
-impl InstructionType for Add {
+impl InstructionType for Adc {
     fn execute(&self, cpu: &mut Cpu) -> (u8, u8) {
         let (val, operands, ticks) = cpu.get(&self.0);
 
@@ -134,7 +134,7 @@ impl Cpu {
     fn execute<T: SyncInstructionCycle>(&mut self, inst: Instruction, cycle_sync: &mut T) {
         cycle_sync.start();
         let (pc, cycles) = match inst {
-            Instruction::Add(inst) => {
+            Instruction::Adc(inst) => {
                 inst.execute(self)
             },
         };
