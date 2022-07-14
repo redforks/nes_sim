@@ -98,6 +98,9 @@ enum Instruction {
     Ror(Ror),
 
     Clc(Clc),
+    Cld(Cld),
+    Cli(Cli),
+    Clv(Clv),
 }
 
 struct Transfer {
@@ -139,6 +142,12 @@ struct Rol(Agu);
 struct Ror(Agu);
 
 struct Clc();
+
+struct Cld();
+
+struct Cli();
+
+struct Clv();
 
 trait InstructionType {
     // (pcDelta, tickCount)
@@ -327,11 +336,36 @@ impl InstructionType for Clc {
     }
 }
 
+impl InstructionType for Cld {
+    fn execute(&self, cpu: &mut Cpu) -> (u8, u8) {
+        cpu.set_flag(DecimalModeFlag, false);
+        (1, 2)
+    }
+}
+
+impl InstructionType for Cli {
+    fn execute(&self, cpu: &mut Cpu) -> (u8, u8) {
+        cpu.set_flag(InterruptDisableFlag, false);
+        (1, 2)
+    }
+}
+
+impl InstructionType for Clv {
+    fn execute(&self, cpu: &mut Cpu) -> (u8, u8) {
+        cpu.set_flag(OverflowFlag, false);
+        (1, 2)
+    }
+}
+
 trait FlagBit {
     const BIT: u8;
 }
 
 struct CarryFlag;
+
+struct DecimalModeFlag;
+
+struct InterruptDisableFlag;
 
 struct ZeroFlag;
 
@@ -346,6 +380,10 @@ impl FlagBit for NegativeFlag { const BIT: u8 = 0x80; }
 impl FlagBit for OverflowFlag { const BIT: u8 = 0x40; }
 
 impl FlagBit for BreakFlag { const BIT: u8 = 0x10; }
+
+impl FlagBit for DecimalModeFlag { const BIT: u8 = 0x8; }
+
+impl FlagBit for InterruptDisableFlag { const BIT: u8 = 0x4; }
 
 impl FlagBit for CarryFlag { const BIT: u8 = 0x1; }
 
@@ -414,6 +452,9 @@ impl Cpu {
             Instruction::Rol(inst) => inst.execute(self),
             Instruction::Ror(inst) => inst.execute(self),
             Instruction::Clc(inst) => inst.execute(self),
+            Instruction::Cld(inst) => inst.execute(self),
+            Instruction::Cli(inst) => inst.execute(self),
+            Instruction::Clv(inst) => inst.execute(self),
         };
         cycle_sync.end(cycles);
 
