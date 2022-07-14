@@ -20,6 +20,7 @@ enum Agu {
     RegisterX,
     RegisterY,
     RegisterSP,
+    Status,
 }
 
 impl Agu {
@@ -54,6 +55,7 @@ impl Agu {
             Agu::RegisterX => panic_any("RegisterX not supported"),
             Agu::RegisterY => panic_any("RegisterY not supported"),
             Agu::RegisterSP => panic_any("RegisterSP not supported"),
+            Agu::Status => panic_any("Status not supported"),
         }
     }
 }
@@ -62,10 +64,8 @@ impl Agu {
 enum Instruction {
     // LDA, LDX, LDY, TAX, TAY, TSX, TXA, TYA
     Transfer(Transfer),
-
     // STA, STX, STY
     TransferNoTouchFlags(TransferNoTouchFlags),
-
     Txs(Txs),
 
     Adc(Adc),
@@ -113,8 +113,8 @@ impl InstructionType for TransferNoTouchFlags {
 
 impl InstructionType for Txs {
     fn execute(&self, cpu: &mut Cpu) -> (u8, u8) {
-        cpu.sp = cp.x;
-        (operands + 1, ticks + 2)
+        cpu.sp = cpu.x;
+        (1, 2)
     }
 }
 
@@ -151,6 +151,8 @@ struct CarryFlag;
 
 struct ZeroFlag;
 
+struct BreakFlag;
+
 struct OverflowFlag;
 
 struct NegativeFlag;
@@ -158,6 +160,8 @@ struct NegativeFlag;
 impl FlagBit for NegativeFlag { const BIT: u8 = 0x80; }
 
 impl FlagBit for OverflowFlag { const BIT: u8 = 0x40; }
+
+impl FlagBit for BreakFlag { const BIT: u8 = 0x10; }
 
 impl FlagBit for CarryFlag { const BIT: u8 = 0x1; }
 
@@ -269,6 +273,9 @@ impl Cpu {
             &Agu::RegisterX => (self.x, 0, 0),
             &Agu::RegisterY => (self.y, 0, 0),
             &Agu::RegisterSP => (self.sp, 0, 0),
+            &Agu::Status => {
+                (self.status | 0b0011_0000, 0, 0)
+            },
             _ => {
                 let (addr, operand_bytes, ticks) = agu.address(self);
                 (self.read_byte(addr), operand_bytes, ticks)
@@ -283,19 +290,24 @@ impl Cpu {
             &Agu::RegisterA => {
                 self.a = value;
                 (0, 0)
-            },
+            }
             &Agu::RegisterX => {
                 self.x = value;
                 (0, 0)
-            },
+            }
             &Agu::RegisterY => {
                 self.y = value;
                 (0, 0)
-            },
+            }
             &Agu::RegisterSP => {
                 self.sp = value;
                 (0, 0)
-            },
+            }
+            &Agu::Status => {
+                let saved = self.status & 0b0011_0000;
+                self.status = value & 0b1100_1111 | saved;
+                (0, 0)
+            }
             _ => {
                 let (addr, operand_bytes, ticks) = agu.address(self);
                 self.write_byte(addr, value);

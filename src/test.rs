@@ -1,5 +1,6 @@
 #![cfg(test)]
 
+use std::ops::ControlFlow::Break;
 use super::*;
 
 #[test]
@@ -209,6 +210,12 @@ fn cpu_execute() {
     assert_eq!(cycle_sync.cycles(), 2);
 }
 
+struct IgnoredFlag;
+
+impl FlagBit for IgnoredFlag {
+    const BIT: u8 = 0x20;
+}
+
 #[test]
 fn test_get() {
     let mut cpu = Cpu::new(0);
@@ -221,6 +228,12 @@ fn test_get() {
     // get registerA
     cpu.a = 0x10;
     assert_eq!((0x10, 0, 0), cpu.get(&Agu::RegisterA));
+
+    // get status
+    cpu.status = 0x00;
+    cpu.set_flag(BreakFlag, false);
+    cpu.set_flag(IgnoredFlag, false);
+    assert_eq!((0b0011_0000, 0, 0), cpu.get(&Agu::Status));
 }
 
 #[test]
@@ -229,6 +242,14 @@ fn test_put() {
     cpu.write_byte(0x1000, 0x10);
     assert_eq!((2, 2), cpu.put(&Agu::Absolute(0x1000), 0x20));
     assert_eq!(0x20, cpu.read_byte(0x1000));
+
+    // set status not touch break and not used flags
+    cpu.status = 0x00;
+    assert_eq!((0, 0), cpu.put(&Agu::Status, 0xff));
+    assert_eq!(0b1100_1111, cpu.status);
+    cpu.status = 0xff;
+    cpu.put(&Agu::Status, 0x00);
+    assert_eq!(0b0011_0000, cpu.status);
 }
 
 #[test]
