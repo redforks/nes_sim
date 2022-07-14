@@ -60,17 +60,17 @@ impl Agu {
 
 #[allow(dead_code)]
 enum Instruction {
-    // LDA, LDX, LDY
-    Load(Load),
+    // LDA, LDX, LDY, TAX, TAY, TSX, TXA, TYA
+    Transfer(Transfer),
 
-    // STA, STX, STY
+    // STA, STX, STY, Txs
     Store(Store),
 
     Adc(Adc),
     And(And),
 }
 
-struct Load {
+struct Transfer {
     src: Agu,
     dest: Agu,
 }
@@ -89,7 +89,7 @@ trait InstructionType {
     fn execute(&self, cpu: &mut Cpu) -> (u8, u8);
 }
 
-impl InstructionType for Load {
+impl InstructionType for Transfer {
     fn execute(&self, cpu: &mut Cpu) -> (u8, u8) {
         let (val, operands, ticks) = cpu.get(&self.src);
         cpu.put(&self.dest, val);
@@ -198,7 +198,7 @@ impl Cpu {
     fn execute<T: SyncInstructionCycle>(&mut self, inst: Instruction, cycle_sync: &mut T) {
         cycle_sync.start();
         let (pc, cycles) = match inst {
-            Instruction::Load(inst) => inst.execute(self),
+            Instruction::Transfer(inst) => inst.execute(self),
             Instruction::Store(inst) => inst.execute(self),
             Instruction::Adc(inst) => inst.execute(self),
             Instruction::And(inst) => inst.execute(self),
