@@ -176,6 +176,17 @@ fn adc() {
 }
 
 #[test]
+fn and() {
+    let mut cpu = Cpu::new(0);
+    cpu.a = 0b1010_1010;
+    let and = And(Agu::Literal(0b1100_1100));
+    assert_eq!((2, 2), and.execute(&mut cpu));
+    assert_eq!(0b1000_1000, cpu.a);
+    assert_eq!(cpu.flag(ZeroFlag), false);
+    assert_eq!(cpu.flag(NegativeFlag), true);
+}
+
+#[test]
 fn cpu_execute() {
     let mut cpu = Cpu::new(0);
     let mut cycle_sync = TestSyncInstructionCycle(0);

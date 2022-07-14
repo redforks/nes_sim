@@ -48,15 +48,10 @@ impl Agu {
     }
 }
 
+#[allow(dead_code)]
 enum Instruction {
     Adc(Adc),
-    // AddFromZeroPage(u8),
-    // AddFromZeroPageX(u8),
-    // AddFromAbsolute(u16),
-    // AddFromAbsoluteX(u16),
-    // AddFromAbsoluteY(u16),
-    // AddFromIndirectX(u8),
-    // AddFromIndirectY(u8),
+    And(And),
 }
 
 trait InstructionType {
@@ -77,6 +72,8 @@ struct Cpu {
 
 struct Adc(Agu);
 
+struct And(Agu);
+
 impl InstructionType for Adc {
     fn execute(&self, cpu: &mut Cpu) -> (u8, u8) {
         let (val, operands, ticks) = cpu.get(&self.0);
@@ -92,18 +89,34 @@ impl InstructionType for Adc {
     }
 }
 
+impl InstructionType for And {
+    fn execute(&self, cpu: &mut Cpu) -> (u8, u8) {
+        let (val, operands, ticks) = cpu.get(&self.0);
+        cpu.a = cpu.a & val;
+        cpu.set_flag(ZeroFlag, cpu.a == 0);
+        cpu.set_flag(NegativeFlag, cpu.a & 0x80 != 0);
+        (operands + 1, ticks + 2)
+    }
+}
+
 trait FlagBit {
     const BIT: u8;
 }
 
 struct CarryFlag;
+
 struct ZeroFlag;
+
 struct OverflowFlag;
+
 struct NegativeFlag;
 
 impl FlagBit for NegativeFlag { const BIT: u8 = 0x80; }
+
 impl FlagBit for OverflowFlag { const BIT: u8 = 0x40; }
+
 impl FlagBit for CarryFlag { const BIT: u8 = 0x1; }
+
 impl FlagBit for ZeroFlag { const BIT: u8 = 0x2; }
 
 // Trait to sync instruction execution  times.
@@ -143,7 +156,10 @@ impl Cpu {
         let (pc, cycles) = match inst {
             Instruction::Adc(inst) => {
                 inst.execute(self)
-            },
+            }
+            Instruction::And(inst) => {
+                inst.execute(self)
+            }
         };
         cycle_sync.end(cycles);
 
