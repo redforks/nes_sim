@@ -19,6 +19,7 @@ enum Agu {
     RegisterA,
     RegisterX,
     RegisterY,
+    RegisterSP,
 }
 
 impl Agu {
@@ -52,6 +53,7 @@ impl Agu {
             Agu::RegisterA => panic_any("RegisterA not supported"),
             Agu::RegisterX => panic_any("RegisterX not supported"),
             Agu::RegisterY => panic_any("RegisterY not supported"),
+            Agu::RegisterSP => panic_any("RegisterSP not supported"),
         }
     }
 }
@@ -254,6 +256,7 @@ impl Cpu {
             &Agu::RegisterA => (self.a, 0, 0),
             &Agu::RegisterX => (self.x, 0, 0),
             &Agu::RegisterY => (self.y, 0, 0),
+            &Agu::RegisterSP => (self.sp, 0, 0),
             _ => {
                 let (addr, operand_bytes, ticks) = agu.address(self);
                 (self.read_byte(addr), operand_bytes, ticks)
@@ -269,12 +272,16 @@ impl Cpu {
                 self.a = value;
                 (0, 0)
             },
-            $Agu::RegisterX => {
+            &Agu::RegisterX => {
                 self.x = value;
                 (0, 0)
             },
-            $Agu::RegisterY => {
+            &Agu::RegisterY => {
                 self.y = value;
+                (0, 0)
+            },
+            &Agu::RegisterSP => {
+                self.sp = value;
                 (0, 0)
             },
             _ => {
