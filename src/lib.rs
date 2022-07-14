@@ -104,6 +104,9 @@ enum Instruction {
     Sec(Sec),
     Sed(Sed),
     Sei(Sei),
+
+    // Cmp, Cpx, Cpy
+    Cmp(Cmp),
 }
 
 struct Transfer {
@@ -157,6 +160,11 @@ struct Sec();
 struct Sed();
 
 struct Sei();
+
+struct Cmp{
+    register: Agu,
+    memory: Agu,
+}
 
 trait InstructionType {
     // (pcDelta, tickCount)
@@ -387,6 +395,18 @@ impl InstructionType for Sei {
     }
 }
 
+impl InstructionType for Cmp {
+    fn execute(&self, cpu: &mut Cpu) -> (u8, u8) {
+        let (reg_val, _, _) = cpu.get(&self.register);
+        let (val, operands, ticks) = cpu.get(&self.memory);
+        let t = reg_val - val;
+        cpu.update_negative_flag(t);
+        cpu.update_zero_flag(t);
+        cpu.set_flag(CarryFlag, reg_val > val);
+        (operands + 1, ticks + 2)
+    }
+}
+
 trait FlagBit {
     const BIT: u8;
 }
@@ -488,6 +508,7 @@ impl Cpu {
             Instruction::Sec(inst) => inst.execute(self),
             Instruction::Sed(inst) => inst.execute(self),
             Instruction::Sei(inst) => inst.execute(self),
+            Instruction::Cmp(inst) => inst.execute(self),
         };
         cycle_sync.end(cycles);
 
