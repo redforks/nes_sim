@@ -124,6 +124,21 @@ trait InstructionType {
     fn execute(&self, cpu: &mut Cpu) -> (u8, u8);
 }
 
+/// Bin operate with A register and value from Agu, store result to A register.
+trait AccumulatorOpInstructionType {
+    fn agu(&self)->&Agu;
+    fn op(a: u8, v: u8)->u8;
+
+    fn execute(&self, cpu: &mut Cpu) -> (u8, u8) {
+        let agu = self.agu();
+        let (val, operands, ticks) = cpu.get(agu);
+        cpu.a = Self::op(cpu.a, val);
+        cpu.update_negative_flag(cpu.a);
+        cpu.update_zero_flag(cpu.a);
+        (operands + 1, ticks + 2)
+    }
+}
+
 impl InstructionType for Transfer {
     fn execute(&self, cpu: &mut Cpu) -> (u8, u8) {
         let (val, operands, ticks) = cpu.get(&self.src);
@@ -217,34 +232,19 @@ impl InstructionType for Sbc {
     }
 }
 
-impl InstructionType for And {
-    fn execute(&self, cpu: &mut Cpu) -> (u8, u8) {
-        let (val, operands, ticks) = cpu.get(&self.0);
-        cpu.a = cpu.a & val;
-        cpu.update_negative_flag(cpu.a);
-        cpu.update_zero_flag(cpu.a);
-        (operands + 1, ticks + 2)
-    }
+impl AccumulatorOpInstructionType for And {
+    fn agu(&self) -> &Agu { &self.0 }
+    fn op(a: u8, v: u8) -> u8 { a & v }
 }
 
-impl InstructionType for Eor {
-    fn execute(&self, cpu: &mut Cpu) -> (u8, u8) {
-        let (val, operands, ticks) = cpu.get(&self.0);
-        cpu.a = cpu.a ^ val;
-        cpu.update_negative_flag(cpu.a);
-        cpu.update_zero_flag(cpu.a);
-        (operands + 1, ticks + 2)
-    }
+impl AccumulatorOpInstructionType for Eor {
+    fn agu(&self) -> &Agu { &self.0 }
+    fn op(a: u8, v: u8) -> u8 { a ^ v }
 }
 
-impl InstructionType for Ora {
-    fn execute(&self, cpu: &mut Cpu) -> (u8, u8) {
-        let (val, operands, ticks) = cpu.get(&self.0);
-        cpu.a = cpu.a | val;
-        cpu.update_negative_flag(cpu.a);
-        cpu.update_zero_flag(cpu.a);
-        (operands + 1, ticks + 2)
-    }
+impl AccumulatorOpInstructionType for Ora {
+    fn agu(&self) -> &Agu { &self.0 }
+    fn op(a: u8, v: u8) -> u8 { a | v }
 }
 
 trait FlagBit {
