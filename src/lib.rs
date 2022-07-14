@@ -131,6 +131,7 @@ enum Instruction {
     ConditionBranch(ConditionBranch),
 
     Jmp(Jmp),
+    IndirectJmp(IndirectJmp),
 }
 
 struct Transfer {
@@ -197,6 +198,8 @@ struct ConditionBranch {
 }
 
 struct Jmp(u16);
+
+struct IndirectJmp(u16);
 
 trait InstructionType {
     // (pcDelta, tickCount)
@@ -457,6 +460,13 @@ impl Jmp {
     }
 }
 
+impl IndirectJmp {
+    fn execute(&self, cpu: &Cpu) -> (u16, u8) {
+        let addr = cpu.read_word(self.0);
+        (addr, 5)
+    }
+}
+
 trait FlagBit {
     const BIT: u8;
 }
@@ -563,6 +573,11 @@ impl Cpu {
             Instruction::ConditionBranch(inst) => inst.execute(self),
             Instruction::Jmp(jmp) => {
                 let (addr, ticks) = jmp.execute();
+                absolute_pc = addr as i32;
+                (1, ticks)
+            },
+            Instruction::IndirectJmp(jmp) => {
+                let (addr, ticks) = jmp.execute(self);
                 absolute_pc = addr as i32;
                 (1, ticks)
             },
