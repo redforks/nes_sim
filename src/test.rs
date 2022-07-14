@@ -217,4 +217,8 @@ fn test_get() {
 
     // get literal
     assert_eq!((0x10, 1, 0), cpu.get(&Agu::Literal(0x10)));
+
+    // get registerA
+    cpu.a = 0x10;
+    assert_eq!((0x10, 0, 0), cpu.get(&Agu::RegisterA));
 }

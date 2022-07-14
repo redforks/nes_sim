@@ -14,6 +14,7 @@ enum Agu {
     Indirect(u16),
     IndirectX(u8),
     IndirectY(u8),
+    RegisterA,
 }
 
 impl Agu {
@@ -43,7 +44,8 @@ impl Agu {
                 let high = (addr >> 8) as u8;
                 let r = addr.wrapping_add(cpu.y as u16);
                 (r, if high == (r >> 8) as u8 { 3 } else { 4 }, 1)
-            }
+            },
+            Agu::RegisterA => panic_any("RegisterA not supported"),
         }
     }
 }
@@ -199,6 +201,7 @@ impl Cpu {
     fn get(&self, agu: &Agu) -> (u8, u8, u8) {
         match agu {
             &Agu::Literal(val) => (val, 1, 0),
+            &Agu::RegisterA => (self.a, 0, 0),
             _ => {
                 let (addr, operand_bytes, ticks) = agu.address(self);
                 (self.read_byte(addr), operand_bytes, ticks)
