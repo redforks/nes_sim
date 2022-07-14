@@ -2,6 +2,7 @@ use std::ops::{BitAnd, Shl};
 use std::convert::From;
 use std::num::FpCategory::Zero;
 use std::panic::panic_any;
+use crate::Agu::Absolute;
 
 mod test;
 
@@ -49,7 +50,7 @@ impl Agu {
         match self {
             &Agu::Literal(_) => panic_any("Literal not supported"),
             &Agu::ZeroPage(addr) => (addr as u16, 1, 1),
-            &Agu::Absolute(addr) => (addr, 2, 2),
+            &Absolute(addr) => (addr, 2, 2),
             &Agu::ZeroPageX(addr) => (addr.wrapping_add(cpu.x) as u16, 2, 1),
             &Agu::ZeroPageY(addr) => (addr.wrapping_add(cpu.y) as u16, 2, 1),
             &Agu::AbsoluteX(addr) => {
@@ -134,6 +135,7 @@ enum Instruction {
     Jmp(Jmp),
     IndirectJmp(IndirectJmp),
     Jsr(Jsr),
+    Rts(Rts),
     Brk(Brk),
     Rti(Rti),
 
@@ -151,7 +153,7 @@ struct TransferNoTouchFlags {
     dest: Agu,
 }
 
-struct Txs();
+struct Txs {}
 
 struct Push(Agu);
 
@@ -179,19 +181,19 @@ struct Rol(Agu);
 
 struct Ror(Agu);
 
-struct Clc();
+struct Clc {}
 
-struct Cld();
+struct Cld {}
 
-struct Cli();
+struct Cli {}
 
-struct Clv();
+struct Clv {}
 
-struct Sec();
+struct Sec {}
 
-struct Sed();
+struct Sed {}
 
-struct Sei();
+struct Sei {}
 
 struct Cmp {
     register: Agu,
@@ -204,15 +206,27 @@ struct ConditionBranch {
     negative: bool,
 }
 
+impl ConditionBranch {
+    fn new(offset: u8, register: Agu, negative: bool) -> ConditionBranch {
+        ConditionBranch {
+            offset,
+            register,
+            negative,
+        }
+    }
+}
+
 struct Jmp(u16);
 
 struct IndirectJmp(u16);
 
 struct Jsr(u16);
 
-struct Brk();
+struct Rts {}
 
-struct Rti();
+struct Brk {}
+
+struct Rti {}
 
 struct Bit(Agu);
 
@@ -491,6 +505,15 @@ impl Jsr {
     }
 }
 
+impl Rts {
+    fn execute(&self, cpu: &mut Cpu) -> (u16, u8) {
+        let l = cpu.pop_stack();
+        let h = cpu.pop_stack();
+        let addr = (h as u16) << 8 | l as u16;
+        (addr, 6)
+    }
+}
+
 impl Brk {
     fn execute(&self, cpu: &mut Cpu) -> (u16, u8) {
         let pc = cpu.pc.wrapping_add(2);
@@ -513,12 +536,171 @@ impl Rti {
 
 impl InstructionType for Bit {
     fn execute(&self, cpu: &mut Cpu) -> (u8, u8) {
-        let (v, operands, ticks)  = cpu.get(&self.0);
+        let (v, operands, ticks) = cpu.get(&self.0);
         let v = v & cpu.a;
         cpu.set_flag(NegativeFlag, v & 0x80 != 0);
         cpu.set_flag(OverflowFlag, v & 0x70 != 0);
         cpu.update_zero_flag(v);
         (operands + 1, ticks + 2)
+    }
+}
+
+fn decode(cpu: &Cpu) -> Instruction {
+    let op_code = cpu.read_byte(cpu.pc);
+    let a = op_code & 0b1110_0000 >> 5;
+    let b = op_code & 0b0001_1100 >> 2;
+    let c = op_code & 0b0000_0011;
+    let read_u8 = || cpu.read_byte(cpu.pc.wrapping_add(1));
+    let read_u16 = || cpu.read_word(cpu.pc.wrapping_add(1));
+    let literal = || Agu::Literal(read_u8());
+    let zero_page = || Agu::ZeroPage(read_u8());
+    let zero_page_x = || Agu::ZeroPageX(read_u8());
+    let absolute = || Absolute(read_u16());
+    let absolute_x = || Agu::AbsoluteX(read_u16());
+    let absolute_y = || Agu::AbsoluteY(read_u16());
+    // let indirect = || Agu::Indirect(read_u16());
+    let indirect_x = || Agu::IndirectX(read_u8());
+    let indirect_y = || Agu::IndirectY(read_u8());
+    let cond_branch = |agu| Instruction::ConditionBranch(ConditionBranch::new(read_u8(), agu, false));
+    let neg_cond_branch = |agu| Instruction::ConditionBranch(ConditionBranch::new(read_u8(), agu, true));
+    let transfer = |dest, src| Instruction::Transfer(Transfer { src, dest });
+    let dec = |agu| Instruction::Dec(Dec(agu));
+    let inc = |agu| Instruction::Inc(Inc(agu));
+    let cmp = |register, memory| Instruction::Cmp(Cmp { register, memory });
+    let (aa, x, y) = (Agu::RegisterA, Agu::RegisterX, Agu::RegisterY);
+    let ora = |agu| Instruction::Ora(Ora(agu));
+    let and = |agu| Instruction::And(And(agu));
+    let eor = |agu| Instruction::Eor(Eor(agu));
+    let adc = |agu| Instruction::Adc(Adc(agu));
+    let sbc = |agu| Instruction::Sbc(Sbc(agu));
+
+    match (c, a, b) {
+        (0, 0, 0) => Instruction::Brk(Brk),
+        (0, 0, 2) => Instruction::Push(Push(Agu::Status)),
+        (0, 0, 4) => neg_cond_branch(Agu::NegativeFlag),
+        (0, 0, 6) => Instruction::Clc(Clc),
+
+        (0, 1, 0) => Instruction::Jsr(Jsr(read_u16())),
+        (0, 1, 1) => Instruction::Bit(Bit(zero_page())),
+        (0, 1, 2) => Instruction::Pop(Pop(Agu::Status)),
+        (0, 1, 3) => Instruction::Bit(Bit(absolute())),
+        (0, 1, 4) => cond_branch(Agu::NegativeFlag),
+        (0, 1, 6) => Instruction::Sec(Sec),
+
+        (0, 2, 0) => Instruction::Rti(Rti),
+        (0, 2, 2) => Instruction::Push(Push(aa)),
+        (0, 2, 3) => Instruction::Jmp(Jmp(read_u16())),
+        (0, 2, 4) => neg_cond_branch(Agu::OverflowFlag),
+        (0, 2, 6) => Instruction::Cli(Cli),
+
+        (0, 3, 0) => Instruction::Rts(Rts),
+        (0, 3, 2) => Instruction::Pop(Pop(aa)),
+        (0, 3, 3) => Instruction::IndirectJmp(IndirectJmp(read_u16())),
+        (0, 3, 4) => cond_branch(Agu::OverflowFlag),
+        (0, 3, 6) => Instruction::Sei(Sei),
+
+        (0, 4, 1) => transfer(zero_page(), y),
+        (0, 4, 2) => dec(Agu::RegisterY),
+        (0, 4, 3) => transfer(absolute(), y),
+        (0, 4, 4) => neg_cond_branch(Agu::CarryFlag),
+        (0, 4, 5) => transfer(zero_page_x(), y),
+        (0, 4, 6) => transfer(aa, y),
+
+        (0, 5, 0) => transfer(y, literal()),
+        (0, 5, 1) => transfer(y, zero_page()),
+        (0, 5, 2) => transfer(y, aa),
+        (0, 5, 3) => transfer(y, absolute()),
+        (0, 5, 4) => cond_branch(Agu::CarryFlag),
+        (0, 5, 5) => transfer(y, zero_page_x()),
+        (0, 5, 6) => Instruction::Clv(Clv),
+        (0, 5, 7) => transfer(y, absolute_x()),
+
+        (0, 6, 0) => cmp(y, literal()),
+        (0, 6, 1) => cmp(y, zero_page()),
+        (0, 6, 2) => inc(y),
+        (0, 6, 3) => cmp(y, absolute()),
+        (0, 6, 4) => neg_cond_branch(Agu::ZeroFlag),
+        (0, 6, 6) => Instruction::Cld(Cld),
+
+        (0, 7, 0) => cmp(x, literal()),
+        (0, 7, 1) => cmp(x, zero_page()),
+        (0, 7, 2) => inc(x),
+        (0, 7, 3) => cmp(x, absolute()),
+        (0, 7, 4) => cond_branch(Agu::ZeroFlag),
+        (0, 7, 6) => Instruction::Sed(Sed),
+
+        (1, 0, 0) => ora(indirect_x()),
+        (1, 0, 1) => ora(zero_page()),
+        (1, 0, 2) => ora(literal()),
+        (1, 0, 3) => ora(absolute()),
+        (1, 0, 4) => ora(indirect_y()),
+        (1, 0, 5) => ora(zero_page_x()),
+        (1, 0, 6) => ora(absolute_y()),
+        (1, 0, 7) => ora(absolute_x()),
+
+        (1, 1, 0) => and(indirect_x()),
+        (1, 1, 1) => and(zero_page()),
+        (1, 1, 2) => and(literal()),
+        (1, 1, 3) => and(absolute()),
+        (1, 1, 4) => and(indirect_y()),
+        (1, 1, 5) => and(zero_page_x()),
+        (1, 1, 6) => and(absolute_y()),
+        (1, 1, 7) => and(absolute_x()),
+
+        (1, 2, 0) => eor(indirect_x()),
+        (1, 2, 1) => eor(zero_page()),
+        (1, 2, 2) => eor(literal()),
+        (1, 2, 3) => eor(absolute()),
+        (1, 2, 4) => eor(indirect_y()),
+        (1, 2, 5) => eor(zero_page_x()),
+        (1, 2, 6) => eor(absolute_y()),
+        (1, 2, 7) => eor(absolute_x()),
+
+        (1, 3, 0) => adc(indirect_x()),
+        (1, 3, 1) => adc(zero_page()),
+        (1, 3, 2) => adc(literal()),
+        (1, 3, 3) => adc(absolute()),
+        (1, 3, 4) => adc(indirect_y()),
+        (1, 3, 5) => adc(zero_page_x()),
+        (1, 3, 6) => adc(absolute_y()),
+        (1, 3, 7) => adc(absolute_x()),
+
+        (1, 4, 0) => transfer(indirect_x(), aa),
+        (1, 4, 1) => transfer(zero_page(), aa),
+        (1, 4, 3) => transfer(absolute(), aa),
+        (1, 4, 4) => transfer(indirect_y(), aa),
+        (1, 4, 5) => transfer(zero_page_x(), aa),
+        (1, 4, 6) => transfer(absolute_y(), aa),
+        (1, 4, 7) => transfer(absolute_x(), aa),
+
+        (1, 5, 0) => transfer(aa, indirect_x()),
+        (1, 5, 1) => transfer(aa, zero_page()),
+        (1, 5, 2) => transfer(aa, literal()),
+        (1, 5, 3) => transfer(aa, absolute()),
+        (1, 5, 4) => transfer(aa, indirect_y()),
+        (1, 5, 5) => transfer(aa, zero_page_x()),
+        (1, 5, 6) => transfer(aa, absolute_y()),
+        (1, 5, 7) => transfer(aa, absolute_x()),
+
+        (1, 6, 0) => cmp(aa, indirect_x()),
+        (1, 6, 1) => cmp(aa, zero_page()),
+        (1, 6, 2) => cmp(aa, literal()),
+        (1, 6, 3) => cmp(aa, absolute()),
+        (1, 6, 4) => cmp(aa, indirect_y()),
+        (1, 6, 5) => cmp(aa, zero_page_x()),
+        (1, 6, 6) => cmp(aa, absolute_y()),
+        (1, 6, 7) => cmp(aa, absolute_x()),
+
+        (1, 7, 0) => sbc(indirect_x()),
+        (1, 7, 1) => sbc(zero_page()),
+        (1, 7, 2) => sbc(literal()),
+        (1, 7, 3) => sbc(absolute()),
+        (1, 7, 4) => sbc(indirect_y()),
+        (1, 7, 5) => sbc(zero_page_x()),
+        (1, 7, 6) => sbc(absolute_y()),
+        (1, 7, 7) => sbc(absolute_x()),
+
+        _ => panic_any(format!("Unknown opcode: {:02x}", op_code)),
     }
 }
 
@@ -599,7 +781,7 @@ impl Cpu {
 
     fn execute<T: SyncInstructionCycle>(&mut self, inst: Instruction, cycle_sync: &mut T) {
         cycle_sync.start();
-        let mut absolute_pc: i32  = -1;
+        let mut absolute_pc: i32 = -1;
         let (pc, cycles) = match inst {
             Instruction::Transfer(inst) => inst.execute(self),
             Instruction::TransferNoTouchFlags(inst) => inst.execute(self),
@@ -630,27 +812,32 @@ impl Cpu {
                 let (addr, ticks) = jmp.execute();
                 absolute_pc = addr as i32;
                 (1, ticks)
-            },
+            }
             Instruction::IndirectJmp(jmp) => {
                 let (addr, ticks) = jmp.execute(self);
                 absolute_pc = addr as i32;
                 (1, ticks)
-            },
+            }
             Instruction::Jsr(jmp) => {
                 let (addr, ticks) = jmp.execute(self);
                 absolute_pc = addr as i32;
                 (1, ticks)
-            },
+            }
+            Instruction::Rts(jmp) => {
+                let (addr, ticks) = jmp.execute(self);
+                absolute_pc = addr as i32;
+                (1, ticks)
+            }
             Instruction::Brk(jmp) => {
                 let (addr, ticks) = jmp.execute(self);
                 absolute_pc = addr as i32;
                 (1, ticks)
-            },
+            }
             Instruction::Rti(jmp) => {
                 let (addr, ticks) = jmp.execute(self);
                 absolute_pc = addr as i32;
                 (1, ticks)
-            },
+            }
             Instruction::Bit(inst) => inst.execute(self),
             Instruction::Nop => (1, 2),
         };
