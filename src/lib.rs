@@ -68,6 +68,9 @@ enum Instruction {
     TransferNoTouchFlags(TransferNoTouchFlags),
     Txs(Txs),
 
+    // PHA, PHP
+    Push(Push),
+
     Adc(Adc),
     And(And),
 }
@@ -83,6 +86,8 @@ struct TransferNoTouchFlags {
 }
 
 struct Txs();
+
+struct Push(Agu);
 
 struct Adc(Agu);
 
@@ -115,6 +120,14 @@ impl InstructionType for Txs {
     fn execute(&self, cpu: &mut Cpu) -> (u8, u8) {
         cpu.sp = cpu.x;
         (1, 2)
+    }
+}
+
+impl InstructionType for Push {
+    fn execute(&self, cpu: &mut Cpu) -> (u8, u8) {
+        let (val, ..) = cpu.get(&self.0);
+        cpu.push_stack(val);
+        (1, 3)
     }
 }
 
@@ -216,6 +229,7 @@ impl Cpu {
             Instruction::Transfer(inst) => inst.execute(self),
             Instruction::TransferNoTouchFlags(inst) => inst.execute(self),
             Instruction::Txs(inst) => inst.execute(self),
+            Instruction::Push(inst) => inst.execute(self),
             Instruction::Adc(inst) => inst.execute(self),
             Instruction::And(inst) => inst.execute(self),
         };
@@ -314,5 +328,10 @@ impl Cpu {
                 (operand_bytes, ticks)
             }
         }
+    }
+
+    fn push_stack(&mut self, value: u8) {
+        self.write_byte(0x100 + self.sp as u16, value);
+        self.sp = self.sp.wrapping_sub(1);
     }
 }

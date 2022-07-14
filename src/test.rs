@@ -291,3 +291,11 @@ fn update_overflow_flag() {
     cpu.update_overflow_flag(0x80, 0x70);
     assert_eq!(cpu.flag(OverflowFlag), true);
 }
+
+#[test]
+fn push_stack() {
+    let mut cpu = Cpu::new(0);
+    cpu.push_stack(0x10);
+    assert_eq!(0x10, cpu.read_byte(0x100));
+    assert_eq!(0xFF, cpu.sp);
+}
