@@ -133,6 +133,7 @@ enum Instruction {
     Jmp(Jmp),
     IndirectJmp(IndirectJmp),
     Jsr(Jsr),
+    Brk(Brk),
 }
 
 struct Transfer {
@@ -203,6 +204,8 @@ struct Jmp(u16);
 struct IndirectJmp(u16);
 
 struct Jsr(u16);
+
+struct Brk();
 
 trait InstructionType {
     // (pcDelta, tickCount)
@@ -473,10 +476,22 @@ impl IndirectJmp {
 impl Jsr {
     fn execute(&self, cpu: &mut Cpu) -> (u16, u8) {
         let pc = cpu.pc.wrapping_add(2);
-        let mut addr = self.0;
         cpu.push_stack((pc >> 8) as u8);
         cpu.push_stack(pc as u8);
-        (addr, 6)
+        (self.0, 6)
+    }
+}
+
+impl Brk {
+    fn execute(&self, cpu: &mut Cpu) -> (u16, u8) {
+        let pc = cpu.pc.wrapping_add(2);
+        cpu.push_stack((pc >> 8) as u8);
+        cpu.push_stack(pc as u8);
+        let (status, ..) = cpu.get(Agu.Status);
+        cpu.push_stack(status);
+        cpu.set_flag(BreakFlag, true);
+        cpu.set_flag(UnusedFlag, true);
+        (cpu.read_word(0xFFFE), 7)
     }
 }
 
@@ -595,6 +610,11 @@ impl Cpu {
                 (1, ticks)
             },
             Instruction::Jsr(jmp) => {
+                let (addr, ticks) = jmp.execute(self);
+                absolute_pc = addr as i32;
+                (1, ticks)
+            },
+            Instruction::Brk(jmp) => {
                 let (addr, ticks) = jmp.execute(self);
                 absolute_pc = addr as i32;
                 (1, ticks)
