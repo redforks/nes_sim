@@ -134,6 +134,7 @@ enum Instruction {
     IndirectJmp(IndirectJmp),
     Jsr(Jsr),
     Brk(Brk),
+    Rti(Rti),
 }
 
 struct Transfer {
@@ -206,6 +207,8 @@ struct IndirectJmp(u16);
 struct Jsr(u16);
 
 struct Brk();
+
+struct Rti();
 
 trait InstructionType {
     // (pcDelta, tickCount)
@@ -495,6 +498,14 @@ impl Brk {
     }
 }
 
+impl Rti {
+    fn execute(&self, cpu: &mut Cpu) -> (u16, u8) {
+        cpu.put(Agu.Status, cpu.pop_stack());
+        let pc = cpu.pop_stack() as u16 | (cpu.pop_stack() as u16) << 8;
+        (pc, 6)
+    }
+}
+
 trait FlagBit {
     const BIT: u8;
 }
@@ -615,6 +626,11 @@ impl Cpu {
                 (1, ticks)
             },
             Instruction::Brk(jmp) => {
+                let (addr, ticks) = jmp.execute(self);
+                absolute_pc = addr as i32;
+                (1, ticks)
+            },
+            Instruction::Rti(jmp) => {
                 let (addr, ticks) = jmp.execute(self);
                 absolute_pc = addr as i32;
                 (1, ticks)
