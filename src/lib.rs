@@ -17,6 +17,8 @@ enum Agu {
     IndirectX(u8),
     IndirectY(u8),
     RegisterA,
+    RegisterX,
+    RegisterY,
 }
 
 impl Agu {
@@ -48,6 +50,8 @@ impl Agu {
                 (r, if high == (r >> 8) as u8 { 3 } else { 4 }, 1)
             }
             Agu::RegisterA => panic_any("RegisterA not supported"),
+            Agu::RegisterX => panic_any("RegisterX not supported"),
+            Agu::RegisterY => panic_any("RegisterY not supported"),
         }
     }
 }
@@ -97,7 +101,7 @@ impl InstructionType for Store {
     fn execute(&self, cpu: &mut Cpu) -> (u8, u8) {
         let (val, operands, ticks) = cpu.get(&self.src);
         cpu.put(&self.dest, val);
-        (operands + 1, ticks + 2)
+        (operands + 1, ticks + 3)
     }
 }
 
@@ -248,6 +252,8 @@ impl Cpu {
         match agu {
             &Agu::Literal(val) => (val, 1, 0),
             &Agu::RegisterA => (self.a, 0, 0),
+            &Agu::RegisterX => (self.x, 0, 0),
+            &Agu::RegisterY => (self.y, 0, 0),
             _ => {
                 let (addr, operand_bytes, ticks) = agu.address(self);
                 (self.read_byte(addr), operand_bytes, ticks)
@@ -262,7 +268,15 @@ impl Cpu {
             &Agu::RegisterA => {
                 self.a = value;
                 (0, 0)
-            }
+            },
+            $Agu::RegisterX => {
+                self.x = value;
+                (0, 0)
+            },
+            $Agu::RegisterY => {
+                self.y = value;
+                (0, 0)
+            },
             _ => {
                 let (addr, operand_bytes, ticks) = agu.address(self);
                 self.write_byte(addr, value);
