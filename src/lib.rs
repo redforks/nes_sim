@@ -94,6 +94,7 @@ enum Instruction {
 
     Asl(Asl),
     Lsr(Lsr),
+    Rol(Rol),
 }
 
 struct Transfer {
@@ -130,6 +131,8 @@ struct Asl(Agu);
 
 struct Lsr(Agu);
 
+struct Rol(Agu);
+
 trait InstructionType {
     // (pcDelta, tickCount)
     fn execute(&self, cpu: &mut Cpu) -> (u8, u8);
@@ -152,12 +155,12 @@ trait AccumulatorOpInstructionType {
 
 trait ShiftInstructionType {
     fn agu(&self) -> &Agu;
-    fn op(v: u8) -> (u8, bool);
+    fn op(cpu: &Cpu, v: u8) -> (u8, bool);
 
     fn execute(&self, cpu: &mut Cpu) -> (u8, u8) {
         let agu = self.agu();
         let (val, operands, ticks) = cpu.get(agu);
-        let (v, carry_flag) = Self::op(val);
+        let (v, carry_flag) = Self::op(cpu, val);
         cpu.set_flag(CarryFlag, carry_flag);
         cpu.put(agu, v);
         cpu.update_negative_flag(v);
@@ -277,7 +280,7 @@ impl AccumulatorOpInstructionType for Ora {
 impl ShiftInstructionType for Asl {
     fn agu(&self) -> &Agu { &self.0 }
 
-    fn op(v: u8) -> (u8, bool) {
+    fn op(_: &Cpu, v: u8) -> (u8, bool) {
         let carry_flag = v & 0x80 != 0;
         (v << 1, carry_flag)
     }
@@ -286,9 +289,18 @@ impl ShiftInstructionType for Asl {
 impl ShiftInstructionType for Lsr {
     fn agu(&self) -> &Agu { &self.0 }
 
-    fn op(v: u8) -> (u8, bool) {
+    fn op(_: &Cpu, v: u8) -> (u8, bool) {
         let carry_flag = v & 1 != 0;
         (v >> 1, carry_flag)
+    }
+}
+
+impl ShiftInstructionType for Rol {
+    fn agu(&self) -> &Agu { &self.0 }
+
+    fn op(cpu: &Cpu, v: u8) -> (u8, bool) {
+        let carry_flag = v & 0x80 != 0;
+        (v << 1 | cpu.flag(CarryFlag) as u8, carry_flag)
     }
 }
 
@@ -376,6 +388,7 @@ impl Cpu {
             Instruction::Ora(inst) => inst.execute(self),
             Instruction::Asl(inst) => inst.execute(self),
             Instruction::Lsr(inst) => inst.execute(self),
+            Instruction::Rol(inst) => inst.execute(self),
         };
         cycle_sync.end(cycles);
 
