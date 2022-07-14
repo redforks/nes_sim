@@ -492,17 +492,16 @@ impl Brk {
         let pc = cpu.pc.wrapping_add(2);
         cpu.push_stack((pc >> 8) as u8);
         cpu.push_stack(pc as u8);
-        let (status, ..) = cpu.get(Agu.Status);
+        let (status, ..) = cpu.get(&Agu::Status);
         cpu.push_stack(status);
-        cpu.set_flag(BreakFlag, true);
-        cpu.set_flag(UnusedFlag, true);
         (cpu.read_word(0xFFFE), 7)
     }
 }
 
 impl Rti {
     fn execute(&self, cpu: &mut Cpu) -> (u16, u8) {
-        cpu.put(Agu.Status, cpu.pop_stack());
+        let v = cpu.pop_stack();
+        cpu.put(&Agu::Status, v);
         let pc = cpu.pop_stack() as u16 | (cpu.pop_stack() as u16) << 8;
         (pc, 6)
     }
