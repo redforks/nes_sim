@@ -135,6 +135,8 @@ enum Instruction {
     Jsr(Jsr),
     Brk(Brk),
     Rti(Rti),
+
+    Nop,
 }
 
 struct Transfer {
@@ -635,6 +637,7 @@ impl Cpu {
                 absolute_pc = addr as i32;
                 (1, ticks)
             },
+            Instruction::Nop => (1, 2),
         };
 
         if absolute_pc != -1 {
