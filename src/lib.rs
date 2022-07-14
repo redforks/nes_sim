@@ -64,7 +64,7 @@ enum Instruction {
     Transfer(Transfer),
 
     // STA, STX, STY, Txs
-    Store(Store),
+    TransferNoTouchFlags(TransferNoTouchFlags),
 
     Adc(Adc),
     And(And),
@@ -75,7 +75,7 @@ struct Transfer {
     dest: Agu,
 }
 
-struct Store {
+struct TransferNoTouchFlags {
     src: Agu,
     dest: Agu,
 }
@@ -99,7 +99,7 @@ impl InstructionType for Transfer {
     }
 }
 
-impl InstructionType for Store {
+impl InstructionType for TransferNoTouchFlags {
     fn execute(&self, cpu: &mut Cpu) -> (u8, u8) {
         let (val, operands, ticks) = cpu.get(&self.src);
         cpu.put(&self.dest, val);
@@ -199,7 +199,7 @@ impl Cpu {
         cycle_sync.start();
         let (pc, cycles) = match inst {
             Instruction::Transfer(inst) => inst.execute(self),
-            Instruction::Store(inst) => inst.execute(self),
+            Instruction::TransferNoTouchFlags(inst) => inst.execute(self),
             Instruction::Adc(inst) => inst.execute(self),
             Instruction::And(inst) => inst.execute(self),
         };
