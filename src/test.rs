@@ -133,23 +133,43 @@ fn inc_pc() {
     assert_eq!(cpu.pc, 1);
 }
 
+struct TestSyncInstructionCycle (u8);
+
+impl SyncInstructionCycle for TestSyncInstructionCycle {
+    fn start(&mut self) {
+    }
+
+    fn end(&mut self, cycles: u8) {
+        self.0 = cycles;
+    }
+}
+
+impl TestSyncInstructionCycle    {
+    fn cycles(&self) -> u8 {
+        self.0
+    }
+}
+
 #[test]
 fn add_literal() {
     let mut cpu = Cpu::new(0);
+    let mut cycle_sync = TestSyncInstructionCycle(0);
 
     // carry
     cpu.a = 0xFF;
-    cpu.execute(Instruction::AddLiteral(AddLiteral(1)));
+    cpu.execute(Instruction::AddLiteral(AddLiteral(1)), &mut cycle_sync);
     assert_eq!(cpu.a, 0);
     assert!(cpu.flag(CarryFlag));
     assert_eq!(cpu.pc, 2);
+    assert_eq!(cycle_sync.cycles(), 2);
 
     // reset carry if no overflow
     cpu.a = 0x1;
-    cpu.execute(Instruction::AddLiteral(AddLiteral(0x2)));
+    cpu.execute(Instruction::AddLiteral(AddLiteral(0x2)), &mut cycle_sync);
     assert_eq!(cpu.a, 0x3);
     assert!(!cpu.flag(CarryFlag));
     assert_eq!(cpu.pc, 4);
+    assert_eq!(cycle_sync.cycles(), 2);
 }
 
 #[test]

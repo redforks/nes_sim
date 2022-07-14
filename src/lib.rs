@@ -99,6 +99,13 @@ impl FlagBit for CarryFlag {
     const BIT: u8 = 0x1;
 }
 
+// Trait to sync instruction execution  times.
+trait SyncInstructionCycle {
+    fn start(&mut self);
+
+    fn end(&mut self, cycles: u8);
+}
+
 impl Cpu {
     fn new(pc: u16) -> Cpu {
         Cpu {
@@ -124,18 +131,20 @@ impl Cpu {
         }
     }
 
-    fn execute(&mut self, inst: Instruction) {
-        let (pc, _) = match inst {
+    fn execute<T: SyncInstructionCycle>(&mut self, inst: Instruction, cycle_sync: &mut T) {
+        cycle_sync.start();
+        let (pc, cycles) = match inst {
             Instruction::AddLiteral(inst) => {
                 inst.execute(self)
             }
         };
+        cycle_sync.end(cycles);
 
         self.inc_pc(pc);
     }
 
     fn inc_pc(&mut self, delta: u8) {
-        self.pc = self.pc.wrapping_add(AddLiteral::LEN as u16);
+        self.pc = self.pc.wrapping_add(delta as u16);
     }
 
     // fn wait_cycles(&mut self, inst: Instruction) {
