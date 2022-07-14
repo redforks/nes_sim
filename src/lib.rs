@@ -87,7 +87,9 @@ enum Instruction {
 
     Adc(Adc),
     Sbc(Sbc),
+
     And(And),
+    Eor(Eor),
 }
 
 struct Transfer {
@@ -113,6 +115,8 @@ struct Adc(Agu);
 struct Sbc(Agu);
 
 struct And(Agu);
+
+struct Eor(Agy);
 
 trait InstructionType {
     // (pcDelta, tickCount)
@@ -222,6 +226,16 @@ impl InstructionType for And {
     }
 }
 
+impl InstructionType for Eor {
+    fn execute(&self, cpu: &mut Cpu) -> (u8, u8) {
+        let (val, operands, ticks) = cpu.get(&self.0);
+        cpu.a = cpu.a ^ val;
+        cpu.update_negative_flag(cpu.a);
+        cpu.update_zero_flag(cpu.a);
+        (operands + 1, ticks + 2)
+    }
+}
+
 trait FlagBit {
     const BIT: u8;
 }
@@ -302,6 +316,7 @@ impl Cpu {
             Instruction::Adc(inst) => inst.execute(self),
             Instruction::Sbc(inst) => inst.execute(self),
             Instruction::And(inst) => inst.execute(self),
+            Instruction::Eor(inst) => inst.execute(self),
         };
         cycle_sync.end(cycles);
 
