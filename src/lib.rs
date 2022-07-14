@@ -125,19 +125,17 @@ impl Cpu {
     }
 
     fn execute(&mut self, inst: Instruction) {
-        match inst {
+        let (pc, _) = match inst {
             Instruction::AddLiteral(inst) => {
-                inst.execute(self);
+                inst.execute(self)
             }
-        }
+        };
+
+        self.inc_pc(pc);
     }
 
-    fn inc_pc(&mut self, inst: Instruction) {
-        match inst {
-            Instruction::AddLiteral(_) => {
-                self.pc = self.pc.wrapping_add(AddLiteral::LEN as u16);
-            }
-        }
+    fn inc_pc(&mut self, delta: u8) {
+        self.pc = self.pc.wrapping_add(AddLiteral::LEN as u16);
     }
 
     // fn wait_cycles(&mut self, inst: Instruction) {
@@ -163,5 +161,10 @@ impl Cpu {
     fn write_word(&mut self, addr: u16, value: u16) {
         self.write_byte(addr, (value & 0xff) as u8);
         self.write_byte(addr.wrapping_add(1), ((value >> 8) & 0xff) as u8);
+    }
+
+    fn get(&self, agu: Agu) -> (u8, u8, u8) {
+        let addr = agu.address(self);
+        (self.read_byte(addr.0), addr.1, addr.2)
     }
 }

@@ -124,12 +124,12 @@ fn read_write_zero_page() {
 #[test]
 fn inc_pc() {
     let mut cpu = Cpu::new(0);
-    cpu.inc_pc(Instruction::AddLiteral(AddLiteral(0)));
+    cpu.inc_pc(2);
     assert_eq!(cpu.pc, 2);
 
     // wrap
     cpu.pc = 0xFFFF;
-    cpu.inc_pc(Instruction::AddLiteral(AddLiteral(0)));
+    cpu.inc_pc(2);
     assert_eq!(cpu.pc, 1);
 }
 
@@ -142,10 +142,19 @@ fn add_literal() {
     cpu.execute(Instruction::AddLiteral(AddLiteral(1)));
     assert_eq!(cpu.a, 0);
     assert!(cpu.flag(CarryFlag));
+    assert_eq!(cpu.pc, 2);
 
     // reset carry if no overflow
     cpu.a = 0x1;
     cpu.execute(Instruction::AddLiteral(AddLiteral(0x2)));
     assert_eq!(cpu.a, 0x3);
     assert!(!cpu.flag(CarryFlag));
+    assert_eq!(cpu.pc, 4);
+}
+
+#[test]
+fn test_get() {
+    let mut cpu = Cpu::new(0);
+    cpu.write_byte(0x1000, 0x10);
+    assert_eq!((0x10, 2, 2), cpu.get(Agu::Absolute(0x1000)));
 }
