@@ -181,19 +181,19 @@ struct Rol(Agu);
 
 struct Ror(Agu);
 
-struct Clc {}
+struct Clc ();
 
-struct Cld {}
+struct Cld ();
 
-struct Cli {}
+struct Cli ();
 
-struct Clv {}
+struct Clv ();
 
-struct Sec {}
+struct Sec ();
 
-struct Sed {}
+struct Sed ();
 
-struct Sei {}
+struct Sei ();
 
 struct Cmp {
     register: Agu,
@@ -222,11 +222,11 @@ struct IndirectJmp(u16);
 
 struct Jsr(u16);
 
-struct Rts {}
+struct Rts ();
 
-struct Brk {}
+struct Brk ();
 
-struct Rti {}
+struct Rti ();
 
 struct Bit(Agu);
 
@@ -575,29 +575,29 @@ fn decode(cpu: &Cpu) -> Instruction {
     let sbc = |agu| Instruction::Sbc(Sbc(agu));
 
     match (c, a, b) {
-        (0, 0, 0) => Instruction::Brk(Brk),
+        (0, 0, 0) => Instruction::Brk(Brk()),
         (0, 0, 2) => Instruction::Push(Push(Agu::Status)),
         (0, 0, 4) => neg_cond_branch(Agu::NegativeFlag),
-        (0, 0, 6) => Instruction::Clc(Clc),
+        (0, 0, 6) => Instruction::Clc(Clc()),
 
         (0, 1, 0) => Instruction::Jsr(Jsr(read_u16())),
         (0, 1, 1) => Instruction::Bit(Bit(zero_page())),
         (0, 1, 2) => Instruction::Pop(Pop(Agu::Status)),
         (0, 1, 3) => Instruction::Bit(Bit(absolute())),
         (0, 1, 4) => cond_branch(Agu::NegativeFlag),
-        (0, 1, 6) => Instruction::Sec(Sec),
+        (0, 1, 6) => Instruction::Sec(Sec()),
 
-        (0, 2, 0) => Instruction::Rti(Rti),
+        (0, 2, 0) => Instruction::Rti(Rti()),
         (0, 2, 2) => Instruction::Push(Push(aa)),
         (0, 2, 3) => Instruction::Jmp(Jmp(read_u16())),
         (0, 2, 4) => neg_cond_branch(Agu::OverflowFlag),
-        (0, 2, 6) => Instruction::Cli(Cli),
+        (0, 2, 6) => Instruction::Cli(Cli()),
 
-        (0, 3, 0) => Instruction::Rts(Rts),
+        (0, 3, 0) => Instruction::Rts(Rts()),
         (0, 3, 2) => Instruction::Pop(Pop(aa)),
         (0, 3, 3) => Instruction::IndirectJmp(IndirectJmp(read_u16())),
         (0, 3, 4) => cond_branch(Agu::OverflowFlag),
-        (0, 3, 6) => Instruction::Sei(Sei),
+        (0, 3, 6) => Instruction::Sei(Sei()),
 
         (0, 4, 1) => transfer(zero_page(), y),
         (0, 4, 2) => dec(Agu::RegisterY),
@@ -612,7 +612,7 @@ fn decode(cpu: &Cpu) -> Instruction {
         (0, 5, 3) => transfer(y, absolute()),
         (0, 5, 4) => cond_branch(Agu::CarryFlag),
         (0, 5, 5) => transfer(y, zero_page_x()),
-        (0, 5, 6) => Instruction::Clv(Clv),
+        (0, 5, 6) => Instruction::Clv(Clv()),
         (0, 5, 7) => transfer(y, absolute_x()),
 
         (0, 6, 0) => cmp(y, literal()),
@@ -620,14 +620,14 @@ fn decode(cpu: &Cpu) -> Instruction {
         (0, 6, 2) => inc(y),
         (0, 6, 3) => cmp(y, absolute()),
         (0, 6, 4) => neg_cond_branch(Agu::ZeroFlag),
-        (0, 6, 6) => Instruction::Cld(Cld),
+        (0, 6, 6) => Instruction::Cld(Cld()),
 
         (0, 7, 0) => cmp(x, literal()),
         (0, 7, 1) => cmp(x, zero_page()),
         (0, 7, 2) => inc(x),
         (0, 7, 3) => cmp(x, absolute()),
         (0, 7, 4) => cond_branch(Agu::ZeroFlag),
-        (0, 7, 6) => Instruction::Sed(Sed),
+        (0, 7, 6) => Instruction::Sed(Sed()),
 
         (1, 0, 0) => ora(indirect_x()),
         (1, 0, 1) => ora(zero_page()),
