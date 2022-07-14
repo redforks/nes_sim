@@ -58,6 +58,13 @@ impl Agu {
             Agu::Status => panic_any("Status not supported"),
         }
     }
+
+    fn is_register(&self) -> bool {
+        match self {
+            &Agu::RegisterA | &Agu::RegisterX | &Agu::RegisterY | &Agu::RegisterSP | &Agu::Status => true,
+            _ => false,
+        }
+    }
 }
 
 #[allow(dead_code)]
@@ -70,6 +77,11 @@ enum Instruction {
 
     // PHA, PHP
     Push(Push),
+    // PLA, PLP
+    Pop(Pop),
+
+    // DEC, DEX, DEY
+    Dec(Dec),
 
     Adc(Adc),
     And(And),
@@ -88,6 +100,10 @@ struct TransferNoTouchFlags {
 struct Txs();
 
 struct Push(Agu);
+
+struct Pop(Agu);
+
+struct Dec(Agu);
 
 struct Adc(Agu);
 
@@ -128,6 +144,25 @@ impl InstructionType for Push {
         let (val, ..) = cpu.get(&self.0);
         cpu.push_stack(val);
         (1, 3)
+    }
+}
+
+impl InstructionType for Pop {
+    fn execute(&self, cpu: &mut Cpu) -> (u8, u8) {
+        let val = cpu.pop_stack();
+        cpu.put(&self.0, val);
+        (1, 4)
+    }
+}
+
+impl InstructionType for Dec {
+    fn execute(&self, cpu: &mut Cpu) -> (u8, u8) {
+        let (val, operands, ticks) = cpu.get(&self.src);
+        let val = val.wrapping_sub(1);
+        cpu.put(&self.0, val);
+        cpu.update_negative_flag(val);
+        cpu.update_zero_flag(val);
+        (1 + operands, if &self.0.is_register() { 2 } else { 4 + ticks })
     }
 }
 
@@ -230,6 +265,8 @@ impl Cpu {
             Instruction::TransferNoTouchFlags(inst) => inst.execute(self),
             Instruction::Txs(inst) => inst.execute(self),
             Instruction::Push(inst) => inst.execute(self),
+            Instruction::Pop(inst) => inst.execute(self),
+            Instruction::Dec(inst) => inst.execute(self),
             Instruction::Adc(inst) => inst.execute(self),
             Instruction::And(inst) => inst.execute(self),
         };
@@ -289,7 +326,7 @@ impl Cpu {
             &Agu::RegisterSP => (self.sp, 0, 0),
             &Agu::Status => {
                 (self.status | 0b0011_0000, 0, 0)
-            },
+            }
             _ => {
                 let (addr, operand_bytes, ticks) = agu.address(self);
                 (self.read_byte(addr), operand_bytes, ticks)
@@ -333,5 +370,10 @@ impl Cpu {
     fn push_stack(&mut self, value: u8) {
         self.write_byte(0x100 + self.sp as u16, value);
         self.sp = self.sp.wrapping_sub(1);
+    }
+
+    fn pop_stack(&mut self) -> u8 {
+        self.sp = self.sp.wrapping_add(1);
+        self.read_byte(0x100 + self.sp as u16)
     }
 }

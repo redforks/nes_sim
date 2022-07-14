@@ -298,4 +298,11 @@ fn push_stack() {
     cpu.push_stack(0x10);
     assert_eq!(0x10, cpu.read_byte(0x100));
     assert_eq!(0xFF, cpu.sp);
+    cpu.push_stack(0x20);
+    assert_eq!(0xFE, cpu.sp);
+
+    assert_eq!(0x20, cpu.pop_stack());
+    assert_eq!(0xFF, cpu.sp);
+    assert_eq!(0x10, cpu.pop_stack());
+    assert_eq!(0x0, cpu.sp);
 }
