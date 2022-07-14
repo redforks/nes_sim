@@ -1,4 +1,4 @@
-use std::ops::{BitAnd};
+use std::ops::{BitAnd, Shl};
 use std::convert::From;
 use std::panic::panic_any;
 
@@ -91,6 +91,8 @@ enum Instruction {
     And(And),
     Eor(Eor),
     Ora(Ora),
+
+    Asl(Asl),
 }
 
 struct Transfer {
@@ -110,14 +112,20 @@ struct Push(Agu);
 struct Pop(Agu);
 
 struct Dec(Agu);
+
 struct Inc(Agu);
 
 struct Adc(Agu);
+
 struct Sbc(Agu);
 
 struct And(Agu);
+
 struct Eor(Agu);
+
 struct Ora(Agu);
+
+struct Asl(Agu);
 
 trait InstructionType {
     // (pcDelta, tickCount)
@@ -126,8 +134,8 @@ trait InstructionType {
 
 /// Bin operate with A register and value from Agu, store result to A register.
 trait AccumulatorOpInstructionType {
-    fn agu(&self)->&Agu;
-    fn op(a: u8, v: u8)->u8;
+    fn agu(&self) -> &Agu;
+    fn op(a: u8, v: u8) -> u8;
 
     fn execute(&self, cpu: &mut Cpu) -> (u8, u8) {
         let agu = self.agu();
@@ -135,6 +143,22 @@ trait AccumulatorOpInstructionType {
         cpu.a = Self::op(cpu.a, val);
         cpu.update_negative_flag(cpu.a);
         cpu.update_zero_flag(cpu.a);
+        (operands + 1, ticks + 2)
+    }
+}
+
+trait ShiftInstructionType {
+    fn agu(&self) -> &Agu;
+    fn op(v: u8) -> (u8, bool);
+
+    fn execute(&self, cpu: &mut Cpu) -> (u8, u8) {
+        let agu = self.agu();
+        let (val, operands, ticks) = cpu.get(agu);
+        let (v, carry_flag) = Self::op(val);
+        cpu.set_flag(CarryFlag, carry_flag);
+        cpu.put(agu, v);
+        cpu.update_negative_flag(v);
+        cpu.update_zero_flag(v);
         (operands + 1, ticks + 2)
     }
 }
@@ -247,6 +271,15 @@ impl AccumulatorOpInstructionType for Ora {
     fn op(a: u8, v: u8) -> u8 { a | v }
 }
 
+impl ShiftInstructionType for Asl {
+    fn agu(&self) -> &Agu { &self.0 }
+
+    fn op(v: u8) -> (u8, bool) {
+        let carry_flag = v & 0x80 != 0;
+        (v << 1, carry_flag)
+    }
+}
+
 trait FlagBit {
     const BIT: u8;
 }
@@ -329,6 +362,7 @@ impl Cpu {
             Instruction::And(inst) => inst.execute(self),
             Instruction::Eor(inst) => inst.execute(self),
             Instruction::Ora(inst) => inst.execute(self),
+            Instruction::Asl(inst) => inst.execute(self),
         };
         cycle_sync.end(cycles);
 
