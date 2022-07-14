@@ -95,6 +95,7 @@ enum Instruction {
     Asl(Asl),
     Lsr(Lsr),
     Rol(Rol),
+    Ror(Ror),
 }
 
 struct Transfer {
@@ -132,6 +133,8 @@ struct Asl(Agu);
 struct Lsr(Agu);
 
 struct Rol(Agu);
+
+struct Ror(Agu);
 
 trait InstructionType {
     // (pcDelta, tickCount)
@@ -300,7 +303,16 @@ impl ShiftInstructionType for Rol {
 
     fn op(cpu: &Cpu, v: u8) -> (u8, bool) {
         let carry_flag = v & 0x80 != 0;
-        (v << 1 | cpu.flag(CarryFlag) as u8, carry_flag)
+        (v << 1 & 0xfe | cpu.flag(CarryFlag) as u8, carry_flag)
+    }
+}
+
+impl ShiftInstructionType for Ror {
+    fn agu(&self) -> &Agu { &self.0 }
+
+    fn op(cpu: &Cpu, v: u8) -> (u8, bool) {
+        let carry_flag = v & 1 != 0;
+        (v >> 1 & 0x7f | ((cpu.flag(CarryFlag) as u8) << 8), carry_flag)
     }
 }
 
@@ -389,6 +401,7 @@ impl Cpu {
             Instruction::Asl(inst) => inst.execute(self),
             Instruction::Lsr(inst) => inst.execute(self),
             Instruction::Rol(inst) => inst.execute(self),
+            Instruction::Ror(inst) => inst.execute(self),
         };
         cycle_sync.end(cycles);
 
