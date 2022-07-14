@@ -21,6 +21,24 @@ enum Agu {
     RegisterY,
     RegisterSP,
     Status,
+    CarryFlag,
+    ZeroFlag,
+    NegativeFlag,
+    OverflowFlag,
+}
+
+fn is_cross_page(a: u16, b: u16) -> bool {
+    let a = (a >> 8) as u8;
+    let b = (b >> 8) as u8;
+    a != b
+}
+
+fn plus_one_if_cross_page(v: u8, a: u16, b: u16) -> u8 {
+    if is_cross_page(a, b) {
+        v + 1
+    } else {
+        v
+    }
 }
 
 impl Agu {
@@ -34,28 +52,29 @@ impl Agu {
             &Agu::ZeroPageX(addr) => (addr.wrapping_add(cpu.x) as u16, 2, 1),
             &Agu::ZeroPageY(addr) => (addr.wrapping_add(cpu.y) as u16, 2, 1),
             &Agu::AbsoluteX(addr) => {
-                let high = (addr >> 8) as u8;
                 let r = addr.wrapping_add(cpu.x as u16) as u16;
-                (r, if high == (r >> 8) as u8 { 2 } else { 3 }, 2)
+                (r, plus_one_if_cross_page(2, addr, r), 2)
             }
             &Agu::AbsoluteY(addr) => {
-                let high = (addr >> 8) as u8;
                 let r = addr.wrapping_add(cpu.y as u16) as u16;
-                (r, if high == (r >> 8) as u8 { 2 } else { 3 }, 2)
+                (r, plus_one_if_cross_page(2, addr, r), 2)
             }
             &Agu::Indirect(addr) => (cpu.read_word(addr), 2, 2),
             &Agu::IndirectX(addr) => (cpu.read_zero_page_word(addr.wrapping_add(cpu.x)), 4, 1),
             &Agu::IndirectY(addr) => {
                 let addr = cpu.read_zero_page_word(addr);
-                let high = (addr >> 8) as u8;
                 let r = addr.wrapping_add(cpu.y as u16);
-                (r, if high == (r >> 8) as u8 { 3 } else { 4 }, 1)
+                (r, plus_one_if_cross_page(3, addr, r), 1)
             }
             Agu::RegisterA => panic_any("RegisterA not supported"),
             Agu::RegisterX => panic_any("RegisterX not supported"),
             Agu::RegisterY => panic_any("RegisterY not supported"),
             Agu::RegisterSP => panic_any("RegisterSP not supported"),
             Agu::Status => panic_any("Status not supported"),
+            Agu::CarryFlag => panic_any("CarryFlag not supported"),
+            Agu::ZeroFlag => panic_any("ZeroFlag not supported"),
+            Agu::NegativeFlag => panic_any("NegativeFlag not supported"),
+            Agu::OverflowFlag => panic_any("OverflowFlag not supported"),
         }
     }
 
@@ -107,6 +126,9 @@ enum Instruction {
 
     // Cmp, Cpx, Cpy
     Cmp(Cmp),
+
+    // Bcc, Bcs, Bne, Beq, Bmi, Bpl, Bvc, Bvs
+    ConditionBranch(ConditionBranch),
 }
 
 struct Transfer {
@@ -161,9 +183,15 @@ struct Sed();
 
 struct Sei();
 
-struct Cmp{
+struct Cmp {
     register: Agu,
     memory: Agu,
+}
+
+struct ConditionBranch {
+    offset: u8,
+    register: Agu,
+    negative: bool,
 }
 
 trait InstructionType {
@@ -407,6 +435,18 @@ impl InstructionType for Cmp {
     }
 }
 
+impl InstructionType for ConditionBranch {
+    fn execute(&self, cpu: &mut Cpu) -> (u8, u8) {
+        let (v, _, _) = cpu.get(&self.register);
+        let v = if self.negative { v == 0 } else { v != 0 };
+        if v {
+            (self.offset, plus_one_if_cross_page(3, cpu.pc, self.offset as u16 + cpu.pc))
+        } else {
+            (2, 2)
+        }
+    }
+}
+
 trait FlagBit {
     const BIT: u8;
 }
@@ -509,6 +549,7 @@ impl Cpu {
             Instruction::Sed(inst) => inst.execute(self),
             Instruction::Sei(inst) => inst.execute(self),
             Instruction::Cmp(inst) => inst.execute(self),
+            Instruction::ConditionBranch(inst) => inst.execute(self),
         };
         cycle_sync.end(cycles);
 
@@ -559,6 +600,10 @@ impl Cpu {
             &Agu::Status => {
                 (self.status | 0b0011_0000, 0, 0)
             }
+            &Agu::CarryFlag => (self.flag(CarryFlag) as u8, 0, 0),
+            &Agu::ZeroFlag => (self.flag(ZeroFlag) as u8, 0, 0),
+            &Agu::NegativeFlag => (self.flag(NegativeFlag) as u8, 0, 0),
+            &Agu::OverflowFlag => (self.flag(OverflowFlag) as u8, 0, 0),
             _ => {
                 let (addr, operand_bytes, ticks) = agu.address(self);
                 (self.read_byte(addr), operand_bytes, ticks)
