@@ -208,4 +208,20 @@ impl Cpu {
             }
         }
     }
+
+    /// Return (operand bytes, address ticks)
+    fn put(&mut self, agu: &Agu, value: u8) -> (u8, u8) {
+        match agu {
+            &Agu::Literal(_) => panic_any("Literal not supported"),
+            &Agu::RegisterA => {
+                self.a = value;
+                (0, 0)
+            },
+            _ => {
+                let (addr, operand_bytes, ticks) = agu.address(self);
+                self.write_byte(addr, value);
+                (operand_bytes, ticks)
+            }
+        }
+    }
 }

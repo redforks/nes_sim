@@ -222,3 +222,11 @@ fn test_get() {
     cpu.a = 0x10;
     assert_eq!((0x10, 0, 0), cpu.get(&Agu::RegisterA));
 }
+
+#[test]
+fn test_put() {
+    let mut cpu = Cpu::new(0);
+    cpu.write_byte(0x1000, 0x10);
+    assert_eq!((2, 2), cpu.put(&Agu::Absolute(0x1000), 0x20));
+    assert_eq!(0x20, cpu.read_byte(0x1000));
+}
