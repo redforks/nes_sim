@@ -57,11 +57,19 @@ enum Instruction {
     // LDA, LDX, LDY
     Load(Load),
 
+    // STA, STX, STY
+    Store(Store),
+
     Adc(Adc),
     And(And),
 }
 
 struct Load {
+    src: Agu,
+    dest: Agu,
+}
+
+struct Store {
     src: Agu,
     dest: Agu,
 }
@@ -81,6 +89,14 @@ impl InstructionType for Load {
         cpu.put(&self.dest, val);
         cpu.update_negative_flag(val);
         cpu.update_zero_flag(val);
+        (operands + 1, ticks + 2)
+    }
+}
+
+impl InstructionType for Store {
+    fn execute(&self, cpu: &mut Cpu) -> (u8, u8) {
+        let (val, operands, ticks) = cpu.get(&self.src);
+        cpu.put(&self.dest, val);
         (operands + 1, ticks + 2)
     }
 }
@@ -177,6 +193,7 @@ impl Cpu {
         cycle_sync.start();
         let (pc, cycles) = match inst {
             Instruction::Load(inst) => inst.execute(self),
+            Instruction::Store(inst) => inst.execute(self),
             Instruction::Adc(inst) => inst.execute(self),
             Instruction::And(inst) => inst.execute(self),
         };
