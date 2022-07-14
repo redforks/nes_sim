@@ -56,10 +56,6 @@ enum Instruction {
 }
 
 trait InstructionType {
-    /// Instruction length, byte counts of the opcode and operands
-    const LEN: u8;
-    const TICK_COUNT: u8;
-
     // (pcDelta, tickCount)
     fn execute(&self, cpu: &mut Cpu) -> (u8, u8);
 }
@@ -78,9 +74,6 @@ struct Cpu {
 struct AddLiteral(u8);
 
 impl InstructionType for AddLiteral {
-    const LEN: u8 = 2;
-    const TICK_COUNT: u8 = 2;
-
     fn execute(&self, cpu: &mut Cpu) -> (u8, u8) {
         let (v, overflow) = cpu.a.overflowing_add(self.0);
         cpu.a = v;
