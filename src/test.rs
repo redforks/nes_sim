@@ -230,3 +230,23 @@ fn test_put() {
     assert_eq!((2, 2), cpu.put(&Agu::Absolute(0x1000), 0x20));
     assert_eq!(0x20, cpu.read_byte(0x1000));
 }
+
+#[test]
+fn update_zero_flag() {
+    let mut cpu = Cpu::new(0);
+    cpu.update_zero_flag(0x10);
+    assert_eq!(cpu.flag(ZeroFlag), false);
+
+    cpu.update_zero_flag(0x00);
+    assert_eq!(cpu.flag(ZeroFlag), true);
+}
+
+#[test]
+fn update_negative_flag() {
+    let mut cpu = Cpu::new(0);
+    cpu.update_negative_flag(0x10);
+    assert_eq!(cpu.flag(NegativeFlag), false);
+
+    cpu.update_negative_flag(0x00);
+    assert_eq!(cpu.flag(NegativeFlag), true);
+}

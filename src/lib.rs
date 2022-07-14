@@ -1,3 +1,5 @@
+use std::ops::BitAnd;
+use std::convert::From;
 use std::panic::panic_any;
 
 mod test;
@@ -52,29 +54,22 @@ impl Agu {
 
 #[allow(dead_code)]
 enum Instruction {
+    Lda(Lda),
+
     Adc(Adc),
     And(And),
 }
+
+struct Lda(Agu);
+
+struct Adc(Agu);
+
+struct And(Agu);
 
 trait InstructionType {
     // (pcDelta, tickCount)
     fn execute(&self, cpu: &mut Cpu) -> (u8, u8);
 }
-
-#[allow(dead_code)]
-struct Cpu {
-    a: u8,
-    x: u8,
-    y: u8,
-    pc: u16,
-    sp: u8,
-    status: u8,
-    memory: [u8; 0x10000],
-}
-
-struct Adc(Agu);
-
-struct And(Agu);
 
 impl InstructionType for Adc {
     fn execute(&self, cpu: &mut Cpu) -> (u8, u8) {
@@ -83,8 +78,8 @@ impl InstructionType for Adc {
         let t: u16 = cpu.a as u16 + val as u16 + (cpu.flag(CarryFlag)) as u16;
         cpu.a = t as u8;
         cpu.set_flag(OverflowFlag, t as u8 & 0x80 != cpu.a & 0x80);
-        cpu.set_flag(NegativeFlag, cpu.a & 0x80 != 0);
-        cpu.set_flag(ZeroFlag, t == 0);
+        cpu.update_zero_flag(t);
+        cpu.update_negative_flag(cpu.a);
         cpu.set_flag(CarryFlag, t > 255);
 
         (operands + 1, ticks + 2)
@@ -95,8 +90,18 @@ impl InstructionType for And {
     fn execute(&self, cpu: &mut Cpu) -> (u8, u8) {
         let (val, operands, ticks) = cpu.get(&self.0);
         cpu.a = cpu.a & val;
-        cpu.set_flag(ZeroFlag, cpu.a == 0);
-        cpu.set_flag(NegativeFlag, cpu.a & 0x80 != 0);
+        cpu.update_negative_flag(cpu.a);
+        cpu.update_zero_flag(cpu.a);
+        (operands + 1, ticks + 2)
+    }
+}
+
+impl InstructionType for Lda {
+    fn execute(&self, cpu: &mut Cpu) -> (u8, u8) {
+        let (val, operands, ticks) = cpu.get(&self.0);
+        cpu.a = val;
+        cpu.update_negative_flag(cpu.a);
+        cpu.update_zero_flag(cpu.a);
         (operands + 1, ticks + 2)
     }
 }
@@ -128,6 +133,17 @@ trait SyncInstructionCycle {
     fn end(&mut self, cycles: u8);
 }
 
+#[allow(dead_code)]
+struct Cpu {
+    a: u8,
+    x: u8,
+    y: u8,
+    pc: u16,
+    sp: u8,
+    status: u8,
+    memory: [u8; 0x10000],
+}
+
 impl Cpu {
     fn new(pc: u16) -> Cpu {
         Cpu {
@@ -156,12 +172,9 @@ impl Cpu {
     fn execute<T: SyncInstructionCycle>(&mut self, inst: Instruction, cycle_sync: &mut T) {
         cycle_sync.start();
         let (pc, cycles) = match inst {
-            Instruction::Adc(inst) => {
-                inst.execute(self)
-            }
-            Instruction::And(inst) => {
-                inst.execute(self)
-            }
+            Instruction::Lda(inst) => inst.execute(self),
+            Instruction::Adc(inst) => inst.execute(self),
+            Instruction::And(inst) => inst.execute(self),
         };
         cycle_sync.end(cycles);
 
@@ -172,9 +185,13 @@ impl Cpu {
         self.pc = self.pc.wrapping_add(delta as u16);
     }
 
-    // fn wait_cycles(&mut self, inst: Instruction) {
-    // TODO: thread sleep for remaining times of inst cycles
-    // }
+    fn update_negative_flag<T: BitAnd<Output=T> + Copy + From<u8> + PartialEq + Default>(&mut self, value: T) {
+        self.set_flag(NegativeFlag, value & T::from(0x80) != T::default());
+    }
+
+    fn update_zero_flag<T: PartialEq + Copy + Default>(&mut self, value: T) {
+        self.set_flag(ZeroFlag, value == T::default());
+    }
 
     fn read_byte(&self, addr: u16) -> u8 {
         self.memory[addr as usize]
