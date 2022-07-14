@@ -93,6 +93,7 @@ enum Instruction {
     Ora(Ora),
 
     Asl(Asl),
+    Lsr(Lsr),
 }
 
 struct Transfer {
@@ -126,6 +127,8 @@ struct Eor(Agu);
 struct Ora(Agu);
 
 struct Asl(Agu);
+
+struct Lsr(Agu);
 
 trait InstructionType {
     // (pcDelta, tickCount)
@@ -280,6 +283,15 @@ impl ShiftInstructionType for Asl {
     }
 }
 
+impl ShiftInstructionType for Lsr {
+    fn agu(&self) -> &Agu { &self.0 }
+
+    fn op(v: u8) -> (u8, bool) {
+        let carry_flag = v & 1 != 0;
+        (v >> 1, carry_flag)
+    }
+}
+
 trait FlagBit {
     const BIT: u8;
 }
@@ -363,6 +375,7 @@ impl Cpu {
             Instruction::Eor(inst) => inst.execute(self),
             Instruction::Ora(inst) => inst.execute(self),
             Instruction::Asl(inst) => inst.execute(self),
+            Instruction::Lsr(inst) => inst.execute(self),
         };
         cycle_sync.end(cycles);
 
