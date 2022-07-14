@@ -46,7 +46,7 @@ impl Agu {
                 let high = (addr >> 8) as u8;
                 let r = addr.wrapping_add(cpu.y as u16);
                 (r, if high == (r >> 8) as u8 { 3 } else { 4 }, 1)
-            },
+            }
             Agu::RegisterA => panic_any("RegisterA not supported"),
         }
     }
@@ -54,13 +54,17 @@ impl Agu {
 
 #[allow(dead_code)]
 enum Instruction {
-    Lda(Lda),
+    // LDA, LDX, LDY
+    Load(Load),
 
     Adc(Adc),
     And(And),
 }
 
-struct Lda(Agu);
+struct Load {
+    src: Agu,
+    dest: Agu,
+}
 
 struct Adc(Agu);
 
@@ -69,6 +73,16 @@ struct And(Agu);
 trait InstructionType {
     // (pcDelta, tickCount)
     fn execute(&self, cpu: &mut Cpu) -> (u8, u8);
+}
+
+impl InstructionType for Load {
+    fn execute(&self, cpu: &mut Cpu) -> (u8, u8) {
+        let (val, operands, ticks) = cpu.get(&self.src);
+        cpu.put(&self.dest, val);
+        cpu.update_negative_flag(val);
+        cpu.update_zero_flag(val);
+        (operands + 1, ticks + 2)
+    }
 }
 
 impl InstructionType for Adc {
@@ -90,16 +104,6 @@ impl InstructionType for And {
     fn execute(&self, cpu: &mut Cpu) -> (u8, u8) {
         let (val, operands, ticks) = cpu.get(&self.0);
         cpu.a = cpu.a & val;
-        cpu.update_negative_flag(cpu.a);
-        cpu.update_zero_flag(cpu.a);
-        (operands + 1, ticks + 2)
-    }
-}
-
-impl InstructionType for Lda {
-    fn execute(&self, cpu: &mut Cpu) -> (u8, u8) {
-        let (val, operands, ticks) = cpu.get(&self.0);
-        cpu.a = val;
         cpu.update_negative_flag(cpu.a);
         cpu.update_zero_flag(cpu.a);
         (operands + 1, ticks + 2)
@@ -172,7 +176,7 @@ impl Cpu {
     fn execute<T: SyncInstructionCycle>(&mut self, inst: Instruction, cycle_sync: &mut T) {
         cycle_sync.start();
         let (pc, cycles) = match inst {
-            Instruction::Lda(inst) => inst.execute(self),
+            Instruction::Load(inst) => inst.execute(self),
             Instruction::Adc(inst) => inst.execute(self),
             Instruction::And(inst) => inst.execute(self),
         };
@@ -241,7 +245,7 @@ impl Cpu {
             &Agu::RegisterA => {
                 self.a = value;
                 (0, 0)
-            },
+            }
             _ => {
                 let (addr, operand_bytes, ticks) = agu.address(self);
                 self.write_byte(addr, value);
