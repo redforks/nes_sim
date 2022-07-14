@@ -81,9 +81,12 @@ impl InstructionType for Adc {
     fn execute(&self, cpu: &mut Cpu) -> (u8, u8) {
         let (val, operands, ticks) = cpu.get(&self.0);
 
-        let (v, overflow) = cpu.a.overflowing_add(val);
-        cpu.a = v;
-        cpu.set_flag(CarryFlag, overflow);
+        let t: u16 = cpu.a as u16 + val as u16 + (cpu.flag(CarryFlag)) as u16;
+        cpu.a = t as u8;
+        cpu.set_flag(OverflowFlag, t as u8 & 0x80 != cpu.a & 0x80);
+        cpu.set_flag(NegativeFlag, cpu.a & 0x80 != 0);
+        cpu.set_flag(ZeroFlag, t == 0);
+        cpu.set_flag(CarryFlag, t > 255);
 
         (operands + 1, ticks + 2)
     }
@@ -94,10 +97,14 @@ trait FlagBit {
 }
 
 struct CarryFlag;
+struct ZeroFlag;
+struct OverflowFlag;
+struct NegativeFlag;
 
-impl FlagBit for CarryFlag {
-    const BIT: u8 = 0x1;
-}
+impl FlagBit for NegativeFlag { const BIT: u8 = 0x80; }
+impl FlagBit for OverflowFlag { const BIT: u8 = 0x40; }
+impl FlagBit for CarryFlag { const BIT: u8 = 0x1; }
+impl FlagBit for ZeroFlag { const BIT: u8 = 0x2; }
 
 // Trait to sync instruction execution  times.
 trait SyncInstructionCycle {

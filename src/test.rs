@@ -151,6 +151,31 @@ impl TestSyncInstructionCycle    {
 }
 
 #[test]
+fn adc() {
+    let mut cpu = Cpu::new(0);
+
+    // zero
+    cpu.set_flag(CarryFlag, true);
+    let adc = Adc(Agu::Literal(0));
+    assert_eq!((2, 2), adc.execute(&mut cpu));
+    assert_eq!(1, cpu.a);
+    assert_eq!(cpu.flag(ZeroFlag), false);
+    assert_eq!(cpu.flag(OverflowFlag), false);
+    assert_eq!(cpu.flag(CarryFlag), false);
+    assert_eq!(cpu.flag(NegativeFlag), false);
+
+    // carry
+    cpu.a = 0x80;
+    let adc = Adc(Agu::Literal(0x80));
+    assert_eq!((2, 2), adc.execute(&mut cpu));
+    assert_eq!(0, cpu.a);
+    assert_eq!(cpu.flag(ZeroFlag), false);
+    assert_eq!(cpu.flag(OverflowFlag), false);
+    assert_eq!(cpu.flag(CarryFlag), true);
+    assert_eq!(cpu.flag(NegativeFlag), false);
+}
+
+#[test]
 fn cpu_execute() {
     let mut cpu = Cpu::new(0);
     let mut cycle_sync = TestSyncInstructionCycle(0);
@@ -167,7 +192,7 @@ fn cpu_execute() {
     // reset carry if no overflow
     cpu.a = 1;
     cpu.execute(Instruction::Adc(Adc(Agu::Literal(10))), &mut cycle_sync);
-    assert_eq!(cpu.a, 11);
+    assert_eq!(cpu.a, 12);
     assert!(!cpu.flag(CarryFlag));
     assert_eq!(cpu.pc, 5);
     assert_eq!(cycle_sync.cycles(), 2);
