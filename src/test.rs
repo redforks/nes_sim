@@ -247,6 +247,26 @@ fn update_negative_flag() {
     cpu.update_negative_flag(0x10);
     assert_eq!(cpu.flag(NegativeFlag), false);
 
-    cpu.update_negative_flag(0x00);
+    cpu.update_negative_flag(0x80);
     assert_eq!(cpu.flag(NegativeFlag), true);
+}
+
+#[test]
+fn update_carry_flag() {
+    let mut cpu = Cpu::new(0);
+    cpu.update_carry_flag(0x10);
+    assert_eq!(cpu.flag(CarryFlag), false);
+
+    cpu.update_carry_flag(0x100);
+    assert_eq!(cpu.flag(CarryFlag), true);
+}
+
+#[test]
+fn update_overflow_flag() {
+    let mut cpu = Cpu::new(0);
+    cpu.update_overflow_flag(0x10, 0x20);
+    assert_eq!(cpu.flag(OverflowFlag), false);
+
+    cpu.update_overflow_flag(0x80, 0x70);
+    assert_eq!(cpu.flag(OverflowFlag), true);
 }

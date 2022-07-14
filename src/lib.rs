@@ -1,4 +1,4 @@
-use std::ops::BitAnd;
+use std::ops::{BitAnd};
 use std::convert::From;
 use std::panic::panic_any;
 
@@ -77,10 +77,10 @@ impl InstructionType for Adc {
 
         let t: u16 = cpu.a as u16 + val as u16 + (cpu.flag(CarryFlag)) as u16;
         cpu.a = t as u8;
-        cpu.set_flag(OverflowFlag, t as u8 & 0x80 != cpu.a & 0x80);
+        cpu.update_overflow_flag(t as u8, cpu.a);
         cpu.update_zero_flag(t);
         cpu.update_negative_flag(cpu.a);
-        cpu.set_flag(CarryFlag, t > 255);
+        cpu.update_carry_flag(t);
 
         (operands + 1, ticks + 2)
     }
@@ -191,6 +191,14 @@ impl Cpu {
 
     fn update_zero_flag<T: PartialEq + Copy + Default>(&mut self, value: T) {
         self.set_flag(ZeroFlag, value == T::default());
+    }
+
+    fn update_carry_flag(&mut self, value: u16) {
+        self.set_flag(CarryFlag, value > 255);
+    }
+
+    fn update_overflow_flag(&mut self, v1: u8, v2: u8) {
+        self.set_flag(OverflowFlag, v1 & 0x80 != v2 & 0x80);
     }
 
     fn read_byte(&self, addr: u16) -> u8 {
