@@ -151,30 +151,32 @@ impl TestSyncInstructionCycle    {
 }
 
 #[test]
-fn add_literal() {
+fn cpu_execute() {
     let mut cpu = Cpu::new(0);
     let mut cycle_sync = TestSyncInstructionCycle(0);
 
     // carry
     cpu.a = 0xFF;
-    cpu.execute(Instruction::AddLiteral(AddLiteral(1)), &mut cycle_sync);
-    assert_eq!(cpu.a, 0);
+    cpu.write_byte(0x1000, 10);
+    cpu.execute(Instruction::Add(Add(Agu::Absolute(0x1000))), &mut cycle_sync);
+    assert_eq!(cpu.a, 9);
     assert!(cpu.flag(CarryFlag));
-    assert_eq!(cpu.pc, 2);
-    assert_eq!(cycle_sync.cycles(), 2);
+    assert_eq!(cpu.pc, 3);
+    assert_eq!(cycle_sync.cycles(), 4);
 
     // reset carry if no overflow
-    cpu.a = 0x1;
-    cpu.execute(Instruction::AddLiteral(AddLiteral(0x2)), &mut cycle_sync);
-    assert_eq!(cpu.a, 0x3);
+    cpu.a = 1;
+    cpu.write_byte(0x10, 10);
+    cpu.execute(Instruction::Add(Add(Agu::ZeroPage(0x10))), &mut cycle_sync);
+    assert_eq!(cpu.a, 11);
     assert!(!cpu.flag(CarryFlag));
-    assert_eq!(cpu.pc, 4);
-    assert_eq!(cycle_sync.cycles(), 2);
+    assert_eq!(cpu.pc, 5);
+    assert_eq!(cycle_sync.cycles(), 3);
 }
 
 #[test]
 fn test_get() {
     let mut cpu = Cpu::new(0);
     cpu.write_byte(0x1000, 0x10);
-    assert_eq!((0x10, 2, 2), cpu.get(Agu::Absolute(0x1000)));
+    assert_eq!((0x10, 2, 2), cpu.get(&Agu::Absolute(0x1000)));
 }

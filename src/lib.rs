@@ -45,7 +45,7 @@ impl Agu {
 }
 
 enum Instruction {
-    AddLiteral(AddLiteral),
+    Add(Add),
     // AddFromZeroPage(u8),
     // AddFromZeroPageX(u8),
     // AddFromAbsolute(u16),
@@ -71,14 +71,17 @@ struct Cpu {
     memory: [u8; 0x10000],
 }
 
-struct AddLiteral(u8);
+struct Add(Agu);
 
-impl InstructionType for AddLiteral {
+impl InstructionType for Add {
     fn execute(&self, cpu: &mut Cpu) -> (u8, u8) {
-        let (v, overflow) = cpu.a.overflowing_add(self.0);
+        let (val, operands, ticks) = cpu.get(&self.0);
+
+        let (v, overflow) = cpu.a.overflowing_add(val);
         cpu.a = v;
         cpu.set_flag(CarryFlag, overflow);
-        (2, 2)
+
+        (operands + 1, ticks + 2)
     }
 }
 
@@ -127,9 +130,9 @@ impl Cpu {
     fn execute<T: SyncInstructionCycle>(&mut self, inst: Instruction, cycle_sync: &mut T) {
         cycle_sync.start();
         let (pc, cycles) = match inst {
-            Instruction::AddLiteral(inst) => {
+            Instruction::Add(inst) => {
                 inst.execute(self)
-            }
+            },
         };
         cycle_sync.end(cycles);
 
@@ -165,7 +168,8 @@ impl Cpu {
         self.write_byte(addr.wrapping_add(1), ((value >> 8) & 0xff) as u8);
     }
 
-    fn get(&self, agu: Agu) -> (u8, u8, u8) {
+    /// Return (value, operand bytes, address ticks)
+    fn get(&self, agu: &Agu) -> (u8, u8, u8) {
         let addr = agu.address(self);
         (self.read_byte(addr.0), addr.1, addr.2)
     }
