@@ -63,8 +63,10 @@ enum Instruction {
     // LDA, LDX, LDY, TAX, TAY, TSX, TXA, TYA
     Transfer(Transfer),
 
-    // STA, STX, STY, Txs
+    // STA, STX, STY
     TransferNoTouchFlags(TransferNoTouchFlags),
+
+    Txs(Txs),
 
     Adc(Adc),
     And(And),
@@ -79,6 +81,8 @@ struct TransferNoTouchFlags {
     src: Agu,
     dest: Agu,
 }
+
+struct Txs();
 
 struct Adc(Agu);
 
@@ -104,6 +108,13 @@ impl InstructionType for TransferNoTouchFlags {
         let (val, operands, ticks) = cpu.get(&self.src);
         cpu.put(&self.dest, val);
         (operands + 1, ticks + 3)
+    }
+}
+
+impl InstructionType for Txs {
+    fn execute(&self, cpu: &mut Cpu) -> (u8, u8) {
+        cpu.sp = cp.x;
+        (operands + 1, ticks + 2)
     }
 }
 
@@ -200,6 +211,7 @@ impl Cpu {
         let (pc, cycles) = match inst {
             Instruction::Transfer(inst) => inst.execute(self),
             Instruction::TransferNoTouchFlags(inst) => inst.execute(self),
+            Instruction::Txs(inst) => inst.execute(self),
             Instruction::Adc(inst) => inst.execute(self),
             Instruction::And(inst) => inst.execute(self),
         };
