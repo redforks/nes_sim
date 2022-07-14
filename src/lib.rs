@@ -82,6 +82,8 @@ enum Instruction {
 
     // DEC, DEX, DEY
     Dec(Dec),
+    // INC, INX, INY
+    Inc(Inc),
 
     Adc(Adc),
     And(And),
@@ -104,6 +106,7 @@ struct Push(Agu);
 struct Pop(Agu);
 
 struct Dec(Agu);
+struct Inc(Agu);
 
 struct Adc(Agu);
 
@@ -159,6 +162,17 @@ impl InstructionType for Dec {
     fn execute(&self, cpu: &mut Cpu) -> (u8, u8) {
         let (val, operands, ticks) = cpu.get(&self.src);
         let val = val.wrapping_sub(1);
+        cpu.put(&self.0, val);
+        cpu.update_negative_flag(val);
+        cpu.update_zero_flag(val);
+        (1 + operands, if &self.0.is_register() { 2 } else { 4 + ticks })
+    }
+}
+
+impl InstructionType for Inc {
+    fn execute(&self, cpu: &mut Cpu) -> (u8, u8) {
+        let (val, operands, ticks) = cpu.get(&self.src);
+        let val = val.wrapping_add(1);
         cpu.put(&self.0, val);
         cpu.update_negative_flag(val);
         cpu.update_zero_flag(val);
@@ -267,6 +281,7 @@ impl Cpu {
             Instruction::Push(inst) => inst.execute(self),
             Instruction::Pop(inst) => inst.execute(self),
             Instruction::Dec(inst) => inst.execute(self),
+            Instruction::Inc(inst) => inst.execute(self),
             Instruction::Adc(inst) => inst.execute(self),
             Instruction::And(inst) => inst.execute(self),
         };
