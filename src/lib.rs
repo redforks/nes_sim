@@ -86,6 +86,7 @@ enum Instruction {
     Inc(Inc),
 
     Adc(Adc),
+    Sbc(Sbc),
     And(And),
 }
 
@@ -109,6 +110,7 @@ struct Dec(Agu);
 struct Inc(Agu);
 
 struct Adc(Agu);
+struct Sbc(Agu);
 
 struct And(Agu);
 
@@ -160,23 +162,23 @@ impl InstructionType for Pop {
 
 impl InstructionType for Dec {
     fn execute(&self, cpu: &mut Cpu) -> (u8, u8) {
-        let (val, operands, ticks) = cpu.get(&self.src);
+        let (val, operands, ticks) = cpu.get(&self.0);
         let val = val.wrapping_sub(1);
         cpu.put(&self.0, val);
         cpu.update_negative_flag(val);
         cpu.update_zero_flag(val);
-        (1 + operands, if &self.0.is_register() { 2 } else { 4 + ticks })
+        (1 + operands, if self.0.is_register() { 2 } else { 4 + ticks })
     }
 }
 
 impl InstructionType for Inc {
     fn execute(&self, cpu: &mut Cpu) -> (u8, u8) {
-        let (val, operands, ticks) = cpu.get(&self.src);
+        let (val, operands, ticks) = cpu.get(&self.0);
         let val = val.wrapping_add(1);
         cpu.put(&self.0, val);
         cpu.update_negative_flag(val);
         cpu.update_zero_flag(val);
-        (1 + operands, if &self.0.is_register() { 2 } else { 4 + ticks })
+        (1 + operands, if self.0.is_register() { 2 } else { 4 + ticks })
     }
 }
 
@@ -185,11 +187,26 @@ impl InstructionType for Adc {
         let (val, operands, ticks) = cpu.get(&self.0);
 
         let t: u16 = cpu.a as u16 + val as u16 + (cpu.flag(CarryFlag)) as u16;
-        cpu.a = t as u8;
-        cpu.update_overflow_flag(t as u8, cpu.a);
+        cpu.set_flag(OverflowFlag, cpu.a & 0x80 != (t as u8) & 0x80);
         cpu.update_zero_flag(t);
         cpu.update_negative_flag(cpu.a);
-        cpu.update_carry_flag(t);
+        cpu.set_flag(CarryFlag, t > 255);
+        cpu.a = t as u8;
+
+        (operands + 1, ticks + 2)
+    }
+}
+
+impl InstructionType for Sbc {
+    fn execute(&self, cpu: &mut Cpu) -> (u8, u8) {
+        let (val, operands, ticks) = cpu.get(&self.0);
+
+        let t = cpu.a as i16 - val as i16 - !(cpu.flag(CarryFlag) as i16);
+        cpu.set_flag(OverflowFlag, t > 127 || t < -128);
+        cpu.set_flag(CarryFlag, t >= 0);
+        cpu.update_negative_flag(t);
+        cpu.update_zero_flag(t);
+        cpu.a = t as u8;
 
         (operands + 1, ticks + 2)
     }
@@ -283,6 +300,7 @@ impl Cpu {
             Instruction::Dec(inst) => inst.execute(self),
             Instruction::Inc(inst) => inst.execute(self),
             Instruction::Adc(inst) => inst.execute(self),
+            Instruction::Sbc(inst) => inst.execute(self),
             Instruction::And(inst) => inst.execute(self),
         };
         cycle_sync.end(cycles);
@@ -300,14 +318,6 @@ impl Cpu {
 
     fn update_zero_flag<T: PartialEq + Copy + Default>(&mut self, value: T) {
         self.set_flag(ZeroFlag, value == T::default());
-    }
-
-    fn update_carry_flag(&mut self, value: u16) {
-        self.set_flag(CarryFlag, value > 255);
-    }
-
-    fn update_overflow_flag(&mut self, v1: u8, v2: u8) {
-        self.set_flag(OverflowFlag, v1 & 0x80 != v2 & 0x80);
     }
 
     fn read_byte(&self, addr: u16) -> u8 {
