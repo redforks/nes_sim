@@ -1,7 +1,10 @@
+use std::panic::panic_any;
+
 mod test;
 
 /// Address generation unit
 enum Agu {
+    Literal(u8),
     ZeroPage(u8),
     Absolute(u16),
     ZeroPageX(u8),
@@ -18,6 +21,7 @@ impl Agu {
     /// operands: number of operands in bytes for the given addressing mode
     fn address(&self, cpu: &Cpu) -> (u16, u8, u8) {
         match self {
+            &Agu::Literal(_) => panic_any("Literal not supported"),
             &Agu::ZeroPage(addr) => (addr as u16, 1, 1),
             &Agu::Absolute(addr) => (addr, 2, 2),
             &Agu::ZeroPageX(addr) => (addr.wrapping_add(cpu.x) as u16, 2, 1),
@@ -170,7 +174,12 @@ impl Cpu {
 
     /// Return (value, operand bytes, address ticks)
     fn get(&self, agu: &Agu) -> (u8, u8, u8) {
-        let addr = agu.address(self);
-        (self.read_byte(addr.0), addr.1, addr.2)
+        match agu {
+            &Agu::Literal(val) => (val, 1, 0),
+            _ => {
+                let (addr, operand_bytes, ticks) = agu.address(self);
+                (self.read_byte(addr), operand_bytes, ticks)
+            }
+        }
     }
 }

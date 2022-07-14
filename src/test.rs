@@ -166,12 +166,11 @@ fn cpu_execute() {
 
     // reset carry if no overflow
     cpu.a = 1;
-    cpu.write_byte(0x10, 10);
-    cpu.execute(Instruction::Add(Add(Agu::ZeroPage(0x10))), &mut cycle_sync);
+    cpu.execute(Instruction::Add(Add(Agu::Literal(10))), &mut cycle_sync);
     assert_eq!(cpu.a, 11);
     assert!(!cpu.flag(CarryFlag));
     assert_eq!(cpu.pc, 5);
-    assert_eq!(cycle_sync.cycles(), 3);
+    assert_eq!(cycle_sync.cycles(), 2);
 }
 
 #[test]
@@ -179,4 +178,7 @@ fn test_get() {
     let mut cpu = Cpu::new(0);
     cpu.write_byte(0x1000, 0x10);
     assert_eq!((0x10, 2, 2), cpu.get(&Agu::Absolute(0x1000)));
+
+    // get literal
+    assert_eq!((0x10, 1, 0), cpu.get(&Agu::Literal(0x10)));
 }
