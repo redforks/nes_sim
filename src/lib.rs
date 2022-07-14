@@ -129,6 +129,8 @@ enum Instruction {
 
     // Bcc, Bcs, Bne, Beq, Bmi, Bpl, Bvc, Bvs
     ConditionBranch(ConditionBranch),
+
+    Jmp(Jmp),
 }
 
 struct Transfer {
@@ -193,6 +195,8 @@ struct ConditionBranch {
     register: Agu,
     negative: bool,
 }
+
+struct Jmp(u16);
 
 trait InstructionType {
     // (pcDelta, tickCount)
@@ -447,6 +451,12 @@ impl InstructionType for ConditionBranch {
     }
 }
 
+impl Jmp {
+    fn execute(&self) -> (u16, u8) {
+        (self.0, 3)
+    }
+}
+
 trait FlagBit {
     const BIT: u8;
 }
@@ -524,6 +534,7 @@ impl Cpu {
 
     fn execute<T: SyncInstructionCycle>(&mut self, inst: Instruction, cycle_sync: &mut T) {
         cycle_sync.start();
+        let mut absolute_pc: i32  = -1;
         let (pc, cycles) = match inst {
             Instruction::Transfer(inst) => inst.execute(self),
             Instruction::TransferNoTouchFlags(inst) => inst.execute(self),
@@ -550,10 +561,20 @@ impl Cpu {
             Instruction::Sei(inst) => inst.execute(self),
             Instruction::Cmp(inst) => inst.execute(self),
             Instruction::ConditionBranch(inst) => inst.execute(self),
+            Instruction::Jmp(jmp) => {
+                let (addr, ticks) = jmp.execute();
+                absolute_pc = addr as i32;
+                (1, ticks)
+            },
         };
-        cycle_sync.end(cycles);
 
-        self.inc_pc(pc);
+        if absolute_pc != -1 {
+            self.pc = absolute_pc as u16;
+        } else {
+            self.inc_pc(pc);
+        }
+
+        cycle_sync.end(cycles);
     }
 
     fn inc_pc(&mut self, delta: u8) {
