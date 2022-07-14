@@ -1,5 +1,6 @@
 use std::ops::{BitAnd, Shl};
 use std::convert::From;
+use std::num::FpCategory::Zero;
 use std::panic::panic_any;
 
 mod test;
@@ -136,6 +137,7 @@ enum Instruction {
     Brk(Brk),
     Rti(Rti),
 
+    Bit(Bit),
     Nop,
 }
 
@@ -211,6 +213,8 @@ struct Jsr(u16);
 struct Brk();
 
 struct Rti();
+
+struct Bit(Agu);
 
 trait InstructionType {
     // (pcDelta, tickCount)
@@ -507,6 +511,17 @@ impl Rti {
     }
 }
 
+impl InstructionType for Bit {
+    fn execute(&self, cpu: &mut Cpu) -> (u8, u8) {
+        let (v, operands, ticks)  = cpu.get(&self.0);
+        let v = v & cpu.a;
+        cpu.set_flag(NegativeFlag, v & 0x80 != 0);
+        cpu.set_flag(OverflowFlag, v & 0x70 != 0);
+        cpu.update_zero_flag(v);
+        (operands + 1, ticks + 2)
+    }
+}
+
 trait FlagBit {
     const BIT: u8;
 }
@@ -636,6 +651,7 @@ impl Cpu {
                 absolute_pc = addr as i32;
                 (1, ticks)
             },
+            Instruction::Bit(inst) => inst.execute(self),
             Instruction::Nop => (1, 2),
         };
 
