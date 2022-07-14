@@ -101,6 +101,9 @@ enum Instruction {
     Cld(Cld),
     Cli(Cli),
     Clv(Clv),
+    Sec(Sec),
+    Sed(Sed),
+    Sei(Sei),
 }
 
 struct Transfer {
@@ -148,6 +151,12 @@ struct Cld();
 struct Cli();
 
 struct Clv();
+
+struct Sec();
+
+struct Sed();
+
+struct Sei();
 
 trait InstructionType {
     // (pcDelta, tickCount)
@@ -325,7 +334,7 @@ impl ShiftInstructionType for Ror {
 
     fn op(cpu: &Cpu, v: u8) -> (u8, bool) {
         let carry_flag = v & 1 != 0;
-        (v >> 1 & 0x7f | ((cpu.flag(CarryFlag) as u8) << 8), carry_flag)
+        (v >> 1 & 0x7f | ((cpu.flag(CarryFlag) as u8) << 7), carry_flag)
     }
 }
 
@@ -353,6 +362,27 @@ impl InstructionType for Cli {
 impl InstructionType for Clv {
     fn execute(&self, cpu: &mut Cpu) -> (u8, u8) {
         cpu.set_flag(OverflowFlag, false);
+        (1, 2)
+    }
+}
+
+impl InstructionType for Sec {
+    fn execute(&self, cpu: &mut Cpu) -> (u8, u8) {
+        cpu.set_flag(CarryFlag, true);
+        (1, 2)
+    }
+}
+
+impl InstructionType for Sed {
+    fn execute(&self, cpu: &mut Cpu) -> (u8, u8) {
+        cpu.set_flag(DecimalModeFlag, true);
+        (1, 2)
+    }
+}
+
+impl InstructionType for Sei {
+    fn execute(&self, cpu: &mut Cpu) -> (u8, u8) {
+        cpu.set_flag(InterruptDisableFlag, true);
         (1, 2)
     }
 }
@@ -455,6 +485,9 @@ impl Cpu {
             Instruction::Cld(inst) => inst.execute(self),
             Instruction::Cli(inst) => inst.execute(self),
             Instruction::Clv(inst) => inst.execute(self),
+            Instruction::Sec(inst) => inst.execute(self),
+            Instruction::Sed(inst) => inst.execute(self),
+            Instruction::Sei(inst) => inst.execute(self),
         };
         cycle_sync.end(cycles);
 
