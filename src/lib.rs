@@ -91,7 +91,6 @@ enum Instruction {
     Transfer(Transfer),
     // STA, STX, STY
     TransferNoTouchFlags(TransferNoTouchFlags),
-    Txs(Txs),
 
     // PHA, PHP
     Push(Push),
@@ -151,9 +150,6 @@ struct TransferNoTouchFlags {
     src: Agu,
     dest: Agu,
 }
-
-#[derive(Debug, Clone, Copy)]
-struct Txs {}
 
 #[derive(Debug, Clone, Copy)]
 struct Push(Agu);
@@ -310,13 +306,6 @@ impl InstructionType for TransferNoTouchFlags {
         let (val, operands, ticks) = cpu.get(&self.src);
         cpu.put(&self.dest, val);
         (operands + 1, ticks + 3)
-    }
-}
-
-impl InstructionType for Txs {
-    fn execute(&self, cpu: &mut Cpu) -> (u8, u8) {
-        cpu.sp = cpu.x;
-        (1, 2)
     }
 }
 
@@ -886,7 +875,6 @@ impl Cpu {
         let (pc, cycles) = match inst {
             Instruction::Transfer(inst) => inst.execute(self),
             Instruction::TransferNoTouchFlags(inst) => inst.execute(self),
-            Instruction::Txs(inst) => inst.execute(self),
             Instruction::Push(inst) => inst.execute(self),
             Instruction::Pop(inst) => inst.execute(self),
             Instruction::Dec(inst) => inst.execute(self),
