@@ -1,8 +1,7 @@
-use std::ops::{BitAnd, Shl};
+use std::ops::BitAnd;
 use std::convert::From;
 use std::num::FpCategory::Zero;
 use std::panic::panic_any;
-use crate::Agu::Absolute;
 
 mod test;
 
@@ -50,7 +49,7 @@ impl Agu {
         match self {
             &Agu::Literal(_) => panic_any("Literal not supported"),
             &Agu::ZeroPage(addr) => (addr as u16, 1, 1),
-            &Absolute(addr) => (addr, 2, 2),
+            &Agu::Absolute(addr) => (addr, 2, 2),
             &Agu::ZeroPageX(addr) => (addr.wrapping_add(cpu.x) as u16, 2, 1),
             &Agu::ZeroPageY(addr) => (addr.wrapping_add(cpu.y) as u16, 2, 1),
             &Agu::AbsoluteX(addr) => {
@@ -555,7 +554,8 @@ fn decode(cpu: &Cpu) -> Instruction {
     let literal = || Agu::Literal(read_u8());
     let zero_page = || Agu::ZeroPage(read_u8());
     let zero_page_x = || Agu::ZeroPageX(read_u8());
-    let absolute = || Absolute(read_u16());
+    let zero_page_y = || Agu::ZeroPageY(read_u8());
+    let absolute = || Agu::Absolute(read_u16());
     let absolute_x = || Agu::AbsoluteX(read_u16());
     let absolute_y = || Agu::AbsoluteY(read_u16());
     // let indirect = || Agu::Indirect(read_u16());
@@ -567,12 +567,16 @@ fn decode(cpu: &Cpu) -> Instruction {
     let dec = |agu| Instruction::Dec(Dec(agu));
     let inc = |agu| Instruction::Inc(Inc(agu));
     let cmp = |register, memory| Instruction::Cmp(Cmp { register, memory });
-    let (aa, x, y) = (Agu::RegisterA, Agu::RegisterX, Agu::RegisterY);
+    let (aa, x, y, sp) = (Agu::RegisterA, Agu::RegisterX, Agu::RegisterY, Agu::RegisterSP);
     let ora = |agu| Instruction::Ora(Ora(agu));
     let and = |agu| Instruction::And(And(agu));
     let eor = |agu| Instruction::Eor(Eor(agu));
     let adc = |agu| Instruction::Adc(Adc(agu));
     let sbc = |agu| Instruction::Sbc(Sbc(agu));
+    let asl = |agu| Instruction::Asl(Asl(agu));
+    let rol = |agu| Instruction::Rol(Rol(agu));
+    let lsr = |agu| Instruction::Lsr(Lsr(agu));
+    let ror = |agu| Instruction::Ror(Ror(agu));
 
     match (c, a, b) {
         (0, 0, 0) => Instruction::Brk(Brk()),
@@ -699,6 +703,56 @@ fn decode(cpu: &Cpu) -> Instruction {
         (1, 7, 5) => sbc(zero_page_x()),
         (1, 7, 6) => sbc(absolute_y()),
         (1, 7, 7) => sbc(absolute_x()),
+
+        (2, 0, 1) => asl(zero_page()),
+        (2, 0, 2) => asl(aa),
+        (2, 0, 3) => asl(absolute()),
+        (2, 0, 5) => asl(zero_page_x()),
+        (2, 0, 7) => asl(absolute_x()),
+
+        (2, 1, 1) => rol(zero_page()),
+        (2, 1, 2) => rol(aa),
+        (2, 1, 3) => rol(absolute()),
+        (2, 1, 5) => rol(zero_page_x()),
+        (2, 1, 7) => rol(absolute_x()),
+
+        (2, 2, 1) => lsr(zero_page()),
+        (2, 2, 2) => lsr(aa),
+        (2, 2, 3) => lsr(absolute()),
+        (2, 2, 5) => lsr(zero_page_x()),
+        (2, 2, 7) => lsr(absolute_x()),
+
+        (2, 3, 1) => ror(zero_page()),
+        (2, 3, 2) => ror(aa),
+        (2, 3, 3) => ror(absolute()),
+        (2, 3, 5) => ror(zero_page_x()),
+        (2, 3, 7) => ror(absolute_x()),
+
+        (2, 4, 1) => transfer(zero_page(), x),
+        (2, 4, 2) => transfer(aa, x),
+        (2, 4, 3) => transfer(absolute(), x),
+        (2, 4, 5) => transfer(zero_page_y(), x),
+        (2, 4, 6) => transfer(sp, x),
+
+        (2, 5, 0) => transfer(x, literal()),
+        (2, 5, 1) => transfer(x, zero_page()),
+        (2, 5, 2) => transfer(x, aa),
+        (2, 5, 3) => transfer(x, absolute()),
+        (2, 5, 5) => transfer(x, zero_page_y()),
+        (2, 5, 6) => transfer(x, sp),
+        (2, 5, 7) => transfer(x, absolute_y()),
+
+        (2, 6, 1) => dec(zero_page()),
+        (2, 6, 2) => dec(x),
+        (2, 6, 3) => dec(absolute()),
+        (2, 6, 5) => dec(zero_page_x()),
+        (2, 6, 7) => dec(absolute_x()),
+
+        (2, 7, 1) => inc(zero_page()),
+        (2, 7, 2) => Instruction::Nop,
+        (2, 7, 3) => inc(absolute()),
+        (2, 7, 5) => inc(zero_page_x()),
+        (2, 7, 7) => inc(absolute_x()),
 
         _ => panic_any(format!("Unknown opcode: {:02x}", op_code)),
     }

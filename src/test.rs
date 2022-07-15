@@ -12,7 +12,7 @@ fn zero_page() {
 #[test]
 fn absolute() {
     let cpu = Cpu::new(0);
-    let addr = Absolute(0x10);
+    let addr = Agu::Absolute(0x10);
     assert_eq!(addr.address(&cpu), (0x10, 2, 2));
 }
 
@@ -194,7 +194,7 @@ fn cpu_execute() {
     // carry
     cpu.a = 0xFF;
     cpu.write_byte(0x1000, 10);
-    cpu.execute(Instruction::Adc(Adc(Absolute(0x1000))), &mut cycle_sync);
+    cpu.execute(Instruction::Adc(Adc(Agu::Absolute(0x1000))), &mut cycle_sync);
     assert_eq!(cpu.a, 9);
     assert!(cpu.flag(CarryFlag));
     assert_eq!(cpu.pc, 3);
@@ -219,7 +219,7 @@ impl FlagBit for IgnoredFlag {
 fn test_get() {
     let mut cpu = Cpu::new(0);
     cpu.write_byte(0x1000, 0x10);
-    assert_eq!((0x10, 2, 2), cpu.get(&Absolute(0x1000)));
+    assert_eq!((0x10, 2, 2), cpu.get(&Agu::Absolute(0x1000)));
 
     // get literal
     assert_eq!((0x10, 1, 0), cpu.get(&Agu::Literal(0x10)));
@@ -239,7 +239,7 @@ fn test_get() {
 fn test_put() {
     let mut cpu = Cpu::new(0);
     cpu.write_byte(0x1000, 0x10);
-    assert_eq!((2, 2), cpu.put(&Absolute(0x1000), 0x20));
+    assert_eq!((2, 2), cpu.put(&Agu::Absolute(0x1000), 0x20));
     assert_eq!(0x20, cpu.read_byte(0x1000));
 
     // set status not touch break and not used flags
