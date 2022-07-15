@@ -1,5 +1,8 @@
 #![cfg(test)]
 
+use std::fs::File;
+use std::io::Read;
+use std::path::PathBuf;
 use super::*;
 
 #[test]
@@ -126,18 +129,17 @@ fn inc_pc() {
     assert_eq!(cpu.pc, 1);
 }
 
-struct TestSyncInstructionCycle (u8);
+struct TestSyncInstructionCycle(u8);
 
 impl SyncInstructionCycle for TestSyncInstructionCycle {
-    fn start(&mut self) {
-    }
+    fn start(&mut self) {}
 
     fn end(&mut self, cycles: u8) {
         self.0 = cycles;
     }
 }
 
-impl TestSyncInstructionCycle    {
+impl TestSyncInstructionCycle {
     fn cycles(&self) -> u8 {
         self.0
     }

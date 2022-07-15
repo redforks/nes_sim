@@ -1,11 +1,11 @@
 use std::ops::BitAnd;
 use std::convert::From;
-use std::num::FpCategory::Zero;
 use std::panic::panic_any;
 
 mod test;
 
 /// Address generation unit
+#[derive(Debug, Clone, Copy)]
 enum Agu {
     Literal(u8),
     ZeroPage(u8),
@@ -85,7 +85,7 @@ impl Agu {
     }
 }
 
-#[allow(dead_code)]
+#[derive(Debug, Copy, Clone)]
 enum Instruction {
     // LDA, LDX, LDY, TAX, TAY, TSX, TXA, TYA
     Transfer(Transfer),
@@ -140,63 +140,88 @@ enum Instruction {
     Nop,
 }
 
+#[derive(Debug, Clone, Copy)]
 struct Transfer {
     src: Agu,
     dest: Agu,
 }
 
+#[derive(Debug, Clone, Copy)]
 struct TransferNoTouchFlags {
     src: Agu,
     dest: Agu,
 }
 
+#[derive(Debug, Clone, Copy)]
 struct Txs {}
 
+#[derive(Debug, Clone, Copy)]
 struct Push(Agu);
 
+#[derive(Debug, Clone, Copy)]
 struct Pop(Agu);
 
+#[derive(Debug, Clone, Copy)]
 struct Dec(Agu);
 
+#[derive(Debug, Clone, Copy)]
 struct Inc(Agu);
 
+#[derive(Debug, Clone, Copy)]
 struct Adc(Agu);
 
+#[derive(Debug, Clone, Copy)]
 struct Sbc(Agu);
 
+#[derive(Debug, Clone, Copy)]
 struct And(Agu);
 
+#[derive(Debug, Clone, Copy)]
 struct Eor(Agu);
 
+#[derive(Debug, Clone, Copy)]
 struct Ora(Agu);
 
+#[derive(Debug, Clone, Copy)]
 struct Asl(Agu);
 
+#[derive(Debug, Clone, Copy)]
 struct Lsr(Agu);
 
+#[derive(Debug, Clone, Copy)]
 struct Rol(Agu);
 
+#[derive(Debug, Clone, Copy)]
 struct Ror(Agu);
 
+#[derive(Debug, Clone, Copy)]
 struct Clc ();
 
+#[derive(Debug, Clone, Copy)]
 struct Cld ();
 
+#[derive(Debug, Clone, Copy)]
 struct Cli ();
 
+#[derive(Debug, Clone, Copy)]
 struct Clv ();
 
+#[derive(Debug, Clone, Copy)]
 struct Sec ();
 
+#[derive(Debug, Clone, Copy)]
 struct Sed ();
 
+#[derive(Debug, Clone, Copy)]
 struct Sei ();
 
+#[derive(Debug, Clone, Copy)]
 struct Cmp {
     register: Agu,
     memory: Agu,
 }
 
+#[derive(Debug, Clone, Copy)]
 struct ConditionBranch {
     offset: u8,
     register: Agu,
@@ -213,18 +238,25 @@ impl ConditionBranch {
     }
 }
 
+#[derive(Debug, Clone, Copy)]
 struct Jmp(u16);
 
+#[derive(Debug, Clone, Copy)]
 struct IndirectJmp(u16);
 
+#[derive(Debug, Clone, Copy)]
 struct Jsr(u16);
 
+#[derive(Debug, Clone, Copy)]
 struct Rts ();
 
+#[derive(Debug, Clone, Copy)]
 struct Brk ();
 
+#[derive(Debug, Clone, Copy)]
 struct Rti ();
 
+#[derive(Debug, Clone, Copy)]
 struct Bit(Agu);
 
 trait InstructionType {
@@ -544,9 +576,12 @@ impl InstructionType for Bit {
 
 fn decode(cpu: &Cpu) -> Instruction {
     let op_code = cpu.read_byte(cpu.pc);
-    let a = op_code & 0b1110_0000 >> 5;
-    let b = op_code & 0b0001_1100 >> 2;
+    print!("{:02x} ", op_code);
+    let a = (op_code & 0b1110_0000) >> 5;
+    let b = (op_code & 0b0001_1100) >> 2;
     let c = op_code & 0b0000_0011;
+    print!("a,b,c: {} {} {} ", a, b, c);
+
     let read_u8 = || cpu.read_byte(cpu.pc.wrapping_add(1));
     let read_u16 = || cpu.read_word(cpu.pc.wrapping_add(1));
     let literal = || Agu::Literal(read_u8());
@@ -751,7 +786,7 @@ fn decode(cpu: &Cpu) -> Instruction {
         (2, 7, 5) => inc(zero_page_x()),
         (2, 7, 7) => inc(absolute_x()),
 
-        _ => panic_any(format!("Unknown opcode: {:02x}", op_code)),
+        _ => panic_any(format!("Unknown opcode: {:02x} @ {:04x}", op_code, cpu.pc)),
     }
 }
 
@@ -788,25 +823,25 @@ impl FlagBit for CarryFlag { const BIT: u8 = 0x1; }
 impl FlagBit for ZeroFlag { const BIT: u8 = 0x2; }
 
 // Trait to sync instruction execution  times.
-trait SyncInstructionCycle {
+pub trait SyncInstructionCycle {
     fn start(&mut self);
 
     fn end(&mut self, cycles: u8);
 }
 
 #[allow(dead_code)]
-struct Cpu {
+pub struct Cpu {
     a: u8,
     x: u8,
     y: u8,
     pc: u16,
     sp: u8,
     status: u8,
-    memory: [u8; 0x10000],
+    pub memory: [u8; 0x10000],
 }
 
 impl Cpu {
-    fn new() -> Cpu {
+    pub fn new() -> Cpu {
         Cpu {
             a: 0,
             x: 0,
@@ -830,11 +865,18 @@ impl Cpu {
         }
     }
 
-    fn run<T: SyncInstructionCycle>(&mut self, cycle_sync: &mut T) {
-        self.pc = self.read_word(0xFFFC);
+    pub fn run<T: SyncInstructionCycle>(&mut self, cycle_sync: &mut T) {
+        // self.pc = self.read_word(0xFFFC);
+        self.pc = 0x400;
+        let mut i=0;
         loop {
             let instruction = decode(self);
+            println!("Op: {:?}", &instruction);
             self.execute(instruction, cycle_sync);
+            i+=1;
+            if i>100 {
+                break;
+            }
         }
     }
 
@@ -906,6 +948,7 @@ impl Cpu {
         } else {
             self.inc_pc(pc);
         }
+        println!("PC: {:04x}", self.pc);
 
         cycle_sync.end(cycles);
     }
