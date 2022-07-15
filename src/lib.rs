@@ -830,6 +830,14 @@ impl Cpu {
         }
     }
 
+    fn run<T: SyncInstructionCycle>(&mut self, cycle_sync: &mut T) {
+        self.pc = self.read_word(0xFFFC);
+        loop {
+            let instruction = decode(self);
+            self.execute(instruction, cycle_sync);
+        }
+    }
+
     fn execute<T: SyncInstructionCycle>(&mut self, inst: Instruction, cycle_sync: &mut T) {
         cycle_sync.start();
         let mut absolute_pc: i32 = -1;
