@@ -59,13 +59,6 @@ fn absolute_y() {
 }
 
 #[test]
-fn indirect() {
-    let mut cpu = Cpu::new(0);
-    cpu.write_word(0x1000, 0x10);
-    assert_eq!((0x10, 2, 2), Agu::Indirect(0x1000).address(&cpu));
-}
-
-#[test]
 fn indirect_x() {
     let mut cpu = Cpu::new(0);
     cpu.write_word(0x12, 0x1000);

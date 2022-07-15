@@ -14,7 +14,6 @@ enum Agu {
     ZeroPageY(u8),
     AbsoluteX(u16),
     AbsoluteY(u16),
-    Indirect(u16),
     IndirectX(u8),
     IndirectY(u8),
     RegisterA,
@@ -60,7 +59,6 @@ impl Agu {
                 let r = addr.wrapping_add(cpu.y as u16) as u16;
                 (r, plus_one_if_cross_page(2, addr, r), 2)
             }
-            &Agu::Indirect(addr) => (cpu.read_word(addr), 2, 2),
             &Agu::IndirectX(addr) => (cpu.read_zero_page_word(addr.wrapping_add(cpu.x)), 4, 1),
             &Agu::IndirectY(addr) => {
                 let addr = cpu.read_zero_page_word(addr);
@@ -558,7 +556,6 @@ fn decode(cpu: &Cpu) -> Instruction {
     let absolute = || Agu::Absolute(read_u16());
     let absolute_x = || Agu::AbsoluteX(read_u16());
     let absolute_y = || Agu::AbsoluteY(read_u16());
-    // let indirect = || Agu::Indirect(read_u16());
     let indirect_x = || Agu::IndirectX(read_u8());
     let indirect_y = || Agu::IndirectY(read_u8());
     let cond_branch = |agu| Instruction::ConditionBranch(ConditionBranch::new(read_u8(), agu, false));
