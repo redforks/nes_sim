@@ -4,21 +4,21 @@ use super::*;
 
 #[test]
 fn zero_page() {
-    let cpu = Cpu::new(0);
+    let cpu = Cpu::new();
     let addr = Agu::ZeroPage(0x10);
     assert_eq!(addr.address(&cpu), (0x10, 1, 1));
 }
 
 #[test]
 fn absolute() {
-    let cpu = Cpu::new(0);
+    let cpu = Cpu::new();
     let addr = Agu::Absolute(0x10);
     assert_eq!(addr.address(&cpu), (0x10, 2, 2));
 }
 
 #[test]
 fn zero_page_x() {
-    let mut cpu = Cpu::new(0);
+    let mut cpu = Cpu::new();
     cpu.x = 10;
     assert_eq!((11, 2, 1), Agu::ZeroPageX(1).address(&cpu));
 
@@ -28,7 +28,7 @@ fn zero_page_x() {
 
 #[test]
 fn zero_page_y() {
-    let mut cpu = Cpu::new(0);
+    let mut cpu = Cpu::new();
     cpu.y = 10;
     assert_eq!((11, 2, 1), Agu::ZeroPageY(1).address(&cpu));
 
@@ -38,7 +38,7 @@ fn zero_page_y() {
 
 #[test]
 fn absolute_x() {
-    let mut cpu = Cpu::new(0);
+    let mut cpu = Cpu::new();
     cpu.x = 0x10;
     assert_eq!((0x1010, 2, 2), Agu::AbsoluteX(0x1000).address(&cpu));
 
@@ -49,7 +49,7 @@ fn absolute_x() {
 
 #[test]
 fn absolute_y() {
-    let mut cpu = Cpu::new(0);
+    let mut cpu = Cpu::new();
     cpu.y = 0x10;
     assert_eq!((0x1010, 2, 2), Agu::AbsoluteY(0x1000).address(&cpu));
 
@@ -60,7 +60,7 @@ fn absolute_y() {
 
 #[test]
 fn indirect_x() {
-    let mut cpu = Cpu::new(0);
+    let mut cpu = Cpu::new();
     cpu.write_word(0x12, 0x1000);
     cpu.x = 0x10;
     assert_eq!((0x1000, 4, 1), Agu::IndirectX(0x2).address(&cpu));
@@ -74,7 +74,7 @@ fn indirect_x() {
 
 #[test]
 fn indirect_y() {
-    let mut cpu = Cpu::new(0);
+    let mut cpu = Cpu::new();
     cpu.write_word(0x2, 0x1000);
     cpu.y = 0x10;
     assert_eq!((0x1010, 3, 1), Agu::IndirectY(0x2).address(&cpu));
@@ -87,7 +87,7 @@ fn indirect_y() {
 
 #[test]
 fn read_write_byte() {
-    let mut cpu = Cpu::new(0);
+    let mut cpu = Cpu::new();
     cpu.write_byte(0x1000, 0x10);
     assert_eq!(0x10, cpu.read_byte(0x1000));
     cpu.write_byte(0x1000, 0x20);
@@ -96,7 +96,7 @@ fn read_write_byte() {
 
 #[test]
 fn read_write_word() {
-    let mut cpu = Cpu::new(0);
+    let mut cpu = Cpu::new();
     cpu.write_word(0x1000, 0x1020);
     assert_eq!(0x1020, cpu.read_word(0x1000));
     assert_eq!(0x20, cpu.read_byte(0x1000));
@@ -105,7 +105,7 @@ fn read_write_word() {
 
 #[test]
 fn read_write_zero_page() {
-    let mut cpu = Cpu::new(0);
+    let mut cpu = Cpu::new();
     cpu.write_word(0x10, 0x1020);
     assert_eq!(0x1020, cpu.read_zero_page_word(0x10));
 
@@ -116,7 +116,7 @@ fn read_write_zero_page() {
 
 #[test]
 fn inc_pc() {
-    let mut cpu = Cpu::new(0);
+    let mut cpu = Cpu::new();
     cpu.inc_pc(2);
     assert_eq!(cpu.pc, 2);
 
@@ -145,7 +145,7 @@ impl TestSyncInstructionCycle    {
 
 #[test]
 fn adc() {
-    let mut cpu = Cpu::new(0);
+    let mut cpu = Cpu::new();
 
     // zero
     cpu.set_flag(CarryFlag, true);
@@ -170,7 +170,7 @@ fn adc() {
 
 #[test]
 fn and() {
-    let mut cpu = Cpu::new(0);
+    let mut cpu = Cpu::new();
     cpu.a = 0b1010_1010;
     let and = And(Agu::Literal(0b1100_1100));
     assert_eq!((2, 2), and.execute(&mut cpu));
@@ -181,7 +181,7 @@ fn and() {
 
 #[test]
 fn cpu_execute() {
-    let mut cpu = Cpu::new(0);
+    let mut cpu = Cpu::new();
     let mut cycle_sync = TestSyncInstructionCycle(0);
 
     // carry
@@ -210,7 +210,7 @@ impl FlagBit for IgnoredFlag {
 
 #[test]
 fn test_get() {
-    let mut cpu = Cpu::new(0);
+    let mut cpu = Cpu::new();
     cpu.write_byte(0x1000, 0x10);
     assert_eq!((0x10, 2, 2), cpu.get(&Agu::Absolute(0x1000)));
 
@@ -230,7 +230,7 @@ fn test_get() {
 
 #[test]
 fn test_put() {
-    let mut cpu = Cpu::new(0);
+    let mut cpu = Cpu::new();
     cpu.write_byte(0x1000, 0x10);
     assert_eq!((2, 2), cpu.put(&Agu::Absolute(0x1000), 0x20));
     assert_eq!(0x20, cpu.read_byte(0x1000));
@@ -246,7 +246,7 @@ fn test_put() {
 
 #[test]
 fn update_zero_flag() {
-    let mut cpu = Cpu::new(0);
+    let mut cpu = Cpu::new();
     cpu.update_zero_flag(0x10);
     assert_eq!(cpu.flag(ZeroFlag), false);
 
@@ -256,7 +256,7 @@ fn update_zero_flag() {
 
 #[test]
 fn update_negative_flag() {
-    let mut cpu = Cpu::new(0);
+    let mut cpu = Cpu::new();
     cpu.update_negative_flag(0x10);
     assert_eq!(cpu.flag(NegativeFlag), false);
 
@@ -266,7 +266,7 @@ fn update_negative_flag() {
 
 #[test]
 fn push_stack() {
-    let mut cpu = Cpu::new(0);
+    let mut cpu = Cpu::new();
     cpu.push_stack(0x10);
     assert_eq!(0x10, cpu.read_byte(0x100));
     assert_eq!(0xFF, cpu.sp);

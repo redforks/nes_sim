@@ -806,12 +806,12 @@ struct Cpu {
 }
 
 impl Cpu {
-    fn new(pc: u16) -> Cpu {
+    fn new() -> Cpu {
         Cpu {
             a: 0,
             x: 0,
             y: 0,
-            pc,
+            pc: 0,
             sp: 0,
             status: 0,
             memory: [0; 0x10000],
