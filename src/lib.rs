@@ -909,12 +909,14 @@ impl Cpu {
     }
 
     fn adc(&mut self, val: u8) {
-        let t = self.a as u16 + val as u16 + self.flag(CarryFlag) as u16;
-        self.set_flag(CarryFlag, t & 0x100 != 0);
-        self.set_flag(OverflowFlag, !(self.a ^ (t as u8)) & (val ^ (t as u8)) & 0x80 != 0);
-        self.a = t as u8;
-        self.update_zero_flag(t);
+        // https://stackoverflow.com/a/29193951/1305678
+        let mut t = self.a as u16 + val as u16 + self.flag(CarryFlag) as u16;
+        println!("{} = {} + {} + {}", t, self.a, val, if self.flag(CarryFlag) { 1 } else { 0 });
+        self.set_flag(OverflowFlag, (self.a ^ (t as u8)) & (val ^ (t as u8)) & 0x80 == 0x80);
+        self.set_flag(CarryFlag, t & 0x100 == 0x100);
         self.update_negative_flag(t);
+        self.a = t as u8;
+        self.update_zero_flag(self.a);
     }
 
     fn inc_pc(&mut self, delta: i8) {
