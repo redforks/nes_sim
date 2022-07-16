@@ -505,53 +505,56 @@ impl InstructionType for ConditionBranch {
 }
 
 impl Jmp {
-    fn execute(&self) -> (u16, u8) {
-        (self.0, 3)
+    fn execute(&self, cpu: &mut Cpu) -> u8 {
+        cpu.pc = self.0;
+        3
     }
 }
 
 impl IndirectJmp {
-    fn execute(&self, cpu: &Cpu) -> (u16, u8) {
-        let addr = cpu.read_word(self.0);
-        (addr, 5)
+    fn execute(&self, cpu: &mut Cpu) -> u8 {
+        cpu.pc = cpu.read_word(self.0);
+        5
     }
 }
 
 impl Jsr {
-    fn execute(&self, cpu: &mut Cpu) -> (u16, u8) {
-        let pc = cpu.pc.wrapping_add(2);
+    fn execute(&self, cpu: &mut Cpu) -> u8 {
+        let pc = cpu.pc;
         cpu.push_stack((pc >> 8) as u8);
         cpu.push_stack(pc as u8);
-        (self.0, 6)
+        cpu.pc = self.0;
+        6
     }
 }
 
 impl Rts {
-    fn execute(&self, cpu: &mut Cpu) -> (u16, u8) {
+    fn execute(&self, cpu: &mut Cpu) -> u8 {
         let l = cpu.pop_stack();
         let h = cpu.pop_stack();
-        let addr = (h as u16) << 8 | l as u16;
-        (addr, 6)
+        cpu.pc = (h as u16) << 8 | l as u16;
+        6
     }
 }
 
 impl Brk {
-    fn execute(&self, cpu: &mut Cpu) -> (u16, u8) {
+    fn execute(&self, cpu: &mut Cpu) -> u8 {
         let pc = cpu.pc.wrapping_add(2);
         cpu.push_stack((pc >> 8) as u8);
         cpu.push_stack(pc as u8);
         let (status, ..) = cpu.get(&Agu::Status);
         cpu.push_stack(status);
-        (cpu.read_word(0xFFFE), 7)
+        cpu.pc = cpu.read_word(0xFFFE);
+        7
     }
 }
 
 impl Rti {
-    fn execute(&self, cpu: &mut Cpu) -> (u16, u8) {
+    fn execute(&self, cpu: &mut Cpu) -> u8 {
         let v = cpu.pop_stack();
         cpu.put(&Agu::Status, v);
-        let pc = cpu.pop_stack() as u16 | (cpu.pop_stack() as u16) << 8;
-        (pc, 6)
+        cpu.pc = cpu.pop_stack() as u16 | (cpu.pop_stack() as u16) << 8;
+        6
     }
 }
 
@@ -868,7 +871,6 @@ impl Cpu {
     }
 
     fn execute(&mut self, inst: Instruction) -> u8 {
-        let mut absolute_pc: i32 = -1;
         let cycles = match inst {
             Instruction::Transfer(inst) => inst.execute(self),
             Instruction::TransferNoTouchFlags(inst) => inst.execute(self),
@@ -894,43 +896,15 @@ impl Cpu {
             Instruction::Sei(inst) => inst.execute(self),
             Instruction::Cmp(inst) => inst.execute(self),
             Instruction::ConditionBranch(inst) => inst.execute(self),
-            Instruction::Jmp(jmp) => {
-                let (addr, ticks) = jmp.execute();
-                absolute_pc = addr as i32;
-                ticks
-            }
-            Instruction::IndirectJmp(jmp) => {
-                let (addr, ticks) = jmp.execute(self);
-                absolute_pc = addr as i32;
-                ticks
-            }
-            Instruction::Jsr(jmp) => {
-                let (addr, ticks) = jmp.execute(self);
-                absolute_pc = addr as i32;
-                ticks
-            }
-            Instruction::Rts(jmp) => {
-                let (addr, ticks) = jmp.execute(self);
-                absolute_pc = addr as i32;
-                ticks
-            }
-            Instruction::Brk(jmp) => {
-                let (addr, ticks) = jmp.execute(self);
-                absolute_pc = addr as i32;
-                ticks
-            }
-            Instruction::Rti(jmp) => {
-                let (addr, ticks) = jmp.execute(self);
-                absolute_pc = addr as i32;
-                ticks
-            }
+            Instruction::Jmp(inst) => inst.execute(self),
+            Instruction::IndirectJmp(inst) => inst.execute(self),
+            Instruction::Jsr(inst) => inst.execute(self),
+            Instruction::Rts(inst) => inst.execute(self),
+            Instruction::Brk(inst) => inst.execute(self),
+            Instruction::Rti(inst) => inst.execute(self),
             Instruction::Bit(inst) => inst.execute(self),
             Instruction::Nop => 2,
         };
-
-        if absolute_pc != -1 {
-            self.pc = absolute_pc as u16;
-        }
 
         cycles
     }
