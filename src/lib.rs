@@ -5,7 +5,7 @@ use std::panic::panic_any;
 mod test;
 
 /// Address generation unit
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 enum Agu {
     Literal(u8),
     ZeroPage(u8),
@@ -85,8 +85,8 @@ impl Agu {
     }
 }
 
-#[derive(Debug, Copy, Clone)]
-enum Instruction {
+#[derive(Debug, Copy, Clone, PartialEq)]
+pub enum Instruction {
     // LDA, LDX, LDY, TAX, TAY, TSX, TXA, TYA
     Transfer(Transfer),
     // STA, STX, STY
@@ -139,86 +139,86 @@ enum Instruction {
     Nop,
 }
 
-#[derive(Debug, Clone, Copy)]
-struct Transfer {
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Transfer {
     src: Agu,
     dest: Agu,
 }
 
-#[derive(Debug, Clone, Copy)]
-struct TransferNoTouchFlags {
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct TransferNoTouchFlags {
     src: Agu,
     dest: Agu,
 }
 
-#[derive(Debug, Clone, Copy)]
-struct Push(Agu);
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Push(Agu);
 
-#[derive(Debug, Clone, Copy)]
-struct Pop(Agu);
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Pop(Agu);
 
-#[derive(Debug, Clone, Copy)]
-struct Dec(Agu);
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Dec(Agu);
 
-#[derive(Debug, Clone, Copy)]
-struct Inc(Agu);
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Inc(Agu);
 
-#[derive(Debug, Clone, Copy)]
-struct Adc(Agu);
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Adc(Agu);
 
-#[derive(Debug, Clone, Copy)]
-struct Sbc(Agu);
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Sbc(Agu);
 
-#[derive(Debug, Clone, Copy)]
-struct And(Agu);
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct And(Agu);
 
-#[derive(Debug, Clone, Copy)]
-struct Eor(Agu);
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Eor(Agu);
 
-#[derive(Debug, Clone, Copy)]
-struct Ora(Agu);
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Ora(Agu);
 
-#[derive(Debug, Clone, Copy)]
-struct Asl(Agu);
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Asl(Agu);
 
-#[derive(Debug, Clone, Copy)]
-struct Lsr(Agu);
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Lsr(Agu);
 
-#[derive(Debug, Clone, Copy)]
-struct Rol(Agu);
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Rol(Agu);
 
-#[derive(Debug, Clone, Copy)]
-struct Ror(Agu);
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Ror(Agu);
 
-#[derive(Debug, Clone, Copy)]
-struct Clc();
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Clc();
 
-#[derive(Debug, Clone, Copy)]
-struct Cld();
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Cld();
 
-#[derive(Debug, Clone, Copy)]
-struct Cli();
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Cli();
 
-#[derive(Debug, Clone, Copy)]
-struct Clv();
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Clv();
 
-#[derive(Debug, Clone, Copy)]
-struct Sec();
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Sec();
 
-#[derive(Debug, Clone, Copy)]
-struct Sed();
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Sed();
 
-#[derive(Debug, Clone, Copy)]
-struct Sei();
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Sei();
 
-#[derive(Debug, Clone, Copy)]
-struct Cmp {
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Cmp {
     register: Agu,
     memory: Agu,
 }
 
-#[derive(Debug, Clone, Copy)]
-struct ConditionBranch {
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct ConditionBranch {
     offset: i8,
     register: Agu,
     negative: bool,
@@ -234,26 +234,26 @@ impl ConditionBranch {
     }
 }
 
-#[derive(Debug, Clone, Copy)]
-struct Jmp(u16);
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Jmp(u16);
 
-#[derive(Debug, Clone, Copy)]
-struct IndirectJmp(u16);
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct IndirectJmp(u16);
 
-#[derive(Debug, Clone, Copy)]
-struct Jsr(u16);
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Jsr(u16);
 
-#[derive(Debug, Clone, Copy)]
-struct Rts();
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Rts();
 
-#[derive(Debug, Clone, Copy)]
-struct Brk();
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Brk();
 
-#[derive(Debug, Clone, Copy)]
-struct Rti();
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Rti();
 
-#[derive(Debug, Clone, Copy)]
-struct Bit(Agu);
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Bit(Agu);
 
 trait InstructionType {
     // (pcDelta, tickCount)
@@ -568,11 +568,9 @@ impl InstructionType for Bit {
 
 fn decode(cpu: &mut Cpu) -> Instruction {
     let op_code = cpu.inc_read_byte();
-    print!("{:02x} ", op_code);
     let a = (op_code & 0b1110_0000) >> 5;
     let b = (op_code & 0b0001_1100) >> 2;
     let c = op_code & 0b0000_0011;
-    print!("a,b,c: {} {} {} ", a, b, c);
 
     let literal = |cpu: &mut Cpu| Agu::Literal(cpu.inc_read_byte());
     let zero_page = |cpu: &mut Cpu| Agu::ZeroPage(cpu.inc_read_byte());
@@ -784,19 +782,19 @@ trait FlagBit {
     const BIT: u8;
 }
 
-struct CarryFlag;
+pub struct CarryFlag;
 
-struct DecimalModeFlag;
+pub struct DecimalModeFlag;
 
-struct InterruptDisableFlag;
+pub struct InterruptDisableFlag;
 
-struct ZeroFlag;
+pub struct ZeroFlag;
 
-struct BreakFlag;
+pub struct BreakFlag;
 
-struct OverflowFlag;
+pub struct OverflowFlag;
 
-struct NegativeFlag;
+pub struct NegativeFlag;
 
 impl FlagBit for NegativeFlag { const BIT: u8 = 0x80; }
 
@@ -813,20 +811,21 @@ impl FlagBit for CarryFlag { const BIT: u8 = 0x1; }
 impl FlagBit for ZeroFlag { const BIT: u8 = 0x2; }
 
 // Trait to sync instruction execution  times.
-pub trait SyncInstructionCycle {
-    fn start(&mut self);
+pub trait Plugin {
+    fn start(&mut self, cpu: &Cpu);
 
-    fn end(&mut self, cycles: u8);
+    // return true to stop cpu
+    fn end(&mut self, cpu: &Cpu, inst: Instruction, cycles: u8) -> bool;
 }
 
 #[allow(dead_code)]
 pub struct Cpu {
-    a: u8,
-    x: u8,
-    y: u8,
-    pc: u16,
-    sp: u8,
-    status: u8,
+    pub a: u8,
+    pub x: u8,
+    pub y: u8,
+    pub pc: u16,
+    pub sp: u8,
+    pub status: u8,
     pub memory: [u8; 0x10000],
 }
 
@@ -855,23 +854,20 @@ impl Cpu {
         }
     }
 
-    pub fn run<T: SyncInstructionCycle>(&mut self, cycle_sync: &mut T) {
+    pub fn run<T: Plugin>(&mut self, plugin: &mut T) {
         // self.pc = self.read_word(0xFFFC);
         self.pc = 0x400;
-        let mut i = 0;
         loop {
+            plugin.start(self);
             let instruction = decode(self);
-            println!("Op: {:?}", &instruction);
-            self.execute(instruction, cycle_sync);
-            i += 1;
-            if i > 40590 {
+            let ticks = self.execute(instruction);
+            if plugin.end(self, instruction, ticks) {
                 break;
             }
         }
     }
 
-    fn execute<T: SyncInstructionCycle>(&mut self, inst: Instruction, cycle_sync: &mut T) {
-        cycle_sync.start();
+    fn execute(&mut self, inst: Instruction) -> u8 {
         let mut absolute_pc: i32 = -1;
         let cycles = match inst {
             Instruction::Transfer(inst) => inst.execute(self),
@@ -935,9 +931,8 @@ impl Cpu {
         if absolute_pc != -1 {
             self.pc = absolute_pc as u16;
         }
-        println!("PC: {:04x}", self.pc);
 
-        cycle_sync.end(cycles);
+        cycles
     }
 
     fn inc_pc(&mut self, delta: i8) {

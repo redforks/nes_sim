@@ -131,7 +131,7 @@ fn inc_pc() {
 
 struct TestSyncInstructionCycle(u8);
 
-impl SyncInstructionCycle for TestSyncInstructionCycle {
+impl Plugin for TestSyncInstructionCycle {
     fn start(&mut self) {}
 
     fn end(&mut self, cycles: u8) {
