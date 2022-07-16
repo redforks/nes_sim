@@ -362,12 +362,12 @@ impl InstructionType for Adc {
     fn execute(&self, cpu: &mut Cpu) -> u8 {
         let (val, ticks) = cpu.get(self.0);
 
-        let t: u16 = cpu.a as u16 + val as u16 + (cpu.flag(CarryFlag)) as u16;
+        let t: u16 = cpu.a as u16 + val as u16 + (cpu.flag(CarryFlag) as u16);
         cpu.set_flag(OverflowFlag, cpu.a & 0x80 != (t as u8) & 0x80);
         cpu.update_zero_flag(t);
-        cpu.update_negative_flag(cpu.a);
         cpu.set_flag(CarryFlag, t > 255);
         cpu.a = t as u8;
+        cpu.update_negative_flag(cpu.a);
 
         ticks + 2
     }
