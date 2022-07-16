@@ -191,25 +191,25 @@ struct Rol(Agu);
 struct Ror(Agu);
 
 #[derive(Debug, Clone, Copy)]
-struct Clc ();
+struct Clc();
 
 #[derive(Debug, Clone, Copy)]
-struct Cld ();
+struct Cld();
 
 #[derive(Debug, Clone, Copy)]
-struct Cli ();
+struct Cli();
 
 #[derive(Debug, Clone, Copy)]
-struct Clv ();
+struct Clv();
 
 #[derive(Debug, Clone, Copy)]
-struct Sec ();
+struct Sec();
 
 #[derive(Debug, Clone, Copy)]
-struct Sed ();
+struct Sed();
 
 #[derive(Debug, Clone, Copy)]
-struct Sei ();
+struct Sei();
 
 #[derive(Debug, Clone, Copy)]
 struct Cmp {
@@ -244,13 +244,13 @@ struct IndirectJmp(u16);
 struct Jsr(u16);
 
 #[derive(Debug, Clone, Copy)]
-struct Rts ();
+struct Rts();
 
 #[derive(Debug, Clone, Copy)]
-struct Brk ();
+struct Brk();
 
 #[derive(Debug, Clone, Copy)]
-struct Rti ();
+struct Rti();
 
 #[derive(Debug, Clone, Copy)]
 struct Bit(Agu);
@@ -484,7 +484,7 @@ impl InstructionType for Cmp {
         let t = reg_val.wrapping_sub(val);
         cpu.update_negative_flag(t);
         cpu.update_zero_flag(t);
-        cpu.set_flag(CarryFlag, reg_val > val);
+        cpu.set_flag(CarryFlag, reg_val >= val);
         ((operands + 1) as i8, ticks + 2)
     }
 }
@@ -494,8 +494,10 @@ impl InstructionType for ConditionBranch {
         let (v, _, _) = cpu.get(&self.register);
         let v = if self.negative { v == 0 } else { v != 0 };
         if v {
-            let dest = ((cpu.pc as i32).wrapping_add(self.offset as i32)) as u16;
-            (self.offset, plus_one_if_cross_page(3, cpu.pc, dest))
+            let pc = cpu.pc;
+            let dest = ((pc as i32).wrapping_add(self.offset as i32)) as u16;
+            cpu.pc = dest;
+            (1, plus_one_if_cross_page(3, pc, dest))
         } else {
             (2, 2)
         }
@@ -564,27 +566,25 @@ impl InstructionType for Bit {
     }
 }
 
-fn decode(cpu: &Cpu) -> Instruction {
-    let op_code = cpu.read_byte(cpu.pc);
+fn decode(cpu: &mut Cpu) -> Instruction {
+    let op_code = cpu.inc_read_byte();
     print!("{:02x} ", op_code);
     let a = (op_code & 0b1110_0000) >> 5;
     let b = (op_code & 0b0001_1100) >> 2;
     let c = op_code & 0b0000_0011;
     print!("a,b,c: {} {} {} ", a, b, c);
 
-    let read_u8 = || cpu.read_byte(cpu.pc.wrapping_add(1));
-    let read_u16 = || cpu.read_word(cpu.pc.wrapping_add(1));
-    let literal = || Agu::Literal(read_u8());
-    let zero_page = || Agu::ZeroPage(read_u8());
-    let zero_page_x = || Agu::ZeroPageX(read_u8());
-    let zero_page_y = || Agu::ZeroPageY(read_u8());
-    let absolute = || Agu::Absolute(read_u16());
-    let absolute_x = || Agu::AbsoluteX(read_u16());
-    let absolute_y = || Agu::AbsoluteY(read_u16());
-    let indirect_x = || Agu::IndirectX(read_u8());
-    let indirect_y = || Agu::IndirectY(read_u8());
-    let cond_branch = |agu| Instruction::ConditionBranch(ConditionBranch::new(read_u8() as i8, agu, false));
-    let neg_cond_branch = |agu| Instruction::ConditionBranch(ConditionBranch::new(read_u8() as i8, agu, true));
+    let literal = |cpu: &mut Cpu| Agu::Literal(cpu.inc_read_byte());
+    let zero_page = |cpu: &mut Cpu| Agu::ZeroPage(cpu.inc_read_byte());
+    let zero_page_x = |cpu: &mut Cpu| Agu::ZeroPageX(cpu.inc_read_byte());
+    let zero_page_y = |cpu: &mut Cpu| Agu::ZeroPageY(cpu.inc_read_byte());
+    let absolute = |cpu: &mut Cpu| Agu::Absolute(cpu.inc_read_word());
+    let absolute_x = |cpu: &mut Cpu| Agu::AbsoluteX(cpu.inc_read_word());
+    let absolute_y = |cpu: &mut Cpu| Agu::AbsoluteY(cpu.inc_read_word());
+    let indirect_x = |cpu: &mut Cpu| Agu::IndirectX(cpu.inc_read_byte());
+    let indirect_y = |cpu: &mut Cpu| Agu::IndirectY(cpu.inc_read_byte());
+    let cond_branch = |cpu: &mut Cpu, agu| Instruction::ConditionBranch(ConditionBranch::new(cpu.inc_read_byte() as i8, agu, false));
+    let neg_cond_branch = |cpu: &mut Cpu, agu| Instruction::ConditionBranch(ConditionBranch::new(cpu.inc_read_byte() as i8, agu, true));
     let transfer = |dest, src| Instruction::Transfer(Transfer { src, dest });
     let dec = |agu| Instruction::Dec(Dec(agu));
     let inc = |agu| Instruction::Inc(Inc(agu));
@@ -603,178 +603,178 @@ fn decode(cpu: &Cpu) -> Instruction {
     match (c, a, b) {
         (0, 0, 0) => Instruction::Brk(Brk()),
         (0, 0, 2) => Instruction::Push(Push(Agu::Status)),
-        (0, 0, 4) => neg_cond_branch(Agu::NegativeFlag),
+        (0, 0, 4) => neg_cond_branch(cpu, Agu::NegativeFlag),
         (0, 0, 6) => Instruction::Clc(Clc()),
 
-        (0, 1, 0) => Instruction::Jsr(Jsr(read_u16())),
-        (0, 1, 1) => Instruction::Bit(Bit(zero_page())),
+        (0, 1, 0) => Instruction::Jsr(Jsr(cpu.inc_read_word())),
+        (0, 1, 1) => Instruction::Bit(Bit(zero_page(cpu))),
         (0, 1, 2) => Instruction::Pop(Pop(Agu::Status)),
-        (0, 1, 3) => Instruction::Bit(Bit(absolute())),
-        (0, 1, 4) => cond_branch(Agu::NegativeFlag),
+        (0, 1, 3) => Instruction::Bit(Bit(absolute(cpu))),
+        (0, 1, 4) => cond_branch(cpu, Agu::NegativeFlag),
         (0, 1, 6) => Instruction::Sec(Sec()),
 
         (0, 2, 0) => Instruction::Rti(Rti()),
         (0, 2, 2) => Instruction::Push(Push(aa)),
-        (0, 2, 3) => Instruction::Jmp(Jmp(read_u16())),
-        (0, 2, 4) => neg_cond_branch(Agu::OverflowFlag),
+        (0, 2, 3) => Instruction::Jmp(Jmp(cpu.inc_read_word())),
+        (0, 2, 4) => neg_cond_branch(cpu, Agu::OverflowFlag),
         (0, 2, 6) => Instruction::Cli(Cli()),
 
         (0, 3, 0) => Instruction::Rts(Rts()),
         (0, 3, 2) => Instruction::Pop(Pop(aa)),
-        (0, 3, 3) => Instruction::IndirectJmp(IndirectJmp(read_u16())),
-        (0, 3, 4) => cond_branch(Agu::OverflowFlag),
+        (0, 3, 3) => Instruction::IndirectJmp(IndirectJmp(cpu.inc_read_word())),
+        (0, 3, 4) => cond_branch(cpu, Agu::OverflowFlag),
         (0, 3, 6) => Instruction::Sei(Sei()),
 
-        (0, 4, 1) => transfer(zero_page(), y),
+        (0, 4, 1) => transfer(zero_page(cpu), y),
         (0, 4, 2) => dec(Agu::RegisterY),
-        (0, 4, 3) => transfer(absolute(), y),
-        (0, 4, 4) => neg_cond_branch(Agu::CarryFlag),
-        (0, 4, 5) => transfer(zero_page_x(), y),
+        (0, 4, 3) => transfer(absolute(cpu), y),
+        (0, 4, 4) => neg_cond_branch(cpu, Agu::CarryFlag),
+        (0, 4, 5) => transfer(zero_page_x(cpu), y),
         (0, 4, 6) => transfer(aa, y),
 
-        (0, 5, 0) => transfer(y, literal()),
-        (0, 5, 1) => transfer(y, zero_page()),
+        (0, 5, 0) => transfer(y, literal(cpu)),
+        (0, 5, 1) => transfer(y, zero_page(cpu)),
         (0, 5, 2) => transfer(y, aa),
-        (0, 5, 3) => transfer(y, absolute()),
-        (0, 5, 4) => cond_branch(Agu::CarryFlag),
-        (0, 5, 5) => transfer(y, zero_page_x()),
+        (0, 5, 3) => transfer(y, absolute(cpu)),
+        (0, 5, 4) => cond_branch(cpu, Agu::CarryFlag),
+        (0, 5, 5) => transfer(y, zero_page_x(cpu)),
         (0, 5, 6) => Instruction::Clv(Clv()),
-        (0, 5, 7) => transfer(y, absolute_x()),
+        (0, 5, 7) => transfer(y, absolute_x(cpu)),
 
-        (0, 6, 0) => cmp(y, literal()),
-        (0, 6, 1) => cmp(y, zero_page()),
+        (0, 6, 0) => cmp(y, literal(cpu)),
+        (0, 6, 1) => cmp(y, zero_page(cpu)),
         (0, 6, 2) => inc(y),
-        (0, 6, 3) => cmp(y, absolute()),
-        (0, 6, 4) => neg_cond_branch(Agu::ZeroFlag),
+        (0, 6, 3) => cmp(y, absolute(cpu)),
+        (0, 6, 4) => neg_cond_branch(cpu, Agu::ZeroFlag),
         (0, 6, 6) => Instruction::Cld(Cld()),
 
-        (0, 7, 0) => cmp(x, literal()),
-        (0, 7, 1) => cmp(x, zero_page()),
+        (0, 7, 0) => cmp(x, literal(cpu)),
+        (0, 7, 1) => cmp(x, zero_page(cpu)),
         (0, 7, 2) => inc(x),
-        (0, 7, 3) => cmp(x, absolute()),
-        (0, 7, 4) => cond_branch(Agu::ZeroFlag),
+        (0, 7, 3) => cmp(x, absolute(cpu)),
+        (0, 7, 4) => cond_branch(cpu, Agu::ZeroFlag),
         (0, 7, 6) => Instruction::Sed(Sed()),
 
-        (1, 0, 0) => ora(indirect_x()),
-        (1, 0, 1) => ora(zero_page()),
-        (1, 0, 2) => ora(literal()),
-        (1, 0, 3) => ora(absolute()),
-        (1, 0, 4) => ora(indirect_y()),
-        (1, 0, 5) => ora(zero_page_x()),
-        (1, 0, 6) => ora(absolute_y()),
-        (1, 0, 7) => ora(absolute_x()),
+        (1, 0, 0) => ora(indirect_x(cpu)),
+        (1, 0, 1) => ora(zero_page(cpu)),
+        (1, 0, 2) => ora(literal(cpu)),
+        (1, 0, 3) => ora(absolute(cpu)),
+        (1, 0, 4) => ora(indirect_y(cpu)),
+        (1, 0, 5) => ora(zero_page_x(cpu)),
+        (1, 0, 6) => ora(absolute_y(cpu)),
+        (1, 0, 7) => ora(absolute_x(cpu)),
 
-        (1, 1, 0) => and(indirect_x()),
-        (1, 1, 1) => and(zero_page()),
-        (1, 1, 2) => and(literal()),
-        (1, 1, 3) => and(absolute()),
-        (1, 1, 4) => and(indirect_y()),
-        (1, 1, 5) => and(zero_page_x()),
-        (1, 1, 6) => and(absolute_y()),
-        (1, 1, 7) => and(absolute_x()),
+        (1, 1, 0) => and(indirect_x(cpu)),
+        (1, 1, 1) => and(zero_page(cpu)),
+        (1, 1, 2) => and(literal(cpu)),
+        (1, 1, 3) => and(absolute(cpu)),
+        (1, 1, 4) => and(indirect_y(cpu)),
+        (1, 1, 5) => and(zero_page_x(cpu)),
+        (1, 1, 6) => and(absolute_y(cpu)),
+        (1, 1, 7) => and(absolute_x(cpu)),
 
-        (1, 2, 0) => eor(indirect_x()),
-        (1, 2, 1) => eor(zero_page()),
-        (1, 2, 2) => eor(literal()),
-        (1, 2, 3) => eor(absolute()),
-        (1, 2, 4) => eor(indirect_y()),
-        (1, 2, 5) => eor(zero_page_x()),
-        (1, 2, 6) => eor(absolute_y()),
-        (1, 2, 7) => eor(absolute_x()),
+        (1, 2, 0) => eor(indirect_x(cpu)),
+        (1, 2, 1) => eor(zero_page(cpu)),
+        (1, 2, 2) => eor(literal(cpu)),
+        (1, 2, 3) => eor(absolute(cpu)),
+        (1, 2, 4) => eor(indirect_y(cpu)),
+        (1, 2, 5) => eor(zero_page_x(cpu)),
+        (1, 2, 6) => eor(absolute_y(cpu)),
+        (1, 2, 7) => eor(absolute_x(cpu)),
 
-        (1, 3, 0) => adc(indirect_x()),
-        (1, 3, 1) => adc(zero_page()),
-        (1, 3, 2) => adc(literal()),
-        (1, 3, 3) => adc(absolute()),
-        (1, 3, 4) => adc(indirect_y()),
-        (1, 3, 5) => adc(zero_page_x()),
-        (1, 3, 6) => adc(absolute_y()),
-        (1, 3, 7) => adc(absolute_x()),
+        (1, 3, 0) => adc(indirect_x(cpu)),
+        (1, 3, 1) => adc(zero_page(cpu)),
+        (1, 3, 2) => adc(literal(cpu)),
+        (1, 3, 3) => adc(absolute(cpu)),
+        (1, 3, 4) => adc(indirect_y(cpu)),
+        (1, 3, 5) => adc(zero_page_x(cpu)),
+        (1, 3, 6) => adc(absolute_y(cpu)),
+        (1, 3, 7) => adc(absolute_x(cpu)),
 
-        (1, 4, 0) => transfer(indirect_x(), aa),
-        (1, 4, 1) => transfer(zero_page(), aa),
-        (1, 4, 3) => transfer(absolute(), aa),
-        (1, 4, 4) => transfer(indirect_y(), aa),
-        (1, 4, 5) => transfer(zero_page_x(), aa),
-        (1, 4, 6) => transfer(absolute_y(), aa),
-        (1, 4, 7) => transfer(absolute_x(), aa),
+        (1, 4, 0) => transfer(indirect_x(cpu), aa),
+        (1, 4, 1) => transfer(zero_page(cpu), aa),
+        (1, 4, 3) => transfer(absolute(cpu), aa),
+        (1, 4, 4) => transfer(indirect_y(cpu), aa),
+        (1, 4, 5) => transfer(zero_page_x(cpu), aa),
+        (1, 4, 6) => transfer(absolute_y(cpu), aa),
+        (1, 4, 7) => transfer(absolute_x(cpu), aa),
 
-        (1, 5, 0) => transfer(aa, indirect_x()),
-        (1, 5, 1) => transfer(aa, zero_page()),
-        (1, 5, 2) => transfer(aa, literal()),
-        (1, 5, 3) => transfer(aa, absolute()),
-        (1, 5, 4) => transfer(aa, indirect_y()),
-        (1, 5, 5) => transfer(aa, zero_page_x()),
-        (1, 5, 6) => transfer(aa, absolute_y()),
-        (1, 5, 7) => transfer(aa, absolute_x()),
+        (1, 5, 0) => transfer(aa, indirect_x(cpu)),
+        (1, 5, 1) => transfer(aa, zero_page(cpu)),
+        (1, 5, 2) => transfer(aa, literal(cpu)),
+        (1, 5, 3) => transfer(aa, absolute(cpu)),
+        (1, 5, 4) => transfer(aa, indirect_y(cpu)),
+        (1, 5, 5) => transfer(aa, zero_page_x(cpu)),
+        (1, 5, 6) => transfer(aa, absolute_y(cpu)),
+        (1, 5, 7) => transfer(aa, absolute_x(cpu)),
 
-        (1, 6, 0) => cmp(aa, indirect_x()),
-        (1, 6, 1) => cmp(aa, zero_page()),
-        (1, 6, 2) => cmp(aa, literal()),
-        (1, 6, 3) => cmp(aa, absolute()),
-        (1, 6, 4) => cmp(aa, indirect_y()),
-        (1, 6, 5) => cmp(aa, zero_page_x()),
-        (1, 6, 6) => cmp(aa, absolute_y()),
-        (1, 6, 7) => cmp(aa, absolute_x()),
+        (1, 6, 0) => cmp(aa, indirect_x(cpu)),
+        (1, 6, 1) => cmp(aa, zero_page(cpu)),
+        (1, 6, 2) => cmp(aa, literal(cpu)),
+        (1, 6, 3) => cmp(aa, absolute(cpu)),
+        (1, 6, 4) => cmp(aa, indirect_y(cpu)),
+        (1, 6, 5) => cmp(aa, zero_page_x(cpu)),
+        (1, 6, 6) => cmp(aa, absolute_y(cpu)),
+        (1, 6, 7) => cmp(aa, absolute_x(cpu)),
 
-        (1, 7, 0) => sbc(indirect_x()),
-        (1, 7, 1) => sbc(zero_page()),
-        (1, 7, 2) => sbc(literal()),
-        (1, 7, 3) => sbc(absolute()),
-        (1, 7, 4) => sbc(indirect_y()),
-        (1, 7, 5) => sbc(zero_page_x()),
-        (1, 7, 6) => sbc(absolute_y()),
-        (1, 7, 7) => sbc(absolute_x()),
+        (1, 7, 0) => sbc(indirect_x(cpu)),
+        (1, 7, 1) => sbc(zero_page(cpu)),
+        (1, 7, 2) => sbc(literal(cpu)),
+        (1, 7, 3) => sbc(absolute(cpu)),
+        (1, 7, 4) => sbc(indirect_y(cpu)),
+        (1, 7, 5) => sbc(zero_page_x(cpu)),
+        (1, 7, 6) => sbc(absolute_y(cpu)),
+        (1, 7, 7) => sbc(absolute_x(cpu)),
 
-        (2, 0, 1) => asl(zero_page()),
+        (2, 0, 1) => asl(zero_page(cpu)),
         (2, 0, 2) => asl(aa),
-        (2, 0, 3) => asl(absolute()),
-        (2, 0, 5) => asl(zero_page_x()),
-        (2, 0, 7) => asl(absolute_x()),
+        (2, 0, 3) => asl(absolute(cpu)),
+        (2, 0, 5) => asl(zero_page_x(cpu)),
+        (2, 0, 7) => asl(absolute_x(cpu)),
 
-        (2, 1, 1) => rol(zero_page()),
+        (2, 1, 1) => rol(zero_page(cpu)),
         (2, 1, 2) => rol(aa),
-        (2, 1, 3) => rol(absolute()),
-        (2, 1, 5) => rol(zero_page_x()),
-        (2, 1, 7) => rol(absolute_x()),
+        (2, 1, 3) => rol(absolute(cpu)),
+        (2, 1, 5) => rol(zero_page_x(cpu)),
+        (2, 1, 7) => rol(absolute_x(cpu)),
 
-        (2, 2, 1) => lsr(zero_page()),
+        (2, 2, 1) => lsr(zero_page(cpu)),
         (2, 2, 2) => lsr(aa),
-        (2, 2, 3) => lsr(absolute()),
-        (2, 2, 5) => lsr(zero_page_x()),
-        (2, 2, 7) => lsr(absolute_x()),
+        (2, 2, 3) => lsr(absolute(cpu)),
+        (2, 2, 5) => lsr(zero_page_x(cpu)),
+        (2, 2, 7) => lsr(absolute_x(cpu)),
 
-        (2, 3, 1) => ror(zero_page()),
+        (2, 3, 1) => ror(zero_page(cpu)),
         (2, 3, 2) => ror(aa),
-        (2, 3, 3) => ror(absolute()),
-        (2, 3, 5) => ror(zero_page_x()),
-        (2, 3, 7) => ror(absolute_x()),
+        (2, 3, 3) => ror(absolute(cpu)),
+        (2, 3, 5) => ror(zero_page_x(cpu)),
+        (2, 3, 7) => ror(absolute_x(cpu)),
 
-        (2, 4, 1) => transfer(zero_page(), x),
+        (2, 4, 1) => transfer(zero_page(cpu), x),
         (2, 4, 2) => transfer(aa, x),
-        (2, 4, 3) => transfer(absolute(), x),
-        (2, 4, 5) => transfer(zero_page_y(), x),
+        (2, 4, 3) => transfer(absolute(cpu), x),
+        (2, 4, 5) => transfer(zero_page_y(cpu), x),
         (2, 4, 6) => transfer(sp, x),
 
-        (2, 5, 0) => transfer(x, literal()),
-        (2, 5, 1) => transfer(x, zero_page()),
+        (2, 5, 0) => transfer(x, literal(cpu)),
+        (2, 5, 1) => transfer(x, zero_page(cpu)),
         (2, 5, 2) => transfer(x, aa),
-        (2, 5, 3) => transfer(x, absolute()),
-        (2, 5, 5) => transfer(x, zero_page_y()),
+        (2, 5, 3) => transfer(x, absolute(cpu)),
+        (2, 5, 5) => transfer(x, zero_page_y(cpu)),
         (2, 5, 6) => transfer(x, sp),
-        (2, 5, 7) => transfer(x, absolute_y()),
+        (2, 5, 7) => transfer(x, absolute_y(cpu)),
 
-        (2, 6, 1) => dec(zero_page()),
+        (2, 6, 1) => dec(zero_page(cpu)),
         (2, 6, 2) => dec(x),
-        (2, 6, 3) => dec(absolute()),
-        (2, 6, 5) => dec(zero_page_x()),
-        (2, 6, 7) => dec(absolute_x()),
+        (2, 6, 3) => dec(absolute(cpu)),
+        (2, 6, 5) => dec(zero_page_x(cpu)),
+        (2, 6, 7) => dec(absolute_x(cpu)),
 
-        (2, 7, 1) => inc(zero_page()),
+        (2, 7, 1) => inc(zero_page(cpu)),
         (2, 7, 2) => Instruction::Nop,
-        (2, 7, 3) => inc(absolute()),
-        (2, 7, 5) => inc(zero_page_x()),
-        (2, 7, 7) => inc(absolute_x()),
+        (2, 7, 3) => inc(absolute(cpu)),
+        (2, 7, 5) => inc(zero_page_x(cpu)),
+        (2, 7, 7) => inc(absolute_x(cpu)),
 
         _ => panic_any(format!("Unknown opcode: {:02x} @ {:04x}", op_code, cpu.pc)),
     }
@@ -858,13 +858,13 @@ impl Cpu {
     pub fn run<T: SyncInstructionCycle>(&mut self, cycle_sync: &mut T) {
         // self.pc = self.read_word(0xFFFC);
         self.pc = 0x400;
-        let mut i=0;
+        let mut i = 0;
         loop {
             let instruction = decode(self);
             println!("Op: {:?}", &instruction);
             self.execute(instruction, cycle_sync);
-            i+=1;
-            if i>100 {
+            i += 1;
+            if i > 40590 {
                 break;
             }
         }
@@ -873,7 +873,7 @@ impl Cpu {
     fn execute<T: SyncInstructionCycle>(&mut self, inst: Instruction, cycle_sync: &mut T) {
         cycle_sync.start();
         let mut absolute_pc: i32 = -1;
-        let (pc, cycles) = match inst {
+        let (_, cycles) = match inst {
             Instruction::Transfer(inst) => inst.execute(self),
             Instruction::TransferNoTouchFlags(inst) => inst.execute(self),
             Instruction::Push(inst) => inst.execute(self),
@@ -934,8 +934,6 @@ impl Cpu {
 
         if absolute_pc != -1 {
             self.pc = absolute_pc as u16;
-        } else {
-            self.inc_pc(pc);
         }
         println!("PC: {:04x}", self.pc);
 
@@ -956,6 +954,18 @@ impl Cpu {
 
     fn read_byte(&self, addr: u16) -> u8 {
         self.memory[addr as usize]
+    }
+
+    fn inc_read_byte(&mut self) -> u8 {
+        let addr = self.pc;
+        self.inc_pc(1);
+        self.read_byte(addr)
+    }
+
+    fn inc_read_word(&mut self) -> u16 {
+        let addr = self.pc;
+        self.inc_pc(2);
+        self.read_word(addr)
     }
 
     fn write_byte(&mut self, addr: u16, value: u8) {
