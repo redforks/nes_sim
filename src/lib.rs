@@ -219,13 +219,13 @@ struct Cmp {
 
 #[derive(Debug, Clone, Copy)]
 struct ConditionBranch {
-    offset: u8,
+    offset: i8,
     register: Agu,
     negative: bool,
 }
 
 impl ConditionBranch {
-    fn new(offset: u8, register: Agu, negative: bool) -> ConditionBranch {
+    fn new(offset: i8, register: Agu, negative: bool) -> ConditionBranch {
         ConditionBranch {
             offset,
             register,
@@ -257,7 +257,7 @@ struct Bit(Agu);
 
 trait InstructionType {
     // (pcDelta, tickCount)
-    fn execute(&self, cpu: &mut Cpu) -> (u8, u8);
+    fn execute(&self, cpu: &mut Cpu) -> (i8, u8);
 }
 
 /// Bin operate with A register and value from Agu, store result to A register.
@@ -265,13 +265,13 @@ trait AccumulatorOpInstructionType {
     fn agu(&self) -> &Agu;
     fn op(a: u8, v: u8) -> u8;
 
-    fn execute(&self, cpu: &mut Cpu) -> (u8, u8) {
+    fn execute(&self, cpu: &mut Cpu) -> (i8, u8) {
         let agu = self.agu();
         let (val, operands, ticks) = cpu.get(agu);
         cpu.a = Self::op(cpu.a, val);
         cpu.update_negative_flag(cpu.a);
         cpu.update_zero_flag(cpu.a);
-        (operands + 1, ticks + 2)
+        ((operands + 1) as i8, ticks + 2)
     }
 }
 
@@ -279,7 +279,7 @@ trait ShiftInstructionType {
     fn agu(&self) -> &Agu;
     fn op(cpu: &Cpu, v: u8) -> (u8, bool);
 
-    fn execute(&self, cpu: &mut Cpu) -> (u8, u8) {
+    fn execute(&self, cpu: &mut Cpu) -> (i8, u8) {
         let agu = self.agu();
         let (val, operands, ticks) = cpu.get(agu);
         let (v, carry_flag) = Self::op(cpu, val);
@@ -287,30 +287,30 @@ trait ShiftInstructionType {
         cpu.put(agu, v);
         cpu.update_negative_flag(v);
         cpu.update_zero_flag(v);
-        (operands + 1, ticks + 2)
+        ((operands + 1) as i8, ticks + 2)
     }
 }
 
 impl InstructionType for Transfer {
-    fn execute(&self, cpu: &mut Cpu) -> (u8, u8) {
+    fn execute(&self, cpu: &mut Cpu) -> (i8, u8) {
         let (val, operands, ticks) = cpu.get(&self.src);
         cpu.put(&self.dest, val);
         cpu.update_negative_flag(val);
         cpu.update_zero_flag(val);
-        (operands + 1, ticks + 2)
+        ((operands + 1) as i8, ticks + 2)
     }
 }
 
 impl InstructionType for TransferNoTouchFlags {
-    fn execute(&self, cpu: &mut Cpu) -> (u8, u8) {
+    fn execute(&self, cpu: &mut Cpu) -> (i8, u8) {
         let (val, operands, ticks) = cpu.get(&self.src);
         cpu.put(&self.dest, val);
-        (operands + 1, ticks + 3)
+        ((operands + 1) as i8, ticks + 3)
     }
 }
 
 impl InstructionType for Push {
-    fn execute(&self, cpu: &mut Cpu) -> (u8, u8) {
+    fn execute(&self, cpu: &mut Cpu) -> (i8, u8) {
         let (val, ..) = cpu.get(&self.0);
         cpu.push_stack(val);
         (1, 3)
@@ -318,7 +318,7 @@ impl InstructionType for Push {
 }
 
 impl InstructionType for Pop {
-    fn execute(&self, cpu: &mut Cpu) -> (u8, u8) {
+    fn execute(&self, cpu: &mut Cpu) -> (i8, u8) {
         let val = cpu.pop_stack();
         cpu.put(&self.0, val);
         (1, 4)
@@ -326,29 +326,29 @@ impl InstructionType for Pop {
 }
 
 impl InstructionType for Dec {
-    fn execute(&self, cpu: &mut Cpu) -> (u8, u8) {
+    fn execute(&self, cpu: &mut Cpu) -> (i8, u8) {
         let (val, operands, ticks) = cpu.get(&self.0);
         let val = val.wrapping_sub(1);
         cpu.put(&self.0, val);
         cpu.update_negative_flag(val);
         cpu.update_zero_flag(val);
-        (1 + operands, if self.0.is_register() { 2 } else { 4 + ticks })
+        ((1 + operands) as i8, if self.0.is_register() { 2 } else { 4 + ticks })
     }
 }
 
 impl InstructionType for Inc {
-    fn execute(&self, cpu: &mut Cpu) -> (u8, u8) {
+    fn execute(&self, cpu: &mut Cpu) -> (i8, u8) {
         let (val, operands, ticks) = cpu.get(&self.0);
         let val = val.wrapping_add(1);
         cpu.put(&self.0, val);
         cpu.update_negative_flag(val);
         cpu.update_zero_flag(val);
-        (1 + operands, if self.0.is_register() { 2 } else { 4 + ticks })
+        ((1 + operands) as i8, if self.0.is_register() { 2 } else { 4 + ticks })
     }
 }
 
 impl InstructionType for Adc {
-    fn execute(&self, cpu: &mut Cpu) -> (u8, u8) {
+    fn execute(&self, cpu: &mut Cpu) -> (i8, u8) {
         let (val, operands, ticks) = cpu.get(&self.0);
 
         let t: u16 = cpu.a as u16 + val as u16 + (cpu.flag(CarryFlag)) as u16;
@@ -358,12 +358,12 @@ impl InstructionType for Adc {
         cpu.set_flag(CarryFlag, t > 255);
         cpu.a = t as u8;
 
-        (operands + 1, ticks + 2)
+        ((operands + 1) as i8, ticks + 2)
     }
 }
 
 impl InstructionType for Sbc {
-    fn execute(&self, cpu: &mut Cpu) -> (u8, u8) {
+    fn execute(&self, cpu: &mut Cpu) -> (i8, u8) {
         let (val, operands, ticks) = cpu.get(&self.0);
 
         let t = cpu.a as i16 - val as i16 - !(cpu.flag(CarryFlag) as i16);
@@ -373,7 +373,7 @@ impl InstructionType for Sbc {
         cpu.update_zero_flag(t);
         cpu.a = t as u8;
 
-        (operands + 1, ticks + 2)
+        ((operands + 1) as i8, ticks + 2)
     }
 }
 
@@ -429,72 +429,73 @@ impl ShiftInstructionType for Ror {
 }
 
 impl InstructionType for Clc {
-    fn execute(&self, cpu: &mut Cpu) -> (u8, u8) {
+    fn execute(&self, cpu: &mut Cpu) -> (i8, u8) {
         cpu.set_flag(CarryFlag, false);
         (1, 2)
     }
 }
 
 impl InstructionType for Cld {
-    fn execute(&self, cpu: &mut Cpu) -> (u8, u8) {
+    fn execute(&self, cpu: &mut Cpu) -> (i8, u8) {
         cpu.set_flag(DecimalModeFlag, false);
         (1, 2)
     }
 }
 
 impl InstructionType for Cli {
-    fn execute(&self, cpu: &mut Cpu) -> (u8, u8) {
+    fn execute(&self, cpu: &mut Cpu) -> (i8, u8) {
         cpu.set_flag(InterruptDisableFlag, false);
         (1, 2)
     }
 }
 
 impl InstructionType for Clv {
-    fn execute(&self, cpu: &mut Cpu) -> (u8, u8) {
+    fn execute(&self, cpu: &mut Cpu) -> (i8, u8) {
         cpu.set_flag(OverflowFlag, false);
         (1, 2)
     }
 }
 
 impl InstructionType for Sec {
-    fn execute(&self, cpu: &mut Cpu) -> (u8, u8) {
+    fn execute(&self, cpu: &mut Cpu) -> (i8, u8) {
         cpu.set_flag(CarryFlag, true);
         (1, 2)
     }
 }
 
 impl InstructionType for Sed {
-    fn execute(&self, cpu: &mut Cpu) -> (u8, u8) {
+    fn execute(&self, cpu: &mut Cpu) -> (i8, u8) {
         cpu.set_flag(DecimalModeFlag, true);
         (1, 2)
     }
 }
 
 impl InstructionType for Sei {
-    fn execute(&self, cpu: &mut Cpu) -> (u8, u8) {
+    fn execute(&self, cpu: &mut Cpu) -> (i8, u8) {
         cpu.set_flag(InterruptDisableFlag, true);
         (1, 2)
     }
 }
 
 impl InstructionType for Cmp {
-    fn execute(&self, cpu: &mut Cpu) -> (u8, u8) {
+    fn execute(&self, cpu: &mut Cpu) -> (i8, u8) {
         let (reg_val, _, _) = cpu.get(&self.register);
         let (val, operands, ticks) = cpu.get(&self.memory);
-        let t = reg_val - val;
+        let t = reg_val.wrapping_sub(val);
         cpu.update_negative_flag(t);
         cpu.update_zero_flag(t);
         cpu.set_flag(CarryFlag, reg_val > val);
-        (operands + 1, ticks + 2)
+        ((operands + 1) as i8, ticks + 2)
     }
 }
 
 impl InstructionType for ConditionBranch {
-    fn execute(&self, cpu: &mut Cpu) -> (u8, u8) {
+    fn execute(&self, cpu: &mut Cpu) -> (i8, u8) {
         let (v, _, _) = cpu.get(&self.register);
         let v = if self.negative { v == 0 } else { v != 0 };
         if v {
-            (self.offset, plus_one_if_cross_page(3, cpu.pc, self.offset as u16 + cpu.pc))
+            let dest = ((cpu.pc as i32).wrapping_add(self.offset as i32)) as u16;
+            (self.offset, plus_one_if_cross_page(3, cpu.pc, dest))
         } else {
             (2, 2)
         }
@@ -553,13 +554,13 @@ impl Rti {
 }
 
 impl InstructionType for Bit {
-    fn execute(&self, cpu: &mut Cpu) -> (u8, u8) {
+    fn execute(&self, cpu: &mut Cpu) -> (i8, u8) {
         let (v, operands, ticks) = cpu.get(&self.0);
         let v = v & cpu.a;
         cpu.set_flag(NegativeFlag, v & 0x80 != 0);
         cpu.set_flag(OverflowFlag, v & 0x70 != 0);
         cpu.update_zero_flag(v);
-        (operands + 1, ticks + 2)
+        ((operands + 1) as i8, ticks + 2)
     }
 }
 
@@ -582,8 +583,8 @@ fn decode(cpu: &Cpu) -> Instruction {
     let absolute_y = || Agu::AbsoluteY(read_u16());
     let indirect_x = || Agu::IndirectX(read_u8());
     let indirect_y = || Agu::IndirectY(read_u8());
-    let cond_branch = |agu| Instruction::ConditionBranch(ConditionBranch::new(read_u8(), agu, false));
-    let neg_cond_branch = |agu| Instruction::ConditionBranch(ConditionBranch::new(read_u8(), agu, true));
+    let cond_branch = |agu| Instruction::ConditionBranch(ConditionBranch::new(read_u8() as i8, agu, false));
+    let neg_cond_branch = |agu| Instruction::ConditionBranch(ConditionBranch::new(read_u8() as i8, agu, true));
     let transfer = |dest, src| Instruction::Transfer(Transfer { src, dest });
     let dec = |agu| Instruction::Dec(Dec(agu));
     let inc = |agu| Instruction::Inc(Inc(agu));
@@ -941,7 +942,7 @@ impl Cpu {
         cycle_sync.end(cycles);
     }
 
-    fn inc_pc(&mut self, delta: u8) {
+    fn inc_pc(&mut self, delta: i8) {
         self.pc = self.pc.wrapping_add(delta as u16);
     }
 
