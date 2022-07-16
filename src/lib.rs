@@ -262,7 +262,7 @@ trait InstructionType {
 
 /// Bin operate with A register and value from Agu, store result to A register.
 trait AccumulatorOpInstructionType {
-    fn agu(&self) -> &Agu;
+    fn agu(&self) -> Agu;
     fn op(a: u8, v: u8) -> u8;
 
     fn execute(&self, cpu: &mut Cpu) -> u8 {
@@ -276,7 +276,7 @@ trait AccumulatorOpInstructionType {
 }
 
 trait ShiftInstructionType {
-    fn agu(&self) -> &Agu;
+    fn agu(&self) -> Agu;
     fn op(cpu: &Cpu, v: u8) -> (u8, bool);
 
     fn execute(&self, cpu: &mut Cpu) -> u8 {
@@ -293,8 +293,8 @@ trait ShiftInstructionType {
 
 impl InstructionType for Transfer {
     fn execute(&self, cpu: &mut Cpu) -> u8 {
-        let (val, ticks) = cpu.get(&self.src);
-        cpu.put(&self.dest, val);
+        let (val, ticks) = cpu.get(self.src);
+        cpu.put(self.dest, val);
         cpu.update_negative_flag(val);
         cpu.update_zero_flag(val);
         ticks + 2
@@ -303,15 +303,15 @@ impl InstructionType for Transfer {
 
 impl InstructionType for TransferNoTouchFlags {
     fn execute(&self, cpu: &mut Cpu) -> u8 {
-        let (val, ticks) = cpu.get(&self.src);
-        cpu.put(&self.dest, val);
+        let (val, ticks) = cpu.get(self.src);
+        cpu.put(self.dest, val);
         ticks + 3
     }
 }
 
 impl InstructionType for Push {
     fn execute(&self, cpu: &mut Cpu) -> u8 {
-        let (val, ..) = cpu.get(&self.0);
+        let (val, ..) = cpu.get(self.0);
         cpu.push_stack(val);
         3
     }
@@ -320,7 +320,7 @@ impl InstructionType for Push {
 impl InstructionType for Pop {
     fn execute(&self, cpu: &mut Cpu) -> u8 {
         let val = cpu.pop_stack();
-        cpu.put(&self.0, val);
+        cpu.put(self.0, val);
         match self.0 {
             Agu::RegisterA => {
                 cpu.update_negative_flag(val);
@@ -338,9 +338,9 @@ impl InstructionType for Pop {
 
 impl InstructionType for Dec {
     fn execute(&self, cpu: &mut Cpu) -> u8 {
-        let (val, ticks) = cpu.get(&self.0);
+        let (val, ticks) = cpu.get(self.0);
         let val = val.wrapping_sub(1);
-        cpu.put(&self.0, val);
+        cpu.put(self.0, val);
         cpu.update_negative_flag(val);
         cpu.update_zero_flag(val);
         if self.0.is_register() { 2 } else { 4 + ticks }
@@ -349,9 +349,9 @@ impl InstructionType for Dec {
 
 impl InstructionType for Inc {
     fn execute(&self, cpu: &mut Cpu) -> u8 {
-        let (val, ticks) = cpu.get(&self.0);
+        let (val, ticks) = cpu.get(self.0);
         let val = val.wrapping_add(1);
-        cpu.put(&self.0, val);
+        cpu.put(self.0, val);
         cpu.update_negative_flag(val);
         cpu.update_zero_flag(val);
         if self.0.is_register() { 2 } else { 4 + ticks }
@@ -360,7 +360,7 @@ impl InstructionType for Inc {
 
 impl InstructionType for Adc {
     fn execute(&self, cpu: &mut Cpu) -> u8 {
-        let (val, ticks) = cpu.get(&self.0);
+        let (val, ticks) = cpu.get(self.0);
 
         let t: u16 = cpu.a as u16 + val as u16 + (cpu.flag(CarryFlag)) as u16;
         cpu.set_flag(OverflowFlag, cpu.a & 0x80 != (t as u8) & 0x80);
@@ -375,7 +375,7 @@ impl InstructionType for Adc {
 
 impl InstructionType for Sbc {
     fn execute(&self, cpu: &mut Cpu) -> u8 {
-        let (val, ticks) = cpu.get(&self.0);
+        let (val, ticks) = cpu.get(self.0);
 
         let t = cpu.a as i16 - val as i16 - !(cpu.flag(CarryFlag) as i16);
         cpu.set_flag(OverflowFlag, t > 127 || t < -128);
@@ -389,22 +389,22 @@ impl InstructionType for Sbc {
 }
 
 impl AccumulatorOpInstructionType for And {
-    fn agu(&self) -> &Agu { &self.0 }
+    fn agu(&self) -> Agu { self.0 }
     fn op(a: u8, v: u8) -> u8 { a & v }
 }
 
 impl AccumulatorOpInstructionType for Eor {
-    fn agu(&self) -> &Agu { &self.0 }
+    fn agu(&self) -> Agu { self.0 }
     fn op(a: u8, v: u8) -> u8 { a ^ v }
 }
 
 impl AccumulatorOpInstructionType for Ora {
-    fn agu(&self) -> &Agu { &self.0 }
+    fn agu(&self) -> Agu { self.0 }
     fn op(a: u8, v: u8) -> u8 { a | v }
 }
 
 impl ShiftInstructionType for Asl {
-    fn agu(&self) -> &Agu { &self.0 }
+    fn agu(&self) -> Agu { self.0 }
 
     fn op(_: &Cpu, v: u8) -> (u8, bool) {
         let carry_flag = v & 0x80 != 0;
@@ -413,7 +413,7 @@ impl ShiftInstructionType for Asl {
 }
 
 impl ShiftInstructionType for Lsr {
-    fn agu(&self) -> &Agu { &self.0 }
+    fn agu(&self) -> Agu { self.0 }
 
     fn op(_: &Cpu, v: u8) -> (u8, bool) {
         let carry_flag = v & 1 != 0;
@@ -422,7 +422,7 @@ impl ShiftInstructionType for Lsr {
 }
 
 impl ShiftInstructionType for Rol {
-    fn agu(&self) -> &Agu { &self.0 }
+    fn agu(&self) -> Agu { self.0 }
 
     fn op(cpu: &Cpu, v: u8) -> (u8, bool) {
         let carry_flag = v & 0x80 != 0;
@@ -431,7 +431,7 @@ impl ShiftInstructionType for Rol {
 }
 
 impl ShiftInstructionType for Ror {
-    fn agu(&self) -> &Agu { &self.0 }
+    fn agu(&self) -> Agu { self.0 }
 
     fn op(cpu: &Cpu, v: u8) -> (u8, bool) {
         let carry_flag = v & 1 != 0;
@@ -490,8 +490,8 @@ impl InstructionType for Sei {
 
 impl InstructionType for Cmp {
     fn execute(&self, cpu: &mut Cpu) -> u8 {
-        let (reg_val, _) = cpu.get(&self.register);
-        let (val, ticks) = cpu.get(&self.memory);
+        let (reg_val, _) = cpu.get(self.register);
+        let (val, ticks) = cpu.get(self.memory);
         let t = reg_val.wrapping_sub(val);
         cpu.update_negative_flag(t);
         cpu.update_zero_flag(t);
@@ -502,7 +502,7 @@ impl InstructionType for Cmp {
 
 impl InstructionType for ConditionBranch {
     fn execute(&self, cpu: &mut Cpu) -> u8 {
-        let (v, ..) = cpu.get(&self.register);
+        let (v, ..) = cpu.get(self.register);
         let v = if self.negative { v == 0 } else { v != 0 };
         if v {
             let pc = cpu.pc;
@@ -553,7 +553,7 @@ impl Brk {
         let pc = cpu.pc.wrapping_add(2);
         cpu.push_stack((pc >> 8) as u8);
         cpu.push_stack(pc as u8);
-        let (status, ..) = cpu.get(&Agu::Status);
+        let (status, ..) = cpu.get(Agu::Status);
         cpu.push_stack(status);
         cpu.pc = cpu.read_word(0xFFFE);
         7
@@ -563,7 +563,7 @@ impl Brk {
 impl Rti {
     fn execute(&self, cpu: &mut Cpu) -> u8 {
         let v = cpu.pop_stack();
-        cpu.put(&Agu::Status, v);
+        cpu.put(Agu::Status, v);
         cpu.pc = cpu.pop_stack() as u16 | (cpu.pop_stack() as u16) << 8;
         6
     }
@@ -571,7 +571,7 @@ impl Rti {
 
 impl InstructionType for Bit {
     fn execute(&self, cpu: &mut Cpu) -> u8 {
-        let (v, ticks) = cpu.get(&self.0);
+        let (v, ticks) = cpu.get(self.0);
         let v = v & cpu.a;
         cpu.set_flag(NegativeFlag, v & 0x80 != 0);
         cpu.set_flag(OverflowFlag, v & 0x70 != 0);
@@ -967,20 +967,20 @@ impl Cpu {
     }
 
     /// Return (value, operand bytes, address ticks)
-    fn get(&self, agu: &Agu) -> (u8, u8) {
+    fn get(&self, agu: Agu) -> (u8, u8) {
         match agu {
-            &Agu::Literal(val) => (val, 0),
-            &Agu::RegisterA => (self.a, 0),
-            &Agu::RegisterX => (self.x, 0),
-            &Agu::RegisterY => (self.y, 0),
-            &Agu::RegisterSP => (self.sp, 0),
-            &Agu::Status => {
+            Agu::Literal(val) => (val, 0),
+            Agu::RegisterA => (self.a, 0),
+            Agu::RegisterX => (self.x, 0),
+            Agu::RegisterY => (self.y, 0),
+            Agu::RegisterSP => (self.sp, 0),
+            Agu::Status => {
                 (self.status | 0b0011_0000, 0)
             }
-            &Agu::CarryFlag => (self.flag(CarryFlag) as u8, 0),
-            &Agu::ZeroFlag => (self.flag(ZeroFlag) as u8, 0),
-            &Agu::NegativeFlag => (self.flag(NegativeFlag) as u8, 0),
-            &Agu::OverflowFlag => (self.flag(OverflowFlag) as u8, 0),
+            Agu::CarryFlag => (self.flag(CarryFlag) as u8, 0),
+            Agu::ZeroFlag => (self.flag(ZeroFlag) as u8, 0),
+            Agu::NegativeFlag => (self.flag(NegativeFlag) as u8, 0),
+            Agu::OverflowFlag => (self.flag(OverflowFlag) as u8, 0),
             _ => {
                 let (addr, ticks) = agu.address(self);
                 (self.read_byte(addr), ticks)
@@ -988,14 +988,14 @@ impl Cpu {
         }
     }
 
-    fn put(&mut self, agu: &Agu, value: u8) {
+    fn put(&mut self, agu: Agu, value: u8) {
         match agu {
-            &Agu::Literal(_) => panic_any("Literal not supported"),
-            &Agu::RegisterA => self.a = value,
-            &Agu::RegisterX => self.x = value,
-            &Agu::RegisterY => self.y = value,
-            &Agu::RegisterSP => self.sp = value,
-            &Agu::Status => self.status = value & 0b1100_1111,
+            Agu::Literal(_) => panic_any("Literal not supported"),
+            Agu::RegisterA => self.a = value,
+            Agu::RegisterX => self.x = value,
+            Agu::RegisterY => self.y = value,
+            Agu::RegisterSP => self.sp = value,
+            Agu::Status => self.status = value & 0b1100_1111,
             _ => {
                 let (addr, _) = agu.address(self);
                 self.write_byte(addr, value);
