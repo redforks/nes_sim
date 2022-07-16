@@ -321,6 +321,17 @@ impl InstructionType for Pop {
     fn execute(&self, cpu: &mut Cpu) -> u8 {
         let val = cpu.pop_stack();
         cpu.put(&self.0, val);
+        match self.0 {
+            Agu::RegisterA => {
+                cpu.update_negative_flag(val);
+                cpu.update_zero_flag(val);
+            },
+            Agu::Status => {},
+            _ => {
+                println!("{:?}", self.0);
+                panic!("Pop can only be used with A or Status")
+            },
+        }
         4
     }
 }
@@ -587,6 +598,7 @@ fn decode(cpu: &mut Cpu) -> Instruction {
     let cond_branch = |cpu: &mut Cpu, agu| Instruction::ConditionBranch(ConditionBranch::new(cpu.inc_read_byte() as i8, agu, false));
     let neg_cond_branch = |cpu: &mut Cpu, agu| Instruction::ConditionBranch(ConditionBranch::new(cpu.inc_read_byte() as i8, agu, true));
     let transfer = |dest, src| Instruction::Transfer(Transfer { src, dest });
+    let transfer_no_touch = |dest, src| Instruction::TransferNoTouchFlags(TransferNoTouchFlags { src, dest});
     let dec = |agu| Instruction::Dec(Dec(agu));
     let inc = |agu| Instruction::Inc(Inc(agu));
     let cmp = |register, memory| Instruction::Cmp(Cmp { register, memory });
@@ -626,11 +638,11 @@ fn decode(cpu: &mut Cpu) -> Instruction {
         (0, 3, 4) => cond_branch(cpu, Agu::OverflowFlag),
         (0, 3, 6) => Instruction::Sei(Sei()),
 
-        (0, 4, 1) => transfer(zero_page(cpu), y),
+        (0, 4, 1) => transfer_no_touch(zero_page(cpu), y),
         (0, 4, 2) => dec(Agu::RegisterY),
-        (0, 4, 3) => transfer(absolute(cpu), y),
+        (0, 4, 3) => transfer_no_touch(absolute(cpu), y),
         (0, 4, 4) => neg_cond_branch(cpu, Agu::CarryFlag),
-        (0, 4, 5) => transfer(zero_page_x(cpu), y),
+        (0, 4, 5) => transfer_no_touch(zero_page_x(cpu), y),
         (0, 4, 6) => transfer(aa, y),
 
         (0, 5, 0) => transfer(y, literal(cpu)),
@@ -692,13 +704,13 @@ fn decode(cpu: &mut Cpu) -> Instruction {
         (1, 3, 6) => adc(absolute_y(cpu)),
         (1, 3, 7) => adc(absolute_x(cpu)),
 
-        (1, 4, 0) => transfer(indirect_x(cpu), aa),
-        (1, 4, 1) => transfer(zero_page(cpu), aa),
-        (1, 4, 3) => transfer(absolute(cpu), aa),
-        (1, 4, 4) => transfer(indirect_y(cpu), aa),
-        (1, 4, 5) => transfer(zero_page_x(cpu), aa),
-        (1, 4, 6) => transfer(absolute_y(cpu), aa),
-        (1, 4, 7) => transfer(absolute_x(cpu), aa),
+        (1, 4, 0) => transfer_no_touch(indirect_x(cpu), aa),
+        (1, 4, 1) => transfer_no_touch(zero_page(cpu), aa),
+        (1, 4, 3) => transfer_no_touch(absolute(cpu), aa),
+        (1, 4, 4) => transfer_no_touch(indirect_y(cpu), aa),
+        (1, 4, 5) => transfer_no_touch(zero_page_x(cpu), aa),
+        (1, 4, 6) => transfer_no_touch(absolute_y(cpu), aa),
+        (1, 4, 7) => transfer_no_touch(absolute_x(cpu), aa),
 
         (1, 5, 0) => transfer(aa, indirect_x(cpu)),
         (1, 5, 1) => transfer(aa, zero_page(cpu)),
@@ -751,11 +763,11 @@ fn decode(cpu: &mut Cpu) -> Instruction {
         (2, 3, 5) => ror(zero_page_x(cpu)),
         (2, 3, 7) => ror(absolute_x(cpu)),
 
-        (2, 4, 1) => transfer(zero_page(cpu), x),
+        (2, 4, 1) => transfer_no_touch(zero_page(cpu), x),
         (2, 4, 2) => transfer(aa, x),
-        (2, 4, 3) => transfer(absolute(cpu), x),
-        (2, 4, 5) => transfer(zero_page_y(cpu), x),
-        (2, 4, 6) => transfer(sp, x),
+        (2, 4, 3) => transfer_no_touch(absolute(cpu), x),
+        (2, 4, 5) => transfer_no_touch(zero_page_y(cpu), x),
+        (2, 4, 6) => transfer_no_touch(sp, x),
 
         (2, 5, 0) => transfer(x, literal(cpu)),
         (2, 5, 1) => transfer(x, zero_page(cpu)),
@@ -992,8 +1004,8 @@ impl Cpu {
                 self.sp = value;
             }
             &Agu::Status => {
-                let saved = self.status & 0b0011_0000;
-                self.status = value & 0b1100_1111 | saved;
+                self.status = value & 0b1100_1111;
+                // self.status = value;
             }
             _ => {
                 let (addr, _) = agu.address(self);
