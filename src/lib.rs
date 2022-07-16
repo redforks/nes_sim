@@ -573,9 +573,9 @@ impl Rti {
 impl InstructionType for Bit {
     fn execute(&self, cpu: &mut Cpu) -> u8 {
         let (v, ticks) = cpu.get(self.0);
+        cpu.set_flag(NegativeFlag, (v & 0x80) != 0);
+        cpu.set_flag(OverflowFlag, (v & 0x70) != 0);
         let v = v & cpu.a;
-        cpu.set_flag(NegativeFlag, v & 0x80 != 0);
-        cpu.set_flag(OverflowFlag, v & 0x70 != 0);
         cpu.update_zero_flag(v);
         ticks + 2
     }
