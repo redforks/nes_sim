@@ -778,7 +778,7 @@ fn decode(cpu: &mut Cpu) -> Instruction {
     }
 }
 
-trait FlagBit {
+pub trait FlagBit {
     const BIT: u8;
 }
 
@@ -842,7 +842,7 @@ impl Cpu {
         }
     }
 
-    fn flag<T: FlagBit>(&self, _: T) -> bool {
+    pub fn flag<T: FlagBit>(&self, _: T) -> bool {
         (self.status & T::BIT) != 0
     }
 
@@ -1036,5 +1036,10 @@ impl Cpu {
     fn pop_stack(&mut self) -> u8 {
         self.sp = self.sp.wrapping_add(1);
         self.read_byte(0x100 + self.sp as u16)
+    }
+
+    pub fn peek_stack(&self) -> u8 {
+        let addr = 0x100 + self.sp.wrapping_add(1) as u16;
+        self.read_byte(addr)
     }
 }

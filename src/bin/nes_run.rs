@@ -11,30 +11,48 @@ fn main() {
 }
 
 struct ReportPlugin {
-    last_pc: Option<u16>
+    count: u32,
+    last_pc: Option<u16>,
 }
 
 impl ReportPlugin {
     fn new() -> ReportPlugin {
-        ReportPlugin { last_pc: None }
+        ReportPlugin { count:0, last_pc: None }
     }
 }
 
 impl Plugin for ReportPlugin {
     fn start(&mut self, cpu: &Cpu) {
-        println!("pc: ${:04x}", cpu.pc);
+        self.count += 1;
+        println!("[{}] pc: ${:04x}", self.count, cpu.pc);
     }
 
     fn end(&mut self, cpu: &Cpu, inst: Instruction, _: u8) -> bool {
-        println!("{:?}\na: ${:02x}, x: ${:02x}, y: ${:02x}, sp: ${:02x}, p: ${:02x}\n", inst, cpu.a, cpu.x, cpu.y, cpu.sp, cpu.status);
+        println!(
+            "{:?}\na: ${:02x}, x: ${:02x}, y: ${:02x}, sp: ${:02x}, p: ${:02x} {} top: ${:02x}\n",
+            inst, cpu.a, cpu.x, cpu.y, cpu.sp, cpu.status, format_flags(cpu), cpu.peek_stack());
 
         if let Some(last) = self.last_pc {
             if last == cpu.pc {
-                println!("pc repeated");
+                println!("test failed: pc repeated");
                 return true;
             }
         }
         self.last_pc = Some(cpu.pc);
         false
     }
+}
+
+fn format_flags(cpu: &Cpu) -> String {
+    let mut r = String::new();
+
+    r.push(if cpu.flag(nes_sim::NegativeFlag) {'N'} else {'n'});
+    r.push(if cpu.flag(nes_sim::OverflowFlag) {'V'} else {'v'});
+    r.push(if cpu.flag(nes_sim::BreakFlag) {'B'} else {'b'});
+    r.push(if cpu.flag(nes_sim::DecimalModeFlag) {'D'} else {'d'});
+    r.push(if cpu.flag(nes_sim::InterruptDisableFlag) {'I'} else {'i'});
+    r.push(if cpu.flag(nes_sim::ZeroFlag) {'Z'} else {'z'});
+    r.push(if cpu.flag(nes_sim::CarryFlag) {'C'} else {'c'});
+
+    r
 }
