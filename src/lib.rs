@@ -325,12 +325,12 @@ impl InstructionType for Pop {
             Agu::RegisterA => {
                 cpu.update_negative_flag(val);
                 cpu.update_zero_flag(val);
-            },
-            Agu::Status => {},
+            }
+            Agu::Status => {}
             _ => {
                 println!("{:?}", self.0);
                 panic!("Pop can only be used with A or Status")
-            },
+            }
         }
         4
     }
@@ -377,12 +377,12 @@ impl InstructionType for Sbc {
     fn execute(&self, cpu: &mut Cpu) -> u8 {
         let (val, ticks) = cpu.get(self.0);
 
-        let t = cpu.a as i16 - val as i16 - !(cpu.flag(CarryFlag) as i16);
+        let t = (cpu.a as i8).wrapping_sub(val as i8).wrapping_sub(if cpu.flag(CarryFlag) { 0 } else { 1 });
         cpu.set_flag(OverflowFlag, t > 127 || t < -128);
-        cpu.set_flag(CarryFlag, t >= 0);
-        cpu.update_negative_flag(t);
+        cpu.set_flag(CarryFlag, t < 0);
         cpu.update_zero_flag(t);
         cpu.a = t as u8;
+        cpu.update_negative_flag(cpu.a);
 
         ticks + 2
     }
@@ -599,7 +599,7 @@ fn decode(cpu: &mut Cpu) -> Instruction {
     let cond_branch = |cpu: &mut Cpu, agu| Instruction::ConditionBranch(ConditionBranch::new(cpu.inc_read_byte() as i8, agu, false));
     let neg_cond_branch = |cpu: &mut Cpu, agu| Instruction::ConditionBranch(ConditionBranch::new(cpu.inc_read_byte() as i8, agu, true));
     let transfer = |dest, src| Instruction::Transfer(Transfer { src, dest });
-    let transfer_no_touch = |dest, src| Instruction::TransferNoTouchFlags(TransferNoTouchFlags { src, dest});
+    let transfer_no_touch = |dest, src| Instruction::TransferNoTouchFlags(TransferNoTouchFlags { src, dest });
     let dec = |agu| Instruction::Dec(Dec(agu));
     let inc = |agu| Instruction::Inc(Inc(agu));
     let cmp = |register, memory| Instruction::Cmp(Cmp { register, memory });
