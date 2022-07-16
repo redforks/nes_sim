@@ -328,7 +328,6 @@ impl InstructionType for Pop {
             }
             Agu::Status => {}
             _ => {
-                println!("{:?}", self.0);
                 panic!("Pop can only be used with A or Status")
             }
         }
@@ -361,14 +360,7 @@ impl InstructionType for Inc {
 impl InstructionType for Adc {
     fn execute(&self, cpu: &mut Cpu) -> u8 {
         let (val, ticks) = cpu.get(self.0);
-
-        let t: u16 = cpu.a as u16 + val as u16 + (cpu.flag(CarryFlag) as u16);
-        cpu.set_flag(OverflowFlag, cpu.a & 0x80 != (t as u8) & 0x80);
-        cpu.update_zero_flag(t);
-        cpu.set_flag(CarryFlag, t > 255);
-        cpu.a = t as u8;
-        cpu.update_negative_flag(cpu.a);
-
+        cpu.adc(val);
         ticks + 2
     }
 }
@@ -376,14 +368,7 @@ impl InstructionType for Adc {
 impl InstructionType for Sbc {
     fn execute(&self, cpu: &mut Cpu) -> u8 {
         let (val, ticks) = cpu.get(self.0);
-
-        let t = (cpu.a as i8).wrapping_sub(val as i8).wrapping_sub(if cpu.flag(CarryFlag) { 0 } else { 1 });
-        cpu.set_flag(OverflowFlag, t > 127 || t < -128);
-        cpu.set_flag(CarryFlag, t < 0);
-        cpu.update_zero_flag(t);
-        cpu.a = t as u8;
-        cpu.update_negative_flag(cpu.a);
-
+        cpu.adc(!val);
         ticks + 2
     }
 }
@@ -493,6 +478,7 @@ impl InstructionType for Cmp {
         let (reg_val, _) = cpu.get(self.register);
         let (val, ticks) = cpu.get(self.memory);
         let t = reg_val.wrapping_sub(val);
+        println!("{:02x} - {:02x} = {:02x}", reg_val, val, t);
         cpu.update_negative_flag(t);
         cpu.update_zero_flag(t);
         cpu.set_flag(CarryFlag, reg_val >= val);
@@ -920,6 +906,15 @@ impl Cpu {
         };
 
         cycles
+    }
+
+    fn adc(&mut self, val: u8) {
+        let t = self.a as u16 + val as u16 + self.flag(CarryFlag) as u16;
+        self.set_flag(CarryFlag, t & 0x100 != 0);
+        self.set_flag(OverflowFlag, !(self.a ^ (t as u8)) & (val ^ (t as u8)) & 0x80 != 0);
+        self.a = t as u8;
+        self.update_zero_flag(t);
+        self.update_negative_flag(t);
     }
 
     fn inc_pc(&mut self, delta: i8) {
