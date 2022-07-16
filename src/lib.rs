@@ -550,11 +550,12 @@ impl Rts {
 
 impl Brk {
     fn execute(&self, cpu: &mut Cpu) -> u8 {
-        let pc = cpu.pc.wrapping_add(2);
+        let pc = cpu.pc.wrapping_add(1);
         cpu.push_stack((pc >> 8) as u8);
         cpu.push_stack(pc as u8);
         let (status, ..) = cpu.get(Agu::Status);
         cpu.push_stack(status);
+        cpu.set_flag(InterruptDisableFlag, true);
         cpu.pc = cpu.read_word(0xFFFE);
         7
     }
