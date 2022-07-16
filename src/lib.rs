@@ -531,7 +531,7 @@ impl IndirectJmp {
 
 impl Jsr {
     fn execute(&self, cpu: &mut Cpu) -> u8 {
-        let pc = cpu.pc;
+        let pc = cpu.pc - 1;
         cpu.push_stack((pc >> 8) as u8);
         cpu.push_stack(pc as u8);
         cpu.pc = self.0;
@@ -543,7 +543,7 @@ impl Rts {
     fn execute(&self, cpu: &mut Cpu) -> u8 {
         let l = cpu.pop_stack();
         let h = cpu.pop_stack();
-        cpu.pc = (h as u16) << 8 | l as u16;
+        cpu.pc = (h as u16) << 8 | l as u16 + 1;
         6
     }
 }
@@ -991,22 +991,11 @@ impl Cpu {
     fn put(&mut self, agu: &Agu, value: u8) {
         match agu {
             &Agu::Literal(_) => panic_any("Literal not supported"),
-            &Agu::RegisterA => {
-                self.a = value;
-            }
-            &Agu::RegisterX => {
-                self.x = value;
-            }
-            &Agu::RegisterY => {
-                self.y = value;
-            }
-            &Agu::RegisterSP => {
-                self.sp = value;
-            }
-            &Agu::Status => {
-                self.status = value & 0b1100_1111;
-                // self.status = value;
-            }
+            &Agu::RegisterA => self.a = value,
+            &Agu::RegisterX => self.x = value,
+            &Agu::RegisterY => self.y = value,
+            &Agu::RegisterSP => self.sp = value,
+            &Agu::Status => self.status = value & 0b1100_1111,
             _ => {
                 let (addr, _) = agu.address(self);
                 self.write_byte(addr, value);
