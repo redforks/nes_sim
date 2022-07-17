@@ -1,8 +1,7 @@
 use std::fs::File;
-use nes_sim::{Cpu, Plugin, Instruction, MemoryBank, RamBank};
+use nes_sim::{Cpu, Plugin, Instruction};
+use nes_sim::mcu_mem::RamMcu;
 use std::io::Read;
-use generic_array::GenericArray;
-use generic_array::typenum;
 use std::env;
 
 fn main() {
@@ -10,11 +9,9 @@ fn main() {
     let quiet = args.len() >= 2 && args[1] == "--quiet";
 
     let mut f = File::open("6502_functional_test.bin").unwrap();
-    let mut ram = RamBank::<typenum::U65536>(GenericArray::default());
-    assert_eq!(65536, f.read(&mut ram.0).unwrap());
-    let mut cpu = Cpu::new_with_memory_banks(
-        vec![MemoryBank::new(0, 0, Box::new(ram))]
-    );
+    let mut ram = [0u8; 0x10000];
+    assert_eq!(65536, f.read(&mut ram).unwrap());
+    let mut cpu = Cpu::new(Box::new(RamMcu::new(ram)));
     cpu.reset();
     // the test rom reset position, not the start position.
     cpu.pc = 0x400;
@@ -50,11 +47,13 @@ impl Plugin for ReportPlugin {
         }
     }
 
-    fn end(&mut self, cpu: &Cpu, inst: Instruction) {
+    fn end(&mut self, cpu: &mut Cpu, inst: Instruction) {
         if self.verbose {
+            let flags = format_flags(cpu);
+            let top = cpu.peek_stack();
             println!(
                 "{:?}\na: ${:02x}, x: ${:02x}, y: ${:02x}, sp: ${:02x}, p: ${:02x} {} top: ${:02x}\n",
-                inst, cpu.a, cpu.x, cpu.y, cpu.sp, cpu.status, format_flags(cpu), cpu.peek_stack());
+                inst, cpu.a, cpu.x, cpu.y, cpu.sp, cpu.status, flags, top);
         }
 
         if let Some(last) = self.last_pc {

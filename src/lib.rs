@@ -1,8 +1,8 @@
 use std::ops::BitAnd;
 use std::convert::From;
 use std::panic::panic_any;
-use generic_array::{ArrayLength, GenericArray};
-use generic_array::typenum;
+
+pub mod mcu_mem;
 
 /// Address generation unit
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -44,7 +44,7 @@ fn plus_one_if_cross_page(v: u8, a: u16, b: u16) -> u8 {
 impl Agu {
     /// Return  (address, ticks, operands) ticks: count for the given addressing mode
     /// operands: number of operands in bytes for the given addressing mode
-    fn address(&self, cpu: &Cpu) -> (u16, u8) {
+    fn address(&self, cpu: &mut Cpu) -> (u16, u8) {
         match self {
             &Agu::Literal(_) => panic_any("Literal not supported"),
             &Agu::ZeroPage(addr) => (addr as u16, 1),
@@ -816,7 +816,12 @@ pub trait Plugin {
     fn start(&mut self, cpu: &Cpu);
 
     // return true to stop cpu
-    fn end(&mut self, cpu: &Cpu, inst: Instruction);
+    fn end(&mut self, cpu: &mut Cpu, inst: Instruction);
+}
+
+pub trait Mcu {
+    fn read(&mut self, address: u16) -> u8;
+    fn write(&mut self, address: u16, value: u8);
 }
 
 #[allow(dead_code)]
@@ -827,27 +832,18 @@ pub struct Cpu {
     pub pc: u16,
     pub sp: u8,
     pub status: u8,
-    banks: Vec<MemoryBank>,
+    mcu: Box<dyn Mcu>,
 
     /// if remains_clock not zero, new instruction will not be executed.
     remain_clocks: u16,
 }
 
 impl Cpu {
-    pub fn new() -> Cpu {
-        Self::new_with_memory_banks(
-            vec![MemoryBank::new(
-                0x0000, 0,
-                Box::new(RamBank::<typenum::U65536>(GenericArray::default())),
-            )]
-        )
-    }
-
     pub fn reset(&mut self) {
         self.pc = self.read_word(0xFFFC);
     }
 
-    pub fn new_with_memory_banks(banks: Vec<MemoryBank>) -> Cpu {
+    pub fn new(mcu: Box<dyn Mcu>) -> Cpu {
         Cpu {
             a: 0,
             x: 0,
@@ -855,7 +851,7 @@ impl Cpu {
             pc: 0,
             sp: 0,
             status: 0,
-            banks,
+            mcu,
             remain_clocks: 0,
         }
     }
@@ -945,13 +941,8 @@ impl Cpu {
         self.set_flag(ZeroFlag, value == T::default());
     }
 
-    fn read_byte(&self, addr: u16) -> u8 {
-        for bank in self.banks.iter() {
-            if (addr >> 8) as u8 & bank.high_mask == bank.high_value {
-                return bank.get(addr & bank.addr_mask);
-            }
-        }
-        panic!("No memory bank at {:04X} when read", addr);
+    fn read_byte(&mut self, addr: u16) -> u8 {
+        self.mcu.read(addr)
     }
 
     fn inc_read_byte(&mut self) -> u8 {
@@ -967,23 +958,18 @@ impl Cpu {
     }
 
     fn write_byte(&mut self, addr: u16, value: u8) {
-        for bank in self.banks.iter_mut() {
-            if (addr >> 8) as u8 & bank.high_mask == bank.high_value {
-                return bank.put(addr & bank.addr_mask, value);
-            }
-        }
-        panic!("No memory bank at {:04X} when write", addr);
+        self.mcu.write(addr, value);
     }
 
-    fn read_word(&self, addr: u16) -> u16 {
+    fn read_word(&mut self, addr: u16) -> u16 {
         (self.read_byte(addr) as u16) | ((self.read_byte(addr.wrapping_add(1)) as u16) << 8)
     }
 
-    fn read_zero_page_word(&self, addr: u8) -> u16 {
+    fn read_zero_page_word(&mut self, addr: u8) -> u16 {
         (self.read_byte(addr as u16) as u16) | ((self.read_byte(addr.wrapping_add(1) as u16) as u16) << 8)
     }
     /// Return (value, operand bytes, address ticks)
-    fn get(&self, agu: Agu) -> (u8, u8) {
+    fn get(&mut self, agu: Agu) -> (u8, u8) {
         match agu {
             Agu::Literal(val) => (val, 0),
             Agu::RegisterA => (self.a, 0),
@@ -1029,59 +1015,8 @@ impl Cpu {
         self.read_byte(0x100 + self.sp as u16)
     }
 
-    pub fn peek_stack(&self) -> u8 {
+    pub fn peek_stack(&mut self) -> u8 {
         let addr = 0x100 + self.sp.wrapping_add(1) as u16;
         self.read_byte(addr)
-    }
-}
-
-/// A memory mapped device.
-/// To tell an address belong to a device, use address_mask, and address_shift.
-/// Shift high byte of the address by address_shift, if equals address_mask
-/// then the address belongs to the device.
-pub struct MemoryBank {
-    high_mask: u8,
-    addr_mask: u16,
-    high_value: u8,
-
-    bank: Box<dyn MemoryBankTrait>,
-}
-
-impl MemoryBank {
-    pub fn new(high_mask: u8, high_value: u8, bank: Box<dyn MemoryBankTrait>) -> MemoryBank {
-        MemoryBank {
-            high_mask,
-            addr_mask: (!high_mask as u16) << 8 | 0xFF,
-            high_value,
-            bank,
-        }
-    }
-
-    fn get(&self, addr: u16) -> u8 {
-        self.bank.get(addr)
-    }
-
-    fn put(&mut self, addr: u16, value: u8) {
-        self.bank.put(addr, value)
-    }
-}
-
-pub trait MemoryBankTrait {
-    /// get the value at the given address. The high three bits of the address always zero.
-    fn get(&self, address: u16) -> u8;
-
-    /// set the value at the given address. The high three bits of the address always zero.
-    fn put(&mut self, address: u16, value: u8);
-}
-
-pub struct RamBank<N: ArrayLength<u8>> (pub GenericArray<u8, N>);
-
-impl<N: ArrayLength<u8>> MemoryBankTrait for RamBank<N> {
-    fn get(&self, address: u16) -> u8 {
-        self.0[address as usize]
-    }
-
-    fn put(&mut self, address: u16, value: u8) {
-        self.0[address as usize] = value;
     }
 }
