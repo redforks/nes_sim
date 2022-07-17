@@ -1,11 +1,16 @@
 use std::fs::File;
-use nes_sim::{Cpu, Plugin, Instruction};
+use nes_sim::{Cpu, Plugin, Instruction, MemoryBank, RamBank};
 use std::io::Read;
+use generic_array::GenericArray;
+use generic_array::typenum;
 
 fn main() {
     let mut f = File::open("6502_functional_test.bin").unwrap();
-    let mut cpu = Cpu::new();
-    assert_eq!(65536, f.read(&mut cpu.memory).unwrap());
+    let mut ram = RamBank::<typenum::U65536>(GenericArray::default());
+    assert_eq!(65536, f.read(&mut ram.0).unwrap());
+    let mut cpu = Cpu::new_with_memory_banks(
+        vec![MemoryBank::new(0, 0, Box::new(ram)) ]
+    );
     let mut sync_cycle = ReportPlugin::new();
     cpu.run(&mut sync_cycle);
 }
@@ -17,7 +22,7 @@ struct ReportPlugin {
 
 impl ReportPlugin {
     fn new() -> ReportPlugin {
-        ReportPlugin { count:0, last_pc: None }
+        ReportPlugin { count: 0, last_pc: None }
     }
 }
 
@@ -46,13 +51,13 @@ impl Plugin for ReportPlugin {
 fn format_flags(cpu: &Cpu) -> String {
     let mut r = String::new();
 
-    r.push(if cpu.flag(nes_sim::NegativeFlag) {'N'} else {'n'});
-    r.push(if cpu.flag(nes_sim::OverflowFlag) {'V'} else {'v'});
-    r.push(if cpu.flag(nes_sim::BreakFlag) {'B'} else {'b'});
-    r.push(if cpu.flag(nes_sim::DecimalModeFlag) {'D'} else {'d'});
-    r.push(if cpu.flag(nes_sim::InterruptDisableFlag) {'I'} else {'i'});
-    r.push(if cpu.flag(nes_sim::ZeroFlag) {'Z'} else {'z'});
-    r.push(if cpu.flag(nes_sim::CarryFlag) {'C'} else {'c'});
+    r.push(if cpu.flag(nes_sim::NegativeFlag) { 'N' } else { 'n' });
+    r.push(if cpu.flag(nes_sim::OverflowFlag) { 'V' } else { 'v' });
+    r.push(if cpu.flag(nes_sim::BreakFlag) { 'B' } else { 'b' });
+    r.push(if cpu.flag(nes_sim::DecimalModeFlag) { 'D' } else { 'd' });
+    r.push(if cpu.flag(nes_sim::InterruptDisableFlag) { 'I' } else { 'i' });
+    r.push(if cpu.flag(nes_sim::ZeroFlag) { 'Z' } else { 'z' });
+    r.push(if cpu.flag(nes_sim::CarryFlag) { 'C' } else { 'c' });
 
     r
 }

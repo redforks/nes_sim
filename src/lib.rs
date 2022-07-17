@@ -1,6 +1,8 @@
 use std::ops::BitAnd;
 use std::convert::From;
 use std::panic::panic_any;
+use generic_array::{ArrayLength, GenericArray};
+use generic_array::typenum;
 
 mod test;
 
@@ -827,11 +829,20 @@ pub struct Cpu {
     pub pc: u16,
     pub sp: u8,
     pub status: u8,
-    pub memory: [u8; 0x10000],
+    banks: Vec<MemoryBank>,
 }
 
 impl Cpu {
     pub fn new() -> Cpu {
+        Self::new_with_memory_banks(
+            vec![MemoryBank::new(
+                0x0000, 0,
+                Box::new(RamBank::<typenum::U65536>(GenericArray::default())),
+            )]
+        )
+    }
+
+    pub fn new_with_memory_banks(banks: Vec<MemoryBank>) -> Cpu {
         Cpu {
             a: 0,
             x: 0,
@@ -839,7 +850,7 @@ impl Cpu {
             pc: 0,
             sp: 0,
             status: 0,
-            memory: [0; 0x10000],
+            banks,
         }
     }
 
@@ -909,7 +920,7 @@ impl Cpu {
 
     fn adc(&mut self, val: u8) {
         // https://stackoverflow.com/a/29193951/1305678
-        let mut t = self.a as u16 + val as u16 + self.flag(CarryFlag) as u16;
+        let t = self.a as u16 + val as u16 + self.flag(CarryFlag) as u16;
         self.set_flag(OverflowFlag, (self.a ^ (t as u8)) & (val ^ (t as u8)) & 0x80 == 0x80);
         self.set_flag(CarryFlag, t & 0x100 == 0x100);
         self.update_negative_flag(t);
@@ -930,7 +941,12 @@ impl Cpu {
     }
 
     fn read_byte(&self, addr: u16) -> u8 {
-        self.memory[addr as usize]
+        for bank in self.banks.iter() {
+            if (addr >> 8) as u8 & bank.high_mask == bank.high_value {
+                return bank.get(addr & bank.addr_mask);
+            }
+        }
+        panic!("No memory bank at {:04X} when read", addr);
     }
 
     fn inc_read_byte(&mut self) -> u8 {
@@ -946,7 +962,12 @@ impl Cpu {
     }
 
     fn write_byte(&mut self, addr: u16, value: u8) {
-        self.memory[addr as usize] = value;
+        for bank in self.banks.iter_mut() {
+            if (addr >> 8) as u8 & bank.high_mask == bank.high_value {
+                return bank.put(addr & bank.addr_mask, value);
+            }
+        }
+        panic!("No memory bank at {:04X} when write", addr);
     }
 
     fn read_word(&self, addr: u16) -> u16 {
@@ -956,12 +977,6 @@ impl Cpu {
     fn read_zero_page_word(&self, addr: u8) -> u16 {
         (self.read_byte(addr as u16) as u16) | ((self.read_byte(addr.wrapping_add(1) as u16) as u16) << 8)
     }
-
-    fn write_word(&mut self, addr: u16, value: u16) {
-        self.write_byte(addr, (value & 0xff) as u8);
-        self.write_byte(addr.wrapping_add(1), ((value >> 8) & 0xff) as u8);
-    }
-
     /// Return (value, operand bytes, address ticks)
     fn get(&self, agu: Agu) -> (u8, u8) {
         match agu {
@@ -1012,5 +1027,56 @@ impl Cpu {
     pub fn peek_stack(&self) -> u8 {
         let addr = 0x100 + self.sp.wrapping_add(1) as u16;
         self.read_byte(addr)
+    }
+}
+
+/// A memory mapped device.
+/// To tell an address belong to a device, use address_mask, and address_shift.
+/// Shift high byte of the address by address_shift, if equals address_mask
+/// then the address belongs to the device.
+pub struct MemoryBank {
+    high_mask: u8,
+    addr_mask: u16,
+    high_value: u8,
+
+    bank: Box<dyn MemoryBankTrait>,
+}
+
+impl MemoryBank {
+    pub fn new(high_mask: u8, high_value: u8, bank: Box<dyn MemoryBankTrait>) -> MemoryBank {
+        MemoryBank {
+            high_mask,
+            addr_mask: (!high_mask as u16) << 8 | 0xFF,
+            high_value,
+            bank,
+        }
+    }
+
+    fn get(&self, addr: u16) -> u8 {
+        self.bank.get(addr)
+    }
+
+    fn put(&mut self, addr: u16, value: u8) {
+        self.bank.put(addr, value)
+    }
+}
+
+pub trait MemoryBankTrait {
+    /// get the value at the given address. The high three bits of the address always zero.
+    fn get(&self, address: u16) -> u8;
+
+    /// set the value at the given address. The high three bits of the address always zero.
+    fn put(&mut self, address: u16, value: u8);
+}
+
+pub struct RamBank<N: ArrayLength<u8>> (pub GenericArray<u8, N>);
+
+impl<N: ArrayLength<u8>> MemoryBankTrait for RamBank<N> {
+    fn get(&self, address: u16) -> u8 {
+        self.0[address as usize]
+    }
+
+    fn put(&mut self, address: u16, value: u8) {
+        self.0[address as usize] = value;
     }
 }
