@@ -845,6 +845,10 @@ impl Cpu {
         )
     }
 
+    pub fn reset(&mut self) {
+        self.pc = self.read_word(0xFFFC);
+    }
+
     pub fn new_with_memory_banks(banks: Vec<MemoryBank>) -> Cpu {
         Cpu {
             a: 0,
