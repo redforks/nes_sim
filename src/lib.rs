@@ -4,8 +4,6 @@ use std::panic::panic_any;
 use generic_array::{ArrayLength, GenericArray};
 use generic_array::typenum;
 
-mod test;
-
 /// Address generation unit
 #[derive(Debug, Clone, Copy, PartialEq)]
 enum Agu {
