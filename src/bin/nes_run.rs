@@ -15,6 +15,7 @@ fn main() {
     let mut cpu = Cpu::new_with_memory_banks(
         vec![MemoryBank::new(0, 0, Box::new(ram))]
     );
+    cpu.pc = 0x400;
     let mut sync_cycle = ReportPlugin::new(quiet);
     while !sync_cycle.should_exit() {
         cpu.clock_tick(&mut sync_cycle);
