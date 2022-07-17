@@ -12,17 +12,24 @@ fn main() {
         vec![MemoryBank::new(0, 0, Box::new(ram)) ]
     );
     let mut sync_cycle = ReportPlugin::new();
-    cpu.run(&mut sync_cycle);
+    while !sync_cycle.should_exit() {
+        cpu.clock_tick(&mut sync_cycle);
+    }
 }
 
 struct ReportPlugin {
     count: u32,
     last_pc: Option<u16>,
+    should_exit: bool,
 }
 
 impl ReportPlugin {
     fn new() -> ReportPlugin {
-        ReportPlugin { count: 0, last_pc: None }
+        ReportPlugin { count: 0, last_pc: None, should_exit: false }
+    }
+
+    fn should_exit(&self) -> bool {
+        self.should_exit
     }
 }
 
@@ -32,7 +39,7 @@ impl Plugin for ReportPlugin {
         println!("[{}] pc: ${:04x}", self.count, cpu.pc);
     }
 
-    fn end(&mut self, cpu: &Cpu, inst: Instruction, _: u8) -> bool {
+    fn end(&mut self, cpu: &Cpu, inst: Instruction) {
         println!(
             "{:?}\na: ${:02x}, x: ${:02x}, y: ${:02x}, sp: ${:02x}, p: ${:02x} {} top: ${:02x}\n",
             inst, cpu.a, cpu.x, cpu.y, cpu.sp, cpu.status, format_flags(cpu), cpu.peek_stack());
@@ -40,11 +47,10 @@ impl Plugin for ReportPlugin {
         if let Some(last) = self.last_pc {
             if last == cpu.pc {
                 println!("test failed: pc repeated");
-                return true;
+                return;
             }
         }
         self.last_pc = Some(cpu.pc);
-        false
     }
 }
 

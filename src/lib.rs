@@ -818,7 +818,7 @@ pub trait Plugin {
     fn start(&mut self, cpu: &Cpu);
 
     // return true to stop cpu
-    fn end(&mut self, cpu: &Cpu, inst: Instruction, cycles: u8) -> bool;
+    fn end(&mut self, cpu: &Cpu, inst: Instruction);
 }
 
 #[allow(dead_code)]
@@ -830,6 +830,9 @@ pub struct Cpu {
     pub sp: u8,
     pub status: u8,
     banks: Vec<MemoryBank>,
+
+    /// if remains_clock not zero, new instruction will not be executed.
+    remain_clocks: u16,
 }
 
 impl Cpu {
@@ -851,6 +854,7 @@ impl Cpu {
             sp: 0,
             status: 0,
             banks,
+            remain_clocks: 0,
         }
     }
 
@@ -866,17 +870,16 @@ impl Cpu {
         }
     }
 
-    pub fn run<T: Plugin>(&mut self, plugin: &mut T) {
-        // self.pc = self.read_word(0xFFFC);
-        self.pc = 0x400;
-        loop {
-            plugin.start(self);
-            let instruction = decode(self);
-            let ticks = self.execute(instruction);
-            if plugin.end(self, instruction, ticks) {
-                break;
-            }
+    pub fn clock_tick<T: Plugin>(&mut self, plugin: &mut T) {
+        if self.remain_clocks != 0 {
+            self.remain_clocks -= 1;
+            return;
         }
+
+        plugin.start(self);
+        let instruction = decode(self);
+        self.remain_clocks = self.execute(instruction) as u16 - 1;
+        plugin.end(self, instruction);
     }
 
     fn execute(&mut self, inst: Instruction) -> u8 {
