@@ -47,7 +47,7 @@ impl Plugin for ReportPlugin {
         }
     }
 
-    fn end(&mut self, cpu: &mut Cpu, inst: Instruction) {
+    fn end(&mut self, cpu: &Cpu, inst: Instruction) {
         if self.verbose {
             let flags = format_flags(cpu);
             let top = cpu.peek_stack();

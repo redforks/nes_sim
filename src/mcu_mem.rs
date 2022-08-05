@@ -7,7 +7,7 @@ impl RamMcu {
 }
 
 impl super::Mcu for RamMcu {
-    fn read(&mut self, addr: u16) -> u8 {
+    fn read(&self, addr: u16) -> u8 {
         self.0[addr as usize]
     }
     fn write(&mut self, addr: u16, val: u8) {

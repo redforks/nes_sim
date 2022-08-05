@@ -44,7 +44,7 @@ fn plus_one_if_cross_page(v: u8, a: u16, b: u16) -> u8 {
 impl Agu {
     /// Return  (address, ticks, operands) ticks: count for the given addressing mode
     /// operands: number of operands in bytes for the given addressing mode
-    fn address(&self, cpu: &mut Cpu) -> (u16, u8) {
+    fn address(&self, cpu: &Cpu) -> (u16, u8) {
         match self {
             &Agu::Literal(_) => panic_any("Literal not supported"),
             &Agu::ZeroPage(addr) => (addr as u16, 1),
@@ -816,11 +816,11 @@ pub trait Plugin {
     fn start(&mut self, cpu: &Cpu);
 
     // return true to stop cpu
-    fn end(&mut self, cpu: &mut Cpu, inst: Instruction);
+    fn end(&mut self, cpu: &Cpu, inst: Instruction);
 }
 
 pub trait Mcu {
-    fn read(&mut self, address: u16) -> u8;
+    fn read(&self, address: u16) -> u8;
     fn write(&mut self, address: u16, value: u8);
 }
 
@@ -941,7 +941,7 @@ impl Cpu {
         self.set_flag(ZeroFlag, value == T::default());
     }
 
-    fn read_byte(&mut self, addr: u16) -> u8 {
+    fn read_byte(&self, addr: u16) -> u8 {
         self.mcu.read(addr)
     }
 
@@ -961,15 +961,15 @@ impl Cpu {
         self.mcu.write(addr, value);
     }
 
-    fn read_word(&mut self, addr: u16) -> u16 {
+    fn read_word(&self, addr: u16) -> u16 {
         (self.read_byte(addr) as u16) | ((self.read_byte(addr.wrapping_add(1)) as u16) << 8)
     }
 
-    fn read_zero_page_word(&mut self, addr: u8) -> u16 {
+    fn read_zero_page_word(&self, addr: u8) -> u16 {
         (self.read_byte(addr as u16) as u16) | ((self.read_byte(addr.wrapping_add(1) as u16) as u16) << 8)
     }
     /// Return (value, operand bytes, address ticks)
-    fn get(&mut self, agu: Agu) -> (u8, u8) {
+    fn get(&self, agu: Agu) -> (u8, u8) {
         match agu {
             Agu::Literal(val) => (val, 0),
             Agu::RegisterA => (self.a, 0),
@@ -1015,7 +1015,7 @@ impl Cpu {
         self.read_byte(0x100 + self.sp as u16)
     }
 
-    pub fn peek_stack(&mut self) -> u8 {
+    pub fn peek_stack(&self) -> u8 {
         let addr = 0x100 + self.sp.wrapping_add(1) as u16;
         self.read_byte(addr)
     }
