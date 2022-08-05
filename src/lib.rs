@@ -3,6 +3,7 @@ use std::convert::From;
 use std::panic::panic_any;
 
 pub mod mcu_mem;
+pub mod nes;
 
 /// Address generation unit
 #[derive(Debug, Clone, Copy, PartialEq)]
