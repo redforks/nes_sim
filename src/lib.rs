@@ -5,6 +5,7 @@ use std::panic::panic_any;
 pub mod mcu_mem;
 pub mod nes;
 mod addressing;
+mod instruction;
 
 use addressing::Address;
 
@@ -973,12 +974,12 @@ impl Cpu {
         (self.read_byte(addr as u16) as u16) | ((self.read_byte(addr.wrapping_add(1) as u16) as u16) << 8)
     }
 
-    fn get2<A: Address>(&self, addr: A) -> (u8, u8)
+    fn get2<A: Address>(&self, addr: &A) -> (u8, u8)
     {
         addr.get(self)
     }
 
-    fn put2<A:Address>(&mut self, addr: A, value: u8) -> u8
+    fn put2<A:Address>(&mut self, addr: &A, value: u8) -> u8
     {
         addr.set(self, value)
     }

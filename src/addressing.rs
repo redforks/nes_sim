@@ -1,4 +1,4 @@
-use super::{Cpu, is_cross_page};
+use super::{is_cross_page, Cpu};
 
 pub trait Address {
     /// return (value, ticks)
@@ -16,6 +16,10 @@ pub trait Address {
 
     fn calc_addr(&self, _: &Cpu) -> (u16, u8) {
         panic!("calc_addr not implemented");
+    }
+
+    fn is_register(&self) -> bool {
+        false
     }
 }
 
@@ -110,7 +114,7 @@ impl Address for IndirectY {
 }
 
 #[derive(Clone, Copy)]
-struct RegisterA();
+pub struct RegisterA();
 
 impl Address for RegisterA {
     fn get(&self, cpu: &Cpu) -> (u8, u8) {
@@ -135,6 +139,10 @@ impl Address for RegisterX {
         cpu.x = val;
         0
     }
+
+    fn is_register(&self) -> bool {
+        true
+    }
 }
 
 #[derive(Clone, Copy)]
@@ -148,6 +156,10 @@ impl Address for RegisterY {
     fn set(&self, cpu: &mut Cpu, val: u8) -> u8 {
         cpu.y = val;
         0
+    }
+
+    fn is_register(&self) -> bool {
+        true
     }
 }
 
@@ -163,10 +175,14 @@ impl Address for RegisterSP {
         cpu.sp = val;
         0
     }
+
+    fn is_register(&self) -> bool {
+        true
+    }
 }
 
 #[derive(Clone, Copy)]
-struct RegisterStatus();
+pub struct RegisterStatus();
 
 impl Address for RegisterStatus {
     fn get(&self, cpu: &Cpu) -> (u8, u8) {
@@ -177,10 +193,15 @@ impl Address for RegisterStatus {
         cpu.status = val & 0b1100_1111;
         0
     }
+
+    fn is_register(&self) -> bool {
+        true
+    }
 }
 
+#[derive(Clone, Copy)]
 #[repr(u8)]
-enum Flag {
+pub enum Flag {
     Carry = 0x01u8,
     Zero = 0x02u8,
     Interrupt = 0x04u8,
@@ -191,38 +212,24 @@ enum Flag {
 }
 
 #[derive(Clone, Copy)]
-struct CarryFlag();
+struct FlagAddr(Flag);
 
-impl Address for CarryFlag {
+impl Address for FlagAddr {
     fn get(&self, cpu: &Cpu) -> (u8, u8) {
-        (cpu.status & Flag::Carry as u8, 0)
+        (cpu.status & self.0 as u8, 0)
     }
-}
 
-#[derive(Clone, Copy)]
-struct ZeroFlag();
-
-impl Address for ZeroFlag {
-    fn get(&self, cpu: &Cpu) -> (u8, u8) {
-        (cpu.status & Flag::Zero as u8, 0)
+    fn set(&self, cpu: &mut Cpu, val: u8) -> u8 {
+        if val == 0 {
+            cpu.status &= !(self.0 as u8);
+        } else {
+            cpu.status |= self.0 as u8;
+        }
+        0
     }
-}
 
-#[derive(Clone, Copy)]
-struct NegativeFlag();
-
-impl Address for NegativeFlag {
-    fn get(&self, cpu: &Cpu) -> (u8, u8) {
-        (cpu.status & Flag::Negative as u8, 0)
-    }
-}
-
-#[derive(Clone, Copy)]
-struct OverflowFlag();
-
-impl Address for OverflowFlag {
-    fn get(&self, cpu: &Cpu) -> (u8, u8) {
-        (cpu.status & Flag::Overflow as u8, 0)
+    fn is_register(&self) -> bool {
+        true
     }
 }
 
@@ -233,4 +240,3 @@ fn extra_tick_if_cross_page(a: u16, b: u16) -> u8 {
         0
     }
 }
-
