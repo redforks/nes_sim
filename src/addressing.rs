@@ -212,7 +212,7 @@ pub enum Flag {
 }
 
 #[derive(Clone, Copy)]
-struct FlagAddr(Flag);
+pub struct FlagAddr(pub Flag);
 
 impl Address for FlagAddr {
     fn get(&self, cpu: &Cpu) -> (u8, u8) {
