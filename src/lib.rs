@@ -1,9 +1,12 @@
-use std::ops::BitAnd;
+use std::ops::{Add, BitAnd};
 use std::convert::From;
 use std::panic::panic_any;
 
 pub mod mcu_mem;
 pub mod nes;
+mod addressing;
+
+use addressing::Address;
 
 /// Address generation unit
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -969,6 +972,17 @@ impl Cpu {
     fn read_zero_page_word(&self, addr: u8) -> u16 {
         (self.read_byte(addr as u16) as u16) | ((self.read_byte(addr.wrapping_add(1) as u16) as u16) << 8)
     }
+
+    fn get2<A: Address>(&self, addr: A) -> (u8, u8)
+    {
+        addr.get(self)
+    }
+
+    fn put2<A:Address>(&mut self, addr: A, value: u8) -> u8
+    {
+        addr.set(self, value)
+    }
+
     /// Return (value, operand bytes, address ticks)
     fn get(&self, agu: Agu) -> (u8, u8) {
         match agu {
