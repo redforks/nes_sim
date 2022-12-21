@@ -1,12 +1,13 @@
-use std::ops::{Add, BitAnd};
 use std::convert::From;
+use std::ops::BitAnd;
 use std::panic::panic_any;
 
-pub mod mcu_mem;
-pub mod nes;
 mod addressing;
 mod instruction;
+pub mod mcu_mem;
+pub mod nes;
 
+use crate::Agu::{Absolute, AbsoluteX, Literal, RegisterA, RegisterY, ZeroPage};
 use addressing::Address;
 
 /// Address generation unit
@@ -84,7 +85,11 @@ impl Agu {
 
     fn is_register(&self) -> bool {
         match self {
-            &Agu::RegisterA | &Agu::RegisterX | &Agu::RegisterY | &Agu::RegisterSP | &Agu::Status => true,
+            &Agu::RegisterA
+            | &Agu::RegisterX
+            | &Agu::RegisterY
+            | &Agu::RegisterSP
+            | &Agu::Status => true,
             _ => false,
         }
     }
@@ -347,7 +352,11 @@ impl InstructionType for Dec {
         cpu.put(self.0, val);
         cpu.update_negative_flag(val);
         cpu.update_zero_flag(val);
-        if self.0.is_register() { 2 } else { 4 + ticks }
+        if self.0.is_register() {
+            2
+        } else {
+            4 + ticks
+        }
     }
 }
 
@@ -358,7 +367,11 @@ impl InstructionType for Inc {
         cpu.put(self.0, val);
         cpu.update_negative_flag(val);
         cpu.update_zero_flag(val);
-        if self.0.is_register() { 2 } else { 4 + ticks }
+        if self.0.is_register() {
+            2
+        } else {
+            4 + ticks
+        }
     }
 }
 
@@ -379,22 +392,36 @@ impl InstructionType for Sbc {
 }
 
 impl AccumulatorOpInstructionType for And {
-    fn agu(&self) -> Agu { self.0 }
-    fn op(a: u8, v: u8) -> u8 { a & v }
+    fn agu(&self) -> Agu {
+        self.0
+    }
+    fn op(a: u8, v: u8) -> u8 {
+        a & v
+    }
 }
 
 impl AccumulatorOpInstructionType for Eor {
-    fn agu(&self) -> Agu { self.0 }
-    fn op(a: u8, v: u8) -> u8 { a ^ v }
+    fn agu(&self) -> Agu {
+        self.0
+    }
+    fn op(a: u8, v: u8) -> u8 {
+        a ^ v
+    }
 }
 
 impl AccumulatorOpInstructionType for Ora {
-    fn agu(&self) -> Agu { self.0 }
-    fn op(a: u8, v: u8) -> u8 { a | v }
+    fn agu(&self) -> Agu {
+        self.0
+    }
+    fn op(a: u8, v: u8) -> u8 {
+        a | v
+    }
 }
 
 impl ShiftInstructionType for Asl {
-    fn agu(&self) -> Agu { self.0 }
+    fn agu(&self) -> Agu {
+        self.0
+    }
 
     fn op(_: &Cpu, v: u8) -> (u8, bool) {
         let carry_flag = v & 0x80 != 0;
@@ -403,7 +430,9 @@ impl ShiftInstructionType for Asl {
 }
 
 impl ShiftInstructionType for Lsr {
-    fn agu(&self) -> Agu { self.0 }
+    fn agu(&self) -> Agu {
+        self.0
+    }
 
     fn op(_: &Cpu, v: u8) -> (u8, bool) {
         let carry_flag = v & 1 != 0;
@@ -412,7 +441,9 @@ impl ShiftInstructionType for Lsr {
 }
 
 impl ShiftInstructionType for Rol {
-    fn agu(&self) -> Agu { self.0 }
+    fn agu(&self) -> Agu {
+        self.0
+    }
 
     fn op(cpu: &Cpu, v: u8) -> (u8, bool) {
         let carry_flag = v & 0x80 != 0;
@@ -421,11 +452,16 @@ impl ShiftInstructionType for Rol {
 }
 
 impl ShiftInstructionType for Ror {
-    fn agu(&self) -> Agu { self.0 }
+    fn agu(&self) -> Agu {
+        self.0
+    }
 
     fn op(cpu: &Cpu, v: u8) -> (u8, bool) {
         let carry_flag = v & 1 != 0;
-        (v >> 1 & 0x7f | ((cpu.flag(CarryFlag) as u8) << 7), carry_flag)
+        (
+            v >> 1 & 0x7f | ((cpu.flag(CarryFlag) as u8) << 7),
+            carry_flag,
+        )
     }
 }
 
@@ -571,6 +607,215 @@ impl InstructionType for Bit {
     }
 }
 
+fn execute_next(cpu: &mut Cpu) -> u8 {
+    use addressing::*;
+    use instruction::*;
+
+    let op_code = cpu.inc_read_byte();
+    let a = (op_code & 0b1110_0000) >> 5;
+    let b = (op_code & 0b0001_1100) >> 2;
+    let c = op_code & 0b0000_0011;
+
+    let zero_page = |cpu: &mut Cpu| ZeroPage(cpu.inc_read_byte());
+    let zero_page_x = |cpu: &mut Cpu| ZeroPageX(cpu.inc_read_byte());
+    let zero_page_y = |cpu: &mut Cpu| ZeroPageY(cpu.inc_read_byte());
+    let absolute = |cpu: &mut Cpu| Absolute(cpu.inc_read_word());
+    let absolute_x = |cpu: &mut Cpu| AbsoluteX(cpu.inc_read_word());
+    let absolute_y = |cpu: &mut Cpu| AbsoluteY(cpu.inc_read_word());
+    let literal = |cpu: &mut Cpu| Literal(cpu.inc_read_byte());
+    let cond_branch = |cpu: &mut Cpu, flag: Flag| {
+        new_condition_branch(cpu.inc_read_byte() as i8, FlagAddr(flag), false)
+    };
+    let neg_cond_branch = |cpu: &mut Cpu, flag: Flag| {
+        new_condition_branch(cpu.inc_read_byte() as i8, FlagAddr(flag), true)
+    };
+    let indirect_x = |cpu: &mut Cpu| IndirectX(cpu.inc_read_byte());
+    let indirect_y = |cpu: &mut Cpu| IndirectY(cpu.inc_read_byte());
+    let x = RegisterX;
+    let y = RegisterY;
+    let aa = RegisterA;
+    let sp = RegisterSP;
+
+    match (c, a, b) {
+        (0, 0, 0) => new_brk()(cpu),
+        (0, 0, 2) => new_push(RegisterStatus())(cpu),
+        (0, 0, 4) => neg_cond_branch(cpu, Flag::Negative)(cpu),
+        (0, 0, 6) => new_clear_bit(FlagAddr(Flag::Carry))(cpu),
+
+        (0, 1, 0) => new_jsr(cpu.inc_read_word())(cpu),
+        (0, 1, 1) => new_bit(zero_page(cpu))(cpu),
+        (0, 1, 2) => new_pop(RegisterStatus())(cpu),
+        (0, 1, 3) => new_bit(absolute(cpu))(cpu),
+        (0, 1, 4) => cond_branch(cpu, Flag::Negative)(cpu),
+        (0, 1, 6) => new_set_bit(FlagAddr(Flag::Carry))(cpu),
+
+        (0, 2, 0) => new_rti()(cpu),
+        (0, 2, 2) => new_push(aa())(cpu),
+        (0, 2, 3) => new_jmp(cpu.inc_read_word())(cpu),
+        (0, 2, 4) => neg_cond_branch(cpu, Flag::Overflow)(cpu),
+        (0, 2, 6) => new_clear_bit(FlagAddr(Flag::Interrupt))(cpu),
+
+        (0, 3, 0) => new_rts()(cpu),
+        (0, 3, 2) => new_pop(aa())(cpu),
+        (0, 3, 3) => new_indirect_jmp(cpu.inc_read_word())(cpu),
+        (0, 3, 4) => cond_branch(cpu, Flag::Overflow)(cpu),
+        (0, 3, 6) => new_set_bit(FlagAddr(Flag::Interrupt))(cpu),
+
+        (0, 4, 1) => new_transfer_no_touch_flags(zero_page(cpu), y())(cpu),
+        (0, 4, 2) => new_dec(y())(cpu),
+        (0, 4, 3) => new_transfer_no_touch_flags(absolute(cpu), y())(cpu),
+        (0, 4, 4) => neg_cond_branch(cpu, Flag::Carry)(cpu),
+        (0, 4, 5) => new_transfer_no_touch_flags(zero_page_x(cpu), y())(cpu),
+        (0, 4, 6) => new_transfer(aa(), y())(cpu),
+
+        (0, 5, 0) => new_transfer(y(), literal(cpu))(cpu),
+        (0, 5, 1) => new_transfer(y(), zero_page(cpu))(cpu),
+        (0, 5, 2) => new_transfer(y(), aa())(cpu),
+        (0, 5, 3) => new_transfer(y(), absolute(cpu))(cpu),
+        (0, 5, 4) => cond_branch(cpu, Flag::Carry)(cpu),
+        (0, 5, 5) => new_transfer(y(), zero_page_x(cpu))(cpu),
+        (0, 5, 6) => new_clear_bit(FlagAddr(Flag::Overflow))(cpu),
+        (0, 5, 7) => new_transfer(y(), absolute_x(cpu))(cpu),
+
+        (0, 6, 0) => new_cmp(y(), literal(cpu))(cpu),
+        (0, 6, 1) => new_cmp(y(), zero_page(cpu))(cpu),
+        (0, 6, 2) => new_inc(y())(cpu),
+        (0, 6, 3) => new_cmp(y(), absolute(cpu))(cpu),
+        (0, 6, 4) => neg_cond_branch(cpu, Flag::Zero)(cpu),
+        (0, 6, 6) => new_clear_bit(FlagAddr(Flag::Decimal))(cpu),
+
+        (0, 7, 0) => new_cmp(x(), literal(cpu))(cpu),
+        (0, 7, 1) => new_cmp(x(), zero_page(cpu))(cpu),
+        (0, 7, 2) => new_inc(x())(cpu),
+        (0, 7, 3) => new_cmp(x(), absolute(cpu))(cpu),
+        (0, 7, 4) => cond_branch(cpu, Flag::Zero)(cpu),
+        (0, 7, 6) => new_set_bit(FlagAddr(Flag::Decimal))(cpu),
+
+        (1, 0, 0) => new_ora(indirect_x(cpu))(cpu),
+        (1, 0, 1) => new_ora(zero_page(cpu))(cpu),
+        (1, 0, 2) => new_ora(literal(cpu))(cpu),
+        (1, 0, 3) => new_ora(absolute(cpu))(cpu),
+        (1, 0, 4) => new_ora(indirect_y(cpu))(cpu),
+        (1, 0, 5) => new_ora(zero_page_x(cpu))(cpu),
+        (1, 0, 6) => new_ora(absolute_y(cpu))(cpu),
+        (1, 0, 7) => new_ora(absolute_x(cpu))(cpu),
+
+        (1, 1, 0) => new_and(indirect_x(cpu))(cpu),
+        (1, 1, 1) => new_and(zero_page(cpu))(cpu),
+        (1, 1, 2) => new_and(literal(cpu))(cpu),
+        (1, 1, 3) => new_and(absolute(cpu))(cpu),
+        (1, 1, 4) => new_and(indirect_y(cpu))(cpu),
+        (1, 1, 5) => new_and(zero_page_x(cpu))(cpu),
+        (1, 1, 6) => new_and(absolute_y(cpu))(cpu),
+        (1, 1, 7) => new_and(absolute_x(cpu))(cpu),
+
+        (1, 2, 0) => new_eor(indirect_x(cpu))(cpu),
+        (1, 2, 1) => new_eor(zero_page(cpu))(cpu),
+        (1, 2, 2) => new_eor(literal(cpu))(cpu),
+        (1, 2, 3) => new_eor(absolute(cpu))(cpu),
+        (1, 2, 4) => new_eor(indirect_y(cpu))(cpu),
+        (1, 2, 5) => new_eor(zero_page_x(cpu))(cpu),
+        (1, 2, 6) => new_eor(absolute_y(cpu))(cpu),
+        (1, 2, 7) => new_eor(absolute_x(cpu))(cpu),
+
+        (1, 3, 0) => new_adc(indirect_x(cpu))(cpu),
+        (1, 3, 1) => new_adc(zero_page(cpu))(cpu),
+        (1, 3, 2) => new_adc(literal(cpu))(cpu),
+        (1, 3, 3) => new_adc(absolute(cpu))(cpu),
+        (1, 3, 4) => new_adc(indirect_y(cpu))(cpu),
+        (1, 3, 5) => new_adc(zero_page_x(cpu))(cpu),
+        (1, 3, 6) => new_adc(absolute_y(cpu))(cpu),
+        (1, 3, 7) => new_adc(absolute_x(cpu))(cpu),
+
+        (1, 4, 0) => new_transfer_no_touch_flags(indirect_x(cpu), aa())(cpu),
+        (1, 4, 1) => new_transfer_no_touch_flags(zero_page(cpu), aa())(cpu),
+        (1, 4, 3) => new_transfer_no_touch_flags(absolute(cpu), aa())(cpu),
+        (1, 4, 4) => new_transfer_no_touch_flags(indirect_y(cpu), aa())(cpu),
+        (1, 4, 5) => new_transfer_no_touch_flags(zero_page_x(cpu), aa())(cpu),
+        (1, 4, 6) => new_transfer_no_touch_flags(absolute_y(cpu), aa())(cpu),
+        (1, 4, 7) => new_transfer_no_touch_flags(absolute_x(cpu), aa())(cpu),
+
+        (1, 5, 0) => new_transfer(aa(), indirect_x(cpu))(cpu),
+        (1, 5, 1) => new_transfer(aa(), zero_page(cpu))(cpu),
+        (1, 5, 2) => new_transfer(aa(), literal(cpu))(cpu),
+        (1, 5, 3) => new_transfer(aa(), absolute(cpu))(cpu),
+        (1, 5, 4) => new_transfer(aa(), indirect_y(cpu))(cpu),
+        (1, 5, 5) => new_transfer(aa(), zero_page_x(cpu))(cpu),
+        (1, 5, 6) => new_transfer(aa(), absolute_y(cpu))(cpu),
+        (1, 5, 7) => new_transfer(aa(), absolute_x(cpu))(cpu),
+
+        (1, 6, 0) => new_cmp(aa(), indirect_x(cpu))(cpu),
+        (1, 6, 1) => new_cmp(aa(), zero_page(cpu))(cpu),
+        (1, 6, 2) => new_cmp(aa(), literal(cpu))(cpu),
+        (1, 6, 3) => new_cmp(aa(), absolute(cpu))(cpu),
+        (1, 6, 4) => new_cmp(aa(), indirect_y(cpu))(cpu),
+        (1, 6, 5) => new_cmp(aa(), zero_page_x(cpu))(cpu),
+        (1, 6, 6) => new_cmp(aa(), absolute_y(cpu))(cpu),
+        (1, 6, 7) => new_cmp(aa(), absolute_x(cpu))(cpu),
+
+        (1, 7, 0) => new_sbc(indirect_x(cpu))(cpu),
+        (1, 7, 1) => new_sbc(zero_page(cpu))(cpu),
+        (1, 7, 2) => new_sbc(literal(cpu))(cpu),
+        (1, 7, 3) => new_sbc(absolute(cpu))(cpu),
+        (1, 7, 4) => new_sbc(indirect_y(cpu))(cpu),
+        (1, 7, 5) => new_sbc(zero_page_x(cpu))(cpu),
+        (1, 7, 6) => new_sbc(absolute_y(cpu))(cpu),
+        (1, 7, 7) => new_sbc(absolute_x(cpu))(cpu),
+
+        (2, 0, 1) => new_asl(zero_page(cpu))(cpu),
+        (2, 0, 2) => new_asl(aa())(cpu),
+        (2, 0, 3) => new_asl(absolute(cpu))(cpu),
+        (2, 0, 5) => new_asl(zero_page_x(cpu))(cpu),
+        (2, 0, 7) => new_asl(absolute_x(cpu))(cpu),
+
+        (2, 1, 1) => new_rol(zero_page(cpu))(cpu),
+        (2, 1, 2) => new_rol(aa())(cpu),
+        (2, 1, 3) => new_rol(absolute(cpu))(cpu),
+        (2, 1, 5) => new_rol(zero_page_x(cpu))(cpu),
+        (2, 1, 7) => new_rol(absolute_x(cpu))(cpu),
+
+        (2, 2, 1) => new_lsr(zero_page(cpu))(cpu),
+        (2, 2, 2) => new_lsr(aa())(cpu),
+        (2, 2, 3) => new_lsr(absolute(cpu))(cpu),
+        (2, 2, 5) => new_lsr(zero_page_x(cpu))(cpu),
+        (2, 2, 7) => new_lsr(absolute_x(cpu))(cpu),
+
+        (2, 3, 1) => new_ror(zero_page(cpu))(cpu),
+        (2, 3, 2) => new_ror(aa())(cpu),
+        (2, 3, 3) => new_ror(absolute(cpu))(cpu),
+        (2, 3, 5) => new_ror(zero_page_x(cpu))(cpu),
+        (2, 3, 7) => new_ror(absolute_x(cpu))(cpu),
+
+        (2, 4, 1) => new_transfer_no_touch_flags(zero_page(cpu), x())(cpu),
+        (2, 4, 2) => new_transfer(aa(), x())(cpu),
+        (2, 4, 3) => new_transfer_no_touch_flags(absolute(cpu), x())(cpu),
+        (2, 4, 5) => new_transfer_no_touch_flags(zero_page_y(cpu), x())(cpu),
+        (2, 4, 6) => new_transfer_no_touch_flags(sp(), x())(cpu),
+
+        (2, 5, 0) => new_transfer(x(), literal(cpu))(cpu),
+        (2, 5, 1) => new_transfer(x(), zero_page(cpu))(cpu),
+        (2, 5, 2) => new_transfer(x(), aa())(cpu),
+        (2, 5, 3) => new_transfer(x(), absolute(cpu))(cpu),
+        (2, 5, 5) => new_transfer(x(), zero_page_y(cpu))(cpu),
+        (2, 5, 6) => new_transfer(x(), sp())(cpu),
+        (2, 5, 7) => new_transfer(x(), absolute_y(cpu))(cpu),
+
+        (2, 6, 1) => new_dec(zero_page(cpu))(cpu),
+        (2, 6, 2) => new_dec(x())(cpu),
+        (2, 6, 3) => new_dec(absolute(cpu))(cpu),
+        (2, 6, 5) => new_dec(zero_page_x(cpu))(cpu),
+        (2, 6, 7) => new_dec(absolute_x(cpu))(cpu),
+
+        (2, 7, 1) => new_inc(zero_page(cpu))(cpu),
+        (2, 7, 2) => new_nop()(cpu),
+        (2, 7, 3) => new_inc(absolute(cpu))(cpu),
+        (2, 7, 5) => new_inc(zero_page_x(cpu))(cpu),
+        (2, 7, 7) => new_inc(absolute_x(cpu))(cpu),
+
+        _ => panic!("Unknown opcode: {:02x} @ {:04x}", op_code, cpu.pc),
+    }
+}
+
 fn decode(cpu: &mut Cpu) -> Instruction {
     let op_code = cpu.inc_read_byte();
     let a = (op_code & 0b1110_0000) >> 5;
@@ -586,14 +831,24 @@ fn decode(cpu: &mut Cpu) -> Instruction {
     let absolute_y = |cpu: &mut Cpu| Agu::AbsoluteY(cpu.inc_read_word());
     let indirect_x = |cpu: &mut Cpu| Agu::IndirectX(cpu.inc_read_byte());
     let indirect_y = |cpu: &mut Cpu| Agu::IndirectY(cpu.inc_read_byte());
-    let cond_branch = |cpu: &mut Cpu, agu| Instruction::ConditionBranch(ConditionBranch::new(cpu.inc_read_byte() as i8, agu, false));
-    let neg_cond_branch = |cpu: &mut Cpu, agu| Instruction::ConditionBranch(ConditionBranch::new(cpu.inc_read_byte() as i8, agu, true));
+    let cond_branch = |cpu: &mut Cpu, agu| {
+        Instruction::ConditionBranch(ConditionBranch::new(cpu.inc_read_byte() as i8, agu, false))
+    };
+    let neg_cond_branch = |cpu: &mut Cpu, agu| {
+        Instruction::ConditionBranch(ConditionBranch::new(cpu.inc_read_byte() as i8, agu, true))
+    };
     let transfer = |dest, src| Instruction::Transfer(Transfer { src, dest });
-    let transfer_no_touch = |dest, src| Instruction::TransferNoTouchFlags(TransferNoTouchFlags { src, dest });
+    let transfer_no_touch =
+        |dest, src| Instruction::TransferNoTouchFlags(TransferNoTouchFlags { src, dest });
     let dec = |agu| Instruction::Dec(Dec(agu));
     let inc = |agu| Instruction::Inc(Inc(agu));
     let cmp = |register, memory| Instruction::Cmp(Cmp { register, memory });
-    let (aa, x, y, sp) = (Agu::RegisterA, Agu::RegisterX, Agu::RegisterY, Agu::RegisterSP);
+    let (aa, x, y, sp) = (
+        Agu::RegisterA,
+        Agu::RegisterX,
+        Agu::RegisterY,
+        Agu::RegisterSP,
+    );
     let ora = |agu| Instruction::Ora(Ora(agu));
     let and = |agu| Instruction::And(And(agu));
     let eor = |agu| Instruction::Eor(Eor(agu));
@@ -802,26 +1057,40 @@ pub struct OverflowFlag;
 
 pub struct NegativeFlag;
 
-impl FlagBit for NegativeFlag { const BIT: u8 = 0x80; }
+impl FlagBit for NegativeFlag {
+    const BIT: u8 = 0x80;
+}
 
-impl FlagBit for OverflowFlag { const BIT: u8 = 0x40; }
+impl FlagBit for OverflowFlag {
+    const BIT: u8 = 0x40;
+}
 
-impl FlagBit for BreakFlag { const BIT: u8 = 0x10; }
+impl FlagBit for BreakFlag {
+    const BIT: u8 = 0x10;
+}
 
-impl FlagBit for DecimalModeFlag { const BIT: u8 = 0x8; }
+impl FlagBit for DecimalModeFlag {
+    const BIT: u8 = 0x8;
+}
 
-impl FlagBit for InterruptDisableFlag { const BIT: u8 = 0x4; }
+impl FlagBit for InterruptDisableFlag {
+    const BIT: u8 = 0x4;
+}
 
-impl FlagBit for CarryFlag { const BIT: u8 = 0x1; }
+impl FlagBit for CarryFlag {
+    const BIT: u8 = 0x1;
+}
 
-impl FlagBit for ZeroFlag { const BIT: u8 = 0x2; }
+impl FlagBit for ZeroFlag {
+    const BIT: u8 = 0x2;
+}
 
 // Trait to sync instruction execution  times.
 pub trait Plugin {
     fn start(&mut self, cpu: &Cpu);
 
     // return true to stop cpu
-    fn end(&mut self, cpu: &Cpu, inst: Instruction);
+    fn end(&mut self, cpu: &Cpu);
 }
 
 pub trait Mcu {
@@ -880,9 +1149,8 @@ impl Cpu {
         }
 
         plugin.start(self);
-        let instruction = decode(self);
-        self.remain_clocks = self.execute(instruction) as u16 - 1;
-        plugin.end(self, instruction);
+        self.remain_clocks = execute_next(self) as u16 - 1;
+        plugin.end(self);
     }
 
     fn execute(&mut self, inst: Instruction) -> u8 {
@@ -927,7 +1195,10 @@ impl Cpu {
     fn adc(&mut self, val: u8) {
         // https://stackoverflow.com/a/29193951/1305678
         let t = self.a as u16 + val as u16 + self.flag(CarryFlag) as u16;
-        self.set_flag(OverflowFlag, (self.a ^ (t as u8)) & (val ^ (t as u8)) & 0x80 == 0x80);
+        self.set_flag(
+            OverflowFlag,
+            (self.a ^ (t as u8)) & (val ^ (t as u8)) & 0x80 == 0x80,
+        );
         self.set_flag(CarryFlag, t & 0x100 == 0x100);
         self.update_negative_flag(t);
         self.a = t as u8;
@@ -938,7 +1209,10 @@ impl Cpu {
         self.pc = self.pc.wrapping_add(delta as u16);
     }
 
-    fn update_negative_flag<T: BitAnd<Output=T> + Copy + From<u8> + PartialEq + Default>(&mut self, value: T) {
+    fn update_negative_flag<T: BitAnd<Output = T> + Copy + From<u8> + PartialEq + Default>(
+        &mut self,
+        value: T,
+    ) {
         self.set_flag(NegativeFlag, value & T::from(0x80) != T::default());
     }
 
@@ -971,16 +1245,15 @@ impl Cpu {
     }
 
     fn read_zero_page_word(&self, addr: u8) -> u16 {
-        (self.read_byte(addr as u16) as u16) | ((self.read_byte(addr.wrapping_add(1) as u16) as u16) << 8)
+        (self.read_byte(addr as u16) as u16)
+            | ((self.read_byte(addr.wrapping_add(1) as u16) as u16) << 8)
     }
 
-    fn get2<A: Address>(&self, addr: &A) -> (u8, u8)
-    {
+    fn get2<A: Address>(&self, addr: &A) -> (u8, u8) {
         addr.get(self)
     }
 
-    fn put2<A:Address>(&mut self, addr: &A, value: u8) -> u8
-    {
+    fn put2<A: Address>(&mut self, addr: &A, value: u8) -> u8 {
         addr.set(self, value)
     }
 
@@ -992,9 +1265,7 @@ impl Cpu {
             Agu::RegisterX => (self.x, 0),
             Agu::RegisterY => (self.y, 0),
             Agu::RegisterSP => (self.sp, 0),
-            Agu::Status => {
-                (self.status | 0b0011_0000, 0)
-            }
+            Agu::Status => (self.status | 0b0011_0000, 0),
             Agu::CarryFlag => (self.flag(CarryFlag) as u8, 0),
             Agu::ZeroFlag => (self.flag(ZeroFlag) as u8, 0),
             Agu::NegativeFlag => (self.flag(NegativeFlag) as u8, 0),

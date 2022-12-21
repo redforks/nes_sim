@@ -24,7 +24,7 @@ pub trait Address {
 }
 
 #[derive(Clone, Copy)]
-struct Literal(u8);
+pub struct Literal(pub u8);
 
 impl Address for Literal {
     fn get(&self, _: &Cpu) -> (u8, u8) {
@@ -37,7 +37,7 @@ impl Address for Literal {
 }
 
 #[derive(Clone, Copy)]
-struct ZeroPage(u8);
+pub struct ZeroPage(pub u8);
 
 impl Address for ZeroPage {
     fn calc_addr(&self, _: &Cpu) -> (u16, u8) {
@@ -46,7 +46,7 @@ impl Address for ZeroPage {
 }
 
 #[derive(Clone, Copy)]
-struct Absolute(u16);
+pub struct Absolute(pub u16);
 
 impl Address for Absolute {
     fn calc_addr(&self, _: &Cpu) -> (u16, u8) {
@@ -55,7 +55,7 @@ impl Address for Absolute {
 }
 
 #[derive(Clone, Copy)]
-struct ZeroPageX(u8);
+pub struct ZeroPageX(pub u8);
 
 impl Address for ZeroPageX {
     fn calc_addr(&self, cpu: &Cpu) -> (u16, u8) {
@@ -64,7 +64,7 @@ impl Address for ZeroPageX {
 }
 
 #[derive(Clone, Copy)]
-struct ZeroPageY(u8);
+pub struct ZeroPageY(pub u8);
 
 impl Address for ZeroPageY {
     fn calc_addr(&self, cpu: &Cpu) -> (u16, u8) {
@@ -73,7 +73,7 @@ impl Address for ZeroPageY {
 }
 
 #[derive(Clone, Copy)]
-struct AbsoluteX(u16);
+pub struct AbsoluteX(pub u16);
 
 impl Address for AbsoluteX {
     fn calc_addr(&self, cpu: &Cpu) -> (u16, u8) {
@@ -83,7 +83,7 @@ impl Address for AbsoluteX {
 }
 
 #[derive(Clone, Copy)]
-struct AbsoluteY(u16);
+pub struct AbsoluteY(pub u16);
 
 impl Address for AbsoluteY {
     fn calc_addr(&self, cpu: &Cpu) -> (u16, u8) {
@@ -93,7 +93,7 @@ impl Address for AbsoluteY {
 }
 
 #[derive(Clone, Copy)]
-struct IndirectX(u8);
+pub struct IndirectX(pub u8);
 
 impl Address for IndirectX {
     fn calc_addr(&self, cpu: &Cpu) -> (u16, u8) {
@@ -103,7 +103,7 @@ impl Address for IndirectX {
 }
 
 #[derive(Clone, Copy)]
-struct IndirectY(u8);
+pub struct IndirectY(pub u8);
 
 impl Address for IndirectY {
     fn calc_addr(&self, cpu: &Cpu) -> (u16, u8) {
@@ -128,7 +128,7 @@ impl Address for RegisterA {
 }
 
 #[derive(Clone, Copy)]
-struct RegisterX();
+pub struct RegisterX();
 
 impl Address for RegisterX {
     fn get(&self, cpu: &Cpu) -> (u8, u8) {
@@ -146,7 +146,7 @@ impl Address for RegisterX {
 }
 
 #[derive(Clone, Copy)]
-struct RegisterY();
+pub struct RegisterY();
 
 impl Address for RegisterY {
     fn get(&self, cpu: &Cpu) -> (u8, u8) {
@@ -164,7 +164,7 @@ impl Address for RegisterY {
 }
 
 #[derive(Clone, Copy)]
-struct RegisterSP();
+pub struct RegisterSP();
 
 impl Address for RegisterSP {
     fn get(&self, cpu: &Cpu) -> (u8, u8) {

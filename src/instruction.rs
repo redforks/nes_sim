@@ -1,6 +1,5 @@
 use crate::addressing::Address;
 use crate::{addressing, plus_one_if_cross_page, Agu, Cpu, InterruptDisableFlag};
-use std::any;
 use std::any::TypeId;
 
 /// LDA, LDX, LDY, TAX, TAY, TSX, TXA, TYA
@@ -280,4 +279,8 @@ pub fn new_bit<D: Address>(dest: D) -> impl FnMut(&mut Cpu) -> u8 {
         cpu.update_zero_flag(v);
         ticks + 2
     }
+}
+
+pub fn new_nop() -> impl FnMut(&mut Cpu) -> u8 {
+    move |_| 2
 }
