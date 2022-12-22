@@ -1,8 +1,8 @@
-use std::fs::File;
-use nes_sim::{Cpu, Plugin, Instruction};
 use nes_sim::mcu_mem::RamMcu;
-use std::io::Read;
+use nes_sim::{Cpu, Plugin};
 use std::env;
+use std::fs::File;
+use std::io::Read;
 
 fn main() {
     let args = env::args().collect::<Vec<_>>();
@@ -30,7 +30,12 @@ struct ReportPlugin {
 
 impl ReportPlugin {
     fn new(quiet: bool) -> ReportPlugin {
-        ReportPlugin { verbose: !quiet, count: 0, last_pc: None, should_exit: false }
+        ReportPlugin {
+            verbose: !quiet,
+            count: 0,
+            last_pc: None,
+            should_exit: false,
+        }
     }
 
     fn should_exit(&self) -> bool {
@@ -47,13 +52,14 @@ impl Plugin for ReportPlugin {
         }
     }
 
-    fn end(&mut self, cpu: &Cpu, inst: Instruction) {
+    fn end(&mut self, cpu: &Cpu) {
         if self.verbose {
             let flags = format_flags(cpu);
             let top = cpu.peek_stack();
             println!(
-                "{:?}\na: ${:02x}, x: ${:02x}, y: ${:02x}, sp: ${:02x}, p: ${:02x} {} top: ${:02x}\n",
-                inst, cpu.a, cpu.x, cpu.y, cpu.sp, cpu.status, flags, top);
+                "a: ${:02x}, x: ${:02x}, y: ${:02x}, sp: ${:02x}, p: ${:02x} {} top: ${:02x}\n",
+                cpu.a, cpu.x, cpu.y, cpu.sp, cpu.status, flags, top
+            );
         }
 
         if let Some(last) = self.last_pc {
@@ -77,13 +83,41 @@ impl Plugin for ReportPlugin {
 fn format_flags(cpu: &Cpu) -> String {
     let mut r = String::new();
 
-    r.push(if cpu.flag(nes_sim::NegativeFlag) { 'N' } else { 'n' });
-    r.push(if cpu.flag(nes_sim::OverflowFlag) { 'V' } else { 'v' });
-    r.push(if cpu.flag(nes_sim::BreakFlag) { 'B' } else { 'b' });
-    r.push(if cpu.flag(nes_sim::DecimalModeFlag) { 'D' } else { 'd' });
-    r.push(if cpu.flag(nes_sim::InterruptDisableFlag) { 'I' } else { 'i' });
-    r.push(if cpu.flag(nes_sim::ZeroFlag) { 'Z' } else { 'z' });
-    r.push(if cpu.flag(nes_sim::CarryFlag) { 'C' } else { 'c' });
+    r.push(if cpu.flag(nes_sim::NegativeFlag) {
+        'N'
+    } else {
+        'n'
+    });
+    r.push(if cpu.flag(nes_sim::OverflowFlag) {
+        'V'
+    } else {
+        'v'
+    });
+    r.push(if cpu.flag(nes_sim::BreakFlag) {
+        'B'
+    } else {
+        'b'
+    });
+    r.push(if cpu.flag(nes_sim::DecimalModeFlag) {
+        'D'
+    } else {
+        'd'
+    });
+    r.push(if cpu.flag(nes_sim::InterruptDisableFlag) {
+        'I'
+    } else {
+        'i'
+    });
+    r.push(if cpu.flag(nes_sim::ZeroFlag) {
+        'Z'
+    } else {
+        'z'
+    });
+    r.push(if cpu.flag(nes_sim::CarryFlag) {
+        'C'
+    } else {
+        'c'
+    });
 
     r
 }
