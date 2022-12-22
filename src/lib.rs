@@ -14,11 +14,7 @@ fn is_cross_page(a: u16, b: u16) -> bool {
 }
 
 fn extra_tick_if_cross_page(a: u16, b: u16) -> u8 {
-    if is_cross_page(a, b) {
-        1
-    } else {
-        0
-    }
+    is_cross_page(a, b) as u8
 }
 
 fn execute_next(cpu: &mut Cpu) -> u8 {

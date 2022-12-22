@@ -282,7 +282,8 @@ pub fn new_rts() -> impl FnMut(&mut Cpu) -> u8 {
     move |cpu| {
         let l = cpu.pop_stack();
         let h = cpu.pop_stack();
-        cpu.pc = ((h as u16) << 8) | l as u16 + 1;
+        cpu.pc = ((h as u16) << 8) | (l as u16);
+        cpu.pc += 1;
         6
     }
 }
