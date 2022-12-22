@@ -1,5 +1,5 @@
 use crate::addressing::{Address, RegisterStatus};
-use crate::{addressing, plus_one_if_cross_page, Cpu, InterruptDisableFlag};
+use crate::{addressing, extra_tick_if_cross_page, Cpu, InterruptDisableFlag};
 use log::debug;
 use std::any::TypeId;
 
@@ -56,7 +56,7 @@ pub fn new_pop<D: Address + 'static>(dest: D) -> impl FnMut(&mut Cpu) -> u8 {
         if TypeId::of::<D>() == TypeId::of::<addressing::RegisterA>() {
             cpu.update_negative_flag(val);
             cpu.update_zero_flag(val);
-        } else if TypeId::of::<D>() != TypeId::of::<addressing::RegisterStatus>() {
+        } else if TypeId::of::<D>() != TypeId::of::<RegisterStatus>() {
             panic!("Pop can only be used with A or Status")
         }
 
@@ -244,7 +244,7 @@ pub fn new_condition_branch<R: Address>(
             let pc = cpu.pc;
             let dest = ((pc as i32).wrapping_add(offset as i32)) as u16;
             cpu.pc = dest;
-            plus_one_if_cross_page(3, pc, dest)
+            3 + extra_tick_if_cross_page(pc, dest)
         } else {
             2
         }

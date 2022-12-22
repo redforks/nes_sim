@@ -12,11 +12,11 @@ fn is_cross_page(a: u16, b: u16) -> bool {
     a != b
 }
 
-fn plus_one_if_cross_page(v: u8, a: u16, b: u16) -> u8 {
+fn extra_tick_if_cross_page(a: u16, b: u16) -> u8 {
     if is_cross_page(a, b) {
-        v + 1
+        1
     } else {
-        v
+        0
     }
 }
 

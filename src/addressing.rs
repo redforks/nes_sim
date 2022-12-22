@@ -1,4 +1,4 @@
-use super::{is_cross_page, Cpu};
+use super::{extra_tick_if_cross_page, Cpu};
 use std::fmt::{Display, Formatter};
 
 pub trait Address: Display {
@@ -321,13 +321,5 @@ impl Address for FlagAddr {
 
     fn is_register(&self) -> bool {
         true
-    }
-}
-
-fn extra_tick_if_cross_page(a: u16, b: u16) -> u8 {
-    if is_cross_page(a, b) {
-        1
-    } else {
-        0
     }
 }
