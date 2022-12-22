@@ -1,4 +1,3 @@
-use crate::addressing::{Address, FlagAddr};
 use log::debug;
 use std::convert::From;
 use std::ops::BitAnd;
@@ -308,11 +307,11 @@ impl Cpu {
     fn adc(&mut self, val: u8) {
         // https://stackoverflow.com/a/29193951/1305678
         let t = self.a as u16 + val as u16 + self.flag(Flag::Carry) as u16;
-        FlagAddr(Flag::Overflow).set(
-            self,
-            ((self.a ^ (t as u8)) & (val ^ (t as u8)) & 0x80) as u8,
+        self.set_flag(
+            Flag::Overflow,
+            ((self.a ^ (t as u8)) & (val ^ (t as u8)) & 0x80) != 0,
         );
-        FlagAddr(Flag::Carry).set(self, (t & 0x100) as u8);
+        self.set_flag(Flag::Carry, (t & 0x100) != 0);
         self.update_negative_flag(t);
         self.a = t as u8;
         self.update_zero_flag(self.a);
@@ -326,11 +325,11 @@ impl Cpu {
         &mut self,
         value: T,
     ) {
-        FlagAddr(Flag::Negative).set(self, ((value & T::from(0x80)) != T::default()) as u8);
+        self.set_flag(Flag::Negative, value & T::from(0x80) != T::default());
     }
 
     fn update_zero_flag<T: PartialEq + Copy + Default>(&mut self, value: T) {
-        FlagAddr(Flag::Zero).set(self, (value == T::default()) as u8);
+        self.set_flag(Flag::Zero, value == T::default());
     }
 
     fn read_byte(&self, addr: u16) -> u8 {
