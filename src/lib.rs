@@ -237,60 +237,6 @@ fn execute_next(cpu: &mut Cpu) -> u8 {
     }
 }
 
-#[deprecated]
-pub trait FlagBit {
-    const BIT: u8;
-}
-
-#[deprecated]
-pub struct CarryFlag;
-
-#[deprecated]
-pub struct DecimalModeFlag;
-
-#[deprecated]
-pub struct InterruptDisableFlag;
-
-#[deprecated]
-pub struct ZeroFlag;
-
-#[deprecated]
-pub struct BreakFlag;
-
-#[deprecated]
-pub struct OverflowFlag;
-
-#[deprecated]
-pub struct NegativeFlag;
-
-impl FlagBit for NegativeFlag {
-    const BIT: u8 = 0x80;
-}
-
-impl FlagBit for OverflowFlag {
-    const BIT: u8 = 0x40;
-}
-
-impl FlagBit for BreakFlag {
-    const BIT: u8 = 0x10;
-}
-
-impl FlagBit for DecimalModeFlag {
-    const BIT: u8 = 0x8;
-}
-
-impl FlagBit for InterruptDisableFlag {
-    const BIT: u8 = 0x4;
-}
-
-impl FlagBit for CarryFlag {
-    const BIT: u8 = 0x1;
-}
-
-impl FlagBit for ZeroFlag {
-    const BIT: u8 = 0x2;
-}
-
 // Trait to sync instruction execution  times.
 pub trait Plugin {
     fn start(&mut self, cpu: &Cpu);
@@ -336,9 +282,16 @@ impl Cpu {
         }
     }
 
-    #[deprecated]
-    pub fn flag<T: FlagBit>(&self, _: T) -> bool {
-        (self.status & T::BIT) != 0
+    pub fn flag(&self, flag: Flag) -> bool {
+        (self.status & flag as u8) != 0
+    }
+
+    pub fn set_flag(&mut self, flag: Flag, v: bool) {
+        if v {
+            self.status |= flag as u8;
+        } else {
+            self.status &= !(flag as u8);
+        }
     }
 
     pub fn clock_tick<T: Plugin>(&mut self, plugin: &mut T) {
@@ -354,7 +307,7 @@ impl Cpu {
 
     fn adc(&mut self, val: u8) {
         // https://stackoverflow.com/a/29193951/1305678
-        let t = self.a as u16 + val as u16 + FlagAddr(Flag::Carry).get_as_bool(self) as u16;
+        let t = self.a as u16 + val as u16 + self.flag(Flag::Carry) as u16;
         FlagAddr(Flag::Overflow).set(
             self,
             ((self.a ^ (t as u8)) & (val ^ (t as u8)) & 0x80) as u8,

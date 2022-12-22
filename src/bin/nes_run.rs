@@ -1,5 +1,5 @@
 use nes_sim::mcu_mem::RamMcu;
-use nes_sim::{Cpu, Plugin};
+use nes_sim::{Cpu, Flag, Plugin};
 use std::env;
 use std::fs::File;
 use std::io::{Read, Write};
@@ -70,7 +70,7 @@ impl Plugin for ReportPlugin {
         if let Some(last) = self.last_pc {
             if last == cpu.pc {
                 self.should_exit = true;
-                if cpu.flag(nes_sim::DecimalModeFlag) {
+                if cpu.flag(Flag::Decimal) {
                     // decimal mode not implemented, it is okay to exit test on decimal error,
                     // decimal test is the last of opCode test.
                     println!("test succeed!");
@@ -88,41 +88,13 @@ impl Plugin for ReportPlugin {
 fn format_flags(cpu: &Cpu) -> String {
     let mut r = String::new();
 
-    r.push(if cpu.flag(nes_sim::NegativeFlag) {
-        'N'
-    } else {
-        'n'
-    });
-    r.push(if cpu.flag(nes_sim::OverflowFlag) {
-        'V'
-    } else {
-        'v'
-    });
-    r.push(if cpu.flag(nes_sim::BreakFlag) {
-        'B'
-    } else {
-        'b'
-    });
-    r.push(if cpu.flag(nes_sim::DecimalModeFlag) {
-        'D'
-    } else {
-        'd'
-    });
-    r.push(if cpu.flag(nes_sim::InterruptDisableFlag) {
-        'I'
-    } else {
-        'i'
-    });
-    r.push(if cpu.flag(nes_sim::ZeroFlag) {
-        'Z'
-    } else {
-        'z'
-    });
-    r.push(if cpu.flag(nes_sim::CarryFlag) {
-        'C'
-    } else {
-        'c'
-    });
+    r.push(if cpu.flag(Flag::Negative) { 'N' } else { 'n' });
+    r.push(if cpu.flag(Flag::Overflow) { 'V' } else { 'v' });
+    r.push(if cpu.flag(Flag::Break) { 'B' } else { 'b' });
+    r.push(if cpu.flag(Flag::Decimal) { 'D' } else { 'd' });
+    r.push(if cpu.flag(Flag::Interrupt) { 'I' } else { 'i' });
+    r.push(if cpu.flag(Flag::Zero) { 'Z' } else { 'z' });
+    r.push(if cpu.flag(Flag::Carry) { 'C' } else { 'c' });
 
     r
 }
