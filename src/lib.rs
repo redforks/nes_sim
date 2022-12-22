@@ -236,22 +236,30 @@ fn execute_next(cpu: &mut Cpu) -> u8 {
     }
 }
 
+#[deprecated]
 pub trait FlagBit {
     const BIT: u8;
 }
 
+#[deprecated]
 pub struct CarryFlag;
 
+#[deprecated]
 pub struct DecimalModeFlag;
 
+#[deprecated]
 pub struct InterruptDisableFlag;
 
+#[deprecated]
 pub struct ZeroFlag;
 
+#[deprecated]
 pub struct BreakFlag;
 
+#[deprecated]
 pub struct OverflowFlag;
 
+#[deprecated]
 pub struct NegativeFlag;
 
 impl FlagBit for NegativeFlag {
@@ -327,10 +335,12 @@ impl Cpu {
         }
     }
 
+    #[deprecated]
     pub fn flag<T: FlagBit>(&self, _: T) -> bool {
         (self.status & T::BIT) != 0
     }
 
+    #[deprecated]
     fn set_flag<T: FlagBit>(&mut self, _: T, value: bool) {
         if value {
             self.status |= T::BIT;
