@@ -4,7 +4,7 @@ use log::debug;
 use std::any::TypeId;
 
 /// LDA, LDX, LDY, TAX, TAY, TSX, TXA, TYA
-pub fn new_transfer<S, D>(src: S, dest: D) -> impl FnMut(&mut Cpu) -> u8
+pub fn new_transfer<S, D>(dest: D, src: S) -> impl FnMut(&mut Cpu) -> u8
 where
     S: Address,
     D: Address,
@@ -21,7 +21,7 @@ where
 }
 
 // STA, STX, STY
-pub fn new_transfer_no_touch_flags<S, D>(src: S, dest: D) -> impl FnMut(&mut Cpu) -> u8
+pub fn new_transfer_no_touch_flags<S, D>(dest: D, src: S) -> impl FnMut(&mut Cpu) -> u8
 where
     S: Address,
     D: Address,
