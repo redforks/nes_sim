@@ -296,15 +296,11 @@ impl Display for FlagAddr {
 
 impl Address for FlagAddr {
     fn get(&self, cpu: &Cpu) -> (u8, u8) {
-        (cpu.status & self.0 as u8, 0)
+        (cpu.flag(self.0) as u8, 0)
     }
 
     fn set(&self, cpu: &mut Cpu, val: u8) -> u8 {
-        if val == 0 {
-            cpu.status &= !(self.0 as u8);
-        } else {
-            cpu.status |= self.0 as u8;
-        }
+        cpu.set_flag(self.0, val != 0);
         0
     }
 
