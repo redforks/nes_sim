@@ -239,8 +239,8 @@ pub fn new_condition_branch<R: Address>(
 
     move |cpu| {
         let (v, _) = r.get(cpu);
-        let v = if negative { v == 0 } else { v != 0 };
-        if v {
+        let should_jump = if negative { v == 0 } else { v != 0 };
+        if should_jump {
             let pc = cpu.pc;
             let dest = ((pc as i32).wrapping_add(offset as i32)) as u16;
             cpu.pc = dest;

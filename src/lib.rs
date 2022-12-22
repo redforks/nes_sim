@@ -1,3 +1,4 @@
+use log::debug;
 use std::convert::From;
 use std::ops::BitAnd;
 
@@ -28,22 +29,28 @@ fn execute_next(cpu: &mut Cpu) -> u8 {
     let a = (op_code & 0b1110_0000) >> 5;
     let b = (op_code & 0b0001_1100) >> 2;
     let c = op_code & 0b0000_0011;
+    debug!("op_code: {:0x} {} {} {}", op_code, c, a, b);
 
-    let zero_page = |cpu: &mut Cpu| ZeroPage(cpu.inc_read_byte());
-    let zero_page_x = |cpu: &mut Cpu| ZeroPageX(cpu.inc_read_byte());
-    let zero_page_y = |cpu: &mut Cpu| ZeroPageY(cpu.inc_read_byte());
-    let absolute = |cpu: &mut Cpu| Absolute(cpu.inc_read_word());
-    let absolute_x = |cpu: &mut Cpu| AbsoluteX(cpu.inc_read_word());
-    let absolute_y = |cpu: &mut Cpu| AbsoluteY(cpu.inc_read_word());
-    let literal = |cpu: &mut Cpu| Literal(cpu.inc_read_byte());
-    let cond_branch = |cpu: &mut Cpu, flag: Flag| {
-        new_condition_branch(cpu.inc_read_byte() as i8, FlagAddr(flag), false)
-    };
-    let neg_cond_branch = |cpu: &mut Cpu, flag: Flag| {
-        new_condition_branch(cpu.inc_read_byte() as i8, FlagAddr(flag), true)
-    };
-    let indirect_x = |cpu: &mut Cpu| IndirectX(cpu.inc_read_byte());
-    let indirect_y = |cpu: &mut Cpu| IndirectY(cpu.inc_read_byte());
+    fn r_b(cpu: &mut Cpu) -> u8 {
+        cpu.inc_read_byte()
+    }
+    fn r_w(cpu: &mut Cpu) -> u16 {
+        cpu.inc_read_word()
+    }
+
+    let zero_page = |cpu: &mut Cpu| ZeroPage(r_b(cpu));
+    let zero_page_x = |cpu: &mut Cpu| ZeroPageX(r_b(cpu));
+    let zero_page_y = |cpu: &mut Cpu| ZeroPageY(r_b(cpu));
+    let absolute = |cpu: &mut Cpu| Absolute(r_w(cpu));
+    let absolute_x = |cpu: &mut Cpu| AbsoluteX(r_w(cpu));
+    let absolute_y = |cpu: &mut Cpu| AbsoluteY(r_w(cpu));
+    let literal = |cpu: &mut Cpu| Literal(r_b(cpu));
+    let cond_branch =
+        |cpu: &mut Cpu, flag: Flag| new_condition_branch(r_b(cpu) as i8, FlagAddr(flag), false);
+    let neg_cond_branch =
+        |cpu: &mut Cpu, flag: Flag| new_condition_branch(r_b(cpu) as i8, FlagAddr(flag), true);
+    let indirect_x = |cpu: &mut Cpu| IndirectX(r_b(cpu));
+    let indirect_y = |cpu: &mut Cpu| IndirectY(r_b(cpu));
     let x = RegisterX;
     let y = RegisterY;
     let aa = RegisterA;
@@ -55,7 +62,7 @@ fn execute_next(cpu: &mut Cpu) -> u8 {
         (0, 0, 4) => neg_cond_branch(cpu, Flag::Negative)(cpu),
         (0, 0, 6) => new_clear_bit(FlagAddr(Flag::Carry))(cpu),
 
-        (0, 1, 0) => new_jsr(cpu.inc_read_word())(cpu),
+        (0, 1, 0) => new_jsr(r_w(cpu))(cpu),
         (0, 1, 1) => new_bit(zero_page(cpu))(cpu),
         (0, 1, 2) => new_pop(RegisterStatus())(cpu),
         (0, 1, 3) => new_bit(absolute(cpu))(cpu),
@@ -64,13 +71,13 @@ fn execute_next(cpu: &mut Cpu) -> u8 {
 
         (0, 2, 0) => new_rti()(cpu),
         (0, 2, 2) => new_push(aa())(cpu),
-        (0, 2, 3) => new_jmp(cpu.inc_read_word())(cpu),
+        (0, 2, 3) => new_jmp(r_w(cpu))(cpu),
         (0, 2, 4) => neg_cond_branch(cpu, Flag::Overflow)(cpu),
         (0, 2, 6) => new_clear_bit(FlagAddr(Flag::Interrupt))(cpu),
 
         (0, 3, 0) => new_rts()(cpu),
         (0, 3, 2) => new_pop(aa())(cpu),
-        (0, 3, 3) => new_indirect_jmp(cpu.inc_read_word())(cpu),
+        (0, 3, 3) => new_indirect_jmp(r_w(cpu))(cpu),
         (0, 3, 4) => cond_branch(cpu, Flag::Overflow)(cpu),
         (0, 3, 6) => new_set_bit(FlagAddr(Flag::Interrupt))(cpu),
 
