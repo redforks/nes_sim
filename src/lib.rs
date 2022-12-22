@@ -1,3 +1,4 @@
+use crate::addressing::{Address, Flag, FlagAddr};
 use log::debug;
 use std::convert::From;
 use std::ops::BitAnd;
@@ -340,15 +341,6 @@ impl Cpu {
         (self.status & T::BIT) != 0
     }
 
-    #[deprecated]
-    fn set_flag<T: FlagBit>(&mut self, _: T, value: bool) {
-        if value {
-            self.status |= T::BIT;
-        } else {
-            self.status &= !T::BIT;
-        }
-    }
-
     pub fn clock_tick<T: Plugin>(&mut self, plugin: &mut T) {
         if self.remain_clocks != 0 {
             self.remain_clocks -= 1;
@@ -362,12 +354,12 @@ impl Cpu {
 
     fn adc(&mut self, val: u8) {
         // https://stackoverflow.com/a/29193951/1305678
-        let t = self.a as u16 + val as u16 + self.flag(CarryFlag) as u16;
-        self.set_flag(
-            OverflowFlag,
-            (self.a ^ (t as u8)) & (val ^ (t as u8)) & 0x80 == 0x80,
+        let t = self.a as u16 + val as u16 + FlagAddr(Flag::Carry).get_as_bool(self) as u16;
+        FlagAddr(Flag::Overflow).set(
+            self,
+            ((self.a ^ (t as u8)) & (val ^ (t as u8)) & 0x80) as u8,
         );
-        self.set_flag(CarryFlag, t & 0x100 == 0x100);
+        FlagAddr(Flag::Carry).set(self, (t & 0x100) as u8);
         self.update_negative_flag(t);
         self.a = t as u8;
         self.update_zero_flag(self.a);
@@ -381,11 +373,11 @@ impl Cpu {
         &mut self,
         value: T,
     ) {
-        self.set_flag(NegativeFlag, value & T::from(0x80) != T::default());
+        FlagAddr(Flag::Negative).set(self, ((value & T::from(0x80)) != T::default()) as u8);
     }
 
     fn update_zero_flag<T: PartialEq + Copy + Default>(&mut self, value: T) {
-        self.set_flag(ZeroFlag, value == T::default());
+        FlagAddr(Flag::Zero).set(self, (value == T::default()) as u8);
     }
 
     fn read_byte(&self, addr: u16) -> u8 {
