@@ -1,5 +1,5 @@
-use crate::addressing::Address;
-use crate::{addressing, plus_one_if_cross_page, Agu, Cpu, InterruptDisableFlag};
+use crate::addressing::{Address, RegisterStatus};
+use crate::{addressing, plus_one_if_cross_page, Cpu, InterruptDisableFlag};
 use log::debug;
 use std::any::TypeId;
 
@@ -299,7 +299,7 @@ pub fn new_brk() -> impl FnMut(&mut Cpu) -> u8 {
         let pc = cpu.pc.wrapping_add(1);
         cpu.push_stack((pc >> 8) as u8);
         cpu.push_stack(pc as u8);
-        let (status, ..) = cpu.get(Agu::Status);
+        let (status, _) = RegisterStatus().get(cpu);
         cpu.push_stack(status);
         cpu.set_flag(InterruptDisableFlag, true);
         cpu.pc = cpu.read_word(0xFFFE);
@@ -312,7 +312,7 @@ pub fn new_rti() -> impl FnMut(&mut Cpu) -> u8 {
 
     move |cpu| {
         let v = cpu.pop_stack();
-        cpu.put(Agu::Status, v);
+        RegisterStatus().set(cpu, v);
         cpu.pc = cpu.pop_stack() as u16 | (cpu.pop_stack() as u16) << 8;
         6
     }

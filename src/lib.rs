@@ -1,37 +1,10 @@
 use std::convert::From;
 use std::ops::BitAnd;
-use std::panic::panic_any;
 
 mod addressing;
 mod instruction;
 pub mod mcu_mem;
 pub mod nes;
-
-use crate::Agu::{Absolute, AbsoluteX, Literal, RegisterA, RegisterY, ZeroPage};
-use addressing::Address;
-
-/// Address generation unit
-#[derive(Debug, Clone, Copy, PartialEq)]
-enum Agu {
-    Literal(u8),
-    ZeroPage(u8),
-    Absolute(u16),
-    ZeroPageX(u8),
-    ZeroPageY(u8),
-    AbsoluteX(u16),
-    AbsoluteY(u16),
-    IndirectX(u8),
-    IndirectY(u8),
-    RegisterA,
-    RegisterX,
-    RegisterY,
-    RegisterSP,
-    Status,
-    CarryFlag,
-    ZeroFlag,
-    NegativeFlag,
-    OverflowFlag,
-}
 
 fn is_cross_page(a: u16, b: u16) -> bool {
     let a = (a >> 8) as u8;
@@ -44,54 +17,6 @@ fn plus_one_if_cross_page(v: u8, a: u16, b: u16) -> u8 {
         v + 1
     } else {
         v
-    }
-}
-
-impl Agu {
-    /// Return  (address, ticks, operands) ticks: count for the given addressing mode
-    /// operands: number of operands in bytes for the given addressing mode
-    fn address(&self, cpu: &Cpu) -> (u16, u8) {
-        match self {
-            &Agu::Literal(_) => panic_any("Literal not supported"),
-            &Agu::ZeroPage(addr) => (addr as u16, 1),
-            &Agu::Absolute(addr) => (addr, 2),
-            &Agu::ZeroPageX(addr) => (addr.wrapping_add(cpu.x) as u16, 2),
-            &Agu::ZeroPageY(addr) => (addr.wrapping_add(cpu.y) as u16, 2),
-            &Agu::AbsoluteX(addr) => {
-                let r = addr.wrapping_add(cpu.x as u16) as u16;
-                (r, plus_one_if_cross_page(2, addr, r))
-            }
-            &Agu::AbsoluteY(addr) => {
-                let r = addr.wrapping_add(cpu.y as u16) as u16;
-                (r, plus_one_if_cross_page(2, addr, r))
-            }
-            &Agu::IndirectX(addr) => (cpu.read_zero_page_word(addr.wrapping_add(cpu.x)), 4),
-            &Agu::IndirectY(addr) => {
-                let addr = cpu.read_zero_page_word(addr);
-                let r = addr.wrapping_add(cpu.y as u16);
-                (r, plus_one_if_cross_page(3, addr, r))
-            }
-            Agu::RegisterA => panic_any("RegisterA not supported"),
-            Agu::RegisterX => panic_any("RegisterX not supported"),
-            Agu::RegisterY => panic_any("RegisterY not supported"),
-            Agu::RegisterSP => panic_any("RegisterSP not supported"),
-            Agu::Status => panic_any("Status not supported"),
-            Agu::CarryFlag => panic_any("CarryFlag not supported"),
-            Agu::ZeroFlag => panic_any("ZeroFlag not supported"),
-            Agu::NegativeFlag => panic_any("NegativeFlag not supported"),
-            Agu::OverflowFlag => panic_any("OverflowFlag not supported"),
-        }
-    }
-
-    fn is_register(&self) -> bool {
-        match self {
-            &Agu::RegisterA
-            | &Agu::RegisterX
-            | &Agu::RegisterY
-            | &Agu::RegisterSP
-            | &Agu::Status => true,
-            _ => false,
-        }
     }
 }
 
@@ -473,49 +398,6 @@ impl Cpu {
     fn read_zero_page_word(&self, addr: u8) -> u16 {
         (self.read_byte(addr as u16) as u16)
             | ((self.read_byte(addr.wrapping_add(1) as u16) as u16) << 8)
-    }
-
-    fn get2<A: Address>(&self, addr: &A) -> (u8, u8) {
-        addr.get(self)
-    }
-
-    fn put2<A: Address>(&mut self, addr: &A, value: u8) -> u8 {
-        addr.set(self, value)
-    }
-
-    /// Return (value, operand bytes, address ticks)
-    fn get(&self, agu: Agu) -> (u8, u8) {
-        match agu {
-            Agu::Literal(val) => (val, 0),
-            Agu::RegisterA => (self.a, 0),
-            Agu::RegisterX => (self.x, 0),
-            Agu::RegisterY => (self.y, 0),
-            Agu::RegisterSP => (self.sp, 0),
-            Agu::Status => (self.status | 0b0011_0000, 0),
-            Agu::CarryFlag => (self.flag(CarryFlag) as u8, 0),
-            Agu::ZeroFlag => (self.flag(ZeroFlag) as u8, 0),
-            Agu::NegativeFlag => (self.flag(NegativeFlag) as u8, 0),
-            Agu::OverflowFlag => (self.flag(OverflowFlag) as u8, 0),
-            _ => {
-                let (addr, ticks) = agu.address(self);
-                (self.read_byte(addr), ticks)
-            }
-        }
-    }
-
-    fn put(&mut self, agu: Agu, value: u8) {
-        match agu {
-            Agu::Literal(_) => panic_any("Literal not supported"),
-            Agu::RegisterA => self.a = value,
-            Agu::RegisterX => self.x = value,
-            Agu::RegisterY => self.y = value,
-            Agu::RegisterSP => self.sp = value,
-            Agu::Status => self.status = value & 0b1100_1111,
-            _ => {
-                let (addr, _) = agu.address(self);
-                self.write_byte(addr, value);
-            }
-        }
     }
 
     fn push_stack(&mut self, value: u8) {
