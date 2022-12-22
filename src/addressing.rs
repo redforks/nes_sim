@@ -284,7 +284,7 @@ impl Address for RegisterStatus {
     }
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, strum_macros::Display)]
 #[repr(u8)]
 pub enum Flag {
     Carry = 0x01u8,
@@ -301,7 +301,7 @@ pub struct FlagAddr(pub Flag);
 
 impl Display for FlagAddr {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        todo!()
+        write!(f, "{}", self.0)
     }
 }
 
