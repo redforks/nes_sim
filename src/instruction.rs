@@ -120,17 +120,17 @@ pub fn new_sbc<D: Address>(dest: D) -> impl FnMut(&mut Cpu) -> u8 {
     }
 }
 
-fn new_acc_op<F: Fn(u8, u8) -> u8, D: Address>(
+fn new_acc_op<F: Fn(u8, u8) -> u8, S: Address>(
     op_name: &str,
     op: F,
-    dest: D,
+    src: S,
 ) -> impl FnMut(&mut Cpu) -> u8 {
-    debug!("{} {}", op_name, dest);
+    debug!("{} {}", op_name, src);
 
     move |cpu| {
-        let (val, ticks) = dest.get(cpu);
+        let (val, ticks) = src.get(cpu);
         let val = op(cpu.a, val);
-        dest.set(cpu, val);
+        cpu.a = val;
         cpu.update_negative_flag(val);
         cpu.update_zero_flag(val);
         2 + ticks
@@ -222,7 +222,7 @@ pub fn new_cmp<R: Address, M: Address>(r: R, m: M) -> impl FnMut(&mut Cpu) -> u8
     move |cpu| {
         let (r_val, _) = r.get(cpu);
         let (val, ticks) = m.get(cpu);
-        let t = r_val.wrapping_add(!val);
+        let t = r_val.wrapping_add(val);
         cpu.update_negative_flag(t);
         cpu.update_zero_flag(t);
         cpu.set_flag(super::CarryFlag, r_val >= val);
