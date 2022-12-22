@@ -2,9 +2,14 @@ use nes_sim::mcu_mem::RamMcu;
 use nes_sim::{Cpu, Plugin};
 use std::env;
 use std::fs::File;
-use std::io::Read;
+use std::io::{Read, Write};
 
 fn main() {
+    env_logger::Builder::new()
+        .filter(None, log::LevelFilter::Debug)
+        .format(|buf, record| writeln!(buf, "{}", record.args()))
+        .init();
+
     let args = env::args().collect::<Vec<_>>();
     let quiet = args.len() >= 2 && args[1] == "--quiet";
 
