@@ -1,5 +1,5 @@
-use crate::addressing::{Address, RegisterStatus};
-use crate::{addressing, extra_tick_if_cross_page, Cpu, InterruptDisableFlag};
+use crate::addressing::{Address, Flag, FlagAddr, RegisterStatus};
+use crate::{addressing, extra_tick_if_cross_page, Cpu};
 use log::debug;
 use std::any::TypeId;
 
@@ -9,7 +9,7 @@ where
     S: Address,
     D: Address,
 {
-    debug!("transfer {} {}", src, dest);
+    debug!("transfer {} {}", dest, src);
 
     move |cpu| {
         let (val, ticks) = src.get(cpu);
@@ -149,7 +149,7 @@ pub fn new_ora<D: Address>(dest: D) -> impl FnMut(&mut Cpu) -> u8 {
     new_acc_op("ora", |a, b| a | b, dest)
 }
 
-fn new_shift_op<F: Fn(&Cpu, u8) -> (u8, bool), D: Address>(
+fn new_shift_op<F: Fn(&Cpu, u8) -> (u8, u8), D: Address>(
     op_name: &str,
     op: F,
     dest: D,
@@ -159,7 +159,7 @@ fn new_shift_op<F: Fn(&Cpu, u8) -> (u8, bool), D: Address>(
     move |cpu| {
         let (val, ticks) = dest.get(cpu);
         let (val, carry_flag) = op(cpu, val);
-        cpu.set_flag(super::CarryFlag, carry_flag);
+        FlagAddr(Flag::Carry).set(cpu, carry_flag);
         dest.set(cpu, val);
         cpu.update_negative_flag(val);
         cpu.update_zero_flag(val);
@@ -168,17 +168,22 @@ fn new_shift_op<F: Fn(&Cpu, u8) -> (u8, bool), D: Address>(
 }
 
 pub fn new_asl<D: Address>(dest: D) -> impl FnMut(&mut Cpu) -> u8 {
-    new_shift_op("asl", |_, v| (v << 1, v & 0x80 != 0), dest)
+    new_shift_op("asl", |_, v| (v << 1, v & 0x80), dest)
 }
 
 pub fn new_lsr<D: Address>(dest: D) -> impl FnMut(&mut Cpu) -> u8 {
-    new_shift_op("lsr", |_, v| (v >> 1, v & 0x01 != 0), dest)
+    new_shift_op("lsr", |_, v| (v >> 1, v & 0x01), dest)
 }
 
 pub fn new_rol<D: Address>(dest: D) -> impl FnMut(&mut Cpu) -> u8 {
     new_shift_op(
         "rol",
-        |cpu, v| ((v << 1) | (cpu.flag(super::CarryFlag) as u8), v & 0x80 != 0),
+        |cpu, v| {
+            (
+                (v << 1) | (FlagAddr(Flag::Carry).get_as_bool(cpu) as u8),
+                v & 0x80,
+            )
+        },
         dest,
     )
 }
@@ -188,8 +193,8 @@ pub fn new_ror<D: Address>(dest: D) -> impl FnMut(&mut Cpu) -> u8 {
         "ror",
         |cpu, v| {
             (
-                (v >> 1) | ((cpu.flag(super::CarryFlag) as u8) << 7),
-                v & 0x01 != 0,
+                (v >> 1) | (FlagAddr(Flag::Carry).get_as_bool(cpu) as u8),
+                v & 0x01,
             )
         },
         dest,
@@ -225,7 +230,7 @@ pub fn new_cmp<R: Address, M: Address>(r: R, m: M) -> impl FnMut(&mut Cpu) -> u8
         let t = r_val.wrapping_add(val);
         cpu.update_negative_flag(t);
         cpu.update_zero_flag(t);
-        cpu.set_flag(super::CarryFlag, r_val >= val);
+        FlagAddr(Flag::Carry).set(cpu, (r_val >= val) as u8);
         2 + ticks
     }
 }
@@ -242,7 +247,7 @@ pub fn new_condition_branch<R: Address>(
         let should_jump = if negative { v == 0 } else { v != 0 };
         if should_jump {
             let pc = cpu.pc;
-            let dest = ((pc as i32).wrapping_add(offset as i32)) as u16;
+            let dest = ((pc as i16).wrapping_add(offset as i16)) as u16;
             cpu.pc = dest;
             3 + extra_tick_if_cross_page(pc, dest)
         } else {
@@ -301,7 +306,7 @@ pub fn new_brk() -> impl FnMut(&mut Cpu) -> u8 {
         cpu.push_stack(pc as u8);
         let (status, _) = RegisterStatus().get(cpu);
         cpu.push_stack(status);
-        cpu.set_flag(InterruptDisableFlag, true);
+        FlagAddr(Flag::Interrupt).set(cpu, 1);
         cpu.pc = cpu.read_word(0xFFFE);
         7
     }
@@ -323,8 +328,8 @@ pub fn new_bit<D: Address>(dest: D) -> impl FnMut(&mut Cpu) -> u8 {
 
     move |cpu| {
         let (v, ticks) = dest.get(cpu);
-        cpu.set_flag(super::NegativeFlag, (v & 0x80) != 0);
-        cpu.set_flag(super::OverflowFlag, (v & 0x70) != 0);
+        FlagAddr(Flag::Negative).set(cpu, v & 0x80);
+        FlagAddr(Flag::Overflow).set(cpu, v & 0x70);
         let v = v & cpu.a;
         cpu.update_zero_flag(v);
         ticks + 2

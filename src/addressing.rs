@@ -305,6 +305,12 @@ impl Display for FlagAddr {
     }
 }
 
+impl FlagAddr {
+    pub fn get_as_bool(&self, cpu: &Cpu) -> bool {
+        cpu.status & self.0 as u8 != 0
+    }
+}
+
 impl Address for FlagAddr {
     fn get(&self, cpu: &Cpu) -> (u8, u8) {
         (cpu.status & self.0 as u8, 0)
