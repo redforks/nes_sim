@@ -1,4 +1,5 @@
 use super::{extra_tick_if_cross_page, Cpu};
+use crate::Flag;
 use std::fmt::{Display, Formatter};
 
 pub trait Address: Display {
@@ -282,18 +283,6 @@ impl Address for RegisterStatus {
     fn is_register(&self) -> bool {
         true
     }
-}
-
-#[derive(Clone, Copy, strum_macros::Display)]
-#[repr(u8)]
-pub enum Flag {
-    Carry = 0x01u8,
-    Zero = 0x02u8,
-    Interrupt = 0x04u8,
-    Decimal = 0x08u8,
-    Break = 0x10u8,
-    Overflow = 0x40u8,
-    Negative = 0x80u8,
 }
 
 #[derive(Clone, Copy)]

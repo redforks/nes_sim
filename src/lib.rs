@@ -1,4 +1,4 @@
-use crate::addressing::{Address, Flag, FlagAddr};
+use crate::addressing::{Address, FlagAddr};
 use log::debug;
 use std::convert::From;
 use std::ops::BitAnd;
@@ -423,4 +423,16 @@ impl Cpu {
         let addr = 0x100 + self.sp.wrapping_add(1) as u16;
         self.read_byte(addr)
     }
+}
+
+#[derive(Clone, Copy, strum_macros::Display)]
+#[repr(u8)]
+pub enum Flag {
+    Carry = 0x01u8,
+    Zero = 0x02u8,
+    Interrupt = 0x04u8,
+    Decimal = 0x08u8,
+    Break = 0x10u8,
+    Overflow = 0x40u8,
+    Negative = 0x80u8,
 }
