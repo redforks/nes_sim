@@ -1,4 +1,6 @@
-pub mod ram;
+mod ram;
+
+pub use ram::RamMcu;
 
 pub trait Mcu {
     fn read(&self, address: u16) -> u8;
