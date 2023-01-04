@@ -3,17 +3,27 @@ use nes_sim::{Cpu, Flag, Plugin};
 use std::env;
 use std::fs::File;
 use std::io::{Read, Write};
+use std::path::PathBuf;
 
 fn main() {
-    env_logger::Builder::new()
-        .filter(None, log::LevelFilter::Debug)
-        .format(|buf, record| writeln!(buf, "{}", record.args()))
-        .init();
-
     let args = env::args().collect::<Vec<_>>();
     let quiet = args.len() >= 2 && args[1] == "--quiet";
 
-    let mut f = File::open("6502_functional_test.bin").unwrap();
+    env_logger::Builder::new()
+        .filter(
+            None,
+            if quiet {
+                log::LevelFilter::Warn
+            } else {
+                log::LevelFilter::Debug
+            },
+        )
+        .format(|buf, record| writeln!(buf, "{}", record.args()))
+        .init();
+
+    let mut p = PathBuf::from(file!());
+    p.pop();
+    let mut f = File::open(p.join("6502_functional_test.bin")).unwrap();
     let mut ram = [0u8; 0x10000];
     assert_eq!(65536, f.read(&mut ram).unwrap());
     let mut cpu = Cpu::new(Box::new(RamMcu::new(ram)));
