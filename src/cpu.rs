@@ -240,6 +240,19 @@ pub trait Plugin {
 pub trait Mcu {
     fn read(&self, address: u16) -> u8;
     fn write(&mut self, address: u16, value: u8);
+
+    fn read_word(&self, addr: u16) -> u16 {
+        let low = self.read(addr) as u16;
+        let high = self.read(addr.wrapping_add(1)) as u16;
+        (high << 8) | low
+    }
+
+    fn write_word(&mut self, addr: u16, value: u16) {
+        let low = value as u8;
+        let high = (value >> 8) as u8;
+        self.write(addr, low);
+        self.write(addr.wrapping_add(1), high);
+    }
 }
 
 pub struct Cpu {
@@ -337,7 +350,7 @@ impl Cpu {
     pub fn inc_read_word(&mut self) -> u16 {
         let addr = self.pc;
         self.inc_pc(2);
-        self.read_word(addr)
+        self.mcu.read_word(addr)
     }
 
     pub fn write_byte(&mut self, addr: u16, value: u8) {
@@ -345,12 +358,11 @@ impl Cpu {
     }
 
     pub fn read_word(&self, addr: u16) -> u16 {
-        (self.read_byte(addr) as u16) | ((self.read_byte(addr.wrapping_add(1)) as u16) << 8)
+        self.mcu.read_word(addr)
     }
 
     pub fn read_zero_page_word(&self, addr: u8) -> u16 {
-        (self.read_byte(addr as u16) as u16)
-            | ((self.read_byte(addr.wrapping_add(1) as u16) as u16) << 8)
+        self.read_word(addr as u16)
     }
 
     fn push_stack(&mut self, value: u8) {
