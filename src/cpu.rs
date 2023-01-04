@@ -242,7 +242,6 @@ pub trait Mcu {
     fn write(&mut self, address: u16, value: u8);
 }
 
-#[allow(dead_code)]
 pub struct Cpu {
     pub a: u8,
     pub x: u8,
