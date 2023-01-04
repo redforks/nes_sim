@@ -9,3 +9,10 @@ edition = "2021"
 env_logger = {version = "0.10.0", default_features = false}
 log = "0.4.17"
 strum_macros = "0.24.3"
+
+[profile.release]
+lto = true
+codegen-units=1
+
+[profile.dev]
+split-debuginfo = "unpacked"
