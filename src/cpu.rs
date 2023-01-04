@@ -1,6 +1,5 @@
 use crate::mcu::Mcu;
 use log::debug;
-use std::io::Read;
 use std::ops::BitAnd;
 
 mod addressing;
