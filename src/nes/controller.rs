@@ -1,3 +1,4 @@
+// nes Controller struct
 pub struct Controller {
     mask: u8,
     bits: u8,
@@ -16,7 +17,11 @@ impl Controller {
         let r = self.bits & self.mask;
         self.mask = self.mask.rotate_left(1);
 
-        if r != 0 { 0x41 } else { 0x40 }
+        if r != 0 {
+            0x41
+        } else {
+            0x40
+        }
     }
 
     pub fn press(&mut self, btn: Button) {

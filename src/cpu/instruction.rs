@@ -1,5 +1,6 @@
-use crate::addressing::{Address, RegisterStatus};
-use crate::{addressing, extra_tick_if_cross_page, Cpu, Flag};
+use super::addressing;
+use super::addressing::{Address, RegisterStatus};
+use super::{extra_tick_if_cross_page, Cpu, Flag};
 use log::debug;
 use std::any::TypeId;
 
