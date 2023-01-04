@@ -253,6 +253,10 @@ pub trait Mcu {
         self.write(addr, low);
         self.write(addr.wrapping_add(1), high);
     }
+
+    fn read_zero_page_word(&self, addr: u8) -> u16 {
+        self.read_word(addr as u16)
+    }
 }
 
 pub struct Cpu {
@@ -362,7 +366,7 @@ impl Cpu {
     }
 
     pub fn read_zero_page_word(&self, addr: u8) -> u16 {
-        self.read_word(addr as u16)
+        self.mcu.read_zero_page_word(addr)
     }
 
     fn push_stack(&mut self, value: u8) {
