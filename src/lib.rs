@@ -1,6 +1,5 @@
 mod cpu;
-mod mcu;
-pub mod mcu_mem;
+pub mod mcu;
 pub mod nes;
 
 pub use cpu::*;

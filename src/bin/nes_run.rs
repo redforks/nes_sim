@@ -1,4 +1,4 @@
-use nes_sim::mcu_mem::RamMcu;
+use nes_sim::mcu::ram::RamMcu;
 use nes_sim::{Cpu, Flag, Plugin};
 use std::env;
 use std::fs::File;

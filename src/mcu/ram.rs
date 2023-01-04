@@ -1,4 +1,4 @@
-pub struct RamMcu ([u8; 0x10000]);
+pub struct RamMcu([u8; 0x10000]);
 
 impl RamMcu {
     pub fn new(buf: [u8; 0x10000]) -> RamMcu {
