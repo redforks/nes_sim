@@ -4,7 +4,7 @@ use super::Mcu;
 pub struct Region {
     /// The start address of the memory region.
     start: u16,
-    /// The mapping region length
+    /// The mapping region last address.
     end: u16,
     /// The sub memory Mcu.
     mcu: Box<dyn Mcu>,
@@ -25,16 +25,14 @@ pub struct MappingMcu {
 impl MappingMcu {
     /// Create a new mapping mcu.
     pub fn new(regions: Vec<Region>) -> MappingMcu {
-        MappingMcu {
-            regions,
-        }
+        MappingMcu { regions }
     }
 }
 
 impl Mcu for MappingMcu {
     fn read(&self, address: u16) -> u8 {
         for region in &self.regions {
-            if address >= region.start && address < region.end {
+            if address >= region.start && address <= region.end {
                 return region.mcu.read(address);
             }
         }
@@ -43,7 +41,7 @@ impl Mcu for MappingMcu {
 
     fn write(&mut self, address: u16, value: u8) {
         for region in &mut self.regions {
-            if address >= region.start && address < region.end {
+            if address >= region.start && address <= region.end {
                 return region.mcu.write(address, value);
             }
         }

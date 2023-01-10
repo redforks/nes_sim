@@ -1,4 +1,4 @@
-use crate::mcu::Mcu;
+use crate::mcu::{MappingMcu, Mcu, Region};
 
 /// ```
 /// use nes_sim::nes::apu::Sweep;
@@ -294,8 +294,7 @@ impl<D: PulseDriver> Mcu for PulseChannel<D> {
     }
 
     fn write(&mut self, address: u16, value: u8) {
-        let offset = address - self.start_addr;
-        match offset {
+        match address - self.start_addr {
             0 => self.driver.set_duty_cycle(value.into()),
             1 => self.driver.set_sweep(value.into()),
             2 => self.length_counter_load.write_low_byte(value),
@@ -319,7 +318,52 @@ impl<D: PulseDriver> PulseChannel<D> {
     }
 }
 
-trait TriangleDriver {
+pub trait TriangleDriver {
     fn set_linear_counter_control(&mut self, linear_counter_control: LinearCounterControl);
     fn set_length_counter_load(&mut self, length_counter: LengthCounterLoad);
+}
+
+pub struct TriangleChannel<D: TriangleDriver> {
+    driver: D,
+    length_counter_load: LengthCounterLoad,
+}
+
+impl<D: TriangleDriver> TriangleChannel<D> {
+    pub fn new(driver: D) -> Self {
+        TriangleChannel {
+            driver,
+            length_counter_load: LengthCounterLoad::default(),
+        }
+    }
+}
+
+impl<D: TriangleDriver> Mcu for TriangleChannel<D> {
+    fn read(&self, _: u16) -> u8 {
+        panic!("Can not read from TriangleChannel");
+    }
+
+    fn write(&mut self, address: u16, value: u8) {
+        match address {
+            0x4008 => self.driver.set_linear_counter_control(value.into()),
+            0x400A => self.length_counter_load.write_low_byte(value),
+            0x400B => {
+                self.length_counter_load.write_high_byte(value);
+                self.driver
+                    .set_length_counter_load(self.length_counter_load);
+            }
+            _ => panic!("Can not write to TriangleChannel at address {}", address),
+        }
+    }
+}
+
+pub fn new<PD, TD>(pd1: PD, pd2: PD, td: TD) -> Vec<Region>
+where
+    PD: PulseDriver + 'static,
+    TD: TriangleDriver + 'static,
+{
+    vec![
+        Region::new(0x4000, 0x4003, Box::new(PulseChannel::new(0x4000, pd1))),
+        Region::new(0x4004, 0x4007, Box::new(PulseChannel::new(0x4004, pd2))),
+        Region::new(0x4008, 0x400B, Box::new(TriangleChannel::new(td))),
+    ]
 }
