@@ -166,14 +166,72 @@ pub struct NoiseEnvelop {
 
 to_from_u8!(NoiseEnvelop);
 
-pub fn new<PD, TD>(pd1: PD, pd2: PD, td: TD) -> Vec<Region>
+#[derive(Copy, Clone)]
+#[bitfield]
+pub struct NoisePeriod {
+    pub enabled: bool,
+
+    #[allow(non_snake_case)]
+    #[skip]
+    __: B3,
+
+    pub period: B4,
+}
+
+to_from_u8!(NoisePeriod);
+
+#[derive(Copy, Clone)]
+#[bitfield]
+pub struct NoiseLength {
+    pub length: B5,
+    #[allow(non_snake_case)]
+    #[skip]
+    __: B3,
+}
+
+to_from_u8!(NoiseLength);
+
+pub trait NoiseDriver {
+    fn set_envelop(&mut self, envelop: NoiseEnvelop);
+    fn set_period(&mut self, period: NoisePeriod);
+    fn set_length(&mut self, length: NoiseLength);
+}
+
+pub struct NoiseChannel<D: NoiseDriver> {
+    driver: D,
+}
+
+impl<D: NoiseDriver> Mcu for NoiseChannel<D> {
+    fn read(&self, _: u16) -> u8 {
+        panic!("Can not from PulseChannel");
+    }
+
+    fn write(&mut self, address: u16, value: u8) {
+        match address {
+            0x400C => self.driver.set_envelop(value.into()),
+            0x400E => self.driver.set_period(value.into()),
+            0x400F => self.driver.set_length(value.into()),
+            _ => panic!("Can not write to NoiseChannel at address {}", address),
+        }
+    }
+}
+
+impl<D: NoiseDriver> NoiseChannel<D> {
+    pub fn new(driver: D) -> Self {
+        NoiseChannel { driver }
+    }
+}
+
+pub fn new<PD, TD, ND>(pd1: PD, pd2: PD, td: TD, nd: ND) -> Vec<Region>
 where
     PD: PulseDriver + 'static,
     TD: TriangleDriver + 'static,
+    ND: NoiseDriver + 'static,
 {
     vec![
         Region::new(0x4000, 0x4003, Box::new(PulseChannel::new(0x4000, pd1))),
         Region::new(0x4004, 0x4007, Box::new(PulseChannel::new(0x4004, pd2))),
         Region::new(0x4008, 0x400B, Box::new(TriangleChannel::new(td))),
+        Region::new(0x400C, 0x400F, Box::new(NoiseChannel::new(nd))),
     ]
 }
