@@ -1,199 +1,42 @@
-use crate::mcu::{MappingMcu, Mcu, Region};
+use crate::mcu::{Mcu, Region};
+use modular_bitfield::prelude::*;
 
-/// ```
-/// use nes_sim::nes::apu::Sweep;
-/// let mut sweep: Sweep = 0x9Au8.into();
-/// assert!(sweep.enabled());
-/// assert_eq!(sweep.shift_count(), 2);
-/// assert_eq!(sweep.divider(), 1);
-/// assert!(sweep.negate());
-/// ```
-#[derive(Copy, Clone, Default)]
+macro_rules! to_from_u8 {
+    ($t: ty) => {
+        impl From<$t> for u8 {
+            fn from(n: $t) -> Self {
+                n.into_bytes()[0]
+            }
+        }
+
+        impl From<u8> for $t {
+            fn from(v: u8) -> Self {
+                <$t>::from_bytes([v])
+            }
+        }
+    };
+}
+
+#[derive(Copy, Clone)]
+#[bitfield]
 pub struct Sweep {
-    v: u8,
+    pub enabled: bool,
+    pub period: B3,
+    pub negate: bool,
+    pub shift: B3,
 }
 
-impl From<Sweep> for u8 {
-    fn from(s: Sweep) -> Self {
-        s.v
-    }
-}
+to_from_u8!(Sweep);
 
-impl From<u8> for Sweep {
-    fn from(v: u8) -> Self {
-        Sweep { v }
-    }
-}
-
-impl Sweep {
-    /// ```
-    /// use nes_sim::nes::apu::Sweep;
-    /// let mut sweep = Sweep::default();
-    /// assert!(!sweep.enabled());
-    ///
-    /// sweep.set_enabled(true);
-    /// assert_eq!(sweep.enabled(), true);
-    ///
-    /// sweep.set_enabled(false);
-    /// assert_eq!(sweep.enabled(), false);
-    /// ```
-    pub fn enabled(&self) -> bool {
-        self.v & 0x80 != 0
-    }
-
-    pub fn set_enabled(&mut self, v: bool) {
-        if v {
-            self.v |= 0x80;
-        } else {
-            self.v &= !0x80;
-        }
-    }
-
-    /// ```
-    /// use nes_sim::nes::apu::Sweep;
-    /// let mut sweep = Sweep::default();
-    /// assert!(!sweep.negate());
-    /// sweep.set_negate(true);
-    /// assert_eq!(sweep.negate(), true);
-    /// sweep.set_negate(false);
-    /// assert_eq!(sweep.negate(), false);
-    /// ```
-    pub fn negate(&self) -> bool {
-        self.v & 0x08 != 0
-    }
-
-    pub fn set_negate(&mut self, v: bool) {
-        if v {
-            self.v |= 0x08;
-        } else {
-            self.v &= !0x08;
-        }
-    }
-
-    /// ```
-    /// use nes_sim::nes::apu::Sweep;
-    /// let mut sweep = Sweep::default();
-    /// assert_eq!(sweep.divider(), 0);
-    /// sweep.set_divider(0b111);
-    /// assert_eq!(sweep.divider(), 0b111);
-    /// ```
-    pub fn divider(&self) -> u8 {
-        (self.v >> 4) & 0x07
-    }
-
-    pub fn set_divider(&mut self, v: u8) {
-        self.v = (self.v & !0x70) | ((v & 0x07) << 4);
-    }
-
-    /// ```
-    /// use nes_sim::nes::apu::Sweep;
-    /// let mut sweep = Sweep::default();
-    /// assert_eq!(sweep.shift_count(), 0);
-    /// sweep.set_shift_count(3);
-    /// assert_eq!(sweep.shift_count(), 3);
-    /// ```
-    pub fn shift_count(&self) -> u8 {
-        self.v & 0x07
-    }
-
-    pub fn set_shift_count(&mut self, v: u8) {
-        self.v = (self.v & !0x07) | (v & 0x07);
-    }
-}
-
-#[derive(Copy, Clone, Default)]
+#[bitfield]
 pub struct DutyCycle {
-    v: u8,
+    pub duty: B2,
+    pub length_counter_halt: bool,
+    pub constant_volume: bool,
+    pub volume: B4,
 }
 
-impl From<DutyCycle> for u8 {
-    fn from(d: DutyCycle) -> Self {
-        d.v
-    }
-}
-
-impl From<u8> for DutyCycle {
-    fn from(v: u8) -> Self {
-        DutyCycle { v }
-    }
-}
-
-impl DutyCycle {
-    /// ```
-    /// use nes_sim::nes::apu::DutyCycle;
-    /// let mut duty_cycle = DutyCycle::default();
-    /// assert_eq!(duty_cycle.duty(), 0);
-    /// duty_cycle.set_duty(0b10);
-    /// assert_eq!(duty_cycle.duty(), 0b10);
-    /// duty_cycle.set_duty(0b11);
-    /// assert_eq!(duty_cycle.duty(), 0b11);
-    /// ```
-    pub fn duty(&self) -> u8 {
-        (self.v & 0xC0) >> 6
-    }
-
-    pub fn set_duty(&mut self, v: u8) {
-        assert!(v <= 0b11);
-        self.v = (self.v & !0xC0) | ((v & 0x03) << 6);
-    }
-
-    /// ```
-    /// use nes_sim::nes::apu::DutyCycle;
-    /// let mut duty_cycle = DutyCycle::default();
-    /// assert_eq!(duty_cycle.length_counter_halt(), false);
-    /// duty_cycle.set_length_counter_halt(true);
-    /// assert_eq!(duty_cycle.length_counter_halt(), true);
-    /// duty_cycle.set_length_counter_halt(false);
-    /// assert_eq!(duty_cycle.length_counter_halt(), false);
-    /// ```
-    pub fn length_counter_halt(&self) -> bool {
-        self.v & 0x20 != 0
-    }
-
-    pub fn set_length_counter_halt(&mut self, v: bool) {
-        if v {
-            self.v |= 0x20;
-        } else {
-            self.v &= !0x20;
-        }
-    }
-
-    /// ```
-    /// use nes_sim::nes::apu::DutyCycle;
-    /// let mut duty_cycle = DutyCycle::default();
-    /// assert_eq!(duty_cycle.constant_volume(), false);
-    /// duty_cycle.set_constant_volume(true);
-    /// assert_eq!(duty_cycle.constant_volume(), true);
-    /// duty_cycle.set_constant_volume(false);
-    /// assert_eq!(duty_cycle.constant_volume(), false);
-    /// ```
-    pub fn constant_volume(&self) -> bool {
-        self.v & 0x10 != 0
-    }
-
-    pub fn set_constant_volume(&mut self, v: bool) {
-        if v {
-            self.v |= 0x10;
-        } else {
-            self.v &= !0x10;
-        }
-    }
-
-    /// ```
-    /// use nes_sim::nes::apu::DutyCycle;
-    /// let mut duty_cycle = DutyCycle::default();
-    /// assert_eq!(duty_cycle.volume(), 0);
-    /// duty_cycle.set_volume(0b111);
-    /// assert_eq!(duty_cycle.volume(), 0b111);
-    /// ```
-    pub fn volume(&self) -> u8 {
-        self.v & 0x0F
-    }
-
-    pub fn set_volume(&mut self, v: u8) {
-        self.v = (self.v & !0x0F) | (v & 0x0F);
-    }
-}
+to_from_u8!(DutyCycle);
 
 #[derive(Copy, Clone, Default)]
 pub struct LengthCounterLoad {
@@ -219,60 +62,14 @@ impl LengthCounterLoad {
     }
 }
 
-#[derive(Copy, Clone, Default)]
+#[derive(Copy, Clone)]
+#[bitfield]
 pub struct LinearCounterControl {
-    v: u8,
+    pub reload_flag: bool,
+    pub counter: B7,
 }
 
-impl From<LinearCounterControl> for u8 {
-    fn from(l: LinearCounterControl) -> Self {
-        l.v
-    }
-}
-
-impl From<u8> for LinearCounterControl {
-    fn from(v: u8) -> Self {
-        LinearCounterControl { v }
-    }
-}
-
-impl LinearCounterControl {
-    /// ```
-    /// use nes_sim::nes::apu::LinearCounterControl;
-    /// let mut linear_counter_control = LinearCounterControl::default();
-    /// assert_eq!(linear_counter_control.reload_flag(), false);
-    /// linear_counter_control.set_reload_flag(true);
-    /// assert_eq!(linear_counter_control.reload_flag(), true);
-    /// linear_counter_control.set_reload_flag(false);
-    /// assert_eq!(linear_counter_control.reload_flag(), false);
-    /// ```
-    pub fn reload_flag(&self) -> bool {
-        self.v & 0x80 != 0
-    }
-
-    pub fn set_reload_flag(&mut self, v: bool) {
-        if v {
-            self.v |= 0x80;
-        } else {
-            self.v &= !0x80;
-        }
-    }
-
-    /// ```
-    /// use nes_sim::nes::apu::LinearCounterControl;
-    /// let mut linear_counter_control = LinearCounterControl::default();
-    /// assert_eq!(linear_counter_control.counter(), 0);
-    /// linear_counter_control.set_counter(0b1111);
-    /// assert_eq!(linear_counter_control.counter(), 0b1111);
-    /// ```
-    pub fn counter(&self) -> u8 {
-        self.v & 0x7F
-    }
-
-    pub fn set_counter(&mut self, v: u8) {
-        self.v = (self.v & !0x7F) | (v & 0x7F);
-    }
-}
+to_from_u8!(LinearCounterControl);
 
 pub trait PulseDriver {
     fn set_duty_cycle(&mut self, duty_cycle: DutyCycle);
@@ -355,6 +152,19 @@ impl<D: TriangleDriver> Mcu for TriangleChannel<D> {
         }
     }
 }
+
+#[derive(Copy, Clone)]
+#[bitfield]
+pub struct NoiseEnvelop {
+    #[allow(non_snake_case)]
+    #[skip]
+    __: B2,
+    pub loop_flag: bool,
+    pub constant_volume: bool,
+    pub volume: B4,
+}
+
+to_from_u8!(NoiseEnvelop);
 
 pub fn new<PD, TD>(pd1: PD, pd2: PD, td: TD) -> Vec<Region>
 where
