@@ -216,6 +216,54 @@ impl<D: NoiseDriver> Mcu for NoiseChannel<D> {
     }
 }
 
+#[derive(Copy, Clone)]
+#[bitfield]
+pub struct DmcIRQLoopFreq {
+    pub irq_enabled: bool,
+    pub loop_flag: bool,
+    #[allow(non_snake_case)]
+    #[skip]
+    __: B2,
+    pub freq: B4,
+}
+
+impl From<DmcIRQLoopFreq> for u8 {
+    fn from(v: DmcIRQLoopFreq) -> Self {
+        v.into_bytes()[0]
+    }
+}
+
+impl From<u8> for DmcIRQLoopFreq {
+    fn from(v: u8) -> Self {
+        DmcIRQLoopFreq::from_bytes([v])
+    }
+}
+
+pub trait DmcDriver {
+    fn set_irq_loop_freq(&mut self, irq_loop_freq: DmcIRQLoopFreq);
+    fn set_load_counter(&mut self, counter: u8);
+    fn set_sample_address(&mut self, addr: u8);
+    fn set_sample_length(&mut self, length: u8);
+}
+
+struct DmcChannel<D: DmcDriver>(D);
+
+impl<D: DmcDriver> Mcu for DmcChannel<D> {
+    fn read(&self, address: u16) -> u8 {
+        panic!("Can not read from DmcChannel at address {}", address);
+    }
+
+    fn write(&mut self, address: u16, value: u8) {
+        match address {
+            0x4010 => self.0.set_irq_loop_freq(value.into()),
+            0x4011 => self.0.set_load_counter(value),
+            0x4012 => self.0.set_sample_address(value),
+            0x4013 => self.0.set_sample_length(value),
+            _ => panic!("Can not write to DmcChannel at address {}", address),
+        }
+    }
+}
+
 pub fn new<PD, TD, ND>(pd1: PD, pd2: PD, td: TD, nd: ND) -> Vec<Region>
 where
     PD: PulseDriver + 'static,
@@ -227,5 +275,6 @@ where
         Region::new(0x4004, 0x4007, Box::new(PulseChannel::new(0x4004, pd2))),
         Region::new(0x4008, 0x400B, Box::new(TriangleChannel::new(td))),
         Region::new(0x400C, 0x400F, Box::new(NoiseChannel { driver: nd })),
+        Region::new(0x4010, 0x4013, Box::new(DmcChannel::new())),
     ]
 }
