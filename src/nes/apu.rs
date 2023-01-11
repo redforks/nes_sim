@@ -79,7 +79,7 @@ pub trait PulseDriver {
     fn set_length_counter_load(&mut self, length_counter: LengthCounterLoad);
 }
 
-pub struct PulseChannel<D: PulseDriver> {
+struct PulseChannel<D: PulseDriver> {
     start_addr: u16,
     driver: D,
     length_counter_load: LengthCounterLoad,
@@ -120,7 +120,7 @@ pub trait TriangleDriver {
     fn set_length_counter_load(&mut self, length_counter: LengthCounterLoad);
 }
 
-pub struct TriangleChannel<D: TriangleDriver> {
+struct TriangleChannel<D: TriangleDriver> {
     driver: D,
     length_counter_load: LengthCounterLoad,
 }
@@ -197,7 +197,7 @@ pub trait NoiseDriver {
     fn set_length(&mut self, length: NoiseLength);
 }
 
-pub struct NoiseChannel<D: NoiseDriver> {
+struct NoiseChannel<D: NoiseDriver> {
     driver: D,
 }
 
@@ -216,12 +216,6 @@ impl<D: NoiseDriver> Mcu for NoiseChannel<D> {
     }
 }
 
-impl<D: NoiseDriver> NoiseChannel<D> {
-    pub fn new(driver: D) -> Self {
-        NoiseChannel { driver }
-    }
-}
-
 pub fn new<PD, TD, ND>(pd1: PD, pd2: PD, td: TD, nd: ND) -> Vec<Region>
 where
     PD: PulseDriver + 'static,
@@ -232,6 +226,6 @@ where
         Region::new(0x4000, 0x4003, Box::new(PulseChannel::new(0x4000, pd1))),
         Region::new(0x4004, 0x4007, Box::new(PulseChannel::new(0x4004, pd2))),
         Region::new(0x4008, 0x400B, Box::new(TriangleChannel::new(td))),
-        Region::new(0x400C, 0x400F, Box::new(NoiseChannel::new(nd))),
+        Region::new(0x400C, 0x400F, Box::new(NoiseChannel { driver: nd })),
     ]
 }
