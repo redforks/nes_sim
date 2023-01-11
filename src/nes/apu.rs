@@ -197,9 +197,7 @@ pub trait NoiseDriver {
     fn set_length(&mut self, length: NoiseLength);
 }
 
-struct NoiseChannel<D: NoiseDriver> {
-    driver: D,
-}
+struct NoiseChannel<D: NoiseDriver>(D);
 
 impl<D: NoiseDriver> Mcu for NoiseChannel<D> {
     fn read(&self, _: u16) -> u8 {
@@ -208,9 +206,9 @@ impl<D: NoiseDriver> Mcu for NoiseChannel<D> {
 
     fn write(&mut self, address: u16, value: u8) {
         match address {
-            0x400C => self.driver.set_envelop(value.into()),
-            0x400E => self.driver.set_period(value.into()),
-            0x400F => self.driver.set_length(value.into()),
+            0x400C => self.0.set_envelop(value.into()),
+            0x400E => self.0.set_period(value.into()),
+            0x400F => self.0.set_length(value.into()),
             _ => panic!("Can not write to NoiseChannel at address {}", address),
         }
     }
@@ -226,18 +224,7 @@ pub struct DmcIRQLoopFreq {
     __: B2,
     pub freq: B4,
 }
-
-impl From<DmcIRQLoopFreq> for u8 {
-    fn from(v: DmcIRQLoopFreq) -> Self {
-        v.into_bytes()[0]
-    }
-}
-
-impl From<u8> for DmcIRQLoopFreq {
-    fn from(v: u8) -> Self {
-        DmcIRQLoopFreq::from_bytes([v])
-    }
-}
+to_from_u8!(DmcIRQLoopFreq);
 
 pub trait DmcDriver {
     fn set_irq_loop_freq(&mut self, irq_loop_freq: DmcIRQLoopFreq);
@@ -264,17 +251,86 @@ impl<D: DmcDriver> Mcu for DmcChannel<D> {
     }
 }
 
-pub fn new<PD, TD, ND>(pd1: PD, pd2: PD, td: TD, nd: ND) -> Vec<Region>
+#[derive(Copy, Clone)]
+#[bitfield]
+pub struct ControlFlags {
+    #[allow(non_snake_case)]
+    #[skip]
+    __: B3,
+    pub dmc_enabled: bool,
+    pub noise_enabled: bool,
+    pub triangle_enabled: bool,
+    pub pulse1_enabled: bool,
+    pub pulse2_enabled: bool,
+}
+to_from_u8!(ControlFlags);
+
+#[derive(Copy, Clone)]
+#[bitfield]
+pub struct APUStatus {
+    pub dmc_interrupt: bool,
+    pub frame_interrupt: bool,
+    #[allow(non_snake_case)]
+    #[skip]
+    __: B1,
+    pub dmc_enabled: bool,
+    pub noise_enabled: bool,
+    pub triangle_enabled: bool,
+    pub pulse1_enabled: bool,
+    pub pulse2_enabled: bool,
+}
+to_from_u8!(APUStatus);
+
+#[derive(Copy, Clone)]
+#[bitfield]
+pub struct FrameCounter {
+    pub mode: bool,
+    pub interrupt_flag: bool,
+    #[allow(non_snake_case)]
+    #[skip]
+    __: B6,
+}
+to_from_u8!(FrameCounter);
+
+pub trait APUControllerDriver {
+    fn set_control_flags(&mut self, flags: ControlFlags);
+    fn set_frame_counter(&mut self, counter: FrameCounter);
+    fn read_status(&self) -> APUStatus;
+}
+
+struct APUController<D: APUControllerDriver>(D);
+
+impl<D: APUControllerDriver> Mcu for APUController<D> {
+    fn read(&self, address: u16) -> u8 {
+        match address {
+            0x4015 => self.0.read_status().into(),
+            _ => panic!("Can not read from APUController at address {}", address),
+        }
+    }
+
+    fn write(&mut self, address: u16, value: u8) {
+        match address {
+            0x4015 => self.0.set_control_flags(value.into()),
+            0x4017 => self.0.set_frame_counter(value.into()),
+            _ => panic!("Can not write to APUController at address {}", address),
+        }
+    }
+}
+
+pub fn new<PD, TD, ND, DD, CD>(pd1: PD, pd2: PD, td: TD, nd: ND, dd: DD, cd: CD) -> Vec<Region>
 where
     PD: PulseDriver + 'static,
     TD: TriangleDriver + 'static,
     ND: NoiseDriver + 'static,
+    DD: DmcDriver + 'static,
+    CD: APUControllerDriver + 'static,
 {
     vec![
         Region::new(0x4000, 0x4003, Box::new(PulseChannel::new(0x4000, pd1))),
         Region::new(0x4004, 0x4007, Box::new(PulseChannel::new(0x4004, pd2))),
         Region::new(0x4008, 0x400B, Box::new(TriangleChannel::new(td))),
-        Region::new(0x400C, 0x400F, Box::new(NoiseChannel { driver: nd })),
-        Region::new(0x4010, 0x4013, Box::new(DmcChannel::new())),
+        Region::new(0x400C, 0x400F, Box::new(NoiseChannel(nd))),
+        Region::new(0x4010, 0x4013, Box::new(DmcChannel(dd))),
+        Region::new(0x4015, 0x4015, Box::new(APUController(cd))),
     ]
 }
