@@ -54,7 +54,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "nes_sim"
+name = "nes_core"
 version = "0.1.0"
 dependencies = [
  "env_logger",

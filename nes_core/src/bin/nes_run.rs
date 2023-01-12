@@ -1,5 +1,5 @@
-use nes_sim::mcu::RamMcu;
-use nes_sim::{Cpu, Flag, Plugin};
+use nes_core::mcu::RamMcu;
+use nes_core::{Cpu, Flag, Plugin};
 use std::env;
 use std::fs::File;
 use std::io::{Read, Write};
