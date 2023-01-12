@@ -1,9 +1,7 @@
 use nes_core::mcu::RamMcu;
 use nes_core::{Cpu, Flag, Plugin};
 use std::env;
-use std::fs::File;
-use std::io::{Read, Write};
-use std::path::PathBuf;
+use std::io::Write;
 
 fn main() {
     let args = env::args().collect::<Vec<_>>();
@@ -21,11 +19,7 @@ fn main() {
         .format(|buf, record| writeln!(buf, "{}", record.args()))
         .init();
 
-    let mut p = PathBuf::from(file!());
-    p.pop();
-    let mut f = File::open(p.join("6502_functional_test.bin")).unwrap();
-    let mut ram = [0u8; 0x10000];
-    assert_eq!(65536, f.read(&mut ram).unwrap());
+    let ram: [u8; 65536] = *include_bytes!("6502_functional_test.bin");
     let mut cpu = Cpu::new(Box::new(RamMcu::new(ram)));
     cpu.reset();
     // the test rom reset position, not the start position.

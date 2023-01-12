@@ -1,13 +1,5 @@
-# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
-
-[profile.release]
-lto = true
-codegen-units=1
-
-[profile.dev]
-split-debuginfo = "unpacked"
-
 [workspace]
 members = [
   "nes_core",
+  "nes_cpu_test",
 ]

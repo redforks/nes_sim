@@ -57,10 +57,18 @@ dependencies = [
 name = "nes_core"
 version = "0.1.0"
 dependencies = [
- "env_logger",
  "log",
  "modular-bitfield",
  "strum_macros",
+]
+
+[[package]]
+name = "nes_cpu_test"
+version = "0.1.0"
+dependencies = [
+ "env_logger",
+ "log",
+ "nes_core",
 ]
 
 [[package]]
