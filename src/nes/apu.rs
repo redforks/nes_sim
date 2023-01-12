@@ -1,21 +1,6 @@
 use crate::mcu::{Mcu, Region};
+use crate::to_from_u8;
 use modular_bitfield::prelude::*;
-
-macro_rules! to_from_u8 {
-    ($t: ty) => {
-        impl From<$t> for u8 {
-            fn from(n: $t) -> Self {
-                n.into_bytes()[0]
-            }
-        }
-
-        impl From<u8> for $t {
-            fn from(v: u8) -> Self {
-                <$t>::from_bytes([v])
-            }
-        }
-    };
-}
 
 #[derive(Copy, Clone)]
 #[bitfield]
