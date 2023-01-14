@@ -302,7 +302,14 @@ impl<D: APUControllerDriver> Mcu for APUController<D> {
     }
 }
 
-pub fn new<PD, TD, ND, DD, CD>(pd1: PD, pd2: PD, td: TD, nd: ND, dd: DD, cd: CD) -> Vec<Region>
+pub fn new<PD, TD, ND, DD, CD>(
+    pd1: PD,
+    pd2: PD,
+    td: TD,
+    nd: ND,
+    dd: DD,
+    cd: CD,
+) -> impl IntoIterator<Item = Region>
 where
     PD: PulseDriver + 'static,
     TD: TriangleDriver + 'static,
@@ -310,7 +317,7 @@ where
     DD: DmcDriver + 'static,
     CD: APUControllerDriver + 'static,
 {
-    vec![
+    [
         Region::new(0x4000, 0x4003, Box::new(PulseChannel::new(0x4000, pd1))),
         Region::new(0x4004, 0x4007, Box::new(PulseChannel::new(0x4004, pd2))),
         Region::new(0x4008, 0x400B, Box::new(TriangleChannel::new(td))),
