@@ -1,4 +1,4 @@
-use crate::mcu::Mcu;
+use crate::mcu::{DefinedRegion, Mcu};
 use std::cell::RefCell;
 
 /// nes Controller struct that represent a controller of nes.
@@ -85,6 +85,12 @@ impl Mcu for Controller {
             0x4017 => {}
             _ => panic!("write address out of range: {:04x}", address),
         }
+    }
+}
+
+impl DefinedRegion for Controller {
+    fn region(&self) -> (u16, u16) {
+        (0x4016, 0x4017)
     }
 }
 

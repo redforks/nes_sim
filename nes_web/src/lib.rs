@@ -22,7 +22,7 @@ pub struct Machine {
 pub fn new_machine() -> Machine {
     let regions = [
         Region::new(0x0000, 0x1fff, Box::new(RamMcu::new([0; 0x2000]))),
-        Region::new(0x2000, 0x3fff, Box::new(Controller::new())),
+        Region::with_defined(Controller::new()),
     ];
     let regions = regions
         .into_iter()
