@@ -1,4 +1,4 @@
-use crate::mcu::{Mcu, Region};
+use crate::mcu::{DefinedRegion, Mcu, Region};
 use crate::to_from_u8;
 use modular_bitfield::prelude::*;
 
@@ -87,6 +87,12 @@ impl<D: PulseDriver> Mcu for PulseChannel<D> {
             }
             _ => panic!("Can not write to PulseChannel at address {}", address),
         }
+    }
+}
+
+impl<D: PulseDriver> DefinedRegion for PulseChannel<D> {
+    fn region(&self) -> (u16, u16) {
+        (self.start_addr, self.start_addr + 4 - 1)
     }
 }
 
@@ -318,7 +324,7 @@ where
     CD: APUControllerDriver + 'static,
 {
     [
-        Region::new(0x4000, 0x4003, Box::new(PulseChannel::new(0x4000, pd1))),
+        Region::with_defined(PulseChannel::new(0x4000, pd1)),
         Region::new(0x4004, 0x4007, Box::new(PulseChannel::new(0x4004, pd2))),
         Region::new(0x4008, 0x400B, Box::new(TriangleChannel::new(td))),
         Region::new(0x400C, 0x400F, Box::new(NoiseChannel(nd))),

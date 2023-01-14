@@ -12,8 +12,13 @@ pub struct Region {
 
 impl Region {
     /// Create a new mapping.
-    pub fn new(start: u16, end: u16, mcu: Box<dyn Mcu>) -> Region {
+    pub fn new(start: u16, end: u16, mcu: Box<dyn Mcu>) -> Self {
         Region { start, end, mcu }
+    }
+
+    pub fn with_defined<M: Mcu + DefinedRegion + 'static>(mcu: M) -> Self {
+        let (start, end) = mcu.region();
+        Region::new(start, end, Box::new(mcu))
     }
 }
 
@@ -47,4 +52,8 @@ impl Mcu for MappingMcu {
         }
         panic!("write address out of range: {:04x}", address);
     }
+}
+
+pub trait DefinedRegion {
+    fn region(&self) -> (u16, u16); // (start, end)
 }
