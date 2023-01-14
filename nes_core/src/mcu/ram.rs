@@ -2,7 +2,7 @@ use crate::mcu::{DefinedRegion, Mcu};
 
 pub struct RamMcu<const SIZE: usize> {
     /// Start address of the memory region
-    start: usize,
+    start: u16,
     ram: [u8; SIZE],
 }
 
@@ -11,7 +11,7 @@ impl<const SIZE: usize> RamMcu<SIZE> {
         RamMcu { start: 0, ram }
     }
 
-    pub fn start_from(start: usize) -> Self {
+    pub fn start_from(start: u16) -> Self {
         RamMcu {
             start,
             ram: [0; SIZE],
@@ -22,17 +22,17 @@ impl<const SIZE: usize> RamMcu<SIZE> {
 // impl super::Mcu trait
 impl<const SIZE: usize> Mcu for RamMcu<SIZE> {
     fn read(&self, address: u16) -> u8 {
-        self.ram[address as usize - self.start]
+        self.ram[(address - self.start) as usize]
     }
 
     fn write(&mut self, address: u16, value: u8) {
-        self.ram[address as usize - self.start] = value;
+        self.ram[(address - self.start) as usize] = value;
     }
 }
 
 impl<const SIZE: usize> DefinedRegion for RamMcu<SIZE> {
     fn region(&self) -> (u16, u16) {
-        (self.start as u16, (self.start - 1 + SIZE) as u16)
+        (self.start, self.start - 1 + (SIZE as u16))
     }
 }
 
