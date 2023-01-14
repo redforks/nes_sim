@@ -238,6 +238,14 @@ pub trait Plugin {
     fn end(&mut self, cpu: &Cpu);
 }
 
+pub struct EmptyPlugin();
+
+impl Plugin for EmptyPlugin {
+    fn start(&mut self, _: &Cpu) {}
+
+    fn end(&mut self, _: &Cpu) {}
+}
+
 pub struct Cpu {
     pub a: u8,
     pub x: u8,
