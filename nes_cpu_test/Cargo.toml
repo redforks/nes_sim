@@ -14,3 +14,4 @@ split-debuginfo = "unpacked"
 nes_core = { path = "../nes_core" }
 env_logger = {version = "0.10.0", default_features = false}
 log = "0.4.17"
+clap = { version = "4.1.1", features = ["derive"] }
