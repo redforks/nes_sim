@@ -4,3 +4,8 @@ members = [
   "nes_cpu_test",
   "nes_web",
 ]
+
+[profile.release]
+lto = true
+codegen-units=1
+opt-level = "z"
