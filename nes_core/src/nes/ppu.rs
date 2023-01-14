@@ -1,4 +1,4 @@
-use crate::mcu::Mcu;
+use crate::mcu::{DefinedRegion, Mcu};
 use crate::to_from_u8;
 use modular_bitfield::prelude::*;
 use std::cell::Cell;
@@ -114,5 +114,12 @@ impl<D: PpuDriver> Mcu for Ppu<D> {
             0x4014 => self.driver.set_dma(value),
             _ => panic!("Can not write to Ppu at address {}", address),
         }
+    }
+}
+
+impl<D: PpuDriver> DefinedRegion for Ppu<D> {
+    fn region(&self) -> (u16, u16) {
+        // TODO: how about 4014 ?
+        (0x2000, 0x2008)
     }
 }

@@ -34,11 +34,7 @@ pub fn new_machine() -> Machine {
             DmcDriver(),
             ApuControlDriver(),
         ))
-        .chain(once(Region::new(
-            0x4015,
-            0x4015,
-            Box::new(Ppu::new(PpuDriver())),
-        )));
+        .chain(once(Region::with_defined(Ppu::new(PpuDriver()))));
     let mcu = MappingMcu::new(regions.collect());
     let mcu = setup_mem_mirror(mcu);
     Machine {
