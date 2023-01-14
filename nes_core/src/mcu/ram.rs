@@ -17,16 +17,20 @@ impl<const SIZE: usize> RamMcu<SIZE> {
             ram: [0; SIZE],
         }
     }
+
+    fn to_index(&self, address: u16) -> usize {
+        (address - self.start) as usize
+    }
 }
 
 // impl super::Mcu trait
 impl<const SIZE: usize> Mcu for RamMcu<SIZE> {
     fn read(&self, address: u16) -> u8 {
-        self.ram[(address - self.start) as usize]
+        self.ram[self.to_index(address)]
     }
 
     fn write(&mut self, address: u16, value: u8) {
-        self.ram[(address - self.start) as usize] = value;
+        self.ram[self.to_index(address)] = value;
     }
 }
 
