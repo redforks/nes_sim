@@ -27,7 +27,7 @@ where
     S: Address,
     D: Address,
 {
-    debug!("transfer_no_touch {} {}", src, dest);
+    debug!("transfer_no_touch {} {}", dest, src);
 
     move |cpu| {
         let (val, ticks) = src.get(cpu);
