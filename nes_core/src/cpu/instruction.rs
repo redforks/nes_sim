@@ -130,10 +130,9 @@ fn new_acc_op<F: Fn(u8, u8) -> u8, S: Address>(
 
     move |cpu| {
         let (val, ticks) = src.get(cpu);
-        let val = op(cpu.a, val);
-        cpu.a = val;
-        cpu.update_negative_flag(val);
-        cpu.update_zero_flag(val);
+        cpu.a = op(cpu.a, val);
+        cpu.update_negative_flag(cpu.a);
+        cpu.update_zero_flag(cpu.a);
         2 + ticks
     }
 }
@@ -172,13 +171,12 @@ pub fn new_arr(Literal(v): Literal) -> impl FnMut(&mut Cpu) -> u8 {
     debug!("arr {}", Literal(v));
 
     move |cpu| {
-        let val = cpu.a & v;
-        let val = val >> 1 | (cpu.flag(Flag::Carry) as u8) << 7;
-        cpu.a = val;
-        cpu.update_negative_flag(cpu.a);
+        cpu.set_flag(Flag::Negative, cpu.flag(Flag::Carry));
+        cpu.a &= v;
+        cpu.a = cpu.a >> 1 | (cpu.flag(Flag::Carry) as u8) << 7;
         cpu.update_zero_flag(cpu.a);
-        cpu.set_flag(Flag::Carry, val & 0x40 != 0);
-        cpu.set_flag(Flag::Overflow, val & 0x40 != val & 0x20);
+        cpu.set_flag(Flag::Carry, cpu.a & 0x80 != 0);
+        cpu.set_flag(Flag::Overflow, (cpu.a >> 7) & (cpu.a >> 6) & 1 != 0);
         2
     }
 }
