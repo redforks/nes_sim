@@ -34,6 +34,13 @@ impl Image {
             ])),
         }
     }
+
+    pub fn start_addr(&self) -> Option<u16> {
+        match self {
+            Image::Bin(_) => Some(0x400),
+            Image::INes(_) => None,
+        }
+    }
 }
 
 #[derive(Debug, thiserror::Error)]

@@ -35,7 +35,7 @@ impl<const DEPTH: usize> Plugin for DetectDeadLoop<DEPTH> {
 
         self.should_exit = true;
 
-        println!("test failed: pc repeated ({})", DEPTH);
+        eprintln!("test failed: pc repeated ({})", DEPTH);
     }
 
     fn should_stop(&self) -> bool {

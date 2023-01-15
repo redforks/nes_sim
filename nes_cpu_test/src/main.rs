@@ -34,6 +34,9 @@ fn main() {
     let image = image::load_image(&f).unwrap();
     let mut cpu = Cpu::new(image.create_mcu());
     cpu.reset();
+    if let Some(pc) = image.start_addr() {
+        cpu.pc = pc;
+    }
     let mut plugin = image.create_plugin(quiet);
     while cpu.clock_tick(&mut plugin) != ExecuteResult::Stop {
         // run until exit
