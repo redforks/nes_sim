@@ -42,7 +42,10 @@ impl Plugin for MonitorTestStatus {
         let status = Status::parse(cpu);
         self.should_stop = match status {
             Status::Succeed => true,
-            Status::Failed(_) => true,
+            Status::Failed(r) => {
+                eprintln!("test failed: {}", r);
+                true
+            }
             Status::ShouldReset => false,
             _ => false,
         };

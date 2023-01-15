@@ -27,7 +27,7 @@ impl Image {
         match self {
             Image::Bin(_) => Box::new(ReportPlugin::new(quiet)),
             Image::INes(_) => Box::new(CompositePlugin::new(vec![
-                Box::new(Console()),
+                Box::new(Console::default()),
                 Box::new(MonitorTestStatus::default()),
                 Box::new(DetectDeadLoop::<1>::new()),
                 Box::new(DetectDeadLoop::<2>::new()),

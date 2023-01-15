@@ -186,24 +186,28 @@ fn execute_next(cpu: &mut Cpu) -> u8 {
         (2, 0, 2) => new_asl(aa())(cpu),
         (2, 0, 3) => new_asl(absolute(cpu))(cpu),
         (2, 0, 5) => new_asl(zero_page_x(cpu))(cpu),
+        (2, 0, 6) => new_nop()(cpu),
         (2, 0, 7) => new_asl(absolute_x(cpu))(cpu),
 
         (2, 1, 1) => new_rol(zero_page(cpu))(cpu),
         (2, 1, 2) => new_rol(aa())(cpu),
         (2, 1, 3) => new_rol(absolute(cpu))(cpu),
         (2, 1, 5) => new_rol(zero_page_x(cpu))(cpu),
+        (2, 1, 6) => new_nop()(cpu),
         (2, 1, 7) => new_rol(absolute_x(cpu))(cpu),
 
         (2, 2, 1) => new_lsr(zero_page(cpu))(cpu),
         (2, 2, 2) => new_lsr(aa())(cpu),
         (2, 2, 3) => new_lsr(absolute(cpu))(cpu),
         (2, 2, 5) => new_lsr(zero_page_x(cpu))(cpu),
+        (2, 2, 6) => new_nop()(cpu),
         (2, 2, 7) => new_lsr(absolute_x(cpu))(cpu),
 
         (2, 3, 1) => new_ror(zero_page(cpu))(cpu),
         (2, 3, 2) => new_ror(aa())(cpu),
         (2, 3, 3) => new_ror(absolute(cpu))(cpu),
         (2, 3, 5) => new_ror(zero_page_x(cpu))(cpu),
+        (2, 3, 6) => new_nop()(cpu),
         (2, 3, 7) => new_ror(absolute_x(cpu))(cpu),
 
         (2, 4, 1) => new_transfer_no_touch_flags(zero_page(cpu), x())(cpu),
@@ -224,15 +228,20 @@ fn execute_next(cpu: &mut Cpu) -> u8 {
         (2, 6, 2) => new_dec(x())(cpu),
         (2, 6, 3) => new_dec(absolute(cpu))(cpu),
         (2, 6, 5) => new_dec(zero_page_x(cpu))(cpu),
+        (2, 6, 6) => new_nop()(cpu),
         (2, 6, 7) => new_dec(absolute_x(cpu))(cpu),
 
         (2, 7, 1) => new_inc(zero_page(cpu))(cpu),
         (2, 7, 2) => new_nop()(cpu),
         (2, 7, 3) => new_inc(absolute(cpu))(cpu),
         (2, 7, 5) => new_inc(zero_page_x(cpu))(cpu),
+        (2, 7, 6) => new_nop()(cpu),
         (2, 7, 7) => new_inc(absolute_x(cpu))(cpu),
 
-        _ => panic!("Unknown opcode: {:02x} @ {:04x}", op_code, cpu.pc),
+        _ => panic!(
+            "Unknown opcode: {:02x} ({}, {}, {}) @ {:04x}",
+            op_code, c, a, b, cpu.pc
+        ),
     }
 }
 
