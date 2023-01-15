@@ -380,16 +380,17 @@ impl Cpu {
     }
 
     fn adc(&mut self, val: u8) {
-        // https://stackoverflow.com/a/29193951/1305678
-        let t = self.a as u16 + val as u16 + self.flag(Flag::Carry) as u16;
+        let carry = self.flag(Flag::Carry) as u8;
+        let (sum, carry0) = self.a.overflowing_add(val);
+        let (sum, carry1) = sum.overflowing_add(carry);
+        self.set_flag(Flag::Carry, carry0 || carry1);
         self.set_flag(
             Flag::Overflow,
-            ((self.a ^ (t as u8)) & (val ^ (t as u8)) & 0x80) != 0,
+            ((self.a ^ val) & 0x80) == 0 && ((self.a ^ sum) & 0x80) != 0,
         );
-        self.set_flag(Flag::Carry, (t & 0x100) != 0);
-        self.update_negative_flag(t);
-        self.a = t as u8;
-        self.update_zero_flag(self.a);
+        self.update_zero_flag(sum);
+        self.update_negative_flag(sum);
+        self.a = sum;
     }
 
     fn inc_pc(&mut self, delta: i8) {
