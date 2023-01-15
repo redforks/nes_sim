@@ -1,4 +1,5 @@
 use super::plugin::{CompositePlugin, Console, MonitorTestStatus, ReportPlugin};
+use crate::plugin::DetectDeadLoop;
 use nes_core::ines::INesFile;
 use nes_core::mcu::{Mcu, RamMcu};
 use nes_core::Plugin;
@@ -28,6 +29,8 @@ impl Image {
             Image::INes(_) => Box::new(CompositePlugin::new(vec![
                 Box::new(Console()),
                 Box::new(MonitorTestStatus::default()),
+                Box::new(DetectDeadLoop::<1>::new()),
+                Box::new(DetectDeadLoop::<2>::new()),
             ])),
         }
     }

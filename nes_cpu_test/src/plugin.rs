@@ -1,9 +1,11 @@
 use nes_core::{Cpu, Plugin};
 
 mod console;
+mod detect_dead_loop;
 mod monitor_test_status;
 mod report;
 pub use console::*;
+pub use detect_dead_loop::*;
 pub use monitor_test_status::*;
 pub use report::*;
 
