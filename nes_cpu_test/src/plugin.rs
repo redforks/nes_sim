@@ -20,4 +20,8 @@ impl Plugin for CompositePlugin {
             p.end(cpu);
         }
     }
+
+    fn should_stop(&self) -> bool {
+        self.0.iter().any(|p| p.should_stop())
+    }
 }

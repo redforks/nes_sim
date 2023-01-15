@@ -38,4 +38,8 @@ impl Plugin for MonitorTestStatus {
         let status = Status::parse(cpu);
         format!("test status: {:?}", status);
     }
+
+    fn should_stop(&self) -> bool {
+        todo!()
+    }
 }

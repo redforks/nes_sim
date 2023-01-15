@@ -16,10 +16,6 @@ impl ReportPlugin {
             should_exit: false,
         }
     }
-
-    pub fn should_exit(&self) -> bool {
-        self.should_exit
-    }
 }
 
 impl Plugin for ReportPlugin {
@@ -56,6 +52,10 @@ impl Plugin for ReportPlugin {
             }
         }
         self.last_pc = Some(cpu.pc);
+    }
+
+    fn should_stop(&self) -> bool {
+        self.should_exit
     }
 }
 

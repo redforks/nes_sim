@@ -2,7 +2,7 @@ use crate::plugin::ReportPlugin;
 use clap::Parser;
 use nes_core::ines::INesFile;
 use nes_core::mcu::{Mcu, RamMcu};
-use nes_core::Cpu;
+use nes_core::{Cpu, ExecuteResult};
 use std::io::{Read, Write};
 
 mod plugin;
@@ -37,9 +37,9 @@ fn main() {
     cpu.reset();
     // the test rom reset position, not the start position.
     cpu.pc = 0x400;
-    let mut sync_cycle = ReportPlugin::new(quiet);
-    while !sync_cycle.should_exit() {
-        cpu.clock_tick(&mut sync_cycle);
+    let mut report = ReportPlugin::new(quiet);
+    while cpu.clock_tick(&mut report) != ExecuteResult::Stop {
+        // run until exit
     }
 }
 

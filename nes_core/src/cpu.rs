@@ -5,6 +5,12 @@ use std::ops::BitAnd;
 mod addressing;
 mod instruction;
 
+pub enum ExecuteResult {
+    Continue,
+    Stop,        // should exit executing
+    ShouldReset, // should reset cpu after 100ms
+}
+
 fn is_cross_page(a: u16, b: u16) -> bool {
     let a = (a >> 8) as u8;
     let b = (b >> 8) as u8;
@@ -236,6 +242,10 @@ pub trait Plugin {
 
     // return true to stop cpu
     fn end(&mut self, cpu: &Cpu);
+
+    fn should_stop(&self) -> bool {
+        false
+    }
 }
 
 pub struct EmptyPlugin();
@@ -289,7 +299,7 @@ impl Cpu {
         }
     }
 
-    pub fn clock_tick<T: Plugin>(&mut self, plugin: &mut T) {
+    pub fn clock_tick<T: Plugin>(&mut self, plugin: &mut T) -> ExecuteResult {
         if self.remain_clocks != 0 {
             self.remain_clocks -= 1;
             return;
@@ -298,6 +308,11 @@ impl Cpu {
         plugin.start(self);
         self.remain_clocks = execute_next(self) as u16 - 1;
         plugin.end(self);
+        if plugin.should_stop() {
+            ExecuteResult::Stop
+        } else {
+            ExecuteResult::Continue
+        }
     }
 
     fn adc(&mut self, val: u8) {
