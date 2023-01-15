@@ -1,4 +1,4 @@
-use nes_core::{Cpu, Plugin};
+use nes_core::{Cpu, ExecuteResult, Plugin};
 
 #[derive(Debug)]
 enum Status {
@@ -32,6 +32,7 @@ impl Status {
 #[derive(Default)]
 pub struct MonitorTestStatus {
     should_stop: bool,
+    should_reset: u16,
 }
 
 impl Plugin for MonitorTestStatus {
@@ -39,16 +40,35 @@ impl Plugin for MonitorTestStatus {
 
     fn end(&mut self, cpu: &Cpu) {
         let status = Status::parse(cpu);
-        format!("test status: {:?}", status);
         self.should_stop = match status {
             Status::Succeed => true,
             Status::Failed(_) => true,
-            Status::ShouldReset => true,
+            Status::ShouldReset => false,
             _ => false,
         };
+
+        if self.should_reset > 0 {
+            self.should_reset -= 1;
+        } else {
+            self.should_reset = match status {
+                Status::ShouldReset => {
+                    eprintln!("should reset");
+                    100
+                }
+                _ => 0,
+            };
+        }
     }
 
-    fn should_stop(&self) -> bool {
-        self.should_stop
+    fn should_stop(&self) -> ExecuteResult {
+        if self.should_reset == 1 {
+            return ExecuteResult::ShouldReset;
+        }
+
+        if self.should_stop {
+            ExecuteResult::Stop
+        } else {
+            ExecuteResult::Continue
+        }
     }
 }

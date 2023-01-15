@@ -38,7 +38,11 @@ fn main() {
         cpu.pc = pc;
     }
     let mut plugin = image.create_plugin(quiet);
-    while cpu.clock_tick(&mut plugin) != ExecuteResult::Stop {
-        // run until exit
+    loop {
+        match cpu.clock_tick(&mut plugin) {
+            ExecuteResult::Continue => {}
+            ExecuteResult::ShouldReset => cpu.reset(),
+            ExecuteResult::Stop => break,
+        }
     }
 }

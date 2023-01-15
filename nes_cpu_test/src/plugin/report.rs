@@ -1,4 +1,4 @@
-use nes_core::{Cpu, Flag, Plugin};
+use nes_core::{Cpu, ExecuteResult, Flag, Plugin};
 
 pub struct ReportPlugin {
     verbose: bool,
@@ -54,8 +54,12 @@ impl Plugin for ReportPlugin {
         self.last_pc = Some(cpu.pc);
     }
 
-    fn should_stop(&self) -> bool {
-        self.should_exit
+    fn should_stop(&self) -> ExecuteResult {
+        if self.should_exit {
+            ExecuteResult::Stop
+        } else {
+            ExecuteResult::Continue
+        }
     }
 }
 

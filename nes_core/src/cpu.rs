@@ -1,5 +1,4 @@
 use crate::mcu::Mcu;
-use log::debug;
 use std::ops::BitAnd;
 
 mod addressing;
@@ -9,7 +8,7 @@ mod instruction;
 pub enum ExecuteResult {
     Continue,
     Stop,        // should exit executing
-    ShouldReset, // should reset cpu after 100ms
+    ShouldReset, // should reset cpu
 }
 
 fn is_cross_page(a: u16, b: u16) -> bool {
@@ -30,7 +29,7 @@ fn execute_next(cpu: &mut Cpu) -> u8 {
     let a = (op_code & 0b1110_0000) >> 5;
     let b = (op_code & 0b0001_1100) >> 2;
     let c = op_code & 0b0000_0011;
-    debug!("op_code: {:0x} {} {} {}", op_code, c, a, b);
+    // debug!("op_code: {:0x} {} {} {}", op_code, c, a, b);
 
     fn r_b(cpu: &mut Cpu) -> u8 {
         cpu.inc_read_byte()
@@ -244,8 +243,8 @@ pub trait Plugin {
     // return true to stop cpu
     fn end(&mut self, cpu: &Cpu);
 
-    fn should_stop(&self) -> bool {
-        false
+    fn should_stop(&self) -> ExecuteResult {
+        ExecuteResult::Continue
     }
 }
 
@@ -258,7 +257,7 @@ impl Plugin for Box<dyn Plugin> {
         self.as_mut().end(cpu);
     }
 
-    fn should_stop(&self) -> bool {
+    fn should_stop(&self) -> ExecuteResult {
         self.as_ref().should_stop()
     }
 }
@@ -323,11 +322,7 @@ impl Cpu {
         plugin.start(self);
         self.remain_clocks = execute_next(self) as u16 - 1;
         plugin.end(self);
-        if plugin.should_stop() {
-            ExecuteResult::Stop
-        } else {
-            ExecuteResult::Continue
-        }
+        plugin.should_stop()
     }
 
     fn adc(&mut self, val: u8) {

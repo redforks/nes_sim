@@ -1,4 +1,4 @@
-use nes_core::{Cpu, Plugin};
+use nes_core::{Cpu, ExecuteResult, Plugin};
 
 mod console;
 mod detect_dead_loop;
@@ -30,7 +30,13 @@ impl Plugin for CompositePlugin {
         }
     }
 
-    fn should_stop(&self) -> bool {
-        self.0.iter().any(|p| p.should_stop())
+    fn should_stop(&self) -> ExecuteResult {
+        for p in self.0.iter() {
+            let r = p.should_stop();
+            if r != ExecuteResult::Continue {
+                return r;
+            }
+        }
+        ExecuteResult::Continue
     }
 }

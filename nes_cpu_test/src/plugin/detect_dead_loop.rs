@@ -1,9 +1,10 @@
-use nes_core::{Cpu, Plugin};
+use nes_core::{Cpu, ExecuteResult, Plugin};
 use std::collections::VecDeque;
 
 pub struct DetectDeadLoop<const DEPTH: usize> {
     recent_pc: VecDeque<u16>,
     should_exit: bool,
+    count: u16,
 }
 
 impl<const DEPTH: usize> DetectDeadLoop<DEPTH> {
@@ -11,6 +12,7 @@ impl<const DEPTH: usize> DetectDeadLoop<DEPTH> {
         DetectDeadLoop {
             recent_pc: VecDeque::with_capacity(2 * DEPTH),
             should_exit: false,
+            count: 0,
         }
     }
 }
@@ -33,12 +35,20 @@ impl<const DEPTH: usize> Plugin for DetectDeadLoop<DEPTH> {
             }
         }
 
-        self.should_exit = true;
-
-        eprintln!("test failed: pc repeated ({})", DEPTH);
+        self.count += 1;
+        self.should_exit = if self.count > 100 {
+            eprintln!("test failed: pc repeated ({})", DEPTH);
+            true
+        } else {
+            false
+        };
     }
 
-    fn should_stop(&self) -> bool {
-        self.should_exit
+    fn should_stop(&self) -> ExecuteResult {
+        if self.should_exit {
+            ExecuteResult::Stop
+        } else {
+            ExecuteResult::Continue
+        }
     }
 }
