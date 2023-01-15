@@ -13,7 +13,7 @@ impl Status {
     fn parse(cpu: &Cpu) -> Status {
         if cpu.read_byte(0x6001) != 0xDE
             || cpu.read_byte(0x6002) != 0xB0
-            || cpu.read_byte(0x6003) != 0x01
+            || cpu.read_byte(0x6003) != 0x61
         {
             return Status::Unknown;
         }
