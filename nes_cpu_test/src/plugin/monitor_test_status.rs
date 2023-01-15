@@ -29,7 +29,10 @@ impl Status {
     }
 }
 
-pub struct MonitorTestStatus();
+#[derive(Default)]
+pub struct MonitorTestStatus {
+    should_stop: bool,
+}
 
 impl Plugin for MonitorTestStatus {
     fn start(&mut self, _: &Cpu) {}
@@ -37,9 +40,15 @@ impl Plugin for MonitorTestStatus {
     fn end(&mut self, cpu: &Cpu) {
         let status = Status::parse(cpu);
         format!("test status: {:?}", status);
+        self.should_stop = match status {
+            Status::Succeed => true,
+            Status::Failed(_) => true,
+            Status::ShouldReset => true,
+            _ => false,
+        };
     }
 
     fn should_stop(&self) -> bool {
-        todo!()
+        self.should_stop
     }
 }

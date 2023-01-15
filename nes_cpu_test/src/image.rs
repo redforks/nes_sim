@@ -27,7 +27,7 @@ impl Image {
             Image::Bin(_) => Box::new(ReportPlugin::new(quiet)),
             Image::INes(_) => Box::new(CompositePlugin::new(vec![
                 Box::new(Console()),
-                Box::new(MonitorTestStatus()),
+                Box::new(MonitorTestStatus::default()),
             ])),
         }
     }
