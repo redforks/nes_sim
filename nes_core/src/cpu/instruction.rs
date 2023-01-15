@@ -258,7 +258,7 @@ pub fn new_ror<D: Address>(dest: D) -> impl FnMut(&mut Cpu) -> u8 {
         "ror",
         |cpu, v| {
             (
-                v >> 1 & 0xf7 | ((cpu.flag(Flag::Carry) as u8) << 7),
+                v >> 1 & 0x7f | ((cpu.flag(Flag::Carry) as u8) << 7),
                 v & 0x01,
             )
         },
