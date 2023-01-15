@@ -1,7 +1,7 @@
 use super::addressing;
 use super::addressing::{Address, RegisterStatus};
 use super::{extra_tick_if_cross_page, Cpu, Flag};
-use crate::cpu::addressing::Literal;
+use crate::cpu::addressing::{Literal, RegisterA};
 use log::debug;
 use std::any::TypeId;
 
@@ -413,6 +413,115 @@ pub fn new_nop_with_addr<D: Address>(dest: D) -> impl FnMut(&mut Cpu) -> u8 {
 
     move |cpu| {
         let (_, ticks) = dest.get(cpu);
+        ticks + 2
+    }
+}
+
+pub fn new_aso<D: Address>(dest: D) -> impl FnMut(&mut Cpu) -> u8 {
+    debug!("aso {}", dest);
+
+    move |cpu| {
+        let (v, ticks) = dest.get(cpu);
+        cpu.set_flag(Flag::Carry, (v & 0x80) != 0);
+        let t = v << 1;
+        cpu.update_negative_flag(t);
+        cpu.update_zero_flag(t);
+        dest.set(cpu, t);
+        ticks + 2
+    }
+}
+
+pub fn new_rla<D: Address>(dest: D) -> impl FnMut(&mut Cpu) -> u8 {
+    debug!("rla {}", dest);
+
+    move |cpu| {
+        let (v, ticks) = dest.get(cpu);
+        let carry = cpu.flag(Flag::Carry) as u8;
+        cpu.set_flag(Flag::Carry, (v & 0x80) != 0);
+        let t = (v << 1) | carry;
+        cpu.update_negative_flag(t);
+        cpu.update_zero_flag(t);
+        dest.set(cpu, t);
+        ticks + 2
+    }
+}
+
+pub fn new_lse<D: Address>(dest: D) -> impl FnMut(&mut Cpu) -> u8 {
+    debug!("lse {}", dest);
+
+    move |cpu| {
+        let (v, ticks) = dest.get(cpu);
+        cpu.set_flag(Flag::Carry, (v & 0x01) != 0);
+        let t = v >> 1;
+        cpu.update_negative_flag(t);
+        cpu.update_zero_flag(t);
+        dest.set(cpu, t);
+        ticks + 2
+    }
+}
+
+pub fn new_rra<D: Address>(dest: D) -> impl FnMut(&mut Cpu) -> u8 {
+    debug!("rra {}", dest);
+
+    move |cpu| {
+        let (v, ticks) = dest.get(cpu);
+        let carry = cpu.flag(Flag::Carry) as u8;
+        cpu.set_flag(Flag::Carry, (v & 0x01) != 0);
+        let t = (v >> 1) | (carry << 7);
+        cpu.update_negative_flag(t);
+        cpu.update_zero_flag(t);
+        dest.set(cpu, t);
+        ticks + 2
+    }
+}
+
+pub fn new_sax<D: Address>(dest: D) -> impl FnMut(&mut Cpu) -> u8 {
+    debug!("sax {}", dest);
+
+    move |cpu| {
+        let v = cpu.a & cpu.x;
+        dest.set(cpu, v);
+        2
+    }
+}
+
+pub fn new_lax<D: Address>(dest: D) -> impl FnMut(&mut Cpu) -> u8 {
+    debug!("lax {}", dest);
+
+    move |cpu| {
+        let (v, ticks) = dest.get(cpu);
+        cpu.a = v;
+        cpu.x = v;
+        cpu.update_negative_flag(v);
+        cpu.update_zero_flag(v);
+        ticks + 2
+    }
+}
+
+pub fn new_dcp<D: Address>(dest: D) -> impl FnMut(&mut Cpu) -> u8 {
+    debug!("dcp {}", dest);
+
+    move |cpu| {
+        let (v, ticks) = dest.get(cpu);
+        let t = v.wrapping_sub(1);
+        dest.set(cpu, t);
+        let t = cpu.a.wrapping_sub(v);
+        cpu.update_negative_flag(t);
+        cpu.update_zero_flag(t);
+        cpu.set_flag(Flag::Carry, cpu.a >= t);
+        ticks + 2
+    }
+}
+
+pub fn new_isc<D: Address>(dest: D) -> impl FnMut(&mut Cpu) -> u8 {
+    debug!("isc {}", dest);
+
+    move |cpu| {
+        // TODO: check if this is correct, maybe it breaks instr_test-v5/rom_singles/04-zero_page.nes
+        let (val, ticks) = dest.get(cpu);
+        let v = val.wrapping_add(1);
+        dest.set(cpu, v);
+        cpu.adc(!val);
         ticks + 2
     }
 }

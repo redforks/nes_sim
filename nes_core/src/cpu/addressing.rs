@@ -1,7 +1,7 @@
 use super::{extra_tick_if_cross_page, Cpu, Flag};
 use std::fmt::{Display, Formatter};
 
-pub trait Address: Display {
+pub trait Address: Display + Copy {
     /// return (value, ticks)
     fn get(&self, cpu: &Cpu) -> (u8, u8) {
         let (addr, ticks) = self.calc_addr(cpu);

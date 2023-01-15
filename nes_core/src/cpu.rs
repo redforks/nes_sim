@@ -58,6 +58,7 @@ fn execute_next(cpu: &mut Cpu) -> u8 {
 
     match (c, a, b) {
         (0, 0, 0) => new_brk()(cpu),
+        (0, 0, 1) => new_nop_with_addr(zero_page(cpu))(cpu),
         (0, 0, 2) => new_push(RegisterStatus())(cpu),
         (0, 0, 4) => neg_cond_branch(cpu, Flag::Negative)(cpu),
         (0, 0, 6) => new_clear_bit(FlagAddr(Flag::Carry))(cpu),
@@ -70,12 +71,14 @@ fn execute_next(cpu: &mut Cpu) -> u8 {
         (0, 1, 6) => new_set_bit(FlagAddr(Flag::Carry))(cpu),
 
         (0, 2, 0) => new_rti()(cpu),
+        (0, 2, 1) => new_nop_with_addr(zero_page(cpu))(cpu),
         (0, 2, 2) => new_push(aa())(cpu),
         (0, 2, 3) => new_jmp(r_w(cpu))(cpu),
         (0, 2, 4) => neg_cond_branch(cpu, Flag::Overflow)(cpu),
         (0, 2, 6) => new_clear_bit(FlagAddr(Flag::Interrupt))(cpu),
 
         (0, 3, 0) => new_rts()(cpu),
+        (0, 3, 1) => new_nop_with_addr(zero_page(cpu))(cpu),
         (0, 3, 2) => new_pop(aa())(cpu),
         (0, 3, 3) => new_indirect_jmp(r_w(cpu))(cpu),
         (0, 3, 4) => cond_branch(cpu, Flag::Overflow)(cpu),
@@ -243,18 +246,27 @@ fn execute_next(cpu: &mut Cpu) -> u8 {
         (2, 7, 6) => new_nop()(cpu), // FA
         (2, 7, 7) => new_inc(absolute_x(cpu))(cpu),
 
+        (3, 0, 1) => new_aso(zero_page(cpu))(cpu),
         (3, 0, 2) => new_anc(literal(cpu))(cpu),
 
+        (3, 1, 1) => new_rla(zero_page(cpu))(cpu),
         (3, 1, 2) => new_anc(literal(cpu))(cpu),
 
+        (3, 2, 1) => new_lse(zero_page(cpu))(cpu),
         (3, 2, 2) => new_alr(literal(cpu))(cpu),
 
+        (3, 3, 1) => new_rra(zero_page(cpu))(cpu),
         (3, 3, 2) => new_arr(literal(cpu))(cpu),
 
+        (3, 4, 1) => new_sax(zero_page(cpu))(cpu),
+
+        (3, 5, 1) => new_lax(zero_page(cpu))(cpu),
         (3, 5, 2) => new_lxa(literal(cpu))(cpu),
 
+        (3, 6, 1) => new_dcp(zero_page(cpu))(cpu),
         (3, 6, 2) => new_sbx(literal(cpu))(cpu),
 
+        (3, 7, 1) => new_isc(zero_page(cpu))(cpu),
         (3, 7, 2) => new_sbc(literal(cpu))(cpu),
 
         _ => panic!(
