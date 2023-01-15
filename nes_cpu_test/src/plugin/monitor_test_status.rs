@@ -23,7 +23,7 @@ impl Status {
             0x80 => Status::Running,
             0x81 => Status::ShouldReset,
             0x00 => Status::Succeed,
-            0x01..=0xff => Status::Failed(status),
+            0x01..=0x7f => Status::Failed(status),
             _ => Status::Unknown,
         }
     }

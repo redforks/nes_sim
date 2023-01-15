@@ -4,9 +4,16 @@ mod console;
 mod monitor_test_status;
 mod report;
 pub use console::*;
+pub use monitor_test_status::*;
 pub use report::*;
 
 pub struct CompositePlugin(Vec<Box<dyn Plugin>>);
+
+impl CompositePlugin {
+    pub fn new(plugins: Vec<Box<dyn Plugin>>) -> CompositePlugin {
+        CompositePlugin(plugins)
+    }
+}
 
 impl Plugin for CompositePlugin {
     fn start(&mut self, cpu: &Cpu) {

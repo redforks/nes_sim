@@ -5,6 +5,7 @@ use std::ops::BitAnd;
 mod addressing;
 mod instruction;
 
+#[derive(Eq, PartialEq)]
 pub enum ExecuteResult {
     Continue,
     Stop,        // should exit executing
@@ -248,6 +249,20 @@ pub trait Plugin {
     }
 }
 
+impl Plugin for Box<dyn Plugin> {
+    fn start(&mut self, cpu: &Cpu) {
+        self.as_mut().start(cpu);
+    }
+
+    fn end(&mut self, cpu: &Cpu) {
+        self.as_mut().end(cpu);
+    }
+
+    fn should_stop(&self) -> bool {
+        self.as_ref().should_stop()
+    }
+}
+
 pub struct EmptyPlugin();
 
 impl Plugin for EmptyPlugin {
@@ -302,7 +317,7 @@ impl Cpu {
     pub fn clock_tick<T: Plugin>(&mut self, plugin: &mut T) -> ExecuteResult {
         if self.remain_clocks != 0 {
             self.remain_clocks -= 1;
-            return;
+            return ExecuteResult::Continue;
         }
 
         plugin.start(self);
