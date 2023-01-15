@@ -81,6 +81,7 @@ fn execute_next(cpu: &mut Cpu) -> u8 {
         (0, 3, 4) => cond_branch(cpu, Flag::Overflow)(cpu),
         (0, 3, 6) => new_set_bit(FlagAddr(Flag::Interrupt))(cpu),
 
+        (0, 4, 0) => new_nop_with_addr(literal(cpu))(cpu),
         (0, 4, 1) => new_transfer_no_touch_flags(zero_page(cpu), y())(cpu),
         (0, 4, 2) => new_dec(y())(cpu),
         (0, 4, 3) => new_transfer_no_touch_flags(absolute(cpu), y())(cpu),
@@ -149,6 +150,7 @@ fn execute_next(cpu: &mut Cpu) -> u8 {
 
         (1, 4, 0) => new_transfer_no_touch_flags(indirect_x(cpu), aa())(cpu),
         (1, 4, 1) => new_transfer_no_touch_flags(zero_page(cpu), aa())(cpu),
+        (1, 4, 2) => new_nop_with_addr(literal(cpu))(cpu),
         (1, 4, 3) => new_transfer_no_touch_flags(absolute(cpu), aa())(cpu),
         (1, 4, 4) => new_transfer_no_touch_flags(indirect_y(cpu), aa())(cpu),
         (1, 4, 5) => new_transfer_no_touch_flags(zero_page_x(cpu), aa())(cpu),
@@ -210,6 +212,7 @@ fn execute_next(cpu: &mut Cpu) -> u8 {
         (2, 3, 6) => new_nop()(cpu),
         (2, 3, 7) => new_ror(absolute_x(cpu))(cpu),
 
+        (2, 4, 0) => new_nop_with_addr(literal(cpu))(cpu),
         (2, 4, 1) => new_transfer_no_touch_flags(zero_page(cpu), x())(cpu),
         (2, 4, 2) => new_transfer(aa(), x())(cpu),
         (2, 4, 3) => new_transfer_no_touch_flags(absolute(cpu), x())(cpu),
@@ -224,6 +227,7 @@ fn execute_next(cpu: &mut Cpu) -> u8 {
         (2, 5, 6) => new_transfer(x(), sp())(cpu),
         (2, 5, 7) => new_transfer(x(), absolute_y(cpu))(cpu),
 
+        (2, 6, 0) => new_nop_with_addr(literal(cpu))(cpu),
         (2, 6, 1) => new_dec(zero_page(cpu))(cpu),
         (2, 6, 2) => new_dec(x())(cpu),
         (2, 6, 3) => new_dec(absolute(cpu))(cpu),
@@ -231,12 +235,27 @@ fn execute_next(cpu: &mut Cpu) -> u8 {
         (2, 6, 6) => new_nop()(cpu),
         (2, 6, 7) => new_dec(absolute_x(cpu))(cpu),
 
+        (2, 7, 0) => new_nop_with_addr(literal(cpu))(cpu),
         (2, 7, 1) => new_inc(zero_page(cpu))(cpu),
         (2, 7, 2) => new_nop()(cpu),
         (2, 7, 3) => new_inc(absolute(cpu))(cpu),
         (2, 7, 5) => new_inc(zero_page_x(cpu))(cpu),
         (2, 7, 6) => new_nop()(cpu),
         (2, 7, 7) => new_inc(absolute_x(cpu))(cpu),
+
+        (3, 0, 2) => new_anc(literal(cpu))(cpu),
+
+        (3, 1, 2) => new_anc(literal(cpu))(cpu),
+
+        (3, 2, 2) => new_alr(literal(cpu))(cpu),
+
+        (3, 3, 2) => new_arr(literal(cpu))(cpu),
+
+        (3, 5, 2) => new_lxa(literal(cpu))(cpu),
+
+        (3, 6, 2) => new_sbx(literal(cpu))(cpu),
+
+        (3, 7, 2) => new_sbc(literal(cpu))(cpu),
 
         _ => panic!(
             "Unknown opcode: {:02x} ({}, {}, {}) @ {:04x}",

@@ -1,6 +1,7 @@
 use super::addressing;
 use super::addressing::{Address, RegisterStatus};
 use super::{extra_tick_if_cross_page, Cpu, Flag};
+use crate::cpu::addressing::Literal;
 use log::debug;
 use std::any::TypeId;
 
@@ -140,6 +141,74 @@ fn new_acc_op<F: Fn(u8, u8) -> u8, S: Address>(
 
 pub fn new_and<D: Address>(dest: D) -> impl FnMut(&mut Cpu) -> u8 {
     new_acc_op("and", |a, b| a & b, dest)
+}
+
+pub fn new_anc(Literal(v): Literal) -> impl FnMut(&mut Cpu) -> u8 {
+    debug!("anc {}", Literal(v));
+
+    move |cpu| {
+        let val = cpu.a & v;
+        cpu.a = val;
+        cpu.update_negative_flag(val);
+        cpu.update_zero_flag(val);
+        cpu.set_flag(Flag::Carry, val & 0x80 != 0);
+        2
+    }
+}
+
+pub fn new_alr(Literal(v): Literal) -> impl FnMut(&mut Cpu) -> u8 {
+    debug!("alr {}", Literal(v));
+
+    move |cpu| {
+        let val = cpu.a & v;
+        cpu.a = val >> 1;
+        cpu.update_negative_flag(cpu.a);
+        cpu.update_zero_flag(cpu.a);
+        cpu.set_flag(Flag::Carry, val & 0x01 != 0);
+        2
+    }
+}
+
+pub fn new_arr(Literal(v): Literal) -> impl FnMut(&mut Cpu) -> u8 {
+    debug!("arr {}", Literal(v));
+
+    move |cpu| {
+        let val = cpu.a & v;
+        let val = val >> 1 | (cpu.flag(Flag::Carry) as u8) << 7;
+        cpu.a = val;
+        cpu.update_negative_flag(cpu.a);
+        cpu.update_zero_flag(cpu.a);
+        cpu.set_flag(Flag::Carry, val & 0x40 != 0);
+        cpu.set_flag(Flag::Overflow, val & 0x40 != val & 0x20);
+        2
+    }
+}
+
+pub fn new_lxa(Literal(v): Literal) -> impl FnMut(&mut Cpu) -> u8 {
+    debug!("lxa {}", Literal(v));
+
+    move |cpu| {
+        let val = cpu.a & v;
+        cpu.a = val;
+        cpu.x = val;
+        cpu.update_negative_flag(cpu.a);
+        cpu.update_zero_flag(cpu.a);
+        2
+    }
+}
+
+pub fn new_sbx(Literal(v): Literal) -> impl FnMut(&mut Cpu) -> u8 {
+    debug!("sbx {}", Literal(v));
+
+    move |cpu| {
+        let val = cpu.a & cpu.x;
+        let delta = val.wrapping_sub(v);
+        cpu.x = delta;
+        cpu.update_negative_flag(delta);
+        cpu.update_zero_flag(delta);
+        cpu.set_flag(Flag::Carry, v >= val);
+        2
+    }
 }
 
 pub fn new_eor<D: Address>(dest: D) -> impl FnMut(&mut Cpu) -> u8 {
@@ -337,4 +406,13 @@ pub fn new_nop() -> impl FnMut(&mut Cpu) -> u8 {
     debug!("nop");
 
     move |_| 2
+}
+
+pub fn new_nop_with_addr<D: Address>(dest: D) -> impl FnMut(&mut Cpu) -> u8 {
+    debug!("nop {}", dest);
+
+    move |cpu| {
+        let (_, ticks) = dest.get(cpu);
+        ticks + 2
+    }
 }
