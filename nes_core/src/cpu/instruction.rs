@@ -1,4 +1,3 @@
-use super::addressing;
 use super::addressing::{Address, RegisterStatus};
 use super::{extra_tick_if_cross_page, Cpu, Flag};
 use crate::cpu::addressing::{Literal, RegisterA};
@@ -55,7 +54,7 @@ pub fn new_pop<D: Address + 'static>(dest: D) -> impl FnMut(&mut Cpu) -> u8 {
     move |cpu| {
         let val = cpu.pop_stack();
         dest.set(cpu, val);
-        if TypeId::of::<D>() == TypeId::of::<addressing::RegisterA>() {
+        if TypeId::of::<D>() == TypeId::of::<RegisterA>() {
             cpu.update_negative_flag(val);
             cpu.update_zero_flag(val);
         } else if TypeId::of::<D>() != TypeId::of::<RegisterStatus>() {

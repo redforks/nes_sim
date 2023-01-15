@@ -61,6 +61,7 @@ fn execute_next(cpu: &mut Cpu) -> u8 {
         (0, 0, 1) => new_nop_with_addr(zero_page(cpu))(cpu),
         (0, 0, 2) => new_push(RegisterStatus())(cpu),
         (0, 0, 4) => neg_cond_branch(cpu, Flag::Negative)(cpu),
+        (0, 0, 5) => new_nop_with_addr(zero_page_x(cpu))(cpu),
         (0, 0, 6) => new_clear_bit(FlagAddr(Flag::Carry))(cpu),
 
         (0, 1, 0) => new_jsr(r_w(cpu))(cpu),
@@ -68,6 +69,7 @@ fn execute_next(cpu: &mut Cpu) -> u8 {
         (0, 1, 2) => new_pop(RegisterStatus())(cpu),
         (0, 1, 3) => new_bit(absolute(cpu))(cpu),
         (0, 1, 4) => cond_branch(cpu, Flag::Negative)(cpu),
+        (0, 1, 5) => new_nop_with_addr(zero_page_x(cpu))(cpu),
         (0, 1, 6) => new_set_bit(FlagAddr(Flag::Carry))(cpu),
 
         (0, 2, 0) => new_rti()(cpu),
@@ -75,6 +77,7 @@ fn execute_next(cpu: &mut Cpu) -> u8 {
         (0, 2, 2) => new_push(aa())(cpu),
         (0, 2, 3) => new_jmp(r_w(cpu))(cpu),
         (0, 2, 4) => neg_cond_branch(cpu, Flag::Overflow)(cpu),
+        (0, 2, 5) => new_nop_with_addr(zero_page_x(cpu))(cpu),
         (0, 2, 6) => new_clear_bit(FlagAddr(Flag::Interrupt))(cpu),
 
         (0, 3, 0) => new_rts()(cpu),
@@ -82,6 +85,7 @@ fn execute_next(cpu: &mut Cpu) -> u8 {
         (0, 3, 2) => new_pop(aa())(cpu),
         (0, 3, 3) => new_indirect_jmp(r_w(cpu))(cpu),
         (0, 3, 4) => cond_branch(cpu, Flag::Overflow)(cpu),
+        (0, 3, 5) => new_nop_with_addr(zero_page_x(cpu))(cpu),
         (0, 3, 6) => new_set_bit(FlagAddr(Flag::Interrupt))(cpu),
 
         (0, 4, 0) => new_nop_with_addr(literal(cpu))(cpu),
@@ -106,6 +110,7 @@ fn execute_next(cpu: &mut Cpu) -> u8 {
         (0, 6, 2) => new_inc(y())(cpu),
         (0, 6, 3) => new_cmp(y(), absolute(cpu))(cpu),
         (0, 6, 4) => neg_cond_branch(cpu, Flag::Zero)(cpu),
+        (0, 6, 5) => new_nop_with_addr(zero_page_x(cpu))(cpu),
         (0, 6, 6) => new_clear_bit(FlagAddr(Flag::Decimal))(cpu),
 
         (0, 7, 0) => new_cmp(x(), literal(cpu))(cpu),
@@ -113,6 +118,7 @@ fn execute_next(cpu: &mut Cpu) -> u8 {
         (0, 7, 2) => new_inc(x())(cpu),
         (0, 7, 3) => new_cmp(x(), absolute(cpu))(cpu),
         (0, 7, 4) => cond_branch(cpu, Flag::Zero)(cpu),
+        (0, 7, 5) => new_nop_with_addr(zero_page_x(cpu))(cpu),
         (0, 7, 6) => new_set_bit(FlagAddr(Flag::Decimal))(cpu),
 
         (1, 0, 0) => new_ora(indirect_x(cpu))(cpu),
@@ -248,26 +254,34 @@ fn execute_next(cpu: &mut Cpu) -> u8 {
 
         (3, 0, 1) => new_aso(zero_page(cpu))(cpu),
         (3, 0, 2) => new_anc(literal(cpu))(cpu),
+        (3, 0, 5) => new_aso(zero_page_x(cpu))(cpu),
 
         (3, 1, 1) => new_rla(zero_page(cpu))(cpu),
         (3, 1, 2) => new_anc(literal(cpu))(cpu),
+        (3, 1, 5) => new_rla(zero_page_x(cpu))(cpu),
 
         (3, 2, 1) => new_lse(zero_page(cpu))(cpu),
         (3, 2, 2) => new_alr(literal(cpu))(cpu),
+        (3, 2, 5) => new_lse(zero_page_x(cpu))(cpu),
 
         (3, 3, 1) => new_rra(zero_page(cpu))(cpu),
         (3, 3, 2) => new_arr(literal(cpu))(cpu),
+        (3, 3, 5) => new_rra(zero_page_x(cpu))(cpu),
 
         (3, 4, 1) => new_sax(zero_page(cpu))(cpu),
+        (3, 4, 5) => new_sax(zero_page_y(cpu))(cpu),
 
         (3, 5, 1) => new_lax(zero_page(cpu))(cpu),
         (3, 5, 2) => new_lxa(literal(cpu))(cpu),
+        (3, 5, 5) => new_lax(zero_page_y(cpu))(cpu),
 
         (3, 6, 1) => new_dcp(zero_page(cpu))(cpu),
         (3, 6, 2) => new_sbx(literal(cpu))(cpu),
+        (3, 6, 5) => new_dcp(zero_page_x(cpu))(cpu),
 
         (3, 7, 1) => new_isc(zero_page(cpu))(cpu),
         (3, 7, 2) => new_sbc(literal(cpu))(cpu),
+        (3, 7, 5) => new_isc(zero_page_x(cpu))(cpu),
 
         _ => panic!(
             "Unknown opcode: {:02x} ({}, {}, {}) @ {:04x}",
