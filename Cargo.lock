@@ -219,6 +219,7 @@ dependencies = [
  "ansi_term",
  "clap",
  "env_logger",
+ "is-terminal",
  "log",
  "nes_core",
  "thiserror",

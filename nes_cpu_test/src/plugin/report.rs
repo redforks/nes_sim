@@ -1,10 +1,8 @@
-use nes_core::{Cpu, ExecuteResult, Flag, Plugin};
+use nes_core::{Cpu, Flag, Plugin};
 
 pub struct ReportPlugin {
     verbose: bool,
     count: u32,
-    last_pc: Option<u16>,
-    should_exit: bool,
 }
 
 impl ReportPlugin {
@@ -12,8 +10,6 @@ impl ReportPlugin {
         ReportPlugin {
             verbose: !quiet,
             count: 0,
-            last_pc: None,
-            should_exit: false,
         }
     }
 }
@@ -35,30 +31,6 @@ impl Plugin for ReportPlugin {
                 "a: ${:02x}, x: ${:02x}, y: ${:02x}, sp: ${:02x}, p: ${:02x} {} top: ${:02x}\n",
                 cpu.a, cpu.x, cpu.y, cpu.sp, cpu.status, flags, top
             );
-        }
-
-        if let Some(last) = self.last_pc {
-            if last == cpu.pc {
-                self.should_exit = true;
-                if cpu.flag(Flag::Decimal) {
-                    // decimal mode not implemented, it is okay to exit test on decimal error,
-                    // decimal test is the last of opCode test.
-                    println!("test succeed!");
-                    return;
-                }
-
-                println!("test failed: pc repeated");
-                return;
-            }
-        }
-        self.last_pc = Some(cpu.pc);
-    }
-
-    fn should_stop(&self) -> ExecuteResult {
-        if self.should_exit {
-            ExecuteResult::Stop
-        } else {
-            ExecuteResult::Continue
         }
     }
 }

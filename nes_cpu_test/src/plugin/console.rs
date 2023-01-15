@@ -1,4 +1,5 @@
 use ansi_term::Color;
+use is_terminal::IsTerminal;
 use nes_core::{Cpu, Plugin};
 
 #[derive(Default)]
@@ -31,16 +32,21 @@ impl Plugin for Console {
         // if buf not start with self.buf, print it
         if buf.len() >= self.buf.len() {
             if buf[..self.buf.len()] != self.buf[..] {
-                print!("{}", Color::Green.paint(String::from_utf8_lossy(&buf)));
+                output(String::from_utf8_lossy(&buf));
             } else {
-                print!(
-                    "{}",
-                    Color::Green.paint(String::from_utf8_lossy(&buf[self.buf.len()..]))
-                );
+                output(String::from_utf8_lossy(&buf[self.buf.len()..]));
             }
         } else {
-            print!("{}", Color::Green.paint(String::from_utf8_lossy(&buf)));
+            output(String::from_utf8_lossy(&buf));
         }
         self.buf = buf;
+    }
+}
+
+fn output<S: AsRef<str>>(s: S) {
+    if std::io::stdout().is_terminal() {
+        print!("{}", Color::Green.paint(s.as_ref()));
+    } else {
+        print!("{}", s.as_ref());
     }
 }

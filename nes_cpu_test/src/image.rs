@@ -1,5 +1,5 @@
 use super::plugin::{CompositePlugin, Console, MonitorTestStatus, ReportPlugin};
-use crate::plugin::DetectDeadLoop;
+use crate::plugin::{DetectDeadLoop, ImageExit};
 use nes_core::ines::INesFile;
 use nes_core::mcu::{Mcu, RamMcu};
 use nes_core::Plugin;
@@ -25,9 +25,13 @@ impl Image {
 
     pub fn create_plugin(&self, quiet: bool) -> Box<dyn Plugin> {
         match self {
-            Image::Bin(_) => Box::new(ReportPlugin::new(quiet)),
+            Image::Bin(_) => Box::new(CompositePlugin::new(vec![
+                Box::new(ReportPlugin::new(quiet)),
+                Box::new(ImageExit::default()),
+            ])),
             Image::INes(_) => Box::new(CompositePlugin::new(vec![
                 Box::new(Console::default()),
+                Box::new(ReportPlugin::new(quiet)),
                 Box::new(MonitorTestStatus::default()),
                 Box::new(DetectDeadLoop::<1>::new()),
                 Box::new(DetectDeadLoop::<2>::new()),
