@@ -1,3 +1,4 @@
+use ansi_term::Color;
 use nes_core::{Cpu, Plugin};
 
 #[derive(Default)]
@@ -30,12 +31,15 @@ impl Plugin for Console {
         // if buf not start with self.buf, print it
         if buf.len() >= self.buf.len() {
             if buf[..self.buf.len()] != self.buf[..] {
-                print!("{}", String::from_utf8_lossy(&buf));
+                print!("{}", Color::Green.paint(String::from_utf8_lossy(&buf)));
             } else {
-                print!("{}", String::from_utf8_lossy(&buf[self.buf.len()..]));
+                print!(
+                    "{}",
+                    Color::Green.paint(String::from_utf8_lossy(&buf[self.buf.len()..]))
+                );
             }
         } else {
-            print!("{}", String::from_utf8_lossy(&buf));
+            print!("{}", Color::Green.paint(String::from_utf8_lossy(&buf)));
         }
         self.buf = buf;
     }
