@@ -240,7 +240,7 @@ fn execute_next(cpu: &mut Cpu) -> u8 {
         (2, 7, 2) => new_nop()(cpu),
         (2, 7, 3) => new_inc(absolute(cpu))(cpu),
         (2, 7, 5) => new_inc(zero_page_x(cpu))(cpu),
-        (2, 7, 6) => new_nop()(cpu),
+        (2, 7, 6) => new_nop()(cpu), // FA
         (2, 7, 7) => new_inc(absolute_x(cpu))(cpu),
 
         (3, 0, 2) => new_anc(literal(cpu))(cpu),

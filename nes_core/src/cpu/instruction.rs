@@ -248,7 +248,7 @@ pub fn new_lsr<D: Address>(dest: D) -> impl FnMut(&mut Cpu) -> u8 {
 pub fn new_rol<D: Address>(dest: D) -> impl FnMut(&mut Cpu) -> u8 {
     new_shift_op(
         "rol",
-        |cpu, v| (v << 1 & 0xfe | (cpu.flag(Flag::Carry) as u8), v & 0x80),
+        |cpu, v| ((v << 1) & 0xfe | (cpu.flag(Flag::Carry) as u8), v & 0x80),
         dest,
     )
 }
@@ -343,7 +343,7 @@ pub fn new_jsr(addr: u16) -> impl FnMut(&mut Cpu) -> u8 {
     debug!("jsr {}", addr);
 
     move |cpu| {
-        let pc = cpu.pc - 1;
+        let pc = cpu.pc.wrapping_sub(1);
         cpu.push_stack((pc >> 8) as u8);
         cpu.push_stack(pc as u8);
         cpu.pc = addr;
@@ -358,7 +358,7 @@ pub fn new_rts() -> impl FnMut(&mut Cpu) -> u8 {
         let l = cpu.pop_stack();
         let h = cpu.pop_stack();
         cpu.pc = ((h as u16) << 8) | (l as u16);
-        cpu.pc += 1;
+        cpu.inc_pc(1);
         6
     }
 }
