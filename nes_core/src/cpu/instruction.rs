@@ -515,11 +515,10 @@ pub fn new_isc<D: Address>(dest: D) -> impl FnMut(&mut Cpu) -> u8 {
     debug!("isc {}", dest);
 
     move |cpu| {
-        // TODO: check if this is correct, maybe it breaks instr_test-v5/rom_singles/04-zero_page.nes
-        let (val, ticks) = dest.get(cpu);
-        let v = val.wrapping_add(1);
-        dest.set(cpu, v);
-        cpu.adc(!val);
+        let (v, ticks) = dest.get(cpu);
+        let t = v.wrapping_add(1);
+        dest.set(cpu, t);
+        cpu.adc(!t);
         ticks + 2
     }
 }
