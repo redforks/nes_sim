@@ -23,11 +23,22 @@ pub struct Mirror<M: Mcu> {
 
 impl<M: Mcu> Mirror<M> {
     pub fn new(maps: Vec<AddrRemap>, inner: M) -> Mirror<M> {
+        // assert maps are sorted
+        let mut last_end = 0;
+        for map in &maps {
+            assert!(map.from > last_end);
+            last_end = map.end;
+        }
+
         Mirror { maps, inner }
     }
 
     fn remap(&self, address: u16) -> u16 {
         for map in &self.maps {
+            if address < map.from {
+                break;
+            }
+
             if address >= map.from && address <= map.end {
                 return map.to + (address - map.from);
             }
