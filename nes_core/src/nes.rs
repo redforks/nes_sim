@@ -1,19 +1,29 @@
-use crate::mcu::{AddrRemap, Mcu, Mirror, RamMcu};
+use crate::mcu::{AddrRemap, MappingMcu, Mcu, Mirror, RamMcu, Region};
 use crate::nes::ppu::PpuDriver;
 
 pub mod apu;
 pub mod controller;
 pub mod ppu;
 
-pub fn create_mcu<PD>(prg: &[u8], _: PD) -> impl Mcu
+pub fn create_mcu<PD>(prg: &[u8], pd: PD) -> impl Mcu
 where
-    PD: PpuDriver,
+    PD: PpuDriver + 'static,
 {
+    let low_ram = RamMcu::new([0; 0x2000]);
+    let after_ppu = RamMcu::start_from(0x4000, [0; 0x4000]);
+
     assert!(prg.len() <= 0x8000);
     assert_eq!(prg.len() % (16 * 1024), 0);
-    let mut arr: [u8; 64 * 1024] = [0; 64 * 1024];
-    arr[0x8000..0x8000 + prg.len()].copy_from_slice(prg);
-    let mcu = RamMcu::new(arr);
+    let mut arr = [0; 32 * 1024];
+    arr[..prg.len()].copy_from_slice(prg);
+    let prg_ram = RamMcu::start_from(0x8000, arr);
+
+    let mcu = MappingMcu::new(vec![
+        Region::with_defined(low_ram),
+        Region::with_defined(ppu::new(pd)),
+        Region::with_defined(after_ppu),
+        Region::with_defined(prg_ram),
+    ]);
     setup_mem_mirror(mcu)
 }
 

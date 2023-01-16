@@ -124,7 +124,7 @@ impl<D: PpuDriver> DefinedRegion for Ppu<D> {
     }
 }
 
-pub fn new<D: PpuDriver>(d: D) -> impl Mcu {
+pub fn new<D: PpuDriver>(d: D) -> impl Mcu + DefinedRegion {
     Mappers(Ppu::new(d))
 }
 
