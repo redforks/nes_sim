@@ -312,7 +312,7 @@ pub fn new_condition_branch<R: Address>(
 }
 
 pub fn new_jmp(addr: u16) -> impl FnMut(&mut Cpu) -> u8 {
-    debug!("jmp {}", addr);
+    debug!("jmp ${:x}", addr);
 
     move |cpu| {
         cpu.pc = addr;
@@ -321,10 +321,18 @@ pub fn new_jmp(addr: u16) -> impl FnMut(&mut Cpu) -> u8 {
 }
 
 pub fn new_indirect_jmp(offset: u16) -> impl FnMut(&mut Cpu) -> u8 {
-    debug!("indirect_jmp {}", offset);
+    debug!("indirect_jmp ${:x}", offset);
 
     move |cpu| {
-        cpu.pc = cpu.read_word(offset);
+        let addr = offset;
+        let low = cpu.read_byte(addr) as u16;
+
+        let low_addr = addr as u8;
+        let high_addr = addr & 0xff00;
+        let addr = high_addr | (low_addr.wrapping_add(1) as u16);
+        let high = cpu.read_byte(addr) as u16;
+
+        cpu.pc = (high << 8) | low;
         5
     }
 }

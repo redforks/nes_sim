@@ -414,7 +414,7 @@ impl Cpu {
     pub fn inc_read_word(&mut self) -> u16 {
         let addr = self.pc;
         self.inc_pc(2);
-        self.mcu.read_word(addr)
+        self.read_word(addr)
     }
 
     pub fn write_byte(&mut self, addr: u16, value: u8) {
