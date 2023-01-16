@@ -452,9 +452,10 @@ pub fn new_lse<D: Address>(dest: D) -> impl FnMut(&mut Cpu) -> u8 {
         let (v, ticks) = dest.get(cpu);
         cpu.set_flag(Flag::Carry, (v & 0x01) != 0);
         let t = v >> 1;
-        cpu.update_negative_flag(t);
-        cpu.update_zero_flag(t);
         dest.set(cpu, t);
+        cpu.a ^= t;
+        cpu.update_negative_flag(cpu.a);
+        cpu.update_zero_flag(cpu.a);
         ticks + 2
     }
 }
