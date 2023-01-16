@@ -28,6 +28,8 @@ pub trait Mcu {
     }
 
     fn read_zero_page_word(&self, addr: u8) -> u16 {
-        self.read_word(addr as u16)
+        let low = self.read(addr as u16) as u16;
+        let high = self.read(addr.wrapping_add(1) as u16) as u16;
+        (high << 8) | low
     }
 }

@@ -146,8 +146,7 @@ impl Display for IndirectX {
 
 impl Address for IndirectX {
     fn calc_addr(&self, cpu: &Cpu) -> (u16, u8) {
-        let addr = self.0.wrapping_add(cpu.x);
-        (cpu.read_zero_page_word(addr), 4)
+        (cpu.read_zero_page_word(cpu.x.wrapping_add(self.0)), 4)
     }
 }
 
