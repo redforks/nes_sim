@@ -1,6 +1,7 @@
+use ansi_term::Color;
 use nes_core::{Cpu, ExecuteResult, Plugin};
 
-#[derive(Debug)]
+#[derive(Debug, Copy, Clone, PartialEq, Eq)]
 enum Status {
     Running,     // 0x80
     ShouldReset, // 0x81, // should reset cpu after 100ms
@@ -33,6 +34,7 @@ impl Status {
 pub struct MonitorTestStatus {
     should_reset: u16,
     exit_code: Option<u8>,
+    last_status: Option<Status>,
 }
 
 impl Plugin for MonitorTestStatus {
@@ -40,31 +42,36 @@ impl Plugin for MonitorTestStatus {
 
     fn end(&mut self, cpu: &Cpu) {
         let status = Status::parse(cpu);
+        if status == Status::ShouldReset && self.should_reset > 0 {
+            self.should_reset -= 1;
+
+            return;
+        }
+
+        if let Some(last_status) = &self.last_status {
+            if *last_status == status {
+                return;
+            }
+        }
+        self.last_status = Some(status);
+
         self.exit_code = match status {
             Status::Succeed => Some(0),
             Status::Failed(r) => {
                 eprintln!("test failed: {}", r);
                 Some(r)
             }
-            Status::ShouldReset => None,
+            Status::ShouldReset => {
+                self.should_reset = 7000;
+                None
+            }
             _ => None,
         };
-
-        if self.should_reset > 0 {
-            self.should_reset -= 1;
-        } else {
-            self.should_reset = match status {
-                Status::ShouldReset => {
-                    eprintln!("should reset");
-                    100
-                }
-                _ => 0,
-            };
-        }
     }
 
     fn should_stop(&self) -> ExecuteResult {
         if self.should_reset == 1 {
+            eprintln!("{}", Color::Yellow.paint("100ms waited, request reset"));
             return ExecuteResult::ShouldReset;
         }
 

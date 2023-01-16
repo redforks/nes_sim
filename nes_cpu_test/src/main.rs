@@ -1,3 +1,4 @@
+use ansi_term::Color;
 use clap::Parser;
 use nes_core::{Cpu, ExecuteResult};
 use std::io::Write;
@@ -41,7 +42,10 @@ fn main() {
     loop {
         match cpu.clock_tick(&mut plugin) {
             ExecuteResult::Continue => {}
-            ExecuteResult::ShouldReset => cpu.reset(),
+            ExecuteResult::ShouldReset => {
+                eprintln!("{}", Color::Red.paint("RESET"));
+                cpu.reset()
+            }
             ExecuteResult::Stop(result) => std::process::exit(result as i32),
         }
     }
