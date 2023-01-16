@@ -474,8 +474,16 @@ impl Cpu {
     }
 
     pub fn read_zero_page_word(&self, addr: u8) -> u16 {
-        let low = self.mcu.read(addr as u16) as u16;
-        let high = self.mcu.read(addr.wrapping_add(1) as u16) as u16;
+        self._read_word_in_same_page(0, addr)
+    }
+
+    pub fn read_word_in_same_page(&self, addr: u16) -> u16 {
+        self._read_word_in_same_page(addr & 0xff00, addr as u8)
+    }
+
+    fn _read_word_in_same_page(&self, page: u16, offset: u8) -> u16 {
+        let low = self.mcu.read(page | offset as u16) as u16;
+        let high = self.mcu.read(page | offset.wrapping_add(1) as u16) as u16;
         (high << 8) | low
     }
 

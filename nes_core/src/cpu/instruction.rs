@@ -324,15 +324,7 @@ pub fn new_indirect_jmp(offset: u16) -> impl FnMut(&mut Cpu) -> u8 {
     debug!("indirect_jmp ${:x}", offset);
 
     move |cpu| {
-        let addr = offset;
-        let low = cpu.read_byte(addr) as u16;
-
-        let low_addr = addr as u8;
-        let high_addr = addr & 0xff00;
-        let addr = high_addr | (low_addr.wrapping_add(1) as u16);
-        let high = cpu.read_byte(addr) as u16;
-
-        cpu.pc = (high << 8) | low;
+        cpu.pc = cpu.read_word_in_same_page(offset);
         5
     }
 }
