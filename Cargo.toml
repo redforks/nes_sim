@@ -12,6 +12,6 @@ opt-level = "z"
 # uncomment below to enable profile release build
 #debug = 1
 
-[rust]
 # uncomment below to enable profile release build
+# [rust]
 #debuginfo-level = 1
