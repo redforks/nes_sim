@@ -182,12 +182,12 @@ pub fn new_arr(Literal(v): Literal) -> impl FnMut(&mut Cpu) -> u8 {
     debug!("arr {}", Literal(v));
 
     move |cpu| {
-        cpu.set_flag(Flag::Negative, cpu.flag(Flag::Carry));
         cpu.a &= v;
         cpu.a = cpu.a >> 1 | (cpu.flag(Flag::Carry) as u8) << 7;
+        cpu.update_negative_flag(cpu.a);
         cpu.update_zero_flag(cpu.a);
-        cpu.set_flag(Flag::Carry, cpu.a & 0x80 != 0);
-        cpu.set_flag(Flag::Overflow, (cpu.a >> 7) & (cpu.a >> 6) & 1 != 0);
+        cpu.set_flag(Flag::Carry, cpu.a & 0x40 != 0);
+        cpu.set_flag(Flag::Overflow, ((cpu.a >> 6) ^ (cpu.a >> 5)) & 1 != 0);
         2
     }
 }
