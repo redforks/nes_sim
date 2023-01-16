@@ -278,6 +278,7 @@ fn execute_next(cpu: &mut Cpu) -> u8 {
 
         (3, 5, 1) => new_lax(zero_page(cpu))(cpu),
         (3, 5, 2) => new_lax(literal(cpu))(cpu),
+        (3, 5, 3) => new_lax(absolute(cpu))(cpu),
         (3, 5, 5) => new_lax(zero_page_y(cpu))(cpu),
 
         (3, 6, 1) => new_dcp(zero_page(cpu))(cpu),
