@@ -503,10 +503,10 @@ pub fn new_dcp<D: Address>(dest: D) -> impl FnMut(&mut Cpu) -> u8 {
         let (v, ticks) = dest.get(cpu);
         let t = v.wrapping_sub(1);
         dest.set(cpu, t);
-        let t = cpu.a.wrapping_sub(v);
+        let (t, borrow) = cpu.a.overflowing_sub(t);
         cpu.update_negative_flag(t);
         cpu.update_zero_flag(t);
-        cpu.set_flag(Flag::Carry, cpu.a >= t);
+        cpu.set_flag(Flag::Carry, !borrow);
         ticks + 2
     }
 }
