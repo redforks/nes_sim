@@ -39,7 +39,7 @@ impl<M: Mcu> Mirror<M> {
                 break;
             }
 
-            if address >= map.from && address <= map.end {
+            if address <= map.end {
                 return map.to + (address - map.from);
             }
         }

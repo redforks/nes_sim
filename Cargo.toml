@@ -10,8 +10,8 @@ lto = true
 codegen-units=1
 opt-level = "z"
 # uncomment below to enable profile release build
-debug = 1
+#debug = 1
 
 [rust]
 # uncomment below to enable profile release build
-debuginfo-level = 1
+#debuginfo-level = 1

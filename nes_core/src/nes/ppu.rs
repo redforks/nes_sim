@@ -123,3 +123,31 @@ impl<D: PpuDriver> DefinedRegion for Ppu<D> {
         (0x2000, 0x2008)
     }
 }
+
+pub fn new<D: PpuDriver>(d: D) -> impl Mcu {
+    Mappers(Ppu::new(d))
+}
+
+struct Mappers<D: PpuDriver>(Ppu<D>);
+
+impl<D: PpuDriver> Mappers<D> {
+    fn addr(&self, addr: u16) -> u16 {
+        0x2000 + addr % 8
+    }
+}
+
+impl<D: PpuDriver> DefinedRegion for Mappers<D> {
+    fn region(&self) -> (u16, u16) {
+        (0x2000, 0x3fff)
+    }
+}
+
+impl<D: PpuDriver> Mcu for Mappers<D> {
+    fn read(&self, address: u16) -> u8 {
+        self.0.read(self.addr(address))
+    }
+
+    fn write(&mut self, address: u16, value: u8) {
+        self.0.write(self.addr(address), value)
+    }
+}
