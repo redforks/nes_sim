@@ -468,11 +468,15 @@ impl Cpu {
     }
 
     pub fn read_word(&self, addr: u16) -> u16 {
-        self.mcu.read_word(addr)
+        let low = self.mcu.read(addr) as u16;
+        let high = self.mcu.read(addr.wrapping_add(1)) as u16;
+        (high << 8) | low
     }
 
     pub fn read_zero_page_word(&self, addr: u8) -> u16 {
-        self.mcu.read_zero_page_word(addr)
+        let low = self.mcu.read(addr as u16) as u16;
+        let high = self.mcu.read(addr.wrapping_add(1) as u16) as u16;
+        (high << 8) | low
     }
 
     fn push_stack(&mut self, value: u8) {
