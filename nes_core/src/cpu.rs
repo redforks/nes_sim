@@ -1,5 +1,4 @@
 use crate::mcu::Mcu;
-use std::ops::BitAnd;
 
 mod addressing;
 mod instruction;
@@ -394,15 +393,12 @@ impl Cpu {
         self.pc = self.pc.wrapping_add(delta as u16);
     }
 
-    fn update_negative_flag<T: BitAnd<Output = T> + Copy + From<u8> + PartialEq + Default>(
-        &mut self,
-        value: T,
-    ) {
-        self.set_flag(Flag::Negative, value & T::from(0x80) != T::default());
+    fn update_negative_flag(&mut self, value: u8) {
+        self.set_flag(Flag::Negative, value & 0x80 != 0);
     }
 
-    fn update_zero_flag<T: PartialEq + Copy + Default>(&mut self, value: T) {
-        self.set_flag(Flag::Zero, value == T::default());
+    fn update_zero_flag(&mut self, value: u8) {
+        self.set_flag(Flag::Zero, value == 0);
     }
 
     pub fn read_byte(&self, addr: u16) -> u8 {
