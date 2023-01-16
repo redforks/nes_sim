@@ -67,7 +67,7 @@ fn read_file_bytes(f: &str) -> Result<Vec<u8>, LoadError> {
 pub fn load_image(f: &str) -> Result<Image, LoadError> {
     if f.ends_with(".bin") {
         load_bin(f)
-    } else if f.ends_with(".nes") {
+    } else if is_nes_file(f) {
         load_rom(f)
     } else {
         panic!("unknown file type");
@@ -79,6 +79,11 @@ fn load_bin(f: &str) -> Result<Image, LoadError> {
     assert_eq!(buf.len(), 64 * 1024);
     let arr: [u8; 64 * 1024] = buf.try_into().expect("image file length is not 64k");
     Ok(Image::Bin(Box::new(arr)))
+}
+
+fn is_nes_file(f: &str) -> bool {
+    let buf = read_file_bytes(f).unwrap();
+    INesFile::is_valid(&buf)
 }
 
 fn load_rom(f: &str) -> Result<Image, LoadError> {

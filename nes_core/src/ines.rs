@@ -5,7 +5,7 @@ pub struct INesFile {
 
 impl INesFile {
     pub fn new(image: Vec<u8>) -> Result<Self, FormatError> {
-        if image.len() < 16 || image[0..=3] != [0x4e, 0x45, 0x53, 0x1a] {
+        if !Self::is_valid(&image) {
             return Err(FormatError::InvalidHeader);
         }
 
@@ -19,6 +19,10 @@ impl INesFile {
         let start = 16;
         let end = start + (self.prg_size as usize) * 16 * 1024;
         &self.image[start..end]
+    }
+
+    pub fn is_valid(image: &[u8]) -> bool {
+        image.len() >= 16 && image[0..=3] == [0x4e, 0x45, 0x53, 0x1a]
     }
 }
 
