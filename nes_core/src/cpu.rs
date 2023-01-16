@@ -99,7 +99,7 @@ fn execute_next(cpu: &mut Cpu) -> u8 {
         (0, 4, 4) => neg_cond_branch(cpu, Flag::Carry)(cpu),
         (0, 4, 5) => new_transfer_no_touch_flags(zero_page_x(cpu), y())(cpu),
         (0, 4, 6) => new_transfer(aa(), y())(cpu),
-        (0, 4, 7) => new_sax(absolute_x(cpu))(cpu),
+        (0, 4, 7) => new_all("shy", y(), absolute_x(cpu))(cpu),
 
         (0, 5, 0) => new_transfer(y(), literal(cpu))(cpu),
         (0, 5, 1) => new_transfer(y(), zero_page(cpu))(cpu),
@@ -234,7 +234,7 @@ fn execute_next(cpu: &mut Cpu) -> u8 {
         (2, 4, 3) => new_transfer_no_touch_flags(absolute(cpu), x())(cpu),
         (2, 4, 5) => new_transfer_no_touch_flags(zero_page_y(cpu), x())(cpu),
         (2, 4, 6) => new_transfer_no_touch_flags(sp(), x())(cpu),
-        (2, 4, 7) => new_shx(absolute_y(cpu))(cpu), // 9e shx
+        (2, 4, 7) => new_all("shx", x(), absolute_y(cpu))(cpu), // 9e
 
         (2, 5, 0) => new_transfer(x(), literal(cpu))(cpu),
         (2, 5, 1) => new_transfer(x(), zero_page(cpu))(cpu),

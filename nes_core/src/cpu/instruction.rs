@@ -1,6 +1,6 @@
 use super::addressing::{Address, RegisterStatus};
 use super::{extra_tick_if_cross_page, Cpu, Flag};
-use crate::cpu::addressing::{AbsoluteY, Literal};
+use crate::cpu::addressing::Literal;
 use log::debug;
 
 /// LDA, LDX, LDY, TAX, TAY, TSX, TXA, TYA
@@ -525,12 +525,13 @@ pub fn new_isc<D: Address>(dest: D) -> impl FnMut(&mut Cpu) -> u8 {
     }
 }
 
-pub fn new_shx(dest: AbsoluteY) -> impl FnMut(&mut Cpu) -> u8 {
-    debug!("shx {}", dest);
+pub fn new_all<R: Address, D: Address>(name: &str, r: R, dest: D) -> impl FnMut(&mut Cpu) -> u8 {
+    debug!("{} {}", name, dest);
 
     move |cpu| {
         let (addr, _) = dest.calc_addr(cpu);
-        let v = cpu.x & ((addr >> 8) as u8).wrapping_add(1);
+        let r = r.get(cpu).0;
+        let v = r & ((addr >> 8) as u8).wrapping_add(1);
         let addr = (addr & 0xff) | ((v as u16) << 8);
         cpu.write_byte(addr, v);
         5
