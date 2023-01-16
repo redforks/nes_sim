@@ -254,6 +254,7 @@ fn execute_next(cpu: &mut Cpu) -> u8 {
 
         (3, 0, 1) => new_aso(zero_page(cpu))(cpu),
         (3, 0, 2) => new_anc(literal(cpu))(cpu),
+        (3, 0, 3) => new_aso(absolute(cpu))(cpu),
         (3, 0, 5) => new_aso(zero_page_x(cpu))(cpu),
 
         (3, 1, 1) => new_rla(zero_page(cpu))(cpu),
