@@ -524,3 +524,13 @@ pub fn new_isc<D: Address>(dest: D) -> impl FnMut(&mut Cpu) -> u8 {
         ticks + 2
     }
 }
+
+// pub fn new_shy<D: Address>(dest: D) -> impl FnMut(&mut Cpu) -> u8 {
+//     debug!("shy {}", dest);
+//
+//     move |cpu| {
+//         let v = cpu.y & (dest.get_addr(cpu) >> 8) as u8;
+//         dest.set(cpu, v);
+//         2
+//     }
+// }

@@ -63,6 +63,7 @@ fn execute_next(cpu: &mut Cpu) -> u8 {
         (0, 0, 4) => neg_cond_branch(cpu, Flag::Negative)(cpu),
         (0, 0, 5) => new_nop_with_addr(zero_page_x(cpu))(cpu),
         (0, 0, 6) => new_clear_bit(FlagAddr(Flag::Carry))(cpu),
+        (0, 0, 7) => new_nop_with_addr(absolute_x(cpu))(cpu),
 
         (0, 1, 0) => new_jsr(r_w(cpu))(cpu),
         (0, 1, 1) => new_bit(zero_page(cpu))(cpu),
@@ -71,6 +72,7 @@ fn execute_next(cpu: &mut Cpu) -> u8 {
         (0, 1, 4) => cond_branch(cpu, Flag::Negative)(cpu),
         (0, 1, 5) => new_nop_with_addr(zero_page_x(cpu))(cpu),
         (0, 1, 6) => new_set_bit(FlagAddr(Flag::Carry))(cpu),
+        (0, 1, 7) => new_nop_with_addr(absolute_x(cpu))(cpu),
 
         (0, 2, 0) => new_rti()(cpu),
         (0, 2, 1) => new_nop_with_addr(zero_page(cpu))(cpu),
@@ -79,6 +81,7 @@ fn execute_next(cpu: &mut Cpu) -> u8 {
         (0, 2, 4) => neg_cond_branch(cpu, Flag::Overflow)(cpu),
         (0, 2, 5) => new_nop_with_addr(zero_page_x(cpu))(cpu),
         (0, 2, 6) => new_clear_bit(FlagAddr(Flag::InterruptDisabled))(cpu),
+        (0, 2, 7) => new_nop_with_addr(absolute_x(cpu))(cpu),
 
         (0, 3, 0) => new_rts()(cpu),
         (0, 3, 1) => new_nop_with_addr(zero_page(cpu))(cpu),
@@ -87,6 +90,7 @@ fn execute_next(cpu: &mut Cpu) -> u8 {
         (0, 3, 4) => cond_branch(cpu, Flag::Overflow)(cpu),
         (0, 3, 5) => new_nop_with_addr(zero_page_x(cpu))(cpu),
         (0, 3, 6) => new_set_bit(FlagAddr(Flag::InterruptDisabled))(cpu),
+        (0, 3, 7) => new_nop_with_addr(absolute_x(cpu))(cpu),
 
         (0, 4, 0) => new_nop_with_addr(literal(cpu))(cpu),
         (0, 4, 1) => new_transfer_no_touch_flags(zero_page(cpu), y())(cpu),
@@ -95,6 +99,7 @@ fn execute_next(cpu: &mut Cpu) -> u8 {
         (0, 4, 4) => neg_cond_branch(cpu, Flag::Carry)(cpu),
         (0, 4, 5) => new_transfer_no_touch_flags(zero_page_x(cpu), y())(cpu),
         (0, 4, 6) => new_transfer(aa(), y())(cpu),
+        (0, 4, 7) => new_sax(absolute_x(cpu))(cpu),
 
         (0, 5, 0) => new_transfer(y(), literal(cpu))(cpu),
         (0, 5, 1) => new_transfer(y(), zero_page(cpu))(cpu),
@@ -104,6 +109,7 @@ fn execute_next(cpu: &mut Cpu) -> u8 {
         (0, 5, 5) => new_transfer(y(), zero_page_x(cpu))(cpu),
         (0, 5, 6) => new_clear_bit(FlagAddr(Flag::Overflow))(cpu),
         (0, 5, 7) => new_transfer(y(), absolute_x(cpu))(cpu),
+        (0, 6, 7) => new_nop_with_addr(absolute_x(cpu))(cpu),
 
         (0, 6, 0) => new_cmp(y(), literal(cpu))(cpu),
         (0, 6, 1) => new_cmp(y(), zero_page(cpu))(cpu),
@@ -120,6 +126,7 @@ fn execute_next(cpu: &mut Cpu) -> u8 {
         (0, 7, 4) => cond_branch(cpu, Flag::Zero)(cpu),
         (0, 7, 5) => new_nop_with_addr(zero_page_x(cpu))(cpu),
         (0, 7, 6) => new_set_bit(FlagAddr(Flag::Decimal))(cpu),
+        (0, 7, 7) => new_nop_with_addr(absolute_x(cpu))(cpu),
 
         (1, 0, 0) => new_ora(indirect_x(cpu))(cpu),
         (1, 0, 1) => new_ora(zero_page(cpu))(cpu),
@@ -227,6 +234,7 @@ fn execute_next(cpu: &mut Cpu) -> u8 {
         (2, 4, 3) => new_transfer_no_touch_flags(absolute(cpu), x())(cpu),
         (2, 4, 5) => new_transfer_no_touch_flags(zero_page_y(cpu), x())(cpu),
         (2, 4, 6) => new_transfer_no_touch_flags(sp(), x())(cpu),
+        (2, 4, 7) => new_sax(absolute_y(cpu))(cpu),
 
         (2, 5, 0) => new_transfer(x(), literal(cpu))(cpu),
         (2, 5, 1) => new_transfer(x(), zero_page(cpu))(cpu),
@@ -256,21 +264,29 @@ fn execute_next(cpu: &mut Cpu) -> u8 {
         (3, 0, 2) => new_anc(literal(cpu))(cpu),
         (3, 0, 3) => new_aso(absolute(cpu))(cpu),
         (3, 0, 5) => new_aso(zero_page_x(cpu))(cpu),
+        (3, 0, 6) => new_aso(absolute_y(cpu))(cpu),
+        (3, 0, 7) => new_aso(absolute_x(cpu))(cpu),
 
         (3, 1, 1) => new_rla(zero_page(cpu))(cpu),
         (3, 1, 2) => new_anc(literal(cpu))(cpu),
         (3, 1, 3) => new_rla(absolute(cpu))(cpu),
         (3, 1, 5) => new_rla(zero_page_x(cpu))(cpu),
+        (3, 1, 6) => new_rla(absolute_y(cpu))(cpu),
+        (3, 1, 7) => new_rla(absolute_x(cpu))(cpu),
 
         (3, 2, 1) => new_lse(zero_page(cpu))(cpu),
         (3, 2, 2) => new_alr(literal(cpu))(cpu),
         (3, 2, 3) => new_lse(absolute(cpu))(cpu),
         (3, 2, 5) => new_lse(zero_page_x(cpu))(cpu),
+        (3, 2, 6) => new_lse(absolute_y(cpu))(cpu),
+        (3, 2, 7) => new_lse(absolute_x(cpu))(cpu),
 
         (3, 3, 1) => new_rra(zero_page(cpu))(cpu),
         (3, 3, 2) => new_arr(literal(cpu))(cpu),
         (3, 3, 3) => new_rra(absolute(cpu))(cpu),
         (3, 3, 5) => new_rra(zero_page_x(cpu))(cpu),
+        (3, 3, 6) => new_rra(absolute_y(cpu))(cpu),
+        (3, 3, 7) => new_rra(absolute_x(cpu))(cpu),
 
         (3, 4, 1) => new_sax(zero_page(cpu))(cpu),
         (3, 4, 3) => new_sax(absolute(cpu))(cpu),
@@ -280,16 +296,21 @@ fn execute_next(cpu: &mut Cpu) -> u8 {
         (3, 5, 2) => new_lax(literal(cpu))(cpu),
         (3, 5, 3) => new_lax(absolute(cpu))(cpu),
         (3, 5, 5) => new_lax(zero_page_y(cpu))(cpu),
+        (3, 5, 7) => new_lax(absolute_y(cpu))(cpu),
 
         (3, 6, 1) => new_dcp(zero_page(cpu))(cpu),
         (3, 6, 2) => new_sbx(literal(cpu))(cpu),
         (3, 6, 3) => new_dcp(absolute(cpu))(cpu),
         (3, 6, 5) => new_dcp(zero_page_x(cpu))(cpu),
+        (3, 6, 6) => new_dcp(absolute_y(cpu))(cpu),
+        (3, 6, 7) => new_dcp(absolute_x(cpu))(cpu),
 
         (3, 7, 1) => new_isc(zero_page(cpu))(cpu),
         (3, 7, 2) => new_sbc(literal(cpu))(cpu),
         (3, 7, 3) => new_isc(absolute(cpu))(cpu),
         (3, 7, 5) => new_isc(zero_page_x(cpu))(cpu),
+        (3, 7, 6) => new_isc(absolute_y(cpu))(cpu),
+        (3, 7, 7) => new_isc(absolute_x(cpu))(cpu),
 
         _ => panic!(
             "Unknown opcode: {:02x} ({}, {}, {}) @ {:04x}",
