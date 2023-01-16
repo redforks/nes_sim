@@ -59,6 +59,7 @@ fn execute_next(cpu: &mut Cpu) -> u8 {
         (0, 0, 0) => new_brk()(cpu),
         (0, 0, 1) => new_nop_with_addr(zero_page(cpu))(cpu),
         (0, 0, 2) => new_php()(cpu),
+        (0, 0, 3) => new_nop_with_addr(absolute(cpu))(cpu),
         (0, 0, 4) => neg_cond_branch(cpu, Flag::Negative)(cpu),
         (0, 0, 5) => new_nop_with_addr(zero_page_x(cpu))(cpu),
         (0, 0, 6) => new_clear_bit(FlagAddr(Flag::Carry))(cpu),
