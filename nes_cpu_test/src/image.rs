@@ -1,10 +1,13 @@
 use super::plugin::{CompositePlugin, Console, MonitorTestStatus, ReportPlugin};
 use super::plugin::{DetectDeadLoop, ImageExit};
+use crate::image::driver::EmptyPpuDriver;
 use nes_core::ines::INesFile;
 use nes_core::mcu::{Mcu, RamMcu};
-use nes_core::nes::setup_mem_mirror;
+use nes_core::nes::create_mcu;
 use nes_core::Plugin;
 use std::io::Read;
+
+mod driver;
 
 pub enum Image {
     Bin(Box<[u8; 64 * 1024]>),
@@ -17,10 +20,7 @@ impl Image {
             Image::Bin(arr) => Box::new(RamMcu::new(**arr)),
             Image::INes(ines) => {
                 let prg = ines.read_prg();
-                let mut arr: [u8; 64 * 1024] = [0; 64 * 1024];
-                arr[0x8000..0x8000 + prg.len()].copy_from_slice(prg);
-                let mcu = RamMcu::new(arr);
-                Box::new(setup_mem_mirror(mcu)) as Box<dyn Mcu>
+                Box::new(create_mcu(&prg, EmptyPpuDriver()))
             }
         }
     }
