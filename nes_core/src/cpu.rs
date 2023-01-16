@@ -288,6 +288,7 @@ fn execute_next(cpu: &mut Cpu) -> u8 {
 
         (3, 7, 1) => new_isc(zero_page(cpu))(cpu),
         (3, 7, 2) => new_sbc(literal(cpu))(cpu),
+        (3, 7, 3) => new_isc(absolute(cpu))(cpu),
         (3, 7, 5) => new_isc(zero_page_x(cpu))(cpu),
 
         _ => panic!(
