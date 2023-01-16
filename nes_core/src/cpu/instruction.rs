@@ -362,7 +362,7 @@ pub fn new_rti() -> impl FnMut(&mut Cpu) -> u8 {
     move |cpu| {
         let v = cpu.pop_stack();
         RegisterStatus().set(cpu, v);
-        cpu.pc = cpu.pop_stack() as u16 | (cpu.pop_stack() as u16) << 8;
+        cpu.pc = cpu.pop_stack() as u16 | ((cpu.pop_stack() as u16) << 8);
         6
     }
 }
@@ -374,8 +374,7 @@ pub fn new_bit<D: Address>(dest: D) -> impl FnMut(&mut Cpu) -> u8 {
         let (v, ticks) = dest.get(cpu);
         cpu.set_flag(Flag::Negative, (v & 0x80) != 0);
         cpu.set_flag(Flag::Overflow, (v & 0x70) != 0);
-        let v = v & cpu.a;
-        cpu.update_zero_flag(v);
+        cpu.update_zero_flag(v & cpu.a);
         ticks + 2
     }
 }
