@@ -1,8 +1,7 @@
 use super::addressing::{Address, RegisterStatus};
 use super::{extra_tick_if_cross_page, Cpu, Flag};
-use crate::cpu::addressing::{Literal, RegisterA};
+use crate::cpu::addressing::Literal;
 use log::debug;
-use std::any::TypeId;
 
 /// LDA, LDX, LDY, TAX, TAY, TSX, TXA, TYA
 pub fn new_transfer<S, D>(dest: D, src: S) -> impl FnMut(&mut Cpu) -> u8
@@ -36,31 +35,44 @@ where
     }
 }
 
-// PHA, PHP
-pub fn new_push<S: Address>(src: S) -> impl FnMut(&mut Cpu) -> u8 {
-    debug!("push {}", src);
+pub fn new_pha() -> impl FnMut(&mut Cpu) -> u8 {
+    debug!("pha");
 
     move |cpu| {
-        let (val, _) = src.get(cpu);
-        cpu.push_stack(val);
+        cpu.push_stack(cpu.a);
         3
     }
 }
 
-// PLA, PLP
-pub fn new_pop<D: Address + 'static>(dest: D) -> impl FnMut(&mut Cpu) -> u8 {
-    debug!("pop {}", dest);
+pub fn new_php() -> impl FnMut(&mut Cpu) -> u8 {
+    debug!("php");
 
     move |cpu| {
-        let val = cpu.pop_stack();
-        dest.set(cpu, val);
-        if TypeId::of::<D>() == TypeId::of::<RegisterA>() {
-            cpu.update_negative_flag(val);
-            cpu.update_zero_flag(val);
-        } else if TypeId::of::<D>() != TypeId::of::<RegisterStatus>() {
-            panic!("Pop can only be used with A or Status")
-        }
+        cpu.set_flag(Flag::Break, true);
+        cpu.push_status();
+        3
+    }
+}
 
+pub fn new_pla() -> impl FnMut(&mut Cpu) -> u8 {
+    debug!("pla");
+
+    move |cpu| {
+        cpu.a = cpu.pop_stack();
+        cpu.update_negative_flag(cpu.a);
+        cpu.update_zero_flag(cpu.a);
+        4
+    }
+}
+
+pub fn new_plp() -> impl FnMut(&mut Cpu) -> u8 {
+    debug!("plp");
+
+    move |cpu| {
+        let saved = cpu.pop_stack();
+        let saved_break_flag = cpu.flag(Flag::Break);
+        cpu.status = saved;
+        cpu.set_flag(Flag::Break, saved_break_flag);
         4
     }
 }
@@ -348,8 +360,8 @@ pub fn new_brk() -> impl FnMut(&mut Cpu) -> u8 {
         let pc = cpu.pc.wrapping_add(1);
         cpu.push_stack((pc >> 8) as u8);
         cpu.push_stack(pc as u8);
-        let (status, _) = RegisterStatus().get(cpu);
-        cpu.push_stack(status);
+        cpu.set_flag(Flag::Break, true);
+        cpu.push_status();
         cpu.set_flag(Flag::Interrupt, true);
         cpu.pc = cpu.read_word(0xFFFE);
         7

@@ -58,14 +58,14 @@ fn execute_next(cpu: &mut Cpu) -> u8 {
     match (c, a, b) {
         (0, 0, 0) => new_brk()(cpu),
         (0, 0, 1) => new_nop_with_addr(zero_page(cpu))(cpu),
-        (0, 0, 2) => new_push(RegisterStatus())(cpu),
+        (0, 0, 2) => new_php()(cpu),
         (0, 0, 4) => neg_cond_branch(cpu, Flag::Negative)(cpu),
         (0, 0, 5) => new_nop_with_addr(zero_page_x(cpu))(cpu),
         (0, 0, 6) => new_clear_bit(FlagAddr(Flag::Carry))(cpu),
 
         (0, 1, 0) => new_jsr(r_w(cpu))(cpu),
         (0, 1, 1) => new_bit(zero_page(cpu))(cpu),
-        (0, 1, 2) => new_pop(RegisterStatus())(cpu),
+        (0, 1, 2) => new_plp()(cpu),
         (0, 1, 3) => new_bit(absolute(cpu))(cpu),
         (0, 1, 4) => cond_branch(cpu, Flag::Negative)(cpu),
         (0, 1, 5) => new_nop_with_addr(zero_page_x(cpu))(cpu),
@@ -73,7 +73,7 @@ fn execute_next(cpu: &mut Cpu) -> u8 {
 
         (0, 2, 0) => new_rti()(cpu),
         (0, 2, 1) => new_nop_with_addr(zero_page(cpu))(cpu),
-        (0, 2, 2) => new_push(aa())(cpu),
+        (0, 2, 2) => new_pha()(cpu),
         (0, 2, 3) => new_jmp(r_w(cpu))(cpu),
         (0, 2, 4) => neg_cond_branch(cpu, Flag::Overflow)(cpu),
         (0, 2, 5) => new_nop_with_addr(zero_page_x(cpu))(cpu),
@@ -81,7 +81,7 @@ fn execute_next(cpu: &mut Cpu) -> u8 {
 
         (0, 3, 0) => new_rts()(cpu),
         (0, 3, 1) => new_nop_with_addr(zero_page(cpu))(cpu),
-        (0, 3, 2) => new_pop(aa())(cpu),
+        (0, 3, 2) => new_pla()(cpu),
         (0, 3, 3) => new_indirect_jmp(r_w(cpu))(cpu),
         (0, 3, 4) => cond_branch(cpu, Flag::Overflow)(cpu),
         (0, 3, 5) => new_nop_with_addr(zero_page_x(cpu))(cpu),
@@ -443,6 +443,10 @@ impl Cpu {
         let addr = 0x100 + self.sp.wrapping_add(1) as u16;
         self.read_byte(addr)
     }
+
+    pub fn push_status(&mut self) {
+        self.push_stack(self.status | (Flag::NotUsed as u8));
+    }
 }
 
 #[derive(Clone, Copy, strum_macros::Display)]
@@ -453,6 +457,7 @@ pub enum Flag {
     Interrupt = 0x04u8,
     Decimal = 0x08u8,
     Break = 0x10u8,
+    NotUsed = 0x20u8,
     Overflow = 0x40u8,
     Negative = 0x80u8,
 }
