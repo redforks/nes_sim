@@ -272,7 +272,7 @@ fn execute_next(cpu: &mut Cpu) -> u8 {
         (3, 4, 5) => new_sax(zero_page_y(cpu))(cpu),
 
         (3, 5, 1) => new_lax(zero_page(cpu))(cpu),
-        (3, 5, 2) => new_lxa(literal(cpu))(cpu),
+        (3, 5, 2) => new_lax(literal(cpu))(cpu),
         (3, 5, 5) => new_lax(zero_page_y(cpu))(cpu),
 
         (3, 6, 1) => new_dcp(zero_page(cpu))(cpu),
@@ -384,10 +384,7 @@ impl Cpu {
         let (sum, carry0) = self.a.overflowing_add(val);
         let (sum, carry1) = sum.overflowing_add(carry);
         self.set_flag(Flag::Carry, carry0 || carry1);
-        self.set_flag(
-            Flag::Overflow,
-            ((self.a ^ val) & 0x80) == 0 && ((self.a ^ sum) & 0x80) != 0,
-        );
+        self.set_flag(Flag::Overflow, !(self.a ^ val) & (self.a ^ sum) & 0x80 != 0);
         self.update_zero_flag(sum);
         self.update_negative_flag(sum);
         self.a = sum;

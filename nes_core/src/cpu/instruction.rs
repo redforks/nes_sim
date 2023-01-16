@@ -145,11 +145,10 @@ pub fn new_anc(Literal(v): Literal) -> impl FnMut(&mut Cpu) -> u8 {
     debug!("anc {}", Literal(v));
 
     move |cpu| {
-        let val = cpu.a & v;
-        cpu.a = val;
-        cpu.update_negative_flag(val);
-        cpu.update_zero_flag(val);
-        cpu.set_flag(Flag::Carry, val & 0x80 != 0);
+        cpu.a &= v;
+        cpu.update_negative_flag(cpu.a);
+        cpu.update_zero_flag(cpu.a);
+        cpu.set_flag(Flag::Carry, cpu.a & 0x80 != 0);
         2
     }
 }
@@ -158,11 +157,11 @@ pub fn new_alr(Literal(v): Literal) -> impl FnMut(&mut Cpu) -> u8 {
     debug!("alr {}", Literal(v));
 
     move |cpu| {
-        let val = cpu.a & v;
-        cpu.a = val >> 1;
-        cpu.update_negative_flag(cpu.a);
+        cpu.a &= v;
+        cpu.set_flag(Flag::Carry, cpu.a & 0x01 != 0);
+        cpu.a >>= 1;
         cpu.update_zero_flag(cpu.a);
-        cpu.set_flag(Flag::Carry, val & 0x01 != 0);
+        cpu.set_flag(Flag::Negative, false);
         2
     }
 }
@@ -181,29 +180,16 @@ pub fn new_arr(Literal(v): Literal) -> impl FnMut(&mut Cpu) -> u8 {
     }
 }
 
-pub fn new_lxa(Literal(v): Literal) -> impl FnMut(&mut Cpu) -> u8 {
-    debug!("lxa {}", Literal(v));
-
-    move |cpu| {
-        let val = cpu.a & v;
-        cpu.a = val;
-        cpu.x = val;
-        cpu.update_negative_flag(cpu.a);
-        cpu.update_zero_flag(cpu.a);
-        2
-    }
-}
-
 pub fn new_sbx(Literal(v): Literal) -> impl FnMut(&mut Cpu) -> u8 {
     debug!("sbx {}", Literal(v));
 
     move |cpu| {
         let val = cpu.a & cpu.x;
-        let delta = val.wrapping_sub(v);
-        cpu.x = delta;
-        cpu.update_negative_flag(delta);
-        cpu.update_zero_flag(delta);
-        cpu.set_flag(Flag::Carry, v >= val);
+        let (x, borrow) = val.overflowing_sub(v);
+        cpu.x = x;
+        cpu.update_negative_flag(x);
+        cpu.update_zero_flag(x);
+        cpu.set_flag(Flag::Carry, !borrow);
         2
     }
 }
