@@ -283,6 +283,7 @@ fn execute_next(cpu: &mut Cpu) -> u8 {
 
         (3, 6, 1) => new_dcp(zero_page(cpu))(cpu),
         (3, 6, 2) => new_sbx(literal(cpu))(cpu),
+        (3, 6, 3) => new_dcp(absolute(cpu))(cpu),
         (3, 6, 5) => new_dcp(zero_page_x(cpu))(cpu),
 
         (3, 7, 1) => new_isc(zero_page(cpu))(cpu),
