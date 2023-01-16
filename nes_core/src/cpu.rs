@@ -269,6 +269,7 @@ fn execute_next(cpu: &mut Cpu) -> u8 {
 
         (3, 3, 1) => new_rra(zero_page(cpu))(cpu),
         (3, 3, 2) => new_arr(literal(cpu))(cpu),
+        (3, 3, 3) => new_rra(absolute(cpu))(cpu),
         (3, 3, 5) => new_rra(zero_page_x(cpu))(cpu),
 
         (3, 4, 1) => new_sax(zero_page(cpu))(cpu),
