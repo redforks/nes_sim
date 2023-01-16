@@ -234,7 +234,7 @@ fn execute_next(cpu: &mut Cpu) -> u8 {
         (2, 4, 3) => new_transfer_no_touch_flags(absolute(cpu), x())(cpu),
         (2, 4, 5) => new_transfer_no_touch_flags(zero_page_y(cpu), x())(cpu),
         (2, 4, 6) => new_transfer_no_touch_flags(sp(), x())(cpu),
-        (2, 4, 7) => new_sax(absolute_y(cpu))(cpu),
+        (2, 4, 7) => new_shx(absolute_y(cpu))(cpu), // 9e shx
 
         (2, 5, 0) => new_transfer(x(), literal(cpu))(cpu),
         (2, 5, 1) => new_transfer(x(), zero_page(cpu))(cpu),
