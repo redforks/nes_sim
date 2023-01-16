@@ -2,6 +2,7 @@ use super::plugin::{CompositePlugin, Console, MonitorTestStatus, ReportPlugin};
 use crate::plugin::{DetectDeadLoop, ImageExit};
 use nes_core::ines::INesFile;
 use nes_core::mcu::{Mcu, RamMcu};
+use nes_core::nes::setup_mem_mirror;
 use nes_core::Plugin;
 use std::io::Read;
 
@@ -18,7 +19,7 @@ impl Image {
                 let prg = ines.read_prg();
                 let mut arr: [u8; 64 * 1024] = [0; 64 * 1024];
                 arr[0x8000..0x8000 + prg.len()].copy_from_slice(prg);
-                Box::new(RamMcu::new(arr)) as Box<dyn Mcu>
+                Box::new(setup_mem_mirror(RamMcu::new(arr))) as Box<dyn Mcu>
             }
         }
     }
