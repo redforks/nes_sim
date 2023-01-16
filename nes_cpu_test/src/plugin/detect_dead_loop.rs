@@ -46,7 +46,7 @@ impl<const DEPTH: usize> Plugin for DetectDeadLoop<DEPTH> {
 
     fn should_stop(&self) -> ExecuteResult {
         if self.should_exit {
-            ExecuteResult::Stop
+            ExecuteResult::Stop(1)
         } else {
             ExecuteResult::Continue
         }

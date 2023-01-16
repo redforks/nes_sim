@@ -31,8 +31,8 @@ impl Status {
 
 #[derive(Default)]
 pub struct MonitorTestStatus {
-    should_stop: bool,
     should_reset: u16,
+    exit_code: Option<u8>,
 }
 
 impl Plugin for MonitorTestStatus {
@@ -40,14 +40,14 @@ impl Plugin for MonitorTestStatus {
 
     fn end(&mut self, cpu: &Cpu) {
         let status = Status::parse(cpu);
-        self.should_stop = match status {
-            Status::Succeed => true,
+        self.exit_code = match status {
+            Status::Succeed => Some(0),
             Status::Failed(r) => {
                 eprintln!("test failed: {}", r);
-                true
+                Some(r)
             }
-            Status::ShouldReset => false,
-            _ => false,
+            Status::ShouldReset => None,
+            _ => None,
         };
 
         if self.should_reset > 0 {
@@ -68,8 +68,8 @@ impl Plugin for MonitorTestStatus {
             return ExecuteResult::ShouldReset;
         }
 
-        if self.should_stop {
-            ExecuteResult::Stop
+        if let Some(exit_code) = self.exit_code {
+            ExecuteResult::Stop(exit_code)
         } else {
             ExecuteResult::Continue
         }

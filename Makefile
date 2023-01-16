@@ -7,11 +7,11 @@ cpu-test:
 	target/release/nes_cpu_test --quiet -f ../nes-test-roms/instr_test-v5/rom_singles/03-immediate.nes
 	target/release/nes_cpu_test --quiet -f ../nes-test-roms/instr_test-v5/rom_singles/04-zero_page.nes
 	target/release/nes_cpu_test --quiet -f ../nes-test-roms/instr_test-v5/rom_singles/05-zp_xy.nes
-	# target/release/nes_cpu_test --quiet -f ../nes-test-roms/instr_test-v5/rom_singles/06-absolute.nes
-	# target/release/nes_cpu_test --quiet -f ../nes-test-roms/instr_test-v5/rom_singles/07-abs_xy.nes
-	# target/release/nes_cpu_test --quiet -f ../nes-test-roms/instr_test-v5/rom_singles/08-ind_x.nes
-	# target/release/nes_cpu_test --quiet -f ../nes-test-roms/instr_test-v5/rom_singles/09-ind_y.nes
-	# target/release/nes_cpu_test --quiet -f ../nes-test-roms/instr_test-v5/rom_singles/10-branches.nes
+	target/release/nes_cpu_test --quiet -f ../nes-test-roms/instr_test-v5/rom_singles/06-absolute.nes
+	target/release/nes_cpu_test --quiet -f ../nes-test-roms/instr_test-v5/rom_singles/07-abs_xy.nes
+	target/release/nes_cpu_test --quiet -f ../nes-test-roms/instr_test-v5/rom_singles/08-ind_x.nes
+	target/release/nes_cpu_test --quiet -f ../nes-test-roms/instr_test-v5/rom_singles/09-ind_y.nes
+	target/release/nes_cpu_test --quiet -f ../nes-test-roms/instr_test-v5/rom_singles/10-branches.nes
 	target/release/nes_cpu_test --quiet -f ../nes-test-roms/instr_test-v5/rom_singles/11-stack.nes
 	target/release/nes_cpu_test --quiet -f ../nes-test-roms/instr_test-v5/rom_singles/12-jmp_jsr.nes
 	target/release/nes_cpu_test --quiet -f ../nes-test-roms/instr_test-v5/rom_singles/13-rts.nes

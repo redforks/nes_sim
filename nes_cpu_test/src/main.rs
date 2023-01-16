@@ -42,7 +42,7 @@ fn main() {
         match cpu.clock_tick(&mut plugin) {
             ExecuteResult::Continue => {}
             ExecuteResult::ShouldReset => cpu.reset(),
-            ExecuteResult::Stop => break,
+            ExecuteResult::Stop(result) => std::process::exit(result as i32),
         }
     }
 }

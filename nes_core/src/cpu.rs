@@ -6,7 +6,7 @@ mod instruction;
 #[derive(Eq, PartialEq)]
 pub enum ExecuteResult {
     Continue,
-    Stop,        // should exit executing
+    Stop(u8),    // should exit executing, with exit code, 0 means success
     ShouldReset, // should reset cpu
 }
 
