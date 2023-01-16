@@ -498,12 +498,19 @@ impl Cpu {
 #[derive(Clone, Copy, strum_macros::Display)]
 #[repr(u8)]
 pub enum Flag {
+    #[strum(serialize = "C")]
     Carry = 0x01u8,
+    #[strum(serialize = "Z")]
     Zero = 0x02u8,
+    #[strum(serialize = "I")]
     InterruptDisabled = 0x04u8,
+    #[strum(serialize = "D")]
     Decimal = 0x08u8,
+    #[strum(serialize = "B")]
     Break = 0x10u8,
     NotUsed = 0x20u8,
+    #[strum(serialize = "V")]
     Overflow = 0x40u8,
+    #[strum(serialize = "N")]
     Negative = 0x80u8,
 }
