@@ -231,7 +231,7 @@ pub fn new_lsr<D: Address>(dest: D) -> impl FnMut(&mut Cpu) -> u8 {
 pub fn new_rol<D: Address>(dest: D) -> impl FnMut(&mut Cpu) -> u8 {
     new_shift_op(
         "rol",
-        |cpu, v| ((v << 1) & 0xfe | (cpu.flag(Flag::Carry) as u8), v & 0x80),
+        |cpu, v| ((v << 1) | (cpu.flag(Flag::Carry) as u8), v & 0x80),
         dest,
     )
 }
@@ -239,12 +239,7 @@ pub fn new_rol<D: Address>(dest: D) -> impl FnMut(&mut Cpu) -> u8 {
 pub fn new_ror<D: Address>(dest: D) -> impl FnMut(&mut Cpu) -> u8 {
     new_shift_op(
         "ror",
-        |cpu, v| {
-            (
-                v >> 1 & 0x7f | ((cpu.flag(Flag::Carry) as u8) << 7),
-                v & 0x01,
-            )
-        },
+        |cpu, v| ((v >> 1) | ((cpu.flag(Flag::Carry) as u8) << 7), v & 0x01),
         dest,
     )
 }
