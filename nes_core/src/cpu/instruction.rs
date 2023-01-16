@@ -433,12 +433,13 @@ pub fn new_rla<D: Address>(dest: D) -> impl FnMut(&mut Cpu) -> u8 {
 
     move |cpu| {
         let (v, ticks) = dest.get(cpu);
-        let carry = cpu.flag(Flag::Carry) as u8;
-        cpu.set_flag(Flag::Carry, (v & 0x80) != 0);
-        let t = (v << 1) | carry;
-        cpu.update_negative_flag(t);
-        cpu.update_zero_flag(t);
+        let carry = v & 0x80 != 0;
+        let t = (v << 1) | cpu.flag(Flag::Carry) as u8;
         dest.set(cpu, t);
+        cpu.set_flag(Flag::Carry, carry);
+        cpu.a &= t;
+        cpu.update_negative_flag(cpu.a);
+        cpu.update_zero_flag(cpu.a);
         ticks + 2
     }
 }
