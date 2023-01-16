@@ -42,7 +42,11 @@ fn format_flags(cpu: &Cpu) -> String {
     r.push(if cpu.flag(Flag::Overflow) { 'V' } else { 'v' });
     r.push(if cpu.flag(Flag::Break) { 'B' } else { 'b' });
     r.push(if cpu.flag(Flag::Decimal) { 'D' } else { 'd' });
-    r.push(if cpu.flag(Flag::Interrupt) { 'I' } else { 'i' });
+    r.push(if cpu.flag(Flag::InterruptDisabled) {
+        'I'
+    } else {
+        'i'
+    });
     r.push(if cpu.flag(Flag::Zero) { 'Z' } else { 'z' });
     r.push(if cpu.flag(Flag::Carry) { 'C' } else { 'c' });
 

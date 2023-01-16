@@ -370,7 +370,7 @@ pub fn new_brk() -> impl FnMut(&mut Cpu) -> u8 {
         cpu.push_stack(pc as u8);
         cpu.set_flag(Flag::Break, true);
         cpu.push_status();
-        cpu.set_flag(Flag::Interrupt, true);
+        cpu.set_flag(Flag::InterruptDisabled, true);
         cpu.pc = cpu.read_word(0xFFFE);
         7
     }

@@ -77,7 +77,7 @@ fn execute_next(cpu: &mut Cpu) -> u8 {
         (0, 2, 3) => new_jmp(r_w(cpu))(cpu),
         (0, 2, 4) => neg_cond_branch(cpu, Flag::Overflow)(cpu),
         (0, 2, 5) => new_nop_with_addr(zero_page_x(cpu))(cpu),
-        (0, 2, 6) => new_clear_bit(FlagAddr(Flag::Interrupt))(cpu),
+        (0, 2, 6) => new_clear_bit(FlagAddr(Flag::InterruptDisabled))(cpu),
 
         (0, 3, 0) => new_rts()(cpu),
         (0, 3, 1) => new_nop_with_addr(zero_page(cpu))(cpu),
@@ -85,7 +85,7 @@ fn execute_next(cpu: &mut Cpu) -> u8 {
         (0, 3, 3) => new_indirect_jmp(r_w(cpu))(cpu),
         (0, 3, 4) => cond_branch(cpu, Flag::Overflow)(cpu),
         (0, 3, 5) => new_nop_with_addr(zero_page_x(cpu))(cpu),
-        (0, 3, 6) => new_set_bit(FlagAddr(Flag::Interrupt))(cpu),
+        (0, 3, 6) => new_set_bit(FlagAddr(Flag::InterruptDisabled))(cpu),
 
         (0, 4, 0) => new_nop_with_addr(literal(cpu))(cpu),
         (0, 4, 1) => new_transfer_no_touch_flags(zero_page(cpu), y())(cpu),
@@ -339,6 +339,7 @@ pub struct Cpu {
 impl Cpu {
     pub fn reset(&mut self) {
         self.pc = self.read_word(0xFFFC);
+        self.set_flag(Flag::InterruptDisabled, true);
     }
 
     pub fn new(mcu: Box<dyn Mcu>) -> Cpu {
@@ -348,7 +349,7 @@ impl Cpu {
             y: 0,
             pc: 0,
             sp: 0,
-            status: 0,
+            status: Flag::InterruptDisabled as u8,
             mcu,
             remain_clocks: 0,
         }
@@ -454,7 +455,7 @@ impl Cpu {
 pub enum Flag {
     Carry = 0x01u8,
     Zero = 0x02u8,
-    Interrupt = 0x04u8,
+    InterruptDisabled = 0x04u8,
     Decimal = 0x08u8,
     Break = 0x10u8,
     NotUsed = 0x20u8,
