@@ -6,14 +6,14 @@ use nes_core::Plugin;
 use std::io::Read;
 
 pub enum Image {
-    Bin([u8; 64 * 1024]),
-    INes(INesFile),
+    Bin(Box<[u8; 64 * 1024]>),
+    INes(Box<INesFile>),
 }
 
 impl Image {
     pub fn create_mcu(&self) -> Box<dyn Mcu> {
         match self {
-            Image::Bin(arr) => Box::new(RamMcu::new(*arr)),
+            Image::Bin(arr) => Box::new(RamMcu::new(**arr)),
             Image::INes(ines) => {
                 let prg = ines.read_prg();
                 let mut arr: [u8; 64 * 1024] = [0; 64 * 1024];
@@ -76,9 +76,9 @@ fn load_bin(f: &str) -> Result<Image, LoadError> {
     let buf = read_file_bytes(f)?;
     assert_eq!(buf.len(), 64 * 1024);
     let arr: [u8; 64 * 1024] = buf.try_into().expect("image file length is not 64k");
-    Ok(Image::Bin(arr))
+    Ok(Image::Bin(Box::new(arr)))
 }
 
 fn load_rom(f: &str) -> Result<Image, LoadError> {
-    Ok(Image::INes(INesFile::new(read_file_bytes(f)?)?))
+    Ok(Image::INes(Box::new(INesFile::new(read_file_bytes(f)?)?)))
 }
