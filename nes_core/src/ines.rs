@@ -15,8 +15,8 @@ pub struct Header {
 
 pub struct INesFile {
     header: Header,
-    prg_ram: Vec<u8>,
-    chr_ram: Vec<u8>,
+    prg_rom: Vec<u8>,
+    chr_rom: Vec<u8>,
 }
 
 impl INesFile {
@@ -28,12 +28,12 @@ impl INesFile {
         &self.header
     }
 
-    pub fn read_chr(&self) -> &[u8] {
-        &self.chr_ram
+    pub fn read_chr_rom(&self) -> &[u8] {
+        &self.chr_rom
     }
 
-    pub fn read_prg(&self) -> &[u8] {
-        &self.prg_ram
+    pub fn read_prg_rom(&self) -> &[u8] {
+        &self.prg_rom
     }
 
     pub fn is_valid(image: &[u8]) -> bool {

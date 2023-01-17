@@ -66,8 +66,8 @@ fn _parse_file(buf: &[u8]) -> IResult<&[u8], INesFile> {
         buf,
         INesFile {
             header,
-            prg_ram: prg.to_vec(),
-            chr_ram: chr.to_vec(),
+            prg_rom: prg.to_vec(),
+            chr_rom: chr.to_vec(),
         },
     ))
 }

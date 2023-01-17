@@ -18,10 +18,7 @@ impl Image {
     pub fn create_mcu(&self) -> Box<dyn Mcu> {
         match self {
             Image::Bin(arr) => Box::new(RamMcu::new(**arr)),
-            Image::INes(ines) => {
-                let prg = ines.read_prg();
-                Box::new(create_mcu(&prg, EmptyPpuDriver()))
-            }
+            Image::INes(ines) => Box::new(create_mcu(ines, EmptyPpuDriver())),
         }
     }
 
