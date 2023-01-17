@@ -112,6 +112,6 @@ mod tests {
         let f = parse_file(rom).unwrap();
         assert_eq!(2, f.header().n_prg_pages);
         assert_eq!(0, f.header().mapper_no);
-        assert_eq!(32 * 1024, f.read_prg().len());
+        assert_eq!(32 * 1024, f.read_prg_rom().len());
     }
 }

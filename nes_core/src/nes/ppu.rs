@@ -84,7 +84,7 @@ impl<D: PpuDriver> Mcu for Ppu<D> {
             }
             0x2004 => self.driver.get_oma_data(),
             0x2007 => self.driver.get_data(),
-            _ => panic!("Can not read from Ppu at address {}", address),
+            _ => 0x55,
         }
     }
 
@@ -112,7 +112,7 @@ impl<D: PpuDriver> Mcu for Ppu<D> {
             }
             0x2007 => self.driver.set_data(value),
             0x4014 => self.driver.set_dma(value),
-            _ => panic!("Can not write to Ppu at address {}", address),
+            _ => panic!("Can not write to Ppu at address ${:x}", address),
         }
     }
 }
@@ -132,7 +132,7 @@ struct Mappers<D: PpuDriver>(Ppu<D>);
 
 impl<D: PpuDriver> Mappers<D> {
     fn addr(&self, addr: u16) -> u16 {
-        0x2000 + addr % 8
+        0x2000 + (addr % 8)
     }
 }
 
