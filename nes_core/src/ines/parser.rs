@@ -15,12 +15,10 @@ pub fn check_signature(image: &[u8]) -> bool {
 }
 
 fn parse_header(input: &[u8]) -> IResult<&[u8], super::Header> {
-    let (remains, (n_prg, n_chr)) = bits::<_, _, NomError<(&[u8], usize)>, _, _>(tuple((
-        bit_take(4usize),
-        bit_take(4usize),
-    )))(input)?;
+    let (input, n_prg) = nom::number::streaming::u8(input)?;
+    let (input, n_chr) = nom::number::streaming::u8(input)?;
     let (
-        remains,
+        input,
         (
             mapper_low,
             ignore_mirror_control,
@@ -34,15 +32,14 @@ fn parse_header(input: &[u8]) -> IResult<&[u8], super::Header> {
         bit_take(1usize),
         bit_take(1usize),
         bit_take(1usize),
-    )))(remains)?;
+    )))(input)?;
 
-    let (remains, (mapper_high, _)): (&[u8], (u8, u8)) =
-        bits::<_, _, NomError<(&[u8], usize)>, _, _>(tuple((bit_take(4usize), bit_take(4usize))))(
-            remains,
-        )?;
+    let (input, (mapper_high, _)): (&[u8], (u8, u8)) = bits::<_, _, NomError<(&[u8], usize)>, _, _>(
+        tuple((bit_take(4usize), bit_take(4usize))),
+    )(input)?;
 
     Ok((
-        remains,
+        input,
         super::Header {
             n_prg_pages: n_prg,
             n_chr_pages: n_chr,
@@ -61,9 +58,9 @@ fn _parse_file(buf: &[u8]) -> IResult<&[u8], INesFile> {
     // skip 8 bytes
     let (buf, _) = bytes::complete::take(8usize)(buf)?;
     // read 16 * header.n_prg_pages bytes
-    let (buf, prg) = bytes::complete::take(16usize * header.n_prg_pages as usize)(buf)?;
+    let (buf, prg) = bytes::complete::take(16 * 1024 * header.n_prg_pages as usize)(buf)?;
     // read 8 * header.n_chr_pages bytes
-    let (buf, chr) = bytes::complete::take(8usize * header.n_chr_pages as usize)(buf)?;
+    let (buf, chr) = bytes::complete::take(8 * 1024 * header.n_chr_pages as usize)(buf)?;
 
     Ok((
         buf,
@@ -107,5 +104,14 @@ mod tests {
         // invalid signature
         let image = vec![0x4e, 0x45, 0x53, 0x1b];
         assert!(!check_signature(&image));
+    }
+
+    #[test]
+    fn test_parse_file() {
+        let rom = include_bytes!("01-basics.nes");
+        let f = parse_file(rom).unwrap();
+        assert_eq!(2, f.header().n_prg_pages);
+        assert_eq!(0, f.header().mapper_no);
+        assert_eq!(32 * 1024, f.read_prg().len());
     }
 }
