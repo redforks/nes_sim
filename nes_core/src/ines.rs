@@ -1,3 +1,5 @@
+mod parser;
+
 pub struct INesFile {
     image: Vec<u8>,
     prg_size: u8,
@@ -22,7 +24,7 @@ impl INesFile {
     }
 
     pub fn is_valid(image: &[u8]) -> bool {
-        image.len() >= 16 && image[0..=3] == [0x4e, 0x45, 0x53, 0x1a]
+        parser::check_signature(image)
     }
 }
 
