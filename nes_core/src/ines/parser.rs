@@ -1,6 +1,9 @@
-use nom::{bytes, error::ParseError, Compare, IResult, InputTake};
+use crate::ines::INesFile;
+use nom::bits::streaming::take as bit_take;
+use nom::error::Error as NomError;
+use nom::{bits::bits, bytes, error::ParseError, sequence::tuple, Compare, IResult, InputTake};
 
-fn new_signature<I, Error: ParseError<I>>() -> impl Fn(I) -> IResult<I, I, Error>
+fn new_signature<I, E: ParseError<I>>() -> impl Fn(I) -> IResult<I, I, E>
 where
     I: InputTake + Compare<[u8; 4]>,
 {
@@ -11,9 +14,83 @@ pub fn check_signature(image: &[u8]) -> bool {
     new_signature::<&[u8], ()>()(image).is_ok()
 }
 
+fn parse_header(input: &[u8]) -> IResult<&[u8], super::Header> {
+    let (remains, (n_prg, n_chr)) = bits::<_, _, NomError<(&[u8], usize)>, _, _>(tuple((
+        bit_take(4usize),
+        bit_take(4usize),
+    )))(input)?;
+    let (
+        remains,
+        (
+            mapper_low,
+            ignore_mirror_control,
+            has_trainer,
+            battery_backed_ram,
+            ver_or_hor_arrangement,
+        ),
+    ): (&[u8], (u8, u8, u8, u8, u8)) = bits::<_, _, NomError<(&[u8], usize)>, _, _>(tuple((
+        bit_take(4usize),
+        bit_take(1usize),
+        bit_take(1usize),
+        bit_take(1usize),
+        bit_take(1usize),
+    )))(remains)?;
+
+    let (remains, (mapper_high, _)): (&[u8], (u8, u8)) =
+        bits::<_, _, NomError<(&[u8], usize)>, _, _>(tuple((bit_take(4usize), bit_take(4usize))))(
+            remains,
+        )?;
+
+    Ok((
+        remains,
+        super::Header {
+            n_prg_pages: n_prg,
+            n_chr_pages: n_chr,
+            mapper_no: mapper_low | (mapper_high << 4),
+            ignore_mirror_control: ignore_mirror_control != 0,
+            has_trainer: has_trainer != 0,
+            battery_backed_ram: battery_backed_ram != 0,
+            ver_or_hor_arrangement: ver_or_hor_arrangement != 0,
+        },
+    ))
+}
+
+fn _parse_file(buf: &[u8]) -> IResult<&[u8], INesFile> {
+    let (buf, _) = new_signature()(buf)?;
+    let (buf, header) = parse_header(buf)?;
+    // skip 8 bytes
+    let (buf, _) = bytes::complete::take(8usize)(buf)?;
+    // read 16 * header.n_prg_pages bytes
+    let (buf, prg) = bytes::complete::take(16usize * header.n_prg_pages as usize)(buf)?;
+    // read 8 * header.n_chr_pages bytes
+    let (buf, chr) = bytes::complete::take(8usize * header.n_chr_pages as usize)(buf)?;
+
+    Ok((
+        buf,
+        INesFile {
+            header,
+            prg_ram: prg.to_vec(),
+            chr_ram: chr.to_vec(),
+        },
+    ))
+}
+
+pub fn parse_file(buf: &[u8]) -> Result<INesFile, nom::error::Error<&[u8]>> {
+    let result = nom::combinator::complete(_parse_file)(buf);
+    match result {
+        Ok((_, file)) => Ok(file),
+        Err(err) => match err {
+            nom::Err::Incomplete(_) => unreachable!(),
+            nom::Err::Error(err) => Err(err),
+            nom::Err::Failure(err) => Err(err),
+        },
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::vec;
 
     #[test]
     fn test_check_signature() {
