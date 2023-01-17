@@ -25,8 +25,7 @@ where
     setup_mem_mirror(mcu)
 }
 
-// TODO: remove pub
-pub fn setup_mem_mirror<M: Mcu>(m: M) -> impl Mcu {
+fn setup_mem_mirror<M: Mcu>(m: M) -> impl Mcu {
     Mirror::new(addr_remaps().collect(), m)
 }
 
