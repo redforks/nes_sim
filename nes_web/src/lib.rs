@@ -1,5 +1,7 @@
+use log::debug;
 use nes_core::nes::create_mcu;
 use nes_core::{Cpu, EmptyPlugin};
+use std::panic;
 use wasm_bindgen::prelude::*;
 
 mod drivers;
@@ -15,6 +17,7 @@ pub struct Machine {
 
 #[wasm_bindgen]
 pub fn new_machine(ines: Vec<u8>) -> Machine {
+    debug!("new_machine");
     let ines = nes_core::ines::INesFile::new(ines).unwrap();
     Machine {
         cpu: Cpu::new(Box::new(create_mcu(&ines, PpuDriver()))),
@@ -27,4 +30,11 @@ impl Machine {
         let mut p = EmptyPlugin();
         self.cpu.clock_tick(&mut p);
     }
+}
+
+#[wasm_bindgen]
+pub fn init() {
+    panic::set_hook(Box::new(console_error_panic_hook::hook));
+    console_log::init_with_level(log::Level::Trace).unwrap();
+    debug!("log inited");
 }

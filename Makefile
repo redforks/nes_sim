@@ -20,8 +20,9 @@ cpu-test:
 	target/release/nes_cpu_test --quiet -f ../nes-test-roms/instr_test-v5/rom_singles/16-special.nes
 #	target/release/nes_cpu_test --quiet -f ../nes-test-roms/cpu_dummy_reads/cpu_dummy_reads.nes
 
-wasm-build:
-	cd nes_web; wasm-pack build
+wasm-debug-build:
+	cd nes_web; wasm-pack build --debug
 
-
+web-start: wasm-debug-build
+	cd www; NODE_OPTIONS=--openssl-legacy-provider npm start
 
