@@ -1,5 +1,6 @@
 mod parser;
 
+#[derive(Debug)]
 pub struct Header {
     /// Each page is 16k
     pub n_prg_pages: u8,

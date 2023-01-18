@@ -6,6 +6,7 @@
       <sourceFolder url="file://$MODULE_DIR$/nes_cpu_test/src" isTestSource="false" />
       <sourceFolder url="file://$MODULE_DIR$/src" isTestSource="false" />
       <sourceFolder url="file://$MODULE_DIR$/nes_web/src" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/nescli/src" isTestSource="false" />
       <excludeFolder url="file://$MODULE_DIR$/target" />
     </content>
     <orderEntry type="inheritedJdk" />
