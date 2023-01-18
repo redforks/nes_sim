@@ -3,6 +3,7 @@ members = [
   "nes_core",
   "nes_cpu_test",
   "nes_web",
+  "nescli",
 ]
 
 [profile.release]
