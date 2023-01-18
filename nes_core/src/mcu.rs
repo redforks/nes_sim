@@ -1,9 +1,7 @@
 mod mapping;
-mod mirror;
 mod ram;
 
 pub use mapping::*;
-pub use mirror::*;
 pub use ram::RamMcu;
 
 /// Nes 6502 Mcu.
