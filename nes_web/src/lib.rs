@@ -26,9 +26,13 @@ pub fn new_machine(ines: Vec<u8>) -> Machine {
 
 #[wasm_bindgen]
 impl Machine {
-    pub fn tick(&mut self) {
+    pub fn tick_for_milliseconds(&mut self, ms: f64) {
+        const CYCLES_PER_MS: u32 = 18000;
+
         let mut p = EmptyPlugin();
-        self.cpu.clock_tick(&mut p);
+        for _ in 0..(ms * CYCLES_PER_MS as f64) as u32 {
+            self.cpu.clock_tick(&mut p);
+        }
     }
 }
 
