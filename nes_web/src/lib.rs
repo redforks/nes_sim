@@ -1,4 +1,4 @@
-use log::debug;
+use log::{debug, warn};
 use nes_core::nes::create_mcu;
 use nes_core::{Cpu, EmptyPlugin};
 use std::panic;
@@ -35,6 +35,6 @@ impl Machine {
 #[wasm_bindgen]
 pub fn init() {
     panic::set_hook(Box::new(console_error_panic_hook::hook));
-    console_log::init_with_level(log::Level::Trace).unwrap();
-    debug!("log inited");
+    console_log::init_with_level(log::Level::Warn).unwrap();
+    warn!("log inited");
 }
