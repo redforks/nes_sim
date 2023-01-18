@@ -3,6 +3,10 @@ use crate::to_from_u8;
 use modular_bitfield::prelude::*;
 use std::cell::Cell;
 
+mod pattern;
+
+pub use pattern::*;
+
 #[derive(Copy, Clone)]
 #[bitfield]
 pub struct PpuCtrl {
