@@ -200,30 +200,38 @@ fn execute_next(cpu: &mut Cpu) -> u8 {
         (1, 7, 6) => new_sbc(absolute_y(cpu))(cpu),
         (1, 7, 7) => new_sbc(absolute_x(cpu))(cpu),
 
+        (2, 0, 0) => new_hlt()(cpu),
         (2, 0, 1) => new_asl(zero_page(cpu))(cpu),
         (2, 0, 2) => new_asl(aa())(cpu),
         (2, 0, 3) => new_asl(absolute(cpu))(cpu),
+        (2, 0, 4) => new_hlt()(cpu),
         (2, 0, 5) => new_asl(zero_page_x(cpu))(cpu),
         (2, 0, 6) => new_nop()(cpu),
         (2, 0, 7) => new_asl(absolute_x(cpu))(cpu),
 
+        (2, 1, 0) => new_hlt()(cpu),
         (2, 1, 1) => new_rol(zero_page(cpu))(cpu),
         (2, 1, 2) => new_rol(aa())(cpu),
         (2, 1, 3) => new_rol(absolute(cpu))(cpu),
+        (2, 1, 4) => new_hlt()(cpu),
         (2, 1, 5) => new_rol(zero_page_x(cpu))(cpu),
         (2, 1, 6) => new_nop()(cpu),
         (2, 1, 7) => new_rol(absolute_x(cpu))(cpu),
 
+        (2, 2, 0) => new_hlt()(cpu),
         (2, 2, 1) => new_lsr(zero_page(cpu))(cpu),
         (2, 2, 2) => new_lsr(aa())(cpu),
         (2, 2, 3) => new_lsr(absolute(cpu))(cpu),
+        (2, 2, 4) => new_hlt()(cpu),
         (2, 2, 5) => new_lsr(zero_page_x(cpu))(cpu),
         (2, 2, 6) => new_nop()(cpu),
         (2, 2, 7) => new_lsr(absolute_x(cpu))(cpu),
 
+        (2, 3, 0) => new_hlt()(cpu),
         (2, 3, 1) => new_ror(zero_page(cpu))(cpu),
         (2, 3, 2) => new_ror(aa())(cpu),
         (2, 3, 3) => new_ror(absolute(cpu))(cpu),
+        (2, 3, 4) => new_hlt()(cpu),
         (2, 3, 5) => new_ror(zero_page_x(cpu))(cpu),
         (2, 3, 6) => new_nop()(cpu),
         (2, 3, 7) => new_ror(absolute_x(cpu))(cpu),
@@ -232,6 +240,7 @@ fn execute_next(cpu: &mut Cpu) -> u8 {
         (2, 4, 1) => new_transfer_no_touch_flags(zero_page(cpu), x())(cpu),
         (2, 4, 2) => new_transfer(aa(), x())(cpu),
         (2, 4, 3) => new_transfer_no_touch_flags(absolute(cpu), x())(cpu),
+        (2, 4, 4) => new_hlt()(cpu),
         (2, 4, 5) => new_transfer_no_touch_flags(zero_page_y(cpu), x())(cpu),
         (2, 4, 6) => new_transfer_no_touch_flags(sp(), x())(cpu),
         (2, 4, 7) => new_all("shx", x(), absolute_y(cpu))(cpu), // 9e
@@ -240,6 +249,7 @@ fn execute_next(cpu: &mut Cpu) -> u8 {
         (2, 5, 1) => new_transfer(x(), zero_page(cpu))(cpu),
         (2, 5, 2) => new_transfer(x(), aa())(cpu),
         (2, 5, 3) => new_transfer(x(), absolute(cpu))(cpu),
+        (2, 5, 4) => new_hlt()(cpu),
         (2, 5, 5) => new_transfer(x(), zero_page_y(cpu))(cpu),
         (2, 5, 6) => new_transfer(x(), sp())(cpu),
         (2, 5, 7) => new_transfer(x(), absolute_y(cpu))(cpu),
@@ -248,6 +258,7 @@ fn execute_next(cpu: &mut Cpu) -> u8 {
         (2, 6, 1) => new_dec(zero_page(cpu))(cpu),
         (2, 6, 2) => new_dec(x())(cpu),
         (2, 6, 3) => new_dec(absolute(cpu))(cpu),
+        (2, 6, 4) => new_hlt()(cpu),
         (2, 6, 5) => new_dec(zero_page_x(cpu))(cpu),
         (2, 6, 6) => new_nop()(cpu),
         (2, 6, 7) => new_dec(absolute_x(cpu))(cpu),
@@ -256,6 +267,7 @@ fn execute_next(cpu: &mut Cpu) -> u8 {
         (2, 7, 1) => new_inc(zero_page(cpu))(cpu),
         (2, 7, 2) => new_nop()(cpu),
         (2, 7, 3) => new_inc(absolute(cpu))(cpu),
+        (2, 7, 4) => new_hlt()(cpu),
         (2, 7, 5) => new_inc(zero_page_x(cpu))(cpu),
         (2, 7, 6) => new_nop()(cpu), // FA
         (2, 7, 7) => new_inc(absolute_x(cpu))(cpu),
@@ -379,6 +391,7 @@ pub struct Cpu {
 
     /// if remains_clock not zero, new instruction will not be executed.
     remain_clocks: u16,
+    is_halt: bool,
 }
 
 impl Cpu {
@@ -397,6 +410,7 @@ impl Cpu {
             status: Flag::InterruptDisabled as u8,
             mcu,
             remain_clocks: 0,
+            is_halt: false,
         }
     }
 
@@ -415,6 +429,10 @@ impl Cpu {
     pub fn clock_tick<T: Plugin>(&mut self, plugin: &mut T) -> ExecuteResult {
         if self.remain_clocks != 0 {
             self.remain_clocks -= 1;
+            return ExecuteResult::Continue;
+        }
+
+        if self.is_halt {
             return ExecuteResult::Continue;
         }
 
@@ -504,6 +522,10 @@ impl Cpu {
 
     pub fn push_status(&mut self) {
         self.push_stack(self.status | (Flag::NotUsed as u8));
+    }
+
+    pub fn halt(&mut self) {
+        self.is_halt = true;
     }
 }
 

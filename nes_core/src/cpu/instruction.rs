@@ -406,6 +406,15 @@ pub fn new_nop_with_addr<D: Address>(dest: D) -> impl FnMut(&mut Cpu) -> u8 {
     }
 }
 
+pub fn new_hlt() -> impl FnMut(&mut Cpu) -> u8 {
+    debug!("hlt");
+
+    move |cpu| {
+        cpu.halt();
+        2
+    }
+}
+
 pub fn new_aso<D: Address>(dest: D) -> impl FnMut(&mut Cpu) -> u8 {
     debug!("aso {}", dest);
 
