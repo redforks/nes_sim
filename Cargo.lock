@@ -379,6 +379,8 @@ version = "0.1.0"
 dependencies = [
  "console_error_panic_hook",
  "console_log",
+ "image",
+ "js-sys",
  "log",
  "nes_core",
  "wasm-bindgen",
