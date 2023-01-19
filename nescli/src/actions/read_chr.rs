@@ -1,4 +1,4 @@
-use image::{ImageOutputFormat, Rgba, RgbaImage};
+use image::{ImageOutputFormat, RgbaImage};
 use nes_core::ines::INesFile;
 use nes_core::nes::ppu::{draw_pattern, PatternBand};
 use std::io::{stdout, Cursor, Write};

@@ -56,7 +56,7 @@ impl MMC1 {
         match mode {
             PrgRomMode::Switch32K | PrgRomMode::FixFirst16K => {
                 self.prg_rom_bank1_start = 0;
-                self.prg_rom_bank2_start = 1 * PRG_ROM_BANK_SIZE;
+                self.prg_rom_bank2_start = PRG_ROM_BANK_SIZE;
             }
             PrgRomMode::FixLast16K => {
                 self.prg_rom_bank1_start = 0;

@@ -26,12 +26,12 @@ impl Image {
         match self {
             Image::Bin(_) => Box::new(CompositePlugin::new(vec![
                 Box::new(ReportPlugin::new(quiet)),
-                Box::new(ImageExit::default()),
+                Box::<ImageExit>::default(),
             ])),
             Image::INes(_) => Box::new(CompositePlugin::new(vec![
-                Box::new(Console::default()),
+                Box::<Console>::default(),
                 Box::new(ReportPlugin::new(quiet)),
-                Box::new(MonitorTestStatus::default()),
+                Box::<MonitorTestStatus>::default(),
                 Box::new(DetectDeadLoop::<1>::new()),
                 Box::new(DetectDeadLoop::<2>::new()),
             ])),
