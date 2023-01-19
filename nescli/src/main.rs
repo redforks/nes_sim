@@ -1,4 +1,4 @@
-use crate::actions::InfoAction;
+use crate::actions::{InfoAction, ReadChrAction};
 use clap::Parser;
 use nes_core::ines::INesFile;
 use std::fs::File;
@@ -30,12 +30,19 @@ impl Args {
 enum Action {
     /// Show information about the ines file
     Info(InfoAction),
+    /// Read CHR ROM and output as PNG into stdout, run as:
+    ///
+    ///   nescli <file.nes> read-chr | feh -Z --force-aliasing -
+    ///
+    /// To view the image
+    ReadChr(ReadChrAction),
 }
 
 impl Action {
     fn run(&self, nes_file: INesFile) -> AppResult<()> {
         match self {
             Action::Info(action) => action.run(&nes_file),
+            Action::ReadChr(action) => action.run(&nes_file),
         }
     }
 }

@@ -26,8 +26,8 @@ impl<'a> Pattern<'a> {
         Tile(&self.0[offset..offset + 16])
     }
 
-    pub fn iter(&self) -> impl Iterator<Item = (usize, Tile)> + '_ {
-        (0..256).map(move |i| (i, self.tile(i)))
+    pub fn iter(&self) -> impl Iterator<Item = Tile> + '_ {
+        (0..256).map(move |i| self.tile(i))
     }
 }
 
@@ -35,6 +35,10 @@ impl<'a> Pattern<'a> {
 pub struct PatternBand<'a>(&'a [u8]);
 
 impl<'a> PatternBand<'a> {
+    pub fn new(data: &'a [u8]) -> Self {
+        Self(data)
+    }
+
     pub fn pattern(&self, index: usize) -> Pattern {
         let offset = index * 4096;
         Pattern(&self.0[offset..offset + 4096])
