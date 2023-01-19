@@ -12,6 +12,7 @@ modular-bitfield = "0.11.2"
 nom = "7.1.3"
 strum_macros = "0.24.3"
 thiserror = "1.0.38"
+image = { version = "0.24.5", default_features = false}
 
 [dev-dependencies]
 env_logger = "0.10.0"

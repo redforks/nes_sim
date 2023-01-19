@@ -351,6 +351,7 @@ name = "nes_core"
 version = "0.1.0"
 dependencies = [
  "env_logger",
+ "image",
  "itertools",
  "log",
  "modular-bitfield",
