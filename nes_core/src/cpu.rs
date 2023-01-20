@@ -414,6 +414,12 @@ impl Cpu {
         self.set_flag(Flag::InterruptDisabled, true);
     }
 
+    pub fn nmi(&mut self) {
+        self.push_pc();
+        self.push_status();
+        self.pc = self.read_word(0xFFFA);
+    }
+
     fn push_pc(&mut self) {
         self.push_stack((self.pc >> 8) as u8);
         self.push_stack(self.pc as u8);
