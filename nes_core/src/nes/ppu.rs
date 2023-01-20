@@ -1,4 +1,4 @@
-use crate::mcu::{DefinedRegion, Mcu};
+use crate::mcu::Mcu;
 use crate::to_from_u8;
 use image::{Rgb, RgbImage};
 use log::debug;
@@ -154,6 +154,9 @@ impl<'a> NameTable<'a> {
 
 pub trait PpuTrait: Mcu {
     fn oam_dma(&mut self, vals: &[u8; 256]);
+
+    /// Returns true if should trigger nmi at the start of v-blank.
+    fn should_nmi(&self) -> bool;
 }
 
 pub struct Ppu<PM, NM> {
@@ -173,6 +176,10 @@ pub struct Ppu<PM, NM> {
 impl<PM: Mcu, NM: Mcu> PpuTrait for Ppu<PM, NM> {
     fn oam_dma(&mut self, vals: &[u8; 256]) {
         self.oam.copy_from_slice(vals);
+    }
+
+    fn should_nmi(&self) -> bool {
+        self.ctrl_flags.nmi_enable()
     }
 }
 
