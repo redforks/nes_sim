@@ -4,11 +4,13 @@ use crate::mcu::{MappingMcu, Mcu, RamMcu, Region};
 pub mod apu;
 pub mod controller;
 mod lower_ram;
+mod machine;
 mod mapper;
 mod nes_mcu;
 pub mod ppu;
+pub use machine::Machine;
 
-pub fn create_mcu(file: &INesFile) -> impl Mcu {
+fn create_mcu(file: &INesFile) -> impl Mcu {
     nes_mcu::NesMcu::build(
         file,
         ppu::Ppu::new(RamMcu::new([0; 0x4000]), RamMcu::new([0; 0x4000])),

@@ -1,9 +1,8 @@
 use image::DynamicImage;
 use log::{debug, warn};
 use nes_core::ines::INesFile;
-use nes_core::nes::create_mcu;
 use nes_core::nes::ppu::{draw_pattern, PatternBand};
-use nes_core::{Cpu, EmptyPlugin};
+use nes_core::nes::Machine as NesMachine;
 use std::panic;
 use wasm_bindgen::prelude::*;
 use wasm_bindgen::{Clamped, JsCast};
@@ -15,16 +14,19 @@ mod drivers;
 static ALLOC: wee_alloc::WeeAlloc = wee_alloc::WeeAlloc::INIT;
 
 #[wasm_bindgen]
-pub struct Machine {
-    cpu: Cpu,
-}
+pub struct Machine(NesMachine);
 
 #[wasm_bindgen]
 pub fn new_machine(ines: Vec<u8>) -> Machine {
     debug!("new_machine");
     let ines = INesFile::new(ines).unwrap();
-    Machine {
-        cpu: Cpu::new(Box::new(create_mcu(&ines))),
+    Machine(NesMachine::new(ines))
+}
+
+#[wasm_bindgen]
+impl Machine {
+    pub fn process_frame(&mut self, ms: f64) {
+        self.0.process_frame(ms);
     }
 }
 
@@ -54,18 +56,6 @@ pub fn draw_chr(ines: Vec<u8>, canvas_id: &str) {
         .dyn_into()
         .unwrap();
     ctx.put_image_data(&image_data, 0.0, 0.0).unwrap();
-}
-
-#[wasm_bindgen]
-impl Machine {
-    pub fn tick_for_milliseconds(&mut self, ms: f64) {
-        const CYCLES_PER_MS: u32 = 18000;
-
-        let mut p = EmptyPlugin();
-        for _ in 0..(ms * CYCLES_PER_MS as f64) as u32 {
-            self.cpu.clock_tick(&mut p);
-        }
-    }
 }
 
 #[wasm_bindgen]
