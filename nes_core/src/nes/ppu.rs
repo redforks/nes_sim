@@ -157,10 +157,14 @@ pub trait PpuTrait: Mcu {
 
     /// Returns true if should trigger nmi at the start of v-blank.
     fn should_nmi(&self) -> bool;
+
+    /// Trigger nmi at the start of v-blank, if should_nmi() returns true.
+    fn set_v_blank(&mut self, v_blank: bool);
 }
 
 pub struct Ppu<PM, NM> {
     ctrl_flags: PpuCtrl,
+    status: RefCell<PpuStatus>,
     pattern: PM,               // pattern memory
     name_table: NM,            // name table
     cur_name_table_addr: u16,  // current active name table start address
@@ -179,7 +183,12 @@ impl<PM: Mcu, NM: Mcu> PpuTrait for Ppu<PM, NM> {
     }
 
     fn should_nmi(&self) -> bool {
-        self.ctrl_flags.nmi_enable()
+        self.ctrl_flags.nmi_enable() && self.status.borrow().v_blank()
+    }
+
+    fn set_v_blank(&mut self, v_blank: bool) {
+        let status = *self.status.borrow();
+        self.status = RefCell::new(status.with_v_blank(v_blank));
     }
 }
 
@@ -187,6 +196,7 @@ impl<PM, NM> Ppu<PM, NM> {
     pub fn new(pattern: PM, name_table: NM) -> Self {
         Ppu {
             ctrl_flags: 0.into(),
+            status: RefCell::new(0.into()),
             pattern,
             name_table,
             cur_name_table_addr: 0x2000,
@@ -225,6 +235,14 @@ impl<PM, NM> Ppu<PM, NM> {
     fn write_oam_data_and_inc(&mut self, value: u8) {
         self.oam[self.oam_addr as usize] = value;
         self.oam_addr = self.oam_addr.wrapping_add(1);
+    }
+
+    fn read_status(&self) -> PpuStatus {
+        // reset data_rw_addr on read status register
+        *self.data_rw_addr.borrow_mut() = None;
+        let r = *self.status.borrow();
+        *self.status.borrow_mut() = r.with_v_blank(false);
+        r
     }
 }
 
@@ -318,11 +336,7 @@ where
     fn read(&self, address: u16) -> u8 {
         // todo: mirror to 0x3fff
         match address {
-            0x2002 => {
-                // reset data_rw_addr on read status register
-                *self.data_rw_addr.borrow_mut() = None;
-                todo!()
-            }
+            0x2002 => self.read_status().into(),
             0x2004 => todo!(),
             0x2006 => self.read_oam_data(),
             0x2007 => self.read_vram_for_cpu(),
@@ -411,5 +425,36 @@ mod tests {
         assert_eq!(0x12, ppu.oam_addr);
         // read oma data, won't auto inc oma addr
         assert_eq!(ppu.read_oam_data(), 0x34);
+    }
+
+    #[test]
+    fn nmi_occurred() {
+        let mut ppu = Ppu::new(RamMcu::new([0; 0x4000]), RamMcu::new([0; 0x4000]));
+
+        let flag = PpuCtrl::new().with_nmi_enable(false);
+        assert_eq!(ppu.status.borrow().v_blank(), false);
+
+        // disable nmi
+        ppu.set_control_flags(flag);
+        ppu.set_v_blank(true);
+        assert_eq!(ppu.status.borrow().v_blank(), true);
+        // should_nmi is false because nmi is disabled
+        assert_eq!(ppu.should_nmi(), false);
+        ppu.set_v_blank(false);
+        // v_blank is false on v_blank end
+        assert_eq!(ppu.status.borrow().v_blank(), false);
+
+        // read status register will reset v_blank flag
+        ppu.set_v_blank(true);
+        assert_eq!(ppu.read_status().v_blank(), true);
+        assert_eq!(ppu.status.borrow().v_blank(), false);
+
+        // enable nmi
+        ppu.set_control_flags(flag.with_nmi_enable(true));
+        assert_eq!(ppu.should_nmi(), false);
+        ppu.set_v_blank(true);
+        assert_eq!(ppu.status.borrow().v_blank(), true);
+        // should_nmi is true because nmi is enabled
+        assert_eq!(ppu.should_nmi(), true);
     }
 }
