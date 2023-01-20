@@ -7,7 +7,6 @@ use std::cell::RefCell;
 
 mod pattern;
 
-use crate::nes::apu::ControlFlags;
 pub use pattern::*;
 
 type RGB = Rgb<u8>;
@@ -153,6 +152,10 @@ impl<'a> NameTable<'a> {
     }
 }
 
+pub trait PpuTrait: Mcu {
+    fn oam_dma(&mut self, vals: &[u8]); // vals length should be 256
+}
+
 pub struct Ppu<PM, NM> {
     ctrl_flags: PpuCtrl,
     pattern: PM,               // pattern memory
@@ -165,6 +168,13 @@ pub struct Ppu<PM, NM> {
     oam: [u8; 0x100], // object attribute memory
 
     data_rw_addr: RefCell<Option<u16>>, // None after reset
+}
+
+impl<PM: Mcu, NM: Mcu> PpuTrait for Ppu<PM, NM> {
+    fn oam_dma(&mut self, vals: &[u8]) {
+        debug_assert_eq!(vals.len(), 256);
+        self.oam.copy_from_slice(vals);
+    }
 }
 
 impl<PM, NM> Ppu<PM, NM> {
@@ -212,29 +222,7 @@ impl<PM, NM> Ppu<PM, NM> {
     }
 }
 
-impl<PM, NM> Ppu<PM, NM>
-where
-    PM: Mcu + AsRef<[u8]>,
-    NM: Mcu + AsRef<[u8]>,
-{
-    pub fn render(&self, image: &mut RgbImage) {
-        let pattern =
-            PatternBand::new(self.pattern.as_ref()).pattern(self.cur_pattern_table_idx as usize);
-        let cur_name_table = self.cur_name_table_addr as usize;
-        let name_table = NameTable::new(
-            &self.name_table.as_ref()[cur_name_table..cur_name_table + 0x0400],
-            pattern,
-        );
-        for (tile_x, tile_y) in itertools::iproduct!(0..32, 0..30) {
-            let tile = name_table.tile(tile_x, tile_y);
-            let palette_idx = name_table.palette_idx(tile_x, tile_y);
-            for (x, y, pixel) in tile.iter() {
-                let color = self.palette.get_background_color(palette_idx, pixel);
-                image.put_pixel(x as u32, y as u32, color);
-            }
-        }
-    }
-
+impl<PM: Mcu, NM: Mcu> Ppu<PM, NM> {
     fn read_vram(&self, address: u16) -> u8 {
         match address {
             0x0000..=0x1fff => self.pattern.read(address),
@@ -292,10 +280,34 @@ where
     }
 }
 
-impl<PM, NM> Mcu for Ppu<PM, NM>
+impl<PM, NM> Ppu<PM, NM>
 where
     PM: Mcu + AsRef<[u8]>,
     NM: Mcu + AsRef<[u8]>,
+{
+    pub fn render(&self, image: &mut RgbImage) {
+        let pattern =
+            PatternBand::new(self.pattern.as_ref()).pattern(self.cur_pattern_table_idx as usize);
+        let cur_name_table = self.cur_name_table_addr as usize;
+        let name_table = NameTable::new(
+            &self.name_table.as_ref()[cur_name_table..cur_name_table + 0x0400],
+            pattern,
+        );
+        for (tile_x, tile_y) in itertools::iproduct!(0..32, 0..30) {
+            let tile = name_table.tile(tile_x, tile_y);
+            let palette_idx = name_table.palette_idx(tile_x, tile_y);
+            for (x, y, pixel) in tile.iter() {
+                let color = self.palette.get_background_color(palette_idx, pixel);
+                image.put_pixel(x as u32, y as u32, color);
+            }
+        }
+    }
+}
+
+impl<PM, NM> Mcu for Ppu<PM, NM>
+where
+    PM: Mcu,
+    NM: Mcu,
 {
     fn read(&self, address: u16) -> u8 {
         match address {

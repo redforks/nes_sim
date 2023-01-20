@@ -5,6 +5,7 @@ pub mod apu;
 pub mod controller;
 mod lower_ram;
 mod mapper;
+mod nes_mcu;
 pub mod ppu;
 
 pub fn create_mcu(file: &INesFile) -> impl Mcu {
