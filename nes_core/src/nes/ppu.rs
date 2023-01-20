@@ -1,10 +1,12 @@
 use crate::mcu::{DefinedRegion, Mcu};
 use crate::to_from_u8;
 use image::{Rgb, RgbImage};
+use log::debug;
 use modular_bitfield::prelude::*;
 
 mod pattern;
 
+use crate::nes::apu::ControlFlags;
 pub use pattern::*;
 
 type RGB = Rgb<u8>;
@@ -168,6 +170,21 @@ impl<PM, NM> Ppu<PM, NM> {
             cur_pattern_table_idx: 0,
         }
     }
+
+    fn set_control_flags(&mut self, flag: PpuCtrl) {
+        self.cur_name_table_addr = match flag.name_table_select() {
+            0 => 0x2000,
+            1 => 0x2400,
+            2 => 0x2800,
+            3 => 0x2c00,
+            _ => unreachable!(),
+        };
+        self.cur_pattern_table_idx = flag.background_pattern_table() as u8;
+    }
+
+    fn set_ppu_mask(&mut self, _: PpuMask) {
+        debug!("TODO: set ppu mask");
+    }
 }
 
 impl<PM, NM> Ppu<PM, NM>
@@ -234,10 +251,10 @@ impl<PM, NM> Mcu for Ppu<PM, NM> {
         }
     }
 
-    fn write(&mut self, address: u16, _: u8) {
+    fn write(&mut self, address: u16, val: u8) {
         match address {
-            0x2000 => todo!(),
-            0x2001 => todo!(),
+            0x2000 => self.set_control_flags(PpuCtrl::from(val)),
+            0x2001 => self.set_ppu_mask(PpuMask::from(val)),
             0x2003 => todo!(),
             0x2004 => todo!(),
             0x2005 => {
