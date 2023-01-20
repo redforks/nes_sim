@@ -3,6 +3,7 @@ use crate::to_from_u8;
 use image::{Rgb, RgbImage};
 use log::debug;
 use modular_bitfield::prelude::*;
+use std::cell::RefCell;
 
 mod pattern;
 
@@ -153,25 +154,31 @@ impl<'a> NameTable<'a> {
 }
 
 pub struct Ppu<PM, NM> {
+    ctrl_flags: PpuCtrl,
     pattern: PM,               // pattern memory
     name_table: NM,            // name table
     cur_name_table_addr: u16,  // current active name table start address
     palette: Palette,          // palette memory
     cur_pattern_table_idx: u8, // index of current active pattern table, 0 or 1
+
+    data_rw_addr: RefCell<Option<u16>>, // None after reset
 }
 
 impl<PM, NM> Ppu<PM, NM> {
     pub fn new(pattern: PM, name_table: NM) -> Self {
         Ppu {
+            ctrl_flags: 0.into(),
             pattern,
             name_table,
             cur_name_table_addr: 0x2000,
             palette: Palette::default(),
             cur_pattern_table_idx: 0,
+            data_rw_addr: RefCell::new(None),
         }
     }
 
     fn set_control_flags(&mut self, flag: PpuCtrl) {
+        self.ctrl_flags = flag;
         self.cur_name_table_addr = match flag.name_table_select() {
             0 => 0x2000,
             1 => 0x2400,
@@ -210,12 +217,6 @@ where
         }
     }
 
-    fn get_tile(&self, idx: u8) -> Tile<'_> {
-        let band = PatternBand::new(self.pattern.as_ref());
-        let pattern = band.pattern(self.cur_pattern_table_idx as usize);
-        pattern.tile(idx as usize)
-    }
-
     fn read_vram(&self, address: u16) -> u8 {
         match address {
             0x0000..=0x1fff => self.pattern.read(address),
@@ -237,16 +238,57 @@ where
             _ => unreachable!(),
         }
     }
+
+    fn set_data_rw_addr(&mut self, address: u8) {
+        let addr = *self.data_rw_addr.borrow();
+        match addr {
+            None => {
+                self.data_rw_addr = RefCell::new(Some(address as u16));
+            }
+            Some(addr) => {
+                self.data_rw_addr = RefCell::new(Some((addr as u16) << 8 | address as u16));
+            }
+        }
+    }
+
+    fn inc_data_rw_addr(&self, addr: u16) {
+        let delta = if self.ctrl_flags.increment_mode() {
+            32
+        } else {
+            1
+        };
+        *self.data_rw_addr.borrow_mut() = Some(addr.wrapping_add(delta));
+    }
+
+    fn read_vram_for_cpu(&self) -> u8 {
+        let addr = self.data_rw_addr.borrow().expect("data_rw addr not set");
+        let value = self.read_vram(addr);
+        self.inc_data_rw_addr(addr);
+        value
+    }
+
+    fn write_vram_for_cpu(&mut self, v: u8) {
+        let addr = self.data_rw_addr.borrow().expect("data_rw addr not set");
+        self.write_vram(addr, v);
+        self.inc_data_rw_addr(addr);
+    }
 }
 
-impl<PM, NM> Mcu for Ppu<PM, NM> {
+impl<PM, NM> Mcu for Ppu<PM, NM>
+where
+    PM: Mcu + AsRef<[u8]>,
+    NM: Mcu + AsRef<[u8]>,
+{
     fn read(&self, address: u16) -> u8 {
         match address {
             0x2002 => {
+                // reset data_rw_addr on read status register
+                *self.data_rw_addr.borrow_mut() = None;
                 todo!()
             }
             0x2004 => todo!(),
-            0x2007 => todo!(),
+            0x2006 => todo!(),
+            0x2007 => self.read_vram_for_cpu(),
             _ => 0x55,
         }
     }
@@ -260,10 +302,8 @@ impl<PM, NM> Mcu for Ppu<PM, NM> {
             0x2005 => {
                 todo!()
             }
-            0x2006 => {
-                todo!()
-            }
-            0x2007 => todo!(),
+            0x2006 => self.set_data_rw_addr(val),
+            0x2007 => self.write_vram_for_cpu(val),
             0x4014 => todo!(),
             _ => panic!("Can not write to Ppu at address ${:x}", address),
         }
@@ -278,6 +318,50 @@ impl<PM, NM> DefinedRegion for Ppu<PM, NM> {
 }
 
 /// Create Ppu. PM and NM are MCU work in PPU address space.
-pub fn new<PM, NM>(pm: PM, nm: NM) -> impl Mcu + DefinedRegion {
+pub fn new<PM, NM>(pm: PM, nm: NM) -> impl Mcu + DefinedRegion
+where
+    PM: Mcu + AsRef<[u8]>,
+    NM: Mcu + AsRef<[u8]>,
+{
     Ppu::new(pm, nm)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::mcu::RamMcu;
+
+    #[test]
+    fn read_write_v_ram() {
+        let mut ppu = Ppu::new(RamMcu::new([0; 0x4000]), RamMcu::new([0; 0x4000]));
+        ppu.read(0x2000); // reset addr
+        ppu.write(0x2006, 0x21);
+        ppu.write(0x2006, 0x08);
+        ppu.write(0x2007, 0x12);
+        ppu.write(0x2007, 0x34);
+        assert_eq!(ppu.read_vram(0x2108), 0x12);
+        assert_eq!(ppu.read_vram(0x2109), 0x34);
+
+        ppu.read(0x2000); // reset addr
+        ppu.write(0x2006, 0x21);
+        ppu.write(0x2006, 0x08);
+        assert_eq!(ppu.read(0x2007), 0x12);
+        assert_eq!(ppu.read(0x2007), 0x34);
+
+        // set increase mode to 32
+        ppu.write(0x2000, PpuCtrl::new().with_increment_mode(true).into());
+        ppu.read(0x2000); // reset addr
+        ppu.write(0x2006, 0x21);
+        ppu.write(0x2006, 0x08);
+        ppu.write(0x2007, 0x56);
+        ppu.write(0x2007, 0x78);
+        assert_eq!(ppu.read_vram(0x2108), 0x56);
+        assert_eq!(ppu.read_vram(0x2128), 0x78);
+
+        ppu.read(0x2000); // reset addr
+        ppu.write(0x2006, 0x21);
+        ppu.write(0x2006, 0x08);
+        assert_eq!(ppu.read(0x2007), 0x56);
+        assert_eq!(ppu.read(0x2007), 0x78);
+    }
 }

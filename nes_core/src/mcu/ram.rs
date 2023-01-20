@@ -6,6 +6,12 @@ pub struct RamMcu<const SIZE: usize> {
     ram: [u8; SIZE],
 }
 
+impl<const SIZE: usize> AsRef<[u8]> for RamMcu<SIZE> {
+    fn as_ref(&self) -> &[u8] {
+        &self.ram
+    }
+}
+
 impl<const SIZE: usize> RamMcu<SIZE> {
     pub fn new(ram: [u8; SIZE]) -> RamMcu<SIZE> {
         RamMcu { start: 0, ram }
