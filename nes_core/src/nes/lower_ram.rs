@@ -11,12 +11,6 @@ impl LowerRam {
     }
 }
 
-impl DefinedRegion for LowerRam {
-    fn region(&self) -> (u16, u16) {
-        (0, 0x1fff)
-    }
-}
-
 impl Mcu for LowerRam {
     fn read(&self, address: u16) -> u8 {
         self.ram[address as usize & 0x7ff]

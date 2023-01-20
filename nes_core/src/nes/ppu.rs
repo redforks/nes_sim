@@ -310,6 +310,7 @@ where
     NM: Mcu,
 {
     fn read(&self, address: u16) -> u8 {
+        // todo: mirror to 0x3fff
         match address {
             0x2002 => {
                 // reset data_rw_addr on read status register
@@ -324,6 +325,7 @@ where
     }
 
     fn write(&mut self, address: u16, val: u8) {
+        // todo: mirror to 0x3fff
         match address {
             0x2000 => self.set_control_flags(PpuCtrl::from(val)),
             0x2001 => self.set_ppu_mask(PpuMask::from(val)),
@@ -340,15 +342,8 @@ where
     }
 }
 
-impl<PM, NM> DefinedRegion for Ppu<PM, NM> {
-    fn region(&self) -> (u16, u16) {
-        // TODO: how about 4014 ?
-        (0x2000, 0x2008)
-    }
-}
-
 /// Create Ppu. PM and NM are MCU work in PPU address space.
-pub fn new<PM, NM>(pm: PM, nm: NM) -> impl Mcu + DefinedRegion
+pub fn new<PM, NM>(pm: PM, nm: NM) -> impl Mcu
 where
     PM: Mcu + AsRef<[u8]>,
     NM: Mcu + AsRef<[u8]>,

@@ -9,17 +9,10 @@ mod nes_mcu;
 pub mod ppu;
 
 pub fn create_mcu(file: &INesFile) -> impl Mcu {
-    let after_ppu = RamMcu::start_from(0x4000, [0; 0x20]);
-    let devices = [
-        Region::with_defined(lower_ram::LowerRam::new()),
-        // todo: correct set PPU MCU
-        Region::with_defined(ppu::new(RamMcu::new([0; 0x4000]), RamMcu::new([0; 0x4000]))),
-        Region::with_defined(after_ppu),
-    ]
-    .into_iter();
-    let devices = devices.chain(mapper::create_cartridge(file));
-
-    MappingMcu::new(devices.collect())
+    nes_mcu::NesMcu::build(
+        file,
+        ppu::Ppu::new(RamMcu::new([0; 0x4000]), RamMcu::new([0; 0x4000])),
+    )
 }
 
 #[macro_use]
