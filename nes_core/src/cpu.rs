@@ -395,11 +395,6 @@ pub struct Cpu {
 }
 
 impl Cpu {
-    pub fn reset(&mut self) {
-        self.pc = self.read_word(0xFFFC);
-        self.set_flag(Flag::InterruptDisabled, true);
-    }
-
     pub fn new(mcu: Box<dyn Mcu>) -> Cpu {
         Cpu {
             a: 0,
@@ -412,6 +407,16 @@ impl Cpu {
             remain_clocks: 0,
             is_halt: false,
         }
+    }
+
+    pub fn reset(&mut self) {
+        self.pc = self.read_word(0xFFFC);
+        self.set_flag(Flag::InterruptDisabled, true);
+    }
+
+    fn push_pc(&mut self) {
+        self.push_stack((self.pc >> 8) as u8);
+        self.push_stack(self.pc as u8);
     }
 
     pub fn flag(&self, flag: Flag) -> bool {

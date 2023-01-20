@@ -333,9 +333,8 @@ pub fn new_jsr(addr: u16) -> impl FnMut(&mut Cpu) -> u8 {
     debug!("jsr {}", addr);
 
     move |cpu| {
-        let pc = cpu.pc.wrapping_sub(1);
-        cpu.push_stack((pc >> 8) as u8);
-        cpu.push_stack(pc as u8);
+        cpu.pc = cpu.pc.wrapping_sub(1);
+        cpu.push_pc();
         cpu.pc = addr;
         6
     }
@@ -357,9 +356,8 @@ pub fn new_brk() -> impl FnMut(&mut Cpu) -> u8 {
     debug!("brk");
 
     move |cpu| {
-        let pc = cpu.pc.wrapping_add(1);
-        cpu.push_stack((pc >> 8) as u8);
-        cpu.push_stack(pc as u8);
+        cpu.pc = cpu.pc.wrapping_add(1);
+        cpu.push_pc();
         cpu.set_flag(Flag::Break, true);
         cpu.push_status();
         cpu.set_flag(Flag::InterruptDisabled, true);
