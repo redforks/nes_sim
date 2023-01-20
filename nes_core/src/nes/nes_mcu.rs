@@ -30,6 +30,14 @@ impl<P: PpuTrait> NesMcu<P> {
         }
         self.ppu.oam_dma(&buf);
     }
+
+    pub fn ppu(&self) -> &P {
+        &self.ppu
+    }
+
+    pub fn ppu_mut(&mut self) -> &mut P {
+        &mut self.ppu
+    }
 }
 
 impl<P: PpuTrait> Mcu for NesMcu<P> {
