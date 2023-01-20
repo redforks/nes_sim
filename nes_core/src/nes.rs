@@ -11,7 +11,7 @@ pub fn create_mcu(file: &INesFile) -> impl Mcu {
     let after_ppu = RamMcu::start_from(0x4000, [0; 0x20]);
     let devices = [
         Region::with_defined(lower_ram::LowerRam::new()),
-        Region::with_defined(ppu::new()),
+        Region::with_defined(ppu::new(1, 2)),
         Region::with_defined(after_ppu),
     ]
     .into_iter();

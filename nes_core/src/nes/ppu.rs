@@ -45,15 +45,46 @@ pub struct PpuStatus {
 }
 to_from_u8!(PpuStatus);
 
-pub struct Ppu {}
+const PALETTE_MEM_START: u16 = 0x3f00;
 
-impl Ppu {
-    pub fn new() -> Self {
-        Self {}
+#[derive(Default)]
+struct Palette {
+    data: [u8; 0x20],
+}
+
+impl Palette {
+    fn get_addr(&self, addr: u16) -> usize {
+        (addr - PALETTE_MEM_START) as usize
     }
 }
 
-impl Mcu for Ppu {
+impl Mcu for Palette {
+    fn read(&self, address: u16) -> u8 {
+        self.data[self.get_addr(address)]
+    }
+
+    fn write(&mut self, address: u16, value: u8) {
+        self.data[self.get_addr(address)] = value;
+    }
+}
+
+pub struct Ppu<PM, NM> {
+    pattern: PM, // pattern memory 
+    name_table: NM, // name table
+    palette: Palette, // palette memory
+}
+
+impl<PM, NM> Ppu<PM, NM> {
+    pub fn new(pattern: PM, name_table: NM) -> Self {
+        Ppu {
+            pattern,
+            name_table,
+            palette: Palette::default(),
+        }
+    }
+}
+
+impl <PM, NM> Mcu for Ppu<PM, NM> {
     fn read(&self, address: u16) -> u8 {
         match address {
             0x2002 => {
@@ -84,13 +115,14 @@ impl Mcu for Ppu {
     }
 }
 
-impl DefinedRegion for Ppu {
+impl <PM, NM> DefinedRegion for Ppu<PM, NM> {
     fn region(&self) -> (u16, u16) {
         // TODO: how about 4014 ?
         (0x2000, 0x2008)
     }
 }
 
-pub fn new() -> impl Mcu + DefinedRegion {
-    Ppu::new()
+/// Create Ppu. PM and NM are MCU work in PPU address space.
+pub fn new<PM, NM>(pm: PM, nm: NM) -> impl Mcu + DefinedRegion {
+    Ppu::new(pm, nm)
 }
