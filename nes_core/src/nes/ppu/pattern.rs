@@ -23,7 +23,7 @@ pub struct Pattern<'a>(&'a [u8]); // slice must be 16 * 256 (4096) bytes long
 
 impl<'a> Pattern<'a> {
     /// Get tile at index. Index is 0-255.
-    pub fn tile(&self, index: usize) -> Tile {
+    pub fn tile(&self, index: usize) -> Tile<'a> {
         let offset = index * 16;
         Tile(&self.0[offset..offset + 16])
     }
@@ -41,7 +41,7 @@ impl<'a> PatternBand<'a> {
         Self(data)
     }
 
-    pub fn pattern(&self, index: usize) -> Pattern {
+    pub fn pattern(&self, index: usize) -> Pattern<'a> {
         let offset = index * 4096;
         Pattern(&self.0[offset..offset + 4096])
     }

@@ -1,10 +1,13 @@
 use crate::mcu::{DefinedRegion, Mcu};
 use crate::to_from_u8;
+use image::{Rgb, RgbImage};
 use modular_bitfield::prelude::*;
 
 mod pattern;
 
 pub use pattern::*;
+
+type RGB = Rgb<u8>;
 
 #[derive(Copy, Clone)]
 #[bitfield]
@@ -47,6 +50,33 @@ to_from_u8!(PpuStatus);
 
 const PALETTE_MEM_START: u16 = 0x3f00;
 
+const fn rgb(v: [u8; 3]) -> RGB {
+    Rgb::<u8>(v)
+}
+
+#[rustfmt::skip]
+const COLORS: [RGB; 64] = [
+    rgb([117, 117, 117]), rgb([39, 27, 143]), rgb([0, 0, 171]), rgb([71, 0, 159]),
+    rgb([143, 0, 119]), rgb([171, 0, 19]), rgb([167, 0, 0]), rgb([127, 11, 0]),
+    rgb([67, 47, 0]), rgb([0, 71, 0]), rgb([0, 81, 0]), rgb([0, 63, 23]),
+    rgb([27, 63, 95]), rgb([0, 0, 0]), rgb([0, 0, 0]), rgb([0, 0, 0]),
+
+    rgb([188, 188, 188]), rgb([0, 115, 239]), rgb([35, 59, 239]), rgb([131, 0, 243]),
+    rgb([191, 0, 191]), rgb([231, 0, 91]), rgb([219, 43, 0]), rgb([203, 79, 15]),
+    rgb([139, 115, 0]), rgb([0, 151, 0]), rgb([0, 171, 0]), rgb([0, 147, 59]),
+    rgb([0, 131, 139]), rgb([0, 0, 0]), rgb([0, 0, 0]), rgb([0, 0, 0]),
+
+    rgb([255, 255, 255]), rgb([63, 191, 255]), rgb([95, 151, 255]), rgb([167, 139, 253]),
+    rgb([247, 123, 255]), rgb([255, 119, 183]), rgb([255, 119, 99]), rgb([255, 155, 59]),
+    rgb([243, 191, 63]), rgb([131, 211, 19]), rgb([79, 223, 75]), rgb([88, 248, 152]),
+    rgb([0, 235, 219]), rgb([0, 0, 0]), rgb([0, 0, 0]), rgb([0, 0, 0]),
+
+    rgb([255, 255, 255]), rgb([171, 231, 255]), rgb([199, 215, 255]), rgb([215, 203, 255]),
+    rgb([255, 199, 255]), rgb([255, 199, 219]), rgb([255, 191, 179]), rgb([255, 219, 171]),
+    rgb([255, 231, 163]), rgb([227, 255, 163]), rgb([171, 243, 191]), rgb([179, 255, 207]),
+    rgb([159, 255, 243]), rgb([0, 0, 0]), rgb([0, 0, 0]), rgb([0, 0, 0]),
+];
+
 #[derive(Default)]
 struct Palette {
     data: [u8; 0x20],
@@ -54,7 +84,38 @@ struct Palette {
 
 impl Palette {
     fn get_addr(&self, addr: u16) -> usize {
+        let addr = match addr {
+            // these address are mirrored
+            0x3f10 | 0x3f14 | 0x3f18 | 0x3f1c => addr - 0x10,
+            _ => addr,
+        };
+
         (addr - PALETTE_MEM_START) as usize
+    }
+
+    fn _get_color_idx(&self, start: usize, palette_idx: u8, idx: u8) -> RGB {
+        let offset = if idx == 0 {
+            0
+        } else {
+            start
+                + idx as usize
+                + match palette_idx {
+                    0 => 0x00,
+                    1 => 0x04,
+                    2 => 0x08,
+                    3 => 0x0c,
+                    _ => unreachable!(),
+                }
+        };
+        COLORS[self.data[offset] as usize]
+    }
+
+    fn get_background_color(&self, palette_idx: u8, idx: u8) -> RGB {
+        self._get_color_idx(0, palette_idx, idx)
+    }
+
+    fn get_sprit_color(&self, palette_idx: u8, idx: u8) -> RGB {
+        self._get_color_idx(0x10, palette_idx, idx)
     }
 }
 
@@ -68,10 +129,33 @@ impl Mcu for Palette {
     }
 }
 
+struct NameTable<'a> {
+    table: &'a [u8],
+    pattern: Pattern<'a>,
+}
+
+impl<'a> NameTable<'a> {
+    fn new(table: &'a [u8], pattern: Pattern<'a>) -> Self {
+        Self { table, pattern }
+    }
+
+    fn tile(&self, x: u8, y: u8) -> Tile<'a> {
+        let idx = (y as usize * 32) + x as usize;
+        self.pattern.tile(self.table[idx] as usize)
+    }
+
+    fn palette_idx(&self, x: u8, y: u8) -> u8 {
+        let idx = (y as usize * 32) + x as usize;
+        self.table[idx + 0x3c0]
+    }
+}
+
 pub struct Ppu<PM, NM> {
-    pattern: PM, // pattern memory 
-    name_table: NM, // name table
-    palette: Palette, // palette memory
+    pattern: PM,               // pattern memory
+    name_table: NM,            // name table
+    cur_name_table_addr: u16,  // current active name table start address
+    palette: Palette,          // palette memory
+    cur_pattern_table_idx: u8, // index of current active pattern table, 0 or 1
 }
 
 impl<PM, NM> Ppu<PM, NM> {
@@ -79,12 +163,66 @@ impl<PM, NM> Ppu<PM, NM> {
         Ppu {
             pattern,
             name_table,
+            cur_name_table_addr: 0x2000,
             palette: Palette::default(),
+            cur_pattern_table_idx: 0,
         }
     }
 }
 
-impl <PM, NM> Mcu for Ppu<PM, NM> {
+impl<PM, NM> Ppu<PM, NM>
+where
+    PM: Mcu + AsRef<[u8]>,
+    NM: Mcu + AsRef<[u8]>,
+{
+    pub fn render(&self, image: &mut RgbImage) {
+        let pattern =
+            PatternBand::new(self.pattern.as_ref()).pattern(self.cur_pattern_table_idx as usize);
+        let cur_name_table = self.cur_name_table_addr as usize;
+        let name_table = NameTable::new(
+            &self.name_table.as_ref()[cur_name_table..cur_name_table + 0x0400],
+            pattern,
+        );
+        for (tile_x, tile_y) in itertools::iproduct!(0..32, 0..30) {
+            let tile = name_table.tile(tile_x, tile_y);
+            let palette_idx = name_table.palette_idx(tile_x, tile_y);
+            for (x, y, pixel) in tile.iter() {
+                let color = self.palette.get_background_color(palette_idx, pixel);
+                image.put_pixel(x as u32, y as u32, color);
+            }
+        }
+    }
+
+    fn get_tile(&self, idx: u8) -> Tile<'_> {
+        let band = PatternBand::new(self.pattern.as_ref());
+        let pattern = band.pattern(self.cur_pattern_table_idx as usize);
+        pattern.tile(idx as usize)
+    }
+
+    fn read_vram(&self, address: u16) -> u8 {
+        match address {
+            0x0000..=0x1fff => self.pattern.read(address),
+            0x2000..=0x2fff => self.name_table.read(address),
+            0x3000..=0x3eff => self.read_vram(address - 0x1000),
+            0x3f00..=0x3f1f => self.palette.read(address),
+            0x3f20..=0x3fff => self.read_vram(address - 0x20),
+            _ => unreachable!(),
+        }
+    }
+
+    fn write_vram(&mut self, address: u16, value: u8) {
+        match address {
+            0x0000..=0x1fff => self.pattern.write(address, value),
+            0x2000..=0x2fff => self.name_table.write(address, value),
+            0x3000..=0x3eff => self.write_vram(address - 0x1000, value),
+            0x3f00..=0x3f1f => self.palette.write(address, value),
+            0x3f20..=0x3fff => self.write_vram(address - 0x20, value),
+            _ => unreachable!(),
+        }
+    }
+}
+
+impl<PM, NM> Mcu for Ppu<PM, NM> {
     fn read(&self, address: u16) -> u8 {
         match address {
             0x2002 => {
@@ -115,7 +253,7 @@ impl <PM, NM> Mcu for Ppu<PM, NM> {
     }
 }
 
-impl <PM, NM> DefinedRegion for Ppu<PM, NM> {
+impl<PM, NM> DefinedRegion for Ppu<PM, NM> {
     fn region(&self) -> (u16, u16) {
         // TODO: how about 4014 ?
         (0x2000, 0x2008)
