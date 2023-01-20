@@ -161,6 +161,9 @@ pub struct Ppu<PM, NM> {
     palette: Palette,          // palette memory
     cur_pattern_table_idx: u8, // index of current active pattern table, 0 or 1
 
+    oam_addr: u8,
+    oam: [u8; 0x100], // object attribute memory
+
     data_rw_addr: RefCell<Option<u16>>, // None after reset
 }
 
@@ -173,6 +176,8 @@ impl<PM, NM> Ppu<PM, NM> {
             cur_name_table_addr: 0x2000,
             palette: Palette::default(),
             cur_pattern_table_idx: 0,
+            oam_addr: 0,
+            oam: [0; 0x100],
             data_rw_addr: RefCell::new(None),
         }
     }
@@ -191,6 +196,19 @@ impl<PM, NM> Ppu<PM, NM> {
 
     fn set_ppu_mask(&mut self, _: PpuMask) {
         debug!("TODO: set ppu mask");
+    }
+
+    fn set_oma_addr(&mut self, addr: u8) {
+        self.oam_addr = addr;
+    }
+
+    fn read_oam_data(&self) -> u8 {
+        self.oam[self.oam_addr as usize]
+    }
+
+    fn write_oam_data_and_inc(&mut self, value: u8) {
+        self.oam[self.oam_addr as usize] = value;
+        self.oam_addr = self.oam_addr.wrapping_add(1);
     }
 }
 
@@ -287,7 +305,7 @@ where
                 todo!()
             }
             0x2004 => todo!(),
-            0x2006 => todo!(),
+            0x2006 => self.read_oam_data(),
             0x2007 => self.read_vram_for_cpu(),
             _ => 0x55,
         }
@@ -297,8 +315,8 @@ where
         match address {
             0x2000 => self.set_control_flags(PpuCtrl::from(val)),
             0x2001 => self.set_ppu_mask(PpuMask::from(val)),
-            0x2003 => todo!(),
-            0x2004 => todo!(),
+            0x2003 => self.set_oma_addr(val),
+            0x2004 => self.write_oam_data_and_inc(val),
             0x2005 => {
                 todo!()
             }
@@ -363,5 +381,22 @@ mod tests {
         ppu.write(0x2006, 0x08);
         assert_eq!(ppu.read(0x2007), 0x56);
         assert_eq!(ppu.read(0x2007), 0x78);
+    }
+
+    #[test]
+    fn read_write_oam() {
+        let mut ppu = Ppu::new(RamMcu::new([0; 0x4000]), RamMcu::new([0; 0x4000]));
+        ppu.write(0x2003, 0x12);
+        // write oma data, auto inc oma addr
+        ppu.write(0x2004, 0x34);
+        assert_eq!(0x13, ppu.oam_addr);
+        ppu.write(0x2004, 0x56);
+        assert_eq!(0x14, ppu.oam_addr);
+
+        ppu.write(0x2003, 0x12);
+        assert_eq!(ppu.read_oam_data(), 0x34);
+        assert_eq!(0x12, ppu.oam_addr);
+        // read oma data, won't auto inc oma addr
+        assert_eq!(ppu.read_oam_data(), 0x34);
     }
 }
