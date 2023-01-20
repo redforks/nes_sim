@@ -153,7 +153,7 @@ impl<'a> NameTable<'a> {
 }
 
 pub trait PpuTrait: Mcu {
-    fn oam_dma(&mut self, vals: &[u8]); // vals length should be 256
+    fn oam_dma(&mut self, vals: &[u8; 256]);
 }
 
 pub struct Ppu<PM, NM> {
@@ -171,8 +171,7 @@ pub struct Ppu<PM, NM> {
 }
 
 impl<PM: Mcu, NM: Mcu> PpuTrait for Ppu<PM, NM> {
-    fn oam_dma(&mut self, vals: &[u8]) {
-        debug_assert_eq!(vals.len(), 256);
+    fn oam_dma(&mut self, vals: &[u8; 256]) {
         self.oam.copy_from_slice(vals);
     }
 }
