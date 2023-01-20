@@ -10,7 +10,6 @@ use wasm_bindgen::{Clamped, JsCast};
 use web_sys::{window, CanvasRenderingContext2d, HtmlCanvasElement, ImageData};
 
 mod drivers;
-use crate::drivers::ppu::PpuDriver;
 
 #[global_allocator]
 static ALLOC: wee_alloc::WeeAlloc = wee_alloc::WeeAlloc::INIT;
@@ -25,7 +24,7 @@ pub fn new_machine(ines: Vec<u8>) -> Machine {
     debug!("new_machine");
     let ines = INesFile::new(ines).unwrap();
     Machine {
-        cpu: Cpu::new(Box::new(create_mcu(&ines, PpuDriver()))),
+        cpu: Cpu::new(Box::new(create_mcu(&ines))),
     }
 }
 

@@ -1,6 +1,5 @@
 use crate::ines::INesFile;
 use crate::mcu::{MappingMcu, Mcu, RamMcu, Region};
-use crate::nes::ppu::PpuDriver;
 
 pub mod apu;
 pub mod controller;
@@ -8,14 +7,11 @@ mod lower_ram;
 mod mapper;
 pub mod ppu;
 
-pub fn create_mcu<PD>(file: &INesFile, pd: PD) -> impl Mcu
-where
-    PD: PpuDriver + 'static,
-{
+pub fn create_mcu(file: &INesFile) -> impl Mcu {
     let after_ppu = RamMcu::start_from(0x4000, [0; 0x20]);
     let devices = [
         Region::with_defined(lower_ram::LowerRam::new()),
-        Region::with_defined(ppu::new(pd)),
+        Region::with_defined(ppu::new()),
         Region::with_defined(after_ppu),
     ]
     .into_iter();
