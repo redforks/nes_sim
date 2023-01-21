@@ -194,7 +194,11 @@ where
             let palette_idx = attr_table.palette_idx(tile_x, tile_y);
             for (x, y, pixel) in tile.iter() {
                 let color = self.palette.get_background_color(palette_idx, pixel);
-                self.image.put_pixel(x as u32, y as u32, color);
+                self.image.put_pixel(
+                    x as u32 + tile_x as u32 * 8,
+                    y as u32 + tile_y as u32 * 8,
+                    color,
+                );
             }
         }
         &self.image
