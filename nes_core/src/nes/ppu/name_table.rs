@@ -27,41 +27,85 @@ impl<'a> NameTable<'a> {
     }
 }
 
+trait NameTableAddr {
+    fn addr(&self, address: u16) -> u16;
+}
+
+impl<T> Mcu for T
+where
+    T: NameTableAddr + AsRef<[u8]> + AsMut<[u8]>,
+{
+    fn read(&self, address: u16) -> u8 {
+        self.as_ref()[self.addr(address) as usize]
+    }
+
+    fn write(&mut self, address: u16, value: u8) {
+        let addr = self.addr(address) as usize;
+        self.as_mut()[addr] = value;
+    }
+}
+
 /// NameTable and attribute tables
-pub trait NameTables: Mcu {
+pub trait NameTables {
     fn nth(&self, idx: u8) -> NameTable<'_>;
     fn attribute_table(&self, idx: u8) -> AttributeTable<'_>;
 }
 
-pub struct OneScreenNameTables([u8; 0x400]);
-
-impl OneScreenNameTables {
-    pub fn new() -> Self {
-        Self([0; 0x400])
+impl<T> NameTables for T
+where
+    T: NameTableAddr + AsRef<[u8]>,
+{
+    fn nth(&self, idx: u8) -> NameTable<'_> {
+        debug_assert!(idx < 4);
+        let start = self.addr(idx as u16 * 0x400) as usize;
+        let end = start + 0x3c0;
+        NameTable(&self.as_ref()[start..end])
     }
 
-    fn addr(address: u16) -> u16 {
+    fn attribute_table(&self, idx: u8) -> AttributeTable<'_> {
+        debug_assert!(idx < 4);
+        let start = self.addr(idx as u16 * 0x400) as usize + 0x3c0;
+        let end = start + 0x40;
+        AttributeTable(&self.as_ref()[start..end])
+    }
+}
+
+macro_rules! define_name_table {
+    ($name: ident, $size: expr) => {
+        pub struct $name([u8; $size]);
+
+        impl $name {
+            pub fn new() -> Self {
+                Self([0; $size])
+            }
+        }
+
+        impl AsRef<[u8]> for $name {
+            fn as_ref(&self) -> &[u8] {
+                &self.0
+            }
+        }
+
+        impl AsMut<[u8]> for $name {
+            fn as_mut(&mut self) -> &mut [u8] {
+                &mut self.0
+            }
+        }
+    };
+}
+
+define_name_table!(OneScreenNameTables, 0x400);
+define_name_table!(FourScreenNameTables, 0x1000);
+
+impl NameTableAddr for OneScreenNameTables {
+    fn addr(&self, address: u16) -> u16 {
         address & 0x3ff
     }
 }
 
-impl NameTables for OneScreenNameTables {
-    fn nth(&self, _: u8) -> NameTable<'_> {
-        NameTable(&self.0[0..0x3c0])
-    }
-
-    fn attribute_table(&self, _: u8) -> AttributeTable<'_> {
-        AttributeTable(&self.0[0x3c0..])
-    }
-}
-
-impl Mcu for OneScreenNameTables {
-    fn read(&self, address: u16) -> u8 {
-        self.0[Self::addr(address) as usize]
-    }
-
-    fn write(&mut self, address: u16, value: u8) {
-        self.0[Self::addr(address) as usize] = value;
+impl NameTableAddr for FourScreenNameTables {
+    fn addr(&self, address: u16) -> u16 {
+        address - 0x2000
     }
 }
 
@@ -70,7 +114,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn one_screen_name_table() {
+    fn one_screen_name_tables() {
         let mut name_tables = OneScreenNameTables::new();
         assert_eq!(name_tables.read(0x2000), 0);
         name_tables.write(0x2000, 1);
@@ -97,5 +141,18 @@ mod tests {
         assert_eq!(name_tables.attribute_table(3).0[0], 2);
         assert_eq!(name_tables.attribute_table(3).0[63], 11);
         assert_eq!(name_tables.attribute_table(3).0.len(), 64);
+    }
+
+    #[test]
+    fn four_screen_name_tables() {
+        let mut name_tabels = FourScreenNameTables::new();
+        name_tabels.write(0x2000, 1);
+        name_tabels.write(0x2400, 2);
+        name_tabels.write(0x2800, 3);
+        name_tabels.write(0x2C00, 4);
+        assert_eq!(name_tabels.read(0x2000), 1);
+        assert_eq!(name_tabels.read(0x2400), 2);
+        assert_eq!(name_tabels.read(0x2800), 3);
+        assert_eq!(name_tabels.read(0x2c00), 4);
     }
 }
