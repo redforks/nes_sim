@@ -147,6 +147,8 @@ pub trait PpuTrait: Mcu {
     fn set_v_blank(&mut self, v_blank: bool);
 
     fn render(&mut self) -> &RgbaImage;
+
+    fn set_mirroring(&mut self, mirroring: Mirroring);
 }
 
 pub struct Ppu<PM> {
@@ -201,6 +203,10 @@ where
             }
         }
         &self.image
+    }
+
+    fn set_mirroring(&mut self, mirroring: Mirroring) {
+        self.name_table.set_mirroring(mirroring);
     }
 }
 
@@ -264,10 +270,6 @@ impl<PM> Ppu<PM> {
         let r = *self.status.borrow();
         *self.status.borrow_mut() = r.with_v_blank(false);
         r
-    }
-
-    pub fn set_mirroring(&mut self, mirroring: Mirroring) {
-        self.name_table.set_mirroring(mirroring);
     }
 }
 
