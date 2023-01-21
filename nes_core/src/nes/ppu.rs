@@ -1,7 +1,7 @@
 use crate::mcu::Mcu;
 use crate::to_from_u8;
 use image::{Rgba, RgbaImage};
-use log::debug;
+use log::{debug, info};
 use modular_bitfield::prelude::*;
 use std::cell::RefCell;
 
@@ -239,18 +239,26 @@ impl<PM, NM> Ppu<PM, NM> {
 
     fn set_control_flags(&mut self, flag: PpuCtrl) {
         self.ctrl_flags = flag;
-        self.cur_name_table_addr = match flag.name_table_select() {
+        let new_val = match flag.name_table_select() {
             0 => 0x2000,
             1 => 0x2400,
             2 => 0x2800,
             3 => 0x2c00,
             _ => unreachable!(),
         };
-        self.cur_pattern_table_idx = flag.background_pattern_table() as u8;
+        if new_val != self.cur_name_table_addr {
+            info!("switch name table to {:04x}", new_val);
+            self.cur_name_table_addr = new_val;
+        }
+        let new_val = flag.background_pattern_table() as u8;
+        if new_val != self.cur_pattern_table_idx {
+            info!("switch pattern table to {}", new_val);
+            self.cur_pattern_table_idx = new_val;
+        }
     }
 
     fn set_ppu_mask(&mut self, _: PpuMask) {
-        debug!("TODO: set ppu mask");
+        info!("TODO: set ppu mask");
     }
 
     fn set_oma_addr(&mut self, addr: u8) {
