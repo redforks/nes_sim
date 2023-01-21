@@ -2,7 +2,7 @@ use crate::ines::INesFile;
 use crate::mcu::{MappingMcu, Mcu, RamMcu};
 use crate::nes::lower_ram::LowerRam;
 use crate::nes::mapper;
-use crate::nes::ppu::{Ppu, PpuTrait};
+use crate::nes::ppu::{NameTables, Ppu, PpuTrait};
 
 pub struct NesMcu<P: PpuTrait> {
     lower_ram: LowerRam,
