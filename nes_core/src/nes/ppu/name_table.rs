@@ -96,6 +96,8 @@ macro_rules! define_name_table {
 
 define_name_table!(OneScreenNameTables, 0x400);
 define_name_table!(FourScreenNameTables, 0x1000);
+define_name_table!(HorizontalNameTables, 0x800);
+define_name_table!(VerticalNameTables, 0x800);
 
 impl NameTableAddr for OneScreenNameTables {
     fn addr(&self, address: u16) -> u16 {
@@ -106,6 +108,23 @@ impl NameTableAddr for OneScreenNameTables {
 impl NameTableAddr for FourScreenNameTables {
     fn addr(&self, address: u16) -> u16 {
         address - 0x2000
+    }
+}
+
+impl NameTableAddr for HorizontalNameTables {
+    fn addr(&self, address: u16) -> u16 {
+        let r = address - 0x2000;
+        if r < 0x800 {
+            r % 0x400
+        } else {
+            r % 0x400 + 0x400
+        }
+    }
+}
+
+impl NameTableAddr for VerticalNameTables {
+    fn addr(&self, address: u16) -> u16 {
+        address & 0x7ff
     }
 }
 
@@ -154,5 +173,27 @@ mod tests {
         assert_eq!(name_tabels.read(0x2400), 2);
         assert_eq!(name_tabels.read(0x2800), 3);
         assert_eq!(name_tabels.read(0x2c00), 4);
+    }
+
+    #[test]
+    fn horizontal_name_tables() {
+        let mut name_tabels = HorizontalNameTables::new();
+        name_tabels.write(0x2000, 1);
+        name_tabels.write(0x2800, 2);
+        assert_eq!(name_tabels.read(0x2000), 1);
+        assert_eq!(name_tabels.read(0x2400), 1);
+        assert_eq!(name_tabels.read(0x2800), 2);
+        assert_eq!(name_tabels.read(0x2c00), 2);
+    }
+
+    #[test]
+    fn vertical_name_tables() {
+        let mut name_tabels = VerticalNameTables::new();
+        name_tabels.write(0x2000, 1);
+        name_tabels.write(0x2400, 2);
+        assert_eq!(name_tabels.read(0x2000), 1);
+        assert_eq!(name_tabels.read(0x2400), 2);
+        assert_eq!(name_tabels.read(0x2800), 1);
+        assert_eq!(name_tabels.read(0x2c00), 2);
     }
 }
