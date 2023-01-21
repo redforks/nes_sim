@@ -1,5 +1,6 @@
 use crate::ines::INesFile;
 use crate::mcu::{DefinedRegion, Mcu, RamMcu, Region};
+use crate::nes::ppu::{HorizontalNameTables, NameTablesMcu, VerticalNameTables};
 
 mod mmc1;
 
@@ -11,8 +12,12 @@ pub fn create_cartridge(f: &INesFile) -> Vec<Region> {
     }
 }
 
-pub fn create_ppu_name_table(f: &INesFile) -> impl Mcu + AsRef<[u8]> {
-    RamMcu::start_from(0x2000, [0; 0x1000])
+pub fn create_ppu_name_table(f: &INesFile) -> Box<dyn NameTablesMcu> {
+    if f.header().ver_or_hor_arrangement {
+        Box::new(VerticalNameTables::new())
+    } else {
+        Box::new(HorizontalNameTables::new())
+    }
 }
 
 pub fn create_ppu_pattern(f: &INesFile) -> impl Mcu + AsRef<[u8]> {

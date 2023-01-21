@@ -1,13 +1,14 @@
 use crate::mcu::Mcu;
 use crate::to_from_u8;
 use image::{Rgba, RgbaImage};
-use log::{debug, info};
+use log::info;
 use modular_bitfield::prelude::*;
 use std::cell::RefCell;
 
 mod name_table;
 mod pattern;
 
+pub use name_table::*;
 pub use pattern::*;
 
 type RGB = Rgba<u8>;
@@ -136,27 +137,6 @@ impl Mcu for Palette {
     }
 }
 
-struct NameTable<'a> {
-    table: &'a [u8],
-    pattern: Pattern<'a>,
-}
-
-impl<'a> NameTable<'a> {
-    fn new(table: &'a [u8], pattern: Pattern<'a>) -> Self {
-        Self { table, pattern }
-    }
-
-    fn tile(&self, x: u8, y: u8) -> Tile<'a> {
-        let idx = (y as usize * 32) + x as usize;
-        self.pattern.tile(self.table[idx])
-    }
-
-    fn palette_idx(&self, x: u8, y: u8) -> u8 {
-        let idx = (y as usize * 32) + x as usize;
-        self.table[idx]
-    }
-}
-
 pub trait PpuTrait: Mcu {
     fn oam_dma(&mut self, vals: &[u8; 256]);
 
@@ -188,7 +168,7 @@ pub struct Ppu<PM, NM> {
 impl<PM, NM> PpuTrait for Ppu<PM, NM>
 where
     PM: Mcu + AsRef<[u8]>,
-    NM: Mcu + AsRef<[u8]>,
+    NM: Mcu + NameTables,
 {
     fn oam_dma(&mut self, vals: &[u8; 256]) {
         self.oam.copy_from_slice(vals);
@@ -206,14 +186,12 @@ where
     fn render(&mut self) -> &RgbaImage {
         let pattern =
             PatternBand::new(self.pattern.as_ref()).pattern(self.cur_pattern_table_idx as usize);
-        let cur_name_table = (self.cur_name_table_addr - NAME_TABLE_MEM_START) as usize;
-        let name_table = NameTable::new(
-            &self.name_table.as_ref()[cur_name_table..cur_name_table + 0x0400],
-            pattern,
-        );
+        let cur_name_table = (self.cur_name_table_addr - NAME_TABLE_MEM_START) / 0x400;
+        let name_table = self.name_table.nth(cur_name_table as u8);
+        let attr_table = self.name_table.attribute_table(cur_name_table as u8);
         for (tile_x, tile_y) in itertools::iproduct!(0..32, 0..30) {
-            let tile = name_table.tile(tile_x, tile_y);
-            let palette_idx = name_table.palette_idx(tile_x, tile_y);
+            let tile = name_table.tile(pattern, tile_x, tile_y);
+            let palette_idx = attr_table.palette_idx(tile_x, tile_y);
             for (x, y, pixel) in tile.iter() {
                 let color = self.palette.get_background_color(palette_idx, pixel);
                 self.image.put_pixel(x as u32, y as u32, color);
@@ -341,7 +319,7 @@ impl<PM: Mcu, NM: Mcu> Ppu<PM, NM> {
 impl<PM, NM> Mcu for Ppu<PM, NM>
 where
     PM: Mcu + AsRef<[u8]>,
-    NM: Mcu + AsRef<[u8]>,
+    NM: Mcu + NameTables,
 {
     fn read(&self, address: u16) -> u8 {
         // todo: mirror to 0x3fff
@@ -380,11 +358,8 @@ mod tests {
     use super::*;
     use crate::mcu::RamMcu;
 
-    fn new_test_ppu() -> Ppu<RamMcu<0x2000>, RamMcu<0x1000>> {
-        Ppu::new(
-            RamMcu::new([0; 0x2000]),
-            RamMcu::start_from(NAME_TABLE_MEM_START, [0; 0x1000]),
-        )
+    fn new_test_ppu() -> Ppu<RamMcu<0x2000>, FourScreenNameTables> {
+        Ppu::new(RamMcu::new([0; 0x2000]), FourScreenNameTables::new())
     }
 
     #[test]

@@ -10,7 +10,7 @@ impl<'a> AttributeTable<'a> {
         AttributeTable(data)
     }
 
-    fn palette_idx(&self, tile_x: u8, tile_y: u8) -> u8 {
+    pub fn palette_idx(&self, tile_x: u8, tile_y: u8) -> u8 {
         debug_assert!(tile_x < TILES_PER_ROW);
         debug_assert!(tile_y < TILES_PER_COL);
         let x = tile_x / 4;
@@ -42,7 +42,7 @@ impl<'a> NameTable<'a> {
         self.0[(tile_y as usize * TILES_PER_ROW as usize) + tile_x as usize]
     }
 
-    fn tile<'b>(&self, patten: Pattern<'b>, tile_x: u8, tile_y: u8) -> Tile<'b> {
+    pub fn tile<'b>(&self, patten: Pattern<'b>, tile_x: u8, tile_y: u8) -> Tile<'b> {
         patten.tile(self.tile_idx(tile_x, tile_y))
     }
 }
@@ -69,6 +69,30 @@ where
 pub trait NameTables {
     fn nth(&self, idx: u8) -> NameTable<'_>;
     fn attribute_table(&self, idx: u8) -> AttributeTable<'_>;
+}
+
+pub trait NameTablesMcu: NameTables + Mcu {}
+
+impl<T: NameTables + Mcu> NameTablesMcu for T {}
+
+impl NameTables for Box<dyn NameTablesMcu> {
+    fn nth(&self, idx: u8) -> NameTable<'_> {
+        self.as_ref().nth(idx)
+    }
+
+    fn attribute_table(&self, idx: u8) -> AttributeTable<'_> {
+        self.as_ref().attribute_table(idx)
+    }
+}
+
+impl Mcu for Box<dyn NameTablesMcu> {
+    fn read(&self, address: u16) -> u8 {
+        self.as_ref().read(address)
+    }
+
+    fn write(&mut self, address: u16, value: u8) {
+        self.as_mut().write(address, value)
+    }
 }
 
 impl<T> NameTables for T
