@@ -51,6 +51,7 @@ pub struct PpuStatus {
 to_from_u8!(PpuStatus);
 
 const PALETTE_MEM_START: u16 = 0x3f00;
+const NAME_TABLE_MEM_START: u16 = 0x2000;
 
 const fn rgb(v: [u8; 3]) -> RGB {
     let [r, g, b] = v;
@@ -202,7 +203,7 @@ where
     fn render(&mut self) -> &RgbaImage {
         let pattern =
             PatternBand::new(self.pattern.as_ref()).pattern(self.cur_pattern_table_idx as usize);
-        let cur_name_table = self.cur_name_table_addr as usize;
+        let cur_name_table = (self.cur_name_table_addr - NAME_TABLE_MEM_START) as usize;
         let name_table = NameTable::new(
             &self.name_table.as_ref()[cur_name_table..cur_name_table + 0x0400],
             pattern,
@@ -363,23 +364,21 @@ where
     }
 }
 
-/// Create Ppu. PM and NM are MCU work in PPU address space.
-pub fn new<PM, NM>(pm: PM, nm: NM) -> impl Mcu
-where
-    PM: Mcu + AsRef<[u8]>,
-    NM: Mcu + AsRef<[u8]>,
-{
-    Ppu::new(pm, nm)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::mcu::RamMcu;
 
+    fn new_test_ppu() -> Ppu<RamMcu<0x2000>, RamMcu<0x1000>> {
+        Ppu::new(
+            RamMcu::new([0; 0x2000]),
+            RamMcu::start_from(NAME_TABLE_MEM_START, [0; 0x1000]),
+        )
+    }
+
     #[test]
     fn read_write_v_ram() {
-        let mut ppu = Ppu::new(RamMcu::new([0; 0x4000]), RamMcu::new([0; 0x4000]));
+        let mut ppu = new_test_ppu();
         // data_addr default to 0
         assert_eq!(ppu.read_vram_for_cpu(), 0);
 
@@ -416,7 +415,7 @@ mod tests {
 
     #[test]
     fn read_write_oam() {
-        let mut ppu = Ppu::new(RamMcu::new([0; 0x4000]), RamMcu::new([0; 0x4000]));
+        let mut ppu = new_test_ppu();
         // oam addr default to 0
         assert_eq!(ppu.oam_addr, 0);
 
@@ -436,7 +435,7 @@ mod tests {
 
     #[test]
     fn nmi_occurred() {
-        let mut ppu = Ppu::new(RamMcu::new([0; 0x4000]), RamMcu::new([0; 0x4000]));
+        let mut ppu = new_test_ppu();
 
         let flag = PpuCtrl::new().with_nmi_enable(false);
         assert_eq!(ppu.status.borrow().v_blank(), false);
@@ -463,5 +462,11 @@ mod tests {
         assert_eq!(ppu.status.borrow().v_blank(), true);
         // should_nmi is true because nmi is enabled
         assert_eq!(ppu.should_nmi(), true);
+    }
+
+    #[test]
+    fn render() {
+        let mut ppu = new_test_ppu();
+        ppu.render();
     }
 }
