@@ -2,7 +2,7 @@ use crate::ines::INesFile;
 use crate::mcu::{MappingMcu, Mcu, RamMcu};
 use crate::nes::lower_ram::LowerRam;
 use crate::nes::mapper;
-use crate::nes::ppu::PpuTrait;
+use crate::nes::ppu::{Ppu, PpuTrait};
 
 pub struct NesMcu<P: PpuTrait> {
     lower_ram: LowerRam,
@@ -11,17 +11,21 @@ pub struct NesMcu<P: PpuTrait> {
     inside_cartridge: MappingMcu,
 }
 
-impl<P: PpuTrait> NesMcu<P> {
-    pub fn build(file: &INesFile, ppu: P) -> NesMcu<P> {
-        let inside_cartridge = MappingMcu::new(mapper::create_cartridge(file));
-        NesMcu {
-            lower_ram: LowerRam::new(),
-            ppu,
-            after_ppu: RamMcu::start_from(0x4000, [0; 0x20]),
-            inside_cartridge,
-        }
+pub fn build(file: &INesFile) -> impl Mcu {
+    let inside_cartridge = MappingMcu::new(mapper::create_cartridge(file));
+    let ppu = Ppu::new(
+        mapper::create_ppu_pattern(file),
+        mapper::create_ppu_name_table(file),
+    );
+    NesMcu {
+        lower_ram: LowerRam::new(),
+        ppu,
+        after_ppu: RamMcu::start_from(0x4000, [0; 0x20]),
+        inside_cartridge,
     }
+}
 
+impl<P: PpuTrait> NesMcu<P> {
     fn ppu_dma(&mut self, address: u8) {
         let addr = (address as u16) << 8;
         let mut buf = [0x00u8; 0x100];

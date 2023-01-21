@@ -1,5 +1,5 @@
 use crate::ines::INesFile;
-use crate::mcu::{MappingMcu, Mcu, RamMcu, Region};
+use crate::mcu::Mcu;
 
 pub mod apu;
 pub mod controller;
@@ -11,10 +11,7 @@ pub mod ppu;
 pub use machine::Machine;
 
 fn create_mcu(file: &INesFile) -> impl Mcu {
-    nes_mcu::NesMcu::build(
-        file,
-        ppu::Ppu::new(RamMcu::new([0; 0x4000]), RamMcu::new([0; 0x4000])),
-    )
+    nes_mcu::build(file)
 }
 
 #[macro_use]
