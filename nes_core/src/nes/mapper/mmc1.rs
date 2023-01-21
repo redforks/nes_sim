@@ -119,8 +119,8 @@ impl Mcu for MMC1 {
                             self.prg_rom_bank1_start = bank as usize * PRG_ROM_BANK_SIZE;
                         }
                         _ => panic!(
-                            "write address out of range or unimplemented: {:04x}",
-                            address
+                            "write address out of range or unimplemented: ${:04x} {:x}",
+                            address, self.sr,
                         ),
                     }
                     self.sr_write_count = 0;
