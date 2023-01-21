@@ -1,6 +1,5 @@
 use crate::ines::INesFile;
 use crate::mcu::{DefinedRegion, Mcu, RamMcu, Region};
-use crate::nes::ppu::{HorizontalNameTables, NameTablesMcu, VerticalNameTables};
 
 mod mmc1;
 
@@ -9,14 +8,6 @@ pub fn create_cartridge(f: &INesFile) -> Vec<Region> {
         0 => mapper000(f).collect(),
         1 => vec![Region::with_defined(mmc1::MMC1::new(f.read_prg_rom()))],
         _ => panic!("Unsupported cartridge mapper no: {}", f.header().mapper_no),
-    }
-}
-
-pub fn create_ppu_name_table(f: &INesFile) -> Box<dyn NameTablesMcu> {
-    if f.header().ver_or_hor_arrangement {
-        Box::new(VerticalNameTables::new())
-    } else {
-        Box::new(HorizontalNameTables::new())
     }
 }
 

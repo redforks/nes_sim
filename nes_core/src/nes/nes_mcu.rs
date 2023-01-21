@@ -2,7 +2,7 @@ use crate::ines::INesFile;
 use crate::mcu::{MappingMcu, Mcu, RamMcu};
 use crate::nes::lower_ram::LowerRam;
 use crate::nes::mapper;
-use crate::nes::ppu::{Ppu, PpuTrait};
+use crate::nes::ppu::{Mirroring, Ppu, PpuTrait};
 use log::info;
 
 pub struct NesMcu<P: PpuTrait> {
@@ -14,10 +14,13 @@ pub struct NesMcu<P: PpuTrait> {
 
 pub fn build(file: &INesFile) -> impl Mcu {
     let inside_cartridge = MappingMcu::new(mapper::create_cartridge(file));
-    let ppu = Ppu::new(
-        mapper::create_ppu_pattern(file),
-        mapper::create_ppu_name_table(file),
-    );
+    let mut ppu = Ppu::new(mapper::create_ppu_pattern(file));
+    ppu.set_mirroring(if file.header().ver_or_hor_arrangement {
+        Mirroring::Vertical
+    } else {
+        Mirroring::Horizontal
+    });
+
     NesMcu {
         lower_ram: LowerRam::new(),
         ppu,
