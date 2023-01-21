@@ -343,11 +343,10 @@ where
             0x2003 => self.set_oma_addr(val),
             0x2004 => self.write_oam_data_and_inc(val),
             0x2005 => {
-                todo!()
+                // todo: scroll
             }
             0x2006 => self.set_data_rw_addr(val),
             0x2007 => self.write_vram_for_cpu(val),
-            0x4014 => todo!(),
             _ => panic!("Can not write to Ppu at address ${:x}", address),
         }
     }
