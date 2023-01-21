@@ -26,7 +26,7 @@ pub fn create_ppu_pattern(f: &INesFile) -> impl Mcu + AsRef<[u8]> {
     if !chr.is_empty() {
         // copy chr to buf
         assert!(chr.len() <= 0x2000);
-        buf[..chr.len()].copy_from_slice(&chr);
+        buf[..chr.len()].copy_from_slice(chr);
     }
     RamMcu::start_from(0x0, buf)
 }

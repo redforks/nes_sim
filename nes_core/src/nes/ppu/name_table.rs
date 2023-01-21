@@ -103,14 +103,14 @@ where
         debug_assert!(idx < 4);
         let start = self.addr(idx as u16 * 0x400) as usize;
         let end = start + 0x3c0;
-        NameTable(&self.as_ref()[start..end])
+        NameTable::new(&self.as_ref()[start..end])
     }
 
     fn attribute_table(&self, idx: u8) -> AttributeTable<'_> {
         debug_assert!(idx < 4);
         let start = self.addr(idx as u16 * 0x400) as usize + 0x3c0;
         let end = start + 0x40;
-        AttributeTable(&self.as_ref()[start..end])
+        AttributeTable::new(&self.as_ref()[start..end])
     }
 }
 
