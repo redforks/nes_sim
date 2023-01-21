@@ -2,7 +2,7 @@ use super::plugin::{CompositePlugin, Console, MonitorTestStatus, ReportPlugin};
 use super::plugin::{DetectDeadLoop, ImageExit};
 use nes_core::ines::INesFile;
 use nes_core::mcu::{Mcu, RamMcu};
-use nes_core::nes::create_mcu;
+use nes_core::nes::nes_mcu;
 use nes_core::Plugin;
 use std::io::Read;
 
@@ -17,7 +17,7 @@ impl Image {
     pub fn create_mcu(&self) -> Box<dyn Mcu> {
         match self {
             Image::Bin(arr) => Box::new(RamMcu::new(**arr)),
-            Image::INes(ines) => Box::new(create_mcu(ines)),
+            Image::INes(ines) => Box::new(nes_mcu::build(ines)),
         }
     }
 
