@@ -23,13 +23,13 @@ pub struct Pattern<'a>(&'a [u8]); // slice must be 16 * 256 (4096) bytes long
 
 impl<'a> Pattern<'a> {
     /// Get tile at index. Index is 0-255.
-    pub fn tile(&self, index: usize) -> Tile<'a> {
-        let offset = index * 16;
+    pub fn tile(&self, index: u8) -> Tile<'a> {
+        let offset = index as usize * 16;
         Tile(&self.0[offset..offset + 16])
     }
 
     pub fn iter(&self) -> impl Iterator<Item = Tile> + '_ {
-        (0..256).map(move |i| self.tile(i))
+        (0..=255u8).map(move |i| self.tile(i))
     }
 }
 

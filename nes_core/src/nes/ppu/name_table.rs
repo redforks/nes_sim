@@ -1,12 +1,5 @@
 use crate::mcu::Mcu;
-use crate::nes::ppu::{Pattern, Tile, TILES_PER_ROW};
-
-pub enum Mirror {
-    Horizontal,
-    Vertical,
-    FourScreen,
-    OneScreen,
-}
+use crate::nes::ppu::{Pattern, Tile, TILES_PER_COL, TILES_PER_ROW};
 
 pub struct AttributeTable<'a>(&'a [u8]);
 
@@ -14,16 +7,19 @@ pub struct AttributeTable<'a>(&'a [u8]);
 pub struct NameTable<'a>(&'a [u8]);
 
 impl<'a> NameTable<'a> {
-    fn tile_idx(&self, x: u8, y: u8) -> u8 {
-        (y * TILES_PER_ROW) + x
+    fn new(data: &'a [u8]) -> Self {
+        debug_assert_eq!(data.len(), TILES_PER_ROW as usize * TILES_PER_COL as usize);
+        NameTable(data)
     }
 
-    fn tile<'b>(&self, patten: Pattern<'b>, x: u8, y: u8) -> Tile<'b> {
-        todo!()
+    fn tile_idx(&self, tile_x: u8, tile_y: u8) -> u8 {
+        debug_assert!(tile_x < TILES_PER_ROW);
+        debug_assert!(tile_y < TILES_PER_COL);
+        self.0[(tile_y as usize * TILES_PER_ROW as usize) + tile_x as usize]
     }
 
-    fn palette(&self, x: u8, y: u8) -> u8 {
-        todo!()
+    fn tile<'b>(&self, patten: Pattern<'b>, tile_x: u8, tile_y: u8) -> Tile<'b> {
+        patten.tile(self.tile_idx(tile_x, tile_y))
     }
 }
 
@@ -195,5 +191,19 @@ mod tests {
         assert_eq!(name_tabels.read(0x2400), 2);
         assert_eq!(name_tabels.read(0x2800), 1);
         assert_eq!(name_tabels.read(0x2c00), 2);
+    }
+
+    #[test]
+    fn name_table() {
+        let mut arr = [0; 960];
+        arr[0] = 1;
+        arr[31] = 2;
+        arr[32] = 3;
+        arr[959] = 4;
+        let name_tables = NameTable::new(&arr);
+        assert_eq!(1, name_tables.tile_idx(0, 0));
+        assert_eq!(2, name_tables.tile_idx(31, 0));
+        assert_eq!(3, name_tables.tile_idx(0, 1));
+        assert_eq!(4, name_tables.tile_idx(31, 29));
     }
 }
