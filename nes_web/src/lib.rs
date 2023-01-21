@@ -1,5 +1,5 @@
 use image::DynamicImage;
-use log::{debug, warn};
+use log::{debug, info};
 use nes_core::ines::INesFile;
 use nes_core::nes::ppu::{draw_pattern, PatternBand};
 use nes_core::nes::Machine as NesMachine;
@@ -32,6 +32,7 @@ pub fn new_machine(canvas_id: &str, ines: Vec<u8>) -> Machine {
 #[wasm_bindgen]
 impl Machine {
     pub fn process_frame(&mut self, ms: f64) {
+        info!("process_frame: {}ms", ms);
         let img = self.inner.process_frame(ms);
         let img_data =
             ImageData::new_with_u8_clamped_array_and_sh(Clamped(&img), 256, 240).unwrap();
@@ -74,6 +75,6 @@ pub fn draw_chr(ines: Vec<u8>, canvas_id: &str) {
 #[wasm_bindgen]
 pub fn init() {
     panic::set_hook(Box::new(console_error_panic_hook::hook));
-    console_log::init_with_level(log::Level::Warn).unwrap();
-    warn!("log inited");
+    console_log::init_with_level(log::Level::Info).unwrap();
+    info!("log inited");
 }
