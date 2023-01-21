@@ -8,6 +8,7 @@ members = [
 
 [profile.dev]
 split-debuginfo = "unpacked"
+opt-level = "z"
 
 [profile.release]
 lto = true
