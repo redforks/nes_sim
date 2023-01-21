@@ -160,6 +160,8 @@ pub trait PpuTrait: Mcu {
 
     /// Trigger nmi at the start of v-blank, if should_nmi() returns true.
     fn set_v_blank(&mut self, v_blank: bool);
+
+    fn render(&mut self) -> &RgbImage;
 }
 
 pub struct Ppu<PM, NM> {
@@ -175,9 +177,14 @@ pub struct Ppu<PM, NM> {
     oam: [u8; 0x100], // object attribute memory
 
     data_rw_addr: RefCell<Option<u16>>, // None after reset
+    image: RgbImage,
 }
 
-impl<PM: Mcu, NM: Mcu> PpuTrait for Ppu<PM, NM> {
+impl<PM, NM> PpuTrait for Ppu<PM, NM>
+where
+    PM: Mcu + AsRef<[u8]>,
+    NM: Mcu + AsRef<[u8]>,
+{
     fn oam_dma(&mut self, vals: &[u8; 256]) {
         self.oam.copy_from_slice(vals);
     }
@@ -189,6 +196,25 @@ impl<PM: Mcu, NM: Mcu> PpuTrait for Ppu<PM, NM> {
     fn set_v_blank(&mut self, v_blank: bool) {
         let status = *self.status.borrow();
         self.status = RefCell::new(status.with_v_blank(v_blank));
+    }
+
+    fn render(&mut self) -> &RgbImage {
+        let pattern =
+            PatternBand::new(self.pattern.as_ref()).pattern(self.cur_pattern_table_idx as usize);
+        let cur_name_table = self.cur_name_table_addr as usize;
+        let name_table = NameTable::new(
+            &self.name_table.as_ref()[cur_name_table..cur_name_table + 0x0400],
+            pattern,
+        );
+        for (tile_x, tile_y) in itertools::iproduct!(0..32, 0..30) {
+            let tile = name_table.tile(tile_x, tile_y);
+            let palette_idx = name_table.palette_idx(tile_x, tile_y);
+            for (x, y, pixel) in tile.iter() {
+                let color = self.palette.get_background_color(palette_idx, pixel);
+                self.image.put_pixel(x as u32, y as u32, color);
+            }
+        }
+        &self.image
     }
 }
 
@@ -205,6 +231,7 @@ impl<PM, NM> Ppu<PM, NM> {
             oam_addr: 0,
             oam: [0; 0x100],
             data_rw_addr: RefCell::new(None),
+            image: RgbImage::new(256, 240),
         }
     }
 
@@ -301,30 +328,6 @@ impl<PM: Mcu, NM: Mcu> Ppu<PM, NM> {
         let addr = self.data_rw_addr.borrow().expect("data_rw addr not set");
         self.write_vram(addr, v);
         self.inc_data_rw_addr(addr);
-    }
-}
-
-impl<PM, NM> Ppu<PM, NM>
-where
-    PM: Mcu + AsRef<[u8]>,
-    NM: Mcu + AsRef<[u8]>,
-{
-    pub fn render(&self, image: &mut RgbImage) {
-        let pattern =
-            PatternBand::new(self.pattern.as_ref()).pattern(self.cur_pattern_table_idx as usize);
-        let cur_name_table = self.cur_name_table_addr as usize;
-        let name_table = NameTable::new(
-            &self.name_table.as_ref()[cur_name_table..cur_name_table + 0x0400],
-            pattern,
-        );
-        for (tile_x, tile_y) in itertools::iproduct!(0..32, 0..30) {
-            let tile = name_table.tile(tile_x, tile_y);
-            let palette_idx = name_table.palette_idx(tile_x, tile_y);
-            for (x, y, pixel) in tile.iter() {
-                let color = self.palette.get_background_color(palette_idx, pixel);
-                image.put_pixel(x as u32, y as u32, color);
-            }
-        }
     }
 }
 
