@@ -5,6 +5,7 @@ use log::{debug, info};
 use modular_bitfield::prelude::*;
 use std::cell::RefCell;
 
+mod name_table;
 mod pattern;
 
 pub use pattern::*;
@@ -52,6 +53,8 @@ to_from_u8!(PpuStatus);
 
 const PALETTE_MEM_START: u16 = 0x3f00;
 const NAME_TABLE_MEM_START: u16 = 0x2000;
+const TILES_PER_ROW: u8 = 32;
+const TILES_PER_COL: u8 = 30;
 
 const fn rgb(v: [u8; 3]) -> RGB {
     let [r, g, b] = v;

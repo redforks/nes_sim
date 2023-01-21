@@ -12,7 +12,6 @@ pub fn create_cartridge(f: &INesFile) -> Vec<Region> {
 }
 
 pub fn create_ppu_name_table(f: &INesFile) -> impl Mcu + AsRef<[u8]> {
-    // todo: create name table mapping by f.header
     RamMcu::start_from(0x2000, [0; 0x1000])
 }
 
