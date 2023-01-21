@@ -176,7 +176,7 @@ pub struct Ppu<PM, NM> {
     oam_addr: u8,
     oam: [u8; 0x100], // object attribute memory
 
-    data_rw_addr: RefCell<Option<u16>>, // None after reset
+    data_rw_addr: RefCell<u16>, // None after reset
     image: RgbImage,
 }
 
@@ -230,7 +230,7 @@ impl<PM, NM> Ppu<PM, NM> {
             cur_pattern_table_idx: 0,
             oam_addr: 0,
             oam: [0; 0x100],
-            data_rw_addr: RefCell::new(None),
+            data_rw_addr: RefCell::new(0),
             image: RgbImage::new(256, 240),
         }
     }
@@ -266,7 +266,7 @@ impl<PM, NM> Ppu<PM, NM> {
 
     fn read_status(&self) -> PpuStatus {
         // reset data_rw_addr on read status register
-        *self.data_rw_addr.borrow_mut() = None;
+        *self.data_rw_addr.borrow_mut() = 0;
         let r = *self.status.borrow();
         *self.status.borrow_mut() = r.with_v_blank(false);
         r
@@ -298,36 +298,30 @@ impl<PM: Mcu, NM: Mcu> Ppu<PM, NM> {
 
     fn set_data_rw_addr(&mut self, address: u8) {
         let addr = *self.data_rw_addr.borrow();
-        match addr {
-            None => {
-                self.data_rw_addr = RefCell::new(Some(address as u16));
-            }
-            Some(addr) => {
-                self.data_rw_addr = RefCell::new(Some((addr as u16) << 8 | address as u16));
-            }
-        }
+        self.data_rw_addr = RefCell::new((addr as u16) << 8 | address as u16);
     }
 
-    fn inc_data_rw_addr(&self, addr: u16) {
+    fn inc_data_rw_addr(&self) {
         let delta = if self.ctrl_flags.increment_mode() {
             32
         } else {
             1
         };
-        *self.data_rw_addr.borrow_mut() = Some(addr.wrapping_add(delta));
+        let mut addr = self.data_rw_addr.borrow_mut();
+        *addr = (*addr).wrapping_add(delta);
     }
 
     fn read_vram_for_cpu(&self) -> u8 {
-        let addr = self.data_rw_addr.borrow().expect("data_rw addr not set");
+        let addr = *self.data_rw_addr.borrow();
         let value = self.read_vram(addr);
-        self.inc_data_rw_addr(addr);
+        self.inc_data_rw_addr();
         value
     }
 
     fn write_vram_for_cpu(&mut self, v: u8) {
-        let addr = self.data_rw_addr.borrow().expect("data_rw addr not set");
+        let addr = *self.data_rw_addr.borrow();
         self.write_vram(addr, v);
-        self.inc_data_rw_addr(addr);
+        self.inc_data_rw_addr();
     }
 }
 
@@ -340,8 +334,7 @@ where
         // todo: mirror to 0x3fff
         match address {
             0x2002 => self.read_status().into(),
-            0x2004 => todo!(),
-            0x2006 => self.read_oam_data(),
+            0x2004 => self.read_oam_data(),
             0x2007 => self.read_vram_for_cpu(),
             _ => 0x55,
         }
@@ -386,6 +379,9 @@ mod tests {
     #[test]
     fn read_write_v_ram() {
         let mut ppu = Ppu::new(RamMcu::new([0; 0x4000]), RamMcu::new([0; 0x4000]));
+        // data_addr default to 0
+        assert_eq!(ppu.read_vram_for_cpu(), 0);
+
         ppu.read(0x2000); // reset addr
         ppu.write(0x2006, 0x21);
         ppu.write(0x2006, 0x08);
@@ -420,6 +416,9 @@ mod tests {
     #[test]
     fn read_write_oam() {
         let mut ppu = Ppu::new(RamMcu::new([0; 0x4000]), RamMcu::new([0; 0x4000]));
+        // oam addr default to 0
+        assert_eq!(ppu.oam_addr, 0);
+
         ppu.write(0x2003, 0x12);
         // write oma data, auto inc oma addr
         ppu.write(0x2004, 0x34);
