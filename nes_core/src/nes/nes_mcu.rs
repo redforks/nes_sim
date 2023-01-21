@@ -3,6 +3,7 @@ use crate::mcu::{MappingMcu, Mcu, RamMcu};
 use crate::nes::lower_ram::LowerRam;
 use crate::nes::mapper;
 use crate::nes::ppu::{Ppu, PpuTrait};
+use log::info;
 
 pub struct NesMcu<P: PpuTrait> {
     lower_ram: LowerRam,
@@ -27,6 +28,7 @@ pub fn build(file: &INesFile) -> impl Mcu {
 
 impl<P: PpuTrait> NesMcu<P> {
     fn ppu_dma(&mut self, address: u8) {
+        info!("ppu dma");
         let addr = (address as u16) << 8;
         let mut buf = [0x00u8; 0x100];
         for i in 0..0x100 {
