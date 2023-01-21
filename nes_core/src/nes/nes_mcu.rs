@@ -59,4 +59,8 @@ impl<P: PpuTrait> Mcu for NesMcu<P> {
             0x4020..=0xffff => self.inside_cartridge.write(address, value),
         }
     }
+
+    fn get_ppu(&mut self) -> &mut dyn PpuTrait {
+        self.ppu.get_ppu()
+    }
 }
