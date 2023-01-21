@@ -1,6 +1,6 @@
 use crate::mcu::Mcu;
 use crate::to_from_u8;
-use image::{Rgb, RgbImage};
+use image::{Rgba, RgbaImage};
 use log::debug;
 use modular_bitfield::prelude::*;
 use std::cell::RefCell;
@@ -9,7 +9,7 @@ mod pattern;
 
 pub use pattern::*;
 
-type RGB = Rgb<u8>;
+type RGB = Rgba<u8>;
 
 #[derive(Copy, Clone)]
 #[bitfield]
@@ -53,7 +53,8 @@ to_from_u8!(PpuStatus);
 const PALETTE_MEM_START: u16 = 0x3f00;
 
 const fn rgb(v: [u8; 3]) -> RGB {
-    Rgb::<u8>(v)
+    let [r, g, b] = v;
+    Rgba::<u8>([r, g, b, 0xff])
 }
 
 #[rustfmt::skip]
@@ -161,7 +162,7 @@ pub trait PpuTrait: Mcu {
     /// Trigger nmi at the start of v-blank, if should_nmi() returns true.
     fn set_v_blank(&mut self, v_blank: bool);
 
-    fn render(&mut self) -> &RgbImage;
+    fn render(&mut self) -> &RgbaImage;
 }
 
 pub struct Ppu<PM, NM> {
@@ -177,7 +178,7 @@ pub struct Ppu<PM, NM> {
     oam: [u8; 0x100], // object attribute memory
 
     data_rw_addr: RefCell<u16>, // None after reset
-    image: RgbImage,
+    image: RgbaImage,
 }
 
 impl<PM, NM> PpuTrait for Ppu<PM, NM>
@@ -198,7 +199,7 @@ where
         self.status = RefCell::new(status.with_v_blank(v_blank));
     }
 
-    fn render(&mut self) -> &RgbImage {
+    fn render(&mut self) -> &RgbaImage {
         let pattern =
             PatternBand::new(self.pattern.as_ref()).pattern(self.cur_pattern_table_idx as usize);
         let cur_name_table = self.cur_name_table_addr as usize;
@@ -231,7 +232,7 @@ impl<PM, NM> Ppu<PM, NM> {
             oam_addr: 0,
             oam: [0; 0x100],
             data_rw_addr: RefCell::new(0),
-            image: RgbImage::new(256, 240),
+            image: RgbaImage::new(256, 240),
         }
     }
 

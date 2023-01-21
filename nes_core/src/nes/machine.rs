@@ -1,7 +1,7 @@
 use crate::ines::INesFile;
 use crate::nes::create_mcu;
 use crate::{Cpu, EmptyPlugin};
-use image::RgbImage;
+use image::RgbaImage;
 
 pub struct Machine {
     cpu: Cpu,
@@ -16,7 +16,7 @@ impl Machine {
 
     /// Run the machine for a single frame.
     /// `ms`: milliseconds elapsed since last frame.
-    pub fn process_frame(&mut self, ms: f64) -> &RgbImage {
+    pub fn process_frame(&mut self, ms: f64) -> &RgbaImage {
         const CYCLES_PER_MS: u32 = 1789;
         const V_BLANK_CYCLES: u32 = 2273;
         let cycles = (ms * CYCLES_PER_MS as f64) as u32;
