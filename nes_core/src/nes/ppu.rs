@@ -149,14 +149,14 @@ pub trait PpuTrait: Mcu {
     fn render(&mut self) -> &RgbaImage;
 }
 
-pub struct Ppu<PM, NM> {
+pub struct Ppu<PM> {
     ctrl_flags: PpuCtrl,
     status: RefCell<PpuStatus>,
-    pattern: PM,               // pattern memory
-    name_table: NM,            // name table
-    cur_name_table_addr: u16,  // current active name table start address
-    palette: Palette,          // palette memory
-    cur_pattern_table_idx: u8, // index of current active pattern table, 0 or 1
+    pattern: PM,                  // pattern memory
+    name_table: NameTableControl, // name table
+    cur_name_table_addr: u16,     // current active name table start address
+    palette: Palette,             // palette memory
+    cur_pattern_table_idx: u8,    // index of current active pattern table, 0 or 1
 
     oam_addr: u8,
     oam: [u8; 0x100], // object attribute memory
@@ -165,10 +165,9 @@ pub struct Ppu<PM, NM> {
     image: RgbaImage,
 }
 
-impl<PM, NM> PpuTrait for Ppu<PM, NM>
+impl<PM> PpuTrait for Ppu<PM>
 where
     PM: Mcu + AsRef<[u8]>,
-    NM: Mcu + NameTables,
 {
     fn oam_dma(&mut self, vals: &[u8; 256]) {
         self.oam.copy_from_slice(vals);
@@ -205,13 +204,13 @@ where
     }
 }
 
-impl<PM, NM> Ppu<PM, NM> {
-    pub fn new(pattern: PM, name_table: NM) -> Self {
+impl<PM> Ppu<PM> {
+    pub fn new(pattern: PM) -> Self {
         Ppu {
             ctrl_flags: 0.into(),
             status: RefCell::new(0.into()),
             pattern,
-            name_table,
+            name_table: NameTableControl::new(),
             cur_name_table_addr: 0x2000,
             palette: Palette::default(),
             cur_pattern_table_idx: 0,
@@ -266,9 +265,13 @@ impl<PM, NM> Ppu<PM, NM> {
         *self.status.borrow_mut() = r.with_v_blank(false);
         r
     }
+
+    pub fn set_mirroring(&mut self, mirroring: Mirroring) {
+        self.name_table.set_mirroring(mirroring);
+    }
 }
 
-impl<PM: Mcu, NM: Mcu> Ppu<PM, NM> {
+impl<PM: Mcu> Ppu<PM> {
     fn read_vram(&self, address: u16) -> u8 {
         match address {
             0x0000..=0x1fff => self.pattern.read(address),
@@ -320,10 +323,9 @@ impl<PM: Mcu, NM: Mcu> Ppu<PM, NM> {
     }
 }
 
-impl<PM, NM> Mcu for Ppu<PM, NM>
+impl<PM> Mcu for Ppu<PM>
 where
     PM: Mcu + AsRef<[u8]>,
-    NM: Mcu + NameTables,
 {
     fn read(&self, address: u16) -> u8 {
         // todo: mirror to 0x3fff
@@ -361,8 +363,8 @@ mod tests {
     use super::*;
     use crate::mcu::RamMcu;
 
-    fn new_test_ppu() -> Ppu<RamMcu<0x2000>, FourScreenNameTables> {
-        Ppu::new(RamMcu::new([0; 0x2000]), FourScreenNameTables::new())
+    fn new_test_ppu() -> Ppu<RamMcu<0x2000>> {
+        Ppu::new(RamMcu::new([0; 0x2000]))
     }
 
     #[test]
