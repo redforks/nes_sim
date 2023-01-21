@@ -409,6 +409,10 @@ impl Cpu {
         }
     }
 
+    pub fn mcu(&mut self) -> &mut dyn Mcu {
+        self.mcu.as_mut()
+    }
+
     pub fn reset(&mut self) {
         self.pc = self.read_word(0xFFFC);
         self.set_flag(Flag::InterruptDisabled, true);

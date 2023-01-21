@@ -333,8 +333,8 @@ impl<PM: Mcu, NM: Mcu> Ppu<PM, NM> {
 
 impl<PM, NM> Mcu for Ppu<PM, NM>
 where
-    PM: Mcu,
-    NM: Mcu,
+    PM: Mcu + AsRef<[u8]>,
+    NM: Mcu + AsRef<[u8]>,
 {
     fn read(&self, address: u16) -> u8 {
         // todo: mirror to 0x3fff
@@ -362,6 +362,10 @@ where
             0x4014 => todo!(),
             _ => panic!("Can not write to Ppu at address ${:x}", address),
         }
+    }
+
+    fn get_ppu(&mut self) -> &mut dyn PpuTrait {
+        self
     }
 }
 

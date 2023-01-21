@@ -1,6 +1,7 @@
 mod mapping;
 mod ram;
 
+use crate::nes::ppu::PpuTrait;
 pub use mapping::*;
 pub use ram::RamMcu;
 
@@ -11,4 +12,9 @@ pub use ram::RamMcu;
 pub trait Mcu {
     fn read(&self, address: u16) -> u8;
     fn write(&mut self, address: u16, value: u8);
+
+    // TODO: remove this hack
+    fn get_ppu(&mut self) -> &mut dyn PpuTrait {
+        panic!("not implemented");
+    }
 }
