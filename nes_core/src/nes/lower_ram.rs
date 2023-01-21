@@ -1,4 +1,4 @@
-use crate::mcu::{DefinedRegion, Mcu};
+use crate::mcu::Mcu;
 
 /// Lower nes RAM (0x0000-0x07FF) and remap to 0x0800-0x1FFF
 pub struct LowerRam {

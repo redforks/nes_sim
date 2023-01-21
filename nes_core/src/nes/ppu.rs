@@ -293,7 +293,7 @@ impl<PM: Mcu, NM: Mcu> Ppu<PM, NM> {
 
     fn set_data_rw_addr(&mut self, address: u8) {
         let addr = *self.data_rw_addr.borrow();
-        self.data_rw_addr = RefCell::new((addr as u16) << 8 | address as u16);
+        self.data_rw_addr = RefCell::new(addr << 8 | address as u16);
     }
 
     fn inc_data_rw_addr(&self) {
