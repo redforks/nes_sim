@@ -148,7 +148,7 @@ impl<'a> NameTable<'a> {
 
     fn tile(&self, x: u8, y: u8) -> Tile<'a> {
         let idx = (y as usize * 32) + x as usize;
-        self.pattern.tile(self.table[idx] as usize)
+        self.pattern.tile(self.table[idx])
     }
 
     fn palette_idx(&self, x: u8, y: u8) -> u8 {
