@@ -6,7 +6,7 @@ pub mod controller;
 mod lower_ram;
 mod machine;
 mod mapper;
-mod nes_mcu;
+pub mod nes_mcu;
 pub mod ppu;
 pub use machine::Machine;
 
