@@ -16,7 +16,7 @@ pub struct NesMcu<P: PpuTrait> {
 
 pub fn build(file: &INesFile) -> impl Mcu {
     let cartridge = mapper::create_cartridge(file);
-    let mut ppu = Ppu::new(mapper::create_ppu_pattern(file));
+    let mut ppu = Ppu::new();
     ppu.set_mirroring(if file.header().ver_or_hor_arrangement {
         Mirroring::Vertical
     } else {
