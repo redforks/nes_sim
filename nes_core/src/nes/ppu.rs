@@ -154,10 +154,9 @@ pub trait PpuTrait {
     fn write(&mut self, pattern: &mut [u8], address: u16, val: u8);
 }
 
-pub struct Ppu<PM> {
+pub struct Ppu {
     ctrl_flags: PpuCtrl,
     status: RefCell<PpuStatus>,
-    pattern: PM,                  // pattern memory
     name_table: NameTableControl, // name table
     cur_name_table_addr: u16,     // current active name table start address
     palette: Palette,             // palette memory
@@ -170,10 +169,7 @@ pub struct Ppu<PM> {
     image: RgbaImage,
 }
 
-impl<PM> PpuTrait for Ppu<PM>
-where
-    PM: Mcu + AsRef<[u8]>,
-{
+impl PpuTrait for Ppu {
     fn oam_dma(&mut self, vals: &[u8; 256]) {
         self.oam.copy_from_slice(vals);
     }
@@ -188,8 +184,7 @@ where
     }
 
     fn render(&mut self, pattern: &[u8]) -> &RgbaImage {
-        let pattern =
-            PatternBand::new(self.pattern.as_ref()).pattern(self.cur_pattern_table_idx as usize);
+        let pattern = PatternBand::new(pattern).pattern(self.cur_pattern_table_idx as usize);
         let cur_name_table = (self.cur_name_table_addr - NAME_TABLE_MEM_START) / 0x400;
         let name_table = self.name_table.nth(cur_name_table as u8);
         let attr_table = self.name_table.attribute_table(cur_name_table as u8);
@@ -221,12 +216,11 @@ where
     }
 }
 
-impl<PM> Ppu<PM> {
-    pub fn new(pattern: PM) -> Self {
+impl Ppu {
+    pub fn new() -> Self {
         Ppu {
             ctrl_flags: 0.into(),
             status: RefCell::new(0.into()),
-            pattern,
             name_table: NameTableControl::new(),
             cur_name_table_addr: 0x2000,
             palette: Palette::default(),
@@ -284,27 +278,29 @@ impl<PM> Ppu<PM> {
     }
 }
 
-impl<PM: Mcu> Ppu<PM> {
+impl Ppu {
     fn read_vram(&self, address: u16) -> u8 {
-        match address {
-            0x0000..=0x1fff => self.pattern.read(address),
-            0x2000..=0x2fff => self.name_table.read(address),
-            0x3000..=0x3eff => self.read_vram(address - 0x1000),
-            0x3f00..=0x3f1f => self.palette.read(address),
-            0x3f20..=0x3fff => self.read_vram(address - 0x20),
-            _ => unreachable!(),
-        }
+        todo!()
+        // match address {
+        //     0x0000..=0x1fff => pattern[address],
+        //     0x2000..=0x2fff => self.name_table.read(address),
+        //     0x3000..=0x3eff => self.read_vram(address - 0x1000),
+        //     0x3f00..=0x3f1f => self.palette.read(address),
+        //     0x3f20..=0x3fff => self.read_vram(address - 0x20),
+        //     _ => unreachable!(),
+        // }
     }
 
     fn write_vram(&mut self, address: u16, value: u8) {
-        match address {
-            0x0000..=0x1fff => self.pattern.write(address, value),
-            0x2000..=0x2fff => self.name_table.write(address, value),
-            0x3000..=0x3eff => self.write_vram(address - 0x1000, value),
-            0x3f00..=0x3f1f => self.palette.write(address, value),
-            0x3f20..=0x3fff => self.write_vram(address - 0x20, value),
-            _ => unreachable!(),
-        }
+        todo!()
+        // match address {
+        //     0x0000..=0x1fff => pattern[address] = value,
+        //     0x2000..=0x2fff => self.name_table.write(address, value),
+        //     0x3000..=0x3eff => self.write_vram(address - 0x1000, value),
+        //     0x3f00..=0x3f1f => self.palette.write(address, value),
+        //     0x3f20..=0x3fff => self.write_vram(address - 0x20, value),
+        //     _ => unreachable!(),
+        // }
     }
 
     fn set_data_rw_addr(&mut self, address: u8) {
@@ -336,10 +332,7 @@ impl<PM: Mcu> Ppu<PM> {
     }
 }
 
-impl<PM> Mcu for Ppu<PM>
-where
-    PM: Mcu + AsRef<[u8]>,
-{
+impl Mcu for Ppu {
     fn read(&self, address: u16) -> u8 {
         // todo: mirror to 0x3fff
         match address {
@@ -376,7 +369,7 @@ mod tests {
     use super::*;
     use crate::mcu::RamMcu;
 
-    fn new_test_ppu() -> Ppu<RamMcu<0x2000>> {
+    fn new_test_ppu() -> Ppu {
         Ppu::new(RamMcu::new([0; 0x2000]))
     }
 
