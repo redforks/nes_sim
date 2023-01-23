@@ -1,6 +1,7 @@
 use super::CARTRIDGE_START_ADDR;
 use crate::mcu::Mcu;
 use crate::nes::mapper::Cartridge;
+use crate::nes::ppu::Ppu;
 
 pub struct Mapper0 {
     prg_rom: [u8; 0x8000],
@@ -30,7 +31,11 @@ impl Default for Mapper0 {
     }
 }
 
-impl Mcu for Mapper0 {
+impl Cartridge for Mapper0 {
+    fn pattern_ref(&self) -> &[u8] {
+        &self.chr_rom
+    }
+
     fn read(&self, address: u16) -> u8 {
         match address {
             CARTRIDGE_START_ADDR..=0x7fff => self.ram[(address - CARTRIDGE_START_ADDR) as usize],
@@ -39,7 +44,7 @@ impl Mcu for Mapper0 {
         }
     }
 
-    fn write(&mut self, address: u16, value: u8) {
+    fn write(&mut self, _ppu: &mut Ppu, address: u16, value: u8) {
         match address {
             CARTRIDGE_START_ADDR..=0x7fff => {
                 self.ram[(address - CARTRIDGE_START_ADDR) as usize] = value
@@ -52,12 +57,6 @@ impl Mcu for Mapper0 {
     }
 }
 
-impl Cartridge for Mapper0 {
-    fn pattern_ref(&self) -> &[u8] {
-        &self.chr_rom
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -66,19 +65,20 @@ mod tests {
     #[test]
     fn mcu() {
         let mut mcu = Mapper0::default();
+        let mut ppu = Ppu::new();
 
         // read-write ram
-        mcu.write(CARTRIDGE_START_ADDR, 0x01);
+        mcu.write(&mut ppu, CARTRIDGE_START_ADDR, 0x01);
         assert_eq!(mcu.read(CARTRIDGE_START_ADDR), 0x01);
         assert_eq!(mcu.ram[0], 0x01);
-        mcu.write(0x7fff, 0x03);
+        mcu.write(&mut ppu, 0x7fff, 0x03);
         assert_eq!(mcu.read(0x7fff), 0x03);
 
         mcu.prg_rom[0] = 0x02;
         // read-write rom
         assert_eq!(mcu.read(0x8000), 0x02);
         // ignore write to rom
-        mcu.write(0x8000, 0x03);
+        mcu.write(&mut ppu, 0x8000, 0x03);
         assert_eq!(mcu.prg_rom[0], 0x02);
     }
 

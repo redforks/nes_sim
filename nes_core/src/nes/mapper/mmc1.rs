@@ -1,6 +1,18 @@
 use super::Cartridge;
 use crate::mcu::Mcu;
+use crate::nes::ppu::Ppu;
+use crate::to_from_u8;
 use log::debug;
+use modular_bitfield::prelude::*;
+
+#[bitfield]
+struct ControlFlags {
+    _not_used: B3,
+    pub chr_in_4k: bool,
+    pub prg_mode: B2,
+    pub mirroring: B2,
+}
+to_from_u8!(ControlFlags);
 
 #[derive(Eq, PartialEq, Copy, Clone)]
 enum PrgRomMode {
@@ -27,6 +39,53 @@ impl Cartridge for MMC1 {
     fn pattern_ref(&self) -> &[u8] {
         // &self.cur_chr_rom
         todo!()
+    }
+
+    fn read(&self, address: u16) -> u8 {
+        match address {
+            0x4020..=0x5fff => 0,
+            0x6000..=0x7fff => self.prg_ram[address as usize - 0x6000],
+            0x8000..=0xbfff => self.prg_rom[address as usize - 0x8000 + self.prg_rom_bank1_start],
+            0xc000..=0xffff => self.prg_rom[address as usize - 0xc000 + self.prg_rom_bank2_start],
+            _ => panic!("read address out of range: {:04x}", address),
+        }
+    }
+
+    fn write(&mut self, ppu: &mut Ppu, address: u16, value: u8) {
+        todo!()
+        // match address {
+        //     0x4020..=0x5fff => {}
+        //     0x6000..=0x7fff => self.prg_ram[address as usize - 0x6000] = value,
+        //     _ => {
+        //         // reset if value high bit is 1
+        //         if value & 0x80 != 0 {
+        //             debug!("{:x} written to ${:x} reset MMC1", value, address);
+        //             self.reset();
+        //             return;
+        //         }
+        //
+        //         if self.sr_write_count < 5 {
+        //             self.sr_write_count += 1;
+        //             self.sr <<= 1;
+        //             self.sr |= value & 0x01;
+        //         }
+        //
+        //         if self.sr_write_count == 5 {
+        //             match address {
+        //                 0x8000..=0x9fff => self.control(self.sr.into()),
+        //                 0xa000..=0xbfff => self.chr_bank1(self.sr),
+        //                 0xc000..=0xdfff => self.chr_bank1(self.sr),
+        //                 0xe000..=0xffff => self.prg_bank(self.sr),
+        //                 _ => panic!(
+        //                     "write address out of range or unimplemented: ${:04x} {:x}",
+        //                     address, self.sr,
+        //                 ),
+        //             }
+        //             self.sr_write_count = 0;
+        //             self.sr = 0;
+        //         }
+        //     }
+        // }
     }
 }
 
@@ -75,7 +134,7 @@ impl MMC1 {
         }
     }
 
-    fn control(&mut self, byte: u8) {
+    fn control(&mut self, byte: ControlFlags) {
         // // control register
         // let prg_rom_mode = match self.sr & 0x03 {
         //     0 => PrgRomMode::Switch32K,
@@ -103,54 +162,6 @@ impl MMC1 {
     }
 }
 
-impl Mcu for MMC1 {
-    fn read(&self, address: u16) -> u8 {
-        match address {
-            0x4020..=0x5fff => 0,
-            0x6000..=0x7fff => self.prg_ram[address as usize - 0x6000],
-            0x8000..=0xbfff => self.prg_rom[address as usize - 0x8000 + self.prg_rom_bank1_start],
-            0xc000..=0xffff => self.prg_rom[address as usize - 0xc000 + self.prg_rom_bank2_start],
-            _ => panic!("read address out of range: {:04x}", address),
-        }
-    }
-
-    fn write(&mut self, address: u16, value: u8) {
-        match address {
-            0x4020..=0x5fff => {}
-            0x6000..=0x7fff => self.prg_ram[address as usize - 0x6000] = value,
-            _ => {
-                // reset if value high bit is 1
-                if value & 0x80 != 0 {
-                    debug!("{:x} written to ${:x} reset MMC1", value, address);
-                    self.reset();
-                    return;
-                }
-
-                if self.sr_write_count < 5 {
-                    self.sr_write_count += 1;
-                    self.sr <<= 1;
-                    self.sr |= value & 0x01;
-                }
-
-                if self.sr_write_count == 5 {
-                    match address {
-                        0x8000..=0x9fff => self.control(self.sr),
-                        0xa000..=0xbfff => self.chr_bank1(self.sr),
-                        0xc000..=0xdfff => self.chr_bank1(self.sr),
-                        0xe000..=0xffff => self.prg_bank(self.sr),
-                        _ => panic!(
-                            "write address out of range or unimplemented: ${:04x} {:x}",
-                            address, self.sr,
-                        ),
-                    }
-                    self.sr_write_count = 0;
-                    self.sr = 0;
-                }
-            }
-        }
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -163,34 +174,37 @@ mod tests {
         prg_rom[0] = 0xba;
         prg_rom[PRG_ROM_BANK_SIZE] = 0xcd;
         let mut mmc1 = MMC1::new(&prg_rom, &[]);
+        let mut ppu = Ppu::new();
 
         // no effect read/write before 0x6000
-        mmc1.write(0x4020, 1);
+        mmc1.write(&mut ppu, 0x4020, 1);
         assert_eq!(mmc1.read(0x4020), 0);
 
-        mmc1.write(0x6000, 1);
+        mmc1.write(&mut ppu, 0x6000, 1);
         assert_eq!(mmc1.read(0x6000), 1);
-        mmc1.write(0x7fff, 255);
+        mmc1.write(&mut ppu, 0x7fff, 255);
         assert_eq!(mmc1.read(0x7fff), 255);
 
         // default is FixLast16k
         assert_eq!(mmc1.read(0x8000), 0xba);
         assert_eq!(mmc1.read(0xffff), 0xab);
 
-        mmc1.write(0xE000, 1);
-        mmc1.write(0xE000, 1);
+        mmc1.write(&mut ppu, 0xE000, 1);
+        mmc1.write(&mut ppu, 0xE000, 1);
         // reset load register, and select 2nd page to first band
-        mmc1.write(0x8000, 0x80);
-        mmc1.write(0xE000, 1);
-        mmc1.write(0xE001, 0);
-        mmc1.write(0xE002, 0);
-        mmc1.write(0xE002, 0);
-        mmc1.write(0xE002, 1);
+        mmc1.write(&mut ppu, 0x8000, 0x80);
+        mmc1.write(&mut ppu, 0xE000, 1);
+        mmc1.write(&mut ppu, 0xE001, 0);
+        mmc1.write(&mut ppu, 0xE002, 0);
+        mmc1.write(&mut ppu, 0xE002, 0);
+        mmc1.write(&mut ppu, 0xE002, 1);
         assert_eq!(mmc1.read(0x8000), 0xcd);
     }
 
     #[test]
     fn chr_row() {
         let mut chr_rom = [0; 4 * 4096];
+        chr_rom[0] = 0x12;
+        todo!()
     }
 }

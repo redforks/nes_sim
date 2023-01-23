@@ -1,5 +1,5 @@
 use crate::ines::INesFile;
-use crate::mcu::Mcu;
+use crate::nes::ppu::Ppu;
 
 const CARTRIDGE_START_ADDR: u16 = 0x4020;
 
@@ -14,6 +14,8 @@ pub fn create_cartridge(f: &INesFile) -> Box<dyn Cartridge> {
     }
 }
 
-pub trait Cartridge: Mcu {
+pub trait Cartridge {
     fn pattern_ref(&self) -> &[u8];
+    fn read(&self, address: u16) -> u8;
+    fn write(&mut self, ppu: &mut Ppu, address: u16, value: u8);
 }
