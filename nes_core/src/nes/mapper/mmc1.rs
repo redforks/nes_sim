@@ -1,5 +1,4 @@
 use super::Cartridge;
-use crate::nes::apu::new;
 use crate::nes::ppu::{Mirroring, Ppu};
 use crate::to_from_u8;
 use log::{debug, info};
@@ -141,7 +140,7 @@ impl MMC1 {
         self.chr_bank_size = 4096;
         self.set_prg_rom_mode(PrgRomMode::FixLast16K);
         self.select_chr_bank1(0);
-        // todo: self.select_chr_bank2(1);
+        self.select_chr_bank2(1);
     }
 
     fn set_prg_rom_mode(&mut self, mode: PrgRomMode) {
@@ -176,12 +175,23 @@ impl MMC1 {
     fn select_chr_bank1(&mut self, offset: u8) {
         let offset = offset as usize;
         let bank_size = self.chr_bank_size as usize;
+        if (offset + 1) * bank_size >= self.chr_rom.len() {
+            return;
+        }
         self.cur_chr_rom[0..bank_size]
             .copy_from_slice(&self.chr_rom[offset * bank_size..(offset + 1) * bank_size])
     }
 
-    fn select_chr_bank2(&mut self, _byte: u8) {
-        todo!()
+    fn select_chr_bank2(&mut self, offset: u8) {
+        if self.chr_bank_size != 4096 {
+            return;
+        }
+        let offset = offset as usize;
+        if (offset + 1) * 4096 >= self.chr_rom.len() {
+            return;
+        }
+
+        self.cur_chr_rom[4096..].copy_from_slice(&self.chr_rom[offset * 4096..(offset + 1) * 4096])
     }
 
     fn select_prg_bank(&mut self, byte: u8) {
@@ -319,7 +329,7 @@ mod tests {
 
     #[test]
     fn select_chr_bank1() {
-        let (mut mmc1, mut ppu) = create_with_chr(|rom| {
+        let (mut mmc1, _ppu) = create_with_chr(|rom| {
             rom[0] = 1;
             rom[8 * 1024] = 2;
             rom[4 * 1024] = 3;
@@ -338,6 +348,29 @@ mod tests {
         assert_eq!(mmc1.chr_bank_size, 8 * 1024);
         mmc1.select_chr_bank1(0);
         assert_eq!(mmc1.cur_chr_rom[0x0000], 1);
+        assert_eq!(mmc1.cur_chr_rom[4096], 3);
+    }
+
+    #[test]
+    fn select_chr_bank2() {
+        let (mut mmc1, _ppu) = create_with_chr(|rom| {
+            rom[0] = 1;
+            rom[4096] = 2;
+            rom[8 * 1024] = 3;
+        });
+        assert_eq!(mmc1.chr_bank_size, 4 * 1024);
+
+        // default select 2nd 4k
+        assert_eq!(mmc1.cur_chr_rom[4096], 2);
+
+        // set bank 2
+        mmc1.select_chr_bank2(2);
+        assert_eq!(mmc1.cur_chr_rom[4096], 3);
+
+        // ignored in 8k mode
+        mmc1.set_chr_bank_mode(false);
+        assert_eq!(mmc1.chr_bank_size, 8 * 1024);
+        mmc1.select_chr_bank2(0);
         assert_eq!(mmc1.cur_chr_rom[4096], 3);
     }
 }
