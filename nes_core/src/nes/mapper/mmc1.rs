@@ -98,9 +98,9 @@ impl Cartridge for MMC1 {
                 if self.sr_write_count == 5 {
                     match address {
                         0x8000..=0x9fff => self.control(ppu, self.sr.into()),
-                        0xa000..=0xbfff => self.chr_bank1(self.sr),
-                        0xc000..=0xdfff => self.chr_bank1(self.sr),
-                        0xe000..=0xffff => self.prg_bank(self.sr),
+                        0xa000..=0xbfff => self.select_chr_bank1(self.sr),
+                        0xc000..=0xdfff => self.select_chr_bank2(self.sr),
+                        0xe000..=0xffff => self.select_prg_bank(self.sr),
                         _ => panic!(
                             "write address out of range or unimplemented: ${:04x} {:x}",
                             address, self.sr,
@@ -140,6 +140,8 @@ impl MMC1 {
         self.sr_write_count = 0;
         self.chr_bank_size = 4096;
         self.set_prg_rom_mode(PrgRomMode::FixLast16K);
+        self.select_chr_bank1(0);
+        // todo: self.select_chr_bank2(1);
     }
 
     fn set_prg_rom_mode(&mut self, mode: PrgRomMode) {
@@ -171,15 +173,18 @@ impl MMC1 {
         self.set_chr_bank_mode(flags.chr_in_4k());
     }
 
-    fn chr_bank0(&mut self, _byte: u8) {
+    fn select_chr_bank1(&mut self, offset: u8) {
+        let offset = offset as usize;
+        let bank_size = self.chr_bank_size as usize;
+        self.cur_chr_rom[0..bank_size]
+            .copy_from_slice(&self.chr_rom[offset * bank_size..(offset + 1) * bank_size])
+    }
+
+    fn select_chr_bank2(&mut self, _byte: u8) {
         todo!()
     }
 
-    fn chr_bank1(&mut self, _byte: u8) {
-        todo!()
-    }
-
-    fn prg_bank(&mut self, byte: u8) {
+    fn select_prg_bank(&mut self, byte: u8) {
         // prg rom bank register
         let bank = byte & 0x0f;
         info!("MMC1 switch prg rom 1st bank to ${:x}", bank);
@@ -200,6 +205,15 @@ mod tests {
         let mut prg_rom = [0; 128 * 1024];
         init_prg(&mut prg_rom);
         (MMC1::new(&prg_rom, &[]), Ppu::new())
+    }
+
+    fn create_with_chr<F>(mut init_chr: F) -> (MMC1, Ppu)
+    where
+        F: FnMut(&mut [u8]),
+    {
+        let mut chr_rom = [0; 128 * 1024];
+        init_chr(&mut chr_rom);
+        (MMC1::new(&[0; 32 * 1024], &chr_rom), Ppu::new())
     }
 
     #[test]
@@ -301,5 +315,29 @@ mod tests {
         // set to 4k
         mmc1.control(&mut ppu, ControlFlags::new().with_chr_in_4k(true));
         assert_eq!(mmc1.chr_bank_size, 4 * 1024);
+    }
+
+    #[test]
+    fn select_chr_bank1() {
+        let (mut mmc1, mut ppu) = create_with_chr(|rom| {
+            rom[0] = 1;
+            rom[8 * 1024] = 2;
+            rom[4 * 1024] = 3;
+        });
+        assert_eq!(mmc1.chr_bank_size, 4 * 1024);
+
+        // default select first 4k
+        assert_eq!(mmc1.cur_chr_rom[0x0000], 1);
+
+        // set bank 2
+        mmc1.select_chr_bank1(2);
+        assert_eq!(mmc1.cur_chr_rom[0x0000], 2);
+
+        // switch to 8k mode
+        mmc1.set_chr_bank_mode(false);
+        assert_eq!(mmc1.chr_bank_size, 8 * 1024);
+        mmc1.select_chr_bank1(0);
+        assert_eq!(mmc1.cur_chr_rom[0x0000], 1);
+        assert_eq!(mmc1.cur_chr_rom[4096], 3);
     }
 }
