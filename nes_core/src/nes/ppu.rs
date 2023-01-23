@@ -143,9 +143,6 @@ pub trait PpuTrait {
 
     /// Trigger nmi at the start of v-blank, if should_nmi() returns true.
     fn set_v_blank(&mut self, v_blank: bool);
-
-    fn read(&self, pattern: &[u8], address: u16) -> u8;
-    fn write(&mut self, pattern: &mut [u8], address: u16, val: u8);
 }
 
 pub struct Ppu {
@@ -171,32 +168,6 @@ impl PpuTrait for Ppu {
     fn set_v_blank(&mut self, v_blank: bool) {
         let status = *self.status.borrow();
         self.status = RefCell::new(status.with_v_blank(v_blank));
-    }
-
-    fn read(&self, pattern: &[u8], address: u16) -> u8 {
-        // todo: mirror to 0x3fff
-        match address {
-            0x2002 => self.read_status().into(),
-            0x2004 => self.read_oam_data(),
-            0x2007 => self.read_vram_and_inc(pattern),
-            _ => 0x55,
-        }
-    }
-
-    fn write(&mut self, pattern: &mut [u8], address: u16, val: u8) {
-        // todo: mirror to 0x3fff
-        match address {
-            0x2000 => self.set_control_flags(PpuCtrl::from(val)),
-            0x2001 => self.set_ppu_mask(PpuMask::from(val)),
-            0x2003 => self.set_oma_addr(val),
-            0x2004 => self.write_oam_data_and_inc(val),
-            0x2005 => {
-                // todo: scroll
-            }
-            0x2006 => self.set_data_rw_addr(val),
-            0x2007 => self.write_vram_and_inc(pattern, val),
-            _ => panic!("Can not write to Ppu at address ${:x}", address),
-        }
     }
 }
 
@@ -287,6 +258,32 @@ impl Ppu {
         let r = *self.status.borrow();
         *self.status.borrow_mut() = r.with_v_blank(false);
         r
+    }
+
+    pub fn read(&self, pattern: &[u8], address: u16) -> u8 {
+        // todo: mirror to 0x3fff
+        match address {
+            0x2002 => self.read_status().into(),
+            0x2004 => self.read_oam_data(),
+            0x2007 => self.read_vram_and_inc(pattern),
+            _ => 0x55,
+        }
+    }
+
+    pub fn write(&mut self, pattern: &mut [u8], address: u16, val: u8) {
+        // todo: mirror to 0x3fff
+        match address {
+            0x2000 => self.set_control_flags(PpuCtrl::from(val)),
+            0x2001 => self.set_ppu_mask(PpuMask::from(val)),
+            0x2003 => self.set_oma_addr(val),
+            0x2004 => self.write_oam_data_and_inc(val),
+            0x2005 => {
+                // todo: scroll
+            }
+            0x2006 => self.set_data_rw_addr(val),
+            0x2007 => self.write_vram_and_inc(pattern, val),
+            _ => panic!("Can not write to Ppu at address ${:x}", address),
+        }
     }
 }
 
