@@ -24,10 +24,6 @@ impl Cartridge for MMC1 {
     fn pattern_ref(&self) -> &[u8] {
         todo!()
     }
-
-    fn pattern_mut(&mut self) -> &mut [u8] {
-        todo!()
-    }
 }
 
 const PRG_ROM_BANK_SIZE: usize = 0x4000;

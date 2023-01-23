@@ -56,7 +56,7 @@ impl Mcu for NesMcu {
     fn write(&mut self, address: u16, value: u8) {
         match address {
             0x0000..=0x1fff => self.lower_ram.write(address, value),
-            0x2000..=0x3fff => self.ppu.write(self.cartridge.pattern_mut(), address, value),
+            0x2000..=0x3fff => self.ppu.write(address, value),
             0x4014 => self.ppu_dma(value),
             0x4000..=0x401f => self.after_ppu.write(address, value),
             0x4020..=0xffff => self.cartridge.write(address, value),

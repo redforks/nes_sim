@@ -46,10 +46,6 @@ impl Cartridge for Mapper0 {
     fn pattern_ref(&self) -> &[u8] {
         todo!()
     }
-
-    fn pattern_mut(&mut self) -> &mut [u8] {
-        todo!()
-    }
 }
 
 #[cfg(test)]

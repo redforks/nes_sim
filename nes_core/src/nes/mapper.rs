@@ -16,5 +16,4 @@ pub fn create_cartridge(f: &INesFile) -> Box<dyn Cartridge> {
 
 pub trait Cartridge: Mcu {
     fn pattern_ref(&self) -> &[u8];
-    fn pattern_mut(&mut self) -> &mut [u8];
 }
