@@ -138,8 +138,6 @@ impl Mcu for Palette {
 }
 
 pub trait PpuTrait {
-    fn oam_dma(&mut self, vals: &[u8; 256]);
-
     /// Returns true if should trigger nmi at the start of v-blank.
     fn should_nmi(&self) -> bool;
 
@@ -170,10 +168,6 @@ pub struct Ppu {
 }
 
 impl PpuTrait for Ppu {
-    fn oam_dma(&mut self, vals: &[u8; 256]) {
-        self.oam.copy_from_slice(vals);
-    }
-
     fn should_nmi(&self) -> bool {
         self.ctrl_flags.nmi_enable() && self.status.borrow().v_blank()
     }
@@ -248,6 +242,10 @@ impl Ppu {
             data_rw_addr: RefCell::new(0),
             image: RgbaImage::new(256, 240),
         }
+    }
+
+    pub fn oam_dma(&mut self, vals: &[u8; 256]) {
+        self.oam.copy_from_slice(vals);
     }
 
     fn set_control_flags(&mut self, flag: PpuCtrl) {
