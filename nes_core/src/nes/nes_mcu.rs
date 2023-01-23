@@ -1,9 +1,10 @@
 use crate::ines::INesFile;
-use crate::mcu::{Mcu, RamMcu};
+use crate::mcu::{MachineMcu, Mcu, RamMcu};
 use crate::nes::lower_ram::LowerRam;
 use crate::nes::mapper;
 use crate::nes::mapper::Cartridge;
 use crate::nes::ppu::{Mirroring, Ppu, PpuTrait};
+use image::RgbaImage;
 use log::info;
 
 pub struct NesMcu<P: PpuTrait> {
@@ -64,5 +65,15 @@ impl<P: PpuTrait> Mcu for NesMcu<P> {
 
     fn get_ppu(&mut self) -> &mut dyn PpuTrait {
         &mut self.ppu
+    }
+
+    fn get_machine_mcu(&mut self) -> &mut dyn MachineMcu {
+        self
+    }
+}
+
+impl<P: PpuTrait> MachineMcu for NesMcu<P> {
+    fn render(&mut self) -> &RgbaImage {
+        self.ppu.render(self.cartridge.pattern_ref())
     }
 }

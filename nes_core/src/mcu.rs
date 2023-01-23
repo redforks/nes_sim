@@ -7,7 +7,7 @@ pub use mapping::*;
 pub use ram::RamMcu;
 
 pub trait MachineMcu {
-    fn render(&self) -> &RgbaImage;
+    fn render(&mut self) -> &RgbaImage;
 }
 
 /// Nes 6502 Mcu.
@@ -24,7 +24,7 @@ pub trait Mcu {
     }
 
     // TODO: remove this hack
-    fn get_machine_mcu(&self) -> &dyn MachineMcu {
-        todo!()
+    fn get_machine_mcu(&mut self) -> &mut dyn MachineMcu {
+        panic!("not implemented");
     }
 }
