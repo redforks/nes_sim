@@ -91,12 +91,12 @@ impl NameTableControl {
 
     pub fn nth(&self, idx: u8) -> NameTable<'_> {
         let start = self.band_start_offset[idx as usize] as usize;
-        NameTable(&self.mem[start..start + 960])
+        NameTable::new(&self.mem[start..start + 960])
     }
 
     pub fn attribute_table(&self, idx: u8) -> AttributeTable<'_> {
         let start = self.band_start_offset[idx as usize] as usize + 960;
-        AttributeTable(&self.mem[start..start + 64])
+        AttributeTable::new(&self.mem[start..start + 64])
     }
 
     fn offset(&self, addr: u16) -> usize {
