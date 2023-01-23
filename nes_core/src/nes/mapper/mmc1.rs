@@ -1,5 +1,4 @@
 use super::Cartridge;
-use crate::mcu::Mcu;
 use crate::nes::ppu::Ppu;
 use crate::to_from_u8;
 use log::debug;
@@ -7,6 +6,7 @@ use modular_bitfield::prelude::*;
 
 #[bitfield]
 struct ControlFlags {
+    #[skip]
     _not_used: B3,
     pub chr_in_4k: bool,
     pub prg_mode: B2,
@@ -52,40 +52,39 @@ impl Cartridge for MMC1 {
     }
 
     fn write(&mut self, ppu: &mut Ppu, address: u16, value: u8) {
-        todo!()
-        // match address {
-        //     0x4020..=0x5fff => {}
-        //     0x6000..=0x7fff => self.prg_ram[address as usize - 0x6000] = value,
-        //     _ => {
-        //         // reset if value high bit is 1
-        //         if value & 0x80 != 0 {
-        //             debug!("{:x} written to ${:x} reset MMC1", value, address);
-        //             self.reset();
-        //             return;
-        //         }
-        //
-        //         if self.sr_write_count < 5 {
-        //             self.sr_write_count += 1;
-        //             self.sr <<= 1;
-        //             self.sr |= value & 0x01;
-        //         }
-        //
-        //         if self.sr_write_count == 5 {
-        //             match address {
-        //                 0x8000..=0x9fff => self.control(self.sr.into()),
-        //                 0xa000..=0xbfff => self.chr_bank1(self.sr),
-        //                 0xc000..=0xdfff => self.chr_bank1(self.sr),
-        //                 0xe000..=0xffff => self.prg_bank(self.sr),
-        //                 _ => panic!(
-        //                     "write address out of range or unimplemented: ${:04x} {:x}",
-        //                     address, self.sr,
-        //                 ),
-        //             }
-        //             self.sr_write_count = 0;
-        //             self.sr = 0;
-        //         }
-        //     }
-        // }
+        match address {
+            0x4020..=0x5fff => {}
+            0x6000..=0x7fff => self.prg_ram[address as usize - 0x6000] = value,
+            _ => {
+                // reset if value high bit is 1
+                if value & 0x80 != 0 {
+                    debug!("{:x} written to ${:x} reset MMC1", value, address);
+                    self.reset();
+                    return;
+                }
+
+                if self.sr_write_count < 5 {
+                    self.sr_write_count += 1;
+                    self.sr <<= 1;
+                    self.sr |= value & 0x01;
+                }
+
+                if self.sr_write_count == 5 {
+                    match address {
+                        0x8000..=0x9fff => self.control(self.sr.into()),
+                        0xa000..=0xbfff => self.chr_bank1(self.sr),
+                        0xc000..=0xdfff => self.chr_bank1(self.sr),
+                        0xe000..=0xffff => self.prg_bank(self.sr),
+                        _ => panic!(
+                            "write address out of range or unimplemented: ${:04x} {:x}",
+                            address, self.sr,
+                        ),
+                    }
+                    self.sr_write_count = 0;
+                    self.sr = 0;
+                }
+            }
+        }
     }
 }
 
@@ -199,12 +198,5 @@ mod tests {
         mmc1.write(&mut ppu, 0xE002, 0);
         mmc1.write(&mut ppu, 0xE002, 1);
         assert_eq!(mmc1.read(0x8000), 0xcd);
-    }
-
-    #[test]
-    fn chr_row() {
-        let mut chr_rom = [0; 4 * 4096];
-        chr_rom[0] = 0x12;
-        todo!()
     }
 }

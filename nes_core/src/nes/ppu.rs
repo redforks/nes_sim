@@ -122,7 +122,7 @@ impl Palette {
         self._get_color_idx(0, palette_idx, idx)
     }
 
-    fn get_sprit_color(&self, palette_idx: u8, idx: u8) -> RGB {
+    fn _get_sprit_color(&self, palette_idx: u8, idx: u8) -> RGB {
         self._get_color_idx(0x10, palette_idx, idx)
     }
 }
