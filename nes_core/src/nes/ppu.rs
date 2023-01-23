@@ -144,8 +144,6 @@ pub trait PpuTrait {
     /// Trigger nmi at the start of v-blank, if should_nmi() returns true.
     fn set_v_blank(&mut self, v_blank: bool);
 
-    fn set_mirroring(&mut self, mirroring: Mirroring);
-
     fn read(&self, pattern: &[u8], address: u16) -> u8;
     fn write(&mut self, pattern: &mut [u8], address: u16, val: u8);
 }
@@ -173,10 +171,6 @@ impl PpuTrait for Ppu {
     fn set_v_blank(&mut self, v_blank: bool) {
         let status = *self.status.borrow();
         self.status = RefCell::new(status.with_v_blank(v_blank));
-    }
-
-    fn set_mirroring(&mut self, mirroring: Mirroring) {
-        self.name_table.set_mirroring(mirroring);
     }
 
     fn read(&self, pattern: &[u8], address: u16) -> u8 {
@@ -244,6 +238,10 @@ impl Ppu {
             }
         }
         &self.image
+    }
+
+    pub fn set_mirroring(&mut self, mirroring: Mirroring) {
+        self.name_table.set_mirroring(mirroring);
     }
 
     fn set_control_flags(&mut self, flag: PpuCtrl) {
