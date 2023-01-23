@@ -1,12 +1,13 @@
 use crate::ines::INesFile;
 use crate::mcu::{DefinedRegion, Mcu, RamMcu, Region};
 
+mod mapper0;
 mod mmc1;
 
-pub fn create_cartridge(f: &INesFile) -> Vec<Region> {
+pub fn create_cartridge(f: &INesFile) -> Box<dyn Cartridge> {
     match f.header().mapper_no {
-        0 => mapper000(f).collect(),
-        1 => vec![Region::with_defined(mmc1::MMC1::new(f.read_prg_rom()))],
+        0 => Box::new(mapper0::Mapper0 {}),
+        1 => Box::new(mmc1::MMC1::new(f.read_prg_rom())),
         _ => panic!("Unsupported cartridge mapper no: {}", f.header().mapper_no),
     }
 }
@@ -33,7 +34,10 @@ fn mapper000(f: &INesFile) -> impl Iterator<Item = Region> {
     [Region::with_defined(ram1), Region::with_defined(prg_rom)].into_iter()
 }
 
-trait Cartridge {}
+pub trait Cartridge: Mcu {
+    fn pattern_ref(&self) -> &[u8];
+    fn pattern_mut(&mut self) -> &mut [u8];
+}
 
 impl<C> DefinedRegion for C
 where

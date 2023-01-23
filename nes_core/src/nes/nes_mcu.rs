@@ -1,7 +1,8 @@
 use crate::ines::INesFile;
-use crate::mcu::{MappingMcu, Mcu, RamMcu};
+use crate::mcu::{Mcu, RamMcu};
 use crate::nes::lower_ram::LowerRam;
 use crate::nes::mapper;
+use crate::nes::mapper::Cartridge;
 use crate::nes::ppu::{Mirroring, Ppu, PpuTrait};
 use log::info;
 
@@ -9,11 +10,11 @@ pub struct NesMcu<P: PpuTrait> {
     lower_ram: LowerRam,
     ppu: P,
     after_ppu: RamMcu<0x20>,
-    inside_cartridge: MappingMcu,
+    cartridge: Box<dyn Cartridge>,
 }
 
 pub fn build(file: &INesFile) -> impl Mcu {
-    let inside_cartridge = MappingMcu::new(mapper::create_cartridge(file));
+    let cartridge = mapper::create_cartridge(file);
     let mut ppu = Ppu::new(mapper::create_ppu_pattern(file));
     ppu.set_mirroring(if file.header().ver_or_hor_arrangement {
         Mirroring::Vertical
@@ -25,7 +26,7 @@ pub fn build(file: &INesFile) -> impl Mcu {
         lower_ram: LowerRam::new(),
         ppu,
         after_ppu: RamMcu::start_from(0x4000, [0; 0x20]),
-        inside_cartridge,
+        cartridge,
     }
 }
 
@@ -45,23 +46,23 @@ impl<P: PpuTrait> Mcu for NesMcu<P> {
     fn read(&self, address: u16) -> u8 {
         match address {
             0x0000..=0x1fff => self.lower_ram.read(address),
-            0x2000..=0x3fff => self.ppu.read(address),
+            0x2000..=0x3fff => self.ppu.read(self.cartridge.pattern_ref(), address),
             0x4000..=0x401f => self.after_ppu.read(address),
-            0x4020..=0xffff => self.inside_cartridge.read(address),
+            0x4020..=0xffff => self.cartridge.read(address),
         }
     }
 
     fn write(&mut self, address: u16, value: u8) {
         match address {
             0x0000..=0x1fff => self.lower_ram.write(address, value),
-            0x2000..=0x3fff => self.ppu.write(address, value),
+            0x2000..=0x3fff => self.ppu.write(self.cartridge.pattern_mut(), address, value),
             0x4014 => self.ppu_dma(value),
             0x4000..=0x401f => self.after_ppu.write(address, value),
-            0x4020..=0xffff => self.inside_cartridge.write(address, value),
+            0x4020..=0xffff => self.cartridge.write(address, value),
         }
     }
 
     fn get_ppu(&mut self) -> &mut dyn PpuTrait {
-        self.ppu.get_ppu()
+        &mut self.ppu
     }
 }

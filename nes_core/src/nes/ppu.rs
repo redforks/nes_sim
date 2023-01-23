@@ -137,7 +137,7 @@ impl Mcu for Palette {
     }
 }
 
-pub trait PpuTrait: Mcu {
+pub trait PpuTrait {
     fn oam_dma(&mut self, vals: &[u8; 256]);
 
     /// Returns true if should trigger nmi at the start of v-blank.
@@ -146,9 +146,12 @@ pub trait PpuTrait: Mcu {
     /// Trigger nmi at the start of v-blank, if should_nmi() returns true.
     fn set_v_blank(&mut self, v_blank: bool);
 
-    fn render(&mut self) -> &RgbaImage;
+    fn render(&mut self, pattern: &[u8]) -> &RgbaImage;
 
     fn set_mirroring(&mut self, mirroring: Mirroring);
+
+    fn read(&self, pattern: &[u8], address: u16) -> u8;
+    fn write(&mut self, pattern: &mut [u8], address: u16, val: u8);
 }
 
 pub struct Ppu<PM> {
@@ -184,7 +187,7 @@ where
         self.status = RefCell::new(status.with_v_blank(v_blank));
     }
 
-    fn render(&mut self) -> &RgbaImage {
+    fn render(&mut self, pattern: &[u8]) -> &RgbaImage {
         let pattern =
             PatternBand::new(self.pattern.as_ref()).pattern(self.cur_pattern_table_idx as usize);
         let cur_name_table = (self.cur_name_table_addr - NAME_TABLE_MEM_START) / 0x400;
@@ -207,6 +210,14 @@ where
 
     fn set_mirroring(&mut self, mirroring: Mirroring) {
         self.name_table.set_mirroring(mirroring);
+    }
+
+    fn read(&self, pattern: &[u8], address: u16) -> u8 {
+        todo!()
+    }
+
+    fn write(&mut self, pattern: &mut [u8], address: u16, val: u8) {
+        todo!()
     }
 }
 

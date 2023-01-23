@@ -2,8 +2,13 @@ mod mapping;
 mod ram;
 
 use crate::nes::ppu::PpuTrait;
+use image::RgbaImage;
 pub use mapping::*;
 pub use ram::RamMcu;
+
+pub trait MachineMcu {
+    fn render(&self) -> &RgbaImage;
+}
 
 /// Nes 6502 Mcu.
 ///
@@ -16,5 +21,10 @@ pub trait Mcu {
     // TODO: remove this hack
     fn get_ppu(&mut self) -> &mut dyn PpuTrait {
         panic!("not implemented");
+    }
+
+    // TODO: remove this hack
+    fn get_machine_mcu(&self) -> &dyn MachineMcu {
+        todo!()
     }
 }
