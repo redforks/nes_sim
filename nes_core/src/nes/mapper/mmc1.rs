@@ -4,6 +4,7 @@ use crate::to_from_u8;
 use log::debug;
 use modular_bitfield::prelude::*;
 
+#[derive(Clone, Copy)]
 #[bitfield]
 struct ControlFlags {
     #[skip]
@@ -26,11 +27,23 @@ impl From<ControlFlags> for Mirroring {
     }
 }
 
-#[derive(Eq, PartialEq, Copy, Clone)]
+#[derive(Debug, Eq, PartialEq, Copy, Clone)]
 enum PrgRomMode {
     Switch32K,
     FixFirst16K,
     FixLast16K,
+}
+
+impl From<ControlFlags> for PrgRomMode {
+    fn from(value: ControlFlags) -> Self {
+        match value.prg_mode() {
+            0b00 => PrgRomMode::Switch32K,
+            0b01 => PrgRomMode::Switch32K,
+            0b10 => PrgRomMode::FixFirst16K,
+            0b11 => PrgRomMode::FixLast16K,
+            _ => unreachable!(),
+        }
+    }
 }
 
 pub struct MMC1 {
@@ -131,8 +144,8 @@ impl MMC1 {
         if mode == self.prg_rom_mode {
             return;
         }
-        self.prg_rom_mode = mode;
 
+        self.prg_rom_mode = mode;
         match mode {
             PrgRomMode::Switch32K | PrgRomMode::FixFirst16K => {
                 self.prg_rom_bank1_start = 0;
@@ -147,6 +160,7 @@ impl MMC1 {
 
     fn control(&mut self, ppu: &mut Ppu, flags: ControlFlags) {
         ppu.set_mirroring(flags.into());
+        self.set_prg_rom_mode(flags.into());
         // todo: impl for other flags
         // // control register
         // let prg_rom_mode = match self.sr & 0x03 {
@@ -158,11 +172,11 @@ impl MMC1 {
         // self.set_prg_rom_mode(prg_rom_mode);
     }
 
-    fn chr_bank0(&mut self, byte: u8) {
+    fn chr_bank0(&mut self, _byte: u8) {
         todo!()
     }
 
-    fn chr_bank1(&mut self, byte: u8) {
+    fn chr_bank1(&mut self, _byte: u8) {
         todo!()
     }
 
@@ -180,17 +194,23 @@ mod tests {
     use crate::nes::ppu::Mirroring;
     use test_log::test;
 
-    fn create() -> (MMC1, Ppu) {
+    fn create<F>(mut init_prg: F) -> (MMC1, Ppu)
+    where
+        F: FnMut(&mut [u8]),
+    {
         let mut prg_rom = [0; 128 * 1024];
-        prg_rom[128 * 1024 - 1] = 0xab;
-        prg_rom[0] = 0xba;
-        prg_rom[PRG_ROM_BANK_SIZE] = 0xcd;
+        init_prg(&mut prg_rom);
         (MMC1::new(&prg_rom, &[]), Ppu::new())
     }
 
     #[test]
     fn prg_rom() {
-        let (mut mmc1, mut ppu) = create();
+        fn init_prg(prg_rom: &mut [u8]) {
+            prg_rom[128 * 1024 - 1] = 0xab;
+            prg_rom[0] = 0xba;
+            prg_rom[PRG_ROM_BANK_SIZE] = 0xcd;
+        }
+        let (mut mmc1, mut ppu) = create(init_prg);
 
         // no effect read/write before 0x6000
         mmc1.write(&mut ppu, 0x4020, 1);
@@ -219,7 +239,7 @@ mod tests {
 
     #[test]
     fn control_ppu_mirroring() {
-        let (mut mmc1, mut ppu) = create();
+        let (mut mmc1, mut ppu) = create(|_| {});
         mmc1.control(&mut ppu, ControlFlags::new().with_mirroring(0));
         assert_eq!(ppu.mirroring(), Mirroring::LowerBank);
     }
@@ -233,5 +253,38 @@ mod tests {
         assert_eq!(Mirroring::UpperBank, to_mirroring(1));
         assert_eq!(Mirroring::Vertical, to_mirroring(2));
         assert_eq!(Mirroring::Horizontal, to_mirroring(3));
+    }
+
+    #[test]
+    fn control_flags_to_prg_rom_mode() {
+        fn to_mode(v: u8) -> PrgRomMode {
+            ControlFlags::new().with_prg_mode(v).into()
+        }
+        assert_eq!(PrgRomMode::Switch32K, to_mode(0));
+        assert_eq!(PrgRomMode::Switch32K, to_mode(1));
+        assert_eq!(PrgRomMode::FixFirst16K, to_mode(2));
+        assert_eq!(PrgRomMode::FixLast16K, to_mode(3));
+    }
+
+    #[test]
+    fn control_prg_rom_mode() {
+        let (mut mmc1, mut ppu) = create(|rom| {
+            rom[0] = 1;
+            rom[32 * 1024 - 1] = 2;
+            rom[128 * 1024 - 16 * 1024] = 3;
+        });
+        mmc1.control(&mut ppu, ControlFlags::new().with_prg_mode(0));
+        assert_eq!(mmc1.read(0x8000), 1);
+        assert_eq!(mmc1.read(0xffff), 2);
+
+        // Fix last 16k
+        mmc1.control(&mut ppu, ControlFlags::new().with_prg_mode(3));
+        assert_eq!(mmc1.read(0x8000), 1);
+        assert_eq!(mmc1.read(0xC000), 3);
+
+        // Fix first 16k
+        mmc1.control(&mut ppu, ControlFlags::new().with_prg_mode(1));
+        assert_eq!(mmc1.read(0x8000), 1);
+        assert_eq!(mmc1.read(0xffff), 2);
     }
 }

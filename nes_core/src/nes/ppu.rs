@@ -418,7 +418,7 @@ mod tests {
 
     #[test]
     fn read_write_oam() {
-        let (mut ppu, mut pattern) = new_test_ppu_and_pattern();
+        let (mut ppu, _pattern) = new_test_ppu_and_pattern();
         // oam addr default to 0
         assert_eq!(ppu.oam_addr, 0);
 
