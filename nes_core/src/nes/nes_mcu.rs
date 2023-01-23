@@ -59,7 +59,7 @@ impl Mcu for NesMcu {
             0x2000..=0x3fff => self.ppu.write(address, value),
             0x4014 => self.ppu_dma(value),
             0x4000..=0x401f => self.after_ppu.write(address, value),
-            0x4020..=0xffff => self.cartridge.write(address, value),
+            0x4020..=0xffff => self.cartridge.write(&mut self.ppu, address, value),
         }
     }
 
