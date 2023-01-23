@@ -212,7 +212,7 @@ impl PpuTrait for Ppu {
         match address {
             0x2002 => self.read_status().into(),
             0x2004 => self.read_oam_data(),
-            0x2007 => self.read_vram_for_cpu(),
+            0x2007 => self.read_vram_and_inc(pattern),
             _ => 0x55,
         }
     }
@@ -228,7 +228,7 @@ impl PpuTrait for Ppu {
                 // todo: scroll
             }
             0x2006 => self.set_data_rw_addr(val),
-            0x2007 => self.write_vram_for_cpu(val),
+            0x2007 => self.write_vram_and_inc(pattern, val),
             _ => panic!("Can not write to Ppu at address ${:x}", address),
         }
     }
@@ -297,28 +297,26 @@ impl Ppu {
 }
 
 impl Ppu {
-    fn read_vram(&self, address: u16) -> u8 {
-        todo!()
-        // match address {
-        //     0x0000..=0x1fff => pattern[address],
-        //     0x2000..=0x2fff => self.name_table.read(address),
-        //     0x3000..=0x3eff => self.read_vram(address - 0x1000),
-        //     0x3f00..=0x3f1f => self.palette.read(address),
-        //     0x3f20..=0x3fff => self.read_vram(address - 0x20),
-        //     _ => unreachable!(),
-        // }
+    fn read_vram(&self, pattern: &[u8], address: u16) -> u8 {
+        match address {
+            0x0000..=0x1fff => pattern[address as usize],
+            0x2000..=0x2fff => self.name_table.read(address),
+            0x3000..=0x3eff => self.read_vram(pattern, address - 0x1000),
+            0x3f00..=0x3f1f => self.palette.read(address),
+            0x3f20..=0x3fff => self.read_vram(pattern, address - 0x20),
+            _ => unreachable!(),
+        }
     }
 
-    fn write_vram(&mut self, address: u16, value: u8) {
-        todo!()
-        // match address {
-        //     0x0000..=0x1fff => pattern[address] = value,
-        //     0x2000..=0x2fff => self.name_table.write(address, value),
-        //     0x3000..=0x3eff => self.write_vram(address - 0x1000, value),
-        //     0x3f00..=0x3f1f => self.palette.write(address, value),
-        //     0x3f20..=0x3fff => self.write_vram(address - 0x20, value),
-        //     _ => unreachable!(),
-        // }
+    fn write_vram(&mut self, pattern: &mut [u8], address: u16, value: u8) {
+        match address {
+            0x0000..=0x1fff => pattern[address as usize] = value,
+            0x2000..=0x2fff => self.name_table.write(address, value),
+            0x3000..=0x3eff => self.write_vram(pattern, address - 0x1000, value),
+            0x3f00..=0x3f1f => self.palette.write(address, value),
+            0x3f20..=0x3fff => self.write_vram(pattern, address - 0x20, value),
+            _ => unreachable!(),
+        }
     }
 
     fn set_data_rw_addr(&mut self, address: u8) {
@@ -336,16 +334,16 @@ impl Ppu {
         *addr = (*addr).wrapping_add(delta);
     }
 
-    fn read_vram_for_cpu(&self) -> u8 {
+    fn read_vram_and_inc(&self, pattern: &[u8]) -> u8 {
         let addr = *self.data_rw_addr.borrow();
-        let value = self.read_vram(addr);
+        let value = self.read_vram(pattern, addr);
         self.inc_data_rw_addr();
         value
     }
 
-    fn write_vram_for_cpu(&mut self, v: u8) {
+    fn write_vram_and_inc(&mut self, pattern: &mut [u8], v: u8) {
         let addr = *self.data_rw_addr.borrow();
-        self.write_vram(addr, v);
+        self.write_vram(pattern, addr, v);
         self.inc_data_rw_addr();
     }
 }
@@ -353,63 +351,87 @@ impl Ppu {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::mcu::RamMcu;
 
-    fn new_test_ppu() -> Ppu {
-        Ppu::new(RamMcu::new([0; 0x2000]))
+    fn new_test_ppu_and_pattern() -> (Ppu, [u8; 8192]) {
+        let pattern = [0; 8192];
+        (Ppu::new(), pattern)
     }
 
     #[test]
     fn read_write_v_ram() {
-        let mut ppu = new_test_ppu();
+        let (mut ppu, mut pattern) = new_test_ppu_and_pattern();
         // data_addr default to 0
-        assert_eq!(ppu.read_vram_for_cpu(), 0);
+        assert_eq!(ppu.read_vram_and_inc(&pattern), 0);
 
-        ppu.read(0x2000); // reset addr
-        ppu.write(0x2006, 0x21);
-        ppu.write(0x2006, 0x08);
-        ppu.write(0x2007, 0x12);
-        ppu.write(0x2007, 0x34);
-        assert_eq!(ppu.read_vram(0x2108), 0x12);
-        assert_eq!(ppu.read_vram(0x2109), 0x34);
+        ppu.read(&pattern, 0x2000); // reset addr
+        ppu.write(&mut pattern, 0x2006, 0x21);
+        ppu.write(&mut pattern, 0x2006, 0x08);
+        ppu.write(&mut pattern, 0x2007, 0x12);
+        ppu.write(&mut pattern, 0x2007, 0x34);
+        assert_eq!(ppu.read_vram(&pattern, 0x2108), 0x12);
+        assert_eq!(ppu.read_vram(&pattern, 0x2109), 0x34);
 
-        ppu.read(0x2000); // reset addr
-        ppu.write(0x2006, 0x21);
-        ppu.write(0x2006, 0x08);
-        assert_eq!(ppu.read(0x2007), 0x12);
-        assert_eq!(ppu.read(0x2007), 0x34);
+        ppu.read(&pattern, 0x2000); // reset addr
+        ppu.write(&mut pattern, 0x2006, 0x21);
+        ppu.write(&mut pattern, 0x2006, 0x08);
+        assert_eq!(ppu.read(&pattern, 0x2007), 0x12);
+        assert_eq!(ppu.read(&pattern, 0x2007), 0x34);
 
         // set increase mode to 32
-        ppu.write(0x2000, PpuCtrl::new().with_increment_mode(true).into());
-        ppu.read(0x2000); // reset addr
-        ppu.write(0x2006, 0x21);
-        ppu.write(0x2006, 0x08);
-        ppu.write(0x2007, 0x56);
-        ppu.write(0x2007, 0x78);
-        assert_eq!(ppu.read_vram(0x2108), 0x56);
-        assert_eq!(ppu.read_vram(0x2128), 0x78);
+        ppu.write(
+            &mut pattern,
+            0x2000,
+            PpuCtrl::new().with_increment_mode(true).into(),
+        );
+        ppu.read(&pattern, 0x2000); // reset addr
+        ppu.write(&mut pattern, 0x2006, 0x21);
+        ppu.write(&mut pattern, 0x2006, 0x08);
+        ppu.write(&mut pattern, 0x2007, 0x56);
+        ppu.write(&mut pattern, 0x2007, 0x78);
+        assert_eq!(ppu.read_vram(&pattern, 0x2108,), 0x56);
+        assert_eq!(ppu.read_vram(&pattern, 0x2128,), 0x78);
 
-        ppu.read(0x2000); // reset addr
-        ppu.write(0x2006, 0x21);
-        ppu.write(0x2006, 0x08);
-        assert_eq!(ppu.read(0x2007), 0x56);
-        assert_eq!(ppu.read(0x2007), 0x78);
+        ppu.read(&pattern, 0x2000); // reset addr
+        ppu.write(&mut pattern, 0x2006, 0x21);
+        ppu.write(&mut pattern, 0x2006, 0x08);
+        assert_eq!(ppu.read(&pattern, 0x2007), 0x56);
+        assert_eq!(ppu.read(&pattern, 0x2007), 0x78);
+
+        fn round_rw(ppu: &mut Ppu, pattern: &mut [u8], addr: u16, value: u8) {
+            ppu.read(pattern, 0x2000); // reset addr
+            ppu.write(pattern, 0x2006, (addr >> 8) as u8);
+            ppu.write(pattern, 0x2006, addr as u8);
+            ppu.write(pattern, 0x2007, value);
+            ppu.read(pattern, 0x2000); // reset addr
+            ppu.write(pattern, 0x2006, (addr >> 8) as u8);
+            ppu.write(pattern, 0x2006, addr as u8);
+            assert_eq!(ppu.read(pattern, 0x2007), value);
+        }
+
+        // read-write pattern area
+        round_rw(&mut ppu, &mut pattern, 0x0001, 13);
+        // read-write palette ram index
+        round_rw(&mut ppu, &mut pattern, 0x3f00, 14);
+        // read-write mirror of name-table
+        round_rw(&mut ppu, &mut pattern, 0x2400, 15);
+        // read-write mirror of palette ram index
+        round_rw(&mut ppu, &mut pattern, 0x3f20, 16);
     }
 
     #[test]
     fn read_write_oam() {
-        let mut ppu = new_test_ppu();
+        let (mut ppu, mut pattern) = new_test_ppu_and_pattern();
         // oam addr default to 0
         assert_eq!(ppu.oam_addr, 0);
 
-        ppu.write(0x2003, 0x12);
+        ppu.write(&mut pattern, 0x2003, 0x12);
         // write oma data, auto inc oma addr
-        ppu.write(0x2004, 0x34);
+        ppu.write(&mut pattern, 0x2004, 0x34);
         assert_eq!(0x13, ppu.oam_addr);
-        ppu.write(0x2004, 0x56);
+        ppu.write(&mut pattern, 0x2004, 0x56);
         assert_eq!(0x14, ppu.oam_addr);
 
-        ppu.write(0x2003, 0x12);
+        ppu.write(&mut pattern, 0x2003, 0x12);
         assert_eq!(ppu.read_oam_data(), 0x34);
         assert_eq!(0x12, ppu.oam_addr);
         // read oma data, won't auto inc oma addr
@@ -418,7 +440,7 @@ mod tests {
 
     #[test]
     fn nmi_occurred() {
-        let mut ppu = new_test_ppu();
+        let (mut ppu, _) = new_test_ppu_and_pattern();
 
         let flag = PpuCtrl::new().with_nmi_enable(false);
         assert_eq!(ppu.status.borrow().v_blank(), false);
@@ -449,7 +471,7 @@ mod tests {
 
     #[test]
     fn render() {
-        let mut ppu = new_test_ppu();
-        ppu.render();
+        let (mut ppu, pattern) = new_test_ppu_and_pattern();
+        ppu.render(&pattern);
     }
 }
