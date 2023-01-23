@@ -47,7 +47,7 @@ impl<'a> NameTable<'a> {
     }
 }
 
-#[derive(Debug, Eq, PartialEq)]
+#[derive(Debug, Eq, PartialEq, Copy, Clone)]
 pub enum Mirroring {
     LowerBank, // single screen use lower bank
     UpperBank, // single screen use upper bank
@@ -59,6 +59,7 @@ pub enum Mirroring {
 pub struct NameTableControl {
     mem: [u8; 4096],
     band_start_offset: [u16; 4],
+    mirroring: Mirroring,
 }
 
 impl NameTableControl {
@@ -66,10 +67,20 @@ impl NameTableControl {
         Self {
             mem: [0; 4096],
             band_start_offset: [0, 1024, 2048, 3072],
+            mirroring: Mirroring::Four,
         }
     }
 
+    pub fn mirroring(&self) -> Mirroring {
+        self.mirroring
+    }
+
     pub fn set_mirroring(&mut self, mirroring: Mirroring) {
+        if mirroring == self.mirroring {
+            return;
+        }
+
+        self.mirroring = mirroring;
         match mirroring {
             Mirroring::LowerBank => {
                 self.band_start_offset = [0, 0, 0, 0];
@@ -171,6 +182,7 @@ mod tests {
         }
 
         let mut control = NameTableControl::new();
+        assert_eq!(Mirroring::Four, control.mirroring());
 
         // default is four screen
         control.write(0x2000, 1);
@@ -193,6 +205,7 @@ mod tests {
         assert_eq!(14, control.attribute_table(3).0[63]);
 
         control.set_mirroring(Mirroring::LowerBank);
+        assert_eq!(Mirroring::LowerBank, control.mirroring());
         assert_start_addr(&control, 1, 1, 1, 1);
 
         control.set_mirroring(Mirroring::UpperBank);
