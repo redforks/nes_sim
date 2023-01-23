@@ -33,7 +33,7 @@ impl Machine {
         } else {
             self.run_ticks(cycles);
         }
-        self.cpu.mcu().get_ppu().render()
+        self.cpu.mcu().get_machine_mcu().render()
     }
 
     fn run_ticks(&mut self, ticks: u32) {
