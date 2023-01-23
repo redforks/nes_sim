@@ -285,6 +285,10 @@ impl Ppu {
             _ => panic!("Can not write to Ppu at address ${:x}", address),
         }
     }
+
+    pub fn mirroring(&self) -> Mirroring {
+        self.name_table.mirroring()
+    }
 }
 
 impl Ppu {
