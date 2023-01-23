@@ -144,8 +144,6 @@ pub trait PpuTrait {
     /// Trigger nmi at the start of v-blank, if should_nmi() returns true.
     fn set_v_blank(&mut self, v_blank: bool);
 
-    fn render(&mut self, pattern: &[u8]) -> &RgbaImage;
-
     fn set_mirroring(&mut self, mirroring: Mirroring);
 
     fn read(&self, pattern: &[u8], address: u16) -> u8;
@@ -175,26 +173,6 @@ impl PpuTrait for Ppu {
     fn set_v_blank(&mut self, v_blank: bool) {
         let status = *self.status.borrow();
         self.status = RefCell::new(status.with_v_blank(v_blank));
-    }
-
-    fn render(&mut self, pattern: &[u8]) -> &RgbaImage {
-        let pattern = PatternBand::new(pattern).pattern(self.cur_pattern_table_idx as usize);
-        let cur_name_table = (self.cur_name_table_addr - NAME_TABLE_MEM_START) / 0x400;
-        let name_table = self.name_table.nth(cur_name_table as u8);
-        let attr_table = self.name_table.attribute_table(cur_name_table as u8);
-        for (tile_x, tile_y) in itertools::iproduct!(0..32, 0..30) {
-            let tile = name_table.tile(pattern, tile_x, tile_y);
-            let palette_idx = attr_table.palette_idx(tile_x, tile_y);
-            for (x, y, pixel) in tile.iter() {
-                let color = self.palette.get_background_color(palette_idx, pixel);
-                self.image.put_pixel(
-                    x as u32 + tile_x as u32 * 8,
-                    y as u32 + tile_y as u32 * 8,
-                    color,
-                );
-            }
-        }
-        &self.image
     }
 
     fn set_mirroring(&mut self, mirroring: Mirroring) {
@@ -246,6 +224,26 @@ impl Ppu {
 
     pub fn oam_dma(&mut self, vals: &[u8; 256]) {
         self.oam.copy_from_slice(vals);
+    }
+
+    pub fn render(&mut self, pattern: &[u8]) -> &RgbaImage {
+        let pattern = PatternBand::new(pattern).pattern(self.cur_pattern_table_idx as usize);
+        let cur_name_table = (self.cur_name_table_addr - NAME_TABLE_MEM_START) / 0x400;
+        let name_table = self.name_table.nth(cur_name_table as u8);
+        let attr_table = self.name_table.attribute_table(cur_name_table as u8);
+        for (tile_x, tile_y) in itertools::iproduct!(0..32, 0..30) {
+            let tile = name_table.tile(pattern, tile_x, tile_y);
+            let palette_idx = attr_table.palette_idx(tile_x, tile_y);
+            for (x, y, pixel) in tile.iter() {
+                let color = self.palette.get_background_color(palette_idx, pixel);
+                self.image.put_pixel(
+                    x as u32 + tile_x as u32 * 8,
+                    y as u32 + tile_y as u32 * 8,
+                    color,
+                );
+            }
+        }
+        &self.image
     }
 
     fn set_control_flags(&mut self, flag: PpuCtrl) {
