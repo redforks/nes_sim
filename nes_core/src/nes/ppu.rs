@@ -270,7 +270,7 @@ impl Ppu {
         }
     }
 
-    pub fn write(&mut self, pattern: &mut [u8], address: u16, val: u8) {
+    pub fn write(&mut self, address: u16, val: u8) {
         // todo: mirror to 0x3fff
         match address {
             0x2000 => self.set_control_flags(PpuCtrl::from(val)),
@@ -281,7 +281,7 @@ impl Ppu {
                 // todo: scroll
             }
             0x2006 => self.set_data_rw_addr(val),
-            0x2007 => self.write_vram_and_inc(pattern, val),
+            0x2007 => self.write_vram_and_inc(val),
             _ => panic!("Can not write to Ppu at address ${:x}", address),
         }
     }
@@ -299,13 +299,13 @@ impl Ppu {
         }
     }
 
-    fn write_vram(&mut self, pattern: &mut [u8], address: u16, value: u8) {
+    fn write_vram(&mut self, address: u16, value: u8) {
         match address {
-            0x0000..=0x1fff => pattern[address as usize] = value,
+            0x0000..=0x1fff => { /* ignore write to pattern/chr-rom*/ }
             0x2000..=0x2fff => self.name_table.write(address, value),
-            0x3000..=0x3eff => self.write_vram(pattern, address - 0x1000, value),
+            0x3000..=0x3eff => self.write_vram(address - 0x1000, value),
             0x3f00..=0x3f1f => self.palette.write(address, value),
-            0x3f20..=0x3fff => self.write_vram(pattern, address - 0x20, value),
+            0x3f20..=0x3fff => self.write_vram(address - 0x20, value),
             _ => unreachable!(),
         }
     }
@@ -332,9 +332,9 @@ impl Ppu {
         value
     }
 
-    fn write_vram_and_inc(&mut self, pattern: &mut [u8], v: u8) {
+    fn write_vram_and_inc(&mut self, v: u8) {
         let addr = *self.data_rw_addr.borrow();
-        self.write_vram(pattern, addr, v);
+        self.write_vram(addr, v);
         self.inc_data_rw_addr();
     }
 }
@@ -355,58 +355,59 @@ mod tests {
         assert_eq!(ppu.read_vram_and_inc(&pattern), 0);
 
         ppu.read(&pattern, 0x2000); // reset addr
-        ppu.write(&mut pattern, 0x2006, 0x21);
-        ppu.write(&mut pattern, 0x2006, 0x08);
-        ppu.write(&mut pattern, 0x2007, 0x12);
-        ppu.write(&mut pattern, 0x2007, 0x34);
+        ppu.write(0x2006, 0x21);
+        ppu.write(0x2006, 0x08);
+        ppu.write(0x2007, 0x12);
+        ppu.write(0x2007, 0x34);
         assert_eq!(ppu.read_vram(&pattern, 0x2108), 0x12);
         assert_eq!(ppu.read_vram(&pattern, 0x2109), 0x34);
 
         ppu.read(&pattern, 0x2000); // reset addr
-        ppu.write(&mut pattern, 0x2006, 0x21);
-        ppu.write(&mut pattern, 0x2006, 0x08);
+        ppu.write(0x2006, 0x21);
+        ppu.write(0x2006, 0x08);
         assert_eq!(ppu.read(&pattern, 0x2007), 0x12);
         assert_eq!(ppu.read(&pattern, 0x2007), 0x34);
 
         // set increase mode to 32
-        ppu.write(
-            &mut pattern,
-            0x2000,
-            PpuCtrl::new().with_increment_mode(true).into(),
-        );
+        ppu.write(0x2000, PpuCtrl::new().with_increment_mode(true).into());
         ppu.read(&pattern, 0x2000); // reset addr
-        ppu.write(&mut pattern, 0x2006, 0x21);
-        ppu.write(&mut pattern, 0x2006, 0x08);
-        ppu.write(&mut pattern, 0x2007, 0x56);
-        ppu.write(&mut pattern, 0x2007, 0x78);
+        ppu.write(0x2006, 0x21);
+        ppu.write(0x2006, 0x08);
+        ppu.write(0x2007, 0x56);
+        ppu.write(0x2007, 0x78);
         assert_eq!(ppu.read_vram(&pattern, 0x2108,), 0x56);
         assert_eq!(ppu.read_vram(&pattern, 0x2128,), 0x78);
 
         ppu.read(&pattern, 0x2000); // reset addr
-        ppu.write(&mut pattern, 0x2006, 0x21);
-        ppu.write(&mut pattern, 0x2006, 0x08);
+        ppu.write(0x2006, 0x21);
+        ppu.write(0x2006, 0x08);
         assert_eq!(ppu.read(&pattern, 0x2007), 0x56);
         assert_eq!(ppu.read(&pattern, 0x2007), 0x78);
 
-        fn round_rw(ppu: &mut Ppu, pattern: &mut [u8], addr: u16, value: u8) {
+        fn rw(ppu: &mut Ppu, pattern: &mut [u8], addr: u16, w_value: u8, r_value: u8) {
             ppu.read(pattern, 0x2000); // reset addr
-            ppu.write(pattern, 0x2006, (addr >> 8) as u8);
-            ppu.write(pattern, 0x2006, addr as u8);
-            ppu.write(pattern, 0x2007, value);
+            ppu.write(0x2006, (addr >> 8) as u8);
+            ppu.write(0x2006, addr as u8);
+            ppu.write(0x2007, w_value);
             ppu.read(pattern, 0x2000); // reset addr
-            ppu.write(pattern, 0x2006, (addr >> 8) as u8);
-            ppu.write(pattern, 0x2006, addr as u8);
-            assert_eq!(ppu.read(pattern, 0x2007), value);
+            ppu.write(0x2006, (addr >> 8) as u8);
+            ppu.write(0x2006, addr as u8);
+            assert_eq!(ppu.read(pattern, 0x2007), r_value);
         }
 
-        // read-write pattern area
-        round_rw(&mut ppu, &mut pattern, 0x0001, 13);
+        fn rw_round_trip(ppu: &mut Ppu, pattern: &mut [u8], addr: u16, value: u8) {
+            rw(ppu, pattern, addr, value, value);
+        }
+
+        // ignore write to pattern/chr-rom
+        rw(&mut ppu, &mut pattern, 0x0001, 13, 0);
+
         // read-write palette ram index
-        round_rw(&mut ppu, &mut pattern, 0x3f00, 14);
+        rw_round_trip(&mut ppu, &mut pattern, 0x3f00, 14);
         // read-write mirror of name-table
-        round_rw(&mut ppu, &mut pattern, 0x2400, 15);
+        rw_round_trip(&mut ppu, &mut pattern, 0x2400, 15);
         // read-write mirror of palette ram index
-        round_rw(&mut ppu, &mut pattern, 0x3f20, 16);
+        rw_round_trip(&mut ppu, &mut pattern, 0x3f20, 16);
     }
 
     #[test]
@@ -415,14 +416,14 @@ mod tests {
         // oam addr default to 0
         assert_eq!(ppu.oam_addr, 0);
 
-        ppu.write(&mut pattern, 0x2003, 0x12);
+        ppu.write(0x2003, 0x12);
         // write oma data, auto inc oma addr
-        ppu.write(&mut pattern, 0x2004, 0x34);
+        ppu.write(0x2004, 0x34);
         assert_eq!(0x13, ppu.oam_addr);
-        ppu.write(&mut pattern, 0x2004, 0x56);
+        ppu.write(0x2004, 0x56);
         assert_eq!(0x14, ppu.oam_addr);
 
-        ppu.write(&mut pattern, 0x2003, 0x12);
+        ppu.write(0x2003, 0x12);
         assert_eq!(ppu.read_oam_data(), 0x34);
         assert_eq!(0x12, ppu.oam_addr);
         // read oma data, won't auto inc oma addr
