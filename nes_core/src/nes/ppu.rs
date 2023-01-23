@@ -208,11 +208,29 @@ impl PpuTrait for Ppu {
     }
 
     fn read(&self, pattern: &[u8], address: u16) -> u8 {
-        todo!()
+        // todo: mirror to 0x3fff
+        match address {
+            0x2002 => self.read_status().into(),
+            0x2004 => self.read_oam_data(),
+            0x2007 => self.read_vram_for_cpu(),
+            _ => 0x55,
+        }
     }
 
     fn write(&mut self, pattern: &mut [u8], address: u16, val: u8) {
-        todo!()
+        // todo: mirror to 0x3fff
+        match address {
+            0x2000 => self.set_control_flags(PpuCtrl::from(val)),
+            0x2001 => self.set_ppu_mask(PpuMask::from(val)),
+            0x2003 => self.set_oma_addr(val),
+            0x2004 => self.write_oam_data_and_inc(val),
+            0x2005 => {
+                // todo: scroll
+            }
+            0x2006 => self.set_data_rw_addr(val),
+            0x2007 => self.write_vram_for_cpu(val),
+            _ => panic!("Can not write to Ppu at address ${:x}", address),
+        }
     }
 }
 
@@ -329,38 +347,6 @@ impl Ppu {
         let addr = *self.data_rw_addr.borrow();
         self.write_vram(addr, v);
         self.inc_data_rw_addr();
-    }
-}
-
-impl Mcu for Ppu {
-    fn read(&self, address: u16) -> u8 {
-        // todo: mirror to 0x3fff
-        match address {
-            0x2002 => self.read_status().into(),
-            0x2004 => self.read_oam_data(),
-            0x2007 => self.read_vram_for_cpu(),
-            _ => 0x55,
-        }
-    }
-
-    fn write(&mut self, address: u16, val: u8) {
-        // todo: mirror to 0x3fff
-        match address {
-            0x2000 => self.set_control_flags(PpuCtrl::from(val)),
-            0x2001 => self.set_ppu_mask(PpuMask::from(val)),
-            0x2003 => self.set_oma_addr(val),
-            0x2004 => self.write_oam_data_and_inc(val),
-            0x2005 => {
-                // todo: scroll
-            }
-            0x2006 => self.set_data_rw_addr(val),
-            0x2007 => self.write_vram_for_cpu(val),
-            _ => panic!("Can not write to Ppu at address ${:x}", address),
-        }
-    }
-
-    fn get_ppu(&mut self) -> &mut dyn PpuTrait {
-        self
     }
 }
 
