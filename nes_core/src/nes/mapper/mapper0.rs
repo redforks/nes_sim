@@ -1,5 +1,4 @@
 use super::CARTRIDGE_START_ADDR;
-use crate::mcu::Mcu;
 use crate::nes::mapper::Cartridge;
 use crate::nes::ppu::Ppu;
 
