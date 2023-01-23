@@ -20,17 +20,7 @@ fn main() {
     let args = Args::parse();
     let Args { f, quiet } = args;
 
-    env_logger::Builder::new()
-        .filter(
-            None,
-            if quiet {
-                log::LevelFilter::Warn
-            } else {
-                log::LevelFilter::Debug
-            },
-        )
-        .format(|buf, record| writeln!(buf, "{}", record.args()))
-        .init();
+    env_logger::init();
 
     let image = image::load_image(&f).unwrap();
     let mut cpu = Cpu::new(image.create_mcu());
