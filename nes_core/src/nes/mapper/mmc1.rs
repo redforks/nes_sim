@@ -138,12 +138,10 @@ impl Mcu for MMC1 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use log::info;
     use test_log::test;
 
     #[test]
     fn test() {
-        info!("test");
         let mut prg_rom = [0; 128 * 1024];
         prg_rom[128 * 1024 - 1] = 0xab;
         prg_rom[0] = 0xba;
@@ -173,11 +171,5 @@ mod tests {
         mmc1.write(0xE002, 0);
         mmc1.write(0xE002, 1);
         assert_eq!(mmc1.read(0x8000), 0xcd);
-        // mmc1.write(0x8000, 1);
-        // mmc1.write(0xc000, 1);
-        // mmc1.write(0xffff, 1);
-        // assert_eq!(mmc1.read(0x8000), 0);
-        // assert_eq!(mmc1.read(0xc000), 0);
-        // assert_eq!(mmc1.read(0xffff), 0);
     }
 }
