@@ -1,5 +1,5 @@
 use super::Cartridge;
-use crate::nes::ppu::Ppu;
+use crate::nes::ppu::{Mirroring, Ppu};
 use crate::to_from_u8;
 use log::debug;
 use modular_bitfield::prelude::*;
@@ -13,6 +13,18 @@ struct ControlFlags {
     pub mirroring: B2,
 }
 to_from_u8!(ControlFlags);
+
+impl From<ControlFlags> for Mirroring {
+    fn from(value: ControlFlags) -> Self {
+        match value.mirroring() {
+            0b00 => Mirroring::LowerBank,
+            0b01 => Mirroring::UpperBank,
+            0b10 => Mirroring::Vertical,
+            0b11 => Mirroring::Horizontal,
+            _ => unreachable!(),
+        }
+    }
+}
 
 #[derive(Eq, PartialEq, Copy, Clone)]
 enum PrgRomMode {
@@ -71,7 +83,7 @@ impl Cartridge for MMC1 {
 
                 if self.sr_write_count == 5 {
                     match address {
-                        0x8000..=0x9fff => self.control(self.sr.into()),
+                        0x8000..=0x9fff => self.control(ppu, self.sr.into()),
                         0xa000..=0xbfff => self.chr_bank1(self.sr),
                         0xc000..=0xdfff => self.chr_bank1(self.sr),
                         0xe000..=0xffff => self.prg_bank(self.sr),
@@ -133,7 +145,9 @@ impl MMC1 {
         }
     }
 
-    fn control(&mut self, byte: ControlFlags) {
+    fn control(&mut self, ppu: &mut Ppu, flags: ControlFlags) {
+        ppu.set_mirroring(flags.into());
+        // todo: impl for other flags
         // // control register
         // let prg_rom_mode = match self.sr & 0x03 {
         //     0 => PrgRomMode::Switch32K,
@@ -142,7 +156,6 @@ impl MMC1 {
         //     _ => panic!("invalid prg rom mode"),
         // };
         // self.set_prg_rom_mode(prg_rom_mode);
-        todo!()
     }
 
     fn chr_bank0(&mut self, byte: u8) {
@@ -164,16 +177,20 @@ impl MMC1 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::nes::ppu::Mirroring;
     use test_log::test;
 
-    #[test]
-    fn prg_rom() {
+    fn create() -> (MMC1, Ppu) {
         let mut prg_rom = [0; 128 * 1024];
         prg_rom[128 * 1024 - 1] = 0xab;
         prg_rom[0] = 0xba;
         prg_rom[PRG_ROM_BANK_SIZE] = 0xcd;
-        let mut mmc1 = MMC1::new(&prg_rom, &[]);
-        let mut ppu = Ppu::new();
+        (MMC1::new(&prg_rom, &[]), Ppu::new())
+    }
+
+    #[test]
+    fn prg_rom() {
+        let (mut mmc1, mut ppu) = create();
 
         // no effect read/write before 0x6000
         mmc1.write(&mut ppu, 0x4020, 1);
@@ -198,5 +215,23 @@ mod tests {
         mmc1.write(&mut ppu, 0xE002, 0);
         mmc1.write(&mut ppu, 0xE002, 1);
         assert_eq!(mmc1.read(0x8000), 0xcd);
+    }
+
+    #[test]
+    fn control_ppu_mirroring() {
+        let (mut mmc1, mut ppu) = create();
+        mmc1.control(&mut ppu, ControlFlags::new().with_mirroring(0));
+        assert_eq!(ppu.mirroring(), Mirroring::LowerBank);
+    }
+
+    #[test]
+    fn control_flags_to_mirroring() {
+        fn to_mirroring(v: u8) -> Mirroring {
+            ControlFlags::new().with_mirroring(v).into()
+        }
+        assert_eq!(Mirroring::LowerBank, to_mirroring(0));
+        assert_eq!(Mirroring::UpperBank, to_mirroring(1));
+        assert_eq!(Mirroring::Vertical, to_mirroring(2));
+        assert_eq!(Mirroring::Horizontal, to_mirroring(3));
     }
 }
