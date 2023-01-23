@@ -1,7 +1,8 @@
 use super::Cartridge;
+use crate::nes::apu::new;
 use crate::nes::ppu::{Mirroring, Ppu};
 use crate::to_from_u8;
-use log::debug;
+use log::{debug, info};
 use modular_bitfield::prelude::*;
 
 #[derive(Clone, Copy)]
@@ -48,7 +49,8 @@ impl From<ControlFlags> for PrgRomMode {
 
 pub struct MMC1 {
     chr_rom: Vec<u8>,
-    cur_chr_rom: Vec<u8>,
+    cur_chr_rom: [u8; 8 * 1024],
+    chr_bank_size: u16,
 
     prg_rom: Vec<u8>,
     prg_ram: [u8; 0x2000],
@@ -62,8 +64,7 @@ pub struct MMC1 {
 
 impl Cartridge for MMC1 {
     fn pattern_ref(&self) -> &[u8] {
-        // &self.cur_chr_rom
-        todo!()
+        &self.cur_chr_rom
     }
 
     fn read(&self, address: u16) -> u8 {
@@ -119,7 +120,8 @@ impl MMC1 {
     pub fn new(prg_rom: &[u8], chr_rom: &[u8]) -> Self {
         let mut r = Self {
             chr_rom: chr_rom.to_vec(),
-            cur_chr_rom: vec![],
+            cur_chr_rom: [0; 1024 * 8],
+            chr_bank_size: 4096,
             prg_rom: prg_rom.to_vec(),
             prg_ram: [0; 0x2000],
             prg_rom_bank1_start: 0,
@@ -136,6 +138,7 @@ impl MMC1 {
     fn reset(&mut self) {
         self.sr = 0;
         self.sr_write_count = 0;
+        self.chr_bank_size = 4096;
         self.set_prg_rom_mode(PrgRomMode::FixLast16K);
     }
 
@@ -158,18 +161,14 @@ impl MMC1 {
         }
     }
 
+    fn set_chr_bank_mode(&mut self, is_4k: bool) {
+        self.chr_bank_size = if is_4k { 4096 } else { 8192 };
+    }
+
     fn control(&mut self, ppu: &mut Ppu, flags: ControlFlags) {
         ppu.set_mirroring(flags.into());
         self.set_prg_rom_mode(flags.into());
-        // todo: impl for other flags
-        // // control register
-        // let prg_rom_mode = match self.sr & 0x03 {
-        //     0 => PrgRomMode::Switch32K,
-        //     1 => PrgRomMode::FixFirst16K,
-        //     2 => PrgRomMode::FixLast16K,
-        //     _ => panic!("invalid prg rom mode"),
-        // };
-        // self.set_prg_rom_mode(prg_rom_mode);
+        self.set_chr_bank_mode(flags.chr_in_4k());
     }
 
     fn chr_bank0(&mut self, _byte: u8) {
@@ -183,7 +182,7 @@ impl MMC1 {
     fn prg_bank(&mut self, byte: u8) {
         // prg rom bank register
         let bank = byte & 0x0f;
-        debug!("MMC1 switch prg rom 1st bank to ${:x}", bank);
+        info!("MMC1 switch prg rom 1st bank to ${:x}", bank);
         self.prg_rom_bank1_start = bank as usize * PRG_ROM_BANK_SIZE;
     }
 }
@@ -286,5 +285,21 @@ mod tests {
         mmc1.control(&mut ppu, ControlFlags::new().with_prg_mode(1));
         assert_eq!(mmc1.read(0x8000), 1);
         assert_eq!(mmc1.read(0xffff), 2);
+    }
+
+    #[test]
+    fn control_chr_bank_size() {
+        let (mut mmc1, mut ppu) = create(|_| {});
+
+        // default is 4k
+        assert_eq!(mmc1.chr_bank_size, 4 * 1024);
+
+        // set to 8k
+        mmc1.control(&mut ppu, ControlFlags::new().with_chr_in_4k(false));
+        assert_eq!(mmc1.chr_bank_size, 8 * 1024);
+
+        // set to 4k
+        mmc1.control(&mut ppu, ControlFlags::new().with_chr_in_4k(true));
+        assert_eq!(mmc1.chr_bank_size, 4 * 1024);
     }
 }
