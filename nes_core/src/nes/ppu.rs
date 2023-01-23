@@ -301,7 +301,9 @@ impl Ppu {
 
     fn write_vram(&mut self, address: u16, value: u8) {
         match address {
-            0x0000..=0x1fff => { /* ignore write to pattern/chr-rom*/ }
+            0x0000..=0x1fff => {
+                info!("Ignore write to pattern rom ${:x} {:x}", address, value)
+            }
             0x2000..=0x2fff => self.name_table.write(address, value),
             0x3000..=0x3eff => self.write_vram(address - 0x1000, value),
             0x3f00..=0x3f1f => self.palette.write(address, value),
