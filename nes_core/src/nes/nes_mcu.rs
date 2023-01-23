@@ -7,9 +7,9 @@ use crate::nes::ppu::{Mirroring, Ppu, PpuTrait};
 use image::RgbaImage;
 use log::info;
 
-pub struct NesMcu<P: PpuTrait> {
+pub struct NesMcu {
     lower_ram: LowerRam,
-    ppu: P,
+    ppu: Ppu,
     after_ppu: RamMcu<0x20>,
     cartridge: Box<dyn Cartridge>,
 }
@@ -31,7 +31,7 @@ pub fn build(file: &INesFile) -> impl Mcu {
     }
 }
 
-impl<P: PpuTrait> NesMcu<P> {
+impl NesMcu {
     fn ppu_dma(&mut self, address: u8) {
         info!("ppu dma");
         let addr = (address as u16) << 8;
@@ -43,7 +43,7 @@ impl<P: PpuTrait> NesMcu<P> {
     }
 }
 
-impl<P: PpuTrait> Mcu for NesMcu<P> {
+impl Mcu for NesMcu {
     fn read(&self, address: u16) -> u8 {
         match address {
             0x0000..=0x1fff => self.lower_ram.read(address),
@@ -72,7 +72,7 @@ impl<P: PpuTrait> Mcu for NesMcu<P> {
     }
 }
 
-impl<P: PpuTrait> MachineMcu for NesMcu<P> {
+impl MachineMcu for NesMcu {
     fn render(&mut self) -> &RgbaImage {
         self.ppu.render(self.cartridge.pattern_ref())
     }
