@@ -391,7 +391,7 @@ pub struct Cpu {
     mcu: Box<dyn Mcu>,
 
     irq_pending: bool,
-    irq_delayed: bool,
+    change_irq_flag_pending: Option<bool>,
 
     /// if remains_clock not zero, new instruction will not be executed.
     remain_clocks: u16,
@@ -409,7 +409,7 @@ impl Cpu {
             status: Flag::InterruptDisabled as u8,
             mcu,
             irq_pending: false,
-            irq_delayed: false,
+            change_irq_flag_pending: None,
             remain_clocks: 0,
             is_halt: false,
         }
@@ -432,7 +432,7 @@ impl Cpu {
     }
 
     fn irq(&mut self) {
-        info!("irq");
+        // info!("irq");
         self.set_flag(Flag::InterruptDisabled, true);
 
         self.push_pc();
@@ -453,9 +453,8 @@ impl Cpu {
         (self.status & flag as u8) != 0
     }
 
-    pub fn clear_interrupt_disabled(&mut self, should_delay: bool) {
-        self.set_flag(Flag::InterruptDisabled, false);
-        self.irq_delayed = should_delay;
+    pub fn pending_set_interrupt_disabled_flag(&mut self, v: bool) {
+        self.change_irq_flag_pending = Some(v);
     }
 
     pub fn set_flag(&mut self, flag: Flag, v: bool) {
@@ -477,10 +476,15 @@ impl Cpu {
         }
 
         if self.irq_pending && !self.flag(Flag::InterruptDisabled) {
-            if self.irq_delayed {
-                self.irq_delayed = false;
-            } else {
-                self.irq();
+            if let Some(v) = self.change_irq_flag_pending {
+                self.set_flag(Flag::InterruptDisabled, v);
+                self.change_irq_flag_pending = None;
+            }
+            self.irq();
+        } else {
+            if let Some(v) = self.change_irq_flag_pending {
+                self.set_flag(Flag::InterruptDisabled, v);
+                self.change_irq_flag_pending = None;
             }
         }
 

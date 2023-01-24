@@ -71,8 +71,12 @@ pub fn new_plp() -> impl FnMut(&mut Cpu) -> u8 {
     move |cpu| {
         let saved = cpu.pop_stack();
         let saved_break_flag = cpu.flag(Flag::Break);
+        let cur_i_flag = cpu.flag(Flag::InterruptDisabled);
+        let save_i_flag = (saved & Flag::InterruptDisabled as u8) != 0;
         cpu.status = saved;
         cpu.set_flag(Flag::Break, saved_break_flag);
+        cpu.set_flag(Flag::InterruptDisabled, cur_i_flag);
+        cpu.pending_set_interrupt_disabled_flag(save_i_flag);
         4
     }
 }
@@ -262,7 +266,7 @@ pub fn new_clear_bit(dest: FlagAddr) -> impl FnMut(&mut Cpu) -> u8 {
 
     move |cpu| {
         if dest.0 == Flag::InterruptDisabled {
-            cpu.clear_interrupt_disabled(true);
+            cpu.pending_set_interrupt_disabled_flag(false);
         } else {
             dest.set(cpu, 0);
         }
@@ -275,7 +279,11 @@ pub fn new_set_bit(dest: FlagAddr) -> impl FnMut(&mut Cpu) -> u8 {
     debug!("set {}", dest);
 
     move |cpu| {
-        dest.set(cpu, 1);
+        if dest.0 == Flag::InterruptDisabled {
+            cpu.pending_set_interrupt_disabled_flag(true);
+        } else {
+            dest.set(cpu, 1);
+        }
         2
     }
 }
