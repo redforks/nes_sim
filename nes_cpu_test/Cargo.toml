@@ -11,3 +11,6 @@ clap = { version = "4.1.1", features = ["derive"] }
 thiserror = "1.0.38"
 ansi_term = "0.12.1"
 is-terminal = "0.4.2"
+
+[dev-dependencies]
+rstest = "0.16.0"
