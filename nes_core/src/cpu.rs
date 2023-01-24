@@ -389,7 +389,9 @@ pub struct Cpu {
     pub sp: u8,
     pub status: u8,
     mcu: Box<dyn Mcu>,
-    irq_requested: bool,
+
+    irq_pending: bool,
+    irq_delayed: bool,
 
     /// if remains_clock not zero, new instruction will not be executed.
     remain_clocks: u16,
@@ -406,7 +408,8 @@ impl Cpu {
             sp: 0,
             status: Flag::InterruptDisabled as u8,
             mcu,
-            irq_requested: false,
+            irq_pending: false,
+            irq_delayed: false,
             remain_clocks: 0,
             is_halt: false,
         }
@@ -438,7 +441,7 @@ impl Cpu {
     }
 
     pub fn set_irq(&mut self, enabled: bool) {
-        self.irq_requested = enabled;
+        self.irq_pending = enabled;
     }
 
     fn push_pc(&mut self) {
@@ -448,6 +451,11 @@ impl Cpu {
 
     pub fn flag(&self, flag: Flag) -> bool {
         (self.status & flag as u8) != 0
+    }
+
+    pub fn clear_interrupt_disabled(&mut self, should_delay: bool) {
+        self.set_flag(Flag::InterruptDisabled, false);
+        self.irq_delayed = should_delay;
     }
 
     pub fn set_flag(&mut self, flag: Flag, v: bool) {
@@ -468,8 +476,12 @@ impl Cpu {
             return ExecuteResult::Continue;
         }
 
-        if self.irq_requested && !self.flag(Flag::InterruptDisabled) {
-            self.irq();
+        if self.irq_pending && !self.flag(Flag::InterruptDisabled) {
+            if self.irq_delayed {
+                self.irq_delayed = false;
+            } else {
+                self.irq();
+            }
         }
 
         plugin.start(self);
@@ -566,7 +578,7 @@ impl Cpu {
     }
 }
 
-#[derive(Clone, Copy, strum_macros::Display)]
+#[derive(Clone, Copy, strum_macros::Display, PartialEq, Eq)]
 #[repr(u8)]
 pub enum Flag {
     #[strum(serialize = "C")]

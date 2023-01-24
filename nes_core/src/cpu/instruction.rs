@@ -1,6 +1,6 @@
 use super::addressing::{Address, RegisterStatus};
 use super::{extra_tick_if_cross_page, Cpu, Flag};
-use crate::cpu::addressing::Literal;
+use crate::cpu::addressing::{FlagAddr, Literal};
 use log::debug;
 
 /// LDA, LDX, LDY, TAX, TAY, TSX, TXA, TYA
@@ -257,17 +257,21 @@ pub fn new_ror<D: Address>(dest: D) -> impl FnMut(&mut Cpu) -> u8 {
 }
 
 // Clc, Cld, Cli, Clv
-pub fn new_clear_bit<D: Address>(dest: D) -> impl FnMut(&mut Cpu) -> u8 {
+pub fn new_clear_bit(dest: FlagAddr) -> impl FnMut(&mut Cpu) -> u8 {
     debug!("clear {}", dest);
 
     move |cpu| {
-        dest.set(cpu, 0);
+        if dest.0 == Flag::InterruptDisabled {
+            cpu.clear_interrupt_disabled(true);
+        } else {
+            dest.set(cpu, 0);
+        }
         2
     }
 }
 
 // Sec, Sed, Sei
-pub fn new_set_bit<D: Address>(dest: D) -> impl FnMut(&mut Cpu) -> u8 {
+pub fn new_set_bit(dest: FlagAddr) -> impl FnMut(&mut Cpu) -> u8 {
     debug!("set {}", dest);
 
     move |cpu| {
