@@ -70,6 +70,10 @@ impl Mcu for NesMcu {
     fn get_machine_mcu(&mut self) -> &mut dyn MachineMcu {
         self
     }
+
+    fn request_irq(&self) -> bool {
+        false
+    }
 }
 
 impl MachineMcu for NesMcu {
