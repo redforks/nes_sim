@@ -32,11 +32,11 @@ pub struct PpuMask {
     pub blue_tint: bool,
     pub green_tint: bool,
     pub red_tint: bool,
-    pub sprite_enable: bool,
-    pub background_enable: bool,
+    pub sprite_enabled: bool,
+    pub background_enabled: bool,
+    pub sprite_left_enabled: bool,
+    pub background_left_enabled: bool,
     pub grayscale: bool,
-    pub sprite_left: bool,
-    pub background_left: bool,
 }
 to_from_u8!(PpuMask);
 
@@ -155,6 +155,8 @@ pub struct Ppu {
     palette: Palette,             // palette memory
     cur_pattern_table_idx: u8,    // index of current active pattern table, 0 or 1
 
+    mask: PpuMask,
+
     oam_addr: u8,
     oam: [u8; 0x100], // object attribute memory
 
@@ -171,6 +173,7 @@ impl Default for Ppu {
             cur_name_table_addr: 0x2000,
             palette: Palette::default(),
             cur_pattern_table_idx: 0,
+            mask: PpuMask::new(),
             oam_addr: 0,
             oam: [0; 0x100],
             data_rw_addr: RefCell::new(0),
@@ -199,7 +202,7 @@ impl Ppu {
         self.oam.copy_from_slice(vals);
     }
 
-    pub fn render(&mut self, pattern: &[u8]) -> &RgbaImage {
+    fn render_background(&mut self, pattern: &[u8]) {
         let pattern = PatternBand::new(pattern).pattern(self.cur_pattern_table_idx as usize);
         let cur_name_table = (self.cur_name_table_addr - NAME_TABLE_MEM_START) / 0x400;
         let name_table = self.name_table.nth(cur_name_table as u8);
@@ -215,6 +218,12 @@ impl Ppu {
                     color,
                 );
             }
+        }
+    }
+
+    pub fn render(&mut self, pattern: &[u8]) -> &RgbaImage {
+        if self.mask.background_enabled() {
+            self.render_background(pattern);
         }
         &self.image
     }
@@ -243,8 +252,8 @@ impl Ppu {
         }
     }
 
-    fn set_ppu_mask(&mut self, _: PpuMask) {
-        info!("TODO: set ppu mask");
+    fn set_ppu_mask(&mut self, mask: PpuMask) {
+        self.mask = mask;
     }
 
     fn set_oma_addr(&mut self, addr: u8) {
