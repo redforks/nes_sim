@@ -2,13 +2,14 @@ use nes_core::machine::CYCLES_PER_FRAME;
 use nes_core::{Cpu, ExecuteResult, Plugin};
 use std::collections::VecDeque;
 
-pub struct DetectDeadLoop<const DEPTH: usize, const REPEATS: u16 = CYCLES_PER_FRAME> {
+pub struct DetectDeadLoop<const DEPTH: usize, const REPEATS: u32 = { CYCLES_PER_FRAME as u32 * 5 }>
+{
     recent_pc: VecDeque<u16>,
     should_exit: bool,
-    count: u16,
+    count: u32,
 }
 
-impl<const DEPTH: usize, const REPEATS: u16> DetectDeadLoop<DEPTH, REPEATS> {
+impl<const DEPTH: usize, const REPEATS: u32> DetectDeadLoop<DEPTH, REPEATS> {
     pub fn new() -> Self {
         DetectDeadLoop {
             recent_pc: VecDeque::with_capacity(2 * DEPTH),
@@ -18,7 +19,7 @@ impl<const DEPTH: usize, const REPEATS: u16> DetectDeadLoop<DEPTH, REPEATS> {
     }
 }
 
-impl<const DEPTH: usize, const REPEATS: u16> Plugin for DetectDeadLoop<DEPTH, REPEATS> {
+impl<const DEPTH: usize, const REPEATS: u32> Plugin for DetectDeadLoop<DEPTH, REPEATS> {
     fn start(&mut self, _: &Cpu) {}
 
     fn end(&mut self, cpu: &Cpu) {
@@ -64,9 +65,10 @@ mod tests {
     #[case(1, false, &[10, 11, 10, 11])]
     #[case(2, false, &[10, 11, 10, 11, 10])]
     #[case(3, true, &[10, 11, 10, 11, 10, 11])]
+    #[case(4, true, &[10, 11, 10, 11, 10, 11, 10])]
     #[case(0, false, &[10, 11, 10, 11, 9])]
     #[case(3, true, &[10, 11, 10, 11, 9, 10, 9, 10, 9, 10])]
-    fn test(#[case] exp_count: u16, #[case] should_exit: bool, #[case] pcs: &[u16]) {
+    fn test(#[case] exp_count: u32, #[case] should_exit: bool, #[case] pcs: &[u16]) {
         let mcu = RamMcu::new([0; 65536]);
         let mut cpu = Cpu::new(Box::new(mcu));
 
