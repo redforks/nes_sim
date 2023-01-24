@@ -1,16 +1,24 @@
 use crate::ines::INesFile;
 use crate::nes::create_mcu;
-use crate::{Cpu, EmptyPlugin};
+use crate::{Cpu, EmptyPlugin, Plugin};
 use image::RgbaImage;
 
-pub struct Machine {
+pub struct Machine<P> {
     cpu: Cpu,
+    p: P,
 }
 
-impl Machine {
+impl Machine<EmptyPlugin> {
     pub fn new(ines: INesFile) -> Self {
+        Self::with_plugin(EmptyPlugin(), ines)
+    }
+}
+
+impl<P: Plugin> Machine<P> {
+    pub fn with_plugin(p: P, ines: INesFile) -> Self {
         Machine {
             cpu: Cpu::new(Box::new(create_mcu(&ines))),
+            p,
         }
     }
 
@@ -37,9 +45,8 @@ impl Machine {
     }
 
     fn run_ticks(&mut self, ticks: u32) {
-        let mut plugin = EmptyPlugin {};
         for _ in 0..ticks {
-            self.cpu.clock_tick(&mut plugin);
+            self.cpu.clock_tick(&mut self.p);
         }
     }
 }
