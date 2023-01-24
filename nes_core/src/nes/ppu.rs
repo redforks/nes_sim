@@ -185,7 +185,9 @@ impl PpuTrait for Ppu {
 
     fn set_v_blank(&self, v_blank: bool) -> PpuStatus {
         let status = *self.status.borrow();
-        info!("set v_blank: {}", v_blank);
+        if v_blank {
+            info!("set v_blank: {}", v_blank);
+        }
         *self.status.borrow_mut() = status.with_v_blank(v_blank);
         status
     }
