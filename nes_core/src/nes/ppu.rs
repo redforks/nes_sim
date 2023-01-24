@@ -142,7 +142,8 @@ pub trait PpuTrait {
     fn should_nmi(&self) -> bool;
 
     /// Trigger nmi at the start of v-blank, if should_nmi() returns true.
-    fn set_v_blank(&mut self, v_blank: bool);
+    /// Return status before change
+    fn set_v_blank(&self, v_blank: bool) -> PpuStatus;
 }
 
 pub struct Ppu {
@@ -182,9 +183,11 @@ impl PpuTrait for Ppu {
         self.ctrl_flags.nmi_enable() && self.status.borrow().v_blank()
     }
 
-    fn set_v_blank(&mut self, v_blank: bool) {
+    fn set_v_blank(&self, v_blank: bool) -> PpuStatus {
         let status = *self.status.borrow();
-        self.status = RefCell::new(status.with_v_blank(v_blank));
+        info!("set v_blank: {}", v_blank);
+        *self.status.borrow_mut() = status.with_v_blank(v_blank);
+        status
     }
 }
 
@@ -255,11 +258,8 @@ impl Ppu {
     }
 
     fn read_status(&self) -> PpuStatus {
-        // reset data_rw_addr on read status register
         *self.data_rw_addr.borrow_mut() = 0;
-        let r = *self.status.borrow();
-        *self.status.borrow_mut() = r.with_v_blank(false);
-        r
+        self.set_v_blank(false)
     }
 
     pub fn read(&self, pattern: &[u8], address: u16) -> u8 {
