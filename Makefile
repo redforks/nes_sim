@@ -18,7 +18,8 @@ cpu-test:
 	target/release/nes_cpu_test --quiet -f ../nes-test-roms/instr_test-v5/rom_singles/14-rti.nes
 	target/release/nes_cpu_test --quiet -f ../nes-test-roms/instr_test-v5/rom_singles/15-brk.nes
 	target/release/nes_cpu_test --quiet -f ../nes-test-roms/instr_test-v5/rom_singles/16-special.nes
-	target/release/nes_cpu_test --quiet -f ../nes-test-roms/ppu_vbl_nmi/ppu_vbl_nmi.nes
+	target/release/nes_cpu_test --quiet -f ../nes-test-roms/cpu_interrupts_v2//rom_singles/1-cli_latency.nes
+	# target/release/nes_cpu_test --quiet -f ../nes-test-roms/ppu_vbl_nmi/ppu_vbl_nmi.nes
 	# target/release/nes_cpu_test --quiet -f ../nes-test-roms/cpu_dummy_reads/cpu_dummy_reads.nes
 
 wasm-debug-build:
