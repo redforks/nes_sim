@@ -1,3 +1,4 @@
+use nes_core::machine::CYCLES_PER_FRAME;
 use nes_core::{Cpu, ExecuteResult, Plugin};
 use std::collections::VecDeque;
 
@@ -36,7 +37,7 @@ impl<const DEPTH: usize> Plugin for DetectDeadLoop<DEPTH> {
         }
 
         self.count += 1;
-        self.should_exit = if self.count > 100 {
+        self.should_exit = if self.count > CYCLES_PER_FRAME {
             eprintln!("test failed: pc repeated ({})", DEPTH);
             true
         } else {

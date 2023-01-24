@@ -13,6 +13,10 @@ impl Machine<EmptyPlugin> {
     }
 }
 
+pub const CYCLES_PER_MS: u16 = 1789;
+pub const V_BLANK_CYCLES: u16 = 2273;
+pub const CYCLES_PER_FRAME: u16 = (CYCLES_PER_MS as f64 * 16.67) as u16;
+
 impl<P: Plugin> Machine<P> {
     pub fn with_plugin(p: P, mcu: Box<dyn Mcu>) -> Self {
         Machine {
@@ -25,19 +29,16 @@ impl<P: Plugin> Machine<P> {
     /// Run the machine for a single frame.
     /// `ms`: milliseconds elapsed since last frame.
     pub fn process_frame(&mut self, ms: f64) -> (&RgbaImage, ExecuteResult) {
-        const CYCLES_PER_MS: u32 = 1789;
-        const V_BLANK_CYCLES: u32 = 2273;
         let cycles = (ms * CYCLES_PER_MS as f64) as u32;
-        let er = if cycles > V_BLANK_CYCLES {
-            // TODO: start ppu vblank, trigger nmi if ppu.should_nmi()
+        let er = if cycles > V_BLANK_CYCLES as u32 {
             let ppu = self.cpu.mcu().get_ppu();
             ppu.set_v_blank(true);
             if ppu.should_nmi() {
                 self.cpu.nmi();
             }
-            self.run_ticks(V_BLANK_CYCLES);
-            // TODO: end ppu vblank
-            self.run_ticks(cycles - V_BLANK_CYCLES)
+            self.run_ticks(V_BLANK_CYCLES as u32);
+            self.cpu.mcu().get_ppu().set_v_blank(false);
+            self.run_ticks(cycles - V_BLANK_CYCLES as u32)
         } else {
             self.run_ticks(cycles)
         };
