@@ -3,6 +3,7 @@ use log::{debug, info};
 use nes_core::ines::INesFile;
 use nes_core::nes::ppu::{draw_pattern, PatternBand};
 use nes_core::nes::Machine as NesMachine;
+use nes_core::EmptyPlugin;
 use std::panic;
 use wasm_bindgen::prelude::*;
 use wasm_bindgen::{Clamped, JsCast};
@@ -15,7 +16,7 @@ static ALLOC: wee_alloc::WeeAlloc = wee_alloc::WeeAlloc::INIT;
 
 #[wasm_bindgen]
 pub struct Machine {
-    inner: NesMachine,
+    inner: NesMachine<EmptyPlugin>,
     ctx: CanvasRenderingContext2d,
 }
 
