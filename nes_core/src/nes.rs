@@ -10,7 +10,7 @@ pub mod nes_mcu;
 pub mod ppu;
 pub use machine::Machine;
 
-fn create_mcu(file: &INesFile) -> impl Mcu {
+pub fn create_mcu(file: &INesFile) -> impl Mcu {
     nes_mcu::build(file)
 }
 

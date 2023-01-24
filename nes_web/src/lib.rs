@@ -2,7 +2,7 @@ use image::DynamicImage;
 use log::{debug, info};
 use nes_core::ines::INesFile;
 use nes_core::nes::ppu::{draw_pattern, PatternBand};
-use nes_core::nes::Machine as NesMachine;
+use nes_core::nes::{create_mcu, Machine as NesMachine};
 use nes_core::EmptyPlugin;
 use std::panic;
 use wasm_bindgen::prelude::*;
@@ -25,7 +25,7 @@ pub fn new_machine(canvas_id: &str, ines: Vec<u8>) -> Machine {
     debug!("new_machine");
     let ines = INesFile::new(ines).unwrap();
     Machine {
-        inner: NesMachine::new(ines),
+        inner: NesMachine::new(Box::new(create_mcu(&ines))),
         ctx: get_canvas_context(canvas_id),
     }
 }
@@ -34,7 +34,7 @@ pub fn new_machine(canvas_id: &str, ines: Vec<u8>) -> Machine {
 impl Machine {
     pub fn process_frame(&mut self, ms: f64) {
         info!("process_frame: {}ms", ms);
-        let img = self.inner.process_frame(ms);
+        let (img, _) = self.inner.process_frame(ms);
         let img_data = ImageData::new_with_u8_clamped_array_and_sh(Clamped(img), 256, 240).unwrap();
         self.ctx.put_image_data(&img_data, 0.0, 0.0).unwrap();
     }
