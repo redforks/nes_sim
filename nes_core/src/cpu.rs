@@ -475,6 +475,7 @@ impl Cpu {
         plugin.start(self);
         self.remain_clocks = execute_next(self) as u16 - 1;
         plugin.end(self);
+        self.set_irq(self.mcu.request_irq());
         plugin.should_stop()
     }
 

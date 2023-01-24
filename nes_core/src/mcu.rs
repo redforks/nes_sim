@@ -27,4 +27,8 @@ pub trait Mcu {
     fn get_machine_mcu(&mut self) -> &mut dyn MachineMcu {
         panic!("not implemented");
     }
+
+    fn request_irq(&self) -> bool {
+        panic!("request_irq() not implemented");
+    }
 }

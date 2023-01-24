@@ -35,6 +35,10 @@ impl<const SIZE: usize> Mcu for RamMcu<SIZE> {
     fn write(&mut self, address: u16, value: u8) {
         self.ram[self.to_index(address)] = value;
     }
+
+    fn request_irq(&self) -> bool {
+        false
+    }
 }
 
 impl<const SIZE: usize> DefinedRegion for RamMcu<SIZE> {
