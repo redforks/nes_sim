@@ -1,4 +1,5 @@
 use crate::mcu::Mcu;
+use log::info;
 
 mod addressing;
 mod instruction;
@@ -419,6 +420,7 @@ impl Cpu {
     }
 
     pub fn nmi(&mut self) {
+        info!("nmi");
         self.push_pc();
         self.push_status();
         self.pc = self.read_word(0xFFFA);
