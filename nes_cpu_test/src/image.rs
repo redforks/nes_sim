@@ -2,7 +2,7 @@ use super::plugin::{CompositePlugin, Console, MonitorTestStatus, ReportPlugin};
 use super::plugin::{DetectDeadLoop, ImageExit};
 use nes_core::ines::INesFile;
 use nes_core::mcu::{Mcu, RamMcu};
-use nes_core::nes::nes_mcu;
+use nes_core::nes::{nes_mcu, Machine};
 use nes_core::Plugin;
 use std::io::Read;
 
@@ -14,14 +14,14 @@ pub enum Image {
 }
 
 impl Image {
-    pub fn create_mcu(&self) -> Box<dyn Mcu> {
+    fn create_mcu(&self) -> Box<dyn Mcu> {
         match self {
             Image::Bin(arr) => Box::new(RamMcu::new(**arr)),
             Image::INes(ines) => Box::new(nes_mcu::build(ines)),
         }
     }
 
-    pub fn create_plugin(&self, quiet: bool) -> Box<dyn Plugin> {
+    fn create_plugin(&self, quiet: bool) -> Box<dyn Plugin> {
         match self {
             Image::Bin(_) => Box::new(CompositePlugin::new(vec![
                 Box::new(ReportPlugin::new(quiet)),
@@ -37,11 +37,26 @@ impl Image {
         }
     }
 
-    pub fn start_addr(&self) -> Option<u16> {
+    pub fn create_machine(&self, quiet: bool) -> Machine<Box<dyn Plugin>> {
         match self {
-            Image::Bin(_) => Some(0x400),
-            Image::INes(_) => None,
+            Image::Bin(_) => self.create_bin_machine(quiet),
+            Image::INes(_) => self.create_ines_machine(quiet),
         }
+    }
+
+    fn create_bin_machine(&self, quiet: bool) -> Machine<Box<dyn Plugin>> {
+        let plugin = self.create_plugin(quiet);
+        let mut r = Machine::with_plugin(plugin, self.create_mcu());
+        r.reset();
+        r.set_pc(0x400);
+        r
+    }
+
+    fn create_ines_machine(&self, quiet: bool) -> Machine<Box<dyn Plugin>> {
+        let plugin = self.create_plugin(quiet);
+        let mut r = Machine::with_plugin(plugin, self.create_mcu());
+        r.reset();
+        r
     }
 }
 
