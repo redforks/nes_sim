@@ -16,7 +16,7 @@ pub struct NesMcu {
 
 pub fn build(file: &INesFile) -> impl Mcu {
     let cartridge = mapper::create_cartridge(file);
-    let mut ppu = Ppu::new();
+    let mut ppu = Ppu::default();
     ppu.set_mirroring(if file.header().ver_or_hor_arrangement {
         Mirroring::Vertical
     } else {
@@ -36,8 +36,8 @@ impl NesMcu {
         info!("ppu dma");
         let addr = (address as u16) << 8;
         let mut buf = [0x00u8; 0x100];
-        for i in 0..0x100 {
-            buf[i] = self.read(addr + i as u16);
+        for (i, item) in buf.iter_mut().enumerate() {
+            *item = self.read(addr + i as u16);
         }
         self.ppu.oam_dma(&buf);
     }
