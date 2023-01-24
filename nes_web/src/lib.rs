@@ -1,8 +1,9 @@
 use image::DynamicImage;
 use log::{debug, info};
 use nes_core::ines::INesFile;
+use nes_core::machine::Machine as NesMachine;
+use nes_core::nes::create_mcu;
 use nes_core::nes::ppu::{draw_pattern, PatternBand};
-use nes_core::nes::{create_mcu, Machine as NesMachine};
 use nes_core::EmptyPlugin;
 use std::panic;
 use wasm_bindgen::prelude::*;

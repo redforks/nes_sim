@@ -1,7 +1,7 @@
 use crate::image::Image;
 use ansi_term::Color;
 use clap::Parser;
-use nes_core::nes::Machine;
+use nes_core::machine::Machine;
 use nes_core::{ExecuteResult, Plugin};
 
 mod image;

@@ -4,11 +4,9 @@ use crate::mcu::Mcu;
 pub mod apu;
 pub mod controller;
 mod lower_ram;
-mod machine;
 mod mapper;
 pub mod nes_mcu;
 pub mod ppu;
-pub use machine::Machine;
 
 pub fn create_mcu(file: &INesFile) -> impl Mcu {
     nes_mcu::build(file)
