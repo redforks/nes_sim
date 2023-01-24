@@ -62,15 +62,17 @@ pub struct NameTableControl {
     mirroring: Mirroring,
 }
 
-impl NameTableControl {
-    pub fn new() -> Self {
+impl Default for NameTableControl {
+    fn default() -> Self {
         Self {
             mem: [0; 4096],
             band_start_offset: [0, 1024, 2048, 3072],
             mirroring: Mirroring::Four,
         }
     }
+}
 
+impl NameTableControl {
     pub fn mirroring(&self) -> Mirroring {
         self.mirroring
     }
@@ -181,7 +183,7 @@ mod tests {
             assert_eq!(v4, control.read(0x2c00));
         }
 
-        let mut control = NameTableControl::new();
+        let mut control = NameTableControl::default();
         assert_eq!(Mirroring::Four, control.mirroring());
 
         // default is four screen

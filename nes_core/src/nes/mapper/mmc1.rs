@@ -214,7 +214,7 @@ mod tests {
     {
         let mut prg_rom = [0; 128 * 1024];
         init_prg(&mut prg_rom);
-        (MMC1::new(&prg_rom, &[]), Ppu::new())
+        (MMC1::new(&prg_rom, &[]), Ppu::default())
     }
 
     fn create_with_chr<F>(mut init_chr: F) -> (MMC1, Ppu)
@@ -223,7 +223,7 @@ mod tests {
     {
         let mut chr_rom = [0; 128 * 1024];
         init_chr(&mut chr_rom);
-        (MMC1::new(&[0; 32 * 1024], &chr_rom), Ppu::new())
+        (MMC1::new(&[0; 32 * 1024], &chr_rom), Ppu::default())
     }
 
     #[test]

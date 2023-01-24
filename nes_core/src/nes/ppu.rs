@@ -11,7 +11,7 @@ mod pattern;
 pub use name_table::*;
 pub use pattern::*;
 
-type RGB = Rgba<u8>;
+type Pixel = Rgba<u8>;
 
 #[derive(Copy, Clone)]
 #[bitfield]
@@ -57,13 +57,13 @@ const NAME_TABLE_MEM_START: u16 = 0x2000;
 const TILES_PER_ROW: u8 = 32;
 const TILES_PER_COL: u8 = 30;
 
-const fn rgb(v: [u8; 3]) -> RGB {
+const fn rgb(v: [u8; 3]) -> Pixel {
     let [r, g, b] = v;
     Rgba::<u8>([r, g, b, 0xff])
 }
 
 #[rustfmt::skip]
-const COLORS: [RGB; 64] = [
+const COLORS: [Pixel; 64] = [
     rgb([117, 117, 117]), rgb([39, 27, 143]), rgb([0, 0, 171]), rgb([71, 0, 159]),
     rgb([143, 0, 119]), rgb([171, 0, 19]), rgb([167, 0, 0]), rgb([127, 11, 0]),
     rgb([67, 47, 0]), rgb([0, 71, 0]), rgb([0, 81, 0]), rgb([0, 63, 23]),
@@ -101,7 +101,7 @@ impl Palette {
         (addr - PALETTE_MEM_START) as usize
     }
 
-    fn _get_color_idx(&self, start: usize, palette_idx: u8, idx: u8) -> RGB {
+    fn _get_color_idx(&self, start: usize, palette_idx: u8, idx: u8) -> Pixel {
         let offset = if idx == 0 {
             0
         } else {
@@ -118,11 +118,11 @@ impl Palette {
         COLORS[self.data[offset] as usize]
     }
 
-    fn get_background_color(&self, palette_idx: u8, idx: u8) -> RGB {
+    fn get_background_color(&self, palette_idx: u8, idx: u8) -> Pixel {
         self._get_color_idx(0, palette_idx, idx)
     }
 
-    fn _get_sprit_color(&self, palette_idx: u8, idx: u8) -> RGB {
+    fn _get_sprit_color(&self, palette_idx: u8, idx: u8) -> Pixel {
         self._get_color_idx(0x10, palette_idx, idx)
     }
 }
@@ -160,6 +160,23 @@ pub struct Ppu {
     image: RgbaImage,
 }
 
+impl Default for Ppu {
+    fn default() -> Self {
+        Ppu {
+            ctrl_flags: 0.into(),
+            status: RefCell::new(0.into()),
+            name_table: NameTableControl::default(),
+            cur_name_table_addr: 0x2000,
+            palette: Palette::default(),
+            cur_pattern_table_idx: 0,
+            oam_addr: 0,
+            oam: [0; 0x100],
+            data_rw_addr: RefCell::new(0),
+            image: RgbaImage::new(256, 240),
+        }
+    }
+}
+
 impl PpuTrait for Ppu {
     fn should_nmi(&self) -> bool {
         self.ctrl_flags.nmi_enable() && self.status.borrow().v_blank()
@@ -172,21 +189,6 @@ impl PpuTrait for Ppu {
 }
 
 impl Ppu {
-    pub fn new() -> Self {
-        Ppu {
-            ctrl_flags: 0.into(),
-            status: RefCell::new(0.into()),
-            name_table: NameTableControl::new(),
-            cur_name_table_addr: 0x2000,
-            palette: Palette::default(),
-            cur_pattern_table_idx: 0,
-            oam_addr: 0,
-            oam: [0; 0x100],
-            data_rw_addr: RefCell::new(0),
-            image: RgbaImage::new(256, 240),
-        }
-    }
-
     pub fn oam_dma(&mut self, vals: &[u8; 256]) {
         self.oam.copy_from_slice(vals);
     }
@@ -351,7 +353,7 @@ mod tests {
 
     fn new_test_ppu_and_pattern() -> (Ppu, [u8; 8192]) {
         let pattern = [0; 8192];
-        (Ppu::new(), pattern)
+        (Ppu::default(), pattern)
     }
 
     #[test]

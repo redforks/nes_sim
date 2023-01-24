@@ -34,8 +34,7 @@ impl Machine {
     pub fn process_frame(&mut self, ms: f64) {
         info!("process_frame: {}ms", ms);
         let img = self.inner.process_frame(ms);
-        let img_data =
-            ImageData::new_with_u8_clamped_array_and_sh(Clamped(&img), 256, 240).unwrap();
+        let img_data = ImageData::new_with_u8_clamped_array_and_sh(Clamped(img), 256, 240).unwrap();
         self.ctx.put_image_data(&img_data, 0.0, 0.0).unwrap();
     }
 }

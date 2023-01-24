@@ -1,7 +1,6 @@
 use ansi_term::Color;
 use clap::Parser;
 use nes_core::{Cpu, ExecuteResult};
-use std::io::Write;
 
 mod image;
 mod plugin;
