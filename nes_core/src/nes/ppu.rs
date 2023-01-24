@@ -1,7 +1,7 @@
 use crate::mcu::Mcu;
 use crate::to_from_u8;
 use image::{Rgba, RgbaImage};
-use log::info;
+use log::{debug, info};
 use modular_bitfield::prelude::*;
 use std::cell::RefCell;
 
@@ -133,6 +133,7 @@ impl Mcu for Palette {
     }
 
     fn write(&mut self, address: u16, value: u8) {
+        info!("set palette ${:x}: {:x}", address, value);
         self.data[self.get_addr(address)] = value;
     }
 }
@@ -186,7 +187,7 @@ impl PpuTrait for Ppu {
     fn set_v_blank(&self, v_blank: bool) -> PpuStatus {
         let status = *self.status.borrow();
         if v_blank {
-            info!("set v_blank: {}", v_blank);
+            debug!("set v_blank: {}", v_blank);
         }
         *self.status.borrow_mut() = status.with_v_blank(v_blank);
         status
@@ -356,6 +357,36 @@ mod tests {
     fn new_test_ppu_and_pattern() -> (Ppu, [u8; 8192]) {
         let pattern = [0; 8192];
         (Ppu::default(), pattern)
+    }
+
+    #[test]
+    fn palette_read_write() {
+        let mut p = Palette::default();
+        for i in 0..0x20 {
+            p.write(0x3f00 + i, i as u8);
+            assert_eq!(i as u8, p.read(0x3f00 + i));
+        }
+        for i in 0..0x20 {
+            if i % 4 != 0 {
+                // exclude mirrored address
+                assert_eq!(i as u8, p.read(0x3f00 + i));
+            }
+        }
+    }
+
+    #[test]
+    fn palette_get_color() {
+        let mut p = Palette::default();
+        p.write(0x3f00, 15);
+        p.write(0x3f01, 16);
+        p.write(0x3f02, 17);
+        p.write(0x3f03, 18);
+        p.write(0x3f05, 19);
+        assert_eq!(COLORS[15], p.get_background_color(0, 0));
+        assert_eq!(COLORS[16], p.get_background_color(0, 1));
+        assert_eq!(COLORS[17], p.get_background_color(0, 2));
+        assert_eq!(COLORS[18], p.get_background_color(0, 3));
+        assert_eq!(COLORS[19], p.get_background_color(1, 1));
     }
 
     #[test]
