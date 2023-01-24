@@ -12,6 +12,7 @@ pub struct NesMcu {
     ppu: Ppu,
     after_ppu: RamMcu<0x20>,
     cartridge: Box<dyn Cartridge>,
+    should_irq: bool,
 }
 
 pub fn build(file: &INesFile) -> impl Mcu {
@@ -28,6 +29,7 @@ pub fn build(file: &INesFile) -> impl Mcu {
         ppu,
         after_ppu: RamMcu::start_from(0x4000, [0; 0x20]),
         cartridge,
+        should_irq: false,
     }
 }
 
@@ -58,6 +60,9 @@ impl Mcu for NesMcu {
             0x0000..=0x1fff => self.lower_ram.write(address, value),
             0x2000..=0x3fff => self.ppu.write(address, value),
             0x4014 => self.ppu_dma(value),
+            0x4017 => {
+                self.should_irq = value & 0b1100_0000 == 0;
+            }
             0x4000..=0x401f => self.after_ppu.write(address, value),
             0x4020..=0xffff => self.cartridge.write(&mut self.ppu, address, value),
         }
@@ -72,7 +77,7 @@ impl Mcu for NesMcu {
     }
 
     fn request_irq(&self) -> bool {
-        false
+        self.should_irq
     }
 }
 
