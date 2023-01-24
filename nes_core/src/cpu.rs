@@ -389,6 +389,7 @@ pub struct Cpu {
     pub sp: u8,
     pub status: u8,
     mcu: Box<dyn Mcu>,
+    irq_requested: bool,
 
     /// if remains_clock not zero, new instruction will not be executed.
     remain_clocks: u16,
@@ -405,6 +406,7 @@ impl Cpu {
             sp: 0,
             status: Flag::InterruptDisabled as u8,
             mcu,
+            irq_requested: false,
             remain_clocks: 0,
             is_halt: false,
         }
@@ -424,6 +426,19 @@ impl Cpu {
         self.push_pc();
         self.push_status();
         self.pc = self.read_word(0xFFFA);
+    }
+
+    fn irq(&mut self) {
+        info!("irq");
+        self.set_flag(Flag::InterruptDisabled, true);
+
+        self.push_pc();
+        self.push_status();
+        self.pc = self.read_word(0xFFFE);
+    }
+
+    pub fn set_irq(&mut self, enabled: bool) {
+        self.irq_requested = enabled;
     }
 
     fn push_pc(&mut self) {
@@ -451,6 +466,10 @@ impl Cpu {
 
         if self.is_halt {
             return ExecuteResult::Continue;
+        }
+
+        if self.irq_requested && !self.flag(Flag::InterruptDisabled) {
+            self.irq();
         }
 
         plugin.start(self);
