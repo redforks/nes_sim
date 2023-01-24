@@ -13,7 +13,8 @@ pub struct NesMcu {
     ppu: Ppu,
     after_ppu: RamMcu<0x20>,
     cartridge: Box<dyn Cartridge>,
-    should_irq: Cell<bool>,
+    frame_counter_interrupt: Cell<bool>,
+    dmc_interrupt: Cell<bool>,
 }
 
 pub fn build(file: &INesFile) -> impl Mcu {
@@ -30,7 +31,8 @@ pub fn build(file: &INesFile) -> impl Mcu {
         ppu,
         after_ppu: RamMcu::start_from(0x4000, [0; 0x20]),
         cartridge,
-        should_irq: Cell::new(false),
+        frame_counter_interrupt: Cell::new(false),
+        dmc_interrupt: Cell::new(false),
     }
 }
 
@@ -52,7 +54,7 @@ impl Mcu for NesMcu {
             0x0000..=0x1fff => self.lower_ram.read(address),
             0x2000..=0x3fff => self.ppu.read(self.cartridge.pattern_ref(), address),
             0x4015 => {
-                self.should_irq.replace(false);
+                self.frame_counter_interrupt.replace(false);
                 0
             }
             0x4000..=0x401f => self.after_ppu.read(address),
@@ -65,8 +67,12 @@ impl Mcu for NesMcu {
             0x0000..=0x1fff => self.lower_ram.write(address, value),
             0x2000..=0x3fff => self.ppu.write(address, value),
             0x4014 => self.ppu_dma(value),
+            0x4015 => {
+                self.dmc_interrupt.replace(false);
+            }
             0x4017 => {
-                self.should_irq.replace(value & 0b1100_0000 == 0);
+                self.frame_counter_interrupt
+                    .replace(value & 0b1100_0000 == 0);
             }
             0x4000..=0x401f => self.after_ppu.write(address, value),
             0x4020..=0xffff => self.cartridge.write(&mut self.ppu, address, value),
@@ -82,7 +88,7 @@ impl Mcu for NesMcu {
     }
 
     fn request_irq(&self) -> bool {
-        self.should_irq.get()
+        self.frame_counter_interrupt.get() || self.dmc_interrupt.get()
     }
 }
 
