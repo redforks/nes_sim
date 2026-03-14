@@ -1,11 +1,11 @@
 [package]
 name = "nes_cpu_test"
 version = "0.1.0"
-edition = "2021"
+edition = "2024"
 
 [dependencies]
 nes_core = { path = "../nes_core" }
-env_logger = {version = "0.10.0", default_features = false}
+env_logger = { version = "0.10.0", default-features = false }
 log = "0.4.17"
 clap = { version = "4.1.1", features = ["derive"] }
 thiserror = "1.0.38"

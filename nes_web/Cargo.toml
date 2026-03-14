@@ -1,7 +1,7 @@
 [package]
 name = "nes_web"
 version = "0.1.0"
-edition = "2021"
+edition = "2024"
 
 [lib]
 crate-type = ["cdylib", "rlib"]
@@ -11,8 +11,8 @@ console_error_panic_hook = "0.1.7"
 console_log = "0.2.0"
 log = "0.4.17"
 nes_core = { path = "../nes_core" }
-wasm-bindgen = "0.2.83"
+wasm-bindgen = "0.2.88"
 web-sys = {version = "0.3.60", features = ["HtmlCanvasElement", "CanvasRenderingContext2d", "ImageData", "Window", "Document"]}
 wee_alloc = "0.4.5"
-image = { version = "0.24.5", default_features = false}
+image = { version = "0.24.5", default-features = false }
 js-sys = "0.3.60"
