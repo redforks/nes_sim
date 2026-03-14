@@ -433,10 +433,11 @@ impl Cpu {
 
     fn irq(&mut self) {
         // info!("irq");
-        self.set_flag(Flag::InterruptDisabled, true);
-
+        // Push status BEFORE setting I flag, so the saved status reflects the state at IRQ time
         self.push_pc();
         self.push_status();
+        // Now set I flag to prevent nested IRQs
+        self.set_flag(Flag::InterruptDisabled, true);
         self.pc = self.read_word(0xFFFE);
     }
 
