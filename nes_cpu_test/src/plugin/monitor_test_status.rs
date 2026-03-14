@@ -48,11 +48,10 @@ impl Plugin for MonitorTestStatus {
             return;
         }
 
-        if let Some(last_status) = &self.last_status {
-            if *last_status == status {
+        if let Some(last_status) = &self.last_status
+            && *last_status == status {
                 return;
             }
-        }
         self.last_status = Some(status);
 
         self.exit_code = match status {

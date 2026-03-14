@@ -73,7 +73,7 @@ mod tests {
         let mut cpu = Cpu::new(Box::new(mcu));
 
         let mut p = DetectDeadLoop::<2, 2>::new();
-        for pc in pcs.to_owned() {
+        for pc in pcs.iter().copied() {
             cpu.pc = pc;
             p.end(&cpu);
         }

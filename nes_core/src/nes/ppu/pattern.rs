@@ -62,7 +62,7 @@ pub fn draw_pattern(band: &PatternBand<'_>) -> RgbaImage {
     let total_bands = band.iter().count() as u32;
 
     let mut img: RgbaImage =
-        RgbaImage::new(128, (128 * total_bands + 32 * (total_bands - 1)).max(0));
+        RgbaImage::new(128, 128 * total_bands + 32 * (total_bands - 1) );
     for (band_idx, pattern) in band.iter().enumerate() {
         let start_y = band_idx * (128 + 32);
         for (tile_idx, tile) in pattern.iter().enumerate() {

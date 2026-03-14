@@ -485,30 +485,30 @@ mod tests {
         let (mut ppu, _) = new_test_ppu_and_pattern();
 
         let flag = PpuCtrl::new().with_nmi_enable(false);
-        assert_eq!(ppu.status.borrow().v_blank(), false);
+        assert!(!ppu.status.borrow().v_blank());
 
         // disable nmi
         ppu.set_control_flags(flag);
         ppu.set_v_blank(true);
-        assert_eq!(ppu.status.borrow().v_blank(), true);
+        assert!(ppu.status.borrow().v_blank());
         // should_nmi is false because nmi is disabled
-        assert_eq!(ppu.should_nmi(), false);
+        assert!(!ppu.should_nmi());
         ppu.set_v_blank(false);
         // v_blank is false on v_blank end
-        assert_eq!(ppu.status.borrow().v_blank(), false);
+        assert!(!ppu.status.borrow().v_blank());
 
         // read status register will reset v_blank flag
         ppu.set_v_blank(true);
-        assert_eq!(ppu.read_status().v_blank(), true);
-        assert_eq!(ppu.status.borrow().v_blank(), false);
+        assert!(ppu.read_status().v_blank());
+        assert!(!ppu.status.borrow().v_blank());
 
         // enable nmi
         ppu.set_control_flags(flag.with_nmi_enable(true));
-        assert_eq!(ppu.should_nmi(), false);
+        assert!(!ppu.should_nmi());
         ppu.set_v_blank(true);
-        assert_eq!(ppu.status.borrow().v_blank(), true);
+        assert!(ppu.status.borrow().v_blank());
         // should_nmi is true because nmi is enabled
-        assert_eq!(ppu.should_nmi(), true);
+        assert!(ppu.should_nmi());
     }
 
     #[test]
