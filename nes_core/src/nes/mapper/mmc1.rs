@@ -1,3 +1,5 @@
+#![allow(dead_code)]
+
 use super::Cartridge;
 use crate::nes::ppu::{Mirroring, Ppu};
 use crate::to_from_u8;
