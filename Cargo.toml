@@ -1,4 +1,5 @@
 [workspace]
+resolver = "2"
 members = [
   "nes_core",
   "nes_cpu_test",

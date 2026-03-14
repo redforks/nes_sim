@@ -17,7 +17,7 @@ pub struct NesMcu {
     dmc_interrupt: Cell<bool>,
 }
 
-pub fn build(file: &INesFile) -> impl Mcu {
+pub fn build(file: &INesFile) -> impl Mcu + use<> {
     let cartridge = mapper::create_cartridge(file);
     let mut ppu = Ppu::default();
     ppu.set_mirroring(if file.header().ver_or_hor_arrangement {

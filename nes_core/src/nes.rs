@@ -8,7 +8,7 @@ mod mapper;
 pub mod nes_mcu;
 pub mod ppu;
 
-pub fn create_mcu(file: &INesFile) -> impl Mcu {
+pub fn create_mcu(file: &INesFile) -> impl Mcu + use<> {
     nes_mcu::build(file)
 }
 
