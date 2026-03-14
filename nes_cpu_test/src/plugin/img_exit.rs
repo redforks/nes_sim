@@ -10,8 +10,8 @@ impl Plugin for ImageExit {
     fn start(&mut self, _: &Cpu) {}
 
     fn end(&mut self, cpu: &Cpu) {
-        if let Some(last) = self.last_pc {
-            if last == cpu.pc {
+        if let Some(last) = self.last_pc
+            && last == cpu.pc {
                 if cpu.flag(Flag::Decimal) {
                     // decimal mode not implemented, it is okay to exit test on decimal error,
                     // decimal test is the last of opCode test.
@@ -24,7 +24,6 @@ impl Plugin for ImageExit {
                 self.exit_code = Some(1);
                 return;
             }
-        }
         self.last_pc = Some(cpu.pc);
     }
 
