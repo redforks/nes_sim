@@ -1,5 +1,5 @@
 use super::addressing::{Address, RegisterStatus};
-use super::{extra_tick_if_cross_page, Cpu, Flag};
+use super::{Cpu, Flag, extra_tick_if_cross_page};
 use crate::cpu::addressing::{FlagAddr, Literal};
 use log::debug;
 
@@ -91,11 +91,7 @@ pub fn new_dec<D: Address>(dest: D) -> impl FnMut(&mut Cpu) -> u8 {
         dest.set(cpu, val);
         cpu.update_negative_flag(val);
         cpu.update_zero_flag(val);
-        if dest.is_register() {
-            2
-        } else {
-            4 + ticks
-        }
+        if dest.is_register() { 2 } else { 4 + ticks }
     }
 }
 
@@ -109,11 +105,7 @@ pub fn new_inc<D: Address>(dest: D) -> impl FnMut(&mut Cpu) -> u8 {
         dest.set(cpu, val);
         cpu.update_negative_flag(val);
         cpu.update_zero_flag(val);
-        if dest.is_register() {
-            2
-        } else {
-            4 + ticks
-        }
+        if dest.is_register() { 2 } else { 4 + ticks }
     }
 }
 
