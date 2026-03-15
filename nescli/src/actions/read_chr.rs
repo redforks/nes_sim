@@ -1,7 +1,8 @@
-use image::{ImageOutputFormat, RgbaImage};
+use image::codecs::png::PngEncoder;
+use image::{DynamicImage, ImageEncoder};
 use nes_core::ines::INesFile;
-use nes_core::nes::ppu::{draw_pattern, PatternBand};
-use std::io::{stdout, Cursor, Write};
+use nes_core::nes::ppu::{PatternBand, draw_pattern};
+use std::io::{Cursor, Write, stdout};
 
 #[derive(clap::Args)]
 pub struct ReadChrAction {}
@@ -16,10 +17,16 @@ impl ReadChrAction {
             return Ok(());
         }
 
-        let img: RgbaImage = draw_pattern(&band);
+        let img = DynamicImage::from(draw_pattern(&band));
 
         let mut buf = Cursor::new(Vec::new());
-        img.write_to(&mut buf, ImageOutputFormat::Png)?;
+        let encoder = PngEncoder::new(&mut buf);
+        encoder.write_image(
+            img.as_bytes(),
+            img.width(),
+            img.height(),
+            image::ExtendedColorType::Rgba8,
+        )?;
         Ok(stdout().write_all(buf.get_ref())?)
     }
 }

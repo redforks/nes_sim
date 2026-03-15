@@ -8,12 +8,11 @@ crate-type = ["cdylib", "rlib"]
 doctest = false
 
 [dependencies]
-console_error_panic_hook = "0.1.7"
-console_log = "0.2.0"
-log = "0.4.17"
+console_error_panic_hook = "0.1"
+console_log = "1"
+log = "0.4"
 nes_core = { path = "../nes_core" }
-wasm-bindgen = "0.2.88"
-web-sys = {version = "0.3.60", features = ["HtmlCanvasElement", "CanvasRenderingContext2d", "ImageData", "Window", "Document"]}
-wee_alloc = "0.4.5"
-image = { version = "0.24.5", default-features = false }
-js-sys = "0.3.60"
+wasm-bindgen = "0.2"
+web-sys = {version = "0.3", features = ["HtmlCanvasElement", "CanvasRenderingContext2d", "ImageData", "Window", "Document"]}
+image = { version = "0.25", default-features = false }
+js-sys = "0.3"

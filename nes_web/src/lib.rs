@@ -1,19 +1,16 @@
 use image::DynamicImage;
 use log::{debug, info};
+use nes_core::EmptyPlugin;
 use nes_core::ines::INesFile;
 use nes_core::machine::Machine as NesMachine;
 use nes_core::nes::create_mcu;
-use nes_core::nes::ppu::{draw_pattern, PatternBand};
-use nes_core::EmptyPlugin;
+use nes_core::nes::ppu::{PatternBand, draw_pattern};
 use std::panic;
 use wasm_bindgen::prelude::*;
 use wasm_bindgen::{Clamped, JsCast};
-use web_sys::{window, CanvasRenderingContext2d, HtmlCanvasElement, ImageData};
+use web_sys::{CanvasRenderingContext2d, HtmlCanvasElement, ImageData, window};
 
 mod drivers;
-
-#[global_allocator]
-static ALLOC: wee_alloc::WeeAlloc = wee_alloc::WeeAlloc::INIT;
 
 #[wasm_bindgen]
 pub struct Machine {
