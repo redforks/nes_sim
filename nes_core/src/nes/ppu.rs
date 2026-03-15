@@ -35,14 +35,14 @@ impl Default for PpuCtrl {
 #[derive(Copy, Clone)]
 #[bitfield]
 pub struct PpuMask {
-    pub blue_tint: bool,
-    pub green_tint: bool,
-    pub red_tint: bool,
-    pub sprite_enabled: bool,
-    pub background_enabled: bool,
-    pub sprite_left_enabled: bool,
-    pub background_left_enabled: bool,
     pub grayscale: bool,
+    pub background_left_enabled: bool,
+    pub sprite_left_enabled: bool,
+    pub background_enabled: bool,
+    pub sprite_enabled: bool,
+    pub red_tint: bool,
+    pub green_tint: bool,
+    pub blue_tint: bool,
 }
 to_from_u8!(PpuMask);
 

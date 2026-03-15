@@ -19,11 +19,13 @@ pub const V_BLANK_CYCLES: f64 = 2273.3333333;
 
 impl<P: Plugin> Machine<P> {
     pub fn with_plugin(p: P, mcu: Box<dyn Mcu>) -> Self {
-        Machine {
+        let mut machine = Machine {
             // cpu: Cpu::new(Box::new(create_mcu(&ines))),
             cpu: Cpu::new(mcu),
             p,
-        }
+        };
+        machine.cpu.reset();
+        machine
     }
 
     /// Run the machine for a single frame.
