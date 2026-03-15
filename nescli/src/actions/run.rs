@@ -33,7 +33,7 @@ impl RunAction {
         // Create texture for RGBA8888 pixel format
         let texture_creator = canvas.texture_creator();
         let mut texture = texture_creator
-            .create_texture_streaming(PixelFormatEnum::RGBA8888, 256, 240)
+            .create_texture_streaming(PixelFormatEnum::ABGR8888, 256, 240)
             .map_err(|e| anyhow::anyhow!(e))?;
 
         // Create NES machine
