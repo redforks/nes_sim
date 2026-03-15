@@ -1,22 +1,19 @@
 use crate::ines::INesFile;
 use nom::bits::streaming::take as bit_take;
 use nom::error::Error as NomError;
-use nom::{Compare, IResult, InputTake, bits::bits, bytes, error::ParseError, sequence::tuple};
+use nom::{IResult, Parser, bits::bits, bytes};
 
-fn new_signature<I, E: ParseError<I>>() -> impl Fn(I) -> IResult<I, I, E>
-where
-    I: InputTake + Compare<[u8; 4]>,
-{
-    bytes::complete::tag([0x4e, 0x45, 0x53, 0x1a])
-}
+const NES_SIGNATURE: &[u8] = &[0x4e, 0x45, 0x53, 0x1a];
 
 pub fn check_signature(image: &[u8]) -> bool {
-    new_signature::<&[u8], ()>()(image).is_ok()
+    bytes::complete::tag::<&[u8], _, NomError<&[u8]>>(NES_SIGNATURE)
+        .parse(image)
+        .is_ok()
 }
 
 fn parse_header(input: &[u8]) -> IResult<&[u8], super::Header> {
-    let (input, n_prg) = nom::number::streaming::u8(input)?;
-    let (input, n_chr) = nom::number::streaming::u8(input)?;
+    let (input, n_prg) = nom::number::streaming::u8.parse(input)?;
+    let (input, n_chr) = nom::number::streaming::u8.parse(input)?;
     let (
         input,
         (
@@ -26,17 +23,18 @@ fn parse_header(input: &[u8]) -> IResult<&[u8], super::Header> {
             battery_backed_ram,
             ver_or_hor_arrangement,
         ),
-    ): (&[u8], (u8, u8, u8, u8, u8)) = bits::<_, _, NomError<(&[u8], usize)>, _, _>(tuple((
+    ): (&[u8], (u8, u8, u8, u8, u8)) = bits::<_, _, NomError<(&[u8], usize)>, _, _>((
         bit_take(4usize),
         bit_take(1usize),
         bit_take(1usize),
         bit_take(1usize),
         bit_take(1usize),
-    )))(input)?;
+    ))
+    .parse(input)?;
 
-    let (input, (mapper_high, _)): (&[u8], (u8, u8)) = bits::<_, _, NomError<(&[u8], usize)>, _, _>(
-        tuple((bit_take(4usize), bit_take(4usize))),
-    )(input)?;
+    let (input, (mapper_high, _)): (&[u8], (u8, u8)) =
+        bits::<_, _, NomError<(&[u8], usize)>, _, _>((bit_take(4usize), bit_take(4usize)))
+            .parse(input)?;
 
     Ok((
         input,
@@ -53,14 +51,14 @@ fn parse_header(input: &[u8]) -> IResult<&[u8], super::Header> {
 }
 
 fn _parse_file(buf: &[u8]) -> IResult<&[u8], INesFile> {
-    let (buf, _) = new_signature()(buf)?;
+    let (buf, _) = bytes::complete::tag(NES_SIGNATURE).parse(buf)?;
     let (buf, header) = parse_header(buf)?;
     // skip 8 bytes
-    let (buf, _) = bytes::complete::take(8usize)(buf)?;
+    let (buf, _) = bytes::complete::take(8usize).parse(buf)?;
     // read 16 * header.n_prg_pages bytes
-    let (buf, prg) = bytes::complete::take(16 * 1024 * header.n_prg_pages as usize)(buf)?;
+    let (buf, prg) = bytes::complete::take(16 * 1024 * header.n_prg_pages as usize).parse(buf)?;
     // read 8 * header.n_chr_pages bytes
-    let (buf, chr) = bytes::complete::take(8 * 1024 * header.n_chr_pages as usize)(buf)?;
+    let (buf, chr) = bytes::complete::take(8 * 1024 * header.n_chr_pages as usize).parse(buf)?;
 
     Ok((
         buf,
@@ -73,7 +71,7 @@ fn _parse_file(buf: &[u8]) -> IResult<&[u8], INesFile> {
 }
 
 pub fn parse_file(buf: &[u8]) -> Result<INesFile, nom::error::Error<&[u8]>> {
-    let result = nom::combinator::complete(_parse_file)(buf);
+    let result = nom::combinator::complete(_parse_file).parse(buf);
     match result {
         Ok((_, file)) => Ok(file),
         Err(err) => match err {
