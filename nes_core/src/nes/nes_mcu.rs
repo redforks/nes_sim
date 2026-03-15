@@ -18,6 +18,7 @@ pub struct NesMcu {
     nmi_pending: Cell<bool>,
     // APU state for length counter timing
     apu_cycle: u64,
+    apu_even_cycle: bool, // APU is clocked every OTHER CPU cycle
     frame_counter: u8,
     frame_counter_mode: bool,
     length_counters: [u8; 4], // pulse1, pulse2, triangle, noise
@@ -43,6 +44,7 @@ pub fn build(file: &INesFile) -> impl Mcu + use<> {
         dmc_interrupt: Cell::new(false),
         nmi_pending: Cell::new(false),
         apu_cycle: 0,
+        apu_even_cycle: false,
         frame_counter: 0,
         frame_counter_mode: false,
         length_counters: [0; 4],
@@ -126,6 +128,7 @@ impl Mcu for NesMcu {
                     .replace(value & 0b1100_0000 == 0);
                 // Reset frame counter on write
                 self.apu_cycle = 0;
+                self.apu_even_cycle = false;
                 self.frame_counter = 0;
                 // In 4-step mode, immediately clock length counters when $4017 is written
                 if !self.frame_counter_mode {
@@ -141,25 +144,25 @@ impl Mcu for NesMcu {
             }
             // Length counter load registers (high byte)
             0x4003 => {
-                // Pulse 1 length counter load
+                // Pulse 1 length counter load (always loads, even if channel disabled)
                 self.after_ppu.write(address, value);
                 let index = ((value & 0xF8) >> 3) as usize;
                 self.length_counters[0] = Self::LENGTH_TABLE[index];
             }
             0x4007 => {
-                // Pulse 2 length counter load
+                // Pulse 2 length counter load (always loads, even if channel disabled)
                 self.after_ppu.write(address, value);
                 let index = ((value & 0xF8) >> 3) as usize;
                 self.length_counters[1] = Self::LENGTH_TABLE[index];
             }
             0x400B => {
-                // Triangle length counter load
+                // Triangle length counter load (always loads, even if channel disabled)
                 self.after_ppu.write(address, value);
                 let index = ((value & 0xF8) >> 3) as usize;
                 self.length_counters[2] = Self::LENGTH_TABLE[index];
             }
             0x400F => {
-                // Noise length counter load
+                // Noise length counter load (always loads, even if channel disabled)
                 self.after_ppu.write(address, value);
                 let index = ((value & 0xF8) >> 3) as usize;
                 self.length_counters[3] = Self::LENGTH_TABLE[index];
@@ -201,52 +204,40 @@ impl Mcu for NesMcu {
 
 impl NesMcu {
     /// Tick the APU frame counter and length counters
+    /// The APU is clocked every OTHER CPU cycle
     /// Returns true if a frame interrupt should occur
     pub fn tick_apu(&mut self) -> bool {
+        // Toggle the even/odd cycle flag
+        self.apu_even_cycle = !self.apu_even_cycle;
+
+        // Only process the APU frame counter on even cycles (every other CPU cycle)
+        if !self.apu_even_cycle {
+            return false;
+        }
+
         self.apu_cycle += 1;
 
-        // APU frame counter in 4-step mode clocks at cycles:
-        // 1, 7459, 14917, 22375 (no length counter clock at 22375)
-        // Then repeats: 29833, 37291, 374749, 44707 ...
+        // APU frame counter in 4-step mode:
+        // The frame counter has a period of 14915 APU cycles (29830 CPU cycles)
+        // According to NESdev wiki, clock points are at:
+        // - APU cycle 3728: step 0 (clock length counters)
+        // - APU cycle 7456: step 1 (clock length counters)
+        // - APU cycle 11185: step 2 (clock length counters)
+        // - APU cycle 14914: step 3 (DON'T clock length counters)
+        // Note: The wiki shows these as cumulative counts, not intervals
 
-        // Calculate which step we're on based on apu_cycle
-        // Frame counter in 4-step mode has period of 29831 cycles (7458*3 + 7457)
-        // Clocks at: 7458, 14916, 22374 (then wraps to 0)
-        let step = if self.apu_cycle < 7458 {
-            0 // Step 0 from reset until first clock
-        } else if self.apu_cycle < 14916 {
-            1 // Step 1
-        } else if self.apu_cycle < 22374 {
-            2 // Step 2
-        } else if self.apu_cycle < 29831 {
-            3 // Step 3 (no length counter clock)
-        } else {
-            // After first full sequence, the period is 29831 cycles
-            let cycle_in_sequence = (self.apu_cycle - 29831) % 29831;
-            if cycle_in_sequence < 7458 {
-                0
-            } else if cycle_in_sequence < 14916 {
-                1
-            } else if cycle_in_sequence < 22374 {
-                2
-            } else {
-                3
-            }
-        };
+        let cycle_mod = self.apu_cycle % 14915;
+        let is_clock_point = cycle_mod == 3728 || cycle_mod == 7456 || cycle_mod == 11185;
 
-        // Detect clock points: cycles 7458, 14916, 22374, then 29830 (wraps), etc.
-        // Note: We DON'T clock at cycle 1 because we already clocked immediately when $4017 was written
-        let is_clock_point = if self.apu_cycle <= 22374 {
-            self.apu_cycle >= 7458
-                && (self.apu_cycle == 7458 || self.apu_cycle == 14916 || self.apu_cycle == 22374)
+        // Calculate which step we're on (0-3)
+        let step = if cycle_mod < 3728 {
+            0
+        } else if cycle_mod < 7456 {
+            1
+        } else if cycle_mod < 11185 {
+            2
         } else {
-            // After first full sequence, the period is 29831 cycles
-            let cycle_in_sequence = (self.apu_cycle - 29831) % 29831;
-            cycle_in_sequence == 7458 - 29831
-                || cycle_in_sequence == 14916 - 29831
-                || cycle_in_sequence == 22374 - 29831
-                || cycle_in_sequence == 0
-            // Simplify: check if we're at a clock point in the next sequence
+            3
         };
 
         // Update frame counter when we clock
@@ -256,7 +247,7 @@ impl NesMcu {
             // In 4-step mode, clock length counters on steps 0, 1, 2 (NOT step 3)
             // In 5-step mode, clock length counters on steps 0, 1, 2, 3
             let should_clock_length = if self.frame_counter_mode {
-                // 5-step mode
+                // 5-step mode - clock on all steps
                 true
             } else {
                 // 4-step mode - don't clock on step 3
@@ -338,6 +329,7 @@ mod tests {
             dmc_interrupt: Cell::new(false),
             nmi_pending: Cell::new(false),
             apu_cycle: 0,
+            apu_even_cycle: false,
             frame_counter: 0,
             frame_counter_mode: false,
             length_counters: [0; 4],
@@ -366,6 +358,7 @@ mod tests {
             dmc_interrupt: Cell::new(false),
             nmi_pending: Cell::new(false),
             apu_cycle: 0,
+            apu_even_cycle: false,
             frame_counter: 0,
             frame_counter_mode: false,
             length_counters: [0; 4],
@@ -390,6 +383,7 @@ mod tests {
             dmc_interrupt: Cell::new(false),
             nmi_pending: Cell::new(false),
             apu_cycle: 0,
+            apu_even_cycle: false,
             frame_counter: 0,
             frame_counter_mode: false,
             length_counters: [0; 4],
@@ -419,6 +413,7 @@ mod tests {
             dmc_interrupt: Cell::new(false),
             nmi_pending: Cell::new(false),
             apu_cycle: 0,
+            apu_even_cycle: false,
             frame_counter: 0,
             frame_counter_mode: false,
             length_counters: [0; 4],
@@ -440,6 +435,7 @@ mod tests {
             dmc_interrupt: Cell::new(false),
             nmi_pending: Cell::new(false),
             apu_cycle: 0,
+            apu_even_cycle: false,
             frame_counter: 0,
             frame_counter_mode: false,
             length_counters: [0; 4],
@@ -461,6 +457,7 @@ mod tests {
             dmc_interrupt: Cell::new(true),
             nmi_pending: Cell::new(false),
             apu_cycle: 0,
+            apu_even_cycle: false,
             frame_counter: 0,
             frame_counter_mode: false,
             length_counters: [0; 4],
@@ -482,6 +479,7 @@ mod tests {
             dmc_interrupt: Cell::new(false),
             nmi_pending: Cell::new(false),
             apu_cycle: 0,
+            apu_even_cycle: false,
             frame_counter: 0,
             frame_counter_mode: false,
             length_counters: [0; 4],
@@ -503,6 +501,7 @@ mod tests {
             dmc_interrupt: Cell::new(false),
             nmi_pending: Cell::new(false),
             apu_cycle: 0,
+            apu_even_cycle: false,
             frame_counter: 0,
             frame_counter_mode: false,
             length_counters: [0; 4],
@@ -525,6 +524,7 @@ mod tests {
             dmc_interrupt: Cell::new(false),
             nmi_pending: Cell::new(false),
             apu_cycle: 0,
+            apu_even_cycle: false,
             frame_counter: 0,
             frame_counter_mode: false,
             length_counters: [0; 4],
@@ -551,6 +551,7 @@ mod tests {
             dmc_interrupt: Cell::new(false),
             nmi_pending: Cell::new(false),
             apu_cycle: 0,
+            apu_even_cycle: false,
             frame_counter: 0,
             frame_counter_mode: false,
             length_counters: [0; 4],
@@ -576,6 +577,7 @@ mod tests {
             dmc_interrupt: Cell::new(true),
             nmi_pending: Cell::new(false),
             apu_cycle: 0,
+            apu_even_cycle: false,
             frame_counter: 0,
             frame_counter_mode: false,
             length_counters: [0; 4],
@@ -601,6 +603,7 @@ mod tests {
             dmc_interrupt: Cell::new(false),
             nmi_pending: Cell::new(false),
             apu_cycle: 0,
+            apu_even_cycle: false,
             frame_counter: 0,
             frame_counter_mode: false,
             length_counters: [0; 4],
@@ -624,6 +627,7 @@ mod tests {
             dmc_interrupt: Cell::new(false),
             nmi_pending: Cell::new(false),
             apu_cycle: 0,
+            apu_even_cycle: false,
             frame_counter: 0,
             frame_counter_mode: false,
             length_counters: [0; 4],
@@ -650,6 +654,7 @@ mod tests {
             dmc_interrupt: Cell::new(false),
             nmi_pending: Cell::new(false),
             apu_cycle: 0,
+            apu_even_cycle: false,
             frame_counter: 0,
             frame_counter_mode: false,
             length_counters: [0; 4],
@@ -674,6 +679,7 @@ mod tests {
             dmc_interrupt: Cell::new(false),
             nmi_pending: Cell::new(false),
             apu_cycle: 0,
+            apu_even_cycle: false,
             frame_counter: 0,
             frame_counter_mode: false,
             length_counters: [0; 4],
@@ -696,6 +702,7 @@ mod tests {
             dmc_interrupt: Cell::new(false),
             nmi_pending: Cell::new(false),
             apu_cycle: 0,
+            apu_even_cycle: false,
             frame_counter: 0,
             frame_counter_mode: false,
             length_counters: [0; 4],
@@ -726,6 +733,7 @@ mod tests {
             dmc_interrupt: Cell::new(false),
             nmi_pending: Cell::new(true),
             apu_cycle: 0,
+            apu_even_cycle: false,
             frame_counter: 0,
             frame_counter_mode: false,
             length_counters: [0; 4],
@@ -753,6 +761,7 @@ mod tests {
             dmc_interrupt: Cell::new(false),
             nmi_pending: Cell::new(false),
             apu_cycle: 0,
+            apu_even_cycle: false,
             frame_counter: 0,
             frame_counter_mode: false,
             length_counters: [0; 4],
@@ -779,6 +788,7 @@ mod tests {
             dmc_interrupt: Cell::new(false),
             nmi_pending: Cell::new(false),
             apu_cycle: 0,
+            apu_even_cycle: false,
             frame_counter: 0,
             frame_counter_mode: false,
             length_counters: [0; 4],
@@ -806,6 +816,7 @@ mod tests {
             dmc_interrupt: Cell::new(false),
             nmi_pending: Cell::new(false),
             apu_cycle: 0,
+            apu_even_cycle: false,
             frame_counter: 0,
             frame_counter_mode: false,
             length_counters: [0; 4],
@@ -828,6 +839,7 @@ mod tests {
             dmc_interrupt: Cell::new(false),
             nmi_pending: Cell::new(false),
             apu_cycle: 0,
+            apu_even_cycle: false,
             frame_counter: 0,
             frame_counter_mode: false,
             length_counters: [0; 4],
