@@ -1,5 +1,5 @@
 use crate::mcu::Mcu;
-use crate::nes::ppu::{NAME_TABLE_MEM_START, Pattern, TILES_PER_COL, TILES_PER_ROW, Tile};
+use crate::nes::ppu::{Pattern, Tile, NAME_TABLE_MEM_START, TILES_PER_COL, TILES_PER_ROW};
 
 #[derive(Copy, Clone)]
 pub struct AttributeTable<'a>(&'a [u8]);

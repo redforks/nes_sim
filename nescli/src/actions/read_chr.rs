@@ -1,8 +1,8 @@
 use image::codecs::png::PngEncoder;
 use image::{DynamicImage, ImageEncoder};
 use nes_core::ines::INesFile;
-use nes_core::nes::ppu::{PatternBand, draw_pattern};
-use std::io::{Cursor, Write, stdout};
+use nes_core::nes::ppu::{draw_pattern, PatternBand};
+use std::io::{stdout, Cursor, Write};
 
 #[derive(clap::Args)]
 pub struct ReadChrAction {}
