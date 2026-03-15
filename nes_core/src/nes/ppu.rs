@@ -275,24 +275,59 @@ impl Ppu {
 
     fn render_background(&mut self, pattern: &[u8]) {
         let pattern = PatternBand::new(pattern).pattern(self.cur_pattern_table_idx as usize);
-        let cur_name_table = (self.cur_name_table_addr - NAME_TABLE_MEM_START) / 0x400;
-        let name_table = self.name_table.nth(cur_name_table as u8);
-        let attr_table = self.name_table.attribute_table(cur_name_table as u8);
-        for (tile_x, tile_y) in itertools::iproduct!(0..32, 0..30) {
-            let tile = name_table.tile(pattern, tile_x, tile_y);
-            let palette_idx = attr_table.palette_idx(tile_x, tile_y);
+
+        // Extract scroll values from vram_addr and fine_x
+        let vram_addr = *self.vram_addr.borrow();
+        let coarse_x = (vram_addr & 0x001f) as u8; // bits 0-4
+        let coarse_y = ((vram_addr >> 5) & 0x001f) as u8; // bits 5-9
+        let fine_y = ((vram_addr >> 12) & 0x0007) as u8; // bits 12-14
+        let fine_x = self.fine_x; // bits 0-2
+
+        // Render 32x30 tiles starting from scroll position
+        for (screen_tile_x, screen_tile_y) in itertools::iproduct!(0..32, 0..30) {
+            // Calculate nametable coordinates with wrapping
+            let nt_x = (coarse_x as u16 + screen_tile_x as u16) & 0x1f;
+            let nt_y = (coarse_y as u16 + screen_tile_y as u16) & 0x1f;
+
+            // Get the correct nametable and attribute table based on scroll offset
+            let nt_select_x = ((coarse_x as u16 + screen_tile_x as u16) >> 5) & 0x1;
+            let nt_select_y = ((coarse_y as u16 + screen_tile_y as u16) >> 5) & 0x1;
+            let nt_idx = (nt_select_y << 1) | nt_select_x;
+
+            let name_table = self.name_table.nth(nt_idx as u8);
+            let attr_table = self.name_table.attribute_table(nt_idx as u8);
+
+            let tile = name_table.tile(pattern, nt_x as u8, nt_y as u8);
+            let palette_idx = attr_table.palette_idx(nt_x as u8, nt_y as u8);
+
             for (x, y, pixel) in tile.iter() {
-                let color = self.palette.get_background_color(palette_idx, pixel);
-                self.image.put_pixel(
-                    x as u32 + tile_x as u32 * 8,
-                    y as u32 + tile_y as u32 * 8,
-                    color,
-                );
+                // Apply fine X scroll to pixel position
+                let screen_x = (screen_tile_x as u32 * 8) + x as u32;
+                let screen_y = (screen_tile_y as u32 * 8) + y as u32 + fine_y as u32;
+
+                // Apply fine_x scroll (shift pixels left)
+                let final_x = if screen_x >= fine_x as u32 {
+                    screen_x - fine_x as u32
+                } else {
+                    256 + screen_x - fine_x as u32
+                };
+
+                // Clamp to screen bounds (256x240)
+                if final_x < 256 && screen_y < 240 {
+                    let color = self.palette.get_background_color(palette_idx, pixel);
+                    self.image.put_pixel(final_x as u32, screen_y as u32, color);
+                }
             }
         }
     }
 
     pub fn render(&mut self, pattern: &[u8]) -> &RgbaImage {
+        // Clear image to black (universal background color, 0x0F in palette)
+        let black_pixel = COLORS[0x0f];
+        for pixel in self.image.pixels_mut() {
+            *pixel = black_pixel;
+        }
+
         if self.mask.background_enabled() {
             self.render_background(pattern);
         }
