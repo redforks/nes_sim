@@ -278,7 +278,10 @@ impl Ppu {
         self.name_table.set_mirroring(mirroring);
     }
 
-    fn set_control_flags(&mut self, flag: PpuCtrl) {
+    /// Set PPU control flags. Returns true if NMI should be triggered
+    /// by enabling NMI during an active VBlank.
+    fn set_control_flags(&mut self, flag: PpuCtrl) -> bool {
+        let old_nmi_enable = self.ctrl_flags.nmi_enable();
         self.ctrl_flags = flag;
         let new_val = match flag.name_table_select() {
             0 => 0x2000,
@@ -296,6 +299,7 @@ impl Ppu {
             info!("switch pattern table to {}", new_val);
             self.cur_pattern_table_idx = new_val;
         }
+        !old_nmi_enable && flag.nmi_enable() && self.status.borrow().v_blank()
     }
 
     fn set_ppu_mask(&mut self, mask: PpuMask) {
@@ -332,18 +336,35 @@ impl Ppu {
         }
     }
 
-    pub fn write(&mut self, address: u16, val: u8) {
+    /// Write to PPU register. Returns true if NMI should be triggered.
+    pub fn write(&mut self, address: u16, val: u8) -> bool {
         // todo: mirror to 0x3fff
         match address {
             0x2000 => self.set_control_flags(PpuCtrl::from(val)),
-            0x2001 => self.set_ppu_mask(PpuMask::from(val)),
-            0x2003 => self.set_oma_addr(val),
-            0x2004 => self.write_oam_data_and_inc(val),
+            0x2001 => {
+                self.set_ppu_mask(PpuMask::from(val));
+                false
+            }
+            0x2003 => {
+                self.set_oma_addr(val);
+                false
+            }
+            0x2004 => {
+                self.write_oam_data_and_inc(val);
+                false
+            }
             0x2005 => {
                 // todo: scroll
+                false
             }
-            0x2006 => self.set_data_rw_addr(val),
-            0x2007 => self.write_vram_and_inc(val),
+            0x2006 => {
+                self.set_data_rw_addr(val);
+                false
+            }
+            0x2007 => {
+                self.write_vram_and_inc(val);
+                false
+            }
             _ => panic!("Can not write to Ppu at address ${:x}", address),
         }
     }
@@ -630,6 +651,31 @@ mod tests {
         assert!(
             ppu.should_nmi(),
             "should_nmi should be true when NMI enabled during VBlank"
+        );
+
+        assert!(
+            ppu.write(0x2000, ctrl.with_nmi_enable(false).into()) == false,
+            "disabling NMI during VBlank should not trigger NMI"
+        );
+        assert!(
+            ppu.write(0x2000, ctrl.with_nmi_enable(true).into()),
+            "0->1 NMI enable transition during VBlank should trigger NMI"
+        );
+        assert!(
+            !ppu.write(0x2000, ctrl.with_nmi_enable(true).into()),
+            "1->1 NMI enable write during VBlank should not trigger a second NMI"
+        );
+    }
+
+    #[test]
+    fn nmi_does_not_trigger_on_ctrl_write_outside_vblank() {
+        let (mut ppu, _) = new_test_ppu_and_pattern();
+        let ctrl = PpuCtrl::new().with_nmi_enable(false);
+
+        assert!(!ppu.status.borrow().v_blank());
+        assert!(
+            !ppu.write(0x2000, ctrl.with_nmi_enable(true).into()),
+            "enabling NMI outside VBlank should not trigger NMI immediately"
         );
     }
 }
