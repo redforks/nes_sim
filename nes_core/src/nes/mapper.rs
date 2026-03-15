@@ -40,11 +40,11 @@ mod tests {
 
         // Control byte 1: MSB 4 bits are mapper_low (bits 7-4), LSB 4 bits are flags (bits 3-0)
         // The bits parser reads MSB-first, so we place mapper_low in the high nibble
-        let control1 = ((mapper & 0x0f) << 4) | 0x00; // mapper in bits 7-4, flags all 0
+        let control1 = (mapper & 0x0f) << 4; // mapper in bits 7-4, flags all 0
         rom.push(control1);
 
         // Control byte 2: MSB 4 bits are mapper_high (bits 7-4), LSB 4 bits are unused/reserved
-        let control2 = (((mapper & 0xf0) >> 4) << 4) | 0x00; // mapper in bits 7-4
+        let control2 = ((mapper & 0xf0) >> 4) << 4; // mapper in bits 7-4
         rom.push(control2);
 
         // 8 bytes of padding
@@ -52,11 +52,11 @@ mod tests {
 
         // PRG ROM data (16KB per page)
         let prg_size = 16 * 1024 * prg_pages as usize;
-        rom.extend(std::iter::repeat(0).take(prg_size));
+        rom.extend(std::iter::repeat_n(0, prg_size));
 
         // CHR ROM data (8KB per page)
         let chr_size = 8 * 1024 * chr_pages as usize;
-        rom.extend(std::iter::repeat(0).take(chr_size));
+        rom.extend(std::iter::repeat_n(0, chr_size));
 
         rom
     }

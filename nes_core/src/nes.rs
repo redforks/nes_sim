@@ -40,10 +40,10 @@ mod tests {
         rom.extend_from_slice(&[0; 8]);
 
         // PRG ROM data (16KB)
-        rom.extend(std::iter::repeat(0).take(16 * 1024));
+        rom.extend(std::iter::repeat_n(0, 16 * 1024));
 
         // CHR ROM data (8KB)
-        rom.extend(std::iter::repeat(0).take(8 * 1024));
+        rom.extend(std::iter::repeat_n(0, 8 * 1024));
 
         let file = INesFile::new(rom).unwrap();
         let _mcu = create_mcu(&file);

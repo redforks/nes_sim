@@ -96,7 +96,7 @@ mod tests {
     fn test_request_irq() {
         let mcu = RamMcu::new([0; 0x100]);
         // RamMcu never requests IRQ
-        assert_eq!(mcu.request_irq(), false);
+        assert!(!mcu.request_irq());
     }
 
     #[test]

@@ -13,6 +13,12 @@ pub struct Sweep {
 
 to_from_u8!(Sweep);
 
+impl Default for Sweep {
+    fn default() -> Self {
+        0u8.into()
+    }
+}
+
 #[bitfield]
 pub struct DutyCycle {
     pub duty: B2,
@@ -22,6 +28,12 @@ pub struct DutyCycle {
 }
 
 to_from_u8!(DutyCycle);
+
+impl Default for DutyCycle {
+    fn default() -> Self {
+        0u8.into()
+    }
+}
 
 #[derive(Copy, Clone, Default)]
 pub struct LengthCounterLoad {
@@ -55,6 +67,12 @@ pub struct LinearCounterControl {
 }
 
 to_from_u8!(LinearCounterControl);
+
+impl Default for LinearCounterControl {
+    fn default() -> Self {
+        0u8.into()
+    }
+}
 
 pub trait PulseDriver {
     fn set_duty_cycle(&mut self, duty_cycle: DutyCycle);
@@ -163,6 +181,12 @@ pub struct NoiseEnvelop {
 
 to_from_u8!(NoiseEnvelop);
 
+impl Default for NoiseEnvelop {
+    fn default() -> Self {
+        0u8.into()
+    }
+}
+
 #[derive(Copy, Clone)]
 #[bitfield]
 pub struct NoisePeriod {
@@ -177,6 +201,12 @@ pub struct NoisePeriod {
 
 to_from_u8!(NoisePeriod);
 
+impl Default for NoisePeriod {
+    fn default() -> Self {
+        0u8.into()
+    }
+}
+
 #[derive(Copy, Clone)]
 #[bitfield]
 pub struct NoiseLength {
@@ -187,6 +217,12 @@ pub struct NoiseLength {
 }
 
 to_from_u8!(NoiseLength);
+
+impl Default for NoiseLength {
+    fn default() -> Self {
+        0u8.into()
+    }
+}
 
 pub trait NoiseDriver {
     fn set_envelop(&mut self, envelop: NoiseEnvelop);
@@ -228,6 +264,12 @@ pub struct DmcIRQLoopFreq {
     pub freq: B4,
 }
 to_from_u8!(DmcIRQLoopFreq);
+
+impl Default for DmcIRQLoopFreq {
+    fn default() -> Self {
+        0u8.into()
+    }
+}
 
 pub trait DmcDriver {
     fn set_irq_loop_freq(&mut self, irq_loop_freq: DmcIRQLoopFreq);
@@ -274,6 +316,12 @@ pub struct ControlFlags {
 }
 to_from_u8!(ControlFlags);
 
+impl Default for ControlFlags {
+    fn default() -> Self {
+        0u8.into()
+    }
+}
+
 #[derive(Copy, Clone)]
 #[bitfield]
 pub struct APUStatus {
@@ -290,6 +338,12 @@ pub struct APUStatus {
 }
 to_from_u8!(APUStatus);
 
+impl Default for APUStatus {
+    fn default() -> Self {
+        0u8.into()
+    }
+}
+
 #[derive(Copy, Clone)]
 #[bitfield]
 pub struct FrameCounter {
@@ -300,6 +354,12 @@ pub struct FrameCounter {
     __: B6,
 }
 to_from_u8!(FrameCounter);
+
+impl Default for FrameCounter {
+    fn default() -> Self {
+        0u8.into()
+    }
+}
 
 pub trait APUControllerDriver {
     fn set_control_flags(&mut self, flags: ControlFlags);
@@ -386,9 +446,9 @@ mod tests {
         let byte: u8 = sweep.into();
         let sweep2: Sweep = byte.into();
 
-        assert_eq!(sweep2.enabled(), true);
+        assert!(sweep2.enabled());
         assert_eq!(sweep2.period(), 0b110);
-        assert_eq!(sweep2.negate(), false);
+        assert!(!sweep2.negate());
         assert_eq!(sweep2.shift(), 0b011);
     }
 
@@ -418,8 +478,8 @@ mod tests {
         let duty2: DutyCycle = byte.into();
 
         assert_eq!(duty2.duty(), 0b10);
-        assert_eq!(duty2.length_counter_halt(), false);
-        assert_eq!(duty2.constant_volume(), true);
+        assert!(!duty2.length_counter_halt());
+        assert!(duty2.constant_volume());
         assert_eq!(duty2.volume(), 0b0101);
     }
 
@@ -467,7 +527,7 @@ mod tests {
         let byte: u8 = lcc.into();
         let lcc2: LinearCounterControl = byte.into();
 
-        assert_eq!(lcc2.reload_flag(), false);
+        assert!(!lcc2.reload_flag());
         assert_eq!(lcc2.counter(), 0x7F);
     }
 
@@ -574,8 +634,8 @@ mod tests {
         let byte: u8 = envelop.into();
         let envelop2: NoiseEnvelop = byte.into();
 
-        assert_eq!(envelop2.loop_flag(), false);
-        assert_eq!(envelop2.constant_volume(), true);
+        assert!(!envelop2.loop_flag());
+        assert!(envelop2.constant_volume());
         assert_eq!(envelop2.volume(), 0b0101);
     }
 
@@ -598,7 +658,7 @@ mod tests {
         let byte: u8 = period.into();
         let period2: NoisePeriod = byte.into();
 
-        assert_eq!(period2.enabled(), false);
+        assert!(!period2.enabled());
         assert_eq!(period2.period(), 0b0101);
     }
 
@@ -643,8 +703,8 @@ mod tests {
         let byte: u8 = freq.into();
         let freq2: DmcIRQLoopFreq = byte.into();
 
-        assert_eq!(freq2.irq_enabled(), false);
-        assert_eq!(freq2.loop_flag(), true);
+        assert!(!freq2.irq_enabled());
+        assert!(freq2.loop_flag());
         assert_eq!(freq2.freq(), 0b0101);
     }
 
@@ -676,11 +736,11 @@ mod tests {
         let byte: u8 = flags.into();
         let flags2: ControlFlags = byte.into();
 
-        assert_eq!(flags2.dmc_enabled(), false);
-        assert_eq!(flags2.noise_enabled(), true);
-        assert_eq!(flags2.triangle_enabled(), false);
-        assert_eq!(flags2.pulse1_enabled(), true);
-        assert_eq!(flags2.pulse2_enabled(), false);
+        assert!(!flags2.dmc_enabled());
+        assert!(flags2.noise_enabled());
+        assert!(!flags2.triangle_enabled());
+        assert!(flags2.pulse1_enabled());
+        assert!(!flags2.pulse2_enabled());
     }
 
     #[test]
@@ -717,13 +777,13 @@ mod tests {
         let byte: u8 = status.into();
         let status2: APUStatus = byte.into();
 
-        assert_eq!(status2.dmc_interrupt(), false);
-        assert_eq!(status2.frame_interrupt(), true);
-        assert_eq!(status2.dmc_enabled(), false);
-        assert_eq!(status2.noise_enabled(), true);
-        assert_eq!(status2.triangle_enabled(), false);
-        assert_eq!(status2.pulse1_enabled(), true);
-        assert_eq!(status2.pulse2_enabled(), false);
+        assert!(!status2.dmc_interrupt());
+        assert!(status2.frame_interrupt());
+        assert!(!status2.dmc_enabled());
+        assert!(status2.noise_enabled());
+        assert!(!status2.triangle_enabled());
+        assert!(status2.pulse1_enabled());
+        assert!(!status2.pulse2_enabled());
     }
 
     #[test]
@@ -745,8 +805,8 @@ mod tests {
         let byte: u8 = counter.into();
         let counter2: FrameCounter = byte.into();
 
-        assert_eq!(counter2.mode(), false);
-        assert_eq!(counter2.interrupt_flag(), true);
+        assert!(!counter2.mode());
+        assert!(counter2.interrupt_flag());
     }
 
     // Mock driver for testing new() function
