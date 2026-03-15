@@ -127,6 +127,17 @@ impl Mcu for NesMcu {
                 // Reset frame counter on write
                 self.apu_cycle = 0;
                 self.frame_counter = 0;
+                // In 4-step mode, immediately clock length counters when $4017 is written
+                if !self.frame_counter_mode {
+                    for i in 0..4 {
+                        if self.channel_enabled[i]
+                            && !self.length_counter_halt[i]
+                            && self.length_counters[i] > 0
+                        {
+                            self.length_counters[i] -= 1;
+                        }
+                    }
+                }
             }
             // Length counter load registers (high byte)
             0x4003 => {
@@ -232,8 +243,21 @@ impl NesMcu {
             }
         };
 
-        // Check if we just entered a new step
-        if step != self.frame_counter {
+        // Detect clock points: cycles 7459, 14917, 22375, then 29833 (wraps), etc.
+        // Note: We DON'T clock at cycle 1 because we already clocked immediately when $4017 was written
+        let is_clock_point = if self.apu_cycle <= 22375 {
+            self.apu_cycle >= 7459
+                && (self.apu_cycle == 7459 || self.apu_cycle == 14917 || self.apu_cycle == 22375)
+        } else {
+            let cycle_offset = (self.apu_cycle % 29832);
+            cycle_offset == 7459
+                || cycle_offset == 14917
+                || cycle_offset == 22375
+                || cycle_offset == 0
+        };
+
+        // Update frame counter when we clock
+        if is_clock_point {
             self.frame_counter = step;
 
             // In 4-step mode, clock length counters on steps 0, 1, 2 (NOT step 3)
