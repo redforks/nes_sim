@@ -5,14 +5,14 @@ pub trait Address: Display + Copy {
     /// return (value, ticks)
     fn get(&self, cpu: &Cpu) -> (u8, u8) {
         let (addr, ticks) = self.calc_addr(cpu);
-        (cpu.read_byte(addr), ticks)
+        (cpu.read_byte(addr), ticks + 1) // +1 for the memory read
     }
 
     /// return ticks
     fn set(&self, cpu: &mut Cpu, val: u8) -> u8 {
         let (addr, ticks) = self.calc_addr(cpu);
         cpu.write_byte(addr, val);
-        ticks
+        ticks + 1 // +1 for the memory write
     }
 
     fn calc_addr(&self, _: &Cpu) -> (u16, u8) {
