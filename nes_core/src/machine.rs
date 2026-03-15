@@ -31,19 +31,7 @@ impl<P: Plugin> Machine<P> {
     pub fn process_frame(&mut self, ms: f64) -> (&RgbaImage, ExecuteResult) {
         let cycles = (ms * CYCLES_PER_MS) as u32;
 
-        // Set VBlank at start of frame so tests can detect it
-        // In real hardware, VBlank occurs at the end of visible scanlines,
-        // but for test ROMs we need VBlank to be detectable early
-        let ppu = self.cpu.mcu().get_ppu();
-        ppu.set_v_blank(true);
-        if ppu.should_nmi() {
-            self.cpu.nmi();
-        }
-
         let er = self.run_ticks(cycles);
-
-        // Clear VBlank at end of frame
-        self.cpu.mcu().get_ppu().set_v_blank(false);
 
         (self.cpu.mcu().get_machine_mcu().render(), er)
     }

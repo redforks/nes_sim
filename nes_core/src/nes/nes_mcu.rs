@@ -90,6 +90,10 @@ impl Mcu for NesMcu {
     fn request_irq(&self) -> bool {
         self.frame_counter_interrupt.get() || self.dmc_interrupt.get()
     }
+
+    fn tick_ppu(&mut self) -> bool {
+        self.ppu.tick()
+    }
 }
 
 impl MachineMcu for NesMcu {

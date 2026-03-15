@@ -31,4 +31,9 @@ pub trait Mcu {
     fn request_irq(&self) -> bool {
         panic!("request_irq() not implemented");
     }
+
+    /// Tick PPU by one dot. Returns true if NMI should be triggered.
+    fn tick_ppu(&mut self) -> bool {
+        false
+    }
 }
