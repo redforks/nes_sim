@@ -114,4 +114,102 @@ mod tests {
         assert_eq!(iter.next(), Some((0, 1, 1)));
         assert_eq!(iter.last(), Some((7, 7, 2)));
     }
+
+    #[test]
+    fn test_pattern_tile() {
+        // Create a pattern with 256 tiles (4096 bytes)
+        let mut data = [0u8; 4096];
+        // Set first tile to have some data
+        data[0] = 0xff;
+        data[8] = 0xff;
+        let pattern = Pattern(&data);
+        let tile = pattern.tile(0);
+        assert_eq!(tile.pixel(0, 0), 3);
+
+        // Test getting tile at different indices
+        let tile2 = pattern.tile(1);
+        assert_eq!(tile2.pixel(0, 0), 0);
+
+        // Test last tile
+        let tile_last = pattern.tile(255);
+        assert_eq!(tile_last.pixel(0, 0), 0);
+    }
+
+    #[test]
+    fn test_pattern_iter() {
+        let data = [0u8; 4096];
+        let pattern = Pattern(&data);
+
+        let iter = pattern.iter();
+        // Should have 256 tiles
+        let count = iter.count();
+        assert_eq!(count, 256);
+    }
+
+    #[test]
+    fn test_pattern_band_new() {
+        let data = [0u8; 4096];
+        let band = PatternBand::new(&data);
+        // Verify the band was created
+        let pattern = band.pattern(0);
+        assert_eq!(pattern.0.len(), 4096);
+    }
+
+    #[test]
+    fn test_pattern_band_pattern() {
+        // Create a band with 2 patterns (8192 bytes)
+        let data = [0u8; 8192];
+        let band = PatternBand(&data);
+
+        let pattern0 = band.pattern(0);
+        assert_eq!(pattern0.0.len(), 4096);
+        assert_eq!(pattern0.0.as_ptr(), data.as_ptr());
+
+        let pattern1 = band.pattern(1);
+        assert_eq!(pattern1.0.len(), 4096);
+        assert_eq!(pattern1.0.as_ptr(), unsafe { data.as_ptr().add(4096) });
+    }
+
+    #[test]
+    fn test_pattern_band_iter() {
+        // Create a band with 2 patterns
+        let data = [0u8; 8192];
+        let band = PatternBand(&data);
+
+        let iter = band.iter();
+        assert_eq!(iter.count(), 2);
+
+        // Test with 1 pattern
+        let data = [0u8; 4096];
+        let band = PatternBand(&data);
+        assert_eq!(band.iter().count(), 1);
+    }
+
+    #[test]
+    fn test_draw_pattern() {
+        // Create a pattern band with 1 pattern
+        let data = [0u8; 4096];
+        let band = PatternBand(&data);
+        let img = draw_pattern(&band);
+
+        // Image should be 128x128 for 1 pattern
+        assert_eq!(img.width(), 128);
+        assert_eq!(img.height(), 128);
+
+        // All pixels should be PALLET[0] = white since data is all zeros
+        let first_pixel = img.get_pixel(0, 0);
+        assert_eq!(first_pixel.0, [0xff, 0xff, 0xff, 0xff]);
+    }
+
+    #[test]
+    fn test_draw_pattern_multiple_bands() {
+        // Create a pattern band with 2 patterns
+        let data = [0u8; 8192];
+        let band = PatternBand::new(&data);
+        let img = draw_pattern(&band);
+
+        // Image should be 128x288 for 2 patterns (128 + 32 spacing + 128)
+        assert_eq!(img.width(), 128);
+        assert_eq!(img.height(), 128 + 32 + 128);
+    }
 }
