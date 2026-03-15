@@ -1386,8 +1386,8 @@ mod tests {
         execute_next(&mut cpu);
         // BIT should have set N flag (bit 7 of 0xE0)
         assert!(cpu.flag(Flag::Negative)); // bit 7 of 0xE0 = 1
-                                           // Overflow flag: (v & 0x70) != 0 means bits 6-4 are checked
-                                           // 0xE0 & 0x70 = 0xE0 & 0x70 = 0x60 != 0, so overflow should be set
+        // Overflow flag: (v & 0x70) != 0 means bits 6-4 are checked
+        // 0xE0 & 0x70 = 0xE0 & 0x70 = 0x60 != 0, so overflow should be set
         assert!(cpu.flag(Flag::Overflow));
     }
 
@@ -2376,5 +2376,57 @@ mod tests {
         execute_next(&mut cpu); // LDA #$F0
         execute_next(&mut cpu); // AND ($20),Y
         assert_eq!(cpu.a, 0x00);
+    }
+
+    #[test]
+    fn test_nop_zero_page() {
+        // 0x04 = NOP zero_page (0, 0, 1)
+        let mut cpu = create_cpu_with_program(&[0x04, 0x20, 0xEA]);
+        let initial_pc = cpu.pc;
+        execute_next(&mut cpu); // NOP $20
+        assert_ne!(cpu.pc, initial_pc);
+    }
+
+    #[test]
+    fn test_nop_zero_page_x() {
+        // 0x14 = NOP zero_page_x (0, 0, 5)
+        let mut cpu = create_cpu_with_program(&[0x14, 0x20, 0xEA]);
+        cpu.x = 5;
+        execute_next(&mut cpu); // NOP $20,X
+    }
+
+    #[test]
+    fn test_nop_absolute() {
+        // 0x0C = NOP absolute (0, 0, 3)
+        let mut cpu = create_cpu_with_program(&[0x0C, 0x34, 0x12, 0xEA]);
+        execute_next(&mut cpu); // NOP $1234
+    }
+
+    #[test]
+    fn test_nop_absolute_x() {
+        // 0x1C = NOP absolute_x (0, 0, 7)
+        let mut cpu = create_cpu_with_program(&[0x1C, 0x34, 0x12, 0xEA]);
+        cpu.x = 5;
+        execute_next(&mut cpu); // NOP $1234,X
+    }
+
+    #[test]
+    fn test_stx_zero_page_y() {
+        // 0x96 = STX zero_page_y (2, 6, 5)
+        let mut cpu = create_cpu_with_program(&[0x96, 0x20, 0xEA]);
+        cpu.x = 0x42;
+        cpu.y = 5;
+        execute_next(&mut cpu); // STX $20,Y
+        assert_eq!(cpu.read_byte(0x0025), 0x42);
+    }
+
+    #[test]
+    fn test_sty_zero_page_x() {
+        // 0x94 = STY zero_page_x (2, 4, 5)
+        let mut cpu = create_cpu_with_program(&[0x94, 0x20, 0xEA]);
+        cpu.y = 0x35;
+        cpu.x = 3;
+        execute_next(&mut cpu); // STY $20,X
+        assert_eq!(cpu.read_byte(0x0023), 0x35);
     }
 }
