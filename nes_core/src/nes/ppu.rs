@@ -57,6 +57,12 @@ const NAME_TABLE_MEM_START: u16 = 0x2000;
 const TILES_PER_ROW: u8 = 32;
 const TILES_PER_COL: u8 = 30;
 
+// PPU Timing Constants
+const SCANLINES_PER_FRAME: u16 = 262;
+const DOTS_PER_SCANLINE: u16 = 341;
+const VBLANK_SET_SCANLINE: u16 = 241;
+const VBLANK_CLEAR_SCANLINE: u16 = 261;
+
 const fn rgb(v: [u8; 3]) -> Pixel {
     let [r, g, b] = v;
     Rgba::<u8>([r, g, b, 0xff])
@@ -162,6 +168,10 @@ pub struct Ppu {
 
     data_rw_addr: RefCell<u16>, // None after reset
     image: RgbaImage,
+
+    // PPU timing
+    scanline: u16, // 0-261
+    dot: u16,      // 0-340
 }
 
 impl Default for Ppu {
@@ -178,6 +188,8 @@ impl Default for Ppu {
             oam: [0; 0x100],
             data_rw_addr: RefCell::new(0),
             image: RgbaImage::new(256, 240),
+            scanline: 0,
+            dot: 0,
         }
     }
 }
@@ -200,6 +212,38 @@ impl PpuTrait for Ppu {
 impl Ppu {
     pub fn oam_dma(&mut self, vals: &[u8; 256]) {
         self.oam.copy_from_slice(vals);
+    }
+
+    /// Advance PPU by one dot. Returns true if NMI should be triggered.
+    pub fn tick(&mut self) -> bool {
+        let mut trigger_nmi = false;
+
+        self.dot += 1;
+        if self.dot >= DOTS_PER_SCANLINE {
+            self.dot = 0;
+            self.scanline += 1;
+            if self.scanline >= SCANLINES_PER_FRAME {
+                self.scanline = 0;
+            }
+        }
+
+        // VBlank set: scanline 241, dot 1
+        if self.scanline == VBLANK_SET_SCANLINE && self.dot == 1 {
+            let status = *self.status.borrow();
+            let was_vblank = status.v_blank();
+            *self.status.borrow_mut() = status.with_v_blank(true);
+            if self.ctrl_flags.nmi_enable() && !was_vblank {
+                trigger_nmi = true;
+            }
+        }
+
+        // VBlank clear: scanline 261, dot 1
+        if self.scanline == VBLANK_CLEAR_SCANLINE && self.dot == 1 {
+            let status = *self.status.borrow();
+            *self.status.borrow_mut() = status.with_v_blank(false);
+        }
+
+        trigger_nmi
     }
 
     fn render_background(&mut self, pattern: &[u8]) {
@@ -367,7 +411,22 @@ mod tests {
 
     fn new_test_ppu_and_pattern() -> (Ppu, [u8; 8192]) {
         let pattern = [0; 8192];
-        (Ppu::default(), pattern)
+        let ppu = Ppu {
+            ctrl_flags: 0.into(),
+            status: RefCell::new(0.into()),
+            name_table: NameTableControl::default(),
+            cur_name_table_addr: 0x2000,
+            palette: Palette::default(),
+            cur_pattern_table_idx: 0,
+            mask: PpuMask::new(),
+            oam_addr: 0,
+            oam: [0; 0x100],
+            data_rw_addr: RefCell::new(0),
+            image: RgbaImage::new(256, 240),
+            scanline: 0,
+            dot: 0,
+        };
+        (ppu, pattern)
     }
 
     #[test]
@@ -517,5 +576,74 @@ mod tests {
     fn render() {
         let (mut ppu, pattern) = new_test_ppu_and_pattern();
         ppu.render(&pattern);
+    }
+
+    #[test]
+    fn ppu_tick_timing() {
+        let (mut ppu, _pattern) = new_test_ppu_and_pattern();
+
+        // Enable NMI
+        ppu.set_control_flags(PpuCtrl::new().with_nmi_enable(true));
+
+        // Initial state
+        assert_eq!(ppu.scanline, 0);
+        assert_eq!(ppu.dot, 0);
+        assert!(!ppu.status.borrow().v_blank());
+
+        // Advance to scanline 241, dot 0
+        ppu.scanline = VBLANK_SET_SCANLINE;
+        ppu.dot = 0;
+
+        // Tick once - should set VBlank and trigger NMI
+        let nmi = ppu.tick();
+        assert!(nmi, "NMI should be triggered at scanline 241, dot 1");
+        assert!(ppu.status.borrow().v_blank());
+
+        // Advance to scanline 261, dot 0
+        ppu.scanline = VBLANK_CLEAR_SCANLINE;
+        ppu.dot = 0;
+
+        // Tick once - should clear VBlank
+        let nmi = ppu.tick();
+        assert!(!nmi, "NMI should not be triggered when clearing VBlank");
+        assert!(!ppu.status.borrow().v_blank());
+    }
+
+    #[test]
+    fn ppu_tick_scanline_wrap() {
+        let (mut ppu, _pattern) = new_test_ppu_and_pattern();
+
+        // Start at last scanline, last dot
+        ppu.scanline = SCANLINES_PER_FRAME - 1; // 261
+        ppu.dot = DOTS_PER_SCANLINE - 1; // 340
+
+        // Tick once - should wrap to scanline 0, dot 0
+        let _ = ppu.tick();
+        assert_eq!(ppu.scanline, 0);
+        assert_eq!(ppu.dot, 0);
+    }
+
+    #[test]
+    fn nmi_trigger_on_ctrl_write_during_vblank() {
+        let (mut ppu, _) = new_test_ppu_and_pattern();
+
+        // Set VBlank active
+        ppu.set_v_blank(true);
+        assert!(ppu.status.borrow().v_blank());
+
+        // NMI disabled initially
+        let ctrl = PpuCtrl::new().with_nmi_enable(false);
+        ppu.set_control_flags(ctrl);
+        assert!(
+            !ppu.should_nmi(),
+            "should_nmi should be false when NMI disabled"
+        );
+
+        // Enable NMI during VBlank - should trigger NMI
+        ppu.set_control_flags(ctrl.with_nmi_enable(true));
+        assert!(
+            ppu.should_nmi(),
+            "should_nmi should be true when NMI enabled during VBlank"
+        );
     }
 }

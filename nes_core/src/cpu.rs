@@ -469,6 +469,13 @@ impl Cpu {
     }
 
     pub fn clock_tick<T: Plugin>(&mut self, plugin: &mut T) -> ExecuteResult {
+        // Tick PPU 3 times per CPU cycle (CPU:PPU = 1:3)
+        for _ in 0..3 {
+            if self.mcu.tick_ppu() {
+                self.nmi();
+            }
+        }
+
         if self.remain_clocks != 0 {
             self.remain_clocks -= 1;
             return ExecuteResult::Continue;
