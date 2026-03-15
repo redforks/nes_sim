@@ -81,7 +81,19 @@ mod tests {
         }
 
         fn get_machine_mcu(&mut self) -> &mut dyn crate::mcu::MachineMcu {
-            panic!("Not implemented for tests")
+            self
+        }
+
+        fn request_irq(&self) -> bool {
+            false
+        }
+    }
+
+    impl crate::mcu::MachineMcu for MockMcu {
+        fn render(&mut self) -> &RgbaImage {
+            use std::sync::OnceLock;
+            static IMAGE: OnceLock<RgbaImage> = OnceLock::new();
+            IMAGE.get_or_init(|| RgbaImage::new(256, 240))
         }
     }
 
@@ -149,5 +161,50 @@ mod tests {
         // Should be positive and reasonable (not 0)
         assert!(cycles > 0);
         assert!(cycles < 1_000_000);
+    }
+
+    #[test]
+    fn test_process_frame() {
+        let mcu = Box::new(MockMcu::new());
+        let mut machine = Machine::new(mcu);
+
+        // Run for 1 ms (about 17868 cycles)
+        let (img, result) = machine.process_frame(1.0);
+
+        // Should return an image and continue result
+        assert_eq!(img.dimensions(), (256, 240));
+        assert_eq!(result, ExecuteResult::Continue);
+    }
+
+    #[test]
+    fn test_process_frame_with_zero_ms() {
+        let mcu = Box::new(MockMcu::new());
+        let mut machine = Machine::new(mcu);
+
+        // Run for 0 ms
+        let (img, result) = machine.process_frame(0.0);
+
+        // Should still return an image
+        assert_eq!(img.dimensions(), (256, 240));
+        assert_eq!(result, ExecuteResult::Continue);
+    }
+
+    #[test]
+    fn test_run_ticks_positive() {
+        let mut mcu = MockMcu::new();
+        // Write a JMP instruction to create an infinite loop
+        // JMP $8000 = 0x4C 0x00 0x80 at address 0x8000
+        mcu.memory[0x8000] = 0x4C; // JMP absolute
+        mcu.memory[0x8001] = 0x00; // low byte of address
+        mcu.memory[0x8002] = 0x80; // high byte of address
+
+        let mcu = Box::new(mcu);
+        let mut machine = Machine::new(mcu);
+
+        machine.set_pc(0x8000);
+
+        // Run some ticks
+        let result = machine.run_ticks(10);
+        assert_eq!(result, ExecuteResult::Continue);
     }
 }
