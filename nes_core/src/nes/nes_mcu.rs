@@ -16,6 +16,13 @@ pub struct NesMcu {
     frame_counter_interrupt: Cell<bool>,
     dmc_interrupt: Cell<bool>,
     nmi_pending: Cell<bool>,
+    // APU state for length counter timing
+    apu_cycle: u64,
+    frame_counter: u8,
+    frame_counter_mode: bool,
+    length_counters: [u8; 4], // pulse1, pulse2, triangle, noise
+    length_counter_halt: [bool; 4],
+    channel_enabled: [bool; 4],
 }
 
 pub fn build(file: &INesFile) -> impl Mcu + use<> {
@@ -35,10 +42,22 @@ pub fn build(file: &INesFile) -> impl Mcu + use<> {
         frame_counter_interrupt: Cell::new(false),
         dmc_interrupt: Cell::new(false),
         nmi_pending: Cell::new(false),
+        apu_cycle: 0,
+        frame_counter: 0,
+        frame_counter_mode: false,
+        length_counters: [0; 4],
+        length_counter_halt: [false; 4],
+        channel_enabled: [false; 4],
     }
 }
 
 impl NesMcu {
+    // Length counter lookup table (index is high 3 bits of length counter load)
+    const LENGTH_TABLE: [u8; 32] = [
+        10, 254, 20, 2, 40, 4, 80, 6, 160, 8, 60, 10, 14, 12, 26, 14, 12, 16, 24, 18, 48, 20, 96,
+        22, 192, 24, 72, 26, 16, 28, 32, 30,
+    ];
+
     fn ppu_dma(&mut self, address: u8) {
         info!("ppu dma");
         let addr = (address as u16) << 8;
@@ -56,8 +75,21 @@ impl Mcu for NesMcu {
             0x0000..=0x1fff => self.lower_ram.read(address),
             0x2000..=0x3fff => self.ppu.read(self.cartridge.pattern_ref(), address),
             0x4015 => {
+                // APU status register - return length counter status
                 self.frame_counter_interrupt.replace(false);
-                0
+                let mut status = 0u8;
+                for i in 0..4 {
+                    if self.length_counters[i] > 0 && self.channel_enabled[i] {
+                        status |= 1 << i;
+                    }
+                }
+                if self.frame_counter_interrupt.get() {
+                    status |= 0x40;
+                }
+                if self.dmc_interrupt.get() {
+                    status |= 0x80;
+                }
+                status
             }
             0x4000..=0x401f => self.after_ppu.read(address),
             0x4020..=0xffff => self.cartridge.read(address),
@@ -74,11 +106,69 @@ impl Mcu for NesMcu {
             }
             0x4014 => self.ppu_dma(value),
             0x4015 => {
+                // APU status register - enable/disable channels and clear DMC interrupt
+                self.channel_enabled[0] = value & 0x01 != 0;
+                self.channel_enabled[1] = value & 0x02 != 0;
+                self.channel_enabled[2] = value & 0x04 != 0;
+                self.channel_enabled[3] = value & 0x08 != 0;
                 self.dmc_interrupt.replace(false);
+                // If a channel is disabled, its length counter is cleared
+                for i in 0..4 {
+                    if !self.channel_enabled[i] {
+                        self.length_counters[i] = 0;
+                    }
+                }
             }
             0x4017 => {
+                // Frame counter register
+                self.frame_counter_mode = value & 0x80 != 0;
                 self.frame_counter_interrupt
                     .replace(value & 0b1100_0000 == 0);
+                // Reset frame counter on write
+                self.apu_cycle = 0;
+                self.frame_counter = 0;
+            }
+            // Length counter load registers (high byte)
+            0x4003 => {
+                // Pulse 1 length counter load
+                self.after_ppu.write(address, value);
+                let index = ((value & 0xF8) >> 3) as usize;
+                if self.channel_enabled[0] {
+                    self.length_counters[0] = Self::LENGTH_TABLE[index];
+                }
+                // Extract halt flag from low byte (needs to be read from register 0x4000)
+                // For now, we'll assume it's set correctly elsewhere
+            }
+            0x4007 => {
+                // Pulse 2 length counter load
+                self.after_ppu.write(address, value);
+                let index = ((value & 0xF8) >> 3) as usize;
+                if self.channel_enabled[1] {
+                    self.length_counters[1] = Self::LENGTH_TABLE[index];
+                }
+            }
+            0x400B => {
+                // Triangle length counter load
+                self.after_ppu.write(address, value);
+                let index = ((value & 0xF8) >> 3) as usize;
+                if self.channel_enabled[2] {
+                    self.length_counters[2] = Self::LENGTH_TABLE[index];
+                }
+            }
+            0x400F => {
+                // Noise length counter load
+                self.after_ppu.write(address, value);
+                let index = ((value & 0xF8) >> 3) as usize;
+                if self.channel_enabled[3] {
+                    self.length_counters[3] = Self::LENGTH_TABLE[index];
+                }
+            }
+            // Halt flag registers (low byte with length counter halt bit)
+            0x4000 | 0x4004 | 0x4008 | 0x400C => {
+                // Duty cycle / length counter halt
+                self.after_ppu.write(address, value);
+                let channel = ((address - 0x4000) / 4) as usize;
+                self.length_counter_halt[channel] = value & 0x20 != 0;
             }
             0x4000..=0x401f => self.after_ppu.write(address, value),
             0x4020..=0xffff => self.cartridge.write(&mut self.ppu, address, value),
@@ -101,6 +191,82 @@ impl Mcu for NesMcu {
         let tick_nmi = self.ppu.tick();
         let write_nmi = self.nmi_pending.replace(false);
         tick_nmi || write_nmi
+    }
+
+    fn tick_apu(&mut self) -> bool {
+        self.tick_apu()
+    }
+}
+
+impl NesMcu {
+    /// Tick the APU frame counter and length counters
+    /// Returns true if a frame interrupt should occur
+    pub fn tick_apu(&mut self) -> bool {
+        self.apu_cycle += 1;
+
+        // APU frame counter in 4-step mode clocks at cycles:
+        // 1, 7459, 14917, 22375 (no length counter clock at 22375)
+        // Then repeats: 29833, 37291, 374749, 44707 ...
+
+        // Calculate which step we're on based on apu_cycle
+        let step = if self.apu_cycle == 1 {
+            0
+        } else if self.apu_cycle < 7459 {
+            0 // Actually step 0 continues until next clock
+        } else {
+            let cycle_offset = if self.apu_cycle <= 22375 {
+                self.apu_cycle
+            } else {
+                // After first sequence, use modulo
+                ((self.apu_cycle - 1) % 29832) + 1
+            };
+
+            if cycle_offset < 7459 {
+                0
+            } else if cycle_offset < 14917 {
+                1
+            } else if cycle_offset < 22375 {
+                2
+            } else {
+                3
+            }
+        };
+
+        // Check if we just entered a new step
+        if step != self.frame_counter {
+            self.frame_counter = step;
+
+            // In 4-step mode, clock length counters on steps 0, 1, 2 (NOT step 3)
+            // In 5-step mode, clock length counters on steps 0, 1, 2, 3
+            let should_clock_length = if self.frame_counter_mode {
+                // 5-step mode
+                true
+            } else {
+                // 4-step mode - don't clock on step 3
+                step != 3
+            };
+
+            if should_clock_length {
+                // Clock length counters for each channel
+                // But only if channel is enabled and halt flag is not set
+                for i in 0..4 {
+                    if self.channel_enabled[i]
+                        && !self.length_counter_halt[i]
+                        && self.length_counters[i] > 0
+                    {
+                        self.length_counters[i] -= 1;
+                    }
+                }
+            }
+
+            // Frame interrupt occurs on step 3 (last step of 4-step sequence)
+            if self.frame_counter == 3 && !self.frame_counter_mode {
+                self.frame_counter_interrupt.set(true);
+                return true;
+            }
+        }
+
+        false
     }
 }
 
@@ -154,6 +320,12 @@ mod tests {
             frame_counter_interrupt: Cell::new(false),
             dmc_interrupt: Cell::new(false),
             nmi_pending: Cell::new(false),
+            apu_cycle: 0,
+            frame_counter: 0,
+            frame_counter_mode: false,
+            length_counters: [0; 4],
+            length_counter_halt: [false; 4],
+            channel_enabled: [false; 4],
         };
 
         // Write to address 0x0000
@@ -176,6 +348,12 @@ mod tests {
             frame_counter_interrupt: Cell::new(false),
             dmc_interrupt: Cell::new(false),
             nmi_pending: Cell::new(false),
+            apu_cycle: 0,
+            frame_counter: 0,
+            frame_counter_mode: false,
+            length_counters: [0; 4],
+            length_counter_halt: [false; 4],
+            channel_enabled: [false; 4],
         };
 
         // PPU registers are at 0x2000-0x3FFF
@@ -194,6 +372,12 @@ mod tests {
             frame_counter_interrupt: Cell::new(false),
             dmc_interrupt: Cell::new(false),
             nmi_pending: Cell::new(false),
+            apu_cycle: 0,
+            frame_counter: 0,
+            frame_counter_mode: false,
+            length_counters: [0; 4],
+            length_counter_halt: [false; 4],
+            channel_enabled: [false; 4],
         };
 
         // APU registers are at 0x4000-0x401F
@@ -217,6 +401,12 @@ mod tests {
             frame_counter_interrupt: Cell::new(false),
             dmc_interrupt: Cell::new(false),
             nmi_pending: Cell::new(false),
+            apu_cycle: 0,
+            frame_counter: 0,
+            frame_counter_mode: false,
+            length_counters: [0; 4],
+            length_counter_halt: [false; 4],
+            channel_enabled: [false; 4],
         };
 
         assert_eq!(mcu.read(0x8000), 0xEA);
@@ -232,6 +422,12 @@ mod tests {
             frame_counter_interrupt: Cell::new(true),
             dmc_interrupt: Cell::new(false),
             nmi_pending: Cell::new(false),
+            apu_cycle: 0,
+            frame_counter: 0,
+            frame_counter_mode: false,
+            length_counters: [0; 4],
+            length_counter_halt: [false; 4],
+            channel_enabled: [false; 4],
         };
 
         assert!(mcu.request_irq());
@@ -247,6 +443,12 @@ mod tests {
             frame_counter_interrupt: Cell::new(false),
             dmc_interrupt: Cell::new(true),
             nmi_pending: Cell::new(false),
+            apu_cycle: 0,
+            frame_counter: 0,
+            frame_counter_mode: false,
+            length_counters: [0; 4],
+            length_counter_halt: [false; 4],
+            channel_enabled: [false; 4],
         };
 
         assert!(mcu.request_irq());
@@ -262,6 +464,12 @@ mod tests {
             frame_counter_interrupt: Cell::new(false),
             dmc_interrupt: Cell::new(false),
             nmi_pending: Cell::new(false),
+            apu_cycle: 0,
+            frame_counter: 0,
+            frame_counter_mode: false,
+            length_counters: [0; 4],
+            length_counter_halt: [false; 4],
+            channel_enabled: [false; 4],
         };
 
         assert!(!mcu.request_irq());
@@ -277,6 +485,12 @@ mod tests {
             frame_counter_interrupt: Cell::new(false),
             dmc_interrupt: Cell::new(false),
             nmi_pending: Cell::new(false),
+            apu_cycle: 0,
+            frame_counter: 0,
+            frame_counter_mode: false,
+            length_counters: [0; 4],
+            length_counter_halt: [false; 4],
+            channel_enabled: [false; 4],
         };
 
         let _ppu = mcu.get_ppu();
@@ -293,6 +507,12 @@ mod tests {
             frame_counter_interrupt: Cell::new(false),
             dmc_interrupt: Cell::new(false),
             nmi_pending: Cell::new(false),
+            apu_cycle: 0,
+            frame_counter: 0,
+            frame_counter_mode: false,
+            length_counters: [0; 4],
+            length_counter_halt: [false; 4],
+            channel_enabled: [false; 4],
         };
 
         // Write to frame counter at 0x4017
@@ -313,6 +533,12 @@ mod tests {
             frame_counter_interrupt: Cell::new(true),
             dmc_interrupt: Cell::new(false),
             nmi_pending: Cell::new(false),
+            apu_cycle: 0,
+            frame_counter: 0,
+            frame_counter_mode: false,
+            length_counters: [0; 4],
+            length_counter_halt: [false; 4],
+            channel_enabled: [false; 4],
         };
 
         assert!(mcu.frame_counter_interrupt.get());
@@ -332,6 +558,12 @@ mod tests {
             frame_counter_interrupt: Cell::new(false),
             dmc_interrupt: Cell::new(true),
             nmi_pending: Cell::new(false),
+            apu_cycle: 0,
+            frame_counter: 0,
+            frame_counter_mode: false,
+            length_counters: [0; 4],
+            length_counter_halt: [false; 4],
+            channel_enabled: [false; 4],
         };
 
         assert!(mcu.dmc_interrupt.get());
@@ -351,6 +583,12 @@ mod tests {
             frame_counter_interrupt: Cell::new(false),
             dmc_interrupt: Cell::new(false),
             nmi_pending: Cell::new(false),
+            apu_cycle: 0,
+            frame_counter: 0,
+            frame_counter_mode: false,
+            length_counters: [0; 4],
+            length_counter_halt: [false; 4],
+            channel_enabled: [false; 4],
         };
 
         // tick_ppu should return false when no NMI pending
@@ -368,6 +606,12 @@ mod tests {
             frame_counter_interrupt: Cell::new(false),
             dmc_interrupt: Cell::new(false),
             nmi_pending: Cell::new(false),
+            apu_cycle: 0,
+            frame_counter: 0,
+            frame_counter_mode: false,
+            length_counters: [0; 4],
+            length_counter_halt: [false; 4],
+            channel_enabled: [false; 4],
         };
 
         // Test different address regions
@@ -388,6 +632,12 @@ mod tests {
             frame_counter_interrupt: Cell::new(false),
             dmc_interrupt: Cell::new(false),
             nmi_pending: Cell::new(false),
+            apu_cycle: 0,
+            frame_counter: 0,
+            frame_counter_mode: false,
+            length_counters: [0; 4],
+            length_counter_halt: [false; 4],
+            channel_enabled: [false; 4],
         };
 
         let machine_mcu = mcu.get_machine_mcu();
@@ -406,6 +656,12 @@ mod tests {
             frame_counter_interrupt: Cell::new(false),
             dmc_interrupt: Cell::new(false),
             nmi_pending: Cell::new(false),
+            apu_cycle: 0,
+            frame_counter: 0,
+            frame_counter_mode: false,
+            length_counters: [0; 4],
+            length_counter_halt: [false; 4],
+            channel_enabled: [false; 4],
         };
 
         let img = mcu.render();
@@ -422,6 +678,12 @@ mod tests {
             frame_counter_interrupt: Cell::new(false),
             dmc_interrupt: Cell::new(false),
             nmi_pending: Cell::new(false),
+            apu_cycle: 0,
+            frame_counter: 0,
+            frame_counter_mode: false,
+            length_counters: [0; 4],
+            length_counter_halt: [false; 4],
+            channel_enabled: [false; 4],
         };
 
         // Set up some data in RAM for DMA
@@ -446,6 +708,12 @@ mod tests {
             frame_counter_interrupt: Cell::new(false),
             dmc_interrupt: Cell::new(false),
             nmi_pending: Cell::new(true),
+            apu_cycle: 0,
+            frame_counter: 0,
+            frame_counter_mode: false,
+            length_counters: [0; 4],
+            length_counter_halt: [false; 4],
+            channel_enabled: [false; 4],
         };
 
         // tick_ppu should return true when NMI is pending
@@ -467,6 +735,12 @@ mod tests {
             frame_counter_interrupt: Cell::new(false),
             dmc_interrupt: Cell::new(false),
             nmi_pending: Cell::new(false),
+            apu_cycle: 0,
+            frame_counter: 0,
+            frame_counter_mode: false,
+            length_counters: [0; 4],
+            length_counter_halt: [false; 4],
+            channel_enabled: [false; 4],
         };
 
         // Write to PPU control register (0x2000) with NMI enabled during VBlank
@@ -487,6 +761,12 @@ mod tests {
             frame_counter_interrupt: Cell::new(false),
             dmc_interrupt: Cell::new(false),
             nmi_pending: Cell::new(false),
+            apu_cycle: 0,
+            frame_counter: 0,
+            frame_counter_mode: false,
+            length_counters: [0; 4],
+            length_counter_halt: [false; 4],
+            channel_enabled: [false; 4],
         };
 
         // Write to cartridge space (0x4020+)
@@ -508,6 +788,12 @@ mod tests {
             frame_counter_interrupt: Cell::new(false),
             dmc_interrupt: Cell::new(false),
             nmi_pending: Cell::new(false),
+            apu_cycle: 0,
+            frame_counter: 0,
+            frame_counter_mode: false,
+            length_counters: [0; 4],
+            length_counter_halt: [false; 4],
+            channel_enabled: [false; 4],
         };
 
         assert_eq!(mcu.read(0x8000), 0x11);
@@ -524,6 +810,12 @@ mod tests {
             frame_counter_interrupt: Cell::new(false),
             dmc_interrupt: Cell::new(false),
             nmi_pending: Cell::new(false),
+            apu_cycle: 0,
+            frame_counter: 0,
+            frame_counter_mode: false,
+            length_counters: [0; 4],
+            length_counter_halt: [false; 4],
+            channel_enabled: [false; 4],
         };
 
         // Reading 0x4015 should return 0
