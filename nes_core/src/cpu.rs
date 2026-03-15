@@ -2429,4 +2429,51 @@ mod tests {
         execute_next(&mut cpu); // STY $20,X
         assert_eq!(cpu.read_byte(0x0023), 0x35);
     }
+
+    #[test]
+    fn test_dey() {
+        // 0x88 = DEY (0, 6, 2)
+        let mut cpu = create_cpu_with_program(&[0x88, 0xEA]);
+        cpu.y = 5;
+        execute_next(&mut cpu); // DEY
+        assert_eq!(cpu.y, 4);
+    }
+
+    #[test]
+    fn test_dex() {
+        // 0xCA = DEX (0, 7, 2)
+        let mut cpu = create_cpu_with_program(&[0xCA, 0xEA]);
+        cpu.x = 5;
+        execute_next(&mut cpu); // DEX
+        assert_eq!(cpu.x, 4);
+    }
+
+    #[test]
+    fn test_tay() {
+        // 0xA8 = TAY (0, 5, 2)
+        let mut cpu = create_cpu_with_program(&[0xA8, 0xEA]);
+        cpu.a = 0x42;
+        execute_next(&mut cpu); // TAY
+        assert_eq!(cpu.y, 0x42);
+    }
+
+    #[test]
+    fn test_tya() {
+        // 0x98 = TYA (2, 5, 2)
+        let mut cpu = create_cpu_with_program(&[0x98, 0xEA]);
+        cpu.y = 0x35;
+        execute_next(&mut cpu); // TYA
+        assert_eq!(cpu.a, 0x35);
+    }
+
+    #[test]
+    fn test_and_zero_page_x() {
+        // 0x35 = AND zero_page_x (1, 1, 5)
+        let mut cpu = create_cpu_with_program(&[0x35, 0x20, 0xEA]);
+        cpu.a = 0xF0;
+        cpu.x = 5;
+        cpu.write_byte(0x0025, 0x0F);
+        execute_next(&mut cpu); // AND $20,X
+        assert_eq!(cpu.a, 0x00);
+    }
 }
