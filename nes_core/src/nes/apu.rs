@@ -356,3 +356,179 @@ where
         Region::with_defined(APUController(cd)),
     ]
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_sweep_bitfield() {
+        let mut sweep = Sweep::new();
+        sweep.set_enabled(true);
+        sweep.set_period(0b111);
+        sweep.set_negate(true);
+        sweep.set_shift(0b101);
+
+        assert!(sweep.enabled());
+        assert_eq!(sweep.period(), 0b111);
+        assert!(sweep.negate());
+        assert_eq!(sweep.shift(), 0b101);
+    }
+
+    #[test]
+    fn test_sweep_to_from_u8() {
+        let mut sweep = Sweep::new();
+        sweep.set_enabled(true);
+        sweep.set_period(0b110);
+        sweep.set_negate(false);
+        sweep.set_shift(0b011);
+
+        let byte: u8 = sweep.into();
+        let sweep2: Sweep = byte.into();
+
+        assert_eq!(sweep2.enabled(), true);
+        assert_eq!(sweep2.period(), 0b110);
+        assert_eq!(sweep2.negate(), false);
+        assert_eq!(sweep2.shift(), 0b011);
+    }
+
+    #[test]
+    fn test_duty_cycle_bitfield() {
+        let mut duty = DutyCycle::new();
+        duty.set_duty(0b11);
+        duty.set_length_counter_halt(true);
+        duty.set_constant_volume(false);
+        duty.set_volume(0b1010);
+
+        assert_eq!(duty.duty(), 0b11);
+        assert!(duty.length_counter_halt());
+        assert!(!duty.constant_volume());
+        assert_eq!(duty.volume(), 0b1010);
+    }
+
+    #[test]
+    fn test_duty_cycle_to_from_u8() {
+        let mut duty = DutyCycle::new();
+        duty.set_duty(0b10);
+        duty.set_length_counter_halt(false);
+        duty.set_constant_volume(true);
+        duty.set_volume(0b0101);
+
+        let byte: u8 = duty.into();
+        let duty2: DutyCycle = byte.into();
+
+        assert_eq!(duty2.duty(), 0b10);
+        assert_eq!(duty2.length_counter_halt(), false);
+        assert_eq!(duty2.constant_volume(), true);
+        assert_eq!(duty2.volume(), 0b0101);
+    }
+
+    #[test]
+    fn test_length_counter_load_write_low_byte() {
+        let mut lcl = LengthCounterLoad::default();
+        lcl.write_low_byte(0xFF);
+        assert_eq!(lcl.low_byte, 0xFF);
+    }
+
+    #[test]
+    fn test_length_counter_load_write_high_byte() {
+        let mut lcl = LengthCounterLoad::default();
+        lcl.write_high_byte(0xAB);
+        assert_eq!(lcl.high_byte, 0xAB);
+    }
+
+    #[test]
+    fn test_length_counter_load_timer() {
+        let mut lcl = LengthCounterLoad::default();
+        lcl.write_low_byte(0x34);
+        lcl.write_high_byte(0x12);
+
+        let timer = lcl.timer();
+        // Timer is bits 7:0 of low_byte and bits 2:0 of high_byte
+        assert_eq!(timer, 0x0234);
+    }
+
+    #[test]
+    fn test_linear_counter_control() {
+        let mut lcc = LinearCounterControl::new();
+        lcc.set_reload_flag(true);
+        lcc.set_counter(0x55);
+
+        assert!(lcc.reload_flag());
+        assert_eq!(lcc.counter(), 0x55);
+    }
+
+    #[test]
+    fn test_linear_counter_control_to_from_u8() {
+        let mut lcc = LinearCounterControl::new();
+        lcc.set_reload_flag(false);
+        lcc.set_counter(0x7F);
+
+        let byte: u8 = lcc.into();
+        let lcc2: LinearCounterControl = byte.into();
+
+        assert_eq!(lcc2.reload_flag(), false);
+        assert_eq!(lcc2.counter(), 0x7F);
+    }
+
+    #[test]
+    fn test_duty_cycle_various_values() {
+        for duty in 0u8..4 {
+            for volume in 0u8..16 {
+                let mut d = DutyCycle::new();
+                d.set_duty(duty);
+                d.set_volume(volume);
+
+                let byte: u8 = d.into();
+                let d2: DutyCycle = byte.into();
+
+                assert_eq!(d2.duty(), duty);
+                assert_eq!(d2.volume(), volume);
+            }
+        }
+    }
+
+    #[test]
+    fn test_sweep_all_bit_combinations() {
+        for enabled in [false, true] {
+            for period in 0u8..8 {
+                for negate in [false, true] {
+                    for shift in 0u8..8 {
+                        let mut sweep = Sweep::new();
+                        sweep.set_enabled(enabled);
+                        sweep.set_period(period);
+                        sweep.set_negate(negate);
+                        sweep.set_shift(shift);
+
+                        let byte: u8 = sweep.into();
+                        let sweep2: Sweep = byte.into();
+
+                        assert_eq!(sweep2.enabled(), enabled);
+                        assert_eq!(sweep2.period(), period);
+                        assert_eq!(sweep2.negate(), negate);
+                        assert_eq!(sweep2.shift(), shift);
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn test_length_counter_load_default() {
+        let lcl = LengthCounterLoad::default();
+        assert_eq!(lcl.low_byte, 0);
+        assert_eq!(lcl.high_byte, 0);
+        assert_eq!(lcl.timer(), 0);
+    }
+
+    #[test]
+    fn test_length_counter_load_high_values() {
+        let mut lcl = LengthCounterLoad::default();
+        lcl.write_low_byte(0xFF);
+        lcl.write_high_byte(0xFF);
+
+        // Verify the values are stored correctly
+        assert_eq!(lcl.low_byte, 0xFF);
+        assert_eq!(lcl.high_byte, 0xFF);
+    }
+}

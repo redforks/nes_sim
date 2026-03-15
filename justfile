@@ -28,4 +28,8 @@ web-start: wasm-debug-build
     cd www && NODE_OPTIONS=--openssl-legacy-provider npm start
 
 test-cov:
-    cargo tarpaulin --skip-clean --workspace --exclude nes_web --engine llvm --output-dir coverage
+    cargo tarpaulin --skip-clean --workspace --out Html --exclude nes_web --engine llvm --output-dir /tmp/tarpaulin-output-dir
+    xdg-open file:///tmp/tarpaulin-output-dir/tarpaulin-report.html
+
+test-cov-text:
+    cargo tarpaulin --skip-clean --workspace --exclude nes_web --engine llvm --output-dir /tmp/tarpaulin-output-dir

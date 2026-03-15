@@ -54,3 +54,100 @@ impl<P: Plugin> Machine<P> {
         self.cpu.pc = pc;
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    struct MockMcu {
+        memory: [u8; 0x10000],
+    }
+
+    impl MockMcu {
+        fn new() -> Self {
+            MockMcu {
+                memory: [0; 0x10000],
+            }
+        }
+    }
+
+    impl Mcu for MockMcu {
+        fn read(&self, addr: u16) -> u8 {
+            self.memory[addr as usize]
+        }
+
+        fn write(&mut self, addr: u16, value: u8) {
+            self.memory[addr as usize] = value;
+        }
+
+        fn get_machine_mcu(&mut self) -> &mut dyn crate::mcu::MachineMcu {
+            panic!("Not implemented for tests")
+        }
+    }
+
+    #[test]
+    fn test_machine_creation() {
+        let mcu = Box::new(MockMcu::new());
+        let machine = Machine::new(mcu);
+        assert_eq!(machine.cpu.pc, 0);
+    }
+
+    #[test]
+    fn test_machine_with_plugin() {
+        let mcu = Box::new(MockMcu::new());
+        let machine = Machine::with_plugin(EmptyPlugin(), mcu);
+        assert_eq!(machine.cpu.pc, 0);
+    }
+
+    #[test]
+    fn test_set_pc() {
+        let mcu = Box::new(MockMcu::new());
+        let mut machine = Machine::new(mcu);
+
+        machine.set_pc(0x1234);
+        assert_eq!(machine.cpu.pc, 0x1234);
+    }
+
+    #[test]
+    fn test_reset() {
+        let mcu = Box::new(MockMcu::new());
+        let mut machine = Machine::new(mcu);
+
+        machine.set_pc(0x5678);
+        machine.reset();
+        // Reset reads PC from 0xFFFC
+        assert_eq!(machine.cpu.pc, 0);
+    }
+
+    #[test]
+    fn test_run_ticks_zero() {
+        let mcu = Box::new(MockMcu::new());
+        let mut machine = Machine::new(mcu);
+
+        let result = machine.run_ticks(0);
+        assert_eq!(result, ExecuteResult::Continue);
+    }
+
+    #[test]
+    fn test_constants_values() {
+        // Verify the constants have reasonable values
+        assert!(CYCLES_PER_FRAME > 0.0);
+        assert!(CYCLES_PER_MS > 0.0);
+        assert!(V_BLANK_CYCLES > 0.0);
+
+        // CYCLES_PER_MS should be derived from CYCLES_PER_FRAME
+        let calculated = CYCLES_PER_FRAME / 100.0 * 60.0;
+        assert!((CYCLES_PER_MS - calculated).abs() < 0.1);
+    }
+
+    #[test]
+    fn test_cycles_per_ms_calculation() {
+        // Just verify that the constants produce reasonable cycle counts
+        let ms = 1.0;
+        let cycles = (ms * CYCLES_PER_MS) as u32;
+
+        // Should be positive and reasonable (not 0)
+        assert!(cycles > 0);
+        assert!(cycles < 1_000_000);
+    }
+}
