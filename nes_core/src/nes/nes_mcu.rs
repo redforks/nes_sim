@@ -144,35 +144,25 @@ impl Mcu for NesMcu {
                 // Pulse 1 length counter load
                 self.after_ppu.write(address, value);
                 let index = ((value & 0xF8) >> 3) as usize;
-                if self.channel_enabled[0] {
-                    self.length_counters[0] = Self::LENGTH_TABLE[index];
-                }
-                // Extract halt flag from low byte (needs to be read from register 0x4000)
-                // For now, we'll assume it's set correctly elsewhere
+                self.length_counters[0] = Self::LENGTH_TABLE[index];
             }
             0x4007 => {
                 // Pulse 2 length counter load
                 self.after_ppu.write(address, value);
                 let index = ((value & 0xF8) >> 3) as usize;
-                if self.channel_enabled[1] {
-                    self.length_counters[1] = Self::LENGTH_TABLE[index];
-                }
+                self.length_counters[1] = Self::LENGTH_TABLE[index];
             }
             0x400B => {
                 // Triangle length counter load
                 self.after_ppu.write(address, value);
                 let index = ((value & 0xF8) >> 3) as usize;
-                if self.channel_enabled[2] {
-                    self.length_counters[2] = Self::LENGTH_TABLE[index];
-                }
+                self.length_counters[2] = Self::LENGTH_TABLE[index];
             }
             0x400F => {
                 // Noise length counter load
                 self.after_ppu.write(address, value);
                 let index = ((value & 0xF8) >> 3) as usize;
-                if self.channel_enabled[3] {
-                    self.length_counters[3] = Self::LENGTH_TABLE[index];
-                }
+                self.length_counters[3] = Self::LENGTH_TABLE[index];
             }
             // Halt flag registers (low byte with length counter halt bit)
             0x4000 | 0x4004 | 0x4008 | 0x400C => {
@@ -220,40 +210,43 @@ impl NesMcu {
         // Then repeats: 29833, 37291, 374749, 44707 ...
 
         // Calculate which step we're on based on apu_cycle
-        let step = if self.apu_cycle == 1 {
-            0
-        } else if self.apu_cycle < 7459 {
-            0 // Actually step 0 continues until next clock
+        // Frame counter in 4-step mode has period of 29831 cycles (7458*3 + 7457)
+        // Clocks at: 7458, 14916, 22374 (then wraps to 0)
+        let step = if self.apu_cycle < 7458 {
+            0 // Step 0 from reset until first clock
+        } else if self.apu_cycle < 14916 {
+            1 // Step 1
+        } else if self.apu_cycle < 22374 {
+            2 // Step 2
+        } else if self.apu_cycle < 29831 {
+            3 // Step 3 (no length counter clock)
         } else {
-            let cycle_offset = if self.apu_cycle <= 22375 {
-                self.apu_cycle
-            } else {
-                // After first sequence, use modulo
-                ((self.apu_cycle - 1) % 29832) + 1
-            };
-
-            if cycle_offset < 7459 {
+            // After first full sequence, the period is 29831 cycles
+            let cycle_in_sequence = (self.apu_cycle - 29831) % 29831;
+            if cycle_in_sequence < 7458 {
                 0
-            } else if cycle_offset < 14917 {
+            } else if cycle_in_sequence < 14916 {
                 1
-            } else if cycle_offset < 22375 {
+            } else if cycle_in_sequence < 22374 {
                 2
             } else {
                 3
             }
         };
 
-        // Detect clock points: cycles 7459, 14917, 22375, then 29833 (wraps), etc.
+        // Detect clock points: cycles 7458, 14916, 22374, then 29830 (wraps), etc.
         // Note: We DON'T clock at cycle 1 because we already clocked immediately when $4017 was written
-        let is_clock_point = if self.apu_cycle <= 22375 {
-            self.apu_cycle >= 7459
-                && (self.apu_cycle == 7459 || self.apu_cycle == 14917 || self.apu_cycle == 22375)
+        let is_clock_point = if self.apu_cycle <= 22374 {
+            self.apu_cycle >= 7458
+                && (self.apu_cycle == 7458 || self.apu_cycle == 14916 || self.apu_cycle == 22374)
         } else {
-            let cycle_offset = (self.apu_cycle % 29832);
-            cycle_offset == 7459
-                || cycle_offset == 14917
-                || cycle_offset == 22375
-                || cycle_offset == 0
+            // After first full sequence, the period is 29831 cycles
+            let cycle_in_sequence = (self.apu_cycle - 29831) % 29831;
+            cycle_in_sequence == 7458 - 29831
+                || cycle_in_sequence == 14916 - 29831
+                || cycle_in_sequence == 22374 - 29831
+                || cycle_in_sequence == 0
+            // Simplify: check if we're at a clock point in the next sequence
         };
 
         // Update frame counter when we clock
