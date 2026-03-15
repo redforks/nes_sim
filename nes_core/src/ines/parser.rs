@@ -1,7 +1,7 @@
 use crate::ines::INesFile;
 use nom::bits::streaming::take as bit_take;
 use nom::error::Error as NomError;
-use nom::{bits::bits, bytes, error::ParseError, sequence::tuple, Compare, IResult, InputTake};
+use nom::{Compare, IResult, InputTake, bits::bits, bytes, error::ParseError, sequence::tuple};
 
 fn new_signature<I, E: ParseError<I>>() -> impl Fn(I) -> IResult<I, I, E>
 where

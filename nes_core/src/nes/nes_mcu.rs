@@ -513,4 +513,20 @@ mod tests {
         assert_eq!(mcu.read(0x8000), 0x11);
         assert_eq!(mcu.read(0xFFFF), 0x22);
     }
+
+    #[test]
+    fn test_read_4015_returns_zero() {
+        let mcu = NesMcu {
+            lower_ram: LowerRam::new(),
+            ppu: Ppu::default(),
+            after_ppu: RamMcu::start_from(0x4000, [0; 0x20]),
+            cartridge: Box::new(MockCartridge::new()),
+            frame_counter_interrupt: Cell::new(false),
+            dmc_interrupt: Cell::new(false),
+            nmi_pending: Cell::new(false),
+        };
+
+        // Reading 0x4015 should return 0
+        assert_eq!(mcu.read(0x4015), 0);
+    }
 }
