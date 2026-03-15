@@ -188,6 +188,21 @@ mod tests {
     }
 
     #[test]
+    fn test_controller_write_4017_does_nothing() {
+        let mut controller = Controller::new();
+
+        controller.a.borrow_mut().press(Button::A);
+        controller.a.borrow_mut().reset_for_read();
+
+        // Write to 0x4017 should do nothing
+        controller.write(0x4017, 0xFF);
+
+        // Controller state should be unchanged
+        let val = controller.read(0x4016);
+        assert_eq!(val, 0x40); // A button still pressed
+    }
+
+    #[test]
     fn test_controller_region() {
         let controller = Controller::new();
         let (start, end) = controller.region();
