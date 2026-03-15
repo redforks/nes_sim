@@ -4512,4 +4512,219 @@ mod tests {
 
         assert_eq!(cpu.pc, 0x0000); // wraps
     }
+
+    #[test]
+    fn test_stack_wrap_around() {
+        // Test stack pointer wrap around
+        let mut cpu = create_cpu();
+        cpu.sp = 0x00;
+        cpu.push_stack(0x42);
+
+        assert_eq!(cpu.sp, 0xFF); // wraps to 0xFF after decrement
+        // push_stack writes to current SP, then decrements
+        // So with SP=0x00, it writes to 0x100, then SP becomes 0xFF
+        assert_eq!(cpu.mcu().read(0x0100), 0x42);
+    }
+
+    #[test]
+    fn test_pop_stack_wrap_around() {
+        // Test stack pointer wrap around on pop
+        let mut cpu = create_cpu();
+        cpu.sp = 0xFF;
+        cpu.mcu().write(0x0100, 0x42);
+        let value = cpu.pop_stack();
+
+        // pop_stack increments SP first, then reads
+        // So with SP=0xFF, it becomes 0x00, then reads from 0x100 + 0x00 = 0x100
+        assert_eq!(value, 0x42);
+        assert_eq!(cpu.sp, 0x00); // wraps
+    }
+
+    #[test]
+    fn test_push_status_with_all_flags() {
+        // Test that all flags are correctly pushed to stack
+        let mut cpu = create_cpu();
+        cpu.sp = 0xFF;
+        cpu.set_flag(Flag::Carry, true);
+        cpu.set_flag(Flag::Zero, true);
+        cpu.set_flag(Flag::InterruptDisabled, true);
+        cpu.set_flag(Flag::Decimal, true);
+        cpu.set_flag(Flag::Overflow, true);
+        cpu.set_flag(Flag::Negative, true);
+        // Note: Break flag is NOT set, so it won't be pushed
+
+        cpu.push_status();
+
+        // push_status writes to current SP, then decrements
+        // With SP=0xFF, it writes to 0x100 + 0xFF = 0x01FF, then SP becomes 0xFE
+        let status = cpu.mcu().read(0x01FF);
+        // Expected: 0x01 | 0x02 | 0x04 | 0x08 | 0x20 | 0x40 | 0x80 = 0xEF
+        assert_eq!(status, 0xEF); // All flags except Break, with NotUsed (bit 5) set
+    }
+
+    #[test]
+    fn test_pop_stack_into_pc() {
+        // Test that popping stack works correctly
+        let mut cpu = create_cpu();
+        cpu.sp = 0xFD;
+        // Push values to stack manually
+        cpu.push_stack(0x12); // writes to 0x01FD, SP -> 0xFC
+        cpu.push_stack(0x34); // writes to 0x01FC, SP -> 0xFB
+
+        // pop_stack increments first, then reads
+        let pc_low = cpu.pop_stack(); // SP -> 0xFC, read from 0x100 + 0xFC = 0x01FC
+        let pc_high = cpu.pop_stack(); // SP -> 0xFD, read from 0x100 + 0xFD = 0x01FD
+
+        assert_eq!(pc_low, 0x34);
+        assert_eq!(pc_high, 0x12);
+    }
+
+    #[test]
+    fn test_rts_adds_one_to_pc() {
+        // Verify that RTS adds 1 to the pulled PC value
+        let mut mcu = Box::new(MockMcu::new());
+        mcu.write(0, 0x60); // RTS
+        let mut cpu = Cpu::new(mcu);
+        cpu.sp = 0xFD;
+        // Push PC value to stack
+        // Note: push_pc pushes high byte first, then low byte
+        cpu.push_stack(0x12); // PCH
+        cpu.push_stack(0x33); // PCL
+
+        execute_next(&mut cpu);
+
+        // RTS pops low byte first, then high byte, then adds 1
+        // So: l = 0x33, h = 0x12, PC = 0x1233, then +1 = 0x1234
+        assert_eq!(cpu.pc, 0x1234);
+    }
+
+    #[test]
+    fn test_adc_overflow_positive() {
+        // Test ADC overflow with positive numbers
+        let mut cpu = create_cpu_with_program(&[0x69, 0x40]); // ADC #$40
+        cpu.a = 0x40; // 64
+        cpu.set_flag(Flag::Carry, false);
+
+        execute_next(&mut cpu);
+
+        assert_eq!(cpu.a, 0x80); // 64 + 64 = 128 = -128 in signed
+        assert!(cpu.flag(Flag::Negative)); // bit 7 is set
+        assert!(cpu.flag(Flag::Overflow)); // signed overflow: 64 + 64 = 128 > 127
+    }
+
+    #[test]
+    fn test_adc_overflow_negative() {
+        // Test ADC overflow with negative numbers
+        let mut cpu = create_cpu_with_program(&[0x69, 0x80]); // ADC #$80
+        cpu.a = 0x80; // -128
+        cpu.set_flag(Flag::Carry, false);
+
+        execute_next(&mut cpu);
+
+        assert_eq!(cpu.a, 0x00); // -128 + -128 = -256 wraps to 0
+        assert!(!cpu.flag(Flag::Negative));
+        assert!(cpu.flag(Flag::Overflow)); // signed overflow: -128 + -128 = -256 < -128
+    }
+
+    #[test]
+    fn test_sbc_overflow_positive_minus_negative() {
+        // Test SBC when subtracting a negative number
+        let mut cpu = create_cpu_with_program(&[0xE9, 0x80]); // SBC #$80
+        cpu.a = 0x40; // 64
+        cpu.set_flag(Flag::Carry, true);
+
+        execute_next(&mut cpu);
+
+        // 64 - (-128) = 64 + 128 = 192 = -64 in signed (overflow)
+        assert_eq!(cpu.a, 0xC0); // 192
+        assert!(cpu.flag(Flag::Negative)); // bit 7 is set
+        assert!(cpu.flag(Flag::Overflow)); // signed overflow
+    }
+
+    #[test]
+    fn test_sbc_no_overflow_negative_minus_positive() {
+        // Test SBC when subtracting positive from negative, where result is still negative
+        let mut cpu = create_cpu_with_program(&[0xE9, 0x01]); // SBC #$01
+        cpu.a = 0x80; // -128
+        cpu.set_flag(Flag::Carry, true);
+
+        execute_next(&mut cpu);
+
+        // -128 - 1 = -129 = 127 in signed (no overflow within valid range)
+        assert_eq!(cpu.a, 0x7F);
+        assert!(cpu.flag(Flag::Overflow)); // -128 - 1 = 127, which overflows from negative to positive
+    }
+
+    #[test]
+    fn test_is_cross_page() {
+        // Test the is_cross_page helper function
+        assert!(is_cross_page(0x10FF, 0x1100)); // crosses page boundary (0x10 vs 0x11)
+        assert!(!is_cross_page(0x1000, 0x1001)); // doesn't cross (both 0x10)
+        assert!(is_cross_page(0x1FFF, 0x2000)); // crosses (0x1F vs 0x20)
+    }
+
+    #[test]
+    fn test_clock_tick_order_of_operations() {
+        // Test that clock_tick does things in the right order:
+        // 1. Tick PPU (3 times)
+        // 2. Check remain_clocks
+        // 3. Check is_halt
+        // 4. Process IRQ if pending
+        // 5. Execute instruction
+        // 6. Check IRQ request
+        let mut mcu = Box::new(MockMcu::new());
+        mcu.write(0, 0xEA); // NOP
+        mcu.set_tick_ppu_result(false);
+        mcu.set_irq_request(false);
+        let mut cpu = Cpu::new(mcu);
+        cpu.set_flag(Flag::InterruptDisabled, false);
+        let mut plugin = EmptyPlugin {};
+
+        let result = cpu.clock_tick(&mut plugin);
+
+        assert_eq!(result, ExecuteResult::Continue);
+        // Instruction should have been executed
+        assert_eq!(cpu.pc, 1); // NOP advances PC by 1
+    }
+
+    #[test]
+    fn test_transfer_no_touch_flags_indirect() {
+        // Test LDA (indirect, X) doesn't touch flags in a specific way
+        let mut mcu = Box::new(MockMcu::new());
+        mcu.write_word(0x15, 0x200);
+        mcu.write(0x200, 0x00);
+        mcu.write(0, 0xA1); // LDA ($10, X)
+        mcu.write(1, 0x10);
+        let mut cpu = Cpu::new(mcu);
+        cpu.x = 5;
+
+        execute_next(&mut cpu);
+
+        assert_eq!(cpu.a, 0x00);
+        assert!(cpu.flag(Flag::Zero)); // loading 0 sets zero flag
+    }
+
+    #[test]
+    fn test_compare_sets_zero_flag() {
+        // Test that compare instructions set zero flag correctly
+        let mut cpu = create_cpu_with_program(&[0xC9, 0x42]); // CMP #$42
+        cpu.a = 0x42;
+
+        execute_next(&mut cpu);
+
+        assert!(cpu.flag(Flag::Zero)); // A == operand
+        assert!(cpu.flag(Flag::Carry)); // A >= operand
+    }
+
+    #[test]
+    fn test_compare_clears_zero_flag() {
+        // Test that compare instructions clear zero flag when not equal
+        let mut cpu = create_cpu_with_program(&[0xC9, 0x42]); // CMP #$42
+        cpu.a = 0x41;
+
+        execute_next(&mut cpu);
+
+        assert!(!cpu.flag(Flag::Zero)); // A != operand
+        assert!(!cpu.flag(Flag::Carry)); // A < operand
+    }
 }
