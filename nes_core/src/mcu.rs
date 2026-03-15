@@ -36,6 +36,11 @@ pub trait Mcu {
     fn tick_ppu(&mut self) -> bool {
         false
     }
+
+    /// Tick APU frame counter. Returns true if frame IRQ should be triggered.
+    fn tick_apu(&mut self) -> bool {
+        false
+    }
 }
 
 #[cfg(test)]

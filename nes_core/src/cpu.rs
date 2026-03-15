@@ -476,6 +476,12 @@ impl Cpu {
             }
         }
 
+        // Tick APU once per CPU cycle
+        if self.mcu.tick_apu() {
+            // Frame interrupt - trigger IRQ
+            self.set_irq(true);
+        }
+
         if self.remain_clocks != 0 {
             self.remain_clocks -= 1;
             return ExecuteResult::Continue;
