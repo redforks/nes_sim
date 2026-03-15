@@ -5,12 +5,12 @@ edition = "2024"
 
 [dependencies]
 nes_core = { path = "../nes_core" }
-env_logger = { version = "0.10.0", default-features = false }
-log = "0.4.17"
-clap = { version = "4.1.1", features = ["derive"] }
-thiserror = "1.0.38"
-ansi_term = "0.12.1"
-is-terminal = "0.4.2"
+env_logger = { version = "0.11", default-features = false }
+log = "0.4"
+clap = { version = "4", features = ["derive"] }
+thiserror = "2"
+ansi_term = "0.12"
+is-terminal = "0.4"
 
 [dev-dependencies]
-rstest = "0.16.0"
+rstest = "0.23"
