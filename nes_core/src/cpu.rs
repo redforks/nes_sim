@@ -2970,4 +2970,1156 @@ mod tests {
         assert_eq!(cpu.a, 0xC0); // (0xFF & 0x80) = 0x80, ROR with carry = 0xC0
         assert!(cpu.flag(Flag::Negative));
     }
+
+    #[test]
+    fn test_lda_indirect_x_unofficial() {
+        // LDA (indirect, X) - 0xA1
+        let mut mcu = Box::new(MockMcu::new());
+        // Set up indirect pointer at 0x10 pointing to 0x200
+        mcu.write_word(0x10, 0x200);
+        mcu.write(0x200, 0x42);
+        // Program: LDA ($10, X)
+        mcu.write(0, 0xA1); // opcode
+        mcu.write(1, 0x10); // zero page addr
+        let mut cpu = Cpu::new(mcu);
+        cpu.x = 0;
+
+        execute_next(&mut cpu);
+
+        assert_eq!(cpu.a, 0x42);
+    }
+
+    #[test]
+    fn test_lda_indirect_y_unofficial() {
+        // LDA (indirect), Y - 0xB1
+        let mut mcu = Box::new(MockMcu::new());
+        // Set up indirect pointer at 0x10 pointing to 0x200
+        mcu.write_word(0x10, 0x200);
+        mcu.write(0x205, 0x42); // 0x200 + Y(5) = 0x205
+        // Program: LDA ($10), Y
+        mcu.write(0, 0xB1); // opcode
+        mcu.write(1, 0x10); // zero page addr
+        let mut cpu = Cpu::new(mcu);
+        cpu.y = 5;
+
+        execute_next(&mut cpu);
+
+        assert_eq!(cpu.a, 0x42);
+    }
+
+    #[test]
+    fn test_sta_indirect_y_unofficial() {
+        // STA (indirect), Y - 0x91
+        let mut mcu = Box::new(MockMcu::new());
+        // Set up indirect pointer at 0x10 pointing to 0x200
+        mcu.write_word(0x10, 0x200);
+        // Program: STA ($10), Y
+        mcu.write(0, 0x91); // opcode
+        mcu.write(1, 0x10); // zero page addr
+        let mut cpu = Cpu::new(mcu);
+        cpu.a = 0x42;
+        cpu.y = 5;
+
+        execute_next(&mut cpu);
+
+        assert_eq!(cpu.mcu().read(0x205), 0x42); // 0x200 + Y(5) = 0x205
+    }
+
+    #[test]
+    fn test_cmp_indirect_x_unofficial() {
+        // CMP (indirect, X) - 0xC1
+        let mut mcu = Box::new(MockMcu::new());
+        // Set up indirect pointer at 0x10 pointing to 0x200
+        mcu.write_word(0x10, 0x200);
+        mcu.write(0x200, 0x40);
+        // Program: CMP ($10, X)
+        mcu.write(0, 0xC1); // opcode
+        mcu.write(1, 0x10); // zero page addr
+        let mut cpu = Cpu::new(mcu);
+        cpu.a = 0x42;
+        cpu.x = 0;
+
+        execute_next(&mut cpu);
+
+        assert!(cpu.flag(Flag::Carry)); // 0x42 > 0x40
+    }
+
+    #[test]
+    fn test_cmp_indirect_y_unofficial() {
+        // CMP (indirect), Y - 0xD1
+        let mut mcu = Box::new(MockMcu::new());
+        // Set up indirect pointer at 0x10 pointing to 0x200
+        mcu.write_word(0x10, 0x200);
+        mcu.write(0x205, 0x40);
+        // Program: CMP ($10), Y
+        mcu.write(0, 0xD1); // opcode
+        mcu.write(1, 0x10); // zero page addr
+        let mut cpu = Cpu::new(mcu);
+        cpu.a = 0x42;
+        cpu.y = 5;
+
+        execute_next(&mut cpu);
+
+        assert!(cpu.flag(Flag::Carry)); // 0x42 > 0x40
+    }
+
+    #[test]
+    fn test_sbc_indirect_x_unofficial() {
+        // SBC (indirect, X) - 0xE1
+        let mut mcu = Box::new(MockMcu::new());
+        // Set up indirect pointer at 0x10 pointing to 0x200
+        mcu.write_word(0x10, 0x200);
+        mcu.write(0x200, 0x10);
+        // Program: SBC ($10, X)
+        mcu.write(0, 0xE1); // opcode
+        mcu.write(1, 0x10); // zero page addr
+        let mut cpu = Cpu::new(mcu);
+        cpu.a = 0x20;
+        cpu.set_flag(Flag::Carry, true);
+        cpu.x = 0;
+
+        execute_next(&mut cpu);
+
+        assert_eq!(cpu.a, 0x10); // 0x20 - 0x10 = 0x10
+    }
+
+    #[test]
+    fn test_sbc_indirect_y_unofficial() {
+        // SBC (indirect), Y - 0xF1
+        let mut mcu = Box::new(MockMcu::new());
+        // Set up indirect pointer at 0x10 pointing to 0x200
+        mcu.write_word(0x10, 0x200);
+        mcu.write(0x205, 0x10);
+        // Program: SBC ($10), Y
+        mcu.write(0, 0xF1); // opcode
+        mcu.write(1, 0x10); // zero page addr
+        let mut cpu = Cpu::new(mcu);
+        cpu.a = 0x20;
+        cpu.set_flag(Flag::Carry, true);
+        cpu.y = 5;
+
+        execute_next(&mut cpu);
+
+        assert_eq!(cpu.a, 0x10); // 0x20 - 0x10 = 0x10
+    }
+
+    #[test]
+    fn test_lax_immediate() {
+        // LAX immediate - 0xAB
+        let mut cpu = create_cpu_with_program(&[0xAB, 0x42]); // LAX #$42
+
+        execute_next(&mut cpu);
+
+        assert_eq!(cpu.a, 0x42);
+        assert_eq!(cpu.x, 0x42);
+    }
+
+    #[test]
+    fn test_lax_zero_page() {
+        // LAX zero page - 0xA7
+        let mut mcu = Box::new(MockMcu::new());
+        mcu.write(0x10, 0x42);
+        mcu.write(0, 0xA7); // opcode
+        mcu.write(1, 0x10); // zero page addr
+        let mut cpu = Cpu::new(mcu);
+
+        execute_next(&mut cpu);
+
+        assert_eq!(cpu.a, 0x42);
+        assert_eq!(cpu.x, 0x42);
+    }
+
+    #[test]
+    fn test_sax_zero_page() {
+        // SAX zero page - 0x87
+        let mut mcu = Box::new(MockMcu::new());
+        mcu.write(0, 0x87); // opcode
+        mcu.write(1, 0x10); // zero page addr
+        let mut cpu = Cpu::new(mcu);
+        cpu.a = 0x30;
+        cpu.x = 0x12;
+
+        execute_next(&mut cpu);
+
+        assert_eq!(cpu.mcu().read(0x10), 0x30 & 0x12); // SAX stores A & X
+    }
+
+    #[test]
+    fn test_dcp_zero_page() {
+        // DCP zero page - 0xC7
+        let mut mcu = Box::new(MockMcu::new());
+        mcu.write(0x10, 0x10);
+        mcu.write(0, 0xC7); // opcode
+        mcu.write(1, 0x10); // zero page addr
+        let mut cpu = Cpu::new(mcu);
+        cpu.a = 0x10;
+
+        execute_next(&mut cpu);
+
+        assert_eq!(cpu.mcu().read(0x10), 0x0F); // decremented
+        assert!(cpu.flag(Flag::Carry)); // 0x10 > 0x0F, so Carry is set
+        assert!(!cpu.flag(Flag::Zero)); // 0x10 != 0x0F, so Zero is NOT set
+    }
+
+    #[test]
+    fn test_isc_zero_page() {
+        // ISC zero page - 0xE7
+        let mut mcu = Box::new(MockMcu::new());
+        mcu.write(0x10, 0x0F);
+        mcu.write(0, 0xE7); // opcode
+        mcu.write(1, 0x10); // zero page addr
+        let mut cpu = Cpu::new(mcu);
+        cpu.a = 0x20;
+        cpu.set_flag(Flag::Carry, true);
+
+        execute_next(&mut cpu);
+
+        assert_eq!(cpu.mcu().read(0x10), 0x10); // incremented
+        assert_eq!(cpu.a, 0x10); // 0x20 - 0x10 = 0x10
+    }
+
+    #[test]
+    fn test_aso_zero_page() {
+        // ASO zero page - 0x07
+        let mut mcu = Box::new(MockMcu::new());
+        mcu.write(0x10, 0x40); // 0b01000000
+        mcu.write(0, 0x07); // opcode
+        mcu.write(1, 0x10); // zero page addr
+        let mut cpu = Cpu::new(mcu);
+        cpu.a = 0x0F;
+
+        execute_next(&mut cpu);
+
+        assert_eq!(cpu.mcu().read(0x10), 0x80); // ASL: 0x40 << 1 = 0x80
+        assert_eq!(cpu.a, 0x8F); // ORA: 0x0F | 0x80 = 0x8F
+        assert!(cpu.flag(Flag::Negative));
+    }
+
+    #[test]
+    fn test_rla_zero_page() {
+        // RLA zero page - 0x27
+        let mut mcu = Box::new(MockMcu::new());
+        mcu.write(0x10, 0x81); // 0b10000001
+        mcu.write(0, 0x27); // opcode
+        mcu.write(1, 0x10); // zero page addr
+        let mut cpu = Cpu::new(mcu);
+        cpu.a = 0x0F;
+        cpu.set_flag(Flag::Carry, true);
+
+        execute_next(&mut cpu);
+
+        assert_eq!(cpu.mcu().read(0x10), 0x03); // ROL: (0x81 << 1) | 1 = 0x103 -> 0x03
+        assert_eq!(cpu.a, 0x0F & 0x03); // AND: 0x0F & 0x03 = 0x03
+    }
+
+    #[test]
+    fn test_lse_zero_page() {
+        // LSE zero page - 0x47
+        let mut mcu = Box::new(MockMcu::new());
+        mcu.write(0x10, 0x81); // 0b10000001
+        mcu.write(0, 0x47); // opcode
+        mcu.write(1, 0x10); // zero page addr
+        let mut cpu = Cpu::new(mcu);
+        cpu.a = 0xFF;
+        cpu.set_flag(Flag::Carry, true);
+
+        execute_next(&mut cpu);
+
+        // LSE does LSR (logical shift right) then EOR
+        // LSR: 0x81 >> 1 = 0x40 (the incoming carry is ignored, LSR just shifts)
+        // EOR: 0xFF ^ 0x40 = 0xBF
+        assert_eq!(cpu.mcu().read(0x10), 0x40); // LSR result
+        assert_eq!(cpu.a, 0xBF); // 0xFF ^ 0x40 = 0xBF
+        assert!(cpu.flag(Flag::Carry)); // bit 0 of original value (0x81) was 1
+    }
+
+    #[test]
+    fn test_rra_zero_page() {
+        // RRA zero page - 0x67
+        let mut mcu = Box::new(MockMcu::new());
+        mcu.write(0x10, 0x81); // 0b10000001
+        mcu.write(0, 0x67); // opcode
+        mcu.write(1, 0x10); // zero page addr
+        let mut cpu = Cpu::new(mcu);
+        cpu.a = 0x05;
+        cpu.set_flag(Flag::Carry, true);
+
+        execute_next(&mut cpu);
+
+        assert_eq!(cpu.mcu().read(0x10), 0xC0); // ROR: (0x81 >> 1) with carry = 0xC0
+        // ADC: 0x05 + 0xC0 + 1(carry)
+        assert_eq!(cpu.a, 0xC6); // 0x05 + 0xC0 + 1 = 0xC6
+    }
+
+    #[test]
+    fn test_sbx_immediate() {
+        // SBX immediate - 0xCB
+        let mut cpu = create_cpu_with_program(&[0xCB, 0x10]); // SBX #$10
+        cpu.a = 0x30;
+        cpu.x = 0x20;
+
+        execute_next(&mut cpu);
+
+        assert_eq!(cpu.x, (0x30 & 0x20) - 0x10); // (A & X) - operand
+        // 0x30 & 0x20 = 0x20, 0x20 - 0x10 = 0x10
+        assert_eq!(cpu.x, 0x10);
+    }
+
+    #[test]
+    fn test_and_absolute_y() {
+        // AND absolute Y - 0x39
+        let mut mcu = Box::new(MockMcu::new());
+        mcu.write(0x205, 0x0F);
+        mcu.write(0, 0x39); // opcode
+        mcu.write_word(1, 0x200); // absolute addr
+        let mut cpu = Cpu::new(mcu);
+        cpu.a = 0xFF;
+        cpu.y = 5;
+
+        execute_next(&mut cpu);
+
+        assert_eq!(cpu.a, 0x0F); // 0xFF & 0x0F
+    }
+
+    #[test]
+    fn test_eor_absolute_y() {
+        // EOR absolute Y - 0x59
+        let mut mcu = Box::new(MockMcu::new());
+        mcu.write(0x205, 0xF0);
+        mcu.write(0, 0x59); // opcode
+        mcu.write_word(1, 0x200); // absolute addr
+        let mut cpu = Cpu::new(mcu);
+        cpu.a = 0xFF;
+        cpu.y = 5;
+
+        execute_next(&mut cpu);
+
+        assert_eq!(cpu.a, 0x0F); // 0xFF ^ 0xF0
+    }
+
+    #[test]
+    fn test_ora_absolute_y() {
+        // ORA absolute Y - 0x19
+        let mut mcu = Box::new(MockMcu::new());
+        mcu.write(0x205, 0xF0);
+        mcu.write(0, 0x19); // opcode
+        mcu.write_word(1, 0x200); // absolute addr
+        let mut cpu = Cpu::new(mcu);
+        cpu.a = 0x0F;
+        cpu.y = 5;
+
+        execute_next(&mut cpu);
+
+        assert_eq!(cpu.a, 0xFF); // 0x0F | 0xF0
+    }
+
+    #[test]
+    fn test_adc_absolute_y() {
+        // ADC absolute Y - 0x79
+        let mut mcu = Box::new(MockMcu::new());
+        mcu.write(0x205, 0x10);
+        mcu.write(0, 0x79); // opcode
+        mcu.write_word(1, 0x200); // absolute addr
+        let mut cpu = Cpu::new(mcu);
+        cpu.a = 0x20;
+        cpu.set_flag(Flag::Carry, false);
+        cpu.y = 5;
+
+        execute_next(&mut cpu);
+
+        assert_eq!(cpu.a, 0x30); // 0x20 + 0x10
+        assert!(!cpu.flag(Flag::Carry));
+    }
+
+    #[test]
+    fn test_cmp_absolute_y() {
+        // CMP absolute Y - 0xD9
+        let mut mcu = Box::new(MockMcu::new());
+        mcu.write(0x205, 0x40);
+        mcu.write(0, 0xD9); // opcode
+        mcu.write_word(1, 0x200); // absolute addr
+        let mut cpu = Cpu::new(mcu);
+        cpu.a = 0x42;
+        cpu.y = 5;
+
+        execute_next(&mut cpu);
+
+        assert!(cpu.flag(Flag::Carry)); // 0x42 > 0x40
+    }
+
+    #[test]
+    fn test_sbc_absolute_y() {
+        // SBC absolute Y - 0xF9
+        let mut mcu = Box::new(MockMcu::new());
+        mcu.write(0x205, 0x10);
+        mcu.write(0, 0xF9); // opcode
+        mcu.write_word(1, 0x200); // absolute addr
+        let mut cpu = Cpu::new(mcu);
+        cpu.a = 0x20;
+        cpu.set_flag(Flag::Carry, true);
+        cpu.y = 5;
+
+        execute_next(&mut cpu);
+
+        assert_eq!(cpu.a, 0x10); // 0x20 - 0x10 = 0x10
+    }
+
+    #[test]
+    fn test_and_absolute_x() {
+        // AND absolute X - 0x3D
+        let mut mcu = Box::new(MockMcu::new());
+        mcu.write(0x205, 0x0F);
+        mcu.write(0, 0x3D); // opcode
+        mcu.write_word(1, 0x200); // absolute addr
+        let mut cpu = Cpu::new(mcu);
+        cpu.a = 0xFF;
+        cpu.x = 5;
+
+        execute_next(&mut cpu);
+
+        assert_eq!(cpu.a, 0x0F); // 0xFF & 0x0F
+    }
+
+    #[test]
+    fn test_eor_absolute_x() {
+        // EOR absolute X - 0x5D
+        let mut mcu = Box::new(MockMcu::new());
+        mcu.write(0x205, 0xF0);
+        mcu.write(0, 0x5D); // opcode
+        mcu.write_word(1, 0x200); // absolute addr
+        let mut cpu = Cpu::new(mcu);
+        cpu.a = 0xFF;
+        cpu.x = 5;
+
+        execute_next(&mut cpu);
+
+        assert_eq!(cpu.a, 0x0F); // 0xFF ^ 0xF0
+    }
+
+    #[test]
+    fn test_ora_absolute_x() {
+        // ORA absolute X - 0x1D
+        let mut mcu = Box::new(MockMcu::new());
+        mcu.write(0x205, 0xF0);
+        mcu.write(0, 0x1D); // opcode
+        mcu.write_word(1, 0x200); // absolute addr
+        let mut cpu = Cpu::new(mcu);
+        cpu.a = 0x0F;
+        cpu.x = 5;
+
+        execute_next(&mut cpu);
+
+        assert_eq!(cpu.a, 0xFF); // 0x0F | 0xF0
+    }
+
+    #[test]
+    fn test_adc_absolute_x() {
+        // ADC absolute X - 0x7D
+        let mut mcu = Box::new(MockMcu::new());
+        mcu.write(0x205, 0x10);
+        mcu.write(0, 0x7D); // opcode
+        mcu.write_word(1, 0x200); // absolute addr
+        let mut cpu = Cpu::new(mcu);
+        cpu.a = 0x20;
+        cpu.set_flag(Flag::Carry, false);
+        cpu.x = 5;
+
+        execute_next(&mut cpu);
+
+        assert_eq!(cpu.a, 0x30); // 0x20 + 0x10
+        assert!(!cpu.flag(Flag::Carry));
+    }
+
+    #[test]
+    fn test_cmp_absolute_x() {
+        // CMP absolute X - 0xDD
+        let mut mcu = Box::new(MockMcu::new());
+        mcu.write(0x205, 0x40);
+        mcu.write(0, 0xDD); // opcode
+        mcu.write_word(1, 0x200); // absolute addr
+        let mut cpu = Cpu::new(mcu);
+        cpu.a = 0x42;
+        cpu.x = 5;
+
+        execute_next(&mut cpu);
+
+        assert!(cpu.flag(Flag::Carry)); // 0x42 > 0x40
+    }
+
+    #[test]
+    fn test_sbc_absolute_x() {
+        // SBC absolute X - 0xFD
+        let mut mcu = Box::new(MockMcu::new());
+        mcu.write(0x205, 0x10);
+        mcu.write(0, 0xFD); // opcode
+        mcu.write_word(1, 0x200); // absolute addr
+        let mut cpu = Cpu::new(mcu);
+        cpu.a = 0x20;
+        cpu.set_flag(Flag::Carry, true);
+        cpu.x = 5;
+
+        execute_next(&mut cpu);
+
+        assert_eq!(cpu.a, 0x10); // 0x20 - 0x10 = 0x10
+    }
+
+    #[test]
+    fn test_hlt_instruction() {
+        // HLT instructions - 0x02, 0x12, 0x22, 0x32, 0x42, 0x52, 0x62, 0x72, 0x92, 0xB2, 0xD2, 0xF2
+        let mut cpu = create_cpu_with_program(&[0x02]); // HLT
+
+        execute_next(&mut cpu);
+
+        // HLT should set the halt flag
+        assert!(cpu.is_halted());
+    }
+
+    #[test]
+    fn test_hlt_various_opcodes() {
+        // Test multiple HLT opcodes
+        for opcode in &[
+            0x02, 0x12, 0x22, 0x32, 0x42, 0x52, 0x62, 0x72, 0x92, 0xB2, 0xD2, 0xF2,
+        ] {
+            let mut cpu = create_cpu_with_program(&[*opcode]);
+            execute_next(&mut cpu);
+            assert!(
+                cpu.is_halted(),
+                "HLT opcode 0x{:02X} should set halt flag",
+                opcode
+            );
+        }
+    }
+
+    #[test]
+    fn test_lax_indirect_y() {
+        // LAX (indirect), Y - 0xB3
+        let mut mcu = Box::new(MockMcu::new());
+        mcu.write_word(0x10, 0x200);
+        mcu.write(0x205, 0x42);
+        mcu.write(0, 0xB3); // opcode
+        mcu.write(1, 0x10); // zero page addr
+        let mut cpu = Cpu::new(mcu);
+        cpu.y = 5;
+
+        execute_next(&mut cpu);
+
+        assert_eq!(cpu.a, 0x42);
+        assert_eq!(cpu.x, 0x42);
+    }
+
+    #[test]
+    fn test_sax_absolute() {
+        // SAX absolute - 0x8F
+        let mut mcu = Box::new(MockMcu::new());
+        mcu.write(0, 0x8F); // opcode
+        mcu.write_word(1, 0x200); // absolute addr
+        let mut cpu = Cpu::new(mcu);
+        cpu.a = 0x30;
+        cpu.x = 0x12;
+
+        execute_next(&mut cpu);
+
+        assert_eq!(cpu.mcu().read(0x200), 0x30 & 0x12); // SAX stores A & X
+    }
+
+    #[test]
+    fn test_sax_indirect_x() {
+        // SAX (indirect, X) - 0x83
+        let mut mcu = Box::new(MockMcu::new());
+        mcu.write_word(0x15, 0x200); // indirect pointer at 0x10 + X(5)
+        mcu.write(0, 0x83); // opcode
+        mcu.write(1, 0x10); // zero page addr
+        let mut cpu = Cpu::new(mcu);
+        cpu.a = 0x30;
+        cpu.x = 5;
+
+        execute_next(&mut cpu);
+
+        assert_eq!(cpu.mcu().read(0x200), 0x30 & 5); // A & X (where X=5 is the index)
+    }
+
+    #[test]
+    fn test_dcp_absolute() {
+        // DCP absolute - 0xCF
+        let mut mcu = Box::new(MockMcu::new());
+        mcu.write(0x200, 0x10);
+        mcu.write(0, 0xCF); // opcode
+        mcu.write_word(1, 0x200); // absolute addr
+        let mut cpu = Cpu::new(mcu);
+        cpu.a = 0x10;
+
+        execute_next(&mut cpu);
+
+        assert_eq!(cpu.mcu().read(0x200), 0x0F); // decremented
+        assert!(cpu.flag(Flag::Carry)); // 0x10 > 0x0F
+        assert!(!cpu.flag(Flag::Zero)); // 0x10 != 0x0F
+    }
+
+    #[test]
+    fn test_dcp_absolute_x() {
+        // DCP absolute X - 0xDF
+        let mut mcu = Box::new(MockMcu::new());
+        mcu.write(0x205, 0x10);
+        mcu.write(0, 0xDF); // opcode
+        mcu.write_word(1, 0x200); // absolute addr
+        let mut cpu = Cpu::new(mcu);
+        cpu.a = 0x10;
+        cpu.x = 5;
+
+        execute_next(&mut cpu);
+
+        assert_eq!(cpu.mcu().read(0x205), 0x0F); // decremented
+    }
+
+    #[test]
+    fn test_dcp_absolute_y() {
+        // DCP absolute Y - 0xDB
+        let mut mcu = Box::new(MockMcu::new());
+        mcu.write(0x205, 0x10);
+        mcu.write(0, 0xDB); // opcode
+        mcu.write_word(1, 0x200); // absolute addr
+        let mut cpu = Cpu::new(mcu);
+        cpu.a = 0x10;
+        cpu.y = 5;
+
+        execute_next(&mut cpu);
+
+        assert_eq!(cpu.mcu().read(0x205), 0x0F); // decremented
+    }
+
+    #[test]
+    fn test_isc_absolute() {
+        // ISC absolute - 0xEF
+        let mut mcu = Box::new(MockMcu::new());
+        mcu.write(0x200, 0x0F);
+        mcu.write(0, 0xEF); // opcode
+        mcu.write_word(1, 0x200); // absolute addr
+        let mut cpu = Cpu::new(mcu);
+        cpu.a = 0x20;
+        cpu.set_flag(Flag::Carry, true);
+
+        execute_next(&mut cpu);
+
+        assert_eq!(cpu.mcu().read(0x200), 0x10); // incremented
+        assert_eq!(cpu.a, 0x10); // 0x20 - 0x10
+    }
+
+    #[test]
+    fn test_isc_absolute_x() {
+        // ISC absolute X - 0xFF
+        let mut mcu = Box::new(MockMcu::new());
+        mcu.write(0x205, 0x0F);
+        mcu.write(0, 0xFF); // opcode
+        mcu.write_word(1, 0x200); // absolute addr
+        let mut cpu = Cpu::new(mcu);
+        cpu.a = 0x20;
+        cpu.set_flag(Flag::Carry, true);
+        cpu.x = 5;
+
+        execute_next(&mut cpu);
+
+        assert_eq!(cpu.mcu().read(0x205), 0x10); // incremented
+        assert_eq!(cpu.a, 0x10); // 0x20 - 0x10
+    }
+
+    #[test]
+    fn test_isc_absolute_y() {
+        // ISC absolute Y - 0xFB
+        let mut mcu = Box::new(MockMcu::new());
+        mcu.write(0x205, 0x0F);
+        mcu.write(0, 0xFB); // opcode
+        mcu.write_word(1, 0x200); // absolute addr
+        let mut cpu = Cpu::new(mcu);
+        cpu.a = 0x20;
+        cpu.set_flag(Flag::Carry, true);
+        cpu.y = 5;
+
+        execute_next(&mut cpu);
+
+        assert_eq!(cpu.mcu().read(0x205), 0x10); // incremented
+        assert_eq!(cpu.a, 0x10); // 0x20 - 0x10
+    }
+
+    #[test]
+    fn test_aso_absolute() {
+        // ASO absolute - 0x0F
+        let mut mcu = Box::new(MockMcu::new());
+        mcu.write(0x200, 0x40); // 0b01000000
+        mcu.write(0, 0x0F); // opcode
+        mcu.write_word(1, 0x200); // absolute addr
+        let mut cpu = Cpu::new(mcu);
+        cpu.a = 0x0F;
+
+        execute_next(&mut cpu);
+
+        assert_eq!(cpu.mcu().read(0x200), 0x80); // ASL: 0x40 << 1 = 0x80
+        assert_eq!(cpu.a, 0x8F); // ORA: 0x0F | 0x80 = 0x8F
+    }
+
+    #[test]
+    fn test_aso_absolute_x() {
+        // ASO absolute X - 0x1F
+        let mut mcu = Box::new(MockMcu::new());
+        mcu.write(0x205, 0x40);
+        mcu.write(0, 0x1F); // opcode
+        mcu.write_word(1, 0x200); // absolute addr
+        let mut cpu = Cpu::new(mcu);
+        cpu.a = 0x0F;
+        cpu.x = 5;
+
+        execute_next(&mut cpu);
+
+        assert_eq!(cpu.mcu().read(0x205), 0x80); // ASL result
+        assert_eq!(cpu.a, 0x8F); // ORA result
+    }
+
+    #[test]
+    fn test_aso_absolute_y() {
+        // ASO absolute Y - 0x1B
+        let mut mcu = Box::new(MockMcu::new());
+        mcu.write(0x205, 0x40);
+        mcu.write(0, 0x1B); // opcode
+        mcu.write_word(1, 0x200); // absolute addr
+        let mut cpu = Cpu::new(mcu);
+        cpu.a = 0x0F;
+        cpu.y = 5;
+
+        execute_next(&mut cpu);
+
+        assert_eq!(cpu.mcu().read(0x205), 0x80); // ASL result
+        assert_eq!(cpu.a, 0x8F); // ORA result
+    }
+
+    #[test]
+    fn test_rla_absolute() {
+        // RLA absolute - 0x2F
+        let mut mcu = Box::new(MockMcu::new());
+        mcu.write(0x200, 0x81);
+        mcu.write(0, 0x2F); // opcode
+        mcu.write_word(1, 0x200); // absolute addr
+        let mut cpu = Cpu::new(mcu);
+        cpu.a = 0x0F;
+        cpu.set_flag(Flag::Carry, true);
+
+        execute_next(&mut cpu);
+
+        assert_eq!(cpu.mcu().read(0x200), 0x03); // ROL result
+        assert_eq!(cpu.a, 0x0F & 0x03); // AND result
+    }
+
+    #[test]
+    fn test_rla_absolute_x() {
+        // RLA absolute X - 0x3F
+        let mut mcu = Box::new(MockMcu::new());
+        mcu.write(0x205, 0x81);
+        mcu.write(0, 0x3F); // opcode
+        mcu.write_word(1, 0x200); // absolute addr
+        let mut cpu = Cpu::new(mcu);
+        cpu.a = 0x0F;
+        cpu.set_flag(Flag::Carry, true);
+        cpu.x = 5;
+
+        execute_next(&mut cpu);
+
+        assert_eq!(cpu.mcu().read(0x205), 0x03); // ROL result
+        assert_eq!(cpu.a, 0x0F & 0x03); // AND result
+    }
+
+    #[test]
+    fn test_rla_absolute_y() {
+        // RLA absolute Y - 0x3B
+        let mut mcu = Box::new(MockMcu::new());
+        mcu.write(0x205, 0x81);
+        mcu.write(0, 0x3B); // opcode
+        mcu.write_word(1, 0x200); // absolute addr
+        let mut cpu = Cpu::new(mcu);
+        cpu.a = 0x0F;
+        cpu.set_flag(Flag::Carry, true);
+        cpu.y = 5;
+
+        execute_next(&mut cpu);
+
+        assert_eq!(cpu.mcu().read(0x205), 0x03); // ROL result
+        assert_eq!(cpu.a, 0x0F & 0x03); // AND result
+    }
+
+    #[test]
+    fn test_rra_absolute() {
+        // RRA absolute - 0x6F
+        let mut mcu = Box::new(MockMcu::new());
+        mcu.write(0x200, 0x81);
+        mcu.write(0, 0x6F); // opcode
+        mcu.write_word(1, 0x200); // absolute addr
+        let mut cpu = Cpu::new(mcu);
+        cpu.a = 0x05;
+        cpu.set_flag(Flag::Carry, true);
+
+        execute_next(&mut cpu);
+
+        assert_eq!(cpu.mcu().read(0x200), 0xC0); // ROR result
+        assert_eq!(cpu.a, 0xC6); // ADC: 0x05 + 0xC0 + 1 = 0xC6
+    }
+
+    #[test]
+    fn test_rra_absolute_x() {
+        // RRA absolute X - 0x7F
+        let mut mcu = Box::new(MockMcu::new());
+        mcu.write(0x205, 0x81);
+        mcu.write(0, 0x7F); // opcode
+        mcu.write_word(1, 0x200); // absolute addr
+        let mut cpu = Cpu::new(mcu);
+        cpu.a = 0x05;
+        cpu.set_flag(Flag::Carry, true);
+        cpu.x = 5;
+
+        execute_next(&mut cpu);
+
+        assert_eq!(cpu.mcu().read(0x205), 0xC0); // ROR result
+        assert_eq!(cpu.a, 0xC6); // ADC result
+    }
+
+    #[test]
+    fn test_rra_absolute_y() {
+        // RRA absolute Y - 0x7B
+        let mut mcu = Box::new(MockMcu::new());
+        mcu.write(0x205, 0x81);
+        mcu.write(0, 0x7B); // opcode
+        mcu.write_word(1, 0x200); // absolute addr
+        let mut cpu = Cpu::new(mcu);
+        cpu.a = 0x05;
+        cpu.set_flag(Flag::Carry, true);
+        cpu.y = 5;
+
+        execute_next(&mut cpu);
+
+        assert_eq!(cpu.mcu().read(0x205), 0xC0); // ROR result
+        assert_eq!(cpu.a, 0xC6); // ADC result
+    }
+
+    #[test]
+    fn test_sbc_underflow() {
+        // Test SBC with borrow
+        let mut cpu = create_cpu_with_program(&[0xE9, 0x10]); // SBC #$10
+        cpu.a = 0x05;
+        cpu.set_flag(Flag::Carry, true);
+
+        execute_next(&mut cpu);
+
+        // 0x05 - 0x10 = -11, which wraps to 0xF5
+        assert_eq!(cpu.a, 0xF5);
+        assert!(!cpu.flag(Flag::Carry)); // borrow occurred
+    }
+
+    #[test]
+    fn test_sbc_with_borrow() {
+        // Test SBC when carry is clear (borrow)
+        let mut cpu = create_cpu_with_program(&[0xE9, 0x10]); // SBC #$10
+        cpu.a = 0x20;
+        cpu.set_flag(Flag::Carry, false);
+
+        execute_next(&mut cpu);
+
+        // 0x20 - 0x10 - 1 = 0x0F
+        assert_eq!(cpu.a, 0x0F);
+        assert!(cpu.flag(Flag::Carry)); // no borrow
+    }
+
+    #[test]
+    fn test_branch_all_conditions() {
+        // Test all branch instructions with taken/not-taken conditions
+        // (opcode, flag, flag_value_for_branch_taken, branch_name)
+        let branches = [
+            (0x90, Flag::Carry, false, "BCC"),    // BCC - branch if carry clear
+            (0xB0, Flag::Carry, true, "BCS"),     // BCS - branch if carry set
+            (0xF0, Flag::Zero, true, "BEQ"),      // BEQ - branch if zero set
+            (0x30, Flag::Negative, true, "BMI"),  // BMI - branch if negative set
+            (0xD0, Flag::Zero, false, "BNE"),     // BNE - branch if zero clear
+            (0x10, Flag::Negative, false, "BPL"), // BPL - branch if negative clear
+            (0x50, Flag::Overflow, false, "BVC"), // BVC - branch if overflow clear
+            (0x70, Flag::Overflow, true, "BVS"),  // BVS - branch if overflow set
+        ];
+
+        for (opcode, flag, take_when_flag_is, name) in branches {
+            // Test branch taken
+            let mut cpu = create_cpu_with_program(&[opcode, 0x02]); // branch forward 2
+            cpu.set_flag(flag, take_when_flag_is);
+            let pc_before = cpu.pc;
+            execute_next(&mut cpu);
+            assert_ne!(
+                cpu.pc,
+                pc_before + 2,
+                "{} (0x{:02X}) should be taken when flag is {}",
+                name,
+                opcode,
+                take_when_flag_is
+            );
+
+            // Test branch not taken
+            let mut cpu = create_cpu_with_program(&[opcode, 0x02]);
+            cpu.set_flag(flag, !take_when_flag_is);
+            let pc_before = cpu.pc;
+            execute_next(&mut cpu);
+            assert_eq!(
+                cpu.pc,
+                pc_before + 2,
+                "{} (0x{:02X}) should not be taken when flag is {}",
+                name,
+                opcode,
+                !take_when_flag_is
+            );
+        }
+    }
+
+    #[test]
+    fn test_anc_with_carry() {
+        // ANC sets carry flag when bit 7 of result is set
+        let mut cpu = create_cpu_with_program(&[0x0B, 0x80]); // ANC #$80
+        cpu.a = 0xFF;
+
+        execute_next(&mut cpu);
+
+        assert_eq!(cpu.a, 0x80);
+        assert!(cpu.flag(Flag::Negative)); // bit 7 is set
+        assert!(cpu.flag(Flag::Carry)); // carry is set when bit 7 is set
+    }
+
+    #[test]
+    fn test_anc_without_carry() {
+        // ANC doesn't set carry when bit 7 of result is not set
+        let mut cpu = create_cpu_with_program(&[0x0B, 0x7F]); // ANC #$7F
+        cpu.a = 0xFF;
+
+        execute_next(&mut cpu);
+
+        assert_eq!(cpu.a, 0x7F);
+        assert!(!cpu.flag(Flag::Negative)); // bit 7 is not set
+        assert!(!cpu.flag(Flag::Carry)); // carry is not set when bit 7 is not set
+    }
+
+    #[test]
+    fn test_alr_with_carry() {
+        // ALR: AND then LSR
+        let mut cpu = create_cpu_with_program(&[0x4B, 0x81]); // ALR #$81
+        cpu.a = 0xFF;
+
+        execute_next(&mut cpu);
+
+        assert_eq!(cpu.a, 0x40); // (0xFF & 0x81) >> 1 = 0x81 >> 1 = 0x40
+        assert!(!cpu.flag(Flag::Negative));
+        assert!(cpu.flag(Flag::Carry)); // bit 0 of 0x81 was 1
+    }
+
+    #[test]
+    fn test_arr_without_carry() {
+        // ARR: AND then ROR, without carry
+        let mut cpu = create_cpu_with_program(&[0x6B, 0x80]); // ARR #$80
+        cpu.a = 0xFF;
+        cpu.set_flag(Flag::Carry, false);
+
+        execute_next(&mut cpu);
+
+        // (0xFF & 0x80) = 0x80, ROR without carry = 0x40
+        assert_eq!(cpu.a, 0x40);
+        assert!(!cpu.flag(Flag::Negative));
+    }
+
+    #[test]
+    fn test_sbx_with_borrow() {
+        // SBX: (A & X) - operand
+        let mut cpu = create_cpu_with_program(&[0xCB, 0x20]); // SBX #$20
+        cpu.a = 0x30;
+        cpu.x = 0x10;
+
+        execute_next(&mut cpu);
+
+        // (0x30 & 0x10) = 0x10, 0x10 - 0x20 = -16 = 0xF0
+        assert_eq!(cpu.x, 0xF0);
+        assert!(!cpu.flag(Flag::Carry)); // borrow occurred
+    }
+
+    #[test]
+    fn test_lax_zero_page_y() {
+        // LAX zero page Y - 0xB7
+        let mut mcu = Box::new(MockMcu::new());
+        mcu.write(0x15, 0x42);
+        mcu.write(0, 0xB7); // opcode
+        mcu.write(1, 0x10); // zero page addr
+        let mut cpu = Cpu::new(mcu);
+        cpu.y = 5;
+
+        execute_next(&mut cpu);
+
+        assert_eq!(cpu.a, 0x42);
+        assert_eq!(cpu.x, 0x42);
+    }
+
+    #[test]
+    fn test_lax_absolute() {
+        // LAX absolute - 0xAF
+        let mut mcu = Box::new(MockMcu::new());
+        mcu.write(0x200, 0x42);
+        mcu.write(0, 0xAF); // opcode
+        mcu.write_word(1, 0x200); // absolute addr
+        let mut cpu = Cpu::new(mcu);
+
+        execute_next(&mut cpu);
+
+        assert_eq!(cpu.a, 0x42);
+        assert_eq!(cpu.x, 0x42);
+    }
+
+    #[test]
+    fn test_lax_absolute_y() {
+        // LAX absolute Y - 0xBF
+        let mut mcu = Box::new(MockMcu::new());
+        mcu.write(0x205, 0x42);
+        mcu.write(0, 0xBF); // opcode
+        mcu.write_word(1, 0x200); // absolute addr
+        let mut cpu = Cpu::new(mcu);
+        cpu.y = 5;
+
+        execute_next(&mut cpu);
+
+        assert_eq!(cpu.a, 0x42);
+        assert_eq!(cpu.x, 0x42);
+    }
+
+    #[test]
+    fn test_sbc_overflow() {
+        // Test SBC overflow detection
+        let mut cpu = create_cpu_with_program(&[0xE9, 0x01]); // SBC #$01
+        cpu.a = 0x80; // -128 in two's complement
+        cpu.set_flag(Flag::Carry, true);
+
+        execute_next(&mut cpu);
+
+        // 0x80 - 0x01 = 0x7F (overflow from -128 to 127)
+        assert_eq!(cpu.a, 0x7F);
+        assert!(cpu.flag(Flag::Overflow)); // overflow occurred
+    }
+
+    #[test]
+    fn test_adc_decimal_mode_not_supported() {
+        // Even if decimal mode is set, ADC doesn't actually use BCD
+        let mut cpu = create_cpu_with_program(&[0x69, 0x10]); // ADC #$10
+        cpu.a = 0x20;
+        cpu.set_flag(Flag::Decimal, true);
+
+        execute_next(&mut cpu);
+
+        // Still does binary addition: 0x20 + 0x10 = 0x30
+        assert_eq!(cpu.a, 0x30);
+    }
+
+    #[test]
+    fn test_nmi_when_interrupt_disabled() {
+        // NMI should still occur even when interrupt disable flag is set
+        let mut cpu = create_cpu();
+        cpu.set_flag(Flag::InterruptDisabled, true);
+        set_nmi_vector(&mut cpu, 0x1234);
+
+        cpu.nmi();
+
+        // NMI should have been processed
+        assert_eq!(cpu.pc, 0x1234);
+    }
+
+    #[test]
+    fn test_nmi_pushes_correct_values() {
+        // Verify NMI pushes correct values to stack
+        let mut cpu = create_cpu();
+        // Set up NMI vector (write as little-endian bytes)
+        cpu.mcu().write(0xFFFA, 0x00);
+        cpu.mcu().write(0xFFFB, 0x20);
+        cpu.pc = 0x1000;
+        cpu.set_flag(Flag::Carry, true);
+        cpu.sp = 0xFF;
+
+        cpu.nmi();
+
+        // SP should be decremented 3 times
+        assert_eq!(cpu.sp, 0xFC);
+        // PC should be loaded from NMI vector
+        assert_eq!(cpu.pc, 0x2000);
+        // Interrupt disable flag should be set after NMI
+        assert!(cpu.flag(Flag::InterruptDisabled));
+    }
+
+    #[test]
+    fn test_irq_pushes_correct_values() {
+        // Verify IRQ pushes correct PC and status to stack
+        let mut cpu = create_cpu();
+        // Set up IRQ vector
+        cpu.mcu().write(0xFFFE, 0x00);
+        cpu.mcu().write(0xFFFF, 0x30);
+        cpu.pc = 0x1000;
+        cpu.set_flag(Flag::Carry, true);
+        cpu.sp = 0xFF;
+
+        cpu.irq();
+
+        // SP should be decremented 3 times
+        assert_eq!(cpu.sp, 0xFC);
+        // PC should be loaded from IRQ vector
+        assert_eq!(cpu.pc, 0x3000);
+        // Interrupt disable flag should be set after IRQ
+        assert!(cpu.flag(Flag::InterruptDisabled));
+    }
+
+    #[test]
+    fn test_brk_pushes_b_flag() {
+        // BRK should set B flag and push status with B flag
+        let mut mcu = Box::new(MockMcu::new());
+        mcu.write(0xFFFE, 0x00);
+        mcu.write(0xFFFF, 0x40);
+        mcu.write(0, 0x00); // BRK
+        let mut cpu = Cpu::new(mcu);
+        cpu.sp = 0xFF;
+        cpu.set_flag(Flag::Carry, true);
+
+        execute_next(&mut cpu);
+
+        // SP should be decremented 3 times
+        assert_eq!(cpu.sp, 0xFC);
+        // PC should be loaded from IRQ vector (BRK uses IRQ vector)
+        assert_eq!(cpu.pc, 0x4000);
+        // Interrupt disable flag should be set after BRK
+        assert!(cpu.flag(Flag::InterruptDisabled));
+    }
+
+    #[test]
+    fn test_rti_clears_b_flag() {
+        // RTI should restore status and B flag should be clear
+        let mut mcu = Box::new(MockMcu::new());
+        mcu.write(0, 0x40); // RTI
+        let mut cpu = Cpu::new(mcu);
+        cpu.sp = 0xFC;
+
+        // Set up stack: status (with B flag set), PCL, PCH
+        cpu.push_stack(0x12); // PCH
+        cpu.push_stack(0x34); // PCL
+        cpu.push_stack(0x30); // Status with various flags
+
+        execute_next(&mut cpu);
+
+        // RTI should restore the status and PC
+        assert_eq!(cpu.pc, 0x1234);
+    }
+
+    #[test]
+    fn test_transfer_no_touch_flags_zero_page() {
+        // Transfer from zero page without touching flags (0xA4 - LDY zero page)
+        let mut mcu = Box::new(MockMcu::new());
+        mcu.write(0x10, 0x42);
+        mcu.write(0, 0xA4); // LDY $10
+        mcu.write(1, 0x10);
+        let mut cpu = Cpu::new(mcu);
+        cpu.set_flag(Flag::Zero, true); // set some flags
+
+        execute_next(&mut cpu);
+
+        assert_eq!(cpu.y, 0x42);
+        // Flags should be updated by load
+        assert!(!cpu.flag(Flag::Zero)); // zero flag should be cleared
+    }
 }
