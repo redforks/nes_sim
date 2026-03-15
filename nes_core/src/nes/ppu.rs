@@ -284,6 +284,7 @@ impl Ppu {
         let fine_x = self.fine_x; // bits 0-2
 
         // Render 32x30 tiles starting from scroll position
+        let mut pixels_rendered = 0;
         for (screen_tile_x, screen_tile_y) in itertools::iproduct!(0..32, 0..30) {
             // Calculate nametable coordinates with wrapping
             let nt_x = (coarse_x as u16 + screen_tile_x as u16) & 0x1f;
@@ -316,8 +317,13 @@ impl Ppu {
                 if final_x < 256 && screen_y < 240 {
                     let color = self.palette.get_background_color(palette_idx, pixel);
                     self.image.put_pixel(final_x as u32, screen_y as u32, color);
+                    pixels_rendered += 1;
                 }
             }
+        }
+        if pixels_rendered == 0 {
+            info!("render_background: No pixels rendered! vram_addr={:04x}, coarse_x={}, coarse_y={}, fine_x={}, fine_y={}", 
+                vram_addr, coarse_x, coarse_y, fine_x, fine_y);
         }
     }
 
