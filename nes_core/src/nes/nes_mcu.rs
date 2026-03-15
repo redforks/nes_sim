@@ -15,6 +15,7 @@ pub struct NesMcu {
     cartridge: Box<dyn Cartridge>,
     frame_counter_interrupt: Cell<bool>,
     dmc_interrupt: Cell<bool>,
+    nmi_pending: Cell<bool>,
 }
 
 pub fn build(file: &INesFile) -> impl Mcu + use<> {
@@ -33,6 +34,7 @@ pub fn build(file: &INesFile) -> impl Mcu + use<> {
         cartridge,
         frame_counter_interrupt: Cell::new(false),
         dmc_interrupt: Cell::new(false),
+        nmi_pending: Cell::new(false),
     }
 }
 
@@ -65,7 +67,11 @@ impl Mcu for NesMcu {
     fn write(&mut self, address: u16, value: u8) {
         match address {
             0x0000..=0x1fff => self.lower_ram.write(address, value),
-            0x2000..=0x3fff => self.ppu.write(address, value),
+            0x2000..=0x3fff => {
+                if self.ppu.write(address, value) {
+                    self.nmi_pending.set(true);
+                }
+            }
             0x4014 => self.ppu_dma(value),
             0x4015 => {
                 self.dmc_interrupt.replace(false);
@@ -92,7 +98,9 @@ impl Mcu for NesMcu {
     }
 
     fn tick_ppu(&mut self) -> bool {
-        self.ppu.tick()
+        let tick_nmi = self.ppu.tick();
+        let write_nmi = self.nmi_pending.replace(false);
+        tick_nmi || write_nmi
     }
 }
 

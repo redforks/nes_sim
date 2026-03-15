@@ -166,7 +166,12 @@ pub struct Ppu {
     oam_addr: u8,
     oam: [u8; 0x100], // object attribute memory
 
-    data_rw_addr: RefCell<u16>, // None after reset
+    // VRAM address registers per NES PPU: v (current), t (temporary), x (fine X), w (write toggle)
+    vram_addr: RefCell<u16>,     // v - current VRAM address
+    temp_vram_addr: u16,         // t - temporary VRAM address
+    fine_x: u8,                  // x - fine X scroll (3 bits)
+    write_toggle: RefCell<bool>, // w - first/second write toggle
+    read_buffer: u8,             // buffered read for non-palette reads
     image: RgbaImage,
 
     // PPU timing
@@ -186,7 +191,11 @@ impl Default for Ppu {
             mask: PpuMask::new(),
             oam_addr: 0,
             oam: [0; 0x100],
-            data_rw_addr: RefCell::new(0),
+            vram_addr: RefCell::new(0),
+            temp_vram_addr: 0,
+            fine_x: 0,
+            write_toggle: RefCell::new(false),
+            read_buffer: 0,
             image: RgbaImage::new(256, 240),
             scanline: 0,
             dot: 0,
@@ -320,15 +329,22 @@ impl Ppu {
     }
 
     fn read_status(&self) -> PpuStatus {
-        *self.data_rw_addr.borrow_mut() = 0;
+        // reading status resets the write toggle (w) and clears vblank
+        *self.write_toggle.borrow_mut() = false;
         let status = self.set_v_blank(false);
         debug!("read_status: {:02x}", u8::from(status));
         status
     }
 
     pub fn read(&self, pattern: &[u8], address: u16) -> u8 {
-        // todo: mirror to 0x3fff
-        match address {
+        // Mirror PPU register space (0x2000-0x3FFF) down to 0x2000-0x2007
+        let addr = if (0x2000..=0x3fff).contains(&address) {
+            0x2000 + (address - 0x2000) % 8
+        } else {
+            address
+        };
+
+        match addr {
             0x2002 => self.read_status().into(),
             0x2004 => self.read_oam_data(),
             0x2007 => self.read_vram_and_inc(pattern),
@@ -338,13 +354,21 @@ impl Ppu {
 
     /// Write to PPU register. Returns true if NMI should be triggered.
     pub fn write(&mut self, address: u16, val: u8) -> bool {
-        // todo: mirror to 0x3fff
-        match address {
+        // Mirror PPU register space (0x2000-0x3FFF) down to 0x2000-0x2007
+        let addr = if (0x2000..=0x3fff).contains(&address) {
+            0x2000 + (address - 0x2000) % 8
+        } else {
+            address
+        };
+
+        match addr {
             0x2000 => self.set_control_flags(PpuCtrl::from(val)),
             0x2001 => {
                 self.set_ppu_mask(PpuMask::from(val));
                 false
             }
+            // 0x2002 is a read-only status register; writes are ignored
+            0x2002 => false,
             0x2003 => {
                 self.set_oma_addr(val);
                 false
@@ -354,11 +378,37 @@ impl Ppu {
                 false
             }
             0x2005 => {
-                // todo: scroll
+                // $2005 - Scroll register: first write: coarse X + fine X; second write: coarse Y + fine Y
+                if !*self.write_toggle.borrow() {
+                    // first write
+                    let coarse_x = (val >> 3) as u16 & 0x1f;
+                    self.temp_vram_addr = (self.temp_vram_addr & !0x001f) | coarse_x;
+                    self.fine_x = val & 0x07;
+                    *self.write_toggle.borrow_mut() = true;
+                } else {
+                    // second write
+                    let coarse_y = (val >> 3) as u16 & 0x1f;
+                    let fine_y = (val & 0x07) as u16;
+                    // set bits 5-9 to coarse_y
+                    self.temp_vram_addr = (self.temp_vram_addr & !0x03e0) | (coarse_y << 5);
+                    // set bits 12-14 to fine_y
+                    self.temp_vram_addr = (self.temp_vram_addr & !0x7000) | (fine_y << 12);
+                    *self.write_toggle.borrow_mut() = false;
+                }
                 false
             }
             0x2006 => {
-                self.set_data_rw_addr(val);
+                // $2006 - Set VRAM address: two writes (high then low) into temp_vram_addr (t).
+                if !*self.write_toggle.borrow() {
+                    // first write: high 6 bits
+                    self.temp_vram_addr = ((val as u16) & 0x3f) << 8;
+                    *self.write_toggle.borrow_mut() = true;
+                } else {
+                    // second write: low 8 bits -> commit t to v
+                    self.temp_vram_addr |= val as u16;
+                    *self.vram_addr.borrow_mut() = self.temp_vram_addr & 0x7fff;
+                    *self.write_toggle.borrow_mut() = false;
+                }
                 false
             }
             0x2007 => {
@@ -400,8 +450,8 @@ impl Ppu {
     }
 
     fn set_data_rw_addr(&mut self, address: u8) {
-        let addr = *self.data_rw_addr.borrow();
-        self.data_rw_addr = RefCell::new(addr << 8 | address as u16);
+        let addr = *self.vram_addr.borrow();
+        *self.vram_addr.borrow_mut() = (addr << 8) | address as u16;
     }
 
     fn inc_data_rw_addr(&self) {
@@ -410,19 +460,19 @@ impl Ppu {
         } else {
             1
         };
-        let mut addr = self.data_rw_addr.borrow_mut();
+        let mut addr = self.vram_addr.borrow_mut();
         *addr = (*addr).wrapping_add(delta);
     }
 
     fn read_vram_and_inc(&self, pattern: &[u8]) -> u8 {
-        let addr = *self.data_rw_addr.borrow();
+        let addr = *self.vram_addr.borrow();
         let value = self.read_vram(pattern, addr);
         self.inc_data_rw_addr();
         value
     }
 
     fn write_vram_and_inc(&mut self, v: u8) {
-        let addr = *self.data_rw_addr.borrow();
+        let addr = *self.vram_addr.borrow();
         self.write_vram(addr, v);
         self.inc_data_rw_addr();
     }
