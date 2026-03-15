@@ -26,3 +26,6 @@ wasm-debug-build:
 
 web-start: wasm-debug-build
     cd www && NODE_OPTIONS=--openssl-legacy-provider npm start
+
+test-cov:
+    cargo tarpaulin --skip-clean --workspace --exclude nes_web --engine llvm --output-dir coverage
