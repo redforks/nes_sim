@@ -728,4 +728,160 @@ mod tests {
             "enabling NMI outside VBlank should not trigger NMI immediately"
         );
     }
+
+    #[test]
+    fn test_ppu_ctrl_to_from_u8() {
+        let ctrl = PpuCtrl::new()
+            .with_nmi_enable(true)
+            .with_ppu_master(true)
+            .with_sprite_size(true)
+            .with_background_pattern_table(true)
+            .with_sprite_pattern_table(true)
+            .with_increment_mode(true)
+            .with_name_table_select(3);
+
+        let byte: u8 = ctrl.into();
+        let ctrl2: PpuCtrl = byte.into();
+
+        assert!(ctrl2.nmi_enable());
+        assert!(ctrl2.ppu_master());
+        assert!(ctrl2.sprite_size());
+        assert!(ctrl2.background_pattern_table());
+        assert!(ctrl2.sprite_pattern_table());
+        assert!(ctrl2.increment_mode());
+        assert_eq!(ctrl2.name_table_select(), 3);
+    }
+
+    #[test]
+    fn test_ppu_mask_to_from_u8() {
+        let mask = PpuMask::new()
+            .with_blue_tint(true)
+            .with_green_tint(true)
+            .with_red_tint(true)
+            .with_sprite_enabled(true)
+            .with_background_enabled(true)
+            .with_sprite_left_enabled(true)
+            .with_background_left_enabled(true)
+            .with_grayscale(true);
+
+        let byte: u8 = mask.into();
+        let mask2: PpuMask = byte.into();
+
+        assert!(mask2.blue_tint());
+        assert!(mask2.green_tint());
+        assert!(mask2.red_tint());
+        assert!(mask2.sprite_enabled());
+        assert!(mask2.background_enabled());
+        assert!(mask2.sprite_left_enabled());
+        assert!(mask2.background_left_enabled());
+        assert!(mask2.grayscale());
+    }
+
+    #[test]
+    fn test_ppu_status_to_from_u8() {
+        let status = PpuStatus::new()
+            .with_sprite_overflow(true)
+            .with_sprite_zero_hit(true)
+            .with_v_blank(true);
+
+        let byte: u8 = status.into();
+        let status2: PpuStatus = byte.into();
+
+        assert!(status2.sprite_overflow());
+        assert!(status2.sprite_zero_hit());
+        assert!(status2.v_blank());
+    }
+
+    #[test]
+    fn test_oam_dma() {
+        let mut ppu = Ppu::default();
+        let data: [u8; 256] = [0x42; 256];
+
+        ppu.oam_dma(&data);
+
+        assert_eq!(ppu.oam[0], 0x42);
+        assert_eq!(ppu.oam[128], 0x42);
+        assert_eq!(ppu.oam[255], 0x42);
+    }
+
+    #[test]
+    fn test_set_mirroring() {
+        let mut ppu = Ppu::default();
+
+        ppu.set_mirroring(Mirroring::Horizontal);
+        ppu.set_mirroring(Mirroring::Vertical);
+
+        // Just verify it doesn't panic - actual mirroring behavior is tested in name_table tests
+    }
+
+    #[test]
+    fn test_read_status_clears_vblank() {
+        let (mut ppu, _pattern) = new_test_ppu_and_pattern();
+        ppu.set_v_blank(true);
+
+        assert!(ppu.status.borrow().v_blank());
+
+        // read_status should clear vblank
+        let status = ppu.read_status();
+        assert!(status.v_blank());
+
+        // v_blank should now be false
+        assert!(!ppu.status.borrow().v_blank());
+    }
+
+    #[test]
+    fn test_render_with_mask_disabled() {
+        let (mut ppu, pattern) = new_test_ppu_and_pattern();
+
+        // Disable all rendering
+        ppu.mask = PpuMask::new();
+
+        let img = ppu.render(&pattern);
+        assert_eq!(img.dimensions(), (256, 240));
+    }
+
+    #[test]
+    fn test_write_0x2006_set_data_addr() {
+        let (mut ppu, _pattern) = new_test_ppu_and_pattern();
+
+        // First write to 0x2006 sets high byte of VRAM address
+        ppu.write(0x2006, 0x3f);
+
+        // Second write to 0x2006 sets low byte and commits to vram_addr
+        ppu.write(0x2006, 0x00);
+
+        // Verify the VRAM address was set
+        assert_eq!(*ppu.vram_addr.borrow(), 0x3f00);
+    }
+
+    #[test]
+    fn test_read_0x3000_reads_palette() {
+        let (mut ppu, pattern) = new_test_ppu_and_pattern();
+
+        // Write to palette memory at 0x3f00 using VRAM write
+        ppu.write(0x2006, 0x3f);
+        ppu.write(0x2006, 0x00);
+        ppu.write(0x2007, 0xAB);
+
+        // Reset VRAM address to read from 0x3f20 (mirrors to 0x3f00)
+        ppu.write(0x2006, 0x3f);
+        ppu.write(0x2006, 0x20);
+
+        // Read from 0x3f20 (should mirror to 0x3f00)
+        let val = ppu.read(&pattern, 0x2007);
+        assert_eq!(val, 0xAB);
+    }
+
+    #[test]
+    fn test_pattern_table_selection() {
+        let (mut ppu, _pattern) = new_test_ppu_and_pattern();
+
+        // Set pattern table index via control flag
+        ppu.write(
+            0x2000,
+            PpuCtrl::new().with_background_pattern_table(true).into(),
+        );
+
+        assert_eq!(ppu.cur_pattern_table_idx, 1);
+    }
 }
