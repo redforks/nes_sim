@@ -4,7 +4,7 @@ use log::info;
 mod addressing;
 mod instruction;
 
-#[derive(Eq, PartialEq)]
+#[derive(Eq, PartialEq, Clone, Copy)]
 pub enum ExecuteResult {
     Continue,
     Stop(u8),    // should exit executing, with exit code, 0 means success
@@ -428,7 +428,9 @@ impl Cpu {
         info!("nmi");
         self.push_pc();
         self.push_status();
-        self.pc = self.read_word(0xFFFA);
+        let vector = self.read_word(0xFFFA);
+        info!("nmi vector: ${:04x}", vector);
+        self.pc = vector;
     }
 
     fn irq(&mut self) {
@@ -580,6 +582,10 @@ impl Cpu {
 
     pub fn halt(&mut self) {
         self.is_halt = true;
+    }
+
+    pub fn is_halted(&self) -> bool {
+        self.is_halt
     }
 }
 

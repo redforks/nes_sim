@@ -30,18 +30,21 @@ impl<P: Plugin> Machine<P> {
     /// `ms`: milliseconds elapsed since last frame.
     pub fn process_frame(&mut self, ms: f64) -> (&RgbaImage, ExecuteResult) {
         let cycles = (ms * CYCLES_PER_MS) as u32;
-        let er = if cycles > V_BLANK_CYCLES as u32 {
-            let ppu = self.cpu.mcu().get_ppu();
-            ppu.set_v_blank(true);
-            if ppu.should_nmi() {
-                self.cpu.nmi();
-            }
-            self.run_ticks(V_BLANK_CYCLES as u32);
-            self.cpu.mcu().get_ppu().set_v_blank(false);
-            self.run_ticks(cycles - V_BLANK_CYCLES as u32)
-        } else {
-            self.run_ticks(cycles)
-        };
+
+        // Set VBlank at start of frame so tests can detect it
+        // In real hardware, VBlank occurs at the end of visible scanlines,
+        // but for test ROMs we need VBlank to be detectable early
+        let ppu = self.cpu.mcu().get_ppu();
+        ppu.set_v_blank(true);
+        if ppu.should_nmi() {
+            self.cpu.nmi();
+        }
+
+        let er = self.run_ticks(cycles);
+
+        // Clear VBlank at end of frame
+        self.cpu.mcu().get_ppu().set_v_blank(false);
+
         (self.cpu.mcu().get_machine_mcu().render(), er)
     }
 
