@@ -57,6 +57,7 @@ pub struct MMC1 {
     prg_ram: [u8; 0x2000],
     prg_rom_bank1_start: usize,
     prg_rom_bank2_start: usize,
+    prg_bank_register: u8, // Store the PRG bank register value
 
     sr: u8, // shift register
     sr_write_count: u8,
@@ -127,6 +128,7 @@ impl MMC1 {
             prg_ram: [0; 0x2000],
             prg_rom_bank1_start: 0,
             prg_rom_bank2_start: 0,
+            prg_bank_register: 0,
             sr: 0,
             sr_write_count: 0,
             prg_rom_mode: PrgRomMode::Switch32K,
@@ -140,6 +142,7 @@ impl MMC1 {
         self.sr = 0;
         self.sr_write_count = 0;
         self.chr_bank_size = 4096;
+        self.prg_bank_register = 0;
         self.set_prg_rom_mode(PrgRomMode::FixLast16K);
         self.select_chr_bank1(0);
         self.select_chr_bank2(1);
@@ -152,13 +155,31 @@ impl MMC1 {
         }
 
         self.prg_rom_mode = mode;
-        match mode {
-            PrgRomMode::Switch32K | PrgRomMode::FixFirst16K => {
+        // Update bank pointers based on new mode and current bank register
+        self.update_prg_banks();
+    }
+
+    fn update_prg_banks(&mut self) {
+        let bank = self.prg_bank_register as usize;
+        match self.prg_rom_mode {
+            PrgRomMode::Switch32K => {
+                // In 32K mode, bank register selects a 32K bank (bit 3 is ignored)
+                // $8000-$BFFF: bank * 16K
+                // $C000-$FFFF: (bank + 1) * 16K
+                let bank32k = bank & 0x07;
+                self.prg_rom_bank1_start = bank32k * PRG_ROM_BANK_SIZE;
+                self.prg_rom_bank2_start = self.prg_rom_bank1_start + PRG_ROM_BANK_SIZE;
+            }
+            PrgRomMode::FixFirst16K => {
+                // $8000-$BFFF: fixed to first 16K
+                // $C000-$FFFF: bank * 16K
                 self.prg_rom_bank1_start = 0;
-                self.prg_rom_bank2_start = PRG_ROM_BANK_SIZE;
+                self.prg_rom_bank2_start = bank * PRG_ROM_BANK_SIZE;
             }
             PrgRomMode::FixLast16K => {
-                self.prg_rom_bank1_start = 0;
+                // $8000-$BFFF: bank * 16K
+                // $C000-$FFFF: fixed to last 16K
+                self.prg_rom_bank1_start = bank * PRG_ROM_BANK_SIZE;
                 self.prg_rom_bank2_start = self.prg_rom.len() - PRG_ROM_BANK_SIZE;
             }
         }
@@ -197,10 +218,11 @@ impl MMC1 {
     }
 
     fn select_prg_bank(&mut self, byte: u8) {
-        // prg rom bank register
-        let bank = byte & 0x0f;
-        info!("MMC1 switch prg rom 1st bank to ${:x}", bank);
-        self.prg_rom_bank1_start = bank as usize * PRG_ROM_BANK_SIZE;
+        // PRG ROM bank register (bits 0-3)
+        // bit 4 is ignored
+        self.prg_bank_register = byte & 0x0f;
+        info!("MMC1 switch prg rom bank to ${:x}", self.prg_bank_register);
+        self.update_prg_banks();
     }
 }
 

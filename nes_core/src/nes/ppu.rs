@@ -43,12 +43,12 @@ to_from_u8!(PpuMask);
 #[derive(Copy, Clone)]
 #[bitfield]
 pub struct PpuStatus {
-    pub v_blank: bool,
-    pub sprite_zero_hit: bool,
-    pub sprite_overflow: bool,
-    #[allow(non_snake_case)]
     #[skip]
     __: B5,
+    #[allow(non_snake_case)]
+    pub sprite_overflow: bool,
+    pub sprite_zero_hit: bool,
+    pub v_blank: bool,
 }
 to_from_u8!(PpuStatus);
 
@@ -271,7 +271,9 @@ impl Ppu {
 
     fn read_status(&self) -> PpuStatus {
         *self.data_rw_addr.borrow_mut() = 0;
-        self.set_v_blank(false)
+        let status = self.set_v_blank(false);
+        debug!("read_status: {:02x}", u8::from(status));
+        status
     }
 
     pub fn read(&self, pattern: &[u8], address: u16) -> u8 {
