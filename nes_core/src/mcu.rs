@@ -37,3 +37,46 @@ pub trait Mcu {
         false
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    struct MockMcu;
+
+    impl Mcu for MockMcu {
+        fn read(&self, _address: u16) -> u8 {
+            0
+        }
+
+        fn write(&mut self, _address: u16, _value: u8) {}
+    }
+
+    #[test]
+    fn test_tick_ppu_default() {
+        let mut mcu = MockMcu;
+        // Default implementation returns false
+        assert!(!mcu.tick_ppu());
+    }
+
+    #[test]
+    #[should_panic(expected = "not implemented")]
+    fn test_get_ppu_default_panics() {
+        let mut mcu = MockMcu;
+        let _ppu = mcu.get_ppu();
+    }
+
+    #[test]
+    #[should_panic(expected = "not implemented")]
+    fn test_get_machine_mcu_default_panics() {
+        let mut mcu = MockMcu;
+        let _machine_mcu = mcu.get_machine_mcu();
+    }
+
+    #[test]
+    #[should_panic(expected = "request_irq() not implemented")]
+    fn test_request_irq_default_panics() {
+        let mcu = MockMcu;
+        let _ = mcu.request_irq();
+    }
+}
