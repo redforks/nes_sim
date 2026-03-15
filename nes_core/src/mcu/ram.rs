@@ -67,4 +67,46 @@ mod tests {
         mcu.write(0x80, 0x12);
         assert_eq!(mcu.read(0x80), 0x12);
     }
+
+    #[test]
+    fn test_as_ref() {
+        let mcu = RamMcu::new([1, 2, 3, 4]);
+        let slice: &[u8] = mcu.as_ref();
+        assert_eq!(slice, &[1, 2, 3, 4]);
+    }
+
+    #[test]
+    fn test_new_with_non_zero_start() {
+        let mcu = RamMcu::new([0; 0x100]);
+        // start should be 0 for new()
+        let (start, end) = mcu.region();
+        assert_eq!(start, 0);
+        assert_eq!(end, 0xFF); // SIZE - 1
+    }
+
+    #[test]
+    fn test_region_with_start() {
+        let mcu = RamMcu::start_from(0x8000, [0; 0x100]);
+        let (start, end) = mcu.region();
+        assert_eq!(start, 0x8000);
+        assert_eq!(end, 0x80FF); // 0x8000 + 0x100 - 1
+    }
+
+    #[test]
+    fn test_request_irq() {
+        let mcu = RamMcu::new([0; 0x100]);
+        // RamMcu never requests IRQ
+        assert_eq!(mcu.request_irq(), false);
+    }
+
+    #[test]
+    fn test_to_index() {
+        let mut mcu = RamMcu::start_from(0x8000, [0; 0x100]);
+        // to_index is private, but we can test it indirectly through read/write
+        mcu.write(0x8000, 0xAB);
+        assert_eq!(mcu.read(0x8000), 0xAB);
+
+        mcu.write(0x80FF, 0xCD);
+        assert_eq!(mcu.read(0x80FF), 0xCD);
+    }
 }
