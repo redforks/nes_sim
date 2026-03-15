@@ -42,6 +42,7 @@ impl RunAction {
 
         // Initialize event pump
         let mut event_pump = sdl_context.event_pump().map_err(|e| anyhow::anyhow!(e))?;
+        let mut frame_count = 0;
 
         'running: loop {
             // Handle events
@@ -60,6 +61,13 @@ impl RunAction {
 
             // Run one frame (16.67ms for 60 FPS)
             let (_img, result) = machine.process_frame(16.67);
+
+            // Save first frame for debugging
+            if frame_count == 0 {
+                _img.save("/tmp/nes_frame_0.png")?;
+                eprintln!("Saved first frame to /tmp/nes_frame_0.png");
+            }
+            frame_count += 1;
 
             // Update texture with frame data
             texture.update(None, _img.as_bytes(), 256 * 4)?;
