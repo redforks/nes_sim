@@ -4,13 +4,13 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-nes_core = { path = "../nes_core" }
-env_logger = { version = "0.11", default-features = false }
-log = "0.4"
-clap = { version = "4", features = ["derive"] }
-thiserror = "2"
-ansi_term = "0.12"
-is-terminal = "0.4"
+nes_core = { workspace = true }
+env_logger = { workspace = true }
+log = { workspace = true }
+clap = { workspace = true }
+thiserror = { workspace = true }
+ansi_term = { workspace = true }
+is-terminal = { workspace = true }
 
 [dev-dependencies]
-rstest = "0.23"
+rstest = { workspace = true }

@@ -6,7 +6,7 @@ edition = "2024"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-anyhow = "1"
-clap = { version = "4", features = ["derive"] }
-image = { version = "0.25", default-features = false, features = ["png"] }
-nes_core = { path = "../nes_core" }
+anyhow = { workspace = true }
+clap = { workspace = true }
+image = { workspace = true, features = ["png"] }
+nes_core = { workspace = true }
