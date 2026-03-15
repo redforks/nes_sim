@@ -222,4 +222,17 @@ mod tests {
         control.set_mirroring(Mirroring::Four);
         assert_start_addr(&control, 1, 2, 3, 4);
     }
+
+    #[test]
+    fn test_set_mirroring_same_value() {
+        let mut control = NameTableControl::default();
+
+        // Set to vertical mirroring
+        control.set_mirroring(Mirroring::Vertical);
+        assert_eq!(Mirroring::Vertical, control.mirroring());
+
+        // Setting same mirroring again should do nothing (early return)
+        control.set_mirroring(Mirroring::Vertical);
+        assert_eq!(Mirroring::Vertical, control.mirroring());
+    }
 }
