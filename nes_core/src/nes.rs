@@ -12,6 +12,45 @@ pub fn create_mcu(file: &INesFile) -> impl Mcu + use<> {
     nes_mcu::build(file)
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_create_mcu() {
+        // Create a minimal valid iNES file for testing
+        let mut rom = Vec::new();
+
+        // NES signature
+        rom.extend_from_slice(&[0x4e, 0x45, 0x53, 0x1a]);
+
+        // PRG ROM pages (1 page = 16KB)
+        rom.push(1);
+
+        // CHR ROM pages (1 page = 8KB)
+        rom.push(1);
+
+        // Control byte 1: mapper in bits 7-4, flags in bits 3-0
+        rom.push(0x00); // Mapper 0, horizontal mirroring
+
+        // Control byte 2: mapper upper bits in bits 7-4
+        rom.push(0x00); // Mapper 0
+
+        // 8 bytes of padding
+        rom.extend_from_slice(&[0; 8]);
+
+        // PRG ROM data (16KB)
+        rom.extend(std::iter::repeat(0).take(16 * 1024));
+
+        // CHR ROM data (8KB)
+        rom.extend(std::iter::repeat(0).take(8 * 1024));
+
+        let file = INesFile::new(rom).unwrap();
+        let _mcu = create_mcu(&file);
+        // If we got here without panicking, the test passed
+    }
+}
+
 #[macro_use]
 mod macros {
     #[macro_export]
