@@ -216,8 +216,6 @@ impl Ppu {
 
     /// Advance PPU by one dot. Returns true if NMI should be triggered.
     pub fn tick(&mut self) -> bool {
-        let mut trigger_nmi = false;
-
         self.dot += 1;
         if self.dot >= DOTS_PER_SCANLINE {
             self.dot = 0;
@@ -231,19 +229,23 @@ impl Ppu {
         if self.scanline == VBLANK_SET_SCANLINE && self.dot == 1 {
             let status = *self.status.borrow();
             let was_vblank = status.v_blank();
-            *self.status.borrow_mut() = status.with_v_blank(true);
-            if self.ctrl_flags.nmi_enable() && !was_vblank {
-                trigger_nmi = true;
+            if !was_vblank {
+                *self.status.borrow_mut() = status.with_v_blank(true);
+                if self.ctrl_flags.nmi_enable() {
+                    return true;
+                }
             }
         }
 
         // VBlank clear: scanline 261, dot 1
         if self.scanline == VBLANK_CLEAR_SCANLINE && self.dot == 1 {
             let status = *self.status.borrow();
-            *self.status.borrow_mut() = status.with_v_blank(false);
+            if status.v_blank() {
+                *self.status.borrow_mut() = status.with_v_blank(false);
+            }
         }
 
-        trigger_nmi
+        false
     }
 
     fn render_background(&mut self, pattern: &[u8]) {
@@ -410,23 +412,7 @@ mod tests {
     use super::*;
 
     fn new_test_ppu_and_pattern() -> (Ppu, [u8; 8192]) {
-        let pattern = [0; 8192];
-        let ppu = Ppu {
-            ctrl_flags: 0.into(),
-            status: RefCell::new(0.into()),
-            name_table: NameTableControl::default(),
-            cur_name_table_addr: 0x2000,
-            palette: Palette::default(),
-            cur_pattern_table_idx: 0,
-            mask: PpuMask::new(),
-            oam_addr: 0,
-            oam: [0; 0x100],
-            data_rw_addr: RefCell::new(0),
-            image: RgbaImage::new(256, 240),
-            scanline: 0,
-            dot: 0,
-        };
-        (ppu, pattern)
+        (Ppu::default(), [0; 8192])
     }
 
     #[test]
