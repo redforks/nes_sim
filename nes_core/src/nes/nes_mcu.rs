@@ -377,4 +377,140 @@ mod tests {
         assert_eq!(mcu.read(0x0100), 0x11);
         assert_eq!(mcu.read(0x4000), 0x22);
     }
+
+    #[test]
+    fn test_get_machine_mcu() {
+        let mut mcu = NesMcu {
+            lower_ram: LowerRam::new(),
+            ppu: Ppu::default(),
+            after_ppu: RamMcu::start_from(0x4000, [0; 0x20]),
+            cartridge: Box::new(MockCartridge::new()),
+            frame_counter_interrupt: Cell::new(false),
+            dmc_interrupt: Cell::new(false),
+            nmi_pending: Cell::new(false),
+        };
+
+        let machine_mcu = mcu.get_machine_mcu();
+        // Should be able to call render
+        let img = machine_mcu.render();
+        assert_eq!(img.dimensions(), (256, 240));
+    }
+
+    #[test]
+    fn test_render() {
+        let mut mcu = NesMcu {
+            lower_ram: LowerRam::new(),
+            ppu: Ppu::default(),
+            after_ppu: RamMcu::start_from(0x4000, [0; 0x20]),
+            cartridge: Box::new(MockCartridge::new()),
+            frame_counter_interrupt: Cell::new(false),
+            dmc_interrupt: Cell::new(false),
+            nmi_pending: Cell::new(false),
+        };
+
+        let img = mcu.render();
+        assert_eq!(img.dimensions(), (256, 240));
+    }
+
+    #[test]
+    fn test_ppu_dma() {
+        let mut mcu = NesMcu {
+            lower_ram: LowerRam::new(),
+            ppu: Ppu::default(),
+            after_ppu: RamMcu::start_from(0x4000, [0; 0x20]),
+            cartridge: Box::new(MockCartridge::new()),
+            frame_counter_interrupt: Cell::new(false),
+            dmc_interrupt: Cell::new(false),
+            nmi_pending: Cell::new(false),
+        };
+
+        // Set up some data in RAM for DMA
+        mcu.write(0x0200, 0x12);
+        mcu.write(0x0201, 0x34);
+        mcu.write(0x0202, 0x56);
+
+        // Trigger DMA from address 0x02 (which means 0x0200)
+        mcu.write(0x4014, 0x02);
+
+        // The DMA should have transferred the data to OAM
+        // We can't directly check OAM contents, but we verify it doesn't panic
+    }
+
+    #[test]
+    fn test_tick_ppu_with_nmi_pending() {
+        let mut mcu = NesMcu {
+            lower_ram: LowerRam::new(),
+            ppu: Ppu::default(),
+            after_ppu: RamMcu::start_from(0x4000, [0; 0x20]),
+            cartridge: Box::new(MockCartridge::new()),
+            frame_counter_interrupt: Cell::new(false),
+            dmc_interrupt: Cell::new(false),
+            nmi_pending: Cell::new(true),
+        };
+
+        // tick_ppu should return true when NMI is pending
+        let result = mcu.tick_ppu();
+        assert!(result);
+
+        // Second call should return false as NMI was consumed
+        let result = mcu.tick_ppu();
+        assert!(!result);
+    }
+
+    #[test]
+    fn test_nmi_pending_from_ppu_write() {
+        let mut mcu = NesMcu {
+            lower_ram: LowerRam::new(),
+            ppu: Ppu::default(),
+            after_ppu: RamMcu::start_from(0x4000, [0; 0x20]),
+            cartridge: Box::new(MockCartridge::new()),
+            frame_counter_interrupt: Cell::new(false),
+            dmc_interrupt: Cell::new(false),
+            nmi_pending: Cell::new(false),
+        };
+
+        // Write to PPU control register (0x2000) with NMI enabled during VBlank
+        // This is a simplified test - actual NMI triggering depends on PPU state
+        mcu.write(0x2000, 0x80); // Enable NMI
+
+        // The nmi_pending flag would be set by PPU.write() if conditions are met
+        // For now, just verify the write doesn't panic
+    }
+
+    #[test]
+    fn test_cartridge_write() {
+        let mut mcu = NesMcu {
+            lower_ram: LowerRam::new(),
+            ppu: Ppu::default(),
+            after_ppu: RamMcu::start_from(0x4000, [0; 0x20]),
+            cartridge: Box::new(MockCartridge::new()),
+            frame_counter_interrupt: Cell::new(false),
+            dmc_interrupt: Cell::new(false),
+            nmi_pending: Cell::new(false),
+        };
+
+        // Write to cartridge space (0x4020+)
+        mcu.write(0x4020, 0xAB);
+        // MockCartridge ignores writes, but verify it doesn't panic
+    }
+
+    #[test]
+    fn test_cartridge_read_boundary() {
+        let mut cart = MockCartridge::new();
+        cart.prg_rom[0] = 0x11;
+        cart.prg_rom[0x7FFF] = 0x22; // Last byte of PRG ROM
+
+        let mcu = NesMcu {
+            lower_ram: LowerRam::new(),
+            ppu: Ppu::default(),
+            after_ppu: RamMcu::start_from(0x4000, [0; 0x20]),
+            cartridge: Box::new(cart),
+            frame_counter_interrupt: Cell::new(false),
+            dmc_interrupt: Cell::new(false),
+            nmi_pending: Cell::new(false),
+        };
+
+        assert_eq!(mcu.read(0x8000), 0x11);
+        assert_eq!(mcu.read(0xFFFF), 0x22);
+    }
 }
