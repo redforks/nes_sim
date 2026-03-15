@@ -623,7 +623,6 @@ mod tests {
     // NES vector addresses
     const NMI_VECTOR: u16 = 0xFFFA;
     const IRQ_VECTOR: u16 = 0xFFFE;
-    const RESET_VECTOR: u16 = 0xFFFC;
 
     struct MockMcu {
         memory: [u8; 0x10000],
@@ -2740,7 +2739,7 @@ mod tests {
 
         assert_eq!(cpu.pc, 0x1234);
         // Status should be 0xFF but with bit 5 (unused) and bit 4 (break) handled
-        assert!(cpu.status & 0xFF == 0xFF || cpu.status == 0xCF || cpu.status == 0xEF);
+        assert!(cpu.status == 0xFF || cpu.status == 0xCF || cpu.status == 0xEF);
     }
 
     // ADC overflow tests
@@ -2899,7 +2898,7 @@ mod tests {
 
     #[test]
     fn test_clock_tick_calls_plugin_hooks() {
-        let mut mcu = Box::new(MockMcu::new().with_program(0, &[0xEA]));
+        let mcu = Box::new(MockMcu::new().with_program(0, &[0xEA]));
         let mut cpu = Cpu::new(mcu);
         let mut plugin = TestPlugin {
             start_called: false,
@@ -2923,7 +2922,7 @@ mod tests {
             }
         }
 
-        let mut mcu = Box::new(MockMcu::new().with_program(0, &[0xEA]));
+        let mcu = Box::new(MockMcu::new().with_program(0, &[0xEA]));
         let mut cpu = Cpu::new(mcu);
         let mut plugin = StopPlugin;
 

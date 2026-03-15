@@ -134,7 +134,7 @@ mod tests {
 
     #[test]
     fn test_controller_read() {
-        let mut controller = Controller::new();
+        let controller = Controller::new();
 
         // Press some buttons on controller A
         controller.a.borrow_mut().press(Button::A);

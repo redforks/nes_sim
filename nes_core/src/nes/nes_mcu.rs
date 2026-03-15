@@ -209,7 +209,7 @@ mod tests {
         let mut cart = MockCartridge::new();
         cart.prg_rom[0] = 0xEA; // NOP opcode
 
-        let mut mcu = NesMcu {
+        let mcu = NesMcu {
             lower_ram: LowerRam::new(),
             ppu: Ppu::default(),
             after_ppu: RamMcu::start_from(0x4000, [0; 0x20]),
@@ -305,7 +305,7 @@ mod tests {
 
     #[test]
     fn test_status_register_read_clears_flags() {
-        let mut mcu = NesMcu {
+        let mcu = NesMcu {
             lower_ram: LowerRam::new(),
             ppu: Ppu::default(),
             after_ppu: RamMcu::start_from(0x4000, [0; 0x20]),

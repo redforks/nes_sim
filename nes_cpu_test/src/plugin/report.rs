@@ -61,7 +61,7 @@ impl Plugin for ReportPlugin {
                 if ch == 0 {
                     break;
                 }
-                if ch >= 0x20 && ch < 0x7f {
+                if (0x20..0x7f).contains(&ch) {
                     text_output.push(ch as char);
                 }
                 addr += 1;
@@ -106,7 +106,7 @@ impl Plugin for ReportPlugin {
             let result = cpu.read_byte(TEST_RESULT_ADDR);
 
             // Print debug every 100000 instructions
-            if self.verbose && self.count % 100000 == 0 {
+            if self.verbose && self.count.is_multiple_of(100000) {
                 // Read first 20 chars of text output
                 let mut text = String::new();
                 for i in 0..20 {
@@ -114,7 +114,7 @@ impl Plugin for ReportPlugin {
                     if ch == 0 {
                         break;
                     }
-                    if ch >= 0x20 && ch < 0x7f {
+                    if (0x20..0x7f).contains(&ch) {
                         text.push(ch as char);
                     }
                 }

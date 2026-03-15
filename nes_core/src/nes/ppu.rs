@@ -26,6 +26,12 @@ pub struct PpuCtrl {
 }
 to_from_u8!(PpuCtrl);
 
+impl Default for PpuCtrl {
+    fn default() -> Self {
+        0u8.into()
+    }
+}
+
 #[derive(Copy, Clone)]
 #[bitfield]
 pub struct PpuMask {
@@ -40,6 +46,12 @@ pub struct PpuMask {
 }
 to_from_u8!(PpuMask);
 
+impl Default for PpuMask {
+    fn default() -> Self {
+        0u8.into()
+    }
+}
+
 #[derive(Copy, Clone)]
 #[bitfield]
 pub struct PpuStatus {
@@ -51,6 +63,12 @@ pub struct PpuStatus {
     pub v_blank: bool,
 }
 to_from_u8!(PpuStatus);
+
+impl Default for PpuStatus {
+    fn default() -> Self {
+        0u8.into()
+    }
+}
 
 const PALETTE_MEM_START: u16 = 0x3f00;
 const NAME_TABLE_MEM_START: u16 = 0x2000;
@@ -171,7 +189,6 @@ pub struct Ppu {
     temp_vram_addr: u16,         // t - temporary VRAM address
     fine_x: u8,                  // x - fine X scroll (3 bits)
     write_toggle: RefCell<bool>, // w - first/second write toggle
-    read_buffer: u8,             // buffered read for non-palette reads
     image: RgbaImage,
 
     // PPU timing
@@ -195,7 +212,6 @@ impl Default for Ppu {
             temp_vram_addr: 0,
             fine_x: 0,
             write_toggle: RefCell::new(false),
-            read_buffer: 0,
             image: RgbaImage::new(256, 240),
             scanline: 0,
             dot: 0,
@@ -449,11 +465,6 @@ impl Ppu {
         }
     }
 
-    fn set_data_rw_addr(&mut self, address: u8) {
-        let addr = *self.vram_addr.borrow();
-        *self.vram_addr.borrow_mut() = (addr << 8) | address as u16;
-    }
-
     fn inc_data_rw_addr(&self) {
         let delta = if self.ctrl_flags.increment_mode() {
             32
@@ -704,7 +715,7 @@ mod tests {
         );
 
         assert!(
-            ppu.write(0x2000, ctrl.with_nmi_enable(false).into()) == false,
+            !ppu.write(0x2000, ctrl.with_nmi_enable(false).into()),
             "disabling NMI during VBlank should not trigger NMI"
         );
         assert!(
@@ -816,7 +827,7 @@ mod tests {
 
     #[test]
     fn test_read_status_clears_vblank() {
-        let (mut ppu, _pattern) = new_test_ppu_and_pattern();
+        let (ppu, _pattern) = new_test_ppu_and_pattern();
         ppu.set_v_blank(true);
 
         assert!(ppu.status.borrow().v_blank());
