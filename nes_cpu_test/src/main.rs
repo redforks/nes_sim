@@ -30,7 +30,7 @@ fn main() {
             exec(&mut machine, |m| m.run_ticks(1));
         }
         Image::INes(_) => {
-            exec(&mut machine, |m| m.process_frame(16.67));
+            exec(&mut machine, |m| m.process_frame());
         }
     }
 }

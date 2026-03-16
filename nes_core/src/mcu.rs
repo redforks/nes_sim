@@ -5,10 +5,6 @@ use crate::nes::ppu::PpuTrait;
 pub use mapping::*;
 pub use ram::RamMcu;
 
-pub trait MachineMcu {
-    fn render(&mut self);
-}
-
 /// Nes 6502 Mcu.
 ///
 /// Note: addr is absolute address, not the offset from start of the memory region.
@@ -22,16 +18,12 @@ pub trait Mcu {
         panic!("not implemented");
     }
 
-    // TODO: remove this hack
-    fn get_machine_mcu(&mut self) -> &mut dyn MachineMcu {
-        panic!("not implemented");
-    }
-
     fn request_irq(&self) -> bool {
         panic!("request_irq() not implemented");
     }
 
     /// Tick PPU by one dot. Returns true if NMI should be triggered.
+    /// Pattern data is passed through from the cartridge for rendering.
     fn tick_ppu(&mut self) -> bool {
         false
     }
@@ -68,13 +60,6 @@ mod tests {
     fn test_get_ppu_default_panics() {
         let mut mcu = MockMcu;
         let _ppu = mcu.get_ppu();
-    }
-
-    #[test]
-    #[should_panic(expected = "not implemented")]
-    fn test_get_machine_mcu_default_panics() {
-        let mut mcu = MockMcu;
-        let _machine_mcu = mcu.get_machine_mcu();
     }
 
     #[test]

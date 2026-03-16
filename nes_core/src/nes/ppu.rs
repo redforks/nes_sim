@@ -239,8 +239,32 @@ impl Ppu {
         self.oam.copy_from_slice(vals);
     }
 
-    /// Advance PPU by one dot. Returns true if NMI should be triggered.
-    pub fn tick(&mut self) -> bool {
+    /// Advance PPU by one dot, rendering a pixel if on a visible scanline.
+    /// Returns true if NMI should be triggered.
+    ///
+    /// # Parameters
+    /// - `pattern`: CHR ROM pattern data for tile/sprite lookup
+    pub fn tick(&mut self, pattern: &[u8]) -> bool {
+        let scanline = self.scanline;
+        let dot = self.dot;
+
+        // Render pixel during visible scanlines (0-239) and visible dots (0-255)
+        if scanline < 240 && dot < 256 {
+            self.render_pixel(pattern, dot as u8, scanline as u8);
+        }
+
+        // At end of pre-render scanline (261), clear screen for next frame
+        if scanline == VBLANK_CLEAR_SCANLINE && dot == 0 {
+            let bg_color = COLORS[self.palette.data[0] as usize];
+            self.renderer.clear(bg_color.0);
+        }
+
+        // Call finish() at end of visible area (scanline 240, dot 0)
+        if scanline == 240 && dot == 0 {
+            self.renderer.finish();
+        }
+
+        // Advance dot/scanline counters
         self.dot += 1;
         if self.dot >= DOTS_PER_SCANLINE {
             self.dot = 0;
@@ -268,77 +292,188 @@ impl Ppu {
             if status.v_blank() {
                 *self.status.borrow_mut() = status.with_v_blank(false);
             }
+            // Also clear sprite zero hit at pre-render scanline
+            let status = *self.status.borrow();
+            *self.status.borrow_mut() = status.with_sprite_zero_hit(false);
         }
 
         false
     }
 
-    fn render_background(&mut self, pattern: &[u8]) {
-        let pattern = PatternBand::new(pattern).pattern(self.cur_pattern_table_idx as usize);
+    /// Render a single pixel at the given screen coordinates.
+    /// Handles both background and sprite rendering with priority.
+    fn render_pixel(&mut self, pattern: &[u8], screen_x: u8, screen_y: u8) {
+        let bg_pixel = if self.mask.background_enabled() {
+            self.get_background_pixel(pattern, screen_x, screen_y)
+        } else {
+            (0, 0) // transparent
+        };
 
-        // Extract scroll values from vram_addr and fine_x
-        let vram_addr = *self.vram_addr.borrow();
-        let coarse_x = (vram_addr & 0x001f) as u8; // bits 0-4
-        let coarse_y = ((vram_addr >> 5) & 0x001f) as u8; // bits 5-9
-        let fine_y = ((vram_addr >> 12) & 0x0007) as u8; // bits 12-14
-        let fine_x = self.fine_x; // bits 0-2
+        let sprite_pixel = if self.mask.sprite_enabled() {
+            self.get_sprite_pixel(pattern, screen_x, screen_y)
+        } else {
+            None
+        };
 
-        // Render 32x30 tiles starting from scroll position
-        let mut pixels_rendered = 0;
-        for (screen_tile_x, screen_tile_y) in itertools::iproduct!(0..32, 0..30) {
-            // Calculate nametable coordinates with wrapping
-            let nt_x = (coarse_x as u16 + screen_tile_x as u16) & 0x1f;
-            let nt_y = (coarse_y as u16 + screen_tile_y as u16) & 0x1f;
+        let (bg_palette_idx, bg_color_idx) = bg_pixel;
 
-            // Get the correct nametable and attribute table based on scroll offset
-            let nt_select_x = ((coarse_x as u16 + screen_tile_x as u16) >> 5) & 0x1;
-            let nt_select_y = ((coarse_y as u16 + screen_tile_y as u16) >> 5) & 0x1;
-            let nt_idx = (nt_select_y << 1) | nt_select_x;
+        let color = match sprite_pixel {
+            Some((spr_palette_idx, spr_color_idx, behind_bg, is_sprite_zero)) => {
+                // Sprite zero hit detection:
+                // Set when an opaque sprite 0 pixel overlaps an opaque background pixel
+                if is_sprite_zero && bg_color_idx != 0 && spr_color_idx != 0 && screen_x != 255 {
+                    let status = *self.status.borrow();
+                    *self.status.borrow_mut() = status.with_sprite_zero_hit(true);
+                }
 
-            let name_table = self.name_table.nth(nt_idx as u8);
-            let attr_table = self.name_table.attribute_table(nt_idx as u8);
-
-            let tile = name_table.tile(pattern, nt_x as u8, nt_y as u8);
-            let palette_idx = attr_table.palette_idx(nt_x as u8, nt_y as u8);
-
-            for (x, y, pixel) in tile.iter() {
-                // Apply fine X scroll to pixel position
-                let screen_x = (screen_tile_x as u32 * 8) + x as u32;
-                let screen_y = (screen_tile_y as u32 * 8) + y as u32 + fine_y as u32;
-
-                // Apply fine_x scroll (shift pixels left)
-                let final_x = if screen_x >= fine_x as u32 {
-                    screen_x - fine_x as u32
+                if spr_color_idx == 0 {
+                    // Sprite pixel is transparent, show background
+                    self.palette
+                        .get_background_color(bg_palette_idx, bg_color_idx)
+                } else if bg_color_idx == 0 || !behind_bg {
+                    // Background is transparent OR sprite has priority
+                    self.palette
+                        ._get_sprit_color(spr_palette_idx, spr_color_idx)
                 } else {
-                    256 + screen_x - fine_x as u32
-                };
-
-                // Clamp to screen bounds (256x240)
-                if final_x < 256 && screen_y < 240 {
-                    let color = self.palette.get_background_color(palette_idx, pixel);
-                    self.renderer.set_pixel(final_x, screen_y, color.0);
-                    pixels_rendered += 1;
+                    // Background has priority and is opaque
+                    self.palette
+                        .get_background_color(bg_palette_idx, bg_color_idx)
                 }
             }
-        }
-        if pixels_rendered == 0 {
-            info!(
-                "render_background: No pixels rendered! vram_addr={:04x}, coarse_x={}, coarse_y={}, fine_x={}, fine_y={}",
-                vram_addr, coarse_x, coarse_y, fine_x, fine_y
-            );
-        }
+            None => {
+                // No sprite, just show background
+                self.palette
+                    .get_background_color(bg_palette_idx, bg_color_idx)
+            }
+        };
+
+        self.renderer
+            .set_pixel(screen_x as u32, screen_y as u32, color.0);
     }
 
-    pub fn render(&mut self, pattern: &[u8]) {
-        // Clear renderer to black (universal background color, 0x0F in palette)
-        let black_pixel = COLORS[0x0f];
-        self.renderer.clear(black_pixel.0);
-
-        if self.mask.background_enabled() {
-            self.render_background(pattern);
+    /// Get background pixel color index at the given screen position.
+    /// Returns (palette_idx, color_idx) where color_idx 0 means transparent/universal bg.
+    fn get_background_pixel(&self, pattern: &[u8], screen_x: u8, screen_y: u8) -> (u8, u8) {
+        // Check left-column clipping
+        if !self.mask.background_left_enabled() && screen_x < 8 {
+            return (0, 0);
         }
 
-        self.renderer.finish();
+        let vram_addr = *self.vram_addr.borrow();
+        let coarse_x = (vram_addr & 0x001f) as u8;
+        let coarse_y = ((vram_addr >> 5) & 0x001f) as u8;
+        let fine_y = ((vram_addr >> 12) & 0x0007) as u8;
+        let fine_x = self.fine_x;
+
+        // Calculate which pixel we're rendering factoring in scroll
+        let pixel_x = screen_x as u16 + fine_x as u16;
+        let tile_x = coarse_x as u16 + (pixel_x / 8);
+        let tile_fine_x = (pixel_x % 8) as usize;
+
+        let pixel_y = screen_y as u16 + (coarse_y as u16 * 8) + fine_y as u16;
+        let tile_y = pixel_y / 8;
+        let tile_fine_y = (pixel_y % 8) as usize;
+
+        // Determine which nametable based on wrapping
+        let nt_x = tile_x & 0x1f;
+        let nt_y = tile_y & 0x1f;
+        // Clamp nt_y to valid range (0-29) since NES screen is only 240px = 30 tiles high
+        let nt_y = if nt_y >= 30 { nt_y - 30 } else { nt_y };
+        let nt_select_x = (tile_x >> 5) & 0x1;
+        let nt_select_y = (tile_y >> 5) & 0x1;
+        let nt_idx = (nt_select_y << 1) | nt_select_x;
+
+        let pattern_table = PatternBand::new(pattern).pattern(self.cur_pattern_table_idx as usize);
+        let name_table = self.name_table.nth(nt_idx as u8);
+        let attr_table = self.name_table.attribute_table(nt_idx as u8);
+
+        let tile = name_table.tile(pattern_table, nt_x as u8, nt_y as u8);
+        let palette_idx = attr_table.palette_idx(nt_x as u8, nt_y as u8);
+        let color_idx = tile.pixel(tile_fine_x, tile_fine_y);
+
+        (palette_idx, color_idx)
+    }
+
+    /// Get sprite pixel at the given screen position.
+    /// Returns Some((palette_idx, color_idx, behind_bg, is_sprite_zero)) if a sprite is present,
+    /// or None if no sprite covers this pixel.
+    fn get_sprite_pixel(
+        &self,
+        pattern: &[u8],
+        screen_x: u8,
+        screen_y: u8,
+    ) -> Option<(u8, u8, bool, bool)> {
+        // Check left-column clipping for sprites
+        if !self.mask.sprite_left_enabled() && screen_x < 8 {
+            return None;
+        }
+
+        let sprite_height: u8 = if self.ctrl_flags.sprite_size() { 16 } else { 8 };
+        let sprite_pattern_table = if self.ctrl_flags.sprite_size() {
+            0 // For 8x16 sprites, pattern table is determined by tile index bit 0
+        } else {
+            self.ctrl_flags.sprite_pattern_table() as usize
+        };
+
+        // Scan OAM for sprites on this scanline (max 8, lower index = higher priority)
+        for i in 0..64u8 {
+            let oam_offset = (i as usize) * 4;
+            let sprite_y = self.oam[oam_offset]; // Y position (top of sprite)
+            let tile_index = self.oam[oam_offset + 1];
+            let attributes = self.oam[oam_offset + 2];
+            let sprite_x = self.oam[oam_offset + 3];
+
+            // Check if sprite is on this scanline
+            let y_diff = screen_y.wrapping_sub(sprite_y.wrapping_add(1));
+            if y_diff >= sprite_height {
+                continue;
+            }
+
+            // Check if sprite covers this X position
+            if screen_x < sprite_x || screen_x >= sprite_x.wrapping_add(8) {
+                continue;
+            }
+
+            let flip_h = attributes & 0x40 != 0;
+            let flip_v = attributes & 0x80 != 0;
+            let behind_bg = attributes & 0x20 != 0;
+            let palette_idx = attributes & 0x03;
+
+            let mut pixel_row = y_diff;
+            if flip_v {
+                pixel_row = sprite_height - 1 - pixel_row;
+            }
+
+            let mut pixel_col = (screen_x - sprite_x) as usize;
+            if flip_h {
+                pixel_col = 7 - pixel_col;
+            }
+
+            // Get tile data
+            let (actual_pattern_table, actual_tile_index) = if self.ctrl_flags.sprite_size() {
+                // 8x16 mode: bit 0 of tile index selects pattern table
+                let pt = (tile_index & 0x01) as usize;
+                let ti = tile_index & 0xFE;
+                if pixel_row < 8 {
+                    (pt, ti)
+                } else {
+                    (pt, ti + 1)
+                }
+            } else {
+                (sprite_pattern_table, tile_index)
+            };
+
+            let pattern_data = PatternBand::new(pattern).pattern(actual_pattern_table);
+            let tile = pattern_data.tile(actual_tile_index);
+            let color_idx = tile.pixel(pixel_col, (pixel_row % 8) as usize);
+
+            if color_idx != 0 {
+                // Found an opaque sprite pixel
+                return Some((palette_idx, color_idx, behind_bg, i == 0));
+            }
+        }
+
+        None
     }
 
     pub fn set_mirroring(&mut self, mirroring: Mirroring) {

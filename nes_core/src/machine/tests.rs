@@ -26,24 +26,12 @@ impl Mcu for MockMcu {
         self.memory[addr as usize] = value;
     }
 
-    fn get_machine_mcu(&mut self) -> &mut dyn crate::mcu::MachineMcu {
-        self
-    }
-
     fn get_ppu(&mut self) -> &mut dyn crate::nes::ppu::PpuTrait {
         &mut self.ppu
     }
 
     fn request_irq(&self) -> bool {
         false
-    }
-}
-
-impl crate::mcu::MachineMcu for MockMcu {
-    fn render(&mut self) {
-        // Mock render - just render the PPU
-        let pattern = [0u8; 0x2000];
-        self.ppu.render(&pattern);
     }
 }
 
@@ -91,35 +79,12 @@ fn test_run_ticks_zero() {
 }
 
 #[test]
-fn test_constants_values() {
-    // Verify the constants have reasonable values
-    assert!(CYCLES_PER_FRAME > 0.0);
-    assert!(CYCLES_PER_MS > 0.0);
-    assert!(V_BLANK_CYCLES > 0.0);
-
-    // CYCLES_PER_MS should be derived from CYCLES_PER_FRAME
-    let calculated = CYCLES_PER_FRAME / 100.0 * 60.0;
-    assert!((CYCLES_PER_MS - calculated).abs() < 0.1);
-}
-
-#[test]
-fn test_cycles_per_ms_calculation() {
-    // Just verify that the constants produce reasonable cycle counts
-    let ms = 1.0;
-    let cycles = (ms * CYCLES_PER_MS) as u32;
-
-    // Should be positive and reasonable (not 0)
-    assert!(cycles > 0);
-    assert!(cycles < 1_000_000);
-}
-
-#[test]
 fn test_process_frame() {
     let mcu = Box::new(MockMcu::new());
     let mut machine = Machine::new(mcu);
 
-    // Run for 1 ms (about 17868 cycles)
-    let result = machine.process_frame(1.0);
+    // Run for 1 frame
+    let result = machine.process_frame();
 
     // Should return continue result
     assert_eq!(result, ExecuteResult::Continue);
@@ -130,8 +95,8 @@ fn test_process_frame_with_zero_ms() {
     let mcu = Box::new(MockMcu::new());
     let mut machine = Machine::new(mcu);
 
-    // Run for 0 ms
-    let result = machine.process_frame(0.0);
+    // Run for 1 frame
+    let result = machine.process_frame();
 
     // Should return continue result
     assert_eq!(result, ExecuteResult::Continue);

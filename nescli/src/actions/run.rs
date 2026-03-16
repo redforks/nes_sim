@@ -154,8 +154,8 @@ impl RunAction {
                 }
             }
 
-            // Run one frame (16.67ms for 60 FPS)
-            let result = machine.process_frame(16.67);
+            // Run one frame
+            let result = machine.process_frame();
 
             // Get the rendered image directly from our image_render
             // Create a scope to keep the borrow alive

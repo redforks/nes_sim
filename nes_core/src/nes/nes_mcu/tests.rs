@@ -356,52 +356,6 @@ fn test_memory_mapping() {
 }
 
 #[test]
-fn test_get_machine_mcu() {
-    let mut mcu = NesMcu {
-        lower_ram: LowerRam::new(),
-        ppu: Ppu::default(),
-        after_ppu: RamMcu::start_from(0x4000, [0; 0x20]),
-        cartridge: Box::new(MockCartridge::new()),
-        frame_counter_interrupt: Cell::new(false),
-        dmc_interrupt: Cell::new(false),
-        nmi_pending: Cell::new(false),
-        apu_cycle: 0,
-        apu_even_cycle: false,
-        frame_counter: 0,
-        frame_counter_mode: false,
-        length_counters: [0; 4],
-        length_counter_halt: [false; 4],
-        channel_enabled: [false; 4],
-    };
-
-    let machine_mcu = mcu.get_machine_mcu();
-    // Should be able to call render
-    machine_mcu.render();
-}
-
-#[test]
-fn test_render() {
-    let mut mcu = NesMcu {
-        lower_ram: LowerRam::new(),
-        ppu: Ppu::default(),
-        after_ppu: RamMcu::start_from(0x4000, [0; 0x20]),
-        cartridge: Box::new(MockCartridge::new()),
-        frame_counter_interrupt: Cell::new(false),
-        dmc_interrupt: Cell::new(false),
-        nmi_pending: Cell::new(false),
-        apu_cycle: 0,
-        apu_even_cycle: false,
-        frame_counter: 0,
-        frame_counter_mode: false,
-        length_counters: [0; 4],
-        length_counter_halt: [false; 4],
-        channel_enabled: [false; 4],
-    };
-
-    mcu.render();
-}
-
-#[test]
 fn test_ppu_dma() {
     let mut mcu = NesMcu {
         lower_ram: LowerRam::new(),

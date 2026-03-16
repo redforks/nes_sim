@@ -393,8 +393,6 @@ pub struct Cpu {
     irq_pending: bool,
     change_irq_flag_pending: Option<bool>,
 
-    /// if remains_clock not zero, new instruction will not be executed.
-    remain_clocks: u16,
     is_halt: bool,
 }
 
@@ -410,7 +408,6 @@ impl Cpu {
             mcu,
             irq_pending: false,
             change_irq_flag_pending: None,
-            remain_clocks: 0,
             is_halt: false,
         }
     }
@@ -468,29 +465,25 @@ impl Cpu {
         }
     }
 
-    pub fn clock_tick<T: Plugin>(&mut self, plugin: &mut T) -> ExecuteResult {
-        // Tick PPU 3 times per CPU cycle (CPU:PPU = 1:3)
-        for _ in 0..3 {
-            if self.mcu.tick_ppu() {
-                self.nmi();
-            }
-        }
-
-        // Tick APU once per CPU cycle
-        if self.mcu.tick_apu() {
-            // Frame interrupt - trigger IRQ
-            self.set_irq(true);
-        }
-
-        if self.remain_clocks != 0 {
-            self.remain_clocks -= 1;
-            return ExecuteResult::Continue;
-        }
-
+    /// Execute one complete CPU instruction, then tick PPU and APU for the
+    /// appropriate number of cycles. Returns the execution result.
+    ///
+    /// One CPU instruction = N cycles. PPU is ticked 3×N times, APU is ticked N times.
+    pub fn tick<T: Plugin>(&mut self, plugin: &mut T) -> ExecuteResult {
         if self.is_halt {
+            // Still need to tick PPU/APU even when halted
+            for _ in 0..3 {
+                if self.mcu.tick_ppu() {
+                    self.nmi();
+                }
+            }
+            if self.mcu.tick_apu() {
+                self.set_irq(true);
+            }
             return ExecuteResult::Continue;
         }
 
+        // Handle pending IRQ
         if self.irq_pending && !self.flag(Flag::InterruptDisabled) {
             if let Some(v) = self.change_irq_flag_pending {
                 self.set_flag(Flag::InterruptDisabled, v);
@@ -504,9 +497,25 @@ impl Cpu {
             }
         }
 
+        // Execute one full instruction
         plugin.start(self);
-        self.remain_clocks = execute_next(self) as u16 - 1;
+        let cycles = execute_next(self) as u32;
         plugin.end(self);
+
+        // Tick PPU 3 times per CPU cycle
+        for _ in 0..(cycles * 3) {
+            if self.mcu.tick_ppu() {
+                self.nmi();
+            }
+        }
+
+        // Tick APU once per CPU cycle
+        for _ in 0..cycles {
+            if self.mcu.tick_apu() {
+                self.set_irq(true);
+            }
+        }
+
         self.set_irq(self.mcu.request_irq());
         plugin.should_stop()
     }

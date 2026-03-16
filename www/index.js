@@ -5,12 +5,8 @@ async function main() {
     let rom = await resp.arrayBuffer();
     // draw_chr(new Uint8Array(rom), 'canvas');
     let machine = new_machine('canvas', new Uint8Array(rom));
-    let time = performance.now();
     let tick = () => {
-        let now = performance.now();
-        let delta = now - time;
-        time = now;
-        machine.process_frame(delta);
+        machine.process_frame();
     };
     let ticks = 0
     requestAnimationFrame(function loop() {
