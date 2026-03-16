@@ -252,6 +252,7 @@ impl Render for MarkdownRender {
         self.dump_next_frame = false;
         self.operations.clear();
         self.pixel_counter = 0;
+        self.start_time = Instant::now();
         self.frame_number += 1;
     }
 }
