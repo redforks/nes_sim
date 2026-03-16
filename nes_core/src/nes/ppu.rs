@@ -558,7 +558,7 @@ impl Ppu {
     }
 
     /// Write to PPU register. Returns true if NMI should be triggered.
-    pub fn write(&mut self, address: u16, val: u8) -> bool {
+    pub fn write(&mut self, address: u16, val: u8) {
         // Mirror PPU register space (0x2000-0x3FFF) down to 0x2000-0x2007
         let addr = if (0x2000..=0x3fff).contains(&address) {
             0x2000 + (address - 0x2000) % 8
@@ -567,20 +567,19 @@ impl Ppu {
         };
 
         match addr {
-            0x2000 => self.set_control_flags(PpuCtrl::from(val)),
+            0x2000 => {
+                self.set_control_flags(PpuCtrl::from(val));
+            }
             0x2001 => {
                 self.set_ppu_mask(PpuMask::from(val));
-                false
             }
             // 0x2002 is a read-only status register; writes are ignored
-            0x2002 => false,
+            0x2002 => {}
             0x2003 => {
                 self.set_oma_addr(val);
-                false
             }
             0x2004 => {
                 self.write_oam_data_and_inc(val);
-                false
             }
             0x2005 => {
                 // $2005 - Scroll register: first write: coarse X + fine X; second write: coarse Y + fine Y
@@ -600,7 +599,6 @@ impl Ppu {
                     self.temp_vram_addr = (self.temp_vram_addr & !0x7000) | (fine_y << 12);
                     *self.write_toggle.borrow_mut() = false;
                 }
-                false
             }
             0x2006 => {
                 // $2006 - Set VRAM address: two writes (high then low) into temp_vram_addr (t).
@@ -614,11 +612,9 @@ impl Ppu {
                     *self.vram_addr.borrow_mut() = self.temp_vram_addr & 0x7fff;
                     *self.write_toggle.borrow_mut() = false;
                 }
-                false
             }
             0x2007 => {
                 self.write_vram_and_inc(val);
-                false
             }
             _ => panic!("Can not write to Ppu at address ${:x}", address),
         }
