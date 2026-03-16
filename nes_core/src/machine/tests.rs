@@ -1,9 +1,7 @@
 use super::*;
-use image::RgbaImage;
 
 struct MockMcu {
     memory: [u8; 0x10000],
-    image: RgbaImage,
     ppu: crate::nes::ppu::Ppu,
 }
 
@@ -11,7 +9,6 @@ impl MockMcu {
     fn new() -> Self {
         MockMcu {
             memory: [0; 0x10000],
-            image: RgbaImage::new(256, 240),
             ppu: crate::nes::ppu::Ppu::default(),
         }
     }
