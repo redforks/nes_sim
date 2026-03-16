@@ -150,6 +150,22 @@ impl RunAction {
                             markdown_render.borrow().frame_number()
                         );
                     }
+                    Event::KeyDown {
+                        keycode: Some(Keycode::F2),
+                        ..
+                    } => {
+                        // Reset the simulator
+                        eprintln!(">> Resetting simulator");
+                        machine.reset();
+                    }
+                    Event::KeyDown {
+                        keycode: Some(Keycode::F4),
+                        ..
+                    } => {
+                        // Quit the application
+                        eprintln!(">> Quitting application");
+                        break 'running;
+                    }
                     _ => {}
                 }
             }

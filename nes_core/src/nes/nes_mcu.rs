@@ -16,6 +16,7 @@ pub struct NesMcu {
     frame_counter_interrupt: Cell<bool>,
     dmc_interrupt: Cell<bool>,
     nmi_pending: Cell<bool>,
+    vblank_started: Cell<bool>,
     // APU state for length counter timing
     apu_cycle: u64,
     apu_even_cycle: bool, // APU is clocked every OTHER CPU cycle
@@ -57,6 +58,7 @@ pub fn build_with_renderer(file: &INesFile, renderer: Option<Box<dyn Render>>) -
         frame_counter_interrupt: Cell::new(false),
         dmc_interrupt: Cell::new(false),
         nmi_pending: Cell::new(false),
+        vblank_started: Cell::new(false),
         apu_cycle: 0,
         apu_even_cycle: false,
         frame_counter: 0,
@@ -202,9 +204,16 @@ impl Mcu for NesMcu {
     }
 
     fn tick_ppu(&mut self) -> bool {
-        let tick_nmi = self.ppu.tick(self.cartridge.pattern_ref());
+        let result = self.ppu.tick(self.cartridge.pattern_ref());
         let write_nmi = self.nmi_pending.replace(false);
-        tick_nmi || write_nmi
+        if result.vblank_started {
+            self.vblank_started.set(true);
+        }
+        result.nmi || write_nmi
+    }
+
+    fn take_vblank(&mut self) -> bool {
+        self.vblank_started.replace(false)
     }
 
     fn tick_apu(&mut self) -> bool {

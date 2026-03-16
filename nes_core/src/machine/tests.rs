@@ -35,6 +35,54 @@ impl Mcu for MockMcu {
     }
 }
 
+/// An MCU backed by a real PPU that fires VBlank at scanline 241 dot 1.
+/// Used to test that `process_frame` correctly waits for VBlank.
+struct VBlankMcu {
+    memory: [u8; 0x10000],
+    ppu: crate::nes::ppu::Ppu,
+    pattern: [u8; 0x2000],
+    vblank_seen: bool,
+}
+
+impl VBlankMcu {
+    fn new() -> Self {
+        VBlankMcu {
+            memory: [0; 0x10000],
+            ppu: crate::nes::ppu::Ppu::default(),
+            pattern: [0; 0x2000],
+            vblank_seen: false,
+        }
+    }
+}
+
+impl Mcu for VBlankMcu {
+    fn read(&self, addr: u16) -> u8 {
+        self.memory[addr as usize]
+    }
+
+    fn write(&mut self, addr: u16, value: u8) {
+        self.memory[addr as usize] = value;
+    }
+
+    fn request_irq(&self) -> bool {
+        false
+    }
+
+    fn tick_ppu(&mut self) -> bool {
+        let result = self.ppu.tick(&self.pattern);
+        if result.vblank_started {
+            self.vblank_seen = true;
+        }
+        result.nmi
+    }
+
+    fn take_vblank(&mut self) -> bool {
+        let v = self.vblank_seen;
+        self.vblank_seen = false;
+        v
+    }
+}
+
 #[test]
 fn test_machine_creation() {
     let mcu = Box::new(MockMcu::new());
@@ -118,5 +166,31 @@ fn test_run_ticks_positive() {
 
     // Run some ticks
     let result = machine.run_ticks(10);
+    assert_eq!(result, ExecuteResult::Continue);
+}
+
+#[test]
+fn test_process_frame_waits_for_vblank() {
+    // Use a VBlankMcu whose PPU fires VBlank at the correct time.
+    // Program: infinite JMP loop at $8000 so the CPU keeps executing.
+    let mut mcu = VBlankMcu::new();
+    mcu.memory[0x8000] = 0x4C; // JMP absolute
+    mcu.memory[0x8001] = 0x00;
+    mcu.memory[0x8002] = 0x80; // JMP $8000
+
+    let mcu = Box::new(mcu);
+    let mut machine = Machine::new(mcu);
+    machine.set_pc(0x8000);
+
+    // process_frame should return as soon as the PPU reaches VBlank
+    // (scanline 241, dot 1 = after 241*341 + 1 = 82,262 PPU dots = ~27,421 CPU cycles).
+    // The call must complete well within MAX_TICKS_PER_FRAME.
+    let result = machine.process_frame();
+    assert_eq!(result, ExecuteResult::Continue);
+
+    // After one frame the PPU should be at or past scanline 241.
+    // We verify by running a second frame — it should also complete without hitting
+    // the safety limit, proving VBlank fires consistently every frame.
+    let result = machine.process_frame();
     assert_eq!(result, ExecuteResult::Continue);
 }
