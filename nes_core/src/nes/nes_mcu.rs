@@ -14,7 +14,6 @@ pub struct NesMcu {
     after_ppu: RamMcu<0x20>,
     cartridge: Box<dyn Cartridge>,
     frame_counter_interrupt: Cell<bool>,
-    dmc_interrupt: Cell<bool>,
     nmi_pending: Cell<bool>,
     vblank_started: Cell<bool>,
     // APU state for length counter timing
@@ -56,7 +55,6 @@ pub fn build_with_renderer(file: &INesFile, renderer: Option<Box<dyn Render>>) -
         after_ppu: RamMcu::start_from(0x4000, [0; 0x20]),
         cartridge,
         frame_counter_interrupt: Cell::new(false),
-        dmc_interrupt: Cell::new(false),
         nmi_pending: Cell::new(false),
         vblank_started: Cell::new(false),
         apu_cycle: 0,
@@ -104,9 +102,6 @@ impl Mcu for NesMcu {
                 if self.frame_counter_interrupt.get() {
                     status |= 0x40;
                 }
-                if self.dmc_interrupt.get() {
-                    status |= 0x80;
-                }
                 status
             }
             0x4000..=0x401f => self.after_ppu.read(address),
@@ -124,12 +119,11 @@ impl Mcu for NesMcu {
             }
             0x4014 => self.ppu_dma(value),
             0x4015 => {
-                // APU status register - enable/disable channels and clear DMC interrupt
+                // APU status register - enable/disable channels
                 self.channel_enabled[0] = value & 0x01 != 0;
                 self.channel_enabled[1] = value & 0x02 != 0;
                 self.channel_enabled[2] = value & 0x04 != 0;
                 self.channel_enabled[3] = value & 0x08 != 0;
-                self.dmc_interrupt.replace(false);
                 // If a channel is disabled, its length counter is cleared
                 for i in 0..4 {
                     if !self.channel_enabled[i] {
@@ -196,7 +190,7 @@ impl Mcu for NesMcu {
     }
 
     fn request_irq(&self) -> bool {
-        self.frame_counter_interrupt.get() || self.dmc_interrupt.get()
+        self.frame_counter_interrupt.get()
     }
 
     fn tick_ppu(&mut self) -> bool {
