@@ -1,5 +1,5 @@
 use crate::ines::INesFile;
-use crate::mcu::{MachineMcu, Mcu, RamMcu};
+use crate::mcu::{Mcu, RamMcu};
 use crate::nes::lower_ram::LowerRam;
 use crate::nes::mapper;
 use crate::nes::mapper::Cartridge;
@@ -197,16 +197,12 @@ impl Mcu for NesMcu {
         &mut self.ppu
     }
 
-    fn get_machine_mcu(&mut self) -> &mut dyn MachineMcu {
-        self
-    }
-
     fn request_irq(&self) -> bool {
         self.frame_counter_interrupt.get() || self.dmc_interrupt.get()
     }
 
     fn tick_ppu(&mut self) -> bool {
-        let tick_nmi = self.ppu.tick();
+        let tick_nmi = self.ppu.tick(self.cartridge.pattern_ref());
         let write_nmi = self.nmi_pending.replace(false);
         tick_nmi || write_nmi
     }
@@ -289,12 +285,6 @@ impl NesMcu {
         }
 
         false
-    }
-}
-
-impl MachineMcu for NesMcu {
-    fn render(&mut self) {
-        self.ppu.render(self.cartridge.pattern_ref())
     }
 }
 

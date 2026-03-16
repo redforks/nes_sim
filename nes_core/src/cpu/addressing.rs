@@ -1,4 +1,4 @@
-use super::{Cpu, Flag, extra_tick_if_cross_page};
+use super::{extra_tick_if_cross_page, Cpu, Flag};
 use std::fmt::{Display, Formatter};
 
 pub trait Address: Display + Copy {

@@ -148,14 +148,8 @@ fn nmi_occurred() {
 }
 
 #[test]
-fn render() {
-    let (mut ppu, pattern) = new_test_ppu_and_pattern();
-    ppu.render(&pattern);
-}
-
-#[test]
 fn ppu_tick_timing() {
-    let (mut ppu, _pattern) = new_test_ppu_and_pattern();
+    let (mut ppu, pattern) = new_test_ppu_and_pattern();
 
     // Enable NMI
     ppu.set_control_flags(PpuCtrl::new().with_nmi_enable(true));
@@ -170,7 +164,7 @@ fn ppu_tick_timing() {
     ppu.dot = 0;
 
     // Tick once - should set VBlank and trigger NMI
-    let nmi = ppu.tick();
+    let nmi = ppu.tick(&pattern);
     assert!(nmi, "NMI should be triggered at scanline 241, dot 1");
     assert!(ppu.status.borrow().v_blank());
 
@@ -179,21 +173,21 @@ fn ppu_tick_timing() {
     ppu.dot = 0;
 
     // Tick once - should clear VBlank
-    let nmi = ppu.tick();
+    let nmi = ppu.tick(&pattern);
     assert!(!nmi, "NMI should not be triggered when clearing VBlank");
     assert!(!ppu.status.borrow().v_blank());
 }
 
 #[test]
 fn ppu_tick_scanline_wrap() {
-    let (mut ppu, _pattern) = new_test_ppu_and_pattern();
+    let (mut ppu, pattern) = new_test_ppu_and_pattern();
 
     // Start at last scanline, last dot
     ppu.scanline = SCANLINES_PER_FRAME - 1; // 261
     ppu.dot = DOTS_PER_SCANLINE - 1; // 340
 
     // Tick once - should wrap to scanline 0, dot 0
-    let _ = ppu.tick();
+    let _ = ppu.tick(&pattern);
     assert_eq!(ppu.scanline, 0);
     assert_eq!(ppu.dot, 0);
 }
@@ -345,17 +339,6 @@ fn test_read_status_clears_vblank() {
 
     // v_blank should now be false
     assert!(!ppu.status.borrow().v_blank());
-}
-
-#[test]
-fn test_render_with_mask_disabled() {
-    let (mut ppu, pattern) = new_test_ppu_and_pattern();
-
-    // Disable all rendering
-    ppu.mask = PpuMask::new();
-
-    ppu.render(&pattern);
-    // Rendering should complete without panicking
 }
 
 #[test]

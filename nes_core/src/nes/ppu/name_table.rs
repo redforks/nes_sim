@@ -1,5 +1,5 @@
 use crate::mcu::Mcu;
-use crate::nes::ppu::{NAME_TABLE_MEM_START, Pattern, TILES_PER_COL, TILES_PER_ROW, Tile};
+use crate::nes::ppu::{Pattern, Tile, NAME_TABLE_MEM_START, TILES_PER_COL, TILES_PER_ROW};
 
 #[derive(Copy, Clone)]
 pub struct AttributeTable<'a>(&'a [u8]);
@@ -42,8 +42,8 @@ impl<'a> NameTable<'a> {
         self.0[(tile_y as usize * TILES_PER_ROW as usize) + tile_x as usize]
     }
 
-    pub fn tile<'b>(&self, patten: Pattern<'b>, tile_x: u8, tile_y: u8) -> Tile<'b> {
-        patten.tile(self.tile_idx(tile_x, tile_y))
+    pub fn tile<'b>(&self, pattern: Pattern<'b>, tile_x: u8, tile_y: u8) -> Tile<'b> {
+        pattern.tile(self.tile_idx(tile_x, tile_y))
     }
 }
 

@@ -1,15 +1,15 @@
 use image::DynamicImage;
 use image::EncodableLayout;
 use log::{debug, info};
-use nes_core::EmptyPlugin;
 use nes_core::ines::INesFile;
 use nes_core::machine::Machine as NesMachine;
-use nes_core::nes::ppu::{PatternBand, draw_pattern};
+use nes_core::nes::ppu::{draw_pattern, PatternBand};
 use nes_core::render::ImageRender;
+use nes_core::EmptyPlugin;
 use std::panic;
 use wasm_bindgen::prelude::*;
 use wasm_bindgen::{Clamped, JsCast};
-use web_sys::{CanvasRenderingContext2d, HtmlCanvasElement, ImageData, window};
+use web_sys::{window, CanvasRenderingContext2d, HtmlCanvasElement, ImageData};
 
 mod drivers;
 
@@ -40,8 +40,8 @@ pub fn new_machine(canvas_id: &str, ines: Vec<u8>) -> Machine {
 
 #[wasm_bindgen]
 impl Machine {
-    pub fn process_frame(&mut self, ms: f64) {
-        self.inner.process_frame(ms);
+    pub fn process_frame(&mut self) {
+        self.inner.process_frame();
         let img = self.image_render.borrow_image();
         let bytes = img.as_bytes();
         let img_data =

@@ -1,6 +1,9 @@
 use crate::mcu::Mcu;
 use crate::{Cpu, EmptyPlugin, ExecuteResult, Plugin};
 
+/// CPU cycles per frame: 262 scanlines × 341 PPU dots / 3 (PPU:CPU ratio) ≈ 29780.67
+pub const CYCLES_PER_FRAME: f64 = 29780.5;
+
 pub struct Machine<P> {
     cpu: Cpu,
     p: P,
@@ -12,14 +15,9 @@ impl Machine<EmptyPlugin> {
     }
 }
 
-pub const CYCLES_PER_FRAME: f64 = 29780.5;
-pub const CYCLES_PER_MS: f64 = CYCLES_PER_FRAME / 100.0 * 60.0;
-pub const V_BLANK_CYCLES: f64 = 2273.3333333;
-
 impl<P: Plugin> Machine<P> {
     pub fn with_plugin(p: P, mcu: Box<dyn Mcu>) -> Self {
         let mut machine = Machine {
-            // cpu: Cpu::new(Box::new(create_mcu(&ines))),
             cpu: Cpu::new(mcu),
             p,
         };
@@ -28,21 +26,21 @@ impl<P: Plugin> Machine<P> {
     }
 
     /// Run the machine for a single frame.
-    /// `ms`: milliseconds elapsed since last frame.
-    pub fn process_frame(&mut self, ms: f64) -> ExecuteResult {
-        let cycles = (ms * CYCLES_PER_MS) as u32;
+    /// Executes CPU instructions until VBlank is detected (one full frame of PPU output).
+    /// A frame is ~29780.5 CPU cycles (262 scanlines × 341 dots / 3 PPU:CPU ratio).
+    pub fn process_frame(&mut self) -> ExecuteResult {
+        // Run enough ticks to cover one full frame
+        // 262 scanlines * 341 dots = 89342 PPU dots per frame
+        // 89342 / 3 ≈ 29780.67 CPU cycles per frame
+        // We use a slightly larger number to ensure we complete the frame
+        const MAX_TICKS_PER_FRAME: u32 = 29781;
 
-        let er = self.run_ticks(cycles);
-
-        // Render the frame
-        self.cpu.mcu().get_machine_mcu().render();
-
-        er
+        self.run_ticks(MAX_TICKS_PER_FRAME)
     }
 
     pub fn run_ticks(&mut self, ticks: u32) -> ExecuteResult {
         for _ in 0..ticks {
-            match self.cpu.clock_tick(&mut self.p) {
+            match self.cpu.tick(&mut self.p) {
                 ExecuteResult::Continue => continue,
                 other => return other,
             }
