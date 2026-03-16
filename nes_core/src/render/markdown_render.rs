@@ -34,11 +34,7 @@ enum RenderOp {
 /// Markdown debug renderer that logs render operations
 ///
 /// This renderer buffers all render operations and generates a markdown document
-/// when `finish()` is called. The markdown includes:
-/// - Frame metadata (timestamp, frame number)
-/// - PPU state information
-/// - All render operations (clear, set_pixel)
-/// - Statistics (total operations, unique colors, etc.)
+/// when `finish()` is called and `dump_next_frame` is true.
 #[derive(Debug)]
 pub struct MarkdownRender {
     /// Frame number for this render
@@ -51,26 +47,11 @@ pub struct MarkdownRender {
     /// Buffer of render operations
     operations: Vec<RenderOp>,
 
-    /// PPU state snapshot (optional)
-    ppu_mask: Option<u8>,
-    vram_addr: Option<u16>,
-    coarse_x: Option<u8>,
-    coarse_y: Option<u8>,
-    fine_x: Option<u8>,
-    fine_y: Option<u8>,
-
     /// Start time for render duration tracking
     start_time: Instant,
 
-    /// Whether to buffer all operations or sample
-    /// If set, only log every Nth pixel operation
-    sample_rate: Option<usize>,
-
-    /// Counter for sampling
+    /// Counter for total pixel operations (for statistics)
     pixel_counter: usize,
-
-    /// Sampled pixel count
-    pixels_logged: usize,
 
     /// Whether to dump the next frame
     /// When true, finish() will export the file and reset this to false
@@ -90,16 +71,8 @@ impl MarkdownRender {
             width,
             height,
             operations: Vec::new(),
-            ppu_mask: None,
-            vram_addr: None,
-            coarse_x: None,
-            coarse_y: None,
-            fine_x: None,
-            fine_y: None,
             start_time: Instant::now(),
-            sample_rate: None,
             pixel_counter: 0,
-            pixels_logged: 0,
             dump_next_frame: false,
         }
     }
@@ -117,59 +90,9 @@ impl MarkdownRender {
         self.dump_next_frame = true;
     }
 
-    /// Increment the frame number
-    ///
-    /// Call this when reusing the renderer for multiple frames.
-    pub fn increment_frame(&mut self) {
-        self.frame_number += 1;
-        // Clear operations for the new frame
-        self.operations.clear();
-        self.pixel_counter = 0;
-        self.pixels_logged = 0;
-    }
-
-    /// Reset the frame number
-    pub fn set_frame_number(&mut self, frame_number: u64) {
-        self.frame_number = frame_number;
-    }
-
-    /// Set PPU state information
-    ///
-    /// Call this before rendering starts to include PPU state in the output.
-    pub fn set_ppu_state(
-        &mut self,
-        ppu_mask: u8,
-        vram_addr: u16,
-        coarse_x: u8,
-        coarse_y: u8,
-        fine_x: u8,
-        fine_y: u8,
-    ) {
-        self.ppu_mask = Some(ppu_mask);
-        self.vram_addr = Some(vram_addr);
-        self.coarse_x = Some(coarse_x);
-        self.coarse_y = Some(coarse_y);
-        self.fine_x = Some(fine_x);
-        self.fine_y = Some(fine_y);
-    }
-
-    /// Set sampling rate for pixel operations
-    ///
-    /// If `sample_rate` is Some(N), only every Nth pixel will be logged.
-    /// This is useful for reducing output size and improving performance.
-    /// Set to None to log all pixels.
-    pub fn set_sample_rate(&mut self, sample_rate: Option<usize>) {
-        self.sample_rate = sample_rate;
-    }
-
-    /// Get the number of pixel operations logged
-    pub fn pixels_logged(&self) -> usize {
-        self.pixels_logged
-    }
-
-    /// Get the total number of pixel operations (including sampled out)
-    pub fn total_pixels(&self) -> usize {
-        self.pixel_counter
+    /// Check if the next frame should be dumped
+    pub fn should_dump(&self) -> bool {
+        self.dump_next_frame
     }
 
     /// Generate the markdown document
@@ -188,25 +111,15 @@ impl MarkdownRender {
             self.start_time.elapsed()
         ));
 
-        // PPU State
-        md.push_str("## PPU State\n\n");
-        if let Some(mask) = self.ppu_mask {
-            md.push_str(&format!("- **PPUMASK**: 0x{:02X}\n", mask));
-        }
-        if let Some(addr) = self.vram_addr {
-            md.push_str(&format!("- **VRAM Address**: 0x{:04X}\n", addr));
-        }
-        if let (Some(cx), Some(cy), Some(fx), Some(fy)) =
-            (self.coarse_x, self.coarse_y, self.fine_x, self.fine_y)
-        {
-            md.push_str(&format!(
-                "- **Scroll**: coarse_x={} coarse_y={} fine_x={} fine_y={}\n",
-                cx, cy, fx, fy
-            ));
-        }
+        // Frame info
+        md.push_str("## Frame Info\n\n");
         md.push_str(&format!(
-            "- **Dimensions**: {}×{}\n\n",
+            "- **Dimensions**: {}×{}\n",
             self.width, self.height
+        ));
+        md.push_str(&format!(
+            "- **Total pixel operations**: {}\n\n",
+            self.pixel_counter
         ));
 
         // Render Operations
@@ -248,16 +161,6 @@ impl MarkdownRender {
             "- **Total pixel operations**: {}\n",
             self.pixel_counter
         ));
-        md.push_str(&format!("- **Pixels logged**: {}\n", self.pixels_logged));
-
-        if let Some(rate) = self.sample_rate {
-            if rate > 1 {
-                md.push_str(&format!(
-                    "- **Sample rate**: 1:{} (every {}th pixel)\n",
-                    rate, rate
-                ));
-            }
-        }
 
         // Calculate unique colors
         let mut colors = std::collections::HashSet::new();
@@ -282,7 +185,7 @@ impl MarkdownRender {
 
     /// Get the markdown output as a string
     ///
-    /// This returns the generated markdown document. Call this after `finish()`.
+    /// This returns the generated markdown document.
     pub fn get_markdown(&self) -> String {
         self.generate_markdown()
     }
@@ -307,17 +210,8 @@ impl Render for MarkdownRender {
 
     fn set_pixel(&mut self, x: u32, y: u32, color: [u8; 4]) {
         self.pixel_counter += 1;
-
-        // Check sampling
-        if let Some(rate) = self.sample_rate {
-            if rate > 1 && (self.pixel_counter - 1) % rate != 0 {
-                return; // Skip this pixel
-            }
-        }
-
         self.operations
             .push(RenderOp::Pixel(PixelOp { x, y, color }));
-        self.pixels_logged += 1;
     }
 
     fn dimensions(&self) -> (u32, u32) {
@@ -342,7 +236,6 @@ impl Render for MarkdownRender {
         self.dump_next_frame = false;
         self.operations.clear();
         self.pixel_counter = 0;
-        self.pixels_logged = 0;
         self.frame_number += 1;
     }
 }
@@ -360,59 +253,29 @@ mod tests {
 
     #[test]
     fn test_markdown_render_clear() {
-        let mut renderer = MarkdownRender::new(1, 100, 100);
+        let mut renderer = MarkdownRender::new(1, 10, 10);
         renderer.clear([255, 0, 0, 255]);
 
         let md = renderer.get_markdown();
         assert!(md.contains("Clear Operation"));
         assert!(md.contains("R=255"));
         // Markdown uses **Dimensions** for bold, so the pattern includes the asterisks
-        assert!(md.contains("Dimensions**: 100×100"));
+        assert!(md.contains("Dimensions**: 10×10"));
     }
 
     #[test]
     fn test_markdown_render_set_pixel() {
         let mut renderer = MarkdownRender::new(2, 10, 10);
+
+        // Set some pixels
         renderer.set_pixel(0, 0, [255, 0, 0, 255]);
         renderer.set_pixel(5, 5, [0, 255, 0, 255]);
-
-        assert_eq!(renderer.pixels_logged(), 2);
-        assert_eq!(renderer.total_pixels(), 2);
+        renderer.set_pixel(9, 9, [0, 0, 255, 255]);
 
         let md = renderer.get_markdown();
         assert!(md.contains("set_pixel(0, 0"));
         assert!(md.contains("set_pixel(5, 5"));
-    }
-
-    #[test]
-    fn test_markdown_render_ppu_state() {
-        let mut renderer = MarkdownRender::new(3, 256, 240);
-        renderer.set_ppu_state(0x1E, 0x2000, 0, 0, 0, 0);
-
-        let md = renderer.get_markdown();
-        assert!(md.contains("PPUMASK"));
-        assert!(md.contains("0x1E"));
-        assert!(md.contains("VRAM Address"));
-        assert!(md.contains("0x2000"));
-    }
-
-    #[test]
-    fn test_markdown_render_sampling() {
-        let mut renderer = MarkdownRender::new(4, 10, 10);
-        renderer.set_sample_rate(Some(10)); // Log every 10th pixel
-
-        for y in 0..10 {
-            for x in 0..10 {
-                renderer.set_pixel(x, y, [128, 128, 128, 255]);
-            }
-        }
-
-        assert_eq!(renderer.total_pixels(), 100);
-        assert_eq!(renderer.pixels_logged(), 10);
-
-        let md = renderer.get_markdown();
-        // Markdown uses **Sample rate** for bold
-        assert!(md.contains("Sample rate**: 1:10"));
+        assert!(md.contains("set_pixel(9, 9"));
     }
 
     #[test]
@@ -476,5 +339,57 @@ mod tests {
         assert!(md.contains("Total pixel operations**: 16"));
 
         renderer.finish();
+    }
+
+    #[test]
+    fn test_markdown_render_finish_resets_state() {
+        let mut renderer = MarkdownRender::new(10, 10, 10);
+
+        renderer.set_pixel(0, 0, [255, 0, 0, 255]);
+        renderer.set_pixel(1, 1, [0, 255, 0, 255]);
+
+        assert_eq!(renderer.frame_number(), 10);
+
+        renderer.finish();
+
+        // State should be reset
+        assert_eq!(renderer.frame_number(), 11);
+        assert_eq!(renderer.pixel_counter, 0);
+
+        // Operations should be cleared
+        let md = renderer.get_markdown();
+        assert!(!md.contains("set_pixel"));
+    }
+
+    #[test]
+    fn test_markdown_render_request_dump() {
+        let mut renderer = MarkdownRender::new(20, 10, 10);
+
+        assert!(!renderer.should_dump());
+
+        renderer.request_dump();
+        assert!(renderer.should_dump());
+
+        renderer.finish();
+
+        // After finish, dump flag should be reset
+        assert!(!renderer.should_dump());
+        assert_eq!(renderer.frame_number(), 21);
+    }
+
+    #[test]
+    fn test_nes_dimensions() {
+        // Test creating a NES-sized render buffer
+        let mut renderer = MarkdownRender::new(256, 256, 240);
+        assert_eq!(renderer.dimensions(), (256, 240));
+
+        // Verify we can set pixels across the entire screen
+        renderer.clear([0, 0, 0, 0]);
+        renderer.set_pixel(0, 0, [255, 255, 255, 255]);
+        renderer.set_pixel(255, 239, [255, 255, 255, 255]);
+        renderer.set_pixel(128, 120, [128, 128, 128, 255]);
+
+        let md = renderer.get_markdown();
+        assert!(md.contains("Total pixel operations**: 3"));
     }
 }
