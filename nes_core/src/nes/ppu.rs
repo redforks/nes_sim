@@ -56,12 +56,11 @@ impl Default for PpuMask {
 #[derive(Copy, Clone)]
 #[bitfield]
 pub struct PpuStatus {
+    pub v_blank: bool,
+    pub sprite_zero_hit: bool,
+    pub sprite_overflow: bool,
     #[skip]
     __: B5,
-    #[allow(non_snake_case)]
-    pub sprite_overflow: bool,
-    pub sprite_zero_hit: bool,
-    pub v_blank: bool,
 }
 to_from_u8!(PpuStatus);
 
