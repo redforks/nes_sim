@@ -14,7 +14,6 @@ pub struct NesMcu {
     after_ppu: RamMcu<0x20>,
     cartridge: Box<dyn Cartridge>,
     frame_counter_interrupt: Cell<bool>,
-    nmi_pending: Cell<bool>,
     vblank_started: Cell<bool>,
     // APU state for length counter timing
     apu_cycle: u64,
@@ -55,7 +54,6 @@ pub fn build_with_renderer(file: &INesFile, renderer: Option<Box<dyn Render>>) -
         after_ppu: RamMcu::start_from(0x4000, [0; 0x20]),
         cartridge,
         frame_counter_interrupt: Cell::new(false),
-        nmi_pending: Cell::new(false),
         vblank_started: Cell::new(false),
         apu_cycle: 0,
         apu_even_cycle: false,
@@ -113,9 +111,7 @@ impl Mcu for NesMcu {
         match address {
             0x0000..=0x1fff => self.lower_ram.write(address, value),
             0x2000..=0x3fff => {
-                if self.ppu.write(address, value) {
-                    self.nmi_pending.set(true);
-                }
+                self.ppu.write(address, value);
             }
             0x4014 => self.ppu_dma(value),
             0x4015 => {
@@ -195,11 +191,10 @@ impl Mcu for NesMcu {
 
     fn tick_ppu(&mut self) -> bool {
         let result = self.ppu.tick(self.cartridge.pattern_ref());
-        let write_nmi = self.nmi_pending.replace(false);
         if result.vblank_started {
             self.vblank_started.set(true);
         }
-        result.nmi || write_nmi
+        result.nmi
     }
 
     fn take_vblank(&mut self) -> bool {

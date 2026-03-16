@@ -204,55 +204,6 @@ fn ppu_tick_scanline_wrap() {
 }
 
 #[test]
-fn nmi_trigger_on_ctrl_write_during_vblank() {
-    let (mut ppu, _) = new_test_ppu_and_pattern();
-
-    // Set VBlank active
-    ppu.set_v_blank(true);
-    assert!(ppu.status.borrow().v_blank());
-
-    // NMI disabled initially
-    let ctrl = PpuCtrl::new().with_nmi_enable(false);
-    ppu.set_control_flags(ctrl);
-    assert!(
-        !(ppu.ctrl_flags.nmi_enable() && ppu.status.borrow().v_blank()),
-        "should_nmi should be false when NMI disabled"
-    );
-
-    // Enable NMI during VBlank - should trigger NMI
-    ppu.set_control_flags(ctrl.with_nmi_enable(true));
-    assert!(
-        ppu.ctrl_flags.nmi_enable() && ppu.status.borrow().v_blank(),
-        "should_nmi should be true when NMI enabled during VBlank"
-    );
-
-    assert!(
-        !ppu.write(0x2000, ctrl.with_nmi_enable(false).into()),
-        "disabling NMI during VBlank should not trigger NMI"
-    );
-    assert!(
-        ppu.write(0x2000, ctrl.with_nmi_enable(true).into()),
-        "0->1 NMI enable transition during VBlank should trigger NMI"
-    );
-    assert!(
-        !ppu.write(0x2000, ctrl.with_nmi_enable(true).into()),
-        "1->1 NMI enable write during VBlank should not trigger a second NMI"
-    );
-}
-
-#[test]
-fn nmi_does_not_trigger_on_ctrl_write_outside_vblank() {
-    let (mut ppu, _) = new_test_ppu_and_pattern();
-    let ctrl = PpuCtrl::new().with_nmi_enable(false);
-
-    assert!(!ppu.status.borrow().v_blank());
-    assert!(
-        !ppu.write(0x2000, ctrl.with_nmi_enable(true).into()),
-        "enabling NMI outside VBlank should not trigger NMI immediately"
-    );
-}
-
-#[test]
 fn test_ppu_ctrl_to_from_u8() {
     let ctrl = PpuCtrl::new()
         .with_nmi_enable(true)
