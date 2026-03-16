@@ -5,7 +5,6 @@
 //! how frames are rendered.
 
 use crate::render::Render;
-use std::any::Any;
 use std::fmt::Debug;
 use std::time::Instant;
 
@@ -116,11 +115,6 @@ impl MarkdownRender {
     /// after which the flag is automatically reset to false.
     pub fn request_dump(&mut self) {
         self.dump_next_frame = true;
-    }
-
-    /// Check if the next frame should be dumped
-    pub fn should_dump(&self) -> bool {
-        self.dump_next_frame
     }
 
     /// Increment the frame number
@@ -342,17 +336,14 @@ impl Render for MarkdownRender {
                     eprintln!("Failed to save markdown frame: {}", e);
                 }
             }
-            // Auto-reset after dumping
-            self.dump_next_frame = false;
         }
-    }
 
-    fn as_any(&self) -> &dyn Any {
-        self
-    }
-
-    fn as_any_mut(&mut self) -> &mut dyn Any {
-        self
+        // Reset internal state for next frame
+        self.dump_next_frame = false;
+        self.operations.clear();
+        self.pixel_counter = 0;
+        self.pixels_logged = 0;
+        self.frame_number += 1;
     }
 }
 
@@ -432,14 +423,16 @@ mod tests {
         renderer.set_pixel(0, 0, [255, 0, 0, 255]);
         renderer.set_pixel(1, 0, [255, 0, 0, 255]);
         renderer.set_pixel(2, 0, [0, 255, 0, 255]);
-        renderer.finish();
 
+        // Get markdown before finish() since finish() clears state
         let md = renderer.get_markdown();
         assert!(md.contains("Statistics"));
         // Markdown uses ** for bold formatting
         assert!(md.contains("Clear operations**: 1"));
         assert!(md.contains("Total pixel operations**: 3"));
         assert!(md.contains("Unique colors**: 2"));
+
+        renderer.finish();
     }
 
     #[test]
@@ -476,11 +469,12 @@ mod tests {
             }
         }
 
-        renderer.finish();
-
+        // Get markdown before finish() since finish() clears state and increments frame number
         let md = renderer.get_markdown();
         assert!(md.contains("Frame 7"));
         assert!(md.contains("Dimensions**: 4×4"));
         assert!(md.contains("Total pixel operations**: 16"));
+
+        renderer.finish();
     }
 }

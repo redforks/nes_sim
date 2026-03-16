@@ -5,7 +5,6 @@
 
 use crate::render::Render;
 use image::{Rgba, RgbaImage};
-use std::any::Any;
 use std::cell::RefCell;
 use std::fmt::Debug;
 use std::rc::Rc;
@@ -54,14 +53,6 @@ impl Render for ImageRender {
     fn dimensions(&self) -> (u32, u32) {
         self.image.borrow().dimensions()
     }
-
-    fn as_any(&self) -> &dyn Any {
-        self
-    }
-
-    fn as_any_mut(&mut self) -> &mut dyn Any {
-        self
-    }
 }
 
 // Also implement Render directly for RgbaImage for convenience
@@ -80,14 +71,6 @@ impl Render for RgbaImage {
 
     fn dimensions(&self) -> (u32, u32) {
         self.dimensions()
-    }
-
-    fn as_any(&self) -> &dyn Any {
-        self
-    }
-
-    fn as_any_mut(&mut self) -> &mut dyn Any {
-        self
     }
 }
 
