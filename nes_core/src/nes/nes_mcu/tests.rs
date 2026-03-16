@@ -38,7 +38,6 @@ fn test_lower_ram_mirroring() {
         after_ppu: RamMcu::start_from(0x4000, [0; 0x20]),
         cartridge: Box::new(MockCartridge::new()),
         frame_counter_interrupt: Cell::new(false),
-        dmc_interrupt: Cell::new(false),
         nmi_pending: Cell::new(false),
         vblank_started: Cell::new(false),
         apu_cycle: 0,
@@ -68,7 +67,6 @@ fn test_ppu_register_access() {
         after_ppu: RamMcu::start_from(0x4000, [0; 0x20]),
         cartridge: Box::new(MockCartridge::new()),
         frame_counter_interrupt: Cell::new(false),
-        dmc_interrupt: Cell::new(false),
         nmi_pending: Cell::new(false),
         vblank_started: Cell::new(false),
         apu_cycle: 0,
@@ -94,7 +92,6 @@ fn test_apu_register_access() {
         after_ppu: RamMcu::start_from(0x4000, [0; 0x20]),
         cartridge: Box::new(MockCartridge::new()),
         frame_counter_interrupt: Cell::new(false),
-        dmc_interrupt: Cell::new(false),
         nmi_pending: Cell::new(false),
         vblank_started: Cell::new(false),
         apu_cycle: 0,
@@ -125,7 +122,6 @@ fn test_cartridge_prg_rom_access() {
         after_ppu: RamMcu::start_from(0x4000, [0; 0x20]),
         cartridge: Box::new(cart),
         frame_counter_interrupt: Cell::new(false),
-        dmc_interrupt: Cell::new(false),
         nmi_pending: Cell::new(false),
         vblank_started: Cell::new(false),
         apu_cycle: 0,
@@ -148,30 +144,6 @@ fn test_frame_counter_interrupt_flag() {
         after_ppu: RamMcu::start_from(0x4000, [0; 0x20]),
         cartridge: Box::new(MockCartridge::new()),
         frame_counter_interrupt: Cell::new(true),
-        dmc_interrupt: Cell::new(false),
-        nmi_pending: Cell::new(false),
-        vblank_started: Cell::new(false),
-        apu_cycle: 0,
-        apu_even_cycle: false,
-        frame_counter: 0,
-        frame_counter_mode: false,
-        length_counters: [0; 4],
-        length_counter_halt: [false; 4],
-        channel_enabled: [false; 4],
-    };
-
-    assert!(mcu.request_irq());
-}
-
-#[test]
-fn test_dmc_interrupt_flag() {
-    let mcu = NesMcu {
-        lower_ram: LowerRam::new(),
-        ppu: Ppu::default(),
-        after_ppu: RamMcu::start_from(0x4000, [0; 0x20]),
-        cartridge: Box::new(MockCartridge::new()),
-        frame_counter_interrupt: Cell::new(false),
-        dmc_interrupt: Cell::new(true),
         nmi_pending: Cell::new(false),
         vblank_started: Cell::new(false),
         apu_cycle: 0,
@@ -194,7 +166,6 @@ fn test_no_interrupt_when_both_false() {
         after_ppu: RamMcu::start_from(0x4000, [0; 0x20]),
         cartridge: Box::new(MockCartridge::new()),
         frame_counter_interrupt: Cell::new(false),
-        dmc_interrupt: Cell::new(false),
         nmi_pending: Cell::new(false),
         vblank_started: Cell::new(false),
         apu_cycle: 0,
@@ -217,7 +188,6 @@ fn test_frame_counter_write() {
         after_ppu: RamMcu::start_from(0x4000, [0; 0x20]),
         cartridge: Box::new(MockCartridge::new()),
         frame_counter_interrupt: Cell::new(false),
-        dmc_interrupt: Cell::new(false),
         nmi_pending: Cell::new(false),
         vblank_started: Cell::new(false),
         apu_cycle: 0,
@@ -245,7 +215,6 @@ fn test_status_register_read_clears_flags() {
         after_ppu: RamMcu::start_from(0x4000, [0; 0x20]),
         cartridge: Box::new(MockCartridge::new()),
         frame_counter_interrupt: Cell::new(true),
-        dmc_interrupt: Cell::new(false),
         nmi_pending: Cell::new(false),
         vblank_started: Cell::new(false),
         apu_cycle: 0,
@@ -265,33 +234,6 @@ fn test_status_register_read_clears_flags() {
 }
 
 #[test]
-fn test_dmc_clear() {
-    let mut mcu = NesMcu {
-        lower_ram: LowerRam::new(),
-        ppu: Ppu::default(),
-        after_ppu: RamMcu::start_from(0x4000, [0; 0x20]),
-        cartridge: Box::new(MockCartridge::new()),
-        frame_counter_interrupt: Cell::new(false),
-        dmc_interrupt: Cell::new(true),
-        nmi_pending: Cell::new(false),
-        vblank_started: Cell::new(false),
-        apu_cycle: 0,
-        apu_even_cycle: false,
-        frame_counter: 0,
-        frame_counter_mode: false,
-        length_counters: [0; 4],
-        length_counter_halt: [false; 4],
-        channel_enabled: [false; 4],
-    };
-
-    assert!(mcu.dmc_interrupt.get());
-
-    // Writing to 0x4015 should clear DMC interrupt
-    mcu.write(0x4015, 0);
-    assert!(!mcu.dmc_interrupt.get());
-}
-
-#[test]
 fn test_tick_ppu() {
     let mut mcu = NesMcu {
         lower_ram: LowerRam::new(),
@@ -299,7 +241,6 @@ fn test_tick_ppu() {
         after_ppu: RamMcu::start_from(0x4000, [0; 0x20]),
         cartridge: Box::new(MockCartridge::new()),
         frame_counter_interrupt: Cell::new(false),
-        dmc_interrupt: Cell::new(false),
         nmi_pending: Cell::new(false),
         vblank_started: Cell::new(false),
         apu_cycle: 0,
@@ -324,7 +265,6 @@ fn test_memory_mapping() {
         after_ppu: RamMcu::start_from(0x4000, [0; 0x20]),
         cartridge: Box::new(MockCartridge::new()),
         frame_counter_interrupt: Cell::new(false),
-        dmc_interrupt: Cell::new(false),
         nmi_pending: Cell::new(false),
         vblank_started: Cell::new(false),
         apu_cycle: 0,
@@ -352,7 +292,6 @@ fn test_ppu_dma() {
         after_ppu: RamMcu::start_from(0x4000, [0; 0x20]),
         cartridge: Box::new(MockCartridge::new()),
         frame_counter_interrupt: Cell::new(false),
-        dmc_interrupt: Cell::new(false),
         nmi_pending: Cell::new(false),
         vblank_started: Cell::new(false),
         apu_cycle: 0,
@@ -384,7 +323,6 @@ fn test_tick_ppu_with_nmi_pending() {
         after_ppu: RamMcu::start_from(0x4000, [0; 0x20]),
         cartridge: Box::new(MockCartridge::new()),
         frame_counter_interrupt: Cell::new(false),
-        dmc_interrupt: Cell::new(false),
         nmi_pending: Cell::new(true),
         vblank_started: Cell::new(false),
         apu_cycle: 0,
@@ -413,7 +351,6 @@ fn test_nmi_pending_from_ppu_write() {
         after_ppu: RamMcu::start_from(0x4000, [0; 0x20]),
         cartridge: Box::new(MockCartridge::new()),
         frame_counter_interrupt: Cell::new(false),
-        dmc_interrupt: Cell::new(false),
         nmi_pending: Cell::new(false),
         vblank_started: Cell::new(false),
         apu_cycle: 0,
@@ -441,7 +378,6 @@ fn test_cartridge_write() {
         after_ppu: RamMcu::start_from(0x4000, [0; 0x20]),
         cartridge: Box::new(MockCartridge::new()),
         frame_counter_interrupt: Cell::new(false),
-        dmc_interrupt: Cell::new(false),
         nmi_pending: Cell::new(false),
         vblank_started: Cell::new(false),
         apu_cycle: 0,
@@ -470,7 +406,6 @@ fn test_cartridge_read_boundary() {
         after_ppu: RamMcu::start_from(0x4000, [0; 0x20]),
         cartridge: Box::new(cart),
         frame_counter_interrupt: Cell::new(false),
-        dmc_interrupt: Cell::new(false),
         nmi_pending: Cell::new(false),
         vblank_started: Cell::new(false),
         apu_cycle: 0,
@@ -494,7 +429,6 @@ fn test_read_4015_returns_zero() {
         after_ppu: RamMcu::start_from(0x4000, [0; 0x20]),
         cartridge: Box::new(MockCartridge::new()),
         frame_counter_interrupt: Cell::new(false),
-        dmc_interrupt: Cell::new(false),
         nmi_pending: Cell::new(false),
         vblank_started: Cell::new(false),
         apu_cycle: 0,
