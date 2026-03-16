@@ -5,6 +5,7 @@
 //! how frames are rendered.
 
 use crate::render::Render;
+use std::any::Any;
 use std::fmt::Debug;
 use std::time::Instant;
 
@@ -71,6 +72,10 @@ pub struct MarkdownRender {
 
     /// Sampled pixel count
     pixels_logged: usize,
+
+    /// Whether markdown export is enabled
+    /// When disabled, finish() will not export the file
+    enabled: bool,
 }
 
 impl MarkdownRender {
@@ -96,12 +101,42 @@ impl MarkdownRender {
             sample_rate: None,
             pixel_counter: 0,
             pixels_logged: 0,
+            enabled: false,
         }
     }
 
     /// Get the frame number
     pub fn frame_number(&self) -> u64 {
         self.frame_number
+    }
+
+    /// Set whether markdown export is enabled
+    ///
+    /// When enabled, the renderer will automatically export to a markdown file
+    /// when `finish()` is called.
+    pub fn set_enabled(&mut self, enabled: bool) {
+        self.enabled = enabled;
+    }
+
+    /// Check if markdown export is enabled
+    pub fn is_enabled(&self) -> bool {
+        self.enabled
+    }
+
+    /// Increment the frame number
+    ///
+    /// Call this when reusing the renderer for multiple frames.
+    pub fn increment_frame(&mut self) {
+        self.frame_number += 1;
+        // Clear operations for the new frame
+        self.operations.clear();
+        self.pixel_counter = 0;
+        self.pixels_logged = 0;
+    }
+
+    /// Reset the frame number
+    pub fn set_frame_number(&mut self, frame_number: u64) {
+        self.frame_number = frame_number;
     }
 
     /// Set PPU state information
@@ -296,9 +331,21 @@ impl Render for MarkdownRender {
     }
 
     fn finish(&mut self) {
-        // Markdown is generated on-demand in get_markdown() or save_to_file()
-        // This is called when rendering is complete, but we defer generation
-        // until requested to avoid unnecessary work
+        // Auto-export markdown if enabled
+        if self.enabled {
+            let path = format!("/tmp/nes_frame_{:04}.md", self.frame_number);
+            if let Err(e) = self.save_to_file(std::path::Path::new(&path)) {
+                eprintln!("Failed to save markdown frame: {}", e);
+            }
+        }
+    }
+
+    fn as_any(&self) -> &dyn Any {
+        self
+    }
+
+    fn as_any_mut(&mut self) -> &mut dyn Any {
+        self
     }
 }
 
