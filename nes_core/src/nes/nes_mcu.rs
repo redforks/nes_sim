@@ -1,40 +1,273 @@
 use crate::ines::INesFile;
-use crate::mcu::{Mcu, RamMcu};
+use crate::mcu::{DefinedRegion, MappingMcu, Mcu, RamMcu, Region};
 use crate::nes::lower_ram::LowerRam;
 use crate::nes::mapper;
 use crate::nes::mapper::Cartridge;
+use crate::nes::nes_apu::NesApu;
 use crate::nes::ppu::{Mirroring, Ppu};
 use crate::render::Render;
 use log::info;
-use std::cell::Cell;
+use std::cell::RefCell;
+use std::rc::Rc;
 
-pub struct NesMcu {
-    lower_ram: LowerRam,
-    ppu: Ppu,
-    after_ppu: RamMcu<0x20>,
-    cartridge: Box<dyn Cartridge>,
-    frame_counter_interrupt: Cell<bool>,
-    vblank_started: Cell<bool>,
-    // APU state for length counter timing
-    apu_cycle: u64,
-    apu_even_cycle: bool, // APU is clocked every OTHER CPU cycle
-    frame_counter: u8,
-    frame_counter_mode: bool,
-    length_counters: [u8; 4], // pulse1, pulse2, triangle, noise
-    length_counter_halt: [bool; 4],
-    channel_enabled: [bool; 4],
+/// Shared state between Machine, PpuRegionMcu, and CartridgeRegionMcu.
+///
+/// The PPU requires CHR ROM (pattern data) from the cartridge for rendering.
+/// The cartridge's `write()` method may update PPU mirroring (MMC1 mapper).
+/// Both are therefore bundled together and shared via `Rc<RefCell<>>`.
+pub struct PpuCartridgeState {
+    pub ppu: Ppu,
+    pub cartridge: Box<dyn Cartridge>,
+    /// Set when VBlank starts; cleared by `take_vblank()`.
+    vblank_started: bool,
 }
 
-pub fn build(file: &INesFile) -> impl Mcu + use<> {
+impl PpuCartridgeState {
+    pub fn new(ppu: Ppu, cartridge: Box<dyn Cartridge>) -> Self {
+        PpuCartridgeState {
+            ppu,
+            cartridge,
+            vblank_started: false,
+        }
+    }
+
+    /// Tick the PPU by one dot.
+    /// Returns true if NMI should be triggered.
+    pub fn tick_ppu(&mut self) -> bool {
+        let result = self.ppu.tick(self.cartridge.pattern_ref());
+        if result.vblank_started {
+            self.vblank_started = true;
+        }
+        result.nmi
+    }
+
+    /// Returns and clears the vblank_started flag.
+    pub fn take_vblank(&mut self) -> bool {
+        let v = self.vblank_started;
+        self.vblank_started = false;
+        v
+    }
+
+    /// Forward a cartridge write, passing `&mut self.ppu` to the cartridge.
+    ///
+    /// This exists because the borrow checker cannot prove that `self.ppu` and
+    /// `self.cartridge` are independent fields when both are borrowed through a
+    /// single `borrow_mut()` of the enclosing `RefCell`.  By moving the split
+    /// into a method on `PpuCartridgeState` itself the compiler can see that the
+    /// two fields are distinct.
+    pub fn cartridge_write(&mut self, address: u16, value: u8) {
+        self.cartridge.write(&mut self.ppu, address, value);
+    }
+}
+
+/// MCU region for PPU registers ($2000–$3FFF).
+///
+/// Shares ownership of `PpuCartridgeState` so cartridge CHR ROM is available
+/// for PPU reads, and PPU mirroring can be updated from cartridge writes.
+pub struct PpuRegionMcu {
+    state: Rc<RefCell<PpuCartridgeState>>,
+}
+
+impl PpuRegionMcu {
+    pub fn new(state: Rc<RefCell<PpuCartridgeState>>) -> Self {
+        PpuRegionMcu { state }
+    }
+}
+
+impl Mcu for PpuRegionMcu {
+    fn read(&self, address: u16) -> u8 {
+        let state = self.state.borrow();
+        state.ppu.read(state.cartridge.pattern_ref(), address)
+    }
+
+    fn write(&mut self, address: u16, value: u8) {
+        self.state.borrow_mut().ppu.write(address, value);
+    }
+}
+
+impl DefinedRegion for PpuRegionMcu {
+    fn region(&self) -> (u16, u16) {
+        (0x2000, 0x3FFF)
+    }
+}
+
+/// MCU region for the PPU OAM DMA register ($4014).
+///
+/// A write to $4014 triggers a 256-byte DMA from CPU RAM into PPU OAM.
+/// This region wraps the `LowerRam` reference so the DMA can read from it.
+pub struct OamDmaRegionMcu {
+    state: Rc<RefCell<PpuCartridgeState>>,
+    lower_ram: Rc<RefCell<LowerRam>>,
+}
+
+impl OamDmaRegionMcu {
+    pub fn new(state: Rc<RefCell<PpuCartridgeState>>, lower_ram: Rc<RefCell<LowerRam>>) -> Self {
+        OamDmaRegionMcu { state, lower_ram }
+    }
+}
+
+impl Mcu for OamDmaRegionMcu {
+    fn read(&self, _address: u16) -> u8 {
+        // $4014 is write-only; reads return open bus (0x55 or similar)
+        0x55
+    }
+
+    fn write(&mut self, _address: u16, value: u8) {
+        info!("ppu dma");
+        let base = (value as u16) << 8;
+        let mut buf = [0u8; 0x100];
+        {
+            let ram = self.lower_ram.borrow();
+            for (i, item) in buf.iter_mut().enumerate() {
+                *item = ram.read(base + i as u16);
+            }
+        }
+        self.state.borrow_mut().ppu.oam_dma(&buf);
+    }
+}
+
+impl DefinedRegion for OamDmaRegionMcu {
+    fn region(&self) -> (u16, u16) {
+        (0x4014, 0x4014)
+    }
+}
+
+/// MCU region for cartridge space ($4020–$FFFF).
+///
+/// Writes to this range may update PPU mirroring (e.g., MMC1 mapper), so
+/// the PPU is accessed through the shared `PpuCartridgeState`.
+pub struct CartridgeRegionMcu {
+    state: Rc<RefCell<PpuCartridgeState>>,
+}
+
+impl CartridgeRegionMcu {
+    pub fn new(state: Rc<RefCell<PpuCartridgeState>>) -> Self {
+        CartridgeRegionMcu { state }
+    }
+}
+
+impl Mcu for CartridgeRegionMcu {
+    fn read(&self, address: u16) -> u8 {
+        self.state.borrow().cartridge.read(address)
+    }
+
+    fn write(&mut self, address: u16, value: u8) {
+        self.state.borrow_mut().cartridge_write(address, value);
+    }
+}
+
+impl DefinedRegion for CartridgeRegionMcu {
+    fn region(&self) -> (u16, u16) {
+        (0x4020, 0xFFFF)
+    }
+}
+
+/// MCU region for the lower RAM ($0000–$1FFF).
+///
+/// Wraps `LowerRam` in a `Rc<RefCell<>>` so it can be shared with the
+/// `OamDmaRegionMcu`.
+pub struct LowerRamRegionMcu {
+    lower_ram: Rc<RefCell<LowerRam>>,
+}
+
+impl LowerRamRegionMcu {
+    pub fn new(lower_ram: Rc<RefCell<LowerRam>>) -> Self {
+        LowerRamRegionMcu { lower_ram }
+    }
+}
+
+impl Mcu for LowerRamRegionMcu {
+    fn read(&self, address: u16) -> u8 {
+        self.lower_ram.borrow().read(address)
+    }
+
+    fn write(&mut self, address: u16, value: u8) {
+        self.lower_ram.borrow_mut().write(address, value);
+    }
+}
+
+impl DefinedRegion for LowerRamRegionMcu {
+    fn region(&self) -> (u16, u16) {
+        (0x0000, 0x1FFF)
+    }
+}
+
+/// APU MCU region wrapper that also routes length counter loads and halt flags.
+///
+/// Wraps `NesApu` in a `Rc<RefCell<>>` so Machine can access it for ticking.
+pub struct ApuRegionMcu {
+    pub apu: Rc<RefCell<NesApu>>,
+    /// General-purpose APU register RAM ($4000–$401F excluding special addresses).
+    after_ppu: RamMcu<0x20>,
+}
+
+impl ApuRegionMcu {
+    pub fn new(apu: Rc<RefCell<NesApu>>) -> Self {
+        ApuRegionMcu {
+            apu,
+            after_ppu: RamMcu::start_from(0x4000, [0; 0x20]),
+        }
+    }
+}
+
+impl Mcu for ApuRegionMcu {
+    fn read(&self, address: u16) -> u8 {
+        match address {
+            0x4015 => self.apu.borrow().read(address),
+            _ => self.after_ppu.read(address),
+        }
+    }
+
+    fn write(&mut self, address: u16, value: u8) {
+        match address {
+            0x4015 | 0x4017 => {
+                self.apu.borrow_mut().write(address, value);
+                // Also write to after_ppu for any raw register reads
+                self.after_ppu.write(address, value);
+            }
+            // Length counter load registers: update both NesApu and after_ppu
+            0x4003 | 0x4007 | 0x400B | 0x400F => {
+                self.apu.borrow_mut().write(address, value);
+                self.after_ppu.write(address, value);
+            }
+            // Halt flag registers
+            0x4000 | 0x4004 | 0x4008 | 0x400C => {
+                self.apu.borrow_mut().write(address, value);
+                self.after_ppu.write(address, value);
+            }
+            _ => self.after_ppu.write(address, value),
+        }
+    }
+}
+
+impl DefinedRegion for ApuRegionMcu {
+    fn region(&self) -> (u16, u16) {
+        // Covers APU registers ($4000–$401F), including the status register
+        // ($4015) and frame counter ($4017).  The OAM DMA address ($4014) is
+        // handled by a separate `OamDmaRegionMcu` that must appear earlier in
+        // the `MappingMcu` region list so it takes precedence.
+        (0x4000, 0x401F)
+    }
+}
+
+/// Bundle produced by `build_nes()` containing the `MappingMcu` for the CPU
+/// plus shared handles for the PPU/cartridge state and APU used by `Machine`.
+pub struct NesBundle {
+    pub mcu: MappingMcu,
+    pub ppu_cartridge: Rc<RefCell<PpuCartridgeState>>,
+    pub apu: Rc<RefCell<NesApu>>,
+}
+
+/// Build NES hardware into a `NesBundle`.
+///
+/// Registers all NES devices into a `MappingMcu` and returns shared handles
+/// to the PPU/cartridge state and APU so `Machine` can tick them directly.
+pub fn build(file: &INesFile) -> NesBundle {
     build_with_renderer(file, None)
 }
 
-/// Build a NesMcu with a custom renderer
-///
-/// # Parameters
-/// - `file`: The iNES file to load
-/// - `renderer`: Optional custom renderer. If None, uses default ImageRender.
-pub fn build_with_renderer(file: &INesFile, renderer: Option<Box<dyn Render>>) -> impl Mcu + use<> {
+/// Build NES hardware with a custom renderer into a `NesBundle`.
+pub fn build_with_renderer(file: &INesFile, renderer: Option<Box<dyn Render>>) -> NesBundle {
     let cartridge = mapper::create_cartridge(file);
     let mut ppu = Ppu::default();
     ppu.set_mirroring(if file.header().ver_or_hor_arrangement {
@@ -42,243 +275,31 @@ pub fn build_with_renderer(file: &INesFile, renderer: Option<Box<dyn Render>>) -
     } else {
         Mirroring::Horizontal
     });
-
-    // Set custom renderer if provided
     if let Some(r) = renderer {
         ppu.set_renderer(r);
     }
 
-    NesMcu {
-        lower_ram: LowerRam::new(),
-        ppu,
-        after_ppu: RamMcu::start_from(0x4000, [0; 0x20]),
-        cartridge,
-        frame_counter_interrupt: Cell::new(false),
-        vblank_started: Cell::new(false),
-        apu_cycle: 0,
-        apu_even_cycle: false,
-        frame_counter: 0,
-        frame_counter_mode: false,
-        length_counters: [0; 4],
-        length_counter_halt: [false; 4],
-        channel_enabled: [false; 4],
-    }
-}
+    let ppu_cartridge = Rc::new(RefCell::new(PpuCartridgeState::new(ppu, cartridge)));
+    let apu = Rc::new(RefCell::new(NesApu::default()));
+    let lower_ram = Rc::new(RefCell::new(LowerRam::new()));
 
-impl NesMcu {
-    // Length counter lookup table (index is high 3 bits of length counter load)
-    const LENGTH_TABLE: [u8; 32] = [
-        10, 254, 20, 2, 40, 4, 80, 6, 160, 8, 60, 10, 14, 12, 26, 14, 12, 16, 24, 18, 48, 20, 96,
-        22, 192, 24, 72, 26, 16, 28, 32, 30,
+    let regions = vec![
+        Region::with_defined(LowerRamRegionMcu::new(Rc::clone(&lower_ram))),
+        Region::with_defined(PpuRegionMcu::new(Rc::clone(&ppu_cartridge))),
+        // OamDma must come before ApuRegionMcu so $4014 is caught before the
+        // broader APU range ($4000–$401F) matches it.
+        Region::with_defined(OamDmaRegionMcu::new(
+            Rc::clone(&ppu_cartridge),
+            Rc::clone(&lower_ram),
+        )),
+        Region::with_defined(ApuRegionMcu::new(Rc::clone(&apu))),
+        Region::with_defined(CartridgeRegionMcu::new(Rc::clone(&ppu_cartridge))),
     ];
 
-    fn ppu_dma(&mut self, address: u8) {
-        info!("ppu dma");
-        let addr = (address as u16) << 8;
-        let mut buf = [0x00u8; 0x100];
-        for (i, item) in buf.iter_mut().enumerate() {
-            *item = self.read(addr + i as u16);
-        }
-        self.ppu.oam_dma(&buf);
-    }
-}
-
-impl Mcu for NesMcu {
-    fn read(&self, address: u16) -> u8 {
-        match address {
-            0x0000..=0x1fff => self.lower_ram.read(address),
-            0x2000..=0x3fff => self.ppu.read(self.cartridge.pattern_ref(), address),
-            0x4015 => {
-                // APU status register - return length counter status
-                self.frame_counter_interrupt.replace(false);
-                let mut status = 0u8;
-                for i in 0..4 {
-                    if self.length_counters[i] > 0 && self.channel_enabled[i] {
-                        status |= 1 << i;
-                    }
-                }
-                if self.frame_counter_interrupt.get() {
-                    status |= 0x40;
-                }
-                status
-            }
-            0x4000..=0x401f => self.after_ppu.read(address),
-            0x4020..=0xffff => self.cartridge.read(address),
-        }
-    }
-
-    fn write(&mut self, address: u16, value: u8) {
-        match address {
-            0x0000..=0x1fff => self.lower_ram.write(address, value),
-            0x2000..=0x3fff => {
-                self.ppu.write(address, value);
-            }
-            0x4014 => self.ppu_dma(value),
-            0x4015 => {
-                // APU status register - enable/disable channels
-                self.channel_enabled[0] = value & 0x01 != 0;
-                self.channel_enabled[1] = value & 0x02 != 0;
-                self.channel_enabled[2] = value & 0x04 != 0;
-                self.channel_enabled[3] = value & 0x08 != 0;
-                // If a channel is disabled, its length counter is cleared
-                for i in 0..4 {
-                    if !self.channel_enabled[i] {
-                        self.length_counters[i] = 0;
-                    }
-                }
-            }
-            0x4017 => {
-                // Frame counter register
-                self.frame_counter_mode = value & 0x80 != 0;
-                self.frame_counter_interrupt
-                    .replace(value & 0b1100_0000 == 0);
-                // Reset frame counter on write
-                self.apu_cycle = 0;
-                self.apu_even_cycle = false;
-                self.frame_counter = 0;
-                // In 4-step mode, immediately clock length counters when $4017 is written
-                if !self.frame_counter_mode {
-                    for i in 0..4 {
-                        if self.channel_enabled[i]
-                            && !self.length_counter_halt[i]
-                            && self.length_counters[i] > 0
-                        {
-                            self.length_counters[i] -= 1;
-                        }
-                    }
-                }
-            }
-            // Length counter load registers (high byte)
-            0x4003 => {
-                // Pulse 1 length counter load (always loads, even if channel disabled)
-                self.after_ppu.write(address, value);
-                let index = ((value & 0xF8) >> 3) as usize;
-                self.length_counters[0] = Self::LENGTH_TABLE[index];
-            }
-            0x4007 => {
-                // Pulse 2 length counter load (always loads, even if channel disabled)
-                self.after_ppu.write(address, value);
-                let index = ((value & 0xF8) >> 3) as usize;
-                self.length_counters[1] = Self::LENGTH_TABLE[index];
-            }
-            0x400B => {
-                // Triangle length counter load (always loads, even if channel disabled)
-                self.after_ppu.write(address, value);
-                let index = ((value & 0xF8) >> 3) as usize;
-                self.length_counters[2] = Self::LENGTH_TABLE[index];
-            }
-            0x400F => {
-                // Noise length counter load (always loads, even if channel disabled)
-                self.after_ppu.write(address, value);
-                let index = ((value & 0xF8) >> 3) as usize;
-                self.length_counters[3] = Self::LENGTH_TABLE[index];
-            }
-            // Halt flag registers (low byte with length counter halt bit)
-            0x4000 | 0x4004 | 0x4008 | 0x400C => {
-                // Duty cycle / length counter halt
-                self.after_ppu.write(address, value);
-                let channel = ((address - 0x4000) / 4) as usize;
-                self.length_counter_halt[channel] = value & 0x20 != 0;
-            }
-            0x4000..=0x401f => self.after_ppu.write(address, value),
-            0x4020..=0xffff => self.cartridge.write(&mut self.ppu, address, value),
-        }
-    }
-
-    fn request_irq(&self) -> bool {
-        self.frame_counter_interrupt.get()
-    }
-
-    fn tick_ppu(&mut self) -> bool {
-        let result = self.ppu.tick(self.cartridge.pattern_ref());
-        if result.vblank_started {
-            self.vblank_started.set(true);
-        }
-        result.nmi
-    }
-
-    fn take_vblank(&mut self) -> bool {
-        self.vblank_started.replace(false)
-    }
-
-    fn tick_apu(&mut self) -> bool {
-        self.tick_apu()
-    }
-}
-
-impl NesMcu {
-    /// Tick the APU frame counter and length counters
-    /// The APU is clocked every OTHER CPU cycle
-    /// Returns true if a frame interrupt should occur
-    pub fn tick_apu(&mut self) -> bool {
-        // Toggle the even/odd cycle flag
-        self.apu_even_cycle = !self.apu_even_cycle;
-
-        // Only process the APU frame counter on even cycles (every other CPU cycle)
-        if !self.apu_even_cycle {
-            return false;
-        }
-
-        self.apu_cycle += 1;
-
-        // APU frame counter in 4-step mode:
-        // The frame counter has a period of 14915 APU cycles (29830 CPU cycles)
-        // According to NESdev wiki, clock points are at:
-        // - APU cycle 3728: step 0 (clock length counters)
-        // - APU cycle 7456: step 1 (clock length counters)
-        // - APU cycle 11185: step 2 (clock length counters)
-        // - APU cycle 14914: step 3 (DON'T clock length counters)
-        // Note: The wiki shows these as cumulative counts, not intervals
-
-        let cycle_mod = self.apu_cycle % 14915;
-        let is_clock_point = cycle_mod == 3728 || cycle_mod == 7456 || cycle_mod == 11185;
-
-        // Calculate which step we're on (0-3)
-        let step = if cycle_mod < 3728 {
-            0
-        } else if cycle_mod < 7456 {
-            1
-        } else if cycle_mod < 11185 {
-            2
-        } else {
-            3
-        };
-
-        // Update frame counter when we clock
-        if is_clock_point {
-            self.frame_counter = step;
-
-            // In 4-step mode, clock length counters on steps 0, 1, 2 (NOT step 3)
-            // In 5-step mode, clock length counters on steps 0, 1, 2, 3
-            let should_clock_length = if self.frame_counter_mode {
-                // 5-step mode - clock on all steps
-                true
-            } else {
-                // 4-step mode - don't clock on step 3
-                step != 3
-            };
-
-            if should_clock_length {
-                // Clock length counters for each channel
-                // But only if channel is enabled and halt flag is not set
-                for i in 0..4 {
-                    if self.channel_enabled[i]
-                        && !self.length_counter_halt[i]
-                        && self.length_counters[i] > 0
-                    {
-                        self.length_counters[i] -= 1;
-                    }
-                }
-            }
-
-            // Frame interrupt occurs on step 3 (last step of 4-step sequence)
-            if self.frame_counter == 3 && !self.frame_counter_mode {
-                self.frame_counter_interrupt.set(true);
-                return true;
-            }
-        }
-
-        false
+    NesBundle {
+        mcu: MappingMcu::new(regions),
+        ppu_cartridge,
+        apu,
     }
 }
 

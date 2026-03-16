@@ -28,11 +28,12 @@ pub fn new_machine(canvas_id: &str, ines: Vec<u8>) -> Machine {
     // Create image renderer for display - keep a reference to access later
     let image_render = ImageRender::new(256, 240);
 
-    // Create MCU with the image renderer (ImageRender is Clone and shares internal Rc)
-    let mcu = nes_core::nes::create_mcu_with_renderer(&ines, Some(Box::new(image_render.clone())));
+    // Create NES machine with the image renderer wired in
+    let inner =
+        nes_core::nes::create_machine_with_renderer(&ines, Some(Box::new(image_render.clone())));
 
     Machine {
-        inner: NesMachine::new(Box::new(mcu)),
+        inner,
         ctx: get_canvas_context(canvas_id),
         image_render,
     }
