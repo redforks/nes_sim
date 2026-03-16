@@ -12,6 +12,7 @@ pub use composite::CompositeRender;
 pub use image_render::ImageRender;
 pub use markdown_render::MarkdownRender;
 
+use std::any::Any;
 use std::fmt::Debug;
 
 /// Abstract render target for PPU output
@@ -56,7 +57,7 @@ use std::fmt::Debug;
 ///     }
 /// }
 /// ```
-pub trait Render: Debug {
+pub trait Render: Debug + Any {
     /// Clear the entire render target with a solid color
     ///
     /// # Parameters
@@ -89,6 +90,16 @@ pub trait Render: Debug {
     ///
     /// The default implementation does nothing.
     fn finish(&mut self) {}
+
+    /// Get as `Any` for downcasting
+    ///
+    /// This enables accessing concrete type methods from trait objects.
+    fn as_any(&self) -> &dyn Any;
+
+    /// Get as mutable `Any` for downcasting
+    ///
+    /// This enables accessing concrete type methods from trait objects.
+    fn as_any_mut(&mut self) -> &mut dyn Any;
 }
 
 #[cfg(test)]

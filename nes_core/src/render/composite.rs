@@ -5,6 +5,7 @@
 //! and generating a debug log simultaneously.
 
 use crate::render::Render;
+use std::any::Any;
 use std::fmt::Debug;
 
 /// Composite renderer that delegates operations to multiple child renderers
@@ -151,6 +152,14 @@ impl Render for CompositeRender {
         for child in &mut self.children {
             child.finish();
         }
+    }
+
+    fn as_any(&self) -> &dyn Any {
+        self
+    }
+
+    fn as_any_mut(&mut self) -> &mut dyn Any {
+        self
     }
 }
 
