@@ -53,8 +53,7 @@ impl Action {
 fn main() -> AppResult<()> {
     env_logger::Builder::from_default_env()
         .filter_level(log::LevelFilter::Info)
-        .try_init()
-        .ok();
+        .try_init()?;
     let args = Args::parse();
     args.action.run(args.read_file()?)
 }
