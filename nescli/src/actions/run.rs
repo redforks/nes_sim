@@ -8,7 +8,7 @@ use sdl2::keyboard::Keycode;
 use sdl2::pixels::PixelFormatEnum;
 use std::cell::RefCell;
 use std::rc::Rc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 /// Wrapper around Rc<RefCell<MarkdownRender>> that implements Render
 #[derive(Debug)]
@@ -126,9 +126,10 @@ impl RunAction {
 
         // Initialize event pump
         let mut event_pump = sdl_context.event_pump().map_err(|e| anyhow::anyhow!(e))?;
-        let mut frame_count = 0;
+        let target_frame_duration = Duration::new(0, 1_000_000_000u32 / 60);
 
         'running: loop {
+            let frame_start = Instant::now();
             // Handle events
             for event in event_pump.poll_iter() {
                 match event {
@@ -173,23 +174,8 @@ impl RunAction {
             // Run one frame
             let result = machine.process_frame();
 
-            // Get the rendered image directly from our image_render
-            // Create a scope to keep the borrow alive
-            {
-                let img = image_render.borrow_image();
-
-                // Save first frame for debugging
-                if frame_count == 0 {
-                    let path = format!("/tmp/nes_frame_0.png");
-                    img.save(&path)?;
-                    eprintln!("Saved first frame to {}", path);
-                }
-
-                // Update texture with frame data
-                texture.update(None, img.as_bytes(), 256 * 4)?;
-            }
-
-            frame_count += 1;
+            // Update texture with frame data
+            texture.update(None, image_render.borrow_image().as_bytes(), 256 * 4)?;
 
             // Copy texture to canvas and present
             canvas
@@ -210,8 +196,11 @@ impl RunAction {
                 }
             }
 
-            // Frame rate limiting
-            std::thread::sleep(Duration::new(0, 1_000_000_000u32 / 60));
+            // Frame rate limiting: sleep only for the remaining time to maintain 60 FPS
+            let elapsed = frame_start.elapsed();
+            if elapsed < target_frame_duration {
+                std::thread::sleep(target_frame_duration - elapsed);
+            }
         }
 
         Ok(())
