@@ -171,17 +171,8 @@ impl Mcu for Palette {
     }
 }
 
-pub trait PpuTrait {
-    /// Returns true if should trigger nmi at the start of v-blank.
-    fn should_nmi(&self) -> bool;
-
-    /// Trigger nmi at the start of v-blank, if should_nmi() returns true.
-    /// Return status before change
-    fn set_v_blank(&self, v_blank: bool) -> PpuStatus;
-}
-
 pub struct Ppu {
-    ctrl_flags: PpuCtrl,
+    pub ctrl_flags: PpuCtrl,
     status: RefCell<PpuStatus>,
     name_table: NameTableControl, // name table
     cur_name_table_addr: u16,     // current active name table start address
@@ -228,12 +219,10 @@ impl Default for Ppu {
     }
 }
 
-impl PpuTrait for Ppu {
-    fn should_nmi(&self) -> bool {
-        self.ctrl_flags.nmi_enable() && self.status.borrow().v_blank()
-    }
-
-    fn set_v_blank(&self, v_blank: bool) -> PpuStatus {
+impl Ppu {
+    /// Set v-blank state.
+    /// Return status before change
+    pub fn set_v_blank(&self, v_blank: bool) -> PpuStatus {
         let status = *self.status.borrow();
         if v_blank {
             debug!("set v_blank: {}", v_blank);
@@ -241,9 +230,7 @@ impl PpuTrait for Ppu {
         *self.status.borrow_mut() = status.with_v_blank(v_blank);
         status
     }
-}
 
-impl Ppu {
     pub fn oam_dma(&mut self, vals: &[u8; 256]) {
         self.oam.copy_from_slice(vals);
     }

@@ -3,7 +3,7 @@ use crate::mcu::{Mcu, RamMcu};
 use crate::nes::lower_ram::LowerRam;
 use crate::nes::mapper;
 use crate::nes::mapper::Cartridge;
-use crate::nes::ppu::{Mirroring, Ppu, PpuTrait};
+use crate::nes::ppu::{Mirroring, Ppu};
 use crate::render::Render;
 use log::info;
 use std::cell::Cell;
@@ -193,10 +193,6 @@ impl Mcu for NesMcu {
             0x4000..=0x401f => self.after_ppu.write(address, value),
             0x4020..=0xffff => self.cartridge.write(&mut self.ppu, address, value),
         }
-    }
-
-    fn get_ppu(&mut self) -> &mut dyn PpuTrait {
-        &mut self.ppu
     }
 
     fn request_irq(&self) -> bool {
