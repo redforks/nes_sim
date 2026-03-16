@@ -557,7 +557,7 @@ impl Ppu {
         }
     }
 
-    /// Write to PPU register. Returns true if NMI should be triggered.
+    /// Write to PPU register.
     pub fn write(&mut self, address: u16, val: u8) {
         // Mirror PPU register space (0x2000-0x3FFF) down to 0x2000-0x2007
         let addr = if (0x2000..=0x3fff).contains(&address) {
