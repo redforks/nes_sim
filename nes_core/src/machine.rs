@@ -1,9 +1,6 @@
 use crate::mcu::Mcu;
 use crate::{Cpu, EmptyPlugin, ExecuteResult, Plugin};
 
-/// CPU cycles per frame: 262 scanlines × 341 PPU dots / 3 (PPU:CPU ratio) ≈ 29780.67
-pub const CYCLES_PER_FRAME: f64 = 29780.5;
-
 /// Safety limit: maximum CPU instruction ticks per `process_frame()` call.
 /// Two full frames worth of ticks; prevents an infinite loop if VBlank never fires
 /// (e.g. when the PPU is not connected or NES hardware is not present).
