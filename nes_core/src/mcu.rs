@@ -2,12 +2,11 @@ mod mapping;
 mod ram;
 
 use crate::nes::ppu::PpuTrait;
-use image::RgbaImage;
 pub use mapping::*;
 pub use ram::RamMcu;
 
 pub trait MachineMcu {
-    fn render(&mut self) -> &RgbaImage;
+    fn render(&mut self);
 }
 
 /// Nes 6502 Mcu.

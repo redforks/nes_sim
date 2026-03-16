@@ -3,7 +3,7 @@ use super::plugin::{DetectDeadLoop, ImageExit};
 use nes_core::ines::INesFile;
 use nes_core::mcu::{Mcu, RamMcu};
 use nes_core::nes::nes_mcu;
-use nes_core::{machine::Machine, Plugin};
+use nes_core::{Plugin, machine::Machine};
 use std::io::Read;
 
 mod driver;

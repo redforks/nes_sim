@@ -1,6 +1,5 @@
 use crate::mcu::Mcu;
 use crate::{Cpu, EmptyPlugin, ExecuteResult, Plugin};
-use image::RgbaImage;
 
 pub struct Machine<P> {
     cpu: Cpu,
@@ -30,12 +29,15 @@ impl<P: Plugin> Machine<P> {
 
     /// Run the machine for a single frame.
     /// `ms`: milliseconds elapsed since last frame.
-    pub fn process_frame(&mut self, ms: f64) -> (&RgbaImage, ExecuteResult) {
+    pub fn process_frame(&mut self, ms: f64) -> ExecuteResult {
         let cycles = (ms * CYCLES_PER_MS) as u32;
 
         let er = self.run_ticks(cycles);
 
-        (self.cpu.mcu().get_machine_mcu().render(), er)
+        // Render the frame
+        self.cpu.mcu().get_machine_mcu().render();
+
+        er
     }
 
     pub fn run_ticks(&mut self, ticks: u32) -> ExecuteResult {

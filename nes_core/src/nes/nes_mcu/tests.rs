@@ -376,8 +376,7 @@ fn test_get_machine_mcu() {
 
     let machine_mcu = mcu.get_machine_mcu();
     // Should be able to call render
-    let img = machine_mcu.render();
-    assert_eq!(img.dimensions(), (256, 240));
+    machine_mcu.render();
 }
 
 #[test]
@@ -399,8 +398,7 @@ fn test_render() {
         channel_enabled: [false; 4],
     };
 
-    let img = mcu.render();
-    assert_eq!(img.dimensions(), (256, 240));
+    mcu.render();
 }
 
 #[test]

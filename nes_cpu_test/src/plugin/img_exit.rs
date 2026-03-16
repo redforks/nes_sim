@@ -11,19 +11,20 @@ impl Plugin for ImageExit {
 
     fn end(&mut self, cpu: &Cpu) {
         if let Some(last) = self.last_pc
-            && last == cpu.pc {
-                if cpu.flag(Flag::Decimal) {
-                    // decimal mode not implemented, it is okay to exit test on decimal error,
-                    // decimal test is the last of opCode test.
-                    println!("test succeed!");
-                    self.exit_code = Some(0);
-                    return;
-                }
-
-                println!("test failed: pc repeated");
-                self.exit_code = Some(1);
+            && last == cpu.pc
+        {
+            if cpu.flag(Flag::Decimal) {
+                // decimal mode not implemented, it is okay to exit test on decimal error,
+                // decimal test is the last of opCode test.
+                println!("test succeed!");
+                self.exit_code = Some(0);
                 return;
             }
+
+            println!("test failed: pc repeated");
+            self.exit_code = Some(1);
+            return;
+        }
         self.last_pc = Some(cpu.pc);
     }
 
