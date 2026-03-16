@@ -21,11 +21,7 @@ impl AController {
         let r = self.bits & self.mask;
         self.mask = self.mask.rotate_left(1);
 
-        if r != 0 {
-            0x40
-        } else {
-            0x41
-        }
+        if r != 0 { 0x40 } else { 0x41 }
     }
 
     pub fn press(&mut self, btn: Button) {
