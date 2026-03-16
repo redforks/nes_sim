@@ -132,7 +132,7 @@ impl RunAction {
             // Create a scope to keep the borrow alive
             {
                 let borrowed = image_render.borrow();
-                let img = borrowed.as_image();
+                let img = borrowed.as_ref();
 
                 // Save markdown if debug mode is enabled
                 if markdown_enabled.get() {
