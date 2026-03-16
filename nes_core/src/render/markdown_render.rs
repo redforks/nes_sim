@@ -6,7 +6,14 @@
 
 use crate::render::Render;
 use std::fmt::Debug;
+use std::fmt::Write;
 use std::time::Instant;
+
+// Markdown section constants
+const MD_SECTION_FRAME_INFO: &str = "## Frame Info\n\n";
+const MD_SECTION_RENDER_OPS: &str = "## Render Operations\n\n";
+const MD_SECTION_STATS: &str = "## Statistics\n\n";
+const MD_FOOTER: &str = "\n---\n*End of render log*\n";
 
 /// A single pixel operation record
 #[derive(Debug, Clone)]
@@ -97,90 +104,99 @@ impl MarkdownRender {
 
     /// Generate the markdown document
     fn generate_markdown(&self) -> String {
-        let mut md = String::new();
+        // Pre-allocate with reasonable capacity (header + operations + stats)
+        let estimated_size = 300 + (self.operations.len() * 80);
+        let mut md = String::with_capacity(estimated_size);
 
-        // Header
-        md.push_str(&format!(
-            "# NES Frame Render Log - Frame {}\n\n",
-            self.frame_number
-        ));
+        // Cache elapsed time
+        let elapsed = self.start_time.elapsed();
 
-        // Timestamp
-        md.push_str(&format!(
-            "**Generated**: {:?}\n\n",
-            self.start_time.elapsed()
-        ));
+        // Write header
+        write!(
+            md,
+            "# NES Frame Render Log - Frame {}\n\n**Generated**: {:?}\n\n",
+            self.frame_number, elapsed
+        )
+        .unwrap();
 
-        // Frame info
-        md.push_str("## Frame Info\n\n");
-        md.push_str(&format!(
-            "- **Dimensions**: {}×{}\n",
-            self.width, self.height
-        ));
-        md.push_str(&format!(
-            "- **Total pixel operations**: {}\n\n",
-            self.pixel_counter
-        ));
+        // Write frame info
+        Self::write_frame_info(&mut md, self.width, self.height, self.pixel_counter);
 
-        // Render Operations
-        md.push_str("## Render Operations\n\n");
+        // Write render operations (single pass that also collects stats)
+        let (clear_count, unique_colors) = Self::write_operations(&mut md, &self.operations);
+
+        // Write statistics
+        Self::write_statistics(
+            &mut md,
+            clear_count,
+            unique_colors,
+            elapsed.as_secs_f64() * 1000.0,
+        );
+
+        // Write footer
+        md.push_str(MD_FOOTER);
+
+        md
+    }
+
+    /// Write frame info section
+    fn write_frame_info(md: &mut String, width: u32, height: u32, pixel_count: usize) {
+        md.push_str(MD_SECTION_FRAME_INFO);
+        write!(md, "- **Dimensions**: {}×{}\n", width, height).unwrap();
+        write!(md, "- **Total pixel operations**: {}\n\n", pixel_count).unwrap();
+    }
+
+    /// Write render operations section and return stats
+    fn write_operations(md: &mut String, operations: &[RenderOp]) -> (usize, usize) {
+        md.push_str(MD_SECTION_RENDER_OPS);
 
         let mut clear_count = 0;
-        for op in &self.operations {
+        let mut colors = std::collections::HashSet::new();
+
+        for op in operations {
             match op {
                 RenderOp::Clear(clear) => {
                     clear_count += 1;
-                    md.push_str("### Clear Operation\n\n");
-                    md.push_str(&format!(
-                        "- **Color**: [R={}, G={}, B={}, A={}]\n",
-                        clear.color[0], clear.color[1], clear.color[2], clear.color[3]
-                    ));
-                    md.push_str(&format!(
-                        "- **Dimensions**: {}×{}\n\n",
-                        clear.width, clear.height
-                    ));
+                    write!(md, "### Clear Operation\n\n").unwrap();
+                    write!(md, "- **Color**: {}\n", Self::format_color(clear.color)).unwrap();
+                    write!(md, "- **Dimensions**: {}×{}\n\n", clear.width, clear.height).unwrap();
                 }
                 RenderOp::Pixel(pixel) => {
-                    md.push_str(&format!(
-                        "- `set_pixel({}, {}, [R={}, G={}, B={}, A={}])`\n",
+                    colors.insert(pixel.color);
+                    write!(
+                        md,
+                        "- `set_pixel({}, {}, {})`\n",
                         pixel.x,
                         pixel.y,
-                        pixel.color[0],
-                        pixel.color[1],
-                        pixel.color[2],
-                        pixel.color[3]
-                    ));
+                        Self::format_color(pixel.color)
+                    )
+                    .unwrap();
                 }
             }
         }
 
-        // Statistics
-        md.push_str("\n## Statistics\n\n");
-        md.push_str(&format!("- **Clear operations**: {}\n", clear_count));
-        md.push_str(&format!(
-            "- **Total pixel operations**: {}\n",
-            self.pixel_counter
-        ));
+        (clear_count, colors.len())
+    }
 
-        // Calculate unique colors
-        let mut colors = std::collections::HashSet::new();
-        for op in &self.operations {
-            if let RenderOp::Pixel(pixel) = op {
-                colors.insert(pixel.color);
-            }
-        }
-        md.push_str(&format!("- **Unique colors**: {}\n", colors.len()));
+    /// Write statistics section
+    fn write_statistics(
+        md: &mut String,
+        clear_count: usize,
+        unique_colors: usize,
+        duration_ms: f64,
+    ) {
+        md.push_str(MD_SECTION_STATS);
+        write!(md, "- **Clear operations**: {}\n", clear_count).unwrap();
+        write!(md, "- **Unique colors**: {}\n", unique_colors).unwrap();
+        write!(md, "- **Render time**: {:.2}ms{}", duration_ms, MD_FOOTER).unwrap();
+    }
 
-        // Render duration
-        md.push_str(&format!(
-            "- **Render time**: {:.2}ms\n",
-            self.start_time.elapsed().as_secs_f64() * 1000.0
-        ));
-
-        md.push_str("\n---\n");
-        md.push_str("*End of render log*\n");
-
-        md
+    /// Format RGBA color array
+    fn format_color(color: [u8; 4]) -> String {
+        format!(
+            "[R={}, G={}, B={}, A={}]",
+            color[0], color[1], color[2], color[3]
+        )
     }
 
     /// Get the markdown output as a string
