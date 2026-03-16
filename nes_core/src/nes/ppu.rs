@@ -81,6 +81,15 @@ const DOTS_PER_SCANLINE: u16 = 341;
 const VBLANK_SET_SCANLINE: u16 = 241;
 const VBLANK_CLEAR_SCANLINE: u16 = 261;
 
+/// Result of a single PPU tick.
+#[derive(Default)]
+pub struct PpuTickResult {
+    /// True if NMI should be triggered (VBlank started and NMI is enabled in PPUCTRL).
+    pub nmi: bool,
+    /// True when VBlank period begins (scanline 241, dot 1), regardless of NMI enable.
+    pub vblank_started: bool,
+}
+
 const fn rgb(v: [u8; 3]) -> Pixel {
     let [r, g, b] = v;
     Rgba::<u8>([r, g, b, 0xff])
@@ -240,11 +249,15 @@ impl Ppu {
     }
 
     /// Advance PPU by one dot, rendering a pixel if on a visible scanline.
-    /// Returns true if NMI should be triggered.
+    /// Returns a [`PpuTickResult`] indicating whether NMI should fire and/or VBlank has started.
+    ///
+    /// - `result.nmi` is `true` only when VBlank starts **and** NMI is enabled in PPUCTRL ($2000).
+    /// - `result.vblank_started` is `true` whenever VBlank begins (scanline 241, dot 1),
+    ///   regardless of whether NMI is enabled.
     ///
     /// # Parameters
     /// - `pattern`: CHR ROM pattern data for tile/sprite lookup
-    pub fn tick(&mut self, pattern: &[u8]) -> bool {
+    pub fn tick(&mut self, pattern: &[u8]) -> PpuTickResult {
         let scanline = self.scanline;
         let dot = self.dot;
 
@@ -280,9 +293,10 @@ impl Ppu {
             let was_vblank = status.v_blank();
             if !was_vblank {
                 *self.status.borrow_mut() = status.with_v_blank(true);
-                if self.ctrl_flags.nmi_enable() {
-                    return true;
-                }
+                return PpuTickResult {
+                    nmi: self.ctrl_flags.nmi_enable(),
+                    vblank_started: true,
+                };
             }
         }
 
@@ -297,7 +311,7 @@ impl Ppu {
             *self.status.borrow_mut() = status.with_sprite_zero_hit(false);
         }
 
-        false
+        PpuTickResult::default()
     }
 
     /// Render a single pixel at the given screen coordinates.

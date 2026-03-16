@@ -164,8 +164,12 @@ fn ppu_tick_timing() {
     ppu.dot = 0;
 
     // Tick once - should set VBlank and trigger NMI
-    let nmi = ppu.tick(&pattern);
-    assert!(nmi, "NMI should be triggered at scanline 241, dot 1");
+    let result = ppu.tick(&pattern);
+    assert!(result.nmi, "NMI should be triggered at scanline 241, dot 1");
+    assert!(
+        result.vblank_started,
+        "VBlank should start at scanline 241, dot 1"
+    );
     assert!(ppu.status.borrow().v_blank());
 
     // Advance to scanline 261, dot 0
@@ -173,8 +177,15 @@ fn ppu_tick_timing() {
     ppu.dot = 0;
 
     // Tick once - should clear VBlank
-    let nmi = ppu.tick(&pattern);
-    assert!(!nmi, "NMI should not be triggered when clearing VBlank");
+    let result = ppu.tick(&pattern);
+    assert!(
+        !result.nmi,
+        "NMI should not be triggered when clearing VBlank"
+    );
+    assert!(
+        !result.vblank_started,
+        "VBlank should not start at scanline 261"
+    );
     assert!(!ppu.status.borrow().v_blank());
 }
 

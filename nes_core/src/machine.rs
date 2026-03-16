@@ -4,6 +4,11 @@ use crate::{Cpu, EmptyPlugin, ExecuteResult, Plugin};
 /// CPU cycles per frame: 262 scanlines × 341 PPU dots / 3 (PPU:CPU ratio) ≈ 29780.67
 pub const CYCLES_PER_FRAME: f64 = 29780.5;
 
+/// Safety limit: maximum CPU instruction ticks per `process_frame()` call.
+/// Two full frames worth of ticks; prevents an infinite loop if VBlank never fires
+/// (e.g. when the PPU is not connected or NES hardware is not present).
+const MAX_TICKS_PER_FRAME: u32 = 60000;
+
 pub struct Machine<P> {
     cpu: Cpu,
     p: P,
@@ -26,16 +31,26 @@ impl<P: Plugin> Machine<P> {
     }
 
     /// Run the machine for a single frame.
-    /// Executes CPU instructions until VBlank is detected (one full frame of PPU output).
+    ///
+    /// Executes CPU instructions until the PPU enters VBlank (scanline 241, dot 1),
+    /// which marks the natural end of a rendered frame. This is the correct approach
+    /// because the PPU has finished rendering all 240 visible scanlines at that point.
+    ///
+    /// If VBlank does not occur within `MAX_TICKS_PER_FRAME` instruction ticks
+    /// (safety guard for MCUs without a real PPU), the function returns early.
+    ///
     /// A frame is ~29780.5 CPU cycles (262 scanlines × 341 dots / 3 PPU:CPU ratio).
     pub fn process_frame(&mut self) -> ExecuteResult {
-        // Run enough ticks to cover one full frame
-        // 262 scanlines * 341 dots = 89342 PPU dots per frame
-        // 89342 / 3 ≈ 29780.67 CPU cycles per frame
-        // We use a slightly larger number to ensure we complete the frame
-        const MAX_TICKS_PER_FRAME: u32 = 29781;
-
-        self.run_ticks(MAX_TICKS_PER_FRAME)
+        for _ in 0..MAX_TICKS_PER_FRAME {
+            match self.cpu.tick(&mut self.p) {
+                ExecuteResult::Continue => {}
+                other => return other,
+            }
+            if self.cpu.mcu().take_vblank() {
+                return ExecuteResult::Continue;
+            }
+        }
+        ExecuteResult::Continue
     }
 
     pub fn run_ticks(&mut self, ticks: u32) -> ExecuteResult {
