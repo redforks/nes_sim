@@ -5,15 +5,18 @@
 
 use crate::render::Render;
 use image::{Rgba, RgbaImage};
+use std::cell::RefCell;
 use std::fmt::Debug;
+use std::rc::Rc;
 
 /// Wrapper around `RgbaImage` that implements the `Render` trait
 ///
 /// This type provides a bridge between the new Render trait and the existing
 /// RgbaImage type, allowing the PPU to use either abstraction.
+/// The image is wrapped in `Rc<RefCell<>>` for shared ownership and interior mutability.
 #[derive(Debug, Clone)]
 pub struct ImageRender {
-    image: RgbaImage,
+    image: Rc<RefCell<RgbaImage>>,
 }
 
 impl ImageRender {
@@ -24,32 +27,31 @@ impl ImageRender {
     /// - `height`: Height in pixels (typically 240 for NES)
     pub fn new(width: u32, height: u32) -> Self {
         Self {
-            image: RgbaImage::new(width, height),
+            image: Rc::new(RefCell::new(RgbaImage::new(width, height))),
         }
+    }
+
+    /// Get a reference to the underlying image by borrowing the RefCell
+    pub fn borrow_image(&self) -> std::cell::Ref<'_, RgbaImage> {
+        self.image.borrow()
     }
 }
 
 impl Render for ImageRender {
     fn clear(&mut self, color: [u8; 4]) {
         let pixel = Rgba(color);
-        for p in self.image.pixels_mut() {
+        let mut image = self.image.borrow_mut();
+        for p in image.pixels_mut() {
             *p = pixel;
         }
     }
 
     fn set_pixel(&mut self, x: u32, y: u32, color: [u8; 4]) {
-        self.image.put_pixel(x, y, Rgba(color));
+        self.image.borrow_mut().put_pixel(x, y, Rgba(color));
     }
 
     fn dimensions(&self) -> (u32, u32) {
-        self.image.dimensions()
-    }
-}
-
-/// Implement AsRef for convenient access to the image
-impl AsRef<RgbaImage> for ImageRender {
-    fn as_ref(&self) -> &RgbaImage {
-        &self.image
+        self.image.borrow().dimensions()
     }
 }
 
@@ -88,7 +90,8 @@ mod tests {
         renderer.clear([255, 0, 0, 255]);
 
         // Check that all pixels are red
-        for pixel in renderer.as_ref().pixels() {
+        let image = renderer.borrow_image();
+        for pixel in image.pixels() {
             assert_eq!(*pixel, Rgba([255, 0, 0, 255]));
         }
     }
@@ -102,9 +105,10 @@ mod tests {
         renderer.set_pixel(5, 5, [0, 255, 0, 255]);
         renderer.set_pixel(9, 9, [0, 0, 255, 255]);
 
-        assert_eq!(renderer.as_ref().get_pixel(0, 0), &Rgba([255, 0, 0, 255]));
-        assert_eq!(renderer.as_ref().get_pixel(5, 5), &Rgba([0, 255, 0, 255]));
-        assert_eq!(renderer.as_ref().get_pixel(9, 9), &Rgba([0, 0, 255, 255]));
+        let image = renderer.borrow_image();
+        assert_eq!(image.get_pixel(0, 0), &Rgba([255, 0, 0, 255]));
+        assert_eq!(image.get_pixel(5, 5), &Rgba([0, 255, 0, 255]));
+        assert_eq!(image.get_pixel(9, 9), &Rgba([0, 0, 255, 255]));
     }
 
     #[test]
@@ -120,12 +124,12 @@ mod tests {
     }
 
     #[test]
-    fn test_image_render_as_ref() {
+    fn test_image_render_borrow() {
         let renderer = ImageRender::new(256, 240);
 
-        // Test AsRef
-        let image_ref = renderer.as_ref();
-        assert_eq!(image_ref.dimensions(), (256, 240));
+        // Test borrow_image
+        let image = renderer.borrow_image();
+        assert_eq!(image.dimensions(), (256, 240));
     }
 
     #[test]

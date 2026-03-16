@@ -2,43 +2,11 @@ use anyhow::Result;
 use image::EncodableLayout;
 use nes_core::ines::INesFile;
 use nes_core::machine::Machine;
-use nes_core::render::{CompositeRender, ImageRender, Render};
+use nes_core::render::{CompositeRender, ImageRender};
 use sdl2::event::Event;
 use sdl2::keyboard::Keycode;
 use sdl2::pixels::PixelFormatEnum;
-use std::cell::RefCell;
-use std::rc::Rc;
 use std::time::Duration;
-
-/// A Render implementation that delegates to a shared Rc<RefCell<ImageRender>>
-#[derive(Debug)]
-struct SharedRender {
-    inner: Rc<RefCell<ImageRender>>,
-}
-
-impl SharedRender {
-    fn new(inner: Rc<RefCell<ImageRender>>) -> Self {
-        Self { inner }
-    }
-}
-
-impl Render for SharedRender {
-    fn clear(&mut self, color: [u8; 4]) {
-        self.inner.borrow_mut().clear(color);
-    }
-
-    fn set_pixel(&mut self, x: u32, y: u32, color: [u8; 4]) {
-        self.inner.borrow_mut().set_pixel(x, y, color);
-    }
-
-    fn dimensions(&self) -> (u32, u32) {
-        self.inner.borrow().dimensions()
-    }
-
-    fn finish(&mut self) {
-        self.inner.borrow_mut().finish();
-    }
-}
 
 #[derive(clap::Args)]
 pub struct RunAction {}
@@ -73,13 +41,13 @@ impl RunAction {
             .map_err(|e| anyhow::anyhow!(e))?;
 
         // Create image renderer for display - keep a reference to access later
-        let image_render = Rc::new(RefCell::new(ImageRender::new(256, 240)));
+        let image_render = ImageRender::new(256, 240);
 
         // Create composite renderer with image + markdown
         let mut composite = CompositeRender::new();
 
-        // Add image renderer via shared wrapper
-        composite.add(Box::new(SharedRender::new(image_render.clone())));
+        // Add image renderer (ImageRender is Clone and shares internal Rc)
+        composite.add(Box::new(image_render.clone()));
 
         // Add markdown renderer (disabled by default, enabled with F1)
         // We'll create it but won't add it until F1 is pressed
@@ -131,12 +99,11 @@ impl RunAction {
             // Get the rendered image directly from our image_render
             // Create a scope to keep the borrow alive
             {
-                let borrowed = image_render.borrow();
-                let img = borrowed.as_ref();
+                let img = image_render.borrow_image();
 
                 // Save markdown if debug mode is enabled
                 if markdown_enabled.get() {
-                    Self::save_frame_markdown(markdown_frame_number, img)?;
+                    Self::save_frame_markdown(markdown_frame_number, &*img)?;
                     markdown_frame_number += 1;
                 }
 
