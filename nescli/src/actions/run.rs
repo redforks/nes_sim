@@ -10,6 +10,36 @@ use std::cell::RefCell;
 use std::rc::Rc;
 use std::time::Duration;
 
+/// Wrapper around Rc<RefCell<MarkdownRender>> that implements Render
+#[derive(Debug)]
+struct SharedMarkdownRender {
+    inner: Rc<RefCell<MarkdownRender>>,
+}
+
+impl SharedMarkdownRender {
+    fn new(inner: Rc<RefCell<MarkdownRender>>) -> Self {
+        Self { inner }
+    }
+}
+
+impl Render for SharedMarkdownRender {
+    fn clear(&mut self, color: [u8; 4]) {
+        self.inner.borrow_mut().clear(color);
+    }
+
+    fn set_pixel(&mut self, x: u32, y: u32, color: [u8; 4]) {
+        self.inner.borrow_mut().set_pixel(x, y, color);
+    }
+
+    fn dimensions(&self) -> (u32, u32) {
+        self.inner.borrow().dimensions()
+    }
+
+    fn finish(&mut self) {
+        self.inner.borrow_mut().finish();
+    }
+}
+
 /// Wrapper around Rc<RefCell<CompositeRender>> that implements Render
 #[derive(Debug)]
 struct SharedCompositeRender {
@@ -37,14 +67,6 @@ impl Render for SharedCompositeRender {
 
     fn finish(&mut self) {
         self.inner.borrow_mut().finish();
-    }
-
-    fn as_any(&self) -> &dyn std::any::Any {
-        self
-    }
-
-    fn as_any_mut(&mut self) -> &mut dyn std::any::Any {
-        self
     }
 }
 
@@ -89,9 +111,11 @@ impl RunAction {
         // Add image renderer (ImageRender is Clone and shares internal Rc)
         composite.borrow_mut().add(Box::new(image_render.clone()));
 
-        // Create and add markdown renderer (dump requested via F1)
-        let markdown_render = MarkdownRender::new(0, 256, 240);
-        composite.borrow_mut().add(Box::new(markdown_render));
+        // Create and wrap markdown renderer for shared access
+        let markdown_render = Rc::new(RefCell::new(MarkdownRender::new(0, 256, 240)));
+        composite
+            .borrow_mut()
+            .add(Box::new(SharedMarkdownRender::new(markdown_render.clone())));
 
         // Wrap composite for sharing
         let shared_composite = SharedCompositeRender::new(composite.clone());
@@ -120,17 +144,11 @@ impl RunAction {
                         ..
                     } => {
                         // Request markdown dump for next frame
-                        if let Some(md) = composite.borrow_mut().get_mut(1) {
-                            if let Some(md_render) =
-                                md.as_any_mut().downcast_mut::<MarkdownRender>()
-                            {
-                                md_render.request_dump();
-                                eprintln!(
-                                    ">> Markdown dump requested for next frame (frame {})",
-                                    md_render.frame_number()
-                                );
-                            }
-                        }
+                        markdown_render.borrow_mut().request_dump();
+                        eprintln!(
+                            ">> Markdown dump requested for next frame (frame {})",
+                            markdown_render.borrow().frame_number()
+                        );
                     }
                     _ => {}
                 }
@@ -138,13 +156,6 @@ impl RunAction {
 
             // Run one frame (16.67ms for 60 FPS)
             let result = machine.process_frame(16.67);
-
-            // Increment markdown frame number
-            if let Some(md) = composite.borrow_mut().get_mut(1) {
-                if let Some(md_render) = md.as_any_mut().downcast_mut::<MarkdownRender>() {
-                    md_render.increment_frame();
-                }
-            }
 
             // Get the rendered image directly from our image_render
             // Create a scope to keep the borrow alive
