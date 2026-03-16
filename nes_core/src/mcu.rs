@@ -1,7 +1,6 @@
 mod mapping;
 mod ram;
 
-use crate::nes::ppu::PpuTrait;
 pub use mapping::*;
 pub use ram::RamMcu;
 
@@ -12,11 +11,6 @@ pub use ram::RamMcu;
 pub trait Mcu {
     fn read(&self, address: u16) -> u8;
     fn write(&mut self, address: u16, value: u8);
-
-    // TODO: remove this hack
-    fn get_ppu(&mut self) -> &mut dyn PpuTrait {
-        panic!("not implemented");
-    }
 
     fn request_irq(&self) -> bool {
         panic!("request_irq() not implemented");
@@ -59,13 +53,6 @@ mod tests {
         let mut mcu = MockMcu;
         // Default implementation returns false
         assert!(!mcu.tick_ppu());
-    }
-
-    #[test]
-    #[should_panic(expected = "not implemented")]
-    fn test_get_ppu_default_panics() {
-        let mut mcu = MockMcu;
-        let _ppu = mcu.get_ppu();
     }
 
     #[test]

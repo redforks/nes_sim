@@ -210,30 +210,6 @@ fn test_no_interrupt_when_both_false() {
 }
 
 #[test]
-fn test_get_ppu() {
-    let mut mcu = NesMcu {
-        lower_ram: LowerRam::new(),
-        ppu: Ppu::default(),
-        after_ppu: RamMcu::start_from(0x4000, [0; 0x20]),
-        cartridge: Box::new(MockCartridge::new()),
-        frame_counter_interrupt: Cell::new(false),
-        dmc_interrupt: Cell::new(false),
-        nmi_pending: Cell::new(false),
-        vblank_started: Cell::new(false),
-        apu_cycle: 0,
-        apu_even_cycle: false,
-        frame_counter: 0,
-        frame_counter_mode: false,
-        length_counters: [0; 4],
-        length_counter_halt: [false; 4],
-        channel_enabled: [false; 4],
-    };
-
-    let _ppu = mcu.get_ppu();
-    // Just verify we can access PPU without panicking
-}
-
-#[test]
 fn test_frame_counter_write() {
     let mut mcu = NesMcu {
         lower_ram: LowerRam::new(),

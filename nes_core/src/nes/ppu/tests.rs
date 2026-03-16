@@ -128,7 +128,7 @@ fn nmi_occurred() {
     ppu.set_v_blank(true);
     assert!(ppu.status.borrow().v_blank());
     // should_nmi is false because nmi is disabled
-    assert!(!ppu.should_nmi());
+    assert!(!(ppu.ctrl_flags.nmi_enable() && ppu.status.borrow().v_blank()));
     ppu.set_v_blank(false);
     // v_blank is false on v_blank end
     assert!(!ppu.status.borrow().v_blank());
@@ -140,11 +140,11 @@ fn nmi_occurred() {
 
     // enable nmi
     ppu.set_control_flags(flag.with_nmi_enable(true));
-    assert!(!ppu.should_nmi());
+    assert!(!(ppu.ctrl_flags.nmi_enable() && ppu.status.borrow().v_blank()));
     ppu.set_v_blank(true);
     assert!(ppu.status.borrow().v_blank());
     // should_nmi is true because nmi is enabled
-    assert!(ppu.should_nmi());
+    assert!(ppu.ctrl_flags.nmi_enable() && ppu.status.borrow().v_blank());
 }
 
 #[test]
@@ -215,14 +215,14 @@ fn nmi_trigger_on_ctrl_write_during_vblank() {
     let ctrl = PpuCtrl::new().with_nmi_enable(false);
     ppu.set_control_flags(ctrl);
     assert!(
-        !ppu.should_nmi(),
+        !(ppu.ctrl_flags.nmi_enable() && ppu.status.borrow().v_blank()),
         "should_nmi should be false when NMI disabled"
     );
 
     // Enable NMI during VBlank - should trigger NMI
     ppu.set_control_flags(ctrl.with_nmi_enable(true));
     assert!(
-        ppu.should_nmi(),
+        ppu.ctrl_flags.nmi_enable() && ppu.status.borrow().v_blank(),
         "should_nmi should be true when NMI enabled during VBlank"
     );
 

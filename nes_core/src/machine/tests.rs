@@ -2,14 +2,12 @@ use super::*;
 
 struct MockMcu {
     memory: [u8; 0x10000],
-    ppu: crate::nes::ppu::Ppu,
 }
 
 impl MockMcu {
     fn new() -> Self {
         MockMcu {
             memory: [0; 0x10000],
-            ppu: crate::nes::ppu::Ppu::default(),
         }
     }
 }
@@ -21,10 +19,6 @@ impl Mcu for MockMcu {
 
     fn write(&mut self, addr: u16, value: u8) {
         self.memory[addr as usize] = value;
-    }
-
-    fn get_ppu(&mut self) -> &mut dyn crate::nes::ppu::PpuTrait {
-        &mut self.ppu
     }
 
     fn request_irq(&self) -> bool {
