@@ -1,6 +1,7 @@
 use crate::mcu::Mcu;
+use crate::render::{ImageRender, Render};
 use crate::to_from_u8;
-use image::{Rgba, RgbaImage};
+use image::Rgba;
 use log::{debug, info};
 use modular_bitfield::prelude::*;
 use std::cell::RefCell;
@@ -189,7 +190,7 @@ pub struct Ppu {
     temp_vram_addr: u16,         // t - temporary VRAM address
     fine_x: u8,                  // x - fine X scroll (3 bits)
     write_toggle: RefCell<bool>, // w - first/second write toggle
-    image: RgbaImage,
+    renderer: Box<dyn Render>,
 
     // PPU timing
     scanline: u16, // 0-261
@@ -212,7 +213,7 @@ impl Default for Ppu {
             temp_vram_addr: 0,
             fine_x: 0,
             write_toggle: RefCell::new(false),
-            image: RgbaImage::new(256, 240),
+            renderer: Box::new(ImageRender::new(256, 240)),
             scanline: 0,
             dot: 0,
         }
@@ -316,7 +317,7 @@ impl Ppu {
                 // Clamp to screen bounds (256x240)
                 if final_x < 256 && screen_y < 240 {
                     let color = self.palette.get_background_color(palette_idx, pixel);
-                    self.image.put_pixel(final_x as u32, screen_y as u32, color);
+                    self.renderer.set_pixel(final_x, screen_y, color.0);
                     pixels_rendered += 1;
                 }
             }
@@ -329,21 +330,31 @@ impl Ppu {
         }
     }
 
-    pub fn render(&mut self, pattern: &[u8]) -> &RgbaImage {
-        // Clear image to black (universal background color, 0x0F in palette)
+    pub fn render(&mut self, pattern: &[u8]) {
+        // Clear renderer to black (universal background color, 0x0F in palette)
         let black_pixel = COLORS[0x0f];
-        for pixel in self.image.pixels_mut() {
-            *pixel = black_pixel;
-        }
+        self.renderer.clear(black_pixel.0);
 
         if self.mask.background_enabled() {
             self.render_background(pattern);
         }
-        &self.image
+
+        self.renderer.finish();
     }
 
     pub fn set_mirroring(&mut self, mirroring: Mirroring) {
         self.name_table.set_mirroring(mirroring);
+    }
+
+    /// Set a custom renderer for the PPU
+    ///
+    /// This allows injecting different rendering backends (image, markdown, composite, etc.)
+    /// instead of using the default ImageRender.
+    ///
+    /// # Parameters
+    /// - `renderer`: The renderer to use (must implement the Render trait)
+    pub fn set_renderer(&mut self, renderer: Box<dyn Render>) {
+        self.renderer = renderer;
     }
 
     /// Set PPU control flags. Returns true if NMI should be triggered

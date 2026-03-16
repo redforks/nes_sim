@@ -1,13 +1,18 @@
 use super::*;
+use image::RgbaImage;
 
 struct MockMcu {
     memory: [u8; 0x10000],
+    image: RgbaImage,
+    ppu: crate::nes::ppu::Ppu,
 }
 
 impl MockMcu {
     fn new() -> Self {
         MockMcu {
             memory: [0; 0x10000],
+            image: RgbaImage::new(256, 240),
+            ppu: crate::nes::ppu::Ppu::default(),
         }
     }
 }
@@ -25,16 +30,20 @@ impl Mcu for MockMcu {
         self
     }
 
+    fn get_ppu(&mut self) -> &mut dyn crate::nes::ppu::PpuTrait {
+        &mut self.ppu
+    }
+
     fn request_irq(&self) -> bool {
         false
     }
 }
 
 impl crate::mcu::MachineMcu for MockMcu {
-    fn render(&mut self) -> &RgbaImage {
-        use std::sync::OnceLock;
-        static IMAGE: OnceLock<RgbaImage> = OnceLock::new();
-        IMAGE.get_or_init(|| RgbaImage::new(256, 240))
+    fn render(&mut self) {
+        // Mock render - just render the PPU
+        let pattern = [0u8; 0x2000];
+        self.ppu.render(&pattern);
     }
 }
 
@@ -110,10 +119,9 @@ fn test_process_frame() {
     let mut machine = Machine::new(mcu);
 
     // Run for 1 ms (about 17868 cycles)
-    let (img, result) = machine.process_frame(1.0);
+    let result = machine.process_frame(1.0);
 
-    // Should return an image and continue result
-    assert_eq!(img.dimensions(), (256, 240));
+    // Should return continue result
     assert_eq!(result, ExecuteResult::Continue);
 }
 
@@ -123,10 +131,9 @@ fn test_process_frame_with_zero_ms() {
     let mut machine = Machine::new(mcu);
 
     // Run for 0 ms
-    let (img, result) = machine.process_frame(0.0);
+    let result = machine.process_frame(0.0);
 
-    // Should still return an image
-    assert_eq!(img.dimensions(), (256, 240));
+    // Should return continue result
     assert_eq!(result, ExecuteResult::Continue);
 }
 

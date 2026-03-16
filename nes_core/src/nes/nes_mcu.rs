@@ -4,7 +4,7 @@ use crate::nes::lower_ram::LowerRam;
 use crate::nes::mapper;
 use crate::nes::mapper::Cartridge;
 use crate::nes::ppu::{Mirroring, Ppu, PpuTrait};
-use image::RgbaImage;
+use crate::render::Render;
 use log::info;
 use std::cell::Cell;
 
@@ -27,6 +27,15 @@ pub struct NesMcu {
 }
 
 pub fn build(file: &INesFile) -> impl Mcu + use<> {
+    build_with_renderer(file, None)
+}
+
+/// Build a NesMcu with a custom renderer
+///
+/// # Parameters
+/// - `file`: The iNES file to load
+/// - `renderer`: Optional custom renderer. If None, uses default ImageRender.
+pub fn build_with_renderer(file: &INesFile, renderer: Option<Box<dyn Render>>) -> impl Mcu + use<> {
     let cartridge = mapper::create_cartridge(file);
     let mut ppu = Ppu::default();
     ppu.set_mirroring(if file.header().ver_or_hor_arrangement {
@@ -34,6 +43,11 @@ pub fn build(file: &INesFile) -> impl Mcu + use<> {
     } else {
         Mirroring::Horizontal
     });
+
+    // Set custom renderer if provided
+    if let Some(r) = renderer {
+        ppu.set_renderer(r);
+    }
 
     NesMcu {
         lower_ram: LowerRam::new(),
@@ -279,7 +293,7 @@ impl NesMcu {
 }
 
 impl MachineMcu for NesMcu {
-    fn render(&mut self) -> &RgbaImage {
+    fn render(&mut self) {
         self.ppu.render(self.cartridge.pattern_ref())
     }
 }

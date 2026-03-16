@@ -1,5 +1,6 @@
 use crate::ines::INesFile;
 use crate::mcu::Mcu;
+use crate::render::Render;
 
 pub mod apu;
 pub mod controller;
@@ -10,6 +11,20 @@ pub mod ppu;
 
 pub fn create_mcu(file: &INesFile) -> impl Mcu + use<> {
     nes_mcu::build(file)
+}
+
+/// Create an MCU with a custom renderer
+///
+/// This allows injecting different rendering backends (image, markdown, composite, etc.)
+///
+/// # Parameters
+/// - `file`: The iNES file to load
+/// - `renderer`: Optional custom renderer. If None, uses default ImageRender.
+pub fn create_mcu_with_renderer(
+    file: &INesFile,
+    renderer: Option<Box<dyn Render>>,
+) -> impl Mcu + use<> {
+    nes_mcu::build_with_renderer(file, renderer)
 }
 
 #[cfg(test)]
