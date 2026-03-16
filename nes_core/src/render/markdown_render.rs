@@ -73,9 +73,9 @@ pub struct MarkdownRender {
     /// Sampled pixel count
     pixels_logged: usize,
 
-    /// Whether markdown export is enabled
-    /// When disabled, finish() will not export the file
-    enabled: bool,
+    /// Whether to dump the next frame
+    /// When true, finish() will export the file and reset this to false
+    dump_next_frame: bool,
 }
 
 impl MarkdownRender {
@@ -101,7 +101,7 @@ impl MarkdownRender {
             sample_rate: None,
             pixel_counter: 0,
             pixels_logged: 0,
-            enabled: false,
+            dump_next_frame: false,
         }
     }
 
@@ -110,17 +110,17 @@ impl MarkdownRender {
         self.frame_number
     }
 
-    /// Set whether markdown export is enabled
+    /// Request that the next frame be dumped to markdown
     ///
-    /// When enabled, the renderer will automatically export to a markdown file
-    /// when `finish()` is called.
-    pub fn set_enabled(&mut self, enabled: bool) {
-        self.enabled = enabled;
+    /// This will cause the next call to `finish()` to export the markdown file,
+    /// after which the flag is automatically reset to false.
+    pub fn request_dump(&mut self) {
+        self.dump_next_frame = true;
     }
 
-    /// Check if markdown export is enabled
-    pub fn is_enabled(&self) -> bool {
-        self.enabled
+    /// Check if the next frame should be dumped
+    pub fn should_dump(&self) -> bool {
+        self.dump_next_frame
     }
 
     /// Increment the frame number
@@ -331,12 +331,19 @@ impl Render for MarkdownRender {
     }
 
     fn finish(&mut self) {
-        // Auto-export markdown if enabled
-        if self.enabled {
+        // Auto-export markdown if dump is requested
+        if self.dump_next_frame {
             let path = format!("/tmp/nes_frame_{:04}.md", self.frame_number);
-            if let Err(e) = self.save_to_file(std::path::Path::new(&path)) {
-                eprintln!("Failed to save markdown frame: {}", e);
+            match self.save_to_file(std::path::Path::new(&path)) {
+                Ok(()) => {
+                    eprintln!(">> Dumped frame {} to {}", self.frame_number, path);
+                }
+                Err(e) => {
+                    eprintln!("Failed to save markdown frame: {}", e);
+                }
             }
+            // Auto-reset after dumping
+            self.dump_next_frame = false;
         }
     }
 

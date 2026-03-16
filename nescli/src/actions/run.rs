@@ -60,7 +60,7 @@ impl RunAction {
         // Create window (2x scale for better visibility: 256x240 -> 512x480)
         let window = video_subsystem
             .window(
-                "NES Simulator - Press F1 to toggle markdown debug mode",
+                "NES Simulator - Press F1 to dump next frame as markdown",
                 512,
                 480,
             )
@@ -89,7 +89,7 @@ impl RunAction {
         // Add image renderer (ImageRender is Clone and shares internal Rc)
         composite.borrow_mut().add(Box::new(image_render.clone()));
 
-        // Create and add markdown renderer (disabled by default)
+        // Create and add markdown renderer (dump requested via F1)
         let markdown_render = MarkdownRender::new(0, 256, 240);
         composite.borrow_mut().add(Box::new(markdown_render));
 
@@ -119,21 +119,16 @@ impl RunAction {
                         keycode: Some(Keycode::F1),
                         ..
                     } => {
-                        // Toggle markdown debug mode
+                        // Request markdown dump for next frame
                         if let Some(md) = composite.borrow_mut().get_mut(1) {
                             if let Some(md_render) =
                                 md.as_any_mut().downcast_mut::<MarkdownRender>()
                             {
-                                let enabled = !md_render.is_enabled();
-                                md_render.set_enabled(enabled);
-
-                                if enabled {
-                                    eprintln!(
-                                        ">> Markdown debug ENABLED - dumping all frames to /tmp/nes_frame_*.md"
-                                    );
-                                } else {
-                                    eprintln!(">> Markdown debug DISABLED");
-                                }
+                                md_render.request_dump();
+                                eprintln!(
+                                    ">> Markdown dump requested for next frame (frame {})",
+                                    md_render.frame_number()
+                                );
                             }
                         }
                     }
