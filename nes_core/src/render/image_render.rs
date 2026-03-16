@@ -4,7 +4,7 @@
 //! maintaining backward compatibility with the existing PPU rendering code.
 
 use crate::render::Render;
-use image::{ImageBuffer, Rgba};
+use image::{Rgba, RgbaImage};
 use std::fmt::Debug;
 
 /// Wrapper around `RgbaImage` that implements the `Render` trait
@@ -13,7 +13,7 @@ use std::fmt::Debug;
 /// RgbaImage type, allowing the PPU to use either abstraction.
 #[derive(Debug, Clone)]
 pub struct ImageRender {
-    image: ImageBuffer<Rgba<u8>, Vec<u8>>,
+    image: RgbaImage,
 }
 
 impl ImageRender {
@@ -24,23 +24,8 @@ impl ImageRender {
     /// - `height`: Height in pixels (typically 240 for NES)
     pub fn new(width: u32, height: u32) -> Self {
         Self {
-            image: ImageBuffer::new(width, height),
+            image: RgbaImage::new(width, height),
         }
-    }
-
-    /// Get a reference to the underlying image
-    pub fn as_image(&self) -> &ImageBuffer<Rgba<u8>, Vec<u8>> {
-        &self.image
-    }
-
-    /// Get a mutable reference to the underlying image
-    pub fn as_image_mut(&mut self) -> &mut ImageBuffer<Rgba<u8>, Vec<u8>> {
-        &mut self.image
-    }
-
-    /// Consume this wrapper and return the underlying image
-    pub fn into_image(self) -> ImageBuffer<Rgba<u8>, Vec<u8>> {
-        self.image
     }
 }
 
@@ -62,22 +47,15 @@ impl Render for ImageRender {
 }
 
 /// Implement AsRef for convenient access to the image
-impl AsRef<ImageBuffer<Rgba<u8>, Vec<u8>>> for ImageRender {
-    fn as_ref(&self) -> &ImageBuffer<Rgba<u8>, Vec<u8>> {
+impl AsRef<RgbaImage> for ImageRender {
+    fn as_ref(&self) -> &RgbaImage {
         &self.image
-    }
-}
-
-/// Implement AsMut for convenient mutable access to the image
-impl AsMut<ImageBuffer<Rgba<u8>, Vec<u8>>> for ImageRender {
-    fn as_mut(&mut self) -> &mut ImageBuffer<Rgba<u8>, Vec<u8>> {
-        &mut self.image
     }
 }
 
 // Also implement Render directly for RgbaImage for convenience
 // This allows existing code to work with minimal changes
-impl Render for ImageBuffer<Rgba<u8>, Vec<u8>> {
+impl Render for RgbaImage {
     fn clear(&mut self, color: [u8; 4]) {
         let pixel = Rgba(color);
         for p in self.pixels_mut() {
@@ -110,7 +88,7 @@ mod tests {
         renderer.clear([255, 0, 0, 255]);
 
         // Check that all pixels are red
-        for pixel in renderer.as_image().pixels() {
+        for pixel in renderer.as_ref().pixels() {
             assert_eq!(*pixel, Rgba([255, 0, 0, 255]));
         }
     }
@@ -124,14 +102,14 @@ mod tests {
         renderer.set_pixel(5, 5, [0, 255, 0, 255]);
         renderer.set_pixel(9, 9, [0, 0, 255, 255]);
 
-        assert_eq!(renderer.as_image().get_pixel(0, 0), &Rgba([255, 0, 0, 255]));
-        assert_eq!(renderer.as_image().get_pixel(5, 5), &Rgba([0, 255, 0, 255]));
-        assert_eq!(renderer.as_image().get_pixel(9, 9), &Rgba([0, 0, 255, 255]));
+        assert_eq!(renderer.as_ref().get_pixel(0, 0), &Rgba([255, 0, 0, 255]));
+        assert_eq!(renderer.as_ref().get_pixel(5, 5), &Rgba([0, 255, 0, 255]));
+        assert_eq!(renderer.as_ref().get_pixel(9, 9), &Rgba([0, 0, 255, 255]));
     }
 
     #[test]
     fn test_rgba_image_render_impl() {
-        let mut image: ImageBuffer<Rgba<u8>, Vec<u8>> = ImageBuffer::new(10, 10);
+        let mut image: RgbaImage = RgbaImage::new(10, 10);
 
         // Test that RgbaImage implements Render
         image.clear([128, 128, 128, 255]);
@@ -146,16 +124,8 @@ mod tests {
         let renderer = ImageRender::new(256, 240);
 
         // Test AsRef
-        let image_ref: &ImageBuffer<Rgba<u8>, Vec<u8>> = renderer.as_ref();
+        let image_ref = renderer.as_ref();
         assert_eq!(image_ref.dimensions(), (256, 240));
-    }
-
-    #[test]
-    fn test_image_render_into_image() {
-        let renderer = ImageRender::new(64, 64);
-        let image: ImageBuffer<Rgba<u8>, Vec<u8>> = renderer.into_image();
-
-        assert_eq!(image.dimensions(), (64, 64));
     }
 
     #[test]

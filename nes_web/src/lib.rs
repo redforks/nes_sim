@@ -78,7 +78,7 @@ impl Machine {
     pub fn process_frame(&mut self, ms: f64) {
         self.inner.process_frame(ms);
         let borrowed = self.image_render.borrow();
-        let img = borrowed.as_image();
+        let img = borrowed.as_ref();
         let bytes = img.as_bytes();
         let img_data =
             ImageData::new_with_u8_clamped_array_and_sh(Clamped(bytes), 256, 240).unwrap();
