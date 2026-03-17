@@ -1,4 +1,4 @@
-use crate::mcu::Mcu;
+use crate::mcu::{DefinedRegion, Mcu};
 use crate::render::{ImageRender, Render};
 use crate::to_from_u8;
 use image::Rgba;
@@ -168,6 +168,12 @@ impl Mcu for Palette {
     fn write(&mut self, address: u16, value: u8) {
         info!("set palette ${:x}: {:x}", address, value);
         self.data[self.get_addr(address)] = value;
+    }
+}
+
+impl DefinedRegion for Palette {
+    fn region(&self) -> (u16, u16) {
+        (0x3f00, 0x3fff)
     }
 }
 

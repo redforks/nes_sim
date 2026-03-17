@@ -1,5 +1,5 @@
-use crate::mcu::Mcu;
-use crate::nes::ppu::{Pattern, Tile, NAME_TABLE_MEM_START, TILES_PER_COL, TILES_PER_ROW};
+use crate::mcu::{DefinedRegion, Mcu};
+use crate::nes::ppu::{NAME_TABLE_MEM_START, Pattern, TILES_PER_COL, TILES_PER_ROW, Tile};
 
 #[derive(Copy, Clone)]
 pub struct AttributeTable<'a>(&'a [u8]);
@@ -125,6 +125,12 @@ impl Mcu for NameTableControl {
 
     fn write(&mut self, address: u16, value: u8) {
         self.mem[self.offset(address)] = value;
+    }
+}
+
+impl DefinedRegion for NameTableControl {
+    fn region(&self) -> (u16, u16) {
+        (0x2000, 0x2fff)
     }
 }
 
