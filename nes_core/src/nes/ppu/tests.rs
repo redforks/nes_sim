@@ -521,3 +521,91 @@ fn test_read_buffer() {
     let _val2 = ppu.read(&pattern_data, 0x2007);
     // Actual value is loaded into buffer for next read
 }
+
+// ============================================================================
+// render_pixel() Tests
+// ============================================================================
+
+fn create_test_ppu_with_mask(mask: PpuMask) -> Ppu {
+    let mut ppu = Ppu::default();
+    ppu.mask = mask;
+    ppu
+}
+
+fn create_pattern_opaque() -> [u8; 8192] {
+    let mut pattern = [0; 8192];
+    for row in 0..8 {
+        pattern[row] = 0xFF;
+        pattern[row + 8] = 0xFF;
+    }
+    pattern
+}
+
+fn create_pattern_transparent() -> [u8; 8192] {
+    [0; 8192]
+}
+
+fn setup_sprite(ppu: &mut Ppu, index: usize, y: u8, tile: u8, attr: u8, x: u8) {
+    ppu.oam[index * 4] = y;
+    ppu.oam[index * 4 + 1] = tile;
+    ppu.oam[index * 4 + 2] = attr;
+    ppu.oam[index * 4 + 3] = x;
+}
+
+#[test]
+fn test_render_pixel_returns_pixel() {
+    let mut ppu = create_test_ppu_with_mask(
+        PpuMask::new()
+            .with_background_enabled(true)
+            .with_background_left_enabled(true),
+    );
+    let pattern = create_pattern_opaque();
+
+    let pixel = ppu.render_pixel(&pattern, 0, 0);
+    let rgba = pixel.0;
+    assert_eq!(rgba.len(), 4);
+}
+
+#[test]
+fn test_render_pixel_both_disabled() {
+    let mut ppu = create_test_ppu_with_mask(PpuMask::new());
+    let pattern = create_pattern_opaque();
+
+    let pixel = ppu.render_pixel(&pattern, 10, 10);
+    // When both disabled, returns default background color
+    let rgba = pixel.0;
+    assert_eq!(rgba.len(), 4);
+}
+
+#[test]
+fn test_render_pixel_sprite_zero_hit() {
+    let mut ppu = create_test_ppu_with_mask(
+        PpuMask::new()
+            .with_background_enabled(true)
+            .with_sprite_enabled(true)
+            .with_background_left_enabled(true)
+            .with_sprite_left_enabled(true),
+    );
+    let pattern = create_pattern_opaque();
+    ppu.name_table.write(0x2000, 0);
+    setup_sprite(&mut ppu, 0, 9, 0, 0, 0);
+
+    assert!(!ppu.status.borrow().sprite_zero_hit());
+    ppu.render_pixel(&pattern, 0, 10);
+    assert!(ppu.status.borrow().sprite_zero_hit());
+}
+
+#[test]
+fn test_render_pixel_sprite_zero_not_at_x255() {
+    let mut ppu = create_test_ppu_with_mask(
+        PpuMask::new()
+            .with_background_enabled(true)
+            .with_sprite_enabled(true),
+    );
+    let pattern = create_pattern_opaque();
+    ppu.name_table.write(0x2000 + 31, 0);
+    setup_sprite(&mut ppu, 0, 9, 0, 0, 248);
+
+    ppu.render_pixel(&pattern, 255, 10);
+    assert!(!ppu.status.borrow().sprite_zero_hit());
+}
