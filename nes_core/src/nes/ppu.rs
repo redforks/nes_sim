@@ -14,6 +14,48 @@ pub use pattern::*;
 
 type Pixel = Rgba<u8>;
 
+/// Apply grayscale and emphasis effects to a pixel color.
+/// - Grayscale: Converts color to grayscale by averaging RGB channels
+/// - Emphasis: Attenuates non-emphasized color channels (e.g., red emphasis darkens G and B)
+fn apply_effects(
+    pixel: Pixel,
+    grayscale: bool,
+    red_tint: bool,
+    green_tint: bool,
+    blue_tint: bool,
+) -> Pixel {
+    let Rgba([r, g, b, a]) = pixel;
+
+    // Apply emphasis (color emphasis darkens the non-emphasized channels)
+    // Using ~0.75 attenuation factor (192/256)
+    let r = if red_tint || (!green_tint && !blue_tint) {
+        r
+    } else {
+        (r as u16 * 192 / 256) as u8
+    };
+    let g = if green_tint || (!red_tint && !blue_tint) {
+        g
+    } else {
+        (g as u16 * 192 / 256) as u8
+    };
+    let b = if blue_tint || (!red_tint && !green_tint) {
+        b
+    } else {
+        (b as u16 * 192 / 256) as u8
+    };
+
+    // Apply grayscale by averaging RGB channels
+    let (r, g, b) = if grayscale {
+        // Use luminance weights (ITU-R BT.601): 0.299R + 0.587G + 0.114B
+        let gray = (r as u16 * 77 + g as u16 * 150 + b as u16 * 29) / 256;
+        (gray as u8, gray as u8, gray as u8)
+    } else {
+        (r, g, b)
+    };
+
+    Rgba([r, g, b, a])
+}
+
 #[derive(Copy, Clone)]
 #[bitfield]
 pub struct PpuCtrl {
@@ -353,7 +395,14 @@ impl Ppu {
             }
         };
 
-        color
+        // Apply grayscale and emphasis effects from PPUMASK
+        apply_effects(
+            color,
+            self.mask.grayscale(),
+            self.mask.red_tint(),
+            self.mask.green_tint(),
+            self.mask.blue_tint(),
+        )
     }
 
     /// Get background pixel color index at the given screen position.
