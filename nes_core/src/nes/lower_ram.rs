@@ -1,4 +1,4 @@
-use crate::mcu::{DefinedRegion, Mcu};
+use crate::mcu::Mcu;
 
 /// Lower nes RAM (0x0000-0x07FF) and remap to 0x0800-0x1FFF
 pub struct LowerRam {
@@ -18,12 +18,6 @@ impl Mcu for LowerRam {
 
     fn write(&mut self, address: u16, value: u8) {
         self.ram[address as usize & 0x7ff] = value;
-    }
-}
-
-impl DefinedRegion for LowerRam {
-    fn region(&self) -> (u16, u16) {
-        (0x0000, 0x1fff)
     }
 }
 
