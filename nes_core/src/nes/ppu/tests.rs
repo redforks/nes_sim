@@ -529,20 +529,49 @@ fn test_read_buffer() {
 fn create_test_ppu_with_mask(mask: PpuMask) -> Ppu {
     let mut ppu = Ppu::default();
     ppu.mask = mask;
+    for i in 0..64 {
+        ppu.oam[i * 4] = 0x20;
+        ppu.oam[i * 4 + 3] = 0xFF;
+    }
     ppu
 }
 
-fn create_pattern_opaque() -> [u8; 8192] {
-    let mut pattern = [0; 8192];
-    for row in 0..8 {
-        pattern[row] = 0xFF;
-        pattern[row + 8] = 0xFF;
-    }
-    pattern
+fn create_pattern() -> [u8; 8192] {
+    [0; 8192]
 }
 
-fn create_pattern_transparent() -> [u8; 8192] {
-    [0; 8192]
+fn set_tile_solid(pattern: &mut [u8; 8192], table: usize, tile: u8, color_idx: u8) {
+    let offset = table * 4096 + tile as usize * 16;
+    let low = if color_idx & 0x01 != 0 { 0xFF } else { 0x00 };
+    let high = if color_idx & 0x02 != 0 { 0xFF } else { 0x00 };
+    for row in 0..8 {
+        pattern[offset + row] = low;
+        pattern[offset + row + 8] = high;
+    }
+}
+
+fn set_tile_pixel(
+    pattern: &mut [u8; 8192],
+    table: usize,
+    tile: u8,
+    x: usize,
+    y: usize,
+    color_idx: u8,
+) {
+    let offset = table * 4096 + tile as usize * 16;
+    let bit = 7 - x;
+    let low_mask = 1 << bit;
+    let high_mask = 1 << bit;
+
+    pattern[offset + y] &= !low_mask;
+    pattern[offset + y + 8] &= !high_mask;
+
+    if color_idx & 0x01 != 0 {
+        pattern[offset + y] |= low_mask;
+    }
+    if color_idx & 0x02 != 0 {
+        pattern[offset + y + 8] |= high_mask;
+    }
 }
 
 fn setup_sprite(ppu: &mut Ppu, index: usize, y: u8, tile: u8, attr: u8, x: u8) {
@@ -552,29 +581,312 @@ fn setup_sprite(ppu: &mut Ppu, index: usize, y: u8, tile: u8, attr: u8, x: u8) {
     ppu.oam[index * 4 + 3] = x;
 }
 
+fn set_bg_tile(ppu: &mut Ppu, tile: u8, palette_idx: u8) {
+    ppu.name_table.write(0x2000, tile);
+    ppu.name_table.write(0x23c0, palette_idx & 0x03);
+}
+
+fn set_bg_palette_color(ppu: &mut Ppu, palette_idx: u8, color_idx: u8, color: u8) {
+    let addr = 0x3f00 + palette_idx as u16 * 4 + color_idx as u16;
+    ppu.palette.write(addr, color);
+}
+
+fn set_sprite_palette_color(ppu: &mut Ppu, palette_idx: u8, color_idx: u8, color: u8) {
+    let addr = 0x3f10 + palette_idx as u16 * 4 + color_idx as u16;
+    ppu.palette.write(addr, color);
+}
+
+fn set_universal_bg_color(ppu: &mut Ppu, color: u8) {
+    ppu.palette.write(0x3f00, color);
+}
+
 #[test]
-fn test_render_pixel_returns_pixel() {
+fn test_render_pixel_returns_background_color() {
     let mut ppu = create_test_ppu_with_mask(
         PpuMask::new()
             .with_background_enabled(true)
             .with_background_left_enabled(true),
     );
-    let pattern = create_pattern_opaque();
+    let mut pattern = create_pattern();
+    set_tile_solid(&mut pattern, 0, 0, 1);
+    set_bg_tile(&mut ppu, 0, 0);
+    set_bg_palette_color(&mut ppu, 0, 1, 0x16);
 
     let pixel = ppu.render_pixel(&pattern, 0, 0);
-    let rgba = pixel.0;
-    assert_eq!(rgba.len(), 4);
+    assert_eq!(pixel, COLORS[0x16]);
 }
 
 #[test]
 fn test_render_pixel_both_disabled() {
     let mut ppu = create_test_ppu_with_mask(PpuMask::new());
-    let pattern = create_pattern_opaque();
+    let pattern = create_pattern();
+    set_universal_bg_color(&mut ppu, 0x21);
 
     let pixel = ppu.render_pixel(&pattern, 10, 10);
-    // When both disabled, returns default background color
-    let rgba = pixel.0;
-    assert_eq!(rgba.len(), 4);
+    assert_eq!(pixel, COLORS[0x21]);
+}
+
+#[test]
+fn test_render_pixel_transparent_bg_and_sprite_use_backdrop_color() {
+    let mut ppu = create_test_ppu_with_mask(
+        PpuMask::new()
+            .with_background_enabled(true)
+            .with_sprite_enabled(true)
+            .with_background_left_enabled(true)
+            .with_sprite_left_enabled(true),
+    );
+    let pattern = create_pattern();
+    set_universal_bg_color(&mut ppu, 0x2c);
+
+    let pixel = ppu.render_pixel(&pattern, 12, 34);
+    assert_eq!(pixel, COLORS[0x2c]);
+}
+
+#[test]
+fn test_render_pixel_returns_sprite_color_when_background_disabled() {
+    let mut ppu = create_test_ppu_with_mask(
+        PpuMask::new()
+            .with_sprite_enabled(true)
+            .with_sprite_left_enabled(true),
+    );
+    let mut pattern = create_pattern();
+    set_tile_solid(&mut pattern, 0, 1, 1);
+    set_sprite_palette_color(&mut ppu, 0, 1, 0x27);
+    setup_sprite(&mut ppu, 0, 0, 1, 0, 0);
+
+    let pixel = ppu.render_pixel(&pattern, 0, 1);
+    assert_eq!(pixel, COLORS[0x27]);
+}
+
+#[test]
+fn test_render_pixel_transparent_sprite_falls_back_to_background() {
+    let mut ppu = create_test_ppu_with_mask(
+        PpuMask::new()
+            .with_background_enabled(true)
+            .with_sprite_enabled(true)
+            .with_background_left_enabled(true)
+            .with_sprite_left_enabled(true),
+    );
+    let mut pattern = create_pattern();
+    set_tile_solid(&mut pattern, 0, 0, 1);
+    set_bg_tile(&mut ppu, 0, 0);
+    set_bg_palette_color(&mut ppu, 0, 1, 0x12);
+    setup_sprite(&mut ppu, 0, 0, 1, 0, 0);
+
+    let pixel = ppu.render_pixel(&pattern, 0, 1);
+    assert_eq!(pixel, COLORS[0x12]);
+}
+
+#[test]
+fn test_render_pixel_sprite_in_front_of_background() {
+    let mut ppu = create_test_ppu_with_mask(
+        PpuMask::new()
+            .with_background_enabled(true)
+            .with_sprite_enabled(true)
+            .with_background_left_enabled(true)
+            .with_sprite_left_enabled(true),
+    );
+    let mut pattern = create_pattern();
+    set_tile_solid(&mut pattern, 0, 0, 1);
+    set_tile_solid(&mut pattern, 0, 1, 2);
+    set_bg_tile(&mut ppu, 0, 0);
+    set_bg_palette_color(&mut ppu, 0, 1, 0x11);
+    set_sprite_palette_color(&mut ppu, 0, 2, 0x22);
+    setup_sprite(&mut ppu, 0, 0, 1, 0, 0);
+
+    let pixel = ppu.render_pixel(&pattern, 0, 1);
+    assert_eq!(pixel, COLORS[0x22]);
+}
+
+#[test]
+fn test_render_pixel_background_priority_when_sprite_is_behind() {
+    let mut ppu = create_test_ppu_with_mask(
+        PpuMask::new()
+            .with_background_enabled(true)
+            .with_sprite_enabled(true)
+            .with_background_left_enabled(true)
+            .with_sprite_left_enabled(true),
+    );
+    let mut pattern = create_pattern();
+    set_tile_solid(&mut pattern, 0, 0, 1);
+    set_tile_solid(&mut pattern, 0, 1, 2);
+    set_bg_tile(&mut ppu, 0, 0);
+    set_bg_palette_color(&mut ppu, 0, 1, 0x14);
+    set_sprite_palette_color(&mut ppu, 0, 2, 0x24);
+    setup_sprite(&mut ppu, 0, 0, 1, 0x20, 0);
+
+    let pixel = ppu.render_pixel(&pattern, 0, 1);
+    assert_eq!(pixel, COLORS[0x14]);
+}
+
+#[test]
+fn test_render_pixel_sprite_behind_transparent_background() {
+    let mut ppu = create_test_ppu_with_mask(
+        PpuMask::new()
+            .with_background_enabled(true)
+            .with_sprite_enabled(true)
+            .with_background_left_enabled(true)
+            .with_sprite_left_enabled(true),
+    );
+    let mut pattern = create_pattern();
+    set_tile_solid(&mut pattern, 0, 1, 2);
+    set_bg_tile(&mut ppu, 0, 0);
+    set_sprite_palette_color(&mut ppu, 0, 2, 0x25);
+    setup_sprite(&mut ppu, 0, 0, 1, 0x20, 0);
+
+    let pixel = ppu.render_pixel(&pattern, 0, 1);
+    assert_eq!(pixel, COLORS[0x25]);
+}
+
+#[test]
+fn test_render_pixel_applies_left_column_clipping() {
+    let mut ppu = create_test_ppu_with_mask(
+        PpuMask::new()
+            .with_background_enabled(true)
+            .with_sprite_enabled(true),
+    );
+    let mut pattern = create_pattern();
+    set_tile_solid(&mut pattern, 0, 0, 1);
+    set_tile_solid(&mut pattern, 0, 1, 2);
+    set_bg_tile(&mut ppu, 0, 0);
+    set_universal_bg_color(&mut ppu, 0x20);
+    set_bg_palette_color(&mut ppu, 0, 1, 0x10);
+    set_sprite_palette_color(&mut ppu, 0, 2, 0x30);
+    setup_sprite(&mut ppu, 0, 0, 1, 0, 0);
+
+    let pixel = ppu.render_pixel(&pattern, 0, 1);
+    assert_eq!(pixel, COLORS[0x20]);
+}
+
+#[test]
+fn test_render_pixel_uses_highest_priority_opaque_sprite() {
+    let mut ppu = create_test_ppu_with_mask(
+        PpuMask::new()
+            .with_sprite_enabled(true)
+            .with_sprite_left_enabled(true),
+    );
+    let mut pattern = create_pattern();
+    set_tile_solid(&mut pattern, 0, 1, 1);
+    set_tile_solid(&mut pattern, 0, 2, 2);
+    set_sprite_palette_color(&mut ppu, 0, 1, 0x26);
+    set_sprite_palette_color(&mut ppu, 1, 2, 0x36);
+    setup_sprite(&mut ppu, 0, 0, 1, 0, 0);
+    setup_sprite(&mut ppu, 1, 0, 2, 1, 0);
+
+    let pixel = ppu.render_pixel(&pattern, 0, 1);
+    assert_eq!(pixel, COLORS[0x26]);
+}
+
+#[test]
+fn test_render_pixel_applies_sprite_priority_before_background_priority() {
+    let mut ppu = create_test_ppu_with_mask(
+        PpuMask::new()
+            .with_background_enabled(true)
+            .with_sprite_enabled(true)
+            .with_background_left_enabled(true)
+            .with_sprite_left_enabled(true),
+    );
+    let mut pattern = create_pattern();
+    set_tile_solid(&mut pattern, 0, 0, 1);
+    set_tile_solid(&mut pattern, 0, 1, 2);
+    set_tile_solid(&mut pattern, 0, 2, 3);
+    set_bg_tile(&mut ppu, 0, 0);
+    set_bg_palette_color(&mut ppu, 0, 1, 0x14);
+    set_sprite_palette_color(&mut ppu, 0, 2, 0x24);
+    set_sprite_palette_color(&mut ppu, 1, 3, 0x34);
+    setup_sprite(&mut ppu, 0, 0, 1, 0x20, 0);
+    setup_sprite(&mut ppu, 1, 0, 2, 1, 0);
+
+    let pixel = ppu.render_pixel(&pattern, 0, 1);
+    assert_eq!(pixel, COLORS[0x14]);
+}
+
+#[test]
+fn test_render_pixel_skips_transparent_higher_priority_sprite() {
+    let mut ppu = create_test_ppu_with_mask(
+        PpuMask::new()
+            .with_sprite_enabled(true)
+            .with_sprite_left_enabled(true),
+    );
+    let mut pattern = create_pattern();
+    set_tile_solid(&mut pattern, 0, 2, 2);
+    set_sprite_palette_color(&mut ppu, 1, 2, 0x37);
+    setup_sprite(&mut ppu, 0, 0, 1, 0, 0);
+    setup_sprite(&mut ppu, 1, 0, 2, 1, 0);
+
+    let pixel = ppu.render_pixel(&pattern, 0, 1);
+    assert_eq!(pixel, COLORS[0x37]);
+}
+
+#[test]
+fn test_render_pixel_respects_background_pattern_table_selection() {
+    let mut ppu = create_test_ppu_with_mask(
+        PpuMask::new()
+            .with_background_enabled(true)
+            .with_background_left_enabled(true),
+    );
+    let mut pattern = create_pattern();
+    set_tile_solid(&mut pattern, 0, 0, 1);
+    set_tile_solid(&mut pattern, 1, 0, 2);
+    set_bg_tile(&mut ppu, 0, 0);
+    set_bg_palette_color(&mut ppu, 0, 1, 0x18);
+    set_bg_palette_color(&mut ppu, 0, 2, 0x28);
+    ppu.set_control_flags(PpuCtrl::new().with_background_pattern_table(true));
+
+    let pixel = ppu.render_pixel(&pattern, 0, 0);
+    assert_eq!(pixel, COLORS[0x28]);
+}
+
+#[test]
+fn test_render_pixel_respects_sprite_pattern_table_selection() {
+    let mut ppu = create_test_ppu_with_mask(
+        PpuMask::new()
+            .with_sprite_enabled(true)
+            .with_sprite_left_enabled(true),
+    );
+    let mut pattern = create_pattern();
+    set_tile_solid(&mut pattern, 0, 1, 1);
+    set_tile_solid(&mut pattern, 1, 1, 2);
+    set_sprite_palette_color(&mut ppu, 0, 1, 0x19);
+    set_sprite_palette_color(&mut ppu, 0, 2, 0x29);
+    ppu.set_control_flags(PpuCtrl::new().with_sprite_pattern_table(true));
+    setup_sprite(&mut ppu, 0, 0, 1, 0, 0);
+
+    let pixel = ppu.render_pixel(&pattern, 0, 1);
+    assert_eq!(pixel, COLORS[0x29]);
+}
+
+#[test]
+fn test_render_pixel_respects_sprite_flipping() {
+    let mut ppu = create_test_ppu_with_mask(
+        PpuMask::new()
+            .with_sprite_enabled(true)
+            .with_sprite_left_enabled(true),
+    );
+    let mut pattern = create_pattern();
+    set_tile_pixel(&mut pattern, 0, 1, 0, 0, 1);
+    set_sprite_palette_color(&mut ppu, 0, 1, 0x2a);
+    setup_sprite(&mut ppu, 0, 10, 1, 0xC0, 0);
+
+    let pixel = ppu.render_pixel(&pattern, 7, 18);
+    assert_eq!(pixel, COLORS[0x2a]);
+}
+
+#[test]
+fn test_render_pixel_uses_second_tile_for_8x16_sprites() {
+    let mut ppu = create_test_ppu_with_mask(
+        PpuMask::new()
+            .with_sprite_enabled(true)
+            .with_sprite_left_enabled(true),
+    );
+    let mut pattern = create_pattern();
+    set_tile_solid(&mut pattern, 0, 1, 3);
+    set_sprite_palette_color(&mut ppu, 0, 3, 0x2b);
+    ppu.set_control_flags(PpuCtrl::new().with_sprite_size(true));
+    setup_sprite(&mut ppu, 0, 10, 0, 0, 0);
+
+    let pixel = ppu.render_pixel(&pattern, 0, 19);
+    assert_eq!(pixel, COLORS[0x2b]);
 }
 
 #[test]
@@ -586,13 +898,89 @@ fn test_render_pixel_sprite_zero_hit() {
             .with_background_left_enabled(true)
             .with_sprite_left_enabled(true),
     );
-    let pattern = create_pattern_opaque();
-    ppu.name_table.write(0x2000, 0);
-    setup_sprite(&mut ppu, 0, 9, 0, 0, 0);
+    let mut pattern = create_pattern();
+    set_tile_solid(&mut pattern, 0, 0, 1);
+    set_tile_solid(&mut pattern, 0, 1, 2);
+    ppu.name_table.write(0x2000 + 1, 0);
+    setup_sprite(&mut ppu, 0, 0, 1, 0, 8);
 
     assert!(!ppu.status.borrow().sprite_zero_hit());
-    ppu.render_pixel(&pattern, 0, 10);
+    ppu.render_pixel(&pattern, 8, 1);
     assert!(ppu.status.borrow().sprite_zero_hit());
+}
+
+#[test]
+fn test_render_pixel_sprite_zero_hit_requires_opaque_background() {
+    let mut ppu = create_test_ppu_with_mask(
+        PpuMask::new()
+            .with_background_enabled(true)
+            .with_sprite_enabled(true)
+            .with_background_left_enabled(true)
+            .with_sprite_left_enabled(true),
+    );
+    let mut pattern = create_pattern();
+    set_tile_solid(&mut pattern, 0, 1, 2);
+    set_bg_tile(&mut ppu, 0, 0);
+    setup_sprite(&mut ppu, 0, 0, 1, 0, 0);
+
+    ppu.render_pixel(&pattern, 0, 1);
+    assert!(!ppu.status.borrow().sprite_zero_hit());
+}
+
+#[test]
+fn test_render_pixel_sprite_zero_hit_respects_background_left_mask() {
+    let mut ppu = create_test_ppu_with_mask(
+        PpuMask::new()
+            .with_background_enabled(true)
+            .with_sprite_enabled(true)
+            .with_sprite_left_enabled(true),
+    );
+    let mut pattern = create_pattern();
+    set_tile_solid(&mut pattern, 0, 0, 1);
+    set_tile_solid(&mut pattern, 0, 1, 2);
+    set_bg_tile(&mut ppu, 0, 0);
+    setup_sprite(&mut ppu, 0, 0, 1, 0, 0);
+
+    ppu.render_pixel(&pattern, 0, 1);
+    assert!(!ppu.status.borrow().sprite_zero_hit());
+}
+
+#[test]
+fn test_render_pixel_sprite_zero_hit_respects_sprite_left_mask() {
+    let mut ppu = create_test_ppu_with_mask(
+        PpuMask::new()
+            .with_background_enabled(true)
+            .with_sprite_enabled(true)
+            .with_background_left_enabled(true),
+    );
+    let mut pattern = create_pattern();
+    set_tile_solid(&mut pattern, 0, 0, 1);
+    set_tile_solid(&mut pattern, 0, 1, 2);
+    set_bg_tile(&mut ppu, 0, 0);
+    setup_sprite(&mut ppu, 0, 0, 1, 0, 0);
+
+    ppu.render_pixel(&pattern, 0, 1);
+    assert!(!ppu.status.borrow().sprite_zero_hit());
+}
+
+#[test]
+fn test_render_pixel_sprite_zero_hit_requires_sprite_zero() {
+    let mut ppu = create_test_ppu_with_mask(
+        PpuMask::new()
+            .with_background_enabled(true)
+            .with_sprite_enabled(true)
+            .with_background_left_enabled(true)
+            .with_sprite_left_enabled(true),
+    );
+    let mut pattern = create_pattern();
+    set_tile_solid(&mut pattern, 0, 0, 1);
+    set_tile_solid(&mut pattern, 0, 1, 2);
+    set_bg_tile(&mut ppu, 0, 0);
+    setup_sprite(&mut ppu, 0, 20, 1, 0, 20);
+    setup_sprite(&mut ppu, 1, 0, 1, 0, 0);
+
+    ppu.render_pixel(&pattern, 0, 1);
+    assert!(!ppu.status.borrow().sprite_zero_hit());
 }
 
 #[test]
@@ -602,7 +990,9 @@ fn test_render_pixel_sprite_zero_not_at_x255() {
             .with_background_enabled(true)
             .with_sprite_enabled(true),
     );
-    let pattern = create_pattern_opaque();
+    let mut pattern = create_pattern();
+    set_tile_solid(&mut pattern, 0, 0, 1);
+    set_tile_solid(&mut pattern, 0, 1, 2);
     ppu.name_table.write(0x2000 + 31, 0);
     setup_sprite(&mut ppu, 0, 9, 0, 0, 248);
 
