@@ -172,7 +172,7 @@ impl Mcu for Palette {
 }
 
 pub struct Ppu {
-    pub ctrl_flags: PpuCtrl,
+    ctrl_flags: PpuCtrl,
     status: RefCell<PpuStatus>,
     name_table: NameTableControl, // name table
     cur_name_table_addr: u16,     // current active name table start address
@@ -250,7 +250,9 @@ impl Ppu {
 
         // Render pixel during visible scanlines (0-239) and visible dots (0-255)
         if scanline < 240 && dot < 256 {
-            self.render_pixel(pattern, dot as u8, scanline as u8);
+            let pixel = self.render_pixel(pattern, dot as u8, scanline as u8);
+            self.renderer
+                .set_pixel(dot as u32, scanline as u32, pixel.0);
         }
 
         // At end of pre-render scanline (261), clear screen for next frame
@@ -303,7 +305,10 @@ impl Ppu {
 
     /// Render a single pixel at the given screen coordinates.
     /// Handles both background and sprite rendering with priority.
-    fn render_pixel(&mut self, pattern: &[u8], screen_x: u8, screen_y: u8) {
+    ///
+    /// # Returns
+    /// The computed pixel color as `Pixel` (RGBA).
+    fn render_pixel(&mut self, pattern: &[u8], screen_x: u8, screen_y: u8) -> Pixel {
         let bg_pixel = if self.mask.background_enabled() {
             self.get_background_pixel(pattern, screen_x, screen_y)
         } else {
@@ -348,8 +353,7 @@ impl Ppu {
             }
         };
 
-        self.renderer
-            .set_pixel(screen_x as u32, screen_y as u32, color.0);
+        color
     }
 
     /// Get background pixel color index at the given screen position.
