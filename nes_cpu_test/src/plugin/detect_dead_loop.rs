@@ -21,7 +21,7 @@ impl<const DEPTH: usize, const REPEATS: u32> DetectDeadLoop<DEPTH, REPEATS> {
 impl<const DEPTH: usize, const REPEATS: u32, M: Mcu> Plugin<M> for DetectDeadLoop<DEPTH, REPEATS> {
     fn start(&mut self, _: &Cpu<M>) {}
 
-    fn end(&mut self, cpu: &Cpu<M>) {
+    fn end(&mut self, cpu: &Cpu<M>, _cycles: u8) {
         if self.recent_pc.len() == DEPTH * 2 {
             self.recent_pc.pop_front();
         }
@@ -74,7 +74,7 @@ mod tests {
         let mut p = DetectDeadLoop::<2, 2>::new();
         for pc in pcs.iter().copied() {
             cpu.pc = pc;
-            p.end(&cpu);
+            p.end(&cpu, 0); // cycles not used in this plugin
         }
 
         assert_eq!(exp_count, p.count);

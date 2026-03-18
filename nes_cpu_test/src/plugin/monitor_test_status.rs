@@ -41,7 +41,7 @@ pub struct MonitorTestStatus {
 impl<M: Mcu> Plugin<M> for MonitorTestStatus {
     fn start(&mut self, _: &Cpu<M>) {}
 
-    fn end(&mut self, cpu: &Cpu<M>) {
+    fn end(&mut self, cpu: &Cpu<M>, _cycles: u8) {
         let status = Status::parse(cpu);
         if status == Status::ShouldReset && self.should_reset > 0 {
             self.should_reset -= 1;
