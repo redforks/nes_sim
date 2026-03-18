@@ -174,7 +174,7 @@ mod tests {
 
     #[test]
     fn test_mock_mcu_flags() {
-        let mut mcu = MockMcu::new()
+        let mcu = MockMcu::new()
             .with_tick_ppu_result(true)
             .with_irq_request(true);
         assert!(mcu.tick_ppu());

@@ -25,7 +25,7 @@ impl ReportPlugin {
 }
 
 impl<M: Mcu> Plugin<M> for ReportPlugin {
-    fn start(&mut self, cpu: &Cpu<M>) {
+    fn start(&mut self, cpu: &mut Cpu<M>) {
         self.count += 1;
 
         if self.verbose {
@@ -40,7 +40,7 @@ impl<M: Mcu> Plugin<M> for ReportPlugin {
         }
     }
 
-    fn end(&mut self, cpu: &Cpu<M>, _cycles: u8) {
+    fn end(&mut self, cpu: &mut Cpu<M>, _cycles: u8) {
         if self.verbose {
             let flags = format_flags(cpu);
             let top = cpu.peek_stack();

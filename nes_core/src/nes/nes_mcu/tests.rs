@@ -134,7 +134,7 @@ fn test_cartridge_prg_rom_access() {
 
 #[test]
 fn test_frame_counter_interrupt_flag() {
-    let mut mcu = NesMcu {
+    let mcu = NesMcu {
         lower_ram: LowerRam::new(),
         ppu: Ppu::default(),
         after_ppu: RamMcu::start_from(0x4000, [0; 0x20]),
@@ -155,7 +155,7 @@ fn test_frame_counter_interrupt_flag() {
 
 #[test]
 fn test_no_interrupt_when_both_false() {
-    let mut mcu = NesMcu {
+    let mcu = NesMcu {
         lower_ram: LowerRam::new(),
         ppu: Ppu::default(),
         after_ppu: RamMcu::start_from(0x4000, [0; 0x20]),

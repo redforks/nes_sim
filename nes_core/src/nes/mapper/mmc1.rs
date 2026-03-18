@@ -311,7 +311,7 @@ mod tests {
 
     #[test]
     fn control_ppu_mirroring() {
-        let (mut mmc1, mut ppu) = create(|_| {});
+        let (mmc1, mut ppu) = create(|_| {});
         mmc1.control(&mut ppu, ControlFlags::new().with_mirroring(0));
         assert_eq!(ppu.mirroring(), Mirroring::LowerBank);
     }
@@ -362,7 +362,7 @@ mod tests {
 
     #[test]
     fn control_chr_bank_size() {
-        let (mut mmc1, mut ppu) = create(|_| {});
+        let (mmc1, mut ppu) = create(|_| {});
 
         // default is 4k
         assert_eq!(*mmc1.chr_bank_size.borrow(), 4 * 1024);

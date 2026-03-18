@@ -160,15 +160,11 @@ const COLORS: [Pixel; 64] = [
     rgb([159, 255, 243]), rgb([0, 0, 0]), rgb([0, 0, 0]), rgb([0, 0, 0]),
 ];
 
+#[derive(Default)]
 pub struct Palette {
     data: [u8; 0x20],
 }
 
-impl Default for Palette {
-    fn default() -> Self {
-        Palette { data: [0; 0x20] }
-    }
-}
 
 impl Palette {
     fn get_addr(&self, addr: u16) -> usize {
@@ -305,13 +301,9 @@ impl Default for InnerPpu {
 }
 
 // Ppu now owns InnerPpu directly
+#[derive(Default)]
 pub struct Ppu(pub InnerPpu);
 
-impl Default for Ppu {
-    fn default() -> Self {
-        Ppu(InnerPpu::default())
-    }
-}
 
 impl Ppu {
     /// Set v-blank state.
@@ -796,7 +788,7 @@ impl Ppu {
 
     /// Render a single pixel (for testing)
     pub fn render_pixel(&mut self, pattern: &[u8], x: u8, y: u8) -> Pixel {
-        Self::render_pixel_inner(&mut self.0.borrow_mut(), pattern, x, y)
+        Self::render_pixel_inner(self.0.borrow_mut(), pattern, x, y)
     }
 
     /// Get scanline (for testing)

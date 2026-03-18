@@ -21,13 +21,13 @@ impl<M: Mcu> CompositePlugin<M> {
 }
 
 impl<M: Mcu> Plugin<M> for CompositePlugin<M> {
-    fn start(&mut self, cpu: &Cpu<M>) {
+    fn start(&mut self, cpu: &mut Cpu<M>) {
         for p in self.0.iter_mut() {
             p.start(cpu);
         }
     }
 
-    fn end(&mut self, cpu: &Cpu<M>, cycles: u8) {
+    fn end(&mut self, cpu: &mut Cpu<M>, cycles: u8) {
         for p in self.0.iter_mut() {
             p.end(cpu, cycles);
         }
