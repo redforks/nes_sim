@@ -1,8 +1,7 @@
-use crate::image::Image;
+use crate::image::{Image, MachineWrapper};
 use ansi_term::Color;
 use clap::Parser;
-use nes_core::machine::Machine;
-use nes_core::{ExecuteResult, Plugin};
+use nes_core::ExecuteResult;
 
 mod image;
 mod plugin;
@@ -35,10 +34,9 @@ fn main() {
     }
 }
 
-fn exec<F, P>(m: &mut Machine<P>, f: F)
+fn exec<F>(m: &mut MachineWrapper, f: F)
 where
-    F: Fn(&mut Machine<P>) -> ExecuteResult,
-    P: Plugin,
+    F: Fn(&mut MachineWrapper) -> ExecuteResult,
 {
     loop {
         match f(m) {

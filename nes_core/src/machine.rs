@@ -6,19 +6,19 @@ use crate::{Cpu, EmptyPlugin, ExecuteResult, Plugin};
 /// (e.g. when the PPU is not connected or NES hardware is not present).
 const MAX_TICKS_PER_FRAME: u32 = 60000;
 
-pub struct Machine<P> {
-    cpu: Cpu,
+pub struct Machine<P, M: Mcu> {
+    cpu: Cpu<M>,
     p: P,
 }
 
-impl Machine<EmptyPlugin> {
-    pub fn new(mcu: Box<dyn Mcu>) -> Self {
-        Self::with_plugin(EmptyPlugin(), mcu)
+impl<M: Mcu> Machine<EmptyPlugin<M>, M> {
+    pub fn new(mcu: M) -> Self {
+        Self::with_plugin(EmptyPlugin::new(), mcu)
     }
 }
 
-impl<P: Plugin> Machine<P> {
-    pub fn with_plugin(p: P, mcu: Box<dyn Mcu>) -> Self {
+impl<P: Plugin<M>, M: Mcu> Machine<P, M> {
+    pub fn with_plugin(p: P, mcu: M) -> Self {
         let mut machine = Machine {
             cpu: Cpu::new(mcu),
             p,

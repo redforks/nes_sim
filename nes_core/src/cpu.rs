@@ -21,7 +21,7 @@ fn extra_tick_if_cross_page(a: u16, b: u16) -> u8 {
     is_cross_page(a, b) as u8
 }
 
-fn execute_next(cpu: &mut Cpu) -> u8 {
+fn execute_next<M: Mcu>(cpu: &mut Cpu<M>) -> u8 {
     use addressing::*;
     use instruction::*;
 
@@ -31,26 +31,26 @@ fn execute_next(cpu: &mut Cpu) -> u8 {
     let c = op_code & 0b0000_0011;
     // debug!("op_code: {:0x} {} {} {}", op_code, c, a, b);
 
-    fn r_b(cpu: &mut Cpu) -> u8 {
+    fn r_b<M: Mcu>(cpu: &mut Cpu<M>) -> u8 {
         cpu.inc_read_byte()
     }
-    fn r_w(cpu: &mut Cpu) -> u16 {
+    fn r_w<M: Mcu>(cpu: &mut Cpu<M>) -> u16 {
         cpu.inc_read_word()
     }
 
-    let zero_page = |cpu: &mut Cpu| ZeroPage(r_b(cpu));
-    let zero_page_x = |cpu: &mut Cpu| ZeroPageX(r_b(cpu));
-    let zero_page_y = |cpu: &mut Cpu| ZeroPageY(r_b(cpu));
-    let absolute = |cpu: &mut Cpu| Absolute(r_w(cpu));
-    let absolute_x = |cpu: &mut Cpu| AbsoluteX(r_w(cpu));
-    let absolute_y = |cpu: &mut Cpu| AbsoluteY(r_w(cpu));
-    let literal = |cpu: &mut Cpu| Literal(r_b(cpu));
+    let zero_page = |cpu: &mut Cpu<M>| ZeroPage(r_b(cpu));
+    let zero_page_x = |cpu: &mut Cpu<M>| ZeroPageX(r_b(cpu));
+    let zero_page_y = |cpu: &mut Cpu<M>| ZeroPageY(r_b(cpu));
+    let absolute = |cpu: &mut Cpu<M>| Absolute(r_w(cpu));
+    let absolute_x = |cpu: &mut Cpu<M>| AbsoluteX(r_w(cpu));
+    let absolute_y = |cpu: &mut Cpu<M>| AbsoluteY(r_w(cpu));
+    let literal = |cpu: &mut Cpu<M>| Literal(r_b(cpu));
     let cond_branch =
-        |cpu: &mut Cpu, flag: Flag| new_condition_branch(r_b(cpu) as i8, FlagAddr(flag), false);
+        |cpu: &mut Cpu<M>, flag: Flag| new_condition_branch(r_b(cpu) as i8, FlagAddr(flag), false);
     let neg_cond_branch =
-        |cpu: &mut Cpu, flag: Flag| new_condition_branch(r_b(cpu) as i8, FlagAddr(flag), true);
-    let indirect_x = |cpu: &mut Cpu| IndirectX(r_b(cpu));
-    let indirect_y = |cpu: &mut Cpu| IndirectY(r_b(cpu));
+        |cpu: &mut Cpu<M>, flag: Flag| new_condition_branch(r_b(cpu) as i8, FlagAddr(flag), true);
+    let indirect_x = |cpu: &mut Cpu<M>| IndirectX(r_b(cpu));
+    let indirect_y = |cpu: &mut Cpu<M>| IndirectY(r_b(cpu));
     let x = RegisterX;
     let y = RegisterY;
     let aa = RegisterA;
@@ -348,23 +348,23 @@ fn execute_next(cpu: &mut Cpu) -> u8 {
 }
 
 // Trait to sync instruction execution  times.
-pub trait Plugin {
-    fn start(&mut self, cpu: &Cpu);
+pub trait Plugin<M: Mcu> {
+    fn start(&mut self, cpu: &Cpu<M>);
 
     // return true to stop cpu
-    fn end(&mut self, cpu: &Cpu);
+    fn end(&mut self, cpu: &Cpu<M>);
 
     fn should_stop(&self) -> ExecuteResult {
         ExecuteResult::Continue
     }
 }
 
-impl Plugin for Box<dyn Plugin> {
-    fn start(&mut self, cpu: &Cpu) {
+impl<M: Mcu> Plugin<M> for Box<dyn Plugin<M>> {
+    fn start(&mut self, cpu: &Cpu<M>) {
         self.as_mut().start(cpu);
     }
 
-    fn end(&mut self, cpu: &Cpu) {
+    fn end(&mut self, cpu: &Cpu<M>) {
         self.as_mut().end(cpu);
     }
 
@@ -373,22 +373,38 @@ impl Plugin for Box<dyn Plugin> {
     }
 }
 
-pub struct EmptyPlugin();
-
-impl Plugin for EmptyPlugin {
-    fn start(&mut self, _: &Cpu) {}
-
-    fn end(&mut self, _: &Cpu) {}
+pub struct EmptyPlugin<M: Mcu> {
+    _phantom: std::marker::PhantomData<M>,
 }
 
-pub struct Cpu {
+impl<M: Mcu> EmptyPlugin<M> {
+    pub fn new() -> Self {
+        EmptyPlugin {
+            _phantom: std::marker::PhantomData,
+        }
+    }
+}
+
+impl<M: Mcu> Plugin<M> for EmptyPlugin<M> {
+    fn start(&mut self, _: &Cpu<M>) {}
+
+    fn end(&mut self, _: &Cpu<M>) {}
+}
+
+impl<M: Mcu> Default for EmptyPlugin<M> {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+pub struct Cpu<M: Mcu> {
     pub a: u8,
     pub x: u8,
     pub y: u8,
     pub pc: u16,
     pub sp: u8,
     pub status: u8,
-    mcu: Box<dyn Mcu>,
+    mcu: M,
 
     irq_pending: bool,
     change_irq_flag_pending: Option<bool>,
@@ -396,8 +412,8 @@ pub struct Cpu {
     is_halt: bool,
 }
 
-impl Cpu {
-    pub fn new(mcu: Box<dyn Mcu>) -> Cpu {
+impl<M: Mcu> Cpu<M> {
+    pub fn new(mcu: M) -> Cpu<M> {
         Cpu {
             a: 0,
             x: 0,
@@ -412,8 +428,12 @@ impl Cpu {
         }
     }
 
-    pub fn mcu(&mut self) -> &mut dyn Mcu {
-        self.mcu.as_mut()
+    pub fn mcu(&self) -> &M {
+        &self.mcu
+    }
+
+    pub fn mcu_mut(&mut self) -> &mut M {
+        &mut self.mcu
     }
 
     pub fn reset(&mut self) {
@@ -469,7 +489,7 @@ impl Cpu {
     /// appropriate number of cycles. Returns the execution result.
     ///
     /// One CPU instruction = N cycles. PPU is ticked 3×N times, APU is ticked N times.
-    pub fn tick<T: Plugin>(&mut self, plugin: &mut T) -> ExecuteResult {
+    pub fn tick<T: Plugin<M>>(&mut self, plugin: &mut T) -> ExecuteResult {
         if self.is_halt {
             // Still need to tick PPU/APU even when halted
             for _ in 0..3 {

@@ -52,21 +52,21 @@ impl Mcu for VBlankMcu {
 
 #[test]
 fn test_machine_creation() {
-    let mcu = Box::new(MockMcu::new());
+    let mcu = MockMcu::new();
     let machine = Machine::new(mcu);
     assert_eq!(machine.cpu.pc, 0);
 }
 
 #[test]
 fn test_machine_with_plugin() {
-    let mcu = Box::new(MockMcu::new());
-    let machine = Machine::with_plugin(EmptyPlugin(), mcu);
+    let mcu = MockMcu::new();
+    let machine = Machine::with_plugin(EmptyPlugin::new(), mcu);
     assert_eq!(machine.cpu.pc, 0);
 }
 
 #[test]
 fn test_set_pc() {
-    let mcu = Box::new(MockMcu::new());
+    let mcu = MockMcu::new();
     let mut machine = Machine::new(mcu);
 
     machine.set_pc(0x1234);
@@ -75,7 +75,7 @@ fn test_set_pc() {
 
 #[test]
 fn test_reset() {
-    let mcu = Box::new(MockMcu::new());
+    let mcu = MockMcu::new();
     let mut machine = Machine::new(mcu);
 
     machine.set_pc(0x5678);
@@ -86,7 +86,7 @@ fn test_reset() {
 
 #[test]
 fn test_run_ticks_zero() {
-    let mcu = Box::new(MockMcu::new());
+    let mcu = MockMcu::new();
     let mut machine = Machine::new(mcu);
 
     let result = machine.run_ticks(0);
@@ -95,7 +95,7 @@ fn test_run_ticks_zero() {
 
 #[test]
 fn test_process_frame() {
-    let mcu = Box::new(MockMcu::new());
+    let mcu = MockMcu::new();
     let mut machine = Machine::new(mcu);
 
     // Run for 1 frame
@@ -107,7 +107,7 @@ fn test_process_frame() {
 
 #[test]
 fn test_process_frame_with_zero_ms() {
-    let mcu = Box::new(MockMcu::new());
+    let mcu = MockMcu::new();
     let mut machine = Machine::new(mcu);
 
     // Run for 1 frame
@@ -126,7 +126,6 @@ fn test_run_ticks_positive() {
     mcu.write(0x8001, 0x00); // low byte of address
     mcu.write(0x8002, 0x80); // high byte of address
 
-    let mcu = Box::new(mcu);
     let mut machine = Machine::new(mcu);
 
     machine.set_pc(0x8000);
@@ -145,7 +144,6 @@ fn test_process_frame_waits_for_vblank() {
     mcu.write(0x8001, 0x00);
     mcu.write(0x8002, 0x80); // JMP $8000
 
-    let mcu = Box::new(mcu);
     let mut machine = Machine::new(mcu);
     machine.set_pc(0x8000);
 

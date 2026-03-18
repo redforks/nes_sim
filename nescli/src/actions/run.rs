@@ -122,7 +122,7 @@ impl RunAction {
 
         // Create NES machine with composite renderer
         let mcu = nes_core::nes::create_mcu_with_renderer(f, Some(Box::new(shared_composite)));
-        let mut machine = Machine::new(Box::new(mcu));
+        let mut machine = Machine::new(mcu);
 
         // Initialize event pump
         let mut event_pump = sdl_context.event_pump().map_err(|e| anyhow::anyhow!(e))?;

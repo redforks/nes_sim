@@ -1,21 +1,22 @@
 use image::DynamicImage;
 use image::EncodableLayout;
 use log::{debug, info};
+use nes_core::EmptyPlugin;
 use nes_core::ines::INesFile;
 use nes_core::machine::Machine as NesMachine;
-use nes_core::nes::ppu::{draw_pattern, PatternBand};
+use nes_core::nes::nes_mcu::NesMcu;
+use nes_core::nes::ppu::{PatternBand, draw_pattern};
 use nes_core::render::ImageRender;
-use nes_core::EmptyPlugin;
 use std::panic;
 use wasm_bindgen::prelude::*;
 use wasm_bindgen::{Clamped, JsCast};
-use web_sys::{window, CanvasRenderingContext2d, HtmlCanvasElement, ImageData};
+use web_sys::{CanvasRenderingContext2d, HtmlCanvasElement, ImageData, window};
 
 mod drivers;
 
 #[wasm_bindgen]
 pub struct Machine {
-    inner: NesMachine<EmptyPlugin>,
+    inner: NesMachine<EmptyPlugin<NesMcu>, NesMcu>,
     ctx: CanvasRenderingContext2d,
     image_render: ImageRender,
 }
@@ -32,7 +33,7 @@ pub fn new_machine(canvas_id: &str, ines: Vec<u8>) -> Machine {
     let mcu = nes_core::nes::create_mcu_with_renderer(&ines, Some(Box::new(image_render.clone())));
 
     Machine {
-        inner: NesMachine::new(Box::new(mcu)),
+        inner: NesMachine::new(mcu),
         ctx: get_canvas_context(canvas_id),
         image_render,
     }

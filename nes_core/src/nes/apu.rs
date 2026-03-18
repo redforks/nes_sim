@@ -102,9 +102,7 @@ impl<D: PulseDriver> Mcu for PulseChannel<D> {
             3 => {
                 let mut load = self.length_counter_load.borrow_mut();
                 load.write_high_byte(value);
-                self.driver
-                    .borrow_mut()
-                    .set_length_counter_load(*load);
+                self.driver.borrow_mut().set_length_counter_load(*load);
             }
             _ => panic!("Can not write to PulseChannel at address {}", address),
         }
@@ -167,9 +165,7 @@ impl<D: TriangleDriver> Mcu for TriangleChannel<D> {
             0x400B => {
                 let mut load = self.length_counter_load.borrow_mut();
                 load.write_high_byte(value);
-                self.driver
-                    .borrow_mut()
-                    .set_length_counter_load(*load);
+                self.driver.borrow_mut().set_length_counter_load(*load);
             }
             _ => panic!("Can not write to TriangleChannel at address {}", address),
         }
