@@ -210,10 +210,6 @@ impl Mcu for NesMcu {
         result.nmi
     }
 
-    fn take_vblank(&self) -> bool {
-        self.vblank_started.replace(false)
-    }
-
     fn tick_apu(&self) -> bool {
         // Toggle the even/odd cycle flag
         let old = self.apu_even_cycle.get();

@@ -22,12 +22,6 @@ pub trait Mcu {
         false
     }
 
-    /// Returns true if VBlank started since the last call to this method.
-    /// Used by `Machine::process_frame()` to detect the natural frame boundary.
-    fn take_vblank(&self) -> bool {
-        false
-    }
-
     /// Tick APU frame counter. Returns true if frame IRQ should be triggered.
     fn tick_apu(&self) -> bool {
         false
