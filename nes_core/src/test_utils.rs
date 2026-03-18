@@ -100,13 +100,16 @@ impl Mcu for MockMcu {
     fn write(&self, addr: u16, value: u8) {
         self.memory.borrow_mut()[addr as usize] = value;
     }
-
-    fn tick_ppu(&self) -> bool {
-        self.tick_ppu_result.get()
-    }
-
     fn request_irq(&self) -> bool {
         self.irq_request.get()
+    }
+}
+
+impl MockMcu {
+    /// Inherent method to emulate ticking the PPU. Kept as an inherent method
+    /// so tests and callers that know the concrete type can still invoke it.
+    pub fn tick_ppu(&self) -> bool {
+        self.tick_ppu_result.get()
     }
 }
 
