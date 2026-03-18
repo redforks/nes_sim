@@ -83,6 +83,12 @@ impl NesMcu {
     }
 }
 
+impl NesMcu {
+    pub fn take_vblank(&self) -> bool {
+        self.vblank_started.replace(false)
+    }
+}
+
 impl Mcu for NesMcu {
     fn read(&self, address: u16) -> u8 {
         match address {

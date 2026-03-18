@@ -4,7 +4,7 @@ use nes_core::Plugin;
 use nes_core::ines::INesFile;
 use nes_core::machine::Machine;
 use nes_core::mcu::RamMcu;
-use nes_core::nes::nes_mcu;
+use nes_core::nes_machine::NesMachine;
 use std::io::Read;
 
 mod driver;
@@ -35,8 +35,6 @@ impl Image {
     }
 
     fn create_ines_machine(&self, ines: &INesFile, quiet: bool) -> MachineWrapper {
-        let mcu = nes_mcu::build(ines);
-
         // Build the composite plugin step by step to handle type coercion
         let plugins: Vec<Box<dyn Plugin<nes_core::nes::nes_mcu::NesMcu>>> = vec![
             Box::<Console>::default(),
@@ -47,7 +45,7 @@ impl Image {
         ];
 
         let plugin = CompositePlugin::new(plugins);
-        let mut machine = Machine::with_plugin(plugin, mcu);
+        let mut machine = NesMachine::with_plugin(ines, plugin);
         machine.reset();
         MachineWrapper::INes(Box::new(machine))
     }
@@ -56,14 +54,14 @@ impl Image {
 // Type aliases to avoid >> parsing issues in enums
 mod machine_types {
     use super::*;
+    use nes_core::nes_machine::NesMachine;
 
     pub type BinMcu = RamMcu<{ 64 * 1024 }>;
     pub type BinPlugin = CompositePlugin<BinMcu>;
     pub type BinMachine = Machine<BinPlugin, BinMcu>;
 
-    pub type INesMcu = nes_core::nes::nes_mcu::NesMcu;
-    pub type INesPlugin = CompositePlugin<INesMcu>;
-    pub type INesMachine = Machine<INesPlugin, INesMcu>;
+    pub type INesPlugin = CompositePlugin<nes_core::nes::nes_mcu::NesMcu>;
+    pub type INesMachine = NesMachine<INesPlugin>;
 }
 
 pub enum MachineWrapper {
