@@ -1,7 +1,7 @@
 use anyhow::Result;
 use image::EncodableLayout;
 use nes_core::ines::INesFile;
-use nes_core::machine::Machine;
+use nes_core::nes_machine::NesMachine;
 use nes_core::render::{CompositeRender, ImageRender, MarkdownRender, Render};
 use sdl2::event::Event;
 use sdl2::keyboard::Keycode;
@@ -121,8 +121,7 @@ impl RunAction {
         let shared_composite = SharedCompositeRender::new(composite.clone());
 
         // Create NES machine with composite renderer
-        let mcu = nes_core::nes::create_mcu_with_renderer(f, Some(Box::new(shared_composite)));
-        let mut machine = Machine::new(mcu);
+        let mut machine = NesMachine::with_renderer(f, Some(Box::new(shared_composite)));
 
         // Initialize event pump
         let mut event_pump = sdl_context.event_pump().map_err(|e| anyhow::anyhow!(e))?;
