@@ -15,17 +15,6 @@ pub trait Mcu {
     fn request_irq(&self) -> bool {
         panic!("request_irq() not implemented");
     }
-
-    /// Tick PPU by one dot. Returns true if NMI should be triggered.
-    /// Pattern data is passed through from the cartridge for rendering.
-    fn tick_ppu(&self) -> bool {
-        false
-    }
-
-    /// Tick APU frame counter. Returns true if frame IRQ should be triggered.
-    fn tick_apu(&self) -> bool {
-        false
-    }
 }
 
 #[cfg(test)]
@@ -53,13 +42,6 @@ mod tests {
         fn write(&self, _address: u16, value: u8) {
             *self.data.borrow_mut() = value;
         }
-    }
-
-    #[test]
-    fn test_tick_ppu_default() {
-        let mcu = MockMcu::new();
-        // Default implementation returns false
-        assert!(!mcu.tick_ppu());
     }
 
     #[test]

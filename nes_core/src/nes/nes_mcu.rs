@@ -81,11 +81,95 @@ impl NesMcu {
         }
         self.ppu.oam_dma(&buf);
     }
-}
 
-impl NesMcu {
     pub fn take_vblank(&self) -> bool {
         self.vblank_started.replace(false)
+    }
+
+    /// Tick PPU by one dot. Returns true if NMI should be triggered.
+    /// Pattern data is passed through from the cartridge for rendering.
+    pub fn tick_ppu(&self) -> bool {
+        let result = self.ppu.tick(self.cartridge.pattern_ref());
+        if result.vblank_started {
+            self.vblank_started.set(true);
+        }
+        result.nmi
+    }
+
+    /// Tick APU frame counter. Returns true if frame IRQ should be triggered.
+    pub fn tick_apu(&self) -> bool {
+        // Toggle the even/odd cycle flag
+        let old = self.apu_even_cycle.get();
+        self.apu_even_cycle.set(!old);
+
+        // Only process the APU frame counter on even cycles (every other CPU cycle)
+        if !self.apu_even_cycle.get() {
+            return false;
+        }
+
+        let old_cycle = self.apu_cycle.get();
+        self.apu_cycle.set(old_cycle + 1);
+
+        // APU frame counter in 4-step mode:
+        // The frame counter has a period of 14915 APU cycles (29830 CPU cycles)
+        // According to NESdev wiki, clock points are at:
+        // - APU cycle 3728: step 0 (clock length counters)
+        // - APU cycle 7456: step 1 (clock length counters)
+        // - APU cycle 11185: step 2 (clock length counters)
+        // - APU cycle 14914: step 3 (DON'T clock length counters)
+        // Note: The wiki shows these as cumulative counts, not intervals
+
+        let cycle = self.apu_cycle.get();
+        let cycle_mod = cycle % 14915;
+        let is_clock_point = cycle_mod == 3728 || cycle_mod == 7456 || cycle_mod == 11185;
+
+        // Calculate which step we're on (0-3)
+        let step = if cycle_mod < 3728 {
+            0
+        } else if cycle_mod < 7456 {
+            1
+        } else if cycle_mod < 11185 {
+            2
+        } else {
+            3
+        };
+
+        // Update frame counter when we clock
+        if is_clock_point {
+            self.frame_counter.set(step);
+
+            // In 4-step mode, clock length counters on steps 0, 1, 2 (NOT step 3)
+            // In 5-step mode, clock length counters on steps 0, 1, 2, 3
+            let frame_counter_mode = self.frame_counter_mode.get();
+            let should_clock_length = if frame_counter_mode {
+                // 5-step mode - clock on all steps
+                true
+            } else {
+                // 4-step mode - don't clock on step 3
+                step != 3
+            };
+
+            if should_clock_length {
+                // Clock length counters for each channel
+                // But only if channel is enabled and halt flag is not set
+                let channel_enabled = self.channel_enabled.borrow();
+                let length_counter_halt = self.length_counter_halt.borrow();
+                let mut length_counters = self.length_counters.borrow_mut();
+                for i in 0..4 {
+                    if channel_enabled[i] && !length_counter_halt[i] && length_counters[i] > 0 {
+                        length_counters[i] -= 1;
+                    }
+                }
+            }
+
+            // Frame interrupt occurs on step 3 (last step of 4-step sequence)
+            if step == 3 && !frame_counter_mode {
+                self.frame_counter_interrupt.set(true);
+                return true;
+            }
+        }
+
+        false
     }
 }
 
@@ -200,89 +284,6 @@ impl Mcu for NesMcu {
 
     fn request_irq(&self) -> bool {
         self.frame_counter_interrupt.get()
-    }
-
-    fn tick_ppu(&self) -> bool {
-        let result = self.ppu.tick(self.cartridge.pattern_ref());
-        if result.vblank_started {
-            self.vblank_started.set(true);
-        }
-        result.nmi
-    }
-
-    fn tick_apu(&self) -> bool {
-        // Toggle the even/odd cycle flag
-        let old = self.apu_even_cycle.get();
-        self.apu_even_cycle.set(!old);
-
-        // Only process the APU frame counter on even cycles (every other CPU cycle)
-        if !self.apu_even_cycle.get() {
-            return false;
-        }
-
-        let old_cycle = self.apu_cycle.get();
-        self.apu_cycle.set(old_cycle + 1);
-
-        // APU frame counter in 4-step mode:
-        // The frame counter has a period of 14915 APU cycles (29830 CPU cycles)
-        // According to NESdev wiki, clock points are at:
-        // - APU cycle 3728: step 0 (clock length counters)
-        // - APU cycle 7456: step 1 (clock length counters)
-        // - APU cycle 11185: step 2 (clock length counters)
-        // - APU cycle 14914: step 3 (DON'T clock length counters)
-        // Note: The wiki shows these as cumulative counts, not intervals
-
-        let cycle = self.apu_cycle.get();
-        let cycle_mod = cycle % 14915;
-        let is_clock_point = cycle_mod == 3728 || cycle_mod == 7456 || cycle_mod == 11185;
-
-        // Calculate which step we're on (0-3)
-        let step = if cycle_mod < 3728 {
-            0
-        } else if cycle_mod < 7456 {
-            1
-        } else if cycle_mod < 11185 {
-            2
-        } else {
-            3
-        };
-
-        // Update frame counter when we clock
-        if is_clock_point {
-            self.frame_counter.set(step);
-
-            // In 4-step mode, clock length counters on steps 0, 1, 2 (NOT step 3)
-            // In 5-step mode, clock length counters on steps 0, 1, 2, 3
-            let frame_counter_mode = self.frame_counter_mode.get();
-            let should_clock_length = if frame_counter_mode {
-                // 5-step mode - clock on all steps
-                true
-            } else {
-                // 4-step mode - don't clock on step 3
-                step != 3
-            };
-
-            if should_clock_length {
-                // Clock length counters for each channel
-                // But only if channel is enabled and halt flag is not set
-                let channel_enabled = self.channel_enabled.borrow();
-                let length_counter_halt = self.length_counter_halt.borrow();
-                let mut length_counters = self.length_counters.borrow_mut();
-                for i in 0..4 {
-                    if channel_enabled[i] && !length_counter_halt[i] && length_counters[i] > 0 {
-                        length_counters[i] -= 1;
-                    }
-                }
-            }
-
-            // Frame interrupt occurs on step 3 (last step of 4-step sequence)
-            if step == 3 && !frame_counter_mode {
-                self.frame_counter_interrupt.set(true);
-                return true;
-            }
-        }
-
-        false
     }
 }
 
