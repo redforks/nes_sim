@@ -530,16 +530,15 @@ fn test_read_buffer() {
 
 fn create_test_ppu_with_mask(mask: PpuMask) -> Ppu {
     let mut ppu = Ppu::default();
-    // Modify inner PPU directly through mutable reference
-    let inner = ppu.inner_mut();
-    inner.mask = mask;
+    // Modify PPU state via test helpers
+    ppu.set_mask(mask);
     // Clear OAM
     for i in 0..64 {
-        inner.oam[i * 4] = 0x20;
-        inner.oam[i * 4 + 3] = 0xFF;
+        ppu.oam_mut()[i * 4] = 0x20;
+        ppu.oam_mut()[i * 4 + 3] = 0xFF;
     }
     // Clear palette RAM
-    inner.palette.data = [0; 0x20];
+    ppu.clear_palette();
     ppu
 }
 
@@ -582,34 +581,30 @@ fn set_tile_pixel(
 }
 
 fn setup_sprite(ppu: &mut Ppu, index: usize, y: u8, tile: u8, attr: u8, x: u8) {
-    let inner = ppu.inner_mut();
-    inner.oam[index * 4] = y;
-    inner.oam[index * 4 + 1] = tile;
-    inner.oam[index * 4 + 2] = attr;
-    inner.oam[index * 4 + 3] = x;
+    let oam = ppu.oam_mut();
+    oam[index * 4] = y;
+    oam[index * 4 + 1] = tile;
+    oam[index * 4 + 2] = attr;
+    oam[index * 4 + 3] = x;
 }
 
 fn set_bg_tile(ppu: &mut Ppu, tile: u8, palette_idx: u8) {
-    let inner = ppu.inner_mut();
-    inner.name_table.write(0x2000, tile);
-    inner.name_table.write(0x23c0, palette_idx & 0x03);
+    ppu.name_table_write(0x2000, tile);
+    ppu.name_table_write(0x23c0, palette_idx & 0x03);
 }
 
 fn set_bg_palette_color(ppu: &mut Ppu, palette_idx: u8, color_idx: u8, color: u8) {
     let addr = 0x3f00 + palette_idx as u16 * 4 + color_idx as u16;
-    let inner = ppu.inner_mut();
-    inner.palette.write(addr, color);
+    ppu.palette_write(addr, color);
 }
 
 fn set_sprite_palette_color(ppu: &mut Ppu, palette_idx: u8, color_idx: u8, color: u8) {
     let addr = 0x3f10 + palette_idx as u16 * 4 + color_idx as u16;
-    let inner = ppu.inner_mut();
-    inner.palette.write(addr, color);
+    ppu.palette_write(addr, color);
 }
 
 fn set_universal_bg_color(ppu: &mut Ppu, color: u8) {
-    let inner = ppu.inner_mut();
-    inner.palette.write(0x3f00, color);
+    ppu.palette_write(0x3f00, color);
 }
 
 #[test]
@@ -916,7 +911,7 @@ fn test_render_pixel_sprite_zero_hit() {
     let mut pattern = create_pattern();
     set_tile_solid(&mut pattern, 0, 0, 1);
     set_tile_solid(&mut pattern, 0, 1, 2);
-    ppu.inner_mut().name_table.write(0x2000 + 1, 0);
+    ppu.name_table_write(0x2000 + 1, 0);
     setup_sprite(&mut ppu, 0, 0, 1, 0, 8);
 
     assert!(!ppu.status().sprite_zero_hit());
@@ -1008,7 +1003,7 @@ fn test_render_pixel_sprite_zero_not_at_x255() {
     let mut pattern = create_pattern();
     set_tile_solid(&mut pattern, 0, 0, 1);
     set_tile_solid(&mut pattern, 0, 1, 2);
-    ppu.inner_mut().name_table.write(0x2000 + 31, 0);
+    ppu.name_table_write(0x2000 + 31, 0);
     setup_sprite(&mut ppu, 0, 9, 0, 0, 248);
 
     ppu.render_pixel(&pattern, 255, 10);
@@ -1083,9 +1078,11 @@ fn test_render_pixel_red_emphasis() {
     let pixel_with_emphasis = ppu.render_pixel(&pattern, 0, 0);
 
     // Compare with no emphasis
-    ppu.inner_mut().mask = PpuMask::new()
-        .with_background_enabled(true)
-        .with_background_left_enabled(true);
+    ppu.set_mask(
+        PpuMask::new()
+            .with_background_enabled(true)
+            .with_background_left_enabled(true),
+    );
     let pixel_without_emphasis = ppu.render_pixel(&pattern, 0, 0);
 
     let (r_with, g_with, b_with) = pixel_to_rgb(pixel_with_emphasis);
@@ -1119,9 +1116,11 @@ fn test_render_pixel_green_emphasis() {
     let pixel_with_emphasis = ppu.render_pixel(&pattern, 0, 0);
 
     // Compare with no emphasis
-    ppu.inner_mut().mask = PpuMask::new()
-        .with_background_enabled(true)
-        .with_background_left_enabled(true);
+    ppu.set_mask(
+        PpuMask::new()
+            .with_background_enabled(true)
+            .with_background_left_enabled(true),
+    );
     let pixel_without_emphasis = ppu.render_pixel(&pattern, 0, 0);
 
     let (r_with, g_with, b_with) = pixel_to_rgb(pixel_with_emphasis);
@@ -1158,9 +1157,11 @@ fn test_render_pixel_blue_emphasis() {
     let pixel_with_emphasis = ppu.render_pixel(&pattern, 0, 0);
 
     // Compare with no emphasis
-    ppu.inner_mut().mask = PpuMask::new()
-        .with_background_enabled(true)
-        .with_background_left_enabled(true);
+    ppu.set_mask(
+        PpuMask::new()
+            .with_background_enabled(true)
+            .with_background_left_enabled(true),
+    );
     let pixel_without_emphasis = ppu.render_pixel(&pattern, 0, 0);
 
     let (r_with, g_with, b_with) = pixel_to_rgb(pixel_with_emphasis);
@@ -1198,9 +1199,11 @@ fn test_render_pixel_multiple_emphasis_bits() {
     let pixel_with_emphasis = ppu.render_pixel(&pattern, 0, 0);
 
     // Compare with no emphasis
-    ppu.inner_mut().mask = PpuMask::new()
-        .with_background_enabled(true)
-        .with_background_left_enabled(true);
+    ppu.set_mask(
+        PpuMask::new()
+            .with_background_enabled(true)
+            .with_background_left_enabled(true),
+    );
     let pixel_without_emphasis = ppu.render_pixel(&pattern, 0, 0);
 
     let (r_with, g_with, b_with) = pixel_to_rgb(pixel_with_emphasis);
@@ -1239,9 +1242,11 @@ fn test_render_pixel_all_emphasis_bits() {
     let pixel_with_emphasis = ppu.render_pixel(&pattern, 0, 0);
 
     // Compare with no emphasis - all channels should remain the same
-    ppu.inner_mut().mask = PpuMask::new()
-        .with_background_enabled(true)
-        .with_background_left_enabled(true);
+    ppu.set_mask(
+        PpuMask::new()
+            .with_background_enabled(true)
+            .with_background_left_enabled(true),
+    );
     let pixel_without_emphasis = ppu.render_pixel(&pattern, 0, 0);
 
     let (r_with, g_with, b_with) = pixel_to_rgb(pixel_with_emphasis);
