@@ -49,7 +49,6 @@ nes_core = { path = "nes_core" }
 
 [profile.dev]
 split-debuginfo = "unpacked"
-opt-level = "z"
 
 [profile.release]
 lto = true
