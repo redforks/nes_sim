@@ -760,31 +760,27 @@ impl Ppu {
         status
     }
 
-    /// Access mutable OAM for tests/helpers
+    // Test helpers in tests code now access fields directly; keep methods available for
+    // backwards compatibility during the refactor but mark as dead_code allowed.
+    #[allow(dead_code)]
     #[cfg(test)]
     pub(crate) fn oam_mut(&mut self) -> &mut [u8; 0x100] {
         &mut self.oam
     }
 
-    /// Write into the name table (test helper)
-    #[cfg(test)]
-    pub(crate) fn name_table_write(&mut self, addr: u16, value: u8) {
-        self.name_table.write(addr, value);
-    }
-
-    /// Write into palette memory (test helper)
+    #[allow(dead_code)]
     #[cfg(test)]
     pub(crate) fn palette_write(&mut self, addr: u16, value: u8) {
         self.palette.write(addr, value);
     }
 
-    /// Clear palette RAM (test helper)
+    #[allow(dead_code)]
     #[cfg(test)]
     pub(crate) fn clear_palette(&mut self) {
         self.palette.data = [0; 0x20];
     }
 
-    /// Set PPUMASK directly (test helper)
+    #[allow(dead_code)]
     #[cfg(test)]
     pub(crate) fn set_mask(&mut self, mask: PpuMask) {
         self.mask = mask;
