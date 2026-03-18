@@ -9,7 +9,8 @@ pub use ram::RamMcu;
 /// Note: addr is absolute address, not the offset from start of the memory region.
 /// Make it easy to implement memory mapped devices..
 pub trait Mcu {
-    fn read(&self, address: u16) -> u8;
+    // Changed to &mut self to allow implementations to mutate state during reads
+    fn read(&mut self, address: u16) -> u8;
     fn write(&mut self, address: u16, value: u8);
 
     fn request_irq(&self) -> bool {
@@ -35,7 +36,7 @@ mod tests {
     }
 
     impl Mcu for MockMcu {
-        fn read(&self, _address: u16) -> u8 {
+        fn read(&mut self, _address: u16) -> u8 {
             *self.data.borrow()
         }
 

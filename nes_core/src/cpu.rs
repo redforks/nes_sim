@@ -540,7 +540,7 @@ impl<M: Mcu> Cpu<M> {
         self.set_flag(Flag::Zero, value == 0);
     }
 
-    pub fn read_byte(&self, addr: u16) -> u8 {
+    pub fn read_byte(&mut self, addr: u16) -> u8 {
         self.mcu.read(addr)
     }
 
@@ -560,21 +560,21 @@ impl<M: Mcu> Cpu<M> {
         self.mcu.write(addr, value);
     }
 
-    pub fn read_word(&self, addr: u16) -> u16 {
+    pub fn read_word(&mut self, addr: u16) -> u16 {
         let low = self.mcu.read(addr) as u16;
         let high = self.mcu.read(addr.wrapping_add(1)) as u16;
         (high << 8) | low
     }
 
-    pub fn read_zero_page_word(&self, addr: u8) -> u16 {
+    pub fn read_zero_page_word(&mut self, addr: u8) -> u16 {
         self._read_word_in_same_page(0, addr)
     }
 
-    pub fn read_word_in_same_page(&self, addr: u16) -> u16 {
+    pub fn read_word_in_same_page(&mut self, addr: u16) -> u16 {
         self._read_word_in_same_page(addr & 0xff00, addr as u8)
     }
 
-    fn _read_word_in_same_page(&self, page: u16, offset: u8) -> u16 {
+    fn _read_word_in_same_page(&mut self, page: u16, offset: u8) -> u16 {
         let low = self.mcu.read(page | offset as u16) as u16;
         let high = self.mcu.read(page | offset.wrapping_add(1) as u16) as u16;
         (high << 8) | low
@@ -590,7 +590,7 @@ impl<M: Mcu> Cpu<M> {
         self.read_byte(0x100 + self.sp as u16)
     }
 
-    pub fn peek_stack(&self) -> u8 {
+    pub fn peek_stack(&mut self) -> u8 {
         let addr = 0x100 + self.sp.wrapping_add(1) as u16;
         self.read_byte(addr)
     }

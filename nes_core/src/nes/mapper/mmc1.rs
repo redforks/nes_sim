@@ -70,7 +70,7 @@ impl Cartridge for MMC1 {
         unsafe { &*self.cur_chr_rom.get() }
     }
 
-    fn read(&self, address: u16) -> u8 {
+    fn read(&mut self, address: u16) -> u8 {
         match address {
             0x4020..=0x5fff => 0,
             0x6000..=0x7fff => self.prg_ram.borrow()[address as usize - 0x6000],
@@ -86,7 +86,7 @@ impl Cartridge for MMC1 {
         }
     }
 
-    fn write(&self, ppu: &Ppu, address: u16, value: u8) {
+    fn write(&mut self, ppu: &mut Ppu, address: u16, value: u8) {
         match address {
             0x4020..=0x5fff => {}
             0x6000..=0x7fff => self.prg_ram.borrow_mut()[address as usize - 0x6000] = value,
@@ -208,7 +208,7 @@ impl MMC1 {
         *self.chr_bank_size.borrow_mut() = if is_4k { 4096 } else { 8192 };
     }
 
-    fn control(&self, ppu: &Ppu, flags: ControlFlags) {
+    fn control(&self, ppu: &mut Ppu, flags: ControlFlags) {
         ppu.set_mirroring(flags.into());
         self.set_prg_rom_mode(flags.into());
         self.set_chr_bank_mode(flags.chr_in_4k());
@@ -282,37 +282,37 @@ mod tests {
             prg_rom[0] = 0xba;
             prg_rom[PRG_ROM_BANK_SIZE] = 0xcd;
         }
-        let (mmc1, ppu) = create(init_prg);
+        let (mut mmc1, mut ppu) = create(init_prg);
 
         // no effect read/write before 0x6000
-        mmc1.write(&ppu, 0x4020, 1);
+        mmc1.write(&mut ppu, 0x4020, 1);
         assert_eq!(mmc1.read(0x4020), 0);
 
-        mmc1.write(&ppu, 0x6000, 1);
+        mmc1.write(&mut ppu, 0x6000, 1);
         assert_eq!(mmc1.read(0x6000), 1);
-        mmc1.write(&ppu, 0x7fff, 255);
+        mmc1.write(&mut ppu, 0x7fff, 255);
         assert_eq!(mmc1.read(0x7fff), 255);
 
         // default is FixLast16k
         assert_eq!(mmc1.read(0x8000), 0xba);
         assert_eq!(mmc1.read(0xffff), 0xab);
 
-        mmc1.write(&ppu, 0xE000, 1);
-        mmc1.write(&ppu, 0xE000, 1);
+        mmc1.write(&mut ppu, 0xE000, 1);
+        mmc1.write(&mut ppu, 0xE000, 1);
         // reset load register, and select 2nd page to first band
-        mmc1.write(&ppu, 0x8000, 0x80);
-        mmc1.write(&ppu, 0xE000, 1);
-        mmc1.write(&ppu, 0xE001, 0);
-        mmc1.write(&ppu, 0xE002, 0);
-        mmc1.write(&ppu, 0xE002, 0);
-        mmc1.write(&ppu, 0xE002, 1);
+        mmc1.write(&mut ppu, 0x8000, 0x80);
+        mmc1.write(&mut ppu, 0xE000, 1);
+        mmc1.write(&mut ppu, 0xE001, 0);
+        mmc1.write(&mut ppu, 0xE002, 0);
+        mmc1.write(&mut ppu, 0xE002, 0);
+        mmc1.write(&mut ppu, 0xE002, 1);
         assert_eq!(mmc1.read(0x8000), 0xcd);
     }
 
     #[test]
     fn control_ppu_mirroring() {
-        let (mmc1, ppu) = create(|_| {});
-        mmc1.control(&ppu, ControlFlags::new().with_mirroring(0));
+        let (mut mmc1, mut ppu) = create(|_| {});
+        mmc1.control(&mut ppu, ControlFlags::new().with_mirroring(0));
         assert_eq!(ppu.mirroring(), Mirroring::LowerBank);
     }
 
@@ -340,39 +340,39 @@ mod tests {
 
     #[test]
     fn control_prg_rom_mode() {
-        let (mmc1, ppu) = create(|rom| {
+        let (mut mmc1, mut ppu) = create(|rom| {
             rom[0] = 1;
             rom[32 * 1024 - 1] = 2;
             rom[128 * 1024 - 16 * 1024] = 3;
         });
-        mmc1.control(&ppu, ControlFlags::new().with_prg_mode(0));
+        mmc1.control(&mut ppu, ControlFlags::new().with_prg_mode(0));
         assert_eq!(mmc1.read(0x8000), 1);
         assert_eq!(mmc1.read(0xffff), 2);
 
         // Fix last 16k
-        mmc1.control(&ppu, ControlFlags::new().with_prg_mode(3));
+        mmc1.control(&mut ppu, ControlFlags::new().with_prg_mode(3));
         assert_eq!(mmc1.read(0x8000), 1);
         assert_eq!(mmc1.read(0xC000), 3);
 
         // Fix first 16k
-        mmc1.control(&ppu, ControlFlags::new().with_prg_mode(1));
+        mmc1.control(&mut ppu, ControlFlags::new().with_prg_mode(1));
         assert_eq!(mmc1.read(0x8000), 1);
         assert_eq!(mmc1.read(0xffff), 2);
     }
 
     #[test]
     fn control_chr_bank_size() {
-        let (mmc1, ppu) = create(|_| {});
+        let (mut mmc1, mut ppu) = create(|_| {});
 
         // default is 4k
         assert_eq!(*mmc1.chr_bank_size.borrow(), 4 * 1024);
 
         // set to 8k
-        mmc1.control(&ppu, ControlFlags::new().with_chr_in_4k(false));
+        mmc1.control(&mut ppu, ControlFlags::new().with_chr_in_4k(false));
         assert_eq!(*mmc1.chr_bank_size.borrow(), 8 * 1024);
 
         // set to 4k
-        mmc1.control(&ppu, ControlFlags::new().with_chr_in_4k(true));
+        mmc1.control(&mut ppu, ControlFlags::new().with_chr_in_4k(true));
         assert_eq!(*mmc1.chr_bank_size.borrow(), 4 * 1024);
     }
 

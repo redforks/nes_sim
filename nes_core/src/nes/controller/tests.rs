@@ -32,27 +32,26 @@ fn test_a_controller() {
 fn test_controller_new() {
     let controller = Controller::new();
     // Verify both controllers are initialized
-    let a = controller.a.borrow();
-    let b = controller.b.borrow();
-    // Just verify they exist (RefCell prevents direct value access)
-    drop((a, b));
+    let _a = &controller.a;
+    let _b = &controller.b;
+    // Controllers exist and are accessible
 }
 
 #[test]
 fn test_controller_read() {
-    let controller = Controller::new();
+    let mut controller = Controller::new();
 
     // Press some buttons on controller A
-    controller.a.borrow_mut().press(Button::A);
-    controller.a.borrow_mut().reset_for_read();
+    controller.a.press(Button::A);
+    controller.a.reset_for_read();
 
     // Read from address 0x4016 (controller A)
     let val = controller.read(0x4016);
     assert_eq!(val, 0x40); // A button pressed
 
     // Press some buttons on controller B
-    controller.b.borrow_mut().press(Button::B);
-    controller.b.borrow_mut().reset_for_read();
+    controller.b.press(Button::B);
+    controller.b.reset_for_read();
 
     // Read from address 0x4017 (controller B)
     let val = controller.read(0x4017);
@@ -64,8 +63,8 @@ fn test_controller_write() {
     let mut controller = Controller::new();
 
     // Press buttons before write
-    controller.a.borrow_mut().press(Button::A);
-    controller.a.borrow_mut().press(Button::B);
+    controller.a.press(Button::A);
+    controller.a.press(Button::B);
 
     // Write 0 to address 0x4016 to reset for reading
     controller.write(0x4016, 0);
@@ -79,8 +78,8 @@ fn test_controller_write() {
 fn test_controller_write_1_does_not_reset() {
     let mut controller = Controller::new();
 
-    controller.a.borrow_mut().press(Button::A);
-    controller.a.borrow_mut().reset_for_read();
+    controller.a.press(Button::A);
+    controller.a.reset_for_read();
     let val1 = controller.read(0x4016);
     assert_eq!(val1, 0x40);
 
@@ -97,8 +96,8 @@ fn test_controller_write_1_does_not_reset() {
 fn test_controller_write_4017_does_nothing() {
     let mut controller = Controller::new();
 
-    controller.a.borrow_mut().press(Button::A);
-    controller.a.borrow_mut().reset_for_read();
+    controller.a.press(Button::A);
+    controller.a.reset_for_read();
 
     // Write to 0x4017 should do nothing
     controller.write(0x4017, 0xFF);
@@ -157,7 +156,7 @@ fn test_release_buttons() {
 #[test]
 #[should_panic(expected = "read address out of range")]
 fn test_controller_read_invalid_address() {
-    let controller = Controller::new();
+    let mut controller = Controller::new();
     controller.read(0x4015);
 }
 

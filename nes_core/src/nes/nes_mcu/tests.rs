@@ -15,7 +15,7 @@ impl MockCartridge {
 }
 
 impl Cartridge for MockCartridge {
-    fn read(&self, address: u16) -> u8 {
+    fn read(&mut self, address: u16) -> u8 {
         if address >= 0x8000 {
             self.prg_rom[(address - 0x8000) as usize]
         } else {
@@ -23,7 +23,7 @@ impl Cartridge for MockCartridge {
         }
     }
 
-    fn write(&self, _ppu: &Ppu, _address: u16, _value: u8) {}
+    fn write(&mut self, _ppu: &mut Ppu, _address: u16, _value: u8) {}
 
     fn pattern_ref(&self) -> &[u8] {
         &self.chr_rom
@@ -113,7 +113,7 @@ fn test_cartridge_prg_rom_access() {
     let mut cart = MockCartridge::new();
     cart.prg_rom[0] = 0xEA; // NOP opcode
 
-    let mcu = NesMcu {
+    let mut mcu = NesMcu {
         lower_ram: LowerRam::new(),
         ppu: Ppu::default(),
         after_ppu: RamMcu::start_from(0x4000, [0; 0x20]),
@@ -134,7 +134,7 @@ fn test_cartridge_prg_rom_access() {
 
 #[test]
 fn test_frame_counter_interrupt_flag() {
-    let mcu = NesMcu {
+    let mut mcu = NesMcu {
         lower_ram: LowerRam::new(),
         ppu: Ppu::default(),
         after_ppu: RamMcu::start_from(0x4000, [0; 0x20]),
@@ -155,7 +155,7 @@ fn test_frame_counter_interrupt_flag() {
 
 #[test]
 fn test_no_interrupt_when_both_false() {
-    let mcu = NesMcu {
+    let mut mcu = NesMcu {
         lower_ram: LowerRam::new(),
         ppu: Ppu::default(),
         after_ppu: RamMcu::start_from(0x4000, [0; 0x20]),
@@ -202,7 +202,7 @@ fn test_frame_counter_write() {
 
 #[test]
 fn test_status_register_read_clears_flags() {
-    let mcu = NesMcu {
+    let mut mcu = NesMcu {
         lower_ram: LowerRam::new(),
         ppu: Ppu::default(),
         after_ppu: RamMcu::start_from(0x4000, [0; 0x20]),
@@ -333,7 +333,7 @@ fn test_cartridge_read_boundary() {
     cart.prg_rom[0] = 0x11;
     cart.prg_rom[0x7FFF] = 0x22; // Last byte of PRG ROM
 
-    let mcu = NesMcu {
+    let mut mcu = NesMcu {
         lower_ram: LowerRam::new(),
         ppu: Ppu::default(),
         after_ppu: RamMcu::start_from(0x4000, [0; 0x20]),
@@ -355,7 +355,7 @@ fn test_cartridge_read_boundary() {
 
 #[test]
 fn test_read_4015_returns_zero() {
-    let mcu = NesMcu {
+    let mut mcu = NesMcu {
         lower_ram: LowerRam::new(),
         ppu: Ppu::default(),
         after_ppu: RamMcu::start_from(0x4000, [0; 0x20]),

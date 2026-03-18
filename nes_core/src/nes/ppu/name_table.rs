@@ -1,6 +1,6 @@
 use crate::mcu::Mcu;
 use crate::nes::ppu::{Pattern, Tile, NAME_TABLE_MEM_START, TILES_PER_COL, TILES_PER_ROW};
-use std::cell::{Cell, RefCell};
+use std::cell::Cell;
 
 #[derive(Copy, Clone)]
 pub struct AttributeTable<'a>(&'a [u8]);
@@ -58,16 +58,16 @@ pub enum Mirroring {
 }
 
 pub struct NameTableControl {
-    mem: RefCell<[u8; 4096]>,
-    band_start_offset: RefCell<[u16; 4]>,
+    mem: [u8; 4096],
+    band_start_offset: [u16; 4],
     mirroring: Cell<Mirroring>,
 }
 
 impl Default for NameTableControl {
     fn default() -> Self {
         Self {
-            mem: RefCell::new([0; 4096]),
-            band_start_offset: RefCell::new([0, 1024, 2048, 3072]),
+            mem: [0; 4096],
+            band_start_offset: [0, 1024, 2048, 3072],
             mirroring: Cell::new(Mirroring::Four),
         }
     }
@@ -78,13 +78,13 @@ impl NameTableControl {
         self.mirroring.get()
     }
 
-    pub fn set_mirroring(&self, mirroring: Mirroring) {
+    pub fn set_mirroring(&mut self, mirroring: Mirroring) {
         if mirroring == self.mirroring.get() {
             return;
         }
 
         self.mirroring.set(mirroring);
-        let mut offsets = self.band_start_offset.borrow_mut();
+        let offsets = &mut self.band_start_offset;
         match mirroring {
             Mirroring::LowerBank => {
                 *offsets = [0, 0, 0, 0];
@@ -109,10 +109,8 @@ impl NameTableControl {
     where
         F: FnOnce(NameTable<'_>) -> U,
     {
-        let offsets = self.band_start_offset.borrow();
-        let mem = self.mem.borrow();
-        let start = offsets[idx as usize] as usize;
-        f(NameTable::new(&mem[start..start + 960]))
+        let start = self.band_start_offset[idx as usize] as usize;
+        f(NameTable::new(&self.mem[start..start + 960]))
     }
 
     /// Execute a callback with read-only access to the nth attribute table data
@@ -120,28 +118,23 @@ impl NameTableControl {
     where
         F: FnOnce(AttributeTable<'_>) -> U,
     {
-        let offsets = self.band_start_offset.borrow();
-        let mem = self.mem.borrow();
-        let start = offsets[idx as usize] as usize + 960;
-        f(AttributeTable::new(&mem[start..start + 64]))
+        let start = self.band_start_offset[idx as usize] as usize + 960;
+        f(AttributeTable::new(&self.mem[start..start + 64]))
     }
 
     fn offset(&self, addr: u16) -> usize {
         let r = addr - NAME_TABLE_MEM_START;
-        let offsets = self.band_start_offset.borrow();
-        (offsets[r as usize / 1024] + r % 1024) as usize
+        (self.band_start_offset[r as usize / 1024] + r % 1024) as usize
     }
 }
 
 impl Mcu for NameTableControl {
-    fn read(&self, address: u16) -> u8 {
-        let mem = self.mem.borrow();
-        mem[self.offset(address)]
+    fn read(&mut self, address: u16) -> u8 {
+        self.mem[self.offset(address)]
     }
 
     fn write(&mut self, address: u16, value: u8) {
-        let mut mem = self.mem.borrow_mut();
-        mem[self.offset(address)] = value;
+        self.mem[self.offset(address)] = value;
     }
 }
 
@@ -193,7 +186,7 @@ mod tests {
 
     #[test]
     fn name_table_control() {
-        fn assert_start_addr(control: &NameTableControl, v1: u8, v2: u8, v3: u8, v4: u8) {
+        fn assert_start_addr(control: &mut NameTableControl, v1: u8, v2: u8, v3: u8, v4: u8) {
             assert_eq!(v1, control.read(0x2000));
             assert_eq!(v2, control.read(0x2400));
             assert_eq!(v3, control.read(0x2800));
@@ -212,8 +205,8 @@ mod tests {
         control.write(0x27ff, 12);
         control.write(0x2bff, 13);
         control.write(0x2fff, 14);
-        assert_start_addr(&control, 1, 2, 3, 4);
-        assert_eq!(11, control.mem.borrow()[1023]);
+        assert_start_addr(&mut control, 1, 2, 3, 4);
+        assert_eq!(11, control.mem[1023]);
         assert_eq!(1, control.with_nth(0, |nt| nt.0[0]));
         assert_eq!(2, control.with_nth(1, |nt| nt.0[0]));
         assert_eq!(3, control.with_nth(2, |nt| nt.0[0]));
@@ -225,24 +218,24 @@ mod tests {
 
         control.set_mirroring(Mirroring::LowerBank);
         assert_eq!(Mirroring::LowerBank, control.mirroring());
-        assert_start_addr(&control, 1, 1, 1, 1);
+        assert_start_addr(&mut control, 1, 1, 1, 1);
 
         control.set_mirroring(Mirroring::UpperBank);
-        assert_start_addr(&control, 2, 2, 2, 2);
+        assert_start_addr(&mut control, 2, 2, 2, 2);
 
         control.set_mirroring(Mirroring::Horizontal);
-        assert_start_addr(&control, 1, 1, 2, 2);
+        assert_start_addr(&mut control, 1, 1, 2, 2);
 
         control.set_mirroring(Mirroring::Vertical);
-        assert_start_addr(&control, 1, 2, 1, 2);
+        assert_start_addr(&mut control, 1, 2, 1, 2);
 
         control.set_mirroring(Mirroring::Four);
-        assert_start_addr(&control, 1, 2, 3, 4);
+        assert_start_addr(&mut control, 1, 2, 3, 4);
     }
 
     #[test]
     fn test_set_mirroring_same_value() {
-        let control = NameTableControl::default();
+        let mut control = NameTableControl::default();
 
         // Set to vertical mirroring
         control.set_mirroring(Mirroring::Vertical);

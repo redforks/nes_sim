@@ -41,7 +41,7 @@ fn create_test_nes(mapper: u8, prg_pages: u8, chr_pages: u8) -> Vec<u8> {
 fn create_cartridge_mapper0() {
     let rom = create_test_nes(0, 1, 1);
     let file = INesFile::new(rom).unwrap();
-    let cartridge = create_cartridge(&file);
+    let mut cartridge = create_cartridge(&file);
 
     // Test that we can read from cartridge
     let val = cartridge.read(CARTRIDGE_START_ADDR);
@@ -55,7 +55,7 @@ fn create_cartridge_mapper0() {
 fn create_cartridge_mapper1() {
     let rom = create_test_nes(1, 2, 1);
     let file = INesFile::new(rom).unwrap();
-    let cartridge = create_cartridge(&file);
+    let mut cartridge = create_cartridge(&file);
 
     // Test that we can read from cartridge
     let val = cartridge.read(0x8000);

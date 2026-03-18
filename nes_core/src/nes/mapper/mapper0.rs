@@ -1,12 +1,11 @@
 use super::CARTRIDGE_START_ADDR;
 use crate::nes::mapper::Cartridge;
 use crate::nes::ppu::Ppu;
-use std::cell::RefCell;
 
 pub struct Mapper0 {
     prg_rom: [u8; 0x8000],
     chr_rom: [u8; 0x2000],
-    ram: RefCell<[u8; 0x4000 - 0x20]>,
+    ram: [u8; 0x4000 - 0x20],
 }
 
 impl Mapper0 {
@@ -26,7 +25,7 @@ impl Default for Mapper0 {
         Self {
             prg_rom: [0; 0x8000],
             chr_rom: [0; 0x2000],
-            ram: RefCell::new([0; 0x4000 - 0x20]),
+            ram: [0; 0x4000 - 0x20],
         }
     }
 }
@@ -36,20 +35,18 @@ impl Cartridge for Mapper0 {
         &self.chr_rom
     }
 
-    fn read(&self, address: u16) -> u8 {
+    fn read(&mut self, address: u16) -> u8 {
         match address {
-            CARTRIDGE_START_ADDR..=0x7fff => {
-                self.ram.borrow()[(address - CARTRIDGE_START_ADDR) as usize]
-            }
+            CARTRIDGE_START_ADDR..=0x7fff => self.ram[(address - CARTRIDGE_START_ADDR) as usize],
             0x8000..=0xffff => self.prg_rom[(address - 0x8000) as usize],
             _ => unreachable!(),
         }
     }
 
-    fn write(&self, _ppu: &Ppu, address: u16, value: u8) {
+    fn write(&mut self, _ppu: &mut Ppu, address: u16, value: u8) {
         match address {
             CARTRIDGE_START_ADDR..=0x7fff => {
-                self.ram.borrow_mut()[(address - CARTRIDGE_START_ADDR) as usize] = value
+                self.ram[(address - CARTRIDGE_START_ADDR) as usize] = value
             }
             0x8000..=0xffff => {
                 // ignore write to rom
@@ -66,20 +63,20 @@ mod tests {
 
     #[test]
     fn mcu() {
-        let mcu = Mapper0::default();
-        let ppu = Ppu::default();
+        let mut mcu = Mapper0::default();
+        let mut ppu = Ppu::default();
 
         // read-write ram
-        mcu.write(&ppu, CARTRIDGE_START_ADDR, 0x01);
+        mcu.write(&mut ppu, CARTRIDGE_START_ADDR, 0x01);
         assert_eq!(mcu.read(CARTRIDGE_START_ADDR), 0x01);
-        assert_eq!(mcu.ram.borrow()[0], 0x01);
-        mcu.write(&ppu, 0x7fff, 0x03);
+        assert_eq!(mcu.ram[0], 0x01);
+        mcu.write(&mut ppu, 0x7fff, 0x03);
         assert_eq!(mcu.read(0x7fff), 0x03);
 
         // read-write rom
         assert_eq!(mcu.read(0x8000), 0);
         // ignore write to rom
-        mcu.write(&ppu, 0x8000, 0x03);
+        mcu.write(&mut ppu, 0x8000, 0x03);
         assert_eq!(mcu.read(0x8000), 0);
     }
 

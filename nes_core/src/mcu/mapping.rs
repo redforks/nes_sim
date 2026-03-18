@@ -35,8 +35,8 @@ impl MappingMcu {
 }
 
 impl Mcu for MappingMcu {
-    fn read(&self, address: u16) -> u8 {
-        for region in &self.regions {
+    fn read(&mut self, address: u16) -> u8 {
+        for region in &mut self.regions {
             if address >= region.start && address <= region.end {
                 return region.mcu.read(address);
             }

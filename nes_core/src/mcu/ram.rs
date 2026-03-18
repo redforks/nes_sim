@@ -1,25 +1,18 @@
 use crate::mcu::{DefinedRegion, Mcu};
-use std::cell::RefCell;
 
 pub struct RamMcu<const SIZE: usize> {
     /// Start address of the memory region
     start: u16,
-    ram: RefCell<[u8; SIZE]>,
+    ram: [u8; SIZE],
 }
 
 impl<const SIZE: usize> RamMcu<SIZE> {
     pub fn new(ram: [u8; SIZE]) -> RamMcu<SIZE> {
-        RamMcu {
-            start: 0,
-            ram: RefCell::new(ram),
-        }
+        RamMcu { start: 0, ram }
     }
 
     pub fn start_from(start: u16, ram: [u8; SIZE]) -> Self {
-        RamMcu {
-            start,
-            ram: RefCell::new(ram),
-        }
+        RamMcu { start, ram }
     }
 
     fn to_index(&self, address: u16) -> usize {
@@ -29,12 +22,12 @@ impl<const SIZE: usize> RamMcu<SIZE> {
 
 // impl super::Mcu trait
 impl<const SIZE: usize> Mcu for RamMcu<SIZE> {
-    fn read(&self, address: u16) -> u8 {
-        self.ram.borrow()[self.to_index(address)]
+    fn read(&mut self, address: u16) -> u8 {
+        self.ram[self.to_index(address)]
     }
 
     fn write(&mut self, address: u16, value: u8) {
-        self.ram.borrow_mut()[self.to_index(address)] = value;
+        self.ram[self.to_index(address)] = value;
     }
 
     fn request_irq(&self) -> bool {

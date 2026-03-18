@@ -1,10 +1,10 @@
-use super::{Cpu, Flag, extra_tick_if_cross_page};
+use super::{extra_tick_if_cross_page, Cpu, Flag};
 use crate::mcu::Mcu;
 use std::fmt::{Display, Formatter};
 
 pub trait Address<M: Mcu>: Display + Copy {
     /// return (value, ticks)
-    fn get(&self, cpu: &Cpu<M>) -> (u8, u8) {
+    fn get(&self, cpu: &mut Cpu<M>) -> (u8, u8) {
         let (addr, ticks) = self.calc_addr(cpu);
         (cpu.read_byte(addr), ticks + 1) // +1 for the memory read
     }
@@ -16,7 +16,7 @@ pub trait Address<M: Mcu>: Display + Copy {
         ticks + 1 // +1 for the memory write
     }
 
-    fn calc_addr(&self, _: &Cpu<M>) -> (u16, u8) {
+    fn calc_addr(&self, _: &mut Cpu<M>) -> (u16, u8) {
         panic!("calc_addr not implemented");
     }
 
@@ -35,7 +35,7 @@ impl Display for Literal {
 }
 
 impl<M: Mcu> Address<M> for Literal {
-    fn get(&self, _: &Cpu<M>) -> (u8, u8) {
+    fn get(&self, _: &mut Cpu<M>) -> (u8, u8) {
         (self.0, 0)
     }
 
@@ -54,7 +54,7 @@ impl Display for ZeroPage {
 }
 
 impl<M: Mcu> Address<M> for ZeroPage {
-    fn calc_addr(&self, _: &Cpu<M>) -> (u16, u8) {
+    fn calc_addr(&self, _: &mut Cpu<M>) -> (u16, u8) {
         (self.0 as u16, 1)
     }
 }
@@ -69,7 +69,7 @@ impl Display for Absolute {
 }
 
 impl<M: Mcu> Address<M> for Absolute {
-    fn calc_addr(&self, _: &Cpu<M>) -> (u16, u8) {
+    fn calc_addr(&self, _: &mut Cpu<M>) -> (u16, u8) {
         (self.0, 2)
     }
 }
@@ -84,7 +84,7 @@ impl Display for ZeroPageX {
 }
 
 impl<M: Mcu> Address<M> for ZeroPageX {
-    fn calc_addr(&self, cpu: &Cpu<M>) -> (u16, u8) {
+    fn calc_addr(&self, cpu: &mut Cpu<M>) -> (u16, u8) {
         (self.0.wrapping_add(cpu.x) as u16, 2)
     }
 }
@@ -99,7 +99,7 @@ impl Display for ZeroPageY {
 }
 
 impl<M: Mcu> Address<M> for ZeroPageY {
-    fn calc_addr(&self, cpu: &Cpu<M>) -> (u16, u8) {
+    fn calc_addr(&self, cpu: &mut Cpu<M>) -> (u16, u8) {
         (self.0.wrapping_add(cpu.y) as u16, 2)
     }
 }
@@ -114,7 +114,7 @@ impl Display for AbsoluteX {
 }
 
 impl<M: Mcu> Address<M> for AbsoluteX {
-    fn calc_addr(&self, cpu: &Cpu<M>) -> (u16, u8) {
+    fn calc_addr(&self, cpu: &mut Cpu<M>) -> (u16, u8) {
         let r = self.0.wrapping_add(cpu.x as u16);
         (r, 2 + extra_tick_if_cross_page(self.0, r))
     }
@@ -130,7 +130,7 @@ impl Display for AbsoluteY {
 }
 
 impl<M: Mcu> Address<M> for AbsoluteY {
-    fn calc_addr(&self, cpu: &Cpu<M>) -> (u16, u8) {
+    fn calc_addr(&self, cpu: &mut Cpu<M>) -> (u16, u8) {
         let r = self.0.wrapping_add(cpu.y as u16);
         (r, 2 + extra_tick_if_cross_page(self.0, r))
     }
@@ -146,7 +146,7 @@ impl Display for IndirectX {
 }
 
 impl<M: Mcu> Address<M> for IndirectX {
-    fn calc_addr(&self, cpu: &Cpu<M>) -> (u16, u8) {
+    fn calc_addr(&self, cpu: &mut Cpu<M>) -> (u16, u8) {
         (cpu.read_zero_page_word(cpu.x.wrapping_add(self.0)), 4)
     }
 }
@@ -161,7 +161,7 @@ impl Display for IndirectY {
 }
 
 impl<M: Mcu> Address<M> for IndirectY {
-    fn calc_addr(&self, cpu: &Cpu<M>) -> (u16, u8) {
+    fn calc_addr(&self, cpu: &mut Cpu<M>) -> (u16, u8) {
         let addr = cpu.read_zero_page_word(self.0);
         let r = addr.wrapping_add(cpu.y as u16);
         (r, 3 + extra_tick_if_cross_page(addr, r))
@@ -178,7 +178,7 @@ impl Display for RegisterA {
 }
 
 impl<M: Mcu> Address<M> for RegisterA {
-    fn get(&self, cpu: &Cpu<M>) -> (u8, u8) {
+    fn get(&self, cpu: &mut Cpu<M>) -> (u8, u8) {
         (cpu.a, 0)
     }
 
@@ -198,7 +198,7 @@ impl Display for RegisterX {
 }
 
 impl<M: Mcu> Address<M> for RegisterX {
-    fn get(&self, cpu: &Cpu<M>) -> (u8, u8) {
+    fn get(&self, cpu: &mut Cpu<M>) -> (u8, u8) {
         (cpu.x, 0)
     }
 
@@ -222,7 +222,7 @@ impl Display for RegisterY {
 }
 
 impl<M: Mcu> Address<M> for RegisterY {
-    fn get(&self, cpu: &Cpu<M>) -> (u8, u8) {
+    fn get(&self, cpu: &mut Cpu<M>) -> (u8, u8) {
         (cpu.y, 0)
     }
 
@@ -246,7 +246,7 @@ impl Display for RegisterSP {
 }
 
 impl<M: Mcu> Address<M> for RegisterSP {
-    fn get(&self, cpu: &Cpu<M>) -> (u8, u8) {
+    fn get(&self, cpu: &mut Cpu<M>) -> (u8, u8) {
         (cpu.sp, 0)
     }
 
@@ -270,7 +270,7 @@ impl Display for RegisterStatus {
 }
 
 impl<M: Mcu> Address<M> for RegisterStatus {
-    fn get(&self, cpu: &Cpu<M>) -> (u8, u8) {
+    fn get(&self, cpu: &mut Cpu<M>) -> (u8, u8) {
         (cpu.status | 0b0011_0000, 0)
     }
 
@@ -294,7 +294,7 @@ impl Display for FlagAddr {
 }
 
 impl<M: Mcu> Address<M> for FlagAddr {
-    fn get(&self, cpu: &Cpu<M>) -> (u8, u8) {
+    fn get(&self, cpu: &mut Cpu<M>) -> (u8, u8) {
         (cpu.flag(self.0) as u8, 0)
     }
 

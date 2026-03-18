@@ -1,5 +1,5 @@
 use super::addressing::{Address, RegisterStatus};
-use super::{Cpu, Flag, extra_tick_if_cross_page};
+use super::{extra_tick_if_cross_page, Cpu, Flag};
 use crate::cpu::addressing::{FlagAddr, Literal};
 use crate::mcu::Mcu;
 
@@ -77,7 +77,11 @@ pub fn new_dec<M: Mcu, D: Address<M>>(dest: D) -> impl FnMut(&mut Cpu<M>) -> u8 
         dest.set(cpu, val);
         cpu.update_negative_flag(val);
         cpu.update_zero_flag(val);
-        if dest.is_register() { 2 } else { 4 + ticks }
+        if dest.is_register() {
+            2
+        } else {
+            4 + ticks
+        }
     }
 }
 
@@ -89,7 +93,11 @@ pub fn new_inc<M: Mcu, D: Address<M>>(dest: D) -> impl FnMut(&mut Cpu<M>) -> u8 
         dest.set(cpu, val);
         cpu.update_negative_flag(val);
         cpu.update_zero_flag(val);
-        if dest.is_register() { 2 } else { 4 + ticks }
+        if dest.is_register() {
+            2
+        } else {
+            4 + ticks
+        }
     }
 }
 

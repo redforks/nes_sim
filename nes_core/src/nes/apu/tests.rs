@@ -445,7 +445,7 @@ fn test_apu_new() {
 #[test]
 #[should_panic(expected = "Can not from PulseChannel")]
 fn test_pulse_channel_read_panics() {
-    let channel = PulseChannel::new(0x4000, MockPulseDriver);
+    let mut channel = PulseChannel::new(0x4000, MockPulseDriver);
     let _ = channel.read(0x4000);
 }
 
@@ -483,13 +483,13 @@ fn test_pulse_channel_write_invalid_address() {
 
 #[test]
 fn test_pulse_channel_region() {
-    let channel = PulseChannel::new(0x4000, MockPulseDriver);
+    let mut channel = PulseChannel::new(0x4000, MockPulseDriver);
     assert_eq!(channel.region(), (0x4000, 0x4003));
 }
 
 #[test]
 fn test_pulse_channel_region_4004() {
-    let channel = PulseChannel::new(0x4004, MockPulseDriver);
+    let mut channel = PulseChannel::new(0x4004, MockPulseDriver);
     assert_eq!(channel.region(), (0x4004, 0x4007));
 }
 
@@ -497,7 +497,7 @@ fn test_pulse_channel_region_4004() {
 #[test]
 #[should_panic(expected = "Can not read from TriangleChannel")]
 fn test_triangle_channel_read_panics() {
-    let channel = TriangleChannel::new(MockTriangleDriver);
+    let mut channel = TriangleChannel::new(MockTriangleDriver);
     let _ = channel.read(0x4008);
 }
 
@@ -528,7 +528,7 @@ fn test_triangle_channel_write_invalid_address() {
 
 #[test]
 fn test_triangle_channel_region() {
-    let channel = TriangleChannel::new(MockTriangleDriver);
+    let mut channel = TriangleChannel::new(MockTriangleDriver);
     assert_eq!(channel.region(), (0x4008, 0x400B));
 }
 
@@ -536,7 +536,7 @@ fn test_triangle_channel_region() {
 #[test]
 #[should_panic(expected = "Can not from PulseChannel")]
 fn test_noise_channel_read_panics() {
-    let channel = NoiseChannel(RefCell::new(MockNoiseDriver));
+    let mut channel = NoiseChannel(RefCell::new(MockNoiseDriver));
     let _ = channel.read(0x400C);
 }
 
@@ -567,7 +567,7 @@ fn test_noise_channel_write_invalid_address() {
 
 #[test]
 fn test_noise_channel_region() {
-    let channel = NoiseChannel(RefCell::new(MockNoiseDriver));
+    let mut channel = NoiseChannel(RefCell::new(MockNoiseDriver));
     assert_eq!(channel.region(), (0x400C, 0x400F));
 }
 
@@ -575,7 +575,7 @@ fn test_noise_channel_region() {
 #[test]
 #[should_panic(expected = "Can not read from DmcChannel")]
 fn test_dmc_channel_read_panics() {
-    let channel = DmcChannel(RefCell::new(MockDmcDriver));
+    let mut channel = DmcChannel(RefCell::new(MockDmcDriver));
     let _ = channel.read(0x4010);
 }
 
@@ -612,14 +612,14 @@ fn test_dmc_channel_write_invalid_address() {
 
 #[test]
 fn test_dmc_channel_region() {
-    let channel = DmcChannel(RefCell::new(MockDmcDriver));
+    let mut channel = DmcChannel(RefCell::new(MockDmcDriver));
     assert_eq!(channel.region(), (0x4010, 0x4013));
 }
 
 // Test APUController
 #[test]
 fn test_apu_controller_read_status() {
-    let channel = APUController(RefCell::new(MockApuControllerDriver));
+    let mut channel = APUController(RefCell::new(MockApuControllerDriver));
     let val = channel.read(0x4015);
     assert_eq!(val, 0); // Default APUStatus
 }
@@ -627,7 +627,7 @@ fn test_apu_controller_read_status() {
 #[test]
 #[should_panic(expected = "Can not read from APUController")]
 fn test_apu_controller_read_invalid_address() {
-    let channel = APUController(RefCell::new(MockApuControllerDriver));
+    let mut channel = APUController(RefCell::new(MockApuControllerDriver));
     let _ = channel.read(0x4016);
 }
 
