@@ -760,13 +760,34 @@ impl Ppu {
         status
     }
 
-    /// Get reference to inner PPU (for advanced testing)
-    pub fn inner(&self) -> &Ppu {
-        self
+    /// Access mutable OAM for tests/helpers
+    #[cfg(test)]
+    pub(crate) fn oam_mut(&mut self) -> &mut [u8; 0x100] {
+        &mut self.oam
     }
 
-    pub fn inner_mut(&mut self) -> &mut Ppu {
-        self
+    /// Write into the name table (test helper)
+    #[cfg(test)]
+    pub(crate) fn name_table_write(&mut self, addr: u16, value: u8) {
+        self.name_table.write(addr, value);
+    }
+
+    /// Write into palette memory (test helper)
+    #[cfg(test)]
+    pub(crate) fn palette_write(&mut self, addr: u16, value: u8) {
+        self.palette.write(addr, value);
+    }
+
+    /// Clear palette RAM (test helper)
+    #[cfg(test)]
+    pub(crate) fn clear_palette(&mut self) {
+        self.palette.data = [0; 0x20];
+    }
+
+    /// Set PPUMASK directly (test helper)
+    #[cfg(test)]
+    pub(crate) fn set_mask(&mut self, mask: PpuMask) {
+        self.mask = mask;
     }
 
     /// Render a single pixel (for testing)
@@ -775,79 +796,90 @@ impl Ppu {
     }
 
     /// Get scanline (for testing)
-    pub fn scanline(&self) -> u16 {
+    #[cfg(test)]
+    pub(crate) fn scanline(&self) -> u16 {
         self.scanline
     }
 
     /// Set scanline (for testing)
-    pub fn set_scanline(&mut self, scanline: u16) {
+    #[cfg(test)]
+    pub(crate) fn set_scanline(&mut self, scanline: u16) {
         self.scanline = scanline;
     }
 
     /// Get dot (for testing)
-    pub fn dot(&self) -> u16 {
+    #[cfg(test)]
+    pub(crate) fn dot(&self) -> u16 {
         self.dot
     }
 
     /// Set dot (for testing)
-    pub fn set_dot(&mut self, dot: u16) {
+    #[cfg(test)]
+    pub(crate) fn set_dot(&mut self, dot: u16) {
         self.dot = dot;
     }
 
     /// Get VRAM address (for testing)
-    pub fn vram_addr(&self) -> u16 {
+    #[cfg(test)]
+    pub(crate) fn vram_addr(&self) -> u16 {
         self.vram_addr
     }
 
     /// Get current pattern table index (for testing)
-    pub fn cur_pattern_table_idx(&self) -> u8 {
+    #[cfg(test)]
+    pub(crate) fn cur_pattern_table_idx(&self) -> u8 {
         self.cur_pattern_table_idx
     }
 
     /// Get temporary VRAM address (for testing)
-    pub fn temp_vram_addr(&self) -> u16 {
+    #[cfg(test)]
+    pub(crate) fn temp_vram_addr(&self) -> u16 {
         self.temp_vram_addr
     }
 
     /// Get fine X scroll (for testing)
-    pub fn fine_x(&self) -> u8 {
+    #[cfg(test)]
+    pub(crate) fn fine_x(&self) -> u8 {
         self.fine_x
     }
 
     /// Get control flags (for testing)
-    pub fn ctrl_flags(&self) -> PpuCtrl {
+    #[cfg(test)]
+    pub(crate) fn ctrl_flags(&self) -> PpuCtrl {
         self.ctrl_flags
     }
 
     /// Get status flags (for testing)
-    pub fn status(&self) -> PpuStatus {
+    #[cfg(test)]
+    pub(crate) fn status(&self) -> PpuStatus {
         self.status
     }
 
     /// Set status register (for testing)
-    pub fn set_status(&mut self, status: PpuStatus) {
+    #[cfg(test)]
+    pub(crate) fn set_status(&mut self, status: PpuStatus) {
         self.status = status;
     }
 
     /// Get write toggle state (for testing)
-    pub fn write_toggle(&self) -> bool {
+    #[cfg(test)]
+    pub(crate) fn write_toggle(&self) -> bool {
         self.write_toggle
     }
 
     /// Get mask flags (for testing)
-    pub fn mask(&self) -> PpuMask {
+    #[cfg(test)]
+    pub(crate) fn mask(&self) -> PpuMask {
         self.mask
     }
 
     /// Get OAM (for testing)
-    pub fn oam(&self) -> &[u8; 0x100] {
+    #[cfg(test)]
+    pub(crate) fn oam(&self) -> &[u8; 0x100] {
         &self.oam
     }
 
-    /// Get palette state (for testing)
-    pub fn palette(&self) -> &Palette {
-        &self.palette
-    }
+    // palette() removed; use test helpers (palette_write / clear_palette) instead
 
     /// Write to VRAM address (for testing)
     pub fn write_vram(&mut self, address: u16, value: u8) {
