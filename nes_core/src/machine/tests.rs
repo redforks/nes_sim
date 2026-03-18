@@ -36,16 +36,7 @@ fn test_reset() {
 }
 
 #[test]
-fn test_run_ticks_zero() {
-    let mcu = MockMcu::new();
-    let mut machine = Machine::new(mcu);
-
-    let result = machine.run_ticks(0);
-    assert_eq!(result, ExecuteResult::Continue);
-}
-
-#[test]
-fn test_run_ticks_positive() {
+fn test_tick_single() {
     let mcu = MockMcu::new();
     // Write a JMP instruction to create an infinite loop
     // JMP $8000 = 0x4C 0x00 0x80 at address 0x8000
@@ -57,7 +48,7 @@ fn test_run_ticks_positive() {
 
     machine.set_pc(0x8000);
 
-    // Run some ticks
-    let result = machine.run_ticks(10);
+    // Execute single tick
+    let (result, _cycles) = machine.tick();
     assert_eq!(result, ExecuteResult::Continue);
 }

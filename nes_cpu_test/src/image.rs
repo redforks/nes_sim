@@ -1,10 +1,10 @@
 use super::plugin::{CompositePlugin, Console, MonitorTestStatus, ReportPlugin};
 use super::plugin::{DetectDeadLoop, ImageExit};
-use nes_core::Plugin;
 use nes_core::ines::INesFile;
 use nes_core::machine::Machine;
 use nes_core::mcu::RamMcu;
 use nes_core::nes_machine::NesMachine;
+use nes_core::Plugin;
 use std::io::Read;
 
 mod driver;
@@ -70,10 +70,10 @@ pub enum MachineWrapper {
 }
 
 impl MachineWrapper {
-    pub fn run_ticks(&mut self, ticks: u32) -> nes_core::ExecuteResult {
+    pub fn tick(&mut self) -> nes_core::ExecuteResult {
         match self {
-            MachineWrapper::Bin(m) => m.run_ticks(ticks),
-            MachineWrapper::INes(m) => m.run_ticks(ticks),
+            MachineWrapper::Bin(m) => m.tick().0,
+            MachineWrapper::INes(m) => m.tick(),
         }
     }
 

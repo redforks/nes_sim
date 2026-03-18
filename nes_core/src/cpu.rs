@@ -347,12 +347,12 @@ fn execute_next<M: Mcu>(cpu: &mut Cpu<M>) -> u8 {
     }
 }
 
-// Trait to sync instruction execution  times.
+// Trait to sync instruction execution times.
 pub trait Plugin<M: Mcu> {
     fn start(&mut self, cpu: &Cpu<M>);
 
-    // return true to stop cpu
-    fn end(&mut self, cpu: &Cpu<M>);
+    // Called after instruction execution with the cycle count
+    fn end(&mut self, cpu: &Cpu<M>, cycles: u8);
 
     fn should_stop(&self) -> ExecuteResult {
         ExecuteResult::Continue
@@ -364,8 +364,8 @@ impl<M: Mcu> Plugin<M> for Box<dyn Plugin<M>> {
         self.as_mut().start(cpu);
     }
 
-    fn end(&mut self, cpu: &Cpu<M>) {
-        self.as_mut().end(cpu);
+    fn end(&mut self, cpu: &Cpu<M>, cycles: u8) {
+        self.as_mut().end(cpu, cycles);
     }
 
     fn should_stop(&self) -> ExecuteResult {
@@ -388,7 +388,7 @@ impl<M: Mcu> EmptyPlugin<M> {
 impl<M: Mcu> Plugin<M> for EmptyPlugin<M> {
     fn start(&mut self, _: &Cpu<M>) {}
 
-    fn end(&mut self, _: &Cpu<M>) {}
+    fn end(&mut self, _: &Cpu<M>, _cycles: u8) {}
 }
 
 impl<M: Mcu> Default for EmptyPlugin<M> {
@@ -485,22 +485,13 @@ impl<M: Mcu> Cpu<M> {
         }
     }
 
-    /// Execute one complete CPU instruction, then tick PPU and APU for the
-    /// appropriate number of cycles. Returns the execution result.
+    /// Execute one complete CPU instruction. Returns (execution result, cycle count).
     ///
-    /// One CPU instruction = N cycles. PPU is ticked 3×N times, APU is ticked N times.
-    pub fn tick<T: Plugin<M>>(&mut self, plugin: &mut T) -> ExecuteResult {
+    /// The caller is responsible for ticking PPU (3× cycles) and APU (1× cycles).
+    pub fn tick<T: Plugin<M>>(&mut self, plugin: &mut T) -> (ExecuteResult, u8) {
         if self.is_halt {
-            // Still need to tick PPU/APU even when halted
-            for _ in 0..3 {
-                if self.mcu.tick_ppu() {
-                    self.nmi();
-                }
-            }
-            if self.mcu.tick_apu() {
-                self.set_irq(true);
-            }
-            return ExecuteResult::Continue;
+            // When halted, return 1 cycle - caller should still tick PPU/APU
+            return (ExecuteResult::Continue, 1);
         }
 
         // Handle pending IRQ
@@ -519,25 +510,11 @@ impl<M: Mcu> Cpu<M> {
 
         // Execute one full instruction
         plugin.start(self);
-        let cycles = execute_next(self) as u32;
-        plugin.end(self);
-
-        // Tick PPU 3 times per CPU cycle
-        for _ in 0..(cycles * 3) {
-            if self.mcu.tick_ppu() {
-                self.nmi();
-            }
-        }
-
-        // Tick APU once per CPU cycle
-        for _ in 0..cycles {
-            if self.mcu.tick_apu() {
-                self.set_irq(true);
-            }
-        }
+        let cycles = execute_next(self);
+        plugin.end(self, cycles);
 
         self.set_irq(self.mcu.request_irq());
-        plugin.should_stop()
+        (plugin.should_stop(), cycles)
     }
 
     fn adc(&mut self, val: u8) {

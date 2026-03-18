@@ -40,7 +40,7 @@ impl<M: Mcu> Plugin<M> for ReportPlugin {
         }
     }
 
-    fn end(&mut self, cpu: &Cpu<M>) {
+    fn end(&mut self, cpu: &Cpu<M>, _cycles: u8) {
         if self.verbose {
             let flags = format_flags(cpu);
             let top = cpu.peek_stack();

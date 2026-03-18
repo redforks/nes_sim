@@ -26,10 +26,10 @@ fn main() {
     let mut machine = image.create_machine(quiet);
     match image {
         Image::Bin(_) => {
-            exec(&mut machine, |m| m.run_ticks(1));
+            exec(&mut machine, |m| m.tick());
         }
         Image::INes(_) => {
-            exec(&mut machine, |m| m.run_ticks(1));
+            exec(&mut machine, |m| m.tick());
         }
     }
 }

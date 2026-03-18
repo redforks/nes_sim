@@ -1,4 +1,6 @@
-use crate::{EmptyPlugin, ExecuteResult, Plugin, ines::INesFile, machine::Machine, nes::NesMcu};
+use crate::{
+    ines::INesFile, machine::Machine, mcu::Mcu, nes::NesMcu, EmptyPlugin, ExecuteResult, Plugin,
+};
 
 /// Safety limit: maximum CPU instruction ticks per `process_frame()` call.
 /// Two full frames worth of ticks; prevents an infinite loop if VBlank never fires
@@ -59,20 +61,44 @@ impl<P: Plugin<NesMcu>> NesMachine<P> {
     ///
     /// A frame is ~29780.5 CPU cycles (262 scanlines × 341 dots / 3 PPU:CPU ratio).
     pub fn process_frame(&mut self) -> ExecuteResult {
+        // Delegate to `tick()` which executes a single CPU instruction and
+        // advances PPU/APU accordingly. Loop until VBlank or safety limit.
         for _ in 0..MAX_TICKS_PER_FRAME {
-            match self.machine.run_ticks(1) {
-                ExecuteResult::Continue => {}
-                other => return other,
+            let result = self.tick();
+
+            // Check for stop conditions from the CPU/plugin
+            if result != ExecuteResult::Continue {
+                return result;
             }
+
+            // Check for VBlank signalled by the PPU
             if self.machine.mcu().take_vblank() {
                 return ExecuteResult::Continue;
             }
         }
+
         ExecuteResult::Continue
     }
 
-    pub fn run_ticks(&mut self, ticks: u32) -> ExecuteResult {
-        self.machine.run_ticks(ticks)
+    /// Execute one CPU instruction and tick PPU/APU. Returns the `ExecuteResult`.
+    pub fn tick(&mut self) -> ExecuteResult {
+        let (result, cycles) = self.machine.tick();
+
+        // Tick PPU 3 times per CPU cycle
+        for _ in 0..(cycles as u32 * 3) {
+            if self.machine.mcu().tick_ppu() {
+                self.machine.cpu_mut().nmi();
+            }
+        }
+
+        // Tick APU once per CPU cycle
+        for _ in 0..(cycles as u32) {
+            if self.machine.mcu().tick_apu() {
+                self.machine.cpu_mut().set_irq(true);
+            }
+        }
+
+        result
     }
 
     pub fn reset(&mut self) {
@@ -127,14 +153,14 @@ mod tests {
     #[test]
     fn test_nes_machine_creation() {
         let file = test_nes_file();
-        let machine = NesMachine::new(&file);
+        let _machine = NesMachine::new(&file);
         // If we got here without panicking, the test passed
     }
 
     #[test]
     fn test_nes_machine_with_plugin() {
         let file = test_nes_file();
-        let machine = NesMachine::with_plugin(&file, EmptyPlugin::new());
+        let _machine = NesMachine::with_plugin(&file, EmptyPlugin::new());
         // If we got here without panicking, the test passed
     }
 

@@ -22,14 +22,9 @@ impl<P: Plugin<M>, M: Mcu> Machine<P, M> {
         machine
     }
 
-    pub fn run_ticks(&mut self, ticks: u32) -> ExecuteResult {
-        for _ in 0..ticks {
-            match self.cpu.tick(&mut self.p) {
-                ExecuteResult::Continue => continue,
-                other => return other,
-            }
-        }
-        ExecuteResult::Continue
+    /// Execute one CPU instruction and return (result, cycles).
+    pub fn tick(&mut self) -> (ExecuteResult, u8) {
+        self.cpu.tick(&mut self.p)
     }
 
     pub fn reset(&mut self) {
@@ -42,6 +37,10 @@ impl<P: Plugin<M>, M: Mcu> Machine<P, M> {
 
     pub fn mcu(&self) -> &M {
         self.cpu.mcu()
+    }
+
+    pub fn cpu_mut(&mut self) -> &mut Cpu<M> {
+        &mut self.cpu
     }
 }
 
