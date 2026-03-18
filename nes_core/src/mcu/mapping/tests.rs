@@ -18,7 +18,7 @@ impl MockMcu {
 }
 
 impl Mcu for MockMcu {
-    fn read(&self, address: u16) -> u8 {
+    fn read(&mut self, address: u16) -> u8 {
         self.data.borrow()[(address - self.start) as usize]
     }
     fn write(&mut self, address: u16, value: u8) {
@@ -54,7 +54,7 @@ fn mapping_mcu_new() {
         Region::new(0x0000, 0x00FF, Box::new(MockMcu::new(0x0000, 0x00FF))),
         Region::new(0x1000, 0x10FF, Box::new(MockMcu::new(0x1000, 0x10FF))),
     ];
-    let mapping = MappingMcu::new(regions);
+    let mut mapping = MappingMcu::new(regions);
     assert_eq!(mapping.regions.len(), 2);
 }
 
@@ -69,7 +69,7 @@ fn mapping_mcu_read() {
         Region::new(0x0000, 0x00FF, Box::new(mcu1)),
         Region::new(0x1000, 0x10FF, Box::new(mcu2)),
     ];
-    let mapping = MappingMcu::new(regions);
+    let mut mapping = MappingMcu::new(regions);
 
     assert_eq!(mapping.read(0x0050), 0xAB);
     assert_eq!(mapping.read(0x1050), 0xCD);
@@ -101,7 +101,7 @@ fn mapping_mcu_read_out_of_range() {
         0x00FF,
         Box::new(MockMcu::new(0x0000, 0x00FF)),
     )];
-    let mapping = MappingMcu::new(regions);
+    let mut mapping = MappingMcu::new(regions);
     mapping.read(0x5000); // Out of range
 }
 

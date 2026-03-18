@@ -2212,7 +2212,7 @@ fn test_sta_indirect_y_unofficial() {
 
     execute_next(&mut cpu);
 
-    assert_eq!(cpu.mcu().read(0x205), 0x42); // 0x200 + Y(5) = 0x205
+    assert_eq!(cpu.mcu_mut().read(0x205), 0x42); // 0x200 + Y(5) = 0x205
 }
 
 #[test]
@@ -2331,7 +2331,7 @@ fn test_sax_zero_page() {
 
     execute_next(&mut cpu);
 
-    assert_eq!(cpu.mcu().read(0x10), 0x30 & 0x12); // SAX stores A & X
+    assert_eq!(cpu.mcu_mut().read(0x10), 0x30 & 0x12); // SAX stores A & X
 }
 
 #[test]
@@ -2346,7 +2346,7 @@ fn test_dcp_zero_page() {
 
     execute_next(&mut cpu);
 
-    assert_eq!(cpu.mcu().read(0x10), 0x0F); // decremented
+    assert_eq!(cpu.mcu_mut().read(0x10), 0x0F); // decremented
     assert!(cpu.flag(Flag::Carry)); // 0x10 > 0x0F, so Carry is set
     assert!(!cpu.flag(Flag::Zero)); // 0x10 != 0x0F, so Zero is NOT set
 }
@@ -2364,7 +2364,7 @@ fn test_isc_zero_page() {
 
     execute_next(&mut cpu);
 
-    assert_eq!(cpu.mcu().read(0x10), 0x10); // incremented
+    assert_eq!(cpu.mcu_mut().read(0x10), 0x10); // incremented
     assert_eq!(cpu.a, 0x10); // 0x20 - 0x10 = 0x10
 }
 
@@ -2380,7 +2380,7 @@ fn test_aso_zero_page() {
 
     execute_next(&mut cpu);
 
-    assert_eq!(cpu.mcu().read(0x10), 0x80); // ASL: 0x40 << 1 = 0x80
+    assert_eq!(cpu.mcu_mut().read(0x10), 0x80); // ASL: 0x40 << 1 = 0x80
     assert_eq!(cpu.a, 0x8F); // ORA: 0x0F | 0x80 = 0x8F
     assert!(cpu.flag(Flag::Negative));
 }
@@ -2398,7 +2398,7 @@ fn test_rla_zero_page() {
 
     execute_next(&mut cpu);
 
-    assert_eq!(cpu.mcu().read(0x10), 0x03); // ROL: (0x81 << 1) | 1 = 0x103 -> 0x03
+    assert_eq!(cpu.mcu_mut().read(0x10), 0x03); // ROL: (0x81 << 1) | 1 = 0x103 -> 0x03
     assert_eq!(cpu.a, 0x0F & 0x03); // AND: 0x0F & 0x03 = 0x03
 }
 
@@ -2418,7 +2418,7 @@ fn test_lse_zero_page() {
     // LSE does LSR (logical shift right) then EOR
     // LSR: 0x81 >> 1 = 0x40 (the incoming carry is ignored, LSR just shifts)
     // EOR: 0xFF ^ 0x40 = 0xBF
-    assert_eq!(cpu.mcu().read(0x10), 0x40); // LSR result
+    assert_eq!(cpu.mcu_mut().read(0x10), 0x40); // LSR result
     assert_eq!(cpu.a, 0xBF); // 0xFF ^ 0x40 = 0xBF
     assert!(cpu.flag(Flag::Carry)); // bit 0 of original value (0x81) was 1
 }
@@ -2436,7 +2436,7 @@ fn test_rra_zero_page() {
 
     execute_next(&mut cpu);
 
-    assert_eq!(cpu.mcu().read(0x10), 0xC0); // ROR: (0x81 >> 1) with carry = 0xC0
+    assert_eq!(cpu.mcu_mut().read(0x10), 0xC0); // ROR: (0x81 >> 1) with carry = 0xC0
                                             // ADC: 0x05 + 0xC0 + 1(carry)
     assert_eq!(cpu.a, 0xC6); // 0x05 + 0xC0 + 1 = 0xC6
 }
@@ -2709,7 +2709,7 @@ fn test_sax_absolute() {
 
     execute_next(&mut cpu);
 
-    assert_eq!(cpu.mcu().read(0x200), 0x30 & 0x12); // SAX stores A & X
+    assert_eq!(cpu.mcu_mut().read(0x200), 0x30 & 0x12); // SAX stores A & X
 }
 
 #[test]
@@ -2725,7 +2725,7 @@ fn test_sax_indirect_x() {
 
     execute_next(&mut cpu);
 
-    assert_eq!(cpu.mcu().read(0x200), 0x30 & 5); // A & X (where X=5 is the index)
+    assert_eq!(cpu.mcu_mut().read(0x200), 0x30 & 5); // A & X (where X=5 is the index)
 }
 
 #[test]
@@ -2740,7 +2740,7 @@ fn test_dcp_absolute() {
 
     execute_next(&mut cpu);
 
-    assert_eq!(cpu.mcu().read(0x200), 0x0F); // decremented
+    assert_eq!(cpu.mcu_mut().read(0x200), 0x0F); // decremented
     assert!(cpu.flag(Flag::Carry)); // 0x10 > 0x0F
     assert!(!cpu.flag(Flag::Zero)); // 0x10 != 0x0F
 }
@@ -2758,7 +2758,7 @@ fn test_dcp_absolute_x() {
 
     execute_next(&mut cpu);
 
-    assert_eq!(cpu.mcu().read(0x205), 0x0F); // decremented
+    assert_eq!(cpu.mcu_mut().read(0x205), 0x0F); // decremented
 }
 
 #[test]
@@ -2774,7 +2774,7 @@ fn test_dcp_absolute_y() {
 
     execute_next(&mut cpu);
 
-    assert_eq!(cpu.mcu().read(0x205), 0x0F); // decremented
+    assert_eq!(cpu.mcu_mut().read(0x205), 0x0F); // decremented
 }
 
 #[test]
@@ -2790,7 +2790,7 @@ fn test_isc_absolute() {
 
     execute_next(&mut cpu);
 
-    assert_eq!(cpu.mcu().read(0x200), 0x10); // incremented
+    assert_eq!(cpu.mcu_mut().read(0x200), 0x10); // incremented
     assert_eq!(cpu.a, 0x10); // 0x20 - 0x10
 }
 
@@ -2808,7 +2808,7 @@ fn test_isc_absolute_x() {
 
     execute_next(&mut cpu);
 
-    assert_eq!(cpu.mcu().read(0x205), 0x10); // incremented
+    assert_eq!(cpu.mcu_mut().read(0x205), 0x10); // incremented
     assert_eq!(cpu.a, 0x10); // 0x20 - 0x10
 }
 
@@ -2826,7 +2826,7 @@ fn test_isc_absolute_y() {
 
     execute_next(&mut cpu);
 
-    assert_eq!(cpu.mcu().read(0x205), 0x10); // incremented
+    assert_eq!(cpu.mcu_mut().read(0x205), 0x10); // incremented
     assert_eq!(cpu.a, 0x10); // 0x20 - 0x10
 }
 
@@ -2842,7 +2842,7 @@ fn test_aso_absolute() {
 
     execute_next(&mut cpu);
 
-    assert_eq!(cpu.mcu().read(0x200), 0x80); // ASL: 0x40 << 1 = 0x80
+    assert_eq!(cpu.mcu_mut().read(0x200), 0x80); // ASL: 0x40 << 1 = 0x80
     assert_eq!(cpu.a, 0x8F); // ORA: 0x0F | 0x80 = 0x8F
 }
 
@@ -2859,7 +2859,7 @@ fn test_aso_absolute_x() {
 
     execute_next(&mut cpu);
 
-    assert_eq!(cpu.mcu().read(0x205), 0x80); // ASL result
+    assert_eq!(cpu.mcu_mut().read(0x205), 0x80); // ASL result
     assert_eq!(cpu.a, 0x8F); // ORA result
 }
 
@@ -2876,7 +2876,7 @@ fn test_aso_absolute_y() {
 
     execute_next(&mut cpu);
 
-    assert_eq!(cpu.mcu().read(0x205), 0x80); // ASL result
+    assert_eq!(cpu.mcu_mut().read(0x205), 0x80); // ASL result
     assert_eq!(cpu.a, 0x8F); // ORA result
 }
 
@@ -2893,7 +2893,7 @@ fn test_rla_absolute() {
 
     execute_next(&mut cpu);
 
-    assert_eq!(cpu.mcu().read(0x200), 0x03); // ROL result
+    assert_eq!(cpu.mcu_mut().read(0x200), 0x03); // ROL result
     assert_eq!(cpu.a, 0x0F & 0x03); // AND result
 }
 
@@ -2911,7 +2911,7 @@ fn test_rla_absolute_x() {
 
     execute_next(&mut cpu);
 
-    assert_eq!(cpu.mcu().read(0x205), 0x03); // ROL result
+    assert_eq!(cpu.mcu_mut().read(0x205), 0x03); // ROL result
     assert_eq!(cpu.a, 0x0F & 0x03); // AND result
 }
 
@@ -2929,7 +2929,7 @@ fn test_rla_absolute_y() {
 
     execute_next(&mut cpu);
 
-    assert_eq!(cpu.mcu().read(0x205), 0x03); // ROL result
+    assert_eq!(cpu.mcu_mut().read(0x205), 0x03); // ROL result
     assert_eq!(cpu.a, 0x0F & 0x03); // AND result
 }
 
@@ -2946,7 +2946,7 @@ fn test_rra_absolute() {
 
     execute_next(&mut cpu);
 
-    assert_eq!(cpu.mcu().read(0x200), 0xC0); // ROR result
+    assert_eq!(cpu.mcu_mut().read(0x200), 0xC0); // ROR result
     assert_eq!(cpu.a, 0xC6); // ADC: 0x05 + 0xC0 + 1 = 0xC6
 }
 
@@ -2964,7 +2964,7 @@ fn test_rra_absolute_x() {
 
     execute_next(&mut cpu);
 
-    assert_eq!(cpu.mcu().read(0x205), 0xC0); // ROR result
+    assert_eq!(cpu.mcu_mut().read(0x205), 0xC0); // ROR result
     assert_eq!(cpu.a, 0xC6); // ADC result
 }
 
@@ -2982,7 +2982,7 @@ fn test_rra_absolute_y() {
 
     execute_next(&mut cpu);
 
-    assert_eq!(cpu.mcu().read(0x205), 0xC0); // ROR result
+    assert_eq!(cpu.mcu_mut().read(0x205), 0xC0); // ROR result
     assert_eq!(cpu.a, 0xC6); // ADC result
 }
 
@@ -3327,7 +3327,7 @@ fn test_dcp_indirect_x() {
 
     execute_next(&mut cpu);
 
-    assert_eq!(cpu.mcu().read(0x200), 0x0F); // decremented
+    assert_eq!(cpu.mcu_mut().read(0x200), 0x0F); // decremented
     assert!(cpu.flag(Flag::Carry)); // 0x10 > 0x0F
 }
 
@@ -3345,7 +3345,7 @@ fn test_dcp_indirect_y() {
 
     execute_next(&mut cpu);
 
-    assert_eq!(cpu.mcu().read(0x205), 0x0F); // decremented
+    assert_eq!(cpu.mcu_mut().read(0x205), 0x0F); // decremented
 }
 
 #[test]
@@ -3363,7 +3363,7 @@ fn test_isc_indirect_x() {
 
     execute_next(&mut cpu);
 
-    assert_eq!(cpu.mcu().read(0x200), 0x10); // incremented
+    assert_eq!(cpu.mcu_mut().read(0x200), 0x10); // incremented
     assert_eq!(cpu.a, 0x10); // 0x20 - 0x10
 }
 
@@ -3382,7 +3382,7 @@ fn test_isc_indirect_y() {
 
     execute_next(&mut cpu);
 
-    assert_eq!(cpu.mcu().read(0x205), 0x10); // incremented
+    assert_eq!(cpu.mcu_mut().read(0x205), 0x10); // incremented
     assert_eq!(cpu.a, 0x10); // 0x20 - 0x10
 }
 
@@ -3400,7 +3400,7 @@ fn test_aso_indirect_x() {
 
     execute_next(&mut cpu);
 
-    assert_eq!(cpu.mcu().read(0x200), 0x80); // ASL result
+    assert_eq!(cpu.mcu_mut().read(0x200), 0x80); // ASL result
     assert_eq!(cpu.a, 0x8F); // ORA result
 }
 
@@ -3418,7 +3418,7 @@ fn test_aso_indirect_y() {
 
     execute_next(&mut cpu);
 
-    assert_eq!(cpu.mcu().read(0x205), 0x80); // ASL result
+    assert_eq!(cpu.mcu_mut().read(0x205), 0x80); // ASL result
     assert_eq!(cpu.a, 0x8F); // ORA result
 }
 
@@ -3437,7 +3437,7 @@ fn test_rla_indirect_x() {
 
     execute_next(&mut cpu);
 
-    assert_eq!(cpu.mcu().read(0x200), 0x03); // ROL result
+    assert_eq!(cpu.mcu_mut().read(0x200), 0x03); // ROL result
     assert_eq!(cpu.a, 0x0F & 0x03); // AND result
 }
 
@@ -3456,7 +3456,7 @@ fn test_rla_indirect_y() {
 
     execute_next(&mut cpu);
 
-    assert_eq!(cpu.mcu().read(0x205), 0x03); // ROL result
+    assert_eq!(cpu.mcu_mut().read(0x205), 0x03); // ROL result
     assert_eq!(cpu.a, 0x0F & 0x03); // AND result
 }
 
@@ -3475,7 +3475,7 @@ fn test_lse_indirect_x() {
 
     execute_next(&mut cpu);
 
-    assert_eq!(cpu.mcu().read(0x200), 0x40); // LSR result
+    assert_eq!(cpu.mcu_mut().read(0x200), 0x40); // LSR result
     assert_eq!(cpu.a, 0xBF); // 0xFF ^ 0x40 = 0xBF
 }
 
@@ -3494,7 +3494,7 @@ fn test_lse_indirect_y() {
 
     execute_next(&mut cpu);
 
-    assert_eq!(cpu.mcu().read(0x205), 0x40); // LSR result
+    assert_eq!(cpu.mcu_mut().read(0x205), 0x40); // LSR result
     assert_eq!(cpu.a, 0xBF); // 0xFF ^ 0x40 = 0xBF
 }
 
@@ -3513,7 +3513,7 @@ fn test_rra_indirect_x() {
 
     execute_next(&mut cpu);
 
-    assert_eq!(cpu.mcu().read(0x200), 0xC0); // ROR result
+    assert_eq!(cpu.mcu_mut().read(0x200), 0xC0); // ROR result
     assert_eq!(cpu.a, 0xC6); // ADC: 0x05 + 0xC0 + 1 = 0xC6
 }
 
@@ -3532,7 +3532,7 @@ fn test_rra_indirect_y() {
 
     execute_next(&mut cpu);
 
-    assert_eq!(cpu.mcu().read(0x205), 0xC0); // ROR result
+    assert_eq!(cpu.mcu_mut().read(0x205), 0xC0); // ROR result
     assert_eq!(cpu.a, 0xC6); // ADC result
 }
 
@@ -3549,7 +3549,7 @@ fn test_dcp_zero_page_x() {
 
     execute_next(&mut cpu);
 
-    assert_eq!(cpu.mcu().read(0x15), 0x0F); // decremented
+    assert_eq!(cpu.mcu_mut().read(0x15), 0x0F); // decremented
     assert!(cpu.flag(Flag::Carry)); // 0x10 > 0x0F
 }
 
@@ -3567,7 +3567,7 @@ fn test_isc_zero_page_x() {
 
     execute_next(&mut cpu);
 
-    assert_eq!(cpu.mcu().read(0x15), 0x10); // incremented
+    assert_eq!(cpu.mcu_mut().read(0x15), 0x10); // incremented
     assert_eq!(cpu.a, 0x10); // 0x20 - 0x10
 }
 
@@ -3584,7 +3584,7 @@ fn test_aso_zero_page_x() {
 
     execute_next(&mut cpu);
 
-    assert_eq!(cpu.mcu().read(0x15), 0x80); // ASL result
+    assert_eq!(cpu.mcu_mut().read(0x15), 0x80); // ASL result
     assert_eq!(cpu.a, 0x8F); // ORA result
 }
 
@@ -3602,7 +3602,7 @@ fn test_rla_zero_page_x() {
 
     execute_next(&mut cpu);
 
-    assert_eq!(cpu.mcu().read(0x15), 0x03); // ROL result
+    assert_eq!(cpu.mcu_mut().read(0x15), 0x03); // ROL result
     assert_eq!(cpu.a, 0x0F & 0x03); // AND result
 }
 
@@ -3620,7 +3620,7 @@ fn test_lse_zero_page_x() {
 
     execute_next(&mut cpu);
 
-    assert_eq!(cpu.mcu().read(0x15), 0x40); // LSR result
+    assert_eq!(cpu.mcu_mut().read(0x15), 0x40); // LSR result
     assert_eq!(cpu.a, 0xBF); // 0xFF ^ 0x40 = 0xBF
 }
 
@@ -3638,7 +3638,7 @@ fn test_rra_zero_page_x() {
 
     execute_next(&mut cpu);
 
-    assert_eq!(cpu.mcu().read(0x15), 0xC0); // ROR result
+    assert_eq!(cpu.mcu_mut().read(0x15), 0xC0); // ROR result
     assert_eq!(cpu.a, 0xC6); // ADC: 0x05 + 0xC0 + 1 = 0xC6
 }
 
@@ -3702,7 +3702,7 @@ fn test_stack_wrap_around() {
     assert_eq!(cpu.sp, 0xFF); // wraps to 0xFF after decrement
                               // push_stack writes to current SP, then decrements
                               // So with SP=0x00, it writes to 0x100, then SP becomes 0xFF
-    assert_eq!(cpu.mcu().read(0x0100), 0x42);
+    assert_eq!(cpu.mcu_mut().read(0x0100), 0x42);
 }
 
 #[test]
@@ -3736,7 +3736,7 @@ fn test_push_status_with_all_flags() {
 
     // push_status writes to current SP, then decrements
     // With SP=0xFF, it writes to 0x100 + 0xFF = 0x01FF, then SP becomes 0xFE
-    let status = cpu.mcu().read(0x01FF);
+    let status = cpu.mcu_mut().read(0x01FF);
     // Expected: 0x01 | 0x02 | 0x04 | 0x08 | 0x20 | 0x40 | 0x80 = 0xEF
     assert_eq!(status, 0xEF); // All flags except Break, with NotUsed (bit 5) set
 }

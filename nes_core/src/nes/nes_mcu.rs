@@ -36,7 +36,7 @@ pub fn build(file: &INesFile) -> NesMcu {
 /// - `renderer`: Optional custom renderer. If None, uses default ImageRender.
 pub fn build_with_renderer(file: &INesFile, renderer: Option<Box<dyn Render>>) -> NesMcu {
     let cartridge = mapper::create_cartridge(file);
-    let ppu = Ppu::default();
+    let mut ppu = Ppu::default();
     ppu.set_mirroring(if file.header().ver_or_hor_arrangement {
         Mirroring::Vertical
     } else {
@@ -72,7 +72,7 @@ impl NesMcu {
         22, 192, 24, 72, 26, 16, 28, 32, 30,
     ];
 
-    fn ppu_dma(&self, address: u8) {
+    fn ppu_dma(&mut self, address: u8) {
         info!("ppu dma");
         let addr = (address as u16) << 8;
         let mut buf = [0x00u8; 0x100];
@@ -175,7 +175,7 @@ impl NesMcu {
 }
 
 impl Mcu for NesMcu {
-    fn read(&self, address: u16) -> u8 {
+    fn read(&mut self, address: u16) -> u8 {
         match address {
             0x0000..=0x1fff => self.lower_ram.read(address),
             0x2000..=0x3fff => self.ppu.read(self.cartridge.pattern_ref(), address),
@@ -277,8 +277,8 @@ impl Mcu for NesMcu {
             }
             0x4000..=0x401f => self.after_ppu.write(address, value),
             0x4020..=0xffff => {
-                // Cartridge now takes &self and &Ppu
-                self.cartridge.write(&self.ppu, address, value)
+                // Cartridge now takes &mut self and &mut Ppu
+                self.cartridge.write(&mut self.ppu, address, value)
             }
         }
     }

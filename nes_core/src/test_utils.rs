@@ -93,7 +93,7 @@ impl MockMcu {
 }
 
 impl Mcu for MockMcu {
-    fn read(&self, addr: u16) -> u8 {
+    fn read(&mut self, addr: u16) -> u8 {
         self.memory.borrow()[addr as usize]
     }
     fn write(&mut self, addr: u16, value: u8) {
@@ -115,7 +115,7 @@ impl MockMcu {
 /// Extension trait adding word read/write operations to any MCU
 pub trait McuUtils: Mcu {
     /// Reads a 16-bit little-endian value from addr
-    fn read_word_le(&self, addr: u16) -> u16 {
+    fn read_word_le(&mut self, addr: u16) -> u16 {
         let lo = self.read(addr) as u16;
         let hi = self.read(addr + 1) as u16;
         hi << 8 | lo
@@ -144,14 +144,14 @@ mod tests {
 
     #[test]
     fn test_mock_mcu_with_program() {
-        let mcu = MockMcu::new().with_program(0x8000, &[0xA9, 0x42, 0x00]);
+        let mut mcu = MockMcu::new().with_program(0x8000, &[0xA9, 0x42, 0x00]);
         assert_eq!(mcu.read(0x8000), 0xA9);
         assert_eq!(mcu.read(0x8001), 0x42);
     }
 
     #[test]
     fn test_mock_mcu_write_word() {
-        let mcu = MockMcu::new();
+        let mut mcu = MockMcu::new();
         mcu.write_word(0x2000, 0x1234);
         assert_eq!(mcu.read(0x2000), 0x34);
         assert_eq!(mcu.read(0x2001), 0x12);
@@ -174,7 +174,7 @@ mod tests {
 
     #[test]
     fn test_mock_mcu_flags() {
-        let mcu = MockMcu::new()
+        let mut mcu = MockMcu::new()
             .with_tick_ppu_result(true)
             .with_irq_request(true);
         assert!(mcu.tick_ppu());

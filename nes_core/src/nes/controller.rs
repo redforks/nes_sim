@@ -1,5 +1,4 @@
 use crate::mcu::{DefinedRegion, Mcu};
-use std::cell::RefCell;
 
 /// nes Controller struct that represent a controller of nes.
 pub struct AController {
@@ -50,26 +49,26 @@ pub enum Button {
 
 pub struct Controller {
     /// The first controller.
-    pub a: RefCell<AController>,
+    pub a: AController,
     /// The second controller.
-    pub b: RefCell<AController>,
+    pub b: AController,
 }
 
 #[allow(clippy::new_without_default)]
 impl Controller {
     pub fn new() -> Controller {
         Controller {
-            a: RefCell::new(AController::new()),
-            b: RefCell::new(AController::new()),
+            a: AController::new(),
+            b: AController::new(),
         }
     }
 }
 
 impl Mcu for Controller {
-    fn read(&self, address: u16) -> u8 {
+    fn read(&mut self, address: u16) -> u8 {
         match address {
-            0x4016 => self.a.borrow_mut().read(),
-            0x4017 => self.b.borrow_mut().read(),
+            0x4016 => self.a.read(),
+            0x4017 => self.b.read(),
             _ => panic!("read address out of range: {:04x}", address),
         }
     }
@@ -78,8 +77,8 @@ impl Mcu for Controller {
         match address {
             0x4016 => {
                 if value & 1 == 0 {
-                    self.a.borrow_mut().reset_for_read();
-                    self.b.borrow_mut().reset_for_read();
+                    self.a.reset_for_read();
+                    self.b.reset_for_read();
                 }
             }
             0x4017 => {}

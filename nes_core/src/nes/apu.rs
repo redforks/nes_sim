@@ -90,7 +90,7 @@ struct PulseChannel<D: PulseDriver> {
 }
 
 impl<D: PulseDriver> Mcu for PulseChannel<D> {
-    fn read(&self, _: u16) -> u8 {
+    fn read(&mut self, _: u16) -> u8 {
         panic!("Can not from PulseChannel");
     }
 
@@ -151,7 +151,7 @@ impl<D: TriangleDriver> DefinedRegion for TriangleChannel<D> {
 }
 
 impl<D: TriangleDriver> Mcu for TriangleChannel<D> {
-    fn read(&self, _: u16) -> u8 {
+    fn read(&mut self, _: u16) -> u8 {
         panic!("Can not read from TriangleChannel");
     }
 
@@ -237,7 +237,7 @@ pub trait NoiseDriver {
 struct NoiseChannel<D: NoiseDriver>(RefCell<D>);
 
 impl<D: NoiseDriver> Mcu for NoiseChannel<D> {
-    fn read(&self, _: u16) -> u8 {
+    fn read(&mut self, _: u16) -> u8 {
         panic!("Can not from PulseChannel");
     }
 
@@ -285,7 +285,7 @@ pub trait DmcDriver {
 struct DmcChannel<D: DmcDriver>(RefCell<D>);
 
 impl<D: DmcDriver> Mcu for DmcChannel<D> {
-    fn read(&self, address: u16) -> u8 {
+    fn read(&mut self, address: u16) -> u8 {
         panic!("Can not read from DmcChannel at address {}", address);
     }
 
@@ -374,7 +374,7 @@ pub trait APUControllerDriver {
 struct APUController<D: APUControllerDriver>(RefCell<D>);
 
 impl<D: APUControllerDriver> Mcu for APUController<D> {
-    fn read(&self, address: u16) -> u8 {
+    fn read(&mut self, address: u16) -> u8 {
         match address {
             0x4015 => self.0.borrow().read_status().into(),
             _ => panic!("Can not read from APUController at address {}", address),
