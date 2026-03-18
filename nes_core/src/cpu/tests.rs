@@ -1,54 +1,9 @@
 use super::*;
+use crate::test_utils::MockMcu;
 
 // NES vector addresses
 const NMI_VECTOR: u16 = 0xFFFA;
 const IRQ_VECTOR: u16 = 0xFFFE;
-
-struct MockMcu {
-    memory: [u8; 0x10000],
-    tick_ppu_result: bool,
-    irq_request: bool,
-}
-
-impl MockMcu {
-    fn new() -> Self {
-        MockMcu {
-            memory: [0; 0x10000],
-            tick_ppu_result: false,
-            irq_request: false,
-        }
-    }
-
-    fn with_program(mut self, addr: u16, program: &[u8]) -> Self {
-        for (i, &byte) in program.iter().enumerate() {
-            self.memory[(addr as usize) + i] = byte;
-        }
-        self
-    }
-
-    fn write_word(&mut self, addr: u16, value: u16) {
-        self.memory[addr as usize] = (value & 0xFF) as u8;
-        self.memory[(addr + 1) as usize] = ((value >> 8) & 0xFF) as u8;
-    }
-}
-
-impl Mcu for MockMcu {
-    fn read(&self, addr: u16) -> u8 {
-        self.memory[addr as usize]
-    }
-
-    fn write(&mut self, addr: u16, value: u8) {
-        self.memory[addr as usize] = value;
-    }
-
-    fn tick_ppu(&mut self) -> bool {
-        self.tick_ppu_result
-    }
-
-    fn request_irq(&self) -> bool {
-        self.irq_request
-    }
-}
 
 fn create_cpu_with_program(program: &[u8]) -> Cpu {
     let mcu = Box::new(MockMcu::new().with_program(0, program));

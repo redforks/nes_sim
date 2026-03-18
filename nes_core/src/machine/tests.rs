@@ -1,75 +1,51 @@
 use super::*;
-
-struct MockMcu {
-    memory: [u8; 0x10000],
-}
-
-impl MockMcu {
-    fn new() -> Self {
-        MockMcu {
-            memory: [0; 0x10000],
-        }
-    }
-}
-
-impl Mcu for MockMcu {
-    fn read(&self, addr: u16) -> u8 {
-        self.memory[addr as usize]
-    }
-
-    fn write(&mut self, addr: u16, value: u8) {
-        self.memory[addr as usize] = value;
-    }
-
-    fn request_irq(&self) -> bool {
-        false
-    }
-}
+use crate::test_utils::MockMcu;
+use std::cell::RefCell;
 
 /// An MCU backed by a real PPU that fires VBlank at scanline 241 dot 1.
 /// Used to test that `process_frame` correctly waits for VBlank.
 struct VBlankMcu {
-    memory: [u8; 0x10000],
+    memory: RefCell<[u8; 0x10000]>,
     ppu: crate::nes::ppu::Ppu,
     pattern: [u8; 0x2000],
-    vblank_seen: bool,
+    vblank_seen: RefCell<bool>,
 }
 
 impl VBlankMcu {
     fn new() -> Self {
         VBlankMcu {
-            memory: [0; 0x10000],
+            memory: RefCell::new([0; 0x10000]),
             ppu: crate::nes::ppu::Ppu::default(),
             pattern: [0; 0x2000],
-            vblank_seen: false,
+            vblank_seen: RefCell::new(false),
         }
     }
 }
 
 impl Mcu for VBlankMcu {
     fn read(&self, addr: u16) -> u8 {
-        self.memory[addr as usize]
+        self.memory.borrow()[addr as usize]
     }
 
-    fn write(&mut self, addr: u16, value: u8) {
-        self.memory[addr as usize] = value;
+    fn write(&self, addr: u16, value: u8) {
+        self.memory.borrow_mut()[addr as usize] = value;
     }
 
     fn request_irq(&self) -> bool {
         false
     }
 
-    fn tick_ppu(&mut self) -> bool {
+    fn tick_ppu(&self) -> bool {
         let result = self.ppu.tick(&self.pattern);
         if result.vblank_started {
-            self.vblank_seen = true;
+            *self.vblank_seen.borrow_mut() = true;
         }
         result.nmi
     }
 
-    fn take_vblank(&mut self) -> bool {
-        let v = self.vblank_seen;
-        self.vblank_seen = false;
+    fn take_vblank(&self) -> bool {
+        let v = *self.vblank_seen.borrow();
+        *self.vblank_seen.borrow_mut() = false;
         v
     }
 }
@@ -143,12 +119,12 @@ fn test_process_frame_with_zero_ms() {
 
 #[test]
 fn test_run_ticks_positive() {
-    let mut mcu = MockMcu::new();
+    let mcu = MockMcu::new();
     // Write a JMP instruction to create an infinite loop
     // JMP $8000 = 0x4C 0x00 0x80 at address 0x8000
-    mcu.memory[0x8000] = 0x4C; // JMP absolute
-    mcu.memory[0x8001] = 0x00; // low byte of address
-    mcu.memory[0x8002] = 0x80; // high byte of address
+    mcu.write(0x8000, 0x4C); // JMP absolute
+    mcu.write(0x8001, 0x00); // low byte of address
+    mcu.write(0x8002, 0x80); // high byte of address
 
     let mcu = Box::new(mcu);
     let mut machine = Machine::new(mcu);
@@ -164,10 +140,10 @@ fn test_run_ticks_positive() {
 fn test_process_frame_waits_for_vblank() {
     // Use a VBlankMcu whose PPU fires VBlank at the correct time.
     // Program: infinite JMP loop at $8000 so the CPU keeps executing.
-    let mut mcu = VBlankMcu::new();
-    mcu.memory[0x8000] = 0x4C; // JMP absolute
-    mcu.memory[0x8001] = 0x00;
-    mcu.memory[0x8002] = 0x80; // JMP $8000
+    let mcu = VBlankMcu::new();
+    mcu.write(0x8000, 0x4C); // JMP absolute
+    mcu.write(0x8001, 0x00);
+    mcu.write(0x8002, 0x80); // JMP $8000
 
     let mcu = Box::new(mcu);
     let mut machine = Machine::new(mcu);
