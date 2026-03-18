@@ -79,25 +79,10 @@ impl MachineWrapper {
         }
     }
 
-    pub fn process_frame(&mut self) -> nes_core::ExecuteResult {
-        match self {
-            MachineWrapper::Bin(m) => m.process_frame(),
-            MachineWrapper::INes(m) => m.process_frame(),
-        }
-    }
-
     pub fn reset(&mut self) {
         match self {
             MachineWrapper::Bin(m) => m.reset(),
             MachineWrapper::INes(m) => m.reset(),
-        }
-    }
-
-    #[allow(dead_code)]
-    pub fn set_pc(&mut self, pc: u16) {
-        match self {
-            MachineWrapper::Bin(m) => m.set_pc(pc),
-            MachineWrapper::INes(m) => m.set_pc(pc),
         }
     }
 }
