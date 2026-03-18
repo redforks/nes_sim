@@ -4,7 +4,6 @@ use crate::to_from_u8;
 use image::Rgba;
 use log::{debug, info};
 use modular_bitfield::prelude::*;
-use std::borrow::BorrowMut;
 
 mod name_table;
 mod pattern;
@@ -165,7 +164,6 @@ pub struct Palette {
     data: [u8; 0x20],
 }
 
-
 impl Palette {
     fn get_addr(&self, addr: u16) -> usize {
         // NES palette mirroring:
@@ -251,8 +249,7 @@ impl Mcu for Palette {
     }
 }
 
-// Inner PPU struct with all state as plain fields (no RefCell)
-pub struct InnerPpu {
+pub struct Ppu {
     ctrl_flags: PpuCtrl,
     status: PpuStatus,
     name_table: NameTableControl, // name table
@@ -277,9 +274,9 @@ pub struct InnerPpu {
     dot: u16,      // 0-340
 }
 
-impl Default for InnerPpu {
+impl Default for Ppu {
     fn default() -> Self {
-        InnerPpu {
+        Ppu {
             ctrl_flags: 0.into(),
             status: 0.into(),
             name_table: NameTableControl::default(),
@@ -300,25 +297,20 @@ impl Default for InnerPpu {
     }
 }
 
-// Ppu now owns InnerPpu directly
-#[derive(Default)]
-pub struct Ppu(pub InnerPpu);
-
-
 impl Ppu {
     /// Set v-blank state.
     /// Return status before change
     pub fn set_v_blank(&mut self, v_blank: bool) -> PpuStatus {
-        let status = self.0.status;
+        let status = self.status;
         if v_blank {
             debug!("set v_blank: {}", v_blank);
         }
-        self.0.status = status.with_v_blank(v_blank);
+        self.status = status.with_v_blank(v_blank);
         status
     }
 
     pub fn oam_dma(&mut self, vals: &[u8; 256]) {
-        self.0.oam.copy_from_slice(vals);
+        self.oam.copy_from_slice(vals);
     }
 
     /// Advance PPU by one dot, rendering a pixel if on a visible scanline.
@@ -331,75 +323,74 @@ impl Ppu {
     /// # Parameters
     /// - `pattern`: CHR ROM pattern data for tile/sprite lookup
     pub fn tick(&mut self, pattern: &[u8]) -> PpuTickResult {
-        let scanline = self.0.scanline;
-        let dot = self.0.dot;
+        let scanline = self.scanline;
+        let dot = self.dot;
 
         // Render pixel during visible scanlines (0-239) and visible dots (0-255)
         if scanline < 240 && dot < 256 {
-            let pixel = Self::render_pixel_inner(&mut self.0, pattern, dot as u8, scanline as u8);
-            self.0
-                .renderer
+            let pixel = Self::render_pixel_inner(self, pattern, dot as u8, scanline as u8);
+            self.renderer
                 .set_pixel(dot as u32, scanline as u32, pixel.0);
         }
 
         // At end of pre-render scanline (261), clear screen for next frame
         if scanline == VBLANK_CLEAR_SCANLINE && dot == 0 {
-            let bg_color = COLORS[self.0.palette.data[0] as usize];
-            self.0.renderer.clear(bg_color.0);
+            let bg_color = COLORS[self.palette.data[0] as usize];
+            self.renderer.clear(bg_color.0);
         }
 
         // Call finish() at end of visible area (scanline 240, dot 0)
         if scanline == 240 && dot == 0 {
-            self.0.renderer.finish();
+            self.renderer.finish();
         }
 
         // Advance dot/scanline counters
-        self.0.dot += 1;
-        if self.0.dot >= DOTS_PER_SCANLINE {
-            self.0.dot = 0;
-            self.0.scanline += 1;
-            if self.0.scanline >= SCANLINES_PER_FRAME {
-                self.0.scanline = 0;
+        self.dot += 1;
+        if self.dot >= DOTS_PER_SCANLINE {
+            self.dot = 0;
+            self.scanline += 1;
+            if self.scanline >= SCANLINES_PER_FRAME {
+                self.scanline = 0;
             }
         }
 
         // VBlank set: scanline 241, dot 1
-        if self.0.scanline == VBLANK_SET_SCANLINE && self.0.dot == 1 {
-            let status = self.0.status;
+        if self.scanline == VBLANK_SET_SCANLINE && self.dot == 1 {
+            let status = self.status;
             let was_vblank = status.v_blank();
             if !was_vblank {
-                self.0.status = status.with_v_blank(true);
+                self.status = status.with_v_blank(true);
                 return PpuTickResult {
-                    nmi: self.0.ctrl_flags.nmi_enable(),
+                    nmi: self.ctrl_flags.nmi_enable(),
                     vblank_started: true,
                 };
             }
         }
 
         // VBlank clear: scanline 261, dot 1
-        if self.0.scanline == VBLANK_CLEAR_SCANLINE && self.0.dot == 1 {
-            let status = self.0.status;
+        if self.scanline == VBLANK_CLEAR_SCANLINE && self.dot == 1 {
+            let status = self.status;
             if status.v_blank() {
-                self.0.status = status.with_v_blank(false);
+                self.status = status.with_v_blank(false);
             }
             // Also clear sprite zero hit at pre-render scanline
-            let status = self.0.status;
-            self.0.status = status.with_sprite_zero_hit(false);
+            let status = self.status;
+            self.status = status.with_sprite_zero_hit(false);
         }
 
         PpuTickResult::default()
     }
 
     pub fn set_mirroring(&mut self, mirroring: Mirroring) {
-        self.0.name_table.set_mirroring(mirroring);
+        self.name_table.set_mirroring(mirroring);
     }
 
     pub fn mirroring(&self) -> Mirroring {
-        self.0.name_table.mirroring()
+        self.name_table.mirroring()
     }
 
     pub fn set_renderer(&mut self, renderer: Box<dyn Render>) {
-        self.0.renderer = renderer;
+        self.renderer = renderer;
     }
 
     /// Read from PPU registers or VRAM/palette data
@@ -408,25 +399,25 @@ impl Ppu {
         match address {
             // PPUSTATUS
             0x2002 => {
-                let status = self.0.status.into();
+                let status = self.status.into();
                 // Clear V-blank flag and write toggle on status read
-                self.0.status = self.0.status.with_v_blank(false);
-                self.0.write_toggle = false;
+                self.status = self.status.with_v_blank(false);
+                self.write_toggle = false;
                 status
             }
             // OAMDATA
-            0x2004 => self.0.oam[self.0.oam_addr as usize],
+            0x2004 => self.oam[self.oam_addr as usize],
             // PPUDATA - read from VRAM or palette
             0x2007 => {
-                let vram_addr = self.0.vram_addr;
-                let value = Self::read_vram_data(&mut self.0, pattern, vram_addr);
+                let vram_addr = self.vram_addr;
+                let value = Self::read_vram_data(self, pattern, vram_addr);
                 // Increment VRAM address based on control flag
-                let increment = if self.0.ctrl_flags.increment_mode() {
+                let increment = if self.ctrl_flags.increment_mode() {
                     32
                 } else {
                     1
                 };
-                self.0.vram_addr = self.0.vram_addr.wrapping_add(increment);
+                self.vram_addr = self.vram_addr.wrapping_add(increment);
                 value
             }
             _ => 0, // Other registers are write-only
@@ -438,12 +429,12 @@ impl Ppu {
         match address {
             // PPUCTRL
             0x2000 => {
-                self.0.ctrl_flags = value.into();
+                self.ctrl_flags = value.into();
                 // Update name table address from control bits
-                self.0.cur_name_table_addr =
-                    0x2000 + (self.0.ctrl_flags.name_table_select() as u16 * 0x400);
+                self.cur_name_table_addr =
+                    0x2000 + (self.ctrl_flags.name_table_select() as u16 * 0x400);
                 // Update pattern table index
-                self.0.cur_pattern_table_idx = if self.0.ctrl_flags.background_pattern_table() {
+                self.cur_pattern_table_idx = if self.ctrl_flags.background_pattern_table() {
                     1
                 } else {
                     0
@@ -451,44 +442,44 @@ impl Ppu {
             }
             // PPUMASK
             0x2001 => {
-                self.0.mask = value.into();
+                self.mask = value.into();
             }
             // OAMADDR
             0x2003 => {
-                self.0.oam_addr = value;
+                self.oam_addr = value;
             }
             // OAMDATA
             0x2004 => {
-                let addr = self.0.oam_addr as usize;
-                self.0.oam[addr] = value;
-                self.0.oam_addr = self.0.oam_addr.wrapping_add(1);
+                let addr = self.oam_addr as usize;
+                self.oam[addr] = value;
+                self.oam_addr = self.oam_addr.wrapping_add(1);
             }
             // PPUSCROLL
             0x2005 => {
-                Self::write_scroll(&mut self.0, value);
+                Self::write_scroll(self, value);
             }
             // PPUADDR
             0x2006 => {
-                Self::write_vram_addr(&mut self.0, value);
+                Self::write_vram_addr(self, value);
             }
             // PPUDATA
             0x2007 => {
-                let vram_addr = self.0.vram_addr;
-                Self::write_vram_data(&mut self.0, vram_addr, value);
+                let vram_addr = self.vram_addr;
+                Self::write_vram_data(self, vram_addr, value);
                 // Increment VRAM address based on control flag
-                let increment = if self.0.ctrl_flags.increment_mode() {
+                let increment = if self.ctrl_flags.increment_mode() {
                     32
                 } else {
                     1
                 };
-                self.0.vram_addr = self.0.vram_addr.wrapping_add(increment);
+                self.vram_addr = self.vram_addr.wrapping_add(increment);
             }
             _ => {} // Ignore other addresses
         }
     }
 
     // Helper methods for VRAM operations
-    fn read_vram_data(inner: &mut InnerPpu, pattern: &[u8], address: u16) -> u8 {
+    fn read_vram_data(inner: &mut Ppu, pattern: &[u8], address: u16) -> u8 {
         let addr = address % 0x4000;
         if addr < 0x3f00 {
             // Read from pattern table or name table
@@ -505,7 +496,7 @@ impl Ppu {
         }
     }
 
-    fn write_vram_data(inner: &mut InnerPpu, address: u16, value: u8) {
+    fn write_vram_data(inner: &mut Ppu, address: u16, value: u8) {
         let addr = address % 0x4000;
         if addr < 0x3f00 {
             if addr >= 0x2000 {
@@ -519,7 +510,7 @@ impl Ppu {
         }
     }
 
-    fn write_scroll(inner: &mut InnerPpu, value: u8) {
+    fn write_scroll(inner: &mut Ppu, value: u8) {
         if !inner.write_toggle {
             // First write - X scroll
             inner.fine_x = value & 0x07;
@@ -534,7 +525,7 @@ impl Ppu {
         }
     }
 
-    fn write_vram_addr(inner: &mut InnerPpu, value: u8) {
+    fn write_vram_addr(inner: &mut Ppu, value: u8) {
         if !inner.write_toggle {
             // First write - high byte
             inner.temp_vram_addr =
@@ -548,12 +539,7 @@ impl Ppu {
         }
     }
 
-    fn render_pixel_inner(
-        inner: &mut InnerPpu,
-        pattern: &[u8],
-        screen_x: u8,
-        screen_y: u8,
-    ) -> Pixel {
+    fn render_pixel_inner(inner: &mut Ppu, pattern: &[u8], screen_x: u8, screen_y: u8) -> Pixel {
         let bg_pixel = if inner.mask.background_enabled() {
             Self::get_background_pixel_inner(inner, pattern, screen_x, screen_y)
         } else {
@@ -612,7 +598,7 @@ impl Ppu {
     }
 
     fn get_background_pixel_inner(
-        inner: &InnerPpu,
+        inner: &Ppu,
         pattern: &[u8],
         screen_x: u8,
         screen_y: u8,
@@ -663,7 +649,7 @@ impl Ppu {
     }
 
     fn get_sprite_pixel_inner(
-        inner: &InnerPpu,
+        inner: &Ppu,
         pattern: &[u8],
         screen_x: u8,
         screen_y: u8,
@@ -727,40 +713,38 @@ impl Ppu {
 
     /// Read VRAM at a specific address (for testing)
     pub fn read_vram(&mut self, pattern: &[u8], address: u16) -> u8 {
-        Self::read_vram_data(&mut self.0, pattern, address)
+        Self::read_vram_data(self, pattern, address)
     }
 
     /// Read VRAM at current address and increment (for testing)
     pub fn read_vram_and_inc(&mut self, pattern: &[u8]) -> u8 {
-        let inner = &mut self.0;
-        let value = Self::read_vram_data(inner, pattern, inner.vram_addr);
+        let vram_addr = self.vram_addr;
+        let value = Self::read_vram_data(self, pattern, vram_addr);
         // Increment VRAM address based on control flag
-        let increment = if inner.ctrl_flags.increment_mode() {
+        let increment = if self.ctrl_flags.increment_mode() {
             32
         } else {
             1
         };
-        inner.vram_addr = inner.vram_addr.wrapping_add(increment);
+        self.vram_addr = self.vram_addr.wrapping_add(increment);
         value
     }
 
     /// Read OAM data at current OAM address (for testing)
     pub fn read_oam_data(&self) -> u8 {
-        let inner = &self.0;
-        inner.oam[inner.oam_addr as usize]
+        self.oam[self.oam_addr as usize]
     }
 
     /// Get current OAM address (for testing)
     pub fn oam_addr(&self) -> u8 {
-        self.0.oam_addr
+        self.oam_addr
     }
 
     /// Set control flags (for testing)
     pub fn set_control_flags(&mut self, flags: PpuCtrl) {
-        let inner = &mut self.0;
-        inner.ctrl_flags = flags;
+        self.ctrl_flags = flags;
         // Update pattern table index based on background_pattern_table flag
-        inner.cur_pattern_table_idx = if inner.ctrl_flags.background_pattern_table() {
+        self.cur_pattern_table_idx = if self.ctrl_flags.background_pattern_table() {
             1
         } else {
             0
@@ -770,110 +754,109 @@ impl Ppu {
     /// Read status register (for testing) - behaves like reading from 0x2002
     /// Returns the current status and clears the v_blank flag
     pub fn read_status(&mut self) -> PpuStatus {
-        let inner = &mut self.0;
-        let status = inner.status;
+        let status = self.status;
         // Clear v_blank flag on read (like real hardware)
-        inner.status = status.with_v_blank(false);
+        self.status = status.with_v_blank(false);
         status
     }
 
     /// Get reference to inner PPU (for advanced testing)
-    pub fn inner(&self) -> &InnerPpu {
-        &self.0
+    pub fn inner(&self) -> &Ppu {
+        self
     }
 
-    pub fn inner_mut(&mut self) -> &mut InnerPpu {
-        &mut self.0
+    pub fn inner_mut(&mut self) -> &mut Ppu {
+        self
     }
 
     /// Render a single pixel (for testing)
     pub fn render_pixel(&mut self, pattern: &[u8], x: u8, y: u8) -> Pixel {
-        Self::render_pixel_inner(self.0.borrow_mut(), pattern, x, y)
+        Self::render_pixel_inner(self, pattern, x, y)
     }
 
     /// Get scanline (for testing)
     pub fn scanline(&self) -> u16 {
-        self.0.scanline
+        self.scanline
     }
 
     /// Set scanline (for testing)
     pub fn set_scanline(&mut self, scanline: u16) {
-        self.0.scanline = scanline;
+        self.scanline = scanline;
     }
 
     /// Get dot (for testing)
     pub fn dot(&self) -> u16 {
-        self.0.dot
+        self.dot
     }
 
     /// Set dot (for testing)
     pub fn set_dot(&mut self, dot: u16) {
-        self.0.dot = dot;
+        self.dot = dot;
     }
 
     /// Get VRAM address (for testing)
     pub fn vram_addr(&self) -> u16 {
-        self.0.vram_addr
+        self.vram_addr
     }
 
     /// Get current pattern table index (for testing)
     pub fn cur_pattern_table_idx(&self) -> u8 {
-        self.0.cur_pattern_table_idx
+        self.cur_pattern_table_idx
     }
 
     /// Get temporary VRAM address (for testing)
     pub fn temp_vram_addr(&self) -> u16 {
-        self.0.temp_vram_addr
+        self.temp_vram_addr
     }
 
     /// Get fine X scroll (for testing)
     pub fn fine_x(&self) -> u8 {
-        self.0.fine_x
+        self.fine_x
     }
 
     /// Get control flags (for testing)
     pub fn ctrl_flags(&self) -> PpuCtrl {
-        self.0.ctrl_flags
+        self.ctrl_flags
     }
 
     /// Get status flags (for testing)
     pub fn status(&self) -> PpuStatus {
-        self.0.status
+        self.status
     }
 
     /// Set status register (for testing)
     pub fn set_status(&mut self, status: PpuStatus) {
-        self.0.status = status;
+        self.status = status;
     }
 
     /// Get write toggle state (for testing)
     pub fn write_toggle(&self) -> bool {
-        self.0.write_toggle
+        self.write_toggle
     }
 
     /// Get mask flags (for testing)
     pub fn mask(&self) -> PpuMask {
-        self.0.mask
+        self.mask
     }
 
     /// Get OAM (for testing)
     pub fn oam(&self) -> &[u8; 0x100] {
-        &self.0.oam
+        &self.oam
     }
 
     /// Get palette state (for testing)
     pub fn palette(&self) -> &Palette {
-        &self.0.palette
+        &self.palette
     }
 
     /// Write to VRAM address (for testing)
     pub fn write_vram(&mut self, address: u16, value: u8) {
-        Self::write_vram_data(&mut self.0, address, value);
+        Self::write_vram_data(self, address, value);
     }
 
     /// Get current name table address (for testing)
     pub fn cur_name_table_addr(&self) -> u16 {
-        self.0.cur_name_table_addr
+        self.cur_name_table_addr
     }
 }
 
