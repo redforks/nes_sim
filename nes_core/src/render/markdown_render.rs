@@ -142,7 +142,7 @@ impl MarkdownRender {
     /// Write frame info section
     fn write_frame_info(md: &mut String, width: u32, height: u32, pixel_count: usize) {
         md.push_str(MD_SECTION_FRAME_INFO);
-        write!(md, "- **Dimensions**: {}×{}\n", width, height).unwrap();
+        writeln!(md, "- **Dimensions**: {}×{}", width, height).unwrap();
         write!(md, "- **Total pixel operations**: {}\n\n", pixel_count).unwrap();
     }
 
@@ -158,14 +158,14 @@ impl MarkdownRender {
                 RenderOp::Clear(clear) => {
                     clear_count += 1;
                     write!(md, "### Clear Operation\n\n").unwrap();
-                    write!(md, "- **Color**: {}\n", Self::format_color(clear.color)).unwrap();
+                    writeln!(md, "- **Color**: {}", Self::format_color(clear.color)).unwrap();
                     write!(md, "- **Dimensions**: {}×{}\n\n", clear.width, clear.height).unwrap();
                 }
                 RenderOp::Pixel(pixel) => {
                     colors.insert(pixel.color);
-                    write!(
+                    writeln!(
                         md,
-                        "- `set_pixel({}, {}, {})`\n",
+                        "- `set_pixel({}, {}, {})`",
                         pixel.x,
                         pixel.y,
                         Self::format_color(pixel.color)
@@ -186,8 +186,8 @@ impl MarkdownRender {
         duration_ms: f64,
     ) {
         md.push_str(MD_SECTION_STATS);
-        write!(md, "- **Clear operations**: {}\n", clear_count).unwrap();
-        write!(md, "- **Unique colors**: {}\n", unique_colors).unwrap();
+        writeln!(md, "- **Clear operations**: {}", clear_count).unwrap();
+        writeln!(md, "- **Unique colors**: {}", unique_colors).unwrap();
         write!(md, "- **Render time**: {:.2}ms{}", duration_ms, MD_FOOTER).unwrap();
     }
 

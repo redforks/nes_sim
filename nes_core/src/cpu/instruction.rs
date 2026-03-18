@@ -1,5 +1,5 @@
 use super::addressing::{Address, RegisterStatus};
-use super::{extra_tick_if_cross_page, Cpu, Flag};
+use super::{Cpu, Flag, extra_tick_if_cross_page};
 use crate::cpu::addressing::{FlagAddr, Literal};
 
 /// LDA, LDX, LDY, TAX, TAY, TSX, TXA, TYA
@@ -8,7 +8,6 @@ where
     S: Address,
     D: Address,
 {
-
     move |cpu| {
         let (val, ticks) = src.get(cpu);
         dest.set(cpu, val);
@@ -24,7 +23,6 @@ where
     S: Address,
     D: Address,
 {
-
     move |cpu| {
         let (val, ticks) = src.get(cpu);
         dest.set(cpu, val);
@@ -33,7 +31,6 @@ where
 }
 
 pub fn new_pha() -> impl FnMut(&mut Cpu) -> u8 {
-
     move |cpu| {
         cpu.push_stack(cpu.a);
         3
@@ -41,7 +38,6 @@ pub fn new_pha() -> impl FnMut(&mut Cpu) -> u8 {
 }
 
 pub fn new_php() -> impl FnMut(&mut Cpu) -> u8 {
-
     move |cpu| {
         cpu.set_flag(Flag::Break, true);
         cpu.push_status();
@@ -50,7 +46,6 @@ pub fn new_php() -> impl FnMut(&mut Cpu) -> u8 {
 }
 
 pub fn new_pla() -> impl FnMut(&mut Cpu) -> u8 {
-
     move |cpu| {
         cpu.a = cpu.pop_stack();
         cpu.update_negative_flag(cpu.a);
@@ -60,7 +55,6 @@ pub fn new_pla() -> impl FnMut(&mut Cpu) -> u8 {
 }
 
 pub fn new_plp() -> impl FnMut(&mut Cpu) -> u8 {
-
     move |cpu| {
         let saved = cpu.pop_stack();
         let saved_break_flag = cpu.flag(Flag::Break);
@@ -76,40 +70,29 @@ pub fn new_plp() -> impl FnMut(&mut Cpu) -> u8 {
 
 // DEC, DEX, DEY
 pub fn new_dec<D: Address>(dest: D) -> impl FnMut(&mut Cpu) -> u8 {
-
     move |cpu| {
         let (val, ticks) = dest.get(cpu);
         let val = val.wrapping_sub(1);
         dest.set(cpu, val);
         cpu.update_negative_flag(val);
         cpu.update_zero_flag(val);
-        if dest.is_register() {
-            2
-        } else {
-            4 + ticks
-        }
+        if dest.is_register() { 2 } else { 4 + ticks }
     }
 }
 
 // INC, INX, INY
 pub fn new_inc<D: Address>(dest: D) -> impl FnMut(&mut Cpu) -> u8 {
-
     move |cpu| {
         let (val, ticks) = dest.get(cpu);
         let val = val.wrapping_add(1);
         dest.set(cpu, val);
         cpu.update_negative_flag(val);
         cpu.update_zero_flag(val);
-        if dest.is_register() {
-            2
-        } else {
-            4 + ticks
-        }
+        if dest.is_register() { 2 } else { 4 + ticks }
     }
 }
 
 pub fn new_adc<D: Address>(dest: D) -> impl FnMut(&mut Cpu) -> u8 {
-
     move |cpu| {
         let (val, ticks) = dest.get(cpu);
         cpu.adc(val);
@@ -118,7 +101,6 @@ pub fn new_adc<D: Address>(dest: D) -> impl FnMut(&mut Cpu) -> u8 {
 }
 
 pub fn new_sbc<D: Address>(dest: D) -> impl FnMut(&mut Cpu) -> u8 {
-
     move |cpu| {
         let (val, ticks) = dest.get(cpu);
         cpu.adc(!val);
@@ -131,7 +113,6 @@ fn new_acc_op<F: Fn(u8, u8) -> u8, S: Address>(
     op: F,
     src: S,
 ) -> impl FnMut(&mut Cpu) -> u8 {
-
     move |cpu| {
         let (val, ticks) = src.get(cpu);
         cpu.a = op(cpu.a, val);
@@ -146,7 +127,6 @@ pub fn new_and<D: Address>(dest: D) -> impl FnMut(&mut Cpu) -> u8 {
 }
 
 pub fn new_anc(Literal(v): Literal) -> impl FnMut(&mut Cpu) -> u8 {
-
     move |cpu| {
         cpu.a &= v;
         cpu.update_negative_flag(cpu.a);
@@ -157,7 +137,6 @@ pub fn new_anc(Literal(v): Literal) -> impl FnMut(&mut Cpu) -> u8 {
 }
 
 pub fn new_alr(Literal(v): Literal) -> impl FnMut(&mut Cpu) -> u8 {
-
     move |cpu| {
         cpu.a &= v;
         cpu.set_flag(Flag::Carry, cpu.a & 0x01 != 0);
@@ -169,7 +148,6 @@ pub fn new_alr(Literal(v): Literal) -> impl FnMut(&mut Cpu) -> u8 {
 }
 
 pub fn new_arr(Literal(v): Literal) -> impl FnMut(&mut Cpu) -> u8 {
-
     move |cpu| {
         cpu.a &= v;
         cpu.a = cpu.a >> 1 | (cpu.flag(Flag::Carry) as u8) << 7;
@@ -182,7 +160,6 @@ pub fn new_arr(Literal(v): Literal) -> impl FnMut(&mut Cpu) -> u8 {
 }
 
 pub fn new_sbx(Literal(v): Literal) -> impl FnMut(&mut Cpu) -> u8 {
-
     move |cpu| {
         let val = cpu.a & cpu.x;
         let (x, borrow) = val.overflowing_sub(v);
@@ -207,7 +184,6 @@ fn new_shift_op<F: Fn(&Cpu, u8) -> (u8, u8), D: Address>(
     op: F,
     dest: D,
 ) -> impl FnMut(&mut Cpu) -> u8 {
-
     move |cpu| {
         let (val, ticks) = dest.get(cpu);
         let (val, carry_flag) = op(cpu, val);
@@ -245,7 +221,6 @@ pub fn new_ror<D: Address>(dest: D) -> impl FnMut(&mut Cpu) -> u8 {
 
 // Clc, Cld, Cli, Clv
 pub fn new_clear_bit(dest: FlagAddr) -> impl FnMut(&mut Cpu) -> u8 {
-
     move |cpu| {
         if dest.0 == Flag::InterruptDisabled {
             cpu.pending_set_interrupt_disabled_flag(false);
@@ -258,7 +233,6 @@ pub fn new_clear_bit(dest: FlagAddr) -> impl FnMut(&mut Cpu) -> u8 {
 
 // Sec, Sed, Sei
 pub fn new_set_bit(dest: FlagAddr) -> impl FnMut(&mut Cpu) -> u8 {
-
     move |cpu| {
         if dest.0 == Flag::InterruptDisabled {
             cpu.pending_set_interrupt_disabled_flag(true);
@@ -270,7 +244,6 @@ pub fn new_set_bit(dest: FlagAddr) -> impl FnMut(&mut Cpu) -> u8 {
 }
 
 pub fn new_cmp<R: Address, M: Address>(r: R, m: M) -> impl FnMut(&mut Cpu) -> u8 {
-
     move |cpu| {
         let (r_val, _) = r.get(cpu);
         let (val, ticks) = m.get(cpu);
@@ -287,7 +260,6 @@ pub fn new_condition_branch<R: Address>(
     r: R,
     negative: bool,
 ) -> impl FnMut(&mut Cpu) -> u8 {
-
     move |cpu| {
         let (v, _) = r.get(cpu);
         let should_jump = if negative { v == 0 } else { v != 0 };
@@ -303,7 +275,6 @@ pub fn new_condition_branch<R: Address>(
 }
 
 pub fn new_jmp(addr: u16) -> impl FnMut(&mut Cpu) -> u8 {
-
     move |cpu| {
         cpu.pc = addr;
         3
@@ -311,7 +282,6 @@ pub fn new_jmp(addr: u16) -> impl FnMut(&mut Cpu) -> u8 {
 }
 
 pub fn new_indirect_jmp(offset: u16) -> impl FnMut(&mut Cpu) -> u8 {
-
     move |cpu| {
         cpu.pc = cpu.read_word_in_same_page(offset);
         5
@@ -319,7 +289,6 @@ pub fn new_indirect_jmp(offset: u16) -> impl FnMut(&mut Cpu) -> u8 {
 }
 
 pub fn new_jsr(addr: u16) -> impl FnMut(&mut Cpu) -> u8 {
-
     move |cpu| {
         cpu.pc = cpu.pc.wrapping_sub(1);
         cpu.push_pc();
@@ -329,7 +298,6 @@ pub fn new_jsr(addr: u16) -> impl FnMut(&mut Cpu) -> u8 {
 }
 
 pub fn new_rts() -> impl FnMut(&mut Cpu) -> u8 {
-
     move |cpu| {
         let l = cpu.pop_stack();
         let h = cpu.pop_stack();
@@ -340,7 +308,6 @@ pub fn new_rts() -> impl FnMut(&mut Cpu) -> u8 {
 }
 
 pub fn new_brk() -> impl FnMut(&mut Cpu) -> u8 {
-
     move |cpu| {
         cpu.pc = cpu.pc.wrapping_add(1);
         cpu.push_pc();
@@ -353,7 +320,6 @@ pub fn new_brk() -> impl FnMut(&mut Cpu) -> u8 {
 }
 
 pub fn new_rti() -> impl FnMut(&mut Cpu) -> u8 {
-
     move |cpu| {
         let v = cpu.pop_stack();
         RegisterStatus().set(cpu, v);
@@ -363,7 +329,6 @@ pub fn new_rti() -> impl FnMut(&mut Cpu) -> u8 {
 }
 
 pub fn new_bit<D: Address>(dest: D) -> impl FnMut(&mut Cpu) -> u8 {
-
     move |cpu| {
         let (v, ticks) = dest.get(cpu);
         cpu.set_flag(Flag::Negative, (v & 0x80) != 0);
@@ -374,12 +339,10 @@ pub fn new_bit<D: Address>(dest: D) -> impl FnMut(&mut Cpu) -> u8 {
 }
 
 pub fn new_nop() -> impl FnMut(&mut Cpu) -> u8 {
-
     move |_| 2
 }
 
 pub fn new_nop_with_addr<D: Address>(dest: D) -> impl FnMut(&mut Cpu) -> u8 {
-
     move |cpu| {
         let (_, ticks) = dest.get(cpu);
         ticks + 2
@@ -387,7 +350,6 @@ pub fn new_nop_with_addr<D: Address>(dest: D) -> impl FnMut(&mut Cpu) -> u8 {
 }
 
 pub fn new_hlt() -> impl FnMut(&mut Cpu) -> u8 {
-
     move |cpu| {
         cpu.halt();
         2
@@ -395,7 +357,6 @@ pub fn new_hlt() -> impl FnMut(&mut Cpu) -> u8 {
 }
 
 pub fn new_aso<D: Address>(dest: D) -> impl FnMut(&mut Cpu) -> u8 {
-
     move |cpu| {
         let (v, ticks) = dest.get(cpu);
         cpu.set_flag(Flag::Carry, (v & 0x80) != 0);
@@ -409,7 +370,6 @@ pub fn new_aso<D: Address>(dest: D) -> impl FnMut(&mut Cpu) -> u8 {
 }
 
 pub fn new_rla<D: Address>(dest: D) -> impl FnMut(&mut Cpu) -> u8 {
-
     move |cpu| {
         let (v, ticks) = dest.get(cpu);
         let carry = v & 0x80 != 0;
@@ -424,7 +384,6 @@ pub fn new_rla<D: Address>(dest: D) -> impl FnMut(&mut Cpu) -> u8 {
 }
 
 pub fn new_lse<D: Address>(dest: D) -> impl FnMut(&mut Cpu) -> u8 {
-
     move |cpu| {
         let (v, ticks) = dest.get(cpu);
         cpu.set_flag(Flag::Carry, (v & 0x01) != 0);
@@ -438,7 +397,6 @@ pub fn new_lse<D: Address>(dest: D) -> impl FnMut(&mut Cpu) -> u8 {
 }
 
 pub fn new_rra<D: Address>(dest: D) -> impl FnMut(&mut Cpu) -> u8 {
-
     move |cpu| {
         let (v, ticks) = dest.get(cpu);
         let carry = v & 0x01 != 0;
@@ -452,7 +410,6 @@ pub fn new_rra<D: Address>(dest: D) -> impl FnMut(&mut Cpu) -> u8 {
 }
 
 pub fn new_sax<D: Address>(dest: D) -> impl FnMut(&mut Cpu) -> u8 {
-
     move |cpu| {
         let v = cpu.a & cpu.x;
         dest.set(cpu, v);
@@ -461,7 +418,6 @@ pub fn new_sax<D: Address>(dest: D) -> impl FnMut(&mut Cpu) -> u8 {
 }
 
 pub fn new_lax<D: Address>(dest: D) -> impl FnMut(&mut Cpu) -> u8 {
-
     move |cpu| {
         let (v, ticks) = dest.get(cpu);
         cpu.a = v;
@@ -473,7 +429,6 @@ pub fn new_lax<D: Address>(dest: D) -> impl FnMut(&mut Cpu) -> u8 {
 }
 
 pub fn new_dcp<D: Address>(dest: D) -> impl FnMut(&mut Cpu) -> u8 {
-
     move |cpu| {
         let (v, ticks) = dest.get(cpu);
         let t = v.wrapping_sub(1);
@@ -487,7 +442,6 @@ pub fn new_dcp<D: Address>(dest: D) -> impl FnMut(&mut Cpu) -> u8 {
 }
 
 pub fn new_isc<D: Address>(dest: D) -> impl FnMut(&mut Cpu) -> u8 {
-
     move |cpu| {
         let (v, ticks) = dest.get(cpu);
         let t = v.wrapping_add(1);
@@ -498,7 +452,6 @@ pub fn new_isc<D: Address>(dest: D) -> impl FnMut(&mut Cpu) -> u8 {
 }
 
 pub fn new_all<R: Address, D: Address>(_name: &str, r: R, dest: D) -> impl FnMut(&mut Cpu) -> u8 {
-
     move |cpu| {
         let (addr, _) = dest.calc_addr(cpu);
         let r = r.get(cpu).0;

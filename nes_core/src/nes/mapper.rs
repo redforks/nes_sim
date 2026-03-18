@@ -17,7 +17,7 @@ pub fn create_cartridge(f: &INesFile) -> Box<dyn Cartridge> {
 pub trait Cartridge {
     fn pattern_ref(&self) -> &[u8];
     fn read(&self, address: u16) -> u8;
-    fn write(&mut self, ppu: &mut Ppu, address: u16, value: u8);
+    fn write(&self, ppu: &Ppu, address: u16, value: u8);
 }
 
 #[cfg(test)]

@@ -23,7 +23,7 @@ impl Cartridge for MockCartridge {
         }
     }
 
-    fn write(&mut self, _ppu: &mut Ppu, _address: u16, _value: u8) {}
+    fn write(&self, _ppu: &Ppu, _address: u16, _value: u8) {}
 
     fn pattern_ref(&self) -> &[u8] {
         &self.chr_rom
@@ -32,20 +32,20 @@ impl Cartridge for MockCartridge {
 
 #[test]
 fn test_lower_ram_mirroring() {
-    let mut mcu = NesMcu {
+    let mcu = NesMcu {
         lower_ram: LowerRam::new(),
         ppu: Ppu::default(),
         after_ppu: RamMcu::start_from(0x4000, [0; 0x20]),
         cartridge: Box::new(MockCartridge::new()),
         frame_counter_interrupt: Cell::new(false),
         vblank_started: Cell::new(false),
-        apu_cycle: 0,
-        apu_even_cycle: false,
-        frame_counter: 0,
-        frame_counter_mode: false,
-        length_counters: [0; 4],
-        length_counter_halt: [false; 4],
-        channel_enabled: [false; 4],
+        apu_cycle: Cell::new(0),
+        apu_even_cycle: Cell::new(false),
+        frame_counter: Cell::new(0),
+        frame_counter_mode: Cell::new(false),
+        length_counters: RefCell::new([0; 4]),
+        length_counter_halt: RefCell::new([false; 4]),
+        channel_enabled: RefCell::new([false; 4]),
     };
 
     // Write to address 0x0000
@@ -60,20 +60,20 @@ fn test_lower_ram_mirroring() {
 
 #[test]
 fn test_ppu_register_access() {
-    let mut mcu = NesMcu {
+    let mcu = NesMcu {
         lower_ram: LowerRam::new(),
         ppu: Ppu::default(),
         after_ppu: RamMcu::start_from(0x4000, [0; 0x20]),
         cartridge: Box::new(MockCartridge::new()),
         frame_counter_interrupt: Cell::new(false),
         vblank_started: Cell::new(false),
-        apu_cycle: 0,
-        apu_even_cycle: false,
-        frame_counter: 0,
-        frame_counter_mode: false,
-        length_counters: [0; 4],
-        length_counter_halt: [false; 4],
-        channel_enabled: [false; 4],
+        apu_cycle: Cell::new(0),
+        apu_even_cycle: Cell::new(false),
+        frame_counter: Cell::new(0),
+        frame_counter_mode: Cell::new(false),
+        length_counters: RefCell::new([0; 4]),
+        length_counter_halt: RefCell::new([false; 4]),
+        channel_enabled: RefCell::new([false; 4]),
     };
 
     // PPU registers are at 0x2000-0x3FFF
@@ -84,20 +84,20 @@ fn test_ppu_register_access() {
 
 #[test]
 fn test_apu_register_access() {
-    let mut mcu = NesMcu {
+    let mcu = NesMcu {
         lower_ram: LowerRam::new(),
         ppu: Ppu::default(),
         after_ppu: RamMcu::start_from(0x4000, [0; 0x20]),
         cartridge: Box::new(MockCartridge::new()),
         frame_counter_interrupt: Cell::new(false),
         vblank_started: Cell::new(false),
-        apu_cycle: 0,
-        apu_even_cycle: false,
-        frame_counter: 0,
-        frame_counter_mode: false,
-        length_counters: [0; 4],
-        length_counter_halt: [false; 4],
-        channel_enabled: [false; 4],
+        apu_cycle: Cell::new(0),
+        apu_even_cycle: Cell::new(false),
+        frame_counter: Cell::new(0),
+        frame_counter_mode: Cell::new(false),
+        length_counters: RefCell::new([0; 4]),
+        length_counter_halt: RefCell::new([false; 4]),
+        channel_enabled: RefCell::new([false; 4]),
     };
 
     // APU registers are at 0x4000-0x401F
@@ -120,13 +120,13 @@ fn test_cartridge_prg_rom_access() {
         cartridge: Box::new(cart),
         frame_counter_interrupt: Cell::new(false),
         vblank_started: Cell::new(false),
-        apu_cycle: 0,
-        apu_even_cycle: false,
-        frame_counter: 0,
-        frame_counter_mode: false,
-        length_counters: [0; 4],
-        length_counter_halt: [false; 4],
-        channel_enabled: [false; 4],
+        apu_cycle: Cell::new(0),
+        apu_even_cycle: Cell::new(false),
+        frame_counter: Cell::new(0),
+        frame_counter_mode: Cell::new(false),
+        length_counters: RefCell::new([0; 4]),
+        length_counter_halt: RefCell::new([false; 4]),
+        channel_enabled: RefCell::new([false; 4]),
     };
 
     assert_eq!(mcu.read(0x8000), 0xEA);
@@ -141,13 +141,13 @@ fn test_frame_counter_interrupt_flag() {
         cartridge: Box::new(MockCartridge::new()),
         frame_counter_interrupt: Cell::new(true),
         vblank_started: Cell::new(false),
-        apu_cycle: 0,
-        apu_even_cycle: false,
-        frame_counter: 0,
-        frame_counter_mode: false,
-        length_counters: [0; 4],
-        length_counter_halt: [false; 4],
-        channel_enabled: [false; 4],
+        apu_cycle: Cell::new(0),
+        apu_even_cycle: Cell::new(false),
+        frame_counter: Cell::new(0),
+        frame_counter_mode: Cell::new(false),
+        length_counters: RefCell::new([0; 4]),
+        length_counter_halt: RefCell::new([false; 4]),
+        channel_enabled: RefCell::new([false; 4]),
     };
 
     assert!(mcu.request_irq());
@@ -162,13 +162,13 @@ fn test_no_interrupt_when_both_false() {
         cartridge: Box::new(MockCartridge::new()),
         frame_counter_interrupt: Cell::new(false),
         vblank_started: Cell::new(false),
-        apu_cycle: 0,
-        apu_even_cycle: false,
-        frame_counter: 0,
-        frame_counter_mode: false,
-        length_counters: [0; 4],
-        length_counter_halt: [false; 4],
-        channel_enabled: [false; 4],
+        apu_cycle: Cell::new(0),
+        apu_even_cycle: Cell::new(false),
+        frame_counter: Cell::new(0),
+        frame_counter_mode: Cell::new(false),
+        length_counters: RefCell::new([0; 4]),
+        length_counter_halt: RefCell::new([false; 4]),
+        channel_enabled: RefCell::new([false; 4]),
     };
 
     assert!(!mcu.request_irq());
@@ -176,20 +176,20 @@ fn test_no_interrupt_when_both_false() {
 
 #[test]
 fn test_frame_counter_write() {
-    let mut mcu = NesMcu {
+    let mcu = NesMcu {
         lower_ram: LowerRam::new(),
         ppu: Ppu::default(),
         after_ppu: RamMcu::start_from(0x4000, [0; 0x20]),
         cartridge: Box::new(MockCartridge::new()),
         frame_counter_interrupt: Cell::new(false),
         vblank_started: Cell::new(false),
-        apu_cycle: 0,
-        apu_even_cycle: false,
-        frame_counter: 0,
-        frame_counter_mode: false,
-        length_counters: [0; 4],
-        length_counter_halt: [false; 4],
-        channel_enabled: [false; 4],
+        apu_cycle: Cell::new(0),
+        apu_even_cycle: Cell::new(false),
+        frame_counter: Cell::new(0),
+        frame_counter_mode: Cell::new(false),
+        length_counters: RefCell::new([0; 4]),
+        length_counter_halt: RefCell::new([false; 4]),
+        channel_enabled: RefCell::new([false; 4]),
     };
 
     // Write to frame counter at 0x4017
@@ -209,13 +209,13 @@ fn test_status_register_read_clears_flags() {
         cartridge: Box::new(MockCartridge::new()),
         frame_counter_interrupt: Cell::new(true),
         vblank_started: Cell::new(false),
-        apu_cycle: 0,
-        apu_even_cycle: false,
-        frame_counter: 0,
-        frame_counter_mode: false,
-        length_counters: [0; 4],
-        length_counter_halt: [false; 4],
-        channel_enabled: [false; 4],
+        apu_cycle: Cell::new(0),
+        apu_even_cycle: Cell::new(false),
+        frame_counter: Cell::new(0),
+        frame_counter_mode: Cell::new(false),
+        length_counters: RefCell::new([0; 4]),
+        length_counter_halt: RefCell::new([false; 4]),
+        channel_enabled: RefCell::new([false; 4]),
     };
 
     assert!(mcu.frame_counter_interrupt.get());
@@ -227,20 +227,20 @@ fn test_status_register_read_clears_flags() {
 
 #[test]
 fn test_tick_ppu() {
-    let mut mcu = NesMcu {
+    let mcu = NesMcu {
         lower_ram: LowerRam::new(),
         ppu: Ppu::default(),
         after_ppu: RamMcu::start_from(0x4000, [0; 0x20]),
         cartridge: Box::new(MockCartridge::new()),
         frame_counter_interrupt: Cell::new(false),
         vblank_started: Cell::new(false),
-        apu_cycle: 0,
-        apu_even_cycle: false,
-        frame_counter: 0,
-        frame_counter_mode: false,
-        length_counters: [0; 4],
-        length_counter_halt: [false; 4],
-        channel_enabled: [false; 4],
+        apu_cycle: Cell::new(0),
+        apu_even_cycle: Cell::new(false),
+        frame_counter: Cell::new(0),
+        frame_counter_mode: Cell::new(false),
+        length_counters: RefCell::new([0; 4]),
+        length_counter_halt: RefCell::new([false; 4]),
+        channel_enabled: RefCell::new([false; 4]),
     };
 
     // tick_ppu should return false when no NMI pending
@@ -250,20 +250,20 @@ fn test_tick_ppu() {
 
 #[test]
 fn test_memory_mapping() {
-    let mut mcu = NesMcu {
+    let mcu = NesMcu {
         lower_ram: LowerRam::new(),
         ppu: Ppu::default(),
         after_ppu: RamMcu::start_from(0x4000, [0; 0x20]),
         cartridge: Box::new(MockCartridge::new()),
         frame_counter_interrupt: Cell::new(false),
         vblank_started: Cell::new(false),
-        apu_cycle: 0,
-        apu_even_cycle: false,
-        frame_counter: 0,
-        frame_counter_mode: false,
-        length_counters: [0; 4],
-        length_counter_halt: [false; 4],
-        channel_enabled: [false; 4],
+        apu_cycle: Cell::new(0),
+        apu_even_cycle: Cell::new(false),
+        frame_counter: Cell::new(0),
+        frame_counter_mode: Cell::new(false),
+        length_counters: RefCell::new([0; 4]),
+        length_counter_halt: RefCell::new([false; 4]),
+        channel_enabled: RefCell::new([false; 4]),
     };
 
     // Test different address regions
@@ -276,20 +276,20 @@ fn test_memory_mapping() {
 
 #[test]
 fn test_ppu_dma() {
-    let mut mcu = NesMcu {
+    let mcu = NesMcu {
         lower_ram: LowerRam::new(),
         ppu: Ppu::default(),
         after_ppu: RamMcu::start_from(0x4000, [0; 0x20]),
         cartridge: Box::new(MockCartridge::new()),
         frame_counter_interrupt: Cell::new(false),
         vblank_started: Cell::new(false),
-        apu_cycle: 0,
-        apu_even_cycle: false,
-        frame_counter: 0,
-        frame_counter_mode: false,
-        length_counters: [0; 4],
-        length_counter_halt: [false; 4],
-        channel_enabled: [false; 4],
+        apu_cycle: Cell::new(0),
+        apu_even_cycle: Cell::new(false),
+        frame_counter: Cell::new(0),
+        frame_counter_mode: Cell::new(false),
+        length_counters: RefCell::new([0; 4]),
+        length_counter_halt: RefCell::new([false; 4]),
+        channel_enabled: RefCell::new([false; 4]),
     };
 
     // Set up some data in RAM for DMA
@@ -306,20 +306,20 @@ fn test_ppu_dma() {
 
 #[test]
 fn test_cartridge_write() {
-    let mut mcu = NesMcu {
+    let mcu = NesMcu {
         lower_ram: LowerRam::new(),
         ppu: Ppu::default(),
         after_ppu: RamMcu::start_from(0x4000, [0; 0x20]),
         cartridge: Box::new(MockCartridge::new()),
         frame_counter_interrupt: Cell::new(false),
         vblank_started: Cell::new(false),
-        apu_cycle: 0,
-        apu_even_cycle: false,
-        frame_counter: 0,
-        frame_counter_mode: false,
-        length_counters: [0; 4],
-        length_counter_halt: [false; 4],
-        channel_enabled: [false; 4],
+        apu_cycle: Cell::new(0),
+        apu_even_cycle: Cell::new(false),
+        frame_counter: Cell::new(0),
+        frame_counter_mode: Cell::new(false),
+        length_counters: RefCell::new([0; 4]),
+        length_counter_halt: RefCell::new([false; 4]),
+        channel_enabled: RefCell::new([false; 4]),
     };
 
     // Write to cartridge space (0x4020+)
@@ -340,13 +340,13 @@ fn test_cartridge_read_boundary() {
         cartridge: Box::new(cart),
         frame_counter_interrupt: Cell::new(false),
         vblank_started: Cell::new(false),
-        apu_cycle: 0,
-        apu_even_cycle: false,
-        frame_counter: 0,
-        frame_counter_mode: false,
-        length_counters: [0; 4],
-        length_counter_halt: [false; 4],
-        channel_enabled: [false; 4],
+        apu_cycle: Cell::new(0),
+        apu_even_cycle: Cell::new(false),
+        frame_counter: Cell::new(0),
+        frame_counter_mode: Cell::new(false),
+        length_counters: RefCell::new([0; 4]),
+        length_counter_halt: RefCell::new([false; 4]),
+        channel_enabled: RefCell::new([false; 4]),
     };
 
     assert_eq!(mcu.read(0x8000), 0x11);
@@ -362,13 +362,13 @@ fn test_read_4015_returns_zero() {
         cartridge: Box::new(MockCartridge::new()),
         frame_counter_interrupt: Cell::new(false),
         vblank_started: Cell::new(false),
-        apu_cycle: 0,
-        apu_even_cycle: false,
-        frame_counter: 0,
-        frame_counter_mode: false,
-        length_counters: [0; 4],
-        length_counter_halt: [false; 4],
-        channel_enabled: [false; 4],
+        apu_cycle: Cell::new(0),
+        apu_even_cycle: Cell::new(false),
+        frame_counter: Cell::new(0),
+        frame_counter_mode: Cell::new(false),
+        length_counters: RefCell::new([0; 4]),
+        length_counter_halt: RefCell::new([false; 4]),
+        channel_enabled: RefCell::new([false; 4]),
     };
 
     // Reading 0x4015 should return 0
