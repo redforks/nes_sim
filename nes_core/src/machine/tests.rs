@@ -37,7 +37,7 @@ fn test_reset() {
 
 #[test]
 fn test_tick_single() {
-    let mcu = MockMcu::new();
+    let mut mcu = MockMcu::new();
     // Write a JMP instruction to create an infinite loop
     // JMP $8000 = 0x4C 0x00 0x80 at address 0x8000
     mcu.write(0x8000, 0x4C); // JMP absolute

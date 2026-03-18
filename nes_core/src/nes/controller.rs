@@ -21,7 +21,11 @@ impl AController {
         let r = self.bits & self.mask;
         self.mask = self.mask.rotate_left(1);
 
-        if r != 0 { 0x40 } else { 0x41 }
+        if r != 0 {
+            0x40
+        } else {
+            0x41
+        }
     }
 
     pub fn press(&mut self, btn: Button) {
@@ -70,7 +74,7 @@ impl Mcu for Controller {
         }
     }
 
-    fn write(&self, address: u16, value: u8) {
+    fn write(&mut self, address: u16, value: u8) {
         match address {
             0x4016 => {
                 if value & 1 == 0 {

@@ -19,7 +19,7 @@ impl Mcu for LowerRam {
         self.ram.borrow()[address as usize & 0x7ff]
     }
 
-    fn write(&self, address: u16, value: u8) {
+    fn write(&mut self, address: u16, value: u8) {
         self.ram.borrow_mut()[address as usize & 0x7ff] = value;
     }
 }
@@ -30,7 +30,7 @@ mod tests {
 
     #[test]
     fn test() {
-        let mcu = LowerRam {
+        let mut mcu = LowerRam {
             ram: RefCell::new([0; 0xf00]),
         };
         mcu.write(0x0000, 0x12);

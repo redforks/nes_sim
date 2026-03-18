@@ -32,7 +32,7 @@ impl Cartridge for MockCartridge {
 
 #[test]
 fn test_lower_ram_mirroring() {
-    let mcu = NesMcu {
+    let mut mcu = NesMcu {
         lower_ram: LowerRam::new(),
         ppu: Ppu::default(),
         after_ppu: RamMcu::start_from(0x4000, [0; 0x20]),
@@ -60,7 +60,7 @@ fn test_lower_ram_mirroring() {
 
 #[test]
 fn test_ppu_register_access() {
-    let mcu = NesMcu {
+    let mut mcu = NesMcu {
         lower_ram: LowerRam::new(),
         ppu: Ppu::default(),
         after_ppu: RamMcu::start_from(0x4000, [0; 0x20]),
@@ -84,7 +84,7 @@ fn test_ppu_register_access() {
 
 #[test]
 fn test_apu_register_access() {
-    let mcu = NesMcu {
+    let mut mcu = NesMcu {
         lower_ram: LowerRam::new(),
         ppu: Ppu::default(),
         after_ppu: RamMcu::start_from(0x4000, [0; 0x20]),
@@ -176,7 +176,7 @@ fn test_no_interrupt_when_both_false() {
 
 #[test]
 fn test_frame_counter_write() {
-    let mcu = NesMcu {
+    let mut mcu = NesMcu {
         lower_ram: LowerRam::new(),
         ppu: Ppu::default(),
         after_ppu: RamMcu::start_from(0x4000, [0; 0x20]),
@@ -250,7 +250,7 @@ fn test_tick_ppu() {
 
 #[test]
 fn test_memory_mapping() {
-    let mcu = NesMcu {
+    let mut mcu = NesMcu {
         lower_ram: LowerRam::new(),
         ppu: Ppu::default(),
         after_ppu: RamMcu::start_from(0x4000, [0; 0x20]),
@@ -276,7 +276,7 @@ fn test_memory_mapping() {
 
 #[test]
 fn test_ppu_dma() {
-    let mcu = NesMcu {
+    let mut mcu = NesMcu {
         lower_ram: LowerRam::new(),
         ppu: Ppu::default(),
         after_ppu: RamMcu::start_from(0x4000, [0; 0x20]),
@@ -306,7 +306,7 @@ fn test_ppu_dma() {
 
 #[test]
 fn test_cartridge_write() {
-    let mcu = NesMcu {
+    let mut mcu = NesMcu {
         lower_ram: LowerRam::new(),
         ppu: Ppu::default(),
         after_ppu: RamMcu::start_from(0x4000, [0; 0x20]),

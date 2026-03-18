@@ -9,16 +9,16 @@ use std::cell::{Cell, RefCell};
 ///
 /// ```
 /// // Simple 64KB MCU
-/// let mcu = MockMcu::new();
+/// let mut mcu = MockMcu::new();
 ///
 /// // With initial program data
-/// let mcu = MockMcu::new().with_program(0x8000, &[0xA9, 0x42]);
+/// let mut mcu = MockMcu::new().with_program(0x8000, &[0xA9, 0x42]);
 ///
 /// // Regional MCU (for mapping tests)
 /// let mcu = MockMcu::regional(0x2000, 0x20FF);
 ///
 /// // With IRQ/PPU controls
-/// let mcu = MockMcu::new()
+/// let mut mcu = MockMcu::new()
 ///     .with_tick_ppu_result(true)
 ///     .with_irq_request(false);
 /// ```
@@ -96,8 +96,7 @@ impl Mcu for MockMcu {
     fn read(&self, addr: u16) -> u8 {
         self.memory.borrow()[addr as usize]
     }
-
-    fn write(&self, addr: u16, value: u8) {
+    fn write(&mut self, addr: u16, value: u8) {
         self.memory.borrow_mut()[addr as usize] = value;
     }
     fn request_irq(&self) -> bool {
@@ -123,7 +122,7 @@ pub trait McuUtils: Mcu {
     }
 
     /// Writes a 16-bit little-endian value to addr
-    fn write_word_le(&self, addr: u16, value: u16) {
+    fn write_word_le(&mut self, addr: u16, value: u16) {
         self.write(addr, (value & 0xFF) as u8);
         self.write(addr + 1, ((value >> 8) & 0xFF) as u8);
     }
@@ -138,7 +137,7 @@ mod tests {
 
     #[test]
     fn test_mock_mcu_basic() {
-        let mcu = MockMcu::new();
+        let mut mcu = MockMcu::new();
         mcu.write(0x1000, 0x42);
         assert_eq!(mcu.read(0x1000), 0x42);
     }
@@ -160,14 +159,14 @@ mod tests {
 
     #[test]
     fn test_mcu_utils_word_rw() {
-        let mcu = MockMcu::new();
+        let mut mcu = MockMcu::new();
         mcu.write_word_le(0x3000, 0xABCD);
         assert_eq!(mcu.read_word_le(0x3000), 0xABCD);
     }
 
     #[test]
     fn test_mock_mcu_regional() {
-        let mcu = MockMcu::regional(0x2000, 0x20FF);
+        let mut mcu = MockMcu::regional(0x2000, 0x20FF);
         assert_eq!(mcu.region(), Some((0x2000, 0x20FF)));
         mcu.write(0x2050, 0xAB);
         assert_eq!(mcu.read(0x2050), 0xAB);

@@ -94,7 +94,7 @@ impl<D: PulseDriver> Mcu for PulseChannel<D> {
         panic!("Can not from PulseChannel");
     }
 
-    fn write(&self, address: u16, value: u8) {
+    fn write(&mut self, address: u16, value: u8) {
         match address - self.start_addr {
             0 => self.driver.borrow_mut().set_duty_cycle(value.into()),
             1 => self.driver.borrow_mut().set_sweep(value.into()),
@@ -155,7 +155,7 @@ impl<D: TriangleDriver> Mcu for TriangleChannel<D> {
         panic!("Can not read from TriangleChannel");
     }
 
-    fn write(&self, address: u16, value: u8) {
+    fn write(&mut self, address: u16, value: u8) {
         match address {
             0x4008 => self
                 .driver
@@ -241,7 +241,7 @@ impl<D: NoiseDriver> Mcu for NoiseChannel<D> {
         panic!("Can not from PulseChannel");
     }
 
-    fn write(&self, address: u16, value: u8) {
+    fn write(&mut self, address: u16, value: u8) {
         match address {
             0x400C => self.0.borrow_mut().set_envelop(value.into()),
             0x400E => self.0.borrow_mut().set_period(value.into()),
@@ -289,7 +289,7 @@ impl<D: DmcDriver> Mcu for DmcChannel<D> {
         panic!("Can not read from DmcChannel at address {}", address);
     }
 
-    fn write(&self, address: u16, value: u8) {
+    fn write(&mut self, address: u16, value: u8) {
         match address {
             0x4010 => self.0.borrow_mut().set_irq_loop_freq(value.into()),
             0x4011 => self.0.borrow_mut().set_load_counter(value),
@@ -381,7 +381,7 @@ impl<D: APUControllerDriver> Mcu for APUController<D> {
         }
     }
 
-    fn write(&self, address: u16, value: u8) {
+    fn write(&mut self, address: u16, value: u8) {
         match address {
             0x4015 => self.0.borrow_mut().set_control_flags(value.into()),
             0x4017 => self.0.borrow_mut().set_frame_counter(value.into()),

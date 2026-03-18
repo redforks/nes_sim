@@ -452,32 +452,32 @@ fn test_pulse_channel_read_panics() {
 // Test PulseChannel writes
 #[test]
 fn test_pulse_channel_write_duty_cycle() {
-    let channel = PulseChannel::new(0x4000, MockPulseDriver);
+    let mut channel = PulseChannel::new(0x4000, MockPulseDriver);
     channel.write(0x4000, 0x3F); // Should call set_duty_cycle
 }
 
 #[test]
 fn test_pulse_channel_write_sweep() {
-    let channel = PulseChannel::new(0x4000, MockPulseDriver);
+    let mut channel = PulseChannel::new(0x4000, MockPulseDriver);
     channel.write(0x4001, 0x7F); // Should call set_sweep
 }
 
 #[test]
 fn test_pulse_channel_write_low_byte() {
-    let channel = PulseChannel::new(0x4000, MockPulseDriver);
+    let mut channel = PulseChannel::new(0x4000, MockPulseDriver);
     channel.write(0x4002, 0xAB); // Should call write_low_byte
 }
 
 #[test]
 fn test_pulse_channel_write_high_byte() {
-    let channel = PulseChannel::new(0x4000, MockPulseDriver);
+    let mut channel = PulseChannel::new(0x4000, MockPulseDriver);
     channel.write(0x4003, 0xCD); // Should call write_high_byte and set_length_counter_load
 }
 
 #[test]
 #[should_panic(expected = "Can not write to PulseChannel")]
 fn test_pulse_channel_write_invalid_address() {
-    let channel = PulseChannel::new(0x4000, MockPulseDriver);
+    let mut channel = PulseChannel::new(0x4000, MockPulseDriver);
     channel.write(0x4005, 0x00); // Invalid address
 }
 
@@ -503,26 +503,26 @@ fn test_triangle_channel_read_panics() {
 
 #[test]
 fn test_triangle_channel_write_linear_counter() {
-    let channel = TriangleChannel::new(MockTriangleDriver);
+    let mut channel = TriangleChannel::new(MockTriangleDriver);
     channel.write(0x4008, 0xFF); // Should call set_linear_counter_control
 }
 
 #[test]
 fn test_triangle_channel_write_timer_low() {
-    let channel = TriangleChannel::new(MockTriangleDriver);
+    let mut channel = TriangleChannel::new(MockTriangleDriver);
     channel.write(0x400A, 0x12); // Should call write_low_byte
 }
 
 #[test]
 fn test_triangle_channel_write_length_counter() {
-    let channel = TriangleChannel::new(MockTriangleDriver);
+    let mut channel = TriangleChannel::new(MockTriangleDriver);
     channel.write(0x400B, 0x34); // Should call write_high_byte and set_length_counter_load
 }
 
 #[test]
 #[should_panic(expected = "Can not write to TriangleChannel")]
 fn test_triangle_channel_write_invalid_address() {
-    let channel = TriangleChannel::new(MockTriangleDriver);
+    let mut channel = TriangleChannel::new(MockTriangleDriver);
     channel.write(0x4009, 0x00); // Invalid address
 }
 
@@ -542,26 +542,26 @@ fn test_noise_channel_read_panics() {
 
 #[test]
 fn test_noise_channel_write_envelop() {
-    let channel = NoiseChannel(RefCell::new(MockNoiseDriver));
+    let mut channel = NoiseChannel(RefCell::new(MockNoiseDriver));
     channel.write(0x400C, 0x1F); // Should call set_envelop
 }
 
 #[test]
 fn test_noise_channel_write_period() {
-    let channel = NoiseChannel(RefCell::new(MockNoiseDriver));
+    let mut channel = NoiseChannel(RefCell::new(MockNoiseDriver));
     channel.write(0x400E, 0x0F); // Should call set_period
 }
 
 #[test]
 fn test_noise_channel_write_length() {
-    let channel = NoiseChannel(RefCell::new(MockNoiseDriver));
+    let mut channel = NoiseChannel(RefCell::new(MockNoiseDriver));
     channel.write(0x400F, 0xF8); // Should call set_length
 }
 
 #[test]
 #[should_panic(expected = "Can not write to NoiseChannel")]
 fn test_noise_channel_write_invalid_address() {
-    let channel = NoiseChannel(RefCell::new(MockNoiseDriver));
+    let mut channel = NoiseChannel(RefCell::new(MockNoiseDriver));
     channel.write(0x4010, 0x00); // Invalid address
 }
 
@@ -581,32 +581,32 @@ fn test_dmc_channel_read_panics() {
 
 #[test]
 fn test_dmc_channel_write_irq_loop_freq() {
-    let channel = DmcChannel(RefCell::new(MockDmcDriver));
+    let mut channel = DmcChannel(RefCell::new(MockDmcDriver));
     channel.write(0x4010, 0xFF); // Should call set_irq_loop_freq
 }
 
 #[test]
 fn test_dmc_channel_write_load_counter() {
-    let channel = DmcChannel(RefCell::new(MockDmcDriver));
+    let mut channel = DmcChannel(RefCell::new(MockDmcDriver));
     channel.write(0x4011, 0x00); // Should call set_load_counter
 }
 
 #[test]
 fn test_dmc_channel_write_sample_address() {
-    let channel = DmcChannel(RefCell::new(MockDmcDriver));
+    let mut channel = DmcChannel(RefCell::new(MockDmcDriver));
     channel.write(0x4012, 0xAA); // Should call set_sample_address
 }
 
 #[test]
 fn test_dmc_channel_write_sample_length() {
-    let channel = DmcChannel(RefCell::new(MockDmcDriver));
+    let mut channel = DmcChannel(RefCell::new(MockDmcDriver));
     channel.write(0x4013, 0x55); // Should call set_sample_length
 }
 
 #[test]
 #[should_panic(expected = "Can not write to DmcChannel")]
 fn test_dmc_channel_write_invalid_address() {
-    let channel = DmcChannel(RefCell::new(MockDmcDriver));
+    let mut channel = DmcChannel(RefCell::new(MockDmcDriver));
     channel.write(0x4014, 0x00); // Invalid address
 }
 
@@ -633,20 +633,20 @@ fn test_apu_controller_read_invalid_address() {
 
 #[test]
 fn test_apu_controller_write_control_flags() {
-    let channel = APUController(RefCell::new(MockApuControllerDriver));
+    let mut channel = APUController(RefCell::new(MockApuControllerDriver));
     channel.write(0x4015, 0x1F); // Should call set_control_flags
 }
 
 #[test]
 fn test_apu_controller_write_frame_counter() {
-    let channel = APUController(RefCell::new(MockApuControllerDriver));
+    let mut channel = APUController(RefCell::new(MockApuControllerDriver));
     channel.write(0x4017, 0xC0); // Should call set_frame_counter
 }
 
 #[test]
 #[should_panic(expected = "Can not write to APUController")]
 fn test_apu_controller_write_invalid_address() {
-    let channel = APUController(RefCell::new(MockApuControllerDriver));
+    let mut channel = APUController(RefCell::new(MockApuControllerDriver));
     channel.write(0x4016, 0x00);
 }
 
