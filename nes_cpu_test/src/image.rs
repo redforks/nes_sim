@@ -31,24 +31,25 @@ impl Image {
         let mut machine = Machine::with_plugin(plugin, mcu);
         machine.reset();
         machine.set_pc(0x400);
-        MachineWrapper::Bin(machine)
+        MachineWrapper::Bin(Box::new(machine))
     }
 
     fn create_ines_machine(&self, ines: &INesFile, quiet: bool) -> MachineWrapper {
         let mcu = nes_mcu::build(ines);
 
         // Build the composite plugin step by step to handle type coercion
-        let mut plugins: Vec<Box<dyn Plugin<nes_core::nes::nes_mcu::NesMcu>>> = Vec::new();
-        plugins.push(Box::<Console>::default());
-        plugins.push(Box::new(ReportPlugin::new(quiet)));
-        plugins.push(Box::<MonitorTestStatus>::default());
-        plugins.push(Box::new(DetectDeadLoop::<1>::new()));
-        plugins.push(Box::new(DetectDeadLoop::<2>::new()));
+        let plugins: Vec<Box<dyn Plugin<nes_core::nes::nes_mcu::NesMcu>>> = vec![
+            Box::<Console>::default(),
+            Box::new(ReportPlugin::new(quiet)),
+            Box::<MonitorTestStatus>::default(),
+            Box::new(DetectDeadLoop::<1>::new()),
+            Box::new(DetectDeadLoop::<2>::new()),
+        ];
 
         let plugin = CompositePlugin::new(plugins);
         let mut machine = Machine::with_plugin(plugin, mcu);
         machine.reset();
-        MachineWrapper::INes(machine)
+        MachineWrapper::INes(Box::new(machine))
     }
 }
 
@@ -66,8 +67,8 @@ mod machine_types {
 }
 
 pub enum MachineWrapper {
-    Bin(machine_types::BinMachine),
-    INes(machine_types::INesMachine),
+    Bin(Box<machine_types::BinMachine>),
+    INes(Box<machine_types::INesMachine>),
 }
 
 impl MachineWrapper {
@@ -92,6 +93,7 @@ impl MachineWrapper {
         }
     }
 
+    #[allow(dead_code)]
     pub fn set_pc(&mut self, pc: u16) {
         match self {
             MachineWrapper::Bin(m) => m.set_pc(pc),
