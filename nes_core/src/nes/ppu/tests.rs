@@ -121,30 +121,30 @@ fn nmi_occurred() {
     let (mut ppu, _) = new_test_ppu_and_pattern();
 
     let flag = PpuCtrl::new().with_nmi_enable(false);
-    assert!(!ppu.status().v_blank());
+    assert!(!ppu.status.v_blank());
 
     // disable nmi
     ppu.set_control_flags(flag);
     ppu.set_v_blank(true);
-    assert!(ppu.status().v_blank());
+    assert!(ppu.status.v_blank());
     // should_nmi is false because nmi is disabled
-    assert!(!(ppu.ctrl_flags().nmi_enable() && ppu.status().v_blank()));
+    assert!(!(ppu.ctrl_flags().nmi_enable() && ppu.status.v_blank()));
     ppu.set_v_blank(false);
     // v_blank is false on v_blank end
-    assert!(!ppu.status().v_blank());
+    assert!(!ppu.status.v_blank());
 
     // read status register will reset v_blank flag
     ppu.set_v_blank(true);
     assert!(ppu.read_status().v_blank());
-    assert!(!ppu.status().v_blank());
+    assert!(!ppu.status.v_blank());
 
     // enable nmi
     ppu.set_control_flags(flag.with_nmi_enable(true));
-    assert!(!(ppu.ctrl_flags().nmi_enable() && ppu.status().v_blank()));
+    assert!(!(ppu.ctrl_flags().nmi_enable() && ppu.status.v_blank()));
     ppu.set_v_blank(true);
-    assert!(ppu.status().v_blank());
+    assert!(ppu.status.v_blank());
     // should_nmi is true because nmi is enabled
-    assert!(ppu.ctrl_flags().nmi_enable() && ppu.status().v_blank());
+    assert!(ppu.ctrl_flags().nmi_enable() && ppu.status.v_blank());
 }
 
 #[test]
@@ -155,13 +155,13 @@ fn ppu_tick_timing() {
     ppu.set_control_flags(PpuCtrl::new().with_nmi_enable(true));
 
     // Initial state
-    assert_eq!(ppu.scanline(), 0);
-    assert_eq!(ppu.dot(), 0);
+    assert_eq!(ppu.scanline, 0);
+    assert_eq!(ppu.dot, 0);
     assert!(!ppu.status().v_blank());
 
     // Advance to scanline 241, dot 0
-    ppu.set_scanline(VBLANK_SET_SCANLINE);
-    ppu.set_dot(0);
+    ppu.scanline = VBLANK_SET_SCANLINE;
+    ppu.dot = 0;
 
     // Tick once - should set VBlank and trigger NMI
     let result = ppu.tick(&pattern);
@@ -173,8 +173,8 @@ fn ppu_tick_timing() {
     assert!(ppu.status().v_blank());
 
     // Advance to scanline 261, dot 0
-    ppu.set_scanline(VBLANK_CLEAR_SCANLINE);
-    ppu.set_dot(0);
+    ppu.scanline = VBLANK_CLEAR_SCANLINE;
+    ppu.dot = 0;
 
     // Tick once - should clear VBlank
     let result = ppu.tick(&pattern);
@@ -194,13 +194,13 @@ fn ppu_tick_scanline_wrap() {
     let (mut ppu, pattern) = new_test_ppu_and_pattern();
 
     // Start at last scanline, last dot
-    ppu.set_scanline(SCANLINES_PER_FRAME - 1); // 261
-    ppu.set_dot(DOTS_PER_SCANLINE - 1); // 340
+    ppu.scanline = SCANLINES_PER_FRAME - 1; // 261
+    ppu.dot = DOTS_PER_SCANLINE - 1; // 340
 
     // Tick once - should wrap to scanline 0, dot 0
     let _ = ppu.tick(&pattern);
-    assert_eq!(ppu.scanline(), 0);
-    assert_eq!(ppu.dot(), 0);
+    assert_eq!(ppu.scanline, 0);
+    assert_eq!(ppu.dot, 0);
 }
 
 #[test]
@@ -314,7 +314,7 @@ fn test_write_0x2006_set_data_addr() {
     ppu.write(0x2006, 0x00);
 
     // Verify the VRAM address was set
-    assert_eq!(ppu.vram_addr(), 0x3f00);
+    assert_eq!(ppu.vram_addr, 0x3f00);
 }
 
 #[test]
@@ -345,7 +345,7 @@ fn test_pattern_table_selection() {
         PpuCtrl::new().with_background_pattern_table(true).into(),
     );
 
-    assert_eq!(ppu.cur_pattern_table_idx(), 1);
+    assert_eq!(ppu.cur_pattern_table_idx, 1);
 }
 
 #[test]
@@ -380,10 +380,10 @@ fn test_scroll_register_first_write() {
     ppu.write(0x2005, 0x3A); // coarse X = 0x07, fine X = 0x02
 
     // Verify the temp_vram_addr was updated with coarse X
-    assert_eq!(ppu.temp_vram_addr() & 0x1F, 0x07);
-    assert_eq!(ppu.fine_x(), 0x02);
+    assert_eq!(ppu.temp_vram_addr & 0x1F, 0x07);
+    assert_eq!(ppu.fine_x, 0x02);
     // write_toggle should be true
-    assert!(ppu.write_toggle());
+    assert!(ppu.write_toggle);
 }
 
 #[test]
@@ -397,10 +397,10 @@ fn test_scroll_register_second_write() {
     ppu.write(0x2005, 0x7B); // coarse Y = 0x0F, fine Y = 0x03
 
     // Verify the temp_vram_addr was updated
-    assert_eq!((ppu.temp_vram_addr() >> 5) & 0x1F, 0x0F);
-    assert_eq!((ppu.temp_vram_addr() >> 12) & 0x07, 0x03);
+    assert_eq!((ppu.temp_vram_addr >> 5) & 0x1F, 0x0F);
+    assert_eq!((ppu.temp_vram_addr >> 12) & 0x07, 0x03);
     // write_toggle should be false again
-    assert!(!ppu.write_toggle());
+    assert!(!ppu.write_toggle);
 }
 
 #[test]
@@ -411,9 +411,9 @@ fn test_vram_address_high_byte_only() {
     ppu.write(0x2006, 0x3F);
 
     // write_toggle should be true, but vram_addr should not be committed yet
-    assert!(ppu.write_toggle());
+    assert!(ppu.write_toggle);
     // The temp_vram_addr should have been set
-    assert_eq!(ppu.temp_vram_addr(), 0x3F00);
+    assert_eq!(ppu.temp_vram_addr, 0x3F00);
 }
 
 #[test]
@@ -472,9 +472,9 @@ fn test_ppu_mask_register() {
             .into(),
     );
 
-    assert!(ppu.mask().blue_tint());
-    assert!(ppu.mask().sprite_enabled());
-    assert!(ppu.mask().background_enabled());
+    assert!(ppu.mask.blue_tint());
+    assert!(ppu.mask.sprite_enabled());
+    assert!(ppu.mask.background_enabled());
 }
 
 #[test]
@@ -499,9 +499,9 @@ fn test_read_status_register() {
     assert!(status.v_blank());
 
     // VBlank should be cleared after reading
-    assert!(!ppu.status().v_blank());
+    assert!(!ppu.status.v_blank());
     // write_toggle should be reset
-    assert!(!ppu.write_toggle());
+    assert!(!ppu.write_toggle);
 }
 
 #[test]
@@ -531,14 +531,14 @@ fn test_read_buffer() {
 fn create_test_ppu_with_mask(mask: PpuMask) -> Ppu {
     let mut ppu = Ppu::default();
     // Modify PPU state via test helpers
-    ppu.set_mask(mask);
+    ppu.mask = mask;
     // Clear OAM
     for i in 0..64 {
-        ppu.oam_mut()[i * 4] = 0x20;
-        ppu.oam_mut()[i * 4 + 3] = 0xFF;
+        ppu.oam[i * 4] = 0x20;
+        ppu.oam[i * 4 + 3] = 0xFF;
     }
     // Clear palette RAM
-    ppu.clear_palette();
+    ppu.palette.data = [0; 0x20];
     ppu
 }
 
@@ -581,7 +581,7 @@ fn set_tile_pixel(
 }
 
 fn setup_sprite(ppu: &mut Ppu, index: usize, y: u8, tile: u8, attr: u8, x: u8) {
-    let oam = ppu.oam_mut();
+    let oam = &mut ppu.oam;
     oam[index * 4] = y;
     oam[index * 4 + 1] = tile;
     oam[index * 4 + 2] = attr;
@@ -589,22 +589,22 @@ fn setup_sprite(ppu: &mut Ppu, index: usize, y: u8, tile: u8, attr: u8, x: u8) {
 }
 
 fn set_bg_tile(ppu: &mut Ppu, tile: u8, palette_idx: u8) {
-    ppu.name_table_write(0x2000, tile);
-    ppu.name_table_write(0x23c0, palette_idx & 0x03);
+    ppu.name_table.write(0x2000, tile);
+    ppu.name_table.write(0x23c0, palette_idx & 0x03);
 }
 
 fn set_bg_palette_color(ppu: &mut Ppu, palette_idx: u8, color_idx: u8, color: u8) {
     let addr = 0x3f00 + palette_idx as u16 * 4 + color_idx as u16;
-    ppu.palette_write(addr, color);
+    ppu.palette.write(addr, color);
 }
 
 fn set_sprite_palette_color(ppu: &mut Ppu, palette_idx: u8, color_idx: u8, color: u8) {
     let addr = 0x3f10 + palette_idx as u16 * 4 + color_idx as u16;
-    ppu.palette_write(addr, color);
+    ppu.palette.write(addr, color);
 }
 
 fn set_universal_bg_color(ppu: &mut Ppu, color: u8) {
-    ppu.palette_write(0x3f00, color);
+    ppu.palette.write(0x3f00, color);
 }
 
 #[test]
@@ -914,9 +914,9 @@ fn test_render_pixel_sprite_zero_hit() {
     ppu.name_table_write(0x2000 + 1, 0);
     setup_sprite(&mut ppu, 0, 0, 1, 0, 8);
 
-    assert!(!ppu.status().sprite_zero_hit());
+    assert!(!ppu.status.sprite_zero_hit());
     ppu.render_pixel(&pattern, 8, 1);
-    assert!(ppu.status().sprite_zero_hit());
+    assert!(ppu.status.sprite_zero_hit());
 }
 
 #[test]
@@ -934,7 +934,7 @@ fn test_render_pixel_sprite_zero_hit_requires_opaque_background() {
     setup_sprite(&mut ppu, 0, 0, 1, 0, 0);
 
     ppu.render_pixel(&pattern, 0, 1);
-    assert!(!ppu.status().sprite_zero_hit());
+    assert!(!ppu.status.sprite_zero_hit());
 }
 
 #[test]
@@ -952,7 +952,7 @@ fn test_render_pixel_sprite_zero_hit_respects_background_left_mask() {
     setup_sprite(&mut ppu, 0, 0, 1, 0, 0);
 
     ppu.render_pixel(&pattern, 0, 1);
-    assert!(!ppu.status().sprite_zero_hit());
+    assert!(!ppu.status.sprite_zero_hit());
 }
 
 #[test]
@@ -970,7 +970,7 @@ fn test_render_pixel_sprite_zero_hit_respects_sprite_left_mask() {
     setup_sprite(&mut ppu, 0, 0, 1, 0, 0);
 
     ppu.render_pixel(&pattern, 0, 1);
-    assert!(!ppu.status().sprite_zero_hit());
+    assert!(!ppu.status.sprite_zero_hit());
 }
 
 #[test]
@@ -990,7 +990,7 @@ fn test_render_pixel_sprite_zero_hit_requires_sprite_zero() {
     setup_sprite(&mut ppu, 1, 0, 1, 0, 0);
 
     ppu.render_pixel(&pattern, 0, 1);
-    assert!(!ppu.status().sprite_zero_hit());
+    assert!(!ppu.status.sprite_zero_hit());
 }
 
 #[test]
