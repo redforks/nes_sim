@@ -191,11 +191,7 @@ impl Palette {
 
         // Clamp to valid range [0, 31]
         let addr = addr as usize;
-        if addr >= 32 {
-            31
-        } else {
-            addr
-        }
+        if addr >= 32 { 31 } else { addr }
     }
 
     fn _get_color_idx(&self, start: usize, palette_idx: u8, idx: u8) -> Pixel {
@@ -328,7 +324,7 @@ impl Ppu {
 
         // Render pixel during visible scanlines (0-239) and visible dots (0-255)
         if scanline < 240 && dot < 256 {
-            let pixel = Self::render_pixel_inner(self, pattern, dot as u8, scanline as u8);
+            let pixel = Self::render_pixel(self, pattern, dot as u8, scanline as u8);
             self.renderer
                 .set_pixel(dot as u32, scanline as u32, pixel.0);
         }
@@ -399,27 +395,14 @@ impl Ppu {
         match address {
             // PPUSTATUS
             0x2002 => {
-                let status = self.status.into();
-                // Clear V-blank flag and write toggle on status read
-                self.status = self.status.with_v_blank(false);
+                let status = self.read_status();
                 self.write_toggle = false;
-                status
+                status.into()
             }
             // OAMDATA
-            0x2004 => self.oam[self.oam_addr as usize],
+            0x2004 => self.read_oam_data(),
             // PPUDATA - read from VRAM or palette
-            0x2007 => {
-                let vram_addr = self.vram_addr;
-                let value = Self::read_vram_data(self, pattern, vram_addr);
-                // Increment VRAM address based on control flag
-                let increment = if self.ctrl_flags.increment_mode() {
-                    32
-                } else {
-                    1
-                };
-                self.vram_addr = self.vram_addr.wrapping_add(increment);
-                value
-            }
+            0x2007 => self.read_vram_and_inc(pattern),
             _ => 0, // Other registers are write-only
         }
     }
@@ -429,16 +412,10 @@ impl Ppu {
         match address {
             // PPUCTRL
             0x2000 => {
-                self.ctrl_flags = value.into();
+                self.set_control_flags(value.into());
                 // Update name table address from control bits
                 self.cur_name_table_addr =
                     0x2000 + (self.ctrl_flags.name_table_select() as u16 * 0x400);
-                // Update pattern table index
-                self.cur_pattern_table_idx = if self.ctrl_flags.background_pattern_table() {
-                    1
-                } else {
-                    0
-                };
             }
             // PPUMASK
             0x2001 => {
@@ -539,70 +516,7 @@ impl Ppu {
         }
     }
 
-    fn render_pixel_inner(inner: &mut Ppu, pattern: &[u8], screen_x: u8, screen_y: u8) -> Pixel {
-        let bg_pixel = if inner.mask.background_enabled() {
-            Self::get_background_pixel_inner(inner, pattern, screen_x, screen_y)
-        } else {
-            (0, 0) // transparent
-        };
-
-        let sprite_pixel = if inner.mask.sprite_enabled() {
-            Self::get_sprite_pixel_inner(inner, pattern, screen_x, screen_y)
-        } else {
-            None
-        };
-
-        let (bg_palette_idx, bg_color_idx) = bg_pixel;
-
-        let color = match sprite_pixel {
-            Some((spr_palette_idx, spr_color_idx, behind_bg, is_sprite_zero)) => {
-                // Sprite zero hit detection:
-                // Set when an opaque sprite 0 pixel overlaps an opaque background pixel
-                if is_sprite_zero && bg_color_idx != 0 && spr_color_idx != 0 && screen_x != 255 {
-                    inner.status = inner.status.with_sprite_zero_hit(true);
-                }
-
-                if spr_color_idx == 0 {
-                    // Sprite pixel is transparent, show background
-                    inner
-                        .palette
-                        .get_background_color(bg_palette_idx, bg_color_idx)
-                } else if bg_color_idx == 0 || !behind_bg {
-                    // Background is transparent OR sprite has priority
-                    inner
-                        .palette
-                        ._get_sprit_color(spr_palette_idx, spr_color_idx)
-                } else {
-                    // Background has priority and is opaque
-                    inner
-                        .palette
-                        .get_background_color(bg_palette_idx, bg_color_idx)
-                }
-            }
-            None => {
-                // No sprite, just show background
-                inner
-                    .palette
-                    .get_background_color(bg_palette_idx, bg_color_idx)
-            }
-        };
-
-        // Apply grayscale and emphasis effects from PPUMASK
-        apply_effects(
-            color,
-            inner.mask.grayscale(),
-            inner.mask.red_tint(),
-            inner.mask.green_tint(),
-            inner.mask.blue_tint(),
-        )
-    }
-
-    fn get_background_pixel_inner(
-        inner: &Ppu,
-        pattern: &[u8],
-        screen_x: u8,
-        screen_y: u8,
-    ) -> (u8, u8) {
+    fn get_background_pixel(inner: &Ppu, pattern: &[u8], screen_x: u8, screen_y: u8) -> (u8, u8) {
         // Check left-column clipping
         if !inner.mask.background_left_enabled() && screen_x < 8 {
             return (0, 0);
@@ -648,7 +562,7 @@ impl Ppu {
         (palette_idx, color_idx)
     }
 
-    fn get_sprite_pixel_inner(
+    fn get_sprite_pixel(
         inner: &Ppu,
         pattern: &[u8],
         screen_x: u8,
@@ -709,15 +623,8 @@ impl Ppu {
         None
     }
 
-    // Test helper methods - these expose internal state for testing purposes
-
-    /// Read VRAM at a specific address (for testing)
-    pub fn read_vram(&mut self, pattern: &[u8], address: u16) -> u8 {
-        Self::read_vram_data(self, pattern, address)
-    }
-
     /// Read VRAM at current address and increment (for testing)
-    pub fn read_vram_and_inc(&mut self, pattern: &[u8]) -> u8 {
+    fn read_vram_and_inc(&mut self, pattern: &[u8]) -> u8 {
         let vram_addr = self.vram_addr;
         let value = Self::read_vram_data(self, pattern, vram_addr);
         // Increment VRAM address based on control flag
@@ -731,17 +638,12 @@ impl Ppu {
     }
 
     /// Read OAM data at current OAM address (for testing)
-    pub fn read_oam_data(&self) -> u8 {
+    fn read_oam_data(&self) -> u8 {
         self.oam[self.oam_addr as usize]
     }
 
-    /// Get current OAM address (for testing)
-    pub fn oam_addr(&self) -> u8 {
-        self.oam_addr
-    }
-
     /// Set control flags (for testing)
-    pub fn set_control_flags(&mut self, flags: PpuCtrl) {
+    fn set_control_flags(&mut self, flags: PpuCtrl) {
         self.ctrl_flags = flags;
         // Update pattern table index based on background_pattern_table flag
         self.cur_pattern_table_idx = if self.ctrl_flags.background_pattern_table() {
@@ -753,138 +655,66 @@ impl Ppu {
 
     /// Read status register (for testing) - behaves like reading from 0x2002
     /// Returns the current status and clears the v_blank flag
-    pub fn read_status(&mut self) -> PpuStatus {
+    fn read_status(&mut self) -> PpuStatus {
         let status = self.status;
         // Clear v_blank flag on read (like real hardware)
         self.status = status.with_v_blank(false);
         status
     }
 
-    // Test helpers in tests code now access fields directly; keep methods available for
-    // backwards compatibility during the refactor but mark as dead_code allowed.
-    #[allow(dead_code)]
-    #[cfg(test)]
-    pub(crate) fn oam_mut(&mut self) -> &mut [u8; 0x100] {
-        &mut self.oam
-    }
-
-    #[allow(dead_code)]
-    #[cfg(test)]
-    pub(crate) fn palette_write(&mut self, addr: u16, value: u8) {
-        self.palette.write(addr, value);
-    }
-
-    #[allow(dead_code)]
-    #[cfg(test)]
-    pub(crate) fn clear_palette(&mut self) {
-        self.palette.data = [0; 0x20];
-    }
-
-    #[allow(dead_code)]
-    #[cfg(test)]
-    pub(crate) fn set_mask(&mut self, mask: PpuMask) {
-        self.mask = mask;
-    }
-
     /// Render a single pixel (for testing)
-    pub fn render_pixel(&mut self, pattern: &[u8], x: u8, y: u8) -> Pixel {
-        Self::render_pixel_inner(self, pattern, x, y)
-    }
+    fn render_pixel(&mut self, pattern: &[u8], x: u8, y: u8) -> Pixel {
+        let bg_pixel = if self.mask.background_enabled() {
+            Self::get_background_pixel(self, pattern, x, y)
+        } else {
+            (0, 0) // transparent
+        };
 
-    /// Get scanline (for testing)
-    #[cfg(test)]
-    pub(crate) fn scanline(&self) -> u16 {
-        self.scanline
-    }
+        let sprite_pixel = if self.mask.sprite_enabled() {
+            Self::get_sprite_pixel(self, pattern, x, y)
+        } else {
+            None
+        };
 
-    /// Set scanline (for testing)
-    #[cfg(test)]
-    pub(crate) fn set_scanline(&mut self, scanline: u16) {
-        self.scanline = scanline;
-    }
+        let (bg_palette_idx, bg_color_idx) = bg_pixel;
 
-    /// Get dot (for testing)
-    #[cfg(test)]
-    pub(crate) fn dot(&self) -> u16 {
-        self.dot
-    }
+        let color = match sprite_pixel {
+            Some((spr_palette_idx, spr_color_idx, behind_bg, is_sprite_zero)) => {
+                // Sprite zero hit detection:
+                // Set when an opaque sprite 0 pixel overlaps an opaque background pixel
+                if is_sprite_zero && bg_color_idx != 0 && spr_color_idx != 0 && x != 255 {
+                    self.status = self.status.with_sprite_zero_hit(true);
+                }
 
-    /// Set dot (for testing)
-    #[cfg(test)]
-    pub(crate) fn set_dot(&mut self, dot: u16) {
-        self.dot = dot;
-    }
+                if spr_color_idx == 0 {
+                    // Sprite pixel is transparent, show background
+                    self.palette
+                        .get_background_color(bg_palette_idx, bg_color_idx)
+                } else if bg_color_idx == 0 || !behind_bg {
+                    // Background is transparent OR sprite has priority
+                    self.palette
+                        ._get_sprit_color(spr_palette_idx, spr_color_idx)
+                } else {
+                    // Background has priority and is opaque
+                    self.palette
+                        .get_background_color(bg_palette_idx, bg_color_idx)
+                }
+            }
+            None => {
+                // No sprite, just show background
+                self.palette
+                    .get_background_color(bg_palette_idx, bg_color_idx)
+            }
+        };
 
-    /// Get VRAM address (for testing)
-    #[cfg(test)]
-    pub(crate) fn vram_addr(&self) -> u16 {
-        self.vram_addr
-    }
-
-    /// Get current pattern table index (for testing)
-    #[cfg(test)]
-    pub(crate) fn cur_pattern_table_idx(&self) -> u8 {
-        self.cur_pattern_table_idx
-    }
-
-    /// Get temporary VRAM address (for testing)
-    #[cfg(test)]
-    pub(crate) fn temp_vram_addr(&self) -> u16 {
-        self.temp_vram_addr
-    }
-
-    /// Get fine X scroll (for testing)
-    #[cfg(test)]
-    pub(crate) fn fine_x(&self) -> u8 {
-        self.fine_x
-    }
-
-    /// Get control flags (for testing)
-    #[cfg(test)]
-    pub(crate) fn ctrl_flags(&self) -> PpuCtrl {
-        self.ctrl_flags
-    }
-
-    /// Get status flags (for testing)
-    #[cfg(test)]
-    pub(crate) fn status(&self) -> PpuStatus {
-        self.status
-    }
-
-    /// Set status register (for testing)
-    #[cfg(test)]
-    pub(crate) fn set_status(&mut self, status: PpuStatus) {
-        self.status = status;
-    }
-
-    /// Get write toggle state (for testing)
-    #[cfg(test)]
-    pub(crate) fn write_toggle(&self) -> bool {
-        self.write_toggle
-    }
-
-    /// Get mask flags (for testing)
-    #[cfg(test)]
-    pub(crate) fn mask(&self) -> PpuMask {
-        self.mask
-    }
-
-    /// Get OAM (for testing)
-    #[cfg(test)]
-    pub(crate) fn oam(&self) -> &[u8; 0x100] {
-        &self.oam
-    }
-
-    // palette() removed; use test helpers (palette_write / clear_palette) instead
-
-    /// Write to VRAM address (for testing)
-    pub fn write_vram(&mut self, address: u16, value: u8) {
-        Self::write_vram_data(self, address, value);
-    }
-
-    /// Get current name table address (for testing)
-    pub fn cur_name_table_addr(&self) -> u16 {
-        self.cur_name_table_addr
+        // Apply grayscale and emphasis effects from PPUMASK
+        apply_effects(
+            color,
+            self.mask.grayscale(),
+            self.mask.red_tint(),
+            self.mask.green_tint(),
+            self.mask.blue_tint(),
+        )
     }
 }
 

@@ -45,8 +45,8 @@ fn read_write_v_ram() {
     ppu.write(0x2006, 0x08);
     ppu.write(0x2007, 0x12);
     ppu.write(0x2007, 0x34);
-    assert_eq!(ppu.read_vram(&pattern, 0x2108), 0x12);
-    assert_eq!(ppu.read_vram(&pattern, 0x2109), 0x34);
+    assert_eq!(Ppu::read_vram_data(&mut ppu, &pattern, 0x2108), 0x12);
+    assert_eq!(Ppu::read_vram_data(&mut ppu, &pattern, 0x2109), 0x34);
 
     ppu.read(&pattern, 0x2000); // reset addr
     ppu.write(0x2006, 0x21);
@@ -61,8 +61,8 @@ fn read_write_v_ram() {
     ppu.write(0x2006, 0x08);
     ppu.write(0x2007, 0x56);
     ppu.write(0x2007, 0x78);
-    assert_eq!(ppu.read_vram(&pattern, 0x2108,), 0x56);
-    assert_eq!(ppu.read_vram(&pattern, 0x2128,), 0x78);
+    assert_eq!(Ppu::read_vram_data(&mut ppu, &pattern, 0x2108,), 0x56);
+    assert_eq!(Ppu::read_vram_data(&mut ppu, &pattern, 0x2128,), 0x78);
 
     ppu.read(&pattern, 0x2000); // reset addr
     ppu.write(0x2006, 0x21);
@@ -100,18 +100,18 @@ fn read_write_v_ram() {
 fn read_write_oam() {
     let (mut ppu, _pattern) = new_test_ppu_and_pattern();
     // oam addr default to 0
-    assert_eq!(ppu.oam_addr(), 0);
+    assert_eq!(ppu.oam_addr, 0);
 
     ppu.write(0x2003, 0x12);
     // write oma data, auto inc oma addr
     ppu.write(0x2004, 0x34);
-    assert_eq!(0x13, ppu.oam_addr());
+    assert_eq!(0x13, ppu.oam_addr);
     ppu.write(0x2004, 0x56);
-    assert_eq!(0x14, ppu.oam_addr());
+    assert_eq!(0x14, ppu.oam_addr);
 
     ppu.write(0x2003, 0x12);
     assert_eq!(ppu.read_oam_data(), 0x34);
-    assert_eq!(0x12, ppu.oam_addr());
+    assert_eq!(0x12, ppu.oam_addr);
     // read oma data, won't auto inc oma addr
     assert_eq!(ppu.read_oam_data(), 0x34);
 }
@@ -128,7 +128,7 @@ fn nmi_occurred() {
     ppu.set_v_blank(true);
     assert!(ppu.status.v_blank());
     // should_nmi is false because nmi is disabled
-    assert!(!(ppu.ctrl_flags().nmi_enable() && ppu.status.v_blank()));
+    assert!(!(ppu.ctrl_flags.nmi_enable() && ppu.status.v_blank()));
     ppu.set_v_blank(false);
     // v_blank is false on v_blank end
     assert!(!ppu.status.v_blank());
@@ -140,11 +140,11 @@ fn nmi_occurred() {
 
     // enable nmi
     ppu.set_control_flags(flag.with_nmi_enable(true));
-    assert!(!(ppu.ctrl_flags().nmi_enable() && ppu.status.v_blank()));
+    assert!(!(ppu.ctrl_flags.nmi_enable() && ppu.status.v_blank()));
     ppu.set_v_blank(true);
     assert!(ppu.status.v_blank());
     // should_nmi is true because nmi is enabled
-    assert!(ppu.ctrl_flags().nmi_enable() && ppu.status.v_blank());
+    assert!(ppu.ctrl_flags.nmi_enable() && ppu.status.v_blank());
 }
 
 #[test]
@@ -157,7 +157,7 @@ fn ppu_tick_timing() {
     // Initial state
     assert_eq!(ppu.scanline, 0);
     assert_eq!(ppu.dot, 0);
-    assert!(!ppu.status().v_blank());
+    assert!(!ppu.status.v_blank());
 
     // Advance to scanline 241, dot 0
     ppu.scanline = VBLANK_SET_SCANLINE;
@@ -170,7 +170,7 @@ fn ppu_tick_timing() {
         result.vblank_started,
         "VBlank should start at scanline 241, dot 1"
     );
-    assert!(ppu.status().v_blank());
+    assert!(ppu.status.v_blank());
 
     // Advance to scanline 261, dot 0
     ppu.scanline = VBLANK_CLEAR_SCANLINE;
@@ -186,7 +186,7 @@ fn ppu_tick_timing() {
         !result.vblank_started,
         "VBlank should not start at scanline 261"
     );
-    assert!(!ppu.status().v_blank());
+    assert!(!ppu.status.v_blank());
 }
 
 #[test]
@@ -273,9 +273,9 @@ fn test_oam_dma() {
 
     ppu.oam_dma(&data);
 
-    assert_eq!(ppu.oam()[0], 0x42);
-    assert_eq!(ppu.oam()[128], 0x42);
-    assert_eq!(ppu.oam()[255], 0x42);
+    assert_eq!(ppu.oam[0], 0x42);
+    assert_eq!(ppu.oam[128], 0x42);
+    assert_eq!(ppu.oam[255], 0x42);
 }
 
 #[test]
@@ -293,14 +293,14 @@ fn test_read_status_clears_vblank() {
     let (mut ppu, _pattern) = new_test_ppu_and_pattern();
     ppu.set_v_blank(true);
 
-    assert!(ppu.status().v_blank());
+    assert!(ppu.status.v_blank());
 
     // read_status should clear vblank
     let status = ppu.read_status();
     assert!(status.v_blank());
 
     // v_blank should now be false
-    assert!(!ppu.status().v_blank());
+    assert!(!ppu.status.v_blank());
 }
 
 #[test]
@@ -423,7 +423,11 @@ fn test_read_vram_pattern_table() {
     // Write some data to pattern table at 0x1000
     // Note: We can't actually write to pattern table (it's ROM in real NES)
     // But we can test reading from it
-    let val = ppu.read_vram(&pattern, 0x1000);
+    let val = {
+        let this = &mut ppu;
+        let pattern: &[u8] = &pattern;
+        Ppu::read_vram_data(this, pattern, 0x1000)
+    };
     // Pattern table data defaults to 0
     assert_eq!(val, 0);
 }
@@ -434,8 +438,14 @@ fn test_write_vram_pattern_ignored() {
 
     // Writing to pattern table space should be ignored (it's ROM)
     // This test just verifies it doesn't panic
-    ppu.write_vram(0x0000, 0xFF);
-    ppu.write_vram(0x1000, 0xFF);
+    {
+        let this = &mut ppu;
+        Ppu::write_vram_data(this, 0x0000, 0xFF);
+    };
+    {
+        let this = &mut ppu;
+        Ppu::write_vram_data(this, 0x1000, 0xFF);
+    };
 }
 
 #[test]
@@ -445,17 +455,17 @@ fn test_write_0x2000_updates_name_table_addr() {
     // Set name table select to 1 (0x2400)
     ppu.write(0x2000, PpuCtrl::new().with_name_table_select(1).into());
 
-    assert_eq!(ppu.cur_name_table_addr(), 0x2400);
+    assert_eq!(ppu.cur_name_table_addr, 0x2400);
 
     // Set name table select to 2 (0x2800)
     ppu.write(0x2000, PpuCtrl::new().with_name_table_select(2).into());
 
-    assert_eq!(ppu.cur_name_table_addr(), 0x2800);
+    assert_eq!(ppu.cur_name_table_addr, 0x2800);
 
     // Set name table select to 3 (0x2C00)
     ppu.write(0x2000, PpuCtrl::new().with_name_table_select(3).into());
 
-    assert_eq!(ppu.cur_name_table_addr(), 0x2C00);
+    assert_eq!(ppu.cur_name_table_addr, 0x2C00);
 }
 
 #[test]
@@ -482,12 +492,14 @@ fn test_read_status_register() {
     let (mut ppu, pattern) = new_test_ppu_and_pattern();
 
     // Set some status flags
-    ppu.set_status(
-        PpuStatus::new()
+    {
+        let this = &mut ppu;
+        let status = PpuStatus::new()
             .with_sprite_overflow(true)
             .with_sprite_zero_hit(true)
-            .with_v_blank(true),
-    );
+            .with_v_blank(true);
+        this.status = status;
+    };
 
     // Read status register (0x2002)
     let val = ppu.read(&pattern, 0x2002);
@@ -529,9 +541,11 @@ fn test_read_buffer() {
 // ============================================================================
 
 fn create_test_ppu_with_mask(mask: PpuMask) -> Ppu {
-    let mut ppu = Ppu::default();
-    // Modify PPU state via test helpers
-    ppu.mask = mask;
+    // Initialize PPU with the provided mask to avoid field reassignment
+    let mut ppu = Ppu {
+        mask,
+        ..Default::default()
+    };
     // Clear OAM
     for i in 0..64 {
         ppu.oam[i * 4] = 0x20;
@@ -911,7 +925,11 @@ fn test_render_pixel_sprite_zero_hit() {
     let mut pattern = create_pattern();
     set_tile_solid(&mut pattern, 0, 0, 1);
     set_tile_solid(&mut pattern, 0, 1, 2);
-    ppu.name_table_write(0x2000 + 1, 0);
+    {
+        let this = &mut ppu;
+        let addr = 0x2000 + 1;
+        this.name_table.write(addr, 0);
+    };
     setup_sprite(&mut ppu, 0, 0, 1, 0, 8);
 
     assert!(!ppu.status.sprite_zero_hit());
@@ -1003,11 +1021,15 @@ fn test_render_pixel_sprite_zero_not_at_x255() {
     let mut pattern = create_pattern();
     set_tile_solid(&mut pattern, 0, 0, 1);
     set_tile_solid(&mut pattern, 0, 1, 2);
-    ppu.name_table_write(0x2000 + 31, 0);
+    {
+        let this = &mut ppu;
+        let addr = 0x2000 + 31;
+        this.name_table.write(addr, 0);
+    };
     setup_sprite(&mut ppu, 0, 9, 0, 0, 248);
 
     ppu.render_pixel(&pattern, 255, 10);
-    assert!(!ppu.status().sprite_zero_hit());
+    assert!(!ppu.status.sprite_zero_hit());
 }
 
 // ============================================================================
@@ -1078,11 +1100,13 @@ fn test_render_pixel_red_emphasis() {
     let pixel_with_emphasis = ppu.render_pixel(&pattern, 0, 0);
 
     // Compare with no emphasis
-    ppu.set_mask(
-        PpuMask::new()
+    {
+        let this = &mut ppu;
+        let mask = PpuMask::new()
             .with_background_enabled(true)
-            .with_background_left_enabled(true),
-    );
+            .with_background_left_enabled(true);
+        this.mask = mask;
+    };
     let pixel_without_emphasis = ppu.render_pixel(&pattern, 0, 0);
 
     let (r_with, g_with, b_with) = pixel_to_rgb(pixel_with_emphasis);
@@ -1116,11 +1140,13 @@ fn test_render_pixel_green_emphasis() {
     let pixel_with_emphasis = ppu.render_pixel(&pattern, 0, 0);
 
     // Compare with no emphasis
-    ppu.set_mask(
-        PpuMask::new()
+    {
+        let this = &mut ppu;
+        let mask = PpuMask::new()
             .with_background_enabled(true)
-            .with_background_left_enabled(true),
-    );
+            .with_background_left_enabled(true);
+        this.mask = mask;
+    };
     let pixel_without_emphasis = ppu.render_pixel(&pattern, 0, 0);
 
     let (r_with, g_with, b_with) = pixel_to_rgb(pixel_with_emphasis);
@@ -1157,11 +1183,13 @@ fn test_render_pixel_blue_emphasis() {
     let pixel_with_emphasis = ppu.render_pixel(&pattern, 0, 0);
 
     // Compare with no emphasis
-    ppu.set_mask(
-        PpuMask::new()
+    {
+        let this = &mut ppu;
+        let mask = PpuMask::new()
             .with_background_enabled(true)
-            .with_background_left_enabled(true),
-    );
+            .with_background_left_enabled(true);
+        this.mask = mask;
+    };
     let pixel_without_emphasis = ppu.render_pixel(&pattern, 0, 0);
 
     let (r_with, g_with, b_with) = pixel_to_rgb(pixel_with_emphasis);
@@ -1199,11 +1227,13 @@ fn test_render_pixel_multiple_emphasis_bits() {
     let pixel_with_emphasis = ppu.render_pixel(&pattern, 0, 0);
 
     // Compare with no emphasis
-    ppu.set_mask(
-        PpuMask::new()
+    {
+        let this = &mut ppu;
+        let mask = PpuMask::new()
             .with_background_enabled(true)
-            .with_background_left_enabled(true),
-    );
+            .with_background_left_enabled(true);
+        this.mask = mask;
+    };
     let pixel_without_emphasis = ppu.render_pixel(&pattern, 0, 0);
 
     let (r_with, g_with, b_with) = pixel_to_rgb(pixel_with_emphasis);
@@ -1242,11 +1272,13 @@ fn test_render_pixel_all_emphasis_bits() {
     let pixel_with_emphasis = ppu.render_pixel(&pattern, 0, 0);
 
     // Compare with no emphasis - all channels should remain the same
-    ppu.set_mask(
-        PpuMask::new()
+    {
+        let this = &mut ppu;
+        let mask = PpuMask::new()
             .with_background_enabled(true)
-            .with_background_left_enabled(true),
-    );
+            .with_background_left_enabled(true);
+        this.mask = mask;
+    };
     let pixel_without_emphasis = ppu.render_pixel(&pattern, 0, 0);
 
     let (r_with, g_with, b_with) = pixel_to_rgb(pixel_with_emphasis);
