@@ -44,8 +44,8 @@ impl Mcu for MappingMcu {
         panic!("read address out of range: {:04x}", address);
     }
 
-    fn write(&mut self, address: u16, value: u8) {
-        for region in &mut self.regions {
+    fn write(&self, address: u16, value: u8) {
+        for region in &self.regions {
             if address >= region.start && address <= region.end {
                 return region.mcu.write(address, value);
             }

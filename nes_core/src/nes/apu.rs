@@ -1,6 +1,7 @@
 use crate::mcu::{DefinedRegion, Mcu, Region};
 use crate::to_from_u8;
 use modular_bitfield::prelude::*;
+use std::cell::RefCell;
 
 #[derive(Copy, Clone)]
 #[bitfield]
@@ -84,8 +85,8 @@ pub trait PulseDriver {
 
 struct PulseChannel<D: PulseDriver> {
     start_addr: u16,
-    driver: D,
-    length_counter_load: LengthCounterLoad,
+    driver: RefCell<D>,
+    length_counter_load: RefCell<LengthCounterLoad>,
 }
 
 impl<D: PulseDriver> Mcu for PulseChannel<D> {
@@ -93,15 +94,17 @@ impl<D: PulseDriver> Mcu for PulseChannel<D> {
         panic!("Can not from PulseChannel");
     }
 
-    fn write(&mut self, address: u16, value: u8) {
+    fn write(&self, address: u16, value: u8) {
         match address - self.start_addr {
-            0 => self.driver.set_duty_cycle(value.into()),
-            1 => self.driver.set_sweep(value.into()),
-            2 => self.length_counter_load.write_low_byte(value),
+            0 => self.driver.borrow_mut().set_duty_cycle(value.into()),
+            1 => self.driver.borrow_mut().set_sweep(value.into()),
+            2 => self.length_counter_load.borrow_mut().write_low_byte(value),
             3 => {
-                self.length_counter_load.write_high_byte(value);
+                let mut load = self.length_counter_load.borrow_mut();
+                load.write_high_byte(value);
                 self.driver
-                    .set_length_counter_load(self.length_counter_load);
+                    .borrow_mut()
+                    .set_length_counter_load(*load);
             }
             _ => panic!("Can not write to PulseChannel at address {}", address),
         }
@@ -118,8 +121,8 @@ impl<D: PulseDriver> PulseChannel<D> {
     pub fn new(start_addr: u16, driver: D) -> Self {
         PulseChannel {
             start_addr,
-            driver,
-            length_counter_load: LengthCounterLoad::default(),
+            driver: RefCell::new(driver),
+            length_counter_load: RefCell::new(LengthCounterLoad::default()),
         }
     }
 }
@@ -130,15 +133,15 @@ pub trait TriangleDriver {
 }
 
 struct TriangleChannel<D: TriangleDriver> {
-    driver: D,
-    length_counter_load: LengthCounterLoad,
+    driver: RefCell<D>,
+    length_counter_load: RefCell<LengthCounterLoad>,
 }
 
 impl<D: TriangleDriver> TriangleChannel<D> {
     pub fn new(driver: D) -> Self {
         TriangleChannel {
-            driver,
-            length_counter_load: LengthCounterLoad::default(),
+            driver: RefCell::new(driver),
+            length_counter_load: RefCell::new(LengthCounterLoad::default()),
         }
     }
 }
@@ -154,14 +157,19 @@ impl<D: TriangleDriver> Mcu for TriangleChannel<D> {
         panic!("Can not read from TriangleChannel");
     }
 
-    fn write(&mut self, address: u16, value: u8) {
+    fn write(&self, address: u16, value: u8) {
         match address {
-            0x4008 => self.driver.set_linear_counter_control(value.into()),
-            0x400A => self.length_counter_load.write_low_byte(value),
+            0x4008 => self
+                .driver
+                .borrow_mut()
+                .set_linear_counter_control(value.into()),
+            0x400A => self.length_counter_load.borrow_mut().write_low_byte(value),
             0x400B => {
-                self.length_counter_load.write_high_byte(value);
+                let mut load = self.length_counter_load.borrow_mut();
+                load.write_high_byte(value);
                 self.driver
-                    .set_length_counter_load(self.length_counter_load);
+                    .borrow_mut()
+                    .set_length_counter_load(*load);
             }
             _ => panic!("Can not write to TriangleChannel at address {}", address),
         }
@@ -230,18 +238,18 @@ pub trait NoiseDriver {
     fn set_length(&mut self, length: NoiseLength);
 }
 
-struct NoiseChannel<D: NoiseDriver>(D);
+struct NoiseChannel<D: NoiseDriver>(RefCell<D>);
 
 impl<D: NoiseDriver> Mcu for NoiseChannel<D> {
     fn read(&self, _: u16) -> u8 {
         panic!("Can not from PulseChannel");
     }
 
-    fn write(&mut self, address: u16, value: u8) {
+    fn write(&self, address: u16, value: u8) {
         match address {
-            0x400C => self.0.set_envelop(value.into()),
-            0x400E => self.0.set_period(value.into()),
-            0x400F => self.0.set_length(value.into()),
+            0x400C => self.0.borrow_mut().set_envelop(value.into()),
+            0x400E => self.0.borrow_mut().set_period(value.into()),
+            0x400F => self.0.borrow_mut().set_length(value.into()),
             _ => panic!("Can not write to NoiseChannel at address {}", address),
         }
     }
@@ -278,19 +286,19 @@ pub trait DmcDriver {
     fn set_sample_length(&mut self, length: u8);
 }
 
-struct DmcChannel<D: DmcDriver>(D);
+struct DmcChannel<D: DmcDriver>(RefCell<D>);
 
 impl<D: DmcDriver> Mcu for DmcChannel<D> {
     fn read(&self, address: u16) -> u8 {
         panic!("Can not read from DmcChannel at address {}", address);
     }
 
-    fn write(&mut self, address: u16, value: u8) {
+    fn write(&self, address: u16, value: u8) {
         match address {
-            0x4010 => self.0.set_irq_loop_freq(value.into()),
-            0x4011 => self.0.set_load_counter(value),
-            0x4012 => self.0.set_sample_address(value),
-            0x4013 => self.0.set_sample_length(value),
+            0x4010 => self.0.borrow_mut().set_irq_loop_freq(value.into()),
+            0x4011 => self.0.borrow_mut().set_load_counter(value),
+            0x4012 => self.0.borrow_mut().set_sample_address(value),
+            0x4013 => self.0.borrow_mut().set_sample_length(value),
             _ => panic!("Can not write to DmcChannel at address {}", address),
         }
     }
@@ -367,20 +375,20 @@ pub trait APUControllerDriver {
     fn read_status(&self) -> APUStatus;
 }
 
-struct APUController<D: APUControllerDriver>(D);
+struct APUController<D: APUControllerDriver>(RefCell<D>);
 
 impl<D: APUControllerDriver> Mcu for APUController<D> {
     fn read(&self, address: u16) -> u8 {
         match address {
-            0x4015 => self.0.read_status().into(),
+            0x4015 => self.0.borrow().read_status().into(),
             _ => panic!("Can not read from APUController at address {}", address),
         }
     }
 
-    fn write(&mut self, address: u16, value: u8) {
+    fn write(&self, address: u16, value: u8) {
         match address {
-            0x4015 => self.0.set_control_flags(value.into()),
-            0x4017 => self.0.set_frame_counter(value.into()),
+            0x4015 => self.0.borrow_mut().set_control_flags(value.into()),
+            0x4017 => self.0.borrow_mut().set_frame_counter(value.into()),
             _ => panic!("Can not write to APUController at address {}", address),
         }
     }
@@ -411,9 +419,9 @@ where
         Region::with_defined(PulseChannel::new(0x4000, pd1)),
         Region::with_defined(PulseChannel::new(0x4004, pd2)),
         Region::with_defined(TriangleChannel::new(td)),
-        Region::with_defined(NoiseChannel(nd)),
-        Region::with_defined(DmcChannel(dd)),
-        Region::with_defined(APUController(cd)),
+        Region::with_defined(NoiseChannel(RefCell::new(nd))),
+        Region::with_defined(DmcChannel(RefCell::new(dd))),
+        Region::with_defined(APUController(RefCell::new(cd))),
     ]
 }
 

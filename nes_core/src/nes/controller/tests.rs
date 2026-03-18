@@ -61,7 +61,7 @@ fn test_controller_read() {
 
 #[test]
 fn test_controller_write() {
-    let mut controller = Controller::new();
+    let controller = Controller::new();
 
     // Press buttons before write
     controller.a.borrow_mut().press(Button::A);
@@ -77,7 +77,7 @@ fn test_controller_write() {
 
 #[test]
 fn test_controller_write_1_does_not_reset() {
-    let mut controller = Controller::new();
+    let controller = Controller::new();
 
     controller.a.borrow_mut().press(Button::A);
     controller.a.borrow_mut().reset_for_read();
@@ -95,7 +95,7 @@ fn test_controller_write_1_does_not_reset() {
 
 #[test]
 fn test_controller_write_4017_does_nothing() {
-    let mut controller = Controller::new();
+    let controller = Controller::new();
 
     controller.a.borrow_mut().press(Button::A);
     controller.a.borrow_mut().reset_for_read();
@@ -164,6 +164,6 @@ fn test_controller_read_invalid_address() {
 #[test]
 #[should_panic(expected = "write address out of range")]
 fn test_controller_write_invalid_address() {
-    let mut controller = Controller::new();
+    let controller = Controller::new();
     controller.write(0x4018, 0);
 }

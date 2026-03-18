@@ -10,7 +10,7 @@ pub use ram::RamMcu;
 /// Make it easy to implement memory mapped devices..
 pub trait Mcu {
     fn read(&self, address: u16) -> u8;
-    fn write(&mut self, address: u16, value: u8);
+    fn write(&self, address: u16, value: u8);
 
     fn request_irq(&self) -> bool {
         panic!("request_irq() not implemented");
@@ -18,18 +18,18 @@ pub trait Mcu {
 
     /// Tick PPU by one dot. Returns true if NMI should be triggered.
     /// Pattern data is passed through from the cartridge for rendering.
-    fn tick_ppu(&mut self) -> bool {
+    fn tick_ppu(&self) -> bool {
         false
     }
 
     /// Returns true if VBlank started since the last call to this method.
     /// Used by `Machine::process_frame()` to detect the natural frame boundary.
-    fn take_vblank(&mut self) -> bool {
+    fn take_vblank(&self) -> bool {
         false
     }
 
     /// Tick APU frame counter. Returns true if frame IRQ should be triggered.
-    fn tick_apu(&mut self) -> bool {
+    fn tick_apu(&self) -> bool {
         false
     }
 }
@@ -37,28 +37,48 @@ pub trait Mcu {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::cell::RefCell;
 
-    struct MockMcu;
+    struct MockMcu {
+        data: RefCell<u8>,
+    }
+
+    impl MockMcu {
+        fn new() -> Self {
+            MockMcu {
+                data: RefCell::new(0),
+            }
+        }
+    }
 
     impl Mcu for MockMcu {
         fn read(&self, _address: u16) -> u8 {
-            0
+            *self.data.borrow()
         }
 
-        fn write(&mut self, _address: u16, _value: u8) {}
+        fn write(&self, _address: u16, value: u8) {
+            *self.data.borrow_mut() = value;
+        }
     }
 
     #[test]
     fn test_tick_ppu_default() {
-        let mut mcu = MockMcu;
+        let mcu = MockMcu::new();
         // Default implementation returns false
         assert!(!mcu.tick_ppu());
     }
 
     #[test]
+    fn test_read_write() {
+        let mcu = MockMcu::new();
+        mcu.write(0x0000, 0x42);
+        assert_eq!(mcu.read(0x0000), 0x42);
+    }
+
+    #[test]
     #[should_panic(expected = "request_irq() not implemented")]
     fn test_request_irq_default_panics() {
-        let mcu = MockMcu;
+        let mcu = MockMcu::new();
         let _ = mcu.request_irq();
     }
 }

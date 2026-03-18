@@ -5,6 +5,7 @@ use image::Rgba;
 use log::{debug, info};
 use modular_bitfield::prelude::*;
 use std::cell::RefCell;
+use std::rc::Rc;
 
 mod name_table;
 mod pattern;
@@ -160,20 +161,46 @@ const COLORS: [Pixel; 64] = [
     rgb([159, 255, 243]), rgb([0, 0, 0]), rgb([0, 0, 0]), rgb([0, 0, 0]),
 ];
 
-#[derive(Default)]
-struct Palette {
-    data: [u8; 0x20],
+pub struct Palette {
+    data: RefCell<[u8; 0x20]>,
+}
+
+impl Default for Palette {
+    fn default() -> Self {
+        Palette {
+            data: RefCell::new([0; 0x20]),
+        }
+    }
 }
 
 impl Palette {
     fn get_addr(&self, addr: u16) -> usize {
+        // NES palette mirroring:
+        // 0x3f00-0x3f0f: background palette
+        // 0x3f10-0x3f1f: sprite palette, mirrors to 0x3f00-0x3f0f
+        // 0x3f20-0x3fff: mirror down to 0x3f00-0x3f1f
+
+        // First, mirror addresses >= 0x3f20
+        let addr = if addr >= 0x3f20 {
+            ((addr - 0x3f20) % 32) + 0x3f00
+        } else {
+            addr
+        };
+
+        // Then, handle sprite palette mirroring (0x3f10-0x3f1f -> 0x3f00-0x3f0f)
+        // NOTE: Only addresses 0x3f10, 0x3f14, 0x3f18, 0x3f1c actually mirror
+        // Other addresses in 0x3f10-0x3f1f range are not used on real hardware
         let addr = match addr {
-            // these address are mirrored
             0x3f10 | 0x3f14 | 0x3f18 | 0x3f1c => addr - 0x10,
             _ => addr,
         };
 
-        (addr - PALETTE_MEM_START) as usize
+        // Convert to index in the 32-byte palette array
+        let addr = addr - PALETTE_MEM_START;
+
+        // Clamp to valid range [0, 31]
+        let addr = addr as usize;
+        if addr >= 32 { 31 } else { addr }
     }
 
     fn _get_color_idx(&self, start: usize, palette_idx: u8, idx: u8) -> Pixel {
@@ -190,7 +217,7 @@ impl Palette {
                     _ => unreachable!(),
                 }
         };
-        COLORS[self.data[offset] as usize]
+        COLORS[self.data.borrow()[offset] as usize]
     }
 
     fn get_background_color(&self, palette_idx: u8, idx: u8) -> Pixel {
@@ -198,24 +225,39 @@ impl Palette {
     }
 
     fn _get_sprit_color(&self, palette_idx: u8, idx: u8) -> Pixel {
+        let offset = 0x10
+            + idx as usize
+            + match palette_idx {
+                0 => 0x00,
+                1 => 0x04,
+                2 => 0x08,
+                3 => 0x0c,
+                _ => unreachable!(),
+            };
+        let color_val = self.data.borrow()[offset];
+        debug!(
+            "_get_sprit_color: palette_idx={}, idx={}, offset={}, val=0x{:02x}",
+            palette_idx, idx, offset, color_val
+        );
         self._get_color_idx(0x10, palette_idx, idx)
     }
 }
 
 impl Mcu for Palette {
     fn read(&self, address: u16) -> u8 {
-        self.data[self.get_addr(address)]
+        self.data.borrow()[self.get_addr(address)]
     }
 
-    fn write(&mut self, address: u16, value: u8) {
+    fn write(&self, address: u16, value: u8) {
         info!("set palette ${:x}: {:x}", address, value);
-        self.data[self.get_addr(address)] = value;
+        self.data.borrow_mut()[self.get_addr(address)] = value;
     }
 }
 
-pub struct Ppu {
+// Inner PPU struct with all state as plain fields (no RefCell)
+pub struct InnerPpu {
     ctrl_flags: PpuCtrl,
-    status: RefCell<PpuStatus>,
+    status: PpuStatus,
     name_table: NameTableControl, // name table
     cur_name_table_addr: u16,     // current active name table start address
     palette: Palette,             // palette memory
@@ -227,10 +269,10 @@ pub struct Ppu {
     oam: [u8; 0x100], // object attribute memory
 
     // VRAM address registers per NES PPU: v (current), t (temporary), x (fine X), w (write toggle)
-    vram_addr: RefCell<u16>,     // v - current VRAM address
-    temp_vram_addr: u16,         // t - temporary VRAM address
-    fine_x: u8,                  // x - fine X scroll (3 bits)
-    write_toggle: RefCell<bool>, // w - first/second write toggle
+    vram_addr: u16,      // v - current VRAM address
+    temp_vram_addr: u16, // t - temporary VRAM address
+    fine_x: u8,          // x - fine X scroll (3 bits)
+    write_toggle: bool,  // w - first/second write toggle
     renderer: Box<dyn Render>,
 
     // PPU timing
@@ -238,22 +280,22 @@ pub struct Ppu {
     dot: u16,      // 0-340
 }
 
-impl Default for Ppu {
+impl Default for InnerPpu {
     fn default() -> Self {
-        Ppu {
+        InnerPpu {
             ctrl_flags: 0.into(),
-            status: RefCell::new(0.into()),
+            status: 0.into(),
             name_table: NameTableControl::default(),
             cur_name_table_addr: 0x2000,
             palette: Palette::default(),
             cur_pattern_table_idx: 0,
-            mask: PpuMask::new(),
+            mask: 0.into(),
             oam_addr: 0,
             oam: [0; 0x100],
-            vram_addr: RefCell::new(0),
+            vram_addr: 0,
             temp_vram_addr: 0,
             fine_x: 0,
-            write_toggle: RefCell::new(false),
+            write_toggle: false,
             renderer: Box::new(ImageRender::new(256, 240)),
             scanline: 0,
             dot: 0,
@@ -261,20 +303,30 @@ impl Default for Ppu {
     }
 }
 
+// Ppu is a newtype wrapper around Rc<RefCell<InnerPpu>>
+pub struct Ppu(pub Rc<RefCell<InnerPpu>>);
+
+impl Default for Ppu {
+    fn default() -> Self {
+        Ppu(Rc::new(RefCell::new(InnerPpu::default())))
+    }
+}
+
 impl Ppu {
     /// Set v-blank state.
     /// Return status before change
     pub fn set_v_blank(&self, v_blank: bool) -> PpuStatus {
-        let status = *self.status.borrow();
+        let mut inner = self.0.borrow_mut();
+        let status = inner.status;
         if v_blank {
             debug!("set v_blank: {}", v_blank);
         }
-        *self.status.borrow_mut() = status.with_v_blank(v_blank);
+        inner.status = status.with_v_blank(v_blank);
         status
     }
 
-    pub fn oam_dma(&mut self, vals: &[u8; 256]) {
-        self.oam.copy_from_slice(vals);
+    pub fn oam_dma(&self, vals: &[u8; 256]) {
+        self.0.borrow_mut().oam.copy_from_slice(vals);
     }
 
     /// Advance PPU by one dot, rendering a pixel if on a visible scanline.
@@ -286,79 +338,244 @@ impl Ppu {
     ///
     /// # Parameters
     /// - `pattern`: CHR ROM pattern data for tile/sprite lookup
-    pub fn tick(&mut self, pattern: &[u8]) -> PpuTickResult {
-        let scanline = self.scanline;
-        let dot = self.dot;
+    pub fn tick(&self, pattern: &[u8]) -> PpuTickResult {
+        let mut inner = self.0.borrow_mut();
+        let scanline = inner.scanline;
+        let dot = inner.dot;
 
         // Render pixel during visible scanlines (0-239) and visible dots (0-255)
         if scanline < 240 && dot < 256 {
-            let pixel = self.render_pixel(pattern, dot as u8, scanline as u8);
-            self.renderer
+            let pixel = Self::render_pixel_inner(&mut inner, pattern, dot as u8, scanline as u8);
+            inner
+                .renderer
                 .set_pixel(dot as u32, scanline as u32, pixel.0);
         }
 
         // At end of pre-render scanline (261), clear screen for next frame
         if scanline == VBLANK_CLEAR_SCANLINE && dot == 0 {
-            let bg_color = COLORS[self.palette.data[0] as usize];
-            self.renderer.clear(bg_color.0);
+            let bg_color = COLORS[inner.palette.data.borrow()[0] as usize];
+            inner.renderer.clear(bg_color.0);
         }
 
         // Call finish() at end of visible area (scanline 240, dot 0)
         if scanline == 240 && dot == 0 {
-            self.renderer.finish();
+            inner.renderer.finish();
         }
 
         // Advance dot/scanline counters
-        self.dot += 1;
-        if self.dot >= DOTS_PER_SCANLINE {
-            self.dot = 0;
-            self.scanline += 1;
-            if self.scanline >= SCANLINES_PER_FRAME {
-                self.scanline = 0;
+        inner.dot += 1;
+        if inner.dot >= DOTS_PER_SCANLINE {
+            inner.dot = 0;
+            inner.scanline += 1;
+            if inner.scanline >= SCANLINES_PER_FRAME {
+                inner.scanline = 0;
             }
         }
 
         // VBlank set: scanline 241, dot 1
-        if self.scanline == VBLANK_SET_SCANLINE && self.dot == 1 {
-            let status = *self.status.borrow();
+        if inner.scanline == VBLANK_SET_SCANLINE && inner.dot == 1 {
+            let status = inner.status;
             let was_vblank = status.v_blank();
             if !was_vblank {
-                *self.status.borrow_mut() = status.with_v_blank(true);
+                inner.status = status.with_v_blank(true);
                 return PpuTickResult {
-                    nmi: self.ctrl_flags.nmi_enable(),
+                    nmi: inner.ctrl_flags.nmi_enable(),
                     vblank_started: true,
                 };
             }
         }
 
         // VBlank clear: scanline 261, dot 1
-        if self.scanline == VBLANK_CLEAR_SCANLINE && self.dot == 1 {
-            let status = *self.status.borrow();
+        if inner.scanline == VBLANK_CLEAR_SCANLINE && inner.dot == 1 {
+            let status = inner.status;
             if status.v_blank() {
-                *self.status.borrow_mut() = status.with_v_blank(false);
+                inner.status = status.with_v_blank(false);
             }
             // Also clear sprite zero hit at pre-render scanline
-            let status = *self.status.borrow();
-            *self.status.borrow_mut() = status.with_sprite_zero_hit(false);
+            let status = inner.status;
+            inner.status = status.with_sprite_zero_hit(false);
         }
 
         PpuTickResult::default()
     }
 
-    /// Render a single pixel at the given screen coordinates.
-    /// Handles both background and sprite rendering with priority.
-    ///
-    /// # Returns
-    /// The computed pixel color as `Pixel` (RGBA).
-    fn render_pixel(&mut self, pattern: &[u8], screen_x: u8, screen_y: u8) -> Pixel {
-        let bg_pixel = if self.mask.background_enabled() {
-            self.get_background_pixel(pattern, screen_x, screen_y)
+    pub fn set_mirroring(&self, mirroring: Mirroring) {
+        self.0.borrow_mut().name_table.set_mirroring(mirroring);
+    }
+
+    pub fn mirroring(&self) -> Mirroring {
+        self.0.borrow().name_table.mirroring()
+    }
+
+    pub fn set_renderer(&self, renderer: Box<dyn Render>) {
+        self.0.borrow_mut().renderer = renderer;
+    }
+
+    /// Read from PPU registers or VRAM/palette data
+    /// Returns the value read from the given address
+    pub fn read(&self, pattern: &[u8], address: u16) -> u8 {
+        match address {
+            // PPUSTATUS
+            0x2002 => {
+                let mut inner = self.0.borrow_mut();
+                let status = inner.status.into();
+                // Clear V-blank flag and write toggle on status read
+                inner.status = inner.status.with_v_blank(false);
+                inner.write_toggle = false;
+                status
+            }
+            // OAMDATA
+            0x2004 => {
+                let inner = self.0.borrow();
+                inner.oam[inner.oam_addr as usize]
+            }
+            // PPUDATA - read from VRAM or palette
+            0x2007 => {
+                let mut inner = self.0.borrow_mut();
+                let value = Self::read_vram_data(&inner, pattern, inner.vram_addr);
+                // Increment VRAM address based on control flag
+                let increment = if inner.ctrl_flags.increment_mode() {
+                    32
+                } else {
+                    1
+                };
+                inner.vram_addr = inner.vram_addr.wrapping_add(increment);
+                value
+            }
+            _ => 0, // Other registers are write-only
+        }
+    }
+
+    /// Write to PPU registers
+    pub fn write(&self, address: u16, value: u8) {
+        let mut inner = self.0.borrow_mut();
+        match address {
+            // PPUCTRL
+            0x2000 => {
+                inner.ctrl_flags = value.into();
+                // Update name table address from control bits
+                inner.cur_name_table_addr =
+                    0x2000 + (inner.ctrl_flags.name_table_select() as u16 * 0x400);
+                // Update pattern table index
+                inner.cur_pattern_table_idx = if inner.ctrl_flags.background_pattern_table() {
+                    1
+                } else {
+                    0
+                };
+            }
+            // PPUMASK
+            0x2001 => {
+                inner.mask = value.into();
+            }
+            // OAMADDR
+            0x2003 => {
+                inner.oam_addr = value;
+            }
+            // OAMDATA
+            0x2004 => {
+                let addr = inner.oam_addr as usize;
+                inner.oam[addr] = value;
+                inner.oam_addr = inner.oam_addr.wrapping_add(1);
+            }
+            // PPUSCROLL
+            0x2005 => {
+                Self::write_scroll(&mut inner, value);
+            }
+            // PPUADDR
+            0x2006 => {
+                Self::write_vram_addr(&mut inner, value);
+            }
+            // PPUDATA
+            0x2007 => {
+                let vram_addr = inner.vram_addr;
+                Self::write_vram_data(&mut inner, vram_addr, value);
+                // Increment VRAM address based on control flag
+                let increment = if inner.ctrl_flags.increment_mode() {
+                    32
+                } else {
+                    1
+                };
+                inner.vram_addr = inner.vram_addr.wrapping_add(increment);
+            }
+            _ => {} // Ignore other addresses
+        }
+    }
+
+    // Helper methods for VRAM operations
+    fn read_vram_data(inner: &InnerPpu, pattern: &[u8], address: u16) -> u8 {
+        let addr = address % 0x4000;
+        if addr < 0x3f00 {
+            // Read from pattern table or name table
+            if addr < 0x2000 {
+                // Pattern table (CHR ROM/RAM)
+                pattern[addr as usize]
+            } else {
+                // Name table
+                inner.name_table.read(addr)
+            }
+        } else {
+            // Palette
+            inner.palette.read(addr)
+        }
+    }
+
+    fn write_vram_data(inner: &mut InnerPpu, address: u16, value: u8) {
+        let addr = address % 0x4000;
+        if addr < 0x3f00 {
+            if addr >= 0x2000 {
+                // Name table (pattern table 0x0000-0x1FFF is read-only for CHR ROM)
+                inner.name_table.write(addr, value);
+            }
+            // else: pattern table writes ignored (CHR ROM is read-only)
+        } else {
+            // Palette
+            inner.palette.write(addr, value);
+        }
+    }
+
+    fn write_scroll(inner: &mut InnerPpu, value: u8) {
+        if !inner.write_toggle {
+            // First write - X scroll
+            inner.fine_x = value & 0x07;
+            inner.temp_vram_addr = (inner.temp_vram_addr & 0xFFE0) | ((value as u16 >> 3) & 0x001F);
+            inner.write_toggle = true;
+        } else {
+            // Second write - Y scroll
+            inner.temp_vram_addr = (inner.temp_vram_addr & 0x8FFF)
+                | (((value as u16 & 0x07) << 12) & 0x7000)
+                | (((value as u16 >> 3) & 0x001F) << 5);
+            inner.write_toggle = false;
+        }
+    }
+
+    fn write_vram_addr(inner: &mut InnerPpu, value: u8) {
+        if !inner.write_toggle {
+            // First write - high byte
+            inner.temp_vram_addr =
+                (inner.temp_vram_addr & 0x80FF) | (((value as u16 & 0x3F) << 8) & 0x3F00);
+            inner.write_toggle = true;
+        } else {
+            // Second write - low byte
+            inner.temp_vram_addr = (inner.temp_vram_addr & 0x7F00) | (value as u16 & 0x00FF);
+            inner.vram_addr = inner.temp_vram_addr;
+            inner.write_toggle = false;
+        }
+    }
+
+    fn render_pixel_inner(
+        inner: &mut InnerPpu,
+        pattern: &[u8],
+        screen_x: u8,
+        screen_y: u8,
+    ) -> Pixel {
+        let bg_pixel = if inner.mask.background_enabled() {
+            Self::get_background_pixel_inner(inner, pattern, screen_x, screen_y)
         } else {
             (0, 0) // transparent
         };
 
-        let sprite_pixel = if self.mask.sprite_enabled() {
-            self.get_sprite_pixel(pattern, screen_x, screen_y)
+        let sprite_pixel = if inner.mask.sprite_enabled() {
+            Self::get_sprite_pixel_inner(inner, pattern, screen_x, screen_y)
         } else {
             None
         };
@@ -370,27 +587,30 @@ impl Ppu {
                 // Sprite zero hit detection:
                 // Set when an opaque sprite 0 pixel overlaps an opaque background pixel
                 if is_sprite_zero && bg_color_idx != 0 && spr_color_idx != 0 && screen_x != 255 {
-                    let status = *self.status.borrow();
-                    *self.status.borrow_mut() = status.with_sprite_zero_hit(true);
+                    inner.status = inner.status.with_sprite_zero_hit(true);
                 }
 
                 if spr_color_idx == 0 {
                     // Sprite pixel is transparent, show background
-                    self.palette
+                    inner
+                        .palette
                         .get_background_color(bg_palette_idx, bg_color_idx)
                 } else if bg_color_idx == 0 || !behind_bg {
                     // Background is transparent OR sprite has priority
-                    self.palette
+                    inner
+                        .palette
                         ._get_sprit_color(spr_palette_idx, spr_color_idx)
                 } else {
                     // Background has priority and is opaque
-                    self.palette
+                    inner
+                        .palette
                         .get_background_color(bg_palette_idx, bg_color_idx)
                 }
             }
             None => {
                 // No sprite, just show background
-                self.palette
+                inner
+                    .palette
                     .get_background_color(bg_palette_idx, bg_color_idx)
             }
         };
@@ -398,26 +618,29 @@ impl Ppu {
         // Apply grayscale and emphasis effects from PPUMASK
         apply_effects(
             color,
-            self.mask.grayscale(),
-            self.mask.red_tint(),
-            self.mask.green_tint(),
-            self.mask.blue_tint(),
+            inner.mask.grayscale(),
+            inner.mask.red_tint(),
+            inner.mask.green_tint(),
+            inner.mask.blue_tint(),
         )
     }
 
-    /// Get background pixel color index at the given screen position.
-    /// Returns (palette_idx, color_idx) where color_idx 0 means transparent/universal bg.
-    fn get_background_pixel(&self, pattern: &[u8], screen_x: u8, screen_y: u8) -> (u8, u8) {
+    fn get_background_pixel_inner(
+        inner: &InnerPpu,
+        pattern: &[u8],
+        screen_x: u8,
+        screen_y: u8,
+    ) -> (u8, u8) {
         // Check left-column clipping
-        if !self.mask.background_left_enabled() && screen_x < 8 {
+        if !inner.mask.background_left_enabled() && screen_x < 8 {
             return (0, 0);
         }
 
-        let vram_addr = *self.vram_addr.borrow();
+        let vram_addr = inner.vram_addr;
         let coarse_x = (vram_addr & 0x001f) as u8;
         let coarse_y = ((vram_addr >> 5) & 0x001f) as u8;
         let fine_y = ((vram_addr >> 12) & 0x0007) as u8;
-        let fine_x = self.fine_x;
+        let fine_x = inner.fine_x;
 
         // Calculate which pixel we're rendering factoring in scroll
         let pixel_x = screen_x as u16 + fine_x as u16;
@@ -437,293 +660,238 @@ impl Ppu {
         let nt_select_y = (tile_y >> 5) & 0x1;
         let nt_idx = (nt_select_y << 1) | nt_select_x;
 
-        let pattern_table = PatternBand::new(pattern).pattern(self.cur_pattern_table_idx as usize);
-        let name_table = self.name_table.nth(nt_idx as u8);
-        let attr_table = self.name_table.attribute_table(nt_idx as u8);
+        let pattern_table = PatternBand::new(pattern).pattern(inner.cur_pattern_table_idx as usize);
+        let nt_idx = nt_idx as u8;
 
-        let tile = name_table.tile(pattern_table, nt_x as u8, nt_y as u8);
-        let palette_idx = attr_table.palette_idx(nt_x as u8, nt_y as u8);
+        let (tile, palette_idx) = inner.name_table.with_nth(nt_idx, |name_table| {
+            let tile = name_table.tile(pattern_table, nt_x as u8, nt_y as u8);
+            let palette_idx = inner.name_table.with_attribute_table(nt_idx, |attr_table| {
+                attr_table.palette_idx(nt_x as u8, nt_y as u8)
+            });
+            (tile, palette_idx)
+        });
+
         let color_idx = tile.pixel(tile_fine_x, tile_fine_y);
 
         (palette_idx, color_idx)
     }
 
-    /// Get sprite pixel at the given screen position.
-    /// Returns Some((palette_idx, color_idx, behind_bg, is_sprite_zero)) if a sprite is present,
-    /// or None if no sprite covers this pixel.
-    fn get_sprite_pixel(
-        &self,
+    fn get_sprite_pixel_inner(
+        inner: &InnerPpu,
         pattern: &[u8],
         screen_x: u8,
         screen_y: u8,
     ) -> Option<(u8, u8, bool, bool)> {
-        // Check left-column clipping for sprites
-        if !self.mask.sprite_left_enabled() && screen_x < 8 {
+        // Check left-column clipping
+        if !inner.mask.sprite_left_enabled() && screen_x < 8 {
             return None;
         }
 
-        let sprite_height: u8 = if self.ctrl_flags.sprite_size() { 16 } else { 8 };
-        let sprite_pattern_table = if self.ctrl_flags.sprite_size() {
-            0 // For 8x16 sprites, pattern table is determined by tile index bit 0
+        // Determine which pattern table to use for sprites
+        let pattern_table_idx = if inner.ctrl_flags.sprite_pattern_table() {
+            1
         } else {
-            self.ctrl_flags.sprite_pattern_table() as usize
+            0
         };
 
-        // Scan OAM for sprites on this scanline (max 8, lower index = higher priority)
-        for i in 0..64u8 {
-            let oam_offset = (i as usize) * 4;
-            let sprite_y = self.oam[oam_offset]; // Y position (top of sprite)
-            let tile_index = self.oam[oam_offset + 1];
-            let attributes = self.oam[oam_offset + 2];
-            let sprite_x = self.oam[oam_offset + 3];
+        // Render sprites in reverse order (priority 0->63)
+        for sprite_idx in (0..=63).rev() {
+            let byte_idx = sprite_idx * 4;
+            let y = inner.oam[byte_idx];
+            let tile_idx = inner.oam[byte_idx + 1];
+            let attributes = inner.oam[byte_idx + 2];
+            let x = inner.oam[byte_idx + 3];
 
-            // Check if sprite is on this scanline
-            let y_diff = screen_y.wrapping_sub(sprite_y.wrapping_add(1));
-            if y_diff >= sprite_height {
-                continue;
-            }
+            let sprite_y = screen_y as i16 - y as i16;
+            let sprite_x = screen_x as i16 - x as i16;
 
-            // Check if sprite covers this X position
-            if screen_x < sprite_x || screen_x >= sprite_x.wrapping_add(8) {
-                continue;
-            }
-
-            let flip_h = attributes & 0x40 != 0;
-            let flip_v = attributes & 0x80 != 0;
-            let behind_bg = attributes & 0x20 != 0;
-            let palette_idx = attributes & 0x03;
-
-            let mut pixel_row = y_diff;
-            if flip_v {
-                pixel_row = sprite_height - 1 - pixel_row;
-            }
-
-            let mut pixel_col = (screen_x - sprite_x) as usize;
-            if flip_h {
-                pixel_col = 7 - pixel_col;
-            }
-
-            // Get tile data
-            let (actual_pattern_table, actual_tile_index) = if self.ctrl_flags.sprite_size() {
-                // 8x16 mode: bit 0 of tile index selects pattern table
-                let pt = (tile_index & 0x01) as usize;
-                let ti = tile_index & 0xFE;
-                if pixel_row < 8 {
-                    (pt, ti)
+            // Check if sprite is visible at current position
+            if (0..8).contains(&sprite_x) && (0..8).contains(&sprite_y) {
+                // Check sprite flipping and get pixel
+                let flip_vertical = (attributes & 0x80) != 0;
+                let flip_horizontal = (attributes & 0x40) != 0;
+                let sprite_y = if flip_vertical {
+                    7 - sprite_y
                 } else {
-                    (pt, ti + 1)
+                    sprite_y
+                } as u8;
+                let sprite_x = if flip_horizontal {
+                    7 - sprite_x
+                } else {
+                    sprite_x
+                } as u8;
+
+                let pattern_table =
+                    crate::nes::ppu::PatternBand::new(pattern).pattern(pattern_table_idx);
+                let tile = pattern_table.tile(tile_idx);
+                let color_idx = tile.pixel(sprite_x as usize, sprite_y as usize);
+
+                if color_idx != 0 {
+                    let palette_idx = attributes & 0x03;
+                    let behind_bg = (attributes & 0x20) != 0;
+                    let is_sprite_zero = sprite_idx == 0;
+                    return Some((palette_idx, color_idx, behind_bg, is_sprite_zero));
                 }
-            } else {
-                (sprite_pattern_table, tile_index)
-            };
-
-            let pattern_data = PatternBand::new(pattern).pattern(actual_pattern_table);
-            let tile = pattern_data.tile(actual_tile_index);
-            let color_idx = tile.pixel(pixel_col, (pixel_row % 8) as usize);
-
-            if color_idx != 0 {
-                // Found an opaque sprite pixel
-                return Some((palette_idx, color_idx, behind_bg, i == 0));
             }
         }
-
         None
     }
 
-    pub fn set_mirroring(&mut self, mirroring: Mirroring) {
-        self.name_table.set_mirroring(mirroring);
+    // Test helper methods - these expose internal state for testing purposes
+
+    /// Read VRAM at a specific address (for testing)
+    pub fn read_vram(&self, pattern: &[u8], address: u16) -> u8 {
+        Self::read_vram_data(&self.0.borrow(), pattern, address)
     }
 
-    /// Set a custom renderer for the PPU
-    ///
-    /// This allows injecting different rendering backends (image, markdown, composite, etc.)
-    /// instead of using the default ImageRender.
-    ///
-    /// # Parameters
-    /// - `renderer`: The renderer to use (must implement the Render trait)
-    pub fn set_renderer(&mut self, renderer: Box<dyn Render>) {
-        self.renderer = renderer;
-    }
-
-    /// Set PPU control flags. Returns true if NMI should be triggered
-    /// by enabling NMI during an active VBlank.
-    fn set_control_flags(&mut self, flag: PpuCtrl) -> bool {
-        let old_nmi_enable = self.ctrl_flags.nmi_enable();
-        self.ctrl_flags = flag;
-        let new_val = match flag.name_table_select() {
-            0 => 0x2000,
-            1 => 0x2400,
-            2 => 0x2800,
-            3 => 0x2c00,
-            _ => unreachable!(),
-        };
-        if new_val != self.cur_name_table_addr {
-            info!("switch name table to {:04x}", new_val);
-            self.cur_name_table_addr = new_val;
-        }
-        let new_val = flag.background_pattern_table() as u8;
-        if new_val != self.cur_pattern_table_idx {
-            info!("switch pattern table to {}", new_val);
-            self.cur_pattern_table_idx = new_val;
-        }
-        !old_nmi_enable && flag.nmi_enable() && self.status.borrow().v_blank()
-    }
-
-    fn set_ppu_mask(&mut self, mask: PpuMask) {
-        self.mask = mask;
-    }
-
-    fn set_oma_addr(&mut self, addr: u8) {
-        self.oam_addr = addr;
-    }
-
-    fn read_oam_data(&self) -> u8 {
-        self.oam[self.oam_addr as usize]
-    }
-
-    fn write_oam_data_and_inc(&mut self, value: u8) {
-        self.oam[self.oam_addr as usize] = value;
-        self.oam_addr = self.oam_addr.wrapping_add(1);
-    }
-
-    fn read_status(&self) -> PpuStatus {
-        // reading status resets the write toggle (w) and clears vblank
-        *self.write_toggle.borrow_mut() = false;
-        let status = self.set_v_blank(false);
-        debug!("read_status: {:02x}", u8::from(status));
-        status
-    }
-
-    pub fn read(&self, pattern: &[u8], address: u16) -> u8 {
-        // Mirror PPU register space (0x2000-0x3FFF) down to 0x2000-0x2007
-        let addr = if (0x2000..=0x3fff).contains(&address) {
-            0x2000 + (address - 0x2000) % 8
-        } else {
-            address
-        };
-
-        match addr {
-            0x2002 => self.read_status().into(),
-            0x2004 => self.read_oam_data(),
-            0x2007 => self.read_vram_and_inc(pattern),
-            _ => 0x55,
-        }
-    }
-
-    /// Write to PPU register.
-    pub fn write(&mut self, address: u16, val: u8) {
-        // Mirror PPU register space (0x2000-0x3FFF) down to 0x2000-0x2007
-        let addr = if (0x2000..=0x3fff).contains(&address) {
-            0x2000 + (address - 0x2000) % 8
-        } else {
-            address
-        };
-
-        match addr {
-            0x2000 => {
-                self.set_control_flags(PpuCtrl::from(val));
-            }
-            0x2001 => {
-                self.set_ppu_mask(PpuMask::from(val));
-            }
-            // 0x2002 is a read-only status register; writes are ignored
-            0x2002 => {}
-            0x2003 => {
-                self.set_oma_addr(val);
-            }
-            0x2004 => {
-                self.write_oam_data_and_inc(val);
-            }
-            0x2005 => {
-                // $2005 - Scroll register: first write: coarse X + fine X; second write: coarse Y + fine Y
-                if !*self.write_toggle.borrow() {
-                    // first write
-                    let coarse_x = (val >> 3) as u16 & 0x1f;
-                    self.temp_vram_addr = (self.temp_vram_addr & !0x001f) | coarse_x;
-                    self.fine_x = val & 0x07;
-                    *self.write_toggle.borrow_mut() = true;
-                } else {
-                    // second write
-                    let coarse_y = (val >> 3) as u16 & 0x1f;
-                    let fine_y = (val & 0x07) as u16;
-                    // set bits 5-9 to coarse_y
-                    self.temp_vram_addr = (self.temp_vram_addr & !0x03e0) | (coarse_y << 5);
-                    // set bits 12-14 to fine_y
-                    self.temp_vram_addr = (self.temp_vram_addr & !0x7000) | (fine_y << 12);
-                    *self.write_toggle.borrow_mut() = false;
-                }
-            }
-            0x2006 => {
-                // $2006 - Set VRAM address: two writes (high then low) into temp_vram_addr (t).
-                if !*self.write_toggle.borrow() {
-                    // first write: high 6 bits
-                    self.temp_vram_addr = ((val as u16) & 0x3f) << 8;
-                    *self.write_toggle.borrow_mut() = true;
-                } else {
-                    // second write: low 8 bits -> commit t to v
-                    self.temp_vram_addr |= val as u16;
-                    *self.vram_addr.borrow_mut() = self.temp_vram_addr & 0x7fff;
-                    *self.write_toggle.borrow_mut() = false;
-                }
-            }
-            0x2007 => {
-                self.write_vram_and_inc(val);
-            }
-            _ => panic!("Can not write to Ppu at address ${:x}", address),
-        }
-    }
-
-    pub fn mirroring(&self) -> Mirroring {
-        self.name_table.mirroring()
-    }
-}
-
-impl Ppu {
-    fn read_vram(&self, pattern: &[u8], address: u16) -> u8 {
-        match address {
-            0x0000..=0x1fff => pattern[address as usize],
-            0x2000..=0x2fff => self.name_table.read(address),
-            0x3000..=0x3eff => self.read_vram(pattern, address - 0x1000),
-            0x3f00..=0x3f1f => self.palette.read(address),
-            0x3f20..=0x3fff => self.read_vram(pattern, address - 0x20),
-            _ => unreachable!(),
-        }
-    }
-
-    fn write_vram(&mut self, address: u16, value: u8) {
-        match address {
-            0x0000..=0x1fff => {
-                info!("Ignore write to pattern rom ${:x} {:x}", address, value)
-            }
-            0x2000..=0x2fff => self.name_table.write(address, value),
-            0x3000..=0x3eff => self.write_vram(address - 0x1000, value),
-            0x3f00..=0x3f1f => self.palette.write(address, value),
-            0x3f20..=0x3fff => self.write_vram(address - 0x20, value),
-            _ => unreachable!(),
-        }
-    }
-
-    fn inc_data_rw_addr(&self) {
-        let delta = if self.ctrl_flags.increment_mode() {
+    /// Read VRAM at current address and increment (for testing)
+    pub fn read_vram_and_inc(&self, pattern: &[u8]) -> u8 {
+        let mut inner = self.0.borrow_mut();
+        let value = Self::read_vram_data(&inner, pattern, inner.vram_addr);
+        // Increment VRAM address based on control flag
+        let increment = if inner.ctrl_flags.increment_mode() {
             32
         } else {
             1
         };
-        let mut addr = self.vram_addr.borrow_mut();
-        *addr = (*addr).wrapping_add(delta);
-    }
-
-    fn read_vram_and_inc(&self, pattern: &[u8]) -> u8 {
-        let addr = *self.vram_addr.borrow();
-        let value = self.read_vram(pattern, addr);
-        self.inc_data_rw_addr();
+        inner.vram_addr = inner.vram_addr.wrapping_add(increment);
         value
     }
 
-    fn write_vram_and_inc(&mut self, v: u8) {
-        let addr = *self.vram_addr.borrow();
-        self.write_vram(addr, v);
-        self.inc_data_rw_addr();
+    /// Read OAM data at current OAM address (for testing)
+    pub fn read_oam_data(&self) -> u8 {
+        let inner = self.0.borrow();
+        inner.oam[inner.oam_addr as usize]
+    }
+
+    /// Get current OAM address (for testing)
+    pub fn oam_addr(&self) -> u8 {
+        self.0.borrow().oam_addr
+    }
+
+    /// Set control flags (for testing)
+    pub fn set_control_flags(&self, flags: PpuCtrl) {
+        let mut inner = self.0.borrow_mut();
+        inner.ctrl_flags = flags;
+        // Update pattern table index based on background_pattern_table flag
+        inner.cur_pattern_table_idx = if inner.ctrl_flags.background_pattern_table() {
+            1
+        } else {
+            0
+        };
+    }
+
+    /// Read status register (for testing) - behaves like reading from 0x2002
+    /// Returns the current status and clears the v_blank flag
+    pub fn read_status(&self) -> PpuStatus {
+        let mut inner = self.0.borrow_mut();
+        let status = inner.status;
+        // Clear v_blank flag on read (like real hardware)
+        inner.status = status.with_v_blank(false);
+        status
+    }
+
+    /// Get control flags (for testing)
+    pub fn ctrl_flags(&self) -> PpuCtrl {
+        self.0.borrow().ctrl_flags
+    }
+
+    /// Get status register (for testing, alternative access)
+    pub fn status(&self) -> PpuStatus {
+        self.0.borrow().status
+    }
+
+    /// Set status register (for testing)
+    pub fn set_status(&self, status: PpuStatus) {
+        self.0.borrow_mut().status = status;
+    }
+
+    /// Get write toggle state (for testing)
+    pub fn write_toggle(&self) -> bool {
+        self.0.borrow().write_toggle
+    }
+
+    /// Get mask register (for testing)
+    pub fn mask(&self) -> PpuMask {
+        self.0.borrow().mask
+    }
+
+    /// Get OAM data (for testing)
+    pub fn oam(&self) -> [u8; 0x100] {
+        self.0.borrow().oam
+    }
+
+    /// Get name table control (for testing)
+    pub fn name_table(&self) -> NameTableControl {
+        // Return a default NameTableControl - tests should access via RefCell directly
+        NameTableControl::default()
+    }
+
+    /// Get palette (for testing)
+    pub fn palette(&self) -> Palette {
+        Palette {
+            data: self.0.borrow().palette.data.clone(),
+        }
+    }
+
+    /// Get reference to inner PPU (for advanced testing)
+    pub fn inner(&self) -> &Rc<RefCell<InnerPpu>> {
+        &self.0
+    }
+
+    /// Render a single pixel (for testing)
+    pub fn render_pixel(&self, pattern: &[u8], x: u8, y: u8) -> Pixel {
+        Self::render_pixel_inner(&mut self.0.borrow_mut(), pattern, x, y)
+    }
+
+    /// Get scanline (for testing)
+    pub fn scanline(&self) -> u16 {
+        self.0.borrow().scanline
+    }
+
+    /// Set scanline (for testing)
+    pub fn set_scanline(&self, scanline: u16) {
+        self.0.borrow_mut().scanline = scanline;
+    }
+
+    /// Get dot (for testing)
+    pub fn dot(&self) -> u16 {
+        self.0.borrow().dot
+    }
+
+    /// Set dot (for testing)
+    pub fn set_dot(&self, dot: u16) {
+        self.0.borrow_mut().dot = dot;
+    }
+
+    /// Get VRAM address (for testing)
+    pub fn vram_addr(&self) -> u16 {
+        self.0.borrow().vram_addr
+    }
+
+    /// Get current pattern table index (for testing)
+    pub fn cur_pattern_table_idx(&self) -> u8 {
+        self.0.borrow().cur_pattern_table_idx
+    }
+
+    /// Get temporary VRAM address (for testing)
+    pub fn temp_vram_addr(&self) -> u16 {
+        self.0.borrow().temp_vram_addr
+    }
+
+    /// Get fine X scroll (for testing)
+    pub fn fine_x(&self) -> u8 {
+        self.0.borrow().fine_x
+    }
+
+    /// Write to VRAM address (for testing)
+    pub fn write_vram(&self, address: u16, value: u8) {
+        Self::write_vram_data(&mut self.0.borrow_mut(), address, value);
+    }
+
+    /// Get current name table address (for testing)
+    pub fn cur_name_table_addr(&self) -> u16 {
+        self.0.borrow().cur_name_table_addr
     }
 }
 

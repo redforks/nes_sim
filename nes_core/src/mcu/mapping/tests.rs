@@ -1,7 +1,8 @@
 use super::*;
+use std::cell::RefCell;
 
 struct MockMcu {
-    data: [u8; 256],
+    data: RefCell<[u8; 256]>,
     start: u16,
     end: u16,
 }
@@ -9,7 +10,7 @@ struct MockMcu {
 impl MockMcu {
     fn new(start: u16, end: u16) -> Self {
         MockMcu {
-            data: [0; 256],
+            data: RefCell::new([0; 256]),
             start,
             end,
         }
@@ -18,11 +19,11 @@ impl MockMcu {
 
 impl Mcu for MockMcu {
     fn read(&self, address: u16) -> u8 {
-        self.data[(address - self.start) as usize]
+        self.data.borrow()[(address - self.start) as usize]
     }
 
-    fn write(&mut self, address: u16, value: u8) {
-        self.data[(address - self.start) as usize] = value;
+    fn write(&self, address: u16, value: u8) {
+        self.data.borrow_mut()[(address - self.start) as usize] = value;
     }
 }
 
@@ -60,9 +61,9 @@ fn mapping_mcu_new() {
 
 #[test]
 fn mapping_mcu_read() {
-    let mut mcu1 = MockMcu::new(0x0000, 0x00FF);
+    let mcu1 = MockMcu::new(0x0000, 0x00FF);
     mcu1.write(0x0050, 0xAB);
-    let mut mcu2 = MockMcu::new(0x1000, 0x10FF);
+    let mcu2 = MockMcu::new(0x1000, 0x10FF);
     mcu2.write(0x1050, 0xCD);
 
     let regions = vec![
@@ -84,7 +85,7 @@ fn mapping_mcu_write() {
         Region::new(0x0000, 0x00FF, Box::new(mcu1)),
         Region::new(0x1000, 0x10FF, Box::new(mcu2)),
     ];
-    let mapping = &mut MappingMcu::new(regions);
+    let mapping = MappingMcu::new(regions);
     mapping.write(0x0050, 0xEF);
     mapping.write(0x1050, 0xDA);
 
@@ -113,6 +114,6 @@ fn mapping_mcu_write_out_of_range() {
         0x00FF,
         Box::new(MockMcu::new(0x0000, 0x00FF)),
     )];
-    let mut mapping = MappingMcu::new(regions);
+    let mapping = MappingMcu::new(regions);
     mapping.write(0x5000, 0xFF); // Out of range
 }

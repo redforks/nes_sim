@@ -70,7 +70,7 @@ impl Mcu for Controller {
         }
     }
 
-    fn write(&mut self, address: u16, value: u8) {
+    fn write(&self, address: u16, value: u8) {
         match address {
             0x4016 => {
                 if value & 1 == 0 {

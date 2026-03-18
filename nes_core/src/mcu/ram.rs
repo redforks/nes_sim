@@ -1,24 +1,25 @@
 use crate::mcu::{DefinedRegion, Mcu};
+use std::cell::RefCell;
 
 pub struct RamMcu<const SIZE: usize> {
     /// Start address of the memory region
     start: u16,
-    ram: [u8; SIZE],
-}
-
-impl<const SIZE: usize> AsRef<[u8]> for RamMcu<SIZE> {
-    fn as_ref(&self) -> &[u8] {
-        &self.ram
-    }
+    ram: RefCell<[u8; SIZE]>,
 }
 
 impl<const SIZE: usize> RamMcu<SIZE> {
     pub fn new(ram: [u8; SIZE]) -> RamMcu<SIZE> {
-        RamMcu { start: 0, ram }
+        RamMcu {
+            start: 0,
+            ram: RefCell::new(ram),
+        }
     }
 
     pub fn start_from(start: u16, ram: [u8; SIZE]) -> Self {
-        RamMcu { start, ram }
+        RamMcu {
+            start,
+            ram: RefCell::new(ram),
+        }
     }
 
     fn to_index(&self, address: u16) -> usize {
@@ -29,11 +30,11 @@ impl<const SIZE: usize> RamMcu<SIZE> {
 // impl super::Mcu trait
 impl<const SIZE: usize> Mcu for RamMcu<SIZE> {
     fn read(&self, address: u16) -> u8 {
-        self.ram[self.to_index(address)]
+        self.ram.borrow()[self.to_index(address)]
     }
 
-    fn write(&mut self, address: u16, value: u8) {
-        self.ram[self.to_index(address)] = value;
+    fn write(&self, address: u16, value: u8) {
+        self.ram.borrow_mut()[self.to_index(address)] = value;
     }
 
     fn request_irq(&self) -> bool {
@@ -57,22 +58,15 @@ mod tests {
 
     #[test]
     fn start_from() {
-        let mut mcu = RamMcu::start_from(0x8000, [0; 0x8000]);
+        let mcu = RamMcu::start_from(0x8000, [0; 0x8000]);
         mcu.write(0x8000, 0x12);
         assert_eq!(mcu.read(0x8000), 0x12);
         mcu.write(0xfffc, 0x12);
         assert_eq!(mcu.read(0xfffc), 0x12);
 
-        let mut mcu = RamMcu::new([0; 0x100]);
+        let mcu = RamMcu::new([0; 0x100]);
         mcu.write(0x80, 0x12);
         assert_eq!(mcu.read(0x80), 0x12);
-    }
-
-    #[test]
-    fn test_as_ref() {
-        let mcu = RamMcu::new([1, 2, 3, 4]);
-        let slice: &[u8] = mcu.as_ref();
-        assert_eq!(slice, &[1, 2, 3, 4]);
     }
 
     #[test]
@@ -101,7 +95,7 @@ mod tests {
 
     #[test]
     fn test_to_index() {
-        let mut mcu = RamMcu::start_from(0x8000, [0; 0x100]);
+        let mcu = RamMcu::start_from(0x8000, [0; 0x100]);
         // to_index is private, but we can test it indirectly through read/write
         mcu.write(0x8000, 0xAB);
         assert_eq!(mcu.read(0x8000), 0xAB);

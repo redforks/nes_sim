@@ -1,5 +1,6 @@
 use crate::mcu::Mcu;
-use crate::nes::ppu::{Pattern, Tile, NAME_TABLE_MEM_START, TILES_PER_COL, TILES_PER_ROW};
+use crate::nes::ppu::{NAME_TABLE_MEM_START, Pattern, TILES_PER_COL, TILES_PER_ROW, Tile};
+use std::cell::{Cell, RefCell};
 
 #[derive(Copy, Clone)]
 pub struct AttributeTable<'a>(&'a [u8]);
@@ -57,74 +58,90 @@ pub enum Mirroring {
 }
 
 pub struct NameTableControl {
-    mem: [u8; 4096],
-    band_start_offset: [u16; 4],
-    mirroring: Mirroring,
+    mem: RefCell<[u8; 4096]>,
+    band_start_offset: RefCell<[u16; 4]>,
+    mirroring: Cell<Mirroring>,
 }
 
 impl Default for NameTableControl {
     fn default() -> Self {
         Self {
-            mem: [0; 4096],
-            band_start_offset: [0, 1024, 2048, 3072],
-            mirroring: Mirroring::Four,
+            mem: RefCell::new([0; 4096]),
+            band_start_offset: RefCell::new([0, 1024, 2048, 3072]),
+            mirroring: Cell::new(Mirroring::Four),
         }
     }
 }
 
 impl NameTableControl {
     pub fn mirroring(&self) -> Mirroring {
-        self.mirroring
+        self.mirroring.get()
     }
 
-    pub fn set_mirroring(&mut self, mirroring: Mirroring) {
-        if mirroring == self.mirroring {
+    pub fn set_mirroring(&self, mirroring: Mirroring) {
+        if mirroring == self.mirroring.get() {
             return;
         }
 
-        self.mirroring = mirroring;
+        self.mirroring.set(mirroring);
+        let mut offsets = self.band_start_offset.borrow_mut();
         match mirroring {
             Mirroring::LowerBank => {
-                self.band_start_offset = [0, 0, 0, 0];
+                *offsets = [0, 0, 0, 0];
             }
             Mirroring::UpperBank => {
-                self.band_start_offset = [1024, 1024, 1024, 1024];
+                *offsets = [1024, 1024, 1024, 1024];
             }
             Mirroring::Vertical => {
-                self.band_start_offset = [0, 1024, 0, 1024];
+                *offsets = [0, 1024, 0, 1024];
             }
             Mirroring::Horizontal => {
-                self.band_start_offset = [0, 0, 1024, 1024];
+                *offsets = [0, 0, 1024, 1024];
             }
             Mirroring::Four => {
-                self.band_start_offset = [0, 1024, 2048, 3072];
+                *offsets = [0, 1024, 2048, 3072];
             }
         }
     }
 
-    pub fn nth(&self, idx: u8) -> NameTable<'_> {
-        let start = self.band_start_offset[idx as usize] as usize;
-        NameTable::new(&self.mem[start..start + 960])
+    /// Execute a callback with read-only access to the nth name table data
+    pub fn with_nth<U, F>(&self, idx: u8, f: F) -> U
+    where
+        F: FnOnce(NameTable<'_>) -> U,
+    {
+        let offsets = self.band_start_offset.borrow();
+        let mem = self.mem.borrow();
+        let start = offsets[idx as usize] as usize;
+        f(NameTable::new(&mem[start..start + 960]))
     }
 
-    pub fn attribute_table(&self, idx: u8) -> AttributeTable<'_> {
-        let start = self.band_start_offset[idx as usize] as usize + 960;
-        AttributeTable::new(&self.mem[start..start + 64])
+    /// Execute a callback with read-only access to the nth attribute table data
+    pub fn with_attribute_table<U, F>(&self, idx: u8, f: F) -> U
+    where
+        F: FnOnce(AttributeTable<'_>) -> U,
+    {
+        let offsets = self.band_start_offset.borrow();
+        let mem = self.mem.borrow();
+        let start = offsets[idx as usize] as usize + 960;
+        f(AttributeTable::new(&mem[start..start + 64]))
     }
 
     fn offset(&self, addr: u16) -> usize {
         let r = addr - NAME_TABLE_MEM_START;
-        (self.band_start_offset[r as usize / 1024] + r % 1024) as usize
+        let offsets = self.band_start_offset.borrow();
+        (offsets[r as usize / 1024] + r % 1024) as usize
     }
 }
 
 impl Mcu for NameTableControl {
     fn read(&self, address: u16) -> u8 {
-        self.mem[self.offset(address)]
+        let mem = self.mem.borrow();
+        mem[self.offset(address)]
     }
 
-    fn write(&mut self, address: u16, value: u8) {
-        self.mem[self.offset(address)] = value;
+    fn write(&self, address: u16, value: u8) {
+        let mut mem = self.mem.borrow_mut();
+        mem[self.offset(address)] = value;
     }
 }
 
@@ -183,7 +200,7 @@ mod tests {
             assert_eq!(v4, control.read(0x2c00));
         }
 
-        let mut control = NameTableControl::default();
+        let control = NameTableControl::default();
         assert_eq!(Mirroring::Four, control.mirroring());
 
         // default is four screen
@@ -196,15 +213,15 @@ mod tests {
         control.write(0x2bff, 13);
         control.write(0x2fff, 14);
         assert_start_addr(&control, 1, 2, 3, 4);
-        assert_eq!(11, control.mem[1023]);
-        assert_eq!(1, control.nth(0).0[0]);
-        assert_eq!(2, control.nth(1).0[0]);
-        assert_eq!(3, control.nth(2).0[0]);
-        assert_eq!(4, control.nth(3).0[0]);
-        assert_eq!(11, control.attribute_table(0).0[63]);
-        assert_eq!(12, control.attribute_table(1).0[63]);
-        assert_eq!(13, control.attribute_table(2).0[63]);
-        assert_eq!(14, control.attribute_table(3).0[63]);
+        assert_eq!(11, control.mem.borrow()[1023]);
+        assert_eq!(1, control.with_nth(0, |nt| nt.0[0]));
+        assert_eq!(2, control.with_nth(1, |nt| nt.0[0]));
+        assert_eq!(3, control.with_nth(2, |nt| nt.0[0]));
+        assert_eq!(4, control.with_nth(3, |nt| nt.0[0]));
+        assert_eq!(11, control.with_attribute_table(0, |at| at.0[63]));
+        assert_eq!(12, control.with_attribute_table(1, |at| at.0[63]));
+        assert_eq!(13, control.with_attribute_table(2, |at| at.0[63]));
+        assert_eq!(14, control.with_attribute_table(3, |at| at.0[63]));
 
         control.set_mirroring(Mirroring::LowerBank);
         assert_eq!(Mirroring::LowerBank, control.mirroring());
@@ -225,7 +242,7 @@ mod tests {
 
     #[test]
     fn test_set_mirroring_same_value() {
-        let mut control = NameTableControl::default();
+        let control = NameTableControl::default();
 
         // Set to vertical mirroring
         control.set_mirroring(Mirroring::Vertical);
