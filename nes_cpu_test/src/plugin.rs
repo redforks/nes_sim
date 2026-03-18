@@ -1,3 +1,4 @@
+use nes_core::mcu::Mcu;
 use nes_core::{Cpu, ExecuteResult, Plugin};
 
 mod console;
@@ -11,22 +12,22 @@ pub use img_exit::*;
 pub use monitor_test_status::*;
 pub use report::*;
 
-pub struct CompositePlugin(Vec<Box<dyn Plugin>>);
+pub struct CompositePlugin<M: Mcu>(Vec<Box<dyn Plugin<M>>>);
 
-impl CompositePlugin {
-    pub fn new(plugins: Vec<Box<dyn Plugin>>) -> CompositePlugin {
+impl<M: Mcu> CompositePlugin<M> {
+    pub fn new(plugins: Vec<Box<dyn Plugin<M>>>) -> CompositePlugin<M> {
         CompositePlugin(plugins)
     }
 }
 
-impl Plugin for CompositePlugin {
-    fn start(&mut self, cpu: &Cpu) {
+impl<M: Mcu> Plugin<M> for CompositePlugin<M> {
+    fn start(&mut self, cpu: &Cpu<M>) {
         for p in self.0.iter_mut() {
             p.start(cpu);
         }
     }
 
-    fn end(&mut self, cpu: &Cpu) {
+    fn end(&mut self, cpu: &Cpu<M>) {
         for p in self.0.iter_mut() {
             p.end(cpu);
         }

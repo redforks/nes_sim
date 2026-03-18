@@ -1,5 +1,4 @@
 use crate::ines::INesFile;
-use crate::mcu::Mcu;
 use crate::render::Render;
 
 pub mod apu;
@@ -9,7 +8,9 @@ mod mapper;
 pub mod nes_mcu;
 pub mod ppu;
 
-pub fn create_mcu(file: &INesFile) -> impl Mcu + use<> {
+pub use nes_mcu::NesMcu;
+
+pub fn create_mcu(file: &INesFile) -> NesMcu {
     nes_mcu::build(file)
 }
 
@@ -20,10 +21,7 @@ pub fn create_mcu(file: &INesFile) -> impl Mcu + use<> {
 /// # Parameters
 /// - `file`: The iNES file to load
 /// - `renderer`: Optional custom renderer. If None, uses default ImageRender.
-pub fn create_mcu_with_renderer(
-    file: &INesFile,
-    renderer: Option<Box<dyn Render>>,
-) -> impl Mcu + use<> {
+pub fn create_mcu_with_renderer(file: &INesFile, renderer: Option<Box<dyn Render>>) -> NesMcu {
     nes_mcu::build_with_renderer(file, renderer)
 }
 

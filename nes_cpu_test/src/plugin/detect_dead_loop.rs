@@ -1,3 +1,4 @@
+use nes_core::mcu::Mcu;
 use nes_core::{Cpu, ExecuteResult, Plugin};
 use std::collections::VecDeque;
 
@@ -17,10 +18,10 @@ impl<const DEPTH: usize, const REPEATS: u32> DetectDeadLoop<DEPTH, REPEATS> {
     }
 }
 
-impl<const DEPTH: usize, const REPEATS: u32> Plugin for DetectDeadLoop<DEPTH, REPEATS> {
-    fn start(&mut self, _: &Cpu) {}
+impl<const DEPTH: usize, const REPEATS: u32, M: Mcu> Plugin<M> for DetectDeadLoop<DEPTH, REPEATS> {
+    fn start(&mut self, _: &Cpu<M>) {}
 
-    fn end(&mut self, cpu: &Cpu) {
+    fn end(&mut self, cpu: &Cpu<M>) {
         if self.recent_pc.len() == DEPTH * 2 {
             self.recent_pc.pop_front();
         }
@@ -68,7 +69,7 @@ mod tests {
     #[case(3, true, &[10, 11, 10, 11, 9, 10, 9, 10, 9, 10])]
     fn test(#[case] exp_count: u32, #[case] should_exit: bool, #[case] pcs: &[u16]) {
         let mcu = RamMcu::new([0; 65536]);
-        let mut cpu = Cpu::new(Box::new(mcu));
+        let mut cpu = Cpu::new(mcu);
 
         let mut p = DetectDeadLoop::<2, 2>::new();
         for pc in pcs.iter().copied() {

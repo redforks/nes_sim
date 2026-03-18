@@ -1,5 +1,6 @@
 use ansi_term::Color;
 use is_terminal::IsTerminal;
+use nes_core::mcu::Mcu;
 use nes_core::{Cpu, Plugin};
 
 #[derive(Default)]
@@ -7,10 +8,10 @@ pub struct Console {
     buf: Vec<u8>,
 }
 
-impl Plugin for Console {
-    fn start(&mut self, _: &Cpu) {}
+impl<M: Mcu> Plugin<M> for Console {
+    fn start(&mut self, _: &Cpu<M>) {}
 
-    fn end(&mut self, cpu: &Cpu) {
+    fn end(&mut self, cpu: &Cpu<M>) {
         if cpu.read_byte(0x6001) != 0xDE
             || cpu.read_byte(0x6002) != 0xB0
             || cpu.read_byte(0x6003) != 0x61

@@ -25,7 +25,7 @@ pub struct NesMcu {
     channel_enabled: RefCell<[bool; 4]>,
 }
 
-pub fn build(file: &INesFile) -> impl Mcu + use<> {
+pub fn build(file: &INesFile) -> NesMcu {
     build_with_renderer(file, None)
 }
 
@@ -34,7 +34,7 @@ pub fn build(file: &INesFile) -> impl Mcu + use<> {
 /// # Parameters
 /// - `file`: The iNES file to load
 /// - `renderer`: Optional custom renderer. If None, uses default ImageRender.
-pub fn build_with_renderer(file: &INesFile, renderer: Option<Box<dyn Render>>) -> impl Mcu + use<> {
+pub fn build_with_renderer(file: &INesFile, renderer: Option<Box<dyn Render>>) -> NesMcu {
     let cartridge = mapper::create_cartridge(file);
     let ppu = Ppu::default();
     ppu.set_mirroring(if file.header().ver_or_hor_arrangement {

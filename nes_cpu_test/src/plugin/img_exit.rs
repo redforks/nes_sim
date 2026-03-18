@@ -1,3 +1,4 @@
+use nes_core::mcu::Mcu;
 use nes_core::{Cpu, ExecuteResult, Flag, Plugin};
 
 #[derive(Default)]
@@ -6,10 +7,10 @@ pub struct ImageExit {
     exit_code: Option<u8>,
 }
 
-impl Plugin for ImageExit {
-    fn start(&mut self, _: &Cpu) {}
+impl<M: Mcu> Plugin<M> for ImageExit {
+    fn start(&mut self, _: &Cpu<M>) {}
 
-    fn end(&mut self, cpu: &Cpu) {
+    fn end(&mut self, cpu: &Cpu<M>) {
         if let Some(last) = self.last_pc
             && last == cpu.pc
         {

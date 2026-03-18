@@ -1,9 +1,10 @@
 use super::plugin::{CompositePlugin, Console, MonitorTestStatus, ReportPlugin};
 use super::plugin::{DetectDeadLoop, ImageExit};
+use nes_core::Plugin;
 use nes_core::ines::INesFile;
-use nes_core::mcu::{Mcu, RamMcu};
+use nes_core::machine::Machine;
+use nes_core::mcu::RamMcu;
 use nes_core::nes::nes_mcu;
-use nes_core::{Plugin, machine::Machine};
 use std::io::Read;
 
 mod driver;
@@ -14,49 +15,88 @@ pub enum Image {
 }
 
 impl Image {
-    fn create_mcu(&self) -> Box<dyn Mcu> {
+    pub fn create_machine(&self, quiet: bool) -> MachineWrapper {
         match self {
-            Image::Bin(arr) => Box::new(RamMcu::new(**arr)),
-            Image::INes(ines) => Box::new(nes_mcu::build(ines)),
+            Image::Bin(arr) => self.create_bin_machine(arr, quiet),
+            Image::INes(ines) => self.create_ines_machine(ines, quiet),
         }
     }
 
-    fn create_plugin(&self, quiet: bool) -> Box<dyn Plugin> {
+    fn create_bin_machine(&self, arr: &[u8; 64 * 1024], quiet: bool) -> MachineWrapper {
+        let mcu = RamMcu::new(*arr);
+        let plugin = CompositePlugin::new(vec![
+            Box::new(ReportPlugin::new(quiet)),
+            Box::<ImageExit>::default(),
+        ]);
+        let mut machine = Machine::with_plugin(plugin, mcu);
+        machine.reset();
+        machine.set_pc(0x400);
+        MachineWrapper::Bin(machine)
+    }
+
+    fn create_ines_machine(&self, ines: &INesFile, quiet: bool) -> MachineWrapper {
+        let mcu = nes_mcu::build(ines);
+
+        // Build the composite plugin step by step to handle type coercion
+        let mut plugins: Vec<Box<dyn Plugin<nes_core::nes::nes_mcu::NesMcu>>> = Vec::new();
+        plugins.push(Box::<Console>::default());
+        plugins.push(Box::new(ReportPlugin::new(quiet)));
+        plugins.push(Box::<MonitorTestStatus>::default());
+        plugins.push(Box::new(DetectDeadLoop::<1>::new()));
+        plugins.push(Box::new(DetectDeadLoop::<2>::new()));
+
+        let plugin = CompositePlugin::new(plugins);
+        let mut machine = Machine::with_plugin(plugin, mcu);
+        machine.reset();
+        MachineWrapper::INes(machine)
+    }
+}
+
+// Type aliases to avoid >> parsing issues in enums
+mod machine_types {
+    use super::*;
+
+    pub type BinMcu = RamMcu<{ 64 * 1024 }>;
+    pub type BinPlugin = CompositePlugin<BinMcu>;
+    pub type BinMachine = Machine<BinPlugin, BinMcu>;
+
+    pub type INesMcu = nes_core::nes::nes_mcu::NesMcu;
+    pub type INesPlugin = CompositePlugin<INesMcu>;
+    pub type INesMachine = Machine<INesPlugin, INesMcu>;
+}
+
+pub enum MachineWrapper {
+    Bin(machine_types::BinMachine),
+    INes(machine_types::INesMachine),
+}
+
+impl MachineWrapper {
+    pub fn run_ticks(&mut self, ticks: u32) -> nes_core::ExecuteResult {
         match self {
-            Image::Bin(_) => Box::new(CompositePlugin::new(vec![
-                Box::new(ReportPlugin::new(quiet)),
-                Box::<ImageExit>::default(),
-            ])),
-            Image::INes(_) => Box::new(CompositePlugin::new(vec![
-                Box::<Console>::default(),
-                Box::new(ReportPlugin::new(quiet)),
-                Box::<MonitorTestStatus>::default(),
-                Box::new(DetectDeadLoop::<1>::new()),
-                Box::new(DetectDeadLoop::<2>::new()),
-            ])),
+            MachineWrapper::Bin(m) => m.run_ticks(ticks),
+            MachineWrapper::INes(m) => m.run_ticks(ticks),
         }
     }
 
-    pub fn create_machine(&self, quiet: bool) -> Machine<Box<dyn Plugin>> {
+    pub fn process_frame(&mut self) -> nes_core::ExecuteResult {
         match self {
-            Image::Bin(_) => self.create_bin_machine(quiet),
-            Image::INes(_) => self.create_ines_machine(quiet),
+            MachineWrapper::Bin(m) => m.process_frame(),
+            MachineWrapper::INes(m) => m.process_frame(),
         }
     }
 
-    fn create_bin_machine(&self, quiet: bool) -> Machine<Box<dyn Plugin>> {
-        let plugin = self.create_plugin(quiet);
-        let mut r = Machine::with_plugin(plugin, self.create_mcu());
-        r.reset();
-        r.set_pc(0x400);
-        r
+    pub fn reset(&mut self) {
+        match self {
+            MachineWrapper::Bin(m) => m.reset(),
+            MachineWrapper::INes(m) => m.reset(),
+        }
     }
 
-    fn create_ines_machine(&self, quiet: bool) -> Machine<Box<dyn Plugin>> {
-        let plugin = self.create_plugin(quiet);
-        let mut r = Machine::with_plugin(plugin, self.create_mcu());
-        r.reset();
-        r
+    pub fn set_pc(&mut self, pc: u16) {
+        match self {
+            MachineWrapper::Bin(m) => m.set_pc(pc),
+            MachineWrapper::INes(m) => m.set_pc(pc),
+        }
     }
 }
 

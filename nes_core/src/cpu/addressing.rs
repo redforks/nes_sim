@@ -1,21 +1,22 @@
 use super::{Cpu, Flag, extra_tick_if_cross_page};
+use crate::mcu::Mcu;
 use std::fmt::{Display, Formatter};
 
-pub trait Address: Display + Copy {
+pub trait Address<M: Mcu>: Display + Copy {
     /// return (value, ticks)
-    fn get(&self, cpu: &Cpu) -> (u8, u8) {
+    fn get(&self, cpu: &Cpu<M>) -> (u8, u8) {
         let (addr, ticks) = self.calc_addr(cpu);
         (cpu.read_byte(addr), ticks + 1) // +1 for the memory read
     }
 
     /// return ticks
-    fn set(&self, cpu: &mut Cpu, val: u8) -> u8 {
+    fn set(&self, cpu: &mut Cpu<M>, val: u8) -> u8 {
         let (addr, ticks) = self.calc_addr(cpu);
         cpu.write_byte(addr, val);
         ticks + 1 // +1 for the memory write
     }
 
-    fn calc_addr(&self, _: &Cpu) -> (u16, u8) {
+    fn calc_addr(&self, _: &Cpu<M>) -> (u16, u8) {
         panic!("calc_addr not implemented");
     }
 
@@ -33,12 +34,12 @@ impl Display for Literal {
     }
 }
 
-impl Address for Literal {
-    fn get(&self, _: &Cpu) -> (u8, u8) {
+impl<M: Mcu> Address<M> for Literal {
+    fn get(&self, _: &Cpu<M>) -> (u8, u8) {
         (self.0, 0)
     }
 
-    fn set(&self, _: &mut Cpu, _: u8) -> u8 {
+    fn set(&self, _: &mut Cpu<M>, _: u8) -> u8 {
         panic!("can't set value to literal");
     }
 }
@@ -52,8 +53,8 @@ impl Display for ZeroPage {
     }
 }
 
-impl Address for ZeroPage {
-    fn calc_addr(&self, _: &Cpu) -> (u16, u8) {
+impl<M: Mcu> Address<M> for ZeroPage {
+    fn calc_addr(&self, _: &Cpu<M>) -> (u16, u8) {
         (self.0 as u16, 1)
     }
 }
@@ -67,8 +68,8 @@ impl Display for Absolute {
     }
 }
 
-impl Address for Absolute {
-    fn calc_addr(&self, _: &Cpu) -> (u16, u8) {
+impl<M: Mcu> Address<M> for Absolute {
+    fn calc_addr(&self, _: &Cpu<M>) -> (u16, u8) {
         (self.0, 2)
     }
 }
@@ -82,8 +83,8 @@ impl Display for ZeroPageX {
     }
 }
 
-impl Address for ZeroPageX {
-    fn calc_addr(&self, cpu: &Cpu) -> (u16, u8) {
+impl<M: Mcu> Address<M> for ZeroPageX {
+    fn calc_addr(&self, cpu: &Cpu<M>) -> (u16, u8) {
         (self.0.wrapping_add(cpu.x) as u16, 2)
     }
 }
@@ -97,8 +98,8 @@ impl Display for ZeroPageY {
     }
 }
 
-impl Address for ZeroPageY {
-    fn calc_addr(&self, cpu: &Cpu) -> (u16, u8) {
+impl<M: Mcu> Address<M> for ZeroPageY {
+    fn calc_addr(&self, cpu: &Cpu<M>) -> (u16, u8) {
         (self.0.wrapping_add(cpu.y) as u16, 2)
     }
 }
@@ -112,8 +113,8 @@ impl Display for AbsoluteX {
     }
 }
 
-impl Address for AbsoluteX {
-    fn calc_addr(&self, cpu: &Cpu) -> (u16, u8) {
+impl<M: Mcu> Address<M> for AbsoluteX {
+    fn calc_addr(&self, cpu: &Cpu<M>) -> (u16, u8) {
         let r = self.0.wrapping_add(cpu.x as u16);
         (r, 2 + extra_tick_if_cross_page(self.0, r))
     }
@@ -128,8 +129,8 @@ impl Display for AbsoluteY {
     }
 }
 
-impl Address for AbsoluteY {
-    fn calc_addr(&self, cpu: &Cpu) -> (u16, u8) {
+impl<M: Mcu> Address<M> for AbsoluteY {
+    fn calc_addr(&self, cpu: &Cpu<M>) -> (u16, u8) {
         let r = self.0.wrapping_add(cpu.y as u16);
         (r, 2 + extra_tick_if_cross_page(self.0, r))
     }
@@ -144,8 +145,8 @@ impl Display for IndirectX {
     }
 }
 
-impl Address for IndirectX {
-    fn calc_addr(&self, cpu: &Cpu) -> (u16, u8) {
+impl<M: Mcu> Address<M> for IndirectX {
+    fn calc_addr(&self, cpu: &Cpu<M>) -> (u16, u8) {
         (cpu.read_zero_page_word(cpu.x.wrapping_add(self.0)), 4)
     }
 }
@@ -159,8 +160,8 @@ impl Display for IndirectY {
     }
 }
 
-impl Address for IndirectY {
-    fn calc_addr(&self, cpu: &Cpu) -> (u16, u8) {
+impl<M: Mcu> Address<M> for IndirectY {
+    fn calc_addr(&self, cpu: &Cpu<M>) -> (u16, u8) {
         let addr = cpu.read_zero_page_word(self.0);
         let r = addr.wrapping_add(cpu.y as u16);
         (r, 3 + extra_tick_if_cross_page(addr, r))
@@ -176,12 +177,12 @@ impl Display for RegisterA {
     }
 }
 
-impl Address for RegisterA {
-    fn get(&self, cpu: &Cpu) -> (u8, u8) {
+impl<M: Mcu> Address<M> for RegisterA {
+    fn get(&self, cpu: &Cpu<M>) -> (u8, u8) {
         (cpu.a, 0)
     }
 
-    fn set(&self, cpu: &mut Cpu, val: u8) -> u8 {
+    fn set(&self, cpu: &mut Cpu<M>, val: u8) -> u8 {
         cpu.a = val;
         0
     }
@@ -196,12 +197,12 @@ impl Display for RegisterX {
     }
 }
 
-impl Address for RegisterX {
-    fn get(&self, cpu: &Cpu) -> (u8, u8) {
+impl<M: Mcu> Address<M> for RegisterX {
+    fn get(&self, cpu: &Cpu<M>) -> (u8, u8) {
         (cpu.x, 0)
     }
 
-    fn set(&self, cpu: &mut Cpu, val: u8) -> u8 {
+    fn set(&self, cpu: &mut Cpu<M>, val: u8) -> u8 {
         cpu.x = val;
         0
     }
@@ -220,12 +221,12 @@ impl Display for RegisterY {
     }
 }
 
-impl Address for RegisterY {
-    fn get(&self, cpu: &Cpu) -> (u8, u8) {
+impl<M: Mcu> Address<M> for RegisterY {
+    fn get(&self, cpu: &Cpu<M>) -> (u8, u8) {
         (cpu.y, 0)
     }
 
-    fn set(&self, cpu: &mut Cpu, val: u8) -> u8 {
+    fn set(&self, cpu: &mut Cpu<M>, val: u8) -> u8 {
         cpu.y = val;
         0
     }
@@ -244,12 +245,12 @@ impl Display for RegisterSP {
     }
 }
 
-impl Address for RegisterSP {
-    fn get(&self, cpu: &Cpu) -> (u8, u8) {
+impl<M: Mcu> Address<M> for RegisterSP {
+    fn get(&self, cpu: &Cpu<M>) -> (u8, u8) {
         (cpu.sp, 0)
     }
 
-    fn set(&self, cpu: &mut Cpu, val: u8) -> u8 {
+    fn set(&self, cpu: &mut Cpu<M>, val: u8) -> u8 {
         cpu.sp = val;
         0
     }
@@ -268,12 +269,12 @@ impl Display for RegisterStatus {
     }
 }
 
-impl Address for RegisterStatus {
-    fn get(&self, cpu: &Cpu) -> (u8, u8) {
+impl<M: Mcu> Address<M> for RegisterStatus {
+    fn get(&self, cpu: &Cpu<M>) -> (u8, u8) {
         (cpu.status | 0b0011_0000, 0)
     }
 
-    fn set(&self, cpu: &mut Cpu, val: u8) -> u8 {
+    fn set(&self, cpu: &mut Cpu<M>, val: u8) -> u8 {
         cpu.status = val & 0b1100_1111;
         0
     }
@@ -292,12 +293,12 @@ impl Display for FlagAddr {
     }
 }
 
-impl Address for FlagAddr {
-    fn get(&self, cpu: &Cpu) -> (u8, u8) {
+impl<M: Mcu> Address<M> for FlagAddr {
+    fn get(&self, cpu: &Cpu<M>) -> (u8, u8) {
         (cpu.flag(self.0) as u8, 0)
     }
 
-    fn set(&self, cpu: &mut Cpu, val: u8) -> u8 {
+    fn set(&self, cpu: &mut Cpu<M>, val: u8) -> u8 {
         cpu.set_flag(self.0, val != 0);
         0
     }

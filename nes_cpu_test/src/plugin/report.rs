@@ -1,3 +1,4 @@
+use nes_core::mcu::Mcu;
 use nes_core::{Cpu, ExecuteResult, Flag, Plugin};
 
 // Test ROM completion signature at $6001-$6003
@@ -23,8 +24,8 @@ impl ReportPlugin {
     }
 }
 
-impl Plugin for ReportPlugin {
-    fn start(&mut self, cpu: &Cpu) {
+impl<M: Mcu> Plugin<M> for ReportPlugin {
+    fn start(&mut self, cpu: &Cpu<M>) {
         self.count += 1;
 
         if self.verbose {
@@ -39,7 +40,7 @@ impl Plugin for ReportPlugin {
         }
     }
 
-    fn end(&mut self, cpu: &Cpu) {
+    fn end(&mut self, cpu: &Cpu<M>) {
         if self.verbose {
             let flags = format_flags(cpu);
             let top = cpu.peek_stack();
@@ -143,7 +144,7 @@ impl Plugin for ReportPlugin {
     }
 }
 
-fn format_flags(cpu: &Cpu) -> String {
+fn format_flags<M: Mcu>(cpu: &Cpu<M>) -> String {
     let mut r = String::new();
 
     r.push(if cpu.flag(Flag::Negative) { 'N' } else { 'n' });

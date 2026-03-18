@@ -1,4 +1,5 @@
 use ansi_term::Color;
+use nes_core::mcu::Mcu;
 use nes_core::{Cpu, ExecuteResult, Plugin};
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
@@ -11,7 +12,7 @@ enum Status {
 }
 
 impl Status {
-    fn parse(cpu: &Cpu) -> Status {
+    fn parse<M: Mcu>(cpu: &Cpu<M>) -> Status {
         if cpu.read_byte(0x6001) != 0xDE
             || cpu.read_byte(0x6002) != 0xB0
             || cpu.read_byte(0x6003) != 0x61
@@ -37,10 +38,10 @@ pub struct MonitorTestStatus {
     last_status: Option<Status>,
 }
 
-impl Plugin for MonitorTestStatus {
-    fn start(&mut self, _: &Cpu) {}
+impl<M: Mcu> Plugin<M> for MonitorTestStatus {
+    fn start(&mut self, _: &Cpu<M>) {}
 
-    fn end(&mut self, cpu: &Cpu) {
+    fn end(&mut self, cpu: &Cpu<M>) {
         let status = Status::parse(cpu);
         if status == Status::ShouldReset && self.should_reset > 0 {
             self.should_reset -= 1;
