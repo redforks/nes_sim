@@ -12,7 +12,7 @@ enum Status {
 }
 
 impl Status {
-    fn parse<M: Mcu>(cpu: &Cpu<M>) -> Status {
+    fn parse<M: Mcu>(cpu: &mut Cpu<M>) -> Status {
         if cpu.read_byte(0x6001) != 0xDE
             || cpu.read_byte(0x6002) != 0xB0
             || cpu.read_byte(0x6003) != 0x61
@@ -39,9 +39,9 @@ pub struct MonitorTestStatus {
 }
 
 impl<M: Mcu> Plugin<M> for MonitorTestStatus {
-    fn start(&mut self, _: &Cpu<M>) {}
+    fn start(&mut self, _: &mut Cpu<M>) {}
 
-    fn end(&mut self, cpu: &Cpu<M>, _cycles: u8) {
+    fn end(&mut self, cpu: &mut Cpu<M>, _cycles: u8) {
         let status = Status::parse(cpu);
         if status == Status::ShouldReset && self.should_reset > 0 {
             self.should_reset -= 1;

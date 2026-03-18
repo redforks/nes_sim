@@ -483,13 +483,13 @@ fn test_pulse_channel_write_invalid_address() {
 
 #[test]
 fn test_pulse_channel_region() {
-    let mut channel = PulseChannel::new(0x4000, MockPulseDriver);
+    let channel = PulseChannel::new(0x4000, MockPulseDriver);
     assert_eq!(channel.region(), (0x4000, 0x4003));
 }
 
 #[test]
 fn test_pulse_channel_region_4004() {
-    let mut channel = PulseChannel::new(0x4004, MockPulseDriver);
+    let channel = PulseChannel::new(0x4004, MockPulseDriver);
     assert_eq!(channel.region(), (0x4004, 0x4007));
 }
 
@@ -528,7 +528,7 @@ fn test_triangle_channel_write_invalid_address() {
 
 #[test]
 fn test_triangle_channel_region() {
-    let mut channel = TriangleChannel::new(MockTriangleDriver);
+    let channel = TriangleChannel::new(MockTriangleDriver);
     assert_eq!(channel.region(), (0x4008, 0x400B));
 }
 
@@ -567,7 +567,7 @@ fn test_noise_channel_write_invalid_address() {
 
 #[test]
 fn test_noise_channel_region() {
-    let mut channel = NoiseChannel(RefCell::new(MockNoiseDriver));
+    let channel = NoiseChannel(RefCell::new(MockNoiseDriver));
     assert_eq!(channel.region(), (0x400C, 0x400F));
 }
 
@@ -612,7 +612,7 @@ fn test_dmc_channel_write_invalid_address() {
 
 #[test]
 fn test_dmc_channel_region() {
-    let mut channel = DmcChannel(RefCell::new(MockDmcDriver));
+    let channel = DmcChannel(RefCell::new(MockDmcDriver));
     assert_eq!(channel.region(), (0x4010, 0x4013));
 }
 

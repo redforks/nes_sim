@@ -2437,7 +2437,7 @@ fn test_rra_zero_page() {
     execute_next(&mut cpu);
 
     assert_eq!(cpu.mcu_mut().read(0x10), 0xC0); // ROR: (0x81 >> 1) with carry = 0xC0
-                                            // ADC: 0x05 + 0xC0 + 1(carry)
+                                                // ADC: 0x05 + 0xC0 + 1(carry)
     assert_eq!(cpu.a, 0xC6); // 0x05 + 0xC0 + 1 = 0xC6
 }
 

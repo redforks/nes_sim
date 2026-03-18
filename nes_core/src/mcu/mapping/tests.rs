@@ -54,7 +54,7 @@ fn mapping_mcu_new() {
         Region::new(0x0000, 0x00FF, Box::new(MockMcu::new(0x0000, 0x00FF))),
         Region::new(0x1000, 0x10FF, Box::new(MockMcu::new(0x1000, 0x10FF))),
     ];
-    let mut mapping = MappingMcu::new(regions);
+    let mapping = MappingMcu::new(regions);
     assert_eq!(mapping.regions.len(), 2);
 }
 

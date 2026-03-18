@@ -349,10 +349,10 @@ fn execute_next<M: Mcu>(cpu: &mut Cpu<M>) -> u8 {
 
 // Trait to sync instruction execution times.
 pub trait Plugin<M: Mcu> {
-    fn start(&mut self, cpu: &Cpu<M>);
+    fn start(&mut self, cpu: &mut Cpu<M>);
 
     // Called after instruction execution with the cycle count
-    fn end(&mut self, cpu: &Cpu<M>, cycles: u8);
+    fn end(&mut self, cpu: &mut Cpu<M>, cycles: u8);
 
     fn should_stop(&self) -> ExecuteResult {
         ExecuteResult::Continue
@@ -360,11 +360,11 @@ pub trait Plugin<M: Mcu> {
 }
 
 impl<M: Mcu> Plugin<M> for Box<dyn Plugin<M>> {
-    fn start(&mut self, cpu: &Cpu<M>) {
+    fn start(&mut self, cpu: &mut Cpu<M>) {
         self.as_mut().start(cpu);
     }
 
-    fn end(&mut self, cpu: &Cpu<M>, cycles: u8) {
+    fn end(&mut self, cpu: &mut Cpu<M>, cycles: u8) {
         self.as_mut().end(cpu, cycles);
     }
 
@@ -386,9 +386,9 @@ impl<M: Mcu> EmptyPlugin<M> {
 }
 
 impl<M: Mcu> Plugin<M> for EmptyPlugin<M> {
-    fn start(&mut self, _: &Cpu<M>) {}
+    fn start(&mut self, _: &mut Cpu<M>) {}
 
-    fn end(&mut self, _: &Cpu<M>, _cycles: u8) {}
+    fn end(&mut self, _: &mut Cpu<M>, _cycles: u8) {}
 }
 
 impl<M: Mcu> Default for EmptyPlugin<M> {
