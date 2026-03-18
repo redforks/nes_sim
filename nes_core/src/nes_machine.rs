@@ -1,6 +1,4 @@
-use crate::{
-    ines::INesFile, machine::Machine, nes::NesMcu, EmptyPlugin, ExecuteResult, Plugin,
-};
+use crate::{ines::INesFile, machine::Machine, nes::NesMcu, EmptyPlugin, ExecuteResult, Plugin};
 
 /// Safety limit: maximum CPU instruction ticks per `process_frame()` call.
 /// Two full frames worth of ticks; prevents an infinite loop if VBlank never fires
@@ -72,7 +70,7 @@ impl<P: Plugin<NesMcu>> NesMachine<P> {
             }
 
             // Check for VBlank signalled by the PPU
-            if self.machine.mcu().take_vblank() {
+            if self.machine.mcu_mut().take_vblank() {
                 return ExecuteResult::Continue;
             }
         }
@@ -86,14 +84,14 @@ impl<P: Plugin<NesMcu>> NesMachine<P> {
 
         // Tick PPU 3 times per CPU cycle
         for _ in 0..(cycles as u32 * 3) {
-            if self.machine.mcu().tick_ppu() {
+            if self.machine.mcu_mut().tick_ppu() {
                 self.machine.cpu_mut().nmi();
             }
         }
 
         // Tick APU once per CPU cycle
         for _ in 0..(cycles as u32) {
-            if self.machine.mcu().tick_apu() {
+            if self.machine.mcu_mut().tick_apu() {
                 self.machine.cpu_mut().set_irq(true);
             }
         }
