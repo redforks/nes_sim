@@ -1,5 +1,5 @@
 use crate::mcu::Mcu;
-use crate::nes::ppu::{NAME_TABLE_MEM_START, Pattern, TILES_PER_COL, TILES_PER_ROW, Tile};
+use crate::nes::ppu::{Pattern, Tile, NAME_TABLE_MEM_START, TILES_PER_COL, TILES_PER_ROW};
 use std::cell::{Cell, RefCell};
 
 #[derive(Copy, Clone)]
@@ -139,7 +139,7 @@ impl Mcu for NameTableControl {
         mem[self.offset(address)]
     }
 
-    fn write(&self, address: u16, value: u8) {
+    fn write(&mut self, address: u16, value: u8) {
         let mut mem = self.mem.borrow_mut();
         mem[self.offset(address)] = value;
     }
@@ -200,7 +200,7 @@ mod tests {
             assert_eq!(v4, control.read(0x2c00));
         }
 
-        let control = NameTableControl::default();
+        let mut control = NameTableControl::default();
         assert_eq!(Mirroring::Four, control.mirroring());
 
         // default is four screen

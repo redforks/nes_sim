@@ -1,5 +1,5 @@
 use crate::{
-    ines::INesFile, machine::Machine, mcu::Mcu, nes::NesMcu, EmptyPlugin, ExecuteResult, Plugin,
+    ines::INesFile, machine::Machine, nes::NesMcu, EmptyPlugin, ExecuteResult, Plugin,
 };
 
 /// Safety limit: maximum CPU instruction ticks per `process_frame()` call.

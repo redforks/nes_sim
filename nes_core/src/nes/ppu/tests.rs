@@ -6,7 +6,7 @@ fn new_test_ppu_and_pattern() -> (Ppu, [u8; 8192]) {
 
 #[test]
 fn palette_read_write() {
-    let p = Palette::default();
+    let mut p = Palette::default();
     for i in 0..0x20 {
         p.write(0x3f00 + i, i as u8);
         assert_eq!(i as u8, p.read(0x3f00 + i));
@@ -21,7 +21,7 @@ fn palette_read_write() {
 
 #[test]
 fn palette_get_color() {
-    let p = Palette::default();
+    let mut p = Palette::default();
     p.write(0x3f00, 15);
     p.write(0x3f01, 16);
     p.write(0x3f02, 17);
@@ -591,25 +591,25 @@ fn setup_sprite(ppu: &Ppu, index: usize, y: u8, tile: u8, attr: u8, x: u8) {
 }
 
 fn set_bg_tile(ppu: &Ppu, tile: u8, palette_idx: u8) {
-    let inner = ppu.inner().borrow();
+    let mut inner = ppu.inner().borrow_mut();
     inner.name_table.write(0x2000, tile);
     inner.name_table.write(0x23c0, palette_idx & 0x03);
 }
 
 fn set_bg_palette_color(ppu: &Ppu, palette_idx: u8, color_idx: u8, color: u8) {
     let addr = 0x3f00 + palette_idx as u16 * 4 + color_idx as u16;
-    let inner = ppu.inner().borrow();
+    let mut inner = ppu.inner().borrow_mut();
     inner.palette.write(addr, color);
 }
 
 fn set_sprite_palette_color(ppu: &Ppu, palette_idx: u8, color_idx: u8, color: u8) {
     let addr = 0x3f10 + palette_idx as u16 * 4 + color_idx as u16;
-    let inner = ppu.inner().borrow();
+    let mut inner = ppu.inner().borrow_mut();
     inner.palette.write(addr, color);
 }
 
 fn set_universal_bg_color(ppu: &Ppu, color: u8) {
-    let inner = ppu.inner().borrow();
+    let mut inner = ppu.inner().borrow_mut();
     inner.palette.write(0x3f00, color);
 }
 
@@ -917,7 +917,7 @@ fn test_render_pixel_sprite_zero_hit() {
     let mut pattern = create_pattern();
     set_tile_solid(&mut pattern, 0, 0, 1);
     set_tile_solid(&mut pattern, 0, 1, 2);
-    ppu.inner().borrow().name_table.write(0x2000 + 1, 0);
+    ppu.inner().borrow_mut().name_table.write(0x2000 + 1, 0);
     setup_sprite(&ppu, 0, 0, 1, 0, 8);
 
     assert!(!ppu.status().sprite_zero_hit());
@@ -1009,7 +1009,7 @@ fn test_render_pixel_sprite_zero_not_at_x255() {
     let mut pattern = create_pattern();
     set_tile_solid(&mut pattern, 0, 0, 1);
     set_tile_solid(&mut pattern, 0, 1, 2);
-    ppu.inner().borrow().name_table.write(0x2000 + 31, 0);
+    ppu.inner().borrow_mut().name_table.write(0x2000 + 31, 0);
     setup_sprite(&ppu, 0, 9, 0, 0, 248);
 
     ppu.render_pixel(&pattern, 255, 10);

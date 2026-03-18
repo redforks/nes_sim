@@ -200,7 +200,11 @@ impl Palette {
 
         // Clamp to valid range [0, 31]
         let addr = addr as usize;
-        if addr >= 32 { 31 } else { addr }
+        if addr >= 32 {
+            31
+        } else {
+            addr
+        }
     }
 
     fn _get_color_idx(&self, start: usize, palette_idx: u8, idx: u8) -> Pixel {
@@ -248,7 +252,7 @@ impl Mcu for Palette {
         self.data.borrow()[self.get_addr(address)]
     }
 
-    fn write(&self, address: u16, value: u8) {
+    fn write(&mut self, address: u16, value: u8) {
         info!("set palette ${:x}: {:x}", address, value);
         self.data.borrow_mut()[self.get_addr(address)] = value;
     }

@@ -749,8 +749,8 @@ fn test_bit_instruction() {
     execute_next(&mut cpu);
     // BIT should have set N flag (bit 7 of 0xE0)
     assert!(cpu.flag(Flag::Negative)); // bit 7 of 0xE0 = 1
-    // Overflow flag: (v & 0x70) != 0 means bits 6-4 are checked
-    // 0xE0 & 0x70 = 0xE0 & 0x70 = 0x60 != 0, so overflow should be set
+                                       // Overflow flag: (v & 0x70) != 0 means bits 6-4 are checked
+                                       // 0xE0 & 0x70 = 0xE0 & 0x70 = 0x60 != 0, so overflow should be set
     assert!(cpu.flag(Flag::Overflow));
 }
 
@@ -1928,14 +1928,14 @@ fn test_jsr_pushes_pc_and_jumps() {
 #[test]
 fn test_rts_pops_pc() {
     let mut cpu = create_cpu_with_program(&[0x60]); // RTS
-    // Setup stack: return address $1233 (before RTS adds 1)
-    // pop_stack increments SP first, then reads
-    // We want: first pop reads 0x33, second pop reads 0x12
+                                                    // Setup stack: return address $1233 (before RTS adds 1)
+                                                    // pop_stack increments SP first, then reads
+                                                    // We want: first pop reads 0x33, second pop reads 0x12
     cpu.sp = 0xFD; // After two pops: 0xFE -> 0x1FF, 0xFF -> 0x100... no wait
-    // Let me recalculate:
-    // pop_stack: SP++, read from 0x100 + SP
-    // First pop: SP = 0xFD + 1 = 0xFE, read from 0x1FE (should be low byte 0x33)
-    // Second pop: SP = 0xFE + 1 = 0xFF, read from 0x1FF (should be high byte 0x12)
+                   // Let me recalculate:
+                   // pop_stack: SP++, read from 0x100 + SP
+                   // First pop: SP = 0xFD + 1 = 0xFE, read from 0x1FE (should be low byte 0x33)
+                   // Second pop: SP = 0xFE + 1 = 0xFF, read from 0x1FF (should be high byte 0x12)
     cpu.write_byte(0x1FE, 0x33); // Low byte
     cpu.write_byte(0x1FF, 0x12); // High byte
 
@@ -1975,7 +1975,7 @@ fn test_jsr_rts_round_trip() {
 #[test]
 fn test_rti_restores_pc_and_flags() {
     let mut cpu = create_cpu_with_program(&[0x40]); // RTI
-    // Setup stack with status then PC (RTI pops in reverse order)
+                                                    // Setup stack with status then PC (RTI pops in reverse order)
     cpu.sp = 0xFD; // Stack at 0x100, 0x1FF, 0x1FE
     cpu.write_byte(0x1FE, 0xFF); // Status (popped first)
     cpu.write_byte(0x1FF, 0x34); // PC low
@@ -2164,7 +2164,7 @@ fn test_arr_immediate() {
 #[test]
 fn test_lda_indirect_x_unofficial() {
     // LDA (indirect, X) - 0xA1
-    let mcu = MockMcu::new();
+    let mut mcu = MockMcu::new();
     // Set up indirect pointer at 0x10 pointing to 0x200
     mcu.write_word(0x10, 0x200);
     mcu.write(0x200, 0x42);
@@ -2182,11 +2182,11 @@ fn test_lda_indirect_x_unofficial() {
 #[test]
 fn test_lda_indirect_y_unofficial() {
     // LDA (indirect), Y - 0xB1
-    let mcu = MockMcu::new();
+    let mut mcu = MockMcu::new();
     // Set up indirect pointer at 0x10 pointing to 0x200
     mcu.write_word(0x10, 0x200);
     mcu.write(0x205, 0x42); // 0x200 + Y(5) = 0x205
-    // Program: LDA ($10), Y
+                            // Program: LDA ($10), Y
     mcu.write(0, 0xB1); // opcode
     mcu.write(1, 0x10); // zero page addr
     let mut cpu = Cpu::new(mcu);
@@ -2200,7 +2200,7 @@ fn test_lda_indirect_y_unofficial() {
 #[test]
 fn test_sta_indirect_y_unofficial() {
     // STA (indirect), Y - 0x91
-    let mcu = MockMcu::new();
+    let mut mcu = MockMcu::new();
     // Set up indirect pointer at 0x10 pointing to 0x200
     mcu.write_word(0x10, 0x200);
     // Program: STA ($10), Y
@@ -2218,7 +2218,7 @@ fn test_sta_indirect_y_unofficial() {
 #[test]
 fn test_cmp_indirect_x_unofficial() {
     // CMP (indirect, X) - 0xC1
-    let mcu = MockMcu::new();
+    let mut mcu = MockMcu::new();
     // Set up indirect pointer at 0x10 pointing to 0x200
     mcu.write_word(0x10, 0x200);
     mcu.write(0x200, 0x40);
@@ -2237,7 +2237,7 @@ fn test_cmp_indirect_x_unofficial() {
 #[test]
 fn test_cmp_indirect_y_unofficial() {
     // CMP (indirect), Y - 0xD1
-    let mcu = MockMcu::new();
+    let mut mcu = MockMcu::new();
     // Set up indirect pointer at 0x10 pointing to 0x200
     mcu.write_word(0x10, 0x200);
     mcu.write(0x205, 0x40);
@@ -2256,7 +2256,7 @@ fn test_cmp_indirect_y_unofficial() {
 #[test]
 fn test_sbc_indirect_x_unofficial() {
     // SBC (indirect, X) - 0xE1
-    let mcu = MockMcu::new();
+    let mut mcu = MockMcu::new();
     // Set up indirect pointer at 0x10 pointing to 0x200
     mcu.write_word(0x10, 0x200);
     mcu.write(0x200, 0x10);
@@ -2276,7 +2276,7 @@ fn test_sbc_indirect_x_unofficial() {
 #[test]
 fn test_sbc_indirect_y_unofficial() {
     // SBC (indirect), Y - 0xF1
-    let mcu = MockMcu::new();
+    let mut mcu = MockMcu::new();
     // Set up indirect pointer at 0x10 pointing to 0x200
     mcu.write_word(0x10, 0x200);
     mcu.write(0x205, 0x10);
@@ -2307,7 +2307,7 @@ fn test_lax_immediate() {
 #[test]
 fn test_lax_zero_page() {
     // LAX zero page - 0xA7
-    let mcu = MockMcu::new();
+    let mut mcu = MockMcu::new();
     mcu.write(0x10, 0x42);
     mcu.write(0, 0xA7); // opcode
     mcu.write(1, 0x10); // zero page addr
@@ -2322,7 +2322,7 @@ fn test_lax_zero_page() {
 #[test]
 fn test_sax_zero_page() {
     // SAX zero page - 0x87
-    let mcu = MockMcu::new();
+    let mut mcu = MockMcu::new();
     mcu.write(0, 0x87); // opcode
     mcu.write(1, 0x10); // zero page addr
     let mut cpu = Cpu::new(mcu);
@@ -2337,7 +2337,7 @@ fn test_sax_zero_page() {
 #[test]
 fn test_dcp_zero_page() {
     // DCP zero page - 0xC7
-    let mcu = MockMcu::new();
+    let mut mcu = MockMcu::new();
     mcu.write(0x10, 0x10);
     mcu.write(0, 0xC7); // opcode
     mcu.write(1, 0x10); // zero page addr
@@ -2354,7 +2354,7 @@ fn test_dcp_zero_page() {
 #[test]
 fn test_isc_zero_page() {
     // ISC zero page - 0xE7
-    let mcu = MockMcu::new();
+    let mut mcu = MockMcu::new();
     mcu.write(0x10, 0x0F);
     mcu.write(0, 0xE7); // opcode
     mcu.write(1, 0x10); // zero page addr
@@ -2371,7 +2371,7 @@ fn test_isc_zero_page() {
 #[test]
 fn test_aso_zero_page() {
     // ASO zero page - 0x07
-    let mcu = MockMcu::new();
+    let mut mcu = MockMcu::new();
     mcu.write(0x10, 0x40); // 0b01000000
     mcu.write(0, 0x07); // opcode
     mcu.write(1, 0x10); // zero page addr
@@ -2388,7 +2388,7 @@ fn test_aso_zero_page() {
 #[test]
 fn test_rla_zero_page() {
     // RLA zero page - 0x27
-    let mcu = MockMcu::new();
+    let mut mcu = MockMcu::new();
     mcu.write(0x10, 0x81); // 0b10000001
     mcu.write(0, 0x27); // opcode
     mcu.write(1, 0x10); // zero page addr
@@ -2405,7 +2405,7 @@ fn test_rla_zero_page() {
 #[test]
 fn test_lse_zero_page() {
     // LSE zero page - 0x47
-    let mcu = MockMcu::new();
+    let mut mcu = MockMcu::new();
     mcu.write(0x10, 0x81); // 0b10000001
     mcu.write(0, 0x47); // opcode
     mcu.write(1, 0x10); // zero page addr
@@ -2426,7 +2426,7 @@ fn test_lse_zero_page() {
 #[test]
 fn test_rra_zero_page() {
     // RRA zero page - 0x67
-    let mcu = MockMcu::new();
+    let mut mcu = MockMcu::new();
     mcu.write(0x10, 0x81); // 0b10000001
     mcu.write(0, 0x67); // opcode
     mcu.write(1, 0x10); // zero page addr
@@ -2437,7 +2437,7 @@ fn test_rra_zero_page() {
     execute_next(&mut cpu);
 
     assert_eq!(cpu.mcu().read(0x10), 0xC0); // ROR: (0x81 >> 1) with carry = 0xC0
-    // ADC: 0x05 + 0xC0 + 1(carry)
+                                            // ADC: 0x05 + 0xC0 + 1(carry)
     assert_eq!(cpu.a, 0xC6); // 0x05 + 0xC0 + 1 = 0xC6
 }
 
@@ -2451,14 +2451,14 @@ fn test_sbx_immediate() {
     execute_next(&mut cpu);
 
     assert_eq!(cpu.x, (0x30 & 0x20) - 0x10); // (A & X) - operand
-    // 0x30 & 0x20 = 0x20, 0x20 - 0x10 = 0x10
+                                             // 0x30 & 0x20 = 0x20, 0x20 - 0x10 = 0x10
     assert_eq!(cpu.x, 0x10);
 }
 
 #[test]
 fn test_and_absolute_y() {
     // AND absolute Y - 0x39
-    let mcu = MockMcu::new();
+    let mut mcu = MockMcu::new();
     mcu.write(0x205, 0x0F);
     mcu.write(0, 0x39); // opcode
     mcu.write_word(1, 0x200); // absolute addr
@@ -2474,7 +2474,7 @@ fn test_and_absolute_y() {
 #[test]
 fn test_eor_absolute_y() {
     // EOR absolute Y - 0x59
-    let mcu = MockMcu::new();
+    let mut mcu = MockMcu::new();
     mcu.write(0x205, 0xF0);
     mcu.write(0, 0x59); // opcode
     mcu.write_word(1, 0x200); // absolute addr
@@ -2490,7 +2490,7 @@ fn test_eor_absolute_y() {
 #[test]
 fn test_ora_absolute_y() {
     // ORA absolute Y - 0x19
-    let mcu = MockMcu::new();
+    let mut mcu = MockMcu::new();
     mcu.write(0x205, 0xF0);
     mcu.write(0, 0x19); // opcode
     mcu.write_word(1, 0x200); // absolute addr
@@ -2506,7 +2506,7 @@ fn test_ora_absolute_y() {
 #[test]
 fn test_adc_absolute_y() {
     // ADC absolute Y - 0x79
-    let mcu = MockMcu::new();
+    let mut mcu = MockMcu::new();
     mcu.write(0x205, 0x10);
     mcu.write(0, 0x79); // opcode
     mcu.write_word(1, 0x200); // absolute addr
@@ -2524,7 +2524,7 @@ fn test_adc_absolute_y() {
 #[test]
 fn test_cmp_absolute_y() {
     // CMP absolute Y - 0xD9
-    let mcu = MockMcu::new();
+    let mut mcu = MockMcu::new();
     mcu.write(0x205, 0x40);
     mcu.write(0, 0xD9); // opcode
     mcu.write_word(1, 0x200); // absolute addr
@@ -2540,7 +2540,7 @@ fn test_cmp_absolute_y() {
 #[test]
 fn test_sbc_absolute_y() {
     // SBC absolute Y - 0xF9
-    let mcu = MockMcu::new();
+    let mut mcu = MockMcu::new();
     mcu.write(0x205, 0x10);
     mcu.write(0, 0xF9); // opcode
     mcu.write_word(1, 0x200); // absolute addr
@@ -2557,7 +2557,7 @@ fn test_sbc_absolute_y() {
 #[test]
 fn test_and_absolute_x() {
     // AND absolute X - 0x3D
-    let mcu = MockMcu::new();
+    let mut mcu = MockMcu::new();
     mcu.write(0x205, 0x0F);
     mcu.write(0, 0x3D); // opcode
     mcu.write_word(1, 0x200); // absolute addr
@@ -2573,7 +2573,7 @@ fn test_and_absolute_x() {
 #[test]
 fn test_eor_absolute_x() {
     // EOR absolute X - 0x5D
-    let mcu = MockMcu::new();
+    let mut mcu = MockMcu::new();
     mcu.write(0x205, 0xF0);
     mcu.write(0, 0x5D); // opcode
     mcu.write_word(1, 0x200); // absolute addr
@@ -2589,7 +2589,7 @@ fn test_eor_absolute_x() {
 #[test]
 fn test_ora_absolute_x() {
     // ORA absolute X - 0x1D
-    let mcu = MockMcu::new();
+    let mut mcu = MockMcu::new();
     mcu.write(0x205, 0xF0);
     mcu.write(0, 0x1D); // opcode
     mcu.write_word(1, 0x200); // absolute addr
@@ -2605,7 +2605,7 @@ fn test_ora_absolute_x() {
 #[test]
 fn test_adc_absolute_x() {
     // ADC absolute X - 0x7D
-    let mcu = MockMcu::new();
+    let mut mcu = MockMcu::new();
     mcu.write(0x205, 0x10);
     mcu.write(0, 0x7D); // opcode
     mcu.write_word(1, 0x200); // absolute addr
@@ -2623,7 +2623,7 @@ fn test_adc_absolute_x() {
 #[test]
 fn test_cmp_absolute_x() {
     // CMP absolute X - 0xDD
-    let mcu = MockMcu::new();
+    let mut mcu = MockMcu::new();
     mcu.write(0x205, 0x40);
     mcu.write(0, 0xDD); // opcode
     mcu.write_word(1, 0x200); // absolute addr
@@ -2639,7 +2639,7 @@ fn test_cmp_absolute_x() {
 #[test]
 fn test_sbc_absolute_x() {
     // SBC absolute X - 0xFD
-    let mcu = MockMcu::new();
+    let mut mcu = MockMcu::new();
     mcu.write(0x205, 0x10);
     mcu.write(0, 0xFD); // opcode
     mcu.write_word(1, 0x200); // absolute addr
@@ -2683,7 +2683,7 @@ fn test_hlt_various_opcodes() {
 #[test]
 fn test_lax_indirect_y() {
     // LAX (indirect), Y - 0xB3
-    let mcu = MockMcu::new();
+    let mut mcu = MockMcu::new();
     mcu.write_word(0x10, 0x200);
     mcu.write(0x205, 0x42);
     mcu.write(0, 0xB3); // opcode
@@ -2700,7 +2700,7 @@ fn test_lax_indirect_y() {
 #[test]
 fn test_sax_absolute() {
     // SAX absolute - 0x8F
-    let mcu = MockMcu::new();
+    let mut mcu = MockMcu::new();
     mcu.write(0, 0x8F); // opcode
     mcu.write_word(1, 0x200); // absolute addr
     let mut cpu = Cpu::new(mcu);
@@ -2715,7 +2715,7 @@ fn test_sax_absolute() {
 #[test]
 fn test_sax_indirect_x() {
     // SAX (indirect, X) - 0x83
-    let mcu = MockMcu::new();
+    let mut mcu = MockMcu::new();
     mcu.write_word(0x15, 0x200); // indirect pointer at 0x10 + X(5)
     mcu.write(0, 0x83); // opcode
     mcu.write(1, 0x10); // zero page addr
@@ -2731,7 +2731,7 @@ fn test_sax_indirect_x() {
 #[test]
 fn test_dcp_absolute() {
     // DCP absolute - 0xCF
-    let mcu = MockMcu::new();
+    let mut mcu = MockMcu::new();
     mcu.write(0x200, 0x10);
     mcu.write(0, 0xCF); // opcode
     mcu.write_word(1, 0x200); // absolute addr
@@ -2748,7 +2748,7 @@ fn test_dcp_absolute() {
 #[test]
 fn test_dcp_absolute_x() {
     // DCP absolute X - 0xDF
-    let mcu = MockMcu::new();
+    let mut mcu = MockMcu::new();
     mcu.write(0x205, 0x10);
     mcu.write(0, 0xDF); // opcode
     mcu.write_word(1, 0x200); // absolute addr
@@ -2764,7 +2764,7 @@ fn test_dcp_absolute_x() {
 #[test]
 fn test_dcp_absolute_y() {
     // DCP absolute Y - 0xDB
-    let mcu = MockMcu::new();
+    let mut mcu = MockMcu::new();
     mcu.write(0x205, 0x10);
     mcu.write(0, 0xDB); // opcode
     mcu.write_word(1, 0x200); // absolute addr
@@ -2780,7 +2780,7 @@ fn test_dcp_absolute_y() {
 #[test]
 fn test_isc_absolute() {
     // ISC absolute - 0xEF
-    let mcu = MockMcu::new();
+    let mut mcu = MockMcu::new();
     mcu.write(0x200, 0x0F);
     mcu.write(0, 0xEF); // opcode
     mcu.write_word(1, 0x200); // absolute addr
@@ -2797,7 +2797,7 @@ fn test_isc_absolute() {
 #[test]
 fn test_isc_absolute_x() {
     // ISC absolute X - 0xFF
-    let mcu = MockMcu::new();
+    let mut mcu = MockMcu::new();
     mcu.write(0x205, 0x0F);
     mcu.write(0, 0xFF); // opcode
     mcu.write_word(1, 0x200); // absolute addr
@@ -2815,7 +2815,7 @@ fn test_isc_absolute_x() {
 #[test]
 fn test_isc_absolute_y() {
     // ISC absolute Y - 0xFB
-    let mcu = MockMcu::new();
+    let mut mcu = MockMcu::new();
     mcu.write(0x205, 0x0F);
     mcu.write(0, 0xFB); // opcode
     mcu.write_word(1, 0x200); // absolute addr
@@ -2833,7 +2833,7 @@ fn test_isc_absolute_y() {
 #[test]
 fn test_aso_absolute() {
     // ASO absolute - 0x0F
-    let mcu = MockMcu::new();
+    let mut mcu = MockMcu::new();
     mcu.write(0x200, 0x40); // 0b01000000
     mcu.write(0, 0x0F); // opcode
     mcu.write_word(1, 0x200); // absolute addr
@@ -2849,7 +2849,7 @@ fn test_aso_absolute() {
 #[test]
 fn test_aso_absolute_x() {
     // ASO absolute X - 0x1F
-    let mcu = MockMcu::new();
+    let mut mcu = MockMcu::new();
     mcu.write(0x205, 0x40);
     mcu.write(0, 0x1F); // opcode
     mcu.write_word(1, 0x200); // absolute addr
@@ -2866,7 +2866,7 @@ fn test_aso_absolute_x() {
 #[test]
 fn test_aso_absolute_y() {
     // ASO absolute Y - 0x1B
-    let mcu = MockMcu::new();
+    let mut mcu = MockMcu::new();
     mcu.write(0x205, 0x40);
     mcu.write(0, 0x1B); // opcode
     mcu.write_word(1, 0x200); // absolute addr
@@ -2883,7 +2883,7 @@ fn test_aso_absolute_y() {
 #[test]
 fn test_rla_absolute() {
     // RLA absolute - 0x2F
-    let mcu = MockMcu::new();
+    let mut mcu = MockMcu::new();
     mcu.write(0x200, 0x81);
     mcu.write(0, 0x2F); // opcode
     mcu.write_word(1, 0x200); // absolute addr
@@ -2900,7 +2900,7 @@ fn test_rla_absolute() {
 #[test]
 fn test_rla_absolute_x() {
     // RLA absolute X - 0x3F
-    let mcu = MockMcu::new();
+    let mut mcu = MockMcu::new();
     mcu.write(0x205, 0x81);
     mcu.write(0, 0x3F); // opcode
     mcu.write_word(1, 0x200); // absolute addr
@@ -2918,7 +2918,7 @@ fn test_rla_absolute_x() {
 #[test]
 fn test_rla_absolute_y() {
     // RLA absolute Y - 0x3B
-    let mcu = MockMcu::new();
+    let mut mcu = MockMcu::new();
     mcu.write(0x205, 0x81);
     mcu.write(0, 0x3B); // opcode
     mcu.write_word(1, 0x200); // absolute addr
@@ -2936,7 +2936,7 @@ fn test_rla_absolute_y() {
 #[test]
 fn test_rra_absolute() {
     // RRA absolute - 0x6F
-    let mcu = MockMcu::new();
+    let mut mcu = MockMcu::new();
     mcu.write(0x200, 0x81);
     mcu.write(0, 0x6F); // opcode
     mcu.write_word(1, 0x200); // absolute addr
@@ -2953,7 +2953,7 @@ fn test_rra_absolute() {
 #[test]
 fn test_rra_absolute_x() {
     // RRA absolute X - 0x7F
-    let mcu = MockMcu::new();
+    let mut mcu = MockMcu::new();
     mcu.write(0x205, 0x81);
     mcu.write(0, 0x7F); // opcode
     mcu.write_word(1, 0x200); // absolute addr
@@ -2971,7 +2971,7 @@ fn test_rra_absolute_x() {
 #[test]
 fn test_rra_absolute_y() {
     // RRA absolute Y - 0x7B
-    let mcu = MockMcu::new();
+    let mut mcu = MockMcu::new();
     mcu.write(0x205, 0x81);
     mcu.write(0, 0x7B); // opcode
     mcu.write_word(1, 0x200); // absolute addr
@@ -3130,7 +3130,7 @@ fn test_sbx_with_borrow() {
 #[test]
 fn test_lax_zero_page_y() {
     // LAX zero page Y - 0xB7
-    let mcu = MockMcu::new();
+    let mut mcu = MockMcu::new();
     mcu.write(0x15, 0x42);
     mcu.write(0, 0xB7); // opcode
     mcu.write(1, 0x10); // zero page addr
@@ -3146,7 +3146,7 @@ fn test_lax_zero_page_y() {
 #[test]
 fn test_lax_absolute() {
     // LAX absolute - 0xAF
-    let mcu = MockMcu::new();
+    let mut mcu = MockMcu::new();
     mcu.write(0x200, 0x42);
     mcu.write(0, 0xAF); // opcode
     mcu.write_word(1, 0x200); // absolute addr
@@ -3161,7 +3161,7 @@ fn test_lax_absolute() {
 #[test]
 fn test_lax_absolute_y() {
     // LAX absolute Y - 0xBF
-    let mcu = MockMcu::new();
+    let mut mcu = MockMcu::new();
     mcu.write(0x205, 0x42);
     mcu.write(0, 0xBF); // opcode
     mcu.write_word(1, 0x200); // absolute addr
@@ -3219,8 +3219,8 @@ fn test_nmi_pushes_correct_values() {
     // Verify NMI pushes correct values to stack
     let mut cpu = create_cpu();
     // Set up NMI vector (write as little-endian bytes)
-    cpu.mcu().write(0xFFFA, 0x00);
-    cpu.mcu().write(0xFFFB, 0x20);
+    cpu.mcu_mut().write(0xFFFA, 0x00);
+    cpu.mcu_mut().write(0xFFFB, 0x20);
     cpu.pc = 0x1000;
     cpu.set_flag(Flag::Carry, true);
     cpu.sp = 0xFF;
@@ -3240,8 +3240,8 @@ fn test_irq_pushes_correct_values() {
     // Verify IRQ pushes correct PC and status to stack
     let mut cpu = create_cpu();
     // Set up IRQ vector
-    cpu.mcu().write(0xFFFE, 0x00);
-    cpu.mcu().write(0xFFFF, 0x30);
+    cpu.mcu_mut().write(0xFFFE, 0x00);
+    cpu.mcu_mut().write(0xFFFF, 0x30);
     cpu.pc = 0x1000;
     cpu.set_flag(Flag::Carry, true);
     cpu.sp = 0xFF;
@@ -3259,7 +3259,7 @@ fn test_irq_pushes_correct_values() {
 #[test]
 fn test_brk_pushes_b_flag() {
     // BRK should set B flag and push status with B flag
-    let mcu = MockMcu::new();
+    let mut mcu = MockMcu::new();
     mcu.write(0xFFFE, 0x00);
     mcu.write(0xFFFF, 0x40);
     mcu.write(0, 0x00); // BRK
@@ -3280,7 +3280,7 @@ fn test_brk_pushes_b_flag() {
 #[test]
 fn test_rti_clears_b_flag() {
     // RTI should restore status and B flag should be clear
-    let mcu = MockMcu::new();
+    let mut mcu = MockMcu::new();
     mcu.write(0, 0x40); // RTI
     let mut cpu = Cpu::new(mcu);
     cpu.sp = 0xFC;
@@ -3299,7 +3299,7 @@ fn test_rti_clears_b_flag() {
 #[test]
 fn test_transfer_no_touch_flags_zero_page() {
     // Transfer from zero page without touching flags (0xA4 - LDY zero page)
-    let mcu = MockMcu::new();
+    let mut mcu = MockMcu::new();
     mcu.write(0x10, 0x42);
     mcu.write(0, 0xA4); // LDY $10
     mcu.write(1, 0x10);
@@ -3316,7 +3316,7 @@ fn test_transfer_no_touch_flags_zero_page() {
 #[test]
 fn test_dcp_indirect_x() {
     // DCP (indirect, X) - 0xC3
-    let mcu = MockMcu::new();
+    let mut mcu = MockMcu::new();
     mcu.write_word(0x15, 0x200);
     mcu.write(0x200, 0x10);
     mcu.write(0, 0xC3); // DCP ($10, X)
@@ -3334,7 +3334,7 @@ fn test_dcp_indirect_x() {
 #[test]
 fn test_dcp_indirect_y() {
     // DCP (indirect), Y - 0xD3
-    let mcu = MockMcu::new();
+    let mut mcu = MockMcu::new();
     mcu.write_word(0x10, 0x200);
     mcu.write(0x205, 0x10);
     mcu.write(0, 0xD3); // DCP ($10), Y
@@ -3351,7 +3351,7 @@ fn test_dcp_indirect_y() {
 #[test]
 fn test_isc_indirect_x() {
     // ISC (indirect, X) - 0xE3
-    let mcu = MockMcu::new();
+    let mut mcu = MockMcu::new();
     mcu.write_word(0x15, 0x200);
     mcu.write(0x200, 0x0F);
     mcu.write(0, 0xE3); // ISC ($10, X)
@@ -3370,7 +3370,7 @@ fn test_isc_indirect_x() {
 #[test]
 fn test_isc_indirect_y() {
     // ISC (indirect), Y - 0xF3
-    let mcu = MockMcu::new();
+    let mut mcu = MockMcu::new();
     mcu.write_word(0x10, 0x200);
     mcu.write(0x205, 0x0F);
     mcu.write(0, 0xF3); // ISC ($10), Y
@@ -3389,7 +3389,7 @@ fn test_isc_indirect_y() {
 #[test]
 fn test_aso_indirect_x() {
     // ASO (indirect, X) - 0x03
-    let mcu = MockMcu::new();
+    let mut mcu = MockMcu::new();
     mcu.write_word(0x15, 0x200);
     mcu.write(0x200, 0x40);
     mcu.write(0, 0x03); // ASO ($10, X)
@@ -3407,7 +3407,7 @@ fn test_aso_indirect_x() {
 #[test]
 fn test_aso_indirect_y() {
     // ASO (indirect), Y - 0x13
-    let mcu = MockMcu::new();
+    let mut mcu = MockMcu::new();
     mcu.write_word(0x10, 0x200);
     mcu.write(0x205, 0x40);
     mcu.write(0, 0x13); // ASO ($10), Y
@@ -3425,7 +3425,7 @@ fn test_aso_indirect_y() {
 #[test]
 fn test_rla_indirect_x() {
     // RLA (indirect, X) - 0x23
-    let mcu = MockMcu::new();
+    let mut mcu = MockMcu::new();
     mcu.write_word(0x15, 0x200);
     mcu.write(0x200, 0x81);
     mcu.write(0, 0x23); // RLA ($10, X)
@@ -3444,7 +3444,7 @@ fn test_rla_indirect_x() {
 #[test]
 fn test_rla_indirect_y() {
     // RLA (indirect), Y - 0x33
-    let mcu = MockMcu::new();
+    let mut mcu = MockMcu::new();
     mcu.write_word(0x10, 0x200);
     mcu.write(0x205, 0x81);
     mcu.write(0, 0x33); // RLA ($10), Y
@@ -3463,7 +3463,7 @@ fn test_rla_indirect_y() {
 #[test]
 fn test_lse_indirect_x() {
     // LSE (indirect, X) - 0x43
-    let mcu = MockMcu::new();
+    let mut mcu = MockMcu::new();
     mcu.write_word(0x15, 0x200);
     mcu.write(0x200, 0x81);
     mcu.write(0, 0x43); // LSE ($10, X)
@@ -3482,7 +3482,7 @@ fn test_lse_indirect_x() {
 #[test]
 fn test_lse_indirect_y() {
     // LSE (indirect), Y - 0x53
-    let mcu = MockMcu::new();
+    let mut mcu = MockMcu::new();
     mcu.write_word(0x10, 0x200);
     mcu.write(0x205, 0x81);
     mcu.write(0, 0x53); // LSE ($10), Y
@@ -3501,7 +3501,7 @@ fn test_lse_indirect_y() {
 #[test]
 fn test_rra_indirect_x() {
     // RRA (indirect, X) - 0x63
-    let mcu = MockMcu::new();
+    let mut mcu = MockMcu::new();
     mcu.write_word(0x15, 0x200);
     mcu.write(0x200, 0x81);
     mcu.write(0, 0x63); // RRA ($10, X)
@@ -3520,7 +3520,7 @@ fn test_rra_indirect_x() {
 #[test]
 fn test_rra_indirect_y() {
     // RRA (indirect), Y - 0x73
-    let mcu = MockMcu::new();
+    let mut mcu = MockMcu::new();
     mcu.write_word(0x10, 0x200);
     mcu.write(0x205, 0x81);
     mcu.write(0, 0x73); // RRA ($10), Y
@@ -3539,7 +3539,7 @@ fn test_rra_indirect_y() {
 #[test]
 fn test_dcp_zero_page_x() {
     // DCP zero page X - 0xD7
-    let mcu = MockMcu::new();
+    let mut mcu = MockMcu::new();
     mcu.write(0x15, 0x10);
     mcu.write(0, 0xD7); // DCP $10, X
     mcu.write(1, 0x10);
@@ -3556,7 +3556,7 @@ fn test_dcp_zero_page_x() {
 #[test]
 fn test_isc_zero_page_x() {
     // ISC zero page X - 0xF7
-    let mcu = MockMcu::new();
+    let mut mcu = MockMcu::new();
     mcu.write(0x15, 0x0F);
     mcu.write(0, 0xF7); // ISC $10, X
     mcu.write(1, 0x10);
@@ -3574,7 +3574,7 @@ fn test_isc_zero_page_x() {
 #[test]
 fn test_aso_zero_page_x() {
     // ASO zero page X - 0x17
-    let mcu = MockMcu::new();
+    let mut mcu = MockMcu::new();
     mcu.write(0x15, 0x40);
     mcu.write(0, 0x17); // ASO $10, X
     mcu.write(1, 0x10);
@@ -3591,7 +3591,7 @@ fn test_aso_zero_page_x() {
 #[test]
 fn test_rla_zero_page_x() {
     // RLA zero page X - 0x37
-    let mcu = MockMcu::new();
+    let mut mcu = MockMcu::new();
     mcu.write(0x15, 0x81);
     mcu.write(0, 0x37); // RLA $10, X
     mcu.write(1, 0x10);
@@ -3609,7 +3609,7 @@ fn test_rla_zero_page_x() {
 #[test]
 fn test_lse_zero_page_x() {
     // LSE zero page X - 0x57
-    let mcu = MockMcu::new();
+    let mut mcu = MockMcu::new();
     mcu.write(0x15, 0x81);
     mcu.write(0, 0x57); // LSE $10, X
     mcu.write(1, 0x10);
@@ -3627,7 +3627,7 @@ fn test_lse_zero_page_x() {
 #[test]
 fn test_rra_zero_page_x() {
     // RRA zero page X - 0x77
-    let mcu = MockMcu::new();
+    let mut mcu = MockMcu::new();
     mcu.write(0x15, 0x81);
     mcu.write(0, 0x77); // RRA $10, X
     mcu.write(1, 0x10);
@@ -3668,16 +3668,16 @@ fn test_adc_all_flags() {
     assert_eq!(cpu.a, 0x00); // 0xFF + 0x00 + 1 = 0x100, truncated to 0x00
     assert!(cpu.flag(Flag::Zero)); // result is zero
     assert!(cpu.flag(Flag::Carry)); // overflow occurred
-    // Overflow: -1 + 0 + 1 = 0, which is within range, so no signed overflow
+                                    // Overflow: -1 + 0 + 1 = 0, which is within range, so no signed overflow
     assert!(!cpu.flag(Flag::Overflow)); // no signed overflow
 }
 
 #[test]
 fn test_read_zero_page_word_edge_cases() {
     // Test zero page word reading at boundary
-    let cpu = create_cpu();
-    cpu.mcu().write(0xFF, 0x34);
-    cpu.mcu().write(0x00, 0x12);
+    let mut cpu = create_cpu();
+    cpu.mcu_mut().write(0xFF, 0x34);
+    cpu.mcu_mut().write(0x00, 0x12);
 
     assert_eq!(cpu.read_zero_page_word(0xFF), 0x1234); // wraps to 0x00
 }
@@ -3700,8 +3700,8 @@ fn test_stack_wrap_around() {
     cpu.push_stack(0x42);
 
     assert_eq!(cpu.sp, 0xFF); // wraps to 0xFF after decrement
-    // push_stack writes to current SP, then decrements
-    // So with SP=0x00, it writes to 0x100, then SP becomes 0xFF
+                              // push_stack writes to current SP, then decrements
+                              // So with SP=0x00, it writes to 0x100, then SP becomes 0xFF
     assert_eq!(cpu.mcu().read(0x0100), 0x42);
 }
 
@@ -3710,7 +3710,7 @@ fn test_pop_stack_wrap_around() {
     // Test stack pointer wrap around on pop
     let mut cpu = create_cpu();
     cpu.sp = 0xFF;
-    cpu.mcu().write(0x0100, 0x42);
+    cpu.mcu_mut().write(0x0100, 0x42);
     let value = cpu.pop_stack();
 
     // pop_stack increments SP first, then reads
@@ -3761,7 +3761,7 @@ fn test_pop_stack_into_pc() {
 #[test]
 fn test_rts_adds_one_to_pc() {
     // Verify that RTS adds 1 to the pulled PC value
-    let mcu = MockMcu::new();
+    let mut mcu = MockMcu::new();
     mcu.write(0, 0x60); // RTS
     let mut cpu = Cpu::new(mcu);
     cpu.sp = 0xFD;
@@ -3845,7 +3845,7 @@ fn test_is_cross_page() {
 #[test]
 fn test_transfer_no_touch_flags_indirect() {
     // Test LDA (indirect, X) doesn't touch flags in a specific way
-    let mcu = MockMcu::new();
+    let mut mcu = MockMcu::new();
     mcu.write_word(0x15, 0x200);
     mcu.write(0x200, 0x00);
     mcu.write(0, 0xA1); // LDA ($10, X)

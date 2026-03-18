@@ -10,7 +10,7 @@ pub use ram::RamMcu;
 /// Make it easy to implement memory mapped devices..
 pub trait Mcu {
     fn read(&self, address: u16) -> u8;
-    fn write(&self, address: u16, value: u8);
+    fn write(&mut self, address: u16, value: u8);
 
     fn request_irq(&self) -> bool {
         panic!("request_irq() not implemented");
@@ -39,14 +39,14 @@ mod tests {
             *self.data.borrow()
         }
 
-        fn write(&self, _address: u16, value: u8) {
+        fn write(&mut self, _address: u16, value: u8) {
             *self.data.borrow_mut() = value;
         }
     }
 
     #[test]
     fn test_read_write() {
-        let mcu = MockMcu::new();
+        let mut mcu = MockMcu::new();
         mcu.write(0x0000, 0x42);
         assert_eq!(mcu.read(0x0000), 0x42);
     }

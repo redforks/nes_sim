@@ -33,7 +33,7 @@ impl<const SIZE: usize> Mcu for RamMcu<SIZE> {
         self.ram.borrow()[self.to_index(address)]
     }
 
-    fn write(&self, address: u16, value: u8) {
+    fn write(&mut self, address: u16, value: u8) {
         self.ram.borrow_mut()[self.to_index(address)] = value;
     }
 
@@ -58,13 +58,13 @@ mod tests {
 
     #[test]
     fn start_from() {
-        let mcu = RamMcu::start_from(0x8000, [0; 0x8000]);
+        let mut mcu = RamMcu::start_from(0x8000, [0; 0x8000]);
         mcu.write(0x8000, 0x12);
         assert_eq!(mcu.read(0x8000), 0x12);
         mcu.write(0xfffc, 0x12);
         assert_eq!(mcu.read(0xfffc), 0x12);
 
-        let mcu = RamMcu::new([0; 0x100]);
+        let mut mcu = RamMcu::new([0; 0x100]);
         mcu.write(0x80, 0x12);
         assert_eq!(mcu.read(0x80), 0x12);
     }
@@ -95,7 +95,7 @@ mod tests {
 
     #[test]
     fn test_to_index() {
-        let mcu = RamMcu::start_from(0x8000, [0; 0x100]);
+        let mut mcu = RamMcu::start_from(0x8000, [0; 0x100]);
         // to_index is private, but we can test it indirectly through read/write
         mcu.write(0x8000, 0xAB);
         assert_eq!(mcu.read(0x8000), 0xAB);
