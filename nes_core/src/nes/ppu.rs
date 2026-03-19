@@ -58,13 +58,22 @@ fn apply_effects(
 #[derive(Copy, Clone)]
 #[bitfield]
 pub struct PpuCtrl {
-    pub nmi_enable: bool,
-    pub ppu_master: bool,
-    pub sprite_size: bool,
-    pub background_pattern_table: bool,
-    pub sprite_pattern_table: bool,
-    pub increment_mode: bool,
+    // Field declaration is LSB-first (first declared field maps to bit 0).
+    // Arrange fields so they match the hardware PPUCTRL layout (bits 0..7):
+    // bits 0-1: name_table_select
+    // bit 2: increment_mode
+    // bit 3: sprite_pattern_table
+    // bit 4: background_pattern_table
+    // bit 5: sprite_size
+    // bit 6: ppu_master
+    // bit 7: nmi_enable
     pub name_table_select: B2,
+    pub increment_mode: bool,
+    pub sprite_pattern_table: bool,
+    pub background_pattern_table: bool,
+    pub sprite_size: bool,
+    pub ppu_master: bool,
+    pub nmi_enable: bool,
 }
 to_from_u8!(PpuCtrl);
 
@@ -97,11 +106,11 @@ impl Default for PpuMask {
 #[derive(Copy, Clone)]
 #[bitfield]
 pub struct PpuStatus {
-    pub v_blank: bool,
-    pub sprite_zero_hit: bool,
-    pub sprite_overflow: bool,
     #[skip]
     __: B5,
+    pub sprite_overflow: bool,
+    pub sprite_zero_hit: bool,
+    pub v_blank: bool,
 }
 to_from_u8!(PpuStatus);
 
@@ -191,7 +200,11 @@ impl Palette {
 
         // Clamp to valid range [0, 31]
         let addr = addr as usize;
-        if addr >= 32 { 31 } else { addr }
+        if addr >= 32 {
+            31
+        } else {
+            addr
+        }
     }
 
     fn _get_color_idx(&self, start: usize, palette_idx: u8, idx: u8) -> Pixel {

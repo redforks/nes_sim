@@ -24,14 +24,7 @@ fn main() {
 
     let image = image::load_image(&f).unwrap();
     let mut machine = image.create_machine(quiet);
-    match image {
-        Image::Bin(_) => {
-            exec(&mut machine, |m| m.tick());
-        }
-        Image::INes(_) => {
-            exec(&mut machine, |m| m.tick());
-        }
-    }
+    exec(&mut machine, |m| m.tick());
 }
 
 fn exec<F>(m: &mut MachineWrapper, f: F)
