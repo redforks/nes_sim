@@ -5,6 +5,89 @@ fn new_test_ppu_and_pattern() -> (Ppu, [u8; 8192]) {
 }
 
 #[test]
+fn repr_ppu_status() {
+    let status: PpuStatus = 0b1010_0000.into();
+    assert!(status.v_blank());
+    assert!(!status.sprite_zero_hit());
+    assert!(status.sprite_overflow());
+}
+
+#[test]
+fn repr_ppu_ctrl() {
+    // Test with all bits set to 1 (0b1111_1111)
+    // After reversing bit order in the struct, fields map from MSB->LSB.
+    let ctrl: PpuCtrl = 0b1111_1111.into();
+    assert!(ctrl.name_table_select() == 0x3); // bits 7-6
+    assert!(ctrl.increment_mode()); // bit 5
+    assert!(ctrl.sprite_pattern_table()); // bit 4
+    assert!(ctrl.background_pattern_table()); // bit 3
+    assert!(ctrl.sprite_size()); // bit 2
+    assert!(ctrl.ppu_master()); // bit 1
+    assert!(ctrl.nmi_enable()); // bit 0
+
+    // Test with pattern 0b0101_1100 (0x5C)
+    // Bits (from MSB to LSB): 0 1 0 1 1 1 0 0
+    // According to PPUCTRL (bit7..bit0):
+    // bit7=nmi_enable=0, bit6=ppu_master=1, bit5=sprite_size=0,
+    // bit4=background_pattern_table=1, bit3=sprite_pattern_table=1,
+    // bit2=increment_mode=1, bits1-0=name_table_select=0
+    let ctrl: PpuCtrl = 0b0101_1100.into();
+    assert_eq!(ctrl.name_table_select(), 0x0);
+    assert!(ctrl.increment_mode());
+    assert!(ctrl.sprite_pattern_table());
+    assert!(ctrl.background_pattern_table());
+    assert!(!ctrl.sprite_size());
+    assert!(ctrl.ppu_master());
+    assert!(!ctrl.nmi_enable());
+
+    // Test with all bits cleared
+    let ctrl: PpuCtrl = 0b0000_0000.into();
+    assert!(!ctrl.nmi_enable());
+    assert!(!ctrl.ppu_master());
+    assert!(!ctrl.sprite_size());
+    assert!(!ctrl.background_pattern_table());
+    assert!(!ctrl.sprite_pattern_table());
+    assert!(!ctrl.increment_mode());
+    assert_eq!(ctrl.name_table_select(), 0x0);
+}
+
+#[test]
+fn repr_ppu_mask() {
+    // Test with all bits set to 1
+    let mask: PpuMask = 0b1111_1111.into();
+    assert!(mask.grayscale());
+    assert!(mask.background_left_enabled());
+    assert!(mask.sprite_left_enabled());
+    assert!(mask.background_enabled());
+    assert!(mask.sprite_enabled());
+    assert!(mask.red_tint());
+    assert!(mask.green_tint());
+    assert!(mask.blue_tint());
+
+    // Test with specific bits set (0b1010_1010)
+    let mask: PpuMask = 0b1010_1010.into();
+    assert!(!mask.grayscale()); // bit 0
+    assert!(mask.background_left_enabled()); // bit 1
+    assert!(!mask.sprite_left_enabled()); // bit 2
+    assert!(mask.background_enabled()); // bit 3
+    assert!(!mask.sprite_enabled()); // bit 4
+    assert!(mask.red_tint()); // bit 5
+    assert!(!mask.green_tint()); // bit 6
+    assert!(mask.blue_tint()); // bit 7
+
+    // Test with all bits cleared
+    let mask: PpuMask = 0b0000_0000.into();
+    assert!(!mask.grayscale());
+    assert!(!mask.background_left_enabled());
+    assert!(!mask.sprite_left_enabled());
+    assert!(!mask.background_enabled());
+    assert!(!mask.sprite_enabled());
+    assert!(!mask.red_tint());
+    assert!(!mask.green_tint());
+    assert!(!mask.blue_tint());
+}
+
+#[test]
 fn palette_read_write() {
     let mut p = Palette::default();
     for i in 0..0x20 {
@@ -224,31 +307,6 @@ fn test_ppu_ctrl_to_from_u8() {
     assert!(ctrl2.sprite_pattern_table());
     assert!(ctrl2.increment_mode());
     assert_eq!(ctrl2.name_table_select(), 3);
-}
-
-#[test]
-fn test_ppu_mask_to_from_u8() {
-    let mask = PpuMask::new()
-        .with_blue_tint(true)
-        .with_green_tint(true)
-        .with_red_tint(true)
-        .with_sprite_enabled(true)
-        .with_background_enabled(true)
-        .with_sprite_left_enabled(true)
-        .with_background_left_enabled(true)
-        .with_grayscale(true);
-
-    let byte: u8 = mask.into();
-    let mask2: PpuMask = byte.into();
-
-    assert!(mask2.blue_tint());
-    assert!(mask2.green_tint());
-    assert!(mask2.red_tint());
-    assert!(mask2.sprite_enabled());
-    assert!(mask2.background_enabled());
-    assert!(mask2.sprite_left_enabled());
-    assert!(mask2.background_left_enabled());
-    assert!(mask2.grayscale());
 }
 
 #[test]

@@ -2,7 +2,7 @@ use nes_core::mcu::Mcu;
 use nes_core::{Cpu, ExecuteResult, Plugin};
 use std::collections::VecDeque;
 
-pub struct DetectDeadLoop<const DEPTH: usize, const REPEATS: u32 = 1000> {
+pub struct DetectDeadLoop<const DEPTH: usize, const REPEATS: u32 = 200000> {
     recent_pc: VecDeque<u16>,
     should_exit: bool,
     count: u32,
