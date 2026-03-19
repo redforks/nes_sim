@@ -12,9 +12,9 @@ use std::cell::{RefCell, UnsafeCell};
 struct ControlFlags {
     #[skip]
     _not_used: B3,
-    pub chr_in_4k: bool,
-    pub prg_mode: B2,
     pub mirroring: B2,
+    pub prg_mode: B2,
+    pub chr_in_4k: bool,
 }
 to_from_u8!(ControlFlags);
 
