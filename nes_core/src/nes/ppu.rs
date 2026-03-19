@@ -405,7 +405,9 @@ impl Ppu {
     /// Read from PPU registers or VRAM/palette data
     /// Returns the value read from the given address
     pub fn read(&mut self, pattern: &[u8], address: u16) -> u8 {
-        match address {
+        // PPU registers are mirrored every 8 bytes in range $2000-$3FFF
+        let reg = 0x2000 + ((address - 0x2000) % 8);
+        match reg {
             // PPUSTATUS
             0x2002 => {
                 let status = self.read_status();
@@ -422,7 +424,9 @@ impl Ppu {
 
     /// Write to PPU registers
     pub fn write(&mut self, address: u16, value: u8) {
-        match address {
+        // PPU registers are mirrored every 8 bytes in range $2000-$3FFF
+        let reg = 0x2000 + ((address - 0x2000) % 8);
+        match reg {
             // PPUCTRL
             0x2000 => {
                 self.set_control_flags(value.into());
