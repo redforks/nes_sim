@@ -1,4 +1,4 @@
-use crate::{ines::INesFile, machine::Machine, nes::NesMcu, EmptyPlugin, ExecuteResult, Plugin};
+use crate::{EmptyPlugin, ExecuteResult, Plugin, ines::INesFile, machine::Machine, nes::NesMcu};
 
 /// Safety limit: maximum CPU instruction ticks per `process_frame()` call.
 /// Two full frames worth of ticks; prevents an infinite loop if VBlank never fires
@@ -101,14 +101,6 @@ impl<P: Plugin<NesMcu>> NesMachine<P> {
 
     pub fn reset(&mut self) {
         self.machine.reset()
-    }
-
-    pub fn set_pc(&mut self, pc: u16) {
-        self.machine.set_pc(pc)
-    }
-
-    pub fn mcu(&self) -> &NesMcu {
-        self.machine.mcu()
     }
 }
 
