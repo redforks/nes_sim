@@ -14,16 +14,34 @@ struct Args {
 
     #[arg(short, long)]
     quiet: bool,
+    /// Exit if more than this many instructions executed (0 = disabled)
+    #[arg(long = "max-instructions", default_value_t = 0)]
+    max_instructions: u64,
+    /// Set the CPU start PC after reset (hex with 0x prefix or decimal)
+    #[arg(long = "start-pc")]
+    start_pc: Option<String>,
 }
 
 fn main() {
-    let args = Args::parse();
-    let Args { f, quiet, .. } = args;
+    let Args { f, quiet, max_instructions, start_pc } = Args::parse();
 
     env_logger::init();
 
     let image = image::load_image(&f).unwrap();
-    let mut machine = image.create_machine(quiet);
+
+    let start_pc = match start_pc {
+        Some(s) => {
+            let parsed = if s.starts_with("0x") || s.starts_with("0X") {
+                u16::from_str_radix(&s[2..], 16)
+            } else {
+                s.parse::<u16>()
+            };
+            Some(parsed.expect("invalid --start-pc value"))
+        }
+        None => None,
+    };
+
+    let mut machine = image.create_machine(quiet, start_pc, max_instructions);
     exec(&mut machine, |m| m.tick());
 }
 
