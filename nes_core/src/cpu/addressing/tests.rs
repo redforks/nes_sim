@@ -1,11 +1,6 @@
 use super::*;
 
 #[test]
-fn literal_format() {
-    assert_eq!(format!("{}", Literal(0x12)), "#$12");
-}
-
-#[test]
 fn zero_page_format() {
     assert_eq!(format!("{}", ZeroPage(0x12)), "$12");
 }

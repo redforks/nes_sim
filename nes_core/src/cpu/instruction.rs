@@ -1,5 +1,5 @@
 use super::addressing::Address;
-use super::{extra_tick_if_cross_page, Cpu, Flag};
+use super::{Cpu, Flag, extra_tick_if_cross_page};
 use crate::cpu::addressing::{Addressing, BranchAddressing, FlagAddr};
 use crate::mcu::Mcu;
 
@@ -12,12 +12,11 @@ pub enum Instruction {
     Ora(Addressing),
     Eor(Addressing),
 
-    // Immediate/accumulator unofficial ops (store immediates as raw u8 to keep
-    // pattern matching exhaustive and avoid Addressing-wide matches)
-    Anc(u8),
-    Alr(u8),
-    Arr(u8),
-    Sbx(u8),
+    // Immediate/accumulator unofficial ops
+    Anc(Addressing),
+    Alr(Addressing),
+    Arr(Addressing),
+    Sbx(Addressing),
 
     // Shifts/rotates
     Asl(Addressing),
@@ -108,69 +107,73 @@ impl Instruction {
     pub fn exec<M: Mcu>(self, cpu: &mut Cpu<M>) -> u8 {
         match self {
             Instruction::Adc(addressing) => {
-                let (val, ticks) = addressing.read(cpu);
-                cpu.adc(val);
-                1 + ticks
+                let (v, cycles) = addressing.read(cpu);
+                cpu.adc(v);
+                1 + cycles
             }
             Instruction::Sbc(addressing) => {
-                let (val, ticks) = addressing.read(cpu);
-                cpu.adc(!val);
-                1 + ticks
+                let (v, cycles) = addressing.read(cpu);
+                cpu.adc(!v);
+                1 + cycles
             }
             Instruction::And(addressing) => {
-                let (val, ticks) = addressing.read(cpu);
-                cpu.a &= val;
+                let (v, cycles) = addressing.read(cpu);
+                cpu.a &= v;
                 cpu.update_negative_flag(cpu.a);
                 cpu.update_zero_flag(cpu.a);
-                1 + ticks
+                1 + cycles
             }
             Instruction::Ora(addressing) => {
-                let (val, ticks) = addressing.read(cpu);
-                cpu.a |= val;
+                let (v, cycles) = addressing.read(cpu);
+                cpu.a |= v;
                 cpu.update_negative_flag(cpu.a);
                 cpu.update_zero_flag(cpu.a);
-                1 + ticks
+                1 + cycles
             }
             Instruction::Eor(addressing) => {
-                let (val, ticks) = addressing.read(cpu);
-                cpu.a ^= val;
+                let (v, cycles) = addressing.read(cpu);
+                cpu.a ^= v;
                 cpu.update_negative_flag(cpu.a);
                 cpu.update_zero_flag(cpu.a);
-                1 + ticks
+                1 + cycles
             }
 
-            Instruction::Anc(v) => {
+            Instruction::Anc(addressing) => {
+                let (v, cycles) = addressing.read(cpu);
                 cpu.a &= v;
                 cpu.update_negative_flag(cpu.a);
                 cpu.update_zero_flag(cpu.a);
                 cpu.set_flag(Flag::Carry, cpu.a & 0x80 != 0);
-                2
+                2 + cycles
             }
-            Instruction::Alr(v) => {
+            Instruction::Alr(addressing) => {
+                let (v, cycles) = addressing.read(cpu);
                 cpu.a &= v;
                 cpu.set_flag(Flag::Carry, cpu.a & 0x01 != 0);
                 cpu.a >>= 1;
                 cpu.update_zero_flag(cpu.a);
                 cpu.set_flag(Flag::Negative, false);
-                2
+                2 + cycles
             }
-            Instruction::Arr(v) => {
+            Instruction::Arr(addressing) => {
+                let (v, cycles) = addressing.read(cpu);
                 cpu.a &= v;
                 cpu.a = cpu.a >> 1 | (cpu.flag(Flag::Carry) as u8) << 7;
                 cpu.update_negative_flag(cpu.a);
                 cpu.update_zero_flag(cpu.a);
                 cpu.set_flag(Flag::Carry, cpu.a & 0x40 != 0);
                 cpu.set_flag(Flag::Overflow, ((cpu.a >> 6) ^ (cpu.a >> 5)) & 1 != 0);
-                2
+                2 + cycles
             }
-            Instruction::Sbx(v) => {
+            Instruction::Sbx(addressing) => {
+                let (v, cycles) = addressing.read(cpu);
                 let val = cpu.a & cpu.x;
                 let (x, borrow) = val.overflowing_sub(v);
                 cpu.x = x;
                 cpu.update_negative_flag(x);
                 cpu.update_zero_flag(x);
                 cpu.set_flag(Flag::Carry, !borrow);
-                2
+                2 + cycles
             }
 
             Instruction::Asl(addressing) => match addressing {
@@ -615,11 +618,12 @@ impl Instruction {
                 cpu.adc(!t);
                 ticks_set + 3
             }
-            Instruction::Ane(v) => {
+            Instruction::Ane(addressing) => {
+                let (v, cycles) = addressing.read(cpu);
                 cpu.a = cpu.x & v;
                 cpu.update_negative_flag(cpu.a);
                 cpu.update_zero_flag(cpu.a);
-                2
+                2 + cycles
             }
             Instruction::Sha(dest) => {
                 // SHA stores A & X & highbyte(addr) to memory (unofficial opcode behaviour)
