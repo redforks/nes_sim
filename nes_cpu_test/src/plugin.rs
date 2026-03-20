@@ -6,11 +6,13 @@ mod detect_dead_loop;
 mod img_exit;
 mod monitor_test_status;
 mod report;
+mod max_instructions;
 pub use console::*;
 pub use detect_dead_loop::*;
 pub use img_exit::*;
 pub use monitor_test_status::*;
 pub use report::*;
+pub use max_instructions::*;
 
 pub struct CompositePlugin<M: Mcu>(Vec<Box<dyn Plugin<M>>>);
 

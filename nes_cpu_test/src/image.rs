@@ -1,5 +1,5 @@
 use super::plugin::{CompositePlugin, Console, MonitorTestStatus, ReportPlugin};
-use super::plugin::{DetectDeadLoop, ImageExit};
+use super::plugin::{DetectDeadLoop, ImageExit, MaxInstructions};
 use nes_core::ines::INesFile;
 use nes_core::machine::Machine;
 use nes_core::mcu::RamMcu;
@@ -15,38 +15,68 @@ pub enum Image {
 }
 
 impl Image {
-    pub fn create_machine(&self, quiet: bool) -> MachineWrapper {
+    pub fn create_machine(
+        &self,
+        quiet: bool,
+        start_pc: Option<u16>,
+        max_instructions: u64,
+    ) -> MachineWrapper {
         match self {
-            Image::Bin(arr) => self.create_bin_machine(arr, quiet),
-            Image::INes(ines) => self.create_ines_machine(ines, quiet),
+            Image::Bin(arr) => self.create_bin_machine(arr, quiet, start_pc, max_instructions),
+            Image::INes(ines) => self.create_ines_machine(ines, quiet, start_pc, max_instructions),
         }
     }
 
-    fn create_bin_machine(&self, arr: &[u8; 64 * 1024], quiet: bool) -> MachineWrapper {
+    fn create_bin_machine(
+        &self,
+        arr: &[u8; 64 * 1024],
+        quiet: bool,
+        start_pc: Option<u16>,
+        max_instructions: u64,
+    ) -> MachineWrapper {
         let mcu = RamMcu::new(*arr);
-        let plugin = CompositePlugin::new(vec![
+        let mut plugins: Vec<Box<dyn Plugin<_>>> = vec![
             Box::new(ReportPlugin::new(quiet)),
             Box::<ImageExit>::default(),
-        ]);
+        ];
+        if max_instructions > 0 {
+            plugins.push(Box::new(MaxInstructions::new(max_instructions)));
+        }
+        let plugin = CompositePlugin::new(plugins);
         let mut machine = Machine::with_plugin(plugin, mcu);
         machine.reset();
-        machine.set_pc(0x400);
+        match start_pc {
+            Some(pc) => machine.set_pc(pc),
+            None => machine.set_pc(0x400),
+        }
         MachineWrapper::Bin(Box::new(machine))
     }
 
-    fn create_ines_machine(&self, ines: &INesFile, quiet: bool) -> MachineWrapper {
+    fn create_ines_machine(
+        &self,
+        ines: &INesFile,
+        quiet: bool,
+        start_pc: Option<u16>,
+        max_instructions: u64,
+    ) -> MachineWrapper {
         // Build the composite plugin step by step to handle type coercion
-        let plugins: Vec<Box<dyn Plugin<nes_core::nes::nes_mcu::NesMcu>>> = vec![
+        let mut plugins: Vec<Box<dyn Plugin<nes_core::nes::nes_mcu::NesMcu>>> = vec![
             Box::<Console>::default(),
             Box::new(ReportPlugin::new(quiet)),
             Box::<MonitorTestStatus>::default(),
             Box::new(DetectDeadLoop::<1>::new()),
             Box::new(DetectDeadLoop::<2>::new()),
         ];
-
+        if max_instructions > 0 {
+            // MaxInstructions is generic over Mcu; need to coerce type. MaxInstructions doesn't use Mcu methods so this is fine.
+            plugins.push(Box::new(MaxInstructions::new(max_instructions)));
+        }
         let plugin = CompositePlugin::new(plugins);
         let mut machine = NesMachine::with_plugin(ines, plugin);
         machine.reset();
+        if let Some(pc) = start_pc {
+            machine.set_pc(pc);
+        }
         MachineWrapper::INes(Box::new(machine))
     }
 }
