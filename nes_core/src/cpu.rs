@@ -310,10 +310,10 @@ fn decode_next<M: Mcu>(cpu: &mut Cpu<M>) -> Instruction {
         (3, 4, 1) => Instruction::Sax(zero_page(cpu)),
         (3, 4, 2) => Instruction::Ane(literal_v(cpu)),
         (3, 4, 3) => Instruction::Sax(absolute(cpu)),
-        (3, 4, 4) => Instruction::NopStore(indirect_y(cpu)),
+        (3, 4, 4) => Instruction::Sha(indirect_y(cpu)),
         (3, 4, 5) => Instruction::Sax(zero_page_y(cpu)),
-        (3, 4, 6) => Instruction::NopStore(absolute_y(cpu)),
-        (3, 4, 7) => Instruction::NopStore(absolute_y(cpu)),
+        (3, 4, 6) => Instruction::Tas(absolute_y(cpu)),
+        (3, 4, 7) => Instruction::Tas(absolute_y(cpu)),
 
         (3, 5, 0) => Instruction::Lax(indirect_x(cpu)),
         (3, 5, 1) => Instruction::Lax(zero_page(cpu)),

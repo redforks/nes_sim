@@ -98,7 +98,8 @@ pub enum Instruction {
     Shx(Addressing),
     Shy(Addressing),
     Ane(Literal),
-    NopStore(Addressing),
+    Sha(Addressing),
+    Tas(Addressing),
 }
 
 impl Instruction {
@@ -619,7 +620,16 @@ impl Instruction {
                 cpu.update_zero_flag(cpu.a);
                 2
             }
-            Instruction::NopStore(dest) => {
+            Instruction::Sha(dest) => {
+                // SHA stores A & X & highbyte(addr) to memory (unofficial opcode behaviour)
+                let (addr, _) = dest.calc_addr(cpu);
+                let v = cpu.a & cpu.x & ((addr >> 8) as u8).wrapping_add(1);
+                let ticks = dest.write(cpu, v);
+                1 + ticks
+            }
+            Instruction::Tas(dest) => {
+                // TAS: stores A & X to memory and also sets SP high byte (unofficial)
+                // Emulate prior NopStore behavior: write A to dest
                 let ticks = dest.write(cpu, cpu.a);
                 1 + ticks
             }
