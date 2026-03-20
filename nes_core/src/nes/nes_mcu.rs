@@ -96,6 +96,7 @@ impl NesMcu {
         let result = self.ppu.tick(self.cartridge.pattern_ref());
         if result.vblank_started {
             self.vblank_started = true;
+            // debug!("VBLANK STARTED");
         }
         result.nmi
     }
@@ -285,6 +286,10 @@ impl Mcu for NesMcu {
 
     fn request_irq(&self) -> bool {
         self.frame_counter_interrupt.get()
+    }
+
+    fn ppu_status(&self) -> (u16, u16) {
+        self.ppu.scanline_and_dot()
     }
 }
 

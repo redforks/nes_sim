@@ -82,6 +82,7 @@ impl<P: Plugin<NesMcu>> NesMachine<P> {
     pub fn tick(&mut self) -> ExecuteResult {
         let (result, cycles) = self.machine.tick();
 
+        // let pc = self.machine.cpu().pc;
         // Tick PPU 3 times per CPU cycle
         for _ in 0..(cycles as u32 * 3) {
             if self.machine.mcu_mut().tick_ppu() {

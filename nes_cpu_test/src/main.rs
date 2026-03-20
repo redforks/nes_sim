@@ -1,4 +1,4 @@
-use crate::image::{Image, MachineWrapper};
+use crate::image::MachineWrapper;
 use ansi_term::Color;
 use clap::Parser;
 use nes_core::ExecuteResult;

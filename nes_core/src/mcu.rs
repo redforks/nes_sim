@@ -16,6 +16,12 @@ pub trait Mcu {
     fn request_irq(&self) -> bool {
         panic!("request_irq() not implemented");
     }
+
+    fn tick_catch_up(&mut self, _cycles: u8) {}
+
+    fn ppu_status(&self) -> (u16, u16) {
+        (0, 0)
+    }
 }
 
 #[cfg(test)]
