@@ -83,8 +83,7 @@ pub enum Instruction {
     Clv,
 
     // Misc
-    Nop,
-    NopWithAddr(Addressing),
+    Nop(Addressing),
     Hlt,
 
     // Unofficial combination ops
@@ -96,7 +95,8 @@ pub enum Instruction {
     Lax(Addressing),
     Dcp(Addressing),
     Isc(Addressing),
-    All(Addressing, Addressing),
+    Shx(Addressing),
+    Shy(Addressing),
     Ane(Literal),
     NopStore(Addressing),
 }
@@ -530,11 +530,13 @@ impl Instruction {
                 2
             }
 
-            Instruction::Nop => 2,
-            Instruction::NopWithAddr(dest) => {
-                let (_v, ticks) = dest.read(cpu);
-                1 + ticks
-            }
+            Instruction::Nop(dest) => match dest {
+                Addressing::Implied => 2,
+                _ => {
+                    let (_v, ticks) = dest.read(cpu);
+                    1 + ticks
+                }
+            },
             Instruction::Hlt => {
                 cpu.halt();
                 2
@@ -621,14 +623,16 @@ impl Instruction {
                 let ticks = dest.write(cpu, cpu.a);
                 1 + ticks
             }
-            Instruction::All(r, dest) => {
+            Instruction::Shx(dest) => {
                 let (addr, _) = dest.calc_addr(cpu);
-                let r = match r {
-                    Addressing::RegisterX => cpu.x,
-                    Addressing::RegisterY => cpu.y,
-                    _ => panic!("ALL unsupported source: {:?}", r),
-                };
-                let v = r & ((addr >> 8) as u8).wrapping_add(1);
+                let v = cpu.x & ((addr >> 8) as u8).wrapping_add(1);
+                let addr = (addr & 0xff) | ((v as u16) << 8);
+                cpu.write_byte(addr, v);
+                5
+            }
+            Instruction::Shy(dest) => {
+                let (addr, _) = dest.calc_addr(cpu);
+                let v = cpu.y & ((addr >> 8) as u8).wrapping_add(1);
                 let addr = (addr & 0xff) | ((v as u16) << 8);
                 cpu.write_byte(addr, v);
                 5

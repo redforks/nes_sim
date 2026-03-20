@@ -52,52 +52,52 @@ fn decode_next<M: Mcu>(cpu: &mut Cpu<M>) -> Instruction {
     let y = || Addressing::RegisterY;
     let aa = || Addressing::Accumulator;
 
-    // See: https://www.masswerk.at/6502/6502_instruction_set.html 6502
+    // See: https://www.masswerk.at/6502/6502_instruction_set.html
     match (c, a, b) {
         (0, 0, 0) => Instruction::Brk,
-        (0, 0, 1) => Instruction::NopWithAddr(zero_page(cpu)),
+        (0, 0, 1) => Instruction::Nop(zero_page(cpu)),
         (0, 0, 2) => Instruction::Php,
-        (0, 0, 3) => Instruction::NopWithAddr(absolute(cpu)),
+        (0, 0, 3) => Instruction::Nop(absolute(cpu)),
         (0, 0, 4) => Instruction::Bpl(BranchAddressing::Relative(r_b(cpu))),
-        (0, 0, 5) => Instruction::NopWithAddr(zero_page_x(cpu)),
+        (0, 0, 5) => Instruction::Nop(zero_page_x(cpu)),
         (0, 0, 6) => Instruction::Clc,
-        (0, 0, 7) => Instruction::NopWithAddr(absolute_x(cpu)),
+        (0, 0, 7) => Instruction::Nop(absolute_x(cpu)),
 
         (0, 1, 0) => Instruction::Jsr(BranchAddressing::Absolute(r_w(cpu))),
         (0, 1, 1) => Instruction::Bit(zero_page(cpu)),
         (0, 1, 2) => Instruction::Plp,
         (0, 1, 3) => Instruction::Bit(absolute(cpu)),
         (0, 1, 4) => Instruction::Bmi(BranchAddressing::Relative(r_b(cpu))),
-        (0, 1, 5) => Instruction::NopWithAddr(zero_page_x(cpu)),
+        (0, 1, 5) => Instruction::Nop(zero_page_x(cpu)),
         (0, 1, 6) => Instruction::Sec,
-        (0, 1, 7) => Instruction::NopWithAddr(absolute_x(cpu)),
+        (0, 1, 7) => Instruction::Nop(absolute_x(cpu)),
 
         (0, 2, 0) => Instruction::Rti,
-        (0, 2, 1) => Instruction::NopWithAddr(zero_page(cpu)),
+        (0, 2, 1) => Instruction::Nop(zero_page(cpu)),
         (0, 2, 2) => Instruction::Pha,
         (0, 2, 3) => Instruction::Jmp(BranchAddressing::Absolute(r_w(cpu))),
         (0, 2, 4) => Instruction::Bvc(BranchAddressing::Relative(r_b(cpu))),
-        (0, 2, 5) => Instruction::NopWithAddr(zero_page_x(cpu)),
+        (0, 2, 5) => Instruction::Nop(zero_page_x(cpu)),
         (0, 2, 6) => Instruction::Cli,
-        (0, 2, 7) => Instruction::NopWithAddr(absolute_x(cpu)),
+        (0, 2, 7) => Instruction::Nop(absolute_x(cpu)),
 
         (0, 3, 0) => Instruction::Rts,
-        (0, 3, 1) => Instruction::NopWithAddr(zero_page(cpu)),
+        (0, 3, 1) => Instruction::Nop(zero_page(cpu)),
         (0, 3, 2) => Instruction::Pla,
         (0, 3, 3) => Instruction::Jmp(BranchAddressing::AbsoluteIndirect(r_w(cpu))),
         (0, 3, 4) => Instruction::Bvs(BranchAddressing::Relative(r_b(cpu))),
-        (0, 3, 5) => Instruction::NopWithAddr(zero_page_x(cpu)),
+        (0, 3, 5) => Instruction::Nop(zero_page_x(cpu)),
         (0, 3, 6) => Instruction::Sei,
-        (0, 3, 7) => Instruction::NopWithAddr(absolute_x(cpu)),
+        (0, 3, 7) => Instruction::Nop(absolute_x(cpu)),
 
-        (0, 4, 0) => Instruction::NopWithAddr(literal(cpu)),
+        (0, 4, 0) => Instruction::Nop(literal(cpu)),
         (0, 4, 1) => Instruction::Sty(zero_page(cpu)),
         (0, 4, 2) => Instruction::Dey,
         (0, 4, 3) => Instruction::Sty(absolute(cpu)),
         (0, 4, 4) => Instruction::Bcc(BranchAddressing::Relative(r_b(cpu))),
         (0, 4, 5) => Instruction::Sty(zero_page_x(cpu)),
         (0, 4, 6) => Instruction::Tya,
-        (0, 4, 7) => Instruction::All(y(), absolute_x(cpu)),
+        (0, 4, 7) => Instruction::Shy(absolute_x(cpu)),
 
         (0, 5, 0) => Instruction::Ldy(literal(cpu)),
         (0, 5, 1) => Instruction::Ldy(zero_page(cpu)),
@@ -107,14 +107,14 @@ fn decode_next<M: Mcu>(cpu: &mut Cpu<M>) -> Instruction {
         (0, 5, 5) => Instruction::Ldy(zero_page_x(cpu)),
         (0, 5, 6) => Instruction::Clv,
         (0, 5, 7) => Instruction::Ldy(absolute_x(cpu)),
-        (0, 6, 7) => Instruction::NopWithAddr(absolute_x(cpu)),
+        (0, 6, 7) => Instruction::Nop(absolute_x(cpu)),
 
         (0, 6, 0) => Instruction::Cpy(literal(cpu)),
         (0, 6, 1) => Instruction::Cpy(zero_page(cpu)),
         (0, 6, 2) => Instruction::Iny,
         (0, 6, 3) => Instruction::Cpy(absolute(cpu)),
         (0, 6, 4) => Instruction::Bne(BranchAddressing::Relative(r_b(cpu))),
-        (0, 6, 5) => Instruction::NopWithAddr(zero_page_x(cpu)),
+        (0, 6, 5) => Instruction::Nop(zero_page_x(cpu)),
         (0, 6, 6) => Instruction::Cld,
 
         (0, 7, 0) => Instruction::Cpx(literal(cpu)),
@@ -122,9 +122,9 @@ fn decode_next<M: Mcu>(cpu: &mut Cpu<M>) -> Instruction {
         (0, 7, 2) => Instruction::Inx,
         (0, 7, 3) => Instruction::Cpx(absolute(cpu)),
         (0, 7, 4) => Instruction::Beq(BranchAddressing::Relative(r_b(cpu))),
-        (0, 7, 5) => Instruction::NopWithAddr(zero_page_x(cpu)),
+        (0, 7, 5) => Instruction::Nop(zero_page_x(cpu)),
         (0, 7, 6) => Instruction::Sed,
-        (0, 7, 7) => Instruction::NopWithAddr(absolute_x(cpu)),
+        (0, 7, 7) => Instruction::Nop(absolute_x(cpu)),
 
         (1, 0, 0) => Instruction::Ora(indirect_x(cpu)),
         (1, 0, 1) => Instruction::Ora(zero_page(cpu)),
@@ -164,7 +164,7 @@ fn decode_next<M: Mcu>(cpu: &mut Cpu<M>) -> Instruction {
 
         (1, 4, 0) => Instruction::Sta(indirect_x(cpu)),
         (1, 4, 1) => Instruction::Sta(zero_page(cpu)),
-        (1, 4, 2) => Instruction::NopWithAddr(literal(cpu)),
+        (1, 4, 2) => Instruction::Nop(literal(cpu)),
         (1, 4, 3) => Instruction::Sta(absolute(cpu)),
         (1, 4, 4) => Instruction::Sta(indirect_y(cpu)),
         (1, 4, 5) => Instruction::Sta(zero_page_x(cpu)),
@@ -204,7 +204,7 @@ fn decode_next<M: Mcu>(cpu: &mut Cpu<M>) -> Instruction {
         (2, 0, 3) => Instruction::Asl(absolute(cpu)),
         (2, 0, 4) => Instruction::Hlt,
         (2, 0, 5) => Instruction::Asl(zero_page_x(cpu)),
-        (2, 0, 6) => Instruction::Nop,
+        (2, 0, 6) => Instruction::Nop(Addressing::Implied),
         (2, 0, 7) => Instruction::Asl(absolute_x(cpu)),
 
         (2, 1, 0) => Instruction::Hlt,
@@ -213,7 +213,7 @@ fn decode_next<M: Mcu>(cpu: &mut Cpu<M>) -> Instruction {
         (2, 1, 3) => Instruction::Rol(absolute(cpu)),
         (2, 1, 4) => Instruction::Hlt,
         (2, 1, 5) => Instruction::Rol(zero_page_x(cpu)),
-        (2, 1, 6) => Instruction::Nop,
+        (2, 1, 6) => Instruction::Nop(Addressing::Implied),
         (2, 1, 7) => Instruction::Rol(absolute_x(cpu)),
 
         (2, 2, 0) => Instruction::Hlt,
@@ -222,7 +222,7 @@ fn decode_next<M: Mcu>(cpu: &mut Cpu<M>) -> Instruction {
         (2, 2, 3) => Instruction::Lsr(absolute(cpu)),
         (2, 2, 4) => Instruction::Hlt,
         (2, 2, 5) => Instruction::Lsr(zero_page_x(cpu)),
-        (2, 2, 6) => Instruction::Nop,
+        (2, 2, 6) => Instruction::Nop(Addressing::Implied),
         (2, 2, 7) => Instruction::Lsr(absolute_x(cpu)),
 
         (2, 3, 0) => Instruction::Hlt,
@@ -231,17 +231,17 @@ fn decode_next<M: Mcu>(cpu: &mut Cpu<M>) -> Instruction {
         (2, 3, 3) => Instruction::Ror(absolute(cpu)),
         (2, 3, 4) => Instruction::Hlt,
         (2, 3, 5) => Instruction::Ror(zero_page_x(cpu)),
-        (2, 3, 6) => Instruction::Nop,
+        (2, 3, 6) => Instruction::Nop(Addressing::Implied),
         (2, 3, 7) => Instruction::Ror(absolute_x(cpu)),
 
-        (2, 4, 0) => Instruction::NopWithAddr(literal(cpu)),
+        (2, 4, 0) => Instruction::Nop(literal(cpu)),
         (2, 4, 1) => Instruction::Stx(zero_page(cpu)),
         (2, 4, 2) => Instruction::Txa,
         (2, 4, 3) => Instruction::Stx(absolute(cpu)),
         (2, 4, 4) => Instruction::Hlt,
         (2, 4, 5) => Instruction::Stx(zero_page_y(cpu)),
         (2, 4, 6) => Instruction::Txs,
-        (2, 4, 7) => Instruction::All(x(), absolute_y(cpu)), // 9e
+        (2, 4, 7) => Instruction::Shx(absolute_y(cpu)), // 9e
 
         (2, 5, 0) => Instruction::Ldx(literal(cpu)),
         (2, 5, 1) => Instruction::Ldx(zero_page(cpu)),
@@ -252,22 +252,22 @@ fn decode_next<M: Mcu>(cpu: &mut Cpu<M>) -> Instruction {
         (2, 5, 6) => Instruction::Tsx,
         (2, 5, 7) => Instruction::Ldx(absolute_y(cpu)),
 
-        (2, 6, 0) => Instruction::NopWithAddr(literal(cpu)),
+        (2, 6, 0) => Instruction::Nop(literal(cpu)),
         (2, 6, 1) => Instruction::Dec(zero_page(cpu)),
         (2, 6, 2) => Instruction::Dex,
         (2, 6, 3) => Instruction::Dec(absolute(cpu)),
         (2, 6, 4) => Instruction::Hlt,
         (2, 6, 5) => Instruction::Dec(zero_page_x(cpu)),
-        (2, 6, 6) => Instruction::Nop,
+        (2, 6, 6) => Instruction::Nop(Addressing::Implied),
         (2, 6, 7) => Instruction::Dec(absolute_x(cpu)),
 
-        (2, 7, 0) => Instruction::NopWithAddr(literal(cpu)),
+        (2, 7, 0) => Instruction::Nop(literal(cpu)),
         (2, 7, 1) => Instruction::Inc(zero_page(cpu)),
-        (2, 7, 2) => Instruction::Nop,
+        (2, 7, 2) => Instruction::Nop(Addressing::Implied),
         (2, 7, 3) => Instruction::Inc(absolute(cpu)),
         (2, 7, 4) => Instruction::Hlt,
         (2, 7, 5) => Instruction::Inc(zero_page_x(cpu)),
-        (2, 7, 6) => Instruction::Nop, // FA
+        (2, 7, 6) => Instruction::Nop(Addressing::Implied), // FA
         (2, 7, 7) => Instruction::Inc(absolute_x(cpu)),
 
         (3, 0, 0) => Instruction::Aso(indirect_x(cpu)),
