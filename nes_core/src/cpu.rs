@@ -186,14 +186,14 @@ fn decode_next<M: Mcu>(cpu: &mut Cpu<M>) -> Instruction {
         (1, 5, 6) => Instruction::Lda(absolute_y(cpu)),
         (1, 5, 7) => Instruction::Lda(absolute_x(cpu)),
 
-        (1, 6, 0) => Instruction::Cmp(aa(), indirect_x(cpu)),
-        (1, 6, 1) => Instruction::Cmp(aa(), zero_page(cpu)),
-        (1, 6, 2) => Instruction::Cmp(aa(), literal(cpu)),
-        (1, 6, 3) => Instruction::Cmp(aa(), absolute(cpu)),
-        (1, 6, 4) => Instruction::Cmp(aa(), indirect_y(cpu)),
-        (1, 6, 5) => Instruction::Cmp(aa(), zero_page_x(cpu)),
-        (1, 6, 6) => Instruction::Cmp(aa(), absolute_y(cpu)),
-        (1, 6, 7) => Instruction::Cmp(aa(), absolute_x(cpu)),
+        (1, 6, 0) => Instruction::Cmp(indirect_x(cpu)),
+        (1, 6, 1) => Instruction::Cmp(zero_page(cpu)),
+        (1, 6, 2) => Instruction::Cmp(literal(cpu)),
+        (1, 6, 3) => Instruction::Cmp(absolute(cpu)),
+        (1, 6, 4) => Instruction::Cmp(indirect_y(cpu)),
+        (1, 6, 5) => Instruction::Cmp(zero_page_x(cpu)),
+        (1, 6, 6) => Instruction::Cmp(absolute_y(cpu)),
+        (1, 6, 7) => Instruction::Cmp(absolute_x(cpu)),
 
         (1, 7, 0) => Instruction::Sbc(indirect_x(cpu)),
         (1, 7, 1) => Instruction::Sbc(zero_page(cpu)),
@@ -468,7 +468,7 @@ impl<M: Mcu> Cpu<M> {
         // info!("irq");
         self.mcu.tick(); // dummy 1
         self.mcu.tick(); // dummy 2
-                         // Push status BEFORE setting I flag, so the saved status reflects the state at IRQ time
+        // Push status BEFORE setting I flag, so the saved status reflects the state at IRQ time
         self.push_pc();
         self.push_status();
         // Now set I flag to prevent nested IRQs

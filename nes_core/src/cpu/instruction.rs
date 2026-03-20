@@ -53,7 +53,7 @@ pub enum Instruction {
     Dey,
 
     // Compare / Bit / Branches
-    Cmp(Addressing, Addressing),
+    Cmp(Addressing),
     Cpx(Addressing),
     Cpy(Addressing),
     Bit(Addressing),
@@ -414,13 +414,12 @@ impl Instruction {
                 2
             }
 
-            Instruction::Cmp(r, m) => {
-                let (r_val, _r_ticks) = r.read(cpu);
+            Instruction::Cmp(m) => {
                 let (val, ticks) = m.read(cpu);
-                let t = r_val.wrapping_sub(val);
+                let t = cpu.a.wrapping_sub(val);
                 cpu.update_negative_flag(t);
                 cpu.update_zero_flag(t);
-                cpu.set_flag(Flag::Carry, r_val >= val);
+                cpu.set_flag(Flag::Carry, cpu.a >= val);
                 1 + ticks
             }
             Instruction::Cpx(m) => {
