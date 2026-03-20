@@ -1,6 +1,6 @@
 use super::addressing::Address;
 use super::{extra_tick_if_cross_page, Cpu, Flag};
-use crate::cpu::addressing::{Addressing, FlagAddr, Literal};
+use crate::cpu::addressing::{Addressing, BranchAddressing, FlagAddr, Literal};
 use crate::mcu::Mcu;
 
 #[derive(Debug, Copy, Clone, PartialEq)]
@@ -57,7 +57,14 @@ pub enum Instruction {
     Cpx(Addressing),
     Cpy(Addressing),
     Bit(Addressing),
-    ConditionBranch(i8, FlagAddr, bool),
+    Bcc(BranchAddressing),
+    Bcs(BranchAddressing),
+    Bne(BranchAddressing),
+    Beq(BranchAddressing),
+    Bpl(BranchAddressing),
+    Bmi(BranchAddressing),
+    Bvc(BranchAddressing),
+    Bvs(BranchAddressing),
 
     // Jumps / calls / returns / interrupts
     Jmp(u16),
@@ -445,18 +452,14 @@ impl Instruction {
                 cpu.update_zero_flag(v & cpu.a);
                 1 + ticks
             }
-            Instruction::ConditionBranch(offset, flagaddr, negative) => {
-                let (v, _ticks) = flagaddr.get(cpu);
-                let should_jump = if negative { v == 0 } else { v != 0 };
-                if should_jump {
-                    let pc = cpu.pc;
-                    let dest = ((pc as i16).wrapping_add(offset as i16)) as u16;
-                    cpu.pc = dest;
-                    3 + extra_tick_if_cross_page(pc, dest)
-                } else {
-                    2
-                }
-            }
+            Instruction::Bcc(addr) => branch(cpu, addr, !cpu.flag(Flag::Carry)),
+            Instruction::Bcs(addr) => branch(cpu, addr, cpu.flag(Flag::Carry)),
+            Instruction::Bne(addr) => branch(cpu, addr, !cpu.flag(Flag::Zero)),
+            Instruction::Beq(addr) => branch(cpu, addr, cpu.flag(Flag::Zero)),
+            Instruction::Bpl(addr) => branch(cpu, addr, !cpu.flag(Flag::Negative)),
+            Instruction::Bmi(addr) => branch(cpu, addr, cpu.flag(Flag::Negative)),
+            Instruction::Bvc(addr) => branch(cpu, addr, !cpu.flag(Flag::Overflow)),
+            Instruction::Bvs(addr) => branch(cpu, addr, cpu.flag(Flag::Overflow)),
 
             Instruction::Jmp(addr) => {
                 cpu.pc = addr;
@@ -619,6 +622,17 @@ impl Instruction {
                 5
             }
         }
+    }
+}
+
+fn branch<M: Mcu>(cpu: &mut Cpu<M>, addr: BranchAddressing, should_jump: bool) -> u8 {
+    if should_jump {
+        let pc = cpu.pc;
+        let dest = addr.calc_addr(cpu);
+        cpu.pc = dest;
+        3 + extra_tick_if_cross_page(pc, dest)
+    } else {
+        2
     }
 }
 
