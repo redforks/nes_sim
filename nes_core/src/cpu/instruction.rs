@@ -1,6 +1,6 @@
 use super::addressing::Address;
 use super::{extra_tick_if_cross_page, Cpu, Flag};
-use crate::cpu::addressing::{Addressing, BranchAddressing, FlagAddr, Literal};
+use crate::cpu::addressing::{Addressing, BranchAddressing, FlagAddr};
 use crate::mcu::Mcu;
 
 #[derive(Debug, Copy, Clone, PartialEq)]
@@ -12,11 +12,12 @@ pub enum Instruction {
     Ora(Addressing),
     Eor(Addressing),
 
-    // Immediate/accumulator unofficial ops
-    Anc(Literal),
-    Alr(Literal),
-    Arr(Literal),
-    Sbx(Literal),
+    // Immediate/accumulator unofficial ops (store immediates as raw u8 to keep
+    // pattern matching exhaustive and avoid Addressing-wide matches)
+    Anc(u8),
+    Alr(u8),
+    Arr(u8),
+    Sbx(u8),
 
     // Shifts/rotates
     Asl(Addressing),
@@ -97,7 +98,7 @@ pub enum Instruction {
     Isc(Addressing),
     Shx(Addressing),
     Shy(Addressing),
-    Ane(Literal),
+    Ane(Addressing),
     Sha(Addressing),
     Tas(Addressing),
 }
@@ -138,14 +139,14 @@ impl Instruction {
                 1 + ticks
             }
 
-            Instruction::Anc(Literal(v)) => {
+            Instruction::Anc(v) => {
                 cpu.a &= v;
                 cpu.update_negative_flag(cpu.a);
                 cpu.update_zero_flag(cpu.a);
                 cpu.set_flag(Flag::Carry, cpu.a & 0x80 != 0);
                 2
             }
-            Instruction::Alr(Literal(v)) => {
+            Instruction::Alr(v) => {
                 cpu.a &= v;
                 cpu.set_flag(Flag::Carry, cpu.a & 0x01 != 0);
                 cpu.a >>= 1;
@@ -153,7 +154,7 @@ impl Instruction {
                 cpu.set_flag(Flag::Negative, false);
                 2
             }
-            Instruction::Arr(Literal(v)) => {
+            Instruction::Arr(v) => {
                 cpu.a &= v;
                 cpu.a = cpu.a >> 1 | (cpu.flag(Flag::Carry) as u8) << 7;
                 cpu.update_negative_flag(cpu.a);
@@ -162,7 +163,7 @@ impl Instruction {
                 cpu.set_flag(Flag::Overflow, ((cpu.a >> 6) ^ (cpu.a >> 5)) & 1 != 0);
                 2
             }
-            Instruction::Sbx(Literal(v)) => {
+            Instruction::Sbx(v) => {
                 let val = cpu.a & cpu.x;
                 let (x, borrow) = val.overflowing_sub(v);
                 cpu.x = x;
@@ -614,7 +615,7 @@ impl Instruction {
                 cpu.adc(!t);
                 ticks_set + 3
             }
-            Instruction::Ane(Literal(v)) => {
+            Instruction::Ane(v) => {
                 cpu.a = cpu.x & v;
                 cpu.update_negative_flag(cpu.a);
                 cpu.update_zero_flag(cpu.a);
