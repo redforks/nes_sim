@@ -46,12 +46,6 @@ fn decode_next<M: Mcu>(cpu: &mut Cpu<M>) -> Instruction {
     let absolute_y = |cpu: &mut Cpu<M>| Addressing::AbsoluteIndexedWithY(r_w(cpu));
     let literal = |cpu: &mut Cpu<M>| Addressing::Immediate(r_b(cpu));
     let literal_v = |cpu: &mut Cpu<M>| Literal(r_b(cpu));
-    let cond_branch = |cpu: &mut Cpu<M>, flag: Flag| {
-        Instruction::ConditionBranch(r_b(cpu) as i8, FlagAddr(flag), false)
-    };
-    let neg_cond_branch = |cpu: &mut Cpu<M>, flag: Flag| {
-        Instruction::ConditionBranch(r_b(cpu) as i8, FlagAddr(flag), true)
-    };
     let indirect_x = |cpu: &mut Cpu<M>| Addressing::ZeroPageIndexedIndirect(r_b(cpu));
     let indirect_y = |cpu: &mut Cpu<M>| Addressing::ZeroPageIndexedIndirectWithY(r_b(cpu));
     let x = || Addressing::RegisterX;
@@ -64,7 +58,7 @@ fn decode_next<M: Mcu>(cpu: &mut Cpu<M>) -> Instruction {
         (0, 0, 1) => Instruction::NopWithAddr(zero_page(cpu)),
         (0, 0, 2) => Instruction::Php,
         (0, 0, 3) => Instruction::NopWithAddr(absolute(cpu)),
-        (0, 0, 4) => neg_cond_branch(cpu, Flag::Negative),
+        (0, 0, 4) => Instruction::Bpl(BranchAddressing::Relative(r_b(cpu))),
         (0, 0, 5) => Instruction::NopWithAddr(zero_page_x(cpu)),
         (0, 0, 6) => Instruction::ClearBit(FlagAddr(Flag::Carry)),
         (0, 0, 7) => Instruction::NopWithAddr(absolute_x(cpu)),
@@ -73,7 +67,7 @@ fn decode_next<M: Mcu>(cpu: &mut Cpu<M>) -> Instruction {
         (0, 1, 1) => Instruction::Bit(zero_page(cpu)),
         (0, 1, 2) => Instruction::Plp,
         (0, 1, 3) => Instruction::Bit(absolute(cpu)),
-        (0, 1, 4) => cond_branch(cpu, Flag::Negative),
+        (0, 1, 4) => Instruction::Bmi(BranchAddressing::Relative(r_b(cpu))),
         (0, 1, 5) => Instruction::NopWithAddr(zero_page_x(cpu)),
         (0, 1, 6) => Instruction::SetBit(FlagAddr(Flag::Carry)),
         (0, 1, 7) => Instruction::NopWithAddr(absolute_x(cpu)),
@@ -82,7 +76,7 @@ fn decode_next<M: Mcu>(cpu: &mut Cpu<M>) -> Instruction {
         (0, 2, 1) => Instruction::NopWithAddr(zero_page(cpu)),
         (0, 2, 2) => Instruction::Pha,
         (0, 2, 3) => Instruction::Jmp(r_w(cpu)),
-        (0, 2, 4) => neg_cond_branch(cpu, Flag::Overflow),
+        (0, 2, 4) => Instruction::Bvc(BranchAddressing::Relative(r_b(cpu))),
         (0, 2, 5) => Instruction::NopWithAddr(zero_page_x(cpu)),
         (0, 2, 6) => Instruction::ClearBit(FlagAddr(Flag::InterruptDisabled)),
         (0, 2, 7) => Instruction::NopWithAddr(absolute_x(cpu)),
@@ -91,7 +85,7 @@ fn decode_next<M: Mcu>(cpu: &mut Cpu<M>) -> Instruction {
         (0, 3, 1) => Instruction::NopWithAddr(zero_page(cpu)),
         (0, 3, 2) => Instruction::Pla,
         (0, 3, 3) => Instruction::IndirectJmp(r_w(cpu)),
-        (0, 3, 4) => cond_branch(cpu, Flag::Overflow),
+        (0, 3, 4) => Instruction::Bvs(BranchAddressing::Relative(r_b(cpu))),
         (0, 3, 5) => Instruction::NopWithAddr(zero_page_x(cpu)),
         (0, 3, 6) => Instruction::SetBit(FlagAddr(Flag::InterruptDisabled)),
         (0, 3, 7) => Instruction::NopWithAddr(absolute_x(cpu)),
@@ -100,7 +94,7 @@ fn decode_next<M: Mcu>(cpu: &mut Cpu<M>) -> Instruction {
         (0, 4, 1) => Instruction::Sty(zero_page(cpu)),
         (0, 4, 2) => Instruction::Dey,
         (0, 4, 3) => Instruction::Sty(absolute(cpu)),
-        (0, 4, 4) => neg_cond_branch(cpu, Flag::Carry),
+        (0, 4, 4) => Instruction::Bcc(BranchAddressing::Relative(r_b(cpu))),
         (0, 4, 5) => Instruction::Sty(zero_page_x(cpu)),
         (0, 4, 6) => Instruction::Tya,
         (0, 4, 7) => Instruction::All(y(), absolute_x(cpu)),
@@ -109,7 +103,7 @@ fn decode_next<M: Mcu>(cpu: &mut Cpu<M>) -> Instruction {
         (0, 5, 1) => Instruction::Ldy(zero_page(cpu)),
         (0, 5, 2) => Instruction::Tay,
         (0, 5, 3) => Instruction::Ldy(absolute(cpu)),
-        (0, 5, 4) => cond_branch(cpu, Flag::Carry),
+        (0, 5, 4) => Instruction::Bcs(BranchAddressing::Relative(r_b(cpu))),
         (0, 5, 5) => Instruction::Ldy(zero_page_x(cpu)),
         (0, 5, 6) => Instruction::ClearBit(FlagAddr(Flag::Overflow)),
         (0, 5, 7) => Instruction::Ldy(absolute_x(cpu)),
@@ -119,7 +113,7 @@ fn decode_next<M: Mcu>(cpu: &mut Cpu<M>) -> Instruction {
         (0, 6, 1) => Instruction::Cpy(zero_page(cpu)),
         (0, 6, 2) => Instruction::Iny,
         (0, 6, 3) => Instruction::Cpy(absolute(cpu)),
-        (0, 6, 4) => neg_cond_branch(cpu, Flag::Zero),
+        (0, 6, 4) => Instruction::Bne(BranchAddressing::Relative(r_b(cpu))),
         (0, 6, 5) => Instruction::NopWithAddr(zero_page_x(cpu)),
         (0, 6, 6) => Instruction::ClearBit(FlagAddr(Flag::Decimal)),
 
@@ -127,7 +121,7 @@ fn decode_next<M: Mcu>(cpu: &mut Cpu<M>) -> Instruction {
         (0, 7, 1) => Instruction::Cpx(zero_page(cpu)),
         (0, 7, 2) => Instruction::Inx,
         (0, 7, 3) => Instruction::Cpx(absolute(cpu)),
-        (0, 7, 4) => cond_branch(cpu, Flag::Zero),
+        (0, 7, 4) => Instruction::Beq(BranchAddressing::Relative(r_b(cpu))),
         (0, 7, 5) => Instruction::NopWithAddr(zero_page_x(cpu)),
         (0, 7, 6) => Instruction::SetBit(FlagAddr(Flag::Decimal)),
         (0, 7, 7) => Instruction::NopWithAddr(absolute_x(cpu)),
@@ -468,7 +462,7 @@ impl<M: Mcu> Cpu<M> {
         // info!("irq");
         self.mcu.tick(); // dummy 1
         self.mcu.tick(); // dummy 2
-        // Push status BEFORE setting I flag, so the saved status reflects the state at IRQ time
+                         // Push status BEFORE setting I flag, so the saved status reflects the state at IRQ time
         self.push_pc();
         self.push_status();
         // Now set I flag to prevent nested IRQs
