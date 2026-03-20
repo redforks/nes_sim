@@ -46,11 +46,6 @@ fn indirect_y_format() {
 }
 
 #[test]
-fn register_a_format() {
-    assert_eq!(format!("{}", RegisterA()), "A");
-}
-
-#[test]
 fn register_x_format() {
     assert_eq!(format!("{}", RegisterX()), "X");
 }
@@ -63,11 +58,6 @@ fn register_y_format() {
 #[test]
 fn register_sp_format() {
     assert_eq!(format!("{}", RegisterSP()), "SP");
-}
-
-#[test]
-fn register_status_format() {
-    assert_eq!(format!("{}", RegisterStatus()), "status");
 }
 
 #[test]

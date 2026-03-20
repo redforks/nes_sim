@@ -1,5 +1,3 @@
-extern crate core;
-
 mod cpu;
 pub mod ines;
 pub mod machine;
