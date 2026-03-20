@@ -5,6 +5,7 @@ use std::fmt::{Display, Formatter};
 #[derive(Debug, Copy, Clone, PartialEq)]
 pub enum BranchAddressing {
     Relative(u8),
+    Absolute(u16),
     AbsoluteIndirect(u16),
 }
 
@@ -12,6 +13,7 @@ impl Display for BranchAddressing {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         match self {
             BranchAddressing::Relative(offset) => write!(f, "${:02x}", offset),
+            BranchAddressing::Absolute(addr) => write!(f, "${:04x}", addr),
             BranchAddressing::AbsoluteIndirect(addr) => write!(f, "(${:04x})", addr),
         }
     }
@@ -21,6 +23,7 @@ impl BranchAddressing {
     pub fn calc_addr<M: Mcu>(&self, cpu: &mut Cpu<M>) -> u16 {
         match self {
             BranchAddressing::Relative(offset) => cpu.pc.wrapping_add((*offset as i8) as u16),
+            BranchAddressing::Absolute(addr) => *addr,
             BranchAddressing::AbsoluteIndirect(addr) => cpu.read_word_in_same_page(*addr),
         }
     }

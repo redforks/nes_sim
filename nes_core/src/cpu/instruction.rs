@@ -67,16 +67,20 @@ pub enum Instruction {
     Bvs(BranchAddressing),
 
     // Jumps / calls / returns / interrupts
-    Jmp(u16),
-    IndirectJmp(u16),
-    Jsr(u16),
+    Jmp(BranchAddressing),
+    Jsr(BranchAddressing),
     Rts,
     Brk,
     Rti,
 
     // Flags
-    ClearBit(FlagAddr),
-    SetBit(FlagAddr),
+    Clc,
+    Sec,
+    Cld,
+    Sed,
+    Cli,
+    Sei,
+    Clv,
 
     // Misc
     Nop,
@@ -462,17 +466,13 @@ impl Instruction {
             Instruction::Bvs(addr) => branch(cpu, addr, cpu.flag(Flag::Overflow)),
 
             Instruction::Jmp(addr) => {
-                cpu.pc = addr;
+                cpu.pc = addr.calc_addr(cpu);
                 3
-            }
-            Instruction::IndirectJmp(offset) => {
-                cpu.pc = cpu.read_word_in_same_page(offset);
-                5
             }
             Instruction::Jsr(addr) => {
                 cpu.pc = cpu.pc.wrapping_sub(1);
                 cpu.push_pc();
-                cpu.pc = addr;
+                cpu.pc = addr.calc_addr(cpu);
                 6
             }
             Instruction::Rts => {
@@ -501,20 +501,32 @@ impl Instruction {
                 6
             }
 
-            Instruction::ClearBit(dest) => {
-                if dest.0 == Flag::InterruptDisabled {
-                    cpu.pending_set_interrupt_disabled_flag(false);
-                } else {
-                    dest.set(cpu, 0);
-                }
+            Instruction::Clc => {
+                cpu.set_flag(Flag::Carry, false);
                 2
             }
-            Instruction::SetBit(dest) => {
-                if dest.0 == Flag::InterruptDisabled {
-                    cpu.pending_set_interrupt_disabled_flag(true);
-                } else {
-                    dest.set(cpu, 1);
-                }
+            Instruction::Sec => {
+                cpu.set_flag(Flag::Carry, true);
+                2
+            }
+            Instruction::Cld => {
+                cpu.set_flag(Flag::Decimal, false);
+                2
+            }
+            Instruction::Sed => {
+                cpu.set_flag(Flag::Decimal, true);
+                2
+            }
+            Instruction::Cli => {
+                cpu.pending_set_interrupt_disabled_flag(false);
+                2
+            }
+            Instruction::Sei => {
+                cpu.pending_set_interrupt_disabled_flag(true);
+                2
+            }
+            Instruction::Clv => {
+                cpu.set_flag(Flag::Overflow, false);
                 2
             }
 
