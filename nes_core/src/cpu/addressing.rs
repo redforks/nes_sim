@@ -269,24 +269,7 @@ pub trait Address<M: Mcu>: Display + Copy {
     }
 }
 
-#[derive(Clone, Copy, PartialEq, Debug)]
-pub struct Literal(pub u8);
-
-impl Display for Literal {
-    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        write!(f, "#${:02x}", self.0)
-    }
-}
-
-impl<M: Mcu> Address<M> for Literal {
-    fn get(&self, _: &mut Cpu<M>) -> (u8, u8) {
-        (self.0, 1)
-    }
-
-    fn set(&self, _: &mut Cpu<M>, _: u8) -> u8 {
-        panic!("can't set value to literal");
-    }
-}
+// Literal wrapper removed: use Addressing::Immediate instead
 
 #[cfg(test)]
 #[derive(Clone, Copy)]

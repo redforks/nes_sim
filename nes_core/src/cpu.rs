@@ -45,12 +45,8 @@ fn decode_next<M: Mcu>(cpu: &mut Cpu<M>) -> Instruction {
     let absolute_x = |cpu: &mut Cpu<M>| Addressing::AbsoluteIndexedWithX(r_w(cpu));
     let absolute_y = |cpu: &mut Cpu<M>| Addressing::AbsoluteIndexedWithY(r_w(cpu));
     let literal = |cpu: &mut Cpu<M>| Addressing::Immediate(r_b(cpu));
-    let literal_v = |cpu: &mut Cpu<M>| Literal(r_b(cpu));
     let indirect_x = |cpu: &mut Cpu<M>| Addressing::ZeroPageIndexedIndirect(r_b(cpu));
     let indirect_y = |cpu: &mut Cpu<M>| Addressing::ZeroPageIndexedIndirectWithY(r_b(cpu));
-    let x = || Addressing::RegisterX;
-    let y = || Addressing::RegisterY;
-    let aa = || Addressing::Accumulator;
 
     // See: https://www.masswerk.at/6502/6502_instruction_set.html
     match (c, a, b) {
@@ -200,7 +196,7 @@ fn decode_next<M: Mcu>(cpu: &mut Cpu<M>) -> Instruction {
 
         (2, 0, 0) => Instruction::Hlt,
         (2, 0, 1) => Instruction::Asl(zero_page(cpu)),
-        (2, 0, 2) => Instruction::Asl(aa()),
+        (2, 0, 2) => Instruction::Asl(Addressing::Accumulator),
         (2, 0, 3) => Instruction::Asl(absolute(cpu)),
         (2, 0, 4) => Instruction::Hlt,
         (2, 0, 5) => Instruction::Asl(zero_page_x(cpu)),
@@ -209,7 +205,7 @@ fn decode_next<M: Mcu>(cpu: &mut Cpu<M>) -> Instruction {
 
         (2, 1, 0) => Instruction::Hlt,
         (2, 1, 1) => Instruction::Rol(zero_page(cpu)),
-        (2, 1, 2) => Instruction::Rol(aa()),
+        (2, 1, 2) => Instruction::Rol(Addressing::Accumulator),
         (2, 1, 3) => Instruction::Rol(absolute(cpu)),
         (2, 1, 4) => Instruction::Hlt,
         (2, 1, 5) => Instruction::Rol(zero_page_x(cpu)),
@@ -218,7 +214,7 @@ fn decode_next<M: Mcu>(cpu: &mut Cpu<M>) -> Instruction {
 
         (2, 2, 0) => Instruction::Hlt,
         (2, 2, 1) => Instruction::Lsr(zero_page(cpu)),
-        (2, 2, 2) => Instruction::Lsr(aa()),
+        (2, 2, 2) => Instruction::Lsr(Addressing::Accumulator),
         (2, 2, 3) => Instruction::Lsr(absolute(cpu)),
         (2, 2, 4) => Instruction::Hlt,
         (2, 2, 5) => Instruction::Lsr(zero_page_x(cpu)),
@@ -227,7 +223,7 @@ fn decode_next<M: Mcu>(cpu: &mut Cpu<M>) -> Instruction {
 
         (2, 3, 0) => Instruction::Hlt,
         (2, 3, 1) => Instruction::Ror(zero_page(cpu)),
-        (2, 3, 2) => Instruction::Ror(aa()),
+        (2, 3, 2) => Instruction::Ror(Addressing::Accumulator),
         (2, 3, 3) => Instruction::Ror(absolute(cpu)),
         (2, 3, 4) => Instruction::Hlt,
         (2, 3, 5) => Instruction::Ror(zero_page_x(cpu)),
@@ -272,7 +268,7 @@ fn decode_next<M: Mcu>(cpu: &mut Cpu<M>) -> Instruction {
 
         (3, 0, 0) => Instruction::Aso(indirect_x(cpu)),
         (3, 0, 1) => Instruction::Aso(zero_page(cpu)),
-        (3, 0, 2) => Instruction::Anc(literal_v(cpu)),
+        (3, 0, 2) => Instruction::Anc(Addressing::Immediate(r_b(cpu))),
         (3, 0, 3) => Instruction::Aso(absolute(cpu)),
         (3, 0, 4) => Instruction::Aso(indirect_y(cpu)),
         (3, 0, 5) => Instruction::Aso(zero_page_x(cpu)),
@@ -281,7 +277,7 @@ fn decode_next<M: Mcu>(cpu: &mut Cpu<M>) -> Instruction {
 
         (3, 1, 0) => Instruction::Rla(indirect_x(cpu)),
         (3, 1, 1) => Instruction::Rla(zero_page(cpu)),
-        (3, 1, 2) => Instruction::Anc(literal_v(cpu)),
+        (3, 1, 2) => Instruction::Anc(Addressing::Immediate(r_b(cpu))),
         (3, 1, 3) => Instruction::Rla(absolute(cpu)),
         (3, 1, 4) => Instruction::Rla(indirect_y(cpu)),
         (3, 1, 5) => Instruction::Rla(zero_page_x(cpu)),
@@ -290,7 +286,7 @@ fn decode_next<M: Mcu>(cpu: &mut Cpu<M>) -> Instruction {
 
         (3, 2, 0) => Instruction::Lse(indirect_x(cpu)),
         (3, 2, 1) => Instruction::Lse(zero_page(cpu)),
-        (3, 2, 2) => Instruction::Alr(literal_v(cpu)),
+        (3, 2, 2) => Instruction::Alr(Addressing::Immediate(r_b(cpu))),
         (3, 2, 3) => Instruction::Lse(absolute(cpu)),
         (3, 2, 4) => Instruction::Lse(indirect_y(cpu)),
         (3, 2, 5) => Instruction::Lse(zero_page_x(cpu)),
@@ -299,7 +295,7 @@ fn decode_next<M: Mcu>(cpu: &mut Cpu<M>) -> Instruction {
 
         (3, 3, 0) => Instruction::Rra(indirect_x(cpu)),
         (3, 3, 1) => Instruction::Rra(zero_page(cpu)),
-        (3, 3, 2) => Instruction::Arr(literal_v(cpu)),
+        (3, 3, 2) => Instruction::Arr(Addressing::Immediate(r_b(cpu))),
         (3, 3, 3) => Instruction::Rra(absolute(cpu)),
         (3, 3, 4) => Instruction::Rra(indirect_y(cpu)),
         (3, 3, 5) => Instruction::Rra(zero_page_x(cpu)),
@@ -308,7 +304,7 @@ fn decode_next<M: Mcu>(cpu: &mut Cpu<M>) -> Instruction {
 
         (3, 4, 0) => Instruction::Sax(indirect_x(cpu)),
         (3, 4, 1) => Instruction::Sax(zero_page(cpu)),
-        (3, 4, 2) => Instruction::Ane(literal_v(cpu)),
+        (3, 4, 2) => Instruction::Ane(Addressing::Immediate(r_b(cpu))),
         (3, 4, 3) => Instruction::Sax(absolute(cpu)),
         (3, 4, 4) => Instruction::Sha(indirect_y(cpu)),
         (3, 4, 5) => Instruction::Sax(zero_page_y(cpu)),
@@ -326,7 +322,7 @@ fn decode_next<M: Mcu>(cpu: &mut Cpu<M>) -> Instruction {
 
         (3, 6, 0) => Instruction::Dcp(indirect_x(cpu)),
         (3, 6, 1) => Instruction::Dcp(zero_page(cpu)),
-        (3, 6, 2) => Instruction::Sbx(literal_v(cpu)),
+        (3, 6, 2) => Instruction::Sbx(Addressing::Immediate(r_b(cpu))),
         (3, 6, 3) => Instruction::Dcp(absolute(cpu)),
         (3, 6, 4) => Instruction::Dcp(indirect_y(cpu)),
         (3, 6, 5) => Instruction::Dcp(zero_page_x(cpu)),
