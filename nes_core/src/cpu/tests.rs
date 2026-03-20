@@ -3298,7 +3298,7 @@ fn test_rti_clears_b_flag() {
 
 #[test]
 fn test_transfer_no_touch_flags_zero_page() {
-    // Transfer from zero page without touching flags (0xA4 - LDY zero page)
+    // Load Y from zero page (0xA4 - LDY zero page)
     let mut mcu = MockMcu::new();
     mcu.write(0x10, 0x42);
     mcu.write(0, 0xA4); // LDY $10
@@ -3309,8 +3309,7 @@ fn test_transfer_no_touch_flags_zero_page() {
     execute_next(&mut cpu);
 
     assert_eq!(cpu.y, 0x42);
-    // Flags should be updated by load
-    assert!(!cpu.flag(Flag::Zero)); // zero flag should be cleared
+    assert!(!cpu.flag(Flag::Zero));
 }
 
 #[test]

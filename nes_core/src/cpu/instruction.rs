@@ -25,8 +25,18 @@ pub enum Instruction {
     Ror(Addressing),
 
     // Load / store / transfer
-    Transfer(Addressing, Addressing),
-    TransferNoTouchFlags(Addressing, Addressing),
+    Lda(Addressing),
+    Ldx(Addressing),
+    Ldy(Addressing),
+    Sta(Addressing),
+    Stx(Addressing),
+    Sty(Addressing),
+    Tax,
+    Txa,
+    Tay,
+    Tya,
+    Tsx,
+    Txs,
 
     // Stack
     Pha,
@@ -238,17 +248,72 @@ impl Instruction {
                 }
             },
 
-            Instruction::Transfer(dest, src) => {
-                let (val, ticks_src) = src.read(cpu);
-                let ticks_dst = dest.write(cpu, val);
+            Instruction::Lda(addressing) => {
+                let (val, ticks) = addressing.read(cpu);
+                cpu.a = val;
                 cpu.update_negative_flag(val);
                 cpu.update_zero_flag(val);
-                1 + ticks_src + ticks_dst
+                1 + ticks
             }
-            Instruction::TransferNoTouchFlags(dest, src) => {
-                let (val, ticks_src) = src.read(cpu);
-                let ticks_dst = dest.write(cpu, val);
-                1 + ticks_src + ticks_dst
+            Instruction::Ldx(addressing) => {
+                let (val, ticks) = addressing.read(cpu);
+                cpu.x = val;
+                cpu.update_negative_flag(val);
+                cpu.update_zero_flag(val);
+                1 + ticks
+            }
+            Instruction::Ldy(addressing) => {
+                let (val, ticks) = addressing.read(cpu);
+                cpu.y = val;
+                cpu.update_negative_flag(val);
+                cpu.update_zero_flag(val);
+                1 + ticks
+            }
+            Instruction::Sta(addressing) => {
+                let ticks = addressing.write(cpu, cpu.a);
+                1 + ticks
+            }
+            Instruction::Stx(addressing) => {
+                let ticks = addressing.write(cpu, cpu.x);
+                1 + ticks
+            }
+            Instruction::Sty(addressing) => {
+                let ticks = addressing.write(cpu, cpu.y);
+                1 + ticks
+            }
+            Instruction::Tax => {
+                cpu.x = cpu.a;
+                cpu.update_negative_flag(cpu.x);
+                cpu.update_zero_flag(cpu.x);
+                2
+            }
+            Instruction::Txa => {
+                cpu.a = cpu.x;
+                cpu.update_negative_flag(cpu.a);
+                cpu.update_zero_flag(cpu.a);
+                2
+            }
+            Instruction::Tay => {
+                cpu.y = cpu.a;
+                cpu.update_negative_flag(cpu.y);
+                cpu.update_zero_flag(cpu.y);
+                2
+            }
+            Instruction::Tya => {
+                cpu.a = cpu.y;
+                cpu.update_negative_flag(cpu.a);
+                cpu.update_zero_flag(cpu.a);
+                2
+            }
+            Instruction::Tsx => {
+                cpu.x = cpu.sp;
+                cpu.update_negative_flag(cpu.x);
+                cpu.update_zero_flag(cpu.x);
+                2
+            }
+            Instruction::Txs => {
+                cpu.sp = cpu.x;
+                2
             }
 
             Instruction::Pha => {
