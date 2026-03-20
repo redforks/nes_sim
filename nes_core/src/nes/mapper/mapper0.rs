@@ -14,8 +14,10 @@ impl Mapper0 {
         debug_assert!(prg_rom.len() <= 0x8000);
         debug_assert!(chr_rom.len() <= 0x2000);
 
-        let mut r = Self::default();
-        r.prg_rom_len = prg_rom.len();
+        let mut r = Self {
+            prg_rom_len: prg_rom.len(),
+            ..Self::default()
+        };
         r.prg_rom[0..prg_rom.len()].copy_from_slice(prg_rom);
         r.chr_rom[0..chr_rom.len()].copy_from_slice(chr_rom);
         r
