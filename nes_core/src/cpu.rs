@@ -20,7 +20,7 @@ fn is_cross_page(a: u16, b: u16) -> bool {
     a != b
 }
 
-fn extra_tick_if_cross_page(a: u16, b: u16) -> u8 {
+fn extra_cycles_if_cross_page(a: u16, b: u16) -> u8 {
     is_cross_page(a, b) as u8
 }
 
@@ -458,7 +458,7 @@ impl<M: Mcu> Cpu<M> {
         // info!("irq");
         self.mcu.tick(); // dummy 1
         self.mcu.tick(); // dummy 2
-                         // Push status BEFORE setting I flag, so the saved status reflects the state at IRQ time
+        // Push status BEFORE setting I flag, so the saved status reflects the state at IRQ time
         self.push_pc();
         self.push_status();
         // Now set I flag to prevent nested IRQs
