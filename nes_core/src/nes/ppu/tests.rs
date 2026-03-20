@@ -242,9 +242,9 @@ fn ppu_tick_timing() {
     assert_eq!(ppu.dot, 0);
     assert!(!ppu.status.v_blank());
 
-    // Advance to scanline 241, dot 0
+    // Advance to scanline 241, dot 1
     ppu.scanline = VBLANK_SET_SCANLINE;
-    ppu.dot = 0;
+    ppu.dot = 1;
 
     // Tick once - should set VBlank and trigger NMI
     let result = ppu.tick(&pattern);

@@ -11,10 +11,10 @@ where
 {
     move |cpu| {
         let (val, ticks) = src.get(cpu);
-        dest.set(cpu, val);
+        let ticks2 = dest.set(cpu, val);
         cpu.update_negative_flag(val);
         cpu.update_zero_flag(val);
-        ticks + 2
+        ticks + ticks2
     }
 }
 
@@ -26,8 +26,8 @@ where
 {
     move |cpu| {
         let (val, ticks) = src.get(cpu);
-        dest.set(cpu, val);
-        ticks + 2
+        let ticks2 = dest.set(cpu, val);
+        ticks + ticks2
     }
 }
 
@@ -72,15 +72,15 @@ pub fn new_plp<M: Mcu>() -> impl FnMut(&mut Cpu<M>) -> u8 {
 // DEC, DEX, DEY
 pub fn new_dec<M: Mcu, D: Address<M>>(dest: D) -> impl FnMut(&mut Cpu<M>) -> u8 {
     move |cpu| {
-        let (val, ticks) = dest.get(cpu);
+        let (val, _) = dest.get(cpu);
         let val = val.wrapping_sub(1);
-        dest.set(cpu, val);
+        let ticks_set = dest.set(cpu, val);
         cpu.update_negative_flag(val);
         cpu.update_zero_flag(val);
         if dest.is_register() {
             2
         } else {
-            4 + ticks
+            ticks_set + 3
         }
     }
 }
@@ -88,15 +88,15 @@ pub fn new_dec<M: Mcu, D: Address<M>>(dest: D) -> impl FnMut(&mut Cpu<M>) -> u8 
 // INC, INX, INY
 pub fn new_inc<M: Mcu, D: Address<M>>(dest: D) -> impl FnMut(&mut Cpu<M>) -> u8 {
     move |cpu| {
-        let (val, ticks) = dest.get(cpu);
+        let (val, _) = dest.get(cpu);
         let val = val.wrapping_add(1);
-        dest.set(cpu, val);
+        let ticks_set = dest.set(cpu, val);
         cpu.update_negative_flag(val);
         cpu.update_zero_flag(val);
         if dest.is_register() {
             2
         } else {
-            4 + ticks
+            ticks_set + 3
         }
     }
 }
@@ -105,7 +105,7 @@ pub fn new_adc<M: Mcu, D: Address<M>>(dest: D) -> impl FnMut(&mut Cpu<M>) -> u8 
     move |cpu| {
         let (val, ticks) = dest.get(cpu);
         cpu.adc(val);
-        2 + ticks
+        1 + ticks
     }
 }
 
@@ -113,7 +113,7 @@ pub fn new_sbc<M: Mcu, D: Address<M>>(dest: D) -> impl FnMut(&mut Cpu<M>) -> u8 
     move |cpu| {
         let (val, ticks) = dest.get(cpu);
         cpu.adc(!val);
-        2 + ticks
+        1 + ticks
     }
 }
 
@@ -127,7 +127,7 @@ fn new_acc_op<M: Mcu, F: Fn(u8, u8) -> u8, S: Address<M>>(
         cpu.a = op(cpu.a, val);
         cpu.update_negative_flag(cpu.a);
         cpu.update_zero_flag(cpu.a);
-        2 + ticks
+        1 + ticks
     }
 }
 
@@ -194,13 +194,17 @@ fn new_shift_op<M: Mcu, F: Fn(&Cpu<M>, u8) -> (u8, u8), D: Address<M>>(
     dest: D,
 ) -> impl FnMut(&mut Cpu<M>) -> u8 {
     move |cpu| {
-        let (val, ticks) = dest.get(cpu);
+        let (val, _) = dest.get(cpu);
         let (val, carry_flag) = op(cpu, val);
         cpu.set_flag(Flag::Carry, carry_flag != 0);
-        dest.set(cpu, val);
+        let ticks_set = dest.set(cpu, val);
         cpu.update_negative_flag(val);
         cpu.update_zero_flag(val);
-        2 + ticks
+        if dest.is_register() {
+            2
+        } else {
+            ticks_set + 3
+        }
     }
 }
 
@@ -260,7 +264,7 @@ pub fn new_cmp<N: Mcu, R: Address<N>, M: Address<N>>(r: R, m: M) -> impl FnMut(&
         cpu.update_negative_flag(t);
         cpu.update_zero_flag(t);
         cpu.set_flag(Flag::Carry, r_val >= val);
-        2 + ticks
+        1 + ticks
     }
 }
 
@@ -343,7 +347,7 @@ pub fn new_bit<M: Mcu, D: Address<M>>(dest: D) -> impl FnMut(&mut Cpu<M>) -> u8 
         cpu.set_flag(Flag::Negative, (v & 0x80) != 0);
         cpu.set_flag(Flag::Overflow, (v & 0x70) != 0);
         cpu.update_zero_flag(v & cpu.a);
-        ticks + 2
+        1 + ticks
     }
 }
 
@@ -354,7 +358,7 @@ pub fn new_nop<M: Mcu>() -> impl FnMut(&mut Cpu<M>) -> u8 {
 pub fn new_nop_with_addr<N: Mcu, D: Address<N>>(dest: D) -> impl FnMut(&mut Cpu<N>) -> u8 {
     move |cpu| {
         let (_, ticks) = dest.get(cpu);
-        ticks + 2
+        1 + ticks
     }
 }
 
@@ -367,62 +371,78 @@ pub fn new_hlt<M: Mcu>() -> impl FnMut(&mut Cpu<M>) -> u8 {
 
 pub fn new_aso<M: Mcu, D: Address<M>>(dest: D) -> impl FnMut(&mut Cpu<M>) -> u8 {
     move |cpu| {
-        let (v, ticks) = dest.get(cpu);
+        let (v, _ticks) = dest.get(cpu);
         cpu.set_flag(Flag::Carry, (v & 0x80) != 0);
         let t = v << 1;
-        dest.set(cpu, t);
+        let ticks_set = dest.set(cpu, t);
         cpu.a |= t;
         cpu.update_negative_flag(cpu.a);
         cpu.update_zero_flag(cpu.a);
-        ticks + 2
+        if dest.is_register() {
+            2
+        } else {
+            ticks_set + 3
+        }
     }
 }
 
 pub fn new_rla<M: Mcu, D: Address<M>>(dest: D) -> impl FnMut(&mut Cpu<M>) -> u8 {
     move |cpu| {
-        let (v, ticks) = dest.get(cpu);
+        let (v, _ticks) = dest.get(cpu);
         let carry = v & 0x80 != 0;
         let t = (v << 1) | cpu.flag(Flag::Carry) as u8;
-        dest.set(cpu, t);
+        let ticks_set = dest.set(cpu, t);
         cpu.set_flag(Flag::Carry, carry);
         cpu.a &= t;
         cpu.update_negative_flag(cpu.a);
         cpu.update_zero_flag(cpu.a);
-        ticks + 2
+        if dest.is_register() {
+            2
+        } else {
+            ticks_set + 3
+        }
     }
 }
 
 pub fn new_lse<M: Mcu, D: Address<M>>(dest: D) -> impl FnMut(&mut Cpu<M>) -> u8 {
     move |cpu| {
-        let (v, ticks) = dest.get(cpu);
+        let (v, _ticks) = dest.get(cpu);
         cpu.set_flag(Flag::Carry, (v & 0x01) != 0);
         let t = v >> 1;
-        dest.set(cpu, t);
+        let ticks_set = dest.set(cpu, t);
         cpu.a ^= t;
         cpu.update_negative_flag(cpu.a);
         cpu.update_zero_flag(cpu.a);
-        ticks + 2
+        if dest.is_register() {
+            2
+        } else {
+            ticks_set + 3
+        }
     }
 }
 
 pub fn new_rra<M: Mcu, D: Address<M>>(dest: D) -> impl FnMut(&mut Cpu<M>) -> u8 {
     move |cpu| {
-        let (v, ticks) = dest.get(cpu);
+        let (v, _ticks) = dest.get(cpu);
         let carry = v & 0x01 != 0;
         let v = (v >> 1) | ((cpu.flag(Flag::Carry) as u8) << 7);
-        dest.set(cpu, v);
+        let ticks_set = dest.set(cpu, v);
         cpu.set_flag(Flag::Carry, carry);
         cpu.update_negative_flag(v);
         cpu.adc(v);
-        ticks + 2
+        if dest.is_register() {
+            2
+        } else {
+            ticks_set + 3
+        }
     }
 }
 
 pub fn new_sax<M: Mcu, D: Address<M>>(dest: D) -> impl FnMut(&mut Cpu<M>) -> u8 {
     move |cpu| {
         let v = cpu.a & cpu.x;
-        dest.set(cpu, v);
-        2
+        let ticks = dest.set(cpu, v);
+        1 + ticks
     }
 }
 
@@ -433,30 +453,38 @@ pub fn new_lax<M: Mcu, D: Address<M>>(dest: D) -> impl FnMut(&mut Cpu<M>) -> u8 
         cpu.x = v;
         cpu.update_negative_flag(v);
         cpu.update_zero_flag(v);
-        ticks + 2
+        1 + ticks
     }
 }
 
 pub fn new_dcp<M: Mcu, D: Address<M>>(dest: D) -> impl FnMut(&mut Cpu<M>) -> u8 {
     move |cpu| {
-        let (v, ticks) = dest.get(cpu);
+        let (v, _ticks) = dest.get(cpu);
         let t = v.wrapping_sub(1);
-        dest.set(cpu, t);
+        let ticks_set = dest.set(cpu, t);
         let (t, borrow) = cpu.a.overflowing_sub(t);
         cpu.update_negative_flag(t);
         cpu.update_zero_flag(t);
         cpu.set_flag(Flag::Carry, !borrow);
-        ticks + 2
+        if dest.is_register() {
+            2
+        } else {
+            ticks_set + 3
+        }
     }
 }
 
 pub fn new_isc<M: Mcu, D: Address<M>>(dest: D) -> impl FnMut(&mut Cpu<M>) -> u8 {
     move |cpu| {
-        let (v, ticks) = dest.get(cpu);
+        let (v, _ticks) = dest.get(cpu);
         let t = v.wrapping_add(1);
-        dest.set(cpu, t);
+        let ticks_set = dest.set(cpu, t);
         cpu.adc(!t);
-        ticks + 2
+        if dest.is_register() {
+            2
+        } else {
+            ticks_set + 3
+        }
     }
 }
 
@@ -472,5 +500,22 @@ pub fn new_all<N: Mcu, R: Address<N>, D: Address<N>>(
         let addr = (addr & 0xff) | ((v as u16) << 8);
         cpu.write_byte(addr, v);
         5
+    }
+}
+
+pub fn new_ane<M: Mcu, D: Address<M>>(dest: D) -> impl FnMut(&mut Cpu<M>) -> u8 {
+    move |cpu| {
+        let (v, ticks) = dest.get(cpu);
+        cpu.a = cpu.x & v;
+        cpu.update_negative_flag(cpu.a);
+        cpu.update_zero_flag(cpu.a);
+        1 + ticks
+    }
+}
+
+pub fn new_nop_store<M: Mcu, D: Address<M>>(dest: D) -> impl FnMut(&mut Cpu<M>) -> u8 {
+    move |cpu| {
+        let ticks = dest.set(cpu, cpu.a); // dummy write
+        1 + ticks
     }
 }

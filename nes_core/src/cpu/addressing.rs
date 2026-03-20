@@ -11,13 +11,17 @@ pub trait Address<M: Mcu>: Display + Copy {
 
     /// return ticks
     fn set(&self, cpu: &mut Cpu<M>, val: u8) -> u8 {
-        let (addr, ticks) = self.calc_addr(cpu);
+        let (addr, ticks) = self.calc_addr_write(cpu);
         cpu.write_byte(addr, val);
         ticks + 1 // +1 for the memory write
     }
 
     fn calc_addr(&self, _: &mut Cpu<M>) -> (u16, u8) {
         panic!("calc_addr not implemented");
+    }
+
+    fn calc_addr_write(&self, cpu: &mut Cpu<M>) -> (u16, u8) {
+        self.calc_addr(cpu)
     }
 
     fn is_register(&self) -> bool {
@@ -36,7 +40,7 @@ impl Display for Literal {
 
 impl<M: Mcu> Address<M> for Literal {
     fn get(&self, _: &mut Cpu<M>) -> (u8, u8) {
-        (self.0, 0)
+        (self.0, 1)
     }
 
     fn set(&self, _: &mut Cpu<M>, _: u8) -> u8 {
@@ -118,6 +122,11 @@ impl<M: Mcu> Address<M> for AbsoluteX {
         let r = self.0.wrapping_add(cpu.x as u16);
         (r, 2 + extra_tick_if_cross_page(self.0, r))
     }
+
+    fn calc_addr_write(&self, cpu: &mut Cpu<M>) -> (u16, u8) {
+        let r = self.0.wrapping_add(cpu.x as u16);
+        (r, 3)
+    }
 }
 
 #[derive(Clone, Copy)]
@@ -133,6 +142,11 @@ impl<M: Mcu> Address<M> for AbsoluteY {
     fn calc_addr(&self, cpu: &mut Cpu<M>) -> (u16, u8) {
         let r = self.0.wrapping_add(cpu.y as u16);
         (r, 2 + extra_tick_if_cross_page(self.0, r))
+    }
+
+    fn calc_addr_write(&self, cpu: &mut Cpu<M>) -> (u16, u8) {
+        let r = self.0.wrapping_add(cpu.y as u16);
+        (r, 3)
     }
 }
 
@@ -166,6 +180,12 @@ impl<M: Mcu> Address<M> for IndirectY {
         let r = addr.wrapping_add(cpu.y as u16);
         (r, 3 + extra_tick_if_cross_page(addr, r))
     }
+
+    fn calc_addr_write(&self, cpu: &mut Cpu<M>) -> (u16, u8) {
+        let addr = cpu.read_zero_page_word(self.0);
+        let r = addr.wrapping_add(cpu.y as u16);
+        (r, 4)
+    }
 }
 
 #[derive(Clone, Copy)]
@@ -179,12 +199,16 @@ impl Display for RegisterA {
 
 impl<M: Mcu> Address<M> for RegisterA {
     fn get(&self, cpu: &mut Cpu<M>) -> (u8, u8) {
-        (cpu.a, 0)
+        (cpu.a, 1)
     }
 
     fn set(&self, cpu: &mut Cpu<M>, val: u8) -> u8 {
         cpu.a = val;
-        0
+        1
+    }
+
+    fn is_register(&self) -> bool {
+        true
     }
 }
 
@@ -199,12 +223,12 @@ impl Display for RegisterX {
 
 impl<M: Mcu> Address<M> for RegisterX {
     fn get(&self, cpu: &mut Cpu<M>) -> (u8, u8) {
-        (cpu.x, 0)
+        (cpu.x, 1)
     }
 
     fn set(&self, cpu: &mut Cpu<M>, val: u8) -> u8 {
         cpu.x = val;
-        0
+        1
     }
 
     fn is_register(&self) -> bool {
@@ -223,12 +247,12 @@ impl Display for RegisterY {
 
 impl<M: Mcu> Address<M> for RegisterY {
     fn get(&self, cpu: &mut Cpu<M>) -> (u8, u8) {
-        (cpu.y, 0)
+        (cpu.y, 1)
     }
 
     fn set(&self, cpu: &mut Cpu<M>, val: u8) -> u8 {
         cpu.y = val;
-        0
+        1
     }
 
     fn is_register(&self) -> bool {
@@ -247,12 +271,12 @@ impl Display for RegisterSP {
 
 impl<M: Mcu> Address<M> for RegisterSP {
     fn get(&self, cpu: &mut Cpu<M>) -> (u8, u8) {
-        (cpu.sp, 0)
+        (cpu.sp, 1)
     }
 
     fn set(&self, cpu: &mut Cpu<M>, val: u8) -> u8 {
         cpu.sp = val;
-        0
+        1
     }
 
     fn is_register(&self) -> bool {
@@ -271,12 +295,12 @@ impl Display for RegisterStatus {
 
 impl<M: Mcu> Address<M> for RegisterStatus {
     fn get(&self, cpu: &mut Cpu<M>) -> (u8, u8) {
-        (cpu.status | 0b0011_0000, 0)
+        (cpu.status | 0b0011_0000, 1)
     }
 
     fn set(&self, cpu: &mut Cpu<M>, val: u8) -> u8 {
         cpu.status = val & 0b1100_1111;
-        0
+        1
     }
 
     fn is_register(&self) -> bool {
@@ -295,12 +319,12 @@ impl Display for FlagAddr {
 
 impl<M: Mcu> Address<M> for FlagAddr {
     fn get(&self, cpu: &mut Cpu<M>) -> (u8, u8) {
-        (cpu.flag(self.0) as u8, 0)
+        (cpu.flag(self.0) as u8, 1)
     }
 
     fn set(&self, cpu: &mut Cpu<M>, val: u8) -> u8 {
         cpu.set_flag(self.0, val != 0);
-        0
+        1
     }
 
     fn is_register(&self) -> bool {

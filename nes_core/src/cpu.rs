@@ -311,6 +311,7 @@ fn execute_next<M: Mcu>(cpu: &mut Cpu<M>) -> u8 {
 
         (3, 4, 0) => new_sax(indirect_x(cpu))(cpu),
         (3, 4, 1) => new_sax(zero_page(cpu))(cpu),
+        (3, 4, 2) => new_ane(literal(cpu))(cpu),
         (3, 4, 3) => new_sax(absolute(cpu))(cpu),
         (3, 4, 5) => new_sax(zero_page_y(cpu))(cpu),
 
@@ -340,6 +341,10 @@ fn execute_next<M: Mcu>(cpu: &mut Cpu<M>) -> u8 {
         (3, 7, 6) => new_isc(absolute_y(cpu))(cpu),
         (3, 7, 7) => new_isc(absolute_x(cpu))(cpu),
 
+        (3, 4, 4) => new_nop_store(indirect_y(cpu))(cpu),
+        (3, 4, 6) => new_nop_store(absolute_y(cpu))(cpu),
+        (3, 4, 7) => new_nop_store(absolute_y(cpu))(cpu),
+        (3, 5, 6) => new_lax(absolute_y(cpu))(cpu),
         _ => panic!(
             "Unknown opcode: {:02x} ({}, {}, {}) @ {:04x}",
             op_code, c, a, b, cpu.pc

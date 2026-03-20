@@ -281,6 +281,7 @@ pub struct Ppu {
     // PPU timing
     scanline: u16, // 0-261
     dot: u16,      // 0-340
+    odd_frame: bool,
 }
 
 impl Default for Ppu {
@@ -302,6 +303,7 @@ impl Default for Ppu {
             renderer: Box::new(ImageRender::new(256, 240)),
             scanline: 0,
             dot: 0,
+            odd_frame: false,
         }
     }
 }
@@ -353,33 +355,30 @@ impl Ppu {
             self.renderer.finish();
         }
 
-        // Advance dot/scanline counters
-        self.dot += 1;
-        if self.dot >= DOTS_PER_SCANLINE {
-            self.dot = 0;
-            self.scanline += 1;
-            if self.scanline >= SCANLINES_PER_FRAME {
-                self.scanline = 0;
-            }
-        }
-
-        // VBlank set: scanline 241, dot 1
+        // VBlank set: normally scanline 241, dot 1.
+        let mut vblank_started = false;
+        let mut trigger_nmi = false;
         if self.scanline == VBLANK_SET_SCANLINE && self.dot == 1 {
             let status = self.status;
-            let was_vblank = status.v_blank();
-            if !was_vblank {
+            if !status.v_blank() {
+                debug!(
+                    "PPU: VBLANK SET at scanline={}, dot={}",
+                    self.scanline, self.dot
+                );
                 self.status = status.with_v_blank(true);
-                return PpuTickResult {
-                    nmi: self.ctrl_flags.nmi_enable(),
-                    vblank_started: true,
-                };
+                trigger_nmi = self.ctrl_flags.nmi_enable();
+                vblank_started = true;
             }
         }
 
-        // VBlank clear: scanline 261, dot 1
-        if self.scanline == VBLANK_CLEAR_SCANLINE && self.dot == 1 {
+        // VBlank clear: scanline 261, dot 0
+        if self.scanline == VBLANK_CLEAR_SCANLINE && self.dot == 0 {
             let status = self.status;
             if status.v_blank() {
+                debug!(
+                    "PPU: VBLANK CLEAR at scanline={}, dot={}",
+                    self.scanline, self.dot
+                );
                 self.status = status.with_v_blank(false);
             }
             // Also clear sprite zero hit at pre-render scanline
@@ -387,7 +386,30 @@ impl Ppu {
             self.status = status.with_sprite_zero_hit(false);
         }
 
-        PpuTickResult::default()
+        // Advance dot/scanline counters
+        self.dot += 1;
+        if self.dot >= DOTS_PER_SCANLINE {
+            self.dot = 0;
+            self.scanline += 1;
+            if self.scanline >= SCANLINES_PER_FRAME {
+                debug!("PPU: Frame complete, scanline={} -> 0", self.scanline);
+                self.scanline = 0;
+                self.odd_frame = !self.odd_frame;
+
+                // Handle skipped dot on odd frames when background is enabled
+                // This happens at (0, 0) of every odd frame.
+                // We use dot=1 to skip (0,0) effectively.
+                if self.odd_frame && (self.mask.background_enabled() || self.mask.sprite_enabled())
+                {
+                    self.dot = 1;
+                }
+            }
+        }
+
+        PpuTickResult {
+            nmi: trigger_nmi,
+            vblank_started,
+        }
     }
 
     pub fn set_mirroring(&mut self, mirroring: Mirroring) {
@@ -400,6 +422,10 @@ impl Ppu {
 
     pub fn set_renderer(&mut self, renderer: Box<dyn Render>) {
         self.renderer = renderer;
+    }
+
+    pub fn scanline_and_dot(&self) -> (u16, u16) {
+        (self.scanline, self.dot)
     }
 
     /// Read from PPU registers or VRAM/palette data
