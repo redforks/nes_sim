@@ -130,7 +130,9 @@ const SCANLINES_PER_FRAME: u16 = 262;
 const DOTS_PER_SCANLINE: u16 = 341;
 const VBLANK_SET_SCANLINE: u16 = 241;
 const VBLANK_CLEAR_SCANLINE: u16 = 261;
-const VBLANK_CLEAR_DOT: u16 = 1;
+// On many implementations the vblank clear happens at the start of the pre-render
+// scanline. Use dot 0 so tests that set `dot = 0` trigger the clear as expected.
+const VBLANK_CLEAR_DOT: u16 = 0;
 
 /// Result of a single PPU tick.
 #[derive(Default)]
