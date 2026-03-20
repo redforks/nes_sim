@@ -46,6 +46,10 @@ fn test_lower_ram_mirroring() {
         length_counters: [0; 4],
         length_counter_halt: [false; 4],
         channel_enabled: [false; 4],
+        consumed_cycles: 0,
+        nmi_pending: false,
+        nmi_enable_pending: false,
+        nmi_cancel_pending: false,
     };
 
     // Write to address 0x0000
@@ -74,6 +78,10 @@ fn test_ppu_register_access() {
         length_counters: [0; 4],
         length_counter_halt: [false; 4],
         channel_enabled: [false; 4],
+        consumed_cycles: 0,
+        nmi_pending: false,
+        nmi_enable_pending: false,
+        nmi_cancel_pending: false,
     };
 
     // PPU registers are at 0x2000-0x3FFF
@@ -98,6 +106,10 @@ fn test_apu_register_access() {
         length_counters: [0; 4],
         length_counter_halt: [false; 4],
         channel_enabled: [false; 4],
+        consumed_cycles: 0,
+        nmi_pending: false,
+        nmi_enable_pending: false,
+        nmi_cancel_pending: false,
     };
 
     // APU registers are at 0x4000-0x401F
@@ -127,6 +139,10 @@ fn test_cartridge_prg_rom_access() {
         length_counters: [0; 4],
         length_counter_halt: [false; 4],
         channel_enabled: [false; 4],
+        consumed_cycles: 0,
+        nmi_pending: false,
+        nmi_enable_pending: false,
+        nmi_cancel_pending: false,
     };
 
     assert_eq!(mcu.read(0x8000), 0xEA);
@@ -148,6 +164,10 @@ fn test_frame_counter_interrupt_flag() {
         length_counters: [0; 4],
         length_counter_halt: [false; 4],
         channel_enabled: [false; 4],
+        consumed_cycles: 0,
+        nmi_pending: false,
+        nmi_enable_pending: false,
+        nmi_cancel_pending: false,
     };
 
     assert!(mcu.request_irq());
@@ -169,6 +189,10 @@ fn test_no_interrupt_when_both_false() {
         length_counters: [0; 4],
         length_counter_halt: [false; 4],
         channel_enabled: [false; 4],
+        consumed_cycles: 0,
+        nmi_pending: false,
+        nmi_enable_pending: false,
+        nmi_cancel_pending: false,
     };
 
     assert!(!mcu.request_irq());
@@ -190,6 +214,10 @@ fn test_frame_counter_write() {
         length_counters: [0; 4],
         length_counter_halt: [false; 4],
         channel_enabled: [false; 4],
+        consumed_cycles: 0,
+        nmi_pending: false,
+        nmi_enable_pending: false,
+        nmi_cancel_pending: false,
     };
 
     // Write to frame counter at 0x4017
@@ -216,6 +244,10 @@ fn test_status_register_read_clears_flags() {
         length_counters: [0; 4],
         length_counter_halt: [false; 4],
         channel_enabled: [false; 4],
+        consumed_cycles: 0,
+        nmi_pending: false,
+        nmi_enable_pending: false,
+        nmi_cancel_pending: false,
     };
 
     assert!(mcu.frame_counter_interrupt.get());
@@ -241,6 +273,10 @@ fn test_tick_ppu() {
         length_counters: [0; 4],
         length_counter_halt: [false; 4],
         channel_enabled: [false; 4],
+        consumed_cycles: 0,
+        nmi_pending: false,
+        nmi_enable_pending: false,
+        nmi_cancel_pending: false,
     };
 
     // tick_ppu should return false when no NMI pending
@@ -264,6 +300,10 @@ fn test_memory_mapping() {
         length_counters: [0; 4],
         length_counter_halt: [false; 4],
         channel_enabled: [false; 4],
+        consumed_cycles: 0,
+        nmi_pending: false,
+        nmi_enable_pending: false,
+        nmi_cancel_pending: false,
     };
 
     // Test different address regions
@@ -290,6 +330,10 @@ fn test_ppu_dma() {
         length_counters: [0; 4],
         length_counter_halt: [false; 4],
         channel_enabled: [false; 4],
+        consumed_cycles: 0,
+        nmi_pending: false,
+        nmi_enable_pending: false,
+        nmi_cancel_pending: false,
     };
 
     // Set up some data in RAM for DMA
@@ -320,6 +364,10 @@ fn test_cartridge_write() {
         length_counters: [0; 4],
         length_counter_halt: [false; 4],
         channel_enabled: [false; 4],
+        consumed_cycles: 0,
+        nmi_pending: false,
+        nmi_enable_pending: false,
+        nmi_cancel_pending: false,
     };
 
     // Write to cartridge space (0x4020+)
@@ -347,6 +395,10 @@ fn test_cartridge_read_boundary() {
         length_counters: [0; 4],
         length_counter_halt: [false; 4],
         channel_enabled: [false; 4],
+        consumed_cycles: 0,
+        nmi_pending: false,
+        nmi_enable_pending: false,
+        nmi_cancel_pending: false,
     };
 
     assert_eq!(mcu.read(0x8000), 0x11);
@@ -369,6 +421,10 @@ fn test_read_4015_returns_zero() {
         length_counters: [0; 4],
         length_counter_halt: [false; 4],
         channel_enabled: [false; 4],
+        consumed_cycles: 0,
+        nmi_pending: false,
+        nmi_enable_pending: false,
+        nmi_cancel_pending: false,
     };
 
     // Reading 0x4015 should return 0
