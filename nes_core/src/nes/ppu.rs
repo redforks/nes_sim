@@ -130,6 +130,7 @@ const SCANLINES_PER_FRAME: u16 = 262;
 const DOTS_PER_SCANLINE: u16 = 341;
 const VBLANK_SET_SCANLINE: u16 = 241;
 const VBLANK_CLEAR_SCANLINE: u16 = 261;
+const VBLANK_CLEAR_DOT: u16 = 1;
 
 /// Result of a single PPU tick.
 #[derive(Default)]
@@ -282,6 +283,7 @@ pub struct Ppu {
     scanline: u16, // 0-261
     dot: u16,      // 0-340
     odd_frame: bool,
+    cancel_nmi_pending: bool,
 }
 
 impl Default for Ppu {
@@ -304,6 +306,7 @@ impl Default for Ppu {
             scanline: 0,
             dot: 0,
             odd_frame: false,
+            cancel_nmi_pending: false,
         }
     }
 }
@@ -371,8 +374,8 @@ impl Ppu {
             }
         }
 
-        // VBlank clear: scanline 261, dot 0
-        if self.scanline == VBLANK_CLEAR_SCANLINE && self.dot == 0 {
+        // VBlank clear: pre-render scanline 261, dot 1
+        if self.scanline == VBLANK_CLEAR_SCANLINE && self.dot == VBLANK_CLEAR_DOT {
             let status = self.status;
             if status.v_blank() {
                 debug!(
@@ -422,6 +425,16 @@ impl Ppu {
 
     pub fn set_renderer(&mut self, renderer: Box<dyn Render>) {
         self.renderer = renderer;
+    }
+
+    pub fn take_cancel_nmi_pending(&mut self) -> bool {
+        let v = self.cancel_nmi_pending;
+        self.cancel_nmi_pending = false;
+        v
+    }
+
+    pub fn nmi_signal(&self) -> bool {
+        self.status.v_blank() && self.ctrl_flags.nmi_enable()
     }
 
     pub fn scanline_and_dot(&self) -> (u16, u16) {
@@ -699,6 +712,9 @@ impl Ppu {
     /// Read status register (for testing) - behaves like reading from 0x2002
     /// Returns the current status and clears the v_blank flag
     fn read_status(&mut self) -> PpuStatus {
+        if self.scanline == VBLANK_SET_SCANLINE && (self.dot == 1 || self.dot == 2) {
+            self.cancel_nmi_pending = true;
+        }
         let status = self.status;
         // Clear v_blank flag on read (like real hardware)
         self.status = status.with_v_blank(false);

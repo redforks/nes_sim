@@ -30,9 +30,9 @@ impl<M: Mcu> Plugin<M> for ReportPlugin {
 
         if self.verbose {
             // Read the opcode and next few bytes for context
-            let op = cpu.read_byte(cpu.pc);
-            let b1 = cpu.read_byte(cpu.pc.wrapping_add(1));
-            let b2 = cpu.read_byte(cpu.pc.wrapping_add(2));
+            let op = cpu.peek_byte(cpu.pc);
+            let b1 = cpu.peek_byte(cpu.pc.wrapping_add(1));
+            let b2 = cpu.peek_byte(cpu.pc.wrapping_add(2));
             println!(
                 "[{}] pc: ${:04x}  [{:02x} {:02x} {:02x}]",
                 self.count, cpu.pc, op, b1, b2
@@ -52,13 +52,13 @@ impl<M: Mcu> Plugin<M> for ReportPlugin {
 
         // Check for CPU halt - if halted, the test is complete
         if cpu.is_halted() {
-            let result = cpu.read_byte(TEST_RESULT_ADDR);
+            let result = cpu.peek_byte(TEST_RESULT_ADDR);
 
             // Read text output from $6004+
             let mut text_output = String::new();
             let mut addr = 0x6004u16;
             loop {
-                let ch = cpu.read_byte(addr);
+                let ch = cpu.peek_byte(addr);
                 if ch == 0 {
                     break;
                 }
@@ -100,18 +100,18 @@ impl<M: Mcu> Plugin<M> for ReportPlugin {
 
             // Always check $6000 memory
             let sig = [
-                cpu.read_byte(TEST_SIGNATURE_ADDR),
-                cpu.read_byte(TEST_SIGNATURE_ADDR + 1),
-                cpu.read_byte(TEST_SIGNATURE_ADDR + 2),
+                cpu.peek_byte(TEST_SIGNATURE_ADDR),
+                cpu.peek_byte(TEST_SIGNATURE_ADDR + 1),
+                cpu.peek_byte(TEST_SIGNATURE_ADDR + 2),
             ];
-            let result = cpu.read_byte(TEST_RESULT_ADDR);
+            let result = cpu.peek_byte(TEST_RESULT_ADDR);
 
             // Print debug every 100000 instructions
             if self.verbose && self.count.is_multiple_of(100000) {
                 // Read first 20 chars of text output
                 let mut text = String::new();
                 for i in 0..20 {
-                    let ch = cpu.read_byte(0x6004 + i);
+                    let ch = cpu.peek_byte(0x6004 + i);
                     if ch == 0 {
                         break;
                     }

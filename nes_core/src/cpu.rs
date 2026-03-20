@@ -448,16 +448,20 @@ impl<M: Mcu> Cpu<M> {
 
     pub fn nmi(&mut self) {
         info!("nmi");
-        self.push_pc();
-        self.push_status();
-        let vector = self.read_word(0xFFFA);
+        self.mcu.tick(); // dummy 1
+        self.mcu.tick(); // dummy 2
+        self.push_pc(); // 2 ticks
+        self.push_status(); // 1 tick
+        let vector = self.read_word(0xFFFA); // 2 ticks
         info!("nmi vector: ${:04x}", vector);
         self.pc = vector;
     }
 
     fn irq(&mut self) {
         // info!("irq");
-        // Push status BEFORE setting I flag, so the saved status reflects the state at IRQ time
+        self.mcu.tick(); // dummy 1
+        self.mcu.tick(); // dummy 2
+                         // Push status BEFORE setting I flag, so the saved status reflects the state at IRQ time
         self.push_pc();
         self.push_status();
         // Now set I flag to prevent nested IRQs
@@ -546,27 +550,40 @@ impl<M: Mcu> Cpu<M> {
     }
 
     pub fn read_byte(&mut self, addr: u16) -> u8 {
+        self.mcu.tick();
+        self.mcu.read(addr)
+    }
+
+    pub fn peek_byte(&mut self, addr: u16) -> u8 {
         self.mcu.read(addr)
     }
 
     fn inc_read_byte(&mut self) -> u8 {
         let addr = self.pc;
         self.inc_pc(1);
-        self.read_byte(addr)
+        self.mcu.tick();
+        self.mcu.read(addr)
     }
 
     pub fn inc_read_word(&mut self) -> u16 {
         let addr = self.pc;
         self.inc_pc(2);
-        self.read_word(addr)
+        self.mcu.tick();
+        let low = self.mcu.read(addr) as u16;
+        self.mcu.tick();
+        let high = self.mcu.read(addr.wrapping_add(1)) as u16;
+        (high << 8) | low
     }
 
     pub fn write_byte(&mut self, addr: u16, value: u8) {
+        self.mcu.tick();
         self.mcu.write(addr, value);
     }
 
     pub fn read_word(&mut self, addr: u16) -> u16 {
+        self.mcu.tick();
         let low = self.mcu.read(addr) as u16;
+        self.mcu.tick();
         let high = self.mcu.read(addr.wrapping_add(1)) as u16;
         (high << 8) | low
     }
@@ -580,24 +597,28 @@ impl<M: Mcu> Cpu<M> {
     }
 
     fn _read_word_in_same_page(&mut self, page: u16, offset: u8) -> u16 {
+        self.mcu.tick();
         let low = self.mcu.read(page | offset as u16) as u16;
+        self.mcu.tick();
         let high = self.mcu.read(page | offset.wrapping_add(1) as u16) as u16;
         (high << 8) | low
     }
 
     fn push_stack(&mut self, value: u8) {
-        self.write_byte(0x100 + self.sp as u16, value);
+        self.mcu.tick();
+        self.mcu.write(0x100 + self.sp as u16, value);
         self.sp = self.sp.wrapping_sub(1);
     }
 
     fn pop_stack(&mut self) -> u8 {
         self.sp = self.sp.wrapping_add(1);
-        self.read_byte(0x100 + self.sp as u16)
+        self.mcu.tick();
+        self.mcu.read(0x100 + self.sp as u16)
     }
 
     pub fn peek_stack(&mut self) -> u8 {
         let addr = 0x100 + self.sp.wrapping_add(1) as u16;
-        self.read_byte(addr)
+        self.mcu.read(addr)
     }
 
     pub fn push_status(&mut self) {

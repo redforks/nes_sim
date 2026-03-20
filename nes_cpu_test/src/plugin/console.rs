@@ -12,9 +12,9 @@ impl<M: Mcu> Plugin<M> for Console {
     fn start(&mut self, _: &mut Cpu<M>) {}
 
     fn end(&mut self, cpu: &mut Cpu<M>, _cycles: u8) {
-        if cpu.read_byte(0x6001) != 0xDE
-            || cpu.read_byte(0x6002) != 0xB0
-            || cpu.read_byte(0x6003) != 0x61
+        if cpu.peek_byte(0x6001) != 0xDE
+            || cpu.peek_byte(0x6002) != 0xB0
+            || cpu.peek_byte(0x6003) != 0x61
         {
             return;
         }
@@ -23,7 +23,7 @@ impl<M: Mcu> Plugin<M> for Console {
         let mut buf = Vec::with_capacity(32);
         let mut addr = 0x6004;
         loop {
-            let c = cpu.read_byte(addr);
+            let c = cpu.peek_byte(addr);
             if c == 0 {
                 break;
             }
