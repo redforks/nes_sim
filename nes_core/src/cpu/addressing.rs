@@ -1,8 +1,8 @@
-use super::{Cpu, Flag, extra_tick_if_cross_page};
+use super::{extra_tick_if_cross_page, Cpu, Flag};
 use crate::mcu::Mcu;
 use std::fmt::{Display, Formatter};
 
-#[derive(Debug, Copy, Clone)]
+#[derive(Debug, Copy, Clone, PartialEq)]
 pub enum BranchAddressing {
     Relative(u8),
     AbsoluteIndirect(u16),
@@ -26,7 +26,7 @@ impl BranchAddressing {
     }
 }
 
-#[derive(Debug, Copy, Clone)]
+#[derive(Debug, Copy, Clone, PartialEq)]
 pub enum Addressing {
     Accumulator,
     Implied,
@@ -39,6 +39,11 @@ pub enum Addressing {
     ZeroPageIndexedWithY(u8),
     ZeroPageIndexedIndirect(u8),
     ZeroPageIndexedIndirectWithY(u8),
+    RegisterA,
+    RegisterX,
+    RegisterY,
+    RegisterSP,
+    RegisterStatus,
 }
 
 impl Display for Addressing {
@@ -55,11 +60,61 @@ impl Display for Addressing {
             Addressing::ZeroPageIndexedWithY(z) => write!(f, "${:02x},Y", z),
             Addressing::ZeroPageIndexedIndirect(z) => write!(f, "(${:02x},X)", z),
             Addressing::ZeroPageIndexedIndirectWithY(z) => write!(f, "(${:02x}),Y", z),
+            Addressing::RegisterA => write!(f, "A"),
+            Addressing::RegisterX => write!(f, "X"),
+            Addressing::RegisterY => write!(f, "Y"),
+            Addressing::RegisterSP => write!(f, "SP"),
+            Addressing::RegisterStatus => write!(f, "status"),
         }
     }
 }
 
 impl Addressing {
+    pub fn is_register(&self) -> bool {
+        matches!(
+            self,
+            Addressing::Accumulator
+                | Addressing::RegisterA
+                | Addressing::RegisterX
+                | Addressing::RegisterY
+                | Addressing::RegisterSP
+                | Addressing::RegisterStatus
+        )
+    }
+
+    pub fn calc_addr<M: Mcu>(&self, cpu: &mut Cpu<M>) -> (u16, u8) {
+        match self {
+            Addressing::Accumulator => (cpu.a as u16, 1),
+            Addressing::Implied => panic!("can't calc addr for implied addressing"),
+            Addressing::Immediate(v) => (*v as u16, 1),
+            Addressing::Absolute(a) => (*a, 2),
+            Addressing::ZeroPage(z) => (*z as u16, 1),
+            Addressing::AbsoluteIndexedWithX(a) => {
+                let r = a.wrapping_add(cpu.x as u16);
+                (r, 2 + extra_tick_if_cross_page(*a, r))
+            }
+            Addressing::AbsoluteIndexedWithY(a) => {
+                let r = a.wrapping_add(cpu.y as u16);
+                (r, 2 + extra_tick_if_cross_page(*a, r))
+            }
+            Addressing::ZeroPageIndexedWithX(z) => (z.wrapping_add(cpu.x) as u16, 2),
+            Addressing::ZeroPageIndexedWithY(z) => (z.wrapping_add(cpu.y) as u16, 2),
+            Addressing::ZeroPageIndexedIndirect(z) => {
+                (cpu.read_zero_page_word(cpu.x.wrapping_add(*z)), 4)
+            }
+            Addressing::ZeroPageIndexedIndirectWithY(z) => {
+                let base = cpu.read_zero_page_word(*z);
+                let r = base.wrapping_add(cpu.y as u16);
+                (r, 3 + extra_tick_if_cross_page(base, r))
+            }
+            Addressing::RegisterA => (cpu.a as u16, 1),
+            Addressing::RegisterX => (cpu.x as u16, 1),
+            Addressing::RegisterY => (cpu.y as u16, 1),
+            Addressing::RegisterSP => (cpu.sp as u16, 1),
+            Addressing::RegisterStatus => (cpu.status as u16, 1),
+        }
+    }
+
     /// Return value and extra cycles used
     pub fn read<M: Mcu>(&self, cpu: &mut Cpu<M>) -> (u8, u8) {
         match self {
@@ -103,6 +158,11 @@ impl Addressing {
                 let r = base.wrapping_add(cpu.y as u16);
                 (cpu.read_byte(r), 5 + extra_tick_if_cross_page(base, r))
             }
+            Addressing::RegisterA => (cpu.a, 1),
+            Addressing::RegisterX => (cpu.x, 1),
+            Addressing::RegisterY => (cpu.y, 1),
+            Addressing::RegisterSP => (cpu.sp, 1),
+            Addressing::RegisterStatus => (cpu.status | 0b0011_0000, 1),
         }
     }
 
@@ -160,6 +220,26 @@ impl Addressing {
                 cpu.write_byte(addr, val);
                 6
             }
+            Addressing::RegisterA => {
+                cpu.a = val;
+                1
+            }
+            Addressing::RegisterX => {
+                cpu.x = val;
+                1
+            }
+            Addressing::RegisterY => {
+                cpu.y = val;
+                1
+            }
+            Addressing::RegisterSP => {
+                cpu.sp = val;
+                1
+            }
+            Addressing::RegisterStatus => {
+                cpu.status = val & 0b1100_1111;
+                1
+            }
         }
     }
 }
@@ -191,7 +271,7 @@ pub trait Address<M: Mcu>: Display + Copy {
     }
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, PartialEq, Debug)]
 pub struct Literal(pub u8);
 
 impl Display for Literal {
@@ -470,7 +550,7 @@ impl<M: Mcu> Address<M> for RegisterStatus {
     }
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, PartialEq, Debug)]
 pub struct FlagAddr(pub Flag);
 
 impl Display for FlagAddr {
