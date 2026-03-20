@@ -134,6 +134,11 @@ impl<P: Plugin<NesMcu>> NesMachine<P> {
     pub fn reset(&mut self) {
         self.machine.reset()
     }
+
+    /// Set the CPU program counter.
+    pub fn set_pc(&mut self, pc: u16) {
+        self.machine.set_pc(pc);
+    }
 }
 
 #[cfg(test)]

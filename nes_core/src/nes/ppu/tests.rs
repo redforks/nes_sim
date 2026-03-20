@@ -255,9 +255,9 @@ fn ppu_tick_timing() {
     );
     assert!(ppu.status.v_blank());
 
-    // Advance to scanline 261, dot 0
+    // Advance to scanline 261, dot 1
     ppu.scanline = VBLANK_CLEAR_SCANLINE;
-    ppu.dot = 0;
+    ppu.dot = 1;
 
     // Tick once - should clear VBlank
     let result = ppu.tick(&pattern);

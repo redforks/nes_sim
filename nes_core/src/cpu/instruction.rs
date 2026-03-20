@@ -345,7 +345,7 @@ pub fn new_bit<M: Mcu, D: Address<M>>(dest: D) -> impl FnMut(&mut Cpu<M>) -> u8 
     move |cpu| {
         let (v, ticks) = dest.get(cpu);
         cpu.set_flag(Flag::Negative, (v & 0x80) != 0);
-        cpu.set_flag(Flag::Overflow, (v & 0x70) != 0);
+        cpu.set_flag(Flag::Overflow, (v & 0x40) != 0);
         cpu.update_zero_flag(v & cpu.a);
         1 + ticks
     }
