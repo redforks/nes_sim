@@ -56,7 +56,7 @@ fn decode_next<M: Mcu>(cpu: &mut Cpu<M>) -> Instruction {
     let indirect_y = |cpu: &mut Cpu<M>| Addressing::ZeroPageIndexedIndirectWithY(r_b(cpu));
     let x = || Addressing::RegisterX;
     let y = || Addressing::RegisterY;
-    let aa = || Addressing::RegisterA;
+    let aa = || Addressing::Accumulator;
     let sp = || Addressing::RegisterSP;
 
     match (c, a, b) {

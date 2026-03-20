@@ -1,7 +1,7 @@
 use crate::ines::INesFile;
 use nom::bits::streaming::take as bit_take;
 use nom::error::Error as NomError;
-use nom::{IResult, Parser, bits::bits, bytes};
+use nom::{bits::bits, bytes, IResult, Parser};
 
 const NES_SIGNATURE: &[u8] = &[0x4e, 0x45, 0x53, 0x1a];
 
