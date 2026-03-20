@@ -1,4 +1,6 @@
-use crate::{EmptyPlugin, ExecuteResult, Plugin, ines::INesFile, machine::Machine, nes::NesMcu};
+use crate::{
+    ines::INesFile, machine::Machine, mcu::Mcu, nes::NesMcu, EmptyPlugin, ExecuteResult, Plugin,
+};
 
 /// Safety limit: maximum CPU instruction ticks per `process_frame()` call.
 /// Two full frames worth of ticks; prevents an infinite loop if VBlank never fires
@@ -7,6 +9,7 @@ const MAX_TICKS_PER_FRAME: u32 = 60000;
 
 pub struct NesMachine<P> {
     machine: Machine<P, NesMcu>,
+    nmi_enable_delay: u8,
 }
 
 impl NesMachine<EmptyPlugin<NesMcu>> {
@@ -23,6 +26,7 @@ impl NesMachine<EmptyPlugin<NesMcu>> {
         let mcu = crate::nes::create_mcu_with_renderer(file, renderer);
         Self {
             machine: Machine::with_plugin(EmptyPlugin::new(), mcu),
+            nmi_enable_delay: 0,
         }
     }
 }
@@ -33,6 +37,7 @@ impl<P: Plugin<NesMcu>> NesMachine<P> {
         let mcu = crate::nes::create_mcu(file);
         Self {
             machine: Machine::with_plugin(plugin, mcu),
+            nmi_enable_delay: 0,
         }
     }
 
@@ -45,6 +50,7 @@ impl<P: Plugin<NesMcu>> NesMachine<P> {
         let mcu = crate::nes::create_mcu_with_renderer(file, renderer);
         Self {
             machine: Machine::with_plugin(plugin, mcu),
+            nmi_enable_delay: 0,
         }
     }
 
@@ -80,21 +86,46 @@ impl<P: Plugin<NesMcu>> NesMachine<P> {
 
     /// Execute one CPU instruction and tick PPU/APU. Returns the `ExecuteResult`.
     pub fn tick(&mut self) -> ExecuteResult {
+        self.machine.mcu_mut().consumed_cycles = 0;
         let (result, cycles) = self.machine.tick();
 
-        // let pc = self.machine.cpu().pc;
-        // Tick PPU 3 times per CPU cycle
-        for _ in 0..(cycles as u32 * 3) {
-            if self.machine.mcu_mut().tick_ppu() {
+        let consumed = self.machine.mcu().consumed_cycles as u8;
+        let remaining = if cycles > consumed {
+            cycles - consumed
+        } else {
+            0
+        };
+
+        for _ in 0..remaining {
+            self.machine.mcu_mut().tick();
+        }
+
+        if self.machine.mcu_mut().nmi_cancel_pending {
+            self.machine.mcu_mut().nmi_cancel_pending = false;
+            self.machine.mcu_mut().nmi_pending = false;
+            self.nmi_enable_delay = 0;
+        }
+
+        if self.nmi_enable_delay > 0 {
+            self.nmi_enable_delay -= 1;
+            if self.nmi_enable_delay == 0 {
                 self.machine.cpu_mut().nmi();
             }
         }
 
-        // Tick APU once per CPU cycle
-        for _ in 0..(cycles as u32) {
-            if self.machine.mcu_mut().tick_apu() {
-                self.machine.cpu_mut().set_irq(true);
+        if self.machine.mcu_mut().nmi_pending {
+            self.machine.mcu_mut().nmi_pending = false;
+            self.machine.cpu_mut().nmi();
+        }
+
+        if self.machine.mcu_mut().nmi_enable_pending {
+            self.machine.mcu_mut().nmi_enable_pending = false;
+            if self.nmi_enable_delay == 0 {
+                self.nmi_enable_delay = 1;
             }
+        }
+        if self.machine.mcu().request_irq() {
+            self.machine.cpu_mut().set_irq(true);
         }
 
         result

@@ -13,14 +13,14 @@ enum Status {
 
 impl Status {
     fn parse<M: Mcu>(cpu: &mut Cpu<M>) -> Status {
-        if cpu.read_byte(0x6001) != 0xDE
-            || cpu.read_byte(0x6002) != 0xB0
-            || cpu.read_byte(0x6003) != 0x61
+        if cpu.peek_byte(0x6001) != 0xDE
+            || cpu.peek_byte(0x6002) != 0xB0
+            || cpu.peek_byte(0x6003) != 0x61
         {
             return Status::Unknown;
         }
 
-        let status = cpu.read_byte(0x6000);
+        let status = cpu.peek_byte(0x6000);
         match status {
             0x80 => Status::Running,
             0x81 => Status::ShouldReset,
