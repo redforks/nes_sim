@@ -90,11 +90,7 @@ impl<P: Plugin<NesMcu>> NesMachine<P> {
         let (result, cycles) = self.machine.tick();
 
         let consumed = self.machine.mcu().consumed_cycles as u8;
-        let remaining = if cycles > consumed {
-            cycles - consumed
-        } else {
-            0
-        };
+        let remaining = cycles.saturating_sub(consumed);
 
         for _ in 0..remaining {
             self.machine.mcu_mut().tick();

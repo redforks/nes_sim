@@ -1,6 +1,5 @@
-use super::addressing::Address;
-use super::{Cpu, Flag, extra_cycles_if_cross_page};
-use crate::cpu::addressing::{Addressing, BranchAddressing, FlagAddr};
+use super::{extra_cycles_if_cross_page, Cpu, Flag};
+use crate::cpu::addressing::{Addressing, BranchAddressing};
 use crate::mcu::Mcu;
 
 #[derive(Debug, Copy, Clone, PartialEq)]
