@@ -47,9 +47,15 @@ pub enum Instruction {
     // Inc / Dec
     Inc(Addressing),
     Dec(Addressing),
+    Inx,
+    Iny,
+    Dex,
+    Dey,
 
     // Compare / Bit / Branches
     Cmp(Addressing, Addressing),
+    Cpx(Addressing),
+    Cpy(Addressing),
     Bit(Addressing),
     ConditionBranch(i8, FlagAddr, bool),
 
@@ -383,6 +389,30 @@ impl Instruction {
                     }
                 }
             },
+            Instruction::Inx => {
+                cpu.x = cpu.x.wrapping_add(1);
+                cpu.update_negative_flag(cpu.x);
+                cpu.update_zero_flag(cpu.x);
+                2
+            }
+            Instruction::Iny => {
+                cpu.y = cpu.y.wrapping_add(1);
+                cpu.update_negative_flag(cpu.y);
+                cpu.update_zero_flag(cpu.y);
+                2
+            }
+            Instruction::Dex => {
+                cpu.x = cpu.x.wrapping_sub(1);
+                cpu.update_negative_flag(cpu.x);
+                cpu.update_zero_flag(cpu.x);
+                2
+            }
+            Instruction::Dey => {
+                cpu.y = cpu.y.wrapping_sub(1);
+                cpu.update_negative_flag(cpu.y);
+                cpu.update_zero_flag(cpu.y);
+                2
+            }
 
             Instruction::Cmp(r, m) => {
                 let (r_val, _r_ticks) = r.read(cpu);
@@ -391,6 +421,22 @@ impl Instruction {
                 cpu.update_negative_flag(t);
                 cpu.update_zero_flag(t);
                 cpu.set_flag(Flag::Carry, r_val >= val);
+                1 + ticks
+            }
+            Instruction::Cpx(m) => {
+                let (val, ticks) = m.read(cpu);
+                let t = cpu.x.wrapping_sub(val);
+                cpu.update_negative_flag(t);
+                cpu.update_zero_flag(t);
+                cpu.set_flag(Flag::Carry, cpu.x >= val);
+                1 + ticks
+            }
+            Instruction::Cpy(m) => {
+                let (val, ticks) = m.read(cpu);
+                let t = cpu.y.wrapping_sub(val);
+                cpu.update_negative_flag(t);
+                cpu.update_zero_flag(t);
+                cpu.set_flag(Flag::Carry, cpu.y >= val);
                 1 + ticks
             }
             Instruction::Bit(dest) => {
