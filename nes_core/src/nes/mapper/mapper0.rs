@@ -4,6 +4,7 @@ use crate::nes::ppu::Ppu;
 
 pub struct Mapper0 {
     prg_rom: [u8; 0x8000],
+    prg_rom_len: usize,
     chr_rom: [u8; 0x2000],
     ram: [u8; 0x4000 - 0x20],
 }
@@ -14,6 +15,7 @@ impl Mapper0 {
         debug_assert!(chr_rom.len() <= 0x2000);
 
         let mut r = Self::default();
+        r.prg_rom_len = prg_rom.len();
         r.prg_rom[0..prg_rom.len()].copy_from_slice(prg_rom);
         r.chr_rom[0..chr_rom.len()].copy_from_slice(chr_rom);
         r
@@ -24,6 +26,7 @@ impl Default for Mapper0 {
     fn default() -> Self {
         Self {
             prg_rom: [0; 0x8000],
+            prg_rom_len: 0,
             chr_rom: [0; 0x2000],
             ram: [0; 0x4000 - 0x20],
         }
@@ -38,7 +41,14 @@ impl Cartridge for Mapper0 {
     fn read(&mut self, address: u16) -> u8 {
         match address {
             CARTRIDGE_START_ADDR..=0x7fff => self.ram[(address - CARTRIDGE_START_ADDR) as usize],
-            0x8000..=0xffff => self.prg_rom[(address - 0x8000) as usize],
+            0x8000..=0xffff => {
+                let offset = (address - 0x8000) as usize;
+                let prg_offset = match self.prg_rom_len {
+                    0x4000 => offset % 0x4000,
+                    _ => offset,
+                };
+                self.prg_rom[prg_offset]
+            }
             _ => unreachable!(),
         }
     }
@@ -85,5 +95,17 @@ mod tests {
         let mcu = Mapper0::new(&[0; 0], &[1, 2]);
         assert_eq!(1, mcu.pattern_ref()[0]);
         assert_eq!(2, mcu.pattern_ref()[1]);
+    }
+
+    #[test]
+    fn mirrors_16k_prg_into_upper_bank() {
+        let mut prg = [0u8; 0x4000];
+        prg[0x3ffc] = 0x00;
+        prg[0x3ffd] = 0x80;
+
+        let mut mcu = Mapper0::new(&prg, &[]);
+
+        assert_eq!(mcu.read(0xfffc), 0x00);
+        assert_eq!(mcu.read(0xfffd), 0x80);
     }
 }
