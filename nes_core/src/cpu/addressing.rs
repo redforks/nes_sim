@@ -1,4 +1,4 @@
-use super::{extra_tick_if_cross_page, Cpu, Flag};
+use super::{Cpu, Flag, extra_cycles_if_cross_page};
 use crate::mcu::Mcu;
 use std::fmt::{Display, Formatter};
 
@@ -93,11 +93,11 @@ impl Addressing {
             Addressing::ZeroPage(z) => (*z as u16, 1),
             Addressing::AbsoluteIndexedWithX(a) => {
                 let r = a.wrapping_add(cpu.x as u16);
-                (r, 2 + extra_tick_if_cross_page(*a, r))
+                (r, 2 + extra_cycles_if_cross_page(*a, r))
             }
             Addressing::AbsoluteIndexedWithY(a) => {
                 let r = a.wrapping_add(cpu.y as u16);
-                (r, 2 + extra_tick_if_cross_page(*a, r))
+                (r, 2 + extra_cycles_if_cross_page(*a, r))
             }
             Addressing::ZeroPageIndexedWithX(z) => (z.wrapping_add(cpu.x) as u16, 2),
             Addressing::ZeroPageIndexedWithY(z) => (z.wrapping_add(cpu.y) as u16, 2),
@@ -107,7 +107,7 @@ impl Addressing {
             Addressing::ZeroPageIndexedIndirectWithY(z) => {
                 let base = cpu.read_zero_page_word(*z);
                 let r = base.wrapping_add(cpu.y as u16);
-                (r, 3 + extra_tick_if_cross_page(base, r))
+                (r, 3 + extra_cycles_if_cross_page(base, r))
             }
             Addressing::RegisterA => (cpu.a as u16, 1),
             Addressing::RegisterX => (cpu.x as u16, 1),
@@ -134,12 +134,12 @@ impl Addressing {
             Addressing::AbsoluteIndexedWithX(a) => {
                 let base = *a;
                 let r = base.wrapping_add(cpu.x as u16);
-                (cpu.read_byte(r), 4 + extra_tick_if_cross_page(base, r))
+                (cpu.read_byte(r), 4 + extra_cycles_if_cross_page(base, r))
             }
             Addressing::AbsoluteIndexedWithY(a) => {
                 let base = *a;
                 let r = base.wrapping_add(cpu.y as u16);
-                (cpu.read_byte(r), 4 + extra_tick_if_cross_page(base, r))
+                (cpu.read_byte(r), 4 + extra_cycles_if_cross_page(base, r))
             }
             Addressing::ZeroPageIndexedWithX(z) => {
                 let addr = z.wrapping_add(cpu.x) as u16;
@@ -158,7 +158,7 @@ impl Addressing {
                 // (zp), Y
                 let base = cpu.read_zero_page_word(*z);
                 let r = base.wrapping_add(cpu.y as u16);
-                (cpu.read_byte(r), 5 + extra_tick_if_cross_page(base, r))
+                (cpu.read_byte(r), 5 + extra_cycles_if_cross_page(base, r))
             }
             Addressing::RegisterA => (cpu.a, 1),
             Addressing::RegisterX => (cpu.x, 1),
@@ -358,7 +358,7 @@ impl Display for AbsoluteX {
 impl<M: Mcu> Address<M> for AbsoluteX {
     fn calc_addr(&self, cpu: &mut Cpu<M>) -> (u16, u8) {
         let r = self.0.wrapping_add(cpu.x as u16);
-        (r, 2 + extra_tick_if_cross_page(self.0, r))
+        (r, 2 + extra_cycles_if_cross_page(self.0, r))
     }
 
     fn calc_addr_write(&self, cpu: &mut Cpu<M>) -> (u16, u8) {
@@ -382,7 +382,7 @@ impl Display for AbsoluteY {
 impl<M: Mcu> Address<M> for AbsoluteY {
     fn calc_addr(&self, cpu: &mut Cpu<M>) -> (u16, u8) {
         let r = self.0.wrapping_add(cpu.y as u16);
-        (r, 2 + extra_tick_if_cross_page(self.0, r))
+        (r, 2 + extra_cycles_if_cross_page(self.0, r))
     }
 
     fn calc_addr_write(&self, cpu: &mut Cpu<M>) -> (u16, u8) {
@@ -425,7 +425,7 @@ impl<M: Mcu> Address<M> for IndirectY {
     fn calc_addr(&self, cpu: &mut Cpu<M>) -> (u16, u8) {
         let addr = cpu.read_zero_page_word(self.0);
         let r = addr.wrapping_add(cpu.y as u16);
-        (r, 3 + extra_tick_if_cross_page(addr, r))
+        (r, 3 + extra_cycles_if_cross_page(addr, r))
     }
 
     fn calc_addr_write(&self, cpu: &mut Cpu<M>) -> (u16, u8) {

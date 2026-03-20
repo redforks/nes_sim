@@ -1,5 +1,5 @@
 use super::addressing::Address;
-use super::{Cpu, Flag, extra_tick_if_cross_page};
+use super::{Cpu, Flag, extra_cycles_if_cross_page};
 use crate::cpu::addressing::{Addressing, BranchAddressing, FlagAddr};
 use crate::mcu::Mcu;
 
@@ -186,15 +186,15 @@ impl Instruction {
                     2
                 }
                 _ => {
-                    let (v, _ticks) = addressing.read(cpu);
+                    let (v, _cycles) = addressing.read(cpu);
                     let t = v << 1;
-                    let ticks_set = addressing.write(cpu, t);
+                    let cycles_set = addressing.write(cpu, t);
                     cpu.update_negative_flag(t);
                     cpu.update_zero_flag(t);
                     if addressing.is_register() {
                         2
                     } else {
-                        ticks_set + 3
+                        cycles_set + 3
                     }
                 }
             },
@@ -208,16 +208,16 @@ impl Instruction {
                     2
                 }
                 _ => {
-                    let (v, _ticks) = addressing.read(cpu);
+                    let (v, _cycles) = addressing.read(cpu);
                     cpu.set_flag(Flag::Carry, v & 0x01 != 0);
                     let t = v >> 1;
-                    let ticks_set = addressing.write(cpu, t);
+                    let cycles_set = addressing.write(cpu, t);
                     cpu.update_negative_flag(t);
                     cpu.update_zero_flag(t);
                     if addressing.is_register() {
                         2
                     } else {
-                        ticks_set + 3
+                        cycles_set + 3
                     }
                 }
             },
@@ -232,16 +232,16 @@ impl Instruction {
                     2
                 }
                 _ => {
-                    let (v, _ticks) = addressing.read(cpu);
+                    let (v, _cycles) = addressing.read(cpu);
                     let new = (v << 1) | (cpu.flag(Flag::Carry) as u8);
-                    let ticks_set = addressing.write(cpu, new);
+                    let cycles_set = addressing.write(cpu, new);
                     cpu.set_flag(Flag::Carry, v & 0x80 != 0);
                     cpu.update_negative_flag(new);
                     cpu.update_zero_flag(new);
                     if addressing.is_register() {
                         2
                     } else {
-                        ticks_set + 3
+                        cycles_set + 3
                     }
                 }
             },
@@ -256,52 +256,52 @@ impl Instruction {
                     2
                 }
                 _ => {
-                    let (v, _ticks) = addressing.read(cpu);
+                    let (v, _cycles) = addressing.read(cpu);
                     let new = (v >> 1) | ((cpu.flag(Flag::Carry) as u8) << 7);
-                    let ticks_set = addressing.write(cpu, new);
+                    let cycles_set = addressing.write(cpu, new);
                     cpu.set_flag(Flag::Carry, v & 0x01 != 0);
                     cpu.update_negative_flag(new);
                     cpu.update_zero_flag(new);
                     if addressing.is_register() {
                         2
                     } else {
-                        ticks_set + 3
+                        cycles_set + 3
                     }
                 }
             },
 
             Instruction::Lda(addressing) => {
-                let (val, ticks) = addressing.read(cpu);
+                let (val, cycles) = addressing.read(cpu);
                 cpu.a = val;
                 cpu.update_negative_flag(val);
                 cpu.update_zero_flag(val);
-                1 + ticks
+                1 + cycles
             }
             Instruction::Ldx(addressing) => {
-                let (val, ticks) = addressing.read(cpu);
+                let (val, cycles) = addressing.read(cpu);
                 cpu.x = val;
                 cpu.update_negative_flag(val);
                 cpu.update_zero_flag(val);
-                1 + ticks
+                1 + cycles
             }
             Instruction::Ldy(addressing) => {
-                let (val, ticks) = addressing.read(cpu);
+                let (val, cycles) = addressing.read(cpu);
                 cpu.y = val;
                 cpu.update_negative_flag(val);
                 cpu.update_zero_flag(val);
-                1 + ticks
+                1 + cycles
             }
             Instruction::Sta(addressing) => {
-                let ticks = addressing.write(cpu, cpu.a);
-                1 + ticks
+                let cycles = addressing.write(cpu, cpu.a);
+                1 + cycles
             }
             Instruction::Stx(addressing) => {
-                let ticks = addressing.write(cpu, cpu.x);
-                1 + ticks
+                let cycles = addressing.write(cpu, cpu.x);
+                1 + cycles
             }
             Instruction::Sty(addressing) => {
-                let ticks = addressing.write(cpu, cpu.y);
-                1 + ticks
+                let cycles = addressing.write(cpu, cpu.y);
+                1 + cycles
             }
             Instruction::Tax => {
                 cpu.x = cpu.a;
@@ -375,13 +375,13 @@ impl Instruction {
                 _ => {
                     let (val, _r) = addressing.read(cpu);
                     let val = val.wrapping_add(1);
-                    let ticks_set = addressing.write(cpu, val);
+                    let cycles_set = addressing.write(cpu, val);
                     cpu.update_negative_flag(val);
                     cpu.update_zero_flag(val);
                     if addressing.is_register() {
                         2
                     } else {
-                        ticks_set + 3
+                        cycles_set + 3
                     }
                 }
             },
@@ -395,13 +395,13 @@ impl Instruction {
                 _ => {
                     let (val, _r) = addressing.read(cpu);
                     let val = val.wrapping_sub(1);
-                    let ticks_set = addressing.write(cpu, val);
+                    let cycles_set = addressing.write(cpu, val);
                     cpu.update_negative_flag(val);
                     cpu.update_zero_flag(val);
                     if addressing.is_register() {
                         2
                     } else {
-                        ticks_set + 3
+                        cycles_set + 3
                     }
                 }
             },
@@ -431,35 +431,35 @@ impl Instruction {
             }
 
             Instruction::Cmp(m) => {
-                let (val, ticks) = m.read(cpu);
+                let (val, cycles) = m.read(cpu);
                 let t = cpu.a.wrapping_sub(val);
                 cpu.update_negative_flag(t);
                 cpu.update_zero_flag(t);
                 cpu.set_flag(Flag::Carry, cpu.a >= val);
-                1 + ticks
+                1 + cycles
             }
             Instruction::Cpx(m) => {
-                let (val, ticks) = m.read(cpu);
+                let (val, cycles) = m.read(cpu);
                 let t = cpu.x.wrapping_sub(val);
                 cpu.update_negative_flag(t);
                 cpu.update_zero_flag(t);
                 cpu.set_flag(Flag::Carry, cpu.x >= val);
-                1 + ticks
+                1 + cycles
             }
             Instruction::Cpy(m) => {
-                let (val, ticks) = m.read(cpu);
+                let (val, cycles) = m.read(cpu);
                 let t = cpu.y.wrapping_sub(val);
                 cpu.update_negative_flag(t);
                 cpu.update_zero_flag(t);
                 cpu.set_flag(Flag::Carry, cpu.y >= val);
-                1 + ticks
+                1 + cycles
             }
             Instruction::Bit(dest) => {
-                let (v, ticks) = dest.read(cpu);
+                let (v, cycles) = dest.read(cpu);
                 cpu.set_flag(Flag::Negative, (v & 0x80) != 0);
                 cpu.set_flag(Flag::Overflow, (v & 0x40) != 0);
                 cpu.update_zero_flag(v & cpu.a);
-                1 + ticks
+                1 + cycles
             }
             Instruction::Bcc(addr) => branch(cpu, addr, !cpu.flag(Flag::Carry)),
             Instruction::Bcs(addr) => branch(cpu, addr, cpu.flag(Flag::Carry)),
@@ -538,8 +538,8 @@ impl Instruction {
             Instruction::Nop(dest) => match dest {
                 Addressing::Implied => 2,
                 _ => {
-                    let (_v, ticks) = dest.read(cpu);
-                    1 + ticks
+                    let (_v, cycles) = dest.read(cpu);
+                    1 + cycles
                 }
             },
             Instruction::Hlt => {
@@ -548,75 +548,75 @@ impl Instruction {
             }
 
             Instruction::Aso(dest) => {
-                let (v, _ticks) = dest.read(cpu);
+                let (v, _cycles) = dest.read(cpu);
                 cpu.set_flag(Flag::Carry, (v & 0x80) != 0);
                 let t = v << 1;
-                let ticks_set = dest.write(cpu, t);
+                let cycles_set = dest.write(cpu, t);
                 cpu.a |= t;
                 cpu.update_negative_flag(cpu.a);
                 cpu.update_zero_flag(cpu.a);
-                ticks_set + 3
+                cycles_set + 3
             }
             Instruction::Rla(dest) => {
-                let (v, _ticks) = dest.read(cpu);
+                let (v, _cycles) = dest.read(cpu);
                 let carry = v & 0x80 != 0;
                 let t = (v << 1) | cpu.flag(Flag::Carry) as u8;
-                let ticks_set = dest.write(cpu, t);
+                let cycles_set = dest.write(cpu, t);
                 cpu.set_flag(Flag::Carry, carry);
                 cpu.a &= t;
                 cpu.update_negative_flag(cpu.a);
                 cpu.update_zero_flag(cpu.a);
-                ticks_set + 3
+                cycles_set + 3
             }
             Instruction::Lse(dest) => {
-                let (v, _ticks) = dest.read(cpu);
+                let (v, _cycles) = dest.read(cpu);
                 cpu.set_flag(Flag::Carry, (v & 0x01) != 0);
                 let t = v >> 1;
-                let ticks_set = dest.write(cpu, t);
+                let cycles_set = dest.write(cpu, t);
                 cpu.a ^= t;
                 cpu.update_negative_flag(cpu.a);
                 cpu.update_zero_flag(cpu.a);
-                ticks_set + 3
+                cycles_set + 3
             }
             Instruction::Rra(dest) => {
-                let (v, _ticks) = dest.read(cpu);
+                let (v, _cycles) = dest.read(cpu);
                 let carry = v & 0x01 != 0;
                 let v = (v >> 1) | ((cpu.flag(Flag::Carry) as u8) << 7);
-                let ticks_set = dest.write(cpu, v);
+                let cycles_set = dest.write(cpu, v);
                 cpu.set_flag(Flag::Carry, carry);
                 cpu.update_negative_flag(v);
                 cpu.adc(v);
-                ticks_set + 3
+                cycles_set + 3
             }
             Instruction::Sax(dest) => {
                 let v = cpu.a & cpu.x;
-                let ticks = dest.write(cpu, v);
-                1 + ticks
+                let cycles = dest.write(cpu, v);
+                1 + cycles
             }
             Instruction::Lax(dest) => {
-                let (v, ticks) = dest.read(cpu);
+                let (v, cycles) = dest.read(cpu);
                 cpu.a = v;
                 cpu.x = v;
                 cpu.update_negative_flag(v);
                 cpu.update_zero_flag(v);
-                1 + ticks
+                1 + cycles
             }
             Instruction::Dcp(dest) => {
-                let (v, _ticks) = dest.read(cpu);
+                let (v, _cycles) = dest.read(cpu);
                 let t = v.wrapping_sub(1);
-                let ticks_set = dest.write(cpu, t);
+                let cycles_set = dest.write(cpu, t);
                 let (t2, borrow) = cpu.a.overflowing_sub(t);
                 cpu.update_negative_flag(t2);
                 cpu.update_zero_flag(t2);
                 cpu.set_flag(Flag::Carry, !borrow);
-                ticks_set + 3
+                cycles_set + 3
             }
             Instruction::Isc(dest) => {
-                let (v, _ticks) = dest.read(cpu);
+                let (v, _cycles) = dest.read(cpu);
                 let t = v.wrapping_add(1);
-                let ticks_set = dest.write(cpu, t);
+                let cycles_set = dest.write(cpu, t);
                 cpu.adc(!t);
-                ticks_set + 3
+                cycles_set + 3
             }
             Instruction::Ane(addressing) => {
                 let (v, cycles) = addressing.read(cpu);
@@ -629,14 +629,14 @@ impl Instruction {
                 // SHA stores A & X & highbyte(addr) to memory (unofficial opcode behaviour)
                 let (addr, _) = dest.calc_addr(cpu);
                 let v = cpu.a & cpu.x & ((addr >> 8) as u8).wrapping_add(1);
-                let ticks = dest.write(cpu, v);
-                1 + ticks
+                let cycles = dest.write(cpu, v);
+                1 + cycles
             }
             Instruction::Tas(dest) => {
                 // TAS: stores A & X to memory and also sets SP high byte (unofficial)
                 // Emulate prior NopStore behavior: write A to dest
-                let ticks = dest.write(cpu, cpu.a);
-                1 + ticks
+                let cycles = dest.write(cpu, cpu.a);
+                1 + cycles
             }
             Instruction::Shx(dest) => {
                 let (addr, _) = dest.calc_addr(cpu);
@@ -661,7 +661,7 @@ fn branch<M: Mcu>(cpu: &mut Cpu<M>, addr: BranchAddressing, should_jump: bool) -
         let pc = cpu.pc;
         let dest = addr.calc_addr(cpu);
         cpu.pc = dest;
-        3 + extra_tick_if_cross_page(pc, dest)
+        3 + extra_cycles_if_cross_page(pc, dest)
     } else {
         2
     }
