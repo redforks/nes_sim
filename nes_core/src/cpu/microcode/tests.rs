@@ -127,28 +127,21 @@ fn load_immediate_a_reads_operand_and_updates_flags() {
 
 #[test]
 fn addressing_microcodes_set_expected_address_bus() {
-    let mut cpu = cpu_with_memory(
-        0x8000,
-        &[
-            (0x8000, 0x44),
-            (0x8001, 0xF0),
-            (0x8002, 0x34),
-            (0x8003, 0x12),
-        ],
-    );
-    cpu.x = 0x20;
+    let mut cpu = cpu_with_memory(0x8000, &[(0x8000, 0x44), (0x8001, 0xF0), (0x8002, 0x34)]);
+    cpu.x = 0xff;
 
     Microcode::ZeroPage.exec(&mut cpu);
     assert_eq!(cpu.ab, 0x0044);
 
-    Microcode::ZeroPageX.exec(&mut cpu);
-    assert_eq!(cpu.ab, 0x0010);
+    Microcode::ZeroPageIndexedX.exec(&mut cpu);
+    assert_eq!(cpu.ab, 0x0043); // 0x43 = 0x44 + 0xff (wrapping around)
 
-    Microcode::AbsoluteL.exec(&mut cpu);
-    assert_eq!(cpu.abl(), 0x34);
     Microcode::AbsoluteH.exec(&mut cpu);
-    assert_eq!(cpu.ab, 0x1234);
-    assert_eq!(cpu.pc, 0x8004);
+    assert_eq!(cpu.ab, 0xF043);
+    Microcode::AbsoluteL.exec(&mut cpu);
+    assert_eq!(cpu.ab, 0xF034);
+
+    assert_eq!(cpu.pc, 0x8003);
 }
 
 #[test]

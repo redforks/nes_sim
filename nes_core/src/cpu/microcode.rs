@@ -26,12 +26,16 @@ pub enum Microcode {
     // addressing microcodes
     /// Take a byte from instruction data stream, set cpu address_bus field by read from memory use zero page addressing
     ZeroPage,
-    /// Take a byte from instruction data stream, set cpu address_bus field by read from memory use zero page X addressing
-    ZeroPageX,
+    /// Impl ZeroPageIndexedX addressing, work after ZeroPage, set abl = (abl + x) % 256, set abh = 00
+    ZeroPageIndexedX,
     /// Take a byte from instruction data stream, set cpu abl field
     AbsoluteL,
     /// Take a byte from instruction data stream, set cpu abh field
     AbsoluteH,
+    /// Add ab with x register value, set cpu ab field
+    AbsoluteIndexX,
+    /// Add ab with y register value, set cpu ab field
+    AbsoluteIndexY,
 
     /// Take immediate value from instruction data stream, add to accumulator with carry
     AdcImmediate,
@@ -45,6 +49,12 @@ pub enum Opcode {}
 impl Opcode {
     pub const ADC_IMMEDIATE: u8 = 0x69;
     pub const ADC_ZERO_PAGE: u8 = 0x65;
+    pub const ADC_ZERO_PAGE_X: u8 = 0x75;
+    pub const ADC_ABSOLUTE: u8 = 0x6D;
+    pub const ADC_ABSOLUTE_X: u8 = 0x7D;
+    pub const ADC_ABSOLUTE_Y: u8 = 0x79;
+    pub const ADC_INDEXED_INDIRECT: u8 = 0x61;
+    pub const ADC_INDIRECT_INDEXED: u8 = 0x71;
 }
 
 impl Microcode {
@@ -60,11 +70,12 @@ impl Microcode {
             Microcode::StoreY => Self::store_y(cpu),
             Microcode::LoadImmediateA => Self::load_immediate_a(cpu),
             Microcode::ZeroPage => Self::zero_page(cpu),
-            Microcode::ZeroPageX => Self::zero_page_x(cpu),
+            Microcode::ZeroPageIndexedX => Self::zero_page_indexed_x(cpu),
             Microcode::AbsoluteL => Self::absolute_l(cpu),
             Microcode::AbsoluteH => Self::absolute_h(cpu),
             Microcode::AdcImmediate => Self::adc_immediate(cpu),
             Microcode::Adc => Self::adc(cpu),
+            _ => unimplemented!("Unimplementd microcode: {:?}", self),
         }
     }
 
@@ -77,6 +88,11 @@ impl Microcode {
             }
             Opcode::ADC_ZERO_PAGE => {
                 cpu.push_microcode(Microcode::ZeroPage);
+                cpu.push_microcode(Microcode::Adc);
+            }
+            Opcode::ADC_ZERO_PAGE_X => {
+                cpu.push_microcode(Microcode::ZeroPage);
+                cpu.push_microcode(Microcode::ZeroPageIndexedX);
                 cpu.push_microcode(Microcode::Adc);
             }
             _ => panic!("Unknown opcode: {}", opcode),
@@ -124,9 +140,8 @@ impl Microcode {
         cpu.ab = addr as u16;
     }
 
-    fn zero_page_x<M: Mcu>(cpu: &mut Cpu2<M>) {
-        let base = cpu.inc_read_byte();
-        cpu.ab = base.wrapping_add(cpu.x) as u16;
+    fn zero_page_indexed_x<M: Mcu>(cpu: &mut Cpu2<M>) {
+        cpu.ab = cpu.abl().wrapping_add(cpu.x) as u16;
     }
 
     fn absolute_l<M: Mcu>(cpu: &mut Cpu2<M>) {
