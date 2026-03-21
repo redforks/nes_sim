@@ -1,7 +1,7 @@
 use std::collections::VecDeque;
 
 use crate::{
-    cpu::{Flag, microcode::Microcode},
+    cpu::{microcode::Microcode, Flag},
     mcu::Mcu,
 };
 
@@ -157,6 +157,12 @@ impl<M: Mcu> Cpu2<M> {
         self.update_zero_flag(sum);
         self.update_negative_flag(sum);
         self.a = sum;
+    }
+
+    pub(crate) fn and(&mut self, val: u8) {
+        self.a &= val;
+        self.update_zero_flag(self.a);
+        self.update_negative_flag(self.a);
     }
 
     pub(crate) fn push_microcode(&mut self, microcode: Microcode) {

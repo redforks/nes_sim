@@ -22,6 +22,8 @@ pub enum Microcode {
     StoreY,
     /// Read immediate value into accumulator
     LoadImmediateA,
+    /// Take immediate value from instruction data stream, and it with accumulator
+    AndImmediate,
 
     // addressing microcodes
     /// Take a byte from instruction data stream, set cpu address_bus field by read from memory use zero page addressing
@@ -60,12 +62,23 @@ pub enum Microcode {
     AdcImmediate,
     /// Fetch a byte from memory use address saved in `data_latch`, then add to accumulator with carry
     Adc,
+    /// Fetch a byte from memory use address saved in `data_latch`, then and with accumulator
+    And,
 }
 
 /// Represents the opcode of a CPU instruction, the first byte of an instruction
 pub enum Opcode {}
 
 impl Opcode {
+    pub const AND_IMMEDIATE: u8 = 0x29;
+    pub const AND_ZERO_PAGE: u8 = 0x25;
+    pub const AND_ZERO_PAGE_X: u8 = 0x35;
+    pub const AND_ABSOLUTE: u8 = 0x2D;
+    pub const AND_ABSOLUTE_INDEXED_X: u8 = 0x3D;
+    pub const AND_ABSOLUTE_INDEXED_Y: u8 = 0x39;
+    pub const AND_INDEXED_INDIRECT: u8 = 0x21;
+    pub const AND_INDIRECT_INDEXED: u8 = 0x31;
+
     pub const ADC_IMMEDIATE: u8 = 0x69;
     pub const ADC_ZERO_PAGE: u8 = 0x65;
     pub const ADC_ZERO_PAGE_X: u8 = 0x75;
@@ -88,6 +101,7 @@ impl Microcode {
             Microcode::StoreX => Self::store_x(cpu),
             Microcode::StoreY => Self::store_y(cpu),
             Microcode::LoadImmediateA => Self::load_immediate_a(cpu),
+            Microcode::AndImmediate => Self::and_immediate(cpu),
             Microcode::ZeroPage => Self::zero_page(cpu),
             Microcode::ZeroPageIndexedX => Self::zero_page_indexed_x(cpu),
             Microcode::AbsoluteL => Self::absolute_l(cpu),
@@ -97,6 +111,7 @@ impl Microcode {
             Microcode::AbsoluteIndexedYWithoutHigh => Self::absolute_indexed_y_without_high(cpu),
             Microcode::AdcImmediate => Self::adc_immediate(cpu),
             Microcode::Adc => Self::adc(cpu),
+            Microcode::And => Self::and(cpu),
             _ => unimplemented!("Unimplementd microcode: {:?}", self),
         }
     }
@@ -105,6 +120,37 @@ impl Microcode {
         let opcode = cpu.inc_read_byte();
         cpu.opcode = opcode;
         match opcode {
+            Opcode::AND_IMMEDIATE => {
+                cpu.push_microcode(Microcode::AndImmediate);
+            }
+            Opcode::AND_ZERO_PAGE => {
+                cpu.push_microcode(Microcode::ZeroPage);
+                cpu.push_microcode(Microcode::And);
+            }
+            Opcode::AND_ZERO_PAGE_X => {
+                zero_page_indexed_x_addressing(cpu);
+                cpu.push_microcode(Microcode::And);
+            }
+            Opcode::AND_ABSOLUTE => {
+                absolute_addressing(cpu);
+                cpu.push_microcode(Microcode::And);
+            }
+            Opcode::AND_ABSOLUTE_INDEXED_X => {
+                absolute_indexed_x_addressing(cpu);
+                cpu.push_microcode(Microcode::And);
+            }
+            Opcode::AND_ABSOLUTE_INDEXED_Y => {
+                absolute_indexed_y_addressing(cpu);
+                cpu.push_microcode(Microcode::And);
+            }
+            Opcode::AND_INDEXED_INDIRECT => {
+                indexed_indirect_addressing(cpu);
+                cpu.push_microcode(Microcode::And);
+            }
+            Opcode::AND_INDIRECT_INDEXED => {
+                indirect_indexed_addressing(cpu);
+                cpu.push_microcode(Microcode::And);
+            }
             Opcode::ADC_IMMEDIATE => {
                 cpu.push_microcode(Microcode::AdcImmediate);
             }
@@ -176,6 +222,11 @@ impl Microcode {
         cpu.update_zero_flag(cpu.a);
     }
 
+    fn and_immediate<M: Mcu>(cpu: &mut Cpu2<M>) {
+        let value = cpu.inc_read_byte();
+        cpu.and(value);
+    }
+
     fn zero_page<M: Mcu>(cpu: &mut Cpu2<M>) {
         let addr = cpu.inc_read_byte();
         cpu.ab = addr as u16;
@@ -227,6 +278,11 @@ impl Microcode {
         let value = cpu.read_byte(cpu.ab);
         cpu.adc(value);
     }
+
+    fn and<M: Mcu>(cpu: &mut Cpu2<M>) {
+        let value = cpu.read_byte(cpu.ab);
+        cpu.and(value);
+    }
 }
 
 /// Push Microcodes for zero page indexed x addressing
@@ -244,7 +300,7 @@ fn absolute_addressing<M: Mcu>(cpu: &mut Cpu2<M>) {
 /// Push Microcodes for absolute indexed x addressing
 fn absolute_indexed_x_addressing<M: Mcu>(cpu: &mut Cpu2<M>) {
     cpu.push_microcode(Microcode::AbsoluteL);
-    cpu.push_microcode(Microcode::AbsoluteIndexedX);
+    cpu.push_microcode(Microcode::AbsoluteIndexedX); // may add nop for extra cycle
 }
 
 /// Push Microcodes for absolute indexed y addressing
