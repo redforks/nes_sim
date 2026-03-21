@@ -1,4 +1,4 @@
-use crate::{cpu::Cpu2, mcu::Mcu};
+use crate::{Flag, cpu::Cpu2, mcu::Mcu};
 
 /// Each Microcode instruction executed by the CPU in a single cycle
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -83,8 +83,25 @@ pub enum Microcode {
     Asl,
 
     /// Read offset value from instruction data stream,
-    /// If carry flag is true, pc += offset, push one Noc if not cross page, push two Noc if cross page
-    BranchIfCarryClear,
+    /// If BranchTest is true, pc += offset, push one Noc if not cross page, push two Noc if cross page
+    BranchRelative(BranchTest),
+}
+
+#[derive(Debug, Clone, Copy, Eq, PartialEq)]
+pub enum BranchTest {
+    IfCarryClear,
+    IfCarrySet,
+    IfZeroSet,
+}
+
+impl BranchTest {
+    fn test<M: Mcu>(self, cpu: &Cpu2<M>) -> bool {
+        match self {
+            BranchTest::IfCarryClear => !cpu.flag(Flag::Carry),
+            BranchTest::IfCarrySet => cpu.flag(Flag::Carry),
+            BranchTest::IfZeroSet => cpu.flag(Flag::Zero),
+        }
+    }
 }
 
 /// Represents the opcode of a CPU instruction, the first byte of an instruction
@@ -116,6 +133,8 @@ impl Opcode {
     pub const ASL_ABSOLUTE_INDEXED_X: u8 = 0x1E;
 
     pub const BCC: u8 = 0x90;
+    pub const BCS: u8 = 0xB0;
+    pub const BEQ: u8 = 0xF0;
 }
 
 impl Microcode {
@@ -159,7 +178,7 @@ impl Microcode {
             Microcode::AslAccumulator => Self::asl_accumulator(cpu),
             Microcode::Asl => Self::asl(cpu),
 
-            Microcode::BranchIfCarryClear => Self::branch_if_carry_clear(cpu),
+            Microcode::BranchRelative(branch_test) => Self::branch_relative(cpu, branch_test),
         }
     }
 
@@ -266,7 +285,13 @@ impl Microcode {
             }
 
             Opcode::BCC => {
-                cpu.push_microcode(Microcode::BranchIfCarryClear);
+                cpu.push_microcode(Microcode::BranchRelative(BranchTest::IfCarryClear));
+            }
+            Opcode::BCS => {
+                cpu.push_microcode(Microcode::BranchRelative(BranchTest::IfCarrySet));
+            }
+            Opcode::BEQ => {
+                cpu.push_microcode(Microcode::BranchRelative(BranchTest::IfZeroSet));
             }
             _ => panic!("Unknown opcode: {}", opcode),
         }
@@ -396,14 +421,14 @@ impl Microcode {
         cpu.alu = cpu.asl(cpu.alu);
     }
 
-    fn branch_if_carry_clear<M: Mcu>(cpu: &mut Cpu2<M>) {
+    fn branch_relative<M: Mcu>(cpu: &mut Cpu2<M>, branch_test: BranchTest) {
         let offset = cpu.inc_read_byte();
-        if !cpu.flag(super::Flag::Carry) {
+        if branch_test.test(cpu) {
             let pch = cpu.pch();
             cpu.pc = cpu.pc.wrapping_add((offset as i8) as u16);
-            cpu.push_microcode(Microcode::Nop);
+            cpu.retain_cycle();
             if pch != cpu.pch() {
-                cpu.push_microcode(Microcode::Nop);
+                cpu.retain_cycle();
             }
         }
     }
