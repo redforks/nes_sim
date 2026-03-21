@@ -100,6 +100,58 @@ fn fetch_and_decode_queues_bit_sequences() {
 }
 
 #[test]
+fn fetch_and_decode_queues_branch_sequences() {
+    let mut cpu = cpu_with_memory(
+        0x8000,
+        &[
+            (0x8000, Opcode::BMI),
+            (0x8001, Opcode::BNE),
+            (0x8002, Opcode::BPL),
+        ],
+    );
+
+    Microcode::FetchAndDecode.exec(&mut cpu);
+    assert_eq!(cpu.opcode, Opcode::BMI);
+    assert_eq!(
+        cpu.pop_microcode(),
+        Some(Microcode::BranchRelative(BranchTest::IfNegativeSet))
+    );
+
+    Microcode::FetchAndDecode.exec(&mut cpu);
+    assert_eq!(cpu.opcode, Opcode::BNE);
+    assert_eq!(
+        cpu.pop_microcode(),
+        Some(Microcode::BranchRelative(BranchTest::IfZeroClear))
+    );
+
+    Microcode::FetchAndDecode.exec(&mut cpu);
+    assert_eq!(cpu.opcode, Opcode::BPL);
+    assert_eq!(
+        cpu.pop_microcode(),
+        Some(Microcode::BranchRelative(BranchTest::IfNegativeClear))
+    );
+}
+
+#[test]
+fn fetch_and_decode_queues_overflow_branch_sequences() {
+    let mut cpu = cpu_with_memory(0x8000, &[(0x8000, Opcode::BVC), (0x8001, Opcode::BVS)]);
+
+    Microcode::FetchAndDecode.exec(&mut cpu);
+    assert_eq!(cpu.opcode, Opcode::BVC);
+    assert_eq!(
+        cpu.pop_microcode(),
+        Some(Microcode::BranchRelative(BranchTest::IfOverflowClear))
+    );
+
+    Microcode::FetchAndDecode.exec(&mut cpu);
+    assert_eq!(cpu.opcode, Opcode::BVS);
+    assert_eq!(
+        cpu.pop_microcode(),
+        Some(Microcode::BranchRelative(BranchTest::IfOverflowSet))
+    );
+}
+
+#[test]
 fn load_microcodes_read_memory_and_update_flags() {
     let mut cpu = cpu_with_memory(0x0000, &[(0x0042, 0x80), (0x0043, 0x00), (0x0044, 0x7F)]);
 

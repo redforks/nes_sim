@@ -95,6 +95,11 @@ pub enum BranchTest {
     IfCarryClear,
     IfCarrySet,
     IfZeroSet,
+    IfZeroClear,
+    IfNegativeSet,
+    IfNegativeClear,
+    IfOverflowSet,
+    IfOverflowClear,
 }
 
 impl BranchTest {
@@ -103,6 +108,11 @@ impl BranchTest {
             BranchTest::IfCarryClear => !cpu.flag(Flag::Carry),
             BranchTest::IfCarrySet => cpu.flag(Flag::Carry),
             BranchTest::IfZeroSet => cpu.flag(Flag::Zero),
+            BranchTest::IfZeroClear => !cpu.flag(Flag::Zero),
+            BranchTest::IfNegativeSet => cpu.flag(Flag::Negative),
+            BranchTest::IfNegativeClear => !cpu.flag(Flag::Negative),
+            BranchTest::IfOverflowSet => cpu.flag(Flag::Overflow),
+            BranchTest::IfOverflowClear => !cpu.flag(Flag::Overflow),
         }
     }
 }
@@ -138,6 +148,11 @@ impl Opcode {
     pub const BCC: u8 = 0x90;
     pub const BCS: u8 = 0xB0;
     pub const BEQ: u8 = 0xF0;
+    pub const BMI: u8 = 0x30;
+    pub const BNE: u8 = 0xD0;
+    pub const BPL: u8 = 0x10;
+    pub const BVC: u8 = 0x50;
+    pub const BVS: u8 = 0x70;
 
     pub const BIT_ZERO_PAGE: u8 = 0x24;
     pub const BIT_ABSOLUTE: u8 = 0x2C;
@@ -310,6 +325,21 @@ impl Microcode {
             }
             Opcode::BEQ => {
                 cpu.push_microcode(Microcode::BranchRelative(BranchTest::IfZeroSet));
+            }
+            Opcode::BMI => {
+                cpu.push_microcode(Microcode::BranchRelative(BranchTest::IfNegativeSet));
+            }
+            Opcode::BNE => {
+                cpu.push_microcode(Microcode::BranchRelative(BranchTest::IfZeroClear));
+            }
+            Opcode::BPL => {
+                cpu.push_microcode(Microcode::BranchRelative(BranchTest::IfNegativeClear));
+            }
+            Opcode::BVC => {
+                cpu.push_microcode(Microcode::BranchRelative(BranchTest::IfOverflowClear));
+            }
+            Opcode::BVS => {
+                cpu.push_microcode(Microcode::BranchRelative(BranchTest::IfOverflowSet));
             }
             _ => panic!("Unknown opcode: {}", opcode),
         }
