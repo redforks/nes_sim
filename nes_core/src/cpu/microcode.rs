@@ -32,12 +32,29 @@ pub enum Microcode {
     AbsoluteL,
     /// Take a byte from instruction data stream, set cpu abh field
     AbsoluteH,
-    /// Take a byte from instruction data stream, set cpu abh field, add ab with x register value, set cpu ab field, retain_cycle if the 8bit plus operation overflows
+    /// Take a byte from instruction data stream, set cpu abh field, add ab with
+    /// x register value, set cpu ab field, retain_cycle if the 8bit plus
+    /// operation overflows
+    ///
+    /// Must after AbsoluteL
     AbsoluteIndexedX,
-    /// Take a byte from instruction data stream, set cpu abh field, add ab with y register value, set cpu ab field, retain_cycle if the 8bit plus operation overflows
+    /// Take a byte from instruction data stream, set cpu abh field, add ab with
+    /// y register value, set cpu ab field, retain_cycle if the 8bit plus
+    /// operation overflows
+    ///
+    /// Must after AbsoluteL
     AbsoluteIndexedY,
+    /// AbsoluteIndexedY but do not take high byte from instruction data stream, used to impl IndirectIndexed
+    AbsoluteIndexedYWithoutHigh,
     /// Do nothing, used in "oops" cycles of AbsoluteIndexed and Indirect Indexed addressing
     Nop,
+    /// (d,x)
+    IndexedIndirect,
+    /// (d),y
+    IndirectIndexed,
+    /// Load abl from memory at [ab], load abh from memory at [ab+1]
+    /// append with Nop, because it is actually need two cycles
+    Indexed,
 
     /// Take immediate value from instruction data stream, add to accumulator with carry
     AdcImmediate,
@@ -77,6 +94,7 @@ impl Microcode {
             Microcode::AbsoluteH => Self::absolute_h(cpu),
             Microcode::AbsoluteIndexedX => Self::absolute_indexed_x(cpu),
             Microcode::AbsoluteIndexedY => Self::absolute_indexed_y(cpu),
+            Microcode::AbsoluteIndexedYWithoutHigh => Self::absolute_indexed_y_without_high(cpu),
             Microcode::AdcImmediate => Self::adc_immediate(cpu),
             Microcode::Adc => Self::adc(cpu),
             _ => unimplemented!("Unimplementd microcode: {:?}", self),
@@ -106,12 +124,25 @@ impl Microcode {
             }
             Opcode::ADC_ABSOLUTE_INDEXED_X => {
                 cpu.push_microcode(Microcode::AbsoluteL);
-                cpu.push_microcode(Microcode::AbsoluteIndexedX);
+                cpu.push_microcode(Microcode::AbsoluteIndexedX); // may add nop for extra cycle
                 cpu.push_microcode(Microcode::Adc);
             }
             Opcode::ADC_ABSOLUTE_INDEXED_Y => {
                 cpu.push_microcode(Microcode::AbsoluteL);
-                cpu.push_microcode(Microcode::AbsoluteIndexedY);
+                cpu.push_microcode(Microcode::AbsoluteIndexedY); // may add nop for extra cycle
+                cpu.push_microcode(Microcode::Adc);
+            }
+            Opcode::ADC_INDEXED_INDIRECT => {
+                cpu.push_microcode(Microcode::ZeroPage);
+                cpu.push_microcode(Microcode::ZeroPageIndexedX);
+                cpu.push_microcode(Microcode::Indexed);
+                cpu.push_microcode(Microcode::Nop);
+                cpu.push_microcode(Microcode::Adc);
+            }
+            Opcode::ADC_INDIRECT_INDEXED => {
+                cpu.push_microcode(Microcode::ZeroPage);
+                cpu.push_microcode(Microcode::IndirectIndexed);
+                cpu.push_microcode(Microcode::AbsoluteIndexedYWithoutHigh); // may add nop for extra cycle
                 cpu.push_microcode(Microcode::Adc);
             }
             _ => panic!("Unknown opcode: {}", opcode),
@@ -190,6 +221,11 @@ impl Microcode {
     fn absolute_indexed_y<M: Mcu>(cpu: &mut Cpu2<M>) {
         let abh = cpu.inc_read_byte();
         cpu.set_abh(abh);
+        Self::absolute_indexed_y_without_high(cpu)
+    }
+
+    fn absolute_indexed_y_without_high<M: Mcu>(cpu: &mut Cpu2<M>) {
+        let abh = cpu.abh();
         cpu.ab = cpu.ab.wrapping_add(cpu.y as u16);
         if abh != cpu.abh() {
             cpu.retain_cycle();
