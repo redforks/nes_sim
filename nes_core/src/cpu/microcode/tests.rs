@@ -152,6 +152,83 @@ fn fetch_and_decode_queues_overflow_branch_sequences() {
 }
 
 #[test]
+fn fetch_and_decode_queues_load_and_store_sequences() {
+    let mut cpu = cpu_with_memory(
+        0x8000,
+        &[
+            (0x8000, Opcode::LDA_IMMEDIATE),
+            (0x8001, Opcode::LDX_ZERO_PAGE),
+            (0x8002, Opcode::LDY_ABSOLUTE),
+            (0x8003, Opcode::STA_ZERO_PAGE),
+            (0x8004, Opcode::STX_ABSOLUTE),
+            (0x8005, Opcode::STY_ZERO_PAGE_X),
+        ],
+    );
+
+    Microcode::FetchAndDecode.exec(&mut cpu);
+    assert_eq!(cpu.opcode, Opcode::LDA_IMMEDIATE);
+    assert_eq!(cpu.pop_microcode(), Some(Microcode::LoadImmediateA));
+
+    Microcode::FetchAndDecode.exec(&mut cpu);
+    assert_eq!(cpu.opcode, Opcode::LDX_ZERO_PAGE);
+    assert_eq!(
+        cpu.pop_microcode(),
+        Some(Microcode::ZeroPage {
+            load_into_alu: false
+        })
+    );
+    assert_eq!(cpu.pop_microcode(), Some(Microcode::LoadX));
+
+    Microcode::FetchAndDecode.exec(&mut cpu);
+    assert_eq!(cpu.opcode, Opcode::LDY_ABSOLUTE);
+    assert_eq!(cpu.pop_microcode(), Some(Microcode::AbsoluteL));
+    assert_eq!(
+        cpu.pop_microcode(),
+        Some(Microcode::AbsoluteH {
+            load_into_alu: false
+        })
+    );
+    assert_eq!(cpu.pop_microcode(), Some(Microcode::LoadY));
+
+    Microcode::FetchAndDecode.exec(&mut cpu);
+    assert_eq!(cpu.opcode, Opcode::STA_ZERO_PAGE);
+    assert_eq!(
+        cpu.pop_microcode(),
+        Some(Microcode::ZeroPage {
+            load_into_alu: false
+        })
+    );
+    assert_eq!(cpu.pop_microcode(), Some(Microcode::StoreA));
+
+    Microcode::FetchAndDecode.exec(&mut cpu);
+    assert_eq!(cpu.opcode, Opcode::STX_ABSOLUTE);
+    assert_eq!(cpu.pop_microcode(), Some(Microcode::AbsoluteL));
+    assert_eq!(
+        cpu.pop_microcode(),
+        Some(Microcode::AbsoluteH {
+            load_into_alu: false
+        })
+    );
+    assert_eq!(cpu.pop_microcode(), Some(Microcode::StoreX));
+
+    Microcode::FetchAndDecode.exec(&mut cpu);
+    assert_eq!(cpu.opcode, Opcode::STY_ZERO_PAGE_X);
+    assert_eq!(
+        cpu.pop_microcode(),
+        Some(Microcode::ZeroPage {
+            load_into_alu: false
+        })
+    );
+    assert_eq!(
+        cpu.pop_microcode(),
+        Some(Microcode::ZeroPageIndexedX {
+            load_into_alu: false
+        })
+    );
+    assert_eq!(cpu.pop_microcode(), Some(Microcode::StoreY));
+}
+
+#[test]
 fn load_microcodes_read_memory_and_update_flags() {
     let mut cpu = cpu_with_memory(0x0000, &[(0x0042, 0x80), (0x0043, 0x00), (0x0044, 0x7F)]);
 
@@ -171,6 +248,23 @@ fn load_microcodes_read_memory_and_update_flags() {
     Microcode::LoadY.exec(&mut cpu);
     assert_eq!(cpu.y, 0x7F);
     assert!(!cpu.flag(Flag::Zero));
+    assert!(!cpu.flag(Flag::Negative));
+}
+
+#[test]
+fn load_immediate_x_and_y_read_operand_and_update_flags() {
+    let mut cpu = cpu_with_memory(0x8000, &[(0x8000, 0x80), (0x8001, 0x00)]);
+
+    Microcode::LoadImmediateX.exec(&mut cpu);
+    assert_eq!(cpu.x, 0x80);
+    assert_eq!(cpu.pc, 0x8001);
+    assert!(cpu.flag(Flag::Negative));
+    assert!(!cpu.flag(Flag::Zero));
+
+    Microcode::LoadImmediateY.exec(&mut cpu);
+    assert_eq!(cpu.y, 0x00);
+    assert_eq!(cpu.pc, 0x8002);
+    assert!(cpu.flag(Flag::Zero));
     assert!(!cpu.flag(Flag::Negative));
 }
 
@@ -195,6 +289,23 @@ fn store_microcodes_write_registers_to_memory() {
         cpu.mcu().writes,
         vec![(0x1234, 0x11), (0x1235, 0x22), (0x1236, 0x33)]
     );
+}
+
+#[test]
+fn store_and_load_microcodes_use_alu_and_memory() {
+    let mut cpu = cpu_with_memory(0x0000, &[(0x0042, 0x44), (0x0055, 0x55)]);
+
+    cpu.ab = 0x0042;
+    cpu.load_alu();
+    assert_eq!(cpu.alu, 0x44);
+
+    Microcode::LoadA.exec(&mut cpu);
+    assert_eq!(cpu.a, 0x44);
+
+    cpu.ab = 0x0055;
+    cpu.a = 0xAA;
+    Microcode::StoreA.exec(&mut cpu);
+    assert_eq!(cpu.mcu().mem[0x0055], 0xAA);
 }
 
 #[test]
