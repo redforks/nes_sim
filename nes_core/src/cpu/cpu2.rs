@@ -1,7 +1,7 @@
 use std::collections::VecDeque;
 
 use crate::{
-    cpu::{Flag, microcode::Microcode},
+    cpu::{microcode::Microcode, Flag},
     mcu::Mcu,
 };
 
@@ -169,6 +169,12 @@ impl<M: Mcu> Cpu2<M> {
         self.a &= self.alu;
         self.update_zero_flag(self.a);
         self.update_negative_flag(self.a);
+    }
+
+    pub(crate) fn bit(&mut self) {
+        self.set_flag(Flag::Negative, self.alu & 0x80 != 0);
+        self.set_flag(Flag::Overflow, self.alu & 0x40 != 0);
+        self.update_zero_flag(self.a & self.alu);
     }
 
     pub(crate) fn asl(&mut self, val: u8) -> u8 {

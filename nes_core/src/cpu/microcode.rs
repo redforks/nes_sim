@@ -1,4 +1,4 @@
-use crate::{Flag, cpu::Cpu2, mcu::Mcu};
+use crate::{cpu::Cpu2, mcu::Mcu, Flag};
 
 /// Each Microcode instruction executed by the CPU in a single cycle
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -79,6 +79,9 @@ pub enum Microcode {
     /// Fetch a byte from memory use address saved in `data_latch`, then and with accumulator
     And,
 
+    /// Test bits in accumulator against ALU value
+    Bit,
+
     AslAccumulator,
     Asl,
 
@@ -135,6 +138,9 @@ impl Opcode {
     pub const BCC: u8 = 0x90;
     pub const BCS: u8 = 0xB0;
     pub const BEQ: u8 = 0xF0;
+
+    pub const BIT_ZERO_PAGE: u8 = 0x24;
+    pub const BIT_ABSOLUTE: u8 = 0x2C;
 }
 
 impl Microcode {
@@ -172,6 +178,7 @@ impl Microcode {
 
             Microcode::AndImmediate => Self::and_immediate(cpu),
             Microcode::And => cpu.and(),
+            Microcode::Bit => cpu.bit(),
             Microcode::StoreAlu => Self::store_alu(cpu),
             Microcode::Nop => {}
             Microcode::Indexed { load_into_alu } => Self::indexed(cpu, load_into_alu),
@@ -218,6 +225,17 @@ impl Microcode {
             Opcode::AND_INDIRECT_INDEXED => {
                 indirect_indexed_addressing(cpu, true, true);
                 cpu.push_microcode(Microcode::And);
+            }
+
+            Opcode::BIT_ZERO_PAGE => {
+                cpu.push_microcode(Microcode::ZeroPage {
+                    load_into_alu: true,
+                });
+                cpu.push_microcode(Microcode::Bit);
+            }
+            Opcode::BIT_ABSOLUTE => {
+                absolute_addressing(cpu, true);
+                cpu.push_microcode(Microcode::Bit);
             }
 
             Opcode::ADC_IMMEDIATE => {
