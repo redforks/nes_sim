@@ -1,7 +1,7 @@
 use std::collections::VecDeque;
 
 use crate::{
-    cpu::{microcode::Microcode, Flag},
+    cpu::{Flag, microcode::Microcode},
     mcu::Mcu,
 };
 
@@ -121,6 +121,11 @@ impl<M: Mcu> Cpu2<M> {
         self.mcu.read(addr)
     }
 
+    /// Load the ALU with the value at the address bus.
+    pub(crate) fn load_alu(&mut self) {
+        self.alu = self.mcu.read(self.ab);
+    }
+
     pub(crate) fn write_byte(&mut self, addr: u16, value: u8) {
         self.mcu.tick();
         self.mcu.write(addr, value);
@@ -163,6 +168,14 @@ impl<M: Mcu> Cpu2<M> {
         self.a &= val;
         self.update_zero_flag(self.a);
         self.update_negative_flag(self.a);
+    }
+
+    pub(crate) fn asl(&mut self, val: u8) -> u8 {
+        self.set_flag(Flag::Carry, val & 0x80 != 0);
+        let result = val << 1;
+        self.update_zero_flag(result);
+        self.update_negative_flag(result);
+        result
     }
 
     pub(crate) fn push_microcode(&mut self, microcode: Microcode) {
