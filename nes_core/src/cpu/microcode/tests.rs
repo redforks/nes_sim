@@ -67,6 +67,39 @@ fn fetch_and_decode_queues_and_immediate() {
 }
 
 #[test]
+fn fetch_and_decode_queues_bit_sequences() {
+    let mut cpu = cpu_with_memory(
+        0x8000,
+        &[
+            (0x8000, Opcode::BIT_ZERO_PAGE),
+            (0x8001, Opcode::BIT_ABSOLUTE),
+        ],
+    );
+
+    Microcode::FetchAndDecode.exec(&mut cpu);
+    assert_eq!(cpu.opcode, Opcode::BIT_ZERO_PAGE);
+    assert_eq!(
+        cpu.pop_microcode(),
+        Some(Microcode::ZeroPage {
+            load_into_alu: true
+        })
+    );
+    assert_eq!(cpu.pop_microcode(), Some(Microcode::Bit));
+
+    Microcode::FetchAndDecode.exec(&mut cpu);
+    assert_eq!(cpu.opcode, Opcode::BIT_ABSOLUTE);
+    assert_eq!(cpu.pc, 0x8002);
+    assert_eq!(cpu.pop_microcode(), Some(Microcode::AbsoluteL));
+    assert_eq!(
+        cpu.pop_microcode(),
+        Some(Microcode::AbsoluteH {
+            load_into_alu: true
+        })
+    );
+    assert_eq!(cpu.pop_microcode(), Some(Microcode::Bit));
+}
+
+#[test]
 fn load_microcodes_read_memory_and_update_flags() {
     let mut cpu = cpu_with_memory(0x0000, &[(0x0042, 0x80), (0x0043, 0x00), (0x0044, 0x7F)]);
 
@@ -145,6 +178,7 @@ fn adc_reads_from_address_bus_and_sets_zero_and_carry() {
     let mut cpu = cpu_with_memory(0x0000, &[(0x0042, 0xFF)]);
     cpu.ab = 0x0042;
     cpu.a = 0x00;
+    cpu.alu = 0xFF;
     cpu.set_flag(Flag::Carry, true);
 
     Microcode::Adc.exec(&mut cpu);
@@ -168,8 +202,30 @@ fn and_immediate_and_memory_microcodes_update_accumulator_and_flags() {
     assert!(cpu.flag(Flag::Negative));
 
     cpu.ab = 0x0042;
+    cpu.alu = 0b1010_1010;
     Microcode::And.exec(&mut cpu);
     assert_eq!(cpu.a, 0b1000_0000);
     assert!(!cpu.flag(Flag::Zero));
     assert!(cpu.flag(Flag::Negative));
+}
+
+#[test]
+fn bit_updates_flags_from_alu_and_accumulator() {
+    let mut cpu = cpu_with_memory(0x0000, &[]);
+    cpu.a = 0b0011_0000;
+    cpu.alu = 0b1100_0000;
+    cpu.status = Flag::Zero as u8;
+
+    Microcode::Bit.exec(&mut cpu);
+
+    assert!(cpu.flag(Flag::Negative));
+    assert!(cpu.flag(Flag::Overflow));
+    assert!(cpu.flag(Flag::Zero));
+
+    cpu.a = 0b1111_0000;
+    cpu.alu = 0b0100_0000;
+    Microcode::Bit.exec(&mut cpu);
+    assert!(!cpu.flag(Flag::Negative));
+    assert!(cpu.flag(Flag::Overflow));
+    assert!(!cpu.flag(Flag::Zero));
 }
