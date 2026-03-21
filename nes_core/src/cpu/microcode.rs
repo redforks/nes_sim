@@ -1,7 +1,4 @@
-use crate::{
-    cpu::{Cpu2, Flag},
-    mcu::Mcu,
-};
+use crate::{cpu::Cpu2, mcu::Mcu};
 
 /// Each Microcode instruction executed by the CPU in a single cycle
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -22,48 +19,68 @@ pub enum Microcode {
     StoreY,
     /// Read immediate value into accumulator
     LoadImmediateA,
-    /// Take immediate value from instruction data stream, and it with accumulator
-    AndImmediate,
+
+    /// Store cpu alu register into memory at cpu.ab
+    StoreAlu,
 
     // addressing microcodes
     /// Take a byte from instruction data stream, set cpu address_bus field by read from memory use zero page addressing
-    ZeroPage,
+    ZeroPage {
+        load_into_alu: bool,
+    },
     /// Impl ZeroPageIndexedX addressing, work after ZeroPage, set abl = (abl + x) % 256, set abh = 00
-    ZeroPageIndexedX,
+    ZeroPageIndexedX {
+        load_into_alu: bool,
+    },
     /// Take a byte from instruction data stream, set cpu abl field
     AbsoluteL,
     /// Take a byte from instruction data stream, set cpu abh field
-    AbsoluteH,
+    AbsoluteH {
+        load_into_alu: bool,
+    },
     /// Take a byte from instruction data stream, set cpu abh field, add ab with
     /// x register value, set cpu ab field, retain_cycle if the 8bit plus
     /// operation overflows
     ///
     /// Must after AbsoluteL
-    AbsoluteIndexedX,
+    AbsoluteIndexedX {
+        oops: bool,
+        load_into_alu: bool,
+    },
     /// Take a byte from instruction data stream, set cpu abh field, add ab with
     /// y register value, set cpu ab field, retain_cycle if the 8bit plus
     /// operation overflows
     ///
     /// Must after AbsoluteL
-    AbsoluteIndexedY,
+    AbsoluteIndexedY {
+        oops: bool,
+        load_into_alu: bool,
+    },
     /// AbsoluteIndexedY but do not take high byte from instruction data stream, used to impl IndirectIndexed
-    AbsoluteIndexedYWithoutHigh,
+    AbsoluteIndexedYWithoutHigh {
+        oops: bool,
+        load_into_alu: bool,
+    },
     /// Do nothing, used in "oops" cycles of AbsoluteIndexed and Indirect Indexed addressing
     Nop,
-    /// (d,x)
-    IndexedIndirect,
-    /// (d),y
-    IndirectIndexed,
     /// Load abl from memory at [ab], load abh from memory at [ab+1]
     /// append with Nop, because it is actually need two cycles
-    Indexed,
+    Indexed {
+        load_into_alu: bool,
+    },
 
     /// Take immediate value from instruction data stream, add to accumulator with carry
     AdcImmediate,
     /// Fetch a byte from memory use address saved in `data_latch`, then add to accumulator with carry
     Adc,
+
+    /// Take immediate value from instruction data stream, and it with accumulator
+    AndImmediate,
     /// Fetch a byte from memory use address saved in `data_latch`, then and with accumulator
     And,
+
+    AslAccumulator,
+    Asl,
 }
 
 /// Represents the opcode of a CPU instruction, the first byte of an instruction
@@ -87,6 +104,12 @@ impl Opcode {
     pub const ADC_ABSOLUTE_INDEXED_Y: u8 = 0x79;
     pub const ADC_INDEXED_INDIRECT: u8 = 0x61;
     pub const ADC_INDIRECT_INDEXED: u8 = 0x71;
+
+    pub const ASL_ACCUMULATOR: u8 = 0x0A;
+    pub const ASL_ZERO_PAGE: u8 = 0x06;
+    pub const ASL_ZERO_PAGE_X: u8 = 0x16;
+    pub const ASL_ABSOLUTE: u8 = 0x0E;
+    pub const ASL_ABSOLUTE_INDEXED_X: u8 = 0x1E;
 }
 
 impl Microcode {
@@ -102,17 +125,32 @@ impl Microcode {
             Microcode::StoreY => Self::store_y(cpu),
             Microcode::LoadImmediateA => Self::load_immediate_a(cpu),
             Microcode::AndImmediate => Self::and_immediate(cpu),
-            Microcode::ZeroPage => Self::zero_page(cpu),
-            Microcode::ZeroPageIndexedX => Self::zero_page_indexed_x(cpu),
+            Microcode::ZeroPage { load_into_alu } => Self::zero_page(cpu, load_into_alu),
+            Microcode::ZeroPageIndexedX { load_into_alu } => {
+                Self::zero_page_indexed_x(cpu, load_into_alu)
+            }
             Microcode::AbsoluteL => Self::absolute_l(cpu),
-            Microcode::AbsoluteH => Self::absolute_h(cpu),
-            Microcode::AbsoluteIndexedX => Self::absolute_indexed_x(cpu),
-            Microcode::AbsoluteIndexedY => Self::absolute_indexed_y(cpu),
-            Microcode::AbsoluteIndexedYWithoutHigh => Self::absolute_indexed_y_without_high(cpu),
+            Microcode::AbsoluteH { load_into_alu } => Self::absolute_h(cpu, load_into_alu),
+            Microcode::AbsoluteIndexedX {
+                oops,
+                load_into_alu,
+            } => Self::absolute_indexed_x(cpu, oops, load_into_alu),
+            Microcode::AbsoluteIndexedY {
+                oops,
+                load_into_alu,
+            } => Self::absolute_indexed_y(cpu, oops, load_into_alu),
+            Microcode::AbsoluteIndexedYWithoutHigh {
+                oops,
+                load_into_alu,
+            } => Self::absolute_indexed_y_without_high(cpu, oops, load_into_alu),
             Microcode::AdcImmediate => Self::adc_immediate(cpu),
             Microcode::Adc => Self::adc(cpu),
             Microcode::And => Self::and(cpu),
-            _ => unimplemented!("Unimplementd microcode: {:?}", self),
+            Microcode::StoreAlu => Self::store_alu(cpu),
+            Microcode::Nop => {}
+            Microcode::Indexed { load_into_alu } => Self::indexed(cpu, load_into_alu),
+            Microcode::AslAccumulator => Self::asl_accumulator(cpu),
+            Microcode::Asl => Self::asl(cpu),
         }
     }
 
@@ -124,63 +162,96 @@ impl Microcode {
                 cpu.push_microcode(Microcode::AndImmediate);
             }
             Opcode::AND_ZERO_PAGE => {
-                cpu.push_microcode(Microcode::ZeroPage);
+                cpu.push_microcode(Microcode::ZeroPage {
+                    load_into_alu: false,
+                });
                 cpu.push_microcode(Microcode::And);
             }
             Opcode::AND_ZERO_PAGE_X => {
-                zero_page_indexed_x_addressing(cpu);
+                zero_page_indexed_x_addressing(cpu, false);
                 cpu.push_microcode(Microcode::And);
             }
             Opcode::AND_ABSOLUTE => {
-                absolute_addressing(cpu);
+                absolute_addressing(cpu, false);
                 cpu.push_microcode(Microcode::And);
             }
             Opcode::AND_ABSOLUTE_INDEXED_X => {
-                absolute_indexed_x_addressing(cpu);
+                absolute_indexed_x_addressing(cpu, true, false);
                 cpu.push_microcode(Microcode::And);
             }
             Opcode::AND_ABSOLUTE_INDEXED_Y => {
-                absolute_indexed_y_addressing(cpu);
+                absolute_indexed_y_addressing(cpu, true, false);
                 cpu.push_microcode(Microcode::And);
             }
             Opcode::AND_INDEXED_INDIRECT => {
-                indexed_indirect_addressing(cpu);
+                indexed_indirect_addressing(cpu, false);
                 cpu.push_microcode(Microcode::And);
             }
             Opcode::AND_INDIRECT_INDEXED => {
-                indirect_indexed_addressing(cpu);
+                indirect_indexed_addressing(cpu, true, false);
                 cpu.push_microcode(Microcode::And);
             }
             Opcode::ADC_IMMEDIATE => {
                 cpu.push_microcode(Microcode::AdcImmediate);
             }
             Opcode::ADC_ZERO_PAGE => {
-                cpu.push_microcode(Microcode::ZeroPage);
+                cpu.push_microcode(Microcode::ZeroPage {
+                    load_into_alu: false,
+                });
                 cpu.push_microcode(Microcode::Adc);
             }
             Opcode::ADC_ZERO_PAGE_X => {
-                zero_page_indexed_x_addressing(cpu);
+                zero_page_indexed_x_addressing(cpu, false);
                 cpu.push_microcode(Microcode::Adc);
             }
             Opcode::ADC_ABSOLUTE => {
-                absolute_addressing(cpu);
+                absolute_addressing(cpu, false);
                 cpu.push_microcode(Microcode::Adc);
             }
             Opcode::ADC_ABSOLUTE_INDEXED_X => {
-                absolute_indexed_x_addressing(cpu);
+                absolute_indexed_x_addressing(cpu, true, false);
                 cpu.push_microcode(Microcode::Adc);
             }
             Opcode::ADC_ABSOLUTE_INDEXED_Y => {
-                absolute_indexed_y_addressing(cpu);
+                absolute_indexed_y_addressing(cpu, true, false);
                 cpu.push_microcode(Microcode::Adc);
             }
             Opcode::ADC_INDEXED_INDIRECT => {
-                indexed_indirect_addressing(cpu);
+                indexed_indirect_addressing(cpu, false);
                 cpu.push_microcode(Microcode::Adc);
             }
             Opcode::ADC_INDIRECT_INDEXED => {
-                indirect_indexed_addressing(cpu);
+                indirect_indexed_addressing(cpu, true, false);
                 cpu.push_microcode(Microcode::Adc);
+            }
+            Opcode::ASL_ACCUMULATOR => {
+                cpu.push_microcode(Microcode::AslAccumulator);
+            }
+            Opcode::ASL_ZERO_PAGE => {
+                cpu.push_microcode(Microcode::ZeroPage {
+                    load_into_alu: true,
+                });
+                cpu.push_microcode(Microcode::StoreAlu);
+                cpu.push_microcode(Microcode::Asl);
+                cpu.push_microcode(Microcode::StoreAlu);
+            }
+            Opcode::ASL_ZERO_PAGE_X => {
+                zero_page_indexed_x_addressing(cpu, true);
+                cpu.push_microcode(Microcode::StoreAlu);
+                cpu.push_microcode(Microcode::Asl);
+                cpu.push_microcode(Microcode::StoreAlu);
+            }
+            Opcode::ASL_ABSOLUTE => {
+                absolute_addressing(cpu, true);
+                cpu.push_microcode(Microcode::StoreAlu);
+                cpu.push_microcode(Microcode::Asl);
+                cpu.push_microcode(Microcode::StoreAlu);
+            }
+            Opcode::ASL_ABSOLUTE_INDEXED_X => {
+                absolute_indexed_x_addressing(cpu, false, true);
+                cpu.push_microcode(Microcode::StoreAlu);
+                cpu.push_microcode(Microcode::Asl);
+                cpu.push_microcode(Microcode::StoreAlu);
             }
             _ => panic!("Unknown opcode: {}", opcode),
         }
@@ -227,13 +298,19 @@ impl Microcode {
         cpu.and(value);
     }
 
-    fn zero_page<M: Mcu>(cpu: &mut Cpu2<M>) {
+    fn zero_page<M: Mcu>(cpu: &mut Cpu2<M>, load_into_alu: bool) {
         let addr = cpu.inc_read_byte();
         cpu.ab = addr as u16;
+        if load_into_alu {
+            cpu.load_alu();
+        }
     }
 
-    fn zero_page_indexed_x<M: Mcu>(cpu: &mut Cpu2<M>) {
+    fn zero_page_indexed_x<M: Mcu>(cpu: &mut Cpu2<M>, load_into_alu: bool) {
         cpu.ab = cpu.abl().wrapping_add(cpu.x) as u16;
+        if load_into_alu {
+            cpu.load_alu();
+        }
     }
 
     fn absolute_l<M: Mcu>(cpu: &mut Cpu2<M>) {
@@ -241,9 +318,12 @@ impl Microcode {
         cpu.set_abl(low);
     }
 
-    fn absolute_h<M: Mcu>(cpu: &mut Cpu2<M>) {
+    fn absolute_h<M: Mcu>(cpu: &mut Cpu2<M>, load_into_alu: bool) {
         let high = cpu.inc_read_byte();
         cpu.set_abh(high);
+        if load_into_alu {
+            cpu.load_alu();
+        }
     }
 
     fn adc_immediate<M: Mcu>(cpu: &mut Cpu2<M>) {
@@ -251,26 +331,32 @@ impl Microcode {
         cpu.adc(value);
     }
 
-    fn absolute_indexed_x<M: Mcu>(cpu: &mut Cpu2<M>) {
+    fn absolute_indexed_x<M: Mcu>(cpu: &mut Cpu2<M>, oops: bool, load_into_alu: bool) {
         let abh = cpu.inc_read_byte();
         cpu.set_abh(abh);
         cpu.ab = cpu.ab.wrapping_add(cpu.x as u16);
-        if abh != cpu.abh() {
+        if load_into_alu {
+            cpu.load_alu();
+        }
+        if oops && abh != cpu.abh() {
             cpu.retain_cycle();
         }
     }
 
-    fn absolute_indexed_y<M: Mcu>(cpu: &mut Cpu2<M>) {
+    fn absolute_indexed_y<M: Mcu>(cpu: &mut Cpu2<M>, oops: bool, load_into_alu: bool) {
         let abh = cpu.inc_read_byte();
         cpu.set_abh(abh);
-        Self::absolute_indexed_y_without_high(cpu)
+        Self::absolute_indexed_y_without_high(cpu, oops, load_into_alu);
     }
 
-    fn absolute_indexed_y_without_high<M: Mcu>(cpu: &mut Cpu2<M>) {
+    fn absolute_indexed_y_without_high<M: Mcu>(cpu: &mut Cpu2<M>, oops: bool, load_into_alu: bool) {
         let abh = cpu.abh();
         cpu.ab = cpu.ab.wrapping_add(cpu.y as u16);
-        if abh != cpu.abh() {
+        if oops && abh != cpu.abh() {
             cpu.retain_cycle();
+        }
+        if load_into_alu {
+            cpu.load_alu();
         }
     }
 
@@ -283,45 +369,85 @@ impl Microcode {
         let value = cpu.read_byte(cpu.ab);
         cpu.and(value);
     }
+
+    fn store_alu<M: Mcu>(cpu: &mut Cpu2<M>) {
+        cpu.write_byte(cpu.ab, cpu.alu);
+    }
+
+    fn indexed<M: Mcu>(cpu: &mut Cpu2<M>, load_into_alu: bool) {
+        let addr_low = cpu.read_byte(cpu.ab);
+        let addr_high = cpu.read_byte(cpu.ab.wrapping_add(1));
+        cpu.ab = (addr_high as u16) << 8 | addr_low as u16;
+        if load_into_alu {
+            cpu.alu = cpu.read_byte(cpu.ab);
+        }
+    }
+
+    fn asl_accumulator<M: Mcu>(cpu: &mut Cpu2<M>) {
+        cpu.a = cpu.asl(cpu.a);
+    }
+
+    fn asl<M: Mcu>(cpu: &mut Cpu2<M>) {
+        cpu.alu = cpu.asl(cpu.alu);
+    }
 }
 
 /// Push Microcodes for zero page indexed x addressing
-fn zero_page_indexed_x_addressing<M: Mcu>(cpu: &mut Cpu2<M>) {
-    cpu.push_microcode(Microcode::ZeroPage);
-    cpu.push_microcode(Microcode::ZeroPageIndexedX);
+fn zero_page_indexed_x_addressing<M: Mcu>(cpu: &mut Cpu2<M>, load_into_alu: bool) {
+    cpu.push_microcode(Microcode::ZeroPage {
+        load_into_alu: false,
+    });
+    cpu.push_microcode(Microcode::ZeroPageIndexedX { load_into_alu });
 }
 
 /// Push Microcodes for absolute addressing
-fn absolute_addressing<M: Mcu>(cpu: &mut Cpu2<M>) {
+fn absolute_addressing<M: Mcu>(cpu: &mut Cpu2<M>, load_into_alu: bool) {
     cpu.push_microcode(Microcode::AbsoluteL);
-    cpu.push_microcode(Microcode::AbsoluteH);
+    cpu.push_microcode(Microcode::AbsoluteH { load_into_alu });
 }
 
 /// Push Microcodes for absolute indexed x addressing
-fn absolute_indexed_x_addressing<M: Mcu>(cpu: &mut Cpu2<M>) {
+fn absolute_indexed_x_addressing<M: Mcu>(cpu: &mut Cpu2<M>, oops: bool, load_into_alu: bool) {
     cpu.push_microcode(Microcode::AbsoluteL);
-    cpu.push_microcode(Microcode::AbsoluteIndexedX); // may add nop for extra cycle
+    cpu.push_microcode(Microcode::AbsoluteIndexedX {
+        oops,
+        load_into_alu,
+    }); // may add nop for extra cycle
 }
 
 /// Push Microcodes for absolute indexed y addressing
-fn absolute_indexed_y_addressing<M: Mcu>(cpu: &mut Cpu2<M>) {
+fn absolute_indexed_y_addressing<M: Mcu>(cpu: &mut Cpu2<M>, oops: bool, load_into_alu: bool) {
     cpu.push_microcode(Microcode::AbsoluteL);
-    cpu.push_microcode(Microcode::AbsoluteIndexedY); // may add nop for extra cycle
+    cpu.push_microcode(Microcode::AbsoluteIndexedY {
+        oops,
+        load_into_alu,
+    }); // may add nop for extra cycle
 }
 
 /// Push Microcodes for zero page indexed indirect addressing
-fn indexed_indirect_addressing<M: Mcu>(cpu: &mut Cpu2<M>) {
-    cpu.push_microcode(Microcode::ZeroPage);
-    cpu.push_microcode(Microcode::ZeroPageIndexedX);
-    cpu.push_microcode(Microcode::Indexed);
+fn indexed_indirect_addressing<M: Mcu>(cpu: &mut Cpu2<M>, load_into_alu: bool) {
+    cpu.push_microcode(Microcode::ZeroPage {
+        load_into_alu: false,
+    });
+    cpu.push_microcode(Microcode::ZeroPageIndexedX {
+        load_into_alu: false,
+    });
+    cpu.push_microcode(Microcode::Indexed { load_into_alu });
     cpu.push_microcode(Microcode::Nop);
 }
 
 /// Push Microcodes for indirect indexed addressing
-fn indirect_indexed_addressing<M: Mcu>(cpu: &mut Cpu2<M>) {
-    cpu.push_microcode(Microcode::ZeroPage);
-    cpu.push_microcode(Microcode::IndirectIndexed);
-    cpu.push_microcode(Microcode::AbsoluteIndexedYWithoutHigh); // may add nop for extra cycle
+fn indirect_indexed_addressing<M: Mcu>(cpu: &mut Cpu2<M>, oops: bool, load_into_alu: bool) {
+    cpu.push_microcode(Microcode::ZeroPage {
+        load_into_alu: false,
+    });
+    cpu.push_microcode(Microcode::Indexed {
+        load_into_alu: false,
+    });
+    cpu.push_microcode(Microcode::AbsoluteIndexedYWithoutHigh {
+        oops,
+        load_into_alu,
+    }); // may add nop for extra cycle
 }
 
 #[cfg(test)]

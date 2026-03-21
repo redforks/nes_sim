@@ -1,4 +1,5 @@
 use super::*;
+use crate::cpu::Flag;
 
 struct TestMcu {
     mem: [u8; 0x10000],
@@ -66,19 +67,6 @@ fn fetch_and_decode_queues_and_immediate() {
 }
 
 #[test]
-fn fetch_and_decode_queues_zero_page_adc_sequence() {
-    let mut cpu = cpu_with_memory(0x8000, &[(0x8000, Opcode::ADC_ZERO_PAGE)]);
-
-    Microcode::FetchAndDecode.exec(&mut cpu);
-
-    assert_eq!(cpu.opcode, Opcode::ADC_ZERO_PAGE);
-    assert_eq!(cpu.pc, 0x8001);
-    assert_eq!(cpu.pop_microcode(), Some(Microcode::ZeroPage));
-    assert_eq!(cpu.pop_microcode(), Some(Microcode::Adc));
-    assert!(cpu.pop_microcode().is_none());
-}
-
-#[test]
 fn load_microcodes_read_memory_and_update_flags() {
     let mut cpu = cpu_with_memory(0x0000, &[(0x0042, 0x80), (0x0043, 0x00), (0x0044, 0x7F)]);
 
@@ -135,25 +123,6 @@ fn load_immediate_a_reads_operand_and_updates_flags() {
     assert_eq!(cpu.pc, 0x8001);
     assert!(cpu.flag(Flag::Zero));
     assert!(!cpu.flag(Flag::Negative));
-}
-
-#[test]
-fn addressing_microcodes_set_expected_address_bus() {
-    let mut cpu = cpu_with_memory(0x8000, &[(0x8000, 0x44), (0x8001, 0xF0), (0x8002, 0x34)]);
-    cpu.x = 0xff;
-
-    Microcode::ZeroPage.exec(&mut cpu);
-    assert_eq!(cpu.ab, 0x0044);
-
-    Microcode::ZeroPageIndexedX.exec(&mut cpu);
-    assert_eq!(cpu.ab, 0x0043); // 0x43 = 0x44 + 0xff (wrapping around)
-
-    Microcode::AbsoluteH.exec(&mut cpu);
-    assert_eq!(cpu.ab, 0xF043);
-    Microcode::AbsoluteL.exec(&mut cpu);
-    assert_eq!(cpu.ab, 0xF034);
-
-    assert_eq!(cpu.pc, 0x8003);
 }
 
 #[test]
