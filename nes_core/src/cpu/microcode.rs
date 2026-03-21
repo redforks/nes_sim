@@ -113,36 +113,27 @@ impl Microcode {
                 cpu.push_microcode(Microcode::Adc);
             }
             Opcode::ADC_ZERO_PAGE_X => {
-                cpu.push_microcode(Microcode::ZeroPage);
-                cpu.push_microcode(Microcode::ZeroPageIndexedX);
+                zero_page_indexed_x_addressing(cpu);
                 cpu.push_microcode(Microcode::Adc);
             }
             Opcode::ADC_ABSOLUTE => {
-                cpu.push_microcode(Microcode::AbsoluteL);
-                cpu.push_microcode(Microcode::AbsoluteH);
+                absolute_addressing(cpu);
                 cpu.push_microcode(Microcode::Adc);
             }
             Opcode::ADC_ABSOLUTE_INDEXED_X => {
-                cpu.push_microcode(Microcode::AbsoluteL);
-                cpu.push_microcode(Microcode::AbsoluteIndexedX); // may add nop for extra cycle
+                absolute_indexed_x_addressing(cpu);
                 cpu.push_microcode(Microcode::Adc);
             }
             Opcode::ADC_ABSOLUTE_INDEXED_Y => {
-                cpu.push_microcode(Microcode::AbsoluteL);
-                cpu.push_microcode(Microcode::AbsoluteIndexedY); // may add nop for extra cycle
+                absolute_indexed_y_addressing(cpu);
                 cpu.push_microcode(Microcode::Adc);
             }
             Opcode::ADC_INDEXED_INDIRECT => {
-                cpu.push_microcode(Microcode::ZeroPage);
-                cpu.push_microcode(Microcode::ZeroPageIndexedX);
-                cpu.push_microcode(Microcode::Indexed);
-                cpu.push_microcode(Microcode::Nop);
+                indexed_indirect_addressing(cpu);
                 cpu.push_microcode(Microcode::Adc);
             }
             Opcode::ADC_INDIRECT_INDEXED => {
-                cpu.push_microcode(Microcode::ZeroPage);
-                cpu.push_microcode(Microcode::IndirectIndexed);
-                cpu.push_microcode(Microcode::AbsoluteIndexedYWithoutHigh); // may add nop for extra cycle
+                indirect_indexed_addressing(cpu);
                 cpu.push_microcode(Microcode::Adc);
             }
             _ => panic!("Unknown opcode: {}", opcode),
@@ -236,6 +227,45 @@ impl Microcode {
         let value = cpu.read_byte(cpu.ab);
         cpu.adc(value);
     }
+}
+
+/// Push Microcodes for zero page indexed x addressing
+fn zero_page_indexed_x_addressing<M: Mcu>(cpu: &mut Cpu2<M>) {
+    cpu.push_microcode(Microcode::ZeroPage);
+    cpu.push_microcode(Microcode::ZeroPageIndexedX);
+}
+
+/// Push Microcodes for absolute addressing
+fn absolute_addressing<M: Mcu>(cpu: &mut Cpu2<M>) {
+    cpu.push_microcode(Microcode::AbsoluteL);
+    cpu.push_microcode(Microcode::AbsoluteH);
+}
+
+/// Push Microcodes for absolute indexed x addressing
+fn absolute_indexed_x_addressing<M: Mcu>(cpu: &mut Cpu2<M>) {
+    cpu.push_microcode(Microcode::AbsoluteL);
+    cpu.push_microcode(Microcode::AbsoluteIndexedX);
+}
+
+/// Push Microcodes for absolute indexed y addressing
+fn absolute_indexed_y_addressing<M: Mcu>(cpu: &mut Cpu2<M>) {
+    cpu.push_microcode(Microcode::AbsoluteL);
+    cpu.push_microcode(Microcode::AbsoluteIndexedY); // may add nop for extra cycle
+}
+
+/// Push Microcodes for zero page indexed indirect addressing
+fn indexed_indirect_addressing<M: Mcu>(cpu: &mut Cpu2<M>) {
+    cpu.push_microcode(Microcode::ZeroPage);
+    cpu.push_microcode(Microcode::ZeroPageIndexedX);
+    cpu.push_microcode(Microcode::Indexed);
+    cpu.push_microcode(Microcode::Nop);
+}
+
+/// Push Microcodes for indirect indexed addressing
+fn indirect_indexed_addressing<M: Mcu>(cpu: &mut Cpu2<M>) {
+    cpu.push_microcode(Microcode::ZeroPage);
+    cpu.push_microcode(Microcode::IndirectIndexed);
+    cpu.push_microcode(Microcode::AbsoluteIndexedYWithoutHigh); // may add nop for extra cycle
 }
 
 #[cfg(test)]
