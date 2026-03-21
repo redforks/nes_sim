@@ -54,6 +54,18 @@ fn fetch_and_decode_queues_adc_immediate() {
 }
 
 #[test]
+fn fetch_and_decode_queues_and_immediate() {
+    let mut cpu = cpu_with_memory(0x8000, &[(0x8000, Opcode::AND_IMMEDIATE)]);
+
+    Microcode::FetchAndDecode.exec(&mut cpu);
+
+    assert_eq!(cpu.opcode, Opcode::AND_IMMEDIATE);
+    assert_eq!(cpu.pc, 0x8001);
+    assert_eq!(cpu.pop_microcode(), Some(Microcode::AndImmediate));
+    assert!(cpu.pop_microcode().is_none());
+}
+
+#[test]
 fn fetch_and_decode_queues_zero_page_adc_sequence() {
     let mut cpu = cpu_with_memory(0x8000, &[(0x8000, Opcode::ADC_ZERO_PAGE)]);
 
@@ -173,4 +185,22 @@ fn adc_reads_from_address_bus_and_sets_zero_and_carry() {
     assert!(cpu.flag(Flag::Zero));
     assert!(!cpu.flag(Flag::Negative));
     assert!(!cpu.flag(Flag::Overflow));
+}
+
+#[test]
+fn and_immediate_and_memory_microcodes_update_accumulator_and_flags() {
+    let mut cpu = cpu_with_memory(0x8000, &[(0x8000, 0b1100_1100), (0x0042, 0b1010_1010)]);
+    cpu.a = 0b1111_0000;
+
+    Microcode::AndImmediate.exec(&mut cpu);
+    assert_eq!(cpu.a, 0b1100_0000);
+    assert_eq!(cpu.pc, 0x8001);
+    assert!(!cpu.flag(Flag::Zero));
+    assert!(cpu.flag(Flag::Negative));
+
+    cpu.ab = 0x0042;
+    Microcode::And.exec(&mut cpu);
+    assert_eq!(cpu.a, 0b1000_0000);
+    assert!(!cpu.flag(Flag::Zero));
+    assert!(cpu.flag(Flag::Negative));
 }
