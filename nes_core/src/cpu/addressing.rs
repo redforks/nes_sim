@@ -1,4 +1,4 @@
-use super::{Cpu, extra_cycles_if_cross_page};
+use super::{extra_cycles_if_cross_page, Cpu};
 use crate::mcu::Mcu;
 use std::fmt::{Display, Formatter};
 
@@ -69,9 +69,9 @@ impl Addressing {
 
     pub fn calc_addr<M: Mcu>(&self, cpu: &mut Cpu<M>) -> (u16, u8) {
         match self {
-            Addressing::Accumulator => (cpu.a as u16, 1),
+            Addressing::Accumulator => (cpu.a as u16, 0),
             Addressing::Implied => panic!("can't calc addr for implied addressing"),
-            Addressing::Immediate(v) => (*v as u16, 1),
+            Addressing::Immediate(v) => (*v as u16, 0),
             Addressing::Absolute(a) => (*a, 2),
             Addressing::ZeroPage(z) => (*z as u16, 1),
             Addressing::AbsoluteIndexedWithX(a) => {
@@ -91,109 +91,6 @@ impl Addressing {
                 let base = cpu.read_zero_page_word(*z);
                 let r = base.wrapping_add(cpu.y as u16);
                 (r, 3 + extra_cycles_if_cross_page(base, r))
-            }
-        }
-    }
-
-    /// Return value and extra cycles used
-    pub fn read<M: Mcu>(&self, cpu: &mut Cpu<M>) -> (u8, u8) {
-        match self {
-            Addressing::Accumulator => (cpu.a, 0),
-            Addressing::Implied => unreachable!("can't read implied addressing"),
-            Addressing::Immediate(v) => (*v, 0),
-            Addressing::ZeroPage(z) => {
-                let addr = *z as u16;
-                (cpu.read_byte(addr), 0)
-            }
-            Addressing::Absolute(a) => {
-                let addr = *a;
-                (cpu.read_byte(addr), 0)
-            }
-            Addressing::AbsoluteIndexedWithX(a) => {
-                let base = *a;
-                let r = base.wrapping_add(cpu.x as u16);
-                (cpu.read_byte(r), 4 + extra_cycles_if_cross_page(base, r))
-            }
-            Addressing::AbsoluteIndexedWithY(a) => {
-                let base = *a;
-                let r = base.wrapping_add(cpu.y as u16);
-                (cpu.read_byte(r), 4 + extra_cycles_if_cross_page(base, r))
-            }
-            Addressing::ZeroPageIndexedWithX(z) => {
-                let addr = z.wrapping_add(cpu.x) as u16;
-                (cpu.read_byte(addr), 4)
-            }
-            Addressing::ZeroPageIndexedWithY(z) => {
-                let addr = z.wrapping_add(cpu.y) as u16;
-                (cpu.read_byte(addr), 4)
-            }
-            Addressing::ZeroPageIndexedIndirect(z) => {
-                // (zp, X)
-                let addr = cpu.read_zero_page_word(cpu.x.wrapping_add(*z));
-                (cpu.read_byte(addr), 6)
-            }
-            Addressing::ZeroPageIndexedIndirectWithY(z) => {
-                // (zp), Y
-                let base = cpu.read_zero_page_word(*z);
-                let r = base.wrapping_add(cpu.y as u16);
-                (cpu.read_byte(r), 5 + extra_cycles_if_cross_page(base, r))
-            }
-        }
-    }
-
-    /// Write value and return extra cycles it takes
-    pub fn write<M: Mcu>(&self, cpu: &mut Cpu<M>, val: u8) -> u8 {
-        // Return the number of cycles required to perform a write to this addressing
-        // mode. Some addressing modes (like Immediate) are invalid targets for
-        // writes and will panic.
-        match self {
-            Addressing::Accumulator => {
-                cpu.a = val;
-                0
-            }
-            Addressing::Implied => unreachable!("can't write to implied addressing"),
-            Addressing::Immediate(_) => unreachable!("can't write to immediate addressing"),
-            Addressing::ZeroPage(z) => {
-                let addr = *z as u16;
-                cpu.write_byte(addr, val);
-                0
-            }
-            Addressing::Absolute(a) => {
-                cpu.write_byte(*a, val);
-                0
-            }
-            Addressing::AbsoluteIndexedWithX(a) => {
-                let addr = a.wrapping_add(cpu.x as u16);
-                cpu.write_byte(addr, val);
-                5
-            }
-            Addressing::AbsoluteIndexedWithY(a) => {
-                let addr = a.wrapping_add(cpu.y as u16);
-                cpu.write_byte(addr, val);
-                5
-            }
-            Addressing::ZeroPageIndexedWithX(z) => {
-                let addr = z.wrapping_add(cpu.x) as u16;
-                cpu.write_byte(addr, val);
-                4
-            }
-            Addressing::ZeroPageIndexedWithY(z) => {
-                let addr = z.wrapping_add(cpu.y) as u16;
-                cpu.write_byte(addr, val);
-                4
-            }
-            Addressing::ZeroPageIndexedIndirect(z) => {
-                // (zp, X)
-                let addr = cpu.read_zero_page_word(cpu.x.wrapping_add(*z));
-                cpu.write_byte(addr, val);
-                6
-            }
-            Addressing::ZeroPageIndexedIndirectWithY(z) => {
-                // (zp), Y
-                let base = cpu.read_zero_page_word(*z);
-                let addr = base.wrapping_add(cpu.y as u16);
-                cpu.write_byte(addr, val);
-                6
             }
         }
     }
