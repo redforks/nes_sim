@@ -159,12 +159,17 @@ impl<M: Mcu> Cpu2<M> {
         self.a = sum;
     }
 
-    pub fn push_microcode(&mut self, microcode: Microcode) {
+    pub(crate) fn push_microcode(&mut self, microcode: Microcode) {
         self.microcode_queue.push_back(microcode);
     }
 
     pub(crate) fn pop_microcode(&mut self) -> Option<Microcode> {
         self.microcode_queue.pop_front()
+    }
+
+    /// Retain the current cycle by set Nop as next microcode, used in "oops" cycles of AbsoluteIndexed and Indirect Indexed addressing
+    pub(crate) fn retain_cycle(&mut self) {
+        self.microcode_queue.push_front(Microcode::Nop);
     }
 
     fn read_word(&mut self, addr: u16) -> u16 {
