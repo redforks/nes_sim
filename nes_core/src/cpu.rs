@@ -1,11 +1,16 @@
-use crate::mcu::Mcu;
+use std::collections::VecDeque;
+
+use crate::{cpu::microcode::Microcode, mcu::Mcu};
+use addressing::*;
+use instruction::Instruction;
 use log::info;
 
 mod addressing;
+mod cpu2;
 mod instruction;
+mod microcode;
 
-use addressing::*;
-use instruction::Instruction;
+use cpu2::Cpu2;
 
 #[derive(Eq, PartialEq, Clone, Copy, Debug)]
 pub enum ExecuteResult {
@@ -416,6 +421,9 @@ pub struct Cpu<M: Mcu> {
 
 impl<M: Mcu> Cpu<M> {
     pub fn new(mcu: M) -> Cpu<M> {
+        let mut microcode_queue = VecDeque::with_capacity(8);
+        microcode_queue.push_back(Microcode::FetchAndDecode);
+
         Cpu {
             a: 0,
             x: 0,
