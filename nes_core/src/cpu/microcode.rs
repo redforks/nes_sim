@@ -81,6 +81,10 @@ pub enum Microcode {
 
     AslAccumulator,
     Asl,
+
+    /// Read offset value from instruction data stream,
+    /// If carry flag is true, pc += offset, push one Noc if not cross page, push two Noc if cross page
+    BranchIfCarryClear,
 }
 
 /// Represents the opcode of a CPU instruction, the first byte of an instruction
@@ -110,6 +114,8 @@ impl Opcode {
     pub const ASL_ZERO_PAGE_X: u8 = 0x16;
     pub const ASL_ABSOLUTE: u8 = 0x0E;
     pub const ASL_ABSOLUTE_INDEXED_X: u8 = 0x1E;
+
+    pub const BCC: u8 = 0x90;
 }
 
 impl Microcode {
@@ -152,6 +158,8 @@ impl Microcode {
             Microcode::Indexed { load_into_alu } => Self::indexed(cpu, load_into_alu),
             Microcode::AslAccumulator => Self::asl_accumulator(cpu),
             Microcode::Asl => Self::asl(cpu),
+
+            Microcode::BranchIfCarryClear => Self::branch_if_carry_clear(cpu),
         }
     }
 
@@ -255,6 +263,10 @@ impl Microcode {
                 cpu.push_microcode(Microcode::StoreAlu);
                 cpu.push_microcode(Microcode::Asl);
                 cpu.push_microcode(Microcode::StoreAlu);
+            }
+
+            Opcode::BCC => {
+                cpu.push_microcode(Microcode::BranchIfCarryClear);
             }
             _ => panic!("Unknown opcode: {}", opcode),
         }
@@ -382,6 +394,18 @@ impl Microcode {
 
     fn asl<M: Mcu>(cpu: &mut Cpu2<M>) {
         cpu.alu = cpu.asl(cpu.alu);
+    }
+
+    fn branch_if_carry_clear<M: Mcu>(cpu: &mut Cpu2<M>) {
+        let offset = cpu.inc_read_byte();
+        if !cpu.flag(super::Flag::Carry) {
+            let pch = cpu.pch();
+            cpu.pc = cpu.pc.wrapping_add((offset as i8) as u16);
+            cpu.push_microcode(Microcode::Nop);
+            if pch != cpu.pch() {
+                cpu.push_microcode(Microcode::Nop);
+            }
+        }
     }
 }
 
