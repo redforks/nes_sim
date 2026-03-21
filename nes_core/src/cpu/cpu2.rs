@@ -153,7 +153,8 @@ impl<M: Mcu> Cpu2<M> {
         self.set_flag(Flag::Zero, value == 0);
     }
 
-    pub(crate) fn adc(&mut self, val: u8) {
+    pub(crate) fn adc(&mut self) {
+        let val = self.alu;
         let carry = self.flag(Flag::Carry) as u8;
         let (sum, carry0) = self.a.overflowing_add(val);
         let (sum, carry1) = sum.overflowing_add(carry);
@@ -164,8 +165,8 @@ impl<M: Mcu> Cpu2<M> {
         self.a = sum;
     }
 
-    pub(crate) fn and(&mut self, val: u8) {
-        self.a &= val;
+    pub(crate) fn and(&mut self) {
+        self.a &= self.alu;
         self.update_zero_flag(self.a);
         self.update_negative_flag(self.a);
     }
