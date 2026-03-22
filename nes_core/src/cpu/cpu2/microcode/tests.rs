@@ -346,6 +346,54 @@ fn fetch_and_decode_queues_ora_and_eor_sequences() {
 }
 
 #[test]
+fn fetch_and_decode_queues_compare_and_bit_sequences() {
+    let mut cpu = cpu_with_memory(
+        0x8000,
+        &[
+            (0x8000, Opcode::CMP_IMMEDIATE),
+            (0x8001, Opcode::CPX_ZERO_PAGE),
+            (0x8002, Opcode::CPY_ABSOLUTE),
+            (0x8003, Opcode::BIT_ZERO_PAGE),
+        ],
+    );
+
+    Microcode::FetchAndDecode.exec(&mut cpu);
+    assert_eq!(cpu.opcode, Opcode::CMP_IMMEDIATE);
+    assert_eq!(cpu.pop_microcode(), Some(Microcode::CmpImmediate));
+
+    Microcode::FetchAndDecode.exec(&mut cpu);
+    assert_eq!(cpu.opcode, Opcode::CPX_ZERO_PAGE);
+    assert_eq!(
+        cpu.pop_microcode(),
+        Some(Microcode::ZeroPage {
+            load_into_alu: true
+        })
+    );
+    assert_eq!(cpu.pop_microcode(), Some(Microcode::Cpx));
+
+    Microcode::FetchAndDecode.exec(&mut cpu);
+    assert_eq!(cpu.opcode, Opcode::CPY_ABSOLUTE);
+    assert_eq!(cpu.pop_microcode(), Some(Microcode::AbsoluteL));
+    assert_eq!(
+        cpu.pop_microcode(),
+        Some(Microcode::AbsoluteH {
+            load_into_alu: true
+        })
+    );
+    assert_eq!(cpu.pop_microcode(), Some(Microcode::Cpy));
+
+    Microcode::FetchAndDecode.exec(&mut cpu);
+    assert_eq!(cpu.opcode, Opcode::BIT_ZERO_PAGE);
+    assert_eq!(
+        cpu.pop_microcode(),
+        Some(Microcode::ZeroPage {
+            load_into_alu: true
+        })
+    );
+    assert_eq!(cpu.pop_microcode(), Some(Microcode::Bit));
+}
+
+#[test]
 fn load_microcodes_read_memory_and_update_flags() {
     let mut cpu = cpu_with_memory(0x0000, &[(0x0042, 0x80), (0x0043, 0x00), (0x0044, 0x7F)]);
 
@@ -466,6 +514,37 @@ fn ora_and_eor_microcodes_update_accumulator_and_flags() {
     assert_eq!(cpu.a, 0b1010_1111);
     assert!(!cpu.flag(Flag::Zero));
     assert!(cpu.flag(Flag::Negative));
+}
+
+#[test]
+fn compare_and_bit_microcodes_update_flags() {
+    let mut cpu = cpu_with_memory(0x8000, &[(0x8000, 0x10), (0x0001, 0x40)]);
+    cpu.a = 0x20;
+    cpu.x = 0x11;
+    cpu.y = 0x10;
+
+    Microcode::CmpImmediate.exec(&mut cpu);
+    assert!(cpu.flag(Flag::Carry));
+    assert!(!cpu.flag(Flag::Zero));
+    assert!(!cpu.flag(Flag::Negative));
+
+    cpu.a = 0x41;
+    cpu.ab = 0x0001;
+    cpu.load_alu();
+    Microcode::Bit.exec(&mut cpu);
+    assert!(cpu.flag(Flag::Overflow));
+    assert!(!cpu.flag(Flag::Negative));
+    assert!(!cpu.flag(Flag::Zero));
+
+    cpu.alu = 0x11;
+    Microcode::Cpx.exec(&mut cpu);
+    assert!(cpu.flag(Flag::Carry));
+    assert!(cpu.flag(Flag::Zero));
+
+    cpu.alu = 0x0F;
+    Microcode::Cpy.exec(&mut cpu);
+    assert!(cpu.flag(Flag::Carry));
+    assert!(!cpu.flag(Flag::Zero));
 }
 
 #[test]

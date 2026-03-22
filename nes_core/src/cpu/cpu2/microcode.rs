@@ -87,6 +87,21 @@ pub enum Microcode {
     /// Fetch a byte from memory use address saved in `data_latch`, then subtract with carry from accumulator
     Sbc,
 
+    /// Take immediate value from instruction data stream, compare with accumulator
+    CmpImmediate,
+    /// Fetch a byte from memory use address saved in `data_latch`, then compare with accumulator
+    Cmp,
+
+    /// Take immediate value from instruction data stream, compare with x register
+    CpxImmediate,
+    /// Fetch a byte from memory use address saved in `data_latch`, then compare with x register
+    Cpx,
+
+    /// Take immediate value from instruction data stream, compare with y register
+    CpyImmediate,
+    /// Fetch a byte from memory use address saved in `data_latch`, then compare with y register
+    Cpy,
+
     /// Take immediate value from instruction data stream, or it with accumulator
     OraImmediate,
     /// Fetch a byte from memory use address saved in `data_latch`, then or with accumulator
@@ -162,9 +177,6 @@ impl Opcode {
     pub const BVC: u8 = 0x50;
     pub const BVS: u8 = 0x70;
 
-    pub const BIT_ZERO_PAGE: u8 = 0x24;
-    pub const BIT_ABSOLUTE: u8 = 0x2C;
-
     // Load and Save instructions
 
     pub const LDA_IMMEDIATE: u8 = 0xA9;
@@ -224,6 +236,23 @@ impl Opcode {
     pub const SBC_INDEXED_INDIRECT: u8 = 0xE1;
     pub const SBC_INDIRECT_INDEXED: u8 = 0xF1;
 
+    pub const CMP_IMMEDIATE: u8 = 0xC9;
+    pub const CMP_ZERO_PAGE: u8 = 0xC5;
+    pub const CMP_ZERO_PAGE_X: u8 = 0xD5;
+    pub const CMP_ABSOLUTE: u8 = 0xCD;
+    pub const CMP_ABSOLUTE_INDEXED_X: u8 = 0xDD;
+    pub const CMP_ABSOLUTE_INDEXED_Y: u8 = 0xD9;
+    pub const CMP_INDEXED_INDIRECT: u8 = 0xC1;
+    pub const CMP_INDIRECT_INDEXED: u8 = 0xD1;
+
+    pub const CPX_IMMEDIATE: u8 = 0xE0;
+    pub const CPX_ZERO_PAGE: u8 = 0xE4;
+    pub const CPX_ABSOLUTE: u8 = 0xEC;
+
+    pub const CPY_IMMEDIATE: u8 = 0xC0;
+    pub const CPY_ZERO_PAGE: u8 = 0xC4;
+    pub const CPY_ABSOLUTE: u8 = 0xCC;
+
     // Shift and Rotate instructions
 
     pub const ASL_ACCUMULATOR: u8 = 0x0A;
@@ -278,6 +307,9 @@ impl Opcode {
     pub const EOR_ABSOLUTE_INDEXED_Y: u8 = 0x59;
     pub const EOR_INDEXED_INDIRECT: u8 = 0x41;
     pub const EOR_INDIRECT_INDEXED: u8 = 0x51;
+
+    pub const BIT_ZERO_PAGE: u8 = 0x24;
+    pub const BIT_ABSOLUTE: u8 = 0x2C;
 }
 
 impl Microcode {
@@ -319,6 +351,13 @@ impl Microcode {
             Microcode::Adc => cpu.adc(),
             Microcode::SbcImmediate => Self::sbc_immediate(cpu),
             Microcode::Sbc => cpu.sbc(),
+
+            Microcode::CmpImmediate => Self::cmp_immediate(cpu),
+            Microcode::Cmp => cpu.cmp(),
+            Microcode::CpxImmediate => Self::cpx_immediate(cpu),
+            Microcode::Cpx => cpu.cpx(),
+            Microcode::CpyImmediate => Self::cpy_immediate(cpu),
+            Microcode::Cpy => cpu.cpy(),
 
             Microcode::OraImmediate => Self::ora_immediate(cpu),
             Microcode::Ora => cpu.ora(),
@@ -745,6 +784,68 @@ impl Microcode {
                 cpu.push_microcode(Microcode::Sbc);
             }
 
+            Opcode::CMP_IMMEDIATE => {
+                cpu.push_microcode(Microcode::CmpImmediate);
+            }
+            Opcode::CMP_ZERO_PAGE => {
+                cpu.push_microcode(Microcode::ZeroPage {
+                    load_into_alu: true,
+                });
+                cpu.push_microcode(Microcode::Cmp);
+            }
+            Opcode::CMP_ZERO_PAGE_X => {
+                zero_page_indexed_x_addressing(cpu, true);
+                cpu.push_microcode(Microcode::Cmp);
+            }
+            Opcode::CMP_ABSOLUTE => {
+                absolute_addressing(cpu, true);
+                cpu.push_microcode(Microcode::Cmp);
+            }
+            Opcode::CMP_ABSOLUTE_INDEXED_X => {
+                absolute_indexed_x_addressing(cpu, true, true);
+                cpu.push_microcode(Microcode::Cmp);
+            }
+            Opcode::CMP_ABSOLUTE_INDEXED_Y => {
+                absolute_indexed_y_addressing(cpu, true, true);
+                cpu.push_microcode(Microcode::Cmp);
+            }
+            Opcode::CMP_INDEXED_INDIRECT => {
+                indexed_indirect_addressing(cpu, true);
+                cpu.push_microcode(Microcode::Cmp);
+            }
+            Opcode::CMP_INDIRECT_INDEXED => {
+                indirect_indexed_addressing(cpu, true, true);
+                cpu.push_microcode(Microcode::Cmp);
+            }
+
+            Opcode::CPX_IMMEDIATE => {
+                cpu.push_microcode(Microcode::CpxImmediate);
+            }
+            Opcode::CPX_ZERO_PAGE => {
+                cpu.push_microcode(Microcode::ZeroPage {
+                    load_into_alu: true,
+                });
+                cpu.push_microcode(Microcode::Cpx);
+            }
+            Opcode::CPX_ABSOLUTE => {
+                absolute_addressing(cpu, true);
+                cpu.push_microcode(Microcode::Cpx);
+            }
+
+            Opcode::CPY_IMMEDIATE => {
+                cpu.push_microcode(Microcode::CpyImmediate);
+            }
+            Opcode::CPY_ZERO_PAGE => {
+                cpu.push_microcode(Microcode::ZeroPage {
+                    load_into_alu: true,
+                });
+                cpu.push_microcode(Microcode::Cpy);
+            }
+            Opcode::CPY_ABSOLUTE => {
+                absolute_addressing(cpu, true);
+                cpu.push_microcode(Microcode::Cpy);
+            }
+
             Opcode::ORA_IMMEDIATE => {
                 cpu.push_microcode(Microcode::OraImmediate);
             }
@@ -912,6 +1013,21 @@ impl Microcode {
     fn sbc_immediate<M: Mcu>(cpu: &mut Cpu2<M>) {
         cpu.alu = cpu.inc_read_byte();
         cpu.sbc();
+    }
+
+    fn cmp_immediate<M: Mcu>(cpu: &mut Cpu2<M>) {
+        cpu.alu = cpu.inc_read_byte();
+        cpu.cmp();
+    }
+
+    fn cpx_immediate<M: Mcu>(cpu: &mut Cpu2<M>) {
+        cpu.alu = cpu.inc_read_byte();
+        cpu.cpx();
+    }
+
+    fn cpy_immediate<M: Mcu>(cpu: &mut Cpu2<M>) {
+        cpu.alu = cpu.inc_read_byte();
+        cpu.cpy();
     }
 
     fn ora_immediate<M: Mcu>(cpu: &mut Cpu2<M>) {
