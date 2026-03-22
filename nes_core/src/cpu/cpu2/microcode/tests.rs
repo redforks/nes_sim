@@ -223,7 +223,7 @@ fn fetch_and_decode_queues_load_and_store_sequences() {
     Microcode::FetchAndDecode.exec(&mut cpu);
     assert_eq!(cpu.opcode, opcode::LDX_ZERO_PAGE);
     assert_eq!(cpu.pop_microcode(), Some(zero_page_addr()));
-    assert_eq!(cpu.pop_microcode(), Some(Microcode::LoadX));
+    assert_eq!(cpu.pop_microcode(), Some(Microcode::LoadR(Register::X)));
 
     Microcode::FetchAndDecode.exec(&mut cpu);
     assert_eq!(cpu.opcode, opcode::LDY_ABSOLUTE);
@@ -234,12 +234,12 @@ fn fetch_and_decode_queues_load_and_store_sequences() {
             load_into_alu: false
         })
     );
-    assert_eq!(cpu.pop_microcode(), Some(Microcode::LoadY));
+    assert_eq!(cpu.pop_microcode(), Some(Microcode::LoadR(Register::Y)));
 
     Microcode::FetchAndDecode.exec(&mut cpu);
     assert_eq!(cpu.opcode, opcode::STA_ZERO_PAGE);
     assert_eq!(cpu.pop_microcode(), Some(zero_page_addr()));
-    assert_eq!(cpu.pop_microcode(), Some(Microcode::StoreA));
+    assert_eq!(cpu.pop_microcode(), Some(Microcode::StoreR(Register::A)));
 
     Microcode::FetchAndDecode.exec(&mut cpu);
     assert_eq!(cpu.opcode, opcode::STX_ABSOLUTE);
@@ -250,7 +250,7 @@ fn fetch_and_decode_queues_load_and_store_sequences() {
             load_into_alu: false
         })
     );
-    assert_eq!(cpu.pop_microcode(), Some(Microcode::StoreX));
+    assert_eq!(cpu.pop_microcode(), Some(Microcode::StoreR(Register::X)));
 
     Microcode::FetchAndDecode.exec(&mut cpu);
     assert_eq!(cpu.opcode, opcode::STY_ZERO_PAGE_X);
@@ -261,7 +261,7 @@ fn fetch_and_decode_queues_load_and_store_sequences() {
             load_into_alu: false
         })
     );
-    assert_eq!(cpu.pop_microcode(), Some(Microcode::StoreY));
+    assert_eq!(cpu.pop_microcode(), Some(Microcode::StoreR(Register::Y)));
 }
 
 #[test]
@@ -536,19 +536,19 @@ fn load_microcodes_read_memory_and_update_flags() {
     let mut cpu = cpu_with_memory(0x0000, &[(0x0042, 0x80), (0x0043, 0x00), (0x0044, 0x7F)]);
 
     cpu.ab = 0x0042;
-    Microcode::LoadA.exec(&mut cpu);
+    Microcode::LoadR(Register::A).exec(&mut cpu);
     assert_eq!(cpu.a, 0x80);
     assert!(cpu.flag(Flag::Negative));
     assert!(!cpu.flag(Flag::Zero));
 
     cpu.ab = 0x0043;
-    Microcode::LoadX.exec(&mut cpu);
+    Microcode::LoadR(Register::X).exec(&mut cpu);
     assert_eq!(cpu.x, 0x00);
     assert!(cpu.flag(Flag::Zero));
     assert!(!cpu.flag(Flag::Negative));
 
     cpu.ab = 0x0044;
-    Microcode::LoadY.exec(&mut cpu);
+    Microcode::LoadR(Register::Y).exec(&mut cpu);
     assert_eq!(cpu.y, 0x7F);
     assert!(!cpu.flag(Flag::Zero));
     assert!(!cpu.flag(Flag::Negative));
@@ -579,11 +579,11 @@ fn store_microcodes_write_registers_to_memory() {
     cpu.x = 0x22;
     cpu.y = 0x33;
 
-    Microcode::StoreA.exec(&mut cpu);
+    Microcode::StoreR(Register::A).exec(&mut cpu);
     cpu.ab = 0x1235;
-    Microcode::StoreX.exec(&mut cpu);
+    Microcode::StoreR(Register::X).exec(&mut cpu);
     cpu.ab = 0x1236;
-    Microcode::StoreY.exec(&mut cpu);
+    Microcode::StoreR(Register::Y).exec(&mut cpu);
 
     assert_eq!(cpu.mcu().mem[0x1234], 0x11);
     assert_eq!(cpu.mcu().mem[0x1235], 0x22);
@@ -602,12 +602,12 @@ fn store_and_load_microcodes_use_alu_and_memory() {
     cpu.load_alu();
     assert_eq!(cpu.alu, 0x44);
 
-    Microcode::LoadA.exec(&mut cpu);
+    Microcode::LoadR(Register::A).exec(&mut cpu);
     assert_eq!(cpu.a, 0x44);
 
     cpu.ab = 0x0055;
     cpu.a = 0xAA;
-    Microcode::StoreA.exec(&mut cpu);
+    Microcode::StoreR(Register::A).exec(&mut cpu);
     assert_eq!(cpu.mcu().mem[0x0055], 0xAA);
 }
 
