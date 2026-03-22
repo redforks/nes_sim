@@ -1,17 +1,18 @@
 use crate::mcu::Mcu;
 use addressing::*;
 use instruction::Instruction;
-use log::info;
 
 mod addressing;
 mod cpu2;
 mod instruction;
 
+pub use cpu2::Cpu;
+
 #[derive(Eq, PartialEq, Clone, Copy, Debug)]
 pub enum ExecuteResult {
     Continue,
-    Stop(u8),    // should exit executing, with exit code, 0 means success
-    ShouldReset, // should reset cpu
+    Stop(u8),
+    ShouldReset,
 }
 
 fn is_cross_page(a: u16, b: u16) -> bool {
@@ -29,7 +30,6 @@ fn decode_next<M: Mcu>(cpu: &mut Cpu<M>) -> Instruction {
     let a = (op_code & 0b1110_0000) >> 5;
     let b = (op_code & 0b0001_1100) >> 2;
     let c = op_code & 0b0000_0011;
-    // debug!("op_code: {:0x} {} {} {}", op_code, c, a, b);
 
     fn r_b<M: Mcu>(cpu: &mut Cpu<M>) -> u8 {
         cpu.inc_read_byte()
@@ -48,7 +48,6 @@ fn decode_next<M: Mcu>(cpu: &mut Cpu<M>) -> Instruction {
     let indirect_x = |cpu: &mut Cpu<M>| Addressing::ZeroPageIndexedIndirect(r_b(cpu));
     let indirect_y = |cpu: &mut Cpu<M>| Addressing::ZeroPageIndexedIndirectWithY(r_b(cpu));
 
-    // See: https://www.masswerk.at/6502/6502_instruction_set.html
     match (c, a, b) {
         (0, 0, 0) => Instruction::Brk,
         (0, 0, 1) => Instruction::Nop(zero_page(cpu)),
@@ -237,7 +236,7 @@ fn decode_next<M: Mcu>(cpu: &mut Cpu<M>) -> Instruction {
         (2, 4, 4) => Instruction::Hlt,
         (2, 4, 5) => Instruction::Stx(zero_page_y(cpu)),
         (2, 4, 6) => Instruction::Txs,
-        (2, 4, 7) => Instruction::Shx(absolute_y(cpu)), // 9e
+        (2, 4, 7) => Instruction::Shx(absolute_y(cpu)),
 
         (2, 5, 0) => Instruction::Ldx(literal(cpu)),
         (2, 5, 1) => Instruction::Ldx(zero_page(cpu)),
@@ -259,11 +258,11 @@ fn decode_next<M: Mcu>(cpu: &mut Cpu<M>) -> Instruction {
 
         (2, 7, 0) => Instruction::Nop(literal(cpu)),
         (2, 7, 1) => Instruction::Inc(zero_page(cpu)),
-        (2, 7, 2) => Instruction::Nop(Addressing::Implied),
+        (2, 7, 2) => Instruction::Inx,
         (2, 7, 3) => Instruction::Inc(absolute(cpu)),
         (2, 7, 4) => Instruction::Hlt,
         (2, 7, 5) => Instruction::Inc(zero_page_x(cpu)),
-        (2, 7, 6) => Instruction::Nop(Addressing::Implied), // FA
+        (2, 7, 6) => Instruction::Nop(Addressing::Implied),
         (2, 7, 7) => Instruction::Inc(absolute_x(cpu)),
 
         (3, 0, 0) => Instruction::Aso(indirect_x(cpu)),
@@ -349,11 +348,9 @@ fn execute_next<M: Mcu>(cpu: &mut Cpu<M>) -> u8 {
     decode_next(cpu).exec(cpu)
 }
 
-// Trait to sync instruction execution times.
 pub trait Plugin<M: Mcu> {
     fn start(&mut self, cpu: &mut Cpu<M>);
 
-    // Called after instruction execution with the cycle count
     fn end(&mut self, cpu: &mut Cpu<M>, cycles: u8);
 
     fn should_stop(&self) -> ExecuteResult {
@@ -381,7 +378,7 @@ pub struct EmptyPlugin<M: Mcu> {
 
 impl<M: Mcu> EmptyPlugin<M> {
     pub fn new() -> Self {
-        EmptyPlugin {
+        Self {
             _phantom: std::marker::PhantomData,
         }
     }
@@ -396,238 +393,6 @@ impl<M: Mcu> Plugin<M> for EmptyPlugin<M> {
 impl<M: Mcu> Default for EmptyPlugin<M> {
     fn default() -> Self {
         Self::new()
-    }
-}
-
-pub struct Cpu<M: Mcu> {
-    pub a: u8,
-    pub x: u8,
-    pub y: u8,
-    pub pc: u16,
-    pub sp: u8,
-    pub status: u8,
-    mcu: M,
-
-    irq_pending: bool,
-    change_irq_flag_pending: Option<bool>,
-
-    is_halt: bool,
-}
-
-impl<M: Mcu> Cpu<M> {
-    pub fn new(mcu: M) -> Cpu<M> {
-        Cpu {
-            a: 0,
-            x: 0,
-            y: 0,
-            pc: 0,
-            sp: 0,
-            status: Flag::InterruptDisabled as u8,
-            mcu,
-            irq_pending: false,
-            change_irq_flag_pending: None,
-            is_halt: false,
-        }
-    }
-
-    pub fn mcu(&self) -> &M {
-        &self.mcu
-    }
-
-    pub fn mcu_mut(&mut self) -> &mut M {
-        &mut self.mcu
-    }
-
-    pub fn reset(&mut self) {
-        self.pc = self.read_word(0xFFFC);
-        self.set_flag(Flag::InterruptDisabled, true);
-    }
-
-    pub fn nmi(&mut self) {
-        info!("nmi");
-        self.mcu.tick(); // dummy 1
-        self.mcu.tick(); // dummy 2
-        self.push_pc(); // 2 ticks
-        self.push_status(); // 1 tick
-        let vector = self.read_word(0xFFFA); // 2 ticks
-        info!("nmi vector: ${:04x}", vector);
-        self.pc = vector;
-    }
-
-    fn irq(&mut self) {
-        // info!("irq");
-        self.mcu.tick(); // dummy 1
-        self.mcu.tick(); // dummy 2
-        // Push status BEFORE setting I flag, so the saved status reflects the state at IRQ time
-        self.push_pc();
-        self.push_status();
-        // Now set I flag to prevent nested IRQs
-        self.set_flag(Flag::InterruptDisabled, true);
-        self.pc = self.read_word(0xFFFE);
-    }
-
-    pub fn set_irq(&mut self, enabled: bool) {
-        self.irq_pending = enabled;
-    }
-
-    fn push_pc(&mut self) {
-        self.push_stack((self.pc >> 8) as u8);
-        self.push_stack(self.pc as u8);
-    }
-
-    pub fn flag(&self, flag: Flag) -> bool {
-        (self.status & flag as u8) != 0
-    }
-
-    pub fn pending_set_interrupt_disabled_flag(&mut self, v: bool) {
-        self.change_irq_flag_pending = Some(v);
-    }
-
-    pub fn set_flag(&mut self, flag: Flag, v: bool) {
-        if v {
-            self.status |= flag as u8;
-        } else {
-            self.status &= !(flag as u8);
-        }
-    }
-
-    /// Execute one complete CPU instruction. Returns (execution result, cycle count).
-    ///
-    /// The caller is responsible for ticking PPU (3× cycles) and APU (1× cycles).
-    pub fn tick<T: Plugin<M>>(&mut self, plugin: &mut T) -> (ExecuteResult, u8) {
-        if self.is_halt {
-            // When halted, return 1 cycle - caller should still tick PPU/APU
-            return (ExecuteResult::Continue, 1);
-        }
-
-        // Handle pending IRQ
-        if self.irq_pending && !self.flag(Flag::InterruptDisabled) {
-            if let Some(v) = self.change_irq_flag_pending {
-                self.set_flag(Flag::InterruptDisabled, v);
-                self.change_irq_flag_pending = None;
-            }
-            self.irq();
-        } else {
-            if let Some(v) = self.change_irq_flag_pending {
-                self.set_flag(Flag::InterruptDisabled, v);
-                self.change_irq_flag_pending = None;
-            }
-        }
-
-        // Execute one full instruction
-        plugin.start(self);
-        let cycles = execute_next(self);
-        plugin.end(self, cycles);
-
-        self.set_irq(self.mcu.request_irq());
-        (plugin.should_stop(), cycles)
-    }
-
-    fn adc(&mut self, val: u8) {
-        let carry = self.flag(Flag::Carry) as u8;
-        let (sum, carry0) = self.a.overflowing_add(val);
-        let (sum, carry1) = sum.overflowing_add(carry);
-        self.set_flag(Flag::Carry, carry0 || carry1);
-        self.set_flag(Flag::Overflow, !(self.a ^ val) & (self.a ^ sum) & 0x80 != 0);
-        self.update_zero_flag(sum);
-        self.update_negative_flag(sum);
-        self.a = sum;
-    }
-
-    fn inc_pc(&mut self, delta: i8) {
-        self.pc = self.pc.wrapping_add(delta as u16);
-    }
-
-    fn update_negative_flag(&mut self, value: u8) {
-        self.set_flag(Flag::Negative, value & 0x80 != 0);
-    }
-
-    fn update_zero_flag(&mut self, value: u8) {
-        self.set_flag(Flag::Zero, value == 0);
-    }
-
-    pub fn read_byte(&mut self, addr: u16) -> u8 {
-        self.mcu.tick();
-        self.mcu.read(addr)
-    }
-
-    pub fn peek_byte(&mut self, addr: u16) -> u8 {
-        self.mcu.read(addr)
-    }
-
-    fn inc_read_byte(&mut self) -> u8 {
-        let addr = self.pc;
-        self.inc_pc(1);
-        self.mcu.tick();
-        self.mcu.read(addr)
-    }
-
-    pub fn inc_read_word(&mut self) -> u16 {
-        let addr = self.pc;
-        self.inc_pc(2);
-        self.mcu.tick();
-        let low = self.mcu.read(addr) as u16;
-        self.mcu.tick();
-        let high = self.mcu.read(addr.wrapping_add(1)) as u16;
-        (high << 8) | low
-    }
-
-    pub fn write_byte(&mut self, addr: u16, value: u8) {
-        self.mcu.tick();
-        self.mcu.write(addr, value);
-    }
-
-    pub fn read_word(&mut self, addr: u16) -> u16 {
-        self.mcu.tick();
-        let low = self.mcu.read(addr) as u16;
-        self.mcu.tick();
-        let high = self.mcu.read(addr.wrapping_add(1)) as u16;
-        (high << 8) | low
-    }
-
-    pub fn read_zero_page_word(&mut self, addr: u8) -> u16 {
-        self._read_word_in_same_page(0, addr)
-    }
-
-    pub fn read_word_in_same_page(&mut self, addr: u16) -> u16 {
-        self._read_word_in_same_page(addr & 0xff00, addr as u8)
-    }
-
-    fn _read_word_in_same_page(&mut self, page: u16, offset: u8) -> u16 {
-        self.mcu.tick();
-        let low = self.mcu.read(page | offset as u16) as u16;
-        self.mcu.tick();
-        let high = self.mcu.read(page | offset.wrapping_add(1) as u16) as u16;
-        (high << 8) | low
-    }
-
-    fn push_stack(&mut self, value: u8) {
-        self.mcu.tick();
-        self.mcu.write(0x100 + self.sp as u16, value);
-        self.sp = self.sp.wrapping_sub(1);
-    }
-
-    fn pop_stack(&mut self) -> u8 {
-        self.sp = self.sp.wrapping_add(1);
-        self.mcu.tick();
-        self.mcu.read(0x100 + self.sp as u16)
-    }
-
-    pub fn peek_stack(&mut self) -> u8 {
-        let addr = 0x100 + self.sp.wrapping_add(1) as u16;
-        self.mcu.read(addr)
-    }
-
-    pub fn push_status(&mut self) {
-        self.push_stack(self.status | (Flag::NotUsed as u8));
-    }
-
-    pub fn halt(&mut self) {
-        self.is_halt = true;
-    }
-
-    pub fn is_halted(&self) -> bool {
-        self.is_halt
     }
 }
 

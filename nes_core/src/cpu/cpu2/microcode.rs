@@ -1,6 +1,6 @@
 use tinyvec::ArrayVec;
 
-use super::Cpu2;
+use super::Cpu;
 use crate::{cpu::cpu2::Register, mcu::Mcu, Flag};
 
 macro_rules! microcode_arr {
@@ -861,10 +861,24 @@ const fn build_opcode_table() -> [ArrayVec<[Microcode; 7]>; 256] {
         },
         Lax
     );
-    r[SAX_ZERO_PAGE as usize] = microcode_arr!(Sax, zero_page_save_alu());
-    r[SAX_ZERO_PAGE_Y as usize] = microcode_arr!(Sax);
-    r[SAX_ABSOLUTE as usize] = microcode_arr!(Sax);
-    r[SAX_INDEXED_INDIRECT as usize] = microcode_arr!(Sax);
+    r[SAX_ZERO_PAGE as usize] = microcode_arr!(zero_page_addr(), Sax);
+    r[SAX_ZERO_PAGE_Y as usize] = microcode_arr!(zero_page_y_addr(), Sax);
+    r[SAX_ABSOLUTE as usize] = microcode_arr!(
+        AbsoluteL,
+        AbsoluteH {
+            load_into_alu: false
+        },
+        Sax
+    );
+    r[SAX_INDEXED_INDIRECT as usize] = microcode_arr!(
+        zero_page_addr(),
+        zero_page_x_addr(),
+        Indexed {
+            load_into_alu: false
+        },
+        Nop,
+        Sax
+    );
     r[DCP_ZERO_PAGE as usize] = microcode_arr!(zero_page_load_alu(), Dcp);
     r[DCP_ZERO_PAGE_X as usize] = microcode_arr!(zero_page_addr(), zero_page_x_load_alu(), Dcp);
     r[DCP_ABSOLUTE as usize] = microcode_arr!(
@@ -955,22 +969,16 @@ const fn build_opcode_table() -> [ArrayVec<[Microcode; 7]>; 256] {
         },
         Isc
     );
-    r[RRA_ZERO_PAGE as usize] = microcode_arr!(zero_page_load_alu(), StoreAlu, Rra, StoreAlu);
-    r[RRA_ZERO_PAGE_X as usize] = microcode_arr!(
-        zero_page_addr(),
-        zero_page_x_load_alu(),
-        StoreAlu,
-        Rra,
-        StoreAlu
-    );
+    r[RRA_ZERO_PAGE as usize] = microcode_arr!(zero_page_load_alu(), StoreAlu, Rra);
+    r[RRA_ZERO_PAGE_X as usize] =
+        microcode_arr!(zero_page_addr(), zero_page_x_load_alu(), StoreAlu, Rra);
     r[RRA_ABSOLUTE as usize] = microcode_arr!(
         AbsoluteL,
         AbsoluteH {
             load_into_alu: true
         },
         StoreAlu,
-        Rra,
-        StoreAlu
+        Rra
     );
     r[RRA_ABSOLUTE_INDEXED_X as usize] = microcode_arr!(
         AbsoluteL,
@@ -979,8 +987,7 @@ const fn build_opcode_table() -> [ArrayVec<[Microcode; 7]>; 256] {
             load_into_alu: true
         },
         StoreAlu,
-        Rra,
-        StoreAlu
+        Rra
     );
     r[RRA_ABSOLUTE_INDEXED_Y as usize] = microcode_arr!(
         AbsoluteL,
@@ -989,8 +996,7 @@ const fn build_opcode_table() -> [ArrayVec<[Microcode; 7]>; 256] {
             load_into_alu: true
         },
         StoreAlu,
-        Rra,
-        StoreAlu
+        Rra
     );
     r[RRA_INDEXED_INDIRECT as usize] = microcode_arr!(
         zero_page_addr(),
@@ -1000,8 +1006,7 @@ const fn build_opcode_table() -> [ArrayVec<[Microcode; 7]>; 256] {
         },
         Nop,
         StoreAlu,
-        Rra,
-        StoreAlu
+        Rra
     );
     r[RRA_INDIRECT_INDEXED as usize] = microcode_arr!(
         zero_page_addr(),
@@ -1016,22 +1021,16 @@ const fn build_opcode_table() -> [ArrayVec<[Microcode; 7]>; 256] {
         Rra,
         StoreAlu
     );
-    r[SLO_ZERO_PAGE as usize] = microcode_arr!(zero_page_load_alu(), StoreAlu, Asl, StoreAlu);
-    r[SLO_ZERO_PAGE_X as usize] = microcode_arr!(
-        zero_page_addr(),
-        zero_page_x_load_alu(),
-        StoreAlu,
-        Asl,
-        StoreAlu
-    );
+    r[SLO_ZERO_PAGE as usize] = microcode_arr!(zero_page_load_alu(), StoreAlu, Slo);
+    r[SLO_ZERO_PAGE_X as usize] =
+        microcode_arr!(zero_page_addr(), zero_page_x_load_alu(), StoreAlu, Slo);
     r[SLO_ABSOLUTE as usize] = microcode_arr!(
         AbsoluteL,
         AbsoluteH {
             load_into_alu: true
         },
         StoreAlu,
-        Asl,
-        StoreAlu
+        Slo
     );
     r[SLO_ABSOLUTE_INDEXED_X as usize] = microcode_arr!(
         AbsoluteL,
@@ -1040,8 +1039,7 @@ const fn build_opcode_table() -> [ArrayVec<[Microcode; 7]>; 256] {
             load_into_alu: true
         },
         StoreAlu,
-        Asl,
-        StoreAlu
+        Slo
     );
     r[SLO_ABSOLUTE_INDEXED_Y as usize] = microcode_arr!(
         AbsoluteL,
@@ -1050,8 +1048,7 @@ const fn build_opcode_table() -> [ArrayVec<[Microcode; 7]>; 256] {
             load_into_alu: true
         },
         StoreAlu,
-        Asl,
-        StoreAlu
+        Slo
     );
     r[SLO_INDEXED_INDIRECT as usize] = microcode_arr!(
         zero_page_addr(),
@@ -1061,8 +1058,7 @@ const fn build_opcode_table() -> [ArrayVec<[Microcode; 7]>; 256] {
         },
         Nop,
         StoreAlu,
-        Asl,
-        StoreAlu
+        Slo
     );
     r[SLO_INDIRECT_INDEXED as usize] = microcode_arr!(
         zero_page_addr(),
@@ -1074,25 +1070,18 @@ const fn build_opcode_table() -> [ArrayVec<[Microcode; 7]>; 256] {
             load_into_alu: true
         },
         StoreAlu,
-        Asl,
-        StoreAlu
+        Slo
     );
-    r[SRE_ZERO_PAGE as usize] = microcode_arr!(zero_page_load_alu(), StoreAlu, Lsr, StoreAlu);
-    r[SRE_ZERO_PAGE_X as usize] = microcode_arr!(
-        zero_page_addr(),
-        zero_page_x_load_alu(),
-        StoreAlu,
-        Lsr,
-        StoreAlu
-    );
+    r[SRE_ZERO_PAGE as usize] = microcode_arr!(zero_page_load_alu(), StoreAlu, Sre);
+    r[SRE_ZERO_PAGE_X as usize] =
+        microcode_arr!(zero_page_addr(), zero_page_x_load_alu(), StoreAlu, Sre);
     r[SRE_ABSOLUTE as usize] = microcode_arr!(
         AbsoluteL,
         AbsoluteH {
             load_into_alu: true
         },
         StoreAlu,
-        Lsr,
-        StoreAlu
+        Sre
     );
     r[SRE_ABSOLUTE_INDEXED_X as usize] = microcode_arr!(
         AbsoluteL,
@@ -1101,8 +1090,7 @@ const fn build_opcode_table() -> [ArrayVec<[Microcode; 7]>; 256] {
             load_into_alu: true
         },
         StoreAlu,
-        Lsr,
-        StoreAlu
+        Sre
     );
     r[SRE_ABSOLUTE_INDEXED_Y as usize] = microcode_arr!(
         AbsoluteL,
@@ -1111,8 +1099,7 @@ const fn build_opcode_table() -> [ArrayVec<[Microcode; 7]>; 256] {
             load_into_alu: true
         },
         StoreAlu,
-        Lsr,
-        StoreAlu
+        Sre
     );
     r[SRE_INDEXED_INDIRECT as usize] = microcode_arr!(
         zero_page_addr(),
@@ -1122,8 +1109,7 @@ const fn build_opcode_table() -> [ArrayVec<[Microcode; 7]>; 256] {
         },
         Nop,
         StoreAlu,
-        Lsr,
-        StoreAlu
+        Sre
     );
     r[SRE_INDIRECT_INDEXED as usize] = microcode_arr!(
         zero_page_addr(),
@@ -1135,8 +1121,7 @@ const fn build_opcode_table() -> [ArrayVec<[Microcode; 7]>; 256] {
             load_into_alu: true
         },
         StoreAlu,
-        Lsr,
-        StoreAlu
+        Sre
     );
     r[SHX_ABSOLUTE_INDEXED_Y as usize] = microcode_arr!(
         AbsoluteL,
@@ -1362,7 +1347,7 @@ pub enum BranchTest {
 }
 
 impl BranchTest {
-    fn test<M: Mcu>(self, cpu: &Cpu2<M>) -> bool {
+    fn test<M: Mcu>(self, cpu: &Cpu<M>) -> bool {
         match self {
             BranchTest::IfCarryClear => !cpu.flag(Flag::Carry),
             BranchTest::IfCarrySet => cpu.flag(Flag::Carry),
@@ -1675,7 +1660,7 @@ mod opcode {
 
 impl Microcode {
     /// Execute the micro code
-    pub fn exec<M: Mcu>(self, cpu: &mut Cpu2<M>) {
+    pub fn exec<M: Mcu>(self, cpu: &mut Cpu<M>) {
         match self {
             Self::FetchAndDecode => Self::fetch_and_decode(cpu),
             Self::LoadR(r) => Self::load_register(cpu, r),
@@ -1710,7 +1695,7 @@ impl Microcode {
                 load_into_alu,
             } => Self::absolute_indexed_y_without_high(cpu, oops, load_into_alu),
             Self::AdcImmediate => Self::adc_immediate(cpu),
-            Self::Adc => cpu.adc(),
+            Self::Adc => cpu.adc_alu(),
             Self::SbcImmediate => Self::sbc_immediate(cpu),
             Self::Sbc => cpu.sbc(),
 
@@ -1789,17 +1774,17 @@ impl Microcode {
             Self::Txs => cpu.txs(),
 
             Self::BranchRelative(branch_test) => Self::branch_relative(cpu, branch_test),
-            Self::Kill => cpu.freezed = true,
+            Self::Kill => cpu.halt(),
         }
     }
 
-    fn fetch_and_decode<M: Mcu>(cpu: &mut Cpu2<M>) {
+    fn fetch_and_decode<M: Mcu>(cpu: &mut Cpu<M>) {
         let opcode = cpu.inc_read_byte();
         cpu.opcode = opcode;
         cpu.push_microcodes(&OPCODE_TABLE[opcode as usize]);
     }
 
-    fn load_register<M: Mcu>(cpu: &mut Cpu2<M>, r: Register) {
+    fn load_register<M: Mcu>(cpu: &mut Cpu<M>, r: Register) {
         let value = cpu.read_byte(cpu.ab);
         cpu.update_negative_flag(value);
         cpu.update_zero_flag(value);
@@ -1816,7 +1801,7 @@ impl Microcode {
         }
     }
 
-    fn store_register<M: Mcu>(cpu: &mut Cpu2<M>, r: Register) {
+    fn store_register<M: Mcu>(cpu: &mut Cpu<M>, r: Register) {
         match r {
             Register::A => cpu.write_byte(cpu.ab, cpu.a),
             Register::X => cpu.write_byte(cpu.ab, cpu.x),
@@ -1824,50 +1809,50 @@ impl Microcode {
         }
     }
 
-    fn load_immediate_a<M: Mcu>(cpu: &mut Cpu2<M>) {
+    fn load_immediate_a<M: Mcu>(cpu: &mut Cpu<M>) {
         cpu.a = cpu.inc_read_byte();
         cpu.update_negative_flag(cpu.a);
         cpu.update_zero_flag(cpu.a);
     }
 
-    fn load_immediate_x<M: Mcu>(cpu: &mut Cpu2<M>) {
+    fn load_immediate_x<M: Mcu>(cpu: &mut Cpu<M>) {
         cpu.x = cpu.inc_read_byte();
         cpu.update_negative_flag(cpu.x);
         cpu.update_zero_flag(cpu.x);
     }
 
-    fn load_immediate_y<M: Mcu>(cpu: &mut Cpu2<M>) {
+    fn load_immediate_y<M: Mcu>(cpu: &mut Cpu<M>) {
         cpu.y = cpu.inc_read_byte();
         cpu.update_negative_flag(cpu.y);
         cpu.update_zero_flag(cpu.y);
     }
 
-    fn and_immediate<M: Mcu>(cpu: &mut Cpu2<M>) {
+    fn and_immediate<M: Mcu>(cpu: &mut Cpu<M>) {
         cpu.alu = cpu.inc_read_byte();
         cpu.and();
     }
 
-    fn alr_immediate<M: Mcu>(cpu: &mut Cpu2<M>) {
+    fn alr_immediate<M: Mcu>(cpu: &mut Cpu<M>) {
         cpu.alu = cpu.inc_read_byte();
         cpu.alr();
     }
 
-    fn anc_immediate<M: Mcu>(cpu: &mut Cpu2<M>) {
+    fn anc_immediate<M: Mcu>(cpu: &mut Cpu<M>) {
         cpu.alu = cpu.inc_read_byte();
         cpu.anc();
     }
 
-    fn arr_immediate<M: Mcu>(cpu: &mut Cpu2<M>) {
+    fn arr_immediate<M: Mcu>(cpu: &mut Cpu<M>) {
         cpu.alu = cpu.inc_read_byte();
         cpu.arr();
     }
 
-    fn axs_immediate<M: Mcu>(cpu: &mut Cpu2<M>) {
+    fn axs_immediate<M: Mcu>(cpu: &mut Cpu<M>) {
         cpu.alu = cpu.inc_read_byte();
         cpu.axs();
     }
 
-    fn zero_page<M: Mcu>(cpu: &mut Cpu2<M>, load_into_alu: bool, save_alu: bool) {
+    fn zero_page<M: Mcu>(cpu: &mut Cpu<M>, load_into_alu: bool, save_alu: bool) {
         let addr = cpu.inc_read_byte();
         cpu.ab = addr as u16;
         if load_into_alu {
@@ -1878,7 +1863,7 @@ impl Microcode {
         }
     }
 
-    fn zero_page_indexed_x<M: Mcu>(cpu: &mut Cpu2<M>, load_into_alu: bool, save_alu: bool) {
+    fn zero_page_indexed_x<M: Mcu>(cpu: &mut Cpu<M>, load_into_alu: bool, save_alu: bool) {
         cpu.ab = cpu.abl().wrapping_add(cpu.x) as u16;
         if load_into_alu {
             cpu.load_alu();
@@ -1888,7 +1873,7 @@ impl Microcode {
         }
     }
 
-    fn zero_page_indexed_y<M: Mcu>(cpu: &mut Cpu2<M>, load_into_alu: bool, save_alu: bool) {
+    fn zero_page_indexed_y<M: Mcu>(cpu: &mut Cpu<M>, load_into_alu: bool, save_alu: bool) {
         cpu.ab = cpu.abl().wrapping_add(cpu.y) as u16;
         if load_into_alu {
             cpu.load_alu();
@@ -1898,12 +1883,12 @@ impl Microcode {
         }
     }
 
-    fn absolute_l<M: Mcu>(cpu: &mut Cpu2<M>) {
+    fn absolute_l<M: Mcu>(cpu: &mut Cpu<M>) {
         let low = cpu.inc_read_byte();
         cpu.set_abl(low);
     }
 
-    fn absolute_h<M: Mcu>(cpu: &mut Cpu2<M>, load_into_alu: bool) {
+    fn absolute_h<M: Mcu>(cpu: &mut Cpu<M>, load_into_alu: bool) {
         let high = cpu.inc_read_byte();
         cpu.set_abh(high);
         if load_into_alu {
@@ -1911,42 +1896,42 @@ impl Microcode {
         }
     }
 
-    fn adc_immediate<M: Mcu>(cpu: &mut Cpu2<M>) {
+    fn adc_immediate<M: Mcu>(cpu: &mut Cpu<M>) {
         cpu.alu = cpu.inc_read_byte();
-        cpu.adc();
+        cpu.adc_alu();
     }
 
-    fn sbc_immediate<M: Mcu>(cpu: &mut Cpu2<M>) {
+    fn sbc_immediate<M: Mcu>(cpu: &mut Cpu<M>) {
         cpu.alu = cpu.inc_read_byte();
         cpu.sbc();
     }
 
-    fn cmp_immediate<M: Mcu>(cpu: &mut Cpu2<M>) {
+    fn cmp_immediate<M: Mcu>(cpu: &mut Cpu<M>) {
         cpu.alu = cpu.inc_read_byte();
         cpu.cmp();
     }
 
-    fn cpx_immediate<M: Mcu>(cpu: &mut Cpu2<M>) {
+    fn cpx_immediate<M: Mcu>(cpu: &mut Cpu<M>) {
         cpu.alu = cpu.inc_read_byte();
         cpu.cpx();
     }
 
-    fn cpy_immediate<M: Mcu>(cpu: &mut Cpu2<M>) {
+    fn cpy_immediate<M: Mcu>(cpu: &mut Cpu<M>) {
         cpu.alu = cpu.inc_read_byte();
         cpu.cpy();
     }
 
-    fn ora_immediate<M: Mcu>(cpu: &mut Cpu2<M>) {
+    fn ora_immediate<M: Mcu>(cpu: &mut Cpu<M>) {
         cpu.alu = cpu.inc_read_byte();
         cpu.ora();
     }
 
-    fn eor_immediate<M: Mcu>(cpu: &mut Cpu2<M>) {
+    fn eor_immediate<M: Mcu>(cpu: &mut Cpu<M>) {
         cpu.alu = cpu.inc_read_byte();
         cpu.eor();
     }
 
-    fn absolute_indexed_x<M: Mcu>(cpu: &mut Cpu2<M>, oops: bool, load_into_alu: bool) {
+    fn absolute_indexed_x<M: Mcu>(cpu: &mut Cpu<M>, oops: bool, load_into_alu: bool) {
         let abh = cpu.inc_read_byte();
         cpu.set_abh(abh);
         cpu.ab = cpu.ab.wrapping_add(cpu.x as u16);
@@ -1958,13 +1943,13 @@ impl Microcode {
         }
     }
 
-    fn absolute_indexed_y<M: Mcu>(cpu: &mut Cpu2<M>, oops: bool, load_into_alu: bool) {
+    fn absolute_indexed_y<M: Mcu>(cpu: &mut Cpu<M>, oops: bool, load_into_alu: bool) {
         let abh = cpu.inc_read_byte();
         cpu.set_abh(abh);
         Self::absolute_indexed_y_without_high(cpu, oops, load_into_alu);
     }
 
-    fn absolute_indexed_y_without_high<M: Mcu>(cpu: &mut Cpu2<M>, oops: bool, load_into_alu: bool) {
+    fn absolute_indexed_y_without_high<M: Mcu>(cpu: &mut Cpu<M>, oops: bool, load_into_alu: bool) {
         let abh = cpu.abh();
         cpu.ab = cpu.ab.wrapping_add(cpu.y as u16);
         if oops && abh != cpu.abh() {
@@ -1975,11 +1960,11 @@ impl Microcode {
         }
     }
 
-    fn store_alu<M: Mcu>(cpu: &mut Cpu2<M>) {
+    fn store_alu<M: Mcu>(cpu: &mut Cpu<M>) {
         cpu.write_byte(cpu.ab, cpu.alu);
     }
 
-    fn indexed<M: Mcu>(cpu: &mut Cpu2<M>, load_into_alu: bool) {
+    fn indexed<M: Mcu>(cpu: &mut Cpu<M>, load_into_alu: bool) {
         let addr_low = cpu.read_byte(cpu.ab);
         let addr_high = cpu.read_byte(cpu.ab.wrapping_add(1));
         cpu.ab = (addr_high as u16) << 8 | addr_low as u16;
@@ -1988,15 +1973,15 @@ impl Microcode {
         }
     }
 
-    fn asl_accumulator<M: Mcu>(cpu: &mut Cpu2<M>) {
+    fn asl_accumulator<M: Mcu>(cpu: &mut Cpu<M>) {
         cpu.a = cpu.asl(cpu.a);
     }
 
-    fn asl<M: Mcu>(cpu: &mut Cpu2<M>) {
+    fn asl<M: Mcu>(cpu: &mut Cpu<M>) {
         cpu.alu = cpu.asl(cpu.alu);
     }
 
-    fn lsr_accumulator<M: Mcu>(cpu: &mut Cpu2<M>) {
+    fn lsr_accumulator<M: Mcu>(cpu: &mut Cpu<M>) {
         let v = cpu.a;
         cpu.set_flag(Flag::Carry, v & 0x01 != 0);
         cpu.a = v >> 1;
@@ -2004,7 +1989,7 @@ impl Microcode {
         cpu.update_zero_flag(cpu.a);
     }
 
-    fn lsr<M: Mcu>(cpu: &mut Cpu2<M>) {
+    fn lsr<M: Mcu>(cpu: &mut Cpu<M>) {
         let v = cpu.alu;
         cpu.set_flag(Flag::Carry, v & 0x01 != 0);
         cpu.alu = v >> 1;
@@ -2012,7 +1997,7 @@ impl Microcode {
         cpu.update_zero_flag(cpu.alu);
     }
 
-    fn rol_accumulator<M: Mcu>(cpu: &mut Cpu2<M>) {
+    fn rol_accumulator<M: Mcu>(cpu: &mut Cpu<M>) {
         let v = cpu.a;
         let new = (v << 1) | (cpu.flag(Flag::Carry) as u8);
         cpu.set_flag(Flag::Carry, v & 0x80 != 0);
@@ -2021,7 +2006,7 @@ impl Microcode {
         cpu.update_zero_flag(cpu.a);
     }
 
-    fn rol<M: Mcu>(cpu: &mut Cpu2<M>) {
+    fn rol<M: Mcu>(cpu: &mut Cpu<M>) {
         let v = cpu.alu;
         let new = (v << 1) | (cpu.flag(Flag::Carry) as u8);
         cpu.set_flag(Flag::Carry, v & 0x80 != 0);
@@ -2030,7 +2015,7 @@ impl Microcode {
         cpu.update_zero_flag(cpu.alu);
     }
 
-    fn ror_accumulator<M: Mcu>(cpu: &mut Cpu2<M>) {
+    fn ror_accumulator<M: Mcu>(cpu: &mut Cpu<M>) {
         let v = cpu.a;
         let new = (v >> 1) | ((cpu.flag(Flag::Carry) as u8) << 7);
         cpu.set_flag(Flag::Carry, v & 0x01 != 0);
@@ -2039,7 +2024,7 @@ impl Microcode {
         cpu.update_zero_flag(cpu.a);
     }
 
-    fn ror<M: Mcu>(cpu: &mut Cpu2<M>) {
+    fn ror<M: Mcu>(cpu: &mut Cpu<M>) {
         let v = cpu.alu;
         let new = (v >> 1) | ((cpu.flag(Flag::Carry) as u8) << 7);
         cpu.set_flag(Flag::Carry, v & 0x01 != 0);
@@ -2048,7 +2033,7 @@ impl Microcode {
         cpu.update_zero_flag(cpu.alu);
     }
 
-    fn branch_relative<M: Mcu>(cpu: &mut Cpu2<M>, branch_test: BranchTest) {
+    fn branch_relative<M: Mcu>(cpu: &mut Cpu<M>, branch_test: BranchTest) {
         let offset = cpu.inc_read_byte();
         if branch_test.test(cpu) {
             let pch = cpu.pch();

@@ -30,14 +30,14 @@ impl Mcu for TestMcu {
 
 #[test]
 fn new_initializes_registers_and_fetch_queue() {
-    let cpu = Cpu2::new(TestMcu::default());
+    let cpu = Cpu::new(TestMcu::default());
 
     assert_eq!(cpu.a, 0);
     assert_eq!(cpu.x, 0);
     assert_eq!(cpu.y, 0);
     assert_eq!(cpu.pc, 0);
     assert_eq!(cpu.sp, 0);
-    assert_eq!(cpu.status, 0);
+    assert_eq!(cpu.status, Flag::InterruptDisabled as u8);
     assert_eq!(cpu.opcode, 0);
     assert_eq!(cpu.ab, 0);
     assert_eq!(cpu.alu, 0);
@@ -46,7 +46,7 @@ fn new_initializes_registers_and_fetch_queue() {
 
 #[test]
 fn pc_and_address_bus_byte_helpers_round_trip() {
-    let mut cpu = Cpu2::new(TestMcu::default());
+    let mut cpu = Cpu::new(TestMcu::default());
 
     cpu.set_pch(0x12);
     cpu.set_pcl(0x34);
@@ -66,7 +66,7 @@ fn inc_read_byte_advances_pc_and_ticks() {
     let mut mcu = TestMcu::default();
     mcu.mem[0x0200] = 0xAB;
 
-    let mut cpu = Cpu2::new(mcu);
+    let mut cpu = Cpu::new(mcu);
     cpu.pc = 0x0200;
 
     assert_eq!(cpu.inc_read_byte(), 0xAB);
