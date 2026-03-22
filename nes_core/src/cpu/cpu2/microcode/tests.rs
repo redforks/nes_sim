@@ -255,12 +255,7 @@ fn fetch_and_decode_queues_load_and_store_sequences() {
     Microcode::FetchAndDecode.exec(&mut cpu);
     assert_eq!(cpu.opcode, opcode::STY_ZERO_PAGE_X);
     assert_eq!(cpu.pop_microcode(), Some(zero_page_addr()));
-    assert_eq!(
-        cpu.pop_microcode(),
-        Some(Microcode::ZeroPageIndexedX {
-            load_into_alu: false
-        })
-    );
+    assert_eq!(cpu.pop_microcode(), Some(zero_page_x_addr()));
     assert_eq!(cpu.pop_microcode(), Some(Microcode::StoreR(Register::Y)));
 }
 
