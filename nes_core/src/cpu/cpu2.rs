@@ -1,9 +1,8 @@
+use crate::{cpu::Flag, mcu::Mcu};
+use microcode::Microcode;
 use std::collections::VecDeque;
 
-use crate::{
-    cpu::{microcode::Microcode, Flag},
-    mcu::Mcu,
-};
+mod microcode;
 
 /// New designed CPU based on microcode execution
 pub struct Cpu2<M: Mcu> {
@@ -66,42 +65,42 @@ impl<M: Mcu> Cpu2<M> {
     }
 
     /// Return high byte of pc
-    pub(crate) fn pch(&self) -> u8 {
+    fn pch(&self) -> u8 {
         (self.pc >> 8) as u8
     }
 
     /// Return low byte of pc
-    pub(crate) fn pcl(&self) -> u8 {
+    fn pcl(&self) -> u8 {
         (self.pc & 0xff) as u8
     }
 
     /// Set high byte of pc
-    pub(crate) fn set_pch(&mut self, v: u8) {
+    fn set_pch(&mut self, v: u8) {
         self.pc = (self.pc & 0xff) | ((v as u16) << 8);
     }
 
     /// Set low byte of pc
-    pub(crate) fn set_pcl(&mut self, v: u8) {
+    fn set_pcl(&mut self, v: u8) {
         self.pc = (self.pc & 0xff00) | (v as u16);
     }
 
     /// Return high byte of address bus
-    pub(crate) fn abh(&self) -> u8 {
+    fn abh(&self) -> u8 {
         (self.ab >> 8) as u8
     }
 
     /// Return low byte of address bus
-    pub(crate) fn abl(&self) -> u8 {
+    fn abl(&self) -> u8 {
         (self.ab & 0xff) as u8
     }
 
     /// Set high byte of address bus
-    pub(crate) fn set_abh(&mut self, v: u8) {
+    fn set_abh(&mut self, v: u8) {
         self.ab = (self.ab & 0xff) | ((v as u16) << 8);
     }
 
     /// Set low byte of address bus
-    pub(crate) fn set_abl(&mut self, v: u8) {
+    fn set_abl(&mut self, v: u8) {
         self.ab = (self.ab & 0xff00) | (v as u16);
     }
 
@@ -109,33 +108,33 @@ impl<M: Mcu> Cpu2<M> {
         self.pc = self.pc.wrapping_add(delta as u16);
     }
 
-    pub(crate) fn inc_read_byte(&mut self) -> u8 {
+    fn inc_read_byte(&mut self) -> u8 {
         let addr = self.pc;
         self.inc_pc(1);
         self.mcu.tick();
         self.mcu.read(addr)
     }
 
-    pub(crate) fn read_byte(&mut self, addr: u16) -> u8 {
+    fn read_byte(&mut self, addr: u16) -> u8 {
         self.mcu.tick();
         self.mcu.read(addr)
     }
 
     /// Load the ALU with the value at the address bus.
-    pub(crate) fn load_alu(&mut self) {
+    fn load_alu(&mut self) {
         self.alu = self.mcu.read(self.ab);
     }
 
-    pub(crate) fn write_byte(&mut self, addr: u16, value: u8) {
+    fn write_byte(&mut self, addr: u16, value: u8) {
         self.mcu.tick();
         self.mcu.write(addr, value);
     }
 
-    pub(crate) fn flag(&self, flag: Flag) -> bool {
+    fn flag(&self, flag: Flag) -> bool {
         (self.status & flag as u8) != 0
     }
 
-    pub(crate) fn set_flag(&mut self, flag: Flag, v: bool) {
+    fn set_flag(&mut self, flag: Flag, v: bool) {
         if v {
             self.status |= flag as u8;
         } else {
@@ -144,16 +143,16 @@ impl<M: Mcu> Cpu2<M> {
     }
 
     /// Set the negative flag to the high bit of `value`.
-    pub(crate) fn update_negative_flag(&mut self, value: u8) {
+    fn update_negative_flag(&mut self, value: u8) {
         self.set_flag(Flag::Negative, value & 0x80 != 0);
     }
 
     /// Set the zero flag to `true` if `value` is zero.
-    pub(crate) fn update_zero_flag(&mut self, value: u8) {
+    fn update_zero_flag(&mut self, value: u8) {
         self.set_flag(Flag::Zero, value == 0);
     }
 
-    pub(crate) fn adc(&mut self) {
+    fn adc(&mut self) {
         let val = self.alu;
         let carry = self.flag(Flag::Carry) as u8;
         let (sum, carry0) = self.a.overflowing_add(val);
@@ -165,7 +164,7 @@ impl<M: Mcu> Cpu2<M> {
         self.a = sum;
     }
 
-    pub(crate) fn sbc(&mut self) {
+    fn sbc(&mut self) {
         let val = self.alu ^ 0xFF;
         let carry = self.flag(Flag::Carry) as u8;
         let (sum, carry0) = self.a.overflowing_add(val);
@@ -177,19 +176,19 @@ impl<M: Mcu> Cpu2<M> {
         self.a = sum;
     }
 
-    pub(crate) fn and(&mut self) {
+    fn and(&mut self) {
         self.a &= self.alu;
         self.update_zero_flag(self.a);
         self.update_negative_flag(self.a);
     }
 
-    pub(crate) fn bit(&mut self) {
+    fn bit(&mut self) {
         self.set_flag(Flag::Negative, self.alu & 0x80 != 0);
         self.set_flag(Flag::Overflow, self.alu & 0x40 != 0);
         self.update_zero_flag(self.a & self.alu);
     }
 
-    pub(crate) fn asl(&mut self, val: u8) -> u8 {
+    fn asl(&mut self, val: u8) -> u8 {
         self.set_flag(Flag::Carry, val & 0x80 != 0);
         let result = val << 1;
         self.update_zero_flag(result);
@@ -197,16 +196,16 @@ impl<M: Mcu> Cpu2<M> {
         result
     }
 
-    pub(crate) fn push_microcode(&mut self, microcode: Microcode) {
+    fn push_microcode(&mut self, microcode: Microcode) {
         self.microcode_queue.push_back(microcode);
     }
 
-    pub(crate) fn pop_microcode(&mut self) -> Option<Microcode> {
+    fn pop_microcode(&mut self) -> Option<Microcode> {
         self.microcode_queue.pop_front()
     }
 
     /// Retain the current cycle by set Nop as next microcode, used in "oops" cycles of AbsoluteIndexed and Indirect Indexed addressing
-    pub(crate) fn retain_cycle(&mut self) {
+    fn retain_cycle(&mut self) {
         self.microcode_queue.push_front(Microcode::Nop);
     }
 
@@ -218,13 +217,13 @@ impl<M: Mcu> Cpu2<M> {
         (high << 8) | low
     }
 
-    pub(crate) fn push_stack(&mut self, value: u8) {
+    fn push_stack(&mut self, value: u8) {
         self.mcu.tick();
         self.mcu.write(0x100 + self.sp as u16, value);
         self.sp = self.sp.wrapping_sub(1);
     }
 
-    pub(crate) fn pop_stack(&mut self) -> u8 {
+    fn pop_stack(&mut self) -> u8 {
         self.sp = self.sp.wrapping_add(1);
         self.mcu.tick();
         self.mcu.read(0x100 + self.sp as u16)
