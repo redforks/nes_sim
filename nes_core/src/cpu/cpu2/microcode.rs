@@ -1040,7 +1040,8 @@ const fn build_opcode_table() -> [ArrayVec<[Microcode; 7]>; 256] {
     r[Opcode::SAX_ZERO_PAGE_Y as usize] = microcode_arr!(Microcode::Sax);
     r[Opcode::SAX_ABSOLUTE as usize] = microcode_arr!(Microcode::Sax);
     r[Opcode::SAX_INDEXED_INDIRECT as usize] = microcode_arr!(Microcode::Sax);
-    r[Opcode::DCP_ZERO_PAGE as usize] = microcode_arr!(Microcode::Dcp);
+    r[Opcode::DCP_ZERO_PAGE as usize] =
+        microcode_arr!(Microcode::zero_page_load_alu(), Microcode::Dcp);
     r[Opcode::DCP_ZERO_PAGE_X as usize] = microcode_arr!(
         Microcode::zero_page_addr(),
         Microcode::ZeroPageIndexedX {
