@@ -1,7 +1,7 @@
 use tinyvec::ArrayVec;
 
 use super::Cpu2;
-use crate::{Flag, cpu::cpu2::Register, mcu::Mcu};
+use crate::{cpu::cpu2::Register, mcu::Mcu, Flag};
 
 macro_rules! microcode_arr {
     ($item1:expr) => {
@@ -118,9 +118,9 @@ macro_rules! microcode_arr {
 }
 
 const fn build_opcode_table() -> [ArrayVec<[Microcode; 7]>; 256] {
+    use opcode::*;
     use Microcode::*;
     use Register::*;
-    use opcode::*;
 
     let mut r = include!("init_microtable.inc.rs");
     r[AND_IMMEDIATE as usize] = microcode_arr!(AndImmediate);
@@ -217,13 +217,7 @@ const fn build_opcode_table() -> [ArrayVec<[Microcode; 7]>; 256] {
     );
     r[LDX_IMMEDIATE as usize] = microcode_arr!(LoadImmediateX);
     r[LDX_ZERO_PAGE as usize] = microcode_arr!(zero_page_addr(), LoadR(X));
-    r[LDX_ZERO_PAGE_Y as usize] = microcode_arr!(
-        zero_page_addr(),
-        ZeroPageIndexedY {
-            load_into_alu: false
-        },
-        LoadR(X)
-    );
+    r[LDX_ZERO_PAGE_Y as usize] = microcode_arr!(zero_page_y_addr(), LoadR(X));
     r[LDX_ABSOLUTE as usize] = microcode_arr!(
         AbsoluteL,
         AbsoluteH {
@@ -303,13 +297,7 @@ const fn build_opcode_table() -> [ArrayVec<[Microcode; 7]>; 256] {
         StoreR(A)
     );
     r[STX_ZERO_PAGE as usize] = microcode_arr!(zero_page_addr(), StoreR(X));
-    r[STX_ZERO_PAGE_Y as usize] = microcode_arr!(
-        zero_page_addr(),
-        ZeroPageIndexedY {
-            load_into_alu: false
-        },
-        StoreR(X)
-    );
+    r[STX_ZERO_PAGE_Y as usize] = microcode_arr!(zero_page_y_save_alu(), StoreR(X));
     r[STX_ABSOLUTE as usize] = microcode_arr!(
         AbsoluteL,
         AbsoluteH {
@@ -837,13 +825,7 @@ const fn build_opcode_table() -> [ArrayVec<[Microcode; 7]>; 256] {
     r[ARR as usize] = microcode_arr!(ArrImmediate);
     r[AXS as usize] = microcode_arr!(AxsImmediate);
     r[LAX_ZERO_PAGE as usize] = microcode_arr!(zero_page_load_alu(), Lax);
-    r[LAX_ZERO_PAGE_Y as usize] = microcode_arr!(
-        zero_page_addr(),
-        ZeroPageIndexedY {
-            load_into_alu: true
-        },
-        Lax
-    );
+    r[LAX_ZERO_PAGE_Y as usize] = microcode_arr!(zero_page_y_load_alu(), Lax);
     r[LAX_ABSOLUTE as usize] = microcode_arr!(
         AbsoluteL,
         AbsoluteH {
@@ -1213,9 +1195,11 @@ pub enum Microcode {
     /// Impl ZeroPageIndexedX addressing, work after ZeroPage, set abl = (abl + x) % 256, set abh = 00
     ZeroPageIndexedX {
         load_into_alu: bool,
+        save_alu: bool,
     },
     ZeroPageIndexedY {
         load_into_alu: bool,
+        save_alu: bool,
     },
     /// Take a byte from instruction data stream, set cpu abl field
     AbsoluteL,
@@ -1703,12 +1687,14 @@ impl Microcode {
                 load_into_alu,
                 save_alu,
             } => Self::zero_page(cpu, load_into_alu, save_alu),
-            Self::ZeroPageIndexedX { load_into_alu } => {
-                Self::zero_page_indexed_x(cpu, load_into_alu)
-            }
-            Self::ZeroPageIndexedY { load_into_alu } => {
-                Self::zero_page_indexed_y(cpu, load_into_alu)
-            }
+            Self::ZeroPageIndexedX {
+                load_into_alu,
+                save_alu,
+            } => Self::zero_page_indexed_x(cpu, load_into_alu, save_alu),
+            Self::ZeroPageIndexedY {
+                load_into_alu,
+                save_alu,
+            } => Self::zero_page_indexed_y(cpu, load_into_alu, save_alu),
             Self::AbsoluteL => Self::absolute_l(cpu),
             Self::AbsoluteH { load_into_alu } => Self::absolute_h(cpu, load_into_alu),
             Self::AbsoluteIndexedX {
@@ -1892,17 +1878,23 @@ impl Microcode {
         }
     }
 
-    fn zero_page_indexed_x<M: Mcu>(cpu: &mut Cpu2<M>, load_into_alu: bool) {
+    fn zero_page_indexed_x<M: Mcu>(cpu: &mut Cpu2<M>, load_into_alu: bool, save_alu: bool) {
         cpu.ab = cpu.abl().wrapping_add(cpu.x) as u16;
         if load_into_alu {
             cpu.load_alu();
         }
+        if save_alu {
+            cpu.write_byte(cpu.ab, cpu.alu);
+        }
     }
 
-    fn zero_page_indexed_y<M: Mcu>(cpu: &mut Cpu2<M>, load_into_alu: bool) {
+    fn zero_page_indexed_y<M: Mcu>(cpu: &mut Cpu2<M>, load_into_alu: bool, save_alu: bool) {
         cpu.ab = cpu.abl().wrapping_add(cpu.y) as u16;
         if load_into_alu {
             cpu.load_alu();
+        }
+        if save_alu {
+            cpu.write_byte(cpu.ab, cpu.alu);
         }
     }
 
@@ -2093,18 +2085,42 @@ const fn zero_page_addr() -> Microcode {
 const fn zero_page_x_load_alu() -> Microcode {
     Microcode::ZeroPageIndexedX {
         load_into_alu: true,
+        save_alu: false,
     }
 }
 
 const fn zero_page_x_save_alu() -> Microcode {
     Microcode::ZeroPageIndexedX {
         load_into_alu: false,
+        save_alu: true,
     }
 }
 
 const fn zero_page_x_addr() -> Microcode {
     Microcode::ZeroPageIndexedX {
         load_into_alu: false,
+        save_alu: false,
+    }
+}
+
+const fn zero_page_y_load_alu() -> Microcode {
+    Microcode::ZeroPageIndexedY {
+        load_into_alu: true,
+        save_alu: false,
+    }
+}
+
+const fn zero_page_y_save_alu() -> Microcode {
+    Microcode::ZeroPageIndexedY {
+        load_into_alu: false,
+        save_alu: true,
+    }
+}
+
+const fn zero_page_y_addr() -> Microcode {
+    Microcode::ZeroPageIndexedY {
+        load_into_alu: false,
+        save_alu: false,
     }
 }
 
