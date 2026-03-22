@@ -78,13 +78,7 @@ fn fetch_and_decode_queues_bit_sequences() {
 
     Microcode::FetchAndDecode.exec(&mut cpu);
     assert_eq!(cpu.opcode, Opcode::BIT_ZERO_PAGE);
-    assert_eq!(
-        cpu.pop_microcode(),
-        Some(Microcode::ZeroPage {
-            load_into_alu: true,
-            save_alu: false,
-        })
-    );
+    assert_eq!(cpu.pop_microcode(), Some(Microcode::zero_page_load_alu()));
     assert_eq!(cpu.pop_microcode(), Some(Microcode::Bit));
 
     Microcode::FetchAndDecode.exec(&mut cpu);
@@ -193,13 +187,7 @@ fn fetch_and_decode_queues_sbc_sequences() {
 
     Microcode::FetchAndDecode.exec(&mut cpu);
     assert_eq!(cpu.opcode, Opcode::SBC_ZERO_PAGE);
-    assert_eq!(
-        cpu.pop_microcode(),
-        Some(Microcode::ZeroPage {
-            load_into_alu: true,
-            save_alu: false
-        })
-    );
+    assert_eq!(cpu.pop_microcode(), Some(Microcode::zero_page_load_alu()));
     assert_eq!(cpu.pop_microcode(), Some(Microcode::Sbc));
 
     Microcode::FetchAndDecode.exec(&mut cpu);
@@ -234,13 +222,7 @@ fn fetch_and_decode_queues_load_and_store_sequences() {
 
     Microcode::FetchAndDecode.exec(&mut cpu);
     assert_eq!(cpu.opcode, Opcode::LDX_ZERO_PAGE);
-    assert_eq!(
-        cpu.pop_microcode(),
-        Some(Microcode::ZeroPage {
-            load_into_alu: false,
-            save_alu: false,
-        })
-    );
+    assert_eq!(cpu.pop_microcode(), Some(Microcode::zero_page_addr()));
     assert_eq!(cpu.pop_microcode(), Some(Microcode::LoadX));
 
     Microcode::FetchAndDecode.exec(&mut cpu);
@@ -256,13 +238,7 @@ fn fetch_and_decode_queues_load_and_store_sequences() {
 
     Microcode::FetchAndDecode.exec(&mut cpu);
     assert_eq!(cpu.opcode, Opcode::STA_ZERO_PAGE);
-    assert_eq!(
-        cpu.pop_microcode(),
-        Some(Microcode::ZeroPage {
-            load_into_alu: false,
-            save_alu: false,
-        })
-    );
+    assert_eq!(cpu.pop_microcode(), Some(Microcode::zero_page_addr()));
     assert_eq!(cpu.pop_microcode(), Some(Microcode::StoreA));
 
     Microcode::FetchAndDecode.exec(&mut cpu);
@@ -278,13 +254,7 @@ fn fetch_and_decode_queues_load_and_store_sequences() {
 
     Microcode::FetchAndDecode.exec(&mut cpu);
     assert_eq!(cpu.opcode, Opcode::STY_ZERO_PAGE_X);
-    assert_eq!(
-        cpu.pop_microcode(),
-        Some(Microcode::ZeroPage {
-            load_into_alu: false,
-            save_alu: false,
-        })
-    );
+    assert_eq!(cpu.pop_microcode(), Some(Microcode::zero_page_addr()));
     assert_eq!(
         cpu.pop_microcode(),
         Some(Microcode::ZeroPageIndexedX {
@@ -470,13 +440,7 @@ fn fetch_and_decode_queues_shift_and_rotate_sequences() {
 
     Microcode::FetchAndDecode.exec(&mut cpu);
     assert_eq!(cpu.opcode, Opcode::ROL_ZERO_PAGE);
-    assert_eq!(
-        cpu.pop_microcode(),
-        Some(Microcode::ZeroPage {
-            load_into_alu: true,
-            save_alu: false
-        })
-    );
+    assert_eq!(cpu.pop_microcode(), Some(Microcode::zero_page_load_alu()));
     assert_eq!(cpu.pop_microcode(), Some(Microcode::StoreAlu));
     assert_eq!(cpu.pop_microcode(), Some(Microcode::Rol));
     assert_eq!(cpu.pop_microcode(), Some(Microcode::StoreAlu));
@@ -513,13 +477,7 @@ fn fetch_and_decode_queues_ora_and_eor_sequences() {
 
     Microcode::FetchAndDecode.exec(&mut cpu);
     assert_eq!(cpu.opcode, Opcode::EOR_ZERO_PAGE);
-    assert_eq!(
-        cpu.pop_microcode(),
-        Some(Microcode::ZeroPage {
-            load_into_alu: true,
-            save_alu: false
-        })
-    );
+    assert_eq!(cpu.pop_microcode(), Some(Microcode::zero_page_load_alu()));
     assert_eq!(cpu.pop_microcode(), Some(Microcode::Eor));
 
     Microcode::FetchAndDecode.exec(&mut cpu);
@@ -553,13 +511,7 @@ fn fetch_and_decode_queues_compare_and_bit_sequences() {
 
     Microcode::FetchAndDecode.exec(&mut cpu);
     assert_eq!(cpu.opcode, Opcode::CPX_ZERO_PAGE);
-    assert_eq!(
-        cpu.pop_microcode(),
-        Some(Microcode::ZeroPage {
-            load_into_alu: true,
-            save_alu: false
-        })
-    );
+    assert_eq!(cpu.pop_microcode(), Some(Microcode::zero_page_load_alu()));
     assert_eq!(cpu.pop_microcode(), Some(Microcode::Cpx));
 
     Microcode::FetchAndDecode.exec(&mut cpu);
@@ -575,13 +527,7 @@ fn fetch_and_decode_queues_compare_and_bit_sequences() {
 
     Microcode::FetchAndDecode.exec(&mut cpu);
     assert_eq!(cpu.opcode, Opcode::BIT_ZERO_PAGE);
-    assert_eq!(
-        cpu.pop_microcode(),
-        Some(Microcode::ZeroPage {
-            load_into_alu: true,
-            save_alu: false
-        })
-    );
+    assert_eq!(cpu.pop_microcode(), Some(Microcode::zero_page_load_alu()));
     assert_eq!(cpu.pop_microcode(), Some(Microcode::Bit));
 }
 
@@ -964,64 +910,28 @@ fn undocumented_decode_sequences_exist() {
     Microcode::FetchAndDecode.exec(&mut cpu);
     assert_eq!(cpu.pop_microcode(), Some(Microcode::AxsImmediate));
     Microcode::FetchAndDecode.exec(&mut cpu);
-    assert_eq!(
-        cpu.pop_microcode(),
-        Some(Microcode::ZeroPage {
-            load_into_alu: true,
-            save_alu: false,
-        })
-    );
+    assert_eq!(cpu.pop_microcode(), Some(Microcode::zero_page_load_alu()));
     assert_eq!(cpu.pop_microcode(), Some(Microcode::Lax));
     Microcode::FetchAndDecode.exec(&mut cpu);
     assert_eq!(cpu.pop_microcode(), Some(Microcode::Sax));
     Microcode::FetchAndDecode.exec(&mut cpu);
-    assert_eq!(
-        cpu.pop_microcode(),
-        Some(Microcode::ZeroPage {
-            load_into_alu: true,
-            save_alu: false,
-        })
-    );
+    assert_eq!(cpu.pop_microcode(), Some(Microcode::zero_page_load_alu()));
     assert_eq!(cpu.pop_microcode(), Some(Microcode::Dcp));
     Microcode::FetchAndDecode.exec(&mut cpu);
-    assert_eq!(
-        cpu.pop_microcode(),
-        Some(Microcode::ZeroPage {
-            load_into_alu: true,
-            save_alu: false,
-        })
-    );
+    assert_eq!(cpu.pop_microcode(), Some(Microcode::zero_page_load_alu()));
     assert_eq!(cpu.pop_microcode(), Some(Microcode::Isc));
     Microcode::FetchAndDecode.exec(&mut cpu);
-    assert_eq!(
-        cpu.pop_microcode(),
-        Some(Microcode::ZeroPage {
-            load_into_alu: true,
-            save_alu: false,
-        })
-    );
+    assert_eq!(cpu.pop_microcode(), Some(Microcode::zero_page_load_alu()));
     assert_eq!(cpu.pop_microcode(), Some(Microcode::StoreAlu));
     assert_eq!(cpu.pop_microcode(), Some(Microcode::Rra));
     assert_eq!(cpu.pop_microcode(), Some(Microcode::StoreAlu));
     Microcode::FetchAndDecode.exec(&mut cpu);
-    assert_eq!(
-        cpu.pop_microcode(),
-        Some(Microcode::ZeroPage {
-            load_into_alu: true,
-            save_alu: false,
-        })
-    );
+    assert_eq!(cpu.pop_microcode(), Some(Microcode::zero_page_load_alu()));
     assert_eq!(cpu.pop_microcode(), Some(Microcode::StoreAlu));
     assert_eq!(cpu.pop_microcode(), Some(Microcode::Asl));
     assert_eq!(cpu.pop_microcode(), Some(Microcode::StoreAlu));
     Microcode::FetchAndDecode.exec(&mut cpu);
-    assert_eq!(
-        cpu.pop_microcode(),
-        Some(Microcode::ZeroPage {
-            load_into_alu: true,
-            save_alu: false,
-        })
-    );
+    assert_eq!(cpu.pop_microcode(), Some(Microcode::zero_page_load_alu()));
     assert_eq!(cpu.pop_microcode(), Some(Microcode::StoreAlu));
     assert_eq!(cpu.pop_microcode(), Some(Microcode::Lsr));
     assert_eq!(cpu.pop_microcode(), Some(Microcode::StoreAlu));
