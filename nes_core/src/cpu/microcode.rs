@@ -81,6 +81,11 @@ pub enum Microcode {
     /// Fetch a byte from memory use address saved in `data_latch`, then add to accumulator with carry
     Adc,
 
+    /// Take immediate value from instruction data stream, subtract with carry from accumulator
+    SbcImmediate,
+    /// Fetch a byte from memory use address saved in `data_latch`, then subtract with carry from accumulator
+    Sbc,
+
     /// Take immediate value from instruction data stream, and it with accumulator
     AndImmediate,
     /// Fetch a byte from memory use address saved in `data_latch`, then and with accumulator
@@ -137,15 +142,6 @@ impl Opcode {
     pub const AND_INDEXED_INDIRECT: u8 = 0x21;
     pub const AND_INDIRECT_INDEXED: u8 = 0x31;
 
-    pub const ADC_IMMEDIATE: u8 = 0x69;
-    pub const ADC_ZERO_PAGE: u8 = 0x65;
-    pub const ADC_ZERO_PAGE_X: u8 = 0x75;
-    pub const ADC_ABSOLUTE: u8 = 0x6D;
-    pub const ADC_ABSOLUTE_INDEXED_X: u8 = 0x7D;
-    pub const ADC_ABSOLUTE_INDEXED_Y: u8 = 0x79;
-    pub const ADC_INDEXED_INDIRECT: u8 = 0x61;
-    pub const ADC_INDIRECT_INDEXED: u8 = 0x71;
-
     pub const ASL_ACCUMULATOR: u8 = 0x0A;
     pub const ASL_ZERO_PAGE: u8 = 0x06;
     pub const ASL_ZERO_PAGE_X: u8 = 0x16;
@@ -163,6 +159,8 @@ impl Opcode {
 
     pub const BIT_ZERO_PAGE: u8 = 0x24;
     pub const BIT_ABSOLUTE: u8 = 0x2C;
+
+    // Load and Save instructions
 
     pub const LDA_IMMEDIATE: u8 = 0xA9;
     pub const LDA_ZERO_PAGE: u8 = 0xA5;
@@ -200,6 +198,26 @@ impl Opcode {
     pub const STY_ZERO_PAGE: u8 = 0x84;
     pub const STY_ZERO_PAGE_X: u8 = 0x94;
     pub const STY_ABSOLUTE: u8 = 0x8C;
+
+    // Arithmetic instructions
+
+    pub const ADC_IMMEDIATE: u8 = 0x69;
+    pub const ADC_ZERO_PAGE: u8 = 0x65;
+    pub const ADC_ZERO_PAGE_X: u8 = 0x75;
+    pub const ADC_ABSOLUTE: u8 = 0x6D;
+    pub const ADC_ABSOLUTE_INDEXED_X: u8 = 0x7D;
+    pub const ADC_ABSOLUTE_INDEXED_Y: u8 = 0x79;
+    pub const ADC_INDEXED_INDIRECT: u8 = 0x61;
+    pub const ADC_INDIRECT_INDEXED: u8 = 0x71;
+
+    pub const SBC_IMMEDIATE: u8 = 0xE9;
+    pub const SBC_ZERO_PAGE: u8 = 0xE5;
+    pub const SBC_ZERO_PAGE_X: u8 = 0xF5;
+    pub const SBC_ABSOLUTE: u8 = 0xED;
+    pub const SBC_ABSOLUTE_INDEXED_X: u8 = 0xFD;
+    pub const SBC_ABSOLUTE_INDEXED_Y: u8 = 0xF9;
+    pub const SBC_INDEXED_INDIRECT: u8 = 0xE1;
+    pub const SBC_INDIRECT_INDEXED: u8 = 0xF1;
 }
 
 impl Microcode {
@@ -239,6 +257,8 @@ impl Microcode {
             } => Self::absolute_indexed_y_without_high(cpu, oops, load_into_alu),
             Microcode::AdcImmediate => Self::adc_immediate(cpu),
             Microcode::Adc => cpu.adc(),
+            Microcode::SbcImmediate => Self::sbc_immediate(cpu),
+            Microcode::Sbc => cpu.sbc(),
 
             Microcode::AndImmediate => Self::and_immediate(cpu),
             Microcode::And => cpu.and(),
@@ -529,6 +549,40 @@ impl Microcode {
             Opcode::BVS => {
                 cpu.push_microcode(Microcode::BranchRelative(BranchTest::IfOverflowSet));
             }
+
+            Opcode::SBC_IMMEDIATE => {
+                cpu.push_microcode(Microcode::SbcImmediate);
+            }
+            Opcode::SBC_ZERO_PAGE => {
+                cpu.push_microcode(Microcode::ZeroPage {
+                    load_into_alu: true,
+                });
+                cpu.push_microcode(Microcode::Sbc);
+            }
+            Opcode::SBC_ZERO_PAGE_X => {
+                zero_page_indexed_x_addressing(cpu, true);
+                cpu.push_microcode(Microcode::Sbc);
+            }
+            Opcode::SBC_ABSOLUTE => {
+                absolute_addressing(cpu, true);
+                cpu.push_microcode(Microcode::Sbc);
+            }
+            Opcode::SBC_ABSOLUTE_INDEXED_X => {
+                absolute_indexed_x_addressing(cpu, true, true);
+                cpu.push_microcode(Microcode::Sbc);
+            }
+            Opcode::SBC_ABSOLUTE_INDEXED_Y => {
+                absolute_indexed_y_addressing(cpu, true, true);
+                cpu.push_microcode(Microcode::Sbc);
+            }
+            Opcode::SBC_INDEXED_INDIRECT => {
+                indexed_indirect_addressing(cpu, true);
+                cpu.push_microcode(Microcode::Sbc);
+            }
+            Opcode::SBC_INDIRECT_INDEXED => {
+                indirect_indexed_addressing(cpu, true, true);
+                cpu.push_microcode(Microcode::Sbc);
+            }
             _ => panic!("Unknown opcode: {}", opcode),
         }
     }
@@ -624,6 +678,11 @@ impl Microcode {
     fn adc_immediate<M: Mcu>(cpu: &mut Cpu2<M>) {
         cpu.alu = cpu.inc_read_byte();
         cpu.adc();
+    }
+
+    fn sbc_immediate<M: Mcu>(cpu: &mut Cpu2<M>) {
+        cpu.alu = cpu.inc_read_byte();
+        cpu.sbc();
     }
 
     fn absolute_indexed_x<M: Mcu>(cpu: &mut Cpu2<M>, oops: bool, load_into_alu: bool) {
