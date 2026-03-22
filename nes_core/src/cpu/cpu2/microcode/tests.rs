@@ -914,6 +914,7 @@ fn undocumented_decode_sequences_exist() {
     assert_eq!(cpu.pop_microcode(), Some(Microcode::Lax));
     Microcode::FetchAndDecode.exec(&mut cpu);
     assert_eq!(cpu.pop_microcode(), Some(Microcode::Sax));
+    assert_eq!(cpu.pop_microcode(), Some(Microcode::zero_page_save_alu()));
     Microcode::FetchAndDecode.exec(&mut cpu);
     assert_eq!(cpu.pop_microcode(), Some(Microcode::zero_page_load_alu()));
     assert_eq!(cpu.pop_microcode(), Some(Microcode::Dcp));
