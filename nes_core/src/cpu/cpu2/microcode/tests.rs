@@ -81,7 +81,8 @@ fn fetch_and_decode_queues_bit_sequences() {
     assert_eq!(
         cpu.pop_microcode(),
         Some(Microcode::ZeroPage {
-            load_into_alu: true
+            load_into_alu: true,
+            save_alu: false,
         })
     );
     assert_eq!(cpu.pop_microcode(), Some(Microcode::Bit));
@@ -195,7 +196,8 @@ fn fetch_and_decode_queues_sbc_sequences() {
     assert_eq!(
         cpu.pop_microcode(),
         Some(Microcode::ZeroPage {
-            load_into_alu: true
+            load_into_alu: true,
+            save_alu: false
         })
     );
     assert_eq!(cpu.pop_microcode(), Some(Microcode::Sbc));
@@ -235,7 +237,8 @@ fn fetch_and_decode_queues_load_and_store_sequences() {
     assert_eq!(
         cpu.pop_microcode(),
         Some(Microcode::ZeroPage {
-            load_into_alu: false
+            load_into_alu: false,
+            save_alu: false,
         })
     );
     assert_eq!(cpu.pop_microcode(), Some(Microcode::LoadX));
@@ -256,7 +259,8 @@ fn fetch_and_decode_queues_load_and_store_sequences() {
     assert_eq!(
         cpu.pop_microcode(),
         Some(Microcode::ZeroPage {
-            load_into_alu: false
+            load_into_alu: false,
+            save_alu: false,
         })
     );
     assert_eq!(cpu.pop_microcode(), Some(Microcode::StoreA));
@@ -277,7 +281,8 @@ fn fetch_and_decode_queues_load_and_store_sequences() {
     assert_eq!(
         cpu.pop_microcode(),
         Some(Microcode::ZeroPage {
-            load_into_alu: false
+            load_into_alu: false,
+            save_alu: false,
         })
     );
     assert_eq!(
@@ -468,7 +473,8 @@ fn fetch_and_decode_queues_shift_and_rotate_sequences() {
     assert_eq!(
         cpu.pop_microcode(),
         Some(Microcode::ZeroPage {
-            load_into_alu: true
+            load_into_alu: true,
+            save_alu: false
         })
     );
     assert_eq!(cpu.pop_microcode(), Some(Microcode::StoreAlu));
@@ -510,7 +516,8 @@ fn fetch_and_decode_queues_ora_and_eor_sequences() {
     assert_eq!(
         cpu.pop_microcode(),
         Some(Microcode::ZeroPage {
-            load_into_alu: true
+            load_into_alu: true,
+            save_alu: false
         })
     );
     assert_eq!(cpu.pop_microcode(), Some(Microcode::Eor));
@@ -549,7 +556,8 @@ fn fetch_and_decode_queues_compare_and_bit_sequences() {
     assert_eq!(
         cpu.pop_microcode(),
         Some(Microcode::ZeroPage {
-            load_into_alu: true
+            load_into_alu: true,
+            save_alu: false
         })
     );
     assert_eq!(cpu.pop_microcode(), Some(Microcode::Cpx));
@@ -570,7 +578,8 @@ fn fetch_and_decode_queues_compare_and_bit_sequences() {
     assert_eq!(
         cpu.pop_microcode(),
         Some(Microcode::ZeroPage {
-            load_into_alu: true
+            load_into_alu: true,
+            save_alu: false
         })
     );
     assert_eq!(cpu.pop_microcode(), Some(Microcode::Bit));
@@ -958,7 +967,8 @@ fn undocumented_decode_sequences_exist() {
     assert_eq!(
         cpu.pop_microcode(),
         Some(Microcode::ZeroPage {
-            load_into_alu: true
+            load_into_alu: true,
+            save_alu: false,
         })
     );
     assert_eq!(cpu.pop_microcode(), Some(Microcode::Lax));
@@ -968,7 +978,8 @@ fn undocumented_decode_sequences_exist() {
     assert_eq!(
         cpu.pop_microcode(),
         Some(Microcode::ZeroPage {
-            load_into_alu: true
+            load_into_alu: true,
+            save_alu: false,
         })
     );
     assert_eq!(cpu.pop_microcode(), Some(Microcode::Dcp));
@@ -976,7 +987,8 @@ fn undocumented_decode_sequences_exist() {
     assert_eq!(
         cpu.pop_microcode(),
         Some(Microcode::ZeroPage {
-            load_into_alu: true
+            load_into_alu: true,
+            save_alu: false,
         })
     );
     assert_eq!(cpu.pop_microcode(), Some(Microcode::Isc));
@@ -984,7 +996,8 @@ fn undocumented_decode_sequences_exist() {
     assert_eq!(
         cpu.pop_microcode(),
         Some(Microcode::ZeroPage {
-            load_into_alu: true
+            load_into_alu: true,
+            save_alu: false,
         })
     );
     assert_eq!(cpu.pop_microcode(), Some(Microcode::StoreAlu));
@@ -994,7 +1007,8 @@ fn undocumented_decode_sequences_exist() {
     assert_eq!(
         cpu.pop_microcode(),
         Some(Microcode::ZeroPage {
-            load_into_alu: true
+            load_into_alu: true,
+            save_alu: false,
         })
     );
     assert_eq!(cpu.pop_microcode(), Some(Microcode::StoreAlu));
@@ -1004,7 +1018,8 @@ fn undocumented_decode_sequences_exist() {
     assert_eq!(
         cpu.pop_microcode(),
         Some(Microcode::ZeroPage {
-            load_into_alu: true
+            load_into_alu: true,
+            save_alu: false,
         })
     );
     assert_eq!(cpu.pop_microcode(), Some(Microcode::StoreAlu));

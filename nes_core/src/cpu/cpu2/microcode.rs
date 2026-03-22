@@ -1,8 +1,1644 @@
+use tinyvec::ArrayVec;
+
 use super::Cpu2;
 use crate::{Flag, mcu::Mcu};
+macro_rules! microcode_arr {
+    ($item1:expr) => {
+        match ArrayVec::try_from_array_len(
+            [
+                $item1,
+                Microcode::Nop,
+                Microcode::Nop,
+                Microcode::Nop,
+                Microcode::Nop,
+                Microcode::Nop,
+                Microcode::Nop,
+            ],
+            1,
+        ) {
+            Ok(v) => v,
+            Err(_) => panic!(),
+        }
+    };
+    ($item1:expr, $item2:expr) => {
+        match ArrayVec::try_from_array_len(
+            [
+                $item1,
+                $item2,
+                Microcode::Nop,
+                Microcode::Nop,
+                Microcode::Nop,
+                Microcode::Nop,
+                Microcode::Nop,
+            ],
+            2,
+        ) {
+            Ok(v) => v,
+            Err(_) => panic!(),
+        }
+    };
+    ($item1:expr, $item2:expr, $item3:expr) => {
+        match ArrayVec::try_from_array_len(
+            [
+                $item1,
+                $item2,
+                $item3,
+                Microcode::Nop,
+                Microcode::Nop,
+                Microcode::Nop,
+                Microcode::Nop,
+            ],
+            3,
+        ) {
+            Ok(v) => v,
+            Err(_) => panic!(),
+        }
+    };
+    ($item1:expr, $item2:expr, $item3:expr, $item4:expr) => {
+        match ArrayVec::try_from_array_len(
+            [
+                $item1,
+                $item2,
+                $item3,
+                $item4,
+                Microcode::Nop,
+                Microcode::Nop,
+                Microcode::Nop,
+            ],
+            4,
+        ) {
+            Ok(v) => v,
+            Err(_) => panic!(),
+        }
+    };
+    ($item1:expr, $item2:expr, $item3:expr, $item4:expr, $item5:expr) => {
+        match ArrayVec::try_from_array_len(
+            [
+                $item1,
+                $item2,
+                $item3,
+                $item4,
+                $item5,
+                Microcode::Nop,
+                Microcode::Nop,
+            ],
+            5,
+        ) {
+            Ok(v) => v,
+            Err(_) => panic!(),
+        }
+    };
+    ($item1:expr, $item2:expr, $item3:expr, $item4:expr, $item5:expr, $item6:expr) => {
+        match ArrayVec::try_from_array_len(
+            [
+                $item1,
+                $item2,
+                $item3,
+                $item4,
+                $item5,
+                $item6,
+                Microcode::Nop,
+            ],
+            6,
+        ) {
+            Ok(v) => v,
+            Err(_) => panic!(),
+        }
+    };
+    ($item1:expr, $item2:expr, $item3:expr, $item4:expr, $item5:expr, $item6:expr, $item7:expr) => {
+        match ArrayVec::try_from_array_len(
+            [$item1, $item2, $item3, $item4, $item5, $item6, $item7],
+            7,
+        ) {
+            Ok(v) => v,
+            Err(_) => panic!(),
+        }
+    };
+}
+
+const fn build_opcode_table() -> [ArrayVec<[Microcode; 7]>; 256] {
+    let mut r = include!("init_microtable.inc.rs");
+    r[Opcode::AND_IMMEDIATE as usize] = microcode_arr!(Microcode::AndImmediate);
+    r[Opcode::AND_ZERO_PAGE as usize] = microcode_arr!(
+        Microcode::ZeroPage {
+            load_into_alu: true,
+            save_alu: false
+        },
+        Microcode::And
+    );
+    r[Opcode::AND_ZERO_PAGE_X as usize] = microcode_arr!(
+        Microcode::ZeroPage {
+            load_into_alu: false,
+            save_alu: false
+        },
+        Microcode::ZeroPageIndexedX {
+            load_into_alu: true
+        },
+        Microcode::And
+    );
+    r[Opcode::AND_ABSOLUTE as usize] = microcode_arr!(
+        Microcode::AbsoluteL,
+        Microcode::AbsoluteH {
+            load_into_alu: true
+        },
+        Microcode::And
+    );
+    r[Opcode::AND_ABSOLUTE_INDEXED_X as usize] = microcode_arr!(
+        Microcode::AbsoluteL,
+        Microcode::AbsoluteIndexedX {
+            oops: true,
+            load_into_alu: true
+        },
+        Microcode::And
+    );
+    r[Opcode::AND_ABSOLUTE_INDEXED_Y as usize] = microcode_arr!(
+        Microcode::AbsoluteL,
+        Microcode::AbsoluteIndexedY {
+            oops: true,
+            load_into_alu: true
+        },
+        Microcode::And
+    );
+    r[Opcode::AND_INDEXED_INDIRECT as usize] = microcode_arr!(
+        Microcode::ZeroPage {
+            load_into_alu: false,
+            save_alu: false
+        },
+        Microcode::ZeroPageIndexedX {
+            load_into_alu: false
+        },
+        Microcode::Indexed {
+            load_into_alu: true
+        },
+        Microcode::Nop,
+        Microcode::And
+    );
+    r[Opcode::AND_INDIRECT_INDEXED as usize] = microcode_arr!(
+        Microcode::ZeroPage {
+            load_into_alu: false,
+            save_alu: false
+        },
+        Microcode::Indexed {
+            load_into_alu: false
+        },
+        Microcode::AbsoluteIndexedYWithoutHigh {
+            oops: true,
+            load_into_alu: true
+        },
+        Microcode::And
+    );
+    r[Opcode::LDA_IMMEDIATE as usize] = microcode_arr!(Microcode::LoadImmediateA);
+    r[Opcode::LDA_ZERO_PAGE as usize] = microcode_arr!(
+        Microcode::ZeroPage {
+            load_into_alu: false,
+            save_alu: false
+        },
+        Microcode::LoadA
+    );
+    r[Opcode::LDA_ZERO_PAGE_X as usize] = microcode_arr!(
+        Microcode::ZeroPage {
+            load_into_alu: false,
+            save_alu: false
+        },
+        Microcode::ZeroPageIndexedX {
+            load_into_alu: false
+        },
+        Microcode::LoadA
+    );
+    r[Opcode::LDA_ABSOLUTE as usize] = microcode_arr!(
+        Microcode::AbsoluteL,
+        Microcode::AbsoluteH {
+            load_into_alu: false
+        },
+        Microcode::LoadA
+    );
+    r[Opcode::LDA_ABSOLUTE_INDEXED_X as usize] = microcode_arr!(
+        Microcode::AbsoluteL,
+        Microcode::AbsoluteIndexedX {
+            oops: true,
+            load_into_alu: false
+        },
+        Microcode::LoadA
+    );
+    r[Opcode::LDA_ABSOLUTE_INDEXED_Y as usize] = microcode_arr!(
+        Microcode::AbsoluteL,
+        Microcode::AbsoluteIndexedY {
+            oops: true,
+            load_into_alu: false
+        },
+        Microcode::LoadA
+    );
+    r[Opcode::LDA_INDIRECT_INDEXED as usize] = microcode_arr!(
+        Microcode::ZeroPage {
+            load_into_alu: false,
+            save_alu: false
+        },
+        Microcode::ZeroPageIndexedX {
+            load_into_alu: false
+        },
+        Microcode::Indexed {
+            load_into_alu: false
+        },
+        Microcode::Nop,
+        Microcode::LoadA
+    );
+    r[Opcode::LDA_INDIRECT_INDEXED_Y as usize] = microcode_arr!(
+        Microcode::ZeroPage {
+            load_into_alu: false,
+            save_alu: false
+        },
+        Microcode::Indexed {
+            load_into_alu: false
+        },
+        Microcode::AbsoluteIndexedYWithoutHigh {
+            oops: true,
+            load_into_alu: false
+        },
+        Microcode::LoadA
+    );
+    r[Opcode::LDX_IMMEDIATE as usize] = microcode_arr!(Microcode::LoadImmediateX);
+    r[Opcode::LDX_ZERO_PAGE as usize] = microcode_arr!(
+        Microcode::ZeroPage {
+            load_into_alu: false,
+            save_alu: false
+        },
+        Microcode::LoadX
+    );
+    r[Opcode::LDX_ZERO_PAGE_Y as usize] = microcode_arr!(
+        Microcode::ZeroPage {
+            load_into_alu: false,
+            save_alu: false
+        },
+        Microcode::ZeroPageIndexedY {
+            load_into_alu: false
+        },
+        Microcode::LoadX
+    );
+    r[Opcode::LDX_ABSOLUTE as usize] = microcode_arr!(
+        Microcode::AbsoluteL,
+        Microcode::AbsoluteH {
+            load_into_alu: false
+        },
+        Microcode::LoadX
+    );
+    r[Opcode::LDX_ABSOLUTE_INDEXED_Y as usize] = microcode_arr!(
+        Microcode::AbsoluteL,
+        Microcode::AbsoluteIndexedY {
+            oops: true,
+            load_into_alu: false
+        },
+        Microcode::LoadX
+    );
+    r[Opcode::LDY_IMMEDIATE as usize] = microcode_arr!(Microcode::LoadImmediateY);
+    r[Opcode::LDY_ZERO_PAGE as usize] = microcode_arr!(
+        Microcode::ZeroPage {
+            load_into_alu: false,
+            save_alu: false
+        },
+        Microcode::LoadY
+    );
+    r[Opcode::LDY_ZERO_PAGE_X as usize] = microcode_arr!(
+        Microcode::ZeroPage {
+            load_into_alu: false,
+            save_alu: false
+        },
+        Microcode::ZeroPageIndexedX {
+            load_into_alu: false
+        },
+        Microcode::LoadY
+    );
+    r[Opcode::LDY_ABSOLUTE as usize] = microcode_arr!(
+        Microcode::AbsoluteL,
+        Microcode::AbsoluteH {
+            load_into_alu: false
+        },
+        Microcode::LoadY
+    );
+    r[Opcode::LDY_ABSOLUTE_INDEXED_X as usize] = microcode_arr!(
+        Microcode::AbsoluteL,
+        Microcode::AbsoluteIndexedX {
+            oops: true,
+            load_into_alu: false
+        },
+        Microcode::LoadY
+    );
+    r[Opcode::STA_ZERO_PAGE as usize] = microcode_arr!(
+        Microcode::ZeroPage {
+            load_into_alu: false,
+            save_alu: false
+        },
+        Microcode::StoreA
+    );
+    r[Opcode::STA_ZERO_PAGE_X as usize] = microcode_arr!(
+        Microcode::ZeroPage {
+            load_into_alu: false,
+            save_alu: false
+        },
+        Microcode::ZeroPageIndexedX {
+            load_into_alu: false
+        },
+        Microcode::StoreA
+    );
+    r[Opcode::STA_ABSOLUTE as usize] = microcode_arr!(
+        Microcode::AbsoluteL,
+        Microcode::AbsoluteH {
+            load_into_alu: false
+        },
+        Microcode::StoreA
+    );
+    r[Opcode::STA_ABSOLUTE_INDEXED_X as usize] = microcode_arr!(
+        Microcode::AbsoluteL,
+        Microcode::AbsoluteIndexedX {
+            oops: false,
+            load_into_alu: false
+        },
+        Microcode::StoreA
+    );
+    r[Opcode::STA_ABSOLUTE_INDEXED_Y as usize] = microcode_arr!(
+        Microcode::AbsoluteL,
+        Microcode::AbsoluteIndexedY {
+            oops: false,
+            load_into_alu: false
+        },
+        Microcode::StoreA
+    );
+    r[Opcode::STA_INDEXED_INDIRECT as usize] = microcode_arr!(
+        Microcode::ZeroPage {
+            load_into_alu: false,
+            save_alu: false
+        },
+        Microcode::ZeroPageIndexedX {
+            load_into_alu: false
+        },
+        Microcode::Indexed {
+            load_into_alu: false
+        },
+        Microcode::Nop,
+        Microcode::StoreA
+    );
+    r[Opcode::STA_INDIRECT_INDEXED_Y as usize] = microcode_arr!(
+        Microcode::ZeroPage {
+            load_into_alu: false,
+            save_alu: false
+        },
+        Microcode::Indexed {
+            load_into_alu: false
+        },
+        Microcode::AbsoluteIndexedYWithoutHigh {
+            oops: false,
+            load_into_alu: false
+        },
+        Microcode::StoreA
+    );
+    r[Opcode::STX_ZERO_PAGE as usize] = microcode_arr!(
+        Microcode::ZeroPage {
+            load_into_alu: false,
+            save_alu: false
+        },
+        Microcode::StoreX
+    );
+    r[Opcode::STX_ZERO_PAGE_Y as usize] = microcode_arr!(
+        Microcode::ZeroPage {
+            load_into_alu: false,
+            save_alu: false
+        },
+        Microcode::ZeroPageIndexedY {
+            load_into_alu: false
+        },
+        Microcode::StoreX
+    );
+    r[Opcode::STX_ABSOLUTE as usize] = microcode_arr!(
+        Microcode::AbsoluteL,
+        Microcode::AbsoluteH {
+            load_into_alu: false
+        },
+        Microcode::StoreX
+    );
+    r[Opcode::STY_ZERO_PAGE as usize] = microcode_arr!(
+        Microcode::ZeroPage {
+            load_into_alu: false,
+            save_alu: false
+        },
+        Microcode::StoreY
+    );
+    r[Opcode::STY_ZERO_PAGE_X as usize] = microcode_arr!(
+        Microcode::ZeroPage {
+            load_into_alu: false,
+            save_alu: false
+        },
+        Microcode::ZeroPageIndexedX {
+            load_into_alu: false
+        },
+        Microcode::StoreY
+    );
+    r[Opcode::STY_ABSOLUTE as usize] = microcode_arr!(
+        Microcode::AbsoluteL,
+        Microcode::AbsoluteH {
+            load_into_alu: false
+        },
+        Microcode::StoreY
+    );
+    r[Opcode::BIT_ZERO_PAGE as usize] = microcode_arr!(
+        Microcode::ZeroPage {
+            load_into_alu: true,
+            save_alu: false
+        },
+        Microcode::Bit
+    );
+    r[Opcode::BIT_ABSOLUTE as usize] = microcode_arr!(
+        Microcode::AbsoluteL,
+        Microcode::AbsoluteH {
+            load_into_alu: true
+        },
+        Microcode::Bit
+    );
+    r[Opcode::ADC_IMMEDIATE as usize] = microcode_arr!(Microcode::AdcImmediate);
+    r[Opcode::ADC_ZERO_PAGE as usize] = microcode_arr!(
+        Microcode::ZeroPage {
+            load_into_alu: true,
+            save_alu: false
+        },
+        Microcode::Adc
+    );
+    r[Opcode::ADC_ZERO_PAGE_X as usize] = microcode_arr!(
+        Microcode::ZeroPage {
+            load_into_alu: false,
+            save_alu: false
+        },
+        Microcode::ZeroPageIndexedX {
+            load_into_alu: true
+        },
+        Microcode::Adc
+    );
+    r[Opcode::ADC_ABSOLUTE as usize] = microcode_arr!(
+        Microcode::AbsoluteL,
+        Microcode::AbsoluteH {
+            load_into_alu: true
+        },
+        Microcode::Adc
+    );
+    r[Opcode::ADC_ABSOLUTE_INDEXED_X as usize] = microcode_arr!(
+        Microcode::AbsoluteL,
+        Microcode::AbsoluteIndexedX {
+            oops: true,
+            load_into_alu: true
+        },
+        Microcode::Adc
+    );
+    r[Opcode::ADC_ABSOLUTE_INDEXED_Y as usize] = microcode_arr!(
+        Microcode::AbsoluteL,
+        Microcode::AbsoluteIndexedY {
+            oops: true,
+            load_into_alu: true
+        },
+        Microcode::Adc
+    );
+    r[Opcode::ADC_INDEXED_INDIRECT as usize] = microcode_arr!(
+        Microcode::ZeroPage {
+            load_into_alu: false,
+            save_alu: false
+        },
+        Microcode::ZeroPageIndexedX {
+            load_into_alu: false
+        },
+        Microcode::Indexed {
+            load_into_alu: true
+        },
+        Microcode::Nop,
+        Microcode::Adc
+    );
+    r[Opcode::ADC_INDIRECT_INDEXED as usize] = microcode_arr!(
+        Microcode::ZeroPage {
+            load_into_alu: false,
+            save_alu: false
+        },
+        Microcode::Indexed {
+            load_into_alu: false
+        },
+        Microcode::AbsoluteIndexedYWithoutHigh {
+            oops: true,
+            load_into_alu: true
+        },
+        Microcode::Adc
+    );
+    r[Opcode::ASL_ACCUMULATOR as usize] = microcode_arr!(Microcode::AslAccumulator);
+    r[Opcode::ASL_ZERO_PAGE as usize] = microcode_arr!(
+        Microcode::ZeroPage {
+            load_into_alu: true,
+            save_alu: false
+        },
+        Microcode::StoreAlu,
+        Microcode::Asl,
+        Microcode::StoreAlu
+    );
+    r[Opcode::ASL_ZERO_PAGE_X as usize] = microcode_arr!(
+        Microcode::ZeroPage {
+            load_into_alu: false,
+            save_alu: false
+        },
+        Microcode::ZeroPageIndexedX {
+            load_into_alu: true
+        },
+        Microcode::StoreAlu,
+        Microcode::Asl,
+        Microcode::StoreAlu
+    );
+    r[Opcode::ASL_ABSOLUTE as usize] = microcode_arr!(
+        Microcode::AbsoluteL,
+        Microcode::AbsoluteH {
+            load_into_alu: true
+        },
+        Microcode::StoreAlu,
+        Microcode::Asl,
+        Microcode::StoreAlu
+    );
+    r[Opcode::ASL_ABSOLUTE_INDEXED_X as usize] = microcode_arr!(
+        Microcode::AbsoluteL,
+        Microcode::AbsoluteIndexedX {
+            oops: false,
+            load_into_alu: true
+        },
+        Microcode::StoreAlu,
+        Microcode::Asl,
+        Microcode::StoreAlu
+    );
+    r[Opcode::LSR_ACCUMULATOR as usize] = microcode_arr!(Microcode::LsrAccumulator);
+    r[Opcode::LSR_ZERO_PAGE as usize] = microcode_arr!(
+        Microcode::ZeroPage {
+            load_into_alu: true,
+            save_alu: false
+        },
+        Microcode::StoreAlu,
+        Microcode::Lsr,
+        Microcode::StoreAlu
+    );
+    r[Opcode::LSR_ZERO_PAGE_X as usize] = microcode_arr!(
+        Microcode::ZeroPage {
+            load_into_alu: false,
+            save_alu: false
+        },
+        Microcode::ZeroPageIndexedX {
+            load_into_alu: true
+        },
+        Microcode::StoreAlu,
+        Microcode::Lsr,
+        Microcode::StoreAlu
+    );
+    r[Opcode::LSR_ABSOLUTE as usize] = microcode_arr!(
+        Microcode::AbsoluteL,
+        Microcode::AbsoluteH {
+            load_into_alu: true
+        },
+        Microcode::StoreAlu,
+        Microcode::Lsr,
+        Microcode::StoreAlu
+    );
+    r[Opcode::LSR_ABSOLUTE_INDEXED_X as usize] = microcode_arr!(
+        Microcode::AbsoluteL,
+        Microcode::AbsoluteIndexedX {
+            oops: false,
+            load_into_alu: true
+        },
+        Microcode::StoreAlu,
+        Microcode::Lsr,
+        Microcode::StoreAlu
+    );
+    r[Opcode::ROL_ACCUMULATOR as usize] = microcode_arr!(Microcode::RolAccumulator);
+    r[Opcode::ROL_ZERO_PAGE as usize] = microcode_arr!(
+        Microcode::ZeroPage {
+            load_into_alu: true,
+            save_alu: false
+        },
+        Microcode::StoreAlu,
+        Microcode::Rol,
+        Microcode::StoreAlu
+    );
+    r[Opcode::ROL_ZERO_PAGE_X as usize] = microcode_arr!(
+        Microcode::ZeroPage {
+            load_into_alu: false,
+            save_alu: false
+        },
+        Microcode::ZeroPageIndexedX {
+            load_into_alu: true
+        },
+        Microcode::StoreAlu,
+        Microcode::Rol,
+        Microcode::StoreAlu
+    );
+    r[Opcode::ROL_ABSOLUTE as usize] = microcode_arr!(
+        Microcode::AbsoluteL,
+        Microcode::AbsoluteH {
+            load_into_alu: true
+        },
+        Microcode::StoreAlu,
+        Microcode::Rol,
+        Microcode::StoreAlu
+    );
+    r[Opcode::ROL_ABSOLUTE_INDEXED_X as usize] = microcode_arr!(
+        Microcode::AbsoluteL,
+        Microcode::AbsoluteIndexedX {
+            oops: false,
+            load_into_alu: true
+        },
+        Microcode::StoreAlu,
+        Microcode::Rol,
+        Microcode::StoreAlu
+    );
+    r[Opcode::ROR_ACCUMULATOR as usize] = microcode_arr!(Microcode::RorAccumulator);
+    r[Opcode::ROR_ZERO_PAGE as usize] = microcode_arr!(
+        Microcode::ZeroPage {
+            load_into_alu: true,
+            save_alu: false
+        },
+        Microcode::StoreAlu,
+        Microcode::Ror,
+        Microcode::StoreAlu
+    );
+    r[Opcode::ROR_ZERO_PAGE_X as usize] = microcode_arr!(
+        Microcode::ZeroPage {
+            load_into_alu: false,
+            save_alu: false
+        },
+        Microcode::ZeroPageIndexedX {
+            load_into_alu: true
+        },
+        Microcode::StoreAlu,
+        Microcode::Ror,
+        Microcode::StoreAlu
+    );
+    r[Opcode::ROR_ABSOLUTE as usize] = microcode_arr!(
+        Microcode::AbsoluteL,
+        Microcode::AbsoluteH {
+            load_into_alu: true
+        },
+        Microcode::StoreAlu,
+        Microcode::Ror,
+        Microcode::StoreAlu
+    );
+    r[Opcode::ROR_ABSOLUTE_INDEXED_X as usize] = microcode_arr!(
+        Microcode::AbsoluteL,
+        Microcode::AbsoluteIndexedX {
+            oops: false,
+            load_into_alu: true
+        },
+        Microcode::StoreAlu,
+        Microcode::Ror,
+        Microcode::StoreAlu
+    );
+    r[Opcode::BCC as usize] = microcode_arr!(Microcode::BranchRelative(BranchTest::IfCarryClear));
+    r[Opcode::BCS as usize] = microcode_arr!(Microcode::BranchRelative(BranchTest::IfCarrySet));
+    r[Opcode::BEQ as usize] = microcode_arr!(Microcode::BranchRelative(BranchTest::IfZeroSet));
+    r[Opcode::BMI as usize] = microcode_arr!(Microcode::BranchRelative(BranchTest::IfNegativeSet));
+    r[Opcode::BNE as usize] = microcode_arr!(Microcode::BranchRelative(BranchTest::IfZeroClear));
+    r[Opcode::BPL as usize] =
+        microcode_arr!(Microcode::BranchRelative(BranchTest::IfNegativeClear));
+    r[Opcode::BVC as usize] =
+        microcode_arr!(Microcode::BranchRelative(BranchTest::IfOverflowClear));
+    r[Opcode::BVS as usize] = microcode_arr!(Microcode::BranchRelative(BranchTest::IfOverflowSet));
+    r[Opcode::PHA as usize] = microcode_arr!(Microcode::Pha);
+    r[Opcode::PLA as usize] = microcode_arr!(Microcode::Pla);
+    r[Opcode::PHP as usize] = microcode_arr!(Microcode::Php);
+    r[Opcode::PLP as usize] = microcode_arr!(Microcode::Plp);
+    r[Opcode::JMP_ABSOLUTE as usize] = microcode_arr!(
+        Microcode::AbsoluteL,
+        Microcode::AbsoluteH {
+            load_into_alu: false
+        },
+        Microcode::JmpAbsolute
+    );
+    r[Opcode::JMP_INDIRECT as usize] = microcode_arr!(
+        Microcode::AbsoluteL,
+        Microcode::AbsoluteH {
+            load_into_alu: false
+        },
+        Microcode::JmpIndirect
+    );
+    r[Opcode::JSR as usize] = microcode_arr!(
+        Microcode::AbsoluteL,
+        Microcode::AbsoluteH {
+            load_into_alu: true
+        },
+        Microcode::Jsr
+    );
+    r[Opcode::RTS as usize] = microcode_arr!(Microcode::Rts);
+    r[Opcode::RTI as usize] = microcode_arr!(Microcode::Rti);
+    r[Opcode::CLC as usize] = microcode_arr!(Microcode::Clc);
+    r[Opcode::SEC as usize] = microcode_arr!(Microcode::Sec);
+    r[Opcode::CLD as usize] = microcode_arr!(Microcode::Cld);
+    r[Opcode::SED as usize] = microcode_arr!(Microcode::Sed);
+    r[Opcode::CLI as usize] = microcode_arr!(Microcode::Cli);
+    r[Opcode::SEI as usize] = microcode_arr!(Microcode::Sei);
+    r[Opcode::CLV as usize] = microcode_arr!(Microcode::Clv);
+    r[Opcode::NOP as usize] = microcode_arr!(Microcode::Nop);
+    r[Opcode::NOP1 as usize] = microcode_arr!(Microcode::Nop);
+    r[Opcode::NOP2 as usize] = microcode_arr!(Microcode::Nop);
+    r[Opcode::NOP3 as usize] = microcode_arr!(Microcode::Nop);
+    r[Opcode::NOP4 as usize] = microcode_arr!(Microcode::Nop);
+    r[Opcode::NOP5 as usize] = microcode_arr!(Microcode::Nop);
+    r[Opcode::NOP6 as usize] = microcode_arr!(Microcode::Nop);
+    r[Opcode::NOP_IMMEDIATE1 as usize] = microcode_arr!(Microcode::SkipImmediate, Microcode::Nop);
+    r[Opcode::NOP_IMMEDIATE2 as usize] = microcode_arr!(Microcode::SkipImmediate, Microcode::Nop);
+    r[Opcode::NOP_IMMEDIATE3 as usize] = microcode_arr!(Microcode::SkipImmediate, Microcode::Nop);
+    r[Opcode::NOP_IMMEDIATE4 as usize] = microcode_arr!(Microcode::SkipImmediate, Microcode::Nop);
+    r[Opcode::NOP_IMMEDIATE5 as usize] = microcode_arr!(Microcode::SkipImmediate, Microcode::Nop);
+    r[Opcode::NOP_ZERO_PAGE1 as usize] = microcode_arr!(Microcode::Nop);
+    r[Opcode::NOP_ZERO_PAGE2 as usize] = microcode_arr!(Microcode::Nop);
+    r[Opcode::NOP_ZERO_PAGE3 as usize] = microcode_arr!(Microcode::Nop);
+    r[Opcode::NOP_ZERO_PAGE_X1 as usize] = microcode_arr!(
+        Microcode::ZeroPage {
+            load_into_alu: false,
+            save_alu: false
+        },
+        Microcode::ZeroPageIndexedX {
+            load_into_alu: false
+        },
+        Microcode::Nop
+    );
+    r[Opcode::NOP_ZERO_PAGE_X2 as usize] = microcode_arr!(
+        Microcode::ZeroPage {
+            load_into_alu: false,
+            save_alu: false
+        },
+        Microcode::ZeroPageIndexedX {
+            load_into_alu: false
+        },
+        Microcode::Nop
+    );
+    r[Opcode::NOP_ZERO_PAGE_X3 as usize] = microcode_arr!(
+        Microcode::ZeroPage {
+            load_into_alu: false,
+            save_alu: false
+        },
+        Microcode::ZeroPageIndexedX {
+            load_into_alu: false
+        },
+        Microcode::Nop
+    );
+    r[Opcode::NOP_ZERO_PAGE_X4 as usize] = microcode_arr!(
+        Microcode::ZeroPage {
+            load_into_alu: false,
+            save_alu: false
+        },
+        Microcode::ZeroPageIndexedX {
+            load_into_alu: false
+        },
+        Microcode::Nop
+    );
+    r[Opcode::NOP_ZERO_PAGE_X5 as usize] = microcode_arr!(
+        Microcode::ZeroPage {
+            load_into_alu: false,
+            save_alu: false
+        },
+        Microcode::ZeroPageIndexedX {
+            load_into_alu: false
+        },
+        Microcode::Nop
+    );
+    r[Opcode::NOP_ZERO_PAGE_X6 as usize] = microcode_arr!(
+        Microcode::ZeroPage {
+            load_into_alu: false,
+            save_alu: false
+        },
+        Microcode::ZeroPageIndexedX {
+            load_into_alu: false
+        },
+        Microcode::Nop
+    );
+    r[Opcode::NOP_ABSOLUTE as usize] = microcode_arr!(
+        Microcode::AbsoluteL,
+        Microcode::AbsoluteH {
+            load_into_alu: false
+        },
+        Microcode::Nop
+    );
+    r[Opcode::NOP_ABSOLUTE_INDEXED_X1 as usize] = microcode_arr!(
+        Microcode::AbsoluteL,
+        Microcode::AbsoluteIndexedX {
+            oops: false,
+            load_into_alu: false
+        },
+        Microcode::Nop
+    );
+    r[Opcode::NOP_ABSOLUTE_INDEXED_X2 as usize] = microcode_arr!(
+        Microcode::AbsoluteL,
+        Microcode::AbsoluteIndexedX {
+            oops: false,
+            load_into_alu: false
+        },
+        Microcode::Nop
+    );
+    r[Opcode::NOP_ABSOLUTE_INDEXED_X3 as usize] = microcode_arr!(
+        Microcode::AbsoluteL,
+        Microcode::AbsoluteIndexedX {
+            oops: false,
+            load_into_alu: false
+        },
+        Microcode::Nop
+    );
+    r[Opcode::NOP_ABSOLUTE_INDEXED_X4 as usize] = microcode_arr!(
+        Microcode::AbsoluteL,
+        Microcode::AbsoluteIndexedX {
+            oops: false,
+            load_into_alu: false
+        },
+        Microcode::Nop
+    );
+    r[Opcode::NOP_ABSOLUTE_INDEXED_X5 as usize] = microcode_arr!(
+        Microcode::AbsoluteL,
+        Microcode::AbsoluteIndexedX {
+            oops: false,
+            load_into_alu: false
+        },
+        Microcode::Nop
+    );
+    r[Opcode::NOP_ABSOLUTE_INDEXED_X6 as usize] = microcode_arr!(
+        Microcode::AbsoluteL,
+        Microcode::AbsoluteIndexedX {
+            oops: false,
+            load_into_alu: false
+        },
+        Microcode::Nop
+    );
+    r[Opcode::KIL1 as usize] = microcode_arr!(Microcode::Kill);
+    r[Opcode::KIL2 as usize] = microcode_arr!(Microcode::Kill);
+    r[Opcode::KIL3 as usize] = microcode_arr!(Microcode::Kill);
+    r[Opcode::KIL4 as usize] = microcode_arr!(Microcode::Kill);
+    r[Opcode::KIL5 as usize] = microcode_arr!(Microcode::Kill);
+    r[Opcode::KIL6 as usize] = microcode_arr!(Microcode::Kill);
+    r[Opcode::KIL7 as usize] = microcode_arr!(Microcode::Kill);
+    r[Opcode::KIL8 as usize] = microcode_arr!(Microcode::Kill);
+    r[Opcode::KIL9 as usize] = microcode_arr!(Microcode::Kill);
+    r[Opcode::KIL10 as usize] = microcode_arr!(Microcode::Kill);
+    r[Opcode::KIL11 as usize] = microcode_arr!(Microcode::Kill);
+    r[Opcode::KIL12 as usize] = microcode_arr!(Microcode::Kill);
+    r[Opcode::BRK as usize] = microcode_arr!(Microcode::Brk);
+    r[Opcode::SBC_IMMEDIATE as usize] = microcode_arr!(Microcode::SbcImmediate);
+    r[Opcode::USBC as usize] = microcode_arr!(Microcode::SbcImmediate);
+    r[Opcode::SBC_ZERO_PAGE as usize] = microcode_arr!(
+        Microcode::ZeroPage {
+            load_into_alu: true,
+            save_alu: false,
+        },
+        Microcode::Sbc
+    );
+    r[Opcode::SBC_ZERO_PAGE_X as usize] = microcode_arr!(
+        Microcode::ZeroPage {
+            load_into_alu: false,
+            save_alu: false,
+        },
+        Microcode::ZeroPageIndexedX {
+            load_into_alu: true
+        },
+        Microcode::Sbc
+    );
+    r[Opcode::SBC_ABSOLUTE as usize] = microcode_arr!(
+        Microcode::AbsoluteL,
+        Microcode::AbsoluteH {
+            load_into_alu: true
+        },
+        Microcode::Sbc
+    );
+    r[Opcode::SBC_ABSOLUTE_INDEXED_X as usize] = microcode_arr!(
+        Microcode::AbsoluteL,
+        Microcode::AbsoluteIndexedX {
+            oops: true,
+            load_into_alu: true
+        },
+        Microcode::Sbc
+    );
+    r[Opcode::SBC_ABSOLUTE_INDEXED_Y as usize] = microcode_arr!(
+        Microcode::AbsoluteL,
+        Microcode::AbsoluteIndexedY {
+            oops: true,
+            load_into_alu: true
+        },
+        Microcode::Sbc
+    );
+    r[Opcode::SBC_INDEXED_INDIRECT as usize] = microcode_arr!(
+        Microcode::ZeroPage {
+            load_into_alu: false,
+            save_alu: false,
+        },
+        Microcode::ZeroPageIndexedX {
+            load_into_alu: false
+        },
+        Microcode::Indexed {
+            load_into_alu: true
+        },
+        Microcode::Nop,
+        Microcode::Sbc
+    );
+    r[Opcode::SBC_INDIRECT_INDEXED as usize] = microcode_arr!(
+        Microcode::ZeroPage {
+            load_into_alu: false,
+            save_alu: false,
+        },
+        Microcode::Indexed {
+            load_into_alu: false
+        },
+        Microcode::AbsoluteIndexedYWithoutHigh {
+            oops: true,
+            load_into_alu: true
+        },
+        Microcode::Sbc
+    );
+    r[Opcode::CMP_IMMEDIATE as usize] = microcode_arr!(Microcode::CmpImmediate);
+    r[Opcode::CMP_ZERO_PAGE as usize] = microcode_arr!(
+        Microcode::ZeroPage {
+            load_into_alu: true,
+            save_alu: false,
+        },
+        Microcode::Cmp
+    );
+    r[Opcode::CMP_ZERO_PAGE_X as usize] = microcode_arr!(
+        Microcode::ZeroPage {
+            load_into_alu: false,
+            save_alu: false,
+        },
+        Microcode::ZeroPageIndexedX {
+            load_into_alu: true
+        },
+        Microcode::Cmp
+    );
+    r[Opcode::CMP_ABSOLUTE as usize] = microcode_arr!(
+        Microcode::AbsoluteL,
+        Microcode::AbsoluteH {
+            load_into_alu: true
+        },
+        Microcode::Cmp
+    );
+    r[Opcode::CMP_ABSOLUTE_INDEXED_X as usize] = microcode_arr!(
+        Microcode::AbsoluteL,
+        Microcode::AbsoluteIndexedX {
+            oops: true,
+            load_into_alu: true
+        },
+        Microcode::Cmp
+    );
+    r[Opcode::CMP_ABSOLUTE_INDEXED_Y as usize] = microcode_arr!(
+        Microcode::AbsoluteL,
+        Microcode::AbsoluteIndexedY {
+            oops: true,
+            load_into_alu: true
+        },
+        Microcode::Cmp
+    );
+    r[Opcode::CMP_INDEXED_INDIRECT as usize] = microcode_arr!(
+        Microcode::ZeroPage {
+            load_into_alu: false,
+            save_alu: false,
+        },
+        Microcode::ZeroPageIndexedX {
+            load_into_alu: false
+        },
+        Microcode::Indexed {
+            load_into_alu: true
+        },
+        Microcode::Nop,
+        Microcode::Cmp
+    );
+    r[Opcode::CMP_INDIRECT_INDEXED as usize] = microcode_arr!(
+        Microcode::ZeroPage {
+            load_into_alu: false,
+            save_alu: false,
+        },
+        Microcode::Indexed {
+            load_into_alu: false
+        },
+        Microcode::AbsoluteIndexedYWithoutHigh {
+            oops: true,
+            load_into_alu: true
+        },
+        Microcode::Cmp
+    );
+    r[Opcode::CPX_IMMEDIATE as usize] = microcode_arr!(Microcode::CpxImmediate);
+    r[Opcode::CPX_ZERO_PAGE as usize] = microcode_arr!(
+        Microcode::ZeroPage {
+            load_into_alu: true,
+            save_alu: false,
+        },
+        Microcode::Cpx
+    );
+    r[Opcode::CPX_ABSOLUTE as usize] = microcode_arr!(
+        Microcode::AbsoluteL,
+        Microcode::AbsoluteH {
+            load_into_alu: true
+        },
+        Microcode::Cpx
+    );
+    r[Opcode::CPY_IMMEDIATE as usize] = microcode_arr!(Microcode::CpyImmediate);
+    r[Opcode::CPY_ZERO_PAGE as usize] = microcode_arr!(
+        Microcode::ZeroPage {
+            load_into_alu: true,
+            save_alu: false,
+        },
+        Microcode::Cpy
+    );
+    r[Opcode::CPY_ABSOLUTE as usize] = microcode_arr!(
+        Microcode::AbsoluteL,
+        Microcode::AbsoluteH {
+            load_into_alu: true
+        },
+        Microcode::Cpy
+    );
+    r[Opcode::TAX as usize] = microcode_arr!(Microcode::Tax);
+    r[Opcode::TXA as usize] = microcode_arr!(Microcode::Txa);
+    r[Opcode::TAY as usize] = microcode_arr!(Microcode::Tay);
+    r[Opcode::TYA as usize] = microcode_arr!(Microcode::Tya);
+    r[Opcode::TSX as usize] = microcode_arr!(Microcode::Tsx);
+    r[Opcode::TXS as usize] = microcode_arr!(Microcode::Txs);
+    r[Opcode::ORA_IMMEDIATE as usize] = microcode_arr!(Microcode::OraImmediate);
+    r[Opcode::ORA_ZERO_PAGE as usize] = microcode_arr!(
+        Microcode::ZeroPage {
+            load_into_alu: true,
+            save_alu: false,
+        },
+        Microcode::Ora
+    );
+    r[Opcode::ORA_ZERO_PAGE_X as usize] = microcode_arr!(
+        Microcode::ZeroPage {
+            load_into_alu: false,
+            save_alu: false,
+        },
+        Microcode::ZeroPageIndexedX {
+            load_into_alu: true
+        },
+        Microcode::Ora
+    );
+    r[Opcode::ORA_ABSOLUTE as usize] = microcode_arr!(
+        Microcode::AbsoluteL,
+        Microcode::AbsoluteH {
+            load_into_alu: true
+        },
+        Microcode::Ora
+    );
+    r[Opcode::ORA_ABSOLUTE_INDEXED_X as usize] = microcode_arr!(
+        Microcode::AbsoluteL,
+        Microcode::AbsoluteIndexedX {
+            oops: true,
+            load_into_alu: true
+        },
+        Microcode::Ora
+    );
+    r[Opcode::ORA_ABSOLUTE_INDEXED_Y as usize] = microcode_arr!(
+        Microcode::AbsoluteL,
+        Microcode::AbsoluteIndexedY {
+            oops: true,
+            load_into_alu: true
+        },
+        Microcode::Ora
+    );
+    r[Opcode::ORA_INDEXED_INDIRECT as usize] = microcode_arr!(
+        Microcode::ZeroPage {
+            load_into_alu: false,
+            save_alu: false,
+        },
+        Microcode::ZeroPageIndexedX {
+            load_into_alu: false
+        },
+        Microcode::Indexed {
+            load_into_alu: true
+        },
+        Microcode::Nop,
+        Microcode::Ora
+    );
+    r[Opcode::ORA_INDIRECT_INDEXED as usize] = microcode_arr!(
+        Microcode::ZeroPage {
+            load_into_alu: false,
+            save_alu: false,
+        },
+        Microcode::Indexed {
+            load_into_alu: false
+        },
+        Microcode::AbsoluteIndexedYWithoutHigh {
+            oops: true,
+            load_into_alu: true
+        },
+        Microcode::Ora
+    );
+    r[Opcode::EOR_IMMEDIATE as usize] = microcode_arr!(Microcode::EorImmediate);
+    r[Opcode::EOR_ZERO_PAGE as usize] = microcode_arr!(
+        Microcode::ZeroPage {
+            load_into_alu: true,
+            save_alu: false,
+        },
+        Microcode::Eor
+    );
+    r[Opcode::EOR_ZERO_PAGE_X as usize] = microcode_arr!(
+        Microcode::ZeroPage {
+            load_into_alu: false,
+            save_alu: false,
+        },
+        Microcode::ZeroPageIndexedX {
+            load_into_alu: true
+        },
+        Microcode::Eor
+    );
+    r[Opcode::EOR_ABSOLUTE as usize] = microcode_arr!(
+        Microcode::AbsoluteL,
+        Microcode::AbsoluteH {
+            load_into_alu: true
+        },
+        Microcode::Eor
+    );
+    r[Opcode::EOR_ABSOLUTE_INDEXED_X as usize] = microcode_arr!(
+        Microcode::AbsoluteL,
+        Microcode::AbsoluteIndexedX {
+            oops: true,
+            load_into_alu: true
+        },
+        Microcode::Eor
+    );
+    r[Opcode::EOR_ABSOLUTE_INDEXED_Y as usize] = microcode_arr!(
+        Microcode::AbsoluteL,
+        Microcode::AbsoluteIndexedY {
+            oops: true,
+            load_into_alu: true,
+        },
+        Microcode::Eor
+    );
+    r[Opcode::EOR_INDEXED_INDIRECT as usize] = microcode_arr!(
+        Microcode::ZeroPage {
+            load_into_alu: false,
+            save_alu: false,
+        },
+        Microcode::ZeroPageIndexedX {
+            load_into_alu: false
+        },
+        Microcode::Indexed {
+            load_into_alu: true
+        },
+        Microcode::Nop,
+        Microcode::Eor
+    );
+    r[Opcode::EOR_INDIRECT_INDEXED as usize] = microcode_arr!(
+        Microcode::ZeroPage {
+            load_into_alu: false,
+            save_alu: false,
+        },
+        Microcode::Indexed {
+            load_into_alu: false
+        },
+        Microcode::AbsoluteIndexedYWithoutHigh {
+            oops: true,
+            load_into_alu: true
+        },
+        Microcode::Eor
+    );
+    r[Opcode::ALR as usize] = microcode_arr!(Microcode::AlrImmediate);
+    r[Opcode::ANC as usize] = microcode_arr!(Microcode::AncImmediate);
+    r[Opcode::ARR as usize] = microcode_arr!(Microcode::ArrImmediate);
+    r[Opcode::AXS as usize] = microcode_arr!(Microcode::AxsImmediate);
+    r[Opcode::LAX_ZERO_PAGE as usize] = microcode_arr!(
+        Microcode::ZeroPage {
+            load_into_alu: true,
+            save_alu: false,
+        },
+        Microcode::Lax
+    );
+    r[Opcode::LAX_ZERO_PAGE_Y as usize] = microcode_arr!(
+        Microcode::ZeroPage {
+            load_into_alu: false,
+            save_alu: false,
+        },
+        Microcode::ZeroPageIndexedY {
+            load_into_alu: true
+        },
+        Microcode::Lax
+    );
+    r[Opcode::LAX_ABSOLUTE as usize] = microcode_arr!(
+        Microcode::AbsoluteL,
+        Microcode::AbsoluteH {
+            load_into_alu: true
+        },
+        Microcode::Lax
+    );
+    r[Opcode::LAX_ABSOLUTE_INDEXED_Y as usize] = microcode_arr!(
+        Microcode::AbsoluteL,
+        Microcode::AbsoluteIndexedY {
+            oops: true,
+            load_into_alu: true
+        },
+        Microcode::Lax
+    );
+    r[Opcode::LAX_INDEXED_INDIRECT as usize] = microcode_arr!(
+        Microcode::ZeroPage {
+            load_into_alu: false,
+            save_alu: false,
+        },
+        Microcode::ZeroPageIndexedX {
+            load_into_alu: false
+        },
+        Microcode::Indexed {
+            load_into_alu: true
+        },
+        Microcode::Nop,
+        Microcode::Lax
+    );
+    r[Opcode::LAX_INDIRECT_INDEXED as usize] = microcode_arr!(
+        Microcode::ZeroPage {
+            load_into_alu: false,
+            save_alu: false,
+        },
+        Microcode::Indexed {
+            load_into_alu: false
+        },
+        Microcode::AbsoluteIndexedYWithoutHigh {
+            oops: true,
+            load_into_alu: true
+        },
+        Microcode::Lax
+    );
+    r[Opcode::SAX_ZERO_PAGE as usize] = microcode_arr!(
+        Microcode::Sax,
+        Microcode::ZeroPage {
+            load_into_alu: false,
+            save_alu: true
+        }
+    );
+    r[Opcode::SAX_ZERO_PAGE_Y as usize] = microcode_arr!(Microcode::Sax);
+    r[Opcode::SAX_ABSOLUTE as usize] = microcode_arr!(Microcode::Sax);
+    r[Opcode::SAX_INDEXED_INDIRECT as usize] = microcode_arr!(Microcode::Sax);
+    r[Opcode::DCP_ZERO_PAGE as usize] = microcode_arr!(Microcode::Dcp);
+    r[Opcode::DCP_ZERO_PAGE_X as usize] = microcode_arr!(
+        Microcode::ZeroPage {
+            load_into_alu: false,
+            save_alu: false,
+        },
+        Microcode::ZeroPageIndexedX {
+            load_into_alu: true
+        },
+        Microcode::Dcp
+    );
+    r[Opcode::DCP_ABSOLUTE as usize] = microcode_arr!(
+        Microcode::AbsoluteL,
+        Microcode::AbsoluteH {
+            load_into_alu: true
+        },
+        Microcode::Dcp
+    );
+    r[Opcode::DCP_ABSOLUTE_INDEXED_X as usize] = microcode_arr!(
+        Microcode::AbsoluteL,
+        Microcode::AbsoluteIndexedX {
+            oops: true,
+            load_into_alu: true
+        },
+        Microcode::Dcp
+    );
+    r[Opcode::DCP_ABSOLUTE_INDEXED_Y as usize] = microcode_arr!(
+        Microcode::AbsoluteL,
+        Microcode::AbsoluteIndexedY {
+            oops: true,
+            load_into_alu: true
+        },
+        Microcode::Dcp
+    );
+    r[Opcode::DCP_INDEXED_INDIRECT as usize] = microcode_arr!(
+        Microcode::ZeroPage {
+            load_into_alu: false,
+            save_alu: false,
+        },
+        Microcode::ZeroPageIndexedX {
+            load_into_alu: false
+        },
+        Microcode::Indexed {
+            load_into_alu: true
+        },
+        Microcode::Nop,
+        Microcode::Dcp
+    );
+    r[Opcode::DCP_INDIRECT_INDEXED as usize] = microcode_arr!(
+        Microcode::ZeroPage {
+            load_into_alu: false,
+            save_alu: false,
+        },
+        Microcode::Indexed {
+            load_into_alu: false
+        },
+        Microcode::AbsoluteIndexedYWithoutHigh {
+            oops: true,
+            load_into_alu: true
+        },
+        Microcode::Dcp
+    );
+    r[Opcode::ISC_ZERO_PAGE as usize] = microcode_arr!(Microcode::Isc);
+    r[Opcode::ISC_ZERO_PAGE_X as usize] = microcode_arr!(
+        Microcode::ZeroPage {
+            load_into_alu: false,
+            save_alu: false,
+        },
+        Microcode::ZeroPageIndexedX {
+            load_into_alu: true
+        },
+        Microcode::Isc
+    );
+    r[Opcode::ISC_ABSOLUTE as usize] = microcode_arr!(
+        Microcode::AbsoluteL,
+        Microcode::AbsoluteH {
+            load_into_alu: true
+        },
+        Microcode::Isc
+    );
+    r[Opcode::ISC_ABSOLUTE_INDEXED_X as usize] = microcode_arr!(
+        Microcode::AbsoluteL,
+        Microcode::AbsoluteIndexedX {
+            oops: true,
+            load_into_alu: true
+        },
+        Microcode::Isc
+    );
+    r[Opcode::ISC_ABSOLUTE_INDEXED_Y as usize] = microcode_arr!(
+        Microcode::AbsoluteL,
+        Microcode::AbsoluteIndexedY {
+            oops: true,
+            load_into_alu: true
+        },
+        Microcode::Isc
+    );
+    r[Opcode::ISC_INDEXED_INDIRECT as usize] = microcode_arr!(
+        Microcode::ZeroPage {
+            load_into_alu: false,
+            save_alu: false,
+        },
+        Microcode::ZeroPageIndexedX {
+            load_into_alu: false
+        },
+        Microcode::Indexed {
+            load_into_alu: true
+        },
+        Microcode::Nop,
+        Microcode::Isc
+    );
+    r[Opcode::ISC_INDIRECT_INDEXED as usize] = microcode_arr!(
+        Microcode::ZeroPage {
+            load_into_alu: false,
+            save_alu: false,
+        },
+        Microcode::Indexed {
+            load_into_alu: false
+        },
+        Microcode::AbsoluteIndexedYWithoutHigh {
+            oops: true,
+            load_into_alu: true
+        },
+        Microcode::Isc
+    );
+    r[Opcode::RRA_ZERO_PAGE as usize] =
+        microcode_arr!(Microcode::StoreAlu, Microcode::Rra, Microcode::StoreAlu);
+    r[Opcode::RRA_ZERO_PAGE_X as usize] = microcode_arr!(
+        Microcode::ZeroPage {
+            load_into_alu: false,
+            save_alu: false,
+        },
+        Microcode::ZeroPageIndexedX {
+            load_into_alu: true
+        },
+        Microcode::StoreAlu,
+        Microcode::Rra,
+        Microcode::StoreAlu
+    );
+    r[Opcode::RRA_ABSOLUTE as usize] = microcode_arr!(
+        Microcode::AbsoluteL,
+        Microcode::AbsoluteH {
+            load_into_alu: true
+        },
+        Microcode::StoreAlu,
+        Microcode::Rra,
+        Microcode::StoreAlu
+    );
+    r[Opcode::RRA_ABSOLUTE_INDEXED_X as usize] = microcode_arr!(
+        Microcode::AbsoluteL,
+        Microcode::AbsoluteIndexedX {
+            oops: false,
+            load_into_alu: true
+        },
+        Microcode::StoreAlu,
+        Microcode::Rra,
+        Microcode::StoreAlu
+    );
+    r[Opcode::RRA_ABSOLUTE_INDEXED_Y as usize] = microcode_arr!(
+        Microcode::AbsoluteL,
+        Microcode::AbsoluteIndexedY {
+            oops: false,
+            load_into_alu: true
+        },
+        Microcode::StoreAlu,
+        Microcode::Rra,
+        Microcode::StoreAlu
+    );
+    r[Opcode::RRA_INDEXED_INDIRECT as usize] = microcode_arr!(
+        Microcode::ZeroPage {
+            load_into_alu: false,
+            save_alu: false,
+        },
+        Microcode::ZeroPageIndexedX {
+            load_into_alu: false
+        },
+        Microcode::Indexed {
+            load_into_alu: true
+        },
+        Microcode::Nop,
+        Microcode::StoreAlu,
+        Microcode::Rra,
+        Microcode::StoreAlu
+    );
+    r[Opcode::RRA_INDIRECT_INDEXED as usize] = microcode_arr!(
+        Microcode::ZeroPage {
+            load_into_alu: false,
+            save_alu: false,
+        },
+        Microcode::Indexed {
+            load_into_alu: false
+        },
+        Microcode::AbsoluteIndexedYWithoutHigh {
+            oops: false,
+            load_into_alu: true
+        },
+        Microcode::StoreAlu,
+        Microcode::Rra,
+        Microcode::StoreAlu
+    );
+    r[Opcode::SLO_ZERO_PAGE as usize] =
+        microcode_arr!(Microcode::StoreAlu, Microcode::Asl, Microcode::StoreAlu);
+    r[Opcode::SLO_ZERO_PAGE_X as usize] = microcode_arr!(
+        Microcode::ZeroPage {
+            load_into_alu: false,
+            save_alu: false,
+        },
+        Microcode::ZeroPageIndexedX {
+            load_into_alu: true
+        },
+        Microcode::StoreAlu,
+        Microcode::Asl,
+        Microcode::StoreAlu
+    );
+    r[Opcode::SLO_ABSOLUTE as usize] = microcode_arr!(
+        Microcode::AbsoluteL,
+        Microcode::AbsoluteH {
+            load_into_alu: true
+        },
+        Microcode::StoreAlu,
+        Microcode::Asl,
+        Microcode::StoreAlu
+    );
+    r[Opcode::SLO_ABSOLUTE_INDEXED_X as usize] = microcode_arr!(
+        Microcode::AbsoluteL,
+        Microcode::AbsoluteIndexedX {
+            oops: false,
+            load_into_alu: true
+        },
+        Microcode::StoreAlu,
+        Microcode::Asl,
+        Microcode::StoreAlu
+    );
+    r[Opcode::SLO_ABSOLUTE_INDEXED_Y as usize] = microcode_arr!(
+        Microcode::AbsoluteL,
+        Microcode::AbsoluteIndexedY {
+            oops: false,
+            load_into_alu: true
+        },
+        Microcode::StoreAlu,
+        Microcode::Asl,
+        Microcode::StoreAlu
+    );
+    r[Opcode::SLO_INDEXED_INDIRECT as usize] = microcode_arr!(
+        Microcode::ZeroPage {
+            load_into_alu: false,
+            save_alu: false,
+        },
+        Microcode::ZeroPageIndexedX {
+            load_into_alu: false
+        },
+        Microcode::Indexed {
+            load_into_alu: true
+        },
+        Microcode::Nop,
+        Microcode::StoreAlu,
+        Microcode::Asl,
+        Microcode::StoreAlu
+    );
+    r[Opcode::SLO_INDIRECT_INDEXED as usize] = microcode_arr!(
+        Microcode::ZeroPage {
+            load_into_alu: false,
+            save_alu: false,
+        },
+        Microcode::Indexed {
+            load_into_alu: false
+        },
+        Microcode::AbsoluteIndexedYWithoutHigh {
+            oops: false,
+            load_into_alu: true
+        },
+        Microcode::StoreAlu,
+        Microcode::Asl,
+        Microcode::StoreAlu
+    );
+    r[Opcode::SRE_ZERO_PAGE as usize] =
+        microcode_arr!(Microcode::StoreAlu, Microcode::Lsr, Microcode::StoreAlu);
+    r[Opcode::SRE_ZERO_PAGE_X as usize] = microcode_arr!(
+        Microcode::ZeroPage {
+            load_into_alu: false,
+            save_alu: false,
+        },
+        Microcode::ZeroPageIndexedX {
+            load_into_alu: true
+        },
+        Microcode::StoreAlu,
+        Microcode::Lsr,
+        Microcode::StoreAlu
+    );
+    r[Opcode::SRE_ABSOLUTE as usize] = microcode_arr!(
+        Microcode::AbsoluteL,
+        Microcode::AbsoluteH {
+            load_into_alu: true
+        },
+        Microcode::StoreAlu,
+        Microcode::Lsr,
+        Microcode::StoreAlu
+    );
+    r[Opcode::SRE_ABSOLUTE_INDEXED_X as usize] = microcode_arr!(
+        Microcode::AbsoluteL,
+        Microcode::AbsoluteIndexedX {
+            oops: false,
+            load_into_alu: true
+        },
+        Microcode::StoreAlu,
+        Microcode::Lsr,
+        Microcode::StoreAlu
+    );
+    r[Opcode::SRE_ABSOLUTE_INDEXED_Y as usize] = microcode_arr!(
+        Microcode::AbsoluteL,
+        Microcode::AbsoluteIndexedY {
+            oops: false,
+            load_into_alu: true
+        },
+        Microcode::StoreAlu,
+        Microcode::Lsr,
+        Microcode::StoreAlu
+    );
+    r[Opcode::SRE_INDEXED_INDIRECT as usize] = microcode_arr!(
+        Microcode::ZeroPage {
+            load_into_alu: false,
+            save_alu: false,
+        },
+        Microcode::ZeroPageIndexedX {
+            load_into_alu: false
+        },
+        Microcode::Indexed {
+            load_into_alu: true
+        },
+        Microcode::Nop,
+        Microcode::StoreAlu,
+        Microcode::Lsr,
+        Microcode::StoreAlu
+    );
+    r[Opcode::SRE_INDIRECT_INDEXED as usize] = microcode_arr!(
+        Microcode::ZeroPage {
+            load_into_alu: false,
+            save_alu: false,
+        },
+        Microcode::Indexed {
+            load_into_alu: false
+        },
+        Microcode::AbsoluteIndexedYWithoutHigh {
+            oops: false,
+            load_into_alu: true
+        },
+        Microcode::StoreAlu,
+        Microcode::Lsr,
+        Microcode::StoreAlu
+    );
+    r[Opcode::SHX_ABSOLUTE_INDEXED_Y as usize] = microcode_arr!(
+        Microcode::AbsoluteL,
+        Microcode::AbsoluteIndexedY {
+            oops: false,
+            load_into_alu: true
+        },
+        Microcode::Shx
+    );
+    r[Opcode::SHY_ABSOLUTE_INDEXED_X as usize] = microcode_arr!(
+        Microcode::AbsoluteL,
+        Microcode::AbsoluteIndexedX {
+            oops: false,
+            load_into_alu: true
+        },
+        Microcode::Shy
+    );
+    r[Opcode::TAS_ABSOLUTE_INDEXED_Y as usize] = microcode_arr!(
+        Microcode::AbsoluteL,
+        Microcode::AbsoluteIndexedY {
+            oops: false,
+            load_into_alu: true
+        },
+        Microcode::Tas
+    );
+    r
+}
+
+const OPCODE_TABLE: [ArrayVec<[Microcode; 7]>; 256] = build_opcode_table();
 
 /// Each Microcode instruction executed by the CPU in a single cycle
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
 pub enum Microcode {
     /// Fetch and decode next op code
     FetchAndDecode,
@@ -32,6 +1668,7 @@ pub enum Microcode {
     /// Take a byte from instruction data stream, set cpu address_bus field by read from memory use zero page addressing
     ZeroPage {
         load_into_alu: bool,
+        save_alu: bool,
     },
     /// Impl ZeroPageIndexedX addressing, work after ZeroPage, set abl = (abl + x) % 256, set abh = 00
     ZeroPageIndexedX {
@@ -184,6 +1821,7 @@ pub enum Microcode {
 
     /// Cpu will trapped infinitely if execute this microcode, used to impl illegal instructions that will lock up the CPU
     /// Only reset can restore the CPU from this state
+    #[default]
     Kill,
 }
 
@@ -524,7 +2162,10 @@ impl Microcode {
             Microcode::LoadImmediateA => Self::load_immediate_a(cpu),
             Microcode::LoadImmediateX => Self::load_immediate_x(cpu),
             Microcode::LoadImmediateY => Self::load_immediate_y(cpu),
-            Microcode::ZeroPage { load_into_alu } => Self::zero_page(cpu, load_into_alu),
+            Microcode::ZeroPage {
+                load_into_alu,
+                save_alu,
+            } => Self::zero_page(cpu, load_into_alu, save_alu),
             Microcode::ZeroPageIndexedX { load_into_alu } => {
                 Self::zero_page_indexed_x(cpu, load_into_alu)
             }
@@ -632,894 +2273,7 @@ impl Microcode {
     fn fetch_and_decode<M: Mcu>(cpu: &mut Cpu2<M>) {
         let opcode = cpu.inc_read_byte();
         cpu.opcode = opcode;
-        match opcode {
-            Opcode::AND_IMMEDIATE => {
-                cpu.push_microcode(Microcode::AndImmediate);
-            }
-            Opcode::AND_ZERO_PAGE => {
-                cpu.push_microcode(Microcode::ZeroPage {
-                    load_into_alu: true,
-                });
-                cpu.push_microcode(Microcode::And);
-            }
-            Opcode::AND_ZERO_PAGE_X => {
-                zero_page_indexed_x_addressing(cpu, true);
-                cpu.push_microcode(Microcode::And);
-            }
-            Opcode::AND_ABSOLUTE => {
-                absolute_addressing(cpu, true);
-                cpu.push_microcode(Microcode::And);
-            }
-            Opcode::AND_ABSOLUTE_INDEXED_X => {
-                absolute_indexed_x_addressing(cpu, true, true);
-                cpu.push_microcode(Microcode::And);
-            }
-            Opcode::AND_ABSOLUTE_INDEXED_Y => {
-                absolute_indexed_y_addressing(cpu, true, true);
-                cpu.push_microcode(Microcode::And);
-            }
-            Opcode::AND_INDEXED_INDIRECT => {
-                indexed_indirect_addressing(cpu, true);
-                cpu.push_microcode(Microcode::And);
-            }
-            Opcode::AND_INDIRECT_INDEXED => {
-                indirect_indexed_addressing(cpu, true, true);
-                cpu.push_microcode(Microcode::And);
-            }
-
-            Opcode::LDA_IMMEDIATE => {
-                cpu.push_microcode(Microcode::LoadImmediateA);
-            }
-            Opcode::LDA_ZERO_PAGE => {
-                cpu.push_microcode(Microcode::ZeroPage {
-                    load_into_alu: false,
-                });
-                cpu.push_microcode(Microcode::LoadA);
-            }
-            Opcode::LDA_ZERO_PAGE_X => {
-                zero_page_indexed_x_addressing(cpu, false);
-                cpu.push_microcode(Microcode::LoadA);
-            }
-            Opcode::LDA_ABSOLUTE => {
-                absolute_addressing(cpu, false);
-                cpu.push_microcode(Microcode::LoadA);
-            }
-            Opcode::LDA_ABSOLUTE_INDEXED_X => {
-                absolute_indexed_x_addressing(cpu, true, false);
-                cpu.push_microcode(Microcode::LoadA);
-            }
-            Opcode::LDA_ABSOLUTE_INDEXED_Y => {
-                absolute_indexed_y_addressing(cpu, true, false);
-                cpu.push_microcode(Microcode::LoadA);
-            }
-            Opcode::LDA_INDIRECT_INDEXED => {
-                indexed_indirect_addressing(cpu, false);
-                cpu.push_microcode(Microcode::LoadA);
-            }
-            Opcode::LDA_INDIRECT_INDEXED_Y => {
-                indirect_indexed_addressing(cpu, true, false);
-                cpu.push_microcode(Microcode::LoadA);
-            }
-
-            Opcode::LDX_IMMEDIATE => {
-                cpu.push_microcode(Microcode::LoadImmediateX);
-            }
-            Opcode::LDX_ZERO_PAGE => {
-                cpu.push_microcode(Microcode::ZeroPage {
-                    load_into_alu: false,
-                });
-                cpu.push_microcode(Microcode::LoadX);
-            }
-            Opcode::LDX_ZERO_PAGE_Y => {
-                zero_page_indexed_y_addressing(cpu, false);
-                cpu.push_microcode(Microcode::LoadX);
-            }
-            Opcode::LDX_ABSOLUTE => {
-                absolute_addressing(cpu, false);
-                cpu.push_microcode(Microcode::LoadX);
-            }
-            Opcode::LDX_ABSOLUTE_INDEXED_Y => {
-                absolute_indexed_y_addressing(cpu, true, false);
-                cpu.push_microcode(Microcode::LoadX);
-            }
-
-            Opcode::LDY_IMMEDIATE => {
-                cpu.push_microcode(Microcode::LoadImmediateY);
-            }
-            Opcode::LDY_ZERO_PAGE => {
-                cpu.push_microcode(Microcode::ZeroPage {
-                    load_into_alu: false,
-                });
-                cpu.push_microcode(Microcode::LoadY);
-            }
-            Opcode::LDY_ZERO_PAGE_X => {
-                zero_page_indexed_x_addressing(cpu, false);
-                cpu.push_microcode(Microcode::LoadY);
-            }
-            Opcode::LDY_ABSOLUTE => {
-                absolute_addressing(cpu, false);
-                cpu.push_microcode(Microcode::LoadY);
-            }
-            Opcode::LDY_ABSOLUTE_INDEXED_X => {
-                absolute_indexed_x_addressing(cpu, true, false);
-                cpu.push_microcode(Microcode::LoadY);
-            }
-
-            Opcode::STA_ZERO_PAGE => {
-                cpu.push_microcode(Microcode::ZeroPage {
-                    load_into_alu: false,
-                });
-                cpu.push_microcode(Microcode::StoreA);
-            }
-            Opcode::STA_ZERO_PAGE_X => {
-                zero_page_indexed_x_addressing(cpu, false);
-                cpu.push_microcode(Microcode::StoreA);
-            }
-            Opcode::STA_ABSOLUTE => {
-                absolute_addressing(cpu, false);
-                cpu.push_microcode(Microcode::StoreA);
-            }
-            Opcode::STA_ABSOLUTE_INDEXED_X => {
-                absolute_indexed_x_addressing(cpu, false, false);
-                cpu.push_microcode(Microcode::StoreA);
-            }
-            Opcode::STA_ABSOLUTE_INDEXED_Y => {
-                absolute_indexed_y_addressing(cpu, false, false);
-                cpu.push_microcode(Microcode::StoreA);
-            }
-            Opcode::STA_INDEXED_INDIRECT => {
-                indexed_indirect_addressing(cpu, false);
-                cpu.push_microcode(Microcode::StoreA);
-            }
-            Opcode::STA_INDIRECT_INDEXED_Y => {
-                indirect_indexed_addressing(cpu, false, false);
-                cpu.push_microcode(Microcode::StoreA);
-            }
-
-            Opcode::STX_ZERO_PAGE => {
-                cpu.push_microcode(Microcode::ZeroPage {
-                    load_into_alu: false,
-                });
-                cpu.push_microcode(Microcode::StoreX);
-            }
-            Opcode::STX_ZERO_PAGE_Y => {
-                zero_page_indexed_y_addressing(cpu, false);
-                cpu.push_microcode(Microcode::StoreX);
-            }
-            Opcode::STX_ABSOLUTE => {
-                absolute_addressing(cpu, false);
-                cpu.push_microcode(Microcode::StoreX);
-            }
-
-            Opcode::STY_ZERO_PAGE => {
-                cpu.push_microcode(Microcode::ZeroPage {
-                    load_into_alu: false,
-                });
-                cpu.push_microcode(Microcode::StoreY);
-            }
-            Opcode::STY_ZERO_PAGE_X => {
-                zero_page_indexed_x_addressing(cpu, false);
-                cpu.push_microcode(Microcode::StoreY);
-            }
-            Opcode::STY_ABSOLUTE => {
-                absolute_addressing(cpu, false);
-                cpu.push_microcode(Microcode::StoreY);
-            }
-
-            Opcode::BIT_ZERO_PAGE => {
-                cpu.push_microcode(Microcode::ZeroPage {
-                    load_into_alu: true,
-                });
-                cpu.push_microcode(Microcode::Bit);
-            }
-            Opcode::BIT_ABSOLUTE => {
-                absolute_addressing(cpu, true);
-                cpu.push_microcode(Microcode::Bit);
-            }
-
-            Opcode::ADC_IMMEDIATE => {
-                cpu.push_microcode(Microcode::AdcImmediate);
-            }
-            Opcode::ADC_ZERO_PAGE => {
-                cpu.push_microcode(Microcode::ZeroPage {
-                    load_into_alu: true,
-                });
-                cpu.push_microcode(Microcode::Adc);
-            }
-            Opcode::ADC_ZERO_PAGE_X => {
-                zero_page_indexed_x_addressing(cpu, true);
-                cpu.push_microcode(Microcode::Adc);
-            }
-            Opcode::ADC_ABSOLUTE => {
-                absolute_addressing(cpu, true);
-                cpu.push_microcode(Microcode::Adc);
-            }
-            Opcode::ADC_ABSOLUTE_INDEXED_X => {
-                absolute_indexed_x_addressing(cpu, true, true);
-                cpu.push_microcode(Microcode::Adc);
-            }
-            Opcode::ADC_ABSOLUTE_INDEXED_Y => {
-                absolute_indexed_y_addressing(cpu, true, true);
-                cpu.push_microcode(Microcode::Adc);
-            }
-            Opcode::ADC_INDEXED_INDIRECT => {
-                indexed_indirect_addressing(cpu, true);
-                cpu.push_microcode(Microcode::Adc);
-            }
-            Opcode::ADC_INDIRECT_INDEXED => {
-                indirect_indexed_addressing(cpu, true, true);
-                cpu.push_microcode(Microcode::Adc);
-            }
-
-            Opcode::ASL_ACCUMULATOR => {
-                cpu.push_microcode(Microcode::AslAccumulator);
-            }
-            Opcode::ASL_ZERO_PAGE => {
-                cpu.push_microcode(Microcode::ZeroPage {
-                    load_into_alu: true,
-                });
-                cpu.push_microcode(Microcode::StoreAlu);
-                cpu.push_microcode(Microcode::Asl);
-                cpu.push_microcode(Microcode::StoreAlu);
-            }
-            Opcode::ASL_ZERO_PAGE_X => {
-                zero_page_indexed_x_addressing(cpu, true);
-                cpu.push_microcode(Microcode::StoreAlu);
-                cpu.push_microcode(Microcode::Asl);
-                cpu.push_microcode(Microcode::StoreAlu);
-            }
-            Opcode::ASL_ABSOLUTE => {
-                absolute_addressing(cpu, true);
-                cpu.push_microcode(Microcode::StoreAlu);
-                cpu.push_microcode(Microcode::Asl);
-                cpu.push_microcode(Microcode::StoreAlu);
-            }
-            Opcode::ASL_ABSOLUTE_INDEXED_X => {
-                absolute_indexed_x_addressing(cpu, false, true);
-                cpu.push_microcode(Microcode::StoreAlu);
-                cpu.push_microcode(Microcode::Asl);
-                cpu.push_microcode(Microcode::StoreAlu);
-            }
-
-            Opcode::LSR_ACCUMULATOR => {
-                cpu.push_microcode(Microcode::LsrAccumulator);
-            }
-            Opcode::LSR_ZERO_PAGE => {
-                cpu.push_microcode(Microcode::ZeroPage {
-                    load_into_alu: true,
-                });
-                cpu.push_microcode(Microcode::StoreAlu);
-                cpu.push_microcode(Microcode::Lsr);
-                cpu.push_microcode(Microcode::StoreAlu);
-            }
-            Opcode::LSR_ZERO_PAGE_X => {
-                zero_page_indexed_x_addressing(cpu, true);
-                cpu.push_microcode(Microcode::StoreAlu);
-                cpu.push_microcode(Microcode::Lsr);
-                cpu.push_microcode(Microcode::StoreAlu);
-            }
-            Opcode::LSR_ABSOLUTE => {
-                absolute_addressing(cpu, true);
-                cpu.push_microcode(Microcode::StoreAlu);
-                cpu.push_microcode(Microcode::Lsr);
-                cpu.push_microcode(Microcode::StoreAlu);
-            }
-            Opcode::LSR_ABSOLUTE_INDEXED_X => {
-                absolute_indexed_x_addressing(cpu, false, true);
-                cpu.push_microcode(Microcode::StoreAlu);
-                cpu.push_microcode(Microcode::Lsr);
-                cpu.push_microcode(Microcode::StoreAlu);
-            }
-
-            Opcode::ROL_ACCUMULATOR => {
-                cpu.push_microcode(Microcode::RolAccumulator);
-            }
-            Opcode::ROL_ZERO_PAGE => {
-                cpu.push_microcode(Microcode::ZeroPage {
-                    load_into_alu: true,
-                });
-                cpu.push_microcode(Microcode::StoreAlu);
-                cpu.push_microcode(Microcode::Rol);
-                cpu.push_microcode(Microcode::StoreAlu);
-            }
-            Opcode::ROL_ZERO_PAGE_X => {
-                zero_page_indexed_x_addressing(cpu, true);
-                cpu.push_microcode(Microcode::StoreAlu);
-                cpu.push_microcode(Microcode::Rol);
-                cpu.push_microcode(Microcode::StoreAlu);
-            }
-            Opcode::ROL_ABSOLUTE => {
-                absolute_addressing(cpu, true);
-                cpu.push_microcode(Microcode::StoreAlu);
-                cpu.push_microcode(Microcode::Rol);
-                cpu.push_microcode(Microcode::StoreAlu);
-            }
-            Opcode::ROL_ABSOLUTE_INDEXED_X => {
-                absolute_indexed_x_addressing(cpu, false, true);
-                cpu.push_microcode(Microcode::StoreAlu);
-                cpu.push_microcode(Microcode::Rol);
-                cpu.push_microcode(Microcode::StoreAlu);
-            }
-
-            Opcode::ROR_ACCUMULATOR => {
-                cpu.push_microcode(Microcode::RorAccumulator);
-            }
-            Opcode::ROR_ZERO_PAGE => {
-                cpu.push_microcode(Microcode::ZeroPage {
-                    load_into_alu: true,
-                });
-                cpu.push_microcode(Microcode::StoreAlu);
-                cpu.push_microcode(Microcode::Ror);
-                cpu.push_microcode(Microcode::StoreAlu);
-            }
-            Opcode::ROR_ZERO_PAGE_X => {
-                zero_page_indexed_x_addressing(cpu, true);
-                cpu.push_microcode(Microcode::StoreAlu);
-                cpu.push_microcode(Microcode::Ror);
-                cpu.push_microcode(Microcode::StoreAlu);
-            }
-            Opcode::ROR_ABSOLUTE => {
-                absolute_addressing(cpu, true);
-                cpu.push_microcode(Microcode::StoreAlu);
-                cpu.push_microcode(Microcode::Ror);
-                cpu.push_microcode(Microcode::StoreAlu);
-            }
-            Opcode::ROR_ABSOLUTE_INDEXED_X => {
-                absolute_indexed_x_addressing(cpu, false, true);
-                cpu.push_microcode(Microcode::StoreAlu);
-                cpu.push_microcode(Microcode::Ror);
-                cpu.push_microcode(Microcode::StoreAlu);
-            }
-
-            Opcode::BCC => {
-                cpu.push_microcode(Microcode::BranchRelative(BranchTest::IfCarryClear));
-            }
-            Opcode::BCS => {
-                cpu.push_microcode(Microcode::BranchRelative(BranchTest::IfCarrySet));
-            }
-            Opcode::BEQ => {
-                cpu.push_microcode(Microcode::BranchRelative(BranchTest::IfZeroSet));
-            }
-            Opcode::BMI => {
-                cpu.push_microcode(Microcode::BranchRelative(BranchTest::IfNegativeSet));
-            }
-            Opcode::BNE => {
-                cpu.push_microcode(Microcode::BranchRelative(BranchTest::IfZeroClear));
-            }
-            Opcode::BPL => {
-                cpu.push_microcode(Microcode::BranchRelative(BranchTest::IfNegativeClear));
-            }
-            Opcode::BVC => {
-                cpu.push_microcode(Microcode::BranchRelative(BranchTest::IfOverflowClear));
-            }
-            Opcode::BVS => {
-                cpu.push_microcode(Microcode::BranchRelative(BranchTest::IfOverflowSet));
-            }
-
-            Opcode::PHA => cpu.push_microcode(Microcode::Pha),
-            Opcode::PLA => cpu.push_microcode(Microcode::Pla),
-            Opcode::PHP => cpu.push_microcode(Microcode::Php),
-            Opcode::PLP => cpu.push_microcode(Microcode::Plp),
-
-            Opcode::JMP_ABSOLUTE => {
-                absolute_addressing(cpu, false);
-                cpu.push_microcode(Microcode::JmpAbsolute);
-            }
-            Opcode::JMP_INDIRECT => {
-                cpu.push_microcode(Microcode::AbsoluteL);
-                cpu.push_microcode(Microcode::AbsoluteH {
-                    load_into_alu: false,
-                });
-                cpu.push_microcode(Microcode::JmpIndirect);
-            }
-            Opcode::JSR => {
-                cpu.push_microcode(Microcode::AbsoluteL);
-                cpu.push_microcode(Microcode::AbsoluteH {
-                    load_into_alu: false,
-                });
-                cpu.push_microcode(Microcode::Jsr);
-            }
-            Opcode::RTS => cpu.push_microcode(Microcode::Rts),
-            Opcode::RTI => cpu.push_microcode(Microcode::Rti),
-
-            Opcode::CLC => cpu.push_microcode(Microcode::Clc),
-            Opcode::SEC => cpu.push_microcode(Microcode::Sec),
-            Opcode::CLD => cpu.push_microcode(Microcode::Cld),
-            Opcode::SED => cpu.push_microcode(Microcode::Sed),
-            Opcode::CLI => cpu.push_microcode(Microcode::Cli),
-            Opcode::SEI => cpu.push_microcode(Microcode::Sei),
-            Opcode::CLV => cpu.push_microcode(Microcode::Clv),
-
-            Opcode::NOP
-            | Opcode::NOP1
-            | Opcode::NOP2
-            | Opcode::NOP3
-            | Opcode::NOP4
-            | Opcode::NOP5
-            | Opcode::NOP6 => cpu.push_microcode(Microcode::Nop),
-            Opcode::NOP_IMMEDIATE1
-            | Opcode::NOP_IMMEDIATE2
-            | Opcode::NOP_IMMEDIATE3
-            | Opcode::NOP_IMMEDIATE4
-            | Opcode::NOP_IMMEDIATE5 => {
-                cpu.push_microcode(Microcode::SkipImmediate);
-                cpu.push_microcode(Microcode::Nop);
-            }
-            Opcode::NOP_ZERO_PAGE1 | Opcode::NOP_ZERO_PAGE2 | Opcode::NOP_ZERO_PAGE3 => {
-                cpu.push_microcode(Microcode::ZeroPage {
-                    load_into_alu: false,
-                });
-                cpu.push_microcode(Microcode::Nop);
-            }
-            Opcode::NOP_ZERO_PAGE_X1
-            | Opcode::NOP_ZERO_PAGE_X2
-            | Opcode::NOP_ZERO_PAGE_X3
-            | Opcode::NOP_ZERO_PAGE_X4
-            | Opcode::NOP_ZERO_PAGE_X5
-            | Opcode::NOP_ZERO_PAGE_X6 => {
-                zero_page_indexed_x_addressing(cpu, false);
-                cpu.push_microcode(Microcode::Nop);
-            }
-            Opcode::NOP_ABSOLUTE => {
-                absolute_addressing(cpu, false);
-                cpu.push_microcode(Microcode::Nop);
-            }
-            Opcode::NOP_ABSOLUTE_INDEXED_X1
-            | Opcode::NOP_ABSOLUTE_INDEXED_X2
-            | Opcode::NOP_ABSOLUTE_INDEXED_X3
-            | Opcode::NOP_ABSOLUTE_INDEXED_X4
-            | Opcode::NOP_ABSOLUTE_INDEXED_X5
-            | Opcode::NOP_ABSOLUTE_INDEXED_X6 => {
-                absolute_indexed_x_addressing(cpu, false, false);
-                cpu.push_microcode(Microcode::Nop);
-            }
-
-            Opcode::KIL1
-            | Opcode::KIL2
-            | Opcode::KIL3
-            | Opcode::KIL4
-            | Opcode::KIL5
-            | Opcode::KIL6
-            | Opcode::KIL7
-            | Opcode::KIL8
-            | Opcode::KIL9
-            | Opcode::KIL10
-            | Opcode::KIL11
-            | Opcode::KIL12 => cpu.push_microcode(Microcode::Kill),
-
-            Opcode::BRK => cpu.push_microcode(Microcode::Brk),
-
-            Opcode::SBC_IMMEDIATE | Opcode::USBC => {
-                cpu.push_microcode(Microcode::SbcImmediate);
-            }
-            Opcode::SBC_ZERO_PAGE => {
-                cpu.push_microcode(Microcode::ZeroPage {
-                    load_into_alu: true,
-                });
-                cpu.push_microcode(Microcode::Sbc);
-            }
-            Opcode::SBC_ZERO_PAGE_X => {
-                zero_page_indexed_x_addressing(cpu, true);
-                cpu.push_microcode(Microcode::Sbc);
-            }
-            Opcode::SBC_ABSOLUTE => {
-                absolute_addressing(cpu, true);
-                cpu.push_microcode(Microcode::Sbc);
-            }
-            Opcode::SBC_ABSOLUTE_INDEXED_X => {
-                absolute_indexed_x_addressing(cpu, true, true);
-                cpu.push_microcode(Microcode::Sbc);
-            }
-            Opcode::SBC_ABSOLUTE_INDEXED_Y => {
-                absolute_indexed_y_addressing(cpu, true, true);
-                cpu.push_microcode(Microcode::Sbc);
-            }
-            Opcode::SBC_INDEXED_INDIRECT => {
-                indexed_indirect_addressing(cpu, true);
-                cpu.push_microcode(Microcode::Sbc);
-            }
-            Opcode::SBC_INDIRECT_INDEXED => {
-                indirect_indexed_addressing(cpu, true, true);
-                cpu.push_microcode(Microcode::Sbc);
-            }
-
-            Opcode::CMP_IMMEDIATE => {
-                cpu.push_microcode(Microcode::CmpImmediate);
-            }
-            Opcode::CMP_ZERO_PAGE => {
-                cpu.push_microcode(Microcode::ZeroPage {
-                    load_into_alu: true,
-                });
-                cpu.push_microcode(Microcode::Cmp);
-            }
-            Opcode::CMP_ZERO_PAGE_X => {
-                zero_page_indexed_x_addressing(cpu, true);
-                cpu.push_microcode(Microcode::Cmp);
-            }
-            Opcode::CMP_ABSOLUTE => {
-                absolute_addressing(cpu, true);
-                cpu.push_microcode(Microcode::Cmp);
-            }
-            Opcode::CMP_ABSOLUTE_INDEXED_X => {
-                absolute_indexed_x_addressing(cpu, true, true);
-                cpu.push_microcode(Microcode::Cmp);
-            }
-            Opcode::CMP_ABSOLUTE_INDEXED_Y => {
-                absolute_indexed_y_addressing(cpu, true, true);
-                cpu.push_microcode(Microcode::Cmp);
-            }
-            Opcode::CMP_INDEXED_INDIRECT => {
-                indexed_indirect_addressing(cpu, true);
-                cpu.push_microcode(Microcode::Cmp);
-            }
-            Opcode::CMP_INDIRECT_INDEXED => {
-                indirect_indexed_addressing(cpu, true, true);
-                cpu.push_microcode(Microcode::Cmp);
-            }
-
-            Opcode::CPX_IMMEDIATE => {
-                cpu.push_microcode(Microcode::CpxImmediate);
-            }
-            Opcode::CPX_ZERO_PAGE => {
-                cpu.push_microcode(Microcode::ZeroPage {
-                    load_into_alu: true,
-                });
-                cpu.push_microcode(Microcode::Cpx);
-            }
-            Opcode::CPX_ABSOLUTE => {
-                absolute_addressing(cpu, true);
-                cpu.push_microcode(Microcode::Cpx);
-            }
-
-            Opcode::CPY_IMMEDIATE => {
-                cpu.push_microcode(Microcode::CpyImmediate);
-            }
-            Opcode::CPY_ZERO_PAGE => {
-                cpu.push_microcode(Microcode::ZeroPage {
-                    load_into_alu: true,
-                });
-                cpu.push_microcode(Microcode::Cpy);
-            }
-            Opcode::CPY_ABSOLUTE => {
-                absolute_addressing(cpu, true);
-                cpu.push_microcode(Microcode::Cpy);
-            }
-
-            Opcode::TAX => {
-                cpu.push_microcode(Microcode::Tax);
-            }
-            Opcode::TXA => {
-                cpu.push_microcode(Microcode::Txa);
-            }
-            Opcode::TAY => {
-                cpu.push_microcode(Microcode::Tay);
-            }
-            Opcode::TYA => {
-                cpu.push_microcode(Microcode::Tya);
-            }
-            Opcode::TSX => {
-                cpu.push_microcode(Microcode::Tsx);
-            }
-            Opcode::TXS => {
-                cpu.push_microcode(Microcode::Txs);
-            }
-
-            Opcode::ORA_IMMEDIATE => {
-                cpu.push_microcode(Microcode::OraImmediate);
-            }
-            Opcode::ORA_ZERO_PAGE => {
-                cpu.push_microcode(Microcode::ZeroPage {
-                    load_into_alu: true,
-                });
-                cpu.push_microcode(Microcode::Ora);
-            }
-            Opcode::ORA_ZERO_PAGE_X => {
-                zero_page_indexed_x_addressing(cpu, true);
-                cpu.push_microcode(Microcode::Ora);
-            }
-            Opcode::ORA_ABSOLUTE => {
-                absolute_addressing(cpu, true);
-                cpu.push_microcode(Microcode::Ora);
-            }
-            Opcode::ORA_ABSOLUTE_INDEXED_X => {
-                absolute_indexed_x_addressing(cpu, true, true);
-                cpu.push_microcode(Microcode::Ora);
-            }
-            Opcode::ORA_ABSOLUTE_INDEXED_Y => {
-                absolute_indexed_y_addressing(cpu, true, true);
-                cpu.push_microcode(Microcode::Ora);
-            }
-            Opcode::ORA_INDEXED_INDIRECT => {
-                indexed_indirect_addressing(cpu, true);
-                cpu.push_microcode(Microcode::Ora);
-            }
-            Opcode::ORA_INDIRECT_INDEXED => {
-                indirect_indexed_addressing(cpu, true, true);
-                cpu.push_microcode(Microcode::Ora);
-            }
-
-            Opcode::EOR_IMMEDIATE => {
-                cpu.push_microcode(Microcode::EorImmediate);
-            }
-            Opcode::EOR_ZERO_PAGE => {
-                cpu.push_microcode(Microcode::ZeroPage {
-                    load_into_alu: true,
-                });
-                cpu.push_microcode(Microcode::Eor);
-            }
-            Opcode::EOR_ZERO_PAGE_X => {
-                zero_page_indexed_x_addressing(cpu, true);
-                cpu.push_microcode(Microcode::Eor);
-            }
-            Opcode::EOR_ABSOLUTE => {
-                absolute_addressing(cpu, true);
-                cpu.push_microcode(Microcode::Eor);
-            }
-            Opcode::EOR_ABSOLUTE_INDEXED_X => {
-                absolute_indexed_x_addressing(cpu, true, true);
-                cpu.push_microcode(Microcode::Eor);
-            }
-            Opcode::EOR_ABSOLUTE_INDEXED_Y => {
-                absolute_indexed_y_addressing(cpu, true, true);
-                cpu.push_microcode(Microcode::Eor);
-            }
-            Opcode::EOR_INDEXED_INDIRECT => {
-                indexed_indirect_addressing(cpu, true);
-                cpu.push_microcode(Microcode::Eor);
-            }
-            Opcode::EOR_INDIRECT_INDEXED => {
-                indirect_indexed_addressing(cpu, true, true);
-                cpu.push_microcode(Microcode::Eor);
-            }
-
-            Opcode::ALR => cpu.push_microcode(Microcode::AlrImmediate),
-            Opcode::ANC => cpu.push_microcode(Microcode::AncImmediate),
-            Opcode::ARR => cpu.push_microcode(Microcode::ArrImmediate),
-            Opcode::AXS => cpu.push_microcode(Microcode::AxsImmediate),
-
-            Opcode::LAX_ZERO_PAGE => {
-                cpu.push_microcode(Microcode::ZeroPage {
-                    load_into_alu: true,
-                });
-                cpu.push_microcode(Microcode::Lax);
-            }
-            Opcode::LAX_ZERO_PAGE_Y => {
-                zero_page_indexed_y_addressing(cpu, true);
-                cpu.push_microcode(Microcode::Lax);
-            }
-            Opcode::LAX_ABSOLUTE => {
-                absolute_addressing(cpu, true);
-                cpu.push_microcode(Microcode::Lax);
-            }
-            Opcode::LAX_ABSOLUTE_INDEXED_Y => {
-                absolute_indexed_y_addressing(cpu, true, true);
-                cpu.push_microcode(Microcode::Lax);
-            }
-            Opcode::LAX_INDEXED_INDIRECT => {
-                indexed_indirect_addressing(cpu, true);
-                cpu.push_microcode(Microcode::Lax);
-            }
-            Opcode::LAX_INDIRECT_INDEXED => {
-                indirect_indexed_addressing(cpu, true, true);
-                cpu.push_microcode(Microcode::Lax);
-            }
-
-            Opcode::SAX_ZERO_PAGE => cpu.push_microcode(Microcode::Sax),
-            Opcode::SAX_ZERO_PAGE_Y => cpu.push_microcode(Microcode::Sax),
-            Opcode::SAX_ABSOLUTE => cpu.push_microcode(Microcode::Sax),
-            Opcode::SAX_INDEXED_INDIRECT => cpu.push_microcode(Microcode::Sax),
-
-            Opcode::DCP_ZERO_PAGE => {
-                cpu.push_microcode(Microcode::ZeroPage {
-                    load_into_alu: true,
-                });
-                cpu.push_microcode(Microcode::Dcp);
-            }
-            Opcode::DCP_ZERO_PAGE_X => {
-                zero_page_indexed_x_addressing(cpu, true);
-                cpu.push_microcode(Microcode::Dcp);
-            }
-            Opcode::DCP_ABSOLUTE => {
-                absolute_addressing(cpu, true);
-                cpu.push_microcode(Microcode::Dcp);
-            }
-            Opcode::DCP_ABSOLUTE_INDEXED_X => {
-                absolute_indexed_x_addressing(cpu, true, true);
-                cpu.push_microcode(Microcode::Dcp);
-            }
-            Opcode::DCP_ABSOLUTE_INDEXED_Y => {
-                absolute_indexed_y_addressing(cpu, true, true);
-                cpu.push_microcode(Microcode::Dcp);
-            }
-            Opcode::DCP_INDEXED_INDIRECT => {
-                indexed_indirect_addressing(cpu, true);
-                cpu.push_microcode(Microcode::Dcp);
-            }
-            Opcode::DCP_INDIRECT_INDEXED => {
-                indirect_indexed_addressing(cpu, true, true);
-                cpu.push_microcode(Microcode::Dcp);
-            }
-
-            Opcode::ISC_ZERO_PAGE => {
-                cpu.push_microcode(Microcode::ZeroPage {
-                    load_into_alu: true,
-                });
-                cpu.push_microcode(Microcode::Isc);
-            }
-            Opcode::ISC_ZERO_PAGE_X => {
-                zero_page_indexed_x_addressing(cpu, true);
-                cpu.push_microcode(Microcode::Isc);
-            }
-            Opcode::ISC_ABSOLUTE => {
-                absolute_addressing(cpu, true);
-                cpu.push_microcode(Microcode::Isc);
-            }
-            Opcode::ISC_ABSOLUTE_INDEXED_X => {
-                absolute_indexed_x_addressing(cpu, true, true);
-                cpu.push_microcode(Microcode::Isc);
-            }
-            Opcode::ISC_ABSOLUTE_INDEXED_Y => {
-                absolute_indexed_y_addressing(cpu, true, true);
-                cpu.push_microcode(Microcode::Isc);
-            }
-            Opcode::ISC_INDEXED_INDIRECT => {
-                indexed_indirect_addressing(cpu, true);
-                cpu.push_microcode(Microcode::Isc);
-            }
-            Opcode::ISC_INDIRECT_INDEXED => {
-                indirect_indexed_addressing(cpu, true, true);
-                cpu.push_microcode(Microcode::Isc);
-            }
-
-            Opcode::RRA_ZERO_PAGE => {
-                cpu.push_microcode(Microcode::ZeroPage {
-                    load_into_alu: true,
-                });
-                cpu.push_microcode(Microcode::StoreAlu);
-                cpu.push_microcode(Microcode::Rra);
-                cpu.push_microcode(Microcode::StoreAlu);
-            }
-            Opcode::RRA_ZERO_PAGE_X => {
-                zero_page_indexed_x_addressing(cpu, true);
-                cpu.push_microcode(Microcode::StoreAlu);
-                cpu.push_microcode(Microcode::Rra);
-                cpu.push_microcode(Microcode::StoreAlu);
-            }
-            Opcode::RRA_ABSOLUTE => {
-                absolute_addressing(cpu, true);
-                cpu.push_microcode(Microcode::StoreAlu);
-                cpu.push_microcode(Microcode::Rra);
-                cpu.push_microcode(Microcode::StoreAlu);
-            }
-            Opcode::RRA_ABSOLUTE_INDEXED_X => {
-                absolute_indexed_x_addressing(cpu, false, true);
-                cpu.push_microcode(Microcode::StoreAlu);
-                cpu.push_microcode(Microcode::Rra);
-                cpu.push_microcode(Microcode::StoreAlu);
-            }
-            Opcode::RRA_ABSOLUTE_INDEXED_Y => {
-                absolute_indexed_y_addressing(cpu, false, true);
-                cpu.push_microcode(Microcode::StoreAlu);
-                cpu.push_microcode(Microcode::Rra);
-                cpu.push_microcode(Microcode::StoreAlu);
-            }
-            Opcode::RRA_INDEXED_INDIRECT => {
-                indexed_indirect_addressing(cpu, true);
-                cpu.push_microcode(Microcode::StoreAlu);
-                cpu.push_microcode(Microcode::Rra);
-                cpu.push_microcode(Microcode::StoreAlu);
-            }
-            Opcode::RRA_INDIRECT_INDEXED => {
-                indirect_indexed_addressing(cpu, false, true);
-                cpu.push_microcode(Microcode::StoreAlu);
-                cpu.push_microcode(Microcode::Rra);
-                cpu.push_microcode(Microcode::StoreAlu);
-            }
-
-            Opcode::SLO_ZERO_PAGE => {
-                cpu.push_microcode(Microcode::ZeroPage {
-                    load_into_alu: true,
-                });
-                cpu.push_microcode(Microcode::StoreAlu);
-                cpu.push_microcode(Microcode::Asl);
-                cpu.push_microcode(Microcode::StoreAlu);
-            }
-            Opcode::SLO_ZERO_PAGE_X => {
-                zero_page_indexed_x_addressing(cpu, true);
-                cpu.push_microcode(Microcode::StoreAlu);
-                cpu.push_microcode(Microcode::Asl);
-                cpu.push_microcode(Microcode::StoreAlu);
-            }
-            Opcode::SLO_ABSOLUTE => {
-                absolute_addressing(cpu, true);
-                cpu.push_microcode(Microcode::StoreAlu);
-                cpu.push_microcode(Microcode::Asl);
-                cpu.push_microcode(Microcode::StoreAlu);
-            }
-            Opcode::SLO_ABSOLUTE_INDEXED_X => {
-                absolute_indexed_x_addressing(cpu, false, true);
-                cpu.push_microcode(Microcode::StoreAlu);
-                cpu.push_microcode(Microcode::Asl);
-                cpu.push_microcode(Microcode::StoreAlu);
-            }
-            Opcode::SLO_ABSOLUTE_INDEXED_Y => {
-                absolute_indexed_y_addressing(cpu, false, true);
-                cpu.push_microcode(Microcode::StoreAlu);
-                cpu.push_microcode(Microcode::Asl);
-                cpu.push_microcode(Microcode::StoreAlu);
-            }
-            Opcode::SLO_INDEXED_INDIRECT => {
-                indexed_indirect_addressing(cpu, true);
-                cpu.push_microcode(Microcode::StoreAlu);
-                cpu.push_microcode(Microcode::Asl);
-                cpu.push_microcode(Microcode::StoreAlu);
-            }
-            Opcode::SLO_INDIRECT_INDEXED => {
-                indirect_indexed_addressing(cpu, false, true);
-                cpu.push_microcode(Microcode::StoreAlu);
-                cpu.push_microcode(Microcode::Asl);
-                cpu.push_microcode(Microcode::StoreAlu);
-            }
-
-            Opcode::SRE_ZERO_PAGE => {
-                cpu.push_microcode(Microcode::ZeroPage {
-                    load_into_alu: true,
-                });
-                cpu.push_microcode(Microcode::StoreAlu);
-                cpu.push_microcode(Microcode::Lsr);
-                cpu.push_microcode(Microcode::StoreAlu);
-            }
-            Opcode::SRE_ZERO_PAGE_X => {
-                zero_page_indexed_x_addressing(cpu, true);
-                cpu.push_microcode(Microcode::StoreAlu);
-                cpu.push_microcode(Microcode::Lsr);
-                cpu.push_microcode(Microcode::StoreAlu);
-            }
-            Opcode::SRE_ABSOLUTE => {
-                absolute_addressing(cpu, true);
-                cpu.push_microcode(Microcode::StoreAlu);
-                cpu.push_microcode(Microcode::Lsr);
-                cpu.push_microcode(Microcode::StoreAlu);
-            }
-            Opcode::SRE_ABSOLUTE_INDEXED_X => {
-                absolute_indexed_x_addressing(cpu, false, true);
-                cpu.push_microcode(Microcode::StoreAlu);
-                cpu.push_microcode(Microcode::Lsr);
-                cpu.push_microcode(Microcode::StoreAlu);
-            }
-            Opcode::SRE_ABSOLUTE_INDEXED_Y => {
-                absolute_indexed_y_addressing(cpu, false, true);
-                cpu.push_microcode(Microcode::StoreAlu);
-                cpu.push_microcode(Microcode::Lsr);
-                cpu.push_microcode(Microcode::StoreAlu);
-            }
-            Opcode::SRE_INDEXED_INDIRECT => {
-                indexed_indirect_addressing(cpu, true);
-                cpu.push_microcode(Microcode::StoreAlu);
-                cpu.push_microcode(Microcode::Lsr);
-                cpu.push_microcode(Microcode::StoreAlu);
-            }
-            Opcode::SRE_INDIRECT_INDEXED => {
-                indirect_indexed_addressing(cpu, false, true);
-                cpu.push_microcode(Microcode::StoreAlu);
-                cpu.push_microcode(Microcode::Lsr);
-                cpu.push_microcode(Microcode::StoreAlu);
-            }
-
-            Opcode::SHX_ABSOLUTE_INDEXED_Y => {
-                absolute_indexed_y_addressing(cpu, false, true);
-                cpu.push_microcode(Microcode::Shx);
-            }
-            Opcode::SHY_ABSOLUTE_INDEXED_X => {
-                absolute_indexed_x_addressing(cpu, false, true);
-                cpu.push_microcode(Microcode::Shy);
-            }
-            Opcode::TAS_ABSOLUTE_INDEXED_Y => {
-                absolute_indexed_y_addressing(cpu, false, true);
-                cpu.push_microcode(Microcode::Tas);
-            }
-            _ => panic!("Unknown opcode: {}", opcode),
-        }
+        cpu.push_microcodes(&OPCODE_TABLE[opcode as usize]);
     }
 
     fn load_a<M: Mcu>(cpu: &mut Cpu2<M>) {
@@ -1635,11 +2389,14 @@ impl Microcode {
         cpu.tas();
     }
 
-    fn zero_page<M: Mcu>(cpu: &mut Cpu2<M>, load_into_alu: bool) {
+    fn zero_page<M: Mcu>(cpu: &mut Cpu2<M>, load_into_alu: bool, save_alu: bool) {
         let addr = cpu.inc_read_byte();
         cpu.ab = addr as u16;
         if load_into_alu {
             cpu.load_alu();
+        }
+        if save_alu {
+            cpu.write_byte(cpu.ab, cpu.alu);
         }
     }
 
@@ -1818,6 +2575,27 @@ impl Microcode {
             }
         }
     }
+
+    fn zero_page_into_alu() -> Self {
+        Self::ZeroPage {
+            load_into_alu: true,
+            save_alu: false,
+        }
+    }
+
+    fn zero_page_save_alu() -> Self {
+        Self::ZeroPage {
+            load_into_alu: false,
+            save_alu: true,
+        }
+    }
+
+    fn zero_page_addr_only() -> Self {
+        Self::ZeroPage {
+            load_into_alu: false,
+            save_alu: false,
+        }
+    }
 }
 
 // TODO: if load_into_alu always is true in addressing functions, remove this argument
@@ -1826,6 +2604,7 @@ impl Microcode {
 fn zero_page_indexed_x_addressing<M: Mcu>(cpu: &mut Cpu2<M>, load_into_alu: bool) {
     cpu.push_microcode(Microcode::ZeroPage {
         load_into_alu: false,
+        save_alu: false,
     });
     cpu.push_microcode(Microcode::ZeroPageIndexedX { load_into_alu });
 }
@@ -1834,6 +2613,7 @@ fn zero_page_indexed_x_addressing<M: Mcu>(cpu: &mut Cpu2<M>, load_into_alu: bool
 fn zero_page_indexed_y_addressing<M: Mcu>(cpu: &mut Cpu2<M>, load_into_alu: bool) {
     cpu.push_microcode(Microcode::ZeroPage {
         load_into_alu: false,
+        save_alu: false,
     });
     cpu.push_microcode(Microcode::ZeroPageIndexedY { load_into_alu });
 }
@@ -1866,6 +2646,7 @@ fn absolute_indexed_y_addressing<M: Mcu>(cpu: &mut Cpu2<M>, oops: bool, load_int
 fn indexed_indirect_addressing<M: Mcu>(cpu: &mut Cpu2<M>, load_into_alu: bool) {
     cpu.push_microcode(Microcode::ZeroPage {
         load_into_alu: false,
+        save_alu: false,
     });
     cpu.push_microcode(Microcode::ZeroPageIndexedX {
         load_into_alu: false,
@@ -1878,6 +2659,7 @@ fn indexed_indirect_addressing<M: Mcu>(cpu: &mut Cpu2<M>, load_into_alu: bool) {
 fn indirect_indexed_addressing<M: Mcu>(cpu: &mut Cpu2<M>, oops: bool, load_into_alu: bool) {
     cpu.push_microcode(Microcode::ZeroPage {
         load_into_alu: false,
+        save_alu: false,
     });
     cpu.push_microcode(Microcode::Indexed {
         load_into_alu: false,
