@@ -4,6 +4,13 @@ use std::collections::VecDeque;
 
 mod microcode;
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum GeneralRegister {
+    A,
+    X,
+    Y,
+}
+
 /// New designed CPU based on microcode execution
 pub struct Cpu2<M: Mcu> {
     pub a: u8,
