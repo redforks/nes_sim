@@ -1,7 +1,7 @@
 use tinyvec::ArrayVec;
 
 use super::Cpu;
-use crate::{cpu::cpu2::Register, mcu::Mcu, Flag};
+use crate::{Flag, cpu::cpu2::Register, mcu::Mcu};
 
 macro_rules! microcode_arr {
     ($item1:expr) => {
@@ -118,9 +118,9 @@ macro_rules! microcode_arr {
 }
 
 const fn build_opcode_table() -> [ArrayVec<[Microcode; 7]>; 256] {
-    use opcode::*;
     use Microcode::*;
     use Register::*;
+    use opcode::*;
 
     let mut r = include!("init_microtable.inc.rs");
     r[AND_IMMEDIATE as usize] = microcode_arr!(AndImmediate);
@@ -1428,6 +1428,7 @@ pub enum Microcode {
 }
 
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]
+#[allow(clippy::enum_variant_names)]
 pub enum BranchTest {
     IfCarryClear,
     IfCarrySet,
@@ -2178,13 +2179,6 @@ const fn zero_page_load_alu() -> Microcode {
     }
 }
 
-const fn zero_page_save_alu() -> Microcode {
-    Microcode::ZeroPage {
-        load_into_alu: false,
-        save_alu: true,
-    }
-}
-
 const fn zero_page_addr() -> Microcode {
     Microcode::ZeroPage {
         load_into_alu: false,
@@ -2199,13 +2193,6 @@ const fn zero_page_x_load_alu() -> Microcode {
     }
 }
 
-const fn zero_page_x_save_alu() -> Microcode {
-    Microcode::ZeroPageIndexedX {
-        load_into_alu: false,
-        save_alu: true,
-    }
-}
-
 const fn zero_page_x_addr() -> Microcode {
     Microcode::ZeroPageIndexedX {
         load_into_alu: false,
@@ -2217,13 +2204,6 @@ const fn zero_page_y_load_alu() -> Microcode {
     Microcode::ZeroPageIndexedY {
         load_into_alu: true,
         save_alu: false,
-    }
-}
-
-const fn zero_page_y_save_alu() -> Microcode {
-    Microcode::ZeroPageIndexedY {
-        load_into_alu: false,
-        save_alu: true,
     }
 }
 

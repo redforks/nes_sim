@@ -173,19 +173,6 @@ fn test_inc_read_byte() {
 }
 
 #[test]
-fn test_inc_read_word() {
-    let mut cpu = create_cpu_with_program(&[0x2C, 0x34, 0x12, 0xEA]);
-    assert_eq!(cpu.pc, 0);
-
-    let _first = cpu.inc_read_byte(); // 0x2C
-    assert_eq!(cpu.pc, 1);
-
-    let word = cpu.inc_read_word();
-    assert_eq!(word, 0x1234);
-    assert_eq!(cpu.pc, 3);
-}
-
-#[test]
 fn test_update_negative_flag() {
     let mut cpu = create_cpu();
     cpu.set_flag(Flag::Negative, false);
@@ -207,26 +194,6 @@ fn test_update_zero_flag() {
 
     cpu.update_zero_flag(0x01);
     assert!(!cpu.flag(Flag::Zero));
-}
-
-#[test]
-fn test_read_zero_page_word() {
-    let mut cpu = create_cpu();
-    cpu.write_byte(0x50, 0x78);
-    cpu.write_byte(0x51, 0x56);
-
-    let word = cpu.read_zero_page_word(0x50);
-    assert_eq!(word, 0x5678);
-}
-
-#[test]
-fn test_read_zero_page_word_wrapping() {
-    let mut cpu = create_cpu();
-    cpu.write_byte(0xFF, 0x12);
-    cpu.write_byte(0x00, 0x34);
-
-    let word = cpu.read_zero_page_word(0xFF);
-    assert_eq!(word, 0x3412);
 }
 
 #[test]
@@ -319,20 +286,6 @@ fn test_multiple_flags_simultaneously() {
     assert!(cpu.flag(Flag::Zero));
     assert!(cpu.flag(Flag::Negative));
     assert!(!cpu.flag(Flag::Overflow));
-}
-
-#[test]
-fn test_cross_page_detection() {
-    assert!(is_cross_page(0x0100, 0x0200));
-    assert!(is_cross_page(0x00FF, 0x0100));
-    assert!(!is_cross_page(0x0100, 0x0101));
-    assert!(!is_cross_page(0x01FF, 0x01FE));
-}
-
-#[test]
-fn test_extra_tick_if_cross_page() {
-    assert_eq!(extra_cycles_if_cross_page(0x0100, 0x0200), 1);
-    assert_eq!(extra_cycles_if_cross_page(0x0100, 0x0101), 0);
 }
 
 #[test]
@@ -755,8 +708,8 @@ fn test_bit_instruction() {
     execute_next(&mut cpu);
     // BIT should have set N flag (bit 7 of 0xE0)
     assert!(cpu.flag(Flag::Negative)); // bit 7 of 0xE0 = 1
-                                       // Overflow flag: (v & 0x70) != 0 means bits 6-4 are checked
-                                       // 0xE0 & 0x70 = 0xE0 & 0x70 = 0x60 != 0, so overflow should be set
+    // Overflow flag: (v & 0x70) != 0 means bits 6-4 are checked
+    // 0xE0 & 0x70 = 0xE0 & 0x70 = 0x60 != 0, so overflow should be set
     assert!(cpu.flag(Flag::Overflow));
 }
 
@@ -1934,14 +1887,14 @@ fn test_jsr_pushes_pc_and_jumps() {
 #[test]
 fn test_rts_pops_pc() {
     let mut cpu = create_cpu_with_program(&[0x60]); // RTS
-                                                    // Setup stack: return address $1233 (before RTS adds 1)
-                                                    // pop_stack increments SP first, then reads
-                                                    // We want: first pop reads 0x33, second pop reads 0x12
+    // Setup stack: return address $1233 (before RTS adds 1)
+    // pop_stack increments SP first, then reads
+    // We want: first pop reads 0x33, second pop reads 0x12
     cpu.sp = 0xFD; // After two pops: 0xFE -> 0x1FF, 0xFF -> 0x100... no wait
-                   // Let me recalculate:
-                   // pop_stack: SP++, read from 0x100 + SP
-                   // First pop: SP = 0xFD + 1 = 0xFE, read from 0x1FE (should be low byte 0x33)
-                   // Second pop: SP = 0xFE + 1 = 0xFF, read from 0x1FF (should be high byte 0x12)
+    // Let me recalculate:
+    // pop_stack: SP++, read from 0x100 + SP
+    // First pop: SP = 0xFD + 1 = 0xFE, read from 0x1FE (should be low byte 0x33)
+    // Second pop: SP = 0xFE + 1 = 0xFF, read from 0x1FF (should be high byte 0x12)
     cpu.write_byte(0x1FE, 0x33); // Low byte
     cpu.write_byte(0x1FF, 0x12); // High byte
 
@@ -1981,7 +1934,7 @@ fn test_jsr_rts_round_trip() {
 #[test]
 fn test_rti_restores_pc_and_flags() {
     let mut cpu = create_cpu_with_program(&[0x40]); // RTI
-                                                    // Setup stack with status then PC (RTI pops in reverse order)
+    // Setup stack with status then PC (RTI pops in reverse order)
     cpu.sp = 0xFD; // Stack at 0x100, 0x1FF, 0x1FE
     cpu.write_byte(0x1FE, 0xFF); // Status (popped first)
     cpu.write_byte(0x1FF, 0x34); // PC low
@@ -2192,7 +2145,7 @@ fn test_lda_indirect_y_unofficial() {
     // Set up indirect pointer at 0x10 pointing to 0x200
     mcu.write_word(0x10, 0x200);
     mcu.write(0x205, 0x42); // 0x200 + Y(5) = 0x205
-                            // Program: LDA ($10), Y
+    // Program: LDA ($10), Y
     mcu.write(0, 0xB1); // opcode
     mcu.write(1, 0x10); // zero page addr
     let mut cpu = Cpu::new(mcu);
@@ -2443,7 +2396,7 @@ fn test_rra_zero_page() {
     execute_next(&mut cpu);
 
     assert_eq!(cpu.mcu_mut().read(0x10), 0xC0); // ROR: (0x81 >> 1) with carry = 0xC0
-                                                // ADC: 0x05 + 0xC0 + 1(carry)
+    // ADC: 0x05 + 0xC0 + 1(carry)
     assert_eq!(cpu.a, 0xC6); // 0x05 + 0xC0 + 1 = 0xC6
 }
 
@@ -2457,7 +2410,7 @@ fn test_sbx_immediate() {
     execute_next(&mut cpu);
 
     assert_eq!(cpu.x, (0x30 & 0x20) - 0x10); // (A & X) - operand
-                                             // 0x30 & 0x20 = 0x20, 0x20 - 0x10 = 0x10
+    // 0x30 & 0x20 = 0x20, 0x20 - 0x10 = 0x10
     assert_eq!(cpu.x, 0x10);
 }
 
@@ -3673,18 +3626,8 @@ fn test_adc_all_flags() {
     assert_eq!(cpu.a, 0x00); // 0xFF + 0x00 + 1 = 0x100, truncated to 0x00
     assert!(cpu.flag(Flag::Zero)); // result is zero
     assert!(cpu.flag(Flag::Carry)); // overflow occurred
-                                    // Overflow: -1 + 0 + 1 = 0, which is within range, so no signed overflow
+    // Overflow: -1 + 0 + 1 = 0, which is within range, so no signed overflow
     assert!(!cpu.flag(Flag::Overflow)); // no signed overflow
-}
-
-#[test]
-fn test_read_zero_page_word_edge_cases() {
-    // Test zero page word reading at boundary
-    let mut cpu = create_cpu();
-    cpu.mcu_mut().write(0xFF, 0x34);
-    cpu.mcu_mut().write(0x00, 0x12);
-
-    assert_eq!(cpu.read_zero_page_word(0xFF), 0x1234); // wraps to 0x00
 }
 
 #[test]
@@ -3705,8 +3648,8 @@ fn test_stack_wrap_around() {
     cpu.push_stack(0x42);
 
     assert_eq!(cpu.sp, 0xFF); // wraps to 0xFF after decrement
-                              // push_stack writes to current SP, then decrements
-                              // So with SP=0x00, it writes to 0x100, then SP becomes 0xFF
+    // push_stack writes to current SP, then decrements
+    // So with SP=0x00, it writes to 0x100, then SP becomes 0xFF
     assert_eq!(cpu.mcu_mut().read(0x0100), 0x42);
 }
 
@@ -3837,14 +3780,6 @@ fn test_sbc_no_overflow_negative_minus_positive() {
     // -128 - 1 = -129 = 127 in signed (no overflow within valid range)
     assert_eq!(cpu.a, 0x7F);
     assert!(cpu.flag(Flag::Overflow)); // -128 - 1 = 127, which overflows from negative to positive
-}
-
-#[test]
-fn test_is_cross_page() {
-    // Test the is_cross_page helper function
-    assert!(is_cross_page(0x10FF, 0x1100)); // crosses page boundary (0x10 vs 0x11)
-    assert!(!is_cross_page(0x1000, 0x1001)); // doesn't cross (both 0x10)
-    assert!(is_cross_page(0x1FFF, 0x2000)); // crosses (0x1F vs 0x20)
 }
 
 #[test]

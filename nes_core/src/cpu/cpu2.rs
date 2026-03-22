@@ -147,7 +147,7 @@ impl<M: Mcu> Cpu<M> {
         self.push_stack(self.pc as u8);
     }
 
-    pub(crate) fn flag(&self, flag: Flag) -> bool {
+    pub fn flag(&self, flag: Flag) -> bool {
         (self.status & flag as u8) != 0
     }
 
@@ -187,16 +187,6 @@ impl<M: Mcu> Cpu<M> {
         self.mcu.read(addr)
     }
 
-    pub(crate) fn inc_read_word(&mut self) -> u16 {
-        let addr = self.pc;
-        self.inc_pc(2);
-        self.tick_bus();
-        let low = self.mcu.read(addr) as u16;
-        self.tick_bus();
-        let high = self.mcu.read(addr.wrapping_add(1)) as u16;
-        (high << 8) | low
-    }
-
     pub(crate) fn write_byte(&mut self, addr: u16, value: u8) {
         self.tick_bus();
         self.mcu.write(addr, value);
@@ -208,10 +198,6 @@ impl<M: Mcu> Cpu<M> {
         self.tick_bus();
         let high = self.mcu.read(addr.wrapping_add(1)) as u16;
         (high << 8) | low
-    }
-
-    pub(crate) fn read_zero_page_word(&mut self, addr: u8) -> u16 {
-        self.read_word_in_page(0, addr)
     }
 
     pub(crate) fn read_word_in_same_page(&mut self, addr: u16) -> u16 {
@@ -262,18 +248,6 @@ impl<M: Mcu> Cpu<M> {
 
     fn pch(&self) -> u8 {
         (self.pc >> 8) as u8
-    }
-
-    fn pcl(&self) -> u8 {
-        (self.pc & 0xff) as u8
-    }
-
-    fn set_pch(&mut self, v: u8) {
-        self.pc = (self.pc & 0x00ff) | ((v as u16) << 8);
-    }
-
-    fn set_pcl(&mut self, v: u8) {
-        self.pc = (self.pc & 0xff00) | v as u16;
     }
 
     fn abh(&self) -> u8 {

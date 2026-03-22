@@ -11,16 +11,6 @@ pub enum ExecuteResult {
     ShouldReset,
 }
 
-fn is_cross_page(a: u16, b: u16) -> bool {
-    let a = (a >> 8) as u8;
-    let b = (b >> 8) as u8;
-    a != b
-}
-
-fn extra_cycles_if_cross_page(a: u16, b: u16) -> u8 {
-    is_cross_page(a, b) as u8
-}
-
 pub trait Plugin<M: Mcu> {
     fn start(&mut self, cpu: &mut Cpu<M>);
 

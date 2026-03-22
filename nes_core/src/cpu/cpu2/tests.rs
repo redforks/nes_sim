@@ -45,23 +45,6 @@ fn new_initializes_registers_and_fetch_queue() {
 }
 
 #[test]
-fn pc_and_address_bus_byte_helpers_round_trip() {
-    let mut cpu = Cpu::new(TestMcu::default());
-
-    cpu.set_pch(0x12);
-    cpu.set_pcl(0x34);
-    cpu.set_abh(0x56);
-    cpu.set_abl(0x78);
-
-    assert_eq!(cpu.pc, 0x1234);
-    assert_eq!(cpu.pch(), 0x12);
-    assert_eq!(cpu.pcl(), 0x34);
-    assert_eq!(cpu.ab, 0x5678);
-    assert_eq!(cpu.abh(), 0x56);
-    assert_eq!(cpu.abl(), 0x78);
-}
-
-#[test]
 fn inc_read_byte_advances_pc_and_ticks() {
     let mut mcu = TestMcu::default();
     mcu.mem[0x0200] = 0xAB;
