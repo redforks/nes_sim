@@ -5,7 +5,7 @@ use std::collections::VecDeque;
 mod microcode;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum GeneralRegister {
+enum Register {
     A,
     X,
     Y,

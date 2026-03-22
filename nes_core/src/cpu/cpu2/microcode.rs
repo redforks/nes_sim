@@ -1,7 +1,7 @@
 use tinyvec::ArrayVec;
 
 use super::Cpu2;
-use crate::{Flag, mcu::Mcu};
+use crate::{Flag, cpu::cpu2::Register, mcu::Mcu};
 
 macro_rules! microcode_arr {
     ($item1:expr) => {
@@ -119,6 +119,7 @@ macro_rules! microcode_arr {
 
 const fn build_opcode_table() -> [ArrayVec<[Microcode; 7]>; 256] {
     use Microcode::*;
+    use Register::*;
     use opcode::*;
 
     let mut r = include!("init_microtable.inc.rs");
@@ -177,20 +178,20 @@ const fn build_opcode_table() -> [ArrayVec<[Microcode; 7]>; 256] {
         And
     );
     r[LDA_IMMEDIATE as usize] = microcode_arr!(LoadImmediateA);
-    r[LDA_ZERO_PAGE as usize] = microcode_arr!(zero_page_addr(), LoadA);
+    r[LDA_ZERO_PAGE as usize] = microcode_arr!(zero_page_addr(), LoadR(A));
     r[LDA_ZERO_PAGE_X as usize] = microcode_arr!(
         zero_page_addr(),
         ZeroPageIndexedX {
             load_into_alu: false
         },
-        LoadA
+        LoadR(A)
     );
     r[LDA_ABSOLUTE as usize] = microcode_arr!(
         AbsoluteL,
         AbsoluteH {
             load_into_alu: false
         },
-        LoadA
+        LoadR(A)
     );
     r[LDA_ABSOLUTE_INDEXED_X as usize] = microcode_arr!(
         AbsoluteL,
@@ -198,7 +199,7 @@ const fn build_opcode_table() -> [ArrayVec<[Microcode; 7]>; 256] {
             oops: true,
             load_into_alu: false
         },
-        LoadA
+        LoadR(A)
     );
     r[LDA_ABSOLUTE_INDEXED_Y as usize] = microcode_arr!(
         AbsoluteL,
@@ -206,7 +207,7 @@ const fn build_opcode_table() -> [ArrayVec<[Microcode; 7]>; 256] {
             oops: true,
             load_into_alu: false
         },
-        LoadA
+        LoadR(A)
     );
     r[LDA_INDIRECT_INDEXED as usize] = microcode_arr!(
         zero_page_addr(),
@@ -217,7 +218,7 @@ const fn build_opcode_table() -> [ArrayVec<[Microcode; 7]>; 256] {
             load_into_alu: false
         },
         Nop,
-        LoadA
+        LoadR(A)
     );
     r[LDA_INDIRECT_INDEXED_Y as usize] = microcode_arr!(
         zero_page_addr(),
@@ -228,23 +229,23 @@ const fn build_opcode_table() -> [ArrayVec<[Microcode; 7]>; 256] {
             oops: true,
             load_into_alu: false
         },
-        LoadA
+        LoadR(A)
     );
     r[LDX_IMMEDIATE as usize] = microcode_arr!(LoadImmediateX);
-    r[LDX_ZERO_PAGE as usize] = microcode_arr!(zero_page_addr(), LoadX);
+    r[LDX_ZERO_PAGE as usize] = microcode_arr!(zero_page_addr(), LoadR(X));
     r[LDX_ZERO_PAGE_Y as usize] = microcode_arr!(
         zero_page_addr(),
         ZeroPageIndexedY {
             load_into_alu: false
         },
-        LoadX
+        LoadR(X)
     );
     r[LDX_ABSOLUTE as usize] = microcode_arr!(
         AbsoluteL,
         AbsoluteH {
             load_into_alu: false
         },
-        LoadX
+        LoadR(X)
     );
     r[LDX_ABSOLUTE_INDEXED_Y as usize] = microcode_arr!(
         AbsoluteL,
@@ -252,23 +253,23 @@ const fn build_opcode_table() -> [ArrayVec<[Microcode; 7]>; 256] {
             oops: true,
             load_into_alu: false
         },
-        LoadX
+        LoadR(X)
     );
     r[LDY_IMMEDIATE as usize] = microcode_arr!(LoadImmediateY);
-    r[LDY_ZERO_PAGE as usize] = microcode_arr!(zero_page_addr(), LoadY);
+    r[LDY_ZERO_PAGE as usize] = microcode_arr!(zero_page_addr(), LoadR(Y));
     r[LDY_ZERO_PAGE_X as usize] = microcode_arr!(
         zero_page_addr(),
         ZeroPageIndexedX {
             load_into_alu: false
         },
-        LoadY
+        LoadR(Y)
     );
     r[LDY_ABSOLUTE as usize] = microcode_arr!(
         AbsoluteL,
         AbsoluteH {
             load_into_alu: false
         },
-        LoadY
+        LoadR(Y)
     );
     r[LDY_ABSOLUTE_INDEXED_X as usize] = microcode_arr!(
         AbsoluteL,
@@ -276,22 +277,22 @@ const fn build_opcode_table() -> [ArrayVec<[Microcode; 7]>; 256] {
             oops: true,
             load_into_alu: false
         },
-        LoadY
+        LoadR(Y)
     );
-    r[STA_ZERO_PAGE as usize] = microcode_arr!(zero_page_addr(), StoreA);
+    r[STA_ZERO_PAGE as usize] = microcode_arr!(zero_page_addr(), StoreR(A));
     r[STA_ZERO_PAGE_X as usize] = microcode_arr!(
         zero_page_addr(),
         ZeroPageIndexedX {
             load_into_alu: false
         },
-        StoreA
+        StoreR(A)
     );
     r[STA_ABSOLUTE as usize] = microcode_arr!(
         AbsoluteL,
         AbsoluteH {
             load_into_alu: false
         },
-        StoreA
+        StoreR(A)
     );
     r[STA_ABSOLUTE_INDEXED_X as usize] = microcode_arr!(
         AbsoluteL,
@@ -299,7 +300,7 @@ const fn build_opcode_table() -> [ArrayVec<[Microcode; 7]>; 256] {
             oops: false,
             load_into_alu: false
         },
-        StoreA
+        StoreR(A)
     );
     r[STA_ABSOLUTE_INDEXED_Y as usize] = microcode_arr!(
         AbsoluteL,
@@ -307,7 +308,7 @@ const fn build_opcode_table() -> [ArrayVec<[Microcode; 7]>; 256] {
             oops: false,
             load_into_alu: false
         },
-        StoreA
+        StoreR(A)
     );
     r[STA_INDEXED_INDIRECT as usize] = microcode_arr!(
         zero_page_addr(),
@@ -318,7 +319,7 @@ const fn build_opcode_table() -> [ArrayVec<[Microcode; 7]>; 256] {
             load_into_alu: false
         },
         Nop,
-        StoreA
+        StoreR(A)
     );
     r[STA_INDIRECT_INDEXED_Y as usize] = microcode_arr!(
         zero_page_addr(),
@@ -329,37 +330,37 @@ const fn build_opcode_table() -> [ArrayVec<[Microcode; 7]>; 256] {
             oops: false,
             load_into_alu: false
         },
-        StoreA
+        StoreR(A)
     );
-    r[STX_ZERO_PAGE as usize] = microcode_arr!(zero_page_addr(), StoreX);
+    r[STX_ZERO_PAGE as usize] = microcode_arr!(zero_page_addr(), StoreR(X));
     r[STX_ZERO_PAGE_Y as usize] = microcode_arr!(
         zero_page_addr(),
         ZeroPageIndexedY {
             load_into_alu: false
         },
-        StoreX
+        StoreR(X)
     );
     r[STX_ABSOLUTE as usize] = microcode_arr!(
         AbsoluteL,
         AbsoluteH {
             load_into_alu: false
         },
-        StoreX
+        StoreR(X)
     );
-    r[STY_ZERO_PAGE as usize] = microcode_arr!(zero_page_addr(), StoreY);
+    r[STY_ZERO_PAGE as usize] = microcode_arr!(zero_page_addr(), StoreR(Y));
     r[STY_ZERO_PAGE_X as usize] = microcode_arr!(
         zero_page_addr(),
         ZeroPageIndexedX {
             load_into_alu: false
         },
-        StoreY
+        StoreR(Y)
     );
     r[STY_ABSOLUTE as usize] = microcode_arr!(
         AbsoluteL,
         AbsoluteH {
             load_into_alu: false
         },
-        StoreY
+        StoreR(Y)
     );
     r[BIT_ZERO_PAGE as usize] = microcode_arr!(zero_page_load_alu(), Bit);
     r[BIT_ABSOLUTE as usize] = microcode_arr!(
@@ -1339,18 +1340,10 @@ const OPCODE_TABLE: [ArrayVec<[Microcode; 7]>; 256] = build_opcode_table();
 pub enum Microcode {
     /// Fetch and decode next op code
     FetchAndDecode,
-    /// Load accumulator with value from memory
-    LoadA,
-    /// Load X register with value from memory
-    LoadX,
-    /// Load Y register with value from memory
-    LoadY,
-    /// Store accumulator value to memory
-    StoreA,
-    /// Store X register value to memory
-    StoreX,
-    /// Store Y register value to memory
-    StoreY,
+    /// Load register with value from memory
+    LoadR(Register),
+    /// Store register value to memory
+    StoreR(Register),
     /// Read immediate value into accumulator
     LoadImmediateA,
     /// Read immediate value into X register
@@ -1851,12 +1844,8 @@ impl Microcode {
     pub fn exec<M: Mcu>(self, cpu: &mut Cpu2<M>) {
         match self {
             Self::FetchAndDecode => Self::fetch_and_decode(cpu),
-            Self::LoadA => Self::load_a(cpu),
-            Self::LoadX => Self::load_x(cpu),
-            Self::LoadY => Self::load_y(cpu),
-            Self::StoreA => Self::store_a(cpu),
-            Self::StoreX => Self::store_x(cpu),
-            Self::StoreY => Self::store_y(cpu),
+            Self::LoadR(r) => Self::load_register(cpu, r),
+            Self::StoreR(r) => Self::store_register(cpu, r),
             Self::LoadImmediateA => Self::load_immediate_a(cpu),
             Self::LoadImmediateX => Self::load_immediate_x(cpu),
             Self::LoadImmediateY => Self::load_immediate_y(cpu),
@@ -1974,34 +1963,29 @@ impl Microcode {
         cpu.push_microcodes(&OPCODE_TABLE[opcode as usize]);
     }
 
-    fn load_a<M: Mcu>(cpu: &mut Cpu2<M>) {
-        cpu.a = cpu.read_byte(cpu.ab);
-        cpu.update_negative_flag(cpu.a);
-        cpu.update_zero_flag(cpu.a);
+    fn load_register<M: Mcu>(cpu: &mut Cpu2<M>, r: Register) {
+        let value = cpu.read_byte(cpu.ab);
+        cpu.update_negative_flag(value);
+        cpu.update_zero_flag(value);
+        match r {
+            Register::A => {
+                cpu.a = value;
+            }
+            Register::X => {
+                cpu.x = value;
+            }
+            Register::Y => {
+                cpu.y = value;
+            }
+        }
     }
 
-    fn load_x<M: Mcu>(cpu: &mut Cpu2<M>) {
-        cpu.x = cpu.read_byte(cpu.ab);
-        cpu.update_negative_flag(cpu.x);
-        cpu.update_zero_flag(cpu.x);
-    }
-
-    fn load_y<M: Mcu>(cpu: &mut Cpu2<M>) {
-        cpu.y = cpu.read_byte(cpu.ab);
-        cpu.update_negative_flag(cpu.y);
-        cpu.update_zero_flag(cpu.y);
-    }
-
-    fn store_a<M: Mcu>(cpu: &mut Cpu2<M>) {
-        cpu.write_byte(cpu.ab, cpu.a);
-    }
-
-    fn store_x<M: Mcu>(cpu: &mut Cpu2<M>) {
-        cpu.write_byte(cpu.ab, cpu.x);
-    }
-
-    fn store_y<M: Mcu>(cpu: &mut Cpu2<M>) {
-        cpu.write_byte(cpu.ab, cpu.y);
+    fn store_register<M: Mcu>(cpu: &mut Cpu2<M>, r: Register) {
+        match r {
+            Register::A => cpu.write_byte(cpu.ab, cpu.a),
+            Register::X => cpu.write_byte(cpu.ab, cpu.x),
+            Register::Y => cpu.write_byte(cpu.ab, cpu.y),
+        }
     }
 
     fn load_immediate_a<M: Mcu>(cpu: &mut Cpu2<M>) {
