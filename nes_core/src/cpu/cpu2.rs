@@ -248,6 +248,105 @@ impl<M: Mcu> Cpu2<M> {
         self.sp = self.x;
     }
 
+    fn alr(&mut self) {
+        self.a &= self.alu;
+        self.set_flag(Flag::Carry, self.a & 0x01 != 0);
+        self.a >>= 1;
+        self.update_zero_flag(self.a);
+        self.update_negative_flag(self.a);
+    }
+
+    fn anc(&mut self) {
+        self.a &= self.alu;
+        self.update_zero_flag(self.a);
+        self.update_negative_flag(self.a);
+        self.set_flag(Flag::Carry, self.a & 0x80 != 0);
+    }
+
+    fn arr(&mut self) {
+        self.a &= self.alu;
+        self.a = (self.a >> 1) | ((self.flag(Flag::Carry) as u8) << 7);
+        self.update_zero_flag(self.a);
+        self.update_negative_flag(self.a);
+        self.set_flag(Flag::Carry, self.a & 0x40 != 0);
+        self.set_flag(Flag::Overflow, ((self.a >> 6) ^ (self.a >> 5)) & 1 != 0);
+    }
+
+    fn axs(&mut self) {
+        let v = self.a & self.x;
+        let (x, borrow) = v.overflowing_sub(self.alu);
+        self.x = x;
+        self.update_negative_flag(self.x);
+        self.update_zero_flag(self.x);
+        self.set_flag(Flag::Carry, !borrow);
+    }
+
+    fn lax(&mut self) {
+        self.a = self.alu;
+        self.x = self.alu;
+        self.update_negative_flag(self.alu);
+        self.update_zero_flag(self.alu);
+    }
+
+    fn sax(&mut self) {
+        self.write_byte(self.ab, self.a & self.x);
+    }
+
+    fn dcp(&mut self) {
+        let v = self.alu.wrapping_sub(1);
+        self.write_byte(self.ab, v);
+        let t = self.a.wrapping_sub(v);
+        self.update_negative_flag(t);
+        self.update_zero_flag(t);
+        self.set_flag(Flag::Carry, self.a >= v);
+    }
+
+    fn isc(&mut self) {
+        let v = self.alu.wrapping_add(1);
+        self.write_byte(self.ab, v);
+        self.alu = !v;
+        self.sbc();
+    }
+
+    fn rra(&mut self) {
+        let carry = self.alu & 0x01 != 0;
+        self.alu = (self.alu >> 1) | ((self.flag(Flag::Carry) as u8) << 7);
+        self.write_byte(self.ab, self.alu);
+        self.set_flag(Flag::Carry, carry);
+        self.adc();
+    }
+
+    fn slo(&mut self) {
+        self.set_flag(Flag::Carry, self.alu & 0x80 != 0);
+        self.alu <<= 1;
+        self.write_byte(self.ab, self.alu);
+        self.ora();
+    }
+
+    fn sre(&mut self) {
+        self.set_flag(Flag::Carry, self.alu & 0x01 != 0);
+        self.alu >>= 1;
+        self.write_byte(self.ab, self.alu);
+        self.eor();
+    }
+
+    fn shx(&mut self) {
+        let v = self.x & ((self.abh()).wrapping_add(1));
+        self.write_byte(self.ab, v);
+    }
+
+    fn shy(&mut self) {
+        let v = self.y & ((self.abh()).wrapping_add(1));
+        self.write_byte(self.ab, v);
+    }
+
+    fn tas(&mut self) {
+        let v = self.a & self.x;
+        self.sp = v;
+        let out = v & ((self.abh()).wrapping_add(1));
+        self.write_byte(self.ab, out);
+    }
+
     fn pha(&mut self) {
         self.push_stack(self.a);
     }

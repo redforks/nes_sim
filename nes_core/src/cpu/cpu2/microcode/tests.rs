@@ -837,6 +837,213 @@ fn stack_and_misc_microcodes_manipulate_state() {
 }
 
 #[test]
+fn undocumented_microcodes_update_state() {
+    let mut cpu = cpu_with_memory(
+        0x8000,
+        &[
+            (0x8000, 0x80),
+            (0x0042, 0x10),
+            (0x0043, 0x01),
+            (0x1234, 0x55),
+        ],
+    );
+
+    cpu.a = 0xF0;
+    cpu.x = 0x0F;
+    cpu.y = 0x33;
+    cpu.ab = 0x0042;
+    Microcode::AlrImmediate.exec(&mut cpu);
+    assert_eq!(cpu.a, 0x40);
+
+    cpu.alu = 0x80;
+    Microcode::AncImmediate.exec(&mut cpu);
+    assert_eq!(cpu.a, 0x00);
+
+    cpu.a = 0x7F;
+    cpu.alu = 0xFF;
+    cpu.pc = 0x8002;
+    cpu.mcu_mut().mem[0x8002] = 0xFF;
+    Microcode::ArrImmediate.exec(&mut cpu);
+    assert_eq!(cpu.a, 0x3F);
+
+    cpu.a = 0x1F;
+    cpu.x = 0x0F;
+    cpu.pc = 0x8003;
+    cpu.mcu_mut().mem[0x8003] = 0x01;
+    cpu.alu = 0x01;
+    Microcode::AxsImmediate.exec(&mut cpu);
+    assert_eq!(cpu.x, 0x0E);
+
+    cpu.alu = 0x01;
+    cpu.ab = 0x1234;
+    Microcode::Lax.exec(&mut cpu);
+    assert_eq!(cpu.a, 0x01);
+    assert_eq!(cpu.x, 0x01);
+
+    cpu.a = 0xAA;
+    cpu.x = 0x0F;
+    Microcode::Sax.exec(&mut cpu);
+    assert_eq!(cpu.mcu().writes.last(), Some(&(0x1234, 0x0A)));
+
+    cpu.alu = 0x10;
+    cpu.ab = 0x0042;
+    Microcode::Dcp.exec(&mut cpu);
+    assert_eq!(cpu.mcu().writes.last(), Some(&(0x0042, 0x0F)));
+
+    cpu.alu = 0x01;
+    cpu.ab = 0x0043;
+    Microcode::Isc.exec(&mut cpu);
+    assert_eq!(cpu.mcu().writes.last(), Some(&(0x0043, 0x02)));
+
+    cpu.a = 0x01;
+    cpu.alu = 0x02;
+    cpu.set_flag(Flag::Carry, false);
+    cpu.ab = 0x1234;
+    Microcode::Rra.exec(&mut cpu);
+    assert!(cpu.a != 0x01);
+
+    cpu.a = 0x01;
+    cpu.alu = 0x81;
+    cpu.ab = 0x1234;
+    Microcode::Slo.exec(&mut cpu);
+    assert!(cpu.a != 0x01);
+
+    cpu.a = 0xFF;
+    cpu.alu = 0x03;
+    cpu.ab = 0x1234;
+    Microcode::Sre.exec(&mut cpu);
+    assert!(cpu.a != 0xFF);
+
+    cpu.x = 0xF0;
+    cpu.alu = 0x12;
+    cpu.ab = 0x1234;
+    Microcode::Shx.exec(&mut cpu);
+    Microcode::Shy.exec(&mut cpu);
+    Microcode::Tas.exec(&mut cpu);
+}
+
+#[test]
+fn undocumented_decode_sequences_exist() {
+    let mut cpu = cpu_with_memory(
+        0x8000,
+        &[
+            (0x8000, Opcode::ALR),
+            (0x8001, Opcode::ANC),
+            (0x8002, Opcode::ARR),
+            (0x8003, Opcode::AXS),
+            (0x8004, Opcode::LAX_ZERO_PAGE),
+            (0x8005, Opcode::SAX_ZERO_PAGE),
+            (0x8006, Opcode::DCP_ZERO_PAGE),
+            (0x8007, Opcode::ISC_ZERO_PAGE),
+            (0x8008, Opcode::RRA_ZERO_PAGE),
+            (0x8009, Opcode::SLO_ZERO_PAGE),
+            (0x800A, Opcode::SRE_ZERO_PAGE),
+            (0x800B, Opcode::SHX_ABSOLUTE_INDEXED_Y),
+            (0x800C, Opcode::SHY_ABSOLUTE_INDEXED_X),
+            (0x800D, Opcode::TAS_ABSOLUTE_INDEXED_Y),
+            (0x800E, Opcode::USBC),
+        ],
+    );
+
+    Microcode::FetchAndDecode.exec(&mut cpu);
+    assert_eq!(cpu.pop_microcode(), Some(Microcode::AlrImmediate));
+    Microcode::FetchAndDecode.exec(&mut cpu);
+    assert_eq!(cpu.pop_microcode(), Some(Microcode::AncImmediate));
+    Microcode::FetchAndDecode.exec(&mut cpu);
+    assert_eq!(cpu.pop_microcode(), Some(Microcode::ArrImmediate));
+    Microcode::FetchAndDecode.exec(&mut cpu);
+    assert_eq!(cpu.pop_microcode(), Some(Microcode::AxsImmediate));
+    Microcode::FetchAndDecode.exec(&mut cpu);
+    assert_eq!(
+        cpu.pop_microcode(),
+        Some(Microcode::ZeroPage {
+            load_into_alu: true
+        })
+    );
+    assert_eq!(cpu.pop_microcode(), Some(Microcode::Lax));
+    Microcode::FetchAndDecode.exec(&mut cpu);
+    assert_eq!(cpu.pop_microcode(), Some(Microcode::Sax));
+    Microcode::FetchAndDecode.exec(&mut cpu);
+    assert_eq!(
+        cpu.pop_microcode(),
+        Some(Microcode::ZeroPage {
+            load_into_alu: true
+        })
+    );
+    assert_eq!(cpu.pop_microcode(), Some(Microcode::Dcp));
+    Microcode::FetchAndDecode.exec(&mut cpu);
+    assert_eq!(
+        cpu.pop_microcode(),
+        Some(Microcode::ZeroPage {
+            load_into_alu: true
+        })
+    );
+    assert_eq!(cpu.pop_microcode(), Some(Microcode::Isc));
+    Microcode::FetchAndDecode.exec(&mut cpu);
+    assert_eq!(
+        cpu.pop_microcode(),
+        Some(Microcode::ZeroPage {
+            load_into_alu: true
+        })
+    );
+    assert_eq!(cpu.pop_microcode(), Some(Microcode::StoreAlu));
+    assert_eq!(cpu.pop_microcode(), Some(Microcode::Rra));
+    assert_eq!(cpu.pop_microcode(), Some(Microcode::StoreAlu));
+    Microcode::FetchAndDecode.exec(&mut cpu);
+    assert_eq!(
+        cpu.pop_microcode(),
+        Some(Microcode::ZeroPage {
+            load_into_alu: true
+        })
+    );
+    assert_eq!(cpu.pop_microcode(), Some(Microcode::StoreAlu));
+    assert_eq!(cpu.pop_microcode(), Some(Microcode::Asl));
+    assert_eq!(cpu.pop_microcode(), Some(Microcode::StoreAlu));
+    Microcode::FetchAndDecode.exec(&mut cpu);
+    assert_eq!(
+        cpu.pop_microcode(),
+        Some(Microcode::ZeroPage {
+            load_into_alu: true
+        })
+    );
+    assert_eq!(cpu.pop_microcode(), Some(Microcode::StoreAlu));
+    assert_eq!(cpu.pop_microcode(), Some(Microcode::Lsr));
+    assert_eq!(cpu.pop_microcode(), Some(Microcode::StoreAlu));
+    Microcode::FetchAndDecode.exec(&mut cpu);
+    assert_eq!(cpu.pop_microcode(), Some(Microcode::AbsoluteL));
+    assert_eq!(
+        cpu.pop_microcode(),
+        Some(Microcode::AbsoluteIndexedY {
+            oops: false,
+            load_into_alu: true
+        })
+    );
+    assert_eq!(cpu.pop_microcode(), Some(Microcode::Shx));
+    Microcode::FetchAndDecode.exec(&mut cpu);
+    assert_eq!(cpu.pop_microcode(), Some(Microcode::AbsoluteL));
+    assert_eq!(
+        cpu.pop_microcode(),
+        Some(Microcode::AbsoluteIndexedX {
+            oops: false,
+            load_into_alu: true
+        })
+    );
+    assert_eq!(cpu.pop_microcode(), Some(Microcode::Shy));
+    Microcode::FetchAndDecode.exec(&mut cpu);
+    assert_eq!(cpu.pop_microcode(), Some(Microcode::AbsoluteL));
+    assert_eq!(
+        cpu.pop_microcode(),
+        Some(Microcode::AbsoluteIndexedY {
+            oops: false,
+            load_into_alu: true
+        })
+    );
+    assert_eq!(cpu.pop_microcode(), Some(Microcode::Tas));
+    Microcode::FetchAndDecode.exec(&mut cpu);
+    assert_eq!(cpu.pop_microcode(), Some(Microcode::SbcImmediate));
+}
+
+#[test]
 fn load_immediate_a_reads_operand_and_updates_flags() {
     let mut cpu = cpu_with_memory(0x8000, &[(0x8000, 0x00)]);
     cpu.status = Flag::Negative as u8;
