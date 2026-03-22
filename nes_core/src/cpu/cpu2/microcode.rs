@@ -1,4 +1,5 @@
-use crate::{cpu::Cpu2, mcu::Mcu, Flag};
+use super::Cpu2;
+use crate::{Flag, mcu::Mcu};
 
 /// Each Microcode instruction executed by the CPU in a single cycle
 #[derive(Debug, Clone, Copy, PartialEq)]
