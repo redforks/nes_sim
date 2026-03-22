@@ -32,12 +32,12 @@ impl Mcu for TestMcu {
     }
 }
 
-fn cpu_with_memory(program_start: u16, bytes: &[(u16, u8)]) -> Cpu2<TestMcu> {
+fn cpu_with_memory(program_start: u16, bytes: &[(u16, u8)]) -> Cpu<TestMcu> {
     let mut mcu = TestMcu::default();
     for (addr, value) in bytes {
         mcu.mem[*addr as usize] = *value;
     }
-    let mut cpu = Cpu2::new(mcu);
+    let mut cpu = Cpu::new(mcu);
     cpu.pc = program_start;
     cpu
 }
@@ -908,8 +908,8 @@ fn undocumented_decode_sequences_exist() {
     assert_eq!(cpu.pop_microcode(), Some(zero_page_load_alu()));
     assert_eq!(cpu.pop_microcode(), Some(Microcode::Lax));
     Microcode::FetchAndDecode.exec(&mut cpu);
+    assert_eq!(cpu.pop_microcode(), Some(zero_page_addr()));
     assert_eq!(cpu.pop_microcode(), Some(Microcode::Sax));
-    assert_eq!(cpu.pop_microcode(), Some(zero_page_save_alu()));
     Microcode::FetchAndDecode.exec(&mut cpu);
     assert_eq!(cpu.pop_microcode(), Some(zero_page_load_alu()));
     assert_eq!(cpu.pop_microcode(), Some(Microcode::Dcp));
@@ -920,17 +920,17 @@ fn undocumented_decode_sequences_exist() {
     assert_eq!(cpu.pop_microcode(), Some(zero_page_load_alu()));
     assert_eq!(cpu.pop_microcode(), Some(Microcode::StoreAlu));
     assert_eq!(cpu.pop_microcode(), Some(Microcode::Rra));
-    assert_eq!(cpu.pop_microcode(), Some(Microcode::StoreAlu));
+    assert!(cpu.pop_microcode().is_none());
     Microcode::FetchAndDecode.exec(&mut cpu);
     assert_eq!(cpu.pop_microcode(), Some(zero_page_load_alu()));
     assert_eq!(cpu.pop_microcode(), Some(Microcode::StoreAlu));
-    assert_eq!(cpu.pop_microcode(), Some(Microcode::Asl));
-    assert_eq!(cpu.pop_microcode(), Some(Microcode::StoreAlu));
+    assert_eq!(cpu.pop_microcode(), Some(Microcode::Slo));
+    assert!(cpu.pop_microcode().is_none());
     Microcode::FetchAndDecode.exec(&mut cpu);
     assert_eq!(cpu.pop_microcode(), Some(zero_page_load_alu()));
     assert_eq!(cpu.pop_microcode(), Some(Microcode::StoreAlu));
-    assert_eq!(cpu.pop_microcode(), Some(Microcode::Lsr));
-    assert_eq!(cpu.pop_microcode(), Some(Microcode::StoreAlu));
+    assert_eq!(cpu.pop_microcode(), Some(Microcode::Sre));
+    assert!(cpu.pop_microcode().is_none());
     Microcode::FetchAndDecode.exec(&mut cpu);
     assert_eq!(cpu.pop_microcode(), Some(Microcode::AbsoluteL));
     assert_eq!(
