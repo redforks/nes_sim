@@ -475,6 +475,22 @@ impl Opcode {
     const NOP_IMMEDIATE3: u8 = 0x89;
     const NOP_IMMEDIATE4: u8 = 0xC2;
     const NOP_IMMEDIATE5: u8 = 0xE2;
+    const NOP_ZERO_PAGE1: u8 = 0x04;
+    const NOP_ZERO_PAGE2: u8 = 0x44;
+    const NOP_ZERO_PAGE3: u8 = 0x64;
+    const NOP_ZERO_PAGE_X1: u8 = 0x14;
+    const NOP_ZERO_PAGE_X2: u8 = 0x34;
+    const NOP_ZERO_PAGE_X3: u8 = 0x54;
+    const NOP_ZERO_PAGE_X4: u8 = 0x74;
+    const NOP_ZERO_PAGE_X5: u8 = 0xD4;
+    const NOP_ZERO_PAGE_X6: u8 = 0xF4;
+    const NOP_ABSOLUTE: u8 = 0x0C;
+    const NOP_ABSOLUTE_INDEXED_X1: u8 = 0x1C;
+    const NOP_ABSOLUTE_INDEXED_X2: u8 = 0x3C;
+    const NOP_ABSOLUTE_INDEXED_X3: u8 = 0x5C;
+    const NOP_ABSOLUTE_INDEXED_X4: u8 = 0x7C;
+    const NOP_ABSOLUTE_INDEXED_X5: u8 = 0xDC;
+    const NOP_ABSOLUTE_INDEXED_X6: u8 = 0xFC;
 }
 
 impl Microcode {
@@ -1008,7 +1024,35 @@ impl Microcode {
             | Opcode::NOP_IMMEDIATE3
             | Opcode::NOP_IMMEDIATE4
             | Opcode::NOP_IMMEDIATE5 => {
-                cpu.push_microcode(Microcode::FetchAndDecode);
+                cpu.push_microcode(Microcode::SkipImmediate);
+                cpu.push_microcode(Microcode::Nop);
+            }
+            Opcode::NOP_ZERO_PAGE1 | Opcode::NOP_ZERO_PAGE2 | Opcode::NOP_ZERO_PAGE3 => {
+                cpu.push_microcode(Microcode::ZeroPage {
+                    load_into_alu: false,
+                });
+                cpu.push_microcode(Microcode::Nop);
+            }
+            Opcode::NOP_ZERO_PAGE_X1
+            | Opcode::NOP_ZERO_PAGE_X2
+            | Opcode::NOP_ZERO_PAGE_X3
+            | Opcode::NOP_ZERO_PAGE_X4
+            | Opcode::NOP_ZERO_PAGE_X5
+            | Opcode::NOP_ZERO_PAGE_X6 => {
+                zero_page_indexed_x_addressing(cpu, false);
+                cpu.push_microcode(Microcode::Nop);
+            }
+            Opcode::NOP_ABSOLUTE => {
+                absolute_addressing(cpu, false);
+                cpu.push_microcode(Microcode::Nop);
+            }
+            Opcode::NOP_ABSOLUTE_INDEXED_X1
+            | Opcode::NOP_ABSOLUTE_INDEXED_X2
+            | Opcode::NOP_ABSOLUTE_INDEXED_X3
+            | Opcode::NOP_ABSOLUTE_INDEXED_X4
+            | Opcode::NOP_ABSOLUTE_INDEXED_X5
+            | Opcode::NOP_ABSOLUTE_INDEXED_X6 => {
+                absolute_indexed_x_addressing(cpu, false, false);
                 cpu.push_microcode(Microcode::Nop);
             }
 
