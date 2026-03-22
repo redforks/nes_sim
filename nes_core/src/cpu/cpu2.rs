@@ -436,6 +436,12 @@ impl<M: Mcu> Cpu2<M> {
         self.microcode_queue.push_back(microcode);
     }
 
+    fn push_microcodes(&mut self, microcodes: &[Microcode]) {
+        for &code in microcodes {
+            self.microcode_queue.push_back(code);
+        }
+    }
+
     fn pop_microcode(&mut self) -> Option<Microcode> {
         self.microcode_queue.pop_front()
     }

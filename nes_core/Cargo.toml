@@ -16,6 +16,7 @@ nom = { workspace = true }
 strum_macros = { workspace = true }
 thiserror = { workspace = true }
 image = { workspace = true }
+tinyvec = { version = "1.11.0", features = ["latest_stable_rust"] }
 
 [dev-dependencies]
 env_logger = { workspace = true }
