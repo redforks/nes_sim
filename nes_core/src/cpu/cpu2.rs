@@ -188,6 +188,27 @@ impl<M: Mcu> Cpu2<M> {
         self.update_negative_flag(self.a);
     }
 
+    fn cmp(&mut self) {
+        let t = self.a.wrapping_sub(self.alu);
+        self.update_negative_flag(t);
+        self.update_zero_flag(t);
+        self.set_flag(Flag::Carry, self.a >= self.alu);
+    }
+
+    fn cpx(&mut self) {
+        let t = self.x.wrapping_sub(self.alu);
+        self.update_negative_flag(t);
+        self.update_zero_flag(t);
+        self.set_flag(Flag::Carry, self.x >= self.alu);
+    }
+
+    fn cpy(&mut self) {
+        let t = self.y.wrapping_sub(self.alu);
+        self.update_negative_flag(t);
+        self.update_zero_flag(t);
+        self.set_flag(Flag::Carry, self.y >= self.alu);
+    }
+
     fn and(&mut self) {
         self.a &= self.alu;
         self.update_zero_flag(self.a);
