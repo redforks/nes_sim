@@ -329,6 +329,126 @@ fn fetch_and_decode_queues_transfer_sequences() {
 }
 
 #[test]
+fn fetch_and_decode_queues_stack_subroutine_jump_flag_misc_sequences() {
+    let mut cpu = cpu_with_memory(
+        0x8000,
+        &[
+            (0x8000, Opcode::PHA),
+            (0x8001, Opcode::PLA),
+            (0x8002, Opcode::PHP),
+            (0x8003, Opcode::PLP),
+            (0x8004, Opcode::JMP_ABSOLUTE),
+            (0x8005, Opcode::JMP_INDIRECT),
+            (0x8006, Opcode::JSR),
+            (0x8007, Opcode::RTS),
+            (0x8008, Opcode::RTI),
+            (0x8009, Opcode::CLC),
+            (0x800A, Opcode::SEC),
+            (0x800B, Opcode::CLD),
+            (0x800C, Opcode::SED),
+            (0x800D, Opcode::CLI),
+            (0x800E, Opcode::SEI),
+            (0x800F, Opcode::CLV),
+            (0x8010, Opcode::NOP),
+            (0x8011, Opcode::BRK),
+        ],
+    );
+
+    Microcode::FetchAndDecode.exec(&mut cpu);
+    assert_eq!(cpu.opcode, Opcode::PHA);
+    assert_eq!(cpu.pop_microcode(), Some(Microcode::Pha));
+
+    Microcode::FetchAndDecode.exec(&mut cpu);
+    assert_eq!(cpu.opcode, Opcode::PLA);
+    assert_eq!(cpu.pop_microcode(), Some(Microcode::Pla));
+
+    Microcode::FetchAndDecode.exec(&mut cpu);
+    assert_eq!(cpu.opcode, Opcode::PHP);
+    assert_eq!(cpu.pop_microcode(), Some(Microcode::Php));
+
+    Microcode::FetchAndDecode.exec(&mut cpu);
+    assert_eq!(cpu.opcode, Opcode::PLP);
+    assert_eq!(cpu.pop_microcode(), Some(Microcode::Plp));
+
+    Microcode::FetchAndDecode.exec(&mut cpu);
+    assert_eq!(cpu.opcode, Opcode::JMP_ABSOLUTE);
+    assert_eq!(cpu.pop_microcode(), Some(Microcode::AbsoluteL));
+    assert_eq!(
+        cpu.pop_microcode(),
+        Some(Microcode::AbsoluteH {
+            load_into_alu: false
+        })
+    );
+    assert_eq!(cpu.pop_microcode(), Some(Microcode::JmpAbsolute));
+
+    Microcode::FetchAndDecode.exec(&mut cpu);
+    assert_eq!(cpu.opcode, Opcode::JMP_INDIRECT);
+    assert_eq!(cpu.pop_microcode(), Some(Microcode::AbsoluteL));
+    assert_eq!(
+        cpu.pop_microcode(),
+        Some(Microcode::AbsoluteH {
+            load_into_alu: false
+        })
+    );
+    assert_eq!(cpu.pop_microcode(), Some(Microcode::JmpIndirect));
+
+    Microcode::FetchAndDecode.exec(&mut cpu);
+    assert_eq!(cpu.opcode, Opcode::JSR);
+    assert_eq!(cpu.pop_microcode(), Some(Microcode::AbsoluteL));
+    assert_eq!(
+        cpu.pop_microcode(),
+        Some(Microcode::AbsoluteH {
+            load_into_alu: false
+        })
+    );
+    assert_eq!(cpu.pop_microcode(), Some(Microcode::Jsr));
+
+    Microcode::FetchAndDecode.exec(&mut cpu);
+    assert_eq!(cpu.opcode, Opcode::RTS);
+    assert_eq!(cpu.pop_microcode(), Some(Microcode::Rts));
+
+    Microcode::FetchAndDecode.exec(&mut cpu);
+    assert_eq!(cpu.opcode, Opcode::RTI);
+    assert_eq!(cpu.pop_microcode(), Some(Microcode::Rti));
+
+    Microcode::FetchAndDecode.exec(&mut cpu);
+    assert_eq!(cpu.opcode, Opcode::CLC);
+    assert_eq!(cpu.pop_microcode(), Some(Microcode::Clc));
+
+    Microcode::FetchAndDecode.exec(&mut cpu);
+    assert_eq!(cpu.opcode, Opcode::SEC);
+    assert_eq!(cpu.pop_microcode(), Some(Microcode::Sec));
+
+    Microcode::FetchAndDecode.exec(&mut cpu);
+    assert_eq!(cpu.opcode, Opcode::CLD);
+    assert_eq!(cpu.pop_microcode(), Some(Microcode::Cld));
+
+    Microcode::FetchAndDecode.exec(&mut cpu);
+    assert_eq!(cpu.opcode, Opcode::SED);
+    assert_eq!(cpu.pop_microcode(), Some(Microcode::Sed));
+
+    Microcode::FetchAndDecode.exec(&mut cpu);
+    assert_eq!(cpu.opcode, Opcode::CLI);
+    assert_eq!(cpu.pop_microcode(), Some(Microcode::Cli));
+
+    Microcode::FetchAndDecode.exec(&mut cpu);
+    assert_eq!(cpu.opcode, Opcode::SEI);
+    assert_eq!(cpu.pop_microcode(), Some(Microcode::Sei));
+
+    Microcode::FetchAndDecode.exec(&mut cpu);
+    assert_eq!(cpu.opcode, Opcode::CLV);
+    assert_eq!(cpu.pop_microcode(), Some(Microcode::Clv));
+
+    Microcode::FetchAndDecode.exec(&mut cpu);
+    assert_eq!(cpu.opcode, Opcode::NOP);
+    assert_eq!(cpu.pop_microcode(), Some(Microcode::Nop));
+
+    Microcode::FetchAndDecode.exec(&mut cpu);
+    assert_eq!(cpu.opcode, Opcode::BRK);
+    assert_eq!(cpu.pop_microcode(), Some(Microcode::Brk));
+}
+
+#[test]
 fn fetch_and_decode_queues_shift_and_rotate_sequences() {
     let mut cpu = cpu_with_memory(
         0x8000,
@@ -638,6 +758,82 @@ fn transfer_microcodes_copy_registers_and_update_flags() {
     cpu.x = 0x55;
     Microcode::Txs.exec(&mut cpu);
     assert_eq!(cpu.sp, 0x55);
+}
+
+#[test]
+fn stack_and_misc_microcodes_manipulate_state() {
+    let mut cpu = cpu_with_memory(0x8000, &[(0xFFFE, 0x34), (0xFFFF, 0x12)]);
+    cpu.a = 0xAB;
+    cpu.sp = 0xFF;
+    cpu.status = Flag::Carry as u8;
+
+    Microcode::Pha.exec(&mut cpu);
+    assert_eq!(cpu.sp, 0xFE);
+    assert_eq!(cpu.mcu().mem[0x01FF], 0xAB);
+
+    cpu.a = 0x00;
+    Microcode::Pla.exec(&mut cpu);
+    assert_eq!(cpu.a, 0xAB);
+
+    Microcode::Php.exec(&mut cpu);
+    assert_eq!(
+        cpu.mcu().mem[0x01FF] & (Flag::Break as u8),
+        Flag::Break as u8
+    );
+
+    cpu.status = 0;
+    cpu.sp = 0xFD;
+    cpu.mcu_mut().mem[0x01FE] = Flag::Carry as u8;
+    Microcode::Plp.exec(&mut cpu);
+    assert_eq!(cpu.status & Flag::Carry as u8, Flag::Carry as u8);
+
+    cpu.ab = 0x1234;
+    Microcode::JmpAbsolute.exec(&mut cpu);
+    assert_eq!(cpu.pc, 0x1234);
+
+    cpu.ab = 0x1234;
+    cpu.mcu_mut().mem[0x1234] = 0x34;
+    cpu.mcu_mut().mem[0x1235] = 0x12;
+    Microcode::JmpIndirect.exec(&mut cpu);
+    assert_eq!(cpu.pc, 0x1234);
+
+    cpu.ab = 0x1234;
+    cpu.pc = 0x8005;
+    cpu.sp = 0xFF;
+    Microcode::Jsr.exec(&mut cpu);
+    assert_eq!(cpu.pc, 0x1234);
+
+    cpu.sp = 0xFD;
+    cpu.mcu_mut().mem[0x01FE] = 0x00;
+    cpu.mcu_mut().mem[0x01FF] = 0x80;
+    Microcode::Rts.exec(&mut cpu);
+    assert_eq!(cpu.pc, 0x8001);
+
+    cpu.sp = 0xFC;
+    cpu.mcu_mut().mem[0x01FD] = Flag::Carry as u8;
+    cpu.mcu_mut().mem[0x01FE] = 0x78;
+    cpu.mcu_mut().mem[0x01FF] = 0x56;
+    Microcode::Rti.exec(&mut cpu);
+    assert_eq!(cpu.status & Flag::Carry as u8, Flag::Carry as u8);
+    assert_eq!(cpu.pc, 0x5678);
+
+    cpu.status = Flag::Carry as u8;
+    Microcode::Clc.exec(&mut cpu);
+    assert!(!cpu.flag(Flag::Carry));
+    Microcode::Sec.exec(&mut cpu);
+    assert!(cpu.flag(Flag::Carry));
+    cpu.status = Flag::Decimal as u8;
+    Microcode::Cld.exec(&mut cpu);
+    assert!(!cpu.flag(Flag::Decimal));
+    Microcode::Sed.exec(&mut cpu);
+    assert!(cpu.flag(Flag::Decimal));
+    Microcode::Cli.exec(&mut cpu);
+    assert!(!cpu.flag(Flag::InterruptDisabled));
+    Microcode::Sei.exec(&mut cpu);
+    assert!(cpu.flag(Flag::InterruptDisabled));
+    cpu.status = Flag::Overflow as u8;
+    Microcode::Clv.exec(&mut cpu);
+    assert!(!cpu.flag(Flag::Overflow));
 }
 
 #[test]

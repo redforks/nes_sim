@@ -1,5 +1,5 @@
 use super::Cpu2;
-use crate::{mcu::Mcu, Flag};
+use crate::{Flag, mcu::Mcu};
 
 /// Each Microcode instruction executed by the CPU in a single cycle
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -131,6 +131,27 @@ pub enum Microcode {
 
     RorAccumulator,
     Ror,
+
+    Pha,
+    Pla,
+    Php,
+    Plp,
+
+    JmpAbsolute,
+    JmpIndirect,
+    Jsr,
+    Rts,
+    Rti,
+
+    Clc,
+    Sec,
+    Cld,
+    Sed,
+    Cli,
+    Sei,
+    Clv,
+
+    Brk,
 
     Tax,
     Txa,
@@ -328,6 +349,34 @@ impl Opcode {
     pub const TYA: u8 = 0x98;
     pub const TSX: u8 = 0xBA;
     pub const TXS: u8 = 0x9A;
+
+    // Stack Instructions
+
+    pub const PHA: u8 = 0x48;
+    pub const PLA: u8 = 0x68;
+    pub const PHP: u8 = 0x08;
+    pub const PLP: u8 = 0x28;
+
+    // Subroutine and Jump Instructions
+
+    pub const JMP_ABSOLUTE: u8 = 0x4C;
+    pub const JMP_INDIRECT: u8 = 0x6C;
+    pub const JSR: u8 = 0x20;
+    pub const RTS: u8 = 0x60;
+    pub const RTI: u8 = 0x40;
+
+    // Set and Clear Instructions
+    pub const CLC: u8 = 0x18;
+    pub const SEC: u8 = 0x38;
+    pub const CLD: u8 = 0xD8;
+    pub const SED: u8 = 0xF8;
+    pub const CLI: u8 = 0x58;
+    pub const SEI: u8 = 0x78;
+    pub const CLV: u8 = 0xB8;
+
+    // Miscellaneous Instructions
+    pub const NOP: u8 = 0xEA;
+    pub const BRK: u8 = 0x00;
 }
 
 impl Microcode {
@@ -396,6 +445,27 @@ impl Microcode {
             Microcode::Rol => Self::rol(cpu),
             Microcode::RorAccumulator => Self::ror_accumulator(cpu),
             Microcode::Ror => Self::ror(cpu),
+
+            Microcode::Pha => cpu.pha(),
+            Microcode::Pla => cpu.pla(),
+            Microcode::Php => cpu.php(),
+            Microcode::Plp => cpu.plp(),
+
+            Microcode::JmpAbsolute => cpu.jmp_absolute(),
+            Microcode::JmpIndirect => cpu.jmp_indirect(),
+            Microcode::Jsr => cpu.jsr(),
+            Microcode::Rts => cpu.rts(),
+            Microcode::Rti => cpu.rti(),
+
+            Microcode::Clc => cpu.set_flag(Flag::Carry, false),
+            Microcode::Sec => cpu.set_flag(Flag::Carry, true),
+            Microcode::Cld => cpu.set_flag(Flag::Decimal, false),
+            Microcode::Sed => cpu.set_flag(Flag::Decimal, true),
+            Microcode::Cli => cpu.set_flag(Flag::InterruptDisabled, false),
+            Microcode::Sei => cpu.set_flag(Flag::InterruptDisabled, true),
+            Microcode::Clv => cpu.set_flag(Flag::Overflow, false),
+
+            Microcode::Brk => cpu.brk(),
 
             Microcode::Tax => cpu.tax(),
             Microcode::Txa => cpu.txa(),
@@ -774,6 +844,43 @@ impl Microcode {
             Opcode::BVS => {
                 cpu.push_microcode(Microcode::BranchRelative(BranchTest::IfOverflowSet));
             }
+
+            Opcode::PHA => cpu.push_microcode(Microcode::Pha),
+            Opcode::PLA => cpu.push_microcode(Microcode::Pla),
+            Opcode::PHP => cpu.push_microcode(Microcode::Php),
+            Opcode::PLP => cpu.push_microcode(Microcode::Plp),
+
+            Opcode::JMP_ABSOLUTE => {
+                absolute_addressing(cpu, false);
+                cpu.push_microcode(Microcode::JmpAbsolute);
+            }
+            Opcode::JMP_INDIRECT => {
+                cpu.push_microcode(Microcode::AbsoluteL);
+                cpu.push_microcode(Microcode::AbsoluteH {
+                    load_into_alu: false,
+                });
+                cpu.push_microcode(Microcode::JmpIndirect);
+            }
+            Opcode::JSR => {
+                cpu.push_microcode(Microcode::AbsoluteL);
+                cpu.push_microcode(Microcode::AbsoluteH {
+                    load_into_alu: false,
+                });
+                cpu.push_microcode(Microcode::Jsr);
+            }
+            Opcode::RTS => cpu.push_microcode(Microcode::Rts),
+            Opcode::RTI => cpu.push_microcode(Microcode::Rti),
+
+            Opcode::CLC => cpu.push_microcode(Microcode::Clc),
+            Opcode::SEC => cpu.push_microcode(Microcode::Sec),
+            Opcode::CLD => cpu.push_microcode(Microcode::Cld),
+            Opcode::SED => cpu.push_microcode(Microcode::Sed),
+            Opcode::CLI => cpu.push_microcode(Microcode::Cli),
+            Opcode::SEI => cpu.push_microcode(Microcode::Sei),
+            Opcode::CLV => cpu.push_microcode(Microcode::Clv),
+
+            Opcode::NOP => cpu.push_microcode(Microcode::Nop),
+            Opcode::BRK => cpu.push_microcode(Microcode::Brk),
 
             Opcode::SBC_IMMEDIATE => {
                 cpu.push_microcode(Microcode::SbcImmediate);

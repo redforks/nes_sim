@@ -64,6 +64,11 @@ impl<M: Mcu> Cpu2<M> {
         &self.mcu
     }
 
+    #[cfg(test)]
+    pub fn mcu_mut(&mut self) -> &mut M {
+        &mut self.mcu
+    }
+
     /// Return high byte of pc
     fn pch(&self) -> u8 {
         (self.pc >> 8) as u8
@@ -241,6 +246,62 @@ impl<M: Mcu> Cpu2<M> {
 
     fn txs(&mut self) {
         self.sp = self.x;
+    }
+
+    fn pha(&mut self) {
+        self.push_stack(self.a);
+    }
+
+    fn pla(&mut self) {
+        self.a = self.pop_stack();
+        self.update_negative_flag(self.a);
+        self.update_zero_flag(self.a);
+    }
+
+    fn php(&mut self) {
+        self.push_stack(self.status | Flag::Break as u8 | Flag::NotUsed as u8);
+    }
+
+    fn plp(&mut self) {
+        let v = self.pop_stack();
+        self.status = v & 0b1100_1111;
+    }
+
+    fn jmp_absolute(&mut self) {
+        self.pc = self.ab;
+    }
+
+    fn jmp_indirect(&mut self) {
+        self.pc = self.read_word(self.ab);
+    }
+
+    fn jsr(&mut self) {
+        let ret = self.pc.wrapping_sub(1);
+        self.push_stack((ret >> 8) as u8);
+        self.push_stack(ret as u8);
+        self.pc = self.ab;
+    }
+
+    fn rts(&mut self) {
+        let lo = self.pop_stack() as u16;
+        let hi = self.pop_stack() as u16;
+        self.pc = ((hi << 8) | lo).wrapping_add(1);
+    }
+
+    fn rti(&mut self) {
+        let v = self.pop_stack();
+        self.status = v & 0b1100_1111;
+        self.pc = self.pop_stack() as u16 | ((self.pop_stack() as u16) << 8);
+    }
+
+    fn brk(&mut self) {
+        self.pc = self.pc.wrapping_add(1);
+        let pc = self.pc;
+        self.push_stack((pc >> 8) as u8);
+        self.push_stack(pc as u8);
+        self.push_stack(self.status | Flag::Break as u8 | Flag::NotUsed as u8);
+        self.set_flag(Flag::InterruptDisabled, true);
+        self.pc = self.read_word(0xFFFE);
     }
 
     fn and(&mut self) {
