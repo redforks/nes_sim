@@ -152,6 +152,43 @@ fn fetch_and_decode_queues_overflow_branch_sequences() {
 }
 
 #[test]
+fn fetch_and_decode_queues_sbc_sequences() {
+    let mut cpu = cpu_with_memory(
+        0x8000,
+        &[
+            (0x8000, Opcode::SBC_IMMEDIATE),
+            (0x8001, Opcode::SBC_ZERO_PAGE),
+            (0x8002, Opcode::SBC_ABSOLUTE),
+        ],
+    );
+
+    Microcode::FetchAndDecode.exec(&mut cpu);
+    assert_eq!(cpu.opcode, Opcode::SBC_IMMEDIATE);
+    assert_eq!(cpu.pop_microcode(), Some(Microcode::SbcImmediate));
+
+    Microcode::FetchAndDecode.exec(&mut cpu);
+    assert_eq!(cpu.opcode, Opcode::SBC_ZERO_PAGE);
+    assert_eq!(
+        cpu.pop_microcode(),
+        Some(Microcode::ZeroPage {
+            load_into_alu: true
+        })
+    );
+    assert_eq!(cpu.pop_microcode(), Some(Microcode::Sbc));
+
+    Microcode::FetchAndDecode.exec(&mut cpu);
+    assert_eq!(cpu.opcode, Opcode::SBC_ABSOLUTE);
+    assert_eq!(cpu.pop_microcode(), Some(Microcode::AbsoluteL));
+    assert_eq!(
+        cpu.pop_microcode(),
+        Some(Microcode::AbsoluteH {
+            load_into_alu: true
+        })
+    );
+    assert_eq!(cpu.pop_microcode(), Some(Microcode::Sbc));
+}
+
+#[test]
 fn fetch_and_decode_queues_load_and_store_sequences() {
     let mut cpu = cpu_with_memory(
         0x8000,
@@ -334,6 +371,27 @@ fn adc_immediate_uses_carry_and_updates_flags() {
     assert!(cpu.flag(Flag::Overflow));
     assert!(!cpu.flag(Flag::Carry));
     assert!(!cpu.flag(Flag::Zero));
+}
+
+#[test]
+fn sbc_immediate_and_memory_microcodes_update_accumulator_and_flags() {
+    let mut cpu = cpu_with_memory(0x8000, &[(0x8000, 0x10), (0x0042, 0x01)]);
+    cpu.a = 0x20;
+    cpu.set_flag(Flag::Carry, true);
+
+    Microcode::SbcImmediate.exec(&mut cpu);
+    assert_eq!(cpu.a, 0x10);
+    assert_eq!(cpu.pc, 0x8001);
+    assert!(cpu.flag(Flag::Carry));
+    assert!(!cpu.flag(Flag::Zero));
+
+    cpu.ab = 0x0042;
+    cpu.alu = 0x01;
+    Microcode::Sbc.exec(&mut cpu);
+    assert_eq!(cpu.a, 0x0F);
+    assert!(cpu.flag(Flag::Carry));
+    assert!(!cpu.flag(Flag::Zero));
+    assert!(!cpu.flag(Flag::Negative));
 }
 
 #[test]
