@@ -390,6 +390,30 @@ impl<M: Mcu> Cpu<M> {
         self.sp = self.x;
     }
 
+    fn inx(&mut self) {
+        self.x = self.x.wrapping_add(1);
+        self.update_negative_flag(self.x);
+        self.update_zero_flag(self.x);
+    }
+
+    fn iny(&mut self) {
+        self.y = self.y.wrapping_add(1);
+        self.update_negative_flag(self.y);
+        self.update_zero_flag(self.y);
+    }
+
+    fn dex(&mut self) {
+        self.x = self.x.wrapping_sub(1);
+        self.update_negative_flag(self.x);
+        self.update_zero_flag(self.x);
+    }
+
+    fn dey(&mut self) {
+        self.y = self.y.wrapping_sub(1);
+        self.update_negative_flag(self.y);
+        self.update_zero_flag(self.y);
+    }
+
     fn alr(&mut self) {
         self.a &= self.alu;
         self.set_flag(Flag::Carry, self.a & 0x01 != 0);
@@ -446,7 +470,7 @@ impl<M: Mcu> Cpu<M> {
     fn isc(&mut self) {
         let v = self.alu.wrapping_add(1);
         self.write_byte(self.ab, v);
-        self.alu = !v;
+        self.alu = v;
         self.sbc();
     }
 
