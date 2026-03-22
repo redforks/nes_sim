@@ -22,6 +22,9 @@ pub struct Cpu2<M: Mcu> {
     /// Internal register of ALU
     pub alu: u8,
 
+    /// CPU freeze state triggered by KIL opcodes.
+    pub freezed: bool,
+
     microcode_queue: VecDeque<Microcode>,
 }
 
@@ -40,12 +43,17 @@ impl<M: Mcu> Cpu2<M> {
             opcode: 0,
             ab: 0,
             alu: 0,
+            freezed: false,
             microcode_queue,
         }
     }
 
     /// Tick the CPU, executing one microcode cycle.
     pub fn tick(&mut self) {
+        if self.freezed {
+            return;
+        }
+
         let microcode = match self.pop_microcode() {
             Some(code) => code,
             None => Microcode::FetchAndDecode,
@@ -56,6 +64,7 @@ impl<M: Mcu> Cpu2<M> {
 
     pub fn reset(&mut self) {
         self.pc = self.read_word(0xFFFC);
+        self.freezed = false;
         self.microcode_queue.clear();
     }
 

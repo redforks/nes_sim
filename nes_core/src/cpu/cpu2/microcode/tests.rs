@@ -941,7 +941,8 @@ fn undocumented_decode_sequences_exist() {
             (0x800B, Opcode::SHX_ABSOLUTE_INDEXED_Y),
             (0x800C, Opcode::SHY_ABSOLUTE_INDEXED_X),
             (0x800D, Opcode::TAS_ABSOLUTE_INDEXED_Y),
-            (0x800E, Opcode::USBC),
+            (0x800E, Opcode::KIL1),
+            (0x800F, Opcode::USBC),
         ],
     );
 
@@ -1039,6 +1040,8 @@ fn undocumented_decode_sequences_exist() {
         })
     );
     assert_eq!(cpu.pop_microcode(), Some(Microcode::Tas));
+    Microcode::FetchAndDecode.exec(&mut cpu);
+    assert_eq!(cpu.pop_microcode(), Some(Microcode::Kill));
     Microcode::FetchAndDecode.exec(&mut cpu);
     assert_eq!(cpu.pop_microcode(), Some(Microcode::SbcImmediate));
 }
