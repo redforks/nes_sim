@@ -266,6 +266,48 @@ fn fetch_and_decode_queues_load_and_store_sequences() {
 }
 
 #[test]
+fn fetch_and_decode_queues_shift_and_rotate_sequences() {
+    let mut cpu = cpu_with_memory(
+        0x8000,
+        &[
+            (0x8000, Opcode::LSR_ACCUMULATOR),
+            (0x8001, Opcode::ROL_ZERO_PAGE),
+            (0x8002, Opcode::ROR_ABSOLUTE_INDEXED_X),
+        ],
+    );
+
+    Microcode::FetchAndDecode.exec(&mut cpu);
+    assert_eq!(cpu.opcode, Opcode::LSR_ACCUMULATOR);
+    assert_eq!(cpu.pop_microcode(), Some(Microcode::LsrAccumulator));
+
+    Microcode::FetchAndDecode.exec(&mut cpu);
+    assert_eq!(cpu.opcode, Opcode::ROL_ZERO_PAGE);
+    assert_eq!(
+        cpu.pop_microcode(),
+        Some(Microcode::ZeroPage {
+            load_into_alu: true
+        })
+    );
+    assert_eq!(cpu.pop_microcode(), Some(Microcode::StoreAlu));
+    assert_eq!(cpu.pop_microcode(), Some(Microcode::Rol));
+    assert_eq!(cpu.pop_microcode(), Some(Microcode::StoreAlu));
+
+    Microcode::FetchAndDecode.exec(&mut cpu);
+    assert_eq!(cpu.opcode, Opcode::ROR_ABSOLUTE_INDEXED_X);
+    assert_eq!(cpu.pop_microcode(), Some(Microcode::AbsoluteL));
+    assert_eq!(
+        cpu.pop_microcode(),
+        Some(Microcode::AbsoluteIndexedX {
+            oops: false,
+            load_into_alu: true
+        })
+    );
+    assert_eq!(cpu.pop_microcode(), Some(Microcode::StoreAlu));
+    assert_eq!(cpu.pop_microcode(), Some(Microcode::Ror));
+    assert_eq!(cpu.pop_microcode(), Some(Microcode::StoreAlu));
+}
+
+#[test]
 fn load_microcodes_read_memory_and_update_flags() {
     let mut cpu = cpu_with_memory(0x0000, &[(0x0042, 0x80), (0x0043, 0x00), (0x0044, 0x7F)]);
 
@@ -343,6 +385,31 @@ fn store_and_load_microcodes_use_alu_and_memory() {
     cpu.a = 0xAA;
     Microcode::StoreA.exec(&mut cpu);
     assert_eq!(cpu.mcu().mem[0x0055], 0xAA);
+}
+
+#[test]
+fn shift_and_rotate_microcodes_update_accumulator_and_alu() {
+    let mut cpu = cpu_with_memory(0x0000, &[]);
+
+    cpu.a = 0b1000_0001;
+    Microcode::LsrAccumulator.exec(&mut cpu);
+    assert_eq!(cpu.a, 0b0100_0000);
+    assert!(cpu.flag(Flag::Carry));
+    assert!(!cpu.flag(Flag::Negative));
+
+    cpu.a = 0b0100_0001;
+    cpu.set_flag(Flag::Carry, true);
+    Microcode::RolAccumulator.exec(&mut cpu);
+    assert_eq!(cpu.a, 0b1000_0011);
+    assert!(!cpu.flag(Flag::Carry));
+    assert!(cpu.flag(Flag::Negative));
+
+    cpu.alu = 0b0000_0001;
+    cpu.set_flag(Flag::Carry, true);
+    Microcode::Ror.exec(&mut cpu);
+    assert_eq!(cpu.alu, 0b1000_0000);
+    assert!(cpu.flag(Flag::Carry));
+    assert!(cpu.flag(Flag::Negative));
 }
 
 #[test]

@@ -1,5 +1,5 @@
 use super::Cpu2;
-use crate::{Flag, mcu::Mcu};
+use crate::{mcu::Mcu, Flag};
 
 /// Each Microcode instruction executed by the CPU in a single cycle
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -98,6 +98,15 @@ pub enum Microcode {
     AslAccumulator,
     Asl,
 
+    LsrAccumulator,
+    Lsr,
+
+    RolAccumulator,
+    Rol,
+
+    RorAccumulator,
+    Ror,
+
     /// Read offset value from instruction data stream,
     /// If BranchTest is true, pc += offset, push one Noc if not cross page, push two Noc if cross page
     BranchRelative(BranchTest),
@@ -142,12 +151,6 @@ impl Opcode {
     pub const AND_ABSOLUTE_INDEXED_Y: u8 = 0x39;
     pub const AND_INDEXED_INDIRECT: u8 = 0x21;
     pub const AND_INDIRECT_INDEXED: u8 = 0x31;
-
-    pub const ASL_ACCUMULATOR: u8 = 0x0A;
-    pub const ASL_ZERO_PAGE: u8 = 0x06;
-    pub const ASL_ZERO_PAGE_X: u8 = 0x16;
-    pub const ASL_ABSOLUTE: u8 = 0x0E;
-    pub const ASL_ABSOLUTE_INDEXED_X: u8 = 0x1E;
 
     pub const BCC: u8 = 0x90;
     pub const BCS: u8 = 0xB0;
@@ -219,6 +222,32 @@ impl Opcode {
     pub const SBC_ABSOLUTE_INDEXED_Y: u8 = 0xF9;
     pub const SBC_INDEXED_INDIRECT: u8 = 0xE1;
     pub const SBC_INDIRECT_INDEXED: u8 = 0xF1;
+
+    // Shift and Rotate instructions
+
+    pub const ASL_ACCUMULATOR: u8 = 0x0A;
+    pub const ASL_ZERO_PAGE: u8 = 0x06;
+    pub const ASL_ZERO_PAGE_X: u8 = 0x16;
+    pub const ASL_ABSOLUTE: u8 = 0x0E;
+    pub const ASL_ABSOLUTE_INDEXED_X: u8 = 0x1E;
+
+    pub const LSR_ACCUMULATOR: u8 = 0x4A;
+    pub const LSR_ZERO_PAGE: u8 = 0x46;
+    pub const LSR_ZERO_PAGE_X: u8 = 0x56;
+    pub const LSR_ABSOLUTE: u8 = 0x4E;
+    pub const LSR_ABSOLUTE_INDEXED_X: u8 = 0x5E;
+
+    pub const ROL_ACCUMULATOR: u8 = 0x2A;
+    pub const ROL_ZERO_PAGE: u8 = 0x26;
+    pub const ROL_ZERO_PAGE_X: u8 = 0x36;
+    pub const ROL_ABSOLUTE: u8 = 0x2E;
+    pub const ROL_ABSOLUTE_INDEXED_X: u8 = 0x3E;
+
+    pub const ROR_ACCUMULATOR: u8 = 0x6A;
+    pub const ROR_ZERO_PAGE: u8 = 0x66;
+    pub const ROR_ZERO_PAGE_X: u8 = 0x76;
+    pub const ROR_ABSOLUTE: u8 = 0x6E;
+    pub const ROR_ABSOLUTE_INDEXED_X: u8 = 0x7E;
 }
 
 impl Microcode {
@@ -269,6 +298,12 @@ impl Microcode {
             Microcode::Indexed { load_into_alu } => Self::indexed(cpu, load_into_alu),
             Microcode::AslAccumulator => Self::asl_accumulator(cpu),
             Microcode::Asl => Self::asl(cpu),
+            Microcode::LsrAccumulator => Self::lsr_accumulator(cpu),
+            Microcode::Lsr => Self::lsr(cpu),
+            Microcode::RolAccumulator => Self::rol_accumulator(cpu),
+            Microcode::Rol => Self::rol(cpu),
+            Microcode::RorAccumulator => Self::ror_accumulator(cpu),
+            Microcode::Ror => Self::ror(cpu),
 
             Microcode::BranchRelative(branch_test) => Self::branch_relative(cpu, branch_test),
         }
@@ -526,6 +561,96 @@ impl Microcode {
                 cpu.push_microcode(Microcode::StoreAlu);
             }
 
+            Opcode::LSR_ACCUMULATOR => {
+                cpu.push_microcode(Microcode::LsrAccumulator);
+            }
+            Opcode::LSR_ZERO_PAGE => {
+                cpu.push_microcode(Microcode::ZeroPage {
+                    load_into_alu: true,
+                });
+                cpu.push_microcode(Microcode::StoreAlu);
+                cpu.push_microcode(Microcode::Lsr);
+                cpu.push_microcode(Microcode::StoreAlu);
+            }
+            Opcode::LSR_ZERO_PAGE_X => {
+                zero_page_indexed_x_addressing(cpu, true);
+                cpu.push_microcode(Microcode::StoreAlu);
+                cpu.push_microcode(Microcode::Lsr);
+                cpu.push_microcode(Microcode::StoreAlu);
+            }
+            Opcode::LSR_ABSOLUTE => {
+                absolute_addressing(cpu, true);
+                cpu.push_microcode(Microcode::StoreAlu);
+                cpu.push_microcode(Microcode::Lsr);
+                cpu.push_microcode(Microcode::StoreAlu);
+            }
+            Opcode::LSR_ABSOLUTE_INDEXED_X => {
+                absolute_indexed_x_addressing(cpu, false, true);
+                cpu.push_microcode(Microcode::StoreAlu);
+                cpu.push_microcode(Microcode::Lsr);
+                cpu.push_microcode(Microcode::StoreAlu);
+            }
+
+            Opcode::ROL_ACCUMULATOR => {
+                cpu.push_microcode(Microcode::RolAccumulator);
+            }
+            Opcode::ROL_ZERO_PAGE => {
+                cpu.push_microcode(Microcode::ZeroPage {
+                    load_into_alu: true,
+                });
+                cpu.push_microcode(Microcode::StoreAlu);
+                cpu.push_microcode(Microcode::Rol);
+                cpu.push_microcode(Microcode::StoreAlu);
+            }
+            Opcode::ROL_ZERO_PAGE_X => {
+                zero_page_indexed_x_addressing(cpu, true);
+                cpu.push_microcode(Microcode::StoreAlu);
+                cpu.push_microcode(Microcode::Rol);
+                cpu.push_microcode(Microcode::StoreAlu);
+            }
+            Opcode::ROL_ABSOLUTE => {
+                absolute_addressing(cpu, true);
+                cpu.push_microcode(Microcode::StoreAlu);
+                cpu.push_microcode(Microcode::Rol);
+                cpu.push_microcode(Microcode::StoreAlu);
+            }
+            Opcode::ROL_ABSOLUTE_INDEXED_X => {
+                absolute_indexed_x_addressing(cpu, false, true);
+                cpu.push_microcode(Microcode::StoreAlu);
+                cpu.push_microcode(Microcode::Rol);
+                cpu.push_microcode(Microcode::StoreAlu);
+            }
+
+            Opcode::ROR_ACCUMULATOR => {
+                cpu.push_microcode(Microcode::RorAccumulator);
+            }
+            Opcode::ROR_ZERO_PAGE => {
+                cpu.push_microcode(Microcode::ZeroPage {
+                    load_into_alu: true,
+                });
+                cpu.push_microcode(Microcode::StoreAlu);
+                cpu.push_microcode(Microcode::Ror);
+                cpu.push_microcode(Microcode::StoreAlu);
+            }
+            Opcode::ROR_ZERO_PAGE_X => {
+                zero_page_indexed_x_addressing(cpu, true);
+                cpu.push_microcode(Microcode::StoreAlu);
+                cpu.push_microcode(Microcode::Ror);
+                cpu.push_microcode(Microcode::StoreAlu);
+            }
+            Opcode::ROR_ABSOLUTE => {
+                absolute_addressing(cpu, true);
+                cpu.push_microcode(Microcode::StoreAlu);
+                cpu.push_microcode(Microcode::Ror);
+                cpu.push_microcode(Microcode::StoreAlu);
+            }
+            Opcode::ROR_ABSOLUTE_INDEXED_X => {
+                absolute_indexed_x_addressing(cpu, false, true);
+                cpu.push_microcode(Microcode::StoreAlu);
+                cpu.push_microcode(Microcode::Ror);
+                cpu.push_microcode(Microcode::StoreAlu);
+            }
+
             Opcode::BCC => {
                 cpu.push_microcode(Microcode::BranchRelative(BranchTest::IfCarryClear));
             }
@@ -734,6 +859,58 @@ impl Microcode {
 
     fn asl<M: Mcu>(cpu: &mut Cpu2<M>) {
         cpu.alu = cpu.asl(cpu.alu);
+    }
+
+    fn lsr_accumulator<M: Mcu>(cpu: &mut Cpu2<M>) {
+        let v = cpu.a;
+        cpu.set_flag(Flag::Carry, v & 0x01 != 0);
+        cpu.a = v >> 1;
+        cpu.update_negative_flag(cpu.a);
+        cpu.update_zero_flag(cpu.a);
+    }
+
+    fn lsr<M: Mcu>(cpu: &mut Cpu2<M>) {
+        let v = cpu.alu;
+        cpu.set_flag(Flag::Carry, v & 0x01 != 0);
+        cpu.alu = v >> 1;
+        cpu.update_negative_flag(cpu.alu);
+        cpu.update_zero_flag(cpu.alu);
+    }
+
+    fn rol_accumulator<M: Mcu>(cpu: &mut Cpu2<M>) {
+        let v = cpu.a;
+        let new = (v << 1) | (cpu.flag(Flag::Carry) as u8);
+        cpu.set_flag(Flag::Carry, v & 0x80 != 0);
+        cpu.a = new;
+        cpu.update_negative_flag(cpu.a);
+        cpu.update_zero_flag(cpu.a);
+    }
+
+    fn rol<M: Mcu>(cpu: &mut Cpu2<M>) {
+        let v = cpu.alu;
+        let new = (v << 1) | (cpu.flag(Flag::Carry) as u8);
+        cpu.set_flag(Flag::Carry, v & 0x80 != 0);
+        cpu.alu = new;
+        cpu.update_negative_flag(cpu.alu);
+        cpu.update_zero_flag(cpu.alu);
+    }
+
+    fn ror_accumulator<M: Mcu>(cpu: &mut Cpu2<M>) {
+        let v = cpu.a;
+        let new = (v >> 1) | ((cpu.flag(Flag::Carry) as u8) << 7);
+        cpu.set_flag(Flag::Carry, v & 0x01 != 0);
+        cpu.a = new;
+        cpu.update_negative_flag(cpu.a);
+        cpu.update_zero_flag(cpu.a);
+    }
+
+    fn ror<M: Mcu>(cpu: &mut Cpu2<M>) {
+        let v = cpu.alu;
+        let new = (v >> 1) | ((cpu.flag(Flag::Carry) as u8) << 7);
+        cpu.set_flag(Flag::Carry, v & 0x01 != 0);
+        cpu.alu = new;
+        cpu.update_negative_flag(cpu.alu);
+        cpu.update_zero_flag(cpu.alu);
     }
 
     fn branch_relative<M: Mcu>(cpu: &mut Cpu2<M>, branch_test: BranchTest) {
