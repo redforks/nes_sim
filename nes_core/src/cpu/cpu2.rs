@@ -176,6 +176,18 @@ impl<M: Mcu> Cpu2<M> {
         self.a = sum;
     }
 
+    fn ora(&mut self) {
+        self.a |= self.alu;
+        self.update_zero_flag(self.a);
+        self.update_negative_flag(self.a);
+    }
+
+    fn eor(&mut self) {
+        self.a ^= self.alu;
+        self.update_zero_flag(self.a);
+        self.update_negative_flag(self.a);
+    }
+
     fn and(&mut self) {
         self.a &= self.alu;
         self.update_zero_flag(self.a);

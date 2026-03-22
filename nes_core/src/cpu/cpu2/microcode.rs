@@ -87,6 +87,16 @@ pub enum Microcode {
     /// Fetch a byte from memory use address saved in `data_latch`, then subtract with carry from accumulator
     Sbc,
 
+    /// Take immediate value from instruction data stream, or it with accumulator
+    OraImmediate,
+    /// Fetch a byte from memory use address saved in `data_latch`, then or with accumulator
+    Ora,
+
+    /// Take immediate value from instruction data stream, xor it with accumulator
+    EorImmediate,
+    /// Fetch a byte from memory use address saved in `data_latch`, then xor with accumulator
+    Eor,
+
     /// Take immediate value from instruction data stream, and it with accumulator
     AndImmediate,
     /// Fetch a byte from memory use address saved in `data_latch`, then and with accumulator
@@ -143,15 +153,6 @@ impl BranchTest {
 pub enum Opcode {}
 
 impl Opcode {
-    pub const AND_IMMEDIATE: u8 = 0x29;
-    pub const AND_ZERO_PAGE: u8 = 0x25;
-    pub const AND_ZERO_PAGE_X: u8 = 0x35;
-    pub const AND_ABSOLUTE: u8 = 0x2D;
-    pub const AND_ABSOLUTE_INDEXED_X: u8 = 0x3D;
-    pub const AND_ABSOLUTE_INDEXED_Y: u8 = 0x39;
-    pub const AND_INDEXED_INDIRECT: u8 = 0x21;
-    pub const AND_INDIRECT_INDEXED: u8 = 0x31;
-
     pub const BCC: u8 = 0x90;
     pub const BCS: u8 = 0xB0;
     pub const BEQ: u8 = 0xF0;
@@ -248,6 +249,35 @@ impl Opcode {
     pub const ROR_ZERO_PAGE_X: u8 = 0x76;
     pub const ROR_ABSOLUTE: u8 = 0x6E;
     pub const ROR_ABSOLUTE_INDEXED_X: u8 = 0x7E;
+
+    // Logic instructions
+
+    pub const AND_IMMEDIATE: u8 = 0x29;
+    pub const AND_ZERO_PAGE: u8 = 0x25;
+    pub const AND_ZERO_PAGE_X: u8 = 0x35;
+    pub const AND_ABSOLUTE: u8 = 0x2D;
+    pub const AND_ABSOLUTE_INDEXED_X: u8 = 0x3D;
+    pub const AND_ABSOLUTE_INDEXED_Y: u8 = 0x39;
+    pub const AND_INDEXED_INDIRECT: u8 = 0x21;
+    pub const AND_INDIRECT_INDEXED: u8 = 0x31;
+
+    pub const ORA_IMMEDIATE: u8 = 0x09;
+    pub const ORA_ZERO_PAGE: u8 = 0x05;
+    pub const ORA_ZERO_PAGE_X: u8 = 0x15;
+    pub const ORA_ABSOLUTE: u8 = 0x0D;
+    pub const ORA_ABSOLUTE_INDEXED_X: u8 = 0x1D;
+    pub const ORA_ABSOLUTE_INDEXED_Y: u8 = 0x19;
+    pub const ORA_INDEXED_INDIRECT: u8 = 0x01;
+    pub const ORA_INDIRECT_INDEXED: u8 = 0x11;
+
+    pub const EOR_IMMEDIATE: u8 = 0x49;
+    pub const EOR_ZERO_PAGE: u8 = 0x45;
+    pub const EOR_ZERO_PAGE_X: u8 = 0x55;
+    pub const EOR_ABSOLUTE: u8 = 0x4D;
+    pub const EOR_ABSOLUTE_INDEXED_X: u8 = 0x5D;
+    pub const EOR_ABSOLUTE_INDEXED_Y: u8 = 0x59;
+    pub const EOR_INDEXED_INDIRECT: u8 = 0x41;
+    pub const EOR_INDIRECT_INDEXED: u8 = 0x51;
 }
 
 impl Microcode {
@@ -289,6 +319,11 @@ impl Microcode {
             Microcode::Adc => cpu.adc(),
             Microcode::SbcImmediate => Self::sbc_immediate(cpu),
             Microcode::Sbc => cpu.sbc(),
+
+            Microcode::OraImmediate => Self::ora_immediate(cpu),
+            Microcode::Ora => cpu.ora(),
+            Microcode::EorImmediate => Self::eor_immediate(cpu),
+            Microcode::Eor => cpu.eor(),
 
             Microcode::AndImmediate => Self::and_immediate(cpu),
             Microcode::And => cpu.and(),
@@ -709,6 +744,74 @@ impl Microcode {
                 indirect_indexed_addressing(cpu, true, true);
                 cpu.push_microcode(Microcode::Sbc);
             }
+
+            Opcode::ORA_IMMEDIATE => {
+                cpu.push_microcode(Microcode::OraImmediate);
+            }
+            Opcode::ORA_ZERO_PAGE => {
+                cpu.push_microcode(Microcode::ZeroPage {
+                    load_into_alu: true,
+                });
+                cpu.push_microcode(Microcode::Ora);
+            }
+            Opcode::ORA_ZERO_PAGE_X => {
+                zero_page_indexed_x_addressing(cpu, true);
+                cpu.push_microcode(Microcode::Ora);
+            }
+            Opcode::ORA_ABSOLUTE => {
+                absolute_addressing(cpu, true);
+                cpu.push_microcode(Microcode::Ora);
+            }
+            Opcode::ORA_ABSOLUTE_INDEXED_X => {
+                absolute_indexed_x_addressing(cpu, true, true);
+                cpu.push_microcode(Microcode::Ora);
+            }
+            Opcode::ORA_ABSOLUTE_INDEXED_Y => {
+                absolute_indexed_y_addressing(cpu, true, true);
+                cpu.push_microcode(Microcode::Ora);
+            }
+            Opcode::ORA_INDEXED_INDIRECT => {
+                indexed_indirect_addressing(cpu, true);
+                cpu.push_microcode(Microcode::Ora);
+            }
+            Opcode::ORA_INDIRECT_INDEXED => {
+                indirect_indexed_addressing(cpu, true, true);
+                cpu.push_microcode(Microcode::Ora);
+            }
+
+            Opcode::EOR_IMMEDIATE => {
+                cpu.push_microcode(Microcode::EorImmediate);
+            }
+            Opcode::EOR_ZERO_PAGE => {
+                cpu.push_microcode(Microcode::ZeroPage {
+                    load_into_alu: true,
+                });
+                cpu.push_microcode(Microcode::Eor);
+            }
+            Opcode::EOR_ZERO_PAGE_X => {
+                zero_page_indexed_x_addressing(cpu, true);
+                cpu.push_microcode(Microcode::Eor);
+            }
+            Opcode::EOR_ABSOLUTE => {
+                absolute_addressing(cpu, true);
+                cpu.push_microcode(Microcode::Eor);
+            }
+            Opcode::EOR_ABSOLUTE_INDEXED_X => {
+                absolute_indexed_x_addressing(cpu, true, true);
+                cpu.push_microcode(Microcode::Eor);
+            }
+            Opcode::EOR_ABSOLUTE_INDEXED_Y => {
+                absolute_indexed_y_addressing(cpu, true, true);
+                cpu.push_microcode(Microcode::Eor);
+            }
+            Opcode::EOR_INDEXED_INDIRECT => {
+                indexed_indirect_addressing(cpu, true);
+                cpu.push_microcode(Microcode::Eor);
+            }
+            Opcode::EOR_INDIRECT_INDEXED => {
+                indirect_indexed_addressing(cpu, true, true);
+                cpu.push_microcode(Microcode::Eor);
+            }
             _ => panic!("Unknown opcode: {}", opcode),
         }
     }
@@ -809,6 +912,16 @@ impl Microcode {
     fn sbc_immediate<M: Mcu>(cpu: &mut Cpu2<M>) {
         cpu.alu = cpu.inc_read_byte();
         cpu.sbc();
+    }
+
+    fn ora_immediate<M: Mcu>(cpu: &mut Cpu2<M>) {
+        cpu.alu = cpu.inc_read_byte();
+        cpu.ora();
+    }
+
+    fn eor_immediate<M: Mcu>(cpu: &mut Cpu2<M>) {
+        cpu.alu = cpu.inc_read_byte();
+        cpu.eor();
     }
 
     fn absolute_indexed_x<M: Mcu>(cpu: &mut Cpu2<M>, oops: bool, load_into_alu: bool) {
