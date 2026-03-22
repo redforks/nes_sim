@@ -216,265 +216,265 @@ pub enum Opcode {}
 impl Opcode {
     // Load and Save instructions
 
-    pub const LDA_IMMEDIATE: u8 = 0xA9;
-    pub const LDA_ZERO_PAGE: u8 = 0xA5;
-    pub const LDA_ZERO_PAGE_X: u8 = 0xB5;
-    pub const LDA_ABSOLUTE: u8 = 0xAD;
-    pub const LDA_ABSOLUTE_INDEXED_X: u8 = 0xBD;
-    pub const LDA_ABSOLUTE_INDEXED_Y: u8 = 0xB9;
-    pub const LDA_INDIRECT_INDEXED: u8 = 0xA1;
-    pub const LDA_INDIRECT_INDEXED_Y: u8 = 0xB1;
+    const LDA_IMMEDIATE: u8 = 0xA9;
+    const LDA_ZERO_PAGE: u8 = 0xA5;
+    const LDA_ZERO_PAGE_X: u8 = 0xB5;
+    const LDA_ABSOLUTE: u8 = 0xAD;
+    const LDA_ABSOLUTE_INDEXED_X: u8 = 0xBD;
+    const LDA_ABSOLUTE_INDEXED_Y: u8 = 0xB9;
+    const LDA_INDIRECT_INDEXED: u8 = 0xA1;
+    const LDA_INDIRECT_INDEXED_Y: u8 = 0xB1;
 
-    pub const LDX_IMMEDIATE: u8 = 0xA2;
-    pub const LDX_ZERO_PAGE: u8 = 0xA6;
-    pub const LDX_ZERO_PAGE_Y: u8 = 0xB6;
-    pub const LDX_ABSOLUTE: u8 = 0xAE;
-    pub const LDX_ABSOLUTE_INDEXED_Y: u8 = 0xBE;
+    const LDX_IMMEDIATE: u8 = 0xA2;
+    const LDX_ZERO_PAGE: u8 = 0xA6;
+    const LDX_ZERO_PAGE_Y: u8 = 0xB6;
+    const LDX_ABSOLUTE: u8 = 0xAE;
+    const LDX_ABSOLUTE_INDEXED_Y: u8 = 0xBE;
 
-    pub const LDY_IMMEDIATE: u8 = 0xA0;
-    pub const LDY_ZERO_PAGE: u8 = 0xA4;
-    pub const LDY_ZERO_PAGE_X: u8 = 0xB4;
-    pub const LDY_ABSOLUTE: u8 = 0xAC;
-    pub const LDY_ABSOLUTE_INDEXED_X: u8 = 0xBC;
+    const LDY_IMMEDIATE: u8 = 0xA0;
+    const LDY_ZERO_PAGE: u8 = 0xA4;
+    const LDY_ZERO_PAGE_X: u8 = 0xB4;
+    const LDY_ABSOLUTE: u8 = 0xAC;
+    const LDY_ABSOLUTE_INDEXED_X: u8 = 0xBC;
 
-    pub const STA_ZERO_PAGE: u8 = 0x85;
-    pub const STA_ZERO_PAGE_X: u8 = 0x95;
-    pub const STA_ABSOLUTE: u8 = 0x8D;
-    pub const STA_ABSOLUTE_INDEXED_X: u8 = 0x9D;
-    pub const STA_ABSOLUTE_INDEXED_Y: u8 = 0x99;
-    pub const STA_INDEXED_INDIRECT: u8 = 0x81;
-    pub const STA_INDIRECT_INDEXED_Y: u8 = 0x91;
+    const STA_ZERO_PAGE: u8 = 0x85;
+    const STA_ZERO_PAGE_X: u8 = 0x95;
+    const STA_ABSOLUTE: u8 = 0x8D;
+    const STA_ABSOLUTE_INDEXED_X: u8 = 0x9D;
+    const STA_ABSOLUTE_INDEXED_Y: u8 = 0x99;
+    const STA_INDEXED_INDIRECT: u8 = 0x81;
+    const STA_INDIRECT_INDEXED_Y: u8 = 0x91;
 
-    pub const STX_ZERO_PAGE: u8 = 0x86;
-    pub const STX_ZERO_PAGE_Y: u8 = 0x96;
-    pub const STX_ABSOLUTE: u8 = 0x8E;
+    const STX_ZERO_PAGE: u8 = 0x86;
+    const STX_ZERO_PAGE_Y: u8 = 0x96;
+    const STX_ABSOLUTE: u8 = 0x8E;
 
-    pub const STY_ZERO_PAGE: u8 = 0x84;
-    pub const STY_ZERO_PAGE_X: u8 = 0x94;
-    pub const STY_ABSOLUTE: u8 = 0x8C;
+    const STY_ZERO_PAGE: u8 = 0x84;
+    const STY_ZERO_PAGE_X: u8 = 0x94;
+    const STY_ABSOLUTE: u8 = 0x8C;
 
     // Arithmetic instructions
 
-    pub const ADC_IMMEDIATE: u8 = 0x69;
-    pub const ADC_ZERO_PAGE: u8 = 0x65;
-    pub const ADC_ZERO_PAGE_X: u8 = 0x75;
-    pub const ADC_ABSOLUTE: u8 = 0x6D;
-    pub const ADC_ABSOLUTE_INDEXED_X: u8 = 0x7D;
-    pub const ADC_ABSOLUTE_INDEXED_Y: u8 = 0x79;
-    pub const ADC_INDEXED_INDIRECT: u8 = 0x61;
-    pub const ADC_INDIRECT_INDEXED: u8 = 0x71;
+    const ADC_IMMEDIATE: u8 = 0x69;
+    const ADC_ZERO_PAGE: u8 = 0x65;
+    const ADC_ZERO_PAGE_X: u8 = 0x75;
+    const ADC_ABSOLUTE: u8 = 0x6D;
+    const ADC_ABSOLUTE_INDEXED_X: u8 = 0x7D;
+    const ADC_ABSOLUTE_INDEXED_Y: u8 = 0x79;
+    const ADC_INDEXED_INDIRECT: u8 = 0x61;
+    const ADC_INDIRECT_INDEXED: u8 = 0x71;
 
-    pub const SBC_IMMEDIATE: u8 = 0xE9;
-    pub const SBC_ZERO_PAGE: u8 = 0xE5;
-    pub const SBC_ZERO_PAGE_X: u8 = 0xF5;
-    pub const SBC_ABSOLUTE: u8 = 0xED;
-    pub const SBC_ABSOLUTE_INDEXED_X: u8 = 0xFD;
-    pub const SBC_ABSOLUTE_INDEXED_Y: u8 = 0xF9;
-    pub const SBC_INDEXED_INDIRECT: u8 = 0xE1;
-    pub const SBC_INDIRECT_INDEXED: u8 = 0xF1;
+    const SBC_IMMEDIATE: u8 = 0xE9;
+    const SBC_ZERO_PAGE: u8 = 0xE5;
+    const SBC_ZERO_PAGE_X: u8 = 0xF5;
+    const SBC_ABSOLUTE: u8 = 0xED;
+    const SBC_ABSOLUTE_INDEXED_X: u8 = 0xFD;
+    const SBC_ABSOLUTE_INDEXED_Y: u8 = 0xF9;
+    const SBC_INDEXED_INDIRECT: u8 = 0xE1;
+    const SBC_INDIRECT_INDEXED: u8 = 0xF1;
 
-    pub const CMP_IMMEDIATE: u8 = 0xC9;
-    pub const CMP_ZERO_PAGE: u8 = 0xC5;
-    pub const CMP_ZERO_PAGE_X: u8 = 0xD5;
-    pub const CMP_ABSOLUTE: u8 = 0xCD;
-    pub const CMP_ABSOLUTE_INDEXED_X: u8 = 0xDD;
-    pub const CMP_ABSOLUTE_INDEXED_Y: u8 = 0xD9;
-    pub const CMP_INDEXED_INDIRECT: u8 = 0xC1;
-    pub const CMP_INDIRECT_INDEXED: u8 = 0xD1;
+    const CMP_IMMEDIATE: u8 = 0xC9;
+    const CMP_ZERO_PAGE: u8 = 0xC5;
+    const CMP_ZERO_PAGE_X: u8 = 0xD5;
+    const CMP_ABSOLUTE: u8 = 0xCD;
+    const CMP_ABSOLUTE_INDEXED_X: u8 = 0xDD;
+    const CMP_ABSOLUTE_INDEXED_Y: u8 = 0xD9;
+    const CMP_INDEXED_INDIRECT: u8 = 0xC1;
+    const CMP_INDIRECT_INDEXED: u8 = 0xD1;
 
-    pub const CPX_IMMEDIATE: u8 = 0xE0;
-    pub const CPX_ZERO_PAGE: u8 = 0xE4;
-    pub const CPX_ABSOLUTE: u8 = 0xEC;
+    const CPX_IMMEDIATE: u8 = 0xE0;
+    const CPX_ZERO_PAGE: u8 = 0xE4;
+    const CPX_ABSOLUTE: u8 = 0xEC;
 
-    pub const CPY_IMMEDIATE: u8 = 0xC0;
-    pub const CPY_ZERO_PAGE: u8 = 0xC4;
-    pub const CPY_ABSOLUTE: u8 = 0xCC;
+    const CPY_IMMEDIATE: u8 = 0xC0;
+    const CPY_ZERO_PAGE: u8 = 0xC4;
+    const CPY_ABSOLUTE: u8 = 0xCC;
 
     // Shift and Rotate instructions
 
-    pub const ASL_ACCUMULATOR: u8 = 0x0A;
-    pub const ASL_ZERO_PAGE: u8 = 0x06;
-    pub const ASL_ZERO_PAGE_X: u8 = 0x16;
-    pub const ASL_ABSOLUTE: u8 = 0x0E;
-    pub const ASL_ABSOLUTE_INDEXED_X: u8 = 0x1E;
+    const ASL_ACCUMULATOR: u8 = 0x0A;
+    const ASL_ZERO_PAGE: u8 = 0x06;
+    const ASL_ZERO_PAGE_X: u8 = 0x16;
+    const ASL_ABSOLUTE: u8 = 0x0E;
+    const ASL_ABSOLUTE_INDEXED_X: u8 = 0x1E;
 
-    pub const LSR_ACCUMULATOR: u8 = 0x4A;
-    pub const LSR_ZERO_PAGE: u8 = 0x46;
-    pub const LSR_ZERO_PAGE_X: u8 = 0x56;
-    pub const LSR_ABSOLUTE: u8 = 0x4E;
-    pub const LSR_ABSOLUTE_INDEXED_X: u8 = 0x5E;
+    const LSR_ACCUMULATOR: u8 = 0x4A;
+    const LSR_ZERO_PAGE: u8 = 0x46;
+    const LSR_ZERO_PAGE_X: u8 = 0x56;
+    const LSR_ABSOLUTE: u8 = 0x4E;
+    const LSR_ABSOLUTE_INDEXED_X: u8 = 0x5E;
 
-    pub const ROL_ACCUMULATOR: u8 = 0x2A;
-    pub const ROL_ZERO_PAGE: u8 = 0x26;
-    pub const ROL_ZERO_PAGE_X: u8 = 0x36;
-    pub const ROL_ABSOLUTE: u8 = 0x2E;
-    pub const ROL_ABSOLUTE_INDEXED_X: u8 = 0x3E;
+    const ROL_ACCUMULATOR: u8 = 0x2A;
+    const ROL_ZERO_PAGE: u8 = 0x26;
+    const ROL_ZERO_PAGE_X: u8 = 0x36;
+    const ROL_ABSOLUTE: u8 = 0x2E;
+    const ROL_ABSOLUTE_INDEXED_X: u8 = 0x3E;
 
-    pub const ROR_ACCUMULATOR: u8 = 0x6A;
-    pub const ROR_ZERO_PAGE: u8 = 0x66;
-    pub const ROR_ZERO_PAGE_X: u8 = 0x76;
-    pub const ROR_ABSOLUTE: u8 = 0x6E;
-    pub const ROR_ABSOLUTE_INDEXED_X: u8 = 0x7E;
+    const ROR_ACCUMULATOR: u8 = 0x6A;
+    const ROR_ZERO_PAGE: u8 = 0x66;
+    const ROR_ZERO_PAGE_X: u8 = 0x76;
+    const ROR_ABSOLUTE: u8 = 0x6E;
+    const ROR_ABSOLUTE_INDEXED_X: u8 = 0x7E;
 
     // Logic instructions
 
-    pub const AND_IMMEDIATE: u8 = 0x29;
-    pub const AND_ZERO_PAGE: u8 = 0x25;
-    pub const AND_ZERO_PAGE_X: u8 = 0x35;
-    pub const AND_ABSOLUTE: u8 = 0x2D;
-    pub const AND_ABSOLUTE_INDEXED_X: u8 = 0x3D;
-    pub const AND_ABSOLUTE_INDEXED_Y: u8 = 0x39;
-    pub const AND_INDEXED_INDIRECT: u8 = 0x21;
-    pub const AND_INDIRECT_INDEXED: u8 = 0x31;
+    const AND_IMMEDIATE: u8 = 0x29;
+    const AND_ZERO_PAGE: u8 = 0x25;
+    const AND_ZERO_PAGE_X: u8 = 0x35;
+    const AND_ABSOLUTE: u8 = 0x2D;
+    const AND_ABSOLUTE_INDEXED_X: u8 = 0x3D;
+    const AND_ABSOLUTE_INDEXED_Y: u8 = 0x39;
+    const AND_INDEXED_INDIRECT: u8 = 0x21;
+    const AND_INDIRECT_INDEXED: u8 = 0x31;
 
-    pub const ORA_IMMEDIATE: u8 = 0x09;
-    pub const ORA_ZERO_PAGE: u8 = 0x05;
-    pub const ORA_ZERO_PAGE_X: u8 = 0x15;
-    pub const ORA_ABSOLUTE: u8 = 0x0D;
-    pub const ORA_ABSOLUTE_INDEXED_X: u8 = 0x1D;
-    pub const ORA_ABSOLUTE_INDEXED_Y: u8 = 0x19;
-    pub const ORA_INDEXED_INDIRECT: u8 = 0x01;
-    pub const ORA_INDIRECT_INDEXED: u8 = 0x11;
+    const ORA_IMMEDIATE: u8 = 0x09;
+    const ORA_ZERO_PAGE: u8 = 0x05;
+    const ORA_ZERO_PAGE_X: u8 = 0x15;
+    const ORA_ABSOLUTE: u8 = 0x0D;
+    const ORA_ABSOLUTE_INDEXED_X: u8 = 0x1D;
+    const ORA_ABSOLUTE_INDEXED_Y: u8 = 0x19;
+    const ORA_INDEXED_INDIRECT: u8 = 0x01;
+    const ORA_INDIRECT_INDEXED: u8 = 0x11;
 
-    pub const EOR_IMMEDIATE: u8 = 0x49;
-    pub const EOR_ZERO_PAGE: u8 = 0x45;
-    pub const EOR_ZERO_PAGE_X: u8 = 0x55;
-    pub const EOR_ABSOLUTE: u8 = 0x4D;
-    pub const EOR_ABSOLUTE_INDEXED_X: u8 = 0x5D;
-    pub const EOR_ABSOLUTE_INDEXED_Y: u8 = 0x59;
-    pub const EOR_INDEXED_INDIRECT: u8 = 0x41;
-    pub const EOR_INDIRECT_INDEXED: u8 = 0x51;
+    const EOR_IMMEDIATE: u8 = 0x49;
+    const EOR_ZERO_PAGE: u8 = 0x45;
+    const EOR_ZERO_PAGE_X: u8 = 0x55;
+    const EOR_ABSOLUTE: u8 = 0x4D;
+    const EOR_ABSOLUTE_INDEXED_X: u8 = 0x5D;
+    const EOR_ABSOLUTE_INDEXED_Y: u8 = 0x59;
+    const EOR_INDEXED_INDIRECT: u8 = 0x41;
+    const EOR_INDIRECT_INDEXED: u8 = 0x51;
 
-    pub const BIT_ZERO_PAGE: u8 = 0x24;
-    pub const BIT_ABSOLUTE: u8 = 0x2C;
+    const BIT_ZERO_PAGE: u8 = 0x24;
+    const BIT_ABSOLUTE: u8 = 0x2C;
 
     // Branch instructions
 
-    pub const BCC: u8 = 0x90;
-    pub const BCS: u8 = 0xB0;
-    pub const BNE: u8 = 0xD0;
-    pub const BEQ: u8 = 0xF0;
-    pub const BPL: u8 = 0x10;
-    pub const BMI: u8 = 0x30;
-    pub const BVC: u8 = 0x50;
-    pub const BVS: u8 = 0x70;
+    const BCC: u8 = 0x90;
+    const BCS: u8 = 0xB0;
+    const BNE: u8 = 0xD0;
+    const BEQ: u8 = 0xF0;
+    const BPL: u8 = 0x10;
+    const BMI: u8 = 0x30;
+    const BVC: u8 = 0x50;
+    const BVS: u8 = 0x70;
 
     // Transfer Instructions
 
-    pub const TAX: u8 = 0xAA;
-    pub const TXA: u8 = 0x8A;
-    pub const TAY: u8 = 0xA8;
-    pub const TYA: u8 = 0x98;
-    pub const TSX: u8 = 0xBA;
-    pub const TXS: u8 = 0x9A;
+    const TAX: u8 = 0xAA;
+    const TXA: u8 = 0x8A;
+    const TAY: u8 = 0xA8;
+    const TYA: u8 = 0x98;
+    const TSX: u8 = 0xBA;
+    const TXS: u8 = 0x9A;
 
     // Stack Instructions
 
-    pub const PHA: u8 = 0x48;
-    pub const PLA: u8 = 0x68;
-    pub const PHP: u8 = 0x08;
-    pub const PLP: u8 = 0x28;
+    const PHA: u8 = 0x48;
+    const PLA: u8 = 0x68;
+    const PHP: u8 = 0x08;
+    const PLP: u8 = 0x28;
 
     // Subroutine and Jump Instructions
 
-    pub const JMP_ABSOLUTE: u8 = 0x4C;
-    pub const JMP_INDIRECT: u8 = 0x6C;
-    pub const JSR: u8 = 0x20;
-    pub const RTS: u8 = 0x60;
-    pub const RTI: u8 = 0x40;
+    const JMP_ABSOLUTE: u8 = 0x4C;
+    const JMP_INDIRECT: u8 = 0x6C;
+    const JSR: u8 = 0x20;
+    const RTS: u8 = 0x60;
+    const RTI: u8 = 0x40;
 
     // Set and Clear Instructions
-    pub const CLC: u8 = 0x18;
-    pub const SEC: u8 = 0x38;
-    pub const CLD: u8 = 0xD8;
-    pub const SED: u8 = 0xF8;
-    pub const CLI: u8 = 0x58;
-    pub const SEI: u8 = 0x78;
-    pub const CLV: u8 = 0xB8;
+    const CLC: u8 = 0x18;
+    const SEC: u8 = 0x38;
+    const CLD: u8 = 0xD8;
+    const SED: u8 = 0xF8;
+    const CLI: u8 = 0x58;
+    const SEI: u8 = 0x78;
+    const CLV: u8 = 0xB8;
 
     // Miscellaneous Instructions
-    pub const NOP: u8 = 0xEA;
-    pub const BRK: u8 = 0x00;
+    const NOP: u8 = 0xEA;
+    const BRK: u8 = 0x00;
 
     // Undocumented/Illegal Instructions
 
     //   Combined instructions
 
-    pub const ALR: u8 = 0x4B;
-    pub const ANC: u8 = 0x2B;
-    pub const ARR: u8 = 0x6B;
-    pub const AXS: u8 = 0xCB;
+    const ALR: u8 = 0x4B;
+    const ANC: u8 = 0x2B;
+    const ARR: u8 = 0x6B;
+    const AXS: u8 = 0xCB;
 
-    pub const LAX_ZERO_PAGE: u8 = 0xA7;
-    pub const LAX_ZERO_PAGE_Y: u8 = 0xB7;
-    pub const LAX_ABSOLUTE: u8 = 0xAF;
-    pub const LAX_ABSOLUTE_INDEXED_Y: u8 = 0xBF;
-    pub const LAX_INDEXED_INDIRECT: u8 = 0xA3;
-    pub const LAX_INDIRECT_INDEXED: u8 = 0xB3;
+    const LAX_ZERO_PAGE: u8 = 0xA7;
+    const LAX_ZERO_PAGE_Y: u8 = 0xB7;
+    const LAX_ABSOLUTE: u8 = 0xAF;
+    const LAX_ABSOLUTE_INDEXED_Y: u8 = 0xBF;
+    const LAX_INDEXED_INDIRECT: u8 = 0xA3;
+    const LAX_INDIRECT_INDEXED: u8 = 0xB3;
 
-    pub const SAX_ZERO_PAGE: u8 = 0x87;
-    pub const SAX_ZERO_PAGE_Y: u8 = 0x97;
-    pub const SAX_ABSOLUTE: u8 = 0x8F;
-    pub const SAX_INDEXED_INDIRECT: u8 = 0x83;
+    const SAX_ZERO_PAGE: u8 = 0x87;
+    const SAX_ZERO_PAGE_Y: u8 = 0x97;
+    const SAX_ABSOLUTE: u8 = 0x8F;
+    const SAX_INDEXED_INDIRECT: u8 = 0x83;
 
     //   Read-modify-write instructions
-    pub const DCP_ZERO_PAGE: u8 = 0xC7;
-    pub const DCP_ZERO_PAGE_X: u8 = 0xD7;
-    pub const DCP_ABSOLUTE: u8 = 0xCF;
-    pub const DCP_ABSOLUTE_INDEXED_X: u8 = 0xDF;
-    pub const DCP_ABSOLUTE_INDEXED_Y: u8 = 0xDB;
-    pub const DCP_INDEXED_INDIRECT: u8 = 0xC3;
-    pub const DCP_INDIRECT_INDEXED: u8 = 0xD3;
+    const DCP_ZERO_PAGE: u8 = 0xC7;
+    const DCP_ZERO_PAGE_X: u8 = 0xD7;
+    const DCP_ABSOLUTE: u8 = 0xCF;
+    const DCP_ABSOLUTE_INDEXED_X: u8 = 0xDF;
+    const DCP_ABSOLUTE_INDEXED_Y: u8 = 0xDB;
+    const DCP_INDEXED_INDIRECT: u8 = 0xC3;
+    const DCP_INDIRECT_INDEXED: u8 = 0xD3;
 
-    pub const ISC_ZERO_PAGE: u8 = 0xE7;
-    pub const ISC_ZERO_PAGE_X: u8 = 0xF7;
-    pub const ISC_ABSOLUTE: u8 = 0xEF;
-    pub const ISC_ABSOLUTE_INDEXED_X: u8 = 0xFF;
-    pub const ISC_ABSOLUTE_INDEXED_Y: u8 = 0xFB;
-    pub const ISC_INDEXED_INDIRECT: u8 = 0xE3;
-    pub const ISC_INDIRECT_INDEXED: u8 = 0xF3;
+    const ISC_ZERO_PAGE: u8 = 0xE7;
+    const ISC_ZERO_PAGE_X: u8 = 0xF7;
+    const ISC_ABSOLUTE: u8 = 0xEF;
+    const ISC_ABSOLUTE_INDEXED_X: u8 = 0xFF;
+    const ISC_ABSOLUTE_INDEXED_Y: u8 = 0xFB;
+    const ISC_INDEXED_INDIRECT: u8 = 0xE3;
+    const ISC_INDIRECT_INDEXED: u8 = 0xF3;
 
-    pub const RRA_ZERO_PAGE: u8 = 0x67;
-    pub const RRA_ZERO_PAGE_X: u8 = 0x77;
-    pub const RRA_ABSOLUTE: u8 = 0x6F;
-    pub const RRA_ABSOLUTE_INDEXED_X: u8 = 0x7F;
-    pub const RRA_ABSOLUTE_INDEXED_Y: u8 = 0x7B;
-    pub const RRA_INDEXED_INDIRECT: u8 = 0x63;
-    pub const RRA_INDIRECT_INDEXED: u8 = 0x73;
+    const RRA_ZERO_PAGE: u8 = 0x67;
+    const RRA_ZERO_PAGE_X: u8 = 0x77;
+    const RRA_ABSOLUTE: u8 = 0x6F;
+    const RRA_ABSOLUTE_INDEXED_X: u8 = 0x7F;
+    const RRA_ABSOLUTE_INDEXED_Y: u8 = 0x7B;
+    const RRA_INDEXED_INDIRECT: u8 = 0x63;
+    const RRA_INDIRECT_INDEXED: u8 = 0x73;
 
-    pub const SLO_ZERO_PAGE: u8 = 0x07;
-    pub const SLO_ZERO_PAGE_X: u8 = 0x17;
-    pub const SLO_ABSOLUTE: u8 = 0x0F;
-    pub const SLO_ABSOLUTE_INDEXED_X: u8 = 0x1F;
-    pub const SLO_ABSOLUTE_INDEXED_Y: u8 = 0x1B;
-    pub const SLO_INDEXED_INDIRECT: u8 = 0x03;
-    pub const SLO_INDIRECT_INDEXED: u8 = 0x13;
+    const SLO_ZERO_PAGE: u8 = 0x07;
+    const SLO_ZERO_PAGE_X: u8 = 0x17;
+    const SLO_ABSOLUTE: u8 = 0x0F;
+    const SLO_ABSOLUTE_INDEXED_X: u8 = 0x1F;
+    const SLO_ABSOLUTE_INDEXED_Y: u8 = 0x1B;
+    const SLO_INDEXED_INDIRECT: u8 = 0x03;
+    const SLO_INDIRECT_INDEXED: u8 = 0x13;
 
-    pub const SRE_ZERO_PAGE: u8 = 0x47;
-    pub const SRE_ZERO_PAGE_X: u8 = 0x57;
-    pub const SRE_ABSOLUTE: u8 = 0x4F;
-    pub const SRE_ABSOLUTE_INDEXED_X: u8 = 0x5F;
-    pub const SRE_ABSOLUTE_INDEXED_Y: u8 = 0x5B;
-    pub const SRE_INDEXED_INDIRECT: u8 = 0x43;
-    pub const SRE_INDIRECT_INDEXED: u8 = 0x53;
+    const SRE_ZERO_PAGE: u8 = 0x47;
+    const SRE_ZERO_PAGE_X: u8 = 0x57;
+    const SRE_ABSOLUTE: u8 = 0x4F;
+    const SRE_ABSOLUTE_INDEXED_X: u8 = 0x5F;
+    const SRE_ABSOLUTE_INDEXED_Y: u8 = 0x5B;
+    const SRE_INDEXED_INDIRECT: u8 = 0x43;
+    const SRE_INDIRECT_INDEXED: u8 = 0x53;
 
-    pub const SHX_ABSOLUTE_INDEXED_Y: u8 = 0x9E;
-    pub const SHY_ABSOLUTE_INDEXED_X: u8 = 0x9C;
-    pub const TAS_ABSOLUTE_INDEXED_Y: u8 = 0x9B;
+    const SHX_ABSOLUTE_INDEXED_Y: u8 = 0x9E;
+    const SHY_ABSOLUTE_INDEXED_X: u8 = 0x9C;
+    const TAS_ABSOLUTE_INDEXED_Y: u8 = 0x9B;
 
     // duplicated opcodes
-    pub const USBC: u8 = 0xEB;
-    pub const NOP1: u8 = 0x1A;
-    pub const NOP2: u8 = 0x3A;
-    pub const NOP3: u8 = 0x5A;
-    pub const NOP4: u8 = 0x7A;
-    pub const NOP5: u8 = 0xDA;
-    pub const NOP6: u8 = 0xFA;
-    pub const NOP_IMMEDIATE1: u8 = 0x80;
-    pub const NOP_IMMEDIATE2: u8 = 0x82;
-    pub const NOP_IMMEDIATE3: u8 = 0x89;
-    pub const NOP_IMMEDIATE4: u8 = 0xC2;
-    pub const NOP_IMMEDIATE5: u8 = 0xE2;
+    const USBC: u8 = 0xEB;
+    const NOP1: u8 = 0x1A;
+    const NOP2: u8 = 0x3A;
+    const NOP3: u8 = 0x5A;
+    const NOP4: u8 = 0x7A;
+    const NOP5: u8 = 0xDA;
+    const NOP6: u8 = 0xFA;
+    const NOP_IMMEDIATE1: u8 = 0x80;
+    const NOP_IMMEDIATE2: u8 = 0x82;
+    const NOP_IMMEDIATE3: u8 = 0x89;
+    const NOP_IMMEDIATE4: u8 = 0xC2;
+    const NOP_IMMEDIATE5: u8 = 0xE2;
 }
 
 impl Microcode {
