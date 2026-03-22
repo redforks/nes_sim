@@ -209,6 +209,40 @@ impl<M: Mcu> Cpu2<M> {
         self.set_flag(Flag::Carry, self.y >= self.alu);
     }
 
+    fn tax(&mut self) {
+        self.x = self.a;
+        self.update_negative_flag(self.x);
+        self.update_zero_flag(self.x);
+    }
+
+    fn txa(&mut self) {
+        self.a = self.x;
+        self.update_negative_flag(self.a);
+        self.update_zero_flag(self.a);
+    }
+
+    fn tay(&mut self) {
+        self.y = self.a;
+        self.update_negative_flag(self.y);
+        self.update_zero_flag(self.y);
+    }
+
+    fn tya(&mut self) {
+        self.a = self.y;
+        self.update_negative_flag(self.a);
+        self.update_zero_flag(self.a);
+    }
+
+    fn tsx(&mut self) {
+        self.x = self.sp;
+        self.update_negative_flag(self.x);
+        self.update_zero_flag(self.x);
+    }
+
+    fn txs(&mut self) {
+        self.sp = self.x;
+    }
+
     fn and(&mut self) {
         self.a &= self.alu;
         self.update_zero_flag(self.a);

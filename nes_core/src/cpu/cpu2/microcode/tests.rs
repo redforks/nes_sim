@@ -152,6 +152,30 @@ fn fetch_and_decode_queues_overflow_branch_sequences() {
 }
 
 #[test]
+fn branch_relative_taken_and_not_taken_behaves() {
+    let mut cpu = cpu_with_memory(0x8000, &[(0x8000, 0x02), (0x8001, 0xFE)]);
+
+    Microcode::BranchRelative(BranchTest::IfZeroClear).exec(&mut cpu);
+    assert_eq!(cpu.pc, 0x8003);
+
+    cpu.set_flag(Flag::Zero, true);
+    Microcode::BranchRelative(BranchTest::IfZeroClear).exec(&mut cpu);
+    assert_eq!(cpu.pc, 0x8004);
+}
+
+#[test]
+fn branch_relative_cross_page_retains_extra_cycles() {
+    let mut cpu = cpu_with_memory(0x80FE, &[(0x80FE, 0x02)]);
+
+    Microcode::BranchRelative(BranchTest::IfCarryClear).exec(&mut cpu);
+
+    assert_eq!(cpu.pc, 0x8101);
+    assert_eq!(cpu.pop_microcode(), Some(Microcode::Nop));
+    assert_eq!(cpu.pop_microcode(), Some(Microcode::Nop));
+    assert!(cpu.pop_microcode().is_none());
+}
+
+#[test]
 fn fetch_and_decode_queues_sbc_sequences() {
     let mut cpu = cpu_with_memory(
         0x8000,
@@ -263,6 +287,45 @@ fn fetch_and_decode_queues_load_and_store_sequences() {
         })
     );
     assert_eq!(cpu.pop_microcode(), Some(Microcode::StoreY));
+}
+
+#[test]
+fn fetch_and_decode_queues_transfer_sequences() {
+    let mut cpu = cpu_with_memory(
+        0x8000,
+        &[
+            (0x8000, Opcode::TAX),
+            (0x8001, Opcode::TXA),
+            (0x8002, Opcode::TAY),
+            (0x8003, Opcode::TYA),
+            (0x8004, Opcode::TSX),
+            (0x8005, Opcode::TXS),
+        ],
+    );
+
+    Microcode::FetchAndDecode.exec(&mut cpu);
+    assert_eq!(cpu.opcode, Opcode::TAX);
+    assert_eq!(cpu.pop_microcode(), Some(Microcode::Tax));
+
+    Microcode::FetchAndDecode.exec(&mut cpu);
+    assert_eq!(cpu.opcode, Opcode::TXA);
+    assert_eq!(cpu.pop_microcode(), Some(Microcode::Txa));
+
+    Microcode::FetchAndDecode.exec(&mut cpu);
+    assert_eq!(cpu.opcode, Opcode::TAY);
+    assert_eq!(cpu.pop_microcode(), Some(Microcode::Tay));
+
+    Microcode::FetchAndDecode.exec(&mut cpu);
+    assert_eq!(cpu.opcode, Opcode::TYA);
+    assert_eq!(cpu.pop_microcode(), Some(Microcode::Tya));
+
+    Microcode::FetchAndDecode.exec(&mut cpu);
+    assert_eq!(cpu.opcode, Opcode::TSX);
+    assert_eq!(cpu.pop_microcode(), Some(Microcode::Tsx));
+
+    Microcode::FetchAndDecode.exec(&mut cpu);
+    assert_eq!(cpu.opcode, Opcode::TXS);
+    assert_eq!(cpu.pop_microcode(), Some(Microcode::Txs));
 }
 
 #[test]
@@ -545,6 +608,36 @@ fn compare_and_bit_microcodes_update_flags() {
     Microcode::Cpy.exec(&mut cpu);
     assert!(cpu.flag(Flag::Carry));
     assert!(!cpu.flag(Flag::Zero));
+}
+
+#[test]
+fn transfer_microcodes_copy_registers_and_update_flags() {
+    let mut cpu = cpu_with_memory(0x0000, &[]);
+    cpu.a = 0x80;
+    cpu.x = 0x00;
+    cpu.y = 0x7F;
+    cpu.sp = 0x42;
+
+    Microcode::Tax.exec(&mut cpu);
+    assert_eq!(cpu.x, 0x80);
+    assert!(cpu.flag(Flag::Negative));
+
+    Microcode::Txa.exec(&mut cpu);
+    assert_eq!(cpu.a, 0x80);
+
+    Microcode::Tay.exec(&mut cpu);
+    assert_eq!(cpu.y, 0x80);
+
+    Microcode::Tya.exec(&mut cpu);
+    assert_eq!(cpu.a, 0x80);
+
+    Microcode::Tsx.exec(&mut cpu);
+    assert_eq!(cpu.x, 0x42);
+    assert!(!cpu.flag(Flag::Zero));
+
+    cpu.x = 0x55;
+    Microcode::Txs.exec(&mut cpu);
+    assert_eq!(cpu.sp, 0x55);
 }
 
 #[test]
