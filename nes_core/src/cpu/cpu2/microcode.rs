@@ -132,6 +132,13 @@ pub enum Microcode {
     RorAccumulator,
     Ror,
 
+    Tax,
+    Txa,
+    Tay,
+    Tya,
+    Tsx,
+    Txs,
+
     /// Read offset value from instruction data stream,
     /// If BranchTest is true, pc += offset, push one Noc if not cross page, push two Noc if cross page
     BranchRelative(BranchTest),
@@ -168,15 +175,6 @@ impl BranchTest {
 pub enum Opcode {}
 
 impl Opcode {
-    pub const BCC: u8 = 0x90;
-    pub const BCS: u8 = 0xB0;
-    pub const BEQ: u8 = 0xF0;
-    pub const BMI: u8 = 0x30;
-    pub const BNE: u8 = 0xD0;
-    pub const BPL: u8 = 0x10;
-    pub const BVC: u8 = 0x50;
-    pub const BVS: u8 = 0x70;
-
     // Load and Save instructions
 
     pub const LDA_IMMEDIATE: u8 = 0xA9;
@@ -310,6 +308,26 @@ impl Opcode {
 
     pub const BIT_ZERO_PAGE: u8 = 0x24;
     pub const BIT_ABSOLUTE: u8 = 0x2C;
+
+    // Branch instructions
+
+    pub const BCC: u8 = 0x90;
+    pub const BCS: u8 = 0xB0;
+    pub const BNE: u8 = 0xD0;
+    pub const BEQ: u8 = 0xF0;
+    pub const BPL: u8 = 0x10;
+    pub const BMI: u8 = 0x30;
+    pub const BVC: u8 = 0x50;
+    pub const BVS: u8 = 0x70;
+
+    // Transfer Instructions
+
+    pub const TAX: u8 = 0xAA;
+    pub const TXA: u8 = 0x8A;
+    pub const TAY: u8 = 0xA8;
+    pub const TYA: u8 = 0x98;
+    pub const TSX: u8 = 0xBA;
+    pub const TXS: u8 = 0x9A;
 }
 
 impl Microcode {
@@ -378,6 +396,13 @@ impl Microcode {
             Microcode::Rol => Self::rol(cpu),
             Microcode::RorAccumulator => Self::ror_accumulator(cpu),
             Microcode::Ror => Self::ror(cpu),
+
+            Microcode::Tax => cpu.tax(),
+            Microcode::Txa => cpu.txa(),
+            Microcode::Tay => cpu.tay(),
+            Microcode::Tya => cpu.tya(),
+            Microcode::Tsx => cpu.tsx(),
+            Microcode::Txs => cpu.txs(),
 
             Microcode::BranchRelative(branch_test) => Self::branch_relative(cpu, branch_test),
         }
@@ -844,6 +869,25 @@ impl Microcode {
             Opcode::CPY_ABSOLUTE => {
                 absolute_addressing(cpu, true);
                 cpu.push_microcode(Microcode::Cpy);
+            }
+
+            Opcode::TAX => {
+                cpu.push_microcode(Microcode::Tax);
+            }
+            Opcode::TXA => {
+                cpu.push_microcode(Microcode::Txa);
+            }
+            Opcode::TAY => {
+                cpu.push_microcode(Microcode::Tay);
+            }
+            Opcode::TYA => {
+                cpu.push_microcode(Microcode::Tya);
+            }
+            Opcode::TSX => {
+                cpu.push_microcode(Microcode::Tsx);
+            }
+            Opcode::TXS => {
+                cpu.push_microcode(Microcode::Txs);
             }
 
             Opcode::ORA_IMMEDIATE => {
