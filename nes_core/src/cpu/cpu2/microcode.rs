@@ -217,7 +217,7 @@ const fn build_opcode_table() -> [ArrayVec<[Microcode; 7]>; 256] {
     );
     r[LDX_IMMEDIATE as usize] = microcode_arr!(LoadImmediateX);
     r[LDX_ZERO_PAGE as usize] = microcode_arr!(zero_page_addr(), LoadR(X));
-    r[LDX_ZERO_PAGE_Y as usize] = microcode_arr!(zero_page_y_addr(), LoadR(X));
+    r[LDX_ZERO_PAGE_Y as usize] = microcode_arr!(zero_page_addr(), zero_page_y_addr(), LoadR(X));
     r[LDX_ABSOLUTE as usize] = microcode_arr!(
         AbsoluteL,
         AbsoluteH {
@@ -297,7 +297,7 @@ const fn build_opcode_table() -> [ArrayVec<[Microcode; 7]>; 256] {
         StoreR(A)
     );
     r[STX_ZERO_PAGE as usize] = microcode_arr!(zero_page_addr(), StoreR(X));
-    r[STX_ZERO_PAGE_Y as usize] = microcode_arr!(zero_page_y_save_alu(), StoreR(X));
+    r[STX_ZERO_PAGE_Y as usize] = microcode_arr!(zero_page_addr(), zero_page_y_addr(), StoreR(X));
     r[STX_ABSOLUTE as usize] = microcode_arr!(
         AbsoluteL,
         AbsoluteH {
@@ -728,6 +728,10 @@ const fn build_opcode_table() -> [ArrayVec<[Microcode; 7]>; 256] {
     r[TYA as usize] = microcode_arr!(Tya);
     r[TSX as usize] = microcode_arr!(Tsx);
     r[TXS as usize] = microcode_arr!(Txs);
+    r[INX as usize] = microcode_arr!(Inx);
+    r[INY as usize] = microcode_arr!(Iny);
+    r[DEX as usize] = microcode_arr!(Dex);
+    r[DEY as usize] = microcode_arr!(Dey);
     r[ORA_IMMEDIATE as usize] = microcode_arr!(OraImmediate);
     r[ORA_ZERO_PAGE as usize] = microcode_arr!(zero_page_load_alu(), Ora);
     r[ORA_ZERO_PAGE_X as usize] = microcode_arr!(zero_page_addr(), zero_page_x_load_alu(), Ora);
@@ -822,10 +826,13 @@ const fn build_opcode_table() -> [ArrayVec<[Microcode; 7]>; 256] {
     );
     r[ALR as usize] = microcode_arr!(AlrImmediate);
     r[ANC as usize] = microcode_arr!(AncImmediate);
+    r[ANC1 as usize] = microcode_arr!(AncImmediate);
+    r[ANC2 as usize] = microcode_arr!(AncImmediate);
     r[ARR as usize] = microcode_arr!(ArrImmediate);
     r[AXS as usize] = microcode_arr!(AxsImmediate);
+    r[LAX_IMMEDIATE as usize] = microcode_arr!(LoadImmediateA, Tax);
     r[LAX_ZERO_PAGE as usize] = microcode_arr!(zero_page_load_alu(), Lax);
-    r[LAX_ZERO_PAGE_Y as usize] = microcode_arr!(zero_page_y_load_alu(), Lax);
+    r[LAX_ZERO_PAGE_Y as usize] = microcode_arr!(zero_page_addr(), zero_page_y_load_alu(), Lax);
     r[LAX_ABSOLUTE as usize] = microcode_arr!(
         AbsoluteL,
         AbsoluteH {
@@ -924,6 +931,40 @@ const fn build_opcode_table() -> [ArrayVec<[Microcode; 7]>; 256] {
         },
         Dcp
     );
+    r[DEC_ZERO_PAGE as usize] = microcode_arr!(zero_page_load_alu(), Dec);
+    r[DEC_ZERO_PAGE_X as usize] = microcode_arr!(zero_page_addr(), zero_page_x_load_alu(), Dec);
+    r[DEC_ABSOLUTE as usize] = microcode_arr!(
+        AbsoluteL,
+        AbsoluteH {
+            load_into_alu: true
+        },
+        Dec
+    );
+    r[DEC_ABSOLUTE_INDEXED_X as usize] = microcode_arr!(
+        AbsoluteL,
+        AbsoluteIndexedX {
+            oops: false,
+            load_into_alu: true
+        },
+        Dec
+    );
+    r[INC_ZERO_PAGE as usize] = microcode_arr!(zero_page_load_alu(), Inc);
+    r[INC_ZERO_PAGE_X as usize] = microcode_arr!(zero_page_addr(), zero_page_x_load_alu(), Inc);
+    r[INC_ABSOLUTE as usize] = microcode_arr!(
+        AbsoluteL,
+        AbsoluteH {
+            load_into_alu: true
+        },
+        Inc
+    );
+    r[INC_ABSOLUTE_INDEXED_X as usize] = microcode_arr!(
+        AbsoluteL,
+        AbsoluteIndexedX {
+            oops: false,
+            load_into_alu: true
+        },
+        Inc
+    );
     r[ISC_ZERO_PAGE as usize] = microcode_arr!(zero_page_load_alu(), Isc);
     r[ISC_ZERO_PAGE_X as usize] = microcode_arr!(zero_page_addr(), zero_page_x_load_alu(), Isc);
     r[ISC_ABSOLUTE as usize] = microcode_arr!(
@@ -1020,6 +1061,51 @@ const fn build_opcode_table() -> [ArrayVec<[Microcode; 7]>; 256] {
         StoreAlu,
         Rra,
         StoreAlu
+    );
+    r[RLA_ZERO_PAGE as usize] = microcode_arr!(zero_page_load_alu(), Rla);
+    r[RLA_ZERO_PAGE_X as usize] = microcode_arr!(zero_page_addr(), zero_page_x_load_alu(), Rla);
+    r[RLA_ABSOLUTE as usize] = microcode_arr!(
+        AbsoluteL,
+        AbsoluteH {
+            load_into_alu: true
+        },
+        Rla
+    );
+    r[RLA_ABSOLUTE_INDEXED_X as usize] = microcode_arr!(
+        AbsoluteL,
+        AbsoluteIndexedX {
+            oops: false,
+            load_into_alu: true
+        },
+        Rla
+    );
+    r[RLA_ABSOLUTE_INDEXED_Y as usize] = microcode_arr!(
+        AbsoluteL,
+        AbsoluteIndexedY {
+            oops: false,
+            load_into_alu: true
+        },
+        Rla
+    );
+    r[RLA_INDEXED_INDIRECT as usize] = microcode_arr!(
+        zero_page_addr(),
+        zero_page_x_addr(),
+        Indexed {
+            load_into_alu: true
+        },
+        Nop,
+        Rla
+    );
+    r[RLA_INDIRECT_INDEXED as usize] = microcode_arr!(
+        zero_page_addr(),
+        Indexed {
+            load_into_alu: false
+        },
+        AbsoluteIndexedYWithoutHigh {
+            oops: false,
+            load_into_alu: true
+        },
+        Rla
     );
     r[SLO_ZERO_PAGE as usize] = microcode_arr!(zero_page_load_alu(), StoreAlu, Slo);
     r[SLO_ZERO_PAGE_X as usize] =
@@ -1287,6 +1373,7 @@ pub enum Microcode {
 
     Lax,
     Sax,
+    Rla,
     Dcp,
     Isc,
     Rra,
@@ -1323,6 +1410,12 @@ pub enum Microcode {
     Tya,
     Tsx,
     Txs,
+    Inx,
+    Iny,
+    Dex,
+    Dey,
+    Inc,
+    Dec,
 
     /// Read offset value from instruction data stream,
     /// If BranchTest is true, pc += offset, push one Noc if not cross page, push two Noc if cross page
@@ -1519,6 +1612,10 @@ mod opcode {
     pub const TYA: u8 = 0x98;
     pub const TSX: u8 = 0xBA;
     pub const TXS: u8 = 0x9A;
+    pub const INX: u8 = 0xE8;
+    pub const INY: u8 = 0xC8;
+    pub const DEX: u8 = 0xCA;
+    pub const DEY: u8 = 0x88;
 
     // Stack Instructions
 
@@ -1553,9 +1650,12 @@ mod opcode {
     //   Combined instructions
 
     pub const ALR: u8 = 0x4B;
+    pub const ANC1: u8 = 0x0B;
     pub const ANC: u8 = 0x2B;
+    pub const ANC2: u8 = 0x2B;
     pub const ARR: u8 = 0x6B;
     pub const AXS: u8 = 0xCB;
+    pub const LAX_IMMEDIATE: u8 = 0xAB;
 
     pub const LAX_ZERO_PAGE: u8 = 0xA7;
     pub const LAX_ZERO_PAGE_Y: u8 = 0xB7;
@@ -1578,6 +1678,16 @@ mod opcode {
     pub const DCP_INDEXED_INDIRECT: u8 = 0xC3;
     pub const DCP_INDIRECT_INDEXED: u8 = 0xD3;
 
+    pub const DEC_ZERO_PAGE: u8 = 0xC6;
+    pub const DEC_ZERO_PAGE_X: u8 = 0xD6;
+    pub const DEC_ABSOLUTE: u8 = 0xCE;
+    pub const DEC_ABSOLUTE_INDEXED_X: u8 = 0xDE;
+
+    pub const INC_ZERO_PAGE: u8 = 0xE6;
+    pub const INC_ZERO_PAGE_X: u8 = 0xF6;
+    pub const INC_ABSOLUTE: u8 = 0xEE;
+    pub const INC_ABSOLUTE_INDEXED_X: u8 = 0xFE;
+
     pub const ISC_ZERO_PAGE: u8 = 0xE7;
     pub const ISC_ZERO_PAGE_X: u8 = 0xF7;
     pub const ISC_ABSOLUTE: u8 = 0xEF;
@@ -1593,6 +1703,14 @@ mod opcode {
     pub const RRA_ABSOLUTE_INDEXED_Y: u8 = 0x7B;
     pub const RRA_INDEXED_INDIRECT: u8 = 0x63;
     pub const RRA_INDIRECT_INDEXED: u8 = 0x73;
+
+    pub const RLA_ZERO_PAGE: u8 = 0x27;
+    pub const RLA_ZERO_PAGE_X: u8 = 0x37;
+    pub const RLA_ABSOLUTE: u8 = 0x2F;
+    pub const RLA_ABSOLUTE_INDEXED_X: u8 = 0x3F;
+    pub const RLA_ABSOLUTE_INDEXED_Y: u8 = 0x3B;
+    pub const RLA_INDEXED_INDIRECT: u8 = 0x23;
+    pub const RLA_INDIRECT_INDEXED: u8 = 0x33;
 
     pub const SLO_ZERO_PAGE: u8 = 0x07;
     pub const SLO_ZERO_PAGE_X: u8 = 0x17;
@@ -1736,6 +1854,7 @@ impl Microcode {
 
             Self::Lax => cpu.lax(),
             Self::Sax => cpu.sax(),
+            Self::Rla => cpu.rla(),
             Self::Dcp => cpu.dcp(),
             Self::Isc => cpu.isc(),
             Self::Rra => cpu.rra(),
@@ -1772,6 +1891,12 @@ impl Microcode {
             Self::Tya => cpu.tya(),
             Self::Tsx => cpu.tsx(),
             Self::Txs => cpu.txs(),
+            Self::Inx => cpu.inx(),
+            Self::Iny => cpu.iny(),
+            Self::Dex => cpu.dex(),
+            Self::Dey => cpu.dey(),
+            Self::Inc => cpu.inc(),
+            Self::Dec => cpu.dec(),
 
             Self::BranchRelative(branch_test) => Self::branch_relative(cpu, branch_test),
             Self::Kill => cpu.halt(),

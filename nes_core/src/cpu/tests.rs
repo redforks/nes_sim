@@ -15,6 +15,12 @@ fn create_cpu() -> Cpu<MockMcu> {
     Cpu::new(mcu)
 }
 
+fn execute_next(cpu: &mut Cpu<MockMcu>) -> u8 {
+    let mut plugin = EmptyPlugin::new();
+    let (_, cycles) = cpu.tick(&mut plugin);
+    cycles
+}
+
 // Helper function to set up interrupt vectors
 fn set_nmi_vector(cpu: &mut Cpu<MockMcu>, addr: u16) {
     cpu.write_byte(NMI_VECTOR, (addr & 0xFF) as u8);
