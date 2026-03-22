@@ -1,7 +1,8 @@
 use tinyvec::ArrayVec;
 
 use super::Cpu2;
-use crate::{mcu::Mcu, Flag};
+use crate::{Flag, mcu::Mcu};
+
 macro_rules! microcode_arr {
     ($item1:expr) => {
         match ArrayVec::try_from_array_len(
@@ -1092,7 +1093,8 @@ const fn build_opcode_table() -> [ArrayVec<[Microcode; 7]>; 256] {
         },
         Microcode::Dcp
     );
-    r[Opcode::ISC_ZERO_PAGE as usize] = microcode_arr!(Microcode::Isc);
+    r[Opcode::ISC_ZERO_PAGE as usize] =
+        microcode_arr!(Microcode::zero_page_load_alu(), Microcode::Isc);
     r[Opcode::ISC_ZERO_PAGE_X as usize] = microcode_arr!(
         Microcode::zero_page_addr(),
         Microcode::ZeroPageIndexedX {
@@ -1145,8 +1147,12 @@ const fn build_opcode_table() -> [ArrayVec<[Microcode; 7]>; 256] {
         },
         Microcode::Isc
     );
-    r[Opcode::RRA_ZERO_PAGE as usize] =
-        microcode_arr!(Microcode::StoreAlu, Microcode::Rra, Microcode::StoreAlu);
+    r[Opcode::RRA_ZERO_PAGE as usize] = microcode_arr!(
+        Microcode::zero_page_load_alu(),
+        Microcode::StoreAlu,
+        Microcode::Rra,
+        Microcode::StoreAlu
+    );
     r[Opcode::RRA_ZERO_PAGE_X as usize] = microcode_arr!(
         Microcode::zero_page_addr(),
         Microcode::ZeroPageIndexedX {
@@ -1211,8 +1217,12 @@ const fn build_opcode_table() -> [ArrayVec<[Microcode; 7]>; 256] {
         Microcode::Rra,
         Microcode::StoreAlu
     );
-    r[Opcode::SLO_ZERO_PAGE as usize] =
-        microcode_arr!(Microcode::StoreAlu, Microcode::Asl, Microcode::StoreAlu);
+    r[Opcode::SLO_ZERO_PAGE as usize] = microcode_arr!(
+        Microcode::zero_page_load_alu(),
+        Microcode::StoreAlu,
+        Microcode::Asl,
+        Microcode::StoreAlu
+    );
     r[Opcode::SLO_ZERO_PAGE_X as usize] = microcode_arr!(
         Microcode::zero_page_addr(),
         Microcode::ZeroPageIndexedX {
@@ -1277,8 +1287,12 @@ const fn build_opcode_table() -> [ArrayVec<[Microcode; 7]>; 256] {
         Microcode::Asl,
         Microcode::StoreAlu
     );
-    r[Opcode::SRE_ZERO_PAGE as usize] =
-        microcode_arr!(Microcode::StoreAlu, Microcode::Lsr, Microcode::StoreAlu);
+    r[Opcode::SRE_ZERO_PAGE as usize] = microcode_arr!(
+        Microcode::zero_page_load_alu(),
+        Microcode::StoreAlu,
+        Microcode::Lsr,
+        Microcode::StoreAlu
+    );
     r[Opcode::SRE_ZERO_PAGE_X as usize] = microcode_arr!(
         Microcode::zero_page_addr(),
         Microcode::ZeroPageIndexedX {
@@ -1961,16 +1975,16 @@ impl Microcode {
             Microcode::ArrImmediate => Self::arr_immediate(cpu),
             Microcode::AxsImmediate => Self::axs_immediate(cpu),
 
-            Microcode::Lax => Self::lax(cpu),
-            Microcode::Sax => Self::sax(cpu),
-            Microcode::Dcp => Self::dcp(cpu),
-            Microcode::Isc => Self::isc(cpu),
-            Microcode::Rra => Self::rra(cpu),
-            Microcode::Slo => Self::slo(cpu),
-            Microcode::Sre => Self::sre(cpu),
-            Microcode::Shx => Self::shx(cpu),
-            Microcode::Shy => Self::shy(cpu),
-            Microcode::Tas => Self::tas(cpu),
+            Microcode::Lax => cpu.lax(),
+            Microcode::Sax => cpu.sax(),
+            Microcode::Dcp => cpu.dcp(),
+            Microcode::Isc => cpu.isc(),
+            Microcode::Rra => cpu.rra(),
+            Microcode::Slo => cpu.slo(),
+            Microcode::Sre => cpu.sre(),
+            Microcode::Shx => cpu.shx(),
+            Microcode::Shy => cpu.shy(),
+            Microcode::Tas => cpu.tas(),
 
             Microcode::Pha => cpu.pha(),
             Microcode::Pla => cpu.pla(),
@@ -2082,46 +2096,6 @@ impl Microcode {
     fn axs_immediate<M: Mcu>(cpu: &mut Cpu2<M>) {
         cpu.alu = cpu.inc_read_byte();
         cpu.axs();
-    }
-
-    fn lax<M: Mcu>(cpu: &mut Cpu2<M>) {
-        cpu.lax();
-    }
-
-    fn sax<M: Mcu>(cpu: &mut Cpu2<M>) {
-        cpu.sax();
-    }
-
-    fn dcp<M: Mcu>(cpu: &mut Cpu2<M>) {
-        cpu.dcp();
-    }
-
-    fn isc<M: Mcu>(cpu: &mut Cpu2<M>) {
-        cpu.isc();
-    }
-
-    fn rra<M: Mcu>(cpu: &mut Cpu2<M>) {
-        cpu.rra();
-    }
-
-    fn slo<M: Mcu>(cpu: &mut Cpu2<M>) {
-        cpu.slo();
-    }
-
-    fn sre<M: Mcu>(cpu: &mut Cpu2<M>) {
-        cpu.sre();
-    }
-
-    fn shx<M: Mcu>(cpu: &mut Cpu2<M>) {
-        cpu.shx();
-    }
-
-    fn shy<M: Mcu>(cpu: &mut Cpu2<M>) {
-        cpu.shy();
-    }
-
-    fn tas<M: Mcu>(cpu: &mut Cpu2<M>) {
-        cpu.tas();
     }
 
     fn zero_page<M: Mcu>(cpu: &mut Cpu2<M>, load_into_alu: bool, save_alu: bool) {
@@ -2331,66 +2305,6 @@ impl Microcode {
             save_alu: false,
         }
     }
-}
-
-// TODO: if load_into_alu always is true in addressing functions, remove this argument
-
-/// Push Microcodes for zero page indexed x addressing
-fn zero_page_indexed_x_addressing<M: Mcu>(cpu: &mut Cpu2<M>, load_into_alu: bool) {
-    cpu.push_microcode(Microcode::zero_page_addr());
-    cpu.push_microcode(Microcode::ZeroPageIndexedX { load_into_alu });
-}
-
-/// Push Microcodes for zero page indexed y addressing
-fn zero_page_indexed_y_addressing<M: Mcu>(cpu: &mut Cpu2<M>, load_into_alu: bool) {
-    cpu.push_microcode(Microcode::zero_page_addr());
-    cpu.push_microcode(Microcode::ZeroPageIndexedY { load_into_alu });
-}
-
-/// Push Microcodes for absolute addressing
-fn absolute_addressing<M: Mcu>(cpu: &mut Cpu2<M>, load_into_alu: bool) {
-    cpu.push_microcode(Microcode::AbsoluteL);
-    cpu.push_microcode(Microcode::AbsoluteH { load_into_alu });
-}
-
-/// Push Microcodes for absolute indexed x addressing
-fn absolute_indexed_x_addressing<M: Mcu>(cpu: &mut Cpu2<M>, oops: bool, load_into_alu: bool) {
-    cpu.push_microcode(Microcode::AbsoluteL);
-    cpu.push_microcode(Microcode::AbsoluteIndexedX {
-        oops,
-        load_into_alu,
-    }); // may add nop for extra cycle
-}
-
-/// Push Microcodes for absolute indexed y addressing
-fn absolute_indexed_y_addressing<M: Mcu>(cpu: &mut Cpu2<M>, oops: bool, load_into_alu: bool) {
-    cpu.push_microcode(Microcode::AbsoluteL);
-    cpu.push_microcode(Microcode::AbsoluteIndexedY {
-        oops,
-        load_into_alu,
-    }); // may add nop for extra cycle
-}
-
-/// Push Microcodes for zero page indexed indirect addressing
-fn indexed_indirect_addressing<M: Mcu>(cpu: &mut Cpu2<M>, load_into_alu: bool) {
-    cpu.push_microcode(Microcode::zero_page_addr());
-    cpu.push_microcode(Microcode::ZeroPageIndexedX {
-        load_into_alu: false,
-    });
-    cpu.push_microcode(Microcode::Indexed { load_into_alu });
-    cpu.push_microcode(Microcode::Nop);
-}
-
-/// Push Microcodes for indirect indexed addressing
-fn indirect_indexed_addressing<M: Mcu>(cpu: &mut Cpu2<M>, oops: bool, load_into_alu: bool) {
-    cpu.push_microcode(Microcode::zero_page_addr());
-    cpu.push_microcode(Microcode::Indexed {
-        load_into_alu: false,
-    });
-    cpu.push_microcode(Microcode::AbsoluteIndexedYWithoutHigh {
-        oops,
-        load_into_alu,
-    }); // may add nop for extra cycle
 }
 
 #[cfg(test)]
