@@ -1,5 +1,5 @@
 use super::Cpu2;
-use crate::{mcu::Mcu, Flag};
+use crate::{Flag, mcu::Mcu};
 
 /// Each Microcode instruction executed by the CPU in a single cycle
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -462,6 +462,12 @@ impl Opcode {
 
     // duplicated opcodes
     pub const USBC: u8 = 0xEB;
+    pub const NOP1: u8 = 0x1A;
+    pub const NOP2: u8 = 0x3A;
+    pub const NOP3: u8 = 0x5A;
+    pub const NOP4: u8 = 0x7A;
+    pub const NOP5: u8 = 0xDA;
+    pub const NOP6: u8 = 0xFA;
 }
 
 impl Microcode {
@@ -980,7 +986,14 @@ impl Microcode {
             Opcode::SEI => cpu.push_microcode(Microcode::Sei),
             Opcode::CLV => cpu.push_microcode(Microcode::Clv),
 
-            Opcode::NOP => cpu.push_microcode(Microcode::Nop),
+            Opcode::NOP
+            | Opcode::NOP1
+            | Opcode::NOP2
+            | Opcode::NOP3
+            | Opcode::NOP4
+            | Opcode::NOP5
+            | Opcode::NOP6 => cpu.push_microcode(Microcode::Nop),
+
             Opcode::BRK => cpu.push_microcode(Microcode::Brk),
 
             Opcode::SBC_IMMEDIATE | Opcode::USBC => {
