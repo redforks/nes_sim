@@ -181,6 +181,10 @@ pub enum Microcode {
     /// Read offset value from instruction data stream,
     /// If BranchTest is true, pc += offset, push one Noc if not cross page, push two Noc if cross page
     BranchRelative(BranchTest),
+
+    /// Cpu will trapped infinitely if execute this microcode, used to impl illegal instructions that will lock up the CPU
+    /// Only reset can restore the CPU from this state
+    Kill,
 }
 
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]
@@ -491,6 +495,19 @@ impl Opcode {
     const NOP_ABSOLUTE_INDEXED_X4: u8 = 0x7C;
     const NOP_ABSOLUTE_INDEXED_X5: u8 = 0xDC;
     const NOP_ABSOLUTE_INDEXED_X6: u8 = 0xFC;
+
+    const KIL1: u8 = 0x02;
+    const KIL2: u8 = 0x12;
+    const KIL3: u8 = 0x22;
+    const KIL4: u8 = 0x32;
+    const KIL5: u8 = 0x42;
+    const KIL6: u8 = 0x52;
+    const KIL7: u8 = 0x62;
+    const KIL8: u8 = 0x72;
+    const KIL9: u8 = 0x92;
+    const KIL10: u8 = 0xB2;
+    const KIL11: u8 = 0xD2;
+    const KIL12: u8 = 0xF2;
 }
 
 impl Microcode {
@@ -608,6 +625,7 @@ impl Microcode {
             Microcode::Txs => cpu.txs(),
 
             Microcode::BranchRelative(branch_test) => Self::branch_relative(cpu, branch_test),
+            Microcode::Kill => cpu.freezed = true,
         }
     }
 
@@ -1055,6 +1073,19 @@ impl Microcode {
                 absolute_indexed_x_addressing(cpu, false, false);
                 cpu.push_microcode(Microcode::Nop);
             }
+
+            Opcode::KIL1
+            | Opcode::KIL2
+            | Opcode::KIL3
+            | Opcode::KIL4
+            | Opcode::KIL5
+            | Opcode::KIL6
+            | Opcode::KIL7
+            | Opcode::KIL8
+            | Opcode::KIL9
+            | Opcode::KIL10
+            | Opcode::KIL11
+            | Opcode::KIL12 => cpu.push_microcode(Microcode::Kill),
 
             Opcode::BRK => cpu.push_microcode(Microcode::Brk),
 
