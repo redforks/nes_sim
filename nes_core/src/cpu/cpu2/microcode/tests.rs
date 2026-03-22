@@ -308,6 +308,44 @@ fn fetch_and_decode_queues_shift_and_rotate_sequences() {
 }
 
 #[test]
+fn fetch_and_decode_queues_ora_and_eor_sequences() {
+    let mut cpu = cpu_with_memory(
+        0x8000,
+        &[
+            (0x8000, Opcode::ORA_IMMEDIATE),
+            (0x8001, Opcode::EOR_ZERO_PAGE),
+            (0x8002, Opcode::EOR_ABSOLUTE_INDEXED_X),
+        ],
+    );
+
+    Microcode::FetchAndDecode.exec(&mut cpu);
+    assert_eq!(cpu.opcode, Opcode::ORA_IMMEDIATE);
+    assert_eq!(cpu.pop_microcode(), Some(Microcode::OraImmediate));
+
+    Microcode::FetchAndDecode.exec(&mut cpu);
+    assert_eq!(cpu.opcode, Opcode::EOR_ZERO_PAGE);
+    assert_eq!(
+        cpu.pop_microcode(),
+        Some(Microcode::ZeroPage {
+            load_into_alu: true
+        })
+    );
+    assert_eq!(cpu.pop_microcode(), Some(Microcode::Eor));
+
+    Microcode::FetchAndDecode.exec(&mut cpu);
+    assert_eq!(cpu.opcode, Opcode::EOR_ABSOLUTE_INDEXED_X);
+    assert_eq!(cpu.pop_microcode(), Some(Microcode::AbsoluteL));
+    assert_eq!(
+        cpu.pop_microcode(),
+        Some(Microcode::AbsoluteIndexedX {
+            oops: true,
+            load_into_alu: true
+        })
+    );
+    assert_eq!(cpu.pop_microcode(), Some(Microcode::Eor));
+}
+
+#[test]
 fn load_microcodes_read_memory_and_update_flags() {
     let mut cpu = cpu_with_memory(0x0000, &[(0x0042, 0x80), (0x0043, 0x00), (0x0044, 0x7F)]);
 
@@ -409,6 +447,24 @@ fn shift_and_rotate_microcodes_update_accumulator_and_alu() {
     Microcode::Ror.exec(&mut cpu);
     assert_eq!(cpu.alu, 0b1000_0000);
     assert!(cpu.flag(Flag::Carry));
+    assert!(cpu.flag(Flag::Negative));
+}
+
+#[test]
+fn ora_and_eor_microcodes_update_accumulator_and_flags() {
+    let mut cpu = cpu_with_memory(0x8000, &[(0x8000, 0b0000_1111), (0x0042, 0b1111_0000)]);
+    cpu.a = 0b0101_0000;
+
+    Microcode::OraImmediate.exec(&mut cpu);
+    assert_eq!(cpu.a, 0b0101_1111);
+    assert!(!cpu.flag(Flag::Zero));
+    assert!(!cpu.flag(Flag::Negative));
+
+    cpu.ab = 0x0042;
+    cpu.alu = 0b1111_0000;
+    Microcode::Eor.exec(&mut cpu);
+    assert_eq!(cpu.a, 0b1010_1111);
+    assert!(!cpu.flag(Flag::Zero));
     assert!(cpu.flag(Flag::Negative));
 }
 
