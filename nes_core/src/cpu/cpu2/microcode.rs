@@ -76,6 +76,8 @@ pub enum Microcode {
     Indexed {
         load_into_alu: bool,
     },
+    /// Read immediate value from instruction data stream, but do not use it
+    SkipImmediate,
 
     /// Take immediate value from instruction data stream, add to accumulator with carry
     AdcImmediate,
@@ -468,6 +470,11 @@ impl Opcode {
     pub const NOP4: u8 = 0x7A;
     pub const NOP5: u8 = 0xDA;
     pub const NOP6: u8 = 0xFA;
+    pub const NOP_IMMEDIATE1: u8 = 0x80;
+    pub const NOP_IMMEDIATE2: u8 = 0x82;
+    pub const NOP_IMMEDIATE3: u8 = 0x89;
+    pub const NOP_IMMEDIATE4: u8 = 0xC2;
+    pub const NOP_IMMEDIATE5: u8 = 0xE2;
 }
 
 impl Microcode {
@@ -527,6 +534,9 @@ impl Microcode {
             Microcode::Bit => cpu.bit(),
             Microcode::StoreAlu => Self::store_alu(cpu),
             Microcode::Nop => {}
+            Microcode::SkipImmediate => {
+                cpu.inc_read_byte();
+            }
             Microcode::Indexed { load_into_alu } => Self::indexed(cpu, load_into_alu),
             Microcode::AslAccumulator => Self::asl_accumulator(cpu),
             Microcode::Asl => Self::asl(cpu),
@@ -993,6 +1003,14 @@ impl Microcode {
             | Opcode::NOP4
             | Opcode::NOP5
             | Opcode::NOP6 => cpu.push_microcode(Microcode::Nop),
+            Opcode::NOP_IMMEDIATE1
+            | Opcode::NOP_IMMEDIATE2
+            | Opcode::NOP_IMMEDIATE3
+            | Opcode::NOP_IMMEDIATE4
+            | Opcode::NOP_IMMEDIATE5 => {
+                cpu.push_microcode(Microcode::FetchAndDecode);
+                cpu.push_microcode(Microcode::Nop);
+            }
 
             Opcode::BRK => cpu.push_microcode(Microcode::Brk),
 
