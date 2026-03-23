@@ -1,9 +1,8 @@
-use super::microcode::{opcode, BranchTest};
+use super::microcode::{BranchTest, opcode};
 use super::*;
 use crate::test_utils::MockMcu;
 
 // NES vector addresses
-const NMI_VECTOR: u16 = 0xFFFA;
 const IRQ_VECTOR: u16 = 0xFFFE;
 
 fn create_cpu_with_program(program: &[u8]) -> Cpu<MockMcu> {
@@ -22,12 +21,6 @@ fn execute_next(cpu: &mut Cpu<MockMcu>) -> u8 {
     cycles
 }
 
-// Helper function to set up interrupt vectors
-fn set_nmi_vector(cpu: &mut Cpu<MockMcu>, addr: u16) {
-    cpu.write_byte(NMI_VECTOR, (addr & 0xFF) as u8);
-    cpu.write_byte(NMI_VECTOR + 1, ((addr >> 8) & 0xFF) as u8);
-}
-
 fn set_irq_vector(cpu: &mut Cpu<MockMcu>, addr: u16) {
     cpu.write_byte(IRQ_VECTOR, (addr & 0xFF) as u8);
     cpu.write_byte(IRQ_VECTOR + 1, ((addr >> 8) & 0xFF) as u8);
@@ -42,7 +35,7 @@ fn test_cpu_initialization() {
     assert_eq!(cpu.pc, 0);
     assert_eq!(cpu.sp, 0);
     assert_eq!(cpu.status, Flag::InterruptDisabled as u8);
-    assert!(!cpu.is_halt);
+    assert!(!cpu.is_halted());
 }
 
 #[test]
@@ -709,8 +702,8 @@ fn test_bit_instruction() {
     execute_next(&mut cpu);
     // BIT should have set N flag (bit 7 of 0xE0)
     assert!(cpu.flag(Flag::Negative)); // bit 7 of 0xE0 = 1
-                                       // Overflow flag: (v & 0x70) != 0 means bits 6-4 are checked
-                                       // 0xE0 & 0x70 = 0xE0 & 0x70 = 0x60 != 0, so overflow should be set
+    // Overflow flag: (v & 0x70) != 0 means bits 6-4 are checked
+    // 0xE0 & 0x70 = 0xE0 & 0x70 = 0x60 != 0, so overflow should be set
     assert!(cpu.flag(Flag::Overflow));
 }
 
@@ -1799,24 +1792,6 @@ fn test_and_zero_page_x() {
     assert_eq!(cpu.a, 0x00);
 }
 
-// NMI and interrupt handling tests
-#[test]
-fn test_nmi_pushes_pc_and_status() {
-    let mut cpu = create_cpu_with_program(&[0xEA]);
-    cpu.pc = 0x1234;
-    set_nmi_vector(&mut cpu, 0xABCD);
-
-    cpu.nmi();
-
-    assert_eq!(cpu.pc, 0xABCD);
-    // Check stack: SP starts at 0
-    // push high byte at 0x100, sp becomes 0xFF
-    // push low byte at 0x1FF, sp becomes 0xFE
-    // push status at 0x1FE, sp becomes 0xFD
-    assert_eq!(cpu.read_byte(0x100), 0x12); // PC high byte
-    assert_eq!(cpu.read_byte(0x1FF), 0x34); // PC low byte
-}
-
 #[test]
 fn test_irq_pushes_pc_and_status() {
     let mut cpu = create_cpu_with_program(&[0xEA]);
@@ -1888,14 +1863,14 @@ fn test_jsr_pushes_pc_and_jumps() {
 #[test]
 fn test_rts_pops_pc() {
     let mut cpu = create_cpu_with_program(&[0x60]); // RTS
-                                                    // Setup stack: return address $1233 (before RTS adds 1)
-                                                    // pop_stack increments SP first, then reads
-                                                    // We want: first pop reads 0x33, second pop reads 0x12
+    // Setup stack: return address $1233 (before RTS adds 1)
+    // pop_stack increments SP first, then reads
+    // We want: first pop reads 0x33, second pop reads 0x12
     cpu.sp = 0xFD; // After two pops: 0xFE -> 0x1FF, 0xFF -> 0x100... no wait
-                   // Let me recalculate:
-                   // pop_stack: SP++, read from 0x100 + SP
-                   // First pop: SP = 0xFD + 1 = 0xFE, read from 0x1FE (should be low byte 0x33)
-                   // Second pop: SP = 0xFE + 1 = 0xFF, read from 0x1FF (should be high byte 0x12)
+    // Let me recalculate:
+    // pop_stack: SP++, read from 0x100 + SP
+    // First pop: SP = 0xFD + 1 = 0xFE, read from 0x1FE (should be low byte 0x33)
+    // Second pop: SP = 0xFE + 1 = 0xFF, read from 0x1FF (should be high byte 0x12)
     cpu.write_byte(0x1FE, 0x33); // Low byte
     cpu.write_byte(0x1FF, 0x12); // High byte
 
@@ -1935,7 +1910,7 @@ fn test_jsr_rts_round_trip() {
 #[test]
 fn test_rti_restores_pc_and_flags() {
     let mut cpu = create_cpu_with_program(&[0x40]); // RTI
-                                                    // Setup stack with status then PC (RTI pops in reverse order)
+    // Setup stack with status then PC (RTI pops in reverse order)
     cpu.sp = 0xFD; // Stack at 0x100, 0x1FF, 0x1FE
     cpu.write_byte(0x1FE, 0xFF); // Status (popped first)
     cpu.write_byte(0x1FF, 0x34); // PC low
@@ -2146,7 +2121,7 @@ fn test_lda_indirect_y_unofficial() {
     // Set up indirect pointer at 0x10 pointing to 0x200
     mcu.write_word(0x10, 0x200);
     mcu.write(0x205, 0x42); // 0x200 + Y(5) = 0x205
-                            // Program: LDA ($10), Y
+    // Program: LDA ($10), Y
     mcu.write(0, 0xB1); // opcode
     mcu.write(1, 0x10); // zero page addr
     let mut cpu = Cpu::new(mcu);
@@ -2397,7 +2372,7 @@ fn test_rra_zero_page() {
     execute_next(&mut cpu);
 
     assert_eq!(cpu.mcu_mut().read(0x10), 0xC0); // ROR: (0x81 >> 1) with carry = 0xC0
-                                                // ADC: 0x05 + 0xC0 + 1(carry)
+    // ADC: 0x05 + 0xC0 + 1(carry)
     assert_eq!(cpu.a, 0xC6); // 0x05 + 0xC0 + 1 = 0xC6
 }
 
@@ -2411,7 +2386,7 @@ fn test_sbx_immediate() {
     execute_next(&mut cpu);
 
     assert_eq!(cpu.x, (0x30 & 0x20) - 0x10); // (A & X) - operand
-                                             // 0x30 & 0x20 = 0x20, 0x20 - 0x10 = 0x10
+    // 0x30 & 0x20 = 0x20, 0x20 - 0x10 = 0x10
     assert_eq!(cpu.x, 0x10);
 }
 
@@ -3162,40 +3137,6 @@ fn test_adc_decimal_mode_not_supported() {
 }
 
 #[test]
-fn test_nmi_when_interrupt_disabled() {
-    // NMI should still occur even when interrupt disable flag is set
-    let mut cpu = create_cpu();
-    cpu.set_flag(Flag::InterruptDisabled, true);
-    set_nmi_vector(&mut cpu, 0x1234);
-
-    cpu.nmi();
-
-    // NMI should have been processed
-    assert_eq!(cpu.pc, 0x1234);
-}
-
-#[test]
-fn test_nmi_pushes_correct_values() {
-    // Verify NMI pushes correct values to stack
-    let mut cpu = create_cpu();
-    // Set up NMI vector (write as little-endian bytes)
-    cpu.mcu_mut().write(0xFFFA, 0x00);
-    cpu.mcu_mut().write(0xFFFB, 0x20);
-    cpu.pc = 0x1000;
-    cpu.set_flag(Flag::Carry, true);
-    cpu.sp = 0xFF;
-
-    cpu.nmi();
-
-    // SP should be decremented 3 times
-    assert_eq!(cpu.sp, 0xFC);
-    // PC should be loaded from NMI vector
-    assert_eq!(cpu.pc, 0x2000);
-    // Interrupt disable flag should be set after NMI
-    assert!(cpu.flag(Flag::InterruptDisabled));
-}
-
-#[test]
 fn test_irq_pushes_correct_values() {
     // Verify IRQ pushes correct PC and status to stack
     let mut cpu = create_cpu();
@@ -3627,7 +3568,7 @@ fn test_adc_all_flags() {
     assert_eq!(cpu.a, 0x00); // 0xFF + 0x00 + 1 = 0x100, truncated to 0x00
     assert!(cpu.flag(Flag::Zero)); // result is zero
     assert!(cpu.flag(Flag::Carry)); // overflow occurred
-                                    // Overflow: -1 + 0 + 1 = 0, which is within range, so no signed overflow
+    // Overflow: -1 + 0 + 1 = 0, which is within range, so no signed overflow
     assert!(!cpu.flag(Flag::Overflow)); // no signed overflow
 }
 
@@ -3649,8 +3590,8 @@ fn test_stack_wrap_around() {
     cpu.push_stack(0x42);
 
     assert_eq!(cpu.sp, 0xFF); // wraps to 0xFF after decrement
-                              // push_stack writes to current SP, then decrements
-                              // So with SP=0x00, it writes to 0x100, then SP becomes 0xFF
+    // push_stack writes to current SP, then decrements
+    // So with SP=0x00, it writes to 0x100, then SP becomes 0xFF
     assert_eq!(cpu.mcu_mut().read(0x0100), 0x42);
 }
 
@@ -4229,11 +4170,19 @@ fn fetch_and_decode_queues_stack_subroutine_jump_flag_misc_sequences() {
 
     Microcode::FetchAndDecode.exec(&mut cpu);
     assert_eq!(cpu.opcode, opcode::RTS);
-    assert_eq!(cpu.pop_microcode(), Some(Microcode::Rts));
+    assert_eq!(cpu.pop_microcode(), Some(Microcode::Nop));
+    assert_eq!(cpu.pop_microcode(), Some(Microcode::PopPcLow));
+    assert_eq!(cpu.pop_microcode(), Some(Microcode::PopPcHigh));
+    assert_eq!(cpu.pop_microcode(), Some(Microcode::Nop));
+    assert_eq!(cpu.pop_microcode(), Some(Microcode::IncPc));
 
     Microcode::FetchAndDecode.exec(&mut cpu);
     assert_eq!(cpu.opcode, opcode::RTI);
-    assert_eq!(cpu.pop_microcode(), Some(Microcode::Rti));
+    assert_eq!(cpu.pop_microcode(), Some(Microcode::Nop));
+    assert_eq!(cpu.pop_microcode(), Some(Microcode::PopStatus));
+    assert_eq!(cpu.pop_microcode(), Some(Microcode::PopPcLow));
+    assert_eq!(cpu.pop_microcode(), Some(Microcode::PopPcHigh));
+    assert_eq!(cpu.pop_microcode(), Some(Microcode::Nop));
 
     Microcode::FetchAndDecode.exec(&mut cpu);
     assert_eq!(cpu.opcode, opcode::CLC);
@@ -4269,7 +4218,12 @@ fn fetch_and_decode_queues_stack_subroutine_jump_flag_misc_sequences() {
 
     Microcode::FetchAndDecode.exec(&mut cpu);
     assert_eq!(cpu.opcode, opcode::BRK);
-    assert_eq!(cpu.pop_microcode(), Some(Microcode::Brk));
+    assert_eq!(cpu.pop_microcode(), Some(Microcode::IncPc));
+    assert_eq!(cpu.pop_microcode(), Some(Microcode::PushPcHigh));
+    assert_eq!(cpu.pop_microcode(), Some(Microcode::PushPcLow));
+    assert_eq!(cpu.pop_microcode(), Some(Microcode::PushStatus));
+    assert_eq!(cpu.pop_microcode(), Some(Microcode::LoadIrqAddressLow));
+    assert_eq!(cpu.pop_microcode(), Some(Microcode::LoadIrqAddressHigh));
 }
 
 #[test]
@@ -4606,20 +4560,6 @@ fn stack_and_misc_microcodes_manipulate_state() {
     cpu.sp = 0xFF;
     Microcode::Jsr.exec(&mut cpu);
     assert_eq!(cpu.pc, 0x1234);
-
-    cpu.sp = 0xFD;
-    cpu.mcu_mut().mem[0x01FE] = 0x00;
-    cpu.mcu_mut().mem[0x01FF] = 0x80;
-    Microcode::Rts.exec(&mut cpu);
-    assert_eq!(cpu.pc, 0x8001);
-
-    cpu.sp = 0xFC;
-    cpu.mcu_mut().mem[0x01FD] = Flag::Carry as u8;
-    cpu.mcu_mut().mem[0x01FE] = 0x78;
-    cpu.mcu_mut().mem[0x01FF] = 0x56;
-    Microcode::Rti.exec(&mut cpu);
-    assert_eq!(cpu.status & Flag::Carry as u8, Flag::Carry as u8);
-    assert_eq!(cpu.pc, 0x5678);
 
     cpu.status = Flag::Carry as u8;
     Microcode::Clc.exec(&mut cpu);

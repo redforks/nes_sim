@@ -7,7 +7,6 @@ const MAX_TICKS_PER_FRAME: u32 = 60000;
 
 pub struct NesMachine<P> {
     machine: Machine<P, NesMcu>,
-    nmi_enable_delay: u8,
 }
 
 impl NesMachine<EmptyPlugin<NesMcu>> {
@@ -24,7 +23,6 @@ impl NesMachine<EmptyPlugin<NesMcu>> {
         let mcu = crate::nes::create_mcu_with_renderer(file, renderer);
         Self {
             machine: Machine::with_plugin(EmptyPlugin::new(), mcu),
-            nmi_enable_delay: 0,
         }
     }
 }
@@ -35,7 +33,6 @@ impl<P: Plugin<NesMcu>> NesMachine<P> {
         let mcu = crate::nes::create_mcu(file);
         Self {
             machine: Machine::with_plugin(plugin, mcu),
-            nmi_enable_delay: 0,
         }
     }
 
@@ -48,7 +45,6 @@ impl<P: Plugin<NesMcu>> NesMachine<P> {
         let mcu = crate::nes::create_mcu_with_renderer(file, renderer);
         Self {
             machine: Machine::with_plugin(plugin, mcu),
-            nmi_enable_delay: 0,
         }
     }
 
@@ -91,7 +87,7 @@ impl<P: Plugin<NesMcu>> NesMachine<P> {
         self.machine.mcu_mut().tick_apu();
         for _ in 0..3 {
             if self.machine.mcu_mut().tick_ppu() {
-                self.machine.cpu_mut().nmi();
+                self.machine.cpu_mut().request_nmi();
             }
         }
 

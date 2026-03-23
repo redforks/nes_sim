@@ -117,9 +117,9 @@ macro_rules! microcode_arr {
 }
 
 const fn build_opcode_table() -> [ArrayVec<[Microcode; 7]>; 256] {
-    use opcode::*;
     use Microcode::*;
     use Register::*;
+    use opcode::*;
 
     let mut r = include!("init_microtable.inc.rs");
     r[AND_IMMEDIATE as usize] = microcode_arr!(AndImmediate);
@@ -512,8 +512,8 @@ const fn build_opcode_table() -> [ArrayVec<[Microcode; 7]>; 256] {
         },
         Jsr
     );
-    r[RTS as usize] = microcode_arr!(Rts);
-    r[RTI as usize] = microcode_arr!(Rti);
+    r[RTS as usize] = microcode_arr!(Nop, PopPcLow, PopPcHigh, Nop, IncPc);
+    r[RTI as usize] = microcode_arr!(Nop, PopStatus, PopPcLow, PopPcHigh, Nop);
     r[CLC as usize] = microcode_arr!(Clc);
     r[SEC as usize] = microcode_arr!(Sec);
     r[CLD as usize] = microcode_arr!(Cld);
@@ -609,7 +609,14 @@ const fn build_opcode_table() -> [ArrayVec<[Microcode; 7]>; 256] {
     r[KIL10 as usize] = microcode_arr!(Kill);
     r[KIL11 as usize] = microcode_arr!(Kill);
     r[KIL12 as usize] = microcode_arr!(Kill);
-    r[BRK as usize] = microcode_arr!(Brk);
+    r[BRK as usize] = microcode_arr!(
+        IncPc,
+        PushPcHigh,
+        PushPcLow,
+        PushStatus,
+        LoadIrqAddressLow,
+        LoadIrqAddressHigh
+    );
     r[SBC_IMMEDIATE as usize] = microcode_arr!(SbcImmediate);
     r[USBC as usize] = microcode_arr!(SbcImmediate);
     r[SBC_ZERO_PAGE as usize] = microcode_arr!(zero_page_load_alu(), Sbc);
@@ -1390,8 +1397,6 @@ pub enum Microcode {
     JmpAbsolute,
     JmpIndirect,
     Jsr,
-    Rts,
-    Rti,
 
     Clc,
     Sec,
@@ -1400,8 +1405,6 @@ pub enum Microcode {
     Cli,
     Sei,
     Clv,
-
-    Brk,
 
     Tax,
     Txa,
@@ -1419,6 +1422,29 @@ pub enum Microcode {
     /// Read offset value from instruction data stream,
     /// If BranchTest is true, pc += offset, push one Noc if not cross page, push two Noc if cross page
     BranchRelative(BranchTest),
+
+    /// Push high byte of pc register into stack
+    PushPcHigh,
+    /// Push low byte of pc register into stack
+    PushPcLow,
+    /// Push cpu status register into stack
+    PushStatus,
+    /// Set cpu pc high byte of nmi handler address
+    LoadNmiAddreeHigh,
+    /// Set cpu pc low byte of nmi handler address
+    LoadNmiAddressLow,
+    /// Set cpu pc high byte of irq handler address
+    LoadIrqAddressHigh,
+    /// Set cpu pc low byte of irq handler address
+    LoadIrqAddressLow,
+    /// Pop cpu status register from stack, used to return from interrupt handler
+    PopStatus,
+    /// Pop low byte of pc register from stack, used to return from interrupt handler
+    PopPcHigh,
+    /// Pop high byte of pc register from stack, used to return from interrupt handler
+    PopPcLow,
+    /// Increment pc register by 1,
+    IncPc,
 
     /// Cpu will trapped infinitely if execute this microcode, used to impl illegal instructions that will lock up the CPU
     /// Only reset can restore the CPU from this state
@@ -1872,8 +1898,6 @@ impl Microcode {
             Self::JmpAbsolute => cpu.jmp_absolute(),
             Self::JmpIndirect => cpu.jmp_indirect(),
             Self::Jsr => cpu.jsr(),
-            Self::Rts => cpu.rts(),
-            Self::Rti => cpu.rti(),
 
             Self::Clc => cpu.set_flag(Flag::Carry, false),
             Self::Sec => cpu.set_flag(Flag::Carry, true),
@@ -1882,8 +1906,6 @@ impl Microcode {
             Self::Cli => cpu.set_flag(Flag::InterruptDisabled, false),
             Self::Sei => cpu.set_flag(Flag::InterruptDisabled, true),
             Self::Clv => cpu.set_flag(Flag::Overflow, false),
-
-            Self::Brk => cpu.brk(),
 
             Self::Tax => cpu.tax(),
             Self::Txa => cpu.txa(),
@@ -1900,6 +1922,18 @@ impl Microcode {
 
             Self::BranchRelative(branch_test) => Self::branch_relative(cpu, branch_test),
             Self::Kill => cpu.halt(),
+
+            Self::IncPc => todo!(),
+            Self::LoadIrqAddressHigh => todo!(),
+            Self::LoadIrqAddressLow => todo!(),
+            Self::LoadNmiAddreeHigh => todo!(),
+            Self::LoadNmiAddressLow => todo!(),
+            Self::PushPcHigh => todo!(),
+            Self::PushPcLow => todo!(),
+            Self::PushStatus => todo!(),
+            Self::PopStatus => todo!(),
+            Self::PopPcHigh => todo!(),
+            Self::PopPcLow => todo!(),
         }
     }
 

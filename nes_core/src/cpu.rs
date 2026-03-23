@@ -11,6 +11,15 @@ pub enum Register {
     Y,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum CpuMode {
+    Normal,
+    /// Set when cpu detected nmi_requested, reset to Normal if nmi handle complete
+    Nmi,
+    /// Set when hit some illegal/undocument hlt instruction, reset to normal if call `reset()`
+    Halt,
+}
+
 pub struct Cpu<M: Mcu> {
     pub a: u8,
     pub x: u8,
@@ -26,7 +35,8 @@ pub struct Cpu<M: Mcu> {
 
     pub(crate) irq_pending: bool,
     pub(crate) change_irq_flag_pending: Option<bool>,
-    pub(crate) is_halt: bool,
+    nmi_requested: bool,
+    mode: CpuMode,
 
     microcode_queue: VecDeque<Microcode>,
     total_cycles: u64,
@@ -47,9 +57,10 @@ impl<M: Mcu> Cpu<M> {
             alu: 0,
             irq_pending: false,
             change_irq_flag_pending: None,
-            is_halt: false,
             microcode_queue: VecDeque::with_capacity(8),
             total_cycles: 0,
+            mode: CpuMode::Normal,
+            nmi_requested: false,
         }
     }
 
@@ -66,17 +77,14 @@ impl<M: Mcu> Cpu<M> {
         self.set_flag(Flag::InterruptDisabled, true);
         self.irq_pending = false;
         self.change_irq_flag_pending = None;
-        self.is_halt = false;
         self.microcode_queue.clear();
+        self.nmi_requested = false;
+        self.mode = CpuMode::Normal;
     }
 
-    pub fn nmi(&mut self) {
-        self.microcode_queue.clear();
-        self.tick_bus();
-        self.tick_bus();
-        self.push_pc();
-        self.push_status();
-        self.pc = self.read_word(0xFFFA);
+    /// Cpu will enter nmi before exec next instrnuction
+    pub fn request_nmi(&mut self) {
+        self.nmi_requested = true;
     }
 
     pub(crate) fn irq(&mut self) {
@@ -97,21 +105,47 @@ impl<M: Mcu> Cpu<M> {
         self.change_irq_flag_pending = Some(v);
     }
 
+    pub fn is_halted(&self) -> bool {
+        self.mode == CpuMode::Halt
+    }
+
     pub fn tick(&mut self) {
-        if self.is_halt {
+        if self.is_halted() {
             return;
         }
 
         let code = match self.pop_microcode() {
             Some(v) => v,
-            None => Microcode::FetchAndDecode,
+            None => {
+                if self.nmi_requested {
+                    // reset nmi_requested, because nmi signal is edge detected, ignored if cpu is already in nmi mode
+                    self.nmi_requested = false;
+                    if self.mode == CpuMode::Normal {
+                        self.mode = CpuMode::Nmi;
+                        // need extra two cycles for cpu to start nmi process
+                        self.push_microcodes(&[
+                            Microcode::Nop,
+                            Microcode::PushPcLow,
+                            Microcode::PushPcHigh,
+                            Microcode::PushStatus,
+                            Microcode::LoadNmiAddressLow,
+                            Microcode::LoadNmiAddreeHigh,
+                        ]);
+                        Microcode::Nop
+                    } else {
+                        Microcode::FetchAndDecode
+                    }
+                } else {
+                    Microcode::FetchAndDecode
+                }
+            }
         };
         code.exec(self);
         self.tick_bus();
     }
 
     pub fn execute_instruction<T: Plugin<M>>(&mut self, plugin: &mut T) -> (ExecuteResult, u8) {
-        if self.is_halt {
+        if self.is_halted() {
             return (ExecuteResult::Halt, 0);
         }
         self.handle_pending_irq();
@@ -235,11 +269,7 @@ impl<M: Mcu> Cpu<M> {
     }
 
     pub(crate) fn halt(&mut self) {
-        self.is_halt = true;
-    }
-
-    pub fn is_halted(&self) -> bool {
-        self.is_halt
+        self.mode = CpuMode::Halt;
     }
 
     fn tick_bus(&mut self) {
@@ -548,29 +578,6 @@ impl<M: Mcu> Cpu<M> {
         self.push_stack((ret >> 8) as u8);
         self.push_stack(ret as u8);
         self.pc = self.ab;
-    }
-
-    fn rts(&mut self) {
-        let lo = self.pop_stack() as u16;
-        let hi = self.pop_stack() as u16;
-        self.pc = ((hi << 8) | lo).wrapping_add(1);
-    }
-
-    fn rti(&mut self) {
-        let v = self.pop_stack();
-        self.status = v & 0b1100_1111;
-        self.pc = self.pop_stack() as u16 | ((self.pop_stack() as u16) << 8);
-    }
-
-    fn brk(&mut self) {
-        self.pc = self.pc.wrapping_add(1);
-        let pc = self.pc;
-        self.set_flag(Flag::Break, true);
-        self.push_stack((pc >> 8) as u8);
-        self.push_stack(pc as u8);
-        self.push_stack(self.status | Flag::Break as u8 | Flag::NotUsed as u8);
-        self.set_flag(Flag::InterruptDisabled, true);
-        self.pc = self.read_word(0xFFFE);
     }
 
     fn and(&mut self) {
