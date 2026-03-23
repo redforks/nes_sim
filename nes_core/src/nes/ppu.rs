@@ -192,11 +192,7 @@ impl Palette {
 
         // Clamp to valid range [0, 31]
         let addr = addr as usize;
-        if addr >= 32 {
-            31
-        } else {
-            addr
-        }
+        if addr >= 32 { 31 } else { addr }
     }
 
     fn _get_color_idx(&self, start: usize, palette_idx: u8, idx: u8) -> Pixel {
@@ -248,6 +244,11 @@ impl Mcu for Palette {
         info!("set palette ${:x}: {:x}", address, value);
         self.data[self.get_addr(address)] = value;
     }
+}
+
+pub struct PpuTickResult {
+    pub vblank_started: bool,
+    pub nmi_requested: bool,
 }
 
 pub struct Ppu {
@@ -343,7 +344,7 @@ impl Ppu {
     ///
     /// # Parameters
     /// - `pattern`: CHR ROM pattern data for tile/sprite lookup
-    pub fn tick(&mut self, pattern: &[u8]) -> bool {
+    pub fn tick(&mut self, pattern: &[u8]) -> PpuTickResult {
         let scanline = self.scanline;
         let dot = self.dot;
 
@@ -406,7 +407,10 @@ impl Ppu {
             }
         }
 
-        self.need_request_nmi(vblank_started)
+        PpuTickResult {
+            vblank_started,
+            nmi_requested: self.need_request_nmi(vblank_started),
+        }
     }
 
     pub fn set_mirroring(&mut self, mirroring: Mirroring) {

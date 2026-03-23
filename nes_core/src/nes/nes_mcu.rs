@@ -64,24 +64,17 @@ impl NesMcu {
     }
 
     pub fn take_vblank(&mut self) -> bool {
-        let val = self.vblank_started;
-        self.vblank_started = false;
-        val
+        std::mem::take(&mut self.vblank_started)
     }
 
-    /// Tick PPU by one dot. Returns true if NMI should be triggered.
-    /// Pattern data is passed through from the cartridge for rendering.
     /// Tick PPU by one dot. Returns true if NMI should be triggered.
     /// Pattern data is passed through from the cartridge for rendering.
     pub fn tick_ppu(&mut self) -> bool {
-        let nmi = self.ppu.tick(self.cartridge.pattern_ref());
-        if self.ppu.timing() == (241, 2) {
-            self.vblank_started = true;
-        }
-        nmi
+        let rv = self.ppu.tick(self.cartridge.pattern_ref());
+        self.vblank_started = rv.vblank_started;
+        rv.nmi_requested
     }
 
-    /// Tick APU frame counter. Returns true if frame IRQ should be triggered.
     /// Tick APU frame counter. Returns true if frame IRQ should be triggered.
     pub fn tick_apu(&mut self) -> bool {
         self.apu.tick()
