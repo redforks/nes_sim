@@ -2129,9 +2129,7 @@ impl Microcode {
     }
 
     fn indexed<M: Mcu>(cpu: &mut Cpu<M>, load_into_alu: bool) {
-        let addr_low = cpu.read_byte(cpu.ab);
-        let addr_high = cpu.read_byte(cpu.ab.wrapping_add(1));
-        cpu.ab = (addr_high as u16) << 8 | addr_low as u16;
+        cpu.ab = cpu.read_word_in_same_page(cpu.ab);
         if load_into_alu {
             cpu.alu = cpu.read_byte(cpu.ab);
         }
