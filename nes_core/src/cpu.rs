@@ -42,7 +42,7 @@ pub struct Cpu<M: Mcu> {
 
 impl<M: Mcu> Cpu<M> {
     pub fn new(mcu: M) -> Cpu<M> {
-        Cpu {
+        let mut r = Cpu {
             a: 0,
             x: 0,
             y: 0,
@@ -57,7 +57,9 @@ impl<M: Mcu> Cpu<M> {
             microcode_queue: VecDeque::with_capacity(8),
             mode: CpuMode::Normal,
             nmi_requested: false,
-        }
+        };
+        r.reset();
+        r
     }
 
     pub fn mcu(&self) -> &M {

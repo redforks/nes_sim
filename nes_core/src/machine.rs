@@ -14,12 +14,10 @@ impl<M: Mcu> Machine<EmptyPlugin<M>, M> {
 
 impl<P: Plugin<M>, M: Mcu> Machine<P, M> {
     pub fn with_plugin(p: P, mcu: M) -> Self {
-        let mut machine = Machine {
+        Machine {
             cpu: Cpu::new(mcu),
             p,
-        };
-        machine.cpu.reset();
-        machine
+        }
     }
 
     /// Execute one CPU instruction and return (result, cycles).
