@@ -77,7 +77,7 @@ impl<P: Plugin<NesMcu>> NesMachine<P> {
         ExecuteResult::Continue
     }
 
-    pub fn execute_instruction(&mut self) -> (ExecuteResult, u8) {
+    pub fn execute_instruction(&mut self) -> ExecuteResult {
         self.machine.execute_instruction()
     }
 

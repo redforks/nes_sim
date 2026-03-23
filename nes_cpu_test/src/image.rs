@@ -102,8 +102,8 @@ pub enum MachineWrapper {
 impl MachineWrapper {
     pub fn tick(&mut self) -> nes_core::ExecuteResult {
         match self {
-            MachineWrapper::Bin(m) => m.execute_instruction().0,
-            MachineWrapper::INes(m) => m.execute_instruction().0,
+            MachineWrapper::Bin(m) => m.execute_instruction(),
+            MachineWrapper::INes(m) => m.execute_instruction(),
         }
     }
 

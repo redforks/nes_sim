@@ -75,6 +75,7 @@ impl<M: Mcu> Cpu<M> {
         self.microcode_queue.clear();
         self.nmi_requested = false;
         self.mode = CpuMode::Normal;
+        self.sp = 0xFD;
     }
 
     /// Cpu will enter nmi before exec next instrnuction
@@ -146,9 +147,9 @@ impl<M: Mcu> Cpu<M> {
         self.tick_inner();
     }
 
-    pub fn execute_instruction<T: Plugin<M>>(&mut self, plugin: &mut T) -> (ExecuteResult, u8) {
+    pub fn execute_instruction<T: Plugin<M>>(&mut self, plugin: &mut T) -> ExecuteResult {
         if self.is_halted() {
-            return (ExecuteResult::Halt, 0);
+            return ExecuteResult::Halt;
         }
 
         if self.microcode_queue.is_empty() {
@@ -156,16 +157,14 @@ impl<M: Mcu> Cpu<M> {
         }
 
         plugin.start(self);
-        let mut cycles = 0u8;
         while !self.microcode_queue.is_empty() {
-            cycles = cycles.wrapping_add(1);
             if self.tick_inner() {
                 plugin.decoded(self);
             }
         }
         plugin.end(self);
 
-        (plugin.should_stop(), cycles)
+        plugin.should_stop()
     }
 
     fn push_pc(&mut self) {

@@ -27,7 +27,7 @@ impl<P: Plugin<M>, M: Mcu> Machine<P, M> {
         self.cpu.tick();
     }
 
-    pub fn execute_instruction(&mut self) -> (ExecuteResult, u8) {
+    pub fn execute_instruction(&mut self) -> ExecuteResult {
         self.cpu.execute_instruction(&mut self.p)
     }
 
