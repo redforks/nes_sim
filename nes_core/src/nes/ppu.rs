@@ -132,15 +132,6 @@ const VBLANK_SET_SCANLINE: u16 = 241;
 const VBLANK_CLEAR_SCANLINE: u16 = 261;
 const VBLANK_CLEAR_DOT: u16 = 1;
 
-/// Result of a single PPU tick.
-#[derive(Default)]
-pub struct PpuTickResult {
-    /// True if NMI should be triggered (VBlank started and NMI is enabled in PPUCTRL).
-    pub nmi: bool,
-    /// True when VBlank period begins (scanline 241, dot 1), regardless of NMI enable.
-    pub vblank_started: bool,
-}
-
 const fn rgb(v: [u8; 3]) -> Pixel {
     let [r, g, b] = v;
     Rgba::<u8>([r, g, b, 0xff])
@@ -201,11 +192,7 @@ impl Palette {
 
         // Clamp to valid range [0, 31]
         let addr = addr as usize;
-        if addr >= 32 {
-            31
-        } else {
-            addr
-        }
+        if addr >= 32 { 31 } else { addr }
     }
 
     fn _get_color_idx(&self, start: usize, palette_idx: u8, idx: u8) -> Pixel {
@@ -267,6 +254,13 @@ pub struct Ppu {
     palette: Palette,             // palette memory
     cur_pattern_table_idx: u8,    // index of current active pattern table, 0 or 1
 
+    // saved nmi_enabled ctrl_flags value, set to Some() in write method,
+    // tick() method handle it and set it to false.
+    // we need to track nmi_enabled and v_blank control bits changes to request nmi,
+    // because nmi is an edge-triggered interrupt, it only triggers when v_blank changes from false to true and nmi_enabled is true,
+    // or v_blank is true and nmi_enabled changes from false to true.
+    old_nmi_enabled_value: Option<bool>,
+
     mask: PpuMask,
 
     oam_addr: u8,
@@ -307,6 +301,7 @@ impl Default for Ppu {
             dot: 0,
             odd_frame: false,
             cancel_nmi_pending: false,
+            old_nmi_enabled_value: None,
         }
     }
 }
@@ -327,16 +322,22 @@ impl Ppu {
         self.oam.copy_from_slice(vals);
     }
 
+    fn need_request_nmi(&mut self, vblank_started: bool) -> bool {
+        let old_nmi_enabled = self.old_nmi_enabled_value.take();
+        if !vblank_started && !(old_nmi_enabled.is_some_and(|v| v != self.ctrl_flags.nmi_enable()))
+        {
+            // always returns false if status not changed
+            return false;
+        }
+        self.ctrl_flags.nmi_enable() && self.status.v_blank()
+    }
+
     /// Advance PPU by one dot, rendering a pixel if on a visible scanline.
-    /// Returns a [`PpuTickResult`] indicating whether NMI should fire and/or VBlank has started.
-    ///
-    /// - `result.nmi` is `true` only when VBlank starts **and** NMI is enabled in PPUCTRL ($2000).
-    /// - `result.vblank_started` is `true` whenever VBlank begins (scanline 241, dot 1),
-    ///   regardless of whether NMI is enabled.
+    /// Return true if need request nmi.
     ///
     /// # Parameters
     /// - `pattern`: CHR ROM pattern data for tile/sprite lookup
-    pub fn tick(&mut self, pattern: &[u8]) -> PpuTickResult {
+    pub fn tick(&mut self, pattern: &[u8]) -> bool {
         let scanline = self.scanline;
         let dot = self.dot;
 
@@ -360,7 +361,6 @@ impl Ppu {
 
         // VBlank set: normally scanline 241, dot 1.
         let mut vblank_started = false;
-        let mut trigger_nmi = false;
         if self.scanline == VBLANK_SET_SCANLINE && self.dot == 1 {
             let status = self.status;
             if !status.v_blank() {
@@ -369,7 +369,6 @@ impl Ppu {
                     self.scanline, self.dot
                 );
                 self.status = status.with_v_blank(true);
-                trigger_nmi = self.ctrl_flags.nmi_enable();
                 vblank_started = true;
             }
         }
@@ -401,10 +400,7 @@ impl Ppu {
             }
         }
 
-        PpuTickResult {
-            nmi: trigger_nmi,
-            vblank_started,
-        }
+        self.need_request_nmi(vblank_started)
     }
 
     pub fn set_mirroring(&mut self, mirroring: Mirroring) {
@@ -460,6 +456,7 @@ impl Ppu {
         match reg {
             // PPUCTRL
             0x2000 => {
+                self.old_nmi_enabled_value = Some(self.ctrl_flags.nmi_enable());
                 self.set_control_flags(value.into());
                 // Update name table address from control bits
                 self.cur_name_table_addr =

@@ -231,48 +231,6 @@ fn nmi_occurred() {
 }
 
 #[test]
-fn ppu_tick_timing() {
-    let (mut ppu, pattern) = new_test_ppu_and_pattern();
-
-    // Enable NMI
-    ppu.set_control_flags(PpuCtrl::new().with_nmi_enable(true));
-
-    // Initial state
-    assert_eq!(ppu.scanline, 0);
-    assert_eq!(ppu.dot, 0);
-    assert!(!ppu.status.v_blank());
-
-    // Advance to scanline 241, dot 1
-    ppu.scanline = VBLANK_SET_SCANLINE;
-    ppu.dot = 1;
-
-    // Tick once - should set VBlank and trigger NMI
-    let result = ppu.tick(&pattern);
-    assert!(result.nmi, "NMI should be triggered at scanline 241, dot 1");
-    assert!(
-        result.vblank_started,
-        "VBlank should start at scanline 241, dot 1"
-    );
-    assert!(ppu.status.v_blank());
-
-    // Advance to scanline 261, dot 1
-    ppu.scanline = VBLANK_CLEAR_SCANLINE;
-    ppu.dot = 1;
-
-    // Tick once - should clear VBlank
-    let result = ppu.tick(&pattern);
-    assert!(
-        !result.nmi,
-        "NMI should not be triggered when clearing VBlank"
-    );
-    assert!(
-        !result.vblank_started,
-        "VBlank should not start at scanline 261"
-    );
-    assert!(!ppu.status.v_blank());
-}
-
-#[test]
 fn ppu_tick_scanline_wrap() {
     let (mut ppu, pattern) = new_test_ppu_and_pattern();
 

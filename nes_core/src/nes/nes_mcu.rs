@@ -23,9 +23,6 @@ pub struct NesMcu {
     length_counters: [u8; 4], // pulse1, pulse2, triangle, noise
     length_counter_halt: [bool; 4],
     channel_enabled: [bool; 4],
-    pub nmi_pending: bool,
-    pub nmi_enable_pending: bool,
-    pub nmi_cancel_pending: bool,
 }
 
 pub fn build(file: &INesFile) -> NesMcu {
@@ -65,9 +62,6 @@ pub fn build_with_renderer(file: &INesFile, renderer: Option<Box<dyn Render>>) -
         length_counters: [0; 4],
         length_counter_halt: [false; 4],
         channel_enabled: [false; 4],
-        nmi_pending: false,
-        nmi_enable_pending: false,
-        nmi_cancel_pending: false,
     }
 }
 
@@ -99,15 +93,7 @@ impl NesMcu {
     /// Tick PPU by one dot. Returns true if NMI should be triggered.
     /// Pattern data is passed through from the cartridge for rendering.
     pub fn tick_ppu(&mut self) -> bool {
-        let result = self.ppu.tick(self.cartridge.pattern_ref());
-        if result.vblank_started {
-            self.vblank_started = true;
-            // debug!("VBLANK STARTED");
-        }
-        if self.ppu.take_cancel_nmi_pending() {
-            self.nmi_cancel_pending = true;
-        }
-        result.nmi
+        self.ppu.tick(self.cartridge.pattern_ref())
     }
 
     /// Tick APU frame counter. Returns true if frame IRQ should be triggered.
@@ -214,12 +200,7 @@ impl Mcu for NesMcu {
         match address {
             0x0000..=0x1fff => self.lower_ram.write(address, value),
             0x2000..=0x3fff => {
-                let prev_nmi = self.ppu.nmi_signal();
                 self.ppu.write(address, value);
-                let new_nmi = self.ppu.nmi_signal();
-                if !prev_nmi && new_nmi {
-                    self.nmi_enable_pending = true;
-                }
             }
             0x4014 => self.ppu_dma(value),
             0x4015 => {
