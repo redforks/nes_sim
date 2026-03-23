@@ -90,34 +90,6 @@ impl<P: Plugin<NesMcu>> NesMachine<P> {
                 self.machine.cpu_mut().request_nmi();
             }
         }
-
-        // if self.machine.mcu_mut().nmi_cancel_pending {
-        //     self.machine.mcu_mut().nmi_cancel_pending = false;
-        //     self.machine.mcu_mut().nmi_pending = false;
-        //     self.nmi_enable_delay = 0;
-        // }
-
-        // if self.nmi_enable_delay > 0 {
-        //     self.nmi_enable_delay -= 1;
-        //     if self.nmi_enable_delay == 0 {
-        //         self.machine.cpu_mut().nmi();
-        //     }
-        // }
-
-        // if self.machine.mcu_mut().nmi_pending {
-        //     self.machine.mcu_mut().nmi_pending = false;
-        //     self.machine.cpu_mut().nmi();
-        // }
-
-        // if self.machine.mcu_mut().nmi_enable_pending {
-        //     self.machine.mcu_mut().nmi_enable_pending = false;
-        //     if self.nmi_enable_delay == 0 {
-        //         self.nmi_enable_delay = 1;
-        //     }
-        // }
-        // if self.machine.mcu().request_irq() {
-        //     self.machine.cpu_mut().set_irq(true);
-        // }
     }
 
     pub fn reset(&mut self) {

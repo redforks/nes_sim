@@ -6,10 +6,10 @@ use std::cell::RefCell;
 #[derive(Copy, Clone)]
 #[bitfield]
 pub struct Sweep {
-    pub enabled: bool,
-    pub period: B3,
-    pub negate: bool,
     pub shift: B3,
+    pub negate: bool,
+    pub period: B3,
+    pub enabled: bool,
 }
 
 to_from_u8!(Sweep);
@@ -22,10 +22,10 @@ impl Default for Sweep {
 
 #[bitfield]
 pub struct DutyCycle {
-    pub duty: B2,
-    pub length_counter_halt: bool,
-    pub constant_volume: bool,
     pub volume: B4,
+    pub constant_volume: bool,
+    pub length_counter_halt: bool,
+    pub duty: B2,
 }
 
 to_from_u8!(DutyCycle);
@@ -51,8 +51,15 @@ impl LengthCounterLoad {
         self.high_byte = v;
     }
 
+    pub fn from_registers(low_byte: u8, high_byte: u8) -> Self {
+        Self {
+            low_byte,
+            high_byte,
+        }
+    }
+
     pub fn length_count(&self) -> u8 {
-        self.high_byte & 0xF8 >> 3
+        (self.high_byte & 0xF8) >> 3
     }
 
     pub fn timer(&self) -> u16 {
@@ -63,8 +70,8 @@ impl LengthCounterLoad {
 #[derive(Copy, Clone)]
 #[bitfield]
 pub struct LinearCounterControl {
-    pub reload_flag: bool,
     pub counter: B7,
+    pub reload_flag: bool,
 }
 
 to_from_u8!(LinearCounterControl);
@@ -175,12 +182,12 @@ impl<D: TriangleDriver> Mcu for TriangleChannel<D> {
 #[derive(Copy, Clone)]
 #[bitfield]
 pub struct NoiseEnvelop {
+    pub volume: B4,
+    pub constant_volume: bool,
+    pub loop_flag: bool,
     #[allow(non_snake_case)]
     #[skip]
     __: B2,
-    pub loop_flag: bool,
-    pub constant_volume: bool,
-    pub volume: B4,
 }
 
 to_from_u8!(NoiseEnvelop);
@@ -194,13 +201,13 @@ impl Default for NoiseEnvelop {
 #[derive(Copy, Clone)]
 #[bitfield]
 pub struct NoisePeriod {
-    pub enabled: bool,
+    pub period: B4,
 
     #[allow(non_snake_case)]
     #[skip]
     __: B3,
 
-    pub period: B4,
+    pub enabled: bool,
 }
 
 to_from_u8!(NoisePeriod);
@@ -214,10 +221,11 @@ impl Default for NoisePeriod {
 #[derive(Copy, Clone)]
 #[bitfield]
 pub struct NoiseLength {
-    pub length: B5,
     #[allow(non_snake_case)]
     #[skip]
     __: B3,
+
+    pub length: B5,
 }
 
 to_from_u8!(NoiseLength);
@@ -260,12 +268,12 @@ impl<D: NoiseDriver> DefinedRegion for NoiseChannel<D> {
 #[derive(Copy, Clone)]
 #[bitfield]
 pub struct DmcIRQLoopFreq {
-    pub irq_enabled: bool,
-    pub loop_flag: bool,
+    pub freq: B4,
     #[allow(non_snake_case)]
     #[skip]
     __: B2,
-    pub freq: B4,
+    pub loop_flag: bool,
+    pub irq_enabled: bool,
 }
 to_from_u8!(DmcIRQLoopFreq);
 
@@ -309,14 +317,14 @@ impl<D: DmcDriver> DefinedRegion for DmcChannel<D> {
 #[derive(Copy, Clone)]
 #[bitfield]
 pub struct ControlFlags {
+    pub pulse1_enabled: bool,
+    pub pulse2_enabled: bool,
+    pub triangle_enabled: bool,
+    pub noise_enabled: bool,
+    pub dmc_enabled: bool,
     #[allow(non_snake_case)]
     #[skip]
     __: B3,
-    pub dmc_enabled: bool,
-    pub noise_enabled: bool,
-    pub triangle_enabled: bool,
-    pub pulse1_enabled: bool,
-    pub pulse2_enabled: bool,
 }
 to_from_u8!(ControlFlags);
 
@@ -329,16 +337,16 @@ impl Default for ControlFlags {
 #[derive(Copy, Clone)]
 #[bitfield]
 pub struct APUStatus {
-    pub dmc_interrupt: bool,
-    pub frame_interrupt: bool,
+    pub pulse1_enabled: bool,
+    pub pulse2_enabled: bool,
+    pub triangle_enabled: bool,
+    pub noise_enabled: bool,
+    pub dmc_enabled: bool,
     #[allow(non_snake_case)]
     #[skip]
     __: B1,
-    pub dmc_enabled: bool,
-    pub noise_enabled: bool,
-    pub triangle_enabled: bool,
-    pub pulse1_enabled: bool,
-    pub pulse2_enabled: bool,
+    pub frame_interrupt: bool,
+    pub dmc_interrupt: bool,
 }
 to_from_u8!(APUStatus);
 
@@ -351,11 +359,11 @@ impl Default for APUStatus {
 #[derive(Copy, Clone)]
 #[bitfield]
 pub struct FrameCounter {
-    pub mode: bool,
-    pub interrupt_flag: bool,
     #[allow(non_snake_case)]
     #[skip]
     __: B6,
+    pub interrupt_flag: bool,
+    pub mode: bool,
 }
 to_from_u8!(FrameCounter);
 
@@ -365,19 +373,83 @@ impl Default for FrameCounter {
     }
 }
 
+#[derive(Copy, Clone, Debug, Eq, PartialEq)]
+pub enum LengthCounterChannel {
+    Pulse1,
+    Pulse2,
+    Triangle,
+    Noise,
+}
+
+impl LengthCounterChannel {
+    fn index(self) -> usize {
+        match self {
+            LengthCounterChannel::Pulse1 => 0,
+            LengthCounterChannel::Pulse2 => 1,
+            LengthCounterChannel::Triangle => 2,
+            LengthCounterChannel::Noise => 3,
+        }
+    }
+}
+
 pub trait APUControllerDriver {
     fn set_control_flags(&mut self, flags: ControlFlags);
     fn set_frame_counter(&mut self, counter: FrameCounter);
-    fn read_status(&self) -> APUStatus;
+    fn read_status(&mut self) -> APUStatus;
+
+    fn tick(&mut self) -> bool {
+        false
+    }
+
+    fn request_irq(&self) -> bool {
+        false
+    }
+
+    fn set_length_counter_halt(&mut self, _channel: LengthCounterChannel, _halt: bool) {}
+
+    fn set_length_counter_load(
+        &mut self,
+        _channel: LengthCounterChannel,
+        _length_counter: LengthCounterLoad,
+    ) {
+    }
 }
 
-struct APUController<D: APUControllerDriver>(RefCell<D>);
+pub struct ApuController<D: APUControllerDriver>(RefCell<D>);
 
-impl<D: APUControllerDriver> Mcu for APUController<D> {
+impl<D: APUControllerDriver> ApuController<D> {
+    pub fn new(driver: D) -> Self {
+        Self(RefCell::new(driver))
+    }
+
+    pub fn tick(&self) -> bool {
+        self.0.borrow_mut().tick()
+    }
+
+    pub fn request_irq(&self) -> bool {
+        self.0.borrow().request_irq()
+    }
+
+    pub fn set_length_counter_halt(&self, channel: LengthCounterChannel, halt: bool) {
+        self.0.borrow_mut().set_length_counter_halt(channel, halt);
+    }
+
+    pub fn set_length_counter_load(
+        &self,
+        channel: LengthCounterChannel,
+        length_counter: LengthCounterLoad,
+    ) {
+        self.0
+            .borrow_mut()
+            .set_length_counter_load(channel, length_counter);
+    }
+}
+
+impl<D: APUControllerDriver> Mcu for ApuController<D> {
     fn read(&mut self, address: u16) -> u8 {
         match address {
-            0x4015 => self.0.borrow().read_status().into(),
-            _ => panic!("Can not read from APUController at address {}", address),
+            0x4015 => self.0.borrow_mut().read_status().into(),
+            _ => panic!("Can not read from ApuController at address {}", address),
         }
     }
 
@@ -385,14 +457,156 @@ impl<D: APUControllerDriver> Mcu for APUController<D> {
         match address {
             0x4015 => self.0.borrow_mut().set_control_flags(value.into()),
             0x4017 => self.0.borrow_mut().set_frame_counter(value.into()),
-            _ => panic!("Can not write to APUController at address {}", address),
+            _ => panic!("Can not write to ApuController at address {}", address),
         }
     }
 }
 
-impl<D: APUControllerDriver> DefinedRegion for APUController<D> {
+impl<D: APUControllerDriver> DefinedRegion for ApuController<D> {
     fn region(&self) -> (u16, u16) {
         (0x4015, 0x4017)
+    }
+}
+
+pub struct FakeApuControllerDriver {
+    apu_cycle: u64,
+    apu_even_cycle: bool,
+    frame_counter_mode: bool,
+    frame_interrupt_inhibit: bool,
+    frame_interrupt: bool,
+    dmc_interrupt: bool,
+    length_counters: [u8; 4],
+    length_counter_halt: [bool; 4],
+    channel_enabled: [bool; 5],
+}
+
+impl Default for FakeApuControllerDriver {
+    fn default() -> Self {
+        Self {
+            apu_cycle: 0,
+            apu_even_cycle: false,
+            frame_counter_mode: false,
+            frame_interrupt_inhibit: false,
+            frame_interrupt: false,
+            dmc_interrupt: false,
+            length_counters: [0; 4],
+            length_counter_halt: [false; 4],
+            channel_enabled: [false; 5],
+        }
+    }
+}
+
+impl FakeApuControllerDriver {
+    const LENGTH_TABLE: [u8; 32] = [
+        10, 254, 20, 2, 40, 4, 80, 6, 160, 8, 60, 10, 14, 12, 26, 14, 12, 16, 24, 18, 48, 20, 96,
+        22, 192, 24, 72, 26, 16, 28, 32, 30,
+    ];
+
+    fn clock_length_counters(&mut self) {
+        for i in 0..self.length_counters.len() {
+            if self.channel_enabled[i]
+                && !self.length_counter_halt[i]
+                && self.length_counters[i] > 0
+            {
+                self.length_counters[i] -= 1;
+            }
+        }
+    }
+
+    fn set_channel_enabled(&mut self, channel: usize, enabled: bool) {
+        self.channel_enabled[channel] = enabled;
+        if channel < self.length_counters.len() && !enabled {
+            self.length_counters[channel] = 0;
+        }
+    }
+
+    fn status_channel_enabled(&self, channel: usize) -> bool {
+        self.channel_enabled[channel] && self.length_counters[channel] > 0
+    }
+}
+
+impl APUControllerDriver for FakeApuControllerDriver {
+    fn set_control_flags(&mut self, flags: ControlFlags) {
+        self.set_channel_enabled(0, flags.pulse1_enabled());
+        self.set_channel_enabled(1, flags.pulse2_enabled());
+        self.set_channel_enabled(2, flags.triangle_enabled());
+        self.set_channel_enabled(3, flags.noise_enabled());
+        self.channel_enabled[4] = flags.dmc_enabled();
+        if !self.channel_enabled[4] {
+            self.dmc_interrupt = false;
+        }
+    }
+
+    fn set_frame_counter(&mut self, counter: FrameCounter) {
+        self.frame_counter_mode = counter.mode();
+        self.frame_interrupt_inhibit = counter.interrupt_flag();
+        if self.frame_interrupt_inhibit {
+            self.frame_interrupt = false;
+        }
+        self.apu_cycle = 0;
+        self.apu_even_cycle = false;
+
+        if self.frame_counter_mode {
+            self.clock_length_counters();
+        }
+    }
+
+    fn read_status(&mut self) -> APUStatus {
+        let mut status = APUStatus::new();
+        status.set_pulse1_enabled(self.status_channel_enabled(0));
+        status.set_pulse2_enabled(self.status_channel_enabled(1));
+        status.set_triangle_enabled(self.status_channel_enabled(2));
+        status.set_noise_enabled(self.status_channel_enabled(3));
+        status.set_dmc_enabled(self.channel_enabled[4]);
+        status.set_frame_interrupt(self.frame_interrupt);
+        status.set_dmc_interrupt(self.dmc_interrupt);
+        self.frame_interrupt = false;
+        status
+    }
+
+    fn tick(&mut self) -> bool {
+        self.apu_even_cycle = !self.apu_even_cycle;
+        if !self.apu_even_cycle {
+            return false;
+        }
+
+        self.apu_cycle = self.apu_cycle.wrapping_add(1);
+
+        if self.frame_counter_mode {
+            let cycle_mod = self.apu_cycle % 18641;
+            if cycle_mod == 7456 || cycle_mod == 18640 {
+                self.clock_length_counters();
+            }
+            return false;
+        }
+
+        let cycle_mod = self.apu_cycle % 14915;
+        if cycle_mod == 7456 || cycle_mod == 14914 {
+            self.clock_length_counters();
+        }
+        if cycle_mod == 14914 && !self.frame_interrupt_inhibit {
+            self.frame_interrupt = true;
+            return true;
+        }
+
+        false
+    }
+
+    fn request_irq(&self) -> bool {
+        self.frame_interrupt
+    }
+
+    fn set_length_counter_halt(&mut self, channel: LengthCounterChannel, halt: bool) {
+        self.length_counter_halt[channel.index()] = halt;
+    }
+
+    fn set_length_counter_load(
+        &mut self,
+        channel: LengthCounterChannel,
+        length_counter: LengthCounterLoad,
+    ) {
+        self.length_counters[channel.index()] =
+            Self::LENGTH_TABLE[length_counter.length_count() as usize];
     }
 }
 
@@ -417,7 +631,7 @@ where
         Region::with_defined(TriangleChannel::new(td)),
         Region::with_defined(NoiseChannel(RefCell::new(nd))),
         Region::with_defined(DmcChannel(RefCell::new(dd))),
-        Region::with_defined(APUController(RefCell::new(cd))),
+        Region::with_defined(ApuController::new(cd)),
     ]
 }
 
