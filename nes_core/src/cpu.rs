@@ -72,7 +72,9 @@ impl<M: Mcu> Cpu<M> {
 
     pub fn reset(&mut self) {
         self.pc = self.read_word(0xFFFC);
+        self.status = 0;
         self.set_flag(Flag::InterruptDisabled, true);
+        self.set_flag(Flag::NotUsed, true);
         self.irq_pending = false;
         self.microcode_queue.clear();
         self.nmi_requested = false;
