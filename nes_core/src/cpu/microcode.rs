@@ -497,13 +497,7 @@ const fn build_opcode_table() -> [ArrayVec<[Microcode; 7]>; 256] {
         }
     );
     r[PLP as usize] = microcode_arr!(Nop, Nop, Plp);
-    r[JMP_ABSOLUTE as usize] = microcode_arr!(
-        AbsoluteL,
-        AbsoluteH {
-            load_into_alu: false
-        },
-        JmpAbsolute
-    );
+    r[JMP_ABSOLUTE as usize] = microcode_arr!(Absolute, JmpAbsolute);
     r[JMP_INDIRECT as usize] = microcode_arr!(
         AbsoluteL,
         AbsoluteH {
@@ -1293,6 +1287,9 @@ pub enum Microcode {
     AbsoluteH {
         load_into_alu: bool,
     },
+    /// Load both low and high bytes into cpu ab register, although it actually take two cycles, use it
+    /// with instructions that happened when address high byte load, such as JMP_ABSOLUTE
+    Absolute,
     /// Take a byte from instruction data stream, set cpu abh field, add ab with
     /// x register value, set cpu ab field, retain_cycle if the 8bit plus
     /// operation overflows
@@ -1831,6 +1828,10 @@ impl Microcode {
             } => Self::zero_page_indexed_y(cpu, load_into_alu, save_alu),
             Self::AbsoluteL => Self::absolute_l(cpu),
             Self::AbsoluteH { load_into_alu } => Self::absolute_h(cpu, load_into_alu),
+            Self::Absolute => {
+                Self::absolute_l(cpu);
+                Self::absolute_h(cpu, false);
+            }
             Self::AbsoluteIndexedX {
                 oops,
                 load_into_alu,
