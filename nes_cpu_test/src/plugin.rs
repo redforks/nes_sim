@@ -4,15 +4,15 @@ use nes_core::{Cpu, ExecuteResult, Plugin};
 mod console;
 mod detect_dead_loop;
 mod img_exit;
+mod max_instructions;
 mod monitor_test_status;
 mod report;
-mod max_instructions;
 pub use console::*;
 pub use detect_dead_loop::*;
 pub use img_exit::*;
+pub use max_instructions::*;
 pub use monitor_test_status::*;
 pub use report::*;
-pub use max_instructions::*;
 
 pub struct CompositePlugin<M: Mcu>(Vec<Box<dyn Plugin<M>>>);
 
@@ -26,6 +26,12 @@ impl<M: Mcu> Plugin<M> for CompositePlugin<M> {
     fn start(&mut self, cpu: &mut Cpu<M>) {
         for p in self.0.iter_mut() {
             p.start(cpu);
+        }
+    }
+
+    fn decoded(&mut self, cpu: &Cpu<M>) {
+        for p in self.0.iter_mut() {
+            p.decoded(cpu);
         }
     }
 

@@ -1,5 +1,5 @@
 use nes_core::mcu::Mcu;
-use nes_core::{Cpu, ExecuteResult, Flag, Plugin};
+use nes_core::{Cpu, ExecuteResult, Plugin};
 
 // Test ROM completion signature at $6001-$6003
 const TEST_SIGNATURE: [u8; 3] = [0xDE, 0xB0, 0x61];
@@ -11,6 +11,14 @@ pub struct ReportPlugin {
     count: u32,
     last_result_check: u32,
     pending_result: Option<ExecuteResult>,
+
+    cycles: usize,
+    a: u8,
+    x: u8,
+    y: u8,
+    pc: u16,
+    sp: u8,
+    p: u8,
 }
 
 impl ReportPlugin {
@@ -20,33 +28,46 @@ impl ReportPlugin {
             count: 0,
             last_result_check: 0,
             pending_result: None,
+            cycles: 0,
+            a: 0,
+            x: 0,
+            y: 0,
+            pc: 0,
+            sp: 0,
+            p: 0,
         }
     }
 }
 
 impl<M: Mcu> Plugin<M> for ReportPlugin {
     fn start(&mut self, cpu: &mut Cpu<M>) {
-        self.count += 1;
+        self.cycles += 1; // decode opcode takes one cycle
+        self.a = cpu.a;
+        self.x = cpu.x;
+        self.y = cpu.y;
+        self.pc = cpu.pc;
+        self.sp = cpu.sp;
+        self.p = cpu.status;
+    }
 
-        if self.verbose {
-            // Read the opcode and next few bytes for context
-            let op = cpu.peek_byte(cpu.pc);
-            let b1 = cpu.peek_byte(cpu.pc.wrapping_add(1));
-            let b2 = cpu.peek_byte(cpu.pc.wrapping_add(2));
-            println!(
-                "[{}] pc: ${:04x}  [{:02x} {:02x} {:02x}]",
-                self.count, cpu.pc, op, b1, b2
-            );
-        }
+    fn decoded(&mut self, cpu: &Cpu<M>) {
+        self.cycles += cpu.microcodes_len()
     }
 
     fn end(&mut self, cpu: &mut Cpu<M>, _cycles: u8) {
         if self.verbose {
-            let flags = format_flags(cpu);
-            let top = cpu.peek_stack();
             println!(
-                "a: ${:02x}, x: ${:02x}, y: ${:02x}, sp: ${:02x}, p: ${:02x} {} top: ${:02x}\n",
-                cpu.a, cpu.x, cpu.y, cpu.sp, cpu.status, flags, top
+                "{:04X}  {:02X} {:02X} {:02X}  A:{:02X} X:{:02X} Y:{:02X} P:{:02X} SP:{:02X} CYC:{}",
+                self.pc,
+                cpu.peek_byte(self.pc),
+                cpu.peek_byte(self.pc + 1),
+                cpu.peek_byte(self.pc + 2),
+                self.a,
+                self.x,
+                self.y,
+                self.p,
+                self.sp,
+                self.cycles
             );
         }
 
@@ -142,22 +163,4 @@ impl<M: Mcu> Plugin<M> for ReportPlugin {
     fn should_stop(&self) -> ExecuteResult {
         self.pending_result.unwrap_or(ExecuteResult::Continue)
     }
-}
-
-fn format_flags<M: Mcu>(cpu: &Cpu<M>) -> String {
-    let mut r = String::new();
-
-    r.push(if cpu.flag(Flag::Negative) { 'N' } else { 'n' });
-    r.push(if cpu.flag(Flag::Overflow) { 'V' } else { 'v' });
-    r.push(if cpu.flag(Flag::Break) { 'B' } else { 'b' });
-    r.push(if cpu.flag(Flag::Decimal) { 'D' } else { 'd' });
-    r.push(if cpu.flag(Flag::InterruptDisabled) {
-        'I'
-    } else {
-        'i'
-    });
-    r.push(if cpu.flag(Flag::Zero) { 'Z' } else { 'z' });
-    r.push(if cpu.flag(Flag::Carry) { 'C' } else { 'c' });
-
-    r
 }

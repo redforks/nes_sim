@@ -92,11 +92,12 @@ impl<M: Mcu> Cpu<M> {
         self.mode == CpuMode::Halt
     }
 
-    pub fn tick(&mut self) {
+    /// Return true if just execute FetchAndDecode microcode, used for plugin to know when instruction just decoded
+    fn tick_inner(&mut self) -> bool {
         self.total_cycles = self.total_cycles.wrapping_add(1);
 
         if self.is_halted() {
-            return;
+            return false;
         }
 
         let code = match self.pop_microcode() {
@@ -142,6 +143,11 @@ impl<M: Mcu> Cpu<M> {
             }
         };
         code.exec(self);
+        code == Microcode::FetchAndDecode
+    }
+
+    pub fn tick(&mut self) {
+        self.tick_inner();
     }
 
     pub fn execute_instruction<T: Plugin<M>>(&mut self, plugin: &mut T) -> (ExecuteResult, u8) {
@@ -156,7 +162,9 @@ impl<M: Mcu> Cpu<M> {
         let before = self.total_cycles;
         plugin.start(self);
         while !self.microcode_queue.is_empty() {
-            self.tick();
+            if self.tick_inner() {
+                plugin.decoded(self);
+            }
         }
         let cycles = (self.total_cycles - before) as u8;
         plugin.end(self, cycles);
@@ -593,6 +601,11 @@ impl<M: Mcu> Cpu<M> {
         }
     }
 
+    /// Return how many microcodes are in queue, used for plugin to know how many cycles left for current instruction
+    pub fn microcodes_len(&self) -> usize {
+        self.microcode_queue.len()
+    }
+
     fn pop_microcode(&mut self) -> Option<Microcode> {
         self.microcode_queue.pop_front()
     }
@@ -614,10 +627,16 @@ pub enum ExecuteResult {
 }
 
 pub trait Plugin<M: Mcu> {
+    /// Before start execute new instruction
     fn start(&mut self, cpu: &mut Cpu<M>);
 
+    /// After fetch and decoded microcodes, before execute
+    fn decoded(&mut self, _cpu: &Cpu<M>) {}
+
+    /// After execute instruction
     fn end(&mut self, cpu: &mut Cpu<M>, cycles: u8);
 
+    /// After execute an instruction, tell cpu should stop execution or not
     fn should_stop(&self) -> ExecuteResult {
         ExecuteResult::Continue
     }
@@ -626,6 +645,10 @@ pub trait Plugin<M: Mcu> {
 impl<M: Mcu> Plugin<M> for Box<dyn Plugin<M>> {
     fn start(&mut self, cpu: &mut Cpu<M>) {
         self.as_mut().start(cpu);
+    }
+
+    fn decoded(&mut self, cpu: &Cpu<M>) {
+        self.as_mut().decoded(cpu);
     }
 
     fn end(&mut self, cpu: &mut Cpu<M>, cycles: u8) {
