@@ -117,9 +117,9 @@ macro_rules! microcode_arr {
 }
 
 const fn build_opcode_table() -> [ArrayVec<[Microcode; 7]>; 256] {
+    use opcode::*;
     use Microcode::*;
     use Register::*;
-    use opcode::*;
 
     let mut r = include!("init_microtable.inc.rs");
     r[AND_IMMEDIATE as usize] = microcode_arr!(AndImmediate);
@@ -539,9 +539,9 @@ const fn build_opcode_table() -> [ArrayVec<[Microcode; 7]>; 256] {
     r[NOP_IMMEDIATE3 as usize] = microcode_arr!(SkipImmediate, Nop);
     r[NOP_IMMEDIATE4 as usize] = microcode_arr!(SkipImmediate, Nop);
     r[NOP_IMMEDIATE5 as usize] = microcode_arr!(SkipImmediate, Nop);
-    r[NOP_ZERO_PAGE1 as usize] = microcode_arr!(Nop);
-    r[NOP_ZERO_PAGE2 as usize] = microcode_arr!(Nop);
-    r[NOP_ZERO_PAGE3 as usize] = microcode_arr!(Nop);
+    r[NOP_ZERO_PAGE1 as usize] = microcode_arr!(SkipImmediate, Nop);
+    r[NOP_ZERO_PAGE2 as usize] = microcode_arr!(SkipImmediate, Nop);
+    r[NOP_ZERO_PAGE3 as usize] = microcode_arr!(SkipImmediate, Nop);
     r[NOP_ZERO_PAGE_X1 as usize] = microcode_arr!(zero_page_addr(), zero_page_x_addr(), Nop);
     r[NOP_ZERO_PAGE_X2 as usize] = microcode_arr!(zero_page_addr(), zero_page_x_addr(), Nop);
     r[NOP_ZERO_PAGE_X3 as usize] = microcode_arr!(zero_page_addr(), zero_page_x_addr(), Nop);
