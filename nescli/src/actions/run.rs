@@ -185,13 +185,17 @@ impl RunAction {
             // Check if execution should stop
             match result {
                 nes_core::ExecuteResult::Continue => {}
+                nes_core::ExecuteResult::ShouldReset => {
+                    eprintln!("CPU reset requested");
+                    machine.reset();
+                }
                 nes_core::ExecuteResult::Stop(code) => {
                     eprintln!("Execution stopped with code {}", code);
                     break 'running;
                 }
-                nes_core::ExecuteResult::ShouldReset => {
-                    eprintln!("CPU reset requested");
-                    machine.reset();
+                nes_core::ExecuteResult::Halt => {
+                    eprintln!("Cpu halt, possible because of an invalid instruction");
+                    break 'running;
                 }
             }
 

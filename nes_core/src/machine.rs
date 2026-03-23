@@ -23,8 +23,12 @@ impl<P: Plugin<M>, M: Mcu> Machine<P, M> {
     }
 
     /// Execute one CPU instruction and return (result, cycles).
-    pub fn tick(&mut self) -> (ExecuteResult, u8) {
-        self.cpu.tick(&mut self.p)
+    pub fn tick(&mut self) {
+        self.cpu.tick();
+    }
+
+    pub fn execute_instruction(&mut self) -> (ExecuteResult, u8) {
+        self.cpu.execute_instruction(&mut self.p)
     }
 
     pub fn reset(&mut self) {

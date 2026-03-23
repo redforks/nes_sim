@@ -51,9 +51,7 @@ nes_core = { path = "nes_core" }
 split-debuginfo = "unpacked"
 
 [profile.release]
-lto = true
 codegen-units=1
-opt-level = "z"
 # uncomment below to enable profile release build
 # debug = 1
 

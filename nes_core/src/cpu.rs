@@ -97,35 +97,39 @@ impl<M: Mcu> Cpu<M> {
         self.change_irq_flag_pending = Some(v);
     }
 
-    pub fn tick<T: Plugin<M>>(&mut self, plugin: &mut T) -> (ExecuteResult, u8) {
+    pub fn tick(&mut self) {
         if self.is_halt {
-            return (ExecuteResult::Continue, 1);
+            return;
         }
 
+        let code = match self.pop_microcode() {
+            Some(v) => v,
+            None => Microcode::FetchAndDecode,
+        };
+        code.exec(self);
+        self.tick_bus();
+    }
+
+    pub fn execute_instruction<T: Plugin<M>>(&mut self, plugin: &mut T) -> (ExecuteResult, u8) {
+        if self.is_halt {
+            return (ExecuteResult::Halt, 0);
+        }
+        self.handle_pending_irq();
+
         if self.microcode_queue.is_empty() {
-            self.handle_pending_irq();
+            self.push_microcode(Microcode::FetchAndDecode);
         }
 
         let before = self.total_cycles;
         plugin.start(self);
-        self.execute_instruction();
+        while !self.microcode_queue.is_empty() {
+            self.tick();
+        }
         let cycles = (self.total_cycles - before) as u8;
         plugin.end(self, cycles);
 
         self.set_irq(self.mcu.request_irq());
         (plugin.should_stop(), cycles)
-    }
-
-    fn execute_instruction(&mut self) {
-        let fetch = Microcode::FetchAndDecode;
-        fetch.exec(self);
-
-        while let Some(code) = self.pop_microcode() {
-            code.exec(self);
-            if self.is_halt && self.microcode_queue.is_empty() {
-                break;
-            }
-        }
     }
 
     fn handle_pending_irq(&mut self) {
@@ -589,6 +593,10 @@ impl<M: Mcu> Cpu<M> {
         result
     }
 
+    fn push_microcode(&mut self, microcode: Microcode) {
+        self.microcode_queue.push_back(microcode);
+    }
+
     pub(crate) fn push_microcodes(&mut self, microcodes: &[Microcode]) {
         for &code in microcodes {
             self.microcode_queue.push_back(code);
@@ -611,6 +619,8 @@ pub enum ExecuteResult {
     Continue,
     Stop(u8),
     ShouldReset,
+    /// Cpu halted because of executed an invalid instruction, only reset can recover
+    Halt,
 }
 
 pub trait Plugin<M: Mcu> {

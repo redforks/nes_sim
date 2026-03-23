@@ -23,7 +23,12 @@ struct Args {
 }
 
 fn main() {
-    let Args { f, quiet, max_instructions, start_pc } = Args::parse();
+    let Args {
+        f,
+        quiet,
+        max_instructions,
+        start_pc,
+    } = Args::parse();
 
     env_logger::init();
 
@@ -57,6 +62,7 @@ where
                 m.reset();
             }
             ExecuteResult::Stop(result) => std::process::exit(result as i32),
+            ExecuteResult::Halt => std::process::exit(128),
         }
     }
 }

@@ -1,6 +1,4 @@
-use crate::{
-    ines::INesFile, machine::Machine, mcu::Mcu, nes::NesMcu, EmptyPlugin, ExecuteResult, Plugin,
-};
+use crate::{EmptyPlugin, ExecuteResult, Plugin, ines::INesFile, machine::Machine, nes::NesMcu};
 
 /// Safety limit: maximum CPU instruction ticks per `process_frame()` call.
 /// Two full frames worth of ticks; prevents an infinite loop if VBlank never fires
@@ -68,11 +66,10 @@ impl<P: Plugin<NesMcu>> NesMachine<P> {
         // Delegate to `tick()` which executes a single CPU instruction and
         // advances PPU/APU accordingly. Loop until VBlank or safety limit.
         for _ in 0..MAX_TICKS_PER_FRAME {
-            let result = self.tick();
+            self.tick();
 
-            // Check for stop conditions from the CPU/plugin
-            if result != ExecuteResult::Continue {
-                return result;
+            if self.machine.cpu_mut().is_halted() {
+                return ExecuteResult::Halt;
             }
 
             // Check for VBlank signalled by the PPU
@@ -84,47 +81,47 @@ impl<P: Plugin<NesMcu>> NesMachine<P> {
         ExecuteResult::Continue
     }
 
+    pub fn execute_instruction(&mut self) -> (ExecuteResult, u8) {
+        self.machine.execute_instruction()
+    }
+
     /// Execute one CPU instruction and tick PPU/APU. Returns the `ExecuteResult`.
-    pub fn tick(&mut self) -> ExecuteResult {
-        self.machine.mcu_mut().consumed_cycles = 0;
-        let (result, cycles) = self.machine.tick();
-
-        let consumed = self.machine.mcu().consumed_cycles as u8;
-        let remaining = cycles.saturating_sub(consumed);
-
-        for _ in 0..remaining {
-            self.machine.mcu_mut().tick();
-        }
-
-        if self.machine.mcu_mut().nmi_cancel_pending {
-            self.machine.mcu_mut().nmi_cancel_pending = false;
-            self.machine.mcu_mut().nmi_pending = false;
-            self.nmi_enable_delay = 0;
-        }
-
-        if self.nmi_enable_delay > 0 {
-            self.nmi_enable_delay -= 1;
-            if self.nmi_enable_delay == 0 {
+    pub fn tick(&mut self) {
+        self.machine.tick();
+        self.machine.mcu_mut().tick_apu();
+        for _ in 0..3 {
+            if self.machine.mcu_mut().tick_ppu() {
                 self.machine.cpu_mut().nmi();
             }
         }
 
-        if self.machine.mcu_mut().nmi_pending {
-            self.machine.mcu_mut().nmi_pending = false;
-            self.machine.cpu_mut().nmi();
-        }
+        // if self.machine.mcu_mut().nmi_cancel_pending {
+        //     self.machine.mcu_mut().nmi_cancel_pending = false;
+        //     self.machine.mcu_mut().nmi_pending = false;
+        //     self.nmi_enable_delay = 0;
+        // }
 
-        if self.machine.mcu_mut().nmi_enable_pending {
-            self.machine.mcu_mut().nmi_enable_pending = false;
-            if self.nmi_enable_delay == 0 {
-                self.nmi_enable_delay = 1;
-            }
-        }
-        if self.machine.mcu().request_irq() {
-            self.machine.cpu_mut().set_irq(true);
-        }
+        // if self.nmi_enable_delay > 0 {
+        //     self.nmi_enable_delay -= 1;
+        //     if self.nmi_enable_delay == 0 {
+        //         self.machine.cpu_mut().nmi();
+        //     }
+        // }
 
-        result
+        // if self.machine.mcu_mut().nmi_pending {
+        //     self.machine.mcu_mut().nmi_pending = false;
+        //     self.machine.cpu_mut().nmi();
+        // }
+
+        // if self.machine.mcu_mut().nmi_enable_pending {
+        //     self.machine.mcu_mut().nmi_enable_pending = false;
+        //     if self.nmi_enable_delay == 0 {
+        //         self.nmi_enable_delay = 1;
+        //     }
+        // }
+        // if self.machine.mcu().request_irq() {
+        //     self.machine.cpu_mut().set_irq(true);
+        // }
     }
 
     pub fn reset(&mut self) {
