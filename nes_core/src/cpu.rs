@@ -87,16 +87,6 @@ impl<M: Mcu> Cpu<M> {
         self.nmi_requested = true;
     }
 
-    pub(crate) fn irq(&mut self) {
-        self.microcode_queue.clear();
-        self.tick_bus();
-        self.tick_bus();
-        self.push_pc();
-        self.push_status();
-        self.set_flag(Flag::InterruptDisabled, true);
-        self.pc = self.read_word(0xFFFE);
-    }
-
     pub fn set_irq(&mut self, enabled: bool) {
         self.irq_pending = enabled;
     }
@@ -125,16 +115,32 @@ impl<M: Mcu> Cpu<M> {
                         // need extra two cycles for cpu to start nmi process
                         self.push_microcodes(&[
                             Microcode::Nop,
-                            Microcode::PushPcLow,
-                            Microcode::PushPcHigh,
-                            Microcode::PushStatus,
-                            Microcode::LoadNmiAddressLow,
-                            Microcode::LoadNmiAddreeHigh,
+                            Microcode::Nop,
+                            Microcode::PushPc,
+                            Microcode::PushStatus {
+                                set_disable_interrupt: true,
+                                break_flag: false,
+                            },
+                            Microcode::Nop,
+                            Microcode::LoadNmiAddress,
                         ]);
                         Microcode::Nop
                     } else {
                         Microcode::FetchAndDecode
                     }
+                } else if self.irq_pending {
+                    self.push_microcodes(&[
+                        Microcode::Nop,
+                        Microcode::Nop,
+                        Microcode::PushPc,
+                        Microcode::PushStatus {
+                            set_disable_interrupt: true,
+                            break_flag: false,
+                        },
+                        Microcode::Nop,
+                        Microcode::LoadIrqAddress,
+                    ]);
+                    Microcode::IncPc
                 } else {
                     Microcode::FetchAndDecode
                 }
@@ -148,7 +154,6 @@ impl<M: Mcu> Cpu<M> {
         if self.is_halted() {
             return (ExecuteResult::Halt, 0);
         }
-        self.handle_pending_irq();
 
         if self.microcode_queue.is_empty() {
             self.push_microcode(Microcode::FetchAndDecode);
@@ -166,20 +171,15 @@ impl<M: Mcu> Cpu<M> {
         (plugin.should_stop(), cycles)
     }
 
-    fn handle_pending_irq(&mut self) {
-        if self.irq_pending && !self.flag(Flag::InterruptDisabled) {
-            if let Some(v) = self.change_irq_flag_pending.take() {
-                self.set_flag(Flag::InterruptDisabled, v);
-            }
-            self.irq();
-        } else if let Some(v) = self.change_irq_flag_pending.take() {
-            self.set_flag(Flag::InterruptDisabled, v);
-        }
-    }
-
-    pub(crate) fn push_pc(&mut self) {
+    fn push_pc(&mut self) {
         self.push_stack((self.pc >> 8) as u8);
         self.push_stack(self.pc as u8);
+    }
+
+    fn pop_pc(&mut self) {
+        let low = self.pop_stack() as u16;
+        let high = self.pop_stack() as u16;
+        self.pc = (high << 8) | low;
     }
 
     pub fn flag(&self, flag: Flag) -> bool {
@@ -194,7 +194,7 @@ impl<M: Mcu> Cpu<M> {
         }
     }
 
-    pub(crate) fn inc_pc(&mut self, delta: i8) {
+    fn inc_pc(&mut self, delta: i8) {
         self.pc = self.pc.wrapping_add(delta as u16);
     }
 
@@ -262,10 +262,6 @@ impl<M: Mcu> Cpu<M> {
     pub fn peek_stack(&mut self) -> u8 {
         let addr = 0x100 + self.sp.wrapping_add(1) as u16;
         self.mcu.read(addr)
-    }
-
-    pub(crate) fn push_status(&mut self) {
-        self.push_stack(self.status | Flag::NotUsed as u8);
     }
 
     pub(crate) fn halt(&mut self) {
@@ -550,8 +546,15 @@ impl<M: Mcu> Cpu<M> {
         self.update_zero_flag(self.a);
     }
 
-    fn php(&mut self) {
-        self.push_stack(self.status | Flag::Break as u8 | Flag::NotUsed as u8);
+    fn push_status(&mut self, set_disable_interrupt: bool, break_flag: bool) {
+        self.push_stack(if break_flag {
+            self.status | Flag::Break as u8 | Flag::NotUsed as u8
+        } else {
+            self.status | Flag::NotUsed as u8
+        });
+        if set_disable_interrupt {
+            self.set_flag(Flag::InterruptDisabled, true);
+        }
     }
 
     fn plp(&mut self) {

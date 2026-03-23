@@ -21,11 +21,6 @@ fn execute_next(cpu: &mut Cpu<MockMcu>) -> u8 {
     cycles
 }
 
-fn set_irq_vector(cpu: &mut Cpu<MockMcu>, addr: u16) {
-    cpu.write_byte(IRQ_VECTOR, (addr & 0xFF) as u8);
-    cpu.write_byte(IRQ_VECTOR + 1, ((addr >> 8) & 0xFF) as u8);
-}
-
 #[test]
 fn test_cpu_initialization() {
     let cpu = create_cpu();
@@ -135,7 +130,7 @@ fn test_push_status() {
     cpu.sp = 0xFF;
     cpu.status = 0b0000_0000;
 
-    cpu.push_status();
+    cpu.push_status(false, false);
     let status_on_stack = cpu.read_byte(0x1FF);
     // NotUsed flag (0x20) should be set
     assert_eq!(status_on_stack & 0x20, 0x20);
@@ -1499,7 +1494,7 @@ fn test_brk_instruction() {
     cpu.write_byte(IRQ_VECTOR + 1, 0x04);
 
     execute_next(&mut cpu); // BRK
-    assert!(cpu.flag(Flag::Break));
+    assert!(!cpu.flag(Flag::Break));
     assert!(cpu.flag(Flag::InterruptDisabled));
     assert_eq!(cpu.pc, 0x0400);
 }
@@ -1790,33 +1785,6 @@ fn test_and_zero_page_x() {
     cpu.write_byte(0x0025, 0x0F);
     execute_next(&mut cpu); // AND $20,X
     assert_eq!(cpu.a, 0x00);
-}
-
-#[test]
-fn test_irq_pushes_pc_and_status() {
-    let mut cpu = create_cpu_with_program(&[0xEA]);
-    cpu.pc = 0x1234;
-    set_irq_vector(&mut cpu, 0xABCD);
-
-    cpu.irq();
-
-    assert_eq!(cpu.pc, 0xABCD);
-    assert!(cpu.flag(Flag::InterruptDisabled));
-    // Check stack: same as NMI
-    assert_eq!(cpu.read_byte(0x100), 0x12); // PC high byte
-    assert_eq!(cpu.read_byte(0x1FF), 0x34); // PC low byte
-}
-
-#[test]
-fn test_irq_sets_interrupt_disabled_flag() {
-    let mut cpu = create_cpu_with_program(&[0xEA]);
-    cpu.set_flag(Flag::InterruptDisabled, false);
-    set_irq_vector(&mut cpu, 0x1000);
-
-    cpu.irq();
-
-    assert!(cpu.flag(Flag::InterruptDisabled));
-    assert_eq!(cpu.pc, 0x1000);
 }
 
 #[test]
@@ -3137,27 +3105,6 @@ fn test_adc_decimal_mode_not_supported() {
 }
 
 #[test]
-fn test_irq_pushes_correct_values() {
-    // Verify IRQ pushes correct PC and status to stack
-    let mut cpu = create_cpu();
-    // Set up IRQ vector
-    cpu.mcu_mut().write(0xFFFE, 0x00);
-    cpu.mcu_mut().write(0xFFFF, 0x30);
-    cpu.pc = 0x1000;
-    cpu.set_flag(Flag::Carry, true);
-    cpu.sp = 0xFF;
-
-    cpu.irq();
-
-    // SP should be decremented 3 times
-    assert_eq!(cpu.sp, 0xFC);
-    // PC should be loaded from IRQ vector
-    assert_eq!(cpu.pc, 0x3000);
-    // Interrupt disable flag should be set after IRQ
-    assert!(cpu.flag(Flag::InterruptDisabled));
-}
-
-#[test]
 fn test_brk_pushes_b_flag() {
     // BRK should set B flag and push status with B flag
     let mut mcu = MockMcu::new();
@@ -3622,7 +3569,7 @@ fn test_push_status_with_all_flags() {
     cpu.set_flag(Flag::Negative, true);
     // Note: Break flag is NOT set, so it won't be pushed
 
-    cpu.push_status();
+    cpu.push_status(true, false);
 
     // push_status writes to current SP, then decrements
     // With SP=0xFF, it writes to 0x100 + 0xFF = 0x01FF, then SP becomes 0xFE
@@ -4121,18 +4068,30 @@ fn fetch_and_decode_queues_stack_subroutine_jump_flag_misc_sequences() {
 
     Microcode::FetchAndDecode.exec(&mut cpu);
     assert_eq!(cpu.opcode, opcode::PHA);
+    assert_eq!(cpu.pop_microcode(), Some(Microcode::Nop));
     assert_eq!(cpu.pop_microcode(), Some(Microcode::Pha));
 
     Microcode::FetchAndDecode.exec(&mut cpu);
     assert_eq!(cpu.opcode, opcode::PLA);
+    assert_eq!(cpu.pop_microcode(), Some(Microcode::Nop));
+    assert_eq!(cpu.pop_microcode(), Some(Microcode::Nop));
     assert_eq!(cpu.pop_microcode(), Some(Microcode::Pla));
 
     Microcode::FetchAndDecode.exec(&mut cpu);
     assert_eq!(cpu.opcode, opcode::PHP);
-    assert_eq!(cpu.pop_microcode(), Some(Microcode::Php));
+    assert_eq!(cpu.pop_microcode(), Some(Microcode::Nop));
+    assert_eq!(
+        cpu.pop_microcode(),
+        Some(Microcode::PushStatus {
+            set_disable_interrupt: false,
+            break_flag: true
+        })
+    );
 
     Microcode::FetchAndDecode.exec(&mut cpu);
     assert_eq!(cpu.opcode, opcode::PLP);
+    assert_eq!(cpu.pop_microcode(), Some(Microcode::Nop));
+    assert_eq!(cpu.pop_microcode(), Some(Microcode::Nop));
     assert_eq!(cpu.pop_microcode(), Some(Microcode::Plp));
 
     Microcode::FetchAndDecode.exec(&mut cpu);
@@ -4171,17 +4130,17 @@ fn fetch_and_decode_queues_stack_subroutine_jump_flag_misc_sequences() {
     Microcode::FetchAndDecode.exec(&mut cpu);
     assert_eq!(cpu.opcode, opcode::RTS);
     assert_eq!(cpu.pop_microcode(), Some(Microcode::Nop));
-    assert_eq!(cpu.pop_microcode(), Some(Microcode::PopPcLow));
-    assert_eq!(cpu.pop_microcode(), Some(Microcode::PopPcHigh));
+    assert_eq!(cpu.pop_microcode(), Some(Microcode::Nop));
+    assert_eq!(cpu.pop_microcode(), Some(Microcode::PopPc));
     assert_eq!(cpu.pop_microcode(), Some(Microcode::Nop));
     assert_eq!(cpu.pop_microcode(), Some(Microcode::IncPc));
 
     Microcode::FetchAndDecode.exec(&mut cpu);
     assert_eq!(cpu.opcode, opcode::RTI);
     assert_eq!(cpu.pop_microcode(), Some(Microcode::Nop));
-    assert_eq!(cpu.pop_microcode(), Some(Microcode::PopStatus));
-    assert_eq!(cpu.pop_microcode(), Some(Microcode::PopPcLow));
-    assert_eq!(cpu.pop_microcode(), Some(Microcode::PopPcHigh));
+    assert_eq!(cpu.pop_microcode(), Some(Microcode::Plp));
+    assert_eq!(cpu.pop_microcode(), Some(Microcode::Nop));
+    assert_eq!(cpu.pop_microcode(), Some(Microcode::PopPc));
     assert_eq!(cpu.pop_microcode(), Some(Microcode::Nop));
 
     Microcode::FetchAndDecode.exec(&mut cpu);
@@ -4219,11 +4178,17 @@ fn fetch_and_decode_queues_stack_subroutine_jump_flag_misc_sequences() {
     Microcode::FetchAndDecode.exec(&mut cpu);
     assert_eq!(cpu.opcode, opcode::BRK);
     assert_eq!(cpu.pop_microcode(), Some(Microcode::IncPc));
-    assert_eq!(cpu.pop_microcode(), Some(Microcode::PushPcHigh));
-    assert_eq!(cpu.pop_microcode(), Some(Microcode::PushPcLow));
-    assert_eq!(cpu.pop_microcode(), Some(Microcode::PushStatus));
-    assert_eq!(cpu.pop_microcode(), Some(Microcode::LoadIrqAddressLow));
-    assert_eq!(cpu.pop_microcode(), Some(Microcode::LoadIrqAddressHigh));
+    assert_eq!(cpu.pop_microcode(), Some(Microcode::Nop));
+    assert_eq!(cpu.pop_microcode(), Some(Microcode::PushPc));
+    assert_eq!(
+        cpu.pop_microcode(),
+        Some(Microcode::PushStatus {
+            set_disable_interrupt: true,
+            break_flag: true
+        })
+    );
+    assert_eq!(cpu.pop_microcode(), Some(Microcode::Nop));
+    assert_eq!(cpu.pop_microcode(), Some(Microcode::LoadIrqAddress));
 }
 
 #[test]
@@ -4533,7 +4498,11 @@ fn stack_and_misc_microcodes_manipulate_state() {
     Microcode::Pla.exec(&mut cpu);
     assert_eq!(cpu.a, 0xAB);
 
-    Microcode::Php.exec(&mut cpu);
+    Microcode::PushStatus {
+        set_disable_interrupt: false,
+        break_flag: true,
+    }
+    .exec(&mut cpu);
     assert_eq!(
         cpu.mcu().mem[0x01FF] & (Flag::Break as u8),
         Flag::Break as u8

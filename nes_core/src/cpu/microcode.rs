@@ -487,10 +487,16 @@ const fn build_opcode_table() -> [ArrayVec<[Microcode; 7]>; 256] {
     r[BPL as usize] = microcode_arr!(BranchRelative(BranchTest::IfNegativeClear));
     r[BVC as usize] = microcode_arr!(BranchRelative(BranchTest::IfOverflowClear));
     r[BVS as usize] = microcode_arr!(BranchRelative(BranchTest::IfOverflowSet));
-    r[PHA as usize] = microcode_arr!(Pha);
-    r[PLA as usize] = microcode_arr!(Pla);
-    r[PHP as usize] = microcode_arr!(Php);
-    r[PLP as usize] = microcode_arr!(Plp);
+    r[PHA as usize] = microcode_arr!(Nop, Pha);
+    r[PLA as usize] = microcode_arr!(Nop, Nop, Pla);
+    r[PHP as usize] = microcode_arr!(
+        Nop,
+        PushStatus {
+            set_disable_interrupt: false,
+            break_flag: true
+        }
+    );
+    r[PLP as usize] = microcode_arr!(Nop, Nop, Plp);
     r[JMP_ABSOLUTE as usize] = microcode_arr!(
         AbsoluteL,
         AbsoluteH {
@@ -512,8 +518,8 @@ const fn build_opcode_table() -> [ArrayVec<[Microcode; 7]>; 256] {
         },
         Jsr
     );
-    r[RTS as usize] = microcode_arr!(Nop, PopPcLow, PopPcHigh, Nop, IncPc);
-    r[RTI as usize] = microcode_arr!(Nop, PopStatus, PopPcLow, PopPcHigh, Nop);
+    r[RTS as usize] = microcode_arr!(Nop, Nop, PopPc, Nop, IncPc);
+    r[RTI as usize] = microcode_arr!(Nop, Plp, Nop, PopPc, Nop);
     r[CLC as usize] = microcode_arr!(Clc);
     r[SEC as usize] = microcode_arr!(Sec);
     r[CLD as usize] = microcode_arr!(Cld);
@@ -611,11 +617,14 @@ const fn build_opcode_table() -> [ArrayVec<[Microcode; 7]>; 256] {
     r[KIL12 as usize] = microcode_arr!(Kill);
     r[BRK as usize] = microcode_arr!(
         IncPc,
-        PushPcHigh,
-        PushPcLow,
-        PushStatus,
-        LoadIrqAddressLow,
-        LoadIrqAddressHigh
+        Nop,
+        PushPc,
+        PushStatus {
+            break_flag: true,
+            set_disable_interrupt: true,
+        },
+        Nop,
+        LoadIrqAddress
     );
     r[SBC_IMMEDIATE as usize] = microcode_arr!(SbcImmediate);
     r[USBC as usize] = microcode_arr!(SbcImmediate);
@@ -1389,11 +1398,6 @@ pub enum Microcode {
     Shy,
     Tas,
 
-    Pha,
-    Pla,
-    Php,
-    Plp,
-
     JmpAbsolute,
     JmpIndirect,
     Jsr,
@@ -1423,28 +1427,29 @@ pub enum Microcode {
     /// If BranchTest is true, pc += offset, push one Noc if not cross page, push two Noc if cross page
     BranchRelative(BranchTest),
 
-    /// Push high byte of pc register into stack
-    PushPcHigh,
-    /// Push low byte of pc register into stack
-    PushPcLow,
+    /// Push pc register into stack, it is actually two cycles, append Nop before this Microcode
+    PushPc,
     /// Push cpu status register into stack
-    PushStatus,
-    /// Set cpu pc high byte of nmi handler address
-    LoadNmiAddreeHigh,
-    /// Set cpu pc low byte of nmi handler address
-    LoadNmiAddressLow,
-    /// Set cpu pc high byte of irq handler address
-    LoadIrqAddressHigh,
-    /// Set cpu pc low byte of irq handler address
-    LoadIrqAddressLow,
-    /// Pop cpu status register from stack, used to return from interrupt handler
-    PopStatus,
-    /// Pop low byte of pc register from stack, used to return from interrupt handler
-    PopPcHigh,
-    /// Pop high byte of pc register from stack, used to return from interrupt handler
-    PopPcLow,
+    PushStatus {
+        /// after push status, set disable interrupt flag
+        set_disable_interrupt: bool,
+        /// break flag of status to set
+        break_flag: bool,
+    },
+    /// Set cpu pc to nmi handler address, it is actually two cycles, append Nop before this Microcode
+    LoadNmiAddress,
+    /// Set cpu pc to irq handler address, it is actually two cycles, append Nop before this Microcode
+    LoadIrqAddress,
+    /// Pop cpu status register from stack, used to return from interrupt handler, and PLP
+    Plp,
+    /// Pop pc register from stack, it is actually two cycles, append Nop before this Microcode
+    PopPc,
     /// Increment pc register by 1,
     IncPc,
+    /// Push register A to stack
+    Pha,
+    /// Pop value from stack to register A
+    Pla,
 
     /// Cpu will trapped infinitely if execute this microcode, used to impl illegal instructions that will lock up the CPU
     /// Only reset can restore the CPU from this state
@@ -1890,11 +1895,6 @@ impl Microcode {
             Self::Shy => cpu.shy(),
             Self::Tas => cpu.tas(),
 
-            Self::Pha => cpu.pha(),
-            Self::Pla => cpu.pla(),
-            Self::Php => cpu.php(),
-            Self::Plp => cpu.plp(),
-
             Self::JmpAbsolute => cpu.jmp_absolute(),
             Self::JmpIndirect => cpu.jmp_indirect(),
             Self::Jsr => cpu.jsr(),
@@ -1923,17 +1923,22 @@ impl Microcode {
             Self::BranchRelative(branch_test) => Self::branch_relative(cpu, branch_test),
             Self::Kill => cpu.halt(),
 
-            Self::IncPc => todo!(),
-            Self::LoadIrqAddressHigh => todo!(),
-            Self::LoadIrqAddressLow => todo!(),
-            Self::LoadNmiAddreeHigh => todo!(),
-            Self::LoadNmiAddressLow => todo!(),
-            Self::PushPcHigh => todo!(),
-            Self::PushPcLow => todo!(),
-            Self::PushStatus => todo!(),
-            Self::PopStatus => todo!(),
-            Self::PopPcHigh => todo!(),
-            Self::PopPcLow => todo!(),
+            Self::IncPc => cpu.inc_pc(1),
+            Self::LoadIrqAddress => {
+                cpu.pc = cpu.read_word(0xFFFE);
+            }
+            Self::LoadNmiAddress => {
+                cpu.pc = cpu.read_word(0xFFFA);
+            }
+            Self::PushPc => cpu.push_pc(),
+            Self::PushStatus {
+                set_disable_interrupt,
+                break_flag,
+            } => cpu.push_status(set_disable_interrupt, break_flag),
+            Self::Plp => cpu.plp(),
+            Self::PopPc => cpu.pop_pc(),
+            Self::Pla => cpu.pla(),
+            Self::Pha => cpu.pha(),
         }
     }
 
