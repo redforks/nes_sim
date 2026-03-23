@@ -100,6 +100,8 @@ impl<M: Mcu> Cpu<M> {
     }
 
     pub fn tick(&mut self) {
+        self.total_cycles = self.total_cycles.wrapping_add(1);
+
         if self.is_halted() {
             return;
         }
@@ -147,7 +149,6 @@ impl<M: Mcu> Cpu<M> {
             }
         };
         code.exec(self);
-        self.tick_bus();
     }
 
     pub fn execute_instruction<T: Plugin<M>>(&mut self, plugin: &mut T) -> (ExecuteResult, u8) {
@@ -207,7 +208,6 @@ impl<M: Mcu> Cpu<M> {
     }
 
     pub(crate) fn read_byte(&mut self, addr: u16) -> u8 {
-        self.tick_bus();
         self.mcu.read(addr)
     }
 
@@ -218,19 +218,15 @@ impl<M: Mcu> Cpu<M> {
     pub(crate) fn inc_read_byte(&mut self) -> u8 {
         let addr = self.pc;
         self.inc_pc(1);
-        self.tick_bus();
         self.mcu.read(addr)
     }
 
     pub(crate) fn write_byte(&mut self, addr: u16, value: u8) {
-        self.tick_bus();
         self.mcu.write(addr, value);
     }
 
     pub(crate) fn read_word(&mut self, addr: u16) -> u16 {
-        self.tick_bus();
         let low = self.mcu.read(addr) as u16;
-        self.tick_bus();
         let high = self.mcu.read(addr.wrapping_add(1)) as u16;
         (high << 8) | low
     }
@@ -240,22 +236,18 @@ impl<M: Mcu> Cpu<M> {
     }
 
     fn read_word_in_page(&mut self, page: u16, offset: u8) -> u16 {
-        self.tick_bus();
         let low = self.mcu.read(page | offset as u16) as u16;
-        self.tick_bus();
         let high = self.mcu.read(page | offset.wrapping_add(1) as u16) as u16;
         (high << 8) | low
     }
 
     pub(crate) fn push_stack(&mut self, value: u8) {
-        self.tick_bus();
         self.mcu.write(0x100 + self.sp as u16, value);
         self.sp = self.sp.wrapping_sub(1);
     }
 
     pub(crate) fn pop_stack(&mut self) -> u8 {
         self.sp = self.sp.wrapping_add(1);
-        self.tick_bus();
         self.mcu.read(0x100 + self.sp as u16)
     }
 
@@ -266,11 +258,6 @@ impl<M: Mcu> Cpu<M> {
 
     pub(crate) fn halt(&mut self) {
         self.mode = CpuMode::Halt;
-    }
-
-    fn tick_bus(&mut self) {
-        self.total_cycles = self.total_cycles.wrapping_add(1);
-        self.mcu.tick();
     }
 
     fn pch(&self) -> u8 {

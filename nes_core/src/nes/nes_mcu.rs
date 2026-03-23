@@ -23,7 +23,6 @@ pub struct NesMcu {
     length_counters: [u8; 4], // pulse1, pulse2, triangle, noise
     length_counter_halt: [bool; 4],
     channel_enabled: [bool; 4],
-    pub consumed_cycles: u32,
     pub nmi_pending: bool,
     pub nmi_enable_pending: bool,
     pub nmi_cancel_pending: bool,
@@ -66,7 +65,6 @@ pub fn build_with_renderer(file: &INesFile, renderer: Option<Box<dyn Render>>) -
         length_counters: [0; 4],
         length_counter_halt: [false; 4],
         channel_enabled: [false; 4],
-        consumed_cycles: 0,
         nmi_pending: false,
         nmi_enable_pending: false,
         nmi_cancel_pending: false,
@@ -187,16 +185,6 @@ impl NesMcu {
 }
 
 impl Mcu for NesMcu {
-    fn tick(&mut self) {
-        self.consumed_cycles += 1;
-        for _ in 0..3 {
-            if self.tick_ppu() {
-                self.nmi_pending = true;
-            }
-        }
-        self.tick_apu();
-    }
-
     fn read(&mut self, address: u16) -> u8 {
         match address {
             0x0000..=0x1fff => self.lower_ram.read(address),

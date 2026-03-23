@@ -12,7 +12,6 @@ pub trait Mcu {
     // Changed to &mut self to allow implementations to mutate state during reads
     fn read(&mut self, address: u16) -> u8;
     fn write(&mut self, address: u16, value: u8);
-    fn tick(&mut self) {}
 
     fn request_irq(&self) -> bool {
         panic!("request_irq() not implemented");

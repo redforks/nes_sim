@@ -3716,7 +3716,6 @@ fn test_compare_clears_zero_flag() {
 
 struct TestMcu {
     mem: [u8; 0x10000],
-    ticks: usize,
     writes: Vec<(u16, u8)>,
 }
 
@@ -3724,7 +3723,6 @@ impl Default for TestMcu {
     fn default() -> Self {
         Self {
             mem: [0; 0x10000],
-            ticks: 0,
             writes: Vec::new(),
         }
     }
@@ -3738,10 +3736,6 @@ impl Mcu for TestMcu {
     fn write(&mut self, address: u16, value: u8) {
         self.mem[address as usize] = value;
         self.writes.push((address, value));
-    }
-
-    fn tick(&mut self) {
-        self.ticks += 1;
     }
 }
 
@@ -3771,7 +3765,6 @@ fn inc_read_byte_advances_pc_and_ticks() {
 
     assert_eq!(cpu.inc_read_byte(), 0xAB);
     assert_eq!(cpu.pc, 0x0201);
-    assert_eq!(cpu.mcu().ticks, 1);
 }
 
 fn cpu_with_memory(program_start: u16, bytes: &[(u16, u8)]) -> Cpu<TestMcu> {
