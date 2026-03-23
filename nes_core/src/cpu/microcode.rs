@@ -884,7 +884,7 @@ const fn build_opcode_table() -> [ArrayVec<[Microcode; 7]>; 256] {
         Lax
     );
     r[SAX_ZERO_PAGE as usize] = microcode_arr!(zero_page_addr(), Sax);
-    r[SAX_ZERO_PAGE_Y as usize] = microcode_arr!(zero_page_y_addr(), Sax);
+    r[SAX_ZERO_PAGE_Y as usize] = microcode_arr!(zero_page_addr(), zero_page_y_addr(), Sax);
     r[SAX_ABSOLUTE as usize] = microcode_arr!(
         AbsoluteL,
         AbsoluteH {
