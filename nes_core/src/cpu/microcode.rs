@@ -1228,7 +1228,7 @@ const fn build_opcode_table() -> [ArrayVec<[Microcode; 7]>; 256] {
         AbsoluteL,
         AbsoluteIndexedY {
             oops: false,
-            load_into_alu: true
+            load_into_alu: false
         },
         Shx
     );
@@ -1236,7 +1236,7 @@ const fn build_opcode_table() -> [ArrayVec<[Microcode; 7]>; 256] {
         AbsoluteL,
         AbsoluteIndexedX {
             oops: false,
-            load_into_alu: true
+            load_into_alu: false
         },
         Shy
     );
@@ -1244,7 +1244,7 @@ const fn build_opcode_table() -> [ArrayVec<[Microcode; 7]>; 256] {
         AbsoluteL,
         AbsoluteIndexedY {
             oops: false,
-            load_into_alu: true
+            load_into_alu: false
         },
         Tas
     );

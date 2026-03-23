@@ -501,19 +501,22 @@ impl<M: Mcu> Cpu<M> {
 
     fn shx(&mut self) {
         let v = self.x & self.abh().wrapping_add(1);
-        self.write_byte(self.ab, v);
+        let addr = (self.abl() as u16) | ((v as u16) << 8);
+        self.write_byte(addr, v);
     }
 
     fn shy(&mut self) {
         let v = self.y & self.abh().wrapping_add(1);
-        self.write_byte(self.ab, v);
+        let addr = (self.abl() as u16) | ((v as u16) << 8);
+        self.write_byte(addr, v);
     }
 
     fn tas(&mut self) {
         let v = self.a & self.x;
         self.sp = v;
         let out = v & self.abh().wrapping_add(1);
-        self.write_byte(self.ab, out);
+        let addr = (self.abl() as u16) | ((out as u16) << 8);
+        self.write_byte(addr, out);
     }
 
     fn pha(&mut self) {
