@@ -29,10 +29,6 @@ impl<const SIZE: usize> Mcu for RamMcu<SIZE> {
     fn write(&mut self, address: u16, value: u8) {
         self.ram[self.to_index(address)] = value;
     }
-
-    fn request_irq(&self) -> bool {
-        false
-    }
 }
 
 impl<const SIZE: usize> DefinedRegion for RamMcu<SIZE> {
@@ -77,13 +73,6 @@ mod tests {
         let (start, end) = mcu.region();
         assert_eq!(start, 0x8000);
         assert_eq!(end, 0x80FF); // 0x8000 + 0x100 - 1
-    }
-
-    #[test]
-    fn test_request_irq() {
-        let mcu = RamMcu::new([0; 0x100]);
-        // RamMcu never requests IRQ
-        assert!(!mcu.request_irq());
     }
 
     #[test]

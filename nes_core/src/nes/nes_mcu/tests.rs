@@ -73,11 +73,8 @@ fn test_apu_frame_counter_irq_flow() {
         mcu.tick_apu();
     }
 
-    assert!(mcu.request_irq());
-
     let status = mcu.read(0x4015);
     assert_ne!(status & 0x40, 0);
-    assert!(!mcu.request_irq());
 }
 
 #[test]
@@ -88,10 +85,9 @@ fn test_frame_counter_inhibit_clears_irq() {
     for _ in 0..(14914 * 2) {
         mcu.tick_apu();
     }
-    assert!(mcu.request_irq());
 
     mcu.write(0x4017, 0x40);
-    assert!(!mcu.request_irq());
+    assert_eq!(mcu.read(0x4015) & 0x40, 0);
 }
 
 #[test]

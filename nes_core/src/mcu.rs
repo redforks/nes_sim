@@ -12,16 +12,6 @@ pub trait Mcu {
     // Changed to &mut self to allow implementations to mutate state during reads
     fn read(&mut self, address: u16) -> u8;
     fn write(&mut self, address: u16, value: u8);
-
-    fn request_irq(&self) -> bool {
-        panic!("request_irq() not implemented");
-    }
-
-    fn tick_catch_up(&mut self, _cycles: u8) {}
-
-    fn ppu_status(&self) -> (u16, u16) {
-        (0, 0)
-    }
 }
 
 #[cfg(test)]
@@ -56,12 +46,5 @@ mod tests {
         let mut mcu = MockMcu::new();
         mcu.write(0x0000, 0x42);
         assert_eq!(mcu.read(0x0000), 0x42);
-    }
-
-    #[test]
-    #[should_panic(expected = "request_irq() not implemented")]
-    fn test_request_irq_default_panics() {
-        let mcu = MockMcu::new();
-        let _ = mcu.request_irq();
     }
 }

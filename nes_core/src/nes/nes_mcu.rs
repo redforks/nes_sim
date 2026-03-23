@@ -151,10 +151,6 @@ impl Mcu for NesMcu {
             }
         }
     }
-
-    fn request_irq(&self) -> bool {
-        self.apu.request_irq()
-    }
 }
 
 #[cfg(test)]

@@ -19,13 +19,11 @@ use std::cell::{Cell, RefCell};
 ///
 /// // With IRQ/PPU controls
 /// let mut mcu = MockMcu::new()
-///     .with_tick_ppu_result(true)
-///     .with_irq_request(false);
+///     .with_tick_ppu_result(true);
 /// ```
 pub struct MockMcu {
     memory: RefCell<[u8; 0x10000]>,
     tick_ppu_result: Cell<bool>,
-    irq_request: Cell<bool>,
     is_regional: Cell<bool>,
     region_start: Cell<u16>,
     region_end: Cell<u16>,
@@ -37,7 +35,6 @@ impl MockMcu {
         MockMcu {
             memory: RefCell::new([0; 0x10000]),
             tick_ppu_result: Cell::new(false),
-            irq_request: Cell::new(false),
             is_regional: Cell::new(false),
             region_start: Cell::new(0),
             region_end: Cell::new(0xFFFF),
@@ -49,7 +46,6 @@ impl MockMcu {
         MockMcu {
             memory: RefCell::new([0; 0x10000]),
             tick_ppu_result: Cell::new(false),
-            irq_request: Cell::new(false),
             is_regional: Cell::new(true),
             region_start: Cell::new(start),
             region_end: Cell::new(end),
@@ -67,12 +63,6 @@ impl MockMcu {
     /// Sets the PPU tick result (builder pattern)
     pub fn with_tick_ppu_result(self, result: bool) -> Self {
         self.tick_ppu_result.set(result);
-        self
-    }
-
-    /// Sets the IRQ request state (builder pattern)
-    pub fn with_irq_request(self, request: bool) -> Self {
-        self.irq_request.set(request);
         self
     }
 
@@ -98,9 +88,6 @@ impl Mcu for MockMcu {
     }
     fn write(&mut self, addr: u16, value: u8) {
         self.memory.borrow_mut()[addr as usize] = value;
-    }
-    fn request_irq(&self) -> bool {
-        self.irq_request.get()
     }
 }
 
@@ -174,10 +161,7 @@ mod tests {
 
     #[test]
     fn test_mock_mcu_flags() {
-        let mcu = MockMcu::new()
-            .with_tick_ppu_result(true)
-            .with_irq_request(true);
+        let mcu = MockMcu::new().with_tick_ppu_result(true);
         assert!(mcu.tick_ppu());
-        assert!(mcu.request_irq());
     }
 }
