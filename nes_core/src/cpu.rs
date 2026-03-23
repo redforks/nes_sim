@@ -161,7 +161,6 @@ impl<M: Mcu> Cpu<M> {
         let cycles = (self.total_cycles - before) as u8;
         plugin.end(self, cycles);
 
-        self.set_irq(self.mcu.request_irq());
         (plugin.should_stop(), cycles)
     }
 

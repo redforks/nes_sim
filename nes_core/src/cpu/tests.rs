@@ -4681,7 +4681,7 @@ fn undocumented_decode_sequences_exist() {
         cpu.pop_microcode(),
         Some(Microcode::AbsoluteIndexedY {
             oops: false,
-            load_into_alu: true
+            load_into_alu: false
         })
     );
     assert_eq!(cpu.pop_microcode(), Some(Microcode::Shx));
@@ -4691,7 +4691,7 @@ fn undocumented_decode_sequences_exist() {
         cpu.pop_microcode(),
         Some(Microcode::AbsoluteIndexedX {
             oops: false,
-            load_into_alu: true
+            load_into_alu: false
         })
     );
     assert_eq!(cpu.pop_microcode(), Some(Microcode::Shy));
@@ -4701,7 +4701,7 @@ fn undocumented_decode_sequences_exist() {
         cpu.pop_microcode(),
         Some(Microcode::AbsoluteIndexedY {
             oops: false,
-            load_into_alu: true
+            load_into_alu: false
         })
     );
     assert_eq!(cpu.pop_microcode(), Some(Microcode::Tas));
