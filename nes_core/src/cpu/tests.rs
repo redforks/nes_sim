@@ -1799,18 +1799,6 @@ fn test_set_irq() {
     assert!(!cpu.irq_pending);
 }
 
-#[test]
-fn test_pending_set_interrupt_disabled_flag() {
-    let mut cpu = create_cpu();
-    cpu.set_flag(Flag::InterruptDisabled, false); // Clear the flag first
-    cpu.pending_set_interrupt_disabled_flag(true);
-    // The flag change is stored in change_irq_flag_pending, not applied immediately
-    assert!(cpu.change_irq_flag_pending == Some(true));
-    assert!(!cpu.flag(Flag::InterruptDisabled)); // Flag should still be false
-}
-
-// clock_tick tests have been removed - remain_clocks and clock_tick no longer exist
-
 // JSR/RTS/RTI tests
 #[test]
 fn test_jsr_pushes_pc_and_jumps() {

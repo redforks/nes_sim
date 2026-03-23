@@ -34,7 +34,6 @@ pub struct Cpu<M: Mcu> {
     pub alu: u8,
 
     pub(crate) irq_pending: bool,
-    pub(crate) change_irq_flag_pending: Option<bool>,
     nmi_requested: bool,
     mode: CpuMode,
 
@@ -56,7 +55,6 @@ impl<M: Mcu> Cpu<M> {
             ab: 0,
             alu: 0,
             irq_pending: false,
-            change_irq_flag_pending: None,
             microcode_queue: VecDeque::with_capacity(8),
             total_cycles: 0,
             mode: CpuMode::Normal,
@@ -76,7 +74,6 @@ impl<M: Mcu> Cpu<M> {
         self.pc = self.read_word(0xFFFC);
         self.set_flag(Flag::InterruptDisabled, true);
         self.irq_pending = false;
-        self.change_irq_flag_pending = None;
         self.microcode_queue.clear();
         self.nmi_requested = false;
         self.mode = CpuMode::Normal;
@@ -89,10 +86,6 @@ impl<M: Mcu> Cpu<M> {
 
     pub fn set_irq(&mut self, enabled: bool) {
         self.irq_pending = enabled;
-    }
-
-    pub(crate) fn pending_set_interrupt_disabled_flag(&mut self, v: bool) {
-        self.change_irq_flag_pending = Some(v);
     }
 
     pub fn is_halted(&self) -> bool {
@@ -546,13 +539,11 @@ impl<M: Mcu> Cpu<M> {
 
     fn plp(&mut self) {
         let saved = self.pop_stack();
-        let saved_break_flag = self.flag(Flag::Break);
-        let cur_i_flag = self.flag(Flag::InterruptDisabled);
-        let saved_i_flag = (saved & Flag::InterruptDisabled as u8) != 0;
+        let break_flag = self.flag(Flag::Break);
+        let not_used = self.flag(Flag::NotUsed);
         self.status = saved;
-        self.set_flag(Flag::Break, saved_break_flag);
-        self.set_flag(Flag::InterruptDisabled, cur_i_flag);
-        self.pending_set_interrupt_disabled_flag(saved_i_flag);
+        self.set_flag(Flag::Break, break_flag);
+        self.set_flag(Flag::NotUsed, not_used);
     }
 
     fn jmp_absolute(&mut self) {
