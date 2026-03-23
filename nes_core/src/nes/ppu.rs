@@ -277,7 +277,6 @@ pub struct Ppu {
     scanline: u16, // 0-261
     dot: u16,      // 0-340
     odd_frame: bool,
-    cancel_nmi_pending: bool,
 }
 
 impl Default for Ppu {
@@ -300,7 +299,6 @@ impl Default for Ppu {
             scanline: 0,
             dot: 0,
             odd_frame: false,
-            cancel_nmi_pending: false,
             old_nmi_enabled_value: None,
         }
     }
@@ -413,20 +411,6 @@ impl Ppu {
 
     pub fn set_renderer(&mut self, renderer: Box<dyn Render>) {
         self.renderer = renderer;
-    }
-
-    pub fn take_cancel_nmi_pending(&mut self) -> bool {
-        let v = self.cancel_nmi_pending;
-        self.cancel_nmi_pending = false;
-        v
-    }
-
-    pub fn nmi_signal(&self) -> bool {
-        self.status.v_blank() && self.ctrl_flags.nmi_enable()
-    }
-
-    pub fn scanline_and_dot(&self) -> (u16, u16) {
-        (self.scanline, self.dot)
     }
 
     /// Read from PPU registers or VRAM/palette data
@@ -701,9 +685,6 @@ impl Ppu {
     /// Read status register (for testing) - behaves like reading from 0x2002
     /// Returns the current status and clears the v_blank flag
     fn read_status(&mut self) -> PpuStatus {
-        if self.scanline == VBLANK_SET_SCANLINE && (self.dot == 1 || self.dot == 2) {
-            self.cancel_nmi_pending = true;
-        }
         let status = self.status;
         // Clear v_blank flag on read (like real hardware)
         self.status = status.with_v_blank(false);
