@@ -1,7 +1,6 @@
+use super::{Cpu, Flag, Register};
+use crate::mcu::Mcu;
 use tinyvec::ArrayVec;
-
-use super::Cpu;
-use crate::{Flag, cpu::cpu2::Register, mcu::Mcu};
 
 macro_rules! microcode_arr {
     ($item1:expr) => {
@@ -118,9 +117,9 @@ macro_rules! microcode_arr {
 }
 
 const fn build_opcode_table() -> [ArrayVec<[Microcode; 7]>; 256] {
+    use opcode::*;
     use Microcode::*;
     use Register::*;
-    use opcode::*;
 
     let mut r = include!("init_microtable.inc.rs");
     r[AND_IMMEDIATE as usize] = microcode_arr!(AndImmediate);
@@ -1459,7 +1458,7 @@ impl BranchTest {
 ///
 /// The `Opcode` enum type was removed; these are defined as a module containing
 /// module-level constants so callers can continue to use `Opcode::NAME` paths.
-mod opcode {
+pub(crate) mod opcode {
     // Load and Save instructions
 
     pub const LDA_IMMEDIATE: u8 = 0xA9;
@@ -2172,47 +2171,44 @@ impl Microcode {
     }
 }
 
-const fn zero_page_load_alu() -> Microcode {
+pub(super) const fn zero_page_load_alu() -> Microcode {
     Microcode::ZeroPage {
         load_into_alu: true,
         save_alu: false,
     }
 }
 
-const fn zero_page_addr() -> Microcode {
+pub(super) const fn zero_page_addr() -> Microcode {
     Microcode::ZeroPage {
         load_into_alu: false,
         save_alu: false,
     }
 }
 
-const fn zero_page_x_load_alu() -> Microcode {
+pub(super) const fn zero_page_x_load_alu() -> Microcode {
     Microcode::ZeroPageIndexedX {
         load_into_alu: true,
         save_alu: false,
     }
 }
 
-const fn zero_page_x_addr() -> Microcode {
+pub(super) const fn zero_page_x_addr() -> Microcode {
     Microcode::ZeroPageIndexedX {
         load_into_alu: false,
         save_alu: false,
     }
 }
 
-const fn zero_page_y_load_alu() -> Microcode {
+pub(super) const fn zero_page_y_load_alu() -> Microcode {
     Microcode::ZeroPageIndexedY {
         load_into_alu: true,
         save_alu: false,
     }
 }
 
-const fn zero_page_y_addr() -> Microcode {
+pub(super) const fn zero_page_y_addr() -> Microcode {
     Microcode::ZeroPageIndexedY {
         load_into_alu: false,
         save_alu: false,
     }
 }
-
-#[cfg(test)]
-mod tests;
