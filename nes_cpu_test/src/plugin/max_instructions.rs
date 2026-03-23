@@ -2,8 +2,7 @@ use nes_core::mcu::Mcu;
 use nes_core::{Cpu, ExecuteResult, Plugin};
 
 /// Plugin that stops execution after a maximum number of instructions.
-#[derive(Debug)]
-#[derive(Default)]
+#[derive(Debug, Default)]
 pub struct MaxInstructions {
     max: u64,
     count: u64,
@@ -18,7 +17,7 @@ impl MaxInstructions {
 impl<M: Mcu> Plugin<M> for MaxInstructions {
     fn start(&mut self, _: &mut Cpu<M>) {}
 
-    fn end(&mut self, _cpu: &mut Cpu<M>, _cycles: u8) {
+    fn end(&mut self, _cpu: &mut Cpu<M>) {
         self.count = self.count.saturating_add(1);
         if self.count > self.max {
             // nothing to do here; should_stop will return Stop
@@ -33,4 +32,3 @@ impl<M: Mcu> Plugin<M> for MaxInstructions {
         }
     }
 }
-

@@ -35,9 +35,9 @@ impl<M: Mcu> Plugin<M> for CompositePlugin<M> {
         }
     }
 
-    fn end(&mut self, cpu: &mut Cpu<M>, cycles: u8) {
+    fn end(&mut self, cpu: &mut Cpu<M>) {
         for p in self.0.iter_mut() {
-            p.end(cpu, cycles);
+            p.end(cpu);
         }
     }
 

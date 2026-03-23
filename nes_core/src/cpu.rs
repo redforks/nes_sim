@@ -38,7 +38,6 @@ pub struct Cpu<M: Mcu> {
     mode: CpuMode,
 
     microcode_queue: VecDeque<Microcode>,
-    total_cycles: u64,
 }
 
 impl<M: Mcu> Cpu<M> {
@@ -56,7 +55,6 @@ impl<M: Mcu> Cpu<M> {
             alu: 0,
             irq_pending: false,
             microcode_queue: VecDeque::with_capacity(8),
-            total_cycles: 0,
             mode: CpuMode::Normal,
             nmi_requested: false,
         }
@@ -94,8 +92,6 @@ impl<M: Mcu> Cpu<M> {
 
     /// Return true if just execute FetchAndDecode microcode, used for plugin to know when instruction just decoded
     fn tick_inner(&mut self) -> bool {
-        self.total_cycles = self.total_cycles.wrapping_add(1);
-
         if self.is_halted() {
             return false;
         }
@@ -159,15 +155,15 @@ impl<M: Mcu> Cpu<M> {
             self.push_microcode(Microcode::FetchAndDecode);
         }
 
-        let before = self.total_cycles;
         plugin.start(self);
+        let mut cycles = 0u8;
         while !self.microcode_queue.is_empty() {
+            cycles = cycles.wrapping_add(1);
             if self.tick_inner() {
                 plugin.decoded(self);
             }
         }
-        let cycles = (self.total_cycles - before) as u8;
-        plugin.end(self, cycles);
+        plugin.end(self);
 
         (plugin.should_stop(), cycles)
     }
@@ -634,7 +630,7 @@ pub trait Plugin<M: Mcu> {
     fn decoded(&mut self, _cpu: &Cpu<M>) {}
 
     /// After execute instruction
-    fn end(&mut self, cpu: &mut Cpu<M>, cycles: u8);
+    fn end(&mut self, cpu: &mut Cpu<M>);
 
     /// After execute an instruction, tell cpu should stop execution or not
     fn should_stop(&self) -> ExecuteResult {
@@ -651,8 +647,8 @@ impl<M: Mcu> Plugin<M> for Box<dyn Plugin<M>> {
         self.as_mut().decoded(cpu);
     }
 
-    fn end(&mut self, cpu: &mut Cpu<M>, cycles: u8) {
-        self.as_mut().end(cpu, cycles);
+    fn end(&mut self, cpu: &mut Cpu<M>) {
+        self.as_mut().end(cpu);
     }
 
     fn should_stop(&self) -> ExecuteResult {
@@ -675,7 +671,7 @@ impl<M: Mcu> EmptyPlugin<M> {
 impl<M: Mcu> Plugin<M> for EmptyPlugin<M> {
     fn start(&mut self, _: &mut Cpu<M>) {}
 
-    fn end(&mut self, _: &mut Cpu<M>, _cycles: u8) {}
+    fn end(&mut self, _: &mut Cpu<M>) {}
 }
 
 impl<M: Mcu> Default for EmptyPlugin<M> {

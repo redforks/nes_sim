@@ -11,7 +11,7 @@ pub struct Console {
 impl<M: Mcu> Plugin<M> for Console {
     fn start(&mut self, _: &mut Cpu<M>) {}
 
-    fn end(&mut self, cpu: &mut Cpu<M>, _cycles: u8) {
+    fn end(&mut self, cpu: &mut Cpu<M>) {
         if cpu.peek_byte(0x6001) != 0xDE
             || cpu.peek_byte(0x6002) != 0xB0
             || cpu.peek_byte(0x6003) != 0x61

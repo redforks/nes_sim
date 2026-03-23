@@ -54,7 +54,7 @@ impl<M: Mcu> Plugin<M> for ReportPlugin {
         self.cycles += cpu.microcodes_len()
     }
 
-    fn end(&mut self, cpu: &mut Cpu<M>, _cycles: u8) {
+    fn end(&mut self, cpu: &mut Cpu<M>) {
         if self.verbose {
             println!(
                 "{:04X}  {:02X} {:02X} {:02X}  A:{:02X} X:{:02X} Y:{:02X} P:{:02X} SP:{:02X} CYC:{}",
