@@ -1,6 +1,8 @@
 use nes_core::mcu::Mcu;
 use nes_core::{Cpu, ExecuteResult, Plugin};
 
+mod simple_disassembly;
+
 // Test ROM completion signature at $6001-$6003
 const TEST_SIGNATURE: [u8; 3] = [0xDE, 0xB0, 0x61];
 const TEST_RESULT_ADDR: u16 = 0x6000;
@@ -56,18 +58,16 @@ impl<M: Mcu> Plugin<M> for ReportPlugin {
 
     fn end(&mut self, cpu: &mut Cpu<M>) {
         if self.verbose {
-            println!(
-                "{:04X}  {:02X} {:02X} {:02X}  A:{:02X} X:{:02X} Y:{:02X} P:{:02X} SP:{:02X} CYC:{}",
-                self.pc,
+            let (op, low, high) = (
                 cpu.peek_byte(self.pc),
                 cpu.peek_byte(self.pc + 1),
                 cpu.peek_byte(self.pc + 2),
-                self.a,
-                self.x,
-                self.y,
-                self.p,
-                self.sp,
-                self.cycles
+            );
+            let instruction = format!("{}", simple_disassembly::AsAsm(op, low, high));
+
+            println!(
+                "{:04X}  {:32}A:{:02X} X:{:02X} Y:{:02X} P:{:02X} SP:{:02X} CYC:{}",
+                self.pc, instruction, self.a, self.x, self.y, self.p, self.sp, self.cycles
             );
         }
 
