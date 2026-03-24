@@ -14,7 +14,6 @@ pub struct ReportPlugin {
     last_result_check: u32,
     pending_result: Option<ExecuteResult>,
 
-    cycles: usize,
     start_cycles: usize,
     a: u8,
     x: u8,
@@ -31,7 +30,6 @@ impl ReportPlugin {
             count: 0,
             last_result_check: 0,
             pending_result: None,
-            cycles: 7, // on startup cpu execute reset sequence which takes 7 cycles
             start_cycles: 0,
             a: 0,
             x: 0,
@@ -45,18 +43,13 @@ impl ReportPlugin {
 
 impl<M: Mcu> Plugin<M> for ReportPlugin {
     fn start(&mut self, cpu: &mut Cpu<M>) {
-        self.start_cycles = self.cycles;
-        self.cycles += 1; // decode opcode takes one cycle
+        self.start_cycles = cpu.total_cycles();
         self.a = cpu.a;
         self.x = cpu.x;
         self.y = cpu.y;
         self.pc = cpu.pc;
         self.sp = cpu.sp;
         self.p = cpu.status;
-    }
-
-    fn decoded(&mut self, cpu: &Cpu<M>) {
-        self.cycles += cpu.microcodes_len()
     }
 
     fn end(&mut self, cpu: &mut Cpu<M>) {

@@ -44,7 +44,6 @@ impl Image {
         }
         let plugin = CompositePlugin::new(plugins);
         let mut machine = Machine::with_plugin(plugin, mcu);
-        machine.reset();
         match start_pc {
             Some(pc) => machine.set_pc(pc),
             None => machine.set_pc(0x400),
@@ -73,7 +72,6 @@ impl Image {
         }
         let plugin = CompositePlugin::new(plugins);
         let mut machine = NesMachine::with_plugin(ines, plugin);
-        machine.reset();
         if let Some(pc) = start_pc {
             machine.set_pc(pc);
         }

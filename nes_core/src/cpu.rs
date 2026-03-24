@@ -27,6 +27,7 @@ pub struct Cpu<M: Mcu> {
     pub pc: u16,
     pub sp: u8,
     pub status: u8,
+    cycles: usize,
     mcu: M,
 
     pub opcode: u8,
@@ -49,6 +50,7 @@ impl<M: Mcu> Cpu<M> {
             pc: 0,
             sp: 0,
             status: Flag::InterruptDisabled as u8,
+            cycles: 0,
             mcu,
             opcode: 0,
             ab: 0,
@@ -80,6 +82,11 @@ impl<M: Mcu> Cpu<M> {
         self.nmi_requested = false;
         self.mode = CpuMode::Normal;
         self.sp = 0xFD;
+        self.cycles = self.cycles.wrapping_add(7);
+    }
+
+    pub fn total_cycles(&self) -> usize {
+        self.cycles
     }
 
     /// Cpu will enter nmi before exec next instrnuction
@@ -97,6 +104,7 @@ impl<M: Mcu> Cpu<M> {
 
     /// Return true if just execute FetchAndDecode microcode, used for plugin to know when instruction just decoded
     fn tick_inner(&mut self) -> bool {
+        self.cycles = self.cycles.wrapping_add(1);
         if self.is_halted() {
             return false;
         }
@@ -162,9 +170,7 @@ impl<M: Mcu> Cpu<M> {
 
         plugin.start(self);
         while !self.microcode_queue.is_empty() {
-            if self.tick_inner() {
-                plugin.decoded(self);
-            }
+            self.tick_inner();
         }
         plugin.end(self);
 
@@ -622,9 +628,6 @@ pub trait Plugin<M: Mcu> {
     /// Before start execute new instruction
     fn start(&mut self, cpu: &mut Cpu<M>);
 
-    /// After fetch and decoded microcodes, before execute
-    fn decoded(&mut self, _cpu: &Cpu<M>) {}
-
     /// After execute instruction
     fn end(&mut self, cpu: &mut Cpu<M>);
 
@@ -637,10 +640,6 @@ pub trait Plugin<M: Mcu> {
 impl<M: Mcu> Plugin<M> for Box<dyn Plugin<M>> {
     fn start(&mut self, cpu: &mut Cpu<M>) {
         self.as_mut().start(cpu);
-    }
-
-    fn decoded(&mut self, cpu: &Cpu<M>) {
-        self.as_mut().decoded(cpu);
     }
 
     fn end(&mut self, cpu: &mut Cpu<M>) {
