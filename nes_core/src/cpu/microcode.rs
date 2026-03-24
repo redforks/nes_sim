@@ -260,6 +260,7 @@ const fn build_opcode_table() -> [ArrayVec<[Microcode; 7]>; 256] {
         StoreR(A)
     );
     r[STA_ABSOLUTE_INDEXED_X as usize] = microcode_arr!(
+        Nop,
         AbsoluteL,
         AbsoluteIndexedX {
             oops: false,
@@ -268,6 +269,7 @@ const fn build_opcode_table() -> [ArrayVec<[Microcode; 7]>; 256] {
         StoreR(A)
     );
     r[STA_ABSOLUTE_INDEXED_Y as usize] = microcode_arr!(
+        Nop,
         AbsoluteL,
         AbsoluteIndexedY {
             oops: false,
@@ -285,6 +287,7 @@ const fn build_opcode_table() -> [ArrayVec<[Microcode; 7]>; 256] {
         StoreR(A)
     );
     r[STA_INDIRECT_INDEXED_Y as usize] = microcode_arr!(
+        Nop,
         zero_page_addr(),
         Indexed {
             load_into_alu: false
