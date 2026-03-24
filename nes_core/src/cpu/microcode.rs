@@ -1185,6 +1185,8 @@ const fn build_opcode_table() -> [ArrayVec<[Microcode; 7]>; 256] {
             load_into_alu: true
         },
         StoreAlu,
+        Nop,
+        Nop,
         Slo
     );
     r[SLO_ABSOLUTE_INDEXED_Y as usize] = microcode_arr!(
@@ -1195,6 +1197,7 @@ const fn build_opcode_table() -> [ArrayVec<[Microcode; 7]>; 256] {
         },
         StoreAlu,
         Nop,
+        Nop,
         Slo
     );
     r[SLO_INDEXED_INDIRECT as usize] = microcode_arr!(
@@ -1203,8 +1206,8 @@ const fn build_opcode_table() -> [ArrayVec<[Microcode; 7]>; 256] {
         Indexed {
             load_into_alu: true
         },
-        Nop,
         StoreAlu,
+        Nop,
         Nop,
         Slo
     );
@@ -1218,6 +1221,7 @@ const fn build_opcode_table() -> [ArrayVec<[Microcode; 7]>; 256] {
             load_into_alu: true
         },
         StoreAlu,
+        Nop,
         Nop,
         Slo
     );
