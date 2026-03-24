@@ -502,6 +502,7 @@ const fn build_opcode_table() -> [ArrayVec<[Microcode; 7]>; 256] {
     r[PLP as usize] = microcode_arr!(Nop, Nop, Plp);
     r[JMP_ABSOLUTE as usize] = microcode_arr!(Absolute, SetPcToAb);
     r[JMP_INDIRECT as usize] = microcode_arr!(
+        Nop,
         AbsoluteL,
         AbsoluteH {
             load_into_alu: false
