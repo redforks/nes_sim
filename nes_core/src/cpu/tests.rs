@@ -17,7 +17,7 @@ fn create_cpu() -> Cpu<MockMcu> {
 
 fn execute_next(cpu: &mut Cpu<MockMcu>) {
     let mut plugin = EmptyPlugin::new();
-    cpu.execute_instruction(&mut plugin);
+    let _ = cpu.execute_instruction(&mut plugin);
 }
 
 #[test]

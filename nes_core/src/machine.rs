@@ -26,6 +26,10 @@ impl<P: Plugin<M>, M: Mcu> Machine<P, M> {
     }
 
     pub fn execute_instruction(&mut self) -> ExecuteResult {
+        self.cpu.execute_instruction(&mut self.p).0
+    }
+
+    pub fn execute_instruction_with_cycles(&mut self) -> (ExecuteResult, usize) {
         self.cpu.execute_instruction(&mut self.p)
     }
 

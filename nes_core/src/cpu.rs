@@ -159,10 +159,12 @@ impl<M: Mcu> Cpu<M> {
         self.tick_inner();
     }
 
-    pub fn execute_instruction<T: Plugin<M>>(&mut self, plugin: &mut T) -> ExecuteResult {
+    pub fn execute_instruction<T: Plugin<M>>(&mut self, plugin: &mut T) -> (ExecuteResult, usize) {
         if self.is_halted() {
-            return ExecuteResult::Halt;
+            return (ExecuteResult::Halt, 0);
         }
+
+        let start_cycles = self.cycles;
 
         if self.microcode_queue.is_empty() {
             self.push_microcode(Microcode::FetchAndDecode);
@@ -174,7 +176,7 @@ impl<M: Mcu> Cpu<M> {
         }
         plugin.end(self);
 
-        plugin.should_stop()
+        (plugin.should_stop(), self.cycles - start_cycles)
     }
 
     fn push_pc(&mut self) {
