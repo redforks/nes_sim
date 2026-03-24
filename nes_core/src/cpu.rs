@@ -145,7 +145,7 @@ impl<M: Mcu> Cpu<M> {
                         Microcode::Nop,
                         Microcode::LoadIrqAddress,
                     ]);
-                    Microcode::IncPc
+                    Microcode::IncPc(1)
                 } else {
                     Microcode::FetchAndDecode
                 }

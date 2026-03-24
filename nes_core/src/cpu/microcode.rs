@@ -510,11 +510,11 @@ const fn build_opcode_table() -> [ArrayVec<[Microcode; 7]>; 256] {
         AbsoluteH {
             load_into_alu: false
         },
-        IncPcDelta(-1),
+        IncPc(-1),
         PushPc,
         SetPcToAb
     );
-    r[RTS as usize] = microcode_arr!(Nop, Nop, PopPc, Nop, IncPc);
+    r[RTS as usize] = microcode_arr!(Nop, Nop, PopPc, Nop, IncPc(1));
     r[RTI as usize] = microcode_arr!(Nop, Plp, Nop, PopPc, Nop);
     r[CLC as usize] = microcode_arr!(Clc);
     r[SEC as usize] = microcode_arr!(Sec);
@@ -612,7 +612,7 @@ const fn build_opcode_table() -> [ArrayVec<[Microcode; 7]>; 256] {
     r[KIL11 as usize] = microcode_arr!(Kill);
     r[KIL12 as usize] = microcode_arr!(Kill);
     r[BRK as usize] = microcode_arr!(
-        IncPc,
+        IncPc(1),
         Nop,
         PushPc,
         PushStatus {
@@ -1442,10 +1442,8 @@ pub enum Microcode {
     Plp,
     /// Pop pc register from stack, it is actually two cycles, append Nop before this Microcode
     PopPc,
-    /// Increment pc register by 1,
-    IncPc,
     /// Increment pc register by delta,
-    IncPcDelta(i8),
+    IncPc(i8),
     /// Push register A to stack
     Pha,
     /// Pop value from stack to register A
@@ -1926,8 +1924,7 @@ impl Microcode {
             Self::BranchRelative(branch_test) => Self::branch_relative(cpu, branch_test),
             Self::Kill => cpu.halt(),
 
-            Self::IncPc => cpu.inc_pc(1),
-            Self::IncPcDelta(delta) => cpu.inc_pc(delta),
+            Self::IncPc(delta) => cpu.inc_pc(delta),
             Self::LoadIrqAddress => {
                 cpu.pc = cpu.read_word(0xFFFE);
             }

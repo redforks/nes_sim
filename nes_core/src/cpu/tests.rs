@@ -4101,7 +4101,7 @@ fn fetch_and_decode_queues_stack_subroutine_jump_flag_misc_sequences() {
             load_into_alu: false
         })
     );
-    assert_eq!(cpu.pop_microcode(), Some(Microcode::IncPcDelta(-1)));
+    assert_eq!(cpu.pop_microcode(), Some(Microcode::IncPc(-1)));
     assert_eq!(cpu.pop_microcode(), Some(Microcode::PushPc));
     assert_eq!(cpu.pop_microcode(), Some(Microcode::SetPcToAb));
 
@@ -4111,7 +4111,7 @@ fn fetch_and_decode_queues_stack_subroutine_jump_flag_misc_sequences() {
     assert_eq!(cpu.pop_microcode(), Some(Microcode::Nop));
     assert_eq!(cpu.pop_microcode(), Some(Microcode::PopPc));
     assert_eq!(cpu.pop_microcode(), Some(Microcode::Nop));
-    assert_eq!(cpu.pop_microcode(), Some(Microcode::IncPc));
+    assert_eq!(cpu.pop_microcode(), Some(Microcode::IncPc(1)));
 
     Microcode::FetchAndDecode.exec(&mut cpu);
     assert_eq!(cpu.opcode, opcode::RTI);
@@ -4155,7 +4155,7 @@ fn fetch_and_decode_queues_stack_subroutine_jump_flag_misc_sequences() {
 
     Microcode::FetchAndDecode.exec(&mut cpu);
     assert_eq!(cpu.opcode, opcode::BRK);
-    assert_eq!(cpu.pop_microcode(), Some(Microcode::IncPc));
+    assert_eq!(cpu.pop_microcode(), Some(Microcode::IncPc(1)));
     assert_eq!(cpu.pop_microcode(), Some(Microcode::Nop));
     assert_eq!(cpu.pop_microcode(), Some(Microcode::PushPc));
     assert_eq!(
