@@ -942,9 +942,12 @@ const fn build_opcode_table() -> [ArrayVec<[Microcode; 7]>; 256] {
         },
         Dcp
     );
-    r[DEC_ZERO_PAGE as usize] = microcode_arr!(zero_page_load_alu(), Dec);
-    r[DEC_ZERO_PAGE_X as usize] = microcode_arr!(zero_page_addr(), zero_page_x_load_alu(), Dec);
+    r[DEC_ZERO_PAGE as usize] = microcode_arr!(Nop, Nop, zero_page_load_alu(), Dec);
+    r[DEC_ZERO_PAGE_X as usize] =
+        microcode_arr!(Nop, Nop, zero_page_addr(), zero_page_x_load_alu(), Dec);
     r[DEC_ABSOLUTE as usize] = microcode_arr!(
+        Nop,
+        Nop,
         AbsoluteL,
         AbsoluteH {
             load_into_alu: true
@@ -952,6 +955,9 @@ const fn build_opcode_table() -> [ArrayVec<[Microcode; 7]>; 256] {
         Dec
     );
     r[DEC_ABSOLUTE_INDEXED_X as usize] = microcode_arr!(
+        Nop,
+        Nop,
+        Nop,
         AbsoluteL,
         AbsoluteIndexedX {
             oops: false,
