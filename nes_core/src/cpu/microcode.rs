@@ -417,6 +417,7 @@ const fn build_opcode_table() -> [ArrayVec<[Microcode; 7]>; 256] {
         StoreAlu
     );
     r[LSR_ABSOLUTE_INDEXED_X as usize] = microcode_arr!(
+        Nop,
         AbsoluteL,
         AbsoluteIndexedX {
             oops: false,
