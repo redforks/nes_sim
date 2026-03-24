@@ -538,11 +538,11 @@ const fn build_opcode_table() -> [ArrayVec<[Microcode; 7]>; 256] {
     r[NOP4 as usize] = microcode_arr!(Nop);
     r[NOP5 as usize] = microcode_arr!(Nop);
     r[NOP6 as usize] = microcode_arr!(Nop);
-    r[NOP_IMMEDIATE1 as usize] = microcode_arr!(SkipImmediate, Nop);
-    r[NOP_IMMEDIATE2 as usize] = microcode_arr!(SkipImmediate, Nop);
-    r[NOP_IMMEDIATE3 as usize] = microcode_arr!(SkipImmediate, Nop);
-    r[NOP_IMMEDIATE4 as usize] = microcode_arr!(SkipImmediate, Nop);
-    r[NOP_IMMEDIATE5 as usize] = microcode_arr!(SkipImmediate, Nop);
+    r[NOP_IMMEDIATE1 as usize] = microcode_arr!(SkipImmediate);
+    r[NOP_IMMEDIATE2 as usize] = microcode_arr!(SkipImmediate);
+    r[NOP_IMMEDIATE3 as usize] = microcode_arr!(SkipImmediate);
+    r[NOP_IMMEDIATE4 as usize] = microcode_arr!(SkipImmediate);
+    r[NOP_IMMEDIATE5 as usize] = microcode_arr!(SkipImmediate);
     r[NOP_ZERO_PAGE1 as usize] = microcode_arr!(SkipImmediate, Nop);
     r[NOP_ZERO_PAGE2 as usize] = microcode_arr!(SkipImmediate, Nop);
     r[NOP_ZERO_PAGE3 as usize] = microcode_arr!(SkipImmediate, Nop);
@@ -562,7 +562,7 @@ const fn build_opcode_table() -> [ArrayVec<[Microcode; 7]>; 256] {
     r[NOP_ABSOLUTE_INDEXED_X1 as usize] = microcode_arr!(
         AbsoluteL,
         AbsoluteIndexedX {
-            oops: false,
+            oops: true,
             load_into_alu: false
         },
         Nop
@@ -570,7 +570,7 @@ const fn build_opcode_table() -> [ArrayVec<[Microcode; 7]>; 256] {
     r[NOP_ABSOLUTE_INDEXED_X2 as usize] = microcode_arr!(
         AbsoluteL,
         AbsoluteIndexedX {
-            oops: false,
+            oops: true,
             load_into_alu: false
         },
         Nop
@@ -578,7 +578,7 @@ const fn build_opcode_table() -> [ArrayVec<[Microcode; 7]>; 256] {
     r[NOP_ABSOLUTE_INDEXED_X3 as usize] = microcode_arr!(
         AbsoluteL,
         AbsoluteIndexedX {
-            oops: false,
+            oops: true,
             load_into_alu: false
         },
         Nop
@@ -586,7 +586,7 @@ const fn build_opcode_table() -> [ArrayVec<[Microcode; 7]>; 256] {
     r[NOP_ABSOLUTE_INDEXED_X4 as usize] = microcode_arr!(
         AbsoluteL,
         AbsoluteIndexedX {
-            oops: false,
+            oops: true,
             load_into_alu: false
         },
         Nop
@@ -594,7 +594,7 @@ const fn build_opcode_table() -> [ArrayVec<[Microcode; 7]>; 256] {
     r[NOP_ABSOLUTE_INDEXED_X5 as usize] = microcode_arr!(
         AbsoluteL,
         AbsoluteIndexedX {
-            oops: false,
+            oops: true,
             load_into_alu: false
         },
         Nop
@@ -602,7 +602,7 @@ const fn build_opcode_table() -> [ArrayVec<[Microcode; 7]>; 256] {
     r[NOP_ABSOLUTE_INDEXED_X6 as usize] = microcode_arr!(
         AbsoluteL,
         AbsoluteIndexedX {
-            oops: false,
+            oops: true,
             load_into_alu: false
         },
         Nop
