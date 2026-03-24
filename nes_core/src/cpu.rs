@@ -82,7 +82,18 @@ impl<M: Mcu> Cpu<M> {
         self.nmi_requested = false;
         self.mode = CpuMode::Normal;
         self.sp = 0xFD;
-        self.cycles = self.cycles.wrapping_add(7);
+        self.cycles = 0;
+
+        // Reset process takes 7 cycles, push 7 Nop microcodes to ppu/apu run as a real device, and make Plugin to get correct total cycles
+        self.push_microcodes(&[
+            Microcode::Nop,
+            Microcode::Nop,
+            Microcode::Nop,
+            Microcode::Nop,
+            Microcode::Nop,
+            Microcode::Nop,
+            Microcode::Nop,
+        ]);
     }
 
     pub fn total_cycles(&self) -> usize {
