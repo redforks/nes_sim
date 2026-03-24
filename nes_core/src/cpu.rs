@@ -102,16 +102,17 @@ impl<M: Mcu> Cpu<M> {
         self.mode == CpuMode::Halt
     }
 
-    /// Return true if just execute FetchAndDecode microcode, used for plugin to know when instruction just decoded
-    fn tick_inner(&mut self) -> bool {
-        self.cycles = self.cycles.wrapping_add(1);
+    /// Return true if just execute current instruction
+    pub fn tick<P: Plugin<M>>(&mut self, plugin: &mut P) -> (ExecuteResult, bool) {
         if self.is_halted() {
-            return false;
+            return (ExecuteResult::Halt, true);
         }
 
         let code = match self.pop_microcode() {
             Some(v) => v,
             None => {
+                plugin.start(self);
+
                 if self.nmi_requested {
                     // reset nmi_requested, because nmi signal is edge detected, ignored if cpu is already in nmi mode
                     self.nmi_requested = false;
@@ -151,32 +152,14 @@ impl<M: Mcu> Cpu<M> {
                 }
             }
         };
+        self.cycles = self.cycles.wrapping_add(1);
         code.exec(self);
-        code == Microcode::FetchAndDecode
-    }
-
-    pub fn tick(&mut self) {
-        self.tick_inner();
-    }
-
-    pub fn execute_instruction<T: Plugin<M>>(&mut self, plugin: &mut T) -> (ExecuteResult, usize) {
-        if self.is_halted() {
-            return (ExecuteResult::Halt, 0);
-        }
-
-        let start_cycles = self.cycles;
-
         if self.microcode_queue.is_empty() {
-            self.push_microcode(Microcode::FetchAndDecode);
+            plugin.end(self);
+            (plugin.should_stop(), true)
+        } else {
+            (ExecuteResult::Continue, false)
         }
-
-        plugin.start(self);
-        while !self.microcode_queue.is_empty() {
-            self.tick_inner();
-        }
-        plugin.end(self);
-
-        (plugin.should_stop(), self.cycles - start_cycles)
     }
 
     fn push_pc(&mut self) {
@@ -589,10 +572,6 @@ impl<M: Mcu> Cpu<M> {
         self.update_zero_flag(result);
         self.update_negative_flag(result);
         result
-    }
-
-    fn push_microcode(&mut self, microcode: Microcode) {
-        self.microcode_queue.push_back(microcode);
     }
 
     pub(crate) fn push_microcodes(&mut self, microcodes: &[Microcode]) {

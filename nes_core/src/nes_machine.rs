@@ -77,28 +77,16 @@ impl<P: Plugin<NesMcu>> NesMachine<P> {
         ExecuteResult::Continue
     }
 
-    pub fn execute_instruction(&mut self) -> ExecuteResult {
-        let (result, cycles) = self.machine.execute_instruction_with_cycles();
-        for _ in 0..cycles {
-            self.machine.mcu_mut().tick_apu();
-        }
-        for _ in 0..cycles * 3 {
-            if self.machine.mcu_mut().tick_ppu() {
-                self.machine.cpu_mut().request_nmi();
-            }
-        }
-        result
-    }
-
     /// Execute one CPU instruction and tick PPU/APU. Returns the `ExecuteResult`.
-    pub fn tick(&mut self) {
-        self.machine.tick();
+    pub fn tick(&mut self) -> ExecuteResult {
+        let result = self.machine.tick();
         self.machine.mcu_mut().tick_apu();
         for _ in 0..3 {
             if self.machine.mcu_mut().tick_ppu() {
                 self.machine.cpu_mut().request_nmi();
             }
         }
+        result
     }
 
     pub fn reset(&mut self) {

@@ -20,17 +20,9 @@ impl<P: Plugin<M>, M: Mcu> Machine<P, M> {
         }
     }
 
-    /// Execute one CPU instruction and return (result, cycles).
-    pub fn tick(&mut self) {
-        self.cpu.tick();
-    }
-
-    pub fn execute_instruction(&mut self) -> ExecuteResult {
-        self.cpu.execute_instruction(&mut self.p).0
-    }
-
-    pub fn execute_instruction_with_cycles(&mut self) -> (ExecuteResult, usize) {
-        self.cpu.execute_instruction(&mut self.p)
+    /// Execute one CPU instruction and return its result and cycle count.
+    pub fn tick(&mut self) -> ExecuteResult {
+        self.cpu.tick(&mut self.p).0
     }
 
     pub fn reset(&mut self) {
