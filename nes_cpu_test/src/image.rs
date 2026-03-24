@@ -1,4 +1,4 @@
-use crate::plugin::{ExitTestPlugin, NesReportPlugin};
+use crate::plugin::{ExitTestPlugin, NesReportPlugin, ReportNesTestResult};
 
 use super::plugin::{CompositePlugin, Console, MonitorTestStatus, ReportPlugin};
 use super::plugin::{DetectDeadLoop, ImageExit, MaxInstructions};
@@ -8,12 +8,16 @@ use nes_core::machine::Machine;
 use nes_core::mcu::RamMcu;
 use nes_core::nes_machine::NesMachine;
 use std::io::Read;
+use std::path::{Path, PathBuf};
 
 mod driver;
 
 pub enum Image {
     Bin(Box<[u8; 64 * 1024]>),
-    INes(Box<INesFile>),
+    INes {
+        nes_file: Box<INesFile>,
+        file_name: PathBuf,
+    },
 }
 
 impl Image {
@@ -25,7 +29,10 @@ impl Image {
     ) -> MachineWrapper {
         match self {
             Image::Bin(arr) => self.create_bin_machine(arr, quiet, start_pc, max_instructions),
-            Image::INes(ines) => self.create_ines_machine(ines, quiet, start_pc, max_instructions),
+            Image::INes {
+                nes_file,
+                file_name,
+            } => self.create_ines_machine(nes_file, file_name, quiet, start_pc, max_instructions),
         }
     }
 
@@ -57,6 +64,7 @@ impl Image {
     fn create_ines_machine(
         &self,
         ines: &INesFile,
+        file_name: &Path,
         quiet: bool,
         start_pc: Option<u16>,
         max_instructions: u64,
@@ -65,11 +73,15 @@ impl Image {
         let mut plugins: Vec<Box<dyn Plugin<nes_core::nes::nes_mcu::NesMcu>>> = vec![
             Box::<Console>::default(),
             Box::new(NesReportPlugin::new(quiet)),
-            Box::new(ExitTestPlugin::new()),
             Box::<MonitorTestStatus>::default(),
             Box::new(DetectDeadLoop::<1>::new()),
             Box::new(DetectDeadLoop::<2>::new()),
         ];
+        if file_name.file_name().is_some_and(|f| f == "nestest.nes") {
+            plugins.push(Box::new(ReportNesTestResult::new()));
+        } else {
+            plugins.push(Box::new(ExitTestPlugin::new()));
+        }
         if max_instructions > 0 {
             // MaxInstructions is generic over Mcu; need to coerce type. MaxInstructions doesn't use Mcu methods so this is fine.
             plugins.push(Box::new(MaxInstructions::new(max_instructions)));
@@ -125,35 +137,38 @@ pub enum LoadError {
     InvalidINes(#[from] nes_core::ines::FormatError),
 }
 
-fn read_file_bytes(f: &str) -> Result<Vec<u8>, LoadError> {
+fn read_file_bytes(f: &Path) -> Result<Vec<u8>, LoadError> {
     let mut f = std::fs::File::open(f)?;
     let mut buf = Vec::new();
     f.read_to_end(&mut buf).unwrap();
     Ok(buf)
 }
 
-pub fn load_image(f: &str) -> Result<Image, LoadError> {
-    if f.ends_with(".bin") {
-        load_bin(f)
-    } else if is_nes_file(f) {
+pub fn load_image(f: PathBuf) -> Result<Image, LoadError> {
+    if f.extension().is_some_and(|ext| ext == "bin") {
+        load_bin(&f)
+    } else if is_nes_file(&f) {
         load_rom(f)
     } else {
         panic!("unknown file type");
     }
 }
 
-fn load_bin(f: &str) -> Result<Image, LoadError> {
+fn load_bin(f: &Path) -> Result<Image, LoadError> {
     let buf = read_file_bytes(f)?;
     assert_eq!(buf.len(), 64 * 1024);
     let arr: [u8; 64 * 1024] = buf.try_into().expect("image file length is not 64k");
     Ok(Image::Bin(Box::new(arr)))
 }
 
-fn is_nes_file(f: &str) -> bool {
+fn is_nes_file(f: &Path) -> bool {
     let buf = read_file_bytes(f).unwrap();
     INesFile::is_valid(&buf)
 }
 
-fn load_rom(f: &str) -> Result<Image, LoadError> {
-    Ok(Image::INes(Box::new(INesFile::new(read_file_bytes(f)?)?)))
+fn load_rom(f: PathBuf) -> Result<Image, LoadError> {
+    Ok(Image::INes {
+        nes_file: Box::new(INesFile::new(read_file_bytes(&f)?)?),
+        file_name: f,
+    })
 }

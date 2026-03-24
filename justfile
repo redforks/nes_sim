@@ -23,7 +23,7 @@ cpu-test:
 
 nes-test:
     cargo build -p nes_cpu_test
-    timeout 45 target/debug/nes_cpu_test -f ../nes-test-roms/other/nestest.nes --start-pc 0xC000 --max-instructions 8991
+    target/debug/nes_cpu_test -f ../nes-test-roms/other/nestest.nes --start-pc 0xC000
 
 wasm-debug-build:
     cd nes_web && wasm-pack build --debug

@@ -105,6 +105,45 @@ impl<M: Mcu> Plugin<M> for ReportPlugin {
     }
 }
 
+/// Check nestest.nes test result,
+pub struct ReportNesTestResult {
+    // saved nes memory 02h and 03h
+    result: Option<u16>,
+}
+
+impl ReportNesTestResult {
+    pub fn new() -> Self {
+        Self { result: None }
+    }
+}
+
+impl<M: Mcu> Plugin<M> for ReportNesTestResult {
+    fn start(&mut self, _cpu: &mut Cpu<M>) {}
+
+    fn end(&mut self, cpu: &mut Cpu<M>) {
+        if cpu.total_cycles() >= 26560 {
+            let low = cpu.peek_byte(0x0002) as u16;
+            let high = cpu.peek_byte(0x0003) as u16;
+            self.result = Some((high << 8) | low);
+        }
+    }
+
+    fn should_stop(&self) -> ExecuteResult {
+        if let Some(result) = self.result {
+            let low = result as u8;
+            if low == 0 {
+                println!("nestest PASSED");
+                ExecuteResult::Stop(0)
+            } else {
+                println!("nestest FAILED with code {:03X}", result);
+                ExecuteResult::Stop(1)
+            }
+        } else {
+            ExecuteResult::Continue
+        }
+    }
+}
+
 // Check for CPU halt - if halted, the test is complete
 pub struct ExitTestPlugin {
     count: u32,

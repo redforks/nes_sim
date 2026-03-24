@@ -1,3 +1,5 @@
+use std::path::PathBuf;
+
 use crate::image::MachineWrapper;
 use ansi_term::Color;
 use clap::Parser;
@@ -10,7 +12,7 @@ mod plugin;
 #[command(author, version, about, long_about = None)]
 struct Args {
     #[arg(short)]
-    f: String,
+    f: PathBuf,
 
     #[arg(short, long)]
     quiet: bool,
@@ -32,7 +34,7 @@ fn main() {
 
     env_logger::init();
 
-    let image = image::load_image(&f).unwrap();
+    let image = image::load_image(f).unwrap();
 
     let start_pc = match start_pc {
         Some(s) => {
