@@ -4194,6 +4194,7 @@ fn fetch_and_decode_queues_shift_and_rotate_sequences() {
 
     Microcode::FetchAndDecode.exec(&mut cpu);
     assert_eq!(cpu.opcode, opcode::ROR_ABSOLUTE_INDEXED_X);
+    assert_eq!(cpu.pop_microcode(), Some(Microcode::Nop));
     assert_eq!(cpu.pop_microcode(), Some(Microcode::AbsoluteL));
     assert_eq!(
         cpu.pop_microcode(),
