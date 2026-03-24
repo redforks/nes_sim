@@ -192,7 +192,11 @@ impl Palette {
 
         // Clamp to valid range [0, 31]
         let addr = addr as usize;
-        if addr >= 32 { 31 } else { addr }
+        if addr >= 32 {
+            31
+        } else {
+            addr
+        }
     }
 
     fn _get_color_idx(&self, start: usize, palette_idx: u8, idx: u8) -> Pixel {
@@ -265,6 +269,7 @@ pub struct Ppu {
     // because nmi is an edge-triggered interrupt, it only triggers when v_blank changes from false to true and nmi_enabled is true,
     // or v_blank is true and nmi_enabled changes from false to true.
     old_nmi_enabled_value: Option<bool>,
+    suppress_vblank_for_current_frame: bool,
 
     mask: PpuMask,
 
@@ -305,6 +310,7 @@ impl Default for Ppu {
             dot: 0,
             odd_frame: false,
             old_nmi_enabled_value: None,
+            suppress_vblank_for_current_frame: false,
         }
     }
 }
@@ -370,7 +376,7 @@ impl Ppu {
         let mut vblank_started = false;
         if self.scanline == VBLANK_SET_SCANLINE && self.dot == 1 {
             let status = self.status;
-            if !status.v_blank() {
+            if !status.v_blank() && !self.suppress_vblank_for_current_frame {
                 debug!(
                     "PPU: VBLANK SET at scanline={}, dot={}",
                     self.scanline, self.dot
@@ -403,6 +409,7 @@ impl Ppu {
             if self.scanline >= SCANLINES_PER_FRAME {
                 debug!("PPU: Frame complete, scanline={} -> 0", self.scanline);
                 self.scanline = 0;
+                self.suppress_vblank_for_current_frame = false;
                 self.odd_frame = !self.odd_frame;
             }
         }
@@ -698,6 +705,9 @@ impl Ppu {
     /// Returns the current status and clears the v_blank flag
     fn read_status(&mut self) -> PpuStatus {
         let status = self.status;
+        if self.scanline == VBLANK_SET_SCANLINE && self.dot <= 1 {
+            self.suppress_vblank_for_current_frame = true;
+        }
         // Clear v_blank flag on read (like real hardware)
         self.status = status.with_v_blank(false);
         status

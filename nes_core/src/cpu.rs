@@ -2,7 +2,7 @@ use crate::mcu::Mcu;
 use std::collections::VecDeque;
 
 mod microcode;
-use self::microcode::Microcode;
+use self::microcode::{Microcode, opcode};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Register {
@@ -35,6 +35,9 @@ pub struct Cpu<M: Mcu> {
     pub alu: u8,
 
     pub(crate) irq_pending: bool,
+    irq_inhibit: bool,
+    pending_irq_inhibit: VecDeque<bool>,
+    instruction_in_progress: bool,
     nmi_requested: bool,
     mode: CpuMode,
 
@@ -56,6 +59,9 @@ impl<M: Mcu> Cpu<M> {
             ab: 0,
             alu: 0,
             irq_pending: false,
+            irq_inhibit: true,
+            pending_irq_inhibit: VecDeque::with_capacity(2),
+            instruction_in_progress: false,
             microcode_queue: VecDeque::with_capacity(8),
             mode: CpuMode::Normal,
             nmi_requested: false,
@@ -78,6 +84,9 @@ impl<M: Mcu> Cpu<M> {
         self.set_flag(Flag::InterruptDisabled, true);
         self.set_flag(Flag::NotUsed, true);
         self.irq_pending = false;
+        self.irq_inhibit = true;
+        self.pending_irq_inhibit.clear();
+        self.instruction_in_progress = false;
         self.microcode_queue.clear();
         self.nmi_requested = false;
         self.mode = CpuMode::Normal;
@@ -109,6 +118,12 @@ impl<M: Mcu> Cpu<M> {
         self.irq_pending = enabled;
     }
 
+    #[cfg(test)]
+    pub(crate) fn force_sync_irq_inhibit_with_flag(&mut self) {
+        self.irq_inhibit = self.flag(Flag::InterruptDisabled);
+        self.pending_irq_inhibit.clear();
+    }
+
     pub fn is_halted(&self) -> bool {
         self.mode == CpuMode::Halt
     }
@@ -119,14 +134,17 @@ impl<M: Mcu> Cpu<M> {
             return (ExecuteResult::Halt, true);
         }
 
+        self.maybe_hijack_interrupt_vector();
+
         let code = match self.pop_microcode() {
             Some(v) => v,
             None => {
                 plugin.start(self);
 
-                if self.nmi_requested {
+                let code = if self.nmi_requested {
                     // reset nmi_requested, because nmi signal is edge detected, ignored if cpu is already in nmi mode
                     self.nmi_requested = false;
+                    self.instruction_in_progress = false;
                     if self.mode == CpuMode::Normal {
                         self.mode = CpuMode::Nmi;
                         // need extra two cycles for cpu to start nmi process
@@ -145,7 +163,8 @@ impl<M: Mcu> Cpu<M> {
                     } else {
                         Microcode::FetchAndDecode
                     }
-                } else if self.irq_pending {
+                } else if self.irq_pending && !self.irq_inhibit {
+                    self.instruction_in_progress = false;
                     self.push_microcodes(&[
                         Microcode::Nop,
                         Microcode::Nop,
@@ -154,18 +173,21 @@ impl<M: Mcu> Cpu<M> {
                             set_disable_interrupt: true,
                             break_flag: false,
                         },
-                        Microcode::Nop,
                         Microcode::LoadIrqAddress,
                     ]);
-                    Microcode::IncPc(1)
+                    Microcode::Nop
                 } else {
+                    self.instruction_in_progress = true;
                     Microcode::FetchAndDecode
-                }
+                };
+
+                code
             }
         };
         self.cycles = self.cycles.wrapping_add(1);
         code.exec(self);
         if self.microcode_queue.is_empty() {
+            self.finish_sequence();
             plugin.end(self);
             (plugin.should_stop(), true)
         } else {
@@ -603,6 +625,69 @@ impl<M: Mcu> Cpu<M> {
     fn retain_cycle(&mut self) {
         self.microcode_queue.push_front(Microcode::Nop);
     }
+
+    fn maybe_hijack_interrupt_vector(&mut self) {
+        if !self.nmi_requested {
+            return;
+        }
+
+        let Some(index) = self
+            .microcode_queue
+            .iter()
+            .position(|code| matches!(code, Microcode::LoadIrqAddress))
+        else {
+            return;
+        };
+
+        if index == 0 {
+            return;
+        }
+
+        for code in self.microcode_queue.iter_mut().skip(index) {
+            *code = match *code {
+                Microcode::LoadIrqAddress => Microcode::LoadNmiAddress,
+                other => other,
+            };
+        }
+        self.nmi_requested = false;
+        self.mode = CpuMode::Nmi;
+    }
+
+    fn finish_instruction(&mut self) {
+        if let Some(irq_inhibit) = self.pending_irq_inhibit.pop_front() {
+            self.irq_inhibit = irq_inhibit;
+        }
+
+        if self.opcode == opcode::RTI {
+            self.mode = CpuMode::Normal;
+        }
+
+        if matches!(self.opcode, opcode::CLI | opcode::SEI | opcode::PLP) {
+            self.pending_irq_inhibit
+                .push_back(self.flag(Flag::InterruptDisabled));
+            return;
+        }
+
+        if self.pending_irq_inhibit.is_empty() {
+            self.irq_inhibit = self.flag(Flag::InterruptDisabled);
+        }
+    }
+
+    fn finish_sequence(&mut self) {
+        if self.instruction_in_progress {
+            self.finish_instruction();
+        } else {
+            if let Some(irq_inhibit) = self.pending_irq_inhibit.pop_front() {
+                self.irq_inhibit = irq_inhibit;
+            }
+
+            if self.pending_irq_inhibit.is_empty() {
+                self.irq_inhibit = self.flag(Flag::InterruptDisabled);
+            }
+        }
+
+        self.instruction_in_progress = false;
+    }
 }
 
 // ExecuteResult, Plugin, EmptyPlugin, and Flag remain from original cpu.rs
@@ -686,9 +771,6 @@ pub enum Flag {
     #[strum(serialize = "N")]
     Negative = 0x80u8,
 }
-
-#[cfg(test)]
-use self::microcode::{zero_page_addr, zero_page_load_alu, zero_page_x_addr};
 
 #[cfg(test)]
 mod tests;

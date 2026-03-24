@@ -117,9 +117,9 @@ macro_rules! microcode_arr {
 }
 
 const fn build_opcode_table() -> [ArrayVec<[Microcode; 7]>; 256] {
-    use opcode::*;
     use Microcode::*;
     use Register::*;
+    use opcode::*;
 
     let mut r = include!("init_microtable.inc.rs");
     r[AND_IMMEDIATE as usize] = microcode_arr!(AndImmediate);
@@ -622,12 +622,12 @@ const fn build_opcode_table() -> [ArrayVec<[Microcode; 7]>; 256] {
     r[BRK as usize] = microcode_arr!(
         IncPc(1),
         Nop,
+        Nop,
         PushPc,
         PushStatus {
             break_flag: true,
             set_disable_interrupt: true,
         },
-        Nop,
         LoadIrqAddress
     );
     r[SBC_IMMEDIATE as usize] = microcode_arr!(SbcImmediate);

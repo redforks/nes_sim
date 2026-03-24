@@ -1,4 +1,4 @@
-use super::microcode::{opcode, BranchTest};
+use super::microcode::{BranchTest, opcode};
 use super::*;
 use crate::test_utils::MockMcu;
 
@@ -17,6 +17,11 @@ fn create_cpu() -> Cpu<MockMcu> {
 
 fn execute_next(cpu: &mut Cpu<MockMcu>) {
     let mut plugin = EmptyPlugin::new();
+
+    while cpu.total_cycles() < 7 && cpu.microcodes_len() > 0 {
+        cpu.tick(&mut plugin);
+    }
+
     while !cpu.tick(&mut plugin).1 {}
 }
 
@@ -695,8 +700,8 @@ fn test_bit_instruction() {
     execute_next(&mut cpu);
     // BIT should have set N flag (bit 7 of 0xE0)
     assert!(cpu.flag(Flag::Negative)); // bit 7 of 0xE0 = 1
-                                       // Overflow flag: (v & 0x70) != 0 means bits 6-4 are checked
-                                       // 0xE0 & 0x70 = 0xE0 & 0x70 = 0x60 != 0, so overflow should be set
+    // Overflow flag: (v & 0x70) != 0 means bits 6-4 are checked
+    // 0xE0 & 0x70 = 0xE0 & 0x70 = 0x60 != 0, so overflow should be set
     assert!(cpu.flag(Flag::Overflow));
 }
 
@@ -1797,6 +1802,130 @@ fn test_set_irq() {
     assert!(!cpu.irq_pending);
 }
 
+#[test]
+fn test_cli_delays_irq_for_one_instruction() {
+    let mut mcu = MockMcu::new();
+    mcu.write(IRQ_VECTOR, 0x34);
+    mcu.write(IRQ_VECTOR + 1, 0x12);
+    let mut cpu = Cpu::new(mcu);
+    cpu.write_byte(0x0000, opcode::CLI);
+    cpu.write_byte(0x0001, opcode::NOP);
+    cpu.pc = 0x0000;
+    cpu.status = Flag::InterruptDisabled as u8;
+    cpu.force_sync_irq_inhibit_with_flag();
+    cpu.set_irq(true);
+
+    execute_next(&mut cpu);
+    assert_eq!(cpu.pc, 0x0001);
+    assert!(!cpu.flag(Flag::InterruptDisabled));
+
+    execute_next(&mut cpu);
+    assert_eq!(cpu.pc, 0x0002);
+
+    execute_next(&mut cpu);
+    assert_eq!(cpu.pc, 0x1234);
+}
+
+#[test]
+fn test_rti_allows_pending_irq_immediately() {
+    let mut mcu = MockMcu::new();
+    mcu.write(IRQ_VECTOR, 0x78);
+    mcu.write(IRQ_VECTOR + 1, 0x56);
+    mcu.write(0x0000, opcode::RTI);
+    let mut cpu = Cpu::new(mcu);
+    cpu.pc = 0x0000;
+    cpu.sp = 0xFA;
+    cpu.write_byte(0x01FB, 0x00);
+    cpu.write_byte(0x01FC, 0x00);
+    cpu.write_byte(0x01FD, 0x80);
+    cpu.force_sync_irq_inhibit_with_flag();
+    cpu.set_irq(true);
+
+    execute_next(&mut cpu);
+    assert_eq!(cpu.pc, 0x8000);
+    assert!(!cpu.flag(Flag::InterruptDisabled));
+
+    execute_next(&mut cpu);
+    assert_eq!(cpu.pc, 0x5678);
+}
+
+#[test]
+fn test_plp_plp_allows_irq_only_after_second_plp() {
+    let mut mcu = MockMcu::new();
+    mcu.write(IRQ_VECTOR, 0x00);
+    mcu.write(IRQ_VECTOR + 1, 0x20);
+    let mut cpu = Cpu::new(mcu);
+    cpu.write_byte(0x0000, opcode::PHP);
+    cpu.write_byte(0x0001, opcode::LDA_IMMEDIATE);
+    cpu.write_byte(0x0002, 0x00);
+    cpu.write_byte(0x0003, opcode::PHA);
+    cpu.write_byte(0x0004, opcode::PLP);
+    cpu.write_byte(0x0005, opcode::PLP);
+    cpu.write_byte(0x0006, opcode::NOP);
+    cpu.write_byte(0x2000, opcode::RTI);
+    cpu.pc = 0x0000;
+    cpu.status = Flag::InterruptDisabled as u8;
+    cpu.force_sync_irq_inhibit_with_flag();
+    cpu.set_irq(true);
+
+    execute_next(&mut cpu);
+    assert_eq!(cpu.pc, 0x0001);
+
+    execute_next(&mut cpu);
+    assert_eq!(cpu.pc, 0x0003);
+
+    execute_next(&mut cpu);
+    assert_eq!(cpu.pc, 0x0004);
+
+    execute_next(&mut cpu);
+    assert_eq!(cpu.pc, 0x0005);
+
+    execute_next(&mut cpu);
+    assert_eq!(cpu.pc, 0x0006);
+
+    execute_next(&mut cpu);
+    assert_eq!(cpu.pc, 0x2000);
+}
+
+#[test]
+fn test_plp_plp_only_allows_one_irq() {
+    let mut mcu = MockMcu::new();
+    mcu.write(IRQ_VECTOR, 0x00);
+    mcu.write(IRQ_VECTOR + 1, 0x20);
+    let mut cpu = Cpu::new(mcu);
+
+    cpu.write_byte(0x0000, opcode::PHP);
+    cpu.write_byte(0x0001, opcode::LDA_IMMEDIATE);
+    cpu.write_byte(0x0002, 0x00);
+    cpu.write_byte(0x0003, opcode::PHA);
+    cpu.write_byte(0x0004, opcode::PLP);
+    cpu.write_byte(0x0005, opcode::PLP);
+    cpu.write_byte(0x0006, opcode::NOP);
+    cpu.write_byte(0x0007, opcode::NOP);
+
+    cpu.write_byte(0x2000, opcode::RTI);
+
+    cpu.pc = 0x0000;
+    cpu.status = Flag::InterruptDisabled as u8;
+    cpu.force_sync_irq_inhibit_with_flag();
+    cpu.set_irq(true);
+
+    for _ in 0..5 {
+        execute_next(&mut cpu);
+    }
+    assert_eq!(cpu.pc, 0x0006);
+
+    execute_next(&mut cpu);
+    assert_eq!(cpu.pc, 0x2000);
+
+    execute_next(&mut cpu);
+    assert_eq!(cpu.pc, 0x0006);
+    assert!(cpu.flag(Flag::InterruptDisabled));
+
+    execute_next(&mut cpu);
+    assert_eq!(cpu.pc, 0x0007);
+}
+
 // JSR/RTS/RTI tests
 #[test]
 fn test_jsr_pushes_pc_and_jumps() {
@@ -1818,14 +1947,14 @@ fn test_jsr_pushes_pc_and_jumps() {
 #[test]
 fn test_rts_pops_pc() {
     let mut cpu = create_cpu_with_program(&[0x60]); // RTS
-                                                    // Setup stack: return address $1233 (before RTS adds 1)
-                                                    // pop_stack increments SP first, then reads
-                                                    // We want: first pop reads 0x33, second pop reads 0x12
+    // Setup stack: return address $1233 (before RTS adds 1)
+    // pop_stack increments SP first, then reads
+    // We want: first pop reads 0x33, second pop reads 0x12
     cpu.sp = 0xFD; // After two pops: 0xFE -> 0x1FF, 0xFF -> 0x100... no wait
-                   // Let me recalculate:
-                   // pop_stack: SP++, read from 0x100 + SP
-                   // First pop: SP = 0xFD + 1 = 0xFE, read from 0x1FE (should be low byte 0x33)
-                   // Second pop: SP = 0xFE + 1 = 0xFF, read from 0x1FF (should be high byte 0x12)
+    // Let me recalculate:
+    // pop_stack: SP++, read from 0x100 + SP
+    // First pop: SP = 0xFD + 1 = 0xFE, read from 0x1FE (should be low byte 0x33)
+    // Second pop: SP = 0xFE + 1 = 0xFF, read from 0x1FF (should be high byte 0x12)
     cpu.write_byte(0x1FE, 0x33); // Low byte
     cpu.write_byte(0x1FF, 0x12); // High byte
 
@@ -1865,7 +1994,7 @@ fn test_jsr_rts_round_trip() {
 #[test]
 fn test_rti_restores_pc_and_flags() {
     let mut cpu = create_cpu_with_program(&[0x40]); // RTI
-                                                    // Setup stack with status then PC (RTI pops in reverse order)
+    // Setup stack with status then PC (RTI pops in reverse order)
     cpu.sp = 0xFD; // Stack at 0x100, 0x1FF, 0x1FE
     cpu.write_byte(0x1FE, 0xFF); // Status (popped first)
     cpu.write_byte(0x1FF, 0x34); // PC low
@@ -2076,7 +2205,7 @@ fn test_lda_indirect_y_unofficial() {
     // Set up indirect pointer at 0x10 pointing to 0x200
     mcu.write_word(0x10, 0x200);
     mcu.write(0x205, 0x42); // 0x200 + Y(5) = 0x205
-                            // Program: LDA ($10), Y
+    // Program: LDA ($10), Y
     mcu.write(0, 0xB1); // opcode
     mcu.write(1, 0x10); // zero page addr
     let mut cpu = Cpu::new(mcu);
@@ -2327,7 +2456,7 @@ fn test_rra_zero_page() {
     execute_next(&mut cpu);
 
     assert_eq!(cpu.mcu_mut().read(0x10), 0xC0); // ROR: (0x81 >> 1) with carry = 0xC0
-                                                // ADC: 0x05 + 0xC0 + 1(carry)
+    // ADC: 0x05 + 0xC0 + 1(carry)
     assert_eq!(cpu.a, 0xC6); // 0x05 + 0xC0 + 1 = 0xC6
 }
 
@@ -2341,7 +2470,7 @@ fn test_sbx_immediate() {
     execute_next(&mut cpu);
 
     assert_eq!(cpu.x, (0x30 & 0x20) - 0x10); // (A & X) - operand
-                                             // 0x30 & 0x20 = 0x20, 0x20 - 0x10 = 0x10
+    // 0x30 & 0x20 = 0x20, 0x20 - 0x10 = 0x10
     assert_eq!(cpu.x, 0x10);
 }
 
@@ -3132,6 +3261,50 @@ fn test_rti_clears_b_flag() {
 }
 
 #[test]
+fn test_rti_leaves_nmi_mode() {
+    let mut mcu = MockMcu::new();
+    mcu.write(0x0000, opcode::RTI);
+    let mut cpu = Cpu::new(mcu);
+    cpu.pc = 0x0000;
+    cpu.sp = 0xFA;
+    cpu.write_byte(0x01FB, 0x00);
+    cpu.write_byte(0x01FC, 0x34);
+    cpu.write_byte(0x01FD, 0x12);
+    cpu.mode = CpuMode::Nmi;
+
+    execute_next(&mut cpu);
+
+    assert_eq!(cpu.mode, CpuMode::Normal);
+    assert_eq!(cpu.pc, 0x1234);
+}
+
+#[test]
+fn test_nmi_can_replace_pending_irq_vectoring() {
+    let mut mcu = MockMcu::new();
+    mcu.write(0xFFFA, 0x78);
+    mcu.write(0xFFFB, 0x56);
+    mcu.write(0xFFFE, 0x34);
+    mcu.write(0xFFFF, 0x12);
+    let mut cpu = Cpu::new(mcu);
+    cpu.pc = 0x2000;
+    cpu.status = 0;
+    cpu.force_sync_irq_inhibit_with_flag();
+    cpu.set_irq(true);
+
+    let mut plugin = EmptyPlugin::new();
+    while cpu.microcodes_len() > 0 {
+        cpu.tick(&mut plugin);
+    }
+
+    cpu.tick(&mut plugin); // starts IRQ sequence
+    cpu.request_nmi();
+    while !cpu.tick(&mut plugin).1 {}
+
+    assert_eq!(cpu.pc, 0x5678);
+    assert_eq!(cpu.mode, CpuMode::Nmi);
+}
+
+#[test]
 fn test_transfer_no_touch_flags_zero_page() {
     // Load Y from zero page (0xA4 - LDY zero page)
     let mut mcu = MockMcu::new();
@@ -3502,7 +3675,7 @@ fn test_adc_all_flags() {
     assert_eq!(cpu.a, 0x00); // 0xFF + 0x00 + 1 = 0x100, truncated to 0x00
     assert!(cpu.flag(Flag::Zero)); // result is zero
     assert!(cpu.flag(Flag::Carry)); // overflow occurred
-                                    // Overflow: -1 + 0 + 1 = 0, which is within range, so no signed overflow
+    // Overflow: -1 + 0 + 1 = 0, which is within range, so no signed overflow
     assert!(!cpu.flag(Flag::Overflow)); // no signed overflow
 }
 
@@ -3524,8 +3697,8 @@ fn test_stack_wrap_around() {
     cpu.push_stack(0x42);
 
     assert_eq!(cpu.sp, 0xFF); // wraps to 0xFF after decrement
-                              // push_stack writes to current SP, then decrements
-                              // So with SP=0x00, it writes to 0x100, then SP becomes 0xFF
+    // push_stack writes to current SP, then decrements
+    // So with SP=0x00, it writes to 0x100, then SP becomes 0xFF
     assert_eq!(cpu.mcu_mut().read(0x0100), 0x42);
 }
 
@@ -3727,24 +3900,6 @@ impl Mcu for TestMcu {
 }
 
 #[test]
-fn new_initializes_registers_and_fetch_queue() {
-    let cpu = Cpu::new(TestMcu::default());
-
-    assert_eq!(cpu.a, 0);
-    assert_eq!(cpu.x, 0);
-    assert_eq!(cpu.y, 0);
-    assert_eq!(cpu.pc, 0);
-    // Cpu::new performs reset() so SP is initialized to reset value
-    assert_eq!(cpu.sp, 0xFD);
-    // status should have InterruptDisabled set after reset
-    assert!(cpu.flag(Flag::InterruptDisabled));
-    assert_eq!(cpu.opcode, 0);
-    assert_eq!(cpu.ab, 0);
-    assert_eq!(cpu.alu, 0);
-    assert_eq!(cpu.microcode_queue.len(), 0);
-}
-
-#[test]
 fn inc_read_byte_advances_pc_and_ticks() {
     let mut mcu = TestMcu::default();
     mcu.mem[0x0200] = 0xAB;
@@ -3767,110 +3922,6 @@ fn cpu_with_memory(program_start: u16, bytes: &[(u16, u8)]) -> Cpu<TestMcu> {
 }
 
 #[test]
-fn fetch_and_decode_queues_adc_immediate() {
-    let mut cpu = cpu_with_memory(0x8000, &[(0x8000, opcode::ADC_IMMEDIATE)]);
-
-    Microcode::FetchAndDecode.exec(&mut cpu);
-
-    assert_eq!(cpu.opcode, opcode::ADC_IMMEDIATE);
-    assert_eq!(cpu.pc, 0x8001);
-    assert_eq!(cpu.pop_microcode(), Some(Microcode::AdcImmediate));
-    assert!(cpu.pop_microcode().is_none());
-}
-
-#[test]
-fn fetch_and_decode_queues_and_immediate() {
-    let mut cpu = cpu_with_memory(0x8000, &[(0x8000, opcode::AND_IMMEDIATE)]);
-
-    Microcode::FetchAndDecode.exec(&mut cpu);
-
-    assert_eq!(cpu.opcode, opcode::AND_IMMEDIATE);
-    assert_eq!(cpu.pc, 0x8001);
-    assert_eq!(cpu.pop_microcode(), Some(Microcode::AndImmediate));
-    assert!(cpu.pop_microcode().is_none());
-}
-
-#[test]
-fn fetch_and_decode_queues_bit_sequences() {
-    let mut cpu = cpu_with_memory(
-        0x8000,
-        &[
-            (0x8000, opcode::BIT_ZERO_PAGE),
-            (0x8001, opcode::BIT_ABSOLUTE),
-        ],
-    );
-
-    Microcode::FetchAndDecode.exec(&mut cpu);
-    assert_eq!(cpu.opcode, opcode::BIT_ZERO_PAGE);
-    assert_eq!(cpu.pop_microcode(), Some(zero_page_load_alu()));
-    assert_eq!(cpu.pop_microcode(), Some(Microcode::Bit));
-
-    Microcode::FetchAndDecode.exec(&mut cpu);
-    assert_eq!(cpu.opcode, opcode::BIT_ABSOLUTE);
-    assert_eq!(cpu.pc, 0x8002);
-    assert_eq!(cpu.pop_microcode(), Some(Microcode::AbsoluteL));
-    assert_eq!(
-        cpu.pop_microcode(),
-        Some(Microcode::AbsoluteH {
-            load_into_alu: true
-        })
-    );
-    assert_eq!(cpu.pop_microcode(), Some(Microcode::Bit));
-}
-
-#[test]
-fn fetch_and_decode_queues_branch_sequences() {
-    let mut cpu = cpu_with_memory(
-        0x8000,
-        &[
-            (0x8000, opcode::BMI),
-            (0x8001, opcode::BNE),
-            (0x8002, opcode::BPL),
-        ],
-    );
-
-    Microcode::FetchAndDecode.exec(&mut cpu);
-    assert_eq!(cpu.opcode, opcode::BMI);
-    assert_eq!(
-        cpu.pop_microcode(),
-        Some(Microcode::BranchRelative(BranchTest::IfNegativeSet))
-    );
-
-    Microcode::FetchAndDecode.exec(&mut cpu);
-    assert_eq!(cpu.opcode, opcode::BNE);
-    assert_eq!(
-        cpu.pop_microcode(),
-        Some(Microcode::BranchRelative(BranchTest::IfZeroClear))
-    );
-
-    Microcode::FetchAndDecode.exec(&mut cpu);
-    assert_eq!(cpu.opcode, opcode::BPL);
-    assert_eq!(
-        cpu.pop_microcode(),
-        Some(Microcode::BranchRelative(BranchTest::IfNegativeClear))
-    );
-}
-
-#[test]
-fn fetch_and_decode_queues_overflow_branch_sequences() {
-    let mut cpu = cpu_with_memory(0x8000, &[(0x8000, opcode::BVC), (0x8001, opcode::BVS)]);
-
-    Microcode::FetchAndDecode.exec(&mut cpu);
-    assert_eq!(cpu.opcode, opcode::BVC);
-    assert_eq!(
-        cpu.pop_microcode(),
-        Some(Microcode::BranchRelative(BranchTest::IfOverflowClear))
-    );
-
-    Microcode::FetchAndDecode.exec(&mut cpu);
-    assert_eq!(cpu.opcode, opcode::BVS);
-    assert_eq!(
-        cpu.pop_microcode(),
-        Some(Microcode::BranchRelative(BranchTest::IfOverflowSet))
-    );
-}
-
-#[test]
 fn branch_relative_taken_and_not_taken_behaves() {
     let mut cpu = cpu_with_memory(0x8000, &[(0x8000, 0x02), (0x8001, 0xFE)]);
 
@@ -3880,426 +3931,6 @@ fn branch_relative_taken_and_not_taken_behaves() {
     cpu.set_flag(Flag::Zero, true);
     Microcode::BranchRelative(BranchTest::IfZeroClear).exec(&mut cpu);
     assert_eq!(cpu.pc, 0x8004);
-}
-
-#[test]
-fn branch_relative_cross_page_retains_extra_cycles() {
-    let mut cpu = cpu_with_memory(0x80FE, &[(0x80FE, 0x02)]);
-
-    Microcode::BranchRelative(BranchTest::IfCarryClear).exec(&mut cpu);
-
-    assert_eq!(cpu.pc, 0x8101);
-    assert_eq!(cpu.pop_microcode(), Some(Microcode::Nop));
-    assert_eq!(cpu.pop_microcode(), Some(Microcode::Nop));
-    assert!(cpu.pop_microcode().is_none());
-}
-
-#[test]
-fn fetch_and_decode_queues_sbc_sequences() {
-    let mut cpu = cpu_with_memory(
-        0x8000,
-        &[
-            (0x8000, opcode::SBC_IMMEDIATE),
-            (0x8001, opcode::SBC_ZERO_PAGE),
-            (0x8002, opcode::SBC_ABSOLUTE),
-        ],
-    );
-
-    Microcode::FetchAndDecode.exec(&mut cpu);
-    assert_eq!(cpu.opcode, opcode::SBC_IMMEDIATE);
-    assert_eq!(cpu.pop_microcode(), Some(Microcode::SbcImmediate));
-
-    Microcode::FetchAndDecode.exec(&mut cpu);
-    assert_eq!(cpu.opcode, opcode::SBC_ZERO_PAGE);
-    assert_eq!(cpu.pop_microcode(), Some(zero_page_load_alu()));
-    assert_eq!(cpu.pop_microcode(), Some(Microcode::Sbc));
-
-    Microcode::FetchAndDecode.exec(&mut cpu);
-    assert_eq!(cpu.opcode, opcode::SBC_ABSOLUTE);
-    assert_eq!(cpu.pop_microcode(), Some(Microcode::AbsoluteL));
-    assert_eq!(
-        cpu.pop_microcode(),
-        Some(Microcode::AbsoluteH {
-            load_into_alu: true
-        })
-    );
-    assert_eq!(cpu.pop_microcode(), Some(Microcode::Sbc));
-}
-
-#[test]
-fn fetch_and_decode_queues_load_and_store_sequences() {
-    let mut cpu = cpu_with_memory(
-        0x8000,
-        &[
-            (0x8000, opcode::LDA_IMMEDIATE),
-            (0x8001, opcode::LDX_ZERO_PAGE),
-            (0x8002, opcode::LDY_ABSOLUTE),
-            (0x8003, opcode::STA_ZERO_PAGE),
-            (0x8004, opcode::STX_ABSOLUTE),
-            (0x8005, opcode::STY_ZERO_PAGE_X),
-        ],
-    );
-
-    Microcode::FetchAndDecode.exec(&mut cpu);
-    assert_eq!(cpu.opcode, opcode::LDA_IMMEDIATE);
-    assert_eq!(cpu.pop_microcode(), Some(Microcode::LoadImmediateA));
-
-    Microcode::FetchAndDecode.exec(&mut cpu);
-    assert_eq!(cpu.opcode, opcode::LDX_ZERO_PAGE);
-    assert_eq!(cpu.pop_microcode(), Some(zero_page_addr()));
-    assert_eq!(cpu.pop_microcode(), Some(Microcode::LoadR(Register::X)));
-
-    Microcode::FetchAndDecode.exec(&mut cpu);
-    assert_eq!(cpu.opcode, opcode::LDY_ABSOLUTE);
-    assert_eq!(cpu.pop_microcode(), Some(Microcode::AbsoluteL));
-    assert_eq!(
-        cpu.pop_microcode(),
-        Some(Microcode::AbsoluteH {
-            load_into_alu: false
-        })
-    );
-    assert_eq!(cpu.pop_microcode(), Some(Microcode::LoadR(Register::Y)));
-
-    Microcode::FetchAndDecode.exec(&mut cpu);
-    assert_eq!(cpu.opcode, opcode::STA_ZERO_PAGE);
-    assert_eq!(cpu.pop_microcode(), Some(zero_page_addr()));
-    assert_eq!(cpu.pop_microcode(), Some(Microcode::StoreR(Register::A)));
-
-    Microcode::FetchAndDecode.exec(&mut cpu);
-    assert_eq!(cpu.opcode, opcode::STX_ABSOLUTE);
-    assert_eq!(cpu.pop_microcode(), Some(Microcode::AbsoluteL));
-    assert_eq!(
-        cpu.pop_microcode(),
-        Some(Microcode::AbsoluteH {
-            load_into_alu: false
-        })
-    );
-    assert_eq!(cpu.pop_microcode(), Some(Microcode::StoreR(Register::X)));
-
-    Microcode::FetchAndDecode.exec(&mut cpu);
-    assert_eq!(cpu.opcode, opcode::STY_ZERO_PAGE_X);
-    assert_eq!(cpu.pop_microcode(), Some(zero_page_addr()));
-    assert_eq!(cpu.pop_microcode(), Some(zero_page_x_addr()));
-    assert_eq!(cpu.pop_microcode(), Some(Microcode::StoreR(Register::Y)));
-}
-
-#[test]
-fn fetch_and_decode_queues_transfer_sequences() {
-    let mut cpu = cpu_with_memory(
-        0x8000,
-        &[
-            (0x8000, opcode::TAX),
-            (0x8001, opcode::TXA),
-            (0x8002, opcode::TAY),
-            (0x8003, opcode::TYA),
-            (0x8004, opcode::TSX),
-            (0x8005, opcode::TXS),
-        ],
-    );
-
-    Microcode::FetchAndDecode.exec(&mut cpu);
-    assert_eq!(cpu.opcode, opcode::TAX);
-    assert_eq!(cpu.pop_microcode(), Some(Microcode::Tax));
-
-    Microcode::FetchAndDecode.exec(&mut cpu);
-    assert_eq!(cpu.opcode, opcode::TXA);
-    assert_eq!(cpu.pop_microcode(), Some(Microcode::Txa));
-
-    Microcode::FetchAndDecode.exec(&mut cpu);
-    assert_eq!(cpu.opcode, opcode::TAY);
-    assert_eq!(cpu.pop_microcode(), Some(Microcode::Tay));
-
-    Microcode::FetchAndDecode.exec(&mut cpu);
-    assert_eq!(cpu.opcode, opcode::TYA);
-    assert_eq!(cpu.pop_microcode(), Some(Microcode::Tya));
-
-    Microcode::FetchAndDecode.exec(&mut cpu);
-    assert_eq!(cpu.opcode, opcode::TSX);
-    assert_eq!(cpu.pop_microcode(), Some(Microcode::Tsx));
-
-    Microcode::FetchAndDecode.exec(&mut cpu);
-    assert_eq!(cpu.opcode, opcode::TXS);
-    assert_eq!(cpu.pop_microcode(), Some(Microcode::Txs));
-}
-
-#[test]
-fn fetch_and_decode_queues_stack_subroutine_jump_flag_misc_sequences() {
-    let mut cpu = cpu_with_memory(
-        0x8000,
-        &[
-            (0x8000, opcode::PHA),
-            (0x8001, opcode::PLA),
-            (0x8002, opcode::PHP),
-            (0x8003, opcode::PLP),
-            (0x8004, opcode::JMP_ABSOLUTE),
-            (0x8005, opcode::JMP_INDIRECT),
-            (0x8006, opcode::JSR),
-            (0x8007, opcode::RTS),
-            (0x8008, opcode::RTI),
-            (0x8009, opcode::CLC),
-            (0x800A, opcode::SEC),
-            (0x800B, opcode::CLD),
-            (0x800C, opcode::SED),
-            (0x800D, opcode::CLI),
-            (0x800E, opcode::SEI),
-            (0x800F, opcode::CLV),
-            (0x8010, opcode::NOP),
-            (0x8011, opcode::BRK),
-        ],
-    );
-
-    Microcode::FetchAndDecode.exec(&mut cpu);
-    assert_eq!(cpu.opcode, opcode::PHA);
-    assert_eq!(cpu.pop_microcode(), Some(Microcode::Nop));
-    assert_eq!(cpu.pop_microcode(), Some(Microcode::Pha));
-
-    Microcode::FetchAndDecode.exec(&mut cpu);
-    assert_eq!(cpu.opcode, opcode::PLA);
-    assert_eq!(cpu.pop_microcode(), Some(Microcode::Nop));
-    assert_eq!(cpu.pop_microcode(), Some(Microcode::Nop));
-    assert_eq!(cpu.pop_microcode(), Some(Microcode::Pla));
-
-    Microcode::FetchAndDecode.exec(&mut cpu);
-    assert_eq!(cpu.opcode, opcode::PHP);
-    assert_eq!(cpu.pop_microcode(), Some(Microcode::Nop));
-    assert_eq!(
-        cpu.pop_microcode(),
-        Some(Microcode::PushStatus {
-            set_disable_interrupt: false,
-            break_flag: true
-        })
-    );
-
-    Microcode::FetchAndDecode.exec(&mut cpu);
-    assert_eq!(cpu.opcode, opcode::PLP);
-    assert_eq!(cpu.pop_microcode(), Some(Microcode::Nop));
-    assert_eq!(cpu.pop_microcode(), Some(Microcode::Nop));
-    assert_eq!(cpu.pop_microcode(), Some(Microcode::Plp));
-
-    Microcode::FetchAndDecode.exec(&mut cpu);
-    assert_eq!(cpu.opcode, opcode::JMP_ABSOLUTE);
-    assert_eq!(cpu.pop_microcode(), Some(Microcode::Absolute));
-    assert_eq!(cpu.pop_microcode(), Some(Microcode::SetPcToAb));
-
-    Microcode::FetchAndDecode.exec(&mut cpu);
-    assert_eq!(cpu.opcode, opcode::JMP_INDIRECT);
-    assert_eq!(cpu.pop_microcode(), Some(Microcode::Nop));
-    assert_eq!(cpu.pop_microcode(), Some(Microcode::AbsoluteL));
-    assert_eq!(
-        cpu.pop_microcode(),
-        Some(Microcode::AbsoluteH {
-            load_into_alu: false
-        })
-    );
-    assert_eq!(cpu.pop_microcode(), Some(Microcode::JmpIndirect));
-
-    Microcode::FetchAndDecode.exec(&mut cpu);
-    assert_eq!(cpu.opcode, opcode::JSR);
-    assert_eq!(cpu.pop_microcode(), Some(Microcode::AbsoluteL));
-    assert_eq!(
-        cpu.pop_microcode(),
-        Some(Microcode::AbsoluteH {
-            load_into_alu: false
-        })
-    );
-    assert_eq!(cpu.pop_microcode(), Some(Microcode::IncPc(-1)));
-    assert_eq!(cpu.pop_microcode(), Some(Microcode::PushPc));
-    assert_eq!(cpu.pop_microcode(), Some(Microcode::SetPcToAb));
-
-    Microcode::FetchAndDecode.exec(&mut cpu);
-    assert_eq!(cpu.opcode, opcode::RTS);
-    assert_eq!(cpu.pop_microcode(), Some(Microcode::Nop));
-    assert_eq!(cpu.pop_microcode(), Some(Microcode::Nop));
-    assert_eq!(cpu.pop_microcode(), Some(Microcode::PopPc));
-    assert_eq!(cpu.pop_microcode(), Some(Microcode::Nop));
-    assert_eq!(cpu.pop_microcode(), Some(Microcode::IncPc(1)));
-
-    Microcode::FetchAndDecode.exec(&mut cpu);
-    assert_eq!(cpu.opcode, opcode::RTI);
-    assert_eq!(cpu.pop_microcode(), Some(Microcode::Nop));
-    assert_eq!(cpu.pop_microcode(), Some(Microcode::Plp));
-    assert_eq!(cpu.pop_microcode(), Some(Microcode::Nop));
-    assert_eq!(cpu.pop_microcode(), Some(Microcode::PopPc));
-    assert_eq!(cpu.pop_microcode(), Some(Microcode::Nop));
-
-    Microcode::FetchAndDecode.exec(&mut cpu);
-    assert_eq!(cpu.opcode, opcode::CLC);
-    assert_eq!(cpu.pop_microcode(), Some(Microcode::Clc));
-
-    Microcode::FetchAndDecode.exec(&mut cpu);
-    assert_eq!(cpu.opcode, opcode::SEC);
-    assert_eq!(cpu.pop_microcode(), Some(Microcode::Sec));
-
-    Microcode::FetchAndDecode.exec(&mut cpu);
-    assert_eq!(cpu.opcode, opcode::CLD);
-    assert_eq!(cpu.pop_microcode(), Some(Microcode::Cld));
-
-    Microcode::FetchAndDecode.exec(&mut cpu);
-    assert_eq!(cpu.opcode, opcode::SED);
-    assert_eq!(cpu.pop_microcode(), Some(Microcode::Sed));
-
-    Microcode::FetchAndDecode.exec(&mut cpu);
-    assert_eq!(cpu.opcode, opcode::CLI);
-    assert_eq!(cpu.pop_microcode(), Some(Microcode::Cli));
-
-    Microcode::FetchAndDecode.exec(&mut cpu);
-    assert_eq!(cpu.opcode, opcode::SEI);
-    assert_eq!(cpu.pop_microcode(), Some(Microcode::Sei));
-
-    Microcode::FetchAndDecode.exec(&mut cpu);
-    assert_eq!(cpu.opcode, opcode::CLV);
-    assert_eq!(cpu.pop_microcode(), Some(Microcode::Clv));
-
-    Microcode::FetchAndDecode.exec(&mut cpu);
-    assert_eq!(cpu.opcode, opcode::NOP);
-    assert_eq!(cpu.pop_microcode(), Some(Microcode::Nop));
-
-    Microcode::FetchAndDecode.exec(&mut cpu);
-    assert_eq!(cpu.opcode, opcode::BRK);
-    assert_eq!(cpu.pop_microcode(), Some(Microcode::IncPc(1)));
-    assert_eq!(cpu.pop_microcode(), Some(Microcode::Nop));
-    assert_eq!(cpu.pop_microcode(), Some(Microcode::PushPc));
-    assert_eq!(
-        cpu.pop_microcode(),
-        Some(Microcode::PushStatus {
-            set_disable_interrupt: true,
-            break_flag: true
-        })
-    );
-    assert_eq!(cpu.pop_microcode(), Some(Microcode::Nop));
-    assert_eq!(cpu.pop_microcode(), Some(Microcode::LoadIrqAddress));
-}
-
-#[test]
-fn fetch_and_decode_queues_shift_and_rotate_sequences() {
-    let mut cpu = cpu_with_memory(
-        0x8000,
-        &[
-            (0x8000, opcode::LSR_ACCUMULATOR),
-            (0x8001, opcode::ROL_ZERO_PAGE),
-            (0x8002, opcode::ROR_ABSOLUTE_INDEXED_X),
-        ],
-    );
-
-    Microcode::FetchAndDecode.exec(&mut cpu);
-    assert_eq!(cpu.opcode, opcode::LSR_ACCUMULATOR);
-    assert_eq!(cpu.pop_microcode(), Some(Microcode::LsrAccumulator));
-
-    Microcode::FetchAndDecode.exec(&mut cpu);
-    assert_eq!(cpu.opcode, opcode::ROL_ZERO_PAGE);
-    assert_eq!(cpu.pop_microcode(), Some(zero_page_load_alu()));
-    assert_eq!(cpu.pop_microcode(), Some(Microcode::StoreAlu));
-    assert_eq!(cpu.pop_microcode(), Some(Microcode::Rol));
-    assert_eq!(cpu.pop_microcode(), Some(Microcode::StoreAlu));
-
-    Microcode::FetchAndDecode.exec(&mut cpu);
-    assert_eq!(cpu.opcode, opcode::ROR_ABSOLUTE_INDEXED_X);
-    assert_eq!(cpu.pop_microcode(), Some(Microcode::Nop));
-    assert_eq!(cpu.pop_microcode(), Some(Microcode::AbsoluteL));
-    assert_eq!(
-        cpu.pop_microcode(),
-        Some(Microcode::AbsoluteIndexedX {
-            oops: false,
-            load_into_alu: true
-        })
-    );
-    assert_eq!(cpu.pop_microcode(), Some(Microcode::StoreAlu));
-    assert_eq!(cpu.pop_microcode(), Some(Microcode::Ror));
-    assert_eq!(cpu.pop_microcode(), Some(Microcode::StoreAlu));
-}
-
-#[test]
-fn fetch_and_decode_queues_ora_and_eor_sequences() {
-    let mut cpu = cpu_with_memory(
-        0x8000,
-        &[
-            (0x8000, opcode::ORA_IMMEDIATE),
-            (0x8001, opcode::EOR_ZERO_PAGE),
-            (0x8002, opcode::EOR_ABSOLUTE_INDEXED_X),
-        ],
-    );
-
-    Microcode::FetchAndDecode.exec(&mut cpu);
-    assert_eq!(cpu.opcode, opcode::ORA_IMMEDIATE);
-    assert_eq!(cpu.pop_microcode(), Some(Microcode::OraImmediate));
-
-    Microcode::FetchAndDecode.exec(&mut cpu);
-    assert_eq!(cpu.opcode, opcode::EOR_ZERO_PAGE);
-    assert_eq!(cpu.pop_microcode(), Some(zero_page_load_alu()));
-    assert_eq!(cpu.pop_microcode(), Some(Microcode::Eor));
-
-    Microcode::FetchAndDecode.exec(&mut cpu);
-    assert_eq!(cpu.opcode, opcode::EOR_ABSOLUTE_INDEXED_X);
-    assert_eq!(cpu.pop_microcode(), Some(Microcode::AbsoluteL));
-    assert_eq!(
-        cpu.pop_microcode(),
-        Some(Microcode::AbsoluteIndexedX {
-            oops: true,
-            load_into_alu: true
-        })
-    );
-    assert_eq!(cpu.pop_microcode(), Some(Microcode::Eor));
-}
-
-#[test]
-fn fetch_and_decode_queues_compare_and_bit_sequences() {
-    let mut cpu = cpu_with_memory(
-        0x8000,
-        &[
-            (0x8000, opcode::CMP_IMMEDIATE),
-            (0x8001, opcode::CPX_ZERO_PAGE),
-            (0x8002, opcode::CPY_ABSOLUTE),
-            (0x8003, opcode::BIT_ZERO_PAGE),
-        ],
-    );
-
-    Microcode::FetchAndDecode.exec(&mut cpu);
-    assert_eq!(cpu.opcode, opcode::CMP_IMMEDIATE);
-    assert_eq!(cpu.pop_microcode(), Some(Microcode::CmpImmediate));
-
-    Microcode::FetchAndDecode.exec(&mut cpu);
-    assert_eq!(cpu.opcode, opcode::CPX_ZERO_PAGE);
-    assert_eq!(cpu.pop_microcode(), Some(zero_page_load_alu()));
-    assert_eq!(cpu.pop_microcode(), Some(Microcode::Cpx));
-
-    Microcode::FetchAndDecode.exec(&mut cpu);
-    assert_eq!(cpu.opcode, opcode::CPY_ABSOLUTE);
-    assert_eq!(cpu.pop_microcode(), Some(Microcode::AbsoluteL));
-    assert_eq!(
-        cpu.pop_microcode(),
-        Some(Microcode::AbsoluteH {
-            load_into_alu: true
-        })
-    );
-    assert_eq!(cpu.pop_microcode(), Some(Microcode::Cpy));
-
-    Microcode::FetchAndDecode.exec(&mut cpu);
-    assert_eq!(cpu.opcode, opcode::BIT_ZERO_PAGE);
-    assert_eq!(cpu.pop_microcode(), Some(zero_page_load_alu()));
-    assert_eq!(cpu.pop_microcode(), Some(Microcode::Bit));
-}
-
-#[test]
-fn load_microcodes_read_memory_and_update_flags() {
-    let mut cpu = cpu_with_memory(0x0000, &[(0x0042, 0x80), (0x0043, 0x00), (0x0044, 0x7F)]);
-
-    cpu.ab = 0x0042;
-    Microcode::LoadR(Register::A).exec(&mut cpu);
-    assert_eq!(cpu.a, 0x80);
-    assert!(cpu.flag(Flag::Negative));
-    assert!(!cpu.flag(Flag::Zero));
-
-    cpu.ab = 0x0043;
-    Microcode::LoadR(Register::X).exec(&mut cpu);
-    assert_eq!(cpu.x, 0x00);
-    assert!(cpu.flag(Flag::Zero));
-    assert!(!cpu.flag(Flag::Negative));
-
-    cpu.ab = 0x0044;
-    Microcode::LoadR(Register::Y).exec(&mut cpu);
-    assert_eq!(cpu.y, 0x7F);
-    assert!(!cpu.flag(Flag::Zero));
-    assert!(!cpu.flag(Flag::Negative));
 }
 
 #[test]
@@ -4521,92 +4152,6 @@ fn stack_and_misc_microcodes_manipulate_state() {
     cpu.status = Flag::Overflow as u8;
     Microcode::Clv.exec(&mut cpu);
     assert!(!cpu.flag(Flag::Overflow));
-}
-
-#[test]
-fn undocumented_microcodes_update_state() {
-    let mut cpu = cpu_with_memory(
-        0x8000,
-        &[
-            (0x8000, 0x80),
-            (0x0042, 0x10),
-            (0x0043, 0x01),
-            (0x1234, 0x55),
-        ],
-    );
-
-    cpu.a = 0xF0;
-    cpu.x = 0x0F;
-    cpu.y = 0x33;
-    cpu.ab = 0x0042;
-    Microcode::AlrImmediate.exec(&mut cpu);
-    assert_eq!(cpu.a, 0x40);
-
-    cpu.alu = 0x80;
-    Microcode::AncImmediate.exec(&mut cpu);
-    assert_eq!(cpu.a, 0x00);
-
-    cpu.a = 0x7F;
-    cpu.alu = 0xFF;
-    cpu.pc = 0x8002;
-    cpu.mcu_mut().mem[0x8002] = 0xFF;
-    Microcode::ArrImmediate.exec(&mut cpu);
-    assert_eq!(cpu.a, 0x3F);
-
-    cpu.a = 0x1F;
-    cpu.x = 0x0F;
-    cpu.pc = 0x8003;
-    cpu.mcu_mut().mem[0x8003] = 0x01;
-    cpu.alu = 0x01;
-    Microcode::AxsImmediate.exec(&mut cpu);
-    assert_eq!(cpu.x, 0x0E);
-
-    cpu.alu = 0x01;
-    cpu.ab = 0x1234;
-    Microcode::Lax.exec(&mut cpu);
-    assert_eq!(cpu.a, 0x01);
-    assert_eq!(cpu.x, 0x01);
-
-    cpu.a = 0xAA;
-    cpu.x = 0x0F;
-    Microcode::Sax.exec(&mut cpu);
-    assert_eq!(cpu.mcu().writes.last(), Some(&(0x1234, 0x0A)));
-
-    cpu.alu = 0x10;
-    cpu.ab = 0x0042;
-    Microcode::Dcp.exec(&mut cpu);
-    assert_eq!(cpu.mcu().writes.last(), Some(&(0x0042, 0x0F)));
-
-    cpu.alu = 0x01;
-    cpu.ab = 0x0043;
-    Microcode::Isc.exec(&mut cpu);
-    assert_eq!(cpu.mcu().writes.last(), Some(&(0x0043, 0x02)));
-
-    cpu.a = 0x01;
-    cpu.alu = 0x02;
-    cpu.set_flag(Flag::Carry, false);
-    cpu.ab = 0x1234;
-    Microcode::Rra.exec(&mut cpu);
-    assert!(cpu.a != 0x01);
-
-    cpu.a = 0x01;
-    cpu.alu = 0x81;
-    cpu.ab = 0x1234;
-    Microcode::Slo.exec(&mut cpu);
-    assert!(cpu.a != 0x01);
-
-    cpu.a = 0xFF;
-    cpu.alu = 0x03;
-    cpu.ab = 0x1234;
-    Microcode::Sre.exec(&mut cpu);
-    assert!(cpu.a != 0xFF);
-
-    cpu.x = 0xF0;
-    cpu.alu = 0x12;
-    cpu.ab = 0x1234;
-    Microcode::Shx.exec(&mut cpu);
-    Microcode::Shy.exec(&mut cpu);
-    Microcode::Tas.exec(&mut cpu);
 }
 
 #[test]

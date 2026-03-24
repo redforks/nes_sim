@@ -1,4 +1,4 @@
-use crate::{EmptyPlugin, ExecuteResult, Plugin, ines::INesFile, machine::Machine, nes::NesMcu};
+use crate::{ines::INesFile, machine::Machine, nes::NesMcu, EmptyPlugin, ExecuteResult, Plugin};
 
 /// Safety limit: maximum CPU instruction ticks per `process_frame()` call.
 /// Two full frames worth of ticks; prevents an infinite loop if VBlank never fires
@@ -81,6 +81,8 @@ impl<P: Plugin<NesMcu>> NesMachine<P> {
     pub fn tick(&mut self) -> ExecuteResult {
         let result = self.machine.tick();
         self.machine.mcu_mut().tick_apu();
+        let apu_irq = self.machine.mcu().apu_irq_pending();
+        self.machine.cpu_mut().set_irq(apu_irq);
         for _ in 0..3 {
             if self.machine.mcu_mut().tick_ppu() {
                 self.machine.cpu_mut().request_nmi();

@@ -80,6 +80,10 @@ impl NesMcu {
         self.apu.tick()
     }
 
+    pub fn apu_irq_pending(&self) -> bool {
+        self.apu.request_irq()
+    }
+
     pub fn ppu_timing(&self) -> (u16, u16) {
         self.ppu.timing()
     }

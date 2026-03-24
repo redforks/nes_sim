@@ -320,6 +320,36 @@ fn test_read_status_clears_vblank() {
 }
 
 #[test]
+fn test_read_status_at_vblank_start_suppresses_vblank_for_frame() {
+    let (mut ppu, pattern) = new_test_ppu_and_pattern();
+    ppu.scanline = 241;
+    ppu.dot = 1;
+
+    let status = ppu.read_status();
+    assert!(!status.v_blank());
+
+    let tick = ppu.tick(&pattern);
+    assert!(!tick.vblank_started);
+    assert!(!ppu.status.v_blank());
+}
+
+#[test]
+fn test_vblank_starts_on_scanline_241_dot_1() {
+    let (mut ppu, pattern) = new_test_ppu_and_pattern();
+    ppu.scanline = 241;
+    ppu.dot = 0;
+
+    let tick0 = ppu.tick(&pattern);
+    assert!(!tick0.vblank_started);
+    assert_eq!(ppu.scanline, 241);
+    assert_eq!(ppu.dot, 1);
+
+    let tick1 = ppu.tick(&pattern);
+    assert!(tick1.vblank_started);
+    assert!(ppu.status.v_blank());
+}
+
+#[test]
 fn test_write_0x2006_set_data_addr() {
     let (mut ppu, _pattern) = new_test_ppu_and_pattern();
 
