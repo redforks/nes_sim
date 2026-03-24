@@ -1,29 +1,25 @@
 cpu-test:
     cargo run -p nes_cpu_test --release -- --quiet -f nes_cpu_test/src/6502_functional_test.bin
-    cargo run -p nes_cpu_test --release -- --quiet -f ../nes-test-roms/instr_misc/rom_singles/01-abs_x_wrap.nes
-    cargo run -p nes_cpu_test --release -- --quiet -f ../nes-test-roms/instr_test-v5/rom_singles/01-basics.nes
-    cargo run -p nes_cpu_test --release -- --quiet -f ../nes-test-roms/instr_test-v5/rom_singles/02-implied.nes
-    cargo run -p nes_cpu_test --release -- --quiet -f ../nes-test-roms/instr_test-v5/rom_singles/03-immediate.nes
-    cargo run -p nes_cpu_test --release -- --quiet -f ../nes-test-roms/instr_test-v5/rom_singles/04-zero_page.nes
-    cargo run -p nes_cpu_test --release -- --quiet -f ../nes-test-roms/instr_test-v5/rom_singles/05-zp_xy.nes
-    cargo run -p nes_cpu_test --release -- --quiet -f ../nes-test-roms/instr_test-v5/rom_singles/06-absolute.nes
-    cargo run -p nes_cpu_test --release -- --quiet -f ../nes-test-roms/instr_test-v5/rom_singles/07-abs_xy.nes
-    cargo run -p nes_cpu_test --release -- --quiet -f ../nes-test-roms/instr_test-v5/rom_singles/08-ind_x.nes
-    cargo run -p nes_cpu_test --release -- --quiet -f ../nes-test-roms/instr_test-v5/rom_singles/09-ind_y.nes
-    cargo run -p nes_cpu_test --release -- --quiet -f ../nes-test-roms/instr_test-v5/rom_singles/10-branches.nes
-    cargo run -p nes_cpu_test --release -- --quiet -f ../nes-test-roms/instr_test-v5/rom_singles/11-stack.nes
-    cargo run -p nes_cpu_test --release -- --quiet -f ../nes-test-roms/instr_test-v5/rom_singles/12-jmp_jsr.nes
-    cargo run -p nes_cpu_test --release -- --quiet -f ../nes-test-roms/instr_test-v5/rom_singles/13-rts.nes
-    cargo run -p nes_cpu_test --release -- --quiet -f ../nes-test-roms/instr_test-v5/rom_singles/14-rti.nes
-    cargo run -p nes_cpu_test --release -- --quiet -f ../nes-test-roms/instr_test-v5/rom_singles/15-brk.nes
-    cargo run -p nes_cpu_test --release -- --quiet -f ../nes-test-roms/instr_test-v5/rom_singles/16-special.nes
+
+instr_misc:
+    cargo run -p nes_cpu_test --release -- --quiet -f ../nes-test-roms/instr_misc/instr_misc.nes
+
+instr_test-v3:
+    cargo run -p nes_cpu_test --release -- --quiet -f ../nes-test-roms/instr_test-v3/all_instrs.nes
+
+instr_test-v5:
+    cargo run -p nes_cpu_test --release -- --quiet -f ../nes-test-roms/instr_test-v5/all_instrs.nes
+
+cpu_interrupts_v2:
     cargo run -p nes_cpu_test --release -- --quiet -f ../nes-test-roms/cpu_interrupts_v2/rom_singles/1-cli_latency.nes
-    # cargo run -p nes_cpu_test --release -- --quiet -f ../nes-test-roms/ppu_vbl_nmi/ppu_vbl_nmi.nes
-    # cargo run -p nes_cpu_test --release -- -f ../nes-test-roms/cpu_dummy_reads/cpu_dummy_reads.nes
+    cargo run -p nes_cpu_test --release -- --quiet -f ../nes-test-roms/cpu_interrupts_v2/rom_singles/2-nmi_add_brk.nes
 
 nes-test:
-    cargo build -p nes_cpu_test
-    target/debug/nes_cpu_test -f ../nes-test-roms/other/nestest.nes --start-pc 0xC000
+    cargo build -p nes_cpu_test -- -f ../nes-test-roms/other/nestest.nes --start-pc 0xC000
+
+rom-test: cpu-test instr_misc instr_test-v5 instr_test-v3 nes-test cpu_interrupts_v2
+    # cargo run -p nes_cpu_test --release -- --quiet -f ../nes-test-roms/ppu_vbl_nmi/ppu_vbl_nmi.nes
+    # cargo run -p nes_cpu_test --release -- -f ../nes-test-roms/cpu_dummy_reads/cpu_dummy_reads.nes
 
 wasm-debug-build:
     cd nes_web && wasm-pack build --debug
