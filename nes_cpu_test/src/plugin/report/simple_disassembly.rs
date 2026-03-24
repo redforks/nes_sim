@@ -13,10 +13,17 @@ enum Addressing {
     Indirect,
     IndexedIndirect,
     IndirectIndexed,
+    RelativeJump,
 }
 
 impl Addressing {
-    fn format(self, f: &mut Formatter<'_>, low: u8, high: u8) -> Result<(), std::fmt::Error> {
+    fn format(
+        self,
+        f: &mut Formatter<'_>,
+        pc: u16,
+        low: u8,
+        high: u8,
+    ) -> Result<(), std::fmt::Error> {
         match self {
             Addressing::None => Ok(()),
             Addressing::Immediate => write!(f, "#${:02X}", low),
@@ -29,6 +36,10 @@ impl Addressing {
             Addressing::Indirect => write!(f, "(${:02X}{:02X})", high, low),
             Addressing::IndexedIndirect => write!(f, "(${:02X},X)", low),
             Addressing::IndirectIndexed => write!(f, "(${:02X}),Y", low),
+            Addressing::RelativeJump => {
+                let target = pc.wrapping_add(2).wrapping_add((low as i8) as i16 as u16);
+                write!(f, "${:04X}", target)
+            }
         }
     }
 
@@ -45,6 +56,7 @@ impl Addressing {
             Addressing::Indirect => 2,
             Addressing::IndexedIndirect => 1,
             Addressing::IndirectIndexed => 1,
+            Addressing::RelativeJump => 1,
         }
     }
 }
@@ -60,27 +72,33 @@ impl Op {
         Self { name, addressing }
     }
 
-    fn format(self, f: &mut Formatter<'_>, low: u8, high: u8) -> Result<(), std::fmt::Error> {
+    fn format(
+        self,
+        f: &mut Formatter<'_>,
+        pc: u16,
+        low: u8,
+        high: u8,
+    ) -> Result<(), std::fmt::Error> {
         write!(f, "{} ", self.name)?;
-        self.addressing.format(f, low, high)
+        self.addressing.format(f, pc, low, high)
     }
 }
 
-pub struct AsAsm(pub u8, pub u8, pub u8);
+pub struct AsAsm(pub u8, pub u16, pub u8, pub u8);
 
 impl Display for AsAsm {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         let op = OPCODES[self.0 as usize];
         write!(f, "{:02X} ", self.0)?;
         match op.addressing.operand_len() {
-            1 => write!(f, "{:02X}     ", self.1)?,
+            1 => write!(f, "{:02X}     ", self.2)?,
             2 => {
-                write!(f, "{:02X} ", self.1)?;
-                write!(f, "{:02X}  ", self.2)?;
+                write!(f, "{:02X} ", self.2)?;
+                write!(f, "{:02X}  ", self.3)?;
             }
             _ => write!(f, "       ")?,
         }
-        op.format(f, self.1, self.2)
+        op.format(f, self.1, self.2, self.3)
     }
 }
 
@@ -101,7 +119,7 @@ static OPCODES: [Op; 256] = [
     /* 0x0D */ Op::new("ORA", Addressing::Absolute),
     /* 0x0E */ Op::new("ASL", Addressing::Absolute),
     /* 0x0F */ Op::new("SLO", Addressing::Absolute),
-    /* 0x10 */ Op::new("BPL", Addressing::None),
+    /* 0x10 */ Op::new("BPL", Addressing::RelativeJump),
     /* 0x11 */ Op::new("ORA", Addressing::IndirectIndexed),
     /* 0x12 */ Op::new("KIL", Addressing::None),
     /* 0x13 */ Op::new("SLO", Addressing::IndirectIndexed),
@@ -133,7 +151,7 @@ static OPCODES: [Op; 256] = [
     /* 0x2D */ Op::new("AND", Addressing::Absolute),
     /* 0x2E */ Op::new("ROL", Addressing::Absolute),
     /* 0x2F */ Op::new("RLA", Addressing::Absolute),
-    /* 0x30 */ Op::new("BMI", Addressing::None),
+    /* 0x30 */ Op::new("BMI", Addressing::RelativeJump),
     /* 0x31 */ Op::new("AND", Addressing::IndirectIndexed),
     /* 0x32 */ Op::new("KIL", Addressing::None),
     /* 0x33 */ Op::new("RLA", Addressing::IndirectIndexed),
@@ -165,7 +183,7 @@ static OPCODES: [Op; 256] = [
     /* 0x4D */ Op::new("EOR", Addressing::Absolute),
     /* 0x4E */ Op::new("LSR", Addressing::Absolute),
     /* 0x4F */ Op::new("SRE", Addressing::Absolute),
-    /* 0x50 */ Op::new("BVC", Addressing::None),
+    /* 0x50 */ Op::new("BVC", Addressing::RelativeJump),
     /* 0x51 */ Op::new("EOR", Addressing::IndirectIndexed),
     /* 0x52 */ Op::new("KIL", Addressing::None),
     /* 0x53 */ Op::new("SRE", Addressing::IndirectIndexed),
@@ -197,7 +215,7 @@ static OPCODES: [Op; 256] = [
     /* 0x6D */ Op::new("ADC", Addressing::Absolute),
     /* 0x6E */ Op::new("ROR", Addressing::Absolute),
     /* 0x6F */ Op::new("RRA", Addressing::Absolute),
-    /* 0x70 */ Op::new("BVS", Addressing::None),
+    /* 0x70 */ Op::new("BVS", Addressing::RelativeJump),
     /* 0x71 */ Op::new("ADC", Addressing::IndirectIndexed),
     /* 0x72 */ Op::new("KIL", Addressing::None),
     /* 0x73 */ Op::new("RRA", Addressing::IndirectIndexed),
@@ -229,7 +247,7 @@ static OPCODES: [Op; 256] = [
     /* 0x8D */ Op::new("STA", Addressing::Absolute),
     /* 0x8E */ Op::new("STX", Addressing::Absolute),
     /* 0x8F */ Op::new("SAX", Addressing::Absolute),
-    /* 0x90 */ Op::new("BCC", Addressing::None),
+    /* 0x90 */ Op::new("BCC", Addressing::RelativeJump),
     /* 0x91 */ Op::new("STA", Addressing::IndirectIndexed),
     /* 0x92 */ Op::new("KIL", Addressing::None),
     /* 0x93 */ Op::new("AHX", Addressing::IndirectIndexed),
@@ -261,7 +279,7 @@ static OPCODES: [Op; 256] = [
     /* 0xAD */ Op::new("LDA", Addressing::Absolute),
     /* 0xAE */ Op::new("LDX", Addressing::Absolute),
     /* 0xAF */ Op::new("LAX", Addressing::Absolute),
-    /* 0xB0 */ Op::new("BCS", Addressing::None),
+    /* 0xB0 */ Op::new("BCS", Addressing::RelativeJump),
     /* 0xB1 */ Op::new("LDA", Addressing::IndirectIndexed),
     /* 0xB2 */ Op::new("KIL", Addressing::None),
     /* 0xB3 */ Op::new("LAX", Addressing::IndirectIndexed),
@@ -293,7 +311,7 @@ static OPCODES: [Op; 256] = [
     /* 0xCD */ Op::new("CMP", Addressing::Absolute),
     /* 0xCE */ Op::new("DEC", Addressing::Absolute),
     /* 0xCF */ Op::new("DCP", Addressing::Absolute),
-    /* 0xD0 */ Op::new("BNE", Addressing::None),
+    /* 0xD0 */ Op::new("BNE", Addressing::RelativeJump),
     /* 0xD1 */ Op::new("CMP", Addressing::IndirectIndexed),
     /* 0xD2 */ Op::new("KIL", Addressing::None),
     /* 0xD3 */ Op::new("DCP", Addressing::IndirectIndexed),
@@ -325,7 +343,7 @@ static OPCODES: [Op; 256] = [
     /* 0xED */ Op::new("SBC", Addressing::Absolute),
     /* 0xEE */ Op::new("INC", Addressing::Absolute),
     /* 0xEF */ Op::new("ISC", Addressing::Absolute),
-    /* 0xF0 */ Op::new("BEQ", Addressing::None),
+    /* 0xF0 */ Op::new("BEQ", Addressing::RelativeJump),
     /* 0xF1 */ Op::new("SBC", Addressing::IndirectIndexed),
     /* 0xF2 */ Op::new("KIL", Addressing::None),
     /* 0xF3 */ Op::new("ISC", Addressing::IndirectIndexed),

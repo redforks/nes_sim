@@ -66,7 +66,7 @@ impl<M: Mcu> Plugin<M> for ReportPlugin {
                 cpu.peek_byte(self.pc + 1),
                 cpu.peek_byte(self.pc + 2),
             );
-            let instruction = format!("{}", simple_disassembly::AsAsm(op, low, high));
+            let instruction = format!("{}", simple_disassembly::AsAsm(op, self.pc, low, high));
 
             println!(
                 "{:04X}  {:32}A:{:02X} X:{:02X} Y:{:02X} P:{:02X} SP:{:02X} CYC:{}",
