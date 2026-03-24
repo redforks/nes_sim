@@ -79,6 +79,10 @@ impl NesMcu {
     pub fn tick_apu(&mut self) -> bool {
         self.apu.tick()
     }
+
+    pub fn ppu_timing(&self) -> (u16, u16) {
+        self.ppu.timing()
+    }
 }
 
 impl Mcu for NesMcu {

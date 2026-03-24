@@ -1,4 +1,5 @@
 use nes_core::mcu::Mcu;
+use nes_core::nes::NesMcu;
 use nes_core::{Cpu, ExecuteResult, Plugin};
 
 mod simple_disassembly;
@@ -8,12 +9,41 @@ const TEST_SIGNATURE: [u8; 3] = [0xDE, 0xB0, 0x61];
 const TEST_RESULT_ADDR: u16 = 0x6000;
 const TEST_SIGNATURE_ADDR: u16 = 0x6001;
 
-pub struct ReportPlugin {
-    verbose: bool,
-    count: u32,
-    last_result_check: u32,
-    pending_result: Option<ExecuteResult>,
+/// if quiet, do not call inner Plugin,
+struct QuietPlugin<P> {
+    quiet: bool,
+    inner: P,
+}
 
+impl<P> QuietPlugin<P> {
+    pub fn new(quiet: bool, inner: P) -> Self {
+        Self { quiet, inner }
+    }
+}
+
+impl<M: Mcu, P: Plugin<M>> Plugin<M> for QuietPlugin<P> {
+    fn start(&mut self, cpu: &mut Cpu<M>) {
+        if !self.quiet {
+            self.inner.start(cpu);
+        }
+    }
+
+    fn end(&mut self, cpu: &mut Cpu<M>) {
+        if !self.quiet {
+            self.inner.end(cpu);
+        }
+    }
+
+    fn should_stop(&self) -> ExecuteResult {
+        if self.quiet {
+            ExecuteResult::Continue
+        } else {
+            self.inner.should_stop()
+        }
+    }
+}
+
+pub struct ReportPlugin {
     start_cycles: usize,
     a: u8,
     x: u8,
@@ -24,12 +54,8 @@ pub struct ReportPlugin {
 }
 
 impl ReportPlugin {
-    pub fn new(quiet: bool) -> ReportPlugin {
-        ReportPlugin {
-            verbose: !quiet,
-            count: 0,
-            last_result_check: 0,
-            pending_result: None,
+    fn inner_new() -> Self {
+        Self {
             start_cycles: 0,
             a: 0,
             x: 0,
@@ -38,6 +64,24 @@ impl ReportPlugin {
             sp: 0,
             p: 0,
         }
+    }
+
+    pub fn new<M: Mcu>(quiet: bool) -> impl Plugin<M> {
+        QuietPlugin::new(quiet, ReportPlugin::inner_new())
+    }
+
+    fn output<M: Mcu>(&mut self, cpu: &mut Cpu<M>, ppu: &str) {
+        let (op, low, high) = (
+            cpu.peek_byte(self.pc),
+            cpu.peek_byte(self.pc + 1),
+            cpu.peek_byte(self.pc + 2),
+        );
+        let instruction = format!("{}", simple_disassembly::AsAsm(op, self.pc, low, high));
+
+        println!(
+            "{:04X}  {:32}A:{:02X} X:{:02X} Y:{:02X} P:{:02X} SP:{:02X} {}CYC:{}",
+            self.pc, instruction, self.a, self.x, self.y, self.p, self.sp, ppu, self.start_cycles
+        );
     }
 }
 
@@ -53,20 +97,35 @@ impl<M: Mcu> Plugin<M> for ReportPlugin {
     }
 
     fn end(&mut self, cpu: &mut Cpu<M>) {
-        if self.verbose {
-            let (op, low, high) = (
-                cpu.peek_byte(self.pc),
-                cpu.peek_byte(self.pc + 1),
-                cpu.peek_byte(self.pc + 2),
-            );
-            let instruction = format!("{}", simple_disassembly::AsAsm(op, self.pc, low, high));
+        self.output(cpu, "")
+    }
 
-            println!(
-                "{:04X}  {:32}A:{:02X} X:{:02X} Y:{:02X} P:{:02X} SP:{:02X} CYC:{}",
-                self.pc, instruction, self.a, self.x, self.y, self.p, self.sp, self.start_cycles
-            );
+    fn should_stop(&self) -> ExecuteResult {
+        ExecuteResult::Continue
+    }
+}
+
+// Check for CPU halt - if halted, the test is complete
+pub struct ExitTestPlugin {
+    count: u32,
+    last_result_check: u32,
+    pending_result: Option<ExecuteResult>,
+}
+
+impl ExitTestPlugin {
+    pub fn new() -> Self {
+        Self {
+            count: 0,
+            last_result_check: 0,
+            pending_result: None,
         }
+    }
+}
 
+impl<M: Mcu> Plugin<M> for ExitTestPlugin {
+    fn start(&mut self, _cpu: &mut Cpu<M>) {}
+
+    fn end(&mut self, cpu: &mut Cpu<M>) {
         // Check for CPU halt - if halted, the test is complete
         if cpu.is_halted() {
             let result = cpu.peek_byte(TEST_RESULT_ADDR);
@@ -88,21 +147,16 @@ impl<M: Mcu> Plugin<M> for ReportPlugin {
                 }
             }
 
-            if self.verbose {
-                let msg = if result == 0 {
-                    "PASSED".to_string()
-                } else if result == 0x80 {
-                    "FAILED (no result written)".to_string()
-                } else {
-                    format!("FAILED #{}", result)
-                };
-                println!("CPU halted with result: {}", msg);
-                if !text_output.is_empty() {
-                    println!("Test output: {}", text_output);
-                }
-            } else if !text_output.is_empty() {
-                // In quiet mode, just print the test output
-                println!("{}", text_output);
+            let msg = if result == 0 {
+                "PASSED".to_string()
+            } else if result == 0x80 {
+                "FAILED (no result written)".to_string()
+            } else {
+                format!("FAILED #{}", result)
+            };
+            println!("CPU halted with result: {}", msg);
+            if !text_output.is_empty() {
+                println!("Test output: {}", text_output);
             }
 
             // If result is still 0x80, treat as failure
@@ -123,40 +177,45 @@ impl<M: Mcu> Plugin<M> for ReportPlugin {
             ];
             let result = cpu.peek_byte(TEST_RESULT_ADDR);
 
-            // Print debug every 100000 instructions
-            if self.verbose && self.count.is_multiple_of(100000) {
-                // Read first 20 chars of text output
-                let mut text = String::new();
-                for i in 0..20 {
-                    let ch = cpu.peek_byte(0x6004 + i);
-                    if ch == 0 {
-                        break;
-                    }
-                    if (0x20..0x7f).contains(&ch) {
-                        text.push(ch as char);
-                    }
-                }
-                eprintln!(
-                    "DEBUG [{}]: sig={:02x?} result=${:02x} text='{}'",
-                    self.count, sig, result, text
-                );
-            }
-
             if sig == TEST_SIGNATURE && result != 0x80 {
-                if self.verbose {
-                    let msg = if result == 0 {
-                        "PASSED".to_string()
-                    } else {
-                        format!("FAILED #{}", result)
-                    };
-                    println!("Test completed with result: {}", msg);
-                }
+                let msg = if result == 0 {
+                    "PASSED".to_string()
+                } else {
+                    format!("FAILED #{}", result)
+                };
+                println!("Test completed with result: {}", msg);
+
                 self.pending_result = Some(ExecuteResult::Stop(result));
             }
         }
     }
+}
 
-    fn should_stop(&self) -> ExecuteResult {
-        self.pending_result.unwrap_or(ExecuteResult::Continue)
+pub struct NesReportPlugin {
+    inner: ReportPlugin,
+    timing: (u16, u16),
+}
+
+impl NesReportPlugin {
+    pub fn new(quiet: bool) -> impl Plugin<NesMcu> {
+        QuietPlugin::new(
+            quiet,
+            NesReportPlugin {
+                inner: ReportPlugin::inner_new(),
+                timing: (0, 0),
+            },
+        )
+    }
+}
+
+impl Plugin<NesMcu> for NesReportPlugin {
+    fn start(&mut self, cpu: &mut Cpu<NesMcu>) {
+        self.inner.start(cpu);
+        self.timing = cpu.mcu().ppu_timing();
+    }
+
+    fn end(&mut self, cpu: &mut Cpu<NesMcu>) {
+        let ppu = format!("PPU:{:3},{:3} ", self.timing.0, self.timing.1);
+        self.inner.output(cpu, &ppu);
     }
 }

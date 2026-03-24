@@ -1,3 +1,5 @@
+use crate::plugin::{ExitTestPlugin, NesReportPlugin};
+
 use super::plugin::{CompositePlugin, Console, MonitorTestStatus, ReportPlugin};
 use super::plugin::{DetectDeadLoop, ImageExit, MaxInstructions};
 use nes_core::Plugin;
@@ -37,6 +39,7 @@ impl Image {
         let mcu = RamMcu::new(*arr);
         let mut plugins: Vec<Box<dyn Plugin<_>>> = vec![
             Box::new(ReportPlugin::new(quiet)),
+            Box::new(ExitTestPlugin::new()),
             Box::<ImageExit>::default(),
         ];
         if max_instructions > 0 {
@@ -61,7 +64,8 @@ impl Image {
         // Build the composite plugin step by step to handle type coercion
         let mut plugins: Vec<Box<dyn Plugin<nes_core::nes::nes_mcu::NesMcu>>> = vec![
             Box::<Console>::default(),
-            Box::new(ReportPlugin::new(quiet)),
+            Box::new(NesReportPlugin::new(quiet)),
+            Box::new(ExitTestPlugin::new()),
             Box::<MonitorTestStatus>::default(),
             Box::new(DetectDeadLoop::<1>::new()),
             Box::new(DetectDeadLoop::<2>::new()),
