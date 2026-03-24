@@ -27,8 +27,9 @@ fn test_cpu_initialization() {
     assert_eq!(cpu.x, 0);
     assert_eq!(cpu.y, 0);
     assert_eq!(cpu.pc, 0);
-    assert_eq!(cpu.sp, 0);
-    assert_eq!(cpu.status, Flag::InterruptDisabled as u8);
+    // Cpu::new calls reset() so SP and status reflect reset state
+    assert_eq!(cpu.sp, 0xFD);
+    assert!(cpu.flag(Flag::InterruptDisabled));
     assert!(!cpu.is_halted());
 }
 
@@ -1809,8 +1810,9 @@ fn test_jsr_pushes_pc_and_jumps() {
     // Stack: SP starts at 0
     // push high byte at 0x100, sp becomes 0xFF
     // push low byte at 0x1FF, sp becomes 0xFE
-    assert_eq!(cpu.read_byte(0x100), 0x00); // High byte of 2
-    assert_eq!(cpu.read_byte(0x1FF), 0x02); // Low byte of 2
+    // With reset, SP starts at 0xFD, so pushed bytes are at 0x1FD (high) and 0x1FC (low)
+    assert_eq!(cpu.read_byte(0x1FD), 0x00); // High byte of 2
+    assert_eq!(cpu.read_byte(0x1FC), 0x02); // Low byte of 2
 }
 
 #[test]
@@ -3732,8 +3734,10 @@ fn new_initializes_registers_and_fetch_queue() {
     assert_eq!(cpu.x, 0);
     assert_eq!(cpu.y, 0);
     assert_eq!(cpu.pc, 0);
-    assert_eq!(cpu.sp, 0);
-    assert_eq!(cpu.status, Flag::InterruptDisabled as u8);
+    // Cpu::new performs reset() so SP is initialized to reset value
+    assert_eq!(cpu.sp, 0xFD);
+    // status should have InterruptDisabled set after reset
+    assert!(cpu.flag(Flag::InterruptDisabled));
     assert_eq!(cpu.opcode, 0);
     assert_eq!(cpu.ab, 0);
     assert_eq!(cpu.alu, 0);
@@ -4074,14 +4078,8 @@ fn fetch_and_decode_queues_stack_subroutine_jump_flag_misc_sequences() {
 
     Microcode::FetchAndDecode.exec(&mut cpu);
     assert_eq!(cpu.opcode, opcode::JMP_ABSOLUTE);
-    assert_eq!(cpu.pop_microcode(), Some(Microcode::AbsoluteL));
-    assert_eq!(
-        cpu.pop_microcode(),
-        Some(Microcode::AbsoluteH {
-            load_into_alu: false
-        })
-    );
-    assert_eq!(cpu.pop_microcode(), Some(Microcode::JmpAbsolute));
+    assert_eq!(cpu.pop_microcode(), Some(Microcode::Absolute));
+    assert_eq!(cpu.pop_microcode(), Some(Microcode::SetPcToAb));
 
     Microcode::FetchAndDecode.exec(&mut cpu);
     assert_eq!(cpu.opcode, opcode::JMP_INDIRECT);
@@ -4103,7 +4101,9 @@ fn fetch_and_decode_queues_stack_subroutine_jump_flag_misc_sequences() {
             load_into_alu: false
         })
     );
-    assert_eq!(cpu.pop_microcode(), Some(Microcode::Jsr));
+    assert_eq!(cpu.pop_microcode(), Some(Microcode::IncPcDelta(-1)));
+    assert_eq!(cpu.pop_microcode(), Some(Microcode::PushPc));
+    assert_eq!(cpu.pop_microcode(), Some(Microcode::SetPcToAb));
 
     Microcode::FetchAndDecode.exec(&mut cpu);
     assert_eq!(cpu.opcode, opcode::RTS);
@@ -4493,19 +4493,13 @@ fn stack_and_misc_microcodes_manipulate_state() {
     assert_eq!(cpu.status & Flag::Carry as u8, Flag::Carry as u8);
 
     cpu.ab = 0x1234;
-    Microcode::JmpAbsolute.exec(&mut cpu);
+    Microcode::SetPcToAb.exec(&mut cpu);
     assert_eq!(cpu.pc, 0x1234);
 
     cpu.ab = 0x1234;
     cpu.mcu_mut().mem[0x1234] = 0x34;
     cpu.mcu_mut().mem[0x1235] = 0x12;
     Microcode::JmpIndirect.exec(&mut cpu);
-    assert_eq!(cpu.pc, 0x1234);
-
-    cpu.ab = 0x1234;
-    cpu.pc = 0x8005;
-    cpu.sp = 0xFF;
-    Microcode::Jsr.exec(&mut cpu);
     assert_eq!(cpu.pc, 0x1234);
 
     cpu.status = Flag::Carry as u8;

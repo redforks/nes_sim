@@ -555,19 +555,12 @@ impl<M: Mcu> Cpu<M> {
         self.set_flag(Flag::NotUsed, not_used);
     }
 
-    fn jmp_absolute(&mut self) {
+    fn set_pc_to_ab(&mut self) {
         self.pc = self.ab;
     }
 
     fn jmp_indirect(&mut self) {
         self.pc = self.read_word_in_same_page(self.ab);
-    }
-
-    fn jsr(&mut self) {
-        let ret = self.pc.wrapping_sub(1);
-        self.push_stack((ret >> 8) as u8);
-        self.push_stack(ret as u8);
-        self.pc = self.ab;
     }
 
     fn and(&mut self) {

@@ -117,9 +117,9 @@ macro_rules! microcode_arr {
 }
 
 const fn build_opcode_table() -> [ArrayVec<[Microcode; 7]>; 256] {
+    use opcode::*;
     use Microcode::*;
     use Register::*;
-    use opcode::*;
 
     let mut r = include!("init_microtable.inc.rs");
     r[AND_IMMEDIATE as usize] = microcode_arr!(AndImmediate);
@@ -497,7 +497,7 @@ const fn build_opcode_table() -> [ArrayVec<[Microcode; 7]>; 256] {
         }
     );
     r[PLP as usize] = microcode_arr!(Nop, Nop, Plp);
-    r[JMP_ABSOLUTE as usize] = microcode_arr!(Absolute, JmpAbsolute);
+    r[JMP_ABSOLUTE as usize] = microcode_arr!(Absolute, SetPcToAb);
     r[JMP_INDIRECT as usize] = microcode_arr!(
         AbsoluteL,
         AbsoluteH {
@@ -510,7 +510,9 @@ const fn build_opcode_table() -> [ArrayVec<[Microcode; 7]>; 256] {
         AbsoluteH {
             load_into_alu: false
         },
-        Jsr
+        IncPcDelta(-1),
+        PushPc,
+        SetPcToAb
     );
     r[RTS as usize] = microcode_arr!(Nop, Nop, PopPc, Nop, IncPc);
     r[RTI as usize] = microcode_arr!(Nop, Plp, Nop, PopPc, Nop);
@@ -1395,9 +1397,8 @@ pub enum Microcode {
     Shy,
     Tas,
 
-    JmpAbsolute,
+    SetPcToAb,
     JmpIndirect,
-    Jsr,
 
     Clc,
     Sec,
@@ -1443,6 +1444,8 @@ pub enum Microcode {
     PopPc,
     /// Increment pc register by 1,
     IncPc,
+    /// Increment pc register by delta,
+    IncPcDelta(i8),
     /// Push register A to stack
     Pha,
     /// Pop value from stack to register A
@@ -1896,9 +1899,8 @@ impl Microcode {
             Self::Shy => cpu.shy(),
             Self::Tas => cpu.tas(),
 
-            Self::JmpAbsolute => cpu.jmp_absolute(),
+            Self::SetPcToAb => cpu.set_pc_to_ab(),
             Self::JmpIndirect => cpu.jmp_indirect(),
-            Self::Jsr => cpu.jsr(),
 
             Self::Clc => cpu.set_flag(Flag::Carry, false),
             Self::Sec => cpu.set_flag(Flag::Carry, true),
@@ -1925,6 +1927,7 @@ impl Microcode {
             Self::Kill => cpu.halt(),
 
             Self::IncPc => cpu.inc_pc(1),
+            Self::IncPcDelta(delta) => cpu.inc_pc(delta),
             Self::LoadIrqAddress => {
                 cpu.pc = cpu.read_word(0xFFFE);
             }
