@@ -107,13 +107,17 @@ impl<M: Mcu> Plugin<M> for ReportPlugin {
 
 /// Check nestest.nes test result,
 pub struct ReportNesTestResult {
+    instruction_executed: usize,
     // saved nes memory 02h and 03h
     result: Option<u16>,
 }
 
 impl ReportNesTestResult {
     pub fn new() -> Self {
-        Self { result: None }
+        Self {
+            result: None,
+            instruction_executed: 0,
+        }
     }
 }
 
@@ -121,7 +125,9 @@ impl<M: Mcu> Plugin<M> for ReportNesTestResult {
     fn start(&mut self, _cpu: &mut Cpu<M>) {}
 
     fn end(&mut self, cpu: &mut Cpu<M>) {
+        self.instruction_executed += 1;
         if cpu.total_cycles() >= 26560 {
+            // 26560 is the cycle count after the last instrction executed, 26554 is the cycle count before the last instruction
             let low = cpu.peek_byte(0x0002) as u16;
             let high = cpu.peek_byte(0x0003) as u16;
             self.result = Some((high << 8) | low);
@@ -131,6 +137,13 @@ impl<M: Mcu> Plugin<M> for ReportNesTestResult {
     fn should_stop(&self) -> ExecuteResult {
         if let Some(result) = self.result {
             let low = result as u8;
+            if self.instruction_executed != 8992 {
+                // Actually 8991 instructions, but when start cpu, we treat RESET action as an instruction
+                println!(
+                    "Warning: nestest executed {} instructions, expected 8992",
+                    self.instruction_executed
+                );
+            }
             if low == 0 {
                 println!("nestest PASSED");
                 ExecuteResult::Stop(0)
