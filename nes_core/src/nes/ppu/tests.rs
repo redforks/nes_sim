@@ -200,37 +200,6 @@ fn read_write_oam() {
 }
 
 #[test]
-fn nmi_occurred() {
-    let (mut ppu, _) = new_test_ppu_and_pattern();
-
-    let flag = PpuCtrl::new().with_nmi_enable(false);
-    assert!(!ppu.status.v_blank());
-
-    // disable nmi
-    ppu.set_control_flags(flag);
-    ppu.set_v_blank(true);
-    assert!(ppu.status.v_blank());
-    // should_nmi is false because nmi is disabled
-    assert!(!(ppu.ctrl_flags.nmi_enable() && ppu.status.v_blank()));
-    ppu.set_v_blank(false);
-    // v_blank is false on v_blank end
-    assert!(!ppu.status.v_blank());
-
-    // read status register will reset v_blank flag
-    ppu.set_v_blank(true);
-    assert!(ppu.read_status().v_blank());
-    assert!(!ppu.status.v_blank());
-
-    // enable nmi
-    ppu.set_control_flags(flag.with_nmi_enable(true));
-    assert!(!(ppu.ctrl_flags.nmi_enable() && ppu.status.v_blank()));
-    ppu.set_v_blank(true);
-    assert!(ppu.status.v_blank());
-    // should_nmi is true because nmi is enabled
-    assert!(ppu.ctrl_flags.nmi_enable() && ppu.status.v_blank());
-}
-
-#[test]
 fn ppu_tick_scanline_wrap() {
     let (mut ppu, pattern) = new_test_ppu_and_pattern();
 
@@ -307,7 +276,7 @@ fn test_set_mirroring() {
 #[test]
 fn test_read_status_clears_vblank() {
     let (mut ppu, _pattern) = new_test_ppu_and_pattern();
-    ppu.set_v_blank(true);
+    ppu.status.set_v_blank(true);
 
     assert!(ppu.status.v_blank());
 

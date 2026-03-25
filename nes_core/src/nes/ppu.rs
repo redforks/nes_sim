@@ -192,11 +192,7 @@ impl Palette {
 
         // Clamp to valid range [0, 31]
         let addr = addr as usize;
-        if addr >= 32 {
-            31
-        } else {
-            addr
-        }
+        if addr >= 32 { 31 } else { addr }
     }
 
     fn _get_color_idx(&self, start: usize, palette_idx: u8, idx: u8) -> Pixel {
@@ -318,17 +314,6 @@ impl Default for Ppu {
 impl Ppu {
     pub fn timing(&self) -> (u16, u16) {
         (self.scanline, self.dot)
-    }
-
-    /// Set v-blank state.
-    /// Return status before change
-    pub fn set_v_blank(&mut self, v_blank: bool) -> PpuStatus {
-        let status = self.status;
-        if v_blank {
-            debug!("set v_blank: {}", v_blank);
-        }
-        self.status = status.with_v_blank(v_blank);
-        status
     }
 
     pub fn oam_dma(&mut self, vals: &[u8; 256]) {
