@@ -123,19 +123,16 @@ impl<M: Mcu> Cpu<M> {
             return (ExecuteResult::Halt, true);
         }
 
-        self.maybe_hijack_interrupt_vector();
-
         let code = match self.pop_microcode() {
             Some(v) => v,
             None => {
                 plugin.start(self);
                 let irq_inhibit = self.irq_inhibit.take();
 
-                let code = if self.nmi_requested {
-                    // handle nmi
-                    // reset nmi_requested, because nmi signal is edge detected, ignored if cpu is already in nmi mode
-                    self.nmi_requested = false;
-                    if self.mode == CpuMode::Normal {
+                let code =
+                    if std::mem::take(&mut self.nmi_requested) && self.mode == CpuMode::Normal {
+                        // handle nmi
+                        // reset nmi_requested, because nmi signal is edge detected, ignored if cpu is already in nmi mode
                         self.mode = CpuMode::Nmi;
                         // need extra two cycles for cpu to start nmi process
                         self.push_microcodes(&[
@@ -150,27 +147,24 @@ impl<M: Mcu> Cpu<M> {
                             Microcode::LoadNmiAddress,
                         ]);
                         Microcode::Nop
+                    } else if self.irq_line
+                        && !irq_inhibit.unwrap_or_else(|| self.flag(Flag::InterruptDisabled))
+                    {
+                        // handle irq
+                        self.push_microcodes(&[
+                            Microcode::Nop,
+                            Microcode::Nop,
+                            Microcode::PushPc,
+                            Microcode::PushStatus {
+                                set_disable_interrupt: true,
+                                break_flag: false,
+                            },
+                            Microcode::LoadIrqAddress,
+                        ]);
+                        Microcode::Nop
                     } else {
                         Microcode::FetchAndDecode
-                    }
-                } else if self.irq_line
-                    && !irq_inhibit.unwrap_or_else(|| self.flag(Flag::InterruptDisabled))
-                {
-                    // handle irq
-                    self.push_microcodes(&[
-                        Microcode::Nop,
-                        Microcode::Nop,
-                        Microcode::PushPc,
-                        Microcode::PushStatus {
-                            set_disable_interrupt: true,
-                            break_flag: false,
-                        },
-                        Microcode::LoadIrqAddress,
-                    ]);
-                    Microcode::Nop
-                } else {
-                    Microcode::FetchAndDecode
-                };
+                    };
 
                 code
             }
@@ -631,31 +625,14 @@ impl<M: Mcu> Cpu<M> {
         self.microcode_queue.push_front(Microcode::Nop);
     }
 
-    fn maybe_hijack_interrupt_vector(&mut self) {
-        if !self.nmi_requested {
-            return;
+    fn load_irq_address(&mut self) {
+        if std::mem::take(&mut self.nmi_requested) && self.mode == CpuMode::Normal {
+            // hijacked by nmi
+            self.mode = CpuMode::Nmi;
+            self.pc = self.read_word(0xFFFA);
+        } else {
+            self.pc = self.read_word(0xFFFE);
         }
-
-        let Some(index) = self
-            .microcode_queue
-            .iter()
-            .position(|code| matches!(code, Microcode::LoadIrqAddress))
-        else {
-            return;
-        };
-
-        if index == 0 {
-            return;
-        }
-
-        for code in self.microcode_queue.iter_mut().skip(index) {
-            *code = match *code {
-                Microcode::LoadIrqAddress => Microcode::LoadNmiAddress,
-                other => other,
-            };
-        }
-        self.nmi_requested = false;
-        self.mode = CpuMode::Nmi;
     }
 }
 

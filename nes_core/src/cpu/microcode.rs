@@ -2010,9 +2010,7 @@ impl Microcode {
             Self::Kill => cpu.halt(),
 
             Self::IncPc(delta) => cpu.inc_pc(delta),
-            Self::LoadIrqAddress => {
-                cpu.pc = cpu.read_word(0xFFFE);
-            }
+            Self::LoadIrqAddress => cpu.load_irq_address(),
             Self::LoadNmiAddress => {
                 cpu.pc = cpu.read_word(0xFFFA);
             }
