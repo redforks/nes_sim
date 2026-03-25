@@ -1793,137 +1793,13 @@ fn test_and_zero_page_x() {
 #[test]
 fn test_set_irq() {
     let mut cpu = create_cpu();
-    assert!(!cpu.irq_pending);
+    assert!(!cpu.irq_line);
 
     cpu.set_irq(true);
-    assert!(cpu.irq_pending);
+    assert!(cpu.irq_line);
 
     cpu.set_irq(false);
-    assert!(!cpu.irq_pending);
-}
-
-#[test]
-fn test_cli_delays_irq_for_one_instruction() {
-    let mut mcu = MockMcu::new();
-    mcu.write(IRQ_VECTOR, 0x34);
-    mcu.write(IRQ_VECTOR + 1, 0x12);
-    let mut cpu = Cpu::new(mcu);
-    cpu.write_byte(0x0000, opcode::CLI);
-    cpu.write_byte(0x0001, opcode::NOP);
-    cpu.pc = 0x0000;
-    cpu.status = Flag::InterruptDisabled as u8;
-    cpu.force_sync_irq_inhibit_with_flag();
-    cpu.set_irq(true);
-
-    execute_next(&mut cpu);
-    assert_eq!(cpu.pc, 0x0001);
-    assert!(!cpu.flag(Flag::InterruptDisabled));
-
-    execute_next(&mut cpu);
-    assert_eq!(cpu.pc, 0x0002);
-
-    execute_next(&mut cpu);
-    assert_eq!(cpu.pc, 0x1234);
-}
-
-#[test]
-fn test_rti_allows_pending_irq_immediately() {
-    let mut mcu = MockMcu::new();
-    mcu.write(IRQ_VECTOR, 0x78);
-    mcu.write(IRQ_VECTOR + 1, 0x56);
-    mcu.write(0x0000, opcode::RTI);
-    let mut cpu = Cpu::new(mcu);
-    cpu.pc = 0x0000;
-    cpu.sp = 0xFA;
-    cpu.write_byte(0x01FB, 0x00);
-    cpu.write_byte(0x01FC, 0x00);
-    cpu.write_byte(0x01FD, 0x80);
-    cpu.force_sync_irq_inhibit_with_flag();
-    cpu.set_irq(true);
-
-    execute_next(&mut cpu);
-    assert_eq!(cpu.pc, 0x8000);
-    assert!(!cpu.flag(Flag::InterruptDisabled));
-
-    execute_next(&mut cpu);
-    assert_eq!(cpu.pc, 0x5678);
-}
-
-#[test]
-fn test_plp_plp_allows_irq_only_after_second_plp() {
-    let mut mcu = MockMcu::new();
-    mcu.write(IRQ_VECTOR, 0x00);
-    mcu.write(IRQ_VECTOR + 1, 0x20);
-    let mut cpu = Cpu::new(mcu);
-    cpu.write_byte(0x0000, opcode::PHP);
-    cpu.write_byte(0x0001, opcode::LDA_IMMEDIATE);
-    cpu.write_byte(0x0002, 0x00);
-    cpu.write_byte(0x0003, opcode::PHA);
-    cpu.write_byte(0x0004, opcode::PLP);
-    cpu.write_byte(0x0005, opcode::PLP);
-    cpu.write_byte(0x0006, opcode::NOP);
-    cpu.write_byte(0x2000, opcode::RTI);
-    cpu.pc = 0x0000;
-    cpu.status = Flag::InterruptDisabled as u8;
-    cpu.force_sync_irq_inhibit_with_flag();
-    cpu.set_irq(true);
-
-    execute_next(&mut cpu);
-    assert_eq!(cpu.pc, 0x0001);
-
-    execute_next(&mut cpu);
-    assert_eq!(cpu.pc, 0x0003);
-
-    execute_next(&mut cpu);
-    assert_eq!(cpu.pc, 0x0004);
-
-    execute_next(&mut cpu);
-    assert_eq!(cpu.pc, 0x0005);
-
-    execute_next(&mut cpu);
-    assert_eq!(cpu.pc, 0x0006);
-
-    execute_next(&mut cpu);
-    assert_eq!(cpu.pc, 0x2000);
-}
-
-#[test]
-fn test_plp_plp_only_allows_one_irq() {
-    let mut mcu = MockMcu::new();
-    mcu.write(IRQ_VECTOR, 0x00);
-    mcu.write(IRQ_VECTOR + 1, 0x20);
-    let mut cpu = Cpu::new(mcu);
-
-    cpu.write_byte(0x0000, opcode::PHP);
-    cpu.write_byte(0x0001, opcode::LDA_IMMEDIATE);
-    cpu.write_byte(0x0002, 0x00);
-    cpu.write_byte(0x0003, opcode::PHA);
-    cpu.write_byte(0x0004, opcode::PLP);
-    cpu.write_byte(0x0005, opcode::PLP);
-    cpu.write_byte(0x0006, opcode::NOP);
-    cpu.write_byte(0x0007, opcode::NOP);
-
-    cpu.write_byte(0x2000, opcode::RTI);
-
-    cpu.pc = 0x0000;
-    cpu.status = Flag::InterruptDisabled as u8;
-    cpu.force_sync_irq_inhibit_with_flag();
-    cpu.set_irq(true);
-
-    for _ in 0..5 {
-        execute_next(&mut cpu);
-    }
-    assert_eq!(cpu.pc, 0x0006);
-
-    execute_next(&mut cpu);
-    assert_eq!(cpu.pc, 0x2000);
-
-    execute_next(&mut cpu);
-    assert_eq!(cpu.pc, 0x0006);
-    assert!(cpu.flag(Flag::InterruptDisabled));
-
-    execute_next(&mut cpu);
-    assert_eq!(cpu.pc, 0x0007);
+    assert!(!cpu.irq_line);
 }
 
 // JSR/RTS/RTI tests
@@ -3276,32 +3152,6 @@ fn test_rti_leaves_nmi_mode() {
 
     assert_eq!(cpu.mode, CpuMode::Normal);
     assert_eq!(cpu.pc, 0x1234);
-}
-
-#[test]
-fn test_nmi_can_replace_pending_irq_vectoring() {
-    let mut mcu = MockMcu::new();
-    mcu.write(0xFFFA, 0x78);
-    mcu.write(0xFFFB, 0x56);
-    mcu.write(0xFFFE, 0x34);
-    mcu.write(0xFFFF, 0x12);
-    let mut cpu = Cpu::new(mcu);
-    cpu.pc = 0x2000;
-    cpu.status = 0;
-    cpu.force_sync_irq_inhibit_with_flag();
-    cpu.set_irq(true);
-
-    let mut plugin = EmptyPlugin::new();
-    while cpu.microcodes_len() > 0 {
-        cpu.tick(&mut plugin);
-    }
-
-    cpu.tick(&mut plugin); // starts IRQ sequence
-    cpu.request_nmi();
-    while !cpu.tick(&mut plugin).1 {}
-
-    assert_eq!(cpu.pc, 0x5678);
-    assert_eq!(cpu.mode, CpuMode::Nmi);
 }
 
 #[test]

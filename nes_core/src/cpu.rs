@@ -1,8 +1,8 @@
+use self::microcode::{Microcode, opcode};
 use crate::mcu::Mcu;
 use std::collections::VecDeque;
 
 mod microcode;
-use self::microcode::{Microcode, opcode};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Register {
@@ -34,10 +34,9 @@ pub struct Cpu<M: Mcu> {
     pub ab: u16,
     pub alu: u8,
 
-    pub(crate) irq_pending: bool,
-    irq_inhibit: bool,
-    pending_irq_inhibit: VecDeque<bool>,
-    instruction_in_progress: bool,
+    /// cpu irq line, true means irq is requested, map to Low level of cpu irq pin
+    irq_line: bool,
+    irq_inhibit: Option<bool>,
     nmi_requested: bool,
     mode: CpuMode,
 
@@ -52,16 +51,14 @@ impl<M: Mcu> Cpu<M> {
             y: 0,
             pc: 0,
             sp: 0,
-            status: Flag::InterruptDisabled as u8,
+            status: 0,
             cycles: 0,
             mcu,
             opcode: 0,
             ab: 0,
             alu: 0,
-            irq_pending: false,
-            irq_inhibit: true,
-            pending_irq_inhibit: VecDeque::with_capacity(2),
-            instruction_in_progress: false,
+            irq_line: false,
+            irq_inhibit: None,
             microcode_queue: VecDeque::with_capacity(8),
             mode: CpuMode::Normal,
             nmi_requested: false,
@@ -81,12 +78,10 @@ impl<M: Mcu> Cpu<M> {
     pub fn reset(&mut self) {
         self.pc = self.read_word(0xFFFC);
         self.status = 0;
-        self.set_flag(Flag::InterruptDisabled, true);
-        self.set_flag(Flag::NotUsed, true);
-        self.irq_pending = false;
-        self.irq_inhibit = true;
-        self.pending_irq_inhibit.clear();
-        self.instruction_in_progress = false;
+        self.inner_set_flag(Flag::InterruptDisabled, true);
+        self.inner_set_flag(Flag::NotUsed, true);
+        self.irq_line = false;
+        self.irq_inhibit = None;
         self.microcode_queue.clear();
         self.nmi_requested = false;
         self.mode = CpuMode::Normal;
@@ -115,13 +110,7 @@ impl<M: Mcu> Cpu<M> {
     }
 
     pub fn set_irq(&mut self, enabled: bool) {
-        self.irq_pending = enabled;
-    }
-
-    #[cfg(test)]
-    pub(crate) fn force_sync_irq_inhibit_with_flag(&mut self) {
-        self.irq_inhibit = self.flag(Flag::InterruptDisabled);
-        self.pending_irq_inhibit.clear();
+        self.irq_line = enabled;
     }
 
     pub fn is_halted(&self) -> bool {
@@ -140,11 +129,12 @@ impl<M: Mcu> Cpu<M> {
             Some(v) => v,
             None => {
                 plugin.start(self);
+                let irq_inhibit = self.irq_inhibit.take();
 
                 let code = if self.nmi_requested {
+                    // handle nmi
                     // reset nmi_requested, because nmi signal is edge detected, ignored if cpu is already in nmi mode
                     self.nmi_requested = false;
-                    self.instruction_in_progress = false;
                     if self.mode == CpuMode::Normal {
                         self.mode = CpuMode::Nmi;
                         // need extra two cycles for cpu to start nmi process
@@ -163,8 +153,10 @@ impl<M: Mcu> Cpu<M> {
                     } else {
                         Microcode::FetchAndDecode
                     }
-                } else if self.irq_pending && !self.irq_inhibit {
-                    self.instruction_in_progress = false;
+                } else if self.irq_line
+                    && !irq_inhibit.unwrap_or_else(|| self.flag(Flag::InterruptDisabled))
+                {
+                    // handle irq
                     self.push_microcodes(&[
                         Microcode::Nop,
                         Microcode::Nop,
@@ -177,7 +169,6 @@ impl<M: Mcu> Cpu<M> {
                     ]);
                     Microcode::Nop
                 } else {
-                    self.instruction_in_progress = true;
                     Microcode::FetchAndDecode
                 };
 
@@ -187,7 +178,9 @@ impl<M: Mcu> Cpu<M> {
         self.cycles = self.cycles.wrapping_add(1);
         code.exec(self);
         if self.microcode_queue.is_empty() {
-            self.finish_sequence();
+            if self.opcode == opcode::RTI {
+                self.mode = CpuMode::Normal;
+            };
             plugin.end(self);
             (plugin.should_stop(), true)
         } else {
@@ -210,7 +203,7 @@ impl<M: Mcu> Cpu<M> {
         (self.status & flag as u8) != 0
     }
 
-    pub(crate) fn set_flag(&mut self, flag: Flag, v: bool) {
+    fn inner_set_flag(&mut self, flag: Flag, v: bool) {
         if v {
             self.status |= flag as u8;
         } else {
@@ -218,16 +211,27 @@ impl<M: Mcu> Cpu<M> {
         }
     }
 
+    fn save_irq_inhibit(&mut self) {
+        if matches!(self.opcode, opcode::CLI | opcode::SEI | opcode::PLP) {
+            self.irq_inhibit = Some(self.flag(Flag::InterruptDisabled));
+        }
+    }
+
+    fn set_flag(&mut self, flag: Flag, v: bool) {
+        self.save_irq_inhibit();
+        self.inner_set_flag(flag, v);
+    }
+
     fn inc_pc(&mut self, delta: i8) {
         self.pc = self.pc.wrapping_add(delta as u16);
     }
 
     pub(crate) fn update_negative_flag(&mut self, value: u8) {
-        self.set_flag(Flag::Negative, value & 0x80 != 0);
+        self.inner_set_flag(Flag::Negative, value & 0x80 != 0);
     }
 
     pub(crate) fn update_zero_flag(&mut self, value: u8) {
-        self.set_flag(Flag::Zero, value == 0);
+        self.inner_set_flag(Flag::Zero, value == 0);
     }
 
     pub(crate) fn read_byte(&mut self, addr: u16) -> u8 {
@@ -311,8 +315,8 @@ impl<M: Mcu> Cpu<M> {
         let carry = self.flag(Flag::Carry) as u8;
         let (sum, carry0) = self.a.overflowing_add(val);
         let (sum, carry1) = sum.overflowing_add(carry);
-        self.set_flag(Flag::Carry, carry0 || carry1);
-        self.set_flag(Flag::Overflow, !(self.a ^ val) & (self.a ^ sum) & 0x80 != 0);
+        self.inner_set_flag(Flag::Carry, carry0 || carry1);
+        self.inner_set_flag(Flag::Overflow, !(self.a ^ val) & (self.a ^ sum) & 0x80 != 0);
         self.update_zero_flag(sum);
         self.update_negative_flag(sum);
         self.a = sum;
@@ -327,8 +331,8 @@ impl<M: Mcu> Cpu<M> {
         let carry = self.flag(Flag::Carry) as u8;
         let (sum, carry0) = self.a.overflowing_add(val);
         let (sum, carry1) = sum.overflowing_add(carry);
-        self.set_flag(Flag::Carry, carry0 || carry1);
-        self.set_flag(Flag::Overflow, !(self.a ^ val) & (self.a ^ sum) & 0x80 != 0);
+        self.inner_set_flag(Flag::Carry, carry0 || carry1);
+        self.inner_set_flag(Flag::Overflow, !(self.a ^ val) & (self.a ^ sum) & 0x80 != 0);
         self.update_zero_flag(sum);
         self.update_negative_flag(sum);
         self.a = sum;
@@ -350,21 +354,21 @@ impl<M: Mcu> Cpu<M> {
         let t = self.a.wrapping_sub(self.alu);
         self.update_negative_flag(t);
         self.update_zero_flag(t);
-        self.set_flag(Flag::Carry, self.a >= self.alu);
+        self.inner_set_flag(Flag::Carry, self.a >= self.alu);
     }
 
     fn cpx(&mut self) {
         let t = self.x.wrapping_sub(self.alu);
         self.update_negative_flag(t);
         self.update_zero_flag(t);
-        self.set_flag(Flag::Carry, self.x >= self.alu);
+        self.inner_set_flag(Flag::Carry, self.x >= self.alu);
     }
 
     fn cpy(&mut self) {
         let t = self.y.wrapping_sub(self.alu);
         self.update_negative_flag(t);
         self.update_zero_flag(t);
-        self.set_flag(Flag::Carry, self.y >= self.alu);
+        self.inner_set_flag(Flag::Carry, self.y >= self.alu);
     }
 
     fn tax(&mut self) {
@@ -427,7 +431,7 @@ impl<M: Mcu> Cpu<M> {
 
     fn alr(&mut self) {
         self.a &= self.alu;
-        self.set_flag(Flag::Carry, self.a & 0x01 != 0);
+        self.inner_set_flag(Flag::Carry, self.a & 0x01 != 0);
         self.a >>= 1;
         self.update_zero_flag(self.a);
         self.update_negative_flag(self.a);
@@ -437,7 +441,7 @@ impl<M: Mcu> Cpu<M> {
         self.a &= self.alu;
         self.update_zero_flag(self.a);
         self.update_negative_flag(self.a);
-        self.set_flag(Flag::Carry, self.a & 0x80 != 0);
+        self.inner_set_flag(Flag::Carry, self.a & 0x80 != 0);
     }
 
     fn arr(&mut self) {
@@ -445,8 +449,8 @@ impl<M: Mcu> Cpu<M> {
         self.a = (self.a >> 1) | ((self.flag(Flag::Carry) as u8) << 7);
         self.update_zero_flag(self.a);
         self.update_negative_flag(self.a);
-        self.set_flag(Flag::Carry, self.a & 0x40 != 0);
-        self.set_flag(Flag::Overflow, ((self.a >> 6) ^ (self.a >> 5)) & 1 != 0);
+        self.inner_set_flag(Flag::Carry, self.a & 0x40 != 0);
+        self.inner_set_flag(Flag::Overflow, ((self.a >> 6) ^ (self.a >> 5)) & 1 != 0);
     }
 
     fn axs(&mut self) {
@@ -455,7 +459,7 @@ impl<M: Mcu> Cpu<M> {
         self.x = x;
         self.update_negative_flag(self.x);
         self.update_zero_flag(self.x);
-        self.set_flag(Flag::Carry, !borrow);
+        self.inner_set_flag(Flag::Carry, !borrow);
     }
 
     fn lax(&mut self) {
@@ -475,7 +479,7 @@ impl<M: Mcu> Cpu<M> {
         let t = self.a.wrapping_sub(v);
         self.update_negative_flag(t);
         self.update_zero_flag(t);
-        self.set_flag(Flag::Carry, self.a >= v);
+        self.inner_set_flag(Flag::Carry, self.a >= v);
     }
 
     fn isc(&mut self) {
@@ -503,27 +507,27 @@ impl<M: Mcu> Cpu<M> {
         let carry = self.alu & 0x01 != 0;
         self.alu = (self.alu >> 1) | ((self.flag(Flag::Carry) as u8) << 7);
         self.write_byte(self.ab, self.alu);
-        self.set_flag(Flag::Carry, carry);
+        self.inner_set_flag(Flag::Carry, carry);
         self.adc_alu();
     }
 
     fn rla(&mut self) {
         let new = (self.alu << 1) | (self.flag(Flag::Carry) as u8);
-        self.set_flag(Flag::Carry, self.alu & 0x80 != 0);
+        self.inner_set_flag(Flag::Carry, self.alu & 0x80 != 0);
         self.alu = new;
         self.write_byte(self.ab, self.alu);
         self.and();
     }
 
     fn slo(&mut self) {
-        self.set_flag(Flag::Carry, self.alu & 0x80 != 0);
+        self.inner_set_flag(Flag::Carry, self.alu & 0x80 != 0);
         self.alu <<= 1;
         self.write_byte(self.ab, self.alu);
         self.ora();
     }
 
     fn sre(&mut self) {
-        self.set_flag(Flag::Carry, self.alu & 0x01 != 0);
+        self.inner_set_flag(Flag::Carry, self.alu & 0x01 != 0);
         self.alu >>= 1;
         self.write_byte(self.ab, self.alu);
         self.eor();
@@ -566,17 +570,18 @@ impl<M: Mcu> Cpu<M> {
             self.status | Flag::NotUsed as u8
         });
         if set_disable_interrupt {
-            self.set_flag(Flag::InterruptDisabled, true);
+            self.inner_set_flag(Flag::InterruptDisabled, true);
         }
     }
 
     fn plp(&mut self) {
+        self.save_irq_inhibit();
         let saved = self.pop_stack();
         let break_flag = self.flag(Flag::Break);
         let not_used = self.flag(Flag::NotUsed);
         self.status = saved;
-        self.set_flag(Flag::Break, break_flag);
-        self.set_flag(Flag::NotUsed, not_used);
+        self.inner_set_flag(Flag::Break, break_flag);
+        self.inner_set_flag(Flag::NotUsed, not_used);
     }
 
     fn set_pc_to_ab(&mut self) {
@@ -594,13 +599,13 @@ impl<M: Mcu> Cpu<M> {
     }
 
     fn bit(&mut self) {
-        self.set_flag(Flag::Negative, self.alu & 0x80 != 0);
-        self.set_flag(Flag::Overflow, self.alu & 0x40 != 0);
+        self.inner_set_flag(Flag::Negative, self.alu & 0x80 != 0);
+        self.inner_set_flag(Flag::Overflow, self.alu & 0x40 != 0);
         self.update_zero_flag(self.a & self.alu);
     }
 
     fn asl(&mut self, val: u8) -> u8 {
-        self.set_flag(Flag::Carry, val & 0x80 != 0);
+        self.inner_set_flag(Flag::Carry, val & 0x80 != 0);
         let result = val << 1;
         self.update_zero_flag(result);
         self.update_negative_flag(result);
@@ -651,42 +656,6 @@ impl<M: Mcu> Cpu<M> {
         }
         self.nmi_requested = false;
         self.mode = CpuMode::Nmi;
-    }
-
-    fn finish_instruction(&mut self) {
-        if let Some(irq_inhibit) = self.pending_irq_inhibit.pop_front() {
-            self.irq_inhibit = irq_inhibit;
-        }
-
-        if self.opcode == opcode::RTI {
-            self.mode = CpuMode::Normal;
-        }
-
-        if matches!(self.opcode, opcode::CLI | opcode::SEI | opcode::PLP) {
-            self.pending_irq_inhibit
-                .push_back(self.flag(Flag::InterruptDisabled));
-            return;
-        }
-
-        if self.pending_irq_inhibit.is_empty() {
-            self.irq_inhibit = self.flag(Flag::InterruptDisabled);
-        }
-    }
-
-    fn finish_sequence(&mut self) {
-        if self.instruction_in_progress {
-            self.finish_instruction();
-        } else {
-            if let Some(irq_inhibit) = self.pending_irq_inhibit.pop_front() {
-                self.irq_inhibit = irq_inhibit;
-            }
-
-            if self.pending_irq_inhibit.is_empty() {
-                self.irq_inhibit = self.flag(Flag::InterruptDisabled);
-            }
-        }
-
-        self.instruction_in_progress = false;
     }
 }
 
