@@ -1,4 +1,4 @@
-use crate::{ines::INesFile, machine::Machine, nes::NesMcu, EmptyPlugin, ExecuteResult, Plugin};
+use crate::{EmptyPlugin, ExecuteResult, Plugin, ines::INesFile, machine::Machine, nes::NesMcu};
 
 /// Safety limit: maximum CPU instruction ticks per `process_frame()` call.
 /// Two full frames worth of ticks; prevents an infinite loop if VBlank never fires
@@ -7,6 +7,8 @@ const MAX_TICKS_PER_FRAME: u32 = 60000;
 
 pub struct NesMachine<P> {
     machine: Machine<P, NesMcu>,
+    is_vblank: bool,
+    enter_vblank: bool,
 }
 
 impl NesMachine<EmptyPlugin<NesMcu>> {
@@ -21,8 +23,11 @@ impl NesMachine<EmptyPlugin<NesMcu>> {
         renderer: Option<Box<dyn crate::render::Render>>,
     ) -> Self {
         let mcu = crate::nes::create_mcu_with_renderer(file, renderer);
+        let is_vblank = mcu.ppu().vblank();
         Self {
             machine: Machine::with_plugin(EmptyPlugin::new(), mcu),
+            is_vblank,
+            enter_vblank: false,
         }
     }
 }
@@ -31,8 +36,11 @@ impl<P: Plugin<NesMcu>> NesMachine<P> {
     /// Create a new NES machine from an iNES file with a custom plugin.
     pub fn with_plugin(file: &INesFile, plugin: P) -> Self {
         let mcu = crate::nes::create_mcu(file);
+        let is_vblank = mcu.ppu().vblank();
         Self {
             machine: Machine::with_plugin(plugin, mcu),
+            is_vblank,
+            enter_vblank: false,
         }
     }
 
@@ -43,8 +51,11 @@ impl<P: Plugin<NesMcu>> NesMachine<P> {
         renderer: Option<Box<dyn crate::render::Render>>,
     ) -> Self {
         let mcu = crate::nes::create_mcu_with_renderer(file, renderer);
+        let is_vblank = mcu.ppu().vblank();
         Self {
             machine: Machine::with_plugin(plugin, mcu),
+            is_vblank,
+            enter_vblank: false,
         }
     }
 
@@ -69,7 +80,7 @@ impl<P: Plugin<NesMcu>> NesMachine<P> {
             }
 
             // Check for VBlank signalled by the PPU
-            if self.machine.mcu_mut().take_vblank() {
+            if std::mem::take(&mut self.enter_vblank) {
                 return ExecuteResult::Continue;
             }
         }
@@ -84,11 +95,19 @@ impl<P: Plugin<NesMcu>> NesMachine<P> {
         let apu_irq = self.machine.mcu().apu_irq_pending();
         self.machine.cpu_mut().set_irq(apu_irq);
         for _ in 0..3 {
-            if self.machine.mcu_mut().tick_ppu() {
-                self.machine.cpu_mut().request_nmi();
-            }
+            self.machine.mcu_mut().tick_ppu()
         }
+        if self.mcu().ppu().vblank() != self.is_vblank && !self.is_vblank {
+            self.enter_vblank = true;
+        }
+        self.is_vblank = self.mcu().ppu().vblank();
+        let nmi_line = self.mcu().ppu().nmi_outline();
+        self.machine.cpu_mut().update_nmi_line(nmi_line);
         result
+    }
+
+    fn mcu(&self) -> &NesMcu {
+        self.machine.mcu()
     }
 
     pub fn reset(&mut self) {

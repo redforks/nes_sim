@@ -37,6 +37,7 @@ pub struct Cpu<M: Mcu> {
     /// cpu irq line, true means irq is requested, map to Low level of cpu irq pin
     irq_line: bool,
     irq_inhibit: Option<bool>,
+    nmi_line: bool,
     nmi_requested: bool,
     mode: CpuMode,
 
@@ -59,6 +60,7 @@ impl<M: Mcu> Cpu<M> {
             alu: 0,
             irq_line: false,
             irq_inhibit: None,
+            nmi_line: false,
             microcode_queue: VecDeque::with_capacity(8),
             mode: CpuMode::Normal,
             nmi_requested: false,
@@ -632,6 +634,16 @@ impl<M: Mcu> Cpu<M> {
             self.pc = self.read_word(0xFFFA);
         } else {
             self.pc = self.read_word(0xFFFE);
+        }
+    }
+
+    /// Update cpu nmi signal line, may trigger nmi
+    pub fn update_nmi_line(&mut self, nmi: bool) {
+        if self.nmi_line != nmi {
+            self.nmi_line = nmi;
+            if nmi {
+                self.request_nmi();
+            }
         }
     }
 }

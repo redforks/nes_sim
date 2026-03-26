@@ -297,8 +297,7 @@ fn test_read_status_at_vblank_start_suppresses_vblank_for_frame() {
     let status = ppu.read_status();
     assert!(!status.v_blank());
 
-    let tick = ppu.tick(&pattern);
-    assert!(!tick.vblank_started);
+    ppu.tick(&pattern);
     assert!(!ppu.status.v_blank());
 }
 
@@ -308,13 +307,11 @@ fn test_vblank_starts_on_scanline_241_dot_1() {
     ppu.scanline = 241;
     ppu.dot = 0;
 
-    let tick0 = ppu.tick(&pattern);
-    assert!(!tick0.vblank_started);
+    ppu.tick(&pattern);
     assert_eq!(ppu.scanline, 241);
     assert_eq!(ppu.dot, 1);
 
-    let tick1 = ppu.tick(&pattern);
-    assert!(tick1.vblank_started);
+    ppu.tick(&pattern);
     assert!(ppu.status.v_blank());
 }
 

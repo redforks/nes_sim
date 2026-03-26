@@ -37,7 +37,6 @@ fn test_mcu() -> NesMcu {
         after_ppu: RamMcu::start_from(0x4000, [0; 0x20]),
         cartridge: Box::new(MockCartridge::new()),
         apu: ApuController::new(FakeApuControllerDriver::default()),
-        vblank_started: false,
     }
 }
 

@@ -16,7 +16,6 @@ pub struct NesMcu {
     after_ppu: RamMcu<0x20>,
     cartridge: Box<dyn Cartridge>,
     apu: ApuController<FakeApuControllerDriver>,
-    vblank_started: bool,
 }
 
 pub fn build(file: &INesFile) -> NesMcu {
@@ -48,7 +47,6 @@ pub fn build_with_renderer(file: &INesFile, renderer: Option<Box<dyn Render>>) -
         after_ppu: RamMcu::start_from(0x4000, [0; 0x20]),
         cartridge,
         apu: ApuController::new(FakeApuControllerDriver::default()),
-        vblank_started: false,
     }
 }
 
@@ -63,16 +61,10 @@ impl NesMcu {
         self.ppu.oam_dma(&buf);
     }
 
-    pub fn take_vblank(&mut self) -> bool {
-        std::mem::take(&mut self.vblank_started)
-    }
-
-    /// Tick PPU by one dot. Returns true if NMI should be triggered.
+    /// Tick PPU by one dot.
     /// Pattern data is passed through from the cartridge for rendering.
-    pub fn tick_ppu(&mut self) -> bool {
-        let rv = self.ppu.tick(self.cartridge.pattern_ref());
-        self.vblank_started = rv.vblank_started;
-        rv.nmi_requested
+    pub fn tick_ppu(&mut self) {
+        self.ppu.tick(self.cartridge.pattern_ref());
     }
 
     /// Tick APU frame counter. Returns true if frame IRQ should be triggered.
@@ -86,6 +78,10 @@ impl NesMcu {
 
     pub fn ppu_timing(&self) -> (u16, u16) {
         self.ppu.timing()
+    }
+
+    pub fn ppu(&self) -> &Ppu {
+        &self.ppu
     }
 }
 

@@ -259,12 +259,6 @@ pub struct Ppu {
     palette: Palette,             // palette memory
     cur_pattern_table_idx: u8,    // index of current active pattern table, 0 or 1
 
-    // saved nmi_enabled ctrl_flags value, set to Some() in write method,
-    // tick() method handle it and set it to false.
-    // we need to track nmi_enabled and v_blank control bits changes to request nmi,
-    // because nmi is an edge-triggered interrupt, it only triggers when v_blank changes from false to true and nmi_enabled is true,
-    // or v_blank is true and nmi_enabled changes from false to true.
-    old_nmi_enabled_value: Option<bool>,
     suppress_vblank_for_current_frame: bool,
 
     mask: PpuMask,
@@ -305,7 +299,6 @@ impl Default for Ppu {
             scanline: 0,
             dot: 0,
             odd_frame: false,
-            old_nmi_enabled_value: None,
             suppress_vblank_for_current_frame: false,
         }
     }
@@ -320,70 +313,48 @@ impl Ppu {
         self.oam.copy_from_slice(vals);
     }
 
-    fn need_request_nmi(&mut self, vblank_started: bool) -> bool {
-        let old_nmi_enabled = self.old_nmi_enabled_value.take();
-        if !vblank_started && !(old_nmi_enabled.is_some_and(|v| v != self.ctrl_flags.nmi_enable()))
-        {
-            // always returns false if status not changed
-            return false;
-        }
-        self.ctrl_flags.nmi_enable() && self.status.v_blank()
-    }
-
     /// Advance PPU by one dot, rendering a pixel if on a visible scanline.
     /// Return true if need request nmi.
     ///
     /// # Parameters
     /// - `pattern`: CHR ROM pattern data for tile/sprite lookup
-    pub fn tick(&mut self, pattern: &[u8]) -> PpuTickResult {
-        let scanline = self.scanline;
-        let dot = self.dot;
-
+    pub fn tick(&mut self, pattern: &[u8]) {
         // Render pixel during visible scanlines (0-239) and visible dots (0-255)
-        if scanline < 240 && dot < 256 {
-            let pixel = Self::render_pixel(self, pattern, dot as u8, scanline as u8);
+        if self.scanline < 240 && self.dot < 256 {
+            let pixel = Self::render_pixel(self, pattern, self.dot as u8, self.scanline as u8);
             self.renderer
-                .set_pixel(dot as u32, scanline as u32, pixel.0);
+                .set_pixel(self.dot as u32, self.scanline as u32, pixel.0);
         }
 
         // At end of pre-render scanline (261), clear screen for next frame
-        if scanline == VBLANK_CLEAR_SCANLINE && dot == 0 {
+        if self.scanline == VBLANK_CLEAR_SCANLINE && self.dot == 0 {
             let bg_color = COLORS[self.palette.data[0] as usize];
             self.renderer.clear(bg_color.0);
         }
 
         // Call finish() at end of visible area (scanline 240, dot 0)
-        if scanline == 240 && dot == 0 {
+        if self.scanline == 240 && self.dot == 0 {
             self.renderer.finish();
         }
 
-        // VBlank set: normally scanline 241, dot 1.
-        let mut vblank_started = false;
         if self.scanline == VBLANK_SET_SCANLINE && self.dot == 1 {
-            let status = self.status;
-            if !status.v_blank() && !self.suppress_vblank_for_current_frame {
+            if !std::mem::take(&mut self.suppress_vblank_for_current_frame) {
                 debug!(
                     "PPU: VBLANK SET at scanline={}, dot={}",
                     self.scanline, self.dot
                 );
-                self.status = status.with_v_blank(true);
-                vblank_started = true;
+                self.status.set_v_blank(true);
             }
         }
 
         // VBlank clear: pre-render scanline 261, dot 1
         if self.scanline == VBLANK_CLEAR_SCANLINE && self.dot == VBLANK_CLEAR_DOT {
-            let status = self.status;
-            if status.v_blank() {
-                debug!(
-                    "PPU: VBLANK CLEAR at scanline={}, dot={}",
-                    self.scanline, self.dot
-                );
-                self.status = status.with_v_blank(false);
-            }
-            // Also clear sprite zero hit at pre-render scanline
-            let status = self.status;
-            self.status = status.with_sprite_zero_hit(false);
+            debug!(
+                "PPU: VBLANK CLEAR at scanline={}, dot={}",
+                self.scanline, self.dot
+            );
+            self.status.set_v_blank(false);
+            self.status.set_sprite_zero_hit(false);
         }
 
         // Advance dot/scanline counters
@@ -394,15 +365,19 @@ impl Ppu {
             if self.scanline >= SCANLINES_PER_FRAME {
                 debug!("PPU: Frame complete, scanline={} -> 0", self.scanline);
                 self.scanline = 0;
-                self.suppress_vblank_for_current_frame = false;
                 self.odd_frame = !self.odd_frame;
             }
         }
+    }
 
-        PpuTickResult {
-            vblank_started,
-            nmi_requested: self.need_request_nmi(vblank_started),
-        }
+    /// Return ppu nmi signal, it connect to Cpu nmi input line
+    pub fn nmi_outline(&self) -> bool {
+        self.status.v_blank() && self.ctrl_flags.nmi_enable()
+    }
+
+    /// Return ppu vblank status
+    pub fn vblank(&self) -> bool {
+        self.status.v_blank()
     }
 
     pub fn set_mirroring(&mut self, mirroring: Mirroring) {
@@ -444,7 +419,6 @@ impl Ppu {
         match reg {
             // PPUCTRL
             0x2000 => {
-                self.old_nmi_enabled_value = Some(self.ctrl_flags.nmi_enable());
                 self.set_control_flags(value.into());
                 // Update name table address from control bits
                 self.cur_name_table_addr =
@@ -689,13 +663,14 @@ impl Ppu {
     /// Read status register (for testing) - behaves like reading from 0x2002
     /// Returns the current status and clears the v_blank flag
     fn read_status(&mut self) -> PpuStatus {
-        let status = self.status;
-        if self.scanline == VBLANK_SET_SCANLINE && self.dot <= 1 {
+        let r = self.status;
+        if self.scanline == VBLANK_SET_SCANLINE && self.dot == 0 {
             self.suppress_vblank_for_current_frame = true;
         }
-        // Clear v_blank flag on read (like real hardware)
-        self.status = status.with_v_blank(false);
-        status
+        // Clear v_blank flag on read
+        self.status.set_v_blank(false);
+        self.write_toggle = false; // Also reset write toggle on status read
+        r
     }
 
     /// Render a single pixel (for testing)
@@ -719,7 +694,7 @@ impl Ppu {
                 // Sprite zero hit detection:
                 // Set when an opaque sprite 0 pixel overlaps an opaque background pixel
                 if is_sprite_zero && bg_color_idx != 0 && spr_color_idx != 0 && x != 255 {
-                    self.status = self.status.with_sprite_zero_hit(true);
+                    self.status.set_sprite_zero_hit(true);
                 }
 
                 if spr_color_idx == 0 {
