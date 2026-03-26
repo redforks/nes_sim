@@ -211,6 +211,38 @@ fn ppu_tick_scanline_wrap() {
 }
 
 #[test]
+fn ppu_tick_odd_frame_skips_last_prerender_dot_when_rendering_enabled() {
+    let (mut ppu, pattern) = new_test_ppu_and_pattern();
+
+    ppu.scanline = VBLANK_CLEAR_SCANLINE;
+    ppu.dot = DOTS_PER_SCANLINE - 2;
+    ppu.odd_frame = true;
+    ppu.mask = PpuMask::new().with_background_enabled(true);
+
+    ppu.tick(&pattern);
+
+    assert_eq!(ppu.scanline, 0);
+    assert_eq!(ppu.dot, 0);
+    assert!(!ppu.odd_frame);
+}
+
+#[test]
+fn ppu_tick_odd_frame_keeps_last_prerender_dot_when_rendering_disabled() {
+    let (mut ppu, pattern) = new_test_ppu_and_pattern();
+
+    ppu.scanline = VBLANK_CLEAR_SCANLINE;
+    ppu.dot = DOTS_PER_SCANLINE - 2;
+    ppu.odd_frame = true;
+    ppu.mask = PpuMask::new();
+
+    ppu.tick(&pattern);
+
+    assert_eq!(ppu.scanline, VBLANK_CLEAR_SCANLINE);
+    assert_eq!(ppu.dot, DOTS_PER_SCANLINE - 1);
+    assert!(ppu.odd_frame);
+}
+
+#[test]
 fn test_ppu_ctrl_to_from_u8() {
     let ctrl = PpuCtrl::new()
         .with_nmi_enable(true)

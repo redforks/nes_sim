@@ -297,6 +297,10 @@ impl Ppu {
         (self.scanline, self.dot)
     }
 
+    fn rendering_enabled(&self) -> bool {
+        self.mask.background_enabled() || self.mask.sprite_enabled()
+    }
+
     pub fn oam_dma(&mut self, vals: &[u8; 256]) {
         self.oam_data.copy_from_slice(vals);
     }
@@ -348,6 +352,23 @@ impl Ppu {
             self.status.set_v_blank(false);
             self.status.set_sprite_overflow(false);
             self.status.set_sprite_zero_hit(false);
+        }
+
+        // On odd frames with rendering enabled, the pre-render scanline skips the
+        // final idle dot and wraps directly to scanline 0 dot 0.
+        if self.scanline == VBLANK_CLEAR_SCANLINE
+            && self.dot == DOTS_PER_SCANLINE - 2
+            && self.odd_frame
+            && self.rendering_enabled()
+        {
+            debug!(
+                "PPU: Odd frame skip at scanline={}, dot={}",
+                self.scanline, self.dot
+            );
+            self.dot = 0;
+            self.scanline = 0;
+            self.odd_frame = !self.odd_frame;
+            return;
         }
 
         // Advance dot/scanline counters
