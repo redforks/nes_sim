@@ -57,7 +57,7 @@ fn apply_effects(
 
 #[derive(Copy, Clone)]
 #[bitfield]
-pub struct PpuCtrl {
+struct PpuCtrl {
     // Field declaration is LSB-first (first declared field maps to bit 0).
     // Arrange fields so they match the hardware PPUCTRL layout (bits 0..7):
     // bits 0-1: name_table_select
@@ -67,58 +67,41 @@ pub struct PpuCtrl {
     // bit 5: sprite_size
     // bit 6: ppu_master
     // bit 7: nmi_enable
-    pub name_table_select: B2,
-    pub increment_mode: bool,
-    pub sprite_pattern_table: bool,
-    pub background_pattern_table: bool,
-    pub sprite_size: bool,
-    pub ppu_master: bool,
-    pub nmi_enable: bool,
+    name_table_select: B2,
+    increment_mode: bool,
+    sprite_pattern_table: bool,
+    background_pattern_table: bool,
+    sprite_size: bool,
+    #[skip]
+    _ppu_master: bool, // not used in NES, can be ignored
+    nmi_enable: bool,
 }
 to_from_u8!(PpuCtrl);
 
-impl Default for PpuCtrl {
-    fn default() -> Self {
-        0u8.into()
-    }
-}
-
 #[derive(Copy, Clone)]
 #[bitfield]
-pub struct PpuMask {
-    pub grayscale: bool,
-    pub background_left_enabled: bool,
-    pub sprite_left_enabled: bool,
-    pub background_enabled: bool,
-    pub sprite_enabled: bool,
-    pub red_tint: bool,
-    pub green_tint: bool,
-    pub blue_tint: bool,
+struct PpuMask {
+    grayscale: bool,
+    background_left_enabled: bool,
+    sprite_left_enabled: bool,
+    background_enabled: bool,
+    sprite_enabled: bool,
+    red_tint: bool,
+    green_tint: bool,
+    blue_tint: bool,
 }
 to_from_u8!(PpuMask);
 
-impl Default for PpuMask {
-    fn default() -> Self {
-        0u8.into()
-    }
-}
-
 #[derive(Copy, Clone)]
 #[bitfield]
-pub struct PpuStatus {
+struct PpuStatus {
     #[skip]
     __: B5,
-    pub sprite_overflow: bool,
-    pub sprite_zero_hit: bool,
-    pub v_blank: bool,
+    sprite_overflow: bool,
+    sprite_zero_hit: bool,
+    v_blank: bool,
 }
 to_from_u8!(PpuStatus);
-
-impl Default for PpuStatus {
-    fn default() -> Self {
-        0u8.into()
-    }
-}
 
 const PALETTE_MEM_START: u16 = 0x3f00;
 const NAME_TABLE_MEM_START: u16 = 0x2000;
@@ -161,7 +144,7 @@ const COLORS: [Pixel; 64] = [
 ];
 
 #[derive(Default)]
-pub struct Palette {
+struct Palette {
     data: [u8; 0x20],
 }
 
@@ -246,13 +229,8 @@ impl Mcu for Palette {
     }
 }
 
-pub struct PpuTickResult {
-    pub vblank_started: bool,
-    pub nmi_requested: bool,
-}
-
 pub struct Ppu {
-    ctrl_flags: PpuCtrl,
+    ctrl: PpuCtrl,
     status: PpuStatus,
     name_table: NameTableControl, // name table
     cur_name_table_addr: u16,     // current active name table start address
@@ -264,7 +242,7 @@ pub struct Ppu {
     mask: PpuMask,
 
     oam_addr: u8,
-    oam: [u8; 0x100], // object attribute memory
+    oam_data: [u8; 0x100], // object attribute memory
 
     // VRAM address registers per NES PPU: v (current), t (temporary), x (fine X), w (write toggle)
     vram_addr: u16,      // v - current VRAM address
@@ -282,15 +260,16 @@ pub struct Ppu {
 impl Ppu {
     pub fn new() -> Self {
         Ppu {
-            ctrl_flags: 0.into(),
-            status: 0.into(),
+            ctrl: PpuCtrl::new(),
+            mask: PpuMask::new(),
+            status: PpuStatus::new(),
+            oam_addr: 0,
+            oam_data: [0; 0x100],
+
             name_table: NameTableControl::default(),
             cur_name_table_addr: 0x2000,
             palette: Palette::default(),
             cur_pattern_table_idx: 0,
-            mask: 0.into(),
-            oam_addr: 0,
-            oam: [0; 0x100],
             vram_addr: 0,
             temp_vram_addr: 0,
             fine_x: 0,
@@ -308,7 +287,7 @@ impl Ppu {
     }
 
     pub fn oam_dma(&mut self, vals: &[u8; 256]) {
-        self.oam.copy_from_slice(vals);
+        self.oam_data.copy_from_slice(vals);
     }
 
     /// Advance PPU by one dot, rendering a pixel if on a visible scanline.
@@ -370,7 +349,7 @@ impl Ppu {
 
     /// Return ppu nmi signal, it connect to Cpu nmi input line
     pub fn nmi_outline(&self) -> bool {
-        self.status.v_blank() && self.ctrl_flags.nmi_enable()
+        self.status.v_blank() && self.ctrl.nmi_enable()
     }
 
     /// Return ppu vblank status
@@ -419,8 +398,7 @@ impl Ppu {
             0x2000 => {
                 self.set_control_flags(value.into());
                 // Update name table address from control bits
-                self.cur_name_table_addr =
-                    0x2000 + (self.ctrl_flags.name_table_select() as u16 * 0x400);
+                self.cur_name_table_addr = 0x2000 + (self.ctrl.name_table_select() as u16 * 0x400);
             }
             // PPUMASK
             0x2001 => {
@@ -433,7 +411,7 @@ impl Ppu {
             // OAMDATA
             0x2004 => {
                 let addr = self.oam_addr as usize;
-                self.oam[addr] = value;
+                self.oam_data[addr] = value;
                 self.oam_addr = self.oam_addr.wrapping_add(1);
             }
             // PPUSCROLL
@@ -449,11 +427,7 @@ impl Ppu {
                 let vram_addr = self.vram_addr;
                 Self::write_vram_data(self, vram_addr, value);
                 // Increment VRAM address based on control flag
-                let increment = if self.ctrl_flags.increment_mode() {
-                    32
-                } else {
-                    1
-                };
+                let increment = if self.ctrl.increment_mode() { 32 } else { 1 };
                 self.vram_addr = self.vram_addr.wrapping_add(increment);
             }
             _ => {} // Ignore other addresses
@@ -579,7 +553,7 @@ impl Ppu {
         }
 
         // Determine which pattern table to use for sprites
-        let pattern_table_idx = if inner.ctrl_flags.sprite_pattern_table() {
+        let pattern_table_idx = if inner.ctrl.sprite_pattern_table() {
             1
         } else {
             0
@@ -588,10 +562,10 @@ impl Ppu {
         // Render sprites in reverse order (priority 0->63)
         for sprite_idx in (0..=63).rev() {
             let byte_idx = sprite_idx * 4;
-            let y = inner.oam[byte_idx];
-            let tile_idx = inner.oam[byte_idx + 1];
-            let attributes = inner.oam[byte_idx + 2];
-            let x = inner.oam[byte_idx + 3];
+            let y = inner.oam_data[byte_idx];
+            let tile_idx = inner.oam_data[byte_idx + 1];
+            let attributes = inner.oam_data[byte_idx + 2];
+            let x = inner.oam_data[byte_idx + 3];
 
             let sprite_y = screen_y as i16 - y as i16;
             let sprite_x = screen_x as i16 - x as i16;
@@ -633,25 +607,21 @@ impl Ppu {
         let vram_addr = self.vram_addr;
         let value = Self::read_vram_data(self, pattern, vram_addr);
         // Increment VRAM address based on control flag
-        let increment = if self.ctrl_flags.increment_mode() {
-            32
-        } else {
-            1
-        };
+        let increment = if self.ctrl.increment_mode() { 32 } else { 1 };
         self.vram_addr = self.vram_addr.wrapping_add(increment);
         value
     }
 
     /// Read OAM data at current OAM address (for testing)
     fn read_oam_data(&self) -> u8 {
-        self.oam[self.oam_addr as usize]
+        self.oam_data[self.oam_addr as usize]
     }
 
     /// Set control flags (for testing)
     fn set_control_flags(&mut self, flags: PpuCtrl) {
-        self.ctrl_flags = flags;
+        self.ctrl = flags;
         // Update pattern table index based on background_pattern_table flag
-        self.cur_pattern_table_idx = if self.ctrl_flags.background_pattern_table() {
+        self.cur_pattern_table_idx = if self.ctrl.background_pattern_table() {
             1
         } else {
             0
