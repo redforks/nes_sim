@@ -72,8 +72,7 @@ struct PpuCtrl {
     sprite_pattern_table: bool,
     background_pattern_table: bool,
     sprite_size: bool,
-    #[skip]
-    _ppu_master: bool, // not used in NES, can be ignored
+    ppu_master: bool, // not used in NES, can be ignored
     nmi_enable: bool,
 }
 to_from_u8!(PpuCtrl);
@@ -114,6 +113,14 @@ const DOTS_PER_SCANLINE: u16 = 341;
 const VBLANK_SET_SCANLINE: u16 = 241;
 const VBLANK_CLEAR_SCANLINE: u16 = 261;
 const VBLANK_CLEAR_DOT: u16 = 1;
+const MAX_SPRITES_PER_SCANLINE: usize = 8;
+
+#[derive(Copy, Clone)]
+struct SpritePixel {
+    palette_idx: u8,
+    color_idx: u8,
+    behind_bg: bool,
+}
 
 const fn rgb(v: [u8; 3]) -> Pixel {
     let [r, g, b] = v;
@@ -178,7 +185,7 @@ impl Palette {
         if addr >= 32 { 31 } else { addr }
     }
 
-    fn _get_color_idx(&self, start: usize, palette_idx: u8, idx: u8) -> Pixel {
+    fn get_color_idx(&self, start: usize, palette_idx: u8, idx: u8) -> Pixel {
         let offset = if idx == 0 {
             0
         } else {
@@ -196,10 +203,10 @@ impl Palette {
     }
 
     fn get_background_color(&self, palette_idx: u8, idx: u8) -> Pixel {
-        self._get_color_idx(0, palette_idx, idx)
+        self.get_color_idx(0, palette_idx, idx)
     }
 
-    fn _get_sprit_color(&self, palette_idx: u8, idx: u8) -> Pixel {
+    fn get_sprit_color(&self, palette_idx: u8, idx: u8) -> Pixel {
         let offset = 0x10
             + idx as usize
             + match palette_idx {
@@ -214,7 +221,7 @@ impl Palette {
             "_get_sprit_color: palette_idx={}, idx={}, offset={}, val=0x{:02x}",
             palette_idx, idx, offset, color_val
         );
-        self._get_color_idx(0x10, palette_idx, idx)
+        self.get_color_idx(0x10, palette_idx, idx)
     }
 }
 
@@ -296,6 +303,10 @@ impl Ppu {
     /// # Parameters
     /// - `pattern`: CHR ROM pattern data for tile/sprite lookup
     pub fn tick(&mut self, pattern: &[u8]) {
+        if self.scanline < 240 && self.dot == 0 {
+            self.update_sprite_overflow(self.scanline as u8);
+        }
+
         // Render pixel during visible scanlines (0-239) and visible dots (0-255)
         if self.scanline < 240 && self.dot < 256 {
             let pixel = Self::render_pixel(self, pattern, self.dot as u8, self.scanline as u8);
@@ -331,6 +342,7 @@ impl Ppu {
                 self.scanline, self.dot
             );
             self.status.set_v_blank(false);
+            self.status.set_sprite_overflow(false);
             self.status.set_sprite_zero_hit(false);
         }
 
@@ -546,60 +558,107 @@ impl Ppu {
         pattern: &[u8],
         screen_x: u8,
         screen_y: u8,
-    ) -> Option<(u8, u8, bool, bool)> {
+    ) -> Option<SpritePixel> {
         // Check left-column clipping
         if !inner.mask.sprite_left_enabled() && screen_x < 8 {
             return None;
         }
 
-        // Determine which pattern table to use for sprites
-        let pattern_table_idx = if inner.ctrl.sprite_pattern_table() {
-            1
-        } else {
-            0
-        };
-
         // Render sprites in reverse order (priority 0->63)
         for sprite_idx in (0..=63).rev() {
-            let byte_idx = sprite_idx * 4;
-            let y = inner.oam_data[byte_idx];
-            let tile_idx = inner.oam_data[byte_idx + 1];
-            let attributes = inner.oam_data[byte_idx + 2];
-            let x = inner.oam_data[byte_idx + 3];
-
-            let sprite_y = screen_y as i16 - y as i16;
-            let sprite_x = screen_x as i16 - x as i16;
-
-            // Check if sprite is visible at current position
-            if (0..8).contains(&sprite_x) && (0..8).contains(&sprite_y) {
-                // Check sprite flipping and get pixel
-                let flip_vertical = (attributes & 0x80) != 0;
-                let flip_horizontal = (attributes & 0x40) != 0;
-                let sprite_y = if flip_vertical {
-                    7 - sprite_y
-                } else {
-                    sprite_y
-                } as u8;
-                let sprite_x = if flip_horizontal {
-                    7 - sprite_x
-                } else {
-                    sprite_x
-                } as u8;
-
-                let pattern_table =
-                    crate::nes::ppu::PatternBand::new(pattern).pattern(pattern_table_idx);
-                let tile = pattern_table.tile(tile_idx);
-                let color_idx = tile.pixel(sprite_x as usize, sprite_y as usize);
-
-                if color_idx != 0 {
-                    let palette_idx = attributes & 0x03;
-                    let behind_bg = (attributes & 0x20) != 0;
-                    let is_sprite_zero = sprite_idx == 0;
-                    return Some((palette_idx, color_idx, behind_bg, is_sprite_zero));
-                }
+            if let Some(pixel) =
+                inner.get_sprite_pixel_for_index(pattern, sprite_idx, screen_x, screen_y)
+            {
+                return Some(pixel);
             }
         }
         None
+    }
+
+    fn sprite_height(&self) -> i16 {
+        if self.ctrl.sprite_size() { 16 } else { 8 }
+    }
+
+    fn sprite_covers_scanline(&self, sprite_idx: usize, screen_y: u8) -> bool {
+        let byte_idx = sprite_idx * 4;
+        let y = self.oam_data[byte_idx] as i16;
+        let sprite_y = screen_y as i16 - y;
+        (0..self.sprite_height()).contains(&sprite_y)
+    }
+
+    fn update_sprite_overflow(&mut self, screen_y: u8) {
+        let count = (0..64)
+            .filter(|&sprite_idx| self.sprite_covers_scanline(sprite_idx, screen_y))
+            .take(MAX_SPRITES_PER_SCANLINE + 1)
+            .count();
+
+        if count > MAX_SPRITES_PER_SCANLINE {
+            self.status.set_sprite_overflow(true);
+        }
+    }
+
+    fn get_sprite_pixel_for_index(
+        &self,
+        pattern: &[u8],
+        sprite_idx: usize,
+        screen_x: u8,
+        screen_y: u8,
+    ) -> Option<SpritePixel> {
+        let byte_idx = sprite_idx * 4;
+        let y = self.oam_data[byte_idx];
+        let tile_idx = self.oam_data[byte_idx + 1];
+        let attributes = self.oam_data[byte_idx + 2];
+        let x = self.oam_data[byte_idx + 3];
+
+        let sprite_y = screen_y as i16 - y as i16;
+        let sprite_x = screen_x as i16 - x as i16;
+        let sprite_height = self.sprite_height();
+
+        if !(0..8).contains(&sprite_x) || !(0..sprite_height).contains(&sprite_y) {
+            return None;
+        }
+
+        let flip_vertical = (attributes & 0x80) != 0;
+        let flip_horizontal = (attributes & 0x40) != 0;
+        let sprite_y = if flip_vertical {
+            sprite_height - 1 - sprite_y
+        } else {
+            sprite_y
+        } as u8;
+        let sprite_x = if flip_horizontal {
+            7 - sprite_x
+        } else {
+            sprite_x
+        } as u8;
+
+        let color_idx = if self.ctrl.sprite_size() {
+            let pattern_table_idx = (tile_idx & 0x01) as usize;
+            let tile_base = tile_idx & 0xFE;
+            let tile_offset = sprite_y / 8;
+            let tile_row = (sprite_y % 8) as usize;
+            let pattern_table = PatternBand::new(pattern).pattern(pattern_table_idx);
+            let tile = pattern_table.tile(tile_base.wrapping_add(tile_offset));
+            tile.pixel(sprite_x as usize, tile_row)
+        } else {
+            let pattern_table_idx = if self.ctrl.sprite_pattern_table() {
+                1
+            } else {
+                0
+            };
+            let pattern_table = PatternBand::new(pattern).pattern(pattern_table_idx);
+            let tile = pattern_table.tile(tile_idx);
+            tile.pixel(sprite_x as usize, sprite_y as usize)
+        };
+
+        if color_idx == 0 {
+            return None;
+        }
+
+        Some(SpritePixel {
+            palette_idx: attributes & 0x03,
+            color_idx,
+            behind_bg: (attributes & 0x20) != 0,
+        })
     }
 
     /// Read VRAM at current address and increment (for testing)
@@ -643,6 +702,8 @@ impl Ppu {
 
     /// Render a single pixel (for testing)
     fn render_pixel(&mut self, pattern: &[u8], x: u8, y: u8) -> Pixel {
+        self.update_sprite_overflow(y);
+
         let bg_pixel = if self.mask.background_enabled() {
             Self::get_background_pixel(self, pattern, x, y)
         } else {
@@ -657,22 +718,23 @@ impl Ppu {
 
         let (bg_palette_idx, bg_color_idx) = bg_pixel;
 
-        let color = match sprite_pixel {
-            Some((spr_palette_idx, spr_color_idx, behind_bg, is_sprite_zero)) => {
-                // Sprite zero hit detection:
-                // Set when an opaque sprite 0 pixel overlaps an opaque background pixel
-                if is_sprite_zero && bg_color_idx != 0 && spr_color_idx != 0 && x != 255 {
-                    self.status.set_sprite_zero_hit(true);
-                }
+        if self.mask.background_enabled()
+            && self.mask.sprite_enabled()
+            && bg_color_idx != 0
+            && x != 255
+            && (x >= 8 || self.mask.background_left_enabled())
+            && (x >= 8 || self.mask.sprite_left_enabled())
+            && self.get_sprite_pixel_for_index(pattern, 0, x, y).is_some()
+        {
+            self.status.set_sprite_zero_hit(true);
+        }
 
-                if spr_color_idx == 0 {
-                    // Sprite pixel is transparent, show background
-                    self.palette
-                        .get_background_color(bg_palette_idx, bg_color_idx)
-                } else if bg_color_idx == 0 || !behind_bg {
+        let color = match sprite_pixel {
+            Some(sprite_pixel) => {
+                if bg_color_idx == 0 || !sprite_pixel.behind_bg {
                     // Background is transparent OR sprite has priority
                     self.palette
-                        ._get_sprit_color(spr_palette_idx, spr_color_idx)
+                        .get_sprit_color(sprite_pixel.palette_idx, sprite_pixel.color_idx)
                 } else {
                     // Background has priority and is opaque
                     self.palette

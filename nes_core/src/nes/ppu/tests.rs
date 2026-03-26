@@ -915,11 +915,72 @@ fn test_render_pixel_uses_second_tile_for_8x16_sprites() {
     let mut pattern = create_pattern();
     set_tile_solid(&mut pattern, 0, 1, 3);
     set_sprite_palette_color(&mut ppu, 0, 3, 0x2b);
-    // Note: 8x16 sprite mode is not yet fully implemented, so test as regular 8x8
-    setup_sprite(&mut ppu, 0, 0, 1, 0, 0);
+    ppu.set_control_flags(PpuCtrl::new().with_sprite_size(true));
+    setup_sprite(&mut ppu, 0, 0, 0, 0, 0);
 
-    let pixel = ppu.render_pixel(&pattern, 0, 1);
+    let pixel = ppu.render_pixel(&pattern, 0, 8);
     assert_eq!(pixel, COLORS[0x2b]);
+}
+
+#[test]
+fn test_render_pixel_uses_odd_tile_bank_for_8x16_sprites() {
+    let mut ppu = create_test_ppu_with_mask(
+        PpuMask::new()
+            .with_sprite_enabled(true)
+            .with_sprite_left_enabled(true),
+    );
+    let mut pattern = create_pattern();
+    set_tile_solid(&mut pattern, 1, 2, 2);
+    set_sprite_palette_color(&mut ppu, 0, 2, 0x2c);
+    ppu.set_control_flags(PpuCtrl::new().with_sprite_size(true));
+    setup_sprite(&mut ppu, 0, 0, 3, 0, 0);
+
+    let pixel = ppu.render_pixel(&pattern, 0, 0);
+    assert_eq!(pixel, COLORS[0x2c]);
+}
+
+#[test]
+fn test_render_pixel_uses_vertical_flip_for_8x16_sprites() {
+    let mut ppu = create_test_ppu_with_mask(
+        PpuMask::new()
+            .with_sprite_enabled(true)
+            .with_sprite_left_enabled(true),
+    );
+    let mut pattern = create_pattern();
+    set_tile_solid(&mut pattern, 0, 0, 1);
+    set_sprite_palette_color(&mut ppu, 0, 1, 0x2d);
+    ppu.set_control_flags(PpuCtrl::new().with_sprite_size(true));
+    setup_sprite(&mut ppu, 0, 0, 0, 0x80, 0);
+
+    let pixel = ppu.render_pixel(&pattern, 0, 15);
+    assert_eq!(pixel, COLORS[0x2d]);
+}
+
+#[test]
+fn test_render_pixel_sets_sprite_overflow_with_nine_sprites_on_scanline() {
+    let mut ppu = create_test_ppu_with_mask(PpuMask::new());
+    let pattern = create_pattern();
+
+    for idx in 0..9 {
+        setup_sprite(&mut ppu, idx, 20, 0, 0, (idx * 8) as u8);
+    }
+
+    assert!(!ppu.status.sprite_overflow());
+    ppu.render_pixel(&pattern, 0, 20);
+    assert!(ppu.status.sprite_overflow());
+}
+
+#[test]
+fn test_render_pixel_does_not_set_sprite_overflow_with_eight_sprites_on_scanline() {
+    let mut ppu = create_test_ppu_with_mask(PpuMask::new());
+    let pattern = create_pattern();
+
+    for idx in 0..8 {
+        setup_sprite(&mut ppu, idx, 20, 0, 0, (idx * 8) as u8);
+    }
+
+    ppu.render_pixel(&pattern, 0, 20);
+    assert!(!ppu.status.sprite_overflow());
 }
 
 #[test]
