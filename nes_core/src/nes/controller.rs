@@ -2,29 +2,43 @@ use crate::mcu::{DefinedRegion, Mcu};
 
 /// nes Controller struct that represent a controller of nes.
 pub struct AController {
-    mask: u8,
+    stroke: bool,
+    /// current button state
     bits: u8,
+    /// copy of bits that is used for locking the state when reading
+    locked_bits: u8,
+    /// the position of the bit that is currently being read
+    bit_position: u8,
 }
 
 #[allow(clippy::new_without_default)]
 impl AController {
     pub fn new() -> AController {
-        AController { mask: 1, bits: 0 }
+        AController {
+            stroke: false,
+            bits: 0,
+            locked_bits: 0,
+            bit_position: 0,
+        }
     }
 
     fn reset_for_read(&mut self) {
-        self.mask = 1;
+        self.bit_position = 0;
+        self.locked_bits = self.bits;
     }
 
     fn read(&mut self) -> u8 {
-        let r = self.bits & self.mask;
-        self.mask = self.mask.rotate_left(1);
-
-        if r != 0 {
-            0x40
+        let pressed = if self.stroke {
+            self.bits & Button::A as u8 != 0
+        } else if self.bit_position < 8 {
+            let r = (self.locked_bits >> self.bit_position) & 1 != 0;
+            self.bit_position = self.bit_position.saturating_add(1);
+            r
         } else {
-            0x41
-        }
+            false
+        };
+
+        if pressed { 0x41 } else { 0x40 }
     }
 
     pub fn press(&mut self, btn: Button) {
@@ -77,10 +91,10 @@ impl Mcu for Controller {
     fn write(&mut self, address: u16, value: u8) {
         match address {
             0x4016 => {
-                if value & 1 == 0 {
-                    self.a.reset_for_read();
-                    self.b.reset_for_read();
-                }
+                self.a.stroke = value & 1 != 0;
+                self.b.stroke = value & 1 != 0;
+                self.a.reset_for_read();
+                self.b.reset_for_read();
             }
             0x4017 => {}
             _ => panic!("write address out of range: {:04x}", address),

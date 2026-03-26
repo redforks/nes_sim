@@ -29,6 +29,17 @@ fn test_a_controller() {
 }
 
 #[test]
+fn test_a_controller_stroke_mode_reads_a_button_only() {
+    let mut a = AController::new();
+    a.press(Button::A);
+    a.press(Button::B);
+    a.stroke = true;
+
+    assert_eq!(a.read(), 0x40);
+    assert_eq!(a.read(), 0x40);
+}
+
+#[test]
 fn test_controller_new() {
     let controller = Controller::new();
     // Verify both controllers are initialized
@@ -75,7 +86,7 @@ fn test_controller_write() {
 }
 
 #[test]
-fn test_controller_write_1_does_not_reset() {
+fn test_controller_write_1_resets_and_latches() {
     let mut controller = Controller::new();
 
     controller.a.press(Button::A);
@@ -83,13 +94,12 @@ fn test_controller_write_1_does_not_reset() {
     let val1 = controller.read(0x4016);
     assert_eq!(val1, 0x40);
 
-    // Write 1 (which doesn't trigger reset)
+    // Write 1 enables strobe mode and latches the current state
     controller.write(0x4016, 1);
 
-    // Next read should continue from current state (not reset)
+    // Next read should stay on A while strobe is enabled
     let val2 = controller.read(0x4016);
-    // Since mask was rotated, now we're reading B button
-    assert_eq!(val2, 0x41);
+    assert_eq!(val2, 0x40);
 }
 
 #[test]
