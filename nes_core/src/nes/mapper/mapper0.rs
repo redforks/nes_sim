@@ -76,7 +76,7 @@ mod tests {
     #[test]
     fn mcu() {
         let mut mcu = Mapper0::default();
-        let mut ppu = Ppu::default();
+        let mut ppu = Ppu::new();
 
         // read-write ram
         mcu.write(&mut ppu, CARTRIDGE_START_ADDR, 0x01);

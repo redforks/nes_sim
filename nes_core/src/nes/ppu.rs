@@ -279,8 +279,8 @@ pub struct Ppu {
     odd_frame: bool,
 }
 
-impl Default for Ppu {
-    fn default() -> Self {
+impl Ppu {
+    pub fn new() -> Self {
         Ppu {
             ctrl_flags: 0.into(),
             status: 0.into(),
@@ -302,9 +302,7 @@ impl Default for Ppu {
             suppress_vblank_for_current_frame: false,
         }
     }
-}
 
-impl Ppu {
     pub fn timing(&self) -> (u16, u16) {
         (self.scanline, self.dot)
     }

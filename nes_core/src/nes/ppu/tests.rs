@@ -1,7 +1,7 @@
 use super::*;
 
 fn new_test_ppu_and_pattern() -> (Ppu, [u8; 8192]) {
-    (Ppu::default(), [0; 8192])
+    (Ppu::new(), [0; 8192])
 }
 
 #[test]
@@ -253,19 +253,19 @@ fn test_ppu_status_to_from_u8() {
 
 #[test]
 fn test_oam_dma() {
-    let mut ppu = Ppu::default();
+    let mut ppu = Ppu::new();
     let data: [u8; 256] = [0x42; 256];
 
     ppu.oam_dma(&data);
 
-    assert_eq!(ppu.oam[0], 0x42);
-    assert_eq!(ppu.oam[128], 0x42);
-    assert_eq!(ppu.oam[255], 0x42);
+    assert_eq!(ppu.oam_data[0], 0x42);
+    assert_eq!(ppu.oam_data[128], 0x42);
+    assert_eq!(ppu.oam_data[255], 0x42);
 }
 
 #[test]
 fn test_set_mirroring() {
-    let mut ppu = Ppu::default();
+    let mut ppu = Ppu::new();
 
     ppu.set_mirroring(Mirroring::Horizontal);
     ppu.set_mirroring(Mirroring::Vertical);
@@ -292,7 +292,7 @@ fn test_read_status_clears_vblank() {
 fn test_read_status_at_vblank_start_suppresses_vblank_for_frame() {
     let (mut ppu, pattern) = new_test_ppu_and_pattern();
     ppu.scanline = 241;
-    ppu.dot = 1;
+    ppu.dot = 0;
 
     let status = ppu.read_status();
     assert!(!status.v_blank());
@@ -554,14 +554,11 @@ fn test_read_buffer() {
 
 fn create_test_ppu_with_mask(mask: PpuMask) -> Ppu {
     // Initialize PPU with the provided mask to avoid field reassignment
-    let mut ppu = Ppu {
-        mask,
-        ..Default::default()
-    };
+    let mut ppu = Ppu { mask, ..Ppu::new() };
     // Clear OAM
     for i in 0..64 {
-        ppu.oam[i * 4] = 0x20;
-        ppu.oam[i * 4 + 3] = 0xFF;
+        ppu.oam_data[i * 4] = 0x20;
+        ppu.oam_data[i * 4 + 3] = 0xFF;
     }
     // Clear palette RAM
     ppu.palette.data = [0; 0x20];
@@ -607,7 +604,7 @@ fn set_tile_pixel(
 }
 
 fn setup_sprite(ppu: &mut Ppu, index: usize, y: u8, tile: u8, attr: u8, x: u8) {
-    let oam = &mut ppu.oam;
+    let oam = &mut ppu.oam_data;
     oam[index * 4] = y;
     oam[index * 4 + 1] = tile;
     oam[index * 4 + 2] = attr;

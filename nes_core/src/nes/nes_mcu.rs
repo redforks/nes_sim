@@ -29,7 +29,7 @@ pub fn build(file: &INesFile) -> NesMcu {
 /// - `renderer`: Optional custom renderer. If None, uses default ImageRender.
 pub fn build_with_renderer(file: &INesFile, renderer: Option<Box<dyn Render>>) -> NesMcu {
     let cartridge = mapper::create_cartridge(file);
-    let mut ppu = Ppu::default();
+    let mut ppu = Ppu::new();
     ppu.set_mirroring(if file.header().ver_or_hor_arrangement {
         Mirroring::Vertical
     } else {

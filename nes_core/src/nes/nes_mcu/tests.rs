@@ -33,7 +33,7 @@ impl Cartridge for MockCartridge {
 fn test_mcu() -> NesMcu {
     NesMcu {
         lower_ram: LowerRam::new(),
-        ppu: Ppu::default(),
+        ppu: Ppu::new(),
         after_ppu: RamMcu::start_from(0x4000, [0; 0x20]),
         cartridge: Box::new(MockCartridge::new()),
         apu: ApuController::new(FakeApuControllerDriver::default()),
