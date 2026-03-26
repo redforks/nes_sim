@@ -1,6 +1,7 @@
 use crate::{
     ines::INesFile,
     machine::Machine,
+    nes::controller::Button,
     nes::{self, NesMcu},
     EmptyPlugin, ExecuteResult, Plugin,
 };
@@ -135,6 +136,14 @@ impl<P: Plugin<NesMcu>> NesMachine<P> {
 
     pub fn flush_audio(&mut self) {
         self.machine.mcu_mut().flush_audio();
+    }
+
+    pub fn press_button(&mut self, button: Button) {
+        self.machine.mcu_mut().press_button(button);
+    }
+
+    pub fn release_button(&mut self, button: Button) {
+        self.machine.mcu_mut().release_button(button);
     }
 
     /// Set the CPU program counter.

@@ -36,6 +36,7 @@ impl AController {
     }
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum Button {
     A = 1,
     B = 0x2,

@@ -1,6 +1,7 @@
 use crate::ines::INesFile;
 use crate::mcu::{Mcu, RamMcu};
 use crate::nes::apu::{Apu, AudioDriver, NullAudioDriver};
+use crate::nes::controller::{Button, Controller};
 use crate::nes::lower_ram::LowerRam;
 use crate::nes::mapper;
 use crate::nes::mapper::Cartridge;
@@ -12,6 +13,7 @@ pub struct NesMcu {
     lower_ram: LowerRam,
     ppu: Ppu,
     after_ppu: RamMcu<0x20>,
+    controller: Controller,
     cartridge: Box<dyn Cartridge>,
     apu: Apu,
 }
@@ -51,6 +53,7 @@ pub fn build_with_renderer_and_audio(
         lower_ram: LowerRam::new(),
         ppu,
         after_ppu: RamMcu::start_from(0x4000, [0; 0x20]),
+        controller: Controller::new(),
         cartridge,
         apu: Apu::new(audio_driver),
     }
@@ -86,6 +89,14 @@ impl NesMcu {
         self.apu.flush();
     }
 
+    pub fn press_button(&mut self, button: Button) {
+        self.controller.a.press(button);
+    }
+
+    pub fn release_button(&mut self, button: Button) {
+        self.controller.a.release(button);
+    }
+
     pub fn ppu_timing(&self) -> (u16, u16) {
         self.ppu.timing()
     }
@@ -101,6 +112,7 @@ impl Mcu for NesMcu {
             0x0000..=0x1fff => self.lower_ram.read(address),
             0x2000..=0x3fff => self.ppu.read(self.cartridge.pattern_ref(), address),
             0x4015 => self.apu.read(address),
+            0x4016..=0x4017 => self.controller.read(address),
             0x4000..=0x401f => self.after_ppu.read(address),
             0x4020..=0xffff => self.cartridge.read(address),
         }
@@ -117,6 +129,10 @@ impl Mcu for NesMcu {
                     });
             }
             0x4014 => self.ppu_dma(value),
+            0x4016 => {
+                self.after_ppu.write(address, value);
+                self.controller.write(address, value);
+            }
             0x4000..=0x4017 => {
                 self.after_ppu.write(address, value);
                 if matches!(

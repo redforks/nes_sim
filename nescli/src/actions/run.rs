@@ -2,6 +2,7 @@ use anyhow::Result;
 use image::EncodableLayout;
 use nes_core::ines::INesFile;
 use nes_core::nes::apu::AudioDriver;
+use nes_core::nes::controller::Button;
 use nes_core::nes_machine::NesMachine;
 use nes_core::render::{CompositeRender, ImageRender, MarkdownRender, Render};
 use sdl2::audio::{AudioQueue, AudioSpecDesired};
@@ -15,6 +16,20 @@ use std::time::{Duration, Instant};
 const AUDIO_SAMPLE_RATE: i32 = 44_100;
 const AUDIO_CHUNK_SAMPLES: usize = 1024;
 const AUDIO_MAX_QUEUED_BYTES: u32 = (AUDIO_SAMPLE_RATE as u32) * 4 / 2;
+
+fn map_keycode_to_button(keycode: Keycode) -> Option<Button> {
+    match keycode {
+        Keycode::Z => Some(Button::A),
+        Keycode::X => Some(Button::B),
+        Keycode::Space => Some(Button::Select),
+        Keycode::Return => Some(Button::Start),
+        Keycode::Up => Some(Button::Up),
+        Keycode::Down => Some(Button::Down),
+        Keycode::Left => Some(Button::Left),
+        Keycode::Right => Some(Button::Right),
+        _ => None,
+    }
+}
 
 struct SdlAudioDriver {
     queue: AudioQueue<f32>,
@@ -149,7 +164,7 @@ impl RunAction {
         // Create window (2x scale for better visibility: 256x240 -> 512x480)
         let window = video_subsystem
             .window(
-                "NES Simulator - Press F1 to dump next frame as markdown",
+                "NES Simulator - Arrows move, Z/X A/B, Space Select, Enter Start, F1 dump",
                 512,
                 480,
             )
@@ -203,12 +218,14 @@ impl RunAction {
                     Event::Quit { .. }
                     | Event::KeyDown {
                         keycode: Some(Keycode::Escape),
+                        repeat: false,
                         ..
                     } => {
                         break 'running;
                     }
                     Event::KeyDown {
                         keycode: Some(Keycode::F1),
+                        repeat: false,
                         ..
                     } => {
                         // Request markdown dump for next frame
@@ -220,6 +237,7 @@ impl RunAction {
                     }
                     Event::KeyDown {
                         keycode: Some(Keycode::F2),
+                        repeat: false,
                         ..
                     } => {
                         // Reset the simulator
@@ -228,11 +246,30 @@ impl RunAction {
                     }
                     Event::KeyDown {
                         keycode: Some(Keycode::F4),
+                        repeat: false,
                         ..
                     } => {
                         // Quit the application
                         eprintln!(">> Quitting application");
                         break 'running;
+                    }
+                    Event::KeyDown {
+                        keycode: Some(keycode),
+                        repeat: false,
+                        ..
+                    } => {
+                        if let Some(button) = map_keycode_to_button(keycode) {
+                            machine.press_button(button);
+                        }
+                    }
+                    Event::KeyUp {
+                        keycode: Some(keycode),
+                        repeat: false,
+                        ..
+                    } => {
+                        if let Some(button) = map_keycode_to_button(keycode) {
+                            machine.release_button(button);
+                        }
                     }
                     _ => {}
                 }

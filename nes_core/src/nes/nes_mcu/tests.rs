@@ -1,5 +1,6 @@
 use super::*;
 use crate::nes::apu::Apu;
+use crate::nes::controller::Button;
 
 struct MockCartridge {
     prg_rom: [u8; 0x8000],
@@ -40,6 +41,7 @@ fn test_mcu() -> NesMcu {
         lower_ram: LowerRam::new(),
         ppu: Ppu::new(),
         after_ppu: RamMcu::start_from(0x4000, [0; 0x20]),
+        controller: Controller::new(),
         cartridge: Box::new(MockCartridge::new()),
         apu: Apu::default(),
     }
@@ -128,4 +130,21 @@ fn test_ppu_pattern_writes_route_to_cartridge() {
     mcu.write(0x2007, 0xab);
 
     assert_eq!(mcu.cartridge.pattern_ref()[0x10], 0xab);
+}
+
+#[test]
+fn test_controller_reads_route_through_nes_mcu() {
+    let mut mcu = test_mcu();
+
+    mcu.press_button(Button::A);
+    mcu.press_button(Button::Left);
+    mcu.write(0x4016, 0);
+
+    assert_eq!(mcu.read(0x4016), 0x40);
+    assert_eq!(mcu.read(0x4016), 0x41);
+    assert_eq!(mcu.read(0x4016), 0x41);
+    assert_eq!(mcu.read(0x4016), 0x41);
+    assert_eq!(mcu.read(0x4016), 0x41);
+    assert_eq!(mcu.read(0x4016), 0x41);
+    assert_eq!(mcu.read(0x4016), 0x40);
 }
