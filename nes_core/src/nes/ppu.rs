@@ -430,6 +430,13 @@ impl Ppu {
 
     /// Write to PPU registers
     pub fn write(&mut self, address: u16, value: u8) {
+        self.write_with_pattern_write(address, value, |_, _| {});
+    }
+
+    pub fn write_with_pattern_write<F>(&mut self, address: u16, value: u8, mut pattern_write: F)
+    where
+        F: FnMut(u16, u8),
+    {
         // PPU registers are mirrored every 8 bytes in range $2000-$3FFF
         let reg = 0x2000 + ((address - 0x2000) % 8);
         match reg {
@@ -464,7 +471,12 @@ impl Ppu {
             // PPUDATA
             0x2007 => {
                 let vram_addr = self.vram_addr;
-                Self::write_vram_data(self, vram_addr, value);
+                Self::write_vram_data_with_pattern_write(
+                    self,
+                    vram_addr,
+                    value,
+                    &mut pattern_write,
+                );
                 // Increment VRAM address based on control flag
                 let increment = if self.ctrl.increment_mode() { 32 } else { 1 };
                 self.vram_addr = self.vram_addr.wrapping_add(increment);
@@ -492,13 +504,25 @@ impl Ppu {
     }
 
     fn write_vram_data(inner: &mut Ppu, address: u16, value: u8) {
+        Self::write_vram_data_with_pattern_write(inner, address, value, |_, _| {});
+    }
+
+    fn write_vram_data_with_pattern_write<F>(
+        inner: &mut Ppu,
+        address: u16,
+        value: u8,
+        mut pattern_write: F,
+    ) where
+        F: FnMut(u16, u8),
+    {
         let addr = address % 0x4000;
         if addr < 0x3f00 {
             if addr >= 0x2000 {
                 // Name table (pattern table 0x0000-0x1FFF is read-only for CHR ROM)
                 inner.name_table.write(addr, value);
+            } else {
+                pattern_write(addr, value);
             }
-            // else: pattern table writes ignored (CHR ROM is read-only)
         } else {
             // Palette
             inner.palette.write(addr, value);

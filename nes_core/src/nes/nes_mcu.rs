@@ -110,7 +110,11 @@ impl Mcu for NesMcu {
         match address {
             0x0000..=0x1fff => self.lower_ram.write(address, value),
             0x2000..=0x3fff => {
-                self.ppu.write(address, value);
+                let cartridge = &mut self.cartridge;
+                self.ppu
+                    .write_with_pattern_write(address, value, |pattern_addr, pattern_value| {
+                        cartridge.write_pattern(pattern_addr, pattern_value)
+                    });
             }
             0x4014 => self.ppu_dma(value),
             0x4000..=0x4017 => {

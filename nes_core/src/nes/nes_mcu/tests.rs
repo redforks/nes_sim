@@ -29,6 +29,10 @@ impl Cartridge for MockCartridge {
     fn pattern_ref(&self) -> &[u8] {
         &self.chr_rom
     }
+
+    fn write_pattern(&mut self, address: u16, value: u8) {
+        self.chr_rom[address as usize] = value;
+    }
 }
 
 fn test_mcu() -> NesMcu {
@@ -113,4 +117,15 @@ fn test_ppu_dma() {
     mcu.write(0x0201, 0x34);
     mcu.write(0x0202, 0x56);
     mcu.write(0x4014, 0x02);
+}
+
+#[test]
+fn test_ppu_pattern_writes_route_to_cartridge() {
+    let mut mcu = test_mcu();
+
+    mcu.write(0x2006, 0x00);
+    mcu.write(0x2006, 0x10);
+    mcu.write(0x2007, 0xab);
+
+    assert_eq!(mcu.cartridge.pattern_ref()[0x10], 0xab);
 }
