@@ -311,25 +311,27 @@ impl Ppu {
     /// # Parameters
     /// - `pattern`: CHR ROM pattern data for tile/sprite lookup
     pub fn tick(&mut self, pattern: &[u8]) {
+        let rendering_enabled = self.rendering_enabled();
+
         if self.scanline < 240 && self.dot == 0 {
             self.update_sprite_overflow(self.scanline as u8);
         }
 
         // Render pixel during visible scanlines (0-239) and visible dots (0-255)
-        if self.scanline < 240 && self.dot < 256 {
+        if rendering_enabled && self.scanline < 240 && self.dot < 256 {
             let pixel = Self::render_pixel(self, pattern, self.dot as u8, self.scanline as u8);
             self.renderer
                 .set_pixel(self.dot as u32, self.scanline as u32, pixel.0);
         }
 
         // At end of pre-render scanline (261), clear screen for next frame
-        if self.scanline == VBLANK_CLEAR_SCANLINE && self.dot == 0 {
+        if rendering_enabled && self.scanline == VBLANK_CLEAR_SCANLINE && self.dot == 0 {
             let bg_color = COLORS[self.palette.data[0] as usize];
             self.renderer.clear(bg_color.0);
         }
 
         // Call finish() at end of visible area (scanline 240, dot 0)
-        if self.scanline == 240 && self.dot == 0 {
+        if rendering_enabled && self.scanline == 240 && self.dot == 0 {
             self.renderer.finish();
         }
 

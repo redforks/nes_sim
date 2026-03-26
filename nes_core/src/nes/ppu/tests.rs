@@ -1,4 +1,43 @@
 use super::*;
+use crate::render::Render;
+use std::cell::RefCell;
+use std::rc::Rc;
+
+#[derive(Debug, Default, Clone, PartialEq, Eq)]
+struct RenderStats {
+    clear_calls: usize,
+    set_pixel_calls: usize,
+    finish_calls: usize,
+}
+
+#[derive(Debug)]
+struct CountingRender {
+    stats: Rc<RefCell<RenderStats>>,
+}
+
+impl CountingRender {
+    fn new(stats: Rc<RefCell<RenderStats>>) -> Self {
+        Self { stats }
+    }
+}
+
+impl Render for CountingRender {
+    fn clear(&mut self, _color: [u8; 4]) {
+        self.stats.borrow_mut().clear_calls += 1;
+    }
+
+    fn set_pixel(&mut self, _x: u32, _y: u32, _color: [u8; 4]) {
+        self.stats.borrow_mut().set_pixel_calls += 1;
+    }
+
+    fn dimensions(&self) -> (u32, u32) {
+        (256, 240)
+    }
+
+    fn finish(&mut self) {
+        self.stats.borrow_mut().finish_calls += 1;
+    }
+}
 
 fn new_test_ppu_and_pattern() -> (Ppu, [u8; 8192]) {
     (Ppu::new(), [0; 8192])
@@ -619,6 +658,13 @@ fn create_test_ppu_with_mask(mask: PpuMask) -> Ppu {
     ppu
 }
 
+fn create_test_ppu_with_counting_renderer(mask: PpuMask) -> (Ppu, Rc<RefCell<RenderStats>>) {
+    let mut ppu = create_test_ppu_with_mask(mask);
+    let stats = Rc::new(RefCell::new(RenderStats::default()));
+    ppu.set_renderer(Box::new(CountingRender::new(stats.clone())));
+    (ppu, stats)
+}
+
 fn create_pattern() -> [u8; 8192] {
     [0; 8192]
 }
@@ -715,6 +761,54 @@ fn test_render_pixel_both_disabled() {
 
     let pixel = ppu.render_pixel(&pattern, 10, 10);
     assert_eq!(pixel, COLORS[0x21]);
+}
+
+#[test]
+fn test_tick_does_not_touch_renderer_when_rendering_disabled() {
+    let (mut ppu, stats) = create_test_ppu_with_counting_renderer(PpuMask::new());
+    let pattern = create_pattern();
+
+    ppu.scanline = 0;
+    ppu.dot = 0;
+    ppu.tick(&pattern);
+
+    ppu.scanline = VBLANK_CLEAR_SCANLINE;
+    ppu.dot = 0;
+    ppu.tick(&pattern);
+
+    ppu.scanline = 240;
+    ppu.dot = 0;
+    ppu.tick(&pattern);
+
+    assert_eq!(*stats.borrow(), RenderStats::default());
+}
+
+#[test]
+fn test_tick_updates_renderer_when_rendering_enabled() {
+    let (mut ppu, stats) =
+        create_test_ppu_with_counting_renderer(PpuMask::new().with_background_enabled(true));
+    let pattern = create_pattern();
+
+    ppu.scanline = 0;
+    ppu.dot = 0;
+    ppu.tick(&pattern);
+
+    ppu.scanline = VBLANK_CLEAR_SCANLINE;
+    ppu.dot = 0;
+    ppu.tick(&pattern);
+
+    ppu.scanline = 240;
+    ppu.dot = 0;
+    ppu.tick(&pattern);
+
+    assert_eq!(
+        *stats.borrow(),
+        RenderStats {
+            clear_calls: 1,
+            set_pixel_calls: 1,
+            finish_calls: 1,
+        }
+    );
 }
 
 #[test]
