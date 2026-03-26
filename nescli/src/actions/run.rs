@@ -1,14 +1,69 @@
 use anyhow::Result;
 use image::EncodableLayout;
 use nes_core::ines::INesFile;
+use nes_core::nes::apu::AudioDriver;
 use nes_core::nes_machine::NesMachine;
 use nes_core::render::{CompositeRender, ImageRender, MarkdownRender, Render};
+use sdl2::audio::{AudioQueue, AudioSpecDesired};
 use sdl2::event::Event;
 use sdl2::keyboard::Keycode;
 use sdl2::pixels::PixelFormatEnum;
 use std::cell::RefCell;
 use std::rc::Rc;
 use std::time::{Duration, Instant};
+
+const AUDIO_SAMPLE_RATE: i32 = 44_100;
+const AUDIO_CHUNK_SAMPLES: usize = 1024;
+const AUDIO_MAX_QUEUED_BYTES: u32 = (AUDIO_SAMPLE_RATE as u32) * 4 / 2;
+
+struct SdlAudioDriver {
+    queue: AudioQueue<f32>,
+    buffer: Vec<f32>,
+    sample_rate: u32,
+}
+
+impl SdlAudioDriver {
+    fn new(queue: AudioQueue<f32>, sample_rate: u32) -> Self {
+        Self {
+            queue,
+            buffer: Vec::with_capacity(AUDIO_CHUNK_SAMPLES),
+            sample_rate,
+        }
+    }
+
+    fn try_flush(&mut self) {
+        if self.buffer.is_empty() {
+            return;
+        }
+
+        if self.queue.size() >= AUDIO_MAX_QUEUED_BYTES {
+            self.buffer.clear();
+            return;
+        }
+
+        self.queue
+            .queue_audio(&self.buffer)
+            .expect("failed to queue SDL audio samples");
+        self.buffer.clear();
+    }
+}
+
+impl AudioDriver for SdlAudioDriver {
+    fn sample_rate(&self) -> u32 {
+        self.sample_rate
+    }
+
+    fn push_sample(&mut self, sample: f32) {
+        self.buffer.push(sample);
+        if self.buffer.len() >= AUDIO_CHUNK_SAMPLES {
+            self.try_flush();
+        }
+    }
+
+    fn flush(&mut self) {
+        self.try_flush();
+    }
+}
 
 /// Wrapper around Rc<RefCell<MarkdownRender>> that implements Render
 #[derive(Debug)]
@@ -78,6 +133,18 @@ impl RunAction {
         // Initialize SDL2
         let sdl_context = sdl2::init().map_err(|e| anyhow::anyhow!(e))?;
         let video_subsystem = sdl_context.video().map_err(|e| anyhow::anyhow!(e))?;
+        let audio_subsystem = sdl_context.audio().map_err(|e| anyhow::anyhow!(e))?;
+
+        let audio_spec = AudioSpecDesired {
+            freq: Some(AUDIO_SAMPLE_RATE),
+            channels: Some(1),
+            samples: Some(AUDIO_CHUNK_SAMPLES as u16),
+        };
+        let audio_queue = audio_subsystem
+            .open_queue::<f32, _>(None, &audio_spec)
+            .map_err(|e| anyhow::anyhow!(e))?;
+        audio_queue.resume();
+        let audio_driver = Box::new(SdlAudioDriver::new(audio_queue, AUDIO_SAMPLE_RATE as u32));
 
         // Create window (2x scale for better visibility: 256x240 -> 512x480)
         let window = video_subsystem
@@ -121,7 +188,8 @@ impl RunAction {
         let shared_composite = SharedCompositeRender::new(composite.clone());
 
         // Create NES machine with composite renderer
-        let mut machine = NesMachine::with_renderer(f, Some(Box::new(shared_composite)));
+        let mut machine =
+            NesMachine::with_renderer_and_audio(f, Some(Box::new(shared_composite)), audio_driver);
 
         // Initialize event pump
         let mut event_pump = sdl_context.event_pump().map_err(|e| anyhow::anyhow!(e))?;
@@ -172,6 +240,7 @@ impl RunAction {
 
             // Run one frame
             let result = machine.process_frame();
+            machine.flush_audio();
 
             // Update texture with frame data
             texture.update(None, image_render.borrow_image().as_bytes(), 256 * 4)?;

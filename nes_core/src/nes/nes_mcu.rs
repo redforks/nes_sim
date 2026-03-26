@@ -1,8 +1,6 @@
 use crate::ines::INesFile;
 use crate::mcu::{Mcu, RamMcu};
-use crate::nes::apu::{
-    ApuController, FakeApuControllerDriver, LengthCounterChannel, LengthCounterLoad,
-};
+use crate::nes::apu::{Apu, AudioDriver, NullAudioDriver};
 use crate::nes::lower_ram::LowerRam;
 use crate::nes::mapper;
 use crate::nes::mapper::Cartridge;
@@ -15,7 +13,7 @@ pub struct NesMcu {
     ppu: Ppu,
     after_ppu: RamMcu<0x20>,
     cartridge: Box<dyn Cartridge>,
-    apu: ApuController<FakeApuControllerDriver>,
+    apu: Apu,
 }
 
 pub fn build(file: &INesFile) -> NesMcu {
@@ -28,6 +26,14 @@ pub fn build(file: &INesFile) -> NesMcu {
 /// - `file`: The iNES file to load
 /// - `renderer`: Optional custom renderer. If None, uses default ImageRender.
 pub fn build_with_renderer(file: &INesFile, renderer: Option<Box<dyn Render>>) -> NesMcu {
+    build_with_renderer_and_audio(file, renderer, Box::new(NullAudioDriver))
+}
+
+pub fn build_with_renderer_and_audio(
+    file: &INesFile,
+    renderer: Option<Box<dyn Render>>,
+    audio_driver: Box<dyn AudioDriver>,
+) -> NesMcu {
     let cartridge = mapper::create_cartridge(file);
     let mut ppu = Ppu::new();
     ppu.set_mirroring(if file.header().ver_or_hor_arrangement {
@@ -46,7 +52,7 @@ pub fn build_with_renderer(file: &INesFile, renderer: Option<Box<dyn Render>>) -
         ppu,
         after_ppu: RamMcu::start_from(0x4000, [0; 0x20]),
         cartridge,
-        apu: ApuController::new(FakeApuControllerDriver::default()),
+        apu: Apu::new(audio_driver),
     }
 }
 
@@ -76,6 +82,10 @@ impl NesMcu {
         self.apu.request_irq()
     }
 
+    pub fn flush_audio(&mut self) {
+        self.apu.flush();
+    }
+
     pub fn ppu_timing(&self) -> (u16, u16) {
         self.ppu.timing()
     }
@@ -103,52 +113,16 @@ impl Mcu for NesMcu {
                 self.ppu.write(address, value);
             }
             0x4014 => self.ppu_dma(value),
-            0x4015 | 0x4017 => self.apu.write(address, value),
-            // Length counter load registers (high byte)
-            0x4003 => {
+            0x4000..=0x4017 => {
                 self.after_ppu.write(address, value);
-                let low = self.after_ppu.read(0x4002);
-                self.apu.set_length_counter_load(
-                    LengthCounterChannel::Pulse1,
-                    LengthCounterLoad::from_registers(low, value),
-                );
+                if matches!(
+                    address,
+                    0x4000..=0x400F | 0x4010..=0x4013 | 0x4015 | 0x4017
+                ) {
+                    self.apu.write(address, value);
+                }
             }
-            0x4007 => {
-                self.after_ppu.write(address, value);
-                let low = self.after_ppu.read(0x4006);
-                self.apu.set_length_counter_load(
-                    LengthCounterChannel::Pulse2,
-                    LengthCounterLoad::from_registers(low, value),
-                );
-            }
-            0x400B => {
-                self.after_ppu.write(address, value);
-                let low = self.after_ppu.read(0x400A);
-                self.apu.set_length_counter_load(
-                    LengthCounterChannel::Triangle,
-                    LengthCounterLoad::from_registers(low, value),
-                );
-            }
-            0x400F => {
-                self.after_ppu.write(address, value);
-                self.apu.set_length_counter_load(
-                    LengthCounterChannel::Noise,
-                    LengthCounterLoad::from_registers(0, value),
-                );
-            }
-            // Halt flag registers (low byte with length counter halt bit)
-            0x4000 | 0x4004 | 0x4008 | 0x400C => {
-                self.after_ppu.write(address, value);
-                let channel = match address {
-                    0x4000 => LengthCounterChannel::Pulse1,
-                    0x4004 => LengthCounterChannel::Pulse2,
-                    0x4008 => LengthCounterChannel::Triangle,
-                    0x400C => LengthCounterChannel::Noise,
-                    _ => unreachable!(),
-                };
-                self.apu.set_length_counter_halt(channel, value & 0x20 != 0);
-            }
-            0x4000..=0x401f => self.after_ppu.write(address, value),
+            0x4018..=0x401f => self.after_ppu.write(address, value),
             0x4020..=0xffff => {
                 // Cartridge now takes &mut self and &mut Ppu
                 self.cartridge.write(&mut self.ppu, address, value)

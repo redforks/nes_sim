@@ -1,4 +1,9 @@
-use crate::{EmptyPlugin, ExecuteResult, Plugin, ines::INesFile, machine::Machine, nes::NesMcu};
+use crate::{
+    ines::INesFile,
+    machine::Machine,
+    nes::{self, NesMcu},
+    EmptyPlugin, ExecuteResult, Plugin,
+};
 
 /// Safety limit: maximum CPU instruction ticks per `process_frame()` call.
 /// Two full frames worth of ticks; prevents an infinite loop if VBlank never fires
@@ -22,7 +27,21 @@ impl NesMachine<EmptyPlugin<NesMcu>> {
         file: &INesFile,
         renderer: Option<Box<dyn crate::render::Render>>,
     ) -> Self {
-        let mcu = crate::nes::create_mcu_with_renderer(file, renderer);
+        let mcu = nes::create_mcu_with_renderer(file, renderer);
+        let is_vblank = mcu.ppu().vblank();
+        Self {
+            machine: Machine::with_plugin(EmptyPlugin::new(), mcu),
+            is_vblank,
+            enter_vblank: false,
+        }
+    }
+
+    pub fn with_renderer_and_audio(
+        file: &INesFile,
+        renderer: Option<Box<dyn crate::render::Render>>,
+        audio_driver: Box<dyn crate::nes::apu::AudioDriver>,
+    ) -> Self {
+        let mcu = nes::create_mcu_with_renderer_and_audio(file, renderer, audio_driver);
         let is_vblank = mcu.ppu().vblank();
         Self {
             machine: Machine::with_plugin(EmptyPlugin::new(), mcu),
@@ -35,7 +54,7 @@ impl NesMachine<EmptyPlugin<NesMcu>> {
 impl<P: Plugin<NesMcu>> NesMachine<P> {
     /// Create a new NES machine from an iNES file with a custom plugin.
     pub fn with_plugin(file: &INesFile, plugin: P) -> Self {
-        let mcu = crate::nes::create_mcu(file);
+        let mcu = nes::create_mcu(file);
         let is_vblank = mcu.ppu().vblank();
         Self {
             machine: Machine::with_plugin(plugin, mcu),
@@ -50,7 +69,7 @@ impl<P: Plugin<NesMcu>> NesMachine<P> {
         plugin: P,
         renderer: Option<Box<dyn crate::render::Render>>,
     ) -> Self {
-        let mcu = crate::nes::create_mcu_with_renderer(file, renderer);
+        let mcu = nes::create_mcu_with_renderer(file, renderer);
         let is_vblank = mcu.ppu().vblank();
         Self {
             machine: Machine::with_plugin(plugin, mcu),
@@ -112,6 +131,10 @@ impl<P: Plugin<NesMcu>> NesMachine<P> {
 
     pub fn reset(&mut self) {
         self.machine.reset()
+    }
+
+    pub fn flush_audio(&mut self) {
+        self.machine.mcu_mut().flush_audio();
     }
 
     /// Set the CPU program counter.

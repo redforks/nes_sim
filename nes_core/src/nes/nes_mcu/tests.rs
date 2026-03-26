@@ -1,4 +1,5 @@
 use super::*;
+use crate::nes::apu::Apu;
 
 struct MockCartridge {
     prg_rom: [u8; 0x8000],
@@ -36,7 +37,7 @@ fn test_mcu() -> NesMcu {
         ppu: Ppu::new(),
         after_ppu: RamMcu::start_from(0x4000, [0; 0x20]),
         cartridge: Box::new(MockCartridge::new()),
-        apu: ApuController::new(FakeApuControllerDriver::default()),
+        apu: Apu::default(),
     }
 }
 
