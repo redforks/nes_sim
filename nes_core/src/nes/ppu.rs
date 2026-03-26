@@ -182,7 +182,11 @@ impl Palette {
 
         // Clamp to valid range [0, 31]
         let addr = addr as usize;
-        if addr >= 32 { 31 } else { addr }
+        if addr >= 32 {
+            31
+        } else {
+            addr
+        }
     }
 
     fn get_color_idx(&self, start: usize, palette_idx: u8, idx: u8) -> Pixel {
@@ -486,7 +490,7 @@ impl Ppu {
             inner.write_toggle = true;
         } else {
             // Second write - Y scroll
-            inner.temp_vram_addr = (inner.temp_vram_addr & 0x8FFF)
+            inner.temp_vram_addr = (inner.temp_vram_addr & !0x73E0)
                 | (((value as u16 & 0x07) << 12) & 0x7000)
                 | (((value as u16 >> 3) & 0x001F) << 5);
             inner.write_toggle = false;
@@ -496,8 +500,7 @@ impl Ppu {
     fn write_vram_addr(inner: &mut Ppu, value: u8) {
         if !inner.write_toggle {
             // First write - high byte
-            inner.temp_vram_addr =
-                (inner.temp_vram_addr & 0x80FF) | (((value as u16 & 0x3F) << 8) & 0x3F00);
+            inner.temp_vram_addr = (inner.temp_vram_addr & 0x00FF) | ((value as u16 & 0x3F) << 8);
             inner.write_toggle = true;
         } else {
             // Second write - low byte
@@ -513,32 +516,24 @@ impl Ppu {
             return (0, 0);
         }
 
-        let vram_addr = inner.vram_addr;
-        let coarse_x = (vram_addr & 0x001f) as u8;
-        let coarse_y = ((vram_addr >> 5) & 0x001f) as u8;
-        let fine_y = ((vram_addr >> 12) & 0x0007) as u8;
-        let fine_x = inner.fine_x;
+        let scroll_addr = inner.temp_vram_addr;
+        let base_nametable = ((scroll_addr >> 10) & 0x0003) as u8;
+        let scroll_x = ((scroll_addr & 0x001f) << 3) | inner.fine_x as u16;
+        let scroll_y = (((scroll_addr >> 5) & 0x001f) << 3) | ((scroll_addr >> 12) & 0x0007);
 
-        // Calculate which pixel we're rendering factoring in scroll
-        let pixel_x = screen_x as u16 + fine_x as u16;
-        let tile_x = coarse_x as u16 + (pixel_x / 8);
-        let tile_fine_x = (pixel_x % 8) as usize;
+        let world_x = scroll_x + screen_x as u16;
+        let world_y = scroll_y + screen_y as u16;
 
-        let pixel_y = screen_y as u16 + (coarse_y as u16 * 8) + fine_y as u16;
-        let tile_y = pixel_y / 8;
-        let tile_fine_y = (pixel_y % 8) as usize;
+        let nt_select_x = (((base_nametable & 0x01) as u16) + (world_x / 256)) & 0x01;
+        let nt_select_y = ((((base_nametable >> 1) & 0x01) as u16) + (world_y / 240)) & 0x01;
+        let nt_idx = ((nt_select_y << 1) | nt_select_x) as u8;
 
-        // Determine which nametable based on wrapping
-        let nt_x = tile_x & 0x1f;
-        let nt_y = tile_y & 0x1f;
-        // Clamp nt_y to valid range (0-29) since NES screen is only 240px = 30 tiles high
-        let nt_y = if nt_y >= 30 { nt_y - 30 } else { nt_y };
-        let nt_select_x = (tile_x >> 5) & 0x1;
-        let nt_select_y = (tile_y >> 5) & 0x1;
-        let nt_idx = (nt_select_y << 1) | nt_select_x;
+        let nt_x = ((world_x % 256) / 8) as u8;
+        let nt_y = ((world_y % 240) / 8) as u8;
+        let tile_fine_x = (world_x % 8) as usize;
+        let tile_fine_y = (world_y % 8) as usize;
 
         let pattern_table = PatternBand::new(pattern).pattern(inner.cur_pattern_table_idx as usize);
-        let nt_idx = nt_idx as u8;
 
         let (tile, palette_idx) = inner.name_table.with_nth(nt_idx, |name_table| {
             let tile = name_table.tile(pattern_table, nt_x as u8, nt_y as u8);
@@ -576,7 +571,11 @@ impl Ppu {
     }
 
     fn sprite_height(&self) -> i16 {
-        if self.ctrl.sprite_size() { 16 } else { 8 }
+        if self.ctrl.sprite_size() {
+            16
+        } else {
+            8
+        }
     }
 
     fn sprite_covers_scanline(&self, sprite_idx: usize, screen_y: u8) -> bool {
@@ -679,6 +678,9 @@ impl Ppu {
     /// Set control flags (for testing)
     fn set_control_flags(&mut self, flags: PpuCtrl) {
         self.ctrl = flags;
+        self.temp_vram_addr =
+            (self.temp_vram_addr & !0x0C00) | ((self.ctrl.name_table_select() as u16) << 10);
+        self.cur_name_table_addr = 0x2000 + (self.ctrl.name_table_select() as u16 * 0x400);
         // Update pattern table index based on background_pattern_table flag
         self.cur_pattern_table_idx = if self.ctrl.background_pattern_table() {
             1

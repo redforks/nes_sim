@@ -22,13 +22,12 @@ fn repr_ppu_ctrl() {
     assert!(ctrl.sprite_pattern_table()); // bit 4
     assert!(ctrl.background_pattern_table()); // bit 3
     assert!(ctrl.sprite_size()); // bit 2
-    assert!(ctrl.ppu_master()); // bit 1
     assert!(ctrl.nmi_enable()); // bit 0
 
     // Test with pattern 0b0101_1100 (0x5C)
     // Bits (from MSB to LSB): 0 1 0 1 1 1 0 0
     // According to PPUCTRL (bit7..bit0):
-    // bit7=nmi_enable=0, bit6=ppu_master=1, bit5=sprite_size=0,
+    // bit7=nmi_enable=0, bit6=unused master/slave=1, bit5=sprite_size=0,
     // bit4=background_pattern_table=1, bit3=sprite_pattern_table=1,
     // bit2=increment_mode=1, bits1-0=name_table_select=0
     let ctrl: PpuCtrl = 0b0101_1100.into();
@@ -37,13 +36,11 @@ fn repr_ppu_ctrl() {
     assert!(ctrl.sprite_pattern_table());
     assert!(ctrl.background_pattern_table());
     assert!(!ctrl.sprite_size());
-    assert!(ctrl.ppu_master());
     assert!(!ctrl.nmi_enable());
 
     // Test with all bits cleared
     let ctrl: PpuCtrl = 0b0000_0000.into();
     assert!(!ctrl.nmi_enable());
-    assert!(!ctrl.ppu_master());
     assert!(!ctrl.sprite_size());
     assert!(!ctrl.background_pattern_table());
     assert!(!ctrl.sprite_pattern_table());
@@ -217,7 +214,6 @@ fn ppu_tick_scanline_wrap() {
 fn test_ppu_ctrl_to_from_u8() {
     let ctrl = PpuCtrl::new()
         .with_nmi_enable(true)
-        .with_ppu_master(true)
         .with_sprite_size(true)
         .with_background_pattern_table(true)
         .with_sprite_pattern_table(true)
@@ -228,7 +224,6 @@ fn test_ppu_ctrl_to_from_u8() {
     let ctrl2: PpuCtrl = byte.into();
 
     assert!(ctrl2.nmi_enable());
-    assert!(ctrl2.ppu_master());
     assert!(ctrl2.sprite_size());
     assert!(ctrl2.background_pattern_table());
     assert!(ctrl2.sprite_pattern_table());
@@ -416,6 +411,21 @@ fn test_scroll_register_second_write() {
 }
 
 #[test]
+fn test_scroll_second_write_replaces_existing_y_scroll_bits() {
+    let (mut ppu, _pattern) = new_test_ppu_and_pattern();
+
+    ppu.temp_vram_addr = 0x7FFF;
+    ppu.write_toggle = true;
+
+    ppu.write(0x2005, 0x00);
+
+    assert_eq!((ppu.temp_vram_addr >> 5) & 0x1F, 0x00);
+    assert_eq!((ppu.temp_vram_addr >> 12) & 0x07, 0x00);
+    assert_eq!((ppu.temp_vram_addr >> 10) & 0x03, 0x03);
+    assert_eq!(ppu.temp_vram_addr & 0x1F, 0x1F);
+}
+
+#[test]
 fn test_vram_address_high_byte_only() {
     let (mut ppu, _pattern) = new_test_ppu_and_pattern();
 
@@ -478,6 +488,18 @@ fn test_write_0x2000_updates_name_table_addr() {
     ppu.write(0x2000, PpuCtrl::new().with_name_table_select(3).into());
 
     assert_eq!(ppu.cur_name_table_addr, 0x2C00);
+}
+
+#[test]
+fn test_write_0x2000_updates_temp_vram_nametable_bits() {
+    let (mut ppu, _pattern) = new_test_ppu_and_pattern();
+
+    ppu.temp_vram_addr = 0x73FF;
+    ppu.write(0x2000, PpuCtrl::new().with_name_table_select(2).into());
+
+    assert_eq!((ppu.temp_vram_addr >> 10) & 0x03, 0x02);
+    assert_eq!(ppu.temp_vram_addr & 0x03FF, 0x03FF);
+    assert_eq!((ppu.temp_vram_addr >> 12) & 0x07, 0x07);
 }
 
 #[test]
@@ -614,6 +636,13 @@ fn setup_sprite(ppu: &mut Ppu, index: usize, y: u8, tile: u8, attr: u8, x: u8) {
 fn set_bg_tile(ppu: &mut Ppu, tile: u8, palette_idx: u8) {
     ppu.name_table.write(0x2000, tile);
     ppu.name_table.write(0x23c0, palette_idx & 0x03);
+}
+
+fn set_bg_tile_at(ppu: &mut Ppu, addr: u16, tile: u8, palette_idx: u8) {
+    ppu.name_table.write(addr, tile);
+    let nametable_base = addr & 0xFC00;
+    ppu.name_table
+        .write(nametable_base + 0x03c0, palette_idx & 0x03);
 }
 
 fn set_bg_palette_color(ppu: &mut Ppu, palette_idx: u8, color_idx: u8, color: u8) {
@@ -863,6 +892,54 @@ fn test_render_pixel_respects_background_pattern_table_selection() {
 
     let pixel = ppu.render_pixel(&pattern, 0, 0);
     assert_eq!(pixel, COLORS[0x28]);
+}
+
+#[test]
+fn test_render_pixel_applies_horizontal_scroll_across_nametables() {
+    let mut ppu = create_test_ppu_with_mask(
+        PpuMask::new()
+            .with_background_enabled(true)
+            .with_background_left_enabled(true),
+    );
+    ppu.set_mirroring(Mirroring::Four);
+
+    let mut pattern = create_pattern();
+    set_tile_solid(&mut pattern, 0, 1, 1);
+    set_tile_solid(&mut pattern, 0, 2, 2);
+    set_bg_tile_at(&mut ppu, 0x2000, 1, 0);
+    set_bg_tile_at(&mut ppu, 0x2400, 2, 0);
+    set_bg_palette_color(&mut ppu, 0, 1, 0x11);
+    set_bg_palette_color(&mut ppu, 0, 2, 0x21);
+
+    ppu.write(0x2005, 0xF8);
+    ppu.write(0x2005, 0x00);
+
+    let pixel = ppu.render_pixel(&pattern, 8, 0);
+    assert_eq!(pixel, COLORS[0x21]);
+}
+
+#[test]
+fn test_render_pixel_applies_vertical_scroll_across_nametables() {
+    let mut ppu = create_test_ppu_with_mask(
+        PpuMask::new()
+            .with_background_enabled(true)
+            .with_background_left_enabled(true),
+    );
+    ppu.set_mirroring(Mirroring::Four);
+
+    let mut pattern = create_pattern();
+    set_tile_solid(&mut pattern, 0, 1, 1);
+    set_tile_solid(&mut pattern, 0, 2, 2);
+    set_bg_tile_at(&mut ppu, 0x2000, 1, 0);
+    set_bg_tile_at(&mut ppu, 0x2800, 2, 0);
+    set_bg_palette_color(&mut ppu, 0, 1, 0x12);
+    set_bg_palette_color(&mut ppu, 0, 2, 0x22);
+
+    ppu.write(0x2005, 0x00);
+    ppu.write(0x2005, 0xEF);
+
+    let pixel = ppu.render_pixel(&pattern, 0, 1);
+    assert_eq!(pixel, COLORS[0x22]);
 }
 
 #[test]
