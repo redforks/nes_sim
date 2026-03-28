@@ -332,19 +332,10 @@ fn test_frame_counter_to_from_u8() {
     assert!(counter2.interrupt_flag());
 }
 
-struct MockApuControllerDriver;
-impl APUControllerDriver for MockApuControllerDriver {
-    fn set_control_flags(&mut self, _flags: ControlFlags) {}
-    fn set_frame_counter(&mut self, _counter: FrameCounter) {}
-    fn read_status(&mut self) -> APUStatus {
-        APUStatus::new()
-    }
-}
-
 // Test ApuController
 #[test]
 fn test_apu_controller_read_status() {
-    let mut channel = ApuController::new(MockApuControllerDriver);
+    let mut channel = ApuController::new();
     let val = channel.read(0x4015);
     assert_eq!(val, 0); // Default APUStatus
 }
@@ -352,38 +343,38 @@ fn test_apu_controller_read_status() {
 #[test]
 #[should_panic(expected = "Can not read from ApuController")]
 fn test_apu_controller_read_invalid_address() {
-    let mut channel = ApuController::new(MockApuControllerDriver);
+    let mut channel = ApuController::new();
     let _ = channel.read(0x4016);
 }
 
 #[test]
 fn test_apu_controller_write_control_flags() {
-    let mut channel = ApuController::new(MockApuControllerDriver);
+    let mut channel = ApuController::new();
     channel.write(0x4015, 0x1F); // Should call set_control_flags
 }
 
 #[test]
 fn test_apu_controller_write_frame_counter() {
-    let mut channel = ApuController::new(MockApuControllerDriver);
+    let mut channel = ApuController::new();
     channel.write(0x4017, 0xC0); // Should call set_frame_counter
 }
 
 #[test]
 #[should_panic(expected = "Can not write to ApuController")]
 fn test_apu_controller_write_invalid_address() {
-    let mut channel = ApuController::new(MockApuControllerDriver);
+    let mut channel = ApuController::new();
     channel.write(0x4016, 0x00);
 }
 
 #[test]
 fn test_apu_controller_region() {
-    let channel = ApuController::new(MockApuControllerDriver);
+    let channel = ApuController::new();
     assert_eq!(channel.region(), (0x4015, 0x4017));
 }
 
 #[test]
-fn test_fake_apu_controller_driver_control_flags_status() {
-    let mut driver = FakeApuControllerDriver::default();
+fn test_apu_controller_driver_control_flags_status() {
+    let mut driver = ApuController::new();
 
     driver.set_length_counter_load(
         LengthCounterChannel::Pulse1,
@@ -397,8 +388,8 @@ fn test_fake_apu_controller_driver_control_flags_status() {
 }
 
 #[test]
-fn test_fake_apu_controller_driver_read_status_clears_frame_irq() {
-    let mut driver = FakeApuControllerDriver::default();
+fn test_apu_controller_driver_read_status_clears_frame_irq() {
+    let mut driver = ApuController::new();
     driver.set_frame_counter(0u8.into());
 
     for _ in 0..(14914 * 2) {
@@ -412,8 +403,8 @@ fn test_fake_apu_controller_driver_read_status_clears_frame_irq() {
 }
 
 #[test]
-fn test_fake_apu_controller_driver_five_step_write_clocks_length_counter() {
-    let mut driver = FakeApuControllerDriver::default();
+fn test_apu_controller_driver_five_step_write_clocks_length_counter() {
+    let mut driver = ApuController::new();
     driver.set_length_counter_load(
         LengthCounterChannel::Pulse1,
         LengthCounterLoad::from_registers(0, 0x18),

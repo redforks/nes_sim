@@ -1,7 +1,6 @@
 use crate::mcu::{DefinedRegion, Mcu};
 use crate::to_from_u8;
 use modular_bitfield::prelude::*;
-use std::cell::RefCell;
 
 #[derive(Copy, Clone)]
 #[bitfield]
@@ -228,83 +227,7 @@ impl LengthCounterChannel {
     }
 }
 
-pub trait APUControllerDriver {
-    fn set_control_flags(&mut self, flags: ControlFlags);
-    fn set_frame_counter(&mut self, counter: FrameCounter);
-    fn read_status(&mut self) -> APUStatus;
-
-    fn tick(&mut self) -> bool {
-        false
-    }
-
-    fn request_irq(&self) -> bool {
-        false
-    }
-
-    fn set_length_counter_halt(&mut self, _channel: LengthCounterChannel, _halt: bool) {}
-
-    fn set_length_counter_load(
-        &mut self,
-        _channel: LengthCounterChannel,
-        _length_counter: LengthCounterLoad,
-    ) {
-    }
-}
-
-pub struct ApuController<D: APUControllerDriver>(RefCell<D>);
-
-impl<D: APUControllerDriver> ApuController<D> {
-    pub fn new(driver: D) -> Self {
-        Self(RefCell::new(driver))
-    }
-
-    pub fn tick(&self) -> bool {
-        self.0.borrow_mut().tick()
-    }
-
-    pub fn request_irq(&self) -> bool {
-        self.0.borrow().request_irq()
-    }
-
-    pub fn set_length_counter_halt(&self, channel: LengthCounterChannel, halt: bool) {
-        self.0.borrow_mut().set_length_counter_halt(channel, halt);
-    }
-
-    pub fn set_length_counter_load(
-        &self,
-        channel: LengthCounterChannel,
-        length_counter: LengthCounterLoad,
-    ) {
-        self.0
-            .borrow_mut()
-            .set_length_counter_load(channel, length_counter);
-    }
-}
-
-impl<D: APUControllerDriver> Mcu for ApuController<D> {
-    fn read(&mut self, address: u16) -> u8 {
-        match address {
-            0x4015 => self.0.borrow_mut().read_status().into(),
-            _ => panic!("Can not read from ApuController at address {}", address),
-        }
-    }
-
-    fn write(&mut self, address: u16, value: u8) {
-        match address {
-            0x4015 => self.0.borrow_mut().set_control_flags(value.into()),
-            0x4017 => self.0.borrow_mut().set_frame_counter(value.into()),
-            _ => panic!("Can not write to ApuController at address {}", address),
-        }
-    }
-}
-
-impl<D: APUControllerDriver> DefinedRegion for ApuController<D> {
-    fn region(&self) -> (u16, u16) {
-        (0x4015, 0x4017)
-    }
-}
-
-pub struct FakeApuControllerDriver {
+pub struct ApuController {
     apu_cycle: u64,
     apu_even_cycle: bool,
     frame_counter_mode: bool,
@@ -316,7 +239,7 @@ pub struct FakeApuControllerDriver {
     channel_enabled: [bool; 5],
 }
 
-impl Default for FakeApuControllerDriver {
+impl Default for ApuController {
     fn default() -> Self {
         Self {
             apu_cycle: 0,
@@ -332,36 +255,61 @@ impl Default for FakeApuControllerDriver {
     }
 }
 
-impl FakeApuControllerDriver {
+impl ApuController {
     const LENGTH_TABLE: [u8; 32] = [
         10, 254, 20, 2, 40, 4, 80, 6, 160, 8, 60, 10, 14, 12, 26, 14, 12, 16, 24, 18, 48, 20, 96,
         22, 192, 24, 72, 26, 16, 28, 32, 30,
     ];
 
-    fn clock_length_counters(&mut self) {
-        for i in 0..self.length_counters.len() {
-            if self.channel_enabled[i]
-                && !self.length_counter_halt[i]
-                && self.length_counters[i] > 0
-            {
-                self.length_counters[i] -= 1;
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn tick(&mut self) -> bool {
+        self.apu_even_cycle = !self.apu_even_cycle;
+        if !self.apu_even_cycle {
+            return false;
+        }
+
+        self.apu_cycle = self.apu_cycle.wrapping_add(1);
+
+        if self.frame_counter_mode {
+            let cycle_mod = self.apu_cycle % 18641;
+            if cycle_mod == 7456 || cycle_mod == 18640 {
+                self.clock_length_counters();
             }
+            return false;
         }
-    }
 
-    fn set_channel_enabled(&mut self, channel: usize, enabled: bool) {
-        self.channel_enabled[channel] = enabled;
-        if channel < self.length_counters.len() && !enabled {
-            self.length_counters[channel] = 0;
+        let cycle_mod = self.apu_cycle % 14915;
+        if cycle_mod == 7456 || cycle_mod == 14914 {
+            self.clock_length_counters();
         }
+        if cycle_mod == 14914 && !self.frame_interrupt_inhibit {
+            self.frame_interrupt = true;
+            return true;
+        }
+
+        false
     }
 
-    fn status_channel_enabled(&self, channel: usize) -> bool {
-        self.channel_enabled[channel] && self.length_counters[channel] > 0
+    pub fn request_irq(&self) -> bool {
+        self.frame_interrupt
     }
-}
 
-impl APUControllerDriver for FakeApuControllerDriver {
+    pub fn set_length_counter_halt(&mut self, channel: LengthCounterChannel, halt: bool) {
+        self.length_counter_halt[channel.index()] = halt;
+    }
+
+    pub fn set_length_counter_load(
+        &mut self,
+        channel: LengthCounterChannel,
+        length_counter: LengthCounterLoad,
+    ) {
+        self.length_counters[channel.index()] =
+            Self::LENGTH_TABLE[length_counter.length_count() as usize];
+    }
+
     fn set_control_flags(&mut self, flags: ControlFlags) {
         self.set_channel_enabled(0, flags.pulse1_enabled());
         self.set_channel_enabled(1, flags.pulse2_enabled());
@@ -400,49 +348,49 @@ impl APUControllerDriver for FakeApuControllerDriver {
         status
     }
 
-    fn tick(&mut self) -> bool {
-        self.apu_even_cycle = !self.apu_even_cycle;
-        if !self.apu_even_cycle {
-            return false;
-        }
-
-        self.apu_cycle = self.apu_cycle.wrapping_add(1);
-
-        if self.frame_counter_mode {
-            let cycle_mod = self.apu_cycle % 18641;
-            if cycle_mod == 7456 || cycle_mod == 18640 {
-                self.clock_length_counters();
+    fn clock_length_counters(&mut self) {
+        for i in 0..self.length_counters.len() {
+            if self.channel_enabled[i]
+                && !self.length_counter_halt[i]
+                && self.length_counters[i] > 0
+            {
+                self.length_counters[i] -= 1;
             }
-            return false;
         }
-
-        let cycle_mod = self.apu_cycle % 14915;
-        if cycle_mod == 7456 || cycle_mod == 14914 {
-            self.clock_length_counters();
-        }
-        if cycle_mod == 14914 && !self.frame_interrupt_inhibit {
-            self.frame_interrupt = true;
-            return true;
-        }
-
-        false
     }
 
-    fn request_irq(&self) -> bool {
-        self.frame_interrupt
+    fn set_channel_enabled(&mut self, channel: usize, enabled: bool) {
+        self.channel_enabled[channel] = enabled;
+        if channel < self.length_counters.len() && !enabled {
+            self.length_counters[channel] = 0;
+        }
     }
 
-    fn set_length_counter_halt(&mut self, channel: LengthCounterChannel, halt: bool) {
-        self.length_counter_halt[channel.index()] = halt;
+    fn status_channel_enabled(&self, channel: usize) -> bool {
+        self.channel_enabled[channel] && self.length_counters[channel] > 0
+    }
+}
+
+impl Mcu for ApuController {
+    fn read(&mut self, address: u16) -> u8 {
+        match address {
+            0x4015 => self.read_status().into(),
+            _ => panic!("Can not read from ApuController at address {}", address),
+        }
     }
 
-    fn set_length_counter_load(
-        &mut self,
-        channel: LengthCounterChannel,
-        length_counter: LengthCounterLoad,
-    ) {
-        self.length_counters[channel.index()] =
-            Self::LENGTH_TABLE[length_counter.length_count() as usize];
+    fn write(&mut self, address: u16, value: u8) {
+        match address {
+            0x4015 => self.set_control_flags(value.into()),
+            0x4017 => self.set_frame_counter(value.into()),
+            _ => panic!("Can not write to ApuController at address {}", address),
+        }
+    }
+}
+
+impl DefinedRegion for ApuController {
+    fn region(&self) -> (u16, u16) {
+        (0x4015, 0x4017)
     }
 }
 
@@ -569,7 +517,7 @@ impl PulseState {
 
     fn write_timer_high(&mut self, load: LengthCounterLoad) {
         self.timer_period = load.timer();
-        self.length_counter = FakeApuControllerDriver::LENGTH_TABLE[load.length_count() as usize];
+        self.length_counter = ApuController::LENGTH_TABLE[load.length_count() as usize];
         self.sequence_step = 0;
         self.envelope.restart();
     }
@@ -676,7 +624,7 @@ impl TriangleState {
 
     fn write_timer_high(&mut self, load: LengthCounterLoad) {
         self.timer_period = load.timer();
-        self.length_counter = FakeApuControllerDriver::LENGTH_TABLE[load.length_count() as usize];
+        self.length_counter = ApuController::LENGTH_TABLE[load.length_count() as usize];
         self.linear_counter_reload = true;
     }
 
@@ -764,7 +712,7 @@ impl NoiseState {
     }
 
     fn write_length(&mut self, value: NoiseLength) {
-        self.length_counter = FakeApuControllerDriver::LENGTH_TABLE[value.length() as usize];
+        self.length_counter = ApuController::LENGTH_TABLE[value.length() as usize];
         self.envelope_state.restart();
     }
 
