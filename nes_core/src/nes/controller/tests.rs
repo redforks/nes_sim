@@ -118,14 +118,6 @@ fn test_controller_write_4017_does_nothing() {
 }
 
 #[test]
-fn test_controller_region() {
-    let controller = Controller::new();
-    let (start, end) = controller.region();
-    assert_eq!(start, 0x4016);
-    assert_eq!(end, 0x4017);
-}
-
-#[test]
 fn test_all_button_values() {
     assert_eq!(Button::A as u8, 1);
     assert_eq!(Button::B as u8, 0x2);

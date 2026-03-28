@@ -1,7 +1,5 @@
-mod mapping;
 mod ram;
 
-pub use mapping::*;
 pub use ram::RamMcu;
 
 /// Nes 6502 Mcu.

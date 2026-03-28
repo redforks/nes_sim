@@ -1,4 +1,4 @@
-use crate::mcu::{DefinedRegion, Mcu};
+use crate::mcu::Mcu;
 
 pub struct RamMcu<const SIZE: usize> {
     /// Start address of the memory region
@@ -31,8 +31,8 @@ impl<const SIZE: usize> Mcu for RamMcu<SIZE> {
     }
 }
 
-impl<const SIZE: usize> DefinedRegion for RamMcu<SIZE> {
-    fn region(&self) -> (u16, u16) {
+impl<const SIZE: usize> RamMcu<SIZE> {
+    pub fn region(&self) -> (u16, u16) {
         if self.start == 0 {
             (0, (SIZE - 1) as u16)
         } else {

@@ -1,4 +1,4 @@
-use crate::mcu::{DefinedRegion, Mcu};
+use crate::mcu::Mcu;
 
 /// nes Controller struct that represent a controller of nes.
 pub struct AController {
@@ -38,11 +38,7 @@ impl AController {
             false
         };
 
-        if pressed {
-            0x41
-        } else {
-            0x40
-        }
+        if pressed { 0x41 } else { 0x40 }
     }
 
     pub fn press(&mut self, btn: Button) {
@@ -106,11 +102,7 @@ impl Mcu for Controller {
     }
 }
 
-impl DefinedRegion for Controller {
-    fn region(&self) -> (u16, u16) {
-        (0x4016, 0x4017)
-    }
-}
+// hard-coded addresses where needed.
 
 #[cfg(test)]
 mod tests;
