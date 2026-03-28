@@ -3,31 +3,29 @@ use modular_bitfield::prelude::*;
 
 #[derive(Copy, Clone)]
 #[bitfield]
-pub struct Sweep {
-    pub shift: B3,
-    pub negate: bool,
-    pub period: B3,
-    pub enabled: bool,
+#[repr(u8)]
+struct Sweep {
+    shift: B3,
+    negate: bool,
+    period: B3,
+    enabled: bool,
 }
-
-to_from_u8!(Sweep);
 
 impl Default for Sweep {
     fn default() -> Self {
-        0u8.into()
+        Self::new()
     }
 }
 
 #[derive(Copy, Clone)]
 #[bitfield]
-pub struct DutyCycle {
-    pub volume: B4,
-    pub constant_volume: bool,
-    pub length_counter_halt: bool,
-    pub duty: B2,
+#[repr(u8)]
+struct DutyCycle {
+    volume: B4,
+    constant_volume: bool,
+    length_counter_halt: bool,
+    duty: B2,
 }
-
-to_from_u8!(DutyCycle);
 
 impl Default for DutyCycle {
     fn default() -> Self {
@@ -36,7 +34,7 @@ impl Default for DutyCycle {
 }
 
 #[derive(Copy, Clone, Default)]
-pub struct LengthCounterLoad {
+struct LengthCounterLoad {
     low_byte: u8,
     high_byte: u8,
 }
@@ -60,9 +58,9 @@ impl LengthCounterLoad {
 
 #[derive(Copy, Clone)]
 #[bitfield]
-pub struct LinearCounterControl {
-    pub counter: B7,
-    pub reload_flag: bool,
+struct LinearCounterControl {
+    counter: B7,
+    reload_flag: bool,
 }
 
 to_from_u8!(LinearCounterControl);
@@ -75,10 +73,10 @@ impl Default for LinearCounterControl {
 
 #[derive(Copy, Clone)]
 #[bitfield]
-pub struct NoiseEnvelop {
-    pub volume: B4,
-    pub constant_volume: bool,
-    pub loop_flag: bool,
+struct NoiseEnvelop {
+    volume: B4,
+    constant_volume: bool,
+    loop_flag: bool,
     #[allow(non_snake_case)]
     #[skip]
     __: B2,
@@ -94,14 +92,14 @@ impl Default for NoiseEnvelop {
 
 #[derive(Copy, Clone)]
 #[bitfield]
-pub struct NoisePeriod {
-    pub period: B4,
+struct NoisePeriod {
+    period: B4,
 
     #[allow(non_snake_case)]
     #[skip]
     __: B3,
 
-    pub enabled: bool,
+    enabled: bool,
 }
 
 to_from_u8!(NoisePeriod);
@@ -114,12 +112,12 @@ impl Default for NoisePeriod {
 
 #[derive(Copy, Clone)]
 #[bitfield]
-pub struct NoiseLength {
+struct NoiseLength {
     #[allow(non_snake_case)]
     #[skip]
     __: B3,
 
-    pub length: B5,
+    length: B5,
 }
 
 to_from_u8!(NoiseLength);
@@ -132,13 +130,13 @@ impl Default for NoiseLength {
 
 #[derive(Copy, Clone)]
 #[bitfield]
-pub struct DmcIRQLoopFreq {
-    pub freq: B4,
+struct DmcIRQLoopFreq {
+    freq: B4,
     #[allow(non_snake_case)]
     #[skip]
     __: B2,
-    pub loop_flag: bool,
-    pub irq_enabled: bool,
+    loop_flag: bool,
+    irq_enabled: bool,
 }
 to_from_u8!(DmcIRQLoopFreq);
 
@@ -150,12 +148,12 @@ impl Default for DmcIRQLoopFreq {
 
 #[derive(Copy, Clone)]
 #[bitfield]
-pub struct ControlFlags {
-    pub pulse1_enabled: bool,
-    pub pulse2_enabled: bool,
-    pub triangle_enabled: bool,
-    pub noise_enabled: bool,
-    pub dmc_enabled: bool,
+struct ControlFlags {
+    pulse1_enabled: bool,
+    pulse2_enabled: bool,
+    triangle_enabled: bool,
+    noise_enabled: bool,
+    dmc_enabled: bool,
     #[allow(non_snake_case)]
     #[skip]
     __: B3,
@@ -170,17 +168,17 @@ impl Default for ControlFlags {
 
 #[derive(Copy, Clone)]
 #[bitfield]
-pub struct APUStatus {
-    pub pulse1_enabled: bool,
-    pub pulse2_enabled: bool,
-    pub triangle_enabled: bool,
-    pub noise_enabled: bool,
-    pub dmc_enabled: bool,
+struct APUStatus {
+    pulse1_enabled: bool,
+    pulse2_enabled: bool,
+    triangle_enabled: bool,
+    noise_enabled: bool,
+    dmc_enabled: bool,
     #[allow(non_snake_case)]
     #[skip]
     __: B1,
-    pub frame_interrupt: bool,
-    pub dmc_interrupt: bool,
+    frame_interrupt: bool,
+    dmc_interrupt: bool,
 }
 to_from_u8!(APUStatus);
 
@@ -192,12 +190,12 @@ impl Default for APUStatus {
 
 #[derive(Copy, Clone)]
 #[bitfield]
-pub struct FrameCounter {
+struct FrameCounter {
     #[allow(non_snake_case)]
     #[skip]
     __: B6,
-    pub interrupt_flag: bool,
-    pub mode: bool,
+    interrupt_flag: bool,
+    mode: bool,
 }
 to_from_u8!(FrameCounter);
 
@@ -208,7 +206,7 @@ impl Default for FrameCounter {
 }
 
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
-pub enum LengthCounterChannel {
+enum LengthCounterChannel {
     Pulse1,
     Pulse2,
     Triangle,

@@ -75,20 +75,35 @@ mod tests {
 
 #[macro_use]
 mod macros {
+
     #[macro_export]
-    macro_rules! to_from_u8 {
+    macro_rules! from_u8 {
+        ($t: ty) => {
+            impl From<u8> for $t {
+                fn from(v: u8) -> Self {
+                    <$t>::from_bytes([v])
+                }
+            }
+        };
+    }
+
+    #[macro_export]
+    macro_rules! to_u8 {
         ($t: ty) => {
             impl From<$t> for u8 {
                 fn from(n: $t) -> Self {
                     n.into_bytes()[0]
                 }
             }
+        };
+    }
 
-            impl From<u8> for $t {
-                fn from(v: u8) -> Self {
-                    <$t>::from_bytes([v])
-                }
-            }
+    #[macro_export]
+    macro_rules! to_from_u8 {
+        ($t: ty) => {
+            crate::to_u8!($t);
+
+            crate::from_u8!($t);
         };
     }
 }

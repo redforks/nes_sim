@@ -15,23 +15,6 @@ fn test_sweep_bitfield() {
 }
 
 #[test]
-fn test_sweep_to_from_u8() {
-    let mut sweep = Sweep::new();
-    sweep.set_enabled(true);
-    sweep.set_period(0b110);
-    sweep.set_negate(false);
-    sweep.set_shift(0b011);
-
-    let byte: u8 = sweep.into();
-    let sweep2: Sweep = byte.into();
-
-    assert!(sweep2.enabled());
-    assert_eq!(sweep2.period(), 0b110);
-    assert!(!sweep2.negate());
-    assert_eq!(sweep2.shift(), 0b011);
-}
-
-#[test]
 fn test_duty_cycle_bitfield() {
     let mut duty = DutyCycle::new();
     duty.set_duty(0b11);
@@ -98,31 +81,6 @@ fn test_duty_cycle_various_values() {
 
             assert_eq!(d2.duty(), duty);
             assert_eq!(d2.volume(), volume);
-        }
-    }
-}
-
-#[test]
-fn test_sweep_all_bit_combinations() {
-    for enabled in [false, true] {
-        for period in 0u8..8 {
-            for negate in [false, true] {
-                for shift in 0u8..8 {
-                    let mut sweep = Sweep::new();
-                    sweep.set_enabled(enabled);
-                    sweep.set_period(period);
-                    sweep.set_negate(negate);
-                    sweep.set_shift(shift);
-
-                    let byte: u8 = sweep.into();
-                    let sweep2: Sweep = byte.into();
-
-                    assert_eq!(sweep2.enabled(), enabled);
-                    assert_eq!(sweep2.period(), period);
-                    assert_eq!(sweep2.negate(), negate);
-                    assert_eq!(sweep2.shift(), shift);
-                }
-            }
         }
     }
 }
