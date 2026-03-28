@@ -7,7 +7,7 @@ use crate::nes::mapper;
 use crate::nes::mapper::Cartridge;
 use crate::nes::ppu::{Mirroring, Ppu};
 use crate::render::Render;
-use log::info;
+use log::trace;
 
 pub struct NesMcu {
     lower_ram: LowerRam,
@@ -38,7 +38,9 @@ pub fn build_with_renderer_and_audio(
 ) -> NesMcu {
     let cartridge = mapper::create_cartridge(file);
     let mut ppu = Ppu::new();
-    ppu.set_mirroring(if file.header().ver_or_hor_arrangement {
+    ppu.set_mirroring(if file.header().ignore_mirror_control {
+        Mirroring::Four
+    } else if file.header().ver_or_hor_arrangement {
         Mirroring::Vertical
     } else {
         Mirroring::Horizontal
@@ -61,7 +63,7 @@ pub fn build_with_renderer_and_audio(
 
 impl NesMcu {
     fn ppu_dma(&mut self, address: u8) {
-        info!("ppu dma");
+        trace!("ppu dma");
         let addr = (address as u16) << 8;
         let mut buf = [0x00u8; 0x100];
         for (i, item) in buf.iter_mut().enumerate() {
@@ -73,7 +75,13 @@ impl NesMcu {
     /// Tick PPU by one dot.
     /// Pattern data is passed through from the cartridge for rendering.
     pub fn tick_ppu(&mut self) {
-        self.ppu.tick(self.cartridge.pattern_ref());
+        let (scanline, dot) = self.ppu.timing();
+        let rendering_enabled = self.ppu.rendering_enabled();
+        {
+            let pattern = self.cartridge.pattern_ref();
+            self.ppu.tick(pattern);
+        }
+        self.cartridge.on_ppu_tick(scanline, dot, rendering_enabled);
     }
 
     /// Tick APU frame counter. Returns true if frame IRQ should be triggered.
@@ -83,6 +91,10 @@ impl NesMcu {
 
     pub fn apu_irq_pending(&self) -> bool {
         self.apu.request_irq()
+    }
+
+    pub fn cartridge_irq_pending(&self) -> bool {
+        self.cartridge.irq_pending()
     }
 
     pub fn flush_audio(&mut self) {

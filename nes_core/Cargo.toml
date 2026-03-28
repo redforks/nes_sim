@@ -10,7 +10,7 @@ doctest = false
 
 [dependencies]
 itertools = { workspace = true }
-log = { workspace = true, features = ["release_max_level_off"] }
+log = { workspace = true }
 modular-bitfield = { workspace = true }
 nom = { workspace = true }
 strum_macros = { workspace = true }

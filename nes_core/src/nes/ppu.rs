@@ -2,7 +2,7 @@ use crate::mcu::Mcu;
 use crate::render::{ImageRender, Render};
 use crate::to_from_u8;
 use image::Rgba;
-use log::{debug, info};
+use log::{debug, trace};
 use modular_bitfield::prelude::*;
 
 mod name_table;
@@ -182,11 +182,7 @@ impl Palette {
 
         // Clamp to valid range [0, 31]
         let addr = addr as usize;
-        if addr >= 32 {
-            31
-        } else {
-            addr
-        }
+        if addr >= 32 { 31 } else { addr }
     }
 
     fn get_color_idx(&self, start: usize, palette_idx: u8, idx: u8) -> Pixel {
@@ -235,7 +231,7 @@ impl Mcu for Palette {
     }
 
     fn write(&mut self, address: u16, value: u8) {
-        info!("set palette ${:x}: {:x}", address, value);
+        trace!("set palette ${:x}: {:x}", address, value);
         self.data[self.get_addr(address)] = value;
     }
 }
@@ -297,7 +293,7 @@ impl Ppu {
         (self.scanline, self.dot)
     }
 
-    fn rendering_enabled(&self) -> bool {
+    pub fn rendering_enabled(&self) -> bool {
         self.mask.background_enabled() || self.mask.sprite_enabled()
     }
 
@@ -618,11 +614,7 @@ impl Ppu {
     }
 
     fn sprite_height(&self) -> i16 {
-        if self.ctrl.sprite_size() {
-            16
-        } else {
-            8
-        }
+        if self.ctrl.sprite_size() { 16 } else { 8 }
     }
 
     fn sprite_covers_scanline(&self, sprite_idx: usize, screen_y: u8) -> bool {

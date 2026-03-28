@@ -113,7 +113,8 @@ impl<P: Plugin<NesMcu>> NesMachine<P> {
         let result = self.machine.tick();
         self.machine.mcu_mut().tick_apu();
         let apu_irq = self.machine.mcu().apu_irq_pending();
-        self.machine.cpu_mut().set_irq(apu_irq);
+        let cartridge_irq = self.machine.mcu().cartridge_irq_pending();
+        self.machine.cpu_mut().set_irq(apu_irq || cartridge_irq);
         for _ in 0..3 {
             self.machine.mcu_mut().tick_ppu()
         }
