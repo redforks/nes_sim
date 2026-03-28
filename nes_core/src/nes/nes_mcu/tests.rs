@@ -1,40 +1,7 @@
 use super::*;
 use crate::nes::apu::Apu;
 use crate::nes::controller::Button;
-
-struct MockCartridge {
-    prg_rom: [u8; 0x8000],
-    chr_rom: [u8; 0x2000],
-}
-
-impl MockCartridge {
-    fn new() -> Self {
-        Self {
-            prg_rom: [0; 0x8000],
-            chr_rom: [0; 0x2000],
-        }
-    }
-}
-
-impl Cartridge for MockCartridge {
-    fn read(&mut self, address: u16) -> u8 {
-        if address >= 0x8000 {
-            self.prg_rom[(address - 0x8000) as usize]
-        } else {
-            0
-        }
-    }
-
-    fn write(&mut self, _ppu: &mut Ppu, _address: u16, _value: u8) {}
-
-    fn pattern_ref(&self) -> &[u8] {
-        &self.chr_rom
-    }
-
-    fn write_pattern(&mut self, address: u16, value: u8) {
-        self.chr_rom[address as usize] = value;
-    }
-}
+use crate::nes::mapper::{Cartridge, TestCartridge};
 
 fn test_mcu() -> NesMcu {
     NesMcu {
@@ -42,7 +9,7 @@ fn test_mcu() -> NesMcu {
         ppu: Ppu::new(),
         after_ppu: RamMcu::start_from(0x4000, [0; 0x20]),
         controller: Controller::new(),
-        cartridge: Box::new(MockCartridge::new()),
+        cartridge: Cartridge::Test(TestCartridge::new()),
         apu: Apu::default(),
     }
 }

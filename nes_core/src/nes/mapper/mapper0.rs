@@ -1,5 +1,4 @@
 use super::CARTRIDGE_START_ADDR;
-use crate::nes::mapper::Cartridge;
 use crate::nes::ppu::Ppu;
 
 pub struct Mapper0 {
@@ -35,12 +34,14 @@ impl Default for Mapper0 {
     }
 }
 
-impl Cartridge for Mapper0 {
-    fn pattern_ref(&self) -> &[u8] {
+impl Mapper0 {
+    pub fn pattern_ref(&self) -> &[u8] {
         &self.chr_rom
     }
 
-    fn read(&mut self, address: u16) -> u8 {
+    pub fn write_pattern(&mut self, _address: u16, _value: u8) {}
+
+    pub fn read(&mut self, address: u16) -> u8 {
         match address {
             CARTRIDGE_START_ADDR..=0x7fff => self.ram[(address - CARTRIDGE_START_ADDR) as usize],
             0x8000..=0xffff => {
@@ -55,16 +56,20 @@ impl Cartridge for Mapper0 {
         }
     }
 
-    fn write(&mut self, _ppu: &mut Ppu, address: u16, value: u8) {
+    pub fn write(&mut self, _ppu: &mut Ppu, address: u16, value: u8) {
         match address {
             CARTRIDGE_START_ADDR..=0x7fff => {
                 self.ram[(address - CARTRIDGE_START_ADDR) as usize] = value
             }
-            0x8000..=0xffff => {
-                // ignore write to rom
-            }
+            0x8000..=0xffff => {}
             _ => unreachable!(),
         }
+    }
+
+    pub fn on_ppu_tick(&mut self, _scanline: u16, _dot: u16, _rendering_enabled: bool) {}
+
+    pub fn irq_pending(&self) -> bool {
+        false
     }
 }
 

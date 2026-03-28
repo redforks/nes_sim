@@ -1,5 +1,4 @@
 use super::CARTRIDGE_START_ADDR;
-use crate::nes::mapper::Cartridge;
 use crate::nes::ppu::Ppu;
 
 const PRG_ROM_BANK_SIZE: usize = 0x4000;
@@ -48,18 +47,18 @@ impl Mapper2 {
     }
 }
 
-impl Cartridge for Mapper2 {
-    fn pattern_ref(&self) -> &[u8] {
+impl Mapper2 {
+    pub fn pattern_ref(&self) -> &[u8] {
         &self.chr
     }
 
-    fn write_pattern(&mut self, address: u16, value: u8) {
+    pub fn write_pattern(&mut self, address: u16, value: u8) {
         if self.has_chr_ram {
             self.chr[address as usize % CHR_ROM_SIZE] = value;
         }
     }
 
-    fn read(&mut self, address: u16) -> u8 {
+    pub fn read(&mut self, address: u16) -> u8 {
         match address {
             CARTRIDGE_START_ADDR..=0x7fff => self.ram[(address - CARTRIDGE_START_ADDR) as usize],
             0x8000..=0xbfff => self.read_prg_bank(self.selected_prg_bank(), address - 0x8000),
@@ -68,7 +67,7 @@ impl Cartridge for Mapper2 {
         }
     }
 
-    fn write(&mut self, _ppu: &mut Ppu, address: u16, value: u8) {
+    pub fn write(&mut self, _ppu: &mut Ppu, address: u16, value: u8) {
         match address {
             CARTRIDGE_START_ADDR..=0x7fff => {
                 self.ram[(address - CARTRIDGE_START_ADDR) as usize] = value;
@@ -78,6 +77,12 @@ impl Cartridge for Mapper2 {
             }
             _ => unreachable!(),
         }
+    }
+
+    pub fn on_ppu_tick(&mut self, _scanline: u16, _dot: u16, _rendering_enabled: bool) {}
+
+    pub fn irq_pending(&self) -> bool {
+        false
     }
 }
 

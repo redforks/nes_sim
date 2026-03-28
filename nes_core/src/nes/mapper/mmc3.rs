@@ -1,5 +1,4 @@
 use super::CARTRIDGE_START_ADDR;
-use crate::nes::mapper::Cartridge;
 use crate::nes::ppu::{Mirroring, Ppu};
 
 const PRG_RAM_SIZE: usize = 0x2000;
@@ -190,12 +189,12 @@ impl MMC3 {
     }
 }
 
-impl Cartridge for MMC3 {
-    fn pattern_ref(&self) -> &[u8] {
+impl MMC3 {
+    pub fn pattern_ref(&self) -> &[u8] {
         &self.current_chr
     }
 
-    fn write_pattern(&mut self, address: u16, value: u8) {
+    pub fn write_pattern(&mut self, address: u16, value: u8) {
         if !self.has_chr_ram {
             return;
         }
@@ -208,7 +207,7 @@ impl Cartridge for MMC3 {
         self.current_chr[addr] = value;
     }
 
-    fn read(&mut self, address: u16) -> u8 {
+    pub fn read(&mut self, address: u16) -> u8 {
         match address {
             CARTRIDGE_START_ADDR..=0x5fff => 0,
             0x6000..=0x7fff => {
@@ -226,7 +225,7 @@ impl Cartridge for MMC3 {
         }
     }
 
-    fn write(&mut self, ppu: &mut Ppu, address: u16, value: u8) {
+    pub fn write(&mut self, ppu: &mut Ppu, address: u16, value: u8) {
         match address {
             CARTRIDGE_START_ADDR..=0x5fff => {}
             0x6000..=0x7fff => {
@@ -267,13 +266,13 @@ impl Cartridge for MMC3 {
         }
     }
 
-    fn on_ppu_tick(&mut self, scanline: u16, dot: u16, rendering_enabled: bool) {
+    pub fn on_ppu_tick(&mut self, scanline: u16, dot: u16, rendering_enabled: bool) {
         if rendering_enabled && scanline < 240 && dot == 260 {
             self.clock_irq();
         }
     }
 
-    fn irq_pending(&self) -> bool {
+    pub fn irq_pending(&self) -> bool {
         self.irq_pending
     }
 }

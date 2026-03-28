@@ -1,6 +1,5 @@
 #![allow(dead_code)]
 
-use super::Cartridge;
 use crate::nes::ppu::{Mirroring, Ppu};
 use crate::to_from_u8;
 use log::{debug, info};
@@ -65,12 +64,14 @@ pub struct MMC1 {
     prg_rom_mode: RefCell<PrgRomMode>,
 }
 
-impl Cartridge for MMC1 {
-    fn pattern_ref(&self) -> &[u8] {
+impl MMC1 {
+    pub fn pattern_ref(&self) -> &[u8] {
         unsafe { &*self.cur_chr_rom.get() }
     }
 
-    fn read(&mut self, address: u16) -> u8 {
+    pub fn write_pattern(&mut self, _address: u16, _value: u8) {}
+
+    pub fn read(&mut self, address: u16) -> u8 {
         match address {
             0x4020..=0x5fff => 0,
             0x6000..=0x7fff => self.prg_ram.borrow()[address as usize - 0x6000],
@@ -86,12 +87,11 @@ impl Cartridge for MMC1 {
         }
     }
 
-    fn write(&mut self, ppu: &mut Ppu, address: u16, value: u8) {
+    pub fn write(&mut self, ppu: &mut Ppu, address: u16, value: u8) {
         match address {
             0x4020..=0x5fff => {}
             0x6000..=0x7fff => self.prg_ram.borrow_mut()[address as usize - 0x6000] = value,
             _ => {
-                // reset if value high bit is 1
                 if value & 0x80 != 0 {
                     debug!("{:x} written to ${:x} reset MMC1", value, address);
                     self.reset();
@@ -128,6 +128,12 @@ impl Cartridge for MMC1 {
                 }
             }
         }
+    }
+
+    pub fn on_ppu_tick(&mut self, _scanline: u16, _dot: u16, _rendering_enabled: bool) {}
+
+    pub fn irq_pending(&self) -> bool {
+        false
     }
 }
 

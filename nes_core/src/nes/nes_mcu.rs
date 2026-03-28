@@ -14,7 +14,7 @@ pub struct NesMcu {
     ppu: Ppu,
     after_ppu: RamMcu<0x20>,
     controller: Controller,
-    cartridge: Box<dyn Cartridge>,
+    cartridge: Cartridge,
     apu: Apu,
 }
 

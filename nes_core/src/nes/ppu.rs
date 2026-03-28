@@ -499,6 +499,7 @@ impl Ppu {
         }
     }
 
+    #[cfg(test)]
     fn write_vram_data(inner: &mut Ppu, address: u16, value: u8) {
         Self::write_vram_data_with_pattern_write(inner, address, value, |_, _| {});
     }
