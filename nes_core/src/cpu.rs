@@ -672,20 +672,6 @@ pub trait Plugin<M: Mcu> {
     }
 }
 
-impl<M: Mcu> Plugin<M> for Box<dyn Plugin<M>> {
-    fn start(&mut self, cpu: &mut Cpu<M>) {
-        self.as_mut().start(cpu);
-    }
-
-    fn end(&mut self, cpu: &mut Cpu<M>) {
-        self.as_mut().end(cpu);
-    }
-
-    fn should_stop(&self) -> ExecuteResult {
-        self.as_ref().should_stop()
-    }
-}
-
 pub struct EmptyPlugin<M: Mcu> {
     _phantom: std::marker::PhantomData<M>,
 }

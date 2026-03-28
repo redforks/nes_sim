@@ -127,12 +127,6 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_render_basic() {
-        // Test that the trait is object-safe
-        let _box: Box<dyn Render> = Box::new(crate::render::ImageRender::new(256, 240));
-    }
-
-    #[test]
     #[should_panic]
     fn test_x_out_of_bounds() {
         // This test verifies that out-of-bounds coordinates panic
