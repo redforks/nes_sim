@@ -2,21 +2,20 @@
 
 use crate::nes::ppu::{Mirroring, Ppu};
 use crate::render::Render;
-use crate::to_from_u8;
+use bitfield_struct::bitfield;
 use log::{debug, info};
-use modular_bitfield::prelude::*;
 use std::cell::{RefCell, UnsafeCell};
 
-#[derive(Clone, Copy)]
-#[bitfield]
+#[bitfield(u8)]
 struct ControlFlags {
-    #[skip]
-    _not_used: B3,
-    pub mirroring: B2,
-    pub prg_mode: B2,
+    #[bits(3)]
+    _not_used: u8,
+    #[bits(2)]
+    pub mirroring: u8,
+    #[bits(2)]
+    pub prg_mode: u8,
     pub chr_in_4k: bool,
 }
-to_from_u8!(ControlFlags);
 
 impl From<ControlFlags> for Mirroring {
     fn from(value: ControlFlags) -> Self {

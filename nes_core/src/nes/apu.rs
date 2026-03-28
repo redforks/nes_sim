@@ -1,39 +1,26 @@
-use crate::to_from_u8;
-use modular_bitfield::prelude::*;
+use bitfield_struct::bitfield;
 
-#[derive(Copy, Clone)]
-#[bitfield]
-#[repr(u8)]
+#[bitfield(u8)]
 struct Sweep {
-    shift: B3,
+    #[bits(3)]
+    shift: u8,
     negate: bool,
-    period: B3,
+    #[bits(3)]
+    period: u8,
     enabled: bool,
 }
 
-impl Default for Sweep {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-#[derive(Copy, Clone)]
-#[bitfield]
-#[repr(u8)]
+#[bitfield(u8)]
 struct DutyCycle {
-    volume: B4,
+    #[bits(4)]
+    volume: u8,
     constant_volume: bool,
     length_counter_halt: bool,
-    duty: B2,
+    #[bits(2)]
+    duty: u8,
 }
 
-impl Default for DutyCycle {
-    fn default() -> Self {
-        0u8.into()
-    }
-}
-
-#[derive(Copy, Clone, Default)]
+#[derive(Default)]
 struct LengthCounterLoad {
     low_byte: u8,
     high_byte: u8,
@@ -56,161 +43,80 @@ impl LengthCounterLoad {
     }
 }
 
-#[derive(Copy, Clone)]
-#[bitfield]
+#[bitfield(u8)]
 struct LinearCounterControl {
-    counter: B7,
+    #[bits(7)]
+    counter: u8,
     reload_flag: bool,
 }
 
-to_from_u8!(LinearCounterControl);
-
-impl Default for LinearCounterControl {
-    fn default() -> Self {
-        0u8.into()
-    }
-}
-
-#[derive(Copy, Clone)]
-#[bitfield]
+#[bitfield(u8)]
 struct NoiseEnvelop {
-    volume: B4,
+    #[bits(4)]
+    volume: u8,
     constant_volume: bool,
     loop_flag: bool,
-    #[allow(non_snake_case)]
-    #[skip]
-    __: B2,
+    #[bits(2)]
+    __: u8,
 }
 
-to_from_u8!(NoiseEnvelop);
-
-impl Default for NoiseEnvelop {
-    fn default() -> Self {
-        0u8.into()
-    }
-}
-
-#[derive(Copy, Clone)]
-#[bitfield]
+#[bitfield(u8)]
 struct NoisePeriod {
-    period: B4,
-
-    #[allow(non_snake_case)]
-    #[skip]
-    __: B3,
-
+    #[bits(4)]
+    period: u8,
+    #[bits(3)]
+    __: u8,
     enabled: bool,
 }
 
-to_from_u8!(NoisePeriod);
-
-impl Default for NoisePeriod {
-    fn default() -> Self {
-        0u8.into()
-    }
-}
-
-#[derive(Copy, Clone)]
-#[bitfield]
+#[bitfield(u8)]
 struct NoiseLength {
-    #[allow(non_snake_case)]
-    #[skip]
-    __: B3,
-
-    length: B5,
+    #[bits(3)]
+    __: u8,
+    #[bits(5)]
+    length: u8,
 }
 
-to_from_u8!(NoiseLength);
-
-impl Default for NoiseLength {
-    fn default() -> Self {
-        0u8.into()
-    }
-}
-
-#[derive(Copy, Clone)]
-#[bitfield]
+#[bitfield(u8)]
 struct DmcIRQLoopFreq {
-    freq: B4,
-    #[allow(non_snake_case)]
-    #[skip]
-    __: B2,
+    #[bits(4)]
+    freq: u8,
+    #[bits(2)]
+    __: u8,
     loop_flag: bool,
     irq_enabled: bool,
 }
-to_from_u8!(DmcIRQLoopFreq);
 
-impl Default for DmcIRQLoopFreq {
-    fn default() -> Self {
-        0u8.into()
-    }
-}
-
-#[derive(Copy, Clone)]
-#[bitfield]
+#[bitfield(u8)]
 struct ControlFlags {
     pulse1_enabled: bool,
     pulse2_enabled: bool,
     triangle_enabled: bool,
     noise_enabled: bool,
     dmc_enabled: bool,
-    #[allow(non_snake_case)]
-    #[skip]
-    __: B3,
-}
-to_from_u8!(ControlFlags);
-
-impl Default for ControlFlags {
-    fn default() -> Self {
-        0u8.into()
-    }
+    #[bits(3)]
+    __: u8,
 }
 
-#[derive(Copy, Clone)]
-#[bitfield]
+#[bitfield(u8)]
 struct APUStatus {
     pulse1_enabled: bool,
     pulse2_enabled: bool,
     triangle_enabled: bool,
     noise_enabled: bool,
     dmc_enabled: bool,
-    #[allow(non_snake_case)]
-    #[skip]
-    __: B1,
+    #[bits(1)]
+    __: u8,
     frame_interrupt: bool,
     dmc_interrupt: bool,
 }
-to_from_u8!(APUStatus);
 
-impl Default for APUStatus {
-    fn default() -> Self {
-        0u8.into()
-    }
-}
-
-#[derive(Copy, Clone)]
-#[bitfield]
+#[bitfield(u8)]
 struct FrameCounter {
-    #[allow(non_snake_case)]
-    #[skip]
-    __: B6,
+    #[bits(6)]
+    __: u8,
     interrupt_flag: bool,
     mode: bool,
-}
-to_from_u8!(FrameCounter);
-
-impl Default for FrameCounter {
-    fn default() -> Self {
-        0u8.into()
-    }
-}
-
-#[derive(Copy, Clone, Debug, Eq, PartialEq)]
-enum LengthCounterChannel {
-    Pulse1,
-    Pulse2,
-    Triangle,
-    Noise,
 }
 
 const LENGTH_TABLE: [u8; 32] = [
@@ -697,7 +603,7 @@ impl<D: AudioDriver> Apu<D> {
                 status.set_frame_interrupt(self.frame_interrupt);
                 status.set_dmc_interrupt(self.dmc_interrupt);
                 self.frame_interrupt = false;
-                status.into()
+                status.into_bits()
             }
             _ => panic!("Can not read from Apu at address {}", address),
         }
@@ -705,8 +611,8 @@ impl<D: AudioDriver> Apu<D> {
 
     pub fn write(&mut self, address: u16, value: u8) {
         match address {
-            0x4000 => self.pulse1.write_control(value.into()),
-            0x4001 => self.pulse1.write_sweep(value.into()),
+            0x4000 => self.pulse1.write_control(DutyCycle::from_bits(value)),
+            0x4001 => self.pulse1.write_sweep(Sweep::from_bits(value)),
             0x4002 => self.pulse1.write_timer_low(value),
             0x4003 => self
                 .pulse1
@@ -714,8 +620,8 @@ impl<D: AudioDriver> Apu<D> {
                     self.pulse1.timer_period as u8,
                     value,
                 )),
-            0x4004 => self.pulse2.write_control(value.into()),
-            0x4005 => self.pulse2.write_sweep(value.into()),
+            0x4004 => self.pulse2.write_control(DutyCycle::from_bits(value)),
+            0x4005 => self.pulse2.write_sweep(Sweep::from_bits(value)),
             0x4006 => self.pulse2.write_timer_low(value),
             0x4007 => self
                 .pulse2
@@ -723,7 +629,9 @@ impl<D: AudioDriver> Apu<D> {
                     self.pulse2.timer_period as u8,
                     value,
                 )),
-            0x4008 => self.triangle.write_control(value.into()),
+            0x4008 => self
+                .triangle
+                .write_control(LinearCounterControl::from_bits(value)),
             0x400A => self.triangle.write_timer_low(value),
             0x400B => self
                 .triangle
@@ -731,15 +639,15 @@ impl<D: AudioDriver> Apu<D> {
                     self.triangle.timer_period as u8,
                     value,
                 )),
-            0x400C => self.noise.write_envelope(value.into()),
-            0x400E => self.noise.write_period(value.into()),
-            0x400F => self.noise.write_length(value.into()),
-            0x4010 => self.dmc.irq_loop_freq = value.into(),
+            0x400C => self.noise.write_envelope(NoiseEnvelop::from_bits(value)),
+            0x400E => self.noise.write_period(NoisePeriod::from_bits(value)),
+            0x400F => self.noise.write_length(NoiseLength::from_bits(value)),
+            0x4010 => self.dmc.irq_loop_freq = DmcIRQLoopFreq::from_bits(value),
             0x4011 => self.dmc.load_counter = value & 0x7F,
             0x4012 => self.dmc.sample_address = value,
             0x4013 => self.dmc.sample_length = value,
-            0x4015 => self.set_control_flags(value.into()),
-            0x4017 => self.set_frame_counter(value.into()),
+            0x4015 => self.set_control_flags(ControlFlags::from_bits(value)),
+            0x4017 => self.set_frame_counter(FrameCounter::from_bits(value)),
             0x4009 | 0x400D => {}
             _ => panic!("Can not write to Apu at address {}", address),
         }

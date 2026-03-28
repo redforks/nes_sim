@@ -1,9 +1,8 @@
 use crate::mcu::Mcu;
 use crate::render::Render;
-use crate::to_from_u8;
+use bitfield_struct::bitfield;
 use image::Rgba;
 use log::{debug, trace};
-use modular_bitfield::prelude::*;
 
 mod name_table;
 mod pattern;
@@ -55,8 +54,7 @@ fn apply_effects(
     Rgba([r, g, b, a])
 }
 
-#[derive(Copy, Clone)]
-#[bitfield]
+#[bitfield(u8)]
 struct PpuCtrl {
     // Field declaration is LSB-first (first declared field maps to bit 0).
     // Arrange fields so they match the hardware PPUCTRL layout (bits 0..7):
@@ -67,7 +65,8 @@ struct PpuCtrl {
     // bit 5: sprite_size
     // bit 6: ppu_master
     // bit 7: nmi_enable
-    name_table_select: B2,
+    #[bits(2)]
+    name_table_select: u8,
     increment_mode: bool,
     sprite_pattern_table: bool,
     background_pattern_table: bool,
@@ -75,10 +74,8 @@ struct PpuCtrl {
     ppu_master: bool, // not used in NES, can be ignored
     nmi_enable: bool,
 }
-to_from_u8!(PpuCtrl);
 
-#[derive(Copy, Clone)]
-#[bitfield]
+#[bitfield(u8)]
 struct PpuMask {
     grayscale: bool,
     background_left_enabled: bool,
@@ -89,18 +86,15 @@ struct PpuMask {
     green_tint: bool,
     blue_tint: bool,
 }
-to_from_u8!(PpuMask);
 
-#[derive(Copy, Clone)]
-#[bitfield]
+#[bitfield(u8)]
 struct PpuStatus {
-    #[skip]
-    __: B5,
+    #[bits(5)]
+    __: u8,
     sprite_overflow: bool,
     sprite_zero_hit: bool,
     v_blank: bool,
 }
-to_from_u8!(PpuStatus);
 
 const PALETTE_MEM_START: u16 = 0x3f00;
 const NAME_TABLE_MEM_START: u16 = 0x2000;
@@ -414,7 +408,7 @@ impl<R: Render> Ppu<R> {
             0x2002 => {
                 let status = self.read_status();
                 self.write_toggle = false;
-                status.into()
+                status.into_bits()
             }
             // OAMDATA
             0x2004 => self.read_oam_data(),
@@ -438,13 +432,13 @@ impl<R: Render> Ppu<R> {
         match reg {
             // PPUCTRL
             0x2000 => {
-                self.set_control_flags(value.into());
+                self.set_control_flags(PpuCtrl::from_bits(value));
                 // Update name table address from control bits
                 self.cur_name_table_addr = 0x2000 + (self.ctrl.name_table_select() as u16 * 0x400);
             }
             // PPUMASK
             0x2001 => {
-                self.mask = value.into();
+                self.mask = PpuMask::from_bits(value);
             }
             // OAMADDR
             0x2003 => {
