@@ -1,5 +1,6 @@
 use super::CARTRIDGE_START_ADDR;
 use crate::nes::ppu::Ppu;
+use crate::render::Render;
 
 const PRG_ROM_BANK_SIZE: usize = 0x4000;
 const CHR_ROM_SIZE: usize = 0x2000;
@@ -67,7 +68,7 @@ impl Mapper2 {
         }
     }
 
-    pub fn write(&mut self, _ppu: &mut Ppu, address: u16, value: u8) {
+    pub fn write<R: Render>(&mut self, _ppu: &mut Ppu<R>, address: u16, value: u8) {
         match address {
             CARTRIDGE_START_ADDR..=0x7fff => {
                 self.ram[(address - CARTRIDGE_START_ADDR) as usize] = value;
@@ -89,11 +90,12 @@ impl Mapper2 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::render::ImageRender;
 
     #[test]
     fn reads_and_writes_cartridge_ram() {
         let mut mapper = Mapper2::new(&[0; PRG_ROM_BANK_SIZE * 2], &[]);
-        let mut ppu = Ppu::new();
+        let mut ppu = Ppu::new(ImageRender::new(256, 240));
 
         mapper.write(&mut ppu, CARTRIDGE_START_ADDR, 0x12);
         mapper.write(&mut ppu, 0x7fff, 0x34);
@@ -112,7 +114,7 @@ mod tests {
         prg_rom[(PRG_ROM_BANK_SIZE * 4) - 1] = 0x4f;
 
         let mut mapper = Mapper2::new(&prg_rom, &[]);
-        let mut ppu = Ppu::new();
+        let mut ppu = Ppu::new(ImageRender::new(256, 240));
 
         assert_eq!(mapper.read(0x8000), 0x10);
         assert_eq!(mapper.read(0xc000), 0x40);

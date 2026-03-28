@@ -91,6 +91,37 @@ pub trait Render: Debug {
     fn finish(&mut self) {}
 }
 
+impl Render for () {
+    fn clear(&mut self, _color: [u8; 4]) {}
+
+    fn set_pixel(&mut self, _x: u32, _y: u32, _color: [u8; 4]) {}
+
+    fn dimensions(&self) -> (u32, u32) {
+        (0, 0)
+    }
+}
+
+impl<R> Render for Box<R>
+where
+    R: Render + ?Sized,
+{
+    fn clear(&mut self, color: [u8; 4]) {
+        (**self).clear(color);
+    }
+
+    fn set_pixel(&mut self, x: u32, y: u32, color: [u8; 4]) {
+        (**self).set_pixel(x, y, color);
+    }
+
+    fn dimensions(&self) -> (u32, u32) {
+        (**self).dimensions()
+    }
+
+    fn finish(&mut self) {
+        (**self).finish();
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

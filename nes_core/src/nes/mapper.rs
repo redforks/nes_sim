@@ -6,6 +6,7 @@ use crate::nes::mapper::mapper2::Mapper2;
 use crate::nes::mapper::mmc1::MMC1;
 use crate::nes::mapper::mmc3::MMC3;
 use crate::nes::ppu::Ppu;
+use crate::render::Render;
 
 const CARTRIDGE_START_ADDR: u16 = 0x4020;
 
@@ -70,7 +71,7 @@ impl TestCartridge {
         }
     }
 
-    pub fn write(&mut self, _ppu: &mut Ppu, _address: u16, _value: u8) {}
+    pub fn write<R: Render>(&mut self, _ppu: &mut Ppu<R>, _address: u16, _value: u8) {}
 
     pub fn on_ppu_tick(&mut self, _scanline: u16, _dot: u16, _rendering_enabled: bool) {}
 
@@ -113,7 +114,7 @@ impl Cartridge {
         }
     }
 
-    pub fn write(&mut self, ppu: &mut Ppu, address: u16, value: u8) {
+    pub fn write<R: Render>(&mut self, ppu: &mut Ppu<R>, address: u16, value: u8) {
         match self {
             Cartridge::Mapper0(cartridge) => cartridge.write(ppu, address, value),
             Cartridge::Mapper2(cartridge) => cartridge.write(ppu, address, value),

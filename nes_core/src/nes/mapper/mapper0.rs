@@ -1,5 +1,6 @@
 use super::CARTRIDGE_START_ADDR;
 use crate::nes::ppu::Ppu;
+use crate::render::Render;
 
 pub struct Mapper0 {
     prg_rom: [u8; 0x8000],
@@ -56,7 +57,7 @@ impl Mapper0 {
         }
     }
 
-    pub fn write(&mut self, _ppu: &mut Ppu, address: u16, value: u8) {
+    pub fn write<R: Render>(&mut self, _ppu: &mut Ppu<R>, address: u16, value: u8) {
         match address {
             CARTRIDGE_START_ADDR..=0x7fff => {
                 self.ram[(address - CARTRIDGE_START_ADDR) as usize] = value
@@ -77,11 +78,12 @@ impl Mapper0 {
 mod tests {
     use super::*;
     use crate::nes::mapper::CARTRIDGE_START_ADDR;
+    use crate::render::ImageRender;
 
     #[test]
     fn mcu() {
         let mut mcu = Mapper0::default();
-        let mut ppu = Ppu::new();
+        let mut ppu = Ppu::new(ImageRender::new(256, 240));
 
         // read-write ram
         mcu.write(&mut ppu, CARTRIDGE_START_ADDR, 0x01);

@@ -6,12 +6,12 @@ use crate::nes::lower_ram::LowerRam;
 use crate::nes::mapper;
 use crate::nes::mapper::Cartridge;
 use crate::nes::ppu::{Mirroring, Ppu};
-use crate::render::Render;
+use crate::render::{ImageRender, Render};
 use log::trace;
 
-pub struct NesMcu {
+pub struct NesMcu<R: Render = ImageRender> {
     lower_ram: LowerRam,
-    ppu: Ppu,
+    ppu: Ppu<R>,
     after_ppu: RamMcu<0x20>,
     controller: Controller,
     cartridge: Cartridge,
@@ -19,25 +19,25 @@ pub struct NesMcu {
 }
 
 pub fn build(file: &INesFile) -> NesMcu {
-    build_with_renderer(file, None)
+    build_with_renderer(file, ImageRender::new(256, 240))
 }
 
 /// Build a NesMcu with a custom renderer
 ///
 /// # Parameters
 /// - `file`: The iNES file to load
-/// - `renderer`: Optional custom renderer. If None, uses default ImageRender.
-pub fn build_with_renderer(file: &INesFile, renderer: Option<Box<dyn Render>>) -> NesMcu {
+/// - `renderer`: Renderer used by the PPU.
+pub fn build_with_renderer<R: Render>(file: &INesFile, renderer: R) -> NesMcu<R> {
     build_with_renderer_and_audio(file, renderer, Box::new(NullAudioDriver))
 }
 
-pub fn build_with_renderer_and_audio(
+pub fn build_with_renderer_and_audio<R: Render>(
     file: &INesFile,
-    renderer: Option<Box<dyn Render>>,
+    renderer: R,
     audio_driver: Box<dyn AudioDriver>,
-) -> NesMcu {
+) -> NesMcu<R> {
     let cartridge = mapper::create_cartridge(file);
-    let mut ppu = Ppu::new();
+    let mut ppu = Ppu::new(renderer);
     ppu.set_mirroring(if file.header().ignore_mirror_control {
         Mirroring::Four
     } else if file.header().ver_or_hor_arrangement {
@@ -45,11 +45,6 @@ pub fn build_with_renderer_and_audio(
     } else {
         Mirroring::Horizontal
     });
-
-    // Set custom renderer if provided
-    if let Some(r) = renderer {
-        ppu.set_renderer(r);
-    }
 
     NesMcu {
         lower_ram: LowerRam::new(),
@@ -61,7 +56,7 @@ pub fn build_with_renderer_and_audio(
     }
 }
 
-impl NesMcu {
+impl<R: Render> NesMcu<R> {
     fn ppu_dma(&mut self, address: u8) {
         trace!("ppu dma");
         let addr = (address as u16) << 8;
@@ -113,12 +108,12 @@ impl NesMcu {
         self.ppu.timing()
     }
 
-    pub fn ppu(&self) -> &Ppu {
+    pub fn ppu(&self) -> &Ppu<R> {
         &self.ppu
     }
 }
 
-impl Mcu for NesMcu {
+impl<R: Render> Mcu for NesMcu<R> {
     fn read(&mut self, address: u16) -> u8 {
         match address {
             0x0000..=0x1fff => self.lower_ram.read(address),

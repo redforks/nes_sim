@@ -1,6 +1,7 @@
 #![allow(dead_code)]
 
 use crate::nes::ppu::{Mirroring, Ppu};
+use crate::render::Render;
 use crate::to_from_u8;
 use log::{debug, info};
 use modular_bitfield::prelude::*;
@@ -87,7 +88,7 @@ impl MMC1 {
         }
     }
 
-    pub fn write(&mut self, ppu: &mut Ppu, address: u16, value: u8) {
+    pub fn write<R: Render>(&mut self, ppu: &mut Ppu<R>, address: u16, value: u8) {
         match address {
             0x4020..=0x5fff => {}
             0x6000..=0x7fff => self.prg_ram.borrow_mut()[address as usize - 0x6000] = value,
@@ -214,7 +215,7 @@ impl MMC1 {
         *self.chr_bank_size.borrow_mut() = if is_4k { 4096 } else { 8192 };
     }
 
-    fn control(&self, ppu: &mut Ppu, flags: ControlFlags) {
+    fn control<R: Render>(&self, ppu: &mut Ppu<R>, flags: ControlFlags) {
         ppu.set_mirroring(flags.into());
         self.set_prg_rom_mode(flags.into());
         self.set_chr_bank_mode(flags.chr_in_4k());
@@ -269,7 +270,7 @@ mod tests {
     {
         let mut prg_rom = [0; 128 * 1024];
         init_prg(&mut prg_rom);
-        (MMC1::new(&prg_rom, &[]), Ppu::new())
+        (MMC1::new(&prg_rom, &[]), Ppu::new(()))
     }
 
     fn create_with_chr<F>(mut init_chr: F) -> (MMC1, Ppu)
@@ -278,7 +279,7 @@ mod tests {
     {
         let mut chr_rom = [0; 128 * 1024];
         init_chr(&mut chr_rom);
-        (MMC1::new(&[0; 32 * 1024], &chr_rom), Ppu::new())
+        (MMC1::new(&[0; 32 * 1024], &chr_rom), Ppu::new(()))
     }
 
     #[test]

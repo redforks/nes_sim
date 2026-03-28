@@ -204,7 +204,7 @@ impl RunAction {
 
         // Create NES machine with composite renderer
         let mut machine =
-            NesMachine::with_renderer_and_audio(f, Some(Box::new(shared_composite)), audio_driver);
+            NesMachine::with_renderer_and_audio(f, Box::new(shared_composite), audio_driver);
 
         // Initialize event pump
         let mut event_pump = sdl_context.event_pump().map_err(|e| anyhow::anyhow!(e))?;

@@ -1,5 +1,5 @@
 use crate::mcu::Mcu;
-use crate::render::{ImageRender, Render};
+use crate::render::Render;
 use crate::to_from_u8;
 use image::Rgba;
 use log::{debug, trace};
@@ -236,7 +236,7 @@ impl Mcu for Palette {
     }
 }
 
-pub struct Ppu {
+pub struct Ppu<R: Render = ()> {
     ctrl: PpuCtrl,
     status: PpuStatus,
     name_table: NameTableControl, // name table
@@ -256,7 +256,7 @@ pub struct Ppu {
     temp_vram_addr: u16, // t - temporary VRAM address
     fine_x: u8,          // x - fine X scroll (3 bits)
     write_toggle: bool,  // w - first/second write toggle
-    renderer: Box<dyn Render>,
+    renderer: R,
 
     // PPU timing
     scanline: u16, // 0-261
@@ -264,8 +264,8 @@ pub struct Ppu {
     odd_frame: bool,
 }
 
-impl Ppu {
-    pub fn new() -> Self {
+impl<R: Render> Ppu<R> {
+    pub fn new(renderer: R) -> Self {
         Ppu {
             ctrl: PpuCtrl::new(),
             mask: PpuMask::new(),
@@ -281,7 +281,7 @@ impl Ppu {
             temp_vram_addr: 0,
             fine_x: 0,
             write_toggle: false,
-            renderer: Box::new(ImageRender::new(256, 240)),
+            renderer,
             scanline: 0,
             dot: 0,
             odd_frame: false,
@@ -400,10 +400,6 @@ impl Ppu {
         self.name_table.mirroring()
     }
 
-    pub fn set_renderer(&mut self, renderer: Box<dyn Render>) {
-        self.renderer = renderer;
-    }
-
     /// Read from PPU registers or VRAM/palette data
     /// Returns the value read from the given address
     pub fn read(&mut self, pattern: &[u8], address: u16) -> u8 {
@@ -482,7 +478,7 @@ impl Ppu {
     }
 
     // Helper methods for VRAM operations
-    fn read_vram_data(inner: &mut Ppu, pattern: &[u8], address: u16) -> u8 {
+    fn read_vram_data(inner: &mut Self, pattern: &[u8], address: u16) -> u8 {
         let addr = address % 0x4000;
         if addr < 0x3f00 {
             // Read from pattern table or name table
@@ -500,12 +496,12 @@ impl Ppu {
     }
 
     #[cfg(test)]
-    fn write_vram_data(inner: &mut Ppu, address: u16, value: u8) {
+    fn write_vram_data(inner: &mut Self, address: u16, value: u8) {
         Self::write_vram_data_with_pattern_write(inner, address, value, |_, _| {});
     }
 
     fn write_vram_data_with_pattern_write<F>(
-        inner: &mut Ppu,
+        inner: &mut Self,
         address: u16,
         value: u8,
         mut pattern_write: F,
@@ -526,7 +522,7 @@ impl Ppu {
         }
     }
 
-    fn write_scroll(inner: &mut Ppu, value: u8) {
+    fn write_scroll(inner: &mut Self, value: u8) {
         if !inner.write_toggle {
             // First write - X scroll
             inner.fine_x = value & 0x07;
@@ -541,7 +537,7 @@ impl Ppu {
         }
     }
 
-    fn write_vram_addr(inner: &mut Ppu, value: u8) {
+    fn write_vram_addr(inner: &mut Self, value: u8) {
         if !inner.write_toggle {
             // First write - high byte
             inner.temp_vram_addr = (inner.temp_vram_addr & 0x00FF) | ((value as u16 & 0x3F) << 8);
@@ -554,7 +550,7 @@ impl Ppu {
         }
     }
 
-    fn get_background_pixel(inner: &Ppu, pattern: &[u8], screen_x: u8, screen_y: u8) -> (u8, u8) {
+    fn get_background_pixel(inner: &Self, pattern: &[u8], screen_x: u8, screen_y: u8) -> (u8, u8) {
         // Check left-column clipping
         if !inner.mask.background_left_enabled() && screen_x < 8 {
             return (0, 0);
@@ -593,7 +589,7 @@ impl Ppu {
     }
 
     fn get_sprite_pixel(
-        inner: &Ppu,
+        inner: &Self,
         pattern: &[u8],
         screen_x: u8,
         screen_y: u8,

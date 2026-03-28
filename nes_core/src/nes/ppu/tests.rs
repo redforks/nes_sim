@@ -1,4 +1,5 @@
 use super::*;
+use crate::render::ImageRender;
 use crate::render::Render;
 use std::cell::RefCell;
 use std::rc::Rc;
@@ -40,7 +41,7 @@ impl Render for CountingRender {
 }
 
 fn new_test_ppu_and_pattern() -> (Ppu, [u8; 8192]) {
-    (Ppu::new(), [0; 8192])
+    (Ppu::new(()), [0; 8192])
 }
 
 #[test]
@@ -319,7 +320,7 @@ fn test_ppu_status_to_from_u8() {
 
 #[test]
 fn test_oam_dma() {
-    let mut ppu = Ppu::new();
+    let mut ppu = Ppu::new(ImageRender::new(256, 240));
     let data: [u8; 256] = [0x42; 256];
 
     ppu.oam_dma(&data);
@@ -331,7 +332,7 @@ fn test_oam_dma() {
 
 #[test]
 fn test_set_mirroring() {
-    let mut ppu = Ppu::new();
+    let mut ppu = Ppu::new(ImageRender::new(256, 240));
 
     ppu.set_mirroring(Mirroring::Horizontal);
     ppu.set_mirroring(Mirroring::Vertical);
@@ -647,7 +648,10 @@ fn test_read_buffer() {
 
 fn create_test_ppu_with_mask(mask: PpuMask) -> Ppu {
     // Initialize PPU with the provided mask to avoid field reassignment
-    let mut ppu = Ppu { mask, ..Ppu::new() };
+    let mut ppu = Ppu {
+        mask,
+        ..Ppu::new(())
+    };
     // Clear OAM
     for i in 0..64 {
         ppu.oam_data[i * 4] = 0x20;
@@ -658,10 +662,19 @@ fn create_test_ppu_with_mask(mask: PpuMask) -> Ppu {
     ppu
 }
 
-fn create_test_ppu_with_counting_renderer(mask: PpuMask) -> (Ppu, Rc<RefCell<RenderStats>>) {
-    let mut ppu = create_test_ppu_with_mask(mask);
+fn create_test_ppu_with_counting_renderer(
+    mask: PpuMask,
+) -> (Ppu<CountingRender>, Rc<RefCell<RenderStats>>) {
     let stats = Rc::new(RefCell::new(RenderStats::default()));
-    ppu.set_renderer(Box::new(CountingRender::new(stats.clone())));
+    let mut ppu = Ppu::new(CountingRender::new(stats.clone()));
+    ppu.mask = mask;
+    // Clear OAM
+    for i in 0..64 {
+        ppu.oam_data[i * 4] = 0x20;
+        ppu.oam_data[i * 4 + 3] = 0xFF;
+    }
+    // Clear palette RAM
+    ppu.palette.data = [0; 0x20];
     (ppu, stats)
 }
 

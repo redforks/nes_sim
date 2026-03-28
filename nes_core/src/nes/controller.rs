@@ -38,7 +38,11 @@ impl AController {
             false
         };
 
-        if pressed { 0x41 } else { 0x40 }
+        if pressed {
+            0x41
+        } else {
+            0x40
+        }
     }
 
     pub fn press(&mut self, btn: Button) {

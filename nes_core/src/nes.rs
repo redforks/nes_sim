@@ -21,16 +21,16 @@ pub fn create_mcu(file: &INesFile) -> NesMcu {
 ///
 /// # Parameters
 /// - `file`: The iNES file to load
-/// - `renderer`: Optional custom renderer. If None, uses default ImageRender.
-pub fn create_mcu_with_renderer(file: &INesFile, renderer: Option<Box<dyn Render>>) -> NesMcu {
+/// - `renderer`: Renderer used by the PPU.
+pub fn create_mcu_with_renderer<R: Render>(file: &INesFile, renderer: R) -> NesMcu<R> {
     nes_mcu::build_with_renderer(file, renderer)
 }
 
-pub fn create_mcu_with_renderer_and_audio(
+pub fn create_mcu_with_renderer_and_audio<R: Render>(
     file: &INesFile,
-    renderer: Option<Box<dyn Render>>,
+    renderer: R,
     audio_driver: Box<dyn AudioDriver>,
-) -> NesMcu {
+) -> NesMcu<R> {
     nes_mcu::build_with_renderer_and_audio(file, renderer, audio_driver)
 }
 

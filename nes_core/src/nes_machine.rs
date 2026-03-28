@@ -3,6 +3,7 @@ use crate::{
     machine::Machine,
     nes::controller::Button,
     nes::{self, NesMcu},
+    render::{ImageRender, Render},
     EmptyPlugin, ExecuteResult, Plugin,
 };
 
@@ -11,23 +12,22 @@ use crate::{
 /// (e.g. when the PPU is not connected or NES hardware is not present).
 const MAX_TICKS_PER_FRAME: u32 = 60000;
 
-pub struct NesMachine<P> {
-    machine: Machine<P, NesMcu>,
+pub struct NesMachine<P, R: Render = ImageRender> {
+    machine: Machine<P, NesMcu<R>>,
     is_vblank: bool,
     enter_vblank: bool,
 }
 
-impl NesMachine<EmptyPlugin<NesMcu>> {
+impl NesMachine<EmptyPlugin<NesMcu>, ImageRender> {
     /// Create a new NES machine from an iNES file with the default plugin.
     pub fn new(file: &INesFile) -> Self {
         Self::with_plugin(file, EmptyPlugin::new())
     }
+}
 
+impl<R: Render> NesMachine<EmptyPlugin<NesMcu<R>>, R> {
     /// Create a new NES machine from an iNES file with a custom renderer.
-    pub fn with_renderer(
-        file: &INesFile,
-        renderer: Option<Box<dyn crate::render::Render>>,
-    ) -> Self {
+    pub fn with_renderer(file: &INesFile, renderer: R) -> Self {
         let mcu = nes::create_mcu_with_renderer(file, renderer);
         let is_vblank = mcu.ppu().vblank();
         Self {
@@ -39,7 +39,7 @@ impl NesMachine<EmptyPlugin<NesMcu>> {
 
     pub fn with_renderer_and_audio(
         file: &INesFile,
-        renderer: Option<Box<dyn crate::render::Render>>,
+        renderer: R,
         audio_driver: Box<dyn crate::nes::apu::AudioDriver>,
     ) -> Self {
         let mcu = nes::create_mcu_with_renderer_and_audio(file, renderer, audio_driver);
@@ -52,7 +52,7 @@ impl NesMachine<EmptyPlugin<NesMcu>> {
     }
 }
 
-impl<P: Plugin<NesMcu>> NesMachine<P> {
+impl<P: Plugin<NesMcu>> NesMachine<P, ImageRender> {
     /// Create a new NES machine from an iNES file with a custom plugin.
     pub fn with_plugin(file: &INesFile, plugin: P) -> Self {
         let mcu = nes::create_mcu(file);
@@ -63,13 +63,15 @@ impl<P: Plugin<NesMcu>> NesMachine<P> {
             enter_vblank: false,
         }
     }
+}
 
+impl<P, R> NesMachine<P, R>
+where
+    P: Plugin<NesMcu<R>>,
+    R: Render,
+{
     /// Create a new NES machine from an iNES file with a custom plugin and renderer.
-    pub fn with_plugin_and_renderer(
-        file: &INesFile,
-        plugin: P,
-        renderer: Option<Box<dyn crate::render::Render>>,
-    ) -> Self {
+    pub fn with_plugin_and_renderer(file: &INesFile, plugin: P, renderer: R) -> Self {
         let mcu = nes::create_mcu_with_renderer(file, renderer);
         let is_vblank = mcu.ppu().vblank();
         Self {
@@ -127,7 +129,7 @@ impl<P: Plugin<NesMcu>> NesMachine<P> {
         result
     }
 
-    fn mcu(&self) -> &NesMcu {
+    fn mcu(&self) -> &NesMcu<R> {
         self.machine.mcu()
     }
 

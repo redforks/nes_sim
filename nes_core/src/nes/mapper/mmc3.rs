@@ -1,5 +1,6 @@
 use super::CARTRIDGE_START_ADDR;
 use crate::nes::ppu::{Mirroring, Ppu};
+use crate::render::Render;
 
 const PRG_RAM_SIZE: usize = 0x2000;
 const PRG_ROM_BANK_SIZE: usize = 0x2000;
@@ -157,7 +158,7 @@ impl MMC3 {
         self.sync_banks();
     }
 
-    fn set_mirroring(&self, ppu: &mut Ppu, value: u8) {
+    fn set_mirroring<R: Render>(&self, ppu: &mut Ppu<R>, value: u8) {
         if self.mirroring_locked {
             return;
         }
@@ -225,7 +226,7 @@ impl MMC3 {
         }
     }
 
-    pub fn write(&mut self, ppu: &mut Ppu, address: u16, value: u8) {
+    pub fn write<R: Render>(&mut self, ppu: &mut Ppu<R>, address: u16, value: u8) {
         match address {
             CARTRIDGE_START_ADDR..=0x5fff => {}
             0x6000..=0x7fff => {
@@ -281,6 +282,10 @@ impl MMC3 {
 mod tests {
     use super::*;
 
+    fn new_test_ppu() -> Ppu {
+        Ppu::new(())
+    }
+
     fn create_prg() -> [u8; PRG_ROM_BANK_SIZE * 8] {
         let mut prg = [0u8; PRG_ROM_BANK_SIZE * 8];
         for bank in 0..8 {
@@ -302,7 +307,7 @@ mod tests {
     fn switches_prg_bank_in_normal_mode() {
         let prg = create_prg();
         let mut mapper = MMC3::new(&prg, &create_chr(), false);
-        let mut ppu = Ppu::new();
+        let mut ppu = new_test_ppu();
 
         mapper.write(&mut ppu, 0x8000, 0x06);
         mapper.write(&mut ppu, 0x8001, 0x03);
@@ -320,7 +325,7 @@ mod tests {
     fn swaps_fixed_and_switchable_prg_regions_in_prg_mode_1() {
         let prg = create_prg();
         let mut mapper = MMC3::new(&prg, &create_chr(), false);
-        let mut ppu = Ppu::new();
+        let mut ppu = new_test_ppu();
 
         mapper.write(&mut ppu, 0x8000, 0x46);
         mapper.write(&mut ppu, 0x8001, 0x03);
@@ -337,7 +342,7 @@ mod tests {
     fn switches_chr_layout_in_chr_mode_0() {
         let chr = create_chr();
         let mut mapper = MMC3::new(&create_prg(), &chr, false);
-        let mut ppu = Ppu::new();
+        let mut ppu = new_test_ppu();
 
         mapper.write(&mut ppu, 0x8000, 0x00);
         mapper.write(&mut ppu, 0x8001, 0x06);
@@ -366,7 +371,7 @@ mod tests {
     fn switches_chr_layout_in_chr_mode_1() {
         let chr = create_chr();
         let mut mapper = MMC3::new(&create_prg(), &chr, false);
-        let mut ppu = Ppu::new();
+        let mut ppu = new_test_ppu();
 
         mapper.write(&mut ppu, 0x8000, 0x80);
         mapper.write(&mut ppu, 0x8001, 0x06);
@@ -394,7 +399,7 @@ mod tests {
     #[test]
     fn writes_to_chr_ram_through_current_mapping() {
         let mut mapper = MMC3::new(&create_prg(), &[], false);
-        let mut ppu = Ppu::new();
+        let mut ppu = new_test_ppu();
 
         mapper.write(&mut ppu, 0x8000, 0x02);
         mapper.write(&mut ppu, 0x8001, 0x03);
@@ -406,7 +411,7 @@ mod tests {
     #[test]
     fn changes_mirroring_unless_four_screen_is_forced() {
         let mut mapper = MMC3::new(&create_prg(), &create_chr(), false);
-        let mut ppu = Ppu::new();
+        let mut ppu = new_test_ppu();
 
         mapper.write(&mut ppu, 0xa000, 0x00);
         assert_eq!(ppu.mirroring(), Mirroring::Vertical);
@@ -424,9 +429,9 @@ mod tests {
     fn triggers_irq_after_scanline_clocks() {
         let mut mapper = MMC3::new(&create_prg(), &create_chr(), false);
 
-        mapper.write(&mut Ppu::new(), 0xc000, 0x01);
-        mapper.write(&mut Ppu::new(), 0xc001, 0x00);
-        mapper.write(&mut Ppu::new(), 0xe001, 0x00);
+        mapper.write(&mut new_test_ppu(), 0xc000, 0x01);
+        mapper.write(&mut new_test_ppu(), 0xc001, 0x00);
+        mapper.write(&mut new_test_ppu(), 0xe001, 0x00);
 
         mapper.on_ppu_tick(0, 260, true);
         assert!(!mapper.irq_pending());
@@ -434,7 +439,7 @@ mod tests {
         mapper.on_ppu_tick(1, 260, true);
         assert!(mapper.irq_pending());
 
-        mapper.write(&mut Ppu::new(), 0xe000, 0x00);
+        mapper.write(&mut new_test_ppu(), 0xe000, 0x00);
         assert!(!mapper.irq_pending());
     }
 }
