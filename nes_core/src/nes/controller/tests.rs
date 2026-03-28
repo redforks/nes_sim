@@ -6,26 +6,26 @@ fn test_a_controller() {
     a.press(Button::A);
     a.press(Button::Left);
     a.reset_for_read();
-    assert_eq!(a.read(), 0x40); // A
-    assert_eq!(a.read(), 0x41); // B
-    assert_eq!(a.read(), 0x41); // Select
-    assert_eq!(a.read(), 0x41); // Start
-    assert_eq!(a.read(), 0x41); // Up
-    assert_eq!(a.read(), 0x41); // Down
-    assert_eq!(a.read(), 0x40); // Left
-    assert_eq!(a.read(), 0x41); // Right
+    assert_eq!(a.read(), 0x41); // A
+    assert_eq!(a.read(), 0x40); // B
+    assert_eq!(a.read(), 0x40); // Select
+    assert_eq!(a.read(), 0x40); // Start
+    assert_eq!(a.read(), 0x40); // Up
+    assert_eq!(a.read(), 0x40); // Down
+    assert_eq!(a.read(), 0x41); // Left
+    assert_eq!(a.read(), 0x40); // Right
 
     a.release(Button::A);
     a.press(Button::B);
     a.reset_for_read();
-    assert_eq!(a.read(), 0x41); // A
-    assert_eq!(a.read(), 0x40); // B
-    assert_eq!(a.read(), 0x41); // Select
-    assert_eq!(a.read(), 0x41); // Start
-    assert_eq!(a.read(), 0x41); // Up
-    assert_eq!(a.read(), 0x41); // Down
-    assert_eq!(a.read(), 0x40); // Left
-    assert_eq!(a.read(), 0x41); // Right
+    assert_eq!(a.read(), 0x40); // A
+    assert_eq!(a.read(), 0x41); // B
+    assert_eq!(a.read(), 0x40); // Select
+    assert_eq!(a.read(), 0x40); // Start
+    assert_eq!(a.read(), 0x40); // Up
+    assert_eq!(a.read(), 0x40); // Down
+    assert_eq!(a.read(), 0x41); // Left
+    assert_eq!(a.read(), 0x40); // Right
 }
 
 #[test]
@@ -35,8 +35,8 @@ fn test_a_controller_stroke_mode_reads_a_button_only() {
     a.press(Button::B);
     a.stroke = true;
 
-    assert_eq!(a.read(), 0x40);
-    assert_eq!(a.read(), 0x40);
+    assert_eq!(a.read(), 0x41);
+    assert_eq!(a.read(), 0x41);
 }
 
 #[test]
@@ -58,7 +58,7 @@ fn test_controller_read() {
 
     // Read from address 0x4016 (controller A)
     let val = controller.read(0x4016);
-    assert_eq!(val, 0x40); // A button pressed
+    assert_eq!(val, 0x41); // A button pressed
 
     // Press some buttons on controller B
     controller.b.press(Button::B);
@@ -66,7 +66,7 @@ fn test_controller_read() {
 
     // Read from address 0x4017 (controller B)
     let val = controller.read(0x4017);
-    assert_eq!(val, 0x41); // B button not pressed (first read is A)
+    assert_eq!(val, 0x40); // B button not pressed (first read is A)
 }
 
 #[test]
@@ -82,7 +82,7 @@ fn test_controller_write() {
 
     // Now read should return button states starting from first button
     let val = controller.read(0x4016);
-    assert_eq!(val, 0x40); // A button
+    assert_eq!(val, 0x41); // A button
 }
 
 #[test]
@@ -92,14 +92,14 @@ fn test_controller_write_1_resets_and_latches() {
     controller.a.press(Button::A);
     controller.a.reset_for_read();
     let val1 = controller.read(0x4016);
-    assert_eq!(val1, 0x40);
+    assert_eq!(val1, 0x41);
 
     // Write 1 enables strobe mode and latches the current state
     controller.write(0x4016, 1);
 
     // Next read should stay on A while strobe is enabled
     let val2 = controller.read(0x4016);
-    assert_eq!(val2, 0x40);
+    assert_eq!(val2, 0x41);
 }
 
 #[test]
@@ -114,7 +114,7 @@ fn test_controller_write_4017_does_nothing() {
 
     // Controller state should be unchanged
     let val = controller.read(0x4016);
-    assert_eq!(val, 0x40); // A button still pressed
+    assert_eq!(val, 0x41); // A button still pressed
 }
 
 #[test]
@@ -145,10 +145,10 @@ fn test_press_multiple_buttons() {
     a.press(Button::Start);
     a.reset_for_read();
 
-    assert_eq!(a.read(), 0x40); // A
-    assert_eq!(a.read(), 0x40); // B
-    assert_eq!(a.read(), 0x41); // Select
-    assert_eq!(a.read(), 0x40); // Start
+    assert_eq!(a.read(), 0x41); // A
+    assert_eq!(a.read(), 0x41); // B
+    assert_eq!(a.read(), 0x40); // Select
+    assert_eq!(a.read(), 0x41); // Start
 }
 
 #[test]
@@ -159,8 +159,8 @@ fn test_release_buttons() {
     a.release(Button::A);
 
     a.reset_for_read();
-    assert_eq!(a.read(), 0x41); // A (released)
-    assert_eq!(a.read(), 0x40); // B (still pressed)
+    assert_eq!(a.read(), 0x40); // A (released)
+    assert_eq!(a.read(), 0x41); // B (still pressed)
 }
 
 #[test]

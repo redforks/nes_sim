@@ -107,11 +107,11 @@ fn test_controller_reads_route_through_nes_mcu() {
     mcu.press_button(Button::Left);
     mcu.write(0x4016, 0);
 
-    assert_eq!(mcu.read(0x4016), 0x40);
-    assert_eq!(mcu.read(0x4016), 0x41);
-    assert_eq!(mcu.read(0x4016), 0x41);
-    assert_eq!(mcu.read(0x4016), 0x41);
-    assert_eq!(mcu.read(0x4016), 0x41);
     assert_eq!(mcu.read(0x4016), 0x41);
     assert_eq!(mcu.read(0x4016), 0x40);
+    assert_eq!(mcu.read(0x4016), 0x40);
+    assert_eq!(mcu.read(0x4016), 0x40);
+    assert_eq!(mcu.read(0x4016), 0x40);
+    assert_eq!(mcu.read(0x4016), 0x40);
+    assert_eq!(mcu.read(0x4016), 0x41);
 }
