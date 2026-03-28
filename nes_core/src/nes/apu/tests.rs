@@ -426,21 +426,6 @@ impl APUControllerDriver for MockApuControllerDriver {
     }
 }
 
-#[test]
-fn test_apu_new() {
-    let regions = new(
-        MockPulseDriver,
-        MockPulseDriver,
-        MockTriangleDriver,
-        MockNoiseDriver,
-        MockDmcDriver,
-        MockApuControllerDriver,
-    );
-
-    let region_vec: Vec<Region> = regions.into_iter().collect();
-    assert_eq!(region_vec.len(), 6);
-}
-
 // Test PulseChannel read panics
 #[test]
 #[should_panic(expected = "Can not from PulseChannel")]

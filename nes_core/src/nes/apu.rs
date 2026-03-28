@@ -611,31 +611,6 @@ impl APUControllerDriver for FakeApuControllerDriver {
     }
 }
 
-pub fn new<PD, TD, ND, DD, CD>(
-    pd1: PD,
-    pd2: PD,
-    td: TD,
-    nd: ND,
-    dd: DD,
-    cd: CD,
-) -> impl IntoIterator<Item = Region>
-where
-    PD: PulseDriver + 'static,
-    TD: TriangleDriver + 'static,
-    ND: NoiseDriver + 'static,
-    DD: DmcDriver + 'static,
-    CD: APUControllerDriver + 'static,
-{
-    [
-        Region::with_defined(PulseChannel::new(0x4000, pd1)),
-        Region::with_defined(PulseChannel::new(0x4004, pd2)),
-        Region::with_defined(TriangleChannel::new(td)),
-        Region::with_defined(NoiseChannel(RefCell::new(nd))),
-        Region::with_defined(DmcChannel(RefCell::new(dd))),
-        Region::with_defined(ApuController::new(cd)),
-    ]
-}
-
 pub trait AudioDriver {
     fn sample_rate(&self) -> u32;
 
