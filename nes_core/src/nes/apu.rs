@@ -1,4 +1,3 @@
-use crate::mcu::{DefinedRegion, Mcu};
 use crate::to_from_u8;
 use modular_bitfield::prelude::*;
 
@@ -227,172 +226,10 @@ impl LengthCounterChannel {
     }
 }
 
-pub struct ApuController {
-    apu_cycle: u64,
-    apu_even_cycle: bool,
-    frame_counter_mode: bool,
-    frame_interrupt_inhibit: bool,
-    frame_interrupt: bool,
-    dmc_interrupt: bool,
-    length_counters: [u8; 4],
-    length_counter_halt: [bool; 4],
-    channel_enabled: [bool; 5],
-}
-
-impl Default for ApuController {
-    fn default() -> Self {
-        Self {
-            apu_cycle: 0,
-            apu_even_cycle: false,
-            frame_counter_mode: false,
-            frame_interrupt_inhibit: false,
-            frame_interrupt: false,
-            dmc_interrupt: false,
-            length_counters: [0; 4],
-            length_counter_halt: [false; 4],
-            channel_enabled: [false; 5],
-        }
-    }
-}
-
-impl ApuController {
-    const LENGTH_TABLE: [u8; 32] = [
-        10, 254, 20, 2, 40, 4, 80, 6, 160, 8, 60, 10, 14, 12, 26, 14, 12, 16, 24, 18, 48, 20, 96,
-        22, 192, 24, 72, 26, 16, 28, 32, 30,
-    ];
-
-    pub fn new() -> Self {
-        Self::default()
-    }
-
-    pub fn tick(&mut self) -> bool {
-        self.apu_even_cycle = !self.apu_even_cycle;
-        if !self.apu_even_cycle {
-            return false;
-        }
-
-        self.apu_cycle = self.apu_cycle.wrapping_add(1);
-
-        if self.frame_counter_mode {
-            let cycle_mod = self.apu_cycle % 18641;
-            if cycle_mod == 7456 || cycle_mod == 18640 {
-                self.clock_length_counters();
-            }
-            return false;
-        }
-
-        let cycle_mod = self.apu_cycle % 14915;
-        if cycle_mod == 7456 || cycle_mod == 14914 {
-            self.clock_length_counters();
-        }
-        if cycle_mod == 14914 && !self.frame_interrupt_inhibit {
-            self.frame_interrupt = true;
-            return true;
-        }
-
-        false
-    }
-
-    pub fn request_irq(&self) -> bool {
-        self.frame_interrupt
-    }
-
-    pub fn set_length_counter_halt(&mut self, channel: LengthCounterChannel, halt: bool) {
-        self.length_counter_halt[channel.index()] = halt;
-    }
-
-    pub fn set_length_counter_load(
-        &mut self,
-        channel: LengthCounterChannel,
-        length_counter: LengthCounterLoad,
-    ) {
-        self.length_counters[channel.index()] =
-            Self::LENGTH_TABLE[length_counter.length_count() as usize];
-    }
-
-    fn set_control_flags(&mut self, flags: ControlFlags) {
-        self.set_channel_enabled(0, flags.pulse1_enabled());
-        self.set_channel_enabled(1, flags.pulse2_enabled());
-        self.set_channel_enabled(2, flags.triangle_enabled());
-        self.set_channel_enabled(3, flags.noise_enabled());
-        self.channel_enabled[4] = flags.dmc_enabled();
-        if !self.channel_enabled[4] {
-            self.dmc_interrupt = false;
-        }
-    }
-
-    fn set_frame_counter(&mut self, counter: FrameCounter) {
-        self.frame_counter_mode = counter.mode();
-        self.frame_interrupt_inhibit = counter.interrupt_flag();
-        if self.frame_interrupt_inhibit {
-            self.frame_interrupt = false;
-        }
-        self.apu_cycle = 0;
-        self.apu_even_cycle = false;
-
-        if self.frame_counter_mode {
-            self.clock_length_counters();
-        }
-    }
-
-    fn read_status(&mut self) -> APUStatus {
-        let mut status = APUStatus::new();
-        status.set_pulse1_enabled(self.status_channel_enabled(0));
-        status.set_pulse2_enabled(self.status_channel_enabled(1));
-        status.set_triangle_enabled(self.status_channel_enabled(2));
-        status.set_noise_enabled(self.status_channel_enabled(3));
-        status.set_dmc_enabled(self.channel_enabled[4]);
-        status.set_frame_interrupt(self.frame_interrupt);
-        status.set_dmc_interrupt(self.dmc_interrupt);
-        self.frame_interrupt = false;
-        status
-    }
-
-    fn clock_length_counters(&mut self) {
-        for i in 0..self.length_counters.len() {
-            if self.channel_enabled[i]
-                && !self.length_counter_halt[i]
-                && self.length_counters[i] > 0
-            {
-                self.length_counters[i] -= 1;
-            }
-        }
-    }
-
-    fn set_channel_enabled(&mut self, channel: usize, enabled: bool) {
-        self.channel_enabled[channel] = enabled;
-        if channel < self.length_counters.len() && !enabled {
-            self.length_counters[channel] = 0;
-        }
-    }
-
-    fn status_channel_enabled(&self, channel: usize) -> bool {
-        self.channel_enabled[channel] && self.length_counters[channel] > 0
-    }
-}
-
-impl Mcu for ApuController {
-    fn read(&mut self, address: u16) -> u8 {
-        match address {
-            0x4015 => self.read_status().into(),
-            _ => panic!("Can not read from ApuController at address {}", address),
-        }
-    }
-
-    fn write(&mut self, address: u16, value: u8) {
-        match address {
-            0x4015 => self.set_control_flags(value.into()),
-            0x4017 => self.set_frame_counter(value.into()),
-            _ => panic!("Can not write to ApuController at address {}", address),
-        }
-    }
-}
-
-impl DefinedRegion for ApuController {
-    fn region(&self) -> (u16, u16) {
-        (0x4015, 0x4017)
-    }
-}
+const LENGTH_TABLE: [u8; 32] = [
+    10, 254, 20, 2, 40, 4, 80, 6, 160, 8, 60, 10, 14, 12, 26, 14, 12, 16, 24, 18, 48, 20, 96, 22,
+    192, 24, 72, 26, 16, 28, 32, 30,
+];
 
 pub trait AudioDriver {
     fn sample_rate(&self) -> u32;
@@ -517,7 +354,7 @@ impl PulseState {
 
     fn write_timer_high(&mut self, load: LengthCounterLoad) {
         self.timer_period = load.timer();
-        self.length_counter = ApuController::LENGTH_TABLE[load.length_count() as usize];
+        self.length_counter = LENGTH_TABLE[load.length_count() as usize];
         self.sequence_step = 0;
         self.envelope.restart();
     }
@@ -624,7 +461,7 @@ impl TriangleState {
 
     fn write_timer_high(&mut self, load: LengthCounterLoad) {
         self.timer_period = load.timer();
-        self.length_counter = ApuController::LENGTH_TABLE[load.length_count() as usize];
+        self.length_counter = LENGTH_TABLE[load.length_count() as usize];
         self.linear_counter_reload = true;
     }
 
@@ -712,7 +549,7 @@ impl NoiseState {
     }
 
     fn write_length(&mut self, value: NoiseLength) {
-        self.length_counter = ApuController::LENGTH_TABLE[value.length() as usize];
+        self.length_counter = LENGTH_TABLE[value.length() as usize];
         self.envelope_state.restart();
     }
 

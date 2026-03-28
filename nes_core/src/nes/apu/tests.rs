@@ -332,92 +332,80 @@ fn test_frame_counter_to_from_u8() {
     assert!(counter2.interrupt_flag());
 }
 
-// Test ApuController
+// Test APU control logic
 #[test]
 fn test_apu_controller_read_status() {
-    let mut channel = ApuController::new();
+    let mut channel = Apu::new(Box::new(NullAudioDriver));
     let val = channel.read(0x4015);
     assert_eq!(val, 0); // Default APUStatus
 }
 
 #[test]
-#[should_panic(expected = "Can not read from ApuController")]
+#[should_panic(expected = "Can not read from Apu")]
 fn test_apu_controller_read_invalid_address() {
-    let mut channel = ApuController::new();
+    let mut channel = Apu::new(Box::new(NullAudioDriver));
     let _ = channel.read(0x4016);
 }
 
 #[test]
 fn test_apu_controller_write_control_flags() {
-    let mut channel = ApuController::new();
+    let mut channel = Apu::new(Box::new(NullAudioDriver));
     channel.write(0x4015, 0x1F); // Should call set_control_flags
 }
 
 #[test]
 fn test_apu_controller_write_frame_counter() {
-    let mut channel = ApuController::new();
+    let mut channel = Apu::new(Box::new(NullAudioDriver));
     channel.write(0x4017, 0xC0); // Should call set_frame_counter
 }
 
 #[test]
-#[should_panic(expected = "Can not write to ApuController")]
+#[should_panic(expected = "Can not write to Apu")]
 fn test_apu_controller_write_invalid_address() {
-    let mut channel = ApuController::new();
+    let mut channel = Apu::new(Box::new(NullAudioDriver));
     channel.write(0x4016, 0x00);
 }
 
 #[test]
-fn test_apu_controller_region() {
-    let channel = ApuController::new();
-    assert_eq!(channel.region(), (0x4015, 0x4017));
-}
-
-#[test]
 fn test_apu_controller_driver_control_flags_status() {
-    let mut driver = ApuController::new();
+    let mut driver = Apu::new(Box::new(NullAudioDriver));
 
-    driver.set_length_counter_load(
-        LengthCounterChannel::Pulse1,
-        LengthCounterLoad::from_registers(0, 0xF8),
-    );
-    driver.set_control_flags(ControlFlags::new().with_pulse1_enabled(true));
+    driver.write(0x4003, 0xF8);
+    driver.write(0x4015, 0x01);
 
-    let status = driver.read_status();
-    assert!(status.pulse1_enabled());
-    assert!(!status.frame_interrupt());
+    let status = driver.read(0x4015);
+    assert_eq!(status & 0x01, 0x01);
+    assert_eq!(status & 0x40, 0x00);
 }
 
 #[test]
 fn test_apu_controller_driver_read_status_clears_frame_irq() {
-    let mut driver = ApuController::new();
-    driver.set_frame_counter(0u8.into());
+    let mut driver = Apu::new(Box::new(NullAudioDriver));
+    driver.write(0x4017, 0x00);
 
     for _ in 0..(14914 * 2) {
         driver.tick();
     }
 
     assert!(driver.request_irq());
-    let status = driver.read_status();
-    assert!(status.frame_interrupt());
+    let status = driver.read(0x4015);
+    assert!(status & 0x40 != 0);
     assert!(!driver.request_irq());
 }
 
 #[test]
 fn test_apu_controller_driver_five_step_write_clocks_length_counter() {
-    let mut driver = ApuController::new();
-    driver.set_length_counter_load(
-        LengthCounterChannel::Pulse1,
-        LengthCounterLoad::from_registers(0, 0x18),
-    );
-    driver.set_control_flags(ControlFlags::new().with_pulse1_enabled(true));
+    let mut driver = Apu::new(Box::new(NullAudioDriver));
+    driver.write(0x4003, 0x18);
+    driver.write(0x4015, 0x01);
 
-    let before = driver.read_status();
-    assert!(before.pulse1_enabled());
+    let before = driver.read(0x4015);
+    assert!(before & 0x01 != 0);
 
-    driver.set_frame_counter(FrameCounter::new().with_mode(true));
-    assert!(driver.read_status().pulse1_enabled());
+    driver.write(0x4017, 0x80);
+    assert!(driver.read(0x4015) & 0x01 != 0);
 
-    driver.set_frame_counter(FrameCounter::new().with_mode(true));
-    let after = driver.read_status();
-    assert!(!after.pulse1_enabled());
+    driver.write(0x4017, 0x80);
+    let after = driver.read(0x4015);
+    assert!(after & 0x01 == 0);
 }
