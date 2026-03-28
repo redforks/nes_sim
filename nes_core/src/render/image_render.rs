@@ -31,6 +31,10 @@ impl ImageRender {
         }
     }
 
+    pub fn default() -> Self {
+        Self::new(256, 240)
+    }
+
     /// Get a reference to the underlying image by borrowing the RefCell
     pub fn borrow_image(&self) -> std::cell::Ref<'_, RgbaImage> {
         self.image.borrow()
@@ -80,7 +84,7 @@ mod tests {
 
     #[test]
     fn test_image_render_new() {
-        let renderer = ImageRender::new(256, 240);
+        let renderer = ImageRender::default();
         assert_eq!(renderer.dimensions(), (256, 240));
     }
 
@@ -125,7 +129,7 @@ mod tests {
 
     #[test]
     fn test_image_render_borrow() {
-        let renderer = ImageRender::new(256, 240);
+        let renderer = ImageRender::default();
 
         // Test borrow_image
         let image = renderer.borrow_image();
@@ -135,7 +139,7 @@ mod tests {
     #[test]
     fn test_nes_dimensions() {
         // Test creating a NES-sized render buffer
-        let mut renderer = ImageRender::new(256, 240);
+        let mut renderer = ImageRender::default();
         assert_eq!(renderer.dimensions(), (256, 240));
 
         // Verify we can set pixels across the entire screen

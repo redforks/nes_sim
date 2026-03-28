@@ -215,17 +215,6 @@ pub enum LengthCounterChannel {
     Noise,
 }
 
-impl LengthCounterChannel {
-    fn index(self) -> usize {
-        match self {
-            LengthCounterChannel::Pulse1 => 0,
-            LengthCounterChannel::Pulse2 => 1,
-            LengthCounterChannel::Triangle => 2,
-            LengthCounterChannel::Noise => 3,
-        }
-    }
-}
-
 const LENGTH_TABLE: [u8; 32] = [
     10, 254, 20, 2, 40, 4, 80, 6, 160, 8, 60, 10, 14, 12, 26, 14, 12, 16, 24, 18, 48, 20, 96, 22,
     192, 24, 72, 26, 16, 28, 32, 30,
@@ -239,10 +228,21 @@ pub trait AudioDriver {
     fn flush(&mut self) {}
 }
 
-#[derive(Default)]
-pub struct NullAudioDriver;
+impl<T: AudioDriver + ?Sized> AudioDriver for Box<T> {
+    fn sample_rate(&self) -> u32 {
+        (**self).sample_rate()
+    }
 
-impl AudioDriver for NullAudioDriver {
+    fn push_sample(&mut self, sample: f32) {
+        (**self).push_sample(sample)
+    }
+
+    fn flush(&mut self) {
+        (**self).flush()
+    }
+}
+
+impl AudioDriver for () {
     fn sample_rate(&self) -> u32 {
         44_100
     }
@@ -615,13 +615,13 @@ impl DmcState {
     }
 }
 
-pub struct Apu {
+pub struct Apu<D: AudioDriver = ()> {
     pulse1: PulseState,
     pulse2: PulseState,
     triangle: TriangleState,
     noise: NoiseState,
     dmc: DmcState,
-    driver: Box<dyn AudioDriver>,
+    driver: D,
     sample_rate: u32,
     sample_accumulator: u64,
     apu_cycle: u64,
@@ -634,14 +634,14 @@ pub struct Apu {
     dc_last_output: f32,
 }
 
-impl Default for Apu {
+impl Default for Apu<()> {
     fn default() -> Self {
-        Self::new(Box::<NullAudioDriver>::default())
+        Self::new(())
     }
 }
 
-impl Apu {
-    pub fn new(driver: Box<dyn AudioDriver>) -> Self {
+impl<D: AudioDriver> Apu<D> {
+    pub fn new(driver: D) -> Self {
         let sample_rate = driver.sample_rate().max(1);
         Self {
             pulse1: PulseState::new(true),

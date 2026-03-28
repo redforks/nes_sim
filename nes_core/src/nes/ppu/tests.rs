@@ -320,7 +320,7 @@ fn test_ppu_status_to_from_u8() {
 
 #[test]
 fn test_oam_dma() {
-    let mut ppu = Ppu::new(ImageRender::new(256, 240));
+    let mut ppu = Ppu::new(ImageRender::default());
     let data: [u8; 256] = [0x42; 256];
 
     ppu.oam_dma(&data);
@@ -332,7 +332,7 @@ fn test_oam_dma() {
 
 #[test]
 fn test_set_mirroring() {
-    let mut ppu = Ppu::new(ImageRender::new(256, 240));
+    let mut ppu = Ppu::new(ImageRender::default());
 
     ppu.set_mirroring(Mirroring::Horizontal);
     ppu.set_mirroring(Mirroring::Vertical);

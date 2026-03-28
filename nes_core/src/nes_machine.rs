@@ -1,10 +1,9 @@
 use crate::{
+    ExecuteResult, Plugin,
     ines::INesFile,
     machine::Machine,
-    nes::controller::Button,
-    nes::{self, NesMcu},
-    render::{ImageRender, Render},
-    EmptyPlugin, ExecuteResult, Plugin,
+    nes::{self, NesMcu, controller::Button},
+    render::Render,
 };
 
 /// Safety limit: maximum CPU instruction ticks per `process_frame()` call.
@@ -12,67 +11,20 @@ use crate::{
 /// (e.g. when the PPU is not connected or NES hardware is not present).
 const MAX_TICKS_PER_FRAME: u32 = 60000;
 
-pub struct NesMachine<P, R: Render = ImageRender> {
-    machine: Machine<P, NesMcu<R>>,
+pub struct NesMachine<P, R: Render, D: crate::nes::apu::AudioDriver> {
+    machine: Machine<P, NesMcu<R, D>>,
     is_vblank: bool,
     enter_vblank: bool,
 }
 
-impl NesMachine<EmptyPlugin<NesMcu>, ImageRender> {
-    /// Create a new NES machine from an iNES file with the default plugin.
-    pub fn new(file: &INesFile) -> Self {
-        Self::with_plugin(file, EmptyPlugin::new())
-    }
-}
-
-impl<R: Render> NesMachine<EmptyPlugin<NesMcu<R>>, R> {
-    /// Create a new NES machine from an iNES file with a custom renderer.
-    pub fn with_renderer(file: &INesFile, renderer: R) -> Self {
-        let mcu = nes::create_mcu_with_renderer(file, renderer);
-        let is_vblank = mcu.ppu().vblank();
-        Self {
-            machine: Machine::with_plugin(EmptyPlugin::new(), mcu),
-            is_vblank,
-            enter_vblank: false,
-        }
-    }
-
-    pub fn with_renderer_and_audio(
-        file: &INesFile,
-        renderer: R,
-        audio_driver: Box<dyn crate::nes::apu::AudioDriver>,
-    ) -> Self {
-        let mcu = nes::create_mcu_with_renderer_and_audio(file, renderer, audio_driver);
-        let is_vblank = mcu.ppu().vblank();
-        Self {
-            machine: Machine::with_plugin(EmptyPlugin::new(), mcu),
-            is_vblank,
-            enter_vblank: false,
-        }
-    }
-}
-
-impl<P: Plugin<NesMcu>> NesMachine<P, ImageRender> {
-    /// Create a new NES machine from an iNES file with a custom plugin.
-    pub fn with_plugin(file: &INesFile, plugin: P) -> Self {
-        let mcu = nes::create_mcu(file);
-        let is_vblank = mcu.ppu().vblank();
-        Self {
-            machine: Machine::with_plugin(plugin, mcu),
-            is_vblank,
-            enter_vblank: false,
-        }
-    }
-}
-
-impl<P, R> NesMachine<P, R>
+impl<P, R, D> NesMachine<P, R, D>
 where
-    P: Plugin<NesMcu<R>>,
+    P: Plugin<NesMcu<R, D>>,
     R: Render,
+    D: crate::nes::apu::AudioDriver,
 {
-    /// Create a new NES machine from an iNES file with a custom plugin and renderer.
-    pub fn with_plugin_and_renderer(file: &INesFile, plugin: P, renderer: R) -> Self {
-        let mcu = nes::create_mcu_with_renderer(file, renderer);
+    pub fn new(file: &INesFile, plugin: P, render: R, audio_driver: D) -> Self {
+        let mcu = nes::create_mcu_with_renderer_and_audio(file, render, audio_driver);
         let is_vblank = mcu.ppu().vblank();
         Self {
             machine: Machine::with_plugin(plugin, mcu),
@@ -129,7 +81,7 @@ where
         result
     }
 
-    fn mcu(&self) -> &NesMcu<R> {
+    fn mcu(&self) -> &NesMcu<R, D> {
         self.machine.mcu()
     }
 
@@ -157,6 +109,8 @@ where
 
 #[cfg(test)]
 mod tests {
+    use crate::EmptyPlugin;
+
     use super::*;
 
     /// Create a minimal valid iNES file for testing
@@ -192,23 +146,9 @@ mod tests {
     }
 
     #[test]
-    fn test_nes_machine_creation() {
-        let file = test_nes_file();
-        let _machine = NesMachine::new(&file);
-        // If we got here without panicking, the test passed
-    }
-
-    #[test]
-    fn test_nes_machine_with_plugin() {
-        let file = test_nes_file();
-        let _machine = NesMachine::with_plugin(&file, EmptyPlugin::new());
-        // If we got here without panicking, the test passed
-    }
-
-    #[test]
     fn test_process_frame_waits_for_vblank() {
         let file = test_nes_file();
-        let mut machine = NesMachine::new(&file);
+        let mut machine = NesMachine::new(&file, EmptyPlugin::new(), (), ());
 
         // process_frame should return as soon as the PPU reaches VBlank
         // (scanline 241, dot 1 = after 241*341 + 1 = 82,262 PPU dots = ~27,421 CPU cycles).

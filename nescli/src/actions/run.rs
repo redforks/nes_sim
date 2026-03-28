@@ -1,5 +1,6 @@
 use anyhow::Result;
 use image::EncodableLayout;
+use nes_core::EmptyPlugin;
 use nes_core::ines::INesFile;
 use nes_core::nes::apu::AudioDriver;
 use nes_core::nes::controller::Button;
@@ -185,7 +186,7 @@ impl RunAction {
             .map_err(|e| anyhow::anyhow!(e))?;
 
         // Create image renderer for display - keep a reference to access later
-        let image_render = ImageRender::new(256, 240);
+        let image_render = ImageRender::default();
 
         // Create composite renderer with image + markdown
         let composite = Rc::new(RefCell::new(CompositeRender::new()));
@@ -203,8 +204,7 @@ impl RunAction {
         let shared_composite = SharedCompositeRender::new(composite.clone());
 
         // Create NES machine with composite renderer
-        let mut machine =
-            NesMachine::with_renderer_and_audio(f, Box::new(shared_composite), audio_driver);
+        let mut machine = NesMachine::new(f, EmptyPlugin::new(), shared_composite, audio_driver);
 
         // Initialize event pump
         let mut event_pump = sdl_context.event_pump().map_err(|e| anyhow::anyhow!(e))?;

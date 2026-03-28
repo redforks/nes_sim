@@ -172,7 +172,7 @@ mod tests {
         let mut composite = CompositeRender::new();
         assert!(composite.is_empty());
 
-        let image = ImageRender::new(256, 240);
+        let image = ImageRender::default();
         composite.add(Box::new(image));
 
         assert_eq!(composite.len(), 1);

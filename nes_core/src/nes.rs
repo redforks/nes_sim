@@ -1,6 +1,6 @@
 use crate::ines::INesFile;
 use crate::nes::apu::AudioDriver;
-use crate::render::Render;
+use crate::render::{ImageRender, Render};
 
 pub mod apu;
 pub mod controller;
@@ -11,7 +11,7 @@ pub mod ppu;
 
 pub use nes_mcu::NesMcu;
 
-pub fn create_mcu(file: &INesFile) -> NesMcu {
+pub fn create_mcu(file: &INesFile) -> NesMcu<ImageRender, ()> {
     nes_mcu::build(file)
 }
 
@@ -22,15 +22,15 @@ pub fn create_mcu(file: &INesFile) -> NesMcu {
 /// # Parameters
 /// - `file`: The iNES file to load
 /// - `renderer`: Renderer used by the PPU.
-pub fn create_mcu_with_renderer<R: Render>(file: &INesFile, renderer: R) -> NesMcu<R> {
+pub fn create_mcu_with_renderer<R: Render>(file: &INesFile, renderer: R) -> NesMcu<R, ()> {
     nes_mcu::build_with_renderer(file, renderer)
 }
 
-pub fn create_mcu_with_renderer_and_audio<R: Render>(
+pub fn create_mcu_with_renderer_and_audio<R: Render, D: AudioDriver>(
     file: &INesFile,
     renderer: R,
-    audio_driver: Box<dyn AudioDriver>,
-) -> NesMcu<R> {
+    audio_driver: D,
+) -> NesMcu<R, D> {
     nes_mcu::build_with_renderer_and_audio(file, renderer, audio_driver)
 }
 

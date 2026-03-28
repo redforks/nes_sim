@@ -182,7 +182,11 @@ impl Palette {
 
         // Clamp to valid range [0, 31]
         let addr = addr as usize;
-        if addr >= 32 { 31 } else { addr }
+        if addr >= 32 {
+            31
+        } else {
+            addr
+        }
     }
 
     fn get_color_idx(&self, start: usize, palette_idx: u8, idx: u8) -> Pixel {
@@ -611,7 +615,11 @@ impl<R: Render> Ppu<R> {
     }
 
     fn sprite_height(&self) -> i16 {
-        if self.ctrl.sprite_size() { 16 } else { 8 }
+        if self.ctrl.sprite_size() {
+            16
+        } else {
+            8
+        }
     }
 
     fn sprite_covers_scanline(&self, sprite_idx: usize, screen_y: u8) -> bool {

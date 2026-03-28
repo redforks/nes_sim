@@ -4,14 +4,14 @@ use crate::nes::controller::Button;
 use crate::nes::mapper::{Cartridge, TestCartridge};
 use crate::render::ImageRender;
 
-fn test_mcu() -> NesMcu {
+fn test_mcu() -> NesMcu<ImageRender, ()> {
     NesMcu {
         lower_ram: LowerRam::new(),
-        ppu: Ppu::new(ImageRender::new(256, 240)),
+        ppu: Ppu::new(ImageRender::default()),
         after_ppu: RamMcu::start_from(0x4000, [0; 0x20]),
         controller: Controller::new(),
         cartridge: Cartridge::Test(TestCartridge::new()),
-        apu: Apu::default(),
+        apu: Apu::new(()),
     }
 }
 

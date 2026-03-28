@@ -335,7 +335,7 @@ fn test_frame_counter_to_from_u8() {
 // Test APU control logic
 #[test]
 fn test_apu_controller_read_status() {
-    let mut channel = Apu::new(Box::new(NullAudioDriver));
+    let mut channel = Apu::new(());
     let val = channel.read(0x4015);
     assert_eq!(val, 0); // Default APUStatus
 }
@@ -343,32 +343,32 @@ fn test_apu_controller_read_status() {
 #[test]
 #[should_panic(expected = "Can not read from Apu")]
 fn test_apu_controller_read_invalid_address() {
-    let mut channel = Apu::new(Box::new(NullAudioDriver));
+    let mut channel = Apu::new(());
     let _ = channel.read(0x4016);
 }
 
 #[test]
 fn test_apu_controller_write_control_flags() {
-    let mut channel = Apu::new(Box::new(NullAudioDriver));
+    let mut channel = Apu::new(());
     channel.write(0x4015, 0x1F); // Should call set_control_flags
 }
 
 #[test]
 fn test_apu_controller_write_frame_counter() {
-    let mut channel = Apu::new(Box::new(NullAudioDriver));
+    let mut channel = Apu::new(());
     channel.write(0x4017, 0xC0); // Should call set_frame_counter
 }
 
 #[test]
 #[should_panic(expected = "Can not write to Apu")]
 fn test_apu_controller_write_invalid_address() {
-    let mut channel = Apu::new(Box::new(NullAudioDriver));
+    let mut channel = Apu::new(());
     channel.write(0x4016, 0x00);
 }
 
 #[test]
 fn test_apu_controller_driver_control_flags_status() {
-    let mut driver = Apu::new(Box::new(NullAudioDriver));
+    let mut driver = Apu::new(());
 
     driver.write(0x4003, 0xF8);
     driver.write(0x4015, 0x01);
@@ -380,7 +380,7 @@ fn test_apu_controller_driver_control_flags_status() {
 
 #[test]
 fn test_apu_controller_driver_read_status_clears_frame_irq() {
-    let mut driver = Apu::new(Box::new(NullAudioDriver));
+    let mut driver = Apu::new(());
     driver.write(0x4017, 0x00);
 
     for _ in 0..(14914 * 2) {
@@ -395,7 +395,7 @@ fn test_apu_controller_driver_read_status_clears_frame_irq() {
 
 #[test]
 fn test_apu_controller_driver_five_step_write_clocks_length_counter() {
-    let mut driver = Apu::new(Box::new(NullAudioDriver));
+    let mut driver = Apu::new(());
     driver.write(0x4003, 0x18);
     driver.write(0x4015, 0x01);
 

@@ -70,7 +70,7 @@ impl Image {
         max_instructions: u64,
     ) -> MachineWrapper {
         // Build the composite plugin step by step to handle type coercion
-        let mut plugins: Vec<Box<dyn Plugin<nes_core::nes::nes_mcu::NesMcu>>> = vec![
+        let mut plugins: Vec<Box<dyn Plugin<nes_core::nes::nes_mcu::NesMcu<(), ()>>>> = vec![
             Box::<Console>::default(),
             Box::new(NesReportPlugin::new(quiet)),
             Box::<MonitorTestStatus>::default(),
@@ -87,7 +87,7 @@ impl Image {
             plugins.push(Box::new(MaxInstructions::new(max_instructions)));
         }
         let plugin = CompositePlugin::new(plugins);
-        let mut machine = NesMachine::with_plugin(ines, plugin);
+        let mut machine = NesMachine::new(ines, plugin, (), ());
         if let Some(pc) = start_pc {
             machine.set_pc(pc);
         }
@@ -104,8 +104,8 @@ mod machine_types {
     pub type BinPlugin = CompositePlugin<BinMcu>;
     pub type BinMachine = Machine<BinPlugin, BinMcu>;
 
-    pub type INesPlugin = CompositePlugin<nes_core::nes::nes_mcu::NesMcu>;
-    pub type INesMachine = NesMachine<INesPlugin>;
+    pub type INesPlugin = CompositePlugin<nes_core::nes::nes_mcu::NesMcu<(), ()>>;
+    pub type INesMachine = NesMachine<INesPlugin, (), ()>;
 }
 
 pub enum MachineWrapper {

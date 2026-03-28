@@ -95,7 +95,7 @@ mod tests {
     #[test]
     fn reads_and_writes_cartridge_ram() {
         let mut mapper = Mapper2::new(&[0; PRG_ROM_BANK_SIZE * 2], &[]);
-        let mut ppu = Ppu::new(ImageRender::new(256, 240));
+        let mut ppu = Ppu::new(ImageRender::default());
 
         mapper.write(&mut ppu, CARTRIDGE_START_ADDR, 0x12);
         mapper.write(&mut ppu, 0x7fff, 0x34);
@@ -114,7 +114,7 @@ mod tests {
         prg_rom[(PRG_ROM_BANK_SIZE * 4) - 1] = 0x4f;
 
         let mut mapper = Mapper2::new(&prg_rom, &[]);
-        let mut ppu = Ppu::new(ImageRender::new(256, 240));
+        let mut ppu = Ppu::new(ImageRender::default());
 
         assert_eq!(mapper.read(0x8000), 0x10);
         assert_eq!(mapper.read(0xc000), 0x40);
