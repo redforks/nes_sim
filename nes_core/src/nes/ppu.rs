@@ -116,6 +116,60 @@ struct SpritePixel {
     behind_bg: bool,
 }
 
+#[derive(Copy, Clone, Default)]
+struct CachedBackgroundPixel {
+    palette_idx: u8,
+    color_idx: u8,
+}
+
+#[derive(Copy, Clone)]
+struct CachedSprite {
+    x: u8,
+    palette_idx: u8,
+    behind_bg: bool,
+    pixels: [u8; 8],
+}
+
+impl CachedSprite {
+    fn opaque_pixel(&self, screen_x: u8) -> Option<SpritePixel> {
+        let sprite_x = screen_x as i16 - self.x as i16;
+        if !(0..8).contains(&sprite_x) {
+            return None;
+        }
+
+        let color_idx = self.pixels[sprite_x as usize];
+        if color_idx == 0 {
+            return None;
+        }
+
+        Some(SpritePixel {
+            palette_idx: self.palette_idx,
+            color_idx,
+            behind_bg: self.behind_bg,
+        })
+    }
+}
+
+struct ScanlineCache {
+    scanline: u8,
+    dirty: bool,
+    background: [CachedBackgroundPixel; 256],
+    sprite_pixels: [Option<SpritePixel>; 256],
+    sprite_zero_pixels: [bool; 256],
+}
+
+impl Default for ScanlineCache {
+    fn default() -> Self {
+        Self {
+            scanline: 0,
+            dirty: true,
+            background: [CachedBackgroundPixel::default(); 256],
+            sprite_pixels: [None; 256],
+            sprite_zero_pixels: [false; 256],
+        }
+    }
+}
+
 const fn rgb(v: [u8; 3]) -> Pixel {
     let [r, g, b] = v;
     Rgba::<u8>([r, g, b, 0xff])
@@ -176,7 +230,11 @@ impl Palette {
 
         // Clamp to valid range [0, 31]
         let addr = addr as usize;
-        if addr >= 32 { 31 } else { addr }
+        if addr >= 32 {
+            31
+        } else {
+            addr
+        }
     }
 
     fn get_color_idx(&self, start: usize, palette_idx: u8, idx: u8) -> Pixel {
@@ -201,20 +259,6 @@ impl Palette {
     }
 
     fn get_sprit_color(&self, palette_idx: u8, idx: u8) -> Pixel {
-        let offset = 0x10
-            + idx as usize
-            + match palette_idx {
-                0 => 0x00,
-                1 => 0x04,
-                2 => 0x08,
-                3 => 0x0c,
-                _ => unreachable!(),
-            };
-        let color_val = self.data[offset];
-        debug!(
-            "_get_sprit_color: palette_idx={}, idx={}, offset={}, val=0x{:02x}",
-            palette_idx, idx, offset, color_val
-        );
         self.get_color_idx(0x10, palette_idx, idx)
     }
 }
@@ -256,6 +300,8 @@ pub struct Ppu<R: Render = ()> {
     scanline: u16, // 0-261
     dot: u16,      // 0-340
     odd_frame: bool,
+
+    scanline_cache: ScanlineCache,
 }
 
 impl<R: Render> Ppu<R> {
@@ -280,6 +326,7 @@ impl<R: Render> Ppu<R> {
             dot: 0,
             odd_frame: false,
             suppress_vblank_for_current_frame: false,
+            scanline_cache: ScanlineCache::default(),
         }
     }
 
@@ -294,6 +341,7 @@ impl<R: Render> Ppu<R> {
         self.fine_x = 0;
         self.write_toggle = false;
         self.odd_frame = false;
+        self.scanline_cache.dirty = true;
         Self::write_scroll(self, 0);
     }
 
@@ -307,6 +355,7 @@ impl<R: Render> Ppu<R> {
 
     pub fn oam_dma(&mut self, vals: &[u8; 256]) {
         self.oam_data.copy_from_slice(vals);
+        self.scanline_cache.dirty = true;
     }
 
     /// Advance PPU by one dot, rendering a pixel if on a visible scanline.
@@ -318,7 +367,7 @@ impl<R: Render> Ppu<R> {
         let rendering_enabled = self.rendering_enabled();
 
         if self.scanline < 240 && self.dot == 0 {
-            self.update_sprite_overflow(self.scanline as u8);
+            self.prepare_scanline_cache(pattern, self.scanline as u8);
         }
 
         // Render pixel during visible scanlines (0-239) and visible dots (0-255)
@@ -445,10 +494,12 @@ impl<R: Render> Ppu<R> {
                 self.set_control_flags(PpuCtrl::from_bits(value));
                 // Update name table address from control bits
                 self.cur_name_table_addr = 0x2000 + (self.ctrl.name_table_select() as u16 * 0x400);
+                self.scanline_cache.dirty = true;
             }
             // PPUMASK
             0x2001 => {
                 self.mask = PpuMask::from_bits(value);
+                self.scanline_cache.dirty = true;
             }
             // OAMADDR
             0x2003 => {
@@ -459,14 +510,17 @@ impl<R: Render> Ppu<R> {
                 let addr = self.oam_addr as usize;
                 self.oam_data[addr] = value;
                 self.oam_addr = self.oam_addr.wrapping_add(1);
+                self.scanline_cache.dirty = true;
             }
             // PPUSCROLL
             0x2005 => {
                 Self::write_scroll(self, value);
+                self.scanline_cache.dirty = true;
             }
             // PPUADDR
             0x2006 => {
                 Self::write_vram_addr(self, value);
+                self.scanline_cache.dirty = true;
             }
             // PPUDATA
             0x2007 => {
@@ -480,6 +534,7 @@ impl<R: Render> Ppu<R> {
                 // Increment VRAM address based on control flag
                 let increment = if self.ctrl.increment_mode() { 32 } else { 1 };
                 self.vram_addr = self.vram_addr.wrapping_add(increment);
+                self.scanline_cache.dirty = true;
             }
             _ => {} // Ignore other addresses
         }
@@ -558,7 +613,12 @@ impl<R: Render> Ppu<R> {
         }
     }
 
-    fn get_background_pixel(inner: &Self, pattern: &[u8], screen_x: u8, screen_y: u8) -> (u8, u8) {
+    fn get_background_pixel(
+        inner: &Self,
+        pattern_table: Pattern<'_>,
+        screen_x: u8,
+        screen_y: u8,
+    ) -> (u8, u8) {
         // Check left-column clipping
         if !inner.mask.background_left_enabled() && screen_x < 8 {
             return (0, 0);
@@ -581,8 +641,6 @@ impl<R: Render> Ppu<R> {
         let tile_fine_x = (world_x % 8) as usize;
         let tile_fine_y = (world_y % 8) as usize;
 
-        let pattern_table = PatternBand::new(pattern).pattern(inner.cur_pattern_table_idx as usize);
-
         let (tile, palette_idx) = inner.name_table.with_nth(nt_idx, |name_table| {
             let tile = name_table.tile(pattern_table, nt_x as u8, nt_y as u8);
             let palette_idx = inner.name_table.with_attribute_table(nt_idx, |attr_table| {
@@ -596,30 +654,12 @@ impl<R: Render> Ppu<R> {
         (palette_idx, color_idx)
     }
 
-    fn get_sprite_pixel(
-        inner: &Self,
-        pattern: &[u8],
-        screen_x: u8,
-        screen_y: u8,
-    ) -> Option<SpritePixel> {
-        // Check left-column clipping
-        if !inner.mask.sprite_left_enabled() && screen_x < 8 {
-            return None;
-        }
-
-        // Render sprites in reverse order (priority 0->63)
-        for sprite_idx in (0..=63).rev() {
-            if let Some(pixel) =
-                inner.get_sprite_pixel_for_index(pattern, sprite_idx, screen_x, screen_y)
-            {
-                return Some(pixel);
-            }
-        }
-        None
-    }
-
     fn sprite_height(&self) -> i16 {
-        if self.ctrl.sprite_size() { 16 } else { 8 }
+        if self.ctrl.sprite_size() {
+            16
+        } else {
+            8
+        }
     }
 
     fn sprite_covers_scanline(&self, sprite_idx: usize, screen_y: u8) -> bool {
@@ -640,68 +680,129 @@ impl<R: Render> Ppu<R> {
         }
     }
 
-    fn get_sprite_pixel_for_index(
-        &self,
-        pattern: &[u8],
-        sprite_idx: usize,
-        screen_x: u8,
-        screen_y: u8,
-    ) -> Option<SpritePixel> {
-        let byte_idx = sprite_idx * 4;
-        let y = self.oam_data[byte_idx];
-        let tile_idx = self.oam_data[byte_idx + 1];
-        let attributes = self.oam_data[byte_idx + 2];
-        let x = self.oam_data[byte_idx + 3];
+    fn prepare_scanline_cache(&mut self, pattern: &[u8], screen_y: u8) {
+        if !self.scanline_cache.dirty && self.scanline_cache.scanline == screen_y {
+            return;
+        }
 
-        let sprite_y = screen_y as i16 - y as i16;
-        let sprite_x = screen_x as i16 - x as i16;
+        self.scanline_cache.scanline = screen_y;
+        self.scanline_cache.dirty = false;
+        self.scanline_cache.background = [CachedBackgroundPixel::default(); 256];
+        self.scanline_cache.sprite_pixels = [None; 256];
+        self.scanline_cache.sprite_zero_pixels = [false; 256];
+
+        self.update_sprite_overflow(screen_y);
+
+        let bg_pattern = PatternBand::new(pattern).pattern(self.cur_pattern_table_idx as usize);
+        if self.mask.background_enabled() {
+            for screen_x in 0..256u16 {
+                let (palette_idx, color_idx) =
+                    Self::get_background_pixel(self, bg_pattern, screen_x as u8, screen_y);
+                self.scanline_cache.background[screen_x as usize] = CachedBackgroundPixel {
+                    palette_idx,
+                    color_idx,
+                };
+            }
+        }
+
+        if !self.mask.sprite_enabled() {
+            return;
+        }
+
+        let sprite_pattern = PatternBand::new(pattern);
         let sprite_height = self.sprite_height();
+        let mut visible_count = 0;
+        let mut visible_sprites = [CachedSprite {
+            x: 0,
+            palette_idx: 0,
+            behind_bg: false,
+            pixels: [0; 8],
+        }; MAX_SPRITES_PER_SCANLINE];
 
-        if !(0..8).contains(&sprite_x) || !(0..sprite_height).contains(&sprite_y) {
-            return None;
-        }
+        for sprite_idx in 0..64 {
+            if !self.sprite_covers_scanline(sprite_idx, screen_y) {
+                continue;
+            }
 
-        let flip_vertical = (attributes & 0x80) != 0;
-        let flip_horizontal = (attributes & 0x40) != 0;
-        let sprite_y = if flip_vertical {
-            sprite_height - 1 - sprite_y
-        } else {
-            sprite_y
-        } as u8;
-        let sprite_x = if flip_horizontal {
-            7 - sprite_x
-        } else {
-            sprite_x
-        } as u8;
+            let byte_idx = sprite_idx * 4;
+            let y = self.oam_data[byte_idx];
+            let tile_idx = self.oam_data[byte_idx + 1];
+            let attributes = self.oam_data[byte_idx + 2];
+            let x = self.oam_data[byte_idx + 3];
+            let sprite_y = screen_y as i16 - y as i16;
+            let flip_vertical = (attributes & 0x80) != 0;
+            let flip_horizontal = (attributes & 0x40) != 0;
+            let palette_idx = attributes & 0x03;
+            let behind_bg = (attributes & 0x20) != 0;
+            let mut pixels = [0u8; 8];
 
-        let color_idx = if self.ctrl.sprite_size() {
-            let pattern_table_idx = (tile_idx & 0x01) as usize;
-            let tile_base = tile_idx & 0xFE;
-            let tile_offset = sprite_y / 8;
-            let tile_row = (sprite_y % 8) as usize;
-            let pattern_table = PatternBand::new(pattern).pattern(pattern_table_idx);
-            let tile = pattern_table.tile(tile_base.wrapping_add(tile_offset));
-            tile.pixel(sprite_x as usize, tile_row)
-        } else {
-            let pattern_table_idx = if self.ctrl.sprite_pattern_table() {
-                1
-            } else {
-                0
+            for pixel_x in 0..8i16 {
+                let src_x = if flip_horizontal {
+                    7 - pixel_x
+                } else {
+                    pixel_x
+                } as usize;
+                let src_y = if flip_vertical {
+                    sprite_height - 1 - sprite_y
+                } else {
+                    sprite_y
+                } as u8;
+
+                let color_idx = if self.ctrl.sprite_size() {
+                    let pattern_table_idx = (tile_idx & 0x01) as usize;
+                    let tile_base = tile_idx & 0xFE;
+                    let tile_offset = src_y / 8;
+                    let tile_row = (src_y % 8) as usize;
+                    let pattern_table = sprite_pattern.pattern(pattern_table_idx);
+                    let tile = pattern_table.tile(tile_base.wrapping_add(tile_offset));
+                    tile.pixel(src_x, tile_row)
+                } else {
+                    let pattern_table_idx = if self.ctrl.sprite_pattern_table() {
+                        1
+                    } else {
+                        0
+                    };
+                    let pattern_table = sprite_pattern.pattern(pattern_table_idx);
+                    let tile = pattern_table.tile(tile_idx);
+                    tile.pixel(src_x, src_y as usize)
+                };
+
+                pixels[pixel_x as usize] = color_idx;
+            }
+
+            let sprite = CachedSprite {
+                x,
+                palette_idx,
+                behind_bg,
+                pixels,
             };
-            let pattern_table = PatternBand::new(pattern).pattern(pattern_table_idx);
-            let tile = pattern_table.tile(tile_idx);
-            tile.pixel(sprite_x as usize, sprite_y as usize)
-        };
 
-        if color_idx == 0 {
-            return None;
+            if sprite_idx == 0 {
+                for screen_x in 0..256u16 {
+                    self.scanline_cache.sprite_zero_pixels[screen_x as usize] =
+                        sprite.opaque_pixel(screen_x as u8).is_some();
+                }
+            }
+
+            if visible_count < MAX_SPRITES_PER_SCANLINE {
+                visible_sprites[visible_count] = sprite;
+                visible_count += 1;
+            }
         }
 
-        Some(SpritePixel {
-            palette_idx: attributes & 0x03,
-            color_idx,
-            behind_bg: (attributes & 0x20) != 0,
-        })
+        for screen_x in 0..256u16 {
+            let x = screen_x as u8;
+            if !self.mask.sprite_left_enabled() && x < 8 {
+                continue;
+            }
+
+            for sprite in visible_sprites.iter().take(visible_count) {
+                if let Some(pixel) = sprite.opaque_pixel(x) {
+                    self.scanline_cache.sprite_pixels[screen_x as usize] = Some(pixel);
+                    break;
+                }
+            }
+        }
     }
 
     /// Read VRAM at current address and increment (for testing)
@@ -725,6 +826,7 @@ impl<R: Render> Ppu<R> {
         self.temp_vram_addr =
             (self.temp_vram_addr & !0x0C00) | ((self.ctrl.name_table_select() as u16) << 10);
         self.cur_name_table_addr = 0x2000 + (self.ctrl.name_table_select() as u16 * 0x400);
+        self.scanline_cache.dirty = true;
         // Update pattern table index based on background_pattern_table flag
         self.cur_pattern_table_idx = if self.ctrl.background_pattern_table() {
             1
@@ -748,16 +850,17 @@ impl<R: Render> Ppu<R> {
 
     /// Render a single pixel (for testing)
     fn render_pixel(&mut self, pattern: &[u8], x: u8, y: u8) -> Pixel {
-        self.update_sprite_overflow(y);
+        self.prepare_scanline_cache(pattern, y);
 
         let bg_pixel = if self.mask.background_enabled() {
-            Self::get_background_pixel(self, pattern, x, y)
+            let cached = self.scanline_cache.background[x as usize];
+            (cached.palette_idx, cached.color_idx)
         } else {
             (0, 0) // transparent
         };
 
         let sprite_pixel = if self.mask.sprite_enabled() {
-            Self::get_sprite_pixel(self, pattern, x, y)
+            self.scanline_cache.sprite_pixels[x as usize]
         } else {
             None
         };
@@ -770,7 +873,7 @@ impl<R: Render> Ppu<R> {
             && x != 255
             && (x >= 8 || self.mask.background_left_enabled())
             && (x >= 8 || self.mask.sprite_left_enabled())
-            && self.get_sprite_pixel_for_index(pattern, 0, x, y).is_some()
+            && self.scanline_cache.sprite_zero_pixels[x as usize]
         {
             self.status.set_sprite_zero_hit(true);
         }
