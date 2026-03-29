@@ -15,33 +15,36 @@ mod canvas_render;
 mod drivers;
 
 use canvas_render::CanvasRender;
+use drivers::apu::WebAudioDriver;
 
 #[wasm_bindgen]
 pub struct Machine {
     inner: NesMachine<
-        nes_core::EmptyPlugin<nes_core::nes::nes_mcu::NesMcu<CanvasRender, ()>>,
+        nes_core::EmptyPlugin<nes_core::nes::nes_mcu::NesMcu<CanvasRender, WebAudioDriver>>,
         CanvasRender,
-        (),
+        WebAudioDriver,
     >,
 }
 
 #[wasm_bindgen]
-pub fn new_machine(canvas_id: &str, ines: Vec<u8>) -> Machine {
+pub fn new_machine(canvas_id: &str, ines: Vec<u8>) -> Result<Machine, JsValue> {
     debug!("new_machine");
     let ines = INesFile::new(ines).unwrap();
 
     let ctx = get_canvas_context(canvas_id);
     let canvas_render = CanvasRender::new(ctx, 256, 240);
+    let audio_driver = WebAudioDriver::new()?;
 
-    Machine {
-        inner: NesMachine::new(&ines, EmptyPlugin::new(), canvas_render, ()),
-    }
+    Ok(Machine {
+        inner: NesMachine::new(&ines, EmptyPlugin::new(), canvas_render, audio_driver),
+    })
 }
 
 #[wasm_bindgen]
 impl Machine {
     pub fn process_frame(&mut self) {
         self.inner.process_frame();
+        self.inner.flush_audio();
     }
 }
 
