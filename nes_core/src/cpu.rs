@@ -222,15 +222,15 @@ impl<M: Mcu> Cpu<M> {
         self.pc = self.pc.wrapping_add(delta as u16);
     }
 
-    pub(crate) fn update_negative_flag(&mut self, value: u8) {
+    fn update_negative_flag(&mut self, value: u8) {
         self.inner_set_flag(Flag::Negative, value & 0x80 != 0);
     }
 
-    pub(crate) fn update_zero_flag(&mut self, value: u8) {
+    fn update_zero_flag(&mut self, value: u8) {
         self.inner_set_flag(Flag::Zero, value == 0);
     }
 
-    pub(crate) fn read_byte(&mut self, addr: u16) -> u8 {
+    fn read_byte(&mut self, addr: u16) -> u8 {
         self.mcu.read(addr)
     }
 
@@ -238,23 +238,23 @@ impl<M: Mcu> Cpu<M> {
         self.mcu.read(addr)
     }
 
-    pub(crate) fn inc_read_byte(&mut self) -> u8 {
+    fn inc_read_byte(&mut self) -> u8 {
         let addr = self.pc;
         self.inc_pc(1);
         self.mcu.read(addr)
     }
 
-    pub(crate) fn write_byte(&mut self, addr: u16, value: u8) {
+    fn write_byte(&mut self, addr: u16, value: u8) {
         self.mcu.write(addr, value);
     }
 
-    pub(crate) fn read_word(&mut self, addr: u16) -> u16 {
+    fn read_word(&mut self, addr: u16) -> u16 {
         let low = self.mcu.read(addr) as u16;
         let high = self.mcu.read(addr.wrapping_add(1)) as u16;
         (high << 8) | low
     }
 
-    pub(crate) fn read_word_in_same_page(&mut self, addr: u16) -> u16 {
+    fn read_word_in_same_page(&mut self, addr: u16) -> u16 {
         self.read_word_in_page(addr & 0xff00, addr as u8)
     }
 
@@ -264,12 +264,12 @@ impl<M: Mcu> Cpu<M> {
         (high << 8) | low
     }
 
-    pub(crate) fn push_stack(&mut self, value: u8) {
+    fn push_stack(&mut self, value: u8) {
         self.mcu.write(0x100 + self.sp as u16, value);
         self.sp = self.sp.wrapping_sub(1);
     }
 
-    pub(crate) fn pop_stack(&mut self) -> u8 {
+    fn pop_stack(&mut self) -> u8 {
         self.sp = self.sp.wrapping_add(1);
         self.mcu.read(0x100 + self.sp as u16)
     }
@@ -279,7 +279,7 @@ impl<M: Mcu> Cpu<M> {
         self.mcu.read(addr)
     }
 
-    pub(crate) fn halt(&mut self) {
+    fn halt(&mut self) {
         self.mode = CpuMode::Halt;
     }
 
@@ -307,7 +307,7 @@ impl<M: Mcu> Cpu<M> {
         self.alu = self.mcu.read(self.ab);
     }
 
-    pub(crate) fn adc(&mut self, val: u8) {
+    fn adc(&mut self, val: u8) {
         let carry = self.flag(Flag::Carry) as u8;
         let (sum, carry0) = self.a.overflowing_add(val);
         let (sum, carry1) = sum.overflowing_add(carry);
@@ -318,7 +318,7 @@ impl<M: Mcu> Cpu<M> {
         self.a = sum;
     }
 
-    pub(crate) fn adc_alu(&mut self) {
+    fn adc_alu(&mut self) {
         self.adc(self.alu);
     }
 
@@ -608,13 +608,14 @@ impl<M: Mcu> Cpu<M> {
         result
     }
 
-    pub(crate) fn push_microcodes(&mut self, microcodes: &[Microcode]) {
+    fn push_microcodes(&mut self, microcodes: &[Microcode]) {
         self.microcode_queue
-            .extend_back(microcodes.into_iter().cloned());
+            .extend_back(microcodes.into_iter().copied());
     }
 
     /// Return how many microcodes are in queue, used for plugin to know how many cycles left for current instruction
-    pub fn microcodes_len(&self) -> usize {
+    #[cfg(test)]
+    fn microcodes_len(&self) -> usize {
         self.microcode_queue.len()
     }
 

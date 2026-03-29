@@ -18,7 +18,7 @@ fn create_cpu() -> Cpu<MockMcu> {
 fn execute_next(cpu: &mut Cpu<MockMcu>) {
     let mut plugin = EmptyPlugin::new();
 
-    while cpu.total_cycles() < 7 && cpu.microcodes_len() > 0 {
+    while cpu.microcodes_len() > 0 {
         cpu.tick(&mut plugin);
     }
 
