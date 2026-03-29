@@ -4,13 +4,9 @@
 //! to different backends such as image buffers, markdown debug logs, SDL2 textures,
 //! WGPU surfaces, and more.
 
-pub mod composite;
 pub mod image_render;
-pub mod markdown_render;
-
-pub use composite::CompositeRender;
 pub use image_render::ImageRender;
-pub use markdown_render::MarkdownRender;
+// MarkdownRender and CompositeRender removed; ImageRender is the primary render target.
 
 use std::fmt::Debug;
 

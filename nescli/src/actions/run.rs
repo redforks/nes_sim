@@ -1,17 +1,15 @@
 use anyhow::Result;
 use image::EncodableLayout;
+use nes_core::EmptyPlugin;
 use nes_core::ines::INesFile;
 use nes_core::nes::apu::AudioDriver;
 use nes_core::nes::controller::Button;
 use nes_core::nes_machine::NesMachine;
-use nes_core::render::{CompositeRender, ImageRender, MarkdownRender, Render};
-use nes_core::EmptyPlugin;
+use nes_core::render::ImageRender;
 use sdl2::audio::{AudioQueue, AudioSpecDesired};
 use sdl2::event::Event;
 use sdl2::keyboard::Keycode;
 use sdl2::pixels::PixelFormatEnum;
-use std::cell::RefCell;
-use std::rc::Rc;
 use std::time::{Duration, Instant};
 
 const AUDIO_SAMPLE_RATE: i32 = 44_100;
@@ -81,78 +79,6 @@ impl AudioDriver for SdlAudioDriver {
     }
 }
 
-/// Wrapper around Rc<RefCell<MarkdownRender>> that implements Render
-#[derive(Debug)]
-struct SharedMarkdownRender {
-    inner: Rc<RefCell<MarkdownRender>>,
-}
-
-impl SharedMarkdownRender {
-    fn new(inner: Rc<RefCell<MarkdownRender>>) -> Self {
-        Self { inner }
-    }
-}
-
-impl Render for SharedMarkdownRender {
-    fn clear(&mut self, color: [u8; 4]) {
-        self.inner.borrow_mut().clear(color);
-    }
-
-    fn set_pixel(&mut self, x: u32, y: u32, color: [u8; 4]) {
-        self.inner.borrow_mut().set_pixel(x, y, color);
-    }
-
-    fn dimensions(&self) -> (u32, u32) {
-        self.inner.borrow().dimensions()
-    }
-
-    fn finish(&mut self) {
-        self.inner.borrow_mut().finish();
-    }
-}
-
-/// Wrapper around Rc<RefCell<CompositeRender<A, B>>> that implements Render
-#[derive(Debug)]
-struct SharedCompositeRender<A, B>
-where
-    A: Render,
-    B: Render,
-{
-    inner: Rc<RefCell<CompositeRender<A, B>>>,
-}
-
-impl<A, B> SharedCompositeRender<A, B>
-where
-    A: Render,
-    B: Render,
-{
-    fn new(inner: Rc<RefCell<CompositeRender<A, B>>>) -> Self {
-        Self { inner }
-    }
-}
-
-impl<A, B> Render for SharedCompositeRender<A, B>
-where
-    A: Render,
-    B: Render,
-{
-    fn clear(&mut self, color: [u8; 4]) {
-        self.inner.borrow_mut().clear(color);
-    }
-
-    fn set_pixel(&mut self, x: u32, y: u32, color: [u8; 4]) {
-        self.inner.borrow_mut().set_pixel(x, y, color);
-    }
-
-    fn dimensions(&self) -> (u32, u32) {
-        self.inner.borrow().dimensions()
-    }
-
-    fn finish(&mut self) {
-        self.inner.borrow_mut().finish();
-    }
-}
-
 #[derive(clap::Args)]
 pub struct RunAction {}
 
@@ -177,7 +103,7 @@ impl RunAction {
         // Create window (2x scale for better visibility: 256x240 -> 512x480)
         let window = video_subsystem
             .window(
-                "NES Simulator - Arrows move, Z/X A/B, Space Select, Enter Start, F1 dump",
+                "NES Simulator - Arrows move, Z/X A/B, Space Select, Enter Start",
                 512,
                 480,
             )
@@ -200,18 +126,12 @@ impl RunAction {
         // Create image renderer for display - keep a reference to access later
         let image_render = ImageRender::default();
 
-        // Create composite renderer with image + markdown
-        let markdown_render = Rc::new(RefCell::new(MarkdownRender::new(0, 256, 240)));
-        let composite = Rc::new(RefCell::new(CompositeRender::new(
-            image_render.clone(),
-            SharedMarkdownRender::new(markdown_render.clone()),
-        )));
+        // NesMachine will use the ImageRender directly. Pass a clone (shared Rc) so
+        // we can update the texture from the main loop.
+        let shared_image = image_render.clone();
 
-        // Wrap composite for sharing
-        let shared_composite = SharedCompositeRender::new(composite.clone());
-
-        // Create NES machine with composite renderer
-        let mut machine = NesMachine::new(f, EmptyPlugin::new(), shared_composite, audio_driver);
+        // Create NES machine with image renderer directly
+        let mut machine = NesMachine::new(f, EmptyPlugin::new(), shared_image, audio_driver);
 
         // Initialize event pump
         let mut event_pump = sdl_context.event_pump().map_err(|e| anyhow::anyhow!(e))?;
@@ -230,18 +150,7 @@ impl RunAction {
                     } => {
                         break 'running;
                     }
-                    Event::KeyDown {
-                        keycode: Some(Keycode::F1),
-                        repeat: false,
-                        ..
-                    } => {
-                        // Request markdown dump for next frame
-                        markdown_render.borrow_mut().request_dump();
-                        eprintln!(
-                            ">> Markdown dump requested for next frame (frame {})",
-                            markdown_render.borrow().frame_number()
-                        );
-                    }
+                    // F1 markdown dump removed
                     Event::KeyDown {
                         keycode: Some(Keycode::F2),
                         repeat: false,
