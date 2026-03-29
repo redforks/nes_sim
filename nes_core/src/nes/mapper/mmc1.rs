@@ -4,7 +4,6 @@ use crate::nes::ppu::{Mirroring, Ppu};
 use crate::render::Render;
 use bitfield_struct::bitfield;
 use log::{debug, info};
-use std::cell::{RefCell, UnsafeCell};
 
 #[bitfield(u8)]
 struct ControlFlags {
@@ -50,39 +49,33 @@ impl From<ControlFlags> for PrgRomMode {
 
 pub struct MMC1 {
     chr_rom: Vec<u8>,
-    cur_chr_rom: UnsafeCell<[u8; 8 * 1024]>,
-    chr_bank_size: RefCell<u16>,
+    cur_chr_rom: [u8; 8 * 1024],
+    chr_bank_size: u16,
 
     prg_rom: Vec<u8>,
-    prg_ram: RefCell<[u8; 0x2000]>,
-    prg_rom_bank1_start: RefCell<usize>,
-    prg_rom_bank2_start: RefCell<usize>,
-    prg_bank_register: RefCell<u8>, // Store the PRG bank register value
+    prg_ram: [u8; 0x2000],
+    prg_rom_bank1_start: usize,
+    prg_rom_bank2_start: usize,
+    prg_bank_register: u8, // Store the PRG bank register value
 
-    sr: RefCell<u8>, // shift register
-    sr_write_count: RefCell<u8>,
-    prg_rom_mode: RefCell<PrgRomMode>,
+    sr: u8, // shift register
+    sr_write_count: u8,
+    prg_rom_mode: PrgRomMode,
 }
 
 impl MMC1 {
     pub fn pattern_ref(&self) -> &[u8] {
-        unsafe { &*self.cur_chr_rom.get() }
+        &self.cur_chr_rom
     }
 
     pub fn write_pattern(&mut self, _address: u16, _value: u8) {}
 
     pub fn read(&mut self, address: u16) -> u8 {
         match address {
+            0x8000..=0xbfff => self.prg_rom[address as usize - 0x8000 + self.prg_rom_bank1_start],
+            0xc000..=0xffff => self.prg_rom[address as usize - 0xc000 + self.prg_rom_bank2_start],
+            0x6000..=0x7fff => self.prg_ram[address as usize - 0x6000],
             0x4020..=0x5fff => 0,
-            0x6000..=0x7fff => self.prg_ram.borrow()[address as usize - 0x6000],
-            0x8000..=0xbfff => {
-                let bank1_start = *self.prg_rom_bank1_start.borrow();
-                self.prg_rom[address as usize - 0x8000 + bank1_start]
-            }
-            0xc000..=0xffff => {
-                let bank2_start = *self.prg_rom_bank2_start.borrow();
-                self.prg_rom[address as usize - 0xc000 + bank2_start]
-            }
             _ => panic!("read address out of range: {:04x}", address),
         }
     }
@@ -90,7 +83,7 @@ impl MMC1 {
     pub fn write<R: Render>(&mut self, ppu: &mut Ppu<R>, address: u16, value: u8) {
         match address {
             0x4020..=0x5fff => {}
-            0x6000..=0x7fff => self.prg_ram.borrow_mut()[address as usize - 0x6000] = value,
+            0x6000..=0x7fff => self.prg_ram[address as usize - 0x6000] = value,
             _ => {
                 if value & 0x80 != 0 {
                     debug!("{:x} written to ${:x} reset MMC1", value, address);
@@ -98,20 +91,14 @@ impl MMC1 {
                     return;
                 }
 
-                let mut sr_write_count = self.sr_write_count.borrow_mut();
-                let mut sr = self.sr.borrow_mut();
-
-                if *sr_write_count < 5 {
-                    *sr_write_count += 1;
-                    *sr <<= 1;
-                    *sr |= value & 0x01;
+                if self.sr_write_count < 5 {
+                    self.sr_write_count += 1;
+                    self.sr <<= 1;
+                    self.sr |= value & 0x01;
                 }
 
-                if *sr_write_count == 5 {
-                    let sr_value = *sr;
-                    drop(sr);
-                    drop(sr_write_count);
-
+                if self.sr_write_count == 5 {
+                    let sr_value = self.sr;
                     match address {
                         0x8000..=0x9fff => self.control(ppu, sr_value.into()),
                         0xa000..=0xbfff => self.select_chr_bank1(sr_value),
@@ -123,8 +110,8 @@ impl MMC1 {
                         ),
                     }
 
-                    *self.sr_write_count.borrow_mut() = 0;
-                    *self.sr.borrow_mut() = 0;
+                    self.sr_write_count = 0;
+                    self.sr = 0;
                 }
             }
         }
@@ -141,100 +128,94 @@ const PRG_ROM_BANK_SIZE: usize = 0x4000;
 
 impl MMC1 {
     pub fn new(prg_rom: &[u8], chr_rom: &[u8]) -> Self {
-        let r = Self {
+        let mut r = Self {
             chr_rom: chr_rom.to_vec(),
-            cur_chr_rom: UnsafeCell::new([0; 1024 * 8]),
-            chr_bank_size: RefCell::new(4096),
+            cur_chr_rom: [0; 1024 * 8],
+            chr_bank_size: 4096,
             prg_rom: prg_rom.to_vec(),
-            prg_ram: RefCell::new([0; 0x2000]),
-            prg_rom_bank1_start: RefCell::new(0),
-            prg_rom_bank2_start: RefCell::new(0),
-            prg_bank_register: RefCell::new(0),
-            sr: RefCell::new(0),
-            sr_write_count: RefCell::new(0),
-            prg_rom_mode: RefCell::new(PrgRomMode::Switch32K),
+            prg_ram: [0; 0x2000],
+            prg_rom_bank1_start: 0,
+            prg_rom_bank2_start: 0,
+            prg_bank_register: 0,
+            sr: 0,
+            sr_write_count: 0,
+            prg_rom_mode: PrgRomMode::Switch32K,
         };
 
         r.reset();
         r
     }
 
-    fn reset(&self) {
-        *self.sr.borrow_mut() = 0;
-        *self.sr_write_count.borrow_mut() = 0;
-        *self.chr_bank_size.borrow_mut() = 4096;
-        *self.prg_bank_register.borrow_mut() = 0;
+    fn reset(&mut self) {
+        self.sr = 0;
+        self.sr_write_count = 0;
+        self.chr_bank_size = 4096;
+        self.prg_bank_register = 0;
         self.set_prg_rom_mode(PrgRomMode::FixLast16K);
         self.select_chr_bank1(0);
         self.select_chr_bank2(1);
     }
 
-    fn set_prg_rom_mode(&self, mode: PrgRomMode) {
+    fn set_prg_rom_mode(&mut self, mode: PrgRomMode) {
         // return if mode == last mode
-        let prg_rom_mode = self.prg_rom_mode.borrow();
-        if mode == *prg_rom_mode {
+        if mode == self.prg_rom_mode {
             return;
         }
-        drop(prg_rom_mode);
 
-        *self.prg_rom_mode.borrow_mut() = mode;
+        self.prg_rom_mode = mode;
         // Update bank pointers based on new mode and current bank register
         self.update_prg_banks();
     }
 
-    fn update_prg_banks(&self) {
-        let bank = *self.prg_bank_register.borrow() as usize;
-        let prg_rom_mode = *self.prg_rom_mode.borrow();
+    fn update_prg_banks(&mut self) {
+        let bank = self.prg_bank_register as usize;
+        let prg_rom_mode = self.prg_rom_mode;
         match prg_rom_mode {
             PrgRomMode::Switch32K => {
                 // In 32K mode, bank register selects a 32K bank (bit 3 is ignored)
                 // $8000-$BFFF: bank * 16K
                 // $C000-$FFFF: (bank + 1) * 16K
                 let bank32k = bank & 0x07;
-                *self.prg_rom_bank1_start.borrow_mut() = bank32k * PRG_ROM_BANK_SIZE;
-                *self.prg_rom_bank2_start.borrow_mut() =
-                    *self.prg_rom_bank1_start.borrow() + PRG_ROM_BANK_SIZE;
+                self.prg_rom_bank1_start = bank32k * PRG_ROM_BANK_SIZE;
+                self.prg_rom_bank2_start = self.prg_rom_bank1_start + PRG_ROM_BANK_SIZE;
             }
             PrgRomMode::FixFirst16K => {
                 // $8000-$BFFF: fixed to first 16K
                 // $C000-$FFFF: bank * 16K
-                *self.prg_rom_bank1_start.borrow_mut() = 0;
-                *self.prg_rom_bank2_start.borrow_mut() = bank * PRG_ROM_BANK_SIZE;
+                self.prg_rom_bank1_start = 0;
+                self.prg_rom_bank2_start = bank * PRG_ROM_BANK_SIZE;
             }
             PrgRomMode::FixLast16K => {
                 // $8000-$BFFF: bank * 16K
                 // $C000-$FFFF: fixed to last 16K
-                *self.prg_rom_bank1_start.borrow_mut() = bank * PRG_ROM_BANK_SIZE;
-                *self.prg_rom_bank2_start.borrow_mut() = self.prg_rom.len() - PRG_ROM_BANK_SIZE;
+                self.prg_rom_bank1_start = bank * PRG_ROM_BANK_SIZE;
+                self.prg_rom_bank2_start = self.prg_rom.len() - PRG_ROM_BANK_SIZE;
             }
         }
     }
 
-    fn set_chr_bank_mode(&self, is_4k: bool) {
-        *self.chr_bank_size.borrow_mut() = if is_4k { 4096 } else { 8192 };
+    fn set_chr_bank_mode(&mut self, is_4k: bool) {
+        self.chr_bank_size = if is_4k { 4096 } else { 8192 };
     }
 
-    fn control<R: Render>(&self, ppu: &mut Ppu<R>, flags: ControlFlags) {
+    fn control<R: Render>(&mut self, ppu: &mut Ppu<R>, flags: ControlFlags) {
         ppu.set_mirroring(flags.into());
         self.set_prg_rom_mode(flags.into());
         self.set_chr_bank_mode(flags.chr_in_4k());
     }
 
-    fn select_chr_bank1(&self, offset: u8) {
+    fn select_chr_bank1(&mut self, offset: u8) {
         let offset = offset as usize;
-        let bank_size = *self.chr_bank_size.borrow() as usize;
+        let bank_size = self.chr_bank_size as usize;
         if (offset + 1) * bank_size >= self.chr_rom.len() {
             return;
         }
-        unsafe {
-            let cur_chr = &mut *self.cur_chr_rom.get();
-            cur_chr[0..bank_size]
-                .copy_from_slice(&self.chr_rom[offset * bank_size..(offset + 1) * bank_size])
-        }
+        self.cur_chr_rom[0..bank_size]
+            .copy_from_slice(&self.chr_rom[offset * bank_size..(offset + 1) * bank_size])
     }
 
-    fn select_chr_bank2(&self, offset: u8) {
-        if *self.chr_bank_size.borrow() != 4096 {
+    fn select_chr_bank2(&mut self, offset: u8) {
+        if self.chr_bank_size != 4096 {
             return;
         }
         let offset = offset as usize;
@@ -242,16 +223,13 @@ impl MMC1 {
             return;
         }
 
-        unsafe {
-            let cur_chr = &mut *self.cur_chr_rom.get();
-            cur_chr[4096..].copy_from_slice(&self.chr_rom[offset * 4096..(offset + 1) * 4096])
-        }
+        self.cur_chr_rom[4096..].copy_from_slice(&self.chr_rom[offset * 4096..(offset + 1) * 4096])
     }
 
-    fn select_prg_bank(&self, byte: u8) {
+    fn select_prg_bank(&mut self, byte: u8) {
         // PRG ROM bank register (bits 0-3)
         // bit 4 is ignored
-        *self.prg_bank_register.borrow_mut() = byte & 0x0f;
+        self.prg_bank_register = byte & 0x0f;
         info!("MMC1 switch prg rom bank to ${:x}", byte & 0x0f);
         self.update_prg_banks();
     }
@@ -317,7 +295,7 @@ mod tests {
 
     #[test]
     fn control_ppu_mirroring() {
-        let (mmc1, mut ppu) = create(|_| {});
+        let (mut mmc1, mut ppu) = create(|_| {});
         mmc1.control(&mut ppu, ControlFlags::new().with_mirroring(0));
         assert_eq!(ppu.mirroring(), Mirroring::LowerBank);
     }
@@ -368,64 +346,64 @@ mod tests {
 
     #[test]
     fn control_chr_bank_size() {
-        let (mmc1, mut ppu) = create(|_| {});
+        let (mut mmc1, mut ppu) = create(|_| {});
 
         // default is 4k
-        assert_eq!(*mmc1.chr_bank_size.borrow(), 4 * 1024);
+        assert_eq!(mmc1.chr_bank_size, 4 * 1024);
 
         // set to 8k
         mmc1.control(&mut ppu, ControlFlags::new().with_chr_in_4k(false));
-        assert_eq!(*mmc1.chr_bank_size.borrow(), 8 * 1024);
+        assert_eq!(mmc1.chr_bank_size, 8 * 1024);
 
         // set to 4k
         mmc1.control(&mut ppu, ControlFlags::new().with_chr_in_4k(true));
-        assert_eq!(*mmc1.chr_bank_size.borrow(), 4 * 1024);
+        assert_eq!(mmc1.chr_bank_size, 4 * 1024);
     }
 
     #[test]
     fn select_chr_bank1() {
-        let (mmc1, _ppu) = create_with_chr(|rom| {
+        let (mut mmc1, _ppu) = create_with_chr(|rom| {
             rom[0] = 1;
             rom[8 * 1024] = 2;
             rom[4 * 1024] = 3;
         });
-        assert_eq!(*mmc1.chr_bank_size.borrow(), 4 * 1024);
+        assert_eq!(mmc1.chr_bank_size, 4 * 1024);
 
         // default select first 4k
-        assert_eq!(unsafe { &*mmc1.cur_chr_rom.get() }[0x0000], 1);
+        assert_eq!(mmc1.cur_chr_rom[0x0000], 1);
 
         // set bank 2
         mmc1.select_chr_bank1(2);
-        assert_eq!(unsafe { &*mmc1.cur_chr_rom.get() }[0x0000], 2);
+        assert_eq!(mmc1.cur_chr_rom[0x0000], 2);
 
         // switch to 8k mode
         mmc1.set_chr_bank_mode(false);
-        assert_eq!(*mmc1.chr_bank_size.borrow(), 8 * 1024);
+        assert_eq!(mmc1.chr_bank_size, 8 * 1024);
         mmc1.select_chr_bank1(0);
-        assert_eq!(unsafe { &*mmc1.cur_chr_rom.get() }[0x0000], 1);
-        assert_eq!(unsafe { &*mmc1.cur_chr_rom.get() }[4096], 3);
+        assert_eq!(mmc1.cur_chr_rom[0x0000], 1);
+        assert_eq!(mmc1.cur_chr_rom[4096], 3);
     }
 
     #[test]
     fn select_chr_bank2() {
-        let (mmc1, _ppu) = create_with_chr(|rom| {
+        let (mut mmc1, _ppu) = create_with_chr(|rom| {
             rom[0] = 1;
             rom[4096] = 2;
             rom[8 * 1024] = 3;
         });
-        assert_eq!(*mmc1.chr_bank_size.borrow(), 4 * 1024);
+        assert_eq!(mmc1.chr_bank_size, 4 * 1024);
 
         // default select 2nd 4k
-        assert_eq!(unsafe { &*mmc1.cur_chr_rom.get() }[4096], 2);
+        assert_eq!(mmc1.cur_chr_rom[4096], 2);
 
         // set bank 2
         mmc1.select_chr_bank2(2);
-        assert_eq!(unsafe { &*mmc1.cur_chr_rom.get() }[4096], 3);
+        assert_eq!(mmc1.cur_chr_rom[4096], 3);
 
         // ignored in 8k mode
         mmc1.set_chr_bank_mode(false);
-        assert_eq!(*mmc1.chr_bank_size.borrow(), 8 * 1024);
+        assert_eq!(mmc1.chr_bank_size, 8 * 1024);
         mmc1.select_chr_bank2(0);
-        assert_eq!(unsafe { &*mmc1.cur_chr_rom.get() }[4096], 3);
+        assert_eq!(mmc1.cur_chr_rom[4096], 3);
     }
 }
