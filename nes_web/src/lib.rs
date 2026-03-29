@@ -1,15 +1,13 @@
 #![cfg(target_arch = "wasm32")]
 
-use image::DynamicImage;
 use log::{debug, info};
 use nes_core::EmptyPlugin;
 use nes_core::ines::INesFile;
-use nes_core::nes::ppu::{PatternBand, draw_pattern};
 use nes_core::nes_machine::NesMachine;
 use std::panic;
+use wasm_bindgen::JsCast;
 use wasm_bindgen::prelude::*;
-use wasm_bindgen::{Clamped, JsCast};
-use web_sys::{CanvasRenderingContext2d, HtmlCanvasElement, ImageData, window};
+use web_sys::{CanvasRenderingContext2d, HtmlCanvasElement, window};
 
 mod canvas_render;
 mod drivers;
@@ -48,12 +46,6 @@ impl Machine {
     }
 }
 
-fn read_chr(f: &INesFile) -> Vec<u8> {
-    let band = PatternBand::new(f.read_chr_rom());
-    let img: DynamicImage = draw_pattern(&band).into();
-    img.into_bytes()
-}
-
 fn get_canvas_context(canvas_id: &str) -> CanvasRenderingContext2d {
     let window = window().unwrap();
     let document = window.document().unwrap();
@@ -68,16 +60,6 @@ fn get_canvas_context(canvas_id: &str) -> CanvasRenderingContext2d {
         .unwrap()
         .dyn_into()
         .unwrap()
-}
-
-#[wasm_bindgen]
-pub fn draw_chr(ines: Vec<u8>, canvas_id: &str) {
-    let ines = INesFile::new(ines).unwrap();
-    let img = read_chr(&ines);
-    let image_data = ImageData::new_with_u8_clamped_array(Clamped(&img), 128).unwrap();
-
-    let ctx = get_canvas_context(canvas_id);
-    ctx.put_image_data(&image_data, 0.0, 0.0).unwrap();
 }
 
 #[wasm_bindgen]
