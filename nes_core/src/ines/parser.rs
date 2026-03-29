@@ -1,85 +1,58 @@
 use crate::ines::INesFile;
-use nom::bits::streaming::take as bit_take;
-use nom::error::Error as NomError;
-use nom::{bits::bits, bytes, IResult, Parser};
+use winnow::binary::u8;
+use winnow::error::ContextError;
+use winnow::prelude::*;
+use winnow::token::{literal, take};
 
 const NES_SIGNATURE: &[u8] = &[0x4e, 0x45, 0x53, 0x1a];
 
 pub fn check_signature(image: &[u8]) -> bool {
-    bytes::complete::tag::<&[u8], _, NomError<&[u8]>>(NES_SIGNATURE)
-        .parse(image)
+    literal::<_, _, ContextError>(NES_SIGNATURE)
+        .parse_peek(image)
         .is_ok()
 }
 
-fn parse_header(input: &[u8]) -> IResult<&[u8], super::Header> {
-    let (input, n_prg) = nom::number::streaming::u8.parse(input)?;
-    let (input, n_chr) = nom::number::streaming::u8.parse(input)?;
-    let (
-        input,
-        (
-            mapper_low,
-            ignore_mirror_control,
-            has_trainer,
-            battery_backed_ram,
-            ver_or_hor_arrangement,
-        ),
-    ): (&[u8], (u8, u8, u8, u8, u8)) = bits::<_, _, NomError<(&[u8], usize)>, _, _>((
-        bit_take(4usize),
-        bit_take(1usize),
-        bit_take(1usize),
-        bit_take(1usize),
-        bit_take(1usize),
-    ))
-    .parse(input)?;
+fn parse_header(input: &mut &[u8]) -> Result<super::Header, ContextError> {
+    let n_prg = u8.parse_next(input)?;
+    let n_chr = u8.parse_next(input)?;
+    let flags6 = u8.parse_next(input)?;
+    let flags7 = u8.parse_next(input)?;
 
-    let (input, (mapper_high, _)): (&[u8], (u8, u8)) =
-        bits::<_, _, NomError<(&[u8], usize)>, _, _>((bit_take(4usize), bit_take(4usize)))
-            .parse(input)?;
+    let mapper_low = flags6 >> 4;
+    let mapper_high = flags7 >> 4;
 
-    Ok((
-        input,
-        super::Header {
-            n_prg_pages: n_prg,
-            n_chr_pages: n_chr,
-            mapper_no: mapper_low | (mapper_high << 4),
-            ignore_mirror_control: ignore_mirror_control != 0,
-            has_trainer: has_trainer != 0,
-            battery_backed_ram: battery_backed_ram != 0,
-            ver_or_hor_arrangement: ver_or_hor_arrangement != 0,
-        },
-    ))
+    Ok(super::Header {
+        n_prg_pages: n_prg,
+        n_chr_pages: n_chr,
+        mapper_no: mapper_low | (mapper_high << 4),
+        ignore_mirror_control: flags6 & 0b0000_1000 != 0,
+        has_trainer: flags6 & 0b0000_0100 != 0,
+        battery_backed_ram: flags6 & 0b0000_0010 != 0,
+        ver_or_hor_arrangement: flags6 & 0b0000_0001 != 0,
+    })
 }
 
-fn _parse_file(buf: &[u8]) -> IResult<&[u8], INesFile> {
-    let (buf, _) = bytes::complete::tag(NES_SIGNATURE).parse(buf)?;
-    let (buf, header) = parse_header(buf)?;
+fn _parse_file(input: &mut &[u8]) -> Result<INesFile, ContextError> {
+    let mut signature = literal::<_, _, ContextError>(NES_SIGNATURE);
+    signature.parse_next(input)?;
+    let header = parse_header(input)?;
     // skip 8 bytes
-    let (buf, _) = bytes::complete::take(8usize).parse(buf)?;
+    take(8usize).void().parse_next(input)?;
     // read 16 * header.n_prg_pages bytes
-    let (buf, prg) = bytes::complete::take(16 * 1024 * header.n_prg_pages as usize).parse(buf)?;
+    let prg = take(16 * 1024 * header.n_prg_pages as usize).parse_next(input)?;
     // read 8 * header.n_chr_pages bytes
-    let (buf, chr) = bytes::complete::take(8 * 1024 * header.n_chr_pages as usize).parse(buf)?;
+    let chr = take(8 * 1024 * header.n_chr_pages as usize).parse_next(input)?;
 
-    Ok((
-        buf,
-        INesFile {
-            header,
-            prg_rom: prg.to_vec(),
-            chr_rom: chr.to_vec(),
-        },
-    ))
+    Ok(INesFile {
+        header,
+        prg_rom: prg.to_vec(),
+        chr_rom: chr.to_vec(),
+    })
 }
 
-pub fn parse_file(buf: &[u8]) -> Result<INesFile, nom::error::Error<&[u8]>> {
-    let result = nom::combinator::complete(_parse_file).parse(buf);
-    match result {
-        Ok((_, file)) => Ok(file),
-        Err(err) => match err {
-            nom::Err::Incomplete(_) => unreachable!(),
-            nom::Err::Error(err) => Err(err),
-            nom::Err::Failure(err) => Err(err),
-        },
-    }
+pub fn parse_file(buf: &[u8]) -> Result<INesFile, ContextError> {
+    let mut input = buf;
+    _parse_file(&mut input)
 }
 
 #[cfg(test)]
