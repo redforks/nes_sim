@@ -10,7 +10,7 @@ fn test_mcu() -> NesMcu<ImageRender, ()> {
         ppu: Ppu::new(ImageRender::default()),
         after_ppu: RamMcu::start_from(0x4000, [0; 0x20]),
         controller: Controller::new(),
-        cartridge: Cartridge::Test(TestCartridge::new()),
+        cartridge: Cartridge::Test(Box::new(TestCartridge::new())),
         apu: Apu::new(()),
     }
 }

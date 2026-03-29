@@ -37,7 +37,7 @@ pub enum Cartridge {
     MMC1(Box<MMC1>),
     MMC3(Box<MMC3>),
     #[cfg(test)]
-    Test(TestCartridge),
+    Test(Box<TestCartridge>),
 }
 
 #[cfg(test)]
