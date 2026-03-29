@@ -1,0 +1,6 @@
+[profile.release]
+lto = true
+# with lto, no need to set codegen-units to 1, code size changes little, but hurts compile speed.
+# codegen-units = 1
+panic = "abort"
+strip = true
