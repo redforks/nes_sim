@@ -57,6 +57,11 @@ pub fn build_with_renderer_and_audio<R: Render, D: AudioDriver>(
 }
 
 impl<R: Render, D: AudioDriver> NesMcu<R, D> {
+    pub fn reset(&mut self) {
+        self.ppu.reset();
+        self.apu.reset();
+    }
+
     fn ppu_dma(&mut self, address: u8) {
         trace!("ppu dma");
         let addr = (address as u16) << 8;

@@ -1,9 +1,9 @@
 use crate::{
-    ExecuteResult, Plugin,
     ines::INesFile,
     machine::Machine,
-    nes::{self, NesMcu, controller::Button},
+    nes::{self, controller::Button, NesMcu},
     render::Render,
+    ExecuteResult, Plugin,
 };
 
 /// Safety limit: maximum CPU instruction ticks per `process_frame()` call.
@@ -86,7 +86,8 @@ where
     }
 
     pub fn reset(&mut self) {
-        self.machine.reset()
+        self.machine.mcu_mut().reset();
+        self.machine.reset();
     }
 
     pub fn flush_audio(&mut self) {

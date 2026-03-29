@@ -567,6 +567,12 @@ impl<D: AudioDriver> Apu<D> {
         }
     }
 
+    pub fn reset(&mut self) {
+        // https://www.nesdev.org/wiki/CPU_power_up_state
+        self.set_control_flags(ControlFlags::new());
+        self.triangle = TriangleState::default();
+    }
+
     pub fn tick(&mut self) -> bool {
         self.triangle.step_timer();
 
