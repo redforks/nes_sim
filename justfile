@@ -31,10 +31,10 @@ passed: cpu-test instr_misc instr_test-v5 instr_test-v3 nestest
     cargo run -p nes_cpu_test --release -- --quiet -f ../nes-test-roms/cpu_interrupts_v2/rom_singles/1-cli_latency.nes
 
 wasm-debug-build:
-    cd nes_web && wasm-pack build --debug
+    cd nes_web && wasm-pack build --release
 
 web-start: wasm-debug-build
-    cd www && NODE_OPTIONS=--openssl-legacy-provider npm start
+    cd www && NODE_OPTIONS=--openssl-legacy-provider pnpm run start
 
 test-cov:
     cd nes_core; cargo tarpaulin --skip-clean --out Html --engine llvm --output-dir /tmp/tarpaulin-output-dir

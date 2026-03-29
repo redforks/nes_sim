@@ -1,7 +1,7 @@
-import {new_machine, init, draw_chr} from "nes_web"
+import {new_machine, init, draw_chr} from "../nes_web/pkg/nes_web.js"
 
 async function main() {
-    let resp = await fetch("01-basics.nes");
+    let resp = await fetch("super-mario-bros.nes");
     let rom = await resp.arrayBuffer();
     // draw_chr(new Uint8Array(rom), 'canvas');
     let machine = new_machine('canvas', new Uint8Array(rom));
