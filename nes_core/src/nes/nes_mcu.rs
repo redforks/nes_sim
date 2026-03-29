@@ -77,10 +77,8 @@ impl<R: Render, D: AudioDriver> NesMcu<R, D> {
     pub fn tick_ppu(&mut self) {
         let (scanline, dot) = self.ppu.timing();
         let rendering_enabled = self.ppu.rendering_enabled();
-        {
-            let pattern = self.cartridge.pattern_ref();
-            self.ppu.tick(pattern);
-        }
+        let pattern = self.cartridge.pattern_ref();
+        self.ppu.tick(pattern);
         self.cartridge.on_ppu_tick(scanline, dot, rendering_enabled);
     }
 

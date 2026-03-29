@@ -2,6 +2,9 @@ use ansi_term::Color;
 use is_terminal::IsTerminal;
 use nes_core::mcu::Mcu;
 use nes_core::{Cpu, Plugin};
+use std::sync::LazyLock;
+
+static IS_TERMINAL: LazyLock<bool> = LazyLock::new(|| std::io::stdout().is_terminal());
 
 #[derive(Default)]
 pub struct Console {
@@ -45,7 +48,11 @@ impl<M: Mcu> Plugin<M> for Console {
 }
 
 fn output<S: AsRef<str>>(s: S) {
-    if std::io::stdout().is_terminal() {
+    if s.as_ref().is_empty() {
+        return;
+    }
+
+    if *IS_TERMINAL {
         print!("{}", Color::Green.paint(s.as_ref()));
     } else {
         print!("{}", s.as_ref());
