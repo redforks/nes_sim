@@ -1,27 +1,28 @@
+#![cfg(target_arch = "wasm32")]
+
 use image::DynamicImage;
-use image::EncodableLayout;
 use log::{debug, info};
 use nes_core::EmptyPlugin;
 use nes_core::ines::INesFile;
 use nes_core::nes::ppu::{PatternBand, draw_pattern};
 use nes_core::nes_machine::NesMachine;
-use nes_core::render::ImageRender;
 use std::panic;
 use wasm_bindgen::prelude::*;
 use wasm_bindgen::{Clamped, JsCast};
 use web_sys::{CanvasRenderingContext2d, HtmlCanvasElement, ImageData, window};
 
+mod canvas_render;
 mod drivers;
+
+use canvas_render::CanvasRender;
 
 #[wasm_bindgen]
 pub struct Machine {
     inner: NesMachine<
-        nes_core::EmptyPlugin<nes_core::nes::nes_mcu::NesMcu<ImageRender, ()>>,
-        ImageRender,
+        nes_core::EmptyPlugin<nes_core::nes::nes_mcu::NesMcu<CanvasRender, ()>>,
+        CanvasRender,
         (),
     >,
-    ctx: CanvasRenderingContext2d,
-    image_render: ImageRender,
 }
 
 #[wasm_bindgen]
@@ -29,14 +30,11 @@ pub fn new_machine(canvas_id: &str, ines: Vec<u8>) -> Machine {
     debug!("new_machine");
     let ines = INesFile::new(ines).unwrap();
 
-    // Create image renderer for display - keep a reference to access later
-    let image_render = ImageRender::default();
+    let ctx = get_canvas_context(canvas_id);
+    let canvas_render = CanvasRender::new(ctx, 256, 240);
 
-    // Create NES machine with the image renderer
     Machine {
-        inner: NesMachine::new(&ines, EmptyPlugin::new(), image_render.clone(), ()),
-        ctx: get_canvas_context(canvas_id),
-        image_render,
+        inner: NesMachine::new(&ines, EmptyPlugin::new(), canvas_render, ()),
     }
 }
 
@@ -44,11 +42,6 @@ pub fn new_machine(canvas_id: &str, ines: Vec<u8>) -> Machine {
 impl Machine {
     pub fn process_frame(&mut self) {
         self.inner.process_frame();
-        let img = self.image_render.borrow_image();
-        let bytes = img.as_bytes();
-        let img_data =
-            ImageData::new_with_u8_clamped_array_and_sh(Clamped(bytes), 256, 240).unwrap();
-        self.ctx.put_image_data(&img_data, 0.0, 0.0).unwrap();
     }
 }
 
