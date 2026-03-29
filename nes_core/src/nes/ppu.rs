@@ -302,7 +302,7 @@ impl<R: Render> Ppu<R> {
     }
 
     pub fn rendering_enabled(&self) -> bool {
-        self.mask.background_enabled() || self.mask.sprite_enabled()
+        self.mask.0 & 0x18 != 0
     }
 
     pub fn oam_dma(&mut self, vals: &[u8; 256]) {
