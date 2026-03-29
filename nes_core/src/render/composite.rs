@@ -27,130 +27,57 @@ use std::fmt::Debug;
 /// composite.set_pixel(100, 100, [255, 0, 0, 255]);
 /// composite.finish();
 /// ```
+/// CompositeRender now wraps exactly two render targets.
+///
+/// This type is generic over the two concrete renderer types. It delegates
+/// all Render calls to both children in the same order. The previous
+/// Vec<Box<dyn Render>>-based API has been removed: callers must now pass
+/// the two renderers to `new` and there are no add/remove operations.
 #[derive(Debug)]
-pub struct CompositeRender {
-    /// Child renderers
-    children: Vec<Box<dyn Render>>,
-
-    /// Dimensions (must be consistent across all children)
-    width: u32,
-    height: u32,
+pub struct CompositeRender<A, B>
+where
+    A: Render,
+    B: Render,
+{
+    a: A,
+    b: B,
 }
 
-impl CompositeRender {
-    /// Create a new empty composite renderer
-    pub fn new() -> Self {
-        Self {
-            children: Vec::new(),
-            width: 256,
-            height: 240,
-        }
-    }
-
-    /// Create a new composite renderer with the specified dimensions
-    pub fn with_dimensions(width: u32, height: u32) -> Self {
-        Self {
-            children: Vec::new(),
-            width,
-            height,
-        }
-    }
-
-    /// Add a child renderer
-    ///
-    /// # Parameters
-    /// - `renderer`: The renderer to add
-    pub fn add(&mut self, renderer: Box<dyn Render>) {
-        // Validate dimensions match
-        let (w, h) = renderer.dimensions();
-        if self.children.is_empty() {
-            // First renderer sets the dimensions
-            self.width = w;
-            self.height = h;
-        } else {
-            // Subsequent renderers must match
-            if (w, h) != (self.width, self.height) {
-                panic!(
-                    "Renderer dimensions ({}, {}) must match composite dimensions ({}, {})",
-                    w, h, self.width, self.height
-                );
-            }
-        }
-        self.children.push(renderer);
-    }
-
-    /// Remove a child renderer by index
-    ///
-    /// # Parameters
-    /// - `index`: The index of the renderer to remove
-    ///
-    /// # Returns
-    /// The removed renderer
-    pub fn remove(&mut self, index: usize) -> Option<Box<dyn Render>> {
-        if index < self.children.len() {
-            Some(self.children.remove(index))
-        } else {
-            None
-        }
-    }
-
-    /// Get the number of child renderers
-    pub fn len(&self) -> usize {
-        self.children.len()
-    }
-
-    /// Check if there are no child renderers
-    pub fn is_empty(&self) -> bool {
-        self.children.is_empty()
-    }
-
-    /// Get a reference to a child renderer by index
-    pub fn get(&self, index: usize) -> Option<&dyn Render> {
-        self.children.get(index).map(|b| b.as_ref())
-    }
-
-    /// Get a mutable reference to a child renderer by index
-    pub fn get_mut(&mut self, index: usize) -> Option<&mut dyn Render> {
-        if index < self.children.len() {
-            Some(self.children[index].as_mut())
-        } else {
-            None
-        }
-    }
-
-    /// Clear all child renderers
-    pub fn clear_children(&mut self) {
-        self.children.clear();
+impl<A, B> CompositeRender<A, B>
+where
+    A: Render,
+    B: Render,
+{
+    /// Create a new composite renderer from two render targets
+    pub fn new(a: A, b: B) -> Self {
+        Self { a, b }
     }
 }
 
-impl Default for CompositeRender {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-impl Render for CompositeRender {
+impl<A, B> Render for CompositeRender<A, B>
+where
+    A: Render,
+    B: Render,
+{
     fn clear(&mut self, color: [u8; 4]) {
-        for child in &mut self.children {
-            child.clear(color);
-        }
+        self.a.clear(color);
+        self.b.clear(color);
     }
 
     fn set_pixel(&mut self, x: u32, y: u32, color: [u8; 4]) {
-        for child in &mut self.children {
-            child.set_pixel(x, y, color);
-        }
+        self.a.set_pixel(x, y, color);
+        self.b.set_pixel(x, y, color);
     }
 
     fn dimensions(&self) -> (u32, u32) {
-        (self.width, self.height)
+        // Prefer the first renderer's dimensions. It's the caller's
+        // responsibility to ensure these are compatible.
+        self.a.dimensions()
     }
 
     fn finish(&mut self) {
-        for child in &mut self.children {
-            child.finish();
-        }
+        self.a.finish();
+        self.b.finish();
     }
 }
 
@@ -161,206 +88,29 @@ mod tests {
     use crate::render::markdown_render::MarkdownRender;
 
     #[test]
-    fn test_composite_new() {
-        let composite = CompositeRender::new();
-        assert_eq!(composite.dimensions(), (256, 240));
-        assert!(composite.is_empty());
-    }
-
-    #[test]
-    fn test_composite_add() {
-        let mut composite = CompositeRender::new();
-        assert!(composite.is_empty());
-
-        let image = ImageRender::default();
-        composite.add(Box::new(image));
-
-        assert_eq!(composite.len(), 1);
-        assert!(!composite.is_empty());
-    }
-
-    #[test]
-    fn test_composite_clear() {
-        let mut composite = CompositeRender::new();
-        let image = ImageRender::new(100, 100);
-        composite.add(Box::new(image));
-
-        composite.clear([255, 0, 0, 255]);
-
-        // Verify the image was cleared
-        let renderer = composite.get(0).unwrap();
-        // We can't directly check the image content through the trait,
-        // but we can verify it doesn't panic
-        renderer.dimensions();
-    }
-
-    #[test]
-    fn test_composite_set_pixel() {
-        let mut composite = CompositeRender::new();
+    fn test_composite_basic_ops() {
         let image = ImageRender::new(10, 10);
-        composite.add(Box::new(image));
-
-        composite.set_pixel(5, 5, [255, 0, 0, 255]);
-        composite.set_pixel(3, 7, [0, 255, 0, 255]);
-
-        // Verify operations completed without panicking
-        assert_eq!(composite.len(), 1);
-    }
-
-    #[test]
-    fn test_composite_multiple() {
-        let mut composite = CompositeRender::new();
-
-        let image = ImageRender::new(50, 50);
-        let markdown = MarkdownRender::new(0, 50, 50);
-
-        composite.add(Box::new(image));
-        composite.add(Box::new(markdown));
-
-        assert_eq!(composite.len(), 2);
-
-        composite.clear([0, 0, 0, 255]);
-        composite.set_pixel(10, 10, [255, 0, 0, 255]);
-        composite.finish();
-
-        // Verify both children received the operations
-        assert_eq!(composite.len(), 2);
-    }
-
-    #[test]
-    fn test_composite_remove() {
-        let mut composite = CompositeRender::new();
-
-        composite.add(Box::new(ImageRender::new(100, 100)));
-        composite.add(Box::new(ImageRender::new(100, 100)));
-        composite.add(Box::new(ImageRender::new(100, 100)));
-
-        assert_eq!(composite.len(), 3);
-
-        let removed = composite.remove(1);
-        assert!(removed.is_some());
-        assert_eq!(composite.len(), 2);
-
-        let out_of_bounds = composite.remove(10);
-        assert!(out_of_bounds.is_none());
-    }
-
-    #[test]
-    fn test_composite_clear_children() {
-        let mut composite = CompositeRender::new();
-
-        composite.add(Box::new(ImageRender::new(100, 100)));
-        composite.add(Box::new(ImageRender::new(100, 100)));
-
-        assert_eq!(composite.len(), 2);
-
-        composite.clear_children();
-
-        assert!(composite.is_empty());
-    }
-
-    #[test]
-    fn test_composite_get() {
-        let mut composite = CompositeRender::new();
-
-        composite.add(Box::new(ImageRender::new(100, 100)));
-        composite.add(Box::new(ImageRender::new(100, 100)));
-
-        let first = composite.get(0);
-        assert!(first.is_some());
-        assert_eq!(first.unwrap().dimensions(), (100, 100));
-
-        let out_of_bounds = composite.get(10);
-        assert!(out_of_bounds.is_none());
-    }
-
-    #[test]
-    fn test_composite_get_mut() {
-        let mut composite = CompositeRender::new();
-
-        composite.add(Box::new(ImageRender::new(100, 100)));
-
-        let first = composite.get_mut(0);
-        assert!(first.is_some());
-
-        // We can call methods through the mutable reference
-        first.unwrap().clear([128, 128, 128, 255]);
-    }
-
-    #[test]
-    fn test_composite_dimension_validation() {
-        let mut composite = CompositeRender::new();
-
-        // Add first renderer with 256x240
-        composite.add(Box::new(ImageRender::new(256, 240)));
-
-        // Adding matching dimensions should work
-        composite.add(Box::new(ImageRender::new(256, 240)));
-        assert_eq!(composite.len(), 2);
-
-        // Adding mismatched dimensions should panic
-        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            composite.add(Box::new(ImageRender::new(100, 100)));
-        }));
-
-        assert!(result.is_err());
-    }
-
-    #[test]
-    fn test_composite_finish() {
-        let mut composite = CompositeRender::new();
-
-        let image = ImageRender::new(10, 10);
+        let image_clone = image.clone();
         let markdown = MarkdownRender::new(0, 10, 10);
 
-        composite.add(Box::new(image));
-        composite.add(Box::new(markdown));
+        let mut composite = CompositeRender::new(image, markdown);
 
-        composite.clear([0, 0, 0, 255]);
-        composite.set_pixel(5, 5, [255, 0, 0, 255]);
+        // Basic operations should not panic and should affect the image buffer
+        composite.clear([1, 2, 3, 4]);
+        composite.set_pixel(5, 5, [9, 9, 9, 9]);
         composite.finish();
 
-        // Verify both children were finished
-        assert_eq!(composite.len(), 2);
+        // The underlying shared image should reflect the clear and pixel ops
+        let img = image_clone.borrow_image();
+        assert_eq!(img.get_pixel(0, 0)[0], 1);
+        assert_eq!(img.get_pixel(5, 5)[0], 9);
     }
 
     #[test]
-    fn test_composite_with_dimensions() {
-        let composite = CompositeRender::with_dimensions(100, 100);
-        assert_eq!(composite.dimensions(), (100, 100));
-    }
-
-    #[test]
-    fn test_composite_empty_operations() {
-        let mut composite = CompositeRender::new();
-
-        // Operations on empty composite should not panic
-        composite.clear([0, 0, 0, 255]);
-        composite.set_pixel(0, 0, [255, 0, 0, 255]);
-        composite.finish();
-
-        assert!(composite.is_empty());
-    }
-
-    #[test]
-    fn test_composite_with_markdown_and_image() {
-        let mut composite = CompositeRender::new();
-
-        let image = ImageRender::new(4, 4);
-        let markdown = MarkdownRender::new(1, 4, 4);
-
-        composite.add(Box::new(image));
-        composite.add(Box::new(markdown));
-
-        // Render a simple pattern
-        composite.clear([0, 0, 0, 255]);
-        composite.set_pixel(0, 0, [255, 255, 255, 255]);
-        composite.set_pixel(1, 0, [255, 0, 0, 255]);
-        composite.set_pixel(2, 0, [0, 255, 0, 255]);
-        composite.set_pixel(3, 0, [0, 0, 255, 255]);
-        composite.finish();
-
-        // Verify the composite works
-        assert_eq!(composite.len(), 2);
+    fn test_composite_dimensions() {
+        let image = ImageRender::new(20, 15);
+        let markdown = MarkdownRender::new(0, 20, 15);
+        let composite = CompositeRender::new(image, markdown);
+        assert_eq!(composite.dimensions(), (20, 15));
     }
 }

@@ -1,11 +1,11 @@
 use anyhow::Result;
 use image::EncodableLayout;
-use nes_core::EmptyPlugin;
 use nes_core::ines::INesFile;
 use nes_core::nes::apu::AudioDriver;
 use nes_core::nes::controller::Button;
 use nes_core::nes_machine::NesMachine;
 use nes_core::render::{CompositeRender, ImageRender, MarkdownRender, Render};
+use nes_core::EmptyPlugin;
 use sdl2::audio::{AudioQueue, AudioSpecDesired};
 use sdl2::event::Event;
 use sdl2::keyboard::Keycode;
@@ -111,19 +111,31 @@ impl Render for SharedMarkdownRender {
     }
 }
 
-/// Wrapper around Rc<RefCell<CompositeRender>> that implements Render
+/// Wrapper around Rc<RefCell<CompositeRender<A, B>>> that implements Render
 #[derive(Debug)]
-struct SharedCompositeRender {
-    inner: Rc<RefCell<CompositeRender>>,
+struct SharedCompositeRender<A, B>
+where
+    A: Render,
+    B: Render,
+{
+    inner: Rc<RefCell<CompositeRender<A, B>>>,
 }
 
-impl SharedCompositeRender {
-    fn new(inner: Rc<RefCell<CompositeRender>>) -> Self {
+impl<A, B> SharedCompositeRender<A, B>
+where
+    A: Render,
+    B: Render,
+{
+    fn new(inner: Rc<RefCell<CompositeRender<A, B>>>) -> Self {
         Self { inner }
     }
 }
 
-impl Render for SharedCompositeRender {
+impl<A, B> Render for SharedCompositeRender<A, B>
+where
+    A: Render,
+    B: Render,
+{
     fn clear(&mut self, color: [u8; 4]) {
         self.inner.borrow_mut().clear(color);
     }
@@ -189,16 +201,11 @@ impl RunAction {
         let image_render = ImageRender::default();
 
         // Create composite renderer with image + markdown
-        let composite = Rc::new(RefCell::new(CompositeRender::new()));
-
-        // Add image renderer (ImageRender is Clone and shares internal Rc)
-        composite.borrow_mut().add(Box::new(image_render.clone()));
-
-        // Create and wrap markdown renderer for shared access
         let markdown_render = Rc::new(RefCell::new(MarkdownRender::new(0, 256, 240)));
-        composite
-            .borrow_mut()
-            .add(Box::new(SharedMarkdownRender::new(markdown_render.clone())));
+        let composite = Rc::new(RefCell::new(CompositeRender::new(
+            image_render.clone(),
+            SharedMarkdownRender::new(markdown_render.clone()),
+        )));
 
         // Wrap composite for sharing
         let shared_composite = SharedCompositeRender::new(composite.clone());
