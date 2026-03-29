@@ -1,6 +1,6 @@
 use self::microcode::{Microcode, opcode};
 use crate::mcu::Mcu;
-use std::collections::VecDeque;
+use arraydeque::ArrayDeque;
 
 mod microcode;
 
@@ -41,7 +41,7 @@ pub struct Cpu<M: Mcu> {
     nmi_requested: bool,
     mode: CpuMode,
 
-    microcode_queue: VecDeque<Microcode>,
+    microcode_queue: ArrayDeque<Microcode, 8>,
 }
 
 impl<M: Mcu> Cpu<M> {
@@ -61,7 +61,7 @@ impl<M: Mcu> Cpu<M> {
             irq_line: false,
             irq_inhibit: None,
             nmi_line: false,
-            microcode_queue: VecDeque::with_capacity(8),
+            microcode_queue: ArrayDeque::new(),
             mode: CpuMode::Normal,
             nmi_requested: false,
         };
@@ -609,9 +609,8 @@ impl<M: Mcu> Cpu<M> {
     }
 
     pub(crate) fn push_microcodes(&mut self, microcodes: &[Microcode]) {
-        for &code in microcodes {
-            self.microcode_queue.push_back(code);
-        }
+        self.microcode_queue
+            .extend_back(microcodes.into_iter().cloned());
     }
 
     /// Return how many microcodes are in queue, used for plugin to know how many cycles left for current instruction
@@ -624,7 +623,13 @@ impl<M: Mcu> Cpu<M> {
     }
 
     fn retain_cycle(&mut self) {
-        self.microcode_queue.push_front(Microcode::Nop);
+        match self.microcode_queue.push_front(Microcode::Nop) {
+            Ok(_) => (),
+            Err(_) => debug_assert!(
+                true,
+                "Microcode queue overflow, maybe some microcode is too long?"
+            ),
+        }
     }
 
     fn load_irq_address(&mut self) {

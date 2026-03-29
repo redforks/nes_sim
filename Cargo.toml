@@ -24,6 +24,7 @@ image = { version = "0.25", default-features = false }
 
 # Iterator utilities
 itertools = "0.14"
+arraydeque = "0.5"
 
 # Parsing and serialization
 winnow = "1"
