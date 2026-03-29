@@ -2,7 +2,7 @@ use js_sys::Float32Array;
 use nes_core::nes::apu::AudioDriver;
 use wasm_bindgen::prelude::*;
 
-const CHUNK_SIZE: usize = 1024;
+const CHUNK_SIZE: usize = 256;
 
 #[wasm_bindgen(inline_js = r#"
 const PROCESSOR_NAME = "nes-audio-processor";
@@ -17,6 +17,7 @@ class NesAudioProcessor extends AudioWorkletProcessor {
     this.queue = [];
     this.offset = 0;
     this.bufferedSamples = 0;
+    this.maxBufferedSamples = Math.max(128, Math.ceil(sampleRate * 0.12));
     this.port.onmessage = (event) => {
       const data = event.data;
       if (!data || data.type !== "chunk" || !(data.samples instanceof Float32Array)) {
@@ -25,7 +26,25 @@ class NesAudioProcessor extends AudioWorkletProcessor {
 
       this.queue.push(data.samples);
       this.bufferedSamples += data.samples.length;
+      this.trimBufferedAudio();
     };
+  }
+
+  trimBufferedAudio() {
+    while (this.bufferedSamples > this.maxBufferedSamples && this.queue.length > 0) {
+      const current = this.queue[0];
+      const remaining = current.length - this.offset;
+      const overflow = this.bufferedSamples - this.maxBufferedSamples;
+
+      if (overflow >= remaining) {
+        this.queue.shift();
+        this.offset = 0;
+        this.bufferedSamples -= remaining;
+      } else {
+        this.offset += overflow;
+        this.bufferedSamples -= overflow;
+      }
+    }
   }
 
   process(_inputs, outputs) {
@@ -80,6 +99,8 @@ export class AudioWorkletDriverHandle {
     this.sampleRate = this.context.sampleRate;
     this.node = null;
     this.pendingChunks = [];
+    this.pendingSamples = 0;
+    this.maxBufferedSamples = Math.max(128, Math.ceil(this.sampleRate * 0.12));
     this.ready = this.installWorklet();
     this.ready.catch((error) => console.error("failed to initialize NES audio worklet", error));
     this.resumeNow();
@@ -110,6 +131,7 @@ export class AudioWorkletDriverHandle {
       this.postChunk(chunk);
     }
     this.pendingChunks.length = 0;
+    this.pendingSamples = 0;
   }
 
   pushChunk(chunk) {
@@ -120,10 +142,19 @@ export class AudioWorkletDriverHandle {
     }
 
     this.pendingChunks.push(chunk);
+    this.pendingSamples += chunk.length;
+    this.trimPendingChunks();
   }
 
   postChunk(chunk) {
     this.node.port.postMessage({ type: "chunk", samples: chunk }, [chunk.buffer]);
+  }
+
+  trimPendingChunks() {
+    while (this.pendingSamples > this.maxBufferedSamples && this.pendingChunks.length > 0) {
+      const dropped = this.pendingChunks.shift();
+      this.pendingSamples -= dropped.length;
+    }
   }
 
   flush() {}
