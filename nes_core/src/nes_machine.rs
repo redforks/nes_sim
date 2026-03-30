@@ -1,7 +1,7 @@
 use crate::{
     ines::INesFile,
     machine::Machine,
-    nes::{self, controller::Button, NesMcu},
+    nes::{controller::Button, NesMcu},
     render::Render,
     ExecuteResult, Plugin,
 };
@@ -24,7 +24,7 @@ where
     D: crate::nes::apu::AudioDriver,
 {
     pub fn new(file: &INesFile, plugin: P, render: R, audio_driver: D) -> Self {
-        let mcu = nes::create_mcu_with_renderer_and_audio(file, render, audio_driver);
+        let mcu = NesMcu::new(file, render, audio_driver);
         let is_vblank = mcu.ppu().vblank();
         Self {
             machine: Machine::with_plugin(plugin, mcu),

@@ -70,7 +70,7 @@ impl Image {
         max_instructions: u64,
     ) -> MachineWrapper {
         // Build the composite plugin step by step to handle type coercion
-        let mut plugins: Vec<Box<dyn Plugin<nes_core::nes::nes_mcu::NesMcu<(), ()>>>> = vec![
+        let mut plugins: Vec<Box<dyn Plugin<nes_core::nes::NesMcu<(), ()>>>> = vec![
             Box::<Console>::default(),
             Box::new(NesReportPlugin::new(quiet)),
             Box::<MonitorTestStatus>::default(),
@@ -104,7 +104,7 @@ mod machine_types {
     pub type BinPlugin = CompositePlugin<BinMcu>;
     pub type BinMachine = Machine<BinPlugin, BinMcu>;
 
-    pub type INesPlugin = CompositePlugin<nes_core::nes::nes_mcu::NesMcu<(), ()>>;
+    pub type INesPlugin = CompositePlugin<nes_core::nes::NesMcu<(), ()>>;
     pub type INesMachine = NesMachine<INesPlugin, (), ()>;
 }
 
