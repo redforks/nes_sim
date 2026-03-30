@@ -124,7 +124,7 @@ impl RunAction {
             .map_err(|e| anyhow::anyhow!(e))?;
 
         // Create image renderer for display - keep a reference to access later
-        let image_render = ImageRender::default();
+        let image_render = ImageRender::default_dimension();
 
         // NesMachine will use the ImageRender directly. Pass a clone (shared Rc) so
         // we can update the texture from the main loop.

@@ -83,7 +83,7 @@ mod tests {
     #[test]
     fn mcu() {
         let mut mcu = Mapper0::default();
-        let mut ppu = Ppu::new(ImageRender::default());
+        let mut ppu = Ppu::new(ImageRender::default_dimension());
 
         // read-write ram
         mcu.write(&mut ppu, CARTRIDGE_START_ADDR, 0x01);

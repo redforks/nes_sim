@@ -388,15 +388,14 @@ impl<R: Render> Ppu<R> {
             self.renderer.finish();
         }
 
-        if self.scanline == VBLANK_SET_SCANLINE && self.dot == 1 {
-            if !std::mem::take(&mut self.suppress_vblank_for_current_frame) {
+        if self.scanline == VBLANK_SET_SCANLINE && self.dot == 1
+            && !std::mem::take(&mut self.suppress_vblank_for_current_frame) {
                 debug!(
                     "PPU: VBLANK SET at scanline={}, dot={}",
                     self.scanline, self.dot
                 );
                 self.status.set_v_blank(true);
             }
-        }
 
         // VBlank clear: pre-render scanline 261, dot 1
         if self.scanline == VBLANK_CLEAR_SCANLINE && self.dot == VBLANK_CLEAR_DOT {
@@ -642,9 +641,9 @@ impl<R: Render> Ppu<R> {
         let tile_fine_y = (world_y % 8) as usize;
 
         let (tile, palette_idx) = inner.name_table.with_nth(nt_idx, |name_table| {
-            let tile = name_table.tile(pattern_table, nt_x as u8, nt_y as u8);
+            let tile = name_table.tile(pattern_table, nt_x, nt_y);
             let palette_idx = inner.name_table.with_attribute_table(nt_idx, |attr_table| {
-                attr_table.palette_idx(nt_x as u8, nt_y as u8)
+                attr_table.palette_idx(nt_x, nt_y)
             });
             (tile, palette_idx)
         });

@@ -31,7 +31,7 @@ impl ImageRender {
         }
     }
 
-    pub fn default() -> Self {
+    pub fn default_dimension() -> Self {
         Self::new(256, 240)
     }
 
@@ -84,7 +84,7 @@ mod tests {
 
     #[test]
     fn test_image_render_new() {
-        let renderer = ImageRender::default();
+        let renderer = ImageRender::default_dimension();
         assert_eq!(renderer.dimensions(), (256, 240));
     }
 
@@ -129,7 +129,7 @@ mod tests {
 
     #[test]
     fn test_image_render_borrow() {
-        let renderer = ImageRender::default();
+        let renderer = ImageRender::default_dimension();
 
         // Test borrow_image
         let image = renderer.borrow_image();
@@ -139,7 +139,7 @@ mod tests {
     #[test]
     fn test_nes_dimensions() {
         // Test creating a NES-sized render buffer
-        let mut renderer = ImageRender::default();
+        let mut renderer = ImageRender::default_dimension();
         assert_eq!(renderer.dimensions(), (256, 240));
 
         // Verify we can set pixels across the entire screen

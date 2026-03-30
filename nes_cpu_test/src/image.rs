@@ -45,7 +45,7 @@ impl Image {
     ) -> MachineWrapper {
         let mcu = RamMcu::new(*arr);
         let mut plugins: Vec<Box<dyn Plugin<_>>> = vec![
-            Box::new(ReportPlugin::new(quiet)),
+            Box::new(ReportPlugin::create(quiet)),
             Box::new(ExitTestPlugin::new()),
             Box::<ImageExit>::default(),
         ];
@@ -72,7 +72,7 @@ impl Image {
         // Build the composite plugin step by step to handle type coercion
         let mut plugins: Vec<Box<dyn Plugin<nes_core::nes::NesMcu<(), ()>>>> = vec![
             Box::<Console>::default(),
-            Box::new(NesReportPlugin::new(quiet)),
+            Box::new(NesReportPlugin::create(quiet)),
             Box::<MonitorTestStatus>::default(),
             Box::new(DetectDeadLoop::<1>::new()),
             Box::new(DetectDeadLoop::<2>::new()),

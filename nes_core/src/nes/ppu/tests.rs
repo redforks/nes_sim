@@ -245,7 +245,7 @@ fn ppu_tick_scanline_wrap() {
     ppu.dot = DOTS_PER_SCANLINE - 1; // 340
 
     // Tick once - should wrap to scanline 0, dot 0
-    let _ = ppu.tick(&pattern);
+    ppu.tick(&pattern);
     assert_eq!(ppu.scanline, 0);
     assert_eq!(ppu.dot, 0);
 }
@@ -320,7 +320,7 @@ fn test_ppu_status_to_from_u8() {
 
 #[test]
 fn test_oam_dma() {
-    let mut ppu = Ppu::new(ImageRender::default());
+    let mut ppu = Ppu::new(ImageRender::default_dimension());
     let data: [u8; 256] = [0x42; 256];
 
     ppu.oam_dma(&data);
@@ -332,7 +332,7 @@ fn test_oam_dma() {
 
 #[test]
 fn test_set_mirroring() {
-    let mut ppu = Ppu::new(ImageRender::default());
+    let mut ppu = Ppu::new(ImageRender::default_dimension());
 
     ppu.set_mirroring(Mirroring::Horizontal);
     ppu.set_mirroring(Mirroring::Vertical);

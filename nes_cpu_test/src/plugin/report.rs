@@ -68,7 +68,7 @@ impl ReportPlugin {
         }
     }
 
-    pub fn new<M: Mcu>(quiet: bool) -> impl Plugin<M> {
+    pub fn create<M: Mcu>(quiet: bool) -> impl Plugin<M> {
         QuietPlugin::new(quiet, ReportPlugin::inner_new())
     }
 
@@ -252,7 +252,7 @@ pub struct NesReportPlugin<R, A> {
 }
 
 impl<R: Render, A: AudioDriver> NesReportPlugin<R, A> {
-    pub fn new(quiet: bool) -> impl Plugin<NesMcu<R, A>> {
+    pub fn create(quiet: bool) -> impl Plugin<NesMcu<R, A>> {
         QuietPlugin::new(
             quiet,
             NesReportPlugin {

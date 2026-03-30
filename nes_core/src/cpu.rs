@@ -131,44 +131,41 @@ impl<M: Mcu> Cpu<M> {
                 plugin.start(self);
                 let irq_inhibit = self.irq_inhibit.take();
 
-                let code =
-                    if std::mem::take(&mut self.nmi_requested) && self.mode == CpuMode::Normal {
-                        // handle nmi
-                        // reset nmi_requested, because nmi signal is edge detected, ignored if cpu is already in nmi mode
-                        self.mode = CpuMode::Nmi;
-                        // need extra two cycles for cpu to start nmi process
-                        self.push_microcodes(&[
-                            Microcode::Nop,
-                            Microcode::Nop,
-                            Microcode::PushPc,
-                            Microcode::PushStatus {
-                                set_disable_interrupt: true,
-                                break_flag: false,
-                            },
-                            Microcode::Nop,
-                            Microcode::LoadNmiAddress,
-                        ]);
-                        Microcode::Nop
-                    } else if self.irq_line
-                        && !irq_inhibit.unwrap_or_else(|| self.flag(Flag::InterruptDisabled))
-                    {
-                        // handle irq
-                        self.push_microcodes(&[
-                            Microcode::Nop,
-                            Microcode::Nop,
-                            Microcode::PushPc,
-                            Microcode::PushStatus {
-                                set_disable_interrupt: true,
-                                break_flag: false,
-                            },
-                            Microcode::LoadIrqAddress,
-                        ]);
-                        Microcode::Nop
-                    } else {
-                        Microcode::FetchAndDecode
-                    };
-
-                code
+                if std::mem::take(&mut self.nmi_requested) && self.mode == CpuMode::Normal {
+                    // handle nmi
+                    // reset nmi_requested, because nmi signal is edge detected, ignored if cpu is already in nmi mode
+                    self.mode = CpuMode::Nmi;
+                    // need extra two cycles for cpu to start nmi process
+                    self.push_microcodes(&[
+                        Microcode::Nop,
+                        Microcode::Nop,
+                        Microcode::PushPc,
+                        Microcode::PushStatus {
+                            set_disable_interrupt: true,
+                            break_flag: false,
+                        },
+                        Microcode::Nop,
+                        Microcode::LoadNmiAddress,
+                    ]);
+                    Microcode::Nop
+                } else if self.irq_line
+                    && !irq_inhibit.unwrap_or_else(|| self.flag(Flag::InterruptDisabled))
+                {
+                    // handle irq
+                    self.push_microcodes(&[
+                        Microcode::Nop,
+                        Microcode::Nop,
+                        Microcode::PushPc,
+                        Microcode::PushStatus {
+                            set_disable_interrupt: true,
+                            break_flag: false,
+                        },
+                        Microcode::LoadIrqAddress,
+                    ]);
+                    Microcode::Nop
+                } else {
+                    Microcode::FetchAndDecode
+                }
             }
         };
         self.cycles = self.cycles.wrapping_add(1);
@@ -609,8 +606,7 @@ impl<M: Mcu> Cpu<M> {
     }
 
     fn push_microcodes(&mut self, microcodes: &[Microcode]) {
-        self.microcode_queue
-            .extend_back(microcodes.into_iter().copied());
+        self.microcode_queue.extend_back(microcodes.iter().copied());
     }
 
     /// Return how many microcodes are in queue, used for plugin to know how many cycles left for current instruction
@@ -627,7 +623,7 @@ impl<M: Mcu> Cpu<M> {
         match self.microcode_queue.push_front(Microcode::Nop) {
             Ok(_) => (),
             Err(_) => debug_assert!(
-                true,
+                false,
                 "Microcode queue overflow, maybe some microcode is too long?"
             ),
         }
