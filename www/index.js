@@ -11,6 +11,37 @@ async function main() {
     let rom = await resp.arrayBuffer();
     // draw_chr(new Uint8Array(rom), 'canvas');
     let started = false;
+    let machine = null;
+
+    window.addEventListener("keydown", (event) => {
+        if (!machine) {
+            return;
+        }
+
+        if (event.code === "F2") {
+            event.preventDefault();
+            machine.reset();
+            return;
+        }
+
+        const handledKeys = ["ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight", "KeyZ", "KeyX", "Space", "Enter"];
+        if (handledKeys.includes(event.code)) {
+            event.preventDefault();
+            machine.key_down(event.code);
+        }
+    });
+
+    window.addEventListener("keyup", (event) => {
+        if (!machine) {
+            return;
+        }
+
+        const handledKeys = ["ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight", "KeyZ", "KeyX", "Space", "Enter"];
+        if (handledKeys.includes(event.code)) {
+            event.preventDefault();
+            machine.key_up(event.code);
+        }
+    });
 
     playButton.addEventListener("click", async () => {
         if (started) {
@@ -22,7 +53,7 @@ async function main() {
         playButton.style.display = "none";
 
         try {
-            const machine = new_machine('canvas', new Uint8Array(rom));
+            machine = new_machine('canvas', new Uint8Array(rom));
 
             let tick = () => {
                 machine.process_frame();

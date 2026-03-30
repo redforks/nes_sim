@@ -1,13 +1,14 @@
 #![cfg(target_arch = "wasm32")]
 
 use log::{debug, info};
-use nes_core::EmptyPlugin;
 use nes_core::ines::INesFile;
+use nes_core::nes::controller::Button;
 use nes_core::nes_machine::NesMachine;
+use nes_core::EmptyPlugin;
 use std::panic;
-use wasm_bindgen::JsCast;
 use wasm_bindgen::prelude::*;
-use web_sys::{CanvasRenderingContext2d, HtmlCanvasElement, window};
+use wasm_bindgen::JsCast;
+use web_sys::{window, CanvasRenderingContext2d, HtmlCanvasElement};
 
 mod canvas_render;
 mod drivers;
@@ -18,7 +19,7 @@ use drivers::apu::WebAudioDriver;
 #[wasm_bindgen]
 pub struct Machine {
     inner: NesMachine<
-        nes_core::EmptyPlugin<nes_core::nes::nes_mcu::NesMcu<CanvasRender, WebAudioDriver>>,
+        nes_core::EmptyPlugin<nes_core::nes::NesMcu<CanvasRender, WebAudioDriver>>,
         CanvasRender,
         WebAudioDriver,
     >,
@@ -44,6 +45,22 @@ impl Machine {
         self.inner.process_frame();
         self.inner.flush_audio();
     }
+
+    pub fn reset(&mut self) {
+        self.inner.reset();
+    }
+
+    pub fn key_down(&mut self, key: &str) {
+        if let Some(button) = map_key_to_button(key) {
+            self.inner.press_button(button);
+        }
+    }
+
+    pub fn key_up(&mut self, key: &str) {
+        if let Some(button) = map_key_to_button(key) {
+            self.inner.release_button(button);
+        }
+    }
 }
 
 fn get_canvas_context(canvas_id: &str) -> CanvasRenderingContext2d {
@@ -60,6 +77,20 @@ fn get_canvas_context(canvas_id: &str) -> CanvasRenderingContext2d {
         .unwrap()
         .dyn_into()
         .unwrap()
+}
+
+fn map_key_to_button(key: &str) -> Option<Button> {
+    match key {
+        "ArrowUp" => Some(Button::Up),
+        "ArrowDown" => Some(Button::Down),
+        "ArrowLeft" => Some(Button::Left),
+        "ArrowRight" => Some(Button::Right),
+        "KeyZ" => Some(Button::A),
+        "KeyX" => Some(Button::B),
+        "Space" => Some(Button::Select),
+        "Enter" => Some(Button::Start),
+        _ => None,
+    }
 }
 
 #[wasm_bindgen]
