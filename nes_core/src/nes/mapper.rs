@@ -3,6 +3,7 @@ use log::info;
 use crate::ines::INesFile;
 use crate::nes::mapper::mapper0::Mapper0;
 use crate::nes::mapper::mapper2::Mapper2;
+use crate::nes::mapper::mapper3::Mapper3;
 use crate::nes::mapper::mmc1::MMC1;
 use crate::nes::mapper::mmc3::MMC3;
 use crate::nes::ppu::Ppu;
@@ -12,6 +13,7 @@ const CARTRIDGE_START_ADDR: u16 = 0x4020;
 
 mod mapper0;
 mod mapper2;
+mod mapper3;
 mod mmc1;
 mod mmc3;
 
@@ -22,6 +24,7 @@ pub fn create_cartridge(f: &INesFile) -> Cartridge {
         0 => Cartridge::Mapper0(Box::new(Mapper0::new(f.read_prg_rom(), f.read_chr_rom()))),
         1 => Cartridge::MMC1(Box::new(MMC1::new(f.read_prg_rom(), f.read_chr_rom()))),
         2 => Cartridge::Mapper2(Box::new(Mapper2::new(f.read_prg_rom(), f.read_chr_rom()))),
+        3 => Cartridge::Mapper3(Box::new(Mapper3::new(f.read_prg_rom(), f.read_chr_rom()))),
         4 => Cartridge::MMC3(Box::new(MMC3::new(
             f.read_prg_rom(),
             f.read_chr_rom(),
@@ -34,6 +37,7 @@ pub fn create_cartridge(f: &INesFile) -> Cartridge {
 pub enum Cartridge {
     Mapper0(Box<Mapper0>),
     Mapper2(Box<Mapper2>),
+    Mapper3(Box<Mapper3>),
     MMC1(Box<MMC1>),
     MMC3(Box<MMC3>),
     #[cfg(test)]
@@ -85,6 +89,7 @@ impl Cartridge {
         match self {
             Cartridge::Mapper0(cartridge) => cartridge.pattern_ref(),
             Cartridge::Mapper2(cartridge) => cartridge.pattern_ref(),
+            Cartridge::Mapper3(cartridge) => cartridge.pattern_ref(),
             Cartridge::MMC1(cartridge) => cartridge.pattern_ref(),
             Cartridge::MMC3(cartridge) => cartridge.pattern_ref(),
             #[cfg(test)]
@@ -96,6 +101,7 @@ impl Cartridge {
         match self {
             Cartridge::Mapper0(cartridge) => cartridge.write_pattern(address, value),
             Cartridge::Mapper2(cartridge) => cartridge.write_pattern(address, value),
+            Cartridge::Mapper3(cartridge) => cartridge.write_pattern(address, value),
             Cartridge::MMC1(cartridge) => cartridge.write_pattern(address, value),
             Cartridge::MMC3(cartridge) => cartridge.write_pattern(address, value),
             #[cfg(test)]
@@ -107,6 +113,7 @@ impl Cartridge {
         match self {
             Cartridge::Mapper0(cartridge) => cartridge.read(address),
             Cartridge::Mapper2(cartridge) => cartridge.read(address),
+            Cartridge::Mapper3(cartridge) => cartridge.read(address),
             Cartridge::MMC1(cartridge) => cartridge.read(address),
             Cartridge::MMC3(cartridge) => cartridge.read(address),
             #[cfg(test)]
@@ -118,6 +125,7 @@ impl Cartridge {
         match self {
             Cartridge::Mapper0(cartridge) => cartridge.write(ppu, address, value),
             Cartridge::Mapper2(cartridge) => cartridge.write(ppu, address, value),
+            Cartridge::Mapper3(cartridge) => cartridge.write(ppu, address, value),
             Cartridge::MMC1(cartridge) => cartridge.write(ppu, address, value),
             Cartridge::MMC3(cartridge) => cartridge.write(ppu, address, value),
             #[cfg(test)]
@@ -133,6 +141,9 @@ impl Cartridge {
             Cartridge::Mapper2(cartridge) => {
                 cartridge.on_ppu_tick(scanline, dot, rendering_enabled)
             }
+            Cartridge::Mapper3(cartridge) => {
+                cartridge.on_ppu_tick(scanline, dot, rendering_enabled)
+            }
             Cartridge::MMC1(cartridge) => cartridge.on_ppu_tick(scanline, dot, rendering_enabled),
             Cartridge::MMC3(cartridge) => cartridge.on_ppu_tick(scanline, dot, rendering_enabled),
             #[cfg(test)]
@@ -144,6 +155,7 @@ impl Cartridge {
         match self {
             Cartridge::Mapper0(cartridge) => cartridge.irq_pending(),
             Cartridge::Mapper2(cartridge) => cartridge.irq_pending(),
+            Cartridge::Mapper3(cartridge) => cartridge.irq_pending(),
             Cartridge::MMC1(cartridge) => cartridge.irq_pending(),
             Cartridge::MMC3(cartridge) => cartridge.irq_pending(),
             #[cfg(test)]

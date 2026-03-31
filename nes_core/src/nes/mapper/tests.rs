@@ -90,6 +90,18 @@ fn create_cartridge_mapper2_with_chr_ram() {
 }
 
 #[test]
+fn create_cartridge_mapper3() {
+    let rom = create_test_nes(3, 2, 2);
+    let file = INesFile::new(rom).unwrap();
+    let mut cartridge = create_cartridge(&file);
+
+    let val = cartridge.read(0x8000);
+    assert_eq!(val, 0);
+
+    assert_eq!(cartridge.pattern_ref().len(), 8 * 1024);
+}
+
+#[test]
 fn create_cartridge_mapper4() {
     let rom = create_test_nes(4, 4, 1);
     let file = INesFile::new(rom).unwrap();
