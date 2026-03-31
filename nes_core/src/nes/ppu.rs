@@ -12,6 +12,19 @@ pub use pattern::*;
 
 type Pixel = Rgba<u8>;
 
+#[derive(Copy, Clone, Debug, Eq, PartialEq)]
+pub enum PatternAccess {
+    Cpu,
+    Background,
+    Sprite,
+}
+
+#[derive(Copy, Clone, Debug, Eq, PartialEq)]
+pub struct BackgroundTileOverride {
+    pub palette_idx: u8,
+    pub color_idx: u8,
+}
+
 /// Apply grayscale and emphasis effects to a pixel color.
 /// - Grayscale: Converts color to grayscale by averaging RGB channels
 /// - Emphasis: Attenuates non-emphasized color channels (e.g., red emphasis darkens G and B)
@@ -230,11 +243,7 @@ impl Palette {
 
         // Clamp to valid range [0, 31]
         let addr = addr as usize;
-        if addr >= 32 {
-            31
-        } else {
-            addr
-        }
+        if addr >= 32 { 31 } else { addr }
     }
 
     fn get_color_idx(&self, start: usize, palette_idx: u8, idx: u8) -> Pixel {
@@ -364,15 +373,44 @@ impl<R: Render> Ppu<R> {
     /// # Parameters
     /// - `pattern`: CHR ROM pattern data for tile/sprite lookup
     pub fn tick(&mut self, pattern: &[u8]) {
+        self.tick_with_mapper(
+            |addr, _| pattern[addr as usize % pattern.len()],
+            |_| None,
+            |_, _, _, _, _, _, _| None,
+        );
+    }
+
+    pub fn tick_with_mapper<CR, NR, BO>(
+        &mut self,
+        mut chr_read: CR,
+        mut name_table_read: NR,
+        mut background_override: BO,
+    ) where
+        CR: FnMut(u16, PatternAccess) -> u8,
+        NR: FnMut(u16) -> Option<u8>,
+        BO: FnMut(u8, u8, u16, u8, u8, usize, usize) -> Option<BackgroundTileOverride>,
+    {
         let rendering_enabled = self.rendering_enabled();
 
         if self.scanline < 240 && self.dot == 0 {
-            self.prepare_scanline_cache(pattern, self.scanline as u8);
+            self.prepare_scanline_cache(
+                &mut chr_read,
+                &mut name_table_read,
+                &mut background_override,
+                self.scanline as u8,
+            );
         }
 
         // Render pixel during visible scanlines (0-239) and visible dots (0-255)
         if rendering_enabled && self.scanline < 240 && self.dot < 256 {
-            let pixel = Self::render_pixel(self, pattern, self.dot as u8, self.scanline as u8);
+            let pixel = Self::render_pixel_with_mapper(
+                self,
+                &mut chr_read,
+                &mut name_table_read,
+                &mut background_override,
+                self.dot as u8,
+                self.scanline as u8,
+            );
             self.renderer
                 .set_pixel(self.dot as u32, self.scanline as u32, pixel.0);
         }
@@ -388,14 +426,16 @@ impl<R: Render> Ppu<R> {
             self.renderer.finish();
         }
 
-        if self.scanline == VBLANK_SET_SCANLINE && self.dot == 1
-            && !std::mem::take(&mut self.suppress_vblank_for_current_frame) {
-                debug!(
-                    "PPU: VBLANK SET at scanline={}, dot={}",
-                    self.scanline, self.dot
-                );
-                self.status.set_v_blank(true);
-            }
+        if self.scanline == VBLANK_SET_SCANLINE
+            && self.dot == 1
+            && !std::mem::take(&mut self.suppress_vblank_for_current_frame)
+        {
+            debug!(
+                "PPU: VBLANK SET at scanline={}, dot={}",
+                self.scanline, self.dot
+            );
+            self.status.set_v_blank(true);
+        }
 
         // VBlank clear: pre-render scanline 261, dot 1
         if self.scanline == VBLANK_CLEAR_SCANLINE && self.dot == VBLANK_CLEAR_DOT {
@@ -459,6 +499,23 @@ impl<R: Render> Ppu<R> {
     /// Read from PPU registers or VRAM/palette data
     /// Returns the value read from the given address
     pub fn read(&mut self, pattern: &[u8], address: u16) -> u8 {
+        self.read_with_mapper(
+            address,
+            |addr, _| pattern[addr as usize % pattern.len()],
+            |_| None,
+        )
+    }
+
+    pub fn read_with_mapper<CR, NR>(
+        &mut self,
+        address: u16,
+        mut chr_read: CR,
+        mut name_table_read: NR,
+    ) -> u8
+    where
+        CR: FnMut(u16, PatternAccess) -> u8,
+        NR: FnMut(u16) -> Option<u8>,
+    {
         // PPU registers are mirrored every 8 bytes in range $2000-$3FFF
         let reg = 0x2000 + ((address - 0x2000) % 8);
         match reg {
@@ -471,19 +528,32 @@ impl<R: Render> Ppu<R> {
             // OAMDATA
             0x2004 => self.read_oam_data(),
             // PPUDATA - read from VRAM or palette
-            0x2007 => self.read_vram_and_inc(pattern),
+            0x2007 => self.read_vram_and_inc_with_mapper(&mut chr_read, &mut name_table_read),
             _ => 0, // Other registers are write-only
         }
     }
 
     /// Write to PPU registers
     pub fn write(&mut self, address: u16, value: u8) {
-        self.write_with_pattern_write(address, value, |_, _| {});
+        self.write_with_mapper(address, value, |_, _| {}, |_, _| false);
     }
 
     pub fn write_with_pattern_write<F>(&mut self, address: u16, value: u8, mut pattern_write: F)
     where
         F: FnMut(u16, u8),
+    {
+        self.write_with_mapper(address, value, &mut pattern_write, |_, _| false);
+    }
+
+    pub fn write_with_mapper<PW, NW>(
+        &mut self,
+        address: u16,
+        value: u8,
+        mut pattern_write: PW,
+        mut name_table_write: NW,
+    ) where
+        PW: FnMut(u16, u8),
+        NW: FnMut(u16, u8) -> bool,
     {
         // PPU registers are mirrored every 8 bytes in range $2000-$3FFF
         let reg = 0x2000 + ((address - 0x2000) % 8);
@@ -524,11 +594,12 @@ impl<R: Render> Ppu<R> {
             // PPUDATA
             0x2007 => {
                 let vram_addr = self.vram_addr;
-                Self::write_vram_data_with_pattern_write(
+                Self::write_vram_data_with_mapper(
                     self,
                     vram_addr,
                     value,
                     &mut pattern_write,
+                    &mut name_table_write,
                 );
                 // Increment VRAM address based on control flag
                 let increment = if self.ctrl.increment_mode() { 32 } else { 1 };
@@ -540,16 +611,38 @@ impl<R: Render> Ppu<R> {
     }
 
     // Helper methods for VRAM operations
-    fn read_vram_data(inner: &mut Self, pattern: &[u8], address: u16) -> u8 {
-        let addr = address % 0x4000;
+    #[cfg(test)]
+    fn read_vram_data(&mut self, pattern: &[u8], address: u16) -> u8 {
+        Self::read_vram_data_with_mapper(
+            self,
+            address,
+            &mut |addr, _| pattern[addr as usize % pattern.len()],
+            &mut |_| None,
+        )
+    }
+
+    fn read_vram_data_with_mapper<CR, NR>(
+        inner: &mut Self,
+        address: u16,
+        chr_read: &mut CR,
+        name_table_read: &mut NR,
+    ) -> u8
+    where
+        CR: FnMut(u16, PatternAccess) -> u8,
+        NR: FnMut(u16) -> Option<u8>,
+    {
+        let mut addr = address % 0x4000;
+        if (0x3000..0x3f00).contains(&addr) {
+            addr -= 0x1000;
+        }
         if addr < 0x3f00 {
             // Read from pattern table or name table
             if addr < 0x2000 {
                 // Pattern table (CHR ROM/RAM)
-                pattern[addr as usize]
+                chr_read(addr, PatternAccess::Cpu)
             } else {
                 // Name table
-                inner.name_table.read(addr)
+                Self::read_name_table_byte(inner, addr, name_table_read)
             }
         } else {
             // Palette
@@ -559,22 +652,29 @@ impl<R: Render> Ppu<R> {
 
     #[cfg(test)]
     fn write_vram_data(inner: &mut Self, address: u16, value: u8) {
-        Self::write_vram_data_with_pattern_write(inner, address, value, |_, _| {});
+        Self::write_vram_data_with_mapper(inner, address, value, |_, _| {}, |_, _| false);
     }
 
-    fn write_vram_data_with_pattern_write<F>(
+    fn write_vram_data_with_mapper<PW, NW>(
         inner: &mut Self,
         address: u16,
         value: u8,
-        mut pattern_write: F,
+        mut pattern_write: PW,
+        mut name_table_write: NW,
     ) where
-        F: FnMut(u16, u8),
+        PW: FnMut(u16, u8),
+        NW: FnMut(u16, u8) -> bool,
     {
-        let addr = address % 0x4000;
+        let mut addr = address % 0x4000;
+        if (0x3000..0x3f00).contains(&addr) {
+            addr -= 0x1000;
+        }
         if addr < 0x3f00 {
             if addr >= 0x2000 {
                 // Name table (pattern table 0x0000-0x1FFF is read-only for CHR ROM)
-                inner.name_table.write(addr, value);
+                if !name_table_write(addr, value) {
+                    inner.name_table.write(addr, value);
+                }
             } else {
                 pattern_write(addr, value);
             }
@@ -612,12 +712,44 @@ impl<R: Render> Ppu<R> {
         }
     }
 
-    fn get_background_pixel(
-        inner: &Self,
-        pattern_table: Pattern<'_>,
+    fn read_name_table_byte<NR>(inner: &mut Self, address: u16, name_table_read: &mut NR) -> u8
+    where
+        NR: FnMut(u16) -> Option<u8>,
+    {
+        name_table_read(address).unwrap_or_else(|| inner.name_table.read(address))
+    }
+
+    fn read_pattern_pixel<CR>(
+        chr_read: &mut CR,
+        base_addr: u16,
+        tile_idx: u8,
+        tile_x: usize,
+        tile_y: usize,
+        access: PatternAccess,
+    ) -> u8
+    where
+        CR: FnMut(u16, PatternAccess) -> u8,
+    {
+        let tile_addr = base_addr + tile_idx as u16 * 16;
+        let low = chr_read(tile_addr + tile_y as u16, access);
+        let high = chr_read(tile_addr + tile_y as u16 + 8, access);
+        let bit = 7 - tile_x;
+        ((low >> bit) & 1) | (((high >> bit) & 1) << 1)
+    }
+
+    fn get_background_pixel<CR, NR, BO>(
+        inner: &mut Self,
+        chr_read: &mut CR,
+        name_table_read: &mut NR,
+        background_override: &mut BO,
         screen_x: u8,
         screen_y: u8,
-    ) -> (u8, u8) {
+    ) -> (u8, u8)
+    where
+        CR: FnMut(u16, PatternAccess) -> u8,
+        NR: FnMut(u16) -> Option<u8>,
+        BO: FnMut(u8, u8, u16, u8, u8, usize, usize) -> Option<BackgroundTileOverride>,
+    {
         // Check left-column clipping
         if !inner.mask.background_left_enabled() && screen_x < 8 {
             return (0, 0);
@@ -640,25 +772,41 @@ impl<R: Render> Ppu<R> {
         let tile_fine_x = (world_x % 8) as usize;
         let tile_fine_y = (world_y % 8) as usize;
 
-        let (tile, palette_idx) = inner.name_table.with_nth(nt_idx, |name_table| {
-            let tile = name_table.tile(pattern_table, nt_x, nt_y);
-            let palette_idx = inner.name_table.with_attribute_table(nt_idx, |attr_table| {
-                attr_table.palette_idx(nt_x, nt_y)
-            });
-            (tile, palette_idx)
-        });
+        let nt_base = 0x2000 + nt_idx as u16 * 0x0400;
+        let nt_addr = nt_base + nt_y as u16 * TILES_PER_ROW as u16 + nt_x as u16;
+        let tile_idx = Self::read_name_table_byte(inner, nt_addr, name_table_read);
+        let attr_addr = nt_base + 0x03c0 + (nt_y as u16 / 4) * 8 + (nt_x as u16 / 4);
+        let attr_byte = Self::read_name_table_byte(inner, attr_addr, name_table_read);
+        let shift = (((nt_y >> 1) & 0x01) << 2) | (((nt_x >> 1) & 0x01) << 1);
+        let palette_idx = (attr_byte >> shift) & 0x03;
 
-        let color_idx = tile.pixel(tile_fine_x, tile_fine_y);
+        if let Some(override_pixel) = background_override(
+            screen_x,
+            screen_y,
+            nt_addr,
+            tile_idx,
+            palette_idx,
+            tile_fine_x,
+            tile_fine_y,
+        ) {
+            return (override_pixel.palette_idx, override_pixel.color_idx);
+        }
+
+        let base_addr = inner.cur_pattern_table_idx as u16 * 0x1000;
+        let color_idx = Self::read_pattern_pixel(
+            chr_read,
+            base_addr,
+            tile_idx,
+            tile_fine_x,
+            tile_fine_y,
+            PatternAccess::Background,
+        );
 
         (palette_idx, color_idx)
     }
 
     fn sprite_height(&self) -> i16 {
-        if self.ctrl.sprite_size() {
-            16
-        } else {
-            8
-        }
+        if self.ctrl.sprite_size() { 16 } else { 8 }
     }
 
     fn sprite_covers_scanline(&self, sprite_idx: usize, screen_y: u8) -> bool {
@@ -679,7 +827,17 @@ impl<R: Render> Ppu<R> {
         }
     }
 
-    fn prepare_scanline_cache(&mut self, pattern: &[u8], screen_y: u8) {
+    fn prepare_scanline_cache<CR, NR, BO>(
+        &mut self,
+        chr_read: &mut CR,
+        name_table_read: &mut NR,
+        background_override: &mut BO,
+        screen_y: u8,
+    ) where
+        CR: FnMut(u16, PatternAccess) -> u8,
+        NR: FnMut(u16) -> Option<u8>,
+        BO: FnMut(u8, u8, u16, u8, u8, usize, usize) -> Option<BackgroundTileOverride>,
+    {
         if !self.scanline_cache.dirty && self.scanline_cache.scanline == screen_y {
             return;
         }
@@ -692,11 +850,16 @@ impl<R: Render> Ppu<R> {
 
         self.update_sprite_overflow(screen_y);
 
-        let bg_pattern = PatternBand::new(pattern).pattern(self.cur_pattern_table_idx as usize);
         if self.mask.background_enabled() {
             for screen_x in 0..256u16 {
-                let (palette_idx, color_idx) =
-                    Self::get_background_pixel(self, bg_pattern, screen_x as u8, screen_y);
+                let (palette_idx, color_idx) = Self::get_background_pixel(
+                    self,
+                    chr_read,
+                    name_table_read,
+                    background_override,
+                    screen_x as u8,
+                    screen_y,
+                );
                 self.scanline_cache.background[screen_x as usize] = CachedBackgroundPixel {
                     palette_idx,
                     color_idx,
@@ -708,7 +871,6 @@ impl<R: Render> Ppu<R> {
             return;
         }
 
-        let sprite_pattern = PatternBand::new(pattern);
         let sprite_height = self.sprite_height();
         let mut visible_count = 0;
         let mut visible_sprites = [CachedSprite {
@@ -748,22 +910,32 @@ impl<R: Render> Ppu<R> {
                 } as u8;
 
                 let color_idx = if self.ctrl.sprite_size() {
-                    let pattern_table_idx = (tile_idx & 0x01) as usize;
+                    let pattern_table_idx = (tile_idx & 0x01) as u16;
                     let tile_base = tile_idx & 0xFE;
                     let tile_offset = src_y / 8;
                     let tile_row = (src_y % 8) as usize;
-                    let pattern_table = sprite_pattern.pattern(pattern_table_idx);
-                    let tile = pattern_table.tile(tile_base.wrapping_add(tile_offset));
-                    tile.pixel(src_x, tile_row)
+                    Self::read_pattern_pixel(
+                        chr_read,
+                        pattern_table_idx * 0x1000,
+                        tile_base.wrapping_add(tile_offset),
+                        src_x,
+                        tile_row,
+                        PatternAccess::Sprite,
+                    )
                 } else {
                     let pattern_table_idx = if self.ctrl.sprite_pattern_table() {
-                        1
+                        0x1000
                     } else {
                         0
                     };
-                    let pattern_table = sprite_pattern.pattern(pattern_table_idx);
-                    let tile = pattern_table.tile(tile_idx);
-                    tile.pixel(src_x, src_y as usize)
+                    Self::read_pattern_pixel(
+                        chr_read,
+                        pattern_table_idx,
+                        tile_idx,
+                        src_x,
+                        src_y as usize,
+                        PatternAccess::Sprite,
+                    )
                 };
 
                 pixels[pixel_x as usize] = color_idx;
@@ -805,9 +977,26 @@ impl<R: Render> Ppu<R> {
     }
 
     /// Read VRAM at current address and increment (for testing)
+    #[cfg(test)]
     fn read_vram_and_inc(&mut self, pattern: &[u8]) -> u8 {
+        Self::read_vram_and_inc_with_mapper(
+            self,
+            &mut |addr, _| pattern[addr as usize % pattern.len()],
+            &mut |_| None,
+        )
+    }
+
+    fn read_vram_and_inc_with_mapper<CR, NR>(
+        &mut self,
+        chr_read: &mut CR,
+        name_table_read: &mut NR,
+    ) -> u8
+    where
+        CR: FnMut(u16, PatternAccess) -> u8,
+        NR: FnMut(u16) -> Option<u8>,
+    {
         let vram_addr = self.vram_addr;
-        let value = Self::read_vram_data(self, pattern, vram_addr);
+        let value = Self::read_vram_data_with_mapper(self, vram_addr, chr_read, name_table_read);
         // Increment VRAM address based on control flag
         let increment = if self.ctrl.increment_mode() { 32 } else { 1 };
         self.vram_addr = self.vram_addr.wrapping_add(increment);
@@ -848,8 +1037,31 @@ impl<R: Render> Ppu<R> {
     }
 
     /// Render a single pixel (for testing)
+    #[cfg(test)]
     fn render_pixel(&mut self, pattern: &[u8], x: u8, y: u8) -> Pixel {
-        self.prepare_scanline_cache(pattern, y);
+        self.render_pixel_with_mapper(
+            &mut |addr, _| pattern[addr as usize % pattern.len()],
+            &mut |_| None,
+            &mut |_, _, _, _, _, _, _| None,
+            x,
+            y,
+        )
+    }
+
+    fn render_pixel_with_mapper<CR, NR, BO>(
+        &mut self,
+        chr_read: &mut CR,
+        name_table_read: &mut NR,
+        background_override: &mut BO,
+        x: u8,
+        y: u8,
+    ) -> Pixel
+    where
+        CR: FnMut(u16, PatternAccess) -> u8,
+        NR: FnMut(u16) -> Option<u8>,
+        BO: FnMut(u8, u8, u16, u8, u8, usize, usize) -> Option<BackgroundTileOverride>,
+    {
+        self.prepare_scanline_cache(chr_read, name_table_read, background_override, y);
 
         let bg_pixel = if self.mask.background_enabled() {
             let cached = self.scanline_cache.background[x as usize];

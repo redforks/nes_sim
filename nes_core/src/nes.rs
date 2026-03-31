@@ -7,6 +7,7 @@ use crate::nes::mapper::Cartridge;
 use crate::nes::ppu::{Mirroring, Ppu};
 use crate::render::Render;
 use log::trace;
+use std::cell::RefCell;
 
 pub mod apu;
 pub mod controller;
@@ -58,6 +59,7 @@ impl<R: Render, D: AudioDriver> NesMcu<R, D> {
             *item = self.read(addr + i as u16);
         }
         self.ppu.oam_dma(&buf);
+        self.cartridge.on_oam_dma();
     }
 
     /// Tick PPU by one dot.
@@ -65,8 +67,28 @@ impl<R: Render, D: AudioDriver> NesMcu<R, D> {
     pub fn tick_ppu(&mut self) {
         let (scanline, dot) = self.ppu.timing();
         let rendering_enabled = self.ppu.rendering_enabled();
-        let pattern = self.cartridge.pattern_ref();
-        self.ppu.tick(pattern);
+        let cartridge = RefCell::new(&mut self.cartridge);
+        self.ppu.tick_with_mapper(
+            |addr, access| cartridge.borrow_mut().read_chr(addr, access),
+            |addr| cartridge.borrow_mut().read_nametable(addr),
+            |screen_x,
+             screen_y,
+             nametable_addr,
+             tile_idx,
+             palette_idx,
+             tile_fine_x,
+             tile_fine_y| {
+                cartridge.borrow_mut().background_override(
+                    screen_x,
+                    screen_y,
+                    nametable_addr,
+                    tile_idx,
+                    palette_idx,
+                    tile_fine_x,
+                    tile_fine_y,
+                )
+            },
+        );
         self.cartridge.on_ppu_tick(scanline, dot, rendering_enabled);
     }
 
@@ -108,7 +130,14 @@ impl<R: Render, D: AudioDriver> Mcu for NesMcu<R, D> {
     fn read(&mut self, address: u16) -> u8 {
         match address {
             0x0000..=0x1fff => self.lower_ram.read(address),
-            0x2000..=0x3fff => self.ppu.read(self.cartridge.pattern_ref(), address),
+            0x2000..=0x3fff => {
+                let cartridge = RefCell::new(&mut self.cartridge);
+                self.ppu.read_with_mapper(
+                    address,
+                    |addr, access| cartridge.borrow_mut().read_chr(addr, access),
+                    |addr| cartridge.borrow_mut().read_nametable(addr),
+                )
+            }
             0x4015 => self.apu.read(address),
             0x4016..=0x4017 => self.controller.read(address),
             0x4000..=0x401f => self.after_ppu.read(address),
@@ -120,11 +149,28 @@ impl<R: Render, D: AudioDriver> Mcu for NesMcu<R, D> {
         match address {
             0x0000..=0x1fff => self.lower_ram.write(address, value),
             0x2000..=0x3fff => {
-                let cartridge = &mut self.cartridge;
-                self.ppu
-                    .write_with_pattern_write(address, value, |pattern_addr, pattern_value| {
-                        cartridge.write_pattern(pattern_addr, pattern_value)
-                    });
+                let reg = 0x2000 + ((address - 0x2000) % 8);
+                match reg {
+                    0x2000 => self.cartridge.on_ppu_ctrl_write(value),
+                    0x2001 => self.cartridge.on_ppu_mask_write(value),
+                    0x2005 => self.cartridge.on_ppu_scroll_write(value),
+                    _ => {}
+                }
+                let cartridge = RefCell::new(&mut self.cartridge);
+                self.ppu.write_with_mapper(
+                    address,
+                    value,
+                    |pattern_addr, pattern_value| {
+                        cartridge
+                            .borrow_mut()
+                            .write_pattern(pattern_addr, pattern_value)
+                    },
+                    |nametable_addr, nametable_value| {
+                        cartridge
+                            .borrow_mut()
+                            .write_nametable(nametable_addr, nametable_value)
+                    },
+                );
             }
             0x4014 => self.ppu_dma(value),
             0x4016 => {

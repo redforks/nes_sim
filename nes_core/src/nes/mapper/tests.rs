@@ -125,6 +125,18 @@ fn create_cartridge_mapper4_with_chr_ram() {
 }
 
 #[test]
+fn create_cartridge_mapper5() {
+    let rom = create_test_nes(5, 4, 2);
+    let file = INesFile::new(rom).unwrap();
+    let mut cartridge = create_cartridge(&file);
+
+    let val = cartridge.read(0x8000);
+    assert_eq!(val, 0);
+
+    assert_eq!(cartridge.pattern_ref().len(), 8 * 1024);
+}
+
+#[test]
 #[should_panic(expected = "Unsupported cartridge mapper no")]
 fn create_cartridge_unsupported_mapper() {
     let rom = create_test_nes(99, 1, 1);
