@@ -850,7 +850,9 @@ const fn build_opcode_table() -> [ArrayVec<[Microcode; 7]>; 256] {
     r[ANC2 as usize] = microcode_arr!(AncImmediate);
     r[ARR as usize] = microcode_arr!(ArrImmediate);
     r[AXS as usize] = microcode_arr!(AxsImmediate);
-    r[LAX_IMMEDIATE as usize] = microcode_arr!(LoadImmediateA, Tax);
+    // LAX immediate should be a two-cycle instruction: FetchAndDecode + LaxImmediate
+    // Make the immediate microcode a single micro-op (LaxImmediate) so total cycles = 2
+    r[LAX_IMMEDIATE as usize] = microcode_arr!(LaxImmediate);
     r[LAX_ZERO_PAGE as usize] = microcode_arr!(zero_page_load_alu(), Lax);
     r[LAX_ZERO_PAGE_Y as usize] = microcode_arr!(zero_page_addr(), zero_page_y_load_alu(), Lax);
     r[LAX_ABSOLUTE as usize] = microcode_arr!(
@@ -1320,6 +1322,7 @@ const fn build_opcode_table() -> [ArrayVec<[Microcode; 7]>; 256] {
             oops: false,
             load_into_alu: false
         },
+        Nop,
         Shx
     );
     r[SHA_ABSOLUTE_INDEXED_Y as usize] = microcode_arr!(
@@ -1328,6 +1331,7 @@ const fn build_opcode_table() -> [ArrayVec<[Microcode; 7]>; 256] {
             oops: false,
             load_into_alu: false
         },
+        Nop,
         Sha
     );
     r[SHY_ABSOLUTE_INDEXED_X as usize] = microcode_arr!(
@@ -1336,6 +1340,7 @@ const fn build_opcode_table() -> [ArrayVec<[Microcode; 7]>; 256] {
             oops: false,
             load_into_alu: false
         },
+        Nop,
         Shy
     );
     r[TAS_ABSOLUTE_INDEXED_Y as usize] = microcode_arr!(
@@ -1344,6 +1349,7 @@ const fn build_opcode_table() -> [ArrayVec<[Microcode; 7]>; 256] {
             oops: false,
             load_into_alu: false
         },
+        Nop,
         Tas
     );
     r[SHA_INDIRECT_INDEXED_Y as usize] = microcode_arr!(
@@ -1479,6 +1485,8 @@ pub enum Microcode {
     /// Undocumented ANE/XAA: (A OR CONST) AND X AND oper -> A
     /// Implemented deterministically as A := X & oper
     AneImmediate,
+    /// LAX immediate: load immediate into A and X in a single micro-op (two cycles total with Fetch)
+    LaxImmediate,
     /// Fetch a byte from memory use address saved in `data_latch`, then and with accumulator
     And,
 
@@ -2012,6 +2020,7 @@ impl Microcode {
             Self::AneImmediate => Self::ane_immediate(cpu),
             Self::Sha => cpu.sha(),
             Self::Las => Self::las(cpu),
+            Self::LaxImmediate => Self::lax_immediate(cpu),
 
             Self::Lax => cpu.lax(),
             Self::Sax => cpu.sax(),
@@ -2142,6 +2151,15 @@ impl Microcode {
         cpu.sp = v;
         cpu.update_zero_flag(v);
         cpu.update_negative_flag(v);
+    }
+
+    fn lax_immediate<M: Mcu>(cpu: &mut Cpu<M>) {
+        // Read immediate operand into alu and perform LAX semantics in one micro-op.
+        cpu.alu = cpu.inc_read_byte();
+        cpu.a = cpu.alu;
+        cpu.x = cpu.alu;
+        cpu.update_zero_flag(cpu.alu);
+        cpu.update_negative_flag(cpu.alu);
     }
 
     fn alr_immediate<M: Mcu>(cpu: &mut Cpu<M>) {

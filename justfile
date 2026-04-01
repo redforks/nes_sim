@@ -27,7 +27,10 @@ rom-test: cpu-test instr_misc instr_test-v5 instr_test-v3 nestest cpu_interrupts
 unit-test:
     cargo test
 
-passed: cpu-test instr_misc instr_test-v5 instr_test-v3 nestest
+instr-timing:
+    cargo run -p nes_cpu_test --release -- --quiet -f ../nes-test-roms/instr_timing/instr_timing.nes
+
+passed: cpu-test instr_misc instr_test-v5 instr_test-v3 nestest instr-timing
     cargo run -p nes_cpu_test --release -- --quiet -f ../nes-test-roms/cpu_interrupts_v2/rom_singles/1-cli_latency.nes
 
 wasm-debug-build:
