@@ -1,9 +1,9 @@
 use crate::{
+    ExecuteResult, Plugin,
     ines::INesFile,
     machine::Machine,
-    nes::{controller::Button, NesMcu},
+    nes::{NesMcu, controller::Button},
     render::Render,
-    ExecuteResult, Plugin,
 };
 
 /// Safety limit: maximum CPU instruction ticks per `process_frame()` call.
@@ -13,7 +13,6 @@ const MAX_TICKS_PER_FRAME: u32 = 60000;
 
 pub struct NesMachine<P, R: Render, D: crate::nes::apu::AudioDriver> {
     machine: Machine<P, NesMcu<R, D>>,
-    is_vblank: bool,
     enter_vblank: bool,
 }
 
@@ -25,10 +24,8 @@ where
 {
     pub fn new(file: &INesFile, plugin: P, render: R, audio_driver: D) -> Self {
         let mcu = NesMcu::new(file, render, audio_driver);
-        let is_vblank = mcu.ppu().vblank();
         Self {
             machine: Machine::with_plugin(plugin, mcu),
-            is_vblank,
             enter_vblank: false,
         }
     }
@@ -64,6 +61,7 @@ where
 
     /// Execute one CPU instruction and tick PPU/APU. Returns the `ExecuteResult`.
     pub fn tick(&mut self) -> ExecuteResult {
+        let prev_vblank = self.mcu().ppu().vblank();
         let result = self.machine.tick();
         self.machine.mcu_mut().tick_apu();
         let apu_irq = self.machine.mcu().apu_irq_pending();
@@ -72,10 +70,9 @@ where
         for _ in 0..3 {
             self.machine.mcu_mut().tick_ppu()
         }
-        if self.mcu().ppu().vblank() != self.is_vblank && !self.is_vblank {
+        if !prev_vblank && self.mcu().ppu().vblank() {
             self.enter_vblank = true;
         }
-        self.is_vblank = self.mcu().ppu().vblank();
         let nmi_line = self.mcu().ppu().nmi_outline();
         self.machine.cpu_mut().update_nmi_line(nmi_line);
         result
