@@ -1,15 +1,17 @@
 use anyhow::Result;
 use image::EncodableLayout;
-use nes_core::EmptyPlugin;
 use nes_core::ines::INesFile;
 use nes_core::nes::apu::AudioDriver;
 use nes_core::nes::controller::Button;
 use nes_core::nes_machine::NesMachine;
-use nes_core::render::ImageRender;
+use nes_core::render::{ImageRender, Render};
+use nes_core::EmptyPlugin;
 use sdl2::audio::{AudioQueue, AudioSpecDesired};
 use sdl2::event::Event;
 use sdl2::keyboard::Keycode;
 use sdl2::pixels::PixelFormatEnum;
+use sdl2::render::Canvas;
+use sdl2::video::Window;
 use std::time::{Duration, Instant};
 
 const AUDIO_SAMPLE_RATE: i32 = 44_100;
@@ -34,6 +36,60 @@ struct SdlAudioDriver {
     queue: AudioQueue<f32>,
     buffer: Vec<f32>,
     sample_rate: u32,
+}
+
+struct SdlRender {
+    image: ImageRender,
+    canvas: Canvas<Window>,
+}
+
+impl std::fmt::Debug for SdlRender {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("SdlRender").finish_non_exhaustive()
+    }
+}
+
+impl SdlRender {
+    fn new(canvas: Canvas<Window>) -> Self {
+        Self {
+            image: ImageRender::default_dimension(),
+            canvas,
+        }
+    }
+}
+
+impl Render for SdlRender {
+    fn clear(&mut self, color: [u8; 4]) {
+        self.image.clear(color);
+    }
+
+    fn set_pixel(&mut self, x: u32, y: u32, color: [u8; 4]) {
+        self.image.set_pixel(x, y, color);
+    }
+
+    fn dimensions(&self) -> (u32, u32) {
+        self.image.dimensions()
+    }
+
+    fn finish(&mut self) {
+        let (width, height) = self.image.dimensions();
+        let texture_creator = self.canvas.texture_creator();
+        let mut texture = texture_creator
+            .create_texture_streaming(PixelFormatEnum::ABGR8888, width, height)
+            .expect("failed to create SDL texture");
+
+        texture
+            .update(
+                None,
+                self.image.borrow_image().as_bytes(),
+                (width * 4) as usize,
+            )
+            .expect("failed to upload SDL texture");
+        self.canvas
+            .copy(&texture, None, None)
+            .expect("failed to copy SDL texture");
+        self.canvas.present();
+    }
 }
 
 impl SdlAudioDriver {
@@ -112,26 +168,16 @@ impl RunAction {
             .map_err(|e| anyhow::anyhow!(e))?;
 
         // Create canvas/renderer
-        let mut canvas = window
+        let canvas = window
             .into_canvas()
             .build()
             .map_err(|e| anyhow::anyhow!(e))?;
 
-        // Create texture for RGBA8888 pixel format
-        let texture_creator = canvas.texture_creator();
-        let mut texture = texture_creator
-            .create_texture_streaming(PixelFormatEnum::ABGR8888, 256, 240)
-            .map_err(|e| anyhow::anyhow!(e))?;
+        // The renderer uploads and presents itself during `finish()`.
+        let sdl_render = SdlRender::new(canvas);
 
-        // Create image renderer for display - keep a reference to access later
-        let image_render = ImageRender::default_dimension();
-
-        // NesMachine will use the ImageRender directly. Pass a clone (shared Rc) so
-        // we can update the texture from the main loop.
-        let shared_image = image_render.clone();
-
-        // Create NES machine with image renderer directly
-        let mut machine = NesMachine::new(f, EmptyPlugin::new(), shared_image, audio_driver);
+        // Create NES machine with SDL-backed renderer
+        let mut machine = NesMachine::new(f, EmptyPlugin::new(), sdl_render, audio_driver);
 
         // Initialize event pump
         let mut event_pump = sdl_context.event_pump().map_err(|e| anyhow::anyhow!(e))?;
@@ -191,18 +237,9 @@ impl RunAction {
                 }
             }
 
-            // Run one frame
+            // Run one frame; the renderer presents from `finish()`.
             let result = machine.process_frame();
             machine.flush_audio();
-
-            // Update texture with frame data
-            texture.update(None, image_render.borrow_image().as_bytes(), 256 * 4)?;
-
-            // Copy texture to canvas and present
-            canvas
-                .copy(&texture, None, None)
-                .map_err(|e| anyhow::anyhow!(e))?;
-            canvas.present();
 
             // Check if execution should stop
             match result {
