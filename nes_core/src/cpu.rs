@@ -1,4 +1,4 @@
-use self::microcode::{opcode, Microcode};
+use self::microcode::{Microcode, opcode};
 use crate::mcu::Mcu;
 use arraydeque::ArrayDeque;
 
@@ -599,9 +599,10 @@ impl<M: Mcu> Cpu<M> {
     }
 
     fn bit(&mut self) {
-        self.inner_set_flag(Flag::Negative, self.alu & 0x80 != 0);
-        self.inner_set_flag(Flag::Overflow, self.alu & 0x40 != 0);
-        self.update_zero_flag(self.a & self.alu);
+        let v = self.read_byte(self.ab);
+        self.inner_set_flag(Flag::Negative, v & 0x80 != 0);
+        self.inner_set_flag(Flag::Overflow, v & 0x40 != 0);
+        self.update_zero_flag(self.a & v);
     }
 
     fn asl(&mut self, val: u8) -> u8 {

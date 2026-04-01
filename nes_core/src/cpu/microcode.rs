@@ -117,9 +117,9 @@ macro_rules! microcode_arr {
 }
 
 const fn build_opcode_table() -> [ArrayVec<[Microcode; 7]>; 256] {
-    use opcode::*;
     use Microcode::*;
     use Register::*;
+    use opcode::*;
 
     let mut r = include!("init_microtable.inc.rs");
     r[AND_IMMEDIATE as usize] = microcode_arr!(AndImmediate);
@@ -316,11 +316,11 @@ const fn build_opcode_table() -> [ArrayVec<[Microcode; 7]>; 256] {
         },
         StoreR(Y)
     );
-    r[BIT_ZERO_PAGE as usize] = microcode_arr!(zero_page_load_alu(), Bit);
+    r[BIT_ZERO_PAGE as usize] = microcode_arr!(zero_page_addr(), Bit);
     r[BIT_ABSOLUTE as usize] = microcode_arr!(
         AbsoluteL,
         AbsoluteH {
-            load_into_alu: true
+            load_into_alu: false
         },
         Bit
     );
