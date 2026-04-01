@@ -117,9 +117,9 @@ macro_rules! microcode_arr {
 }
 
 const fn build_opcode_table() -> [ArrayVec<[Microcode; 7]>; 256] {
+    use opcode::*;
     use Microcode::*;
     use Register::*;
-    use opcode::*;
 
     let mut r = include!("init_microtable.inc.rs");
     r[AND_IMMEDIATE as usize] = microcode_arr!(AndImmediate);
@@ -844,6 +844,7 @@ const fn build_opcode_table() -> [ArrayVec<[Microcode; 7]>; 256] {
         Eor
     );
     r[ALR as usize] = microcode_arr!(AlrImmediate);
+    r[ANE as usize] = microcode_arr!(AneImmediate);
     r[ANC as usize] = microcode_arr!(AncImmediate);
     r[ANC1 as usize] = microcode_arr!(AncImmediate);
     r[ANC2 as usize] = microcode_arr!(AncImmediate);
@@ -1447,6 +1448,9 @@ pub enum Microcode {
 
     /// Take immediate value from instruction data stream, and it with accumulator
     AndImmediate,
+    /// Undocumented ANE/XAA: (A OR CONST) AND X AND oper -> A
+    /// Implemented deterministically as A := X & oper
+    AneImmediate,
     /// Fetch a byte from memory use address saved in `data_latch`, then and with accumulator
     And,
 
@@ -1764,6 +1768,8 @@ pub(crate) mod opcode {
     //   Combined instructions
 
     pub const ALR: u8 = 0x4B;
+    /// Undocumented ANE / XAA immediate
+    pub const ANE: u8 = 0x8B;
     pub const ANC1: u8 = 0x0B;
     pub const ANC: u8 = 0x2B;
     pub const ANC2: u8 = 0x2B;
@@ -1969,6 +1975,7 @@ impl Microcode {
             Self::AncImmediate => Self::anc_immediate(cpu),
             Self::ArrImmediate => Self::arr_immediate(cpu),
             Self::AxsImmediate => Self::axs_immediate(cpu),
+            Self::AneImmediate => Self::ane_immediate(cpu),
 
             Self::Lax => cpu.lax(),
             Self::Sax => cpu.sax(),
@@ -2078,6 +2085,16 @@ impl Microcode {
     fn and_immediate<M: Mcu>(cpu: &mut Cpu<M>) {
         cpu.alu = cpu.inc_read_byte();
         cpu.and();
+    }
+
+    fn ane_immediate<M: Mcu>(cpu: &mut Cpu<M>) {
+        // Undocumented ANE/XAA: hardware behaviour uncertain; use deterministic
+        // approximation: A := X & oper. Read immediate operand into alu first.
+        cpu.alu = cpu.inc_read_byte();
+        // Compute X & operand into A, update flags accordingly
+        cpu.a = cpu.x & cpu.alu;
+        cpu.update_zero_flag(cpu.a);
+        cpu.update_negative_flag(cpu.a);
     }
 
     fn alr_immediate<M: Mcu>(cpu: &mut Cpu<M>) {
