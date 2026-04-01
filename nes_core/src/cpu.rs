@@ -38,7 +38,10 @@ pub struct Cpu<M: Mcu> {
     irq_line: bool,
     irq_inhibit: Option<bool>,
     nmi_line: bool,
-    nmi_requested: bool,
+    /// cycles that nmi_requested, in real 6502 cpu, cpu check nmi at the last cycle of instruction,
+    /// if set nmi line of ppu, such as STA $2000, nmi line set after last cycle of STA instruction, then
+    /// cpu can not know nmi signal until the next instruction, we save the cycle that nmi requested to detect this
+    nmi_requested_at: Option<usize>,
     mode: CpuMode,
 
     microcode_queue: ArrayDeque<Microcode, 8>,
@@ -63,7 +66,7 @@ impl<M: Mcu> Cpu<M> {
             nmi_line: false,
             microcode_queue: ArrayDeque::new(),
             mode: CpuMode::Normal,
-            nmi_requested: false,
+            nmi_requested_at: None,
         };
         r.reset();
         r
@@ -85,7 +88,7 @@ impl<M: Mcu> Cpu<M> {
         self.irq_line = false;
         self.irq_inhibit = None;
         self.microcode_queue.clear();
-        self.nmi_requested = false;
+        self.nmi_requested_at = None;
         self.mode = CpuMode::Normal;
         self.sp = 0xFD;
         self.cycles = 0;
@@ -108,7 +111,7 @@ impl<M: Mcu> Cpu<M> {
 
     /// Cpu will enter nmi before exec next instrnuction
     pub fn request_nmi(&mut self) {
-        self.nmi_requested = true;
+        self.nmi_requested_at = Some(self.cycles);
     }
 
     pub fn set_irq(&mut self, enabled: bool) {
@@ -131,7 +134,12 @@ impl<M: Mcu> Cpu<M> {
                 plugin.start(self);
                 let irq_inhibit = self.irq_inhibit.take();
 
-                if std::mem::take(&mut self.nmi_requested) && self.mode == CpuMode::Normal {
+                if self
+                    .nmi_requested_at
+                    .is_some_and(|cycles| self.cycles > cycles)
+                    && self.mode == CpuMode::Normal
+                {
+                    self.nmi_requested_at = None;
                     // handle nmi
                     // reset nmi_requested, because nmi signal is edge detected, ignored if cpu is already in nmi mode
                     self.mode = CpuMode::Nmi;
@@ -638,7 +646,7 @@ impl<M: Mcu> Cpu<M> {
     }
 
     fn load_irq_address(&mut self) {
-        if std::mem::take(&mut self.nmi_requested) && self.mode == CpuMode::Normal {
+        if std::mem::take(&mut self.nmi_requested_at).is_some() && self.mode == CpuMode::Normal {
             // hijacked by nmi
             self.mode = CpuMode::Nmi;
             self.pc = self.read_word(0xFFFA);
