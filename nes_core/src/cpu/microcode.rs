@@ -1314,6 +1314,14 @@ const fn build_opcode_table() -> [ArrayVec<[Microcode; 7]>; 256] {
         },
         Shx
     );
+    r[SHA_ABSOLUTE_INDEXED_Y as usize] = microcode_arr!(
+        AbsoluteL,
+        AbsoluteIndexedY {
+            oops: false,
+            load_into_alu: false
+        },
+        Sha
+    );
     r[SHY_ABSOLUTE_INDEXED_X as usize] = microcode_arr!(
         AbsoluteL,
         AbsoluteIndexedX {
@@ -1329,6 +1337,18 @@ const fn build_opcode_table() -> [ArrayVec<[Microcode; 7]>; 256] {
             load_into_alu: false
         },
         Tas
+    );
+    r[SHA_INDIRECT_INDEXED_Y as usize] = microcode_arr!(
+        Nop,
+        zero_page_addr(),
+        Indexed {
+            load_into_alu: false
+        },
+        AbsoluteIndexedYWithoutHigh {
+            oops: false,
+            load_into_alu: false
+        },
+        Sha
     );
     r
 }
@@ -1483,6 +1503,7 @@ pub enum Microcode {
     Slo,
     Sre,
     Shx,
+    Sha,
     Shy,
     Tas,
 
@@ -1849,7 +1870,9 @@ pub(crate) mod opcode {
     pub const SRE_INDIRECT_INDEXED: u8 = 0x53;
 
     pub const SHX_ABSOLUTE_INDEXED_Y: u8 = 0x9E;
+    pub const SHA_ABSOLUTE_INDEXED_Y: u8 = 0x9F;
     pub const SHY_ABSOLUTE_INDEXED_X: u8 = 0x9C;
+    pub const SHA_INDIRECT_INDEXED_Y: u8 = 0x93;
     pub const TAS_ABSOLUTE_INDEXED_Y: u8 = 0x9B;
 
     // duplicated opcodes
@@ -1976,6 +1999,7 @@ impl Microcode {
             Self::ArrImmediate => Self::arr_immediate(cpu),
             Self::AxsImmediate => Self::axs_immediate(cpu),
             Self::AneImmediate => Self::ane_immediate(cpu),
+            Self::Sha => cpu.sha(),
 
             Self::Lax => cpu.lax(),
             Self::Sax => cpu.sax(),

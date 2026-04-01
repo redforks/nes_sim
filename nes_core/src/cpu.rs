@@ -1,4 +1,4 @@
-use self::microcode::{Microcode, opcode};
+use self::microcode::{opcode, Microcode};
 use crate::mcu::Mcu;
 use arraydeque::ArrayDeque;
 
@@ -536,6 +536,13 @@ impl<M: Mcu> Cpu<M> {
         let v = self.y & self.abh().wrapping_add(1);
         let addr = (self.abl() as u16) | ((v as u16) << 8);
         self.write_byte(addr, v);
+    }
+
+    fn sha(&mut self) {
+        // SHA (AHX/AXA): store A & X & (high-byte of addr + 1) at address
+        let out = self.a & self.x & self.abh().wrapping_add(1);
+        let addr = (self.abl() as u16) | ((out as u16) << 8);
+        self.write_byte(addr, out);
     }
 
     fn tas(&mut self) {
