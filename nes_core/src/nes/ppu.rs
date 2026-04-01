@@ -1027,7 +1027,7 @@ impl<R: Render> Ppu<R> {
     /// Returns the current status and clears the v_blank flag
     fn read_status(&mut self) -> PpuStatus {
         let r = self.status;
-        if self.scanline == VBLANK_SET_SCANLINE && self.dot == 0 {
+        if self.scanline == VBLANK_SET_SCANLINE && self.dot == 1 {
             self.suppress_vblank_for_current_frame = true;
         }
         // Clear v_blank flag on read
