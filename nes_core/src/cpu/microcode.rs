@@ -868,6 +868,14 @@ const fn build_opcode_table() -> [ArrayVec<[Microcode; 7]>; 256] {
         },
         Lax
     );
+    r[LAS_ABSOLUTE_INDEXED_Y as usize] = microcode_arr!(
+        AbsoluteL,
+        AbsoluteIndexedY {
+            oops: true,
+            load_into_alu: true
+        },
+        Las
+    );
     r[LAX_INDEXED_INDIRECT as usize] = microcode_arr!(
         zero_page_addr(),
         zero_page_x_addr(),
@@ -1506,6 +1514,7 @@ pub enum Microcode {
     Sha,
     Shy,
     Tas,
+    Las,
 
     SetPcToAb,
     JmpIndirect,
@@ -1805,6 +1814,8 @@ pub(crate) mod opcode {
     pub const LAX_INDEXED_INDIRECT: u8 = 0xA3;
     pub const LAX_INDIRECT_INDEXED: u8 = 0xB3;
 
+    pub const LAS_ABSOLUTE_INDEXED_Y: u8 = 0xBB;
+
     pub const SAX_ZERO_PAGE: u8 = 0x87;
     pub const SAX_ZERO_PAGE_Y: u8 = 0x97;
     pub const SAX_ABSOLUTE: u8 = 0x8F;
@@ -2000,6 +2011,7 @@ impl Microcode {
             Self::AxsImmediate => Self::axs_immediate(cpu),
             Self::AneImmediate => Self::ane_immediate(cpu),
             Self::Sha => cpu.sha(),
+            Self::Las => Self::las(cpu),
 
             Self::Lax => cpu.lax(),
             Self::Sax => cpu.sax(),
@@ -2119,6 +2131,17 @@ impl Microcode {
         cpu.a = cpu.x & cpu.alu;
         cpu.update_zero_flag(cpu.a);
         cpu.update_negative_flag(cpu.a);
+    }
+
+    fn las<M: Mcu>(cpu: &mut Cpu<M>) {
+        // LAS/LAR: load memory into ALU already (addressing microcode sets cpu.alu)
+        // Then perform: M AND SP -> A, X, SP
+        let v = cpu.alu & cpu.sp;
+        cpu.a = v;
+        cpu.x = v;
+        cpu.sp = v;
+        cpu.update_zero_flag(v);
+        cpu.update_negative_flag(v);
     }
 
     fn alr_immediate<M: Mcu>(cpu: &mut Cpu<M>) {
