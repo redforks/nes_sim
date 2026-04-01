@@ -124,6 +124,11 @@ impl<M: Mcu> Cpu<M> {
 
     /// Return true if just execute current instruction
     pub fn tick<P: Plugin<M>>(&mut self, plugin: &mut P) -> (ExecuteResult, bool) {
+        self.cycles = self.cycles.wrapping_add(1);
+        if self.cycles % 3 != 0 {
+            return (ExecuteResult::Continue, false);
+        }
+
         if self.is_halted() {
             return (ExecuteResult::Halt, true);
         }
@@ -136,7 +141,7 @@ impl<M: Mcu> Cpu<M> {
 
                 if self
                     .nmi_requested_at
-                    .is_some_and(|cycles| self.cycles > cycles)
+                    .is_some_and(|cycles| self.cycles > cycles + 5)
                     && self.mode == CpuMode::Normal
                 {
                     self.nmi_requested_at = None;
@@ -176,7 +181,6 @@ impl<M: Mcu> Cpu<M> {
                 }
             }
         };
-        self.cycles = self.cycles.wrapping_add(1);
         code.exec(self);
         if self.microcode_queue.is_empty() {
             if self.opcode == opcode::RTI {

@@ -6,14 +6,15 @@ use crate::{
     render::Render,
 };
 
-/// Safety limit: maximum CPU instruction ticks per `process_frame()` call.
+/// Safety limit: maximum PPU instruction ticks per `process_frame()` call.
 /// Two full frames worth of ticks; prevents an infinite loop if VBlank never fires
 /// (e.g. when the PPU is not connected or NES hardware is not present).
-const MAX_TICKS_PER_FRAME: u32 = 60000;
+const MAX_TICKS_PER_FRAME: u32 = 90000;
 
 pub struct NesMachine<P, R: Render, D: crate::nes::apu::AudioDriver> {
     machine: Machine<P, NesMcu<R, D>>,
     enter_vblank: bool,
+    cycles: u8,
 }
 
 impl<P, R, D> NesMachine<P, R, D>
@@ -27,6 +28,7 @@ where
         Self {
             machine: Machine::with_plugin(plugin, mcu),
             enter_vblank: false,
+            cycles: 0,
         }
     }
 
@@ -38,8 +40,6 @@ where
     ///
     /// If VBlank does not occur within `MAX_TICKS_PER_FRAME` instruction ticks
     /// (safety guard for MCUs without a real PPU), the function returns early.
-    ///
-    /// A frame is ~29780.5 CPU cycles (262 scanlines × 341 dots / 3 PPU:CPU ratio).
     pub fn process_frame(&mut self) -> ExecuteResult {
         // Delegate to `tick()` which executes a single CPU instruction and
         // advances PPU/APU accordingly. Loop until VBlank or safety limit.
@@ -63,13 +63,15 @@ where
     pub fn tick(&mut self) -> ExecuteResult {
         let prev_vblank = self.mcu().ppu().vblank();
         let result = self.machine.tick();
-        self.machine.mcu_mut().tick_apu();
+        self.cycles += 1;
+        if self.cycles == 3 {
+            self.cycles = 0;
+            self.machine.mcu_mut().tick_apu();
+        }
         let apu_irq = self.machine.mcu().apu_irq_pending();
         let cartridge_irq = self.machine.mcu().cartridge_irq_pending();
         self.machine.cpu_mut().set_irq(apu_irq || cartridge_irq);
-        for _ in 0..3 {
-            self.machine.mcu_mut().tick_ppu()
-        }
+        self.machine.mcu_mut().tick_ppu();
         if !prev_vblank && self.mcu().ppu().vblank() {
             self.enter_vblank = true;
         }
