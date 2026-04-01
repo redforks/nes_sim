@@ -59,25 +59,6 @@ impl Render for ImageRender {
     }
 }
 
-// Also implement Render directly for RgbaImage for convenience
-// This allows existing code to work with minimal changes
-impl Render for RgbaImage {
-    fn clear(&mut self, color: [u8; 4]) {
-        let pixel = Rgba(color);
-        for p in self.pixels_mut() {
-            *p = pixel;
-        }
-    }
-
-    fn set_pixel(&mut self, x: u32, y: u32, color: [u8; 4]) {
-        self.put_pixel(x, y, Rgba(color));
-    }
-
-    fn dimensions(&self) -> (u32, u32) {
-        self.dimensions()
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -113,18 +94,6 @@ mod tests {
         assert_eq!(image.get_pixel(0, 0), &Rgba([255, 0, 0, 255]));
         assert_eq!(image.get_pixel(5, 5), &Rgba([0, 255, 0, 255]));
         assert_eq!(image.get_pixel(9, 9), &Rgba([0, 0, 255, 255]));
-    }
-
-    #[test]
-    fn test_rgba_image_render_impl() {
-        let mut image: RgbaImage = RgbaImage::new(10, 10);
-
-        // Test that RgbaImage implements Render
-        image.clear([128, 128, 128, 255]);
-        assert_eq!(image.dimensions(), (10, 10));
-
-        image.set_pixel(0, 0, [255, 255, 255, 255]);
-        assert_eq!(image.get_pixel(0, 0), &Rgba([255, 255, 255, 255]));
     }
 
     #[test]
