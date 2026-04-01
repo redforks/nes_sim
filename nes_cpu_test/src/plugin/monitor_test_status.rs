@@ -33,9 +33,9 @@ impl Status {
 
 #[derive(Default)]
 pub struct MonitorTestStatus {
-    should_reset: u16,
+    cycles_request_reset: Option<usize>,
+    should_reset: bool,
     exit_code: Option<u8>,
-    last_status: Option<Status>,
 }
 
 impl<M: Mcu> Plugin<M> for MonitorTestStatus {
@@ -43,18 +43,16 @@ impl<M: Mcu> Plugin<M> for MonitorTestStatus {
 
     fn end(&mut self, cpu: &mut Cpu<M>) {
         let status = Status::parse(cpu);
-        if status == Status::ShouldReset && self.should_reset > 0 {
-            self.should_reset -= 1;
-
-            return;
-        }
-
-        if let Some(last_status) = &self.last_status
-            && *last_status == status
-        {
-            return;
-        }
-        self.last_status = Some(status);
+        self.should_reset = if let Some(cycles) = self.cycles_request_reset {
+            if cpu.total_cycles() - cycles >= 1_000_000 {
+                self.cycles_request_reset = None;
+                true
+            } else {
+                false
+            }
+        } else {
+            false
+        };
 
         self.exit_code = match status {
             Status::Succeed => Some(0),
@@ -63,7 +61,10 @@ impl<M: Mcu> Plugin<M> for MonitorTestStatus {
                 Some(r)
             }
             Status::ShouldReset => {
-                self.should_reset = 7000;
+                if self.cycles_request_reset.is_none() {
+                    dbg!("request reset");
+                    self.cycles_request_reset = Some(cpu.total_cycles());
+                }
                 None
             }
             _ => None,
@@ -71,7 +72,7 @@ impl<M: Mcu> Plugin<M> for MonitorTestStatus {
     }
 
     fn should_stop(&self) -> ExecuteResult {
-        if self.should_reset == 1 {
+        if self.should_reset {
             eprintln!("{}", Color::Yellow.paint("100ms waited, request reset"));
             return ExecuteResult::ShouldReset;
         }
