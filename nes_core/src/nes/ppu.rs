@@ -461,7 +461,7 @@ impl<R: Render> Ppu<R> {
         if self.scanline == VBLANK_CLEAR_SCANLINE
             && self.dot == DOTS_PER_SCANLINE - 2
             && self.odd_frame
-            && self.rendering_enabled()
+            && rendering_enabled
         {
             debug!(
                 "PPU: Odd frame skip at scanline={}, dot={}",
