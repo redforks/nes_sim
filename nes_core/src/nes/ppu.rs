@@ -2,7 +2,6 @@ use crate::mcu::Mcu;
 use crate::render::Render;
 use bitfield_struct::bitfield;
 use image::Rgba;
-use log::{debug, trace};
 
 mod name_table;
 mod pattern;
@@ -278,7 +277,6 @@ impl Mcu for Palette {
     }
 
     fn write(&mut self, address: u16, value: u8) {
-        trace!("set palette ${:x}: {:x}", address, value);
         self.data[self.get_addr(address)] = value;
     }
 }
@@ -360,7 +358,7 @@ impl<R: Render> Ppu<R> {
         self.write_toggle = false;
         self.odd_frame = false;
         self.scanline_cache.dirty = true;
-        Self::write_scroll(self, 0);
+        self.write_scroll(0);
     }
 
     pub fn timing(&self) -> (u16, u16) {
@@ -412,8 +410,7 @@ impl<R: Render> Ppu<R> {
 
         // Render pixel during visible scanlines (0-239) and visible dots (0-255)
         if rendering_enabled && self.scanline < 240 && self.dot < 256 {
-            let pixel = Self::render_pixel_with_mapper(
-                self,
+            let pixel = self.render_pixel_with_mapper(
                 &mut chr_read,
                 &mut name_table_read,
                 &mut background_override,
@@ -443,10 +440,6 @@ impl<R: Render> Ppu<R> {
 
         // VBlank clear: pre-render scanline 261, dot 1
         if self.scanline == VBLANK_CLEAR_SCANLINE && self.dot == VBLANK_CLEAR_DOT {
-            debug!(
-                "PPU: VBLANK CLEAR at scanline={}, dot={}",
-                self.scanline, self.dot
-            );
             self.status.set_v_blank(false);
             self.status.set_sprite_overflow(false);
             self.status.set_sprite_zero_hit(false);
@@ -591,19 +584,18 @@ impl<R: Render> Ppu<R> {
             }
             // PPUSCROLL
             0x2005 => {
-                Self::write_scroll(self, value);
+                self.write_scroll(value);
                 self.scanline_cache.dirty = true;
             }
             // PPUADDR
             0x2006 => {
-                Self::write_vram_addr(self, value);
+                self.write_vram_addr(value);
                 self.scanline_cache.dirty = true;
             }
             // PPUDATA
             0x2007 => {
                 let vram_addr = self.vram_addr;
-                Self::write_vram_data_with_mapper(
-                    self,
+                self.write_vram_data_with_mapper(
                     vram_addr,
                     value,
                     &mut pattern_write,
@@ -621,8 +613,7 @@ impl<R: Render> Ppu<R> {
     // Helper methods for VRAM operations
     #[cfg(test)]
     fn read_vram_data(&mut self, pattern: &[u8], address: u16) -> u8 {
-        Self::read_vram_data_with_mapper(
-            self,
+        self.read_vram_data_with_mapper(
             address,
             &mut |addr, _| pattern[addr as usize % pattern.len()],
             &mut |_| None,
@@ -630,7 +621,7 @@ impl<R: Render> Ppu<R> {
     }
 
     fn read_vram_data_with_mapper<CR, NR>(
-        inner: &mut Self,
+        &mut self,
         address: u16,
         chr_read: &mut CR,
         name_table_read: &mut NR,
@@ -650,21 +641,21 @@ impl<R: Render> Ppu<R> {
                 chr_read(addr, PatternAccess::Cpu)
             } else {
                 // Name table
-                Self::read_name_table_byte(inner, addr, name_table_read)
+                self.read_name_table_byte(addr, name_table_read)
             }
         } else {
             // Palette
-            inner.palette.read(addr)
+            self.palette.read(addr)
         }
     }
 
     #[cfg(test)]
-    fn write_vram_data(inner: &mut Self, address: u16, value: u8) {
-        Self::write_vram_data_with_mapper(inner, address, value, |_, _| {}, |_, _| false);
+    fn write_vram_data(&mut self, address: u16, value: u8) {
+        self.write_vram_data_with_mapper(address, value, |_, _| {}, |_, _| false);
     }
 
     fn write_vram_data_with_mapper<PW, NW>(
-        inner: &mut Self,
+        &mut self,
         address: u16,
         value: u8,
         mut pattern_write: PW,
@@ -681,50 +672,49 @@ impl<R: Render> Ppu<R> {
             if addr >= 0x2000 {
                 // Name table (pattern table 0x0000-0x1FFF is read-only for CHR ROM)
                 if !name_table_write(addr, value) {
-                    inner.name_table.write(addr, value);
+                    self.name_table.write(addr, value);
                 }
             } else {
                 pattern_write(addr, value);
             }
         } else {
-            // Palette
-            inner.palette.write(addr, value);
+            self.palette.write(addr, value);
         }
     }
 
-    fn write_scroll(inner: &mut Self, value: u8) {
-        if !inner.write_toggle {
+    fn write_scroll(&mut self, value: u8) {
+        if !self.write_toggle {
             // First write - X scroll
-            inner.fine_x = value & 0x07;
-            inner.temp_vram_addr = (inner.temp_vram_addr & 0xFFE0) | ((value as u16 >> 3) & 0x001F);
-            inner.write_toggle = true;
+            self.fine_x = value & 0x07;
+            self.temp_vram_addr = (self.temp_vram_addr & 0xFFE0) | ((value as u16 >> 3) & 0x001F);
+            self.write_toggle = true;
         } else {
             // Second write - Y scroll
-            inner.temp_vram_addr = (inner.temp_vram_addr & !0x73E0)
+            self.temp_vram_addr = (self.temp_vram_addr & !0x73E0)
                 | (((value as u16 & 0x07) << 12) & 0x7000)
                 | (((value as u16 >> 3) & 0x001F) << 5);
-            inner.write_toggle = false;
+            self.write_toggle = false;
         }
     }
 
-    fn write_vram_addr(inner: &mut Self, value: u8) {
-        if !inner.write_toggle {
+    fn write_vram_addr(&mut self, value: u8) {
+        if !self.write_toggle {
             // First write - high byte
-            inner.temp_vram_addr = (inner.temp_vram_addr & 0x00FF) | ((value as u16 & 0x3F) << 8);
-            inner.write_toggle = true;
+            self.temp_vram_addr = (self.temp_vram_addr & 0x00FF) | ((value as u16 & 0x3F) << 8);
+            self.write_toggle = true;
         } else {
             // Second write - low byte
-            inner.temp_vram_addr = (inner.temp_vram_addr & 0x7F00) | (value as u16 & 0x00FF);
-            inner.vram_addr = inner.temp_vram_addr;
-            inner.write_toggle = false;
+            self.temp_vram_addr = (self.temp_vram_addr & 0x7F00) | (value as u16 & 0x00FF);
+            self.vram_addr = self.temp_vram_addr;
+            self.write_toggle = false;
         }
     }
 
-    fn read_name_table_byte<NR>(inner: &mut Self, address: u16, name_table_read: &mut NR) -> u8
+    fn read_name_table_byte<NR>(&mut self, address: u16, name_table_read: &mut NR) -> u8
     where
         NR: FnMut(u16) -> Option<u8>,
     {
-        name_table_read(address).unwrap_or_else(|| inner.name_table.read(address))
+        name_table_read(address).unwrap_or_else(|| self.name_table.read(address))
     }
 
     fn read_pattern_pixel<CR>(
@@ -746,7 +736,7 @@ impl<R: Render> Ppu<R> {
     }
 
     fn get_background_pixel<CR, NR, BO>(
-        inner: &mut Self,
+        &mut self,
         chr_read: &mut CR,
         name_table_read: &mut NR,
         background_override: &mut BO,
@@ -759,13 +749,13 @@ impl<R: Render> Ppu<R> {
         BO: FnMut(u8, u8, u16, u8, u8, usize, usize) -> Option<BackgroundTileOverride>,
     {
         // Check left-column clipping
-        if !inner.mask.background_left_enabled() && screen_x < 8 {
+        if !self.mask.background_left_enabled() && screen_x < 8 {
             return (0, 0);
         }
 
-        let scroll_addr = inner.temp_vram_addr;
+        let scroll_addr = self.temp_vram_addr;
         let base_nametable = ((scroll_addr >> 10) & 0x0003) as u8;
-        let scroll_x = ((scroll_addr & 0x001f) << 3) | inner.fine_x as u16;
+        let scroll_x = ((scroll_addr & 0x001f) << 3) | self.fine_x as u16;
         let scroll_y = (((scroll_addr >> 5) & 0x001f) << 3) | ((scroll_addr >> 12) & 0x0007);
 
         let world_x = scroll_x + screen_x as u16;
@@ -782,9 +772,9 @@ impl<R: Render> Ppu<R> {
 
         let nt_base = 0x2000 + nt_idx as u16 * 0x0400;
         let nt_addr = nt_base + nt_y as u16 * TILES_PER_ROW as u16 + nt_x as u16;
-        let tile_idx = Self::read_name_table_byte(inner, nt_addr, name_table_read);
+        let tile_idx = self.read_name_table_byte(nt_addr, name_table_read);
         let attr_addr = nt_base + 0x03c0 + (nt_y as u16 / 4) * 8 + (nt_x as u16 / 4);
-        let attr_byte = Self::read_name_table_byte(inner, attr_addr, name_table_read);
+        let attr_byte = self.read_name_table_byte(attr_addr, name_table_read);
         let shift = (((nt_y >> 1) & 0x01) << 2) | (((nt_x >> 1) & 0x01) << 1);
         let palette_idx = (attr_byte >> shift) & 0x03;
 
@@ -800,7 +790,7 @@ impl<R: Render> Ppu<R> {
             return (override_pixel.palette_idx, override_pixel.color_idx);
         }
 
-        let base_addr = inner.cur_pattern_table_idx as u16 * 0x1000;
+        let base_addr = self.cur_pattern_table_idx as u16 * 0x1000;
         let color_idx = Self::read_pattern_pixel(
             chr_read,
             base_addr,
@@ -860,8 +850,7 @@ impl<R: Render> Ppu<R> {
 
         if self.mask.background_enabled() {
             for screen_x in 0..256u16 {
-                let (palette_idx, color_idx) = Self::get_background_pixel(
-                    self,
+                let (palette_idx, color_idx) = self.get_background_pixel(
                     chr_read,
                     name_table_read,
                     background_override,
@@ -987,8 +976,7 @@ impl<R: Render> Ppu<R> {
     /// Read VRAM at current address and increment (for testing)
     #[cfg(test)]
     fn read_vram_and_inc(&mut self, pattern: &[u8]) -> u8 {
-        Self::read_vram_and_inc_with_mapper(
-            self,
+        self.read_vram_and_inc_with_mapper(
             &mut |addr, _| pattern[addr as usize % pattern.len()],
             &mut |_| None,
         )
@@ -1004,7 +992,7 @@ impl<R: Render> Ppu<R> {
         NR: FnMut(u16) -> Option<u8>,
     {
         let vram_addr = self.vram_addr;
-        let value = Self::read_vram_data_with_mapper(self, vram_addr, chr_read, name_table_read);
+        let value = self.read_vram_data_with_mapper(vram_addr, chr_read, name_table_read);
         // Increment VRAM address based on control flag
         let increment = if self.ctrl.increment_mode() { 32 } else { 1 };
         self.vram_addr = self.vram_addr.wrapping_add(increment);
