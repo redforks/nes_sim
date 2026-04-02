@@ -61,9 +61,16 @@ where
 
     /// Execute one CPU instruction and tick PPU/APU. Returns the `ExecuteResult`.
     pub fn tick(&mut self) -> ExecuteResult {
-        let prev_vblank = self.mcu().ppu().vblank();
-        let result = self.machine.tick();
         self.cycles += 1;
+
+        let prev_vblank = self.mcu().ppu().vblank();
+        self.machine.mcu_mut().tick_ppu();
+        if !prev_vblank && self.mcu().ppu().vblank() {
+            self.enter_vblank = true;
+        }
+        let nmi_line = self.mcu().ppu().nmi_line_out();
+        self.machine.cpu_mut().update_nmi_line(nmi_line);
+
         if self.cycles == 3 {
             self.cycles = 0;
             self.machine.mcu_mut().tick_apu();
@@ -71,13 +78,8 @@ where
         let apu_irq = self.machine.mcu().apu_irq_pending();
         let cartridge_irq = self.machine.mcu().cartridge_irq_pending();
         self.machine.cpu_mut().set_irq(apu_irq || cartridge_irq);
-        self.machine.mcu_mut().tick_ppu();
-        if !prev_vblank && self.mcu().ppu().vblank() {
-            self.enter_vblank = true;
-        }
-        let nmi_line = self.mcu().ppu().nmi_outline();
-        self.machine.cpu_mut().update_nmi_line(nmi_line);
-        result
+
+        self.machine.tick()
     }
 
     fn mcu(&self) -> &NesMcu<R, D> {
