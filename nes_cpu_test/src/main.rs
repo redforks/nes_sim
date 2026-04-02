@@ -32,7 +32,7 @@ fn main() {
         start_pc,
     } = Args::parse();
 
-    env_logger::init();
+    env_logger::builder().format_timestamp(None).init();
 
     let image = image::load_image(f).unwrap();
 
