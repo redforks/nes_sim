@@ -1,5 +1,3 @@
-use log::info;
-
 use crate::{
     ExecuteResult, Plugin,
     ines::INesFile,
@@ -71,13 +69,6 @@ where
             self.enter_vblank = true;
         }
         let nmi_line = self.mcu().ppu().nmi_line_out();
-        if nmi_line {
-            info!(
-                "NMI line asserted by PPU, @ scanline {:?}, dot {}",
-                self.mcu().ppu().timing(),
-                self.mcu().ppu().frame_no()
-            );
-        }
         let timing = self.mcu().ppu().timing();
         self.machine.cpu_mut().update_nmi_line(nmi_line, timing);
 

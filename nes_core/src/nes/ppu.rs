@@ -2,7 +2,7 @@ use crate::mcu::Mcu;
 use crate::render::Render;
 use bitfield_struct::bitfield;
 use image::Rgba;
-use log::{debug, info, trace};
+use log::{debug, trace};
 
 mod name_table;
 mod pattern;
@@ -432,16 +432,8 @@ impl<R: Render> Ppu<R> {
         }
 
         if self.scanline == VBLANK_SET_SCANLINE && self.dot == 1 {
-            if self.suppress_vblank_for_current_frame {
-                info!("suppressed vblank {:?} @{}", self.timing(), self.frame_no);
-            } else {
+            if !self.suppress_vblank_for_current_frame {
                 self.status.set_v_blank(true);
-                info!(
-                    "set vblank, nmi_line: {}, {:?} @{}",
-                    self.nmi_line_out(),
-                    self.timing(),
-                    self.frame_no
-                );
             }
         }
 
@@ -473,7 +465,6 @@ impl<R: Render> Ppu<R> {
             self.suppress_vblank_for_current_frame = false;
             self.suppress_nmi_for_current_frame = false;
             self.frame_no += 1;
-            info!("end frame");
             return;
         }
 
@@ -1025,12 +1016,6 @@ impl<R: Render> Ppu<R> {
 
     /// Set control flags (for testing)
     fn set_control_flags(&mut self, flags: PpuCtrl) {
-        info!(
-            "set NMI flag to {} @ {:?} {}",
-            flags.nmi_enable(),
-            self.timing(),
-            self.frame_no
-        );
         self.ctrl = flags;
         self.temp_vram_addr =
             (self.temp_vram_addr & !0x0C00) | ((self.ctrl.name_table_select() as u16) << 10);
@@ -1044,10 +1029,6 @@ impl<R: Render> Ppu<R> {
         };
     }
 
-    pub(crate) fn frame_no(&self) -> usize {
-        self.frame_no
-    }
-
     /// Read status register (for testing) - behaves like reading from 0x2002
     /// Returns the current status and clears the v_blank flag
     fn read_status(&mut self) -> PpuStatus {
@@ -1055,23 +1036,14 @@ impl<R: Render> Ppu<R> {
         if self.scanline == VBLANK_SET_SCANLINE {
             match self.dot {
                 1 => {
-                    info!("suppress v_blank @ {:?} {}", self.timing(), self.frame_no);
                     self.suppress_vblank_for_current_frame = true;
                     self.suppress_nmi_for_current_frame = true;
                 }
                 2..=4 => {
-                    info!("suppress nmi @ {:?} {}", self.timing(), self.frame_no);
                     self.suppress_nmi_for_current_frame = true;
                 }
                 _ => {}
             }
-        }
-        if self.status.v_blank() {
-            info!(
-                "reset v_blank by read 0x2002 @ {:?} {}",
-                self.timing(),
-                self.frame_no
-            );
         }
         // Clear v_blank flag on read
         self.status.set_v_blank(false);

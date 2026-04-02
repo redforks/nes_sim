@@ -1,7 +1,6 @@
 use self::microcode::{Microcode, opcode};
 use crate::mcu::Mcu;
 use arraydeque::ArrayDeque;
-use log::info;
 
 mod microcode;
 
@@ -145,7 +144,6 @@ impl<M: Mcu> Cpu<M> {
                     .is_some_and(|cycles| self.cycles > cycles + 5)
                     && self.mode == CpuMode::Normal
                 {
-                    info!("nmi checked by CPU");
                     self.nmi_requested_at = None;
                     // handle nmi
                     // reset nmi_requested, because nmi signal is edge detected, ignored if cpu is already in nmi mode
@@ -666,13 +664,11 @@ impl<M: Mcu> Cpu<M> {
         if self.nmi_line != nmi {
             self.nmi_line = nmi;
             if nmi {
-                info!("request nmi");
                 self.request_nmi();
             }
         }
 
         if !nmi && scanline == 241 && dot <= 4 {
-            info!("clear nmi request because of vblank end");
             self.nmi_requested_at = None;
         }
     }

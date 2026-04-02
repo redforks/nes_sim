@@ -1,5 +1,3 @@
-use log::info;
-
 use crate::ines::INesFile;
 use crate::nes::mapper::mapper0::Mapper0;
 use crate::nes::mapper::mapper2::Mapper2;
@@ -22,7 +20,6 @@ use crate::nes::mapper::mmc5::MMC5;
 
 pub fn create_cartridge(f: &INesFile) -> Cartridge {
     let mapper_no = f.header().mapper_no;
-    info!("Creating cartridge with mapper no: {}", mapper_no);
     match mapper_no {
         0 => Cartridge::Mapper0(Box::new(Mapper0::new(f.read_prg_rom(), f.read_chr_rom()))),
         1 => Cartridge::MMC1(Box::new(MMC1::new(f.read_prg_rom(), f.read_chr_rom()))),

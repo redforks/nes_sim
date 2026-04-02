@@ -3,7 +3,7 @@
 use crate::nes::ppu::{Mirroring, Ppu};
 use crate::render::Render;
 use bitfield_struct::bitfield;
-use log::{debug, info};
+use log::debug;
 
 #[bitfield(u8)]
 struct ControlFlags {
@@ -230,7 +230,6 @@ impl MMC1 {
         // PRG ROM bank register (bits 0-3)
         // bit 4 is ignored
         self.prg_bank_register = byte & 0x0f;
-        info!("MMC1 switch prg rom bank to ${:x}", byte & 0x0f);
         self.update_prg_banks();
     }
 }
