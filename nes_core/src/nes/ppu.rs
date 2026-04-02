@@ -312,6 +312,9 @@ pub struct Ppu<R: Render = ()> {
     odd_frame: bool,
 
     scanline_cache: ScanlineCache,
+    /// set to PPUMask register changes render_enabled state, but ppu see it at the next tick,
+    /// so can not defineds on `self.mask`
+    effective_render_enabled: bool,
 
     frame_no: usize,
 }
@@ -341,6 +344,7 @@ impl<R: Render> Ppu<R> {
             suppress_nmi_for_current_frame: false,
             scanline_cache: ScanlineCache::default(),
             frame_no: 0,
+            effective_render_enabled: false,
         }
     }
 
@@ -364,7 +368,7 @@ impl<R: Render> Ppu<R> {
     }
 
     pub fn rendering_enabled(&self) -> bool {
-        self.mask.0 & 0x18 != 0
+        self.effective_render_enabled
     }
 
     pub fn oam_dma(&mut self, vals: &[u8; 256]) {
@@ -455,10 +459,6 @@ impl<R: Render> Ppu<R> {
             && self.odd_frame
             && rendering_enabled
         {
-            debug!(
-                "PPU: Odd frame skip at scanline={}, dot={}",
-                self.scanline, self.dot
-            );
             self.dot = 0;
             self.scanline = 0;
             self.odd_frame = !self.odd_frame;
@@ -474,7 +474,6 @@ impl<R: Render> Ppu<R> {
             self.dot = 0;
             self.scanline += 1;
             if self.scanline >= SCANLINES_PER_FRAME {
-                debug!("PPU: Frame complete, scanline={} -> 0", self.scanline);
                 self.scanline = 0;
                 self.odd_frame = !self.odd_frame;
                 self.suppress_vblank_for_current_frame = false;
@@ -482,6 +481,9 @@ impl<R: Render> Ppu<R> {
                 self.frame_no += 1;
             }
         }
+
+        self.effective_render_enabled =
+            self.mask.background_enabled() || self.mask.sprite_enabled();
     }
 
     /// Return ppu nmi signal, it connect to Cpu nmi input line
