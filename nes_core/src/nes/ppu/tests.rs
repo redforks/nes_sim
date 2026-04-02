@@ -125,8 +125,8 @@ fn repr_ppu_mask() {
 }
 
 #[test]
-fn palette_read_write() {
-    let mut p = Palette::default();
+fn palette_ram_read_write() {
+    let mut p = PaletteRam::default();
     for i in 0..0x20 {
         p.write(0x3f00 + i, i as u8);
         assert_eq!(i as u8, p.read(0x3f00 + i));
@@ -140,8 +140,8 @@ fn palette_read_write() {
 }
 
 #[test]
-fn palette_get_color() {
-    let mut p = Palette::default();
+fn palette_ram_get_color() {
+    let mut p = PaletteRam::default();
     p.write(0x3f00, 15);
     p.write(0x3f01, 16);
     p.write(0x3f02, 17);

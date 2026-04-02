@@ -1,4 +1,3 @@
-use crate::mcu::Mcu;
 use crate::render::Render;
 use bitfield_struct::bitfield;
 use image::Rgba;
@@ -111,7 +110,6 @@ struct PpuStatus {
 const PALETTE_MEM_START: u16 = 0x3f00;
 const NAME_TABLE_MEM_START: u16 = 0x2000;
 const TILES_PER_ROW: u8 = 32;
-const TILES_PER_COL: u8 = 30;
 
 // PPU Timing Constants
 const SCANLINES_PER_FRAME: u16 = 262;
@@ -211,11 +209,19 @@ const COLORS: [Pixel; 64] = [
 ];
 
 #[derive(Default)]
-struct Palette {
+struct PaletteRam {
     data: [u8; 0x20],
 }
 
-impl Palette {
+impl PaletteRam {
+    fn read(&mut self, address: u16) -> u8 {
+        self.data[self.get_addr(address)]
+    }
+
+    fn write(&mut self, address: u16, value: u8) {
+        self.data[self.get_addr(address)] = value;
+    }
+
     fn get_addr(&self, addr: u16) -> usize {
         // NES palette mirroring:
         // 0x3f00-0x3f0f: background palette
@@ -271,22 +277,12 @@ impl Palette {
     }
 }
 
-impl Mcu for Palette {
-    fn read(&mut self, address: u16) -> u8 {
-        self.data[self.get_addr(address)]
-    }
-
-    fn write(&mut self, address: u16, value: u8) {
-        self.data[self.get_addr(address)] = value;
-    }
-}
-
 pub struct Ppu<R: Render = ()> {
     ctrl: PpuCtrl,
     status: PpuStatus,
     name_table: NameTableControl, // name table
     cur_name_table_addr: u16,     // current active name table start address
-    palette: Palette,             // palette memory
+    palette: PaletteRam,          // palette memory
     cur_pattern_table_idx: u8,    // index of current active pattern table, 0 or 1
 
     suppress_vblank_for_current_frame: bool,
@@ -328,7 +324,7 @@ impl<R: Render> Ppu<R> {
 
             name_table: NameTableControl::default(),
             cur_name_table_addr: 0x2000,
-            palette: Palette::default(),
+            palette: PaletteRam::default(),
             cur_pattern_table_idx: 0,
             vram_addr: 0,
             temp_vram_addr: 0,
