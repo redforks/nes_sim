@@ -50,21 +50,11 @@ impl Render for ImageRender {
     fn set_pixel(&mut self, x: u32, y: u32, color: [u8; 4]) {
         self.image.put_pixel(x, y, Rgba(color));
     }
-
-    fn dimensions(&self) -> (u32, u32) {
-        self.image.dimensions()
-    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn test_image_render_new() {
-        let renderer = ImageRender::default_dimension();
-        assert_eq!(renderer.dimensions(), (256, 240));
-    }
 
     #[test]
     fn test_image_render_clear() {
@@ -100,18 +90,5 @@ mod tests {
         // Test borrow_image
         let image = renderer.borrow_image();
         assert_eq!(image.dimensions(), (256, 240));
-    }
-
-    #[test]
-    fn test_nes_dimensions() {
-        // Test creating a NES-sized render buffer
-        let mut renderer = ImageRender::default_dimension();
-        assert_eq!(renderer.dimensions(), (256, 240));
-
-        // Verify we can set pixels across the entire screen
-        renderer.clear([0, 0, 0, 0]);
-        renderer.set_pixel(0, 0, [255, 255, 255, 255]);
-        renderer.set_pixel(255, 239, [255, 255, 255, 255]);
-        renderer.set_pixel(128, 120, [128, 128, 128, 255]);
     }
 }

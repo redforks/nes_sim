@@ -67,12 +67,9 @@ impl Render for SdlRender {
         self.image.set_pixel(x, y, color);
     }
 
-    fn dimensions(&self) -> (u32, u32) {
-        self.image.dimensions()
-    }
-
     fn finish(&mut self) {
-        let (width, height) = self.image.dimensions();
+        let image = self.image.borrow_image();
+        let (width, height) = image.dimensions();
         let texture_creator = self.canvas.texture_creator();
         let mut texture = texture_creator
             .create_texture_streaming(PixelFormatEnum::ABGR8888, width, height)

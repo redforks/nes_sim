@@ -57,10 +57,6 @@ impl Render for CanvasRender {
         self.buffer[idx..idx + 4].copy_from_slice(&color);
     }
 
-    fn dimensions(&self) -> (u32, u32) {
-        (self.width, self.height)
-    }
-
     fn finish(&mut self) {
         self.flush();
     }

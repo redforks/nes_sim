@@ -20,7 +20,6 @@ use std::fmt::Debug;
 ///
 /// - `clear(color)` - Fill the entire render target with a solid color
 /// - `set_pixel(x, y, color)` - Set a single pixel to the given RGBA color
-/// - `dimensions()` - Return the (width, height) of the render target
 ///
 /// # Optional Methods
 ///
@@ -47,9 +46,8 @@ use std::fmt::Debug;
 ///         self.pixels[idx] = color;
 ///     }
 ///
-///     fn dimensions(&self) -> (u32, u32) {
-///         (self.width, self.height)
-///     }
+///     // Implementations may expose their own accessors for dimensions if
+///     // consumers need them (for example, ImageRender::borrow_image()).
 /// }
 /// ```
 pub trait Render: Debug {
@@ -71,12 +69,6 @@ pub trait Render: Debug {
     /// rather than panic, for performance reasons.
     fn set_pixel(&mut self, x: u32, y: u32, color: [u8; 4]);
 
-    /// Get the dimensions of the render target
-    ///
-    /// # Returns
-    /// A tuple of (width, height) in pixels
-    fn dimensions(&self) -> (u32, u32);
-
     /// Called after rendering a complete frame
     ///
     /// This method is called once after all `set_pixel()` calls for a frame
@@ -91,10 +83,6 @@ impl Render for () {
     fn clear(&mut self, _color: [u8; 4]) {}
 
     fn set_pixel(&mut self, _x: u32, _y: u32, _color: [u8; 4]) {}
-
-    fn dimensions(&self) -> (u32, u32) {
-        (0, 0)
-    }
 }
 
 impl<R> Render for Box<R>
@@ -107,10 +95,6 @@ where
 
     fn set_pixel(&mut self, x: u32, y: u32, color: [u8; 4]) {
         (**self).set_pixel(x, y, color);
-    }
-
-    fn dimensions(&self) -> (u32, u32) {
-        (**self).dimensions()
     }
 
     fn finish(&mut self) {
