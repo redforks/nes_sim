@@ -2,10 +2,6 @@ use crate::render::Render;
 use bitfield_struct::bitfield;
 use image::Rgba;
 
-mod pattern;
-
-pub use pattern::*;
-
 type Pixel = Rgba<u8>;
 
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
