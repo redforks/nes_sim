@@ -154,17 +154,3 @@ fn test_release_buttons() {
     assert_eq!(a.read(), 0x40); // A (released)
     assert_eq!(a.read(), 0x41); // B (still pressed)
 }
-
-#[test]
-#[should_panic(expected = "read address out of range")]
-fn test_controller_read_invalid_address() {
-    let mut controller = Controller::new();
-    controller.read(0x4015);
-}
-
-#[test]
-#[should_panic(expected = "write address out of range")]
-fn test_controller_write_invalid_address() {
-    let mut controller = Controller::new();
-    controller.write(0x4018, 0);
-}

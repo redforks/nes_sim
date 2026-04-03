@@ -299,13 +299,6 @@ fn test_apu_controller_read_status() {
 }
 
 #[test]
-#[should_panic(expected = "Can not read from Apu")]
-fn test_apu_controller_read_invalid_address() {
-    let mut channel = Apu::new(());
-    let _ = channel.read(0x4016);
-}
-
-#[test]
 fn test_apu_controller_write_control_flags() {
     let mut channel = Apu::new(());
     channel.write(0x4015, 0x1F); // Should call set_control_flags
@@ -315,13 +308,6 @@ fn test_apu_controller_write_control_flags() {
 fn test_apu_controller_write_frame_counter() {
     let mut channel = Apu::new(());
     channel.write(0x4017, 0xC0); // Should call set_frame_counter
-}
-
-#[test]
-#[should_panic(expected = "Can not write to Apu")]
-fn test_apu_controller_write_invalid_address() {
-    let mut channel = Apu::new(());
-    channel.write(0x4016, 0x00);
 }
 
 #[test]

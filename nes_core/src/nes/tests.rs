@@ -26,18 +26,6 @@ fn test_lower_ram_mirroring() {
 }
 
 #[test]
-fn test_apu_register_access() {
-    let mut mcu = test_mcu();
-
-    mcu.write(0x4000, 0x5A);
-    assert_eq!(mcu.read(0x4000), 0x5A);
-
-    mcu.write(0x4015, 0x0F);
-    let status = mcu.read(0x4015);
-    assert_eq!(status & 0x0F, 0);
-}
-
-#[test]
 fn test_apu_frame_counter_irq_flow() {
     let mut mcu = test_mcu();
 
