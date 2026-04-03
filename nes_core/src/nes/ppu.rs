@@ -423,20 +423,7 @@ impl<R: Render> Ppu<R> {
         self.scanline_cache.dirty = true;
     }
 
-    /// Advance PPU by one dot, rendering a pixel if on a visible scanline.
-    /// Return true if need request nmi.
-    ///
-    /// # Parameters
-    /// - `pattern`: CHR ROM pattern data for tile/sprite lookup
-    pub fn tick(&mut self, pattern: &[u8]) {
-        self.tick_with_mapper(
-            |addr, _| pattern[addr as usize % pattern.len()],
-            |_| None,
-            |_, _, _, _, _, _, _| None,
-        );
-    }
-
-    pub fn tick_with_mapper<CR, NR, BO>(
+    pub fn tick<CR, NR, BO>(
         &mut self,
         mut chr_read: CR,
         mut name_table_read: NR,

@@ -68,7 +68,7 @@ impl<R: Render, D: AudioDriver> NesMcu<R, D> {
         let (scanline, dot) = self.ppu.timing();
         let rendering_enabled = self.ppu.rendering_enabled();
         let cartridge = RefCell::new(&mut self.cartridge);
-        self.ppu.tick_with_mapper(
+        self.ppu.tick(
             |addr, access| cartridge.borrow_mut().read_chr(addr, access),
             |addr| cartridge.borrow_mut().read_nametable(addr),
             |screen_x,
