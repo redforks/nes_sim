@@ -5,18 +5,16 @@
 
 use crate::render::Render;
 use image::{Rgba, RgbaImage};
-use std::cell::RefCell;
 use std::fmt::Debug;
-use std::rc::Rc;
 
 /// Wrapper around `RgbaImage` that implements the `Render` trait
 ///
 /// This type provides a bridge between the new Render trait and the existing
 /// RgbaImage type, allowing the PPU to use either abstraction.
-/// The image is wrapped in `Rc<RefCell<>>` for shared ownership and interior mutability.
+/// The image is stored directly as an `RgbaImage` buffer.
 #[derive(Debug, Clone)]
 pub struct ImageRender {
-    image: Rc<RefCell<RgbaImage>>,
+    image: RgbaImage,
 }
 
 impl ImageRender {
@@ -27,7 +25,7 @@ impl ImageRender {
     /// - `height`: Height in pixels (typically 240 for NES)
     pub fn new(width: u32, height: u32) -> Self {
         Self {
-            image: Rc::new(RefCell::new(RgbaImage::new(width, height))),
+            image: RgbaImage::new(width, height),
         }
     }
 
@@ -35,27 +33,26 @@ impl ImageRender {
         Self::new(256, 240)
     }
 
-    /// Get a reference to the underlying image by borrowing the RefCell
-    pub fn borrow_image(&self) -> std::cell::Ref<'_, RgbaImage> {
-        self.image.borrow()
+    /// Get a reference to the underlying image buffer
+    pub fn borrow_image(&self) -> &RgbaImage {
+        &self.image
     }
 }
 
 impl Render for ImageRender {
     fn clear(&mut self, color: [u8; 4]) {
         let pixel = Rgba(color);
-        let mut image = self.image.borrow_mut();
-        for p in image.pixels_mut() {
+        for p in self.image.pixels_mut() {
             *p = pixel;
         }
     }
 
     fn set_pixel(&mut self, x: u32, y: u32, color: [u8; 4]) {
-        self.image.borrow_mut().put_pixel(x, y, Rgba(color));
+        self.image.put_pixel(x, y, Rgba(color));
     }
 
     fn dimensions(&self) -> (u32, u32) {
-        self.image.borrow().dimensions()
+        self.image.dimensions()
     }
 }
 
