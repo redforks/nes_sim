@@ -82,33 +82,11 @@ impl TestCartridge {
         }
     }
 
-    pub fn write<R: Render>(&mut self, _ppu: &mut Ppu<R>, _address: u16, _value: u8) {}
-
-    pub fn on_ppu_tick(&mut self, _scanline: u16, _dot: u16, _rendering_enabled: bool) {}
-
-    pub fn read_chr(&mut self, address: u16, _access: PatternAccess) -> u8 {
+    pub fn read_chr(&self, address: u16) -> u8 {
         self.chr_rom[address as usize % self.chr_rom.len()]
     }
 
-    pub fn write_nametable(&mut self, _address: u16, _value: u8) -> bool {
-        false
-    }
-
     pub fn read_nametable(&mut self, _address: u16) -> Option<u8> {
-        None
-    }
-
-    #[allow(clippy::too_many_arguments)]
-    pub fn background_override(
-        &mut self,
-        _screen_x: u8,
-        _screen_y: u8,
-        _nametable_addr: u16,
-        _tile_idx: u8,
-        _palette_idx: u8,
-        _tile_fine_x: usize,
-        _tile_fine_y: usize,
-    ) -> Option<BackgroundTileOverride> {
         None
     }
 
@@ -160,42 +138,36 @@ impl Cartridge {
 
     pub fn write<R: Render>(&mut self, ppu: &mut Ppu<R>, address: u16, value: u8) {
         match self {
-            Cartridge::Mapper0(cartridge) => cartridge.write(ppu, address, value),
-            Cartridge::Mapper2(cartridge) => cartridge.write(ppu, address, value),
-            Cartridge::Mapper3(cartridge) => cartridge.write(ppu, address, value),
+            Cartridge::Mapper0(cartridge) => cartridge.write(address, value),
+            Cartridge::Mapper2(cartridge) => cartridge.write(address, value),
+            Cartridge::Mapper3(cartridge) => cartridge.write(address, value),
             Cartridge::MMC1(cartridge) => cartridge.write(ppu, address, value),
             Cartridge::MMC3(cartridge) => cartridge.write(ppu, address, value),
-            Cartridge::MMC5(cartridge) => cartridge.write(ppu, address, value),
+            Cartridge::MMC5(cartridge) => cartridge.write(address, value),
             #[cfg(test)]
-            Cartridge::Test(cartridge) => cartridge.write(ppu, address, value),
+            Cartridge::Test(_) => {}
         }
     }
 
     pub fn on_ppu_tick(&mut self, scanline: u16, dot: u16, rendering_enabled: bool) {
         match self {
-            Cartridge::Mapper0(cartridge) => {
-                cartridge.on_ppu_tick(scanline, dot, rendering_enabled)
-            }
-            Cartridge::Mapper2(cartridge) => {
-                cartridge.on_ppu_tick(scanline, dot, rendering_enabled)
-            }
-            Cartridge::Mapper3(cartridge) => {
-                cartridge.on_ppu_tick(scanline, dot, rendering_enabled)
-            }
-            Cartridge::MMC1(cartridge) => cartridge.on_ppu_tick(scanline, dot, rendering_enabled),
+            Cartridge::Mapper0(_)
+            | Cartridge::Mapper2(_)
+            | Cartridge::Mapper3(_)
+            | Cartridge::MMC1(_) => {}
             Cartridge::MMC3(cartridge) => cartridge.on_ppu_tick(scanline, dot, rendering_enabled),
             Cartridge::MMC5(cartridge) => cartridge.on_ppu_tick(scanline, dot, rendering_enabled),
             #[cfg(test)]
-            Cartridge::Test(cartridge) => cartridge.on_ppu_tick(scanline, dot, rendering_enabled),
+            Cartridge::Test(_) => {}
         }
     }
 
     pub fn irq_pending(&self) -> bool {
         match self {
-            Cartridge::Mapper0(cartridge) => cartridge.irq_pending(),
-            Cartridge::Mapper2(cartridge) => cartridge.irq_pending(),
-            Cartridge::Mapper3(cartridge) => cartridge.irq_pending(),
-            Cartridge::MMC1(cartridge) => cartridge.irq_pending(),
+            Cartridge::Mapper0(_)
+            | Cartridge::Mapper2(_)
+            | Cartridge::Mapper3(_)
+            | Cartridge::MMC1(_) => false,
             Cartridge::MMC3(cartridge) => cartridge.irq_pending(),
             Cartridge::MMC5(cartridge) => cartridge.irq_pending(),
             #[cfg(test)]
@@ -222,30 +194,30 @@ impl Cartridge {
             }
             Cartridge::MMC5(cartridge) => cartridge.read_chr(address, access),
             #[cfg(test)]
-            Cartridge::Test(cartridge) => cartridge.read_chr(address, access),
+            Cartridge::Test(cartridge) => cartridge.read_chr(address),
         }
     }
 
     pub fn write_nametable(&mut self, address: u16, value: u8) -> bool {
         match self {
-            Cartridge::Mapper0(_) => false,
-            Cartridge::Mapper2(_) => false,
-            Cartridge::Mapper3(_) => false,
-            Cartridge::MMC1(_) => false,
-            Cartridge::MMC3(_) => false,
+            Cartridge::Mapper0(_)
+            | Cartridge::Mapper2(_)
+            | Cartridge::Mapper3(_)
+            | Cartridge::MMC1(_)
+            | Cartridge::MMC3(_) => false,
             Cartridge::MMC5(cartridge) => cartridge.write_nametable(address, value),
             #[cfg(test)]
-            Cartridge::Test(cartridge) => cartridge.write_nametable(address, value),
+            Cartridge::Test(_) => false,
         }
     }
 
     pub fn read_nametable(&mut self, address: u16) -> Option<u8> {
         match self {
-            Cartridge::Mapper0(_) => None,
-            Cartridge::Mapper2(_) => None,
-            Cartridge::Mapper3(_) => None,
-            Cartridge::MMC1(_) => None,
-            Cartridge::MMC3(_) => None,
+            Cartridge::Mapper0(_)
+            | Cartridge::Mapper2(_)
+            | Cartridge::Mapper3(_)
+            | Cartridge::MMC1(_)
+            | Cartridge::MMC3(_) => None,
             Cartridge::MMC5(cartridge) => cartridge.read_nametable(address),
             #[cfg(test)]
             Cartridge::Test(cartridge) => cartridge.read_nametable(address),
@@ -264,11 +236,11 @@ impl Cartridge {
         tile_fine_y: usize,
     ) -> Option<BackgroundTileOverride> {
         match self {
-            Cartridge::Mapper0(_) => None,
-            Cartridge::Mapper2(_) => None,
-            Cartridge::Mapper3(_) => None,
-            Cartridge::MMC1(_) => None,
-            Cartridge::MMC3(_) => None,
+            Cartridge::Mapper0(_)
+            | Cartridge::Mapper2(_)
+            | Cartridge::Mapper3(_)
+            | Cartridge::MMC1(_)
+            | Cartridge::MMC3(_) => None,
             Cartridge::MMC5(cartridge) => cartridge.background_override(
                 screen_x,
                 screen_y,
@@ -279,15 +251,7 @@ impl Cartridge {
                 tile_fine_y,
             ),
             #[cfg(test)]
-            Cartridge::Test(cartridge) => cartridge.background_override(
-                screen_x,
-                screen_y,
-                nametable_addr,
-                tile_idx,
-                palette_idx,
-                tile_fine_x,
-                tile_fine_y,
-            ),
+            Cartridge::Test(_) => None,
         }
     }
 

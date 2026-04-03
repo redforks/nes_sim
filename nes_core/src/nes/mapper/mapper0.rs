@@ -1,6 +1,4 @@
 use super::CARTRIDGE_START_ADDR;
-use crate::nes::ppu::Ppu;
-use crate::render::Render;
 
 pub struct Mapper0 {
     prg_rom: [u8; 0x8000],
@@ -57,7 +55,7 @@ impl Mapper0 {
         }
     }
 
-    pub fn write<R: Render>(&mut self, _ppu: &mut Ppu<R>, address: u16, value: u8) {
+    pub fn write(&mut self, address: u16, value: u8) {
         match address {
             CARTRIDGE_START_ADDR..=0x7fff => {
                 self.ram[(address - CARTRIDGE_START_ADDR) as usize] = value
@@ -66,36 +64,28 @@ impl Mapper0 {
             _ => unreachable!(),
         }
     }
-
-    pub fn on_ppu_tick(&mut self, _scanline: u16, _dot: u16, _rendering_enabled: bool) {}
-
-    pub fn irq_pending(&self) -> bool {
-        false
-    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::nes::mapper::CARTRIDGE_START_ADDR;
-    use crate::render::ImageRender;
 
     #[test]
     fn mcu() {
         let mut mcu = Mapper0::default();
-        let mut ppu = Ppu::new(ImageRender::default_dimension());
 
         // read-write ram
-        mcu.write(&mut ppu, CARTRIDGE_START_ADDR, 0x01);
+        mcu.write(CARTRIDGE_START_ADDR, 0x01);
         assert_eq!(mcu.read(CARTRIDGE_START_ADDR), 0x01);
         assert_eq!(mcu.ram[0], 0x01);
-        mcu.write(&mut ppu, 0x7fff, 0x03);
+        mcu.write(0x7fff, 0x03);
         assert_eq!(mcu.read(0x7fff), 0x03);
 
         // read-write rom
         assert_eq!(mcu.read(0x8000), 0);
         // ignore write to rom
-        mcu.write(&mut ppu, 0x8000, 0x03);
+        mcu.write(0x8000, 0x03);
         assert_eq!(mcu.read(0x8000), 0);
     }
 

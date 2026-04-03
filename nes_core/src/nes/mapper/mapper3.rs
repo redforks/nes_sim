@@ -1,6 +1,4 @@
 use super::CARTRIDGE_START_ADDR;
-use crate::nes::ppu::Ppu;
-use crate::render::Render;
 
 const PRG_ROM_SIZE: usize = 0x8000;
 const CHR_BANK_SIZE: usize = 0x2000;
@@ -71,7 +69,7 @@ impl Mapper3 {
         }
     }
 
-    pub fn write<R: Render>(&mut self, _ppu: &mut Ppu<R>, address: u16, value: u8) {
+    pub fn write(&mut self, address: u16, value: u8) {
         match address {
             CARTRIDGE_START_ADDR..=0x7fff => {
                 self.ram[(address - CARTRIDGE_START_ADDR) as usize] = value;
@@ -83,26 +81,18 @@ impl Mapper3 {
             _ => unreachable!(),
         }
     }
-
-    pub fn on_ppu_tick(&mut self, _scanline: u16, _dot: u16, _rendering_enabled: bool) {}
-
-    pub fn irq_pending(&self) -> bool {
-        false
-    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::render::ImageRender;
 
     #[test]
     fn reads_and_writes_cartridge_ram() {
         let mut mapper = Mapper3::new(&[0; 0x8000], &[0; CHR_BANK_SIZE]);
-        let mut ppu = Ppu::new(ImageRender::default_dimension());
 
-        mapper.write(&mut ppu, CARTRIDGE_START_ADDR, 0x12);
-        mapper.write(&mut ppu, 0x7fff, 0x34);
+        mapper.write(CARTRIDGE_START_ADDR, 0x12);
+        mapper.write(0x7fff, 0x34);
 
         assert_eq!(mapper.read(CARTRIDGE_START_ADDR), 0x12);
         assert_eq!(mapper.read(0x7fff), 0x34);
@@ -132,17 +122,16 @@ mod tests {
         chr[CHR_BANK_SIZE * 3] = 0x40;
 
         let mut mapper = Mapper3::new(&prg, &chr);
-        let mut ppu = Ppu::new(ImageRender::default_dimension());
 
         assert_eq!(mapper.pattern_ref()[0], 0x10);
 
-        mapper.write(&mut ppu, 0x8000, 0x01);
+        mapper.write(0x8000, 0x01);
         assert_eq!(mapper.pattern_ref()[0], 0x20);
 
-        mapper.write(&mut ppu, 0x9000, 0x02);
+        mapper.write(0x9000, 0x02);
         assert_eq!(mapper.pattern_ref()[0], 0x30);
 
-        mapper.write(&mut ppu, 0xffff, 0x03);
+        mapper.write(0xffff, 0x03);
         assert_eq!(mapper.pattern_ref()[0], 0x40);
     }
 
@@ -154,9 +143,8 @@ mod tests {
         chr[CHR_BANK_SIZE] = 0xbb;
 
         let mut mapper = Mapper3::new(&prg, &chr);
-        let mut ppu = Ppu::new(ImageRender::default_dimension());
 
-        mapper.write(&mut ppu, 0x8000, 0x03);
+        mapper.write(0x8000, 0x03);
 
         assert_eq!(mapper.pattern_ref()[0], 0xbb);
     }

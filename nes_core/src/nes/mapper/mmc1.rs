@@ -116,12 +116,6 @@ impl MMC1 {
             }
         }
     }
-
-    pub fn on_ppu_tick(&mut self, _scanline: u16, _dot: u16, _rendering_enabled: bool) {}
-
-    pub fn irq_pending(&self) -> bool {
-        false
-    }
 }
 
 const PRG_ROM_BANK_SIZE: usize = 0x4000;

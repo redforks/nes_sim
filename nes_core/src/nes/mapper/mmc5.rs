@@ -1,6 +1,5 @@
 use super::CARTRIDGE_START_ADDR;
-use crate::nes::ppu::{BackgroundTileOverride, PatternAccess, Ppu};
-use crate::render::Render;
+use crate::nes::ppu::{BackgroundTileOverride, PatternAccess};
 
 const PRG_BANK_SIZE_8K: usize = 0x2000;
 const CHR_WINDOW_SIZE: usize = 0x2000;
@@ -154,7 +153,7 @@ impl MMC5 {
         }
     }
 
-    pub fn write<R: Render>(&mut self, _ppu: &mut Ppu<R>, address: u16, value: u8) {
+    pub fn write(&mut self, address: u16, value: u8) {
         match address {
             CARTRIDGE_START_ADDR..=0x4fff => {}
             0x5000..=0x5015 => {}
@@ -227,7 +226,7 @@ impl MMC5 {
         self.irq_enabled && self.irq_pending
     }
 
-    pub fn read_chr(&mut self, address: u16, access: PatternAccess) -> u8 {
+    pub fn read_chr(&self, address: u16, access: PatternAccess) -> u8 {
         let chr_addr = self.map_chr_addr(address, access);
         self.chr_mem[chr_addr]
     }
@@ -637,10 +636,6 @@ impl MMC5 {
 mod tests {
     use super::*;
 
-    fn new_ppu() -> Ppu {
-        Ppu::new(())
-    }
-
     fn create_prg() -> [u8; PRG_BANK_SIZE_8K * 8] {
         let mut prg = [0u8; PRG_BANK_SIZE_8K * 8];
         for bank in 0..8 {
@@ -660,10 +655,10 @@ mod tests {
     #[test]
     fn switches_prg_banks_in_mode_3() {
         let mut mmc5 = MMC5::new(&create_prg(), &create_chr(), Some(0x10000), false);
-        mmc5.write(&mut new_ppu(), 0x5114, 0x81);
-        mmc5.write(&mut new_ppu(), 0x5115, 0x82);
-        mmc5.write(&mut new_ppu(), 0x5116, 0x83);
-        mmc5.write(&mut new_ppu(), 0x5117, 0x84);
+        mmc5.write(0x5114, 0x81);
+        mmc5.write(0x5115, 0x82);
+        mmc5.write(0x5116, 0x83);
+        mmc5.write(0x5117, 0x84);
 
         assert_eq!(mmc5.read(0x8000), 1);
         assert_eq!(mmc5.read(0xa000), 2);
@@ -674,9 +669,9 @@ mod tests {
     #[test]
     fn maps_fill_mode_nametable_reads() {
         let mut mmc5 = MMC5::new(&create_prg(), &create_chr(), Some(0x10000), false);
-        mmc5.write(&mut new_ppu(), 0x5105, 0xff);
-        mmc5.write(&mut new_ppu(), 0x5106, 0x2a);
-        mmc5.write(&mut new_ppu(), 0x5107, 0x03);
+        mmc5.write(0x5105, 0xff);
+        mmc5.write(0x5106, 0x2a);
+        mmc5.write(0x5107, 0x03);
 
         assert_eq!(mmc5.read_nametable(0x2000), Some(0x2a));
         assert_eq!(mmc5.read_nametable(0x23c0), Some(0xff));
@@ -685,8 +680,8 @@ mod tests {
     #[test]
     fn exposes_multiplier_result() {
         let mut mmc5 = MMC5::new(&create_prg(), &create_chr(), Some(0x10000), false);
-        mmc5.write(&mut new_ppu(), 0x5205, 7);
-        mmc5.write(&mut new_ppu(), 0x5206, 9);
+        mmc5.write(0x5205, 7);
+        mmc5.write(0x5206, 9);
 
         assert_eq!(mmc5.read(0x5205), 63);
         assert_eq!(mmc5.read(0x5206), 0);
