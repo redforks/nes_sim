@@ -461,11 +461,10 @@ impl<R: Render> Ppu<R> {
             self.renderer.finish();
         }
 
-        if self.scanline == VBLANK_SET_SCANLINE && self.dot == 1 {
-            if !self.suppress_vblank_for_current_frame {
+        if self.scanline == VBLANK_SET_SCANLINE && self.dot == 1
+            && !self.suppress_vblank_for_current_frame {
                 self.status.set_v_blank(true);
             }
-        }
 
         // VBlank clear: pre-render scanline 261, dot 1
         if self.scanline == VBLANK_CLEAR_SCANLINE && self.dot == VBLANK_CLEAR_DOT {

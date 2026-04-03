@@ -125,7 +125,7 @@ impl<M: Mcu> Cpu<M> {
     /// Return true if just execute current instruction
     pub fn tick<P: Plugin<M>>(&mut self, plugin: &mut P) -> (ExecuteResult, bool) {
         self.cycles = self.cycles.wrapping_add(1);
-        if self.cycles % 3 != 0 {
+        if !self.cycles.is_multiple_of(3) {
             return (ExecuteResult::Continue, false);
         }
 

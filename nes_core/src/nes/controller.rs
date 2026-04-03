@@ -89,14 +89,11 @@ impl Mcu for Controller {
     }
 
     fn write(&mut self, address: u16, value: u8) {
-        match address {
-            0x4016 => {
-                self.a.stroke = value & 1 != 0;
-                self.b.stroke = value & 1 != 0;
-                self.a.reset_for_read();
-                self.b.reset_for_read();
-            }
-            _ => {}
+        if address == 0x4016 {
+            self.a.stroke = value & 1 != 0;
+            self.b.stroke = value & 1 != 0;
+            self.a.reset_for_read();
+            self.b.reset_for_read();
         }
     }
 }

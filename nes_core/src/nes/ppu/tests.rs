@@ -353,14 +353,13 @@ fn render_pixel(ppu: &mut Ppu, pattern: &[u8], x: u8, y: u8) -> Pixel {
     // Build a temporary Cartridge::Test and fill its CHR with pattern bytes
     use crate::nes::mapper::{Cartridge, TestCartridge};
     let mut cart = Cartridge::Test(Box::new(TestCartridge::new()));
-    if !pattern.is_empty() {
-        if let Cartridge::Test(tc) = &mut cart {
+    if !pattern.is_empty()
+        && let Cartridge::Test(tc) = &mut cart {
             for i in 0..tc.chr_rom.len() {
                 tc.chr_rom[i] = pattern[i % pattern.len()];
             }
         }
-    }
-    ppu.render_pixel(&mut cart, x, y)
+    ppu.render_pixel(&cart, x, y)
 }
 
 #[test]
