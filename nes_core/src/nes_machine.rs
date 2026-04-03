@@ -14,7 +14,7 @@ const MAX_TICKS_PER_FRAME: u32 = 90000;
 pub struct NesMachine<P, R: Render, D: crate::nes::apu::AudioDriver> {
     machine: Machine<P, NesMcu<R, D>>,
     enter_vblank: bool,
-    cycles: u8,
+    cycles: usize,
 }
 
 impl<P, R, D> NesMachine<P, R, D>
@@ -72,13 +72,11 @@ where
         let timing = self.mcu().ppu().timing();
         self.machine.cpu_mut().update_nmi_line(nmi_line, timing);
 
-        if self.cycles == 3 {
-            self.cycles = 0;
+        if self.cycles % 3 == 0 {
             self.machine.mcu_mut().tick_apu();
         }
-        let apu_irq = self.machine.mcu().apu_irq_pending();
-        let cartridge_irq = self.machine.mcu().cartridge_irq_pending();
-        self.machine.cpu_mut().set_irq(apu_irq || cartridge_irq);
+        let irq_pending = self.machine.mcu().irq_pending();
+        self.machine.cpu_mut().set_irq(irq_pending);
 
         self.machine.tick()
     }

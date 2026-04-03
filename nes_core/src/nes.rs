@@ -73,12 +73,8 @@ impl<R: Render, D: AudioDriver> NesMcu<R, D> {
         self.apu.tick()
     }
 
-    pub fn apu_irq_pending(&self) -> bool {
-        self.apu.request_irq()
-    }
-
-    pub fn cartridge_irq_pending(&self) -> bool {
-        self.cartridge.irq_pending()
+    pub fn irq_pending(&self) -> bool {
+        self.apu.request_irq() || self.cartridge.irq_pending()
     }
 
     pub fn flush_audio(&mut self) {
