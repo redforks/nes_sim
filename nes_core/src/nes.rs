@@ -132,7 +132,7 @@ impl<R: Render, D: AudioDriver> Mcu for NesMcu<R, D> {
             0x0000..=0x1fff => self.lower_ram.read(address),
             0x2000..=0x3fff => {
                 let cartridge = RefCell::new(&mut self.cartridge);
-                self.ppu.read_with_mapper(
+                self.ppu.read(
                     address,
                     |addr, access| cartridge.borrow_mut().read_chr(addr, access),
                     |addr| cartridge.borrow_mut().read_nametable(addr),
@@ -157,7 +157,7 @@ impl<R: Render, D: AudioDriver> Mcu for NesMcu<R, D> {
                     _ => {}
                 }
                 let cartridge = RefCell::new(&mut self.cartridge);
-                self.ppu.write_with_mapper(
+                self.ppu.write(
                     address,
                     value,
                     |pattern_addr, pattern_value| {

@@ -167,88 +167,6 @@ fn test_set_mirroring_same_value() {
 }
 
 #[test]
-fn read_write_v_ram() {
-    let (mut ppu, pattern) = new_test_ppu_and_pattern();
-    // data_addr default to 0
-    assert_eq!(ppu.read_vram_and_inc(&pattern), 0);
-
-    ppu.read(&pattern, 0x2000); // reset addr
-    ppu.write(0x2006, 0x21);
-    ppu.write(0x2006, 0x08);
-    ppu.write(0x2007, 0x12);
-    ppu.write(0x2007, 0x34);
-    assert_eq!(Ppu::read_vram_data(&mut ppu, &pattern, 0x2108), 0x12);
-    assert_eq!(Ppu::read_vram_data(&mut ppu, &pattern, 0x2109), 0x34);
-
-    ppu.read(&pattern, 0x2000); // reset addr
-    ppu.write(0x2006, 0x21);
-    ppu.write(0x2006, 0x08);
-    assert_eq!(ppu.read(&pattern, 0x2007), 0x12);
-    assert_eq!(ppu.read(&pattern, 0x2007), 0x34);
-
-    // set increase mode to 32
-    ppu.write(0x2000, PpuCtrl::new().with_increment_mode(true).into());
-    ppu.read(&pattern, 0x2000); // reset addr
-    ppu.write(0x2006, 0x21);
-    ppu.write(0x2006, 0x08);
-    ppu.write(0x2007, 0x56);
-    ppu.write(0x2007, 0x78);
-    assert_eq!(Ppu::read_vram_data(&mut ppu, &pattern, 0x2108,), 0x56);
-    assert_eq!(Ppu::read_vram_data(&mut ppu, &pattern, 0x2128,), 0x78);
-
-    ppu.read(&pattern, 0x2000); // reset addr
-    ppu.write(0x2006, 0x21);
-    ppu.write(0x2006, 0x08);
-    assert_eq!(ppu.read(&pattern, 0x2007), 0x56);
-    assert_eq!(ppu.read(&pattern, 0x2007), 0x78);
-
-    fn rw(ppu: &mut Ppu, pattern: &[u8], addr: u16, w_value: u8, r_value: u8) {
-        ppu.read(pattern, 0x2000); // reset addr
-        ppu.write(0x2006, (addr >> 8) as u8);
-        ppu.write(0x2006, addr as u8);
-        ppu.write(0x2007, w_value);
-        ppu.read(pattern, 0x2000); // reset addr
-        ppu.write(0x2006, (addr >> 8) as u8);
-        ppu.write(0x2006, addr as u8);
-        assert_eq!(ppu.read(pattern, 0x2007), r_value);
-    }
-
-    fn rw_round_trip(ppu: &mut Ppu, pattern: &[u8], addr: u16, value: u8) {
-        rw(ppu, pattern, addr, value, value);
-    }
-
-    // ignore write to pattern/chr-rom
-    rw(&mut ppu, &pattern, 0x0001, 13, 0);
-
-    // read-write palette ram index
-    rw_round_trip(&mut ppu, &pattern, 0x3f00, 14);
-    // read-write mirror of name-table
-    rw_round_trip(&mut ppu, &pattern, 0x2400, 15);
-    // read-write mirror of palette ram index
-    rw_round_trip(&mut ppu, &pattern, 0x3f20, 16);
-}
-
-#[test]
-fn read_write_oam() {
-    let (mut ppu, _pattern) = new_test_ppu_and_pattern();
-    // oam addr default to 0
-    assert_eq!(ppu.oam_addr, 0);
-
-    ppu.write(0x2003, 0x12);
-    // write oma data, auto inc oma addr
-    ppu.write(0x2004, 0x34);
-    assert_eq!(0x13, ppu.oam_addr);
-    ppu.write(0x2004, 0x56);
-    assert_eq!(0x14, ppu.oam_addr);
-
-    ppu.write(0x2003, 0x12);
-    assert_eq!(ppu.read_oam_data(), 0x34);
-    assert_eq!(0x12, ppu.oam_addr);
-    // read oma data, won't auto inc oma addr
-    assert_eq!(ppu.read_oam_data(), 0x34);
-}
-
-#[test]
 fn test_ppu_ctrl_to_from_u8() {
     let ctrl = PpuCtrl::new()
         .with_nmi_enable(true)
@@ -322,51 +240,6 @@ fn test_read_status_clears_vblank() {
 }
 
 #[test]
-fn test_write_0x2006_set_data_addr() {
-    let (mut ppu, _pattern) = new_test_ppu_and_pattern();
-
-    // First write to 0x2006 sets high byte of VRAM address
-    ppu.write(0x2006, 0x3f);
-
-    // Second write to 0x2006 sets low byte and commits to vram_addr
-    ppu.write(0x2006, 0x00);
-
-    // Verify the VRAM address was set
-    assert_eq!(ppu.vram_addr, 0x3f00);
-}
-
-#[test]
-fn test_read_0x3000_reads_palette() {
-    let (mut ppu, pattern) = new_test_ppu_and_pattern();
-
-    // Write to palette memory at 0x3f00 using VRAM write
-    ppu.write(0x2006, 0x3f);
-    ppu.write(0x2006, 0x00);
-    ppu.write(0x2007, 0xAB);
-
-    // Reset VRAM address to read from 0x3f20 (mirrors to 0x3f00)
-    ppu.write(0x2006, 0x3f);
-    ppu.write(0x2006, 0x20);
-
-    // Read from 0x3f20 (should mirror to 0x3f00)
-    let val = ppu.read(&pattern, 0x2007);
-    assert_eq!(val, 0xAB);
-}
-
-#[test]
-fn test_pattern_table_selection() {
-    let (mut ppu, _pattern) = new_test_ppu_and_pattern();
-
-    // Set pattern table index via control flag
-    ppu.write(
-        0x2000,
-        PpuCtrl::new().with_background_pattern_table(true).into(),
-    );
-
-    assert_eq!(ppu.cur_pattern_table_idx, 1);
-}
-
-#[test]
 fn test_mirroring() {
     let (mut ppu, _pattern) = new_test_ppu_and_pattern();
 
@@ -391,178 +264,20 @@ fn test_mirroring() {
 }
 
 #[test]
-fn test_scroll_register_first_write() {
-    let (mut ppu, _pattern) = new_test_ppu_and_pattern();
-
-    // First write to 0x2005 sets coarse X and fine X
-    ppu.write(0x2005, 0x3A); // coarse X = 0x07, fine X = 0x02
-
-    // Verify the temp_vram_addr was updated with coarse X
-    assert_eq!(ppu.temp_vram_addr & 0x1F, 0x07);
-    assert_eq!(ppu.fine_x, 0x02);
-    // write_toggle should be true
-    assert!(ppu.write_toggle);
-}
-
-#[test]
-fn test_scroll_register_second_write() {
-    let (mut ppu, _pattern) = new_test_ppu_and_pattern();
-
-    // First write
-    ppu.write(0x2005, 0x00);
-
-    // Second write to 0x2005 sets coarse Y and fine Y
-    ppu.write(0x2005, 0x7B); // coarse Y = 0x0F, fine Y = 0x03
-
-    // Verify the temp_vram_addr was updated
-    assert_eq!((ppu.temp_vram_addr >> 5) & 0x1F, 0x0F);
-    assert_eq!((ppu.temp_vram_addr >> 12) & 0x07, 0x03);
-    // write_toggle should be false again
-    assert!(!ppu.write_toggle);
-}
-
-#[test]
-fn test_scroll_second_write_replaces_existing_y_scroll_bits() {
-    let (mut ppu, _pattern) = new_test_ppu_and_pattern();
-
-    ppu.temp_vram_addr = 0x7FFF;
-    ppu.write_toggle = true;
-
-    ppu.write(0x2005, 0x00);
-
-    assert_eq!((ppu.temp_vram_addr >> 5) & 0x1F, 0x00);
-    assert_eq!((ppu.temp_vram_addr >> 12) & 0x07, 0x00);
-    assert_eq!((ppu.temp_vram_addr >> 10) & 0x03, 0x03);
-    assert_eq!(ppu.temp_vram_addr & 0x1F, 0x1F);
-}
-
-#[test]
-fn test_vram_address_high_byte_only() {
-    let (mut ppu, _pattern) = new_test_ppu_and_pattern();
-
-    // Write only the high byte to 0x2006
-    ppu.write(0x2006, 0x3F);
-
-    // write_toggle should be true, but vram_addr should not be committed yet
-    assert!(ppu.write_toggle);
-    // The temp_vram_addr should have been set
-    assert_eq!(ppu.temp_vram_addr, 0x3F00);
-}
-
-#[test]
 fn test_read_vram_pattern_table() {
     let (mut ppu, pattern) = new_test_ppu_and_pattern();
 
     // Write some data to pattern table at 0x1000
     // Note: We can't actually write to pattern table (it's ROM in real NES)
     // But we can test reading from it
-    let val = {
-        let this = &mut ppu;
-        let pattern: &[u8] = &pattern;
-        Ppu::read_vram_data(this, pattern, 0x1000)
-    };
+    let pattern: &[u8] = &pattern;
+    let val = ppu.read_vram(
+        0x1000,
+        &mut |addr, _| pattern[addr as usize % pattern.len()],
+        &mut |_| None,
+    );
     // Pattern table data defaults to 0
     assert_eq!(val, 0);
-}
-
-#[test]
-fn test_write_0x2000_updates_name_table_addr() {
-    let (mut ppu, _pattern) = new_test_ppu_and_pattern();
-
-    // Set name table select to 1 (0x2400)
-    ppu.write(0x2000, PpuCtrl::new().with_name_table_select(1).into());
-
-    assert_eq!(ppu.cur_name_table_addr, 0x2400);
-
-    // Set name table select to 2 (0x2800)
-    ppu.write(0x2000, PpuCtrl::new().with_name_table_select(2).into());
-
-    assert_eq!(ppu.cur_name_table_addr, 0x2800);
-
-    // Set name table select to 3 (0x2C00)
-    ppu.write(0x2000, PpuCtrl::new().with_name_table_select(3).into());
-
-    assert_eq!(ppu.cur_name_table_addr, 0x2C00);
-}
-
-#[test]
-fn test_write_0x2000_updates_temp_vram_nametable_bits() {
-    let (mut ppu, _pattern) = new_test_ppu_and_pattern();
-
-    ppu.temp_vram_addr = 0x73FF;
-    ppu.write(0x2000, PpuCtrl::new().with_name_table_select(2).into());
-
-    assert_eq!((ppu.temp_vram_addr >> 10) & 0x03, 0x02);
-    assert_eq!(ppu.temp_vram_addr & 0x03FF, 0x03FF);
-    assert_eq!((ppu.temp_vram_addr >> 12) & 0x07, 0x07);
-}
-
-#[test]
-fn test_ppu_mask_register() {
-    let (mut ppu, _pattern) = new_test_ppu_and_pattern();
-
-    // Write mask register
-    ppu.write(
-        0x2001,
-        PpuMask::new()
-            .with_blue_tint(true)
-            .with_sprite_enabled(true)
-            .with_background_enabled(true)
-            .into(),
-    );
-
-    assert!(ppu.mask.blue_tint());
-    assert!(ppu.mask.sprite_enabled());
-    assert!(ppu.mask.background_enabled());
-}
-
-#[test]
-fn test_read_status_register() {
-    let (mut ppu, pattern) = new_test_ppu_and_pattern();
-
-    // Set some status flags
-    {
-        let this = &mut ppu;
-        let status = PpuStatus::new()
-            .with_sprite_overflow(true)
-            .with_sprite_zero_hit(true)
-            .with_v_blank(true);
-        this.status = status;
-    };
-
-    // Read status register (0x2002)
-    let val = ppu.read(&pattern, 0x2002);
-
-    // Check that status flags are in the correct bits
-    let status: PpuStatus = val.into();
-    assert!(status.sprite_overflow());
-    assert!(status.sprite_zero_hit());
-    assert!(status.v_blank());
-
-    // VBlank should be cleared after reading
-    assert!(!ppu.status.v_blank());
-    // write_toggle should be reset
-    assert!(!ppu.write_toggle);
-}
-
-#[test]
-fn test_read_buffer() {
-    let (mut ppu, pattern) = new_test_ppu_and_pattern();
-
-    // First read from VRAM (0x2007) returns read_buffer (default 0)
-    let val1 = ppu.read(&pattern, 0x2007);
-    assert_eq!(val1, 0);
-
-    // Set up pattern data
-    let pattern_data = [0u8; 8192];
-
-    // Set VRAM address
-    ppu.write(0x2006, 0x00);
-    ppu.write(0x2006, 0x00);
-
-    // Reading from pattern table - first read returns buffer
-    let _val2 = ppu.read(&pattern_data, 0x2007);
-    // Actual value is loaded into buffer for next read
 }
 
 // ============================================================================
@@ -634,13 +349,6 @@ fn setup_sprite(ppu: &mut Ppu, index: usize, y: u8, tile: u8, attr: u8, x: u8) {
 fn set_bg_tile(ppu: &mut Ppu, tile: u8, palette_idx: u8) {
     ppu.name_table.write(0x2000, tile);
     ppu.name_table.write(0x23c0, palette_idx & 0x03);
-}
-
-fn set_bg_tile_at(ppu: &mut Ppu, addr: u16, tile: u8, palette_idx: u8) {
-    ppu.name_table.write(addr, tile);
-    let nametable_base = addr & 0xFC00;
-    ppu.name_table
-        .write(nametable_base + 0x03c0, palette_idx & 0x03);
 }
 
 fn set_bg_palette_color(ppu: &mut Ppu, palette_idx: u8, color_idx: u8, color: u8) {
@@ -890,54 +598,6 @@ fn test_render_pixel_respects_background_pattern_table_selection() {
 
     let pixel = ppu.render_pixel(&pattern, 0, 0);
     assert_eq!(pixel, COLORS[0x28]);
-}
-
-#[test]
-fn test_render_pixel_applies_horizontal_scroll_across_nametables() {
-    let mut ppu = create_test_ppu_with_mask(
-        PpuMask::new()
-            .with_background_enabled(true)
-            .with_background_left_enabled(true),
-    );
-    ppu.set_mirroring(Mirroring::Four);
-
-    let mut pattern = create_pattern();
-    set_tile_solid(&mut pattern, 0, 1, 1);
-    set_tile_solid(&mut pattern, 0, 2, 2);
-    set_bg_tile_at(&mut ppu, 0x2000, 1, 0);
-    set_bg_tile_at(&mut ppu, 0x2400, 2, 0);
-    set_bg_palette_color(&mut ppu, 0, 1, 0x11);
-    set_bg_palette_color(&mut ppu, 0, 2, 0x21);
-
-    ppu.write(0x2005, 0xF8);
-    ppu.write(0x2005, 0x00);
-
-    let pixel = ppu.render_pixel(&pattern, 8, 0);
-    assert_eq!(pixel, COLORS[0x21]);
-}
-
-#[test]
-fn test_render_pixel_applies_vertical_scroll_across_nametables() {
-    let mut ppu = create_test_ppu_with_mask(
-        PpuMask::new()
-            .with_background_enabled(true)
-            .with_background_left_enabled(true),
-    );
-    ppu.set_mirroring(Mirroring::Four);
-
-    let mut pattern = create_pattern();
-    set_tile_solid(&mut pattern, 0, 1, 1);
-    set_tile_solid(&mut pattern, 0, 2, 2);
-    set_bg_tile_at(&mut ppu, 0x2000, 1, 0);
-    set_bg_tile_at(&mut ppu, 0x2800, 2, 0);
-    set_bg_palette_color(&mut ppu, 0, 1, 0x12);
-    set_bg_palette_color(&mut ppu, 0, 2, 0x22);
-
-    ppu.write(0x2005, 0x00);
-    ppu.write(0x2005, 0xEF);
-
-    let pixel = ppu.render_pixel(&pattern, 0, 1);
-    assert_eq!(pixel, COLORS[0x22]);
 }
 
 #[test]

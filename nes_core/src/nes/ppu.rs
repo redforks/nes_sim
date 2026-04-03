@@ -533,22 +533,8 @@ impl<R: Render> Ppu<R> {
         self.name_table.mirroring()
     }
 
-    /// Read from PPU registers or VRAM/palette data
-    /// Returns the value read from the given address
-    pub fn read(&mut self, pattern: &[u8], address: u16) -> u8 {
-        self.read_with_mapper(
-            address,
-            |addr, _| pattern[addr as usize % pattern.len()],
-            |_| None,
-        )
-    }
-
-    pub fn read_with_mapper<CR, NR>(
-        &mut self,
-        address: u16,
-        mut chr_read: CR,
-        mut name_table_read: NR,
-    ) -> u8
+    /// Read by cpu memory bus
+    pub fn read<CR, NR>(&mut self, address: u16, mut chr_read: CR, mut name_table_read: NR) -> u8
     where
         CR: FnMut(u16, PatternAccess) -> u8,
         NR: FnMut(u16) -> Option<u8>,
@@ -565,24 +551,13 @@ impl<R: Render> Ppu<R> {
             // OAMDATA
             0x2004 => self.read_oam_data(),
             // PPUDATA - read from VRAM or palette
-            0x2007 => self.read_vram_and_inc_with_mapper(&mut chr_read, &mut name_table_read),
+            0x2007 => self.read_vram_and_inc(&mut chr_read, &mut name_table_read),
             _ => 0, // Other registers are write-only
         }
     }
 
-    /// Write to PPU registers
-    pub fn write(&mut self, address: u16, value: u8) {
-        self.write_with_mapper(address, value, |_, _| {}, |_, _| false);
-    }
-
-    pub fn write_with_pattern_write<F>(&mut self, address: u16, value: u8, mut pattern_write: F)
-    where
-        F: FnMut(u16, u8),
-    {
-        self.write_with_mapper(address, value, &mut pattern_write, |_, _| false);
-    }
-
-    pub fn write_with_mapper<PW, NW>(
+    /// Write by cpu memory bus
+    pub fn write<PW, NW>(
         &mut self,
         address: u16,
         value: u8,
@@ -631,12 +606,7 @@ impl<R: Render> Ppu<R> {
             // PPUDATA
             0x2007 => {
                 let vram_addr = self.vram_addr;
-                self.write_vram_data_with_mapper(
-                    vram_addr,
-                    value,
-                    &mut pattern_write,
-                    &mut name_table_write,
-                );
+                self.write_vram(vram_addr, value, &mut pattern_write, &mut name_table_write);
                 // Increment VRAM address based on control flag
                 let increment = if self.ctrl.increment_mode() { 32 } else { 1 };
                 self.vram_addr = self.vram_addr.wrapping_add(increment);
@@ -646,22 +616,7 @@ impl<R: Render> Ppu<R> {
         }
     }
 
-    // Helper methods for VRAM operations
-    #[cfg(test)]
-    fn read_vram_data(&mut self, pattern: &[u8], address: u16) -> u8 {
-        self.read_vram_data_with_mapper(
-            address,
-            &mut |addr, _| pattern[addr as usize % pattern.len()],
-            &mut |_| None,
-        )
-    }
-
-    fn read_vram_data_with_mapper<CR, NR>(
-        &mut self,
-        address: u16,
-        chr_read: &mut CR,
-        name_table_read: &mut NR,
-    ) -> u8
+    fn read_vram<CR, NR>(&mut self, address: u16, chr_read: &mut CR, name_table_read: &mut NR) -> u8
     where
         CR: FnMut(u16, PatternAccess) -> u8,
         NR: FnMut(u16) -> Option<u8>,
@@ -685,7 +640,7 @@ impl<R: Render> Ppu<R> {
         }
     }
 
-    fn write_vram_data_with_mapper<PW, NW>(
+    fn write_vram<PW, NW>(
         &mut self,
         address: u16,
         value: u8,
@@ -1004,29 +959,16 @@ impl<R: Render> Ppu<R> {
         }
     }
 
-    /// Read VRAM at current address and increment (for testing)
-    #[cfg(test)]
-    fn read_vram_and_inc(&mut self, pattern: &[u8]) -> u8 {
-        self.read_vram_and_inc_with_mapper(
-            &mut |addr, _| pattern[addr as usize % pattern.len()],
-            &mut |_| None,
-        )
-    }
-
-    fn read_vram_and_inc_with_mapper<CR, NR>(
-        &mut self,
-        chr_read: &mut CR,
-        name_table_read: &mut NR,
-    ) -> u8
+    fn read_vram_and_inc<CR, NR>(&mut self, chr_read: &mut CR, name_table_read: &mut NR) -> u8
     where
         CR: FnMut(u16, PatternAccess) -> u8,
         NR: FnMut(u16) -> Option<u8>,
     {
         let vram_addr = self.vram_addr;
-        let value = self.read_vram_data_with_mapper(vram_addr, chr_read, name_table_read);
-        // Increment VRAM address based on control flag
-        let increment = if self.ctrl.increment_mode() { 32 } else { 1 };
-        self.vram_addr = self.vram_addr.wrapping_add(increment);
+        let value = self.read_vram(vram_addr, chr_read, name_table_read);
+        self.vram_addr =
+            self.vram_addr
+                .wrapping_add(if self.ctrl.increment_mode() { 32 } else { 1 });
         value
     }
 
