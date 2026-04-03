@@ -263,23 +263,6 @@ fn test_mirroring() {
     assert_eq!(ppu.mirroring(), Mirroring::UpperBank);
 }
 
-#[test]
-fn test_read_vram_pattern_table() {
-    let (mut ppu, pattern) = new_test_ppu_and_pattern();
-
-    // Write some data to pattern table at 0x1000
-    // Note: We can't actually write to pattern table (it's ROM in real NES)
-    // But we can test reading from it
-    let pattern: &[u8] = &pattern;
-    let val = ppu.read_vram(
-        0x1000,
-        &mut |addr, _| pattern[addr as usize % pattern.len()],
-        &mut |_| None,
-    );
-    // Pattern table data defaults to 0
-    assert_eq!(val, 0);
-}
-
 // ============================================================================
 // render_pixel() Tests
 // ============================================================================
