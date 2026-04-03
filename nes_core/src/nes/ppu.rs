@@ -133,44 +133,38 @@ impl From<NametableArrangement> for Mirroring {
 }
 
 struct NameTableControl {
-    mem: [u8; 4096],
-    band_start_offset: [u16; 4],
+    mem: [u8; 2048],
     mirroring: Mirroring,
 }
 
-impl Default for NameTableControl {
-    fn default() -> Self {
-        Self {
-            mem: [0; 4096],
-            band_start_offset: [0, 1024, 2048, 3072],
-            mirroring: Mirroring::Four,
-        }
-    }
-}
-
 impl NameTableControl {
+    pub fn new(mirroring: Mirroring) -> Self {
+        let mut r = Self {
+            mem: [0; 2048],
+            mirroring: mirroring,
+        };
+        r.set_mirroring(mirroring);
+        r
+    }
+
     fn mirroring(&self) -> Mirroring {
         self.mirroring
     }
 
     fn set_mirroring(&mut self, mirroring: Mirroring) {
-        if mirroring == self.mirroring {
-            return;
-        }
-
         self.mirroring = mirroring;
-        self.band_start_offset = match mirroring {
-            Mirroring::LowerBank => [0, 0, 0, 0],
-            Mirroring::UpperBank => [1024, 1024, 1024, 1024],
-            Mirroring::Vertical => [0, 1024, 0, 1024],
-            Mirroring::Horizontal => [0, 0, 1024, 1024],
-            Mirroring::Four => [0, 1024, 2048, 3072],
-        };
     }
 
     fn offset(&self, addr: u16) -> usize {
         let r = addr - NAME_TABLE_MEM_START;
-        (self.band_start_offset[r as usize / 1024] + r % 1024) as usize
+        let band_start_offset = match self.mirroring {
+            Mirroring::LowerBank => [0, 0, 0, 0],
+            Mirroring::UpperBank => [1024, 1024, 1024, 1024],
+            Mirroring::Vertical => [0, 1024, 0, 1024],
+            Mirroring::Horizontal => [0, 0, 1024, 1024],
+            Mirroring::Four => unimplemented!(),
+        };
+        (band_start_offset[r as usize / 1024] + r % 1024) as usize
     }
 
     fn read(&mut self, address: u16) -> u8 {
@@ -391,7 +385,7 @@ fn normalize_ppu_addr(addr: u16) -> u16 {
 }
 
 impl<R: Render> Ppu<R> {
-    pub fn new(renderer: R) -> Self {
+    pub fn new(renderer: R, mirroring: Mirroring) -> Self {
         Ppu {
             ctrl: PpuCtrl::new(),
             mask: PpuMask::new(),
@@ -399,7 +393,7 @@ impl<R: Render> Ppu<R> {
             oam_addr: 0,
             oam_data: [0; 0x100],
 
-            name_table: NameTableControl::default(),
+            name_table: NameTableControl::new(mirroring),
             cur_name_table_addr: 0x2000,
             palette: PaletteRam::default(),
             cur_pattern_table_idx: 0,

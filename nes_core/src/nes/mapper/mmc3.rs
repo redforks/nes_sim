@@ -283,7 +283,7 @@ mod tests {
     use super::*;
 
     fn new_test_ppu() -> Ppu {
-        Ppu::new(())
+        Ppu::new((), Mirroring::Four)
     }
 
     fn create_prg() -> [u8; PRG_ROM_BANK_SIZE * 8] {

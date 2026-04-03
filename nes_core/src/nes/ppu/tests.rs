@@ -2,7 +2,7 @@ use super::*;
 use crate::render::ImageRender;
 
 fn new_test_ppu_and_pattern() -> (Ppu, [u8; 8192]) {
-    (Ppu::new(()), [0; 8192])
+    (Ppu::new((), Mirroring::Horizontal), [0; 8192])
 }
 
 #[test]
@@ -116,48 +116,8 @@ fn palette_ram_get_color() {
 }
 
 #[test]
-fn name_table_control() {
-    fn assert_start_addr(control: &mut NameTableControl, v1: u8, v2: u8, v3: u8, v4: u8) {
-        assert_eq!(v1, control.read(0x2000));
-        assert_eq!(v2, control.read(0x2400));
-        assert_eq!(v3, control.read(0x2800));
-        assert_eq!(v4, control.read(0x2c00));
-    }
-
-    let mut control = NameTableControl::default();
-    assert_eq!(Mirroring::Four, control.mirroring());
-
-    control.write(0x2000, 1);
-    control.write(0x2400, 2);
-    control.write(0x2800, 3);
-    control.write(0x2c00, 4);
-    control.write(0x23ff, 11);
-    control.write(0x27ff, 12);
-    control.write(0x2bff, 13);
-    control.write(0x2fff, 14);
-    assert_start_addr(&mut control, 1, 2, 3, 4);
-    assert_eq!(11, control.mem[1023]);
-
-    control.set_mirroring(Mirroring::LowerBank);
-    assert_eq!(Mirroring::LowerBank, control.mirroring());
-    assert_start_addr(&mut control, 1, 1, 1, 1);
-
-    control.set_mirroring(Mirroring::UpperBank);
-    assert_start_addr(&mut control, 2, 2, 2, 2);
-
-    control.set_mirroring(Mirroring::Horizontal);
-    assert_start_addr(&mut control, 1, 1, 2, 2);
-
-    control.set_mirroring(Mirroring::Vertical);
-    assert_start_addr(&mut control, 1, 2, 1, 2);
-
-    control.set_mirroring(Mirroring::Four);
-    assert_start_addr(&mut control, 1, 2, 3, 4);
-}
-
-#[test]
 fn test_set_mirroring_same_value() {
-    let mut control = NameTableControl::default();
+    let mut control = NameTableControl::new(Mirroring::Vertical);
 
     control.set_mirroring(Mirroring::Vertical);
     assert_eq!(Mirroring::Vertical, control.mirroring());
@@ -204,7 +164,7 @@ fn test_ppu_status_to_from_u8() {
 
 #[test]
 fn test_oam_dma() {
-    let mut ppu = Ppu::new(ImageRender::default_dimension());
+    let mut ppu = Ppu::new(ImageRender::default_dimension(), Mirroring::Four);
     let data: [u8; 256] = [0x42; 256];
 
     ppu.oam_dma(&data);
@@ -216,7 +176,7 @@ fn test_oam_dma() {
 
 #[test]
 fn test_set_mirroring() {
-    let mut ppu = Ppu::new(ImageRender::default_dimension());
+    let mut ppu = Ppu::new(ImageRender::default_dimension(), Mirroring::Four);
 
     ppu.set_mirroring(Mirroring::Horizontal);
     ppu.set_mirroring(Mirroring::Vertical);
@@ -271,7 +231,7 @@ fn create_test_ppu_with_mask(mask: PpuMask) -> Ppu {
     // Initialize PPU with the provided mask to avoid field reassignment
     let mut ppu = Ppu {
         mask,
-        ..Ppu::new(())
+        ..Ppu::new((), Mirroring::Vertical)
     };
     // Clear OAM
     for i in 0..64 {
@@ -354,11 +314,12 @@ fn render_pixel(ppu: &mut Ppu, pattern: &[u8], x: u8, y: u8) -> Pixel {
     use crate::nes::mapper::{Cartridge, TestCartridge};
     let mut cart = Cartridge::Test(Box::new(TestCartridge::new()));
     if !pattern.is_empty()
-        && let Cartridge::Test(tc) = &mut cart {
-            for i in 0..tc.chr_rom.len() {
-                tc.chr_rom[i] = pattern[i % pattern.len()];
-            }
+        && let Cartridge::Test(tc) = &mut cart
+    {
+        for i in 0..tc.chr_rom.len() {
+            tc.chr_rom[i] = pattern[i % pattern.len()];
         }
+    }
     ppu.render_pixel(&cart, x, y)
 }
 

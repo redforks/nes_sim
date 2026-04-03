@@ -25,12 +25,14 @@ pub struct NesMcu<R: Render, D: AudioDriver> {
 impl<R: Render, D: AudioDriver> NesMcu<R, D> {
     pub fn new(file: &INesFile, renderer: R, audio_driver: D) -> Self {
         let cartridge = mapper::create_cartridge(file);
-        let mut ppu = Ppu::new(renderer);
-        ppu.set_mirroring(if file.header().ignore_mirror_control {
-            Mirroring::Four
-        } else {
-            file.header().nametable_arrangement.into()
-        });
+        let ppu = Ppu::new(
+            renderer,
+            if file.header().ignore_mirror_control {
+                Mirroring::Four
+            } else {
+                file.header().nametable_arrangement.into()
+            },
+        );
 
         Self {
             lower_ram: LowerRam::new(),
