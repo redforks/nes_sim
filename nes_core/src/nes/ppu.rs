@@ -308,11 +308,7 @@ impl PaletteRam {
 
         // Clamp to valid range [0, 31]
         let addr = addr as usize;
-        if addr >= 32 {
-            31
-        } else {
-            addr
-        }
+        if addr >= 32 { 31 } else { addr }
     }
 
     fn get_color_idx(&self, start: usize, palette_idx: u8, idx: u8) -> Pixel {
@@ -559,6 +555,7 @@ impl<R: Render> Ppu<R> {
         match reg {
             // PPUCTRL
             0x2000 => {
+                cartridge.on_ppu_ctrl_write(value);
                 self.set_control_flags(PpuCtrl::from_bits(value));
                 // Update name table address from control bits
                 self.cur_name_table_addr = 0x2000 + (self.ctrl.name_table_select() as u16 * 0x400);
@@ -566,6 +563,7 @@ impl<R: Render> Ppu<R> {
             }
             // PPUMASK
             0x2001 => {
+                cartridge.on_ppu_mask_write(value);
                 self.mask = PpuMask::from_bits(value);
                 self.scanline_cache.dirty = true;
             }
@@ -582,6 +580,7 @@ impl<R: Render> Ppu<R> {
             }
             // PPUSCROLL
             0x2005 => {
+                cartridge.on_ppu_scroll_write(value);
                 self.write_scroll(value);
                 self.scanline_cache.dirty = true;
             }
@@ -752,11 +751,7 @@ impl<R: Render> Ppu<R> {
     }
 
     fn sprite_height(&self) -> i16 {
-        if self.ctrl.sprite_size() {
-            16
-        } else {
-            8
-        }
+        if self.ctrl.sprite_size() { 16 } else { 8 }
     }
 
     fn sprite_covers_scanline(&self, sprite_idx: usize, screen_y: u8) -> bool {

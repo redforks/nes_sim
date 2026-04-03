@@ -38,11 +38,7 @@ impl AController {
             false
         };
 
-        if pressed {
-            0x41
-        } else {
-            0x40
-        }
+        if pressed { 0x41 } else { 0x40 }
     }
 
     pub fn press(&mut self, btn: Button) {
@@ -88,7 +84,7 @@ impl Mcu for Controller {
         match address {
             0x4016 => self.a.read(),
             0x4017 => self.b.read(),
-            _ => panic!("read address out of range: {:04x}", address),
+            _ => 0,
         }
     }
 
@@ -100,8 +96,7 @@ impl Mcu for Controller {
                 self.a.reset_for_read();
                 self.b.reset_for_read();
             }
-            0x4017 => {}
-            _ => panic!("write address out of range: {:04x}", address),
+            _ => {}
         }
     }
 }

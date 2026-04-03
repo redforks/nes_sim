@@ -121,25 +121,13 @@ impl<R: Render, D: AudioDriver> Mcu for NesMcu<R, D> {
     fn write(&mut self, address: u16, value: u8) {
         match address {
             0x0000..=0x1fff => self.lower_ram.write(address, value),
-            0x2000..=0x3fff => {
-                let reg = 0x2000 + ((address - 0x2000) % 8);
-                match reg {
-                    0x2000 => self.cartridge.on_ppu_ctrl_write(value),
-                    0x2001 => self.cartridge.on_ppu_mask_write(value),
-                    0x2005 => self.cartridge.on_ppu_scroll_write(value),
-                    _ => {}
-                }
-                self.ppu.write(address, value, &mut self.cartridge);
-            }
+            0x2000..=0x3fff => self.ppu.write(address, value, &mut self.cartridge),
             0x4000..=0x401f => match address {
                 0x4014 => self.ppu_dma(value),
                 0x4016 => self.controller.write(address, value),
                 _ => self.apu.write(address, value),
             },
-            0x4020..=0xffff => {
-                // Cartridge now takes &mut self and &mut Ppu
-                self.cartridge.write(&mut self.ppu, address, value)
-            }
+            0x4020..=0xffff => self.cartridge.write(&mut self.ppu, address, value),
         }
     }
 }
