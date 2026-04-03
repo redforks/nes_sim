@@ -12,6 +12,10 @@ impl InfoAction {
 
 fn header_to_key_values(h: &Header, version: FileVersion) -> Vec<(&str, String)> {
     let bool_to_string = |b: bool| if b { "yes" } else { "no" }.to_string();
+    let arrangement_to_string = |a: &nes_core::ines::NametableArrangement| match a {
+        nes_core::ines::NametableArrangement::Vertical => "vertical".to_string(),
+        nes_core::ines::NametableArrangement::Horizontal => "horizontal".to_string(),
+    };
 
     let mut values = vec![
         ("File version", format!("{:?}", version)),
@@ -26,7 +30,7 @@ fn header_to_key_values(h: &Header, version: FileVersion) -> Vec<(&str, String)>
         ("Battery backed RAM", bool_to_string(h.battery_backed_ram)),
         (
             "Vertical or horizontal",
-            bool_to_string(h.ver_or_hor_arrangement),
+            arrangement_to_string(&h.nametable_arrangement),
         ),
     ];
 

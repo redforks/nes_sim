@@ -1,4 +1,5 @@
 use super::*;
+use crate::ines::NametableArrangement;
 
 fn build_rom(
     header: [u8; 16],
@@ -133,7 +134,10 @@ fn test_nes20_header_fields_are_parsed() {
     assert!(header.ignore_mirror_control);
     assert!(header.has_trainer);
     assert!(header.battery_backed_ram);
-    assert!(header.ver_or_hor_arrangement);
+    assert_eq!(
+        header.nametable_arrangement,
+        NametableArrangement::Horizontal
+    );
     assert_eq!(1, header.console_type);
     assert_eq!(Some(8 * 1024), header.prg_ram_size);
     assert_eq!(Some(16 * 1024), header.prg_nvram_size);

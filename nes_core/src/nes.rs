@@ -28,10 +28,8 @@ impl<R: Render, D: AudioDriver> NesMcu<R, D> {
         let mut ppu = Ppu::new(renderer);
         ppu.set_mirroring(if file.header().ignore_mirror_control {
             Mirroring::Four
-        } else if file.header().ver_or_hor_arrangement {
-            Mirroring::Vertical
         } else {
-            Mirroring::Horizontal
+            file.header().nametable_arrangement.into()
         });
 
         Self {

@@ -84,7 +84,11 @@ fn parse_header(input: &mut &[u8]) -> Result<(FileVersion, super::Header), Conte
             ignore_mirror_control: flags6 & 0b0000_1000 != 0,
             has_trainer: flags6 & 0b0000_0100 != 0,
             battery_backed_ram: flags6 & 0b0000_0010 != 0,
-            ver_or_hor_arrangement: flags6 & 0b0000_0001 != 0,
+            nametable_arrangement: if flags6 & 0b0000_0001 == 0 {
+                super::NametableArrangement::Vertical
+            } else {
+                super::NametableArrangement::Horizontal
+            },
             console_type,
             prg_ram_size: nes20.then(|| decode_shift_count(flags10 & 0x0f)).flatten(),
             prg_nvram_size: nes20.then(|| decode_shift_count(flags10 >> 4)).flatten(),

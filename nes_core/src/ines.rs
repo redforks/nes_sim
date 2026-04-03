@@ -6,6 +6,12 @@ pub enum FileVersion {
     Nes20,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum NametableArrangement {
+    Vertical,
+    Horizontal,
+}
+
 #[derive(Debug)]
 pub struct Header {
     /// Each page is 16k
@@ -21,7 +27,7 @@ pub struct Header {
     pub ignore_mirror_control: bool,
     pub has_trainer: bool,
     pub battery_backed_ram: bool,
-    pub ver_or_hor_arrangement: bool,
+    pub nametable_arrangement: NametableArrangement,
     pub console_type: u8,
     pub prg_ram_size: Option<usize>,
     pub prg_nvram_size: Option<usize>,
