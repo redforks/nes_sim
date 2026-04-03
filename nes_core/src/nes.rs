@@ -1,5 +1,5 @@
 use crate::ines::INesFile;
-use crate::mcu::{Mcu, RamMcu};
+use crate::mcu::Mcu;
 use crate::nes::apu::{Apu, AudioDriver};
 use crate::nes::controller::{Button, Controller};
 use crate::nes::lower_ram::LowerRam;
@@ -18,7 +18,6 @@ pub mod ppu;
 pub struct NesMcu<R: Render, D: AudioDriver> {
     lower_ram: LowerRam,
     ppu: Ppu<R>,
-    after_ppu: RamMcu<0x20>,
     controller: Controller,
     cartridge: Cartridge,
     apu: Apu<D>,
@@ -39,7 +38,6 @@ impl<R: Render, D: AudioDriver> NesMcu<R, D> {
         Self {
             lower_ram: LowerRam::new(),
             ppu,
-            after_ppu: RamMcu::start_from(0x4000, [0; 0x20]),
             controller: Controller::new(),
             cartridge,
             apu: Apu::new(audio_driver),
@@ -138,9 +136,13 @@ impl<R: Render, D: AudioDriver> Mcu for NesMcu<R, D> {
                     |addr| cartridge.borrow_mut().read_nametable(addr),
                 )
             }
-            0x4015 => self.apu.read(address),
-            0x4016..=0x4017 => self.controller.read(address),
-            0x4000..=0x401f => self.after_ppu.read(address),
+            0x4000..=0x401f => {
+                if address == 0x4016 || address == 0x4017 {
+                    self.controller.read(address)
+                } else {
+                    self.apu.read(address)
+                }
+            }
             0x4020..=0xffff => self.cartridge.read(address),
         }
     }
@@ -172,21 +174,11 @@ impl<R: Render, D: AudioDriver> Mcu for NesMcu<R, D> {
                     },
                 );
             }
-            0x4014 => self.ppu_dma(value),
-            0x4016 => {
-                self.after_ppu.write(address, value);
-                self.controller.write(address, value);
-            }
-            0x4000..=0x4017 => {
-                self.after_ppu.write(address, value);
-                if matches!(
-                    address,
-                    0x4000..=0x400F | 0x4010..=0x4013 | 0x4015 | 0x4017
-                ) {
-                    self.apu.write(address, value);
-                }
-            }
-            0x4018..=0x401f => self.after_ppu.write(address, value),
+            0x4000..=0x401f => match address {
+                0x4014 => self.ppu_dma(value),
+                0x4016 => self.controller.write(address, value),
+                _ => self.apu.write(address, value),
+            },
             0x4020..=0xffff => {
                 // Cartridge now takes &mut self and &mut Ppu
                 self.cartridge.write(&mut self.ppu, address, value)

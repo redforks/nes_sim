@@ -611,7 +611,7 @@ impl<D: AudioDriver> Apu<D> {
                 self.frame_interrupt = false;
                 status.into_bits()
             }
-            _ => panic!("Can not read from Apu at address {}", address),
+            _ => 0,
         }
     }
 
@@ -654,8 +654,7 @@ impl<D: AudioDriver> Apu<D> {
             0x4013 => self.dmc.sample_length = value,
             0x4015 => self.set_control_flags(ControlFlags::from_bits(value)),
             0x4017 => self.set_frame_counter(FrameCounter::from_bits(value)),
-            0x4009 | 0x400D => {}
-            _ => panic!("Can not write to Apu at address {}", address),
+            _ => {}
         }
     }
 

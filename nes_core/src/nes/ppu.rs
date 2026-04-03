@@ -80,6 +80,12 @@ struct PpuCtrl {
     nmi_enable: bool,
 }
 
+impl PpuCtrl {
+    fn inc_ppu_addr(self, ppu_addr: &mut u16) {
+        *ppu_addr = ppu_addr.wrapping_add(if self.increment_mode() { 32 } else { 1 });
+    }
+}
+
 #[bitfield(u8)]
 struct PpuMask {
     grayscale: bool,
@@ -366,6 +372,12 @@ pub struct Ppu<R: Render = ()> {
     frame_no: usize,
 }
 
+/// PPU registers are mirrored every 8 bytes in range $2000-$3FFF
+/// this function normalized $2000, $2008, .. $3ff8 to $2000
+fn normalize_ppu_addr(addr: u16) -> u16 {
+    addr & 0x2007
+}
+
 impl<R: Render> Ppu<R> {
     pub fn new(renderer: R) -> Self {
         Ppu {
@@ -540,7 +552,7 @@ impl<R: Render> Ppu<R> {
         NR: FnMut(u16) -> Option<u8>,
     {
         // PPU registers are mirrored every 8 bytes in range $2000-$3FFF
-        let reg = 0x2000 + ((address - 0x2000) % 8);
+        let reg = normalize_ppu_addr(address);
         match reg {
             // PPUSTATUS
             0x2002 => {
@@ -567,8 +579,7 @@ impl<R: Render> Ppu<R> {
         PW: FnMut(u16, u8),
         NW: FnMut(u16, u8) -> bool,
     {
-        // PPU registers are mirrored every 8 bytes in range $2000-$3FFF
-        let reg = 0x2000 + ((address - 0x2000) % 8);
+        let reg = normalize_ppu_addr(address);
         match reg {
             // PPUCTRL
             0x2000 => {
@@ -607,9 +618,7 @@ impl<R: Render> Ppu<R> {
             0x2007 => {
                 let vram_addr = self.vram_addr;
                 self.write_vram(vram_addr, value, &mut pattern_write, &mut name_table_write);
-                // Increment VRAM address based on control flag
-                let increment = if self.ctrl.increment_mode() { 32 } else { 1 };
-                self.vram_addr = self.vram_addr.wrapping_add(increment);
+                self.ctrl.inc_ppu_addr(&mut self.vram_addr);
                 self.scanline_cache.dirty = true;
             }
             _ => {} // Ignore other addresses
@@ -966,9 +975,7 @@ impl<R: Render> Ppu<R> {
     {
         let vram_addr = self.vram_addr;
         let value = self.read_vram(vram_addr, chr_read, name_table_read);
-        self.vram_addr =
-            self.vram_addr
-                .wrapping_add(if self.ctrl.increment_mode() { 32 } else { 1 });
+        self.ctrl.inc_ppu_addr(&mut self.vram_addr);
         value
     }
 
