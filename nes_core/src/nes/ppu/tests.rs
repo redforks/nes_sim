@@ -348,6 +348,21 @@ fn set_universal_bg_color(ppu: &mut Ppu, color: u8) {
     ppu.palette.write(0x3f00, color);
 }
 
+/// Render a single pixel (for testing)
+fn render_pixel(ppu: &mut Ppu, pattern: &[u8], x: u8, y: u8) -> Pixel {
+    // Build a temporary Cartridge::Test and fill its CHR with pattern bytes
+    use crate::nes::mapper::{Cartridge, TestCartridge};
+    let mut cart = Cartridge::Test(Box::new(TestCartridge::new()));
+    if !pattern.is_empty() {
+        if let Cartridge::Test(tc) = &mut cart {
+            for i in 0..tc.chr_rom.len() {
+                tc.chr_rom[i] = pattern[i % pattern.len()];
+            }
+        }
+    }
+    ppu.render_pixel(&mut cart, x, y)
+}
+
 #[test]
 fn test_render_pixel_returns_background_color() {
     let mut ppu = create_test_ppu_with_mask(
@@ -360,7 +375,7 @@ fn test_render_pixel_returns_background_color() {
     set_bg_tile(&mut ppu, 0, 0);
     set_bg_palette_color(&mut ppu, 0, 1, 0x16);
 
-    let pixel = ppu.render_pixel(&pattern, 0, 0);
+    let pixel = render_pixel(&mut ppu, &pattern, 0, 0);
     assert_eq!(pixel, COLORS[0x16]);
 }
 
@@ -370,7 +385,7 @@ fn test_render_pixel_both_disabled() {
     let pattern = create_pattern();
     set_universal_bg_color(&mut ppu, 0x21);
 
-    let pixel = ppu.render_pixel(&pattern, 10, 10);
+    let pixel = render_pixel(&mut ppu, &pattern, 10, 10);
     assert_eq!(pixel, COLORS[0x21]);
 }
 
@@ -386,7 +401,7 @@ fn test_render_pixel_transparent_bg_and_sprite_use_backdrop_color() {
     let pattern = create_pattern();
     set_universal_bg_color(&mut ppu, 0x2c);
 
-    let pixel = ppu.render_pixel(&pattern, 12, 34);
+    let pixel = render_pixel(&mut ppu, &pattern, 12, 34);
     assert_eq!(pixel, COLORS[0x2c]);
 }
 
@@ -402,7 +417,7 @@ fn test_render_pixel_returns_sprite_color_when_background_disabled() {
     set_sprite_palette_color(&mut ppu, 0, 1, 0x27);
     setup_sprite(&mut ppu, 0, 0, 1, 0, 0);
 
-    let pixel = ppu.render_pixel(&pattern, 0, 1);
+    let pixel = render_pixel(&mut ppu, &pattern, 0, 1);
     assert_eq!(pixel, COLORS[0x27]);
 }
 
@@ -421,7 +436,7 @@ fn test_render_pixel_transparent_sprite_falls_back_to_background() {
     set_bg_palette_color(&mut ppu, 0, 1, 0x12);
     setup_sprite(&mut ppu, 0, 0, 1, 0, 0);
 
-    let pixel = ppu.render_pixel(&pattern, 0, 1);
+    let pixel = render_pixel(&mut ppu, &pattern, 0, 1);
     assert_eq!(pixel, COLORS[0x12]);
 }
 
@@ -442,7 +457,7 @@ fn test_render_pixel_sprite_in_front_of_background() {
     set_sprite_palette_color(&mut ppu, 0, 2, 0x22);
     setup_sprite(&mut ppu, 0, 0, 1, 0, 0);
 
-    let pixel = ppu.render_pixel(&pattern, 0, 1);
+    let pixel = render_pixel(&mut ppu, &pattern, 0, 1);
     assert_eq!(pixel, COLORS[0x22]);
 }
 
@@ -463,7 +478,7 @@ fn test_render_pixel_background_priority_when_sprite_is_behind() {
     set_sprite_palette_color(&mut ppu, 0, 2, 0x24);
     setup_sprite(&mut ppu, 0, 0, 1, 0x20, 0);
 
-    let pixel = ppu.render_pixel(&pattern, 0, 1);
+    let pixel = render_pixel(&mut ppu, &pattern, 0, 1);
     assert_eq!(pixel, COLORS[0x14]);
 }
 
@@ -482,7 +497,7 @@ fn test_render_pixel_sprite_behind_transparent_background() {
     set_sprite_palette_color(&mut ppu, 0, 2, 0x25);
     setup_sprite(&mut ppu, 0, 0, 1, 0x20, 0);
 
-    let pixel = ppu.render_pixel(&pattern, 0, 1);
+    let pixel = render_pixel(&mut ppu, &pattern, 0, 1);
     assert_eq!(pixel, COLORS[0x25]);
 }
 
@@ -502,7 +517,7 @@ fn test_render_pixel_applies_left_column_clipping() {
     set_sprite_palette_color(&mut ppu, 0, 2, 0x30);
     setup_sprite(&mut ppu, 0, 0, 1, 0, 0);
 
-    let pixel = ppu.render_pixel(&pattern, 0, 1);
+    let pixel = render_pixel(&mut ppu, &pattern, 0, 1);
     assert_eq!(pixel, COLORS[0x20]);
 }
 
@@ -521,7 +536,7 @@ fn test_render_pixel_uses_highest_priority_opaque_sprite() {
     setup_sprite(&mut ppu, 0, 0, 1, 0, 0);
     setup_sprite(&mut ppu, 1, 0, 2, 1, 0);
 
-    let pixel = ppu.render_pixel(&pattern, 0, 1);
+    let pixel = render_pixel(&mut ppu, &pattern, 0, 1);
     assert_eq!(pixel, COLORS[0x26]);
 }
 
@@ -542,7 +557,7 @@ fn test_render_pixel_applies_sprite_priority_before_background_priority() {
     set_sprite_palette_color(&mut ppu, 0, 2, 0x24);
     setup_sprite(&mut ppu, 0, 0, 1, 0, 0); // sprite in front (not behind)
 
-    let pixel = ppu.render_pixel(&pattern, 0, 1);
+    let pixel = render_pixel(&mut ppu, &pattern, 0, 1);
     // Sprite is in front and opaque, so sprite color should show
     assert_eq!(pixel, COLORS[0x24]);
 }
@@ -560,7 +575,7 @@ fn test_render_pixel_skips_transparent_higher_priority_sprite() {
     setup_sprite(&mut ppu, 0, 0, 1, 0, 0);
     setup_sprite(&mut ppu, 1, 0, 2, 1, 0);
 
-    let pixel = ppu.render_pixel(&pattern, 0, 1);
+    let pixel = render_pixel(&mut ppu, &pattern, 0, 1);
     assert_eq!(pixel, COLORS[0x37]);
 }
 
@@ -579,7 +594,7 @@ fn test_render_pixel_respects_background_pattern_table_selection() {
     set_bg_palette_color(&mut ppu, 0, 2, 0x28);
     ppu.set_control_flags(PpuCtrl::new().with_background_pattern_table(true));
 
-    let pixel = ppu.render_pixel(&pattern, 0, 0);
+    let pixel = render_pixel(&mut ppu, &pattern, 0, 0);
     assert_eq!(pixel, COLORS[0x28]);
 }
 
@@ -598,7 +613,7 @@ fn test_render_pixel_respects_sprite_pattern_table_selection() {
     ppu.set_control_flags(PpuCtrl::new().with_sprite_pattern_table(true));
     setup_sprite(&mut ppu, 0, 0, 1, 0, 0);
 
-    let pixel = ppu.render_pixel(&pattern, 0, 1);
+    let pixel = render_pixel(&mut ppu, &pattern, 0, 1);
     assert_eq!(pixel, COLORS[0x29]);
 }
 
@@ -619,7 +634,7 @@ fn test_render_pixel_respects_sprite_flipping() {
     // sprite_offset = screen - sprite_pos, so screen = sprite_offset + sprite_pos
     // If sprite_pos.x = 0, then screen_x = 7
     // If sprite_pos.y = 10, then screen_y = 10 + 7 = 17
-    let pixel = ppu.render_pixel(&pattern, 7, 17);
+    let pixel = render_pixel(&mut ppu, &pattern, 7, 17);
     assert_eq!(pixel, COLORS[0x2a]);
 }
 
@@ -636,7 +651,7 @@ fn test_render_pixel_uses_second_tile_for_8x16_sprites() {
     ppu.set_control_flags(PpuCtrl::new().with_sprite_size(true));
     setup_sprite(&mut ppu, 0, 0, 0, 0, 0);
 
-    let pixel = ppu.render_pixel(&pattern, 0, 8);
+    let pixel = render_pixel(&mut ppu, &pattern, 0, 8);
     assert_eq!(pixel, COLORS[0x2b]);
 }
 
@@ -653,7 +668,7 @@ fn test_render_pixel_uses_odd_tile_bank_for_8x16_sprites() {
     ppu.set_control_flags(PpuCtrl::new().with_sprite_size(true));
     setup_sprite(&mut ppu, 0, 0, 3, 0, 0);
 
-    let pixel = ppu.render_pixel(&pattern, 0, 0);
+    let pixel = render_pixel(&mut ppu, &pattern, 0, 0);
     assert_eq!(pixel, COLORS[0x2c]);
 }
 
@@ -670,7 +685,7 @@ fn test_render_pixel_uses_vertical_flip_for_8x16_sprites() {
     ppu.set_control_flags(PpuCtrl::new().with_sprite_size(true));
     setup_sprite(&mut ppu, 0, 0, 0, 0x80, 0);
 
-    let pixel = ppu.render_pixel(&pattern, 0, 15);
+    let pixel = render_pixel(&mut ppu, &pattern, 0, 15);
     assert_eq!(pixel, COLORS[0x2d]);
 }
 
@@ -684,7 +699,7 @@ fn test_render_pixel_sets_sprite_overflow_with_nine_sprites_on_scanline() {
     }
 
     assert!(!ppu.status.sprite_overflow());
-    ppu.render_pixel(&pattern, 0, 20);
+    render_pixel(&mut ppu, &pattern, 0, 20);
     assert!(ppu.status.sprite_overflow());
 }
 
@@ -697,7 +712,7 @@ fn test_render_pixel_does_not_set_sprite_overflow_with_eight_sprites_on_scanline
         setup_sprite(&mut ppu, idx, 20, 0, 0, (idx * 8) as u8);
     }
 
-    ppu.render_pixel(&pattern, 0, 20);
+    render_pixel(&mut ppu, &pattern, 0, 20);
     assert!(!ppu.status.sprite_overflow());
 }
 
@@ -721,7 +736,7 @@ fn test_render_pixel_sprite_zero_hit() {
     setup_sprite(&mut ppu, 0, 0, 1, 0, 8);
 
     assert!(!ppu.status.sprite_zero_hit());
-    ppu.render_pixel(&pattern, 8, 1);
+    render_pixel(&mut ppu, &pattern, 8, 1);
     assert!(ppu.status.sprite_zero_hit());
 }
 
@@ -739,7 +754,7 @@ fn test_render_pixel_sprite_zero_hit_requires_opaque_background() {
     set_bg_tile(&mut ppu, 0, 0);
     setup_sprite(&mut ppu, 0, 0, 1, 0, 0);
 
-    ppu.render_pixel(&pattern, 0, 1);
+    render_pixel(&mut ppu, &pattern, 0, 1);
     assert!(!ppu.status.sprite_zero_hit());
 }
 
@@ -757,7 +772,7 @@ fn test_render_pixel_sprite_zero_hit_respects_background_left_mask() {
     set_bg_tile(&mut ppu, 0, 0);
     setup_sprite(&mut ppu, 0, 0, 1, 0, 0);
 
-    ppu.render_pixel(&pattern, 0, 1);
+    render_pixel(&mut ppu, &pattern, 0, 1);
     assert!(!ppu.status.sprite_zero_hit());
 }
 
@@ -775,7 +790,7 @@ fn test_render_pixel_sprite_zero_hit_respects_sprite_left_mask() {
     set_bg_tile(&mut ppu, 0, 0);
     setup_sprite(&mut ppu, 0, 0, 1, 0, 0);
 
-    ppu.render_pixel(&pattern, 0, 1);
+    render_pixel(&mut ppu, &pattern, 0, 1);
     assert!(!ppu.status.sprite_zero_hit());
 }
 
@@ -795,7 +810,7 @@ fn test_render_pixel_sprite_zero_hit_requires_sprite_zero() {
     setup_sprite(&mut ppu, 0, 20, 1, 0, 20);
     setup_sprite(&mut ppu, 1, 0, 1, 0, 0);
 
-    ppu.render_pixel(&pattern, 0, 1);
+    render_pixel(&mut ppu, &pattern, 0, 1);
     assert!(!ppu.status.sprite_zero_hit());
 }
 
@@ -816,7 +831,7 @@ fn test_render_pixel_sprite_zero_not_at_x255() {
     };
     setup_sprite(&mut ppu, 0, 9, 0, 0, 248);
 
-    ppu.render_pixel(&pattern, 255, 10);
+    render_pixel(&mut ppu, &pattern, 255, 10);
     assert!(!ppu.status.sprite_zero_hit());
 }
 
@@ -843,7 +858,7 @@ fn test_render_pixel_grayscale_mode() {
     set_bg_tile(&mut ppu, 0, 0);
     set_bg_palette_color(&mut ppu, 0, 1, 0x16); // Color 0x16 is blue-ish
 
-    let pixel = ppu.render_pixel(&pattern, 0, 0);
+    let pixel = render_pixel(&mut ppu, &pattern, 0, 0);
     let (r, g, b) = pixel_to_rgb(pixel);
 
     // In grayscale mode, R, G, and B should all be equal
@@ -864,7 +879,7 @@ fn test_render_pixel_grayscale_mode_with_sprite() {
     set_sprite_palette_color(&mut ppu, 0, 1, 0x27);
     setup_sprite(&mut ppu, 0, 0, 1, 0, 0);
 
-    let pixel = ppu.render_pixel(&pattern, 0, 1);
+    let pixel = render_pixel(&mut ppu, &pattern, 0, 1);
     let (r, g, b) = pixel_to_rgb(pixel);
 
     // In grayscale mode, R, G, and B should all be equal
@@ -885,7 +900,7 @@ fn test_render_pixel_red_emphasis() {
     set_bg_tile(&mut ppu, 0, 0);
     set_bg_palette_color(&mut ppu, 0, 1, 0x16);
 
-    let pixel_with_emphasis = ppu.render_pixel(&pattern, 0, 0);
+    let pixel_with_emphasis = render_pixel(&mut ppu, &pattern, 0, 0);
 
     // Compare with no emphasis
     {
@@ -895,7 +910,7 @@ fn test_render_pixel_red_emphasis() {
             .with_background_left_enabled(true);
         this.mask = mask;
     };
-    let pixel_without_emphasis = ppu.render_pixel(&pattern, 0, 0);
+    let pixel_without_emphasis = render_pixel(&mut ppu, &pattern, 0, 0);
 
     let (r_with, g_with, b_with) = pixel_to_rgb(pixel_with_emphasis);
     let (r_without, g_without, b_without) = pixel_to_rgb(pixel_without_emphasis);
@@ -925,7 +940,7 @@ fn test_render_pixel_green_emphasis() {
     set_bg_tile(&mut ppu, 0, 0);
     set_bg_palette_color(&mut ppu, 0, 1, 0x16);
 
-    let pixel_with_emphasis = ppu.render_pixel(&pattern, 0, 0);
+    let pixel_with_emphasis = render_pixel(&mut ppu, &pattern, 0, 0);
 
     // Compare with no emphasis
     {
@@ -935,7 +950,7 @@ fn test_render_pixel_green_emphasis() {
             .with_background_left_enabled(true);
         this.mask = mask;
     };
-    let pixel_without_emphasis = ppu.render_pixel(&pattern, 0, 0);
+    let pixel_without_emphasis = render_pixel(&mut ppu, &pattern, 0, 0);
 
     let (r_with, g_with, b_with) = pixel_to_rgb(pixel_with_emphasis);
     let (r_without, g_without, b_without) = pixel_to_rgb(pixel_without_emphasis);
@@ -968,7 +983,7 @@ fn test_render_pixel_blue_emphasis() {
     set_bg_tile(&mut ppu, 0, 0);
     set_bg_palette_color(&mut ppu, 0, 1, 0x16);
 
-    let pixel_with_emphasis = ppu.render_pixel(&pattern, 0, 0);
+    let pixel_with_emphasis = render_pixel(&mut ppu, &pattern, 0, 0);
 
     // Compare with no emphasis
     {
@@ -978,7 +993,7 @@ fn test_render_pixel_blue_emphasis() {
             .with_background_left_enabled(true);
         this.mask = mask;
     };
-    let pixel_without_emphasis = ppu.render_pixel(&pattern, 0, 0);
+    let pixel_without_emphasis = render_pixel(&mut ppu, &pattern, 0, 0);
 
     let (r_with, g_with, b_with) = pixel_to_rgb(pixel_with_emphasis);
     let (r_without, g_without, b_without) = pixel_to_rgb(pixel_without_emphasis);
@@ -1012,7 +1027,7 @@ fn test_render_pixel_multiple_emphasis_bits() {
     set_bg_tile(&mut ppu, 0, 0);
     set_bg_palette_color(&mut ppu, 0, 1, 0x16);
 
-    let pixel_with_emphasis = ppu.render_pixel(&pattern, 0, 0);
+    let pixel_with_emphasis = render_pixel(&mut ppu, &pattern, 0, 0);
 
     // Compare with no emphasis
     {
@@ -1022,7 +1037,7 @@ fn test_render_pixel_multiple_emphasis_bits() {
             .with_background_left_enabled(true);
         this.mask = mask;
     };
-    let pixel_without_emphasis = ppu.render_pixel(&pattern, 0, 0);
+    let pixel_without_emphasis = render_pixel(&mut ppu, &pattern, 0, 0);
 
     let (r_with, g_with, b_with) = pixel_to_rgb(pixel_with_emphasis);
     let (r_without, g_without, b_without) = pixel_to_rgb(pixel_without_emphasis);
@@ -1057,7 +1072,7 @@ fn test_render_pixel_all_emphasis_bits() {
     set_bg_tile(&mut ppu, 0, 0);
     set_bg_palette_color(&mut ppu, 0, 1, 0x16);
 
-    let pixel_with_emphasis = ppu.render_pixel(&pattern, 0, 0);
+    let pixel_with_emphasis = render_pixel(&mut ppu, &pattern, 0, 0);
 
     // Compare with no emphasis - all channels should remain the same
     {
@@ -1067,7 +1082,7 @@ fn test_render_pixel_all_emphasis_bits() {
             .with_background_left_enabled(true);
         this.mask = mask;
     };
-    let pixel_without_emphasis = ppu.render_pixel(&pattern, 0, 0);
+    let pixel_without_emphasis = render_pixel(&mut ppu, &pattern, 0, 0);
 
     let (r_with, g_with, b_with) = pixel_to_rgb(pixel_with_emphasis);
     let (r_without, g_without, b_without) = pixel_to_rgb(pixel_without_emphasis);
@@ -1101,7 +1116,7 @@ fn test_render_pixel_grayscale_and_emphasis_combined() {
     set_bg_tile(&mut ppu, 0, 0);
     set_bg_palette_color(&mut ppu, 0, 1, 0x16);
 
-    let pixel = ppu.render_pixel(&pattern, 0, 0);
+    let pixel = render_pixel(&mut ppu, &pattern, 0, 0);
     let (r, g, b) = pixel_to_rgb(pixel);
 
     // In grayscale mode with emphasis, result should still be grayscale
@@ -1121,7 +1136,7 @@ fn test_render_pixel_no_emphasis_no_change() {
     set_bg_tile(&mut ppu, 0, 0);
     set_bg_palette_color(&mut ppu, 0, 1, 0x16);
 
-    let pixel = ppu.render_pixel(&pattern, 0, 0);
+    let pixel = render_pixel(&mut ppu, &pattern, 0, 0);
 
     // Without any effects, pixel should match COLORS lookup directly
     assert_eq!(pixel, COLORS[0x16]);

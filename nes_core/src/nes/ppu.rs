@@ -436,7 +436,7 @@ impl<R: Render> Ppu<R> {
         self.scanline_cache.dirty = true;
     }
 
-    pub fn tick(&mut self, cartridge: &mut Cartridge) {
+    pub fn tick(&mut self, cartridge: &Cartridge) {
         let rendering_enabled = self.rendering_enabled();
 
         if self.scanline < 240 && self.dot == 0 {
@@ -445,8 +445,7 @@ impl<R: Render> Ppu<R> {
 
         // Render pixel during visible scanlines (0-239) and visible dots (0-255)
         if rendering_enabled && self.scanline < 240 && self.dot < 256 {
-            let pixel =
-                self.render_pixel_with_mapper(cartridge, self.dot as u8, self.scanline as u8);
+            let pixel = self.render_pixel(cartridge, self.dot as u8, self.scanline as u8);
             self.renderer
                 .set_pixel(self.dot as u32, self.scanline as u32, pixel.0);
         }
@@ -668,14 +667,14 @@ impl<R: Render> Ppu<R> {
         }
     }
 
-    fn read_name_table_byte(&mut self, address: u16, cartridge: &mut Cartridge) -> u8 {
+    fn read_name_table_byte(&mut self, address: u16, cartridge: &Cartridge) -> u8 {
         cartridge
             .read_nametable(address)
             .unwrap_or_else(|| self.name_table.read(address))
     }
 
     fn read_pattern_pixel(
-        cartridge: &mut Cartridge,
+        cartridge: &Cartridge,
         base_addr: u16,
         tile_idx: u8,
         tile_x: usize,
@@ -691,7 +690,7 @@ impl<R: Render> Ppu<R> {
 
     fn get_background_pixel(
         &mut self,
-        cartridge: &mut Cartridge,
+        cartridge: &Cartridge,
         screen_x: u8,
         screen_y: u8,
     ) -> (u8, u8) {
@@ -772,7 +771,7 @@ impl<R: Render> Ppu<R> {
         }
     }
 
-    fn prepare_scanline_cache(&mut self, cartridge: &mut Cartridge, screen_y: u8) {
+    fn prepare_scanline_cache(&mut self, cartridge: &Cartridge, screen_y: u8) {
         if !self.scanline_cache.dirty && self.scanline_cache.scanline == screen_y {
             return;
         }
@@ -954,23 +953,7 @@ impl<R: Render> Ppu<R> {
         r
     }
 
-    /// Render a single pixel (for testing)
-    #[cfg(test)]
-    fn render_pixel(&mut self, pattern: &[u8], x: u8, y: u8) -> Pixel {
-        // Build a temporary Cartridge::Test and fill its CHR with pattern bytes
-        use crate::nes::mapper::{Cartridge, TestCartridge};
-        let mut cart = Cartridge::Test(Box::new(TestCartridge::new()));
-        if !pattern.is_empty() {
-            if let Cartridge::Test(tc) = &mut cart {
-                for i in 0..tc.chr_rom.len() {
-                    tc.chr_rom[i] = pattern[i % pattern.len()];
-                }
-            }
-        }
-        self.render_pixel_with_mapper(&mut cart, x, y)
-    }
-
-    fn render_pixel_with_mapper(&mut self, cartridge: &mut Cartridge, x: u8, y: u8) -> Pixel {
+    fn render_pixel(&mut self, cartridge: &Cartridge, x: u8, y: u8) -> Pixel {
         self.prepare_scanline_cache(cartridge, y);
 
         let bg_pixel = if self.mask.background_enabled() {

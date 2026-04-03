@@ -86,10 +86,6 @@ impl TestCartridge {
         self.chr_rom[address as usize % self.chr_rom.len()]
     }
 
-    pub fn read_nametable(&mut self, _address: u16) -> Option<u8> {
-        None
-    }
-
     pub fn irq_pending(&self) -> bool {
         false
     }
@@ -175,7 +171,7 @@ impl Cartridge {
         }
     }
 
-    pub fn read_chr(&mut self, address: u16, access: PatternAccess) -> u8 {
+    pub fn read_chr(&self, address: u16, access: PatternAccess) -> u8 {
         match self {
             Cartridge::Mapper0(cartridge) => {
                 cartridge.pattern_ref()[address as usize % cartridge.pattern_ref().len()]
@@ -211,7 +207,7 @@ impl Cartridge {
         }
     }
 
-    pub fn read_nametable(&mut self, address: u16) -> Option<u8> {
+    pub fn read_nametable(&self, address: u16) -> Option<u8> {
         match self {
             Cartridge::Mapper0(_)
             | Cartridge::Mapper2(_)
@@ -220,13 +216,13 @@ impl Cartridge {
             | Cartridge::MMC3(_) => None,
             Cartridge::MMC5(cartridge) => cartridge.read_nametable(address),
             #[cfg(test)]
-            Cartridge::Test(cartridge) => cartridge.read_nametable(address),
+            Cartridge::Test(_) => None,
         }
     }
 
     #[allow(clippy::too_many_arguments)]
     pub fn background_override(
-        &mut self,
+        &self,
         screen_x: u8,
         screen_y: u8,
         nametable_addr: u16,

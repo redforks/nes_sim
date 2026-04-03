@@ -249,13 +249,13 @@ impl MMC5 {
         true
     }
 
-    pub fn read_nametable(&mut self, address: u16) -> Option<u8> {
+    pub fn read_nametable(&self, address: u16) -> Option<u8> {
         Some(self.read_nametable_byte(address))
     }
 
     #[allow(clippy::too_many_arguments)]
     pub fn background_override(
-        &mut self,
+        &self,
         screen_x: u8,
         screen_y: u8,
         nametable_addr: u16,
