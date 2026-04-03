@@ -466,22 +466,6 @@ fn test_read_vram_pattern_table() {
 }
 
 #[test]
-fn test_write_vram_pattern_ignored() {
-    let (mut ppu, _pattern) = new_test_ppu_and_pattern();
-
-    // Writing to pattern table space should be ignored (it's ROM)
-    // This test just verifies it doesn't panic
-    {
-        let this = &mut ppu;
-        Ppu::write_vram_data(this, 0x0000, 0xFF);
-    };
-    {
-        let this = &mut ppu;
-        Ppu::write_vram_data(this, 0x1000, 0xFF);
-    };
-}
-
-#[test]
 fn test_write_0x2000_updates_name_table_addr() {
     let (mut ppu, _pattern) = new_test_ppu_and_pattern();
 

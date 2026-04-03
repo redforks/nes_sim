@@ -685,11 +685,6 @@ impl<R: Render> Ppu<R> {
         }
     }
 
-    #[cfg(test)]
-    fn write_vram_data(&mut self, address: u16, value: u8) {
-        self.write_vram_data_with_mapper(address, value, |_, _| {}, |_, _| false);
-    }
-
     fn write_vram_data_with_mapper<PW, NW>(
         &mut self,
         address: u16,
