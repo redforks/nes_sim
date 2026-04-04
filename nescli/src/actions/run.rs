@@ -204,6 +204,14 @@ impl RunAction {
                         machine.reset();
                     }
                     Event::KeyDown {
+                        keycode: Some(Keycode::F1),
+                        repeat: false,
+                        ..
+                    } => match machine.dump_ppu_state_to_file() {
+                        Ok(path) => eprintln!(">> Dumped PPU state to {}", path),
+                        Err(err) => eprintln!(">> Failed to dump PPU state: {}", err),
+                    },
+                    Event::KeyDown {
                         keycode: Some(Keycode::F4),
                         repeat: false,
                         ..

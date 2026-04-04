@@ -1,14 +1,15 @@
 use crate::{
-    ExecuteResult, Plugin,
     ines::INesFile,
     machine::Machine,
     nes::{
-        NesMcu,
         controller::Button,
         ppu::{VBLANK_SET_DOT, VBLANK_SET_SCANLINE},
+        NesMcu,
     },
     render::Render,
+    ExecuteResult, Plugin,
 };
+use std::fs;
 
 /// Safety limit: maximum PPU instruction ticks per `process_frame()` call.
 /// Two full frames worth of ticks; prevents an infinite loop if VBlank never fires
@@ -103,6 +104,15 @@ where
     /// Set the CPU program counter.
     pub fn set_pc(&mut self, pc: u16) {
         self.machine.set_pc(pc);
+    }
+
+    pub fn dump_ppu_state_to_file(&self) -> std::io::Result<String> {
+        let mcu = self.machine.mcu();
+        let (scanline, dot) = mcu.ppu_timing();
+        let frame_no = mcu.ppu().frame_no();
+        let path = format!("/tmp/ppu-{}-{}-{}.md", frame_no, scanline, dot);
+        fs::write(&path, mcu.dump_ppu_state())?;
+        Ok(path)
     }
 }
 

@@ -2,6 +2,7 @@ use crate::nes::mapper::Cartridge;
 use crate::render::Render;
 use bitfield_struct::bitfield;
 use image::Rgba;
+use std::fmt::Write;
 
 type Pixel = Rgba<u8>;
 
@@ -333,6 +334,90 @@ impl<R: Render> Ppu<R> {
         (self.scanline, self.dot)
     }
 
+    pub fn frame_no(&self) -> usize {
+        self.frame_no
+    }
+
+    fn scroll_xy(&self) -> (u16, u16) {
+        let scroll_addr = self.temp_vram_addr;
+        let scroll_x = ((scroll_addr & 0x001f) << 3) | self.fine_x as u16;
+        let scroll_y = (((scroll_addr >> 5) & 0x001f) << 3) | ((scroll_addr >> 12) & 0x0007);
+        (scroll_x, scroll_y)
+    }
+
+    pub fn dump_state(&self, cartridge: &Cartridge) -> String {
+        let mut out = String::new();
+
+        let _ = writeln!(out, "# PPU State");
+        let _ = writeln!(out, "- Frame: {}", self.frame_no);
+        let _ = writeln!(
+            out,
+            "- Timing: scanline {}, dot {}",
+            self.scanline, self.dot
+        );
+        let _ = writeln!(
+            out,
+            "- Current nametable address: 0x{:04X}",
+            self.cur_name_table_addr
+        );
+        let _ = writeln!(out, "- PPUCTRL: 0x{:02X}", self.ctrl.into_bits());
+        let _ = writeln!(out, "- PPUMASK: 0x{:02X}", self.mask.into_bits());
+        let _ = writeln!(out, "- PPUSTATUS: 0x{:02X}", self.status.into_bits());
+        let _ = writeln!(out, "- OAMADDR: 0x{:02X}", self.oam_addr);
+        let _ = writeln!(out, "- VRAM address: 0x{:04X}", self.vram_addr);
+        let _ = writeln!(
+            out,
+            "- Temporary VRAM address: 0x{:04X}",
+            self.temp_vram_addr
+        );
+        let _ = writeln!(out, "- Fine X: 0x{:02X}", self.fine_x);
+        let _ = writeln!(out, "- Write toggle: {}", self.write_toggle);
+        let _ = writeln!(out, "- Scroll X/Y: {:?}", self.scroll_xy());
+
+        let _ = writeln!(out);
+        let _ = writeln!(out, "## Nametable");
+        for base in [0x2000u16, 0x2400, 0x2800, 0x2C00] {
+            let _ = writeln!(out, "### 0x{:04X}", base);
+            for row in 0..0x0400u16 / 16 {
+                let addr = base + row * 16;
+                let _ = write!(out, "\n0x{:04X}: ", addr);
+                for col in 0..16u16 {
+                    let value = cartridge.read_nametable(addr + col);
+                    let _ = write!(out, "{:02X} ", value);
+                }
+                let _ = writeln!(out);
+                let _ = writeln!(out);
+            }
+            let _ = writeln!(out);
+        }
+
+        let _ = writeln!(out, "## Palette RAM");
+        for row in 0..2u16 {
+            let addr = 0x3F00 + row * 16;
+            let _ = write!(out, "0x{:04X}: ", addr);
+            for col in 0..16u16 {
+                let value = self.palette.data[(row * 16 + col) as usize];
+                let _ = write!(out, "{:02X} ", value);
+            }
+            let _ = writeln!(out);
+        }
+
+        let _ = writeln!(out);
+        let _ = writeln!(out, "## OAM");
+        let _ = writeln!(out, "- OAMADDR: 0x{:02X}", self.oam_addr);
+        for row in 0..16u16 {
+            let addr = row * 16;
+            let _ = write!(out, "0x{:04X}: ", addr);
+            for col in 0..16u16 {
+                let value = self.oam_data[(row * 16 + col) as usize];
+                let _ = write!(out, "{:02X} ", value);
+            }
+            let _ = writeln!(out);
+        }
+
+        out
+    }
+
     pub fn rendering_enabled(&self) -> bool {
         self.effective_render_enabled
     }
@@ -489,9 +574,7 @@ impl<R: Render> Ppu<R> {
             }
             // PPUDATA
             0x2007 => {
-                let vram_addr = self.vram_addr;
-                // closures forwarding to cartridge
-                self.write_vram(vram_addr, value, cartridge);
+                self.write_vram(self.vram_addr, value, cartridge);
                 self.ctrl.inc_ppu_addr(&mut self.vram_addr);
                 self.scanline_cache.dirty = true;
             }
@@ -540,13 +623,13 @@ impl<R: Render> Ppu<R> {
         if !self.write_toggle {
             // First write - X scroll
             self.fine_x = value & 0x07;
-            self.temp_vram_addr = (self.temp_vram_addr & 0xFFE0) | ((value as u16 >> 3) & 0x001F);
+            self.temp_vram_addr = (self.temp_vram_addr & 0xFFE0) | (value as u16 >> 3);
             self.write_toggle = true;
         } else {
             // Second write - Y scroll
             self.temp_vram_addr = (self.temp_vram_addr & !0x73E0)
                 | (((value as u16 & 0x07) << 12) & 0x7000)
-                | (((value as u16 >> 3) & 0x001F) << 5);
+                | ((value as u16 >> 3) << 5);
             self.write_toggle = false;
         }
     }
@@ -594,14 +677,11 @@ impl<R: Render> Ppu<R> {
             return (0, 0);
         }
 
-        let scroll_addr = self.temp_vram_addr;
-        let base_nametable = ((scroll_addr >> 10) & 0x0003) as u8;
-        let scroll_x = ((scroll_addr & 0x001f) << 3) | self.fine_x as u16;
-        let scroll_y = (((scroll_addr >> 5) & 0x001f) << 3) | ((scroll_addr >> 12) & 0x0007);
-
+        let (scroll_x, scroll_y) = self.scroll_xy();
         let world_x = scroll_x + screen_x as u16;
         let world_y = scroll_y + screen_y as u16;
 
+        let base_nametable = ((self.temp_vram_addr >> 10) & 0x0003) as u8;
         let nt_select_x = (((base_nametable & 0x01) as u16) + (world_x / 256)) & 0x01;
         let nt_select_y = ((((base_nametable >> 1) & 0x01) as u16) + (world_y / 240)) & 0x01;
         let nt_idx = ((nt_select_y << 1) | nt_select_x) as u8;
