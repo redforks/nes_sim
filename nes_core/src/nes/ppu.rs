@@ -4,6 +4,9 @@ use bitfield_struct::bitfield;
 use image::Rgba;
 use std::fmt::Write;
 
+pub mod pattern;
+pub use pattern::{PatternBand, draw_pattern};
+
 type Pixel = Rgba<u8>;
 
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
