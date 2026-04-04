@@ -753,9 +753,11 @@ impl<R: Render> Ppu<R> {
 
         self.scanline_cache.scanline = screen_y;
         self.scanline_cache.dirty = false;
-        self.scanline_cache.background = [CachedBackgroundPixel::default(); 256];
-        self.scanline_cache.sprite_pixels = [None; 256];
-        self.scanline_cache.sprite_zero_pixels = [false; 256];
+        self.scanline_cache
+            .background
+            .fill(CachedBackgroundPixel::default());
+        self.scanline_cache.sprite_pixels.fill(None);
+        self.scanline_cache.sprite_zero_pixels.fill(false);
 
         self.update_sprite_overflow(screen_y);
 
