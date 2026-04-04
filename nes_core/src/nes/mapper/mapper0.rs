@@ -6,6 +6,7 @@ pub struct Mapper0 {
     prg_rom: [u8; 0x8000],
     prg_rom_len: usize,
     chr_rom: [u8; 0x2000],
+    has_chr_ram: bool,
     ram: [u8; 0x4000 - 0x20],
     name_table: NameTableControl,
 }
@@ -17,6 +18,7 @@ impl Mapper0 {
 
         let mut r = Self {
             prg_rom_len: prg_rom.len(),
+            has_chr_ram: chr_rom.is_empty(),
             name_table: NameTableControl::new(mirroring),
             ..Self::default()
         };
@@ -32,6 +34,7 @@ impl Default for Mapper0 {
             prg_rom: [0; 0x8000],
             prg_rom_len: 0,
             chr_rom: [0; 0x2000],
+            has_chr_ram: false,
             ram: [0; 0x4000 - 0x20],
             name_table: NameTableControl::new(Mirroring::Horizontal),
         }
@@ -41,6 +44,12 @@ impl Default for Mapper0 {
 impl Mapper0 {
     pub fn pattern_ref(&self) -> &[u8] {
         &self.chr_rom
+    }
+
+    pub fn write_pattern(&mut self, address: u16, value: u8) {
+        if self.has_chr_ram {
+            self.chr_rom[address as usize % self.chr_rom.len()] = value;
+        }
     }
 
     pub fn read(&mut self, address: u16) -> u8 {
@@ -105,6 +114,17 @@ mod tests {
         let mcu = Mapper0::new(&[0; 0], &[1, 2], Mirroring::Horizontal);
         assert_eq!(1, mcu.pattern_ref()[0]);
         assert_eq!(2, mcu.pattern_ref()[1]);
+    }
+
+    #[test]
+    fn writes_to_chr_ram_when_chr_rom_is_absent() {
+        let mut mcu = Mapper0::new(&[0; 0], &[], Mirroring::Horizontal);
+
+        mcu.write_pattern(0x0000, 0x12);
+        mcu.write_pattern(0x1fff, 0x34);
+
+        assert_eq!(mcu.pattern_ref()[0], 0x12);
+        assert_eq!(mcu.pattern_ref()[0x1fff], 0x34);
     }
 
     #[test]

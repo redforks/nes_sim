@@ -202,8 +202,9 @@ impl Cartridge {
 
     pub fn write_pattern(&mut self, address: u16, value: u8) {
         match self {
-            Cartridge::Mapper0(_) | Cartridge::Mapper3(_) | Cartridge::MMC1(_) => {}
+            Cartridge::Mapper0(cartridge) => cartridge.write_pattern(address, value),
             Cartridge::Mapper2(cartridge) => cartridge.write_pattern(address, value),
+            Cartridge::Mapper3(_) | Cartridge::MMC1(_) => {}
             Cartridge::MMC3(cartridge) => cartridge.write_pattern(address, value),
             Cartridge::MMC5(cartridge) => cartridge.write_pattern(address, value),
             #[cfg(test)]
