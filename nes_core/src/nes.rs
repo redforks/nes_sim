@@ -20,6 +20,7 @@ pub struct NesMcu<R: Render, D: AudioDriver> {
     controller: Controller,
     cartridge: Cartridge,
     apu: Apu<D>,
+    oam_dma_pending: bool,
 }
 
 impl<R: Render, D: AudioDriver> NesMcu<R, D> {
@@ -33,6 +34,7 @@ impl<R: Render, D: AudioDriver> NesMcu<R, D> {
             controller: Controller::new(),
             cartridge,
             apu: Apu::new(audio_driver),
+            oam_dma_pending: false,
         }
     }
 
@@ -50,6 +52,7 @@ impl<R: Render, D: AudioDriver> NesMcu<R, D> {
         }
         self.ppu.oam_dma(&buf);
         self.cartridge.on_oam_dma();
+        self.oam_dma_pending = true;
     }
 
     /// Tick PPU by one dot.
@@ -72,6 +75,10 @@ impl<R: Render, D: AudioDriver> NesMcu<R, D> {
 
     pub fn flush_audio(&mut self) {
         self.apu.flush();
+    }
+
+    pub fn take_oam_dma_pending(&mut self) -> bool {
+        std::mem::take(&mut self.oam_dma_pending)
     }
 
     pub fn press_button(&mut self, button: Button) {

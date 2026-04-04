@@ -73,6 +73,10 @@ where
 
         let result = self.machine.tick();
 
+        if self.machine.mcu_mut().take_oam_dma_pending() {
+            self.machine.cpu_mut().request_oam_dma();
+        }
+
         if self.cycles.is_multiple_of(3) {
             self.machine.mcu_mut().tick_apu();
         }

@@ -20,6 +20,13 @@ enum CpuMode {
     Halt,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct OamDmaState {
+    startup_cycles: usize,
+    remaining_cpu_cycles: usize,
+    defer_poll_once: bool,
+}
+
 pub struct Cpu<M: Mcu> {
     pub a: u8,
     pub x: u8,
@@ -36,6 +43,7 @@ pub struct Cpu<M: Mcu> {
 
     /// cpu irq line, true means irq is requested, map to Low level of cpu irq pin
     irq_line: bool,
+    irq_requested_at: Option<usize>,
     irq_inhibit: Option<bool>,
     nmi_line: bool,
     /// cycles that nmi_requested, in real 6502 cpu, cpu check nmi at the last cycle of instruction,
@@ -45,6 +53,8 @@ pub struct Cpu<M: Mcu> {
     defer_nmi_poll: bool,
     irq_vector_is_nmi: bool,
     allow_late_irq_nmi_hijack: bool,
+    oam_dma_pending: bool,
+    oam_dma: Option<OamDmaState>,
     mode: CpuMode,
 
     microcode_queue: ArrayDeque<Microcode, 8>,
@@ -65,6 +75,7 @@ impl<M: Mcu> Cpu<M> {
             ab: 0,
             alu: 0,
             irq_line: false,
+            irq_requested_at: None,
             irq_inhibit: None,
             nmi_line: false,
             microcode_queue: ArrayDeque::new(),
@@ -73,6 +84,8 @@ impl<M: Mcu> Cpu<M> {
             defer_nmi_poll: false,
             irq_vector_is_nmi: false,
             allow_late_irq_nmi_hijack: false,
+            oam_dma_pending: false,
+            oam_dma: None,
         };
         r.reset();
         r
@@ -92,12 +105,15 @@ impl<M: Mcu> Cpu<M> {
         self.inner_set_flag(Flag::InterruptDisabled, true);
         self.inner_set_flag(Flag::NotUsed, true);
         self.irq_line = false;
+        self.irq_requested_at = None;
         self.irq_inhibit = None;
         self.microcode_queue.clear();
         self.nmi_requested_at = None;
         self.defer_nmi_poll = false;
         self.irq_vector_is_nmi = false;
         self.allow_late_irq_nmi_hijack = false;
+        self.oam_dma_pending = false;
+        self.oam_dma = None;
         self.mode = CpuMode::Normal;
         self.sp = 0xFD;
         self.cycles = 0;
@@ -124,6 +140,11 @@ impl<M: Mcu> Cpu<M> {
     }
 
     pub fn set_irq(&mut self, enabled: bool) {
+        if enabled && !self.irq_line {
+            self.irq_requested_at = Some(self.cycles);
+        } else if !enabled {
+            self.irq_requested_at = None;
+        }
         self.irq_line = enabled;
     }
 
@@ -136,10 +157,50 @@ impl<M: Mcu> Cpu<M> {
         self.mode == CpuMode::Halt
     }
 
+    pub fn request_oam_dma(&mut self) {
+        self.oam_dma_pending = true;
+    }
+
     /// Return true if just execute current instruction
     pub fn tick<P: Plugin<M>>(&mut self, plugin: &mut P) -> (ExecuteResult, bool) {
         self.cycles = self.cycles.wrapping_add(1);
+
+        if let Some(mut dma) = self.oam_dma {
+            if dma.startup_cycles > 0 {
+                dma.startup_cycles -= 1;
+            } else if self.cycles.is_multiple_of(3) {
+                if dma.defer_poll_once {
+                    dma.defer_poll_once = false;
+                }
+                dma.remaining_cpu_cycles -= 1;
+            }
+
+            if dma.startup_cycles == 0 && dma.remaining_cpu_cycles == 0 {
+                self.oam_dma = None;
+            } else {
+                self.oam_dma = Some(dma);
+            }
+            return (ExecuteResult::Continue, false);
+        }
+
         if !self.cycles.is_multiple_of(3) {
+            return (ExecuteResult::Continue, false);
+        }
+
+        if self.oam_dma_pending {
+            self.oam_dma_pending = false;
+            let cpu_cycle = self.cycles / 3;
+            let startup_cycles = if cpu_cycle.is_multiple_of(2) { 2 } else { 1 };
+            self.oam_dma = Some(OamDmaState {
+                startup_cycles,
+                remaining_cpu_cycles: 512,
+                defer_poll_once: true,
+            });
+            return (ExecuteResult::Continue, false);
+        }
+
+        if self.oam_dma.is_none() && self.defer_nmi_poll {
+            self.defer_nmi_poll = false;
             return (ExecuteResult::Continue, false);
         }
 
