@@ -56,8 +56,6 @@ impl Mapper3 {
         &self.chr_window
     }
 
-    pub fn write_pattern(&mut self, _address: u16, _value: u8) {}
-
     pub fn read(&mut self, address: u16) -> u8 {
         match address {
             CARTRIDGE_START_ADDR..=0x7fff => self.ram[(address - CARTRIDGE_START_ADDR) as usize],
@@ -159,14 +157,5 @@ mod tests {
         mapper.write(0x8000, 0x03);
 
         assert_eq!(mapper.pattern_ref()[0], 0xbb);
-    }
-
-    #[test]
-    fn ignores_pattern_writes() {
-        let mut mapper = Mapper3::new(&[0; 0x8000], &[0x56; CHR_BANK_SIZE], Mirroring::Horizontal);
-
-        mapper.write_pattern(0x0000, 0x12);
-
-        assert_eq!(mapper.pattern_ref()[0], 0x56);
     }
 }

@@ -2,7 +2,6 @@
 
 use crate::nes::mapper::Mirroring;
 use crate::nes::mapper::NameTableControl;
-use crate::nes::ppu::Ppu;
 use bitfield_struct::bitfield;
 use log::debug;
 
@@ -69,8 +68,6 @@ impl MMC1 {
     pub fn pattern_ref(&self) -> &[u8] {
         &self.cur_chr_rom
     }
-
-    pub fn write_pattern(&mut self, _address: u16, _value: u8) {}
 
     pub fn read(&mut self, address: u16) -> u8 {
         match address {
@@ -242,6 +239,7 @@ impl MMC1 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::nes::ppu::Ppu;
     use test_log::test;
 
     fn create<F>(mut init_prg: F) -> (MMC1, Ppu)

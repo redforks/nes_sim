@@ -43,8 +43,6 @@ impl Mapper0 {
         &self.chr_rom
     }
 
-    pub fn write_pattern(&mut self, _address: u16, _value: u8) {}
-
     pub fn read(&mut self, address: u16) -> u8 {
         match address {
             CARTRIDGE_START_ADDR..=0x7fff => self.ram[(address - CARTRIDGE_START_ADDR) as usize],
