@@ -249,9 +249,7 @@ impl PaletteRam {
 pub struct Ppu<R: Render = ()> {
     ctrl: PpuCtrl,
     status: PpuStatus,
-    cur_name_table_addr: u16,  // current active name table start address
     palette: PaletteRam,       // palette memory
-    cur_pattern_table_idx: u8, // index of current active pattern table, 0 or 1
 
     suppress_vblank_for_current_frame: bool,
     suppress_nmi_for_current_frame: bool,
@@ -296,9 +294,9 @@ impl<R: Render> Ppu<R> {
             oam_addr: 0,
             oam_data: [0; 0x100],
 
-            cur_name_table_addr: 0x2000,
+            
             palette: PaletteRam::default(),
-            cur_pattern_table_idx: 0,
+            
             vram_addr: 0,
             temp_vram_addr: 0,
             fine_x: 0,
@@ -320,7 +318,7 @@ impl<R: Render> Ppu<R> {
         self.ctrl = PpuCtrl::new();
         self.status = PpuStatus::new();
         self.mask = PpuMask::new();
-        self.cur_pattern_table_idx = 0;
+        
         self.vram_addr = 0;
         self.temp_vram_addr = 0;
         self.fine_x = 0;
@@ -355,11 +353,8 @@ impl<R: Render> Ppu<R> {
             "- Timing: scanline {}, dot {}",
             self.scanline, self.dot
         );
-        let _ = writeln!(
-            out,
-            "- Current nametable address: 0x{:04X}",
-            self.cur_name_table_addr
-        );
+        let cur_name_table_addr = 0x2000 + (self.ctrl.name_table_select() as u16 * 0x400);
+        let _ = writeln!(out, "- Current nametable address: 0x{:04X}", cur_name_table_addr);
         let _ = writeln!(out, "- PPUCTRL: 0x{:02X}", self.ctrl.into_bits());
         let _ = writeln!(out, "- PPUMASK: 0x{:02X}", self.mask.into_bits());
         let _ = writeln!(out, "- PPUSTATUS: 0x{:02X}", self.status.into_bits());
@@ -540,8 +535,7 @@ impl<R: Render> Ppu<R> {
             0x2000 => {
                 cartridge.on_ppu_ctrl_write(value);
                 self.set_control_flags(PpuCtrl::from_bits(value));
-                // Update name table address from control bits
-                self.cur_name_table_addr = 0x2000 + (self.ctrl.name_table_select() as u16 * 0x400);
+                // Update name table selection and mark cache dirty
                 self.scanline_cache.dirty = true;
             }
             // PPUMASK
@@ -711,7 +705,7 @@ impl<R: Render> Ppu<R> {
             return (override_pixel.palette_idx, override_pixel.color_idx);
         }
 
-        let base_addr = self.cur_pattern_table_idx as u16 * 0x1000;
+        let base_addr = if self.ctrl.background_pattern_table() { 0x1000 } else { 0x0000 };
         let color_idx = Self::read_pattern_pixel(
             cartridge,
             base_addr,
@@ -898,14 +892,7 @@ impl<R: Render> Ppu<R> {
         self.ctrl = flags;
         self.temp_vram_addr =
             (self.temp_vram_addr & !0x0C00) | ((self.ctrl.name_table_select() as u16) << 10);
-        self.cur_name_table_addr = 0x2000 + (self.ctrl.name_table_select() as u16 * 0x400);
         self.scanline_cache.dirty = true;
-        // Update pattern table index based on background_pattern_table flag
-        self.cur_pattern_table_idx = if self.ctrl.background_pattern_table() {
-            1
-        } else {
-            0
-        };
     }
 
     /// Read status register (for testing) - behaves like reading from 0x2002
