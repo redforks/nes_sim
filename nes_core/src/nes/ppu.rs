@@ -437,7 +437,7 @@ impl<R: Render> Ppu<R> {
         // Render pixel during visible scanlines (0-239) and visible dots (0-255)
         if self.scanline < 240 && self.dot < 256 {
             let pixel = if rendering_enabled {
-                self.render_pixel(cartridge, self.dot as u8, self.scanline as u8)
+                self.render_pixel(self.dot as u8)
             } else {
                 let vram_addr = self.vram_addr % 0x4000;
                 if (0x3f00..0x4000).contains(&vram_addr) {
@@ -928,9 +928,7 @@ impl<R: Render> Ppu<R> {
         r
     }
 
-    fn render_pixel(&mut self, cartridge: &Cartridge, x: u8, y: u8) -> Pixel {
-        self.prepare_scanline_cache(cartridge, y);
-
+    fn render_pixel(&mut self, x: u8) -> Pixel {
         let (bg_palette_idx, bg_color_idx) = if self.mask.background_enabled() {
             let cached = self.scanline_cache.background[x as usize];
             (cached.palette_idx, cached.color_idx)

@@ -279,7 +279,8 @@ fn render_pixel(ppu: &mut Ppu, pattern: &[u8], x: u8, y: u8) -> Pixel {
             tc.chr_rom[i] = pattern[i % pattern.len()];
         }
     }
-    ppu.render_pixel(&cart, x, y)
+    ppu.prepare_scanline_cache(&cart, y);
+    ppu.render_pixel(x)
 }
 
 fn render_pixel_with_setup<F>(ppu: &mut Ppu, pattern: &[u8], setup: F, x: u8, y: u8) -> Pixel
@@ -295,7 +296,8 @@ where
         }
     }
     setup(&mut cart);
-    let pixel = ppu.render_pixel(&cart, x, y);
+    ppu.prepare_scanline_cache(&cart, y);
+    let pixel = ppu.render_pixel(x);
     ppu.mask.apply_effects(pixel)
 }
 
