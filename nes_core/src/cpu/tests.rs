@@ -3155,6 +3155,72 @@ fn test_rti_leaves_nmi_mode() {
 }
 
 #[test]
+fn test_irq_vector_load_ignores_too_recent_nmi() {
+    let mut mcu = MockMcu::new();
+    mcu.write(0xFFFA, 0x78);
+    mcu.write(0xFFFB, 0x56);
+    mcu.write(0xFFFE, 0x34);
+    mcu.write(0xFFFF, 0x12);
+    let mut cpu = Cpu::new(mcu);
+    cpu.mode = CpuMode::Normal;
+    cpu.cycles = 100;
+    cpu.nmi_requested_at = Some(94);
+
+    cpu.load_irq_address();
+
+    assert_eq!(cpu.pc, 0x1234);
+    assert_eq!(cpu.mode, CpuMode::Normal);
+    assert_eq!(cpu.nmi_requested_at, Some(94));
+}
+
+#[test]
+fn test_irq_vector_load_hijacks_when_nmi_is_ready() {
+    let mut mcu = MockMcu::new();
+    mcu.write(0xFFFA, 0x78);
+    mcu.write(0xFFFB, 0x56);
+    mcu.write(0xFFFE, 0x34);
+    mcu.write(0xFFFF, 0x12);
+    let mut cpu = Cpu::new(mcu);
+    cpu.mode = CpuMode::Normal;
+    cpu.cycles = 100;
+    cpu.nmi_requested_at = Some(93);
+    cpu.irq_vector_is_nmi = true;
+
+    cpu.load_irq_address();
+
+    assert_eq!(cpu.pc, 0x5678);
+    assert_eq!(cpu.mode, CpuMode::Nmi);
+    assert_eq!(cpu.nmi_requested_at, Some(93));
+}
+
+#[test]
+fn test_irq_entry_schedules_five_followup_microcodes() {
+    let mut cpu = create_cpu();
+    cpu.cycles = 2;
+    cpu.set_flag(Flag::InterruptDisabled, false);
+    cpu.set_irq(true);
+
+    let mut plugin = EmptyPlugin::new();
+    let (_, finished) = cpu.tick(&mut plugin);
+
+    assert!(!finished);
+    assert_eq!(cpu.microcodes_len(), 6);
+}
+
+#[test]
+fn test_irq_vector_load_defers_next_nmi_poll_when_not_hijacked() {
+    let mut mcu = MockMcu::new();
+    mcu.write(0xFFFE, 0x34);
+    mcu.write(0xFFFF, 0x12);
+    let mut cpu = Cpu::new(mcu);
+
+    cpu.load_irq_address();
+
+    assert_eq!(cpu.pc, 0x1234);
+    assert!(cpu.defer_nmi_poll);
+}
+
+#[test]
 fn test_transfer_no_touch_flags_zero_page() {
     // Load Y from zero page (0xA4 - LDY zero page)
     let mut mcu = MockMcu::new();

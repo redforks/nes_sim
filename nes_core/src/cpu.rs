@@ -1,4 +1,4 @@
-use self::microcode::{Microcode, opcode};
+use self::microcode::{opcode, Microcode};
 use crate::mcu::Mcu;
 use arraydeque::ArrayDeque;
 
@@ -42,6 +42,8 @@ pub struct Cpu<M: Mcu> {
     /// if set nmi line of ppu, such as STA $2000, nmi line set after last cycle of STA instruction, then
     /// cpu can not know nmi signal until the next instruction, we save the cycle that nmi requested to detect this
     nmi_requested_at: Option<usize>,
+    defer_nmi_poll: bool,
+    irq_vector_is_nmi: bool,
     mode: CpuMode,
 
     microcode_queue: ArrayDeque<Microcode, 8>,
@@ -67,6 +69,8 @@ impl<M: Mcu> Cpu<M> {
             microcode_queue: ArrayDeque::new(),
             mode: CpuMode::Normal,
             nmi_requested_at: None,
+            defer_nmi_poll: false,
+            irq_vector_is_nmi: false,
         };
         r.reset();
         r
@@ -89,6 +93,8 @@ impl<M: Mcu> Cpu<M> {
         self.irq_inhibit = None;
         self.microcode_queue.clear();
         self.nmi_requested_at = None;
+        self.defer_nmi_poll = false;
+        self.irq_vector_is_nmi = false;
         self.mode = CpuMode::Normal;
         self.sp = 0xFD;
         self.cycles = 0;
@@ -118,6 +124,11 @@ impl<M: Mcu> Cpu<M> {
         self.irq_line = enabled;
     }
 
+    fn nmi_ready(&self) -> bool {
+        self.nmi_requested_at
+            .is_some_and(|cycles| self.cycles > cycles + 5)
+    }
+
     pub fn is_halted(&self) -> bool {
         self.mode == CpuMode::Halt
     }
@@ -139,11 +150,9 @@ impl<M: Mcu> Cpu<M> {
                 plugin.start(self);
                 let irq_inhibit = self.irq_inhibit.take();
 
-                if self
-                    .nmi_requested_at
-                    .is_some_and(|cycles| self.cycles > cycles + 5)
-                    && self.mode == CpuMode::Normal
-                {
+                if std::mem::take(&mut self.defer_nmi_poll) {
+                    Microcode::FetchAndDecode
+                } else if self.nmi_ready() && self.mode == CpuMode::Normal {
                     self.nmi_requested_at = None;
                     // handle nmi
                     // reset nmi_requested, because nmi signal is edge detected, ignored if cpu is already in nmi mode
@@ -581,6 +590,12 @@ impl<M: Mcu> Cpu<M> {
         } else {
             self.status | Flag::NotUsed as u8
         });
+        if set_disable_interrupt && self.mode == CpuMode::Normal {
+            self.irq_vector_is_nmi = self.nmi_ready();
+            if self.irq_vector_is_nmi {
+                self.nmi_requested_at = None;
+            }
+        }
         if set_disable_interrupt {
             self.inner_set_flag(Flag::InterruptDisabled, true);
         }
@@ -650,11 +665,12 @@ impl<M: Mcu> Cpu<M> {
     }
 
     fn load_irq_address(&mut self) {
-        if std::mem::take(&mut self.nmi_requested_at).is_some() && self.mode == CpuMode::Normal {
+        if std::mem::take(&mut self.irq_vector_is_nmi) {
             // hijacked by nmi
             self.mode = CpuMode::Nmi;
             self.pc = self.read_word(0xFFFA);
         } else {
+            self.defer_nmi_poll = true;
             self.pc = self.read_word(0xFFFE);
         }
     }
