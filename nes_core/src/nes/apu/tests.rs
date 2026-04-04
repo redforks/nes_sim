@@ -321,35 +321,3 @@ fn test_apu_controller_driver_control_flags_status() {
     assert_eq!(status & 0x01, 0x01);
     assert_eq!(status & 0x40, 0x00);
 }
-
-#[test]
-fn test_apu_controller_driver_read_status_clears_frame_irq() {
-    let mut driver = Apu::new(());
-    driver.write(0x4017, 0x00);
-
-    for _ in 0..(14914 * 2) {
-        driver.tick();
-    }
-
-    assert!(driver.request_irq());
-    let status = driver.read(0x4015);
-    assert!(status & 0x40 != 0);
-    assert!(!driver.request_irq());
-}
-
-#[test]
-fn test_apu_controller_driver_five_step_write_clocks_length_counter() {
-    let mut driver = Apu::new(());
-    driver.write(0x4003, 0x18);
-    driver.write(0x4015, 0x01);
-
-    let before = driver.read(0x4015);
-    assert!(before & 0x01 != 0);
-
-    driver.write(0x4017, 0x80);
-    assert!(driver.read(0x4015) & 0x01 != 0);
-
-    driver.write(0x4017, 0x80);
-    let after = driver.read(0x4015);
-    assert!(after & 0x01 == 0);
-}

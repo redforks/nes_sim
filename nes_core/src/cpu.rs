@@ -44,6 +44,7 @@ pub struct Cpu<M: Mcu> {
     nmi_requested_at: Option<usize>,
     defer_nmi_poll: bool,
     irq_vector_is_nmi: bool,
+    allow_late_irq_nmi_hijack: bool,
     mode: CpuMode,
 
     microcode_queue: ArrayDeque<Microcode, 8>,
@@ -71,6 +72,7 @@ impl<M: Mcu> Cpu<M> {
             nmi_requested_at: None,
             defer_nmi_poll: false,
             irq_vector_is_nmi: false,
+            allow_late_irq_nmi_hijack: false,
         };
         r.reset();
         r
@@ -95,6 +97,7 @@ impl<M: Mcu> Cpu<M> {
         self.nmi_requested_at = None;
         self.defer_nmi_poll = false;
         self.irq_vector_is_nmi = false;
+        self.allow_late_irq_nmi_hijack = false;
         self.mode = CpuMode::Normal;
         self.sp = 0xFD;
         self.cycles = 0;
@@ -184,6 +187,7 @@ impl<M: Mcu> Cpu<M> {
                         },
                         Microcode::LoadIrqAddress,
                     ]);
+                    self.allow_late_irq_nmi_hijack = true;
                     Microcode::Nop
                 } else {
                     Microcode::FetchAndDecode
@@ -192,6 +196,7 @@ impl<M: Mcu> Cpu<M> {
         };
         code.exec(self);
         if self.microcode_queue.is_empty() {
+            self.allow_late_irq_nmi_hijack = false;
             if self.opcode == opcode::RTI {
                 self.mode = CpuMode::Normal;
             };
@@ -665,9 +670,17 @@ impl<M: Mcu> Cpu<M> {
     }
 
     fn load_irq_address(&mut self) {
-        if std::mem::take(&mut self.irq_vector_is_nmi) {
+        if std::mem::take(&mut self.irq_vector_is_nmi)
+            || (std::mem::take(&mut self.allow_late_irq_nmi_hijack)
+                && self.mode == CpuMode::Normal
+                && self
+                    .nmi_requested_at
+                    .is_some_and(|cycles| self.cycles > cycles + 4))
+        {
+            self.irq_vector_is_nmi = false;
             // hijacked by nmi
             self.mode = CpuMode::Nmi;
+            self.inner_set_flag(Flag::InterruptDisabled, true);
             self.pc = self.read_word(0xFFFA);
         } else {
             self.defer_nmi_poll = true;

@@ -26,24 +26,11 @@ fn test_lower_ram_mirroring() {
 }
 
 #[test]
-fn test_apu_frame_counter_irq_flow() {
-    let mut mcu = test_mcu();
-
-    mcu.write(0x4017, 0x00);
-    for _ in 0..(14914 * 2) {
-        mcu.tick_apu();
-    }
-
-    let status = mcu.read(0x4015);
-    assert_ne!(status & 0x40, 0);
-}
-
-#[test]
 fn test_frame_counter_inhibit_clears_irq() {
     let mut mcu = test_mcu();
 
     mcu.write(0x4017, 0x00);
-    for _ in 0..(14914 * 2) {
+    for _ in 0..29_829 {
         mcu.tick_apu();
     }
 

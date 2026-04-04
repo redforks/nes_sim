@@ -529,10 +529,13 @@ pub struct Apu<D: AudioDriver = ()> {
     sample_rate: u32,
     sample_accumulator: u64,
     apu_cycle: u64,
+    frame_counter_cycle: u64,
     apu_even_cycle: bool,
     frame_counter_mode: bool,
     frame_interrupt_inhibit: bool,
     frame_interrupt: bool,
+    frame_counter_write_delay: Option<u8>,
+    pending_frame_counter: Option<FrameCounter>,
     dmc_interrupt: bool,
     dc_last_input: f32,
     dc_last_output: f32,
@@ -557,10 +560,13 @@ impl<D: AudioDriver> Apu<D> {
             sample_rate,
             sample_accumulator: 0,
             apu_cycle: 0,
+            frame_counter_cycle: 0,
             apu_even_cycle: false,
             frame_counter_mode: false,
             frame_interrupt_inhibit: false,
             frame_interrupt: false,
+            frame_counter_write_delay: None,
+            pending_frame_counter: None,
             dmc_interrupt: false,
             dc_last_input: 0.0,
             dc_last_output: 0.0,
@@ -571,10 +577,14 @@ impl<D: AudioDriver> Apu<D> {
         // https://www.nesdev.org/wiki/CPU_power_up_state
         self.set_control_flags(ControlFlags::new());
         self.triangle = TriangleState::default();
+        self.frame_counter_cycle = 0;
+        self.frame_counter_write_delay = None;
+        self.pending_frame_counter = None;
     }
 
     pub fn tick(&mut self) -> bool {
         self.triangle.step_timer();
+        self.frame_counter_cycle = self.frame_counter_cycle.wrapping_add(1);
 
         self.apu_even_cycle = !self.apu_even_cycle;
         if self.apu_even_cycle {
@@ -582,6 +592,16 @@ impl<D: AudioDriver> Apu<D> {
             self.pulse1.step_timer();
             self.pulse2.step_timer();
             self.noise.step_timer();
+        }
+
+        if let Some(delay) = &mut self.frame_counter_write_delay {
+            *delay -= 1;
+            if *delay == 0 {
+                self.frame_counter_write_delay = None;
+                if let Some(counter) = self.pending_frame_counter.take() {
+                    self.apply_frame_counter(counter);
+                }
+            }
         }
 
         let irq_triggered = self.tick_frame_counter();
@@ -671,6 +691,12 @@ impl<D: AudioDriver> Apu<D> {
     }
 
     fn set_frame_counter(&mut self, counter: FrameCounter) {
+        // A $4017 write takes effect 3 or 4 CPU clocks later depending on phase.
+        self.pending_frame_counter = Some(counter);
+        self.frame_counter_write_delay = Some(4);
+    }
+
+    fn apply_frame_counter(&mut self, counter: FrameCounter) {
         self.frame_counter_mode = counter.mode();
         self.frame_interrupt_inhibit = counter.interrupt_flag();
         if self.frame_interrupt_inhibit {
@@ -678,7 +704,7 @@ impl<D: AudioDriver> Apu<D> {
         }
 
         self.apu_cycle = 0;
-        self.apu_even_cycle = false;
+        self.frame_counter_cycle = 0;
 
         if self.frame_counter_mode {
             self.clock_quarter_frame();
@@ -687,15 +713,11 @@ impl<D: AudioDriver> Apu<D> {
     }
 
     fn tick_frame_counter(&mut self) -> bool {
-        if !self.apu_even_cycle {
-            return false;
-        }
-
         if self.frame_counter_mode {
-            let cycle = self.apu_cycle % 18_641;
+            let cycle = self.frame_counter_cycle % 37_282;
             match cycle {
-                3_728 | 11_185 => self.clock_quarter_frame(),
-                7_456 | 18_640 => {
+                7_457 | 22_371 => self.clock_quarter_frame(),
+                14_913 | 37_281 => {
                     self.clock_quarter_frame();
                     self.clock_half_frame();
                 }
@@ -704,14 +726,14 @@ impl<D: AudioDriver> Apu<D> {
             return false;
         }
 
-        let cycle = self.apu_cycle % 14_915;
+        let cycle = self.frame_counter_cycle % 29_830;
         match cycle {
-            3_728 | 11_185 => self.clock_quarter_frame(),
-            7_456 => {
+            7_457 | 22_371 => self.clock_quarter_frame(),
+            14_913 => {
                 self.clock_quarter_frame();
                 self.clock_half_frame();
             }
-            14_914 => {
+            29_829 => {
                 self.clock_quarter_frame();
                 self.clock_half_frame();
                 if !self.frame_interrupt_inhibit {
