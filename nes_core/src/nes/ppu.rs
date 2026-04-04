@@ -249,7 +249,7 @@ impl PaletteRam {
 pub struct Ppu<R: Render = ()> {
     ctrl: PpuCtrl,
     status: PpuStatus,
-    palette: PaletteRam,       // palette memory
+    palette: PaletteRam, // palette memory
 
     suppress_vblank_for_current_frame: bool,
     suppress_nmi_for_current_frame: bool,
@@ -273,8 +273,8 @@ pub struct Ppu<R: Render = ()> {
 
     scanline_cache: ScanlineCache,
     /// set to PPUMask register changes render_enabled state, but ppu see it at the next tick,
-    /// so can not defineds on `self.mask`
-    effective_render_enabled: bool,
+    /// so can not depends on `self.mask`
+    effective_mask: PpuMask,
 
     frame_no: usize,
 }
@@ -294,9 +294,8 @@ impl<R: Render> Ppu<R> {
             oam_addr: 0,
             oam_data: [0; 0x100],
 
-            
             palette: PaletteRam::default(),
-            
+
             vram_addr: 0,
             temp_vram_addr: 0,
             fine_x: 0,
@@ -309,7 +308,7 @@ impl<R: Render> Ppu<R> {
             suppress_nmi_for_current_frame: false,
             scanline_cache: ScanlineCache::default(),
             frame_no: 0,
-            effective_render_enabled: false,
+            effective_mask: PpuMask::new(),
         }
     }
 
@@ -318,7 +317,8 @@ impl<R: Render> Ppu<R> {
         self.ctrl = PpuCtrl::new();
         self.status = PpuStatus::new();
         self.mask = PpuMask::new();
-        
+        self.effective_mask = PpuMask::new();
+
         self.vram_addr = 0;
         self.temp_vram_addr = 0;
         self.fine_x = 0;
@@ -354,7 +354,11 @@ impl<R: Render> Ppu<R> {
             self.scanline, self.dot
         );
         let cur_name_table_addr = 0x2000 + (self.ctrl.name_table_select() as u16 * 0x400);
-        let _ = writeln!(out, "- Current nametable address: 0x{:04X}", cur_name_table_addr);
+        let _ = writeln!(
+            out,
+            "- Current nametable address: 0x{:04X}",
+            cur_name_table_addr
+        );
         let _ = writeln!(out, "- PPUCTRL: 0x{:02X}", self.ctrl.into_bits());
         let _ = writeln!(out, "- PPUMASK: 0x{:02X}", self.mask.into_bits());
         let _ = writeln!(out, "- PPUSTATUS: 0x{:02X}", self.status.into_bits());
@@ -414,7 +418,7 @@ impl<R: Render> Ppu<R> {
     }
 
     pub fn rendering_enabled(&self) -> bool {
-        self.effective_render_enabled
+        self.effective_mask.background_enabled() || self.effective_mask.sprite_enabled()
     }
 
     pub fn oam_dma(&mut self, vals: &[u8; 256]) {
@@ -441,7 +445,7 @@ impl<R: Render> Ppu<R> {
                     COLORS[self.palette.read(0x3f00) as usize]
                 }
             };
-            let pixel = self.mask.apply_effects(pixel);
+            let pixel = self.effective_mask.apply_effects(pixel);
             self.renderer
                 .set_pixel(self.dot as u32, self.scanline as u32, pixel.0);
         }
@@ -496,8 +500,7 @@ impl<R: Render> Ppu<R> {
             }
         }
 
-        self.effective_render_enabled =
-            self.mask.background_enabled() || self.mask.sprite_enabled();
+        self.effective_mask = self.mask;
     }
 
     /// Return ppu nmi signal, it connect to Cpu nmi input line
@@ -667,7 +670,7 @@ impl<R: Render> Ppu<R> {
         screen_y: u8,
     ) -> (u8, u8) {
         // Check left-column clipping
-        if !self.mask.background_left_enabled() && screen_x < 8 {
+        if !self.effective_mask.background_left_enabled() && screen_x < 8 {
             return (0, 0);
         }
 
@@ -705,7 +708,11 @@ impl<R: Render> Ppu<R> {
             return (override_pixel.palette_idx, override_pixel.color_idx);
         }
 
-        let base_addr = if self.ctrl.background_pattern_table() { 0x1000 } else { 0x0000 };
+        let base_addr = if self.ctrl.background_pattern_table() {
+            0x1000
+        } else {
+            0x0000
+        };
         let color_idx = Self::read_pattern_pixel(
             cartridge,
             base_addr,
@@ -755,7 +762,7 @@ impl<R: Render> Ppu<R> {
 
         self.update_sprite_overflow(screen_y);
 
-        if self.mask.background_enabled() {
+        if self.effective_mask.background_enabled() {
             for screen_x in 0..256u16 {
                 let (palette_idx, color_idx) =
                     self.get_background_pixel(cartridge, screen_x as u8, screen_y);
@@ -766,7 +773,7 @@ impl<R: Render> Ppu<R> {
             }
         }
 
-        if !self.mask.sprite_enabled() {
+        if !self.effective_mask.sprite_enabled() {
             return;
         }
 
@@ -862,7 +869,7 @@ impl<R: Render> Ppu<R> {
 
         for screen_x in 0..256u16 {
             let x = screen_x as u8;
-            if !self.mask.sprite_left_enabled() && x < 8 {
+            if !self.effective_mask.sprite_left_enabled() && x < 8 {
                 continue;
             }
 
@@ -918,25 +925,25 @@ impl<R: Render> Ppu<R> {
     }
 
     fn render_pixel(&mut self, x: u8) -> Pixel {
-        let (bg_palette_idx, bg_color_idx) = if self.mask.background_enabled() {
+        let (bg_palette_idx, bg_color_idx) = if self.effective_mask.background_enabled() {
             let cached = self.scanline_cache.background[x as usize];
             (cached.palette_idx, cached.color_idx)
         } else {
             (0, 0) // transparent
         };
 
-        let sprite_pixel = if self.mask.sprite_enabled() {
+        let sprite_pixel = if self.effective_mask.sprite_enabled() {
             self.scanline_cache.sprite_pixels[x as usize]
         } else {
             None
         };
 
-        if self.mask.background_enabled()
-            && self.mask.sprite_enabled()
+        if self.effective_mask.background_enabled()
+            && self.effective_mask.sprite_enabled()
             && bg_color_idx != 0
             && x != 255
-            && (x >= 8 || self.mask.background_left_enabled())
-            && (x >= 8 || self.mask.sprite_left_enabled())
+            && (x >= 8 || self.effective_mask.background_left_enabled())
+            && (x >= 8 || self.effective_mask.sprite_left_enabled())
             && self.scanline_cache.sprite_zero_pixels[x as usize]
         {
             self.status.set_sprite_zero_hit(true);

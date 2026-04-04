@@ -187,6 +187,7 @@ fn create_test_ppu_with_mask(mask: PpuMask) -> Ppu {
     // Initialize PPU with the provided mask to avoid field reassignment
     let mut ppu = Ppu {
         mask,
+        effective_mask: mask,
         ..Ppu::new(())
     };
     // Clear OAM
