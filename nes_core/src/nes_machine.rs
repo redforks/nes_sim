@@ -2,7 +2,11 @@ use crate::{
     ExecuteResult, Plugin,
     ines::INesFile,
     machine::Machine,
-    nes::{NesMcu, controller::Button},
+    nes::{
+        NesMcu,
+        controller::Button,
+        ppu::{VBLANK_SET_DOT, VBLANK_SET_SCANLINE},
+    },
     render::Render,
 };
 
@@ -13,7 +17,6 @@ const MAX_TICKS_PER_FRAME: u32 = 90000;
 
 pub struct NesMachine<P, R: Render, D: crate::nes::apu::AudioDriver> {
     machine: Machine<P, NesMcu<R, D>>,
-    enter_vblank: bool,
     cycles: usize,
 }
 
@@ -27,7 +30,6 @@ where
         let mcu = NesMcu::new(file, render, audio_driver);
         Self {
             machine: Machine::with_plugin(plugin, mcu),
-            enter_vblank: false,
             cycles: 0,
         }
     }
@@ -51,7 +53,7 @@ where
             }
 
             // Check for VBlank signalled by the PPU
-            if std::mem::take(&mut self.enter_vblank) {
+            if self.machine.mcu().ppu_timing() == (VBLANK_SET_SCANLINE, VBLANK_SET_DOT) {
                 return ExecuteResult::Continue;
             }
         }
@@ -63,11 +65,7 @@ where
     pub fn tick(&mut self) -> ExecuteResult {
         self.cycles += 1;
 
-        let prev_vblank = self.mcu().ppu().vblank();
         self.machine.mcu_mut().tick_ppu();
-        if !prev_vblank && self.mcu().ppu().vblank() {
-            self.enter_vblank = true;
-        }
         let nmi_line = self.mcu().ppu().nmi_line_out();
         let timing = self.mcu().ppu().timing();
         self.machine.cpu_mut().update_nmi_line(nmi_line, timing);

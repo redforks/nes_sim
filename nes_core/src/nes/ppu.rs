@@ -109,7 +109,8 @@ const TILES_PER_ROW: u8 = 32;
 // PPU Timing Constants
 const SCANLINES_PER_FRAME: u16 = 262;
 const DOTS_PER_SCANLINE: u16 = 341;
-const VBLANK_SET_SCANLINE: u16 = 241;
+pub const VBLANK_SET_SCANLINE: u16 = 241;
+pub const VBLANK_SET_DOT: u16 = 1;
 const VBLANK_CLEAR_SCANLINE: u16 = 261;
 const VBLANK_CLEAR_DOT: u16 = 1;
 const MAX_SPRITES_PER_SCANLINE: usize = 8;
@@ -371,16 +372,11 @@ impl<R: Render> Ppu<R> {
             self.renderer.clear(bg_color.0);
         }
 
-        // Call finish() at end of visible area (scanline 240, dot 0)
-        if rendering_enabled && self.scanline == 240 && self.dot == 0 {
+        if self.scanline == VBLANK_SET_SCANLINE && self.dot == VBLANK_SET_DOT {
             self.renderer.finish();
-        }
-
-        if self.scanline == VBLANK_SET_SCANLINE
-            && self.dot == 1
-            && !self.suppress_vblank_for_current_frame
-        {
-            self.status.set_v_blank(true);
+            if !self.suppress_vblank_for_current_frame {
+                self.status.set_v_blank(true);
+            }
         }
 
         // VBlank clear: pre-render scanline 261, dot 1
@@ -427,11 +423,6 @@ impl<R: Render> Ppu<R> {
     /// Return ppu nmi signal, it connect to Cpu nmi input line
     pub fn nmi_line_out(&self) -> bool {
         self.status.v_blank() && self.ctrl.nmi_enable() && !self.suppress_nmi_for_current_frame
-    }
-
-    /// Return ppu vblank status
-    pub fn vblank(&self) -> bool {
-        self.status.v_blank()
     }
 
     /// Read by cpu memory bus. Uses Cartridge for CHR/name-table access.
