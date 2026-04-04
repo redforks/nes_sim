@@ -108,7 +108,6 @@ struct PpuStatus {
     v_blank: bool,
 }
 
-const PALETTE_MEM_START: u16 = 0x3f00;
 const TILES_PER_ROW: u8 = 32;
 
 // PPU Timing Constants
@@ -215,65 +214,37 @@ struct PaletteRam {
 
 impl PaletteRam {
     fn read(&mut self, address: u16) -> u8 {
-        self.data[self.get_addr(address)]
+        self.data[Self::index(address)]
     }
 
     fn write(&mut self, address: u16, value: u8) {
-        self.data[self.get_addr(address)] = value;
+        self.data[Self::index(address)] = value;
     }
 
-    fn get_addr(&self, addr: u16) -> usize {
-        // NES palette mirroring:
-        // 0x3f00-0x3f0f: background palette
-        // 0x3f10-0x3f1f: sprite palette, mirrors to 0x3f00-0x3f0f
-        // 0x3f20-0x3fff: mirror down to 0x3f00-0x3f1f
-
-        // First, mirror addresses >= 0x3f20
-        let addr = if addr >= 0x3f20 {
-            ((addr - 0x3f20) % 32) + 0x3f00
+    fn index(addr: u16) -> usize {
+        let addr = addr & 0x1f;
+        if let 0x10 | 0x14 | 0x18 | 0x1C = addr {
+            (addr & 0xf) as usize
         } else {
-            addr
-        };
-
-        // Then, handle sprite palette mirroring (0x3f10-0x3f1f -> 0x3f00-0x3f0f)
-        // NOTE: Only addresses 0x3f10, 0x3f14, 0x3f18, 0x3f1c actually mirror
-        // Other addresses in 0x3f10-0x3f1f range are not used on real hardware
-        let addr = match addr {
-            0x3f10 | 0x3f14 | 0x3f18 | 0x3f1c => addr - 0x10,
-            _ => addr,
-        };
-
-        // Convert to index in the 32-byte palette array
-        let addr = addr - PALETTE_MEM_START;
-
-        // Clamp to valid range [0, 31]
-        let addr = addr as usize;
-        if addr >= 32 { 31 } else { addr }
+            addr as usize
+        }
     }
 
-    fn get_color_idx(&self, start: usize, palette_idx: u8, idx: u8) -> Pixel {
+    fn get_color(&self, start: u8, palette_idx: u8, idx: u8) -> Pixel {
         let offset = if idx == 0 {
             0
         } else {
-            start
-                + idx as usize
-                + match palette_idx {
-                    0 => 0x00,
-                    1 => 0x04,
-                    2 => 0x08,
-                    3 => 0x0c,
-                    _ => unreachable!(),
-                }
+            (start | idx | (palette_idx << 2)) as usize
         };
         COLORS[self.data[offset] as usize]
     }
 
     fn get_background_color(&self, palette_idx: u8, idx: u8) -> Pixel {
-        self.get_color_idx(0, palette_idx, idx)
+        self.get_color(0, palette_idx, idx)
     }
 
     fn get_sprit_color(&self, palette_idx: u8, idx: u8) -> Pixel {
-        self.get_color_idx(0x10, palette_idx, idx)
+        self.get_color(0x10, palette_idx, idx)
     }
 }
 
@@ -883,7 +854,7 @@ impl<R: Render> Ppu<R> {
     fn render_pixel(&mut self, cartridge: &Cartridge, x: u8, y: u8) -> Pixel {
         self.prepare_scanline_cache(cartridge, y);
 
-        let bg_pixel = if self.mask.background_enabled() {
+        let (bg_palette_idx, bg_color_idx) = if self.mask.background_enabled() {
             let cached = self.scanline_cache.background[x as usize];
             (cached.palette_idx, cached.color_idx)
         } else {
@@ -895,8 +866,6 @@ impl<R: Render> Ppu<R> {
         } else {
             None
         };
-
-        let (bg_palette_idx, bg_color_idx) = bg_pixel;
 
         if self.mask.background_enabled()
             && self.mask.sprite_enabled()
