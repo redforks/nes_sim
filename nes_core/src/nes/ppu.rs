@@ -18,46 +18,42 @@ pub struct BackgroundTileOverride {
     pub color_idx: u8,
 }
 
-/// Apply grayscale and emphasis effects to a pixel color.
-/// - Grayscale: Converts color to grayscale by averaging RGB channels
-/// - Emphasis: Attenuates non-emphasized color channels (e.g., red emphasis darkens G and B)
-fn apply_effects(
-    pixel: Pixel,
-    grayscale: bool,
-    red_tint: bool,
-    green_tint: bool,
-    blue_tint: bool,
-) -> Pixel {
-    let Rgba([r, g, b, a]) = pixel;
+impl PpuMask {
+    /// Apply grayscale and emphasis effects to a pixel color using this mask's flags.
+    /// - Grayscale: Converts color to grayscale by averaging RGB channels
+    /// - Emphasis: Attenuates non-emphasized color channels (e.g., red emphasis darkens G and B)
+    fn apply_effects(&self, pixel: Pixel) -> Pixel {
+        let Rgba([r, g, b, a]) = pixel;
 
-    // Apply emphasis (color emphasis darkens the non-emphasized channels)
-    // Using ~0.75 attenuation factor (192/256)
-    let r = if red_tint || (!green_tint && !blue_tint) {
-        r
-    } else {
-        (r as u16 * 192 / 256) as u8
-    };
-    let g = if green_tint || (!red_tint && !blue_tint) {
-        g
-    } else {
-        (g as u16 * 192 / 256) as u8
-    };
-    let b = if blue_tint || (!red_tint && !green_tint) {
-        b
-    } else {
-        (b as u16 * 192 / 256) as u8
-    };
+        // Apply emphasis (color emphasis darkens the non-emphasized channels)
+        // Using ~0.75 attenuation factor (192/256)
+        let r = if self.red_tint() || (!self.green_tint() && !self.blue_tint()) {
+            r
+        } else {
+            (r as u16 * 192 / 256) as u8
+        };
+        let g = if self.green_tint() || (!self.red_tint() && !self.blue_tint()) {
+            g
+        } else {
+            (g as u16 * 192 / 256) as u8
+        };
+        let b = if self.blue_tint() || (!self.red_tint() && !self.green_tint()) {
+            b
+        } else {
+            (b as u16 * 192 / 256) as u8
+        };
 
-    // Apply grayscale by averaging RGB channels
-    let (r, g, b) = if grayscale {
-        // Use luminance weights (ITU-R BT.601): 0.299R + 0.587G + 0.114B
-        let gray = (r as u16 * 77 + g as u16 * 150 + b as u16 * 29) / 256;
-        (gray as u8, gray as u8, gray as u8)
-    } else {
-        (r, g, b)
-    };
+        // Apply grayscale by averaging RGB channels
+        let (r, g, b) = if self.grayscale() {
+            // Use luminance weights (ITU-R BT.601): 0.299R + 0.587G + 0.114B
+            let gray = (r as u16 * 77 + g as u16 * 150 + b as u16 * 29) / 256;
+            (gray as u8, gray as u8, gray as u8)
+        } else {
+            (r, g, b)
+        };
 
-    Rgba([r, g, b, a])
+        Rgba([r, g, b, a])
+    }
 }
 
 #[bitfield(u8)]
@@ -353,8 +349,18 @@ impl<R: Render> Ppu<R> {
         }
 
         // Render pixel during visible scanlines (0-239) and visible dots (0-255)
-        if rendering_enabled && self.scanline < 240 && self.dot < 256 {
-            let pixel = self.render_pixel(cartridge, self.dot as u8, self.scanline as u8);
+        if self.scanline < 240 && self.dot < 256 {
+            let pixel = if rendering_enabled {
+                self.render_pixel(cartridge, self.dot as u8, self.scanline as u8)
+            } else {
+                let vram_addr = self.vram_addr % 0x4000;
+                if (0x3f00..0x4000).contains(&vram_addr) {
+                    COLORS[self.palette.read(vram_addr) as usize]
+                } else {
+                    COLORS[self.palette.read(0x3f00) as usize]
+                }
+            };
+            let pixel = self.mask.apply_effects(pixel);
             self.renderer
                 .set_pixel(self.dot as u32, self.scanline as u32, pixel.0);
         }
@@ -878,7 +884,7 @@ impl<R: Render> Ppu<R> {
             self.status.set_sprite_zero_hit(true);
         }
 
-        let color = match sprite_pixel {
+        match sprite_pixel {
             Some(sprite_pixel) => {
                 if bg_color_idx == 0 || !sprite_pixel.behind_bg {
                     // Background is transparent OR sprite has priority
@@ -895,16 +901,7 @@ impl<R: Render> Ppu<R> {
                 self.palette
                     .get_background_color(bg_palette_idx, bg_color_idx)
             }
-        };
-
-        // Apply grayscale and emphasis effects from PPUMASK
-        apply_effects(
-            color,
-            self.mask.grayscale(),
-            self.mask.red_tint(),
-            self.mask.green_tint(),
-            self.mask.blue_tint(),
-        )
+        }
     }
 }
 

@@ -295,7 +295,8 @@ where
         }
     }
     setup(&mut cart);
-    ppu.render_pixel(&cart, x, y)
+    let pixel = ppu.render_pixel(&cart, x, y);
+    ppu.mask.apply_effects(pixel)
 }
 
 #[test]
@@ -321,6 +322,40 @@ fn test_render_pixel_both_disabled() {
 
     let pixel = render_pixel(&mut ppu, &pattern, 10, 10);
     assert_eq!(pixel, COLORS[0x21]);
+}
+
+#[test]
+fn test_tick_renders_palette_color_when_rendering_disabled_and_vram_points_to_palette() {
+    let mut ppu = Ppu {
+        mask: PpuMask::new(),
+        ..Ppu::new(ImageRender::default_dimension())
+    };
+    ppu.palette.write(0x3f00, 0x21);
+    ppu.vram_addr = 0x3f10;
+    ppu.scanline = 0;
+    ppu.dot = 0;
+
+    ppu.tick(&new_test_cartridge());
+
+    let image = ppu.renderer.borrow_image();
+    assert_eq!(image.get_pixel(0, 0), &image::Rgba(COLORS[0x21].0));
+}
+
+#[test]
+fn test_tick_renders_background_color_when_rendering_disabled_and_vram_not_palette() {
+    let mut ppu = Ppu {
+        mask: PpuMask::new(),
+        ..Ppu::new(ImageRender::default_dimension())
+    };
+    ppu.palette.write(0x3f00, 0x16);
+    ppu.vram_addr = 0x2000;
+    ppu.scanline = 0;
+    ppu.dot = 0;
+
+    ppu.tick(&new_test_cartridge());
+
+    let image = ppu.renderer.borrow_image();
+    assert_eq!(image.get_pixel(0, 0), &image::Rgba(COLORS[0x16].0));
 }
 
 #[test]
@@ -658,7 +693,13 @@ fn test_render_pixel_sprite_zero_hit() {
     setup_sprite(&mut ppu, 0, 0, 1, 0, 8);
 
     assert!(!ppu.status.sprite_zero_hit());
-    render_pixel_with_setup(&mut ppu, &pattern, |cart| cart.write_nametable(0x2001, 0), 8, 1);
+    render_pixel_with_setup(
+        &mut ppu,
+        &pattern,
+        |cart| cart.write_nametable(0x2001, 0),
+        8,
+        1,
+    );
     assert!(ppu.status.sprite_zero_hit());
 }
 
@@ -744,7 +785,13 @@ fn test_render_pixel_sprite_zero_not_at_x255() {
     set_tile_solid(&mut pattern, 0, 1, 2);
     setup_sprite(&mut ppu, 0, 9, 0, 0, 248);
 
-    render_pixel_with_setup(&mut ppu, &pattern, |cart| cart.write_nametable(0x201f, 0), 255, 10);
+    render_pixel_with_setup(
+        &mut ppu,
+        &pattern,
+        |cart| cart.write_nametable(0x201f, 0),
+        255,
+        10,
+    );
     assert!(!ppu.status.sprite_zero_hit());
 }
 
@@ -792,6 +839,7 @@ fn test_render_pixel_grayscale_mode_with_sprite() {
     setup_sprite(&mut ppu, 0, 0, 1, 0, 0);
 
     let pixel = render_pixel(&mut ppu, &pattern, 0, 1);
+    let pixel = ppu.mask.apply_effects(pixel);
     let (r, g, b) = pixel_to_rgb(pixel);
 
     // In grayscale mode, R, G, and B should all be equal
