@@ -42,7 +42,16 @@ ppu-vbl-nmi:
     cargo run -p nes_cpu_test --release -- --quiet -f ../nes-test-roms/ppu_vbl_nmi/rom_singles/09-even_odd_frames.nes
     cargo run -p nes_cpu_test --release -- --quiet -f ../nes-test-roms/ppu_vbl_nmi/rom_singles/10-even_odd_timing.nes
 
-passed: unit-test cpu-test instr_misc instr_test-v5 instr_test-v3 nestest instr-timing ppu-vbl-nmi
+vbl-nmi-timing:
+    cargo run -p nes_cpu_test --release -- --quiet -f ../nes-test-roms/vbl_nmi_timing/1.frame_basics.nes
+    cargo run -p nes_cpu_test --release -- --quiet -f ../nes-test-roms/vbl_nmi_timing/2.vbl_timing.nes
+    cargo run -p nes_cpu_test --release -- --quiet -f ../nes-test-roms/vbl_nmi_timing/3.even_odd_frames.nes
+    cargo run -p nes_cpu_test --release -- --quiet -f ../nes-test-roms/vbl_nmi_timing/4.vbl_clear_timing.nes
+    cargo run -p nes_cpu_test --release -- --quiet -f ../nes-test-roms/vbl_nmi_timing/5.nmi_suppression.nes
+    cargo run -p nes_cpu_test --release -- --quiet -f ../nes-test-roms/vbl_nmi_timing/6.nmi_disable.nes
+    cargo run -p nes_cpu_test --release -- --quiet -f ../nes-test-roms/vbl_nmi_timing/7.nmi_timing.nes
+
+passed: unit-test cpu-test instr_misc instr_test-v5 instr_test-v3 nestest instr-timing ppu-vbl-nmi vbl-nmi-timing
     cargo run -p nes_cpu_test --release -- --quiet -f ../nes-test-roms/cpu_interrupts_v2/rom_singles/1-cli_latency.nes
 
 wasm-debug-build:
