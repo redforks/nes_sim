@@ -443,6 +443,10 @@ impl<R: Render> Ppu<R> {
         self.effective_mask.background_enabled() || self.effective_mask.sprite_enabled()
     }
 
+    pub fn in_vblank(&self) -> bool {
+        self.status.v_blank()
+    }
+
     pub fn oam_dma(&mut self, vals: &[u8; 256]) {
         self.oam_data.copy_from_slice(vals);
         self.scanline_cache.dirty = true;

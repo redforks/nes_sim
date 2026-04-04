@@ -1,6 +1,6 @@
 use crate::plugin::{ExitTestPlugin, NesReportPlugin, ReportNesTestResult};
 
-use super::plugin::{CompositePlugin, Console, MonitorTestStatus, ReportPlugin};
+use super::plugin::{CompositePlugin, Console, MonitorTestStatus, NametableConsole, ReportPlugin};
 use super::plugin::{DetectDeadLoop, ImageExit, MaxInstructions};
 use nes_core::Plugin;
 use nes_core::ines::INesFile;
@@ -71,15 +71,21 @@ impl Image {
     ) -> MachineWrapper {
         // Build the composite plugin step by step to handle type coercion
         let mut plugins: Vec<Box<dyn Plugin<nes_core::nes::NesMcu<(), ()>>>> = vec![
-            Box::<Console>::default(),
+            Box::<NametableConsole>::default(),
             Box::new(NesReportPlugin::create(quiet)),
-            Box::<MonitorTestStatus>::default(),
             Box::new(DetectDeadLoop::<1>::new()),
             Box::new(DetectDeadLoop::<2>::new()),
         ];
         if file_name.file_name().is_some_and(|f| f == "nestest.nes") {
             plugins.push(Box::new(ReportNesTestResult::new()));
+        } else if file_name
+            .to_str()
+            .is_some_and(|p| p.contains("vbl_nmi_timing"))
+        {
+            plugins.push(Box::new(NametableConsole::default()));
         } else {
+            plugins.push(Box::<Console>::default());
+            plugins.push(Box::<MonitorTestStatus>::default());
             plugins.push(Box::new(ExitTestPlugin::new()));
         }
         if max_instructions > 0 {

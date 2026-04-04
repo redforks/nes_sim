@@ -90,6 +90,10 @@ impl<R: Render, D: AudioDriver> NesMcu<R, D> {
         &self.ppu
     }
 
+    pub fn read_nametable(&self, address: u16) -> u8 {
+        self.cartridge.read_nametable(address)
+    }
+
     pub fn dump_ppu_state(&self) -> String {
         self.ppu.dump_state(&self.cartridge)
     }
