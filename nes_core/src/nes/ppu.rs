@@ -1,4 +1,3 @@
-use crate::ines::NametableArrangement;
 use crate::nes::mapper::Cartridge;
 use crate::render::Render;
 use bitfield_struct::bitfield;
@@ -110,71 +109,7 @@ struct PpuStatus {
 }
 
 const PALETTE_MEM_START: u16 = 0x3f00;
-const NAME_TABLE_MEM_START: u16 = 0x2000;
 const TILES_PER_ROW: u8 = 32;
-
-#[derive(Debug, Eq, PartialEq, Copy, Clone)]
-pub enum Mirroring {
-    LowerBank, // single screen use lower bank
-    UpperBank, // single screen use upper bank
-    Horizontal,
-    Vertical,
-    Four,
-}
-
-impl From<NametableArrangement> for Mirroring {
-    fn from(value: NametableArrangement) -> Self {
-        match value {
-            // Vertical arrangement requires Horizontal mirrored
-            NametableArrangement::Vertical => Self::Horizontal,
-            NametableArrangement::Horizontal => Self::Vertical,
-        }
-    }
-}
-
-struct NameTableControl {
-    mem: [u8; 2048],
-    mirroring: Mirroring,
-}
-
-impl NameTableControl {
-    pub fn new(mirroring: Mirroring) -> Self {
-        let mut r = Self {
-            mem: [0; 2048],
-            mirroring: mirroring,
-        };
-        r.set_mirroring(mirroring);
-        r
-    }
-
-    fn mirroring(&self) -> Mirroring {
-        self.mirroring
-    }
-
-    fn set_mirroring(&mut self, mirroring: Mirroring) {
-        self.mirroring = mirroring;
-    }
-
-    fn offset(&self, addr: u16) -> usize {
-        let r = addr - NAME_TABLE_MEM_START;
-        let band_start_offset = match self.mirroring {
-            Mirroring::LowerBank => [0, 0, 0, 0],
-            Mirroring::UpperBank => [1024, 1024, 1024, 1024],
-            Mirroring::Vertical => [0, 1024, 0, 1024],
-            Mirroring::Horizontal => [0, 0, 1024, 1024],
-            Mirroring::Four => unimplemented!(),
-        };
-        (band_start_offset[r as usize / 1024] + r % 1024) as usize
-    }
-
-    fn read(&mut self, address: u16) -> u8 {
-        self.mem[self.offset(address)]
-    }
-
-    fn write(&mut self, address: u16, value: u8) {
-        self.mem[self.offset(address)] = value;
-    }
-}
 
 // PPU Timing Constants
 const SCANLINES_PER_FRAME: u16 = 262;
@@ -345,10 +280,9 @@ impl PaletteRam {
 pub struct Ppu<R: Render = ()> {
     ctrl: PpuCtrl,
     status: PpuStatus,
-    name_table: NameTableControl, // name table
-    cur_name_table_addr: u16,     // current active name table start address
-    palette: PaletteRam,          // palette memory
-    cur_pattern_table_idx: u8,    // index of current active pattern table, 0 or 1
+    cur_name_table_addr: u16,  // current active name table start address
+    palette: PaletteRam,       // palette memory
+    cur_pattern_table_idx: u8, // index of current active pattern table, 0 or 1
 
     suppress_vblank_for_current_frame: bool,
     suppress_nmi_for_current_frame: bool,
@@ -385,7 +319,7 @@ fn normalize_ppu_addr(addr: u16) -> u16 {
 }
 
 impl<R: Render> Ppu<R> {
-    pub fn new(renderer: R, mirroring: Mirroring) -> Self {
+    pub fn new(renderer: R) -> Self {
         Ppu {
             ctrl: PpuCtrl::new(),
             mask: PpuMask::new(),
@@ -393,7 +327,6 @@ impl<R: Render> Ppu<R> {
             oam_addr: 0,
             oam_data: [0; 0x100],
 
-            name_table: NameTableControl::new(mirroring),
             cur_name_table_addr: 0x2000,
             palette: PaletteRam::default(),
             cur_pattern_table_idx: 0,
@@ -524,14 +457,6 @@ impl<R: Render> Ppu<R> {
         self.status.v_blank()
     }
 
-    pub fn set_mirroring(&mut self, mirroring: Mirroring) {
-        self.name_table.set_mirroring(mirroring);
-    }
-
-    pub fn mirroring(&self) -> Mirroring {
-        self.name_table.mirroring()
-    }
-
     /// Read by cpu memory bus. Uses Cartridge for CHR/name-table access.
     pub fn read(&mut self, address: u16, cartridge: &mut Cartridge) -> u8 {
         // PPU registers are mirrored every 8 bytes in range $2000-$3FFF
@@ -634,9 +559,7 @@ impl<R: Render> Ppu<R> {
         if addr < 0x3f00 {
             if addr >= 0x2000 {
                 // Name table (pattern table 0x0000-0x1FFF is read-only for CHR ROM)
-                if !cartridge.write_nametable(addr, value) {
-                    self.name_table.write(addr, value);
-                }
+                cartridge.write_nametable(addr, value);
             } else {
                 cartridge.write_pattern(addr, value);
             }
@@ -674,9 +597,7 @@ impl<R: Render> Ppu<R> {
     }
 
     fn read_name_table_byte(&mut self, address: u16, cartridge: &Cartridge) -> u8 {
-        cartridge
-            .read_nametable(address)
-            .unwrap_or_else(|| self.name_table.read(address))
+        cartridge.read_nametable(address)
     }
 
     fn read_pattern_pixel(

@@ -1,4 +1,6 @@
 use super::CARTRIDGE_START_ADDR;
+use crate::nes::mapper::Mirroring;
+use crate::nes::mapper::NameTableControl;
 
 const PRG_ROM_SIZE: usize = 0x8000;
 const CHR_BANK_SIZE: usize = 0x2000;
@@ -13,10 +15,11 @@ pub struct Mapper3 {
     selected_chr_bank: usize,
     chr_bank_count: usize,
     ram: [u8; CARTRIDGE_RAM_SIZE],
+    name_table: NameTableControl,
 }
 
 impl Mapper3 {
-    pub fn new(prg_rom: &[u8], chr_rom: &[u8]) -> Self {
+    pub fn new(prg_rom: &[u8], chr_rom: &[u8], mirroring: Mirroring) -> Self {
         debug_assert!(!prg_rom.is_empty());
         debug_assert!(prg_rom.len() <= PRG_ROM_SIZE);
         debug_assert!(!chr_rom.is_empty());
@@ -30,6 +33,7 @@ impl Mapper3 {
             selected_chr_bank: 0,
             chr_bank_count: chr_rom.len() / CHR_BANK_SIZE,
             ram: [0; CARTRIDGE_RAM_SIZE],
+            name_table: NameTableControl::new(mirroring),
         };
         mapper.prg_rom[..prg_rom.len()].copy_from_slice(prg_rom);
         mapper.refresh_chr_window();
@@ -81,6 +85,14 @@ impl Mapper3 {
             _ => unreachable!(),
         }
     }
+
+    pub fn write_nametable(&mut self, address: u16, value: u8) {
+        self.name_table.write(address, value);
+    }
+
+    pub fn read_nametable(&self, address: u16) -> u8 {
+        self.name_table.read(address)
+    }
 }
 
 #[cfg(test)]
@@ -89,7 +101,7 @@ mod tests {
 
     #[test]
     fn reads_and_writes_cartridge_ram() {
-        let mut mapper = Mapper3::new(&[0; 0x8000], &[0; CHR_BANK_SIZE]);
+        let mut mapper = Mapper3::new(&[0; 0x8000], &[0; CHR_BANK_SIZE], Mirroring::Horizontal);
 
         mapper.write(CARTRIDGE_START_ADDR, 0x12);
         mapper.write(0x7fff, 0x34);
@@ -104,7 +116,7 @@ mod tests {
         prg[0x0000] = 0x11;
         prg[0x3fff] = 0x22;
 
-        let mut mapper = Mapper3::new(&prg, &[0; CHR_BANK_SIZE]);
+        let mut mapper = Mapper3::new(&prg, &[0; CHR_BANK_SIZE], Mirroring::Horizontal);
 
         assert_eq!(mapper.read(0x8000), 0x11);
         assert_eq!(mapper.read(0xbfff), 0x22);
@@ -121,7 +133,7 @@ mod tests {
         chr[CHR_BANK_SIZE * 2] = 0x30;
         chr[CHR_BANK_SIZE * 3] = 0x40;
 
-        let mut mapper = Mapper3::new(&prg, &chr);
+        let mut mapper = Mapper3::new(&prg, &chr, Mirroring::Horizontal);
 
         assert_eq!(mapper.pattern_ref()[0], 0x10);
 
@@ -142,7 +154,7 @@ mod tests {
         chr[0] = 0xaa;
         chr[CHR_BANK_SIZE] = 0xbb;
 
-        let mut mapper = Mapper3::new(&prg, &chr);
+        let mut mapper = Mapper3::new(&prg, &chr, Mirroring::Horizontal);
 
         mapper.write(0x8000, 0x03);
 
@@ -151,7 +163,7 @@ mod tests {
 
     #[test]
     fn ignores_pattern_writes() {
-        let mut mapper = Mapper3::new(&[0; 0x8000], &[0x56; CHR_BANK_SIZE]);
+        let mut mapper = Mapper3::new(&[0; 0x8000], &[0x56; CHR_BANK_SIZE], Mirroring::Horizontal);
 
         mapper.write_pattern(0x0000, 0x12);
 

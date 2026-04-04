@@ -231,7 +231,7 @@ impl MMC5 {
         self.chr_mem[chr_addr]
     }
 
-    pub fn write_nametable(&mut self, address: u16, value: u8) -> bool {
+    pub fn write_nametable(&mut self, address: u16, value: u8) {
         let (region, offset) = self.nametable_region(address);
         match self.nt_mapping[region] {
             0 | 1 => {
@@ -246,11 +246,10 @@ impl MMC5 {
             3 => {}
             _ => unreachable!(),
         }
-        true
     }
 
-    pub fn read_nametable(&self, address: u16) -> Option<u8> {
-        Some(self.read_nametable_byte(address))
+    pub fn read_nametable(&self, address: u16) -> u8 {
+        self.read_nametable_byte(address)
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -673,8 +672,8 @@ mod tests {
         mmc5.write(0x5106, 0x2a);
         mmc5.write(0x5107, 0x03);
 
-        assert_eq!(mmc5.read_nametable(0x2000), Some(0x2a));
-        assert_eq!(mmc5.read_nametable(0x23c0), Some(0xff));
+        assert_eq!(mmc5.read_nametable(0x2000), 0x2a);
+        assert_eq!(mmc5.read_nametable(0x23c0), 0xff);
     }
 
     #[test]

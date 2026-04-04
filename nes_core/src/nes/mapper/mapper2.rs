@@ -1,4 +1,6 @@
 use super::CARTRIDGE_START_ADDR;
+use crate::nes::mapper::Mirroring;
+use crate::nes::mapper::NameTableControl;
 
 const PRG_ROM_BANK_SIZE: usize = 0x4000;
 const CHR_ROM_SIZE: usize = 0x2000;
@@ -11,10 +13,11 @@ pub struct Mapper2 {
     ram: [u8; CARTRIDGE_RAM_SIZE],
     selected_prg_bank: usize,
     prg_bank_count: usize,
+    name_table: NameTableControl,
 }
 
 impl Mapper2 {
-    pub fn new(prg_rom: &[u8], chr_rom: &[u8]) -> Self {
+    pub fn new(prg_rom: &[u8], chr_rom: &[u8], mirroring: Mirroring) -> Self {
         debug_assert!(!prg_rom.is_empty());
         debug_assert_eq!(prg_rom.len() % PRG_ROM_BANK_SIZE, 0);
         debug_assert!(chr_rom.len() <= CHR_ROM_SIZE);
@@ -26,6 +29,7 @@ impl Mapper2 {
             ram: [0; CARTRIDGE_RAM_SIZE],
             selected_prg_bank: 0,
             prg_bank_count: prg_rom.len() / PRG_ROM_BANK_SIZE,
+            name_table: NameTableControl::new(mirroring),
         };
         mapper.chr[..chr_rom.len()].copy_from_slice(chr_rom);
         mapper
@@ -77,6 +81,14 @@ impl Mapper2 {
             _ => unreachable!(),
         }
     }
+
+    pub fn write_nametable(&mut self, address: u16, value: u8) {
+        self.name_table.write(address, value);
+    }
+
+    pub fn read_nametable(&self, address: u16) -> u8 {
+        self.name_table.read(address)
+    }
 }
 
 #[cfg(test)]
@@ -85,7 +97,7 @@ mod tests {
 
     #[test]
     fn reads_and_writes_cartridge_ram() {
-        let mut mapper = Mapper2::new(&[0; PRG_ROM_BANK_SIZE * 2], &[]);
+        let mut mapper = Mapper2::new(&[0; PRG_ROM_BANK_SIZE * 2], &[], Mirroring::Horizontal);
 
         mapper.write(CARTRIDGE_START_ADDR, 0x12);
         mapper.write(0x7fff, 0x34);
@@ -103,7 +115,7 @@ mod tests {
         prg_rom[PRG_ROM_BANK_SIZE * 3] = 0x40;
         prg_rom[(PRG_ROM_BANK_SIZE * 4) - 1] = 0x4f;
 
-        let mut mapper = Mapper2::new(&prg_rom, &[]);
+        let mut mapper = Mapper2::new(&prg_rom, &[], Mirroring::Horizontal);
 
         assert_eq!(mapper.read(0x8000), 0x10);
         assert_eq!(mapper.read(0xc000), 0x40);
@@ -118,7 +130,11 @@ mod tests {
 
     #[test]
     fn exposes_chr_rom_patterns() {
-        let mapper = Mapper2::new(&[0; PRG_ROM_BANK_SIZE * 2], &[1, 2, 3]);
+        let mapper = Mapper2::new(
+            &[0; PRG_ROM_BANK_SIZE * 2],
+            &[1, 2, 3],
+            Mirroring::Horizontal,
+        );
 
         assert_eq!(mapper.pattern_ref()[0], 1);
         assert_eq!(mapper.pattern_ref()[1], 2);
@@ -127,7 +143,7 @@ mod tests {
 
     #[test]
     fn writes_to_chr_ram_when_chr_rom_is_absent() {
-        let mut mapper = Mapper2::new(&[0; PRG_ROM_BANK_SIZE * 2], &[]);
+        let mut mapper = Mapper2::new(&[0; PRG_ROM_BANK_SIZE * 2], &[], Mirroring::Horizontal);
 
         mapper.write_pattern(0x0000, 0x12);
         mapper.write_pattern(0x1fff, 0x34);
@@ -138,7 +154,7 @@ mod tests {
 
     #[test]
     fn ignores_pattern_writes_when_chr_rom_is_present() {
-        let mut mapper = Mapper2::new(&[0; PRG_ROM_BANK_SIZE * 2], &[0x56]);
+        let mut mapper = Mapper2::new(&[0; PRG_ROM_BANK_SIZE * 2], &[0x56], Mirroring::Horizontal);
 
         mapper.write_pattern(0x0000, 0x12);
 

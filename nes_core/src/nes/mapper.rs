@@ -1,11 +1,12 @@
 use crate::ines::INesFile;
+use crate::ines::NametableArrangement;
 use crate::nes::mapper::mapper0::Mapper0;
 use crate::nes::mapper::mapper2::Mapper2;
 use crate::nes::mapper::mapper3::Mapper3;
 use crate::nes::mapper::mmc1::MMC1;
 use crate::nes::mapper::mmc3::MMC3;
-use crate::nes::ppu::{BackgroundTileOverride, PatternAccess, Ppu};
-use crate::render::Render;
+use crate::nes::ppu::BackgroundTileOverride;
+use crate::nes::ppu::PatternAccess;
 
 const CARTRIDGE_START_ADDR: u16 = 0x4020;
 
@@ -18,16 +19,99 @@ mod mmc5;
 
 use crate::nes::mapper::mmc5::MMC5;
 
+const NAME_TABLE_MEM_START: u16 = 0x2000;
+
+#[derive(Debug, Eq, PartialEq, Copy, Clone)]
+pub enum Mirroring {
+    LowerBank, // single screen use lower bank
+    UpperBank, // single screen use upper bank
+    Horizontal,
+    Vertical,
+    Four,
+}
+
+impl From<NametableArrangement> for Mirroring {
+    fn from(value: NametableArrangement) -> Self {
+        match value {
+            // Vertical arrangement requires Horizontal mirrored
+            NametableArrangement::Vertical => Self::Horizontal,
+            NametableArrangement::Horizontal => Self::Vertical,
+        }
+    }
+}
+
+pub(crate) struct NameTableControl {
+    mem: [u8; 4096],
+    mirroring: Mirroring,
+}
+
+impl NameTableControl {
+    pub(crate) fn new(mirroring: Mirroring) -> Self {
+        Self {
+            mem: [0; 4096],
+            mirroring,
+        }
+    }
+
+    pub(crate) fn set_mirroring(&mut self, mirroring: Mirroring) {
+        self.mirroring = mirroring;
+    }
+
+    fn offset(&self, addr: u16) -> usize {
+        let offset = addr - NAME_TABLE_MEM_START;
+        let page = (offset / 1024) as usize;
+        let offset_in_page = (offset % 1024) as usize;
+        let page_start = match self.mirroring {
+            Mirroring::LowerBank => [0, 0, 0, 0][page],
+            Mirroring::UpperBank => [1024, 1024, 1024, 1024][page],
+            Mirroring::Vertical => [0, 1024, 0, 1024][page],
+            Mirroring::Horizontal => [0, 0, 1024, 1024][page],
+            Mirroring::Four => page * 1024,
+        };
+        page_start + offset_in_page
+    }
+
+    pub(crate) fn read(&self, address: u16) -> u8 {
+        self.mem[self.offset(address)]
+    }
+
+    pub(crate) fn write(&mut self, address: u16, value: u8) {
+        self.mem[self.offset(address)] = value;
+    }
+}
+
 pub fn create_cartridge(f: &INesFile) -> Cartridge {
     let mapper_no = f.header().mapper_no;
+    let mirroring = if f.header().ignore_mirror_control {
+        Mirroring::Four
+    } else {
+        f.header().nametable_arrangement.into()
+    };
     match mapper_no {
-        0 => Cartridge::Mapper0(Box::new(Mapper0::new(f.read_prg_rom(), f.read_chr_rom()))),
-        1 => Cartridge::MMC1(Box::new(MMC1::new(f.read_prg_rom(), f.read_chr_rom()))),
-        2 => Cartridge::Mapper2(Box::new(Mapper2::new(f.read_prg_rom(), f.read_chr_rom()))),
-        3 => Cartridge::Mapper3(Box::new(Mapper3::new(f.read_prg_rom(), f.read_chr_rom()))),
+        0 => Cartridge::Mapper0(Box::new(Mapper0::new(
+            f.read_prg_rom(),
+            f.read_chr_rom(),
+            mirroring,
+        ))),
+        1 => Cartridge::MMC1(Box::new(MMC1::new(
+            f.read_prg_rom(),
+            f.read_chr_rom(),
+            mirroring,
+        ))),
+        2 => Cartridge::Mapper2(Box::new(Mapper2::new(
+            f.read_prg_rom(),
+            f.read_chr_rom(),
+            mirroring,
+        ))),
+        3 => Cartridge::Mapper3(Box::new(Mapper3::new(
+            f.read_prg_rom(),
+            f.read_chr_rom(),
+            mirroring,
+        ))),
         4 => Cartridge::MMC3(Box::new(MMC3::new(
             f.read_prg_rom(),
             f.read_chr_rom(),
+            mirroring,
             f.header().ignore_mirror_control,
         ))),
         5 => Cartridge::MMC5(Box::new(MMC5::new(
@@ -55,6 +139,7 @@ pub enum Cartridge {
 pub struct TestCartridge {
     pub(crate) prg_rom: [u8; 0x8000],
     pub(crate) chr_rom: [u8; 0x2000],
+    name_table: NameTableControl,
 }
 
 #[cfg(test)]
@@ -63,6 +148,7 @@ impl TestCartridge {
         Self {
             prg_rom: [0; 0x8000],
             chr_rom: [0; 0x2000],
+            name_table: NameTableControl::new(Mirroring::Horizontal),
         }
     }
 
@@ -88,6 +174,14 @@ impl TestCartridge {
 
     pub fn irq_pending(&self) -> bool {
         false
+    }
+
+    pub fn write_nametable(&mut self, address: u16, value: u8) {
+        self.name_table.write(address, value);
+    }
+
+    pub fn read_nametable(&self, address: u16) -> u8 {
+        self.name_table.read(address)
     }
 }
 
@@ -132,13 +226,13 @@ impl Cartridge {
         }
     }
 
-    pub fn write<R: Render>(&mut self, ppu: &mut Ppu<R>, address: u16, value: u8) {
+    pub fn write(&mut self, address: u16, value: u8) {
         match self {
             Cartridge::Mapper0(cartridge) => cartridge.write(address, value),
             Cartridge::Mapper2(cartridge) => cartridge.write(address, value),
             Cartridge::Mapper3(cartridge) => cartridge.write(address, value),
-            Cartridge::MMC1(cartridge) => cartridge.write(ppu, address, value),
-            Cartridge::MMC3(cartridge) => cartridge.write(ppu, address, value),
+            Cartridge::MMC1(cartridge) => cartridge.write(address, value),
+            Cartridge::MMC3(cartridge) => cartridge.write(address, value),
             Cartridge::MMC5(cartridge) => cartridge.write(address, value),
             #[cfg(test)]
             Cartridge::Test(_) => {}
@@ -194,29 +288,29 @@ impl Cartridge {
         }
     }
 
-    pub fn write_nametable(&mut self, address: u16, value: u8) -> bool {
+    pub fn write_nametable(&mut self, address: u16, value: u8) {
         match self {
-            Cartridge::Mapper0(_)
-            | Cartridge::Mapper2(_)
-            | Cartridge::Mapper3(_)
-            | Cartridge::MMC1(_)
-            | Cartridge::MMC3(_) => false,
+            Cartridge::Mapper0(cartridge) => cartridge.write_nametable(address, value),
+            Cartridge::Mapper2(cartridge) => cartridge.write_nametable(address, value),
+            Cartridge::Mapper3(cartridge) => cartridge.write_nametable(address, value),
+            Cartridge::MMC1(cartridge) => cartridge.write_nametable(address, value),
+            Cartridge::MMC3(cartridge) => cartridge.write_nametable(address, value),
             Cartridge::MMC5(cartridge) => cartridge.write_nametable(address, value),
             #[cfg(test)]
-            Cartridge::Test(_) => false,
+            Cartridge::Test(cartridge) => cartridge.write_nametable(address, value),
         }
     }
 
-    pub fn read_nametable(&self, address: u16) -> Option<u8> {
+    pub fn read_nametable(&self, address: u16) -> u8 {
         match self {
-            Cartridge::Mapper0(_)
-            | Cartridge::Mapper2(_)
-            | Cartridge::Mapper3(_)
-            | Cartridge::MMC1(_)
-            | Cartridge::MMC3(_) => None,
+            Cartridge::Mapper0(cartridge) => cartridge.read_nametable(address),
+            Cartridge::Mapper2(cartridge) => cartridge.read_nametable(address),
+            Cartridge::Mapper3(cartridge) => cartridge.read_nametable(address),
+            Cartridge::MMC1(cartridge) => cartridge.read_nametable(address),
+            Cartridge::MMC3(cartridge) => cartridge.read_nametable(address),
             Cartridge::MMC5(cartridge) => cartridge.read_nametable(address),
             #[cfg(test)]
-            Cartridge::Test(_) => None,
+            Cartridge::Test(cartridge) => cartridge.read_nametable(address),
         }
     }
 

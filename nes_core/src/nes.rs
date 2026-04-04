@@ -4,7 +4,7 @@ use crate::nes::apu::{Apu, AudioDriver};
 use crate::nes::controller::{Button, Controller};
 use crate::nes::lower_ram::LowerRam;
 use crate::nes::mapper::Cartridge;
-use crate::nes::ppu::{Mirroring, Ppu};
+use crate::nes::ppu::Ppu;
 use crate::render::Render;
 use log::trace;
 
@@ -25,14 +25,7 @@ pub struct NesMcu<R: Render, D: AudioDriver> {
 impl<R: Render, D: AudioDriver> NesMcu<R, D> {
     pub fn new(file: &INesFile, renderer: R, audio_driver: D) -> Self {
         let cartridge = mapper::create_cartridge(file);
-        let ppu = Ppu::new(
-            renderer,
-            if file.header().ignore_mirror_control {
-                Mirroring::Four
-            } else {
-                file.header().nametable_arrangement.into()
-            },
-        );
+        let ppu = Ppu::new(renderer);
 
         Self {
             lower_ram: LowerRam::new(),
@@ -123,7 +116,7 @@ impl<R: Render, D: AudioDriver> Mcu for NesMcu<R, D> {
                 0x4016 => self.controller.write(address, value),
                 _ => self.apu.write(address, value),
             },
-            0x4020..=0xffff => self.cartridge.write(&mut self.ppu, address, value),
+            0x4020..=0xffff => self.cartridge.write(address, value),
         }
     }
 }

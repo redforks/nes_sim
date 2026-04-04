@@ -7,7 +7,7 @@ use crate::render::ImageRender;
 fn test_mcu() -> NesMcu<ImageRender, ()> {
     NesMcu {
         lower_ram: LowerRam::new(),
-        ppu: Ppu::new(ImageRender::default_dimension(), Mirroring::Four),
+        ppu: Ppu::new(ImageRender::default_dimension()),
         controller: Controller::new(),
         cartridge: Cartridge::Test(Box::new(TestCartridge::new())),
         apu: Apu::new(()),

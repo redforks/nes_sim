@@ -1,19 +1,23 @@
 use super::CARTRIDGE_START_ADDR;
+use crate::nes::mapper::Mirroring;
+use crate::nes::mapper::NameTableControl;
 
 pub struct Mapper0 {
     prg_rom: [u8; 0x8000],
     prg_rom_len: usize,
     chr_rom: [u8; 0x2000],
     ram: [u8; 0x4000 - 0x20],
+    name_table: NameTableControl,
 }
 
 impl Mapper0 {
-    pub fn new(prg_rom: &[u8], chr_rom: &[u8]) -> Self {
+    pub fn new(prg_rom: &[u8], chr_rom: &[u8], mirroring: Mirroring) -> Self {
         debug_assert!(prg_rom.len() <= 0x8000);
         debug_assert!(chr_rom.len() <= 0x2000);
 
         let mut r = Self {
             prg_rom_len: prg_rom.len(),
+            name_table: NameTableControl::new(mirroring),
             ..Self::default()
         };
         r.prg_rom[0..prg_rom.len()].copy_from_slice(prg_rom);
@@ -29,6 +33,7 @@ impl Default for Mapper0 {
             prg_rom_len: 0,
             chr_rom: [0; 0x2000],
             ram: [0; 0x4000 - 0x20],
+            name_table: NameTableControl::new(Mirroring::Horizontal),
         }
     }
 }
@@ -64,6 +69,14 @@ impl Mapper0 {
             _ => unreachable!(),
         }
     }
+
+    pub fn write_nametable(&mut self, address: u16, value: u8) {
+        self.name_table.write(address, value);
+    }
+
+    pub fn read_nametable(&self, address: u16) -> u8 {
+        self.name_table.read(address)
+    }
 }
 
 #[cfg(test)]
@@ -91,7 +104,7 @@ mod tests {
 
     #[test]
     fn cartridge() {
-        let mcu = Mapper0::new(&[0; 0], &[1, 2]);
+        let mcu = Mapper0::new(&[0; 0], &[1, 2], Mirroring::Horizontal);
         assert_eq!(1, mcu.pattern_ref()[0]);
         assert_eq!(2, mcu.pattern_ref()[1]);
     }
@@ -102,7 +115,7 @@ mod tests {
         prg[0x3ffc] = 0x00;
         prg[0x3ffd] = 0x80;
 
-        let mut mcu = Mapper0::new(&prg, &[]);
+        let mut mcu = Mapper0::new(&prg, &[], Mirroring::Horizontal);
 
         assert_eq!(mcu.read(0xfffc), 0x00);
         assert_eq!(mcu.read(0xfffd), 0x80);
