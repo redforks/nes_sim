@@ -55,6 +55,7 @@ vbl-nmi-timing:
 passed: unit-test cpu-test instr_misc instr_test-v5 instr_test-v3 nestest instr-timing ppu-vbl-nmi vbl-nmi-timing
     cargo run -p nes_cpu_test --release -- --quiet -f ../nes-test-roms/cpu_interrupts_v2/rom_singles/1-cli_latency.nes
     cargo run -p nes_cpu_test --release -- --quiet -f ../nes-test-roms/cpu_interrupts_v2/rom_singles/2-nmi_and_brk.nes
+    cargo run -p nes_cpu_test --release -- --quiet -f ../nes-test-roms/cpu_interrupts_v2/rom_singles/3-nmi_and_irq.nes
 
 wasm-debug-build:
     cd nes_web && wasm-pack build --release
