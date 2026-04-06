@@ -2,7 +2,7 @@ use ansi_term::Color;
 use is_terminal::IsTerminal;
 use nes_core::mcu::Mcu;
 use nes_core::{Cpu, Plugin};
-use std::io::{self, Write};
+use std::fmt::Write as _;
 use std::sync::LazyLock;
 
 static IS_TERMINAL: LazyLock<bool> = LazyLock::new(|| std::io::stdout().is_terminal());
@@ -10,6 +10,25 @@ static IS_TERMINAL: LazyLock<bool> = LazyLock::new(|| std::io::stdout().is_termi
 #[derive(Default)]
 pub struct Console {
     buf: Vec<u8>,
+    line_buf: String,
+}
+
+impl Console {
+    fn output<S: AsRef<str>>(&mut self, s: S) {
+        if s.as_ref().is_empty() {
+            return;
+        }
+
+        let _ = write!(&mut self.line_buf, "{}", s.as_ref());
+        if self.line_buf.ends_with('\n') {
+            if *IS_TERMINAL {
+                let _ = print!("{}", Color::Green.paint(&self.line_buf));
+            } else {
+                print!("{}", &self.line_buf);
+            }
+            self.line_buf.clear();
+        }
+    }
 }
 
 impl<M: Mcu> Plugin<M> for Console {
@@ -37,26 +56,13 @@ impl<M: Mcu> Plugin<M> for Console {
         // if buf not start with self.buf, print it
         if buf.len() >= self.buf.len() {
             if buf[..self.buf.len()] != self.buf[..] {
-                output(String::from_utf8_lossy(&buf));
+                self.output(String::from_utf8_lossy(&buf));
             } else {
-                output(String::from_utf8_lossy(&buf[self.buf.len()..]));
+                self.output(String::from_utf8_lossy(&buf[self.buf.len()..]));
             }
         } else {
-            output(String::from_utf8_lossy(&buf));
+            self.output(String::from_utf8_lossy(&buf));
         }
         self.buf = buf;
-    }
-}
-
-fn output<S: AsRef<str>>(s: S) {
-    if s.as_ref().is_empty() {
-        return;
-    }
-
-    if *IS_TERMINAL {
-        print!("{}", Color::Green.paint(s.as_ref()));
-    } else {
-        print!("{}", s.as_ref());
-        let _ = io::stdout().flush();
     }
 }
