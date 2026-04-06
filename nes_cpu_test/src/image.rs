@@ -71,7 +71,6 @@ impl Image {
     ) -> MachineWrapper {
         // Build the composite plugin step by step to handle type coercion
         let mut plugins: Vec<Box<dyn Plugin<nes_core::nes::NesMcu<(), ()>>>> = vec![
-            Box::<NametableConsole>::default(),
             Box::new(NesReportPlugin::create(quiet)),
             Box::new(DetectDeadLoop::<1>::new()),
             Box::new(DetectDeadLoop::<2>::new()),
