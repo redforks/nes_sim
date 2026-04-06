@@ -745,6 +745,8 @@ impl<D: AudioDriver> Apu<D> {
                 self.clock_quarter_frame();
                 self.clock_half_frame();
             }
+            // On real hardware, the frame IRQ flag is set on cycles 29828-29830.
+            // Using 29829 which matches the primary assertion point.
             29_829 => {
                 self.clock_quarter_frame();
                 self.clock_half_frame();
