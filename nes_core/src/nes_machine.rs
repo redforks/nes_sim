@@ -19,6 +19,7 @@ const MAX_TICKS_PER_FRAME: u32 = 90000;
 pub struct NesMachine<P, R: Render, D: crate::nes::apu::AudioDriver> {
     machine: Machine<P, NesMcu<R, D>>,
     cycles: usize,
+    delayed_irq_pending: bool,
 }
 
 impl<P, R, D> NesMachine<P, R, D>
@@ -32,6 +33,7 @@ where
         Self {
             machine: Machine::with_plugin(plugin, mcu),
             cycles: 0,
+            delayed_irq_pending: false,
         }
     }
 
@@ -71,17 +73,20 @@ where
         let timing = self.mcu().ppu().timing();
         self.machine.cpu_mut().update_nmi_line(nmi_line, timing);
 
+        if self.cycles.is_multiple_of(3) {
+            self.machine.mcu_mut().tick_apu();
+        }
+        let irq_pending = self.machine.mcu().irq_pending();
+        self.machine.cpu_mut().set_irq(self.delayed_irq_pending);
+        if self.cycles.is_multiple_of(3) {
+            self.delayed_irq_pending = irq_pending;
+        }
+
         let result = self.machine.tick();
 
         if self.machine.mcu_mut().take_oam_dma_pending() {
             self.machine.cpu_mut().request_oam_dma();
         }
-
-        if self.cycles.is_multiple_of(3) {
-            self.machine.mcu_mut().tick_apu();
-        }
-        let irq_pending = self.machine.mcu().irq_pending();
-        self.machine.cpu_mut().set_irq(irq_pending);
 
         result
     }
@@ -93,6 +98,7 @@ where
     pub fn reset(&mut self) {
         self.machine.mcu_mut().reset();
         self.machine.reset();
+        self.delayed_irq_pending = false;
     }
 
     pub fn flush_audio(&mut self) {

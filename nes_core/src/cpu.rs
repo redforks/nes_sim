@@ -24,7 +24,8 @@ enum CpuMode {
 struct OamDmaState {
     startup_cycles: usize,
     remaining_cpu_cycles: usize,
-    defer_poll_once: bool,
+    irq_was_pending: bool,
+    dma_started_at: usize,
 }
 
 pub struct Cpu<M: Mcu> {
@@ -165,17 +166,25 @@ impl<M: Mcu> Cpu<M> {
     pub fn tick<P: Plugin<M>>(&mut self, plugin: &mut P) -> (ExecuteResult, bool) {
         self.cycles = self.cycles.wrapping_add(1);
 
+        if !self.cycles.is_multiple_of(3) {
+            return (ExecuteResult::Continue, false);
+        }
+
         if let Some(mut dma) = self.oam_dma {
             if dma.startup_cycles > 0 {
                 dma.startup_cycles -= 1;
-            } else if self.cycles.is_multiple_of(3) {
-                if dma.defer_poll_once {
-                    dma.defer_poll_once = false;
-                }
+            } else {
                 dma.remaining_cpu_cycles -= 1;
             }
 
             if dma.startup_cycles == 0 && dma.remaining_cpu_cycles == 0 {
+                if !dma.irq_was_pending
+                    && self
+                        .irq_requested_at
+                        .is_some_and(|irq_at| irq_at + 3 <= self.cycles)
+                {
+                    self.defer_nmi_poll = true;
+                }
                 self.oam_dma = None;
             } else {
                 self.oam_dma = Some(dma);
@@ -183,24 +192,16 @@ impl<M: Mcu> Cpu<M> {
             return (ExecuteResult::Continue, false);
         }
 
-        if !self.cycles.is_multiple_of(3) {
-            return (ExecuteResult::Continue, false);
-        }
-
         if self.oam_dma_pending {
             self.oam_dma_pending = false;
             let cpu_cycle = self.cycles / 3;
-            let startup_cycles = if cpu_cycle.is_multiple_of(2) { 2 } else { 1 };
+            let startup_cycles = if cpu_cycle.is_multiple_of(2) { 1 } else { 2 };
             self.oam_dma = Some(OamDmaState {
                 startup_cycles,
                 remaining_cpu_cycles: 512,
-                defer_poll_once: true,
+                irq_was_pending: self.irq_line,
+                dma_started_at: self.cycles,
             });
-            return (ExecuteResult::Continue, false);
-        }
-
-        if self.oam_dma.is_none() && self.defer_nmi_poll {
-            self.defer_nmi_poll = false;
             return (ExecuteResult::Continue, false);
         }
 
@@ -218,10 +219,7 @@ impl<M: Mcu> Cpu<M> {
                     Microcode::FetchAndDecode
                 } else if self.nmi_ready() && self.mode == CpuMode::Normal {
                     self.nmi_requested_at = None;
-                    // handle nmi
-                    // reset nmi_requested, because nmi signal is edge detected, ignored if cpu is already in nmi mode
                     self.mode = CpuMode::Nmi;
-                    // need extra two cycles for cpu to start nmi process
                     self.push_microcodes(&[
                         Microcode::Nop,
                         Microcode::Nop,
@@ -237,7 +235,6 @@ impl<M: Mcu> Cpu<M> {
                 } else if self.irq_line
                     && !irq_inhibit.unwrap_or_else(|| self.flag(Flag::InterruptDisabled))
                 {
-                    // handle irq
                     self.push_microcodes(&[
                         Microcode::Nop,
                         Microcode::Nop,

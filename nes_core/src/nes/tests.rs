@@ -11,6 +11,7 @@ fn test_mcu() -> NesMcu<ImageRender, ()> {
         controller: Controller::new(),
         cartridge: Cartridge::Test(Box::new(TestCartridge::new())),
         apu: Apu::new(()),
+        oam_dma_pending: false,
     }
 }
 
