@@ -214,7 +214,7 @@ struct PaletteRam {
 }
 
 impl PaletteRam {
-    fn read(&mut self, address: u16) -> u8 {
+    fn read(&self, address: u16) -> u8 {
         self.data[Self::index(address)]
     }
 
@@ -556,6 +556,16 @@ impl<R: Render> Ppu<R> {
         }
     }
 
+    pub fn peek(&self, address: u16, cartridge: &Cartridge) -> u8 {
+        let reg = normalize_ppu_addr(address);
+        match reg {
+            0x2002 => self.status.into_bits(),
+            0x2004 => self.read_oam_data(),
+            0x2007 => self.read_vram(self.vram_addr, cartridge),
+            _ => 0,
+        }
+    }
+
     /// Write by cpu memory bus. Uses Cartridge for CHR/name-table writes.
     pub fn write(&mut self, address: u16, value: u8, cartridge: &mut Cartridge) {
         let reg = normalize_ppu_addr(address);
@@ -605,7 +615,7 @@ impl<R: Render> Ppu<R> {
         }
     }
 
-    fn read_vram(&mut self, address: u16, cartridge: &mut Cartridge) -> u8 {
+    fn read_vram(&self, address: u16, cartridge: &Cartridge) -> u8 {
         let mut addr = address % 0x4000;
         if (0x3000..0x3f00).contains(&addr) {
             addr -= 0x1000;
@@ -670,7 +680,7 @@ impl<R: Render> Ppu<R> {
         }
     }
 
-    fn read_name_table_byte(&mut self, address: u16, cartridge: &Cartridge) -> u8 {
+    fn read_name_table_byte(&self, address: u16, cartridge: &Cartridge) -> u8 {
         cartridge.read_nametable(address)
     }
 

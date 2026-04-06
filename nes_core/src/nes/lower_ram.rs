@@ -16,6 +16,10 @@ impl Mcu for LowerRam {
         self.ram[address as usize & 0x7ff]
     }
 
+    fn peek(&self, address: u16) -> u8 {
+        self.ram[address as usize & 0x7ff]
+    }
+
     fn write(&mut self, address: u16, value: u8) {
         self.ram[address as usize & 0x7ff] = value;
     }

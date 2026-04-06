@@ -179,6 +179,17 @@ fn test_read_status_clears_vblank() {
     assert!(!ppu.status.v_blank());
 }
 
+#[test]
+fn test_peek_status_does_not_clear_vblank() {
+    let (mut ppu, _pattern) = new_test_ppu_and_pattern();
+    let cartridge = Cartridge::Test(Box::new(TestCartridge::new()));
+    ppu.status.set_v_blank(true);
+
+    let status = ppu.peek(0x2002, &cartridge);
+    assert_eq!(status & 0x80, 0x80);
+    assert!(ppu.status.v_blank());
+}
+
 // ============================================================================
 // render_pixel() Tests
 // ============================================================================

@@ -9,6 +9,7 @@ pub use ram::RamMcu;
 pub trait Mcu {
     // Changed to &mut self to allow implementations to mutate state during reads
     fn read(&mut self, address: u16) -> u8;
+    fn peek(&self, address: u16) -> u8;
     fn write(&mut self, address: u16, value: u8);
 }
 
@@ -31,6 +32,10 @@ mod tests {
 
     impl Mcu for MockMcu {
         fn read(&mut self, _address: u16) -> u8 {
+            *self.data.borrow()
+        }
+
+        fn peek(&self, _address: u16) -> u8 {
             *self.data.borrow()
         }
 

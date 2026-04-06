@@ -316,7 +316,7 @@ impl<M: Mcu> Cpu<M> {
     }
 
     pub fn peek_byte(&mut self, addr: u16) -> u8 {
-        self.mcu.read(addr)
+        self.mcu.peek(addr)
     }
 
     fn inc_read_byte(&mut self) -> u8 {
@@ -357,7 +357,7 @@ impl<M: Mcu> Cpu<M> {
 
     pub fn peek_stack(&mut self) -> u8 {
         let addr = 0x100 + self.sp.wrapping_add(1) as u16;
-        self.mcu.read(addr)
+        self.mcu.peek(addr)
     }
 
     fn halt(&mut self) {

@@ -86,6 +86,11 @@ impl Mcu for MockMcu {
     fn read(&mut self, addr: u16) -> u8 {
         self.memory.borrow()[addr as usize]
     }
+
+    fn peek(&self, addr: u16) -> u8 {
+        self.memory.borrow()[addr as usize]
+    }
+
     fn write(&mut self, addr: u16, value: u8) {
         self.memory.borrow_mut()[addr as usize] = value;
     }

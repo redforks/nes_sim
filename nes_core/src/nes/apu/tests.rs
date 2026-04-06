@@ -299,6 +299,16 @@ fn test_apu_controller_read_status() {
 }
 
 #[test]
+fn test_apu_controller_peek_status_does_not_clear_interrupt() {
+    let mut channel = Apu::new(());
+    channel.frame_interrupt = true;
+
+    let val = channel.peek(0x4015);
+    assert_eq!(val & 0x40, 0x40);
+    assert!(channel.frame_interrupt);
+}
+
+#[test]
 fn test_apu_controller_write_control_flags() {
     let mut channel = Apu::new(());
     channel.write(0x4015, 0x1F); // Should call set_control_flags

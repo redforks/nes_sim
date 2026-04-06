@@ -168,6 +168,14 @@ impl TestCartridge {
         }
     }
 
+    pub fn peek(&self, address: u16) -> u8 {
+        if address >= 0x8000 {
+            self.prg_rom[(address - 0x8000) as usize]
+        } else {
+            0
+        }
+    }
+
     pub fn read_chr(&self, address: u16) -> u8 {
         self.chr_rom[address as usize % self.chr_rom.len()]
     }
@@ -222,6 +230,19 @@ impl Cartridge {
             Cartridge::MMC5(cartridge) => cartridge.read(address),
             #[cfg(test)]
             Cartridge::Test(cartridge) => cartridge.read(address),
+        }
+    }
+
+    pub fn peek(&self, address: u16) -> u8 {
+        match self {
+            Cartridge::Mapper0(cartridge) => cartridge.peek(address),
+            Cartridge::Mapper2(cartridge) => cartridge.peek(address),
+            Cartridge::Mapper3(cartridge) => cartridge.peek(address),
+            Cartridge::MMC1(cartridge) => cartridge.peek(address),
+            Cartridge::MMC3(cartridge) => cartridge.peek(address),
+            Cartridge::MMC5(cartridge) => cartridge.peek(address),
+            #[cfg(test)]
+            Cartridge::Test(cartridge) => cartridge.peek(address),
         }
     }
 

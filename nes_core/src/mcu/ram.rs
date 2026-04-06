@@ -26,6 +26,10 @@ impl<const SIZE: usize> Mcu for RamMcu<SIZE> {
         self.ram[self.to_index(address)]
     }
 
+    fn peek(&self, address: u16) -> u8 {
+        self.ram[self.to_index(address)]
+    }
+
     fn write(&mut self, address: u16, value: u8) {
         self.ram[self.to_index(address)] = value;
     }

@@ -122,6 +122,21 @@ impl<R: Render, D: AudioDriver> Mcu for NesMcu<R, D> {
         }
     }
 
+    fn peek(&self, address: u16) -> u8 {
+        match address {
+            0x0000..=0x1fff => self.lower_ram.peek(address),
+            0x2000..=0x3fff => self.ppu.peek(address, &self.cartridge),
+            0x4000..=0x401f => {
+                if address == 0x4016 || address == 0x4017 {
+                    self.controller.peek(address)
+                } else {
+                    self.apu.peek(address)
+                }
+            }
+            0x4020..=0xffff => self.cartridge.peek(address),
+        }
+    }
+
     fn write(&mut self, address: u16, value: u8) {
         match address {
             0x0000..=0x1fff => self.lower_ram.write(address, value),

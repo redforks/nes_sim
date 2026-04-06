@@ -27,6 +27,22 @@ impl AController {
         self.locked_bits = self.bits;
     }
 
+    fn peek(&self) -> u8 {
+        let pressed = if self.stroke {
+            self.bits & Button::A as u8 != 0
+        } else if self.bit_position < 8 {
+            (self.locked_bits >> self.bit_position) & 1 != 0
+        } else {
+            false
+        };
+
+        if pressed {
+            0x41
+        } else {
+            0x40
+        }
+    }
+
     fn read(&mut self) -> u8 {
         let pressed = if self.stroke {
             self.bits & Button::A as u8 != 0
@@ -38,7 +54,11 @@ impl AController {
             false
         };
 
-        if pressed { 0x41 } else { 0x40 }
+        if pressed {
+            0x41
+        } else {
+            0x40
+        }
     }
 
     pub fn press(&mut self, btn: Button) {
@@ -84,6 +104,14 @@ impl Mcu for Controller {
         match address {
             0x4016 => self.a.read(),
             0x4017 => self.b.read(),
+            _ => 0,
+        }
+    }
+
+    fn peek(&self, address: u16) -> u8 {
+        match address {
+            0x4016 => self.a.peek(),
+            0x4017 => self.b.peek(),
             _ => 0,
         }
     }

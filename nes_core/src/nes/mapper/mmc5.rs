@@ -120,6 +120,14 @@ impl MMC5 {
     }
 
     pub fn read(&mut self, address: u16) -> u8 {
+        let value = self.peek(address);
+        if address == 0x5204 {
+            self.irq_pending = false;
+        }
+        value
+    }
+
+    pub fn peek(&self, address: u16) -> u8 {
         match address {
             CARTRIDGE_START_ADDR..=0x4fff => 0,
             0x5000..=0x5015 => 0,
@@ -140,11 +148,7 @@ impl MMC5 {
             0x5120..=0x5127 => self.sprite_chr_regs[(address - 0x5120) as usize],
             0x5128..=0x512b => self.bg_chr_regs[(address - 0x5128) as usize],
             0x5130 => self.upper_chr_bits,
-            0x5204 => {
-                let status = (u8::from(self.irq_pending) << 7) | (u8::from(self.in_frame) << 6);
-                self.irq_pending = false;
-                status
-            }
+            0x5204 => (u8::from(self.irq_pending) << 7) | (u8::from(self.in_frame) << 6),
             0x5205 => self.product() as u8,
             0x5206 => (self.product() >> 8) as u8,
             0x5c00..=0x5fff => self.read_exram_cpu(address),

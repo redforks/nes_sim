@@ -620,17 +620,17 @@ impl<D: AudioDriver> Apu<D> {
     pub fn read(&mut self, address: u16) -> u8 {
         match address {
             0x4015 => {
-                let mut status = APUStatus::new();
-                status.set_pulse1_enabled(self.pulse1.status_enabled());
-                status.set_pulse2_enabled(self.pulse2.status_enabled());
-                status.set_triangle_enabled(self.triangle.status_enabled());
-                status.set_noise_enabled(self.noise.status_enabled());
-                status.set_dmc_enabled(self.dmc.status_enabled());
-                status.set_frame_interrupt(self.frame_interrupt);
-                status.set_dmc_interrupt(self.dmc_interrupt);
+                let status = self.status_byte();
                 self.frame_interrupt = false;
-                status.into_bits()
+                status
             }
+            _ => 0,
+        }
+    }
+
+    pub fn peek(&self, address: u16) -> u8 {
+        match address {
+            0x4015 => self.status_byte(),
             _ => 0,
         }
     }
@@ -676,6 +676,18 @@ impl<D: AudioDriver> Apu<D> {
             0x4017 => self.set_frame_counter(FrameCounter::from_bits(value)),
             _ => {}
         }
+    }
+
+    fn status_byte(&self) -> u8 {
+        let mut status = APUStatus::new();
+        status.set_pulse1_enabled(self.pulse1.status_enabled());
+        status.set_pulse2_enabled(self.pulse2.status_enabled());
+        status.set_triangle_enabled(self.triangle.status_enabled());
+        status.set_noise_enabled(self.noise.status_enabled());
+        status.set_dmc_enabled(self.dmc.status_enabled());
+        status.set_frame_interrupt(self.frame_interrupt);
+        status.set_dmc_interrupt(self.dmc_interrupt);
+        status.into_bits()
     }
 
     fn set_control_flags(&mut self, flags: ControlFlags) {

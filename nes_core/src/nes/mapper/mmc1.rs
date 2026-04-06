@@ -70,6 +70,10 @@ impl MMC1 {
     }
 
     pub fn read(&mut self, address: u16) -> u8 {
+        self.peek(address)
+    }
+
+    pub fn peek(&self, address: u16) -> u8 {
         match address {
             0x8000..=0xbfff => self.prg_rom[address as usize - 0x8000 + self.prg_rom_bank1_start],
             0xc000..=0xffff => self.prg_rom[address as usize - 0xc000 + self.prg_rom_bank2_start],

@@ -3813,6 +3813,7 @@ fn test_compare_clears_zero_flag() {
 struct TestMcu {
     mem: [u8; 0x10000],
     writes: Vec<(u16, u8)>,
+    reads: Vec<u16>,
 }
 
 impl Default for TestMcu {
@@ -3820,12 +3821,18 @@ impl Default for TestMcu {
         Self {
             mem: [0; 0x10000],
             writes: Vec::new(),
+            reads: Vec::new(),
         }
     }
 }
 
 impl Mcu for TestMcu {
     fn read(&mut self, address: u16) -> u8 {
+        self.reads.push(address);
+        self.mem[address as usize]
+    }
+
+    fn peek(&self, address: u16) -> u8 {
         self.mem[address as usize]
     }
 
@@ -3845,6 +3852,18 @@ fn inc_read_byte_advances_pc_and_ticks() {
 
     assert_eq!(cpu.inc_read_byte(), 0xAB);
     assert_eq!(cpu.pc, 0x0201);
+}
+
+#[test]
+fn peek_byte_uses_non_mutating_mcu_path() {
+    let mut mcu = TestMcu::default();
+    mcu.mem[0x2002] = 0x80;
+
+    let mut cpu = Cpu::new(mcu);
+    let reads_before = cpu.mcu().reads.len();
+
+    assert_eq!(cpu.peek_byte(0x2002), 0x80);
+    assert_eq!(cpu.mcu().reads.len(), reads_before);
 }
 
 fn cpu_with_memory(program_start: u16, bytes: &[(u16, u8)]) -> Cpu<TestMcu> {

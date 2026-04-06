@@ -62,6 +62,10 @@ impl Mapper2 {
     }
 
     pub fn read(&mut self, address: u16) -> u8 {
+        self.peek(address)
+    }
+
+    pub fn peek(&self, address: u16) -> u8 {
         match address {
             CARTRIDGE_START_ADDR..=0x7fff => self.ram[(address - CARTRIDGE_START_ADDR) as usize],
             0x8000..=0xbfff => self.read_prg_bank(self.selected_prg_bank(), address - 0x8000),
