@@ -85,7 +85,6 @@ impl Image {
         } else {
             plugins.push(Box::<Console>::default());
             plugins.push(Box::<MonitorTestStatus>::default());
-            plugins.push(Box::new(ExitTestPlugin::new()));
         }
         if max_instructions > 0 {
             // MaxInstructions is generic over Mcu; need to coerce type. MaxInstructions doesn't use Mcu methods so this is fine.

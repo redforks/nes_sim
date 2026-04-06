@@ -101,10 +101,6 @@ impl<M: Mcu> Plugin<M> for ReportPlugin {
     fn end(&mut self, cpu: &mut Cpu<M>) {
         self.output(cpu, "")
     }
-
-    fn should_stop(&self) -> ExecuteResult {
-        ExecuteResult::Continue
-    }
 }
 
 /// Check nestest.nes test result,
@@ -129,7 +125,7 @@ impl<M: Mcu> Plugin<M> for ReportNesTestResult {
     fn end(&mut self, cpu: &mut Cpu<M>) {
         self.instruction_executed += 1;
         if cpu.total_cycles() >= 26560 {
-            // 26560 is the cycle count after the last instrction executed, 26554 is the cycle count before the last instruction
+            // 26560 is the cycle count after the last instruction executed, 26554 is the cycle count before the last instruction
             let low = cpu.peek_byte(0x0002) as u16;
             let high = cpu.peek_byte(0x0003) as u16;
             self.result = Some((high << 8) | low);

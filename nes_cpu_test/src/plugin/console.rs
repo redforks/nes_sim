@@ -2,6 +2,7 @@ use ansi_term::Color;
 use is_terminal::IsTerminal;
 use nes_core::mcu::Mcu;
 use nes_core::{Cpu, Plugin};
+use std::io::{self, Write};
 use std::sync::LazyLock;
 
 static IS_TERMINAL: LazyLock<bool> = LazyLock::new(|| std::io::stdout().is_terminal());
@@ -56,5 +57,6 @@ fn output<S: AsRef<str>>(s: S) {
         print!("{}", Color::Green.paint(s.as_ref()));
     } else {
         print!("{}", s.as_ref());
+        let _ = io::stdout().flush();
     }
 }
