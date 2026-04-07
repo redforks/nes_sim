@@ -371,12 +371,12 @@ const fn build_opcode_table() -> [ArrayVec<[Microcode; 7]>; 256] {
         Adc
     );
     r[ASL_ACCUMULATOR as usize] = microcode_arr!(AslAccumulator);
-    r[ASL_ZERO_PAGE as usize] = microcode_arr!(zero_page_load_alu(), StoreAlu, Asl, StoreAlu);
+    r[ASL_ZERO_PAGE as usize] = microcode_arr!(zero_page_load_alu(), Nop, DummyWriteAsl, StoreAlu);
     r[ASL_ZERO_PAGE_X as usize] = microcode_arr!(
         zero_page_addr(),
         zero_page_x_load_alu(),
-        StoreAlu,
-        Asl,
+        Nop,
+        DummyWriteAsl,
         StoreAlu
     );
     r[ASL_ABSOLUTE as usize] = microcode_arr!(
@@ -384,8 +384,8 @@ const fn build_opcode_table() -> [ArrayVec<[Microcode; 7]>; 256] {
         AbsoluteH {
             load_into_alu: true
         },
-        StoreAlu,
-        Asl,
+        Nop,
+        DummyWriteAsl,
         StoreAlu
     );
     r[ASL_ABSOLUTE_INDEXED_X as usize] = microcode_arr!(
@@ -395,17 +395,17 @@ const fn build_opcode_table() -> [ArrayVec<[Microcode; 7]>; 256] {
             oops: false,
             load_into_alu: true
         },
-        StoreAlu,
-        Asl,
+        Nop,
+        DummyWriteAsl,
         StoreAlu
     );
     r[LSR_ACCUMULATOR as usize] = microcode_arr!(LsrAccumulator);
-    r[LSR_ZERO_PAGE as usize] = microcode_arr!(zero_page_load_alu(), StoreAlu, Lsr, StoreAlu);
+    r[LSR_ZERO_PAGE as usize] = microcode_arr!(zero_page_load_alu(), Nop, DummyWriteLsr, StoreAlu);
     r[LSR_ZERO_PAGE_X as usize] = microcode_arr!(
         zero_page_addr(),
         zero_page_x_load_alu(),
-        StoreAlu,
-        Lsr,
+        Nop,
+        DummyWriteLsr,
         StoreAlu
     );
     r[LSR_ABSOLUTE as usize] = microcode_arr!(
@@ -413,8 +413,8 @@ const fn build_opcode_table() -> [ArrayVec<[Microcode; 7]>; 256] {
         AbsoluteH {
             load_into_alu: true
         },
-        StoreAlu,
-        Lsr,
+        Nop,
+        DummyWriteLsr,
         StoreAlu
     );
     r[LSR_ABSOLUTE_INDEXED_X as usize] = microcode_arr!(
@@ -424,17 +424,17 @@ const fn build_opcode_table() -> [ArrayVec<[Microcode; 7]>; 256] {
             oops: false,
             load_into_alu: true
         },
-        StoreAlu,
-        Lsr,
+        Nop,
+        DummyWriteLsr,
         StoreAlu
     );
     r[ROL_ACCUMULATOR as usize] = microcode_arr!(RolAccumulator);
-    r[ROL_ZERO_PAGE as usize] = microcode_arr!(zero_page_load_alu(), StoreAlu, Rol, StoreAlu);
+    r[ROL_ZERO_PAGE as usize] = microcode_arr!(zero_page_load_alu(), Nop, DummyWriteRol, StoreAlu);
     r[ROL_ZERO_PAGE_X as usize] = microcode_arr!(
         zero_page_addr(),
         zero_page_x_load_alu(),
-        StoreAlu,
-        Rol,
+        Nop,
+        DummyWriteRol,
         StoreAlu
     );
     r[ROL_ABSOLUTE as usize] = microcode_arr!(
@@ -442,8 +442,8 @@ const fn build_opcode_table() -> [ArrayVec<[Microcode; 7]>; 256] {
         AbsoluteH {
             load_into_alu: true
         },
-        StoreAlu,
-        Rol,
+        Nop,
+        DummyWriteRol,
         StoreAlu
     );
     r[ROL_ABSOLUTE_INDEXED_X as usize] = microcode_arr!(
@@ -453,17 +453,17 @@ const fn build_opcode_table() -> [ArrayVec<[Microcode; 7]>; 256] {
             oops: false,
             load_into_alu: true
         },
-        StoreAlu,
-        Rol,
+        Nop,
+        DummyWriteRol,
         StoreAlu
     );
     r[ROR_ACCUMULATOR as usize] = microcode_arr!(RorAccumulator);
-    r[ROR_ZERO_PAGE as usize] = microcode_arr!(zero_page_load_alu(), StoreAlu, Ror, StoreAlu);
+    r[ROR_ZERO_PAGE as usize] = microcode_arr!(zero_page_load_alu(), Nop, DummyWriteRor, StoreAlu);
     r[ROR_ZERO_PAGE_X as usize] = microcode_arr!(
         zero_page_addr(),
         zero_page_x_load_alu(),
-        StoreAlu,
-        Ror,
+        Nop,
+        DummyWriteRor,
         StoreAlu
     );
     r[ROR_ABSOLUTE as usize] = microcode_arr!(
@@ -471,8 +471,8 @@ const fn build_opcode_table() -> [ArrayVec<[Microcode; 7]>; 256] {
         AbsoluteH {
             load_into_alu: true
         },
-        StoreAlu,
-        Ror,
+        Nop,
+        DummyWriteRor,
         StoreAlu
     );
     r[ROR_ABSOLUTE_INDEXED_X as usize] = microcode_arr!(
@@ -482,8 +482,8 @@ const fn build_opcode_table() -> [ArrayVec<[Microcode; 7]>; 256] {
             oops: false,
             load_into_alu: true
         },
-        StoreAlu,
-        Ror,
+        Nop,
+        DummyWriteRor,
         StoreAlu
     );
     r[BCC as usize] = microcode_arr!(BranchRelative(BranchTest::IfCarryClear));
@@ -916,16 +916,16 @@ const fn build_opcode_table() -> [ArrayVec<[Microcode; 7]>; 256] {
         Nop,
         Sax
     );
-    r[DCP_ZERO_PAGE as usize] = microcode_arr!(zero_page_load_alu(), Nop, Nop, Dcp);
+    r[DCP_ZERO_PAGE as usize] = microcode_arr!(zero_page_load_alu(), Nop, StoreAlu, Dcp);
     r[DCP_ZERO_PAGE_X as usize] =
-        microcode_arr!(zero_page_addr(), zero_page_x_load_alu(), Nop, Nop, Dcp);
+        microcode_arr!(zero_page_addr(), zero_page_x_load_alu(), Nop, StoreAlu, Dcp);
     r[DCP_ABSOLUTE as usize] = microcode_arr!(
         AbsoluteL,
         AbsoluteH {
             load_into_alu: true
         },
         Nop,
-        Nop,
+        StoreAlu,
         Dcp
     );
     r[DCP_ABSOLUTE_INDEXED_X as usize] = microcode_arr!(
@@ -936,7 +936,7 @@ const fn build_opcode_table() -> [ArrayVec<[Microcode; 7]>; 256] {
         },
         Nop,
         Nop,
-        Nop,
+        StoreAlu,
         Dcp
     );
     r[DCP_ABSOLUTE_INDEXED_Y as usize] = microcode_arr!(
@@ -947,7 +947,7 @@ const fn build_opcode_table() -> [ArrayVec<[Microcode; 7]>; 256] {
         },
         Nop,
         Nop,
-        Nop,
+        StoreAlu,
         Dcp
     );
     r[DCP_INDEXED_INDIRECT as usize] = microcode_arr!(
@@ -958,7 +958,7 @@ const fn build_opcode_table() -> [ArrayVec<[Microcode; 7]>; 256] {
         },
         Nop,
         Nop,
-        Nop,
+        StoreAlu,
         Dcp
     );
     r[DCP_INDIRECT_INDEXED as usize] = microcode_arr!(
@@ -972,65 +972,65 @@ const fn build_opcode_table() -> [ArrayVec<[Microcode; 7]>; 256] {
         },
         Nop,
         Nop,
-        Nop,
+        StoreAlu,
         Dcp
     );
-    r[DEC_ZERO_PAGE as usize] = microcode_arr!(Nop, Nop, zero_page_load_alu(), Dec);
+    r[DEC_ZERO_PAGE as usize] = microcode_arr!(zero_page_load_alu(), Nop, StoreAlu, Dec);
     r[DEC_ZERO_PAGE_X as usize] =
-        microcode_arr!(Nop, Nop, zero_page_addr(), zero_page_x_load_alu(), Dec);
+        microcode_arr!(zero_page_addr(), zero_page_x_load_alu(), Nop, StoreAlu, Dec);
     r[DEC_ABSOLUTE as usize] = microcode_arr!(
-        Nop,
-        Nop,
         AbsoluteL,
         AbsoluteH {
             load_into_alu: true
         },
+        Nop,
+        StoreAlu,
         Dec
     );
     r[DEC_ABSOLUTE_INDEXED_X as usize] = microcode_arr!(
         Nop,
-        Nop,
-        Nop,
         AbsoluteL,
         AbsoluteIndexedX {
             oops: false,
             load_into_alu: true
         },
+        Nop,
+        StoreAlu,
         Dec
     );
-    r[INC_ZERO_PAGE as usize] = microcode_arr!(Nop, Nop, zero_page_load_alu(), Inc);
+    r[INC_ZERO_PAGE as usize] = microcode_arr!(zero_page_load_alu(), Nop, StoreAlu, Inc);
     r[INC_ZERO_PAGE_X as usize] =
-        microcode_arr!(Nop, Nop, zero_page_addr(), zero_page_x_load_alu(), Inc);
+        microcode_arr!(zero_page_addr(), zero_page_x_load_alu(), Nop, StoreAlu, Inc);
     r[INC_ABSOLUTE as usize] = microcode_arr!(
-        Nop,
-        Nop,
         AbsoluteL,
         AbsoluteH {
             load_into_alu: true
         },
+        Nop,
+        StoreAlu,
         Inc
     );
     r[INC_ABSOLUTE_INDEXED_X as usize] = microcode_arr!(
-        Nop,
-        Nop,
         Nop,
         AbsoluteL,
         AbsoluteIndexedX {
             oops: false,
             load_into_alu: true
         },
+        Nop,
+        StoreAlu,
         Inc
     );
-    r[ISC_ZERO_PAGE as usize] = microcode_arr!(zero_page_load_alu(), Nop, Nop, Isc);
+    r[ISC_ZERO_PAGE as usize] = microcode_arr!(zero_page_load_alu(), Nop, StoreAlu, Isc);
     r[ISC_ZERO_PAGE_X as usize] =
-        microcode_arr!(zero_page_addr(), zero_page_x_load_alu(), Nop, Nop, Isc);
+        microcode_arr!(zero_page_addr(), zero_page_x_load_alu(), Nop, StoreAlu, Isc);
     r[ISC_ABSOLUTE as usize] = microcode_arr!(
         AbsoluteL,
         AbsoluteH {
             load_into_alu: true
         },
         Nop,
-        Nop,
+        StoreAlu,
         Isc
     );
     r[ISC_ABSOLUTE_INDEXED_X as usize] = microcode_arr!(
@@ -1041,7 +1041,7 @@ const fn build_opcode_table() -> [ArrayVec<[Microcode; 7]>; 256] {
         },
         Nop,
         Nop,
-        Nop,
+        StoreAlu,
         Isc
     );
     r[ISC_ABSOLUTE_INDEXED_Y as usize] = microcode_arr!(
@@ -1052,7 +1052,7 @@ const fn build_opcode_table() -> [ArrayVec<[Microcode; 7]>; 256] {
         },
         Nop,
         Nop,
-        Nop,
+        StoreAlu,
         Isc
     );
     r[ISC_INDEXED_INDIRECT as usize] = microcode_arr!(
@@ -1063,7 +1063,7 @@ const fn build_opcode_table() -> [ArrayVec<[Microcode; 7]>; 256] {
         },
         Nop,
         Nop,
-        Nop,
+        StoreAlu,
         Isc
     );
     r[ISC_INDIRECT_INDEXED as usize] = microcode_arr!(
@@ -1077,19 +1077,19 @@ const fn build_opcode_table() -> [ArrayVec<[Microcode; 7]>; 256] {
         },
         Nop,
         Nop,
-        Nop,
+        StoreAlu,
         Isc
     );
-    r[RRA_ZERO_PAGE as usize] = microcode_arr!(zero_page_load_alu(), StoreAlu, Nop, Rra);
+    r[RRA_ZERO_PAGE as usize] = microcode_arr!(zero_page_load_alu(), Nop, StoreAlu, Rra);
     r[RRA_ZERO_PAGE_X as usize] =
-        microcode_arr!(zero_page_addr(), zero_page_x_load_alu(), StoreAlu, Nop, Rra);
+        microcode_arr!(zero_page_addr(), zero_page_x_load_alu(), Nop, StoreAlu, Rra);
     r[RRA_ABSOLUTE as usize] = microcode_arr!(
         AbsoluteL,
         AbsoluteH {
             load_into_alu: true
         },
-        StoreAlu,
         Nop,
+        StoreAlu,
         Rra
     );
     r[RRA_ABSOLUTE_INDEXED_X as usize] = microcode_arr!(
@@ -1098,9 +1098,9 @@ const fn build_opcode_table() -> [ArrayVec<[Microcode; 7]>; 256] {
             oops: false,
             load_into_alu: true
         },
+        Nop,
+        Nop,
         StoreAlu,
-        Nop,
-        Nop,
         Rra
     );
     r[RRA_ABSOLUTE_INDEXED_Y as usize] = microcode_arr!(
@@ -1109,9 +1109,9 @@ const fn build_opcode_table() -> [ArrayVec<[Microcode; 7]>; 256] {
             oops: false,
             load_into_alu: true
         },
+        Nop,
+        Nop,
         StoreAlu,
-        Nop,
-        Nop,
         Rra
     );
     r[RRA_INDEXED_INDIRECT as usize] = microcode_arr!(
@@ -1120,9 +1120,9 @@ const fn build_opcode_table() -> [ArrayVec<[Microcode; 7]>; 256] {
         Indexed {
             load_into_alu: true
         },
+        Nop,
+        Nop,
         StoreAlu,
-        Nop,
-        Nop,
         Rra
     );
     r[RRA_INDIRECT_INDEXED as usize] = microcode_arr!(
@@ -1134,21 +1134,21 @@ const fn build_opcode_table() -> [ArrayVec<[Microcode; 7]>; 256] {
             oops: false,
             load_into_alu: true
         },
-        StoreAlu,
-        Rra,
         Nop,
-        StoreAlu
+        Nop,
+        StoreAlu,
+        Rra
     );
-    r[RLA_ZERO_PAGE as usize] = microcode_arr!(zero_page_load_alu(), Nop, Nop, Rla);
+    r[RLA_ZERO_PAGE as usize] = microcode_arr!(zero_page_load_alu(), Nop, StoreAlu, Rla);
     r[RLA_ZERO_PAGE_X as usize] =
-        microcode_arr!(zero_page_addr(), zero_page_x_load_alu(), Nop, Nop, Rla);
+        microcode_arr!(zero_page_addr(), zero_page_x_load_alu(), Nop, StoreAlu, Rla);
     r[RLA_ABSOLUTE as usize] = microcode_arr!(
         AbsoluteL,
         AbsoluteH {
             load_into_alu: true
         },
         Nop,
-        Nop,
+        StoreAlu,
         Rla
     );
     r[RLA_ABSOLUTE_INDEXED_X as usize] = microcode_arr!(
@@ -1159,7 +1159,7 @@ const fn build_opcode_table() -> [ArrayVec<[Microcode; 7]>; 256] {
         },
         Nop,
         Nop,
-        Nop,
+        StoreAlu,
         Rla
     );
     r[RLA_ABSOLUTE_INDEXED_Y as usize] = microcode_arr!(
@@ -1170,7 +1170,7 @@ const fn build_opcode_table() -> [ArrayVec<[Microcode; 7]>; 256] {
         },
         Nop,
         Nop,
-        Nop,
+        StoreAlu,
         Rla
     );
     r[RLA_INDEXED_INDIRECT as usize] = microcode_arr!(
@@ -1181,7 +1181,7 @@ const fn build_opcode_table() -> [ArrayVec<[Microcode; 7]>; 256] {
         },
         Nop,
         Nop,
-        Nop,
+        StoreAlu,
         Rla
     );
     r[RLA_INDIRECT_INDEXED as usize] = microcode_arr!(
@@ -1195,19 +1195,19 @@ const fn build_opcode_table() -> [ArrayVec<[Microcode; 7]>; 256] {
         },
         Nop,
         Nop,
-        Nop,
+        StoreAlu,
         Rla
     );
-    r[SLO_ZERO_PAGE as usize] = microcode_arr!(zero_page_load_alu(), StoreAlu, Nop, Slo);
+    r[SLO_ZERO_PAGE as usize] = microcode_arr!(zero_page_load_alu(), Nop, StoreAlu, Slo);
     r[SLO_ZERO_PAGE_X as usize] =
-        microcode_arr!(zero_page_addr(), zero_page_x_load_alu(), StoreAlu, Nop, Slo);
+        microcode_arr!(zero_page_addr(), zero_page_x_load_alu(), Nop, StoreAlu, Slo);
     r[SLO_ABSOLUTE as usize] = microcode_arr!(
         AbsoluteL,
         AbsoluteH {
             load_into_alu: true
         },
-        StoreAlu,
         Nop,
+        StoreAlu,
         Slo
     );
     r[SLO_ABSOLUTE_INDEXED_X as usize] = microcode_arr!(
@@ -1216,9 +1216,9 @@ const fn build_opcode_table() -> [ArrayVec<[Microcode; 7]>; 256] {
             oops: false,
             load_into_alu: true
         },
+        Nop,
+        Nop,
         StoreAlu,
-        Nop,
-        Nop,
         Slo
     );
     r[SLO_ABSOLUTE_INDEXED_Y as usize] = microcode_arr!(
@@ -1227,9 +1227,9 @@ const fn build_opcode_table() -> [ArrayVec<[Microcode; 7]>; 256] {
             oops: false,
             load_into_alu: true
         },
+        Nop,
+        Nop,
         StoreAlu,
-        Nop,
-        Nop,
         Slo
     );
     r[SLO_INDEXED_INDIRECT as usize] = microcode_arr!(
@@ -1238,9 +1238,9 @@ const fn build_opcode_table() -> [ArrayVec<[Microcode; 7]>; 256] {
         Indexed {
             load_into_alu: true
         },
+        Nop,
+        Nop,
         StoreAlu,
-        Nop,
-        Nop,
         Slo
     );
     r[SLO_INDIRECT_INDEXED as usize] = microcode_arr!(
@@ -1252,21 +1252,21 @@ const fn build_opcode_table() -> [ArrayVec<[Microcode; 7]>; 256] {
             oops: false,
             load_into_alu: true
         },
+        Nop,
+        Nop,
         StoreAlu,
-        Nop,
-        Nop,
         Slo
     );
-    r[SRE_ZERO_PAGE as usize] = microcode_arr!(zero_page_load_alu(), StoreAlu, Nop, Sre);
+    r[SRE_ZERO_PAGE as usize] = microcode_arr!(zero_page_load_alu(), Nop, StoreAlu, Sre);
     r[SRE_ZERO_PAGE_X as usize] =
-        microcode_arr!(zero_page_addr(), zero_page_x_load_alu(), StoreAlu, Nop, Sre);
+        microcode_arr!(zero_page_addr(), zero_page_x_load_alu(), Nop, StoreAlu, Sre);
     r[SRE_ABSOLUTE as usize] = microcode_arr!(
         AbsoluteL,
         AbsoluteH {
             load_into_alu: true
         },
-        StoreAlu,
         Nop,
+        StoreAlu,
         Sre
     );
     r[SRE_ABSOLUTE_INDEXED_X as usize] = microcode_arr!(
@@ -1275,9 +1275,9 @@ const fn build_opcode_table() -> [ArrayVec<[Microcode; 7]>; 256] {
             oops: false,
             load_into_alu: true
         },
+        Nop,
+        Nop,
         StoreAlu,
-        Nop,
-        Nop,
         Sre
     );
     r[SRE_ABSOLUTE_INDEXED_Y as usize] = microcode_arr!(
@@ -1286,9 +1286,9 @@ const fn build_opcode_table() -> [ArrayVec<[Microcode; 7]>; 256] {
             oops: false,
             load_into_alu: true
         },
+        Nop,
+        Nop,
         StoreAlu,
-        Nop,
-        Nop,
         Sre
     );
     r[SRE_INDEXED_INDIRECT as usize] = microcode_arr!(
@@ -1297,9 +1297,9 @@ const fn build_opcode_table() -> [ArrayVec<[Microcode; 7]>; 256] {
         Indexed {
             load_into_alu: true
         },
+        Nop,
+        Nop,
         StoreAlu,
-        Nop,
-        Nop,
         Sre
     );
     r[SRE_INDIRECT_INDEXED as usize] = microcode_arr!(
@@ -1311,9 +1311,9 @@ const fn build_opcode_table() -> [ArrayVec<[Microcode; 7]>; 256] {
             oops: false,
             load_into_alu: true
         },
+        Nop,
+        Nop,
         StoreAlu,
-        Nop,
-        Nop,
         Sre
     );
     r[SHX_ABSOLUTE_INDEXED_Y as usize] = microcode_arr!(
@@ -1494,16 +1494,22 @@ pub enum Microcode {
     Bit,
 
     AslAccumulator,
-    Asl,
+    /// Dummy-write the original ALU value to memory, then compute ASL.
+    /// Combines the RMW dummy write and ALU modification into one cycle
+    /// so that the dummy write and the subsequent StoreAlu are consecutive.
+    DummyWriteAsl,
 
     LsrAccumulator,
-    Lsr,
+    /// Dummy-write the original ALU value to memory, then compute LSR.
+    DummyWriteLsr,
 
     RolAccumulator,
-    Rol,
+    /// Dummy-write the original ALU value to memory, then compute ROL.
+    DummyWriteRol,
 
     RorAccumulator,
-    Ror,
+    /// Dummy-write the original ALU value to memory, then compute ROR.
+    DummyWriteRor,
 
     AlrImmediate,
     AncImmediate,
@@ -2005,13 +2011,13 @@ impl Microcode {
             }
             Self::Indexed { load_into_alu } => Self::indexed(cpu, load_into_alu),
             Self::AslAccumulator => Self::asl_accumulator(cpu),
-            Self::Asl => Self::asl(cpu),
+            Self::DummyWriteAsl => Self::dummy_write_asl(cpu),
             Self::LsrAccumulator => Self::lsr_accumulator(cpu),
-            Self::Lsr => Self::lsr(cpu),
+            Self::DummyWriteLsr => Self::dummy_write_lsr(cpu),
             Self::RolAccumulator => Self::rol_accumulator(cpu),
-            Self::Rol => Self::rol(cpu),
+            Self::DummyWriteRol => Self::dummy_write_rol(cpu),
             Self::RorAccumulator => Self::ror_accumulator(cpu),
-            Self::Ror => Self::ror(cpu),
+            Self::DummyWriteRor => Self::dummy_write_ror(cpu),
 
             Self::AlrImmediate => Self::alr_immediate(cpu),
             Self::AncImmediate => Self::anc_immediate(cpu),
@@ -2369,6 +2375,31 @@ impl Microcode {
         cpu.alu = new;
         cpu.update_negative_flag(cpu.alu);
         cpu.update_zero_flag(cpu.alu);
+    }
+
+    /// Write original ALU value to memory (dummy write), then compute ASL on ALU.
+    /// On the real 6502, the dummy write and ALU computation happen on the same cycle.
+    fn dummy_write_asl<M: Mcu>(cpu: &mut Cpu<M>) {
+        Self::store_alu(cpu);
+        Self::asl(cpu);
+    }
+
+    /// Write original ALU value to memory (dummy write), then compute LSR on ALU.
+    fn dummy_write_lsr<M: Mcu>(cpu: &mut Cpu<M>) {
+        Self::store_alu(cpu);
+        Self::lsr(cpu);
+    }
+
+    /// Write original ALU value to memory (dummy write), then compute ROL on ALU.
+    fn dummy_write_rol<M: Mcu>(cpu: &mut Cpu<M>) {
+        Self::store_alu(cpu);
+        Self::rol(cpu);
+    }
+
+    /// Write original ALU value to memory (dummy write), then compute ROR on ALU.
+    fn dummy_write_ror<M: Mcu>(cpu: &mut Cpu<M>) {
+        Self::store_alu(cpu);
+        Self::ror(cpu);
     }
 
     fn branch_relative<M: Mcu>(cpu: &mut Cpu<M>, branch_test: BranchTest) {

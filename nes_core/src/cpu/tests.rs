@@ -3965,7 +3965,7 @@ fn shift_and_rotate_microcodes_update_accumulator_and_alu() {
 
     cpu.alu = 0b0000_0001;
     cpu.set_flag(Flag::Carry, true);
-    Microcode::Ror.exec(&mut cpu);
+    Microcode::DummyWriteRor.exec(&mut cpu);
     assert_eq!(cpu.alu, 0b1000_0000);
     assert!(cpu.flag(Flag::Carry));
     assert!(cpu.flag(Flag::Negative));

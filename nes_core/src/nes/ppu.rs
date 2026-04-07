@@ -269,6 +269,13 @@ pub struct Ppu<R: Render = ()> {
     write_toggle: bool,  // w - first/second write toggle
     renderer: R,
 
+    // PPUDATA read buffer: non-palette VRAM reads are delayed by one read
+    ppudata_buffer: u8,
+
+    // PPU open bus / data latch: last value placed on the PPU data bus.
+    // Reading write-only registers returns this value.
+    bus_latch: u8,
+
     // PPU timing
     scanline: u16, // 0-261
     dot: u16,      // 0-340
@@ -304,6 +311,8 @@ impl<R: Render> Ppu<R> {
             fine_x: 0,
             write_toggle: false,
             renderer,
+            ppudata_buffer: 0,
+            bus_latch: 0,
             scanline: 0,
             dot: 0,
             odd_frame: false,
@@ -538,22 +547,24 @@ impl<R: Render> Ppu<R> {
     pub fn read(&mut self, address: u16, cartridge: &mut Cartridge) -> u8 {
         // PPU registers are mirrored every 8 bytes in range $2000-$3FFF
         let reg = normalize_ppu_addr(address);
-        match reg {
-            // PPUSTATUS
+        let result = match reg {
+            // PPUSTATUS: bits 7-5 from status, bits 4-0 from bus latch
             0x2002 => {
                 let status = self.read_status();
                 self.write_toggle = false;
-                status.into_bits()
+                (status.into_bits() & 0xE0) | (self.bus_latch & 0x1F)
             }
             // OAMDATA
             0x2004 => self.read_oam_data(),
             // PPUDATA - read from VRAM or palette
             0x2007 => {
-                // create closures that forward to cartridge
                 self.read_vram_and_inc(cartridge)
             }
-            _ => 0, // Other registers are write-only
-        }
+            // Other registers are write-only: return open bus (latch)
+            _ => self.bus_latch,
+        };
+        self.bus_latch = result;
+        result
     }
 
     pub fn peek(&self, address: u16, cartridge: &Cartridge) -> u8 {
@@ -568,6 +579,7 @@ impl<R: Render> Ppu<R> {
 
     /// Write by cpu memory bus. Uses Cartridge for CHR/name-table writes.
     pub fn write(&mut self, address: u16, value: u8, cartridge: &mut Cartridge) {
+        self.bus_latch = value;
         let reg = normalize_ppu_addr(address);
         match reg {
             // PPUCTRL
@@ -920,9 +932,23 @@ impl<R: Render> Ppu<R> {
 
     fn read_vram_and_inc(&mut self, cartridge: &mut Cartridge) -> u8 {
         let vram_addr = self.vram_addr;
-        let value = self.read_vram(vram_addr, cartridge);
+        let current = self.read_vram(vram_addr, cartridge);
         self.ctrl.inc_ppu_addr(&mut self.vram_addr);
-        value
+
+        // Non-palette addresses use a read buffer (delayed by one read).
+        // Palette addresses ($3F00-$3FFF) return immediately, but still
+        // update the buffer with the nametable byte "underneath".
+        let addr = vram_addr % 0x4000;
+        if addr >= 0x3F00 {
+            // Palette: fill buffer with the nametable data underneath
+            // (mirrored from $2F00-$2FFF)
+            self.ppudata_buffer = self.read_vram(vram_addr - 0x1000, cartridge);
+            current
+        } else {
+            let buffered = self.ppudata_buffer;
+            self.ppudata_buffer = current;
+            buffered
+        }
     }
 
     /// Read OAM data at current OAM address (for testing)
