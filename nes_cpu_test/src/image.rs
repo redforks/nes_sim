@@ -79,7 +79,7 @@ impl Image {
             plugins.push(Box::new(ReportNesTestResult::new()));
         } else if file_name
             .to_str()
-            .is_some_and(|p| p.contains("vbl_nmi_timing"))
+            .is_some_and(|p| p.contains("vbl_nmi_timing") || p.contains("branch_timing_tests") || p.contains("cpu_dummy_reads"))
         {
             plugins.push(Box::new(NametableConsole::default()));
         } else {
