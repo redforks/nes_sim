@@ -1,13 +1,13 @@
 use crate::{
+    ExecuteResult, Plugin,
     ines::INesFile,
     machine::Machine,
     nes::{
+        NesMcu,
         controller::Button,
         ppu::{VBLANK_SET_DOT, VBLANK_SET_SCANLINE},
-        NesMcu,
     },
     render::Render,
-    ExecuteResult, Plugin,
 };
 use std::fs;
 
@@ -91,8 +91,12 @@ where
         result
     }
 
-    fn mcu(&self) -> &NesMcu<R, D> {
+    pub fn mcu(&self) -> &NesMcu<R, D> {
         self.machine.mcu()
+    }
+
+    pub fn mcu_mut(&mut self) -> &mut NesMcu<R, D> {
+        self.machine.mcu_mut()
     }
 
     pub fn reset(&mut self) {

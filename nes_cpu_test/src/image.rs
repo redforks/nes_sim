@@ -97,6 +97,15 @@ impl Image {
         if let Some(pc) = start_pc {
             machine.set_pc(pc);
         }
+        if file_name
+            .to_str()
+            .is_some_and(|p| p.contains("cpu_timing_test6"))
+        {
+            // test OFFICIAL + UNDOCUMENTED instructions
+            machine
+                .mcu_mut()
+                .press_button(nes_core::nes::controller::Button::B);
+        }
         MachineWrapper::INes(Box::new(machine))
     }
 }
