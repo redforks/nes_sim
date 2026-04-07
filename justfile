@@ -50,8 +50,12 @@ cpu_dummy_writes:
     cargo run -p nes_cpu_test --release -- --quiet -f ../nes-test-roms/cpu_dummy_writes/cpu_dummy_writes_oam.nes
     cargo run -p nes_cpu_test --release -- --quiet -f ../nes-test-roms/cpu_dummy_writes/cpu_dummy_writes_ppumem.nes
 
+cpu_exec_space:
+    cargo run -p nes_cpu_test --release -- --quiet -f ../nes-test-roms/cpu_exec_space/test_cpu_exec_space_apu.nes
+    cargo run -p nes_cpu_test --release -- --quiet -f ../nes-test-roms/cpu_exec_space/test_cpu_exec_space_ppuio.nes
+
 [parallel]
-passed: unit-test cpu-test instr_misc instr_test-v5 instr_test-v3 nestest instr_timing ppu_vbl_nmi vbl_nmi_timing cpu_interrupts_v2 branch_timing_tests cpu_dummy_reads
+passed: unit-test cpu-test instr_misc instr_test-v5 instr_test-v3 nestest instr_timing ppu_vbl_nmi vbl_nmi_timing cpu_interrupts_v2 branch_timing_tests cpu_dummy_reads cpu_dummy_writes cpu_exec_space
 
 wasm-debug-build:
     cd nes_web && wasm-pack build --release

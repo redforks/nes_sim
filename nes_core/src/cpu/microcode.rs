@@ -117,9 +117,9 @@ macro_rules! microcode_arr {
 }
 
 const fn build_opcode_table() -> [ArrayVec<[Microcode; 7]>; 256] {
-    use opcode::*;
     use Microcode::*;
     use Register::*;
+    use opcode::*;
 
     let mut r = include!("init_microtable.inc.rs");
     r[AND_IMMEDIATE as usize] = microcode_arr!(AndImmediate);
@@ -522,8 +522,8 @@ const fn build_opcode_table() -> [ArrayVec<[Microcode; 7]>; 256] {
         PushPc,
         SetPcToAb
     );
-    r[RTS as usize] = microcode_arr!(Nop, Nop, PopPc, Nop, IncPc(1));
-    r[RTI as usize] = microcode_arr!(Nop, Plp, Nop, PopPc, Nop);
+    r[RTS as usize] = microcode_arr!(SkipImmediate, Nop, PopPc, Nop, SkipImmediate);
+    r[RTI as usize] = microcode_arr!(SkipImmediate, Plp, Nop, PopPc, Nop);
     r[CLC as usize] = microcode_arr!(Clc);
     r[SEC as usize] = microcode_arr!(Sec);
     r[CLD as usize] = microcode_arr!(Cld);
@@ -620,7 +620,7 @@ const fn build_opcode_table() -> [ArrayVec<[Microcode; 7]>; 256] {
     r[KIL11 as usize] = microcode_arr!(Kill);
     r[KIL12 as usize] = microcode_arr!(Kill);
     r[BRK as usize] = microcode_arr!(
-        IncPc(1),
+        SkipImmediate,
         Nop,
         Nop,
         PushPc,
