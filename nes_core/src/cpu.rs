@@ -233,7 +233,7 @@ impl<M: Mcu> Cpu<M> {
 
                 if std::mem::take(&mut self.defer_nmi_poll) {
                     Microcode::FetchAndDecode
-                } else if self.nmi_ready() && self.mode == CpuMode::Normal {
+                } else if self.nmi_ready() {
                     self.nmi_requested_at = None;
                     self.mode = CpuMode::Nmi;
                     self.push_microcodes(&[

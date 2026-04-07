@@ -3156,6 +3156,26 @@ fn test_rti_leaves_nmi_mode() {
 }
 
 #[test]
+fn test_ready_nmi_is_taken_even_while_already_in_nmi_mode() {
+    let mut mcu = MockMcu::new();
+    mcu.write(0xFFFA, 0x78);
+    mcu.write(0xFFFB, 0x56);
+    let mut cpu = Cpu::new(mcu);
+    cpu.mode = CpuMode::Nmi;
+    cpu.cycles = 8;
+    cpu.microcode_queue.clear();
+    cpu.nmi_requested_at = Some(0);
+
+    let mut plugin = EmptyPlugin::new();
+    let (_, finished) = cpu.tick(&mut plugin);
+
+    assert!(!finished);
+    assert_eq!(cpu.mode, CpuMode::Nmi);
+    assert_eq!(cpu.nmi_requested_at, None);
+    assert_eq!(cpu.microcodes_len(), 6);
+}
+
+#[test]
 fn test_irq_vector_load_ignores_too_recent_nmi() {
     let mut mcu = MockMcu::new();
     mcu.write(0xFFFA, 0x78);

@@ -77,10 +77,12 @@ impl Image {
         ];
         if file_name.file_name().is_some_and(|f| f == "nestest.nes") {
             plugins.push(Box::new(ReportNesTestResult::new()));
-        } else if file_name
-            .to_str()
-            .is_some_and(|p| p.contains("vbl_nmi_timing") || p.contains("branch_timing_tests") || p.contains("cpu_dummy_reads"))
-        {
+        } else if file_name.to_str().is_some_and(|p| {
+            p.contains("vbl_nmi_timing")
+                || p.contains("branch_timing_tests")
+                || p.contains("cpu_dummy_reads")
+                || p.contains("cpu_timing_test6")
+        }) {
             plugins.push(Box::new(NametableConsole::default()));
         } else {
             plugins.push(Box::<Console>::default());
