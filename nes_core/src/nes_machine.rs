@@ -71,11 +71,16 @@ where
         let timing = self.mcu().ppu().timing();
         self.machine.cpu_mut().update_nmi_line(nmi_line, timing);
 
+        // Poll IRQ BEFORE the APU tick so the CPU sees the previous
+        // tick's interrupt state.  This models the real 6502's behavior
+        // where a newly-asserted IRQ is not visible until the following
+        // instruction boundary.
+        let irq_pending = self.machine.mcu().irq_pending();
+        self.machine.cpu_mut().set_irq(irq_pending);
+
         if self.cycles.is_multiple_of(3) {
             self.machine.mcu_mut().tick_apu();
         }
-        let irq_pending = self.machine.mcu().irq_pending();
-        self.machine.cpu_mut().set_irq(irq_pending);
 
         let result = self.machine.tick();
 

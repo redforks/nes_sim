@@ -3203,14 +3203,14 @@ fn test_irq_vector_load_hijacks_when_nmi_becomes_ready_during_irq_entry() {
     let mut cpu = Cpu::new(mcu);
     cpu.mode = CpuMode::Normal;
     cpu.cycles = 101;
-    cpu.nmi_requested_at = Some(94);
+    cpu.nmi_requested_at = Some(93);
     cpu.allow_late_irq_nmi_hijack = true;
 
     cpu.load_irq_address();
 
     assert_eq!(cpu.pc, 0x5678);
     assert_eq!(cpu.mode, CpuMode::Nmi);
-    assert_eq!(cpu.nmi_requested_at, Some(94));
+    assert_eq!(cpu.nmi_requested_at, Some(93));
 }
 
 #[test]

@@ -117,9 +117,9 @@ macro_rules! microcode_arr {
 }
 
 const fn build_opcode_table() -> [ArrayVec<[Microcode; 7]>; 256] {
+    use opcode::*;
     use Microcode::*;
     use Register::*;
-    use opcode::*;
 
     let mut r = include!("init_microtable.inc.rs");
     r[AND_IMMEDIATE as usize] = microcode_arr!(AndImmediate);
@@ -2369,6 +2369,11 @@ impl Microcode {
             cpu.retain_cycle();
             if pch != cpu.pch() {
                 cpu.retain_cycle();
+            } else {
+                // A taken non-page-crossing branch suppresses IRQ
+                // detection on its last (3rd) cycle.  Set a flag so
+                // the next instruction-boundary IRQ check is deferred.
+                cpu.branch_irq_defer = true;
             }
         }
     }

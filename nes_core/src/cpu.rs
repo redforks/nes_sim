@@ -52,6 +52,10 @@ pub struct Cpu<M: Mcu> {
     /// cpu can not know nmi signal until the next instruction, we save the cycle that nmi requested to detect this
     nmi_requested_at: Option<usize>,
     defer_nmi_poll: bool,
+    /// A taken non-page-crossing branch suppresses IRQ on its last
+    /// cycle.  This flag is set when such a branch completes, causing
+    /// the next instruction-boundary IRQ check to be skipped.
+    branch_irq_defer: bool,
     irq_vector_is_nmi: bool,
     allow_late_irq_nmi_hijack: bool,
     /// Set to the DMA completion cycle when DMA ends without IRQ pending.
@@ -88,6 +92,7 @@ impl<M: Mcu> Cpu<M> {
             mode: CpuMode::Normal,
             nmi_requested_at: None,
             defer_nmi_poll: false,
+            branch_irq_defer: false,
             irq_vector_is_nmi: false,
             allow_late_irq_nmi_hijack: false,
             post_dma_irq_defer: None,
@@ -117,6 +122,7 @@ impl<M: Mcu> Cpu<M> {
         self.microcode_queue.clear();
         self.nmi_requested_at = None;
         self.defer_nmi_poll = false;
+        self.branch_irq_defer = false;
         self.irq_vector_is_nmi = false;
         self.allow_late_irq_nmi_hijack = false;
         self.post_dma_irq_defer = None;
@@ -225,6 +231,7 @@ impl<M: Mcu> Cpu<M> {
             None => {
                 plugin.start(self);
                 let irq_inhibit = self.irq_inhibit.take();
+                let branch_defer = std::mem::take(&mut self.branch_irq_defer);
 
                 if std::mem::take(&mut self.defer_nmi_poll) {
                     Microcode::FetchAndDecode
@@ -246,43 +253,47 @@ impl<M: Mcu> Cpu<M> {
                 } else if self.irq_line
                     && !irq_inhibit.unwrap_or_else(|| self.flag(Flag::InterruptDisabled))
                 {
-                    // After DMA, model the 6502's penultimate-cycle IRQ sampling.
-                    // During DMA, no instructions execute, so the CPU can't detect
-                    // IRQ on a penultimate cycle. We track how long the IRQ has
-                    // been visible relative to both the DMA end time and the
-                    // current boundary to decide if the IRQ should be deferred.
-                    let should_defer = self.post_dma_irq_defer.is_some_and(|dma_end| {
-                        self.irq_requested_at.is_some_and(|at| {
-                            // First boundary after DMA: the CPU hasn't executed
-                            // any instruction yet. Defer if the IRQ arrived within
-                            // the last CPU cycle of DMA (not visible long enough).
-                            if self.cycles <= dma_end + 3 {
-                                at + 3 > dma_end
-                            } else {
-                                // Subsequent boundaries: defer if the IRQ arrived
-                                // during the last CPU cycle (after penultimate cycle).
-                                at + 3 > self.cycles
-                            }
-                        })
-                    });
-                    if should_defer {
-                        // IRQ arrived too recently — defer and execute the next
-                        // instruction. Keep post_dma_irq_defer active.
+                    // A taken non-page-crossing branch ignores IRQ during
+                    // its last clock.  Only defer if the IRQ was first
+                    // visible during the penalty cycle (last 3 PPU ticks
+                    // = last CPU cycle).  If visible earlier, the CPU
+                    // sampled it on the penultimate cycle and should
+                    // take it normally.
+                    let defer_for_branch = branch_defer
+                        && self
+                            .irq_requested_at
+                            .is_some_and(|at| self.cycles.wrapping_sub(at) <= 3);
+                    if defer_for_branch {
                         Microcode::FetchAndDecode
                     } else {
-                        self.post_dma_irq_defer = None;
-                        self.push_microcodes(&[
-                            Microcode::Nop,
-                            Microcode::Nop,
-                            Microcode::PushPc,
-                            Microcode::PushStatus {
-                                set_disable_interrupt: true,
-                                break_flag: false,
-                            },
-                            Microcode::LoadIrqAddress,
-                        ]);
-                        self.allow_late_irq_nmi_hijack = true;
-                        Microcode::Nop
+                        // After DMA, model the 6502's penultimate-cycle IRQ sampling.
+                        let should_defer = self.post_dma_irq_defer.is_some_and(|dma_end| {
+                            self.irq_requested_at.is_some_and(|at| {
+                                if self.cycles <= dma_end + 3 {
+                                    at + 3 > dma_end
+                                } else {
+                                    at + 3 > self.cycles
+                                }
+                            })
+                        });
+                        if should_defer {
+                            Microcode::FetchAndDecode
+                        } else {
+                            self.post_dma_irq_defer = None;
+                            self.push_microcodes(&[
+                                Microcode::Nop,
+                                Microcode::Nop,
+                                Microcode::PushPc,
+                                Microcode::PushStatus {
+                                    set_disable_interrupt: true,
+                                    break_flag: false,
+                                },
+                                Microcode::Nop,
+                                Microcode::LoadIrqAddress,
+                            ]);
+                            self.allow_late_irq_nmi_hijack = true;
+                            Microcode::Nop
+                        }
                     }
                 } else {
                     // No IRQ pending. Expire the post-DMA window after enough
@@ -778,7 +789,7 @@ impl<M: Mcu> Cpu<M> {
                 && self.mode == CpuMode::Normal
                 && self
                     .nmi_requested_at
-                    .is_some_and(|cycles| self.cycles > cycles + 4))
+                    .is_some_and(|cycles| self.cycles > cycles + 7))
         {
             self.irq_vector_is_nmi = false;
             // hijacked by nmi

@@ -534,8 +534,20 @@ pub struct Apu<D: AudioDriver = ()> {
     frame_counter_mode: bool,
     frame_interrupt_inhibit: bool,
     frame_interrupt: bool,
+    /// Set 1 tick before frame_interrupt proper.  Used by status_byte()
+    /// so that $4015 reads see the flag 1 cycle earlier than the IRQ
+    /// line.  This compensates for the sequential tick ordering where
+    /// set_irq() runs BEFORE tick_apu(), making asynchronous IRQ
+    /// detection 1 cycle late relative to synchronous register reads.
+    frame_interrupt_preview: bool,
     frame_counter_write_delay: Option<u8>,
     pending_frame_counter: Option<FrameCounter>,
+    /// Set after a natural 4-step mode wrap (29830→0) so the next tick
+    /// (counter=1) re-asserts frame_interrupt.  This extends the
+    /// frame_interrupt window by 1 cycle to compensate for the
+    /// sequential tick ordering where IRQ detection is 1 cycle behind
+    /// synchronous $4015 reads.
+    post_wrap_irq_pending: bool,
     dmc_interrupt: bool,
     dc_last_input: f32,
     dc_last_output: f32,
@@ -565,8 +577,10 @@ impl<D: AudioDriver> Apu<D> {
             frame_counter_mode: false,
             frame_interrupt_inhibit: false,
             frame_interrupt: false,
+            frame_interrupt_preview: false,
             frame_counter_write_delay: None,
             pending_frame_counter: None,
+            post_wrap_irq_pending: false,
             dmc_interrupt: false,
             dc_last_input: 0.0,
             dc_last_output: 0.0,
@@ -580,6 +594,7 @@ impl<D: AudioDriver> Apu<D> {
         self.frame_counter_cycle = 0;
         self.frame_counter_write_delay = None;
         self.pending_frame_counter = None;
+        self.post_wrap_irq_pending = false;
     }
 
     pub fn tick(&mut self) -> bool {
@@ -622,6 +637,7 @@ impl<D: AudioDriver> Apu<D> {
             0x4015 => {
                 let status = self.status_byte();
                 self.frame_interrupt = false;
+                self.frame_interrupt_preview = false;
                 status
             }
             _ => 0,
@@ -685,7 +701,10 @@ impl<D: AudioDriver> Apu<D> {
         status.set_triangle_enabled(self.triangle.status_enabled());
         status.set_noise_enabled(self.noise.status_enabled());
         status.set_dmc_enabled(self.dmc.status_enabled());
-        status.set_frame_interrupt(self.frame_interrupt);
+        // Use frame_interrupt OR the 1-tick-early preview so $4015
+        // reads see the frame interrupt 1 tick sooner than the IRQ
+        // line, compensating for the set_irq() ordering delay.
+        status.set_frame_interrupt(self.frame_interrupt || self.frame_interrupt_preview);
         status.set_dmc_interrupt(self.dmc_interrupt);
         status.into_bits()
     }
@@ -703,7 +722,6 @@ impl<D: AudioDriver> Apu<D> {
     }
 
     fn set_frame_counter(&mut self, counter: FrameCounter) {
-        // A $4017 write takes effect 3 or 4 CPU clocks later depending on phase.
         self.pending_frame_counter = Some(counter);
         self.frame_counter_write_delay = Some(4);
     }
@@ -713,10 +731,12 @@ impl<D: AudioDriver> Apu<D> {
         self.frame_interrupt_inhibit = counter.interrupt_flag();
         if self.frame_interrupt_inhibit {
             self.frame_interrupt = false;
+            self.frame_interrupt_preview = false;
         }
 
         self.apu_cycle = 0;
         self.frame_counter_cycle = 0;
+        self.post_wrap_irq_pending = false;
 
         if self.frame_counter_mode {
             self.clock_quarter_frame();
@@ -726,39 +746,94 @@ impl<D: AudioDriver> Apu<D> {
 
     fn tick_frame_counter(&mut self) -> bool {
         if self.frame_counter_mode {
-            let cycle = self.frame_counter_cycle % 37_282;
-            match cycle {
+            // 5-step mode — never generates frame IRQ.
+            // Manual wrap avoids modulo so that apply_frame_counter's reset
+            // to 0 is distinguishable from the natural period wrap.
+            match self.frame_counter_cycle {
                 7_457 | 22_371 => self.clock_quarter_frame(),
                 14_913 | 37_281 => {
                     self.clock_quarter_frame();
                     self.clock_half_frame();
+                }
+                37_282 => {
+                    self.frame_counter_cycle = 0;
                 }
                 _ => {}
             }
             return false;
         }
 
-        let cycle = self.frame_counter_cycle % 29_830;
-        match cycle {
+        // 4-step mode.
+        //
+        // On real hardware the frame IRQ flag is set on three consecutive
+        // CPU cycles at the end of the period: 29828, 29829, and 0 (the
+        // reload/wrap point).  We use manual wrapping so that the
+        // cycle-0 IRQ only fires on the natural period wrap (29830), NOT
+        // after an apply_frame_counter reset which also sets the counter
+        // to 0.
+        //
+        // Additionally, the CPU polls IRQ via `set_irq()` BEFORE
+        // `tick_apu()` runs, adding a 1-cycle delay to asynchronous IRQ
+        // detection (but NOT to synchronous BIT $4015 reads).  To
+        // compensate, after the natural wrap at 29830 we set
+        // `post_wrap_irq_pending` so that counter=1 re-asserts
+        // frame_interrupt.  This extends the BIT $4015 polling window
+        // by 1 cycle, keeping the handler's CK measurement correct.
+        let mut irq_triggered = false;
+
+        // Post-wrap re-assertion: after a natural 29830→0 wrap, re-set
+        // frame_interrupt on the very next tick (counter=1).  This does
+        // NOT fire on counter=1 after an apply_frame_counter reset
+        // because apply clears the flag.
+        if self.post_wrap_irq_pending {
+            self.post_wrap_irq_pending = false;
+            if !self.frame_interrupt_inhibit {
+                self.frame_interrupt = true;
+            }
+        }
+
+        match self.frame_counter_cycle {
             7_457 | 22_371 => self.clock_quarter_frame(),
             14_913 => {
                 self.clock_quarter_frame();
                 self.clock_half_frame();
             }
-            // On real hardware, the frame IRQ flag is set on cycles 29828-29830.
-            // Using 29829 which matches the primary assertion point.
+            29_827 => {
+                // Preview: set the read-visible flag 1 tick before the
+                // actual frame_interrupt, so $4015 reads see the IRQ
+                // 1 cycle earlier than the IRQ line (compensating for
+                // the set_irq ordering delay).
+                if !self.frame_interrupt_inhibit {
+                    self.frame_interrupt_preview = true;
+                }
+            }
+            29_828 => {
+                if !self.frame_interrupt_inhibit {
+                    self.frame_interrupt = true;
+                    self.frame_interrupt_preview = false;
+                    irq_triggered = true;
+                }
+            }
             29_829 => {
                 self.clock_quarter_frame();
                 self.clock_half_frame();
                 if !self.frame_interrupt_inhibit {
                     self.frame_interrupt = true;
-                    return true;
+                    irq_triggered = true;
+                }
+            }
+            29_830 => {
+                self.frame_counter_cycle = 0;
+                self.post_wrap_irq_pending = true;
+                if !self.frame_interrupt_inhibit {
+                    self.frame_interrupt = true;
+                    irq_triggered = true;
                 }
             }
             _ => {}
         }
 
-        false
+        irq_triggered
     }
 
     fn clock_quarter_frame(&mut self) {
