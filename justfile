@@ -31,16 +31,7 @@ instr-timing:
     cargo run -p nes_cpu_test --release -- --quiet -f ../nes-test-roms/instr_timing/instr_timing.nes
 
 ppu-vbl-nmi:
-    cargo run -p nes_cpu_test --release -- --quiet -f ../nes-test-roms/ppu_vbl_nmi/rom_singles/01-vbl_basics.nes
-    cargo run -p nes_cpu_test --release -- --quiet -f ../nes-test-roms/ppu_vbl_nmi/rom_singles/02-vbl_set_time.nes
-    cargo run -p nes_cpu_test --release -- --quiet -f ../nes-test-roms/ppu_vbl_nmi/rom_singles/03-vbl_clear_time.nes
-    cargo run -p nes_cpu_test --release -- --quiet -f ../nes-test-roms/ppu_vbl_nmi/rom_singles/04-nmi_control.nes
-    cargo run -p nes_cpu_test --release -- --quiet -f ../nes-test-roms/ppu_vbl_nmi/rom_singles/05-nmi_timing.nes
-    cargo run -p nes_cpu_test --release -- --quiet -f ../nes-test-roms/ppu_vbl_nmi/rom_singles/06-suppression.nes
-    cargo run -p nes_cpu_test --release -- --quiet -f ../nes-test-roms/ppu_vbl_nmi/rom_singles/07-nmi_on_timing.nes
-    cargo run -p nes_cpu_test --release -- --quiet -f ../nes-test-roms/ppu_vbl_nmi/rom_singles/08-nmi_off_timing.nes
-    cargo run -p nes_cpu_test --release -- --quiet -f ../nes-test-roms/ppu_vbl_nmi/rom_singles/09-even_odd_frames.nes
-    cargo run -p nes_cpu_test --release -- --quiet -f ../nes-test-roms/ppu_vbl_nmi/rom_singles/10-even_odd_timing.nes
+    cargo run -p nes_cpu_test --release -- --quiet -f ../nes-test-roms/ppu_vbl_nmi/ppu_vbl_nmi.nes
 
 vbl-nmi-timing:
     cargo run -p nes_cpu_test --release -- --quiet -f ../nes-test-roms/vbl_nmi_timing/1.frame_basics.nes

@@ -85,7 +85,7 @@ fn contains_passed(s: &str) -> bool {
 }
 
 fn contains_failed(s: &str) -> bool {
-    s.contains("FAILED")
+    s.contains("FAILED") || s.contains("Error ")
 }
 
 fn output<S: AsRef<str>>(s: S) {

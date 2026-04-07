@@ -250,7 +250,8 @@ fn test_reset() {
     cpu.reset();
     // Reset reads PC from 0xFFFC (which is 0x0000 in MockMcu)
     assert_eq!(cpu.pc, 0);
-    assert_eq!(cpu.sp, 0xFD);
+    // Reset now adjusts SP by subtracting 3 from its current value
+    assert_eq!(cpu.sp, 0x80u8.wrapping_sub(3));
     assert!(cpu.flag(Flag::InterruptDisabled)); // InterruptDisabled flag is set
 }
 

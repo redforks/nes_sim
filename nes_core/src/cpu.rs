@@ -113,7 +113,6 @@ impl<M: Mcu> Cpu<M> {
 
     pub fn reset(&mut self) {
         self.pc = self.read_word(0xFFFC);
-        self.status = 0;
         self.inner_set_flag(Flag::InterruptDisabled, true);
         self.inner_set_flag(Flag::NotUsed, true);
         self.irq_line = false;
@@ -129,8 +128,7 @@ impl<M: Mcu> Cpu<M> {
         self.oam_dma_pending = false;
         self.oam_dma = None;
         self.mode = CpuMode::Normal;
-        self.sp = 0xFD;
-        self.cycles = 0;
+        self.sp = self.sp.wrapping_sub(3);
 
         // Reset process takes 7 cycles, push 7 Nop microcodes to ppu/apu run as a real device, and make Plugin to get correct total cycles
         self.push_microcodes(&[
