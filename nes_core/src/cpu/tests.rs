@@ -319,7 +319,11 @@ fn test_lda_immediate() {
     // LDA #$42 (opcode A9 42)
     let mut cpu = create_cpu_with_program(&[0xA9, 0x42, 0xEA]);
 
-    execute_next(&mut cpu);
+    let mut plugin = EmptyPlugin::new();
+    while cpu.microcodes_len() > 0 {
+        cpu.tick(&mut plugin);
+    }
+    while !cpu.tick(&mut plugin).1 {}
     assert_eq!(cpu.a, 0x42);
     assert!(!cpu.flag(Flag::Zero));
     assert!(!cpu.flag(Flag::Negative));
@@ -3865,6 +3869,33 @@ fn peek_byte_uses_non_mutating_mcu_path() {
 
     assert_eq!(cpu.peek_byte(0x2002), 0x80);
     assert_eq!(cpu.mcu().reads.len(), reads_before);
+}
+
+#[test]
+fn lda_absolute_x_page_cross_performs_dummy_read_before_final_read() {
+    let mut cpu = cpu_with_memory(
+        0x8000,
+        &[
+            (0x8000, 0xBD),
+            (0x8001, 0xFF),
+            (0x8002, 0x12),
+            (0x1300, 0x42),
+        ],
+    );
+    cpu.x = 0x01;
+    cpu.mcu_mut().reads.clear();
+
+    let mut plugin = EmptyPlugin::<TestMcu>::new();
+    while cpu.microcodes_len() > 0 {
+        cpu.tick(&mut plugin);
+    }
+    while !cpu.tick(&mut plugin).1 {}
+
+    assert_eq!(cpu.a, 0x42);
+    assert_eq!(
+        cpu.mcu().reads,
+        vec![0x8000, 0x8001, 0x8002, 0x1200, 0x1300]
+    );
 }
 
 fn cpu_with_memory(program_start: u16, bytes: &[(u16, u8)]) -> Cpu<TestMcu> {

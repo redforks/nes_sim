@@ -83,9 +83,7 @@ impl MMC1 {
             has_chr_ram: chr_rom.is_empty(),
             prg_rom: prg_rom.to_vec(),
             prg_ram: [0; PRG_RAM_SIZE],
-            control: ControlFlags::new()
-                .with_mirroring(Self::mirroring_bits(mirroring))
-                .with_prg_mode(0b11),
+            control: ControlFlags::new().with_mirroring(Self::mirroring_bits(mirroring)),
             chr_bank0: 0,
             chr_bank1: 0,
             prg_bank: 0,
@@ -93,8 +91,7 @@ impl MMC1 {
             name_table: NameTableControl::new(mirroring),
         };
 
-        mapper.apply_control();
-        mapper.refresh_chr_window();
+        mapper.reset_banks();
         mapper
     }
 
@@ -121,13 +118,7 @@ impl MMC1 {
         match address {
             0x8000..=0xbfff => self.read_prg_bank(self.lower_prg_bank(), address - 0x8000),
             0xc000..=0xffff => self.read_prg_bank(self.upper_prg_bank(), address - 0xc000),
-            0x6000..=0x7fff => {
-                if self.prg_ram_enabled() {
-                    self.prg_ram[address as usize - 0x6000]
-                } else {
-                    0
-                }
-            }
+            0x6000..=0x7fff => self.prg_ram[address as usize - 0x6000],
             0x4020..=0x5fff => 0,
             _ => panic!("read address out of range: {:04x}", address),
         }
@@ -136,11 +127,7 @@ impl MMC1 {
     pub fn write(&mut self, address: u16, value: u8) {
         match address {
             0x4020..=0x5fff => {}
-            0x6000..=0x7fff => {
-                if self.prg_ram_enabled() {
-                    self.prg_ram[address as usize - 0x6000] = value;
-                }
-            }
+            0x6000..=0x7fff => self.prg_ram[address as usize - 0x6000] = value,
             0x8000..=0xffff => self.write_load_register(address, value),
             _ => panic!("write address out of range: {:04x}", address),
         }
@@ -148,9 +135,7 @@ impl MMC1 {
 
     fn write_load_register(&mut self, address: u16, value: u8) {
         if value & 0x80 != 0 {
-            self.shift_register = INITIAL_SHIFT_REGISTER;
-            self.control = ControlFlags::from_bits(self.control.into_bits() | 0x0c);
-            self.apply_control();
+            self.reset_banks();
             return;
         }
 
@@ -185,6 +170,18 @@ impl MMC1 {
         self.refresh_chr_window();
     }
 
+    fn reset_banks(&mut self) {
+        self.shift_register = INITIAL_SHIFT_REGISTER;
+        self.control = ControlFlags::new()
+            .with_mirroring(self.control.mirroring())
+            .with_prg_mode(0b11)
+            .with_chr_in_4k(true);
+        self.prg_bank = 0;
+        self.chr_bank0 = 0;
+        self.chr_bank1 = 1;
+        self.apply_control();
+    }
+
     fn control(&mut self, flags: ControlFlags) {
         self.control = flags;
         self.apply_control();
@@ -208,10 +205,6 @@ impl MMC1 {
 
     fn chr_bank_count_4k(&self) -> usize {
         self.chr.len() / CHR_BANK_SIZE_4K
-    }
-
-    fn prg_ram_enabled(&self) -> bool {
-        self.prg_bank & 0x10 == 0
     }
 
     fn uses_outer_prg_bank(&self) -> bool {
@@ -394,7 +387,7 @@ mod tests {
     }
 
     #[test]
-    fn prg_ram_respects_enable_bit() {
+    fn prg_ram_remains_accessible_across_bank_writes() {
         let (mut mmc1, _ppu) = create(|_| {});
 
         mmc1.write(0x6000, 0x12);
@@ -402,19 +395,25 @@ mod tests {
 
         write_serial(&mut mmc1, 0xe000, 0x10);
         mmc1.write(0x6000, 0x34);
-        assert_eq!(mmc1.read(0x6000), 0x00);
+        assert_eq!(mmc1.read(0x6000), 0x34);
     }
 
     #[test]
-    fn reset_write_keeps_mirroring_and_chr_mode() {
+    fn reset_write_restores_initial_bank_layout() {
         let (mut mmc1, _ppu) = create(|_| {});
 
-        mmc1.control(ControlFlags::new().with_mirroring(0).with_chr_in_4k(true));
+        mmc1.control(ControlFlags::new().with_mirroring(0).with_chr_in_4k(false));
+        mmc1.select_prg_bank(2);
+        mmc1.select_chr_bank0(3);
+        mmc1.select_chr_bank1(4);
         mmc1.write(0x8000, 0x80);
 
         assert_eq!(Mirroring::LowerBank, mmc1.control.into());
         assert!(mmc1.control.chr_in_4k());
         assert_eq!(PrgRomMode::FixLast16K, mmc1.prg_rom_mode());
+        assert_eq!(0, mmc1.prg_bank);
+        assert_eq!(0, mmc1.chr_bank0);
+        assert_eq!(1, mmc1.chr_bank1);
     }
 
     #[test]
@@ -475,6 +474,9 @@ mod tests {
     fn control_chr_bank_size() {
         let (mut mmc1, _ppu) = create(|_| {});
 
+        assert_eq!(mmc1.chr_bank_size(), 4 * 1024);
+
+        mmc1.control(ControlFlags::new().with_chr_in_4k(false));
         assert_eq!(mmc1.chr_bank_size(), 8 * 1024);
 
         mmc1.control(ControlFlags::new().with_chr_in_4k(true));

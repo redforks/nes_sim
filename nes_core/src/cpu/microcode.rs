@@ -2265,11 +2265,16 @@ impl Microcode {
         let abh = cpu.inc_read_byte();
         cpu.set_abh(abh);
         cpu.ab = cpu.ab.wrapping_add(cpu.x as u16);
+        let crossed_page = abh != cpu.abh();
+        let dummy_addr = (u16::from(abh) << 8) | u16::from(cpu.abl());
+        if !oops || crossed_page {
+            cpu.read_byte(dummy_addr);
+        }
+        if oops && crossed_page {
+            cpu.retain_cycle();
+        }
         if load_into_alu {
             cpu.load_alu();
-        }
-        if oops && abh != cpu.abh() {
-            cpu.retain_cycle();
         }
     }
 
@@ -2282,7 +2287,12 @@ impl Microcode {
     fn absolute_indexed_y_without_high<M: Mcu>(cpu: &mut Cpu<M>, oops: bool, load_into_alu: bool) {
         let abh = cpu.abh();
         cpu.ab = cpu.ab.wrapping_add(cpu.y as u16);
-        if oops && abh != cpu.abh() {
+        let crossed_page = abh != cpu.abh();
+        let dummy_addr = (u16::from(abh) << 8) | u16::from(cpu.abl());
+        if !oops || crossed_page {
+            cpu.read_byte(dummy_addr);
+        }
+        if oops && crossed_page {
             cpu.retain_cycle();
         }
         if load_into_alu {
