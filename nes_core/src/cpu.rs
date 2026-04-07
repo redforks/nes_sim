@@ -124,7 +124,6 @@ impl<M: Mcu> Cpu<M> {
         self.oam_dma = None;
         self.mode = CpuMode::Normal;
         self.sp = 0xFD;
-        self.cycles = 0;
 
         // Reset process takes 7 cycles, push 7 Nop microcodes to ppu/apu run as a real device, and make Plugin to get correct total cycles
         self.push_microcodes(&[

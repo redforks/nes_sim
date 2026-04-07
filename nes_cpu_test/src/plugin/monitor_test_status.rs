@@ -34,6 +34,7 @@ impl Status {
 #[derive(Default)]
 pub struct MonitorTestStatus {
     cycles_request_reset: Option<usize>,
+    cycles_last_reset: Option<usize>,
     should_reset: bool,
     exit_code: Option<u8>,
 }
@@ -44,8 +45,10 @@ impl<M: Mcu> Plugin<M> for MonitorTestStatus {
     fn end(&mut self, cpu: &mut Cpu<M>) {
         let status = Status::parse(cpu);
         self.should_reset = if let Some(cycles) = self.cycles_request_reset {
-            if cpu.total_cycles() - cycles >= 1_000_000 {
+            // ppu clock is 5.320342 MHz, 100ms is about 532,000 cycles
+            if (cpu.total_cycles() > cycles) && (cpu.total_cycles() - cycles >= 536_000) {
                 self.cycles_request_reset = None;
+                self.cycles_last_reset = Some(cpu.total_cycles());
                 true
             } else {
                 false
@@ -61,8 +64,7 @@ impl<M: Mcu> Plugin<M> for MonitorTestStatus {
                 Some(r)
             }
             Status::ShouldReset => {
-                if self.cycles_request_reset.is_none() {
-                    dbg!("request reset");
+                if self.cycles_request_reset.is_none() && self.cycles_last_reset.map_or(true, |c| cpu.total_cycles() - c >= 536_000) {
                     self.cycles_request_reset = Some(cpu.total_cycles());
                 }
                 None
