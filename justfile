@@ -17,19 +17,24 @@ cpu_interrupts_v2:
     cargo run -p nes_cpu_test --release -- --quiet -f ../nes-test-roms/cpu_interrupts_v2/rom_singles/4-irq_and_dma.nes
     cargo run -p nes_cpu_test --release -- --quiet -f ../nes-test-roms/cpu_interrupts_v2/rom_singles/5-branch_delays_irq.nes
 
+branch_timing_tests:
+    cargo run -p nes_cpu_test --release -- --quiet -f ../nes-test-roms/branch_timing_tests/1.Branch_Basics.nes
+    cargo run -p nes_cpu_test --release -- --quiet -f ../nes-test-roms/branch_timing_tests/2.Backward_Branch.nes
+    cargo run -p nes_cpu_test --release -- --quiet -f ../nes-test-roms/branch_timing_tests/3.Forward_Branch.nes
+
 nestest:
     cargo run -p nes_cpu_test -- -f ../nes-test-roms/other/nestest.nes --start-pc 0xC000
 
 unit-test:
     cargo test
 
-instr-timing:
+instr_timing:
     cargo run -p nes_cpu_test --release -- --quiet -f ../nes-test-roms/instr_timing/instr_timing.nes
 
-ppu-vbl-nmi:
+ppu_vbl_nmi:
     cargo run -p nes_cpu_test --release -- --quiet -f ../nes-test-roms/ppu_vbl_nmi/ppu_vbl_nmi.nes
 
-vbl-nmi-timing:
+vbl_nmi_timing:
     cargo run -p nes_cpu_test --release -- --quiet -f ../nes-test-roms/vbl_nmi_timing/1.frame_basics.nes
     cargo run -p nes_cpu_test --release -- --quiet -f ../nes-test-roms/vbl_nmi_timing/2.vbl_timing.nes
     cargo run -p nes_cpu_test --release -- --quiet -f ../nes-test-roms/vbl_nmi_timing/3.even_odd_frames.nes
@@ -39,7 +44,7 @@ vbl-nmi-timing:
     cargo run -p nes_cpu_test --release -- --quiet -f ../nes-test-roms/vbl_nmi_timing/7.nmi_timing.nes
 
 [parallel]
-passed: unit-test cpu-test instr_misc instr_test-v5 instr_test-v3 nestest instr-timing ppu-vbl-nmi vbl-nmi-timing cpu_interrupts_v2
+passed: unit-test cpu-test instr_misc instr_test-v5 instr_test-v3 nestest instr_timing ppu_vbl_nmi vbl_nmi_timing cpu_interrupts_v2 branch_timing_tests
 
 wasm-debug-build:
     cd nes_web && wasm-pack build --release
