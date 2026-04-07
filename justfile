@@ -43,8 +43,15 @@ vbl_nmi_timing:
     cargo run -p nes_cpu_test --release -- --quiet -f ../nes-test-roms/vbl_nmi_timing/6.nmi_disable.nes
     cargo run -p nes_cpu_test --release -- --quiet -f ../nes-test-roms/vbl_nmi_timing/7.nmi_timing.nes
 
+cpu_dummy_reads:
+    cargo run -p nes_cpu_test --release -- --quiet -f ../nes-test-roms/cpu_dummy_reads/cpu_dummy_reads.nes
+
+cpu_dummy_writes:
+    cargo run -p nes_cpu_test --release -- --quiet -f ../nes-test-roms/cpu_dummy_writes/cpu_dummy_writes_oam.nes
+    cargo run -p nes_cpu_test --release -- --quiet -f ../nes-test-roms/cpu_dummy_writes/cpu_dummy_writes_ppumem.nes
+
 [parallel]
-passed: unit-test cpu-test instr_misc instr_test-v5 instr_test-v3 nestest instr_timing ppu_vbl_nmi vbl_nmi_timing cpu_interrupts_v2 branch_timing_tests
+passed: unit-test cpu-test instr_misc instr_test-v5 instr_test-v3 nestest instr_timing ppu_vbl_nmi vbl_nmi_timing cpu_interrupts_v2 branch_timing_tests cpu_dummy_reads
 
 wasm-debug-build:
     cd nes_web && wasm-pack build --release

@@ -81,7 +81,7 @@ fn read_console(cpu: &Cpu<NesMcu<(), ()>>) -> String {
 }
 
 fn contains_passed(s: &str) -> bool {
-    s.contains("PASSED")
+    s.contains("PASSED") || s.contains("Passed\n")
 }
 
 fn contains_failed(s: &str) -> bool {
