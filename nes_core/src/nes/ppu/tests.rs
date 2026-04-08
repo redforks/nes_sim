@@ -210,6 +210,30 @@ fn test_peek_status_does_not_clear_vblank() {
     assert!(ppu.status.v_blank());
 }
 
+#[test]
+fn test_open_bus_bits_decay_to_zero() {
+    let mut ppu = Ppu::new(());
+    let mut cartridge = new_test_cartridge();
+
+    ppu.write(0x2002, 0xFF, &mut cartridge);
+    ppu.ppu_ticks = PPU_OPEN_BUS_DECAY_TICKS;
+
+    assert_eq!(ppu.read(0x2000, &mut cartridge), 0x00);
+}
+
+#[test]
+fn test_status_read_only_refreshes_high_bits() {
+    let mut ppu = Ppu::new(());
+    let mut cartridge = new_test_cartridge();
+
+    ppu.write(0x2002, 0xFF, &mut cartridge);
+    ppu.ppu_ticks = PPU_OPEN_BUS_DECAY_TICKS;
+    ppu.status.set_v_blank(true);
+    assert_eq!(ppu.read(0x2002, &mut cartridge), 0x80);
+
+    assert_eq!(ppu.read(0x2000, &mut cartridge), 0x80);
+}
+
 // ============================================================================
 // render_pixel() Tests
 // ============================================================================

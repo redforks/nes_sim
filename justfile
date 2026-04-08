@@ -67,8 +67,14 @@ oam_read:
 oam_stress:
     cargo run -p nes_cpu_test --release -- --quiet -f ../nes-test-roms/oam_stress/oam_stress.nes
 
+ppu_open_bus:
+    cargo run -p nes_cpu_test --release -- --quiet -f ../nes-test-roms/ppu_open_bus/ppu_open_bus.nes
+
+ppu_read_buffer:
+    cargo run -p nes_cpu_test --release -- --quiet -f ../nes-test-roms/ppu_read_buffer/test_ppu_read_buffer.nes
+
 [parallel]
-passed: unit-test cpu-test instr_misc instr_test-v5 instr_test-v3 nestest instr_timing ppu_vbl_nmi vbl_nmi_timing cpu_interrupts_v2 branch_timing_tests cpu_dummy_reads cpu_dummy_writes cpu_exec_space cpu_reset cpu_timing_test6 oam_read oam_stress
+passed: unit-test cpu-test instr_misc instr_test-v5 instr_test-v3 nestest instr_timing ppu_vbl_nmi vbl_nmi_timing cpu_interrupts_v2 branch_timing_tests cpu_dummy_reads cpu_dummy_writes cpu_exec_space cpu_reset cpu_timing_test6 oam_read oam_stress ppu_open_bus ppu_read_buffer
 
 wasm-debug-build:
     cd nes_web && wasm-pack build --release

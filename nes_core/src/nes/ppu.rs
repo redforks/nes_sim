@@ -113,6 +113,7 @@ const TILES_PER_ROW: u8 = 32;
 // PPU Timing Constants
 const SCANLINES_PER_FRAME: u16 = 262;
 const DOTS_PER_SCANLINE: u16 = 341;
+const PPU_OPEN_BUS_DECAY_TICKS: u64 = 3_221_591;
 pub const VBLANK_SET_SCANLINE: u16 = 241;
 pub const VBLANK_SET_DOT: u16 = 1;
 const VBLANK_CLEAR_SCANLINE: u16 = 261;
@@ -283,6 +284,7 @@ pub struct Ppu<R: Render = ()> {
     // PPU open bus / data latch: last value placed on the PPU data bus.
     // Reading write-only registers returns this value.
     bus_latch: u8,
+    bus_latch_decay_deadlines: [u64; 8],
 
     // PPU timing
     scanline: u16, // 0-261
@@ -295,6 +297,7 @@ pub struct Ppu<R: Render = ()> {
     effective_mask: PpuMask,
 
     frame_no: usize,
+    ppu_ticks: u64,
 }
 
 /// PPU registers are mirrored every 8 bytes in range $2000-$3FFF
@@ -321,6 +324,7 @@ impl<R: Render> Ppu<R> {
             renderer,
             ppudata_buffer: 0,
             bus_latch: 0,
+            bus_latch_decay_deadlines: [0; 8],
             scanline: 0,
             dot: 0,
             odd_frame: false,
@@ -328,6 +332,7 @@ impl<R: Render> Ppu<R> {
             suppress_nmi_for_current_frame: false,
             scanline_cache: ScanlineCache::default(),
             frame_no: 0,
+            ppu_ticks: 0,
             effective_mask: PpuMask::new(),
         }
     }
@@ -343,7 +348,11 @@ impl<R: Render> Ppu<R> {
         self.temp_vram_addr = 0;
         self.fine_x = 0;
         self.write_toggle = false;
+        self.ppudata_buffer = 0;
+        self.bus_latch = 0;
+        self.bus_latch_decay_deadlines = [0; 8];
         self.odd_frame = false;
+        self.ppu_ticks = 0;
         self.scanline_cache.dirty = true;
         self.write_scroll(0);
     }
@@ -472,6 +481,7 @@ impl<R: Render> Ppu<R> {
     }
 
     pub fn tick(&mut self, cartridge: &Cartridge) {
+        self.ppu_ticks = self.ppu_ticks.wrapping_add(1);
         let rendering_enabled = self.rendering_enabled();
 
         if self.scanline < 240 && self.dot == 0 {
@@ -557,24 +567,27 @@ impl<R: Render> Ppu<R> {
     pub fn read(&mut self, address: u16, cartridge: &mut Cartridge) -> u8 {
         // PPU registers are mirrored every 8 bytes in range $2000-$3FFF
         let reg = normalize_ppu_addr(address);
-        let result = match reg {
+        match reg {
             // PPUSTATUS: bits 7-5 from status, bits 4-0 from bus latch
             0x2002 => {
                 let status = self.read_status();
                 self.write_toggle = false;
-                (status.into_bits() & 0xE0) | (self.bus_latch & 0x1F)
+                let status_bits = status.into_bits();
+                let result = (status_bits & 0xE0) | (self.current_bus_latch() & 0x1F);
+                self.refresh_bus_latch_bits(0xE0, status_bits);
+                result
             }
             // OAMDATA
-            0x2004 => self.read_oam_data(),
-            // PPUDATA - read from VRAM or palette
-            0x2007 => {
-                self.read_vram_and_inc(cartridge)
+            0x2004 => {
+                let result = self.read_oam_data();
+                self.refresh_bus_latch(result);
+                result
             }
+            // PPUDATA - read from VRAM or palette
+            0x2007 => self.read_vram_and_inc(cartridge),
             // Other registers are write-only: return open bus (latch)
-            _ => self.bus_latch,
-        };
-        self.bus_latch = result;
-        result
+            _ => self.current_bus_latch(),
+        }
     }
 
     pub fn peek(&self, address: u16, cartridge: &Cartridge) -> u8 {
@@ -589,7 +602,7 @@ impl<R: Render> Ppu<R> {
 
     /// Write by cpu memory bus. Uses Cartridge for CHR/name-table writes.
     pub fn write(&mut self, address: u16, value: u8, cartridge: &mut Cartridge) {
-        self.bus_latch = value;
+        self.refresh_bus_latch(value);
         let reg = normalize_ppu_addr(address);
         match reg {
             // PPUCTRL
@@ -953,11 +966,62 @@ impl<R: Render> Ppu<R> {
             // Palette: fill buffer with the nametable data underneath
             // (mirrored from $2F00-$2FFF)
             self.ppudata_buffer = self.read_vram(vram_addr - 0x1000, cartridge);
-            current
+            let result = (current & 0x3F) | (self.current_bus_latch() & 0xC0);
+            self.refresh_bus_latch_bits(0x3F, result);
+            result
         } else {
             let buffered = self.ppudata_buffer;
             self.ppudata_buffer = current;
+            self.refresh_bus_latch(buffered);
             buffered
+        }
+    }
+
+    fn current_bus_latch(&mut self) -> u8 {
+        self.apply_bus_decay();
+        self.bus_latch
+    }
+
+    fn apply_bus_decay(&mut self) {
+        for bit in 0..8 {
+            let mask = 1 << bit;
+            let deadline = self.bus_latch_decay_deadlines[bit];
+            if (self.bus_latch & mask) != 0 && deadline != 0 && self.ppu_ticks >= deadline {
+                self.bus_latch &= !mask;
+                self.bus_latch_decay_deadlines[bit] = 0;
+            }
+        }
+    }
+
+    fn refresh_bus_latch(&mut self, value: u8) {
+        self.apply_bus_decay();
+        self.bus_latch = value;
+        for bit in 0..8 {
+            let mask = 1 << bit;
+            self.bus_latch_decay_deadlines[bit] = if (value & mask) != 0 {
+                self.ppu_ticks.wrapping_add(PPU_OPEN_BUS_DECAY_TICKS)
+            } else {
+                0
+            };
+        }
+    }
+
+    fn refresh_bus_latch_bits(&mut self, mask: u8, value: u8) {
+        self.apply_bus_decay();
+        for bit in 0..8 {
+            let bit_mask = 1 << bit;
+            if (mask & bit_mask) == 0 {
+                continue;
+            }
+
+            if (value & bit_mask) != 0 {
+                self.bus_latch |= bit_mask;
+                self.bus_latch_decay_deadlines[bit] =
+                    self.ppu_ticks.wrapping_add(PPU_OPEN_BUS_DECAY_TICKS);
+            } else {
+                self.bus_latch &= !bit_mask;
+                self.bus_latch_decay_deadlines[bit] = 0;
+            }
         }
     }
 
