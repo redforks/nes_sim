@@ -357,6 +357,13 @@ where
     ppu.mask.apply_effects(pixel)
 }
 
+fn latch_sprite_zero_hit(ppu: &mut Ppu) {
+    if ppu.sprite_zero_hit_pending {
+        ppu.status.set_sprite_zero_hit(true);
+        ppu.sprite_zero_hit_pending = false;
+    }
+}
+
 #[test]
 fn test_render_pixel_returns_background_color() {
     let mut ppu = create_test_ppu_with_mask(
@@ -758,6 +765,7 @@ fn test_render_pixel_sprite_zero_hit() {
         8,
         1,
     );
+    latch_sprite_zero_hit(&mut ppu);
     assert!(ppu.status.sprite_zero_hit());
 }
 

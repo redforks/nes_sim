@@ -73,8 +73,21 @@ ppu_open_bus:
 ppu_read_buffer:
     cargo run -p nes_cpu_test --release -- --quiet -f ../nes-test-roms/ppu_read_buffer/test_ppu_read_buffer.nes
 
+sprite_hit_tests:
+    cargo run -p nes_cpu_test --release -- --quiet -f ../nes-test-roms/sprite_hit_tests_2005.10.05/01.basics.nes
+    cargo run -p nes_cpu_test --release -- --quiet -f ../nes-test-roms/sprite_hit_tests_2005.10.05/02.alignment.nes
+    cargo run -p nes_cpu_test --release -- --quiet -f ../nes-test-roms/sprite_hit_tests_2005.10.05/03.corners.nes
+    cargo run -p nes_cpu_test --release -- --quiet -f ../nes-test-roms/sprite_hit_tests_2005.10.05/04.flip.nes
+    cargo run -p nes_cpu_test --release -- --quiet -f ../nes-test-roms/sprite_hit_tests_2005.10.05/05.left_clip.nes
+    cargo run -p nes_cpu_test --release -- --quiet -f ../nes-test-roms/sprite_hit_tests_2005.10.05/06.right_edge.nes
+    cargo run -p nes_cpu_test --release -- --quiet -f ../nes-test-roms/sprite_hit_tests_2005.10.05/07.screen_bottom.nes
+    cargo run -p nes_cpu_test --release -- --quiet -f ../nes-test-roms/sprite_hit_tests_2005.10.05/08.double_height.nes
+    cargo run -p nes_cpu_test --release -- --quiet -f ../nes-test-roms/sprite_hit_tests_2005.10.05/09.timing_basics.nes
+    cargo run -p nes_cpu_test --release -- --quiet -f ../nes-test-roms/sprite_hit_tests_2005.10.05/10.timing_order.nes
+    cargo run -p nes_cpu_test --release -- --quiet -f ../nes-test-roms/sprite_hit_tests_2005.10.05/11.edge_timing.nes
+
 [parallel]
-passed: unit-test cpu-test instr_misc instr_test-v5 instr_test-v3 nestest instr_timing ppu_vbl_nmi vbl_nmi_timing cpu_interrupts_v2 branch_timing_tests cpu_dummy_reads cpu_dummy_writes cpu_exec_space cpu_reset cpu_timing_test6 oam_read oam_stress ppu_open_bus ppu_read_buffer
+passed: unit-test cpu-test instr_misc instr_test-v5 instr_test-v3 nestest instr_timing ppu_vbl_nmi vbl_nmi_timing cpu_interrupts_v2 branch_timing_tests cpu_dummy_reads cpu_dummy_writes cpu_exec_space cpu_reset cpu_timing_test6 oam_read oam_stress ppu_open_bus ppu_read_buffer sprite_hit_tests
 
 wasm-debug-build:
     cd nes_web && wasm-pack build --release

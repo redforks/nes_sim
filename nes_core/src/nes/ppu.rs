@@ -290,6 +290,7 @@ pub struct Ppu<R: Render = ()> {
     scanline: u16, // 0-261
     dot: u16,      // 0-340
     odd_frame: bool,
+    sprite_zero_hit_pending: bool,
 
     scanline_cache: ScanlineCache,
     /// set to PPUMask register changes render_enabled state, but ppu see it at the next tick,
@@ -328,6 +329,7 @@ impl<R: Render> Ppu<R> {
             scanline: 0,
             dot: 0,
             odd_frame: false,
+            sprite_zero_hit_pending: false,
             suppress_vblank_for_current_frame: false,
             suppress_nmi_for_current_frame: false,
             scanline_cache: ScanlineCache::default(),
@@ -352,6 +354,7 @@ impl<R: Render> Ppu<R> {
         self.bus_latch = 0;
         self.bus_latch_decay_deadlines = [0; 8];
         self.odd_frame = false;
+        self.sprite_zero_hit_pending = false;
         self.ppu_ticks = 0;
         self.scanline_cache.dirty = true;
         self.write_scroll(0);
@@ -484,14 +487,20 @@ impl<R: Render> Ppu<R> {
         self.ppu_ticks = self.ppu_ticks.wrapping_add(1);
         let rendering_enabled = self.rendering_enabled();
 
+        if self.sprite_zero_hit_pending {
+            self.status.set_sprite_zero_hit(true);
+            self.sprite_zero_hit_pending = false;
+        }
+
         if self.scanline < 240 && self.dot == 0 {
             self.prepare_scanline_cache(cartridge, self.scanline as u8);
         }
 
-        // Render pixel during visible scanlines (0-239) and visible dots (0-255)
-        if self.scanline < 240 && self.dot < 256 {
+        // Visible pixels are output on dots 1-256; dot 0 is the idle fetch slot.
+        if self.scanline < 240 && (1..=256).contains(&self.dot) {
+            let x = (self.dot - 1) as u8;
             let pixel = if rendering_enabled {
-                self.render_pixel(self.dot as u8)
+                self.render_pixel(x)
             } else {
                 let vram_addr = self.vram_addr % 0x4000;
                 if (0x3f00..0x4000).contains(&vram_addr) {
@@ -502,7 +511,7 @@ impl<R: Render> Ppu<R> {
             };
             let pixel = self.effective_mask.apply_effects(pixel);
             self.renderer
-                .set_pixel(self.dot as u32, self.scanline as u32, pixel.0);
+                .set_pixel(x as u32, self.scanline as u32, pixel.0);
         }
 
         // At end of pre-render scanline (261), clear screen for next frame
@@ -523,6 +532,7 @@ impl<R: Render> Ppu<R> {
             self.status.set_v_blank(false);
             self.status.set_sprite_overflow(false);
             self.status.set_sprite_zero_hit(false);
+            self.sprite_zero_hit_pending = false;
         }
 
         // On odd frames with rendering enabled, the pre-render scanline skips the
@@ -802,7 +812,7 @@ impl<R: Render> Ppu<R> {
 
     fn sprite_covers_scanline(&self, sprite_idx: usize, screen_y: u8) -> bool {
         let byte_idx = sprite_idx * 4;
-        let y = self.oam_data[byte_idx] as i16;
+        let y = self.oam_data[byte_idx] as i16 + 1;
         let sprite_y = screen_y as i16 - y;
         (0..self.sprite_height()).contains(&sprite_y)
     }
@@ -863,7 +873,7 @@ impl<R: Render> Ppu<R> {
             }
 
             let byte_idx = sprite_idx * 4;
-            let y = self.oam_data[byte_idx];
+            let y = self.oam_data[byte_idx].wrapping_add(1);
             let tile_idx = self.oam_data[byte_idx + 1];
             let attributes = self.oam_data[byte_idx + 2];
             let x = self.oam_data[byte_idx + 3];
@@ -1082,7 +1092,7 @@ impl<R: Render> Ppu<R> {
             && (x >= 8 || self.effective_mask.sprite_left_enabled())
             && self.scanline_cache.sprite_zero_pixels[x as usize]
         {
-            self.status.set_sprite_zero_hit(true);
+            self.sprite_zero_hit_pending = true;
         }
 
         match sprite_pixel {
