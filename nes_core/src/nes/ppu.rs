@@ -189,6 +189,27 @@ impl Default for ScanlineCache {
     }
 }
 
+#[derive(Copy, Clone, Default)]
+enum SpriteOverflowEvalMode {
+    #[default]
+    Idle,
+    ScanY,
+    CopySprite { remaining_bytes: u8 },
+    OverflowSearchDelay,
+    OverflowSearch,
+    Done,
+}
+
+#[derive(Copy, Clone, Default)]
+struct SpriteOverflowEval {
+    scanline: u16,
+    target_scanline: u16,
+    oam_index: usize,
+    byte_index: usize,
+    visible_sprites: usize,
+    mode: SpriteOverflowEvalMode,
+}
+
 const fn rgb(v: [u8; 3]) -> Pixel {
     let [r, g, b] = v;
     Rgba::<u8>([r, g, b, 0xff])
@@ -291,6 +312,8 @@ pub struct Ppu<R: Render = ()> {
     dot: u16,      // 0-340
     odd_frame: bool,
     sprite_zero_hit_pending: bool,
+    sprite_overflow_pending: bool,
+    sprite_overflow_eval: SpriteOverflowEval,
 
     scanline_cache: ScanlineCache,
     /// set to PPUMask register changes render_enabled state, but ppu see it at the next tick,
@@ -330,6 +353,8 @@ impl<R: Render> Ppu<R> {
             dot: 0,
             odd_frame: false,
             sprite_zero_hit_pending: false,
+            sprite_overflow_pending: false,
+            sprite_overflow_eval: SpriteOverflowEval::default(),
             suppress_vblank_for_current_frame: false,
             suppress_nmi_for_current_frame: false,
             scanline_cache: ScanlineCache::default(),
@@ -355,6 +380,8 @@ impl<R: Render> Ppu<R> {
         self.bus_latch_decay_deadlines = [0; 8];
         self.odd_frame = false;
         self.sprite_zero_hit_pending = false;
+        self.sprite_overflow_pending = false;
+        self.sprite_overflow_eval = SpriteOverflowEval::default();
         self.ppu_ticks = 0;
         self.scanline_cache.dirty = true;
         self.write_scroll(0);
@@ -492,8 +519,25 @@ impl<R: Render> Ppu<R> {
             self.sprite_zero_hit_pending = false;
         }
 
+        if self.sprite_overflow_pending {
+            self.status.set_sprite_overflow(true);
+            self.sprite_overflow_pending = false;
+        }
+
         if self.scanline < 240 && self.dot == 0 {
             self.prepare_scanline_cache(cartridge, self.scanline as u8);
+        }
+
+        if self.scanline < 240 && self.dot == 65 {
+            self.begin_sprite_overflow_eval();
+        }
+
+        if rendering_enabled
+            && self.scanline < 240
+            && (65..=256).contains(&self.dot)
+            && self.dot % 2 == 1
+        {
+            self.step_sprite_overflow_eval();
         }
 
         // Visible pixels are output on dots 1-256; dot 0 is the idle fetch slot.
@@ -533,6 +577,7 @@ impl<R: Render> Ppu<R> {
             self.status.set_sprite_overflow(false);
             self.status.set_sprite_zero_hit(false);
             self.sprite_zero_hit_pending = false;
+            self.sprite_overflow_pending = false;
         }
 
         // On odd frames with rendering enabled, the pre-render scanline skips the
@@ -810,21 +855,96 @@ impl<R: Render> Ppu<R> {
         if self.ctrl.sprite_size() { 16 } else { 8 }
     }
 
-    fn sprite_covers_scanline(&self, sprite_idx: usize, screen_y: u8) -> bool {
-        let byte_idx = sprite_idx * 4;
-        let y = self.oam_data[byte_idx] as i16 + 1;
-        let sprite_y = screen_y as i16 - y;
+    fn sprite_in_range(&self, y_byte: u8, target_scanline: u16) -> bool {
+        let top = y_byte as i16 + 1;
+        let sprite_y = target_scanline as i16 - top;
         (0..self.sprite_height()).contains(&sprite_y)
     }
 
-    fn update_sprite_overflow(&mut self, screen_y: u8) {
-        let count = (0..64)
-            .filter(|&sprite_idx| self.sprite_covers_scanline(sprite_idx, screen_y))
-            .take(MAX_SPRITES_PER_SCANLINE + 1)
-            .count();
+    fn sprite_covers_scanline(&self, sprite_idx: usize, screen_y: u8) -> bool {
+        let byte_idx = sprite_idx * 4;
+        self.sprite_in_range(self.oam_data[byte_idx], screen_y as u16)
+    }
 
-        if count > MAX_SPRITES_PER_SCANLINE {
-            self.status.set_sprite_overflow(true);
+    fn begin_sprite_overflow_eval(&mut self) {
+        self.sprite_overflow_eval = SpriteOverflowEval {
+            scanline: self.scanline,
+            target_scanline: self.scanline + 1,
+            oam_index: 0,
+            byte_index: 0,
+            visible_sprites: 0,
+            mode: SpriteOverflowEvalMode::ScanY,
+        };
+    }
+
+    fn step_sprite_overflow_eval(&mut self) {
+        if self.sprite_overflow_eval.scanline != self.scanline {
+            return;
+        }
+
+        match self.sprite_overflow_eval.mode {
+            SpriteOverflowEvalMode::Idle | SpriteOverflowEvalMode::Done => {}
+            SpriteOverflowEvalMode::ScanY => {
+                if self.sprite_overflow_eval.oam_index >= 64 {
+                    self.sprite_overflow_eval.mode = SpriteOverflowEvalMode::Done;
+                    return;
+                }
+
+                let oam_index = self.sprite_overflow_eval.oam_index;
+                let target_scanline = self.sprite_overflow_eval.target_scanline;
+                let y_byte = self.oam_data[oam_index * 4];
+                if self.sprite_in_range(y_byte, target_scanline) {
+                    self.sprite_overflow_eval.visible_sprites += 1;
+                    if self.sprite_overflow_eval.visible_sprites > MAX_SPRITES_PER_SCANLINE {
+                        self.sprite_overflow_pending = true;
+                        self.sprite_overflow_eval.mode = SpriteOverflowEvalMode::Done;
+                    } else {
+                        self.sprite_overflow_eval.mode =
+                            SpriteOverflowEvalMode::CopySprite { remaining_bytes: 3 };
+                    }
+                } else {
+                    self.sprite_overflow_eval.oam_index += 1;
+                }
+            }
+            SpriteOverflowEvalMode::CopySprite { remaining_bytes } => {
+                if remaining_bytes > 1 {
+                    self.sprite_overflow_eval.mode = SpriteOverflowEvalMode::CopySprite {
+                        remaining_bytes: remaining_bytes - 1,
+                    };
+                } else {
+                    self.sprite_overflow_eval.oam_index += 1;
+                    self.sprite_overflow_eval.byte_index = 0;
+                    self.sprite_overflow_eval.mode = if self.sprite_overflow_eval.visible_sprites
+                        >= MAX_SPRITES_PER_SCANLINE
+                    {
+                        SpriteOverflowEvalMode::OverflowSearchDelay
+                    } else {
+                        SpriteOverflowEvalMode::ScanY
+                    };
+                }
+            }
+            SpriteOverflowEvalMode::OverflowSearchDelay => {
+                self.sprite_overflow_eval.mode = SpriteOverflowEvalMode::OverflowSearch;
+            }
+            SpriteOverflowEvalMode::OverflowSearch => {
+                if self.sprite_overflow_eval.oam_index >= 64 {
+                    self.sprite_overflow_eval.mode = SpriteOverflowEvalMode::Done;
+                    return;
+                }
+
+                let oam_index = self.sprite_overflow_eval.oam_index;
+                let byte_index = self.sprite_overflow_eval.byte_index;
+                let target_scanline = self.sprite_overflow_eval.target_scanline;
+                let byte_idx = oam_index * 4 + byte_index;
+                let y_byte = self.oam_data[byte_idx];
+                if self.sprite_in_range(y_byte, target_scanline) {
+                    self.sprite_overflow_pending = true;
+                    self.sprite_overflow_eval.mode = SpriteOverflowEvalMode::Done;
+                } else {
+                    self.sprite_overflow_eval.oam_index += 1;
+                    self.sprite_overflow_eval.byte_index = (byte_index + 1) & 0x03;
+                }
+            }
         }
     }
 
@@ -840,8 +960,6 @@ impl<R: Render> Ppu<R> {
             .fill(CachedBackgroundPixel::default());
         self.scanline_cache.sprite_pixels.fill(None);
         self.scanline_cache.sprite_zero_pixels.fill(false);
-
-        self.update_sprite_overflow(screen_y);
 
         if self.effective_mask.background_enabled() {
             for screen_x in 0..256u16 {

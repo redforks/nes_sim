@@ -339,6 +339,23 @@ fn render_pixel(ppu: &mut Ppu, pattern: &[u8], x: u8, y: u8) -> Pixel {
     ppu.render_pixel(x)
 }
 
+fn run_scanline(ppu: &mut Ppu, pattern: &[u8], scanline: u16) {
+    let mut cart = Cartridge::Test(Box::new(TestCartridge::new()));
+    if !pattern.is_empty()
+        && let Cartridge::Test(tc) = &mut cart
+    {
+        for i in 0..tc.chr_rom.len() {
+            tc.chr_rom[i] = pattern[i % pattern.len()];
+        }
+    }
+
+    ppu.scanline = scanline;
+    ppu.dot = 0;
+    for _ in 0..DOTS_PER_SCANLINE {
+        ppu.tick(&cart);
+    }
+}
+
 fn render_pixel_with_setup<F>(ppu: &mut Ppu, pattern: &[u8], setup: F, x: u8, y: u8) -> Pixel
 where
     F: FnOnce(&mut Cartridge),
@@ -401,6 +418,7 @@ fn test_tick_renders_palette_color_when_rendering_disabled_and_vram_points_to_pa
     ppu.dot = 0;
 
     ppu.tick(&new_test_cartridge());
+    ppu.tick(&new_test_cartridge());
 
     let image = ppu.renderer.borrow_image();
     assert_eq!(image.get_pixel(0, 0), &image::Rgba(COLORS[0x21].0));
@@ -417,6 +435,7 @@ fn test_tick_renders_background_color_when_rendering_disabled_and_vram_not_palet
     ppu.scanline = 0;
     ppu.dot = 0;
 
+    ppu.tick(&new_test_cartridge());
     ppu.tick(&new_test_cartridge());
 
     let image = ppu.renderer.borrow_image();
@@ -661,7 +680,7 @@ fn test_render_pixel_respects_sprite_flipping() {
     // sprite_offset = screen - sprite_pos, so screen = sprite_offset + sprite_pos
     // If sprite_pos.x = 0, then screen_x = 7
     // If sprite_pos.y = 10, then screen_y = 10 + 7 = 17
-    let pixel = render_pixel(&mut ppu, &pattern, 7, 17);
+    let pixel = render_pixel(&mut ppu, &pattern, 7, 18);
     assert_eq!(pixel, COLORS[0x2a]);
 }
 
@@ -678,7 +697,7 @@ fn test_render_pixel_uses_second_tile_for_8x16_sprites() {
     ppu.set_control_flags(PpuCtrl::new().with_sprite_size(true));
     setup_sprite(&mut ppu, 0, 0, 0, 0, 0);
 
-    let pixel = render_pixel(&mut ppu, &pattern, 0, 8);
+    let pixel = render_pixel(&mut ppu, &pattern, 0, 9);
     assert_eq!(pixel, COLORS[0x2b]);
 }
 
@@ -695,7 +714,7 @@ fn test_render_pixel_uses_odd_tile_bank_for_8x16_sprites() {
     ppu.set_control_flags(PpuCtrl::new().with_sprite_size(true));
     setup_sprite(&mut ppu, 0, 0, 3, 0, 0);
 
-    let pixel = render_pixel(&mut ppu, &pattern, 0, 0);
+    let pixel = render_pixel(&mut ppu, &pattern, 0, 1);
     assert_eq!(pixel, COLORS[0x2c]);
 }
 
@@ -718,7 +737,11 @@ fn test_render_pixel_uses_vertical_flip_for_8x16_sprites() {
 
 #[test]
 fn test_render_pixel_sets_sprite_overflow_with_nine_sprites_on_scanline() {
-    let mut ppu = create_test_ppu_with_mask(PpuMask::new());
+    let mut ppu = create_test_ppu_with_mask(
+        PpuMask::new()
+            .with_background_enabled(true)
+            .with_sprite_enabled(true),
+    );
     let pattern = create_pattern();
 
     for idx in 0..9 {
@@ -726,7 +749,7 @@ fn test_render_pixel_sets_sprite_overflow_with_nine_sprites_on_scanline() {
     }
 
     assert!(!ppu.status.sprite_overflow());
-    render_pixel(&mut ppu, &pattern, 0, 20);
+    run_scanline(&mut ppu, &pattern, 20);
     assert!(ppu.status.sprite_overflow());
 }
 
@@ -740,6 +763,53 @@ fn test_render_pixel_does_not_set_sprite_overflow_with_eight_sprites_on_scanline
     }
 
     render_pixel(&mut ppu, &pattern, 0, 20);
+    assert!(!ppu.status.sprite_overflow());
+}
+
+#[test]
+fn test_render_pixel_does_not_set_sprite_overflow_when_rendering_disabled() {
+    let mut ppu = create_test_ppu_with_mask(PpuMask::new());
+    let pattern = create_pattern();
+
+    for idx in 0..9 {
+        setup_sprite(&mut ppu, idx, 20, 0, 0, (idx * 8) as u8);
+    }
+
+    render_pixel(&mut ppu, &pattern, 0, 20);
+    assert!(!ppu.status.sprite_overflow());
+}
+
+#[test]
+fn test_sprite_overflow_sets_for_next_scanline_at_y239() {
+    let mut ppu = create_test_ppu_with_mask(
+        PpuMask::new()
+            .with_background_enabled(true)
+            .with_sprite_enabled(true),
+    );
+    let pattern = create_pattern();
+
+    for idx in 0..9 {
+        setup_sprite(&mut ppu, idx, 239, 0, 0, (idx * 8) as u8);
+    }
+
+    run_scanline(&mut ppu, &pattern, 239);
+    assert!(ppu.status.sprite_overflow());
+}
+
+#[test]
+fn test_sprite_overflow_does_not_set_for_next_scanline_at_y240() {
+    let mut ppu = create_test_ppu_with_mask(
+        PpuMask::new()
+            .with_background_enabled(true)
+            .with_sprite_enabled(true),
+    );
+    let pattern = create_pattern();
+
+    for idx in 0..9 {
+        setup_sprite(&mut ppu, idx, 240, 0, 0, (idx * 8) as u8);
+    }
+
+    run_scanline(&mut ppu, &pattern, 239);
     assert!(!ppu.status.sprite_overflow());
 }
 

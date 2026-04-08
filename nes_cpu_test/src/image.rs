@@ -83,6 +83,7 @@ impl Image {
                 || p.contains("cpu_dummy_reads")
                 || p.contains("cpu_timing_test6")
                 || p.contains("sprite_hit_tests_2005.10.05")
+                || p.contains("sprite_overflow_tests")
         }) {
             plugins.push(Box::new(NametableConsole::default()));
         } else {
