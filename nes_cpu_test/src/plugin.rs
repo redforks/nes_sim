@@ -8,6 +8,8 @@ mod max_instructions;
 mod monitor_test_status;
 mod nametable_console;
 mod report;
+mod timeout;
+
 pub use console::*;
 pub use detect_dead_loop::*;
 pub use img_exit::*;
@@ -15,6 +17,7 @@ pub use max_instructions::*;
 pub use monitor_test_status::*;
 pub use nametable_console::*;
 pub use report::*;
+pub use timeout::*;
 
 pub struct CompositePlugin<M: Mcu>(Vec<Box<dyn Plugin<M>>>);
 

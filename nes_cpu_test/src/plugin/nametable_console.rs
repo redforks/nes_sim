@@ -12,7 +12,18 @@ const NAMETABLE_LEN: usize = 0x03C0;
 #[derive(Default)]
 pub struct NametableConsole {
     stop: Option<ExecuteResult>,
+    /// If console contains this string, consider the test passed.
+    magic_success_word: Option<String>,
     last: String,
+}
+
+impl NametableConsole {
+    pub fn with_magic_success_word(word: &str) -> Self {
+        Self {
+            magic_success_word: Some(word.to_owned()),
+            ..Default::default()
+        }
+    }
 }
 
 impl Plugin<NesMcu<(), ()>> for NametableConsole {
@@ -43,6 +54,12 @@ impl Plugin<NesMcu<(), ()>> for NametableConsole {
             Some(ExecuteResult::Stop(0))
         } else if contains_failed(&buf) {
             Some(ExecuteResult::Stop(1))
+        } else if let Some(magic_success_word) = &self.magic_success_word {
+            if buf.contains(magic_success_word) {
+                Some(ExecuteResult::Stop(0))
+            } else {
+                None
+            }
         } else {
             None
         };
@@ -85,7 +102,7 @@ fn contains_passed(s: &str) -> bool {
 }
 
 fn contains_failed(s: &str) -> bool {
-    s.contains("FAILED") || s.contains("Error ")
+    s.contains("FAILED") || s.contains("Error ") || s.contains("Failed")
 }
 
 fn output<S: AsRef<str>>(s: S) {

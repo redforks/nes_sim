@@ -1,4 +1,4 @@
-use crate::plugin::{ExitTestPlugin, NesReportPlugin, ReportNesTestResult};
+use crate::plugin::{ExitTestPlugin, NesReportPlugin, ReportNesTestResult, Timeout};
 
 use super::plugin::{CompositePlugin, Console, MonitorTestStatus, NametableConsole, ReportPlugin};
 use super::plugin::{DetectDeadLoop, ImageExit, MaxInstructions};
@@ -9,6 +9,7 @@ use nes_core::mcu::RamMcu;
 use nes_core::nes_machine::NesMachine;
 use std::io::Read;
 use std::path::{Path, PathBuf};
+use std::time::Duration;
 
 mod driver;
 
@@ -84,8 +85,27 @@ impl Image {
                 || p.contains("cpu_timing_test6")
                 || p.contains("sprite_hit_tests_2005.10.05")
                 || p.contains("sprite_overflow_tests")
+                || p.contains("dmc_dma_during_read4")
         }) {
-            plugins.push(Box::new(NametableConsole::default()));
+            if file_name
+                .file_name()
+                .is_some_and(|f| f == "double_2007_read.nes")
+            {
+                plugins.push(Box::new(NametableConsole::with_magic_success_word(
+                    "D84F6815",
+                )));
+                plugins.push(Box::new(Timeout::new(Duration::from_secs(5))));
+            } else if file_name
+                .file_name()
+                .is_some_and(|f| f == "dma_2007_read.nes")
+            {
+                plugins.push(Box::new(NametableConsole::with_magic_success_word(
+                    "498C5C5F",
+                )));
+                plugins.push(Box::new(Timeout::new(Duration::from_secs(5))));
+            } else {
+                plugins.push(Box::new(NametableConsole::default()));
+            }
         } else {
             plugins.push(Box::<Console>::default());
             plugins.push(Box::<MonitorTestStatus>::default());
