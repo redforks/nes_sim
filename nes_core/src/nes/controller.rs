@@ -33,7 +33,7 @@ impl AController {
         } else if self.bit_position < 8 {
             (self.locked_bits >> self.bit_position) & 1 != 0
         } else {
-            false
+            true
         };
 
         if pressed {
@@ -51,7 +51,7 @@ impl AController {
             self.bit_position = self.bit_position.saturating_add(1);
             r
         } else {
-            false
+            true
         };
 
         if pressed {

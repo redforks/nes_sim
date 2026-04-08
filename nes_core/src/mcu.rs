@@ -11,6 +11,16 @@ pub trait Mcu {
     fn read(&mut self, address: u16) -> u8;
     fn peek(&self, address: u16) -> u8;
     fn write(&mut self, address: u16, value: u8);
+
+    fn take_dmc_dma_address(&mut self) -> Option<u16> {
+        None
+    }
+
+    fn perform_dmc_dma_read(&mut self, sample_addr: u16, _cpu_read_addr: u16) -> u8 {
+        self.read(sample_addr)
+    }
+
+    fn supply_dmc_dma_byte(&mut self, _byte: u8) {}
 }
 
 #[cfg(test)]

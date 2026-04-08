@@ -169,6 +169,12 @@ const NOISE_PERIOD_TABLE: [u16; 16] = [
     4, 8, 16, 32, 64, 96, 128, 160, 202, 254, 380, 508, 762, 1016, 2034, 4068,
 ];
 
+/// NTSC DMC rate table: CPU cycles per output sample clock.
+/// Indexed by $4010 bits 0-3.
+const DMC_RATE_TABLE: [u16; 16] = [
+    428, 380, 340, 320, 286, 254, 226, 214, 190, 160, 142, 128, 106, 84, 72, 54,
+];
+
 #[derive(Clone, Default)]
 struct EnvelopeState {
     start: bool,
@@ -500,22 +506,154 @@ impl NoiseState {
     }
 }
 
-#[derive(Clone, Default)]
+#[derive(Clone)]
 struct DmcState {
+    // Registers
     irq_loop_freq: DmcIRQLoopFreq,
-    load_counter: u8,
-    sample_address: u8,
-    sample_length: u8,
-    enabled: bool,
+    load_counter: u8,   // $4011 direct load
+    sample_address: u8, // $4012
+    sample_length: u8,  // $4013
+
+    // Memory reader
+    current_address: u16,
+    bytes_remaining: u16,
+    sample_buffer: Option<u8>,
+
+    // Output unit
+    shift_register: u8,
+    bits_remaining: u8,
+    output_level: u8,
+    silence_flag: bool,
+
+    // Timer
+    timer_counter: u16,
+
+    // DMA request: set when sample buffer needs filling
+    dma_pending: bool,
+}
+
+impl Default for DmcState {
+    fn default() -> Self {
+        Self {
+            irq_loop_freq: DmcIRQLoopFreq::default(),
+            load_counter: 0,
+            sample_address: 0,
+            sample_length: 0,
+            current_address: 0,
+            bytes_remaining: 0,
+            sample_buffer: None,
+            shift_register: 0,
+            bits_remaining: 0,
+            output_level: 0,
+            silence_flag: true,
+            timer_counter: DMC_RATE_TABLE[0],
+            dma_pending: false,
+        }
+    }
 }
 
 impl DmcState {
+    /// Called when $4015 write sets/clears bit 4.
+    /// Returns true if a DMC IRQ should be cleared.
     fn set_enabled(&mut self, enabled: bool) {
-        self.enabled = enabled;
+        if !enabled {
+            self.bytes_remaining = 0;
+        } else if self.bytes_remaining == 0 {
+            self.restart_sample();
+        }
     }
 
+    /// $4015 read: bit 4 = bytes remaining > 0
     fn status_enabled(&self) -> bool {
-        self.enabled
+        self.bytes_remaining > 0
+    }
+
+    /// Reload address and length counters from registers.
+    fn restart_sample(&mut self) {
+        self.current_address = 0xC000 | ((self.sample_address as u16) << 6);
+        self.bytes_remaining = (self.sample_length as u16) * 16 + 1;
+    }
+
+    /// Tick the DMC timer. Called every CPU cycle.
+    /// Returns true if a DMA read should be initiated.
+    fn tick(&mut self) -> bool {
+        // Check if we need to initiate a DMA read before clocking the timer.
+        // The memory reader fills the sample buffer as soon as it becomes empty
+        // and bytes_remaining > 0.
+        let need_dma =
+            self.sample_buffer.is_none() && self.bytes_remaining > 0 && !self.dma_pending;
+        if need_dma {
+            self.dma_pending = true;
+        }
+
+        // Timer counts down every CPU cycle
+        if self.timer_counter > 0 {
+            self.timer_counter -= 1;
+        }
+
+        if self.timer_counter == 0 {
+            self.timer_counter = DMC_RATE_TABLE[self.irq_loop_freq.freq() as usize];
+            self.clock_output_unit();
+        }
+
+        need_dma
+    }
+
+    /// Clock the output unit (called when timer reaches 0).
+    fn clock_output_unit(&mut self) {
+        // If bits_remaining is 0, start a new output cycle
+        if self.bits_remaining == 0 {
+            self.bits_remaining = 8;
+            if let Some(byte) = self.sample_buffer.take() {
+                self.silence_flag = false;
+                self.shift_register = byte;
+            } else {
+                self.silence_flag = true;
+            }
+        }
+
+        // Output: update level based on shift register bit 0
+        if !self.silence_flag {
+            if self.shift_register & 1 != 0 {
+                if self.output_level <= 125 {
+                    self.output_level += 2;
+                }
+            } else if self.output_level >= 2 {
+                self.output_level -= 2;
+            }
+        }
+        self.shift_register >>= 1;
+        self.bits_remaining -= 1;
+    }
+
+    /// Supply a byte from DMA read. Returns true if DMC IRQ should fire.
+    fn supply_dma_byte(&mut self, byte: u8) -> bool {
+        self.sample_buffer = Some(byte);
+        self.dma_pending = false;
+
+        // Increment address, wrapping from $FFFF to $8000
+        self.current_address = if self.current_address == 0xFFFF {
+            0x8000
+        } else {
+            self.current_address + 1
+        };
+
+        self.bytes_remaining -= 1;
+
+        if self.bytes_remaining == 0 {
+            if self.irq_loop_freq.loop_flag() {
+                self.restart_sample();
+                false
+            } else {
+                self.irq_loop_freq.irq_enabled()
+            }
+        } else {
+            false
+        }
+    }
+
+    fn output(&self) -> u8 {
+        self.output_level
     }
 }
 
@@ -549,6 +687,8 @@ pub struct Apu<D: AudioDriver = ()> {
     /// synchronous $4015 reads.
     post_wrap_irq_pending: bool,
     dmc_interrupt: bool,
+    /// Address for pending DMC DMA read, set by tick when buffer needs filling.
+    dmc_dma_request: Option<u16>,
     dc_last_input: f32,
     dc_last_output: f32,
 }
@@ -582,6 +722,7 @@ impl<D: AudioDriver> Apu<D> {
             pending_frame_counter: None,
             post_wrap_irq_pending: false,
             dmc_interrupt: false,
+            dmc_dma_request: None,
             dc_last_input: 0.0,
             dc_last_output: 0.0,
         }
@@ -609,6 +750,12 @@ impl<D: AudioDriver> Apu<D> {
             self.noise.step_timer();
         }
 
+        // Tick DMC timer every CPU cycle
+        if self.dmc.tick() {
+            // DMC requests a DMA read
+            self.dmc_dma_request = Some(self.dmc.current_address);
+        }
+
         if let Some(delay) = &mut self.frame_counter_write_delay {
             *delay -= 1;
             if *delay == 0 {
@@ -626,6 +773,18 @@ impl<D: AudioDriver> Apu<D> {
 
     pub fn request_irq(&self) -> bool {
         self.frame_interrupt || self.dmc_interrupt
+    }
+
+    /// Take the pending DMC DMA request address, if any.
+    pub fn take_dmc_dma_request(&mut self) -> Option<u16> {
+        self.dmc_dma_request.take()
+    }
+
+    /// Supply a byte fetched by DMC DMA. May set the DMC interrupt flag.
+    pub fn supply_dmc_byte(&mut self, byte: u8) {
+        if self.dmc.supply_dma_byte(byte) {
+            self.dmc_interrupt = true;
+        }
     }
 
     pub fn flush(&mut self) {
@@ -684,8 +843,17 @@ impl<D: AudioDriver> Apu<D> {
             0x400C => self.noise.write_envelope(NoiseEnvelop::from_bits(value)),
             0x400E => self.noise.write_period(NoisePeriod::from_bits(value)),
             0x400F => self.noise.write_length(NoiseLength::from_bits(value)),
-            0x4010 => self.dmc.irq_loop_freq = DmcIRQLoopFreq::from_bits(value),
-            0x4011 => self.dmc.load_counter = value & 0x7F,
+            0x4010 => {
+                self.dmc.irq_loop_freq = DmcIRQLoopFreq::from_bits(value);
+                // If IRQ flag cleared, clear the DMC interrupt
+                if !self.dmc.irq_loop_freq.irq_enabled() {
+                    self.dmc_interrupt = false;
+                }
+            }
+            0x4011 => {
+                self.dmc.load_counter = value & 0x7F;
+                self.dmc.output_level = value & 0x7F;
+            }
             0x4012 => self.dmc.sample_address = value,
             0x4013 => self.dmc.sample_length = value,
             0x4015 => self.set_control_flags(ControlFlags::from_bits(value)),
@@ -716,9 +884,8 @@ impl<D: AudioDriver> Apu<D> {
         self.noise.set_enabled(flags.noise_enabled());
         self.dmc.set_enabled(flags.dmc_enabled());
 
-        if !flags.dmc_enabled() {
-            self.dmc_interrupt = false;
-        }
+        // Always clear DMC interrupt on $4015 write
+        self.dmc_interrupt = false;
     }
 
     fn set_frame_counter(&mut self, counter: FrameCounter) {
@@ -872,7 +1039,7 @@ impl<D: AudioDriver> Apu<D> {
         let pulse_2 = self.pulse2.output() as f32;
         let triangle = self.triangle.output() as f32;
         let noise = self.noise.output() as f32;
-        let dmc = 0.0;
+        let dmc = self.dmc.output() as f32;
 
         let pulse_mix = if pulse_1 + pulse_2 == 0.0 {
             0.0

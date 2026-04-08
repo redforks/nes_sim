@@ -14,6 +14,7 @@ fn test_a_controller() {
     assert_eq!(a.read(), 0x40); // Down
     assert_eq!(a.read(), 0x41); // Left
     assert_eq!(a.read(), 0x40); // Right
+    assert_eq!(a.read(), 0x41); // Open bus/high after 8 reads
 
     a.release(Button::A);
     a.press(Button::B);
@@ -26,6 +27,20 @@ fn test_a_controller() {
     assert_eq!(a.read(), 0x40); // Down
     assert_eq!(a.read(), 0x41); // Left
     assert_eq!(a.read(), 0x40); // Right
+    assert_eq!(a.read(), 0x41); // Open bus/high after 8 reads
+}
+
+#[test]
+fn test_controller_reads_return_one_after_eight_buttons() {
+    let mut a = AController::new();
+    a.reset_for_read();
+
+    for _ in 0..8 {
+        assert_eq!(a.read(), 0x40);
+    }
+
+    assert_eq!(a.read(), 0x41);
+    assert_eq!(a.read(), 0x41);
 }
 
 #[test]

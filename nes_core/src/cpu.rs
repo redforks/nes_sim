@@ -28,6 +28,19 @@ struct OamDmaState {
     dma_started_at: usize,
 }
 
+/// DMC DMA state machine. Models the cycle-accurate behaviour where
+/// DMC halt/dummy phases are absorbed by OAM DMA cycles, and only
+/// the actual DMC read (+ alignment) adds extra time.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum DmcDmaPhase {
+    /// First active phase: halt cycle.
+    Halt,
+    /// Second phase: dummy read cycle.
+    Dummy,
+    /// Both halt+dummy consumed. DMC will read on the next get (even) cycle.
+    Ready,
+}
+
 pub struct Cpu<M: Mcu> {
     pub a: u8,
     pub x: u8,
@@ -65,6 +78,8 @@ pub struct Cpu<M: Mcu> {
     post_dma_irq_defer: Option<usize>,
     oam_dma_pending: bool,
     oam_dma: Option<OamDmaState>,
+    /// DMC DMA state machine – `None` when no DMC DMA is in progress.
+    dmc_dma: Option<DmcDmaPhase>,
     mode: CpuMode,
 
     microcode_queue: ArrayDeque<Microcode, 8>,
@@ -98,6 +113,7 @@ impl<M: Mcu> Cpu<M> {
             post_dma_irq_defer: None,
             oam_dma_pending: false,
             oam_dma: None,
+            dmc_dma: None,
         };
         r.reset();
         r
@@ -127,6 +143,7 @@ impl<M: Mcu> Cpu<M> {
         self.post_dma_irq_defer = None;
         self.oam_dma_pending = false;
         self.oam_dma = None;
+        self.dmc_dma = None;
         self.mode = CpuMode::Normal;
         self.sp = self.sp.wrapping_sub(3);
 
@@ -173,6 +190,20 @@ impl<M: Mcu> Cpu<M> {
         self.oam_dma_pending = true;
     }
 
+    /// Request a DMC DMA stall. The actual byte has already been fetched
+    /// by the MCU; this just models the CPU stall cycles.
+    pub fn request_dmc_dma(&mut self) {
+        // Start the DMC DMA state machine.  The halt + dummy phases
+        // will be absorbed by whatever cycles are currently running
+        // (OAM DMA or normal CPU).  Only the actual DMC read cycle
+        // (and possibly an alignment cycle) add extra time.
+        // The actual sample address is supplied by the MCU and latched on the
+        // next CPU tick before the state machine advances.
+        if self.dmc_dma.is_none() {
+            self.dmc_dma = Some(DmcDmaPhase::Halt);
+        }
+    }
+
     /// Return true if just execute current instruction
     pub fn tick<P: Plugin<M>>(&mut self, plugin: &mut P) -> (ExecuteResult, bool) {
         self.cycles = self.cycles.wrapping_add(1);
@@ -181,6 +212,54 @@ impl<M: Mcu> Cpu<M> {
             return (ExecuteResult::Continue, false);
         }
 
+        // CPU cycle number (incremented every 3 PPU ticks).
+        let cpu_cycle = self.cycles / 3;
+        // Get cycle = even CPU cycle (read bus), put cycle = odd (write bus).
+        let is_get_cycle = cpu_cycle % 2 == 0;
+
+        // ── Advance DMC DMA state machine ──
+        // During OAM DMA the halt & dummy phases are "absorbed" — they
+        // advance without costing extra cycles because OAM DMA keeps
+        // running.  Outside OAM DMA the halt & dummy phases stall the
+        // CPU for one cycle each (matching Mesen behaviour).
+        if let Some(phase) = self.dmc_dma {
+            let in_oam_dma = self.oam_dma.is_some();
+
+            match phase {
+                DmcDmaPhase::Halt => {
+                    self.dmc_dma = Some(DmcDmaPhase::Dummy);
+                    if !in_oam_dma {
+                        // Outside OAM DMA: halt costs 1 CPU cycle.
+                        return (ExecuteResult::Continue, false);
+                    }
+                    // During OAM DMA: absorbed – fall through to OAM processing.
+                }
+                DmcDmaPhase::Dummy => {
+                    self.dmc_dma = Some(DmcDmaPhase::Ready);
+                    if !in_oam_dma {
+                        // Outside OAM DMA: dummy costs 1 CPU cycle.
+                        return (ExecuteResult::Continue, false);
+                    }
+                    // During OAM DMA: absorbed – fall through to OAM processing.
+                }
+                DmcDmaPhase::Ready => {
+                    if in_oam_dma && is_get_cycle {
+                        // Whether inside or outside OAM DMA, the DMC
+                        // read steals this cycle.  During OAM DMA the
+                        // OAM read is skipped and the next put cycle
+                        // becomes an alignment dummy.
+                        return (ExecuteResult::Continue, false);
+                    }
+                    // Outside OAM DMA, the pending DMC DMA is consumed by the
+                    // next CPU bus read helper (`read_byte`, `load_alu`, etc.),
+                    // which is the behavior the read4 tests care about.
+                    // During OAM DMA on a put cycle, DMC waits and OAM DMA
+                    // continues normally below.
+                }
+            }
+        }
+
+        // ── OAM DMA processing ──
         if let Some(mut dma) = self.oam_dma {
             if dma.startup_cycles > 0 {
                 dma.startup_cycles -= 1;
@@ -209,7 +288,6 @@ impl<M: Mcu> Cpu<M> {
 
         if self.oam_dma_pending {
             self.oam_dma_pending = false;
-            let cpu_cycle = self.cycles / 3;
             let startup_cycles = if cpu_cycle.is_multiple_of(2) { 1 } else { 2 };
             self.oam_dma = Some(OamDmaState {
                 startup_cycles,
@@ -366,6 +444,7 @@ impl<M: Mcu> Cpu<M> {
     }
 
     fn read_byte(&mut self, addr: u16) -> u8 {
+        self.maybe_perform_dmc_dma(addr);
         self.mcu.read(addr)
     }
 
@@ -376,6 +455,7 @@ impl<M: Mcu> Cpu<M> {
     fn inc_read_byte(&mut self) -> u8 {
         let addr = self.pc;
         self.inc_pc(1);
+        self.maybe_perform_dmc_dma(addr);
         self.mcu.read(addr)
     }
 
@@ -384,7 +464,9 @@ impl<M: Mcu> Cpu<M> {
     }
 
     fn read_word(&mut self, addr: u16) -> u16 {
+        self.maybe_perform_dmc_dma(addr);
         let low = self.mcu.read(addr) as u16;
+        self.maybe_perform_dmc_dma(addr.wrapping_add(1));
         let high = self.mcu.read(addr.wrapping_add(1)) as u16;
         (high << 8) | low
     }
@@ -394,8 +476,12 @@ impl<M: Mcu> Cpu<M> {
     }
 
     fn read_word_in_page(&mut self, page: u16, offset: u8) -> u16 {
-        let low = self.mcu.read(page | offset as u16) as u16;
-        let high = self.mcu.read(page | offset.wrapping_add(1) as u16) as u16;
+        let low_addr = page | offset as u16;
+        let high_addr = page | offset.wrapping_add(1) as u16;
+        self.maybe_perform_dmc_dma(low_addr);
+        let low = self.mcu.read(low_addr) as u16;
+        self.maybe_perform_dmc_dma(high_addr);
+        let high = self.mcu.read(high_addr) as u16;
         (high << 8) | low
     }
 
@@ -406,7 +492,20 @@ impl<M: Mcu> Cpu<M> {
 
     fn pop_stack(&mut self) -> u8 {
         self.sp = self.sp.wrapping_add(1);
-        self.mcu.read(0x100 + self.sp as u16)
+        let addr = 0x100 + self.sp as u16;
+        self.maybe_perform_dmc_dma(addr);
+        self.mcu.read(addr)
+    }
+
+    fn maybe_perform_dmc_dma(&mut self, cpu_read_addr: u16) {
+        if self.dmc_dma != Some(DmcDmaPhase::Ready) {
+            return;
+        }
+        if let Some(sample_addr) = self.mcu.take_dmc_dma_address() {
+            let byte = self.mcu.perform_dmc_dma_read(sample_addr, cpu_read_addr);
+            self.mcu.supply_dmc_dma_byte(byte);
+        }
+        self.dmc_dma = None;
     }
 
     pub fn peek_stack(&mut self) -> u8 {
@@ -439,6 +538,7 @@ impl<M: Mcu> Cpu<M> {
     }
 
     fn load_alu(&mut self) {
+        self.maybe_perform_dmc_dma(self.ab);
         self.alu = self.mcu.read(self.ab);
     }
 

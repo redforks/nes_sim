@@ -1,13 +1,13 @@
 use crate::{
-    ExecuteResult, Plugin,
     ines::INesFile,
     machine::Machine,
     nes::{
-        NesMcu,
         controller::Button,
         ppu::{VBLANK_SET_DOT, VBLANK_SET_SCANLINE},
+        NesMcu,
     },
     render::Render,
+    ExecuteResult, Plugin,
 };
 use std::fs;
 
@@ -80,6 +80,11 @@ where
 
         if self.cycles.is_multiple_of(3) {
             self.machine.mcu_mut().tick_apu();
+
+            // Check for DMC DMA request after APU tick
+            if self.machine.mcu_mut().take_dmc_dma_pending() {
+                self.machine.cpu_mut().request_dmc_dma();
+            }
         }
 
         let result = self.machine.tick();

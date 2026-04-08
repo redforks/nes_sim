@@ -93,6 +93,17 @@ sprite_overflow_tests:
     cargo run -p nes_cpu_test --release -- --quiet -f ../nes-test-roms/sprite_overflow_tests/4.Obscure.nes
     cargo run -p nes_cpu_test --release -- --quiet -f ../nes-test-roms/sprite_overflow_tests/5.Emulator.nes
 
+dmc_dma_during_read4:
+    cargo run -p nes_cpu_test --release -- --quiet -f ../nes-test-roms/dmc_dma_during_read4/dma_4016_read.nes
+    cargo run -p nes_cpu_test --release -- --quiet -f ../nes-test-roms/dmc_dma_during_read4/dma_2007_read.nes
+    cargo run -p nes_cpu_test --release -- --quiet -f ../nes-test-roms/dmc_dma_during_read4/dma_2007_write.nes
+    cargo run -p nes_cpu_test --release -- --quiet -f ../nes-test-roms/dmc_dma_during_read4/read_write_2007.nes
+    cargo run -p nes_cpu_test --release -- --quiet -f ../nes-test-roms/dmc_dma_during_read4/double_2007_read.nes
+
+sprdma_and_dmc_dma:
+    cargo run -p nes_cpu_test --release -- --quiet -f ../nes-test-roms/sprdma_and_dmc_dma/sprdma_and_dmc_dma.nes
+    cargo run -p nes_cpu_test --release -- --quiet -f ../nes-test-roms/sprdma_and_dmc_dma/sprdma_and_dmc_dma_512.nes
+
 [parallel]
 passed: unit-test cpu-test instr_misc instr_test-v5 instr_test-v3 nestest instr_timing ppu_vbl_nmi vbl_nmi_timing cpu_interrupts_v2 branch_timing_tests cpu_dummy_reads cpu_dummy_writes cpu_exec_space cpu_reset cpu_timing_test6 oam_read oam_stress ppu_open_bus ppu_read_buffer sprite_hit_tests sprite_overflow_tests
 
