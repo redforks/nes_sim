@@ -28,17 +28,25 @@ struct OamDmaState {
     dma_started_at: usize,
 }
 
-/// DMC DMA state machine. Models the cycle-accurate behaviour where
-/// DMC halt/dummy phases are absorbed by OAM DMA cycles, and only
-/// the actual DMC read (+ alignment) adds extra time.
+/// DMC DMA state machine.
+///
+/// On real hardware the DMC DMA steals 3–4 CPU cycles depending on
+/// bus alignment.  Each phase is a pure CPU stall cycle.  During the
+/// DmaRead phase the sample byte is fetched and any side-effecting
+/// "phantom reads" ($4016/$4017, $2007) are modelled using the CPU's
+/// microcode queue and address bus value (`cpu.ab`).
+///
+/// During OAM DMA the stall phases are absorbed.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum DmcDmaPhase {
-    /// First active phase: halt cycle.
+    /// First stall cycle (CPU halted).
     Halt,
-    /// Second phase: dummy read cycle.
+    /// Bus alignment stall.
+    Align,
+    /// Dummy read stall.
     Dummy,
-    /// Both halt+dummy consumed. DMC will read on the next get (even) cycle.
-    Ready,
+    /// DMA read cycle — sample byte is fetched here.
+    DmaRead,
 }
 
 pub struct Cpu<M: Mcu> {
@@ -190,17 +198,20 @@ impl<M: Mcu> Cpu<M> {
         self.oam_dma_pending = true;
     }
 
-    /// Request a DMC DMA stall. The actual byte has already been fetched
-    /// by the MCU; this just models the CPU stall cycles.
-    pub fn request_dmc_dma(&mut self) {
-        // Start the DMC DMA state machine.  The halt + dummy phases
-        // will be absorbed by whatever cycles are currently running
-        // (OAM DMA or normal CPU).  Only the actual DMC read cycle
-        // (and possibly an alignment cycle) add extra time.
-        // The actual sample address is supplied by the MCU and latched on the
-        // next CPU tick before the state machine advances.
+    /// Request a DMC DMA stall.
+    /// `is_reload`: true for reload DMAs (output unit emptied buffer, 4 cycles),
+    ///              false for load DMAs ($4015 write with empty buffer, 3 cycles).
+    pub fn request_dmc_dma(&mut self, is_reload: bool) {
         if self.dmc_dma.is_none() {
-            self.dmc_dma = Some(DmcDmaPhase::Halt);
+            if is_reload {
+                // Reload DMA: scheduled on PUT cycle → 4 stall cycles
+                // Halt + Align + Dummy + DmaRead
+                self.dmc_dma = Some(DmcDmaPhase::Halt);
+            } else {
+                // Load DMA: scheduled on GET cycle → 3 stall cycles
+                // Halt + Dummy + DmaRead (skip Align)
+                self.dmc_dma = Some(DmcDmaPhase::Align);
+            }
         }
     }
 
@@ -218,43 +229,38 @@ impl<M: Mcu> Cpu<M> {
         let is_get_cycle = cpu_cycle % 2 == 0;
 
         // ── Advance DMC DMA state machine ──
-        // During OAM DMA the halt & dummy phases are "absorbed" — they
-        // advance without costing extra cycles because OAM DMA keeps
-        // running.  Outside OAM DMA the halt & dummy phases stall the
-        // CPU for one cycle each (matching Mesen behaviour).
+        // Each phase is a pure CPU stall cycle (outside OAM DMA).
+        // During OAM DMA the phases are absorbed.
         if let Some(phase) = self.dmc_dma {
             let in_oam_dma = self.oam_dma.is_some();
 
             match phase {
                 DmcDmaPhase::Halt => {
+                    self.dmc_dma = Some(DmcDmaPhase::Align);
+                    if !in_oam_dma {
+                        return (ExecuteResult::Continue, false);
+                    }
+                }
+                DmcDmaPhase::Align => {
                     self.dmc_dma = Some(DmcDmaPhase::Dummy);
                     if !in_oam_dma {
-                        // Outside OAM DMA: halt costs 1 CPU cycle.
                         return (ExecuteResult::Continue, false);
                     }
-                    // During OAM DMA: absorbed – fall through to OAM processing.
                 }
                 DmcDmaPhase::Dummy => {
-                    self.dmc_dma = Some(DmcDmaPhase::Ready);
+                    self.dmc_dma = Some(DmcDmaPhase::DmaRead);
                     if !in_oam_dma {
-                        // Outside OAM DMA: dummy costs 1 CPU cycle.
                         return (ExecuteResult::Continue, false);
                     }
-                    // During OAM DMA: absorbed – fall through to OAM processing.
                 }
-                DmcDmaPhase::Ready => {
+                DmcDmaPhase::DmaRead => {
                     if in_oam_dma && is_get_cycle {
-                        // Whether inside or outside OAM DMA, the DMC
-                        // read steals this cycle.  During OAM DMA the
-                        // OAM read is skipped and the next put cycle
-                        // becomes an alignment dummy.
                         return (ExecuteResult::Continue, false);
                     }
-                    // Outside OAM DMA, the pending DMC DMA is consumed by the
-                    // next CPU bus read helper (`read_byte`, `load_alu`, etc.),
-                    // which is the behavior the read4 tests care about.
-                    // During OAM DMA on a put cycle, DMC waits and OAM DMA
-                    // continues normally below.
+                    if !in_oam_dma {
+                        self.perform_dmc_dma_on_stall();
+                        return (ExecuteResult::Continue, false);
+                    }
                 }
             }
         }
@@ -497,12 +503,26 @@ impl<M: Mcu> Cpu<M> {
         self.mcu.read(addr)
     }
 
-    fn maybe_perform_dmc_dma(&mut self, cpu_read_addr: u16) {
-        if self.dmc_dma != Some(DmcDmaPhase::Ready) {
-            return;
-        }
+    fn maybe_perform_dmc_dma(&mut self, _cpu_read_addr: u16) {
+        // With the 4-phase DMA model, the DMA is performed during the
+        // DmaRead stall cycle (perform_dmc_dma_on_stall), not here.
+        // This method is kept as a no-op for API compatibility.
+    }
+
+    /// Perform the DMC DMA read during a dedicated stall cycle.
+    /// Uses the CPU's microcode queue and `self.ab` to detect phantom-read
+    /// side effects: on real hardware the CPU's address bus holds the
+    /// address of whatever memory operation it was about to perform when
+    /// it was halted.
+    fn perform_dmc_dma_on_stall(&mut self) {
         if let Some(sample_addr) = self.mcu.take_dmc_dma_address() {
-            let byte = self.mcu.perform_dmc_dma_read(sample_addr, cpu_read_addr);
+            let phantom_addr = match self.microcode_queue.front() {
+                Some(Microcode::LoadR(_) | Microcode::Bit | Microcode::Lax | Microcode::Las) => {
+                    self.ab
+                }
+                _ => self.pc,
+            };
+            let byte = self.mcu.perform_dmc_dma_read(sample_addr, phantom_addr);
             self.mcu.supply_dmc_dma_byte(byte);
         }
         self.dmc_dma = None;

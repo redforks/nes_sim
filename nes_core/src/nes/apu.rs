@@ -554,7 +554,6 @@ impl Default for DmcState {
 
 impl DmcState {
     /// Called when $4015 write sets/clears bit 4.
-    /// Returns true if a DMC IRQ should be cleared.
     fn set_enabled(&mut self, enabled: bool) {
         if !enabled {
             self.bytes_remaining = 0;
@@ -577,15 +576,6 @@ impl DmcState {
     /// Tick the DMC timer. Called every CPU cycle.
     /// Returns true if a DMA read should be initiated.
     fn tick(&mut self) -> bool {
-        // Check if we need to initiate a DMA read before clocking the timer.
-        // The memory reader fills the sample buffer as soon as it becomes empty
-        // and bytes_remaining > 0.
-        let need_dma =
-            self.sample_buffer.is_none() && self.bytes_remaining > 0 && !self.dma_pending;
-        if need_dma {
-            self.dma_pending = true;
-        }
-
         // Timer counts down every CPU cycle
         if self.timer_counter > 0 {
             self.timer_counter -= 1;
@@ -596,6 +586,21 @@ impl DmcState {
             self.clock_output_unit();
         }
 
+        // Check if we need to initiate a DMA read AFTER clocking the timer,
+        // so that a freshly-emptied sample buffer (by clock_output_unit above)
+        // is detected on the same cycle rather than 1 cycle late.
+        self.check_dma_needed()
+    }
+
+    /// Check if a DMA read is needed (sample buffer empty, bytes remaining > 0).
+    /// This is separated from `tick()` so it can also be called after CPU writes
+    /// to $4015 to detect immediately-needed DMAs.
+    fn check_dma_needed(&mut self) -> bool {
+        let need_dma =
+            self.sample_buffer.is_none() && self.bytes_remaining > 0 && !self.dma_pending;
+        if need_dma {
+            self.dma_pending = true;
+        }
         need_dma
     }
 
@@ -687,8 +692,10 @@ pub struct Apu<D: AudioDriver = ()> {
     /// synchronous $4015 reads.
     post_wrap_irq_pending: bool,
     dmc_interrupt: bool,
-    /// Address for pending DMC DMA read, set by tick when buffer needs filling.
-    dmc_dma_request: Option<u16>,
+    /// Pending DMC DMA request: (address, is_reload).
+    /// is_reload = true for reload DMAs (output unit emptied buffer, 4 cycles),
+    /// false for load DMAs ($4015 write with empty buffer, 3 cycles).
+    dmc_dma_request: Option<(u16, bool)>,
     dc_last_input: f32,
     dc_last_output: f32,
 }
@@ -752,8 +759,8 @@ impl<D: AudioDriver> Apu<D> {
 
         // Tick DMC timer every CPU cycle
         if self.dmc.tick() {
-            // DMC requests a DMA read
-            self.dmc_dma_request = Some(self.dmc.current_address);
+            // DMC requests a reload DMA read (output unit emptied buffer)
+            self.dmc_dma_request = Some((self.dmc.current_address, true));
         }
 
         if let Some(delay) = &mut self.frame_counter_write_delay {
@@ -775,8 +782,9 @@ impl<D: AudioDriver> Apu<D> {
         self.frame_interrupt || self.dmc_interrupt
     }
 
-    /// Take the pending DMC DMA request address, if any.
-    pub fn take_dmc_dma_request(&mut self) -> Option<u16> {
+    /// Take the pending DMC DMA request, if any.
+    /// Returns (address, is_reload).
+    pub fn take_dmc_dma_request(&mut self) -> Option<(u16, bool)> {
         self.dmc_dma_request.take()
     }
 
@@ -784,6 +792,19 @@ impl<D: AudioDriver> Apu<D> {
     pub fn supply_dmc_byte(&mut self, byte: u8) {
         if self.dmc.supply_dma_byte(byte) {
             self.dmc_interrupt = true;
+        }
+    }
+
+    /// Re-check if DMC DMA is needed after a CPU write to $4015.
+    /// On real hardware the write and DMA check happen simultaneously,
+    /// but in our sequential model the APU tick (with DMA check) runs
+    /// before the CPU write. This extra check catches the case where
+    /// `sta $4015` enables DMC with an empty buffer, which should
+    /// trigger an immediate DMA on the same cycle.
+    pub fn recheck_dmc_dma(&mut self) {
+        if self.dmc_dma_request.is_none() && self.dmc.check_dma_needed() {
+            // Load DMA (triggered by $4015 write, not output unit): is_reload = false
+            self.dmc_dma_request = Some((self.dmc.current_address, false));
         }
     }
 

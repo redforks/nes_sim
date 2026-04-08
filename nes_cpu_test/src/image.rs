@@ -2,11 +2,11 @@ use crate::plugin::{ExitTestPlugin, NesReportPlugin, ReportNesTestResult, Timeou
 
 use super::plugin::{CompositePlugin, Console, MonitorTestStatus, NametableConsole, ReportPlugin};
 use super::plugin::{DetectDeadLoop, ImageExit, MaxInstructions};
-use nes_core::Plugin;
 use nes_core::ines::INesFile;
 use nes_core::machine::Machine;
 use nes_core::mcu::RamMcu;
 use nes_core::nes_machine::NesMachine;
+use nes_core::Plugin;
 use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
@@ -100,7 +100,7 @@ impl Image {
                 .is_some_and(|f| f == "dma_2007_read.nes")
             {
                 plugins.push(Box::new(NametableConsole::with_magic_success_word(
-                    "498C5C5F",
+                    "159A7A8F",
                 )));
                 plugins.push(Box::new(Timeout::new(Duration::from_secs(5))));
             } else {
