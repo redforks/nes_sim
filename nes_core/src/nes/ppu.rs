@@ -160,6 +160,14 @@ impl CachedSprite {
     }
 }
 
+fn normalize_oam_byte(addr: u8, value: u8) -> u8 {
+    if addr & 0x03 == 0x02 {
+        value & 0xE3
+    } else {
+        value
+    }
+}
+
 struct ScanlineCache {
     scanline: u8,
     dirty: bool,
@@ -457,7 +465,9 @@ impl<R: Render> Ppu<R> {
     }
 
     pub fn oam_dma(&mut self, vals: &[u8; 256]) {
-        self.oam_data.copy_from_slice(vals);
+        for (addr, value) in vals.iter().copied().enumerate() {
+            self.oam_data[addr] = normalize_oam_byte(addr as u8, value);
+        }
         self.scanline_cache.dirty = true;
     }
 
@@ -602,7 +612,7 @@ impl<R: Render> Ppu<R> {
             // OAMDATA
             0x2004 => {
                 let addr = self.oam_addr as usize;
-                self.oam_data[addr] = value;
+                self.oam_data[addr] = normalize_oam_byte(self.oam_addr, value);
                 self.oam_addr = self.oam_addr.wrapping_add(1);
                 self.scanline_cache.dirty = true;
             }
