@@ -614,8 +614,8 @@ const fn build_opcode_table() -> [ArrayVec<[Microcode; 7]>; 256] {
     r[BRK as usize] = microcode_arr!(
         SkipImmediate,
         Nop,
-        Nop,
-        PushPc,
+        PushPcH,
+        PushPcL,
         PushStatus {
             break_flag: true,
             set_disable_interrupt: true,
@@ -1567,8 +1567,6 @@ pub enum Microcode {
     Plp,
     /// Pop pc register from stack, it is actually two cycles, append Nop before this Microcode
     PopPc,
-    /// Increment pc register by delta,
-    IncPc(i8),
     /// Push register A to stack
     Pha,
     /// Pop value from stack to register A
@@ -2067,7 +2065,6 @@ impl Microcode {
             Self::BranchRelative(branch_test) => Self::branch_relative(cpu, branch_test),
             Self::Kill => cpu.halt(),
 
-            Self::IncPc(delta) => cpu.inc_pc(delta),
             Self::LoadIrqAddress => cpu.load_irq_address(),
             Self::LoadNmiPcL => {
                 cpu.pc = cpu.read_byte(0xFFFA) as u16;
