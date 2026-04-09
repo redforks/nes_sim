@@ -1586,6 +1586,9 @@ pub enum Microcode {
     /// Only reset can restore the CPU from this state
     #[default]
     Kill,
+
+    LoadResetPcL,
+    LoadResetPcH,
 }
 
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]
@@ -2081,6 +2084,13 @@ impl Microcode {
             Self::PopPc => cpu.pop_pc(),
             Self::Pla => cpu.pla(),
             Self::Pha => cpu.pha(),
+
+            Self::LoadResetPcL => {
+                cpu.pc = cpu.read_byte(0xFFFC) as u16;
+            }
+            Self::LoadResetPcH => {
+                cpu.pc |= (cpu.read_byte(0xFFFD) as u16) << 8;
+            }
         }
     }
 

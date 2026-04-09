@@ -30,7 +30,7 @@ impl<P: Plugin<M>, M: Mcu> Machine<P, M> {
     }
 
     pub fn set_pc(&mut self, pc: u16) {
-        self.cpu.pc = pc;
+        self.cpu.set_pc(pc);
     }
 
     pub fn mcu(&self) -> &M {

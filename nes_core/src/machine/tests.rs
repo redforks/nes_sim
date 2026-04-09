@@ -25,12 +25,27 @@ fn test_set_pc() {
 }
 
 #[test]
+fn test_set_pc_drains_pending_reset_microcodes() {
+    let mcu = MockMcu::new();
+    let mut machine = Machine::new(mcu);
+
+    machine.reset();
+    machine.set_pc(0x5678);
+
+    assert_eq!(machine.cpu.pc, 0x5678);
+}
+
+#[test]
 fn test_reset() {
     let mcu = MockMcu::new();
     let mut machine = Machine::new(mcu);
 
     machine.set_pc(0x5678);
     machine.reset();
+    // Reset enqueues microcodes that load the reset vector; run them to apply
+    let mut plugin = EmptyPlugin::<MockMcu>::new();
+    // Tick until the CPU reports the current instruction is finished
+    while !machine.cpu_mut().tick(&mut plugin).1 {}
     // Reset reads PC from 0xFFFC
     assert_eq!(machine.cpu.pc, 0);
 }

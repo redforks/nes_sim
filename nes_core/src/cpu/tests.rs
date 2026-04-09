@@ -18,9 +18,7 @@ fn create_cpu() -> Cpu<MockMcu> {
 fn execute_next(cpu: &mut Cpu<MockMcu>) {
     let mut plugin = EmptyPlugin::new();
 
-    while cpu.microcodes_len() > 0 {
-        cpu.tick(&mut plugin);
-    }
+    cpu.drain_microcodes(&mut plugin);
 
     while !cpu.tick(&mut plugin).1 {}
 }
@@ -248,6 +246,9 @@ fn test_reset() {
     cpu.sp = 0x80;
 
     cpu.reset();
+    // Run reset microcodes so the reset vector is actually loaded
+    let mut plugin = EmptyPlugin::new();
+    cpu.drain_microcodes(&mut plugin);
     // Reset reads PC from 0xFFFC (which is 0x0000 in MockMcu)
     assert_eq!(cpu.pc, 0);
     // Reset now adjusts SP by subtracting 3 from its current value
@@ -1976,6 +1977,10 @@ fn test_branch_cross_page_boundary() {
     // Load program at 0x100, test backward branch across page boundary
     let mcu = MockMcu::new().with_program(0x100, &[0x10, 0xFD]); // BPL $FD (branch back 3 bytes)
     let mut cpu = Cpu::new(mcu);
+    // Drain any reset microcodes enqueued by Cpu::new() before setting PC
+    let mut plugin = EmptyPlugin::new();
+    cpu.drain_microcodes(&mut plugin);
+
     cpu.pc = 0x100;
     cpu.set_flag(Flag::Negative, false);
 
@@ -1984,7 +1989,7 @@ fn test_branch_cross_page_boundary() {
     // PC starts at 0x100, reads 0x10 (PC becomes 0x101), reads 0xFD (PC becomes 0x102)
     // Offset is -3 (0xFD as signed byte)
     // Target = 0x102 + (-3) = 0xFF
-    assert_eq!(cpu.pc, 0xFF);
+    assert_eq!(cpu.pc, 0x00FF);
 }
 
 #[test]
@@ -2004,6 +2009,10 @@ fn test_branch_backward_max() {
     // Load program at 0x100
     let mcu = MockMcu::new().with_program(0x100, &[0x10, 0x80]); // BPL $80 (branch back 128 bytes)
     let mut cpu = Cpu::new(mcu);
+    // Drain reset microcodes before setting PC
+    let mut plugin = EmptyPlugin::new();
+    cpu.drain_microcodes(&mut plugin);
+
     cpu.pc = 0x100;
     cpu.set_flag(Flag::Negative, false);
 
@@ -2011,11 +2020,8 @@ fn test_branch_backward_max() {
 
     // PC after instruction = 0x102
     // Offset is -128 (0x80 as signed byte)
-    // Target = 0x102 + (-128) = 0x182... no wait that's wrong
-
-    // Let me recalculate: 0x80 as signed is -128
-    // Target = 0x102 - 128 = 0x82 (130 in decimal, since 0x102 = 258, 258 - 128 = 130 = 0x82)
-    assert_eq!(cpu.pc, 0x82);
+    // Target = 0x102 + (-128) = 0x0082
+    assert_eq!(cpu.pc, 0x0082);
 }
 
 // Additional opcode coverage

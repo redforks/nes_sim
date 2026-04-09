@@ -1,4 +1,4 @@
-use self::microcode::{opcode, Microcode};
+use self::microcode::{Microcode, opcode};
 use crate::mcu::Mcu;
 use arraydeque::ArrayDeque;
 
@@ -135,8 +135,25 @@ impl<M: Mcu> Cpu<M> {
         &mut self.mcu
     }
 
+    /// Drain all pending microcodes by ticking the CPU while the microcode queue
+    /// is non-empty. The provided `plugin` will be used for tick hooks.
+    pub fn drain_microcodes<P: Plugin<M>>(&mut self, plugin: &mut P) {
+        while !self.microcode_queue.is_empty() {
+            // Ignore execute result; we're only interested in running queued microcodes
+            let _ = self.tick(plugin);
+        }
+    }
+
+    /// Set CPU program counter, draining any pending microcodes (e.g. reset vector loads)
+    /// before applying the new PC. This ensures external callers can set PC without
+    /// being later overwritten by queued microcode operations.
+    pub fn set_pc(&mut self, pc: u16) {
+        let mut drain = EmptyPlugin::<M>::new();
+        self.drain_microcodes(&mut drain);
+        self.pc = pc;
+    }
+
     pub fn reset(&mut self) {
-        self.pc = self.read_word(0xFFFC);
         self.inner_set_flag(Flag::InterruptDisabled, true);
         self.inner_set_flag(Flag::NotUsed, true);
         self.irq_line = false;
@@ -162,8 +179,8 @@ impl<M: Mcu> Cpu<M> {
             Microcode::Nop,
             Microcode::Nop,
             Microcode::Nop,
-            Microcode::Nop,
-            Microcode::Nop,
+            Microcode::LoadResetPcL,
+            Microcode::LoadResetPcH,
         ]);
     }
 
@@ -881,7 +898,7 @@ impl<M: Mcu> Cpu<M> {
         self.microcode_queue.extend_back(microcodes.iter().copied());
     }
 
-    /// Return how many microcodes are in queue, used for plugin to know how many cycles left for current instruction
+    /// Return how many microcodes are in queue, used for draining pending reset/interrupt work.
     #[cfg(test)]
     fn microcodes_len(&self) -> usize {
         self.microcode_queue.len()
