@@ -77,7 +77,6 @@ pub struct Cpu<M: Mcu> {
     /// cycle.  This flag is set when such a branch completes, causing
     /// the next instruction-boundary IRQ check to be skipped.
     branch_irq_defer: bool,
-    irq_vector_is_nmi: bool,
     allow_late_irq_nmi_hijack: bool,
     /// Set to the DMA completion cycle when DMA ends without IRQ pending.
     /// While set, apply penultimate-cycle IRQ sampling: the IRQ must have been
@@ -91,6 +90,7 @@ pub struct Cpu<M: Mcu> {
     mode: CpuMode,
 
     microcode_queue: ArrayDeque<Microcode, 8>,
+    irq_hijacked: bool,
 }
 
 impl<M: Mcu> Cpu<M> {
@@ -116,12 +116,12 @@ impl<M: Mcu> Cpu<M> {
             nmi_requested_at: None,
             defer_nmi_poll: false,
             branch_irq_defer: false,
-            irq_vector_is_nmi: false,
             allow_late_irq_nmi_hijack: false,
             post_dma_irq_defer: None,
             oam_dma_pending: false,
             oam_dma: None,
             dmc_dma: None,
+            irq_hijacked: false,
         };
         r.reset();
         r
@@ -163,7 +163,6 @@ impl<M: Mcu> Cpu<M> {
         self.nmi_requested_at = None;
         self.defer_nmi_poll = false;
         self.branch_irq_defer = false;
-        self.irq_vector_is_nmi = false;
         self.allow_late_irq_nmi_hijack = false;
         self.post_dma_irq_defer = None;
         self.oam_dma_pending = false;
@@ -339,8 +338,8 @@ impl<M: Mcu> Cpu<M> {
                     self.mode = CpuMode::Nmi;
                     self.push_microcodes(&[
                         Microcode::Nop,
-                        Microcode::Nop,
-                        Microcode::PushPc,
+                        Microcode::PushPcH,
+                        Microcode::PushPcL,
                         Microcode::PushStatus {
                             set_disable_interrupt: true,
                             break_flag: false,
@@ -381,14 +380,14 @@ impl<M: Mcu> Cpu<M> {
                             self.post_dma_irq_defer = None;
                             self.push_microcodes(&[
                                 Microcode::Nop,
-                                Microcode::Nop,
-                                Microcode::PushPc,
+                                Microcode::PushPcH,
+                                Microcode::PushPcL,
                                 Microcode::PushStatus {
                                     set_disable_interrupt: true,
                                     break_flag: false,
                                 },
-                                Microcode::Nop,
-                                Microcode::LoadIrqAddress,
+                                Microcode::LoadIrqPcL,
+                                Microcode::LoadIrqPcH,
                             ]);
                             self.allow_late_irq_nmi_hijack = true;
                             Microcode::Nop
@@ -418,11 +417,6 @@ impl<M: Mcu> Cpu<M> {
         } else {
             (ExecuteResult::Continue, false)
         }
-    }
-
-    fn push_pc(&mut self) {
-        self.push_stack((self.pc >> 8) as u8);
-        self.push_stack(self.pc as u8);
     }
 
     fn pop_pc(&mut self) {
@@ -484,14 +478,6 @@ impl<M: Mcu> Cpu<M> {
 
     fn write_byte(&mut self, addr: u16, value: u8) {
         self.mcu.write(addr, value);
-    }
-
-    fn read_word(&mut self, addr: u16) -> u16 {
-        self.maybe_perform_dmc_dma(addr);
-        let low = self.mcu.read(addr) as u16;
-        self.maybe_perform_dmc_dma(addr.wrapping_add(1));
-        let high = self.mcu.read(addr.wrapping_add(1)) as u16;
-        (high << 8) | low
     }
 
     fn read_word_in_same_page(&mut self, addr: u16) -> u16 {
@@ -844,12 +830,6 @@ impl<M: Mcu> Cpu<M> {
         } else {
             self.status | Flag::NotUsed as u8
         });
-        if set_disable_interrupt && self.mode == CpuMode::Normal {
-            self.irq_vector_is_nmi = self.nmi_ready();
-            if self.irq_vector_is_nmi {
-                self.nmi_requested_at = None;
-            }
-        }
         if set_disable_interrupt {
             self.inner_set_flag(Flag::InterruptDisabled, true);
         }
@@ -915,25 +895,6 @@ impl<M: Mcu> Cpu<M> {
                 false,
                 "Microcode queue overflow, maybe some microcode is too long?"
             ),
-        }
-    }
-
-    fn load_irq_address(&mut self) {
-        if std::mem::take(&mut self.irq_vector_is_nmi)
-            || (std::mem::take(&mut self.allow_late_irq_nmi_hijack)
-                && self.mode == CpuMode::Normal
-                && self
-                    .nmi_requested_at
-                    .is_some_and(|cycles| self.cycles > cycles + 7))
-        {
-            self.irq_vector_is_nmi = false;
-            // hijacked by nmi
-            self.mode = CpuMode::Nmi;
-            self.inner_set_flag(Flag::InterruptDisabled, true);
-            self.pc = self.read_word(0xFFFA);
-        } else {
-            self.defer_nmi_poll = true;
-            self.pc = self.read_word(0xFFFE);
         }
     }
 

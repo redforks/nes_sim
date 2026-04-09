@@ -1,5 +1,5 @@
 use super::{Cpu, Flag, Register};
-use crate::mcu::Mcu;
+use crate::{cpu::CpuMode, mcu::Mcu};
 use tinyvec::ArrayVec;
 
 macro_rules! microcode_arr {
@@ -613,14 +613,14 @@ const fn build_opcode_table() -> [ArrayVec<[Microcode; 7]>; 256] {
     r[KIL12 as usize] = microcode_arr!(Kill);
     r[BRK as usize] = microcode_arr!(
         SkipImmediate,
-        Nop,
         PushPcH,
         PushPcL,
         PushStatus {
             break_flag: true,
             set_disable_interrupt: true,
         },
-        LoadIrqAddress
+        LoadIrqPcL,
+        LoadIrqPcH
     );
     r[SBC_IMMEDIATE as usize] = microcode_arr!(SbcImmediate);
     r[USBC as usize] = microcode_arr!(SbcImmediate);
@@ -1550,8 +1550,6 @@ pub enum Microcode {
     /// If BranchTest is true, pc += offset, push one Noc if not cross page, push two Noc if cross page
     BranchRelative(BranchTest),
 
-    /// Push pc register into stack, it is actually two cycles, append Nop before this Microcode
-    PushPc,
     PushPcL,
     PushPcH,
     /// Push cpu status register into stack
@@ -1561,8 +1559,6 @@ pub enum Microcode {
         /// break flag of status to set
         break_flag: bool,
     },
-    /// Set cpu pc to irq handler address, it is actually two cycles, append Nop before this Microcode
-    LoadIrqAddress,
     /// Pop cpu status register from stack, used to return from interrupt handler, and PLP
     Plp,
     /// Pop pc register from stack, it is actually two cycles, append Nop before this Microcode
@@ -1584,6 +1580,8 @@ pub enum Microcode {
 
     /// Set pc to address_latch | absolute << 8
     LoadPcAbsoluteH,
+    LoadIrqPcL,
+    LoadIrqPcH,
 }
 
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]
@@ -2065,14 +2063,38 @@ impl Microcode {
             Self::BranchRelative(branch_test) => Self::branch_relative(cpu, branch_test),
             Self::Kill => cpu.halt(),
 
-            Self::LoadIrqAddress => cpu.load_irq_address(),
+            Self::LoadIrqPcH => {
+                let high = if cpu.irq_hijacked {
+                    // hijacked by nmi
+                    cpu.mode = CpuMode::Nmi;
+                    cpu.inner_set_flag(Flag::InterruptDisabled, true);
+                    cpu.read_byte(0xFFFB)
+                } else {
+                    cpu.defer_nmi_poll = true;
+                    cpu.read_byte(0xFFFF)
+                };
+                cpu.pc |= (high as u16) << 8;
+            }
+            Self::LoadIrqPcL => {
+                let low = if cpu.nmi_ready() {
+                    cpu.nmi_requested_at = None;
+                    cpu.irq_hijacked = true;
+                    // hijacked by nmi
+                    cpu.mode = CpuMode::Nmi;
+                    cpu.read_byte(0xFFFA)
+                } else {
+                    cpu.irq_hijacked = false;
+                    cpu.defer_nmi_poll = true;
+                    cpu.read_byte(0xFFFE)
+                };
+                cpu.pc = low as u16;
+            }
             Self::LoadNmiPcL => {
                 cpu.pc = cpu.read_byte(0xFFFA) as u16;
             }
             Self::LoadNmiPcH => {
                 cpu.pc |= (cpu.read_byte(0xFFFB) as u16) << 8;
             }
-            Self::PushPc => cpu.push_pc(),
             Self::PushPcH => {
                 cpu.push_stack((cpu.pc >> 8) as u8);
             }

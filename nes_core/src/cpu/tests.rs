@@ -81,25 +81,6 @@ fn test_read_write_byte() {
 }
 
 #[test]
-fn test_read_word() {
-    let mut cpu = create_cpu();
-    cpu.write_byte(0x1000, 0x34);
-    cpu.write_byte(0x1001, 0x12);
-    let word = cpu.read_word(0x1000);
-    assert_eq!(word, 0x1234);
-}
-
-#[test]
-fn test_read_word_little_endian() {
-    let mut cpu = create_cpu();
-    // Little endian: low byte at lower address, high byte at higher
-    cpu.write_byte(0x2000, 0xFF); // low byte
-    cpu.write_byte(0x2001, 0xEE); // high byte
-    let word = cpu.read_word(0x2000);
-    assert_eq!(word, 0xEEFF);
-}
-
-#[test]
 fn test_stack_push_pop() {
     let mut cpu = create_cpu();
     cpu.sp = 0xFF;
@@ -3182,65 +3163,6 @@ fn test_ready_nmi_is_taken_even_while_already_in_nmi_mode() {
 }
 
 #[test]
-fn test_irq_vector_load_ignores_too_recent_nmi() {
-    let mut mcu = MockMcu::new();
-    mcu.write(0xFFFA, 0x78);
-    mcu.write(0xFFFB, 0x56);
-    mcu.write(0xFFFE, 0x34);
-    mcu.write(0xFFFF, 0x12);
-    let mut cpu = Cpu::new(mcu);
-    cpu.mode = CpuMode::Normal;
-    cpu.cycles = 100;
-    cpu.nmi_requested_at = Some(94);
-
-    cpu.load_irq_address();
-
-    assert_eq!(cpu.pc, 0x1234);
-    assert_eq!(cpu.mode, CpuMode::Normal);
-    assert_eq!(cpu.nmi_requested_at, Some(94));
-}
-
-#[test]
-fn test_irq_vector_load_hijacks_when_nmi_is_ready() {
-    let mut mcu = MockMcu::new();
-    mcu.write(0xFFFA, 0x78);
-    mcu.write(0xFFFB, 0x56);
-    mcu.write(0xFFFE, 0x34);
-    mcu.write(0xFFFF, 0x12);
-    let mut cpu = Cpu::new(mcu);
-    cpu.mode = CpuMode::Normal;
-    cpu.cycles = 100;
-    cpu.nmi_requested_at = Some(93);
-    cpu.irq_vector_is_nmi = true;
-
-    cpu.load_irq_address();
-
-    assert_eq!(cpu.pc, 0x5678);
-    assert_eq!(cpu.mode, CpuMode::Nmi);
-    assert_eq!(cpu.nmi_requested_at, Some(93));
-}
-
-#[test]
-fn test_irq_vector_load_hijacks_when_nmi_becomes_ready_during_irq_entry() {
-    let mut mcu = MockMcu::new();
-    mcu.write(0xFFFA, 0x78);
-    mcu.write(0xFFFB, 0x56);
-    mcu.write(0xFFFE, 0x34);
-    mcu.write(0xFFFF, 0x12);
-    let mut cpu = Cpu::new(mcu);
-    cpu.mode = CpuMode::Normal;
-    cpu.cycles = 101;
-    cpu.nmi_requested_at = Some(93);
-    cpu.allow_late_irq_nmi_hijack = true;
-
-    cpu.load_irq_address();
-
-    assert_eq!(cpu.pc, 0x5678);
-    assert_eq!(cpu.mode, CpuMode::Nmi);
-    assert_eq!(cpu.nmi_requested_at, Some(93));
-}
-
-#[test]
 fn test_irq_entry_schedules_five_followup_microcodes() {
     let mut cpu = create_cpu();
     cpu.cycles = 2;
@@ -3252,19 +3174,6 @@ fn test_irq_entry_schedules_five_followup_microcodes() {
 
     assert!(!finished);
     assert_eq!(cpu.microcodes_len(), 6);
-}
-
-#[test]
-fn test_irq_vector_load_defers_next_nmi_poll_when_not_hijacked() {
-    let mut mcu = MockMcu::new();
-    mcu.write(0xFFFE, 0x34);
-    mcu.write(0xFFFF, 0x12);
-    let mut cpu = Cpu::new(mcu);
-
-    cpu.load_irq_address();
-
-    assert_eq!(cpu.pc, 0x1234);
-    assert!(cpu.defer_nmi_poll);
 }
 
 #[test]
@@ -3726,7 +3635,7 @@ fn test_rts_adds_one_to_pc() {
     let mut cpu = Cpu::new(mcu);
     cpu.sp = 0xFD;
     // Push PC value to stack
-    // Note: push_pc pushes high byte first, then low byte
+    // Push PC high byte then low byte onto stack
     cpu.push_stack(0x12); // PCH
     cpu.push_stack(0x33); // PCL
 
