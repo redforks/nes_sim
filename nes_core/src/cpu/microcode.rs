@@ -513,15 +513,7 @@ const fn build_opcode_table() -> [ArrayVec<[Microcode; 7]>; 256] {
         },
         JmpIndirect
     );
-    r[JSR as usize] = microcode_arr!(
-        AbsoluteL,
-        AbsoluteH {
-            load_into_alu: false
-        },
-        IncPc(-1),
-        PushPc,
-        SetPcToAb
-    );
+    r[JSR as usize] = microcode_arr!(AbsoluteL, Nop, PushPcH, PushPcL, LoadPcAbsoluteH);
     r[RTS as usize] = microcode_arr!(SkipImmediate, Nop, PopPc, Nop, SkipImmediate);
     r[RTI as usize] = microcode_arr!(SkipImmediate, Plp, Nop, PopPc, Nop);
     r[CLC as usize] = microcode_arr!(Clc);
@@ -1560,6 +1552,8 @@ pub enum Microcode {
 
     /// Push pc register into stack, it is actually two cycles, append Nop before this Microcode
     PushPc,
+    PushPcL,
+    PushPcH,
     /// Push cpu status register into stack
     PushStatus {
         /// after push status, set disable interrupt flag
@@ -1589,6 +1583,9 @@ pub enum Microcode {
     LoadResetPcH,
     LoadNmiPcL,
     LoadNmiPcH,
+
+    /// Set pc to address_latch | absolute << 8
+    LoadPcAbsoluteH,
 }
 
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]
@@ -2079,6 +2076,12 @@ impl Microcode {
                 cpu.pc |= (cpu.read_byte(0xFFFB) as u16) << 8;
             }
             Self::PushPc => cpu.push_pc(),
+            Self::PushPcH => {
+                cpu.push_stack((cpu.pc >> 8) as u8);
+            }
+            Self::PushPcL => {
+                cpu.push_stack((cpu.pc & 0xFF) as u8);
+            }
             Self::PushStatus {
                 set_disable_interrupt,
                 break_flag,
@@ -2094,6 +2097,9 @@ impl Microcode {
             Self::LoadResetPcH => {
                 cpu.pc |= (cpu.read_byte(0xFFFD) as u16) << 8;
             }
+            Self::LoadPcAbsoluteH => {
+                cpu.pc = (cpu.address_latch & 0xff) | ((cpu.inc_read_byte() as u16) << 8);
+            }
         }
     }
 
@@ -2104,7 +2110,7 @@ impl Microcode {
     }
 
     fn load_register<M: Mcu>(cpu: &mut Cpu<M>, r: Register) {
-        let value = cpu.read_byte(cpu.ab);
+        let value = cpu.read_byte(cpu.address_latch);
         cpu.update_negative_flag(value);
         cpu.update_zero_flag(value);
         match r {
@@ -2122,9 +2128,9 @@ impl Microcode {
 
     fn store_register<M: Mcu>(cpu: &mut Cpu<M>, r: Register) {
         match r {
-            Register::A => cpu.write_byte(cpu.ab, cpu.a),
-            Register::X => cpu.write_byte(cpu.ab, cpu.x),
-            Register::Y => cpu.write_byte(cpu.ab, cpu.y),
+            Register::A => cpu.write_byte(cpu.address_latch, cpu.a),
+            Register::X => cpu.write_byte(cpu.address_latch, cpu.x),
+            Register::Y => cpu.write_byte(cpu.address_latch, cpu.y),
         }
     }
 
@@ -2203,32 +2209,32 @@ impl Microcode {
 
     fn zero_page<M: Mcu>(cpu: &mut Cpu<M>, load_into_alu: bool, save_alu: bool) {
         let addr = cpu.inc_read_byte();
-        cpu.ab = addr as u16;
+        cpu.address_latch = addr as u16;
         if load_into_alu {
             cpu.load_alu();
         }
         if save_alu {
-            cpu.write_byte(cpu.ab, cpu.alu);
+            cpu.write_byte(cpu.address_latch, cpu.alu);
         }
     }
 
     fn zero_page_indexed_x<M: Mcu>(cpu: &mut Cpu<M>, load_into_alu: bool, save_alu: bool) {
-        cpu.ab = cpu.abl().wrapping_add(cpu.x) as u16;
+        cpu.address_latch = cpu.abl().wrapping_add(cpu.x) as u16;
         if load_into_alu {
             cpu.load_alu();
         }
         if save_alu {
-            cpu.write_byte(cpu.ab, cpu.alu);
+            cpu.write_byte(cpu.address_latch, cpu.alu);
         }
     }
 
     fn zero_page_indexed_y<M: Mcu>(cpu: &mut Cpu<M>, load_into_alu: bool, save_alu: bool) {
-        cpu.ab = cpu.abl().wrapping_add(cpu.y) as u16;
+        cpu.address_latch = cpu.abl().wrapping_add(cpu.y) as u16;
         if load_into_alu {
             cpu.load_alu();
         }
         if save_alu {
-            cpu.write_byte(cpu.ab, cpu.alu);
+            cpu.write_byte(cpu.address_latch, cpu.alu);
         }
     }
 
@@ -2283,7 +2289,7 @@ impl Microcode {
     fn absolute_indexed_x<M: Mcu>(cpu: &mut Cpu<M>, oops: bool, load_into_alu: bool) {
         let abh = cpu.inc_read_byte();
         cpu.set_abh(abh);
-        cpu.ab = cpu.ab.wrapping_add(cpu.x as u16);
+        cpu.address_latch = cpu.address_latch.wrapping_add(cpu.x as u16);
         let crossed_page = abh != cpu.abh();
         let dummy_addr = (u16::from(abh) << 8) | u16::from(cpu.abl());
         if !oops || crossed_page {
@@ -2305,7 +2311,7 @@ impl Microcode {
 
     fn absolute_indexed_y_without_high<M: Mcu>(cpu: &mut Cpu<M>, oops: bool, load_into_alu: bool) {
         let abh = cpu.abh();
-        cpu.ab = cpu.ab.wrapping_add(cpu.y as u16);
+        cpu.address_latch = cpu.address_latch.wrapping_add(cpu.y as u16);
         let crossed_page = abh != cpu.abh();
         let dummy_addr = (u16::from(abh) << 8) | u16::from(cpu.abl());
         if !oops || crossed_page {
@@ -2320,13 +2326,13 @@ impl Microcode {
     }
 
     fn store_alu<M: Mcu>(cpu: &mut Cpu<M>) {
-        cpu.write_byte(cpu.ab, cpu.alu);
+        cpu.write_byte(cpu.address_latch, cpu.alu);
     }
 
     fn indexed<M: Mcu>(cpu: &mut Cpu<M>, load_into_alu: bool) {
-        cpu.ab = cpu.read_word_in_same_page(cpu.ab);
+        cpu.address_latch = cpu.read_word_in_same_page(cpu.address_latch);
         if load_into_alu {
-            cpu.alu = cpu.read_byte(cpu.ab);
+            cpu.alu = cpu.read_byte(cpu.address_latch);
         }
     }
 

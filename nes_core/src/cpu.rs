@@ -60,7 +60,7 @@ pub struct Cpu<M: Mcu> {
     mcu: M,
 
     pub opcode: u8,
-    pub ab: u16,
+    pub address_latch: u16,
     pub alu: u8,
 
     /// cpu irq line, true means irq is requested, map to Low level of cpu irq pin
@@ -105,7 +105,7 @@ impl<M: Mcu> Cpu<M> {
             cycles: 0,
             mcu,
             opcode: 0,
-            ab: 0,
+            address_latch: 0,
             alu: 0,
             irq_line: false,
             irq_requested_at: None,
@@ -535,7 +535,7 @@ impl<M: Mcu> Cpu<M> {
         if let Some(sample_addr) = self.mcu.take_dmc_dma_address() {
             let phantom_addr = match self.microcode_queue.front() {
                 Some(Microcode::LoadR(_) | Microcode::Bit | Microcode::Lax | Microcode::Las) => {
-                    self.ab
+                    self.address_latch
                 }
                 _ => self.pc,
             };
@@ -559,24 +559,24 @@ impl<M: Mcu> Cpu<M> {
     }
 
     fn abh(&self) -> u8 {
-        (self.ab >> 8) as u8
+        (self.address_latch >> 8) as u8
     }
 
     fn abl(&self) -> u8 {
-        (self.ab & 0xff) as u8
+        (self.address_latch & 0xff) as u8
     }
 
     fn set_abh(&mut self, v: u8) {
-        self.ab = (self.ab & 0x00ff) | ((v as u16) << 8);
+        self.address_latch = (self.address_latch & 0x00ff) | ((v as u16) << 8);
     }
 
     fn set_abl(&mut self, v: u8) {
-        self.ab = (self.ab & 0xff00) | v as u16;
+        self.address_latch = (self.address_latch & 0xff00) | v as u16;
     }
 
     fn load_alu(&mut self) {
-        self.maybe_perform_dmc_dma(self.ab);
-        self.alu = self.mcu.read(self.ab);
+        self.maybe_perform_dmc_dma(self.address_latch);
+        self.alu = self.mcu.read(self.address_latch);
     }
 
     fn adc(&mut self, val: u8) {
@@ -738,12 +738,12 @@ impl<M: Mcu> Cpu<M> {
     }
 
     fn sax(&mut self) {
-        self.write_byte(self.ab, self.a & self.x);
+        self.write_byte(self.address_latch, self.a & self.x);
     }
 
     fn dcp(&mut self) {
         let v = self.alu.wrapping_sub(1);
-        self.write_byte(self.ab, v);
+        self.write_byte(self.address_latch, v);
         let t = self.a.wrapping_sub(v);
         self.update_negative_flag(t);
         self.update_zero_flag(t);
@@ -752,21 +752,21 @@ impl<M: Mcu> Cpu<M> {
 
     fn isc(&mut self) {
         let v = self.alu.wrapping_add(1);
-        self.write_byte(self.ab, v);
+        self.write_byte(self.address_latch, v);
         self.alu = v;
         self.sbc();
     }
 
     fn inc(&mut self) {
         self.alu = self.alu.wrapping_add(1);
-        self.write_byte(self.ab, self.alu);
+        self.write_byte(self.address_latch, self.alu);
         self.update_negative_flag(self.alu);
         self.update_zero_flag(self.alu);
     }
 
     fn dec(&mut self) {
         self.alu = self.alu.wrapping_sub(1);
-        self.write_byte(self.ab, self.alu);
+        self.write_byte(self.address_latch, self.alu);
         self.update_negative_flag(self.alu);
         self.update_zero_flag(self.alu);
     }
@@ -774,7 +774,7 @@ impl<M: Mcu> Cpu<M> {
     fn rra(&mut self) {
         let carry = self.alu & 0x01 != 0;
         self.alu = (self.alu >> 1) | ((self.flag(Flag::Carry) as u8) << 7);
-        self.write_byte(self.ab, self.alu);
+        self.write_byte(self.address_latch, self.alu);
         self.inner_set_flag(Flag::Carry, carry);
         self.adc_alu();
     }
@@ -783,21 +783,21 @@ impl<M: Mcu> Cpu<M> {
         let new = (self.alu << 1) | (self.flag(Flag::Carry) as u8);
         self.inner_set_flag(Flag::Carry, self.alu & 0x80 != 0);
         self.alu = new;
-        self.write_byte(self.ab, self.alu);
+        self.write_byte(self.address_latch, self.alu);
         self.and();
     }
 
     fn slo(&mut self) {
         self.inner_set_flag(Flag::Carry, self.alu & 0x80 != 0);
         self.alu <<= 1;
-        self.write_byte(self.ab, self.alu);
+        self.write_byte(self.address_latch, self.alu);
         self.ora();
     }
 
     fn sre(&mut self) {
         self.inner_set_flag(Flag::Carry, self.alu & 0x01 != 0);
         self.alu >>= 1;
-        self.write_byte(self.ab, self.alu);
+        self.write_byte(self.address_latch, self.alu);
         self.eor();
     }
 
@@ -866,11 +866,11 @@ impl<M: Mcu> Cpu<M> {
     }
 
     fn set_pc_to_ab(&mut self) {
-        self.pc = self.ab;
+        self.pc = self.address_latch;
     }
 
     fn jmp_indirect(&mut self) {
-        self.pc = self.read_word_in_same_page(self.ab);
+        self.pc = self.read_word_in_same_page(self.address_latch);
     }
 
     fn and(&mut self) {
@@ -880,7 +880,7 @@ impl<M: Mcu> Cpu<M> {
     }
 
     fn bit(&mut self) {
-        let v = self.read_byte(self.ab);
+        let v = self.read_byte(self.address_latch);
         self.inner_set_flag(Flag::Negative, v & 0x80 != 0);
         self.inner_set_flag(Flag::Overflow, v & 0x40 != 0);
         self.update_zero_flag(self.a & v);
