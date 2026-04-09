@@ -345,8 +345,8 @@ impl<M: Mcu> Cpu<M> {
                             set_disable_interrupt: true,
                             break_flag: false,
                         },
-                        Microcode::Nop,
-                        Microcode::LoadNmiAddress,
+                        Microcode::LoadNmiPcL,
+                        Microcode::LoadNmiPcH,
                     ]);
                     Microcode::Nop
                 } else if self.irq_line

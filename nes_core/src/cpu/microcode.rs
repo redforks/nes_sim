@@ -117,9 +117,9 @@ macro_rules! microcode_arr {
 }
 
 const fn build_opcode_table() -> [ArrayVec<[Microcode; 7]>; 256] {
-    use opcode::*;
     use Microcode::*;
     use Register::*;
+    use opcode::*;
 
     let mut r = include!("init_microtable.inc.rs");
     r[AND_IMMEDIATE as usize] = microcode_arr!(AndImmediate);
@@ -1567,8 +1567,6 @@ pub enum Microcode {
         /// break flag of status to set
         break_flag: bool,
     },
-    /// Set cpu pc to nmi handler address, it is actually two cycles, append Nop before this Microcode
-    LoadNmiAddress,
     /// Set cpu pc to irq handler address, it is actually two cycles, append Nop before this Microcode
     LoadIrqAddress,
     /// Pop cpu status register from stack, used to return from interrupt handler, and PLP
@@ -1589,6 +1587,8 @@ pub enum Microcode {
 
     LoadResetPcL,
     LoadResetPcH,
+    LoadNmiPcL,
+    LoadNmiPcH,
 }
 
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]
@@ -2072,8 +2072,11 @@ impl Microcode {
 
             Self::IncPc(delta) => cpu.inc_pc(delta),
             Self::LoadIrqAddress => cpu.load_irq_address(),
-            Self::LoadNmiAddress => {
-                cpu.pc = cpu.read_word(0xFFFA);
+            Self::LoadNmiPcL => {
+                cpu.pc = cpu.read_byte(0xFFFA) as u16;
+            }
+            Self::LoadNmiPcH => {
+                cpu.pc |= (cpu.read_byte(0xFFFB) as u16) << 8;
             }
             Self::PushPc => cpu.push_pc(),
             Self::PushStatus {
