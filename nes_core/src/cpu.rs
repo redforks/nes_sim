@@ -59,9 +59,10 @@ pub struct Cpu<M: Mcu> {
     cycles: usize,
     mcu: M,
 
-    pub opcode: u8,
-    pub address_latch: u16,
-    pub alu: u8,
+    opcode: u8,
+    address_latch: u16,
+    indexed_address_latch: u8, // save low byte during indexed addressing
+    alu: u8,
 
     /// cpu irq line, true means irq is requested, map to Low level of cpu irq pin
     irq_line: bool,
@@ -106,6 +107,7 @@ impl<M: Mcu> Cpu<M> {
             mcu,
             opcode: 0,
             address_latch: 0,
+            indexed_address_latch: 0,
             alu: 0,
             irq_line: false,
             irq_requested_at: None,

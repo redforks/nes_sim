@@ -151,10 +151,9 @@ const fn build_opcode_table() -> [ArrayVec<[Microcode; 7]>; 256] {
     r[AND_INDEXED_INDIRECT as usize] = microcode_arr!(
         zero_page_addr(),
         zero_page_x_addr(),
-        Indexed {
-            load_into_alu: true
-        },
-        Nop,
+        IndexedL,
+        IndexedH,
+        LoadIntoAlu,
         And
     );
     r[AND_INDIRECT_INDEXED as usize] = microcode_arr!(
@@ -1434,8 +1433,13 @@ pub enum Microcode {
     Indexed {
         load_into_alu: bool,
     },
+    IndexedL,
+    IndexedH,
     /// Read immediate value from instruction data stream, but do not use it
     SkipImmediate,
+
+    /// Load byte into alu at memory ab
+    LoadIntoAlu,
 
     /// Take immediate value from instruction data stream, add to accumulator with carry
     AdcImmediate,
@@ -2006,6 +2010,15 @@ impl Microcode {
                 cpu.inc_read_byte();
             }
             Self::Indexed { load_into_alu } => Self::indexed(cpu, load_into_alu),
+            Self::IndexedL => {
+                cpu.indexed_address_latch = cpu.read_byte(cpu.address_latch);
+            }
+            Self::IndexedH => {
+                let page = cpu.address_latch & 0xFF00;
+                let addr = page | (cpu.address_latch as u8 & 0xFF).wrapping_add(1) as u16;
+                cpu.address_latch =
+                    cpu.indexed_address_latch as u16 | ((cpu.read_byte(addr) as u16) << 8);
+            }
             Self::AslAccumulator => Self::asl_accumulator(cpu),
             Self::DummyWriteAsl => Self::dummy_write_asl(cpu),
             Self::LsrAccumulator => Self::lsr_accumulator(cpu),
@@ -2118,6 +2131,9 @@ impl Microcode {
             }
             Self::LoadPcAbsoluteH => {
                 cpu.pc = (cpu.address_latch & 0xff) | ((cpu.inc_read_byte() as u16) << 8);
+            }
+            Self::LoadIntoAlu => {
+                cpu.alu = cpu.read_byte(cpu.address_latch);
             }
         }
     }
