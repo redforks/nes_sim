@@ -158,14 +158,9 @@ const fn build_opcode_table() -> [ArrayVec<[Microcode; 7]>; 256] {
     );
     r[AND_INDIRECT_INDEXED as usize] = microcode_arr!(
         zero_page_addr(),
-        Indexed {
-            load_into_alu: false
-        },
-        AbsoluteIndexedYWithoutHigh {
-            oops: true,
-            load_into_alu: true
-        },
-        And
+        IndexedL,
+        IndexedH,
+        AbsoluteIndexedYWithOp(AbsoluteIndexedYOp::And)
     );
     r[LDA_IMMEDIATE as usize] = microcode_arr!(LoadImmediateA);
     r[LDA_ZERO_PAGE as usize] = microcode_arr!(zero_page_addr(), LoadR(A));
@@ -1360,8 +1355,21 @@ const fn build_opcode_table() -> [ArrayVec<[Microcode; 7]>; 256] {
 
 const OPCODE_TABLE: [ArrayVec<[Microcode; 7]>; 256] = build_opcode_table();
 
+#[derive(Debug, Copy, Clone)]
+pub enum AbsoluteIndexedYOp {
+    And,
+}
+
+impl AbsoluteIndexedYOp {
+    fn exec<M: Mcu>(self, cpu: &mut Cpu<M>) {
+        match self {
+            AbsoluteIndexedYOp::And => cpu.and(),
+        }
+    }
+}
+
 /// Each Microcode instruction executed by the CPU in a single cycle
-#[derive(Debug, Clone, Copy, PartialEq, Default)]
+#[derive(Debug, Clone, Copy, Default)]
 pub enum Microcode {
     /// Fetch and decode next op code
     FetchAndDecode,
@@ -1426,6 +1434,8 @@ pub enum Microcode {
         oops: bool,
         load_into_alu: bool,
     },
+    /// fetch byte use absolute indexed y, doing and operation with register A
+    AbsoluteIndexedYWithOp(AbsoluteIndexedYOp),
     /// Do nothing, used in "oops" cycles of AbsoluteIndexed and Indirect Indexed addressing
     Nop,
     /// Load abl from memory at [ab], load abh from memory at [ab+1]
@@ -2003,6 +2013,7 @@ impl Microcode {
 
             Self::AndImmediate => Self::and_immediate(cpu),
             Self::And => cpu.and(),
+            Self::AbsoluteIndexedYWithOp(op) => Self::absolute_indexed_y_with_op(cpu, op),
             Self::Bit => cpu.bit(),
             Self::StoreAlu => Self::store_alu(cpu),
             Self::Nop => {}
@@ -2133,7 +2144,7 @@ impl Microcode {
                 cpu.pc = (cpu.address_latch & 0xff) | ((cpu.inc_read_byte() as u16) << 8);
             }
             Self::LoadIntoAlu => {
-                cpu.alu = cpu.read_byte(cpu.address_latch);
+                cpu.load_alu();
             }
         }
     }
@@ -2471,6 +2482,11 @@ impl Microcode {
                 cpu.branch_irq_defer = true;
             }
         }
+    }
+
+    fn absolute_indexed_y_with_op<M: Mcu>(cpu: &mut Cpu<M>, op: AbsoluteIndexedYOp) {
+        Self::absolute_indexed_y_without_high(cpu, true, true);
+        op.exec(cpu);
     }
 }
 

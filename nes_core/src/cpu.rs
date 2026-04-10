@@ -890,14 +890,18 @@ impl<M: Mcu> Cpu<M> {
         self.microcode_queue.pop_front()
     }
 
-    fn retain_cycle(&mut self) {
-        match self.microcode_queue.push_front(Microcode::Nop) {
+    fn push_microcode(&mut self, microcode: Microcode) {
+        match self.microcode_queue.push_front(microcode) {
             Ok(_) => (),
             Err(_) => debug_assert!(
                 false,
                 "Microcode queue overflow, maybe some microcode is too long?"
             ),
         }
+    }
+
+    fn retain_cycle(&mut self) {
+        self.push_microcode(Microcode::Nop);
     }
 
     /// Update cpu nmi signal line, may trigger nmi
