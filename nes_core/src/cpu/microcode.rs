@@ -160,7 +160,10 @@ const fn build_opcode_table() -> [ArrayVec<[Microcode; 7]>; 256] {
         zero_page_addr(),
         IndexedL,
         IndexedH,
-        AbsoluteIndexedYWithOp(AbsoluteIndexedYOp::And)
+        AbsoluteIndexedYWithOp {
+            op: AbsoluteIndexedYOp::And,
+            first_clock: true,
+        }
     );
     r[LDA_IMMEDIATE as usize] = microcode_arr!(LoadImmediateA);
     r[LDA_ZERO_PAGE as usize] = microcode_arr!(zero_page_addr(), LoadR(A));
@@ -1435,7 +1438,11 @@ pub enum Microcode {
         load_into_alu: bool,
     },
     /// fetch byte use absolute indexed y, doing and operation with register A
-    AbsoluteIndexedYWithOp(AbsoluteIndexedYOp),
+    AbsoluteIndexedYWithOp {
+        op: AbsoluteIndexedYOp,
+        /// if cross paged, push this Microcode with `first_clock` to be false
+        first_clock: bool,
+    },
     /// Do nothing, used in "oops" cycles of AbsoluteIndexed and Indirect Indexed addressing
     Nop,
     /// Load abl from memory at [ab], load abh from memory at [ab+1]
@@ -2013,7 +2020,9 @@ impl Microcode {
 
             Self::AndImmediate => Self::and_immediate(cpu),
             Self::And => cpu.and(),
-            Self::AbsoluteIndexedYWithOp(op) => Self::absolute_indexed_y_with_op(cpu, op),
+            Self::AbsoluteIndexedYWithOp { op, first_clock } => {
+                Self::absolute_indexed_y_with_op(cpu, op, first_clock)
+            }
             Self::Bit => cpu.bit(),
             Self::StoreAlu => Self::store_alu(cpu),
             Self::Nop => {}
@@ -2484,9 +2493,31 @@ impl Microcode {
         }
     }
 
-    fn absolute_indexed_y_with_op<M: Mcu>(cpu: &mut Cpu<M>, op: AbsoluteIndexedYOp) {
-        Self::absolute_indexed_y_without_high(cpu, true, true);
-        op.exec(cpu);
+    fn absolute_indexed_y_with_op<M: Mcu>(
+        cpu: &mut Cpu<M>,
+        op: AbsoluteIndexedYOp,
+        first_clock: bool,
+    ) {
+        if !first_clock {
+            cpu.load_alu();
+            op.exec(cpu);
+            return;
+        }
+
+        let abh = cpu.abh();
+        cpu.address_latch = cpu.address_latch.wrapping_add(cpu.y as u16);
+        let crossed_page = abh != cpu.abh();
+        let dummy_addr = (u16::from(abh) << 8) | u16::from(cpu.abl());
+        if crossed_page {
+            cpu.read_byte(dummy_addr);
+            cpu.push_microcode(Microcode::AbsoluteIndexedYWithOp {
+                op,
+                first_clock: false,
+            });
+        } else {
+            cpu.load_alu();
+            op.exec(cpu);
+        }
     }
 }
 
