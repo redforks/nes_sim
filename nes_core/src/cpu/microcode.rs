@@ -1331,11 +1331,8 @@ pub enum AbsoluteIndexedYOp {
     /// Read byte from address_latch into register A,
     LoadIntoA,
     LoadIntoX,
-    LoadIntoY,
     LoadIntoAlu,
     StoreA,
-    StoreX,
-    StoreY,
     Ora,
     Eor,
     Lax,
@@ -1357,11 +1354,8 @@ impl AbsoluteIndexedYOp {
             }
             AbsoluteIndexedYOp::LoadIntoA => Microcode::load_register(cpu, Register::A),
             AbsoluteIndexedYOp::LoadIntoX => Microcode::load_register(cpu, Register::X),
-            AbsoluteIndexedYOp::LoadIntoY => Microcode::load_register(cpu, Register::Y),
             AbsoluteIndexedYOp::LoadIntoAlu => Microcode::LoadIntoAlu.exec(cpu),
             AbsoluteIndexedYOp::StoreA => Microcode::store_register(cpu, Register::A),
-            AbsoluteIndexedYOp::StoreX => Microcode::store_register(cpu, Register::X),
-            AbsoluteIndexedYOp::StoreY => Microcode::store_register(cpu, Register::Y),
             AbsoluteIndexedYOp::Ora => Microcode::OraNew.exec(cpu),
             AbsoluteIndexedYOp::Eor => Microcode::EorNew.exec(cpu),
             AbsoluteIndexedYOp::Lax => Microcode::LaxNew.exec(cpu),
@@ -1437,15 +1431,6 @@ pub enum Microcode {
     ///
     /// Must after AbsoluteL
     AbsoluteIndexedX {
-        oops: bool,
-        load_into_alu: bool,
-    },
-    /// Take a byte from instruction data stream, set cpu abh field, add ab with
-    /// y register value, set cpu ab field, retain_cycle if the 8bit plus
-    /// operation overflows
-    ///
-    /// Must after AbsoluteL
-    AbsoluteIndexedY {
         oops: bool,
         load_into_alu: bool,
     },
@@ -1556,7 +1541,7 @@ pub enum Microcode {
     Rra,
     Slo,
     Sre,
-    Shx,
+
     Shy,
 
     SetPcToAb,
@@ -1619,9 +1604,6 @@ pub enum Microcode {
     LoadPcAbsoluteH,
     LoadIrqPcL,
     LoadIrqPcH,
-
-    /// Read memory from address_latch, but do nothing.
-    DummyRead,
 }
 
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]
@@ -2012,10 +1994,6 @@ impl Microcode {
                 oops,
                 load_into_alu,
             } => Self::absolute_indexed_x(cpu, oops, load_into_alu),
-            Self::AbsoluteIndexedY {
-                oops,
-                load_into_alu,
-            } => Self::absolute_indexed_y(cpu, oops, load_into_alu),
             Self::AdcImmediate => Self::adc_immediate(cpu),
             Self::Adc => cpu.adc_alu(),
             Self::AdcNew => {
@@ -2097,7 +2075,6 @@ impl Microcode {
             Self::Rra => cpu.rra(),
             Self::Slo => cpu.slo(),
             Self::Sre => cpu.sre(),
-            Self::Shx => cpu.shx(),
             Self::Shy => cpu.shy(),
 
             Self::SetPcToAb => cpu.set_pc_to_ab(),
@@ -2185,9 +2162,6 @@ impl Microcode {
             }
             Self::LoadIntoAlu => {
                 cpu.load_alu();
-            }
-            Self::DummyRead => {
-                cpu.read_byte(cpu.address_latch);
             }
         }
     }
@@ -2379,23 +2353,6 @@ impl Microcode {
         let abh = cpu.inc_read_byte();
         cpu.set_abh(abh);
         cpu.address_latch = cpu.address_latch.wrapping_add(cpu.x as u16);
-        let crossed_page = abh != cpu.abh();
-        let dummy_addr = (u16::from(abh) << 8) | u16::from(cpu.abl());
-        if !oops || crossed_page {
-            cpu.read_byte(dummy_addr);
-        }
-        if oops && crossed_page {
-            cpu.retain_cycle();
-        }
-        if load_into_alu {
-            cpu.load_alu();
-        }
-    }
-
-    fn absolute_indexed_y<M: Mcu>(cpu: &mut Cpu<M>, oops: bool, load_into_alu: bool) {
-        let abh = cpu.inc_read_byte();
-        cpu.set_abh(abh);
-        cpu.address_latch = cpu.address_latch.wrapping_add(cpu.y as u16);
         let crossed_page = abh != cpu.abh();
         let dummy_addr = (u16::from(abh) << 8) | u16::from(cpu.abl());
         if !oops || crossed_page {
