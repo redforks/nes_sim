@@ -375,22 +375,17 @@ const fn build_opcode_table() -> [ArrayVec<[Microcode; 7]>; 256] {
         Adc
     );
     r[ASL_ACCUMULATOR as usize] = microcode_arr!(AslAccumulator);
-    r[ASL_ZERO_PAGE as usize] = microcode_arr!(zero_page_load_alu(), Nop, DummyWriteAsl, StoreAlu);
-    r[ASL_ZERO_PAGE_X as usize] = microcode_arr!(
-        zero_page_addr(),
-        zero_page_x_load_alu(),
-        Nop,
-        DummyWriteAsl,
-        StoreAlu
-    );
+    r[ASL_ZERO_PAGE as usize] = microcode_arr!(zero_page_load_alu(), Nop, StoreAlu, Asl);
+    r[ASL_ZERO_PAGE_X as usize] =
+        microcode_arr!(zero_page_addr(), zero_page_x_load_alu(), Nop, StoreAlu, Asl);
     r[ASL_ABSOLUTE as usize] = microcode_arr!(
         AbsoluteL,
         AbsoluteH {
             load_into_alu: true
         },
         Nop,
-        DummyWriteAsl,
-        StoreAlu
+        StoreAlu,
+        Asl
     );
     r[ASL_ABSOLUTE_INDEXED_X as usize] = microcode_arr!(
         AbsoluteL,
@@ -1544,7 +1539,7 @@ pub enum Microcode {
     /// Dummy-write the original ALU value to memory, then compute ASL.
     /// Combines the RMW dummy write and ALU modification into one cycle
     /// so that the dummy write and the subsequent StoreAlu are consecutive.
-    DummyWriteAsl,
+
     /// Compute ASL on alu, save it to memory.
     Asl,
     /// Compute LSR on alu, save it to memory.
@@ -2083,7 +2078,7 @@ impl Microcode {
                     cpu.indexed_address_latch as u16 | ((cpu.read_byte(addr) as u16) << 8);
             }
             Self::AslAccumulator => Self::asl_accumulator(cpu),
-            Self::DummyWriteAsl => Self::dummy_write_asl(cpu),
+
             Self::Asl => {
                 Self::asl(cpu);
                 Self::store_alu(cpu);
@@ -2465,10 +2460,6 @@ impl Microcode {
 
     /// Write original ALU value to memory (dummy write), then compute ASL on ALU.
     /// On the real 6502, the dummy write and ALU computation happen on the same cycle.
-    fn dummy_write_asl<M: Mcu>(cpu: &mut Cpu<M>) {
-        Self::store_alu(cpu);
-        Self::asl(cpu);
-    }
 
     /// Write original ALU value to memory (dummy write), then compute LSR on ALU.
 
