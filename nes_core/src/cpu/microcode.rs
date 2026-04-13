@@ -922,11 +922,9 @@ const fn build_opcode_table() -> [ArrayVec<[Microcode; 7]>; 256] {
     r[DCP_INDEXED_INDIRECT as usize] = microcode_arr!(
         zero_page_addr(),
         zero_page_x_addr(),
-        Indexed {
-            load_into_alu: true
-        },
-        Nop,
-        Nop,
+        IndexedL,
+        IndexedH,
+        LoadIntoAlu,
         StoreAlu,
         Dcp
     );
