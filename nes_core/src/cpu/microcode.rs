@@ -1274,21 +1274,23 @@ const fn build_opcode_table() -> [ArrayVec<[Microcode; 7]>; 256] {
     );
     r[SHX_ABSOLUTE_INDEXED_Y as usize] = microcode_arr!(
         AbsoluteL,
-        AbsoluteIndexedY {
-            oops: false,
+        AbsoluteH {
             load_into_alu: false
         },
-        Nop,
-        Shx
+        AbsoluteIndexedYWithOp {
+            op: AbsoluteIndexedYOp::Shx,
+            first_clock: CrossPageBehavior::FirstClockAlways
+        }
     );
     r[SHA_ABSOLUTE_INDEXED_Y as usize] = microcode_arr!(
         AbsoluteL,
-        AbsoluteIndexedY {
-            oops: false,
+        AbsoluteH {
             load_into_alu: false
         },
-        Nop,
-        Sha
+        AbsoluteIndexedYWithOp {
+            op: AbsoluteIndexedYOp::Sha,
+            first_clock: CrossPageBehavior::FirstClockAlways
+        }
     );
     r[SHY_ABSOLUTE_INDEXED_X as usize] = microcode_arr!(
         AbsoluteL,
@@ -1313,10 +1315,9 @@ const fn build_opcode_table() -> [ArrayVec<[Microcode; 7]>; 256] {
         IndexedL,
         IndexedH,
         AbsoluteIndexedYWithOp {
-            op: AbsoluteIndexedYOp::LoadIntoAlu,
+            op: AbsoluteIndexedYOp::Sha,
             first_clock: CrossPageBehavior::FirstClockAlways
-        },
-        Sha
+        }
     );
     r
 }
@@ -1341,6 +1342,8 @@ pub enum AbsoluteIndexedYOp {
     Sbc,
     Adc,
     Cmp,
+    Shx,
+    Sha,
 }
 
 impl AbsoluteIndexedYOp {
@@ -1363,6 +1366,8 @@ impl AbsoluteIndexedYOp {
             AbsoluteIndexedYOp::Las => Microcode::las(cpu),
             AbsoluteIndexedYOp::Sbc => Microcode::SbcNew.exec(cpu),
             AbsoluteIndexedYOp::Adc => Microcode::AdcNew.exec(cpu),
+            AbsoluteIndexedYOp::Shx => cpu.shx(),
+            AbsoluteIndexedYOp::Sha => cpu.sha(),
             AbsoluteIndexedYOp::Cmp => {
                 cpu.load_alu();
                 cpu.cmp();
@@ -1549,7 +1554,6 @@ pub enum Microcode {
     Slo,
     Sre,
     Shx,
-    Sha,
     Shy,
     Tas,
 
@@ -1613,6 +1617,9 @@ pub enum Microcode {
     LoadPcAbsoluteH,
     LoadIrqPcL,
     LoadIrqPcH,
+
+    /// Read memory from address_latch, but do nothing.
+    DummyRead,
 }
 
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]
@@ -2074,7 +2081,6 @@ impl Microcode {
             Self::ArrImmediate => Self::arr_immediate(cpu),
             Self::AxsImmediate => Self::axs_immediate(cpu),
             Self::AneImmediate => Self::ane_immediate(cpu),
-            Self::Sha => cpu.sha(),
             Self::LaxImmediate => Self::lax_immediate(cpu),
 
             Self::Lax => cpu.lax(),
@@ -2178,6 +2184,9 @@ impl Microcode {
             }
             Self::LoadIntoAlu => {
                 cpu.load_alu();
+            }
+            Self::DummyRead => {
+                cpu.read_byte(cpu.address_latch);
             }
         }
     }
