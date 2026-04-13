@@ -393,44 +393,41 @@ const fn build_opcode_table() -> [ArrayVec<[Microcode; 7]>; 256] {
         StoreAlu
     );
     r[ASL_ABSOLUTE_INDEXED_X as usize] = microcode_arr!(
-        Nop,
         AbsoluteL,
-        AbsoluteIndexedX {
-            oops: false,
-            load_into_alu: true
+        AbsoluteH {
+            load_into_alu: false,
         },
-        Nop,
-        DummyWriteAsl,
-        StoreAlu
+        AbsoluteIndexedXWithOp {
+            op: OpAfterAddressing::LoadIntoAlu,
+            first_clock: CrossPageBehavior::FirstClockAlways
+        },
+        StoreAlu,
+        Asl
     );
     r[LSR_ACCUMULATOR as usize] = microcode_arr!(LsrAccumulator);
-    r[LSR_ZERO_PAGE as usize] = microcode_arr!(zero_page_load_alu(), Nop, DummyWriteLsr, StoreAlu);
-    r[LSR_ZERO_PAGE_X as usize] = microcode_arr!(
-        zero_page_addr(),
-        zero_page_x_load_alu(),
-        Nop,
-        DummyWriteLsr,
-        StoreAlu
-    );
+    r[LSR_ZERO_PAGE as usize] = microcode_arr!(zero_page_load_alu(), Nop, StoreAlu, Lsr);
+    r[LSR_ZERO_PAGE_X as usize] =
+        microcode_arr!(zero_page_addr(), zero_page_x_load_alu(), Nop, StoreAlu, Lsr);
     r[LSR_ABSOLUTE as usize] = microcode_arr!(
         AbsoluteL,
         AbsoluteH {
             load_into_alu: true
         },
         Nop,
-        DummyWriteLsr,
-        StoreAlu
+        StoreAlu,
+        Lsr
     );
     r[LSR_ABSOLUTE_INDEXED_X as usize] = microcode_arr!(
-        Nop,
         AbsoluteL,
-        AbsoluteIndexedX {
-            oops: false,
-            load_into_alu: true
+        AbsoluteH {
+            load_into_alu: false,
         },
-        Nop,
-        DummyWriteLsr,
-        StoreAlu
+        AbsoluteIndexedXWithOp {
+            op: OpAfterAddressing::LoadIntoAlu,
+            first_clock: CrossPageBehavior::FirstClockAlways
+        },
+        StoreAlu,
+        Lsr
     );
     r[ROL_ACCUMULATOR as usize] = microcode_arr!(RolAccumulator);
     r[ROL_ZERO_PAGE as usize] = microcode_arr!(zero_page_load_alu(), Nop, DummyWriteRol, StoreAlu);
@@ -451,15 +448,16 @@ const fn build_opcode_table() -> [ArrayVec<[Microcode; 7]>; 256] {
         StoreAlu
     );
     r[ROL_ABSOLUTE_INDEXED_X as usize] = microcode_arr!(
-        Nop,
         AbsoluteL,
-        AbsoluteIndexedX {
-            oops: false,
-            load_into_alu: true
+        AbsoluteH {
+            load_into_alu: false,
         },
-        Nop,
-        DummyWriteRol,
-        StoreAlu
+        AbsoluteIndexedXWithOp {
+            op: OpAfterAddressing::LoadIntoAlu,
+            first_clock: CrossPageBehavior::FirstClockAlways
+        },
+        StoreAlu,
+        Rol
     );
     r[ROR_ACCUMULATOR as usize] = microcode_arr!(RorAccumulator);
     r[ROR_ZERO_PAGE as usize] = microcode_arr!(zero_page_load_alu(), Nop, DummyWriteRor, StoreAlu);
@@ -480,15 +478,16 @@ const fn build_opcode_table() -> [ArrayVec<[Microcode; 7]>; 256] {
         StoreAlu
     );
     r[ROR_ABSOLUTE_INDEXED_X as usize] = microcode_arr!(
-        Nop,
         AbsoluteL,
-        AbsoluteIndexedX {
-            oops: false,
-            load_into_alu: true
+        AbsoluteH {
+            load_into_alu: false,
         },
-        Nop,
-        DummyWriteRor,
-        StoreAlu
+        AbsoluteIndexedXWithOp {
+            op: OpAfterAddressing::LoadIntoAlu,
+            first_clock: CrossPageBehavior::FirstClockAlways
+        },
+        StoreAlu,
+        Ror
     );
     r[BCC as usize] = microcode_arr!(BranchRelative(BranchTest::IfCarryClear));
     r[BCS as usize] = microcode_arr!(BranchRelative(BranchTest::IfCarrySet));
@@ -1470,15 +1469,6 @@ pub enum Microcode {
     /// Load both low and high bytes into cpu ab register, although it actually take two cycles, use it
     /// with instructions that happened when address high byte load, such as JMP_ABSOLUTE
     Absolute,
-    /// Take a byte from instruction data stream, set cpu abh field, add ab with
-    /// x register value, set cpu ab field, retain_cycle if the 8bit plus
-    /// operation overflows
-    ///
-    /// Must after AbsoluteL
-    AbsoluteIndexedX {
-        oops: bool,
-        load_into_alu: bool,
-    },
     AbsoluteIndexedXWithOp {
         op: OpAfterAddressing,
         /// if cross paged, push this Microcode with `first_clock` to be false
@@ -1565,11 +1555,17 @@ pub enum Microcode {
     /// Combines the RMW dummy write and ALU modification into one cycle
     /// so that the dummy write and the subsequent StoreAlu are consecutive.
     DummyWriteAsl,
+    /// Compute ASL on alu, save it to memory.
+    Asl,
+    /// Compute LSR on alu, save it to memory.
+    Lsr,
+    /// Compute ROL on alu, save it to memory.
+    Rol,
+    /// Compute ROR on alu, save it to memory.
+    Ror,
 
     LsrAccumulator,
     /// Dummy-write the original ALU value to memory, then compute LSR.
-    DummyWriteLsr,
-
     RolAccumulator,
     /// Dummy-write the original ALU value to memory, then compute ROL.
     DummyWriteRol,
@@ -2040,10 +2036,6 @@ impl Microcode {
                 Self::absolute_l(cpu);
                 Self::absolute_h(cpu, false);
             }
-            Self::AbsoluteIndexedX {
-                oops,
-                load_into_alu,
-            } => Self::absolute_indexed_x(cpu, oops, load_into_alu),
             Self::AdcImmediate => Self::adc_immediate(cpu),
             Self::Adc => cpu.adc_alu(),
             Self::AdcNew => {
@@ -2106,12 +2098,28 @@ impl Microcode {
             }
             Self::AslAccumulator => Self::asl_accumulator(cpu),
             Self::DummyWriteAsl => Self::dummy_write_asl(cpu),
+            Self::Asl => {
+                Self::asl(cpu);
+                Self::store_alu(cpu);
+            }
             Self::LsrAccumulator => Self::lsr_accumulator(cpu),
-            Self::DummyWriteLsr => Self::dummy_write_lsr(cpu),
+
+            Self::Lsr => {
+                Self::lsr(cpu);
+                Self::store_alu(cpu);
+            }
             Self::RolAccumulator => Self::rol_accumulator(cpu),
             Self::DummyWriteRol => Self::dummy_write_rol(cpu),
+            Self::Rol => {
+                Self::rol(cpu);
+                Self::store_alu(cpu);
+            }
             Self::RorAccumulator => Self::ror_accumulator(cpu),
             Self::DummyWriteRor => Self::dummy_write_ror(cpu),
+            Self::Ror => {
+                Self::ror(cpu);
+                Self::store_alu(cpu);
+            }
 
             Self::AlrImmediate => Self::alr_immediate(cpu),
             Self::AncImmediate => Self::anc_immediate(cpu),
@@ -2405,23 +2413,6 @@ impl Microcode {
         cpu.eor();
     }
 
-    fn absolute_indexed_x<M: Mcu>(cpu: &mut Cpu<M>, oops: bool, load_into_alu: bool) {
-        let abh = cpu.inc_read_byte();
-        cpu.set_abh(abh);
-        cpu.address_latch = cpu.address_latch.wrapping_add(cpu.x as u16);
-        let crossed_page = abh != cpu.abh();
-        let dummy_addr = (u16::from(abh) << 8) | u16::from(cpu.abl());
-        if !oops || crossed_page {
-            cpu.read_byte(dummy_addr);
-        }
-        if oops && crossed_page {
-            cpu.retain_cycle();
-        }
-        if load_into_alu {
-            cpu.load_alu();
-        }
-    }
-
     fn store_alu<M: Mcu>(cpu: &mut Cpu<M>) {
         cpu.write_byte(cpu.address_latch, cpu.alu);
     }
@@ -2494,10 +2485,6 @@ impl Microcode {
     }
 
     /// Write original ALU value to memory (dummy write), then compute LSR on ALU.
-    fn dummy_write_lsr<M: Mcu>(cpu: &mut Cpu<M>) {
-        Self::store_alu(cpu);
-        Self::lsr(cpu);
-    }
 
     /// Write original ALU value to memory (dummy write), then compute ROL on ALU.
     fn dummy_write_rol<M: Mcu>(cpu: &mut Cpu<M>) {
