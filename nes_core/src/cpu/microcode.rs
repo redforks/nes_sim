@@ -123,12 +123,12 @@ const fn build_opcode_table() -> [ArrayVec<[Microcode; 7]>; 256] {
 
     let mut r = include!("init_microtable.inc.rs");
     r[AND_IMMEDIATE as usize] = microcode_arr!(AndImmediate);
-    r[AND_ZERO_PAGE as usize] = microcode_arr!(zero_page_load_alu(), And);
-    r[AND_ZERO_PAGE_X as usize] = microcode_arr!(zero_page_addr(), zero_page_x_load_alu(), And);
+    r[AND_ZERO_PAGE as usize] = microcode_arr!(zero_page_addr(), And);
+    r[AND_ZERO_PAGE_X as usize] = microcode_arr!(zero_page_addr(), zero_page_x_addr(), And);
     r[AND_ABSOLUTE as usize] = microcode_arr!(
         AbsoluteL,
         AbsoluteH {
-            load_into_alu: true
+            load_into_alu: false,
         },
         And
     );
@@ -136,7 +136,7 @@ const fn build_opcode_table() -> [ArrayVec<[Microcode; 7]>; 256] {
         AbsoluteL,
         AbsoluteIndexedX {
             oops: true,
-            load_into_alu: true
+            load_into_alu: false,
         },
         And
     );
@@ -155,7 +155,6 @@ const fn build_opcode_table() -> [ArrayVec<[Microcode; 7]>; 256] {
         zero_page_x_addr(),
         IndexedL,
         IndexedH,
-        LoadIntoAlu,
         And
     );
     r[AND_INDIRECT_INDEXED as usize] = microcode_arr!(
@@ -1503,6 +1502,8 @@ pub enum Microcode {
     /// LAX immediate: load immediate into A and X in a single micro-op (two cycles total with Fetch)
     LaxImmediate,
     /// Fetch a byte from memory use address saved in `data_latch`, then and with accumulator
+
+    /// Fetch a byte from memory, then and with accumulator
     And,
 
     /// Test bits in accumulator against ALU value
@@ -2028,7 +2029,11 @@ impl Microcode {
             }
 
             Self::AndImmediate => Self::and_immediate(cpu),
-            Self::And => cpu.and(),
+
+            Self::And => {
+                cpu.load_alu();
+                cpu.and();
+            }
             Self::AbsoluteIndexedYWithOp { op, first_clock } => {
                 Self::absolute_indexed_y_with_op(cpu, op, first_clock)
             }
