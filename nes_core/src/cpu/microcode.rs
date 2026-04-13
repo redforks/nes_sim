@@ -525,9 +525,9 @@ const fn build_opcode_table() -> [ArrayVec<[Microcode; 7]>; 256] {
         }
     );
     r[CMP_IMMEDIATE as usize] = microcode_arr!(CmpImmediate);
-    r[CMP_ZERO_PAGE as usize] = microcode_arr!(zero_page_addr(), CmpNew);
-    r[CMP_ZERO_PAGE_X as usize] = microcode_arr!(zero_page_addr(), ZeroPageIndexedX, CmpNew);
-    r[CMP_ABSOLUTE as usize] = microcode_arr!(AbsoluteL, AbsoluteH, CmpNew);
+    r[CMP_ZERO_PAGE as usize] = microcode_arr!(zero_page_addr(), Cmp);
+    r[CMP_ZERO_PAGE_X as usize] = microcode_arr!(zero_page_addr(), ZeroPageIndexedX, Cmp);
+    r[CMP_ABSOLUTE as usize] = microcode_arr!(AbsoluteL, AbsoluteH, Cmp);
     r[CMP_ABSOLUTE_INDEXED_X as usize] = microcode_arr!(
         AbsoluteL,
         AbsoluteH,
@@ -546,10 +546,10 @@ const fn build_opcode_table() -> [ArrayVec<[Microcode; 7]>; 256] {
     );
     r[CMP_INDEXED_INDIRECT as usize] = microcode_arr!(
         zero_page_addr(),
+        LoadIntoAlu, // dummy read
         ZeroPageIndexedX,
         IndexedL,
         IndexedH,
-        LoadIntoAlu,
         Cmp
     );
     r[CMP_INDIRECT_INDEXED as usize] = microcode_arr!(
@@ -557,10 +557,9 @@ const fn build_opcode_table() -> [ArrayVec<[Microcode; 7]>; 256] {
         IndexedL,
         IndexedH,
         AbsoluteIndexedYWithOp {
-            op: OpAfterAddressing::LoadIntoAlu,
+            op: OpAfterAddressing::Cmp,
             first_clock: CrossPageBehavior::FirstClock,
-        },
-        Cmp
+        }
     );
     r[CPX_IMMEDIATE as usize] = microcode_arr!(CpxImmediate);
     r[CPX_ZERO_PAGE as usize] = microcode_arr!(zero_page_addr(), Cpx);
@@ -1196,9 +1195,9 @@ pub enum Microcode {
     /// Take immediate value from instruction data stream, compare with accumulator
     CmpImmediate,
     /// Fetch a byte from memory use address saved in `data_latch`, then compare with accumulator
-    Cmp,
+
     /// Fetch a byte from memory, then compare with accumulator
-    CmpNew,
+    Cmp,
 
     /// Take immediate value from instruction data stream, compare with x register
     CpxImmediate,
@@ -1720,8 +1719,7 @@ impl Microcode {
             }
 
             Self::CmpImmediate => Self::cmp_immediate(cpu),
-            Self::Cmp => cpu.cmp(),
-            Self::CmpNew => {
+            Self::Cmp => {
                 cpu.load_alu();
                 cpu.cmp()
             }
