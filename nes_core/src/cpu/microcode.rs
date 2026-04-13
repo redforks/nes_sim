@@ -801,11 +801,13 @@ const fn build_opcode_table() -> [ArrayVec<[Microcode; 7]>; 256] {
     );
     r[EOR_ABSOLUTE_INDEXED_Y as usize] = microcode_arr!(
         AbsoluteL,
-        AbsoluteIndexedY {
-            oops: true,
-            load_into_alu: true,
+        AbsoluteH {
+            load_into_alu: false
         },
-        Eor
+        AbsoluteIndexedYWithOp {
+            op: AbsoluteIndexedYOp::Eor,
+            first_clock: CrossPageBehavior::FirstClock
+        }
     );
     r[EOR_INDEXED_INDIRECT as usize] = microcode_arr!(
         zero_page_addr(),
@@ -844,19 +846,23 @@ const fn build_opcode_table() -> [ArrayVec<[Microcode; 7]>; 256] {
     );
     r[LAX_ABSOLUTE_INDEXED_Y as usize] = microcode_arr!(
         AbsoluteL,
-        AbsoluteIndexedY {
-            oops: true,
-            load_into_alu: true
+        AbsoluteH {
+            load_into_alu: false
         },
-        Lax
+        AbsoluteIndexedYWithOp {
+            op: AbsoluteIndexedYOp::Lax,
+            first_clock: CrossPageBehavior::FirstClock
+        }
     );
     r[LAS_ABSOLUTE_INDEXED_Y as usize] = microcode_arr!(
         AbsoluteL,
-        AbsoluteIndexedY {
-            oops: true,
-            load_into_alu: true
+        AbsoluteH {
+            load_into_alu: false
         },
-        Las
+        AbsoluteIndexedYWithOp {
+            op: AbsoluteIndexedYOp::Las,
+            first_clock: CrossPageBehavior::FirstClock
+        }
     );
     r[LAX_INDEXED_INDIRECT as usize] = microcode_arr!(
         zero_page_addr(),
@@ -915,12 +921,13 @@ const fn build_opcode_table() -> [ArrayVec<[Microcode; 7]>; 256] {
     );
     r[DCP_ABSOLUTE_INDEXED_Y as usize] = microcode_arr!(
         AbsoluteL,
-        AbsoluteIndexedY {
-            oops: false,
-            load_into_alu: true
+        AbsoluteH {
+            load_into_alu: false
         },
-        Nop,
-        Nop,
+        AbsoluteIndexedYWithOp {
+            op: AbsoluteIndexedYOp::LoadIntoAlu,
+            first_clock: CrossPageBehavior::FirstClockAlways
+        },
         StoreAlu,
         Dcp
     );
@@ -1015,12 +1022,13 @@ const fn build_opcode_table() -> [ArrayVec<[Microcode; 7]>; 256] {
     );
     r[ISC_ABSOLUTE_INDEXED_Y as usize] = microcode_arr!(
         AbsoluteL,
-        AbsoluteIndexedY {
-            oops: false,
-            load_into_alu: true
+        AbsoluteH {
+            load_into_alu: false
         },
-        Nop,
-        Nop,
+        AbsoluteIndexedYWithOp {
+            op: AbsoluteIndexedYOp::LoadIntoAlu,
+            first_clock: CrossPageBehavior::FirstClockAlways
+        },
         StoreAlu,
         Isc
     );
@@ -1069,12 +1077,13 @@ const fn build_opcode_table() -> [ArrayVec<[Microcode; 7]>; 256] {
     );
     r[RRA_ABSOLUTE_INDEXED_Y as usize] = microcode_arr!(
         AbsoluteL,
-        AbsoluteIndexedY {
-            oops: false,
-            load_into_alu: true
+        AbsoluteH {
+            load_into_alu: false
         },
-        Nop,
-        Nop,
+        AbsoluteIndexedYWithOp {
+            op: AbsoluteIndexedYOp::LoadIntoAlu,
+            first_clock: CrossPageBehavior::FirstClockAlways
+        },
         StoreAlu,
         Rra
     );
@@ -1123,12 +1132,13 @@ const fn build_opcode_table() -> [ArrayVec<[Microcode; 7]>; 256] {
     );
     r[RLA_ABSOLUTE_INDEXED_Y as usize] = microcode_arr!(
         AbsoluteL,
-        AbsoluteIndexedY {
-            oops: false,
-            load_into_alu: true
+        AbsoluteH {
+            load_into_alu: false
         },
-        Nop,
-        Nop,
+        AbsoluteIndexedYWithOp {
+            op: AbsoluteIndexedYOp::LoadIntoAlu,
+            first_clock: CrossPageBehavior::FirstClockAlways
+        },
         StoreAlu,
         Rla
     );
@@ -1177,12 +1187,13 @@ const fn build_opcode_table() -> [ArrayVec<[Microcode; 7]>; 256] {
     );
     r[SLO_ABSOLUTE_INDEXED_Y as usize] = microcode_arr!(
         AbsoluteL,
-        AbsoluteIndexedY {
-            oops: false,
-            load_into_alu: true
+        AbsoluteH {
+            load_into_alu: false
         },
-        Nop,
-        Nop,
+        AbsoluteIndexedYWithOp {
+            op: AbsoluteIndexedYOp::LoadIntoAlu,
+            first_clock: CrossPageBehavior::FirstClockAlways
+        },
         StoreAlu,
         Slo
     );
@@ -1231,12 +1242,13 @@ const fn build_opcode_table() -> [ArrayVec<[Microcode; 7]>; 256] {
     );
     r[SRE_ABSOLUTE_INDEXED_Y as usize] = microcode_arr!(
         AbsoluteL,
-        AbsoluteIndexedY {
-            oops: false,
-            load_into_alu: true
+        AbsoluteH {
+            load_into_alu: false
         },
-        Nop,
-        Nop,
+        AbsoluteIndexedYWithOp {
+            op: AbsoluteIndexedYOp::LoadIntoAlu,
+            first_clock: CrossPageBehavior::FirstClockAlways
+        },
         StoreAlu,
         Sre
     );
@@ -1325,6 +1337,7 @@ pub enum AbsoluteIndexedYOp {
     Ora,
     Eor,
     Lax,
+    Las,
     Sbc,
     Adc,
     Cmp,
@@ -1347,6 +1360,7 @@ impl AbsoluteIndexedYOp {
             AbsoluteIndexedYOp::Ora => Microcode::OraNew.exec(cpu),
             AbsoluteIndexedYOp::Eor => Microcode::EorNew.exec(cpu),
             AbsoluteIndexedYOp::Lax => Microcode::LaxNew.exec(cpu),
+            AbsoluteIndexedYOp::Las => Microcode::las(cpu),
             AbsoluteIndexedYOp::Sbc => Microcode::SbcNew.exec(cpu),
             AbsoluteIndexedYOp::Adc => Microcode::AdcNew.exec(cpu),
             AbsoluteIndexedYOp::Cmp => {
@@ -1538,7 +1552,6 @@ pub enum Microcode {
     Sha,
     Shy,
     Tas,
-    Las,
 
     SetPcToAb,
     JmpIndirect,
@@ -2062,7 +2075,6 @@ impl Microcode {
             Self::AxsImmediate => Self::axs_immediate(cpu),
             Self::AneImmediate => Self::ane_immediate(cpu),
             Self::Sha => cpu.sha(),
-            Self::Las => Self::las(cpu),
             Self::LaxImmediate => Self::lax_immediate(cpu),
 
             Self::Lax => cpu.lax(),

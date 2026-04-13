@@ -522,9 +522,7 @@ impl<M: Mcu> Cpu<M> {
     fn perform_dmc_dma_on_stall(&mut self) {
         if let Some(sample_addr) = self.mcu.take_dmc_dma_address() {
             let phantom_addr = match self.microcode_queue.front() {
-                Some(Microcode::LoadR(_) | Microcode::Bit | Microcode::Lax | Microcode::Las) => {
-                    self.address_latch
-                }
+                Some(Microcode::LoadR(_) | Microcode::Bit | Microcode::Lax) => self.address_latch,
                 _ => self.pc,
             };
             let byte = self.mcu.perform_dmc_dma_read(sample_addr, phantom_addr);
