@@ -273,10 +273,8 @@ const fn build_opcode_table() -> [ArrayVec<[Microcode; 7]>; 256] {
     r[STA_INDEXED_INDIRECT as usize] = microcode_arr!(
         zero_page_addr(),
         zero_page_x_addr(),
-        Indexed {
-            load_into_alu: false
-        },
-        Nop,
+        IndexedL,
+        IndexedH,
         StoreR(A)
     );
     r[STA_INDIRECT_INDEXED_Y as usize] = microcode_arr!(
@@ -765,11 +763,9 @@ const fn build_opcode_table() -> [ArrayVec<[Microcode; 7]>; 256] {
     r[ORA_INDEXED_INDIRECT as usize] = microcode_arr!(
         zero_page_addr(),
         zero_page_x_addr(),
-        Indexed {
-            load_into_alu: true
-        },
-        Nop,
-        Ora
+        IndexedL,
+        IndexedH,
+        OraNew
     );
     r[ORA_INDIRECT_INDEXED as usize] = microcode_arr!(
         zero_page_addr(),
@@ -1493,6 +1489,8 @@ pub enum Microcode {
     OraImmediate,
     /// Fetch a byte from memory use address saved in `data_latch`, then or with accumulator
     Ora,
+    /// Fetch a byte from memory, then or with accumulator
+    OraNew,
 
     /// Take immediate value from instruction data stream, xor it with accumulator
     EorImmediate,
@@ -2021,6 +2019,10 @@ impl Microcode {
 
             Self::OraImmediate => Self::ora_immediate(cpu),
             Self::Ora => cpu.ora(),
+            Self::OraNew => {
+                cpu.load_alu();
+                cpu.ora();
+            }
             Self::EorImmediate => Self::eor_immediate(cpu),
             Self::Eor => cpu.eor(),
 
