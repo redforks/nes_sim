@@ -1303,12 +1303,13 @@ const fn build_opcode_table() -> [ArrayVec<[Microcode; 7]>; 256] {
     );
     r[TAS_ABSOLUTE_INDEXED_Y as usize] = microcode_arr!(
         AbsoluteL,
-        AbsoluteIndexedY {
-            oops: false,
+        AbsoluteH {
             load_into_alu: false
         },
-        Nop,
-        Tas
+        AbsoluteIndexedYWithOp {
+            op: AbsoluteIndexedYOp::Tas,
+            first_clock: CrossPageBehavior::FirstClockAlways
+        }
     );
     r[SHA_INDIRECT_INDEXED_Y as usize] = microcode_arr!(
         zero_page_addr(),
@@ -1344,6 +1345,7 @@ pub enum AbsoluteIndexedYOp {
     Cmp,
     Shx,
     Sha,
+    Tas,
 }
 
 impl AbsoluteIndexedYOp {
@@ -1368,6 +1370,7 @@ impl AbsoluteIndexedYOp {
             AbsoluteIndexedYOp::Adc => Microcode::AdcNew.exec(cpu),
             AbsoluteIndexedYOp::Shx => cpu.shx(),
             AbsoluteIndexedYOp::Sha => cpu.sha(),
+            AbsoluteIndexedYOp::Tas => cpu.tas(),
             AbsoluteIndexedYOp::Cmp => {
                 cpu.load_alu();
                 cpu.cmp();
@@ -1555,7 +1558,6 @@ pub enum Microcode {
     Sre,
     Shx,
     Shy,
-    Tas,
 
     SetPcToAb,
     JmpIndirect,
@@ -2097,7 +2099,6 @@ impl Microcode {
             Self::Sre => cpu.sre(),
             Self::Shx => cpu.shx(),
             Self::Shy => cpu.shy(),
-            Self::Tas => cpu.tas(),
 
             Self::SetPcToAb => cpu.set_pc_to_ab(),
             Self::JmpIndirect => cpu.jmp_indirect(),
