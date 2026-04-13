@@ -769,14 +769,12 @@ const fn build_opcode_table() -> [ArrayVec<[Microcode; 7]>; 256] {
     );
     r[ORA_INDIRECT_INDEXED as usize] = microcode_arr!(
         zero_page_addr(),
-        Indexed {
-            load_into_alu: false
-        },
-        AbsoluteIndexedYWithoutHigh {
-            oops: true,
-            load_into_alu: true
-        },
-        Ora
+        IndexedL,
+        IndexedH,
+        AbsoluteIndexedYWithOp {
+            op: AbsoluteIndexedYOp::Ora,
+            first_clock: true
+        }
     );
     r[EOR_IMMEDIATE as usize] = microcode_arr!(EorImmediate);
     r[EOR_ZERO_PAGE as usize] = microcode_arr!(zero_page_load_alu(), Eor);
@@ -1357,6 +1355,7 @@ pub enum AbsoluteIndexedYOp {
     LoadIntoA,
     LoadIntoX,
     LoadIntoY,
+    Ora,
 }
 
 impl AbsoluteIndexedYOp {
@@ -1369,6 +1368,7 @@ impl AbsoluteIndexedYOp {
             AbsoluteIndexedYOp::LoadIntoA => Microcode::load_register(cpu, Register::A),
             AbsoluteIndexedYOp::LoadIntoX => Microcode::load_register(cpu, Register::X),
             AbsoluteIndexedYOp::LoadIntoY => Microcode::load_register(cpu, Register::Y),
+            AbsoluteIndexedYOp::Ora => Microcode::OraNew.exec(cpu),
         }
     }
 }
