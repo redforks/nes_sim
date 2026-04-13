@@ -1177,13 +1177,11 @@ pub enum Microcode {
     /// Take a byte from instruction data stream, set cpu address_bus field by read from memory use zero page addressing
     ZeroPage {
         load_into_alu: bool,
-        save_alu: bool,
     },
     /// Impl ZeroPageIndexedX addressing, work after ZeroPage, set abl = (abl + x) % 256, set abh = 00
     ZeroPageIndexedX,
     ZeroPageIndexedY {
         load_into_alu: bool,
-        save_alu: bool,
     },
     /// Take a byte from instruction data stream, set cpu abl field
     AbsoluteL,
@@ -1742,15 +1740,11 @@ impl Microcode {
             Self::LoadImmediateA => Self::load_immediate_a(cpu),
             Self::LoadImmediateX => Self::load_immediate_x(cpu),
             Self::LoadImmediateY => Self::load_immediate_y(cpu),
-            Self::ZeroPage {
-                load_into_alu,
-                save_alu,
-            } => Self::zero_page(cpu, load_into_alu, save_alu),
+            Self::ZeroPage { load_into_alu } => Self::zero_page(cpu, load_into_alu),
             Self::ZeroPageIndexedX => Self::zero_page_indexed_x(cpu),
-            Self::ZeroPageIndexedY {
-                load_into_alu,
-                save_alu,
-            } => Self::zero_page_indexed_y(cpu, load_into_alu, save_alu),
+            Self::ZeroPageIndexedY { load_into_alu } => {
+                Self::zero_page_indexed_y(cpu, load_into_alu)
+            }
             Self::AbsoluteL => Self::absolute_l(cpu),
             Self::AbsoluteH => Self::absolute_h(cpu),
             Self::Absolute => {
@@ -2067,14 +2061,11 @@ impl Microcode {
         cpu.axs();
     }
 
-    fn zero_page<M: Mcu>(cpu: &mut Cpu<M>, load_into_alu: bool, save_alu: bool) {
+    fn zero_page<M: Mcu>(cpu: &mut Cpu<M>, load_into_alu: bool) {
         let addr = cpu.inc_read_byte();
         cpu.address_latch = addr as u16;
         if load_into_alu {
             cpu.load_alu();
-        }
-        if save_alu {
-            cpu.write_byte(cpu.address_latch, cpu.alu);
         }
     }
 
@@ -2082,13 +2073,10 @@ impl Microcode {
         cpu.address_latch = cpu.abl().wrapping_add(cpu.x) as u16;
     }
 
-    fn zero_page_indexed_y<M: Mcu>(cpu: &mut Cpu<M>, load_into_alu: bool, save_alu: bool) {
+    fn zero_page_indexed_y<M: Mcu>(cpu: &mut Cpu<M>, load_into_alu: bool) {
         cpu.address_latch = cpu.abl().wrapping_add(cpu.y) as u16;
         if load_into_alu {
             cpu.load_alu();
-        }
-        if save_alu {
-            cpu.write_byte(cpu.address_latch, cpu.alu);
         }
     }
 
@@ -2285,27 +2273,23 @@ impl Microcode {
 pub(super) const fn zero_page_load_alu() -> Microcode {
     Microcode::ZeroPage {
         load_into_alu: true,
-        save_alu: false,
     }
 }
 
 pub(super) const fn zero_page_addr() -> Microcode {
     Microcode::ZeroPage {
         load_into_alu: false,
-        save_alu: false,
     }
 }
 
 pub(super) const fn zero_page_y_load_alu() -> Microcode {
     Microcode::ZeroPageIndexedY {
         load_into_alu: true,
-        save_alu: false,
     }
 }
 
 pub(super) const fn zero_page_y_addr() -> Microcode {
     Microcode::ZeroPageIndexedY {
         load_into_alu: false,
-        save_alu: false,
     }
 }
