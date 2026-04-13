@@ -805,22 +805,18 @@ const fn build_opcode_table() -> [ArrayVec<[Microcode; 7]>; 256] {
     r[EOR_INDEXED_INDIRECT as usize] = microcode_arr!(
         zero_page_addr(),
         zero_page_x_addr(),
-        Indexed {
-            load_into_alu: true
-        },
-        Nop,
-        Eor
+        IndexedL,
+        IndexedH,
+        EorNew
     );
     r[EOR_INDIRECT_INDEXED as usize] = microcode_arr!(
         zero_page_addr(),
-        Indexed {
-            load_into_alu: false
-        },
-        AbsoluteIndexedYWithoutHigh {
-            oops: true,
-            load_into_alu: true
-        },
-        Eor
+        IndexedL,
+        IndexedH,
+        AbsoluteIndexedYWithOp {
+            op: AbsoluteIndexedYOp::Eor,
+            first_clock: true
+        }
     );
     r[ALR as usize] = microcode_arr!(AlrImmediate);
     r[ANE as usize] = microcode_arr!(AneImmediate);
@@ -860,22 +856,18 @@ const fn build_opcode_table() -> [ArrayVec<[Microcode; 7]>; 256] {
     r[LAX_INDEXED_INDIRECT as usize] = microcode_arr!(
         zero_page_addr(),
         zero_page_x_addr(),
-        Indexed {
-            load_into_alu: true
-        },
-        Nop,
-        Lax
+        IndexedL,
+        IndexedH,
+        LaxNew
     );
     r[LAX_INDIRECT_INDEXED as usize] = microcode_arr!(
         zero_page_addr(),
-        Indexed {
-            load_into_alu: false
-        },
-        AbsoluteIndexedYWithoutHigh {
-            oops: true,
-            load_into_alu: true
-        },
-        Lax
+        IndexedL,
+        IndexedH,
+        AbsoluteIndexedYWithOp {
+            op: AbsoluteIndexedYOp::Lax,
+            first_clock: true
+        }
     );
     r[SAX_ZERO_PAGE as usize] = microcode_arr!(zero_page_addr(), Sax);
     r[SAX_ZERO_PAGE_Y as usize] = microcode_arr!(zero_page_addr(), zero_page_y_addr(), Sax);
@@ -889,10 +881,8 @@ const fn build_opcode_table() -> [ArrayVec<[Microcode; 7]>; 256] {
     r[SAX_INDEXED_INDIRECT as usize] = microcode_arr!(
         zero_page_addr(),
         zero_page_x_addr(),
-        Indexed {
-            load_into_alu: false
-        },
-        Nop,
+        IndexedL,
+        IndexedH,
         Sax
     );
     r[DCP_ZERO_PAGE as usize] = microcode_arr!(zero_page_load_alu(), Nop, StoreAlu, Dcp);
@@ -1356,6 +1346,8 @@ pub enum AbsoluteIndexedYOp {
     LoadIntoX,
     LoadIntoY,
     Ora,
+    Eor,
+    Lax,
 }
 
 impl AbsoluteIndexedYOp {
@@ -1369,6 +1361,8 @@ impl AbsoluteIndexedYOp {
             AbsoluteIndexedYOp::LoadIntoX => Microcode::load_register(cpu, Register::X),
             AbsoluteIndexedYOp::LoadIntoY => Microcode::load_register(cpu, Register::Y),
             AbsoluteIndexedYOp::Ora => Microcode::OraNew.exec(cpu),
+            AbsoluteIndexedYOp::Eor => Microcode::EorNew.exec(cpu),
+            AbsoluteIndexedYOp::Lax => Microcode::LaxNew.exec(cpu),
         }
     }
 }
@@ -1496,6 +1490,8 @@ pub enum Microcode {
     EorImmediate,
     /// Fetch a byte from memory use address saved in `data_latch`, then xor with accumulator
     Eor,
+    /// Fetch a byte from memory, then xor with accumulator
+    EorNew,
 
     /// Take immediate value from instruction data stream, and it with accumulator
     AndImmediate,
@@ -1534,6 +1530,8 @@ pub enum Microcode {
     AxsImmediate,
 
     Lax,
+    /// Fetch a byte from memory, then load into accumulator and X
+    LaxNew,
     Sax,
     Rla,
     Dcp,
@@ -2025,6 +2023,10 @@ impl Microcode {
             }
             Self::EorImmediate => Self::eor_immediate(cpu),
             Self::Eor => cpu.eor(),
+            Self::EorNew => {
+                cpu.load_alu();
+                cpu.eor();
+            }
 
             Self::AndImmediate => Self::and_immediate(cpu),
             Self::And => cpu.and(),
@@ -2066,6 +2068,10 @@ impl Microcode {
             Self::LaxImmediate => Self::lax_immediate(cpu),
 
             Self::Lax => cpu.lax(),
+            Self::LaxNew => {
+                cpu.load_alu();
+                cpu.lax();
+            }
             Self::Sax => cpu.sax(),
             Self::Rla => cpu.rla(),
             Self::Dcp => cpu.dcp(),
