@@ -194,22 +194,18 @@ const fn build_opcode_table() -> [ArrayVec<[Microcode; 7]>; 256] {
     r[LDA_INDIRECT_INDEXED as usize] = microcode_arr!(
         zero_page_addr(),
         zero_page_x_addr(),
-        Indexed {
-            load_into_alu: false
-        },
-        Nop,
+        IndexedL,
+        IndexedH,
         LoadR(A)
     );
     r[LDA_INDIRECT_INDEXED_Y as usize] = microcode_arr!(
         zero_page_addr(),
-        Indexed {
-            load_into_alu: false
-        },
-        AbsoluteIndexedYWithoutHigh {
-            oops: true,
-            load_into_alu: false
-        },
-        LoadR(A)
+        IndexedL,
+        IndexedH,
+        AbsoluteIndexedYWithOp {
+            op: AbsoluteIndexedYOp::LoadIntoA,
+            first_clock: true
+        }
     );
     r[LDX_IMMEDIATE as usize] = microcode_arr!(LoadImmediateX);
     r[LDX_ZERO_PAGE as usize] = microcode_arr!(zero_page_addr(), LoadR(X));
@@ -1361,12 +1357,22 @@ const OPCODE_TABLE: [ArrayVec<[Microcode; 7]>; 256] = build_opcode_table();
 #[derive(Debug, Copy, Clone)]
 pub enum AbsoluteIndexedYOp {
     And,
+    /// Read byte from address_latch into register A,
+    LoadIntoA,
+    LoadIntoX,
+    LoadIntoY,
 }
 
 impl AbsoluteIndexedYOp {
     fn exec<M: Mcu>(self, cpu: &mut Cpu<M>) {
         match self {
-            AbsoluteIndexedYOp::And => cpu.and(),
+            AbsoluteIndexedYOp::And => {
+                cpu.load_alu();
+                cpu.and();
+            }
+            AbsoluteIndexedYOp::LoadIntoA => Microcode::load_register(cpu, Register::A),
+            AbsoluteIndexedYOp::LoadIntoX => Microcode::load_register(cpu, Register::X),
+            AbsoluteIndexedYOp::LoadIntoY => Microcode::load_register(cpu, Register::Y),
         }
     }
 }
@@ -2515,7 +2521,6 @@ impl Microcode {
                 first_clock: false,
             });
         } else {
-            cpu.load_alu();
             op.exec(cpu);
         }
     }
