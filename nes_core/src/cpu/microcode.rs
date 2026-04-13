@@ -430,22 +430,17 @@ const fn build_opcode_table() -> [ArrayVec<[Microcode; 7]>; 256] {
         Lsr
     );
     r[ROL_ACCUMULATOR as usize] = microcode_arr!(RolAccumulator);
-    r[ROL_ZERO_PAGE as usize] = microcode_arr!(zero_page_load_alu(), Nop, DummyWriteRol, StoreAlu);
-    r[ROL_ZERO_PAGE_X as usize] = microcode_arr!(
-        zero_page_addr(),
-        zero_page_x_load_alu(),
-        Nop,
-        DummyWriteRol,
-        StoreAlu
-    );
+    r[ROL_ZERO_PAGE as usize] = microcode_arr!(zero_page_load_alu(), Nop, StoreAlu, Rol);
+    r[ROL_ZERO_PAGE_X as usize] =
+        microcode_arr!(zero_page_addr(), zero_page_x_load_alu(), Nop, StoreAlu, Rol);
     r[ROL_ABSOLUTE as usize] = microcode_arr!(
         AbsoluteL,
         AbsoluteH {
             load_into_alu: true
         },
         Nop,
-        DummyWriteRol,
-        StoreAlu
+        StoreAlu,
+        Rol
     );
     r[ROL_ABSOLUTE_INDEXED_X as usize] = microcode_arr!(
         AbsoluteL,
@@ -1568,8 +1563,6 @@ pub enum Microcode {
     /// Dummy-write the original ALU value to memory, then compute LSR.
     RolAccumulator,
     /// Dummy-write the original ALU value to memory, then compute ROL.
-    DummyWriteRol,
-
     RorAccumulator,
     /// Dummy-write the original ALU value to memory, then compute ROR.
     DummyWriteRor,
@@ -2109,7 +2102,7 @@ impl Microcode {
                 Self::store_alu(cpu);
             }
             Self::RolAccumulator => Self::rol_accumulator(cpu),
-            Self::DummyWriteRol => Self::dummy_write_rol(cpu),
+
             Self::Rol => {
                 Self::rol(cpu);
                 Self::store_alu(cpu);
@@ -2487,10 +2480,6 @@ impl Microcode {
     /// Write original ALU value to memory (dummy write), then compute LSR on ALU.
 
     /// Write original ALU value to memory (dummy write), then compute ROL on ALU.
-    fn dummy_write_rol<M: Mcu>(cpu: &mut Cpu<M>) {
-        Self::store_alu(cpu);
-        Self::rol(cpu);
-    }
 
     /// Write original ALU value to memory (dummy write), then compute ROR on ALU.
     fn dummy_write_ror<M: Mcu>(cpu: &mut Cpu<M>) {
