@@ -3901,7 +3901,15 @@ fn ora_and_eor_microcodes_update_accumulator_and_flags() {
 
 #[test]
 fn compare_and_bit_microcodes_update_flags() {
-    let mut cpu = cpu_with_memory(0x8000, &[(0x8000, 0x10), (0x0001, 0x40)]);
+    let mut cpu = cpu_with_memory(
+        0x8000,
+        &[
+            (0x8000, 0x10),
+            (0x0001, 0x40),
+            (0x0011, 0x11),
+            (0x000F, 0x0F),
+        ],
+    );
     cpu.a = 0x20;
     cpu.x = 0x11;
     cpu.y = 0x10;
@@ -3919,12 +3927,12 @@ fn compare_and_bit_microcodes_update_flags() {
     assert!(!cpu.flag(Flag::Negative));
     assert!(!cpu.flag(Flag::Zero));
 
-    cpu.alu = 0x11;
+    cpu.address_latch = 0x0011;
     Microcode::Cpx.exec(&mut cpu);
     assert!(cpu.flag(Flag::Carry));
     assert!(cpu.flag(Flag::Zero));
 
-    cpu.alu = 0x0F;
+    cpu.address_latch = 0x000F;
     Microcode::Cpy.exec(&mut cpu);
     assert!(cpu.flag(Flag::Carry));
     assert!(!cpu.flag(Flag::Zero));
