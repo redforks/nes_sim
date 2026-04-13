@@ -259,9 +259,9 @@ const fn build_opcode_table() -> [ArrayVec<[Microcode; 7]>; 256] {
     r[BIT_ZERO_PAGE as usize] = microcode_arr!(zero_page_addr(), Bit);
     r[BIT_ABSOLUTE as usize] = microcode_arr!(AbsoluteL, AbsoluteH, Bit);
     r[ADC_IMMEDIATE as usize] = microcode_arr!(AdcImmediate);
-    r[ADC_ZERO_PAGE as usize] = microcode_arr!(zero_page_addr(), AdcNew);
-    r[ADC_ZERO_PAGE_X as usize] = microcode_arr!(zero_page_addr(), ZeroPageIndexedX, AdcNew);
-    r[ADC_ABSOLUTE as usize] = microcode_arr!(AbsoluteL, AbsoluteH, AdcNew);
+    r[ADC_ZERO_PAGE as usize] = microcode_arr!(zero_page_addr(), Adc);
+    r[ADC_ZERO_PAGE_X as usize] = microcode_arr!(zero_page_addr(), ZeroPageIndexedX, Adc);
+    r[ADC_ABSOLUTE as usize] = microcode_arr!(AbsoluteL, AbsoluteH, Adc);
     r[ADC_ABSOLUTE_INDEXED_X as usize] = microcode_arr!(
         AbsoluteL,
         AbsoluteH,
@@ -278,22 +278,16 @@ const fn build_opcode_table() -> [ArrayVec<[Microcode; 7]>; 256] {
             first_clock: CrossPageBehavior::FirstClock
         }
     );
-    r[ADC_INDEXED_INDIRECT as usize] = microcode_arr!(
-        zero_page_addr(),
-        ZeroPageIndexedX,
-        IndexedL,
-        IndexedH,
-        AdcNew
-    );
+    r[ADC_INDEXED_INDIRECT as usize] =
+        microcode_arr!(zero_page_addr(), ZeroPageIndexedX, IndexedL, IndexedH, Adc);
     r[ADC_INDIRECT_INDEXED as usize] = microcode_arr!(
         zero_page_addr(),
         IndexedL,
         IndexedH,
         AbsoluteIndexedYWithOp {
-            op: OpAfterAddressing::LoadIntoAlu,
+            op: OpAfterAddressing::Adc,
             first_clock: CrossPageBehavior::FirstClock,
-        },
-        Adc
+        }
     );
     r[ASL_ACCUMULATOR as usize] = microcode_arr!(AslAccumulator);
     r[ASL_ZERO_PAGE as usize] = microcode_arr!(zero_page_addr(), LoadIntoAlu, StoreAlu, Asl);
@@ -1111,7 +1105,7 @@ impl OpAfterAddressing {
             OpAfterAddressing::Lax => Microcode::Lax.exec(cpu),
             OpAfterAddressing::Las => Microcode::las(cpu),
             OpAfterAddressing::Sbc => Microcode::Sbc.exec(cpu),
-            OpAfterAddressing::Adc => Microcode::AdcNew.exec(cpu),
+            OpAfterAddressing::Adc => Microcode::Adc.exec(cpu),
             OpAfterAddressing::Shx => cpu.shx(),
             OpAfterAddressing::Shy => cpu.shy(),
             OpAfterAddressing::Sha => cpu.sha(),
@@ -1191,10 +1185,8 @@ pub enum Microcode {
 
     /// Take immediate value from instruction data stream, add to accumulator with carry
     AdcImmediate,
-    /// Fetch a byte from memory use address saved in `data_latch`, then add to accumulator with carry
-    Adc,
     /// Fetch a byte from memory, then add to accumulator with carry
-    AdcNew,
+    Adc,
 
     /// Take immediate value from instruction data stream, subtract with carry from accumulator
     SbcImmediate,
@@ -1716,8 +1708,8 @@ impl Microcode {
                 Self::absolute_h(cpu);
             }
             Self::AdcImmediate => Self::adc_immediate(cpu),
-            Self::Adc => cpu.adc_alu(),
-            Self::AdcNew => {
+
+            Self::Adc => {
                 cpu.load_alu();
                 cpu.adc_alu();
             }

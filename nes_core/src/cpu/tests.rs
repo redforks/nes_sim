@@ -4078,23 +4078,6 @@ fn sbc_immediate_and_memory_microcodes_update_accumulator_and_flags() {
 }
 
 #[test]
-fn adc_reads_from_address_bus_and_sets_zero_and_carry() {
-    let mut cpu = cpu_with_memory(0x0000, &[(0x0042, 0xFF)]);
-    cpu.address_latch = 0x0042;
-    cpu.a = 0x00;
-    cpu.alu = 0xFF;
-    cpu.set_flag(Flag::Carry, true);
-
-    Microcode::Adc.exec(&mut cpu);
-
-    assert_eq!(cpu.a, 0x00);
-    assert!(cpu.flag(Flag::Carry));
-    assert!(cpu.flag(Flag::Zero));
-    assert!(!cpu.flag(Flag::Negative));
-    assert!(!cpu.flag(Flag::Overflow));
-}
-
-#[test]
 fn and_immediate_and_memory_microcodes_update_accumulator_and_flags() {
     let mut cpu = cpu_with_memory(0x8000, &[(0x8000, 0b1100_1100), (0x0042, 0b1010_1010)]);
     cpu.a = 0b1111_0000;
