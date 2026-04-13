@@ -333,9 +333,9 @@ const fn build_opcode_table() -> [ArrayVec<[Microcode; 7]>; 256] {
     r[ADC_ABSOLUTE as usize] = microcode_arr!(
         AbsoluteL,
         AbsoluteH {
-            load_into_alu: true
+            load_into_alu: false,
         },
-        Adc
+        AdcNew
     );
     r[ADC_ABSOLUTE_INDEXED_X as usize] = microcode_arr!(
         AbsoluteL,
@@ -381,9 +381,9 @@ const fn build_opcode_table() -> [ArrayVec<[Microcode; 7]>; 256] {
     r[ASL_ABSOLUTE as usize] = microcode_arr!(
         AbsoluteL,
         AbsoluteH {
-            load_into_alu: true
+            load_into_alu: false,
         },
-        Nop,
+        LoadIntoAlu,
         StoreAlu,
         Asl
     );
@@ -406,9 +406,9 @@ const fn build_opcode_table() -> [ArrayVec<[Microcode; 7]>; 256] {
     r[LSR_ABSOLUTE as usize] = microcode_arr!(
         AbsoluteL,
         AbsoluteH {
-            load_into_alu: true
+            load_into_alu: false,
         },
-        Nop,
+        LoadIntoAlu,
         StoreAlu,
         Lsr
     );
@@ -431,9 +431,9 @@ const fn build_opcode_table() -> [ArrayVec<[Microcode; 7]>; 256] {
     r[ROL_ABSOLUTE as usize] = microcode_arr!(
         AbsoluteL,
         AbsoluteH {
-            load_into_alu: true
+            load_into_alu: false,
         },
-        Nop,
+        LoadIntoAlu,
         StoreAlu,
         Rol
     );
@@ -456,9 +456,9 @@ const fn build_opcode_table() -> [ArrayVec<[Microcode; 7]>; 256] {
     r[ROR_ABSOLUTE as usize] = microcode_arr!(
         AbsoluteL,
         AbsoluteH {
-            load_into_alu: true
+            load_into_alu: false,
         },
-        Nop,
+        LoadIntoAlu,
         StoreAlu,
         Ror
     );
@@ -629,9 +629,9 @@ const fn build_opcode_table() -> [ArrayVec<[Microcode; 7]>; 256] {
     r[SBC_ABSOLUTE as usize] = microcode_arr!(
         AbsoluteL,
         AbsoluteH {
-            load_into_alu: true
+            load_into_alu: false
         },
-        Sbc
+        SbcNew
     );
     r[SBC_ABSOLUTE_INDEXED_X as usize] = microcode_arr!(
         AbsoluteL,
@@ -675,9 +675,9 @@ const fn build_opcode_table() -> [ArrayVec<[Microcode; 7]>; 256] {
     r[CMP_ABSOLUTE as usize] = microcode_arr!(
         AbsoluteL,
         AbsoluteH {
-            load_into_alu: true
+            load_into_alu: false
         },
-        Cmp
+        CmpNew
     );
     r[CMP_ABSOLUTE_INDEXED_X as usize] = microcode_arr!(
         AbsoluteL,
@@ -722,18 +722,18 @@ const fn build_opcode_table() -> [ArrayVec<[Microcode; 7]>; 256] {
     r[CPX_ABSOLUTE as usize] = microcode_arr!(
         AbsoluteL,
         AbsoluteH {
-            load_into_alu: true
+            load_into_alu: false
         },
-        Cpx
+        CpxNew
     );
     r[CPY_IMMEDIATE as usize] = microcode_arr!(CpyImmediate);
     r[CPY_ZERO_PAGE as usize] = microcode_arr!(zero_page_load_alu(), Cpy);
     r[CPY_ABSOLUTE as usize] = microcode_arr!(
         AbsoluteL,
         AbsoluteH {
-            load_into_alu: true
+            load_into_alu: false
         },
-        Cpy
+        CpyNew
     );
     r[TAX as usize] = microcode_arr!(Tax);
     r[TXA as usize] = microcode_arr!(Txa);
@@ -751,9 +751,9 @@ const fn build_opcode_table() -> [ArrayVec<[Microcode; 7]>; 256] {
     r[ORA_ABSOLUTE as usize] = microcode_arr!(
         AbsoluteL,
         AbsoluteH {
-            load_into_alu: true
+            load_into_alu: false
         },
-        Ora
+        OraNew
     );
     r[ORA_ABSOLUTE_INDEXED_X as usize] = microcode_arr!(
         AbsoluteL,
@@ -797,9 +797,9 @@ const fn build_opcode_table() -> [ArrayVec<[Microcode; 7]>; 256] {
     r[EOR_ABSOLUTE as usize] = microcode_arr!(
         AbsoluteL,
         AbsoluteH {
-            load_into_alu: true
+            load_into_alu: false,
         },
-        Eor
+        EorNew
     );
     r[EOR_ABSOLUTE_INDEXED_X as usize] = microcode_arr!(
         AbsoluteL,
@@ -852,9 +852,9 @@ const fn build_opcode_table() -> [ArrayVec<[Microcode; 7]>; 256] {
     r[LAX_ABSOLUTE as usize] = microcode_arr!(
         AbsoluteL,
         AbsoluteH {
-            load_into_alu: true
+            load_into_alu: false,
         },
-        Lax
+        LaxNew
     );
     r[LAX_ABSOLUTE_INDEXED_Y as usize] = microcode_arr!(
         AbsoluteL,
@@ -914,9 +914,9 @@ const fn build_opcode_table() -> [ArrayVec<[Microcode; 7]>; 256] {
     r[DCP_ABSOLUTE as usize] = microcode_arr!(
         AbsoluteL,
         AbsoluteH {
-            load_into_alu: true
+            load_into_alu: false
         },
-        Nop,
+        LoadIntoAlu,
         StoreAlu,
         Dcp
     );
@@ -970,9 +970,9 @@ const fn build_opcode_table() -> [ArrayVec<[Microcode; 7]>; 256] {
     r[DEC_ABSOLUTE as usize] = microcode_arr!(
         AbsoluteL,
         AbsoluteH {
-            load_into_alu: true
+            load_into_alu: false
         },
-        Nop,
+        LoadIntoAlu,
         StoreAlu,
         Dec
     );
@@ -995,9 +995,9 @@ const fn build_opcode_table() -> [ArrayVec<[Microcode; 7]>; 256] {
     r[INC_ABSOLUTE as usize] = microcode_arr!(
         AbsoluteL,
         AbsoluteH {
-            load_into_alu: true
+            load_into_alu: false
         },
-        Nop,
+        LoadIntoAlu,
         StoreAlu,
         Inc
     );
@@ -1020,9 +1020,9 @@ const fn build_opcode_table() -> [ArrayVec<[Microcode; 7]>; 256] {
     r[ISC_ABSOLUTE as usize] = microcode_arr!(
         AbsoluteL,
         AbsoluteH {
-            load_into_alu: true
+            load_into_alu: false
         },
-        Nop,
+        LoadIntoAlu,
         StoreAlu,
         Isc
     );
@@ -1076,9 +1076,9 @@ const fn build_opcode_table() -> [ArrayVec<[Microcode; 7]>; 256] {
     r[RRA_ABSOLUTE as usize] = microcode_arr!(
         AbsoluteL,
         AbsoluteH {
-            load_into_alu: true
+            load_into_alu: false
         },
-        Nop,
+        LoadIntoAlu,
         StoreAlu,
         Rra
     );
@@ -1132,9 +1132,9 @@ const fn build_opcode_table() -> [ArrayVec<[Microcode; 7]>; 256] {
     r[RLA_ABSOLUTE as usize] = microcode_arr!(
         AbsoluteL,
         AbsoluteH {
-            load_into_alu: true
+            load_into_alu: false
         },
-        Nop,
+        LoadIntoAlu,
         StoreAlu,
         Rla
     );
@@ -1188,9 +1188,9 @@ const fn build_opcode_table() -> [ArrayVec<[Microcode; 7]>; 256] {
     r[SLO_ABSOLUTE as usize] = microcode_arr!(
         AbsoluteL,
         AbsoluteH {
-            load_into_alu: true
+            load_into_alu: false
         },
-        Nop,
+        LoadIntoAlu,
         StoreAlu,
         Slo
     );
@@ -1244,9 +1244,9 @@ const fn build_opcode_table() -> [ArrayVec<[Microcode; 7]>; 256] {
     r[SRE_ABSOLUTE as usize] = microcode_arr!(
         AbsoluteL,
         AbsoluteH {
-            load_into_alu: true
+            load_into_alu: false
         },
-        Nop,
+        LoadIntoAlu,
         StoreAlu,
         Sre
     );
@@ -1495,16 +1495,21 @@ pub enum Microcode {
     CmpImmediate,
     /// Fetch a byte from memory use address saved in `data_latch`, then compare with accumulator
     Cmp,
+    /// Fetch a byte from memory, then compare with accumulator
+    CmpNew,
 
     /// Take immediate value from instruction data stream, compare with x register
     CpxImmediate,
     /// Fetch a byte from memory use address saved in `data_latch`, then compare with x register
     Cpx,
+    CpxNew,
 
     /// Take immediate value from instruction data stream, compare with y register
     CpyImmediate,
     /// Fetch a byte from memory use address saved in `data_latch`, then compare with y register
     Cpy,
+    /// Fetch a byte from memory, then compare with y register
+    CpyNew,
 
     /// Take immediate value from instruction data stream, or it with accumulator
     OraImmediate,
@@ -2032,10 +2037,22 @@ impl Microcode {
 
             Self::CmpImmediate => Self::cmp_immediate(cpu),
             Self::Cmp => cpu.cmp(),
+            Self::CmpNew => {
+                cpu.load_alu();
+                cpu.cmp()
+            }
             Self::CpxImmediate => Self::cpx_immediate(cpu),
             Self::Cpx => cpu.cpx(),
+            Self::CpxNew => {
+                cpu.load_alu();
+                cpu.cpx()
+            }
             Self::CpyImmediate => Self::cpy_immediate(cpu),
             Self::Cpy => cpu.cpy(),
+            Self::CpyNew => {
+                cpu.load_alu();
+                cpu.cpy()
+            }
 
             Self::OraImmediate => Self::ora_immediate(cpu),
             Self::Ora => cpu.ora(),
