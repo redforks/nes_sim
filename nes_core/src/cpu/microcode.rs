@@ -455,22 +455,17 @@ const fn build_opcode_table() -> [ArrayVec<[Microcode; 7]>; 256] {
         Rol
     );
     r[ROR_ACCUMULATOR as usize] = microcode_arr!(RorAccumulator);
-    r[ROR_ZERO_PAGE as usize] = microcode_arr!(zero_page_load_alu(), Nop, DummyWriteRor, StoreAlu);
-    r[ROR_ZERO_PAGE_X as usize] = microcode_arr!(
-        zero_page_addr(),
-        zero_page_x_load_alu(),
-        Nop,
-        DummyWriteRor,
-        StoreAlu
-    );
+    r[ROR_ZERO_PAGE as usize] = microcode_arr!(zero_page_load_alu(), Nop, StoreAlu, Ror);
+    r[ROR_ZERO_PAGE_X as usize] =
+        microcode_arr!(zero_page_addr(), zero_page_x_load_alu(), Nop, StoreAlu, Ror);
     r[ROR_ABSOLUTE as usize] = microcode_arr!(
         AbsoluteL,
         AbsoluteH {
             load_into_alu: true
         },
         Nop,
-        DummyWriteRor,
-        StoreAlu
+        StoreAlu,
+        Ror
     );
     r[ROR_ABSOLUTE_INDEXED_X as usize] = microcode_arr!(
         AbsoluteL,
@@ -1565,8 +1560,6 @@ pub enum Microcode {
     /// Dummy-write the original ALU value to memory, then compute ROL.
     RorAccumulator,
     /// Dummy-write the original ALU value to memory, then compute ROR.
-    DummyWriteRor,
-
     AlrImmediate,
     AncImmediate,
     ArrImmediate,
@@ -2108,7 +2101,7 @@ impl Microcode {
                 Self::store_alu(cpu);
             }
             Self::RorAccumulator => Self::ror_accumulator(cpu),
-            Self::DummyWriteRor => Self::dummy_write_ror(cpu),
+
             Self::Ror => {
                 Self::ror(cpu);
                 Self::store_alu(cpu);
@@ -2482,10 +2475,6 @@ impl Microcode {
     /// Write original ALU value to memory (dummy write), then compute ROL on ALU.
 
     /// Write original ALU value to memory (dummy write), then compute ROR on ALU.
-    fn dummy_write_ror<M: Mcu>(cpu: &mut Cpu<M>) {
-        Self::store_alu(cpu);
-        Self::ror(cpu);
-    }
 
     fn branch_relative<M: Mcu>(cpu: &mut Cpu<M>, branch_test: BranchTest) {
         let offset = cpu.inc_read_byte();

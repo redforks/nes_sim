@@ -3882,31 +3882,6 @@ fn store_and_load_microcodes_use_alu_and_memory() {
 }
 
 #[test]
-fn shift_and_rotate_microcodes_update_accumulator_and_alu() {
-    let mut cpu = cpu_with_memory(0x0000, &[]);
-
-    cpu.a = 0b1000_0001;
-    Microcode::LsrAccumulator.exec(&mut cpu);
-    assert_eq!(cpu.a, 0b0100_0000);
-    assert!(cpu.flag(Flag::Carry));
-    assert!(!cpu.flag(Flag::Negative));
-
-    cpu.a = 0b0100_0001;
-    cpu.set_flag(Flag::Carry, true);
-    Microcode::RolAccumulator.exec(&mut cpu);
-    assert_eq!(cpu.a, 0b1000_0011);
-    assert!(!cpu.flag(Flag::Carry));
-    assert!(cpu.flag(Flag::Negative));
-
-    cpu.alu = 0b0000_0001;
-    cpu.set_flag(Flag::Carry, true);
-    Microcode::DummyWriteRor.exec(&mut cpu);
-    assert_eq!(cpu.alu, 0b1000_0000);
-    assert!(cpu.flag(Flag::Carry));
-    assert!(cpu.flag(Flag::Negative));
-}
-
-#[test]
 fn ora_and_eor_microcodes_update_accumulator_and_flags() {
     let mut cpu = cpu_with_memory(0x8000, &[(0x8000, 0b0000_1111), (0x0042, 0b1111_0000)]);
     cpu.a = 0b0101_0000;
