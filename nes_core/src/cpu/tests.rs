@@ -1,4 +1,4 @@
-use super::microcode::{BranchTest, opcode};
+use super::microcode::{opcode, BranchTest};
 use super::*;
 use crate::test_utils::MockMcu;
 
@@ -663,8 +663,8 @@ fn test_bit_instruction() {
     execute_next(&mut cpu);
     // BIT should have set N flag (bit 7 of 0xE0)
     assert!(cpu.flag(Flag::Negative)); // bit 7 of 0xE0 = 1
-    // Overflow flag: (v & 0x70) != 0 means bits 6-4 are checked
-    // 0xE0 & 0x70 = 0xE0 & 0x70 = 0x60 != 0, so overflow should be set
+                                       // Overflow flag: (v & 0x70) != 0 means bits 6-4 are checked
+                                       // 0xE0 & 0x70 = 0xE0 & 0x70 = 0x60 != 0, so overflow should be set
     assert!(cpu.flag(Flag::Overflow));
 }
 
@@ -1786,14 +1786,14 @@ fn test_jsr_pushes_pc_and_jumps() {
 #[test]
 fn test_rts_pops_pc() {
     let mut cpu = create_cpu_with_program(&[0x60]); // RTS
-    // Setup stack: return address $1233 (before RTS adds 1)
-    // pop_stack increments SP first, then reads
-    // We want: first pop reads 0x33, second pop reads 0x12
+                                                    // Setup stack: return address $1233 (before RTS adds 1)
+                                                    // pop_stack increments SP first, then reads
+                                                    // We want: first pop reads 0x33, second pop reads 0x12
     cpu.sp = 0xFD; // After two pops: 0xFE -> 0x1FF, 0xFF -> 0x100... no wait
-    // Let me recalculate:
-    // pop_stack: SP++, read from 0x100 + SP
-    // First pop: SP = 0xFD + 1 = 0xFE, read from 0x1FE (should be low byte 0x33)
-    // Second pop: SP = 0xFE + 1 = 0xFF, read from 0x1FF (should be high byte 0x12)
+                   // Let me recalculate:
+                   // pop_stack: SP++, read from 0x100 + SP
+                   // First pop: SP = 0xFD + 1 = 0xFE, read from 0x1FE (should be low byte 0x33)
+                   // Second pop: SP = 0xFE + 1 = 0xFF, read from 0x1FF (should be high byte 0x12)
     cpu.write_byte(0x1FE, 0x33); // Low byte
     cpu.write_byte(0x1FF, 0x12); // High byte
 
@@ -1833,7 +1833,7 @@ fn test_jsr_rts_round_trip() {
 #[test]
 fn test_rti_restores_pc_and_flags() {
     let mut cpu = create_cpu_with_program(&[0x40]); // RTI
-    // Setup stack with status then PC (RTI pops in reverse order)
+                                                    // Setup stack with status then PC (RTI pops in reverse order)
     cpu.sp = 0xFD; // Stack at 0x100, 0x1FF, 0x1FE
     cpu.write_byte(0x1FE, 0xFF); // Status (popped first)
     cpu.write_byte(0x1FF, 0x34); // PC low
@@ -2049,7 +2049,7 @@ fn test_lda_indirect_y_unofficial() {
     // Set up indirect pointer at 0x10 pointing to 0x200
     mcu.write_word(0x10, 0x200);
     mcu.write(0x205, 0x42); // 0x200 + Y(5) = 0x205
-    // Program: LDA ($10), Y
+                            // Program: LDA ($10), Y
     mcu.write(0, 0xB1); // opcode
     mcu.write(1, 0x10); // zero page addr
     let mut cpu = Cpu::new(mcu);
@@ -2300,7 +2300,7 @@ fn test_rra_zero_page() {
     execute_next(&mut cpu);
 
     assert_eq!(cpu.mcu_mut().read(0x10), 0xC0); // ROR: (0x81 >> 1) with carry = 0xC0
-    // ADC: 0x05 + 0xC0 + 1(carry)
+                                                // ADC: 0x05 + 0xC0 + 1(carry)
     assert_eq!(cpu.a, 0xC6); // 0x05 + 0xC0 + 1 = 0xC6
 }
 
@@ -2314,7 +2314,7 @@ fn test_sbx_immediate() {
     execute_next(&mut cpu);
 
     assert_eq!(cpu.x, (0x30 & 0x20) - 0x10); // (A & X) - operand
-    // 0x30 & 0x20 = 0x20, 0x20 - 0x10 = 0x10
+                                             // 0x30 & 0x20 = 0x20, 0x20 - 0x10 = 0x10
     assert_eq!(cpu.x, 0x10);
 }
 
@@ -3527,7 +3527,7 @@ fn test_adc_all_flags() {
     assert_eq!(cpu.a, 0x00); // 0xFF + 0x00 + 1 = 0x100, truncated to 0x00
     assert!(cpu.flag(Flag::Zero)); // result is zero
     assert!(cpu.flag(Flag::Carry)); // overflow occurred
-    // Overflow: -1 + 0 + 1 = 0, which is within range, so no signed overflow
+                                    // Overflow: -1 + 0 + 1 = 0, which is within range, so no signed overflow
     assert!(!cpu.flag(Flag::Overflow)); // no signed overflow
 }
 
@@ -3549,8 +3549,8 @@ fn test_stack_wrap_around() {
     cpu.push_stack(0x42);
 
     assert_eq!(cpu.sp, 0xFF); // wraps to 0xFF after decrement
-    // push_stack writes to current SP, then decrements
-    // So with SP=0x00, it writes to 0x100, then SP becomes 0xFF
+                              // push_stack writes to current SP, then decrements
+                              // So with SP=0x00, it writes to 0x100, then SP becomes 0xFF
     assert_eq!(cpu.mcu_mut().read(0x0100), 0x42);
 }
 
@@ -3808,13 +3808,13 @@ fn branch_relative_taken_and_not_taken_behaves() {
 fn load_immediate_x_and_y_read_operand_and_update_flags() {
     let mut cpu = cpu_with_memory(0x8000, &[(0x8000, 0x80), (0x8001, 0x00)]);
 
-    Microcode::LoadImmediateX.exec(&mut cpu);
+    Microcode::LoadImmediate(Register::X).exec(&mut cpu);
     assert_eq!(cpu.x, 0x80);
     assert_eq!(cpu.pc, 0x8001);
     assert!(cpu.flag(Flag::Negative));
     assert!(!cpu.flag(Flag::Zero));
 
-    Microcode::LoadImmediateY.exec(&mut cpu);
+    Microcode::LoadImmediate(Register::Y).exec(&mut cpu);
     assert_eq!(cpu.y, 0x00);
     assert_eq!(cpu.pc, 0x8002);
     assert!(cpu.flag(Flag::Zero));
@@ -4017,7 +4017,7 @@ fn load_immediate_a_reads_operand_and_updates_flags() {
     let mut cpu = cpu_with_memory(0x8000, &[(0x8000, 0x00)]);
     cpu.status = Flag::Negative as u8;
 
-    Microcode::LoadImmediateA.exec(&mut cpu);
+    Microcode::LoadImmediate(Register::A).exec(&mut cpu);
 
     assert_eq!(cpu.a, 0x00);
     assert_eq!(cpu.pc, 0x8001);
