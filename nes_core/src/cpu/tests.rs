@@ -170,26 +170,6 @@ fn test_update_zero_flag() {
 }
 
 #[test]
-fn test_read_word_in_same_page() {
-    let mut cpu = create_cpu();
-    cpu.write_byte(0x1050, 0x78);
-    cpu.write_byte(0x1051, 0x56);
-
-    let word = cpu.read_word_in_same_page(0x1050);
-    assert_eq!(word, 0x5678);
-}
-
-#[test]
-fn test_read_word_in_same_page_wrapping() {
-    let mut cpu = create_cpu();
-    cpu.write_byte(0x10FF, 0x12);
-    cpu.write_byte(0x1000, 0x34);
-
-    let word = cpu.read_word_in_same_page(0x10FF);
-    assert_eq!(word, 0x3412);
-}
-
-#[test]
 fn test_halt_flag() {
     let mut cpu = create_cpu();
     assert!(!cpu.is_halted());
@@ -3999,14 +3979,18 @@ fn stack_and_misc_microcodes_manipulate_state() {
     Microcode::Plp.exec(&mut cpu);
     assert_eq!(cpu.status & Flag::Carry as u8, Flag::Carry as u8);
 
-    cpu.address_latch = 0x1234;
-    Microcode::SetPcToAb.exec(&mut cpu);
+    cpu.pc = 0x2000;
+    cpu.mcu_mut().mem[0x2000] = 0x34;
+    cpu.mcu_mut().mem[0x2001] = 0x12;
+    Microcode::AbsoluteL.exec(&mut cpu);
+    Microcode::LoadPcAbsoluteH.exec(&mut cpu);
     assert_eq!(cpu.pc, 0x1234);
 
     cpu.address_latch = 0x1234;
     cpu.mcu_mut().mem[0x1234] = 0x34;
     cpu.mcu_mut().mem[0x1235] = 0x12;
-    Microcode::JmpIndirect.exec(&mut cpu);
+    Microcode::IndexedL.exec(&mut cpu);
+    Microcode::IndexedHAndJump.exec(&mut cpu);
     assert_eq!(cpu.pc, 0x1234);
 
     cpu.status = Flag::Carry as u8;

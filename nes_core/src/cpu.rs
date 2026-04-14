@@ -482,20 +482,6 @@ impl<M: Mcu> Cpu<M> {
         self.mcu.write(addr, value);
     }
 
-    fn read_word_in_same_page(&mut self, addr: u16) -> u16 {
-        self.read_word_in_page(addr & 0xff00, addr as u8)
-    }
-
-    fn read_word_in_page(&mut self, page: u16, offset: u8) -> u16 {
-        let low_addr = page | offset as u16;
-        let high_addr = page | offset.wrapping_add(1) as u16;
-        self.maybe_perform_dmc_dma(low_addr);
-        let low = self.mcu.read(low_addr) as u16;
-        self.maybe_perform_dmc_dma(high_addr);
-        let high = self.mcu.read(high_addr) as u16;
-        (high << 8) | low
-    }
-
     fn push_stack(&mut self, value: u8) {
         self.mcu.write(0x100 + self.sp as u16, value);
         self.sp = self.sp.wrapping_sub(1);
@@ -847,10 +833,6 @@ impl<M: Mcu> Cpu<M> {
 
     fn set_pc_to_ab(&mut self) {
         self.pc = self.address_latch;
-    }
-
-    fn jmp_indirect(&mut self) {
-        self.pc = self.read_word_in_same_page(self.address_latch);
     }
 
     fn and(&mut self) {

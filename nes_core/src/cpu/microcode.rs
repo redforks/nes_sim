@@ -298,9 +298,9 @@ const fn indirect_indexed_store_a() -> ArrayVec<[Microcode; 7]> {
 }
 
 const fn build_opcode_table() -> [ArrayVec<[Microcode; 7]>; 256] {
-    use opcode::*;
     use Microcode::*;
     use Register::*;
+    use opcode::*;
 
     let mut r = include!("init_microtable.inc.rs");
     r[AND_IMMEDIATE as usize] = microcode_arr!(AndImmediate);
@@ -401,8 +401,8 @@ const fn build_opcode_table() -> [ArrayVec<[Microcode; 7]>; 256] {
         }
     );
     r[PLP as usize] = microcode_arr!(Nop, Nop, Plp);
-    r[JMP_ABSOLUTE as usize] = microcode_arr!(Absolute, SetPcToAb);
-    r[JMP_INDIRECT as usize] = microcode_arr!(Nop, AbsoluteL, AbsoluteH, JmpIndirect);
+    r[JMP_ABSOLUTE as usize] = microcode_arr!(AbsoluteL, LoadPcAbsoluteH);
+    r[JMP_INDIRECT as usize] = microcode_arr!(AbsoluteL, AbsoluteH, IndexedL, IndexedHAndJump);
     r[JSR as usize] = microcode_arr!(AbsoluteL, Nop, PushPcH, PushPcL, LoadPcAbsoluteH);
     r[RTS as usize] = microcode_arr!(SkipImmediate, Nop, PopPc, Nop, SkipImmediate);
     r[RTI as usize] = microcode_arr!(SkipImmediate, Plp, Nop, PopPc, Nop);
@@ -812,9 +812,6 @@ pub enum Microcode {
     AbsoluteL,
     /// Take a byte from instruction data stream, set cpu abh field
     AbsoluteH,
-    /// Load both low and high bytes into cpu ab register, although it actually take two cycles, use it
-    /// with instructions that happened when address high byte load, such as JMP_ABSOLUTE
-    Absolute,
     IndexedXWithOp {
         op: OpAfterAddressing,
         /// if cross paged, push this Microcode with `first_clock` to be false
@@ -935,8 +932,7 @@ pub enum Microcode {
     Slo,
     Sre,
 
-    SetPcToAb,
-    JmpIndirect,
+    IndexedHAndJump,
 
     Clc,
     Sec,
@@ -1368,10 +1364,6 @@ impl Microcode {
             Self::ZeroPageIndexedY => Self::zero_page_indexed_y(cpu),
             Self::AbsoluteL => Self::absolute_l(cpu),
             Self::AbsoluteH => Self::absolute_h(cpu),
-            Self::Absolute => {
-                Self::absolute_l(cpu);
-                Self::absolute_h(cpu);
-            }
             Self::AdcImmediate => Self::adc_immediate(cpu),
 
             Self::Adc => {
@@ -1433,15 +1425,8 @@ impl Microcode {
             Self::SkipImmediate => {
                 cpu.inc_read_byte();
             }
-            Self::IndexedL => {
-                cpu.indexed_address_latch = cpu.read_byte(cpu.address_latch);
-            }
-            Self::IndexedH => {
-                let page = cpu.address_latch & 0xFF00;
-                let addr = page | (cpu.address_latch as u8 & 0xFF).wrapping_add(1) as u16;
-                cpu.address_latch =
-                    cpu.indexed_address_latch as u16 | ((cpu.read_byte(addr) as u16) << 8);
-            }
+            Self::IndexedL => Self::indexed_l(cpu),
+            Self::IndexedH => Self::indexed_h(cpu),
             Self::AslAccumulator => Self::asl_accumulator(cpu),
 
             Self::Asl => {
@@ -1487,8 +1472,10 @@ impl Microcode {
             Self::Slo => cpu.slo(),
             Self::Sre => cpu.sre(),
 
-            Self::SetPcToAb => cpu.set_pc_to_ab(),
-            Self::JmpIndirect => cpu.jmp_indirect(),
+            Self::IndexedHAndJump => {
+                Self::indexed_h(cpu);
+                cpu.set_pc_to_ab()
+            }
 
             Self::Clc => cpu.set_flag(Flag::Carry, false),
             Self::Sec => cpu.set_flag(Flag::Carry, true),
@@ -1701,6 +1688,16 @@ impl Microcode {
     fn absolute_h<M: Mcu>(cpu: &mut Cpu<M>) {
         let high = cpu.inc_read_byte();
         cpu.set_abh(high);
+    }
+
+    fn indexed_l<M: Mcu>(cpu: &mut Cpu<M>) {
+        cpu.indexed_address_latch = cpu.read_byte(cpu.address_latch);
+    }
+
+    fn indexed_h<M: Mcu>(cpu: &mut Cpu<M>) {
+        let page = cpu.address_latch & 0xFF00;
+        let addr = page | (cpu.address_latch as u8 & 0xFF).wrapping_add(1) as u16;
+        cpu.address_latch = cpu.indexed_address_latch as u16 | ((cpu.read_byte(addr) as u16) << 8);
     }
 
     fn adc_immediate<M: Mcu>(cpu: &mut Cpu<M>) {
