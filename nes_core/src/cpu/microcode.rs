@@ -303,7 +303,7 @@ const fn build_opcode_table() -> [ArrayVec<[Microcode; 7]>; 256] {
     use opcode::*;
 
     let mut r = include!("init_microtable.inc.rs");
-    r[AND_IMMEDIATE as usize] = microcode_arr!(AndImmediate);
+    r[AND_IMMEDIATE as usize] = microcode_arr!(ImmediateWithOp(ImmediateOp::And));
     r[AND_ZERO_PAGE as usize] = zero_page_op(And);
     r[AND_ZERO_PAGE_X as usize] = zero_page_x_op(And);
     r[AND_ABSOLUTE as usize] = absolute_op(And);
@@ -352,7 +352,7 @@ const fn build_opcode_table() -> [ArrayVec<[Microcode; 7]>; 256] {
     r[STY_ABSOLUTE as usize] = absolute_op(StoreR(Y));
     r[BIT_ZERO_PAGE as usize] = zero_page_op(Bit);
     r[BIT_ABSOLUTE as usize] = absolute_op(Bit);
-    r[ADC_IMMEDIATE as usize] = microcode_arr!(AdcImmediate);
+    r[ADC_IMMEDIATE as usize] = microcode_arr!(ImmediateWithOp(ImmediateOp::Adc));
     r[ADC_ZERO_PAGE as usize] = zero_page_op(Adc);
     r[ADC_ZERO_PAGE_X as usize] = zero_page_x_op(Adc);
     r[ADC_ABSOLUTE as usize] = absolute_op(Adc);
@@ -470,8 +470,8 @@ const fn build_opcode_table() -> [ArrayVec<[Microcode; 7]>; 256] {
         LoadIrqPcL,
         LoadIrqPcH
     );
-    r[SBC_IMMEDIATE as usize] = microcode_arr!(SbcImmediate);
-    r[USBC as usize] = microcode_arr!(SbcImmediate);
+    r[SBC_IMMEDIATE as usize] = microcode_arr!(ImmediateWithOp(ImmediateOp::Sbc));
+    r[USBC as usize] = microcode_arr!(ImmediateWithOp(ImmediateOp::Sbc));
     r[SBC_ZERO_PAGE as usize] = microcode_arr!(ZeroPage, Sbc);
     r[SBC_ZERO_PAGE_X as usize] = zero_page_x_op(Sbc);
     r[SBC_ABSOLUTE as usize] = absolute_op(Sbc);
@@ -494,7 +494,7 @@ const fn build_opcode_table() -> [ArrayVec<[Microcode; 7]>; 256] {
     r[SBC_INDEXED_INDIRECT as usize] = indexed_indirect_op(Sbc);
     r[SBC_INDIRECT_INDEXED as usize] =
         indirect_indexed_op(OpAfterAddressing::Sbc, CrossPageBehavior::FirstClock);
-    r[CMP_IMMEDIATE as usize] = microcode_arr!(CmpImmediate);
+    r[CMP_IMMEDIATE as usize] = microcode_arr!(ImmediateWithOp(ImmediateOp::Cmp));
     r[CMP_ZERO_PAGE as usize] = microcode_arr!(ZeroPage, Cmp);
     r[CMP_ZERO_PAGE_X as usize] = zero_page_x_op(Cmp);
     r[CMP_ABSOLUTE as usize] = absolute_op(Cmp);
@@ -524,10 +524,10 @@ const fn build_opcode_table() -> [ArrayVec<[Microcode; 7]>; 256] {
     );
     r[CMP_INDIRECT_INDEXED as usize] =
         indirect_indexed_op(OpAfterAddressing::Cmp, CrossPageBehavior::FirstClock);
-    r[CPX_IMMEDIATE as usize] = microcode_arr!(CpxImmediate);
+    r[CPX_IMMEDIATE as usize] = microcode_arr!(ImmediateWithOp(ImmediateOp::Cpx));
     r[CPX_ZERO_PAGE as usize] = microcode_arr!(ZeroPage, Cpx);
     r[CPX_ABSOLUTE as usize] = absolute_op(Cpx);
-    r[CPY_IMMEDIATE as usize] = microcode_arr!(CpyImmediate);
+    r[CPY_IMMEDIATE as usize] = microcode_arr!(ImmediateWithOp(ImmediateOp::Cpy));
     r[CPY_ZERO_PAGE as usize] = microcode_arr!(ZeroPage, Cpy);
     r[CPY_ABSOLUTE as usize] = absolute_op(Cpy);
     r[TAX as usize] = microcode_arr!(Tax);
@@ -540,7 +540,7 @@ const fn build_opcode_table() -> [ArrayVec<[Microcode; 7]>; 256] {
     r[INY as usize] = microcode_arr!(Iny);
     r[DEX as usize] = microcode_arr!(Dex);
     r[DEY as usize] = microcode_arr!(Dey);
-    r[ORA_IMMEDIATE as usize] = microcode_arr!(OraImmediate);
+    r[ORA_IMMEDIATE as usize] = microcode_arr!(ImmediateWithOp(ImmediateOp::Ora));
     r[ORA_ZERO_PAGE as usize] = microcode_arr!(ZeroPage, Ora);
     r[ORA_ZERO_PAGE_X as usize] = zero_page_x_op(Ora);
     r[ORA_ABSOLUTE as usize] = absolute_op(Ora);
@@ -563,7 +563,7 @@ const fn build_opcode_table() -> [ArrayVec<[Microcode; 7]>; 256] {
     r[ORA_INDEXED_INDIRECT as usize] = indexed_indirect_op(Ora);
     r[ORA_INDIRECT_INDEXED as usize] =
         indirect_indexed_op(OpAfterAddressing::Ora, CrossPageBehavior::FirstClock);
-    r[EOR_IMMEDIATE as usize] = microcode_arr!(EorImmediate);
+    r[EOR_IMMEDIATE as usize] = microcode_arr!(ImmediateWithOp(ImmediateOp::Eor));
     r[EOR_ZERO_PAGE as usize] = microcode_arr!(ZeroPage, Eor);
     r[EOR_ZERO_PAGE_X as usize] = zero_page_x_op(Eor);
     r[EOR_ABSOLUTE as usize] = absolute_op(Eor);
@@ -776,6 +776,33 @@ impl OpAfterAddressing {
 }
 
 #[derive(Debug, Clone, Copy)]
+pub enum ImmediateOp {
+    Adc,
+    And,
+    Sbc,
+    Cmp,
+    Cpx,
+    Cpy,
+    Ora,
+    Eor,
+}
+
+impl ImmediateOp {
+    pub fn exec<M: Mcu>(self, cpu: &mut Cpu<M>) {
+        match self {
+            ImmediateOp::Adc => cpu.adc_alu(),
+            ImmediateOp::And => cpu.and(),
+            ImmediateOp::Sbc => cpu.sbc(),
+            ImmediateOp::Cmp => cpu.cmp(),
+            ImmediateOp::Cpx => cpu.cpx(),
+            ImmediateOp::Cpy => cpu.cpy(),
+            ImmediateOp::Ora => cpu.ora(),
+            ImmediateOp::Eor => cpu.eor(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
 pub enum CrossPageBehavior {
     /// If not cross paged, will not push the op microcode into cpu
     FirstClock,
@@ -839,45 +866,25 @@ pub enum Microcode {
     /// Store TAS result at memory ab
     Tas,
 
-    /// Take immediate value from instruction data stream, add to accumulator with carry
-    AdcImmediate,
+    /// Take immediate value from instruction data stream and save into alu, then perform the operation.
+    ImmediateWithOp(ImmediateOp),
+
     /// Fetch a byte from memory, then add to accumulator with carry
     Adc,
-
-    /// Take immediate value from instruction data stream, subtract with carry from accumulator
-    SbcImmediate,
     /// Fetch a byte from memory, then subtract with carry from accumulator
     Sbc,
-
-    /// Take immediate value from instruction data stream, compare with accumulator
-    CmpImmediate,
-    /// Fetch a byte from memory use address saved in `data_latch`, then compare with accumulator
-
     /// Fetch a byte from memory, then compare with accumulator
     Cmp,
-
-    /// Take immediate value from instruction data stream, compare with x register
-    CpxImmediate,
     /// Fetch a byte from memory, then compare with x register
     Cpx,
-
-    /// Take immediate value from instruction data stream, compare with y register
-    CpyImmediate,
     /// Fetch a byte from memory, then compare with y register
     Cpy,
-
-    /// Take immediate value from instruction data stream, or it with accumulator
-    OraImmediate,
     /// Fetch a byte from memory, then or with accumulator
     Ora,
-
-    /// Take immediate value from instruction data stream, xor it with accumulator
-    EorImmediate,
     /// Fetch a byte from memory, then xor with accumulator
     Eor,
-
-    /// Take immediate value from instruction data stream, and it with accumulator
-    AndImmediate,
+    /// Fetch a byte from memory, then and with accumulator
+    And,
     /// Undocumented ANE/XAA: (A OR CONST) AND X AND oper -> A
     /// Implemented deterministically as A := X & oper
     AneImmediate,
@@ -885,11 +892,6 @@ pub enum Microcode {
     LaxImmediate,
     /// Execute LAS/LAR semantics
     Las,
-    /// Fetch a byte from memory use address saved in `data_latch`, then and with accumulator
-
-    /// Fetch a byte from memory, then and with accumulator
-    And,
-
     /// Test bits in accumulator against ALU value
     Bit,
 
@@ -1358,47 +1360,35 @@ impl Microcode {
             Self::ZeroPageIndexedY => Self::zero_page_indexed_y(cpu),
             Self::AbsoluteL => Self::absolute_l(cpu),
             Self::AbsoluteH => Self::absolute_h(cpu),
-            Self::AdcImmediate => Self::adc_immediate(cpu),
 
             Self::Adc => {
                 cpu.load_alu();
                 cpu.adc_alu();
             }
-            Self::SbcImmediate => Self::sbc_immediate(cpu),
             Self::Sbc => {
                 cpu.load_alu();
                 cpu.sbc();
             }
-
-            Self::CmpImmediate => Self::cmp_immediate(cpu),
             Self::Cmp => {
                 cpu.load_alu();
                 cpu.cmp()
             }
-            Self::CpxImmediate => Self::cpx_immediate(cpu),
             Self::Cpx => {
                 cpu.load_alu();
                 cpu.cpx()
             }
-            Self::CpyImmediate => Self::cpy_immediate(cpu),
             Self::Cpy => {
                 cpu.load_alu();
                 cpu.cpy()
             }
-
-            Self::OraImmediate => Self::ora_immediate(cpu),
             Self::Ora => {
                 cpu.load_alu();
                 cpu.ora();
             }
-            Self::EorImmediate => Self::eor_immediate(cpu),
             Self::Eor => {
                 cpu.load_alu();
                 cpu.eor();
             }
-
-            Self::AndImmediate => Self::and_immediate(cpu),
-
             Self::And => {
                 cpu.load_alu();
                 cpu.and();
@@ -1554,6 +1544,7 @@ impl Microcode {
             Self::LoadIntoAlu => {
                 cpu.load_alu();
             }
+            Self::ImmediateWithOp(op) => Self::immediate_with_op(cpu, op),
         }
     }
 
@@ -1597,11 +1588,6 @@ impl Microcode {
             Register::X => cpu.x = value,
             Register::Y => cpu.y = value,
         }
-    }
-
-    fn and_immediate<M: Mcu>(cpu: &mut Cpu<M>) {
-        cpu.alu = cpu.inc_read_byte();
-        cpu.and();
     }
 
     fn ane_immediate<M: Mcu>(cpu: &mut Cpu<M>) {
@@ -1685,41 +1671,6 @@ impl Microcode {
         let page = cpu.address_latch & 0xFF00;
         let addr = page | (cpu.address_latch as u8 & 0xFF).wrapping_add(1) as u16;
         cpu.address_latch = cpu.indexed_address_latch as u16 | ((cpu.read_byte(addr) as u16) << 8);
-    }
-
-    fn adc_immediate<M: Mcu>(cpu: &mut Cpu<M>) {
-        cpu.alu = cpu.inc_read_byte();
-        cpu.adc_alu();
-    }
-
-    fn sbc_immediate<M: Mcu>(cpu: &mut Cpu<M>) {
-        cpu.alu = cpu.inc_read_byte();
-        cpu.sbc();
-    }
-
-    fn cmp_immediate<M: Mcu>(cpu: &mut Cpu<M>) {
-        cpu.alu = cpu.inc_read_byte();
-        cpu.cmp();
-    }
-
-    fn cpx_immediate<M: Mcu>(cpu: &mut Cpu<M>) {
-        cpu.alu = cpu.inc_read_byte();
-        cpu.cpx();
-    }
-
-    fn cpy_immediate<M: Mcu>(cpu: &mut Cpu<M>) {
-        cpu.alu = cpu.inc_read_byte();
-        cpu.cpy();
-    }
-
-    fn ora_immediate<M: Mcu>(cpu: &mut Cpu<M>) {
-        cpu.alu = cpu.inc_read_byte();
-        cpu.ora();
-    }
-
-    fn eor_immediate<M: Mcu>(cpu: &mut Cpu<M>) {
-        cpu.alu = cpu.inc_read_byte();
-        cpu.eor();
     }
 
     fn store_alu<M: Mcu>(cpu: &mut Cpu<M>) {
@@ -1847,5 +1798,10 @@ impl Microcode {
         } else {
             op.exec(cpu);
         }
+    }
+
+    fn immediate_with_op<M: Mcu>(cpu: &mut Cpu<M>, op: ImmediateOp) {
+        cpu.alu = cpu.inc_read_byte();
+        op.exec(cpu);
     }
 }
