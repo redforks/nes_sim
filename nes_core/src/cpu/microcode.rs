@@ -117,9 +117,9 @@ macro_rules! microcode_arr {
 }
 
 const fn build_opcode_table() -> [ArrayVec<[Microcode; 7]>; 256] {
+    use opcode::*;
     use Microcode::*;
     use Register::*;
-    use opcode::*;
 
     let mut r = include!("init_microtable.inc.rs");
     r[AND_IMMEDIATE as usize] = microcode_arr!(AndImmediate);
@@ -222,16 +222,17 @@ const fn build_opcode_table() -> [ArrayVec<[Microcode; 7]>; 256] {
         AbsoluteIndexedXWithOp {
             op: OpAfterAddressing::StoreA,
             first_clock: CrossPageBehavior::FirstClockAlways,
-        }
+        },
+        StoreR(Register::A)
     );
     r[STA_ABSOLUTE_INDEXED_Y as usize] = microcode_arr!(
-        Nop,
         AbsoluteL,
         AbsoluteH,
         AbsoluteIndexedYWithOp {
             op: OpAfterAddressing::StoreA,
             first_clock: CrossPageBehavior::FirstClockAlways,
-        }
+        },
+        StoreR(Register::A)
     );
     r[STA_INDEXED_INDIRECT as usize] = microcode_arr!(
         zero_page_addr(),
@@ -245,7 +246,7 @@ const fn build_opcode_table() -> [ArrayVec<[Microcode; 7]>; 256] {
         IndexedL,
         IndexedH,
         AbsoluteIndexedYWithOp {
-            op: OpAfterAddressing::LoadIntoAlu,
+            op: OpAfterAddressing::StoreA,
             first_clock: CrossPageBehavior::FirstClockAlways,
         },
         StoreR(A)
@@ -306,6 +307,7 @@ const fn build_opcode_table() -> [ArrayVec<[Microcode; 7]>; 256] {
             op: OpAfterAddressing::LoadIntoAlu,
             first_clock: CrossPageBehavior::FirstClockAlways
         },
+        LoadIntoAlu,
         StoreAlu,
         Asl
     );
@@ -326,6 +328,7 @@ const fn build_opcode_table() -> [ArrayVec<[Microcode; 7]>; 256] {
             op: OpAfterAddressing::LoadIntoAlu,
             first_clock: CrossPageBehavior::FirstClockAlways
         },
+        LoadIntoAlu,
         StoreAlu,
         Lsr
     );
@@ -346,6 +349,7 @@ const fn build_opcode_table() -> [ArrayVec<[Microcode; 7]>; 256] {
             op: OpAfterAddressing::LoadIntoAlu,
             first_clock: CrossPageBehavior::FirstClockAlways
         },
+        LoadIntoAlu,
         StoreAlu,
         Rol
     );
@@ -366,6 +370,7 @@ const fn build_opcode_table() -> [ArrayVec<[Microcode; 7]>; 256] {
             op: OpAfterAddressing::LoadIntoAlu,
             first_clock: CrossPageBehavior::FirstClockAlways
         },
+        LoadIntoAlu,
         StoreAlu,
         Ror
     );
@@ -700,6 +705,7 @@ const fn build_opcode_table() -> [ArrayVec<[Microcode; 7]>; 256] {
             op: OpAfterAddressing::LoadIntoAlu,
             first_clock: CrossPageBehavior::FirstClockAlways
         },
+        LoadIntoAlu,
         StoreAlu,
         Dcp
     );
@@ -710,6 +716,7 @@ const fn build_opcode_table() -> [ArrayVec<[Microcode; 7]>; 256] {
             op: OpAfterAddressing::LoadIntoAlu,
             first_clock: CrossPageBehavior::FirstClockAlways
         },
+        LoadIntoAlu,
         StoreAlu,
         Dcp
     );
@@ -730,6 +737,7 @@ const fn build_opcode_table() -> [ArrayVec<[Microcode; 7]>; 256] {
             op: OpAfterAddressing::LoadIntoAlu,
             first_clock: CrossPageBehavior::FirstClockAlways,
         },
+        LoadIntoAlu,
         StoreAlu,
         Dcp
     );
@@ -743,13 +751,13 @@ const fn build_opcode_table() -> [ArrayVec<[Microcode; 7]>; 256] {
     );
     r[DEC_ABSOLUTE as usize] = microcode_arr!(AbsoluteL, AbsoluteH, LoadIntoAlu, StoreAlu, Dec);
     r[DEC_ABSOLUTE_INDEXED_X as usize] = microcode_arr!(
-        Nop,
         AbsoluteL,
         AbsoluteH,
         AbsoluteIndexedXWithOp {
             op: OpAfterAddressing::LoadIntoAlu,
             first_clock: CrossPageBehavior::FirstClockAlways
         },
+        LoadIntoAlu,
         StoreAlu,
         Dec
     );
@@ -763,13 +771,13 @@ const fn build_opcode_table() -> [ArrayVec<[Microcode; 7]>; 256] {
     );
     r[INC_ABSOLUTE as usize] = microcode_arr!(AbsoluteL, AbsoluteH, LoadIntoAlu, StoreAlu, Inc);
     r[INC_ABSOLUTE_INDEXED_X as usize] = microcode_arr!(
-        Nop,
         AbsoluteL,
         AbsoluteH,
         AbsoluteIndexedXWithOp {
             op: OpAfterAddressing::LoadIntoAlu,
             first_clock: CrossPageBehavior::FirstClockAlways
         },
+        LoadIntoAlu,
         StoreAlu,
         Inc
     );
@@ -789,6 +797,7 @@ const fn build_opcode_table() -> [ArrayVec<[Microcode; 7]>; 256] {
             op: OpAfterAddressing::LoadIntoAlu,
             first_clock: CrossPageBehavior::FirstClockAlways
         },
+        LoadIntoAlu,
         StoreAlu,
         Isc
     );
@@ -799,6 +808,7 @@ const fn build_opcode_table() -> [ArrayVec<[Microcode; 7]>; 256] {
             op: OpAfterAddressing::LoadIntoAlu,
             first_clock: CrossPageBehavior::FirstClockAlways
         },
+        LoadIntoAlu,
         StoreAlu,
         Isc
     );
@@ -819,6 +829,7 @@ const fn build_opcode_table() -> [ArrayVec<[Microcode; 7]>; 256] {
             op: OpAfterAddressing::LoadIntoAlu,
             first_clock: CrossPageBehavior::FirstClockAlways
         },
+        LoadIntoAlu,
         StoreAlu,
         Isc
     );
@@ -838,6 +849,7 @@ const fn build_opcode_table() -> [ArrayVec<[Microcode; 7]>; 256] {
             op: OpAfterAddressing::LoadIntoAlu,
             first_clock: CrossPageBehavior::FirstClockAlways
         },
+        LoadIntoAlu,
         StoreAlu,
         Rra
     );
@@ -848,6 +860,7 @@ const fn build_opcode_table() -> [ArrayVec<[Microcode; 7]>; 256] {
             op: OpAfterAddressing::LoadIntoAlu,
             first_clock: CrossPageBehavior::FirstClockAlways
         },
+        LoadIntoAlu,
         StoreAlu,
         Rra
     );
@@ -868,6 +881,7 @@ const fn build_opcode_table() -> [ArrayVec<[Microcode; 7]>; 256] {
             op: OpAfterAddressing::LoadIntoAlu,
             first_clock: CrossPageBehavior::FirstClockAlways
         },
+        LoadIntoAlu,
         StoreAlu,
         Rra
     );
@@ -887,6 +901,7 @@ const fn build_opcode_table() -> [ArrayVec<[Microcode; 7]>; 256] {
             op: OpAfterAddressing::LoadIntoAlu,
             first_clock: CrossPageBehavior::FirstClockAlways
         },
+        LoadIntoAlu,
         StoreAlu,
         Rla
     );
@@ -897,6 +912,7 @@ const fn build_opcode_table() -> [ArrayVec<[Microcode; 7]>; 256] {
             op: OpAfterAddressing::LoadIntoAlu,
             first_clock: CrossPageBehavior::FirstClockAlways
         },
+        LoadIntoAlu,
         StoreAlu,
         Rla
     );
@@ -917,6 +933,7 @@ const fn build_opcode_table() -> [ArrayVec<[Microcode; 7]>; 256] {
             op: OpAfterAddressing::LoadIntoAlu,
             first_clock: CrossPageBehavior::FirstClockAlways
         },
+        LoadIntoAlu,
         StoreAlu,
         Rla
     );
@@ -936,6 +953,7 @@ const fn build_opcode_table() -> [ArrayVec<[Microcode; 7]>; 256] {
             op: OpAfterAddressing::LoadIntoAlu,
             first_clock: CrossPageBehavior::FirstClockAlways
         },
+        LoadIntoAlu,
         StoreAlu,
         Slo
     );
@@ -946,6 +964,7 @@ const fn build_opcode_table() -> [ArrayVec<[Microcode; 7]>; 256] {
             op: OpAfterAddressing::LoadIntoAlu,
             first_clock: CrossPageBehavior::FirstClockAlways
         },
+        LoadIntoAlu,
         StoreAlu,
         Slo
     );
@@ -966,6 +985,7 @@ const fn build_opcode_table() -> [ArrayVec<[Microcode; 7]>; 256] {
             op: OpAfterAddressing::LoadIntoAlu,
             first_clock: CrossPageBehavior::FirstClockAlways
         },
+        LoadIntoAlu,
         StoreAlu,
         Slo
     );
@@ -985,6 +1005,7 @@ const fn build_opcode_table() -> [ArrayVec<[Microcode; 7]>; 256] {
             op: OpAfterAddressing::LoadIntoAlu,
             first_clock: CrossPageBehavior::FirstClockAlways
         },
+        LoadIntoAlu,
         StoreAlu,
         Sre
     );
@@ -995,6 +1016,7 @@ const fn build_opcode_table() -> [ArrayVec<[Microcode; 7]>; 256] {
             op: OpAfterAddressing::LoadIntoAlu,
             first_clock: CrossPageBehavior::FirstClockAlways
         },
+        LoadIntoAlu,
         StoreAlu,
         Sre
     );
@@ -1015,6 +1037,7 @@ const fn build_opcode_table() -> [ArrayVec<[Microcode; 7]>; 256] {
             op: OpAfterAddressing::LoadIntoAlu,
             first_clock: CrossPageBehavior::FirstClockAlways
         },
+        LoadIntoAlu,
         StoreAlu,
         Sre
     );
@@ -1024,7 +1047,8 @@ const fn build_opcode_table() -> [ArrayVec<[Microcode; 7]>; 256] {
         AbsoluteIndexedYWithOp {
             op: OpAfterAddressing::Shx,
             first_clock: CrossPageBehavior::FirstClockAlways
-        }
+        },
+        Shx
     );
     r[SHA_ABSOLUTE_INDEXED_Y as usize] = microcode_arr!(
         AbsoluteL,
@@ -1032,7 +1056,8 @@ const fn build_opcode_table() -> [ArrayVec<[Microcode; 7]>; 256] {
         AbsoluteIndexedYWithOp {
             op: OpAfterAddressing::Sha,
             first_clock: CrossPageBehavior::FirstClockAlways
-        }
+        },
+        Sha
     );
     r[SHY_ABSOLUTE_INDEXED_X as usize] = microcode_arr!(
         AbsoluteL,
@@ -1040,7 +1065,8 @@ const fn build_opcode_table() -> [ArrayVec<[Microcode; 7]>; 256] {
         AbsoluteIndexedXWithOp {
             op: OpAfterAddressing::Shy,
             first_clock: CrossPageBehavior::FirstClockAlways
-        }
+        },
+        Shy
     );
     r[TAS_ABSOLUTE_INDEXED_Y as usize] = microcode_arr!(
         AbsoluteL,
@@ -1048,7 +1074,8 @@ const fn build_opcode_table() -> [ArrayVec<[Microcode; 7]>; 256] {
         AbsoluteIndexedYWithOp {
             op: OpAfterAddressing::Tas,
             first_clock: CrossPageBehavior::FirstClockAlways
-        }
+        },
+        Tas
     );
     r[SHA_INDIRECT_INDEXED_Y as usize] = microcode_arr!(
         zero_page_addr(),
@@ -1057,7 +1084,8 @@ const fn build_opcode_table() -> [ArrayVec<[Microcode; 7]>; 256] {
         AbsoluteIndexedYWithOp {
             op: OpAfterAddressing::Sha,
             first_clock: CrossPageBehavior::FirstClockAlways
-        }
+        },
+        Sha
     );
     r
 }
@@ -1088,42 +1116,39 @@ pub enum OpAfterAddressing {
 }
 
 impl OpAfterAddressing {
-    fn exec<M: Mcu>(self, cpu: &mut Cpu<M>) {
+    fn to_microcode(self) -> Microcode {
         match self {
-            OpAfterAddressing::And => {
-                cpu.load_alu();
-                cpu.and();
-            }
-            OpAfterAddressing::LoadIntoA => Microcode::load_register(cpu, Register::A),
-            OpAfterAddressing::LoadIntoX => Microcode::load_register(cpu, Register::X),
-            OpAfterAddressing::LoadIntoY => Microcode::load_register(cpu, Register::Y),
-            OpAfterAddressing::LoadIntoAlu => Microcode::LoadIntoAlu.exec(cpu),
-            OpAfterAddressing::StoreA => Microcode::store_register(cpu, Register::A),
-            OpAfterAddressing::Ora => Microcode::Ora.exec(cpu),
-            OpAfterAddressing::Eor => Microcode::Eor.exec(cpu),
-            OpAfterAddressing::Lax => Microcode::Lax.exec(cpu),
-            OpAfterAddressing::Las => Microcode::las(cpu),
-            OpAfterAddressing::Sbc => Microcode::Sbc.exec(cpu),
-            OpAfterAddressing::Adc => Microcode::Adc.exec(cpu),
-            OpAfterAddressing::Shx => cpu.shx(),
-            OpAfterAddressing::Shy => cpu.shy(),
-            OpAfterAddressing::Sha => cpu.sha(),
-            OpAfterAddressing::Tas => cpu.tas(),
-            OpAfterAddressing::Nop => {}
-            OpAfterAddressing::Cmp => {
-                cpu.load_alu();
-                cpu.cmp();
-            }
+            OpAfterAddressing::And => Microcode::And,
+            OpAfterAddressing::LoadIntoA => Microcode::LoadR(Register::A),
+            OpAfterAddressing::LoadIntoX => Microcode::LoadR(Register::X),
+            OpAfterAddressing::LoadIntoY => Microcode::LoadR(Register::Y),
+            OpAfterAddressing::LoadIntoAlu => Microcode::LoadIntoAlu,
+            OpAfterAddressing::StoreA => Microcode::StoreR(Register::A),
+            OpAfterAddressing::Ora => Microcode::Ora,
+            OpAfterAddressing::Eor => Microcode::Eor,
+            OpAfterAddressing::Lax => Microcode::Lax,
+            OpAfterAddressing::Las => Microcode::Las,
+            OpAfterAddressing::Sbc => Microcode::Sbc,
+            OpAfterAddressing::Adc => Microcode::Adc,
+            OpAfterAddressing::Shx => Microcode::Shx,
+            OpAfterAddressing::Shy => Microcode::Shy,
+            OpAfterAddressing::Sha => Microcode::Sha,
+            OpAfterAddressing::Tas => Microcode::Tas,
+            OpAfterAddressing::Nop => Microcode::Nop,
+            OpAfterAddressing::Cmp => Microcode::Cmp,
         }
+    }
+
+    fn exec<M: Mcu>(self, cpu: &mut Cpu<M>) {
+        self.to_microcode().exec(cpu)
     }
 }
 
 #[derive(Debug, Clone, Copy)]
 pub enum CrossPageBehavior {
-    /// If not cross paged, will not push SecondClock microcode into cpu
+    /// If not cross paged, will not push the op microcode into cpu
     FirstClock,
-    SecondClock,
-    /// No matter cross paged or not, always push SecondClock microcode into cpu
+    /// No matter cross paged or not, always execute the first clock dummy read
     FirstClockAlways,
 }
 
@@ -1181,6 +1206,14 @@ pub enum Microcode {
 
     /// Load byte into alu at memory ab
     LoadIntoAlu,
+    /// Store SHX result at memory ab
+    Shx,
+    /// Store SHY result at memory ab
+    Shy,
+    /// Store SHA result at memory ab
+    Sha,
+    /// Store TAS result at memory ab
+    Tas,
 
     /// Take immediate value from instruction data stream, add to accumulator with carry
     AdcImmediate,
@@ -1226,6 +1259,8 @@ pub enum Microcode {
     AneImmediate,
     /// LAX immediate: load immediate into A and X in a single micro-op (two cycles total with Fetch)
     LaxImmediate,
+    /// Execute LAS/LAR semantics
+    Las,
     /// Fetch a byte from memory use address saved in `data_latch`, then and with accumulator
 
     /// Fetch a byte from memory, then and with accumulator
@@ -1751,6 +1786,10 @@ impl Microcode {
                 cpu.load_alu();
                 cpu.and();
             }
+            Self::Shx => cpu.shx(),
+            Self::Shy => cpu.shy(),
+            Self::Sha => cpu.sha(),
+            Self::Tas => cpu.tas(),
             Self::AbsoluteIndexedXWithOp { op, first_clock } => {
                 Self::absolute_indexed_x_with_op(cpu, op, first_clock)
             }
@@ -1803,6 +1842,7 @@ impl Microcode {
             Self::AxsImmediate => Self::axs_immediate(cpu),
             Self::AneImmediate => Self::ane_immediate(cpu),
             Self::LaxImmediate => Self::lax_immediate(cpu),
+            Self::Las => Self::las(cpu),
 
             Self::Lax => {
                 cpu.load_alu();
@@ -2168,18 +2208,17 @@ impl Microcode {
                 cpu.address_latch = cpu.address_latch.wrapping_add(cpu.x as u16);
                 let crossed_page = abh != cpu.abh();
                 let dummy_addr = (u16::from(abh) << 8) | u16::from(cpu.abl());
-                if crossed_page || matches!(first_clock, CrossPageBehavior::FirstClockAlways) {
+                let is_first_clock_always =
+                    matches!(first_clock, CrossPageBehavior::FirstClockAlways);
+
+                if crossed_page || is_first_clock_always {
                     cpu.read_byte(dummy_addr);
-                    cpu.push_microcode(Microcode::AbsoluteIndexedXWithOp {
-                        op,
-                        first_clock: CrossPageBehavior::SecondClock,
-                    });
+                    if !is_first_clock_always {
+                        cpu.push_microcode(op.to_microcode());
+                    }
                 } else {
                     op.exec(cpu);
                 }
-            }
-            CrossPageBehavior::SecondClock => {
-                op.exec(cpu);
             }
         }
     }
@@ -2195,18 +2234,17 @@ impl Microcode {
                 cpu.address_latch = cpu.address_latch.wrapping_add(cpu.y as u16);
                 let crossed_page = abh != cpu.abh();
                 let dummy_addr = (u16::from(abh) << 8) | u16::from(cpu.abl());
-                if crossed_page || matches!(first_clock, CrossPageBehavior::FirstClockAlways) {
+                let is_first_clock_always =
+                    matches!(first_clock, CrossPageBehavior::FirstClockAlways);
+
+                if crossed_page || is_first_clock_always {
                     cpu.read_byte(dummy_addr);
-                    cpu.push_microcode(Microcode::AbsoluteIndexedYWithOp {
-                        op,
-                        first_clock: CrossPageBehavior::SecondClock,
-                    });
+                    if !is_first_clock_always {
+                        cpu.push_microcode(op.to_microcode());
+                    }
                 } else {
                     op.exec(cpu);
                 }
-            }
-            CrossPageBehavior::SecondClock => {
-                op.exec(cpu);
             }
         }
     }
