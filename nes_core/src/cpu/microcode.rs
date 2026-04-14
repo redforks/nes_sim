@@ -116,234 +116,273 @@ macro_rules! microcode_arr {
     };
 }
 
+const fn zero_page_op(op: Microcode) -> ArrayVec<[Microcode; 7]> {
+    microcode_arr!(Microcode::ZeroPage, op)
+}
+
+const fn zero_page_x_op(op: Microcode) -> ArrayVec<[Microcode; 7]> {
+    microcode_arr!(Microcode::ZeroPage, Microcode::ZeroPageIndexedX, op)
+}
+
+const fn zero_page_y_op(op: Microcode) -> ArrayVec<[Microcode; 7]> {
+    microcode_arr!(Microcode::ZeroPage, Microcode::ZeroPageIndexedY, op)
+}
+
+const fn absolute_op(op: Microcode) -> ArrayVec<[Microcode; 7]> {
+    microcode_arr!(Microcode::AbsoluteL, Microcode::AbsoluteH, op)
+}
+
+const fn absolute_indexed_x_op(
+    op: OpAfterAddressing,
+    first_clock: CrossPageBehavior,
+) -> ArrayVec<[Microcode; 7]> {
+    microcode_arr!(
+        Microcode::AbsoluteL,
+        Microcode::AbsoluteH,
+        Microcode::IndexedXWithOp { op, first_clock }
+    )
+}
+
+const fn absolute_indexed_y_op(
+    op: OpAfterAddressing,
+    first_clock: CrossPageBehavior,
+) -> ArrayVec<[Microcode; 7]> {
+    microcode_arr!(
+        Microcode::AbsoluteL,
+        Microcode::AbsoluteH,
+        Microcode::IndexedYWithOp { op, first_clock }
+    )
+}
+
+const fn indexed_indirect_op(op: Microcode) -> ArrayVec<[Microcode; 7]> {
+    microcode_arr!(
+        Microcode::ZeroPage,
+        Microcode::ZeroPageIndexedX,
+        Microcode::IndexedL,
+        Microcode::IndexedH,
+        op
+    )
+}
+
+const fn indirect_indexed_op(
+    op: OpAfterAddressing,
+    first_clock: CrossPageBehavior,
+) -> ArrayVec<[Microcode; 7]> {
+    microcode_arr!(
+        Microcode::ZeroPage,
+        Microcode::IndexedL,
+        Microcode::IndexedH,
+        Microcode::IndexedYWithOp { op, first_clock }
+    )
+}
+
+const fn zero_page_rmw_op(op: Microcode) -> ArrayVec<[Microcode; 7]> {
+    microcode_arr!(
+        Microcode::ZeroPage,
+        Microcode::LoadIntoAlu,
+        Microcode::StoreAlu,
+        op
+    )
+}
+
+const fn zero_page_x_rmw_op(op: Microcode) -> ArrayVec<[Microcode; 7]> {
+    microcode_arr!(
+        Microcode::ZeroPage,
+        Microcode::ZeroPageIndexedX,
+        Microcode::LoadIntoAlu,
+        Microcode::StoreAlu,
+        op
+    )
+}
+
+const fn absolute_rmw_op(op: Microcode) -> ArrayVec<[Microcode; 7]> {
+    microcode_arr!(
+        Microcode::AbsoluteL,
+        Microcode::AbsoluteH,
+        Microcode::LoadIntoAlu,
+        Microcode::StoreAlu,
+        op
+    )
+}
+
+const fn absolute_indexed_x_rmw_op(op: Microcode) -> ArrayVec<[Microcode; 7]> {
+    microcode_arr!(
+        Microcode::AbsoluteL,
+        Microcode::AbsoluteH,
+        Microcode::IndexedXWithOp {
+            op: OpAfterAddressing::LoadIntoAlu,
+            first_clock: CrossPageBehavior::FirstClockAlways
+        },
+        Microcode::LoadIntoAlu,
+        Microcode::StoreAlu,
+        op
+    )
+}
+
+const fn absolute_indexed_y_rmw_op(op: Microcode) -> ArrayVec<[Microcode; 7]> {
+    microcode_arr!(
+        Microcode::AbsoluteL,
+        Microcode::AbsoluteH,
+        Microcode::IndexedYWithOp {
+            op: OpAfterAddressing::LoadIntoAlu,
+            first_clock: CrossPageBehavior::FirstClockAlways
+        },
+        Microcode::LoadIntoAlu,
+        Microcode::StoreAlu,
+        op
+    )
+}
+
+const fn indexed_indirect_rmw_op(op: Microcode) -> ArrayVec<[Microcode; 7]> {
+    microcode_arr!(
+        Microcode::ZeroPage,
+        Microcode::ZeroPageIndexedX,
+        Microcode::IndexedL,
+        Microcode::IndexedH,
+        Microcode::LoadIntoAlu,
+        Microcode::StoreAlu,
+        op
+    )
+}
+
+const fn indirect_indexed_rmw_op(op: Microcode) -> ArrayVec<[Microcode; 7]> {
+    microcode_arr!(
+        Microcode::ZeroPage,
+        Microcode::IndexedL,
+        Microcode::IndexedH,
+        Microcode::IndexedYWithOp {
+            op: OpAfterAddressing::LoadIntoAlu,
+            first_clock: CrossPageBehavior::FirstClockAlways
+        },
+        Microcode::LoadIntoAlu,
+        Microcode::StoreAlu,
+        op
+    )
+}
+
+const fn absolute_indexed_x_store_a() -> ArrayVec<[Microcode; 7]> {
+    microcode_arr!(
+        Microcode::AbsoluteL,
+        Microcode::AbsoluteH,
+        Microcode::IndexedXWithOp {
+            op: OpAfterAddressing::StoreA,
+            first_clock: CrossPageBehavior::FirstClockAlways
+        },
+        Microcode::StoreR(Register::A)
+    )
+}
+
+const fn absolute_indexed_y_store_a() -> ArrayVec<[Microcode; 7]> {
+    microcode_arr!(
+        Microcode::AbsoluteL,
+        Microcode::AbsoluteH,
+        Microcode::IndexedYWithOp {
+            op: OpAfterAddressing::StoreA,
+            first_clock: CrossPageBehavior::FirstClockAlways
+        },
+        Microcode::StoreR(Register::A)
+    )
+}
+
+const fn indirect_indexed_store_a() -> ArrayVec<[Microcode; 7]> {
+    microcode_arr!(
+        Microcode::ZeroPage,
+        Microcode::IndexedL,
+        Microcode::IndexedH,
+        Microcode::IndexedYWithOp {
+            op: OpAfterAddressing::StoreA,
+            first_clock: CrossPageBehavior::FirstClockAlways
+        },
+        Microcode::StoreR(Register::A)
+    )
+}
+
 const fn build_opcode_table() -> [ArrayVec<[Microcode; 7]>; 256] {
+    use opcode::*;
     use Microcode::*;
     use Register::*;
-    use opcode::*;
 
     let mut r = include!("init_microtable.inc.rs");
     r[AND_IMMEDIATE as usize] = microcode_arr!(AndImmediate);
-    r[AND_ZERO_PAGE as usize] = microcode_arr!(ZeroPage, And);
-    r[AND_ZERO_PAGE_X as usize] = microcode_arr!(ZeroPage, ZeroPageIndexedX, And);
-    r[AND_ABSOLUTE as usize] = microcode_arr!(AbsoluteL, AbsoluteH, And);
-    r[AND_ABSOLUTE_INDEXED_X as usize] = microcode_arr!(
-        AbsoluteL,
-        AbsoluteH,
-        IndexedXWithOp {
-            op: OpAfterAddressing::And,
-            first_clock: CrossPageBehavior::FirstClock
-        }
-    );
-    r[AND_ABSOLUTE_INDEXED_Y as usize] = microcode_arr!(
-        AbsoluteL,
-        AbsoluteH,
-        IndexedYWithOp {
-            op: OpAfterAddressing::And,
-            first_clock: CrossPageBehavior::FirstClock
-        }
-    );
-    r[AND_INDEXED_INDIRECT as usize] =
-        microcode_arr!(ZeroPage, ZeroPageIndexedX, IndexedL, IndexedH, And);
-    r[AND_INDIRECT_INDEXED as usize] = microcode_arr!(
-        ZeroPage,
-        IndexedL,
-        IndexedH,
-        IndexedYWithOp {
-            op: OpAfterAddressing::And,
-            first_clock: CrossPageBehavior::FirstClock,
-        }
-    );
+    r[AND_ZERO_PAGE as usize] = zero_page_op(And);
+    r[AND_ZERO_PAGE_X as usize] = zero_page_x_op(And);
+    r[AND_ABSOLUTE as usize] = absolute_op(And);
+    r[AND_ABSOLUTE_INDEXED_X as usize] =
+        absolute_indexed_x_op(OpAfterAddressing::And, CrossPageBehavior::FirstClock);
+    r[AND_ABSOLUTE_INDEXED_Y as usize] =
+        absolute_indexed_y_op(OpAfterAddressing::And, CrossPageBehavior::FirstClock);
+    r[AND_INDEXED_INDIRECT as usize] = indexed_indirect_op(And);
+    r[AND_INDIRECT_INDEXED as usize] =
+        indirect_indexed_op(OpAfterAddressing::And, CrossPageBehavior::FirstClock);
     r[LDA_IMMEDIATE as usize] = microcode_arr!(LoadImmediateA);
-    r[LDA_ZERO_PAGE as usize] = microcode_arr!(ZeroPage, LoadR(A));
-    r[LDA_ZERO_PAGE_X as usize] = microcode_arr!(ZeroPage, ZeroPageIndexedX, LoadR(A));
-    r[LDA_ABSOLUTE as usize] = microcode_arr!(AbsoluteL, AbsoluteH, LoadR(A));
-    r[LDA_ABSOLUTE_INDEXED_X as usize] = microcode_arr!(
-        AbsoluteL,
-        AbsoluteH,
-        IndexedXWithOp {
-            op: OpAfterAddressing::LoadIntoA,
-            first_clock: CrossPageBehavior::FirstClock
-        }
-    );
-    r[LDA_ABSOLUTE_INDEXED_Y as usize] = microcode_arr!(
-        AbsoluteL,
-        AbsoluteH,
-        IndexedYWithOp {
-            op: OpAfterAddressing::LoadIntoA,
-            first_clock: CrossPageBehavior::FirstClock
-        }
-    );
-    r[LDA_INDIRECT_INDEXED as usize] =
-        microcode_arr!(ZeroPage, ZeroPageIndexedX, IndexedL, IndexedH, LoadR(A));
-    r[LDA_INDIRECT_INDEXED_Y as usize] = microcode_arr!(
-        ZeroPage,
-        IndexedL,
-        IndexedH,
-        IndexedYWithOp {
-            op: OpAfterAddressing::LoadIntoA,
-            first_clock: CrossPageBehavior::FirstClock
-        }
-    );
+    r[LDA_ZERO_PAGE as usize] = zero_page_op(LoadR(A));
+    r[LDA_ZERO_PAGE_X as usize] = zero_page_x_op(LoadR(A));
+    r[LDA_ABSOLUTE as usize] = absolute_op(LoadR(A));
+    r[LDA_ABSOLUTE_INDEXED_X as usize] =
+        absolute_indexed_x_op(OpAfterAddressing::LoadIntoA, CrossPageBehavior::FirstClock);
+    r[LDA_ABSOLUTE_INDEXED_Y as usize] =
+        absolute_indexed_y_op(OpAfterAddressing::LoadIntoA, CrossPageBehavior::FirstClock);
+    r[LDA_INDIRECT_INDEXED as usize] = indexed_indirect_op(LoadR(A));
+    r[LDA_INDIRECT_INDEXED_Y as usize] =
+        indirect_indexed_op(OpAfterAddressing::LoadIntoA, CrossPageBehavior::FirstClock);
     r[LDX_IMMEDIATE as usize] = microcode_arr!(LoadImmediateX);
-    r[LDX_ZERO_PAGE as usize] = microcode_arr!(ZeroPage, LoadR(X));
-    r[LDX_ZERO_PAGE_Y as usize] = microcode_arr!(ZeroPage, ZeroPageIndexedY, LoadR(X));
-    r[LDX_ABSOLUTE as usize] = microcode_arr!(AbsoluteL, AbsoluteH, LoadR(X));
-    r[LDX_ABSOLUTE_INDEXED_Y as usize] = microcode_arr!(
-        AbsoluteL,
-        AbsoluteH,
-        IndexedYWithOp {
-            op: OpAfterAddressing::LoadIntoX,
-            first_clock: CrossPageBehavior::FirstClock
-        }
-    );
+    r[LDX_ZERO_PAGE as usize] = zero_page_op(LoadR(X));
+    r[LDX_ZERO_PAGE_Y as usize] = zero_page_y_op(LoadR(X));
+    r[LDX_ABSOLUTE as usize] = absolute_op(LoadR(X));
+    r[LDX_ABSOLUTE_INDEXED_Y as usize] =
+        absolute_indexed_y_op(OpAfterAddressing::LoadIntoX, CrossPageBehavior::FirstClock);
     r[LDY_IMMEDIATE as usize] = microcode_arr!(LoadImmediateY);
-    r[LDY_ZERO_PAGE as usize] = microcode_arr!(ZeroPage, LoadR(Y));
-    r[LDY_ZERO_PAGE_X as usize] = microcode_arr!(ZeroPage, ZeroPageIndexedX, LoadR(Y));
-    r[LDY_ABSOLUTE as usize] = microcode_arr!(AbsoluteL, AbsoluteH, LoadR(Y));
-    r[LDY_ABSOLUTE_INDEXED_X as usize] = microcode_arr!(
-        AbsoluteL,
-        AbsoluteH,
-        IndexedXWithOp {
-            op: OpAfterAddressing::LoadIntoY,
-            first_clock: CrossPageBehavior::FirstClock,
-        }
-    );
-    r[STA_ZERO_PAGE as usize] = microcode_arr!(ZeroPage, StoreR(A));
-    r[STA_ZERO_PAGE_X as usize] = microcode_arr!(ZeroPage, ZeroPageIndexedX, StoreR(A));
-    r[STA_ABSOLUTE as usize] = microcode_arr!(AbsoluteL, AbsoluteH, StoreR(A));
-    r[STA_ABSOLUTE_INDEXED_X as usize] = microcode_arr!(
-        AbsoluteL,
-        AbsoluteH,
-        IndexedXWithOp {
-            op: OpAfterAddressing::StoreA,
-            first_clock: CrossPageBehavior::FirstClockAlways,
-        },
-        StoreR(Register::A)
-    );
-    r[STA_ABSOLUTE_INDEXED_Y as usize] = microcode_arr!(
-        AbsoluteL,
-        AbsoluteH,
-        IndexedYWithOp {
-            op: OpAfterAddressing::StoreA,
-            first_clock: CrossPageBehavior::FirstClockAlways,
-        },
-        StoreR(Register::A)
-    );
-    r[STA_INDEXED_INDIRECT as usize] =
-        microcode_arr!(ZeroPage, ZeroPageIndexedX, IndexedL, IndexedH, StoreR(A));
-    r[STA_INDIRECT_INDEXED_Y as usize] = microcode_arr!(
-        ZeroPage,
-        IndexedL,
-        IndexedH,
-        IndexedYWithOp {
-            op: OpAfterAddressing::StoreA,
-            first_clock: CrossPageBehavior::FirstClockAlways,
-        },
-        StoreR(A)
-    );
-    r[STX_ZERO_PAGE as usize] = microcode_arr!(ZeroPage, StoreR(X));
-    r[STX_ZERO_PAGE_Y as usize] = microcode_arr!(ZeroPage, ZeroPageIndexedY, StoreR(X));
-    r[STX_ABSOLUTE as usize] = microcode_arr!(AbsoluteL, AbsoluteH, StoreR(X));
-    r[STY_ZERO_PAGE as usize] = microcode_arr!(ZeroPage, StoreR(Y));
-    r[STY_ZERO_PAGE_X as usize] = microcode_arr!(ZeroPage, ZeroPageIndexedX, StoreR(Y));
-    r[STY_ABSOLUTE as usize] = microcode_arr!(AbsoluteL, AbsoluteH, StoreR(Y));
-    r[BIT_ZERO_PAGE as usize] = microcode_arr!(ZeroPage, Bit);
-    r[BIT_ABSOLUTE as usize] = microcode_arr!(AbsoluteL, AbsoluteH, Bit);
+    r[LDY_ZERO_PAGE as usize] = zero_page_op(LoadR(Y));
+    r[LDY_ZERO_PAGE_X as usize] = zero_page_x_op(LoadR(Y));
+    r[LDY_ABSOLUTE as usize] = absolute_op(LoadR(Y));
+    r[LDY_ABSOLUTE_INDEXED_X as usize] =
+        absolute_indexed_x_op(OpAfterAddressing::LoadIntoY, CrossPageBehavior::FirstClock);
+    r[STA_ZERO_PAGE as usize] = zero_page_op(StoreR(A));
+    r[STA_ZERO_PAGE_X as usize] = zero_page_x_op(StoreR(A));
+    r[STA_ABSOLUTE as usize] = absolute_op(StoreR(A));
+    r[STA_ABSOLUTE_INDEXED_X as usize] = absolute_indexed_x_store_a();
+    r[STA_ABSOLUTE_INDEXED_Y as usize] = absolute_indexed_y_store_a();
+    r[STA_INDEXED_INDIRECT as usize] = indexed_indirect_op(StoreR(A));
+    r[STA_INDIRECT_INDEXED_Y as usize] = indirect_indexed_store_a();
+    r[STX_ZERO_PAGE as usize] = zero_page_op(StoreR(X));
+    r[STX_ZERO_PAGE_Y as usize] = zero_page_y_op(StoreR(X));
+    r[STX_ABSOLUTE as usize] = absolute_op(StoreR(X));
+    r[STY_ZERO_PAGE as usize] = zero_page_op(StoreR(Y));
+    r[STY_ZERO_PAGE_X as usize] = zero_page_x_op(StoreR(Y));
+    r[STY_ABSOLUTE as usize] = absolute_op(StoreR(Y));
+    r[BIT_ZERO_PAGE as usize] = zero_page_op(Bit);
+    r[BIT_ABSOLUTE as usize] = absolute_op(Bit);
     r[ADC_IMMEDIATE as usize] = microcode_arr!(AdcImmediate);
-    r[ADC_ZERO_PAGE as usize] = microcode_arr!(ZeroPage, Adc);
-    r[ADC_ZERO_PAGE_X as usize] = microcode_arr!(ZeroPage, ZeroPageIndexedX, Adc);
-    r[ADC_ABSOLUTE as usize] = microcode_arr!(AbsoluteL, AbsoluteH, Adc);
-    r[ADC_ABSOLUTE_INDEXED_X as usize] = microcode_arr!(
-        AbsoluteL,
-        AbsoluteH,
-        IndexedXWithOp {
-            op: OpAfterAddressing::Adc,
-            first_clock: CrossPageBehavior::FirstClock
-        }
-    );
-    r[ADC_ABSOLUTE_INDEXED_Y as usize] = microcode_arr!(
-        AbsoluteL,
-        AbsoluteH,
-        IndexedYWithOp {
-            op: OpAfterAddressing::Adc,
-            first_clock: CrossPageBehavior::FirstClock
-        }
-    );
-    r[ADC_INDEXED_INDIRECT as usize] =
-        microcode_arr!(ZeroPage, ZeroPageIndexedX, IndexedL, IndexedH, Adc);
-    r[ADC_INDIRECT_INDEXED as usize] = microcode_arr!(
-        ZeroPage,
-        IndexedL,
-        IndexedH,
-        IndexedYWithOp {
-            op: OpAfterAddressing::Adc,
-            first_clock: CrossPageBehavior::FirstClock,
-        }
-    );
+    r[ADC_ZERO_PAGE as usize] = zero_page_op(Adc);
+    r[ADC_ZERO_PAGE_X as usize] = zero_page_x_op(Adc);
+    r[ADC_ABSOLUTE as usize] = absolute_op(Adc);
+    r[ADC_ABSOLUTE_INDEXED_X as usize] =
+        absolute_indexed_x_op(OpAfterAddressing::Adc, CrossPageBehavior::FirstClock);
+    r[ADC_ABSOLUTE_INDEXED_Y as usize] =
+        absolute_indexed_y_op(OpAfterAddressing::Adc, CrossPageBehavior::FirstClock);
+    r[ADC_INDEXED_INDIRECT as usize] = indexed_indirect_op(Adc);
+    r[ADC_INDIRECT_INDEXED as usize] =
+        indirect_indexed_op(OpAfterAddressing::Adc, CrossPageBehavior::FirstClock);
     r[ASL_ACCUMULATOR as usize] = microcode_arr!(AslAccumulator);
-    r[ASL_ZERO_PAGE as usize] = microcode_arr!(ZeroPage, LoadIntoAlu, StoreAlu, Asl);
-    r[ASL_ZERO_PAGE_X as usize] =
-        microcode_arr!(ZeroPage, ZeroPageIndexedX, LoadIntoAlu, StoreAlu, Asl);
-    r[ASL_ABSOLUTE as usize] = microcode_arr!(AbsoluteL, AbsoluteH, LoadIntoAlu, StoreAlu, Asl);
-    r[ASL_ABSOLUTE_INDEXED_X as usize] = microcode_arr!(
-        AbsoluteL,
-        AbsoluteH,
-        IndexedXWithOp {
-            op: OpAfterAddressing::LoadIntoAlu,
-            first_clock: CrossPageBehavior::FirstClockAlways
-        },
-        LoadIntoAlu,
-        StoreAlu,
-        Asl
-    );
+    r[ASL_ZERO_PAGE as usize] = zero_page_rmw_op(Asl);
+    r[ASL_ZERO_PAGE_X as usize] = zero_page_x_rmw_op(Asl);
+    r[ASL_ABSOLUTE as usize] = absolute_rmw_op(Asl);
+    r[ASL_ABSOLUTE_INDEXED_X as usize] = absolute_indexed_x_rmw_op(Asl);
     r[LSR_ACCUMULATOR as usize] = microcode_arr!(LsrAccumulator);
-    r[LSR_ZERO_PAGE as usize] = microcode_arr!(ZeroPage, LoadIntoAlu, StoreAlu, Lsr);
-    r[LSR_ZERO_PAGE_X as usize] =
-        microcode_arr!(ZeroPage, ZeroPageIndexedX, LoadIntoAlu, StoreAlu, Lsr);
-    r[LSR_ABSOLUTE as usize] = microcode_arr!(AbsoluteL, AbsoluteH, LoadIntoAlu, StoreAlu, Lsr);
-    r[LSR_ABSOLUTE_INDEXED_X as usize] = microcode_arr!(
-        AbsoluteL,
-        AbsoluteH,
-        IndexedXWithOp {
-            op: OpAfterAddressing::LoadIntoAlu,
-            first_clock: CrossPageBehavior::FirstClockAlways
-        },
-        LoadIntoAlu,
-        StoreAlu,
-        Lsr
-    );
+    r[LSR_ZERO_PAGE as usize] = zero_page_rmw_op(Lsr);
+    r[LSR_ZERO_PAGE_X as usize] = zero_page_x_rmw_op(Lsr);
+    r[LSR_ABSOLUTE as usize] = absolute_rmw_op(Lsr);
+    r[LSR_ABSOLUTE_INDEXED_X as usize] = absolute_indexed_x_rmw_op(Lsr);
     r[ROL_ACCUMULATOR as usize] = microcode_arr!(RolAccumulator);
-    r[ROL_ZERO_PAGE as usize] = microcode_arr!(ZeroPage, LoadIntoAlu, StoreAlu, Rol);
-    r[ROL_ZERO_PAGE_X as usize] =
-        microcode_arr!(ZeroPage, ZeroPageIndexedX, LoadIntoAlu, StoreAlu, Rol);
-    r[ROL_ABSOLUTE as usize] = microcode_arr!(AbsoluteL, AbsoluteH, LoadIntoAlu, StoreAlu, Rol);
-    r[ROL_ABSOLUTE_INDEXED_X as usize] = microcode_arr!(
-        AbsoluteL,
-        AbsoluteH,
-        IndexedXWithOp {
-            op: OpAfterAddressing::LoadIntoAlu,
-            first_clock: CrossPageBehavior::FirstClockAlways
-        },
-        LoadIntoAlu,
-        StoreAlu,
-        Rol
-    );
+    r[ROL_ZERO_PAGE as usize] = zero_page_rmw_op(Rol);
+    r[ROL_ZERO_PAGE_X as usize] = zero_page_x_rmw_op(Rol);
+    r[ROL_ABSOLUTE as usize] = absolute_rmw_op(Rol);
+    r[ROL_ABSOLUTE_INDEXED_X as usize] = absolute_indexed_x_rmw_op(Rol);
     r[ROR_ACCUMULATOR as usize] = microcode_arr!(RorAccumulator);
-    r[ROR_ZERO_PAGE as usize] = microcode_arr!(ZeroPage, LoadIntoAlu, StoreAlu, Ror);
-    r[ROR_ZERO_PAGE_X as usize] =
-        microcode_arr!(ZeroPage, ZeroPageIndexedX, LoadIntoAlu, StoreAlu, Ror);
-    r[ROR_ABSOLUTE as usize] = microcode_arr!(AbsoluteL, AbsoluteH, LoadIntoAlu, StoreAlu, Ror);
-    r[ROR_ABSOLUTE_INDEXED_X as usize] = microcode_arr!(
-        AbsoluteL,
-        AbsoluteH,
-        IndexedXWithOp {
-            op: OpAfterAddressing::LoadIntoAlu,
-            first_clock: CrossPageBehavior::FirstClockAlways
-        },
-        LoadIntoAlu,
-        StoreAlu,
-        Ror
-    );
+    r[ROR_ZERO_PAGE as usize] = zero_page_rmw_op(Ror);
+    r[ROR_ZERO_PAGE_X as usize] = zero_page_x_rmw_op(Ror);
+    r[ROR_ABSOLUTE as usize] = absolute_rmw_op(Ror);
+    r[ROR_ABSOLUTE_INDEXED_X as usize] = absolute_indexed_x_rmw_op(Ror);
     r[BCC as usize] = microcode_arr!(BranchRelative(BranchTest::IfCarryClear));
     r[BCS as usize] = microcode_arr!(BranchRelative(BranchTest::IfCarrySet));
     r[BEQ as usize] = microcode_arr!(BranchRelative(BranchTest::IfZeroSet));
@@ -389,61 +428,25 @@ const fn build_opcode_table() -> [ArrayVec<[Microcode; 7]>; 256] {
     r[NOP_ZERO_PAGE1 as usize] = microcode_arr!(SkipImmediate, Nop);
     r[NOP_ZERO_PAGE2 as usize] = microcode_arr!(SkipImmediate, Nop);
     r[NOP_ZERO_PAGE3 as usize] = microcode_arr!(SkipImmediate, Nop);
-    r[NOP_ZERO_PAGE_X1 as usize] = microcode_arr!(ZeroPage, ZeroPageIndexedX, Nop);
-    r[NOP_ZERO_PAGE_X2 as usize] = microcode_arr!(ZeroPage, ZeroPageIndexedX, Nop);
-    r[NOP_ZERO_PAGE_X3 as usize] = microcode_arr!(ZeroPage, ZeroPageIndexedX, Nop);
-    r[NOP_ZERO_PAGE_X4 as usize] = microcode_arr!(ZeroPage, ZeroPageIndexedX, Nop);
-    r[NOP_ZERO_PAGE_X5 as usize] = microcode_arr!(ZeroPage, ZeroPageIndexedX, Nop);
-    r[NOP_ZERO_PAGE_X6 as usize] = microcode_arr!(ZeroPage, ZeroPageIndexedX, Nop);
-    r[NOP_ABSOLUTE as usize] = microcode_arr!(AbsoluteL, AbsoluteH, Nop);
-    r[NOP_ABSOLUTE_INDEXED_X1 as usize] = microcode_arr!(
-        AbsoluteL,
-        AbsoluteH,
-        IndexedXWithOp {
-            op: OpAfterAddressing::Nop,
-            first_clock: CrossPageBehavior::FirstClock
-        }
-    );
-    r[NOP_ABSOLUTE_INDEXED_X2 as usize] = microcode_arr!(
-        AbsoluteL,
-        AbsoluteH,
-        IndexedXWithOp {
-            op: OpAfterAddressing::Nop,
-            first_clock: CrossPageBehavior::FirstClock
-        }
-    );
-    r[NOP_ABSOLUTE_INDEXED_X3 as usize] = microcode_arr!(
-        AbsoluteL,
-        AbsoluteH,
-        IndexedXWithOp {
-            op: OpAfterAddressing::Nop,
-            first_clock: CrossPageBehavior::FirstClock
-        }
-    );
-    r[NOP_ABSOLUTE_INDEXED_X4 as usize] = microcode_arr!(
-        AbsoluteL,
-        AbsoluteH,
-        IndexedXWithOp {
-            op: OpAfterAddressing::Nop,
-            first_clock: CrossPageBehavior::FirstClock
-        }
-    );
-    r[NOP_ABSOLUTE_INDEXED_X5 as usize] = microcode_arr!(
-        AbsoluteL,
-        AbsoluteH,
-        IndexedXWithOp {
-            op: OpAfterAddressing::Nop,
-            first_clock: CrossPageBehavior::FirstClock
-        }
-    );
-    r[NOP_ABSOLUTE_INDEXED_X6 as usize] = microcode_arr!(
-        AbsoluteL,
-        AbsoluteH,
-        IndexedXWithOp {
-            op: OpAfterAddressing::Nop,
-            first_clock: CrossPageBehavior::FirstClock
-        }
-    );
+    r[NOP_ZERO_PAGE_X1 as usize] = zero_page_x_op(Nop);
+    r[NOP_ZERO_PAGE_X2 as usize] = zero_page_x_op(Nop);
+    r[NOP_ZERO_PAGE_X3 as usize] = zero_page_x_op(Nop);
+    r[NOP_ZERO_PAGE_X4 as usize] = zero_page_x_op(Nop);
+    r[NOP_ZERO_PAGE_X5 as usize] = zero_page_x_op(Nop);
+    r[NOP_ZERO_PAGE_X6 as usize] = zero_page_x_op(Nop);
+    r[NOP_ABSOLUTE as usize] = absolute_op(Nop);
+    r[NOP_ABSOLUTE_INDEXED_X1 as usize] =
+        absolute_indexed_x_op(OpAfterAddressing::Nop, CrossPageBehavior::FirstClock);
+    r[NOP_ABSOLUTE_INDEXED_X2 as usize] =
+        absolute_indexed_x_op(OpAfterAddressing::Nop, CrossPageBehavior::FirstClock);
+    r[NOP_ABSOLUTE_INDEXED_X3 as usize] =
+        absolute_indexed_x_op(OpAfterAddressing::Nop, CrossPageBehavior::FirstClock);
+    r[NOP_ABSOLUTE_INDEXED_X4 as usize] =
+        absolute_indexed_x_op(OpAfterAddressing::Nop, CrossPageBehavior::FirstClock);
+    r[NOP_ABSOLUTE_INDEXED_X5 as usize] =
+        absolute_indexed_x_op(OpAfterAddressing::Nop, CrossPageBehavior::FirstClock);
+    r[NOP_ABSOLUTE_INDEXED_X6 as usize] =
+        absolute_indexed_x_op(OpAfterAddressing::Nop, CrossPageBehavior::FirstClock);
     r[KIL1 as usize] = microcode_arr!(Kill);
     r[KIL2 as usize] = microcode_arr!(Kill);
     r[KIL3 as usize] = microcode_arr!(Kill);
@@ -470,8 +473,8 @@ const fn build_opcode_table() -> [ArrayVec<[Microcode; 7]>; 256] {
     r[SBC_IMMEDIATE as usize] = microcode_arr!(SbcImmediate);
     r[USBC as usize] = microcode_arr!(SbcImmediate);
     r[SBC_ZERO_PAGE as usize] = microcode_arr!(ZeroPage, Sbc);
-    r[SBC_ZERO_PAGE_X as usize] = microcode_arr!(ZeroPage, ZeroPageIndexedX, Sbc);
-    r[SBC_ABSOLUTE as usize] = microcode_arr!(AbsoluteL, AbsoluteH, Sbc);
+    r[SBC_ZERO_PAGE_X as usize] = zero_page_x_op(Sbc);
+    r[SBC_ABSOLUTE as usize] = absolute_op(Sbc);
     r[SBC_ABSOLUTE_INDEXED_X as usize] = microcode_arr!(
         AbsoluteL,
         AbsoluteH,
@@ -488,21 +491,13 @@ const fn build_opcode_table() -> [ArrayVec<[Microcode; 7]>; 256] {
             first_clock: CrossPageBehavior::FirstClock
         }
     );
-    r[SBC_INDEXED_INDIRECT as usize] =
-        microcode_arr!(ZeroPage, ZeroPageIndexedX, IndexedL, IndexedH, Sbc);
-    r[SBC_INDIRECT_INDEXED as usize] = microcode_arr!(
-        ZeroPage,
-        IndexedL,
-        IndexedH,
-        IndexedYWithOp {
-            op: OpAfterAddressing::Sbc,
-            first_clock: CrossPageBehavior::FirstClock
-        }
-    );
+    r[SBC_INDEXED_INDIRECT as usize] = indexed_indirect_op(Sbc);
+    r[SBC_INDIRECT_INDEXED as usize] =
+        indirect_indexed_op(OpAfterAddressing::Sbc, CrossPageBehavior::FirstClock);
     r[CMP_IMMEDIATE as usize] = microcode_arr!(CmpImmediate);
     r[CMP_ZERO_PAGE as usize] = microcode_arr!(ZeroPage, Cmp);
-    r[CMP_ZERO_PAGE_X as usize] = microcode_arr!(ZeroPage, ZeroPageIndexedX, Cmp);
-    r[CMP_ABSOLUTE as usize] = microcode_arr!(AbsoluteL, AbsoluteH, Cmp);
+    r[CMP_ZERO_PAGE_X as usize] = zero_page_x_op(Cmp);
+    r[CMP_ABSOLUTE as usize] = absolute_op(Cmp);
     r[CMP_ABSOLUTE_INDEXED_X as usize] = microcode_arr!(
         AbsoluteL,
         AbsoluteH,
@@ -527,21 +522,14 @@ const fn build_opcode_table() -> [ArrayVec<[Microcode; 7]>; 256] {
         IndexedH,
         Cmp
     );
-    r[CMP_INDIRECT_INDEXED as usize] = microcode_arr!(
-        ZeroPage,
-        IndexedL,
-        IndexedH,
-        IndexedYWithOp {
-            op: OpAfterAddressing::Cmp,
-            first_clock: CrossPageBehavior::FirstClock,
-        }
-    );
+    r[CMP_INDIRECT_INDEXED as usize] =
+        indirect_indexed_op(OpAfterAddressing::Cmp, CrossPageBehavior::FirstClock);
     r[CPX_IMMEDIATE as usize] = microcode_arr!(CpxImmediate);
     r[CPX_ZERO_PAGE as usize] = microcode_arr!(ZeroPage, Cpx);
-    r[CPX_ABSOLUTE as usize] = microcode_arr!(AbsoluteL, AbsoluteH, Cpx);
+    r[CPX_ABSOLUTE as usize] = absolute_op(Cpx);
     r[CPY_IMMEDIATE as usize] = microcode_arr!(CpyImmediate);
     r[CPY_ZERO_PAGE as usize] = microcode_arr!(ZeroPage, Cpy);
-    r[CPY_ABSOLUTE as usize] = microcode_arr!(AbsoluteL, AbsoluteH, Cpy);
+    r[CPY_ABSOLUTE as usize] = absolute_op(Cpy);
     r[TAX as usize] = microcode_arr!(Tax);
     r[TXA as usize] = microcode_arr!(Txa);
     r[TAY as usize] = microcode_arr!(Tay);
@@ -554,8 +542,8 @@ const fn build_opcode_table() -> [ArrayVec<[Microcode; 7]>; 256] {
     r[DEY as usize] = microcode_arr!(Dey);
     r[ORA_IMMEDIATE as usize] = microcode_arr!(OraImmediate);
     r[ORA_ZERO_PAGE as usize] = microcode_arr!(ZeroPage, Ora);
-    r[ORA_ZERO_PAGE_X as usize] = microcode_arr!(ZeroPage, ZeroPageIndexedX, Ora);
-    r[ORA_ABSOLUTE as usize] = microcode_arr!(AbsoluteL, AbsoluteH, Ora);
+    r[ORA_ZERO_PAGE_X as usize] = zero_page_x_op(Ora);
+    r[ORA_ABSOLUTE as usize] = absolute_op(Ora);
     r[ORA_ABSOLUTE_INDEXED_X as usize] = microcode_arr!(
         AbsoluteL,
         AbsoluteH,
@@ -572,21 +560,13 @@ const fn build_opcode_table() -> [ArrayVec<[Microcode; 7]>; 256] {
             first_clock: CrossPageBehavior::FirstClock
         }
     );
-    r[ORA_INDEXED_INDIRECT as usize] =
-        microcode_arr!(ZeroPage, ZeroPageIndexedX, IndexedL, IndexedH, Ora);
-    r[ORA_INDIRECT_INDEXED as usize] = microcode_arr!(
-        ZeroPage,
-        IndexedL,
-        IndexedH,
-        IndexedYWithOp {
-            op: OpAfterAddressing::Ora,
-            first_clock: CrossPageBehavior::FirstClock
-        }
-    );
+    r[ORA_INDEXED_INDIRECT as usize] = indexed_indirect_op(Ora);
+    r[ORA_INDIRECT_INDEXED as usize] =
+        indirect_indexed_op(OpAfterAddressing::Ora, CrossPageBehavior::FirstClock);
     r[EOR_IMMEDIATE as usize] = microcode_arr!(EorImmediate);
     r[EOR_ZERO_PAGE as usize] = microcode_arr!(ZeroPage, Eor);
-    r[EOR_ZERO_PAGE_X as usize] = microcode_arr!(ZeroPage, ZeroPageIndexedX, Eor);
-    r[EOR_ABSOLUTE as usize] = microcode_arr!(AbsoluteL, AbsoluteH, Eor);
+    r[EOR_ZERO_PAGE_X as usize] = zero_page_x_op(Eor);
+    r[EOR_ABSOLUTE as usize] = absolute_op(Eor);
     r[EOR_ABSOLUTE_INDEXED_X as usize] = microcode_arr!(
         AbsoluteL,
         AbsoluteH,
@@ -603,17 +583,9 @@ const fn build_opcode_table() -> [ArrayVec<[Microcode; 7]>; 256] {
             first_clock: CrossPageBehavior::FirstClock
         }
     );
-    r[EOR_INDEXED_INDIRECT as usize] =
-        microcode_arr!(ZeroPage, ZeroPageIndexedX, IndexedL, IndexedH, Eor);
-    r[EOR_INDIRECT_INDEXED as usize] = microcode_arr!(
-        ZeroPage,
-        IndexedL,
-        IndexedH,
-        IndexedYWithOp {
-            op: OpAfterAddressing::Eor,
-            first_clock: CrossPageBehavior::FirstClock
-        }
-    );
+    r[EOR_INDEXED_INDIRECT as usize] = indexed_indirect_op(Eor);
+    r[EOR_INDIRECT_INDEXED as usize] =
+        indirect_indexed_op(OpAfterAddressing::Eor, CrossPageBehavior::FirstClock);
     r[ALR as usize] = microcode_arr!(AlrImmediate);
     r[ANE as usize] = microcode_arr!(AneImmediate);
     r[ANC as usize] = microcode_arr!(AncImmediate);
@@ -625,8 +597,8 @@ const fn build_opcode_table() -> [ArrayVec<[Microcode; 7]>; 256] {
     // Make the immediate microcode a single micro-op (LaxImmediate) so total cycles = 2
     r[LAX_IMMEDIATE as usize] = microcode_arr!(LaxImmediate);
     r[LAX_ZERO_PAGE as usize] = microcode_arr!(ZeroPage, Lax);
-    r[LAX_ZERO_PAGE_Y as usize] = microcode_arr!(ZeroPage, ZeroPageIndexedY, Lax);
-    r[LAX_ABSOLUTE as usize] = microcode_arr!(AbsoluteL, AbsoluteH, Lax);
+    r[LAX_ZERO_PAGE_Y as usize] = zero_page_y_op(Lax);
+    r[LAX_ABSOLUTE as usize] = absolute_op(Lax);
     r[LAX_ABSOLUTE_INDEXED_Y as usize] = microcode_arr!(
         AbsoluteL,
         AbsoluteH,
@@ -643,334 +615,63 @@ const fn build_opcode_table() -> [ArrayVec<[Microcode; 7]>; 256] {
             first_clock: CrossPageBehavior::FirstClock
         }
     );
-    r[LAX_INDEXED_INDIRECT as usize] =
-        microcode_arr!(ZeroPage, ZeroPageIndexedX, IndexedL, IndexedH, Lax);
-    r[LAX_INDIRECT_INDEXED as usize] = microcode_arr!(
-        ZeroPage,
-        IndexedL,
-        IndexedH,
-        IndexedYWithOp {
-            op: OpAfterAddressing::Lax,
-            first_clock: CrossPageBehavior::FirstClock
-        }
-    );
+    r[LAX_INDEXED_INDIRECT as usize] = indexed_indirect_op(Lax);
+    r[LAX_INDIRECT_INDEXED as usize] =
+        indirect_indexed_op(OpAfterAddressing::Lax, CrossPageBehavior::FirstClock);
     r[SAX_ZERO_PAGE as usize] = microcode_arr!(ZeroPage, Sax);
-    r[SAX_ZERO_PAGE_Y as usize] = microcode_arr!(ZeroPage, ZeroPageIndexedY, Sax);
-    r[SAX_ABSOLUTE as usize] = microcode_arr!(AbsoluteL, AbsoluteH, Sax);
-    r[SAX_INDEXED_INDIRECT as usize] =
-        microcode_arr!(ZeroPage, ZeroPageIndexedX, IndexedL, IndexedH, Sax);
+    r[SAX_ZERO_PAGE_Y as usize] = zero_page_y_op(Sax);
+    r[SAX_ABSOLUTE as usize] = absolute_op(Sax);
+    r[SAX_INDEXED_INDIRECT as usize] = indexed_indirect_op(Sax);
     r[DCP_ZERO_PAGE as usize] = microcode_arr!(ZeroPage, LoadIntoAlu, StoreAlu, Dcp);
-    r[DCP_ZERO_PAGE_X as usize] =
-        microcode_arr!(ZeroPage, ZeroPageIndexedX, LoadIntoAlu, StoreAlu, Dcp);
-    r[DCP_ABSOLUTE as usize] = microcode_arr!(AbsoluteL, AbsoluteH, LoadIntoAlu, StoreAlu, Dcp);
-    r[DCP_ABSOLUTE_INDEXED_X as usize] = microcode_arr!(
-        AbsoluteL,
-        AbsoluteH,
-        IndexedXWithOp {
-            op: OpAfterAddressing::LoadIntoAlu,
-            first_clock: CrossPageBehavior::FirstClockAlways
-        },
-        LoadIntoAlu,
-        StoreAlu,
-        Dcp
-    );
-    r[DCP_ABSOLUTE_INDEXED_Y as usize] = microcode_arr!(
-        AbsoluteL,
-        AbsoluteH,
-        IndexedYWithOp {
-            op: OpAfterAddressing::LoadIntoAlu,
-            first_clock: CrossPageBehavior::FirstClockAlways
-        },
-        LoadIntoAlu,
-        StoreAlu,
-        Dcp
-    );
-    r[DCP_INDEXED_INDIRECT as usize] = microcode_arr!(
-        ZeroPage,
-        ZeroPageIndexedX,
-        IndexedL,
-        IndexedH,
-        LoadIntoAlu,
-        StoreAlu,
-        Dcp
-    );
-    r[DCP_INDIRECT_INDEXED as usize] = microcode_arr!(
-        ZeroPage,
-        IndexedL,
-        IndexedH,
-        IndexedYWithOp {
-            op: OpAfterAddressing::LoadIntoAlu,
-            first_clock: CrossPageBehavior::FirstClockAlways,
-        },
-        LoadIntoAlu,
-        StoreAlu,
-        Dcp
-    );
-    r[DEC_ZERO_PAGE as usize] = microcode_arr!(ZeroPage, LoadIntoAlu, StoreAlu, Dec);
-    r[DEC_ZERO_PAGE_X as usize] =
-        microcode_arr!(ZeroPage, ZeroPageIndexedX, LoadIntoAlu, StoreAlu, Dec);
-    r[DEC_ABSOLUTE as usize] = microcode_arr!(AbsoluteL, AbsoluteH, LoadIntoAlu, StoreAlu, Dec);
-    r[DEC_ABSOLUTE_INDEXED_X as usize] = microcode_arr!(
-        AbsoluteL,
-        AbsoluteH,
-        IndexedXWithOp {
-            op: OpAfterAddressing::LoadIntoAlu,
-            first_clock: CrossPageBehavior::FirstClockAlways
-        },
-        LoadIntoAlu,
-        StoreAlu,
-        Dec
-    );
-    r[INC_ZERO_PAGE as usize] = microcode_arr!(ZeroPage, LoadIntoAlu, StoreAlu, Inc);
-    r[INC_ZERO_PAGE_X as usize] =
-        microcode_arr!(ZeroPage, ZeroPageIndexedX, LoadIntoAlu, StoreAlu, Inc);
-    r[INC_ABSOLUTE as usize] = microcode_arr!(AbsoluteL, AbsoluteH, LoadIntoAlu, StoreAlu, Inc);
-    r[INC_ABSOLUTE_INDEXED_X as usize] = microcode_arr!(
-        AbsoluteL,
-        AbsoluteH,
-        IndexedXWithOp {
-            op: OpAfterAddressing::LoadIntoAlu,
-            first_clock: CrossPageBehavior::FirstClockAlways
-        },
-        LoadIntoAlu,
-        StoreAlu,
-        Inc
-    );
-    r[ISC_ZERO_PAGE as usize] = microcode_arr!(ZeroPage, LoadIntoAlu, StoreAlu, Isc);
-    r[ISC_ZERO_PAGE_X as usize] =
-        microcode_arr!(ZeroPage, ZeroPageIndexedX, LoadIntoAlu, StoreAlu, Isc);
-    r[ISC_ABSOLUTE as usize] = microcode_arr!(AbsoluteL, AbsoluteH, LoadIntoAlu, StoreAlu, Isc);
-    r[ISC_ABSOLUTE_INDEXED_X as usize] = microcode_arr!(
-        AbsoluteL,
-        AbsoluteH,
-        IndexedXWithOp {
-            op: OpAfterAddressing::LoadIntoAlu,
-            first_clock: CrossPageBehavior::FirstClockAlways
-        },
-        LoadIntoAlu,
-        StoreAlu,
-        Isc
-    );
-    r[ISC_ABSOLUTE_INDEXED_Y as usize] = microcode_arr!(
-        AbsoluteL,
-        AbsoluteH,
-        IndexedYWithOp {
-            op: OpAfterAddressing::LoadIntoAlu,
-            first_clock: CrossPageBehavior::FirstClockAlways
-        },
-        LoadIntoAlu,
-        StoreAlu,
-        Isc
-    );
-    r[ISC_INDEXED_INDIRECT as usize] = microcode_arr!(
-        ZeroPage,
-        ZeroPageIndexedX,
-        IndexedL,
-        IndexedH,
-        LoadIntoAlu,
-        StoreAlu,
-        Isc
-    );
-    r[ISC_INDIRECT_INDEXED as usize] = microcode_arr!(
-        ZeroPage,
-        IndexedL,
-        IndexedH,
-        IndexedYWithOp {
-            op: OpAfterAddressing::LoadIntoAlu,
-            first_clock: CrossPageBehavior::FirstClockAlways
-        },
-        LoadIntoAlu,
-        StoreAlu,
-        Isc
-    );
-    r[RRA_ZERO_PAGE as usize] = microcode_arr!(ZeroPage, LoadIntoAlu, StoreAlu, Rra);
-    r[RRA_ZERO_PAGE_X as usize] =
-        microcode_arr!(ZeroPage, ZeroPageIndexedX, LoadIntoAlu, StoreAlu, Rra);
-    r[RRA_ABSOLUTE as usize] = microcode_arr!(AbsoluteL, AbsoluteH, LoadIntoAlu, StoreAlu, Rra);
-    r[RRA_ABSOLUTE_INDEXED_X as usize] = microcode_arr!(
-        AbsoluteL,
-        AbsoluteH,
-        IndexedXWithOp {
-            op: OpAfterAddressing::LoadIntoAlu,
-            first_clock: CrossPageBehavior::FirstClockAlways
-        },
-        LoadIntoAlu,
-        StoreAlu,
-        Rra
-    );
-    r[RRA_ABSOLUTE_INDEXED_Y as usize] = microcode_arr!(
-        AbsoluteL,
-        AbsoluteH,
-        IndexedYWithOp {
-            op: OpAfterAddressing::LoadIntoAlu,
-            first_clock: CrossPageBehavior::FirstClockAlways
-        },
-        LoadIntoAlu,
-        StoreAlu,
-        Rra
-    );
-    r[RRA_INDEXED_INDIRECT as usize] = microcode_arr!(
-        ZeroPage,
-        ZeroPageIndexedX,
-        IndexedL,
-        IndexedH,
-        LoadIntoAlu,
-        StoreAlu,
-        Rra
-    );
-    r[RRA_INDIRECT_INDEXED as usize] = microcode_arr!(
-        ZeroPage,
-        IndexedL,
-        IndexedH,
-        IndexedYWithOp {
-            op: OpAfterAddressing::LoadIntoAlu,
-            first_clock: CrossPageBehavior::FirstClockAlways
-        },
-        LoadIntoAlu,
-        StoreAlu,
-        Rra
-    );
-    r[RLA_ZERO_PAGE as usize] = microcode_arr!(ZeroPage, LoadIntoAlu, StoreAlu, Rla);
-    r[RLA_ZERO_PAGE_X as usize] =
-        microcode_arr!(ZeroPage, ZeroPageIndexedX, LoadIntoAlu, StoreAlu, Rla);
-    r[RLA_ABSOLUTE as usize] = microcode_arr!(AbsoluteL, AbsoluteH, LoadIntoAlu, StoreAlu, Rla);
-    r[RLA_ABSOLUTE_INDEXED_X as usize] = microcode_arr!(
-        AbsoluteL,
-        AbsoluteH,
-        IndexedXWithOp {
-            op: OpAfterAddressing::LoadIntoAlu,
-            first_clock: CrossPageBehavior::FirstClockAlways
-        },
-        LoadIntoAlu,
-        StoreAlu,
-        Rla
-    );
-    r[RLA_ABSOLUTE_INDEXED_Y as usize] = microcode_arr!(
-        AbsoluteL,
-        AbsoluteH,
-        IndexedYWithOp {
-            op: OpAfterAddressing::LoadIntoAlu,
-            first_clock: CrossPageBehavior::FirstClockAlways
-        },
-        LoadIntoAlu,
-        StoreAlu,
-        Rla
-    );
-    r[RLA_INDEXED_INDIRECT as usize] = microcode_arr!(
-        ZeroPage,
-        ZeroPageIndexedX,
-        IndexedL,
-        IndexedH,
-        LoadIntoAlu,
-        StoreAlu,
-        Rla
-    );
-    r[RLA_INDIRECT_INDEXED as usize] = microcode_arr!(
-        ZeroPage,
-        IndexedL,
-        IndexedH,
-        IndexedYWithOp {
-            op: OpAfterAddressing::LoadIntoAlu,
-            first_clock: CrossPageBehavior::FirstClockAlways
-        },
-        LoadIntoAlu,
-        StoreAlu,
-        Rla
-    );
-    r[SLO_ZERO_PAGE as usize] = microcode_arr!(ZeroPage, LoadIntoAlu, StoreAlu, Slo);
-    r[SLO_ZERO_PAGE_X as usize] =
-        microcode_arr!(ZeroPage, ZeroPageIndexedX, LoadIntoAlu, StoreAlu, Slo);
-    r[SLO_ABSOLUTE as usize] = microcode_arr!(AbsoluteL, AbsoluteH, LoadIntoAlu, StoreAlu, Slo);
-    r[SLO_ABSOLUTE_INDEXED_X as usize] = microcode_arr!(
-        AbsoluteL,
-        AbsoluteH,
-        IndexedXWithOp {
-            op: OpAfterAddressing::LoadIntoAlu,
-            first_clock: CrossPageBehavior::FirstClockAlways
-        },
-        LoadIntoAlu,
-        StoreAlu,
-        Slo
-    );
-    r[SLO_ABSOLUTE_INDEXED_Y as usize] = microcode_arr!(
-        AbsoluteL,
-        AbsoluteH,
-        IndexedYWithOp {
-            op: OpAfterAddressing::LoadIntoAlu,
-            first_clock: CrossPageBehavior::FirstClockAlways
-        },
-        LoadIntoAlu,
-        StoreAlu,
-        Slo
-    );
-    r[SLO_INDEXED_INDIRECT as usize] = microcode_arr!(
-        ZeroPage,
-        ZeroPageIndexedX,
-        IndexedL,
-        IndexedH,
-        LoadIntoAlu,
-        StoreAlu,
-        Slo
-    );
-    r[SLO_INDIRECT_INDEXED as usize] = microcode_arr!(
-        ZeroPage,
-        IndexedL,
-        IndexedH,
-        IndexedYWithOp {
-            op: OpAfterAddressing::LoadIntoAlu,
-            first_clock: CrossPageBehavior::FirstClockAlways
-        },
-        LoadIntoAlu,
-        StoreAlu,
-        Slo
-    );
-    r[SRE_ZERO_PAGE as usize] = microcode_arr!(ZeroPage, LoadIntoAlu, StoreAlu, Sre);
-    r[SRE_ZERO_PAGE_X as usize] =
-        microcode_arr!(ZeroPage, ZeroPageIndexedX, LoadIntoAlu, StoreAlu, Sre);
-    r[SRE_ABSOLUTE as usize] = microcode_arr!(AbsoluteL, AbsoluteH, LoadIntoAlu, StoreAlu, Sre);
-    r[SRE_ABSOLUTE_INDEXED_X as usize] = microcode_arr!(
-        AbsoluteL,
-        AbsoluteH,
-        IndexedXWithOp {
-            op: OpAfterAddressing::LoadIntoAlu,
-            first_clock: CrossPageBehavior::FirstClockAlways
-        },
-        LoadIntoAlu,
-        StoreAlu,
-        Sre
-    );
-    r[SRE_ABSOLUTE_INDEXED_Y as usize] = microcode_arr!(
-        AbsoluteL,
-        AbsoluteH,
-        IndexedYWithOp {
-            op: OpAfterAddressing::LoadIntoAlu,
-            first_clock: CrossPageBehavior::FirstClockAlways
-        },
-        LoadIntoAlu,
-        StoreAlu,
-        Sre
-    );
-    r[SRE_INDEXED_INDIRECT as usize] = microcode_arr!(
-        ZeroPage,
-        ZeroPageIndexedX,
-        IndexedL,
-        IndexedH,
-        LoadIntoAlu,
-        StoreAlu,
-        Sre
-    );
-    r[SRE_INDIRECT_INDEXED as usize] = microcode_arr!(
-        ZeroPage,
-        IndexedL,
-        IndexedH,
-        IndexedYWithOp {
-            op: OpAfterAddressing::LoadIntoAlu,
-            first_clock: CrossPageBehavior::FirstClockAlways
-        },
-        LoadIntoAlu,
-        StoreAlu,
-        Sre
-    );
+    r[DCP_ZERO_PAGE_X as usize] = zero_page_x_rmw_op(Dcp);
+    r[DCP_ABSOLUTE as usize] = absolute_rmw_op(Dcp);
+    r[DCP_ABSOLUTE_INDEXED_X as usize] = absolute_indexed_x_rmw_op(Dcp);
+    r[DCP_ABSOLUTE_INDEXED_Y as usize] = absolute_indexed_y_rmw_op(Dcp);
+    r[DCP_INDEXED_INDIRECT as usize] = indexed_indirect_rmw_op(Dcp);
+    r[DCP_INDIRECT_INDEXED as usize] = indirect_indexed_rmw_op(Dcp);
+    r[DEC_ZERO_PAGE as usize] = zero_page_rmw_op(Dec);
+    r[DEC_ZERO_PAGE_X as usize] = zero_page_x_rmw_op(Dec);
+    r[DEC_ABSOLUTE as usize] = absolute_rmw_op(Dec);
+    r[DEC_ABSOLUTE_INDEXED_X as usize] = absolute_indexed_x_rmw_op(Dec);
+    r[INC_ZERO_PAGE as usize] = zero_page_rmw_op(Inc);
+    r[INC_ZERO_PAGE_X as usize] = zero_page_x_rmw_op(Inc);
+    r[INC_ABSOLUTE as usize] = absolute_rmw_op(Inc);
+    r[INC_ABSOLUTE_INDEXED_X as usize] = absolute_indexed_x_rmw_op(Inc);
+    r[ISC_ZERO_PAGE as usize] = zero_page_rmw_op(Isc);
+    r[ISC_ZERO_PAGE_X as usize] = zero_page_x_rmw_op(Isc);
+    r[ISC_ABSOLUTE as usize] = absolute_rmw_op(Isc);
+    r[ISC_ABSOLUTE_INDEXED_X as usize] = absolute_indexed_x_rmw_op(Isc);
+    r[ISC_ABSOLUTE_INDEXED_Y as usize] = absolute_indexed_y_rmw_op(Isc);
+    r[ISC_INDEXED_INDIRECT as usize] = indexed_indirect_rmw_op(Isc);
+    r[ISC_INDIRECT_INDEXED as usize] = indirect_indexed_rmw_op(Isc);
+    r[RRA_ZERO_PAGE as usize] = zero_page_rmw_op(Rra);
+    r[RRA_ZERO_PAGE_X as usize] = zero_page_x_rmw_op(Rra);
+    r[RRA_ABSOLUTE as usize] = absolute_rmw_op(Rra);
+    r[RRA_ABSOLUTE_INDEXED_X as usize] = absolute_indexed_x_rmw_op(Rra);
+    r[RRA_ABSOLUTE_INDEXED_Y as usize] = absolute_indexed_y_rmw_op(Rra);
+    r[RRA_INDEXED_INDIRECT as usize] = indexed_indirect_rmw_op(Rra);
+    r[RRA_INDIRECT_INDEXED as usize] = indirect_indexed_rmw_op(Rra);
+    r[RLA_ZERO_PAGE as usize] = zero_page_rmw_op(Rla);
+    r[RLA_ZERO_PAGE_X as usize] = zero_page_x_rmw_op(Rla);
+    r[RLA_ABSOLUTE as usize] = absolute_rmw_op(Rla);
+    r[RLA_ABSOLUTE_INDEXED_X as usize] = absolute_indexed_x_rmw_op(Rla);
+    r[RLA_ABSOLUTE_INDEXED_Y as usize] = absolute_indexed_y_rmw_op(Rla);
+    r[RLA_INDEXED_INDIRECT as usize] = indexed_indirect_rmw_op(Rla);
+    r[RLA_INDIRECT_INDEXED as usize] = indirect_indexed_rmw_op(Rla);
+    r[SLO_ZERO_PAGE as usize] = zero_page_rmw_op(Slo);
+    r[SLO_ZERO_PAGE_X as usize] = zero_page_x_rmw_op(Slo);
+    r[SLO_ABSOLUTE as usize] = absolute_rmw_op(Slo);
+    r[SLO_ABSOLUTE_INDEXED_X as usize] = absolute_indexed_x_rmw_op(Slo);
+    r[SLO_ABSOLUTE_INDEXED_Y as usize] = absolute_indexed_y_rmw_op(Slo);
+    r[SLO_INDEXED_INDIRECT as usize] = indexed_indirect_rmw_op(Slo);
+    r[SLO_INDIRECT_INDEXED as usize] = indirect_indexed_rmw_op(Slo);
+    r[SRE_ZERO_PAGE as usize] = zero_page_rmw_op(Sre);
+    r[SRE_ZERO_PAGE_X as usize] = zero_page_x_rmw_op(Sre);
+    r[SRE_ABSOLUTE as usize] = absolute_rmw_op(Sre);
+    r[SRE_ABSOLUTE_INDEXED_X as usize] = absolute_indexed_x_rmw_op(Sre);
+    r[SRE_ABSOLUTE_INDEXED_Y as usize] = absolute_indexed_y_rmw_op(Sre);
+    r[SRE_INDEXED_INDIRECT as usize] = indexed_indirect_rmw_op(Sre);
+    r[SRE_INDIRECT_INDEXED as usize] = indirect_indexed_rmw_op(Sre);
     r[SHX_ABSOLUTE_INDEXED_Y as usize] = microcode_arr!(
         AbsoluteL,
         AbsoluteH,
@@ -2151,11 +1852,10 @@ impl Microcode {
     ) {
         let abh = cpu.abh();
         cpu.address_latch = cpu.address_latch.wrapping_add(idx as u16);
-        let crossed_page = abh != cpu.abh();
-        let dummy_addr = (u16::from(abh) << 8) | u16::from(cpu.abl());
         let is_first_clock_always = matches!(first_clock, CrossPageBehavior::FirstClockAlways);
 
-        if crossed_page || is_first_clock_always {
+        if is_first_clock_always || abh != cpu.abh() {
+            let dummy_addr = (u16::from(abh) << 8) | u16::from(cpu.abl());
             cpu.read_byte(dummy_addr);
             if !is_first_clock_always {
                 cpu.push_microcode(op.to_microcode());
