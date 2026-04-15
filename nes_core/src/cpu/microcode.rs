@@ -406,8 +406,8 @@ const fn build_opcode_table() -> [ArrayVec<[Microcode; 7]>; 256] {
     r[JMP_ABSOLUTE as usize] = microcode_arr!(AbsoluteL, LoadPcAbsoluteH);
     r[JMP_INDIRECT as usize] = microcode_arr!(AbsoluteL, AbsoluteH, IndexedL, IndexedHAndJump);
     r[JSR as usize] = microcode_arr!(AbsoluteL, Nop, PushPcH, PushPcL, LoadPcAbsoluteH);
-    r[RTS as usize] = microcode_arr!(SkipImmediate, Nop, PopPc, Nop, SkipImmediate);
-    r[RTI as usize] = microcode_arr!(SkipImmediate, Plp, Nop, PopPc, Nop);
+    r[RTS as usize] = microcode_arr!(SkipImmediate, Nop, PopPcL, PopPcH, IncPc);
+    r[RTI as usize] = microcode_arr!(SkipImmediate, Nop, Plp, PopPcL, PopPcH);
     r[CLC as usize] = microcode_arr!(ClearFlag(Carry));
     r[SEC as usize] = microcode_arr!(SetFlag(Carry));
     r[CLD as usize] = microcode_arr!(ClearFlag(Decimal));
@@ -976,8 +976,11 @@ pub enum Microcode {
     },
     /// Pop cpu status register from stack, used to return from interrupt handler, and PLP
     Plp,
-    /// Pop pc register from stack, it is actually two cycles, append Nop before this Microcode
-    PopPc,
+    /// Pop low byte of PC from stack
+    PopPcL,
+    /// Pop high byte of PC from stack
+    PopPcH,
+    IncPc,
     /// Push register A to stack
     Pha,
     /// pop stack into alu
@@ -1455,7 +1458,15 @@ impl Microcode {
                 break_flag,
             } => cpu.push_status(set_disable_interrupt, break_flag),
             Self::Plp => cpu.plp(),
-            Self::PopPc => cpu.pop_pc(),
+            Self::PopPcL => {
+                cpu.pc = cpu.pop_stack() as u16;
+            }
+            Self::PopPcH => {
+                cpu.pc |= (cpu.pop_stack() as u16) << 8;
+            }
+            Self::IncPc => {
+                cpu.pc += 1;
+            }
             Self::Pha => cpu.pha(),
             Self::PopStack => cpu.pop_stack_into_alu(),
             Self::UpdateAFromAlu => cpu.set_a(cpu.alu),

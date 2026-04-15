@@ -421,12 +421,6 @@ impl<M: Mcu> Cpu<M> {
         }
     }
 
-    fn pop_pc(&mut self) {
-        let low = self.pop_stack() as u16;
-        let high = self.pop_stack() as u16;
-        self.pc = (high << 8) | low;
-    }
-
     pub fn flag(&self, flag: Flag) -> bool {
         (self.status & flag as u8) != 0
     }
