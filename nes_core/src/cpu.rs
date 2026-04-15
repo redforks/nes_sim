@@ -817,6 +817,34 @@ impl<M: Mcu> Cpu<M> {
             self.nmi_requested_at = None;
         }
     }
+
+    fn load_irq_pcl(&mut self) {
+        let low = if self.nmi_ready() {
+            self.nmi_requested_at = None;
+            self.irq_hijacked = true;
+            // hijacked by nmi
+            self.mode = CpuMode::Nmi;
+            self.read_byte(0xFFFA)
+        } else {
+            self.irq_hijacked = false;
+            self.defer_nmi_poll = true;
+            self.read_byte(0xFFFE)
+        };
+        self.pc = low as u16;
+    }
+
+    fn load_irq_pch(&mut self) {
+        let high = if self.irq_hijacked {
+            // hijacked by nmi
+            self.mode = CpuMode::Nmi;
+            self.inner_set_flag(Flag::InterruptDisabled, true);
+            self.read_byte(0xFFFB)
+        } else {
+            self.defer_nmi_poll = true;
+            self.read_byte(0xFFFF)
+        };
+        self.pc |= (high as u16) << 8;
+    }
 }
 
 // ExecuteResult, Plugin, EmptyPlugin, and Flag remain from original cpu.rs

@@ -1458,32 +1458,8 @@ impl Microcode {
             Self::BranchRelative(branch_test) => Self::branch_relative(cpu, branch_test),
             Self::Kill => cpu.halt(),
 
-            Self::LoadIrqPcH => {
-                let high = if cpu.irq_hijacked {
-                    // hijacked by nmi
-                    cpu.mode = CpuMode::Nmi;
-                    cpu.inner_set_flag(Flag::InterruptDisabled, true);
-                    cpu.read_byte(0xFFFB)
-                } else {
-                    cpu.defer_nmi_poll = true;
-                    cpu.read_byte(0xFFFF)
-                };
-                cpu.pc |= (high as u16) << 8;
-            }
-            Self::LoadIrqPcL => {
-                let low = if cpu.nmi_ready() {
-                    cpu.nmi_requested_at = None;
-                    cpu.irq_hijacked = true;
-                    // hijacked by nmi
-                    cpu.mode = CpuMode::Nmi;
-                    cpu.read_byte(0xFFFA)
-                } else {
-                    cpu.irq_hijacked = false;
-                    cpu.defer_nmi_poll = true;
-                    cpu.read_byte(0xFFFE)
-                };
-                cpu.pc = low as u16;
-            }
+            Self::LoadIrqPcH => cpu.load_irq_pch(),
+            Self::LoadIrqPcL => cpu.load_irq_pcl(),
             Self::LoadNmiPcL => {
                 cpu.pc = cpu.read_byte(0xFFFA) as u16;
             }
