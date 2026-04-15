@@ -321,6 +321,21 @@ fn test_apu_controller_write_frame_counter() {
 }
 
 #[test]
+fn test_reset_replays_last_frame_counter_write() {
+    let mut apu = Apu::new(());
+
+    apu.write(0x4017, 0x80);
+
+    apu.reset();
+
+    let pending = apu
+        .pending_frame_counter
+        .expect("reset queues a $4017 replay");
+    assert!(pending.mode());
+    assert!(!pending.interrupt_flag());
+}
+
+#[test]
 fn test_apu_controller_driver_control_flags_status() {
     let mut driver = Apu::new(());
 

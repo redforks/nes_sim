@@ -206,28 +206,38 @@ apu_mixer_4: build_nes_cpu_test
 apu_mixer: apu_mixer_1 apu_mixer_2 apu_mixer_3 apu_mixer_4
 
 apu_reset_1: build_nes_cpu_test
-    target/debug/nes_cpu_test --quiet -f ../nes-test-roms/apu_reset/4015_cleared.nes
+    timeout 15 target/debug/nes_cpu_test --quiet -f ../nes-test-roms/apu_reset/4015_cleared.nes
 
 apu_reset_2: build_nes_cpu_test
-    target/debug/nes_cpu_test --quiet -f ../nes-test-roms/apu_reset/4017_timing.nes
+    timeout 15 target/debug/nes_cpu_test --quiet -f ../nes-test-roms/apu_reset/4017_timing.nes
 
 apu_reset_3: build_nes_cpu_test
-    target/debug/nes_cpu_test --quiet -f ../nes-test-roms/apu_reset/4017_written.nes
+    timeout 15 target/debug/nes_cpu_test --quiet -f ../nes-test-roms/apu_reset/4017_written.nes
 
 apu_reset_4: build_nes_cpu_test
-    target/debug/nes_cpu_test --quiet -f ../nes-test-roms/apu_reset/irq_flag_cleared.nes
+    timeout 15 target/debug/nes_cpu_test --quiet -f ../nes-test-roms/apu_reset/irq_flag_cleared.nes
 
 apu_reset_5: build_nes_cpu_test
-    target/debug/nes_cpu_test --quiet -f ../nes-test-roms/apu_reset/len_ctrs_enabled.nes
+    timeout 15 target/debug/nes_cpu_test --quiet -f ../nes-test-roms/apu_reset/len_ctrs_enabled.nes
 
 apu_reset_6: build_nes_cpu_test
-    target/debug/nes_cpu_test --quiet -f ../nes-test-roms/apu_reset/works_immediately.nes
+    timeout 15 target/debug/nes_cpu_test --quiet -f ../nes-test-roms/apu_reset/works_immediately.nes
 
 [parallel]
 apu_reset: apu_reset_1 apu_reset_2 apu_reset_3 apu_reset_4 apu_reset_5 apu_reset_6
 
+apu_test: build_nes_cpu_test
+    timeout 30 target/debug/nes_cpu_test --quiet -f ../nes-test-roms/apu_test/rom_singles/1-len_ctr.nes
+    timeout 30 target/debug/nes_cpu_test --quiet -f ../nes-test-roms/apu_test/rom_singles/2-len_table.nes
+    timeout 30 target/debug/nes_cpu_test --quiet -f ../nes-test-roms/apu_test/rom_singles/3-irq_flag.nes
+    timeout 30 target/debug/nes_cpu_test --quiet -f ../nes-test-roms/apu_test/rom_singles/4-jitter.nes
+    timeout 30 target/debug/nes_cpu_test --quiet -f ../nes-test-roms/apu_test/rom_singles/5-len_timing.nes
+    timeout 30 target/debug/nes_cpu_test --quiet -f ../nes-test-roms/apu_test/rom_singles/6-irq_flag_timing.nes
+    timeout 30 target/debug/nes_cpu_test --quiet -f ../nes-test-roms/apu_test/rom_singles/7-dmc_basics.nes
+    timeout 30 target/debug/nes_cpu_test --quiet -f ../nes-test-roms/apu_test/rom_singles/8-dmc_rates.nes
+
 [parallel]
-passed: unit-test cpu-test instr_misc instr_test-v5 instr_test-v3 nestest instr_timing ppu_vbl_nmi vbl_nmi_timing cpu_interrupts_v2 branch_timing_tests cpu_dummy_reads cpu_dummy_writes cpu_exec_space cpu_reset cpu_timing_test6 oam_read oam_stress ppu_open_bus ppu_read_buffer sprite_hit_tests sprite_overflow_tests dmc_dma_during_read4 apu_mixer
+passed: unit-test cpu-test instr_misc instr_test-v5 instr_test-v3 nestest instr_timing ppu_vbl_nmi vbl_nmi_timing cpu_interrupts_v2 branch_timing_tests cpu_dummy_reads cpu_dummy_writes cpu_exec_space cpu_reset cpu_timing_test6 oam_read oam_stress ppu_open_bus ppu_read_buffer sprite_hit_tests sprite_overflow_tests dmc_dma_during_read4 apu_mixer apu_reset
 
 wasm-debug-build:
     cd nes_web && wasm-pack build --release

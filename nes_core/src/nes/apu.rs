@@ -674,6 +674,7 @@ pub struct Apu<D: AudioDriver = ()> {
     apu_cycle: u64,
     frame_counter_cycle: u64,
     apu_even_cycle: bool,
+    last_frame_counter_write: FrameCounter,
     frame_counter_mode: bool,
     frame_interrupt_inhibit: bool,
     frame_interrupt: bool,
@@ -721,6 +722,7 @@ impl<D: AudioDriver> Apu<D> {
             apu_cycle: 0,
             frame_counter_cycle: 0,
             apu_even_cycle: false,
+            last_frame_counter_write: FrameCounter::new(),
             frame_counter_mode: false,
             frame_interrupt_inhibit: false,
             frame_interrupt: false,
@@ -737,11 +739,32 @@ impl<D: AudioDriver> Apu<D> {
 
     pub fn reset(&mut self) {
         // https://www.nesdev.org/wiki/CPU_power_up_state
+        //
+        // At reset, the APU behaves as if:
+        // 1. $4015 is written with $00 (silences all channels)
+        // 2. $4017 is written again with current mode but IRQ inhibit set
+        // 3. Frame IRQ flag is cleared
+        // 4. DMC interrupt flag is cleared
+
+        // Clear all interrupt flags
+        self.frame_interrupt = false;
+        self.frame_interrupt_preview = false;
+        self.dmc_interrupt = false;
+
+        // $4015 write with $00 silences all channels and clears DMC interrupt
         self.set_control_flags(ControlFlags::new());
+
+        // Reset triangle channel state, but preserve the length counter halt flag
+        // (control.reload_flag) which should persist across reset
+        let length_counter_halt = self.triangle.control.reload_flag();
         self.triangle = TriangleState::default();
-        self.frame_counter_cycle = 0;
-        self.frame_counter_write_delay = None;
-        self.pending_frame_counter = None;
+        self.triangle.control = LinearCounterControl::new().with_reload_flag(length_counter_halt);
+
+        // Re-apply the last value written to $4017 after the reset delay.
+        // The test ROMs rely on reset preserving the previous frame counter mode
+        // and IRQ inhibit bit rather than synthesizing a new value here.
+        self.pending_frame_counter = Some(self.last_frame_counter_write);
+        self.frame_counter_write_delay = Some(4);
         self.post_wrap_irq_pending = false;
     }
 
@@ -910,6 +933,7 @@ impl<D: AudioDriver> Apu<D> {
     }
 
     fn set_frame_counter(&mut self, counter: FrameCounter) {
+        self.last_frame_counter_write = counter;
         self.pending_frame_counter = Some(counter);
         self.frame_counter_write_delay = Some(4);
     }
