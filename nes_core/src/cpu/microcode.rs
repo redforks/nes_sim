@@ -536,10 +536,10 @@ const fn build_opcode_table() -> [ArrayVec<[Microcode; 7]>; 256] {
     r[TYA as usize] = microcode_arr!(Transfer(TransferDirection::YtoA));
     r[TSX as usize] = microcode_arr!(Transfer(TransferDirection::SPtoX));
     r[TXS as usize] = microcode_arr!(Transfer(TransferDirection::XtoSP));
-    r[INX as usize] = microcode_arr!(Inx);
-    r[INY as usize] = microcode_arr!(Iny);
-    r[DEX as usize] = microcode_arr!(Dex);
-    r[DEY as usize] = microcode_arr!(Dey);
+    r[INX as usize] = microcode_arr!(IncDec(IncDecTarget::IncrementX));
+    r[INY as usize] = microcode_arr!(IncDec(IncDecTarget::IncrementY));
+    r[DEX as usize] = microcode_arr!(IncDec(IncDecTarget::DecrementX));
+    r[DEY as usize] = microcode_arr!(IncDec(IncDecTarget::DecrementY));
     r[ORA_IMMEDIATE as usize] = microcode_arr!(ImmediateWithOp(ImmediateOp::Ora));
     r[ORA_ZERO_PAGE as usize] = microcode_arr!(ZeroPage, Ora);
     r[ORA_ZERO_PAGE_X as usize] = zero_page_x_op(Ora);
@@ -629,14 +629,16 @@ const fn build_opcode_table() -> [ArrayVec<[Microcode; 7]>; 256] {
     r[DCP_ABSOLUTE_INDEXED_Y as usize] = absolute_indexed_y_rmw_op(Dcp);
     r[DCP_INDEXED_INDIRECT as usize] = indexed_indirect_rmw_op(Dcp);
     r[DCP_INDIRECT_INDEXED as usize] = indirect_indexed_rmw_op(Dcp);
-    r[DEC_ZERO_PAGE as usize] = zero_page_rmw_op(Dec);
-    r[DEC_ZERO_PAGE_X as usize] = zero_page_x_rmw_op(Dec);
-    r[DEC_ABSOLUTE as usize] = absolute_rmw_op(Dec);
-    r[DEC_ABSOLUTE_INDEXED_X as usize] = absolute_indexed_x_rmw_op(Dec);
-    r[INC_ZERO_PAGE as usize] = zero_page_rmw_op(Inc);
-    r[INC_ZERO_PAGE_X as usize] = zero_page_x_rmw_op(Inc);
-    r[INC_ABSOLUTE as usize] = absolute_rmw_op(Inc);
-    r[INC_ABSOLUTE_INDEXED_X as usize] = absolute_indexed_x_rmw_op(Inc);
+    r[DEC_ZERO_PAGE as usize] = zero_page_rmw_op(IncDec(IncDecTarget::DecrementAlu));
+    r[DEC_ZERO_PAGE_X as usize] = zero_page_x_rmw_op(IncDec(IncDecTarget::DecrementAlu));
+    r[DEC_ABSOLUTE as usize] = absolute_rmw_op(IncDec(IncDecTarget::DecrementAlu));
+    r[DEC_ABSOLUTE_INDEXED_X as usize] =
+        absolute_indexed_x_rmw_op(IncDec(IncDecTarget::DecrementAlu));
+    r[INC_ZERO_PAGE as usize] = zero_page_rmw_op(IncDec(IncDecTarget::IncrementAlu));
+    r[INC_ZERO_PAGE_X as usize] = zero_page_x_rmw_op(IncDec(IncDecTarget::IncrementAlu));
+    r[INC_ABSOLUTE as usize] = absolute_rmw_op(IncDec(IncDecTarget::IncrementAlu));
+    r[INC_ABSOLUTE_INDEXED_X as usize] =
+        absolute_indexed_x_rmw_op(IncDec(IncDecTarget::IncrementAlu));
     r[ISC_ZERO_PAGE as usize] = zero_page_rmw_op(Isc);
     r[ISC_ZERO_PAGE_X as usize] = zero_page_x_rmw_op(Isc);
     r[ISC_ABSOLUTE as usize] = absolute_rmw_op(Isc);
@@ -797,6 +799,16 @@ pub enum TransferDirection {
     XtoSP,
 }
 
+#[derive(Debug, Clone, Copy)]
+pub enum IncDecTarget {
+    IncrementX,
+    IncrementY,
+    DecrementX,
+    DecrementY,
+    IncrementAlu,
+    DecrementAlu,
+}
+
 impl ImmediateOp {
     pub fn exec<M: Mcu>(self, cpu: &mut Cpu<M>) {
         match self {
@@ -951,12 +963,7 @@ pub enum Microcode {
     Clv,
 
     Transfer(TransferDirection),
-    Inx,
-    Iny,
-    Dex,
-    Dey,
-    Inc,
-    Dec,
+    IncDec(IncDecTarget),
 
     /// Read offset value from instruction data stream,
     /// If BranchTest is true, pc += offset, push one Noc if not cross page, push two Noc if cross page
@@ -1475,12 +1482,7 @@ impl Microcode {
             Self::Clv => cpu.set_flag(Flag::Overflow, false),
 
             Self::Transfer(direction) => Self::transfer(cpu, direction),
-            Self::Inx => cpu.inx(),
-            Self::Iny => cpu.iny(),
-            Self::Dex => cpu.dex(),
-            Self::Dey => cpu.dey(),
-            Self::Inc => cpu.inc(),
-            Self::Dec => cpu.dec(),
+            Self::IncDec(target) => Self::inc_dec(cpu, target),
 
             Self::BranchRelative(branch_test) => Self::branch_relative(cpu, branch_test),
             Self::Kill => cpu.halt(),
@@ -1813,6 +1815,17 @@ impl Microcode {
             TransferDirection::YtoA => cpu.tya(),
             TransferDirection::SPtoX => cpu.tsx(),
             TransferDirection::XtoSP => cpu.txs(),
+        }
+    }
+
+    fn inc_dec<M: Mcu>(cpu: &mut Cpu<M>, target: IncDecTarget) {
+        match target {
+            IncDecTarget::IncrementX => cpu.inx(),
+            IncDecTarget::IncrementY => cpu.iny(),
+            IncDecTarget::DecrementX => cpu.dex(),
+            IncDecTarget::DecrementY => cpu.dey(),
+            IncDecTarget::IncrementAlu => cpu.inc(),
+            IncDecTarget::DecrementAlu => cpu.dec(),
         }
     }
 }
