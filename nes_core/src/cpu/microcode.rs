@@ -1711,12 +1711,34 @@ impl Microcode {
 
     fn transfer<M: Mcu>(cpu: &mut Cpu<M>, direction: TransferDirection) {
         match direction {
-            TransferDirection::AtoX => cpu.tax(),
-            TransferDirection::XtoA => cpu.txa(),
-            TransferDirection::AtoY => cpu.tay(),
-            TransferDirection::YtoA => cpu.tya(),
-            TransferDirection::SPtoX => cpu.tsx(),
-            TransferDirection::XtoSP => cpu.txs(),
+            TransferDirection::AtoX => {
+                cpu.x = cpu.a;
+                cpu.update_negative_flag(cpu.x);
+                cpu.update_zero_flag(cpu.x);
+            }
+            TransferDirection::XtoA => {
+                cpu.a = cpu.x;
+                cpu.update_negative_flag(cpu.a);
+                cpu.update_zero_flag(cpu.a);
+            }
+            TransferDirection::AtoY => {
+                cpu.y = cpu.a;
+                cpu.update_negative_flag(cpu.y);
+                cpu.update_zero_flag(cpu.y);
+            }
+            TransferDirection::YtoA => {
+                cpu.a = cpu.y;
+                cpu.update_negative_flag(cpu.a);
+                cpu.update_zero_flag(cpu.a);
+            }
+            TransferDirection::SPtoX => {
+                cpu.x = cpu.sp;
+                cpu.update_negative_flag(cpu.x);
+                cpu.update_zero_flag(cpu.x);
+            }
+            TransferDirection::XtoSP => {
+                cpu.sp = cpu.x;
+            }
         }
     }
 
