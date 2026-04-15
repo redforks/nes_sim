@@ -1,3 +1,6 @@
+#[cfg(debug_assertions)]
+use std::{cell::Cell, rc::Rc};
+
 use self::microcode::{Microcode, opcode};
 use crate::mcu::Mcu;
 use arraydeque::ArrayDeque;
@@ -92,6 +95,9 @@ pub struct Cpu<M: Mcu> {
 
     microcode_queue: ArrayDeque<Microcode, 8>,
     irq_hijacked: bool,
+
+    #[cfg(debug_assertions)]
+    mem_acc_count: Rc<Cell<usize>>,
 }
 
 impl<M: Mcu> Cpu<M> {
@@ -124,6 +130,8 @@ impl<M: Mcu> Cpu<M> {
             oam_dma: None,
             dmc_dma: None,
             irq_hijacked: false,
+            #[cfg(debug_assertions)]
+            mem_acc_count: Default::default(),
         };
         r.reset();
         r
@@ -233,8 +241,29 @@ impl<M: Mcu> Cpu<M> {
         }
     }
 
+    fn inc_mem_count(&mut self) {
+        #[cfg(debug_assertions)]
+        self.mem_acc_count.set(self.mem_acc_count.get() + 1);
+    }
+
+    fn reset_mem_count(&mut self) {
+        #[cfg(debug_assertions)]
+        self.mem_acc_count.set(0);
+    }
+
     /// Return true if just execute current instruction
     pub fn tick<P: Plugin<M>>(&mut self, plugin: &mut P) -> (ExecuteResult, bool) {
+        self.reset_mem_count();
+
+        #[cfg(debug_assertions)]
+        let _guard = scopeguard::guard(self.mem_acc_count.clone(), |acc_count| {
+            assert!(
+                acc_count.get() <= 1,
+                "Multiple memory accesses in a single tick: {}",
+                acc_count.get()
+            );
+        });
+
         self.cycles = self.cycles.wrapping_add(1);
 
         if !self.cycles.is_multiple_of(3) {
@@ -454,6 +483,7 @@ impl<M: Mcu> Cpu<M> {
     }
 
     fn read_byte(&mut self, addr: u16) -> u8 {
+        self.inc_mem_count();
         self.mcu.read(addr)
     }
 
@@ -464,14 +494,17 @@ impl<M: Mcu> Cpu<M> {
     fn inc_read_byte(&mut self) -> u8 {
         let addr = self.pc;
         self.inc_pc(1);
+        self.inc_mem_count();
         self.mcu.read(addr)
     }
 
     fn write_byte(&mut self, addr: u16, value: u8) {
+        self.inc_mem_count();
         self.mcu.write(addr, value);
     }
 
     fn push_stack(&mut self, value: u8) {
+        self.inc_mem_count();
         self.mcu.write(0x100 + self.sp as u16, value);
         self.sp = self.sp.wrapping_sub(1);
     }
@@ -479,6 +512,7 @@ impl<M: Mcu> Cpu<M> {
     fn pop_stack(&mut self) -> u8 {
         self.sp = self.sp.wrapping_add(1);
         let addr = 0x100 + self.sp as u16;
+        self.inc_mem_count();
         self.mcu.read(addr)
     }
 
@@ -529,6 +563,7 @@ impl<M: Mcu> Cpu<M> {
     }
 
     fn load_alu(&mut self) {
+        self.inc_mem_count();
         self.alu = self.mcu.read(self.address_latch);
     }
 
