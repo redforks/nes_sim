@@ -11,11 +11,7 @@ instr_test-v5: build_nes_cpu_test
     target/debug/nes_cpu_test --quiet -f ../nes-test-roms/instr_test-v5/all_instrs.nes
 
 cpu_interrupts_v2: build_nes_cpu_test
-    target/debug/nes_cpu_test --quiet -f ../nes-test-roms/cpu_interrupts_v2/rom_singles/1-cli_latency.nes
-    target/debug/nes_cpu_test --quiet -f ../nes-test-roms/cpu_interrupts_v2/rom_singles/2-nmi_and_brk.nes
-    target/debug/nes_cpu_test --quiet -f ../nes-test-roms/cpu_interrupts_v2/rom_singles/3-nmi_and_irq.nes
-    target/debug/nes_cpu_test --quiet -f ../nes-test-roms/cpu_interrupts_v2/rom_singles/4-irq_and_dma.nes
-    target/debug/nes_cpu_test --quiet -f ../nes-test-roms/cpu_interrupts_v2/rom_singles/5-branch_delays_irq.nes
+    target/debug/nes_cpu_test --quiet -f ../nes-test-roms/cpu_interrupts_v2/cpu_interrupts.nes
 
 branch_timing_tests: build_nes_cpu_test
     target/debug/nes_cpu_test --quiet -f ../nes-test-roms/branch_timing_tests/1.Branch_Basics.nes
