@@ -1722,13 +1722,34 @@ impl Microcode {
 
     fn inc_dec<M: Mcu>(cpu: &mut Cpu<M>, target: IncDecTarget) {
         match target {
-            IncDecTarget::IncrementX => cpu.inx(),
-            IncDecTarget::IncrementY => cpu.iny(),
-            IncDecTarget::DecrementX => cpu.dex(),
-            IncDecTarget::DecrementY => cpu.dey(),
-            IncDecTarget::IncrementAlu => cpu.inc(),
-            IncDecTarget::DecrementAlu => cpu.dec(),
+            IncDecTarget::IncrementX => {
+                cpu.x = cpu.x.wrapping_add(1);
+                cpu.alu = cpu.x;
+            }
+            IncDecTarget::IncrementY => {
+                cpu.y = cpu.y.wrapping_add(1);
+                cpu.alu = cpu.y;
+            }
+            IncDecTarget::DecrementX => {
+                cpu.x = cpu.x.wrapping_sub(1);
+                cpu.alu = cpu.x;
+            }
+            IncDecTarget::DecrementY => {
+                cpu.y = cpu.y.wrapping_sub(1);
+                cpu.alu = cpu.y;
+            }
+            IncDecTarget::IncrementAlu => {
+                cpu.alu = cpu.alu.wrapping_add(1);
+                cpu.write_byte(cpu.address_latch, cpu.alu);
+            }
+            IncDecTarget::DecrementAlu => {
+                cpu.alu = cpu.alu.wrapping_sub(1);
+                cpu.write_byte(cpu.address_latch, cpu.alu);
+            }
         }
+
+        cpu.update_negative_flag(cpu.alu);
+        cpu.update_zero_flag(cpu.alu);
     }
 
     fn shift_rotate<M: Mcu>(cpu: &mut Cpu<M>, target: AOrMemory, op: ShiftRotateOp) {
