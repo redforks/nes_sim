@@ -13,10 +13,17 @@ instr_test-v5: build_nes_cpu_test
 cpu_interrupts_v2: build_nes_cpu_test
     target/debug/nes_cpu_test --quiet -f ../nes-test-roms/cpu_interrupts_v2/cpu_interrupts.nes
 
-branch_timing_tests: build_nes_cpu_test
+branch_timing_tests_1: build_nes_cpu_test
     target/debug/nes_cpu_test --quiet -f ../nes-test-roms/branch_timing_tests/1.Branch_Basics.nes
+
+branch_timing_tests_2: build_nes_cpu_test
     target/debug/nes_cpu_test --quiet -f ../nes-test-roms/branch_timing_tests/2.Backward_Branch.nes
+
+branch_timing_tests_3: build_nes_cpu_test
     target/debug/nes_cpu_test --quiet -f ../nes-test-roms/branch_timing_tests/3.Forward_Branch.nes
+
+[parallel]
+branch_timing_tests: branch_timing_tests_1 branch_timing_tests_2 branch_timing_tests_3
 
 nestest:
     cargo run -p nes_cpu_test -- -f ../nes-test-roms/other/nestest.nes --start-pc 0xC000
@@ -33,29 +40,59 @@ ppu_vbl_nmi: build_nes_cpu_test
 build_nes_cpu_test:
     cargo build -p nes_cpu_test
 
-vbl_nmi_timing: build_nes_cpu_test
+vbl_nmi_timing_1: build_nes_cpu_test
     target/debug/nes_cpu_test --quiet -f ../nes-test-roms/vbl_nmi_timing/1.frame_basics.nes
+
+vbl_nmi_timing_2: build_nes_cpu_test
     target/debug/nes_cpu_test --quiet -f ../nes-test-roms/vbl_nmi_timing/2.vbl_timing.nes
+
+vbl_nmi_timing_3: build_nes_cpu_test
     target/debug/nes_cpu_test --quiet -f ../nes-test-roms/vbl_nmi_timing/3.even_odd_frames.nes
+
+vbl_nmi_timing_4: build_nes_cpu_test
     target/debug/nes_cpu_test --quiet -f ../nes-test-roms/vbl_nmi_timing/4.vbl_clear_timing.nes
+
+vbl_nmi_timing_5: build_nes_cpu_test
     target/debug/nes_cpu_test --quiet -f ../nes-test-roms/vbl_nmi_timing/5.nmi_suppression.nes
+
+vbl_nmi_timing_6: build_nes_cpu_test
     target/debug/nes_cpu_test --quiet -f ../nes-test-roms/vbl_nmi_timing/6.nmi_disable.nes
+
+vbl_nmi_timing_7: build_nes_cpu_test
     target/debug/nes_cpu_test --quiet -f ../nes-test-roms/vbl_nmi_timing/7.nmi_timing.nes
+
+[parallel]
+vbl_nmi_timing: vbl_nmi_timing_1 vbl_nmi_timing_2 vbl_nmi_timing_3 vbl_nmi_timing_4 vbl_nmi_timing_5 vbl_nmi_timing_6 vbl_nmi_timing_7
 
 cpu_dummy_reads: build_nes_cpu_test
     target/debug/nes_cpu_test --quiet -f ../nes-test-roms/cpu_dummy_reads/cpu_dummy_reads.nes
 
-cpu_dummy_writes: build_nes_cpu_test
+cpu_dummy_writes_1: build_nes_cpu_test
     target/debug/nes_cpu_test --quiet -f ../nes-test-roms/cpu_dummy_writes/cpu_dummy_writes_oam.nes
+
+cpu_dummy_writes_2: build_nes_cpu_test
     target/debug/nes_cpu_test --quiet -f ../nes-test-roms/cpu_dummy_writes/cpu_dummy_writes_ppumem.nes
 
-cpu_exec_space: build_nes_cpu_test
+[parallel]
+cpu_dummy_writes: cpu_dummy_writes_1 cpu_dummy_writes_2
+
+cpu_exec_space_1: build_nes_cpu_test
     target/debug/nes_cpu_test --quiet -f ../nes-test-roms/cpu_exec_space/test_cpu_exec_space_apu.nes
+
+cpu_exec_space_2: build_nes_cpu_test
     target/debug/nes_cpu_test --quiet -f ../nes-test-roms/cpu_exec_space/test_cpu_exec_space_ppuio.nes
 
-cpu_reset: build_nes_cpu_test
+[parallel]
+cpu_exec_space: cpu_exec_space_1 cpu_exec_space_2
+
+cpu_reset_1: build_nes_cpu_test
     target/debug/nes_cpu_test --quiet -f ../nes-test-roms/cpu_reset/ram_after_reset.nes
+
+cpu_reset_2: build_nes_cpu_test
     target/debug/nes_cpu_test --quiet -f ../nes-test-roms/cpu_reset/registers.nes
+
+[parallel]
+cpu_reset: cpu_reset_1 cpu_reset_2
 
 cpu_timing_test6: build_nes_cpu_test
     timeout 30 target/debug/nes_cpu_test --quiet -f ../nes-test-roms/cpu_timing_test6/cpu_timing_test.nes
@@ -72,39 +109,125 @@ ppu_open_bus: build_nes_cpu_test
 ppu_read_buffer: build_nes_cpu_test
     target/debug/nes_cpu_test --quiet -f ../nes-test-roms/ppu_read_buffer/test_ppu_read_buffer.nes
 
-sprite_hit_tests: build_nes_cpu_test
+sprite_hit_tests_1: build_nes_cpu_test
     target/debug/nes_cpu_test --quiet -f ../nes-test-roms/sprite_hit_tests_2005.10.05/01.basics.nes
+
+sprite_hit_tests_2: build_nes_cpu_test
     target/debug/nes_cpu_test --quiet -f ../nes-test-roms/sprite_hit_tests_2005.10.05/02.alignment.nes
+
+sprite_hit_tests_3: build_nes_cpu_test
     target/debug/nes_cpu_test --quiet -f ../nes-test-roms/sprite_hit_tests_2005.10.05/03.corners.nes
+
+sprite_hit_tests_4: build_nes_cpu_test
     target/debug/nes_cpu_test --quiet -f ../nes-test-roms/sprite_hit_tests_2005.10.05/04.flip.nes
+
+sprite_hit_tests_5: build_nes_cpu_test
     target/debug/nes_cpu_test --quiet -f ../nes-test-roms/sprite_hit_tests_2005.10.05/05.left_clip.nes
+
+sprite_hit_tests_6: build_nes_cpu_test
     target/debug/nes_cpu_test --quiet -f ../nes-test-roms/sprite_hit_tests_2005.10.05/06.right_edge.nes
+
+sprite_hit_tests_7: build_nes_cpu_test
     target/debug/nes_cpu_test --quiet -f ../nes-test-roms/sprite_hit_tests_2005.10.05/07.screen_bottom.nes
+
+sprite_hit_tests_8: build_nes_cpu_test
     target/debug/nes_cpu_test --quiet -f ../nes-test-roms/sprite_hit_tests_2005.10.05/08.double_height.nes
+
+sprite_hit_tests_9: build_nes_cpu_test
     target/debug/nes_cpu_test --quiet -f ../nes-test-roms/sprite_hit_tests_2005.10.05/09.timing_basics.nes
+
+sprite_hit_tests_10: build_nes_cpu_test
     target/debug/nes_cpu_test --quiet -f ../nes-test-roms/sprite_hit_tests_2005.10.05/10.timing_order.nes
+
+sprite_hit_tests_11: build_nes_cpu_test
     target/debug/nes_cpu_test --quiet -f ../nes-test-roms/sprite_hit_tests_2005.10.05/11.edge_timing.nes
 
-sprite_overflow_tests: build_nes_cpu_test
+[parallel]
+sprite_hit_tests: sprite_hit_tests_1 sprite_hit_tests_2 sprite_hit_tests_3 sprite_hit_tests_4 sprite_hit_tests_5 sprite_hit_tests_6 sprite_hit_tests_7 sprite_hit_tests_8 sprite_hit_tests_9 sprite_hit_tests_10 sprite_hit_tests_11
+
+sprite_overflow_tests_1: build_nes_cpu_test
     target/debug/nes_cpu_test --quiet -f ../nes-test-roms/sprite_overflow_tests/1.Basics.nes
+
+sprite_overflow_tests_2: build_nes_cpu_test
     target/debug/nes_cpu_test --quiet -f ../nes-test-roms/sprite_overflow_tests/2.Details.nes
+
+sprite_overflow_tests_3: build_nes_cpu_test
     target/debug/nes_cpu_test --quiet -f ../nes-test-roms/sprite_overflow_tests/3.Timing.nes
+
+sprite_overflow_tests_4: build_nes_cpu_test
     target/debug/nes_cpu_test --quiet -f ../nes-test-roms/sprite_overflow_tests/4.Obscure.nes
+
+sprite_overflow_tests_5: build_nes_cpu_test
     target/debug/nes_cpu_test --quiet -f ../nes-test-roms/sprite_overflow_tests/5.Emulator.nes
 
-dmc_dma_during_read4: build_nes_cpu_test
+[parallel]
+sprite_overflow_tests: sprite_overflow_tests_1 sprite_overflow_tests_2 sprite_overflow_tests_3 sprite_overflow_tests_4 sprite_overflow_tests_5
+
+dmc_dma_during_read4_1: build_nes_cpu_test
     target/debug/nes_cpu_test --quiet -f ../nes-test-roms/dmc_dma_during_read4/dma_4016_read.nes
+
+dmc_dma_during_read4_2: build_nes_cpu_test
     target/debug/nes_cpu_test --quiet -f ../nes-test-roms/dmc_dma_during_read4/dma_2007_read.nes
+
+dmc_dma_during_read4_3: build_nes_cpu_test
     target/debug/nes_cpu_test --quiet -f ../nes-test-roms/dmc_dma_during_read4/dma_2007_write.nes
+
+dmc_dma_during_read4_4: build_nes_cpu_test
     target/debug/nes_cpu_test --quiet -f ../nes-test-roms/dmc_dma_during_read4/read_write_2007.nes
+
+dmc_dma_during_read4_5: build_nes_cpu_test
     target/debug/nes_cpu_test --quiet -f ../nes-test-roms/dmc_dma_during_read4/double_2007_read.nes
 
-sprdma_and_dmc_dma: build_nes_cpu_test
+[parallel]
+dmc_dma_during_read4: dmc_dma_during_read4_1 dmc_dma_during_read4_2 dmc_dma_during_read4_3 dmc_dma_during_read4_4 dmc_dma_during_read4_5
+
+sprdma_and_dmc_dma_1: build_nes_cpu_test
     target/debug/nes_cpu_test --quiet -f ../nes-test-roms/sprdma_and_dmc_dma/sprdma_and_dmc_dma.nes
+
+sprdma_and_dmc_dma_2: build_nes_cpu_test
     target/debug/nes_cpu_test --quiet -f ../nes-test-roms/sprdma_and_dmc_dma/sprdma_and_dmc_dma_512.nes
 
 [parallel]
-passed: unit-test cpu-test instr_misc instr_test-v5 instr_test-v3 nestest instr_timing ppu_vbl_nmi vbl_nmi_timing cpu_interrupts_v2 branch_timing_tests cpu_dummy_reads cpu_dummy_writes cpu_exec_space cpu_reset cpu_timing_test6 oam_read oam_stress ppu_open_bus ppu_read_buffer sprite_hit_tests sprite_overflow_tests dmc_dma_during_read4
+sprdma_and_dmc_dma: sprdma_and_dmc_dma_1 sprdma_and_dmc_dma_2
+
+apu_mixer_1: build_nes_cpu_test
+    target/debug/nes_cpu_test --quiet -f ../nes-test-roms/apu_mixer/dmc.nes
+
+apu_mixer_2: build_nes_cpu_test
+    target/debug/nes_cpu_test --quiet -f ../nes-test-roms/apu_mixer/noise.nes
+
+apu_mixer_3: build_nes_cpu_test
+    target/debug/nes_cpu_test --quiet -f ../nes-test-roms/apu_mixer/square.nes
+
+apu_mixer_4: build_nes_cpu_test
+    target/debug/nes_cpu_test --quiet -f ../nes-test-roms/apu_mixer/triangle.nes
+
+[parallel]
+apu_mixer: apu_mixer_1 apu_mixer_2 apu_mixer_3 apu_mixer_4
+
+apu_reset_1: build_nes_cpu_test
+    target/debug/nes_cpu_test --quiet -f ../nes-test-roms/apu_reset/4015_cleared.nes
+
+apu_reset_2: build_nes_cpu_test
+    target/debug/nes_cpu_test --quiet -f ../nes-test-roms/apu_reset/4017_timing.nes
+
+apu_reset_3: build_nes_cpu_test
+    target/debug/nes_cpu_test --quiet -f ../nes-test-roms/apu_reset/4017_written.nes
+
+apu_reset_4: build_nes_cpu_test
+    target/debug/nes_cpu_test --quiet -f ../nes-test-roms/apu_reset/irq_flag_cleared.nes
+
+apu_reset_5: build_nes_cpu_test
+    target/debug/nes_cpu_test --quiet -f ../nes-test-roms/apu_reset/len_ctrs_enabled.nes
+
+apu_reset_6: build_nes_cpu_test
+    target/debug/nes_cpu_test --quiet -f ../nes-test-roms/apu_reset/works_immediately.nes
+
+[parallel]
+apu_reset: apu_reset_1 apu_reset_2 apu_reset_3 apu_reset_4 apu_reset_5 apu_reset_6
+
+[parallel]
+passed: unit-test cpu-test instr_misc instr_test-v5 instr_test-v3 nestest instr_timing ppu_vbl_nmi vbl_nmi_timing cpu_interrupts_v2 branch_timing_tests cpu_dummy_reads cpu_dummy_writes cpu_exec_space cpu_reset cpu_timing_test6 oam_read oam_stress ppu_open_bus ppu_read_buffer sprite_hit_tests sprite_overflow_tests dmc_dma_during_read4 apu_mixer
 
 wasm-debug-build:
     cd nes_web && wasm-pack build --release
