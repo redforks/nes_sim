@@ -463,7 +463,6 @@ impl<M: Mcu> Cpu<M> {
     }
 
     fn read_byte(&mut self, addr: u16) -> u8 {
-        self.maybe_perform_dmc_dma(addr);
         self.mcu.read(addr)
     }
 
@@ -474,7 +473,6 @@ impl<M: Mcu> Cpu<M> {
     fn inc_read_byte(&mut self) -> u8 {
         let addr = self.pc;
         self.inc_pc(1);
-        self.maybe_perform_dmc_dma(addr);
         self.mcu.read(addr)
     }
 
@@ -490,14 +488,7 @@ impl<M: Mcu> Cpu<M> {
     fn pop_stack(&mut self) -> u8 {
         self.sp = self.sp.wrapping_add(1);
         let addr = 0x100 + self.sp as u16;
-        self.maybe_perform_dmc_dma(addr);
         self.mcu.read(addr)
-    }
-
-    fn maybe_perform_dmc_dma(&mut self, _cpu_read_addr: u16) {
-        // With the 4-phase DMA model, the DMA is performed during the
-        // DmaRead stall cycle (perform_dmc_dma_on_stall), not here.
-        // This method is kept as a no-op for API compatibility.
     }
 
     /// Perform the DMC DMA read during a dedicated stall cycle.
@@ -547,7 +538,6 @@ impl<M: Mcu> Cpu<M> {
     }
 
     fn load_alu(&mut self) {
-        self.maybe_perform_dmc_dma(self.address_latch);
         self.alu = self.mcu.read(self.address_latch);
     }
 
