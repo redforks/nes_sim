@@ -1,5 +1,5 @@
 use super::{Cpu, Flag, Register};
-use crate::{cpu::CpuMode, mcu::Mcu};
+use crate::mcu::Mcu;
 use tinyvec::ArrayVec;
 
 macro_rules! microcode_arr {
@@ -828,14 +828,14 @@ pub enum ShiftRotateOp {
 impl ImmediateOp {
     pub fn exec<M: Mcu>(self, cpu: &mut Cpu<M>) {
         match self {
-            ImmediateOp::Adc => cpu.adc_alu(),
-            ImmediateOp::And => cpu.and(),
-            ImmediateOp::Sbc => cpu.sbc(),
-            ImmediateOp::Cmp => cpu.cmp(),
-            ImmediateOp::Cpx => cpu.cpx(),
-            ImmediateOp::Cpy => cpu.cpy(),
-            ImmediateOp::Ora => cpu.ora(),
-            ImmediateOp::Eor => cpu.eor(),
+            ImmediateOp::Adc => cpu.adc(false),
+            ImmediateOp::And => cpu.and(false),
+            ImmediateOp::Sbc => cpu.sbc(false),
+            ImmediateOp::Cmp => cpu.cmp(false),
+            ImmediateOp::Cpx => cpu.cpx(false),
+            ImmediateOp::Cpy => cpu.cpy(false),
+            ImmediateOp::Ora => cpu.ora(false),
+            ImmediateOp::Eor => cpu.eor(false),
         }
     }
 }
@@ -1369,38 +1369,14 @@ impl Microcode {
             Self::AbsoluteL => Self::absolute_l(cpu),
             Self::AbsoluteH => Self::absolute_h(cpu),
 
-            Self::Adc => {
-                cpu.load_alu();
-                cpu.adc_alu();
-            }
-            Self::Sbc => {
-                cpu.load_alu();
-                cpu.sbc();
-            }
-            Self::Cmp => {
-                cpu.load_alu();
-                cpu.cmp()
-            }
-            Self::Cpx => {
-                cpu.load_alu();
-                cpu.cpx()
-            }
-            Self::Cpy => {
-                cpu.load_alu();
-                cpu.cpy()
-            }
-            Self::Ora => {
-                cpu.load_alu();
-                cpu.ora();
-            }
-            Self::Eor => {
-                cpu.load_alu();
-                cpu.eor();
-            }
-            Self::And => {
-                cpu.load_alu();
-                cpu.and();
-            }
+            Self::Adc => cpu.adc(true),
+            Self::Sbc => cpu.sbc(true),
+            Self::Cmp => cpu.cmp(true),
+            Self::Cpx => cpu.cpx(true),
+            Self::Cpy => cpu.cpy(true),
+            Self::Ora => cpu.ora(true),
+            Self::Eor => cpu.eor(true),
+            Self::And => cpu.and(true),
             Self::Shx => cpu.shx(),
             Self::Shy => cpu.shy(),
             Self::Sha => cpu.sha(),

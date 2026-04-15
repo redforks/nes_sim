@@ -4074,7 +4074,7 @@ fn and_immediate_and_memory_microcodes_update_accumulator_and_flags() {
 
     cpu.address_latch = 0x0042;
     cpu.alu = 0b1010_1010;
-    cpu.and();
+    cpu.and(false);
     assert_eq!(cpu.a, 0b1000_0000);
     assert!(!cpu.flag(Flag::Zero));
     assert!(cpu.flag(Flag::Negative));
