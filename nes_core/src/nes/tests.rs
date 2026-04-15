@@ -47,8 +47,9 @@ fn test_length_counter_status_comes_from_apu_controller() {
 
     mcu.write(0x4000, 0x00);
     mcu.write(0x4002, 0x34);
-    mcu.write(0x4003, 0xF8);
+    // Enable channel first, then load length counter
     mcu.write(0x4015, 0x01);
+    mcu.write(0x4003, 0xF8);
 
     assert_eq!(mcu.read(0x4015) & 0x01, 0x01);
 

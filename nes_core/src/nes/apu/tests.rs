@@ -339,8 +339,9 @@ fn test_reset_replays_last_frame_counter_write() {
 fn test_apu_controller_driver_control_flags_status() {
     let mut driver = Apu::new(());
 
-    driver.write(0x4003, 0xF8);
+    // First enable the channel, then load the length counter
     driver.write(0x4015, 0x01);
+    driver.write(0x4003, 0xF8);
 
     let status = driver.read(0x4015);
     assert_eq!(status & 0x01, 0x01);

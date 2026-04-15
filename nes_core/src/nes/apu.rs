@@ -264,7 +264,10 @@ impl PulseState {
 
     fn write_timer_high(&mut self, load: LengthCounterLoad) {
         self.timer_period = load.timer();
-        self.length_counter = LENGTH_TABLE[load.length_count() as usize];
+        // Only reload length counter if the channel is enabled
+        if self.enabled {
+            self.length_counter = LENGTH_TABLE[load.length_count() as usize];
+        }
         self.sequence_step = 0;
         self.envelope.restart();
     }
@@ -371,7 +374,10 @@ impl TriangleState {
 
     fn write_timer_high(&mut self, load: LengthCounterLoad) {
         self.timer_period = load.timer();
-        self.length_counter = LENGTH_TABLE[load.length_count() as usize];
+        // Only reload length counter if the channel is enabled
+        if self.enabled {
+            self.length_counter = LENGTH_TABLE[load.length_count() as usize];
+        }
         self.linear_counter_reload = true;
     }
 
@@ -459,7 +465,10 @@ impl NoiseState {
     }
 
     fn write_length(&mut self, value: NoiseLength) {
-        self.length_counter = LENGTH_TABLE[value.length() as usize];
+        // Only reload length counter if the channel is enabled
+        if self.enabled {
+            self.length_counter = LENGTH_TABLE[value.length() as usize];
+        }
         self.envelope_state.restart();
     }
 
@@ -796,7 +805,13 @@ impl<D: AudioDriver> Apu<D> {
             }
         }
 
-        let irq_triggered = self.tick_frame_counter();
+        // Only tick frame counter if we're not in the write delay period
+        let irq_triggered = if self.frame_counter_write_delay.is_none() {
+            self.tick_frame_counter()
+        } else {
+            false
+        };
+
         self.emit_samples();
         irq_triggered
     }
@@ -936,9 +951,8 @@ impl<D: AudioDriver> Apu<D> {
         self.last_frame_counter_write = counter;
         self.pending_frame_counter = Some(counter);
         self.frame_counter_write_delay = Some(4);
-    }
 
-    fn apply_frame_counter(&mut self, counter: FrameCounter) {
+        // The interrupt inhibit flag (bit 7) and mode flag (bit 6) take effect immediately
         self.frame_counter_mode = counter.mode();
         self.frame_interrupt_inhibit = counter.interrupt_flag();
         if self.frame_interrupt_inhibit {
@@ -946,9 +960,17 @@ impl<D: AudioDriver> Apu<D> {
             self.frame_interrupt_preview = false;
         }
 
-        self.apu_cycle = 0;
-        self.frame_counter_cycle = 0;
+        // Clear the post-wrap pending flag when writing to $4017
         self.post_wrap_irq_pending = false;
+    }
+
+    fn apply_frame_counter(&mut self, _counter: FrameCounter) {
+        // Note: frame_counter_mode and frame_interrupt_inhibit are already set
+        // in set_frame_counter() for immediate effect, as per NESdev wiki
+
+        // Reset frame counter cycle to 0. The apu_cycle is not reset here
+        // to preserve the even/odd alignment which affects jitter behavior.
+        self.frame_counter_cycle = 0;
 
         if self.frame_counter_mode {
             self.clock_quarter_frame();
