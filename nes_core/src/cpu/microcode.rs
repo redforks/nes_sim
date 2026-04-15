@@ -530,12 +530,12 @@ const fn build_opcode_table() -> [ArrayVec<[Microcode; 7]>; 256] {
     r[CPY_IMMEDIATE as usize] = microcode_arr!(ImmediateWithOp(ImmediateOp::Cpy));
     r[CPY_ZERO_PAGE as usize] = microcode_arr!(ZeroPage, Cpy);
     r[CPY_ABSOLUTE as usize] = absolute_op(Cpy);
-    r[TAX as usize] = microcode_arr!(Tax);
-    r[TXA as usize] = microcode_arr!(Txa);
-    r[TAY as usize] = microcode_arr!(Tay);
-    r[TYA as usize] = microcode_arr!(Tya);
-    r[TSX as usize] = microcode_arr!(Tsx);
-    r[TXS as usize] = microcode_arr!(Txs);
+    r[TAX as usize] = microcode_arr!(Transfer(TransferDirection::AtoX));
+    r[TXA as usize] = microcode_arr!(Transfer(TransferDirection::XtoA));
+    r[TAY as usize] = microcode_arr!(Transfer(TransferDirection::AtoY));
+    r[TYA as usize] = microcode_arr!(Transfer(TransferDirection::YtoA));
+    r[TSX as usize] = microcode_arr!(Transfer(TransferDirection::SPtoX));
+    r[TXS as usize] = microcode_arr!(Transfer(TransferDirection::XtoSP));
     r[INX as usize] = microcode_arr!(Inx);
     r[INY as usize] = microcode_arr!(Iny);
     r[DEX as usize] = microcode_arr!(Dex);
@@ -787,6 +787,16 @@ pub enum ImmediateOp {
     Eor,
 }
 
+#[derive(Debug, Clone, Copy)]
+pub enum TransferDirection {
+    AtoX,
+    XtoA,
+    AtoY,
+    YtoA,
+    SPtoX,
+    XtoSP,
+}
+
 impl ImmediateOp {
     pub fn exec<M: Mcu>(self, cpu: &mut Cpu<M>) {
         match self {
@@ -940,12 +950,7 @@ pub enum Microcode {
     Sei,
     Clv,
 
-    Tax,
-    Txa,
-    Tay,
-    Tya,
-    Tsx,
-    Txs,
+    Transfer(TransferDirection),
     Inx,
     Iny,
     Dex,
@@ -1469,12 +1474,7 @@ impl Microcode {
             Self::Sei => cpu.set_flag(Flag::InterruptDisabled, true),
             Self::Clv => cpu.set_flag(Flag::Overflow, false),
 
-            Self::Tax => cpu.tax(),
-            Self::Txa => cpu.txa(),
-            Self::Tay => cpu.tay(),
-            Self::Tya => cpu.tya(),
-            Self::Tsx => cpu.tsx(),
-            Self::Txs => cpu.txs(),
+            Self::Transfer(direction) => Self::transfer(cpu, direction),
             Self::Inx => cpu.inx(),
             Self::Iny => cpu.iny(),
             Self::Dex => cpu.dex(),
@@ -1803,5 +1803,16 @@ impl Microcode {
     fn immediate_with_op<M: Mcu>(cpu: &mut Cpu<M>, op: ImmediateOp) {
         cpu.alu = cpu.inc_read_byte();
         op.exec(cpu);
+    }
+
+    fn transfer<M: Mcu>(cpu: &mut Cpu<M>, direction: TransferDirection) {
+        match direction {
+            TransferDirection::AtoX => cpu.tax(),
+            TransferDirection::XtoA => cpu.txa(),
+            TransferDirection::AtoY => cpu.tay(),
+            TransferDirection::YtoA => cpu.tya(),
+            TransferDirection::SPtoX => cpu.tsx(),
+            TransferDirection::XtoSP => cpu.txs(),
+        }
     }
 }

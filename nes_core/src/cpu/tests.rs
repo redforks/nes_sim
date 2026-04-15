@@ -1,4 +1,4 @@
-use super::microcode::{BranchTest, ImmediateOp, opcode};
+use super::microcode::{BranchTest, ImmediateOp, TransferDirection, opcode};
 use super::*;
 use crate::test_utils::MockMcu;
 
@@ -3926,25 +3926,25 @@ fn transfer_microcodes_copy_registers_and_update_flags() {
     cpu.y = 0x7F;
     cpu.sp = 0x42;
 
-    Microcode::Tax.exec(&mut cpu);
+    Microcode::Transfer(TransferDirection::AtoX).exec(&mut cpu);
     assert_eq!(cpu.x, 0x80);
     assert!(cpu.flag(Flag::Negative));
 
-    Microcode::Txa.exec(&mut cpu);
+    Microcode::Transfer(TransferDirection::XtoA).exec(&mut cpu);
     assert_eq!(cpu.a, 0x80);
 
-    Microcode::Tay.exec(&mut cpu);
+    Microcode::Transfer(TransferDirection::AtoY).exec(&mut cpu);
     assert_eq!(cpu.y, 0x80);
 
-    Microcode::Tya.exec(&mut cpu);
+    Microcode::Transfer(TransferDirection::YtoA).exec(&mut cpu);
     assert_eq!(cpu.a, 0x80);
 
-    Microcode::Tsx.exec(&mut cpu);
+    Microcode::Transfer(TransferDirection::SPtoX).exec(&mut cpu);
     assert_eq!(cpu.x, 0x42);
     assert!(!cpu.flag(Flag::Zero));
 
     cpu.x = 0x55;
-    Microcode::Txs.exec(&mut cpu);
+    Microcode::Transfer(TransferDirection::XtoSP).exec(&mut cpu);
     assert_eq!(cpu.sp, 0x55);
 }
 
