@@ -687,6 +687,18 @@ pub struct Apu<D: AudioDriver = ()> {
     frame_counter_mode: bool,
     frame_interrupt_inhibit: bool,
     frame_interrupt: bool,
+    /// 1-tick-delayed copy of frame_interrupt.  When the frame counter
+    /// was reset with the short write delay (3 cycles), request_irq()
+    /// uses this instead of frame_interrupt so the +1 sequential-poll
+    /// delay plus the +1 shadow delay cancels the 1-cycle-earlier
+    /// assertion, giving the same effective IRQ detection cycle as the
+    /// long-delay (4 cycle) case.  This ensures the even/odd jitter is
+    /// absorbed by instruction boundaries, matching real hardware.
+    frame_irq_shadow: bool,
+    /// True when the most recent frame counter reset used the short
+    /// write delay (3 cycles, i.e. the $4017 write occurred during an
+    /// APU cycle).
+    frame_counter_short_delay: bool,
     frame_counter_write_delay: Option<u8>,
     pending_frame_counter: Option<FrameCounter>,
     dmc_interrupt: bool,
@@ -723,6 +735,8 @@ impl<D: AudioDriver> Apu<D> {
             frame_counter_mode: false,
             frame_interrupt_inhibit: false,
             frame_interrupt: false,
+            frame_irq_shadow: false,
+            frame_counter_short_delay: false,
             frame_counter_write_delay: None,
             pending_frame_counter: None,
             dmc_interrupt: false,
@@ -789,6 +803,11 @@ impl<D: AudioDriver> Apu<D> {
             }
         }
 
+        // Snapshot frame_interrupt BEFORE tick_frame_counter may modify
+        // it.  This becomes the 1-tick-delayed shadow used by
+        // request_irq() for short-delay writes.
+        let prev_frame_interrupt = self.frame_interrupt;
+
         // Only tick frame counter if we're not in the write delay period
         let irq_triggered = if self.frame_counter_write_delay.is_none() {
             self.tick_frame_counter()
@@ -796,12 +815,19 @@ impl<D: AudioDriver> Apu<D> {
             false
         };
 
+        self.frame_irq_shadow = prev_frame_interrupt;
+
         self.emit_samples();
         irq_triggered
     }
 
     pub fn request_irq(&self) -> bool {
-        self.frame_interrupt || self.dmc_interrupt
+        let frame_irq = if self.frame_counter_short_delay {
+            self.frame_irq_shadow
+        } else {
+            self.frame_interrupt
+        };
+        frame_irq || self.dmc_interrupt
     }
 
     /// Take the pending DMC DMA request, if any.
@@ -930,7 +956,9 @@ impl<D: AudioDriver> Apu<D> {
     fn set_frame_counter(&mut self, counter: FrameCounter) {
         self.last_frame_counter_write = counter;
         self.pending_frame_counter = Some(counter);
-        self.frame_counter_write_delay = Some(if self.apu_even_cycle { 4 } else { 3 });
+        let delay = if self.apu_even_cycle { 3 } else { 4 };
+        self.frame_counter_write_delay = Some(delay);
+        self.frame_counter_short_delay = delay == 3;
 
         // The interrupt inhibit flag (bit 7) and mode flag (bit 6) take effect immediately
         self.frame_counter_mode = counter.mode();
