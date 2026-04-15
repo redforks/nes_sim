@@ -432,11 +432,8 @@ impl<M: Mcu> Cpu<M> {
     }
 
     fn inner_set_flag(&mut self, flag: Flag, v: bool) {
-        if v {
-            self.status |= flag as u8;
-        } else {
-            self.status &= !(flag as u8);
-        }
+        let mask = flag as u8;
+        self.status = (self.status & !mask) | (if v { mask } else { 0 });
     }
 
     fn save_irq_inhibit(&mut self) {
