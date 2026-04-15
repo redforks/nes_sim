@@ -49,6 +49,7 @@ nes_core = { path = "nes_core" }
 
 [profile.dev]
 split-debuginfo = "unpacked"
+opt-level = 1
 
 [profile.release]
 codegen-units=1
