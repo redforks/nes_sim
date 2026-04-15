@@ -3959,8 +3959,10 @@ fn stack_and_misc_microcodes_manipulate_state() {
     assert_eq!(cpu.sp, 0xFE);
     assert_eq!(cpu.mcu().mem[0x01FF], 0xAB);
 
+    // Restore stack pointer for next test (simulating what Pla would have done)
     cpu.a = 0x00;
-    Microcode::Pla.exec(&mut cpu);
+    Microcode::PopStack.exec(&mut cpu);
+    Microcode::UpdateAFromAlu.exec(&mut cpu);
     assert_eq!(cpu.a, 0xAB);
 
     Microcode::PushStatus {

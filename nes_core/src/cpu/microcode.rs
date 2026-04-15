@@ -394,7 +394,7 @@ const fn build_opcode_table() -> [ArrayVec<[Microcode; 7]>; 256] {
     r[BVC as usize] = microcode_arr!(BranchRelative(BranchTest::IfOverflowClear));
     r[BVS as usize] = microcode_arr!(BranchRelative(BranchTest::IfOverflowSet));
     r[PHA as usize] = microcode_arr!(Nop, Pha);
-    r[PLA as usize] = microcode_arr!(Nop, Nop, Pla);
+    r[PLA as usize] = microcode_arr!(Nop, PopStack, UpdateAFromAlu);
     r[PHP as usize] = microcode_arr!(
         Nop,
         PushStatus {
@@ -980,8 +980,10 @@ pub enum Microcode {
     PopPc,
     /// Push register A to stack
     Pha,
-    /// Pop value from stack to register A
-    Pla,
+    /// pop stack into alu
+    PopStack,
+    /// Set register A to alu
+    UpdateAFromAlu,
 
     /// Cpu will trapped infinitely if execute this microcode, used to impl illegal instructions that will lock up the CPU
     /// Only reset can restore the CPU from this state
@@ -1454,8 +1456,9 @@ impl Microcode {
             } => cpu.push_status(set_disable_interrupt, break_flag),
             Self::Plp => cpu.plp(),
             Self::PopPc => cpu.pop_pc(),
-            Self::Pla => cpu.pla(),
             Self::Pha => cpu.pha(),
+            Self::PopStack => cpu.pop_stack_into_alu(),
+            Self::UpdateAFromAlu => cpu.set_a(cpu.alu),
 
             Self::LoadResetPcL => {
                 cpu.pc = cpu.read_byte(0xFFFC) as u16;

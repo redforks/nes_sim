@@ -721,9 +721,8 @@ impl<M: Mcu> Cpu<M> {
         self.push_stack(self.a);
     }
 
-    fn pla(&mut self) {
-        let t = self.pop_stack();
-        self.set_a(t);
+    fn pop_stack_into_alu(&mut self) {
+        self.alu = self.pop_stack();
     }
 
     fn push_status(&mut self, set_disable_interrupt: bool, break_flag: bool) {
