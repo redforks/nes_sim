@@ -299,6 +299,7 @@ const fn indirect_indexed_store_a() -> ArrayVec<[Microcode; 7]> {
 
 const fn build_opcode_table() -> [ArrayVec<[Microcode; 7]>; 256] {
     use super::Flag::*;
+    use AOrMemory::*;
     use Microcode::*;
     use Register::*;
     use opcode::*;
@@ -364,26 +365,26 @@ const fn build_opcode_table() -> [ArrayVec<[Microcode; 7]>; 256] {
     r[ADC_INDEXED_INDIRECT as usize] = indexed_indirect_op(Adc);
     r[ADC_INDIRECT_INDEXED as usize] =
         indirect_indexed_op(OpAfterAddressing::Adc, CrossPageBehavior::FirstClock);
-    r[ASL_ACCUMULATOR as usize] = microcode_arr!(AslAccumulator);
-    r[ASL_ZERO_PAGE as usize] = zero_page_rmw_op(Asl);
-    r[ASL_ZERO_PAGE_X as usize] = zero_page_x_rmw_op(Asl);
-    r[ASL_ABSOLUTE as usize] = absolute_rmw_op(Asl);
-    r[ASL_ABSOLUTE_INDEXED_X as usize] = absolute_indexed_x_rmw_op(Asl);
-    r[LSR_ACCUMULATOR as usize] = microcode_arr!(LsrAccumulator);
-    r[LSR_ZERO_PAGE as usize] = zero_page_rmw_op(Lsr);
-    r[LSR_ZERO_PAGE_X as usize] = zero_page_x_rmw_op(Lsr);
-    r[LSR_ABSOLUTE as usize] = absolute_rmw_op(Lsr);
-    r[LSR_ABSOLUTE_INDEXED_X as usize] = absolute_indexed_x_rmw_op(Lsr);
-    r[ROL_ACCUMULATOR as usize] = microcode_arr!(RolAccumulator);
-    r[ROL_ZERO_PAGE as usize] = zero_page_rmw_op(Rol);
-    r[ROL_ZERO_PAGE_X as usize] = zero_page_x_rmw_op(Rol);
-    r[ROL_ABSOLUTE as usize] = absolute_rmw_op(Rol);
-    r[ROL_ABSOLUTE_INDEXED_X as usize] = absolute_indexed_x_rmw_op(Rol);
-    r[ROR_ACCUMULATOR as usize] = microcode_arr!(RorAccumulator);
-    r[ROR_ZERO_PAGE as usize] = zero_page_rmw_op(Ror);
-    r[ROR_ZERO_PAGE_X as usize] = zero_page_x_rmw_op(Ror);
-    r[ROR_ABSOLUTE as usize] = absolute_rmw_op(Ror);
-    r[ROR_ABSOLUTE_INDEXED_X as usize] = absolute_indexed_x_rmw_op(Ror);
+    r[ASL_ACCUMULATOR as usize] = microcode_arr!(Asl(Accumulator));
+    r[ASL_ZERO_PAGE as usize] = zero_page_rmw_op(Asl(Memory));
+    r[ASL_ZERO_PAGE_X as usize] = zero_page_x_rmw_op(Asl(Memory));
+    r[ASL_ABSOLUTE as usize] = absolute_rmw_op(Asl(Memory));
+    r[ASL_ABSOLUTE_INDEXED_X as usize] = absolute_indexed_x_rmw_op(Asl(Memory));
+    r[LSR_ACCUMULATOR as usize] = microcode_arr!(Lsr(Accumulator));
+    r[LSR_ZERO_PAGE as usize] = zero_page_rmw_op(Lsr(Memory));
+    r[LSR_ZERO_PAGE_X as usize] = zero_page_x_rmw_op(Lsr(Memory));
+    r[LSR_ABSOLUTE as usize] = absolute_rmw_op(Lsr(Memory));
+    r[LSR_ABSOLUTE_INDEXED_X as usize] = absolute_indexed_x_rmw_op(Lsr(Memory));
+    r[ROL_ACCUMULATOR as usize] = microcode_arr!(Rol(Accumulator));
+    r[ROL_ZERO_PAGE as usize] = zero_page_rmw_op(Rol(Memory));
+    r[ROL_ZERO_PAGE_X as usize] = zero_page_x_rmw_op(Rol(Memory));
+    r[ROL_ABSOLUTE as usize] = absolute_rmw_op(Rol(Memory));
+    r[ROL_ABSOLUTE_INDEXED_X as usize] = absolute_indexed_x_rmw_op(Rol(Memory));
+    r[ROR_ACCUMULATOR as usize] = microcode_arr!(Ror(Accumulator));
+    r[ROR_ZERO_PAGE as usize] = zero_page_rmw_op(Ror(Memory));
+    r[ROR_ZERO_PAGE_X as usize] = zero_page_x_rmw_op(Ror(Memory));
+    r[ROR_ABSOLUTE as usize] = absolute_rmw_op(Ror(Memory));
+    r[ROR_ABSOLUTE_INDEXED_X as usize] = absolute_indexed_x_rmw_op(Ror(Memory));
     r[BCC as usize] = microcode_arr!(BranchRelative(BranchTest::IfCarryClear));
     r[BCS as usize] = microcode_arr!(BranchRelative(BranchTest::IfCarrySet));
     r[BEQ as usize] = microcode_arr!(BranchRelative(BranchTest::IfZeroSet));
@@ -810,6 +811,20 @@ pub enum IncDecTarget {
     DecrementAlu,
 }
 
+#[derive(Debug, Clone, Copy)]
+pub enum AOrMemory {
+    Accumulator,
+    Memory,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub enum ShiftRotateOp {
+    Asl,
+    Lsr,
+    Rol,
+    Ror,
+}
+
 impl ImmediateOp {
     pub fn exec<M: Mcu>(self, cpu: &mut Cpu<M>) {
         match self {
@@ -918,26 +933,11 @@ pub enum Microcode {
     /// Test bits in accumulator against ALU value
     Bit,
 
-    AslAccumulator,
-    /// Dummy-write the original ALU value to memory, then compute ASL.
-    /// Combines the RMW dummy write and ALU modification into one cycle
-    /// so that the dummy write and the subsequent StoreAlu are consecutive.
+    Asl(AOrMemory),
+    Lsr(AOrMemory),
+    Rol(AOrMemory),
+    Ror(AOrMemory),
 
-    /// Compute ASL on alu, save it to memory.
-    Asl,
-    /// Compute LSR on alu, save it to memory.
-    Lsr,
-    /// Compute ROL on alu, save it to memory.
-    Rol,
-    /// Compute ROR on alu, save it to memory.
-    Ror,
-
-    LsrAccumulator,
-    /// Dummy-write the original ALU value to memory, then compute LSR.
-    RolAccumulator,
-    /// Dummy-write the original ALU value to memory, then compute ROL.
-    RorAccumulator,
-    /// Dummy-write the original ALU value to memory, then compute ROR.
     AlrImmediate,
     AncImmediate,
     ArrImmediate,
@@ -1419,30 +1419,10 @@ impl Microcode {
             }
             Self::IndexedL => Self::indexed_l(cpu),
             Self::IndexedH => Self::indexed_h(cpu),
-            Self::AslAccumulator => Self::asl_accumulator(cpu),
-
-            Self::Asl => {
-                Self::asl(cpu);
-                Self::store_alu(cpu);
-            }
-            Self::LsrAccumulator => Self::lsr_accumulator(cpu),
-
-            Self::Lsr => {
-                Self::lsr(cpu);
-                Self::store_alu(cpu);
-            }
-            Self::RolAccumulator => Self::rol_accumulator(cpu),
-
-            Self::Rol => {
-                Self::rol(cpu);
-                Self::store_alu(cpu);
-            }
-            Self::RorAccumulator => Self::ror_accumulator(cpu),
-
-            Self::Ror => {
-                Self::ror(cpu);
-                Self::store_alu(cpu);
-            }
+            Self::Asl(target) => Self::shift_rotate(cpu, target, ShiftRotateOp::Asl),
+            Self::Lsr(target) => Self::shift_rotate(cpu, target, ShiftRotateOp::Lsr),
+            Self::Rol(target) => Self::shift_rotate(cpu, target, ShiftRotateOp::Rol),
+            Self::Ror(target) => Self::shift_rotate(cpu, target, ShiftRotateOp::Ror),
 
             Self::AlrImmediate => Self::alr_immediate(cpu),
             Self::AncImmediate => Self::anc_immediate(cpu),
@@ -1670,75 +1650,6 @@ impl Microcode {
         cpu.write_byte(cpu.address_latch, cpu.alu);
     }
 
-    fn asl_accumulator<M: Mcu>(cpu: &mut Cpu<M>) {
-        cpu.a = cpu.asl(cpu.a);
-    }
-
-    fn asl<M: Mcu>(cpu: &mut Cpu<M>) {
-        cpu.alu = cpu.asl(cpu.alu);
-    }
-
-    fn lsr_accumulator<M: Mcu>(cpu: &mut Cpu<M>) {
-        let v = cpu.a;
-        cpu.set_flag(Flag::Carry, v & 0x01 != 0);
-        cpu.a = v >> 1;
-        cpu.update_negative_flag(cpu.a);
-        cpu.update_zero_flag(cpu.a);
-    }
-
-    fn lsr<M: Mcu>(cpu: &mut Cpu<M>) {
-        let v = cpu.alu;
-        cpu.set_flag(Flag::Carry, v & 0x01 != 0);
-        cpu.alu = v >> 1;
-        cpu.update_negative_flag(cpu.alu);
-        cpu.update_zero_flag(cpu.alu);
-    }
-
-    fn rol_accumulator<M: Mcu>(cpu: &mut Cpu<M>) {
-        let v = cpu.a;
-        let new = (v << 1) | (cpu.flag(Flag::Carry) as u8);
-        cpu.set_flag(Flag::Carry, v & 0x80 != 0);
-        cpu.a = new;
-        cpu.update_negative_flag(cpu.a);
-        cpu.update_zero_flag(cpu.a);
-    }
-
-    fn rol<M: Mcu>(cpu: &mut Cpu<M>) {
-        let v = cpu.alu;
-        let new = (v << 1) | (cpu.flag(Flag::Carry) as u8);
-        cpu.set_flag(Flag::Carry, v & 0x80 != 0);
-        cpu.alu = new;
-        cpu.update_negative_flag(cpu.alu);
-        cpu.update_zero_flag(cpu.alu);
-    }
-
-    fn ror_accumulator<M: Mcu>(cpu: &mut Cpu<M>) {
-        let v = cpu.a;
-        let new = (v >> 1) | ((cpu.flag(Flag::Carry) as u8) << 7);
-        cpu.set_flag(Flag::Carry, v & 0x01 != 0);
-        cpu.a = new;
-        cpu.update_negative_flag(cpu.a);
-        cpu.update_zero_flag(cpu.a);
-    }
-
-    fn ror<M: Mcu>(cpu: &mut Cpu<M>) {
-        let v = cpu.alu;
-        let new = (v >> 1) | ((cpu.flag(Flag::Carry) as u8) << 7);
-        cpu.set_flag(Flag::Carry, v & 0x01 != 0);
-        cpu.alu = new;
-        cpu.update_negative_flag(cpu.alu);
-        cpu.update_zero_flag(cpu.alu);
-    }
-
-    /// Write original ALU value to memory (dummy write), then compute ASL on ALU.
-    /// On the real 6502, the dummy write and ALU computation happen on the same cycle.
-
-    /// Write original ALU value to memory (dummy write), then compute LSR on ALU.
-
-    /// Write original ALU value to memory (dummy write), then compute ROL on ALU.
-
-    /// Write original ALU value to memory (dummy write), then compute ROR on ALU.
-
     fn branch_relative<M: Mcu>(cpu: &mut Cpu<M>, branch_test: BranchTest) {
         let offset = cpu.inc_read_byte();
         if branch_test.test(cpu) {
@@ -1817,6 +1728,66 @@ impl Microcode {
             IncDecTarget::DecrementY => cpu.dey(),
             IncDecTarget::IncrementAlu => cpu.inc(),
             IncDecTarget::DecrementAlu => cpu.dec(),
+        }
+    }
+
+    fn shift_rotate<M: Mcu>(cpu: &mut Cpu<M>, target: AOrMemory, op: ShiftRotateOp) {
+        match target {
+            AOrMemory::Accumulator => match op {
+                ShiftRotateOp::Asl => cpu.a = cpu.asl(cpu.a),
+                ShiftRotateOp::Lsr => {
+                    let v = cpu.a;
+                    cpu.set_flag(Flag::Carry, v & 0x01 != 0);
+                    cpu.a = v >> 1;
+                    cpu.update_negative_flag(cpu.a);
+                    cpu.update_zero_flag(cpu.a);
+                }
+                ShiftRotateOp::Rol => {
+                    let v = cpu.a;
+                    let new = (v << 1) | (cpu.flag(Flag::Carry) as u8);
+                    cpu.set_flag(Flag::Carry, v & 0x80 != 0);
+                    cpu.a = new;
+                    cpu.update_negative_flag(cpu.a);
+                    cpu.update_zero_flag(cpu.a);
+                }
+                ShiftRotateOp::Ror => {
+                    let v = cpu.a;
+                    let new = (v >> 1) | ((cpu.flag(Flag::Carry) as u8) << 7);
+                    cpu.set_flag(Flag::Carry, v & 0x01 != 0);
+                    cpu.a = new;
+                    cpu.update_negative_flag(cpu.a);
+                    cpu.update_zero_flag(cpu.a);
+                }
+            },
+            AOrMemory::Memory => {
+                match op {
+                    ShiftRotateOp::Asl => cpu.alu = cpu.asl(cpu.alu),
+                    ShiftRotateOp::Lsr => {
+                        let v = cpu.alu;
+                        cpu.set_flag(Flag::Carry, v & 0x01 != 0);
+                        cpu.alu = v >> 1;
+                        cpu.update_negative_flag(cpu.alu);
+                        cpu.update_zero_flag(cpu.alu);
+                    }
+                    ShiftRotateOp::Rol => {
+                        let v = cpu.alu;
+                        let new = (v << 1) | (cpu.flag(Flag::Carry) as u8);
+                        cpu.set_flag(Flag::Carry, v & 0x80 != 0);
+                        cpu.alu = new;
+                        cpu.update_negative_flag(cpu.alu);
+                        cpu.update_zero_flag(cpu.alu);
+                    }
+                    ShiftRotateOp::Ror => {
+                        let v = cpu.alu;
+                        let new = (v >> 1) | ((cpu.flag(Flag::Carry) as u8) << 7);
+                        cpu.set_flag(Flag::Carry, v & 0x01 != 0);
+                        cpu.alu = new;
+                        cpu.update_negative_flag(cpu.alu);
+                        cpu.update_zero_flag(cpu.alu);
+                    }
+                }
+                Self::store_alu(cpu);
+            }
         }
     }
 }
