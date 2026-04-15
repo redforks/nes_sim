@@ -562,9 +562,7 @@ impl<M: Mcu> Cpu<M> {
         let (sum, carry1) = sum.overflowing_add(carry);
         self.inner_set_flag(Flag::Carry, carry0 || carry1);
         self.inner_set_flag(Flag::Overflow, !(self.a ^ val) & (self.a ^ sum) & 0x80 != 0);
-        self.update_zero_flag(sum);
-        self.update_negative_flag(sum);
-        self.a = sum;
+        self.set_a(sum);
     }
 
     fn sbc(&mut self, load_alu: bool) {
@@ -578,9 +576,7 @@ impl<M: Mcu> Cpu<M> {
         let (sum, carry1) = sum.overflowing_add(carry);
         self.inner_set_flag(Flag::Carry, carry0 || carry1);
         self.inner_set_flag(Flag::Overflow, !(self.a ^ val) & (self.a ^ sum) & 0x80 != 0);
-        self.update_zero_flag(sum);
-        self.update_negative_flag(sum);
-        self.a = sum;
+        self.set_a(sum);
     }
 
     fn ora(&mut self, load_alu: bool) {
@@ -588,9 +584,7 @@ impl<M: Mcu> Cpu<M> {
             self.load_alu();
         }
 
-        self.a |= self.alu;
-        self.update_zero_flag(self.a);
-        self.update_negative_flag(self.a);
+        self.set_a(self.a | self.alu);
     }
 
     fn eor(&mut self, load_alu: bool) {
@@ -598,9 +592,7 @@ impl<M: Mcu> Cpu<M> {
             self.load_alu();
         }
 
-        self.a ^= self.alu;
-        self.update_zero_flag(self.a);
-        self.update_negative_flag(self.a);
+        self.set_a(self.a ^ self.alu);
     }
 
     fn cmp(&mut self, load_alu: bool) {
@@ -609,8 +601,7 @@ impl<M: Mcu> Cpu<M> {
         }
 
         let t = self.a.wrapping_sub(self.alu);
-        self.update_negative_flag(t);
-        self.update_zero_flag(t);
+        self.update_zero_negative_flags(t);
         self.inner_set_flag(Flag::Carry, self.a >= self.alu);
     }
 
@@ -620,8 +611,7 @@ impl<M: Mcu> Cpu<M> {
         }
 
         let t = self.x.wrapping_sub(self.alu);
-        self.update_negative_flag(t);
-        self.update_zero_flag(t);
+        self.update_zero_negative_flags(t);
         self.inner_set_flag(Flag::Carry, self.x >= self.alu);
     }
 
@@ -631,31 +621,24 @@ impl<M: Mcu> Cpu<M> {
         }
 
         let t = self.y.wrapping_sub(self.alu);
-        self.update_negative_flag(t);
-        self.update_zero_flag(t);
+        self.update_zero_negative_flags(t);
         self.inner_set_flag(Flag::Carry, self.y >= self.alu);
     }
 
     fn alr(&mut self) {
         self.a &= self.alu;
         self.inner_set_flag(Flag::Carry, self.a & 0x01 != 0);
-        self.a >>= 1;
-        self.update_zero_flag(self.a);
-        self.update_negative_flag(self.a);
+        self.set_a(self.a >> 1);
     }
 
     fn anc(&mut self) {
-        self.a &= self.alu;
-        self.update_zero_flag(self.a);
-        self.update_negative_flag(self.a);
+        self.set_a(self.a & self.alu);
         self.inner_set_flag(Flag::Carry, self.a & 0x80 != 0);
     }
 
     fn arr(&mut self) {
         self.a &= self.alu;
-        self.a = (self.a >> 1) | ((self.flag(Flag::Carry) as u8) << 7);
-        self.update_zero_flag(self.a);
-        self.update_negative_flag(self.a);
+        self.set_a((self.a >> 1) | ((self.flag(Flag::Carry) as u8) << 7));
         self.inner_set_flag(Flag::Carry, self.a & 0x40 != 0);
         self.inner_set_flag(Flag::Overflow, ((self.a >> 6) ^ (self.a >> 5)) & 1 != 0);
     }
@@ -663,17 +646,13 @@ impl<M: Mcu> Cpu<M> {
     fn axs(&mut self) {
         let v = self.a & self.x;
         let (x, borrow) = v.overflowing_sub(self.alu);
-        self.x = x;
-        self.update_negative_flag(self.x);
-        self.update_zero_flag(self.x);
+        self.set_x(x);
         self.inner_set_flag(Flag::Carry, !borrow);
     }
 
     fn lax(&mut self) {
-        self.a = self.alu;
-        self.x = self.alu;
-        self.update_negative_flag(self.alu);
-        self.update_zero_flag(self.alu);
+        self.set_a(self.alu);
+        self.set_x(self.alu);
     }
 
     fn sax(&mut self) {
@@ -683,9 +662,7 @@ impl<M: Mcu> Cpu<M> {
     fn dcp(&mut self) {
         let v = self.alu.wrapping_sub(1);
         self.write_byte(self.address_latch, v);
-        let t = self.a.wrapping_sub(v);
-        self.update_negative_flag(t);
-        self.update_zero_flag(t);
+        self.update_zero_negative_flags(self.a.wrapping_sub(v));
         self.inner_set_flag(Flag::Carry, self.a >= v);
     }
 
@@ -758,9 +735,8 @@ impl<M: Mcu> Cpu<M> {
     }
 
     fn pla(&mut self) {
-        self.a = self.pop_stack();
-        self.update_negative_flag(self.a);
-        self.update_zero_flag(self.a);
+        let t = self.pop_stack();
+        self.set_a(t);
     }
 
     fn push_status(&mut self, set_disable_interrupt: bool, break_flag: bool) {
@@ -792,9 +768,7 @@ impl<M: Mcu> Cpu<M> {
         if load_alu {
             self.load_alu();
         }
-        self.a &= self.alu;
-        self.update_zero_flag(self.a);
-        self.update_negative_flag(self.a);
+        self.set_a(self.a & self.alu);
     }
 
     fn bit(&mut self) {
@@ -872,6 +846,29 @@ impl<M: Mcu> Cpu<M> {
             self.read_byte(0xFFFF)
         };
         self.pc |= (high as u16) << 8;
+    }
+
+    /// Set register A and update negative and zero flags.
+    fn set_a(&mut self, val: u8) {
+        self.a = val;
+        self.update_zero_negative_flags(val);
+    }
+
+    /// Set register X and update negative and zero flags.
+    fn set_x(&mut self, val: u8) {
+        self.x = val;
+        self.update_zero_negative_flags(val);
+    }
+
+    /// Set register Y and update negative and zero flags.
+    fn set_y(&mut self, val: u8) {
+        self.y = val;
+        self.update_zero_negative_flags(val);
+    }
+
+    fn update_zero_negative_flags(&mut self, val: u8) {
+        self.update_zero_flag(val);
+        self.update_negative_flag(val);
     }
 }
 

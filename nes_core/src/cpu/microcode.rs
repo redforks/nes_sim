@@ -1481,18 +1481,10 @@ impl Microcode {
 
     fn load_register<M: Mcu>(cpu: &mut Cpu<M>, r: Register) {
         let value = cpu.read_byte(cpu.address_latch);
-        cpu.update_negative_flag(value);
-        cpu.update_zero_flag(value);
         match r {
-            Register::A => {
-                cpu.a = value;
-            }
-            Register::X => {
-                cpu.x = value;
-            }
-            Register::Y => {
-                cpu.y = value;
-            }
+            Register::A => cpu.set_a(value),
+            Register::X => cpu.set_x(value),
+            Register::Y => cpu.set_y(value),
         }
     }
 
@@ -1506,43 +1498,35 @@ impl Microcode {
 
     fn load_immediate<M: Mcu>(cpu: &mut Cpu<M>, r: Register) {
         let value = cpu.inc_read_byte();
-        cpu.update_negative_flag(value);
-        cpu.update_zero_flag(value);
         match r {
-            Register::A => cpu.a = value,
-            Register::X => cpu.x = value,
-            Register::Y => cpu.y = value,
+            Register::A => cpu.set_a(value),
+            Register::X => cpu.set_x(value),
+            Register::Y => cpu.set_y(value),
         }
     }
 
     fn ane_immediate<M: Mcu>(cpu: &mut Cpu<M>) {
         // Undocumented ANE/XAA: hardware behaviour uncertain; use deterministic
         // approximation: A := X & oper. Read immediate operand into alu first.
-        cpu.alu = cpu.inc_read_byte();
+        let t = cpu.inc_read_byte();
         // Compute X & operand into A, update flags accordingly
-        cpu.a = cpu.x & cpu.alu;
-        cpu.update_zero_flag(cpu.a);
-        cpu.update_negative_flag(cpu.a);
+        cpu.set_a(cpu.x & t);
     }
 
     fn las<M: Mcu>(cpu: &mut Cpu<M>) {
         // LAS/LAR: load memory into ALU already (addressing microcode sets cpu.alu)
         // Then perform: M AND SP -> A, X, SP
         let v = cpu.alu & cpu.sp;
-        cpu.a = v;
-        cpu.x = v;
+        cpu.set_a(v);
+        cpu.set_x(v);
         cpu.sp = v;
-        cpu.update_zero_flag(v);
-        cpu.update_negative_flag(v);
     }
 
     fn lax_immediate<M: Mcu>(cpu: &mut Cpu<M>) {
         // Read immediate operand into alu and perform LAX semantics in one micro-op.
-        cpu.alu = cpu.inc_read_byte();
-        cpu.a = cpu.alu;
-        cpu.x = cpu.alu;
-        cpu.update_zero_flag(cpu.alu);
-        cpu.update_negative_flag(cpu.alu);
+        let t = cpu.inc_read_byte();
+        cpu.set_a(t);
+        cpu.set_x(t);
     }
 
     fn alr_immediate<M: Mcu>(cpu: &mut Cpu<M>) {
@@ -1663,31 +1647,11 @@ impl Microcode {
 
     fn transfer<M: Mcu>(cpu: &mut Cpu<M>, direction: TransferDirection) {
         match direction {
-            TransferDirection::AtoX => {
-                cpu.x = cpu.a;
-                cpu.update_negative_flag(cpu.x);
-                cpu.update_zero_flag(cpu.x);
-            }
-            TransferDirection::XtoA => {
-                cpu.a = cpu.x;
-                cpu.update_negative_flag(cpu.a);
-                cpu.update_zero_flag(cpu.a);
-            }
-            TransferDirection::AtoY => {
-                cpu.y = cpu.a;
-                cpu.update_negative_flag(cpu.y);
-                cpu.update_zero_flag(cpu.y);
-            }
-            TransferDirection::YtoA => {
-                cpu.a = cpu.y;
-                cpu.update_negative_flag(cpu.a);
-                cpu.update_zero_flag(cpu.a);
-            }
-            TransferDirection::SPtoX => {
-                cpu.x = cpu.sp;
-                cpu.update_negative_flag(cpu.x);
-                cpu.update_zero_flag(cpu.x);
-            }
+            TransferDirection::AtoX => cpu.set_x(cpu.a),
+            TransferDirection::XtoA => cpu.set_a(cpu.x),
+            TransferDirection::AtoY => cpu.set_y(cpu.a),
+            TransferDirection::YtoA => cpu.set_a(cpu.y),
+            TransferDirection::SPtoX => cpu.set_x(cpu.sp),
             TransferDirection::XtoSP => {
                 cpu.sp = cpu.x;
             }
@@ -1697,33 +1661,32 @@ impl Microcode {
     fn inc_dec<M: Mcu>(cpu: &mut Cpu<M>, target: IncDecTarget) {
         match target {
             IncDecTarget::IncrementX => {
-                cpu.x = cpu.x.wrapping_add(1);
+                cpu.set_x(cpu.x.wrapping_add(1));
                 cpu.alu = cpu.x;
             }
             IncDecTarget::IncrementY => {
-                cpu.y = cpu.y.wrapping_add(1);
+                cpu.set_y(cpu.y.wrapping_add(1));
                 cpu.alu = cpu.y;
             }
             IncDecTarget::DecrementX => {
-                cpu.x = cpu.x.wrapping_sub(1);
+                cpu.set_x(cpu.x.wrapping_sub(1));
                 cpu.alu = cpu.x;
             }
             IncDecTarget::DecrementY => {
-                cpu.y = cpu.y.wrapping_sub(1);
+                cpu.set_y(cpu.y.wrapping_sub(1));
                 cpu.alu = cpu.y;
             }
             IncDecTarget::IncrementAlu => {
                 cpu.alu = cpu.alu.wrapping_add(1);
                 cpu.write_byte(cpu.address_latch, cpu.alu);
+                cpu.update_zero_negative_flags(cpu.alu);
             }
             IncDecTarget::DecrementAlu => {
                 cpu.alu = cpu.alu.wrapping_sub(1);
                 cpu.write_byte(cpu.address_latch, cpu.alu);
+                cpu.update_zero_negative_flags(cpu.alu);
             }
         }
-
-        cpu.update_negative_flag(cpu.alu);
-        cpu.update_zero_flag(cpu.alu);
     }
 
     fn shift_rotate<M: Mcu>(cpu: &mut Cpu<M>, target: AOrMemory, op: ShiftRotateOp) {
@@ -1749,8 +1712,7 @@ impl Microcode {
                 }
             }
 
-            cpu.update_zero_flag(cpu.alu);
-            cpu.update_negative_flag(cpu.alu);
+            cpu.update_zero_negative_flags(cpu.alu);
         }
 
         match target {
