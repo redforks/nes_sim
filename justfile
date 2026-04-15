@@ -187,7 +187,6 @@ sprdma_and_dmc_dma_1: build_nes_cpu_test
 sprdma_and_dmc_dma_2: build_nes_cpu_test
     target/debug/nes_cpu_test --quiet -f ../nes-test-roms/sprdma_and_dmc_dma/sprdma_and_dmc_dma_512.nes
 
-[parallel]
 sprdma_and_dmc_dma: sprdma_and_dmc_dma_1 sprdma_and_dmc_dma_2
 
 apu_mixer_1: build_nes_cpu_test
@@ -227,17 +226,10 @@ apu_reset_6: build_nes_cpu_test
 apu_reset: apu_reset_1 apu_reset_2 apu_reset_3 apu_reset_4 apu_reset_5 apu_reset_6
 
 apu_test: build_nes_cpu_test
-    timeout 30 target/debug/nes_cpu_test --quiet -f ../nes-test-roms/apu_test/rom_singles/1-len_ctr.nes
-    timeout 30 target/debug/nes_cpu_test --quiet -f ../nes-test-roms/apu_test/rom_singles/2-len_table.nes
-    timeout 30 target/debug/nes_cpu_test --quiet -f ../nes-test-roms/apu_test/rom_singles/3-irq_flag.nes
-    timeout 30 target/debug/nes_cpu_test --quiet -f ../nes-test-roms/apu_test/rom_singles/4-jitter.nes
-    timeout 30 target/debug/nes_cpu_test --quiet -f ../nes-test-roms/apu_test/rom_singles/5-len_timing.nes
-    timeout 30 target/debug/nes_cpu_test --quiet -f ../nes-test-roms/apu_test/rom_singles/6-irq_flag_timing.nes
-    timeout 30 target/debug/nes_cpu_test --quiet -f ../nes-test-roms/apu_test/rom_singles/7-dmc_basics.nes
-    timeout 30 target/debug/nes_cpu_test --quiet -f ../nes-test-roms/apu_test/rom_singles/8-dmc_rates.nes
+    timeout 10 target/debug/nes_cpu_test --quiet -f ../nes-test-roms/apu_test/apu_test.nes
 
 [parallel]
-passed: unit-test cpu-test instr_misc instr_test-v5 instr_test-v3 nestest instr_timing ppu_vbl_nmi vbl_nmi_timing cpu_interrupts_v2 branch_timing_tests cpu_dummy_reads cpu_dummy_writes cpu_exec_space cpu_reset cpu_timing_test6 oam_read oam_stress ppu_open_bus ppu_read_buffer sprite_hit_tests sprite_overflow_tests dmc_dma_during_read4 apu_mixer apu_reset
+passed: unit-test cpu-test instr_misc instr_test-v5 instr_test-v3 nestest instr_timing ppu_vbl_nmi vbl_nmi_timing cpu_interrupts_v2 branch_timing_tests cpu_dummy_reads cpu_dummy_writes cpu_exec_space cpu_reset cpu_timing_test6 oam_read oam_stress ppu_open_bus ppu_read_buffer sprite_hit_tests sprite_overflow_tests dmc_dma_during_read4 apu_mixer apu_reset apu_test
 
 wasm-debug-build:
     cd nes_web && wasm-pack build --release
