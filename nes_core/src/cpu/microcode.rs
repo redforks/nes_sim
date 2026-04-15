@@ -1732,60 +1732,40 @@ impl Microcode {
     }
 
     fn shift_rotate<M: Mcu>(cpu: &mut Cpu<M>, target: AOrMemory, op: ShiftRotateOp) {
-        match target {
-            AOrMemory::Accumulator => match op {
-                ShiftRotateOp::Asl => cpu.a = cpu.asl(cpu.a),
+        fn calc<M: Mcu>(cpu: &mut Cpu<M>, op: ShiftRotateOp) {
+            match op {
+                ShiftRotateOp::Asl => {
+                    cpu.inner_set_flag(Flag::Carry, cpu.alu & 0x80 != 0);
+                    cpu.alu <<= 1;
+                }
                 ShiftRotateOp::Lsr => {
-                    let v = cpu.a;
-                    cpu.set_flag(Flag::Carry, v & 0x01 != 0);
-                    cpu.a = v >> 1;
-                    cpu.update_negative_flag(cpu.a);
-                    cpu.update_zero_flag(cpu.a);
+                    cpu.inner_set_flag(Flag::Carry, cpu.alu & 0x01 != 0);
+                    cpu.alu >>= 1;
                 }
                 ShiftRotateOp::Rol => {
-                    let v = cpu.a;
-                    let new = (v << 1) | (cpu.flag(Flag::Carry) as u8);
-                    cpu.set_flag(Flag::Carry, v & 0x80 != 0);
-                    cpu.a = new;
-                    cpu.update_negative_flag(cpu.a);
-                    cpu.update_zero_flag(cpu.a);
+                    let carry = cpu.alu & 0x80 != 0;
+                    cpu.alu = (cpu.alu << 1) | (cpu.flag(Flag::Carry) as u8);
+                    cpu.inner_set_flag(Flag::Carry, carry);
                 }
                 ShiftRotateOp::Ror => {
-                    let v = cpu.a;
-                    let new = (v >> 1) | ((cpu.flag(Flag::Carry) as u8) << 7);
-                    cpu.set_flag(Flag::Carry, v & 0x01 != 0);
-                    cpu.a = new;
-                    cpu.update_negative_flag(cpu.a);
-                    cpu.update_zero_flag(cpu.a);
+                    let carry = cpu.alu & 0x01 != 0;
+                    cpu.alu = (cpu.alu >> 1) | ((cpu.flag(Flag::Carry) as u8) << 7);
+                    cpu.inner_set_flag(Flag::Carry, carry);
                 }
-            },
+            }
+
+            cpu.update_zero_flag(cpu.alu);
+            cpu.update_negative_flag(cpu.alu);
+        }
+
+        match target {
+            AOrMemory::Accumulator => {
+                cpu.alu = cpu.a;
+                calc(cpu, op);
+                cpu.a = cpu.alu;
+            }
             AOrMemory::Memory => {
-                match op {
-                    ShiftRotateOp::Asl => cpu.alu = cpu.asl(cpu.alu),
-                    ShiftRotateOp::Lsr => {
-                        let v = cpu.alu;
-                        cpu.set_flag(Flag::Carry, v & 0x01 != 0);
-                        cpu.alu = v >> 1;
-                        cpu.update_negative_flag(cpu.alu);
-                        cpu.update_zero_flag(cpu.alu);
-                    }
-                    ShiftRotateOp::Rol => {
-                        let v = cpu.alu;
-                        let new = (v << 1) | (cpu.flag(Flag::Carry) as u8);
-                        cpu.set_flag(Flag::Carry, v & 0x80 != 0);
-                        cpu.alu = new;
-                        cpu.update_negative_flag(cpu.alu);
-                        cpu.update_zero_flag(cpu.alu);
-                    }
-                    ShiftRotateOp::Ror => {
-                        let v = cpu.alu;
-                        let new = (v >> 1) | ((cpu.flag(Flag::Carry) as u8) << 7);
-                        cpu.set_flag(Flag::Carry, v & 0x01 != 0);
-                        cpu.alu = new;
-                        cpu.update_negative_flag(cpu.alu);
-                        cpu.update_zero_flag(cpu.alu);
-                    }
-                }
+                calc(cpu, op);
                 Self::store_alu(cpu);
             }
         }

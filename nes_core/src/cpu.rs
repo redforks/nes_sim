@@ -848,14 +848,6 @@ impl<M: Mcu> Cpu<M> {
         self.update_zero_flag(self.a & v);
     }
 
-    fn asl(&mut self, val: u8) -> u8 {
-        self.inner_set_flag(Flag::Carry, val & 0x80 != 0);
-        let result = val << 1;
-        self.update_zero_flag(result);
-        self.update_negative_flag(result);
-        result
-    }
-
     fn push_microcodes(&mut self, microcodes: &[Microcode]) {
         self.microcode_queue.extend_back(microcodes.iter().copied());
     }
