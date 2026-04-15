@@ -3994,21 +3994,21 @@ fn stack_and_misc_microcodes_manipulate_state() {
     assert_eq!(cpu.pc, 0x1234);
 
     cpu.status = Flag::Carry as u8;
-    Microcode::Clc.exec(&mut cpu);
+    Microcode::ClearFlag(Flag::Carry).exec(&mut cpu);
     assert!(!cpu.flag(Flag::Carry));
-    Microcode::Sec.exec(&mut cpu);
+    Microcode::SetFlag(Flag::Carry).exec(&mut cpu);
     assert!(cpu.flag(Flag::Carry));
     cpu.status = Flag::Decimal as u8;
-    Microcode::Cld.exec(&mut cpu);
+    Microcode::ClearFlag(Flag::Decimal).exec(&mut cpu);
     assert!(!cpu.flag(Flag::Decimal));
-    Microcode::Sed.exec(&mut cpu);
+    Microcode::SetFlag(Flag::Decimal).exec(&mut cpu);
     assert!(cpu.flag(Flag::Decimal));
-    Microcode::Cli.exec(&mut cpu);
+    Microcode::ClearFlag(Flag::InterruptDisabled).exec(&mut cpu);
     assert!(!cpu.flag(Flag::InterruptDisabled));
-    Microcode::Sei.exec(&mut cpu);
+    Microcode::SetFlag(Flag::InterruptDisabled).exec(&mut cpu);
     assert!(cpu.flag(Flag::InterruptDisabled));
     cpu.status = Flag::Overflow as u8;
-    Microcode::Clv.exec(&mut cpu);
+    Microcode::ClearFlag(Flag::Overflow).exec(&mut cpu);
     assert!(!cpu.flag(Flag::Overflow));
 }
 

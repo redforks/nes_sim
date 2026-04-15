@@ -298,6 +298,7 @@ const fn indirect_indexed_store_a() -> ArrayVec<[Microcode; 7]> {
 }
 
 const fn build_opcode_table() -> [ArrayVec<[Microcode; 7]>; 256] {
+    use super::Flag::*;
     use Microcode::*;
     use Register::*;
     use opcode::*;
@@ -406,13 +407,13 @@ const fn build_opcode_table() -> [ArrayVec<[Microcode; 7]>; 256] {
     r[JSR as usize] = microcode_arr!(AbsoluteL, Nop, PushPcH, PushPcL, LoadPcAbsoluteH);
     r[RTS as usize] = microcode_arr!(SkipImmediate, Nop, PopPc, Nop, SkipImmediate);
     r[RTI as usize] = microcode_arr!(SkipImmediate, Plp, Nop, PopPc, Nop);
-    r[CLC as usize] = microcode_arr!(Clc);
-    r[SEC as usize] = microcode_arr!(Sec);
-    r[CLD as usize] = microcode_arr!(Cld);
-    r[SED as usize] = microcode_arr!(Sed);
-    r[CLI as usize] = microcode_arr!(Cli);
-    r[SEI as usize] = microcode_arr!(Sei);
-    r[CLV as usize] = microcode_arr!(Clv);
+    r[CLC as usize] = microcode_arr!(ClearFlag(Carry));
+    r[SEC as usize] = microcode_arr!(SetFlag(Carry));
+    r[CLD as usize] = microcode_arr!(ClearFlag(Decimal));
+    r[SED as usize] = microcode_arr!(SetFlag(Decimal));
+    r[CLI as usize] = microcode_arr!(ClearFlag(InterruptDisabled));
+    r[SEI as usize] = microcode_arr!(SetFlag(InterruptDisabled));
+    r[CLV as usize] = microcode_arr!(ClearFlag(Overflow));
     r[NOP as usize] = microcode_arr!(Nop);
     r[NOP1 as usize] = microcode_arr!(Nop);
     r[NOP2 as usize] = microcode_arr!(Nop);
@@ -954,13 +955,8 @@ pub enum Microcode {
 
     IndexedHAndJump,
 
-    Clc,
-    Sec,
-    Cld,
-    Sed,
-    Cli,
-    Sei,
-    Clv,
+    SetFlag(Flag),
+    ClearFlag(Flag),
 
     Transfer(TransferDirection),
     IncDec(IncDecTarget),
@@ -1473,13 +1469,8 @@ impl Microcode {
                 cpu.set_pc_to_ab()
             }
 
-            Self::Clc => cpu.set_flag(Flag::Carry, false),
-            Self::Sec => cpu.set_flag(Flag::Carry, true),
-            Self::Cld => cpu.set_flag(Flag::Decimal, false),
-            Self::Sed => cpu.set_flag(Flag::Decimal, true),
-            Self::Cli => cpu.set_flag(Flag::InterruptDisabled, false),
-            Self::Sei => cpu.set_flag(Flag::InterruptDisabled, true),
-            Self::Clv => cpu.set_flag(Flag::Overflow, false),
+            Self::SetFlag(flag) => cpu.set_flag(flag, true),
+            Self::ClearFlag(flag) => cpu.set_flag(flag, false),
 
             Self::Transfer(direction) => Self::transfer(cpu, direction),
             Self::IncDec(target) => Self::inc_dec(cpu, target),
