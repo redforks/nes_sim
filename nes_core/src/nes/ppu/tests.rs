@@ -336,7 +336,7 @@ fn render_pixel(ppu: &mut Ppu, pattern: &[u8], x: u8, y: u8) -> Pixel {
         }
     }
     ppu.prepare_scanline_cache(&cart, y);
-    ppu.render_pixel(x)
+    ppu.render_pixel(x, &cart)
 }
 
 fn run_scanline(ppu: &mut Ppu, pattern: &[u8], scanline: u16) {
@@ -370,7 +370,7 @@ where
     }
     setup(&mut cart);
     ppu.prepare_scanline_cache(&cart, y);
-    let pixel = ppu.render_pixel(x);
+    let pixel = ppu.render_pixel(x, &cart);
     ppu.mask.apply_effects(pixel)
 }
 

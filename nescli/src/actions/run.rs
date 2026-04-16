@@ -51,13 +51,6 @@ impl std::fmt::Debug for SdlRender {
 }
 
 impl SdlRender {
-    fn new(canvas: Canvas<Window>) -> Self {
-        Self::with_image(
-            Arc::new(Mutex::new(ImageRender::default_dimension())),
-            canvas,
-        )
-    }
-
     fn with_image(image: Arc<Mutex<ImageRender>>, canvas: Canvas<Window>) -> Self {
         Self { image, canvas }
     }

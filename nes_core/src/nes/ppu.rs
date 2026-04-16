@@ -127,12 +127,6 @@ struct SpritePixel {
     behind_bg: bool,
 }
 
-#[derive(Copy, Clone, Default)]
-struct CachedBackgroundPixel {
-    palette_idx: u8,
-    color_idx: u8,
-}
-
 #[derive(Copy, Clone)]
 struct CachedSprite {
     x: u8,
@@ -172,7 +166,6 @@ fn normalize_oam_byte(addr: u8, value: u8) -> u8 {
 struct ScanlineCache {
     scanline: u8,
     dirty: bool,
-    background: [CachedBackgroundPixel; 256],
     sprite_pixels: [Option<SpritePixel>; 256],
     sprite_zero_pixels: [bool; 256],
 }
@@ -182,7 +175,6 @@ impl Default for ScanlineCache {
         Self {
             scanline: 0,
             dirty: true,
-            background: [CachedBackgroundPixel::default(); 256],
             sprite_pixels: [None; 256],
             sprite_zero_pixels: [false; 256],
         }
@@ -319,8 +311,8 @@ pub struct Ppu<R: Render = ()> {
     sprite_overflow_eval: SpriteOverflowEval,
 
     scanline_cache: ScanlineCache,
-    /// set to PPUMask register changes render_enabled state, but ppu see it at the next tick,
-    /// so can not depends on `self.mask`
+    /// PPU mask register changes are not visible until the next PPU tick;
+    /// this delayed copy models the 1-dot internal pipeline delay.
     effective_mask: PpuMask,
 
     frame_no: usize,
@@ -407,6 +399,41 @@ impl<R: Render> Ppu<R> {
         let scroll_x = ((scroll_addr & 0x001f) << 3) | self.fine_x as u16;
         let scroll_y = (((scroll_addr >> 5) & 0x001f) << 3) | ((scroll_addr >> 12) & 0x0007);
         (scroll_x, scroll_y)
+    }
+
+    /// Increment fine Y in vram_addr. Called at dot 256 of each visible scanline
+    /// when rendering is enabled. Wraps fine Y → coarse Y → nametable Y toggle.
+    fn increment_vram_y(&mut self) {
+        let fine_y = (self.vram_addr >> 12) & 0x07;
+        if fine_y < 7 {
+            self.vram_addr += 0x1000; // increment fine Y
+        } else {
+            self.vram_addr &= !0x7000; // clear fine Y
+            let mut coarse_y = (self.vram_addr >> 5) & 0x1F;
+            if coarse_y == 29 {
+                coarse_y = 0;
+                self.vram_addr ^= 0x0800; // toggle nametable Y
+            } else if coarse_y == 31 {
+                coarse_y = 0; // wrap without toggling nametable
+            } else {
+                coarse_y += 1;
+            }
+            self.vram_addr = (self.vram_addr & !0x03E0) | (coarse_y << 5);
+        }
+    }
+
+    /// Copy horizontal scroll bits (coarse X + nametable X) from temp to vram.
+    /// Called at dot 257 of each visible/pre-render scanline when rendering is enabled.
+    fn reload_horizontal_from_temp(&mut self) {
+        // Horizontal bits: coarse X (bits 0-4) and nametable X (bit 10)
+        self.vram_addr = (self.vram_addr & !0x041F) | (self.temp_vram_addr & 0x041F);
+    }
+
+    /// Copy vertical scroll bits (coarse Y + nametable Y + fine Y) from temp to vram.
+    /// Called at dots 280-304 of the pre-render scanline when rendering is enabled.
+    fn reload_vertical_from_temp(&mut self) {
+        // Vertical bits: coarse Y (bits 5-9), nametable Y (bit 11), fine Y (bits 12-14)
+        self.vram_addr = (self.vram_addr & !0x7BE0) | (self.temp_vram_addr & 0x7BE0);
     }
 
     pub fn dump_state(&self, cartridge: &Cartridge) -> String {
@@ -551,7 +578,7 @@ impl<R: Render> Ppu<R> {
         if self.scanline < 240 && (1..=256).contains(&self.dot) {
             let x = (self.dot - 1) as u8;
             let pixel = if rendering_enabled {
-                self.render_pixel(x)
+                self.render_pixel(x, cartridge)
             } else {
                 let vram_addr = self.vram_addr % 0x4000;
                 if (0x3f00..0x4000).contains(&vram_addr) {
@@ -563,6 +590,26 @@ impl<R: Render> Ppu<R> {
             let pixel = self.effective_mask.apply_effects(pixel);
             self.renderer
                 .set_pixel(x as u32, self.scanline as u32, pixel.0);
+        }
+
+        // --- vram_addr management (rendering-enabled only) ---
+        // These model the real NES PPU's internal v-register updates:
+        if rendering_enabled {
+            // Fine Y increment at dot 256 of each visible scanline
+            if self.scanline < 240 && self.dot == 256 {
+                self.increment_vram_y();
+            }
+            // Horizontal bits reload from temp at dot 257
+            // (visible scanlines and pre-render scanline)
+            if (self.scanline < 240 || self.scanline == VBLANK_CLEAR_SCANLINE)
+                && self.dot == 257
+            {
+                self.reload_horizontal_from_temp();
+            }
+            // Vertical bits reload from temp at dots 280-304 of pre-render scanline
+            if self.scanline == VBLANK_CLEAR_SCANLINE && (280..=304).contains(&self.dot) {
+                self.reload_vertical_from_temp();
+            }
         }
 
         // At end of pre-render scanline (261), clear screen for next frame
@@ -800,20 +847,29 @@ impl<R: Render> Ppu<R> {
         &mut self,
         cartridge: &Cartridge,
         screen_x: u8,
-        screen_y: u8,
     ) -> (u8, u8) {
         // Check left-column clipping
         if !self.effective_mask.background_left_enabled() && screen_x < 8 {
             return (0, 0);
         }
 
-        let (scroll_x, scroll_y) = self.scroll_xy();
-        let world_x = scroll_x + screen_x as u16;
-        let world_y = scroll_y + screen_y as u16;
+        // Use vram_addr directly for the absolute nametable position.
+        // On real hardware, the PPU fetches tiles from the position encoded in
+        // vram_addr (the "v" register), which is maintained by fine-Y increments
+        // and horizontal/vertical reloads from temp_vram_addr (the "t" register).
+        let coarse_x = (self.vram_addr & 0x001F) as u16;
+        let coarse_y = ((self.vram_addr >> 5) & 0x001F) as u16;
+        let fine_y = ((self.vram_addr >> 12) & 0x0007) as usize;
+        let nt_select = ((self.vram_addr >> 10) & 0x03) as u8;
 
-        let base_nametable = ((self.temp_vram_addr >> 10) & 0x0003) as u8;
-        let nt_select_x = (((base_nametable & 0x01) as u16) + (world_x / 256)) & 0x01;
-        let nt_select_y = ((((base_nametable >> 1) & 0x01) as u16) + (world_y / 240)) & 0x01;
+        // Horizontal: combine coarse_x from vram_addr with fine_x and screen_x
+        let world_x = coarse_x * 8 + self.fine_x as u16 + screen_x as u16;
+        // Vertical: directly from vram_addr (no screen_y addition; vram_addr is
+        // incremented each scanline by the fine-Y increment at dot 256)
+        let world_y = coarse_y * 8 + fine_y as u16;
+
+        let nt_select_x = (((nt_select & 0x01) as u16) + (world_x / 256)) & 0x01;
+        let nt_select_y = (((nt_select >> 1) as u16) + (world_y / 240)) & 0x01;
         let nt_idx = ((nt_select_y << 1) | nt_select_x) as u8;
 
         let nt_x = ((world_x % 256) / 8) as u8;
@@ -829,6 +885,7 @@ impl<R: Render> Ppu<R> {
         let shift = (((nt_y >> 1) & 0x01) << 2) | (((nt_x >> 1) & 0x01) << 1);
         let palette_idx = (attr_byte >> shift) & 0x03;
 
+        let screen_y = self.scanline as u8;
         if let Some(override_pixel) = cartridge.background_override(
             screen_x,
             screen_y,
@@ -961,22 +1018,11 @@ impl<R: Render> Ppu<R> {
 
         self.scanline_cache.scanline = screen_y;
         self.scanline_cache.dirty = false;
-        self.scanline_cache
-            .background
-            .fill(CachedBackgroundPixel::default());
         self.scanline_cache.sprite_pixels.fill(None);
         self.scanline_cache.sprite_zero_pixels.fill(false);
 
-        if self.effective_mask.background_enabled() {
-            for screen_x in 0..256u16 {
-                let (palette_idx, color_idx) =
-                    self.get_background_pixel(cartridge, screen_x as u8, screen_y);
-                self.scanline_cache.background[screen_x as usize] = CachedBackgroundPixel {
-                    palette_idx,
-                    color_idx,
-                };
-            }
-        }
+        // Background is computed per-pixel in render_pixel() to correctly handle
+        // mid-scanline register writes ($2000, $2001, $2005, $2006).
 
         if !self.effective_mask.sprite_enabled() {
             return;
@@ -1194,10 +1240,11 @@ impl<R: Render> Ppu<R> {
         r
     }
 
-    fn render_pixel(&mut self, x: u8) -> Pixel {
+    fn render_pixel(&mut self, x: u8, cartridge: &Cartridge) -> Pixel {
+        // Compute background pixel on-the-fly (no cache) so that mid-scanline
+        // register writes ($2000, $2001, $2005, $2006) take effect immediately.
         let (bg_palette_idx, bg_color_idx) = if self.effective_mask.background_enabled() {
-            let cached = self.scanline_cache.background[x as usize];
-            (cached.palette_idx, cached.color_idx)
+            self.get_background_pixel(cartridge, x)
         } else {
             (0, 0) // transparent
         };
