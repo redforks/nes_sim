@@ -204,6 +204,25 @@ struct SpriteOverflowEval {
     mode: SpriteOverflowEvalMode,
 }
 
+#[derive(Copy, Clone)]
+struct BackgroundActivation {
+    screen_x: u8,
+    vram_addr: u16,
+    fine_x: u8,
+    ctrl: PpuCtrl,
+}
+
+impl BackgroundActivation {
+    fn snapshot(ppu: &Ppu<impl Render>, screen_x: u8) -> Self {
+        Self {
+            screen_x,
+            vram_addr: ppu.vram_addr,
+            fine_x: ppu.fine_x,
+            ctrl: ppu.ctrl,
+        }
+    }
+}
+
 const fn rgb(v: [u8; 3]) -> Pixel {
     let [r, g, b] = v;
     Rgba::<u8>([r, g, b, 0xff])
@@ -305,6 +324,8 @@ pub struct Ppu<R: Render = ()> {
     // PPU timing
     scanline: u16, // 0-261
     dot: u16,      // 0-340
+    background_anchor: Option<BackgroundActivation>,
+    pending_background_activation: Option<BackgroundActivation>,
     odd_frame: bool,
     sprite_zero_hit_pending: bool,
     sprite_overflow_pending: bool,
@@ -346,6 +367,8 @@ impl<R: Render> Ppu<R> {
             bus_latch_decay_deadlines: [0; 8],
             scanline: 0,
             dot: 0,
+            background_anchor: None,
+            pending_background_activation: None,
             odd_frame: false,
             sprite_zero_hit_pending: false,
             sprite_overflow_pending: false,
@@ -373,6 +396,8 @@ impl<R: Render> Ppu<R> {
         self.ppudata_buffer = 0;
         self.bus_latch = 0;
         self.bus_latch_decay_deadlines = [0; 8];
+        self.background_anchor = None;
+        self.pending_background_activation = None;
         self.odd_frame = false;
         self.sprite_zero_hit_pending = false;
         self.sprite_overflow_pending = false;
@@ -399,6 +424,46 @@ impl<R: Render> Ppu<R> {
         let scroll_x = ((scroll_addr & 0x001f) << 3) | self.fine_x as u16;
         let scroll_y = (((scroll_addr >> 5) & 0x001f) << 3) | ((scroll_addr >> 12) & 0x0007);
         (scroll_x, scroll_y)
+    }
+
+    fn background_pipeline_delay() -> u8 {
+        16
+    }
+
+    fn anchor_background_at(&mut self, screen_x: u8) {
+        self.background_anchor = Some(BackgroundActivation::snapshot(self, screen_x));
+        self.pending_background_activation = None;
+    }
+
+    fn schedule_background_activation(&mut self, screen_x: u8) {
+        self.pending_background_activation = Some(BackgroundActivation::snapshot(self, screen_x));
+    }
+
+    fn schedule_background_activation_if_visible(&mut self) {
+        if self.rendering_enabled()
+            && let Some(screen_x) = self.next_visible_x()
+        {
+            self.schedule_background_activation(
+                screen_x.saturating_add(Self::background_pipeline_delay()),
+            );
+        }
+    }
+
+    fn apply_pending_background_activation(&mut self, screen_x: u8) {
+        if let Some(pending) = self.pending_background_activation
+            && screen_x >= pending.screen_x
+        {
+            self.background_anchor = Some(pending);
+            self.pending_background_activation = None;
+        }
+    }
+
+    fn next_visible_x(&self) -> Option<u8> {
+        if self.scanline < 240 && (1..=256).contains(&self.dot) {
+            Some((self.dot - 1) as u8)
+        } else {
+            None
+        }
     }
 
     /// Increment fine Y in vram_addr. Called at dot 256 of each visible scanline
@@ -560,6 +625,7 @@ impl<R: Render> Ppu<R> {
 
         if self.scanline < 240 && self.dot == 0 {
             self.prepare_scanline_cache(cartridge, self.scanline as u8);
+            self.anchor_background_at(0);
         }
 
         if self.scanline < 240 && self.dot == 65 {
@@ -601,9 +667,7 @@ impl<R: Render> Ppu<R> {
             }
             // Horizontal bits reload from temp at dot 257
             // (visible scanlines and pre-render scanline)
-            if (self.scanline < 240 || self.scanline == VBLANK_CLEAR_SCANLINE)
-                && self.dot == 257
-            {
+            if (self.scanline < 240 || self.scanline == VBLANK_CLEAR_SCANLINE) && self.dot == 257 {
                 self.reload_horizontal_from_temp();
             }
             // Vertical bits reload from temp at dots 280-304 of pre-render scanline
@@ -718,6 +782,7 @@ impl<R: Render> Ppu<R> {
             0x2000 => {
                 cartridge.on_ppu_ctrl_write(value);
                 self.set_control_flags(PpuCtrl::from_bits(value));
+                self.schedule_background_activation_if_visible();
                 // Update name table selection and mark cache dirty
                 self.scanline_cache.dirty = true;
             }
@@ -820,6 +885,7 @@ impl<R: Render> Ppu<R> {
             // Second write - low byte
             self.temp_vram_addr = (self.temp_vram_addr & 0x7F00) | (value as u16 & 0x00FF);
             self.vram_addr = self.temp_vram_addr;
+            self.schedule_background_activation_if_visible();
             self.write_toggle = false;
         }
     }
@@ -843,27 +909,30 @@ impl<R: Render> Ppu<R> {
         ((low >> bit) & 1) | (((high >> bit) & 1) << 1)
     }
 
-    fn get_background_pixel(
-        &mut self,
-        cartridge: &Cartridge,
-        screen_x: u8,
-    ) -> (u8, u8) {
+    fn get_background_pixel(&mut self, cartridge: &Cartridge, screen_x: u8) -> (u8, u8) {
+        self.apply_pending_background_activation(screen_x);
+
         // Check left-column clipping
         if !self.effective_mask.background_left_enabled() && screen_x < 8 {
             return (0, 0);
         }
 
-        // Use vram_addr directly for the absolute nametable position.
         // On real hardware, the PPU fetches tiles from the position encoded in
         // vram_addr (the "v" register), which is maintained by fine-Y increments
         // and horizontal/vertical reloads from temp_vram_addr (the "t" register).
-        let coarse_x = (self.vram_addr & 0x001F) as u16;
-        let coarse_y = ((self.vram_addr >> 5) & 0x001F) as u16;
-        let fine_y = ((self.vram_addr >> 12) & 0x0007) as usize;
-        let nt_select = ((self.vram_addr >> 10) & 0x03) as u8;
+        let background = self
+            .background_anchor
+            .unwrap_or_else(|| BackgroundActivation::snapshot(self, 0));
 
-        // Horizontal: combine coarse_x from vram_addr with fine_x and screen_x
-        let world_x = coarse_x * 8 + self.fine_x as u16 + screen_x as u16;
+        let coarse_x = (background.vram_addr & 0x001F) as u16;
+        let coarse_y = ((background.vram_addr >> 5) & 0x001F) as u16;
+        let fine_y = ((background.vram_addr >> 12) & 0x0007) as usize;
+        let nt_select = ((background.vram_addr >> 10) & 0x03) as u8;
+
+        // Background fetches are pipelined ahead of the pixel currently being output.
+        let world_x = coarse_x * 8
+            + background.fine_x as u16
+            + screen_x.saturating_sub(background.screen_x) as u16;
         // Vertical: directly from vram_addr (no screen_y addition; vram_addr is
         // incremented each scanline by the fine-Y increment at dot 256)
         let world_y = coarse_y * 8 + fine_y as u16;
@@ -898,7 +967,7 @@ impl<R: Render> Ppu<R> {
             return (override_pixel.palette_idx, override_pixel.color_idx);
         }
 
-        let base_addr = if self.ctrl.background_pattern_table() {
+        let base_addr = if background.ctrl.background_pattern_table() {
             0x1000
         } else {
             0x0000

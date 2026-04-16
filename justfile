@@ -232,7 +232,7 @@ scanline: build_nes_cpu_test
     target/debug/nes_cpu_test --quiet -f ../nes-test-roms/scanline/scanline.nes
 
 [parallel]
-passed: unit-test cpu-test instr_misc instr_test-v5 instr_test-v3 nestest instr_timing ppu_vbl_nmi vbl_nmi_timing cpu_interrupts_v2 branch_timing_tests cpu_dummy_reads cpu_dummy_writes cpu_exec_space cpu_reset cpu_timing_test6 oam_read oam_stress ppu_open_bus ppu_read_buffer sprite_hit_tests sprite_overflow_tests dmc_dma_during_read4 apu_mixer apu_reset apu_test
+passed: unit-test cpu-test instr_misc instr_test-v5 instr_test-v3 nestest instr_timing ppu_vbl_nmi vbl_nmi_timing cpu_interrupts_v2 branch_timing_tests cpu_dummy_reads cpu_dummy_writes cpu_exec_space cpu_reset cpu_timing_test6 oam_read oam_stress ppu_open_bus ppu_read_buffer sprite_hit_tests sprite_overflow_tests dmc_dma_during_read4 apu_mixer apu_reset apu_test scanline
 
 wasm-debug-build:
     cd nes_web && wasm-pack build --release
