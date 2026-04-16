@@ -457,6 +457,7 @@ dependencies = [
  "ansi_term",
  "clap",
  "env_logger",
+ "image",
  "is-terminal",
  "log",
  "nes_core",

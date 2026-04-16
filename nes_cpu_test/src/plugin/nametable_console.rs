@@ -1,6 +1,7 @@
 use ansi_term::Color;
 use is_terminal::IsTerminal;
 use nes_core::nes::NesMcu;
+use nes_core::render::Render;
 use nes_core::{Cpu, ExecuteResult, Plugin};
 use std::sync::LazyLock;
 
@@ -26,10 +27,10 @@ impl NametableConsole {
     }
 }
 
-impl Plugin<NesMcu<(), ()>> for NametableConsole {
-    fn start(&mut self, _: &mut Cpu<NesMcu<(), ()>>) {}
+impl<R: Render> Plugin<NesMcu<R, ()>> for NametableConsole {
+    fn start(&mut self, _: &mut Cpu<NesMcu<R, ()>>) {}
 
-    fn end(&mut self, cpu: &mut Cpu<NesMcu<(), ()>>) {
+    fn end(&mut self, cpu: &mut Cpu<NesMcu<R, ()>>) {
         if !cpu.mcu().ppu().in_vblank() || !cpu.mcu().ppu().rendering_enabled() {
             return;
         }
@@ -71,7 +72,7 @@ impl Plugin<NesMcu<(), ()>> for NametableConsole {
     }
 }
 
-fn read_console(cpu: &Cpu<NesMcu<(), ()>>) -> String {
+fn read_console<R: Render>(cpu: &Cpu<NesMcu<R, ()>>) -> String {
     let mut buf = Vec::with_capacity(NAMETABLE_LEN);
     for offset in 0..NAMETABLE_LEN as u16 {
         let value = cpu.mcu().read_nametable(NAMETABLE_START + offset);

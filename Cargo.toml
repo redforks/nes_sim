@@ -20,7 +20,7 @@ ansi_term = "0.12"
 is-terminal = "0.4"
 
 # Image handling
-image = { version = "0.25", default-features = false }
+ image = { version = "0.25", default-features = false, features = ["png"] }
 
 # Iterator utilities
 itertools = "0.14"

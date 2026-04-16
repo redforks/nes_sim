@@ -395,6 +395,10 @@ impl<R: Render> Ppu<R> {
         self.frame_no
     }
 
+    pub fn renderer(&self) -> &R {
+        &self.renderer
+    }
+
     fn scroll_xy(&self) -> (u16, u16) {
         let scroll_addr = self.temp_vram_addr;
         let scroll_x = ((scroll_addr & 0x001f) << 3) | self.fine_x as u16;

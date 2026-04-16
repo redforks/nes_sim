@@ -7,6 +7,7 @@ mod img_exit;
 mod max_instructions;
 mod monitor_test_status;
 mod nametable_console;
+mod png_frame_match;
 mod report;
 mod timeout;
 
@@ -16,6 +17,7 @@ pub use img_exit::*;
 pub use max_instructions::*;
 pub use monitor_test_status::*;
 pub use nametable_console::*;
+pub use png_frame_match::*;
 pub use report::*;
 pub use timeout::*;
 

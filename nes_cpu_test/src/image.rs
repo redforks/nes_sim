@@ -1,14 +1,17 @@
-use super::plugin::{CompositePlugin, Console, MonitorTestStatus, NametableConsole, ReportPlugin};
-use super::plugin::{DetectDeadLoop, ImageExit, MaxInstructions};
-use crate::plugin::{ExitTestPlugin, NesReportPlugin, ReportNesTestResult, Timeout};
-use nes_core::Plugin;
-use nes_core::ines::INesFile;
-use nes_core::machine::Machine;
-use nes_core::mcu::RamMcu;
-use nes_core::nes_machine::NesMachine;
-use std::io::Read;
-use std::path::{Path, PathBuf};
-use std::time::Duration;
+use super::plugin::{
+    CompositePlugin, Console, DetectDeadLoop, ExitTestPlugin, ImageExit, MaxInstructions,
+    MonitorTestStatus, NametableConsole, NesReportPlugin, PngFrameMatch, ReportNesTestResult,
+    ReportPlugin, Timeout,
+};
+use nes_core::{
+    Plugin, ines::INesFile, machine::Machine, mcu::RamMcu, nes_machine::NesMachine,
+    render::ImageRender,
+};
+use std::{
+    io::Read,
+    path::{Path, PathBuf},
+    time::Duration,
+};
 
 mod driver;
 
@@ -69,6 +72,10 @@ impl Image {
         start_pc: Option<u16>,
         max_instructions: u64,
     ) -> MachineWrapper {
+        if file_name.file_name().is_some_and(|f| f == "scanline.nes") {
+            return self.create_scanline_machine(ines, quiet, start_pc, max_instructions);
+        }
+
         // Build the composite plugin step by step to handle type coercion
         let mut plugins: Vec<Box<dyn Plugin<nes_core::nes::NesMcu<(), ()>>>> = vec![
             Box::new(NesReportPlugin::create(quiet)),
@@ -85,7 +92,6 @@ impl Image {
                 || p.contains("sprite_hit_tests_2005.10.05")
                 || p.contains("sprite_overflow_tests")
                 || p.contains("dmc_dma_during_read4")
-                || p.contains("scanline.nes")
         }) {
             if file_name
                 .file_name()
@@ -103,30 +109,6 @@ impl Image {
                     "159A7A8F",
                 )));
                 plugins.push(Box::new(Timeout::new(Duration::from_secs(5))));
-            } else if file_name.file_name().is_some_and(|f| f == "scanline.nes") {
-                plugins.push(Box::new(NametableConsole::with_magic_success_word(
-                    r#" This is a test for    | Stars
- proper mid-scanline   | Below
- PPU write emulation   | Denote
-                       | Errors
- This first area       |
- toggles D3 of $2001   |
- to toggle background  |
- rendering at the      |
- appropriate times     |
- and locations.        |
- This second area      |
- toggles D4 of $2000   |
- to toggle the address |
- of the background     |
- pattern table at the  |
- proper locations.     |
- This third area uses  |
- $2005/$2006 to update |
- the VRAM address at   |
- the proper locations. | "#,
-                )));
-                plugins.push(Box::new(Timeout::new(Duration::from_secs(3))));
             } else {
                 plugins.push(Box::new(NametableConsole::default()));
             }
@@ -154,6 +136,31 @@ impl Image {
         }
         MachineWrapper::INes(Box::new(machine))
     }
+
+    fn create_scanline_machine(
+        &self,
+        ines: &INesFile,
+        quiet: bool,
+        start_pc: Option<u16>,
+        max_instructions: u64,
+    ) -> MachineWrapper {
+        let expected_png = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("src/scanline-exp.png");
+        let mut plugins: Vec<Box<dyn Plugin<nes_core::nes::NesMcu<ImageRender, ()>>>> = vec![
+            Box::new(NesReportPlugin::create(quiet)),
+            Box::new(NametableConsole::default()),
+            Box::new(PngFrameMatch::new(expected_png).expect("failed to load scanline-exp.png")),
+            Box::new(Timeout::new(Duration::from_secs(2))),
+        ];
+        if max_instructions > 0 {
+            plugins.push(Box::new(MaxInstructions::new(max_instructions)));
+        }
+        let plugin = CompositePlugin::new(plugins);
+        let mut machine = NesMachine::new(ines, plugin, ImageRender::default_dimension(), ());
+        if let Some(pc) = start_pc {
+            machine.set_pc(pc);
+        }
+        MachineWrapper::PngFrameMatch(Box::new(machine))
+    }
 }
 
 // Type aliases to avoid >> parsing issues in enums
@@ -167,11 +174,15 @@ mod machine_types {
 
     pub type INesPlugin = CompositePlugin<nes_core::nes::NesMcu<(), ()>>;
     pub type INesMachine = NesMachine<INesPlugin, (), ()>;
+
+    pub type ImageRenderPlugin = CompositePlugin<nes_core::nes::NesMcu<ImageRender, ()>>;
+    pub type PngFrameMatchMachine = NesMachine<ImageRenderPlugin, ImageRender, ()>;
 }
 
 pub enum MachineWrapper {
     Bin(Box<machine_types::BinMachine>),
     INes(Box<machine_types::INesMachine>),
+    PngFrameMatch(Box<machine_types::PngFrameMatchMachine>),
 }
 
 impl MachineWrapper {
@@ -179,6 +190,7 @@ impl MachineWrapper {
         match self {
             MachineWrapper::Bin(m) => m.tick(),
             MachineWrapper::INes(m) => m.tick(),
+            MachineWrapper::PngFrameMatch(m) => m.tick(),
         }
     }
 
@@ -186,6 +198,7 @@ impl MachineWrapper {
         match self {
             MachineWrapper::Bin(m) => m.reset(),
             MachineWrapper::INes(m) => m.reset(),
+            MachineWrapper::PngFrameMatch(m) => m.reset(),
         }
     }
 }
