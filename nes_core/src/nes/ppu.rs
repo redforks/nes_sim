@@ -194,7 +194,9 @@ enum SpriteOverflowEvalMode {
     #[default]
     Idle,
     ScanY,
-    CopySprite { remaining_bytes: u8 },
+    CopySprite {
+        remaining_bytes: u8,
+    },
     OverflowSearchDelay,
     OverflowSearch,
     Done,
@@ -217,25 +219,26 @@ const fn rgb(v: [u8; 3]) -> Pixel {
 
 #[rustfmt::skip]
 const COLORS: [Pixel; 64] = [
-    rgb([117, 117, 117]), rgb([39, 27, 143]), rgb([0, 0, 171]), rgb([71, 0, 159]),
-    rgb([143, 0, 119]), rgb([171, 0, 19]), rgb([167, 0, 0]), rgb([127, 11, 0]),
-    rgb([67, 47, 0]), rgb([0, 71, 0]), rgb([0, 81, 0]), rgb([0, 63, 23]),
-    rgb([27, 63, 95]), rgb([0, 0, 0]), rgb([0, 0, 0]), rgb([0, 0, 0]),
+    // 2C02
+    rgb([102, 102, 102]), rgb([0, 42, 136]), rgb([20, 18, 167]), rgb([59, 0, 164]),
+    rgb([92, 0, 126]), rgb([110, 0, 64]), rgb([108, 6, 0]), rgb([86, 29, 0]),
+    rgb([51, 53, 0]), rgb([11, 72, 0]), rgb([0, 82, 0]), rgb([0, 79, 8]),
+    rgb([0, 64, 77]), rgb([0, 0, 0]), rgb([0, 0, 0]), rgb([0, 0, 0]),
 
-    rgb([188, 188, 188]), rgb([0, 115, 239]), rgb([35, 59, 239]), rgb([131, 0, 243]),
-    rgb([191, 0, 191]), rgb([231, 0, 91]), rgb([219, 43, 0]), rgb([203, 79, 15]),
-    rgb([139, 115, 0]), rgb([0, 151, 0]), rgb([0, 171, 0]), rgb([0, 147, 59]),
-    rgb([0, 131, 139]), rgb([0, 0, 0]), rgb([0, 0, 0]), rgb([0, 0, 0]),
+    rgb([173, 173, 173]), rgb([21, 95, 217]), rgb([66, 64, 255]), rgb([117, 39, 254]),
+    rgb([160, 26, 204]), rgb([183, 30, 123]), rgb([181, 49, 32]), rgb([153, 78, 0]),
+    rgb([107, 109, 0]), rgb([56, 135, 0]), rgb([12, 147, 0]), rgb([0, 143, 50]),
+    rgb([0, 124, 141]), rgb([0, 0, 0]), rgb([0, 0, 0]), rgb([0, 0, 0]),
 
-    rgb([255, 255, 255]), rgb([63, 191, 255]), rgb([95, 151, 255]), rgb([167, 139, 253]),
-    rgb([247, 123, 255]), rgb([255, 119, 183]), rgb([255, 119, 99]), rgb([255, 155, 59]),
-    rgb([243, 191, 63]), rgb([131, 211, 19]), rgb([79, 223, 75]), rgb([88, 248, 152]),
-    rgb([0, 235, 219]), rgb([0, 0, 0]), rgb([0, 0, 0]), rgb([0, 0, 0]),
+    rgb([255, 254, 255]), rgb([100, 176, 255]), rgb([146, 144, 255]), rgb([198, 118, 255]),
+    rgb([243, 106, 255]), rgb([254, 110, 204]), rgb([254, 129, 112]), rgb([234, 158, 34]),
+    rgb([188, 190, 0]), rgb([136, 216, 0]), rgb([92, 228, 48]), rgb([69, 224, 130]),
+    rgb([72, 205, 222]), rgb([79, 79, 79]), rgb([0, 0, 0]), rgb([0, 0, 0]),
 
-    rgb([255, 255, 255]), rgb([171, 231, 255]), rgb([199, 215, 255]), rgb([215, 203, 255]),
-    rgb([255, 199, 255]), rgb([255, 199, 219]), rgb([255, 191, 179]), rgb([255, 219, 171]),
-    rgb([255, 231, 163]), rgb([227, 255, 163]), rgb([171, 243, 191]), rgb([179, 255, 207]),
-    rgb([159, 255, 243]), rgb([0, 0, 0]), rgb([0, 0, 0]), rgb([0, 0, 0]),
+    rgb([255, 254, 255]), rgb([192, 223, 255]), rgb([211, 210, 255]), rgb([232, 200, 255]),
+    rgb([251, 194, 255]), rgb([254, 196, 234]), rgb([254, 204, 197]), rgb([247, 216, 165]),
+    rgb([228, 229, 148]), rgb([207, 239, 150]), rgb([189, 244, 171]), rgb([179, 243, 204]),
+    rgb([179, 235, 242]), rgb([184, 184, 184]), rgb([0, 0, 0]), rgb([0, 0, 0]),
 ];
 
 #[derive(Default)]
@@ -918,13 +921,12 @@ impl<R: Render> Ppu<R> {
                 } else {
                     self.sprite_overflow_eval.oam_index += 1;
                     self.sprite_overflow_eval.byte_index = 0;
-                    self.sprite_overflow_eval.mode = if self.sprite_overflow_eval.visible_sprites
-                        >= MAX_SPRITES_PER_SCANLINE
-                    {
-                        SpriteOverflowEvalMode::OverflowSearchDelay
-                    } else {
-                        SpriteOverflowEvalMode::ScanY
-                    };
+                    self.sprite_overflow_eval.mode =
+                        if self.sprite_overflow_eval.visible_sprites >= MAX_SPRITES_PER_SCANLINE {
+                            SpriteOverflowEvalMode::OverflowSearchDelay
+                        } else {
+                            SpriteOverflowEvalMode::ScanY
+                        };
                 }
             }
             SpriteOverflowEvalMode::OverflowSearchDelay => {
