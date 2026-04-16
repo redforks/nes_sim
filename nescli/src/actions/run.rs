@@ -1,17 +1,18 @@
 use anyhow::Result;
 use image::EncodableLayout;
+use nes_core::EmptyPlugin;
 use nes_core::ines::INesFile;
 use nes_core::nes::apu::AudioDriver;
 use nes_core::nes::controller::Button;
 use nes_core::nes_machine::NesMachine;
 use nes_core::render::{ImageRender, Render};
-use nes_core::EmptyPlugin;
 use sdl2::audio::{AudioQueue, AudioSpecDesired};
 use sdl2::event::Event;
 use sdl2::keyboard::Keycode;
 use sdl2::pixels::PixelFormatEnum;
 use sdl2::render::Canvas;
 use sdl2::video::Window;
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 const AUDIO_SAMPLE_RATE: i32 = 44_100;
@@ -39,7 +40,7 @@ struct SdlAudioDriver {
 }
 
 struct SdlRender {
-    image: ImageRender,
+    image: Arc<Mutex<ImageRender>>,
     canvas: Canvas<Window>,
 }
 
@@ -51,41 +52,48 @@ impl std::fmt::Debug for SdlRender {
 
 impl SdlRender {
     fn new(canvas: Canvas<Window>) -> Self {
-        Self {
-            image: ImageRender::default_dimension(),
+        Self::with_image(
+            Arc::new(Mutex::new(ImageRender::default_dimension())),
             canvas,
-        }
+        )
+    }
+
+    fn with_image(image: Arc<Mutex<ImageRender>>, canvas: Canvas<Window>) -> Self {
+        Self { image, canvas }
     }
 }
 
 impl Render for SdlRender {
     fn clear(&mut self, color: [u8; 4]) {
-        self.image.clear(color);
+        if let Ok(mut img) = self.image.lock() {
+            img.clear(color);
+        }
     }
 
     fn set_pixel(&mut self, x: u32, y: u32, color: [u8; 4]) {
-        self.image.set_pixel(x, y, color);
+        if let Ok(mut img) = self.image.lock() {
+            img.set_pixel(x, y, color);
+        }
     }
 
     fn finish(&mut self) {
-        let image = self.image.borrow_image();
-        let (width, height) = image.dimensions();
-        let texture_creator = self.canvas.texture_creator();
-        let mut texture = texture_creator
-            .create_texture_streaming(PixelFormatEnum::ABGR8888, width, height)
-            .expect("failed to create SDL texture");
+        // Lock image buffer and upload to SDL texture
+        if let Ok(img) = self.image.lock() {
+            let image = img.borrow_image();
+            let (width, height) = image.dimensions();
+            let texture_creator = self.canvas.texture_creator();
+            let mut texture = texture_creator
+                .create_texture_streaming(PixelFormatEnum::ABGR8888, width, height)
+                .expect("failed to create SDL texture");
 
-        texture
-            .update(
-                None,
-                self.image.borrow_image().as_bytes(),
-                (width * 4) as usize,
-            )
-            .expect("failed to upload SDL texture");
-        self.canvas
-            .copy(&texture, None, None)
-            .expect("failed to copy SDL texture");
-        self.canvas.present();
+            texture
+                .update(None, image.as_bytes(), (width * 4) as usize)
+                .expect("failed to upload SDL texture");
+            self.canvas
+                .copy(&texture, None, None)
+                .expect("failed to copy SDL texture");
+            self.canvas.present();
+        }
     }
 }
 
@@ -170,8 +178,9 @@ impl RunAction {
             .build()
             .map_err(|e| anyhow::anyhow!(e))?;
 
-        // The renderer uploads and presents itself during `finish()`.
-        let sdl_render = SdlRender::new(canvas);
+        // Create shared image buffer so we can save screenshots from the event loop
+        let image_arc = Arc::new(Mutex::new(ImageRender::default_dimension()));
+        let sdl_render = SdlRender::with_image(image_arc.clone(), canvas);
 
         // Create NES machine with SDL-backed renderer
         let mut machine = NesMachine::new(f, EmptyPlugin::new(), sdl_render, audio_driver);
@@ -219,6 +228,25 @@ impl RunAction {
                         // Quit the application
                         eprintln!(">> Quitting application");
                         break 'running;
+                    }
+                    Event::KeyDown {
+                        keycode: Some(Keycode::F12),
+                        repeat: false,
+                        ..
+                    } => {
+                        // Save current frame image with frame number in filename
+                        let frame_no = machine.mcu().ppu().frame_no();
+                        let path = format!("/tmp/nes-frame-{}.png", frame_no);
+                        match image_arc.lock() {
+                            Ok(img) => {
+                                if let Err(e) = img.borrow_image().save(&path) {
+                                    eprintln!(">> Failed to save frame to {}: {}", path, e);
+                                } else {
+                                    eprintln!(">> Saved frame to {}", path);
+                                }
+                            }
+                            Err(_) => eprintln!(">> Failed to lock image buffer for saving"),
+                        }
                     }
                     Event::KeyDown {
                         keycode: Some(keycode),
