@@ -26,6 +26,7 @@ pub struct MMC3 {
     irq_reload: bool,
     irq_enabled: bool,
     irq_pending: bool,
+    prev_a12: bool,
 }
 
 impl MMC3 {
@@ -67,6 +68,7 @@ impl MMC3 {
             irq_reload: false,
             irq_enabled: false,
             irq_pending: false,
+            prev_a12: false,
         };
         mapper.sync_banks();
         mapper
@@ -279,9 +281,17 @@ impl MMC3 {
     }
 
     pub fn on_ppu_tick(&mut self, scanline: u16, dot: u16, rendering_enabled: bool) {
-        if rendering_enabled && scanline < 240 && dot == 260 {
+        if rendering_enabled && (scanline < 240 || scanline == 261) && dot == 260 {
             self.clock_irq();
         }
+    }
+
+    pub fn notify_vram_address(&mut self, addr: u16) {
+        let a12 = (addr & 0x1000) != 0;
+        if a12 && !self.prev_a12 {
+            self.clock_irq();
+        }
+        self.prev_a12 = a12;
     }
 
     pub fn irq_pending(&self) -> bool {

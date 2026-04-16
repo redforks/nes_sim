@@ -272,6 +272,12 @@ impl Cartridge {
         }
     }
 
+    pub fn notify_vram_address(&mut self, addr: u16) {
+        if let Cartridge::MMC3(cartridge) = self {
+            cartridge.notify_vram_address(addr);
+        }
+    }
+
     pub fn irq_pending(&self) -> bool {
         match self {
             Cartridge::Mapper0(_)

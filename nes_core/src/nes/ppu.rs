@@ -813,11 +813,13 @@ impl<R: Render> Ppu<R> {
             0x2006 => {
                 self.write_vram_addr(value);
                 self.scanline_cache.dirty = true;
+                cartridge.notify_vram_address(self.vram_addr);
             }
             // PPUDATA
             0x2007 => {
                 self.write_vram(self.vram_addr, value, cartridge);
                 self.ctrl.inc_ppu_addr(&mut self.vram_addr);
+                cartridge.notify_vram_address(self.vram_addr);
                 self.scanline_cache.dirty = true;
             }
             _ => {} // Ignore other addresses
@@ -1206,6 +1208,7 @@ impl<R: Render> Ppu<R> {
         let vram_addr = self.vram_addr;
         let current = self.read_vram(vram_addr, cartridge);
         self.ctrl.inc_ppu_addr(&mut self.vram_addr);
+        cartridge.notify_vram_address(self.vram_addr);
 
         // Non-palette addresses use a read buffer (delayed by one read).
         // Palette addresses ($3F00-$3FFF) return immediately, but still
