@@ -12,7 +12,6 @@ use std::path::PathBuf;
 pub struct PngFrameMatch {
     expected: RgbaImage,
     expected_path: PathBuf,
-    last_frame_no: usize,
     passed: bool,
 }
 
@@ -24,15 +23,16 @@ impl PngFrameMatch {
         Ok(Self {
             expected,
             expected_path,
-            last_frame_no: 0,
             passed: false,
         })
     }
 
     fn compare_frame(&self, actual: &RgbaImage) -> bool {
-        if actual.dimensions() != self.expected.dimensions() {
-            return false;
-        }
+        assert_eq!(
+            actual.dimensions(),
+            self.expected.dimensions(),
+            "Actual frame dimensions do not match expected image dimensions"
+        );
 
         actual
             .pixels()
@@ -52,29 +52,25 @@ fn pixel_within_threshold(actual: Rgba<u8>, expected: Rgba<u8>) -> bool {
 }
 
 impl<A: AudioDriver> Plugin<NesMcu<ImageRender, A>> for PngFrameMatch {
-    fn start(&mut self, cpu: &mut Cpu<NesMcu<ImageRender, A>>) {
-        self.last_frame_no = cpu.mcu().ppu().frame_no();
-    }
+    fn start(&mut self, _cpu: &mut Cpu<NesMcu<ImageRender, A>>) {}
 
     fn end(&mut self, cpu: &mut Cpu<NesMcu<ImageRender, A>>) {
         if self.passed {
             return;
         }
 
-        let frame_no = cpu.mcu().ppu().frame_no();
-        if frame_no == self.last_frame_no {
+        if !cpu.mcu().ppu().in_vblank() {
             return;
         }
 
-        self.last_frame_no = frame_no;
-
+        let frame_no = cpu.mcu().ppu().frame_no();
         let actual = cpu.mcu().ppu().renderer().borrow_image();
-        if frame_no.is_multiple_of(50) {
-            let _ = actual.save(Path::new("/tmp/png-frame-match.png"));
-        }
         if self.compare_frame(actual) {
+            let _ = actual.save(Path::new("/tmp/png-frame-match.png"));
             eprintln!("Frame {} matches expected image", frame_no);
             self.passed = true;
+        } else if frame_no.is_multiple_of(50) {
+            let _ = actual.save(Path::new("/tmp/png-frame-match.png"));
         }
     }
 
