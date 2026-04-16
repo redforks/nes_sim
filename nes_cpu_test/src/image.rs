@@ -1,12 +1,11 @@
-use crate::plugin::{ExitTestPlugin, NesReportPlugin, ReportNesTestResult, Timeout};
-
 use super::plugin::{CompositePlugin, Console, MonitorTestStatus, NametableConsole, ReportPlugin};
 use super::plugin::{DetectDeadLoop, ImageExit, MaxInstructions};
+use crate::plugin::{ExitTestPlugin, NesReportPlugin, ReportNesTestResult, Timeout};
+use nes_core::Plugin;
 use nes_core::ines::INesFile;
 use nes_core::machine::Machine;
 use nes_core::mcu::RamMcu;
 use nes_core::nes_machine::NesMachine;
-use nes_core::Plugin;
 use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
@@ -86,6 +85,7 @@ impl Image {
                 || p.contains("sprite_hit_tests_2005.10.05")
                 || p.contains("sprite_overflow_tests")
                 || p.contains("dmc_dma_during_read4")
+                || p.contains("scanline.nes")
         }) {
             if file_name
                 .file_name()
@@ -103,6 +103,30 @@ impl Image {
                     "159A7A8F",
                 )));
                 plugins.push(Box::new(Timeout::new(Duration::from_secs(5))));
+            } else if file_name.file_name().is_some_and(|f| f == "scanline.nes") {
+                plugins.push(Box::new(NametableConsole::with_magic_success_word(
+                    r#" This is a test for    | Stars
+ proper mid-scanline   | Below
+ PPU write emulation   | Denote
+                       | Errors
+ This first area       |
+ toggles D3 of $2001   |
+ to toggle background  |
+ rendering at the      |
+ appropriate times     |
+ and locations.        |
+ This second area      |
+ toggles D4 of $2000   |
+ to toggle the address |
+ of the background     |
+ pattern table at the  |
+ proper locations.     |
+ This third area uses  |
+ $2005/$2006 to update |
+ the VRAM address at   |
+ the proper locations. | "#,
+                )));
+                plugins.push(Box::new(Timeout::new(Duration::from_secs(3))));
             } else {
                 plugins.push(Box::new(NametableConsole::default()));
             }
