@@ -231,8 +231,47 @@ apu_test: build_nes_cpu_test
 scanline: build_nes_cpu_test
     target/debug/nes_cpu_test --quiet -f ../nes-test-roms/scanline/scanline.nes
 
+mmc3_irq_test_1: build_nes_cpu_test
+    target/debug/nes_cpu_test --quiet -f ../nes-test-roms/mmc3_irq_tests/1.Clocking.nes
+mmc3_irq_test_2: build_nes_cpu_test
+    target/debug/nes_cpu_test --quiet -f ../nes-test-roms/mmc3_irq_tests/2.Details.nes
+mmc3_irq_test_3: build_nes_cpu_test
+    target/debug/nes_cpu_test --quiet -f ../nes-test-roms/mmc3_irq_tests/3.A12_clocking.nes
+mmc3_irq_test_4: build_nes_cpu_test
+    target/debug/nes_cpu_test --quiet -f ../nes-test-roms/mmc3_irq_tests/4.Scanline_timing.nes
+mmc3_irq_test_5: build_nes_cpu_test
+    target/debug/nes_cpu_test --quiet -f ../nes-test-roms/mmc3_irq_tests/5.MMC3_rev_A.nes
+mmc3_irq_test_6: build_nes_cpu_test
+    target/debug/nes_cpu_test --quiet -f ../nes-test-roms/mmc3_irq_tests/6.MMC3_rev_B.nes
+
+mmc3_irq_tests: mmc3_irq_test_1 mmc3_irq_test_2 mmc3_irq_test_3 mmc3_irq_test_4 mmc3_irq_test_5 mmc3_irq_test_6
+
+mmc3_test_1: build_nes_cpu_test
+    target/debug/nes_cpu_test --quiet -f ../nes-test-roms/mmc3_test/1-clocking.nes
+mmc3_test_2: build_nes_cpu_test
+    target/debug/nes_cpu_test --quiet -f ../nes-test-roms/mmc3_test/2-details.nes
+mmc3_test_3: build_nes_cpu_test
+    target/debug/nes_cpu_test --quiet -f ../nes-test-roms/mmc3_test/3-A12_clocking.nes
+mmc3_test_4: build_nes_cpu_test
+    target/debug/nes_cpu_test --quiet -f ../nes-test-roms/mmc3_test/4-scanline_timing.nes
+mmc3_test_5: build_nes_cpu_test
+    target/debug/nes_cpu_test --quiet -f ../nes-test-roms/mmc3_test/5-MMC3.nes
+mmc3_test_6: build_nes_cpu_test
+    target/debug/nes_cpu_test --quiet -f ../nes-test-roms/mmc3_test/6-MMC6.nes
+
+mmc3_tests: mmc3_test_1 mmc3_test_2 mmc3_test_3 mmc3_test_4 mmc3_test_5 mmc3_test_6
+
 [parallel]
-passed: unit-test cpu-test instr_misc instr_test-v5 instr_test-v3 nestest instr_timing ppu_vbl_nmi vbl_nmi_timing cpu_interrupts_v2 branch_timing_tests cpu_dummy_reads cpu_dummy_writes cpu_exec_space cpu_reset cpu_timing_test6 oam_read oam_stress ppu_open_bus ppu_read_buffer sprite_hit_tests sprite_overflow_tests dmc_dma_during_read4 apu_mixer apu_reset apu_test scanline
+passed_cpu_tests: cpu-test instr_misc instr_test-v5 instr_test-v3 instr_timing cpu_dummy_reads cpu_dummy_writes cpu_exec_space cpu_reset cpu_timing_test6 nestest branch_timing_tests cpu_interrupts_v2
+
+[parallel]
+passed_ppu_tests: ppu_vbl_nmi vbl_nmi_timing oam_read oam_stress ppu_open_bus ppu_read_buffer sprite_hit_tests sprite_overflow_tests scanline
+
+[parallel]
+passed_apu_tests: apu_mixer apu_reset apu_test dmc_dma_during_read4
+
+[parallel]
+passed: unit-test passed_cpu_tests passed_ppu_tests passed_apu_tests
 
 wasm-debug-build:
     cd nes_web && wasm-pack build --release

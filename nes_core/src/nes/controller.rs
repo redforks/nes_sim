@@ -36,11 +36,7 @@ impl AController {
             true
         };
 
-        if pressed {
-            0x41
-        } else {
-            0x40
-        }
+        if pressed { 0x41 } else { 0x40 }
     }
 
     fn read(&mut self) -> u8 {
@@ -54,11 +50,7 @@ impl AController {
             true
         };
 
-        if pressed {
-            0x41
-        } else {
-            0x40
-        }
+        if pressed { 0x41 } else { 0x40 }
     }
 
     pub fn press(&mut self, btn: Button) {

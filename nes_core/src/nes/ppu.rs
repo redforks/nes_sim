@@ -609,7 +609,7 @@ impl<R: Render> Ppu<R> {
         self.scanline_cache.dirty = true;
     }
 
-    pub fn tick(&mut self, cartridge: &Cartridge) {
+    pub fn tick(&mut self, cartridge: &mut Cartridge) {
         self.ppu_ticks = self.ppu_ticks.wrapping_add(1);
         let rendering_enabled = self.rendering_enabled();
 
@@ -621,6 +621,31 @@ impl<R: Render> Ppu<R> {
         if self.sprite_overflow_pending {
             self.status.set_sprite_overflow(true);
             self.sprite_overflow_pending = false;
+        }
+
+        // MMC3 A12 monitoring: track VRAM address changes during background fetch sequence
+        // The MMC3 watches for rising edges on A12 (0→1 transitions) to clock the IRQ counter.
+        // Background fetches (dots 1-256): 8-dot cycles - nametable → attr → pat low → pat high
+        // Each fetch type takes 2 dots: (0,1)=NT, (2,3)=attr, (4,5)=pat low, (6,7)=pat high
+        // Monitor during visible scanlines (0-239) and pre-render scanline (261)
+        if rendering_enabled
+            && ((self.scanline < 240 || self.scanline == 261) && self.dot >= 1 && self.dot <= 256)
+        {
+            let dot_in_tile = ((self.dot - 1) % 8) as usize;
+            let fetch_type = dot_in_tile / 2;
+            let background = self
+                .background_anchor
+                .unwrap_or_else(|| BackgroundActivation::snapshot(self, 0));
+
+            let fetch_addr = if fetch_type < 2 {
+                0x2000 // Nametable/attribute fetch: A12=1
+            } else if background.ctrl.background_pattern_table() {
+                0x1000 // Right background pattern table: A12=1
+            } else {
+                0x0000 // Left background pattern table: A12=0
+            };
+
+            cartridge.notify_vram_address(fetch_addr);
         }
 
         if self.scanline < 240 && self.dot == 0 {
@@ -1312,7 +1337,7 @@ impl<R: Render> Ppu<R> {
         r
     }
 
-    fn render_pixel(&mut self, x: u8, cartridge: &Cartridge) -> Pixel {
+    fn render_pixel(&mut self, x: u8, cartridge: &mut Cartridge) -> Pixel {
         // Compute background pixel on-the-fly (no cache) so that mid-scanline
         // register writes ($2000, $2001, $2005, $2006) take effect immediately.
         let (bg_palette_idx, bg_color_idx) = if self.effective_mask.background_enabled() {

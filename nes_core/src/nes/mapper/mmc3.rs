@@ -27,6 +27,7 @@ pub struct MMC3 {
     irq_enabled: bool,
     irq_pending: bool,
     prev_a12: bool,
+    a12_transition_this_scanline: bool,
 }
 
 impl MMC3 {
@@ -69,6 +70,7 @@ impl MMC3 {
             irq_enabled: false,
             irq_pending: false,
             prev_a12: false,
+            a12_transition_this_scanline: false,
         };
         mapper.sync_banks();
         mapper
@@ -186,14 +188,37 @@ impl MMC3 {
     }
 
     fn clock_irq(&mut self) {
-        if self.irq_counter == 0 || self.irq_reload {
+        // Save state before modifying
+        let reload = self.irq_counter == 0 || self.irq_reload;
+        let prev_counter = self.irq_counter;
+        let prev_reload_flag = self.irq_reload;
+
+        if reload {
             self.irq_counter = self.irq_latch;
             self.irq_reload = false;
         } else {
-            self.irq_counter = self.irq_counter.saturating_sub(1);
+            self.irq_counter -= 1;
         }
 
-        if self.irq_counter == 0 && self.irq_enabled {
+        // Determine if we should set IRQ
+        // MMC3: Always set IRQ when reloading to 0
+        // MMC6: Don't set IRQ when reloading to 0 if reload flag was just set this clock
+        let should_set_irq = if self.irq_enabled && self.irq_counter == 0 {
+            if !reload {
+                // Decrement case: only if we went from 1 to 0
+                prev_counter == 1
+            } else if !prev_reload_flag {
+                // MMC6: reload flag was just set this clock, don't set IRQ when reloading to 0
+                false
+            } else {
+                // MMC3/MMC6: normal reload to 0 (reload flag was already set)
+                self.irq_latch == 0
+            }
+        } else {
+            false
+        };
+
+        if should_set_irq {
             self.irq_pending = true;
         }
     }
@@ -280,15 +305,18 @@ impl MMC3 {
         }
     }
 
-    pub fn on_ppu_tick(&mut self, scanline: u16, dot: u16, rendering_enabled: bool) {
-        if rendering_enabled && (scanline < 240 || scanline == 261) && dot == 260 {
-            self.clock_irq();
+    pub fn on_ppu_tick(&mut self, scanline: u16, _dot: u16, _rendering_enabled: bool) {
+        // Reset A12 transition flag at the end of each scanline
+        if scanline == 261 || scanline == 239 {
+            self.a12_transition_this_scanline = false;
         }
     }
 
     pub fn notify_vram_address(&mut self, addr: u16) {
         let a12 = (addr & 0x1000) != 0;
+        // Clock only on rising edges (0→1 transitions) of A12
         if a12 && !self.prev_a12 {
+            self.a12_transition_this_scanline = true;
             self.clock_irq();
         }
         self.prev_a12 = a12;
@@ -451,17 +479,21 @@ mod tests {
     fn triggers_irq_after_scanline_clocks() {
         let mut mapper = MMC3::new(&create_prg(), &create_chr(), Mirroring::Horizontal, false);
 
-        mapper.write(0xc000, 0x01);
-        mapper.write(0xc001, 0x00);
-        mapper.write(0xe001, 0x00);
+        mapper.write(0xc000, 0x01); // Set IRQ latch to 1
+        mapper.write(0xc001, 0x00); // Set irq_reload flag
+        mapper.write(0xe001, 0x00); // Enable IRQ
 
-        mapper.on_ppu_tick(0, 260, true);
-        assert!(!mapper.irq_pending());
+        // Simulate A12 transitions to clock the IRQ
+        // The MMC3 clocks IRQ on rising edges of A12 (when it goes from 0 to 1)
+        // With latch=1, we need 2 clocks: first reloads counter to 1, second decrements to 0
+        mapper.notify_vram_address(0x0fff); // A12 = 0
+        mapper.notify_vram_address(0x1000); // A12 = 1 (rising edge, reloads counter to 1)
+        mapper.notify_vram_address(0x0fff); // A12 = 0
+        mapper.notify_vram_address(0x1000); // A12 = 1 (rising edge, decrements counter to 0, IRQ pending)
 
-        mapper.on_ppu_tick(1, 260, true);
-        assert!(mapper.irq_pending());
+        assert!(mapper.irq_pending()); // Should be pending because counter reached 0
 
-        mapper.write(0xe000, 0x00);
+        mapper.write(0xe000, 0x00); // Disable IRQ and clear pending
         assert!(!mapper.irq_pending());
     }
 }

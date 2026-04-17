@@ -336,7 +336,7 @@ fn render_pixel(ppu: &mut Ppu, pattern: &[u8], x: u8, y: u8) -> Pixel {
         }
     }
     ppu.prepare_scanline_cache(&cart, y);
-    ppu.render_pixel(x, &cart)
+    ppu.render_pixel(x, &mut cart)
 }
 
 fn run_scanline(ppu: &mut Ppu, pattern: &[u8], scanline: u16) {
@@ -352,7 +352,7 @@ fn run_scanline(ppu: &mut Ppu, pattern: &[u8], scanline: u16) {
     ppu.scanline = scanline;
     ppu.dot = 0;
     for _ in 0..DOTS_PER_SCANLINE {
-        ppu.tick(&cart);
+        ppu.tick(&mut cart);
     }
 }
 
@@ -370,7 +370,7 @@ where
     }
     setup(&mut cart);
     ppu.prepare_scanline_cache(&cart, y);
-    let pixel = ppu.render_pixel(x, &cart);
+    let pixel = ppu.render_pixel(x, &mut cart);
     ppu.mask.apply_effects(pixel)
 }
 
@@ -417,8 +417,9 @@ fn test_tick_renders_palette_color_when_rendering_disabled_and_vram_points_to_pa
     ppu.scanline = 0;
     ppu.dot = 0;
 
-    ppu.tick(&new_test_cartridge());
-    ppu.tick(&new_test_cartridge());
+    let mut cart = new_test_cartridge();
+    ppu.tick(&mut cart);
+    ppu.tick(&mut cart);
 
     let image = ppu.renderer.borrow_image();
     assert_eq!(image.get_pixel(0, 0), &image::Rgba(COLORS[0x21].0));
@@ -435,8 +436,9 @@ fn test_tick_renders_background_color_when_rendering_disabled_and_vram_not_palet
     ppu.scanline = 0;
     ppu.dot = 0;
 
-    ppu.tick(&new_test_cartridge());
-    ppu.tick(&new_test_cartridge());
+    let mut cart = new_test_cartridge();
+    ppu.tick(&mut cart);
+    ppu.tick(&mut cart);
 
     let image = ppu.renderer.borrow_image();
     assert_eq!(image.get_pixel(0, 0), &image::Rgba(COLORS[0x16].0));

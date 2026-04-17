@@ -92,6 +92,7 @@ impl Image {
                 || p.contains("sprite_hit_tests_2005.10.05")
                 || p.contains("sprite_overflow_tests")
                 || p.contains("dmc_dma_during_read4")
+                || p.contains("mmc3_irq_tests")
         }) {
             if file_name
                 .file_name()
