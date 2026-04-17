@@ -630,10 +630,26 @@ impl<R: Render> Ppu<R> {
             self.sprite_overflow_pending = false;
         }
 
-        // MMC3 scanline IRQs are driven by filtered PPU A12 rises. Feed the
-        // mapper with the render-time fetch-side addresses so the same edge
-        // detector handles both manual $2006/$2007 clocks and steady-state
-        // rendering clocks.
+        // MMC3 scanline IRQs are driven by filtered PPU A12 rises.
+        //
+        // On the real NES the PPU address bus toggles A12 on each tile
+        // fetch.  The MMC3 filters the rapid bouncing and effectively
+        // clocks its IRQ counter once per scanline at the point where A12
+        // rises from a sustained low period:
+        //
+        //   * When BG uses $0xxx and sprites use $1xxx: the rise occurs at
+        //     the first sprite pattern fetch (~dot 260).
+        //   * When BG uses $1xxx and sprites use $0xxx: the rise occurs at
+        //     the first BG pattern fetch (~dot 4), with a second rise at
+        //     the BG-prefetch after sprite fetches (~dot 324).
+        //
+        // We model this by emitting only pattern-table addresses (skipping
+        // the nametable/attribute-table fetches that cause the filtered
+        // bouncing).  BG pattern addresses are emitted on odd dots and
+        // sprite pattern addresses on even dots, matching the real PPU's
+        // memory-access phasing.
+        //
+        // Manual $2006/$2007 writes still reach the mapper directly.
         if rendering_enabled
             && (self.scanline < 240
                 || (self.scanline == 261 && self.rendering_enabled_at_scanline_start))
@@ -641,24 +657,42 @@ impl<R: Render> Ppu<R> {
             let fetch_addr = if ((1..=256).contains(&self.dot) || (321..=336).contains(&self.dot))
                 && self.dot % 2 == 1
             {
-                let base_dot = if self.dot <= 256 { 1 } else { 321 };
-                let fetch_type = (((self.dot - base_dot) / 2) % 4) as usize;
-                Some(if fetch_type < 2 {
-                    0x2000
-                } else if self.ctrl.background_pattern_table() {
-                    0x1000
+                // BG tile fetch: only pattern-table accesses (fetch types 2-3).
+                // Notifications are shifted +4 dots (base 5/325 instead of 1/321)
+                // so that the first BG pattern appears at dot 9 rather than dot 5.
+                // Together with the sprite base (first pattern at dot 265), this
+                // gives the real hardware's 256-dot gap between mode $10 and $08.
+                let base_dot = if self.dot <= 256 { 5 } else { 325 };
+                if self.dot < base_dot {
+                    None
                 } else {
-                    0x0000
-                })
-            } else if (257..=320).contains(&self.dot) && self.dot % 2 == 0 {
-                let fetch_type = (((self.dot - 258) / 2) % 4) as usize;
-                Some(if fetch_type < 2 {
-                    0x2000
-                } else if self.ctrl.sprite_size() || self.ctrl.sprite_pattern_table() {
-                    0x1000
+                    let fetch_type = (((self.dot - base_dot) / 2) % 4) as usize;
+                    if fetch_type >= 2 {
+                        Some(if self.ctrl.background_pattern_table() {
+                            0x1000
+                        } else {
+                            0x0000
+                        })
+                    } else {
+                        None
+                    }
+                }
+            } else if (261..=320).contains(&self.dot) && self.dot % 2 == 1 {
+                // Sprite tile fetch: only pattern-table accesses (fetch types 2-3).
+                // Emitted on odd dots to align the MMC3 counter clock with the
+                // observed ~dot-260 hardware timing.
+                let fetch_type = (((self.dot - 261) / 2) % 4) as usize;
+                if fetch_type >= 2 {
+                    Some(
+                        if self.ctrl.sprite_size() || self.ctrl.sprite_pattern_table() {
+                            0x1000
+                        } else {
+                            0x0000
+                        },
+                    )
                 } else {
-                    0x0000
-                })
+                    None
+                }
             } else {
                 None
             };
