@@ -639,9 +639,9 @@ impl<R: Render> Ppu<R> {
                 || (self.scanline == 261 && self.rendering_enabled_at_scanline_start))
         {
             let fetch_addr = if ((1..=256).contains(&self.dot) || (321..=336).contains(&self.dot))
-                && self.dot % 2 == 0
+                && self.dot % 2 == 1
             {
-                let base_dot = if self.dot <= 256 { 2 } else { 322 };
+                let base_dot = if self.dot <= 256 { 1 } else { 321 };
                 let fetch_type = (((self.dot - base_dot) / 2) % 4) as usize;
                 Some(if fetch_type < 2 {
                     0x2000

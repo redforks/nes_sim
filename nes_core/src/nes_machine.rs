@@ -1,13 +1,13 @@
 use crate::{
+    ExecuteResult, Plugin,
     ines::INesFile,
     machine::Machine,
     nes::{
+        NesMcu,
         controller::Button,
         ppu::{VBLANK_SET_DOT, VBLANK_SET_SCANLINE},
-        NesMcu,
     },
     render::Render,
-    ExecuteResult, Plugin,
 };
 use std::fs;
 
@@ -19,8 +19,8 @@ const MAX_TICKS_PER_FRAME: u32 = 90000;
 pub struct NesMachine<P, R: Render, D: crate::nes::apu::AudioDriver> {
     machine: Machine<P, NesMcu<R, D>>,
     cycles: usize,
-    irq_line_latched: bool,
-    irq_line_next: bool,
+    cartridge_irq_latched: bool,
+    cartridge_irq_next: bool,
 }
 
 impl<P, R, D> NesMachine<P, R, D>
@@ -34,8 +34,8 @@ where
         Self {
             machine: Machine::with_plugin(plugin, mcu),
             cycles: 0,
-            irq_line_latched: false,
-            irq_line_next: false,
+            cartridge_irq_latched: false,
+            cartridge_irq_next: false,
         }
     }
 
@@ -71,12 +71,13 @@ where
         self.cycles += 1;
 
         if self.cycles.is_multiple_of(3) {
-            self.irq_line_latched = self.irq_line_next;
+            self.cartridge_irq_latched = self.cartridge_irq_next;
         }
 
-        // The CPU samples IRQ from the previously-observed tick, not from a
-        // level that was asserted later in this same PPU tick.
-        self.machine.cpu_mut().set_irq(self.irq_line_latched);
+        // Cartridge IRQs are exposed on the next CPU boundary, while APU IRQs
+        // keep the existing immediate visibility used by the interrupt tests.
+        let irq_pending = self.machine.mcu().apu_irq_pending() || self.cartridge_irq_latched;
+        self.machine.cpu_mut().set_irq(irq_pending);
 
         self.machine.mcu_mut().tick_ppu();
         let nmi_line = self.mcu().ppu().nmi_line_out();
@@ -107,7 +108,7 @@ where
             self.machine.cpu_mut().request_oam_dma();
         }
 
-        self.irq_line_next = self.machine.mcu().irq_pending();
+        self.cartridge_irq_next = self.machine.mcu().cartridge_irq_pending();
 
         result
     }
@@ -123,8 +124,8 @@ where
     pub fn reset(&mut self) {
         self.machine.mcu_mut().reset();
         self.machine.reset();
-        self.irq_line_latched = false;
-        self.irq_line_next = false;
+        self.cartridge_irq_latched = false;
+        self.cartridge_irq_next = false;
     }
 
     pub fn flush_audio(&mut self) {

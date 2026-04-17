@@ -419,9 +419,6 @@ impl<M: Mcu> Cpu<M> {
                 } else if self.irq_line
                     && !irq_inhibit.unwrap_or_else(|| self.flag(Flag::InterruptDisabled))
                 {
-                    let irq_sample_too_recent =
-                        self.irq_requested_at.is_some_and(|at| at + 3 > self.cycles);
-
                     // A taken non-page-crossing branch ignores IRQ during
                     // its last clock.  Only defer if the IRQ was first
                     // visible during the penalty cycle (last 3 PPU ticks
@@ -432,7 +429,7 @@ impl<M: Mcu> Cpu<M> {
                         && self
                             .irq_requested_at
                             .is_some_and(|at| self.cycles.wrapping_sub(at) <= 3);
-                    if irq_sample_too_recent || defer_for_branch {
+                    if defer_for_branch {
                         Microcode::FetchAndDecode
                     } else {
                         // After DMA, model the 6502's penultimate-cycle IRQ sampling.
