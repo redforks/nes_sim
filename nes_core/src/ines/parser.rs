@@ -90,7 +90,13 @@ fn parse_header(input: &mut &[u8]) -> Result<(FileVersion, super::Header), Conte
                 super::NametableArrangement::Horizontal
             },
             console_type,
-            prg_ram_size: nes20.then(|| decode_shift_count(flags10 & 0x0f)).flatten(),
+            prg_ram_size: if nes20 {
+                decode_shift_count(flags10 & 0x0f)
+            } else if flags8 == 0 {
+                Some(8 * 1024)
+            } else {
+                Some(flags8 as usize * 8 * 1024)
+            },
             prg_nvram_size: nes20.then(|| decode_shift_count(flags10 >> 4)).flatten(),
             chr_ram_size: nes20.then(|| decode_shift_count(flags11 & 0x0f)).flatten(),
             chr_nvram_size: nes20.then(|| decode_shift_count(flags11 >> 4)).flatten(),

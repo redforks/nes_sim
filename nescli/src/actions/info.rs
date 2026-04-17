@@ -34,12 +34,15 @@ fn header_to_key_values(h: &Header, version: FileVersion) -> Vec<(&str, String)>
         ),
     ];
 
+    if let Some(prg_ram_size) = h.prg_ram_size {
+        values.push(("PRG RAM bytes", prg_ram_size.to_string()));
+    }
+
     if version == FileVersion::Nes20 {
         values.push(("Submapper number", h.submapper_no.unwrap_or(0).to_string()));
         values.push(("PRG ROM bytes", h.prg_rom_size.to_string()));
         values.push(("CHR ROM bytes", h.chr_rom_size.to_string()));
         values.push(("Console type", h.console_type.to_string()));
-        values.push(("PRG RAM bytes", h.prg_ram_size.unwrap_or(0).to_string()));
         values.push(("PRG NVRAM bytes", h.prg_nvram_size.unwrap_or(0).to_string()));
         values.push(("CHR RAM bytes", h.chr_ram_size.unwrap_or(0).to_string()));
         values.push(("CHR NVRAM bytes", h.chr_nvram_size.unwrap_or(0).to_string()));
