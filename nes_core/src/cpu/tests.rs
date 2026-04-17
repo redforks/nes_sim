@@ -1786,14 +1786,11 @@ fn test_jsr_pushes_pc_and_jumps() {
 #[test]
 fn test_rts_pops_pc() {
     let mut cpu = create_cpu_with_program(&[0x60]); // RTS
-    // Setup stack: return address $1233 (before RTS adds 1)
-    // pop_stack increments SP first, then reads
-    // We want: first pop reads 0x33, second pop reads 0x12
-    cpu.sp = 0xFD; // After two pops: 0xFE -> 0x1FF, 0xFF -> 0x100... no wait
-    // Let me recalculate:
+    // Stack setup: SP=0xFD, 0x1FE=0x33 (low), 0x1FF=0x12 (high)
     // pop_stack: SP++, read from 0x100 + SP
-    // First pop: SP = 0xFD + 1 = 0xFE, read from 0x1FE (should be low byte 0x33)
-    // Second pop: SP = 0xFE + 1 = 0xFF, read from 0x1FF (should be high byte 0x12)
+    // First pop: SP=0xFD+1=0xFE, reads 0x1FE → 0x33
+    // Second pop: SP=0xFE+1=0xFF, reads 0x1FF → 0x12
+    cpu.sp = 0xFD;
     cpu.write_byte(0x1FE, 0x33); // Low byte
     cpu.write_byte(0x1FF, 0x12); // High byte
 

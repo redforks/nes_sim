@@ -1,13 +1,13 @@
 use crate::{
-    ExecuteResult, Plugin,
     ines::INesFile,
     machine::Machine,
     nes::{
-        NesMcu,
         controller::Button,
         ppu::{VBLANK_SET_DOT, VBLANK_SET_SCANLINE},
+        NesMcu,
     },
     render::Render,
+    ExecuteResult, Plugin,
 };
 use std::fs;
 
@@ -19,6 +19,8 @@ const MAX_TICKS_PER_FRAME: u32 = 90000;
 pub struct NesMachine<P, R: Render, D: crate::nes::apu::AudioDriver> {
     machine: Machine<P, NesMcu<R, D>>,
     cycles: usize,
+    irq_line_latched: bool,
+    irq_line_next: bool,
 }
 
 impl<P, R, D> NesMachine<P, R, D>
@@ -32,6 +34,8 @@ where
         Self {
             machine: Machine::with_plugin(plugin, mcu),
             cycles: 0,
+            irq_line_latched: false,
+            irq_line_next: false,
         }
     }
 
@@ -66,17 +70,18 @@ where
     pub fn tick(&mut self) -> ExecuteResult {
         self.cycles += 1;
 
+        if self.cycles.is_multiple_of(3) {
+            self.irq_line_latched = self.irq_line_next;
+        }
+
+        // The CPU samples IRQ from the previously-observed tick, not from a
+        // level that was asserted later in this same PPU tick.
+        self.machine.cpu_mut().set_irq(self.irq_line_latched);
+
         self.machine.mcu_mut().tick_ppu();
         let nmi_line = self.mcu().ppu().nmi_line_out();
         let timing = self.mcu().ppu().timing();
         self.machine.cpu_mut().update_nmi_line(nmi_line, timing);
-
-        // Poll IRQ BEFORE the APU tick so the CPU sees the previous
-        // tick's interrupt state.  This models the real 6502's behavior
-        // where a newly-asserted IRQ is not visible until the following
-        // instruction boundary.
-        let irq_pending = self.machine.mcu().irq_pending();
-        self.machine.cpu_mut().set_irq(irq_pending);
 
         if self.cycles.is_multiple_of(3) {
             self.machine.mcu_mut().tick_apu();
@@ -102,6 +107,8 @@ where
             self.machine.cpu_mut().request_oam_dma();
         }
 
+        self.irq_line_next = self.machine.mcu().irq_pending();
+
         result
     }
 
@@ -116,6 +123,8 @@ where
     pub fn reset(&mut self) {
         self.machine.mcu_mut().reset();
         self.machine.reset();
+        self.irq_line_latched = false;
+        self.irq_line_next = false;
     }
 
     pub fn flush_audio(&mut self) {

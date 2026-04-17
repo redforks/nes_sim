@@ -299,10 +299,10 @@ const fn indirect_indexed_store_a() -> ArrayVec<[Microcode; 7]> {
 
 const fn build_opcode_table() -> [ArrayVec<[Microcode; 7]>; 256] {
     use super::Flag::*;
+    use opcode::*;
     use AOrMemory::*;
     use Microcode::*;
     use Register::*;
-    use opcode::*;
 
     let mut r = include!("init_microtable.inc.rs");
     r[AND_IMMEDIATE as usize] = microcode_arr!(ImmediateWithOp(ImmediateOp::And));

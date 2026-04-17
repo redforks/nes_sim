@@ -244,7 +244,7 @@ mmc3_irq_test_5: build_nes_cpu_test
 mmc3_irq_test_6: build_nes_cpu_test
     target/debug/nes_cpu_test --quiet -f ../nes-test-roms/mmc3_irq_tests/6.MMC3_rev_B.nes
 
-mmc3_irq_tests: mmc3_irq_test_1 mmc3_irq_test_2 mmc3_irq_test_3 mmc3_irq_test_4 mmc3_irq_test_5 mmc3_irq_test_6
+mmc3_irq_tests: mmc3_irq_test_1 mmc3_irq_test_2 mmc3_irq_test_3 mmc3_irq_test_4 mmc3_irq_test_6
 
 mmc3_test_1: build_nes_cpu_test
     target/debug/nes_cpu_test --quiet -f ../nes-test-roms/mmc3_test/1-clocking.nes
@@ -259,7 +259,31 @@ mmc3_test_5: build_nes_cpu_test
 mmc3_test_6: build_nes_cpu_test
     target/debug/nes_cpu_test --quiet -f ../nes-test-roms/mmc3_test/6-MMC6.nes
 
-mmc3_tests: mmc3_test_1 mmc3_test_2 mmc3_test_3 mmc3_test_4 mmc3_test_5 mmc3_test_6
+[parallel]
+mmc3_tests: mmc3_test_1 mmc3_test_2 mmc3_test_3 mmc3_test_4 mmc3_test_5
+
+mmc3_test2_1: build_nes_cpu_test
+    target/debug/nes_cpu_test --quiet -f ../nes-test-roms/mmc3_test_2/rom_singles/1-clocking.nes
+mmc3_test2_2: build_nes_cpu_test
+    target/debug/nes_cpu_test --quiet -f ../nes-test-roms/mmc3_test_2/rom_singles/2-details.nes
+mmc3_test2_3: build_nes_cpu_test
+    target/debug/nes_cpu_test --quiet -f ../nes-test-roms/mmc3_test_2/rom_singles/3-A12_clocking.nes
+mmc3_test2_4: build_nes_cpu_test
+    target/debug/nes_cpu_test --quiet -f ../nes-test-roms/mmc3_test_2/rom_singles/4-scanline_timing.nes
+mmc3_test2_5: build_nes_cpu_test
+    target/debug/nes_cpu_test --quiet -f ../nes-test-roms/mmc3_test_2/rom_singles/5-MMC3.nes
+mmc3_test2_6: build_nes_cpu_test
+    target/debug/nes_cpu_test --quiet -f ../nes-test-roms/mmc3_test_2/rom_singles/6-MMC3_alt.nes
+
+[parallel]
+mmc3_test2: mmc3_test2_1 mmc3_test2_2 mmc3_test2_3 mmc3_test2_4 mmc3_test2_5
+
+[parallel]
+mmc3: mmc3_tests mmc3_test2 mmc3_irq_tests
+
+mapper_todo: mmc3_test2_6
+
+passed_mapper: mmc3
 
 [parallel]
 passed_cpu_tests: cpu-test instr_misc instr_test-v5 instr_test-v3 instr_timing cpu_dummy_reads cpu_dummy_writes cpu_exec_space cpu_reset cpu_timing_test6 nestest branch_timing_tests cpu_interrupts_v2
@@ -271,7 +295,7 @@ passed_ppu_tests: ppu_vbl_nmi vbl_nmi_timing oam_read oam_stress ppu_open_bus pp
 passed_apu_tests: apu_mixer apu_reset apu_test dmc_dma_during_read4
 
 [parallel]
-passed: unit-test passed_cpu_tests passed_ppu_tests passed_apu_tests
+passed: unit-test passed_cpu_tests passed_ppu_tests passed_apu_tests passed_mapper
 
 wasm-debug-build:
     cd nes_web && wasm-pack build --release

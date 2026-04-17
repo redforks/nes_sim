@@ -335,6 +335,7 @@ pub struct Ppu<R: Render = ()> {
     /// PPU mask register changes are not visible until the next PPU tick;
     /// this delayed copy models the 1-dot internal pipeline delay.
     effective_mask: PpuMask,
+    rendering_enabled_at_scanline_start: bool,
 
     frame_no: usize,
     ppu_ticks: u64,
@@ -379,6 +380,7 @@ impl<R: Render> Ppu<R> {
             frame_no: 0,
             ppu_ticks: 0,
             effective_mask: PpuMask::new(),
+            rendering_enabled_at_scanline_start: false,
         }
     }
 
@@ -405,6 +407,7 @@ impl<R: Render> Ppu<R> {
         self.ppu_ticks = 0;
         self.scanline_cache.dirty = true;
         self.write_scroll(0);
+        self.rendering_enabled_at_scanline_start = false;
     }
 
     pub fn timing(&self) -> (u16, u16) {
@@ -613,6 +616,10 @@ impl<R: Render> Ppu<R> {
         self.ppu_ticks = self.ppu_ticks.wrapping_add(1);
         let rendering_enabled = self.rendering_enabled();
 
+        if self.dot == 0 {
+            self.rendering_enabled_at_scanline_start = rendering_enabled;
+        }
+
         if self.sprite_zero_hit_pending {
             self.status.set_sprite_zero_hit(true);
             self.sprite_zero_hit_pending = false;
@@ -623,29 +630,42 @@ impl<R: Render> Ppu<R> {
             self.sprite_overflow_pending = false;
         }
 
-        // MMC3 A12 monitoring: track VRAM address changes during background fetch sequence
-        // The MMC3 watches for rising edges on A12 (0→1 transitions) to clock the IRQ counter.
-        // Background fetches (dots 1-256): 8-dot cycles - nametable → attr → pat low → pat high
-        // Each fetch type takes 2 dots: (0,1)=NT, (2,3)=attr, (4,5)=pat low, (6,7)=pat high
-        // Monitor during visible scanlines (0-239) and pre-render scanline (261)
+        // MMC3 scanline IRQs are driven by filtered PPU A12 rises. Feed the
+        // mapper with the render-time fetch-side addresses so the same edge
+        // detector handles both manual $2006/$2007 clocks and steady-state
+        // rendering clocks.
         if rendering_enabled
-            && ((self.scanline < 240 || self.scanline == 261) && self.dot >= 1 && self.dot <= 256)
+            && (self.scanline < 240
+                || (self.scanline == 261 && self.rendering_enabled_at_scanline_start))
         {
-            let dot_in_tile = ((self.dot - 1) % 8) as usize;
-            let fetch_type = dot_in_tile / 2;
-            let background = self
-                .background_anchor
-                .unwrap_or_else(|| BackgroundActivation::snapshot(self, 0));
-
-            let fetch_addr = if fetch_type < 2 {
-                0x2000 // Nametable/attribute fetch: A12=1
-            } else if background.ctrl.background_pattern_table() {
-                0x1000 // Right background pattern table: A12=1
+            let fetch_addr = if ((1..=256).contains(&self.dot) || (321..=336).contains(&self.dot))
+                && self.dot % 2 == 0
+            {
+                let base_dot = if self.dot <= 256 { 2 } else { 322 };
+                let fetch_type = (((self.dot - base_dot) / 2) % 4) as usize;
+                Some(if fetch_type < 2 {
+                    0x2000
+                } else if self.ctrl.background_pattern_table() {
+                    0x1000
+                } else {
+                    0x0000
+                })
+            } else if (257..=320).contains(&self.dot) && self.dot % 2 == 0 {
+                let fetch_type = (((self.dot - 258) / 2) % 4) as usize;
+                Some(if fetch_type < 2 {
+                    0x2000
+                } else if self.ctrl.sprite_size() || self.ctrl.sprite_pattern_table() {
+                    0x1000
+                } else {
+                    0x0000
+                })
             } else {
-                0x0000 // Left background pattern table: A12=0
+                None
             };
 
-            cartridge.notify_vram_address(fetch_addr);
+            if let Some(fetch_addr) = fetch_addr {
+                cartridge.notify_vram_address(fetch_addr);
+            }
         }
 
         if self.scanline < 240 && self.dot == 0 {
