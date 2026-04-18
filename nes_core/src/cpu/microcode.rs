@@ -299,10 +299,10 @@ const fn indirect_indexed_store_a() -> ArrayVec<[Microcode; 7]> {
 
 const fn build_opcode_table() -> [ArrayVec<[Microcode; 7]>; 256] {
     use super::Flag::*;
-    use opcode::*;
     use AOrMemory::*;
     use Microcode::*;
     use Register::*;
+    use opcode::*;
 
     let mut r = include!("init_microtable.inc.rs");
     r[AND_IMMEDIATE as usize] = microcode_arr!(ImmediateWithOp(ImmediateOp::And));
@@ -1478,7 +1478,7 @@ impl Microcode {
                 cpu.pc |= (cpu.read_byte(0xFFFD) as u16) << 8;
             }
             Self::LoadPcAbsoluteH => {
-                cpu.pc = (cpu.address_latch & 0xff) | ((cpu.inc_read_byte() as u16) << 8);
+                cpu.pc = (cpu.ab & 0xff) | ((cpu.inc_read_byte() as u16) << 8);
             }
             Self::LoadIntoAlu => {
                 cpu.load_alu();
@@ -1494,7 +1494,7 @@ impl Microcode {
     }
 
     fn load_register<M: Mcu>(cpu: &mut Cpu<M>, r: Register) {
-        let value = cpu.read_byte(cpu.address_latch);
+        let value = cpu.read_byte(cpu.ab);
         match r {
             Register::A => cpu.set_a(value),
             Register::X => cpu.set_x(value),
@@ -1504,9 +1504,9 @@ impl Microcode {
 
     fn store_register<M: Mcu>(cpu: &mut Cpu<M>, r: Register) {
         match r {
-            Register::A => cpu.write_byte(cpu.address_latch, cpu.a),
-            Register::X => cpu.write_byte(cpu.address_latch, cpu.x),
-            Register::Y => cpu.write_byte(cpu.address_latch, cpu.y),
+            Register::A => cpu.write_byte(cpu.ab, cpu.a),
+            Register::X => cpu.write_byte(cpu.ab, cpu.x),
+            Register::Y => cpu.write_byte(cpu.ab, cpu.y),
         }
     }
 
@@ -1565,15 +1565,15 @@ impl Microcode {
 
     fn zero_page<M: Mcu>(cpu: &mut Cpu<M>) {
         let addr = cpu.inc_read_byte();
-        cpu.address_latch = addr as u16;
+        cpu.ab = addr as u16;
     }
 
     fn zero_page_indexed_x<M: Mcu>(cpu: &mut Cpu<M>) {
-        cpu.address_latch = cpu.abl().wrapping_add(cpu.x) as u16;
+        cpu.ab = cpu.abl().wrapping_add(cpu.x) as u16;
     }
 
     fn zero_page_indexed_y<M: Mcu>(cpu: &mut Cpu<M>) {
-        cpu.address_latch = cpu.abl().wrapping_add(cpu.y) as u16;
+        cpu.ab = cpu.abl().wrapping_add(cpu.y) as u16;
     }
 
     fn absolute_l<M: Mcu>(cpu: &mut Cpu<M>) {
@@ -1587,17 +1587,17 @@ impl Microcode {
     }
 
     fn indexed_l<M: Mcu>(cpu: &mut Cpu<M>) {
-        cpu.indexed_address_latch = cpu.read_byte(cpu.address_latch);
+        cpu.db = cpu.read_byte(cpu.ab);
     }
 
     fn indexed_h<M: Mcu>(cpu: &mut Cpu<M>) {
-        let page = cpu.address_latch & 0xFF00;
-        let addr = page | (cpu.address_latch as u8 & 0xFF).wrapping_add(1) as u16;
-        cpu.address_latch = cpu.indexed_address_latch as u16 | ((cpu.read_byte(addr) as u16) << 8);
+        let page = cpu.ab & 0xFF00;
+        let addr = page | (cpu.ab as u8 & 0xFF).wrapping_add(1) as u16;
+        cpu.ab = cpu.db as u16 | ((cpu.read_byte(addr) as u16) << 8);
     }
 
     fn store_alu<M: Mcu>(cpu: &mut Cpu<M>) {
-        cpu.write_byte(cpu.address_latch, cpu.alu);
+        cpu.write_byte(cpu.ab, cpu.alu);
     }
 
     fn branch_relative<M: Mcu>(cpu: &mut Cpu<M>, branch_test: BranchTest) {
@@ -1640,7 +1640,7 @@ impl Microcode {
         idx: u8,
     ) {
         let abh = cpu.abh();
-        cpu.address_latch = cpu.address_latch.wrapping_add(idx as u16);
+        cpu.ab = cpu.ab.wrapping_add(idx as u16);
         let is_first_clock_always = matches!(first_clock, CrossPageBehavior::FirstClockAlways);
 
         if is_first_clock_always || abh != cpu.abh() {
@@ -1692,12 +1692,12 @@ impl Microcode {
             }
             IncDecTarget::IncrementAlu => {
                 cpu.alu = cpu.alu.wrapping_add(1);
-                cpu.write_byte(cpu.address_latch, cpu.alu);
+                cpu.write_byte(cpu.ab, cpu.alu);
                 cpu.update_zero_negative_flags(cpu.alu);
             }
             IncDecTarget::DecrementAlu => {
                 cpu.alu = cpu.alu.wrapping_sub(1);
-                cpu.write_byte(cpu.address_latch, cpu.alu);
+                cpu.write_byte(cpu.ab, cpu.alu);
                 cpu.update_zero_negative_flags(cpu.alu);
             }
         }
