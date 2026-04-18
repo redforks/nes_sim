@@ -3734,6 +3734,7 @@ struct TestMcu {
     mem: [u8; 0x10000],
     writes: Vec<(u16, u8)>,
     reads: Vec<u16>,
+    address_latch: Option<u16>,
 }
 
 impl Default for TestMcu {
@@ -3742,6 +3743,7 @@ impl Default for TestMcu {
             mem: [0; 0x10000],
             writes: Vec::new(),
             reads: Vec::new(),
+            address_latch: None,
         }
     }
 }
@@ -3757,6 +3759,40 @@ impl Mcu for TestMcu {
     }
 
     fn write(&mut self, address: u16, value: u8) {
+        self.mem[address as usize] = value;
+        self.writes.push((address, value));
+    }
+
+    fn prepare_read(&mut self, address: u16) {
+        debug_assert!(
+            self.address_latch.is_none(),
+            "Nested prepare_read calls not supported"
+        );
+        self.address_latch = Some(address);
+    }
+
+    fn new_read(&mut self) -> u8 {
+        let address = self
+            .address_latch
+            .take()
+            .expect("new_read called without prepare_read");
+        self.reads.push(address);
+        self.mem[address as usize]
+    }
+
+    fn prepare_write(&mut self, address: u16) {
+        debug_assert!(
+            self.address_latch.is_none(),
+            "Nested prepare_write calls not supported"
+        );
+        self.address_latch = Some(address);
+    }
+
+    fn new_write(&mut self, value: u8) {
+        let address = self
+            .address_latch
+            .take()
+            .expect("new_write called without prepare_write");
         self.mem[address as usize] = value;
         self.writes.push((address, value));
     }

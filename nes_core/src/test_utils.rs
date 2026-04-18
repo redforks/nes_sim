@@ -27,6 +27,7 @@ pub struct MockMcu {
     is_regional: Cell<bool>,
     region_start: Cell<u16>,
     region_end: Cell<u16>,
+    address_latch: Option<u16>,
 }
 
 impl MockMcu {
@@ -38,6 +39,7 @@ impl MockMcu {
             is_regional: Cell::new(false),
             region_start: Cell::new(0),
             region_end: Cell::new(0xFFFF),
+            address_latch: None,
         }
     }
 
@@ -49,6 +51,7 @@ impl MockMcu {
             is_regional: Cell::new(true),
             region_start: Cell::new(start),
             region_end: Cell::new(end),
+            address_latch: None,
         }
     }
 
@@ -93,6 +96,38 @@ impl Mcu for MockMcu {
 
     fn write(&mut self, addr: u16, value: u8) {
         self.memory.borrow_mut()[addr as usize] = value;
+    }
+
+    fn prepare_read(&mut self, address: u16) {
+        debug_assert!(
+            self.address_latch.is_none(),
+            "address latch should be empty when prepare_read"
+        );
+        self.address_latch = Some(address);
+    }
+
+    fn new_read(&mut self) -> u8 {
+        let address = self
+            .address_latch
+            .take()
+            .expect("address latch should have value when new_read");
+        self.read(address)
+    }
+
+    fn prepare_write(&mut self, address: u16) {
+        debug_assert!(
+            self.address_latch.is_none(),
+            "address latch should be empty when prepare_write"
+        );
+        self.address_latch = Some(address);
+    }
+
+    fn new_write(&mut self, value: u8) {
+        let address = self
+            .address_latch
+            .take()
+            .expect("address latch should have value when new_write");
+        self.write(address, value);
     }
 }
 

@@ -339,6 +339,7 @@ pub struct Ppu<R: Render = ()> {
 
     frame_no: usize,
     ppu_ticks: u64,
+    address_latch: Option<u16>,
 }
 
 /// PPU registers are mirrored every 8 bytes in range $2000-$3FFF
@@ -381,6 +382,7 @@ impl<R: Render> Ppu<R> {
             ppu_ticks: 0,
             effective_mask: PpuMask::new(),
             rendering_enabled_at_scanline_start: false,
+            address_latch: None,
         }
     }
 
@@ -903,6 +905,26 @@ impl<R: Render> Ppu<R> {
             }
             _ => {} // Ignore other addresses
         }
+    }
+
+    pub fn prepare_read(&mut self, address: u16) {
+        debug_assert!(self.address_latch.is_none(), "address latch should be empty when prepare_read");
+        self.address_latch = Some(address);
+    }
+
+    pub fn new_read(&mut self, cartridge: &mut Cartridge) -> u8 {
+        let address = self.address_latch.take().expect("address latch should have value when new_read");
+        self.read(address, cartridge)
+    }
+
+    pub fn prepare_write(&mut self, address: u16) {
+        debug_assert!(self.address_latch.is_none(), "address latch should be empty when prepare_write");
+        self.address_latch = Some(address);
+    }
+
+    pub fn new_write(&mut self, value: u8, cartridge: &mut Cartridge) {
+        let address = self.address_latch.take().expect("address latch should have value when new_write");
+        self.write(address, value, cartridge);
     }
 
     fn read_vram(&self, address: u16, cartridge: &Cartridge) -> u8 {

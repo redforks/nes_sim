@@ -708,6 +708,7 @@ pub struct Apu<D: AudioDriver = ()> {
     dmc_dma_request: Option<(u16, bool)>,
     dc_last_input: f32,
     dc_last_output: f32,
+    address_latch: Option<u16>,
 }
 
 impl Default for Apu<()> {
@@ -743,6 +744,7 @@ impl<D: AudioDriver> Apu<D> {
             dmc_dma_request: None,
             dc_last_input: 0.0,
             dc_last_output: 0.0,
+            address_latch: None,
         }
     }
 
@@ -928,6 +930,26 @@ impl<D: AudioDriver> Apu<D> {
             0x4017 => self.set_frame_counter(FrameCounter::from_bits(value)),
             _ => {}
         }
+    }
+
+    pub fn prepare_read(&mut self, address: u16) {
+        debug_assert!(self.address_latch.is_none(), "address latch should be empty when prepare_read");
+        self.address_latch = Some(address);
+    }
+
+    pub fn new_read(&mut self) -> u8 {
+        let address = self.address_latch.take().expect("address latch should have value when new_read");
+        self.read(address)
+    }
+
+    pub fn prepare_write(&mut self, address: u16) {
+        debug_assert!(self.address_latch.is_none(), "address latch should be empty when prepare_write");
+        self.address_latch = Some(address);
+    }
+
+    pub fn new_write(&mut self, value: u8) {
+        let address = self.address_latch.take().expect("address latch should have value when new_write");
+        self.write(address, value);
     }
 
     fn status_byte(&self) -> u8 {

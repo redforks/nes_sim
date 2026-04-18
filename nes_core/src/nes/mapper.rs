@@ -259,6 +259,18 @@ impl Cartridge {
         }
     }
 
+    pub fn prepare_read(&mut self, _address: u16) {}
+
+    pub fn new_read(&mut self, address: u16) -> u8 {
+        self.read(address)
+    }
+
+    pub fn prepare_write(&mut self, _address: u16) {}
+
+    pub fn new_write(&mut self, address: u16, value: u8) {
+        self.write(address, value);
+    }
+
     pub fn on_ppu_tick(&mut self, scanline: u16, dot: u16, rendering_enabled: bool) {
         match self {
             Cartridge::Mapper0(_)

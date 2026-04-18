@@ -26,6 +26,7 @@ pub struct NesMcu<R: Render, D: AudioDriver> {
     /// CPU data bus open bus value: the last value read by the CPU.
     /// Reading write-only or unmapped addresses returns this value.
     open_bus: u8,
+    address_latch: Option<u16>,
 }
 
 impl<R: Render, D: AudioDriver> NesMcu<R, D> {
@@ -42,6 +43,7 @@ impl<R: Render, D: AudioDriver> NesMcu<R, D> {
             oam_dma_pending: false,
             dmc_dma_pending: None,
             open_bus: 0,
+            address_latch: None,
         }
     }
 
@@ -214,16 +216,87 @@ impl<R: Render, D: AudioDriver> Mcu for NesMcu<R, D> {
         }
     }
 
+    fn prepare_read(&mut self, address: u16) {
+        debug_assert!(
+            self.address_latch.is_none(),
+            "address latch should be empty when prepare_read"
+        );
+        self.address_latch = Some(address);
+        match address {
+            0x0000..=0x1fff => self.lower_ram.prepare_read(address),
+            0x2000..=0x3fff => self.ppu.prepare_read(address),
+            0x4015 => self.apu.prepare_read(address),
+            0x4016 | 0x4017 => {}
+            0x4000..=0x401f => {}
+            0x4020..=0x40ff => {}
+            0x4100..=0xffff => self.cartridge.prepare_read(address),
+        }
+    }
+
+    fn new_read(&mut self) -> u8 {
+        let addr = self
+            .address_latch
+            .take()
+            .expect("address latch should have value when new_read");
+        let value = match addr {
+            0x0000..=0x1fff => self.lower_ram.new_read(),
+            0x2000..=0x3fff => self.ppu.new_read(&mut self.cartridge),
+            0x4015 => self.apu.new_read(),
+            0x4016 | 0x4017 => self.controller.new_read(),
+            // Write-only APU/IO registers and unused test registers: open bus
+            0x4000..=0x401f => self.open_bus,
+            // Unallocated I/O space: open bus
+            0x4020..=0x40ff => self.open_bus,
+            0x4100..=0xffff => self.cartridge.new_read(addr),
+        };
+        self.open_bus = value;
+        value
+    }
+
+    fn prepare_write(&mut self, address: u16) {
+        match address {
+            0x0000..=0x1fff => self.lower_ram.prepare_write(address),
+            0x2000..=0x3fff => self.ppu.prepare_write(address),
+            0x4000..=0x401f => match address {
+                0x4014 => {}
+                0x4016 => self.controller.prepare_write(address),
+                _ => self.apu.prepare_write(address),
+            },
+            // Unallocated I/O space: writes are ignored
+            0x4020..=0x40ff => {}
+            0x4100..=0xffff => self.cartridge.prepare_write(address),
+        }
+    }
+
+    fn new_write(&mut self, value: u8) {
+        let addr = self
+            .address_latch
+            .take()
+            .expect("address latch should have value when new_read");
+        match addr {
+            0x0000..=0x1fff => self.lower_ram.new_write(value),
+            0x2000..=0x3fff => self.ppu.new_write(value, &mut self.cartridge),
+            0x4000..=0x401f => match addr {
+                0x4014 => self.ppu_dma(value),
+                0x4016 => self.controller.new_write(value),
+                _ => self.apu.new_write(value),
+            },
+            // Unallocated I/O space: writes are ignored
+            0x4020..=0x40ff => {}
+            0x4100..=0xffff => self.cartridge.new_write(addr, value),
+        }
+    }
+
     fn take_dmc_dma_address(&mut self) -> Option<u16> {
-        self.take_dmc_dma_address()
+        NesMcu::take_dmc_dma_address(self)
     }
 
     fn perform_dmc_dma_read(&mut self, sample_addr: u16, cpu_read_addr: u16) -> u8 {
-        self.perform_dmc_dma_read(sample_addr, cpu_read_addr)
+        NesMcu::perform_dmc_dma_read(self, sample_addr, cpu_read_addr)
     }
 
     fn supply_dmc_dma_byte(&mut self, byte: u8) {
-        self.supply_dmc_dma_byte(byte);
+        NesMcu::supply_dmc_dma_byte(self, byte);
     }
 }
 

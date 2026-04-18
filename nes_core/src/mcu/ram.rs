@@ -4,15 +4,24 @@ pub struct RamMcu<const SIZE: usize> {
     /// Start address of the memory region
     start: u16,
     ram: [u8; SIZE],
+    address_latch: Option<u16>,
 }
 
 impl<const SIZE: usize> RamMcu<SIZE> {
     pub fn new(ram: [u8; SIZE]) -> RamMcu<SIZE> {
-        RamMcu { start: 0, ram }
+        RamMcu {
+            start: 0,
+            ram,
+            address_latch: None,
+        }
     }
 
     pub fn start_from(start: u16, ram: [u8; SIZE]) -> Self {
-        RamMcu { start, ram }
+        RamMcu {
+            start,
+            ram,
+            address_latch: None,
+        }
     }
 
     fn to_index(&self, address: u16) -> usize {
@@ -32,6 +41,38 @@ impl<const SIZE: usize> Mcu for RamMcu<SIZE> {
 
     fn write(&mut self, address: u16, value: u8) {
         self.ram[self.to_index(address)] = value;
+    }
+
+    fn prepare_read(&mut self, address: u16) {
+        debug_assert!(
+            self.address_latch.is_none(),
+            "address latch should be empty when prepare_read"
+        );
+        self.address_latch = Some(address);
+    }
+
+    fn new_read(&mut self) -> u8 {
+        let address = self
+            .address_latch
+            .take()
+            .expect("address latch should have value when new_read");
+        self.read(address)
+    }
+
+    fn prepare_write(&mut self, address: u16) {
+        debug_assert!(
+            self.address_latch.is_none(),
+            "address latch should be empty when prepare_write"
+        );
+        self.address_latch = Some(address);
+    }
+
+    fn new_write(&mut self, value: u8) {
+        let address = self
+            .address_latch
+            .take()
+            .expect("address latch should have value when new_write");
+        self.write(address, value);
     }
 }
 

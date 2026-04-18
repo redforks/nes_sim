@@ -14,6 +14,7 @@ fn test_mcu() -> NesMcu<ImageRender, ()> {
         oam_dma_pending: false,
         dmc_dma_pending: None,
         open_bus: 0,
+        address_latch: None,
     }
 }
 

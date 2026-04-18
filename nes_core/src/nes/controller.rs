@@ -79,6 +79,7 @@ pub struct Controller {
     pub a: AController,
     /// The second controller.
     pub b: AController,
+    address_latch: Option<u16>,
 }
 
 #[allow(clippy::new_without_default)]
@@ -87,6 +88,7 @@ impl Controller {
         Controller {
             a: AController::new(),
             b: AController::new(),
+            address_latch: None,
         }
     }
 }
@@ -115,6 +117,38 @@ impl Mcu for Controller {
             self.a.reset_for_read();
             self.b.reset_for_read();
         }
+    }
+
+    fn prepare_read(&mut self, address: u16) {
+        debug_assert!(
+            self.address_latch.is_none(),
+            "address latch should be empty when prepare_read"
+        );
+        self.address_latch = Some(address);
+    }
+
+    fn new_read(&mut self) -> u8 {
+        let address = self
+            .address_latch
+            .take()
+            .expect("address latch should have value when new_read");
+        self.read(address)
+    }
+
+    fn prepare_write(&mut self, address: u16) {
+        debug_assert!(
+            self.address_latch.is_none(),
+            "address latch should be empty when prepare_write"
+        );
+        self.address_latch = Some(address);
+    }
+
+    fn new_write(&mut self, value: u8) {
+        let address = self
+            .address_latch
+            .take()
+            .expect("address latch should have value when new_write");
+        self.write(address, value);
     }
 }
 

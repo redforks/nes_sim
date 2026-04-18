@@ -7,10 +7,24 @@ pub use ram::RamMcu;
 /// Note: addr is absolute address, not the offset from start of the memory region.
 /// Make it easy to implement memory mapped devices..
 pub trait Mcu {
-    // Changed to &mut self to allow implementations to mutate state during reads
+    /// Changed to &mut self to allow implementations to mutate state during reads.
+    /// deprecated by `prepare_read()` and `new_read()`.
     fn read(&mut self, address: u16) -> u8;
-    fn peek(&self, address: u16) -> u8;
+    /// deprated by `prepare_write()` and `new_write()`.
     fn write(&mut self, address: u16, value: u8);
+
+    /// Return the value of specific address, not triggers side-effect, only used in debug/log.
+    fn peek(&self, address: u16) -> u8;
+
+    /// Notify mcu to prepare for read, normally prepare in first phase of Microcode
+    fn prepare_read(&mut self, address: u16);
+    /// Perform read, normally perform in second phase of Microcode, return the value to be used by cpu
+    fn new_read(&mut self) -> u8;
+
+    /// Notify mcu to prepare for write, normally prepare in first phase of Microcode
+    fn prepare_write(&mut self, address: u16);
+    /// Perform write, normally perform in second phase of Microcode, value is the value to be written to the address
+    fn new_write(&mut self, value: u8);
 
     fn take_dmc_dma_address(&mut self) -> Option<u16> {
         None
@@ -30,12 +44,14 @@ mod tests {
 
     struct MockMcu {
         data: RefCell<u8>,
+        address_latch: Option<u16>,
     }
 
     impl MockMcu {
         fn new() -> Self {
             MockMcu {
                 data: RefCell::new(0),
+                address_latch: None,
             }
         }
     }
@@ -51,6 +67,38 @@ mod tests {
 
         fn write(&mut self, _address: u16, value: u8) {
             *self.data.borrow_mut() = value;
+        }
+
+        fn prepare_read(&mut self, address: u16) {
+            debug_assert!(
+                self.address_latch.is_none(),
+                "address latch should be empty when prepare_read"
+            );
+            self.address_latch = Some(address);
+        }
+
+        fn new_read(&mut self) -> u8 {
+            let addr = self
+                .address_latch
+                .take()
+                .expect("address latch should have value when new_read");
+            self.read(addr)
+        }
+
+        fn prepare_write(&mut self, address: u16) {
+            debug_assert!(
+                self.address_latch.is_none(),
+                "address latch should be empty when prepare_write"
+            );
+            self.address_latch = Some(address);
+        }
+
+        fn new_write(&mut self, value: u8) {
+            let addr = self
+                .address_latch
+                .take()
+                .expect("address latch should have value when new_write");
+            self.write(addr, value);
         }
     }
 
