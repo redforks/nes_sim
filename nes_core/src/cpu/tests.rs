@@ -7,12 +7,21 @@ const IRQ_VECTOR: u16 = 0xFFFE;
 
 fn create_cpu_with_program(program: &[u8]) -> Cpu<MockMcu> {
     let mcu = MockMcu::new().with_program(0, program);
-    Cpu::new(mcu)
+    let mut r = create_cpu_with_mcu(mcu);
+    r.pc = 0;
+    r
+}
+
+fn create_cpu_with_mcu<M: Mcu>(mcu: M) -> Cpu<M> {
+    let mut cpu = Cpu::new(mcu);
+    let mut plugin = EmptyPlugin::new();
+    cpu.drain_microcodes(&mut plugin);
+    cpu
 }
 
 fn create_cpu() -> Cpu<MockMcu> {
     let mcu = MockMcu::new();
-    Cpu::new(mcu)
+    create_cpu_with_mcu(mcu)
 }
 
 fn execute_next(cpu: &mut Cpu<MockMcu>) {
@@ -1934,10 +1943,7 @@ fn test_jmp_indirect_no_page_boundary() {
 fn test_branch_cross_page_boundary() {
     // Load program at 0x100, test backward branch across page boundary
     let mcu = MockMcu::new().with_program(0x100, &[0x10, 0xFD]); // BPL $FD (branch back 3 bytes)
-    let mut cpu = Cpu::new(mcu);
-    // Drain any reset microcodes enqueued by Cpu::new() before setting PC
-    let mut plugin = EmptyPlugin::new();
-    cpu.drain_microcodes(&mut plugin);
+    let mut cpu = create_cpu_with_mcu(mcu);
 
     cpu.pc = 0x100;
     cpu.set_flag(Flag::Negative, false);
@@ -1966,10 +1972,7 @@ fn test_branch_forward() {
 fn test_branch_backward_max() {
     // Load program at 0x100
     let mcu = MockMcu::new().with_program(0x100, &[0x10, 0x80]); // BPL $80 (branch back 128 bytes)
-    let mut cpu = Cpu::new(mcu);
-    // Drain reset microcodes before setting PC
-    let mut plugin = EmptyPlugin::new();
-    cpu.drain_microcodes(&mut plugin);
+    let mut cpu = create_cpu_with_mcu(mcu);
 
     cpu.pc = 0x100;
     cpu.set_flag(Flag::Negative, false);
@@ -2031,7 +2034,7 @@ fn test_lda_indirect_x_unofficial() {
     // Program: LDA ($10, X)
     mcu.write(0, 0xA1); // opcode
     mcu.write(1, 0x10); // zero page addr
-    let mut cpu = Cpu::new(mcu);
+    let mut cpu = create_cpu_with_mcu(mcu);
     cpu.x = 0;
 
     execute_next(&mut cpu);
@@ -2049,7 +2052,7 @@ fn test_lda_indirect_y_unofficial() {
     // Program: LDA ($10), Y
     mcu.write(0, 0xB1); // opcode
     mcu.write(1, 0x10); // zero page addr
-    let mut cpu = Cpu::new(mcu);
+    let mut cpu = create_cpu_with_mcu(mcu);
     cpu.y = 5;
 
     execute_next(&mut cpu);
@@ -2066,7 +2069,7 @@ fn test_sta_indirect_y_unofficial() {
     // Program: STA ($10), Y
     mcu.write(0, 0x91); // opcode
     mcu.write(1, 0x10); // zero page addr
-    let mut cpu = Cpu::new(mcu);
+    let mut cpu = create_cpu_with_mcu(mcu);
     cpu.a = 0x42;
     cpu.y = 5;
 
@@ -2085,7 +2088,7 @@ fn test_cmp_indirect_x_unofficial() {
     // Program: CMP ($10, X)
     mcu.write(0, 0xC1); // opcode
     mcu.write(1, 0x10); // zero page addr
-    let mut cpu = Cpu::new(mcu);
+    let mut cpu = create_cpu_with_mcu(mcu);
     cpu.a = 0x42;
     cpu.x = 0;
 
@@ -2104,7 +2107,7 @@ fn test_cmp_indirect_y_unofficial() {
     // Program: CMP ($10), Y
     mcu.write(0, 0xD1); // opcode
     mcu.write(1, 0x10); // zero page addr
-    let mut cpu = Cpu::new(mcu);
+    let mut cpu = create_cpu_with_mcu(mcu);
     cpu.a = 0x42;
     cpu.y = 5;
 
@@ -2123,7 +2126,7 @@ fn test_sbc_indirect_x_unofficial() {
     // Program: SBC ($10, X)
     mcu.write(0, 0xE1); // opcode
     mcu.write(1, 0x10); // zero page addr
-    let mut cpu = Cpu::new(mcu);
+    let mut cpu = create_cpu_with_mcu(mcu);
     cpu.a = 0x20;
     cpu.set_flag(Flag::Carry, true);
     cpu.x = 0;
@@ -2143,7 +2146,7 @@ fn test_sbc_indirect_y_unofficial() {
     // Program: SBC ($10), Y
     mcu.write(0, 0xF1); // opcode
     mcu.write(1, 0x10); // zero page addr
-    let mut cpu = Cpu::new(mcu);
+    let mut cpu = create_cpu_with_mcu(mcu);
     cpu.a = 0x20;
     cpu.set_flag(Flag::Carry, true);
     cpu.y = 5;
@@ -2171,7 +2174,7 @@ fn test_lax_zero_page() {
     mcu.write(0x10, 0x42);
     mcu.write(0, 0xA7); // opcode
     mcu.write(1, 0x10); // zero page addr
-    let mut cpu = Cpu::new(mcu);
+    let mut cpu = create_cpu_with_mcu(mcu);
 
     execute_next(&mut cpu);
 
@@ -2185,7 +2188,7 @@ fn test_sax_zero_page() {
     let mut mcu = MockMcu::new();
     mcu.write(0, 0x87); // opcode
     mcu.write(1, 0x10); // zero page addr
-    let mut cpu = Cpu::new(mcu);
+    let mut cpu = create_cpu_with_mcu(mcu);
     cpu.a = 0x30;
     cpu.x = 0x12;
 
@@ -2201,7 +2204,7 @@ fn test_dcp_zero_page() {
     mcu.write(0x10, 0x10);
     mcu.write(0, 0xC7); // opcode
     mcu.write(1, 0x10); // zero page addr
-    let mut cpu = Cpu::new(mcu);
+    let mut cpu = create_cpu_with_mcu(mcu);
     cpu.a = 0x10;
 
     execute_next(&mut cpu);
@@ -2218,7 +2221,7 @@ fn test_isc_zero_page() {
     mcu.write(0x10, 0x0F);
     mcu.write(0, 0xE7); // opcode
     mcu.write(1, 0x10); // zero page addr
-    let mut cpu = Cpu::new(mcu);
+    let mut cpu = create_cpu_with_mcu(mcu);
     cpu.a = 0x20;
     cpu.set_flag(Flag::Carry, true);
 
@@ -2235,7 +2238,7 @@ fn test_aso_zero_page() {
     mcu.write(0x10, 0x40); // 0b01000000
     mcu.write(0, 0x07); // opcode
     mcu.write(1, 0x10); // zero page addr
-    let mut cpu = Cpu::new(mcu);
+    let mut cpu = create_cpu_with_mcu(mcu);
     cpu.a = 0x0F;
 
     execute_next(&mut cpu);
@@ -2252,7 +2255,7 @@ fn test_rla_zero_page() {
     mcu.write(0x10, 0x81); // 0b10000001
     mcu.write(0, 0x27); // opcode
     mcu.write(1, 0x10); // zero page addr
-    let mut cpu = Cpu::new(mcu);
+    let mut cpu = create_cpu_with_mcu(mcu);
     cpu.a = 0x0F;
     cpu.set_flag(Flag::Carry, true);
 
@@ -2269,7 +2272,7 @@ fn test_lse_zero_page() {
     mcu.write(0x10, 0x81); // 0b10000001
     mcu.write(0, 0x47); // opcode
     mcu.write(1, 0x10); // zero page addr
-    let mut cpu = Cpu::new(mcu);
+    let mut cpu = create_cpu_with_mcu(mcu);
     cpu.a = 0xFF;
     cpu.set_flag(Flag::Carry, true);
 
@@ -2290,7 +2293,7 @@ fn test_rra_zero_page() {
     mcu.write(0x10, 0x81); // 0b10000001
     mcu.write(0, 0x67); // opcode
     mcu.write(1, 0x10); // zero page addr
-    let mut cpu = Cpu::new(mcu);
+    let mut cpu = create_cpu_with_mcu(mcu);
     cpu.a = 0x05;
     cpu.set_flag(Flag::Carry, true);
 
@@ -2322,7 +2325,7 @@ fn test_and_absolute_y() {
     mcu.write(0x205, 0x0F);
     mcu.write(0, 0x39); // opcode
     mcu.write_word(1, 0x200); // absolute addr
-    let mut cpu = Cpu::new(mcu);
+    let mut cpu = create_cpu_with_mcu(mcu);
     cpu.a = 0xFF;
     cpu.y = 5;
 
@@ -2338,7 +2341,7 @@ fn test_eor_absolute_y() {
     mcu.write(0x205, 0xF0);
     mcu.write(0, 0x59); // opcode
     mcu.write_word(1, 0x200); // absolute addr
-    let mut cpu = Cpu::new(mcu);
+    let mut cpu = create_cpu_with_mcu(mcu);
     cpu.a = 0xFF;
     cpu.y = 5;
 
@@ -2354,7 +2357,7 @@ fn test_ora_absolute_y() {
     mcu.write(0x205, 0xF0);
     mcu.write(0, 0x19); // opcode
     mcu.write_word(1, 0x200); // absolute addr
-    let mut cpu = Cpu::new(mcu);
+    let mut cpu = create_cpu_with_mcu(mcu);
     cpu.a = 0x0F;
     cpu.y = 5;
 
@@ -2370,7 +2373,7 @@ fn test_adc_absolute_y() {
     mcu.write(0x205, 0x10);
     mcu.write(0, 0x79); // opcode
     mcu.write_word(1, 0x200); // absolute addr
-    let mut cpu = Cpu::new(mcu);
+    let mut cpu = create_cpu_with_mcu(mcu);
     cpu.a = 0x20;
     cpu.set_flag(Flag::Carry, false);
     cpu.y = 5;
@@ -2388,7 +2391,7 @@ fn test_cmp_absolute_y() {
     mcu.write(0x205, 0x40);
     mcu.write(0, 0xD9); // opcode
     mcu.write_word(1, 0x200); // absolute addr
-    let mut cpu = Cpu::new(mcu);
+    let mut cpu = create_cpu_with_mcu(mcu);
     cpu.a = 0x42;
     cpu.y = 5;
 
@@ -2404,7 +2407,7 @@ fn test_sbc_absolute_y() {
     mcu.write(0x205, 0x10);
     mcu.write(0, 0xF9); // opcode
     mcu.write_word(1, 0x200); // absolute addr
-    let mut cpu = Cpu::new(mcu);
+    let mut cpu = create_cpu_with_mcu(mcu);
     cpu.a = 0x20;
     cpu.set_flag(Flag::Carry, true);
     cpu.y = 5;
@@ -2421,7 +2424,7 @@ fn test_and_absolute_x() {
     mcu.write(0x205, 0x0F);
     mcu.write(0, 0x3D); // opcode
     mcu.write_word(1, 0x200); // absolute addr
-    let mut cpu = Cpu::new(mcu);
+    let mut cpu = create_cpu_with_mcu(mcu);
     cpu.a = 0xFF;
     cpu.x = 5;
 
@@ -2437,7 +2440,7 @@ fn test_eor_absolute_x() {
     mcu.write(0x205, 0xF0);
     mcu.write(0, 0x5D); // opcode
     mcu.write_word(1, 0x200); // absolute addr
-    let mut cpu = Cpu::new(mcu);
+    let mut cpu = create_cpu_with_mcu(mcu);
     cpu.a = 0xFF;
     cpu.x = 5;
 
@@ -2453,7 +2456,7 @@ fn test_ora_absolute_x() {
     mcu.write(0x205, 0xF0);
     mcu.write(0, 0x1D); // opcode
     mcu.write_word(1, 0x200); // absolute addr
-    let mut cpu = Cpu::new(mcu);
+    let mut cpu = create_cpu_with_mcu(mcu);
     cpu.a = 0x0F;
     cpu.x = 5;
 
@@ -2469,7 +2472,7 @@ fn test_adc_absolute_x() {
     mcu.write(0x205, 0x10);
     mcu.write(0, 0x7D); // opcode
     mcu.write_word(1, 0x200); // absolute addr
-    let mut cpu = Cpu::new(mcu);
+    let mut cpu = create_cpu_with_mcu(mcu);
     cpu.a = 0x20;
     cpu.set_flag(Flag::Carry, false);
     cpu.x = 5;
@@ -2487,7 +2490,7 @@ fn test_cmp_absolute_x() {
     mcu.write(0x205, 0x40);
     mcu.write(0, 0xDD); // opcode
     mcu.write_word(1, 0x200); // absolute addr
-    let mut cpu = Cpu::new(mcu);
+    let mut cpu = create_cpu_with_mcu(mcu);
     cpu.a = 0x42;
     cpu.x = 5;
 
@@ -2503,7 +2506,7 @@ fn test_sbc_absolute_x() {
     mcu.write(0x205, 0x10);
     mcu.write(0, 0xFD); // opcode
     mcu.write_word(1, 0x200); // absolute addr
-    let mut cpu = Cpu::new(mcu);
+    let mut cpu = create_cpu_with_mcu(mcu);
     cpu.a = 0x20;
     cpu.set_flag(Flag::Carry, true);
     cpu.x = 5;
@@ -2548,7 +2551,7 @@ fn test_lax_indirect_y() {
     mcu.write(0x205, 0x42);
     mcu.write(0, 0xB3); // opcode
     mcu.write(1, 0x10); // zero page addr
-    let mut cpu = Cpu::new(mcu);
+    let mut cpu = create_cpu_with_mcu(mcu);
     cpu.y = 5;
 
     execute_next(&mut cpu);
@@ -2563,7 +2566,7 @@ fn test_sax_absolute() {
     let mut mcu = MockMcu::new();
     mcu.write(0, 0x8F); // opcode
     mcu.write_word(1, 0x200); // absolute addr
-    let mut cpu = Cpu::new(mcu);
+    let mut cpu = create_cpu_with_mcu(mcu);
     cpu.a = 0x30;
     cpu.x = 0x12;
 
@@ -2579,7 +2582,7 @@ fn test_sax_indirect_x() {
     mcu.write_word(0x15, 0x200); // indirect pointer at 0x10 + X(5)
     mcu.write(0, 0x83); // opcode
     mcu.write(1, 0x10); // zero page addr
-    let mut cpu = Cpu::new(mcu);
+    let mut cpu = create_cpu_with_mcu(mcu);
     cpu.a = 0x30;
     cpu.x = 5;
 
@@ -2595,7 +2598,7 @@ fn test_dcp_absolute() {
     mcu.write(0x200, 0x10);
     mcu.write(0, 0xCF); // opcode
     mcu.write_word(1, 0x200); // absolute addr
-    let mut cpu = Cpu::new(mcu);
+    let mut cpu = create_cpu_with_mcu(mcu);
     cpu.a = 0x10;
 
     execute_next(&mut cpu);
@@ -2612,7 +2615,7 @@ fn test_dcp_absolute_x() {
     mcu.write(0x205, 0x10);
     mcu.write(0, 0xDF); // opcode
     mcu.write_word(1, 0x200); // absolute addr
-    let mut cpu = Cpu::new(mcu);
+    let mut cpu = create_cpu_with_mcu(mcu);
     cpu.a = 0x10;
     cpu.x = 5;
 
@@ -2628,7 +2631,7 @@ fn test_dcp_absolute_y() {
     mcu.write(0x205, 0x10);
     mcu.write(0, 0xDB); // opcode
     mcu.write_word(1, 0x200); // absolute addr
-    let mut cpu = Cpu::new(mcu);
+    let mut cpu = create_cpu_with_mcu(mcu);
     cpu.a = 0x10;
     cpu.y = 5;
 
@@ -2644,7 +2647,7 @@ fn test_isc_absolute() {
     mcu.write(0x200, 0x0F);
     mcu.write(0, 0xEF); // opcode
     mcu.write_word(1, 0x200); // absolute addr
-    let mut cpu = Cpu::new(mcu);
+    let mut cpu = create_cpu_with_mcu(mcu);
     cpu.a = 0x20;
     cpu.set_flag(Flag::Carry, true);
 
@@ -2661,7 +2664,7 @@ fn test_isc_absolute_x() {
     mcu.write(0x205, 0x0F);
     mcu.write(0, 0xFF); // opcode
     mcu.write_word(1, 0x200); // absolute addr
-    let mut cpu = Cpu::new(mcu);
+    let mut cpu = create_cpu_with_mcu(mcu);
     cpu.a = 0x20;
     cpu.set_flag(Flag::Carry, true);
     cpu.x = 5;
@@ -2679,7 +2682,7 @@ fn test_isc_absolute_y() {
     mcu.write(0x205, 0x0F);
     mcu.write(0, 0xFB); // opcode
     mcu.write_word(1, 0x200); // absolute addr
-    let mut cpu = Cpu::new(mcu);
+    let mut cpu = create_cpu_with_mcu(mcu);
     cpu.a = 0x20;
     cpu.set_flag(Flag::Carry, true);
     cpu.y = 5;
@@ -2697,7 +2700,7 @@ fn test_aso_absolute() {
     mcu.write(0x200, 0x40); // 0b01000000
     mcu.write(0, 0x0F); // opcode
     mcu.write_word(1, 0x200); // absolute addr
-    let mut cpu = Cpu::new(mcu);
+    let mut cpu = create_cpu_with_mcu(mcu);
     cpu.a = 0x0F;
 
     execute_next(&mut cpu);
@@ -2713,7 +2716,7 @@ fn test_aso_absolute_x() {
     mcu.write(0x205, 0x40);
     mcu.write(0, 0x1F); // opcode
     mcu.write_word(1, 0x200); // absolute addr
-    let mut cpu = Cpu::new(mcu);
+    let mut cpu = create_cpu_with_mcu(mcu);
     cpu.a = 0x0F;
     cpu.x = 5;
 
@@ -2730,7 +2733,7 @@ fn test_aso_absolute_y() {
     mcu.write(0x205, 0x40);
     mcu.write(0, 0x1B); // opcode
     mcu.write_word(1, 0x200); // absolute addr
-    let mut cpu = Cpu::new(mcu);
+    let mut cpu = create_cpu_with_mcu(mcu);
     cpu.a = 0x0F;
     cpu.y = 5;
 
@@ -2747,7 +2750,7 @@ fn test_rla_absolute() {
     mcu.write(0x200, 0x81);
     mcu.write(0, 0x2F); // opcode
     mcu.write_word(1, 0x200); // absolute addr
-    let mut cpu = Cpu::new(mcu);
+    let mut cpu = create_cpu_with_mcu(mcu);
     cpu.a = 0x0F;
     cpu.set_flag(Flag::Carry, true);
 
@@ -2764,7 +2767,7 @@ fn test_rla_absolute_x() {
     mcu.write(0x205, 0x81);
     mcu.write(0, 0x3F); // opcode
     mcu.write_word(1, 0x200); // absolute addr
-    let mut cpu = Cpu::new(mcu);
+    let mut cpu = create_cpu_with_mcu(mcu);
     cpu.a = 0x0F;
     cpu.set_flag(Flag::Carry, true);
     cpu.x = 5;
@@ -2782,7 +2785,7 @@ fn test_rla_absolute_y() {
     mcu.write(0x205, 0x81);
     mcu.write(0, 0x3B); // opcode
     mcu.write_word(1, 0x200); // absolute addr
-    let mut cpu = Cpu::new(mcu);
+    let mut cpu = create_cpu_with_mcu(mcu);
     cpu.a = 0x0F;
     cpu.set_flag(Flag::Carry, true);
     cpu.y = 5;
@@ -2800,7 +2803,7 @@ fn test_rra_absolute() {
     mcu.write(0x200, 0x81);
     mcu.write(0, 0x6F); // opcode
     mcu.write_word(1, 0x200); // absolute addr
-    let mut cpu = Cpu::new(mcu);
+    let mut cpu = create_cpu_with_mcu(mcu);
     cpu.a = 0x05;
     cpu.set_flag(Flag::Carry, true);
 
@@ -2817,7 +2820,7 @@ fn test_rra_absolute_x() {
     mcu.write(0x205, 0x81);
     mcu.write(0, 0x7F); // opcode
     mcu.write_word(1, 0x200); // absolute addr
-    let mut cpu = Cpu::new(mcu);
+    let mut cpu = create_cpu_with_mcu(mcu);
     cpu.a = 0x05;
     cpu.set_flag(Flag::Carry, true);
     cpu.x = 5;
@@ -2835,7 +2838,7 @@ fn test_rra_absolute_y() {
     mcu.write(0x205, 0x81);
     mcu.write(0, 0x7B); // opcode
     mcu.write_word(1, 0x200); // absolute addr
-    let mut cpu = Cpu::new(mcu);
+    let mut cpu = create_cpu_with_mcu(mcu);
     cpu.a = 0x05;
     cpu.set_flag(Flag::Carry, true);
     cpu.y = 5;
@@ -2994,7 +2997,7 @@ fn test_lax_zero_page_y() {
     mcu.write(0x15, 0x42);
     mcu.write(0, 0xB7); // opcode
     mcu.write(1, 0x10); // zero page addr
-    let mut cpu = Cpu::new(mcu);
+    let mut cpu = create_cpu_with_mcu(mcu);
     cpu.y = 5;
 
     execute_next(&mut cpu);
@@ -3010,7 +3013,7 @@ fn test_lax_absolute() {
     mcu.write(0x200, 0x42);
     mcu.write(0, 0xAF); // opcode
     mcu.write_word(1, 0x200); // absolute addr
-    let mut cpu = Cpu::new(mcu);
+    let mut cpu = create_cpu_with_mcu(mcu);
 
     execute_next(&mut cpu);
 
@@ -3025,7 +3028,7 @@ fn test_lax_absolute_y() {
     mcu.write(0x205, 0x42);
     mcu.write(0, 0xBF); // opcode
     mcu.write_word(1, 0x200); // absolute addr
-    let mut cpu = Cpu::new(mcu);
+    let mut cpu = create_cpu_with_mcu(mcu);
     cpu.y = 5;
 
     execute_next(&mut cpu);
@@ -3068,7 +3071,7 @@ fn test_brk_pushes_b_flag() {
     mcu.write(0xFFFE, 0x00);
     mcu.write(0xFFFF, 0x40);
     mcu.write(0, 0x00); // BRK
-    let mut cpu = Cpu::new(mcu);
+    let mut cpu = create_cpu_with_mcu(mcu);
     cpu.sp = 0xFF;
     cpu.set_flag(Flag::Carry, true);
 
@@ -3087,7 +3090,7 @@ fn test_rti_clears_b_flag() {
     // RTI should restore status and B flag should be clear
     let mut mcu = MockMcu::new();
     mcu.write(0, 0x40); // RTI
-    let mut cpu = Cpu::new(mcu);
+    let mut cpu = create_cpu_with_mcu(mcu);
     cpu.sp = 0xFC;
 
     // Set up stack: status (with B flag set), PCL, PCH
@@ -3105,7 +3108,7 @@ fn test_rti_clears_b_flag() {
 fn test_rti_leaves_nmi_mode() {
     let mut mcu = MockMcu::new();
     mcu.write(0x0000, opcode::RTI);
-    let mut cpu = Cpu::new(mcu);
+    let mut cpu = create_cpu_with_mcu(mcu);
     cpu.pc = 0x0000;
     cpu.sp = 0xFA;
     cpu.write_byte(0x01FB, 0x00);
@@ -3124,13 +3127,15 @@ fn test_ready_nmi_is_taken_even_while_already_in_nmi_mode() {
     let mut mcu = MockMcu::new();
     mcu.write(0xFFFA, 0x78);
     mcu.write(0xFFFB, 0x56);
-    let mut cpu = Cpu::new(mcu);
+    let mut cpu = create_cpu_with_mcu(mcu);
     cpu.mode = CpuMode::Nmi;
     cpu.cycles = 8;
     cpu.microcode_queue.clear();
     cpu.nmi_requested_at = Some(0);
 
     let mut plugin = EmptyPlugin::new();
+    let (_, finished) = cpu.tick(&mut plugin);
+    assert!(!finished);
     let (_, finished) = cpu.tick(&mut plugin);
 
     assert!(!finished);
@@ -3148,6 +3153,8 @@ fn test_irq_entry_schedules_five_followup_microcodes() {
 
     let mut plugin = EmptyPlugin::new();
     let (_, finished) = cpu.tick(&mut plugin);
+    assert!(!finished);
+    let (_, finished) = cpu.tick(&mut plugin);
 
     assert!(!finished);
     assert_eq!(cpu.microcodes_len(), 6);
@@ -3160,7 +3167,7 @@ fn test_transfer_no_touch_flags_zero_page() {
     mcu.write(0x10, 0x42);
     mcu.write(0, 0xA4); // LDY $10
     mcu.write(1, 0x10);
-    let mut cpu = Cpu::new(mcu);
+    let mut cpu = create_cpu_with_mcu(mcu);
     cpu.set_flag(Flag::Zero, true); // set some flags
 
     execute_next(&mut cpu);
@@ -3177,7 +3184,7 @@ fn test_dcp_indirect_x() {
     mcu.write(0x200, 0x10);
     mcu.write(0, 0xC3); // DCP ($10, X)
     mcu.write(1, 0x10);
-    let mut cpu = Cpu::new(mcu);
+    let mut cpu = create_cpu_with_mcu(mcu);
     cpu.a = 0x10;
     cpu.x = 5;
 
@@ -3195,7 +3202,7 @@ fn test_dcp_indirect_y() {
     mcu.write(0x205, 0x10);
     mcu.write(0, 0xD3); // DCP ($10), Y
     mcu.write(1, 0x10);
-    let mut cpu = Cpu::new(mcu);
+    let mut cpu = create_cpu_with_mcu(mcu);
     cpu.a = 0x10;
     cpu.y = 5;
 
@@ -3212,7 +3219,7 @@ fn test_isc_indirect_x() {
     mcu.write(0x200, 0x0F);
     mcu.write(0, 0xE3); // ISC ($10, X)
     mcu.write(1, 0x10);
-    let mut cpu = Cpu::new(mcu);
+    let mut cpu = create_cpu_with_mcu(mcu);
     cpu.a = 0x20;
     cpu.set_flag(Flag::Carry, true);
     cpu.x = 5;
@@ -3231,7 +3238,7 @@ fn test_isc_indirect_y() {
     mcu.write(0x205, 0x0F);
     mcu.write(0, 0xF3); // ISC ($10), Y
     mcu.write(1, 0x10);
-    let mut cpu = Cpu::new(mcu);
+    let mut cpu = create_cpu_with_mcu(mcu);
     cpu.a = 0x20;
     cpu.set_flag(Flag::Carry, true);
     cpu.y = 5;
@@ -3250,7 +3257,7 @@ fn test_aso_indirect_x() {
     mcu.write(0x200, 0x40);
     mcu.write(0, 0x03); // ASO ($10, X)
     mcu.write(1, 0x10);
-    let mut cpu = Cpu::new(mcu);
+    let mut cpu = create_cpu_with_mcu(mcu);
     cpu.a = 0x0F;
     cpu.x = 5;
 
@@ -3268,7 +3275,7 @@ fn test_aso_indirect_y() {
     mcu.write(0x205, 0x40);
     mcu.write(0, 0x13); // ASO ($10), Y
     mcu.write(1, 0x10);
-    let mut cpu = Cpu::new(mcu);
+    let mut cpu = create_cpu_with_mcu(mcu);
     cpu.a = 0x0F;
     cpu.y = 5;
 
@@ -3286,7 +3293,7 @@ fn test_rla_indirect_x() {
     mcu.write(0x200, 0x81);
     mcu.write(0, 0x23); // RLA ($10, X)
     mcu.write(1, 0x10);
-    let mut cpu = Cpu::new(mcu);
+    let mut cpu = create_cpu_with_mcu(mcu);
     cpu.a = 0x0F;
     cpu.set_flag(Flag::Carry, true);
     cpu.x = 5;
@@ -3305,7 +3312,7 @@ fn test_rla_indirect_y() {
     mcu.write(0x205, 0x81);
     mcu.write(0, 0x33); // RLA ($10), Y
     mcu.write(1, 0x10);
-    let mut cpu = Cpu::new(mcu);
+    let mut cpu = create_cpu_with_mcu(mcu);
     cpu.a = 0x0F;
     cpu.set_flag(Flag::Carry, true);
     cpu.y = 5;
@@ -3324,7 +3331,7 @@ fn test_lse_indirect_x() {
     mcu.write(0x200, 0x81);
     mcu.write(0, 0x43); // LSE ($10, X)
     mcu.write(1, 0x10);
-    let mut cpu = Cpu::new(mcu);
+    let mut cpu = create_cpu_with_mcu(mcu);
     cpu.a = 0xFF;
     cpu.set_flag(Flag::Carry, true);
     cpu.x = 5;
@@ -3343,7 +3350,7 @@ fn test_lse_indirect_y() {
     mcu.write(0x205, 0x81);
     mcu.write(0, 0x53); // LSE ($10), Y
     mcu.write(1, 0x10);
-    let mut cpu = Cpu::new(mcu);
+    let mut cpu = create_cpu_with_mcu(mcu);
     cpu.a = 0xFF;
     cpu.set_flag(Flag::Carry, true);
     cpu.y = 5;
@@ -3362,7 +3369,7 @@ fn test_rra_indirect_x() {
     mcu.write(0x200, 0x81);
     mcu.write(0, 0x63); // RRA ($10, X)
     mcu.write(1, 0x10);
-    let mut cpu = Cpu::new(mcu);
+    let mut cpu = create_cpu_with_mcu(mcu);
     cpu.a = 0x05;
     cpu.set_flag(Flag::Carry, true);
     cpu.x = 5;
@@ -3381,7 +3388,7 @@ fn test_rra_indirect_y() {
     mcu.write(0x205, 0x81);
     mcu.write(0, 0x73); // RRA ($10), Y
     mcu.write(1, 0x10);
-    let mut cpu = Cpu::new(mcu);
+    let mut cpu = create_cpu_with_mcu(mcu);
     cpu.a = 0x05;
     cpu.set_flag(Flag::Carry, true);
     cpu.y = 5;
@@ -3399,7 +3406,7 @@ fn test_dcp_zero_page_x() {
     mcu.write(0x15, 0x10);
     mcu.write(0, 0xD7); // DCP $10, X
     mcu.write(1, 0x10);
-    let mut cpu = Cpu::new(mcu);
+    let mut cpu = create_cpu_with_mcu(mcu);
     cpu.a = 0x10;
     cpu.x = 5;
 
@@ -3416,7 +3423,7 @@ fn test_isc_zero_page_x() {
     mcu.write(0x15, 0x0F);
     mcu.write(0, 0xF7); // ISC $10, X
     mcu.write(1, 0x10);
-    let mut cpu = Cpu::new(mcu);
+    let mut cpu = create_cpu_with_mcu(mcu);
     cpu.a = 0x20;
     cpu.set_flag(Flag::Carry, true);
     cpu.x = 5;
@@ -3434,7 +3441,7 @@ fn test_aso_zero_page_x() {
     mcu.write(0x15, 0x40);
     mcu.write(0, 0x17); // ASO $10, X
     mcu.write(1, 0x10);
-    let mut cpu = Cpu::new(mcu);
+    let mut cpu = create_cpu_with_mcu(mcu);
     cpu.a = 0x0F;
     cpu.x = 5;
 
@@ -3451,7 +3458,7 @@ fn test_rla_zero_page_x() {
     mcu.write(0x15, 0x81);
     mcu.write(0, 0x37); // RLA $10, X
     mcu.write(1, 0x10);
-    let mut cpu = Cpu::new(mcu);
+    let mut cpu = create_cpu_with_mcu(mcu);
     cpu.a = 0x0F;
     cpu.set_flag(Flag::Carry, true);
     cpu.x = 5;
@@ -3469,7 +3476,7 @@ fn test_lse_zero_page_x() {
     mcu.write(0x15, 0x81);
     mcu.write(0, 0x57); // LSE $10, X
     mcu.write(1, 0x10);
-    let mut cpu = Cpu::new(mcu);
+    let mut cpu = create_cpu_with_mcu(mcu);
     cpu.a = 0xFF;
     cpu.set_flag(Flag::Carry, true);
     cpu.x = 5;
@@ -3487,7 +3494,7 @@ fn test_rra_zero_page_x() {
     mcu.write(0x15, 0x81);
     mcu.write(0, 0x77); // RRA $10, X
     mcu.write(1, 0x10);
-    let mut cpu = Cpu::new(mcu);
+    let mut cpu = create_cpu_with_mcu(mcu);
     cpu.a = 0x05;
     cpu.set_flag(Flag::Carry, true);
     cpu.x = 5;
@@ -3609,7 +3616,7 @@ fn test_rts_adds_one_to_pc() {
     // Verify that RTS adds 1 to the pulled PC value
     let mut mcu = MockMcu::new();
     mcu.write(0, 0x60); // RTS
-    let mut cpu = Cpu::new(mcu);
+    let mut cpu = create_cpu_with_mcu(mcu);
     cpu.sp = 0xFD;
     // Push PC value to stack
     // Push PC high byte then low byte onto stack
@@ -3688,7 +3695,7 @@ fn test_transfer_no_touch_flags_indirect() {
     mcu.write(0x200, 0x00);
     mcu.write(0, 0xA1); // LDA ($10, X)
     mcu.write(1, 0x10);
-    let mut cpu = Cpu::new(mcu);
+    let mut cpu = create_cpu_with_mcu(mcu);
     cpu.x = 5;
 
     execute_next(&mut cpu);
@@ -3760,7 +3767,7 @@ fn inc_read_byte_advances_pc_and_ticks() {
     let mut mcu = TestMcu::default();
     mcu.mem[0x0200] = 0xAB;
 
-    let mut cpu = Cpu::new(mcu);
+    let mut cpu = create_cpu_with_mcu(mcu);
     cpu.pc = 0x0200;
 
     assert_eq!(cpu.inc_read_byte(), 0xAB);
@@ -3772,7 +3779,7 @@ fn peek_byte_uses_non_mutating_mcu_path() {
     let mut mcu = TestMcu::default();
     mcu.mem[0x2002] = 0x80;
 
-    let mut cpu = Cpu::new(mcu);
+    let mut cpu = create_cpu_with_mcu(mcu);
     let reads_before = cpu.mcu().reads.len();
 
     assert_eq!(cpu.peek_byte(0x2002), 0x80);
@@ -3784,7 +3791,7 @@ fn cpu_with_memory(program_start: u16, bytes: &[(u16, u8)]) -> Cpu<TestMcu> {
     for (addr, value) in bytes {
         mcu.mem[*addr as usize] = *value;
     }
-    let mut cpu = Cpu::new(mcu);
+    let mut cpu = create_cpu_with_mcu(mcu);
     cpu.pc = program_start;
     cpu
 }
