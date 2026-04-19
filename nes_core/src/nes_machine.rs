@@ -70,19 +70,20 @@ where
     pub fn tick(&mut self) -> ExecuteResult {
         self.cycles += 1;
 
-        if self.cycles.is_multiple_of(3) {
-            self.cartridge_irq_latched = self.cartridge_irq_next;
-        }
-
-        // Cartridge IRQs are exposed on the next CPU boundary, while APU IRQs
-        // keep the existing immediate visibility used by the interrupt tests.
-        let irq_pending = self.machine.mcu().apu_irq_pending() || self.cartridge_irq_latched;
-        self.machine.cpu_mut().set_irq(irq_pending);
-
         self.machine.mcu_mut().tick_ppu();
         let nmi_line = self.mcu().ppu().nmi_line_out();
         let timing = self.mcu().ppu().timing();
         self.machine.cpu_mut().update_nmi_line(nmi_line, timing);
+        self.cartridge_irq_next = self.machine.mcu().cartridge_irq_pending();
+        if self.cycles.is_multiple_of(3) {
+            self.cartridge_irq_latched = self.cartridge_irq_next;
+        }
+
+        // Cartridge IRQs should be visible on the CPU boundary immediately
+        // following the PPU tick that raised them, while APU IRQs keep the
+        // existing direct visibility used by the interrupt tests.
+        let irq_pending = self.machine.mcu().apu_irq_pending() || self.cartridge_irq_latched;
+        self.machine.cpu_mut().set_irq(irq_pending);
 
         if self.cycles.is_multiple_of(3) {
             self.machine.mcu_mut().tick_apu();
@@ -107,8 +108,6 @@ where
         if self.machine.mcu_mut().take_oam_dma_pending() {
             self.machine.cpu_mut().request_oam_dma();
         }
-
-        self.cartridge_irq_next = self.machine.mcu().cartridge_irq_pending();
 
         result
     }
