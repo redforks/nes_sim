@@ -587,6 +587,7 @@ impl<M: Mcu> Cpu<M> {
         self.inner_set_flag(Flag::Zero, value == 0);
     }
 
+    #[cfg(test)]
     fn read_byte(&mut self, addr: u16) -> u8 {
         self.prepare_read_byte(addr);
         self.perform_read_byte()
@@ -596,21 +597,25 @@ impl<M: Mcu> Cpu<M> {
         self.mcu.peek(addr)
     }
 
+    #[cfg(test)]
     fn inc_read_byte(&mut self) -> u8 {
         self.prepare_pc_read();
         self.perform_pc_read()
     }
 
+    #[cfg(test)]
     fn write_byte(&mut self, addr: u16, value: u8) {
         self.prepare_write_byte(addr);
         self.perform_write_byte(value);
     }
 
+    #[cfg(test)]
     fn push_stack(&mut self, value: u8) {
         self.prepare_push_stack();
         self.perform_push_stack(value);
     }
 
+    #[cfg(test)]
     fn pop_stack(&mut self) -> u8 {
         self.prepare_pop_stack();
         self.perform_pop_stack()
@@ -935,53 +940,6 @@ impl<M: Mcu> Cpu<M> {
         self.perform_push_stack(self.a);
     }
 
-    fn pop_stack_into_alu(&mut self) {
-        self.prepare_pop_stack();
-        self.perform_pop_stack_into_alu();
-    }
-
-    fn push_status(&mut self, set_disable_interrupt: bool, break_flag: bool) {
-        self.prepare_push_stack();
-        self.perform_push_status(set_disable_interrupt, break_flag);
-    }
-
-    fn perform_push_status(&mut self, set_disable_interrupt: bool, break_flag: bool) {
-        let value = if break_flag {
-            self.status | Flag::Break as u8 | Flag::NotUsed as u8
-        } else {
-            self.status | Flag::NotUsed as u8
-        };
-        self.perform_push_stack(value);
-        if set_disable_interrupt && self.mode == CpuMode::Normal {
-            self.irq_vector_is_nmi = self.nmi_ready();
-            if self.irq_vector_is_nmi {
-                self.nmi_requested_at = None;
-            }
-        }
-        if set_disable_interrupt {
-            self.inner_set_flag(Flag::InterruptDisabled, true);
-        }
-    }
-
-    fn plp(&mut self) {
-        self.prepare_pop_stack();
-        self.perform_plp();
-    }
-
-    fn perform_plp(&mut self) {
-        self.save_irq_inhibit();
-        let saved = self.perform_pop_stack();
-        let break_flag = self.flag(Flag::Break);
-        let not_used = self.flag(Flag::NotUsed);
-        self.status = saved;
-        self.inner_set_flag(Flag::Break, break_flag);
-        self.inner_set_flag(Flag::NotUsed, not_used);
-    }
-
-    fn perform_pop_stack_into_alu(&mut self) {
-        self.alu = self.perform_pop_stack();
-    }
-
     fn set_pc_to_ab(&mut self) {
         self.pc = self.ab;
     }
@@ -1083,14 +1041,42 @@ impl<M: Mcu> Cpu<M> {
         }
     }
 
-    fn load_irq_pcl(&mut self) {
-        self.prepare_irq_pcl();
-        self.perform_irq_pcl();
+    #[cfg(test)]
+    fn push_status(&mut self, set_disable_interrupt: bool, break_flag: bool) {
+        self.prepare_push_stack();
+        self.perform_push_status(set_disable_interrupt, break_flag);
     }
 
-    fn load_irq_pch(&mut self) {
-        self.prepare_irq_pch();
-        self.perform_irq_pch();
+    fn perform_push_status(&mut self, set_disable_interrupt: bool, break_flag: bool) {
+        let value = if break_flag {
+            self.status | Flag::Break as u8 | Flag::NotUsed as u8
+        } else {
+            self.status | Flag::NotUsed as u8
+        };
+        self.perform_push_stack(value);
+        if set_disable_interrupt && self.mode == CpuMode::Normal {
+            self.irq_vector_is_nmi = self.nmi_ready();
+            if self.irq_vector_is_nmi {
+                self.nmi_requested_at = None;
+            }
+        }
+        if set_disable_interrupt {
+            self.inner_set_flag(Flag::InterruptDisabled, true);
+        }
+    }
+
+    fn perform_plp(&mut self) {
+        self.save_irq_inhibit();
+        let saved = self.perform_pop_stack();
+        let break_flag = self.flag(Flag::Break);
+        let not_used = self.flag(Flag::NotUsed);
+        self.status = saved;
+        self.inner_set_flag(Flag::Break, break_flag);
+        self.inner_set_flag(Flag::NotUsed, not_used);
+    }
+
+    fn perform_pop_stack_into_alu(&mut self) {
+        self.alu = self.perform_pop_stack();
     }
 
     /// Set register A and update negative and zero flags.

@@ -3748,16 +3748,6 @@ impl Default for TestMcu {
     }
 }
 
-impl TestMcu {
-    fn read(&self, address: u16) -> u8 {
-        self.mem[address as usize]
-    }
-
-    fn write(&mut self, address: u16, value: u8) {
-        self.mem[address as usize] = value;
-    }
-}
-
 impl Mcu for TestMcu {
     fn peek(&self, address: u16) -> u8 {
         self.mem[address as usize]
