@@ -1354,30 +1354,56 @@ impl Microcode {
     pub fn first_phase<M: Mcu>(self, cpu: &mut Cpu<M>) {
         match self {
             Self::FetchAndDecode => cpu.prepare_pc_read(),
-            Self::LoadR(_) | Self::Bit | Self::LoadIntoAlu | Self::Adc | Self::Sbc | Self::Cmp
-            | Self::Cpx | Self::Cpy | Self::Ora | Self::Eor | Self::And | Self::Lax => {
-                cpu.prepare_read_byte(cpu.ab)
-            }
-            Self::StoreR(_) | Self::StoreAlu | Self::Sax | Self::Rla | Self::Dcp | Self::Isc
-            | Self::Rra | Self::Slo | Self::Sre => cpu.prepare_write_byte(cpu.ab),
+            Self::LoadR(_)
+            | Self::Bit
+            | Self::LoadIntoAlu
+            | Self::Adc
+            | Self::Sbc
+            | Self::Cmp
+            | Self::Cpx
+            | Self::Cpy
+            | Self::Ora
+            | Self::Eor
+            | Self::And
+            | Self::Lax => cpu.prepare_read_byte(cpu.ab),
+            Self::StoreR(_)
+            | Self::StoreAlu
+            | Self::Sax
+            | Self::Rla
+            | Self::Dcp
+            | Self::Isc
+            | Self::Rra
+            | Self::Slo
+            | Self::Sre => cpu.prepare_write_byte(cpu.ab),
             Self::Asl(AOrMemory::Memory)
             | Self::Lsr(AOrMemory::Memory)
             | Self::Rol(AOrMemory::Memory)
             | Self::Ror(AOrMemory::Memory)
             | Self::IncDec(IncDecTarget::IncrementAlu)
             | Self::IncDec(IncDecTarget::DecrementAlu) => cpu.prepare_write_byte(cpu.ab),
-            Self::LoadImmediate(_) | Self::SkipImmediate | Self::AneImmediate
-            | Self::LaxImmediate | Self::AlrImmediate | Self::AncImmediate
-            | Self::ArrImmediate | Self::AxsImmediate | Self::ZeroPage
-            | Self::AbsoluteL | Self::AbsoluteH | Self::BranchRelative(_)
-            | Self::LoadPcAbsoluteH | Self::ImmediateWithOp(_) => cpu.prepare_pc_read(),
+            Self::LoadImmediate(_)
+            | Self::SkipImmediate
+            | Self::AneImmediate
+            | Self::LaxImmediate
+            | Self::AlrImmediate
+            | Self::AncImmediate
+            | Self::ArrImmediate
+            | Self::AxsImmediate
+            | Self::ZeroPage
+            | Self::AbsoluteL
+            | Self::AbsoluteH
+            | Self::BranchRelative(_)
+            | Self::LoadPcAbsoluteH
+            | Self::ImmediateWithOp(_) => cpu.prepare_pc_read(),
             Self::IndexedL => cpu.prepare_read_byte(cpu.ab),
             Self::IndexedH => {
                 let page = cpu.ab & 0xFF00;
                 let addr = page | (cpu.ab as u8 & 0xFF).wrapping_add(1) as u16;
                 cpu.prepare_read_byte(addr)
             }
-            Self::IndexedHAndJump => cpu.prepare_read_byte((cpu.ab & 0xFF00) | (cpu.ab as u8 & 0xFF).wrapping_add(1) as u16),
+            Self::IndexedHAndJump => cpu.prepare_read_byte(
+                (cpu.ab & 0xFF00) | (cpu.ab as u8 & 0xFF).wrapping_add(1) as u16,
+            ),
             Self::PushPcH | Self::PushPcL | Self::PushStatus { .. } | Self::Pha => {
                 cpu.prepare_push_stack()
             }
@@ -1388,10 +1414,18 @@ impl Microcode {
             Self::LoadNmiPcH => cpu.prepare_read_byte(0xFFFB),
             Self::LoadIrqPcL => cpu.prepare_irq_pcl(),
             Self::LoadIrqPcH => cpu.prepare_irq_pch(),
-            Self::Shx => cpu.prepare_write_byte((cpu.abl() as u16) | (((cpu.x & cpu.abh().wrapping_add(1)) as u16) << 8)),
-            Self::Shy => cpu.prepare_write_byte((cpu.abl() as u16) | (((cpu.y & cpu.abh().wrapping_add(1)) as u16) << 8)),
-            Self::Sha => cpu.prepare_write_byte((cpu.abl() as u16) | (((cpu.a & cpu.x & cpu.abh().wrapping_add(1)) as u16) << 8)),
-            Self::Tas => cpu.prepare_write_byte((cpu.abl() as u16) | ((((cpu.a & cpu.x) & cpu.abh().wrapping_add(1)) as u16) << 8)),
+            Self::Shx => cpu.prepare_write_byte(
+                (cpu.abl() as u16) | (((cpu.x & cpu.abh().wrapping_add(1)) as u16) << 8),
+            ),
+            Self::Shy => cpu.prepare_write_byte(
+                (cpu.abl() as u16) | (((cpu.y & cpu.abh().wrapping_add(1)) as u16) << 8),
+            ),
+            Self::Sha => cpu.prepare_write_byte(
+                (cpu.abl() as u16) | (((cpu.a & cpu.x & cpu.abh().wrapping_add(1)) as u16) << 8),
+            ),
+            Self::Tas => cpu.prepare_write_byte(
+                (cpu.abl() as u16) | ((((cpu.a & cpu.x) & cpu.abh().wrapping_add(1)) as u16) << 8),
+            ),
             Self::IndexedXWithOp { op, first_clock } => {
                 Self::absolute_indexed_x_with_op(cpu, true, op, first_clock)
             }

@@ -8,7 +8,10 @@ pub struct LowerRam {
 
 impl LowerRam {
     pub fn new() -> LowerRam {
-        LowerRam { ram: [0; 0xf00], address_latch: None }
+        LowerRam {
+            ram: [0; 0xf00],
+            address_latch: None,
+        }
     }
 }
 
@@ -18,22 +21,34 @@ impl Mcu for LowerRam {
     }
 
     fn prepare_read(&mut self, address: u16) {
-        debug_assert!(self.address_latch.is_none(), "address latch should be empty when prepare_read");
+        debug_assert!(
+            self.address_latch.is_none(),
+            "address latch should be empty when prepare_read"
+        );
         self.address_latch = Some(address);
     }
 
     fn new_read(&mut self) -> u8 {
-        let address = self.address_latch.take().expect("address latch should have value when new_read");
+        let address = self
+            .address_latch
+            .take()
+            .expect("address latch should have value when new_read");
         self.ram[address as usize & 0x7ff]
     }
 
     fn prepare_write(&mut self, address: u16) {
-        debug_assert!(self.address_latch.is_none(), "address latch should be empty when prepare_write");
+        debug_assert!(
+            self.address_latch.is_none(),
+            "address latch should be empty when prepare_write"
+        );
         self.address_latch = Some(address);
     }
 
     fn new_write(&mut self, value: u8) {
-        let address = self.address_latch.take().expect("address latch should have value when new_write");
+        let address = self
+            .address_latch
+            .take()
+            .expect("address latch should have value when new_write");
         self.ram[address as usize & 0x7ff] = value;
     }
 }

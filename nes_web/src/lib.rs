@@ -1,14 +1,14 @@
 #![cfg(target_arch = "wasm32")]
 
 use log::{debug, info};
+use nes_core::EmptyPlugin;
 use nes_core::ines::INesFile;
 use nes_core::nes::controller::Button;
 use nes_core::nes_machine::NesMachine;
-use nes_core::EmptyPlugin;
 use std::panic;
-use wasm_bindgen::prelude::*;
 use wasm_bindgen::JsCast;
-use web_sys::{window, CanvasRenderingContext2d, HtmlCanvasElement};
+use wasm_bindgen::prelude::*;
+use web_sys::{CanvasRenderingContext2d, HtmlCanvasElement, window};
 
 mod canvas_render;
 mod drivers;

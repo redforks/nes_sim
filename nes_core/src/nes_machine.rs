@@ -1,13 +1,13 @@
 use crate::{
+    ExecuteResult, Plugin,
     ines::INesFile,
     machine::Machine,
     nes::{
+        NesMcu,
         controller::Button,
         ppu::{VBLANK_SET_DOT, VBLANK_SET_SCANLINE},
-        NesMcu,
     },
     render::Render,
-    ExecuteResult, Plugin,
 };
 use std::fs;
 
