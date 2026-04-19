@@ -31,16 +31,8 @@ impl<const SIZE: usize> RamMcu<SIZE> {
 
 // impl super::Mcu trait
 impl<const SIZE: usize> Mcu for RamMcu<SIZE> {
-    fn read(&mut self, address: u16) -> u8 {
-        self.ram[self.to_index(address)]
-    }
-
     fn peek(&self, address: u16) -> u8 {
         self.ram[self.to_index(address)]
-    }
-
-    fn write(&mut self, address: u16, value: u8) {
-        self.ram[self.to_index(address)] = value;
     }
 
     fn prepare_read(&mut self, address: u16) {
@@ -56,7 +48,7 @@ impl<const SIZE: usize> Mcu for RamMcu<SIZE> {
             .address_latch
             .take()
             .expect("address latch should have value when new_read");
-        self.read(address)
+        self.ram[self.to_index(address)]
     }
 
     fn prepare_write(&mut self, address: u16) {
@@ -72,7 +64,8 @@ impl<const SIZE: usize> Mcu for RamMcu<SIZE> {
             .address_latch
             .take()
             .expect("address latch should have value when new_write");
-        self.write(address, value);
+        let index = self.to_index(address);
+        self.ram[index] = value;
     }
 }
 
@@ -93,14 +86,17 @@ mod tests {
     #[test]
     fn start_from() {
         let mut mcu = RamMcu::start_from(0x8000, [0; 0x8000]);
-        mcu.write(0x8000, 0x12);
-        assert_eq!(mcu.read(0x8000), 0x12);
-        mcu.write(0xfffc, 0x12);
-        assert_eq!(mcu.read(0xfffc), 0x12);
+        mcu.prepare_write(0x8000);
+        mcu.new_write(0x12);
+        assert_eq!(mcu.peek(0x8000), 0x12);
+        mcu.prepare_write(0xfffc);
+        mcu.new_write(0x12);
+        assert_eq!(mcu.peek(0xfffc), 0x12);
 
         let mut mcu = RamMcu::new([0; 0x100]);
-        mcu.write(0x80, 0x12);
-        assert_eq!(mcu.read(0x80), 0x12);
+        mcu.prepare_write(0x80);
+        mcu.new_write(0x12);
+        assert_eq!(mcu.peek(0x80), 0x12);
     }
 
     #[test]
@@ -124,10 +120,12 @@ mod tests {
     fn test_to_index() {
         let mut mcu = RamMcu::start_from(0x8000, [0; 0x100]);
         // to_index is private, but we can test it indirectly through read/write
-        mcu.write(0x8000, 0xAB);
-        assert_eq!(mcu.read(0x8000), 0xAB);
+        mcu.prepare_write(0x8000);
+        mcu.new_write(0xAB);
+        assert_eq!(mcu.peek(0x8000), 0xAB);
 
-        mcu.write(0x80FF, 0xCD);
-        assert_eq!(mcu.read(0x80FF), 0xCD);
+        mcu.prepare_write(0x80FF);
+        mcu.new_write(0xCD);
+        assert_eq!(mcu.peek(0x80FF), 0xCD);
     }
 }

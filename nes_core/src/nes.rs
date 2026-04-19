@@ -52,12 +52,26 @@ impl<R: Render, D: AudioDriver> NesMcu<R, D> {
         self.apu.reset();
     }
 
+    fn direct_read(&mut self, address: u16) -> u8 {
+        let value = match address {
+            0x0000..=0x1fff => self.lower_ram.peek(address),
+            0x2000..=0x3fff => self.ppu.read(address, &mut self.cartridge),
+            0x4015 => self.apu.read(address),
+            0x4016 | 0x4017 => self.controller.read(address),
+            0x4000..=0x401f => self.open_bus,
+            0x4020..=0x40ff => self.open_bus,
+            0x4100..=0xffff => self.cartridge.read(address),
+        };
+        self.open_bus = value;
+        value
+    }
+
     fn ppu_dma(&mut self, address: u8) {
         trace!("ppu dma");
         let addr = (address as u16) << 8;
         let mut buf = [0x00u8; 0x100];
         for (i, item) in buf.iter_mut().enumerate() {
-            *item = self.read(addr + i as u16);
+            *item = self.direct_read(addr + i as u16);
         }
         self.ppu.oam_dma(&buf);
         self.cartridge.on_oam_dma();
@@ -131,19 +145,19 @@ impl<R: Render, D: AudioDriver> NesMcu<R, D> {
         match cpu_read_addr {
             0x4016 | 0x4017 => {
                 // DMC DMA during controller read causes an extra controller read.
-                let _ = self.read(cpu_read_addr);
+                let _ = self.direct_read(cpu_read_addr);
             }
             0x2007 => {
                 // DMC DMA during PPUDATA read causes extra PPUDATA reads.
                 // The read4 tests accept 2-3 extra reads depending on power-on
                 // CPU/PPU phase; use the stable 2-read variant here.
-                let _ = self.read(0x2007);
-                let _ = self.read(0x2007);
+                let _ = self.direct_read(0x2007);
+                let _ = self.direct_read(0x2007);
             }
             _ => {}
         }
 
-        self.read(sample_addr)
+        self.direct_read(sample_addr)
     }
 
     pub fn press_button(&mut self, button: Button) {
@@ -172,22 +186,6 @@ impl<R: Render, D: AudioDriver> NesMcu<R, D> {
 }
 
 impl<R: Render, D: AudioDriver> Mcu for NesMcu<R, D> {
-    fn read(&mut self, address: u16) -> u8 {
-        let value = match address {
-            0x0000..=0x1fff => self.lower_ram.read(address),
-            0x2000..=0x3fff => self.ppu.read(address, &mut self.cartridge),
-            0x4015 => self.apu.read(address),
-            0x4016 | 0x4017 => self.controller.read(address),
-            // Write-only APU/IO registers and unused test registers: open bus
-            0x4000..=0x401f => self.open_bus,
-            // Unallocated I/O space: open bus
-            0x4020..=0x40ff => self.open_bus,
-            0x4100..=0xffff => self.cartridge.read(address),
-        };
-        self.open_bus = value;
-        value
-    }
-
     fn peek(&self, address: u16) -> u8 {
         match address {
             0x0000..=0x1fff => self.lower_ram.peek(address),
@@ -197,22 +195,6 @@ impl<R: Render, D: AudioDriver> Mcu for NesMcu<R, D> {
             0x4000..=0x401f => self.open_bus,
             0x4020..=0x40ff => self.open_bus,
             0x4100..=0xffff => self.cartridge.peek(address),
-        }
-    }
-
-    fn write(&mut self, address: u16, value: u8) {
-        self.open_bus = value;
-        match address {
-            0x0000..=0x1fff => self.lower_ram.write(address, value),
-            0x2000..=0x3fff => self.ppu.write(address, value, &mut self.cartridge),
-            0x4000..=0x401f => match address {
-                0x4014 => self.ppu_dma(value),
-                0x4016 => self.controller.write(address, value),
-                _ => self.apu.write(address, value),
-            },
-            // Unallocated I/O space: writes are ignored
-            0x4020..=0x40ff => {}
-            0x4100..=0xffff => self.cartridge.write(address, value),
         }
     }
 
@@ -226,7 +208,7 @@ impl<R: Render, D: AudioDriver> Mcu for NesMcu<R, D> {
             0x0000..=0x1fff => self.lower_ram.prepare_read(address),
             0x2000..=0x3fff => self.ppu.prepare_read(address),
             0x4015 => self.apu.prepare_read(address),
-            0x4016 | 0x4017 => {}
+            0x4016 | 0x4017 => self.controller.prepare_read(address),
             0x4000..=0x401f => {}
             0x4020..=0x40ff => {}
             0x4100..=0xffff => self.cartridge.prepare_read(address),
@@ -254,6 +236,11 @@ impl<R: Render, D: AudioDriver> Mcu for NesMcu<R, D> {
     }
 
     fn prepare_write(&mut self, address: u16) {
+        debug_assert!(
+            self.address_latch.is_none(),
+            "address latch should be empty when prepare_write"
+        );
+        self.address_latch = Some(address);
         match address {
             0x0000..=0x1fff => self.lower_ram.prepare_write(address),
             0x2000..=0x3fff => self.ppu.prepare_write(address),

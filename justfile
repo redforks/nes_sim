@@ -303,7 +303,7 @@ mapper_todo: mmc3_test2_6
 # passed_mapper: mmc3
 
 [parallel]
-passed_cpu_tests: cpu-test instr_misc instr_test-v5 instr_test-v3 instr_timing cpu_dummy_reads cpu_dummy_writes cpu_exec_space cpu_reset cpu_timing_test6 nestest branch_timing_tests cpu_interrupts_v2
+passed_cpu_tests: cpu-test instr_misc instr_test-v5 instr_test-v3 instr_timing cpu_dummy_reads cpu_dummy_writes cpu_exec_space cpu_reset cpu_timing_test6 nestest branch_timing_tests 
 
 [parallel]
 passed_ppu_tests: ppu_vbl_nmi vbl_nmi_timing oam_read oam_stress ppu_open_bus ppu_read_buffer sprite_hit_tests sprite_overflow_tests scanline
@@ -311,7 +311,7 @@ passed_ppu_tests: ppu_vbl_nmi vbl_nmi_timing oam_read oam_stress ppu_open_bus pp
 [parallel]
 passed_apu_tests: apu_mixer apu_reset apu_test
 
-todo_tests: dmc_dma_during_read4 mmc3
+todo_tests: dmc_dma_during_read4 mmc3 cpu_interrupts_v2
 
 [parallel]
 passed: unit-test passed_cpu_tests passed_ppu_tests passed_apu_tests

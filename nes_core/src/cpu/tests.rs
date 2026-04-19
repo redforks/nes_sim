@@ -3748,19 +3748,19 @@ impl Default for TestMcu {
     }
 }
 
-impl Mcu for TestMcu {
-    fn read(&mut self, address: u16) -> u8 {
-        self.reads.push(address);
-        self.mem[address as usize]
-    }
-
-    fn peek(&self, address: u16) -> u8 {
+impl TestMcu {
+    fn read(&self, address: u16) -> u8 {
         self.mem[address as usize]
     }
 
     fn write(&mut self, address: u16, value: u8) {
         self.mem[address as usize] = value;
-        self.writes.push((address, value));
+    }
+}
+
+impl Mcu for TestMcu {
+    fn peek(&self, address: u16) -> u8 {
+        self.mem[address as usize]
     }
 
     fn prepare_read(&mut self, address: u16) {

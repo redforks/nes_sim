@@ -7,12 +7,6 @@ pub use ram::RamMcu;
 /// Note: addr is absolute address, not the offset from start of the memory region.
 /// Make it easy to implement memory mapped devices..
 pub trait Mcu {
-    /// Changed to &mut self to allow implementations to mutate state during reads.
-    /// deprecated by `prepare_read()` and `new_read()`.
-    fn read(&mut self, address: u16) -> u8;
-    /// deprated by `prepare_write()` and `new_write()`.
-    fn write(&mut self, address: u16, value: u8);
-
     /// Return the value of specific address, not triggers side-effect, only used in debug/log.
     fn peek(&self, address: u16) -> u8;
 
@@ -31,7 +25,8 @@ pub trait Mcu {
     }
 
     fn perform_dmc_dma_read(&mut self, sample_addr: u16, _cpu_read_addr: u16) -> u8 {
-        self.read(sample_addr)
+        self.prepare_read(sample_addr);
+        self.new_read()
     }
 
     fn supply_dmc_dma_byte(&mut self, _byte: u8) {}
@@ -57,16 +52,8 @@ mod tests {
     }
 
     impl Mcu for MockMcu {
-        fn read(&mut self, _address: u16) -> u8 {
-            *self.data.borrow()
-        }
-
         fn peek(&self, _address: u16) -> u8 {
             *self.data.borrow()
-        }
-
-        fn write(&mut self, _address: u16, value: u8) {
-            *self.data.borrow_mut() = value;
         }
 
         fn prepare_read(&mut self, address: u16) {
@@ -78,11 +65,11 @@ mod tests {
         }
 
         fn new_read(&mut self) -> u8 {
-            let addr = self
+            let _addr = self
                 .address_latch
                 .take()
                 .expect("address latch should have value when new_read");
-            self.read(addr)
+            *self.data.borrow()
         }
 
         fn prepare_write(&mut self, address: u16) {
@@ -94,18 +81,20 @@ mod tests {
         }
 
         fn new_write(&mut self, value: u8) {
-            let addr = self
+            let _addr = self
                 .address_latch
                 .take()
                 .expect("address latch should have value when new_write");
-            self.write(addr, value);
+            *self.data.borrow_mut() = value;
         }
     }
 
     #[test]
     fn test_read_write() {
         let mut mcu = MockMcu::new();
-        mcu.write(0x0000, 0x42);
-        assert_eq!(mcu.read(0x0000), 0x42);
+        mcu.prepare_write(0x0000);
+        mcu.new_write(0x42);
+        mcu.prepare_read(0x0000);
+        assert_eq!(mcu.new_read(), 0x42);
     }
 }

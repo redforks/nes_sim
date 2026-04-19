@@ -91,31 +91,24 @@ impl Controller {
             address_latch: None,
         }
     }
+
+    pub fn read(&mut self, address: u16) -> u8 {
+        self.prepare_read(address);
+        self.new_read()
+    }
+
+    pub fn write(&mut self, address: u16, value: u8) {
+        self.prepare_write(address);
+        self.new_write(value);
+    }
 }
 
 impl Mcu for Controller {
-    fn read(&mut self, address: u16) -> u8 {
-        match address {
-            0x4016 => self.a.read(),
-            0x4017 => self.b.read(),
-            _ => 0,
-        }
-    }
-
     fn peek(&self, address: u16) -> u8 {
         match address {
             0x4016 => self.a.peek(),
             0x4017 => self.b.peek(),
             _ => 0,
-        }
-    }
-
-    fn write(&mut self, address: u16, value: u8) {
-        if address == 0x4016 {
-            self.a.stroke = value & 1 != 0;
-            self.b.stroke = value & 1 != 0;
-            self.a.reset_for_read();
-            self.b.reset_for_read();
         }
     }
 
@@ -132,7 +125,11 @@ impl Mcu for Controller {
             .address_latch
             .take()
             .expect("address latch should have value when new_read");
-        self.read(address)
+        match address {
+            0x4016 => self.a.read(),
+            0x4017 => self.b.read(),
+            _ => 0,
+        }
     }
 
     fn prepare_write(&mut self, address: u16) {
@@ -148,7 +145,12 @@ impl Mcu for Controller {
             .address_latch
             .take()
             .expect("address latch should have value when new_write");
-        self.write(address, value);
+        if address == 0x4016 {
+            self.a.stroke = value & 1 != 0;
+            self.b.stroke = value & 1 != 0;
+            self.a.reset_for_read();
+            self.b.reset_for_read();
+        }
     }
 }
 

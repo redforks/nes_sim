@@ -516,14 +516,7 @@ const fn build_opcode_table() -> [ArrayVec<[Microcode; 7]>; 256] {
             first_clock: CrossPageBehavior::FirstClock
         }
     );
-    r[CMP_INDEXED_INDIRECT as usize] = microcode_arr!(
-        ZeroPage,
-        LoadIntoAlu, // dummy read
-        ZeroPageIndexedX,
-        IndexedL,
-        IndexedH,
-        Cmp
-    );
+    r[CMP_INDEXED_INDIRECT as usize] = indexed_indirect_op(Cmp);
     r[CMP_INDIRECT_INDEXED as usize] =
         indirect_indexed_op(OpAfterAddressing::Cmp, CrossPageBehavior::FirstClock);
     r[CPX_IMMEDIATE as usize] = microcode_arr!(ImmediateWithOp(ImmediateOp::Cpx));
@@ -1360,6 +1353,45 @@ impl Microcode {
     /// perform first phase of this Microcode, cpu performs different action in upper and down phase of a execution clock cycle
     pub fn first_phase<M: Mcu>(self, cpu: &mut Cpu<M>) {
         match self {
+            Self::FetchAndDecode => cpu.prepare_pc_read(),
+            Self::LoadR(_) | Self::Bit | Self::LoadIntoAlu | Self::Adc | Self::Sbc | Self::Cmp
+            | Self::Cpx | Self::Cpy | Self::Ora | Self::Eor | Self::And | Self::Lax => {
+                cpu.prepare_read_byte(cpu.ab)
+            }
+            Self::StoreR(_) | Self::StoreAlu | Self::Sax | Self::Rla | Self::Dcp | Self::Isc
+            | Self::Rra | Self::Slo | Self::Sre => cpu.prepare_write_byte(cpu.ab),
+            Self::Asl(AOrMemory::Memory)
+            | Self::Lsr(AOrMemory::Memory)
+            | Self::Rol(AOrMemory::Memory)
+            | Self::Ror(AOrMemory::Memory)
+            | Self::IncDec(IncDecTarget::IncrementAlu)
+            | Self::IncDec(IncDecTarget::DecrementAlu) => cpu.prepare_write_byte(cpu.ab),
+            Self::LoadImmediate(_) | Self::SkipImmediate | Self::AneImmediate
+            | Self::LaxImmediate | Self::AlrImmediate | Self::AncImmediate
+            | Self::ArrImmediate | Self::AxsImmediate | Self::ZeroPage
+            | Self::AbsoluteL | Self::AbsoluteH | Self::BranchRelative(_)
+            | Self::LoadPcAbsoluteH | Self::ImmediateWithOp(_) => cpu.prepare_pc_read(),
+            Self::IndexedL => cpu.prepare_read_byte(cpu.ab),
+            Self::IndexedH => {
+                let page = cpu.ab & 0xFF00;
+                let addr = page | (cpu.ab as u8 & 0xFF).wrapping_add(1) as u16;
+                cpu.prepare_read_byte(addr)
+            }
+            Self::IndexedHAndJump => cpu.prepare_read_byte((cpu.ab & 0xFF00) | (cpu.ab as u8 & 0xFF).wrapping_add(1) as u16),
+            Self::PushPcH | Self::PushPcL | Self::PushStatus { .. } | Self::Pha => {
+                cpu.prepare_push_stack()
+            }
+            Self::Plp | Self::PopPcL | Self::PopPcH | Self::PopStack => cpu.prepare_pop_stack(),
+            Self::LoadResetPcL => cpu.prepare_read_byte(0xFFFC),
+            Self::LoadResetPcH => cpu.prepare_read_byte(0xFFFD),
+            Self::LoadNmiPcL => cpu.prepare_read_byte(0xFFFA),
+            Self::LoadNmiPcH => cpu.prepare_read_byte(0xFFFB),
+            Self::LoadIrqPcL => cpu.prepare_irq_pcl(),
+            Self::LoadIrqPcH => cpu.prepare_irq_pch(),
+            Self::Shx => cpu.prepare_write_byte((cpu.abl() as u16) | (((cpu.x & cpu.abh().wrapping_add(1)) as u16) << 8)),
+            Self::Shy => cpu.prepare_write_byte((cpu.abl() as u16) | (((cpu.y & cpu.abh().wrapping_add(1)) as u16) << 8)),
+            Self::Sha => cpu.prepare_write_byte((cpu.abl() as u16) | (((cpu.a & cpu.x & cpu.abh().wrapping_add(1)) as u16) << 8)),
+            Self::Tas => cpu.prepare_write_byte((cpu.abl() as u16) | ((((cpu.a & cpu.x) & cpu.abh().wrapping_add(1)) as u16) << 8)),
             Self::IndexedXWithOp { op, first_clock } => {
                 Self::absolute_indexed_x_with_op(cpu, true, op, first_clock)
             }
@@ -1383,14 +1415,38 @@ impl Microcode {
             Self::AbsoluteL => Self::absolute_l(cpu),
             Self::AbsoluteH => Self::absolute_h(cpu),
 
-            Self::Adc => cpu.adc(true),
-            Self::Sbc => cpu.sbc(true),
-            Self::Cmp => cpu.cmp(true),
-            Self::Cpx => cpu.cpx(true),
-            Self::Cpy => cpu.cpy(true),
-            Self::Ora => cpu.ora(true),
-            Self::Eor => cpu.eor(true),
-            Self::And => cpu.and(true),
+            Self::Adc => {
+                cpu.perform_load_alu();
+                cpu.adc(false)
+            }
+            Self::Sbc => {
+                cpu.perform_load_alu();
+                cpu.sbc(false)
+            }
+            Self::Cmp => {
+                cpu.perform_load_alu();
+                cpu.cmp(false)
+            }
+            Self::Cpx => {
+                cpu.perform_load_alu();
+                cpu.cpx(false)
+            }
+            Self::Cpy => {
+                cpu.perform_load_alu();
+                cpu.cpy(false)
+            }
+            Self::Ora => {
+                cpu.perform_load_alu();
+                cpu.ora(false)
+            }
+            Self::Eor => {
+                cpu.perform_load_alu();
+                cpu.eor(false)
+            }
+            Self::And => {
+                cpu.perform_load_alu();
+                cpu.and(false)
+            }
             Self::Shx => cpu.shx(),
             Self::Shy => cpu.shy(),
             Self::Sha => cpu.sha(),
@@ -1405,7 +1461,7 @@ impl Microcode {
             Self::StoreAlu => Self::store_alu(cpu),
             Self::Nop => {}
             Self::SkipImmediate => {
-                cpu.inc_read_byte();
+                cpu.perform_pc_read();
             }
             Self::IndexedL => Self::indexed_l(cpu),
             Self::IndexedH => Self::indexed_h(cpu),
@@ -1423,7 +1479,7 @@ impl Microcode {
             Self::Las => Self::las(cpu),
 
             Self::Lax => {
-                cpu.load_alu();
+                cpu.perform_load_alu();
                 cpu.lax();
             }
             Self::Sax => cpu.sax(),
@@ -1448,49 +1504,45 @@ impl Microcode {
             Self::BranchRelative(branch_test) => Self::branch_relative(cpu, branch_test),
             Self::Kill => cpu.halt(),
 
-            Self::LoadIrqPcH => cpu.load_irq_pch(),
-            Self::LoadIrqPcL => cpu.load_irq_pcl(),
+            Self::LoadIrqPcH => cpu.perform_irq_pch(),
+            Self::LoadIrqPcL => cpu.perform_irq_pcl(),
             Self::LoadNmiPcL => {
-                cpu.pc = cpu.read_byte(0xFFFA) as u16;
+                cpu.pc = cpu.perform_read_byte() as u16;
             }
             Self::LoadNmiPcH => {
-                cpu.pc |= (cpu.read_byte(0xFFFB) as u16) << 8;
+                cpu.pc |= (cpu.perform_read_byte() as u16) << 8;
             }
             Self::PushPcH => {
-                cpu.push_stack((cpu.pc >> 8) as u8);
+                cpu.perform_push_stack((cpu.pc >> 8) as u8);
             }
             Self::PushPcL => {
-                cpu.push_stack((cpu.pc & 0xFF) as u8);
+                cpu.perform_push_stack((cpu.pc & 0xFF) as u8);
             }
             Self::PushStatus {
                 set_disable_interrupt,
                 break_flag,
-            } => cpu.push_status(set_disable_interrupt, break_flag),
-            Self::Plp => cpu.plp(),
+            } => cpu.perform_push_status(set_disable_interrupt, break_flag),
+            Self::Plp => cpu.perform_plp(),
             Self::PopPcL => {
-                cpu.pc = cpu.pop_stack() as u16;
+                cpu.pc = cpu.perform_pop_stack() as u16;
             }
             Self::PopPcH => {
-                cpu.pc |= (cpu.pop_stack() as u16) << 8;
+                cpu.pc |= (cpu.perform_pop_stack() as u16) << 8;
             }
             Self::IncPc => {
                 cpu.pc += 1;
             }
             Self::Pha => cpu.pha(),
-            Self::PopStack => cpu.pop_stack_into_alu(),
+            Self::PopStack => cpu.perform_pop_stack_into_alu(),
             Self::UpdateAFromAlu => cpu.set_a(cpu.alu),
 
-            Self::LoadResetPcL => {
-                cpu.pc = cpu.read_byte(0xFFFC) as u16;
-            }
-            Self::LoadResetPcH => {
-                cpu.pc |= (cpu.read_byte(0xFFFD) as u16) << 8;
-            }
+            Self::LoadResetPcL => cpu.pc = cpu.perform_read_byte() as u16,
+            Self::LoadResetPcH => cpu.pc |= (cpu.perform_read_byte() as u16) << 8,
             Self::LoadPcAbsoluteH => {
-                cpu.pc = (cpu.ab & 0xff) | ((cpu.inc_read_byte() as u16) << 8);
+                cpu.pc = (cpu.ab & 0xff) | ((cpu.perform_pc_read() as u16) << 8);
             }
             Self::LoadIntoAlu => {
-                cpu.load_alu();
+                cpu.perform_load_alu();
             }
             Self::ImmediateWithOp(op) => Self::immediate_with_op(cpu, op),
         }
@@ -1504,13 +1556,13 @@ impl Microcode {
     }
 
     fn fetch_and_decode<M: Mcu>(cpu: &mut Cpu<M>) {
-        let opcode = cpu.inc_read_byte();
+        let opcode = cpu.perform_pc_read();
         cpu.opcode = opcode;
         cpu.push_microcodes(&OPCODE_TABLE[opcode as usize]);
     }
 
     fn load_register<M: Mcu>(cpu: &mut Cpu<M>, r: Register) {
-        let value = cpu.read_byte(cpu.ab);
+        let value = cpu.perform_read_byte();
         match r {
             Register::A => cpu.set_a(value),
             Register::X => cpu.set_x(value),
@@ -1520,14 +1572,14 @@ impl Microcode {
 
     fn store_register<M: Mcu>(cpu: &mut Cpu<M>, r: Register) {
         match r {
-            Register::A => cpu.write_byte(cpu.ab, cpu.a),
-            Register::X => cpu.write_byte(cpu.ab, cpu.x),
-            Register::Y => cpu.write_byte(cpu.ab, cpu.y),
+            Register::A => cpu.perform_write_byte(cpu.a),
+            Register::X => cpu.perform_write_byte(cpu.x),
+            Register::Y => cpu.perform_write_byte(cpu.y),
         }
     }
 
     fn load_immediate<M: Mcu>(cpu: &mut Cpu<M>, r: Register) {
-        let value = cpu.inc_read_byte();
+        let value = cpu.perform_pc_read();
         match r {
             Register::A => cpu.set_a(value),
             Register::X => cpu.set_x(value),
@@ -1538,7 +1590,7 @@ impl Microcode {
     fn ane_immediate<M: Mcu>(cpu: &mut Cpu<M>) {
         // Undocumented ANE/XAA: hardware behaviour uncertain; use deterministic
         // approximation: A := X & oper. Read immediate operand into alu first.
-        let t = cpu.inc_read_byte();
+        let t = cpu.perform_pc_read();
         // Compute X & operand into A, update flags accordingly
         cpu.set_a(cpu.x & t);
     }
@@ -1554,33 +1606,33 @@ impl Microcode {
 
     fn lax_immediate<M: Mcu>(cpu: &mut Cpu<M>) {
         // Read immediate operand into alu and perform LAX semantics in one micro-op.
-        let t = cpu.inc_read_byte();
+        let t = cpu.perform_pc_read();
         cpu.set_a(t);
         cpu.set_x(t);
     }
 
     fn alr_immediate<M: Mcu>(cpu: &mut Cpu<M>) {
-        cpu.alu = cpu.inc_read_byte();
+        cpu.alu = cpu.perform_pc_read();
         cpu.alr();
     }
 
     fn anc_immediate<M: Mcu>(cpu: &mut Cpu<M>) {
-        cpu.alu = cpu.inc_read_byte();
+        cpu.alu = cpu.perform_pc_read();
         cpu.anc();
     }
 
     fn arr_immediate<M: Mcu>(cpu: &mut Cpu<M>) {
-        cpu.alu = cpu.inc_read_byte();
+        cpu.alu = cpu.perform_pc_read();
         cpu.arr();
     }
 
     fn axs_immediate<M: Mcu>(cpu: &mut Cpu<M>) {
-        cpu.alu = cpu.inc_read_byte();
+        cpu.alu = cpu.perform_pc_read();
         cpu.axs();
     }
 
     fn zero_page<M: Mcu>(cpu: &mut Cpu<M>) {
-        let addr = cpu.inc_read_byte();
+        let addr = cpu.perform_pc_read();
         cpu.ab = addr as u16;
     }
 
@@ -1593,31 +1645,29 @@ impl Microcode {
     }
 
     fn absolute_l<M: Mcu>(cpu: &mut Cpu<M>) {
-        let low = cpu.inc_read_byte();
+        let low = cpu.perform_pc_read();
         cpu.set_abl(low);
     }
 
     fn absolute_h<M: Mcu>(cpu: &mut Cpu<M>) {
-        let high = cpu.inc_read_byte();
+        let high = cpu.perform_pc_read();
         cpu.set_abh(high);
     }
 
     fn indexed_l<M: Mcu>(cpu: &mut Cpu<M>) {
-        cpu.db = cpu.read_byte(cpu.ab);
+        cpu.db = cpu.perform_read_byte();
     }
 
     fn indexed_h<M: Mcu>(cpu: &mut Cpu<M>) {
-        let page = cpu.ab & 0xFF00;
-        let addr = page | (cpu.ab as u8 & 0xFF).wrapping_add(1) as u16;
-        cpu.ab = cpu.db as u16 | ((cpu.read_byte(addr) as u16) << 8);
+        cpu.ab = cpu.db as u16 | ((cpu.perform_read_byte() as u16) << 8);
     }
 
     fn store_alu<M: Mcu>(cpu: &mut Cpu<M>) {
-        cpu.write_byte(cpu.ab, cpu.alu);
+        cpu.perform_write_byte(cpu.alu);
     }
 
     fn branch_relative<M: Mcu>(cpu: &mut Cpu<M>, branch_test: BranchTest) {
-        let offset = cpu.inc_read_byte();
+        let offset = cpu.perform_pc_read();
         if branch_test.test(cpu) {
             let pch = cpu.pch();
             cpu.pc = cpu.pc.wrapping_add((offset as i8) as u16);
@@ -1658,18 +1708,24 @@ impl Microcode {
         first_clock: CrossPageBehavior,
         idx: u8,
     ) {
+        let is_first_clock_always = matches!(first_clock, CrossPageBehavior::FirstClockAlways);
+
         if first_phase {
-            // TODO: bus need to add prepare_read()/prepare_write() method
+            cpu.db = cpu.abh();
+            cpu.ab = cpu.ab.wrapping_add(idx as u16);
+            let uses_dummy = is_first_clock_always || cpu.db != cpu.abh();
+            if uses_dummy {
+                let dummy_addr = (u16::from(cpu.db) << 8) | u16::from(cpu.abl());
+                cpu.prepare_read_byte(dummy_addr);
+            } else {
+                op.to_microcode().first_phase(cpu);
+            }
             return;
         }
 
-        let abh = cpu.abh();
-        cpu.ab = cpu.ab.wrapping_add(idx as u16);
-        let is_first_clock_always = matches!(first_clock, CrossPageBehavior::FirstClockAlways);
-
-        if is_first_clock_always || abh != cpu.abh() {
-            let dummy_addr = (u16::from(abh) << 8) | u16::from(cpu.abl());
-            cpu.read_byte(dummy_addr);
+        let uses_dummy = is_first_clock_always || cpu.db != cpu.abh();
+        if uses_dummy {
+            let _ = cpu.perform_read_byte();
             if !is_first_clock_always {
                 cpu.push_microcode(op.to_microcode());
             }
@@ -1679,7 +1735,7 @@ impl Microcode {
     }
 
     fn immediate_with_op<M: Mcu>(cpu: &mut Cpu<M>, op: ImmediateOp) {
-        cpu.alu = cpu.inc_read_byte();
+        cpu.alu = cpu.perform_pc_read();
         op.exec(cpu);
     }
 
@@ -1716,12 +1772,12 @@ impl Microcode {
             }
             IncDecTarget::IncrementAlu => {
                 cpu.alu = cpu.alu.wrapping_add(1);
-                cpu.write_byte(cpu.ab, cpu.alu);
+                cpu.perform_write_byte(cpu.alu);
                 cpu.update_zero_negative_flags(cpu.alu);
             }
             IncDecTarget::DecrementAlu => {
                 cpu.alu = cpu.alu.wrapping_sub(1);
-                cpu.write_byte(cpu.ab, cpu.alu);
+                cpu.perform_write_byte(cpu.alu);
                 cpu.update_zero_negative_flags(cpu.alu);
             }
         }

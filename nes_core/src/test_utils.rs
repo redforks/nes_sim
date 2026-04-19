@@ -83,19 +83,21 @@ impl MockMcu {
             None
         }
     }
+
+    pub fn read(&mut self, address: u16) -> u8 {
+        self.prepare_read(address);
+        self.new_read()
+    }
+
+    pub fn write(&mut self, address: u16, value: u8) {
+        self.prepare_write(address);
+        self.new_write(value);
+    }
 }
 
 impl Mcu for MockMcu {
-    fn read(&mut self, addr: u16) -> u8 {
-        self.memory.borrow()[addr as usize]
-    }
-
     fn peek(&self, addr: u16) -> u8 {
         self.memory.borrow()[addr as usize]
-    }
-
-    fn write(&mut self, addr: u16, value: u8) {
-        self.memory.borrow_mut()[addr as usize] = value;
     }
 
     fn prepare_read(&mut self, address: u16) {
@@ -111,7 +113,7 @@ impl Mcu for MockMcu {
             .address_latch
             .take()
             .expect("address latch should have value when new_read");
-        self.read(address)
+        self.memory.borrow()[address as usize]
     }
 
     fn prepare_write(&mut self, address: u16) {
@@ -127,7 +129,7 @@ impl Mcu for MockMcu {
             .address_latch
             .take()
             .expect("address latch should have value when new_write");
-        self.write(address, value);
+        self.memory.borrow_mut()[address as usize] = value;
     }
 }
 
@@ -143,15 +145,19 @@ impl MockMcu {
 pub trait McuUtils: Mcu {
     /// Reads a 16-bit little-endian value from addr
     fn read_word_le(&mut self, addr: u16) -> u16 {
-        let lo = self.read(addr) as u16;
-        let hi = self.read(addr + 1) as u16;
+        self.prepare_read(addr);
+        let lo = self.new_read() as u16;
+        self.prepare_read(addr + 1);
+        let hi = self.new_read() as u16;
         hi << 8 | lo
     }
 
     /// Writes a 16-bit little-endian value to addr
     fn write_word_le(&mut self, addr: u16, value: u16) {
-        self.write(addr, (value & 0xFF) as u8);
-        self.write(addr + 1, ((value >> 8) & 0xFF) as u8);
+        self.prepare_write(addr);
+        self.new_write((value & 0xFF) as u8);
+        self.prepare_write(addr + 1);
+        self.new_write(((value >> 8) & 0xFF) as u8);
     }
 }
 
@@ -165,23 +171,24 @@ mod tests {
     #[test]
     fn test_mock_mcu_basic() {
         let mut mcu = MockMcu::new();
-        mcu.write(0x1000, 0x42);
-        assert_eq!(mcu.read(0x1000), 0x42);
+        mcu.prepare_write(0x1000);
+        mcu.new_write(0x42);
+        assert_eq!(mcu.peek(0x1000), 0x42);
     }
 
     #[test]
     fn test_mock_mcu_with_program() {
-        let mut mcu = MockMcu::new().with_program(0x8000, &[0xA9, 0x42, 0x00]);
-        assert_eq!(mcu.read(0x8000), 0xA9);
-        assert_eq!(mcu.read(0x8001), 0x42);
+        let mcu = MockMcu::new().with_program(0x8000, &[0xA9, 0x42, 0x00]);
+        assert_eq!(mcu.peek(0x8000), 0xA9);
+        assert_eq!(mcu.peek(0x8001), 0x42);
     }
 
     #[test]
     fn test_mock_mcu_write_word() {
-        let mut mcu = MockMcu::new();
+        let mcu = MockMcu::new();
         mcu.write_word(0x2000, 0x1234);
-        assert_eq!(mcu.read(0x2000), 0x34);
-        assert_eq!(mcu.read(0x2001), 0x12);
+        assert_eq!(mcu.peek(0x2000), 0x34);
+        assert_eq!(mcu.peek(0x2001), 0x12);
     }
 
     #[test]
@@ -195,8 +202,9 @@ mod tests {
     fn test_mock_mcu_regional() {
         let mut mcu = MockMcu::regional(0x2000, 0x20FF);
         assert_eq!(mcu.region(), Some((0x2000, 0x20FF)));
-        mcu.write(0x2050, 0xAB);
-        assert_eq!(mcu.read(0x2050), 0xAB);
+        mcu.prepare_write(0x2050);
+        mcu.new_write(0xAB);
+        assert_eq!(mcu.peek(0x2050), 0xAB);
     }
 
     #[test]

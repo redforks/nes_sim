@@ -552,8 +552,8 @@ impl<M: Mcu> Cpu<M> {
     }
 
     fn read_byte(&mut self, addr: u16) -> u8 {
-        self.inc_mem_count();
-        self.mcu.read(addr)
+        self.prepare_read_byte(addr);
+        self.perform_read_byte()
     }
 
     pub fn peek_byte(&mut self, addr: u16) -> u8 {
@@ -561,28 +561,71 @@ impl<M: Mcu> Cpu<M> {
     }
 
     fn inc_read_byte(&mut self) -> u8 {
-        let addr = self.pc;
-        self.inc_pc(1);
-        self.inc_mem_count();
-        self.mcu.read(addr)
+        self.prepare_pc_read();
+        self.perform_pc_read()
     }
 
     fn write_byte(&mut self, addr: u16, value: u8) {
-        self.inc_mem_count();
-        self.mcu.write(addr, value);
+        self.prepare_write_byte(addr);
+        self.perform_write_byte(value);
     }
 
     fn push_stack(&mut self, value: u8) {
-        self.inc_mem_count();
-        self.mcu.write(0x100 + self.sp as u16, value);
-        self.sp = self.sp.wrapping_sub(1);
+        self.prepare_push_stack();
+        self.perform_push_stack(value);
     }
 
     fn pop_stack(&mut self) -> u8 {
+        self.prepare_pop_stack();
+        self.perform_pop_stack()
+    }
+
+    fn prepare_read_byte(&mut self, addr: u16) {
+        self.inc_mem_count();
+        self.mcu.prepare_read(addr);
+    }
+
+    fn perform_read_byte(&mut self) -> u8 {
+        self.mcu.new_read()
+    }
+
+    fn prepare_pc_read(&mut self) {
+        let addr = self.pc;
+        self.inc_pc(1);
+        self.prepare_read_byte(addr);
+    }
+
+    fn perform_pc_read(&mut self) -> u8 {
+        self.perform_read_byte()
+    }
+
+    fn prepare_write_byte(&mut self, addr: u16) {
+        self.inc_mem_count();
+        self.mcu.prepare_write(addr);
+    }
+
+    fn perform_write_byte(&mut self, value: u8) {
+        self.mcu.new_write(value);
+    }
+
+    fn prepare_push_stack(&mut self) {
+        self.prepare_write_byte(0x100 + self.sp as u16);
+    }
+
+    fn perform_push_stack(&mut self, value: u8) {
+        self.perform_write_byte(value);
+        self.sp = self.sp.wrapping_sub(1);
+    }
+
+    fn prepare_pop_stack(&mut self) {
+        self.inc_mem_count();
         self.sp = self.sp.wrapping_add(1);
         let addr = 0x100 + self.sp as u16;
-        self.inc_mem_count();
-        self.mcu.read(addr)
+        self.mcu.prepare_read(addr);
+    }
+
+    fn perform_pop_stack(&mut self) -> u8 {
+        self.mcu.new_read()
     }
 
     /// Perform the DMC DMA read during a dedicated stall cycle.
@@ -632,8 +675,16 @@ impl<M: Mcu> Cpu<M> {
     }
 
     fn load_alu(&mut self) {
-        self.inc_mem_count();
-        self.alu = self.mcu.read(self.ab);
+        self.prepare_load_alu();
+        self.perform_load_alu();
+    }
+
+    fn prepare_load_alu(&mut self) {
+        self.prepare_read_byte(self.ab);
+    }
+
+    fn perform_load_alu(&mut self) {
+        self.alu = self.perform_read_byte();
     }
 
     fn adc(&mut self, load_alu: bool) {
@@ -741,19 +792,19 @@ impl<M: Mcu> Cpu<M> {
     }
 
     fn sax(&mut self) {
-        self.write_byte(self.ab, self.a & self.x);
+        self.perform_write_byte(self.a & self.x);
     }
 
     fn dcp(&mut self) {
         let v = self.alu.wrapping_sub(1);
-        self.write_byte(self.ab, v);
+        self.perform_write_byte(v);
         self.update_zero_negative_flags(self.a.wrapping_sub(v));
         self.inner_set_flag(Flag::Carry, self.a >= v);
     }
 
     fn isc(&mut self) {
         let v = self.alu.wrapping_add(1);
-        self.write_byte(self.ab, v);
+        self.perform_write_byte(v);
         self.alu = v;
         self.sbc(false);
     }
@@ -761,7 +812,7 @@ impl<M: Mcu> Cpu<M> {
     fn rra(&mut self) {
         let carry = self.alu & 0x01 != 0;
         self.alu = (self.alu >> 1) | ((self.flag(Flag::Carry) as u8) << 7);
-        self.write_byte(self.ab, self.alu);
+        self.perform_write_byte(self.alu);
         self.inner_set_flag(Flag::Carry, carry);
         self.adc(false);
     }
@@ -770,65 +821,68 @@ impl<M: Mcu> Cpu<M> {
         let new = (self.alu << 1) | (self.flag(Flag::Carry) as u8);
         self.inner_set_flag(Flag::Carry, self.alu & 0x80 != 0);
         self.alu = new;
-        self.write_byte(self.ab, self.alu);
+        self.perform_write_byte(self.alu);
         self.and(false);
     }
 
     fn slo(&mut self) {
         self.inner_set_flag(Flag::Carry, self.alu & 0x80 != 0);
         self.alu <<= 1;
-        self.write_byte(self.ab, self.alu);
+        self.perform_write_byte(self.alu);
         self.ora(false);
     }
 
     fn sre(&mut self) {
         self.inner_set_flag(Flag::Carry, self.alu & 0x01 != 0);
         self.alu >>= 1;
-        self.write_byte(self.ab, self.alu);
+        self.perform_write_byte(self.alu);
         self.eor(false);
     }
 
     fn shx(&mut self) {
         let v = self.x & self.abh().wrapping_add(1);
-        let addr = (self.abl() as u16) | ((v as u16) << 8);
-        self.write_byte(addr, v);
+        self.perform_write_byte(v);
     }
 
     fn shy(&mut self) {
         let v = self.y & self.abh().wrapping_add(1);
-        let addr = (self.abl() as u16) | ((v as u16) << 8);
-        self.write_byte(addr, v);
+        self.perform_write_byte(v);
     }
 
     fn sha(&mut self) {
         // SHA (AHX/AXA): store A & X & (high-byte of addr + 1) at address
         let out = self.a & self.x & self.abh().wrapping_add(1);
-        let addr = (self.abl() as u16) | ((out as u16) << 8);
-        self.write_byte(addr, out);
+        self.perform_write_byte(out);
     }
 
     fn tas(&mut self) {
         let v = self.a & self.x;
         self.sp = v;
         let out = v & self.abh().wrapping_add(1);
-        let addr = (self.abl() as u16) | ((out as u16) << 8);
-        self.write_byte(addr, out);
+        self.perform_write_byte(out);
     }
 
     fn pha(&mut self) {
-        self.push_stack(self.a);
+        self.perform_push_stack(self.a);
     }
 
     fn pop_stack_into_alu(&mut self) {
-        self.alu = self.pop_stack();
+        self.prepare_pop_stack();
+        self.perform_pop_stack_into_alu();
     }
 
     fn push_status(&mut self, set_disable_interrupt: bool, break_flag: bool) {
-        self.push_stack(if break_flag {
+        self.prepare_push_stack();
+        self.perform_push_status(set_disable_interrupt, break_flag);
+    }
+
+    fn perform_push_status(&mut self, set_disable_interrupt: bool, break_flag: bool) {
+        let value = if break_flag {
             self.status | Flag::Break as u8 | Flag::NotUsed as u8
         } else {
             self.status | Flag::NotUsed as u8
-        });
+        };
+        self.perform_push_stack(value);
         if set_disable_interrupt && self.mode == CpuMode::Normal {
             self.irq_vector_is_nmi = self.nmi_ready();
             if self.irq_vector_is_nmi {
@@ -841,13 +895,22 @@ impl<M: Mcu> Cpu<M> {
     }
 
     fn plp(&mut self) {
+        self.prepare_pop_stack();
+        self.perform_plp();
+    }
+
+    fn perform_plp(&mut self) {
         self.save_irq_inhibit();
-        let saved = self.pop_stack();
+        let saved = self.perform_pop_stack();
         let break_flag = self.flag(Flag::Break);
         let not_used = self.flag(Flag::NotUsed);
         self.status = saved;
         self.inner_set_flag(Flag::Break, break_flag);
         self.inner_set_flag(Flag::NotUsed, not_used);
+    }
+
+    fn perform_pop_stack_into_alu(&mut self) {
+        self.alu = self.perform_pop_stack();
     }
 
     fn set_pc_to_ab(&mut self) {
@@ -862,10 +925,52 @@ impl<M: Mcu> Cpu<M> {
     }
 
     fn bit(&mut self) {
-        let v = self.read_byte(self.ab);
+        let v = self.perform_read_byte();
         self.inner_set_flag(Flag::Negative, v & 0x80 != 0);
         self.inner_set_flag(Flag::Overflow, v & 0x40 != 0);
         self.update_zero_flag(self.a & v);
+    }
+
+    fn prepare_irq_pcl(&mut self) {
+        let late_nmi_hijack = std::mem::take(&mut self.allow_late_irq_nmi_hijack)
+            && self.mode == CpuMode::Normal
+            && self
+                .nmi_requested_at
+                .is_some_and(|cycles| self.cycles > cycles + 4);
+        let addr = if std::mem::take(&mut self.irq_vector_is_nmi)
+            || self.nmi_ready()
+            || late_nmi_hijack
+        {
+            self.nmi_requested_at = None;
+            self.irq_hijacked = true;
+            self.mode = CpuMode::Nmi;
+            0xFFFA
+        } else {
+            self.irq_hijacked = false;
+            self.defer_nmi_poll = true;
+            0xFFFE
+        };
+        self.prepare_read_byte(addr);
+    }
+
+    fn perform_irq_pcl(&mut self) {
+        self.pc = self.perform_read_byte() as u16;
+    }
+
+    fn prepare_irq_pch(&mut self) {
+        let addr = if self.irq_hijacked {
+            self.mode = CpuMode::Nmi;
+            self.inner_set_flag(Flag::InterruptDisabled, true);
+            0xFFFB
+        } else {
+            self.defer_nmi_poll = true;
+            0xFFFF
+        };
+        self.prepare_read_byte(addr);
+    }
+
+    fn perform_irq_pch(&mut self) {
+        self.pc |= (self.perform_read_byte() as u16) << 8;
     }
 
     fn push_microcodes(&mut self, microcodes: &[Microcode]) {
@@ -911,39 +1016,13 @@ impl<M: Mcu> Cpu<M> {
     }
 
     fn load_irq_pcl(&mut self) {
-        let late_nmi_hijack = std::mem::take(&mut self.allow_late_irq_nmi_hijack)
-            && self.mode == CpuMode::Normal
-            && self
-                .nmi_requested_at
-                .is_some_and(|cycles| self.cycles > cycles + 4);
-        let low = if std::mem::take(&mut self.irq_vector_is_nmi)
-            || self.nmi_ready()
-            || late_nmi_hijack
-        {
-            self.nmi_requested_at = None;
-            self.irq_hijacked = true;
-            // hijacked by nmi
-            self.mode = CpuMode::Nmi;
-            self.read_byte(0xFFFA)
-        } else {
-            self.irq_hijacked = false;
-            self.defer_nmi_poll = true;
-            self.read_byte(0xFFFE)
-        };
-        self.pc = low as u16;
+        self.prepare_irq_pcl();
+        self.perform_irq_pcl();
     }
 
     fn load_irq_pch(&mut self) {
-        let high = if self.irq_hijacked {
-            // hijacked by nmi
-            self.mode = CpuMode::Nmi;
-            self.inner_set_flag(Flag::InterruptDisabled, true);
-            self.read_byte(0xFFFB)
-        } else {
-            self.defer_nmi_poll = true;
-            self.read_byte(0xFFFF)
-        };
-        self.pc |= (high as u16) << 8;
+        self.prepare_irq_pch();
+        self.perform_irq_pch();
     }
 
     /// Set register A and update negative and zero flags.
