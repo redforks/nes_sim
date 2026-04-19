@@ -292,11 +292,9 @@ mmc3_test2_6: build_nes_cpu_test
     {{ nes_cpu_test }} --quiet -f ../nes-test-roms/mmc3_test_2/rom_singles/6-MMC3_alt.nes
 
 [parallel]
-mmc3_test2: mmc3_test2_1 mmc3_test2_2 mmc3_test2_3 mmc3_test2_4 mmc3_test2_5
+mmc3_test2: mmc3_test2_1 mmc3_test2_2 mmc3_test2_3 mmc3_test2_4 mmc3_test2_5 mmc3_test2_6
 
 mmc3: mmc3_tests mmc3_test2 mmc3_irq_tests
-
-mapper_todo: mmc3_test2_6
 
 passed_mapper: mmc3
 

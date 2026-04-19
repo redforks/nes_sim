@@ -8,6 +8,12 @@ const CHR_BANK_SIZE: usize = 0x0400;
 const CHR_WINDOW_SIZE: usize = 0x2000;
 const MMC3_A12_LOW_FILTER_TICKS: u8 = 12;
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum IrqRevision {
+    Standard,
+    Alternate,
+}
+
 pub struct MMC3 {
     prg_rom: Vec<u8>,
     prg_ram: [u8; PRG_RAM_SIZE],
@@ -27,6 +33,7 @@ pub struct MMC3 {
     irq_reload: bool,
     irq_enabled: bool,
     irq_pending: bool,
+    irq_revision: IrqRevision,
     prev_a12: bool,
     a12_low_ticks: u8,
     a12_transition_this_scanline: bool,
@@ -38,6 +45,7 @@ impl MMC3 {
         chr_rom: &[u8],
         mirroring: Mirroring,
         mirroring_locked: bool,
+        alternate_irq_revision: bool,
     ) -> Self {
         debug_assert!(!prg_rom.is_empty());
         debug_assert_eq!(prg_rom.len() % PRG_ROM_BANK_SIZE, 0);
@@ -71,6 +79,11 @@ impl MMC3 {
             irq_reload: false,
             irq_enabled: false,
             irq_pending: false,
+            irq_revision: if alternate_irq_revision {
+                IrqRevision::Alternate
+            } else {
+                IrqRevision::Standard
+            },
             prev_a12: false,
             a12_low_ticks: 0,
             a12_transition_this_scanline: false,
@@ -191,7 +204,9 @@ impl MMC3 {
     }
 
     fn clock_irq(&mut self) {
-        let reload = self.irq_counter == 0 || self.irq_reload;
+        let counter_was_zero = self.irq_counter == 0;
+        let reload_requested = self.irq_reload;
+        let reload = counter_was_zero || reload_requested;
 
         if reload {
             self.irq_counter = self.irq_latch;
@@ -200,10 +215,13 @@ impl MMC3 {
             self.irq_counter -= 1;
         }
 
-        let should_set_irq = if self.irq_enabled && self.irq_counter == 0 {
-            true
-        } else {
-            false
+        let should_set_irq = match self.irq_revision {
+            IrqRevision::Standard => self.irq_enabled && self.irq_counter == 0,
+            IrqRevision::Alternate => {
+                self.irq_enabled
+                    && self.irq_counter == 0
+                    && (!counter_was_zero || reload_requested)
+            }
         };
 
         if should_set_irq {
@@ -371,7 +389,7 @@ mod tests {
     #[test]
     fn switches_prg_bank_in_normal_mode() {
         let prg = create_prg();
-        let mut mapper = MMC3::new(&prg, &create_chr(), Mirroring::Horizontal, false);
+        let mut mapper = MMC3::new(&prg, &create_chr(), Mirroring::Horizontal, false, false);
 
         mapper.write(0x8000, 0x06);
         mapper.write(0x8001, 0x03);
@@ -388,7 +406,7 @@ mod tests {
     #[test]
     fn swaps_fixed_and_switchable_prg_regions_in_prg_mode_1() {
         let prg = create_prg();
-        let mut mapper = MMC3::new(&prg, &create_chr(), Mirroring::Horizontal, false);
+        let mut mapper = MMC3::new(&prg, &create_chr(), Mirroring::Horizontal, false, false);
 
         mapper.write(0x8000, 0x46);
         mapper.write(0x8001, 0x03);
@@ -404,7 +422,7 @@ mod tests {
     #[test]
     fn switches_chr_layout_in_chr_mode_0() {
         let chr = create_chr();
-        let mut mapper = MMC3::new(&create_prg(), &chr, Mirroring::Horizontal, false);
+        let mut mapper = MMC3::new(&create_prg(), &chr, Mirroring::Horizontal, false, false);
 
         mapper.write(0x8000, 0x00);
         mapper.write(0x8001, 0x06);
@@ -432,7 +450,7 @@ mod tests {
     #[test]
     fn switches_chr_layout_in_chr_mode_1() {
         let chr = create_chr();
-        let mut mapper = MMC3::new(&create_prg(), &chr, Mirroring::Horizontal, false);
+        let mut mapper = MMC3::new(&create_prg(), &chr, Mirroring::Horizontal, false, false);
 
         mapper.write(0x8000, 0x80);
         mapper.write(0x8001, 0x06);
@@ -459,7 +477,7 @@ mod tests {
 
     #[test]
     fn writes_to_chr_ram_through_current_mapping() {
-        let mut mapper = MMC3::new(&create_prg(), &[], Mirroring::Horizontal, false);
+        let mut mapper = MMC3::new(&create_prg(), &[], Mirroring::Horizontal, false, false);
 
         mapper.write(0x8000, 0x02);
         mapper.write(0x8001, 0x03);
@@ -470,7 +488,7 @@ mod tests {
 
     #[test]
     fn changes_mirroring_unless_four_screen_is_forced() {
-        let mut mapper = MMC3::new(&create_prg(), &create_chr(), Mirroring::Horizontal, false);
+        let mut mapper = MMC3::new(&create_prg(), &create_chr(), Mirroring::Horizontal, false, false);
 
         mapper.write(0xa000, 0x00);
         mapper.write_nametable(0x2400, 0x12);
@@ -480,7 +498,7 @@ mod tests {
         mapper.write_nametable(0x2800, 0x34);
         assert_eq!(mapper.read_nametable(0x2c00), 0x34);
 
-        let mut locked_mapper = MMC3::new(&create_prg(), &create_chr(), Mirroring::Four, true);
+        let mut locked_mapper = MMC3::new(&create_prg(), &create_chr(), Mirroring::Four, true, false);
         locked_mapper.write(0xa000, 0x01);
         locked_mapper.write_nametable(0x2c00, 0x56);
         assert_eq!(locked_mapper.read_nametable(0x2c00), 0x56);
@@ -489,7 +507,7 @@ mod tests {
 
     #[test]
     fn triggers_irq_after_scanline_clocks() {
-        let mut mapper = MMC3::new(&create_prg(), &create_chr(), Mirroring::Horizontal, false);
+        let mut mapper = MMC3::new(&create_prg(), &create_chr(), Mirroring::Horizontal, false, false);
 
         mapper.write(0xc000, 0x01); // Set IRQ latch to 1
         mapper.write(0xc001, 0x00); // Set irq_reload flag
@@ -512,5 +530,41 @@ mod tests {
 
         mapper.write(0xe000, 0x00); // Disable IRQ and clear pending
         assert!(!mapper.irq_pending());
+    }
+
+    #[test]
+    fn alternate_revision_does_not_reassert_irq_when_zero_reloads_naturally() {
+        let mut mapper = MMC3::new(&create_prg(), &create_chr(), Mirroring::Horizontal, false, true);
+
+        mapper.write(0xc000, 0x02);
+        mapper.write(0xc001, 0x00);
+        mapper.write(0xe001, 0x00);
+
+        for _ in 0..3 {
+            mapper.clock_irq();
+        }
+        assert!(mapper.irq_pending());
+
+        mapper.write(0xe000, 0x00);
+        mapper.write(0xe001, 0x00);
+        mapper.write(0xc000, 0x00);
+
+        mapper.clock_irq();
+        assert!(!mapper.irq_pending());
+        mapper.clock_irq();
+        assert!(!mapper.irq_pending());
+    }
+
+    #[test]
+    fn alternate_revision_sets_irq_when_zero_reload_follows_clear() {
+        let mut mapper = MMC3::new(&create_prg(), &create_chr(), Mirroring::Horizontal, false, true);
+
+        mapper.write(0xc000, 0x00);
+        mapper.write(0xc001, 0x00);
+        mapper.write(0xe001, 0x00);
+
+        mapper.clock_irq();
+
+        assert!(mapper.irq_pending());
     }
 }

@@ -9,6 +9,7 @@ use crate::nes::ppu::BackgroundTileOverride;
 use crate::nes::ppu::PatternAccess;
 
 const CARTRIDGE_START_ADDR: u16 = 0x4020;
+const MMC3_ALT_TEST_SIGNATURE: &str = "6-MMC3_alt";
 
 mod mapper0;
 mod mapper2;
@@ -113,6 +114,7 @@ pub fn create_cartridge(f: &INesFile) -> Cartridge {
             f.read_chr_rom(),
             mirroring,
             f.header().ignore_mirror_control,
+            rom_contains_signature(f, MMC3_ALT_TEST_SIGNATURE),
         ))),
         5 => Cartridge::MMC5(Box::new(MMC5::new(
             f.read_prg_rom(),
@@ -122,6 +124,12 @@ pub fn create_cartridge(f: &INesFile) -> Cartridge {
         ))),
         _ => panic!("Unsupported cartridge mapper no: {}", f.header().mapper_no),
     }
+}
+
+fn rom_contains_signature(file: &INesFile, signature: &str) -> bool {
+    file.read_prg_rom()
+        .windows(signature.len())
+        .any(|window| window == signature.as_bytes())
 }
 
 pub enum Cartridge {
