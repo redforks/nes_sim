@@ -24,6 +24,11 @@ pub trait Mcu {
         None
     }
 
+    fn perform_dmc_dma_halt(&mut self, cpu_read_addr: u16) {
+        self.prepare_read(cpu_read_addr);
+        let _ = self.new_read();
+    }
+
     fn perform_dmc_dma_read(&mut self, sample_addr: u16, _cpu_read_addr: u16) -> u8 {
         self.prepare_read(sample_addr);
         self.new_read()

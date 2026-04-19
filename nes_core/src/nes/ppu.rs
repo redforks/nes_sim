@@ -660,11 +660,11 @@ impl<R: Render> Ppu<R> {
                 && self.dot % 2 == 1
             {
                 // BG tile fetch: only pattern-table accesses (fetch types 2-3).
-                // Notifications are shifted +4 dots (base 5/325 instead of 1/321)
-                // so that the first BG pattern appears at dot 9 rather than dot 5.
-                // Together with the sprite base (first pattern at dot 265), this
-                // gives the real hardware's 256-dot gap between mode $10 and $08.
-                let base_dot = if self.dot <= 256 { 5 } else { 325 };
+                // Notifications are shifted +2 dots (base 3/323 instead of 1/321)
+                // so that the first BG pattern appears at dot 7 rather than dot 5.
+                // Together with the sprite base (first pattern at dot 263), this
+                // preserves the hardware's 256-dot gap between mode $10 and $08.
+                let base_dot = if self.dot <= 256 { 3 } else { 323 };
                 if self.dot < base_dot {
                     None
                 } else {
@@ -679,11 +679,11 @@ impl<R: Render> Ppu<R> {
                         None
                     }
                 }
-            } else if (261..=320).contains(&self.dot) && self.dot % 2 == 1 {
+            } else if (259..=320).contains(&self.dot) && self.dot % 2 == 1 {
                 // Sprite tile fetch: only pattern-table accesses (fetch types 2-3).
                 // Emitted on odd dots to align the MMC3 counter clock with the
                 // observed ~dot-260 hardware timing.
-                let fetch_type = (((self.dot - 261) / 2) % 4) as usize;
+                let fetch_type = (((self.dot - 259) / 2) % 4) as usize;
                 if fetch_type >= 2 {
                     Some(
                         if self.ctrl.sprite_size() || self.ctrl.sprite_pattern_table() {

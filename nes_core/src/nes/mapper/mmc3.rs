@@ -322,7 +322,7 @@ impl MMC3 {
         // MMC3 only recognizes a new rising edge after A12 has remained low
         // for a few PPU cycles. This filters the multiple high pulses that can
         // occur within a single scanline when both BG and sprite fetches use $1xxx.
-        if a12 && !self.prev_a12 && self.a12_low_ticks > MMC3_A12_LOW_FILTER_TICKS {
+        if a12 && !self.prev_a12 && self.a12_low_ticks >= MMC3_A12_LOW_FILTER_TICKS {
             self.a12_transition_this_scanline = true;
             self.clock_irq();
         }

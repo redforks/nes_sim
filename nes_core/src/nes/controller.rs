@@ -92,6 +92,14 @@ impl Controller {
         }
     }
 
+    pub fn direct_read(&mut self, address: u16) -> u8 {
+        match address {
+            0x4016 => self.a.read(),
+            0x4017 => self.b.read(),
+            _ => 0,
+        }
+    }
+
     pub fn read(&mut self, address: u16) -> u8 {
         self.prepare_read(address);
         self.new_read()
@@ -125,11 +133,7 @@ impl Mcu for Controller {
             .address_latch
             .take()
             .expect("address latch should have value when new_read");
-        match address {
-            0x4016 => self.a.read(),
-            0x4017 => self.b.read(),
-            _ => 0,
-        }
+        self.direct_read(address)
     }
 
     fn prepare_write(&mut self, address: u16) {

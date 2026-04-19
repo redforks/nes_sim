@@ -57,7 +57,7 @@ impl<R: Render, D: AudioDriver> NesMcu<R, D> {
             0x0000..=0x1fff => self.lower_ram.peek(address),
             0x2000..=0x3fff => self.ppu.read(address, &mut self.cartridge),
             0x4015 => self.apu.read(address),
-            0x4016 | 0x4017 => self.controller.read(address),
+            0x4016 | 0x4017 => self.controller.direct_read(address),
             0x4000..=0x401f => self.open_bus,
             0x4020..=0x40ff => self.open_bus,
             0x4100..=0xffff => self.cartridge.read(address),
@@ -142,10 +142,16 @@ impl<R: Render, D: AudioDriver> NesMcu<R, D> {
     /// This models the read4 test behavior where the overlap can trigger an
     /// extra side-effecting CPU register read before the actual sample fetch.
     pub fn perform_dmc_dma_read(&mut self, sample_addr: u16, cpu_read_addr: u16) -> u8 {
-        match cpu_read_addr {
+        let _ = cpu_read_addr;
+        self.direct_read(sample_addr)
+    }
+
+    pub fn perform_dmc_dma_halt(&mut self, cpu_read_addr: u16) {
+        let overlap_addr = self.address_latch.unwrap_or(cpu_read_addr);
+        match overlap_addr {
             0x4016 | 0x4017 => {
                 // DMC DMA during controller read causes an extra controller read.
-                let _ = self.direct_read(cpu_read_addr);
+                let _ = self.direct_read(overlap_addr);
             }
             0x2007 => {
                 // DMC DMA during PPUDATA read causes extra PPUDATA reads.
@@ -156,8 +162,6 @@ impl<R: Render, D: AudioDriver> NesMcu<R, D> {
             }
             _ => {}
         }
-
-        self.direct_read(sample_addr)
     }
 
     pub fn press_button(&mut self, button: Button) {
@@ -276,6 +280,10 @@ impl<R: Render, D: AudioDriver> Mcu for NesMcu<R, D> {
 
     fn take_dmc_dma_address(&mut self) -> Option<u16> {
         NesMcu::take_dmc_dma_address(self)
+    }
+
+    fn perform_dmc_dma_halt(&mut self, cpu_read_addr: u16) {
+        NesMcu::perform_dmc_dma_halt(self, cpu_read_addr)
     }
 
     fn perform_dmc_dma_read(&mut self, sample_addr: u16, cpu_read_addr: u16) -> u8 {
