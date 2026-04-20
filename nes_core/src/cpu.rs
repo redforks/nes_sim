@@ -96,7 +96,6 @@ pub struct Cpu<M: Mcu> {
     /// cycle.  This flag is set when such a branch completes, causing
     /// the next instruction-boundary IRQ check to be skipped.
     branch_irq_defer: bool,
-    allow_late_irq_nmi_hijack: bool,
     /// Set to the DMA completion cycle when DMA ends without IRQ pending.
     /// While set, apply penultimate-cycle IRQ sampling: the IRQ must have been
     /// asserted for at least 1 CPU cycle (3 PPU ticks) before being acted on.
@@ -142,7 +141,6 @@ impl<M: Mcu> Cpu<M> {
             defer_nmi_poll: false,
             irq_vector_is_nmi: false,
             branch_irq_defer: false,
-            allow_late_irq_nmi_hijack: false,
             post_dma_irq_defer: None,
             oam_dma_pending: None,
             oam_dma: None,
@@ -193,7 +191,6 @@ impl<M: Mcu> Cpu<M> {
         self.defer_nmi_poll = false;
         self.irq_vector_is_nmi = false;
         self.branch_irq_defer = false;
-        self.allow_late_irq_nmi_hijack = false;
         self.post_dma_irq_defer = None;
         self.oam_dma_pending = None;
         self.oam_dma = None;
@@ -426,8 +423,7 @@ impl<M: Mcu> Cpu<M> {
             return (ExecuteResult::Halt, !first_phase);
         }
 
-        if first_phase && self.resume_second_phase_after_stall {
-            self.resume_second_phase_after_stall = false;
+        if first_phase && std::mem::take(&mut self.resume_second_phase_after_stall) {
             let code = self
                 .cur_microcode
                 .take()
@@ -435,7 +431,6 @@ impl<M: Mcu> Cpu<M> {
             code.second_phase(self);
 
             if self.microcode_queue.is_empty() && self.cur_microcode.is_none() {
-                self.allow_late_irq_nmi_hijack = false;
                 if self.opcode == opcode::RTI {
                     self.mode = CpuMode::Normal;
                 };
@@ -512,7 +507,6 @@ impl<M: Mcu> Cpu<M> {
                                     Microcode::LoadVectorL(Vector::Irq),
                                     Microcode::LoadVectorH(Vector::Irq),
                                 ]);
-                                self.allow_late_irq_nmi_hijack = true;
                                 Microcode::ReadAtPc
                             }
                         }
@@ -544,7 +538,6 @@ impl<M: Mcu> Cpu<M> {
         }
 
         if self.microcode_queue.is_empty() && self.cur_microcode.is_none() {
-            self.allow_late_irq_nmi_hijack = false;
             if self.opcode == opcode::RTI {
                 self.mode = CpuMode::Normal;
             };
@@ -963,16 +956,8 @@ impl<M: Mcu> Cpu<M> {
             Vector::Reset => self.prepare_read_byte(0xFFFC),
             Vector::Nmi => self.prepare_read_byte(0xFFFA),
             Vector::Irq => {
-                let late_nmi_hijack = std::mem::take(&mut self.allow_late_irq_nmi_hijack)
-                    && self.mode == CpuMode::Normal
-                    && self
-                        .nmi_requested_at
-                        .is_some_and(|cycles| self.cycles > cycles + 5);
                 let vector_nmi_ready = self.nmi_ready_at();
-                let addr = if std::mem::take(&mut self.irq_vector_is_nmi)
-                    || vector_nmi_ready
-                    || late_nmi_hijack
-                {
+                let addr = if std::mem::take(&mut self.irq_vector_is_nmi) || vector_nmi_ready {
                     self.nmi_requested_at = None;
                     self.inner_set_flag(Flag::InterruptDisabled, true);
                     self.irq_hijacked = true;
