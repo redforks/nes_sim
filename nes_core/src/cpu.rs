@@ -91,7 +91,6 @@ pub struct Cpu<M: Mcu> {
     /// cpu can not know nmi signal until the next instruction, we save the cycle that nmi requested to detect this
     nmi_requested_at: Option<usize>,
     defer_nmi_poll: bool,
-    irq_vector_is_nmi: bool,
     /// A taken non-page-crossing branch suppresses IRQ on its last
     /// cycle.  This flag is set when such a branch completes, causing
     /// the next instruction-boundary IRQ check to be skipped.
@@ -139,7 +138,6 @@ impl<M: Mcu> Cpu<M> {
             mode: CpuMode::Normal,
             nmi_requested_at: None,
             defer_nmi_poll: false,
-            irq_vector_is_nmi: false,
             branch_irq_defer: false,
             post_dma_irq_defer: None,
             oam_dma_pending: None,
@@ -189,7 +187,6 @@ impl<M: Mcu> Cpu<M> {
         self.microcode_queue.clear();
         self.nmi_requested_at = None;
         self.defer_nmi_poll = false;
-        self.irq_vector_is_nmi = false;
         self.branch_irq_defer = false;
         self.post_dma_irq_defer = None;
         self.oam_dma_pending = None;
@@ -215,11 +212,6 @@ impl<M: Mcu> Cpu<M> {
         self.cycles
     }
 
-    /// Cpu will enter nmi before exec next instrnuction
-    pub fn request_nmi(&mut self) {
-        self.nmi_requested_at = Some(self.cycles);
-    }
-
     pub fn set_irq(&mut self, enabled: bool) {
         if enabled && !self.irq_line {
             self.irq_requested_at = Some(self.cycles);
@@ -230,11 +222,6 @@ impl<M: Mcu> Cpu<M> {
     }
 
     fn nmi_ready(&self) -> bool {
-        self.nmi_requested_at
-            .is_some_and(|requested_at| self.cycles > requested_at + 2)
-    }
-
-    fn nmi_ready_at(&self) -> bool {
         self.nmi_requested_at
             .is_some_and(|requested_at| self.cycles > requested_at + 3)
     }
@@ -389,7 +376,7 @@ impl<M: Mcu> Cpu<M> {
                         self.post_dma_irq_defer = Some(self.cycles);
                         if self
                             .irq_requested_at
-                            .is_some_and(|irq_at| irq_at + 3 <= self.cycles)
+                            .is_some_and(|irq_at| self.cycles - irq_at > 2)
                         {
                             self.defer_nmi_poll = true;
                         }
@@ -451,7 +438,7 @@ impl<M: Mcu> Cpu<M> {
 
                     if std::mem::take(&mut self.defer_nmi_poll) {
                         Microcode::FetchAndDecode
-                    } else if self.nmi_ready_at() {
+                    } else if self.nmi_ready() {
                         self.nmi_requested_at = None;
                         self.mode = CpuMode::Nmi;
                         self.push_microcodes(&[
@@ -478,7 +465,7 @@ impl<M: Mcu> Cpu<M> {
                         let defer_for_branch = branch_defer
                             && self
                                 .irq_requested_at
-                                .is_some_and(|at| self.cycles.wrapping_sub(at) <= 3);
+                                .is_some_and(|irq_at| self.cycles - irq_at <= 2);
                         if defer_for_branch {
                             Microcode::FetchAndDecode
                         } else {
@@ -956,8 +943,7 @@ impl<M: Mcu> Cpu<M> {
             Vector::Reset => self.prepare_read_byte(0xFFFC),
             Vector::Nmi => self.prepare_read_byte(0xFFFA),
             Vector::Irq => {
-                let vector_nmi_ready = self.nmi_ready_at();
-                let addr = if std::mem::take(&mut self.irq_vector_is_nmi) || vector_nmi_ready {
+                let addr = if self.nmi_ready() {
                     self.nmi_requested_at = None;
                     self.inner_set_flag(Flag::InterruptDisabled, true);
                     self.irq_hijacked = true;
@@ -1029,7 +1015,7 @@ impl<M: Mcu> Cpu<M> {
         if self.nmi_line != nmi {
             self.nmi_line = nmi;
             if nmi {
-                self.request_nmi();
+                self.nmi_requested_at = Some(self.cycles);
             }
         }
 
@@ -1051,12 +1037,6 @@ impl<M: Mcu> Cpu<M> {
             self.status | Flag::NotUsed as u8
         };
         self.perform_push_stack(value);
-        if set_disable_interrupt && self.mode == CpuMode::Normal {
-            self.irq_vector_is_nmi = self.nmi_ready();
-            if self.irq_vector_is_nmi {
-                self.nmi_requested_at = None;
-            }
-        }
         if set_disable_interrupt {
             self.inner_set_flag(Flag::InterruptDisabled, true);
         }
