@@ -52,6 +52,7 @@ impl OamDmaState {
 /// During OAM DMA the stall phases are absorbed.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum DmcDmaPhase {
+    LoadHalt,
     /// First stall cycle (CPU halted).
     Halt,
     /// Bus alignment stall.
@@ -106,6 +107,7 @@ pub struct Cpu<M: Mcu> {
     /// DMC DMA state machine – `None` when no DMC DMA is in progress.
     dmc_dma: Option<DmcDmaPhase>,
     mode: CpuMode,
+    resume_second_phase_after_stall: bool,
 
     microcode_queue: ArrayDeque<Microcode, 8>,
     irq_hijacked: bool,
@@ -146,6 +148,7 @@ impl<M: Mcu> Cpu<M> {
             oam_dma: None,
             dmc_dma: None,
             irq_hijacked: false,
+            resume_second_phase_after_stall: false,
             #[cfg(debug_assertions)]
             mem_acc_count: Default::default(),
         };
@@ -196,6 +199,7 @@ impl<M: Mcu> Cpu<M> {
         self.oam_dma = None;
         self.dmc_dma = None;
         self.mode = CpuMode::Normal;
+        self.resume_second_phase_after_stall = false;
         self.sp = self.sp.wrapping_sub(3);
 
         // Reset process takes 7 cycles, push 7 Nop microcodes to ppu/apu run as a real device, and make Plugin to get correct total cycles
@@ -264,7 +268,7 @@ impl<M: Mcu> Cpu<M> {
             } else {
                 // Load DMA: scheduled on GET cycle -> 3 stall cycles
                 // Halt + Dummy + DmaRead (skip Align)
-                self.dmc_dma = Some(DmcDmaPhase::Align);
+                self.dmc_dma = Some(DmcDmaPhase::LoadHalt);
             }
         }
     }
@@ -310,31 +314,40 @@ impl<M: Mcu> Cpu<M> {
             let in_oam_dma = self.oam_dma.is_some();
             let oam_absorbs_dma = in_oam_dma || self.oam_dma_pending.is_some();
 
+            if !oam_absorbs_dma {
+                if first_phase {
+                    return (ExecuteResult::Continue, false);
+                }
+
+                if self.cur_microcode.is_some() {
+                    self.resume_second_phase_after_stall = true;
+                }
+                match phase {
+                    DmcDmaPhase::LoadHalt => self.dmc_dma = Some(DmcDmaPhase::Dummy),
+                    DmcDmaPhase::Halt => self.dmc_dma = Some(DmcDmaPhase::Align),
+                    DmcDmaPhase::Align => self.dmc_dma = Some(DmcDmaPhase::Dummy),
+                    DmcDmaPhase::Dummy => self.dmc_dma = Some(DmcDmaPhase::DmaRead),
+                    DmcDmaPhase::DmaRead => {
+                        self.perform_dmc_dma_on_stall();
+                    }
+                }
+                return (ExecuteResult::Continue, false);
+            }
+
             match phase {
+                DmcDmaPhase::LoadHalt => {
+                    self.dmc_dma = Some(DmcDmaPhase::Dummy);
+                }
                 DmcDmaPhase::Halt => {
                     self.dmc_dma = Some(DmcDmaPhase::Align);
-                    if !oam_absorbs_dma {
-                        return (ExecuteResult::Continue, false);
-                    }
                 }
                 DmcDmaPhase::Align => {
                     self.dmc_dma = Some(DmcDmaPhase::Dummy);
-                    if !oam_absorbs_dma {
-                        return (ExecuteResult::Continue, false);
-                    }
                 }
                 DmcDmaPhase::Dummy => {
                     self.dmc_dma = Some(DmcDmaPhase::DmaRead);
-                    if !oam_absorbs_dma {
-                        return (ExecuteResult::Continue, false);
-                    }
                 }
                 DmcDmaPhase::DmaRead => {
-                    if !oam_absorbs_dma {
-                        // Not in OAM DMA: this is a stall cycle for DMC DMA read.
-                        self.perform_dmc_dma_on_stall();
-                        return (ExecuteResult::Continue, false);
-                    }
                     // In OAM DMA: DMC DMA read happens on GET cycle without adding stall cycles.
                     // Perform the read and fall through to OAM DMA processing.
                     if first_phase {
@@ -407,6 +420,26 @@ impl<M: Mcu> Cpu<M> {
 
         if self.is_halted() {
             return (ExecuteResult::Halt, !first_phase);
+        }
+
+        if first_phase && self.resume_second_phase_after_stall {
+            self.resume_second_phase_after_stall = false;
+            let code = self
+                .cur_microcode
+                .take()
+                .expect("cur_microcode should exist when resuming stalled second phase");
+            code.second_phase(self);
+
+            if self.microcode_queue.is_empty() && self.cur_microcode.is_none() {
+                self.allow_late_irq_nmi_hijack = false;
+                if self.opcode == opcode::RTI {
+                    self.mode = CpuMode::Normal;
+                };
+                plugin.end(self);
+                return (plugin.should_stop(), true);
+            }
+
+            return (ExecuteResult::Continue, false);
         }
 
         let code = if first_phase {
@@ -592,14 +625,39 @@ impl<M: Mcu> Cpu<M> {
     /// it was halted.
     fn perform_dmc_dma_on_stall(&mut self) {
         if let Some(sample_addr) = self.mcu.take_dmc_dma_address() {
-            let phantom_addr = match self.microcode_queue.front() {
-                Some(Microcode::LoadR(_) | Microcode::Bit | Microcode::Lax) => self.ab,
-                _ => self.pc,
-            };
+            let phantom_addr = self.dmc_dma_phantom_addr();
             let byte = self.mcu.perform_dmc_dma_read(sample_addr, phantom_addr);
             self.mcu.supply_dmc_dma_byte(byte);
         }
         self.dmc_dma = None;
+    }
+
+    #[inline]
+    fn dmc_dma_phantom_info(&self) -> u16 {
+        let pending_read = self.cur_microcode.or_else(|| self.microcode_queue.front().copied());
+        let has_phantom = matches!(
+            pending_read,
+            Some(
+                Microcode::LoadR(_)
+                    | Microcode::Bit
+                    | Microcode::Lax
+                    | Microcode::LoadIntoAlu
+                    | Microcode::Adc
+                    | Microcode::Sbc
+                    | Microcode::Cmp
+                    | Microcode::Cpx
+                    | Microcode::Cpy
+                    | Microcode::Ora
+                    | Microcode::Eor
+                    | Microcode::And
+            )
+        );
+        if has_phantom { self.ab } else { self.pc }
+    }
+
+    #[inline]
+    fn dmc_dma_phantom_addr(&self) -> u16 {
+        self.dmc_dma_phantom_info()
     }
 
     pub fn peek_stack(&mut self) -> u8 {

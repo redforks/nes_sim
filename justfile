@@ -305,7 +305,7 @@ passed_cpu_tests: cpu-test instr_misc instr_test-v5 instr_test-v3 instr_timing c
 passed_ppu_tests: ppu_vbl_nmi vbl_nmi_timing oam_read oam_stress ppu_open_bus ppu_read_buffer sprite_hit_tests sprite_overflow_tests scanline
 
 [parallel]
-passed_apu_tests: apu_mixer apu_reset apu_test
+passed_apu_tests: apu_mixer apu_reset apu_test dmc_dma_during_read4
 
 todo_tests: sprdma_and_dmc_dma dmc_dma_during_read4
 
