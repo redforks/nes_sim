@@ -469,8 +469,8 @@ const fn build_opcode_table() -> [ArrayVec<[Microcode; 7]>; 256] {
             break_flag: true,
             set_disable_interrupt: true,
         },
-        LoadIrqPcL,
-        LoadIrqPcH
+        LoadVectorL(Vector::Irq),
+        LoadVectorH(Vector::Irq)
     );
     r[SBC_IMMEDIATE as usize] = microcode_arr!(ImmediateWithOp(ImmediateOp::Sbc));
     r[USBC as usize] = microcode_arr!(ImmediateWithOp(ImmediateOp::Sbc));
@@ -984,15 +984,17 @@ pub enum Microcode {
     #[default]
     Kill,
 
-    LoadResetPcL,
-    LoadResetPcH,
-    LoadNmiPcL,
-    LoadNmiPcH,
-
     /// Set pc to address_latch | absolute << 8
     LoadPcAbsoluteH,
-    LoadIrqPcL,
-    LoadIrqPcH,
+    LoadVectorL(Vector),
+    LoadVectorH(Vector),
+}
+
+#[derive(Debug, Clone, Copy)]
+pub enum Vector {
+    Reset,
+    Nmi,
+    Irq,
 }
 
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]
@@ -1413,12 +1415,9 @@ impl Microcode {
                 cpu.prepare_push_stack()
             }
             Self::Plp | Self::PopPcL | Self::PopPcH | Self::PopStack => cpu.prepare_pop_stack(),
-            Self::LoadResetPcL => cpu.prepare_read_byte(0xFFFC),
-            Self::LoadResetPcH => cpu.prepare_read_byte(0xFFFD),
-            Self::LoadNmiPcL => cpu.prepare_read_byte(0xFFFA),
-            Self::LoadNmiPcH => cpu.prepare_read_byte(0xFFFB),
-            Self::LoadIrqPcL => cpu.prepare_irq_pcl(),
-            Self::LoadIrqPcH => cpu.prepare_irq_pch(),
+
+            Self::LoadVectorL(vector) => cpu.prepare_vector_pcl(vector),
+            Self::LoadVectorH(vector) => cpu.prepare_vector_pch(vector),
             Self::Shx => cpu.prepare_write_byte(
                 (cpu.abl() as u16) | (((cpu.x & cpu.abh().wrapping_add(1)) as u16) << 8),
             ),
@@ -1543,14 +1542,9 @@ impl Microcode {
             Self::BranchRelative(branch_test) => Self::branch_relative(cpu, branch_test),
             Self::Kill => cpu.halt(),
 
-            Self::LoadIrqPcH => cpu.perform_irq_pch(),
-            Self::LoadIrqPcL => cpu.perform_irq_pcl(),
-            Self::LoadNmiPcL => {
-                cpu.pc = cpu.perform_read_byte() as u16;
-            }
-            Self::LoadNmiPcH => {
-                cpu.pc |= (cpu.perform_read_byte() as u16) << 8;
-            }
+            Self::LoadVectorL(_vector) => cpu.perform_pcl(),
+            Self::LoadVectorH(_vector) => cpu.perform_pch(),
+
             Self::PushPcH => {
                 cpu.perform_push_stack((cpu.pc >> 8) as u8);
             }
@@ -1575,8 +1569,6 @@ impl Microcode {
             Self::PopStack => cpu.perform_pop_stack_into_alu(),
             Self::UpdateAFromAlu => cpu.set_a(cpu.alu),
 
-            Self::LoadResetPcL => cpu.pc = cpu.perform_read_byte() as u16,
-            Self::LoadResetPcH => cpu.pc |= (cpu.perform_read_byte() as u16) << 8,
             Self::LoadPcAbsoluteH => {
                 cpu.pc = (cpu.ab & 0xff) | ((cpu.perform_pc_read() as u16) << 8);
             }

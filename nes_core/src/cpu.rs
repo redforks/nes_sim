@@ -1,5 +1,5 @@
 use self::microcode::{Microcode, opcode};
-use crate::mcu::Mcu;
+use crate::{cpu::microcode::Vector, mcu::Mcu};
 use arraydeque::ArrayDeque;
 #[cfg(debug_assertions)]
 use std::{cell::Cell, rc::Rc};
@@ -209,8 +209,8 @@ impl<M: Mcu> Cpu<M> {
             Microcode::Nop,
             Microcode::Nop,
             Microcode::Nop,
-            Microcode::LoadResetPcL,
-            Microcode::LoadResetPcH,
+            Microcode::LoadVectorL(Vector::Reset),
+            Microcode::LoadVectorH(Vector::Reset),
         ]);
     }
 
@@ -467,8 +467,8 @@ impl<M: Mcu> Cpu<M> {
                                 set_disable_interrupt: true,
                                 break_flag: false,
                             },
-                            Microcode::LoadNmiPcL,
-                            Microcode::LoadNmiPcH,
+                            Microcode::LoadVectorL(Vector::Nmi),
+                            Microcode::LoadVectorH(Vector::Nmi),
                         ]);
                         Microcode::ReadAtPc
                     } else if self.irq_line
@@ -509,8 +509,8 @@ impl<M: Mcu> Cpu<M> {
                                         set_disable_interrupt: true,
                                         break_flag: false,
                                     },
-                                    Microcode::LoadIrqPcL,
-                                    Microcode::LoadIrqPcH,
+                                    Microcode::LoadVectorL(Vector::Irq),
+                                    Microcode::LoadVectorH(Vector::Irq),
                                 ]);
                                 self.allow_late_irq_nmi_hijack = true;
                                 Microcode::ReadAtPc
@@ -958,44 +958,57 @@ impl<M: Mcu> Cpu<M> {
         self.update_zero_flag(self.a & v);
     }
 
-    fn prepare_irq_pcl(&mut self) {
-        let late_nmi_hijack = std::mem::take(&mut self.allow_late_irq_nmi_hijack)
-            && self.mode == CpuMode::Normal
-            && self
-                .nmi_requested_at
-                .is_some_and(|cycles| self.cycles > cycles + 5);
-        let vector_nmi_ready = self.nmi_ready_at();
-        let addr =
-            if std::mem::take(&mut self.irq_vector_is_nmi) || vector_nmi_ready || late_nmi_hijack {
-                self.nmi_requested_at = None;
-                self.irq_hijacked = true;
-                self.mode = CpuMode::Nmi;
-                0xFFFA
-            } else {
-                self.irq_hijacked = false;
-                0xFFFE
-            };
-        self.prepare_read_byte(addr);
+    fn prepare_vector_pcl(&mut self, vector: Vector) {
+        match vector {
+            Vector::Reset => self.prepare_read_byte(0xFFFC),
+            Vector::Nmi => self.prepare_read_byte(0xFFFA),
+            Vector::Irq => {
+                let late_nmi_hijack = std::mem::take(&mut self.allow_late_irq_nmi_hijack)
+                    && self.mode == CpuMode::Normal
+                    && self
+                        .nmi_requested_at
+                        .is_some_and(|cycles| self.cycles > cycles + 5);
+                let vector_nmi_ready = self.nmi_ready_at();
+                let addr = if std::mem::take(&mut self.irq_vector_is_nmi)
+                    || vector_nmi_ready
+                    || late_nmi_hijack
+                {
+                    self.nmi_requested_at = None;
+                    self.inner_set_flag(Flag::InterruptDisabled, true);
+                    self.irq_hijacked = true;
+                    self.mode = CpuMode::Nmi;
+                    0xFFFA
+                } else {
+                    self.irq_hijacked = false;
+                    0xFFFE
+                };
+                self.prepare_read_byte(addr);
+            }
+        }
     }
 
-    fn perform_irq_pcl(&mut self) {
-        self.pc = self.perform_read_byte() as u16;
+    fn prepare_vector_pch(&mut self, vector: Vector) {
+        match vector {
+            Vector::Reset => self.prepare_read_byte(0xFFFD),
+            Vector::Nmi => self.prepare_read_byte(0xFFFB),
+            Vector::Irq => {
+                let addr = if self.irq_hijacked {
+                    0xFFFB
+                } else {
+                    self.defer_nmi_poll = true;
+                    0xFFFF
+                };
+                self.prepare_read_byte(addr);
+            }
+        }
     }
 
-    fn prepare_irq_pch(&mut self) {
-        let addr = if self.irq_hijacked {
-            self.mode = CpuMode::Nmi;
-            self.inner_set_flag(Flag::InterruptDisabled, true);
-            0xFFFB
-        } else {
-            self.defer_nmi_poll = true;
-            0xFFFF
-        };
-        self.prepare_read_byte(addr);
-    }
-
-    fn perform_irq_pch(&mut self) {
+    fn perform_pch(&mut self) {
         self.pc |= (self.perform_read_byte() as u16) << 8;
+    }
+
+    fn perform_pcl(&mut self) {
+        self.pc = self.perform_read_byte() as u16;
     }
 
     fn push_microcodes(&mut self, microcodes: &[Microcode]) {
