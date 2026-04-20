@@ -881,6 +881,8 @@ pub enum Microcode {
     IndexedH,
     /// Read immediate value from instruction data stream, but do not use it
     SkipImmediate,
+    /// Read memory value at address bus, but do not use it
+    ReadAtPc,
 
     /// Load byte into alu at memory ab
     LoadIntoAlu,
@@ -1395,6 +1397,9 @@ impl Microcode {
             | Self::BranchRelative(_)
             | Self::LoadPcAbsoluteH
             | Self::ImmediateWithOp(_) => cpu.prepare_pc_read(),
+            Self::ReadAtPc => {
+                cpu.mcu.prepare_read(cpu.pc);
+            }
             Self::IndexedL => cpu.prepare_read_byte(cpu.ab),
             Self::IndexedH => {
                 let page = cpu.ab & 0xFF00;
@@ -1494,7 +1499,7 @@ impl Microcode {
             Self::Bit => cpu.bit(),
             Self::StoreAlu => Self::store_alu(cpu),
             Self::Nop => {}
-            Self::SkipImmediate => {
+            Self::SkipImmediate | Self::ReadAtPc => {
                 cpu.perform_pc_read();
             }
             Self::IndexedL => Self::indexed_l(cpu),

@@ -233,12 +233,13 @@ impl<M: Mcu> Cpu<M> {
     }
 
     fn nmi_ready(&self) -> bool {
-        self.nmi_ready_at(self.cycles)
+        self.nmi_requested_at
+            .is_some_and(|requested_at| self.cycles > requested_at + 2)
     }
 
-    fn nmi_ready_at(&self, cycles: usize) -> bool {
+    fn nmi_ready_at(&self) -> bool {
         self.nmi_requested_at
-            .is_some_and(|requested_at| cycles > requested_at + 5)
+            .is_some_and(|requested_at| self.cycles > requested_at + 3)
     }
 
     pub fn is_halted(&self) -> bool {
@@ -452,11 +453,10 @@ impl<M: Mcu> Cpu<M> {
                     plugin.start(self);
                     let irq_inhibit = self.irq_inhibit.take();
                     let branch_defer = std::mem::take(&mut self.branch_irq_defer);
-                    let poll_cycles = self.cycles.wrapping_add(2);
 
                     if std::mem::take(&mut self.defer_nmi_poll) {
                         Microcode::FetchAndDecode
-                    } else if self.nmi_ready_at(poll_cycles) {
+                    } else if self.nmi_ready_at() {
                         self.nmi_requested_at = None;
                         self.mode = CpuMode::Nmi;
                         self.push_microcodes(&[
@@ -470,7 +470,7 @@ impl<M: Mcu> Cpu<M> {
                             Microcode::LoadNmiPcL,
                             Microcode::LoadNmiPcH,
                         ]);
-                        Microcode::Nop
+                        Microcode::ReadAtPc
                     } else if self.irq_line
                         && !irq_inhibit.unwrap_or_else(|| self.flag(Flag::InterruptDisabled))
                     {
@@ -513,7 +513,7 @@ impl<M: Mcu> Cpu<M> {
                                     Microcode::LoadIrqPcH,
                                 ]);
                                 self.allow_late_irq_nmi_hijack = true;
-                                Microcode::Nop
+                                Microcode::ReadAtPc
                             }
                         }
                     } else {
@@ -964,7 +964,7 @@ impl<M: Mcu> Cpu<M> {
             && self
                 .nmi_requested_at
                 .is_some_and(|cycles| self.cycles > cycles + 5);
-        let vector_nmi_ready = self.nmi_ready_at(self.cycles.wrapping_add(2));
+        let vector_nmi_ready = self.nmi_ready_at();
         let addr =
             if std::mem::take(&mut self.irq_vector_is_nmi) || vector_nmi_ready || late_nmi_hijack {
                 self.nmi_requested_at = None;
@@ -973,7 +973,6 @@ impl<M: Mcu> Cpu<M> {
                 0xFFFA
             } else {
                 self.irq_hijacked = false;
-                self.defer_nmi_poll = true;
                 0xFFFE
             };
         self.prepare_read_byte(addr);
