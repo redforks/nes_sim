@@ -96,7 +96,6 @@ pub struct Cpu<M: Mcu> {
     /// cycle.  This flag is set when such a branch completes, causing
     /// the next instruction-boundary IRQ check to be skipped.
     branch_irq_defer: bool,
-    allow_late_irq_nmi_hijack: bool,
     /// Set to the DMA completion cycle when DMA ends without IRQ pending.
     /// While set, apply penultimate-cycle IRQ sampling: the IRQ must have been
     /// asserted for at least 1 CPU cycle (3 PPU ticks) before being acted on.
@@ -142,7 +141,6 @@ impl<M: Mcu> Cpu<M> {
             defer_nmi_poll: false,
             irq_vector_is_nmi: false,
             branch_irq_defer: false,
-            allow_late_irq_nmi_hijack: false,
             post_dma_irq_defer: None,
             oam_dma_pending: None,
             oam_dma: None,
@@ -193,7 +191,6 @@ impl<M: Mcu> Cpu<M> {
         self.defer_nmi_poll = false;
         self.irq_vector_is_nmi = false;
         self.branch_irq_defer = false;
-        self.allow_late_irq_nmi_hijack = false;
         self.post_dma_irq_defer = None;
         self.oam_dma_pending = None;
         self.oam_dma = None;
@@ -431,7 +428,6 @@ impl<M: Mcu> Cpu<M> {
             code.second_phase(self);
 
             if self.microcode_queue.is_empty() && self.cur_microcode.is_none() {
-                self.allow_late_irq_nmi_hijack = false;
                 if self.opcode == opcode::RTI {
                     self.mode = CpuMode::Normal;
                 };
@@ -509,7 +505,6 @@ impl<M: Mcu> Cpu<M> {
                                     Microcode::LoadIrqPcL,
                                     Microcode::LoadIrqPcH,
                                 ]);
-                                self.allow_late_irq_nmi_hijack = true;
                                 Microcode::Nop
                             }
                         }
@@ -541,7 +536,6 @@ impl<M: Mcu> Cpu<M> {
         }
 
         if self.microcode_queue.is_empty() && self.cur_microcode.is_none() {
-            self.allow_late_irq_nmi_hijack = false;
             if self.opcode == opcode::RTI {
                 self.mode = CpuMode::Normal;
             };
@@ -634,7 +628,9 @@ impl<M: Mcu> Cpu<M> {
 
     #[inline]
     fn dmc_dma_phantom_info(&self) -> u16 {
-        let pending_read = self.cur_microcode.or_else(|| self.microcode_queue.front().copied());
+        let pending_read = self
+            .cur_microcode
+            .or_else(|| self.microcode_queue.front().copied());
         let has_phantom = matches!(
             pending_read,
             Some(
@@ -969,15 +965,7 @@ impl<M: Mcu> Cpu<M> {
     }
 
     fn load_irq_pcl(&mut self) {
-        let late_nmi_hijack = std::mem::take(&mut self.allow_late_irq_nmi_hijack)
-            && self.mode == CpuMode::Normal
-            && self
-                .nmi_requested_at
-                .is_some_and(|cycles| self.cycles > cycles + 4);
-        let low = if std::mem::take(&mut self.irq_vector_is_nmi)
-            || self.nmi_ready()
-            || late_nmi_hijack
-        {
+        let low = if std::mem::take(&mut self.irq_vector_is_nmi) || self.nmi_ready() {
             self.nmi_requested_at = None;
             self.irq_hijacked = true;
             // hijacked by nmi
