@@ -180,6 +180,7 @@ dmc_dma_during_read4_4: build_nes_cpu_test
 dmc_dma_during_read4_5: build_nes_cpu_test
     {{ nes_cpu_test }} --quiet -f ../nes-test-roms/dmc_dma_during_read4/double_2007_read.nes
 
+[parallel]
 dmc_dma_during_read4: dmc_dma_during_read4_1 dmc_dma_during_read4_2 dmc_dma_during_read4_3 dmc_dma_during_read4_4 dmc_dma_during_read4_5
 
 sprdma_and_dmc_dma_1: build_nes_cpu_test
@@ -292,22 +293,25 @@ mmc3_test2_6: build_nes_cpu_test
     {{ nes_cpu_test }} --quiet -f ../nes-test-roms/mmc3_test_2/rom_singles/6-MMC3_alt.nes
 
 [parallel]
-mmc3_test2: mmc3_test2_1 mmc3_test2_2 mmc3_test2_3 mmc3_test2_4 mmc3_test2_5 mmc3_test2_6
+mmc3_test2: mmc3_test2_1 mmc3_test2_2 mmc3_test2_3 mmc3_test2_4 mmc3_test2_5
 
+[parallel]
 mmc3: mmc3_tests mmc3_test2 mmc3_irq_tests
 
-passed_mapper: mmc3
+mapper_todo: mmc3_test2_6
+
+# passed_mapper: mmc3
 
 [parallel]
 passed_cpu_tests: cpu-test instr_misc instr_test-v5 instr_test-v3 instr_timing cpu_dummy_reads cpu_dummy_writes cpu_exec_space cpu_reset cpu_timing_test6 nestest branch_timing_tests cpu_interrupts_v2
 
 [parallel]
-passed_ppu_tests: ppu_vbl_nmi vbl_nmi_timing oam_read oam_stress ppu_open_bus ppu_read_buffer sprite_hit_tests sprite_overflow_tests scanline dmc_dma_during_read4 
+passed_ppu_tests: ppu_vbl_nmi vbl_nmi_timing oam_read oam_stress ppu_open_bus ppu_read_buffer sprite_hit_tests sprite_overflow_tests scanline
 
 [parallel]
-passed_apu_tests: apu_mixer apu_reset apu_test dmc_dma_during_read4 
+passed_apu_tests: apu_mixer apu_reset apu_test
 
-todo_tests: sprdma_and_dmc_dma 
+todo_tests: dmc_dma_during_read4 mmc3
 
 [parallel]
 passed: unit-test passed_cpu_tests passed_ppu_tests passed_apu_tests

@@ -64,11 +64,7 @@ impl<M: Mcu> Plugin<M> for MonitorTestStatus {
                 Some(r)
             }
             Status::ShouldReset => {
-                if self.cycles_request_reset.is_none()
-                    && self
-                        .cycles_last_reset
-                        .map_or(true, |c| cpu.total_cycles() - c >= 536_000)
-                {
+                if self.cycles_request_reset.is_none() && self.cycles_last_reset.map_or(true, |c| cpu.total_cycles() - c >= 536_000) {
                     self.cycles_request_reset = Some(cpu.total_cycles());
                 }
                 None

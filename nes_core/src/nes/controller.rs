@@ -79,7 +79,6 @@ pub struct Controller {
     pub a: AController,
     /// The second controller.
     pub b: AController,
-    address_latch: Option<u16>,
 }
 
 #[allow(clippy::new_without_default)]
@@ -88,11 +87,12 @@ impl Controller {
         Controller {
             a: AController::new(),
             b: AController::new(),
-            address_latch: None,
         }
     }
+}
 
-    pub fn direct_read(&mut self, address: u16) -> u8 {
+impl Mcu for Controller {
+    fn read(&mut self, address: u16) -> u8 {
         match address {
             0x4016 => self.a.read(),
             0x4017 => self.b.read(),
@@ -100,18 +100,6 @@ impl Controller {
         }
     }
 
-    pub fn read(&mut self, address: u16) -> u8 {
-        self.prepare_read(address);
-        self.new_read()
-    }
-
-    pub fn write(&mut self, address: u16, value: u8) {
-        self.prepare_write(address);
-        self.new_write(value);
-    }
-}
-
-impl Mcu for Controller {
     fn peek(&self, address: u16) -> u8 {
         match address {
             0x4016 => self.a.peek(),
@@ -120,35 +108,7 @@ impl Mcu for Controller {
         }
     }
 
-    fn prepare_read(&mut self, address: u16) {
-        debug_assert!(
-            self.address_latch.is_none(),
-            "address latch should be empty when prepare_read"
-        );
-        self.address_latch = Some(address);
-    }
-
-    fn new_read(&mut self) -> u8 {
-        let address = self
-            .address_latch
-            .take()
-            .expect("address latch should have value when new_read");
-        self.direct_read(address)
-    }
-
-    fn prepare_write(&mut self, address: u16) {
-        debug_assert!(
-            self.address_latch.is_none(),
-            "address latch should be empty when prepare_write"
-        );
-        self.address_latch = Some(address);
-    }
-
-    fn new_write(&mut self, value: u8) {
-        let address = self
-            .address_latch
-            .take()
-            .expect("address latch should have value when new_write");
+    fn write(&mut self, address: u16, value: u8) {
         if address == 0x4016 {
             self.a.stroke = value & 1 != 0;
             self.b.stroke = value & 1 != 0;

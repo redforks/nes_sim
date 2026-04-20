@@ -1,5 +1,5 @@
 use self::microcode::{Microcode, opcode};
-use crate::{cpu::microcode::Vector, mcu::Mcu};
+use crate::mcu::Mcu;
 use arraydeque::ArrayDeque;
 #[cfg(debug_assertions)]
 use std::{cell::Cell, rc::Rc};
@@ -52,7 +52,6 @@ impl OamDmaState {
 /// During OAM DMA the stall phases are absorbed.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum DmcDmaPhase {
-    LoadHalt,
     /// First stall cycle (CPU halted).
     Halt,
     /// Bus alignment stall.
@@ -91,10 +90,12 @@ pub struct Cpu<M: Mcu> {
     /// cpu can not know nmi signal until the next instruction, we save the cycle that nmi requested to detect this
     nmi_requested_at: Option<usize>,
     defer_nmi_poll: bool,
+    irq_vector_is_nmi: bool,
     /// A taken non-page-crossing branch suppresses IRQ on its last
     /// cycle.  This flag is set when such a branch completes, causing
     /// the next instruction-boundary IRQ check to be skipped.
     branch_irq_defer: bool,
+    allow_late_irq_nmi_hijack: bool,
     /// Set to the DMA completion cycle when DMA ends without IRQ pending.
     /// While set, apply penultimate-cycle IRQ sampling: the IRQ must have been
     /// asserted for at least 1 CPU cycle (3 PPU ticks) before being acted on.
@@ -105,7 +106,6 @@ pub struct Cpu<M: Mcu> {
     /// DMC DMA state machine – `None` when no DMC DMA is in progress.
     dmc_dma: Option<DmcDmaPhase>,
     mode: CpuMode,
-    resume_second_phase_after_stall: bool,
 
     microcode_queue: ArrayDeque<Microcode, 8>,
     irq_hijacked: bool,
@@ -138,13 +138,14 @@ impl<M: Mcu> Cpu<M> {
             mode: CpuMode::Normal,
             nmi_requested_at: None,
             defer_nmi_poll: false,
+            irq_vector_is_nmi: false,
             branch_irq_defer: false,
+            allow_late_irq_nmi_hijack: false,
             post_dma_irq_defer: None,
             oam_dma_pending: None,
             oam_dma: None,
             dmc_dma: None,
             irq_hijacked: false,
-            resume_second_phase_after_stall: false,
             #[cfg(debug_assertions)]
             mem_acc_count: Default::default(),
         };
@@ -187,13 +188,14 @@ impl<M: Mcu> Cpu<M> {
         self.microcode_queue.clear();
         self.nmi_requested_at = None;
         self.defer_nmi_poll = false;
+        self.irq_vector_is_nmi = false;
         self.branch_irq_defer = false;
+        self.allow_late_irq_nmi_hijack = false;
         self.post_dma_irq_defer = None;
         self.oam_dma_pending = None;
         self.oam_dma = None;
         self.dmc_dma = None;
         self.mode = CpuMode::Normal;
-        self.resume_second_phase_after_stall = false;
         self.sp = self.sp.wrapping_sub(3);
 
         // Reset process takes 7 cycles, push 7 Nop microcodes to ppu/apu run as a real device, and make Plugin to get correct total cycles
@@ -203,13 +205,18 @@ impl<M: Mcu> Cpu<M> {
             Microcode::Nop,
             Microcode::Nop,
             Microcode::Nop,
-            Microcode::LoadVectorL(Vector::Reset),
-            Microcode::LoadVectorH(Vector::Reset),
+            Microcode::LoadResetPcL,
+            Microcode::LoadResetPcH,
         ]);
     }
 
     pub fn total_cycles(&self) -> usize {
         self.cycles
+    }
+
+    /// Cpu will enter nmi before exec next instrnuction
+    pub fn request_nmi(&mut self) {
+        self.nmi_requested_at = Some(self.cycles);
     }
 
     pub fn set_irq(&mut self, enabled: bool) {
@@ -222,8 +229,12 @@ impl<M: Mcu> Cpu<M> {
     }
 
     fn nmi_ready(&self) -> bool {
+        self.nmi_ready_at(self.cycles)
+    }
+
+    fn nmi_ready_at(&self, cycles: usize) -> bool {
         self.nmi_requested_at
-            .is_some_and(|requested_at| self.cycles > requested_at + 3)
+            .is_some_and(|requested_at| cycles > requested_at + 5)
     }
 
     pub fn is_halted(&self) -> bool {
@@ -253,7 +264,7 @@ impl<M: Mcu> Cpu<M> {
             } else {
                 // Load DMA: scheduled on GET cycle -> 3 stall cycles
                 // Halt + Dummy + DmaRead (skip Align)
-                self.dmc_dma = Some(DmcDmaPhase::LoadHalt);
+                self.dmc_dma = Some(DmcDmaPhase::Align);
             }
         }
     }
@@ -299,43 +310,31 @@ impl<M: Mcu> Cpu<M> {
             let in_oam_dma = self.oam_dma.is_some();
             let oam_absorbs_dma = in_oam_dma || self.oam_dma_pending.is_some();
 
-            if !oam_absorbs_dma {
-                if first_phase {
-                    if matches!(phase, DmcDmaPhase::Align) && self.dmc_dma_has_phantom_read() {
-                        self.mcu.perform_dmc_dma_halt(self.dmc_dma_phantom_addr());
-                    }
-                    return (ExecuteResult::Continue, false);
-                }
-
-                if self.cur_microcode.is_some() {
-                    self.resume_second_phase_after_stall = true;
-                }
-                match phase {
-                    DmcDmaPhase::LoadHalt => self.dmc_dma = Some(DmcDmaPhase::Dummy),
-                    DmcDmaPhase::Halt => self.dmc_dma = Some(DmcDmaPhase::Align),
-                    DmcDmaPhase::Align => self.dmc_dma = Some(DmcDmaPhase::Dummy),
-                    DmcDmaPhase::Dummy => self.dmc_dma = Some(DmcDmaPhase::DmaRead),
-                    DmcDmaPhase::DmaRead => {
-                        self.perform_dmc_dma_on_stall();
-                    }
-                }
-                return (ExecuteResult::Continue, false);
-            }
-
             match phase {
-                DmcDmaPhase::LoadHalt => {
-                    self.dmc_dma = Some(DmcDmaPhase::Dummy);
-                }
                 DmcDmaPhase::Halt => {
                     self.dmc_dma = Some(DmcDmaPhase::Align);
+                    if !oam_absorbs_dma {
+                        return (ExecuteResult::Continue, false);
+                    }
                 }
                 DmcDmaPhase::Align => {
                     self.dmc_dma = Some(DmcDmaPhase::Dummy);
+                    if !oam_absorbs_dma {
+                        return (ExecuteResult::Continue, false);
+                    }
                 }
                 DmcDmaPhase::Dummy => {
                     self.dmc_dma = Some(DmcDmaPhase::DmaRead);
+                    if !oam_absorbs_dma {
+                        return (ExecuteResult::Continue, false);
+                    }
                 }
                 DmcDmaPhase::DmaRead => {
+                    if !oam_absorbs_dma {
+                        // Not in OAM DMA: this is a stall cycle for DMC DMA read.
+                        self.perform_dmc_dma_on_stall();
+                        return (ExecuteResult::Continue, false);
+                    }
                     // In OAM DMA: DMC DMA read happens on GET cycle without adding stall cycles.
                     // Perform the read and fall through to OAM DMA processing.
                     if first_phase {
@@ -376,7 +375,7 @@ impl<M: Mcu> Cpu<M> {
                         self.post_dma_irq_defer = Some(self.cycles);
                         if self
                             .irq_requested_at
-                            .is_some_and(|irq_at| self.cycles - irq_at > 2)
+                            .is_some_and(|irq_at| irq_at + 3 <= self.cycles)
                         {
                             self.defer_nmi_poll = true;
                         }
@@ -410,24 +409,6 @@ impl<M: Mcu> Cpu<M> {
             return (ExecuteResult::Halt, !first_phase);
         }
 
-        if first_phase && std::mem::take(&mut self.resume_second_phase_after_stall) {
-            let code = self
-                .cur_microcode
-                .take()
-                .expect("cur_microcode should exist when resuming stalled second phase");
-            code.second_phase(self);
-
-            if self.microcode_queue.is_empty() && self.cur_microcode.is_none() {
-                if self.opcode == opcode::RTI {
-                    self.mode = CpuMode::Normal;
-                };
-                plugin.end(self);
-                return (plugin.should_stop(), true);
-            }
-
-            return (ExecuteResult::Continue, false);
-        }
-
         let code = if first_phase {
             match self.pop_microcode() {
                 Some(v) => v,
@@ -435,10 +416,11 @@ impl<M: Mcu> Cpu<M> {
                     plugin.start(self);
                     let irq_inhibit = self.irq_inhibit.take();
                     let branch_defer = std::mem::take(&mut self.branch_irq_defer);
+                    let poll_cycles = self.cycles.wrapping_add(2);
 
                     if std::mem::take(&mut self.defer_nmi_poll) {
                         Microcode::FetchAndDecode
-                    } else if self.nmi_ready() {
+                    } else if self.nmi_ready_at(poll_cycles) {
                         self.nmi_requested_at = None;
                         self.mode = CpuMode::Nmi;
                         self.push_microcodes(&[
@@ -449,10 +431,10 @@ impl<M: Mcu> Cpu<M> {
                                 set_disable_interrupt: true,
                                 break_flag: false,
                             },
-                            Microcode::LoadVectorL(Vector::Nmi),
-                            Microcode::LoadVectorH(Vector::Nmi),
+                            Microcode::LoadNmiPcL,
+                            Microcode::LoadNmiPcH,
                         ]);
-                        Microcode::ReadAtPc
+                        Microcode::Nop
                     } else if self.irq_line
                         && !irq_inhibit.unwrap_or_else(|| self.flag(Flag::InterruptDisabled))
                     {
@@ -465,7 +447,7 @@ impl<M: Mcu> Cpu<M> {
                         let defer_for_branch = branch_defer
                             && self
                                 .irq_requested_at
-                                .is_some_and(|irq_at| self.cycles - irq_at <= 2);
+                                .is_some_and(|at| self.cycles.wrapping_sub(at) <= 3);
                         if defer_for_branch {
                             Microcode::FetchAndDecode
                         } else {
@@ -473,7 +455,7 @@ impl<M: Mcu> Cpu<M> {
                             let should_defer = self.post_dma_irq_defer.is_some_and(|dma_end| {
                                 self.irq_requested_at.is_some_and(|at| {
                                     if self.cycles <= dma_end + 3 {
-                                        at + 3 >= dma_end
+                                        at + 3 > dma_end
                                     } else {
                                         at + 3 > self.cycles
                                     }
@@ -491,10 +473,11 @@ impl<M: Mcu> Cpu<M> {
                                         set_disable_interrupt: true,
                                         break_flag: false,
                                     },
-                                    Microcode::LoadVectorL(Vector::Irq),
-                                    Microcode::LoadVectorH(Vector::Irq),
+                                    Microcode::LoadIrqPcL,
+                                    Microcode::LoadIrqPcH,
                                 ]);
-                                Microcode::ReadAtPc
+                                self.allow_late_irq_nmi_hijack = true;
+                                Microcode::Nop
                             }
                         }
                     } else {
@@ -525,6 +508,7 @@ impl<M: Mcu> Cpu<M> {
         }
 
         if self.microcode_queue.is_empty() && self.cur_microcode.is_none() {
+            self.allow_late_irq_nmi_hijack = false;
             if self.opcode == opcode::RTI {
                 self.mode = CpuMode::Normal;
             };
@@ -567,86 +551,38 @@ impl<M: Mcu> Cpu<M> {
         self.inner_set_flag(Flag::Zero, value == 0);
     }
 
-    #[cfg(test)]
     fn read_byte(&mut self, addr: u16) -> u8 {
-        self.prepare_read_byte(addr);
-        self.perform_read_byte()
+        self.inc_mem_count();
+        self.mcu.read(addr)
     }
 
     pub fn peek_byte(&mut self, addr: u16) -> u8 {
         self.mcu.peek(addr)
     }
 
-    #[cfg(test)]
     fn inc_read_byte(&mut self) -> u8 {
-        self.prepare_pc_read();
-        self.perform_pc_read()
-    }
-
-    #[cfg(test)]
-    fn write_byte(&mut self, addr: u16, value: u8) {
-        self.prepare_write_byte(addr);
-        self.perform_write_byte(value);
-    }
-
-    #[cfg(test)]
-    fn push_stack(&mut self, value: u8) {
-        self.prepare_push_stack();
-        self.perform_push_stack(value);
-    }
-
-    #[cfg(test)]
-    fn pop_stack(&mut self) -> u8 {
-        self.prepare_pop_stack();
-        self.perform_pop_stack()
-    }
-
-    fn prepare_read_byte(&mut self, addr: u16) {
-        self.inc_mem_count();
-        self.mcu.prepare_read(addr);
-    }
-
-    fn perform_read_byte(&mut self) -> u8 {
-        self.mcu.new_read()
-    }
-
-    fn prepare_pc_read(&mut self) {
         let addr = self.pc;
         self.inc_pc(1);
-        self.prepare_read_byte(addr);
-    }
-
-    fn perform_pc_read(&mut self) -> u8 {
-        self.perform_read_byte()
-    }
-
-    fn prepare_write_byte(&mut self, addr: u16) {
         self.inc_mem_count();
-        self.mcu.prepare_write(addr);
+        self.mcu.read(addr)
     }
 
-    fn perform_write_byte(&mut self, value: u8) {
-        self.mcu.new_write(value);
+    fn write_byte(&mut self, addr: u16, value: u8) {
+        self.inc_mem_count();
+        self.mcu.write(addr, value);
     }
 
-    fn prepare_push_stack(&mut self) {
-        self.prepare_write_byte(0x100 + self.sp as u16);
-    }
-
-    fn perform_push_stack(&mut self, value: u8) {
-        self.perform_write_byte(value);
+    fn push_stack(&mut self, value: u8) {
+        self.inc_mem_count();
+        self.mcu.write(0x100 + self.sp as u16, value);
         self.sp = self.sp.wrapping_sub(1);
     }
 
-    fn prepare_pop_stack(&mut self) {
-        self.inc_mem_count();
+    fn pop_stack(&mut self) -> u8 {
         self.sp = self.sp.wrapping_add(1);
         let addr = 0x100 + self.sp as u16;
-        self.mcu.prepare_read(addr);
-    }
-
-    fn perform_pop_stack(&mut self) -> u8 {
-        self.mcu.new_read()
+        self.inc_mem_count();
+        self.mcu.read(addr)
     }
 
     /// Perform the DMC DMA read during a dedicated stall cycle.
@@ -656,47 +592,14 @@ impl<M: Mcu> Cpu<M> {
     /// it was halted.
     fn perform_dmc_dma_on_stall(&mut self) {
         if let Some(sample_addr) = self.mcu.take_dmc_dma_address() {
-            let phantom_addr = self.dmc_dma_phantom_addr();
+            let phantom_addr = match self.microcode_queue.front() {
+                Some(Microcode::LoadR(_) | Microcode::Bit | Microcode::Lax) => self.ab,
+                _ => self.pc,
+            };
             let byte = self.mcu.perform_dmc_dma_read(sample_addr, phantom_addr);
             self.mcu.supply_dmc_dma_byte(byte);
         }
         self.dmc_dma = None;
-    }
-
-    #[inline]
-    fn dmc_dma_phantom_info(&self) -> (u16, bool) {
-        let pending_read = self
-            .cur_microcode
-            .or_else(|| self.microcode_queue.front().copied());
-        let has_phantom = matches!(
-            pending_read,
-            Some(
-                Microcode::LoadR(_)
-                    | Microcode::Bit
-                    | Microcode::Lax
-                    | Microcode::LoadIntoAlu
-                    | Microcode::Adc
-                    | Microcode::Sbc
-                    | Microcode::Cmp
-                    | Microcode::Cpx
-                    | Microcode::Cpy
-                    | Microcode::Ora
-                    | Microcode::Eor
-                    | Microcode::And
-            )
-        );
-        let addr = if has_phantom { self.ab } else { self.pc };
-        (addr, has_phantom)
-    }
-
-    #[inline]
-    fn dmc_dma_phantom_addr(&self) -> u16 {
-        self.dmc_dma_phantom_info().0
-    }
-
-    #[inline]
-    fn dmc_dma_has_phantom_read(&self) -> bool {
-        self.dmc_dma_phantom_info().1
     }
 
     pub fn peek_stack(&mut self) -> u8 {
@@ -729,16 +632,8 @@ impl<M: Mcu> Cpu<M> {
     }
 
     fn load_alu(&mut self) {
-        self.prepare_load_alu();
-        self.perform_load_alu();
-    }
-
-    fn prepare_load_alu(&mut self) {
-        self.prepare_read_byte(self.ab);
-    }
-
-    fn perform_load_alu(&mut self) {
-        self.alu = self.perform_read_byte();
+        self.inc_mem_count();
+        self.alu = self.mcu.read(self.ab);
     }
 
     fn adc(&mut self, load_alu: bool) {
@@ -846,19 +741,19 @@ impl<M: Mcu> Cpu<M> {
     }
 
     fn sax(&mut self) {
-        self.perform_write_byte(self.a & self.x);
+        self.write_byte(self.ab, self.a & self.x);
     }
 
     fn dcp(&mut self) {
         let v = self.alu.wrapping_sub(1);
-        self.perform_write_byte(v);
+        self.write_byte(self.ab, v);
         self.update_zero_negative_flags(self.a.wrapping_sub(v));
         self.inner_set_flag(Flag::Carry, self.a >= v);
     }
 
     fn isc(&mut self) {
         let v = self.alu.wrapping_add(1);
-        self.perform_write_byte(v);
+        self.write_byte(self.ab, v);
         self.alu = v;
         self.sbc(false);
     }
@@ -866,7 +761,7 @@ impl<M: Mcu> Cpu<M> {
     fn rra(&mut self) {
         let carry = self.alu & 0x01 != 0;
         self.alu = (self.alu >> 1) | ((self.flag(Flag::Carry) as u8) << 7);
-        self.perform_write_byte(self.alu);
+        self.write_byte(self.ab, self.alu);
         self.inner_set_flag(Flag::Carry, carry);
         self.adc(false);
     }
@@ -875,49 +770,84 @@ impl<M: Mcu> Cpu<M> {
         let new = (self.alu << 1) | (self.flag(Flag::Carry) as u8);
         self.inner_set_flag(Flag::Carry, self.alu & 0x80 != 0);
         self.alu = new;
-        self.perform_write_byte(self.alu);
+        self.write_byte(self.ab, self.alu);
         self.and(false);
     }
 
     fn slo(&mut self) {
         self.inner_set_flag(Flag::Carry, self.alu & 0x80 != 0);
         self.alu <<= 1;
-        self.perform_write_byte(self.alu);
+        self.write_byte(self.ab, self.alu);
         self.ora(false);
     }
 
     fn sre(&mut self) {
         self.inner_set_flag(Flag::Carry, self.alu & 0x01 != 0);
         self.alu >>= 1;
-        self.perform_write_byte(self.alu);
+        self.write_byte(self.ab, self.alu);
         self.eor(false);
     }
 
     fn shx(&mut self) {
         let v = self.x & self.abh().wrapping_add(1);
-        self.perform_write_byte(v);
+        let addr = (self.abl() as u16) | ((v as u16) << 8);
+        self.write_byte(addr, v);
     }
 
     fn shy(&mut self) {
         let v = self.y & self.abh().wrapping_add(1);
-        self.perform_write_byte(v);
+        let addr = (self.abl() as u16) | ((v as u16) << 8);
+        self.write_byte(addr, v);
     }
 
     fn sha(&mut self) {
         // SHA (AHX/AXA): store A & X & (high-byte of addr + 1) at address
         let out = self.a & self.x & self.abh().wrapping_add(1);
-        self.perform_write_byte(out);
+        let addr = (self.abl() as u16) | ((out as u16) << 8);
+        self.write_byte(addr, out);
     }
 
     fn tas(&mut self) {
         let v = self.a & self.x;
         self.sp = v;
         let out = v & self.abh().wrapping_add(1);
-        self.perform_write_byte(out);
+        let addr = (self.abl() as u16) | ((out as u16) << 8);
+        self.write_byte(addr, out);
     }
 
     fn pha(&mut self) {
-        self.perform_push_stack(self.a);
+        self.push_stack(self.a);
+    }
+
+    fn pop_stack_into_alu(&mut self) {
+        self.alu = self.pop_stack();
+    }
+
+    fn push_status(&mut self, set_disable_interrupt: bool, break_flag: bool) {
+        self.push_stack(if break_flag {
+            self.status | Flag::Break as u8 | Flag::NotUsed as u8
+        } else {
+            self.status | Flag::NotUsed as u8
+        });
+        if set_disable_interrupt && self.mode == CpuMode::Normal {
+            self.irq_vector_is_nmi = self.nmi_ready();
+            if self.irq_vector_is_nmi {
+                self.nmi_requested_at = None;
+            }
+        }
+        if set_disable_interrupt {
+            self.inner_set_flag(Flag::InterruptDisabled, true);
+        }
+    }
+
+    fn plp(&mut self) {
+        self.save_irq_inhibit();
+        let saved = self.pop_stack();
+        let break_flag = self.flag(Flag::Break);
+        let not_used = self.flag(Flag::NotUsed);
+        self.status = saved;
+        self.inner_set_flag(Flag::Break, break_flag);
+        self.inner_set_flag(Flag::NotUsed, not_used);
     }
 
     fn set_pc_to_ab(&mut self) {
@@ -932,54 +862,10 @@ impl<M: Mcu> Cpu<M> {
     }
 
     fn bit(&mut self) {
-        let v = self.perform_read_byte();
+        let v = self.read_byte(self.ab);
         self.inner_set_flag(Flag::Negative, v & 0x80 != 0);
         self.inner_set_flag(Flag::Overflow, v & 0x40 != 0);
         self.update_zero_flag(self.a & v);
-    }
-
-    fn prepare_vector_pcl(&mut self, vector: Vector) {
-        match vector {
-            Vector::Reset => self.prepare_read_byte(0xFFFC),
-            Vector::Nmi => self.prepare_read_byte(0xFFFA),
-            Vector::Irq => {
-                let addr = if self.nmi_ready() {
-                    self.nmi_requested_at = None;
-                    self.inner_set_flag(Flag::InterruptDisabled, true);
-                    self.irq_hijacked = true;
-                    self.mode = CpuMode::Nmi;
-                    0xFFFA
-                } else {
-                    self.irq_hijacked = false;
-                    0xFFFE
-                };
-                self.prepare_read_byte(addr);
-            }
-        }
-    }
-
-    fn prepare_vector_pch(&mut self, vector: Vector) {
-        match vector {
-            Vector::Reset => self.prepare_read_byte(0xFFFD),
-            Vector::Nmi => self.prepare_read_byte(0xFFFB),
-            Vector::Irq => {
-                let addr = if self.irq_hijacked {
-                    0xFFFB
-                } else {
-                    self.defer_nmi_poll = true;
-                    0xFFFF
-                };
-                self.prepare_read_byte(addr);
-            }
-        }
-    }
-
-    fn perform_pch(&mut self) {
-        self.pc |= (self.perform_read_byte() as u16) << 8;
-    }
-
-    fn perform_pcl(&mut self) {
-        self.pc = self.perform_read_byte() as u16;
     }
 
     fn push_microcodes(&mut self, microcodes: &[Microcode]) {
@@ -1015,7 +901,7 @@ impl<M: Mcu> Cpu<M> {
         if self.nmi_line != nmi {
             self.nmi_line = nmi;
             if nmi {
-                self.nmi_requested_at = Some(self.cycles);
+                self.request_nmi();
             }
         }
 
@@ -1024,36 +910,40 @@ impl<M: Mcu> Cpu<M> {
         }
     }
 
-    #[cfg(test)]
-    fn push_status(&mut self, set_disable_interrupt: bool, break_flag: bool) {
-        self.prepare_push_stack();
-        self.perform_push_status(set_disable_interrupt, break_flag);
-    }
-
-    fn perform_push_status(&mut self, set_disable_interrupt: bool, break_flag: bool) {
-        let value = if break_flag {
-            self.status | Flag::Break as u8 | Flag::NotUsed as u8
+    fn load_irq_pcl(&mut self) {
+        let late_nmi_hijack = std::mem::take(&mut self.allow_late_irq_nmi_hijack)
+            && self.mode == CpuMode::Normal
+            && self
+                .nmi_requested_at
+                .is_some_and(|cycles| self.cycles > cycles + 4);
+        let low = if std::mem::take(&mut self.irq_vector_is_nmi)
+            || self.nmi_ready()
+            || late_nmi_hijack
+        {
+            self.nmi_requested_at = None;
+            self.irq_hijacked = true;
+            // hijacked by nmi
+            self.mode = CpuMode::Nmi;
+            self.read_byte(0xFFFA)
         } else {
-            self.status | Flag::NotUsed as u8
+            self.irq_hijacked = false;
+            self.defer_nmi_poll = true;
+            self.read_byte(0xFFFE)
         };
-        self.perform_push_stack(value);
-        if set_disable_interrupt {
+        self.pc = low as u16;
+    }
+
+    fn load_irq_pch(&mut self) {
+        let high = if self.irq_hijacked {
+            // hijacked by nmi
+            self.mode = CpuMode::Nmi;
             self.inner_set_flag(Flag::InterruptDisabled, true);
-        }
-    }
-
-    fn perform_plp(&mut self) {
-        self.save_irq_inhibit();
-        let saved = self.perform_pop_stack();
-        let break_flag = self.flag(Flag::Break);
-        let not_used = self.flag(Flag::NotUsed);
-        self.status = saved;
-        self.inner_set_flag(Flag::Break, break_flag);
-        self.inner_set_flag(Flag::NotUsed, not_used);
-    }
-
-    fn perform_pop_stack_into_alu(&mut self) {
-        self.alu = self.perform_pop_stack();
+            self.read_byte(0xFFFB)
+        } else {
+            self.defer_nmi_poll = true;
+            self.read_byte(0xFFFF)
+        };
+        self.pc |= (high as u16) << 8;
     }
 
     /// Set register A and update negative and zero flags.

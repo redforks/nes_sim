@@ -339,7 +339,6 @@ pub struct Ppu<R: Render = ()> {
 
     frame_no: usize,
     ppu_ticks: u64,
-    address_latch: Option<u16>,
 }
 
 /// PPU registers are mirrored every 8 bytes in range $2000-$3FFF
@@ -382,7 +381,6 @@ impl<R: Render> Ppu<R> {
             ppu_ticks: 0,
             effective_mask: PpuMask::new(),
             rendering_enabled_at_scanline_start: false,
-            address_latch: None,
         }
     }
 
@@ -660,11 +658,11 @@ impl<R: Render> Ppu<R> {
                 && self.dot % 2 == 1
             {
                 // BG tile fetch: only pattern-table accesses (fetch types 2-3).
-                // Notifications are shifted +2 dots (base 3/323 instead of 1/321)
-                // so that the first BG pattern appears at dot 7 rather than dot 5.
-                // Together with the sprite base (first pattern at dot 263), this
-                // preserves the hardware's 256-dot gap between mode $10 and $08.
-                let base_dot = if self.dot <= 256 { 3 } else { 323 };
+                // Notifications are shifted +4 dots (base 5/325 instead of 1/321)
+                // so that the first BG pattern appears at dot 9 rather than dot 5.
+                // Together with the sprite base (first pattern at dot 265), this
+                // gives the real hardware's 256-dot gap between mode $10 and $08.
+                let base_dot = if self.dot <= 256 { 5 } else { 325 };
                 if self.dot < base_dot {
                     None
                 } else {
@@ -679,11 +677,11 @@ impl<R: Render> Ppu<R> {
                         None
                     }
                 }
-            } else if (259..=320).contains(&self.dot) && self.dot % 2 == 1 {
+            } else if (261..=320).contains(&self.dot) && self.dot % 2 == 1 {
                 // Sprite tile fetch: only pattern-table accesses (fetch types 2-3).
                 // Emitted on odd dots to align the MMC3 counter clock with the
                 // observed ~dot-260 hardware timing.
-                let fetch_type = (((self.dot - 259) / 2) % 4) as usize;
+                let fetch_type = (((self.dot - 261) / 2) % 4) as usize;
                 if fetch_type >= 2 {
                     Some(
                         if self.ctrl.sprite_size() || self.ctrl.sprite_pattern_table() {
@@ -905,38 +903,6 @@ impl<R: Render> Ppu<R> {
             }
             _ => {} // Ignore other addresses
         }
-    }
-
-    pub fn prepare_read(&mut self, address: u16) {
-        debug_assert!(
-            self.address_latch.is_none(),
-            "address latch should be empty when prepare_read"
-        );
-        self.address_latch = Some(address);
-    }
-
-    pub fn new_read(&mut self, cartridge: &mut Cartridge) -> u8 {
-        let address = self
-            .address_latch
-            .take()
-            .expect("address latch should have value when new_read");
-        self.read(address, cartridge)
-    }
-
-    pub fn prepare_write(&mut self, address: u16) {
-        debug_assert!(
-            self.address_latch.is_none(),
-            "address latch should be empty when prepare_write"
-        );
-        self.address_latch = Some(address);
-    }
-
-    pub fn new_write(&mut self, value: u8, cartridge: &mut Cartridge) {
-        let address = self
-            .address_latch
-            .take()
-            .expect("address latch should have value when new_write");
-        self.write(address, value, cartridge);
     }
 
     fn read_vram(&self, address: u16, cartridge: &Cartridge) -> u8 {

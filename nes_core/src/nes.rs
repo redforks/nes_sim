@@ -26,7 +26,6 @@ pub struct NesMcu<R: Render, D: AudioDriver> {
     /// CPU data bus open bus value: the last value read by the CPU.
     /// Reading write-only or unmapped addresses returns this value.
     open_bus: u8,
-    address_latch: Option<u16>,
 }
 
 impl<R: Render, D: AudioDriver> NesMcu<R, D> {
@@ -43,7 +42,6 @@ impl<R: Render, D: AudioDriver> NesMcu<R, D> {
             oam_dma_pending: false,
             dmc_dma_pending: None,
             open_bus: 0,
-            address_latch: None,
         }
     }
 
@@ -52,26 +50,12 @@ impl<R: Render, D: AudioDriver> NesMcu<R, D> {
         self.apu.reset();
     }
 
-    fn direct_read(&mut self, address: u16) -> u8 {
-        let value = match address {
-            0x0000..=0x1fff => self.lower_ram.peek(address),
-            0x2000..=0x3fff => self.ppu.read(address, &mut self.cartridge),
-            0x4015 => self.apu.read(address),
-            0x4016 | 0x4017 => self.controller.direct_read(address),
-            0x4000..=0x401f => self.open_bus,
-            0x4020..=0x40ff => self.open_bus,
-            0x4100..=0xffff => self.cartridge.read(address),
-        };
-        self.open_bus = value;
-        value
-    }
-
     fn ppu_dma(&mut self, address: u8) {
         trace!("ppu dma");
         let addr = (address as u16) << 8;
         let mut buf = [0x00u8; 0x100];
         for (i, item) in buf.iter_mut().enumerate() {
-            *item = self.direct_read(addr + i as u16);
+            *item = self.read(addr + i as u16);
         }
         self.ppu.oam_dma(&buf);
         self.cartridge.on_oam_dma();
@@ -142,26 +126,22 @@ impl<R: Render, D: AudioDriver> NesMcu<R, D> {
     /// This models the read4 test behavior where the overlap can trigger an
     /// extra side-effecting CPU register read before the actual sample fetch.
     pub fn perform_dmc_dma_read(&mut self, sample_addr: u16, cpu_read_addr: u16) -> u8 {
-        let _ = cpu_read_addr;
-        self.direct_read(sample_addr)
-    }
-
-    pub fn perform_dmc_dma_halt(&mut self, cpu_read_addr: u16) {
-        let overlap_addr = self.address_latch.unwrap_or(cpu_read_addr);
-        match overlap_addr {
+        match cpu_read_addr {
             0x4016 | 0x4017 => {
                 // DMC DMA during controller read causes an extra controller read.
-                let _ = self.direct_read(overlap_addr);
+                let _ = self.read(cpu_read_addr);
             }
             0x2007 => {
                 // DMC DMA during PPUDATA read causes extra PPUDATA reads.
                 // The read4 tests accept 2-3 extra reads depending on power-on
                 // CPU/PPU phase; use the stable 2-read variant here.
-                let _ = self.direct_read(0x2007);
-                let _ = self.direct_read(0x2007);
+                let _ = self.read(0x2007);
+                let _ = self.read(0x2007);
             }
             _ => {}
         }
+
+        self.read(sample_addr)
     }
 
     pub fn press_button(&mut self, button: Button) {
@@ -190,6 +170,22 @@ impl<R: Render, D: AudioDriver> NesMcu<R, D> {
 }
 
 impl<R: Render, D: AudioDriver> Mcu for NesMcu<R, D> {
+    fn read(&mut self, address: u16) -> u8 {
+        let value = match address {
+            0x0000..=0x1fff => self.lower_ram.read(address),
+            0x2000..=0x3fff => self.ppu.read(address, &mut self.cartridge),
+            0x4015 => self.apu.read(address),
+            0x4016 | 0x4017 => self.controller.read(address),
+            // Write-only APU/IO registers and unused test registers: open bus
+            0x4000..=0x401f => self.open_bus,
+            // Unallocated I/O space: open bus
+            0x4020..=0x40ff => self.open_bus,
+            0x4100..=0xffff => self.cartridge.read(address),
+        };
+        self.open_bus = value;
+        value
+    }
+
     fn peek(&self, address: u16) -> u8 {
         match address {
             0x0000..=0x1fff => self.lower_ram.peek(address),
@@ -202,96 +198,32 @@ impl<R: Render, D: AudioDriver> Mcu for NesMcu<R, D> {
         }
     }
 
-    fn prepare_read(&mut self, address: u16) {
-        debug_assert!(
-            self.address_latch.is_none(),
-            "address latch should be empty when prepare_read"
-        );
-        self.address_latch = Some(address);
-        match address {
-            0x0000..=0x1fff => self.lower_ram.prepare_read(address),
-            0x2000..=0x3fff => self.ppu.prepare_read(address),
-            0x4015 => self.apu.prepare_read(address),
-            0x4016 | 0x4017 => self.controller.prepare_read(address),
-            0x4000..=0x401f => {}
-            0x4020..=0x40ff => {}
-            0x4100..=0xffff => self.cartridge.prepare_read(address),
-        }
-    }
-
-    fn new_read(&mut self) -> u8 {
-        let addr = self
-            .address_latch
-            .take()
-            .expect("address latch should have value when new_read");
-        let value = match addr {
-            0x0000..=0x1fff => self.lower_ram.new_read(),
-            0x2000..=0x3fff => self.ppu.new_read(&mut self.cartridge),
-            0x4015 => self.apu.new_read(),
-            0x4016 | 0x4017 => self.controller.new_read(),
-            // Write-only APU/IO registers and unused test registers: open bus
-            0x4000..=0x401f => self.open_bus,
-            // Unallocated I/O space: open bus
-            0x4020..=0x40ff => self.open_bus,
-            0x4100..=0xffff => self.cartridge.new_read(addr),
-        };
+    fn write(&mut self, address: u16, value: u8) {
         self.open_bus = value;
-        value
-    }
-
-    fn prepare_write(&mut self, address: u16) {
-        debug_assert!(
-            self.address_latch.is_none(),
-            "address latch should be empty when prepare_write"
-        );
-        self.address_latch = Some(address);
         match address {
-            0x0000..=0x1fff => self.lower_ram.prepare_write(address),
-            0x2000..=0x3fff => self.ppu.prepare_write(address),
+            0x0000..=0x1fff => self.lower_ram.write(address, value),
+            0x2000..=0x3fff => self.ppu.write(address, value, &mut self.cartridge),
             0x4000..=0x401f => match address {
-                0x4014 => {}
-                0x4016 => self.controller.prepare_write(address),
-                _ => self.apu.prepare_write(address),
-            },
-            // Unallocated I/O space: writes are ignored
-            0x4020..=0x40ff => {}
-            0x4100..=0xffff => self.cartridge.prepare_write(address),
-        }
-    }
-
-    fn new_write(&mut self, value: u8) {
-        let addr = self
-            .address_latch
-            .take()
-            .expect("address latch should have value when new_read");
-        match addr {
-            0x0000..=0x1fff => self.lower_ram.new_write(value),
-            0x2000..=0x3fff => self.ppu.new_write(value, &mut self.cartridge),
-            0x4000..=0x401f => match addr {
                 0x4014 => self.ppu_dma(value),
-                0x4016 => self.controller.new_write(value),
-                _ => self.apu.new_write(value),
+                0x4016 => self.controller.write(address, value),
+                _ => self.apu.write(address, value),
             },
             // Unallocated I/O space: writes are ignored
             0x4020..=0x40ff => {}
-            0x4100..=0xffff => self.cartridge.new_write(addr, value),
+            0x4100..=0xffff => self.cartridge.write(address, value),
         }
     }
 
     fn take_dmc_dma_address(&mut self) -> Option<u16> {
-        NesMcu::take_dmc_dma_address(self)
-    }
-
-    fn perform_dmc_dma_halt(&mut self, cpu_read_addr: u16) {
-        NesMcu::perform_dmc_dma_halt(self, cpu_read_addr)
+        self.take_dmc_dma_address()
     }
 
     fn perform_dmc_dma_read(&mut self, sample_addr: u16, cpu_read_addr: u16) -> u8 {
-        NesMcu::perform_dmc_dma_read(self, sample_addr, cpu_read_addr)
+        self.perform_dmc_dma_read(sample_addr, cpu_read_addr)
     }
 
     fn supply_dmc_dma_byte(&mut self, byte: u8) {
-        NesMcu::supply_dmc_dma_byte(self, byte);
+        self.supply_dmc_dma_byte(byte);
     }
 }
 

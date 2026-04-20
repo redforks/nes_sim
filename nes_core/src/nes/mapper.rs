@@ -9,7 +9,6 @@ use crate::nes::ppu::BackgroundTileOverride;
 use crate::nes::ppu::PatternAccess;
 
 const CARTRIDGE_START_ADDR: u16 = 0x4020;
-const MMC3_ALT_TEST_SIGNATURE: &str = "6-MMC3_alt";
 
 mod mapper0;
 mod mapper2;
@@ -114,7 +113,6 @@ pub fn create_cartridge(f: &INesFile) -> Cartridge {
             f.read_chr_rom(),
             mirroring,
             f.header().ignore_mirror_control,
-            rom_contains_signature(f, MMC3_ALT_TEST_SIGNATURE),
         ))),
         5 => Cartridge::MMC5(Box::new(MMC5::new(
             f.read_prg_rom(),
@@ -124,12 +122,6 @@ pub fn create_cartridge(f: &INesFile) -> Cartridge {
         ))),
         _ => panic!("Unsupported cartridge mapper no: {}", f.header().mapper_no),
     }
-}
-
-fn rom_contains_signature(file: &INesFile, signature: &str) -> bool {
-    file.read_prg_rom()
-        .windows(signature.len())
-        .any(|window| window == signature.as_bytes())
 }
 
 pub enum Cartridge {
@@ -265,18 +257,6 @@ impl Cartridge {
             #[cfg(test)]
             Cartridge::Test(_) => {}
         }
-    }
-
-    pub fn prepare_read(&mut self, _address: u16) {}
-
-    pub fn new_read(&mut self, address: u16) -> u8 {
-        self.read(address)
-    }
-
-    pub fn prepare_write(&mut self, _address: u16) {}
-
-    pub fn new_write(&mut self, address: u16, value: u8) {
-        self.write(address, value);
     }
 
     pub fn on_ppu_tick(&mut self, scanline: u16, dot: u16, rendering_enabled: bool) {
