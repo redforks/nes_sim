@@ -118,7 +118,7 @@ fn palette_ram_get_color() {
 
 #[test]
 fn test_ppu_ctrl_to_from_u8() {
-    let ctrl = PpuCtrl::empty()
+    let ctrl = PpuCtrl::new()
         .with_nmi_enable(true)
         .with_sprite_size(true)
         .with_background_pattern_table(true)
@@ -139,7 +139,7 @@ fn test_ppu_ctrl_to_from_u8() {
 
 #[test]
 fn test_ppu_status_to_from_u8() {
-    let status = PpuStatus::empty()
+    let status = PpuStatus::new()
         .with_sprite_overflow(true)
         .with_sprite_zero_hit(true)
         .with_v_blank(true);
@@ -384,7 +384,7 @@ fn latch_sprite_zero_hit(ppu: &mut Ppu) {
 #[test]
 fn test_render_pixel_returns_background_color() {
     let mut ppu = create_test_ppu_with_mask(
-        PpuMask::empty()
+        PpuMask::new()
             .with_background_enabled(true)
             .with_background_left_enabled(true),
     );
@@ -398,7 +398,7 @@ fn test_render_pixel_returns_background_color() {
 
 #[test]
 fn test_render_pixel_both_disabled() {
-    let mut ppu = create_test_ppu_with_mask(PpuMask::empty());
+    let mut ppu = create_test_ppu_with_mask(PpuMask::new());
     let pattern = create_pattern();
     set_universal_bg_color(&mut ppu, 0x21);
 
@@ -409,7 +409,7 @@ fn test_render_pixel_both_disabled() {
 #[test]
 fn test_tick_renders_palette_color_when_rendering_disabled_and_vram_points_to_palette() {
     let mut ppu = Ppu {
-        mask: PpuMask::empty(),
+        mask: PpuMask::new(),
         ..Ppu::new(ImageRender::default_dimension())
     };
     ppu.palette.write(0x3f00, 0x21);
@@ -428,7 +428,7 @@ fn test_tick_renders_palette_color_when_rendering_disabled_and_vram_points_to_pa
 #[test]
 fn test_tick_renders_background_color_when_rendering_disabled_and_vram_not_palette() {
     let mut ppu = Ppu {
-        mask: PpuMask::empty(),
+        mask: PpuMask::new(),
         ..Ppu::new(ImageRender::default_dimension())
     };
     ppu.palette.write(0x3f00, 0x16);
@@ -447,7 +447,7 @@ fn test_tick_renders_background_color_when_rendering_disabled_and_vram_not_palet
 #[test]
 fn test_render_pixel_transparent_bg_and_sprite_use_backdrop_color() {
     let mut ppu = create_test_ppu_with_mask(
-        PpuMask::empty()
+        PpuMask::new()
             .with_background_enabled(true)
             .with_sprite_enabled(true)
             .with_background_left_enabled(true)
@@ -463,7 +463,7 @@ fn test_render_pixel_transparent_bg_and_sprite_use_backdrop_color() {
 #[test]
 fn test_render_pixel_returns_sprite_color_when_background_disabled() {
     let mut ppu = create_test_ppu_with_mask(
-        PpuMask::empty()
+        PpuMask::new()
             .with_sprite_enabled(true)
             .with_sprite_left_enabled(true),
     );
@@ -479,7 +479,7 @@ fn test_render_pixel_returns_sprite_color_when_background_disabled() {
 #[test]
 fn test_render_pixel_transparent_sprite_falls_back_to_background() {
     let mut ppu = create_test_ppu_with_mask(
-        PpuMask::empty()
+        PpuMask::new()
             .with_background_enabled(true)
             .with_sprite_enabled(true)
             .with_background_left_enabled(true)
@@ -497,7 +497,7 @@ fn test_render_pixel_transparent_sprite_falls_back_to_background() {
 #[test]
 fn test_render_pixel_sprite_in_front_of_background() {
     let mut ppu = create_test_ppu_with_mask(
-        PpuMask::empty()
+        PpuMask::new()
             .with_background_enabled(true)
             .with_sprite_enabled(true)
             .with_background_left_enabled(true)
@@ -517,7 +517,7 @@ fn test_render_pixel_sprite_in_front_of_background() {
 #[test]
 fn test_render_pixel_background_priority_when_sprite_is_behind() {
     let mut ppu = create_test_ppu_with_mask(
-        PpuMask::empty()
+        PpuMask::new()
             .with_background_enabled(true)
             .with_sprite_enabled(true)
             .with_background_left_enabled(true)
@@ -537,7 +537,7 @@ fn test_render_pixel_background_priority_when_sprite_is_behind() {
 #[test]
 fn test_render_pixel_sprite_behind_transparent_background() {
     let mut ppu = create_test_ppu_with_mask(
-        PpuMask::empty()
+        PpuMask::new()
             .with_background_enabled(true)
             .with_sprite_enabled(true)
             .with_background_left_enabled(true)
@@ -555,7 +555,7 @@ fn test_render_pixel_sprite_behind_transparent_background() {
 #[test]
 fn test_render_pixel_applies_left_column_clipping() {
     let mut ppu = create_test_ppu_with_mask(
-        PpuMask::empty()
+        PpuMask::new()
             .with_background_enabled(true)
             .with_sprite_enabled(true),
     );
@@ -574,7 +574,7 @@ fn test_render_pixel_applies_left_column_clipping() {
 #[test]
 fn test_render_pixel_uses_highest_priority_opaque_sprite() {
     let mut ppu = create_test_ppu_with_mask(
-        PpuMask::empty()
+        PpuMask::new()
             .with_sprite_enabled(true)
             .with_sprite_left_enabled(true),
     );
@@ -593,7 +593,7 @@ fn test_render_pixel_uses_highest_priority_opaque_sprite() {
 #[test]
 fn test_render_pixel_applies_sprite_priority_before_background_priority() {
     let mut ppu = create_test_ppu_with_mask(
-        PpuMask::empty()
+        PpuMask::new()
             .with_background_enabled(true)
             .with_sprite_enabled(true)
             .with_background_left_enabled(true)
@@ -614,7 +614,7 @@ fn test_render_pixel_applies_sprite_priority_before_background_priority() {
 #[test]
 fn test_render_pixel_skips_transparent_higher_priority_sprite() {
     let mut ppu = create_test_ppu_with_mask(
-        PpuMask::empty()
+        PpuMask::new()
             .with_sprite_enabled(true)
             .with_sprite_left_enabled(true),
     );
@@ -631,7 +631,7 @@ fn test_render_pixel_skips_transparent_higher_priority_sprite() {
 #[test]
 fn test_render_pixel_respects_background_pattern_table_selection() {
     let mut ppu = create_test_ppu_with_mask(
-        PpuMask::empty()
+        PpuMask::new()
             .with_background_enabled(true)
             .with_background_left_enabled(true),
     );
@@ -640,7 +640,7 @@ fn test_render_pixel_respects_background_pattern_table_selection() {
     set_tile_solid(&mut pattern, 1, 0, 2);
     set_bg_palette_color(&mut ppu, 0, 1, 0x18);
     set_bg_palette_color(&mut ppu, 0, 2, 0x28);
-    ppu.set_control_flags(PpuCtrl::empty().with_background_pattern_table(true));
+    ppu.set_control_flags(PpuCtrl::new().with_background_pattern_table(true));
 
     let pixel = render_pixel_with_setup(&mut ppu, &pattern, |cart| set_bg_tile(cart, 0, 0), 0, 0);
     assert_eq!(pixel, COLORS[0x28]);
@@ -649,7 +649,7 @@ fn test_render_pixel_respects_background_pattern_table_selection() {
 #[test]
 fn test_render_pixel_respects_sprite_pattern_table_selection() {
     let mut ppu = create_test_ppu_with_mask(
-        PpuMask::empty()
+        PpuMask::new()
             .with_sprite_enabled(true)
             .with_sprite_left_enabled(true),
     );
@@ -658,7 +658,7 @@ fn test_render_pixel_respects_sprite_pattern_table_selection() {
     set_tile_solid(&mut pattern, 1, 1, 2);
     set_sprite_palette_color(&mut ppu, 0, 1, 0x19);
     set_sprite_palette_color(&mut ppu, 0, 2, 0x29);
-    ppu.set_control_flags(PpuCtrl::empty().with_sprite_pattern_table(true));
+    ppu.set_control_flags(PpuCtrl::new().with_sprite_pattern_table(true));
     setup_sprite(&mut ppu, 0, 0, 1, 0, 0);
 
     let pixel = render_pixel(&mut ppu, &pattern, 0, 1);
@@ -668,7 +668,7 @@ fn test_render_pixel_respects_sprite_pattern_table_selection() {
 #[test]
 fn test_render_pixel_respects_sprite_flipping() {
     let mut ppu = create_test_ppu_with_mask(
-        PpuMask::empty()
+        PpuMask::new()
             .with_sprite_enabled(true)
             .with_sprite_left_enabled(true),
     );
@@ -689,14 +689,14 @@ fn test_render_pixel_respects_sprite_flipping() {
 #[test]
 fn test_render_pixel_uses_second_tile_for_8x16_sprites() {
     let mut ppu = create_test_ppu_with_mask(
-        PpuMask::empty()
+        PpuMask::new()
             .with_sprite_enabled(true)
             .with_sprite_left_enabled(true),
     );
     let mut pattern = create_pattern();
     set_tile_solid(&mut pattern, 0, 1, 3);
     set_sprite_palette_color(&mut ppu, 0, 3, 0x2b);
-    ppu.set_control_flags(PpuCtrl::empty().with_sprite_size(true));
+    ppu.set_control_flags(PpuCtrl::new().with_sprite_size(true));
     setup_sprite(&mut ppu, 0, 0, 0, 0, 0);
 
     let pixel = render_pixel(&mut ppu, &pattern, 0, 9);
@@ -706,14 +706,14 @@ fn test_render_pixel_uses_second_tile_for_8x16_sprites() {
 #[test]
 fn test_render_pixel_uses_odd_tile_bank_for_8x16_sprites() {
     let mut ppu = create_test_ppu_with_mask(
-        PpuMask::empty()
+        PpuMask::new()
             .with_sprite_enabled(true)
             .with_sprite_left_enabled(true),
     );
     let mut pattern = create_pattern();
     set_tile_solid(&mut pattern, 1, 2, 2);
     set_sprite_palette_color(&mut ppu, 0, 2, 0x2c);
-    ppu.set_control_flags(PpuCtrl::empty().with_sprite_size(true));
+    ppu.set_control_flags(PpuCtrl::new().with_sprite_size(true));
     setup_sprite(&mut ppu, 0, 0, 3, 0, 0);
 
     let pixel = render_pixel(&mut ppu, &pattern, 0, 1);
@@ -723,14 +723,14 @@ fn test_render_pixel_uses_odd_tile_bank_for_8x16_sprites() {
 #[test]
 fn test_render_pixel_uses_vertical_flip_for_8x16_sprites() {
     let mut ppu = create_test_ppu_with_mask(
-        PpuMask::empty()
+        PpuMask::new()
             .with_sprite_enabled(true)
             .with_sprite_left_enabled(true),
     );
     let mut pattern = create_pattern();
     set_tile_solid(&mut pattern, 0, 0, 1);
     set_sprite_palette_color(&mut ppu, 0, 1, 0x2d);
-    ppu.set_control_flags(PpuCtrl::empty().with_sprite_size(true));
+    ppu.set_control_flags(PpuCtrl::new().with_sprite_size(true));
     setup_sprite(&mut ppu, 0, 0, 0, 0x80, 0);
 
     let pixel = render_pixel(&mut ppu, &pattern, 0, 15);
@@ -740,7 +740,7 @@ fn test_render_pixel_uses_vertical_flip_for_8x16_sprites() {
 #[test]
 fn test_render_pixel_sets_sprite_overflow_with_nine_sprites_on_scanline() {
     let mut ppu = create_test_ppu_with_mask(
-        PpuMask::empty()
+        PpuMask::new()
             .with_background_enabled(true)
             .with_sprite_enabled(true),
     );
@@ -757,7 +757,7 @@ fn test_render_pixel_sets_sprite_overflow_with_nine_sprites_on_scanline() {
 
 #[test]
 fn test_render_pixel_does_not_set_sprite_overflow_with_eight_sprites_on_scanline() {
-    let mut ppu = create_test_ppu_with_mask(PpuMask::empty());
+    let mut ppu = create_test_ppu_with_mask(PpuMask::new());
     let pattern = create_pattern();
 
     for idx in 0..8 {
@@ -770,7 +770,7 @@ fn test_render_pixel_does_not_set_sprite_overflow_with_eight_sprites_on_scanline
 
 #[test]
 fn test_render_pixel_does_not_set_sprite_overflow_when_rendering_disabled() {
-    let mut ppu = create_test_ppu_with_mask(PpuMask::empty());
+    let mut ppu = create_test_ppu_with_mask(PpuMask::new());
     let pattern = create_pattern();
 
     for idx in 0..9 {
@@ -784,7 +784,7 @@ fn test_render_pixel_does_not_set_sprite_overflow_when_rendering_disabled() {
 #[test]
 fn test_sprite_overflow_sets_for_next_scanline_at_y239() {
     let mut ppu = create_test_ppu_with_mask(
-        PpuMask::empty()
+        PpuMask::new()
             .with_background_enabled(true)
             .with_sprite_enabled(true),
     );
@@ -801,7 +801,7 @@ fn test_sprite_overflow_sets_for_next_scanline_at_y239() {
 #[test]
 fn test_sprite_overflow_does_not_set_for_next_scanline_at_y240() {
     let mut ppu = create_test_ppu_with_mask(
-        PpuMask::empty()
+        PpuMask::new()
             .with_background_enabled(true)
             .with_sprite_enabled(true),
     );
@@ -818,7 +818,7 @@ fn test_sprite_overflow_does_not_set_for_next_scanline_at_y240() {
 #[test]
 fn test_render_pixel_sprite_zero_hit() {
     let mut ppu = create_test_ppu_with_mask(
-        PpuMask::empty()
+        PpuMask::new()
             .with_background_enabled(true)
             .with_sprite_enabled(true)
             .with_background_left_enabled(true)
@@ -844,7 +844,7 @@ fn test_render_pixel_sprite_zero_hit() {
 #[test]
 fn test_render_pixel_sprite_zero_hit_requires_opaque_background() {
     let mut ppu = create_test_ppu_with_mask(
-        PpuMask::empty()
+        PpuMask::new()
             .with_background_enabled(true)
             .with_sprite_enabled(true)
             .with_background_left_enabled(true)
@@ -861,7 +861,7 @@ fn test_render_pixel_sprite_zero_hit_requires_opaque_background() {
 #[test]
 fn test_render_pixel_sprite_zero_hit_respects_background_left_mask() {
     let mut ppu = create_test_ppu_with_mask(
-        PpuMask::empty()
+        PpuMask::new()
             .with_background_enabled(true)
             .with_sprite_enabled(true)
             .with_sprite_left_enabled(true),
@@ -878,7 +878,7 @@ fn test_render_pixel_sprite_zero_hit_respects_background_left_mask() {
 #[test]
 fn test_render_pixel_sprite_zero_hit_respects_sprite_left_mask() {
     let mut ppu = create_test_ppu_with_mask(
-        PpuMask::empty()
+        PpuMask::new()
             .with_background_enabled(true)
             .with_sprite_enabled(true)
             .with_background_left_enabled(true),
@@ -895,7 +895,7 @@ fn test_render_pixel_sprite_zero_hit_respects_sprite_left_mask() {
 #[test]
 fn test_render_pixel_sprite_zero_hit_requires_sprite_zero() {
     let mut ppu = create_test_ppu_with_mask(
-        PpuMask::empty()
+        PpuMask::new()
             .with_background_enabled(true)
             .with_sprite_enabled(true)
             .with_background_left_enabled(true)
@@ -914,7 +914,7 @@ fn test_render_pixel_sprite_zero_hit_requires_sprite_zero() {
 #[test]
 fn test_render_pixel_sprite_zero_not_at_x255() {
     let mut ppu = create_test_ppu_with_mask(
-        PpuMask::empty()
+        PpuMask::new()
             .with_background_enabled(true)
             .with_sprite_enabled(true),
     );
@@ -946,7 +946,7 @@ fn pixel_to_rgb(pixel: Pixel) -> (u8, u8, u8) {
 #[test]
 fn test_render_pixel_grayscale_mode() {
     let mut ppu = create_test_ppu_with_mask(
-        PpuMask::empty()
+        PpuMask::new()
             .with_background_enabled(true)
             .with_background_left_enabled(true)
             .with_grayscale(true),
@@ -966,7 +966,7 @@ fn test_render_pixel_grayscale_mode() {
 #[test]
 fn test_render_pixel_grayscale_mode_with_sprite() {
     let mut ppu = create_test_ppu_with_mask(
-        PpuMask::empty()
+        PpuMask::new()
             .with_sprite_enabled(true)
             .with_sprite_left_enabled(true)
             .with_grayscale(true),
@@ -988,7 +988,7 @@ fn test_render_pixel_grayscale_mode_with_sprite() {
 #[test]
 fn test_render_pixel_red_emphasis() {
     let mut ppu = create_test_ppu_with_mask(
-        PpuMask::empty()
+        PpuMask::new()
             .with_background_enabled(true)
             .with_background_left_enabled(true)
             .with_red_tint(true),
@@ -1003,7 +1003,7 @@ fn test_render_pixel_red_emphasis() {
     // Compare with no emphasis
     {
         let this = &mut ppu;
-        let mask = PpuMask::empty()
+        let mask = PpuMask::new()
             .with_background_enabled(true)
             .with_background_left_enabled(true);
         this.mask = mask;
@@ -1029,7 +1029,7 @@ fn test_render_pixel_red_emphasis() {
 #[test]
 fn test_render_pixel_green_emphasis() {
     let mut ppu = create_test_ppu_with_mask(
-        PpuMask::empty()
+        PpuMask::new()
             .with_background_enabled(true)
             .with_background_left_enabled(true)
             .with_green_tint(true),
@@ -1044,7 +1044,7 @@ fn test_render_pixel_green_emphasis() {
     // Compare with no emphasis
     {
         let this = &mut ppu;
-        let mask = PpuMask::empty()
+        let mask = PpuMask::new()
             .with_background_enabled(true)
             .with_background_left_enabled(true);
         this.mask = mask;
@@ -1073,7 +1073,7 @@ fn test_render_pixel_green_emphasis() {
 #[test]
 fn test_render_pixel_blue_emphasis() {
     let mut ppu = create_test_ppu_with_mask(
-        PpuMask::empty()
+        PpuMask::new()
             .with_background_enabled(true)
             .with_background_left_enabled(true)
             .with_blue_tint(true),
@@ -1088,7 +1088,7 @@ fn test_render_pixel_blue_emphasis() {
     // Compare with no emphasis
     {
         let this = &mut ppu;
-        let mask = PpuMask::empty()
+        let mask = PpuMask::new()
             .with_background_enabled(true)
             .with_background_left_enabled(true);
         this.mask = mask;
@@ -1117,7 +1117,7 @@ fn test_render_pixel_blue_emphasis() {
 #[test]
 fn test_render_pixel_multiple_emphasis_bits() {
     let mut ppu = create_test_ppu_with_mask(
-        PpuMask::empty()
+        PpuMask::new()
             .with_background_enabled(true)
             .with_background_left_enabled(true)
             .with_red_tint(true)
@@ -1133,7 +1133,7 @@ fn test_render_pixel_multiple_emphasis_bits() {
     // Compare with no emphasis
     {
         let this = &mut ppu;
-        let mask = PpuMask::empty()
+        let mask = PpuMask::new()
             .with_background_enabled(true)
             .with_background_left_enabled(true);
         this.mask = mask;
@@ -1162,7 +1162,7 @@ fn test_render_pixel_multiple_emphasis_bits() {
 #[test]
 fn test_render_pixel_all_emphasis_bits() {
     let mut ppu = create_test_ppu_with_mask(
-        PpuMask::empty()
+        PpuMask::new()
             .with_background_enabled(true)
             .with_background_left_enabled(true)
             .with_red_tint(true)
@@ -1179,7 +1179,7 @@ fn test_render_pixel_all_emphasis_bits() {
     // Compare with no emphasis - all channels should remain the same
     {
         let this = &mut ppu;
-        let mask = PpuMask::empty()
+        let mask = PpuMask::new()
             .with_background_enabled(true)
             .with_background_left_enabled(true);
         this.mask = mask;
@@ -1208,7 +1208,7 @@ fn test_render_pixel_all_emphasis_bits() {
 #[test]
 fn test_render_pixel_grayscale_and_emphasis_combined() {
     let mut ppu = create_test_ppu_with_mask(
-        PpuMask::empty()
+        PpuMask::new()
             .with_background_enabled(true)
             .with_background_left_enabled(true)
             .with_grayscale(true)
@@ -1229,7 +1229,7 @@ fn test_render_pixel_grayscale_and_emphasis_combined() {
 #[test]
 fn test_render_pixel_no_emphasis_no_change() {
     let mut ppu = create_test_ppu_with_mask(
-        PpuMask::empty()
+        PpuMask::new()
             .with_background_enabled(true)
             .with_background_left_enabled(true),
     );
