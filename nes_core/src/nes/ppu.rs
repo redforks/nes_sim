@@ -1,6 +1,6 @@
 use crate::nes::mapper::Cartridge;
 use crate::render::Render;
-use bitfield_struct::bitfield;
+use bitflags::bitflags;
 use image::Rgba;
 use std::fmt::Write;
 
@@ -22,7 +22,157 @@ pub struct BackgroundTileOverride {
     pub color_idx: u8,
 }
 
+bitflags! {
+    #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+    struct PpuCtrl: u8 {
+        // bits 0-1: name_table_select (define dummy flags to preserve these bits)
+        const NAME_TABLE_BIT0 = 0x01;
+        const NAME_TABLE_BIT1 = 0x02;
+        const INCREMENT_MODE = 0x04;
+        const SPRITE_PATTERN_TABLE = 0x08;
+        const BACKGROUND_PATTERN_TABLE = 0x10;
+        const SPRITE_SIZE = 0x20;
+        const PPU_MASTER = 0x40;
+        const NMI_ENABLE = 0x80;
+    }
+}
+
+impl PpuCtrl {
+    fn inc_ppu_addr(self, ppu_addr: &mut u16) {
+        *ppu_addr = ppu_addr.wrapping_add(if self.increment_mode() { 32 } else { 1 });
+    }
+
+    // Helper methods for bitfield compatibility
+    fn name_table_select(&self) -> u8 {
+        self.bits() & 0x03
+    }
+
+    fn increment_mode(&self) -> bool {
+        self.contains(PpuCtrl::INCREMENT_MODE)
+    }
+
+    fn sprite_pattern_table(&self) -> bool {
+        self.contains(PpuCtrl::SPRITE_PATTERN_TABLE)
+    }
+
+    fn background_pattern_table(&self) -> bool {
+        self.contains(PpuCtrl::BACKGROUND_PATTERN_TABLE)
+    }
+
+    fn sprite_size(&self) -> bool {
+        self.contains(PpuCtrl::SPRITE_SIZE)
+    }
+
+    fn ppu_master(&self) -> bool {
+        self.contains(PpuCtrl::PPU_MASTER)
+    }
+
+    fn nmi_enable(&self) -> bool {
+        self.contains(PpuCtrl::NMI_ENABLE)
+    }
+
+    // Builder methods for test compatibility
+    #[cfg(test)]
+    fn with_nmi_enable(self, value: bool) -> Self {
+        let mut result = self;
+        result.set(PpuCtrl::NMI_ENABLE, value);
+        result
+    }
+
+    #[cfg(test)]
+    fn with_sprite_size(self, value: bool) -> Self {
+        let mut result = self;
+        result.set(PpuCtrl::SPRITE_SIZE, value);
+        result
+    }
+
+    #[cfg(test)]
+    fn with_background_pattern_table(self, value: bool) -> Self {
+        let mut result = self;
+        result.set(PpuCtrl::BACKGROUND_PATTERN_TABLE, value);
+        result
+    }
+
+    #[cfg(test)]
+    fn with_sprite_pattern_table(self, value: bool) -> Self {
+        let mut result = self;
+        result.set(PpuCtrl::SPRITE_PATTERN_TABLE, value);
+        result
+    }
+
+    #[cfg(test)]
+    fn with_increment_mode(self, value: bool) -> Self {
+        let mut result = self;
+        result.set(PpuCtrl::INCREMENT_MODE, value);
+        result
+    }
+
+    #[cfg(test)]
+    fn with_name_table_select(self, value: u8) -> Self {
+        let bits = (self.bits() & !0x03) | (value & 0x03);
+        PpuCtrl::from_bits_truncate(bits)
+    }
+}
+
+impl From<u8> for PpuCtrl {
+    fn from(value: u8) -> Self {
+        PpuCtrl::from_bits_truncate(value)
+    }
+}
+
+impl From<PpuCtrl> for u8 {
+    fn from(value: PpuCtrl) -> Self {
+        value.bits()
+    }
+}
+
+bitflags! {
+    #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+    struct PpuMask: u8 {
+        const GRAYSCALE = 0x01;
+        const BACKGROUND_LEFT_ENABLED = 0x02;
+        const SPRITE_LEFT_ENABLED = 0x04;
+        const BACKGROUND_ENABLED = 0x08;
+        const SPRITE_ENABLED = 0x10;
+        const RED_TINT = 0x20;
+        const GREEN_TINT = 0x40;
+        const BLUE_TINT = 0x80;
+    }
+}
+
 impl PpuMask {
+    fn grayscale(&self) -> bool {
+        self.contains(PpuMask::GRAYSCALE)
+    }
+
+    fn background_left_enabled(&self) -> bool {
+        self.contains(PpuMask::BACKGROUND_LEFT_ENABLED)
+    }
+
+    fn sprite_left_enabled(&self) -> bool {
+        self.contains(PpuMask::SPRITE_LEFT_ENABLED)
+    }
+
+    fn background_enabled(&self) -> bool {
+        self.contains(PpuMask::BACKGROUND_ENABLED)
+    }
+
+    fn sprite_enabled(&self) -> bool {
+        self.contains(PpuMask::SPRITE_ENABLED)
+    }
+
+    fn red_tint(&self) -> bool {
+        self.contains(PpuMask::RED_TINT)
+    }
+
+    fn green_tint(&self) -> bool {
+        self.contains(PpuMask::GREEN_TINT)
+    }
+
+    fn blue_tint(&self) -> bool {
+        self.contains(PpuMask::BLUE_TINT)
+    }
+
     /// Apply grayscale and emphasis effects to a pixel color using this mask's flags.
     /// - Grayscale: Converts color to grayscale by averaging RGB channels
     /// - Emphasis: Attenuates non-emphasized color channels (e.g., red emphasis darkens G and B)
@@ -58,54 +208,144 @@ impl PpuMask {
 
         Rgba([r, g, b, a])
     }
-}
 
-#[bitfield(u8)]
-struct PpuCtrl {
-    // Field declaration is LSB-first (first declared field maps to bit 0).
-    // Arrange fields so they match the hardware PPUCTRL layout (bits 0..7):
-    // bits 0-1: name_table_select
-    // bit 2: increment_mode
-    // bit 3: sprite_pattern_table
-    // bit 4: background_pattern_table
-    // bit 5: sprite_size
-    // bit 6: ppu_master
-    // bit 7: nmi_enable
-    #[bits(2)]
-    name_table_select: u8,
-    increment_mode: bool,
-    sprite_pattern_table: bool,
-    background_pattern_table: bool,
-    sprite_size: bool,
-    ppu_master: bool, // not used in NES, can be ignored
-    nmi_enable: bool,
-}
+    // Builder methods for test compatibility
+    #[cfg(test)]
+    fn with_grayscale(self, value: bool) -> Self {
+        let mut result = self;
+        result.set(PpuMask::GRAYSCALE, value);
+        result
+    }
 
-impl PpuCtrl {
-    fn inc_ppu_addr(self, ppu_addr: &mut u16) {
-        *ppu_addr = ppu_addr.wrapping_add(if self.increment_mode() { 32 } else { 1 });
+    #[cfg(test)]
+    fn with_background_left_enabled(self, value: bool) -> Self {
+        let mut result = self;
+        result.set(PpuMask::BACKGROUND_LEFT_ENABLED, value);
+        result
+    }
+
+    #[cfg(test)]
+    fn with_sprite_left_enabled(self, value: bool) -> Self {
+        let mut result = self;
+        result.set(PpuMask::SPRITE_LEFT_ENABLED, value);
+        result
+    }
+
+    #[cfg(test)]
+    fn with_background_enabled(self, value: bool) -> Self {
+        let mut result = self;
+        result.set(PpuMask::BACKGROUND_ENABLED, value);
+        result
+    }
+
+    #[cfg(test)]
+    fn with_sprite_enabled(self, value: bool) -> Self {
+        let mut result = self;
+        result.set(PpuMask::SPRITE_ENABLED, value);
+        result
+    }
+
+    #[cfg(test)]
+    fn with_red_tint(self, value: bool) -> Self {
+        let mut result = self;
+        result.set(PpuMask::RED_TINT, value);
+        result
+    }
+
+    #[cfg(test)]
+    fn with_green_tint(self, value: bool) -> Self {
+        let mut result = self;
+        result.set(PpuMask::GREEN_TINT, value);
+        result
+    }
+
+    #[cfg(test)]
+    fn with_blue_tint(self, value: bool) -> Self {
+        let mut result = self;
+        result.set(PpuMask::BLUE_TINT, value);
+        result
     }
 }
 
-#[bitfield(u8)]
-struct PpuMask {
-    grayscale: bool,
-    background_left_enabled: bool,
-    sprite_left_enabled: bool,
-    background_enabled: bool,
-    sprite_enabled: bool,
-    red_tint: bool,
-    green_tint: bool,
-    blue_tint: bool,
+impl From<u8> for PpuMask {
+    fn from(value: u8) -> Self {
+        PpuMask::from_bits_truncate(value)
+    }
 }
 
-#[bitfield(u8)]
-struct PpuStatus {
-    #[bits(5)]
-    __: u8,
-    sprite_overflow: bool,
-    sprite_zero_hit: bool,
-    v_blank: bool,
+impl From<PpuMask> for u8 {
+    fn from(value: PpuMask) -> Self {
+        value.bits()
+    }
+}
+
+bitflags! {
+    #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+    struct PpuStatus: u8 {
+        const SPRITE_OVERFLOW = 0x20;
+        const SPRITE_ZERO_HIT = 0x40;
+        const V_BLANK = 0x80;
+    }
+}
+
+impl PpuStatus {
+    fn sprite_overflow(&self) -> bool {
+        self.contains(PpuStatus::SPRITE_OVERFLOW)
+    }
+
+    fn sprite_zero_hit(&self) -> bool {
+        self.contains(PpuStatus::SPRITE_ZERO_HIT)
+    }
+
+    fn v_blank(&self) -> bool {
+        self.contains(PpuStatus::V_BLANK)
+    }
+
+    fn set_sprite_overflow(&mut self, value: bool) {
+        self.set(PpuStatus::SPRITE_OVERFLOW, value);
+    }
+
+    fn set_sprite_zero_hit(&mut self, value: bool) {
+        self.set(PpuStatus::SPRITE_ZERO_HIT, value);
+    }
+
+    fn set_v_blank(&mut self, value: bool) {
+        self.set(PpuStatus::V_BLANK, value);
+    }
+
+    // Builder methods for test compatibility
+    #[cfg(test)]
+    fn with_sprite_overflow(self, value: bool) -> Self {
+        let mut result = self;
+        result.set(PpuStatus::SPRITE_OVERFLOW, value);
+        result
+    }
+
+    #[cfg(test)]
+    fn with_sprite_zero_hit(self, value: bool) -> Self {
+        let mut result = self;
+        result.set(PpuStatus::SPRITE_ZERO_HIT, value);
+        result
+    }
+
+    #[cfg(test)]
+    fn with_v_blank(self, value: bool) -> Self {
+        let mut result = self;
+        result.set(PpuStatus::V_BLANK, value);
+        result
+    }
+}
+
+impl From<u8> for PpuStatus {
+    fn from(value: u8) -> Self {
+        PpuStatus::from_bits_truncate(value)
+    }
+}
+
+impl From<PpuStatus> for u8 {
+    fn from(value: PpuStatus) -> Self {
+        value.bits()
+    }
 }
 
 const TILES_PER_ROW: u8 = 32;
@@ -350,9 +590,9 @@ fn normalize_ppu_addr(addr: u16) -> u16 {
 impl<R: Render> Ppu<R> {
     pub fn new(renderer: R) -> Self {
         Ppu {
-            ctrl: PpuCtrl::new(),
-            mask: PpuMask::new(),
-            status: PpuStatus::new(),
+            ctrl: PpuCtrl::empty(),
+            mask: PpuMask::empty(),
+            status: PpuStatus::empty(),
             oam_addr: 0,
             oam_data: [0; 0x100],
 
@@ -379,17 +619,17 @@ impl<R: Render> Ppu<R> {
             scanline_cache: ScanlineCache::default(),
             frame_no: 0,
             ppu_ticks: 0,
-            effective_mask: PpuMask::new(),
+            effective_mask: PpuMask::empty(),
             rendering_enabled_at_scanline_start: false,
         }
     }
 
     pub fn reset(&mut self) {
         // https://www.nesdev.org/wiki/PPU_power_up_state
-        self.ctrl = PpuCtrl::new();
-        self.status = PpuStatus::new();
-        self.mask = PpuMask::new();
-        self.effective_mask = PpuMask::new();
+        self.ctrl = PpuCtrl::empty();
+        self.status = PpuStatus::empty();
+        self.mask = PpuMask::empty();
+        self.effective_mask = PpuMask::empty();
 
         self.vram_addr = 0;
         self.temp_vram_addr = 0;
@@ -520,9 +760,9 @@ impl<R: Render> Ppu<R> {
             "- Current nametable address: 0x{:04X}",
             cur_name_table_addr
         );
-        let _ = writeln!(out, "- PPUCTRL: 0x{:02X}", self.ctrl.into_bits());
-        let _ = writeln!(out, "- PPUMASK: 0x{:02X}", self.mask.into_bits());
-        let _ = writeln!(out, "- PPUSTATUS: 0x{:02X}", self.status.into_bits());
+        let _ = writeln!(out, "- PPUCTRL: 0x{:02X}", self.ctrl.bits());
+        let _ = writeln!(out, "- PPUMASK: 0x{:02X}", self.mask.bits());
+        let _ = writeln!(out, "- PPUSTATUS: 0x{:02X}", self.status.bits());
         let _ = writeln!(out, "- OAMADDR: 0x{:02X}", self.oam_addr);
         let _ = writeln!(out, "- VRAM address: 0x{:04X}", self.vram_addr);
         let _ = writeln!(
@@ -824,7 +1064,7 @@ impl<R: Render> Ppu<R> {
             0x2002 => {
                 let status = self.read_status();
                 self.write_toggle = false;
-                let status_bits = status.into_bits();
+                let status_bits = status.bits();
                 let result = (status_bits & 0xE0) | (self.current_bus_latch() & 0x1F);
                 self.refresh_bus_latch_bits(0xE0, status_bits);
                 result
@@ -845,7 +1085,7 @@ impl<R: Render> Ppu<R> {
     pub fn peek(&self, address: u16, cartridge: &Cartridge) -> u8 {
         let reg = normalize_ppu_addr(address);
         match reg {
-            0x2002 => self.status.into_bits(),
+            0x2002 => self.status.bits(),
             0x2004 => self.read_oam_data(),
             0x2007 => self.read_vram(self.vram_addr, cartridge),
             _ => 0,
@@ -860,7 +1100,7 @@ impl<R: Render> Ppu<R> {
             // PPUCTRL
             0x2000 => {
                 cartridge.on_ppu_ctrl_write(value);
-                self.set_control_flags(PpuCtrl::from_bits(value));
+                self.set_control_flags(PpuCtrl::from_bits_truncate(value));
                 self.schedule_background_activation_if_visible();
                 // Update name table selection and mark cache dirty
                 self.scanline_cache.dirty = true;
@@ -868,7 +1108,7 @@ impl<R: Render> Ppu<R> {
             // PPUMASK
             0x2001 => {
                 cartridge.on_ppu_mask_write(value);
-                self.mask = PpuMask::from_bits(value);
+                self.mask = PpuMask::from_bits_truncate(value);
                 self.scanline_cache.dirty = true;
             }
             // OAMADDR

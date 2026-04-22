@@ -1,23 +1,113 @@
-use bitfield_struct::bitfield;
+use bitflags::bitflags;
 
-#[bitfield(u8)]
-struct Sweep {
-    #[bits(3)]
-    shift: u8,
-    negate: bool,
-    #[bits(3)]
-    period: u8,
-    enabled: bool,
+bitflags! {
+    #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+    struct Sweep: u8 {
+        // shift: bits 0-2 (3-bit field)
+        const SHIFT_BIT0 = 0x01;
+        const SHIFT_BIT1 = 0x02;
+        const SHIFT_BIT2 = 0x04;
+        // negate: bit 3
+        const NEGATE = 0x08;
+        // period: bits 4-6 (3-bit field)
+        const PERIOD_BIT0 = 0x10;
+        const PERIOD_BIT1 = 0x20;
+        const PERIOD_BIT2 = 0x40;
+        // enabled: bit 7
+        const ENABLED = 0x80;
+    }
 }
 
-#[bitfield(u8)]
-struct DutyCycle {
-    #[bits(4)]
-    volume: u8,
-    constant_volume: bool,
-    length_counter_halt: bool,
-    #[bits(2)]
-    duty: u8,
+impl Sweep {
+    fn shift(&self) -> u8 {
+        self.bits() & 0x07
+    }
+
+    fn negate(&self) -> bool {
+        self.contains(Sweep::NEGATE)
+    }
+
+    fn period(&self) -> u8 {
+        (self.bits() >> 4) & 0x07
+    }
+
+    fn enabled(&self) -> bool {
+        self.contains(Sweep::ENABLED)
+    }
+
+    // Setter methods for tests
+    fn set_enabled(&mut self, value: bool) {
+        self.set(Sweep::ENABLED, value);
+    }
+
+    fn set_period(&mut self, value: u8) {
+        let bits = (self.bits() & !0x70) | ((value & 0x07) << 4);
+        *self = Sweep::from_bits_truncate(bits);
+    }
+
+    fn set_negate(&mut self, value: bool) {
+        self.set(Sweep::NEGATE, value);
+    }
+
+    fn set_shift(&mut self, value: u8) {
+        let bits = (self.bits() & !0x07) | (value & 0x07);
+        *self = Sweep::from_bits_truncate(bits);
+    }
+}
+
+bitflags! {
+    #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+    struct DutyCycle: u8 {
+        // volume: bits 0-3 (4-bit field)
+        const VOLUME_BIT0 = 0x01;
+        const VOLUME_BIT1 = 0x02;
+        const VOLUME_BIT2 = 0x04;
+        const VOLUME_BIT3 = 0x08;
+        // constant_volume: bit 4
+        const CONSTANT_VOLUME = 0x10;
+        // length_counter_halt: bit 5
+        const LENGTH_COUNTER_HALT = 0x20;
+        // duty: bits 6-7 (2-bit field)
+        const DUTY_BIT0 = 0x40;
+        const DUTY_BIT1 = 0x80;
+    }
+}
+
+impl DutyCycle {
+    fn volume(&self) -> u8 {
+        self.bits() & 0x0F
+    }
+
+    fn constant_volume(&self) -> bool {
+        self.contains(DutyCycle::CONSTANT_VOLUME)
+    }
+
+    fn length_counter_halt(&self) -> bool {
+        self.contains(DutyCycle::LENGTH_COUNTER_HALT)
+    }
+
+    fn duty(&self) -> u8 {
+        (self.bits() >> 6) & 0x03
+    }
+
+    // Setter methods for tests
+    fn set_duty(&mut self, value: u8) {
+        let bits = (self.bits() & !0xC0) | ((value & 0x03) << 6);
+        *self = DutyCycle::from_bits_truncate(bits);
+    }
+
+    fn set_length_counter_halt(&mut self, value: bool) {
+        self.set(DutyCycle::LENGTH_COUNTER_HALT, value);
+    }
+
+    fn set_constant_volume(&mut self, value: bool) {
+        self.set(DutyCycle::CONSTANT_VOLUME, value);
+    }
+
+    fn set_volume(&mut self, value: u8) {
+        let bits = (self.bits() & !0x0F) | (value & 0x0F);
+        *self = DutyCycle::from_bits_truncate(bits);
+    }
 }
 
 #[derive(Default)]
@@ -43,80 +133,483 @@ impl LengthCounterLoad {
     }
 }
 
-#[bitfield(u8)]
-struct LinearCounterControl {
-    #[bits(7)]
-    counter: u8,
-    reload_flag: bool,
+bitflags! {
+    #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+    struct LinearCounterControl: u8 {
+        // counter: bits 0-6 (7-bit field)
+        const COUNTER_BIT0 = 0x01;
+        const COUNTER_BIT1 = 0x02;
+        const COUNTER_BIT2 = 0x04;
+        const COUNTER_BIT3 = 0x08;
+        const COUNTER_BIT4 = 0x10;
+        const COUNTER_BIT5 = 0x20;
+        const COUNTER_BIT6 = 0x40;
+        // reload_flag: bit 7
+        const RELOAD_FLAG = 0x80;
+    }
 }
 
-#[bitfield(u8)]
-struct NoiseEnvelop {
-    #[bits(4)]
-    volume: u8,
-    constant_volume: bool,
-    loop_flag: bool,
-    #[bits(2)]
-    __: u8,
+impl LinearCounterControl {
+    fn counter(&self) -> u8 {
+        self.bits() & 0x7F
+    }
+
+    fn reload_flag(&self) -> bool {
+        self.contains(LinearCounterControl::RELOAD_FLAG)
+    }
+
+    pub fn with_reload_flag(self, value: bool) -> Self {
+        let mut result = self;
+        result.set(LinearCounterControl::RELOAD_FLAG, value);
+        result
+    }
+
+    // Setter methods for tests
+    fn set_reload_flag(&mut self, value: bool) {
+        self.set(LinearCounterControl::RELOAD_FLAG, value);
+    }
+
+    fn set_counter(&mut self, value: u8) {
+        let bits = (self.bits() & !0x7F) | (value & 0x7F);
+        *self = LinearCounterControl::from_bits_truncate(bits);
+    }
 }
 
-#[bitfield(u8)]
-struct NoisePeriod {
-    #[bits(4)]
-    period: u8,
-    #[bits(3)]
-    __: u8,
-    enabled: bool,
+bitflags! {
+    #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+    struct NoiseEnvelop: u8 {
+        // volume: bits 0-3 (4-bit field)
+        const VOLUME_BIT0 = 0x01;
+        const VOLUME_BIT1 = 0x02;
+        const VOLUME_BIT2 = 0x04;
+        const VOLUME_BIT3 = 0x08;
+        // constant_volume: bit 4
+        const CONSTANT_VOLUME = 0x10;
+        // loop_flag: bit 5
+        const LOOP_FLAG = 0x20;
+        // __: bits 6-7 (padding, not needed)
+    }
 }
 
-#[bitfield(u8)]
-struct NoiseLength {
-    #[bits(3)]
-    __: u8,
-    #[bits(5)]
-    length: u8,
+impl NoiseEnvelop {
+    fn volume(&self) -> u8 {
+        self.bits() & 0x0F
+    }
+
+    fn constant_volume(&self) -> bool {
+        self.contains(NoiseEnvelop::CONSTANT_VOLUME)
+    }
+
+    fn loop_flag(&self) -> bool {
+        self.contains(NoiseEnvelop::LOOP_FLAG)
+    }
+
+    // Setter methods for tests
+    fn set_loop_flag(&mut self, value: bool) {
+        self.set(NoiseEnvelop::LOOP_FLAG, value);
+    }
+
+    fn set_constant_volume(&mut self, value: bool) {
+        self.set(NoiseEnvelop::CONSTANT_VOLUME, value);
+    }
+
+    fn set_volume(&mut self, value: u8) {
+        let bits = (self.bits() & !0x0F) | (value & 0x0F);
+        *self = NoiseEnvelop::from_bits_truncate(bits);
+    }
 }
 
-#[bitfield(u8)]
-struct DmcIRQLoopFreq {
-    #[bits(4)]
-    freq: u8,
-    #[bits(2)]
-    __: u8,
-    loop_flag: bool,
-    irq_enabled: bool,
+bitflags! {
+    #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+    struct NoisePeriod: u8 {
+        // period: bits 0-3 (4-bit field)
+        const PERIOD_BIT0 = 0x01;
+        const PERIOD_BIT1 = 0x02;
+        const PERIOD_BIT2 = 0x04;
+        const PERIOD_BIT3 = 0x08;
+        // __: bits 4-6 (padding, not needed)
+        // enabled: bit 7
+        const ENABLED = 0x80;
+    }
 }
 
-#[bitfield(u8)]
-struct ControlFlags {
-    pulse1_enabled: bool,
-    pulse2_enabled: bool,
-    triangle_enabled: bool,
-    noise_enabled: bool,
-    dmc_enabled: bool,
-    #[bits(3)]
-    __: u8,
+impl NoisePeriod {
+    fn period(&self) -> u8 {
+        self.bits() & 0x0F
+    }
+
+    fn enabled(&self) -> bool {
+        self.contains(NoisePeriod::ENABLED)
+    }
+
+    // Setter methods for tests
+    fn set_enabled(&mut self, value: bool) {
+        self.set(NoisePeriod::ENABLED, value);
+    }
+
+    fn set_period(&mut self, value: u8) {
+        let bits = (self.bits() & !0x0F) | (value & 0x0F);
+        *self = NoisePeriod::from_bits_truncate(bits);
+    }
 }
 
-#[bitfield(u8)]
-struct APUStatus {
-    pulse1_enabled: bool,
-    pulse2_enabled: bool,
-    triangle_enabled: bool,
-    noise_enabled: bool,
-    dmc_enabled: bool,
-    #[bits(1)]
-    __: u8,
-    frame_interrupt: bool,
-    dmc_interrupt: bool,
+bitflags! {
+    #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+    struct NoiseLength: u8 {
+        // __: bits 0-2 (padding, not needed)
+        // length: bits 3-7 (5-bit field)
+        const LENGTH_BIT0 = 0x08;
+        const LENGTH_BIT1 = 0x10;
+        const LENGTH_BIT2 = 0x20;
+        const LENGTH_BIT3 = 0x40;
+        const LENGTH_BIT4 = 0x80;
+    }
 }
 
-#[bitfield(u8)]
-struct FrameCounter {
-    #[bits(6)]
-    __: u8,
-    interrupt_flag: bool,
-    mode: bool,
+impl NoiseLength {
+    fn length(&self) -> u8 {
+        (self.bits() >> 3) & 0x1F
+    }
+
+    // Setter methods for tests
+    fn set_length(&mut self, value: u8) {
+        let bits = (self.bits() & !0xF8) | ((value & 0x1F) << 3);
+        *self = NoiseLength::from_bits_truncate(bits);
+    }
+}
+
+bitflags! {
+    #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+    struct DmcIRQLoopFreq: u8 {
+        // freq: bits 0-3 (4-bit field)
+        const FREQ_BIT0 = 0x01;
+        const FREQ_BIT1 = 0x02;
+        const FREQ_BIT2 = 0x04;
+        const FREQ_BIT3 = 0x08;
+        // __: bits 4-5 (padding, not needed)
+        // loop_flag: bit 6
+        const LOOP_FLAG = 0x40;
+        // irq_enabled: bit 7
+        const IRQ_ENABLED = 0x80;
+    }
+}
+
+impl DmcIRQLoopFreq {
+    fn freq(&self) -> u8 {
+        self.bits() & 0x0F
+    }
+
+    fn loop_flag(&self) -> bool {
+        self.contains(DmcIRQLoopFreq::LOOP_FLAG)
+    }
+
+    fn irq_enabled(&self) -> bool {
+        self.contains(DmcIRQLoopFreq::IRQ_ENABLED)
+    }
+
+    // Setter methods for tests
+    fn set_freq(&mut self, value: u8) {
+        let bits = (self.bits() & !0x0F) | (value & 0x0F);
+        *self = DmcIRQLoopFreq::from_bits_truncate(bits);
+    }
+
+    fn set_loop_flag(&mut self, value: bool) {
+        self.set(DmcIRQLoopFreq::LOOP_FLAG, value);
+    }
+
+    fn set_irq_enabled(&mut self, value: bool) {
+        self.set(DmcIRQLoopFreq::IRQ_ENABLED, value);
+    }
+}
+
+bitflags! {
+    #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+    struct ControlFlags: u8 {
+        // pulse1_enabled: bit 0
+        const PULSE1_ENABLED = 0x01;
+        // pulse2_enabled: bit 1
+        const PULSE2_ENABLED = 0x02;
+        // triangle_enabled: bit 2
+        const TRIANGLE_ENABLED = 0x04;
+        // noise_enabled: bit 3
+        const NOISE_ENABLED = 0x08;
+        // dmc_enabled: bit 4
+        const DMC_ENABLED = 0x10;
+        // __: bits 5-7 (padding, not needed)
+    }
+}
+
+impl ControlFlags {
+    fn pulse1_enabled(&self) -> bool {
+        self.contains(ControlFlags::PULSE1_ENABLED)
+    }
+
+    fn pulse2_enabled(&self) -> bool {
+        self.contains(ControlFlags::PULSE2_ENABLED)
+    }
+
+    fn triangle_enabled(&self) -> bool {
+        self.contains(ControlFlags::TRIANGLE_ENABLED)
+    }
+
+    fn noise_enabled(&self) -> bool {
+        self.contains(ControlFlags::NOISE_ENABLED)
+    }
+
+    fn dmc_enabled(&self) -> bool {
+        self.contains(ControlFlags::DMC_ENABLED)
+    }
+
+    // Setter methods for tests
+    fn set_pulse1_enabled(&mut self, value: bool) {
+        self.set(ControlFlags::PULSE1_ENABLED, value);
+    }
+
+    fn set_pulse2_enabled(&mut self, value: bool) {
+        self.set(ControlFlags::PULSE2_ENABLED, value);
+    }
+
+    fn set_triangle_enabled(&mut self, value: bool) {
+        self.set(ControlFlags::TRIANGLE_ENABLED, value);
+    }
+
+    fn set_noise_enabled(&mut self, value: bool) {
+        self.set(ControlFlags::NOISE_ENABLED, value);
+    }
+
+    fn set_dmc_enabled(&mut self, value: bool) {
+        self.set(ControlFlags::DMC_ENABLED, value);
+    }
+}
+
+bitflags! {
+    #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+    struct APUStatus: u8 {
+        // pulse1_enabled: bit 0
+        const PULSE1_ENABLED = 0x01;
+        // pulse2_enabled: bit 1
+        const PULSE2_ENABLED = 0x02;
+        // triangle_enabled: bit 2
+        const TRIANGLE_ENABLED = 0x04;
+        // noise_enabled: bit 3
+        const NOISE_ENABLED = 0x08;
+        // dmc_enabled: bit 4
+        const DMC_ENABLED = 0x10;
+        // __: bit 5 (padding, not needed)
+        // frame_interrupt: bit 6
+        const FRAME_INTERRUPT = 0x40;
+        // dmc_interrupt: bit 7
+        const DMC_INTERRUPT = 0x80;
+    }
+}
+
+impl APUStatus {
+    fn pulse1_enabled(&self) -> bool {
+        self.contains(APUStatus::PULSE1_ENABLED)
+    }
+
+    fn pulse2_enabled(&self) -> bool {
+        self.contains(APUStatus::PULSE2_ENABLED)
+    }
+
+    fn triangle_enabled(&self) -> bool {
+        self.contains(APUStatus::TRIANGLE_ENABLED)
+    }
+
+    fn noise_enabled(&self) -> bool {
+        self.contains(APUStatus::NOISE_ENABLED)
+    }
+
+    fn dmc_enabled(&self) -> bool {
+        self.contains(APUStatus::DMC_ENABLED)
+    }
+
+    fn frame_interrupt(&self) -> bool {
+        self.contains(APUStatus::FRAME_INTERRUPT)
+    }
+
+    fn dmc_interrupt(&self) -> bool {
+        self.contains(APUStatus::DMC_INTERRUPT)
+    }
+
+    fn set_pulse1_enabled(&mut self, value: bool) {
+        self.set(APUStatus::PULSE1_ENABLED, value);
+    }
+
+    fn set_pulse2_enabled(&mut self, value: bool) {
+        self.set(APUStatus::PULSE2_ENABLED, value);
+    }
+
+    fn set_triangle_enabled(&mut self, value: bool) {
+        self.set(APUStatus::TRIANGLE_ENABLED, value);
+    }
+
+    fn set_noise_enabled(&mut self, value: bool) {
+        self.set(APUStatus::NOISE_ENABLED, value);
+    }
+
+    fn set_dmc_enabled(&mut self, value: bool) {
+        self.set(APUStatus::DMC_ENABLED, value);
+    }
+
+    fn set_frame_interrupt(&mut self, value: bool) {
+        self.set(APUStatus::FRAME_INTERRUPT, value);
+    }
+
+    fn set_dmc_interrupt(&mut self, value: bool) {
+        self.set(APUStatus::DMC_INTERRUPT, value);
+    }
+}
+
+bitflags! {
+    #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+    struct FrameCounter: u8 {
+        // __: bits 0-5 (padding, not needed)
+        // interrupt_flag: bit 6
+        const INTERRUPT_FLAG = 0x40;
+        // mode: bit 7
+        const MODE = 0x80;
+    }
+}
+
+impl FrameCounter {
+    fn interrupt_flag(&self) -> bool {
+        self.contains(FrameCounter::INTERRUPT_FLAG)
+    }
+
+    fn mode(&self) -> bool {
+        self.contains(FrameCounter::MODE)
+    }
+
+    // Setter methods for tests
+    fn set_interrupt_flag(&mut self, value: bool) {
+        self.set(FrameCounter::INTERRUPT_FLAG, value);
+    }
+
+    fn set_mode(&mut self, value: bool) {
+        self.set(FrameCounter::MODE, value);
+    }
+}
+
+// From<u8) implementations for all bitflags structs
+impl From<u8> for Sweep {
+    fn from(value: u8) -> Self {
+        Sweep::from_bits_truncate(value)
+    }
+}
+
+impl From<Sweep> for u8 {
+    fn from(value: Sweep) -> Self {
+        value.bits()
+    }
+}
+
+impl From<u8> for DutyCycle {
+    fn from(value: u8) -> Self {
+        DutyCycle::from_bits_truncate(value)
+    }
+}
+
+impl From<DutyCycle> for u8 {
+    fn from(value: DutyCycle) -> Self {
+        value.bits()
+    }
+}
+
+impl From<u8> for LinearCounterControl {
+    fn from(value: u8) -> Self {
+        LinearCounterControl::from_bits_truncate(value)
+    }
+}
+
+impl From<LinearCounterControl> for u8 {
+    fn from(value: LinearCounterControl) -> Self {
+        value.bits()
+    }
+}
+
+impl From<u8> for NoiseEnvelop {
+    fn from(value: u8) -> Self {
+        NoiseEnvelop::from_bits_truncate(value)
+    }
+}
+
+impl From<NoiseEnvelop> for u8 {
+    fn from(value: NoiseEnvelop) -> Self {
+        value.bits()
+    }
+}
+
+impl From<u8> for NoisePeriod {
+    fn from(value: u8) -> Self {
+        NoisePeriod::from_bits_truncate(value)
+    }
+}
+
+impl From<NoisePeriod> for u8 {
+    fn from(value: NoisePeriod) -> Self {
+        value.bits()
+    }
+}
+
+impl From<u8> for NoiseLength {
+    fn from(value: u8) -> Self {
+        NoiseLength::from_bits_truncate(value)
+    }
+}
+
+impl From<NoiseLength> for u8 {
+    fn from(value: NoiseLength) -> Self {
+        value.bits()
+    }
+}
+
+impl From<u8> for DmcIRQLoopFreq {
+    fn from(value: u8) -> Self {
+        DmcIRQLoopFreq::from_bits_truncate(value)
+    }
+}
+
+impl From<DmcIRQLoopFreq> for u8 {
+    fn from(value: DmcIRQLoopFreq) -> Self {
+        value.bits()
+    }
+}
+
+impl From<u8> for ControlFlags {
+    fn from(value: u8) -> Self {
+        ControlFlags::from_bits_truncate(value)
+    }
+}
+
+impl From<ControlFlags> for u8 {
+    fn from(value: ControlFlags) -> Self {
+        value.bits()
+    }
+}
+
+impl From<u8> for APUStatus {
+    fn from(value: u8) -> Self {
+        APUStatus::from_bits_truncate(value)
+    }
+}
+
+impl From<APUStatus> for u8 {
+    fn from(value: APUStatus) -> Self {
+        value.bits()
+    }
+}
+
+impl From<u8> for FrameCounter {
+    fn from(value: u8) -> Self {
+        FrameCounter::from_bits_truncate(value)
+    }
+}
+
+impl From<FrameCounter> for u8 {
+    fn from(value: FrameCounter) -> Self {
+        value.bits()
+    }
 }
 
 const LENGTH_TABLE: [u8; 32] = [
@@ -731,7 +1224,7 @@ impl<D: AudioDriver> Apu<D> {
             apu_cycle: 0,
             frame_counter_cycle: 0,
             apu_even_cycle: false,
-            last_frame_counter_write: FrameCounter::new(),
+            last_frame_counter_write: FrameCounter::empty(),
             frame_counter_mode: false,
             frame_interrupt_inhibit: false,
             frame_interrupt: false,
@@ -760,13 +1253,13 @@ impl<D: AudioDriver> Apu<D> {
         self.dmc_interrupt = false;
 
         // $4015 write with $00 silences all channels and clears DMC interrupt
-        self.set_control_flags(ControlFlags::new());
+        self.set_control_flags(ControlFlags::empty());
 
         // Reset triangle channel state, but preserve the length counter halt flag
         // (control.reload_flag) which should persist across reset
         let length_counter_halt = self.triangle.control.reload_flag();
         self.triangle = TriangleState::default();
-        self.triangle.control = LinearCounterControl::new().with_reload_flag(length_counter_halt);
+        self.triangle.control = LinearCounterControl::empty().with_reload_flag(length_counter_halt);
 
         // Re-apply the last value written to $4017 after the reset delay.
         // The test ROMs rely on reset preserving the previous frame counter mode
@@ -880,8 +1373,10 @@ impl<D: AudioDriver> Apu<D> {
 
     pub fn write(&mut self, address: u16, value: u8) {
         match address {
-            0x4000 => self.pulse1.write_control(DutyCycle::from_bits(value)),
-            0x4001 => self.pulse1.write_sweep(Sweep::from_bits(value)),
+            0x4000 => self
+                .pulse1
+                .write_control(DutyCycle::from_bits_truncate(value)),
+            0x4001 => self.pulse1.write_sweep(Sweep::from_bits_truncate(value)),
             0x4002 => self.pulse1.write_timer_low(value),
             0x4003 => self
                 .pulse1
@@ -889,8 +1384,10 @@ impl<D: AudioDriver> Apu<D> {
                     self.pulse1.timer_period as u8,
                     value,
                 )),
-            0x4004 => self.pulse2.write_control(DutyCycle::from_bits(value)),
-            0x4005 => self.pulse2.write_sweep(Sweep::from_bits(value)),
+            0x4004 => self
+                .pulse2
+                .write_control(DutyCycle::from_bits_truncate(value)),
+            0x4005 => self.pulse2.write_sweep(Sweep::from_bits_truncate(value)),
             0x4006 => self.pulse2.write_timer_low(value),
             0x4007 => self
                 .pulse2
@@ -900,7 +1397,7 @@ impl<D: AudioDriver> Apu<D> {
                 )),
             0x4008 => self
                 .triangle
-                .write_control(LinearCounterControl::from_bits(value)),
+                .write_control(LinearCounterControl::from_bits_truncate(value)),
             0x400A => self.triangle.write_timer_low(value),
             0x400B => self
                 .triangle
@@ -908,11 +1405,17 @@ impl<D: AudioDriver> Apu<D> {
                     self.triangle.timer_period as u8,
                     value,
                 )),
-            0x400C => self.noise.write_envelope(NoiseEnvelop::from_bits(value)),
-            0x400E => self.noise.write_period(NoisePeriod::from_bits(value)),
-            0x400F => self.noise.write_length(NoiseLength::from_bits(value)),
+            0x400C => self
+                .noise
+                .write_envelope(NoiseEnvelop::from_bits_truncate(value)),
+            0x400E => self
+                .noise
+                .write_period(NoisePeriod::from_bits_truncate(value)),
+            0x400F => self
+                .noise
+                .write_length(NoiseLength::from_bits_truncate(value)),
             0x4010 => {
-                self.dmc.irq_loop_freq = DmcIRQLoopFreq::from_bits(value);
+                self.dmc.irq_loop_freq = DmcIRQLoopFreq::from_bits_truncate(value);
                 // If IRQ flag cleared, clear the DMC interrupt
                 if !self.dmc.irq_loop_freq.irq_enabled() {
                     self.dmc_interrupt = false;
@@ -924,14 +1427,14 @@ impl<D: AudioDriver> Apu<D> {
             }
             0x4012 => self.dmc.sample_address = value,
             0x4013 => self.dmc.sample_length = value,
-            0x4015 => self.set_control_flags(ControlFlags::from_bits(value)),
-            0x4017 => self.set_frame_counter(FrameCounter::from_bits(value)),
+            0x4015 => self.set_control_flags(ControlFlags::from_bits_truncate(value)),
+            0x4017 => self.set_frame_counter(FrameCounter::from_bits_truncate(value)),
             _ => {}
         }
     }
 
     fn status_byte(&self) -> u8 {
-        let mut status = APUStatus::new();
+        let mut status = APUStatus::empty();
         status.set_pulse1_enabled(self.pulse1.status_enabled());
         status.set_pulse2_enabled(self.pulse2.status_enabled());
         status.set_triangle_enabled(self.triangle.status_enabled());
@@ -939,7 +1442,7 @@ impl<D: AudioDriver> Apu<D> {
         status.set_dmc_enabled(self.dmc.status_enabled());
         status.set_frame_interrupt(self.frame_interrupt);
         status.set_dmc_interrupt(self.dmc_interrupt);
-        status.into_bits()
+        status.bits()
     }
 
     fn set_control_flags(&mut self, flags: ControlFlags) {

@@ -17,7 +17,7 @@ strum_macros = { workspace = true }
 thiserror = { workspace = true }
 image = { workspace = true }
 tinyvec = { version = "1.11.0", features = ["latest_stable_rust"] }
-bitfield-struct = "0.12.1"
+bitflags = "2.6"
 scopeguard = "1.2.0"
 
 [dev-dependencies]

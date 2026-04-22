@@ -2,7 +2,7 @@
 
 use crate::nes::mapper::Mirroring;
 use crate::nes::mapper::NameTableControl;
-use bitfield_struct::bitfield;
+use bitflags::bitflags;
 
 const CHR_WINDOW_SIZE: usize = 0x2000;
 const CHR_BANK_SIZE_4K: usize = 0x1000;
@@ -10,16 +10,63 @@ const PRG_ROM_BANK_SIZE: usize = 0x4000;
 const PRG_RAM_SIZE: usize = 0x2000;
 const INITIAL_SHIFT_REGISTER: u8 = 0x10;
 
-#[bitfield(u8)]
-struct ControlFlags {
-    // bitfield_struct field order is LSB-first.
-    #[bits(2)]
-    pub mirroring: u8,
-    #[bits(2)]
-    pub prg_mode: u8,
-    pub chr_in_4k: bool,
-    #[bits(3)]
-    _not_used: u8,
+bitflags! {
+    #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+    struct ControlFlags: u8 {
+        // Mirroring: bits 0-1 (2-bit field)
+        const MIRRORING_BIT0 = 0x01;
+        const MIRRORING_BIT1 = 0x02;
+        // PRG mode: bits 2-3 (2-bit field)
+        const PRG_MODE_BIT0 = 0x04;
+        const PRG_MODE_BIT1 = 0x08;
+        // CHR in 4k: bit 4
+        const CHR_IN_4K = 0x10;
+        // Unused: bits 5-7
+    }
+}
+
+impl ControlFlags {
+    // Helper methods for bitfield compatibility
+    pub fn mirroring(&self) -> u8 {
+        self.bits() & 0x03
+    }
+
+    pub fn prg_mode(&self) -> u8 {
+        (self.bits() >> 2) & 0x03
+    }
+
+    pub fn chr_in_4k(&self) -> bool {
+        self.contains(ControlFlags::CHR_IN_4K)
+    }
+
+    // Builder methods for test compatibility and initialization
+    pub fn with_mirroring(self, value: u8) -> Self {
+        let bits = (self.bits() & !0x03) | (value & 0x03);
+        ControlFlags::from_bits_truncate(bits)
+    }
+
+    pub fn with_prg_mode(self, value: u8) -> Self {
+        let bits = (self.bits() & !0x0c) | ((value & 0x03) << 2);
+        ControlFlags::from_bits_truncate(bits)
+    }
+
+    pub fn with_chr_in_4k(self, value: bool) -> Self {
+        let mut result = self;
+        result.set(ControlFlags::CHR_IN_4K, value);
+        result
+    }
+}
+
+impl From<u8> for ControlFlags {
+    fn from(value: u8) -> Self {
+        ControlFlags::from_bits_truncate(value)
+    }
+}
+
+impl From<ControlFlags> for u8 {
+    fn from(value: ControlFlags) -> Self {
+        value.bits()
+    }
 }
 
 impl From<ControlFlags> for Mirroring {
@@ -83,7 +130,7 @@ impl MMC1 {
             has_chr_ram: chr_rom.is_empty(),
             prg_rom: prg_rom.to_vec(),
             prg_ram: [0; PRG_RAM_SIZE],
-            control: ControlFlags::new()
+            control: ControlFlags::empty()
                 .with_mirroring(Self::mirroring_bits(mirroring))
                 .with_prg_mode(0b11),
             chr_bank0: 0,
@@ -149,7 +196,7 @@ impl MMC1 {
     fn write_load_register(&mut self, address: u16, value: u8) {
         if value & 0x80 != 0 {
             self.shift_register = INITIAL_SHIFT_REGISTER;
-            self.control = ControlFlags::from_bits(self.control.into_bits() | 0x0c);
+            self.control = ControlFlags::from_bits_truncate(self.control.bits() | 0x0c);
             self.apply_control();
             return;
         }
@@ -161,7 +208,7 @@ impl MMC1 {
         if register_ready {
             let register_value = self.shift_register & 0x1f;
             match address {
-                0x8000..=0x9fff => self.control(ControlFlags::from_bits(register_value)),
+                0x8000..=0x9fff => self.control(ControlFlags::from_bits_truncate(register_value)),
                 0xa000..=0xbfff => self.select_chr_bank0(register_value),
                 0xc000..=0xdfff => self.select_chr_bank1(register_value),
                 0xe000..=0xffff => self.select_prg_bank(register_value),
@@ -409,7 +456,7 @@ mod tests {
     fn reset_write_keeps_mirroring_and_chr_mode() {
         let (mut mmc1, _ppu) = create(|_| {});
 
-        mmc1.control(ControlFlags::new().with_mirroring(0).with_chr_in_4k(true));
+        mmc1.control(ControlFlags::empty().with_mirroring(0).with_chr_in_4k(true));
         mmc1.write(0x8000, 0x80);
 
         assert_eq!(Mirroring::LowerBank, mmc1.control.into());
@@ -420,7 +467,7 @@ mod tests {
     #[test]
     fn control_ppu_mirroring() {
         let (mut mmc1, _ppu) = create(|_| {});
-        mmc1.control(ControlFlags::new().with_mirroring(0));
+        mmc1.control(ControlFlags::empty().with_mirroring(0));
         mmc1.write_nametable(0x2400, 0x55);
         assert_eq!(mmc1.read_nametable(0x2000), 0x55);
     }
@@ -428,7 +475,7 @@ mod tests {
     #[test]
     fn control_flags_to_mirroring() {
         fn to_mirroring(v: u8) -> Mirroring {
-            ControlFlags::new().with_mirroring(v).into()
+            ControlFlags::empty().with_mirroring(v).into()
         }
         assert_eq!(Mirroring::LowerBank, to_mirroring(0));
         assert_eq!(Mirroring::UpperBank, to_mirroring(1));
@@ -439,7 +486,7 @@ mod tests {
     #[test]
     fn control_flags_to_prg_rom_mode() {
         fn to_mode(v: u8) -> PrgRomMode {
-            ControlFlags::new().with_prg_mode(v).into()
+            ControlFlags::empty().with_prg_mode(v).into()
         }
         assert_eq!(PrgRomMode::Switch32K, to_mode(0));
         assert_eq!(PrgRomMode::Switch32K, to_mode(1));
@@ -458,15 +505,15 @@ mod tests {
         });
 
         mmc1.select_prg_bank(2);
-        mmc1.control(ControlFlags::new().with_prg_mode(0));
+        mmc1.control(ControlFlags::empty().with_prg_mode(0));
         assert_eq!(mmc1.read(0x8000), 3);
         assert_eq!(mmc1.read(0xc000), 4);
 
-        mmc1.control(ControlFlags::new().with_prg_mode(2));
+        mmc1.control(ControlFlags::empty().with_prg_mode(2));
         assert_eq!(mmc1.read(0x8000), 1);
         assert_eq!(mmc1.read(0xc000), 3);
 
-        mmc1.control(ControlFlags::new().with_prg_mode(3));
+        mmc1.control(ControlFlags::empty().with_prg_mode(3));
         assert_eq!(mmc1.read(0x8000), 3);
         assert_eq!(mmc1.read(0xc000), 5);
     }
@@ -477,7 +524,7 @@ mod tests {
 
         assert_eq!(mmc1.chr_bank_size(), 8 * 1024);
 
-        mmc1.control(ControlFlags::new().with_chr_in_4k(true));
+        mmc1.control(ControlFlags::empty().with_chr_in_4k(true));
         assert_eq!(mmc1.chr_bank_size(), 4 * 1024);
     }
 
@@ -493,7 +540,7 @@ mod tests {
         assert_eq!(mmc1.pattern_ref()[0x0000], 1);
         assert_eq!(mmc1.pattern_ref()[0x1000], 2);
 
-        mmc1.control(ControlFlags::new().with_chr_in_4k(true));
+        mmc1.control(ControlFlags::empty().with_chr_in_4k(true));
         mmc1.select_chr_bank0(2);
         assert_eq!(mmc1.pattern_ref()[0x0000], 3);
     }
@@ -507,7 +554,7 @@ mod tests {
             rom[12 * 1024] = 4;
         });
 
-        mmc1.control(ControlFlags::new().with_chr_in_4k(true));
+        mmc1.control(ControlFlags::empty().with_chr_in_4k(true));
         mmc1.select_chr_bank1(3);
         assert_eq!(mmc1.pattern_ref()[0x1000], 4);
     }

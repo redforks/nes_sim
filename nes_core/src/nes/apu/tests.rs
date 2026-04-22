@@ -2,7 +2,7 @@ use super::*;
 
 #[test]
 fn test_sweep_bitfield() {
-    let mut sweep = Sweep::new();
+    let mut sweep = Sweep::empty();
     sweep.set_enabled(true);
     sweep.set_period(0b111);
     sweep.set_negate(true);
@@ -16,7 +16,7 @@ fn test_sweep_bitfield() {
 
 #[test]
 fn test_duty_cycle_bitfield() {
-    let mut duty = DutyCycle::new();
+    let mut duty = DutyCycle::empty();
     duty.set_duty(0b11);
     duty.set_length_counter_halt(true);
     duty.set_constant_volume(false);
@@ -30,7 +30,7 @@ fn test_duty_cycle_bitfield() {
 
 #[test]
 fn test_duty_cycle_to_from_u8() {
-    let mut duty = DutyCycle::new();
+    let mut duty = DutyCycle::empty();
     duty.set_duty(0b10);
     duty.set_length_counter_halt(false);
     duty.set_constant_volume(true);
@@ -47,7 +47,7 @@ fn test_duty_cycle_to_from_u8() {
 
 #[test]
 fn test_linear_counter_control() {
-    let mut lcc = LinearCounterControl::new();
+    let mut lcc = LinearCounterControl::empty();
     lcc.set_reload_flag(true);
     lcc.set_counter(0x55);
 
@@ -57,7 +57,7 @@ fn test_linear_counter_control() {
 
 #[test]
 fn test_linear_counter_control_to_from_u8() {
-    let mut lcc = LinearCounterControl::new();
+    let mut lcc = LinearCounterControl::empty();
     lcc.set_reload_flag(false);
     lcc.set_counter(0x7F);
 
@@ -72,7 +72,7 @@ fn test_linear_counter_control_to_from_u8() {
 fn test_duty_cycle_various_values() {
     for duty in 0u8..4 {
         for volume in 0u8..16 {
-            let mut d = DutyCycle::new();
+            let mut d = DutyCycle::empty();
             d.set_duty(duty);
             d.set_volume(volume);
 
@@ -95,7 +95,7 @@ fn test_length_counter_load_default() {
 
 #[test]
 fn test_noise_envelop_bitfield() {
-    let mut envelop = NoiseEnvelop::new();
+    let mut envelop = NoiseEnvelop::empty();
     envelop.set_loop_flag(true);
     envelop.set_constant_volume(false);
     envelop.set_volume(0b1010);
@@ -107,7 +107,7 @@ fn test_noise_envelop_bitfield() {
 
 #[test]
 fn test_noise_envelop_to_from_u8() {
-    let mut envelop = NoiseEnvelop::new();
+    let mut envelop = NoiseEnvelop::empty();
     envelop.set_loop_flag(false);
     envelop.set_constant_volume(true);
     envelop.set_volume(0b0101);
@@ -122,7 +122,7 @@ fn test_noise_envelop_to_from_u8() {
 
 #[test]
 fn test_noise_period_bitfield() {
-    let mut period = NoisePeriod::new();
+    let mut period = NoisePeriod::empty();
     period.set_enabled(true);
     period.set_period(0b1010);
 
@@ -132,7 +132,7 @@ fn test_noise_period_bitfield() {
 
 #[test]
 fn test_noise_period_to_from_u8() {
-    let mut period = NoisePeriod::new();
+    let mut period = NoisePeriod::empty();
     period.set_enabled(false);
     period.set_period(0b0101);
 
@@ -145,7 +145,7 @@ fn test_noise_period_to_from_u8() {
 
 #[test]
 fn test_noise_length_bitfield() {
-    let mut length = NoiseLength::new();
+    let mut length = NoiseLength::empty();
     length.set_length(0b10101);
 
     assert_eq!(length.length(), 0b10101);
@@ -153,7 +153,7 @@ fn test_noise_length_bitfield() {
 
 #[test]
 fn test_noise_length_to_from_u8() {
-    let mut length = NoiseLength::new();
+    let mut length = NoiseLength::empty();
     length.set_length(0b01010);
 
     let byte: u8 = length.into();
@@ -164,7 +164,7 @@ fn test_noise_length_to_from_u8() {
 
 #[test]
 fn test_dmc_irq_loop_freq_bitfield() {
-    let mut freq = DmcIRQLoopFreq::new();
+    let mut freq = DmcIRQLoopFreq::empty();
     freq.set_irq_enabled(true);
     freq.set_loop_flag(false);
     freq.set_freq(0b1010);
@@ -176,7 +176,7 @@ fn test_dmc_irq_loop_freq_bitfield() {
 
 #[test]
 fn test_dmc_irq_loop_freq_to_from_u8() {
-    let mut freq = DmcIRQLoopFreq::new();
+    let mut freq = DmcIRQLoopFreq::empty();
     freq.set_irq_enabled(false);
     freq.set_loop_flag(true);
     freq.set_freq(0b0101);
@@ -191,7 +191,7 @@ fn test_dmc_irq_loop_freq_to_from_u8() {
 
 #[test]
 fn test_control_flags_bitfield() {
-    let mut flags = ControlFlags::new();
+    let mut flags = ControlFlags::empty();
     flags.set_dmc_enabled(true);
     flags.set_noise_enabled(false);
     flags.set_triangle_enabled(true);
@@ -207,7 +207,7 @@ fn test_control_flags_bitfield() {
 
 #[test]
 fn test_control_flags_to_from_u8() {
-    let mut flags = ControlFlags::new();
+    let mut flags = ControlFlags::empty();
     flags.set_dmc_enabled(false);
     flags.set_noise_enabled(true);
     flags.set_triangle_enabled(false);
@@ -226,7 +226,7 @@ fn test_control_flags_to_from_u8() {
 
 #[test]
 fn test_apu_status_bitfield() {
-    let mut status = APUStatus::new();
+    let mut status = APUStatus::empty();
     status.set_dmc_interrupt(true);
     status.set_frame_interrupt(false);
     status.set_dmc_enabled(true);
@@ -246,7 +246,7 @@ fn test_apu_status_bitfield() {
 
 #[test]
 fn test_apu_status_to_from_u8() {
-    let mut status = APUStatus::new();
+    let mut status = APUStatus::empty();
     status.set_dmc_interrupt(false);
     status.set_frame_interrupt(true);
     status.set_dmc_enabled(false);
@@ -269,7 +269,7 @@ fn test_apu_status_to_from_u8() {
 
 #[test]
 fn test_frame_counter_bitfield() {
-    let mut counter = FrameCounter::new();
+    let mut counter = FrameCounter::empty();
     counter.set_mode(true);
     counter.set_interrupt_flag(false);
 
@@ -279,7 +279,7 @@ fn test_frame_counter_bitfield() {
 
 #[test]
 fn test_frame_counter_to_from_u8() {
-    let mut counter = FrameCounter::new();
+    let mut counter = FrameCounter::empty();
     counter.set_mode(false);
     counter.set_interrupt_flag(true);
 
