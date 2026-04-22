@@ -91,6 +91,7 @@ pub struct Cpu<M: Mcu> {
     nmi_requested_at: Option<usize>,
     defer_nmi_poll: bool,
     irq_vector_is_nmi: bool,
+    irq_is_brk: bool,
     /// A taken non-page-crossing branch suppresses IRQ on its last
     /// cycle.  This flag is set when such a branch completes, causing
     /// the next instruction-boundary IRQ check to be skipped.
@@ -137,6 +138,7 @@ impl<M: Mcu> Cpu<M> {
             nmi_requested_at: None,
             defer_nmi_poll: false,
             irq_vector_is_nmi: false,
+            irq_is_brk: false,
             branch_irq_defer: false,
             post_dma_irq_defer: None,
             oam_dma_pending: None,
@@ -186,6 +188,7 @@ impl<M: Mcu> Cpu<M> {
         self.nmi_requested_at = None;
         self.defer_nmi_poll = false;
         self.irq_vector_is_nmi = false;
+        self.irq_is_brk = false;
         self.branch_irq_defer = false;
         self.post_dma_irq_defer = None;
         self.oam_dma_pending = None;
@@ -224,8 +227,8 @@ impl<M: Mcu> Cpu<M> {
         self.irq_line = enabled;
     }
 
-    fn nmi_ready(&self) -> bool {
-        self.nmi_ready_at(self.cycles)
+    fn nmi_hijack_ready(&self) -> bool {
+        self.nmi_ready_at(self.cycles.wrapping_add(2))
     }
 
     fn nmi_ready_at(&self, cycles: usize) -> bool {
@@ -404,13 +407,24 @@ impl<M: Mcu> Cpu<M> {
                 plugin.start(self);
                 let irq_inhibit = self.irq_inhibit.take();
                 let branch_defer = std::mem::take(&mut self.branch_irq_defer);
-                let poll_cycles = self.cycles.wrapping_add(2);
+                let poll_cycles = self.cycles;
+                let irq_pending = self.irq_line
+                    && !irq_inhibit.unwrap_or_else(|| self.flag(Flag::InterruptDisabled))
+                    && self
+                        .irq_requested_at
+                        .is_none_or(|requested_at| self.cycles >= requested_at + 3);
+                let nmi_poll_cycles = if irq_pending {
+                    self.cycles.saturating_sub(2)
+                } else {
+                    poll_cycles
+                };
 
                 if std::mem::take(&mut self.defer_nmi_poll) {
                     Microcode::FetchAndDecode
-                } else if self.nmi_ready_at(poll_cycles) {
+                } else if self.nmi_ready_at(nmi_poll_cycles) {
                     self.nmi_requested_at = None;
                     self.mode = CpuMode::Nmi;
+                    self.irq_is_brk = false;
                     self.push_microcodes(&[
                         Microcode::Nop,
                         Microcode::PushPcH,
@@ -423,9 +437,7 @@ impl<M: Mcu> Cpu<M> {
                         Microcode::LoadNmiPcH,
                     ]);
                     Microcode::Nop
-                } else if self.irq_line
-                    && !irq_inhibit.unwrap_or_else(|| self.flag(Flag::InterruptDisabled))
-                {
+                } else if irq_pending {
                     // A taken non-page-crossing branch ignores IRQ during
                     // its last clock.  Only defer if the IRQ was first
                     // visible during the penalty cycle (last 3 PPU ticks
@@ -453,6 +465,7 @@ impl<M: Mcu> Cpu<M> {
                             Microcode::FetchAndDecode
                         } else {
                             self.post_dma_irq_defer = None;
+                            self.irq_is_brk = false;
                             self.push_microcodes(&[
                                 Microcode::Nop,
                                 Microcode::PushPcH,
@@ -828,7 +841,8 @@ impl<M: Mcu> Cpu<M> {
             self.status | Flag::NotUsed as u8
         });
         if set_disable_interrupt && self.mode == CpuMode::Normal {
-            self.irq_vector_is_nmi = self.nmi_ready();
+            self.irq_is_brk = break_flag;
+            self.irq_vector_is_nmi = self.nmi_hijack_ready();
             if self.irq_vector_is_nmi {
                 self.nmi_requested_at = None;
             }
@@ -909,7 +923,12 @@ impl<M: Mcu> Cpu<M> {
     }
 
     fn load_irq_pcl(&mut self) {
-        let low = if std::mem::take(&mut self.irq_vector_is_nmi) || self.nmi_ready() {
+        let hijacked = if self.irq_is_brk {
+            std::mem::take(&mut self.irq_vector_is_nmi)
+        } else {
+            std::mem::take(&mut self.irq_vector_is_nmi) || self.nmi_hijack_ready()
+        };
+        let low = if hijacked {
             self.nmi_requested_at = None;
             self.irq_hijacked = true;
             // hijacked by nmi
@@ -917,6 +936,7 @@ impl<M: Mcu> Cpu<M> {
             self.read_byte(0xFFFA)
         } else {
             self.irq_hijacked = false;
+            self.irq_is_brk = false;
             self.defer_nmi_poll = true;
             self.read_byte(0xFFFE)
         };
