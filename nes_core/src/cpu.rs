@@ -433,7 +433,7 @@ impl<M: Mcu> Cpu<M> {
                 .cur_microcode
                 .take()
                 .expect("cur_microcode should exist when resuming stalled second phase");
-            code.second_phase(self);
+            code.exec(self);
 
             if self.microcode_queue.is_empty() && self.cur_microcode.is_none() {
                 self.allow_late_irq_nmi_hijack = false;
@@ -455,8 +455,8 @@ impl<M: Mcu> Cpu<M> {
                     let irq_inhibit = self.irq_inhibit.take();
                     let branch_defer = std::mem::take(&mut self.branch_irq_defer);
                     let poll_cycles = self.cycles.wrapping_add(2);
-                    let irq_pending =
-                        self.irq_line && !irq_inhibit.unwrap_or_else(|| self.flag(Flag::InterruptDisabled));
+                    let irq_pending = self.irq_line
+                        && !irq_inhibit.unwrap_or_else(|| self.flag(Flag::InterruptDisabled));
 
                     if std::mem::take(&mut self.defer_nmi_poll) {
                         Microcode::FetchAndDecode
@@ -533,9 +533,8 @@ impl<M: Mcu> Cpu<M> {
 
         if first_phase {
             self.cur_microcode = Some(code);
-            code.first_phase(self);
         } else {
-            code.second_phase(self);
+            code.exec(self);
             self.cur_microcode = None;
         }
 
@@ -632,7 +631,9 @@ impl<M: Mcu> Cpu<M> {
     }
 
     fn dmc_dma_phantom_info(&self) -> u16 {
-        let pending_read = self.cur_microcode.or_else(|| self.microcode_queue.front().copied());
+        let pending_read = self
+            .cur_microcode
+            .or_else(|| self.microcode_queue.front().copied());
         let has_phantom = matches!(
             pending_read,
             Some(

@@ -1357,21 +1357,8 @@ pub(crate) mod opcode {
 }
 
 impl Microcode {
-    /// perform first phase of this Microcode, cpu performs different action in upper and down phase of a execution clock cycle
-    pub fn first_phase<M: Mcu>(self, cpu: &mut Cpu<M>) {
-        match self {
-            Self::IndexedXWithOp { op, first_clock } => {
-                Self::absolute_indexed_x_with_op(cpu, true, op, first_clock)
-            }
-            Self::IndexedYWithOp { op, first_clock } => {
-                Self::absolute_indexed_y_with_op(cpu, true, op, first_clock)
-            }
-            _ => {}
-        }
-    }
-
     /// perform second phase of this Microcode
-    pub fn second_phase<M: Mcu>(self, cpu: &mut Cpu<M>) {
+    pub fn exec<M: Mcu>(self, cpu: &mut Cpu<M>) {
         match self {
             Self::FetchAndDecode => Self::fetch_and_decode(cpu),
             Self::LoadR(r) => Self::load_register(cpu, r),
@@ -1396,10 +1383,10 @@ impl Microcode {
             Self::Sha => cpu.sha(),
             Self::Tas => cpu.tas(),
             Self::IndexedXWithOp { op, first_clock } => {
-                Self::absolute_indexed_x_with_op(cpu, false, op, first_clock)
+                Self::absolute_indexed_x_with_op(cpu, op, first_clock)
             }
             Self::IndexedYWithOp { op, first_clock } => {
-                Self::absolute_indexed_y_with_op(cpu, false, op, first_clock)
+                Self::absolute_indexed_y_with_op(cpu, op, first_clock)
             }
             Self::Bit => cpu.bit(),
             Self::StoreAlu => Self::store_alu(cpu),
@@ -1497,11 +1484,6 @@ impl Microcode {
     }
 
     /// Execute the micro code
-    #[cfg(test)]
-    pub fn exec<M: Mcu>(self, cpu: &mut Cpu<M>) {
-        self.first_phase(cpu);
-        self.second_phase(cpu);
-    }
 
     fn fetch_and_decode<M: Mcu>(cpu: &mut Cpu<M>) {
         let opcode = cpu.inc_read_byte();
@@ -1635,33 +1617,26 @@ impl Microcode {
 
     fn absolute_indexed_x_with_op<M: Mcu>(
         cpu: &mut Cpu<M>,
-        first_phase: bool,
         op: OpAfterAddressing,
         first_clock: CrossPageBehavior,
     ) {
-        Self::absolute_indexed_with_op_generic(cpu, first_phase, op, first_clock, cpu.x)
+        Self::absolute_indexed_with_op_generic(cpu, op, first_clock, cpu.x)
     }
 
     fn absolute_indexed_y_with_op<M: Mcu>(
         cpu: &mut Cpu<M>,
-        first_phase: bool,
         op: OpAfterAddressing,
         first_clock: CrossPageBehavior,
     ) {
-        Self::absolute_indexed_with_op_generic(cpu, first_phase, op, first_clock, cpu.y)
+        Self::absolute_indexed_with_op_generic(cpu, op, first_clock, cpu.y)
     }
 
     fn absolute_indexed_with_op_generic<M: Mcu>(
         cpu: &mut Cpu<M>,
-        first_phase: bool,
         op: OpAfterAddressing,
         first_clock: CrossPageBehavior,
         idx: u8,
     ) {
-        if first_phase {
-            return;
-        }
-
         let abh = cpu.abh();
         cpu.ab = cpu.ab.wrapping_add(idx as u16);
         let is_first_clock_always = matches!(first_clock, CrossPageBehavior::FirstClockAlways);
@@ -1673,7 +1648,7 @@ impl Microcode {
                 cpu.push_microcode(op.to_microcode());
             }
         } else {
-            op.to_microcode().second_phase(cpu);
+            op.to_microcode().exec(cpu);
         }
     }
 
