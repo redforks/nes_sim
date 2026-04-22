@@ -103,7 +103,7 @@ pub struct Cpu<M: Mcu> {
     /// asserted for at least 1 CPU cycle (3 PPU ticks) before being acted on.
     /// Cleared when the IRQ is taken or the window expires.
     post_dma_irq_defer: Option<usize>,
-    oam_dma_pending: Option<usize>,
+    oam_dma_pending: bool,
     oam_dma: Option<OamDmaState>,
     /// DMC DMA state machine – `None` when no DMC DMA is in progress.
     dmc_dma: Option<DmcDmaPhase>,
@@ -146,7 +146,7 @@ impl<M: Mcu> Cpu<M> {
             branch_irq_defer: false,
             allow_late_irq_nmi_hijack: false,
             post_dma_irq_defer: None,
-            oam_dma_pending: None,
+            oam_dma_pending: false,
             oam_dma: None,
             dmc_dma: None,
             resume_second_phase_after_stall: false,
@@ -198,7 +198,7 @@ impl<M: Mcu> Cpu<M> {
         self.branch_irq_defer = false;
         self.allow_late_irq_nmi_hijack = false;
         self.post_dma_irq_defer = None;
-        self.oam_dma_pending = None;
+        self.oam_dma_pending = false;
         self.oam_dma = None;
         self.dmc_dma = None;
         self.mode = CpuMode::Normal;
@@ -249,7 +249,7 @@ impl<M: Mcu> Cpu<M> {
     }
 
     pub fn request_oam_dma(&mut self) {
-        self.oam_dma_pending = Some(0);
+        self.oam_dma_pending = true;
     }
 
     /// Request a DMC DMA stall.
@@ -315,7 +315,7 @@ impl<M: Mcu> Cpu<M> {
         // During OAM DMA the phases are absorbed.
         if self.dmc_dma.is_some() {
             let in_oam_dma = self.oam_dma.is_some();
-            let oam_absorbs_dma = in_oam_dma || self.oam_dma_pending.is_some();
+            let oam_absorbs_dma = in_oam_dma || self.oam_dma_pending;
 
             if !oam_absorbs_dma {
                 if first_phase {
@@ -387,9 +387,9 @@ impl<M: Mcu> Cpu<M> {
             return (ExecuteResult::Continue, false);
         }
 
-        if self.oam_dma_pending.is_some() {
+        if self.oam_dma_pending {
             if !first_phase {
-                self.oam_dma_pending = None;
+                self.oam_dma_pending = false;
                 let startup_cycles = if cpu_cycle.is_multiple_of(2) { 1 } else { 2 };
                 self.oam_dma = Some(OamDmaState {
                     startup_cycles,
