@@ -4,10 +4,12 @@ use std::fmt::Write;
 mod palette;
 mod pattern;
 mod registers;
+mod sprite;
 
 use palette::{Palette, Pixel};
 pub use pattern::{PatternBand, draw_pattern};
 use registers::{PpuCtrl, PpuMask, PpuStatus, Registers};
+use sprite::SpriteManager;
 
 // Pixel, palette data and COLORS are defined in the submodule `palette`.
 
@@ -34,75 +36,12 @@ pub const VBLANK_SET_SCANLINE: u16 = 241;
 pub const VBLANK_SET_DOT: u16 = 1;
 const VBLANK_CLEAR_SCANLINE: u16 = 261;
 const VBLANK_CLEAR_DOT: u16 = 1;
-const MAX_SPRITES_PER_SCANLINE: usize = 8;
-
-#[derive(Copy, Clone)]
-struct SpritePixel {
-    palette_idx: u8,
-    color_idx: u8,
-    behind_bg: bool,
-}
-
-#[derive(Copy, Clone)]
-struct CachedSprite {
-    x: u8,
-    palette_idx: u8,
-    behind_bg: bool,
-    pixels: [u8; 8],
-}
-
-impl CachedSprite {
-    fn opaque_pixel(&self, screen_x: u8) -> Option<SpritePixel> {
-        let sprite_x = screen_x as i16 - self.x as i16;
-        if !(0..8).contains(&sprite_x) {
-            return None;
-        }
-
-        let color_idx = self.pixels[sprite_x as usize];
-        if color_idx == 0 {
-            return None;
-        }
-
-        Some(SpritePixel {
-            palette_idx: self.palette_idx,
-            color_idx,
-            behind_bg: self.behind_bg,
-        })
-    }
-}
-
 fn normalize_oam_byte(addr: u8, value: u8) -> u8 {
     if addr & 0x03 == 0x02 {
         value & 0xE3
     } else {
         value
     }
-}
-
-// Scanline cache removed. Sprite pixels and sprite-zero checks are computed
-// on-the-fly to simplify state and remove cached arrays.
-
-#[derive(Copy, Clone, Default)]
-enum SpriteOverflowEvalMode {
-    #[default]
-    Idle,
-    ScanY,
-    CopySprite {
-        remaining_bytes: u8,
-    },
-    OverflowSearchDelay,
-    OverflowSearch,
-    Done,
-}
-
-#[derive(Copy, Clone, Default)]
-struct SpriteOverflowEval {
-    scanline: u16,
-    target_scanline: u16,
-    oam_index: usize,
-    byte_index: usize,
-    visible_sprites: usize,
-    mode: SpriteOverflowEvalMode,
 }
 
 #[derive(Copy, Clone)]
@@ -140,9 +79,7 @@ pub struct Ppu<R: Render = ()> {
     background_anchor: Option<BackgroundActivation>,
     pending_background_activation: Option<BackgroundActivation>,
     odd_frame: bool,
-    sprite_zero_hit_pending: bool,
-    sprite_overflow_pending: bool,
-    sprite_overflow_eval: SpriteOverflowEval,
+    sprite: SpriteManager,
 
     /// PPU mask register changes are not visible until the next PPU tick;
     /// this delayed copy models the 1-dot internal pipeline delay.
@@ -170,9 +107,7 @@ impl<R: Render> Ppu<R> {
             background_anchor: None,
             pending_background_activation: None,
             odd_frame: false,
-            sprite_zero_hit_pending: false,
-            sprite_overflow_pending: false,
-            sprite_overflow_eval: SpriteOverflowEval::default(),
+            sprite: SpriteManager::new(),
             suppress_vblank_for_current_frame: false,
             suppress_nmi_for_current_frame: false,
             frame_no: 0,
@@ -189,9 +124,7 @@ impl<R: Render> Ppu<R> {
         self.background_anchor = None;
         self.pending_background_activation = None;
         self.odd_frame = false;
-        self.sprite_zero_hit_pending = false;
-        self.sprite_overflow_pending = false;
-        self.sprite_overflow_eval = SpriteOverflowEval::default();
+        self.sprite.reset();
         self.ppu_ticks = 0;
         self.registers.write_scroll(0);
         self.rendering_enabled_at_scanline_start = false;
@@ -400,15 +333,7 @@ impl<R: Render> Ppu<R> {
             self.rendering_enabled_at_scanline_start = rendering_enabled;
         }
 
-        if self.sprite_zero_hit_pending {
-            self.registers.status.set_sprite_zero_hit(true);
-            self.sprite_zero_hit_pending = false;
-        }
-
-        if self.sprite_overflow_pending {
-            self.registers.status.set_sprite_overflow(true);
-            self.sprite_overflow_pending = false;
-        }
+        self.sprite.update_ctrl_status(&mut self.registers);
 
         // MMC3 scanline IRQs are driven by filtered PPU A12 rises.
         //
@@ -491,7 +416,7 @@ impl<R: Render> Ppu<R> {
         }
 
         if self.scanline < 240 && self.dot == 65 {
-            self.begin_sprite_overflow_eval();
+            self.sprite.begin_sprite_overflow_eval(self.scanline);
         }
 
         if rendering_enabled
@@ -499,7 +424,11 @@ impl<R: Render> Ppu<R> {
             && (65..=256).contains(&self.dot)
             && self.dot % 2 == 1
         {
-            self.step_sprite_overflow_eval();
+            self.sprite.step_sprite_overflow_eval(
+                self.scanline,
+                self.registers.ctrl.sprite_size(),
+                &self.registers.oam_data,
+            );
         }
 
         // Visible pixels are output on dots 1-256; dot 0 is the idle fetch slot.
@@ -552,8 +481,7 @@ impl<R: Render> Ppu<R> {
             self.registers.status.set_v_blank(false);
             self.registers.status.set_sprite_overflow(false);
             self.registers.status.set_sprite_zero_hit(false);
-            self.sprite_zero_hit_pending = false;
-            self.sprite_overflow_pending = false;
+            self.sprite.clear_pending();
         }
 
         // On odd frames with rendering enabled, the pre-render scanline skips the
@@ -826,299 +754,6 @@ impl<R: Render> Ppu<R> {
         (palette_idx, color_idx)
     }
 
-    fn sprite_height(&self) -> i16 {
-        if self.registers.ctrl.sprite_size() {
-            16
-        } else {
-            8
-        }
-    }
-
-    fn sprite_in_range(&self, y_byte: u8, target_scanline: u16) -> bool {
-        let top = y_byte as i16 + 1;
-        let sprite_y = target_scanline as i16 - top;
-        (0..self.sprite_height()).contains(&sprite_y)
-    }
-
-    fn sprite_covers_scanline(&self, sprite_idx: usize, screen_y: u8) -> bool {
-        let byte_idx = sprite_idx * 4;
-        self.sprite_in_range(self.registers.oam_data[byte_idx], screen_y as u16)
-    }
-
-    fn begin_sprite_overflow_eval(&mut self) {
-        self.sprite_overflow_eval = SpriteOverflowEval {
-            scanline: self.scanline,
-            target_scanline: self.scanline + 1,
-            oam_index: 0,
-            byte_index: 0,
-            visible_sprites: 0,
-            mode: SpriteOverflowEvalMode::ScanY,
-        };
-    }
-
-    fn step_sprite_overflow_eval(&mut self) {
-        if self.sprite_overflow_eval.scanline != self.scanline {
-            return;
-        }
-
-        match self.sprite_overflow_eval.mode {
-            SpriteOverflowEvalMode::Idle | SpriteOverflowEvalMode::Done => {}
-            SpriteOverflowEvalMode::ScanY => {
-                if self.sprite_overflow_eval.oam_index >= 64 {
-                    self.sprite_overflow_eval.mode = SpriteOverflowEvalMode::Done;
-                    return;
-                }
-
-                let oam_index = self.sprite_overflow_eval.oam_index;
-                let target_scanline = self.sprite_overflow_eval.target_scanline;
-                let y_byte = self.registers.oam_data[oam_index * 4];
-                if self.sprite_in_range(y_byte, target_scanline) {
-                    self.sprite_overflow_eval.visible_sprites += 1;
-                    if self.sprite_overflow_eval.visible_sprites > MAX_SPRITES_PER_SCANLINE {
-                        self.sprite_overflow_pending = true;
-                        self.sprite_overflow_eval.mode = SpriteOverflowEvalMode::Done;
-                    } else {
-                        self.sprite_overflow_eval.mode =
-                            SpriteOverflowEvalMode::CopySprite { remaining_bytes: 3 };
-                    }
-                } else {
-                    self.sprite_overflow_eval.oam_index += 1;
-                }
-            }
-            SpriteOverflowEvalMode::CopySprite { remaining_bytes } => {
-                if remaining_bytes > 1 {
-                    self.sprite_overflow_eval.mode = SpriteOverflowEvalMode::CopySprite {
-                        remaining_bytes: remaining_bytes - 1,
-                    };
-                } else {
-                    self.sprite_overflow_eval.oam_index += 1;
-                    self.sprite_overflow_eval.byte_index = 0;
-                    self.sprite_overflow_eval.mode =
-                        if self.sprite_overflow_eval.visible_sprites >= MAX_SPRITES_PER_SCANLINE {
-                            SpriteOverflowEvalMode::OverflowSearchDelay
-                        } else {
-                            SpriteOverflowEvalMode::ScanY
-                        };
-                }
-            }
-            SpriteOverflowEvalMode::OverflowSearchDelay => {
-                self.sprite_overflow_eval.mode = SpriteOverflowEvalMode::OverflowSearch;
-            }
-            SpriteOverflowEvalMode::OverflowSearch => {
-                if self.sprite_overflow_eval.oam_index >= 64 {
-                    self.sprite_overflow_eval.mode = SpriteOverflowEvalMode::Done;
-                    return;
-                }
-
-                let oam_index = self.sprite_overflow_eval.oam_index;
-                let byte_index = self.sprite_overflow_eval.byte_index;
-                let target_scanline = self.sprite_overflow_eval.target_scanline;
-                let byte_idx = oam_index * 4 + byte_index;
-                let y_byte = self.registers.oam_data[byte_idx];
-                if self.sprite_in_range(y_byte, target_scanline) {
-                    self.sprite_overflow_pending = true;
-                    self.sprite_overflow_eval.mode = SpriteOverflowEvalMode::Done;
-                } else {
-                    self.sprite_overflow_eval.oam_index += 1;
-                    self.sprite_overflow_eval.byte_index = (byte_index + 1) & 0x03;
-                }
-            }
-        }
-    }
-
-    /// Find the top-most opaque sprite pixel at (screen_x, screen_y) if any.
-    fn find_sprite_pixel(
-        &self,
-        cartridge: &Cartridge,
-        screen_x: u8,
-        screen_y: u8,
-    ) -> Option<SpritePixel> {
-        if !self.effective_mask.sprite_enabled() {
-            return None;
-        }
-
-        if !self.effective_mask.sprite_left_enabled() && screen_x < 8 {
-            return None;
-        }
-
-        let sprite_height = self.sprite_height();
-        let mut visible_sprites: [CachedSprite; MAX_SPRITES_PER_SCANLINE] = [CachedSprite {
-            x: 0,
-            palette_idx: 0,
-            behind_bg: false,
-            pixels: [0; 8],
-        };
-            MAX_SPRITES_PER_SCANLINE];
-        let mut visible_count = 0usize;
-
-        for sprite_idx in 0..64 {
-            if !self.sprite_covers_scanline(sprite_idx, screen_y) {
-                continue;
-            }
-
-            let byte_idx = sprite_idx * 4;
-            let y = self.registers.oam_data[byte_idx].wrapping_add(1);
-            let tile_idx = self.registers.oam_data[byte_idx + 1];
-            let attributes = self.registers.oam_data[byte_idx + 2];
-            let x = self.registers.oam_data[byte_idx + 3];
-            let sprite_y = screen_y as i16 - y as i16;
-            let flip_vertical = (attributes & 0x80) != 0;
-            let flip_horizontal = (attributes & 0x40) != 0;
-            let palette_idx = attributes & 0x03;
-            let behind_bg = (attributes & 0x20) != 0;
-            let mut pixels = [0u8; 8];
-
-            for pixel_x in 0..8i16 {
-                let src_x = if flip_horizontal {
-                    7 - pixel_x
-                } else {
-                    pixel_x
-                } as usize;
-                let src_y = if flip_vertical {
-                    sprite_height - 1 - sprite_y
-                } else {
-                    sprite_y
-                } as u8;
-
-                let color_idx = if self.registers.ctrl.sprite_size() {
-                    let pattern_table_idx = (tile_idx & 0x01) as u16;
-                    let tile_base = tile_idx & 0xFE;
-                    let tile_offset = src_y / 8;
-                    let tile_row = (src_y % 8) as usize;
-                    Self::read_pattern_pixel(
-                        cartridge,
-                        pattern_table_idx * 0x1000,
-                        tile_base.wrapping_add(tile_offset),
-                        src_x,
-                        tile_row,
-                        PatternAccess::Sprite,
-                    )
-                } else {
-                    let pattern_table_idx = if self.registers.ctrl.sprite_pattern_table() {
-                        0x1000
-                    } else {
-                        0
-                    };
-                    Self::read_pattern_pixel(
-                        cartridge,
-                        pattern_table_idx,
-                        tile_idx,
-                        src_x,
-                        src_y as usize,
-                        PatternAccess::Sprite,
-                    )
-                };
-
-                pixels[pixel_x as usize] = color_idx;
-            }
-
-            let sprite = CachedSprite {
-                x,
-                palette_idx,
-                behind_bg,
-                pixels,
-            };
-
-            if sprite_idx == 0 {
-                // if sprite 0 covers this x, and is opaque, it should be detected by opaque_pixel below
-            }
-
-            if visible_count < MAX_SPRITES_PER_SCANLINE {
-                visible_sprites[visible_count] = sprite;
-                visible_count += 1;
-            }
-        }
-
-        // Debug: optionally print visible sprite info
-        if std::env::var("NES_SIM_DEBUG").is_ok() {
-            eprintln!(
-                "find_sprite_pixel: screen=({},{}), visible_count={}",
-                screen_x, screen_y, visible_count
-            );
-        }
-
-        for sprite in visible_sprites.iter().take(visible_count) {
-            if let Some(pixel) = sprite.opaque_pixel(screen_x) {
-                if std::env::var("NES_SIM_DEBUG").is_ok() {
-                    eprintln!(
-                        " -> found sprite pixel pal={} col={} behind={}",
-                        sprite.palette_idx,
-                        sprite.pixels[(screen_x as i16 - sprite.x as i16) as usize],
-                        sprite.behind_bg
-                    );
-                }
-                return Some(pixel);
-            }
-        }
-
-        None
-    }
-
-    /// Return whether sprite 0 is opaque at given screen position.
-    fn sprite_zero_opaque_at(&self, cartridge: &Cartridge, screen_x: u8, screen_y: u8) -> bool {
-        // Find sprite 0's properties and check if it covers and is opaque at x
-        let byte_idx = 0usize * 4;
-        let y_byte = self.registers.oam_data[byte_idx];
-        if !self.sprite_in_range(y_byte, screen_y as u16) {
-            return false;
-        }
-
-        let tile_idx = self.registers.oam_data[byte_idx + 1];
-        let attributes = self.registers.oam_data[byte_idx + 2];
-        let x = self.registers.oam_data[byte_idx + 3];
-        let y = y_byte.wrapping_add(1);
-        let sprite_y = screen_y as i16 - y as i16;
-        let flip_vertical = (attributes & 0x80) != 0;
-        let flip_horizontal = (attributes & 0x40) != 0;
-
-        // Compute color index for this sprite 0 pixel
-        let src_x_i16 = screen_x as i16 - x as i16;
-        if !(0..8).contains(&src_x_i16) {
-            return false;
-        }
-        let src_x = if flip_horizontal {
-            (7 - src_x_i16) as usize
-        } else {
-            src_x_i16 as usize
-        };
-        let src_y = if flip_vertical {
-            self.sprite_height() - 1 - sprite_y
-        } else {
-            sprite_y
-        } as u8;
-
-        let color_idx = if self.registers.ctrl.sprite_size() {
-            let pattern_table_idx = (tile_idx & 0x01) as u16;
-            let tile_base = tile_idx & 0xFE;
-            let tile_offset = src_y / 8;
-            let tile_row = (src_y % 8) as usize;
-            Self::read_pattern_pixel(
-                cartridge,
-                pattern_table_idx * 0x1000,
-                tile_base.wrapping_add(tile_offset),
-                src_x,
-                tile_row,
-                PatternAccess::Sprite,
-            )
-        } else {
-            let pattern_table_idx = if self.registers.ctrl.sprite_pattern_table() {
-                0x1000
-            } else {
-                0
-            };
-            Self::read_pattern_pixel(
-                cartridge,
-                pattern_table_idx,
-                tile_idx,
-                src_x,
-                src_y as usize,
-                PatternAccess::Sprite,
-            )
-        };
-
-        color_idx != 0
-    }
-
     fn read_vram_and_inc(&mut self, cartridge: &mut Cartridge) -> u8 {
         let vram_addr = self.registers.vram_addr;
         let current = self.read_vram(vram_addr, cartridge);
@@ -1202,7 +837,18 @@ impl<R: Render> Ppu<R> {
 
         let sprite_pixel = if self.effective_mask.sprite_enabled() {
             // compute sprite pixel on-the-fly for this x and current scanline
-            self.find_sprite_pixel(cartridge, x, self.scanline as u8)
+            self.sprite.find_sprite_pixel(
+                &self.registers.oam_data,
+                self.registers.ctrl.sprite_size(),
+                self.registers.ctrl.sprite_pattern_table(),
+                self.effective_mask.sprite_left_enabled(),
+                cartridge,
+                x,
+                self.scanline as u8,
+                |cartridge, base_addr, tile_idx, tile_x, tile_y, access| {
+                    Self::read_pattern_pixel(cartridge, base_addr, tile_idx, tile_x, tile_y, access)
+                },
+            )
         } else {
             None
         };
@@ -1213,9 +859,19 @@ impl<R: Render> Ppu<R> {
             && x != 255
             && (x >= 8 || self.effective_mask.background_left_enabled())
             && (x >= 8 || self.effective_mask.sprite_left_enabled())
-            && self.sprite_zero_opaque_at(cartridge, x, self.scanline as u8)
+            && self.sprite.sprite_zero_opaque_at(
+                &self.registers.oam_data,
+                self.registers.ctrl.sprite_size(),
+                self.registers.ctrl.sprite_pattern_table(),
+                cartridge,
+                x,
+                self.scanline as u8,
+                |cartridge, base_addr, tile_idx, tile_x, tile_y, access| {
+                    Self::read_pattern_pixel(cartridge, base_addr, tile_idx, tile_x, tile_y, access)
+                },
+            )
         {
-            self.sprite_zero_hit_pending = true;
+            self.sprite.set_zero_hit_pending();
         }
 
         match sprite_pixel {
