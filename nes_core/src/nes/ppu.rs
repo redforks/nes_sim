@@ -982,9 +982,7 @@ impl<R: Render> Ppu<R> {
         let nt_select = ((background.vram_addr >> 10) & 0x03) as u8;
 
         // Background fetches are pipelined ahead of the pixel currently being output.
-        let world_x = coarse_x * 8
-            + background.fine_x as u16
-            + screen_x.saturating_sub(background.screen_x) as u16;
+        let world_x = coarse_x * 8 + background.fine_x as u16 + screen_x as u16;
         // Vertical: directly from vram_addr (no screen_y addition; vram_addr is
         // incremented each scanline by the fine-Y increment at dot 256)
         let world_y = coarse_y * 8 + fine_y as u16;
