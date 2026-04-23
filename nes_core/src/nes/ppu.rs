@@ -1,13 +1,13 @@
 use crate::{nes::mapper::Cartridge, render::Render};
-use bitfield_struct::bitfield;
-use image::Rgba;
 use std::fmt::Write;
 
-pub mod pattern;
-pub use pattern::{PatternBand, draw_pattern};
+mod palette;
+mod pattern;
+mod registers;
 
-pub mod palette;
 use palette::{Palette, Pixel};
+pub use pattern::{PatternBand, draw_pattern};
+use registers::{PpuCtrl, PpuMask, PpuStatus, Registers};
 
 // Pixel, palette data and COLORS are defined in the submodule `palette`.
 
@@ -22,92 +22,6 @@ pub enum PatternAccess {
 pub struct BackgroundTileOverride {
     pub palette_idx: u8,
     pub color_idx: u8,
-}
-
-impl PpuMask {
-    /// Apply grayscale and emphasis effects to a pixel color using this mask's flags.
-    /// - Grayscale: Converts color to grayscale by averaging RGB channels
-    /// - Emphasis: Attenuates non-emphasized color channels (e.g., red emphasis darkens G and B)
-    fn apply_effects(&self, pixel: Pixel) -> Pixel {
-        let Rgba([r, g, b, a]) = pixel;
-
-        // Apply emphasis (color emphasis darkens the non-emphasized channels)
-        // Using ~0.75 attenuation factor (192/256)
-        let r = if self.red_tint() || (!self.green_tint() && !self.blue_tint()) {
-            r
-        } else {
-            (r as u16 * 192 / 256) as u8
-        };
-        let g = if self.green_tint() || (!self.red_tint() && !self.blue_tint()) {
-            g
-        } else {
-            (g as u16 * 192 / 256) as u8
-        };
-        let b = if self.blue_tint() || (!self.red_tint() && !self.green_tint()) {
-            b
-        } else {
-            (b as u16 * 192 / 256) as u8
-        };
-
-        // Apply grayscale by averaging RGB channels
-        let (r, g, b) = if self.grayscale() {
-            // Use luminance weights (ITU-R BT.601): 0.299R + 0.587G + 0.114B
-            let gray = (r as u16 * 77 + g as u16 * 150 + b as u16 * 29) / 256;
-            (gray as u8, gray as u8, gray as u8)
-        } else {
-            (r, g, b)
-        };
-
-        Rgba([r, g, b, a])
-    }
-}
-
-#[bitfield(u8)]
-struct PpuCtrl {
-    // Field declaration is LSB-first (first declared field maps to bit 0).
-    // Arrange fields so they match the hardware PPUCTRL layout (bits 0..7):
-    // bits 0-1: name_table_select
-    // bit 2: increment_mode
-    // bit 3: sprite_pattern_table
-    // bit 4: background_pattern_table
-    // bit 5: sprite_size
-    // bit 6: ppu_master
-    // bit 7: nmi_enable
-    #[bits(2)]
-    name_table_select: u8,
-    increment_mode: bool,
-    sprite_pattern_table: bool,
-    background_pattern_table: bool,
-    sprite_size: bool,
-    ppu_master: bool, // not used in NES, can be ignored
-    nmi_enable: bool,
-}
-
-impl PpuCtrl {
-    fn inc_ppu_addr(self, ppu_addr: &mut u16) {
-        *ppu_addr = ppu_addr.wrapping_add(if self.increment_mode() { 32 } else { 1 });
-    }
-}
-
-#[bitfield(u8)]
-struct PpuMask {
-    grayscale: bool,
-    background_left_enabled: bool,
-    sprite_left_enabled: bool,
-    background_enabled: bool,
-    sprite_enabled: bool,
-    red_tint: bool,
-    green_tint: bool,
-    blue_tint: bool,
-}
-
-#[bitfield(u8)]
-struct PpuStatus {
-    #[bits(5)]
-    __: u8,
-    sprite_overflow: bool,
-    sprite_zero_hit: bool,
-    v_blank: bool,
 }
 
 const TILES_PER_ROW: u8 = 32;
@@ -203,40 +117,22 @@ impl BackgroundActivation {
     fn snapshot(ppu: &Ppu<impl Render>, screen_x: u8) -> Self {
         Self {
             screen_x,
-            vram_addr: ppu.vram_addr,
-            fine_x: ppu.fine_x,
-            ctrl: ppu.ctrl,
+            vram_addr: ppu.registers.vram_addr,
+            fine_x: ppu.registers.fine_x,
+            ctrl: ppu.registers.ctrl,
         }
     }
 }
 
 pub struct Ppu<R: Render = ()> {
-    ctrl: PpuCtrl,
-    status: PpuStatus,
+    registers: Registers,
+
     palette: Palette, // palette memory
 
     suppress_vblank_for_current_frame: bool,
     suppress_nmi_for_current_frame: bool,
 
-    mask: PpuMask,
-
-    oam_addr: u8,
-    oam_data: [u8; 0x100], // object attribute memory
-
-    // VRAM address registers per NES PPU: v (current), t (temporary), x (fine X), w (write toggle)
-    vram_addr: u16,      // v - current VRAM address
-    temp_vram_addr: u16, // t - temporary VRAM address
-    fine_x: u8,          // x - fine X scroll (3 bits)
-    write_toggle: bool,  // w - first/second write toggle
     renderer: R,
-
-    // PPUDATA read buffer: non-palette VRAM reads are delayed by one read
-    ppudata_buffer: u8,
-
-    // PPU open bus / data latch: last value placed on the PPU data bus.
-    // Reading write-only registers returns this value.
-    bus_latch: u8,
-    bus_latch_decay_deadlines: [u64; 8],
 
     // PPU timing
     scanline: u16, // 0-261
@@ -266,22 +162,9 @@ fn normalize_ppu_addr(addr: u16) -> u16 {
 impl<R: Render> Ppu<R> {
     pub fn new(renderer: R) -> Self {
         Ppu {
-            ctrl: PpuCtrl::new(),
-            mask: PpuMask::new(),
-            status: PpuStatus::new(),
-            oam_addr: 0,
-            oam_data: [0; 0x100],
-
+            registers: Registers::new(),
             palette: Palette::default(),
-
-            vram_addr: 0,
-            temp_vram_addr: 0,
-            fine_x: 0,
-            write_toggle: false,
             renderer,
-            ppudata_buffer: 0,
-            bus_latch: 0,
-            bus_latch_decay_deadlines: [0; 8],
             scanline: 0,
             dot: 0,
             background_anchor: None,
@@ -292,7 +175,6 @@ impl<R: Render> Ppu<R> {
             sprite_overflow_eval: SpriteOverflowEval::default(),
             suppress_vblank_for_current_frame: false,
             suppress_nmi_for_current_frame: false,
-            // no scanline cache
             frame_no: 0,
             ppu_ticks: 0,
             effective_mask: PpuMask::new(),
@@ -302,18 +184,8 @@ impl<R: Render> Ppu<R> {
 
     pub fn reset(&mut self) {
         // https://www.nesdev.org/wiki/PPU_power_up_state
-        self.ctrl = PpuCtrl::new();
-        self.status = PpuStatus::new();
-        self.mask = PpuMask::new();
+        self.registers.reset();
         self.effective_mask = PpuMask::new();
-
-        self.vram_addr = 0;
-        self.temp_vram_addr = 0;
-        self.fine_x = 0;
-        self.write_toggle = false;
-        self.ppudata_buffer = 0;
-        self.bus_latch = 0;
-        self.bus_latch_decay_deadlines = [0; 8];
         self.background_anchor = None;
         self.pending_background_activation = None;
         self.odd_frame = false;
@@ -321,8 +193,7 @@ impl<R: Render> Ppu<R> {
         self.sprite_overflow_pending = false;
         self.sprite_overflow_eval = SpriteOverflowEval::default();
         self.ppu_ticks = 0;
-        // cache-free: nothing to mark
-        self.write_scroll(0);
+        self.registers.write_scroll(0);
         self.rendering_enabled_at_scanline_start = false;
     }
 
@@ -339,8 +210,8 @@ impl<R: Render> Ppu<R> {
     }
 
     fn scroll_xy(&self) -> (u16, u16) {
-        let scroll_addr = self.temp_vram_addr;
-        let scroll_x = ((scroll_addr & 0x001f) << 3) | self.fine_x as u16;
+        let scroll_addr = self.registers.temp_vram_addr;
+        let scroll_x = ((scroll_addr & 0x001f) << 3) | self.registers.fine_x as u16;
         let scroll_y = (((scroll_addr >> 5) & 0x001f) << 3) | ((scroll_addr >> 12) & 0x0007);
         (scroll_x, scroll_y)
     }
@@ -375,21 +246,21 @@ impl<R: Render> Ppu<R> {
     /// Increment fine Y in vram_addr. Called at dot 256 of each visible scanline
     /// when rendering is enabled. Wraps fine Y → coarse Y → nametable Y toggle.
     fn increment_vram_y(&mut self) {
-        let fine_y = (self.vram_addr >> 12) & 0x07;
+        let fine_y = (self.registers.vram_addr >> 12) & 0x07;
         if fine_y < 7 {
-            self.vram_addr += 0x1000; // increment fine Y
+            self.registers.vram_addr += 0x1000; // increment fine Y
         } else {
-            self.vram_addr &= !0x7000; // clear fine Y
-            let mut coarse_y = (self.vram_addr >> 5) & 0x1F;
+            self.registers.vram_addr &= !0x7000; // clear fine Y
+            let mut coarse_y = (self.registers.vram_addr >> 5) & 0x1F;
             if coarse_y == 29 {
                 coarse_y = 0;
-                self.vram_addr ^= 0x0800; // toggle nametable Y
+                self.registers.vram_addr ^= 0x0800; // toggle nametable Y
             } else if coarse_y == 31 {
                 coarse_y = 0; // wrap without toggling nametable
             } else {
                 coarse_y += 1;
             }
-            self.vram_addr = (self.vram_addr & !0x03E0) | (coarse_y << 5);
+            self.registers.vram_addr = (self.registers.vram_addr & !0x03E0) | (coarse_y << 5);
         }
     }
 
@@ -397,14 +268,16 @@ impl<R: Render> Ppu<R> {
     /// Called at dot 257 of each visible/pre-render scanline when rendering is enabled.
     fn reload_horizontal_from_temp(&mut self) {
         // Horizontal bits: coarse X (bits 0-4) and nametable X (bit 10)
-        self.vram_addr = (self.vram_addr & !0x041F) | (self.temp_vram_addr & 0x041F);
+        self.registers.vram_addr =
+            (self.registers.vram_addr & !0x041F) | (self.registers.temp_vram_addr & 0x041F);
     }
 
     /// Copy vertical scroll bits (coarse Y + nametable Y + fine Y) from temp to vram.
     /// Called at dots 280-304 of the pre-render scanline when rendering is enabled.
     fn reload_vertical_from_temp(&mut self) {
         // Vertical bits: coarse Y (bits 5-9), nametable Y (bit 11), fine Y (bits 12-14)
-        self.vram_addr = (self.vram_addr & !0x7BE0) | (self.temp_vram_addr & 0x7BE0);
+        self.registers.vram_addr =
+            (self.registers.vram_addr & !0x7BE0) | (self.registers.temp_vram_addr & 0x7BE0);
     }
 
     pub fn dump_state(&self, cartridge: &Cartridge) -> String {
@@ -417,24 +290,28 @@ impl<R: Render> Ppu<R> {
             "- Timing: scanline {}, dot {}",
             self.scanline, self.dot
         );
-        let cur_name_table_addr = 0x2000 + (self.ctrl.name_table_select() as u16 * 0x400);
+        let cur_name_table_addr = 0x2000 + (self.registers.ctrl.name_table_select() as u16 * 0x400);
         let _ = writeln!(
             out,
             "- Current nametable address: 0x{:04X}",
             cur_name_table_addr
         );
-        let _ = writeln!(out, "- PPUCTRL: 0x{:02X}", self.ctrl.into_bits());
-        let _ = writeln!(out, "- PPUMASK: 0x{:02X}", self.mask.into_bits());
-        let _ = writeln!(out, "- PPUSTATUS: 0x{:02X}", self.status.into_bits());
-        let _ = writeln!(out, "- OAMADDR: 0x{:02X}", self.oam_addr);
-        let _ = writeln!(out, "- VRAM address: 0x{:04X}", self.vram_addr);
+        let _ = writeln!(out, "- PPUCTRL: 0x{:02X}", self.registers.ctrl.into_bits());
+        let _ = writeln!(out, "- PPUMASK: 0x{:02X}", self.registers.mask.into_bits());
+        let _ = writeln!(
+            out,
+            "- PPUSTATUS: 0x{:02X}",
+            self.registers.status.into_bits()
+        );
+        let _ = writeln!(out, "- OAMADDR: 0x{:02X}", self.registers.oam_addr);
+        let _ = writeln!(out, "- VRAM address: 0x{:04X}", self.registers.vram_addr);
         let _ = writeln!(
             out,
             "- Temporary VRAM address: 0x{:04X}",
-            self.temp_vram_addr
+            self.registers.temp_vram_addr
         );
-        let _ = writeln!(out, "- Fine X: 0x{:02X}", self.fine_x);
-        let _ = writeln!(out, "- Write toggle: {}", self.write_toggle);
+        let _ = writeln!(out, "- Fine X: 0x{:02X}", self.registers.fine_x);
+        let _ = writeln!(out, "- Write toggle: {}", self.registers.write_toggle);
         let _ = writeln!(out, "- Scroll X/Y: {:?}", self.scroll_xy());
 
         let _ = writeln!(out);
@@ -486,12 +363,12 @@ impl<R: Render> Ppu<R> {
 
         let _ = writeln!(out);
         let _ = writeln!(out, "## OAM");
-        let _ = writeln!(out, "- OAMADDR: 0x{:02X}", self.oam_addr);
+        let _ = writeln!(out, "- OAMADDR: 0x{:02X}", self.registers.oam_addr);
         for row in 0..16u16 {
             let addr = row * 16;
             let _ = write!(out, "0x{:04X}: ", addr);
             for col in 0..16u16 {
-                let value = self.oam_data[(row * 16 + col) as usize];
+                let value = self.registers.oam_data[(row * 16 + col) as usize];
                 let _ = write!(out, "{:02X} ", value);
             }
             let _ = writeln!(out);
@@ -505,12 +382,12 @@ impl<R: Render> Ppu<R> {
     }
 
     pub fn in_vblank(&self) -> bool {
-        self.status.v_blank()
+        self.registers.status.v_blank()
     }
 
     pub fn oam_dma(&mut self, vals: &[u8; 256]) {
         for (addr, value) in vals.iter().copied().enumerate() {
-            self.oam_data[addr] = normalize_oam_byte(addr as u8, value);
+            self.registers.oam_data[addr] = normalize_oam_byte(addr as u8, value);
         }
         // cache-free: nothing to mark
     }
@@ -524,12 +401,12 @@ impl<R: Render> Ppu<R> {
         }
 
         if self.sprite_zero_hit_pending {
-            self.status.set_sprite_zero_hit(true);
+            self.registers.status.set_sprite_zero_hit(true);
             self.sprite_zero_hit_pending = false;
         }
 
         if self.sprite_overflow_pending {
-            self.status.set_sprite_overflow(true);
+            self.registers.status.set_sprite_overflow(true);
             self.sprite_overflow_pending = false;
         }
 
@@ -571,7 +448,7 @@ impl<R: Render> Ppu<R> {
                 } else {
                     let fetch_type = (((self.dot - base_dot) / 2) % 4) as usize;
                     if fetch_type >= 2 {
-                        Some(if self.ctrl.background_pattern_table() {
+                        Some(if self.registers.ctrl.background_pattern_table() {
                             0x1000
                         } else {
                             0x0000
@@ -587,7 +464,9 @@ impl<R: Render> Ppu<R> {
                 let fetch_type = (((self.dot - 259) / 2) % 4) as usize;
                 if fetch_type >= 2 {
                     Some(
-                        if self.ctrl.sprite_size() || self.ctrl.sprite_pattern_table() {
+                        if self.registers.ctrl.sprite_size()
+                            || self.registers.ctrl.sprite_pattern_table()
+                        {
                             0x1000
                         } else {
                             0x0000
@@ -629,7 +508,8 @@ impl<R: Render> Ppu<R> {
             let pixel = if rendering_enabled {
                 self.render_pixel(x, cartridge)
             } else {
-                self.palette.render_disabled_color(self.vram_addr % 0x4000)
+                self.palette
+                    .render_disabled_color(self.registers.vram_addr % 0x4000)
             };
             let pixel = self.effective_mask.apply_effects(pixel);
             self.renderer
@@ -663,15 +543,15 @@ impl<R: Render> Ppu<R> {
         if self.scanline == VBLANK_SET_SCANLINE && self.dot == VBLANK_SET_DOT {
             self.renderer.finish();
             if !self.suppress_vblank_for_current_frame {
-                self.status.set_v_blank(true);
+                self.registers.status.set_v_blank(true);
             }
         }
 
         // VBlank clear: pre-render scanline 261, dot 1
         if self.scanline == VBLANK_CLEAR_SCANLINE && self.dot == VBLANK_CLEAR_DOT {
-            self.status.set_v_blank(false);
-            self.status.set_sprite_overflow(false);
-            self.status.set_sprite_zero_hit(false);
+            self.registers.status.set_v_blank(false);
+            self.registers.status.set_sprite_overflow(false);
+            self.registers.status.set_sprite_zero_hit(false);
             self.sprite_zero_hit_pending = false;
             self.sprite_overflow_pending = false;
         }
@@ -706,12 +586,14 @@ impl<R: Render> Ppu<R> {
             }
         }
 
-        self.effective_mask = self.mask;
+        self.effective_mask = self.registers.mask;
     }
 
     /// Return ppu nmi signal, it connect to Cpu nmi input line
     pub fn nmi_line_out(&self) -> bool {
-        self.status.v_blank() && self.ctrl.nmi_enable() && !self.suppress_nmi_for_current_frame
+        self.registers.status.v_blank()
+            && self.registers.ctrl.nmi_enable()
+            && !self.suppress_nmi_for_current_frame
     }
 
     /// Read by cpu memory bus. Uses Cartridge for CHR/name-table access.
@@ -722,7 +604,7 @@ impl<R: Render> Ppu<R> {
             // PPUSTATUS: bits 7-5 from status, bits 4-0 from bus latch
             0x2002 => {
                 let status = self.read_status();
-                self.write_toggle = false;
+                self.registers.write_toggle = false;
                 let status_bits = status.into_bits();
                 let result = (status_bits & 0xE0) | (self.current_bus_latch() & 0x1F);
                 self.refresh_bus_latch_bits(0xE0, status_bits);
@@ -744,9 +626,9 @@ impl<R: Render> Ppu<R> {
     pub fn peek(&self, address: u16, cartridge: &Cartridge) -> u8 {
         let reg = normalize_ppu_addr(address);
         match reg {
-            0x2002 => self.status.into_bits(),
+            0x2002 => self.registers.status.into_bits(),
             0x2004 => self.read_oam_data(),
-            0x2007 => self.read_vram(self.vram_addr, cartridge),
+            0x2007 => self.read_vram(self.registers.vram_addr, cartridge),
             _ => 0,
         }
     }
@@ -766,18 +648,18 @@ impl<R: Render> Ppu<R> {
             // PPUMASK
             0x2001 => {
                 cartridge.on_ppu_mask_write(value);
-                self.mask = PpuMask::from_bits(value);
+                self.registers.mask = PpuMask::from_bits(value);
                 // mask changed; no cache to mark
             }
             // OAMADDR
             0x2003 => {
-                self.oam_addr = value;
+                self.registers.oam_addr = value;
             }
             // OAMDATA
             0x2004 => {
-                let addr = self.oam_addr as usize;
-                self.oam_data[addr] = normalize_oam_byte(self.oam_addr, value);
-                self.oam_addr = self.oam_addr.wrapping_add(1);
+                let addr = self.registers.oam_addr as usize;
+                self.registers.oam_data[addr] = normalize_oam_byte(self.registers.oam_addr, value);
+                self.registers.oam_addr = self.registers.oam_addr.wrapping_add(1);
                 // OAM mutated; no cache to mark
             }
             // PPUSCROLL
@@ -790,13 +672,15 @@ impl<R: Render> Ppu<R> {
             0x2006 => {
                 self.write_vram_addr(value);
                 // vram addr updated; no cache to mark
-                cartridge.notify_vram_address(self.vram_addr);
+                cartridge.notify_vram_address(self.registers.vram_addr);
             }
             // PPUDATA
             0x2007 => {
-                self.write_vram(self.vram_addr, value, cartridge);
-                self.ctrl.inc_ppu_addr(&mut self.vram_addr);
-                cartridge.notify_vram_address(self.vram_addr);
+                self.write_vram(self.registers.vram_addr, value, cartridge);
+                self.registers
+                    .ctrl
+                    .inc_ppu_addr(&mut self.registers.vram_addr);
+                cartridge.notify_vram_address(self.registers.vram_addr);
                 // VRAM written; no cache to mark
             }
             _ => {} // Ignore other addresses
@@ -841,31 +725,12 @@ impl<R: Render> Ppu<R> {
     }
 
     fn write_scroll(&mut self, value: u8) {
-        if !self.write_toggle {
-            // First write - X scroll
-            self.fine_x = value & 0x07;
-            self.temp_vram_addr = (self.temp_vram_addr & 0xFFE0) | (value as u16 >> 3);
-            self.write_toggle = true;
-        } else {
-            // Second write - Y scroll
-            self.temp_vram_addr = (self.temp_vram_addr & !0x73E0)
-                | (((value as u16 & 0x07) << 12) & 0x7000)
-                | ((value as u16 >> 3) << 5);
-            self.write_toggle = false;
-        }
+        self.registers.write_scroll(value);
     }
 
     fn write_vram_addr(&mut self, value: u8) {
-        if !self.write_toggle {
-            // First write - high byte
-            self.temp_vram_addr = (self.temp_vram_addr & 0x00FF) | ((value as u16 & 0x3F) << 8);
-            self.write_toggle = true;
-        } else {
-            // Second write - low byte
-            self.temp_vram_addr = (self.temp_vram_addr & 0x7F00) | (value as u16 & 0x00FF);
-            self.vram_addr = self.temp_vram_addr;
+        if self.registers.write_vram_addr(value) {
             self.schedule_background_activation_if_visible();
-            self.write_toggle = false;
         }
     }
 
@@ -962,7 +827,11 @@ impl<R: Render> Ppu<R> {
     }
 
     fn sprite_height(&self) -> i16 {
-        if self.ctrl.sprite_size() { 16 } else { 8 }
+        if self.registers.ctrl.sprite_size() {
+            16
+        } else {
+            8
+        }
     }
 
     fn sprite_in_range(&self, y_byte: u8, target_scanline: u16) -> bool {
@@ -973,7 +842,7 @@ impl<R: Render> Ppu<R> {
 
     fn sprite_covers_scanline(&self, sprite_idx: usize, screen_y: u8) -> bool {
         let byte_idx = sprite_idx * 4;
-        self.sprite_in_range(self.oam_data[byte_idx], screen_y as u16)
+        self.sprite_in_range(self.registers.oam_data[byte_idx], screen_y as u16)
     }
 
     fn begin_sprite_overflow_eval(&mut self) {
@@ -1002,7 +871,7 @@ impl<R: Render> Ppu<R> {
 
                 let oam_index = self.sprite_overflow_eval.oam_index;
                 let target_scanline = self.sprite_overflow_eval.target_scanline;
-                let y_byte = self.oam_data[oam_index * 4];
+                let y_byte = self.registers.oam_data[oam_index * 4];
                 if self.sprite_in_range(y_byte, target_scanline) {
                     self.sprite_overflow_eval.visible_sprites += 1;
                     if self.sprite_overflow_eval.visible_sprites > MAX_SPRITES_PER_SCANLINE {
@@ -1045,7 +914,7 @@ impl<R: Render> Ppu<R> {
                 let byte_index = self.sprite_overflow_eval.byte_index;
                 let target_scanline = self.sprite_overflow_eval.target_scanline;
                 let byte_idx = oam_index * 4 + byte_index;
-                let y_byte = self.oam_data[byte_idx];
+                let y_byte = self.registers.oam_data[byte_idx];
                 if self.sprite_in_range(y_byte, target_scanline) {
                     self.sprite_overflow_pending = true;
                     self.sprite_overflow_eval.mode = SpriteOverflowEvalMode::Done;
@@ -1088,10 +957,10 @@ impl<R: Render> Ppu<R> {
             }
 
             let byte_idx = sprite_idx * 4;
-            let y = self.oam_data[byte_idx].wrapping_add(1);
-            let tile_idx = self.oam_data[byte_idx + 1];
-            let attributes = self.oam_data[byte_idx + 2];
-            let x = self.oam_data[byte_idx + 3];
+            let y = self.registers.oam_data[byte_idx].wrapping_add(1);
+            let tile_idx = self.registers.oam_data[byte_idx + 1];
+            let attributes = self.registers.oam_data[byte_idx + 2];
+            let x = self.registers.oam_data[byte_idx + 3];
             let sprite_y = screen_y as i16 - y as i16;
             let flip_vertical = (attributes & 0x80) != 0;
             let flip_horizontal = (attributes & 0x40) != 0;
@@ -1111,7 +980,7 @@ impl<R: Render> Ppu<R> {
                     sprite_y
                 } as u8;
 
-                let color_idx = if self.ctrl.sprite_size() {
+                let color_idx = if self.registers.ctrl.sprite_size() {
                     let pattern_table_idx = (tile_idx & 0x01) as u16;
                     let tile_base = tile_idx & 0xFE;
                     let tile_offset = src_y / 8;
@@ -1125,7 +994,7 @@ impl<R: Render> Ppu<R> {
                         PatternAccess::Sprite,
                     )
                 } else {
-                    let pattern_table_idx = if self.ctrl.sprite_pattern_table() {
+                    let pattern_table_idx = if self.registers.ctrl.sprite_pattern_table() {
                         0x1000
                     } else {
                         0
@@ -1189,14 +1058,14 @@ impl<R: Render> Ppu<R> {
     fn sprite_zero_opaque_at(&self, cartridge: &Cartridge, screen_x: u8, screen_y: u8) -> bool {
         // Find sprite 0's properties and check if it covers and is opaque at x
         let byte_idx = 0usize * 4;
-        let y_byte = self.oam_data[byte_idx];
+        let y_byte = self.registers.oam_data[byte_idx];
         if !self.sprite_in_range(y_byte, screen_y as u16) {
             return false;
         }
 
-        let tile_idx = self.oam_data[byte_idx + 1];
-        let attributes = self.oam_data[byte_idx + 2];
-        let x = self.oam_data[byte_idx + 3];
+        let tile_idx = self.registers.oam_data[byte_idx + 1];
+        let attributes = self.registers.oam_data[byte_idx + 2];
+        let x = self.registers.oam_data[byte_idx + 3];
         let y = y_byte.wrapping_add(1);
         let sprite_y = screen_y as i16 - y as i16;
         let flip_vertical = (attributes & 0x80) != 0;
@@ -1218,7 +1087,7 @@ impl<R: Render> Ppu<R> {
             sprite_y
         } as u8;
 
-        let color_idx = if self.ctrl.sprite_size() {
+        let color_idx = if self.registers.ctrl.sprite_size() {
             let pattern_table_idx = (tile_idx & 0x01) as u16;
             let tile_base = tile_idx & 0xFE;
             let tile_offset = src_y / 8;
@@ -1232,7 +1101,7 @@ impl<R: Render> Ppu<R> {
                 PatternAccess::Sprite,
             )
         } else {
-            let pattern_table_idx = if self.ctrl.sprite_pattern_table() {
+            let pattern_table_idx = if self.registers.ctrl.sprite_pattern_table() {
                 0x1000
             } else {
                 0
@@ -1251,10 +1120,12 @@ impl<R: Render> Ppu<R> {
     }
 
     fn read_vram_and_inc(&mut self, cartridge: &mut Cartridge) -> u8 {
-        let vram_addr = self.vram_addr;
+        let vram_addr = self.registers.vram_addr;
         let current = self.read_vram(vram_addr, cartridge);
-        self.ctrl.inc_ppu_addr(&mut self.vram_addr);
-        cartridge.notify_vram_address(self.vram_addr);
+        self.registers
+            .ctrl
+            .inc_ppu_addr(&mut self.registers.vram_addr);
+        cartridge.notify_vram_address(self.registers.vram_addr);
 
         // Non-palette addresses use a read buffer (delayed by one read).
         // Palette addresses ($3F00-$3FFF) return immediately, but still
@@ -1263,83 +1134,45 @@ impl<R: Render> Ppu<R> {
         if addr >= 0x3F00 {
             // Palette: fill buffer with the nametable data underneath
             // (mirrored from $2F00-$2FFF)
-            self.ppudata_buffer = self.read_vram(vram_addr - 0x1000, cartridge);
+            self.registers.ppudata_buffer = self.read_vram(vram_addr - 0x1000, cartridge);
             let result = (current & 0x3F) | (self.current_bus_latch() & 0xC0);
             self.refresh_bus_latch_bits(0x3F, result);
             result
         } else {
-            let buffered = self.ppudata_buffer;
-            self.ppudata_buffer = current;
+            let buffered = self.registers.ppudata_buffer;
+            self.registers.ppudata_buffer = current;
             self.refresh_bus_latch(buffered);
             buffered
         }
     }
 
     fn current_bus_latch(&mut self) -> u8 {
-        self.apply_bus_decay();
-        self.bus_latch
-    }
-
-    fn apply_bus_decay(&mut self) {
-        for bit in 0..8 {
-            let mask = 1 << bit;
-            let deadline = self.bus_latch_decay_deadlines[bit];
-            if (self.bus_latch & mask) != 0 && deadline != 0 && self.ppu_ticks >= deadline {
-                self.bus_latch &= !mask;
-                self.bus_latch_decay_deadlines[bit] = 0;
-            }
-        }
+        self.registers.current_bus_latch(self.ppu_ticks)
     }
 
     fn refresh_bus_latch(&mut self, value: u8) {
-        self.apply_bus_decay();
-        self.bus_latch = value;
-        for bit in 0..8 {
-            let mask = 1 << bit;
-            self.bus_latch_decay_deadlines[bit] = if (value & mask) != 0 {
-                self.ppu_ticks.wrapping_add(PPU_OPEN_BUS_DECAY_TICKS)
-            } else {
-                0
-            };
-        }
+        self.registers.refresh_bus_latch(value, self.ppu_ticks);
     }
 
     fn refresh_bus_latch_bits(&mut self, mask: u8, value: u8) {
-        self.apply_bus_decay();
-        for bit in 0..8 {
-            let bit_mask = 1 << bit;
-            if (mask & bit_mask) == 0 {
-                continue;
-            }
-
-            if (value & bit_mask) != 0 {
-                self.bus_latch |= bit_mask;
-                self.bus_latch_decay_deadlines[bit] =
-                    self.ppu_ticks.wrapping_add(PPU_OPEN_BUS_DECAY_TICKS);
-            } else {
-                self.bus_latch &= !bit_mask;
-                self.bus_latch_decay_deadlines[bit] = 0;
-            }
-        }
+        self.registers
+            .refresh_bus_latch_bits(mask, value, self.ppu_ticks);
     }
 
     /// Read OAM data at current OAM address (for testing)
     fn read_oam_data(&self) -> u8 {
-        self.oam_data[self.oam_addr as usize]
+        self.registers.read_oam_data()
     }
 
     /// Set control flags (for testing)
     fn set_control_flags(&mut self, flags: PpuCtrl) {
-        self.ctrl = flags;
-        self.temp_vram_addr =
-            (self.temp_vram_addr & !0x0C00) | ((self.ctrl.name_table_select() as u16) << 10);
-        // control flags changed; no cache to mark
+        self.registers.set_control_flags(flags);
     }
 
     /// Read status register (for testing) - behaves like reading from 0x2002
     /// Returns the current status and clears the v_blank flag
     fn read_status(&mut self) -> PpuStatus {
-        let r = self.status;
+        let r = self.registers.status;
         if self.scanline == VBLANK_SET_SCANLINE {
             match self.dot {
                 1 => {
@@ -1353,8 +1186,8 @@ impl<R: Render> Ppu<R> {
             }
         }
         // Clear v_blank flag on read
-        self.status.set_v_blank(false);
-        self.write_toggle = false; // Also reset write toggle on status read
+        self.registers.status.set_v_blank(false);
+        self.registers.write_toggle = false; // Also reset write toggle on status read
         r
     }
 

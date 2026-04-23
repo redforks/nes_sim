@@ -2,6 +2,7 @@ use super::palette::color;
 use super::*;
 use crate::nes::mapper::{Cartridge, TestCartridge};
 use crate::render::ImageRender;
+use image::Rgba;
 
 fn new_test_ppu_and_pattern() -> (Ppu, [u8; 8192]) {
     (Ppu::new(()), [0; 8192])
@@ -160,9 +161,9 @@ fn test_oam_dma() {
 
     ppu.oam_dma(&data);
 
-    assert_eq!(ppu.oam_data[0], 0x42);
-    assert_eq!(ppu.oam_data[128], 0x42);
-    assert_eq!(ppu.oam_data[255], 0x42);
+    assert_eq!(ppu.registers.oam_data[0], 0x42);
+    assert_eq!(ppu.registers.oam_data[128], 0x42);
+    assert_eq!(ppu.registers.oam_data[255], 0x42);
 }
 
 #[test]
@@ -172,7 +173,7 @@ fn test_oam_attribute_bits_are_masked_on_write_and_dma() {
 
     ppu.write(0x2003, 0x02, &mut cartridge);
     ppu.write(0x2004, 0xFF, &mut cartridge);
-    assert_eq!(ppu.oam_data[0x02], 0xE3);
+    assert_eq!(ppu.registers.oam_data[0x02], 0xE3);
 
     let mut data = [0u8; 256];
     data[0x02] = 0xFF;
@@ -180,35 +181,35 @@ fn test_oam_attribute_bits_are_masked_on_write_and_dma() {
     data[0x03] = 0xAA;
     ppu.oam_dma(&data);
 
-    assert_eq!(ppu.oam_data[0x02], 0xE3);
-    assert_eq!(ppu.oam_data[0x06], 0x00);
-    assert_eq!(ppu.oam_data[0x03], 0xAA);
+    assert_eq!(ppu.registers.oam_data[0x02], 0xE3);
+    assert_eq!(ppu.registers.oam_data[0x06], 0x00);
+    assert_eq!(ppu.registers.oam_data[0x03], 0xAA);
 }
 
 #[test]
 fn test_read_status_clears_vblank() {
     let (mut ppu, _pattern) = new_test_ppu_and_pattern();
-    ppu.status.set_v_blank(true);
+    ppu.registers.status.set_v_blank(true);
 
-    assert!(ppu.status.v_blank());
+    assert!(ppu.registers.status.v_blank());
 
     // read_status should clear vblank
     let status = ppu.read_status();
     assert!(status.v_blank());
 
     // v_blank should now be false
-    assert!(!ppu.status.v_blank());
+    assert!(!ppu.registers.status.v_blank());
 }
 
 #[test]
 fn test_peek_status_does_not_clear_vblank() {
     let (mut ppu, _pattern) = new_test_ppu_and_pattern();
     let cartridge = Cartridge::Test(Box::new(TestCartridge::new()));
-    ppu.status.set_v_blank(true);
+    ppu.registers.status.set_v_blank(true);
 
     let status = ppu.peek(0x2002, &cartridge);
     assert_eq!(status & 0x80, 0x80);
-    assert!(ppu.status.v_blank());
+    assert!(ppu.registers.status.v_blank());
 }
 
 #[test]
@@ -229,7 +230,7 @@ fn test_status_read_only_refreshes_high_bits() {
 
     ppu.write(0x2002, 0xFF, &mut cartridge);
     ppu.ppu_ticks = PPU_OPEN_BUS_DECAY_TICKS;
-    ppu.status.set_v_blank(true);
+    ppu.registers.status.set_v_blank(true);
     assert_eq!(ppu.read(0x2002, &mut cartridge), 0x80);
 
     assert_eq!(ppu.read(0x2000, &mut cartridge), 0x80);
@@ -242,14 +243,14 @@ fn test_status_read_only_refreshes_high_bits() {
 fn create_test_ppu_with_mask(mask: PpuMask) -> Ppu {
     // Initialize PPU with the provided mask to avoid field reassignment
     let mut ppu = Ppu {
-        mask,
         effective_mask: mask,
         ..Ppu::new(())
     };
+    ppu.registers.mask = mask;
     // Clear OAM
     for i in 0..64 {
-        ppu.oam_data[i * 4] = 0x20;
-        ppu.oam_data[i * 4 + 3] = 0xFF;
+        ppu.registers.oam_data[i * 4] = 0x20;
+        ppu.registers.oam_data[i * 4 + 3] = 0xFF;
     }
     // Clear palette RAM
     ppu.palette.data = [0; 0x20];
@@ -295,7 +296,7 @@ fn set_tile_pixel(
 }
 
 fn setup_sprite(ppu: &mut Ppu, index: usize, y: u8, tile: u8, attr: u8, x: u8) {
-    let oam = &mut ppu.oam_data;
+    let oam = &mut ppu.registers.oam_data;
     oam[index * 4] = y;
     oam[index * 4 + 1] = tile;
     oam[index * 4 + 2] = attr;
@@ -375,12 +376,12 @@ where
     // ensure ppu.scanline matches requested y for on-the-fly sprite lookup
     ppu.scanline = y as u16;
     let pixel = ppu.render_pixel(x, &mut cart);
-    ppu.mask.apply_effects(pixel)
+    ppu.registers.mask.apply_effects(pixel)
 }
 
 fn latch_sprite_zero_hit(ppu: &mut Ppu) {
     if ppu.sprite_zero_hit_pending {
-        ppu.status.set_sprite_zero_hit(true);
+        ppu.registers.status.set_sprite_zero_hit(true);
         ppu.sprite_zero_hit_pending = false;
     }
 }
@@ -413,11 +414,10 @@ fn test_render_pixel_both_disabled() {
 #[test]
 fn test_tick_renders_palette_color_when_rendering_disabled_and_vram_points_to_palette() {
     let mut ppu = Ppu {
-        mask: PpuMask::new(),
         ..Ppu::new(ImageRender::default_dimension())
     };
     ppu.palette.write(0x3f00, 0x21);
-    ppu.vram_addr = 0x3f10;
+    ppu.registers.vram_addr = 0x3f10;
     ppu.scanline = 0;
     ppu.dot = 0;
 
@@ -432,11 +432,10 @@ fn test_tick_renders_palette_color_when_rendering_disabled_and_vram_points_to_pa
 #[test]
 fn test_tick_renders_background_color_when_rendering_disabled_and_vram_not_palette() {
     let mut ppu = Ppu {
-        mask: PpuMask::new(),
         ..Ppu::new(ImageRender::default_dimension())
     };
     ppu.palette.write(0x3f00, 0x16);
-    ppu.vram_addr = 0x2000;
+    ppu.registers.vram_addr = 0x2000;
     ppu.scanline = 0;
     ppu.dot = 0;
 
@@ -754,9 +753,9 @@ fn test_render_pixel_sets_sprite_overflow_with_nine_sprites_on_scanline() {
         setup_sprite(&mut ppu, idx, 20, 0, 0, (idx * 8) as u8);
     }
 
-    assert!(!ppu.status.sprite_overflow());
+    assert!(!ppu.registers.status.sprite_overflow());
     run_scanline(&mut ppu, &pattern, 20);
-    assert!(ppu.status.sprite_overflow());
+    assert!(ppu.registers.status.sprite_overflow());
 }
 
 #[test]
@@ -769,7 +768,7 @@ fn test_render_pixel_does_not_set_sprite_overflow_with_eight_sprites_on_scanline
     }
 
     render_pixel(&mut ppu, &pattern, 0, 20);
-    assert!(!ppu.status.sprite_overflow());
+    assert!(!ppu.registers.status.sprite_overflow());
 }
 
 #[test]
@@ -782,7 +781,7 @@ fn test_render_pixel_does_not_set_sprite_overflow_when_rendering_disabled() {
     }
 
     render_pixel(&mut ppu, &pattern, 0, 20);
-    assert!(!ppu.status.sprite_overflow());
+    assert!(!ppu.registers.status.sprite_overflow());
 }
 
 #[test]
@@ -799,7 +798,7 @@ fn test_sprite_overflow_sets_for_next_scanline_at_y239() {
     }
 
     run_scanline(&mut ppu, &pattern, 239);
-    assert!(ppu.status.sprite_overflow());
+    assert!(ppu.registers.status.sprite_overflow());
 }
 
 #[test]
@@ -816,7 +815,7 @@ fn test_sprite_overflow_does_not_set_for_next_scanline_at_y240() {
     }
 
     run_scanline(&mut ppu, &pattern, 239);
-    assert!(!ppu.status.sprite_overflow());
+    assert!(!ppu.registers.status.sprite_overflow());
 }
 
 #[test]
@@ -833,7 +832,7 @@ fn test_render_pixel_sprite_zero_hit() {
     set_tile_solid(&mut pattern, 0, 1, 2);
     setup_sprite(&mut ppu, 0, 0, 1, 0, 8);
 
-    assert!(!ppu.status.sprite_zero_hit());
+    assert!(!ppu.registers.status.sprite_zero_hit());
     render_pixel_with_setup(
         &mut ppu,
         &pattern,
@@ -842,7 +841,7 @@ fn test_render_pixel_sprite_zero_hit() {
         1,
     );
     latch_sprite_zero_hit(&mut ppu);
-    assert!(ppu.status.sprite_zero_hit());
+    assert!(ppu.registers.status.sprite_zero_hit());
 }
 
 #[test]
@@ -859,7 +858,7 @@ fn test_render_pixel_sprite_zero_hit_requires_opaque_background() {
     setup_sprite(&mut ppu, 0, 0, 1, 0, 0);
 
     render_pixel_with_setup(&mut ppu, &pattern, |cart| set_bg_tile(cart, 0, 0), 0, 1);
-    assert!(!ppu.status.sprite_zero_hit());
+    assert!(!ppu.registers.status.sprite_zero_hit());
 }
 
 #[test]
@@ -876,7 +875,7 @@ fn test_render_pixel_sprite_zero_hit_respects_background_left_mask() {
     setup_sprite(&mut ppu, 0, 0, 1, 0, 0);
 
     render_pixel_with_setup(&mut ppu, &pattern, |cart| set_bg_tile(cart, 0, 0), 0, 1);
-    assert!(!ppu.status.sprite_zero_hit());
+    assert!(!ppu.registers.status.sprite_zero_hit());
 }
 
 #[test]
@@ -893,7 +892,7 @@ fn test_render_pixel_sprite_zero_hit_respects_sprite_left_mask() {
     setup_sprite(&mut ppu, 0, 0, 1, 0, 0);
 
     render_pixel_with_setup(&mut ppu, &pattern, |cart| set_bg_tile(cart, 0, 0), 0, 1);
-    assert!(!ppu.status.sprite_zero_hit());
+    assert!(!ppu.registers.status.sprite_zero_hit());
 }
 
 #[test]
@@ -912,7 +911,7 @@ fn test_render_pixel_sprite_zero_hit_requires_sprite_zero() {
     setup_sprite(&mut ppu, 1, 0, 1, 0, 0);
 
     render_pixel_with_setup(&mut ppu, &pattern, |cart| set_bg_tile(cart, 0, 0), 0, 1);
-    assert!(!ppu.status.sprite_zero_hit());
+    assert!(!ppu.registers.status.sprite_zero_hit());
 }
 
 #[test]
@@ -934,7 +933,7 @@ fn test_render_pixel_sprite_zero_not_at_x255() {
         255,
         10,
     );
-    assert!(!ppu.status.sprite_zero_hit());
+    assert!(!ppu.registers.status.sprite_zero_hit());
 }
 
 // ============================================================================
@@ -981,7 +980,7 @@ fn test_render_pixel_grayscale_mode_with_sprite() {
     setup_sprite(&mut ppu, 0, 0, 1, 0, 0);
 
     let pixel = render_pixel(&mut ppu, &pattern, 0, 1);
-    let pixel = ppu.mask.apply_effects(pixel);
+    let pixel = ppu.registers.mask.apply_effects(pixel);
     let (r, g, b) = pixel_to_rgb(pixel);
 
     // In grayscale mode, R, G, and B should all be equal
@@ -1010,7 +1009,7 @@ fn test_render_pixel_red_emphasis() {
         let mask = PpuMask::new()
             .with_background_enabled(true)
             .with_background_left_enabled(true);
-        this.mask = mask;
+        this.registers.mask = mask;
     };
     let pixel_without_emphasis =
         render_pixel_with_setup(&mut ppu, &pattern, |cart| set_bg_tile(cart, 0, 0), 0, 0);
@@ -1051,7 +1050,7 @@ fn test_render_pixel_green_emphasis() {
         let mask = PpuMask::new()
             .with_background_enabled(true)
             .with_background_left_enabled(true);
-        this.mask = mask;
+        this.registers.mask = mask;
     };
     let pixel_without_emphasis =
         render_pixel_with_setup(&mut ppu, &pattern, |cart| set_bg_tile(cart, 0, 0), 0, 0);
@@ -1095,7 +1094,7 @@ fn test_render_pixel_blue_emphasis() {
         let mask = PpuMask::new()
             .with_background_enabled(true)
             .with_background_left_enabled(true);
-        this.mask = mask;
+        this.registers.mask = mask;
     };
     let pixel_without_emphasis =
         render_pixel_with_setup(&mut ppu, &pattern, |cart| set_bg_tile(cart, 0, 0), 0, 0);
@@ -1140,7 +1139,7 @@ fn test_render_pixel_multiple_emphasis_bits() {
         let mask = PpuMask::new()
             .with_background_enabled(true)
             .with_background_left_enabled(true);
-        this.mask = mask;
+        this.registers.mask = mask;
     };
     let pixel_without_emphasis =
         render_pixel_with_setup(&mut ppu, &pattern, |cart| set_bg_tile(cart, 0, 0), 0, 0);
@@ -1186,7 +1185,7 @@ fn test_render_pixel_all_emphasis_bits() {
         let mask = PpuMask::new()
             .with_background_enabled(true)
             .with_background_left_enabled(true);
-        this.mask = mask;
+        this.registers.mask = mask;
     };
     let pixel_without_emphasis =
         render_pixel_with_setup(&mut ppu, &pattern, |cart| set_bg_tile(cart, 0, 0), 0, 0);
