@@ -335,7 +335,9 @@ fn render_pixel(ppu: &mut Ppu, pattern: &[u8], x: u8, y: u8) -> Pixel {
             tc.chr_rom[i] = pattern[i % pattern.len()];
         }
     }
-    ppu.prepare_scanline_cache(&cart, y);
+    // prepare_scanline_cache is now a no-op; render_pixel computes sprites on-the-fly
+    // ensure ppu.scanline matches requested y for on-the-fly sprite lookup
+    ppu.scanline = y as u16;
     ppu.render_pixel(x, &mut cart)
 }
 
@@ -369,7 +371,8 @@ where
         }
     }
     setup(&mut cart);
-    ppu.prepare_scanline_cache(&cart, y);
+    // ensure ppu.scanline matches requested y for on-the-fly sprite lookup
+    ppu.scanline = y as u16;
     let pixel = ppu.render_pixel(x, &mut cart);
     ppu.mask.apply_effects(pixel)
 }
