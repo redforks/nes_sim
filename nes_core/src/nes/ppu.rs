@@ -429,26 +429,13 @@ impl<R: Render> Ppu<R> {
         (scroll_x, scroll_y)
     }
 
-    fn background_pipeline_delay() -> u8 {
-        16
-    }
-
-    fn anchor_background_at(&mut self, screen_x: u8) {
-        self.background_anchor = Some(BackgroundActivation::snapshot(self, screen_x));
-        self.pending_background_activation = None;
-    }
-
-    fn schedule_background_activation(&mut self, screen_x: u8) {
-        self.pending_background_activation = Some(BackgroundActivation::snapshot(self, screen_x));
-    }
-
     fn schedule_background_activation_if_visible(&mut self) {
         if self.rendering_enabled()
             && let Some(screen_x) = self.next_visible_x()
         {
-            self.schedule_background_activation(
-                screen_x.saturating_add(Self::background_pipeline_delay()),
-            );
+            let screen_x = screen_x.saturating_add(16);
+            self.pending_background_activation =
+                Some(BackgroundActivation::snapshot(self, screen_x));
         }
     }
 
@@ -704,7 +691,8 @@ impl<R: Render> Ppu<R> {
 
         if self.scanline < 240 && self.dot == 0 {
             self.prepare_scanline_cache(cartridge, self.scanline as u8);
-            self.anchor_background_at(0);
+            self.background_anchor = Some(BackgroundActivation::snapshot(self, 0));
+            self.pending_background_activation = None;
         }
 
         if self.scanline < 240 && self.dot == 65 {
