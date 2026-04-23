@@ -1,3 +1,4 @@
+use super::palette::color;
 use super::*;
 use crate::nes::mapper::{Cartridge, TestCartridge};
 use crate::render::ImageRender;
@@ -88,7 +89,7 @@ fn repr_ppu_mask() {
 
 #[test]
 fn palette_ram_read_write() {
-    let mut p = PaletteRam::default();
+    let mut p = Palette::default();
     for i in 0..0x20 {
         p.write(0x3f00 + i, i as u8);
         assert_eq!(i as u8, p.read(0x3f00 + i));
@@ -103,17 +104,17 @@ fn palette_ram_read_write() {
 
 #[test]
 fn palette_ram_get_color() {
-    let mut p = PaletteRam::default();
+    let mut p = Palette::default();
     p.write(0x3f00, 15);
     p.write(0x3f01, 16);
     p.write(0x3f02, 17);
     p.write(0x3f03, 18);
     p.write(0x3f05, 19);
-    assert_eq!(COLORS[15], p.get_background_color(0, 0));
-    assert_eq!(COLORS[16], p.get_background_color(0, 1));
-    assert_eq!(COLORS[17], p.get_background_color(0, 2));
-    assert_eq!(COLORS[18], p.get_background_color(0, 3));
-    assert_eq!(COLORS[19], p.get_background_color(1, 1));
+    assert_eq!(color(15), p.get_background_color(0, 0));
+    assert_eq!(color(16), p.get_background_color(0, 1));
+    assert_eq!(color(17), p.get_background_color(0, 2));
+    assert_eq!(color(18), p.get_background_color(0, 3));
+    assert_eq!(color(19), p.get_background_color(1, 1));
 }
 
 #[test]
@@ -396,7 +397,7 @@ fn test_render_pixel_returns_background_color() {
     set_bg_palette_color(&mut ppu, 0, 1, 0x16);
 
     let pixel = render_pixel_with_setup(&mut ppu, &pattern, |cart| set_bg_tile(cart, 0, 0), 0, 0);
-    assert_eq!(pixel, COLORS[0x16]);
+    assert_eq!(pixel, color(0x16));
 }
 
 #[test]
@@ -406,7 +407,7 @@ fn test_render_pixel_both_disabled() {
     set_universal_bg_color(&mut ppu, 0x21);
 
     let pixel = render_pixel(&mut ppu, &pattern, 10, 10);
-    assert_eq!(pixel, COLORS[0x21]);
+    assert_eq!(pixel, color(0x21));
 }
 
 #[test]
@@ -425,7 +426,7 @@ fn test_tick_renders_palette_color_when_rendering_disabled_and_vram_points_to_pa
     ppu.tick(&mut cart);
 
     let image = ppu.renderer.borrow_image();
-    assert_eq!(image.get_pixel(0, 0), &image::Rgba(COLORS[0x21].0));
+    assert_eq!(image.get_pixel(0, 0), &image::Rgba(color(0x21).0));
 }
 
 #[test]
@@ -444,7 +445,7 @@ fn test_tick_renders_background_color_when_rendering_disabled_and_vram_not_palet
     ppu.tick(&mut cart);
 
     let image = ppu.renderer.borrow_image();
-    assert_eq!(image.get_pixel(0, 0), &image::Rgba(COLORS[0x16].0));
+    assert_eq!(image.get_pixel(0, 0), &image::Rgba(color(0x16).0));
 }
 
 #[test]
@@ -460,7 +461,7 @@ fn test_render_pixel_transparent_bg_and_sprite_use_backdrop_color() {
     set_universal_bg_color(&mut ppu, 0x2c);
 
     let pixel = render_pixel(&mut ppu, &pattern, 12, 34);
-    assert_eq!(pixel, COLORS[0x2c]);
+    assert_eq!(pixel, color(0x2c));
 }
 
 #[test]
@@ -476,7 +477,7 @@ fn test_render_pixel_returns_sprite_color_when_background_disabled() {
     setup_sprite(&mut ppu, 0, 0, 1, 0, 0);
 
     let pixel = render_pixel(&mut ppu, &pattern, 0, 1);
-    assert_eq!(pixel, COLORS[0x27]);
+    assert_eq!(pixel, color(0x27));
 }
 
 #[test]
@@ -494,7 +495,7 @@ fn test_render_pixel_transparent_sprite_falls_back_to_background() {
     setup_sprite(&mut ppu, 0, 0, 1, 0, 0);
 
     let pixel = render_pixel_with_setup(&mut ppu, &pattern, |cart| set_bg_tile(cart, 0, 0), 0, 1);
-    assert_eq!(pixel, COLORS[0x12]);
+    assert_eq!(pixel, color(0x12));
 }
 
 #[test]
@@ -514,7 +515,7 @@ fn test_render_pixel_sprite_in_front_of_background() {
     setup_sprite(&mut ppu, 0, 0, 1, 0, 0);
 
     let pixel = render_pixel_with_setup(&mut ppu, &pattern, |cart| set_bg_tile(cart, 0, 0), 0, 1);
-    assert_eq!(pixel, COLORS[0x22]);
+    assert_eq!(pixel, color(0x22));
 }
 
 #[test]
@@ -534,7 +535,7 @@ fn test_render_pixel_background_priority_when_sprite_is_behind() {
     setup_sprite(&mut ppu, 0, 0, 1, 0x20, 0);
 
     let pixel = render_pixel_with_setup(&mut ppu, &pattern, |cart| set_bg_tile(cart, 0, 0), 0, 1);
-    assert_eq!(pixel, COLORS[0x14]);
+    assert_eq!(pixel, color(0x14));
 }
 
 #[test]
@@ -552,7 +553,7 @@ fn test_render_pixel_sprite_behind_transparent_background() {
     setup_sprite(&mut ppu, 0, 0, 1, 0x20, 0);
 
     let pixel = render_pixel_with_setup(&mut ppu, &pattern, |cart| set_bg_tile(cart, 0, 0), 0, 1);
-    assert_eq!(pixel, COLORS[0x25]);
+    assert_eq!(pixel, color(0x25));
 }
 
 #[test]
@@ -571,7 +572,7 @@ fn test_render_pixel_applies_left_column_clipping() {
     setup_sprite(&mut ppu, 0, 0, 1, 0, 0);
 
     let pixel = render_pixel_with_setup(&mut ppu, &pattern, |cart| set_bg_tile(cart, 0, 0), 0, 1);
-    assert_eq!(pixel, COLORS[0x20]);
+    assert_eq!(pixel, color(0x20));
 }
 
 #[test]
@@ -590,7 +591,7 @@ fn test_render_pixel_uses_highest_priority_opaque_sprite() {
     setup_sprite(&mut ppu, 1, 0, 2, 1, 0);
 
     let pixel = render_pixel(&mut ppu, &pattern, 0, 1);
-    assert_eq!(pixel, COLORS[0x26]);
+    assert_eq!(pixel, color(0x26));
 }
 
 #[test]
@@ -611,7 +612,7 @@ fn test_render_pixel_applies_sprite_priority_before_background_priority() {
 
     let pixel = render_pixel_with_setup(&mut ppu, &pattern, |cart| set_bg_tile(cart, 0, 0), 0, 1);
     // Sprite is in front and opaque, so sprite color should show
-    assert_eq!(pixel, COLORS[0x24]);
+    assert_eq!(pixel, color(0x24));
 }
 
 #[test]
@@ -628,7 +629,7 @@ fn test_render_pixel_skips_transparent_higher_priority_sprite() {
     setup_sprite(&mut ppu, 1, 0, 2, 1, 0);
 
     let pixel = render_pixel(&mut ppu, &pattern, 0, 1);
-    assert_eq!(pixel, COLORS[0x37]);
+    assert_eq!(pixel, color(0x37));
 }
 
 #[test]
@@ -646,7 +647,7 @@ fn test_render_pixel_respects_background_pattern_table_selection() {
     ppu.set_control_flags(PpuCtrl::new().with_background_pattern_table(true));
 
     let pixel = render_pixel_with_setup(&mut ppu, &pattern, |cart| set_bg_tile(cart, 0, 0), 0, 0);
-    assert_eq!(pixel, COLORS[0x28]);
+    assert_eq!(pixel, color(0x28));
 }
 
 #[test]
@@ -665,7 +666,7 @@ fn test_render_pixel_respects_sprite_pattern_table_selection() {
     setup_sprite(&mut ppu, 0, 0, 1, 0, 0);
 
     let pixel = render_pixel(&mut ppu, &pattern, 0, 1);
-    assert_eq!(pixel, COLORS[0x29]);
+    assert_eq!(pixel, color(0x29));
 }
 
 #[test]
@@ -686,7 +687,7 @@ fn test_render_pixel_respects_sprite_flipping() {
     // If sprite_pos.x = 0, then screen_x = 7
     // If sprite_pos.y = 10, then screen_y = 10 + 7 = 17
     let pixel = render_pixel(&mut ppu, &pattern, 7, 18);
-    assert_eq!(pixel, COLORS[0x2a]);
+    assert_eq!(pixel, color(0x2a));
 }
 
 #[test]
@@ -703,7 +704,7 @@ fn test_render_pixel_uses_second_tile_for_8x16_sprites() {
     setup_sprite(&mut ppu, 0, 0, 0, 0, 0);
 
     let pixel = render_pixel(&mut ppu, &pattern, 0, 9);
-    assert_eq!(pixel, COLORS[0x2b]);
+    assert_eq!(pixel, color(0x2b));
 }
 
 #[test]
@@ -720,7 +721,7 @@ fn test_render_pixel_uses_odd_tile_bank_for_8x16_sprites() {
     setup_sprite(&mut ppu, 0, 0, 3, 0, 0);
 
     let pixel = render_pixel(&mut ppu, &pattern, 0, 1);
-    assert_eq!(pixel, COLORS[0x2c]);
+    assert_eq!(pixel, color(0x2c));
 }
 
 #[test]
@@ -737,7 +738,7 @@ fn test_render_pixel_uses_vertical_flip_for_8x16_sprites() {
     setup_sprite(&mut ppu, 0, 0, 0, 0x80, 0);
 
     let pixel = render_pixel(&mut ppu, &pattern, 0, 15);
-    assert_eq!(pixel, COLORS[0x2d]);
+    assert_eq!(pixel, color(0x2d));
 }
 
 #[test]
@@ -1242,6 +1243,6 @@ fn test_render_pixel_no_emphasis_no_change() {
 
     let pixel = render_pixel_with_setup(&mut ppu, &pattern, |cart| set_bg_tile(cart, 0, 0), 0, 0);
 
-    // Without any effects, pixel should match COLORS lookup directly
-    assert_eq!(pixel, COLORS[0x16]);
+    // Without any effects, pixel should match palette color lookup directly
+    assert_eq!(pixel, color(0x16));
 }
