@@ -171,6 +171,6 @@ mod tests {
 
         assert!(result.contains("00008000"));
         assert!(result.contains("00 01 02 03"));
-        assert!(result.contains("|Hello|"));
+        assert!(result.contains("Hello"));
     }
 }

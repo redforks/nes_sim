@@ -1,12 +1,11 @@
 use anyhow::Result;
 use nes_mcp_protocol::{Request, Response};
 use rmcp::{
-    ServerHandler, ServiceExt,
     handler::server::{router::tool::ToolRouter, tool::Parameters},
     model::{PaginatedRequestParam, ServerCapabilities, ServerInfo},
     schemars,
     service::{RequestContext, RoleServer},
-    tool, tool_handler, tool_router,
+    tool, tool_handler, tool_router, ServerHandler, ServiceExt,
 };
 use serde::Deserialize;
 use std::future::Future;
@@ -15,7 +14,7 @@ use std::sync::Arc;
 use std::time::Duration;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::process::Command;
-use tokio::signal::unix::{SignalKind, signal};
+use tokio::signal::unix::{signal, SignalKind};
 use tokio::sync::Mutex;
 use tracing::{error, info, warn};
 
@@ -38,7 +37,7 @@ struct MemoryParams {
     end: String,
 }
 
-    const TCP_PORT: u16 = 28800;
+const TCP_PORT: u16 = 28800;
 const TCP_HOST: &str = "127.0.0.1";
 
 const TCP_CONNECT_RETRY_ATTEMPTS: u8 = 5;
@@ -55,15 +54,6 @@ pub struct NesMcpServer {
 
 #[tool_router]
 impl NesMcpServer {
-    fn new() -> Self {
-        Self {
-            tool_router: Self::tool_router(),
-            child_process: Arc::new(Mutex::new(None)),
-            child_pid: Arc::new(Mutex::new(None)),
-            rom_path: Arc::new(Mutex::new(None)),
-        }
-    }
-
     /// Kill the child process if it's running
     async fn kill_child_process(&self) {
         let mut child_guard = self.child_process.lock().await;
@@ -207,7 +197,7 @@ impl NesMcpServer {
     }
 
     #[tool(
-        description = "Restart the NES emulator. Kills any existing instance and starts a new one with the previously configured ROM."
+        description = "Restart the NES emulator. Kills any existing instance and rebuild nes_cpu_test then start with the previously configured ROM."
     )]
     async fn restart_nes(&self) -> String {
         // Check if ROM path is set
@@ -338,7 +328,10 @@ impl NesMcpServer {
     }
 
     #[tool(description = "Read NES memory using hex start/end addresses. Max 4KB range.")]
-    async fn read_memory(&self, Parameters(MemoryParams { start, end }): Parameters<MemoryParams>) -> String {
+    async fn read_memory(
+        &self,
+        Parameters(MemoryParams { start, end }): Parameters<MemoryParams>,
+    ) -> String {
         match self.read_memory_text(&start, &end).await {
             Ok(text) => text,
             Err(err) => format!("Error: {err:?}"),
@@ -464,7 +457,11 @@ impl ServerHandler for NesMcpServer {
 
 // Helper methods for resource reading
 impl NesMcpServer {
-    fn format_text_resource(uri: &str, mime_type: &str, text: String) -> rmcp::model::ReadResourceResult {
+    fn format_text_resource(
+        uri: &str,
+        mime_type: &str,
+        text: String,
+    ) -> rmcp::model::ReadResourceResult {
         rmcp::model::ReadResourceResult {
             contents: vec![rmcp::model::ResourceContents::TextResourceContents {
                 uri: uri.to_string(),
@@ -474,7 +471,11 @@ impl NesMcpServer {
         }
     }
 
-    async fn read_memory_text(&self, start: &str, end: &str) -> Result<String, rmcp::model::ErrorData> {
+    async fn read_memory_text(
+        &self,
+        start: &str,
+        end: &str,
+    ) -> Result<String, rmcp::model::ErrorData> {
         let parse_hex = |s: &str| -> Result<u16, String> {
             if s.starts_with("0x") || s.starts_with("0X") {
                 u16::from_str_radix(&s[2..], 16).map_err(|e| e.to_string())
@@ -484,10 +485,16 @@ impl NesMcpServer {
         };
 
         let start = parse_hex(start).map_err(|e| {
-            rmcp::model::ErrorData::invalid_params("Invalid start address", Some(serde_json::json!(e)))
+            rmcp::model::ErrorData::invalid_params(
+                "Invalid start address",
+                Some(serde_json::json!(e)),
+            )
         })?;
         let end = parse_hex(end).map_err(|e| {
-            rmcp::model::ErrorData::invalid_params("Invalid end address", Some(serde_json::json!(e)))
+            rmcp::model::ErrorData::invalid_params(
+                "Invalid end address",
+                Some(serde_json::json!(e)),
+            )
         })?;
 
         if start > end {
@@ -504,7 +511,10 @@ impl NesMcpServer {
             ));
         }
 
-        let response = match self.send_tcp_request(&Request::ReadMemory { start, end }).await {
+        let response = match self
+            .send_tcp_request(&Request::ReadMemory { start, end })
+            .await
+        {
             Ok(r) => r,
             Err(e) => {
                 return Err(rmcp::model::ErrorData::internal_error(
@@ -520,7 +530,10 @@ impl NesMcpServer {
                 "Memory read failed",
                 Some(serde_json::json!(message)),
             )),
-            _ => Err(rmcp::model::ErrorData::internal_error("Unexpected response", None)),
+            _ => Err(rmcp::model::ErrorData::internal_error(
+                "Unexpected response",
+                None,
+            )),
         }
     }
 
@@ -536,17 +549,21 @@ impl NesMcpServer {
         };
 
         match response {
-            Response::CpuRegisters { registers } => serde_json::to_string_pretty(&registers).map_err(|e| {
-                rmcp::model::ErrorData::internal_error(
-                    "Failed to serialize registers",
-                    Some(serde_json::json!(e.to_string())),
-                )
-            }),
+            Response::CpuRegisters { registers } => serde_json::to_string_pretty(&registers)
+                .map_err(|e| {
+                    rmcp::model::ErrorData::internal_error(
+                        "Failed to serialize registers",
+                        Some(serde_json::json!(e.to_string())),
+                    )
+                }),
             Response::Error { message } => Err(rmcp::model::ErrorData::internal_error(
                 "Failed to read CPU registers",
                 Some(serde_json::json!(message)),
             )),
-            _ => Err(rmcp::model::ErrorData::internal_error("Unexpected response", None)),
+            _ => Err(rmcp::model::ErrorData::internal_error(
+                "Unexpected response",
+                None,
+            )),
         }
     }
 
@@ -572,7 +589,10 @@ impl NesMcpServer {
                 "Failed to read APU status",
                 Some(serde_json::json!(message)),
             )),
-            _ => Err(rmcp::model::ErrorData::internal_error("Unexpected response", None)),
+            _ => Err(rmcp::model::ErrorData::internal_error(
+                "Unexpected response",
+                None,
+            )),
         }
     }
 
@@ -593,7 +613,10 @@ impl NesMcpServer {
                 "Failed to read PPU status",
                 Some(serde_json::json!(message)),
             )),
-            _ => Err(rmcp::model::ErrorData::internal_error("Unexpected response", None)),
+            _ => Err(rmcp::model::ErrorData::internal_error(
+                "Unexpected response",
+                None,
+            )),
         }
     }
 
@@ -672,7 +695,6 @@ impl NesMcpServer {
         let status = self.read_ppu_status_text().await?;
         Ok(Self::format_text_resource(uri, "text/plain", status))
     }
-
 }
 
 #[tokio::main]
