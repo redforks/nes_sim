@@ -1,0 +1,10 @@
+{
+  "$schema": "https://opencode.ai/config.json",
+  "mcp": {
+    "nes": {
+      "type": "local",
+      "command": ["cargo", "run", "-p", "nes_mcp_server", "-q"],
+      "enabled": true,
+    }
+  }
+}
