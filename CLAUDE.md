@@ -10,6 +10,8 @@ An NES (Nintendo Entertainment System) emulator implemented in Rust with a modul
 | `nes_cpu_test/` | CLI tool for running CPU test ROMs with exit code detection | [nes_cpu_test/CLAUDE.md](nes_cpu_test/CLAUDE.md) |
 | `nes_web/` | WebAssembly build for browser-based emulation | [nes_web/CLAUDE.md](nes_web/CLAUDE.md) |
 | `nescli/` | CLI tools with SDL2 display and CHR ROM inspection | [nescli/CLAUDE.md](nescli/CLAUDE.md) |
+| `nes_mcp_protocol/` | MCP protocol definitions for NES emulator communication | - |
+| `nes_mcp_server/` | MCP server exposing NES emulator as tools and resources | - |
 | `www/` | Frontend for WASM build | - |
 
 ## Quick Start
@@ -44,6 +46,36 @@ cargo run -p nescli --release -- info <file.nes>
 cargo run -p nescli --release -- read-chr <file.nes> | feh -Z --force-aliasing -
 ```
 
+### MCP Server
+
+The `nes_mcp_server` crate provides an MCP (Model Context Protocol) server for inspecting and controlling the NES emulator. It exposes the emulator state as tools and resources.
+
+```bash
+# Start the MCP server (communicates with nes_cpu_test via TCP)
+cargo run -p nes_mcp_server
+
+# The server is configured in .mcp.json and automatically starts nes_cpu_test
+# in TCP server mode (port 28800)
+```
+
+#### Available MCP Tools
+
+- `start` - Start the NES emulator with a ROM file
+- `tick` - Execute N CPU instruction cycles
+- `forward_to_vblank` - Run until next VBlank (scanline 241, dot 1)
+- `read_memory` - Read NES memory (hex start/end addresses, max 4KB range)
+- `read_cpu_registers` - Read current CPU register state
+- `read_ppu_status` - Read current PPU status
+- `read_apu_status` - Read current APU status
+- `restart_nes` - Restart the NES emulator
+
+#### Available MCP Resources
+
+- `nes://memory` - NES memory access
+- `nes://cpu` - CPU state and registers
+- `nes://ppu` - PPU (Picture Processing Unit) status
+- `nes://apu` - APU (Audio Processing Unit) status
+
 ## Architecture
 
 See [nes_core/CLAUDE.md](nes_core/CLAUDE.md) for detailed architecture documentation including:
@@ -55,6 +87,14 @@ See [nes_core/CLAUDE.md](nes_core/CLAUDE.md) for detailed architecture documenta
 - PPU (scanline-accurate rendering)
 - APU (audio with 5 channels: 2 pulse, triangle, noise, DMC)
 - ROM Loading (iNES format)
+
+### MCP Integration
+
+The `nes_mcp_protocol` and `nes_mcp_server` crates provide a Model Context Protocol interface for the emulator:
+- **TCP Server Mode**: `nes_cpu_test` can run as a TCP server (port 28800) for remote control
+- **MCP Protocol**: `nes_mcp_protocol` defines request/response types for NES operations
+- **MCP Server**: `nes_mcp_server` implements the MCP spec, exposing NES state as tools and resources
+- **Process Management**: Automatic lifecycle management with signal handling for graceful shutdown
 
 ## Build System
 
