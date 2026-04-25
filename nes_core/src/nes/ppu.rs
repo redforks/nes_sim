@@ -799,6 +799,11 @@ impl<R: Render> Ppu<R> {
         self.registers.read_oam_data()
     }
 
+    /// Get OAM data as a copy (for debugging/inspection)
+    pub fn get_oam_data(&self) -> [u8; 256] {
+        self.registers.oam_data
+    }
+
     /// Set control flags (for testing)
     fn set_control_flags(&mut self, flags: PpuCtrl) {
         self.registers.set_control_flags(flags);

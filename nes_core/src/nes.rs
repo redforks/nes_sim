@@ -167,6 +167,39 @@ impl<R: Render, D: AudioDriver> NesMcu<R, D> {
     pub fn dump_ppu_state(&self) -> String {
         self.ppu.dump_state(&self.cartridge)
     }
+
+    /// Get APU status information
+    pub fn dump_apu_state(&self) -> crate::nes::apu::ApuStatusInfo {
+        self.apu.get_status()
+    }
+
+    /// Get OAM data (256 bytes)
+    pub fn get_oam_data(&self) -> [u8; 256] {
+        self.ppu.get_oam_data()
+    }
+
+    /// Get nametable data
+    /// index: 0-3 for specific nametable, 255 for all 4KB
+    pub fn get_nametable_data(&self, index: u8) -> Vec<u8> {
+        if index == 255 {
+            // Return all 4KB
+            let mut data = Vec::with_capacity(4096);
+            for addr in 0x2000..0x3000 {
+                data.push(self.cartridge.read_nametable(addr));
+            }
+            data
+        } else if index < 4 {
+            // Return specific 1KB nametable
+            let base = 0x2000 + (index as u16 * 0x400);
+            let mut data = Vec::with_capacity(1024);
+            for addr in base..(base + 0x400) {
+                data.push(self.cartridge.read_nametable(addr));
+            }
+            data
+        } else {
+            Vec::new()
+        }
+    }
 }
 
 impl<R: Render, D: AudioDriver> Mcu for NesMcu<R, D> {

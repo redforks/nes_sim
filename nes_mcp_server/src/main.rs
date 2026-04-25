@@ -1,11 +1,12 @@
 use anyhow::Result;
 use nes_mcp_protocol::{Request, Response};
 use rmcp::{
+    ServerHandler, ServiceExt,
     handler::server::{router::tool::ToolRouter, tool::Parameters},
     model::{PaginatedRequestParam, ServerCapabilities, ServerInfo},
     schemars,
     service::{RequestContext, RoleServer},
-    tool, tool_handler, tool_router, ServerHandler, ServiceExt,
+    tool, tool_handler, tool_router,
 };
 use serde::Deserialize;
 use std::future::Future;
@@ -20,6 +21,31 @@ use tracing::{error, info};
 #[derive(Deserialize, schemars::JsonSchema)]
 struct StartParams {
     rom_path: String,
+}
+
+#[derive(Deserialize, schemars::JsonSchema)]
+struct TickParams {
+    n_cycles: u64,
+}
+
+#[derive(Deserialize, schemars::JsonSchema)]
+struct ForwardToVblankParams {}
+
+#[derive(Deserialize, schemars::JsonSchema)]
+struct CpuRegistersParams {}
+
+#[derive(Deserialize, schemars::JsonSchema)]
+struct ApuStatusParams {}
+
+#[derive(Deserialize, schemars::JsonSchema)]
+struct PpuStatusParams {}
+
+#[derive(Deserialize, schemars::JsonSchema)]
+struct OamParams {}
+
+#[derive(Deserialize, schemars::JsonSchema)]
+struct NametableParams {
+    index: Option<u8>,
 }
 
 const TCP_PORT: u16 = 28800;
@@ -235,7 +261,96 @@ impl NesMcpServer {
         *self.child_process.lock().await = None;
         "Error: TCP server did not become ready in time".to_string()
     }
+
+    #[tool(description = "Execute N CPU instruction cycles on the NES.")]
+    async fn tick(&self, Parameters(TickParams { n_cycles }): Parameters<TickParams>) -> String {
+        const MAX_CYCLES: u64 = 100_000;
+
+        if n_cycles > MAX_CYCLES {
+            return format!(
+                "Error: n_cycles exceeds maximum of {}. Requested: {}",
+                MAX_CYCLES, n_cycles
+            );
+        }
+
+        let mut cycles_executed = 0u64;
+        let mut last_error = None;
+
+        for _ in 0..n_cycles {
+            match self.send_tcp_request(&Request::Step).await {
+                Ok(Response::StepResult { stopped: true }) => {
+                    return format!("Execution stopped after {} cycles", cycles_executed);
+                }
+                Ok(Response::StepResult { stopped: false }) => {
+                    cycles_executed += 1;
+                }
+                Ok(Response::Error { message }) => {
+                    last_error = Some(message);
+                    break;
+                }
+                Err(e) => {
+                    return format!("Error after {} cycles: {}", cycles_executed, e);
+                }
+                _ => {
+                    last_error = Some("Unexpected response".to_string());
+                    break;
+                }
+            }
+        }
+
+        if let Some(err) = last_error {
+            format!("Error after {} cycles: {}", cycles_executed, err)
+        } else {
+            format!("Executed {} cycles", cycles_executed)
+        }
+    }
+
+    #[tool(description = "Run the NES emulator until the next VBlank (scanline 241, dot 1).")]
+    async fn forward_to_vblank(
+        &self,
+        Parameters(_params): Parameters<ForwardToVblankParams>,
+    ) -> String {
+        const MAX_TICKS: u64 = 60_000; // Safety limit: ~1 frame
+        let mut ticks = 0u64;
+
+        loop {
+            if ticks >= MAX_TICKS {
+                return format!(
+                    "Error: Exceeded maximum tick limit ({}) without reaching VBlank",
+                    MAX_TICKS
+                );
+            }
+
+            match self.send_tcp_request(&Request::Step).await {
+                Ok(Response::StepResult { stopped: true }) => {
+                    return format!("Execution stopped after {} ticks", ticks);
+                }
+                Ok(Response::StepResult { stopped: false }) => {
+                    ticks += 1;
+                    // Check if we've reached VBlank by reading PPU status
+                    match self.send_tcp_request(&Request::GetPpuStatus).await {
+                        Ok(Response::PpuStatus { status }) => {
+                            if status.contains("scanline 241") && status.contains("dot 1") {
+                                return format!("Reached VBlank after {} ticks", ticks);
+                            }
+                        }
+                        _ => {
+                            // PPU status not available, continue
+                        }
+                    }
+                }
+                Ok(Response::Error { message }) => {
+                    return format!("Error: {}", message);
+                }
+                Err(e) => {
+                    return format!("Error: {}", e);
+                }
+                _ => {}
+            }
+        }
+    }
 }
+
 
 #[tool_handler]
 impl ServerHandler for NesMcpServer {
@@ -254,18 +369,72 @@ impl ServerHandler for NesMcpServer {
         _request: Option<PaginatedRequestParam>,
         _context: RequestContext<RoleServer>,
     ) -> Result<rmcp::model::ListResourcesResult, rmcp::model::ErrorData> {
-        let raw = rmcp::model::RawResource {
-            uri: "nes://memory/".to_string(),
-            name: "NES Memory".to_string(),
-            description: Some("Access NES emulator memory".to_string()),
-            mime_type: Some("text/plain".to_string()),
-            size: None,
-        };
-        Ok(rmcp::model::ListResourcesResult {
-            resources: vec![rmcp::model::Resource {
-                raw,
+        let resources = vec![
+            rmcp::model::Resource {
+                raw: rmcp::model::RawResource {
+                    uri: "nes://memory/".to_string(),
+                    name: "NES Memory".to_string(),
+                    description: Some("Access NES emulator memory".to_string()),
+                    mime_type: Some("text/plain".to_string()),
+                    size: None,
+                },
                 annotations: None,
-            }],
+            },
+            rmcp::model::Resource {
+                raw: rmcp::model::RawResource {
+                    uri: "nes://cpu/registers".to_string(),
+                    name: "CPU Registers".to_string(),
+                    description: Some("Current CPU register state".to_string()),
+                    mime_type: Some("application/json".to_string()),
+                    size: None,
+                },
+                annotations: None,
+            },
+            rmcp::model::Resource {
+                raw: rmcp::model::RawResource {
+                    uri: "nes://apu/status".to_string(),
+                    name: "APU Status".to_string(),
+                    description: Some("Current APU status".to_string()),
+                    mime_type: Some("application/json".to_string()),
+                    size: None,
+                },
+                annotations: None,
+            },
+            rmcp::model::Resource {
+                raw: rmcp::model::RawResource {
+                    uri: "nes://ppu/status".to_string(),
+                    name: "PPU Status".to_string(),
+                    description: Some("PPU state dump".to_string()),
+                    mime_type: Some("text/plain".to_string()),
+                    size: None,
+                },
+                annotations: None,
+            },
+            rmcp::model::Resource {
+                raw: rmcp::model::RawResource {
+                    uri: "nes://ppu/oam".to_string(),
+                    name: "PPU OAM".to_string(),
+                    description: Some("Object Attribute Memory (sprite data)".to_string()),
+                    mime_type: Some("text/plain".to_string()),
+                    size: None,
+                },
+                annotations: None,
+            },
+            rmcp::model::Resource {
+                raw: rmcp::model::RawResource {
+                    uri: "nes://ppu/nametable".to_string(),
+                    name: "PPU Nametable".to_string(),
+                    description: Some(
+                        "Nametable memory (use ?index=0-3 for specific table)".to_string(),
+                    ),
+                    mime_type: Some("text/plain".to_string()),
+                    size: None,
+                },
+                annotations: None,
+            },
+        ];
+        Ok(rmcp::model::ListResourcesResult {
+            resources,
             next_cursor: None,
         })
     }
@@ -277,13 +446,35 @@ impl ServerHandler for NesMcpServer {
     ) -> Result<rmcp::model::ReadResourceResult, rmcp::model::ErrorData> {
         let uri = &request.uri;
 
-        if !uri.starts_with("nes://memory/") {
-            return Err(rmcp::model::ErrorData::invalid_params(
-                "Unknown resource URI",
-                Some(serde_json::json!(uri.clone())),
-            ));
+        // Route to appropriate handler based on URI
+        if uri.starts_with("nes://memory/") {
+            return self.read_memory_resource(uri).await;
+        } else if uri == "nes://cpu/registers" {
+            return self.read_cpu_registers_resource(uri).await;
+        } else if uri == "nes://apu/status" {
+            return self.read_apu_status_resource(uri).await;
+        } else if uri == "nes://ppu/status" {
+            return self.read_ppu_status_resource(uri).await;
+        } else if uri == "nes://ppu/oam" {
+            return self.read_oam_resource(uri).await;
+        } else if uri.starts_with("nes://ppu/nametable") {
+            return self.read_nametable_resource(uri).await;
         }
 
+        Err(rmcp::model::ErrorData::invalid_params(
+            "Unknown resource URI",
+            Some(serde_json::json!(uri.clone())),
+        ))
+    }
+}
+
+// Helper methods for resource reading
+impl NesMcpServer {
+    /// Read memory resource (existing functionality)
+    async fn read_memory_resource(
+        &self,
+        uri: &str,
+    ) -> Result<rmcp::model::ReadResourceResult, rmcp::model::ErrorData> {
         // Parse query parameters
         let url = match url::Url::parse(uri) {
             Ok(u) => u,
@@ -376,13 +567,229 @@ impl ServerHandler for NesMcpServer {
         match response {
             Response::MemoryData { data } => Ok(rmcp::model::ReadResourceResult {
                 contents: vec![rmcp::model::ResourceContents::TextResourceContents {
-                    uri: uri.clone(),
+                    uri: uri.to_string(),
                     mime_type: Some("text/plain".to_string()),
                     text: data,
                 }],
             }),
             Response::Error { message } => Err(rmcp::model::ErrorData::internal_error(
                 "Memory read failed",
+                Some(serde_json::json!(message)),
+            )),
+            _ => Err(rmcp::model::ErrorData::internal_error(
+                "Unexpected response",
+                None,
+            )),
+        }
+    }
+
+    /// Read CPU registers resource
+    async fn read_cpu_registers_resource(
+        &self,
+        uri: &str,
+    ) -> Result<rmcp::model::ReadResourceResult, rmcp::model::ErrorData> {
+        let response = match self.send_tcp_request(&Request::GetCpuRegisters).await {
+            Ok(r) => r,
+            Err(e) => {
+                return Err(rmcp::model::ErrorData::internal_error(
+                    "Failed to read CPU registers",
+                    Some(serde_json::json!(e.to_string())),
+                ));
+            }
+        };
+
+        match response {
+            Response::CpuRegisters { registers } => {
+                let json = serde_json::to_string_pretty(&registers).map_err(|e| {
+                    rmcp::model::ErrorData::internal_error(
+                        "Failed to serialize registers",
+                        Some(serde_json::json!(e.to_string())),
+                    )
+                })?;
+                Ok(rmcp::model::ReadResourceResult {
+                    contents: vec![rmcp::model::ResourceContents::TextResourceContents {
+                        uri: uri.to_string(),
+                        mime_type: Some("application/json".to_string()),
+                        text: json,
+                    }],
+                })
+            }
+            Response::Error { message } => Err(rmcp::model::ErrorData::internal_error(
+                "Failed to read CPU registers",
+                Some(serde_json::json!(message)),
+            )),
+            _ => Err(rmcp::model::ErrorData::internal_error(
+                "Unexpected response",
+                None,
+            )),
+        }
+    }
+
+    /// Read APU status resource
+    async fn read_apu_status_resource(
+        &self,
+        uri: &str,
+    ) -> Result<rmcp::model::ReadResourceResult, rmcp::model::ErrorData> {
+        let response = match self.send_tcp_request(&Request::GetApuStatus).await {
+            Ok(r) => r,
+            Err(e) => {
+                return Err(rmcp::model::ErrorData::internal_error(
+                    "Failed to read APU status",
+                    Some(serde_json::json!(e.to_string())),
+                ));
+            }
+        };
+
+        match response {
+            Response::ApuStatus { status } => {
+                let json = serde_json::to_string_pretty(&status).map_err(|e| {
+                    rmcp::model::ErrorData::internal_error(
+                        "Failed to serialize APU status",
+                        Some(serde_json::json!(e.to_string())),
+                    )
+                })?;
+                Ok(rmcp::model::ReadResourceResult {
+                    contents: vec![rmcp::model::ResourceContents::TextResourceContents {
+                        uri: uri.to_string(),
+                        mime_type: Some("application/json".to_string()),
+                        text: json,
+                    }],
+                })
+            }
+            Response::Error { message } => Err(rmcp::model::ErrorData::internal_error(
+                "Failed to read APU status",
+                Some(serde_json::json!(message)),
+            )),
+            _ => Err(rmcp::model::ErrorData::internal_error(
+                "Unexpected response",
+                None,
+            )),
+        }
+    }
+
+    /// Read PPU status resource
+    async fn read_ppu_status_resource(
+        &self,
+        uri: &str,
+    ) -> Result<rmcp::model::ReadResourceResult, rmcp::model::ErrorData> {
+        let response = match self.send_tcp_request(&Request::GetPpuStatus).await {
+            Ok(r) => r,
+            Err(e) => {
+                return Err(rmcp::model::ErrorData::internal_error(
+                    "Failed to read PPU status",
+                    Some(serde_json::json!(e.to_string())),
+                ));
+            }
+        };
+
+        match response {
+            Response::PpuStatus { status } => Ok(rmcp::model::ReadResourceResult {
+                contents: vec![rmcp::model::ResourceContents::TextResourceContents {
+                    uri: uri.to_string(),
+                    mime_type: Some("text/plain".to_string()),
+                    text: status,
+                }],
+            }),
+            Response::Error { message } => Err(rmcp::model::ErrorData::internal_error(
+                "Failed to read PPU status",
+                Some(serde_json::json!(message)),
+            )),
+            _ => Err(rmcp::model::ErrorData::internal_error(
+                "Unexpected response",
+                None,
+            )),
+        }
+    }
+
+    /// Read OAM resource
+    async fn read_oam_resource(
+        &self,
+        uri: &str,
+    ) -> Result<rmcp::model::ReadResourceResult, rmcp::model::ErrorData> {
+        let response = match self.send_tcp_request(&Request::ReadOam).await {
+            Ok(r) => r,
+            Err(e) => {
+                return Err(rmcp::model::ErrorData::internal_error(
+                    "Failed to read OAM",
+                    Some(serde_json::json!(e.to_string())),
+                ));
+            }
+        };
+
+        match response {
+            Response::OamData { data } => Ok(rmcp::model::ReadResourceResult {
+                contents: vec![rmcp::model::ResourceContents::TextResourceContents {
+                    uri: uri.to_string(),
+                    mime_type: Some("text/plain".to_string()),
+                    text: data,
+                }],
+            }),
+            Response::Error { message } => Err(rmcp::model::ErrorData::internal_error(
+                "Failed to read OAM",
+                Some(serde_json::json!(message)),
+            )),
+            _ => Err(rmcp::model::ErrorData::internal_error(
+                "Unexpected response",
+                None,
+            )),
+        }
+    }
+
+    /// Read nametable resource
+    async fn read_nametable_resource(
+        &self,
+        uri: &str,
+    ) -> Result<rmcp::model::ReadResourceResult, rmcp::model::ErrorData> {
+        // Parse index from query parameter (default: 255 = all nametables)
+        let url = match url::Url::parse(uri) {
+            Ok(u) => u,
+            Err(e) => {
+                return Err(rmcp::model::ErrorData::invalid_params(
+                    "Invalid URI",
+                    Some(serde_json::json!(e.to_string())),
+                ));
+            }
+        };
+
+        let query_pairs = url.query.map(|q| {
+            q.split('&')
+                .filter_map(|s| {
+                    let mut parts = s.splitn(2, '=');
+                    Some((parts.next()?.to_string(), parts.next()?.to_string()))
+                })
+                .collect::<Vec<_>>()
+        });
+
+        let index = query_pairs
+            .as_ref()
+            .and_then(|pairs| pairs.iter().find(|(k, _)| *k == "index"))
+            .map(|(_, v)| v.parse::<u8>().ok())
+            .flatten()
+            .unwrap_or(255); // Default to all nametables
+
+        let response = match self
+            .send_tcp_request(&Request::ReadNametable { index })
+            .await
+        {
+            Ok(r) => r,
+            Err(e) => {
+                return Err(rmcp::model::ErrorData::internal_error(
+                    "Failed to read nametable",
+                    Some(serde_json::json!(e.to_string())),
+                ));
+            }
+        };
+
+        match response {
+            Response::NametableData { data } => Ok(rmcp::model::ReadResourceResult {
+                contents: vec![rmcp::model::ResourceContents::TextResourceContents {
+                    uri: uri.to_string(),
+                    mime_type: Some("text/plain".to_string()),
+                    text: data,
+                }],
+            }),
+            Response::Error { message } => Err(rmcp::model::ErrorData::internal_error(
+                "Failed to read nametable",
                 Some(serde_json::json!(message)),
             )),
             _ => Err(rmcp::model::ErrorData::internal_error(

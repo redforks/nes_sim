@@ -142,6 +142,26 @@ fn handle_request(state: &mut MachineState, request: Request) -> Response {
             let status = get_machine_status(state);
             Response::Status { status }
         }
+        Request::GetCpuRegisters => {
+            let registers = get_cpu_registers(state);
+            Response::CpuRegisters { registers }
+        }
+        Request::GetApuStatus => {
+            let status = get_apu_status(state);
+            Response::ApuStatus { status }
+        }
+        Request::GetPpuStatus => {
+            let status = get_ppu_status(state);
+            Response::PpuStatus { status }
+        }
+        Request::ReadOam => {
+            let data = get_oam_data(state);
+            Response::OamData { data }
+        }
+        Request::ReadNametable { index } => {
+            let data = get_nametable_data(state, index);
+            Response::NametableData { data }
+        }
     }
 }
 
@@ -172,6 +192,131 @@ fn get_machine_status(state: &mut MachineState) -> nes_mcp_protocol::MachineStat
         // INes and PngFrameMatch don't expose CPU state through public API
         MachineWrapper::INes(_) | MachineWrapper::PngFrameMatch(_) => {
             nes_mcp_protocol::MachineStatus::default()
+        }
+    }
+}
+
+/// Get CPU register state with decoded flags
+fn get_cpu_registers(state: &mut MachineState) -> nes_mcp_protocol::CpuRegisters {
+    match &mut state.machine {
+        MachineWrapper::Bin(m) => {
+            let cpu = m.cpu_mut();
+            let status = cpu.status;
+            nes_mcp_protocol::CpuRegisters {
+                pc: cpu.pc,
+                a: cpu.a,
+                x: cpu.x,
+                y: cpu.y,
+                sp: cpu.sp,
+                status,
+                cycles: cpu.total_cycles() as u64,
+                flag_n: (status & 0x80) != 0,
+                flag_v: (status & 0x40) != 0,
+                flag_d: (status & 0x08) != 0,
+                flag_i: (status & 0x04) != 0,
+                flag_z: (status & 0x02) != 0,
+                flag_c: (status & 0x01) != 0,
+            }
+        }
+        MachineWrapper::INes(_) | MachineWrapper::PngFrameMatch(_) => {
+            nes_mcp_protocol::CpuRegisters {
+                pc: 0,
+                a: 0,
+                x: 0,
+                y: 0,
+                sp: 0,
+                status: 0,
+                cycles: 0,
+                flag_n: false,
+                flag_v: false,
+                flag_d: false,
+                flag_i: false,
+                flag_z: false,
+                flag_c: false,
+            }
+        }
+    }
+}
+
+/// Get APU status
+fn get_apu_status(state: &mut MachineState) -> nes_mcp_protocol::ApuStatus {
+    match &state.machine {
+        MachineWrapper::Bin(_) => {
+            // Bin machines don't have APU
+            nes_mcp_protocol::ApuStatus {
+                pulse1_enabled: false,
+                pulse2_enabled: false,
+                triangle_enabled: false,
+                noise_enabled: false,
+                dmc_enabled: false,
+                frame_irq_pending: false,
+                dmc_irq_pending: false,
+            }
+        }
+        MachineWrapper::INes(m) => {
+            let apu_status = m.mcu().dump_apu_state();
+            nes_mcp_protocol::ApuStatus {
+                pulse1_enabled: apu_status.pulse1_enabled,
+                pulse2_enabled: apu_status.pulse2_enabled,
+                triangle_enabled: apu_status.triangle_enabled,
+                noise_enabled: apu_status.noise_enabled,
+                dmc_enabled: apu_status.dmc_enabled,
+                frame_irq_pending: apu_status.frame_irq_pending,
+                dmc_irq_pending: apu_status.dmc_irq_pending,
+            }
+        }
+        MachineWrapper::PngFrameMatch(m) => {
+            let apu_status = m.mcu().dump_apu_state();
+            nes_mcp_protocol::ApuStatus {
+                pulse1_enabled: apu_status.pulse1_enabled,
+                pulse2_enabled: apu_status.pulse2_enabled,
+                triangle_enabled: apu_status.triangle_enabled,
+                noise_enabled: apu_status.noise_enabled,
+                dmc_enabled: apu_status.dmc_enabled,
+                frame_irq_pending: apu_status.frame_irq_pending,
+                dmc_irq_pending: apu_status.dmc_irq_pending,
+            }
+        }
+    }
+}
+
+/// Get PPU state dump
+fn get_ppu_status(state: &MachineState) -> String {
+    match &state.machine {
+        MachineWrapper::Bin(_) => {
+            "# PPU State\nNot available (Bin machine has no PPU)\n".to_string()
+        }
+        MachineWrapper::INes(m) => m.mcu().dump_ppu_state(),
+        MachineWrapper::PngFrameMatch(m) => m.mcu().dump_ppu_state(),
+    }
+}
+
+/// Get OAM data as hexdump
+fn get_oam_data(state: &MachineState) -> String {
+    match &state.machine {
+        MachineWrapper::Bin(_) => "OAM not available (Bin machine has no PPU)\n".to_string(),
+        MachineWrapper::INes(m) => {
+            let oam = m.mcu().get_oam_data();
+            format_hexdump(&oam, 0)
+        }
+        MachineWrapper::PngFrameMatch(m) => {
+            let oam = m.mcu().get_oam_data();
+            format_hexdump(&oam, 0)
+        }
+    }
+}
+
+/// Get nametable data as hexdump
+fn get_nametable_data(state: &MachineState, index: u8) -> String {
+    match &state.machine {
+        MachineWrapper::Bin(_) => "Nametable not available (Bin machine has no PPU)\n".to_string(),
+        MachineWrapper::INes(m) => {
+            let nametable = m.mcu().get_nametable_data(index);
+            format_hexdump(&nametable, 0x2000 + (index as u16 * 0x400))
+        }
+        MachineWrapper::PngFrameMatch(m) => {
+            let nametable = m.mcu().get_nametable_data(index);
+            format_hexdump(&nametable, 0x2000 + (index as u16 * 0x400))
         }
     }
 }

@@ -16,6 +16,16 @@ pub enum Request {
     Reset,
     /// Get current status
     GetStatus,
+    /// Get CPU register state
+    GetCpuRegisters,
+    /// Get APU status
+    GetApuStatus,
+    /// Get PPU state dump
+    GetPpuStatus,
+    /// Read OAM memory
+    ReadOam,
+    /// Read nametable memory (index: 0-3 for specific, 255 for all)
+    ReadNametable { index: u8 },
 }
 
 /// Response type from nes_cpu_test to MCP server
@@ -30,6 +40,16 @@ pub enum Response {
     ResetDone,
     /// Current machine status
     Status { status: MachineStatus },
+    /// CPU register state
+    CpuRegisters { registers: CpuRegisters },
+    /// APU status
+    ApuStatus { status: ApuStatus },
+    /// PPU state dump
+    PpuStatus { status: String },
+    /// OAM memory data
+    OamData { data: String },
+    /// Nametable memory data
+    NametableData { data: String },
     /// Error response
     Error { message: String },
 }
@@ -44,6 +64,37 @@ pub struct MachineStatus {
     pub p: u8,
     pub sp: u8,
     pub cycles: u64,
+}
+
+/// CPU register state with decoded flags
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CpuRegisters {
+    pub pc: u16,
+    pub a: u8,
+    pub x: u8,
+    pub y: u8,
+    pub sp: u8,
+    pub status: u8,
+    pub cycles: u64,
+    // Decoded flags for readability
+    pub flag_n: bool,
+    pub flag_v: bool,
+    pub flag_d: bool,
+    pub flag_i: bool,
+    pub flag_z: bool,
+    pub flag_c: bool,
+}
+
+/// APU channel and status information
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ApuStatus {
+    pub pulse1_enabled: bool,
+    pub pulse2_enabled: bool,
+    pub triangle_enabled: bool,
+    pub noise_enabled: bool,
+    pub dmc_enabled: bool,
+    pub frame_irq_pending: bool,
+    pub dmc_irq_pending: bool,
 }
 
 impl Default for MachineStatus {

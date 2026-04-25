@@ -175,6 +175,18 @@ const DMC_RATE_TABLE: [u16; 16] = [
     428, 380, 340, 320, 286, 254, 226, 214, 190, 160, 142, 128, 106, 84, 72, 54,
 ];
 
+/// APU status information for debugging/inspection
+#[derive(Debug, Clone, Copy)]
+pub struct ApuStatusInfo {
+    pub pulse1_enabled: bool,
+    pub pulse2_enabled: bool,
+    pub triangle_enabled: bool,
+    pub noise_enabled: bool,
+    pub dmc_enabled: bool,
+    pub frame_irq_pending: bool,
+    pub dmc_irq_pending: bool,
+}
+
 #[derive(Clone, Default)]
 struct EnvelopeState {
     start: bool,
@@ -858,6 +870,19 @@ impl<D: AudioDriver> Apu<D> {
 
     pub fn flush(&mut self) {
         self.driver.flush();
+    }
+
+    /// Get current APU status for debugging/inspection
+    pub fn get_status(&self) -> ApuStatusInfo {
+        ApuStatusInfo {
+            pulse1_enabled: self.pulse1.enabled,
+            pulse2_enabled: self.pulse2.enabled,
+            triangle_enabled: self.triangle.enabled,
+            noise_enabled: self.noise.enabled,
+            dmc_enabled: self.dmc.status_enabled(),
+            frame_irq_pending: self.frame_interrupt,
+            dmc_irq_pending: self.dmc_interrupt,
+        }
     }
 
     pub fn read(&mut self, address: u16) -> u8 {
