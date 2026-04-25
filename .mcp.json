@@ -1,0 +1,11 @@
+{
+  "mcpServers": {
+    "nes": {
+      "command": "cargo",
+      "args": ["run", "-p", "nes_mcp_server", "-q"],
+      "env": {
+        "RUST_LOG": "info"
+      }
+    }
+  }
+}
