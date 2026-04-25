@@ -324,3 +324,6 @@ test-cov:
 
 test-cov-text:
     cd nes_core; cargo tarpaulin --skip-clean --stderr --out Markdown --engine llvm --output-dir /tmp/tarpaulin-output-dir
+
+mount_nes_dev_wiki:
+    fuse-zip ../nesdevwiki.zip nesdev-wiki/
