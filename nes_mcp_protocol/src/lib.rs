@@ -12,6 +12,8 @@ pub enum Request {
     ReadMemory { start: u16, end: u16 },
     /// Step execution
     Step,
+    /// Forward execution until VBlank (scanline 241, dot 1)
+    ForwardToVblank,
     /// Reset the machine
     Reset,
     /// Get current status
@@ -36,6 +38,8 @@ pub enum Response {
     MemoryData { data: String },
     /// Step execution result
     StepResult { stopped: bool },
+    /// Forward to VBlank result
+    ForwardToVblankResult { ticks: u64 },
     /// Reset acknowledgment
     ResetDone,
     /// Current machine status

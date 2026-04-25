@@ -134,6 +134,52 @@ fn handle_request(state: &mut MachineState, request: Request) -> Response {
                 }
             }
         }
+        Request::ForwardToVblank => {
+            const MAX_TICKS: u64 = 2000000;
+            let mut ticks = 0u64;
+
+            loop {
+                if ticks >= MAX_TICKS {
+                    let response = Response::Error {
+                        message: format!(
+                            "Exceeded maximum tick limit ({}) without reaching VBlank",
+                            MAX_TICKS
+                        ),
+                    };
+                    break response;
+                }
+
+                let result = state.machine.tick();
+                ticks += 1;
+
+                match result {
+                    ExecuteResult::Stop(code) => {
+                        info!("Machine stopped with code: {} after {} ticks", code, ticks);
+                        break Response::ForwardToVblankResult { ticks };
+                    }
+                    ExecuteResult::Halt => {
+                        info!("Machine halted after {} ticks", ticks);
+                        break Response::ForwardToVblankResult { ticks };
+                    }
+                    ExecuteResult::ShouldReset => {
+                        state.machine.reset();
+                        warn!("Machine reset during forward_to_vblank");
+                    }
+                    ExecuteResult::Continue => {
+                        // Check if we've reached VBlank (scanline 241, dot 1)
+                        let vblank_reached = match &state.machine {
+                            MachineWrapper::Bin(_) => false,
+                            MachineWrapper::INes(m) => m.mcu().is_at_vblank(),
+                            MachineWrapper::PngFrameMatch(m) => m.mcu().is_at_vblank(),
+                        };
+
+                        if vblank_reached {
+                            break Response::ForwardToVblankResult { ticks };
+                        }
+                    }
+                }
+            }
+        }
         Request::Reset => {
             state.machine.reset();
             Response::ResetDone

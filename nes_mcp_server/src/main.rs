@@ -15,8 +15,9 @@ use std::sync::Arc;
 use std::time::Duration;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::process::Command;
+use tokio::signal::unix::{SignalKind, signal};
 use tokio::sync::Mutex;
-use tracing::{error, info};
+use tracing::{error, info, warn};
 
 #[derive(Deserialize, schemars::JsonSchema)]
 struct StartParams {
@@ -32,18 +33,7 @@ struct TickParams {
 struct ForwardToVblankParams {}
 
 #[derive(Deserialize, schemars::JsonSchema)]
-struct CpuRegistersParams {}
-
-#[derive(Deserialize, schemars::JsonSchema)]
-struct ApuStatusParams {}
-
-#[derive(Deserialize, schemars::JsonSchema)]
-struct PpuStatusParams {}
-
-#[derive(Deserialize, schemars::JsonSchema)]
-struct OamParams {}
-
-#[derive(Deserialize, schemars::JsonSchema)]
+#[allow(dead_code)]
 struct NametableParams {
     index: Option<u8>,
 }
@@ -59,6 +49,7 @@ const TCP_SERVER_READY_DELAY_MS: u64 = 300;
 pub struct NesMcpServer {
     tool_router: ToolRouter<NesMcpServer>,
     child_process: Arc<Mutex<Option<tokio::process::Child>>>,
+    child_pid: Arc<Mutex<Option<u32>>>,
     rom_path: Arc<Mutex<Option<String>>>,
 }
 
@@ -68,8 +59,36 @@ impl NesMcpServer {
         Self {
             tool_router: Self::tool_router(),
             child_process: Arc::new(Mutex::new(None)),
+            child_pid: Arc::new(Mutex::new(None)),
             rom_path: Arc::new(Mutex::new(None)),
         }
+    }
+
+    /// Kill the child process if it's running
+    async fn kill_child_process(&self) {
+        let mut child_guard = self.child_process.lock().await;
+        if let Some(mut child) = child_guard.take() {
+            let pid = child.id();
+            info!("Killing NES emulator process (PID: {:?})", pid);
+
+            // Try SIGTERM first for graceful shutdown
+            if let Err(e) = child.kill().await {
+                warn!("Failed to kill child process: {}", e);
+            } else {
+                // Wait for the process to actually exit
+                match child.wait().await {
+                    Ok(status) => {
+                        info!("Child process exited with status: {}", status);
+                    }
+                    Err(e) => {
+                        warn!("Failed to wait for child process: {}", e);
+                    }
+                }
+            }
+
+            *self.child_pid.lock().await = None;
+        }
+        drop(child_guard);
     }
 
     /// Connect to TCP server with retry logic
@@ -136,13 +155,7 @@ impl NesMcpServer {
         *self.rom_path.lock().await = Some(rom_path.clone());
 
         // Kill any existing process first
-        let mut child_guard = self.child_process.lock().await;
-        if let Some(mut child) = child_guard.take() {
-            info!("Killing existing NES process before starting new one");
-            let _ = child.kill().await;
-            let _ = child.wait().await;
-        }
-        drop(child_guard);
+        self.kill_child_process().await;
 
         // Start new process with ROM
         info!("Starting NES CPU test with ROM: {}", rom_path);
@@ -170,7 +183,10 @@ impl NesMcpServer {
             }
         };
 
+        let pid = child.id();
         *self.child_process.lock().await = Some(child);
+        *self.child_pid.lock().await = pid;
+        info!("Started NES CPU test process with PID: {:?}", pid);
 
         // Wait for TCP server to be ready
         for attempt in 0..TCP_SERVER_READY_ATTEMPTS {
@@ -208,13 +224,7 @@ impl NesMcpServer {
         };
 
         // Kill existing process if any
-        let mut child_guard = self.child_process.lock().await;
-        if let Some(mut child) = child_guard.take() {
-            info!("Killing existing NES process");
-            let _ = child.kill().await;
-            let _ = child.wait().await;
-        }
-        drop(child_guard);
+        self.kill_child_process().await;
 
         // Start new process with ROM
         info!("Restarting NES CPU test with ROM: {}", rom_path);
@@ -242,7 +252,10 @@ impl NesMcpServer {
             }
         };
 
+        let pid = child.id();
         *self.child_process.lock().await = Some(child);
+        *self.child_pid.lock().await = pid;
+        info!("Restarted NES CPU test process with PID: {:?}", pid);
 
         // Wait for TCP server to be ready
         for attempt in 0..TCP_SERVER_READY_ATTEMPTS {
@@ -262,9 +275,9 @@ impl NesMcpServer {
         "Error: TCP server did not become ready in time".to_string()
     }
 
-    #[tool(description = "Execute N CPU instruction cycles on the NES.")]
+    #[tool(description = "Execute N CPU instruction cycles on the NES. N must less than 1000000")]
     async fn tick(&self, Parameters(TickParams { n_cycles }): Parameters<TickParams>) -> String {
-        const MAX_CYCLES: u64 = 100_000;
+        const MAX_CYCLES: u64 = 1000000;
 
         if n_cycles > MAX_CYCLES {
             return format!(
@@ -310,47 +323,20 @@ impl NesMcpServer {
         &self,
         Parameters(_params): Parameters<ForwardToVblankParams>,
     ) -> String {
-        const MAX_TICKS: u64 = 60_000; // Safety limit: ~1 frame
-        let mut ticks = 0u64;
-
-        loop {
-            if ticks >= MAX_TICKS {
-                return format!(
-                    "Error: Exceeded maximum tick limit ({}) without reaching VBlank",
-                    MAX_TICKS
-                );
+        match self.send_tcp_request(&Request::ForwardToVblank).await {
+            Ok(Response::ForwardToVblankResult { ticks }) => {
+                format!("Execution stopped after {} ticks", ticks)
             }
-
-            match self.send_tcp_request(&Request::Step).await {
-                Ok(Response::StepResult { stopped: true }) => {
-                    return format!("Execution stopped after {} ticks", ticks);
-                }
-                Ok(Response::StepResult { stopped: false }) => {
-                    ticks += 1;
-                    // Check if we've reached VBlank by reading PPU status
-                    match self.send_tcp_request(&Request::GetPpuStatus).await {
-                        Ok(Response::PpuStatus { status }) => {
-                            if status.contains("scanline 241") && status.contains("dot 1") {
-                                return format!("Reached VBlank after {} ticks", ticks);
-                            }
-                        }
-                        _ => {
-                            // PPU status not available, continue
-                        }
-                    }
-                }
-                Ok(Response::Error { message }) => {
-                    return format!("Error: {}", message);
-                }
-                Err(e) => {
-                    return format!("Error: {}", e);
-                }
-                _ => {}
+            Ok(Response::Error { message }) => {
+                format!("Error: {}", message)
             }
+            Err(e) => {
+                format!("Error: {}", e)
+            }
+            _ => "Error: Unexpected response".to_string(),
         }
     }
 }
-
 
 #[tool_handler]
 impl ServerHandler for NesMcpServer {
@@ -374,7 +360,9 @@ impl ServerHandler for NesMcpServer {
                 raw: rmcp::model::RawResource {
                     uri: "nes://memory/".to_string(),
                     name: "NES Memory".to_string(),
-                    description: Some("Access NES emulator memory".to_string()),
+                    description: Some(
+                        "Access NES emulator memory. Use ?start=0x0000&end=0xFFFF format (max 4KB range)".to_string(),
+                    ),
                     mime_type: Some("text/plain".to_string()),
                     size: None,
                 },
@@ -812,9 +800,87 @@ async fn main() -> Result<()> {
 
     info!("Starting NES MCP server");
 
+    // Create server with shared state for cleanup
+    let child_process = Arc::new(Mutex::new(None));
+    let child_pid = Arc::new(Mutex::new(None));
+    let rom_path = Arc::new(Mutex::new(None));
+
+    let server = NesMcpServer {
+        tool_router: NesMcpServer::tool_router(),
+        child_process: child_process.clone(),
+        child_pid: child_pid.clone(),
+        rom_path: rom_path.clone(),
+    };
+
+    // Set up signal handlers for graceful shutdown
+    let mut sigterm = signal(SignalKind::terminate())?;
+    let mut sigint = signal(SignalKind::interrupt())?;
+
+    // Clone Arcs for the shutdown task
+    let shutdown_child_process = child_process.clone();
+    let shutdown_child_pid = child_pid.clone();
+
+    // Spawn a task to handle signals
+    let shutdown_task = tokio::spawn(async move {
+        tokio::select! {
+            _ = sigterm.recv() => {
+                info!("Received SIGTERM signal, shutting down...");
+            }
+            _ = sigint.recv() => {
+                info!("Received SIGINT signal, shutting down...");
+            }
+        }
+        // Kill the child process before exiting
+        cleanup_child_process(&shutdown_child_process, &shutdown_child_pid).await;
+    });
+
+    // Start the MCP server
     let transport = (tokio::io::stdin(), tokio::io::stdout());
-    let service = NesMcpServer::new().serve(transport).await?;
-    service.waiting().await?;
+    let service = server.serve(transport).await?;
+
+    // Wait for either the service to complete or shutdown signal
+    tokio::select! {
+        result = service.waiting() => {
+            result?;
+        }
+        _ = shutdown_task => {
+            info!("Shutdown signal received");
+        }
+    }
+
+    // Ensure child process is killed on exit
+    cleanup_child_process(&child_process, &child_pid).await;
+    info!("NES MCP server shutdown complete");
 
     Ok(())
+}
+
+/// Cleanup function to kill the child process
+async fn cleanup_child_process(
+    child_process: &Arc<Mutex<Option<tokio::process::Child>>>,
+    child_pid: &Arc<Mutex<Option<u32>>>,
+) {
+    let mut child_guard = child_process.lock().await;
+    if let Some(mut child) = child_guard.take() {
+        let pid = child.id();
+        info!("Killing NES emulator process (PID: {:?})", pid);
+
+        // Try to kill the process gracefully
+        if let Err(e) = child.kill().await {
+            warn!("Failed to kill child process: {}", e);
+        } else {
+            // Wait for the process to actually exit
+            match child.wait().await {
+                Ok(status) => {
+                    info!("Child process exited with status: {}", status);
+                }
+                Err(e) => {
+                    warn!("Failed to wait for child process: {}", e);
+                }
+            }
+        }
+
+        *child_pid.lock().await = None;
+    }
+    drop(child_guard);
 }

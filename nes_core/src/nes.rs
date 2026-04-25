@@ -168,6 +168,12 @@ impl<R: Render, D: AudioDriver> NesMcu<R, D> {
         self.ppu.dump_state(&self.cartridge)
     }
 
+    /// Check if PPU is at VBlank (scanline 241, dot 1)
+    pub fn is_at_vblank(&self) -> bool {
+        let (scanline, dot) = self.ppu.timing();
+        scanline == 241 && dot == 1
+    }
+
     /// Get APU status information
     pub fn dump_apu_state(&self) -> crate::nes::apu::ApuStatusInfo {
         self.apu.get_status()
