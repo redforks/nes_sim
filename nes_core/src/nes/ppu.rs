@@ -213,7 +213,7 @@ impl<R: Render> Ppu<R> {
             (self.registers.vram_addr & !0x7BE0) | (self.registers.temp_vram_addr & 0x7BE0);
     }
 
-    pub fn dump_state(&self, cartridge: &Cartridge) -> String {
+    pub fn dump_state(&self, _cartridge: &Cartridge) -> String {
         let mut out = String::new();
 
         let _ = writeln!(out, "# PPU State");
@@ -246,66 +246,6 @@ impl<R: Render> Ppu<R> {
         let _ = writeln!(out, "- Fine X: 0x{:02X}", self.registers.fine_x);
         let _ = writeln!(out, "- Write toggle: {}", self.registers.write_toggle);
         let _ = writeln!(out, "- Scroll X/Y: {:?}", self.scroll_xy());
-
-        let _ = writeln!(out);
-
-        // Pattern tables (CHR data) - both 0x0000 and 0x1000 banks
-        let _ = writeln!(out, "## Pattern Tables");
-        for base in [0x0000u16, 0x1000u16] {
-            let _ = writeln!(out, "### 0x{:04X}", base);
-            // Print 16 bytes per row (0x1000 / 16 = 256 rows)
-            for row in 0..0x1000u16 / 16 {
-                let addr = base + row * 16;
-                let _ = write!(out, "\n0x{:04X}: ", addr);
-                for col in 0..16u16 {
-                    let value = cartridge.read_chr(addr + col, PatternAccess::Cpu);
-                    let _ = write!(out, "{:02X} ", value);
-                }
-                let _ = writeln!(out);
-                let _ = writeln!(out);
-            }
-            let _ = writeln!(out);
-        }
-
-        let _ = writeln!(out, "## Nametable");
-        for base in [0x2000u16, 0x2400, 0x2800, 0x2C00] {
-            let _ = writeln!(out, "### 0x{:04X}", base);
-            for row in 0..0x0400u16 / 16 {
-                let addr = base + row * 16;
-                let _ = write!(out, "\n0x{:04X}: ", addr);
-                for col in 0..16u16 {
-                    let value = cartridge.read_nametable(addr + col);
-                    let _ = write!(out, "{:02X} ", value);
-                }
-                let _ = writeln!(out);
-                let _ = writeln!(out);
-            }
-            let _ = writeln!(out);
-        }
-
-        let _ = writeln!(out, "## Palette RAM");
-        for row in 0..2u16 {
-            let addr = 0x3F00 + row * 16;
-            let _ = write!(out, "0x{:04X}: ", addr);
-            for col in 0..16u16 {
-                let value = self.palette.data[(row * 16 + col) as usize];
-                let _ = write!(out, "{:02X} ", value);
-            }
-            let _ = writeln!(out);
-        }
-
-        let _ = writeln!(out);
-        let _ = writeln!(out, "## OAM");
-        let _ = writeln!(out, "- OAMADDR: 0x{:02X}", self.registers.oam_addr);
-        for row in 0..16u16 {
-            let addr = row * 16;
-            let _ = write!(out, "0x{:04X}: ", addr);
-            for col in 0..16u16 {
-                let value = self.registers.oam_data[(row * 16 + col) as usize];
-                let _ = write!(out, "{:02X} ", value);
-            }
-            let _ = writeln!(out);
-        }
 
         out
     }
