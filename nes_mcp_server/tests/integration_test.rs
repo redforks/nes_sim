@@ -35,21 +35,6 @@ fn test_mcp_server_basics() -> TestResult {
 
     println!("Testing MCP server with ROM: {}", rom_path);
 
-    // Build the server first (to avoid cargo output during the test)
-    println!("Building MCP server...");
-    let build_status = Command::new("cargo")
-        .args(["build", "-p", "nes_mcp_server", "-q"])
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .status()?;
-
-    if !build_status.success() {
-        return Err("Failed to build MCP server".into());
-    }
-
-    // Give cargo a moment to finish
-    thread::sleep(Duration::from_secs(1));
-
     println!("Starting MCP server...");
 
     // Start the server - we'll test it by sending a simple initialize request
@@ -62,7 +47,7 @@ fn test_mcp_server_basics() -> TestResult {
 
     // Give the server time to start (cargo compiles on first run)
     println!("Waiting for server to start...");
-    thread::sleep(Duration::from_secs(8));
+    thread::sleep(Duration::from_secs(2));
 
     let server_stdin = server_process.stdin.as_mut().expect("Failed to open stdin");
     let server_stdout = server_process
@@ -91,7 +76,6 @@ fn test_mcp_server_basics() -> TestResult {
     server_stdin.flush()?;
 
     // Read response (skip any non-JSON cargo output)
-    let mut response_count = 0;
     let mut init_ok = false;
     let start = std::time::Instant::now();
 
@@ -116,7 +100,6 @@ fn test_mcp_server_basics() -> TestResult {
                     || response["result"]["capabilities"].is_object()
                 {
                     init_ok = true;
-                    response_count += 1;
                     break;
                 }
             }
@@ -169,7 +152,6 @@ fn test_mcp_server_basics() -> TestResult {
                 if response["result"]["tools"].is_array() {
                     println!("Got tools list: {}", response);
                     tools_ok = true;
-                    response_count += 1;
                     break;
                 }
             }
@@ -199,8 +181,8 @@ fn test_mcp_server_basics() -> TestResult {
     writeln!(server_stdin, "{}", start_request)?;
     server_stdin.flush()?;
 
-    // Read start response
-    thread::sleep(Duration::from_secs(6)); // Wait for emulator to start
+    // Read start response (give emulator time to start)
+    thread::sleep(Duration::from_secs(1));
 
     let mut start_ok = false;
     let start = std::time::Instant::now();
@@ -225,7 +207,6 @@ fn test_mcp_server_basics() -> TestResult {
                             .unwrap_or(false))
                 {
                     start_ok = true;
-                    response_count += 1;
                     break;
                 }
             }
@@ -238,10 +219,10 @@ fn test_mcp_server_basics() -> TestResult {
 
     // Test 4: Shutdown and verify cleanup
     println!("Test 4: Shutting down server...");
-    drop(server_stdin); // Close stdin
+    let _ = server_stdin; // Close stdin by dropping
 
     // Wait a bit for shutdown
-    thread::sleep(Duration::from_secs(2));
+    thread::sleep(Duration::from_secs(1));
 
     // Check if server process exited
     match server_process.try_wait()? {
@@ -255,7 +236,7 @@ fn test_mcp_server_basics() -> TestResult {
 
     // Test 5: Verify no nes_cpu_test processes left
     println!("Test 5: Verifying process cleanup...");
-    thread::sleep(Duration::from_secs(1));
+    thread::sleep(Duration::from_millis(500));
 
     let output = Command::new("pgrep").args(["-f", "nes_cpu_test"]).output();
 

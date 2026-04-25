@@ -42,16 +42,15 @@ fn main() {
     env_logger::builder().format_timestamp(None).init();
 
     // TCP server mode
+    #[cfg(feature = "tcp-server")]
     if tcp_server {
-        #[cfg(feature = "tcp-server")]
-        {
-            return tcp_server::run_tcp_server(f, quiet, start_pc, max_instructions);
-        }
-        #[cfg(not(feature = "tcp-server"))]
-        {
-            eprintln!("Error: TCP server feature not enabled");
-            std::process::exit(1);
-        }
+        tcp_server::run_tcp_server(f, quiet, start_pc, max_instructions);
+    }
+
+    #[cfg(not(feature = "tcp-server"))]
+    if tcp_server {
+        eprintln!("Error: --tcp-server requires the tcp-server feature");
+        std::process::exit(1);
     }
 
     let image = image::load_image(f).unwrap();

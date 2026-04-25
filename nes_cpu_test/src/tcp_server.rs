@@ -23,14 +23,19 @@ struct MachineState {
 
 /// Handle a single client connection
 async fn handle_client(mut socket: tokio::net::TcpStream, state: Arc<Mutex<MachineState>>) {
-    info!("Client connected");
+    let quiet = { state.lock().unwrap().quiet };
+    if !quiet {
+        info!("Client connected");
+    }
 
     loop {
         // Read message length
         let mut len_buf = [0u8; 4];
         if let Err(e) = socket.read_exact(&mut len_buf).await {
             if e.kind() == std::io::ErrorKind::UnexpectedEof {
-                info!("Client disconnected");
+                if !quiet {
+                    info!("Client disconnected");
+                }
                 break;
             }
             error!("Failed to read message length: {}", e);
@@ -60,7 +65,7 @@ async fn handle_client(mut socket: tokio::net::TcpStream, state: Arc<Mutex<Machi
                 let response = Response::Error {
                     message: format!("Invalid request: {}", e),
                 };
-                send_response(&mut socket, &response).await;
+                let _ = send_response(&mut socket, &response).await;
                 continue;
             }
         };
@@ -164,31 +169,9 @@ fn get_machine_status(state: &mut MachineState) -> nes_mcp_protocol::MachineStat
                 cycles: cpu.total_cycles() as u64,
             }
         }
-        MachineWrapper::INes(_) => {
-            // For NesMachine, we can't directly access CPU state through the public API
-            // Return a placeholder status for now
-            nes_mcp_protocol::MachineStatus {
-                pc: 0,
-                a: 0,
-                x: 0,
-                y: 0,
-                p: 0,
-                sp: 0,
-                cycles: 0,
-            }
-        }
-        MachineWrapper::PngFrameMatch(_) => {
-            // For PngFrameMatch, we can't directly access CPU state through the public API
-            // Return a placeholder status for now
-            nes_mcp_protocol::MachineStatus {
-                pc: 0,
-                a: 0,
-                x: 0,
-                y: 0,
-                p: 0,
-                sp: 0,
-                cycles: 0,
-            }
+        // INes and PngFrameMatch don't expose CPU state through public API
+        MachineWrapper::INes(_) | MachineWrapper::PngFrameMatch(_) => {
+            nes_mcp_protocol::MachineStatus::default()
         }
     }
 }

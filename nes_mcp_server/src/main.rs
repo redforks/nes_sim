@@ -1,12 +1,11 @@
 use anyhow::Result;
 use nes_mcp_protocol::{Request, Response};
 use rmcp::{
-    ServerHandler, ServiceExt,
     handler::server::{router::tool::ToolRouter, tool::Parameters},
-    model::{PaginatedRequestParam, ReadResourceRequestParam, ServerCapabilities, ServerInfo},
+    model::{PaginatedRequestParam, ServerCapabilities, ServerInfo},
     schemars,
     service::{RequestContext, RoleServer},
-    tool, tool_handler, tool_router,
+    tool, tool_handler, tool_router, ServerHandler, ServiceExt,
 };
 use serde::Deserialize;
 use std::future::Future;
@@ -26,6 +25,11 @@ struct StartParams {
 const TCP_PORT: u16 = 28800;
 const TCP_HOST: &str = "127.0.0.1";
 
+const TCP_CONNECT_RETRY_ATTEMPTS: u8 = 5;
+const TCP_CONNECT_RETRY_DELAY_MS: u64 = 200;
+const TCP_SERVER_READY_ATTEMPTS: u8 = 10;
+const TCP_SERVER_READY_DELAY_MS: u64 = 300;
+
 pub struct NesMcpServer {
     tool_router: ToolRouter<NesMcpServer>,
     child_process: Arc<Mutex<Option<tokio::process::Child>>>,
@@ -42,26 +46,36 @@ impl NesMcpServer {
         }
     }
 
-    /// Connect to TCP server and send request
-    async fn send_tcp_request(&self, request: &Request) -> Result<Response> {
-        // Retry connection a few times with delay
-        let mut stream = None;
-        for attempt in 0..5 {
+    /// Connect to TCP server with retry logic
+    async fn connect_tcp_with_retry(
+        &self,
+        max_attempts: u8,
+        delay: Duration,
+    ) -> Result<tokio::net::TcpStream> {
+        for attempt in 0..max_attempts {
             match tokio::net::TcpStream::connect((TCP_HOST, TCP_PORT)).await {
-                Ok(s) => {
-                    stream = Some(s);
-                    break;
-                }
-                Err(_e) if attempt < 4 => {
+                Ok(s) => return Ok(s),
+                Err(_) if attempt < max_attempts - 1 => {
                     info!("Connection attempt {} failed, retrying...", attempt + 1);
-                    tokio::time::sleep(Duration::from_millis(200)).await;
+                    tokio::time::sleep(delay).await;
                 }
                 Err(e) => return Err(e.into()),
             }
         }
+        Err(anyhow::anyhow!(
+            "Failed to connect to TCP server after {} attempts",
+            max_attempts
+        ))
+    }
 
-        let mut stream =
-            stream.ok_or_else(|| anyhow::anyhow!("Failed to connect to TCP server"))?;
+    /// Connect to TCP server and send request
+    async fn send_tcp_request(&self, request: &Request) -> Result<Response> {
+        let mut stream = self
+            .connect_tcp_with_retry(
+                TCP_CONNECT_RETRY_ATTEMPTS,
+                Duration::from_millis(TCP_CONNECT_RETRY_DELAY_MS),
+            )
+            .await?;
 
         // Serialize request
         let request_json = serde_json::to_string(request)?;
@@ -133,8 +147,8 @@ impl NesMcpServer {
         *self.child_process.lock().await = Some(child);
 
         // Wait for TCP server to be ready
-        for attempt in 0..10 {
-            tokio::time::sleep(Duration::from_millis(300)).await;
+        for attempt in 0..TCP_SERVER_READY_ATTEMPTS {
+            tokio::time::sleep(Duration::from_millis(TCP_SERVER_READY_DELAY_MS)).await;
             if tokio::net::TcpStream::connect((TCP_HOST, TCP_PORT))
                 .await
                 .is_ok()
@@ -205,8 +219,8 @@ impl NesMcpServer {
         *self.child_process.lock().await = Some(child);
 
         // Wait for TCP server to be ready
-        for attempt in 0..10 {
-            tokio::time::sleep(Duration::from_millis(300)).await;
+        for attempt in 0..TCP_SERVER_READY_ATTEMPTS {
+            tokio::time::sleep(Duration::from_millis(TCP_SERVER_READY_DELAY_MS)).await;
             if tokio::net::TcpStream::connect((TCP_HOST, TCP_PORT))
                 .await
                 .is_ok()

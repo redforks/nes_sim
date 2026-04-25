@@ -46,6 +46,20 @@ pub struct MachineStatus {
     pub cycles: u64,
 }
 
+impl Default for MachineStatus {
+    fn default() -> Self {
+        Self {
+            pc: 0,
+            a: 0,
+            x: 0,
+            y: 0,
+            p: 0,
+            sp: 0,
+            cycles: 0,
+        }
+    }
+}
+
 /// Format memory data as hexdump -C style
 pub fn format_hexdump(data: &[u8], start_addr: u16) -> String {
     let mut output = String::new();
