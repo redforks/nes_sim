@@ -3,8 +3,13 @@ name = "nes_cpu_test"
 version = "0.1.0"
 edition = "2024"
 
+[features]
+default = []
+tcp-server = ["tokio"]
+
 [dependencies]
 nes_core = { workspace = true }
+nes_mcp_protocol = { path = "../nes_mcp_protocol" }
 env_logger = { workspace = true }
 log = { workspace = true }
 clap = { workspace = true }
@@ -12,6 +17,8 @@ thiserror = { workspace = true }
 ansi_term = { workspace = true }
 is-terminal = { workspace = true }
 image = { workspace = true }
+tokio = { version = "1.46", features = ["net", "rt-multi-thread", "macros"], optional = true }
+serde_json = "1.0"
 
 [dev-dependencies]
 rstest = { workspace = true }

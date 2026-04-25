@@ -5,6 +5,8 @@ members = [
   "nes_cpu_test",
   "nes_web",
   "nescli",
+  "nes_mcp_protocol",
+  "nes_mcp_server",
 ]
 
 # Workspace dependencies - ALL dependencies managed here
