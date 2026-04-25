@@ -119,6 +119,10 @@ where
         self.machine.mcu_mut()
     }
 
+    pub fn cpu(&self) -> &crate::Cpu<NesMcu<R, D>> {
+        self.machine.cpu()
+    }
+
     pub fn reset(&mut self) {
         self.machine.mcu_mut().reset();
         self.machine.reset();

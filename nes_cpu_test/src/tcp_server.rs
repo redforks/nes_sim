@@ -104,12 +104,10 @@ fn handle_request(state: &mut MachineState, request: Request) -> Response {
     match request {
         Request::ReadMemory { start, end } => {
             let mut data = Vec::new();
-            let mut addr = start;
 
-            while addr <= end {
+            for addr in start..=end {
                 let byte = read_memory_byte(state, addr);
                 data.push(byte);
-                addr = addr.wrapping_add(1);
             }
 
             let hexdump = format_hexdump(&data, start);
@@ -235,9 +233,29 @@ fn get_machine_status(state: &mut MachineState) -> nes_mcp_protocol::MachineStat
                 cycles: cpu.total_cycles() as u64,
             }
         }
-        // INes and PngFrameMatch don't expose CPU state through public API
-        MachineWrapper::INes(_) | MachineWrapper::PngFrameMatch(_) => {
-            nes_mcp_protocol::MachineStatus::default()
+        MachineWrapper::INes(m) => {
+            let cpu = m.cpu();
+            nes_mcp_protocol::MachineStatus {
+                pc: cpu.pc,
+                a: cpu.a,
+                x: cpu.x,
+                y: cpu.y,
+                p: cpu.status,
+                sp: cpu.sp,
+                cycles: cpu.total_cycles() as u64,
+            }
+        }
+        MachineWrapper::PngFrameMatch(m) => {
+            let cpu = m.cpu();
+            nes_mcp_protocol::MachineStatus {
+                pc: cpu.pc,
+                a: cpu.a,
+                x: cpu.x,
+                y: cpu.y,
+                p: cpu.status,
+                sp: cpu.sp,
+                cycles: cpu.total_cycles() as u64,
+            }
         }
     }
 }
@@ -264,21 +282,42 @@ fn get_cpu_registers(state: &mut MachineState) -> nes_mcp_protocol::CpuRegisters
                 flag_c: (status & 0x01) != 0,
             }
         }
-        MachineWrapper::INes(_) | MachineWrapper::PngFrameMatch(_) => {
+        MachineWrapper::INes(m) => {
+            let cpu = m.cpu();
+            let status = cpu.status;
             nes_mcp_protocol::CpuRegisters {
-                pc: 0,
-                a: 0,
-                x: 0,
-                y: 0,
-                sp: 0,
-                status: 0,
-                cycles: 0,
-                flag_n: false,
-                flag_v: false,
-                flag_d: false,
-                flag_i: false,
-                flag_z: false,
-                flag_c: false,
+                pc: cpu.pc,
+                a: cpu.a,
+                x: cpu.x,
+                y: cpu.y,
+                sp: cpu.sp,
+                status,
+                cycles: cpu.total_cycles() as u64,
+                flag_n: (status & 0x80) != 0,
+                flag_v: (status & 0x40) != 0,
+                flag_d: (status & 0x08) != 0,
+                flag_i: (status & 0x04) != 0,
+                flag_z: (status & 0x02) != 0,
+                flag_c: (status & 0x01) != 0,
+            }
+        }
+        MachineWrapper::PngFrameMatch(m) => {
+            let cpu = m.cpu();
+            let status = cpu.status;
+            nes_mcp_protocol::CpuRegisters {
+                pc: cpu.pc,
+                a: cpu.a,
+                x: cpu.x,
+                y: cpu.y,
+                sp: cpu.sp,
+                status,
+                cycles: cpu.total_cycles() as u64,
+                flag_n: (status & 0x80) != 0,
+                flag_v: (status & 0x40) != 0,
+                flag_d: (status & 0x08) != 0,
+                flag_i: (status & 0x04) != 0,
+                flag_z: (status & 0x02) != 0,
+                flag_c: (status & 0x01) != 0,
             }
         }
     }
@@ -365,6 +404,14 @@ fn get_nametable_data(state: &MachineState, index: u8) -> String {
             format_hexdump(&nametable, 0x2000 + (index as u16 * 0x400))
         }
     }
+}
+
+fn parse_query_param(uri: &str, key: &str) -> Option<String> {
+    let query = uri.split_once('?')?.1;
+    query.split('&').find_map(|pair| {
+        let (k, v) = pair.split_once('=')?;
+        (k == key).then(|| v.to_string())
+    })
 }
 
 /// Run the TCP server

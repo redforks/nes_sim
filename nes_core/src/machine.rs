@@ -41,6 +41,10 @@ impl<P: Plugin<M>, M: Mcu> Machine<P, M> {
         self.cpu.mcu_mut()
     }
 
+    pub fn cpu(&self) -> &Cpu<M> {
+        &self.cpu
+    }
+
     pub fn cpu_mut(&mut self) -> &mut Cpu<M> {
         &mut self.cpu
     }
