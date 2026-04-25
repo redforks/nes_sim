@@ -1,7 +1,11 @@
 [package]
 name = "nes_mcp_server"
 version = "0.1.0"
-edition = "2024"
+edition = "2021"
+
+[[bin]]
+name = "nes_mcp_server"
+path = "src/main.rs"
 
 [dependencies]
 nes_mcp_protocol = { path = "../nes_mcp_protocol" }

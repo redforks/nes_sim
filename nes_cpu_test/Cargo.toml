@@ -5,7 +5,7 @@ edition = "2024"
 
 [features]
 default = []
-tcp-server = ["tokio"]
+tcp-server = ["tokio", "tracing"]
 
 [dependencies]
 nes_core = { workspace = true }
@@ -17,8 +17,9 @@ thiserror = { workspace = true }
 ansi_term = { workspace = true }
 is-terminal = { workspace = true }
 image = { workspace = true }
-tokio = { version = "1.46", features = ["net", "rt-multi-thread", "macros"], optional = true }
+tokio = { version = "1.46", features = ["net", "rt-multi-thread", "macros", "io-util"], optional = true }
 serde_json = "1.0"
+tracing = { version = "0.1", optional = true }
 
 [dev-dependencies]
 rstest = { workspace = true }

@@ -3,12 +3,13 @@ use nes_mcp_protocol::{Request, Response};
 use rmcp::{
     ServerHandler, ServiceExt,
     handler::server::{router::tool::ToolRouter, tool::Parameters},
-    model::{PaginatedRequestParam, ServerCapabilities, ServerInfo},
+    model::{PaginatedRequestParam, ReadResourceRequestParam, ServerCapabilities, ServerInfo},
     schemars,
     service::{RequestContext, RoleServer},
     tool, tool_handler, tool_router,
 };
 use serde::Deserialize;
+use std::future::Future;
 use std::process::Stdio;
 use std::sync::Arc;
 use std::time::Duration;
