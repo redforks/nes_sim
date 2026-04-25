@@ -220,10 +220,20 @@ fn read_file_bytes(f: &Path) -> Result<Vec<u8>, LoadError> {
 }
 
 pub fn load_image(f: PathBuf) -> Result<Image, LoadError> {
-    if f.extension().is_some_and(|ext| ext == "bin") {
-        load_bin(&f)
-    } else if is_nes_file(&f) {
-        load_rom(f)
+    // Resolve relative paths against workspace directory
+    let path = if f.is_relative() {
+        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .parent()
+            .expect("workspace parent directory not found")
+            .join(&f)
+    } else {
+        f
+    };
+
+    if path.extension().is_some_and(|ext| ext == "bin") {
+        load_bin(&path)
+    } else if is_nes_file(&path) {
+        load_rom(path)
     } else {
         panic!("unknown file type");
     }
