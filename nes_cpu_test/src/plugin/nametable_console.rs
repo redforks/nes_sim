@@ -9,21 +9,57 @@ static IS_TERMINAL: LazyLock<bool> = LazyLock::new(|| std::io::stdout().is_termi
 
 const NAMETABLE_START: u16 = 0x2000;
 const NAMETABLE_LEN: usize = 0x03C0;
+const SCREEN_WIDTH: usize = 32;
+const SCREEN_HEIGHT: usize = 30;
 
 #[derive(Default)]
+enum Decoder {
+    #[default]
+    Plain,
+    TallText,
+}
+
+enum SuccessCondition {
+    PassedOrFailed,
+    MagicSuccessWord(String),
+}
+
 pub struct NametableConsole {
     stop: Option<ExecuteResult>,
-    /// If console contains this string, consider the test passed.
-    magic_success_word: Option<String>,
+    decoder: Decoder,
+    success_condition: SuccessCondition,
     last: String,
 }
 
 impl NametableConsole {
+    pub fn new() -> Self {
+        Self {
+            stop: None,
+            decoder: Decoder::Plain,
+            success_condition: SuccessCondition::PassedOrFailed,
+            last: String::new(),
+        }
+    }
+
     pub fn with_magic_success_word(word: &str) -> Self {
         Self {
-            magic_success_word: Some(word.to_owned()),
-            ..Default::default()
+            success_condition: SuccessCondition::MagicSuccessWord(word.to_owned()),
+            ..Self::new()
         }
+    }
+
+    pub fn with_tall_text_magic_success_word(word: &str) -> Self {
+        Self {
+            decoder: Decoder::TallText,
+            success_condition: SuccessCondition::MagicSuccessWord(word.to_owned()),
+            ..Self::new()
+        }
+    }
+}
+
+impl Default for NametableConsole {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
@@ -35,7 +71,7 @@ impl<R: Render> Plugin<NesMcu<R, ()>> for NametableConsole {
             return;
         }
 
-        let buf = read_console(cpu);
+        let buf = read_console(cpu, &self.decoder);
         if buf.is_empty() || buf == self.last {
             return;
         }
@@ -51,19 +87,7 @@ impl<R: Render> Plugin<NesMcu<R, ()>> for NametableConsole {
             output("\n");
         }
 
-        self.stop = if contains_passed(&buf) {
-            Some(ExecuteResult::Stop(0))
-        } else if contains_failed(&buf) {
-            Some(ExecuteResult::Stop(1))
-        } else if let Some(magic_success_word) = &self.magic_success_word {
-            if buf.contains(magic_success_word) {
-                Some(ExecuteResult::Stop(0))
-            } else {
-                None
-            }
-        } else {
-            None
-        };
+        self.stop = evaluate_result(&buf, &self.success_condition);
         self.last = buf;
     }
 
@@ -72,7 +96,14 @@ impl<R: Render> Plugin<NesMcu<R, ()>> for NametableConsole {
     }
 }
 
-fn read_console<R: Render>(cpu: &Cpu<NesMcu<R, ()>>) -> String {
+fn read_console<R: Render>(cpu: &Cpu<NesMcu<R, ()>>, decoder: &Decoder) -> String {
+    match decoder {
+        Decoder::Plain => read_plain_console(cpu),
+        Decoder::TallText => read_tall_console(cpu),
+    }
+}
+
+fn read_plain_console<R: Render>(cpu: &Cpu<NesMcu<R, ()>>) -> String {
     let mut buf = Vec::with_capacity(NAMETABLE_LEN);
     for offset in 0..NAMETABLE_LEN as u16 {
         let value = cpu.mcu().read_nametable(NAMETABLE_START + offset);
@@ -98,6 +129,59 @@ fn read_console<R: Render>(cpu: &Cpu<NesMcu<R, ()>>) -> String {
     r
 }
 
+fn read_tall_console<R: Render>(cpu: &Cpu<NesMcu<R, ()>>) -> String {
+    let mut lines = Vec::with_capacity(SCREEN_HEIGHT / 2);
+
+    for row in (0..SCREEN_HEIGHT).step_by(2) {
+        let mut line = String::with_capacity(SCREEN_WIDTH);
+        for col in 0..SCREEN_WIDTH {
+            let top = read_nametable_char(cpu, row, col);
+            let bottom = read_nametable_char(cpu, row + 1, col);
+            line.push(decode_tall_char(top, bottom).unwrap_or(' '));
+        }
+        let trimmed = line.trim_end();
+        if !trimmed.is_empty() {
+            lines.push(trimmed.to_owned());
+        }
+    }
+
+    lines.join("\n")
+}
+
+fn read_nametable_char<R: Render>(cpu: &Cpu<NesMcu<R, ()>>, row: usize, col: usize) -> u8 {
+    cpu.mcu()
+        .read_nametable(NAMETABLE_START + (row * SCREEN_WIDTH + col) as u16)
+}
+
+fn decode_tall_char(top: u8, bottom: u8) -> Option<char> {
+    if top == 0 && bottom == 0 {
+        return Some(' ');
+    }
+
+    if top & 1 != 0 || bottom != top.wrapping_add(1) {
+        return None;
+    }
+
+    Some((top >> 1) as char)
+}
+
+fn evaluate_result(buf: &str, success_condition: &SuccessCondition) -> Option<ExecuteResult> {
+    match success_condition {
+        SuccessCondition::PassedOrFailed => {
+            if contains_passed(buf) {
+                Some(ExecuteResult::Stop(0))
+            } else if contains_failed(buf) {
+                Some(ExecuteResult::Stop(1))
+            } else {
+                None
+            }
+        }
+        SuccessCondition::MagicSuccessWord(magic_success_word) => buf
+            .contains(magic_success_word)
+            .then_some(ExecuteResult::Stop(0)),
+    }
+}
+
 fn contains_passed(s: &str) -> bool {
     s.contains("PASSED") || s.contains("Passed\n")
 }
@@ -115,5 +199,28 @@ fn output<S: AsRef<str>>(s: S) {
         print!("{}", Color::Green.paint(s.as_ref()));
     } else {
         print!("{}", s.as_ref());
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn decodes_tall_text_characters() {
+        assert_eq!(decode_tall_char(b'A' << 1, (b'A' << 1) + 1), Some('A'));
+        assert_eq!(decode_tall_char(0, 0), Some(' '));
+        assert_eq!(decode_tall_char(3, 4), None);
+    }
+
+    #[test]
+    fn matches_magic_success_word() {
+        assert_eq!(
+            evaluate_result(
+                "Accessible PRG banks:\n0123456789ABCDEF",
+                &SuccessCondition::MagicSuccessWord("0123456789ABCDEF".to_owned())
+            ),
+            Some(ExecuteResult::Stop(0))
+        );
     }
 }

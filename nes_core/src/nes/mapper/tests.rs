@@ -114,6 +114,30 @@ fn create_cartridge_mapper4() {
 }
 
 #[test]
+fn create_cartridge_mapper7() {
+    let rom = create_test_nes(7, 4, 0);
+    let file = INesFile::new(rom).unwrap();
+    let mut cartridge = create_cartridge(&file);
+
+    cartridge.write_pattern(0x0010, 0xab);
+
+    assert_eq!(cartridge.read(0x8000), 0);
+    assert_eq!(cartridge.pattern_ref()[0x0010], 0xab);
+}
+
+#[test]
+fn create_cartridge_mapper34_bnrom() {
+    let rom = create_test_nes(34, 4, 0);
+    let file = INesFile::new(rom).unwrap();
+    let mut cartridge = create_cartridge(&file);
+
+    cartridge.write_pattern(0x0010, 0xab);
+
+    assert_eq!(cartridge.read(0x8000), 0);
+    assert_eq!(cartridge.pattern_ref()[0x0010], 0xab);
+}
+
+#[test]
 fn create_cartridge_mapper4_with_chr_ram() {
     let rom = create_test_nes(4, 4, 0);
     let file = INesFile::new(rom).unwrap();

@@ -296,7 +296,19 @@ mmc3_test2: mmc3_test2_1 mmc3_test2_2 mmc3_test2_3 mmc3_test2_4 mmc3_test2_5 mmc
 
 mmc3: mmc3_tests mmc3_test2 mmc3_irq_tests
 
-passed_mapper: mmc3
+bntest-h: build_nes_cpu_test
+    {{ nes_cpu_test }} --quiet -f test-roms/bntest/bntest_h.nes
+
+bntest-v: build_nes_cpu_test
+    {{ nes_cpu_test }} --quiet -f test-roms/bntest/bntest_v.nes
+
+bntest-aorom: build_nes_cpu_test
+    {{ nes_cpu_test }} --quiet -f test-roms/bntest/bntest_aorom.nes
+
+[parallel]
+bntest: bntest-h bntest-v bntest-aorom
+
+passed_mapper: mmc3 bntest
 
 [parallel]
 passed_cpu_tests: cpu-test instr_misc instr_test-v5 instr_test-v3 instr_timing cpu_dummy_reads cpu_dummy_writes cpu_exec_space cpu_reset cpu_timing_test6 nestest branch_timing_tests cpu_interrupts_v2

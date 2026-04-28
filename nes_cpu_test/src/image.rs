@@ -84,34 +84,47 @@ impl Image {
         ];
         if file_name.file_name().is_some_and(|f| f == "nestest.nes") {
             plugins.push(Box::new(ReportNesTestResult::new()));
-        } else if file_name.to_str().is_some_and(|p| {
-            p.contains("vbl_nmi_timing")
-                || p.contains("branch_timing_tests")
-                || p.contains("cpu_dummy_reads")
-                || p.contains("cpu_timing_test6")
-                || p.contains("sprite_hit_tests_2005.10.05")
-                || p.contains("sprite_overflow_tests")
-                || p.contains("dmc_dma_during_read4")
-                || p.contains("mmc3_irq_tests")
-        }) {
-            if file_name
-                .file_name()
-                .is_some_and(|f| f == "double_2007_read.nes")
-            {
-                plugins.push(Box::new(NametableConsole::with_magic_success_word(
-                    "D84F6815",
+        } else if let Some(file_name_str) = file_name.file_name().and_then(|f| f.to_str()) {
+            if matches!(
+                file_name_str,
+                "bntest_h.nes" | "bntest_v.nes" | "bntest_aorom.nes"
+            ) {
+                plugins.push(Box::new(NametableConsole::with_tall_text_magic_success_word(
+                    "0123456789ABCDEF",
                 )));
                 plugins.push(Box::new(Timeout::new(Duration::from_secs(5))));
-            } else if file_name
-                .file_name()
-                .is_some_and(|f| f == "dma_2007_read.nes")
-            {
-                plugins.push(Box::new(NametableConsole::with_magic_success_word(
-                    "159A7A8F",
-                )));
-                plugins.push(Box::new(Timeout::new(Duration::from_secs(5))));
+            } else if file_name.to_str().is_some_and(|p| {
+                p.contains("vbl_nmi_timing")
+                    || p.contains("branch_timing_tests")
+                    || p.contains("cpu_dummy_reads")
+                    || p.contains("cpu_timing_test6")
+                    || p.contains("sprite_hit_tests_2005.10.05")
+                    || p.contains("sprite_overflow_tests")
+                    || p.contains("dmc_dma_during_read4")
+                    || p.contains("mmc3_irq_tests")
+            }) {
+                if file_name
+                    .file_name()
+                    .is_some_and(|f| f == "double_2007_read.nes")
+                {
+                    plugins.push(Box::new(NametableConsole::with_magic_success_word(
+                        "D84F6815",
+                    )));
+                    plugins.push(Box::new(Timeout::new(Duration::from_secs(5))));
+                } else if file_name
+                    .file_name()
+                    .is_some_and(|f| f == "dma_2007_read.nes")
+                {
+                    plugins.push(Box::new(NametableConsole::with_magic_success_word(
+                        "159A7A8F",
+                    )));
+                    plugins.push(Box::new(Timeout::new(Duration::from_secs(5))));
+                } else {
+                    plugins.push(Box::new(NametableConsole::default()));
+                }
             } else {
-                plugins.push(Box::new(NametableConsole::default()));
+                plugins.push(Box::<Console>::default());
+                plugins.push(Box::<MonitorTestStatus>::default());
             }
         } else {
             plugins.push(Box::<Console>::default());
