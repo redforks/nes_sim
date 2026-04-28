@@ -308,6 +308,9 @@ bntest-aorom: build_nes_cpu_test
 [parallel]
 bntest: bntest-h bntest-v bntest-aorom
 
+mmc1-a12: build_nes_cpu_test
+    {{ nes_cpu_test }} --quiet -f ../nes-test-roms/MMC1_A12/mmc1_a12.nes
+
 passed_mapper: mmc3 bntest
 
 [parallel]

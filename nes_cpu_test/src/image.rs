@@ -72,8 +72,12 @@ impl Image {
         start_pc: Option<u16>,
         max_instructions: u64,
     ) -> MachineWrapper {
-        if file_name.file_name().is_some_and(|f| f == "scanline.nes") {
-            return self.create_scanline_machine(ines, quiet, start_pc, max_instructions);
+        if let Some(f) = file_name.file_name() {
+            if f == "scanline.nes" {
+                return self.create_scanline_machine(ines, quiet, start_pc, max_instructions);
+            } else if f == "mmc1_a12.nes" {
+                return self.create_mmc1_a12_machine(ines, quiet, start_pc, max_instructions);
+            }
         }
 
         // Build the composite plugin step by step to handle type coercion
@@ -89,9 +93,9 @@ impl Image {
                 file_name_str,
                 "bntest_h.nes" | "bntest_v.nes" | "bntest_aorom.nes"
             ) {
-                plugins.push(Box::new(NametableConsole::with_tall_text_magic_success_word(
-                    "0123456789ABCDEF",
-                )));
+                plugins.push(Box::new(
+                    NametableConsole::with_tall_text_magic_success_word("0123456789ABCDEF"),
+                ));
                 plugins.push(Box::new(Timeout::new(Duration::from_secs(5))));
             } else if file_name.to_str().is_some_and(|p| {
                 p.contains("vbl_nmi_timing")
@@ -149,6 +153,32 @@ impl Image {
                 .press_button(nes_core::nes::controller::Button::B);
         }
         MachineWrapper::INes(Box::new(machine))
+    }
+
+    fn create_mmc1_a12_machine(
+        &self,
+        ines: &INesFile,
+        quiet: bool,
+        start_pc: Option<u16>,
+        max_instructions: u64,
+    ) -> MachineWrapper {
+        let expected_png = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("src/mmc1_a12-exp.png");
+        let mut plugins: Vec<Box<dyn Plugin<nes_core::nes::NesMcu<ImageRender, ()>>>> = vec![
+            Box::new(NesReportPlugin::create(quiet)),
+            Box::new(PngFrameMatch::new(expected_png).expect("failed to load mmc1_a12_exp.png")),
+            // MMC1 A12 needs substantially more time than the other image tests
+            // to settle on the matching frame in debug builds.
+            Box::new(Timeout::new(Duration::from_secs(3))),
+        ];
+        if max_instructions > 0 {
+            plugins.push(Box::new(MaxInstructions::new(max_instructions)));
+        }
+        let plugin = CompositePlugin::new(plugins);
+        let mut machine = NesMachine::new(ines, plugin, ImageRender::default_dimension(), ());
+        if let Some(pc) = start_pc {
+            machine.set_pc(pc);
+        }
+        MachineWrapper::PngFrameMatch(Box::new(machine))
     }
 
     fn create_scanline_machine(
