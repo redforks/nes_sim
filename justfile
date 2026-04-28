@@ -12,6 +12,32 @@ instr_test-v3: build_nes_cpu_test
 instr_test-v5: build_nes_cpu_test
     {{ nes_cpu_test }} --quiet -f ../nes-test-roms/instr_test-v5/all_instrs.nes
 
+nes_instr_test1: build_nes_cpu_test
+    {{ nes_cpu_test }} --quiet -f ../nes-test-roms/nes_instr_test/rom_singles/01-implied.nes
+nes_instr_test2: build_nes_cpu_test
+    {{ nes_cpu_test }} --quiet -f ../nes-test-roms/nes_instr_test/rom_singles/02-immediate.nes
+nes_instr_test3: build_nes_cpu_test
+    {{ nes_cpu_test }} --quiet -f ../nes-test-roms/nes_instr_test/rom_singles/03-zero_page.nes
+nes_instr_test4: build_nes_cpu_test
+    {{ nes_cpu_test }} --quiet -f ../nes-test-roms/nes_instr_test/rom_singles/04-zp_xy.nes
+nes_instr_test5: build_nes_cpu_test
+    {{ nes_cpu_test }} --quiet -f ../nes-test-roms/nes_instr_test/rom_singles/05-absolute.nes
+nes_instr_test6: build_nes_cpu_test
+    {{ nes_cpu_test }} --quiet -f ../nes-test-roms/nes_instr_test/rom_singles/06-abs_xy.nes
+nes_instr_test7: build_nes_cpu_test
+    {{ nes_cpu_test }} --quiet -f ../nes-test-roms/nes_instr_test/rom_singles/07-ind_x.nes
+nes_instr_test8: build_nes_cpu_test
+    {{ nes_cpu_test }} --quiet -f ../nes-test-roms/nes_instr_test/rom_singles/08-ind_y.nes
+nes_instr_test9: build_nes_cpu_test
+    {{ nes_cpu_test }} --quiet -f ../nes-test-roms/nes_instr_test/rom_singles/09-branches.nes
+nes_instr_test10: build_nes_cpu_test
+    {{ nes_cpu_test }} --quiet -f ../nes-test-roms/nes_instr_test/rom_singles/10-stack.nes
+nes_instr_test11: build_nes_cpu_test
+    {{ nes_cpu_test }} --quiet -f ../nes-test-roms/nes_instr_test/rom_singles/11-special.nes
+
+[parallel]
+nes_instr_test: nes_instr_test1 nes_instr_test2 nes_instr_test3 nes_instr_test4 nes_instr_test5 nes_instr_test6 nes_instr_test7 nes_instr_test8 nes_instr_test9 nes_instr_test10 nes_instr_test11
+
 cpu_interrupts_v2: build_nes_cpu_test
     {{ nes_cpu_test }} --quiet -f ../nes-test-roms/cpu_interrupts_v2/cpu_interrupts.nes
 
@@ -314,7 +340,7 @@ mmc1-a12: build_nes_cpu_test
 passed_mapper: mmc3 bntest mmc1-a12
 
 [parallel]
-passed_cpu_tests: cpu-test instr_misc instr_test-v5 instr_test-v3 instr_timing cpu_dummy_reads cpu_dummy_writes cpu_exec_space cpu_reset cpu_timing_test6 nestest branch_timing_tests cpu_interrupts_v2
+passed_cpu_tests: cpu-test instr_misc instr_test-v5 instr_test-v3 instr_timing cpu_dummy_reads cpu_dummy_writes cpu_exec_space cpu_reset cpu_timing_test6 nestest branch_timing_tests cpu_interrupts_v2 nes_instr_test
 
 [parallel]
 passed_ppu_tests: vbl_nmi_timing oam_read oam_stress ppu_open_bus ppu_read_buffer sprite_hit_tests sprite_overflow_tests scanline ppu_vbl_nmi
