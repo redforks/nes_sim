@@ -311,7 +311,7 @@ bntest: bntest-h bntest-v bntest-aorom
 mmc1-a12: build_nes_cpu_test
     {{ nes_cpu_test }} --quiet -f ../nes-test-roms/MMC1_A12/mmc1_a12.nes
 
-passed_mapper: mmc3 bntest
+passed_mapper: mmc3 bntest mmc1-a12
 
 [parallel]
 passed_cpu_tests: cpu-test instr_misc instr_test-v5 instr_test-v3 instr_timing cpu_dummy_reads cpu_dummy_writes cpu_exec_space cpu_reset cpu_timing_test6 nestest branch_timing_tests cpu_interrupts_v2

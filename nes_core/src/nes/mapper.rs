@@ -241,7 +241,8 @@ impl Cartridge {
         match self {
             Cartridge::Mapper0(cartridge) => cartridge.write_pattern(address, value),
             Cartridge::Mapper2(cartridge) => cartridge.write_pattern(address, value),
-            Cartridge::Mapper3(_) | Cartridge::MMC1(_) => {}
+            Cartridge::Mapper3(_) => {}
+            Cartridge::MMC1(cartridge) => cartridge.write_pattern(address, value),
             Cartridge::Mapper7(cartridge) => cartridge.write_pattern(address, value),
             Cartridge::Mapper34(cartridge) => cartridge.write_pattern(address, value),
             Cartridge::MMC3(cartridge) => cartridge.write_pattern(address, value),
