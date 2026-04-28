@@ -77,7 +77,7 @@ impl Palette {
         } else {
             (start | idx | (palette_idx << 2)) as usize
         };
-        COLORS[self.data[offset] as usize]
+        COLORS[(self.data[offset] & 0x3f) as usize]
     }
 
     pub fn get_background_color(&self, palette_idx: u8, idx: u8) -> Pixel {
