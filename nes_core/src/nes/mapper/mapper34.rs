@@ -6,13 +6,22 @@ const PRG_ROM_BANK_SIZE: usize = 0x8000;
 const CHR_SIZE: usize = 0x2000;
 const CARTRIDGE_RAM_SIZE: usize = 0x4000 - 0x20;
 
+#[derive(Debug, Copy, Clone, Eq, PartialEq)]
+enum Board {
+    BxRom,
+    Nina001,
+}
+
 pub struct Mapper34 {
     prg_rom: Vec<u8>,
-    chr: [u8; CHR_SIZE],
+    chr: Vec<u8>,
     has_chr_ram: bool,
     ram: [u8; CARTRIDGE_RAM_SIZE],
     selected_prg_bank: usize,
+    selected_chr_bank_0: usize,
+    selected_chr_bank_1: usize,
     prg_bank_count: usize,
+    board: Board,
     name_table: NameTableControl,
 }
 
@@ -20,23 +29,43 @@ impl Mapper34 {
     pub fn new(prg_rom: &[u8], chr_rom: &[u8], mirroring: Mirroring) -> Self {
         debug_assert!(!prg_rom.is_empty());
         debug_assert_eq!(prg_rom.len() % PRG_ROM_BANK_SIZE, 0);
-        debug_assert!(chr_rom.len() <= CHR_SIZE);
 
-        let mut mapper = Self {
+        let board = if chr_rom.len() > CHR_SIZE {
+            Board::Nina001
+        } else {
+            Board::BxRom
+        };
+
+        let chr = if chr_rom.is_empty() {
+            vec![0; CHR_SIZE]
+        } else {
+            chr_rom.to_vec()
+        };
+
+        Self {
             prg_rom: prg_rom.to_vec(),
-            chr: [0; CHR_SIZE],
+            chr,
             has_chr_ram: chr_rom.is_empty(),
             ram: [0; CARTRIDGE_RAM_SIZE],
             selected_prg_bank: 0,
+            selected_chr_bank_0: 0,
+            selected_chr_bank_1: 0,
             prg_bank_count: prg_rom.len() / PRG_ROM_BANK_SIZE,
+            board,
             name_table: NameTableControl::new(mirroring),
-        };
-        mapper.chr[..chr_rom.len()].copy_from_slice(chr_rom);
-        mapper
+        }
     }
 
     fn selected_prg_bank(&self) -> usize {
         self.selected_prg_bank % self.prg_bank_count
+    }
+
+    fn selected_chr_bank_0(&self) -> usize {
+        self.selected_chr_bank_0 % (self.chr.len() / 0x1000)
+    }
+
+    fn selected_chr_bank_1(&self) -> usize {
+        self.selected_chr_bank_1 % (self.chr.len() / 0x1000)
     }
 
     fn read_prg_bank(&self, bank: usize, address: u16) -> u8 {
@@ -50,8 +79,26 @@ impl Mapper34 {
     }
 
     pub fn write_pattern(&mut self, address: u16, value: u8) {
-        if self.has_chr_ram {
-            self.chr[address as usize % CHR_SIZE] = value;
+        if self.board == Board::BxRom && self.has_chr_ram {
+            let index = address as usize % self.chr.len();
+            self.chr[index] = value;
+        }
+    }
+
+    pub fn read_chr(&self, address: u16) -> u8 {
+        match self.board {
+            Board::BxRom => self.chr[address as usize % self.chr.len()],
+            Board::Nina001 => match address {
+                0x0000..=0x0fff => {
+                    let bank_start = self.selected_chr_bank_0() * 0x1000;
+                    self.chr[bank_start + address as usize]
+                }
+                0x1000..=0x1fff => {
+                    let bank_start = self.selected_chr_bank_1() * 0x1000;
+                    self.chr[bank_start + (address as usize & 0x0fff)]
+                }
+                _ => unreachable!(),
+            },
         }
     }
 
@@ -71,11 +118,19 @@ impl Mapper34 {
         match address {
             CARTRIDGE_START_ADDR..=0x7fff => {
                 self.ram[(address - CARTRIDGE_START_ADDR) as usize] = value;
+                if self.board == Board::Nina001 {
+                    match address {
+                        0x7ffd => self.selected_prg_bank = (value & 0x01) as usize,
+                        0x7ffe => self.selected_chr_bank_0 = (value & 0x0f) as usize,
+                        0x7fff => self.selected_chr_bank_1 = (value & 0x0f) as usize,
+                        _ => {}
+                    }
+                }
             }
             0x8000..=0xffff => {
                 self.selected_prg_bank = value as usize;
             }
-            _ => unreachable!(),
+            _ => unreachable!("Invalid write address: {:#04x}", address),
         }
     }
 
@@ -133,5 +188,33 @@ mod tests {
         assert_eq!(mapper.read_nametable(0x2800), 0x11);
         assert_eq!(mapper.read_nametable(0x2400), 0x22);
         assert_eq!(mapper.read_nametable(0x2c00), 0x22);
+    }
+
+    #[test]
+    fn nina001_banks_chr_with_4k_registers() {
+        let mut prg_rom = vec![0u8; PRG_ROM_BANK_SIZE * 2];
+        prg_rom[0x0000] = 0x11;
+        prg_rom[0x8000] = 0x22;
+
+        let mut chr_rom = vec![0u8; CHR_SIZE * 4];
+        chr_rom[0x0000] = 0xa1;
+        chr_rom[0x1000] = 0xb1;
+        chr_rom[0x2000] = 0xa2;
+        chr_rom[0x3000] = 0xb2;
+        chr_rom[0x6000] = 0xa4;
+        chr_rom[0x7000] = 0xb4;
+
+        let mut mapper = Mapper34::new(&prg_rom, &chr_rom, Mirroring::Horizontal);
+
+        mapper.write(0x7ffd, 0x01);
+        mapper.write(0x7ffe, 0x02);
+        mapper.write(0x7fff, 0x03);
+
+        assert_eq!(mapper.read_chr(0x0000), 0xa2);
+        assert_eq!(mapper.read_chr(0x1000), 0xb2);
+        assert_eq!(mapper.read(0x8000), 0x22);
+        assert_eq!(mapper.read(0x7ffd), 0x01);
+        assert_eq!(mapper.read(0x7ffe), 0x02);
+        assert_eq!(mapper.read(0x7fff), 0x03);
     }
 }

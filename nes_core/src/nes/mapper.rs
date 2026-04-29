@@ -127,18 +127,11 @@ pub fn create_cartridge(f: &INesFile) -> Cartridge {
             f.header().ignore_mirror_control,
         ))),
         7 => Cartridge::Mapper7(Box::new(Mapper7::new(f.read_prg_rom(), f.read_chr_rom()))),
-        34 => {
-            let chr_rom = f.read_chr_rom();
-            assert!(
-                chr_rom.len() <= 0x2000,
-                "Unsupported mapper 34 NINA-001 variant"
-            );
-            Cartridge::Mapper34(Box::new(Mapper34::new(
-                f.read_prg_rom(),
-                chr_rom,
-                mirroring,
-            )))
-        }
+        34 => Cartridge::Mapper34(Box::new(Mapper34::new(
+            f.read_prg_rom(),
+            f.read_chr_rom(),
+            mirroring,
+        ))),
         _ => panic!("Unsupported cartridge mapper no: {}", f.header().mapper_no),
     }
 }
@@ -347,9 +340,7 @@ impl Cartridge {
             Cartridge::Mapper7(cartridge) => {
                 cartridge.pattern_ref()[address as usize % cartridge.pattern_ref().len()]
             }
-            Cartridge::Mapper34(cartridge) => {
-                cartridge.pattern_ref()[address as usize % cartridge.pattern_ref().len()]
-            }
+            Cartridge::Mapper34(cartridge) => cartridge.read_chr(address),
             Cartridge::MMC1(cartridge) => {
                 cartridge.pattern_ref()[address as usize % cartridge.pattern_ref().len()]
             }
