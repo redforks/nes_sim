@@ -1,13 +1,13 @@
 use crate::{
+    ExecuteResult, Plugin,
     ines::INesFile,
     machine::Machine,
     nes::{
+        NesMcu,
         controller::Button,
         ppu::{VBLANK_SET_DOT, VBLANK_SET_SCANLINE},
-        NesMcu,
     },
     render::Render,
-    ExecuteResult, Plugin,
 };
 use std::fs;
 
@@ -93,7 +93,11 @@ where
 
         let cpu_tick_phase = (self.cycles - 1) % 3;
         let cpu_cycle = (self.cycles - 1) / 3;
-        if self.machine.mcu_mut().tick_oam_dma(cpu_tick_phase, cpu_cycle) {
+        if self
+            .machine
+            .mcu_mut()
+            .tick_oam_dma(cpu_tick_phase, cpu_cycle)
+        {
             return ExecuteResult::Continue;
         }
 
@@ -105,9 +109,6 @@ where
         // so the DMA check sees the $4015 write on the same cycle.
         if self.cycles.is_multiple_of(3) {
             self.machine.mcu_mut().recheck_dmc_dma();
-            if let Some(is_reload) = self.machine.mcu_mut().take_dmc_dma_pending() {
-                self.machine.cpu_mut().request_dmc_dma(is_reload);
-            }
         }
 
         result
