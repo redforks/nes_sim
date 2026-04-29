@@ -1,6 +1,8 @@
 use bitfield_struct::bitfield;
 use image::Rgba;
 
+use crate::get_system_cycles;
+
 use super::PPU_OPEN_BUS_DECAY_TICKS;
 
 #[bitfield(u8)]
@@ -165,12 +167,13 @@ impl Registers {
         }
     }
 
-    pub fn current_bus_latch(&mut self, now: u64) -> u8 {
-        self.apply_bus_decay(now);
+    pub fn current_bus_latch(&mut self) -> u8 {
+        self.apply_bus_decay();
         self.bus_latch
     }
 
-    pub fn apply_bus_decay(&mut self, now: u64) {
+    pub fn apply_bus_decay(&mut self) {
+        let now = get_system_cycles();
         for bit in 0..8 {
             let mask = 1 << bit;
             let deadline = self.bus_latch_decay_deadlines[bit];
@@ -181,21 +184,21 @@ impl Registers {
         }
     }
 
-    pub fn refresh_bus_latch(&mut self, value: u8, now: u64) {
-        self.apply_bus_decay(now);
+    pub fn refresh_bus_latch(&mut self, value: u8) {
+        self.apply_bus_decay();
         self.bus_latch = value;
         for bit in 0..8 {
             let mask = 1 << bit;
             self.bus_latch_decay_deadlines[bit] = if (value & mask) != 0 {
-                now.wrapping_add(PPU_OPEN_BUS_DECAY_TICKS)
+                get_system_cycles().wrapping_add(PPU_OPEN_BUS_DECAY_TICKS)
             } else {
                 0
             };
         }
     }
 
-    pub fn refresh_bus_latch_bits(&mut self, mask: u8, value: u8, now: u64) {
-        self.apply_bus_decay(now);
+    pub fn refresh_bus_latch_bits(&mut self, mask: u8, value: u8) {
+        self.apply_bus_decay();
         for bit in 0..8 {
             let bit_mask = 1 << bit;
             if (mask & bit_mask) == 0 {
@@ -204,7 +207,8 @@ impl Registers {
 
             if (value & bit_mask) != 0 {
                 self.bus_latch |= bit_mask;
-                self.bus_latch_decay_deadlines[bit] = now.wrapping_add(PPU_OPEN_BUS_DECAY_TICKS);
+                self.bus_latch_decay_deadlines[bit] =
+                    get_system_cycles().wrapping_add(PPU_OPEN_BUS_DECAY_TICKS);
             } else {
                 self.bus_latch &= !bit_mask;
                 self.bus_latch_decay_deadlines[bit] = 0;

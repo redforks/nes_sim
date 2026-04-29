@@ -87,7 +87,6 @@ pub struct Ppu<R: Render = ()> {
     rendering_enabled_at_scanline_start: bool,
 
     frame_no: usize,
-    ppu_ticks: u64,
 }
 
 /// PPU registers are mirrored every 8 bytes in range $2000-$3FFF
@@ -111,7 +110,6 @@ impl<R: Render> Ppu<R> {
             suppress_vblank_for_current_frame: false,
             suppress_nmi_for_current_frame: false,
             frame_no: 0,
-            ppu_ticks: 0,
             effective_mask: PpuMask::new(),
             rendering_enabled_at_scanline_start: false,
         }
@@ -125,7 +123,6 @@ impl<R: Render> Ppu<R> {
         self.pending_background_activation = None;
         self.odd_frame = false;
         self.sprite.reset();
-        self.ppu_ticks = 0;
         self.registers.write_scroll(0);
         self.rendering_enabled_at_scanline_start = false;
     }
@@ -272,7 +269,6 @@ impl<R: Render> Ppu<R> {
     }
 
     pub fn tick(&mut self, cartridge: &mut Cartridge) {
-        self.ppu_ticks = self.ppu_ticks.wrapping_add(1);
         let rendering_enabled = self.rendering_enabled();
 
         if self.dot == 0 {
@@ -726,16 +722,15 @@ impl<R: Render> Ppu<R> {
     }
 
     fn current_bus_latch(&mut self) -> u8 {
-        self.registers.current_bus_latch(self.ppu_ticks)
+        self.registers.current_bus_latch()
     }
 
     fn refresh_bus_latch(&mut self, value: u8) {
-        self.registers.refresh_bus_latch(value, self.ppu_ticks);
+        self.registers.refresh_bus_latch(value);
     }
 
     fn refresh_bus_latch_bits(&mut self, mask: u8, value: u8) {
-        self.registers
-            .refresh_bus_latch_bits(mask, value, self.ppu_ticks);
+        self.registers.refresh_bus_latch_bits(mask, value);
     }
 
     /// Read OAM data at current OAM address (for testing)

@@ -2,6 +2,7 @@ use super::palette::color;
 use super::*;
 use crate::nes::mapper::{Cartridge, TestCartridge};
 use crate::render::ImageRender;
+use crate::set_system_cycles;
 use image::Rgba;
 
 fn new_test_ppu_and_pattern() -> (Ppu, [u8; 8192]) {
@@ -218,7 +219,7 @@ fn test_open_bus_bits_decay_to_zero() {
     let mut cartridge = new_test_cartridge();
 
     ppu.write(0x2002, 0xFF, &mut cartridge);
-    ppu.ppu_ticks = PPU_OPEN_BUS_DECAY_TICKS;
+    set_system_cycles(PPU_OPEN_BUS_DECAY_TICKS);
 
     assert_eq!(ppu.read(0x2000, &mut cartridge), 0x00);
 }
@@ -229,7 +230,7 @@ fn test_status_read_only_refreshes_high_bits() {
     let mut cartridge = new_test_cartridge();
 
     ppu.write(0x2002, 0xFF, &mut cartridge);
-    ppu.ppu_ticks = PPU_OPEN_BUS_DECAY_TICKS;
+    set_system_cycles(PPU_OPEN_BUS_DECAY_TICKS);
     ppu.registers.status.set_v_blank(true);
     assert_eq!(ppu.read(0x2002, &mut cartridge), 0x80);
 

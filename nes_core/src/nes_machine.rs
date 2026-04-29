@@ -1,5 +1,5 @@
 use crate::{
-    ExecuteResult, Plugin,
+    ExecuteResult, Plugin, inc_system_cycles,
     ines::INesFile,
     machine::Machine,
     nes::{
@@ -51,6 +51,7 @@ where
         // Delegate to `tick()` which executes a single CPU instruction and
         // advances PPU/APU accordingly. Loop until VBlank or safety limit.
         for _ in 0..MAX_TICKS_PER_FRAME {
+            inc_system_cycles();
             self.tick();
 
             if self.machine.cpu_mut().is_halted() {
