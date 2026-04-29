@@ -22,25 +22,6 @@ enum CpuMode {
     Halt,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-struct OamDmaState {
-    startup_cycles: usize,
-    remaining_cpu_cycles: usize,
-    remaining_transfer_cpu_cycles: usize,
-    irq_was_pending: bool,
-    dma_started_at: usize,
-}
-
-impl OamDmaState {
-    fn dmc_overlap_penalty(&self) -> usize {
-        match self.remaining_transfer_cpu_cycles {
-            3 => 1,
-            1 => 3,
-            _ => 2,
-        }
-    }
-}
-
 /// DMC DMA state machine.
 ///
 /// On real hardware the DMC DMA steals 3–4 CPU cycles depending on
@@ -49,7 +30,6 @@ impl OamDmaState {
 /// "phantom reads" ($4016/$4017, $2007) are modelled using the CPU's
 /// microcode queue and address bus value (`cpu.ab`).
 ///
-/// During OAM DMA the stall phases are absorbed.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum DmcDmaPhase {
     LoadHalt,
@@ -103,8 +83,6 @@ pub struct Cpu<M: Mcu> {
     /// asserted for at least 1 CPU cycle (3 PPU ticks) before being acted on.
     /// Cleared when the IRQ is taken or the window expires.
     post_dma_irq_defer: Option<usize>,
-    oam_dma_pending: bool,
-    oam_dma: Option<OamDmaState>,
     /// DMC DMA state machine – `None` when no DMC DMA is in progress.
     dmc_dma: Option<DmcDmaPhase>,
     mode: CpuMode,
@@ -146,8 +124,6 @@ impl<M: Mcu> Cpu<M> {
             branch_irq_defer: false,
             allow_late_irq_nmi_hijack: false,
             post_dma_irq_defer: None,
-            oam_dma_pending: false,
-            oam_dma: None,
             dmc_dma: None,
             resume_second_phase_after_stall: false,
             irq_hijacked: false,
@@ -168,7 +144,7 @@ impl<M: Mcu> Cpu<M> {
 
     /// Drain all pending microcodes by ticking the CPU while the microcode queue
     /// is non-empty. The provided `plugin` will be used for tick hooks.
-    pub fn drain_microcodes<P: Plugin<M>>(&mut self, plugin: &mut P) {
+    fn drain_microcodes<P: Plugin<M>>(&mut self, plugin: &mut P) {
         while self.cur_microcode.is_some() || !self.microcode_queue.is_empty() {
             // Ignore execute result; we're only interested in running queued microcodes.
             let _ = self.tick(plugin);
@@ -198,8 +174,6 @@ impl<M: Mcu> Cpu<M> {
         self.branch_irq_defer = false;
         self.allow_late_irq_nmi_hijack = false;
         self.post_dma_irq_defer = None;
-        self.oam_dma_pending = false;
-        self.oam_dma = None;
         self.dmc_dma = None;
         self.mode = CpuMode::Normal;
         self.resume_second_phase_after_stall = false;
@@ -222,7 +196,7 @@ impl<M: Mcu> Cpu<M> {
     }
 
     /// Cpu will enter nmi before exec next instrnuction
-    pub fn request_nmi(&mut self) {
+    fn request_nmi(&mut self) {
         self.nmi_requested_at = Some(self.cycles);
     }
 
@@ -253,13 +227,6 @@ impl<M: Mcu> Cpu<M> {
     ///              false for load DMAs ($4015 write with empty buffer, 3 cycles).
     pub fn request_dmc_dma(&mut self, is_reload: bool) {
         if self.dmc_dma.is_none() {
-            if self.oam_dma.is_some() {
-                // During OAM DMA, only the eventual DMC read steals the bus.
-                // The halt/align/dummy phases are absorbed while waiting for
-                // the next GET cycle.
-                self.dmc_dma = Some(DmcDmaPhase::DmaRead);
-                return;
-            }
             if is_reload {
                 // Reload DMA: scheduled on PUT cycle -> 4 stall cycles
                 // Halt + Align + Dummy + DmaRead
@@ -295,107 +262,30 @@ impl<M: Mcu> Cpu<M> {
             );
         });
 
-        let (cpu_cycle, first_phase) = match self.cycles % 3 {
-            0 => (self.cycles / 3, true),
+        let first_phase = match self.cycles % 3 {
+            0 => true,
             1 => {
                 self.cycles = self.cycles.wrapping_add(1);
                 return (ExecuteResult::Continue, false);
             }
-            2 => (self.cycles / 3, false),
+            2 => false,
             _ => unreachable!(),
         };
 
         self.cycles = self.cycles.wrapping_add(1);
         // ── Advance DMC DMA state machine ──
-        // Each phase is a pure CPU stall cycle (outside OAM DMA).
-        // During OAM DMA the phases are absorbed.
+        // Each phase is a pure CPU stall cycle.
         if self.dmc_dma.is_some() {
-            let in_oam_dma = self.oam_dma.is_some();
-            let oam_absorbs_dma = in_oam_dma || self.oam_dma_pending;
-
-            if !oam_absorbs_dma {
-                if first_phase {
-                    return (ExecuteResult::Continue, false);
-                }
-
-                if self.cur_microcode.is_some() {
-                    self.resume_second_phase_after_stall = true;
-                }
-                if self.advance_dmc_dma_phase() {
-                    self.perform_dmc_dma_on_stall();
-                }
+            if first_phase {
                 return (ExecuteResult::Continue, false);
             }
 
+            if self.cur_microcode.is_some() {
+                self.resume_second_phase_after_stall = true;
+            }
             if self.advance_dmc_dma_phase() {
-                // In OAM DMA: DMC DMA read happens on GET cycle without adding stall cycles.
-                // Perform the read and fall through to OAM DMA processing.
-                if first_phase {
-                    if let Some(dma) = &mut self.oam_dma {
-                        if std::env::var_os("NES_DMA_DEBUG").is_some() {
-                            eprintln!(
-                                "overlap cycle={} startup={} remain={} transfer={}",
-                                cpu_cycle,
-                                dma.startup_cycles,
-                                dma.remaining_cpu_cycles,
-                                dma.remaining_transfer_cpu_cycles
-                            );
-                        }
-                        dma.remaining_cpu_cycles += dma.dmc_overlap_penalty();
-                    }
-                    self.perform_dmc_dma_on_stall();
-                }
+                self.perform_dmc_dma_on_stall();
             }
-        }
-
-        // ── OAM DMA processing ──
-        if let Some(mut dma) = self.oam_dma {
-            if !first_phase {
-                if dma.startup_cycles > 0 {
-                    dma.startup_cycles -= 1;
-                } else {
-                    dma.remaining_cpu_cycles -= 1;
-                    if dma.remaining_transfer_cpu_cycles > 0 {
-                        dma.remaining_transfer_cpu_cycles -= 1;
-                    }
-                }
-
-                if dma.startup_cycles == 0 && dma.remaining_cpu_cycles == 0 {
-                    if !dma.irq_was_pending {
-                        // IRQ wasn't pending when DMA started. Record the DMA completion
-                        // cycle so post-DMA IRQ boundaries apply penultimate-cycle sampling.
-                        self.post_dma_irq_defer = Some(self.cycles);
-                        if self
-                            .irq_requested_at
-                            .is_some_and(|irq_at| irq_at + 3 <= self.cycles)
-                        {
-                            self.defer_nmi_poll = true;
-                        }
-                    }
-                    self.oam_dma = None;
-                } else {
-                    self.oam_dma = Some(dma);
-                }
-            } else {
-                self.oam_dma = Some(dma);
-            }
-
-            return (ExecuteResult::Continue, false);
-        }
-
-        if self.oam_dma_pending {
-            if !first_phase {
-                self.oam_dma_pending = false;
-                let startup_cycles = if cpu_cycle.is_multiple_of(2) { 1 } else { 2 };
-                self.oam_dma = Some(OamDmaState {
-                    startup_cycles,
-                    remaining_cpu_cycles: 512,
-                    remaining_transfer_cpu_cycles: 512,
-                    irq_was_pending: self.irq_line,
-                    dma_started_at: self.cycles,
-                });
-            }
-
             return (ExecuteResult::Continue, false);
         }
 
@@ -606,15 +496,6 @@ impl<M: Mcu> Cpu<M> {
         self.dmc_dma = None;
     }
 
-    fn dmc_dma_phantom_info(&self) -> u16 {
-        let has_phantom = self
-            .cur_microcode
-            .or_else(|| self.microcode_queue.front().copied())
-            .map(|m| m.is_read_operation())
-            .unwrap_or(false);
-        if has_phantom { self.ab } else { self.pc }
-    }
-
     /// Advance DMC DMA state machine phase.
     /// Returns `true` if the DMA read should be performed this cycle.
     fn advance_dmc_dma_phase(&mut self) -> bool {
@@ -631,10 +512,16 @@ impl<M: Mcu> Cpu<M> {
     }
 
     fn dmc_dma_phantom_addr(&self) -> u16 {
-        self.dmc_dma_phantom_info()
+        let has_phantom = self
+            .cur_microcode
+            .or_else(|| self.microcode_queue.front().copied())
+            .map(|m| m.is_read_operation())
+            .unwrap_or(false);
+        if has_phantom { self.ab } else { self.pc }
     }
 
-    pub fn peek_stack(&mut self) -> u8 {
+    #[cfg(test)]
+    fn peek_stack(&mut self) -> u8 {
         let addr = 0x100 + self.sp.wrapping_add(1) as u16;
         self.mcu.peek(addr)
     }
