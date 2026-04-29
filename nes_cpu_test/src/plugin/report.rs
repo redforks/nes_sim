@@ -2,7 +2,7 @@ use nes_core::mcu::Mcu;
 use nes_core::nes::NesMcu;
 use nes_core::nes::apu::AudioDriver;
 use nes_core::render::Render;
-use nes_core::{Cpu, ExecuteResult, Plugin};
+use nes_core::{Cpu, ExecuteResult, Plugin, get_system_cycles};
 
 mod simple_disassembly;
 
@@ -46,7 +46,7 @@ impl<M: Mcu, P: Plugin<M>> Plugin<M> for QuietPlugin<P> {
 }
 
 pub struct ReportPlugin {
-    start_cycles: usize,
+    start_cycles: u64,
     a: u8,
     x: u8,
     y: u8,
@@ -89,7 +89,7 @@ impl ReportPlugin {
 
 impl<M: Mcu> Plugin<M> for ReportPlugin {
     fn start(&mut self, cpu: &mut Cpu<M>) {
-        self.start_cycles = cpu.total_cycles();
+        self.start_cycles = get_system_cycles();
         self.a = cpu.a;
         self.x = cpu.x;
         self.y = cpu.y;
@@ -124,7 +124,7 @@ impl<M: Mcu> Plugin<M> for ReportNesTestResult {
 
     fn end(&mut self, cpu: &mut Cpu<M>) {
         self.instruction_executed += 1;
-        if cpu.total_cycles() >= 26560 {
+        if get_system_cycles() >= 26560 {
             // 26560 is the cycle count after the last instruction executed, 26554 is the cycle count before the last instruction
             let low = cpu.peek_byte(0x0002) as u16;
             let high = cpu.peek_byte(0x0003) as u16;

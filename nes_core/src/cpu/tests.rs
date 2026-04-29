@@ -1,5 +1,6 @@
 use super::microcode::{BranchTest, ImmediateOp, TransferDirection, opcode};
 use super::*;
+use crate::set_system_cycles;
 use crate::test_utils::MockMcu;
 
 // NES vector addresses
@@ -29,7 +30,10 @@ fn execute_next(cpu: &mut Cpu<MockMcu>) {
 
     cpu.drain_microcodes(&mut plugin);
 
-    while !cpu.tick(&mut plugin).1 {}
+    inc_system_cycles();
+    while !cpu.tick(&mut plugin).1 {
+        inc_system_cycles();
+    }
 }
 
 #[test]
@@ -3129,13 +3133,15 @@ fn test_ready_nmi_is_taken_even_while_already_in_nmi_mode() {
     mcu.write(0xFFFB, 0x56);
     let mut cpu = create_cpu_with_mcu(mcu);
     cpu.mode = CpuMode::Nmi;
-    cpu.cycles = 8;
+    set_system_cycles(8);
     cpu.microcode_queue.clear();
     cpu.nmi_requested_at = Some(0);
 
     let mut plugin = EmptyPlugin::new();
+    inc_system_cycles();
     let (_, finished) = cpu.tick(&mut plugin);
     assert!(!finished);
+    inc_system_cycles();
     let (_, finished) = cpu.tick(&mut plugin);
 
     assert!(!finished);
@@ -3147,13 +3153,15 @@ fn test_ready_nmi_is_taken_even_while_already_in_nmi_mode() {
 #[test]
 fn test_irq_entry_schedules_five_followup_microcodes() {
     let mut cpu = create_cpu();
-    cpu.cycles = 2;
+    set_system_cycles(2);
     cpu.set_flag(Flag::InterruptDisabled, false);
     cpu.set_irq(true);
 
     let mut plugin = EmptyPlugin::new();
+    inc_system_cycles();
     let (_, finished) = cpu.tick(&mut plugin);
     assert!(!finished);
+    inc_system_cycles();
     let (_, finished) = cpu.tick(&mut plugin);
 
     assert!(!finished);

@@ -692,7 +692,6 @@ pub struct Apu<D: AudioDriver = ()> {
     driver: D,
     sample_rate: u32,
     sample_accumulator: u64,
-    apu_cycle: u64,
     frame_counter_cycle: u64,
     apu_even_cycle: bool,
     last_frame_counter_write: FrameCounter,
@@ -740,7 +739,6 @@ impl<D: AudioDriver> Apu<D> {
             driver,
             sample_rate,
             sample_accumulator: 0,
-            apu_cycle: 0,
             frame_counter_cycle: 0,
             apu_even_cycle: false,
             last_frame_counter_write: FrameCounter::new(),
@@ -793,7 +791,6 @@ impl<D: AudioDriver> Apu<D> {
 
         self.apu_even_cycle = !self.apu_even_cycle;
         if self.apu_even_cycle {
-            self.apu_cycle = self.apu_cycle.wrapping_add(1);
             self.pulse1.step_timer();
             self.pulse2.step_timer();
             self.noise.step_timer();

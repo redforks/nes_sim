@@ -1,5 +1,5 @@
 use super::*;
-use crate::test_utils::MockMcu;
+use crate::{inc_system_cycles, test_utils::MockMcu};
 
 #[test]
 fn test_machine_creation() {
@@ -45,7 +45,10 @@ fn test_reset() {
     // Reset enqueues microcodes that load the reset vector; run them to apply
     let mut plugin = EmptyPlugin::<MockMcu>::new();
     // Tick until the CPU reports the current instruction is finished
-    while !machine.cpu_mut().tick(&mut plugin).1 {}
+    inc_system_cycles();
+    while !machine.cpu_mut().tick(&mut plugin).1 {
+        inc_system_cycles();
+    }
     // Reset reads PC from 0xFFFC
     assert_eq!(machine.cpu.pc, 0);
 }

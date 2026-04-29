@@ -1,5 +1,5 @@
 use self::microcode::{Microcode, opcode};
-use crate::mcu::Mcu;
+use crate::{get_system_cycles, inc_system_cycles, mcu::Mcu};
 use arraydeque::ArrayDeque;
 #[cfg(debug_assertions)]
 use std::{cell::Cell, rc::Rc};
@@ -50,7 +50,6 @@ pub struct Cpu<M: Mcu> {
     pub pc: u16,
     pub sp: u8,
     pub status: u8,
-    cycles: usize,
     mcu: M,
 
     opcode: u8,
@@ -63,13 +62,13 @@ pub struct Cpu<M: Mcu> {
 
     /// cpu irq line, true means irq is requested, map to Low level of cpu irq pin
     irq_line: bool,
-    irq_requested_at: Option<usize>,
+    irq_requested_at: Option<u64>,
     irq_inhibit: Option<bool>,
     nmi_line: bool,
     /// cycles that nmi_requested, in real 6502 cpu, cpu check nmi at the last cycle of instruction,
     /// if set nmi line of ppu, such as STA $2000, nmi line set after last cycle of STA instruction, then
     /// cpu can not know nmi signal until the next instruction, we save the cycle that nmi requested to detect this
-    nmi_requested_at: Option<usize>,
+    nmi_requested_at: Option<u64>,
     defer_nmi_poll: bool,
     irq_vector_is_nmi: bool,
     irq_is_brk: bool,
@@ -82,7 +81,7 @@ pub struct Cpu<M: Mcu> {
     /// While set, apply penultimate-cycle IRQ sampling: the IRQ must have been
     /// asserted for at least 1 CPU cycle (3 PPU ticks) before being acted on.
     /// Cleared when the IRQ is taken or the window expires.
-    post_dma_irq_defer: Option<usize>,
+    post_dma_irq_defer: Option<u64>,
     /// DMC DMA state machine – `None` when no DMC DMA is in progress.
     dmc_dma: Option<DmcDmaPhase>,
     mode: CpuMode,
@@ -104,7 +103,6 @@ impl<M: Mcu> Cpu<M> {
             pc: 0,
             sp: 0,
             status: 0,
-            cycles: 0,
             mcu,
             opcode: 0,
             cur_microcode: None,
@@ -147,6 +145,7 @@ impl<M: Mcu> Cpu<M> {
     fn drain_microcodes<P: Plugin<M>>(&mut self, plugin: &mut P) {
         while self.cur_microcode.is_some() || !self.microcode_queue.is_empty() {
             // Ignore execute result; we're only interested in running queued microcodes.
+            inc_system_cycles();
             let _ = self.tick(plugin);
         }
     }
@@ -191,18 +190,9 @@ impl<M: Mcu> Cpu<M> {
         ]);
     }
 
-    pub fn total_cycles(&self) -> usize {
-        self.cycles
-    }
-
-    /// Cpu will enter nmi before exec next instrnuction
-    fn request_nmi(&mut self) {
-        self.nmi_requested_at = Some(self.cycles);
-    }
-
     pub fn set_irq(&mut self, enabled: bool) {
         if enabled && !self.irq_line {
-            self.irq_requested_at = Some(self.cycles);
+            self.irq_requested_at = Some(get_system_cycles());
         } else if !enabled {
             self.irq_requested_at = None;
         }
@@ -210,10 +200,10 @@ impl<M: Mcu> Cpu<M> {
     }
 
     fn nmi_hijack_ready(&self) -> bool {
-        self.nmi_ready_at(self.cycles.wrapping_add(2))
+        self.nmi_ready_at(get_system_cycles().wrapping_add(2))
     }
 
-    fn nmi_ready_at(&self, cycles: usize) -> bool {
+    fn nmi_ready_at(&self, cycles: u64) -> bool {
         self.nmi_requested_at
             .is_some_and(|requested_at| cycles > requested_at + 5)
     }
@@ -262,17 +252,15 @@ impl<M: Mcu> Cpu<M> {
             );
         });
 
-        let first_phase = match self.cycles % 3 {
+        let first_phase = match get_system_cycles().wrapping_sub(1) % 3 {
             0 => true,
             1 => {
-                self.cycles = self.cycles.wrapping_add(1);
                 return (ExecuteResult::Continue, false);
             }
             2 => false,
             _ => unreachable!(),
         };
 
-        self.cycles = self.cycles.wrapping_add(1);
         // ── Advance DMC DMA state machine ──
         // Each phase is a pure CPU stall cycle.
         if self.dmc_dma.is_some() {
@@ -320,7 +308,7 @@ impl<M: Mcu> Cpu<M> {
                     plugin.start(self);
                     let irq_inhibit = self.irq_inhibit.take();
                     let branch_defer = std::mem::take(&mut self.branch_irq_defer);
-                    let poll_cycles = self.cycles.wrapping_add(2);
+                    let poll_cycles = get_system_cycles().wrapping_add(2);
                     let irq_pending = self.irq_line
                         && !irq_inhibit.unwrap_or_else(|| self.flag(Flag::InterruptDisabled));
 
@@ -346,16 +334,16 @@ impl<M: Mcu> Cpu<M> {
                         let defer_for_branch = branch_defer
                             && self
                                 .irq_requested_at
-                                .is_some_and(|at| self.cycles.wrapping_sub(at) <= 3);
+                                .is_some_and(|at| get_system_cycles().wrapping_sub(at) <= 3);
                         if defer_for_branch {
                             Microcode::FetchAndDecode
                         } else {
                             let should_defer = self.post_dma_irq_defer.is_some_and(|dma_end| {
                                 self.irq_requested_at.is_some_and(|at| {
-                                    if self.cycles <= dma_end + 3 {
+                                    if get_system_cycles() <= dma_end + 3 {
                                         at + 3 >= dma_end
                                     } else {
-                                        at + 3 > self.cycles
+                                        at + 3 > get_system_cycles()
                                     }
                                 })
                             });
@@ -382,7 +370,7 @@ impl<M: Mcu> Cpu<M> {
                     } else {
                         if self
                             .post_dma_irq_defer
-                            .is_some_and(|dma_end| self.cycles > dma_end + 12)
+                            .is_some_and(|dma_end| get_system_cycles() > dma_end + 12)
                         {
                             self.post_dma_irq_defer = None;
                         }
@@ -821,7 +809,7 @@ impl<M: Mcu> Cpu<M> {
         if self.nmi_line != nmi {
             self.nmi_line = nmi;
             if nmi {
-                self.request_nmi();
+                self.nmi_requested_at = Some(get_system_cycles().wrapping_sub(1));
             }
         }
 
@@ -835,7 +823,7 @@ impl<M: Mcu> Cpu<M> {
             && self.mode == CpuMode::Normal
             && self
                 .nmi_requested_at
-                .is_some_and(|cycles| self.cycles > cycles + 4);
+                .is_some_and(|cycles| get_system_cycles() > cycles + 4);
         let hijacked = if self.irq_is_brk {
             std::mem::take(&mut self.irq_vector_is_nmi)
         } else {
