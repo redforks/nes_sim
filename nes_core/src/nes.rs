@@ -95,7 +95,7 @@ impl<R: Render, D: AudioDriver> NesMcu<R, D> {
         self.apu.flush();
     }
 
-    pub fn tick_oam_dma(&mut self, cycle_phase: usize, cpu_cycle: usize) -> bool {
+    pub fn tick_oam_dma(&mut self, cycle_phase: u64, cpu_cycle: u64) -> bool {
         if let Some(mut dma) = self.oam_dma.take() {
             if cycle_phase == 2 {
                 if dma.startup_cycles > 0 {

@@ -1,5 +1,5 @@
 use crate::{
-    ExecuteResult, Plugin, inc_system_cycles,
+    ExecuteResult, Plugin, get_system_cycles, inc_system_cycles,
     ines::INesFile,
     machine::Machine,
     nes::{
@@ -18,7 +18,6 @@ const MAX_TICKS_PER_FRAME: u32 = 90000;
 
 pub struct NesMachine<P, R: Render, D: crate::nes::apu::AudioDriver> {
     machine: Machine<P, NesMcu<R, D>>,
-    cycles: usize,
     cartridge_irq_latched: bool,
     cartridge_irq_next: bool,
 }
@@ -33,7 +32,6 @@ where
         let mcu = NesMcu::new(file, render, audio_driver);
         Self {
             machine: Machine::with_plugin(plugin, mcu),
-            cycles: 0,
             cartridge_irq_latched: false,
             cartridge_irq_next: false,
         }
@@ -69,14 +67,14 @@ where
 
     /// Execute one CPU instruction and tick PPU/APU. Returns the `ExecuteResult`.
     pub fn tick(&mut self) -> ExecuteResult {
-        self.cycles += 1;
+        let cycles = get_system_cycles();
 
         self.machine.mcu_mut().tick_ppu();
         let nmi_line = self.mcu().ppu().nmi_line_out();
         let timing = self.mcu().ppu().timing();
         self.machine.cpu_mut().update_nmi_line(nmi_line, timing);
         self.cartridge_irq_next = self.machine.mcu().cartridge_irq_pending();
-        if self.cycles.is_multiple_of(3) {
+        if cycles.is_multiple_of(3) {
             self.cartridge_irq_latched = self.cartridge_irq_next;
         }
 
@@ -85,15 +83,15 @@ where
         let irq_pending = self.machine.mcu().apu_irq_pending() || self.cartridge_irq_latched;
         self.machine.cpu_mut().set_irq(irq_pending);
 
-        if self.cycles.is_multiple_of(3) {
+        if cycles.is_multiple_of(3) {
             self.machine.mcu_mut().tick_apu();
             if let Some(is_reload) = self.machine.mcu_mut().take_dmc_dma_pending() {
                 self.machine.cpu_mut().request_dmc_dma(is_reload);
             }
         }
 
-        let cpu_tick_phase = (self.cycles - 1) % 3;
-        let cpu_cycle = (self.cycles - 1) / 3;
+        let cpu_tick_phase = (cycles - 1) % 3;
+        let cpu_cycle = (cycles - 1) / 3;
         if self
             .machine
             .mcu_mut()
@@ -108,7 +106,7 @@ where
         // wrote to $4015 enabling DMC with an empty sample buffer.
         // On real hardware the APU and CPU are clocked simultaneously,
         // so the DMA check sees the $4015 write on the same cycle.
-        if self.cycles.is_multiple_of(3) {
+        if cycles.is_multiple_of(3) {
             self.machine.mcu_mut().recheck_dmc_dma();
         }
 
