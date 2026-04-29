@@ -77,6 +77,13 @@ impl Image {
                 return self.create_scanline_machine(ines, quiet, start_pc, max_instructions);
             } else if f == "mmc1_a12.nes" {
                 return self.create_mmc1_a12_machine(ines, quiet, start_pc, max_instructions);
+            } else if f == "demo_ntsc.nes"
+                && file_name
+                    .as_os_str()
+                    .to_str()
+                    .is_some_and(|s| s.contains("nmi_sync"))
+            {
+                return self.create_nmi_sync_machine(ines, quiet, start_pc, max_instructions);
             }
         }
 
@@ -169,6 +176,36 @@ impl Image {
             // MMC1 A12 needs substantially more time than the other image tests
             // to settle on the matching frame in debug builds.
             Box::new(Timeout::new(Duration::from_secs(3))),
+        ];
+        if max_instructions > 0 {
+            plugins.push(Box::new(MaxInstructions::new(max_instructions)));
+        }
+        let plugin = CompositePlugin::new(plugins);
+        let mut machine = NesMachine::new(ines, plugin, ImageRender::default_dimension(), ());
+        if let Some(pc) = start_pc {
+            machine.set_pc(pc);
+        }
+        MachineWrapper::PngFrameMatch(Box::new(machine))
+    }
+
+    fn create_nmi_sync_machine(
+        &self,
+        ines: &INesFile,
+        quiet: bool,
+        start_pc: Option<u16>,
+        max_instructions: u64,
+    ) -> MachineWrapper {
+        let expected_png_1 =
+            PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("src/nmi-sync-ntsc-exp-1.png");
+        let expected_png_2 =
+            PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("src/nmi-sync-ntsc-exp-2.png");
+        let mut plugins: Vec<Box<dyn Plugin<nes_core::nes::NesMcu<ImageRender, ()>>>> = vec![
+            Box::new(NesReportPlugin::create(quiet)),
+            Box::new(
+                PngFrameMatch::new_two(expected_png_1, expected_png_2)
+                    .expect("failed to load mmc1_a12_exp.png"),
+            ),
+            Box::new(Timeout::new(Duration::from_secs(2))),
         ];
         if max_instructions > 0 {
             plugins.push(Box::new(MaxInstructions::new(max_instructions)));

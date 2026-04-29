@@ -65,6 +65,9 @@ instr_timing: build_nes_cpu_test
 ppu_vbl_nmi: build_nes_cpu_test
     {{ nes_cpu_test }} --quiet -f ../nes-test-roms/ppu_vbl_nmi/ppu_vbl_nmi.nes
 
+nmi_sync: build_nes_cpu_test
+    {{ nes_cpu_test }} --quiet -f ../nes-test-roms/nmi_sync/demo_ntsc.nes
+
 build_nes_cpu_test:
     cargo build -p nes_cpu_test
 
