@@ -91,6 +91,12 @@ where
             }
         }
 
+        let cpu_tick_phase = (self.cycles - 1) % 3;
+        let cpu_cycle = (self.cycles - 1) / 3;
+        if self.machine.mcu_mut().tick_oam_dma(cpu_tick_phase, cpu_cycle) {
+            return ExecuteResult::Continue;
+        }
+
         let result = self.machine.tick();
 
         // After the CPU tick, re-check DMC DMA in case the CPU just
@@ -102,10 +108,6 @@ where
             if let Some(is_reload) = self.machine.mcu_mut().take_dmc_dma_pending() {
                 self.machine.cpu_mut().request_dmc_dma(is_reload);
             }
-        }
-
-        if self.machine.mcu_mut().take_oam_dma_pending() {
-            self.machine.cpu_mut().request_oam_dma();
         }
 
         result

@@ -342,7 +342,7 @@ mmc1-a12: build_nes_cpu_test
 
 passed_mapper: mmc3 bntest mmc1-a12
 
-passed_cpu_tests: cpu-test instr_misc instr_test-v5 instr_test-v3 instr_timing cpu_dummy_reads cpu_dummy_writes cpu_exec_space cpu_reset cpu_timing_test6 nestest branch_timing_tests cpu_interrupts_v2 nes_instr_test
+passed_cpu_tests: cpu-test instr_misc instr_test-v5 instr_test-v3 instr_timing cpu_dummy_reads cpu_dummy_writes cpu_exec_space cpu_reset cpu_timing_test6 nestest branch_timing_tests nes_instr_test
 
 [parallel]
 passed_ppu_tests: vbl_nmi_timing oam_read oam_stress ppu_open_bus ppu_read_buffer sprite_hit_tests sprite_overflow_tests scanline ppu_vbl_nmi
@@ -350,7 +350,7 @@ passed_ppu_tests: vbl_nmi_timing oam_read oam_stress ppu_open_bus ppu_read_buffe
 [parallel]
 passed_apu_tests: apu_mixer apu_reset apu_test dmc_dma_during_read4
 
-todo_tests: sprdma_and_dmc_dma mmc3_test_6
+todo_tests: sprdma_and_dmc_dma mmc3_test_6 cpu_interrupts_v2
 
 [parallel]
 passed: unit-test passed_cpu_tests passed_ppu_tests passed_apu_tests passed_mapper

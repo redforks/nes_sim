@@ -11,7 +11,8 @@ fn test_mcu() -> NesMcu<ImageRender, ()> {
         controller: Controller::new(),
         cartridge: Cartridge::Test(Box::new(TestCartridge::new())),
         apu: Apu::new(()),
-        oam_dma_pending: false,
+        oam_dma_pending: None,
+        oam_dma: None,
         dmc_dma_pending: None,
         open_bus: 0,
     }
@@ -64,7 +65,41 @@ fn test_ppu_dma() {
     mcu.write(0x0200, 0x12);
     mcu.write(0x0201, 0x34);
     mcu.write(0x0202, 0x56);
+    mcu.write(0x2003, 0x00);
     mcu.write(0x4014, 0x02);
+
+    assert_eq!(mcu.get_oam_data()[0], 0x00);
+    assert!(mcu.tick_oam_dma(2, 0));
+    assert_eq!(mcu.get_oam_data()[0], 0x00);
+
+    for tick in 0..513 {
+        assert!(mcu.tick_oam_dma(2, tick));
+    }
+
+    let oam = mcu.get_oam_data();
+    assert_eq!(oam[0], 0x12);
+    assert_eq!(oam[1], 0x34);
+    assert_eq!(oam[2], 0x42);
+    assert!(!mcu.tick_oam_dma(2, 514));
+}
+
+#[test]
+fn test_ppu_dma_respects_oam_addr_wraparound() {
+    let mut mcu = test_mcu();
+
+    mcu.write(0x0200, 0x12);
+    mcu.write(0x02FF, 0x34);
+    mcu.write(0x2003, 0xFE);
+    mcu.write(0x4014, 0x02);
+
+    assert!(mcu.tick_oam_dma(2, 0));
+    for tick in 0..513 {
+        assert!(mcu.tick_oam_dma(2, tick));
+    }
+
+    let oam = mcu.get_oam_data();
+    assert_eq!(oam[0xFE], 0x02);
+    assert_eq!(oam[0xFD], 0x34);
 }
 
 #[test]

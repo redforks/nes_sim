@@ -14,13 +14,22 @@ mod lower_ram;
 mod mapper;
 pub mod ppu;
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct OamDmaState {
+    page: u8,
+    startup_cycles: usize,
+    transfer_cycle: usize,
+    latch: u8,
+}
+
 pub struct NesMcu<R: Render, D: AudioDriver> {
     lower_ram: LowerRam,
     ppu: Ppu<R>,
     controller: Controller,
     cartridge: Cartridge,
     apu: Apu<D>,
-    oam_dma_pending: bool,
+    oam_dma_pending: Option<u8>,
+    oam_dma: Option<OamDmaState>,
     /// Pending DMC DMA: (address, is_reload).
     dmc_dma_pending: Option<(u16, bool)>,
     /// CPU data bus open bus value: the last value read by the CPU.
@@ -39,7 +48,8 @@ impl<R: Render, D: AudioDriver> NesMcu<R, D> {
             controller: Controller::new(),
             cartridge,
             apu: Apu::new(audio_driver),
-            oam_dma_pending: false,
+            oam_dma_pending: None,
+            oam_dma: None,
             dmc_dma_pending: None,
             open_bus: 0,
         }
@@ -52,14 +62,7 @@ impl<R: Render, D: AudioDriver> NesMcu<R, D> {
 
     fn ppu_dma(&mut self, address: u8) {
         trace!("ppu dma");
-        let addr = (address as u16) << 8;
-        let mut buf = [0x00u8; 0x100];
-        for (i, item) in buf.iter_mut().enumerate() {
-            *item = self.read(addr + i as u16);
-        }
-        self.ppu.oam_dma(&buf);
-        self.cartridge.on_oam_dma();
-        self.oam_dma_pending = true;
+        self.oam_dma_pending = Some(address);
     }
 
     /// Tick PPU by one dot.
@@ -92,8 +95,47 @@ impl<R: Render, D: AudioDriver> NesMcu<R, D> {
         self.apu.flush();
     }
 
-    pub fn take_oam_dma_pending(&mut self) -> bool {
-        std::mem::take(&mut self.oam_dma_pending)
+    pub fn tick_oam_dma(&mut self, cycle_phase: usize, cpu_cycle: usize) -> bool {
+        if let Some(mut dma) = self.oam_dma.take() {
+            if cycle_phase == 2 {
+                if dma.startup_cycles > 0 {
+                    dma.startup_cycles -= 1;
+                } else {
+                    let byte_index = dma.transfer_cycle / 2;
+                    if dma.transfer_cycle.is_multiple_of(2) {
+                        let addr = ((dma.page as u16) << 8) | byte_index as u16;
+                        dma.latch = self.read(addr);
+                    } else {
+                        self.ppu.write_oam_dma_byte(dma.latch);
+                    }
+                    dma.transfer_cycle += 1;
+                }
+            }
+
+            if dma.startup_cycles == 0 && dma.transfer_cycle == 512 {
+                return true;
+            }
+
+            self.oam_dma = Some(dma);
+            return true;
+        }
+
+        if let Some(page) = self.oam_dma_pending {
+            if cycle_phase == 2 {
+                self.oam_dma_pending = None;
+                self.oam_dma = Some(OamDmaState {
+                    page,
+                    startup_cycles: if cpu_cycle.is_multiple_of(2) { 1 } else { 2 },
+                    transfer_cycle: 0,
+                    latch: 0,
+                });
+                self.cartridge.on_oam_dma();
+            }
+
+            return true;
+        }
+
+        false
     }
 
     /// Re-check if DMC DMA is needed after a CPU write to $4015.

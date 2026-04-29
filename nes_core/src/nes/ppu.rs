@@ -265,6 +265,12 @@ impl<R: Render> Ppu<R> {
         // cache-free: nothing to mark
     }
 
+    pub fn write_oam_dma_byte(&mut self, value: u8) {
+        let addr = self.registers.oam_addr as usize;
+        self.registers.oam_data[addr] = normalize_oam_byte(self.registers.oam_addr, value);
+        self.registers.oam_addr = self.registers.oam_addr.wrapping_add(1);
+    }
+
     pub fn tick(&mut self, cartridge: &mut Cartridge) {
         self.ppu_ticks = self.ppu_ticks.wrapping_add(1);
         let rendering_enabled = self.rendering_enabled();
@@ -525,9 +531,7 @@ impl<R: Render> Ppu<R> {
             }
             // OAMDATA
             0x2004 => {
-                let addr = self.registers.oam_addr as usize;
-                self.registers.oam_data[addr] = normalize_oam_byte(self.registers.oam_addr, value);
-                self.registers.oam_addr = self.registers.oam_addr.wrapping_add(1);
+                self.write_oam_dma_byte(value);
                 // OAM mutated; no cache to mark
             }
             // PPUSCROLL

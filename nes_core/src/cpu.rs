@@ -248,10 +248,6 @@ impl<M: Mcu> Cpu<M> {
         self.mode == CpuMode::Halt
     }
 
-    pub fn request_oam_dma(&mut self) {
-        self.oam_dma_pending = true;
-    }
-
     /// Request a DMC DMA stall.
     /// `is_reload`: true for reload DMAs (output unit emptied buffer, 4 cycles),
     ///              false for load DMAs ($4015 write with empty buffer, 3 cycles).
