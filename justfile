@@ -57,7 +57,7 @@ nestest:
     cargo run -p nes_cpu_test -- -f ../nes-test-roms/other/nestest.nes --start-pc 0xC000
 
 unit-test:
-    cargo test
+    cargo test --lib --workspace
 
 instr_timing: build_nes_cpu_test
     {{ nes_cpu_test }} --quiet -f ../nes-test-roms/instr_timing/instr_timing.nes
@@ -339,7 +339,6 @@ mmc1-a12: build_nes_cpu_test
 
 passed_mapper: mmc3 bntest mmc1-a12
 
-[parallel]
 passed_cpu_tests: cpu-test instr_misc instr_test-v5 instr_test-v3 instr_timing cpu_dummy_reads cpu_dummy_writes cpu_exec_space cpu_reset cpu_timing_test6 nestest branch_timing_tests cpu_interrupts_v2 nes_instr_test
 
 [parallel]
