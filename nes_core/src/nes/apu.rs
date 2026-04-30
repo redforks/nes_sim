@@ -1,6 +1,67 @@
+use std::ops::SubAssign;
+
 use bitfield_struct::bitfield;
 
 use crate::get_system_cycles;
+
+trait Counter: Eq + SubAssign + Copy + Sized {
+    const ZERO: Self;
+    const ONE: Self;
+}
+
+impl Counter for u16 {
+    const ZERO: Self = 0;
+    const ONE: Self = 1;
+}
+
+impl Counter for u8 {
+    const ZERO: Self = 0;
+    const ONE: Self = 0;
+}
+
+/// A divider outputs a clock every n input clocks, where n is the divider's
+/// period. It contains a counter which is decremented on the arrival of each
+/// clock. When it reaches 0, it is reloaded with the period and an output clock
+/// is generated. Resetting a divider reloads its counter without generating an
+/// output clock. Changing a divider's period doesn't affect its current count.
+#[derive(Debug, Default)]
+struct Timer<C> {
+    period: C,
+    counter: C,
+}
+
+impl<C: Counter> Timer<C> {
+    /// Tick the timer. Returns true if an output clock is generated on this tick.
+    fn tick(&mut self) -> bool {
+        if self.counter == C::ZERO {
+            self.reset();
+            true
+        } else {
+            self.counter -= C::ONE;
+            false
+        }
+    }
+
+    /// Reset the timer (reload counter with period, without generating an output clock).
+    fn reset(&mut self) {
+        self.counter = self.period;
+    }
+
+    /// Set the timer period. Doesn't affect the current counter value.
+    fn set_period(&mut self, period: C) {
+        self.period = period;
+    }
+}
+
+impl Timer<u16> {
+    const fn set_period_high(&mut self, high: u8) {
+        self.period = (self.period & 0x00FF) | ((high as u16) << 8);
+    }
+
+    const fn set_period_low(&mut self, low: u8) {
+        self.period = (self.period & 0xFF00) | (low as u16);
+    }
+}
 
 #[bitfield(u8)]
 struct Sweep {
@@ -29,12 +90,6 @@ struct LengthTimerHigh3Bits {
     high3: u8,
     #[bits(5)]
     length: u8,
-}
-
-impl LengthTimerHigh3Bits {
-    fn update_timer(self, timer: &mut u16) {
-        *timer = ((self.high3() as u16) << 8) | (*timer & 0x00FF);
-    }
 }
 
 #[bitfield(u8)]
@@ -189,7 +244,7 @@ pub struct ApuStatusInfo {
     pub dmc_irq_pending: bool,
 }
 
-#[derive(Clone, Default)]
+#[derive(Default, Debug)]
 struct EnvelopeState {
     start: bool,
     divider: u8,
@@ -224,12 +279,11 @@ impl EnvelopeState {
     }
 }
 
-#[derive(Clone)]
+#[derive(Default)]
 struct PulseState {
     control: DutyCycle,
     sweep: Sweep,
-    timer_period: u16,
-    timer_counter: u16,
+    timer: Timer<u16>,
     length_counter: u8,
     enabled: bool,
     sequence_step: usize,
@@ -242,17 +296,8 @@ struct PulseState {
 impl PulseState {
     fn new(ones_complement_negate: bool) -> Self {
         Self {
-            control: DutyCycle::default(),
-            sweep: Sweep::default(),
-            timer_period: 0,
-            timer_counter: 0,
-            length_counter: 0,
-            enabled: false,
-            sequence_step: 0,
-            envelope: EnvelopeState::default(),
-            sweep_divider: 0,
-            sweep_reload: false,
             ones_complement_negate,
+            ..Default::default()
         }
     }
 
@@ -273,11 +318,11 @@ impl PulseState {
     }
 
     fn write_timer_low(&mut self, value: u8) {
-        self.timer_period = (self.timer_period & 0x0700) | value as u16;
+        self.timer.set_period_low(value);
     }
 
     fn write_timer_high(&mut self, load: LengthTimerHigh3Bits) {
-        load.update_timer(&mut self.timer_period);
+        self.timer.set_period_high(load.high3());
         // Only reload length counter if the channel is enabled
         if self.enabled {
             self.length_counter = LENGTH_TABLE[load.length() as usize];
@@ -287,11 +332,8 @@ impl PulseState {
     }
 
     fn step_timer(&mut self) {
-        if self.timer_counter == 0 {
-            self.timer_counter = self.timer_period;
+        if self.timer.tick() {
             self.sequence_step = (self.sequence_step + 1) % 8;
-        } else {
-            self.timer_counter -= 1;
         }
     }
 
@@ -312,7 +354,7 @@ impl PulseState {
             && self.sweep.shift() > 0
             && !self.sweep_mutes_channel();
         if apply {
-            self.timer_period = self.sweep_target_period();
+            self.timer.period = self.sweep_target_period();
         }
 
         if self.sweep_divider == 0 || self.sweep_reload {
@@ -332,17 +374,18 @@ impl PulseState {
     }
 
     fn sweep_target_period(&self) -> u16 {
-        let change = self.timer_period >> self.sweep.shift();
+        let change = self.timer.period >> self.sweep.shift();
         if self.sweep.negate() {
-            self.timer_period
+            self.timer
+                .period
                 .saturating_sub(change + u16::from(self.ones_complement_negate))
         } else {
-            self.timer_period.saturating_add(change)
+            self.timer.period.saturating_add(change)
         }
     }
 
     fn sweep_mutes_channel(&self) -> bool {
-        self.timer_period < 8 || self.sweep_target_period() > 0x07FF
+        self.timer.period < 8 || self.sweep_target_period() > 0x07FF
     }
 
     fn output(&self) -> u8 {
@@ -358,11 +401,10 @@ impl PulseState {
     }
 }
 
-#[derive(Clone, Default)]
+#[derive(Default, Debug)]
 struct TriangleState {
     control: LinearCounterControl,
-    timer_period: u16,
-    timer_counter: u16,
+    timer: Timer<u16>,
     length_counter: u8,
     linear_counter: u8,
     linear_counter_reload: bool,
@@ -383,11 +425,11 @@ impl TriangleState {
     }
 
     fn write_timer_low(&mut self, value: u8) {
-        self.timer_period = (self.timer_period & 0x0700) | value as u16;
+        self.timer.set_period_low(value);
     }
 
     fn write_timer_high(&mut self, load: LengthTimerHigh3Bits) {
-        load.update_timer(&mut self.timer_period);
+        self.timer.set_period_high(load.high3());
         // Only reload length counter if the channel is enabled
         if self.enabled {
             self.length_counter = LENGTH_TABLE[load.length() as usize];
@@ -396,13 +438,12 @@ impl TriangleState {
     }
 
     fn step_timer(&mut self) {
-        if self.timer_counter == 0 {
-            self.timer_counter = self.timer_period;
-            if self.length_counter > 0 && self.linear_counter > 0 && self.timer_period > 1 {
-                self.sequence_step = (self.sequence_step + 1) % TRIANGLE_SEQUENCE.len();
-            }
-        } else {
-            self.timer_counter -= 1;
+        if self.timer.tick()
+            && self.length_counter > 0
+            && self.linear_counter > 0
+            && self.timer.period > 1
+        {
+            self.sequence_step = (self.sequence_step + 1) % TRIANGLE_SEQUENCE.len();
         }
     }
 
@@ -437,7 +478,7 @@ impl TriangleState {
     }
 }
 
-#[derive(Clone)]
+#[derive(Debug)]
 struct NoiseState {
     envelope: NoiseEnvelop,
     period: NoisePeriod,
@@ -529,7 +570,7 @@ impl NoiseState {
     }
 }
 
-#[derive(Clone)]
+#[derive(Debug)]
 struct DmcState {
     // Registers
     irq_loop_freq: DmcIRQLoopFreq,
