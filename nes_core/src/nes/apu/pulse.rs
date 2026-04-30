@@ -1,5 +1,12 @@
 use super::*;
 
+const PULSE_DUTY_TABLE: [[u8; 8]; 4] = [
+    [0, 1, 0, 0, 0, 0, 0, 0],
+    [0, 1, 1, 0, 0, 0, 0, 0],
+    [0, 1, 1, 1, 1, 0, 0, 0],
+    [1, 0, 0, 1, 1, 1, 1, 1],
+];
+
 #[derive(Default)]
 pub(super) struct Pulse {
     control: PulseControlBits,

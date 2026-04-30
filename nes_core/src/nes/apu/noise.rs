@@ -1,5 +1,9 @@
 use super::*;
 
+const NOISE_PERIOD_TABLE: [u16; 16] = [
+    4, 8, 16, 32, 64, 96, 128, 160, 202, 254, 380, 508, 762, 1016, 2034, 4068,
+];
+
 #[derive(Debug)]
 pub struct Noise {
     envelope: NoiseControlBits,

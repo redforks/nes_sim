@@ -1,5 +1,11 @@
 use super::*;
 
+/// NTSC DMC rate table: CPU cycles per output sample clock.
+/// Indexed by $4010 bits 0-3.
+const DMC_RATE_TABLE: [u16; 16] = [
+    428, 380, 340, 320, 286, 254, 226, 214, 190, 160, 142, 128, 106, 84, 72, 54,
+];
+
 #[derive(Debug)]
 pub struct Dmc {
     irq_loop_freq: DmcIRQLoopFreq,
