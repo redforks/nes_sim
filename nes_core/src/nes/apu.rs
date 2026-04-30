@@ -3,12 +3,18 @@ use bitfield_struct::{bitenum, bitfield};
 use std::ops::SubAssign;
 
 mod frame_sequencer;
+mod dmc;
 mod helper;
+mod noise;
 mod pulse;
+mod triangle;
 
+use dmc::Dmc;
 use frame_sequencer::FrameSequencer;
 use helper::LengthControl;
+use noise::Noise;
 use pulse::Pulse;
+use triangle::Triangle;
 
 trait Counter: Eq + SubAssign + Copy + Sized {
     const ZERO: Self;
@@ -338,342 +344,12 @@ impl EnvelopeState {
     }
 }
 
-#[derive(Default, Debug)]
-struct TriangleState {
-    control: TriangleControlBits,
-    timer: Timer<u16>,
-    length_control: LengthControl,
-    linear_counter: u8,
-    linear_counter_reload: bool,
-    enabled: bool,
-    sequence_step: usize,
-}
-
-impl TriangleState {
-    fn set_enabled(&mut self, enabled: bool) {
-        self.enabled = enabled;
-        if !enabled {
-            self.length_control.clear();
-        }
-    }
-
-    fn write_control(&mut self, value: TriangleControlBits) {
-        self.control = value;
-    }
-
-    fn write_timer_low(&mut self, value: u8) {
-        self.timer.set_period_low(value);
-    }
-
-    fn write_timer_high(&mut self, load: LengthTimerHigh3Bits) {
-        self.timer.set_period_high(load.high3());
-        // Only reload length counter if the channel is enabled
-        if self.enabled {
-            self.length_control.load(load.length());
-        }
-        self.linear_counter_reload = true;
-    }
-
-    fn step_timer(&mut self) {
-        if self.timer.tick()
-            && !self.length_control.disabled()
-            && self.linear_counter > 0
-            && self.timer.period > 1
-        {
-            self.sequence_step = (self.sequence_step + 1) % TRIANGLE_SEQUENCE.len();
-        }
-    }
-
-    fn step_linear_counter(&mut self) {
-        if self.linear_counter_reload {
-            self.linear_counter = self.control.counter();
-        } else if self.linear_counter > 0 {
-            self.linear_counter -= 1;
-        }
-
-        if !self.control.reload_flag() {
-            self.linear_counter_reload = false;
-        }
-    }
-
-    fn step_length_counter(&mut self) {
-        if !self.control.reload_flag() {
-            self.length_control.tick();
-        }
-    }
-
-    fn output(&self) -> u8 {
-        if !self.enabled || self.length_control.disabled() || self.linear_counter == 0 {
-            0
-        } else {
-            TRIANGLE_SEQUENCE[self.sequence_step]
-        }
-    }
-
-    fn status_enabled(&self) -> bool {
-        self.enabled && !self.length_control.disabled()
-    }
-}
-
-#[derive(Debug)]
-struct NoiseState {
-    envelope: NoiseControlBits,
-    period: NoisePeriod,
-    timer_counter: u16,
-    length_control: LengthControl,
-    enabled: bool,
-    shift_register: u16,
-    envelope_state: EnvelopeState,
-}
-
-impl Default for NoiseState {
-    fn default() -> Self {
-        Self {
-            envelope: NoiseControlBits::default(),
-            period: NoisePeriod::default(),
-            timer_counter: 0,
-            length_control: LengthControl::default(),
-            enabled: false,
-            shift_register: 1,
-            envelope_state: EnvelopeState::default(),
-        }
-    }
-}
-
-impl NoiseState {
-    fn set_enabled(&mut self, enabled: bool) {
-        self.enabled = enabled;
-        if !enabled {
-            self.length_control.clear();
-        }
-    }
-
-    fn write_envelope(&mut self, value: NoiseControlBits) {
-        self.envelope = value;
-    }
-
-    fn write_period(&mut self, value: NoisePeriod) {
-        self.period = value;
-    }
-
-    fn write_length(&mut self, value: NoiseLength) {
-        // Only reload length counter if the channel is enabled
-        if self.enabled {
-            self.length_control.load(value.length());
-        }
-        self.envelope_state.restart();
-    }
-
-    fn step_timer(&mut self) {
-        if self.timer_counter == 0 {
-            self.timer_counter = NOISE_PERIOD_TABLE[self.period.period() as usize];
-            let tap = if self.period.enabled() { 6 } else { 1 };
-            let feedback = (self.shift_register ^ (self.shift_register >> tap)) & 0x0001;
-            self.shift_register = (self.shift_register >> 1) | (feedback << 14);
-        } else {
-            self.timer_counter -= 1;
-        }
-    }
-
-    fn step_envelope(&mut self) {
-        self.envelope_state
-            .tick(self.envelope.volume(), self.envelope.loop_flag());
-    }
-
-    fn step_length_counter(&mut self) {
-        if !self.envelope.loop_flag() {
-            self.length_control.tick();
-        }
-    }
-
-    fn current_volume(&self) -> u8 {
-        if self.envelope.constant_volume() {
-            self.envelope.volume()
-        } else {
-            self.envelope_state.decay
-        }
-    }
-
-    fn output(&self) -> u8 {
-        if !self.enabled || self.length_control.disabled() || (self.shift_register & 0x0001) != 0 {
-            0
-        } else {
-            self.current_volume()
-        }
-    }
-
-    fn status_enabled(&self) -> bool {
-        self.enabled && !self.length_control.disabled()
-    }
-}
-
-#[derive(Debug)]
-struct DmcState {
-    // Registers
-    irq_loop_freq: DmcIRQLoopFreq,
-    load_counter: u8,   // $4011 direct load
-    sample_address: u8, // $4012
-    sample_length: u8,  // $4013
-
-    // Memory reader
-    current_address: u16,
-    bytes_remaining: u16,
-    sample_buffer: Option<u8>,
-
-    // Output unit
-    shift_register: u8,
-    bits_remaining: u8,
-    output_level: u8,
-    silence_flag: bool,
-
-    // Timer
-    timer_counter: u16,
-
-    // DMA request: set when sample buffer needs filling
-    dma_pending: bool,
-}
-
-impl Default for DmcState {
-    fn default() -> Self {
-        Self {
-            irq_loop_freq: DmcIRQLoopFreq::default(),
-            load_counter: 0,
-            sample_address: 0,
-            sample_length: 0,
-            current_address: 0,
-            bytes_remaining: 0,
-            sample_buffer: None,
-            shift_register: 0,
-            bits_remaining: 0,
-            output_level: 0,
-            silence_flag: true,
-            timer_counter: DMC_RATE_TABLE[0],
-            dma_pending: false,
-        }
-    }
-}
-
-impl DmcState {
-    /// Called when $4015 write sets/clears bit 4.
-    fn set_enabled(&mut self, enabled: bool) {
-        if !enabled {
-            self.bytes_remaining = 0;
-        } else if self.bytes_remaining == 0 {
-            self.restart_sample();
-        }
-    }
-
-    /// $4015 read: bit 4 = bytes remaining > 0
-    fn status_enabled(&self) -> bool {
-        self.bytes_remaining > 0
-    }
-
-    /// Reload address and length counters from registers.
-    fn restart_sample(&mut self) {
-        self.current_address = 0xC000 | ((self.sample_address as u16) << 6);
-        self.bytes_remaining = (self.sample_length as u16) * 16 + 1;
-    }
-
-    /// Tick the DMC timer. Called every CPU cycle.
-    /// Returns true if a DMA read should be initiated.
-    fn tick(&mut self) -> bool {
-        // Timer counts down every CPU cycle
-        if self.timer_counter > 0 {
-            self.timer_counter -= 1;
-        }
-
-        if self.timer_counter == 0 {
-            self.timer_counter = DMC_RATE_TABLE[self.irq_loop_freq.freq() as usize];
-            self.clock_output_unit();
-        }
-
-        // Check if we need to initiate a DMA read AFTER clocking the timer,
-        // so that a freshly-emptied sample buffer (by clock_output_unit above)
-        // is detected on the same cycle rather than 1 cycle late.
-        self.check_dma_needed()
-    }
-
-    /// Check if a DMA read is needed (sample buffer empty, bytes remaining > 0).
-    /// This is separated from `tick()` so it can also be called after CPU writes
-    /// to $4015 to detect immediately-needed DMAs.
-    fn check_dma_needed(&mut self) -> bool {
-        let need_dma =
-            self.sample_buffer.is_none() && self.bytes_remaining > 0 && !self.dma_pending;
-        if need_dma {
-            self.dma_pending = true;
-        }
-        need_dma
-    }
-
-    /// Clock the output unit (called when timer reaches 0).
-    fn clock_output_unit(&mut self) {
-        // If bits_remaining is 0, start a new output cycle
-        if self.bits_remaining == 0 {
-            self.bits_remaining = 8;
-            if let Some(byte) = self.sample_buffer.take() {
-                self.silence_flag = false;
-                self.shift_register = byte;
-            } else {
-                self.silence_flag = true;
-            }
-        }
-
-        // Output: update level based on shift register bit 0
-        if !self.silence_flag {
-            if self.shift_register & 1 != 0 {
-                if self.output_level <= 125 {
-                    self.output_level += 2;
-                }
-            } else if self.output_level >= 2 {
-                self.output_level -= 2;
-            }
-        }
-        self.shift_register >>= 1;
-        self.bits_remaining -= 1;
-    }
-
-    /// Supply a byte from DMA read. Returns true if DMC IRQ should fire.
-    fn supply_dma_byte(&mut self, byte: u8) -> bool {
-        self.sample_buffer = Some(byte);
-        self.dma_pending = false;
-
-        // Increment address, wrapping from $FFFF to $8000
-        self.current_address = if self.current_address == 0xFFFF {
-            0x8000
-        } else {
-            self.current_address + 1
-        };
-
-        self.bytes_remaining -= 1;
-
-        if self.bytes_remaining == 0 {
-            if self.irq_loop_freq.loop_flag() {
-                self.restart_sample();
-                false
-            } else {
-                self.irq_loop_freq.irq_enabled()
-            }
-        } else {
-            false
-        }
-    }
-
-    fn output(&self) -> u8 {
-        self.output_level
-    }
-
-    fn write_load_counter(&mut self, value: DmcLoadCounter) {
-        self.load_counter = value.load_counter();
-        self.output_level = self.load_counter;
-    }
-}
-
 pub struct Apu<D: AudioDriver = ()> {
     pulse1: Pulse,
     pulse2: Pulse,
-    triangle: TriangleState,
-    noise: NoiseState,
-    dmc: DmcState,
+    triangle: Triangle,
+    noise: Noise,
+    dmc: Dmc,
     driver: D,
     sample_rate: u32,
     sample_accumulator: u64,
@@ -700,9 +376,9 @@ impl<D: AudioDriver> Apu<D> {
         Self {
             pulse1: Pulse::new(true),
             pulse2: Pulse::new(false),
-            triangle: TriangleState::default(),
-            noise: NoiseState::default(),
-            dmc: DmcState::default(),
+            triangle: Triangle::default(),
+            noise: Noise::default(),
+            dmc: Dmc::default(),
             driver,
             sample_rate,
             sample_accumulator: 0,
@@ -733,9 +409,9 @@ impl<D: AudioDriver> Apu<D> {
 
         // Reset triangle channel state, but preserve the length counter halt flag
         // (control.reload_flag) which should persist across reset
-        let length_counter_halt = self.triangle.control.reload_flag();
-        self.triangle = TriangleState::default();
-        self.triangle.control = TriangleControlBits::new().with_reload_flag(length_counter_halt);
+        let length_counter_halt = self.triangle.reload_flag();
+        self.triangle = Triangle::default();
+        self.triangle.restore_reload_flag(length_counter_halt);
 
         // Re-apply the last value written to $4017 after the reset delay.
         // The test ROMs rely on reset preserving the previous frame counter mode
@@ -759,7 +435,7 @@ impl<D: AudioDriver> Apu<D> {
             // Tick DMC timer every CPU cycle
             if self.dmc.tick() {
                 // DMC requests a reload DMA read (output unit emptied buffer)
-                self.dmc_dma_request = Some((self.dmc.current_address, true));
+                self.dmc_dma_request = Some((self.dmc.current_address(), true));
             }
 
             let frame_clock = self.frame_sequencer.tick();
@@ -799,7 +475,7 @@ impl<D: AudioDriver> Apu<D> {
     pub fn recheck_dmc_dma(&mut self) {
         if self.dmc_dma_request.is_none() && self.dmc.check_dma_needed() {
             // Load DMA (triggered by $4015 write, not output unit): is_reload = false
-            self.dmc_dma_request = Some((self.dmc.current_address, false));
+            self.dmc_dma_request = Some((self.dmc.current_address(), false));
         }
     }
 
@@ -812,8 +488,8 @@ impl<D: AudioDriver> Apu<D> {
         ApuStatusInfo {
             pulse1_enabled: self.pulse1.status_enabled(),
             pulse2_enabled: self.pulse2.status_enabled(),
-            triangle_enabled: self.triangle.enabled,
-            noise_enabled: self.noise.enabled,
+            triangle_enabled: self.triangle.is_enabled(),
+            noise_enabled: self.noise.is_enabled(),
             dmc_enabled: self.dmc.status_enabled(),
             frame_irq_pending: self.frame_sequencer.frame_interrupt(),
             dmc_irq_pending: self.dmc_interrupt,
@@ -856,8 +532,8 @@ impl<D: AudioDriver> Apu<D> {
             0x400F => self.noise.write_length(value.into()),
             0x4010 => self.write_dmc_irq_loop_freq(value.into()),
             0x4011 => self.dmc.write_load_counter(value.into()),
-            0x4012 => self.dmc.sample_address = value,
-            0x4013 => self.dmc.sample_length = value,
+            0x4012 => self.dmc.write_sample_address(value),
+            0x4013 => self.dmc.write_sample_length(value),
             0x4015 => self.set_control_flags(value.into()),
             0x4017 => self
                 .frame_sequencer
@@ -948,9 +624,9 @@ impl<D: AudioDriver> Apu<D> {
     }
 
     fn write_dmc_irq_loop_freq(&mut self, value: DmcIRQLoopFreq) {
-        self.dmc.irq_loop_freq = value;
+        self.dmc.write_irq_loop_freq(value);
         // If IRQ flag cleared, clear the DMC interrupt
-        if !self.dmc.irq_loop_freq.irq_enabled() {
+        if !self.dmc.irq_enabled() {
             self.dmc_interrupt = false;
         }
     }
