@@ -23,12 +23,12 @@ impl Triangle {
         self.control = value;
     }
 
-    pub fn reload_flag(&self) -> bool {
-        self.control.reload_flag()
+    pub fn is_halt(&self) -> bool {
+        self.control.is_halt()
     }
 
-    pub fn restore_reload_flag(&mut self, reload_flag: bool) {
-        self.control = TriangleControlBits::new().with_reload_flag(reload_flag);
+    pub fn restore_is_halt_flag(&mut self, is_halt: bool) {
+        self.control = TriangleControlBits::new().with_is_halt(is_halt);
     }
 
     pub fn write_timer_low(&mut self, value: u8) {
@@ -60,13 +60,13 @@ impl Triangle {
             self.linear_counter -= 1;
         }
 
-        if !self.control.reload_flag() {
+        if !self.control.is_halt() {
             self.linear_counter_reload = false;
         }
     }
 
     pub fn step_length_counter(&mut self) {
-        if !self.control.reload_flag() {
+        if !self.control.is_halt() {
             self.length_control.tick();
         }
     }

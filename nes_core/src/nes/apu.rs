@@ -2,8 +2,8 @@ use crate::{SYSTEM_CYCLES_PER_CPU_CYCLE, get_system_cycles};
 use bitfield_struct::{bitenum, bitfield};
 use std::ops::SubAssign;
 
-mod frame_sequencer;
 mod dmc;
+mod frame_sequencer;
 mod helper;
 mod noise;
 mod pulse;
@@ -137,7 +137,7 @@ struct PulseControlBits {
     #[bits(4)]
     volume: u8,
     constant_volume: bool,
-    length_counter_halt: bool,
+    is_halt: bool,
     #[bits(2)]
     duty: u8,
 }
@@ -155,7 +155,7 @@ struct LengthTimerHigh3Bits {
 struct TriangleControlBits {
     #[bits(7)]
     counter: u8,
-    reload_flag: bool,
+    is_halt: bool,
 }
 
 #[bitfield(u8)]
@@ -174,7 +174,7 @@ struct NoisePeriod {
     period: u8,
     #[bits(3)]
     __: u8,
-    enabled: bool,
+    is_halt: bool,
 }
 
 #[bitfield(u8)]
@@ -409,9 +409,9 @@ impl<D: AudioDriver> Apu<D> {
 
         // Reset triangle channel state, but preserve the length counter halt flag
         // (control.reload_flag) which should persist across reset
-        let length_counter_halt = self.triangle.reload_flag();
+        let length_counter_halt = self.triangle.is_halt();
         self.triangle = Triangle::default();
-        self.triangle.restore_reload_flag(length_counter_halt);
+        self.triangle.restore_is_halt_flag(length_counter_halt);
 
         // Re-apply the last value written to $4017 after the reset delay.
         // The test ROMs rely on reset preserving the previous frame counter mode

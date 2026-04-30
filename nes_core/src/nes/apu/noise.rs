@@ -51,7 +51,7 @@ impl Noise {
     pub fn step_timer(&mut self) {
         if self.timer_counter == 0 {
             self.timer_counter = NOISE_PERIOD_TABLE[self.period.period() as usize];
-            let tap = if self.period.enabled() { 6 } else { 1 };
+            let tap = if self.period.is_halt() { 6 } else { 1 };
             let feedback = (self.shift_register ^ (self.shift_register >> tap)) & 0x0001;
             self.shift_register = (self.shift_register >> 1) | (feedback << 14);
         } else {

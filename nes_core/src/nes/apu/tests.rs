@@ -18,12 +18,12 @@ fn test_sweep_bitfield() {
 fn test_duty_cycle_bitfield() {
     let mut duty = PulseControlBits::new();
     duty.set_duty(0b11);
-    duty.set_length_counter_halt(true);
+    duty.set_is_halt(true);
     duty.set_constant_volume(false);
     duty.set_volume(0b1010);
 
     assert_eq!(duty.duty(), 0b11);
-    assert!(duty.length_counter_halt());
+    assert!(duty.is_halt());
     assert!(!duty.constant_volume());
     assert_eq!(duty.volume(), 0b1010);
 }
@@ -32,7 +32,7 @@ fn test_duty_cycle_bitfield() {
 fn test_duty_cycle_to_from_u8() {
     let mut duty = PulseControlBits::new();
     duty.set_duty(0b10);
-    duty.set_length_counter_halt(false);
+    duty.set_is_halt(false);
     duty.set_constant_volume(true);
     duty.set_volume(0b0101);
 
@@ -40,7 +40,7 @@ fn test_duty_cycle_to_from_u8() {
     let duty2: PulseControlBits = byte.into();
 
     assert_eq!(duty2.duty(), 0b10);
-    assert!(!duty2.length_counter_halt());
+    assert!(!duty2.is_halt());
     assert!(duty2.constant_volume());
     assert_eq!(duty2.volume(), 0b0101);
 }
@@ -48,23 +48,23 @@ fn test_duty_cycle_to_from_u8() {
 #[test]
 fn test_linear_counter_control() {
     let mut lcc = TriangleControlBits::new();
-    lcc.set_reload_flag(true);
+    lcc.set_is_halt(true);
     lcc.set_counter(0x55);
 
-    assert!(lcc.reload_flag());
+    assert!(lcc.is_halt());
     assert_eq!(lcc.counter(), 0x55);
 }
 
 #[test]
 fn test_linear_counter_control_to_from_u8() {
     let mut lcc = TriangleControlBits::new();
-    lcc.set_reload_flag(false);
+    lcc.set_is_halt(false);
     lcc.set_counter(0x7F);
 
     let byte: u8 = lcc.into();
     let lcc2: TriangleControlBits = byte.into();
 
-    assert!(!lcc2.reload_flag());
+    assert!(!lcc2.is_halt());
     assert_eq!(lcc2.counter(), 0x7F);
 }
 
@@ -115,23 +115,23 @@ fn test_noise_envelop_to_from_u8() {
 #[test]
 fn test_noise_period_bitfield() {
     let mut period = NoisePeriod::new();
-    period.set_enabled(true);
+    period.set_is_halt(true);
     period.set_period(0b1010);
 
-    assert!(period.enabled());
+    assert!(period.is_halt());
     assert_eq!(period.period(), 0b1010);
 }
 
 #[test]
 fn test_noise_period_to_from_u8() {
     let mut period = NoisePeriod::new();
-    period.set_enabled(false);
+    period.set_is_halt(false);
     period.set_period(0b0101);
 
     let byte: u8 = period.into();
     let period2: NoisePeriod = byte.into();
 
-    assert!(!period2.enabled());
+    assert!(!period2.is_halt());
     assert_eq!(period2.period(), 0b0101);
 }
 

@@ -59,11 +59,11 @@ impl Pulse {
 
     pub fn step_envelope(&mut self) {
         self.envelope
-            .tick(self.control.volume(), self.control.length_counter_halt());
+            .tick(self.control.volume(), self.control.is_halt());
     }
 
     pub fn step_length_counter(&mut self) {
-        if !self.control.length_counter_halt() {
+        if !self.control.is_halt() {
             self.length_control.tick();
         }
     }
