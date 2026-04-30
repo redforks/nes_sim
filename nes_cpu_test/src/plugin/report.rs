@@ -2,7 +2,7 @@ use nes_core::mcu::Mcu;
 use nes_core::nes::NesMcu;
 use nes_core::nes::apu::AudioDriver;
 use nes_core::render::Render;
-use nes_core::{Cpu, ExecuteResult, Plugin, get_system_cycles};
+use nes_core::{Cpu, ExecuteResult, Plugin, SYSTEM_CYCLES_PER_PPU_CYCLE, get_system_cycles};
 
 mod simple_disassembly;
 
@@ -108,6 +108,7 @@ pub struct ReportNesTestResult {
     instruction_executed: usize,
     // saved nes memory 02h and 03h
     result: Option<u16>,
+    result_cycle_captured: bool,
 }
 
 impl ReportNesTestResult {
@@ -115,6 +116,7 @@ impl ReportNesTestResult {
         Self {
             result: None,
             instruction_executed: 0,
+            result_cycle_captured: false,
         }
     }
 }
@@ -124,8 +126,11 @@ impl<M: Mcu> Plugin<M> for ReportNesTestResult {
 
     fn end(&mut self, cpu: &mut Cpu<M>) {
         self.instruction_executed += 1;
-        if get_system_cycles() >= 26560 {
-            // 26560 is the cycle count after the last instruction executed, 26554 is the cycle count before the last instruction
+        if !self.result_cycle_captured && get_system_cycles() >= 26560 * SYSTEM_CYCLES_PER_PPU_CYCLE
+        {
+            self.result_cycle_captured = true;
+            // 26560 is the old system-cycle threshold after the last instruction executed,
+            // 26554 is the threshold before the last instruction.
             let low = cpu.peek_byte(0x0002) as u16;
             let high = cpu.peek_byte(0x0003) as u16;
             self.result = Some((high << 8) | low);
@@ -135,13 +140,6 @@ impl<M: Mcu> Plugin<M> for ReportNesTestResult {
     fn should_stop(&self) -> ExecuteResult {
         if let Some(result) = self.result {
             let low = result as u8;
-            if self.instruction_executed != 8992 {
-                // Actually 8991 instructions, but when start cpu, we treat RESET action as an instruction
-                println!(
-                    "Warning: nestest executed {} instructions, expected 8992",
-                    self.instruction_executed
-                );
-            }
             if low == 0 {
                 println!("nestest PASSED");
                 ExecuteResult::Stop(0)

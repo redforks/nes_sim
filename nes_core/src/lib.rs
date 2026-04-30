@@ -18,6 +18,12 @@ thread_local! {
     static SYSTEM_CYCLES: Cell<u64> = Cell::new(0);
 }
 
+pub const SYSTEM_CYCLES_PER_PPU_CYCLE: u64 = 4;
+pub const PPU_CYCLES_PER_CPU_CYCLE: u64 = 3;
+pub const SYSTEM_CYCLES_PER_CPU_CYCLE: u64 =
+    SYSTEM_CYCLES_PER_PPU_CYCLE * PPU_CYCLES_PER_CPU_CYCLE;
+pub const CPU_SECOND_PHASE_OFFSET: u64 = SYSTEM_CYCLES_PER_PPU_CYCLE * 2;
+
 #[cfg(test)]
 fn set_system_cycles(cycles: u64) {
     SYSTEM_CYCLES.with(|sc| sc.set(cycles));

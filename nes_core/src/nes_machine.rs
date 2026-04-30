@@ -1,5 +1,6 @@
 use crate::{
-    ExecuteResult, Plugin, get_system_cycles, inc_system_cycles,
+    ExecuteResult, Plugin, SYSTEM_CYCLES_PER_CPU_CYCLE, SYSTEM_CYCLES_PER_PPU_CYCLE,
+    get_system_cycles, inc_system_cycles,
     ines::INesFile,
     machine::Machine,
     nes::{
@@ -11,10 +12,10 @@ use crate::{
 };
 use std::fs;
 
-/// Safety limit: maximum PPU instruction ticks per `process_frame()` call.
-/// Two full frames worth of ticks; prevents an infinite loop if VBlank never fires
-/// (e.g. when the PPU is not connected or NES hardware is not present).
-const MAX_TICKS_PER_FRAME: u32 = 90000;
+/// Safety limit: maximum master clock ticks per `process_frame()` call.
+/// A full frame is 89,342 PPU dots, each dot now spans 4 master clock ticks.
+/// This leaves a little headroom while still guarding against infinite loops.
+const MAX_TICKS_PER_FRAME: u32 = 360000;
 
 pub struct NesMachine<P, R: Render, D: crate::nes::apu::AudioDriver> {
     machine: Machine<P, NesMcu<R, D>>,
@@ -65,17 +66,21 @@ where
         ExecuteResult::Continue
     }
 
-    /// Execute one CPU instruction and tick PPU/APU. Returns the `ExecuteResult`.
+    /// Execute one master clock tick. Returns the `ExecuteResult`.
     pub fn tick(&mut self) -> ExecuteResult {
         let cycles = get_system_cycles();
+        let ppu_tick = cycles.is_multiple_of(SYSTEM_CYCLES_PER_PPU_CYCLE);
+        let cpu_tick = cycles.is_multiple_of(SYSTEM_CYCLES_PER_CPU_CYCLE);
 
-        self.machine.mcu_mut().tick_ppu();
-        let nmi_line = self.mcu().ppu().nmi_line_out();
-        let timing = self.mcu().ppu().timing();
-        self.machine.cpu_mut().update_nmi_line(nmi_line, timing);
-        self.cartridge_irq_next = self.machine.mcu().cartridge_irq_pending();
-        if cycles.is_multiple_of(3) {
-            self.cartridge_irq_latched = self.cartridge_irq_next;
+        if ppu_tick {
+            self.machine.mcu_mut().tick_ppu();
+            let nmi_line = self.mcu().ppu().nmi_line_out();
+            let timing = self.mcu().ppu().timing();
+            self.machine.cpu_mut().update_nmi_line(nmi_line, timing);
+            self.cartridge_irq_next = self.machine.mcu().cartridge_irq_pending();
+            if cpu_tick {
+                self.cartridge_irq_latched = self.cartridge_irq_next;
+            }
         }
 
         // Cartridge IRQs are exposed on the next CPU boundary, while APU IRQs
@@ -83,19 +88,24 @@ where
         let irq_pending = self.machine.mcu().apu_irq_pending() || self.cartridge_irq_latched;
         self.machine.cpu_mut().set_irq(irq_pending);
 
-        self.machine.mcu_mut().tick_apu();
-        if let Some(is_reload) = self.machine.mcu_mut().take_dmc_dma_pending() {
-            self.machine.cpu_mut().request_dmc_dma(is_reload);
+        if cpu_tick {
+            self.machine.mcu_mut().tick_apu();
+            if let Some(is_reload) = self.machine.mcu_mut().take_dmc_dma_pending() {
+                self.machine.cpu_mut().request_dmc_dma(is_reload);
+            }
         }
 
-        let cpu_tick_phase = (cycles - 1) % 3;
-        let cpu_cycle = (cycles - 1) / 3;
-        if self
-            .machine
-            .mcu_mut()
-            .tick_oam_dma(cpu_tick_phase, cpu_cycle)
-        {
-            return ExecuteResult::Continue;
+        if ppu_tick {
+            let ppu_cycle = (cycles / SYSTEM_CYCLES_PER_PPU_CYCLE).wrapping_sub(1);
+            let cpu_tick_phase = ppu_cycle % 3;
+            let cpu_cycle = ppu_cycle / 3;
+            if self
+                .machine
+                .mcu_mut()
+                .tick_oam_dma(cpu_tick_phase, cpu_cycle)
+            {
+                return ExecuteResult::Continue;
+            }
         }
 
         let result = self.machine.tick();
@@ -104,7 +114,7 @@ where
         // wrote to $4015 enabling DMC with an empty sample buffer.
         // On real hardware the APU and CPU are clocked simultaneously,
         // so the DMA check sees the $4015 write on the same cycle.
-        if cycles.is_multiple_of(3) {
+        if cpu_tick {
             self.machine.mcu_mut().recheck_dmc_dma();
         }
 

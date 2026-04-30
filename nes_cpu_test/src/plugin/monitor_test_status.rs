@@ -1,6 +1,8 @@
 use ansi_term::Color;
 use nes_core::mcu::Mcu;
-use nes_core::{Cpu, ExecuteResult, Plugin, get_system_cycles};
+use nes_core::{Cpu, ExecuteResult, Plugin, SYSTEM_CYCLES_PER_PPU_CYCLE, get_system_cycles};
+
+const RESET_WAIT_SYSTEM_CYCLES: u64 = 536_000 * SYSTEM_CYCLES_PER_PPU_CYCLE;
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
 enum Status {
@@ -45,8 +47,10 @@ impl<M: Mcu> Plugin<M> for MonitorTestStatus {
     fn end(&mut self, cpu: &mut Cpu<M>) {
         let status = Status::parse(cpu);
         self.should_reset = if let Some(cycles) = self.cycles_request_reset {
-            // ppu clock is 5.320342 MHz, 100ms is about 532,000 cycles
-            if (get_system_cycles() > cycles) && (get_system_cycles() - cycles >= 536_000) {
+            // PPU clock is 5.320342 MHz, so 100ms is about 532,000 PPU cycles.
+            if (get_system_cycles() > cycles)
+                && (get_system_cycles() - cycles >= RESET_WAIT_SYSTEM_CYCLES)
+            {
                 self.cycles_request_reset = None;
                 self.cycles_last_reset = Some(get_system_cycles());
                 true
@@ -65,9 +69,9 @@ impl<M: Mcu> Plugin<M> for MonitorTestStatus {
             }
             Status::ShouldReset => {
                 if self.cycles_request_reset.is_none()
-                    && self
-                        .cycles_last_reset
-                        .map_or(true, |c| get_system_cycles() - c >= 536_000)
+                    && self.cycles_last_reset.map_or(true, |c| {
+                        get_system_cycles() - c >= RESET_WAIT_SYSTEM_CYCLES
+                    })
                 {
                     self.cycles_request_reset = Some(get_system_cycles());
                 }

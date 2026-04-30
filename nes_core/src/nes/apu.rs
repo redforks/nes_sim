@@ -1,4 +1,4 @@
-use crate::get_system_cycles;
+use crate::{SYSTEM_CYCLES_PER_CPU_CYCLE, get_system_cycles};
 use bitfield_struct::{bitenum, bitfield};
 use std::ops::SubAssign;
 
@@ -707,7 +707,7 @@ impl<D: AudioDriver> Apu<D> {
     }
 
     pub fn tick(&mut self) {
-        if get_system_cycles() % 3 != 0 {
+        if !get_system_cycles().is_multiple_of(SYSTEM_CYCLES_PER_CPU_CYCLE) {
             return;
         }
 
