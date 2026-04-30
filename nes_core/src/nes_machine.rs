@@ -88,11 +88,9 @@ where
         let irq_pending = self.machine.mcu().apu_irq_pending() || self.cartridge_irq_latched;
         self.machine.cpu_mut().set_irq(irq_pending);
 
-        if cpu_tick {
-            self.machine.mcu_mut().tick_apu();
-            if let Some(is_reload) = self.machine.mcu_mut().take_dmc_dma_pending() {
-                self.machine.cpu_mut().request_dmc_dma(is_reload);
-            }
+        self.machine.mcu_mut().tick_apu();
+        if let Some(is_reload) = self.machine.mcu_mut().take_dmc_dma_pending() {
+            self.machine.cpu_mut().request_dmc_dma(is_reload);
         }
 
         if ppu_tick {

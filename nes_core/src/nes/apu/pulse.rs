@@ -2,10 +2,10 @@ use super::*;
 
 #[derive(Default)]
 pub(super) struct Pulse {
-    control: DutyCycle,
+    control: PulseControlBits,
     sweep: Sweep,
     timer: Timer<u16>,
-    length_counter: u8,
+    length_control: LengthControl,
     enabled: bool,
     sequence_step: usize,
     envelope: EnvelopeState,
@@ -25,11 +25,11 @@ impl Pulse {
     pub fn set_enabled(&mut self, enabled: bool) {
         self.enabled = enabled;
         if !enabled {
-            self.length_counter = 0;
+            self.length_control.clear();
         }
     }
 
-    pub fn write_control(&mut self, value: DutyCycle) {
+    pub fn write_control(&mut self, value: PulseControlBits) {
         self.control = value;
     }
 
@@ -45,7 +45,7 @@ impl Pulse {
     pub fn write_timer_high(&mut self, load: LengthTimerHigh3Bits) {
         self.timer.set_period_high(load.high3());
         if self.enabled {
-            self.length_counter = LENGTH_TABLE[load.length() as usize];
+            self.length_control.load(load.length());
         }
         self.sequence_step = 0;
         self.envelope.restart();
@@ -63,8 +63,8 @@ impl Pulse {
     }
 
     pub fn step_length_counter(&mut self) {
-        if !self.control.length_counter_halt() && self.length_counter > 0 {
-            self.length_counter -= 1;
+        if !self.control.length_counter_halt() {
+            self.length_control.tick();
         }
     }
 
@@ -109,7 +109,7 @@ impl Pulse {
     }
 
     pub fn output(&self) -> u8 {
-        if !self.enabled || self.length_counter == 0 || self.sweep_mutes_channel() {
+        if !self.enabled || self.length_control.disabled() || self.sweep_mutes_channel() {
             return 0;
         }
 
@@ -117,6 +117,6 @@ impl Pulse {
     }
 
     pub fn status_enabled(&self) -> bool {
-        self.enabled && self.length_counter > 0
+        self.enabled && !self.length_control.disabled()
     }
 }

@@ -3,9 +3,11 @@ use bitfield_struct::{bitenum, bitfield};
 use std::ops::SubAssign;
 
 mod frame_sequencer;
+mod helper;
 mod pulse;
 
 use frame_sequencer::FrameSequencer;
+use helper::LengthControl;
 use pulse::Pulse;
 
 trait Counter: Eq + SubAssign + Copy + Sized {
@@ -20,7 +22,12 @@ impl Counter for u16 {
 
 impl Counter for u8 {
     const ZERO: Self = 0;
-    const ONE: Self = 0;
+    const ONE: Self = 1;
+}
+
+impl Counter for u64 {
+    const ZERO: Self = 0;
+    const ONE: Self = 1;
 }
 
 /// A divider outputs a clock every n input clocks, where n is the divider's
@@ -32,18 +39,21 @@ impl Counter for u8 {
 struct Timer<C> {
     period: C,
     counter: C,
+    /// True if last `tick()` method returns true.
+    signal: bool,
 }
 
 impl<C: Counter> Timer<C> {
     /// Tick the timer. Returns true if an output clock is generated on this tick.
     fn tick(&mut self) -> bool {
-        if self.counter == C::ZERO {
+        self.signal = if self.counter == C::ZERO {
             self.reset();
             true
         } else {
             self.counter -= C::ONE;
             false
-        }
+        };
+        self.signal
     }
 
     /// Reset the timer (reload counter with period, without generating an output clock).
@@ -55,6 +65,11 @@ impl<C: Counter> Timer<C> {
     fn set_period(&mut self, period: C) {
         self.period = period;
     }
+
+    /// True if last `tick()` method returns true.
+    fn signal(&self) -> bool {
+        self.signal
+    }
 }
 
 impl Timer<u16> {
@@ -64,6 +79,33 @@ impl Timer<u16> {
 
     const fn set_period_low(&mut self, low: u8) {
         self.period = (self.period & 0xFF00) | (low as u16);
+    }
+}
+
+#[derive(Debug)]
+struct Sequence<I: 'static> {
+    items: &'static [I],
+    cur_idx: usize,
+}
+
+impl<I: Copy> Sequence<I> {
+    fn new(items: &'static [I]) -> Self {
+        Self { items, cur_idx: 0 }
+    }
+
+    fn reset_items(&mut self, items: &'static [I]) {
+        self.items = items;
+        self.reset();
+    }
+
+    fn reset(&mut self) {
+        self.cur_idx = 0;
+    }
+
+    fn tick(&mut self) -> I {
+        let item = self.items[self.cur_idx];
+        self.cur_idx = (self.cur_idx + 1) % self.items.len();
+        item
     }
 }
 
@@ -85,7 +127,7 @@ struct Sweep {
 }
 
 #[bitfield(u8)]
-struct DutyCycle {
+struct PulseControlBits {
     #[bits(4)]
     volume: u8,
     constant_volume: bool,
@@ -104,14 +146,14 @@ struct LengthTimerHigh3Bits {
 }
 
 #[bitfield(u8)]
-struct LinearCounterControl {
+struct TriangleControlBits {
     #[bits(7)]
     counter: u8,
     reload_flag: bool,
 }
 
 #[bitfield(u8)]
-struct NoiseEnvelop {
+struct NoiseControlBits {
     #[bits(4)]
     volume: u8,
     constant_volume: bool,
@@ -197,11 +239,6 @@ struct DmcLoadCounter {
     #[bits(1)]
     __: u8,
 }
-
-const LENGTH_TABLE: [u8; 32] = [
-    10, 254, 20, 2, 40, 4, 80, 6, 160, 8, 60, 10, 14, 12, 26, 14, 12, 16, 24, 18, 48, 20, 96, 22,
-    192, 24, 72, 26, 16, 28, 32, 30,
-];
 
 pub trait AudioDriver {
     fn sample_rate(&self) -> u32;
@@ -303,9 +340,9 @@ impl EnvelopeState {
 
 #[derive(Default, Debug)]
 struct TriangleState {
-    control: LinearCounterControl,
+    control: TriangleControlBits,
     timer: Timer<u16>,
-    length_counter: u8,
+    length_control: LengthControl,
     linear_counter: u8,
     linear_counter_reload: bool,
     enabled: bool,
@@ -316,11 +353,11 @@ impl TriangleState {
     fn set_enabled(&mut self, enabled: bool) {
         self.enabled = enabled;
         if !enabled {
-            self.length_counter = 0;
+            self.length_control.clear();
         }
     }
 
-    fn write_control(&mut self, value: LinearCounterControl) {
+    fn write_control(&mut self, value: TriangleControlBits) {
         self.control = value;
     }
 
@@ -332,14 +369,14 @@ impl TriangleState {
         self.timer.set_period_high(load.high3());
         // Only reload length counter if the channel is enabled
         if self.enabled {
-            self.length_counter = LENGTH_TABLE[load.length() as usize];
+            self.length_control.load(load.length());
         }
         self.linear_counter_reload = true;
     }
 
     fn step_timer(&mut self) {
         if self.timer.tick()
-            && self.length_counter > 0
+            && !self.length_control.disabled()
             && self.linear_counter > 0
             && self.timer.period > 1
         {
@@ -360,13 +397,13 @@ impl TriangleState {
     }
 
     fn step_length_counter(&mut self) {
-        if !self.control.reload_flag() && self.length_counter > 0 {
-            self.length_counter -= 1;
+        if !self.control.reload_flag() {
+            self.length_control.tick();
         }
     }
 
     fn output(&self) -> u8 {
-        if !self.enabled || self.length_counter == 0 || self.linear_counter == 0 {
+        if !self.enabled || self.length_control.disabled() || self.linear_counter == 0 {
             0
         } else {
             TRIANGLE_SEQUENCE[self.sequence_step]
@@ -374,16 +411,16 @@ impl TriangleState {
     }
 
     fn status_enabled(&self) -> bool {
-        self.enabled && self.length_counter > 0
+        self.enabled && !self.length_control.disabled()
     }
 }
 
 #[derive(Debug)]
 struct NoiseState {
-    envelope: NoiseEnvelop,
+    envelope: NoiseControlBits,
     period: NoisePeriod,
     timer_counter: u16,
-    length_counter: u8,
+    length_control: LengthControl,
     enabled: bool,
     shift_register: u16,
     envelope_state: EnvelopeState,
@@ -392,10 +429,10 @@ struct NoiseState {
 impl Default for NoiseState {
     fn default() -> Self {
         Self {
-            envelope: NoiseEnvelop::default(),
+            envelope: NoiseControlBits::default(),
             period: NoisePeriod::default(),
             timer_counter: 0,
-            length_counter: 0,
+            length_control: LengthControl::default(),
             enabled: false,
             shift_register: 1,
             envelope_state: EnvelopeState::default(),
@@ -407,11 +444,11 @@ impl NoiseState {
     fn set_enabled(&mut self, enabled: bool) {
         self.enabled = enabled;
         if !enabled {
-            self.length_counter = 0;
+            self.length_control.clear();
         }
     }
 
-    fn write_envelope(&mut self, value: NoiseEnvelop) {
+    fn write_envelope(&mut self, value: NoiseControlBits) {
         self.envelope = value;
     }
 
@@ -422,7 +459,7 @@ impl NoiseState {
     fn write_length(&mut self, value: NoiseLength) {
         // Only reload length counter if the channel is enabled
         if self.enabled {
-            self.length_counter = LENGTH_TABLE[value.length() as usize];
+            self.length_control.load(value.length());
         }
         self.envelope_state.restart();
     }
@@ -444,8 +481,8 @@ impl NoiseState {
     }
 
     fn step_length_counter(&mut self) {
-        if !self.envelope.loop_flag() && self.length_counter > 0 {
-            self.length_counter -= 1;
+        if !self.envelope.loop_flag() {
+            self.length_control.tick();
         }
     }
 
@@ -458,7 +495,7 @@ impl NoiseState {
     }
 
     fn output(&self) -> u8 {
-        if !self.enabled || self.length_counter == 0 || (self.shift_register & 0x0001) != 0 {
+        if !self.enabled || self.length_control.disabled() || (self.shift_register & 0x0001) != 0 {
             0
         } else {
             self.current_volume()
@@ -466,7 +503,7 @@ impl NoiseState {
     }
 
     fn status_enabled(&self) -> bool {
-        self.enabled && self.length_counter > 0
+        self.enabled && !self.length_control.disabled()
     }
 }
 
@@ -698,7 +735,7 @@ impl<D: AudioDriver> Apu<D> {
         // (control.reload_flag) which should persist across reset
         let length_counter_halt = self.triangle.control.reload_flag();
         self.triangle = TriangleState::default();
-        self.triangle.control = LinearCounterControl::new().with_reload_flag(length_counter_halt);
+        self.triangle.control = TriangleControlBits::new().with_reload_flag(length_counter_halt);
 
         // Re-apply the last value written to $4017 after the reset delay.
         // The test ROMs rely on reset preserving the previous frame counter mode
@@ -707,34 +744,33 @@ impl<D: AudioDriver> Apu<D> {
     }
 
     pub fn tick(&mut self) {
-        if !get_system_cycles().is_multiple_of(SYSTEM_CYCLES_PER_CPU_CYCLE) {
-            return;
-        }
+        self.frame_sequencer.tick2();
 
-        self.triangle.step_timer();
+        if get_system_cycles().is_multiple_of(SYSTEM_CYCLES_PER_CPU_CYCLE) {
+            self.triangle.step_timer();
 
-        self.apu_even_cycle = !self.apu_even_cycle;
-        if self.apu_even_cycle {
-            self.pulse1.step_timer();
-            self.pulse2.step_timer();
-            self.noise.step_timer();
-        }
+            self.apu_even_cycle = !self.apu_even_cycle;
+            if self.apu_even_cycle {
+                self.pulse1.step_timer();
+                self.pulse2.step_timer();
+                self.noise.step_timer();
+            }
 
-        // Tick DMC timer every CPU cycle
-        if self.dmc.tick() {
-            // DMC requests a reload DMA read (output unit emptied buffer)
-            self.dmc_dma_request = Some((self.dmc.current_address, true));
-        }
+            // Tick DMC timer every CPU cycle
+            if self.dmc.tick() {
+                // DMC requests a reload DMA read (output unit emptied buffer)
+                self.dmc_dma_request = Some((self.dmc.current_address, true));
+            }
 
-        let frame_clock = self.frame_sequencer.tick();
-        if frame_clock.quarter_frame {
-            self.clock_quarter_frame();
+            let frame_clock = self.frame_sequencer.tick();
+            if frame_clock.quarter_frame {
+                self.clock_quarter_frame();
+            }
+            if frame_clock.half_frame {
+                self.clock_half_frame();
+            }
+            self.emit_samples();
         }
-        if frame_clock.half_frame {
-            self.clock_half_frame();
-        }
-
-        self.emit_samples();
     }
 
     pub fn request_irq(&self) -> bool {
@@ -825,7 +861,7 @@ impl<D: AudioDriver> Apu<D> {
             0x4015 => self.set_control_flags(value.into()),
             0x4017 => self
                 .frame_sequencer
-                .set_counter(value.into(), self.apu_even_cycle),
+                .write_mode(value.into(), self.apu_even_cycle),
             _ => {}
         }
     }

@@ -1,10 +1,70 @@
+use crate::{
+    SYSTEM_CYCLES_PER_CPU_CYCLE, get_system_cycles,
+    nes::apu::{Sequence, Timer},
+};
+
 use super::{FrameSequencerBits, FrameSequencerMode};
 
-#[derive(Debug, Default)]
+const FOUR_STEP_TRIGGERS: [FrameSequenceTriggers; 4] = [
+    FrameSequenceTriggers {
+        irq: false,
+        length_and_sweep: false,
+        envelop_and_linear: true,
+    },
+    FrameSequenceTriggers {
+        irq: false,
+        length_and_sweep: true,
+        envelop_and_linear: true,
+    },
+    FrameSequenceTriggers {
+        irq: false,
+        length_and_sweep: false,
+        envelop_and_linear: true,
+    },
+    FrameSequenceTriggers {
+        irq: true,
+        length_and_sweep: true,
+        envelop_and_linear: true,
+    },
+];
+
+const FIVE_STEP_TRIGGERS: [FrameSequenceTriggers; 5] = [
+    FrameSequenceTriggers {
+        irq: false,
+        length_and_sweep: true,
+        envelop_and_linear: true,
+    },
+    FrameSequenceTriggers {
+        irq: false,
+        length_and_sweep: false,
+        envelop_and_linear: true,
+    },
+    FrameSequenceTriggers {
+        irq: false,
+        length_and_sweep: true,
+        envelop_and_linear: true,
+    },
+    FrameSequenceTriggers {
+        irq: false,
+        length_and_sweep: false,
+        envelop_and_linear: true,
+    },
+    FrameSequenceTriggers {
+        irq: false,
+        length_and_sweep: false,
+        envelop_and_linear: false,
+    },
+];
+
+const DIVIDER: u64 = 89490;
+
+#[derive(Debug)]
 pub(super) struct FrameSequencer {
     pub frame_interrupt: bool,
     pub pending_frame_counter: Option<FrameSequencerBits>,
 
+    timer: Timer<u64>,
+    sequences: Sequence<FrameSequenceTriggers>,
     frame_counter_cycle: u64,
     last_frame_counter_write: FrameSequencerBits,
     frame_counter_mode: FrameSequencerMode,
@@ -14,10 +74,38 @@ pub(super) struct FrameSequencer {
     frame_irq_shadow: bool,
 }
 
+impl Default for FrameSequencer {
+    fn default() -> Self {
+        Self {
+            frame_interrupt: false,
+            pending_frame_counter: None,
+            timer: Timer {
+                period: DIVIDER,
+                ..Default::default()
+            },
+            sequences: Sequence::new(&FOUR_STEP_TRIGGERS),
+            frame_counter_cycle: 0,
+            last_frame_counter_write: FrameSequencerBits::default(),
+            frame_counter_mode: FrameSequencerMode::FourStep,
+            frame_counter_write_delay: None,
+            frame_counter_short_delay: false,
+            frame_interrupt_inhibit: false,
+            frame_irq_shadow: false,
+        }
+    }
+}
+
+#[derive(Default, Debug, Clone, Copy)]
+pub struct FrameSequenceTriggers {
+    pub irq: bool,
+    pub length_and_sweep: bool,
+    pub envelop_and_linear: bool,
+}
+
 #[derive(Default)]
-pub(super) struct FrameSequencerClock {
-    pub(super) quarter_frame: bool,
-    pub(super) half_frame: bool,
+pub struct FrameSequencerClock {
+    pub quarter_frame: bool,
+    pub half_frame: bool,
 }
 
 impl FrameSequencer {
@@ -27,7 +115,18 @@ impl FrameSequencer {
         self.frame_counter_write_delay = Some(4);
     }
 
+    pub fn tick2(&mut self) -> Option<FrameSequenceTriggers> {
+        if self.timer.tick() {
+            Some(self.sequences.tick())
+        } else {
+            None
+        }
+    }
+
     pub fn tick(&mut self) -> FrameSequencerClock {
+        if !get_system_cycles().is_multiple_of(SYSTEM_CYCLES_PER_CPU_CYCLE) {
+            return FrameSequencerClock::default();
+        }
         self.frame_counter_cycle = self.frame_counter_cycle.wrapping_add(1);
 
         if let Some(delay) = &mut self.frame_counter_write_delay {
@@ -68,7 +167,13 @@ impl FrameSequencer {
         self.frame_interrupt = false;
     }
 
-    pub fn set_counter(&mut self, counter: FrameSequencerBits, apu_even_cycle: bool) {
+    pub fn write_mode(&mut self, counter: FrameSequencerBits, apu_even_cycle: bool) {
+        self.timer.reset();
+        self.sequences.reset_items(match counter.mode() {
+            FrameSequencerMode::FourStep => &FOUR_STEP_TRIGGERS,
+            FrameSequencerMode::FiveStep => &FIVE_STEP_TRIGGERS,
+        });
+
         self.last_frame_counter_write = counter;
         self.pending_frame_counter = Some(counter);
         let delay = if apu_even_cycle { 3 } else { 4 };

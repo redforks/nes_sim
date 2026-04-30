@@ -16,7 +16,7 @@ fn test_sweep_bitfield() {
 
 #[test]
 fn test_duty_cycle_bitfield() {
-    let mut duty = DutyCycle::new();
+    let mut duty = PulseControlBits::new();
     duty.set_duty(0b11);
     duty.set_length_counter_halt(true);
     duty.set_constant_volume(false);
@@ -30,14 +30,14 @@ fn test_duty_cycle_bitfield() {
 
 #[test]
 fn test_duty_cycle_to_from_u8() {
-    let mut duty = DutyCycle::new();
+    let mut duty = PulseControlBits::new();
     duty.set_duty(0b10);
     duty.set_length_counter_halt(false);
     duty.set_constant_volume(true);
     duty.set_volume(0b0101);
 
     let byte: u8 = duty.into();
-    let duty2: DutyCycle = byte.into();
+    let duty2: PulseControlBits = byte.into();
 
     assert_eq!(duty2.duty(), 0b10);
     assert!(!duty2.length_counter_halt());
@@ -47,7 +47,7 @@ fn test_duty_cycle_to_from_u8() {
 
 #[test]
 fn test_linear_counter_control() {
-    let mut lcc = LinearCounterControl::new();
+    let mut lcc = TriangleControlBits::new();
     lcc.set_reload_flag(true);
     lcc.set_counter(0x55);
 
@@ -57,12 +57,12 @@ fn test_linear_counter_control() {
 
 #[test]
 fn test_linear_counter_control_to_from_u8() {
-    let mut lcc = LinearCounterControl::new();
+    let mut lcc = TriangleControlBits::new();
     lcc.set_reload_flag(false);
     lcc.set_counter(0x7F);
 
     let byte: u8 = lcc.into();
-    let lcc2: LinearCounterControl = byte.into();
+    let lcc2: TriangleControlBits = byte.into();
 
     assert!(!lcc2.reload_flag());
     assert_eq!(lcc2.counter(), 0x7F);
@@ -72,12 +72,12 @@ fn test_linear_counter_control_to_from_u8() {
 fn test_duty_cycle_various_values() {
     for duty in 0u8..4 {
         for volume in 0u8..16 {
-            let mut d = DutyCycle::new();
+            let mut d = PulseControlBits::new();
             d.set_duty(duty);
             d.set_volume(volume);
 
             let byte: u8 = d.into();
-            let d2: DutyCycle = byte.into();
+            let d2: PulseControlBits = byte.into();
 
             assert_eq!(d2.duty(), duty);
             assert_eq!(d2.volume(), volume);
@@ -87,7 +87,7 @@ fn test_duty_cycle_various_values() {
 
 #[test]
 fn test_noise_envelop_bitfield() {
-    let mut envelop = NoiseEnvelop::new();
+    let mut envelop = NoiseControlBits::new();
     envelop.set_loop_flag(true);
     envelop.set_constant_volume(false);
     envelop.set_volume(0b1010);
@@ -99,13 +99,13 @@ fn test_noise_envelop_bitfield() {
 
 #[test]
 fn test_noise_envelop_to_from_u8() {
-    let mut envelop = NoiseEnvelop::new();
+    let mut envelop = NoiseControlBits::new();
     envelop.set_loop_flag(false);
     envelop.set_constant_volume(true);
     envelop.set_volume(0b0101);
 
     let byte: u8 = envelop.into();
-    let envelop2: NoiseEnvelop = byte.into();
+    let envelop2: NoiseControlBits = byte.into();
 
     assert!(!envelop2.loop_flag());
     assert!(envelop2.constant_volume());
