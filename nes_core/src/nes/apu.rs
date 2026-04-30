@@ -1,8 +1,12 @@
+use crate::get_system_cycles;
+use bitfield_struct::{bitenum, bitfield};
 use std::ops::SubAssign;
 
-use bitfield_struct::bitfield;
+mod frame_sequencer;
+mod pulse;
 
-use crate::get_system_cycles;
+use frame_sequencer::FrameSequencer;
+use pulse::Pulse;
 
 trait Counter: Eq + SubAssign + Copy + Sized {
     const ZERO: Self;
@@ -61,6 +65,13 @@ impl Timer<u16> {
     const fn set_period_low(&mut self, low: u8) {
         self.period = (self.period & 0xFF00) | (low as u16);
     }
+}
+
+/// Control Gate, if control is non-zero, the input is passed unchanged to the
+/// output, otherwise the output is 0.
+#[derive(Debug)]
+struct ControlGate<V> {
+    control: V,
 }
 
 #[bitfield(u8)]
@@ -160,12 +171,23 @@ struct APUStatus {
     dmc_interrupt: bool,
 }
 
+#[repr(u8)]
+#[bitenum]
+#[derive(Debug, Default, PartialEq, Eq)]
+enum FrameSequencerMode {
+    #[fallback]
+    #[default]
+    FourStep, // 0
+    FiveStep, // 1
+}
+
 #[bitfield(u8)]
-struct FrameCounter {
+struct FrameSequencerBits {
     #[bits(6)]
     __: u8,
     interrupt_flag: bool,
-    mode: bool,
+    #[bits(1)]
+    mode: FrameSequencerMode,
 }
 
 #[bitfield(u8)]
@@ -276,128 +298,6 @@ impl EnvelopeState {
         } else {
             self.divider -= 1;
         }
-    }
-}
-
-#[derive(Default)]
-struct PulseState {
-    control: DutyCycle,
-    sweep: Sweep,
-    timer: Timer<u16>,
-    length_counter: u8,
-    enabled: bool,
-    sequence_step: usize,
-    envelope: EnvelopeState,
-    sweep_divider: u8,
-    sweep_reload: bool,
-    ones_complement_negate: bool,
-}
-
-impl PulseState {
-    fn new(ones_complement_negate: bool) -> Self {
-        Self {
-            ones_complement_negate,
-            ..Default::default()
-        }
-    }
-
-    fn set_enabled(&mut self, enabled: bool) {
-        self.enabled = enabled;
-        if !enabled {
-            self.length_counter = 0;
-        }
-    }
-
-    fn write_control(&mut self, value: DutyCycle) {
-        self.control = value;
-    }
-
-    fn write_sweep(&mut self, value: Sweep) {
-        self.sweep = value;
-        self.sweep_reload = true;
-    }
-
-    fn write_timer_low(&mut self, value: u8) {
-        self.timer.set_period_low(value);
-    }
-
-    fn write_timer_high(&mut self, load: LengthTimerHigh3Bits) {
-        self.timer.set_period_high(load.high3());
-        // Only reload length counter if the channel is enabled
-        if self.enabled {
-            self.length_counter = LENGTH_TABLE[load.length() as usize];
-        }
-        self.sequence_step = 0;
-        self.envelope.restart();
-    }
-
-    fn step_timer(&mut self) {
-        if self.timer.tick() {
-            self.sequence_step = (self.sequence_step + 1) % 8;
-        }
-    }
-
-    fn step_envelope(&mut self) {
-        self.envelope
-            .tick(self.control.volume(), self.control.length_counter_halt());
-    }
-
-    fn step_length_counter(&mut self) {
-        if !self.control.length_counter_halt() && self.length_counter > 0 {
-            self.length_counter -= 1;
-        }
-    }
-
-    fn step_sweep(&mut self) {
-        let apply = self.sweep_divider == 0
-            && self.sweep.enabled()
-            && self.sweep.shift() > 0
-            && !self.sweep_mutes_channel();
-        if apply {
-            self.timer.period = self.sweep_target_period();
-        }
-
-        if self.sweep_divider == 0 || self.sweep_reload {
-            self.sweep_divider = self.sweep.period();
-            self.sweep_reload = false;
-        } else {
-            self.sweep_divider -= 1;
-        }
-    }
-
-    fn current_volume(&self) -> u8 {
-        if self.control.constant_volume() {
-            self.control.volume()
-        } else {
-            self.envelope.decay
-        }
-    }
-
-    fn sweep_target_period(&self) -> u16 {
-        let change = self.timer.period >> self.sweep.shift();
-        if self.sweep.negate() {
-            self.timer
-                .period
-                .saturating_sub(change + u16::from(self.ones_complement_negate))
-        } else {
-            self.timer.period.saturating_add(change)
-        }
-    }
-
-    fn sweep_mutes_channel(&self) -> bool {
-        self.timer.period < 8 || self.sweep_target_period() > 0x07FF
-    }
-
-    fn output(&self) -> u8 {
-        if !self.enabled || self.length_counter == 0 || self.sweep_mutes_channel() {
-            return 0;
-        }
-
-        PULSE_DUTY_TABLE[self.control.duty() as usize][self.sequence_step] * self.current_volume()
-    }
-
-    fn status_enabled(&self) -> bool {
-        self.enabled && self.length_counter > 0
     }
 }
 
@@ -732,34 +632,16 @@ impl DmcState {
 }
 
 pub struct Apu<D: AudioDriver = ()> {
-    pulse1: PulseState,
-    pulse2: PulseState,
+    pulse1: Pulse,
+    pulse2: Pulse,
     triangle: TriangleState,
     noise: NoiseState,
     dmc: DmcState,
     driver: D,
     sample_rate: u32,
     sample_accumulator: u64,
-    frame_counter_cycle: u64,
+    frame_sequencer: FrameSequencer,
     apu_even_cycle: bool,
-    last_frame_counter_write: FrameCounter,
-    frame_counter_mode: bool,
-    frame_interrupt_inhibit: bool,
-    frame_interrupt: bool,
-    /// 1-tick-delayed copy of frame_interrupt.  When the frame counter
-    /// was reset with the short write delay (3 cycles), request_irq()
-    /// uses this instead of frame_interrupt so the +1 sequential-poll
-    /// delay plus the +1 shadow delay cancels the 1-cycle-earlier
-    /// assertion, giving the same effective IRQ detection cycle as the
-    /// long-delay (4 cycle) case.  This ensures the even/odd jitter is
-    /// absorbed by instruction boundaries, matching real hardware.
-    frame_irq_shadow: bool,
-    /// True when the most recent frame counter reset used the short
-    /// write delay (3 cycles, i.e. the $4017 write occurred during an
-    /// APU cycle).
-    frame_counter_short_delay: bool,
-    frame_counter_write_delay: Option<u8>,
-    pending_frame_counter: Option<FrameCounter>,
     dmc_interrupt: bool,
     /// Pending DMC DMA request: (address, is_reload).
     /// is_reload = true for reload DMAs (output unit emptied buffer, 4 cycles),
@@ -779,24 +661,16 @@ impl<D: AudioDriver> Apu<D> {
     pub fn new(driver: D) -> Self {
         let sample_rate = driver.sample_rate().max(1);
         Self {
-            pulse1: PulseState::new(true),
-            pulse2: PulseState::new(false),
+            pulse1: Pulse::new(true),
+            pulse2: Pulse::new(false),
             triangle: TriangleState::default(),
             noise: NoiseState::default(),
             dmc: DmcState::default(),
             driver,
             sample_rate,
             sample_accumulator: 0,
-            frame_counter_cycle: 0,
+            frame_sequencer: FrameSequencer::default(),
             apu_even_cycle: false,
-            last_frame_counter_write: FrameCounter::new(),
-            frame_counter_mode: false,
-            frame_interrupt_inhibit: false,
-            frame_interrupt: false,
-            frame_irq_shadow: false,
-            frame_counter_short_delay: false,
-            frame_counter_write_delay: None,
-            pending_frame_counter: None,
             dmc_interrupt: false,
             dmc_dma_request: None,
             dc_last_input: 0.0,
@@ -814,7 +688,7 @@ impl<D: AudioDriver> Apu<D> {
         // 4. DMC interrupt flag is cleared
 
         // Clear all interrupt flags
-        self.frame_interrupt = false;
+        self.frame_sequencer.clear_interrupt();
         self.dmc_interrupt = false;
 
         // $4015 write with $00 silences all channels and clears DMC interrupt
@@ -829,8 +703,7 @@ impl<D: AudioDriver> Apu<D> {
         // Re-apply the last value written to $4017 after the reset delay.
         // The test ROMs rely on reset preserving the previous frame counter mode
         // and IRQ inhibit bit rather than synthesizing a new value here.
-        self.pending_frame_counter = Some(self.last_frame_counter_write);
-        self.frame_counter_write_delay = Some(4);
+        self.frame_sequencer.reset();
     }
 
     pub fn tick(&mut self) {
@@ -839,7 +712,6 @@ impl<D: AudioDriver> Apu<D> {
         }
 
         self.triangle.step_timer();
-        self.frame_counter_cycle = self.frame_counter_cycle.wrapping_add(1);
 
         self.apu_even_cycle = !self.apu_even_cycle;
         if self.apu_even_cycle {
@@ -854,38 +726,19 @@ impl<D: AudioDriver> Apu<D> {
             self.dmc_dma_request = Some((self.dmc.current_address, true));
         }
 
-        if let Some(delay) = &mut self.frame_counter_write_delay {
-            *delay -= 1;
-            if *delay == 0 {
-                self.frame_counter_write_delay = None;
-                if let Some(counter) = self.pending_frame_counter.take() {
-                    self.apply_frame_counter(counter);
-                }
-            }
+        let frame_clock = self.frame_sequencer.tick();
+        if frame_clock.quarter_frame {
+            self.clock_quarter_frame();
         }
-
-        // Snapshot frame_interrupt BEFORE tick_frame_counter may modify
-        // it.  This becomes the 1-tick-delayed shadow used by
-        // request_irq() for short-delay writes.
-        let prev_frame_interrupt = self.frame_interrupt;
-
-        // Only tick frame counter if we're not in the write delay period
-        if self.frame_counter_write_delay.is_none() {
-            self.tick_frame_counter();
-        };
-
-        self.frame_irq_shadow = prev_frame_interrupt;
+        if frame_clock.half_frame {
+            self.clock_half_frame();
+        }
 
         self.emit_samples();
     }
 
     pub fn request_irq(&self) -> bool {
-        let frame_irq = if self.frame_counter_short_delay {
-            self.frame_irq_shadow
-        } else {
-            self.frame_interrupt
-        };
-        frame_irq || self.dmc_interrupt
+        self.frame_sequencer.request_irq() || self.dmc_interrupt
     }
 
     /// Take the pending DMC DMA request, if any.
@@ -921,12 +774,12 @@ impl<D: AudioDriver> Apu<D> {
     /// Get current APU status for debugging/inspection
     pub fn get_status(&self) -> ApuStatusInfo {
         ApuStatusInfo {
-            pulse1_enabled: self.pulse1.enabled,
-            pulse2_enabled: self.pulse2.enabled,
+            pulse1_enabled: self.pulse1.status_enabled(),
+            pulse2_enabled: self.pulse2.status_enabled(),
             triangle_enabled: self.triangle.enabled,
             noise_enabled: self.noise.enabled,
             dmc_enabled: self.dmc.status_enabled(),
-            frame_irq_pending: self.frame_interrupt,
+            frame_irq_pending: self.frame_sequencer.frame_interrupt(),
             dmc_irq_pending: self.dmc_interrupt,
         }
     }
@@ -935,7 +788,7 @@ impl<D: AudioDriver> Apu<D> {
         match address {
             0x4015 => {
                 let status = self.status_byte();
-                self.frame_interrupt = false;
+                self.frame_sequencer.clear_interrupt();
                 status
             }
             _ => 0,
@@ -970,7 +823,9 @@ impl<D: AudioDriver> Apu<D> {
             0x4012 => self.dmc.sample_address = value,
             0x4013 => self.dmc.sample_length = value,
             0x4015 => self.set_control_flags(value.into()),
-            0x4017 => self.set_frame_counter(value.into()),
+            0x4017 => self
+                .frame_sequencer
+                .set_counter(value.into(), self.apu_even_cycle),
             _ => {}
         }
     }
@@ -982,7 +837,7 @@ impl<D: AudioDriver> Apu<D> {
         status.set_triangle_enabled(self.triangle.status_enabled());
         status.set_noise_enabled(self.noise.status_enabled());
         status.set_dmc_enabled(self.dmc.status_enabled());
-        status.set_frame_interrupt(self.frame_interrupt);
+        status.set_frame_interrupt(self.frame_sequencer.frame_interrupt());
         status.set_dmc_interrupt(self.dmc_interrupt);
         status.into_bits()
     }
@@ -996,82 +851,6 @@ impl<D: AudioDriver> Apu<D> {
 
         // Always clear DMC interrupt on $4015 write
         self.dmc_interrupt = false;
-    }
-
-    fn set_frame_counter(&mut self, counter: FrameCounter) {
-        self.last_frame_counter_write = counter;
-        self.pending_frame_counter = Some(counter);
-        let delay = if self.apu_even_cycle { 3 } else { 4 };
-        self.frame_counter_write_delay = Some(delay);
-        self.frame_counter_short_delay = delay == 3;
-
-        // The interrupt inhibit flag (bit 7) and mode flag (bit 6) take effect immediately
-        self.frame_counter_mode = counter.mode();
-        self.frame_interrupt_inhibit = counter.interrupt_flag();
-        if self.frame_interrupt_inhibit {
-            self.frame_interrupt = false;
-        }
-    }
-
-    fn apply_frame_counter(&mut self, _counter: FrameCounter) {
-        // Note: frame_counter_mode and frame_interrupt_inhibit are already set
-        // in set_frame_counter() for immediate effect, as per NESdev wiki
-
-        // Reset frame counter cycle to 0. The apu_cycle is not reset here
-        // to preserve the even/odd alignment which affects jitter behavior.
-        self.frame_counter_cycle = 0;
-
-        if self.frame_counter_mode {
-            self.clock_quarter_frame();
-            self.clock_half_frame();
-        }
-    }
-
-    fn tick_frame_counter(&mut self) {
-        if self.frame_counter_mode {
-            // 5-step mode — never generates frame IRQ.
-            // Manual wrap avoids modulo so that apply_frame_counter's reset
-            // to 0 is distinguishable from the natural period wrap.
-            match self.frame_counter_cycle {
-                7_457 | 22_371 => self.clock_quarter_frame(),
-                14_913 | 37_281 => {
-                    self.clock_quarter_frame();
-                    self.clock_half_frame();
-                }
-                37_282 => {
-                    self.frame_counter_cycle = 0;
-                }
-                _ => {}
-            }
-            return;
-        }
-
-        match self.frame_counter_cycle {
-            7_457 | 22_371 => self.clock_quarter_frame(),
-            14_913 => {
-                self.clock_quarter_frame();
-                self.clock_half_frame();
-            }
-            29_828 => {
-                if !self.frame_interrupt_inhibit {
-                    self.frame_interrupt = true;
-                }
-            }
-            29_829 => {
-                self.clock_quarter_frame();
-                self.clock_half_frame();
-                if !self.frame_interrupt_inhibit {
-                    self.frame_interrupt = true;
-                }
-            }
-            29_830 => {
-                self.frame_counter_cycle = 0;
-                if !self.frame_interrupt_inhibit {
-                    self.frame_interrupt = true;
-                }
-            }
-            _ => {}
-        }
     }
 
     fn clock_quarter_frame(&mut self) {

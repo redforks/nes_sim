@@ -261,24 +261,24 @@ fn test_apu_status_to_from_u8() {
 
 #[test]
 fn test_frame_counter_bitfield() {
-    let mut counter = FrameCounter::new();
-    counter.set_mode(true);
+    let mut counter = FrameSequencerBits::new();
+    counter.set_mode(FrameSequencerMode::FiveStep);
     counter.set_interrupt_flag(false);
 
-    assert!(counter.mode());
+    assert_eq!(counter.mode(), FrameSequencerMode::FiveStep);
     assert!(!counter.interrupt_flag());
 }
 
 #[test]
 fn test_frame_counter_to_from_u8() {
-    let mut counter = FrameCounter::new();
-    counter.set_mode(false);
+    let mut counter = FrameSequencerBits::new();
+    counter.set_mode(FrameSequencerMode::FourStep);
     counter.set_interrupt_flag(true);
 
     let byte: u8 = counter.into();
-    let counter2: FrameCounter = byte.into();
+    let counter2: FrameSequencerBits = byte.into();
 
-    assert!(!counter2.mode());
+    assert_eq!(counter2.mode(), FrameSequencerMode::FourStep);
     assert!(counter2.interrupt_flag());
 }
 
@@ -293,11 +293,11 @@ fn test_apu_controller_read_status() {
 #[test]
 fn test_apu_controller_peek_status_does_not_clear_interrupt() {
     let mut channel = Apu::new(());
-    channel.frame_interrupt = true;
+    channel.frame_sequencer.frame_interrupt = true;
 
     let val = channel.peek(0x4015);
     assert_eq!(val & 0x40, 0x40);
-    assert!(channel.frame_interrupt);
+    assert!(channel.frame_sequencer.frame_interrupt);
 }
 
 #[test]
@@ -321,9 +321,10 @@ fn test_reset_replays_last_frame_counter_write() {
     apu.reset();
 
     let pending = apu
+        .frame_sequencer
         .pending_frame_counter
         .expect("reset queues a $4017 replay");
-    assert!(pending.mode());
+    assert_eq!(pending.mode(), FrameSequencerMode::FiveStep);
     assert!(!pending.interrupt_flag());
 }
 
