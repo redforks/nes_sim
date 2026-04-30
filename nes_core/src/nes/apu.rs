@@ -22,26 +22,18 @@ struct DutyCycle {
     duty: u8,
 }
 
-#[derive(Default)]
-struct LengthCounterLoad {
-    low_byte: u8,
-    high_byte: u8,
+/// Length timer high 3 bit register
+#[bitfield(u8)]
+struct LengthTimerHigh3Bits {
+    #[bits(3)]
+    high3: u8,
+    #[bits(5)]
+    length: u8,
 }
 
-impl LengthCounterLoad {
-    pub fn from_registers(low_byte: u8, high_byte: u8) -> Self {
-        Self {
-            low_byte,
-            high_byte,
-        }
-    }
-
-    pub fn length_count(&self) -> u8 {
-        (self.high_byte & 0xF8) >> 3
-    }
-
-    pub fn timer(&self) -> u16 {
-        (((self.high_byte & 0x07) as u16) << 8) | (self.low_byte as u16)
+impl LengthTimerHigh3Bits {
+    fn update_timer(self, timer: &mut u16) {
+        *timer = ((self.high3() as u16) << 8) | (*timer & 0x00FF);
     }
 }
 
@@ -119,6 +111,14 @@ struct FrameCounter {
     __: u8,
     interrupt_flag: bool,
     mode: bool,
+}
+
+#[bitfield(u8)]
+struct DmcLoadCounter {
+    #[bits(7)]
+    load_counter: u8,
+    #[bits(1)]
+    __: u8,
 }
 
 const LENGTH_TABLE: [u8; 32] = [
@@ -276,11 +276,11 @@ impl PulseState {
         self.timer_period = (self.timer_period & 0x0700) | value as u16;
     }
 
-    fn write_timer_high(&mut self, load: LengthCounterLoad) {
-        self.timer_period = load.timer();
+    fn write_timer_high(&mut self, load: LengthTimerHigh3Bits) {
+        load.update_timer(&mut self.timer_period);
         // Only reload length counter if the channel is enabled
         if self.enabled {
-            self.length_counter = LENGTH_TABLE[load.length_count() as usize];
+            self.length_counter = LENGTH_TABLE[load.length() as usize];
         }
         self.sequence_step = 0;
         self.envelope.restart();
@@ -386,11 +386,11 @@ impl TriangleState {
         self.timer_period = (self.timer_period & 0x0700) | value as u16;
     }
 
-    fn write_timer_high(&mut self, load: LengthCounterLoad) {
-        self.timer_period = load.timer();
+    fn write_timer_high(&mut self, load: LengthTimerHigh3Bits) {
+        load.update_timer(&mut self.timer_period);
         // Only reload length counter if the channel is enabled
         if self.enabled {
-            self.length_counter = LENGTH_TABLE[load.length_count() as usize];
+            self.length_counter = LENGTH_TABLE[load.length() as usize];
         }
         self.linear_counter_reload = true;
     }
@@ -683,6 +683,11 @@ impl DmcState {
     fn output(&self) -> u8 {
         self.output_level
     }
+
+    fn write_load_counter(&mut self, value: DmcLoadCounter) {
+        self.load_counter = value.load_counter();
+        self.output_level = self.load_counter;
+    }
 }
 
 pub struct Apu<D: AudioDriver = ()> {
@@ -905,52 +910,26 @@ impl<D: AudioDriver> Apu<D> {
 
     pub fn write(&mut self, address: u16, value: u8) {
         match address {
-            0x4000 => self.pulse1.write_control(DutyCycle::from_bits(value)),
-            0x4001 => self.pulse1.write_sweep(Sweep::from_bits(value)),
+            0x4000 => self.pulse1.write_control(value.into()),
+            0x4001 => self.pulse1.write_sweep(value.into()),
             0x4002 => self.pulse1.write_timer_low(value),
-            0x4003 => self
-                .pulse1
-                .write_timer_high(LengthCounterLoad::from_registers(
-                    self.pulse1.timer_period as u8,
-                    value,
-                )),
-            0x4004 => self.pulse2.write_control(DutyCycle::from_bits(value)),
-            0x4005 => self.pulse2.write_sweep(Sweep::from_bits(value)),
+            0x4003 => self.pulse1.write_timer_high(value.into()),
+            0x4004 => self.pulse2.write_control(value.into()),
+            0x4005 => self.pulse2.write_sweep(value.into()),
             0x4006 => self.pulse2.write_timer_low(value),
-            0x4007 => self
-                .pulse2
-                .write_timer_high(LengthCounterLoad::from_registers(
-                    self.pulse2.timer_period as u8,
-                    value,
-                )),
-            0x4008 => self
-                .triangle
-                .write_control(LinearCounterControl::from_bits(value)),
+            0x4007 => self.pulse2.write_timer_high(value.into()),
+            0x4008 => self.triangle.write_control(value.into()),
             0x400A => self.triangle.write_timer_low(value),
-            0x400B => self
-                .triangle
-                .write_timer_high(LengthCounterLoad::from_registers(
-                    self.triangle.timer_period as u8,
-                    value,
-                )),
-            0x400C => self.noise.write_envelope(NoiseEnvelop::from_bits(value)),
-            0x400E => self.noise.write_period(NoisePeriod::from_bits(value)),
-            0x400F => self.noise.write_length(NoiseLength::from_bits(value)),
-            0x4010 => {
-                self.dmc.irq_loop_freq = DmcIRQLoopFreq::from_bits(value);
-                // If IRQ flag cleared, clear the DMC interrupt
-                if !self.dmc.irq_loop_freq.irq_enabled() {
-                    self.dmc_interrupt = false;
-                }
-            }
-            0x4011 => {
-                self.dmc.load_counter = value & 0x7F;
-                self.dmc.output_level = value & 0x7F;
-            }
+            0x400B => self.triangle.write_timer_high(value.into()),
+            0x400C => self.noise.write_envelope(value.into()),
+            0x400E => self.noise.write_period(value.into()),
+            0x400F => self.noise.write_length(value.into()),
+            0x4010 => self.write_dmc_irq_loop_freq(value.into()),
+            0x4011 => self.dmc.write_load_counter(value.into()),
             0x4012 => self.dmc.sample_address = value,
             0x4013 => self.dmc.sample_length = value,
-            0x4015 => self.set_control_flags(ControlFlags::from_bits(value)),
-            0x4017 => self.set_frame_counter(FrameCounter::from_bits(value)),
+            0x4015 => self.set_control_flags(value.into()),
+            0x4017 => self.set_frame_counter(value.into()),
             _ => {}
         }
     }
@@ -1110,6 +1089,14 @@ impl<D: AudioDriver> Apu<D> {
         self.dc_last_input = input;
         self.dc_last_output = output;
         output.clamp(-1.0, 1.0)
+    }
+
+    fn write_dmc_irq_loop_freq(&mut self, value: DmcIRQLoopFreq) {
+        self.dmc.irq_loop_freq = value;
+        // If IRQ flag cleared, clear the DMC interrupt
+        if !self.dmc.irq_loop_freq.irq_enabled() {
+            self.dmc_interrupt = false;
+        }
     }
 }
 

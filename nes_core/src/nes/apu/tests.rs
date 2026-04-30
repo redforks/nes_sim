@@ -86,14 +86,6 @@ fn test_duty_cycle_various_values() {
 }
 
 #[test]
-fn test_length_counter_load_default() {
-    let lcl = LengthCounterLoad::default();
-    assert_eq!(lcl.low_byte, 0);
-    assert_eq!(lcl.high_byte, 0);
-    assert_eq!(lcl.timer(), 0);
-}
-
-#[test]
 fn test_noise_envelop_bitfield() {
     let mut envelop = NoiseEnvelop::new();
     envelop.set_loop_flag(true);
