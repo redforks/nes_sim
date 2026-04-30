@@ -34,7 +34,7 @@ fn test_frame_counter_inhibit_clears_irq() {
     let mut mcu = test_mcu();
 
     mcu.write(0x4017, 0x00);
-    for _ in 0..29_829 {
+    for _ in 0..(29_829 * 3) {
         mcu.tick_apu();
     }
 

@@ -75,8 +75,8 @@ impl<R: Render, D: AudioDriver> NesMcu<R, D> {
     }
 
     /// Tick APU frame counter. Returns true if frame IRQ should be triggered.
-    pub fn tick_apu(&mut self) -> bool {
-        self.apu.tick()
+    pub fn tick_apu(&mut self) {
+        self.apu.tick();
     }
 
     pub fn irq_pending(&self) -> bool {

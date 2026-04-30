@@ -1,5 +1,7 @@
 use bitfield_struct::bitfield;
 
+use crate::get_system_cycles;
+
 #[bitfield(u8)]
 struct Sweep {
     #[bits(3)]
@@ -785,7 +787,11 @@ impl<D: AudioDriver> Apu<D> {
         self.frame_counter_write_delay = Some(4);
     }
 
-    pub fn tick(&mut self) -> bool {
+    pub fn tick(&mut self) {
+        if get_system_cycles() % 3 != 0 {
+            return;
+        }
+
         self.triangle.step_timer();
         self.frame_counter_cycle = self.frame_counter_cycle.wrapping_add(1);
 
@@ -818,16 +824,13 @@ impl<D: AudioDriver> Apu<D> {
         let prev_frame_interrupt = self.frame_interrupt;
 
         // Only tick frame counter if we're not in the write delay period
-        let irq_triggered = if self.frame_counter_write_delay.is_none() {
-            self.tick_frame_counter()
-        } else {
-            false
+        if self.frame_counter_write_delay.is_none() {
+            self.tick_frame_counter();
         };
 
         self.frame_irq_shadow = prev_frame_interrupt;
 
         self.emit_samples();
-        irq_triggered
     }
 
     pub fn request_irq(&self) -> bool {
@@ -1004,7 +1007,7 @@ impl<D: AudioDriver> Apu<D> {
         }
     }
 
-    fn tick_frame_counter(&mut self) -> bool {
+    fn tick_frame_counter(&mut self) {
         if self.frame_counter_mode {
             // 5-step mode — never generates frame IRQ.
             // Manual wrap avoids modulo so that apply_frame_counter's reset
@@ -1020,19 +1023,8 @@ impl<D: AudioDriver> Apu<D> {
                 }
                 _ => {}
             }
-            return false;
+            return;
         }
-
-        // 4-step mode.
-        //
-        // On real hardware the frame IRQ flag is set on three consecutive
-        // CPU cycles at the end of the period: 29828, 29829, and 0 (the
-        // reload/wrap point).  We use manual wrapping so that the
-        // cycle-0 IRQ only fires on the natural period wrap (29830), NOT
-        // after an apply_frame_counter reset which also sets the counter
-        // to 0.
-        //
-        let mut irq_triggered = false;
 
         match self.frame_counter_cycle {
             7_457 | 22_371 => self.clock_quarter_frame(),
@@ -1043,7 +1035,6 @@ impl<D: AudioDriver> Apu<D> {
             29_828 => {
                 if !self.frame_interrupt_inhibit {
                     self.frame_interrupt = true;
-                    irq_triggered = true;
                 }
             }
             29_829 => {
@@ -1051,20 +1042,16 @@ impl<D: AudioDriver> Apu<D> {
                 self.clock_half_frame();
                 if !self.frame_interrupt_inhibit {
                     self.frame_interrupt = true;
-                    irq_triggered = true;
                 }
             }
             29_830 => {
                 self.frame_counter_cycle = 0;
                 if !self.frame_interrupt_inhibit {
                     self.frame_interrupt = true;
-                    irq_triggered = true;
                 }
             }
             _ => {}
         }
-
-        irq_triggered
     }
 
     fn clock_quarter_frame(&mut self) {

@@ -83,11 +83,9 @@ where
         let irq_pending = self.machine.mcu().apu_irq_pending() || self.cartridge_irq_latched;
         self.machine.cpu_mut().set_irq(irq_pending);
 
-        if cycles.is_multiple_of(3) {
-            self.machine.mcu_mut().tick_apu();
-            if let Some(is_reload) = self.machine.mcu_mut().take_dmc_dma_pending() {
-                self.machine.cpu_mut().request_dmc_dma(is_reload);
-            }
+        self.machine.mcu_mut().tick_apu();
+        if let Some(is_reload) = self.machine.mcu_mut().take_dmc_dma_pending() {
+            self.machine.cpu_mut().request_dmc_dma(is_reload);
         }
 
         let cpu_tick_phase = (cycles - 1) % 3;
