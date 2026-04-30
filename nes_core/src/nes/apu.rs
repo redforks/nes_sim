@@ -467,11 +467,11 @@ impl<D: AudioDriver> Apu<D> {
     /// Get current APU status for debugging/inspection
     pub fn get_status(&self) -> ApuStatusInfo {
         ApuStatusInfo {
-            pulse1_enabled: self.pulse1.status_enabled(),
-            pulse2_enabled: self.pulse2.status_enabled(),
+            pulse1_enabled: self.pulse1.status_bit(),
+            pulse2_enabled: self.pulse2.status_bit(),
             triangle_enabled: self.triangle.is_enabled(),
             noise_enabled: self.noise.is_enabled(),
-            dmc_enabled: self.dmc.status_enabled(),
+            dmc_enabled: self.dmc.status_bit(),
             frame_irq_pending: self.frame_sequencer.frame_interrupt(),
             dmc_irq_pending: self.dmc_interrupt,
         }
@@ -525,11 +525,11 @@ impl<D: AudioDriver> Apu<D> {
 
     fn status_byte(&self) -> u8 {
         let mut status = APUStatus::new();
-        status.set_pulse1_enabled(self.pulse1.status_enabled());
-        status.set_pulse2_enabled(self.pulse2.status_enabled());
-        status.set_triangle_enabled(self.triangle.status_enabled());
-        status.set_noise_enabled(self.noise.status_enabled());
-        status.set_dmc_enabled(self.dmc.status_enabled());
+        status.set_pulse1_enabled(self.pulse1.status_bit());
+        status.set_pulse2_enabled(self.pulse2.status_bit());
+        status.set_triangle_enabled(self.triangle.status_bit());
+        status.set_noise_enabled(self.noise.status_bit());
+        status.set_dmc_enabled(self.dmc.status_bit());
         status.set_frame_interrupt(self.frame_sequencer.frame_interrupt());
         status.set_dmc_interrupt(self.dmc_interrupt);
         status.into_bits()

@@ -90,8 +90,8 @@ impl Noise {
         }
     }
 
-    pub fn status_enabled(&self) -> bool {
-        self.enabled && !self.length_control.disabled()
+    pub fn status_bit(&self) -> bool {
+        !self.length_control.disabled()
     }
 
     pub fn is_enabled(&self) -> bool {

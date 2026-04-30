@@ -52,7 +52,7 @@ impl Dmc {
         }
     }
 
-    pub fn status_enabled(&self) -> bool {
+    pub fn status_bit(&self) -> bool {
         self.bytes_remaining > 0
     }
 

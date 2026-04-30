@@ -123,7 +123,7 @@ impl Pulse {
         PULSE_DUTY_TABLE[self.control.duty() as usize][self.sequence_step] * self.current_volume()
     }
 
-    pub fn status_enabled(&self) -> bool {
-        self.enabled && !self.length_control.disabled()
+    pub fn status_bit(&self) -> bool {
+        !self.length_control.disabled()
     }
 }
