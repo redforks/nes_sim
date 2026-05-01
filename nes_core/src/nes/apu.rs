@@ -31,6 +31,11 @@ impl Counter for u8 {
     const ONE: Self = 1;
 }
 
+impl Counter for u32 {
+    const ZERO: Self = 0;
+    const ONE: Self = 1;
+}
+
 impl Counter for u64 {
     const ZERO: Self = 0;
     const ONE: Self = 1;
@@ -401,9 +406,9 @@ impl<D: AudioDriver> Apu<D> {
     }
 
     pub fn tick(&mut self) {
-        self.frame_sequencer.tick2();
-
+        self.frame_sequencer.tick_timer();
         if get_system_cycles().is_multiple_of(SYSTEM_CYCLES_PER_CPU_CYCLE) {
+            self.frame_sequencer.tick();
             self.triangle.step_timer();
 
             self.apu_even_cycle = !self.apu_even_cycle;
@@ -419,12 +424,14 @@ impl<D: AudioDriver> Apu<D> {
                 self.dmc_dma_request = Some((self.dmc.current_address(), true));
             }
 
-            let frame_clock = self.frame_sequencer.tick();
-            if frame_clock.quarter_frame {
-                self.clock_quarter_frame();
+            if std::mem::take(&mut self.frame_sequencer.output_latch.irq) {
+                self.frame_sequencer.set_interrupt();
             }
-            if frame_clock.half_frame {
-                self.clock_half_frame();
+            if std::mem::take(&mut self.frame_sequencer.output_latch.envelop_and_linear) {
+                self.tick_envelop_and_linear();
+            }
+            if std::mem::take(&mut self.frame_sequencer.output_latch.length_and_sweep) {
+                self.tick_length_and_sweep();
             }
             self.emit_samples();
         }
@@ -472,7 +479,7 @@ impl<D: AudioDriver> Apu<D> {
             triangle_enabled: self.triangle.is_enabled(),
             noise_enabled: self.noise.is_enabled(),
             dmc_enabled: self.dmc.status_bit(),
-            frame_irq_pending: self.frame_sequencer.frame_interrupt(),
+            frame_irq_pending: self.frame_sequencer.frame_interrupt,
             dmc_irq_pending: self.dmc_interrupt,
         }
     }
@@ -546,24 +553,20 @@ impl<D: AudioDriver> Apu<D> {
         self.dmc_interrupt = false;
     }
 
-    fn clock_quarter_frame(&mut self) {
+    fn tick_envelop_and_linear(&mut self) {
         self.pulse1.step_envelope();
         self.pulse2.step_envelope();
         self.triangle.step_linear_counter();
         self.noise.step_envelope();
     }
 
-    fn clock_half_frame(&mut self) {
-        self.clock_length_counters();
-        self.pulse1.step_sweep();
-        self.pulse2.step_sweep();
-    }
-
-    fn clock_length_counters(&mut self) {
+    fn tick_length_and_sweep(&mut self) {
         self.pulse1.step_length_counter();
         self.pulse2.step_length_counter();
         self.triangle.step_length_counter();
         self.noise.step_length_counter();
+        self.pulse1.step_sweep();
+        self.pulse2.step_sweep();
     }
 
     fn emit_samples(&mut self) {

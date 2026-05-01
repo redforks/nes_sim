@@ -1,6 +1,6 @@
 use crate::{
-    ExecuteResult, PPU_CYCLES_PER_CPU_CYCLE, Plugin, SYSTEM_CYCLES_PER_CPU_CYCLE,
-    SYSTEM_CYCLES_PER_PPU_CYCLE, get_system_cycles, inc_system_cycles,
+    ExecuteResult, Plugin, SYSTEM_CYCLES_PER_CPU_CYCLE, SYSTEM_CYCLES_PER_PPU_CYCLE,
+    get_system_cycles, inc_system_cycles,
     ines::INesFile,
     machine::Machine,
     nes::{
