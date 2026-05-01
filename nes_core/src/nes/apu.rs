@@ -424,14 +424,16 @@ impl<D: AudioDriver> Apu<D> {
                 self.dmc_dma_request = Some((self.dmc.current_address(), true));
             }
 
-            if std::mem::take(&mut self.frame_sequencer.output_latch.irq) {
-                self.frame_sequencer.set_interrupt();
-            }
-            if std::mem::take(&mut self.frame_sequencer.output_latch.envelop_and_linear) {
-                self.tick_envelop_and_linear();
-            }
-            if std::mem::take(&mut self.frame_sequencer.output_latch.length_and_sweep) {
-                self.tick_length_and_sweep();
+            if let Some(frame_sequencer) = self.frame_sequencer.output_latch.take() {
+                if frame_sequencer.irq {
+                    self.frame_sequencer.set_interrupt();
+                }
+                if frame_sequencer.envelop_and_linear {
+                    self.tick_envelop_and_linear();
+                }
+                if frame_sequencer.length_and_sweep {
+                    self.tick_length_and_sweep();
+                }
             }
             self.emit_samples();
         }

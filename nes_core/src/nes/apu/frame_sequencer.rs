@@ -58,7 +58,7 @@ const DIVIDER: u32 = 89490;
 #[derive(Debug)]
 pub(super) struct FrameSequencer {
     pub frame_interrupt: bool,
-    pub output_latch: FrameSequenceState,
+    pub output_latch: Option<FrameSequenceState>,
     timer: Timer<u32>,
     sequences: Sequence<FrameSequenceState>,
     frame_interrupt_inhibit: bool,
@@ -102,7 +102,7 @@ impl FrameSequencer {
             None
         };
         if let Some(r) = r {
-            self.output_latch = r;
+            self.output_latch = Some(r);
         }
     }
 
@@ -114,7 +114,7 @@ impl FrameSequencer {
                 FrameSequencerMode::FiveStep => &FIVE_STEP_TRIGGERS,
             });
             if counter.mode() == FrameSequencerMode::FiveStep {
-                self.output_latch = self.sequences.tick();
+                self.output_latch = Some(self.sequences.tick());
             }
 
             self.frame_interrupt_inhibit = counter.interrupt_flag();
