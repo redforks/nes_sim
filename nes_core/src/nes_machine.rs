@@ -1,6 +1,6 @@
 use crate::{
-    ExecuteResult, Plugin, SYSTEM_CYCLES_PER_CPU_CYCLE, SYSTEM_CYCLES_PER_PPU_CYCLE,
-    get_system_cycles, inc_system_cycles,
+    ExecuteResult, PPU_CYCLES_PER_CPU_CYCLE, Plugin, SYSTEM_CYCLES_PER_CPU_CYCLE,
+    SYSTEM_CYCLES_PER_PPU_CYCLE, get_system_cycles, inc_system_cycles,
     ines::INesFile,
     machine::Machine,
     nes::{
@@ -50,7 +50,7 @@ where
         // Delegate to `tick()` which executes a single CPU instruction and
         // advances PPU/APU accordingly. Loop until VBlank or safety limit.
         for _ in 0..MAX_TICKS_PER_FRAME {
-            inc_system_cycles();
+            let cycles = inc_system_cycles();
             self.tick();
 
             if self.machine.cpu_mut().is_halted() {
@@ -58,7 +58,9 @@ where
             }
 
             // Check for VBlank signalled by the PPU
-            if self.machine.mcu().ppu_timing() == (VBLANK_SET_SCANLINE, VBLANK_SET_DOT) {
+            if cycles.is_multiple_of(SYSTEM_CYCLES_PER_PPU_CYCLE)
+                && self.machine.mcu().ppu_timing() == (VBLANK_SET_SCANLINE, VBLANK_SET_DOT)
+            {
                 return ExecuteResult::Continue;
             }
         }
