@@ -71,10 +71,7 @@ impl Default for FrameSequencer {
     fn default() -> Self {
         Self {
             frame_interrupt: false,
-            timer: Timer {
-                period: DIVIDER,
-                ..Default::default()
-            },
+            timer: Timer::new(DIVIDER),
             output_latch: Default::default(),
             sequences: Sequence::new(&FOUR_STEP_TRIGGERS),
             frame_interrupt_inhibit: false,

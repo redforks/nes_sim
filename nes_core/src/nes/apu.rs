@@ -1,6 +1,5 @@
 use crate::{SYSTEM_CYCLES_PER_CPU_CYCLE, get_system_cycles};
 use bitfield_struct::{bitenum, bitfield};
-use std::ops::SubAssign;
 
 mod dmc;
 mod frame_sequencer;
@@ -16,29 +15,42 @@ use noise::Noise;
 use pulse::Pulse;
 use triangle::Triangle;
 
-trait Counter: Eq + SubAssign + Copy + Sized {
+trait Counter: Eq + Copy + Sized {
     const ZERO: Self;
-    const ONE: Self;
+
+    fn inc(self) -> Self;
 }
 
 impl Counter for u16 {
     const ZERO: Self = 0;
-    const ONE: Self = 1;
+
+    fn inc(self) -> Self {
+        self.wrapping_add(1)
+    }
 }
 
 impl Counter for u8 {
     const ZERO: Self = 0;
-    const ONE: Self = 1;
+
+    fn inc(self) -> Self {
+        self.wrapping_add(1)
+    }
 }
 
 impl Counter for u32 {
     const ZERO: Self = 0;
-    const ONE: Self = 1;
+
+    fn inc(self) -> Self {
+        self.wrapping_add(1)
+    }
 }
 
 impl Counter for u64 {
     const ZERO: Self = 0;
-    const ONE: Self = 1;
+
+    fn inc(self) -> Self {
+        self.wrapping_add(1)
+    }
 }
 
 /// A divider outputs a clock every n input clocks, where n is the divider's
@@ -46,7 +58,7 @@ impl Counter for u64 {
 /// clock. When it reaches 0, it is reloaded with the period and an output clock
 /// is generated. Resetting a divider reloads its counter without generating an
 /// output clock. Changing a divider's period doesn't affect its current count.
-#[derive(Debug, Default)]
+#[derive(Debug)]
 struct Timer<C> {
     period: C,
     counter: C,
@@ -55,13 +67,21 @@ struct Timer<C> {
 }
 
 impl<C: Counter> Timer<C> {
+    fn new(period: C) -> Self {
+        Self {
+            period,
+            counter: C::ZERO,
+            signal: false,
+        }
+    }
+
     /// Tick the timer. Returns true if an output clock is generated on this tick.
     fn tick(&mut self) -> bool {
-        self.signal = if self.counter == C::ZERO {
+        self.signal = if self.counter == self.period {
             self.reset();
             true
         } else {
-            self.counter -= C::ONE;
+            self.counter = self.counter.inc();
             false
         };
         self.signal
@@ -69,7 +89,7 @@ impl<C: Counter> Timer<C> {
 
     /// Reset the timer (reload counter with period, without generating an output clock).
     fn reset(&mut self) {
-        self.counter = self.period;
+        self.counter = C::ZERO;
     }
 
     /// Set the timer period. Doesn't affect the current counter value.
