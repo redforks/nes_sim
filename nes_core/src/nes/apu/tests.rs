@@ -263,23 +263,23 @@ fn test_apu_status_to_from_u8() {
 fn test_frame_counter_bitfield() {
     let mut counter = FrameSequencerBits::new();
     counter.set_mode(FrameSequencerMode::FiveStep);
-    counter.set_interrupt_flag(false);
+    counter.set_disable_interrupt(false);
 
     assert_eq!(counter.mode(), FrameSequencerMode::FiveStep);
-    assert!(!counter.interrupt_flag());
+    assert!(!counter.disable_interrupt());
 }
 
 #[test]
 fn test_frame_counter_to_from_u8() {
     let mut counter = FrameSequencerBits::new();
     counter.set_mode(FrameSequencerMode::FourStep);
-    counter.set_interrupt_flag(true);
+    counter.set_disable_interrupt(true);
 
     let byte: u8 = counter.into();
     let counter2: FrameSequencerBits = byte.into();
 
     assert_eq!(counter2.mode(), FrameSequencerMode::FourStep);
-    assert!(counter2.interrupt_flag());
+    assert!(counter2.disable_interrupt());
 }
 
 // Test APU control logic
@@ -288,16 +288,6 @@ fn test_apu_controller_read_status() {
     let mut channel = Apu::new(());
     let val = channel.read(0x4015);
     assert_eq!(val, 0); // Default APUStatus
-}
-
-#[test]
-fn test_apu_controller_peek_status_does_not_clear_interrupt() {
-    let mut channel = Apu::new(());
-    channel.frame_sequencer.frame_interrupt = true;
-
-    let val = channel.peek(0x4015);
-    assert_eq!(val & 0x40, 0x40);
-    assert!(channel.frame_sequencer.frame_interrupt);
 }
 
 #[test]

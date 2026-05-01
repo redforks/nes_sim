@@ -57,12 +57,13 @@ const DIVIDER: u32 = 89490;
 
 #[derive(Debug)]
 pub(super) struct FrameSequencer {
-    pub frame_interrupt: bool,
     pub output_latch: Option<FrameSequenceState>,
+
+    frame_interrupt: bool,
     timer: Timer<u32>,
     sequences: Sequence<FrameSequenceState>,
     frame_interrupt_inhibit: bool,
-
+    request_reset_timer: bool,
     pending_mode: Option<FrameSequencerBits>,
 }
 
@@ -78,6 +79,7 @@ impl Default for FrameSequencer {
             sequences: Sequence::new(&FOUR_STEP_TRIGGERS),
             frame_interrupt_inhibit: false,
             pending_mode: None,
+            request_reset_timer: false,
         }
     }
 }
@@ -93,21 +95,21 @@ impl FrameSequencer {
     pub fn reset(&mut self) {
         self.frame_interrupt = false;
         self.output_latch = Default::default();
+        self.pending_mode = None;
     }
 
     pub fn tick_timer(&mut self) {
-        let r = if self.timer.tick() {
-            Some(self.sequences.tick())
-        } else {
-            None
-        };
-        if let Some(r) = r {
-            self.output_latch = Some(r);
+        if self.timer.tick() {
+            self.output_latch = Some(self.sequences.tick());
         }
     }
 
-    pub fn tick(&mut self) {
-        if let Some(counter) = self.pending_mode.take() {
+    pub fn tick(&mut self, is_even_cycle: bool) {
+        if is_even_cycle {
+            self.request_reset_timer = self.pending_mode.is_some();
+        } else if self.request_reset_timer
+            && let Some(counter) = self.pending_mode.take()
+        {
             self.timer.reset();
             self.sequences.reset_items(match counter.mode() {
                 FrameSequencerMode::FourStep => &FOUR_STEP_TRIGGERS,
@@ -117,7 +119,6 @@ impl FrameSequencer {
                 self.output_latch = Some(self.sequences.tick());
             }
 
-            self.frame_interrupt_inhibit = counter.interrupt_flag();
             if self.frame_interrupt_inhibit {
                 self.frame_interrupt = false;
             }
@@ -128,14 +129,8 @@ impl FrameSequencer {
         self.frame_interrupt && !self.frame_interrupt_inhibit
     }
 
-    pub fn frame_interrupt(&self) -> bool {
-        self.frame_interrupt
-    }
-
     pub fn set_interrupt(&mut self) {
-        if !self.frame_interrupt_inhibit {
-            self.frame_interrupt = true;
-        }
+        self.frame_interrupt = true;
     }
 
     pub fn clear_interrupt(&mut self) {
@@ -145,5 +140,6 @@ impl FrameSequencer {
     pub fn write_mode(&mut self, counter: FrameSequencerBits, _apu_even_cycle: bool) {
         debug_assert!(self.pending_mode.is_none());
         self.pending_mode = Some(counter);
+        self.frame_interrupt_inhibit = counter.disable_interrupt();
     }
 }
