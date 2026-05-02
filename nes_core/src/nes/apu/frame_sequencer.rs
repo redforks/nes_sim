@@ -1,6 +1,5 @@
-use crate::nes::apu::{Sequence, Timer};
-
 use super::{FrameSequencerBits, FrameSequencerMode};
+use crate::nes::apu::{Sequence, Timer};
 
 const FOUR_STEP_TRIGGERS: [FrameSequenceState; 4] = [
     FrameSequenceState {

@@ -12,10 +12,10 @@ use crate::{
 };
 use std::fs;
 
-/// Safety limit: maximum master clock ticks per `process_frame()` call.
-/// A full frame is 89,342 PPU dots, each dot now spans 4 master clock ticks.
+/// Safety limit: maximum system ticks per `process_frame()` call.
+/// A full frame is 89,342 PPU dots, and one system tick now maps to one PPU dot.
 /// This leaves a little headroom while still guarding against infinite loops.
-const MAX_TICKS_PER_FRAME: u32 = 360000;
+const MAX_TICKS_PER_FRAME: u32 = 100000;
 
 pub struct NesMachine<P, R: Render, D: crate::nes::apu::AudioDriver> {
     machine: Machine<P, NesMcu<R, D>>,
