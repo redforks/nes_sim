@@ -40,14 +40,15 @@ impl Triangle {
 
     pub fn write_control(&mut self, value: TriangleControlBits) {
         self.control = value;
+        self.length_control.set_halt(value);
     }
 
     pub fn is_halt(&self) -> bool {
-        self.control.is_halt()
+        self.control.loop_and_is_halt()
     }
 
     pub fn restore_is_halt_flag(&mut self, is_halt: bool) {
-        self.control = TriangleControlBits::new().with_is_halt(is_halt);
+        self.control = TriangleControlBits::new().with_loop_and_is_halt(is_halt);
     }
 
     pub fn write_timer_low(&mut self, value: u8) {
@@ -57,7 +58,7 @@ impl Triangle {
     pub fn write_timer_high(&mut self, load: LengthTimerHigh3Bits) {
         self.timer.set_period_high(load.high3());
         if self.enabled {
-            self.length_control.load(load.length());
+            self.length_control.load(load);
         }
         self.linear_counter_reload = true;
     }
@@ -79,15 +80,13 @@ impl Triangle {
             self.linear_counter -= 1;
         }
 
-        if !self.control.is_halt() {
+        if !self.control.loop_and_is_halt() {
             self.linear_counter_reload = false;
         }
     }
 
     pub fn step_length_counter(&mut self) {
-        if !self.control.is_halt() {
-            self.length_control.tick();
-        }
+        self.length_control.tick();
     }
 
     pub fn output(&self) -> u8 {

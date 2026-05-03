@@ -14,7 +14,7 @@ pub(super) struct Pulse {
     length_control: LengthControl,
     enabled: bool,
     sequence_step: usize,
-    envelope: EnvelopeState,
+    envelope: Envelope,
     sweep_divider: u8,
     sweep_reload: bool,
     ones_complement_negate: bool,
@@ -30,7 +30,7 @@ impl Pulse {
             length_control: LengthControl::default(),
             enabled: false,
             sequence_step: 0,
-            envelope: EnvelopeState::default(),
+            envelope: Envelope::default(),
             sweep_divider: 0,
             sweep_reload: false,
         }
@@ -45,6 +45,7 @@ impl Pulse {
 
     pub fn write_control(&mut self, value: PulseControlBits) {
         self.control = value;
+        self.length_control.set_halt(value);
     }
 
     pub fn write_sweep(&mut self, value: Sweep) {
@@ -59,7 +60,7 @@ impl Pulse {
     pub fn write_timer_high(&mut self, load: LengthTimerHigh3Bits) {
         self.timer.set_period_high(load.high3());
         if self.enabled {
-            self.length_control.load(load.length());
+            self.length_control.load(load);
         }
         self.sequence_step = 0;
         self.envelope.restart();
@@ -73,13 +74,11 @@ impl Pulse {
 
     pub fn step_envelope(&mut self) {
         self.envelope
-            .tick(self.control.volume(), self.control.is_halt());
+            .tick(self.control.volume(), self.control.loop_and_is_halt());
     }
 
     pub fn step_length_counter(&mut self) {
-        if !self.control.is_halt() {
-            self.length_control.tick();
-        }
+        self.length_control.tick();
     }
 
     pub fn step_sweep(&mut self) {
@@ -103,7 +102,7 @@ impl Pulse {
         if self.control.constant_volume() {
             self.control.volume()
         } else {
-            self.envelope.decay
+            self.envelope.decay()
         }
     }
 

@@ -10,7 +10,7 @@ mod triangle;
 
 use dmc::Dmc;
 use frame_sequencer::FrameSequencer;
-use helper::LengthControl;
+use helper::{Envelope, LengthControl};
 use noise::Noise;
 use pulse::Pulse;
 use triangle::Triangle;
@@ -162,7 +162,7 @@ struct PulseControlBits {
     #[bits(4)]
     volume: u8,
     constant_volume: bool,
-    is_halt: bool,
+    loop_and_is_halt: bool,
     #[bits(2)]
     duty: u8,
 }
@@ -173,14 +173,14 @@ struct LengthTimerHigh3Bits {
     #[bits(3)]
     high3: u8,
     #[bits(5)]
-    length: u8,
+    length_idx: u8,
 }
 
 #[bitfield(u8)]
 struct TriangleControlBits {
     #[bits(7)]
     counter: u8,
-    is_halt: bool,
+    loop_and_is_halt: bool,
 }
 
 #[bitfield(u8)]
@@ -188,7 +188,7 @@ struct NoiseControlBits {
     #[bits(4)]
     volume: u8,
     constant_volume: bool,
-    loop_flag: bool,
+    loop_and_is_halt: bool,
     #[bits(2)]
     __: u8,
 }
@@ -207,7 +207,7 @@ struct NoiseLength {
     #[bits(3)]
     __: u8,
     #[bits(5)]
-    length: u8,
+    length_idx: u8,
 }
 
 #[bitfield(u8)]
@@ -313,41 +313,6 @@ pub struct ApuStatusInfo {
     pub dmc_enabled: bool,
     pub frame_irq_pending: bool,
     pub dmc_irq_pending: bool,
-}
-
-#[derive(Default, Debug)]
-struct EnvelopeState {
-    start: bool,
-    divider: u8,
-    decay: u8,
-}
-
-impl EnvelopeState {
-    fn restart(&mut self) {
-        self.start = true;
-    }
-
-    fn tick(&mut self, period: u8, looping: bool) {
-        if self.start {
-            self.start = false;
-            self.decay = 15;
-            self.divider = period;
-            return;
-        }
-
-        if self.divider == 0 {
-            self.divider = period;
-            if self.decay == 0 {
-                if looping {
-                    self.decay = 15;
-                }
-            } else {
-                self.decay -= 1;
-            }
-        } else {
-            self.divider -= 1;
-        }
-    }
 }
 
 pub struct Apu<D: AudioDriver = ()> {

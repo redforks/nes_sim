@@ -6,25 +6,25 @@ const NOISE_PERIOD_TABLE: [u16; 16] = [
 
 #[derive(Debug)]
 pub struct Noise {
-    envelope: NoiseControlBits,
+    control_bits: NoiseControlBits,
     period: NoisePeriod,
     timer_counter: u16,
     length_control: LengthControl,
     enabled: bool,
     shift_register: u16,
-    envelope_state: EnvelopeState,
+    envelope: Envelope,
 }
 
 impl Default for Noise {
     fn default() -> Self {
         Self {
-            envelope: NoiseControlBits::default(),
+            control_bits: NoiseControlBits::default(),
             period: NoisePeriod::default(),
             timer_counter: 0,
             length_control: LengthControl::default(),
             enabled: false,
             shift_register: 1,
-            envelope_state: EnvelopeState::default(),
+            envelope: Envelope::default(),
         }
     }
 }
@@ -38,7 +38,8 @@ impl Noise {
     }
 
     pub fn write_envelope(&mut self, value: NoiseControlBits) {
-        self.envelope = value;
+        self.control_bits = value;
+        self.length_control.set_halt(value);
     }
 
     pub fn write_period(&mut self, value: NoisePeriod) {
@@ -47,9 +48,9 @@ impl Noise {
 
     pub fn write_length(&mut self, value: NoiseLength) {
         if self.enabled {
-            self.length_control.load(value.length());
+            self.length_control.load(value);
         }
-        self.envelope_state.restart();
+        self.envelope.restart();
     }
 
     pub fn step_timer(&mut self) {
@@ -64,21 +65,21 @@ impl Noise {
     }
 
     pub fn step_envelope(&mut self) {
-        self.envelope_state
-            .tick(self.envelope.volume(), self.envelope.loop_flag());
+        self.envelope.tick(
+            self.control_bits.volume(),
+            self.control_bits.loop_and_is_halt(),
+        );
     }
 
     pub fn step_length_counter(&mut self) {
-        if !self.envelope.loop_flag() {
-            self.length_control.tick();
-        }
+        self.length_control.tick();
     }
 
     fn current_volume(&self) -> u8 {
-        if self.envelope.constant_volume() {
-            self.envelope.volume()
+        if self.control_bits.constant_volume() {
+            self.control_bits.volume()
         } else {
-            self.envelope_state.decay
+            self.envelope.decay()
         }
     }
 
