@@ -428,10 +428,11 @@ impl<D: AudioDriver> Apu<D> {
     pub fn tick(&mut self) {
         self.frame_sequencer.tick_timer();
         if get_system_cycles().is_multiple_of(SYSTEM_CYCLES_PER_CPU_CYCLE) {
-            self.frame_sequencer.tick(!self.apu_even_cycle);
+            self.apu_even_cycle = !self.apu_even_cycle;
+
+            self.frame_sequencer.tick();
             self.triangle.step_timer();
 
-            self.apu_even_cycle = !self.apu_even_cycle;
             if self.apu_even_cycle {
                 self.pulse1.step_timer();
                 self.pulse2.step_timer();
