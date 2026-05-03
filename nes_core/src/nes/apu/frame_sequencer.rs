@@ -69,6 +69,8 @@ pub(super) struct FrameSequencer {
     request_timer_delay: u8,
     pending_mode: Option<FrameSequencerBits>,
     mode: FrameSequencerMode,
+    /// use it to restore after reset
+    saved_bits: FrameSequencerBits,
 }
 
 impl Default for FrameSequencer {
@@ -82,6 +84,7 @@ impl Default for FrameSequencer {
             pending_mode: None,
             request_timer_delay: 0,
             mode: FrameSequencerMode::FourStep,
+            saved_bits: FrameSequencerBits::default(),
         }
     }
 }
@@ -97,7 +100,9 @@ impl FrameSequencer {
     pub fn reset(&mut self) {
         self.frame_interrupt = false;
         self.output_latch = Default::default();
-        self.pending_mode = None;
+        self.pending_mode = Some(self.saved_bits);
+        self.frame_interrupt_inhibit = self.saved_bits.disable_interrupt();
+        self.request_timer_delay = 0;
     }
 
     pub fn tick_timer(&mut self) {
@@ -161,10 +166,11 @@ impl FrameSequencer {
         self.frame_interrupt = false;
     }
 
-    pub fn write_mode(&mut self, counter: FrameSequencerBits, apu_even_cycle: bool) {
+    pub fn write_control_bits(&mut self, bits: FrameSequencerBits, apu_even_cycle: bool) {
         debug_assert!(self.pending_mode.is_none());
-        self.pending_mode = Some(counter);
-        self.frame_interrupt_inhibit = counter.disable_interrupt();
+        self.pending_mode = Some(bits);
+        self.frame_interrupt_inhibit = bits.disable_interrupt();
         self.request_timer_delay = if apu_even_cycle { 2 } else { 3 };
+        self.saved_bits = bits;
     }
 }

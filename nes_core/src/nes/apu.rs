@@ -549,7 +549,7 @@ impl<D: AudioDriver> Apu<D> {
             0x4015 => self.set_control_flags(value.into()),
             0x4017 => self
                 .frame_sequencer
-                .write_mode(value.into(), self.apu_even_cycle),
+                .write_control_bits(value.into(), self.apu_even_cycle),
             _ => {}
         }
     }
