@@ -148,7 +148,7 @@ struct ControlGate<V> {
 }
 
 #[bitfield(u8)]
-struct Sweep {
+struct SweepBits {
     #[bits(3)]
     shift: u8,
     negate: bool,

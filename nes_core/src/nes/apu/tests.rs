@@ -2,7 +2,7 @@ use super::*;
 
 #[test]
 fn test_sweep_bitfield() {
-    let mut sweep = Sweep::new();
+    let mut sweep = SweepBits::new();
     sweep.set_enabled(true);
     sweep.set_period(0b111);
     sweep.set_negate(true);

@@ -9,7 +9,7 @@ const PULSE_DUTY_TABLE: [[u8; 8]; 4] = [
 
 pub(super) struct Pulse {
     control: PulseControlBits,
-    sweep: Sweep,
+    sweep: SweepBits,
     timer: Timer<u16>,
     length_control: LengthControl,
     enabled: bool,
@@ -25,7 +25,7 @@ impl Pulse {
         Self {
             ones_complement_negate,
             control: PulseControlBits::default(),
-            sweep: Sweep::default(),
+            sweep: SweepBits::default(),
             timer: Timer::new(u16::MAX),
             length_control: LengthControl::default(),
             enabled: false,
@@ -48,7 +48,7 @@ impl Pulse {
         self.length_control.set_halt(value);
     }
 
-    pub fn write_sweep(&mut self, value: Sweep) {
+    pub fn write_sweep(&mut self, value: SweepBits) {
         self.sweep = value;
         self.sweep_reload = true;
     }
