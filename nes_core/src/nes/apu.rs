@@ -18,38 +18,38 @@ use triangle::Triangle;
 trait Counter: PartialOrd + Copy + Sized {
     const ZERO: Self;
 
-    fn inc(self) -> Self;
+    fn dec(self) -> Self;
 }
 
 impl Counter for u16 {
     const ZERO: Self = 0;
 
-    fn inc(self) -> Self {
-        self.wrapping_add(1)
+    fn dec(self) -> Self {
+        self.wrapping_sub(1)
     }
 }
 
 impl Counter for u8 {
     const ZERO: Self = 0;
 
-    fn inc(self) -> Self {
-        self.wrapping_add(1)
+    fn dec(self) -> Self {
+        self.wrapping_sub(1)
     }
 }
 
 impl Counter for u32 {
     const ZERO: Self = 0;
 
-    fn inc(self) -> Self {
-        self.wrapping_add(1)
+    fn dec(self) -> Self {
+        self.wrapping_sub(1)
     }
 }
 
 impl Counter for u64 {
     const ZERO: Self = 0;
 
-    fn inc(self) -> Self {
-        self.wrapping_add(1)
+    fn dec(self) -> Self {
+        self.wrapping_sub(1)
     }
 }
 
@@ -59,29 +59,29 @@ impl Counter for u64 {
 /// is generated. Resetting a divider reloads its counter without generating an
 /// output clock. Changing a divider's period doesn't affect its current count.
 #[derive(Debug)]
-struct Timer<C> {
+struct Divider<C> {
     period: C,
     counter: C,
     /// True if last `tick()` method returns true.
     signal: bool,
 }
 
-impl<C: Counter> Timer<C> {
+impl<C: Counter> Divider<C> {
     fn new(period: C) -> Self {
         Self {
             period,
-            counter: C::ZERO,
+            counter: period,
             signal: false,
         }
     }
 
     /// Tick the timer. Returns true if an output clock is generated on this tick.
     fn tick(&mut self) -> bool {
-        self.signal = if self.counter >= self.period {
+        self.signal = if self.counter == C::ZERO {
             self.reset();
             true
         } else {
-            self.counter = self.counter.inc();
+            self.counter = self.counter.dec();
             false
         };
         self.signal
@@ -89,7 +89,7 @@ impl<C: Counter> Timer<C> {
 
     /// Reset the timer (reload counter with period, without generating an output clock).
     fn reset(&mut self) {
-        self.counter = C::ZERO;
+        self.counter = self.period;
     }
 
     /// Set the timer period and reset. Doesn't affect the current counter value.
@@ -104,7 +104,7 @@ impl<C: Counter> Timer<C> {
     }
 }
 
-impl Timer<u16> {
+impl Divider<u16> {
     fn set_period_high(&mut self, high: u8) {
         self.period = (self.period & 0x00FF) | ((high as u16) << 8);
         self.reset();

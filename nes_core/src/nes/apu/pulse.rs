@@ -10,7 +10,7 @@ const PULSE_DUTY_TABLE: [[u8; 8]; 4] = [
 pub(super) struct Pulse {
     control: PulseControlBits,
     sweep: SweepBits,
-    timer: Timer<u16>,
+    timer: Divider<u16>,
     length_control: LengthControl,
     enabled: bool,
     sequence_step: usize,
@@ -26,7 +26,7 @@ impl Pulse {
             ones_complement_negate,
             control: PulseControlBits::default(),
             sweep: SweepBits::default(),
-            timer: Timer::new(u16::MAX),
+            timer: Divider::new(u16::MAX),
             length_control: LengthControl::default(),
             enabled: false,
             sequence_step: 0,

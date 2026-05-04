@@ -1,7 +1,7 @@
 use bitfield_struct::bitfield;
 
 use crate::nes::apu::{
-    LengthTimerHigh3Bits, NoiseControlBits, NoiseLength, PulseControlBits, Timer,
+    Divider, LengthTimerHigh3Bits, NoiseControlBits, NoiseLength, PulseControlBits,
     TriangleControlBits,
 };
 
@@ -97,7 +97,7 @@ struct EnvelopeBits {
 
 #[derive(Debug)]
 pub struct Envelope {
-    divider: Timer<u8>,
+    divider: Divider<u8>,
     counter: u8,
     enable_loop: bool,
     disabled: bool,
@@ -107,7 +107,7 @@ impl Envelope {
     pub fn new(bits: u8) -> Self {
         let bits = EnvelopeBits::from(bits);
         Self {
-            divider: Timer::new(bits.period() + 1),
+            divider: Divider::new(bits.period() + 1),
             counter: 0,
             enable_loop: bits.enable_loop(),
             disabled: bits.disabled(),

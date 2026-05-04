@@ -8,7 +8,7 @@ const TRIANGLE_SEQUENCE: [u8; 32] = [
 #[derive(Debug)]
 pub struct Triangle {
     control: TriangleControlBits,
-    timer: Timer<u16>,
+    timer: Divider<u16>,
     length_control: LengthControl,
     linear_counter: u8,
     linear_counter_reload: bool,
@@ -20,7 +20,7 @@ impl Default for Triangle {
     fn default() -> Self {
         Self {
             control: Default::default(),
-            timer: Timer::new(u16::MAX),
+            timer: Divider::new(u16::MAX),
             length_control: Default::default(),
             linear_counter: Default::default(),
             linear_counter_reload: Default::default(),
