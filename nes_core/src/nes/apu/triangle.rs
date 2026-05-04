@@ -65,7 +65,7 @@ impl Triangle {
 
     pub fn step_timer(&mut self) {
         if self.timer.tick()
-            && !self.length_control.disabled()
+            && !self.length_control.is_zero()
             && self.linear_counter > 0
             && self.timer.period > 1
         {
@@ -90,7 +90,7 @@ impl Triangle {
     }
 
     pub fn output(&self) -> u8 {
-        if !self.enabled || self.length_control.disabled() || self.linear_counter == 0 {
+        if !self.enabled || self.length_control.is_zero() || self.linear_counter == 0 {
             0
         } else {
             TRIANGLE_SEQUENCE[self.sequence_step]
@@ -98,7 +98,7 @@ impl Triangle {
     }
 
     pub fn status_bit(&self) -> bool {
-        !self.length_control.disabled()
+        !self.length_control.is_zero()
     }
 
     pub fn is_enabled(&self) -> bool {

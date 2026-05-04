@@ -122,7 +122,7 @@ impl Pulse {
     }
 
     pub fn output(&self) -> u8 {
-        if !self.enabled || self.length_control.disabled() || self.sweep_mutes_channel() {
+        if !self.enabled || self.length_control.is_zero() || self.sweep_mutes_channel() {
             return 0;
         }
 
@@ -130,6 +130,6 @@ impl Pulse {
     }
 
     pub fn status_bit(&self) -> bool {
-        !self.length_control.disabled()
+        !self.length_control.is_zero()
     }
 }

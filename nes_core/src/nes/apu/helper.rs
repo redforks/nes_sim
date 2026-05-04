@@ -63,7 +63,7 @@ impl LengthControl {
     }
 
     /// Should zero output if counter reaches zero
-    pub fn disabled(&self) -> bool {
+    pub fn is_zero(&self) -> bool {
         self.counter == 0
     }
 

@@ -82,7 +82,7 @@ impl Noise {
     }
 
     pub fn output(&self) -> u8 {
-        if !self.enabled || self.length_control.disabled() || (self.shift_register & 0x0001) != 0 {
+        if !self.enabled || self.length_control.is_zero() || (self.shift_register & 0x0001) != 0 {
             0
         } else {
             self.current_volume()
@@ -90,7 +90,7 @@ impl Noise {
     }
 
     pub fn status_bit(&self) -> bool {
-        !self.length_control.disabled()
+        !self.length_control.is_zero()
     }
 
     pub fn is_enabled(&self) -> bool {
