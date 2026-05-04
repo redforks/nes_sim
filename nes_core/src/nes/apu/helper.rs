@@ -1,5 +1,8 @@
+use bitfield_struct::bitfield;
+
 use crate::nes::apu::{
-    LengthTimerHigh3Bits, NoiseControlBits, NoiseLength, PulseControlBits, TriangleControlBits,
+    LengthTimerHigh3Bits, NoiseControlBits, NoiseLength, PulseControlBits, Timer,
+    TriangleControlBits,
 };
 
 /// Abstract register that can be used to read length halt bit for noise and pulse channels.
@@ -82,41 +85,66 @@ impl LengthControl {
     }
 }
 
-#[derive(Default, Debug)]
+#[bitfield(u8)]
+struct EnvelopeBits {
+    #[bits(4)]
+    period: u8,
+    disabled: bool,
+    enable_loop: bool,
+    #[bits(2)]
+    __: u8,
+}
+
+#[derive(Debug)]
 pub struct Envelope {
-    start: bool,
-    divider: u8,
-    decay: u8,
+    divider: Timer<u8>,
+    counter: u8,
+    enable_loop: bool,
+    disabled: bool,
 }
 
 impl Envelope {
-    pub fn restart(&mut self) {
-        self.start = true;
+    pub fn new(bits: u8) -> Self {
+        let bits = EnvelopeBits::from(bits);
+        Self {
+            divider: Timer::new(bits.period() + 1),
+            counter: 0,
+            enable_loop: bits.enable_loop(),
+            disabled: bits.disabled(),
+        }
     }
 
-    pub fn tick(&mut self, period: u8, looping: bool) {
-        if self.start {
-            self.start = false;
-            self.decay = 15;
-            self.divider = period;
-            return;
-        }
+    pub fn config(&mut self, bits: u8) {
+        let bits = EnvelopeBits::from(bits);
+        self.divider.set_period(bits.period() + 1);
+        self.enable_loop = bits.enable_loop();
+        self.disabled = bits.disabled();
+    }
 
-        if self.divider == 0 {
-            self.divider = period;
-            if self.decay == 0 {
-                if looping {
-                    self.decay = 15;
+    pub fn reset(&mut self) {
+        self.counter = 15;
+        self.divider.reset();
+    }
+
+    pub fn tick(&mut self) -> u8 {
+        if self.divider.tick() {
+            if self.counter == 0 {
+                if self.enable_loop {
+                    self.counter = 15;
                 }
             } else {
-                self.decay -= 1;
+                self.counter -= 1;
             }
-        } else {
-            self.divider -= 1;
         }
+
+        self.output()
     }
 
-    pub fn decay(&self) -> u8 {
-        self.decay
+    pub fn output(&self) -> u8 {
+        if self.disabled {
+            self.divider.period - 1
+        } else {
+            self.counter
+        }
     }
 }

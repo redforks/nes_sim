@@ -30,7 +30,7 @@ impl Pulse {
             length_control: LengthControl::default(),
             enabled: false,
             sequence_step: 0,
-            envelope: Envelope::default(),
+            envelope: Envelope::new(0),
             sweep_divider: 0,
             sweep_reload: false,
         }
@@ -44,6 +44,7 @@ impl Pulse {
     }
 
     pub fn write_control(&mut self, value: PulseControlBits) {
+        self.envelope.config(value.into());
         self.control = value;
         self.length_control.set_halt(value);
     }
@@ -63,7 +64,7 @@ impl Pulse {
             self.length_control.load(load);
         }
         self.sequence_step = 0;
-        self.envelope.restart();
+        self.envelope.reset();
     }
 
     pub fn step_timer(&mut self) {
@@ -73,8 +74,7 @@ impl Pulse {
     }
 
     pub fn step_envelope(&mut self) {
-        self.envelope
-            .tick(self.control.volume(), self.control.loop_and_is_halt());
+        self.envelope.tick();
     }
 
     pub fn step_length_counter(&mut self) {
@@ -102,7 +102,7 @@ impl Pulse {
         if self.control.constant_volume() {
             self.control.volume()
         } else {
-            self.envelope.decay()
+            self.envelope.output()
         }
     }
 

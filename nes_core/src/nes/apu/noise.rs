@@ -24,7 +24,7 @@ impl Default for Noise {
             length_control: LengthControl::default(),
             enabled: false,
             shift_register: 1,
-            envelope: Envelope::default(),
+            envelope: Envelope::new(0),
         }
     }
 }
@@ -39,6 +39,7 @@ impl Noise {
 
     pub fn write_envelope(&mut self, value: NoiseControlBits) {
         self.control_bits = value;
+        self.envelope.config(value.into());
         self.length_control.set_halt(value);
     }
 
@@ -50,7 +51,7 @@ impl Noise {
         if self.enabled {
             self.length_control.load(value);
         }
-        self.envelope.restart();
+        self.envelope.reset();
     }
 
     pub fn step_timer(&mut self) {
@@ -65,10 +66,7 @@ impl Noise {
     }
 
     pub fn step_envelope(&mut self) {
-        self.envelope.tick(
-            self.control_bits.volume(),
-            self.control_bits.loop_and_is_halt(),
-        );
+        self.envelope.tick();
     }
 
     pub fn step_length_counter(&mut self) {
@@ -79,7 +77,7 @@ impl Noise {
         if self.control_bits.constant_volume() {
             self.control_bits.volume()
         } else {
-            self.envelope.decay()
+            self.envelope.output()
         }
     }
 

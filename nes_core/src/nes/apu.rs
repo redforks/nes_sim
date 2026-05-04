@@ -15,7 +15,7 @@ use noise::Noise;
 use pulse::Pulse;
 use triangle::Triangle;
 
-trait Counter: Eq + Copy + Sized {
+trait Counter: PartialOrd + Copy + Sized {
     const ZERO: Self;
 
     fn inc(self) -> Self;
@@ -77,7 +77,7 @@ impl<C: Counter> Timer<C> {
 
     /// Tick the timer. Returns true if an output clock is generated on this tick.
     fn tick(&mut self) -> bool {
-        self.signal = if self.counter == self.period {
+        self.signal = if self.counter >= self.period {
             self.reset();
             true
         } else {
@@ -92,9 +92,10 @@ impl<C: Counter> Timer<C> {
         self.counter = C::ZERO;
     }
 
-    /// Set the timer period. Doesn't affect the current counter value.
+    /// Set the timer period and reset. Doesn't affect the current counter value.
     fn set_period(&mut self, period: C) {
         self.period = period;
+        self.reset();
     }
 
     /// True if last `tick()` method returns true.
@@ -104,8 +105,9 @@ impl<C: Counter> Timer<C> {
 }
 
 impl Timer<u16> {
-    const fn set_period_high(&mut self, high: u8) {
+    fn set_period_high(&mut self, high: u8) {
         self.period = (self.period & 0x00FF) | ((high as u16) << 8);
+        self.reset();
     }
 
     const fn set_period_low(&mut self, low: u8) {
