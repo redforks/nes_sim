@@ -1,7 +1,7 @@
 use bitfield_struct::bitfield;
 
 use crate::nes::apu::{
-    Divider, LengthTimerHigh3Bits, NoiseControlBits, NoiseLength, PulseControlBits,
+    Divider, LengthTimerHigh3Bits, NoiseControlBits, NoiseLength, PulseControlBits, SweepBits,
     TriangleControlBits,
 };
 
@@ -116,7 +116,7 @@ impl Envelope {
 
     pub fn config(&mut self, bits: u8) {
         let bits = EnvelopeBits::from(bits);
-        self.divider.set_period(bits.period() + 1);
+        self.divider.reset_period(bits.period() + 1);
         self.enable_loop = bits.enable_loop();
         self.disabled = bits.disabled();
     }
@@ -148,3 +148,99 @@ impl Envelope {
         }
     }
 }
+
+#[derive(Debug)]
+struct Shifter {
+    negate: bool,
+    /// The inverted value will inc 1 if is second pulse channel
+    is_second_pulse_channel: bool,
+    shift_bits: u8,
+}
+
+impl Shifter {
+    fn new(is_second_pulse_channel: bool, bits: SweepBits) -> Self {
+        let mut r = Self {
+            negate: Default::default(),
+            is_second_pulse_channel,
+            shift_bits: Default::default(),
+        };
+        r.config(bits);
+        r
+    }
+
+    fn update_period(&self, period: u16) -> u16 {
+        let change = period >> self.shift_bits;
+        if self.negate {
+            if self.is_second_pulse_channel {
+                period.saturating_sub(change)
+            } else {
+                period.saturating_sub(change).saturating_sub(1)
+            }
+        } else {
+            period.saturating_add(change)
+        }
+    }
+
+    /// Shifter is disabled if shift bits is 0
+    fn disabled(&self) -> bool {
+        self.shift_bits == 0
+    }
+
+    fn config(&mut self, bits: SweepBits) {
+        self.negate = bits.negate();
+        self.shift_bits = bits.shift();
+    }
+}
+
+#[derive(Debug)]
+pub struct Sweep {
+    divider: Divider<u8>,
+    shifter: Shifter,
+    pending_period: Option<u8>,
+    // When the channel's period is less than 8 or the result of the shifter is
+    // greater than $7FF, the channel's DAC receives 0
+    zero_output: bool,
+    enabled: bool,
+}
+
+impl Sweep {
+    pub fn new(is_second_pulse_channel: bool, bits: SweepBits) -> Self {
+        let divider = Divider::new(bits.period() + 1);
+        Self {
+            divider,
+            shifter: Shifter::new(is_second_pulse_channel, bits),
+            pending_period: None,
+            zero_output: false,
+            enabled: bits.enabled(),
+        }
+    }
+
+    pub fn config(&mut self, bits: SweepBits) {
+        self.pending_period = Some(bits.period());
+        self.divider.reset_period(bits.period());
+        self.shifter.config(bits);
+        self.enabled = bits.enabled();
+    }
+
+    pub fn tick(&mut self, period: &mut u16) {
+        let new_period = self.shifter.update_period(*period);
+        self.zero_output = *period < 8 || new_period > 0x7ff;
+
+        if self.divider.tick() {
+            if self.enabled && !self.shifter.disabled() && !self.zero_output {
+                *period = new_period;
+            }
+        }
+
+        if let Some(period) = self.pending_period.take() {
+            self.divider.reset_period(period + 1);
+        }
+    }
+
+    pub fn zero_output(&self) -> bool {
+        self.zero_output
+    }
+}
+
+#[cfg(test)]
+mod tests;

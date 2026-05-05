@@ -1,3 +1,5 @@
+use crate::nes::apu::helper::Sweep;
+
 use super::*;
 
 const PULSE_DUTY_TABLE: [[u8; 8]; 4] = [
@@ -9,30 +11,24 @@ const PULSE_DUTY_TABLE: [[u8; 8]; 4] = [
 
 pub(super) struct Pulse {
     control: PulseControlBits,
-    sweep: SweepBits,
     timer: Divider<u16>,
     length_control: LengthControl,
     enabled: bool,
     sequence_step: usize,
     envelope: Envelope,
-    sweep_divider: u8,
-    sweep_reload: bool,
-    ones_complement_negate: bool,
+    sweep: Sweep,
 }
 
 impl Pulse {
     pub fn new(ones_complement_negate: bool) -> Self {
         Self {
-            ones_complement_negate,
             control: PulseControlBits::default(),
-            sweep: SweepBits::default(),
             timer: Divider::new(u16::MAX),
             length_control: LengthControl::default(),
             enabled: false,
             sequence_step: 0,
             envelope: Envelope::new(0),
-            sweep_divider: 0,
-            sweep_reload: false,
+            sweep: Sweep::new(ones_complement_negate, 0.into()),
         }
     }
 
@@ -50,8 +46,7 @@ impl Pulse {
     }
 
     pub fn write_sweep(&mut self, value: SweepBits) {
-        self.sweep = value;
-        self.sweep_reload = true;
+        self.sweep.config(value);
     }
 
     pub fn write_timer_low(&mut self, value: u8) {
@@ -82,20 +77,7 @@ impl Pulse {
     }
 
     pub fn step_sweep(&mut self) {
-        let apply = self.sweep_divider == 0
-            && self.sweep.enabled()
-            && self.sweep.shift() > 0
-            && !self.sweep_mutes_channel();
-        if apply {
-            self.timer.period = self.sweep_target_period();
-        }
-
-        if self.sweep_divider == 0 || self.sweep_reload {
-            self.sweep_divider = self.sweep.period();
-            self.sweep_reload = false;
-        } else {
-            self.sweep_divider -= 1;
-        }
+        self.sweep.tick(&mut self.timer.period);
     }
 
     fn current_volume(&self) -> u8 {
@@ -106,23 +88,8 @@ impl Pulse {
         }
     }
 
-    fn sweep_target_period(&self) -> u16 {
-        let change = self.timer.period >> self.sweep.shift();
-        if self.sweep.negate() {
-            self.timer
-                .period
-                .saturating_sub(change + u16::from(self.ones_complement_negate))
-        } else {
-            self.timer.period.saturating_add(change)
-        }
-    }
-
-    fn sweep_mutes_channel(&self) -> bool {
-        self.timer.period < 8 || self.sweep_target_period() > 0x07FF
-    }
-
     pub fn output(&self) -> u8 {
-        if !self.enabled || self.length_control.is_zero() || self.sweep_mutes_channel() {
+        if !self.enabled || self.length_control.is_zero() || self.sweep.zero_output() {
             return 0;
         }
 

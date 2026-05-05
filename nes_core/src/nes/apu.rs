@@ -93,7 +93,7 @@ impl<C: Counter> Divider<C> {
     }
 
     /// Set the timer period and reset. Doesn't affect the current counter value.
-    fn set_period(&mut self, period: C) {
+    fn reset_period(&mut self, period: C) {
         self.period = period;
         self.reset();
     }
