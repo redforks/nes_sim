@@ -146,11 +146,48 @@ impl<I: Copy> Sequence<I> {
     }
 }
 
+impl<'a> ControlGate for &'a Sequence<u8> {
+    fn control(&self) -> u8 {
+        self.last_output()
+    }
+}
+
 /// Control Gate, if control is non-zero, the input is passed unchanged to the
 /// output, otherwise the output is 0.
-#[derive(Debug)]
-struct ControlGate<V> {
-    control: V,
+trait ControlGate {
+    /// Return control value
+    fn control(&self) -> u8;
+
+    /// Pass `val` through if control is non-zero, otherwise return 0.
+    fn filter(&self, val: u8) -> u8 {
+        if self.control() == 0 { 0 } else { val }
+    }
+}
+
+impl<U, V> ControlGate for (U, V)
+where
+    U: ControlGate,
+    V: ControlGate,
+{
+    fn control(&self) -> u8 {
+        let a = if self.0.control() != 0 { 1 } else { 0 };
+        let b = if self.1.control() != 0 { 1 } else { 0 };
+        a & b
+    }
+}
+
+impl<U, V, W> ControlGate for (U, V, W)
+where
+    U: ControlGate,
+    V: ControlGate,
+    W: ControlGate,
+{
+    fn control(&self) -> u8 {
+        let a = if self.0.control() != 0 { 1 } else { 0 };
+        let b = if self.1.control() != 0 { 1 } else { 0 };
+        let c = if self.2.control() != 0 { 1 } else { 0 };
+        a & b & c
+    }
 }
 
 #[bitfield(u8)]

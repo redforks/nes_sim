@@ -1,8 +1,8 @@
 use bitfield_struct::bitfield;
 
 use crate::nes::apu::{
-    Divider, LengthTimerHigh3Bits, NoiseControlBits, NoiseLength, PulseControlBits, SweepBits,
-    TriangleControlBits,
+    ControlGate, Divider, LengthTimerHigh3Bits, NoiseControlBits, NoiseLength, PulseControlBits,
+    SweepBits, TriangleControlBits,
 };
 
 /// Abstract register that can be used to read length halt bit for noise and pulse channels.
@@ -82,6 +82,12 @@ impl LengthControl {
         if !self.is_halt {
             self.counter = self.counter.saturating_sub(1);
         }
+    }
+}
+
+impl<'a> ControlGate for &'a LengthControl {
+    fn control(&self) -> u8 {
+        self.counter
     }
 }
 
@@ -236,9 +242,11 @@ impl Sweep {
             self.divider.reset_period(period + 1);
         }
     }
+}
 
-    pub fn zero_output(&self) -> bool {
-        self.zero_output
+impl<'a> ControlGate for &'a Sweep {
+    fn control(&self) -> u8 {
+        if self.zero_output { 0 } else { 1 }
     }
 }
 

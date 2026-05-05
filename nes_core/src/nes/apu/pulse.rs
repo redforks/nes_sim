@@ -9,7 +9,6 @@ const PULSE_DUTY_TABLE: [[u8; 8]; 4] = [
 ];
 
 pub(super) struct Pulse {
-    control: PulseControlBits,
     timer: Divider<u16>,
     length_control: LengthControl,
     enabled: bool,
@@ -21,7 +20,6 @@ pub(super) struct Pulse {
 impl Pulse {
     pub fn new(ones_complement_negate: bool) -> Self {
         Self {
-            control: PulseControlBits::default(),
             timer: Divider::new(u16::MAX),
             length_control: LengthControl::default(),
             enabled: false,
@@ -39,7 +37,6 @@ impl Pulse {
     }
 
     pub fn write_control(&mut self, value: PulseControlBits) {
-        self.control = value;
         self.envelope.config(value.into());
         self.length_control.set_halt(value);
         self.sequence
@@ -80,20 +77,13 @@ impl Pulse {
         self.sweep.tick(&mut self.timer.period);
     }
 
-    fn current_volume(&self) -> u8 {
-        if self.control.constant_volume() {
-            self.control.volume()
-        } else {
-            self.envelope.output()
-        }
-    }
-
     pub fn output(&self) -> u8 {
-        if !self.enabled || self.length_control.is_zero() || self.sweep.zero_output() {
-            return 0;
+        if self.enabled {
+            let control_gate = (&self.sweep, &self.sequence, &self.length_control);
+            control_gate.filter(self.envelope.output())
+        } else {
+            0
         }
-
-        self.sequence.last_output() * self.current_volume()
     }
 
     pub fn status_bit(&self) -> bool {

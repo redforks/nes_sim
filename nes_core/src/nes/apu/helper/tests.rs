@@ -1,4 +1,5 @@
 use super::*;
+use crate::nes::apu::ControlGate;
 
 fn make_sweep_bits(shift: u8, negate: bool, period: u8, enabled: bool) -> SweepBits {
     let mut bits = SweepBits::new();
@@ -96,7 +97,7 @@ fn sweep_tick_zero_output_when_period_less_than_8() {
 
     sweep.tick(&mut period);
 
-    assert!(sweep.zero_output());
+    assert_eq!((&sweep).control(), 0);
 }
 
 #[test]
@@ -106,8 +107,7 @@ fn sweep_tick_zero_output_when_new_period_exceeds_0x7ff() {
     let mut period = 0x600u16;
 
     sweep.tick(&mut period);
-
-    assert!(sweep.zero_output());
+    assert_eq!((&sweep).control(), 0);
 }
 
 #[test]
@@ -157,7 +157,7 @@ fn sweep_zero_output_returns_false_for_valid_period() {
 
     sweep.tick(&mut period);
 
-    assert!(!sweep.zero_output());
+    assert_eq!((&sweep).control(), 1);
 }
 
 #[test]
