@@ -14,9 +14,9 @@ pub(super) struct Pulse {
     timer: Divider<u16>,
     length_control: LengthControl,
     enabled: bool,
-    sequence_step: usize,
     envelope: Envelope,
     sweep: Sweep,
+    sequence: Sequence<u8>,
 }
 
 impl Pulse {
@@ -26,9 +26,9 @@ impl Pulse {
             timer: Divider::new(u16::MAX),
             length_control: LengthControl::default(),
             enabled: false,
-            sequence_step: 0,
             envelope: Envelope::new(0),
             sweep: Sweep::new(ones_complement_negate, 0.into()),
+            sequence: Sequence::new(&PULSE_DUTY_TABLE[0]),
         }
     }
 
@@ -40,9 +40,11 @@ impl Pulse {
     }
 
     pub fn write_control(&mut self, value: PulseControlBits) {
-        self.envelope.config(value.into());
         self.control = value;
+        self.envelope.config(value.into());
         self.length_control.set_halt(value);
+        self.sequence
+            .reset_items(&PULSE_DUTY_TABLE[value.duty() as usize]);
     }
 
     pub fn write_sweep(&mut self, value: SweepBits) {
@@ -58,13 +60,12 @@ impl Pulse {
         if self.enabled {
             self.length_control.load(load);
         }
-        self.sequence_step = 0;
         self.envelope.reset();
     }
 
     pub fn step_timer(&mut self) {
         if self.timer.tick() {
-            self.sequence_step = (self.sequence_step + 1) % 8;
+            self.sequence.tick();
         }
     }
 
@@ -93,7 +94,7 @@ impl Pulse {
             return 0;
         }
 
-        PULSE_DUTY_TABLE[self.control.duty() as usize][self.sequence_step] * self.current_volume()
+        self.sequence.last_output() * self.current_volume()
     }
 
     pub fn status_bit(&self) -> bool {

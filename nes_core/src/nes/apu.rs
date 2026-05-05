@@ -140,6 +140,10 @@ impl<I: Copy> Sequence<I> {
         self.cur_idx = (self.cur_idx + 1) % self.items.len();
         item
     }
+
+    fn last_output(&self) -> I {
+        self.items[(self.cur_idx + self.items.len() - 1) % self.items.len()]
+    }
 }
 
 /// Control Gate, if control is non-zero, the input is passed unchanged to the
