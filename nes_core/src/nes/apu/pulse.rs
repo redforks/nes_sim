@@ -1,6 +1,5 @@
-use crate::nes::apu::helper::Sweep;
-
 use super::*;
+use crate::nes::apu::helper::Sweep;
 
 const PULSE_DUTY_TABLE: [[u8; 8]; 4] = [
     [0, 1, 0, 0, 0, 0, 0, 0],
