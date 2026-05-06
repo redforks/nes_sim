@@ -64,7 +64,7 @@ impl Triangle {
         self.linear_counter_reload = true;
     }
 
-    pub fn step_timer(&mut self) {
+    pub fn tick_timer(&mut self) {
         if self.timer.tick()
             && !self.length.is_zero()
             && self.linear_counter > 0
@@ -74,7 +74,7 @@ impl Triangle {
         }
     }
 
-    pub fn step_linear(&mut self) {
+    pub fn tick_linear(&mut self) {
         if self.linear_counter_reload {
             self.linear_counter = self.control.counter();
         } else if self.linear_counter > 0 {
@@ -86,7 +86,7 @@ impl Triangle {
         }
     }
 
-    pub fn step_length(&mut self) {
+    pub fn tick_length(&mut self) {
         self.length.tick();
     }
 

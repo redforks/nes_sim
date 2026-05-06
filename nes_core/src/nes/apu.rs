@@ -442,12 +442,12 @@ impl<D: AudioDriver> Apu<D> {
             self.apu_even_cycle = !self.apu_even_cycle;
 
             self.frame_sequencer.tick();
-            self.triangle.step_timer();
+            self.triangle.tick_timer();
 
             if self.apu_even_cycle {
-                self.pulse1.step_timer();
-                self.pulse2.step_timer();
-                self.noise.step_timer();
+                self.pulse1.tick_timer();
+                self.pulse2.tick_timer();
+                self.noise.tick_timer();
             }
 
             // Tick DMC timer every CPU cycle
@@ -588,17 +588,17 @@ impl<D: AudioDriver> Apu<D> {
     }
 
     fn tick_envelop_and_linear(&mut self) {
-        self.pulse1.step_envelope();
-        self.pulse2.step_envelope();
-        self.triangle.step_linear();
-        self.noise.step_envelope();
+        self.pulse1.tick_envelope();
+        self.pulse2.tick_envelope();
+        self.triangle.tick_linear();
+        self.noise.tick_envelope();
     }
 
     fn tick_length_and_sweep(&mut self) {
-        self.pulse1.step_length_and_sweep();
-        self.pulse2.step_length_and_sweep();
-        self.triangle.step_length();
-        self.noise.step_length();
+        self.pulse1.tick_length_and_sweep();
+        self.pulse2.tick_length_and_sweep();
+        self.triangle.tick_length();
+        self.noise.tick_length();
     }
 
     fn emit_samples(&mut self) {

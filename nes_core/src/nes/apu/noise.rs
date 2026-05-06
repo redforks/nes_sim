@@ -54,7 +54,7 @@ impl Noise {
         self.envelope.reset();
     }
 
-    pub fn step_timer(&mut self) {
+    pub fn tick_timer(&mut self) {
         if self.timer_counter == 0 {
             self.timer_counter = NOISE_PERIOD_TABLE[self.period.period() as usize];
             let tap = if self.period.is_halt() { 6 } else { 1 };
@@ -65,11 +65,11 @@ impl Noise {
         }
     }
 
-    pub fn step_envelope(&mut self) {
+    pub fn tick_envelope(&mut self) {
         self.envelope.tick();
     }
 
-    pub fn step_length(&mut self) {
+    pub fn tick_length(&mut self) {
         self.length.tick();
     }
 

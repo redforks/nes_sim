@@ -62,17 +62,17 @@ impl Pulse {
         self.sequencer.reset();
     }
 
-    pub fn step_timer(&mut self) {
+    pub fn tick_timer(&mut self) {
         if self.timer.tick() {
             self.sequencer.tick();
         }
     }
 
-    pub fn step_envelope(&mut self) {
+    pub fn tick_envelope(&mut self) {
         self.envelope.tick();
     }
 
-    pub fn step_length_and_sweep(&mut self) {
+    pub fn tick_length_and_sweep(&mut self) {
         self.length.tick();
         self.sweep.tick(&mut self.timer.period);
     }
