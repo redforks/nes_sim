@@ -133,7 +133,7 @@ impl Envelope {
 
     pub fn config(&mut self, bits: u8) {
         let bits = EnvelopeBits::from(bits);
-        self.divider.reset_period(bits.period() + 1);
+        self.divider.set_period(bits.period() + 1);
         self.enable_loop = bits.enable_loop();
         self.disabled = bits.disabled();
     }
@@ -234,7 +234,7 @@ impl Sweep {
 
     pub fn config(&mut self, bits: SweepBits) {
         self.pending_period = Some(bits.period());
-        self.divider.reset_period(bits.period());
+        self.divider.set_period(bits.period());
         self.shifter.config(bits);
         self.enabled = bits.enabled();
     }
@@ -250,7 +250,7 @@ impl Sweep {
         }
 
         if let Some(period) = self.pending_period.take() {
-            self.divider.reset_period(period + 1);
+            self.divider.set_period(period + 1);
         }
     }
 }

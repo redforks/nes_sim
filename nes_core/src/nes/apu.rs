@@ -88,17 +88,17 @@ impl<C: Counter> Divider<C> {
         self.counter = self.period;
     }
 
-    /// Set the timer period and reset. Doesn't affect the current counter value.
-    fn reset_period(&mut self, period: C) {
+    /// Set the timer period. Doesn't affect the current counter value.
+    fn set_period(&mut self, period: C) {
         self.period = period;
-        self.reset();
     }
 }
 
 impl Divider<u16> {
     fn set_period_high(&mut self, high: u8) {
-        self.period = (self.period & 0x00FF) | ((high as u16) << 8);
-        self.reset();
+        // the third and fourth registers form an 11-bit value and the divider's
+        // period is set to this value *plus one*.
+        self.period = (self.period & 0x00FF) | ((high as u16) << 8) + 1;
     }
 
     const fn set_period_low(&mut self, low: u8) {
