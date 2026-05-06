@@ -51,7 +51,7 @@ impl Pulse {
     pub fn write_timer_high(&mut self, load: LengthTimerHigh3Bits) {
         self.timer.set_period_high(load.high3());
         self.length.load(load);
-        self.envelope.reset();
+        self.envelope.request_reset();
         // When the fourth register is written to, the sequencer is restarted.
         self.sequencer.reset();
     }

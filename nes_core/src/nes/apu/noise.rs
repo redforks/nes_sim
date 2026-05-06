@@ -41,7 +41,7 @@ impl Noise {
 
     pub fn write_length(&mut self, value: NoiseLength) {
         self.length.load(value);
-        self.envelope.reset();
+        self.envelope.request_reset();
     }
 
     pub fn tick_timer(&mut self) {

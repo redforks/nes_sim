@@ -118,6 +118,7 @@ pub struct Envelope {
     counter: u8,
     enable_loop: bool,
     disabled: bool,
+    request_reset: bool,
 }
 
 impl Envelope {
@@ -127,9 +128,14 @@ impl Envelope {
             counter: 0,
             enable_loop: false,
             disabled: false,
+            request_reset: false,
         };
         r.config(bits);
         r
+    }
+
+    pub fn request_reset(&mut self) {
+        self.request_reset = true;
     }
 
     pub fn config(&mut self, bits: u8) {
@@ -139,23 +145,29 @@ impl Envelope {
         self.disabled = bits.disabled();
     }
 
-    pub fn reset(&mut self) {
+    fn reset(&mut self) {
         self.counter = 15;
         self.divider.reset();
     }
 
-    pub fn tick(&mut self) -> u8 {
-        if self.divider.tick() {
-            if self.counter == 0 {
-                if self.enable_loop {
-                    self.counter = 15;
+    pub fn tick(&mut self) {
+        // When clocked by the frame sequencer, one of two actions occurs: if
+        // there was a write to the fourth channel register since the last
+        // clock, the counter is set to 15 and the divider is reset, otherwise
+        // the divider is clocked.
+        if std::mem::take(&mut self.request_reset) {
+            self.reset();
+        } else {
+            if self.divider.tick() {
+                if self.counter == 0 {
+                    if self.enable_loop {
+                        self.counter = 15;
+                    }
+                } else {
+                    self.counter -= 1;
                 }
-            } else {
-                self.counter -= 1;
             }
         }
-
-        self.output()
     }
 
     pub fn output(&self) -> u8 {
