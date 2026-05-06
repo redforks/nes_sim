@@ -21,7 +21,6 @@ fn sweep_new_creates_sweep_enabled_from_bits() {
     let mut period = 0x100u16;
 
     sweep.tick(&mut period);
-    sweep.tick(&mut period);
 
     assert_eq!(period, 0x100 + (0x100 >> 3));
 }
@@ -70,8 +69,6 @@ fn sweep_tick_updates_period_when_divider_ticks() {
     let mut sweep = new_sweep(0, 1, false, true);
     let mut period = 0x100u16;
 
-    sweep.tick(&mut period);
-    assert_eq!(period, 0x100);
     sweep.tick(&mut period);
     assert_eq!(period, 0x100 + (0x100 >> 1));
 }
@@ -166,11 +163,9 @@ fn sweep_config_updates_enabled_and_shifter() {
     let mut period = 0x100u16;
 
     sweep.tick(&mut period);
-    sweep.tick(&mut period);
     assert_eq!(period, 0x100);
 
     sweep.config(make_sweep_bits(3, false, 0, true));
-    sweep.tick(&mut period);
     sweep.tick(&mut period);
 
     assert_eq!(period, 0x100 + (0x100 >> 3));
@@ -186,8 +181,6 @@ fn sweep_second_channel_affects_negate_subtraction() {
     let mut period2 = 0x100u16;
 
     sweep1.tick(&mut period1);
-    sweep1.tick(&mut period1);
-    sweep2.tick(&mut period2);
     sweep2.tick(&mut period2);
 
     let expected1 = 0x100u16.wrapping_add(!(0x100 >> 3));

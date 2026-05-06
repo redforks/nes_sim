@@ -53,7 +53,7 @@ impl Counter for u64 {
     }
 }
 
-/// A divider outputs a clock every n input clocks, where n is the divider's
+/// A divider outputs a clock every n + 1 input clocks, where n is the divider's
 /// period. It contains a counter which is decremented on the arrival of each
 /// clock. When it reaches 0, it is reloaded with the period and an output clock
 /// is generated. Resetting a divider reloads its counter without generating an
@@ -98,7 +98,7 @@ impl Divider<u16> {
     fn set_period_high(&mut self, high: u8) {
         // the third and fourth registers form an 11-bit value and the divider's
         // period is set to this value *plus one*.
-        self.period = (self.period & 0x00FF) | ((high as u16) << 8) + 1;
+        self.period = (self.period & 0x00FF) | ((high as u16) << 8);
     }
 
     const fn set_period_low(&mut self, low: u8) {
@@ -536,9 +536,7 @@ impl<D: AudioDriver> Apu<D> {
             0x4012 => self.dmc.write_sample_address(value),
             0x4013 => self.dmc.write_sample_length(value),
             0x4015 => self.set_control_flags(value.into()),
-            0x4017 => self
-                .frame_sequencer
-                .write_control_bits(value.into(), self.apu_even_cycle),
+            0x4017 => self.frame_sequencer.write_control_bits(value.into()),
             _ => {}
         }
     }

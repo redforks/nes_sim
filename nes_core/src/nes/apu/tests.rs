@@ -314,3 +314,19 @@ fn test_apu_controller_driver_control_flags_status() {
     assert_eq!(status & 0x01, 0x01);
     assert_eq!(status & 0x40, 0x00);
 }
+
+#[test]
+fn divider() {
+    let mut divider = Divider::new(1u8);
+    assert!(!divider.tick());
+    assert!(divider.tick());
+
+    // second loop
+    assert!(!divider.tick());
+    assert!(divider.tick());
+
+    let mut divider = Divider::new(0u8);
+    assert!(divider.tick());
+    assert!(divider.tick());
+    assert!(divider.tick());
+}

@@ -166,11 +166,11 @@ impl FrameSequencer {
         self.frame_interrupt = false;
     }
 
-    pub fn write_control_bits(&mut self, bits: FrameSequencerBits, apu_even_cycle: bool) {
+    pub fn write_control_bits(&mut self, bits: FrameSequencerBits) {
         debug_assert!(self.pending_mode.is_none());
         self.pending_mode = Some(bits);
         self.frame_interrupt_inhibit = bits.disable_interrupt();
-        self.request_timer_delay = if apu_even_cycle { 2 } else { 3 };
+        self.request_timer_delay = if self.cycles % 2 == 1 { 2 } else { 3 };
         self.saved_bits = bits;
     }
 }

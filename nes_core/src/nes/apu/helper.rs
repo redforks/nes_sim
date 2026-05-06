@@ -124,7 +124,7 @@ impl Envelope {
     pub fn new(bits: u8) -> Self {
         let bits = EnvelopeBits::from(bits);
         Self {
-            divider: Divider::new(bits.period() + 1),
+            divider: Divider::new(bits.period()),
             counter: 0,
             enable_loop: bits.enable_loop(),
             disabled: bits.disabled(),
@@ -133,7 +133,7 @@ impl Envelope {
 
     pub fn config(&mut self, bits: u8) {
         let bits = EnvelopeBits::from(bits);
-        self.divider.set_period(bits.period() + 1);
+        self.divider.set_period(bits.period());
         self.enable_loop = bits.enable_loop();
         self.disabled = bits.disabled();
     }
@@ -159,7 +159,7 @@ impl Envelope {
 
     pub fn output(&self) -> u8 {
         if self.disabled {
-            self.divider.period - 1
+            self.divider.period
         } else {
             self.counter
         }
@@ -213,7 +213,6 @@ impl Shifter {
 pub struct Sweep {
     divider: Divider<u8>,
     shifter: Shifter,
-    pending_period: Option<u8>,
     // When the channel's period is less than 8 or the result of the shifter is
     // greater than $7FF, the channel's DAC receives 0
     zero_output: bool,
@@ -222,18 +221,16 @@ pub struct Sweep {
 
 impl Sweep {
     pub fn new(is_second_pulse_channel: bool, bits: SweepBits) -> Self {
-        let divider = Divider::new(bits.period() + 1);
+        let divider = Divider::new(bits.period());
         Self {
             divider,
             shifter: Shifter::new(is_second_pulse_channel, bits),
-            pending_period: None,
             zero_output: false,
             enabled: bits.enabled(),
         }
     }
 
     pub fn config(&mut self, bits: SweepBits) {
-        self.pending_period = Some(bits.period());
         self.divider.set_period(bits.period());
         self.shifter.config(bits);
         self.enabled = bits.enabled();
@@ -247,10 +244,6 @@ impl Sweep {
             if self.enabled && !self.shifter.disabled() && !self.zero_output {
                 *period = new_period;
             }
-        }
-
-        if let Some(period) = self.pending_period.take() {
-            self.divider.set_period(period + 1);
         }
     }
 }
