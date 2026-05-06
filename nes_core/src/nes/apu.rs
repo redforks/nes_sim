@@ -62,8 +62,6 @@ impl Counter for u64 {
 struct Divider<C> {
     period: C,
     counter: C,
-    /// True if last `tick()` method returns true.
-    signal: bool,
 }
 
 impl<C: Counter> Divider<C> {
@@ -71,20 +69,18 @@ impl<C: Counter> Divider<C> {
         Self {
             period,
             counter: period,
-            signal: false,
         }
     }
 
     /// Tick the timer. Returns true if an output clock is generated on this tick.
     fn tick(&mut self) -> bool {
-        self.signal = if self.counter == C::ZERO {
+        if self.counter == C::ZERO {
             self.reset();
             true
         } else {
             self.counter = self.counter.dec();
             false
-        };
-        self.signal
+        }
     }
 
     /// Reset the timer (reload counter with period, without generating an output clock).

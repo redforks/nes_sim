@@ -5,6 +5,40 @@ const TRIANGLE_SEQUENCE: [u8; 32] = [
     13, 14, 15,
 ];
 
+#[derive(Debug, Default)]
+struct Linear {
+    counter: u8,
+    halt: bool,
+    reload_value: u8,
+}
+
+impl Linear {
+    fn tick(&mut self, control_flag: bool) {
+        if self.halt {
+            // When the halt flag is set, the linear counter is reloaded with the value from the control register.
+            self.counter = self.reload_value;
+        } else if self.counter > 0 {
+            // If the halt flag is clear and the linear counter is not zero, it is decremented.
+            self.counter -= 1;
+        }
+
+        if control_flag {
+            // If the control flag is clear, the halt flag is cleared.
+            self.halt = false;
+        }
+    }
+
+    fn set_halt(&mut self) {
+        self.halt = true;
+    }
+}
+
+impl ControlGate for Linear {
+    fn control(&self) -> u8 {
+        self.counter
+    }
+}
+
 #[derive(Debug)]
 pub struct Triangle {
     control: TriangleControlBits,
@@ -14,6 +48,7 @@ pub struct Triangle {
     linear_counter_reload: bool,
     enabled: bool,
     sequence_step: usize,
+    linear: Linear,
 }
 
 impl Default for Triangle {
@@ -26,6 +61,7 @@ impl Default for Triangle {
             linear_counter_reload: Default::default(),
             enabled: Default::default(),
             sequence_step: Default::default(),
+            linear: Default::default(),
         }
     }
 }
@@ -41,6 +77,7 @@ impl Triangle {
     pub fn write_control(&mut self, value: TriangleControlBits) {
         self.control = value;
         self.length.set_halt(value);
+        self.linear.reload_value = value.counter();
     }
 
     pub fn is_halt(&self) -> bool {
@@ -62,6 +99,9 @@ impl Triangle {
             self.length.load(load);
         }
         self.linear_counter_reload = true;
+
+        // When register $400B is written to, the halt flag is set.
+        self.linear.set_halt();
     }
 
     pub fn tick_timer(&mut self) {
@@ -75,15 +115,16 @@ impl Triangle {
     }
 
     pub fn tick_linear(&mut self) {
-        if self.linear_counter_reload {
-            self.linear_counter = self.control.counter();
-        } else if self.linear_counter > 0 {
-            self.linear_counter -= 1;
-        }
+        self.linear.tick(self.control.loop_and_is_halt());
+        // if self.linear_counter_reload {
+        //     self.linear_counter = self.control.counter();
+        // } else if self.linear_counter > 0 {
+        //     self.linear_counter -= 1;
+        // }
 
-        if !self.control.loop_and_is_halt() {
-            self.linear_counter_reload = false;
-        }
+        // if !self.control.loop_and_is_halt() {
+        //     self.linear_counter_reload = false;
+        // }
     }
 
     pub fn tick_length(&mut self) {
