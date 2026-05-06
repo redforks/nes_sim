@@ -1,3 +1,5 @@
+use crate::nes::apu::helper::AudioSequencer;
+
 use super::*;
 
 const TRIANGLE_SEQUENCE: [u8; 32] = [
@@ -44,7 +46,7 @@ pub struct Triangle {
     control: TriangleControlBits,
     timer: Divider<u16>,
     length: LengthControl,
-    sequence_step: usize,
+    sequencer: AudioSequencer<32>,
     linear: Linear,
 }
 
@@ -54,7 +56,7 @@ impl Default for Triangle {
             control: Default::default(),
             timer: Divider::new(u16::MAX),
             length: Default::default(),
-            sequence_step: Default::default(),
+            sequencer: AudioSequencer::new(&TRIANGLE_SEQUENCE),
             linear: Default::default(),
         }
     }
@@ -98,7 +100,7 @@ impl Triangle {
             && self.linear.counter > 0
             && self.timer.period > 1
         {
-            self.sequence_step = (self.sequence_step + 1) % TRIANGLE_SEQUENCE.len();
+            self.sequencer.tick();
         }
     }
 
@@ -111,7 +113,7 @@ impl Triangle {
     }
 
     pub fn output(&self) -> u8 {
-        TRIANGLE_SEQUENCE[self.sequence_step]
+        self.sequencer.output()
     }
 
     pub fn status_bit(&self) -> bool {
