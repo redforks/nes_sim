@@ -49,6 +49,7 @@ impl Triangle {
 
     pub fn restore_is_halt_flag(&mut self, is_halt: bool) {
         self.control = TriangleControlBits::new().with_loop_and_is_halt(is_halt);
+        self.length_control.set_halt(self.control);
     }
 
     pub fn write_timer_low(&mut self, value: u8) {
