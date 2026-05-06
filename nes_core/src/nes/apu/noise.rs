@@ -5,22 +5,49 @@ const NOISE_PERIOD_TABLE: [u16; 16] = [
 ];
 
 #[derive(Debug)]
+struct Shifter {
+    mode: u8,
+    val: u16,
+}
+
+impl Shifter {
+    fn tick(&mut self) {
+        let tap = if self.mode == 1 { 6 } else { 1 };
+        let feedback = (self.val ^ (self.val >> tap)) & 0x0001;
+        self.val = (self.val >> 1) | (feedback << 14);
+    }
+}
+
+impl<'a> ControlGate for &'a Shifter {
+    fn control(&self) -> u8 {
+        //  When bit 0 of the shift register is set, the DAC receives 0.
+        if self.val & 0x1 != 0 { 0 } else { 1 }
+    }
+}
+
+impl Default for Shifter {
+    fn default() -> Self {
+        Self { val: 1, mode: 0 }
+    }
+}
+
+#[derive(Debug)]
 pub struct Noise {
     period: NoisePeriod,
-    timer_counter: u16,
+    timer: Divider<u16>,
     length: LengthControl,
-    shift_register: u16,
     envelope: Envelope,
+    shifter: Shifter,
 }
 
 impl Default for Noise {
     fn default() -> Self {
         Self {
             period: NoisePeriod::default(),
-            timer_counter: 0,
+            timer: Divider::new(NOISE_PERIOD_TABLE[0]),
             length: LengthControl::default(),
-            shift_register: 1,
             envelope: Envelope::new(0),
+            shifter: Shifter::default(),
         }
     }
 }
@@ -37,6 +64,9 @@ impl Noise {
 
     pub fn write_period(&mut self, value: NoisePeriod) {
         self.period = value;
+        self.timer
+            .set_period(NOISE_PERIOD_TABLE[self.period.period() as usize]);
+        self.shifter.mode = if value.is_halt() { 1 } else { 0 };
     }
 
     pub fn write_length(&mut self, value: NoiseLength) {
@@ -45,13 +75,8 @@ impl Noise {
     }
 
     pub fn tick_timer(&mut self) {
-        if self.timer_counter == 0 {
-            self.timer_counter = NOISE_PERIOD_TABLE[self.period.period() as usize];
-            let tap = if self.period.is_halt() { 6 } else { 1 };
-            let feedback = (self.shift_register ^ (self.shift_register >> tap)) & 0x0001;
-            self.shift_register = (self.shift_register >> 1) | (feedback << 14);
-        } else {
-            self.timer_counter -= 1;
+        if self.timer.tick() {
+            self.shifter.tick();
         }
     }
 
@@ -64,11 +89,8 @@ impl Noise {
     }
 
     pub fn output(&self) -> u8 {
-        if self.length.is_zero() || (self.shift_register & 0x0001) != 0 {
-            0
-        } else {
-            self.envelope.output()
-        }
+        let control_gate = (&self.shifter, &self.length);
+        control_gate.filter(self.envelope.output())
     }
 
     pub fn status_bit(&self) -> bool {
