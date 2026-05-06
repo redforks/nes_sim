@@ -10,7 +10,6 @@ pub struct Noise {
     period: NoisePeriod,
     timer_counter: u16,
     length: LengthControl,
-    enabled: bool,
     shift_register: u16,
     envelope: Envelope,
 }
@@ -22,7 +21,6 @@ impl Default for Noise {
             period: NoisePeriod::default(),
             timer_counter: 0,
             length: LengthControl::default(),
-            enabled: false,
             shift_register: 1,
             envelope: Envelope::new(0),
         }
@@ -31,10 +29,7 @@ impl Default for Noise {
 
 impl Noise {
     pub fn set_enabled(&mut self, enabled: bool) {
-        self.enabled = enabled;
-        if !enabled {
-            self.length.clear();
-        }
+        self.length.set_enabled(enabled);
     }
 
     pub fn write_envelope(&mut self, value: NoiseControlBits) {
@@ -48,9 +43,7 @@ impl Noise {
     }
 
     pub fn write_length(&mut self, value: NoiseLength) {
-        if self.enabled {
-            self.length.load(value);
-        }
+        self.length.load(value);
         self.envelope.reset();
     }
 
@@ -74,7 +67,7 @@ impl Noise {
     }
 
     pub fn output(&self) -> u8 {
-        if !self.enabled || self.length.is_zero() || (self.shift_register & 0x0001) != 0 {
+        if self.length.is_zero() || (self.shift_register & 0x0001) != 0 {
             0
         } else {
             self.envelope.output()
@@ -83,9 +76,5 @@ impl Noise {
 
     pub fn status_bit(&self) -> bool {
         !self.length.is_zero()
-    }
-
-    pub fn is_enabled(&self) -> bool {
-        self.enabled
     }
 }

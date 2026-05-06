@@ -55,11 +55,19 @@ const LENGTH_TABLE: [u8; 32] = [
 pub struct LengthControl {
     counter: u8,
     is_halt: bool,
+    enabled: bool,
 }
 
 impl LengthControl {
     pub fn set_halt(&mut self, bits: impl GetLengthHalt) {
         self.is_halt = bits.length_halt();
+    }
+
+    pub fn set_enabled(&mut self, enabled: bool) {
+        self.enabled = enabled;
+        if !enabled {
+            self.clear();
+        }
     }
 
     /// Should zero output if counter reaches zero
@@ -74,7 +82,9 @@ impl LengthControl {
 
     /// Load counter from length timer high 5 bits. Length timer high also reloads the counter.
     pub fn load(&mut self, bits: impl GetLengthIndex) {
-        self.counter = LENGTH_TABLE[bits.length_idx() as usize];
+        if self.enabled {
+            self.counter = LENGTH_TABLE[bits.length_idx() as usize];
+        }
     }
 
     /// Decrement counter if it's > 0.
@@ -87,6 +97,7 @@ impl LengthControl {
 
 impl<'a> ControlGate for &'a LengthControl {
     fn control(&self) -> u8 {
+        debug_assert!(self.enabled || self.counter == 0);
         self.counter
     }
 }

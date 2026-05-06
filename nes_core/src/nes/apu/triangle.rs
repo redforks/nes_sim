@@ -44,7 +44,6 @@ pub struct Triangle {
     control: TriangleControlBits,
     timer: Divider<u16>,
     length: LengthControl,
-    enabled: bool,
     sequence_step: usize,
     linear: Linear,
 }
@@ -55,7 +54,6 @@ impl Default for Triangle {
             control: Default::default(),
             timer: Divider::new(u16::MAX),
             length: Default::default(),
-            enabled: Default::default(),
             sequence_step: Default::default(),
             linear: Default::default(),
         }
@@ -64,10 +62,7 @@ impl Default for Triangle {
 
 impl Triangle {
     pub fn set_enabled(&mut self, enabled: bool) {
-        self.enabled = enabled;
-        if !enabled {
-            self.length.clear();
-        }
+        self.length.set_enabled(enabled);
     }
 
     pub fn write_control(&mut self, value: TriangleControlBits) {
@@ -91,9 +86,7 @@ impl Triangle {
 
     pub fn write_timer_high(&mut self, load: LengthTimerHigh3Bits) {
         self.timer.set_period_high(load.high3());
-        if self.enabled {
-            self.length.load(load);
-        }
+        self.length.load(load);
 
         // When register $400B is written to, the halt flag is set.
         self.linear.set_halt();
@@ -123,9 +116,5 @@ impl Triangle {
 
     pub fn status_bit(&self) -> bool {
         !self.length.is_zero()
-    }
-
-    pub fn is_enabled(&self) -> bool {
-        self.enabled
     }
 }

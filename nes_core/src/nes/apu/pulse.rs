@@ -11,7 +11,6 @@ const PULSE_DUTY_TABLE: [[u8; 8]; 4] = [
 pub(super) struct Pulse {
     timer: Divider<u16>,
     length: LengthControl,
-    enabled: bool,
     envelope: Envelope,
     sweep: Sweep,
     sequencer: AudioSequencer<8>,
@@ -22,7 +21,6 @@ impl Pulse {
         Self {
             timer: Divider::new(u16::MAX),
             length: LengthControl::default(),
-            enabled: false,
             envelope: Envelope::new(0),
             sweep: Sweep::new(ones_complement_negate, 0.into()),
             sequencer: AudioSequencer::new(&PULSE_DUTY_TABLE[0]),
@@ -30,10 +28,7 @@ impl Pulse {
     }
 
     pub fn set_enabled(&mut self, enabled: bool) {
-        self.enabled = enabled;
-        if !enabled {
-            self.length.clear();
-        }
+        self.length.set_enabled(enabled);
     }
 
     pub fn write_control(&mut self, value: PulseControlBits) {
@@ -54,9 +49,7 @@ impl Pulse {
 
     pub fn write_timer_high(&mut self, load: LengthTimerHigh3Bits) {
         self.timer.set_period_high(load.high3());
-        if self.enabled {
-            self.length.load(load);
-        }
+        self.length.load(load);
         self.envelope.reset();
         // When the fourth register is written to, the sequencer is restarted.
         self.sequencer.reset();
@@ -78,12 +71,8 @@ impl Pulse {
     }
 
     pub fn output(&self) -> u8 {
-        if self.enabled {
-            let control_gate = (&self.sweep, &self.sequencer, &self.length);
-            control_gate.filter(self.envelope.output())
-        } else {
-            0
-        }
+        let control_gate = (&self.sweep, &self.sequencer, &self.length);
+        control_gate.filter(self.envelope.output())
     }
 
     pub fn status_bit(&self) -> bool {

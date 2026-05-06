@@ -489,8 +489,8 @@ impl<D: AudioDriver> Apu<D> {
         ApuStatusInfo {
             pulse1_enabled: self.pulse1.status_bit(),
             pulse2_enabled: self.pulse2.status_bit(),
-            triangle_enabled: self.triangle.is_enabled(),
-            noise_enabled: self.noise.is_enabled(),
+            triangle_enabled: self.triangle.status_bit(),
+            noise_enabled: self.noise.status_bit(),
             dmc_enabled: self.dmc.status_bit(),
             frame_irq_pending: self.frame_sequencer.request_irq(),
             dmc_irq_pending: self.dmc_interrupt,
