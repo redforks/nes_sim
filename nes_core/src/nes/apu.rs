@@ -458,7 +458,6 @@ impl<D: AudioDriver> Apu<D> {
 
             if let Some(frame_sequencer) = self.frame_sequencer.output_latch.take() {
                 if frame_sequencer.irq {
-                    // dbg!(get_system_cycles());
                     self.frame_sequencer.set_interrupt();
                 }
                 if frame_sequencer.envelop_and_linear {
@@ -591,17 +590,15 @@ impl<D: AudioDriver> Apu<D> {
     fn tick_envelop_and_linear(&mut self) {
         self.pulse1.step_envelope();
         self.pulse2.step_envelope();
-        self.triangle.step_linear_counter();
+        self.triangle.step_linear();
         self.noise.step_envelope();
     }
 
     fn tick_length_and_sweep(&mut self) {
-        self.pulse1.step_length_counter();
-        self.pulse2.step_length_counter();
-        self.triangle.step_length_counter();
-        self.noise.step_length_counter();
-        self.pulse1.step_sweep();
-        self.pulse2.step_sweep();
+        self.pulse1.step_length_and_sweep();
+        self.pulse2.step_length_and_sweep();
+        self.triangle.step_length();
+        self.noise.step_length();
     }
 
     fn emit_samples(&mut self) {

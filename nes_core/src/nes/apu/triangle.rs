@@ -9,7 +9,7 @@ const TRIANGLE_SEQUENCE: [u8; 32] = [
 pub struct Triangle {
     control: TriangleControlBits,
     timer: Divider<u16>,
-    length_control: LengthControl,
+    length: LengthControl,
     linear_counter: u8,
     linear_counter_reload: bool,
     enabled: bool,
@@ -21,7 +21,7 @@ impl Default for Triangle {
         Self {
             control: Default::default(),
             timer: Divider::new(u16::MAX),
-            length_control: Default::default(),
+            length: Default::default(),
             linear_counter: Default::default(),
             linear_counter_reload: Default::default(),
             enabled: Default::default(),
@@ -34,13 +34,13 @@ impl Triangle {
     pub fn set_enabled(&mut self, enabled: bool) {
         self.enabled = enabled;
         if !enabled {
-            self.length_control.clear();
+            self.length.clear();
         }
     }
 
     pub fn write_control(&mut self, value: TriangleControlBits) {
         self.control = value;
-        self.length_control.set_halt(value);
+        self.length.set_halt(value);
     }
 
     pub fn is_halt(&self) -> bool {
@@ -49,7 +49,7 @@ impl Triangle {
 
     pub fn restore_is_halt_flag(&mut self, is_halt: bool) {
         self.control = TriangleControlBits::new().with_loop_and_is_halt(is_halt);
-        self.length_control.set_halt(self.control);
+        self.length.set_halt(self.control);
     }
 
     pub fn write_timer_low(&mut self, value: u8) {
@@ -59,14 +59,14 @@ impl Triangle {
     pub fn write_timer_high(&mut self, load: LengthTimerHigh3Bits) {
         self.timer.set_period_high(load.high3());
         if self.enabled {
-            self.length_control.load(load);
+            self.length.load(load);
         }
         self.linear_counter_reload = true;
     }
 
     pub fn step_timer(&mut self) {
         if self.timer.tick()
-            && !self.length_control.is_zero()
+            && !self.length.is_zero()
             && self.linear_counter > 0
             && self.timer.period > 1
         {
@@ -74,7 +74,7 @@ impl Triangle {
         }
     }
 
-    pub fn step_linear_counter(&mut self) {
+    pub fn step_linear(&mut self) {
         if self.linear_counter_reload {
             self.linear_counter = self.control.counter();
         } else if self.linear_counter > 0 {
@@ -86,12 +86,12 @@ impl Triangle {
         }
     }
 
-    pub fn step_length_counter(&mut self) {
-        self.length_control.tick();
+    pub fn step_length(&mut self) {
+        self.length.tick();
     }
 
     pub fn output(&self) -> u8 {
-        if !self.enabled || self.length_control.is_zero() || self.linear_counter == 0 {
+        if !self.enabled || self.length.is_zero() || self.linear_counter == 0 {
             0
         } else {
             TRIANGLE_SEQUENCE[self.sequence_step]
@@ -99,7 +99,7 @@ impl Triangle {
     }
 
     pub fn status_bit(&self) -> bool {
-        !self.length_control.is_zero()
+        !self.length.is_zero()
     }
 
     pub fn is_enabled(&self) -> bool {

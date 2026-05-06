@@ -10,7 +10,7 @@ const PULSE_DUTY_TABLE: [[u8; 8]; 4] = [
 
 pub(super) struct Pulse {
     timer: Divider<u16>,
-    length_control: LengthControl,
+    length: LengthControl,
     enabled: bool,
     envelope: Envelope,
     sweep: Sweep,
@@ -21,7 +21,7 @@ impl Pulse {
     pub fn new(ones_complement_negate: bool) -> Self {
         Self {
             timer: Divider::new(u16::MAX),
-            length_control: LengthControl::default(),
+            length: LengthControl::default(),
             enabled: false,
             envelope: Envelope::new(0),
             sweep: Sweep::new(ones_complement_negate, 0.into()),
@@ -32,13 +32,13 @@ impl Pulse {
     pub fn set_enabled(&mut self, enabled: bool) {
         self.enabled = enabled;
         if !enabled {
-            self.length_control.clear();
+            self.length.clear();
         }
     }
 
     pub fn write_control(&mut self, value: PulseControlBits) {
         self.envelope.config(value.into());
-        self.length_control.set_halt(value);
+        self.length.set_halt(value);
         // Changes duty without resetting the position of the sequencer, not use `reset_items()`
         self.sequencer
             .replace_items(&PULSE_DUTY_TABLE[value.duty() as usize]);
@@ -55,7 +55,7 @@ impl Pulse {
     pub fn write_timer_high(&mut self, load: LengthTimerHigh3Bits) {
         self.timer.set_period_high(load.high3());
         if self.enabled {
-            self.length_control.load(load);
+            self.length.load(load);
         }
         self.envelope.reset();
         // When the fourth register is written to, the sequencer is restarted.
@@ -72,17 +72,14 @@ impl Pulse {
         self.envelope.tick();
     }
 
-    pub fn step_length_counter(&mut self) {
-        self.length_control.tick();
-    }
-
-    pub fn step_sweep(&mut self) {
+    pub fn step_length_and_sweep(&mut self) {
+        self.length.tick();
         self.sweep.tick(&mut self.timer.period);
     }
 
     pub fn output(&self) -> u8 {
         if self.enabled {
-            let control_gate = (&self.sweep, &self.sequencer, &self.length_control);
+            let control_gate = (&self.sweep, &self.sequencer, &self.length);
             control_gate.filter(self.envelope.output())
         } else {
             0
@@ -90,6 +87,6 @@ impl Pulse {
     }
 
     pub fn status_bit(&self) -> bool {
-        !self.length_control.is_zero()
+        !self.length.is_zero()
     }
 }

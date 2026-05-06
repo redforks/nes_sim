@@ -9,7 +9,7 @@ pub struct Noise {
     control_bits: NoiseControlBits,
     period: NoisePeriod,
     timer_counter: u16,
-    length_control: LengthControl,
+    length: LengthControl,
     enabled: bool,
     shift_register: u16,
     envelope: Envelope,
@@ -21,7 +21,7 @@ impl Default for Noise {
             control_bits: NoiseControlBits::default(),
             period: NoisePeriod::default(),
             timer_counter: 0,
-            length_control: LengthControl::default(),
+            length: LengthControl::default(),
             enabled: false,
             shift_register: 1,
             envelope: Envelope::new(0),
@@ -33,14 +33,14 @@ impl Noise {
     pub fn set_enabled(&mut self, enabled: bool) {
         self.enabled = enabled;
         if !enabled {
-            self.length_control.clear();
+            self.length.clear();
         }
     }
 
     pub fn write_envelope(&mut self, value: NoiseControlBits) {
         self.control_bits = value;
         self.envelope.config(value.into());
-        self.length_control.set_halt(value);
+        self.length.set_halt(value);
     }
 
     pub fn write_period(&mut self, value: NoisePeriod) {
@@ -49,7 +49,7 @@ impl Noise {
 
     pub fn write_length(&mut self, value: NoiseLength) {
         if self.enabled {
-            self.length_control.load(value);
+            self.length.load(value);
         }
         self.envelope.reset();
     }
@@ -69,12 +69,12 @@ impl Noise {
         self.envelope.tick();
     }
 
-    pub fn step_length_counter(&mut self) {
-        self.length_control.tick();
+    pub fn step_length(&mut self) {
+        self.length.tick();
     }
 
     pub fn output(&self) -> u8 {
-        if !self.enabled || self.length_control.is_zero() || (self.shift_register & 0x0001) != 0 {
+        if !self.enabled || self.length.is_zero() || (self.shift_register & 0x0001) != 0 {
             0
         } else {
             self.envelope.output()
@@ -82,7 +82,7 @@ impl Noise {
     }
 
     pub fn status_bit(&self) -> bool {
-        !self.length_control.is_zero()
+        !self.length.is_zero()
     }
 
     pub fn is_enabled(&self) -> bool {
