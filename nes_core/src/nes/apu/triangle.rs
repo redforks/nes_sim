@@ -24,7 +24,7 @@ impl Linear {
             self.counter -= 1;
         }
 
-        if control_flag {
+        if !control_flag {
             // If the control flag is clear, the halt flag is cleared.
             self.halt = false;
         }
