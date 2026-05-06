@@ -250,5 +250,39 @@ impl<'a> ControlGate for &'a Sweep {
     }
 }
 
+#[derive(Debug)]
+pub struct AudioSequencer<const N: usize> {
+    items: &'static [u8; N],
+    cur_idx: usize,
+}
+
+impl<const N: usize> AudioSequencer<N> {
+    pub fn new(items: &'static [u8; N]) -> Self {
+        Self { items, cur_idx: 0 }
+    }
+
+    pub fn replace_items(&mut self, items: &'static [u8; N]) {
+        self.items = items;
+    }
+
+    pub fn reset(&mut self) {
+        self.cur_idx = 0;
+    }
+
+    pub fn tick(&mut self) {
+        self.cur_idx = (self.cur_idx + 1) % N;
+    }
+
+    pub fn output(&self) -> u8 {
+        self.items[self.cur_idx]
+    }
+}
+
+impl<'a> ControlGate for &'a AudioSequencer<8> {
+    fn control(&self) -> u8 {
+        self.output()
+    }
+}
+
 #[cfg(test)]
 mod tests;

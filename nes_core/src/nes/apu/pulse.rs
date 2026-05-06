@@ -1,5 +1,5 @@
 use super::*;
-use crate::nes::apu::helper::Sweep;
+use crate::nes::apu::helper::{AudioSequencer, Sweep};
 
 const PULSE_DUTY_TABLE: [[u8; 8]; 4] = [
     [0, 1, 0, 0, 0, 0, 0, 0],
@@ -14,7 +14,7 @@ pub(super) struct Pulse {
     enabled: bool,
     envelope: Envelope,
     sweep: Sweep,
-    sequencer: Sequencer<u8>,
+    sequencer: AudioSequencer<8>,
 }
 
 impl Pulse {
@@ -25,7 +25,7 @@ impl Pulse {
             enabled: false,
             envelope: Envelope::new(0),
             sweep: Sweep::new(ones_complement_negate, 0.into()),
-            sequencer: Sequencer::new(&PULSE_DUTY_TABLE[0]),
+            sequencer: AudioSequencer::new(&PULSE_DUTY_TABLE[0]),
         }
     }
 

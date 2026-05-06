@@ -122,12 +122,6 @@ impl<I: Copy> Sequencer<I> {
         self.reset();
     }
 
-    /// Replate items without change current index
-    fn replace_items(&mut self, items: &'static [I]) {
-        debug_assert_eq!(self.items.len(), items.len());
-        self.items = items;
-    }
-
     fn reset(&mut self) {
         self.cur_idx = 0;
     }
@@ -137,17 +131,6 @@ impl<I: Copy> Sequencer<I> {
         let item = self.items[self.cur_idx];
         self.cur_idx = (self.cur_idx + 1) % self.items.len();
         item
-    }
-
-    /// Return current value of this Sequencer
-    fn output(&self) -> I {
-        self.items[self.cur_idx]
-    }
-}
-
-impl<'a> ControlGate for &'a Sequencer<u8> {
-    fn control(&self) -> u8 {
-        self.output()
     }
 }
 
