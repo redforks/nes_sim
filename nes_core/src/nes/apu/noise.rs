@@ -6,7 +6,6 @@ const NOISE_PERIOD_TABLE: [u16; 16] = [
 
 #[derive(Debug)]
 pub struct Noise {
-    control_bits: NoiseControlBits,
     period: NoisePeriod,
     timer_counter: u16,
     length: LengthControl,
@@ -17,7 +16,6 @@ pub struct Noise {
 impl Default for Noise {
     fn default() -> Self {
         Self {
-            control_bits: NoiseControlBits::default(),
             period: NoisePeriod::default(),
             timer_counter: 0,
             length: LengthControl::default(),
@@ -33,7 +31,6 @@ impl Noise {
     }
 
     pub fn write_envelope(&mut self, value: NoiseControlBits) {
-        self.control_bits = value;
         self.envelope.config(value.into());
         self.length.set_halt(value);
     }
