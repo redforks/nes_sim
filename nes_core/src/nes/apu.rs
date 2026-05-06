@@ -350,7 +350,6 @@ pub struct Apu<D: AudioDriver = ()> {
     sample_rate: u32,
     sample_accumulator: u64,
     frame_sequencer: FrameSequencer,
-    apu_even_cycle: bool,
     dmc_interrupt: bool,
     /// Pending DMC DMA request: (address, is_reload).
     /// is_reload = true for reload DMAs (output unit emptied buffer, 4 cycles),
@@ -379,7 +378,6 @@ impl<D: AudioDriver> Apu<D> {
             sample_rate,
             sample_accumulator: 0,
             frame_sequencer: FrameSequencer::default(),
-            apu_even_cycle: false,
             dmc_interrupt: false,
             dmc_dma_request: None,
             dc_last_input: 0.0,
@@ -418,16 +416,11 @@ impl<D: AudioDriver> Apu<D> {
     pub fn tick(&mut self) {
         self.frame_sequencer.tick_timer();
         if get_system_cycles().is_multiple_of(SYSTEM_CYCLES_PER_CPU_CYCLE) {
-            self.apu_even_cycle = !self.apu_even_cycle;
-
             self.frame_sequencer.tick();
             self.triangle.tick_timer();
-
-            if self.apu_even_cycle {
-                self.pulse1.tick_timer();
-                self.pulse2.tick_timer();
-                self.noise.tick_timer();
-            }
+            self.pulse1.tick_timer();
+            self.pulse2.tick_timer();
+            self.noise.tick_timer();
 
             // Tick DMC timer every CPU cycle
             if self.dmc.tick() {

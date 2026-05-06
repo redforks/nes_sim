@@ -122,13 +122,14 @@ pub struct Envelope {
 
 impl Envelope {
     pub fn new(bits: u8) -> Self {
-        let bits = EnvelopeBits::from(bits);
-        Self {
-            divider: Divider::new(bits.period()),
+        let mut r = Self {
+            divider: Divider::new(0),
             counter: 0,
-            enable_loop: bits.enable_loop(),
-            disabled: bits.disabled(),
-        }
+            enable_loop: false,
+            disabled: false,
+        };
+        r.config(bits);
+        r
     }
 
     pub fn config(&mut self, bits: u8) {

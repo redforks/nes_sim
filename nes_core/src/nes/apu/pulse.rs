@@ -10,6 +10,7 @@ const PULSE_DUTY_TABLE: [[u8; 8]; 4] = [
 
 pub(super) struct Pulse {
     timer: Divider<u16>,
+    divider_2: Divider<u8>,
     length: LengthControl,
     envelope: Envelope,
     sweep: Sweep,
@@ -20,6 +21,7 @@ impl Pulse {
     pub fn new(ones_complement_negate: bool) -> Self {
         Self {
             timer: Divider::new(u16::MAX),
+            divider_2: Divider::new(1),
             length: LengthControl::default(),
             envelope: Envelope::new(0),
             sweep: Sweep::new(ones_complement_negate, 0.into()),
@@ -34,7 +36,6 @@ impl Pulse {
     pub fn write_control(&mut self, value: PulseControlBits) {
         self.envelope.config(value.into());
         self.length.set_halt(value);
-        // Changes duty without resetting the position of the sequencer, not use `reset_items()`
         self.sequencer
             .replace_items(&PULSE_DUTY_TABLE[value.duty() as usize]);
     }
@@ -56,7 +57,7 @@ impl Pulse {
     }
 
     pub fn tick_timer(&mut self) {
-        if self.timer.tick() {
+        if self.timer.tick() && self.divider_2.tick() {
             self.sequencer.tick();
         }
     }

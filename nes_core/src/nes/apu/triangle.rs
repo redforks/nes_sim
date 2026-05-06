@@ -95,11 +95,7 @@ impl Triangle {
     }
 
     pub fn tick_timer(&mut self) {
-        if self.timer.tick()
-            && !self.length.is_zero()
-            && self.linear.counter > 0
-            && self.timer.period > 1
-        {
+        if self.timer.tick() && !self.length.is_zero() && self.linear.counter > 0 {
             self.sequencer.tick();
         }
     }
