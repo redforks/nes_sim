@@ -44,8 +44,6 @@ pub struct Triangle {
     control: TriangleControlBits,
     timer: Divider<u16>,
     length: LengthControl,
-    linear_counter: u8,
-    linear_counter_reload: bool,
     enabled: bool,
     sequence_step: usize,
     linear: Linear,
@@ -57,8 +55,6 @@ impl Default for Triangle {
             control: Default::default(),
             timer: Divider::new(u16::MAX),
             length: Default::default(),
-            linear_counter: Default::default(),
-            linear_counter_reload: Default::default(),
             enabled: Default::default(),
             sequence_step: Default::default(),
             linear: Default::default(),
@@ -98,7 +94,6 @@ impl Triangle {
         if self.enabled {
             self.length.load(load);
         }
-        self.linear_counter_reload = true;
 
         // When register $400B is written to, the halt flag is set.
         self.linear.set_halt();
@@ -107,7 +102,7 @@ impl Triangle {
     pub fn tick_timer(&mut self) {
         if self.timer.tick()
             && !self.length.is_zero()
-            && self.linear_counter > 0
+            && self.linear.counter > 0
             && self.timer.period > 1
         {
             self.sequence_step = (self.sequence_step + 1) % TRIANGLE_SEQUENCE.len();
@@ -116,15 +111,6 @@ impl Triangle {
 
     pub fn tick_linear(&mut self) {
         self.linear.tick(self.control.loop_and_is_halt());
-        // if self.linear_counter_reload {
-        //     self.linear_counter = self.control.counter();
-        // } else if self.linear_counter > 0 {
-        //     self.linear_counter -= 1;
-        // }
-
-        // if !self.control.loop_and_is_halt() {
-        //     self.linear_counter_reload = false;
-        // }
     }
 
     pub fn tick_length(&mut self) {
@@ -132,11 +118,7 @@ impl Triangle {
     }
 
     pub fn output(&self) -> u8 {
-        if !self.enabled || self.length.is_zero() || self.linear_counter == 0 {
-            0
-        } else {
-            TRIANGLE_SEQUENCE[self.sequence_step]
-        }
+        TRIANGLE_SEQUENCE[self.sequence_step]
     }
 
     pub fn status_bit(&self) -> bool {
