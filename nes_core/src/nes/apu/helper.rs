@@ -145,18 +145,14 @@ impl Envelope {
         self.disabled = bits.disabled();
     }
 
-    fn reset(&mut self) {
-        self.counter = 15;
-        self.divider.reset();
-    }
-
     pub fn tick(&mut self) {
         // When clocked by the frame sequencer, one of two actions occurs: if
         // there was a write to the fourth channel register since the last
         // clock, the counter is set to 15 and the divider is reset, otherwise
         // the divider is clocked.
         if std::mem::take(&mut self.request_reset) {
-            self.reset();
+            self.counter = 15;
+            self.divider.reset();
         } else {
             if self.divider.tick() {
                 if self.counter == 0 {

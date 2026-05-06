@@ -606,7 +606,7 @@ impl<D: AudioDriver> Apu<D> {
         let output = input - self.dc_last_input + (0.995 * self.dc_last_output);
         self.dc_last_input = input;
         self.dc_last_output = output;
-        output.clamp(-1.0, 1.0)
+        (output * 2.0).clamp(-1.0, 1.0)
     }
 
     fn write_dmc_irq_loop_freq(&mut self, value: DmcIRQLoopFreq) {
