@@ -111,12 +111,12 @@ impl Divider<u16> {
 }
 
 #[derive(Debug)]
-struct Sequence<I: 'static> {
+struct Sequencer<I: 'static> {
     items: &'static [I],
     cur_idx: usize,
 }
 
-impl<I: Copy> Sequence<I> {
+impl<I: Copy> Sequencer<I> {
     fn new(items: &'static [I]) -> Self {
         Self { items, cur_idx: 0 }
     }
@@ -126,24 +126,32 @@ impl<I: Copy> Sequence<I> {
         self.reset();
     }
 
+    /// Replate items without change current index
+    fn replace_items(&mut self, items: &'static [I]) {
+        debug_assert_eq!(self.items.len(), items.len());
+        self.items = items;
+    }
+
     fn reset(&mut self) {
         self.cur_idx = 0;
     }
 
+    /// Return the value/event, first tick returns the first item
     fn tick(&mut self) -> I {
         let item = self.items[self.cur_idx];
         self.cur_idx = (self.cur_idx + 1) % self.items.len();
         item
     }
 
-    fn last_output(&self) -> I {
-        self.items[(self.cur_idx + self.items.len() - 1) % self.items.len()]
+    /// Return current value of this Sequencer
+    fn output(&self) -> I {
+        self.items[self.cur_idx]
     }
 }
 
-impl<'a> ControlGate for &'a Sequence<u8> {
+impl<'a> ControlGate for &'a Sequencer<u8> {
     fn control(&self) -> u8 {
-        self.last_output()
+        self.output()
     }
 }
 

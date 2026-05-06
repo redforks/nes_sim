@@ -1,5 +1,5 @@
 use super::{FrameSequencerBits, FrameSequencerMode};
-use crate::nes::apu::Sequence;
+use crate::nes::apu::Sequencer;
 
 const FOUR_STEP_TRIGGERS: [FrameSequenceState; 4] = [
     FrameSequenceState {
@@ -64,7 +64,7 @@ pub(super) struct FrameSequencer {
 
     frame_interrupt: bool,
     cycles: u32,
-    sequences: Sequence<FrameSequenceState>,
+    sequences: Sequencer<FrameSequenceState>,
     frame_interrupt_inhibit: bool,
     request_timer_delay: u8,
     pending_mode: Option<FrameSequencerBits>,
@@ -79,7 +79,7 @@ impl Default for FrameSequencer {
             frame_interrupt: false,
             cycles: 0,
             output_latch: Default::default(),
-            sequences: Sequence::new(&FOUR_STEP_TRIGGERS),
+            sequences: Sequencer::new(&FOUR_STEP_TRIGGERS),
             frame_interrupt_inhibit: false,
             pending_mode: None,
             request_timer_delay: 0,

@@ -14,7 +14,7 @@ pub(super) struct Pulse {
     enabled: bool,
     envelope: Envelope,
     sweep: Sweep,
-    sequence: Sequence<u8>,
+    sequencer: Sequencer<u8>,
 }
 
 impl Pulse {
@@ -25,7 +25,7 @@ impl Pulse {
             enabled: false,
             envelope: Envelope::new(0),
             sweep: Sweep::new(ones_complement_negate, 0.into()),
-            sequence: Sequence::new(&PULSE_DUTY_TABLE[0]),
+            sequencer: Sequencer::new(&PULSE_DUTY_TABLE[0]),
         }
     }
 
@@ -39,8 +39,9 @@ impl Pulse {
     pub fn write_control(&mut self, value: PulseControlBits) {
         self.envelope.config(value.into());
         self.length_control.set_halt(value);
-        self.sequence
-            .reset_items(&PULSE_DUTY_TABLE[value.duty() as usize]);
+        // Changes duty without resetting the position of the sequencer, not use `reset_items()`
+        self.sequencer
+            .replace_items(&PULSE_DUTY_TABLE[value.duty() as usize]);
     }
 
     pub fn write_sweep(&mut self, value: SweepBits) {
@@ -57,11 +58,13 @@ impl Pulse {
             self.length_control.load(load);
         }
         self.envelope.reset();
+        // When the fourth register is written to, the sequencer is restarted.
+        self.sequencer.reset();
     }
 
     pub fn step_timer(&mut self) {
         if self.timer.tick() {
-            self.sequence.tick();
+            self.sequencer.tick();
         }
     }
 
@@ -79,7 +82,7 @@ impl Pulse {
 
     pub fn output(&self) -> u8 {
         if self.enabled {
-            let control_gate = (&self.sweep, &self.sequence, &self.length_control);
+            let control_gate = (&self.sweep, &self.sequencer, &self.length_control);
             control_gate.filter(self.envelope.output())
         } else {
             0
