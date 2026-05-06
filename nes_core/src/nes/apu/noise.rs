@@ -73,19 +73,11 @@ impl Noise {
         self.length_control.tick();
     }
 
-    fn current_volume(&self) -> u8 {
-        if self.control_bits.constant_volume() {
-            self.control_bits.volume()
-        } else {
-            self.envelope.output()
-        }
-    }
-
     pub fn output(&self) -> u8 {
         if !self.enabled || self.length_control.is_zero() || (self.shift_register & 0x0001) != 0 {
             0
         } else {
-            self.current_volume()
+            self.envelope.output()
         }
     }
 

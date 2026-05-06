@@ -97,11 +97,6 @@ impl<C: Counter> Divider<C> {
         self.period = period;
         self.reset();
     }
-
-    /// True if last `tick()` method returns true.
-    fn signal(&self) -> bool {
-        self.signal
-    }
 }
 
 impl Divider<u16> {
