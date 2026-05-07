@@ -1,7 +1,5 @@
 use super::*;
 
-/// NTSC DMC rate table: CPU cycles per output sample clock.
-/// Indexed by $4010 bits 0-3.
 const DMC_RATE_TABLE: [u16; 16] = [
     428, 380, 340, 320, 286, 254, 226, 214, 190, 160, 142, 128, 106, 84, 72, 54,
 ];
@@ -19,7 +17,7 @@ pub struct Dmc {
     bits_remaining: u8,
     output_level: u8,
     silence_flag: bool,
-    timer_counter: u16,
+    timer: Divider<u16>,
     dma_pending: bool,
     interrupt_flag: bool,
     dma_request: Option<(u16, bool)>,
@@ -39,7 +37,7 @@ impl Default for Dmc {
             bits_remaining: 0,
             output_level: 0,
             silence_flag: true,
-            timer_counter: DMC_RATE_TABLE[0],
+            timer: Divider::new(DMC_RATE_TABLE[0]),
             dma_pending: false,
             interrupt_flag: false,
             dma_request: None,
@@ -66,14 +64,9 @@ impl Dmc {
     }
 
     pub fn tick(&mut self) {
-        if self.timer_counter > 0 {
-            self.timer_counter -= 1;
-        }
-
-        if self.timer_counter == 0 {
-            self.timer_counter = DMC_RATE_TABLE[self.irq_loop_freq.freq() as usize];
+        if self.timer.tick() {
+            self.timer.set_period_and_reset(DMC_RATE_TABLE[self.irq_loop_freq.freq() as usize] - 1);
             self.clock_output_unit();
-            // Reload DMA: output unit emptied buffer
             if self.sample_buffer.is_none() && self.bytes_remaining > 0 && !self.dma_pending {
                 self.dma_pending = true;
                 self.dma_request = Some((self.current_address, true));
@@ -169,7 +162,6 @@ impl Dmc {
 
     pub fn write_dmc_irq_loop_freq(&mut self, value: DmcIRQLoopFreq) {
         self.irq_loop_freq = value;
-        // If IRQ flag cleared, clear the DMC interrupt
         if !self.irq_loop_freq.irq_enabled() {
             self.interrupt_flag = false;
         }

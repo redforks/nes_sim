@@ -92,6 +92,11 @@ impl<C: Counter> Divider<C> {
     fn set_period(&mut self, period: C) {
         self.period = period;
     }
+
+    fn set_period_and_reset(&mut self, period: C) {
+        self.period = period;
+        self.counter = period;
+    }
 }
 
 impl Divider<u16> {
