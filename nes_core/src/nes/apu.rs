@@ -369,8 +369,8 @@ impl<D: AudioDriver> Apu<D> {
     pub fn new(driver: D) -> Self {
         let sample_rate = driver.sample_rate().max(1);
         Self {
-            pulse1: Pulse::new(true),
-            pulse2: Pulse::new(false),
+            pulse1: Pulse::new(false),
+            pulse2: Pulse::new(true),
             triangle: Triangle::default(),
             noise: Noise::default(),
             dmc: Dmc::default(),

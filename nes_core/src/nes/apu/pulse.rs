@@ -18,13 +18,13 @@ pub(super) struct Pulse {
 }
 
 impl Pulse {
-    pub fn new(ones_complement_negate: bool) -> Self {
+    pub fn new(is_second_pulse_channel: bool) -> Self {
         Self {
             timer: Divider::new(u16::MAX),
             divider_2: Divider::new(1),
             length: LengthControl::default(),
             envelope: Envelope::new(0),
-            sweep: Sweep::new(ones_complement_negate, 0.into()),
+            sweep: Sweep::new(is_second_pulse_channel, 0.into()),
             sequencer: AudioSequencer::new(&PULSE_DUTY_TABLE[0]),
         }
     }
