@@ -99,6 +99,7 @@ impl Divider<u16> {
         // the third and fourth registers form an 11-bit value and the divider's
         // period is set to this value *plus one*.
         self.period = (self.period & 0x00FF) | ((high as u16) << 8);
+        self.reset();
     }
 
     const fn set_period_low(&mut self, low: u8) {

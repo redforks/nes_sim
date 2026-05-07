@@ -241,6 +241,8 @@ impl Sweep {
 
     pub fn config(&mut self, bits: SweepBits) {
         self.divider.set_period(bits.period());
+        // if there was a write to the sweep register since the last sweep clock, the divider is reset.
+        self.divider.reset();
         self.shifter.config(bits);
         self.enabled = bits.enabled();
     }
