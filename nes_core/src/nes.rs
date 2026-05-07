@@ -156,10 +156,6 @@ impl<R: Render, D: AudioDriver> NesMcu<R, D> {
         self.dmc_dma_pending.take().map(|(addr, _)| addr)
     }
 
-    pub fn supply_dmc_dma_byte(&mut self, byte: u8) {
-        self.apu.supply_dmc_byte(byte);
-    }
-
     /// Perform the DMC DMA bus read while the CPU is reading `cpu_read_addr`.
     /// This models the read4 test behavior where the overlap can trigger an
     /// extra side-effecting CPU register read before the actual sample fetch.
@@ -300,7 +296,7 @@ impl<R: Render, D: AudioDriver> Mcu for NesMcu<R, D> {
     }
 
     fn supply_dmc_dma_byte(&mut self, byte: u8) {
-        self.supply_dmc_dma_byte(byte);
+        self.apu.supply_dmc_byte(byte);
     }
 }
 
