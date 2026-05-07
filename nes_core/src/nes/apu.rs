@@ -92,11 +92,6 @@ impl<C: Counter> Divider<C> {
     fn set_period(&mut self, period: C) {
         self.period = period;
     }
-
-    fn set_period_and_reset(&mut self, period: C) {
-        self.period = period;
-        self.counter = period;
-    }
 }
 
 impl Divider<u16> {
@@ -294,9 +289,9 @@ struct FrameSequencerBits {
 }
 
 #[bitfield(u8)]
-struct DmcLoadCounter {
+struct DmcDacBits {
     #[bits(7)]
-    load_counter: u8,
+    dac_value: u8,
     #[bits(1)]
     __: u8,
 }
@@ -515,7 +510,7 @@ impl<D: AudioDriver> Apu<D> {
             0x400E => self.noise.write_period(value.into()),
             0x400F => self.noise.write_length(value.into()),
             0x4010 => self.dmc.write_dmc_irq_loop_freq(value.into()),
-            0x4011 => self.dmc.write_load_counter(value.into()),
+            0x4011 => self.dmc.write_dac(value.into()),
             0x4012 => self.dmc.write_sample_address(value),
             0x4013 => self.dmc.write_sample_length(value),
             0x4015 => self.set_control_flags(value.into()),

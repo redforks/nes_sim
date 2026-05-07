@@ -56,7 +56,7 @@ impl DmaReader {
     }
 
     fn tick(&mut self) {
-        if self.bytes_remaining > 0 && !self.dma_pending {
+        if self.enabled() && !self.dma_pending {
             self.dma_pending = true;
             self.dma_request = Some((self.current_address, true));
         }
@@ -87,16 +87,65 @@ impl DmaReader {
     }
 }
 
+#[derive(Debug, Default)]
+struct OutputUnit {
+    shift_register: u8,
+    remain_bits: u8,
+    silence_flag: bool,
+    output: u8,
+    sample_buffer: Option<u8>,
+}
+
+impl OutputUnit {
+    fn start_cycle(&mut self) {
+        self.remain_bits = 8;
+        if let Some(byte) = self.sample_buffer.take() {
+            self.silence_flag = false;
+            self.shift_register = byte;
+        } else {
+            self.silence_flag = true;
+        }
+    }
+
+    fn receive_sample(&mut self, sample: u8) {
+        self.sample_buffer = Some(sample);
+    }
+
+    fn set_output(&mut self, v: u8) {
+        self.output = v;
+    }
+
+    fn tick(&mut self) {
+        if self.remain_bits == 0 {
+            self.start_cycle();
+        }
+
+        if !self.silence_flag {
+            self.output = match self.shift_register & 0x1 {
+                0 => self.output.saturating_sub(2),
+                1 => {
+                    if self.output < 126 {
+                        self.output + 2
+                    } else {
+                        self.output
+                    }
+                }
+                _ => self.output,
+            };
+            self.shift_register >>= 1;
+        }
+        self.remain_bits -= 1;
+    }
+
+    fn is_buffer_empty(&self) -> bool {
+        self.sample_buffer.is_none()
+    }
+}
+
 #[derive(Debug)]
 pub struct Dmc {
     dma_reader: DmaReader,
-    irq_loop_freq: DmcIRQLoopFreq,
-    load_counter: u8,
-    sample_buffer: Option<u8>,
-    shift_register: u8,
-    bits_remaining: u8,
-    output_level: u8,
-    silence_flag: bool,
+    output: OutputUnit,
     timer: Divider<u16>,
 }
 
@@ -104,13 +153,7 @@ impl Default for Dmc {
     fn default() -> Self {
         Self {
             dma_reader: DmaReader::default(),
-            irq_loop_freq: DmcIRQLoopFreq::default(),
-            load_counter: 0,
-            sample_buffer: None,
-            shift_register: 0,
-            bits_remaining: 0,
-            output_level: 0,
-            silence_flag: true,
+            output: OutputUnit::default(),
             timer: Divider::new(DMC_RATE_TABLE[0]),
         }
     }
@@ -127,10 +170,8 @@ impl Dmc {
 
     pub fn tick(&mut self) {
         if self.timer.tick() {
-            self.timer
-                .set_period_and_reset(DMC_RATE_TABLE[self.irq_loop_freq.freq() as usize] - 1);
-            self.clock_output_unit();
-            if self.sample_buffer.is_none() {
+            self.output.tick();
+            if self.output.is_buffer_empty() {
                 self.dma_reader.tick();
             }
         }
@@ -138,47 +179,22 @@ impl Dmc {
 
     pub fn check_and_request_dma(&mut self) {
         // Load DMA: triggered by $4015 write with empty buffer
-        if self.sample_buffer.is_none() {
+        if self.output.is_buffer_empty() {
             self.dma_reader.check_and_request_dma();
         }
     }
 
-    fn clock_output_unit(&mut self) {
-        if self.bits_remaining == 0 {
-            self.bits_remaining = 8;
-            if let Some(byte) = self.sample_buffer.take() {
-                self.silence_flag = false;
-                self.shift_register = byte;
-            } else {
-                self.silence_flag = true;
-            }
-        }
-
-        if !self.silence_flag {
-            if self.shift_register & 1 != 0 {
-                if self.output_level <= 125 {
-                    self.output_level += 2;
-                }
-            } else if self.output_level >= 2 {
-                self.output_level -= 2;
-            }
-        }
-        self.shift_register >>= 1;
-        self.bits_remaining -= 1;
-    }
-
     pub fn supply_dma_byte(&mut self, byte: u8) {
-        self.sample_buffer = Some(byte);
+        self.output.receive_sample(byte);
         self.dma_reader.inc_addr();
     }
 
     pub fn output(&self) -> u8 {
-        self.output_level
+        self.output.output
     }
 
-    pub fn write_load_counter(&mut self, value: DmcLoadCounter) {
-        self.load_counter = value.load_counter();
-        self.output_level = self.load_counter;
+    pub fn write_dac(&mut self, value: DmcDacBits) {
+        self.output.set_output(value.dac_value());
     }
 
     pub fn write_sample_address(&mut self, value: u8) {
@@ -202,9 +218,8 @@ impl Dmc {
     }
 
     pub fn write_dmc_irq_loop_freq(&mut self, value: DmcIRQLoopFreq) {
-        self.irq_loop_freq = value;
         self.dma_reader.config(value);
         self.timer
-            .set_period(DMC_RATE_TABLE[self.irq_loop_freq.freq() as usize] - 1);
+            .set_period(DMC_RATE_TABLE[value.freq() as usize] - 1);
     }
 }
