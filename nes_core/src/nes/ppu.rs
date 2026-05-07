@@ -255,13 +255,6 @@ impl<R: Render> Ppu<R> {
         self.registers.status.v_blank()
     }
 
-    pub fn oam_dma(&mut self, vals: &[u8; 256]) {
-        for (addr, value) in vals.iter().copied().enumerate() {
-            self.registers.oam_data[addr] = normalize_oam_byte(addr as u8, value);
-        }
-        // cache-free: nothing to mark
-    }
-
     pub fn write_oam_dma_byte(&mut self, value: u8) {
         let addr = self.registers.oam_addr as usize;
         self.registers.oam_data[addr] = normalize_oam_byte(self.registers.oam_addr, value);
@@ -739,6 +732,7 @@ impl<R: Render> Ppu<R> {
     }
 
     /// Get OAM data as a copy (for debugging/inspection)
+    #[cfg(test)]
     pub fn get_oam_data(&self) -> [u8; 256] {
         self.registers.oam_data
     }

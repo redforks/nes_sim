@@ -156,38 +156,6 @@ fn test_ppu_status_to_from_u8() {
 }
 
 #[test]
-fn test_oam_dma() {
-    let mut ppu = Ppu::new(ImageRender::default_dimension());
-    let data: [u8; 256] = [0x42; 256];
-
-    ppu.oam_dma(&data);
-
-    assert_eq!(ppu.registers.oam_data[0], 0x42);
-    assert_eq!(ppu.registers.oam_data[128], 0x42);
-    assert_eq!(ppu.registers.oam_data[255], 0x42);
-}
-
-#[test]
-fn test_oam_attribute_bits_are_masked_on_write_and_dma() {
-    let mut ppu = Ppu::new(ImageRender::default_dimension());
-    let mut cartridge = new_test_cartridge();
-
-    ppu.write(0x2003, 0x02, &mut cartridge);
-    ppu.write(0x2004, 0xFF, &mut cartridge);
-    assert_eq!(ppu.registers.oam_data[0x02], 0xE3);
-
-    let mut data = [0u8; 256];
-    data[0x02] = 0xFF;
-    data[0x06] = 0x1C;
-    data[0x03] = 0xAA;
-    ppu.oam_dma(&data);
-
-    assert_eq!(ppu.registers.oam_data[0x02], 0xE3);
-    assert_eq!(ppu.registers.oam_data[0x06], 0x00);
-    assert_eq!(ppu.registers.oam_data[0x03], 0xAA);
-}
-
-#[test]
 fn test_read_status_clears_vblank() {
     let (mut ppu, _pattern) = new_test_ppu_and_pattern();
     ppu.registers.status.set_v_blank(true);

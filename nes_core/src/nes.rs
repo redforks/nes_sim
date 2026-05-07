@@ -214,7 +214,8 @@ impl<R: Render, D: AudioDriver> NesMcu<R, D> {
     }
 
     /// Get OAM data (256 bytes)
-    pub fn get_oam_data(&self) -> [u8; 256] {
+    #[cfg(test)]
+    fn get_oam_data(&self) -> [u8; 256] {
         self.ppu.get_oam_data()
     }
 
