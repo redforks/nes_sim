@@ -350,11 +350,6 @@ pub struct Apu<D: AudioDriver = ()> {
     sample_rate: u32,
     sample_accumulator: u64,
     frame_sequencer: FrameSequencer,
-    dmc_interrupt: bool,
-    /// Pending DMC DMA request: (address, is_reload).
-    /// is_reload = true for reload DMAs (output unit emptied buffer, 4 cycles),
-    /// false for load DMAs ($4015 write with empty buffer, 3 cycles).
-    dmc_dma_request: Option<(u16, bool)>,
     dc_last_input: f32,
     dc_last_output: f32,
 }
@@ -378,8 +373,6 @@ impl<D: AudioDriver> Apu<D> {
             sample_rate,
             sample_accumulator: 0,
             frame_sequencer: FrameSequencer::default(),
-            dmc_interrupt: false,
-            dmc_dma_request: None,
             dc_last_input: 0.0,
             dc_last_output: 0.0,
         }
@@ -396,7 +389,7 @@ impl<D: AudioDriver> Apu<D> {
 
         // Clear all interrupt flags
         self.frame_sequencer.clear_interrupt();
-        self.dmc_interrupt = false;
+        self.dmc.clear_interrupt_flag();
 
         // $4015 write with $00 silences all channels and clears DMC interrupt
         self.set_control_flags(ControlFlags::new());
@@ -423,10 +416,7 @@ impl<D: AudioDriver> Apu<D> {
             self.noise.tick_timer();
 
             // Tick DMC timer every CPU cycle
-            if self.dmc.tick() {
-                // DMC requests a reload DMA read (output unit emptied buffer)
-                self.dmc_dma_request = Some((self.dmc.current_address(), true));
-            }
+            self.dmc.tick();
 
             if let Some(frame_sequencer) = self.frame_sequencer.output_latch.take() {
                 if frame_sequencer.irq {
@@ -444,20 +434,18 @@ impl<D: AudioDriver> Apu<D> {
     }
 
     pub fn request_irq(&self) -> bool {
-        self.frame_sequencer.request_irq() || self.dmc_interrupt
+        self.frame_sequencer.request_irq() || self.dmc.interrupt_flag()
     }
 
     /// Take the pending DMC DMA request, if any.
     /// Returns (address, is_reload).
     pub fn take_dmc_dma_request(&mut self) -> Option<(u16, bool)> {
-        self.dmc_dma_request.take()
+        self.dmc.take_dma_request()
     }
 
     /// Supply a byte fetched by DMC DMA. May set the DMC interrupt flag.
     pub fn supply_dmc_byte(&mut self, byte: u8) {
-        if self.dmc.supply_dma_byte(byte) {
-            self.dmc_interrupt = true;
-        }
+        self.dmc.supply_dma_byte(byte);
     }
 
     /// Re-check if DMC DMA is needed after a CPU write to $4015.
@@ -467,10 +455,7 @@ impl<D: AudioDriver> Apu<D> {
     /// `sta $4015` enables DMC with an empty buffer, which should
     /// trigger an immediate DMA on the same cycle.
     pub fn recheck_dmc_dma(&mut self) {
-        if self.dmc_dma_request.is_none() && self.dmc.check_dma_needed() {
-            // Load DMA (triggered by $4015 write, not output unit): is_reload = false
-            self.dmc_dma_request = Some((self.dmc.current_address(), false));
-        }
+        self.dmc.check_and_request_dma();
     }
 
     pub fn flush(&mut self) {
@@ -486,7 +471,7 @@ impl<D: AudioDriver> Apu<D> {
             noise_enabled: self.noise.status_bit(),
             dmc_enabled: self.dmc.status_bit(),
             frame_irq_pending: self.frame_sequencer.request_irq(),
-            dmc_irq_pending: self.dmc_interrupt,
+            dmc_irq_pending: self.dmc.interrupt_flag(),
         }
     }
 
@@ -524,7 +509,7 @@ impl<D: AudioDriver> Apu<D> {
             0x400C => self.noise.write_envelope(value.into()),
             0x400E => self.noise.write_period(value.into()),
             0x400F => self.noise.write_length(value.into()),
-            0x4010 => self.write_dmc_irq_loop_freq(value.into()),
+            0x4010 => self.dmc.write_dmc_irq_loop_freq(value.into()),
             0x4011 => self.dmc.write_load_counter(value.into()),
             0x4012 => self.dmc.write_sample_address(value),
             0x4013 => self.dmc.write_sample_length(value),
@@ -542,7 +527,7 @@ impl<D: AudioDriver> Apu<D> {
         status.set_noise_enabled(self.noise.status_bit());
         status.set_dmc_enabled(self.dmc.status_bit());
         status.set_frame_interrupt(self.frame_sequencer.request_irq());
-        status.set_dmc_interrupt(self.dmc_interrupt);
+        status.set_dmc_interrupt(self.dmc.interrupt_flag());
         status.into_bits()
     }
 
@@ -554,7 +539,7 @@ impl<D: AudioDriver> Apu<D> {
         self.dmc.set_enabled(flags.dmc_enabled());
 
         // Always clear DMC interrupt on $4015 write
-        self.dmc_interrupt = false;
+        self.dmc.clear_interrupt_flag();
     }
 
     fn tick_envelop_and_linear(&mut self) {
@@ -607,14 +592,6 @@ impl<D: AudioDriver> Apu<D> {
         self.dc_last_input = input;
         self.dc_last_output = output;
         (output * 2.0).clamp(-1.0, 1.0)
-    }
-
-    fn write_dmc_irq_loop_freq(&mut self, value: DmcIRQLoopFreq) {
-        self.dmc.write_irq_loop_freq(value);
-        // If IRQ flag cleared, clear the DMC interrupt
-        if !self.dmc.irq_enabled() {
-            self.dmc_interrupt = false;
-        }
     }
 }
 

@@ -21,6 +21,8 @@ pub struct Dmc {
     silence_flag: bool,
     timer_counter: u16,
     dma_pending: bool,
+    interrupt_flag: bool,
+    dma_request: Option<(u16, bool)>,
 }
 
 impl Default for Dmc {
@@ -39,6 +41,8 @@ impl Default for Dmc {
             silence_flag: true,
             timer_counter: DMC_RATE_TABLE[0],
             dma_pending: false,
+            interrupt_flag: false,
+            dma_request: None,
         }
     }
 }
@@ -61,7 +65,7 @@ impl Dmc {
         self.bytes_remaining = (self.sample_length as u16) * 16 + 1;
     }
 
-    pub fn tick(&mut self) -> bool {
+    pub fn tick(&mut self) {
         if self.timer_counter > 0 {
             self.timer_counter -= 1;
         }
@@ -69,18 +73,24 @@ impl Dmc {
         if self.timer_counter == 0 {
             self.timer_counter = DMC_RATE_TABLE[self.irq_loop_freq.freq() as usize];
             self.clock_output_unit();
+            // Reload DMA: output unit emptied buffer
+            if self.sample_buffer.is_none() && self.bytes_remaining > 0 && !self.dma_pending {
+                self.dma_pending = true;
+                self.dma_request = Some((self.current_address, true));
+            }
         }
-
-        self.check_dma_needed()
     }
 
-    pub fn check_dma_needed(&mut self) -> bool {
-        let need_dma =
-            self.sample_buffer.is_none() && self.bytes_remaining > 0 && !self.dma_pending;
-        if need_dma {
+    pub fn check_and_request_dma(&mut self) {
+        // Load DMA: triggered by $4015 write with empty buffer
+        if self.dma_request.is_none()
+            && self.sample_buffer.is_none()
+            && self.bytes_remaining > 0
+            && !self.dma_pending
+        {
             self.dma_pending = true;
+            self.dma_request = Some((self.current_address, false));
         }
-        need_dma
     }
 
     fn clock_output_unit(&mut self) {
@@ -107,7 +117,7 @@ impl Dmc {
         self.bits_remaining -= 1;
     }
 
-    pub fn supply_dma_byte(&mut self, byte: u8) -> bool {
+    pub fn supply_dma_byte(&mut self, byte: u8) {
         self.sample_buffer = Some(byte);
         self.dma_pending = false;
 
@@ -122,12 +132,9 @@ impl Dmc {
         if self.bytes_remaining == 0 {
             if self.irq_loop_freq.loop_flag() {
                 self.restart_sample();
-                false
-            } else {
-                self.irq_loop_freq.irq_enabled()
+            } else if self.irq_loop_freq.irq_enabled() {
+                self.interrupt_flag = true;
             }
-        } else {
-            false
         }
     }
 
@@ -148,15 +155,23 @@ impl Dmc {
         self.sample_length = value;
     }
 
-    pub fn write_irq_loop_freq(&mut self, value: DmcIRQLoopFreq) {
+    pub fn take_dma_request(&mut self) -> Option<(u16, bool)> {
+        self.dma_request.take()
+    }
+
+    pub fn interrupt_flag(&self) -> bool {
+        self.interrupt_flag
+    }
+
+    pub fn clear_interrupt_flag(&mut self) {
+        self.interrupt_flag = false;
+    }
+
+    pub fn write_dmc_irq_loop_freq(&mut self, value: DmcIRQLoopFreq) {
         self.irq_loop_freq = value;
-    }
-
-    pub fn irq_enabled(&self) -> bool {
-        self.irq_loop_freq.irq_enabled()
-    }
-
-    pub fn current_address(&self) -> u16 {
-        self.current_address
+        // If IRQ flag cleared, clear the DMC interrupt
+        if !self.irq_loop_freq.irq_enabled() {
+            self.interrupt_flag = false;
+        }
     }
 }
