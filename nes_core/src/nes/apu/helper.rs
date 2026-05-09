@@ -1,7 +1,7 @@
-use bitfield_struct::bitfield;
 use crate::nes::apu::registers::{
-    PulseControlBits, LengthTimerHigh3Bits, TriangleControlBits, NoiseControlBits, NoiseLength,
+    LengthTimerHigh3Bits, NoiseControlBits, NoiseLength, PulseControlBits, TriangleControlBits,
 };
+use bitfield_struct::bitfield;
 
 /// Abstract register that can be used to read length halt bit for noise and pulse channels.
 pub trait GetLengthHalt {
@@ -64,18 +64,13 @@ impl LengthControl {
     pub fn set_enabled(&mut self, enabled: bool) {
         self.enabled = enabled;
         if !enabled {
-            self.clear();
+            self.counter = 0;
         }
     }
 
     /// Should zero output if counter reaches zero
     pub fn is_zero(&self) -> bool {
         self.counter == 0
-    }
-
-    /// Clear the length counter.
-    pub fn clear(&mut self) {
-        self.counter = 0;
     }
 
     /// Load counter from length timer high 5 bits. Length timer high also reloads the counter.

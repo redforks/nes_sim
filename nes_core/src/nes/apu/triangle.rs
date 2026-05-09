@@ -109,7 +109,11 @@ impl Triangle {
     }
 
     pub fn output(&self) -> u8 {
-        self.sequencer.output()
+        if self.length.is_zero() {
+            0
+        } else {
+            self.sequencer.output()
+        }
     }
 
     pub fn status_bit(&self) -> bool {
