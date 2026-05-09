@@ -36,13 +36,6 @@ pub const VBLANK_SET_SCANLINE: u16 = 241;
 pub const VBLANK_SET_DOT: u16 = 1;
 const VBLANK_CLEAR_SCANLINE: u16 = 261;
 const VBLANK_CLEAR_DOT: u16 = 1;
-fn normalize_oam_byte(addr: u8, value: u8) -> u8 {
-    if addr & 0x03 == 0x02 {
-        value & 0xE3
-    } else {
-        value
-    }
-}
 
 #[derive(Copy, Clone)]
 struct BackgroundActivation {

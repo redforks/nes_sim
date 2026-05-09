@@ -32,8 +32,8 @@ const COLORS: [Pixel; 64] = [
 ];
 
 /// Return palette color by index (0..63).
-pub fn color(index: usize) -> Pixel {
-    COLORS[index & 0x3F]
+pub fn color(index: u8) -> Pixel {
+    COLORS[(index & 0x3F) as usize]
 }
 
 #[derive(Default)]
@@ -44,9 +44,9 @@ pub struct Palette {
 impl Palette {
     pub fn render_disabled_color(&self, address: u16) -> Pixel {
         if (0x3f00..0x4000).contains(&address) {
-            color(self.read(address) as usize)
+            color(self.read(address))
         } else {
-            color(self.read(0x3f00) as usize)
+            color(self.read(0x3f00))
         }
     }
 
@@ -68,7 +68,7 @@ impl Palette {
     }
 
     pub fn black_color(&self) -> Pixel {
-        color(self.data[0] as usize)
+        color(self.data[0])
     }
 
     fn get_color(&self, start: u8, palette_idx: u8, idx: u8) -> Pixel {
@@ -77,7 +77,7 @@ impl Palette {
         } else {
             (start | idx | (palette_idx << 2)) as usize
         };
-        COLORS[(self.data[offset] & 0x3f) as usize]
+        color(self.data[offset])
     }
 
     pub fn get_background_color(&self, palette_idx: u8, idx: u8) -> Pixel {
