@@ -237,11 +237,7 @@ impl RunAction {
             }
 
             // Run one frame; the renderer presents from `finish()`.
-            let result = machine.process_frame();
-            machine.flush_audio();
-
-            // Check if execution should stop
-            match result {
+            match machine.process_frame() {
                 nes_core::ExecuteResult::Continue => {}
                 nes_core::ExecuteResult::ShouldReset => {
                     eprintln!("CPU reset requested");

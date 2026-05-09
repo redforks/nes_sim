@@ -54,6 +54,7 @@ where
             self.tick();
 
             if self.machine.cpu_mut().is_halted() {
+                self.flush_audio();
                 return ExecuteResult::Halt;
             }
 
@@ -61,10 +62,11 @@ where
             if cycles.is_multiple_of(SYSTEM_CYCLES_PER_PPU_CYCLE)
                 && self.machine.mcu().ppu_timing() == (VBLANK_SET_SCANLINE, VBLANK_SET_DOT)
             {
-                return ExecuteResult::Continue;
+                break;
             }
         }
 
+        self.flush_audio();
         ExecuteResult::Continue
     }
 
@@ -130,7 +132,7 @@ where
         self.cartridge_irq_next = false;
     }
 
-    pub fn flush_audio(&mut self) {
+    fn flush_audio(&mut self) {
         self.machine.mcu_mut().flush_audio();
     }
 
