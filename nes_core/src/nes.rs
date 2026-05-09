@@ -6,7 +6,6 @@ use crate::nes::lower_ram::LowerRam;
 use crate::nes::mapper::Cartridge;
 use crate::nes::ppu::Ppu;
 use crate::render::Render;
-use log::trace;
 
 pub mod apu;
 pub mod controller;
@@ -58,7 +57,6 @@ impl<R: Render, D: AudioDriver> NesMcu<R, D> {
     }
 
     fn ppu_dma(&mut self, address: u8) {
-        trace!("ppu dma");
         self.oam_dma_pending = Some(address);
     }
 
@@ -163,44 +161,10 @@ impl<R: Render, D: AudioDriver> NesMcu<R, D> {
         self.ppu.dump_state(&self.cartridge)
     }
 
-    /// Check if PPU is at VBlank (scanline 241, dot 1)
-    pub fn is_at_vblank(&self) -> bool {
-        let (scanline, dot) = self.ppu.timing();
-        scanline == 241 && dot == 1
-    }
-
-    /// Get APU status information
-    pub fn dump_apu_state(&self) -> crate::nes::apu::ApuStatusInfo {
-        self.apu.get_status()
-    }
-
     /// Get OAM data (256 bytes)
     #[cfg(test)]
     fn get_oam_data(&self) -> [u8; 256] {
         self.ppu.get_oam_data()
-    }
-
-    /// Get nametable data
-    /// index: 0-3 for specific nametable, 255 for all 4KB
-    pub fn get_nametable_data(&self, index: u8) -> Vec<u8> {
-        if index == 255 {
-            // Return all 4KB
-            let mut data = Vec::with_capacity(4096);
-            for addr in 0x2000..0x3000 {
-                data.push(self.cartridge.read_nametable(addr));
-            }
-            data
-        } else if index < 4 {
-            // Return specific 1KB nametable
-            let base = 0x2000 + (index as u16 * 0x400);
-            let mut data = Vec::with_capacity(1024);
-            for addr in base..(base + 0x400) {
-                data.push(self.cartridge.read_nametable(addr));
-            }
-            data
-        } else {
-            Vec::new()
-        }
     }
 }
 
