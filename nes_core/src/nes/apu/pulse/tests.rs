@@ -1,5 +1,4 @@
 use super::*;
-use crate::nes::apu::ControlGate;
 
 fn make_sweep_bits(shift: u8, negate: bool, period: u8, enabled: bool) -> SweepBits {
     let mut bits = SweepBits::new();

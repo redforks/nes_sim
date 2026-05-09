@@ -1,8 +1,6 @@
 use bitfield_struct::bitfield;
-
-use crate::nes::apu::{
-    ControlGate, Divider, LengthTimerHigh3Bits, NoiseControlBits, NoiseLength, PulseControlBits,
-    SweepBits, TriangleControlBits,
+use crate::nes::apu::registers::{
+    PulseControlBits, LengthTimerHigh3Bits, TriangleControlBits, NoiseControlBits, NoiseLength,
 };
 
 /// Abstract register that can be used to read length halt bit for noise and pulse channels.
@@ -95,13 +93,6 @@ impl LengthControl {
     }
 }
 
-impl<'a> ControlGate for &'a LengthControl {
-    fn control(&self) -> u8 {
-        debug_assert!(self.enabled || self.counter == 0);
-        self.counter
-    }
-}
-
 #[bitfield(u8)]
 struct EnvelopeBits {
     #[bits(4)]
@@ -139,17 +130,13 @@ impl Envelope {
     }
 
     pub fn config(&mut self, bits: u8) {
-        let bits = EnvelopeBits::from(bits);
+        let bits = EnvelopeBits::from_bits(bits);
         self.divider.set_period(bits.period());
         self.enable_loop = bits.enable_loop();
         self.disabled = bits.disabled();
     }
 
     pub fn tick(&mut self) {
-        // When clocked by the frame sequencer, one of two actions occurs: if
-        // there was a write to the fourth channel register since the last
-        // clock, the counter is set to 15 and the divider is reset, otherwise
-        // the divider is clocked.
         if std::mem::take(&mut self.request_reset) {
             self.counter = 15;
             self.divider.reset();
@@ -168,100 +155,126 @@ impl Envelope {
 
     pub fn output(&self) -> u8 {
         if self.disabled {
-            self.divider.period
+            *self.divider.period()
         } else {
             self.counter
         }
     }
 }
 
-#[derive(Debug)]
-struct Shifter {
-    negate: bool,
-    /// The inverted value will inc 1 if is second pulse channel
-    is_second_pulse_channel: bool,
-    shift_bits: u8,
+pub(crate) trait CounterPub: PartialOrd + Copy + Sized {
+    const ZERO: Self;
+
+    fn dec(self) -> Self;
 }
 
-impl Shifter {
-    fn new(is_second_pulse_channel: bool, bits: SweepBits) -> Self {
-        let mut r = Self {
-            negate: Default::default(),
-            is_second_pulse_channel,
-            shift_bits: Default::default(),
-        };
-        r.config(bits);
-        r
-    }
+impl CounterPub for u16 {
+    const ZERO: Self = 0;
 
-    fn update_period(&self, period: u16) -> u16 {
-        let change = period >> self.shift_bits;
-        if self.negate {
-            if self.is_second_pulse_channel {
-                period.saturating_sub(change)
-            } else {
-                period.saturating_sub(change).saturating_sub(1)
-            }
-        } else {
-            period.saturating_add(change)
-        }
+    fn dec(self) -> Self {
+        self.wrapping_sub(1)
     }
+}
 
-    /// Shifter is disabled if shift bits is 0
-    fn disabled(&self) -> bool {
-        self.shift_bits == 0
+impl CounterPub for u8 {
+    const ZERO: Self = 0;
+
+    fn dec(self) -> Self {
+        self.wrapping_sub(1)
     }
+}
 
-    fn config(&mut self, bits: SweepBits) {
-        self.negate = bits.negate();
-        self.shift_bits = bits.shift();
+impl CounterPub for u32 {
+    const ZERO: Self = 0;
+
+    fn dec(self) -> Self {
+        self.wrapping_sub(1)
+    }
+}
+
+impl CounterPub for u64 {
+    const ZERO: Self = 0;
+
+    fn dec(self) -> Self {
+        self.wrapping_sub(1)
     }
 }
 
 #[derive(Debug)]
-pub struct Sweep {
-    divider: Divider<u8>,
-    shifter: Shifter,
-    // When the channel's period is less than 8 or the result of the shifter is
-    // greater than $7FF, the channel's DAC receives 0
-    zero_output: bool,
-    enabled: bool,
+pub struct Divider<C> {
+    period: C,
+    counter: C,
 }
 
-impl Sweep {
-    pub fn new(is_second_pulse_channel: bool, bits: SweepBits) -> Self {
-        let divider = Divider::new(bits.period());
+impl<C: CounterPub> Divider<C> {
+    pub fn new(period: C) -> Self {
         Self {
-            divider,
-            shifter: Shifter::new(is_second_pulse_channel, bits),
-            zero_output: false,
-            enabled: bits.enabled(),
+            period,
+            counter: period,
         }
     }
 
-    pub fn config(&mut self, bits: SweepBits) {
-        self.divider.set_period(bits.period());
-        // if there was a write to the sweep register since the last sweep clock, the divider is reset.
-        self.divider.reset();
-        self.shifter.config(bits);
-        self.enabled = bits.enabled();
+    pub fn tick(&mut self) -> bool {
+        if self.counter == C::ZERO {
+            self.reset();
+            true
+        } else {
+            self.counter = self.counter.dec();
+            false
+        }
     }
 
-    pub fn tick(&mut self, period: &mut u16) {
-        let new_period = self.shifter.update_period(*period);
-        self.zero_output = *period < 8 || new_period > 0x7ff;
+    pub fn reset(&mut self) {
+        self.counter = self.period;
+    }
 
-        if self.divider.tick() {
-            if self.enabled && !self.shifter.disabled() && !self.zero_output {
-                *period = new_period;
-            }
-        }
+    pub fn set_period(&mut self, period: C) {
+        self.period = period;
+    }
+
+    pub fn period(&self) -> &C {
+        &self.period
     }
 }
 
-impl<'a> ControlGate for &'a Sweep {
-    fn control(&self) -> u8 {
-        if self.zero_output { 0 } else { 1 }
+impl Divider<u16> {
+    pub fn set_period_high(&mut self, high: u8) {
+        self.period = (self.period & 0x00FF) | ((high as u16) << 8);
+    }
+
+    pub fn set_period_low(&mut self, low: u8) {
+        self.period = (self.period & 0xFF00) | (low as u16);
+    }
+
+    pub fn period_mut(&mut self) -> &mut u16 {
+        &mut self.period
+    }
+}
+
+#[derive(Debug)]
+pub struct Sequencer<I: 'static> {
+    items: &'static [I],
+    cur_idx: usize,
+}
+
+impl<I: Copy> Sequencer<I> {
+    pub fn new(items: &'static [I]) -> Self {
+        Self { items, cur_idx: 0 }
+    }
+
+    pub fn reset_items(&mut self, items: &'static [I]) {
+        self.items = items;
+        self.reset();
+    }
+
+    pub fn reset(&mut self) {
+        self.cur_idx = 0;
+    }
+
+    pub fn tick(&mut self) -> I {
+        let item = self.items[self.cur_idx];
+        self.cur_idx = (self.cur_idx + 1) % self.items.len();
+        item
     }
 }
 
@@ -293,11 +306,79 @@ impl<const N: usize> AudioSequencer<N> {
     }
 }
 
+pub trait ControlGate {
+    fn control(&self) -> u8;
+
+    fn filter(&self, val: u8) -> u8 {
+        if self.control() == 0 { 0 } else { val }
+    }
+}
+
+impl<U, V> ControlGate for (U, V)
+where
+    U: ControlGate,
+    V: ControlGate,
+{
+    fn control(&self) -> u8 {
+        let a = if self.0.control() != 0 { 1 } else { 0 };
+        let b = if self.1.control() != 0 { 1 } else { 0 };
+        a & b
+    }
+}
+
+impl<U, V, W> ControlGate for (U, V, W)
+where
+    U: ControlGate,
+    V: ControlGate,
+    W: ControlGate,
+{
+    fn control(&self) -> u8 {
+        let a = if self.0.control() != 0 { 1 } else { 0 };
+        let b = if self.1.control() != 0 { 1 } else { 0 };
+        let c = if self.2.control() != 0 { 1 } else { 0 };
+        a & b & c
+    }
+}
+
+impl<'a> ControlGate for &'a LengthControl {
+    fn control(&self) -> u8 {
+        debug_assert!(self.enabled || self.counter == 0);
+        self.counter
+    }
+}
+
 impl<'a> ControlGate for &'a AudioSequencer<8> {
     fn control(&self) -> u8 {
         self.output()
     }
 }
 
-#[cfg(test)]
-mod tests;
+pub trait AudioDriver {
+    fn sample_rate(&self) -> u32;
+
+    fn push_sample(&mut self, sample: f32);
+
+    fn flush(&mut self) {}
+}
+
+impl<T: AudioDriver + ?Sized> AudioDriver for Box<T> {
+    fn sample_rate(&self) -> u32 {
+        (**self).sample_rate()
+    }
+
+    fn push_sample(&mut self, sample: f32) {
+        (**self).push_sample(sample)
+    }
+
+    fn flush(&mut self) {
+        (**self).flush()
+    }
+}
+
+impl AudioDriver for () {
+    fn sample_rate(&self) -> u32 {
+        44_100
+    }
+
+    fn push_sample(&mut self, _sample: f32) {}
+}
