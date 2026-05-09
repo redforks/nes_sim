@@ -104,9 +104,7 @@ impl<D: AudioDriver> Apu<D> {
             self.pulse1.tick_timer();
             self.pulse2.tick_timer();
             self.noise.tick_timer();
-
-            // Tick DMC timer every CPU cycle
-            self.dmc.tick();
+            self.dmc.tick_timer();
 
             if let Some(frame_sequencer) = self.frame_sequencer.output_latch.take() {
                 if frame_sequencer.irq {

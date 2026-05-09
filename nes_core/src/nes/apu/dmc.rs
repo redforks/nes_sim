@@ -181,7 +181,7 @@ impl Dmc {
         self.dma_reader.enabled()
     }
 
-    pub fn tick(&mut self) {
+    pub fn tick_timer(&mut self) {
         if self.timer.tick() {
             self.output.tick();
             if self.output.is_buffer_empty() {
