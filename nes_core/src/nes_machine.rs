@@ -78,8 +78,18 @@ where
 
         if ppu_tick {
             self.machine.mcu_mut().tick_ppu();
-            let nmi_line = self.mcu().ppu().nmi_line_out();
-            let timing = self.mcu().ppu().timing();
+            let nmi_line = {
+                let this = &self;
+                this.machine.mcu()
+            }
+            .ppu()
+            .nmi_line_out();
+            let timing = {
+                let this = &self;
+                this.machine.mcu()
+            }
+            .ppu()
+            .timing();
             self.machine.cpu_mut().update_nmi_line(nmi_line, timing);
             self.cartridge_irq_next = self.machine.mcu().cartridge_irq_pending();
             if cpu_tick {
@@ -111,18 +121,6 @@ where
         }
 
         self.machine.tick()
-    }
-
-    pub fn mcu(&self) -> &NesMcu<R, D> {
-        self.machine.mcu()
-    }
-
-    pub fn mcu_mut(&mut self) -> &mut NesMcu<R, D> {
-        self.machine.mcu_mut()
-    }
-
-    pub fn cpu(&self) -> &crate::Cpu<NesMcu<R, D>> {
-        self.machine.cpu()
     }
 
     pub fn reset(&mut self) {
