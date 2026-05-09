@@ -1,7 +1,7 @@
 use self::microcode::{Microcode, opcode};
 use crate::{
-    SYSTEM_CYCLES_PER_CPU_CYCLE, SYSTEM_CYCLES_PER_PPU_CYCLE, get_system_cycles,
-    inc_system_cycles, mcu::Mcu,
+    SYSTEM_CYCLES_PER_CPU_CYCLE, SYSTEM_CYCLES_PER_PPU_CYCLE, get_system_cycles, inc_system_cycles,
+    mcu::Mcu,
 };
 use arraydeque::ArrayDeque;
 #[cfg(debug_assertions)]
@@ -336,18 +336,16 @@ impl<M: Mcu> Cpu<M> {
                         Microcode::Nop
                     } else if irq_pending {
                         let defer_for_branch = branch_defer
-                            && self
-                                .irq_requested_at
-                                .is_some_and(|at| {
-                                    get_system_cycles().wrapping_sub(at)
-                                        <= SYSTEM_CYCLES_PER_CPU_CYCLE
-                                });
+                            && self.irq_requested_at.is_some_and(|at| {
+                                get_system_cycles().wrapping_sub(at) <= SYSTEM_CYCLES_PER_CPU_CYCLE
+                            });
                         if defer_for_branch {
                             Microcode::FetchAndDecode
                         } else {
                             let should_defer = self.post_dma_irq_defer.is_some_and(|dma_end| {
                                 self.irq_requested_at.is_some_and(|at| {
-                                    if get_system_cycles() <= dma_end + SYSTEM_CYCLES_PER_CPU_CYCLE {
+                                    if get_system_cycles() <= dma_end + SYSTEM_CYCLES_PER_CPU_CYCLE
+                                    {
                                         at + SYSTEM_CYCLES_PER_CPU_CYCLE >= dma_end
                                     } else {
                                         at + SYSTEM_CYCLES_PER_CPU_CYCLE > get_system_cycles()
@@ -375,12 +373,9 @@ impl<M: Mcu> Cpu<M> {
                             }
                         }
                     } else {
-                        if self
-                            .post_dma_irq_defer
-                            .is_some_and(|dma_end| {
-                                get_system_cycles() > dma_end + 4 * SYSTEM_CYCLES_PER_CPU_CYCLE
-                            })
-                        {
+                        if self.post_dma_irq_defer.is_some_and(|dma_end| {
+                            get_system_cycles() > dma_end + 4 * SYSTEM_CYCLES_PER_CPU_CYCLE
+                        }) {
                             self.post_dma_irq_defer = None;
                         }
                         Microcode::FetchAndDecode
@@ -487,10 +482,32 @@ impl<M: Mcu> Cpu<M> {
     fn perform_dmc_dma_on_stall(&mut self) {
         if let Some(sample_addr) = self.mcu.take_dmc_dma_address() {
             let phantom_addr = self.dmc_dma_phantom_addr();
-            let byte = self.mcu.perform_dmc_dma_read(sample_addr, phantom_addr);
+            let byte = self.dmc_dma_read(sample_addr, phantom_addr);
             self.mcu.supply_dmc_dma_byte(byte);
         }
         self.dmc_dma = None;
+    }
+
+    /// Perform the DMC DMA bus read while the CPU is reading `cpu_read_addr`.
+    /// This models the read4 test behavior where the overlap can trigger an
+    /// extra side-effecting CPU register read before the actual sample fetch.
+    fn dmc_dma_read(&mut self, addr: u16, phantom_addr: u16) -> u8 {
+        match phantom_addr {
+            0x4016 | 0x4017 => {
+                // DMC DMA during controller read causes an extra controller read.
+                let _ = self.mcu.read(phantom_addr);
+            }
+            0x2007 => {
+                // DMC DMA during PPUDATA read causes extra PPUDATA reads.
+                // The read4 tests accept 2-3 extra reads depending on power-on
+                // CPU/PPU phase; use the stable 2-read variant here.
+                let _ = self.mcu.read(0x2007);
+                let _ = self.mcu.read(0x2007);
+            }
+            _ => {}
+        }
+
+        self.mcu.read(addr)
     }
 
     /// Advance DMC DMA state machine phase.
@@ -818,9 +835,8 @@ impl<M: Mcu> Cpu<M> {
         if self.nmi_line != nmi {
             self.nmi_line = nmi;
             if nmi {
-                self.nmi_requested_at = Some(
-                    get_system_cycles().wrapping_sub(SYSTEM_CYCLES_PER_PPU_CYCLE),
-                );
+                self.nmi_requested_at =
+                    Some(get_system_cycles().wrapping_sub(SYSTEM_CYCLES_PER_PPU_CYCLE));
             }
         }
 
@@ -832,11 +848,9 @@ impl<M: Mcu> Cpu<M> {
     fn load_irq_pcl(&mut self) {
         let late_nmi_hijack = std::mem::take(&mut self.allow_late_irq_nmi_hijack)
             && self.mode == CpuMode::Normal
-            && self
-                .nmi_requested_at
-                .is_some_and(|cycles| {
-                    get_system_cycles() > cycles + 4 * SYSTEM_CYCLES_PER_PPU_CYCLE
-                });
+            && self.nmi_requested_at.is_some_and(|cycles| {
+                get_system_cycles() > cycles + 4 * SYSTEM_CYCLES_PER_PPU_CYCLE
+            });
         let hijacked = if self.irq_is_brk {
             std::mem::take(&mut self.irq_vector_is_nmi)
         } else {

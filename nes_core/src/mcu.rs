@@ -16,10 +16,6 @@ pub trait Mcu {
         None
     }
 
-    fn perform_dmc_dma_read(&mut self, sample_addr: u16, _cpu_read_addr: u16) -> u8 {
-        self.read(sample_addr)
-    }
-
     fn supply_dmc_dma_byte(&mut self, _byte: u8) {}
 }
 

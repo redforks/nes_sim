@@ -147,32 +147,6 @@ impl<R: Render, D: AudioDriver> NesMcu<R, D> {
         }
     }
 
-    pub fn take_dmc_dma_address(&mut self) -> Option<u16> {
-        self.dmc_dma_pending.take().map(|(addr, _)| addr)
-    }
-
-    /// Perform the DMC DMA bus read while the CPU is reading `cpu_read_addr`.
-    /// This models the read4 test behavior where the overlap can trigger an
-    /// extra side-effecting CPU register read before the actual sample fetch.
-    pub fn perform_dmc_dma_read(&mut self, sample_addr: u16, cpu_read_addr: u16) -> u8 {
-        match cpu_read_addr {
-            0x4016 | 0x4017 => {
-                // DMC DMA during controller read causes an extra controller read.
-                let _ = self.read(cpu_read_addr);
-            }
-            0x2007 => {
-                // DMC DMA during PPUDATA read causes extra PPUDATA reads.
-                // The read4 tests accept 2-3 extra reads depending on power-on
-                // CPU/PPU phase; use the stable 2-read variant here.
-                let _ = self.read(0x2007);
-                let _ = self.read(0x2007);
-            }
-            _ => {}
-        }
-
-        self.read(sample_addr)
-    }
-
     pub fn press_button(&mut self, button: Button) {
         self.controller.a.press(button);
     }
@@ -284,11 +258,7 @@ impl<R: Render, D: AudioDriver> Mcu for NesMcu<R, D> {
     }
 
     fn take_dmc_dma_address(&mut self) -> Option<u16> {
-        self.take_dmc_dma_address()
-    }
-
-    fn perform_dmc_dma_read(&mut self, sample_addr: u16, cpu_read_addr: u16) -> u8 {
-        self.perform_dmc_dma_read(sample_addr, cpu_read_addr)
+        self.dmc_dma_pending.take().map(|(addr, _)| addr)
     }
 
     fn supply_dmc_dma_byte(&mut self, byte: u8) {
