@@ -23,25 +23,15 @@ impl<const SIZE: usize> RamMcu<SIZE> {
 // impl super::Mcu trait
 impl<const SIZE: usize> Mcu for RamMcu<SIZE> {
     fn read(&mut self, address: u16) -> u8 {
-        self.ram[self.to_index(address)]
+        self.ram[self.to_index(address) & (SIZE - 1)]
     }
 
     fn peek(&self, address: u16) -> u8 {
-        self.ram[self.to_index(address)]
+        self.ram[self.to_index(address) & (SIZE - 1)]
     }
 
     fn write(&mut self, address: u16, value: u8) {
-        self.ram[self.to_index(address)] = value;
-    }
-}
-
-impl<const SIZE: usize> RamMcu<SIZE> {
-    pub fn region(&self) -> (u16, u16) {
-        if self.start == 0 {
-            (0, (SIZE - 1) as u16)
-        } else {
-            (self.start, self.start - 1 + (SIZE as u16))
-        }
+        self.ram[self.to_index(address) & (SIZE - 1)] = value;
     }
 }
 
@@ -60,23 +50,6 @@ mod tests {
         let mut mcu = RamMcu::new([0; 0x100]);
         mcu.write(0x80, 0x12);
         assert_eq!(mcu.read(0x80), 0x12);
-    }
-
-    #[test]
-    fn test_new_with_non_zero_start() {
-        let mcu = RamMcu::new([0; 0x100]);
-        // start should be 0 for new()
-        let (start, end) = mcu.region();
-        assert_eq!(start, 0);
-        assert_eq!(end, 0xFF); // SIZE - 1
-    }
-
-    #[test]
-    fn test_region_with_start() {
-        let mcu = RamMcu::start_from(0x8000, [0; 0x100]);
-        let (start, end) = mcu.region();
-        assert_eq!(start, 0x8000);
-        assert_eq!(end, 0x80FF); // 0x8000 + 0x100 - 1
     }
 
     #[test]

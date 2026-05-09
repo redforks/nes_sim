@@ -256,9 +256,7 @@ impl<R: Render> Ppu<R> {
     }
 
     pub fn write_oam_dma_byte(&mut self, value: u8) {
-        let addr = self.registers.oam_addr as usize;
-        self.registers.oam_data[addr] = normalize_oam_byte(self.registers.oam_addr, value);
-        self.registers.oam_addr = self.registers.oam_addr.wrapping_add(1);
+        self.registers.write_oam_data(value);
     }
 
     pub fn tick(&mut self, cartridge: &mut Cartridge) {

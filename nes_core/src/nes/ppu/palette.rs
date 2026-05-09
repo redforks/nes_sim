@@ -58,7 +58,7 @@ impl Palette {
         self.data[Self::index(address)] = value;
     }
 
-    fn index(addr: u16) -> usize {
+    const fn index(addr: u16) -> usize {
         let addr = addr & 0x1f;
         if let 0x10 | 0x14 | 0x18 | 0x1C = addr {
             (addr & 0xf) as usize

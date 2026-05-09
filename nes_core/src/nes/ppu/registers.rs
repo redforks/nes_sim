@@ -136,7 +136,21 @@ impl Registers {
     }
 
     pub fn read_oam_data(&self) -> u8 {
-        self.oam_data[self.oam_addr as usize]
+        self.oam_data[(self.oam_addr as usize) & 0xff]
+    }
+
+    pub fn write_oam_data(&mut self, value: u8) {
+        fn normalize_oam_byte(addr: u8, value: u8) -> u8 {
+            if addr & 0x03 == 0x02 {
+                value & 0xE3
+            } else {
+                value
+            }
+        }
+
+        let addr = self.oam_addr;
+        self.oam_data[(addr as usize) & 0xff] = normalize_oam_byte(addr, value);
+        self.oam_addr = addr.wrapping_add(1);
     }
 
     pub fn write_scroll(&mut self, value: u8) {
