@@ -86,7 +86,8 @@ pub struct Cpu<M: Mcu> {
     /// Cleared when the IRQ is taken or the window expires.
     post_dma_irq_defer: Option<u64>,
     /// DMC DMA state machine – `None` when no DMC DMA is in progress.
-    dmc_dma: Option<DmcDmaPhase>,
+    /// Stores (phase, address) for the DMA operation.
+    dmc_dma: Option<(DmcDmaPhase, u16)>,
     mode: CpuMode,
     resume_second_phase_after_stall: bool,
 
@@ -216,18 +217,19 @@ impl<M: Mcu> Cpu<M> {
     }
 
     /// Request a DMC DMA stall.
+    /// `addr`: the sample address to read from.
     /// `is_reload`: true for reload DMAs (output unit emptied buffer, 4 cycles),
     ///              false for load DMAs ($4015 write with empty buffer, 3 cycles).
-    pub fn request_dmc_dma(&mut self, is_reload: bool) {
+    pub fn request_dmc_dma(&mut self, addr: u16, is_reload: bool) {
         if self.dmc_dma.is_none() {
             if is_reload {
                 // Reload DMA: scheduled on PUT cycle -> 4 stall cycles
                 // Halt + Align + Dummy + DmaRead
-                self.dmc_dma = Some(DmcDmaPhase::Halt);
+                self.dmc_dma = Some((DmcDmaPhase::Halt, addr));
             } else {
                 // Load DMA: scheduled on GET cycle -> 3 stall cycles
                 // Halt + Dummy + DmaRead (skip Align)
-                self.dmc_dma = Some(DmcDmaPhase::LoadHalt);
+                self.dmc_dma = Some((DmcDmaPhase::LoadHalt, addr));
             }
         }
     }
@@ -480,7 +482,7 @@ impl<M: Mcu> Cpu<M> {
     /// address of whatever memory operation it was about to perform when
     /// it was halted.
     fn perform_dmc_dma_on_stall(&mut self) {
-        if let Some(sample_addr) = self.mcu.take_dmc_dma_address() {
+        if let Some((_, sample_addr)) = self.dmc_dma {
             let phantom_addr = self.dmc_dma_phantom_addr();
             let byte = self.dmc_dma_read(sample_addr, phantom_addr);
             self.mcu.supply_dmc_dma_byte(byte);
@@ -513,15 +515,15 @@ impl<M: Mcu> Cpu<M> {
     /// Advance DMC DMA state machine phase.
     /// Returns `true` if the DMA read should be performed this cycle.
     fn advance_dmc_dma_phase(&mut self) -> bool {
-        let next_phase = match self.dmc_dma {
-            Some(DmcDmaPhase::LoadHalt) => DmcDmaPhase::Dummy,
-            Some(DmcDmaPhase::Halt) => DmcDmaPhase::Align,
-            Some(DmcDmaPhase::Align) => DmcDmaPhase::Dummy,
-            Some(DmcDmaPhase::Dummy) => DmcDmaPhase::DmaRead,
-            Some(DmcDmaPhase::DmaRead) => return true,
+        let (next_phase, addr) = match self.dmc_dma {
+            Some((DmcDmaPhase::LoadHalt, addr)) => (DmcDmaPhase::Dummy, addr),
+            Some((DmcDmaPhase::Halt, addr)) => (DmcDmaPhase::Align, addr),
+            Some((DmcDmaPhase::Align, addr)) => (DmcDmaPhase::Dummy, addr),
+            Some((DmcDmaPhase::Dummy, addr)) => (DmcDmaPhase::DmaRead, addr),
+            Some((DmcDmaPhase::DmaRead, _)) => return true,
             None => return false,
         };
-        self.dmc_dma = Some(next_phase);
+        self.dmc_dma = Some((next_phase, addr));
         false
     }
 

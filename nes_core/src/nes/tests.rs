@@ -13,7 +13,6 @@ fn test_mcu() -> NesMcu<ImageRender, ()> {
         apu: Apu::new(()),
         oam_dma_pending: None,
         oam_dma: None,
-        dmc_dma_pending: None,
         open_bus: 0,
     }
 }
