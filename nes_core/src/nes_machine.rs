@@ -103,8 +103,8 @@ where
         self.machine.cpu_mut().set_irq(irq_pending);
 
         self.machine.mcu_mut().tick_apu();
-        if let Some((addr, is_reload)) = self.machine.mcu_mut().take_dmc_dma_pending() {
-            self.machine.cpu_mut().request_dmc_dma(addr, is_reload);
+        if let Some(addr) = self.machine.mcu_mut().take_dmc_dma_pending() {
+            self.machine.cpu_mut().request_dmc_dma(addr);
         }
 
         if ppu_tick {

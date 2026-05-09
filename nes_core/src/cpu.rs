@@ -218,19 +218,16 @@ impl<M: Mcu> Cpu<M> {
 
     /// Request a DMC DMA stall.
     /// `addr`: the sample address to read from.
-    /// `is_reload`: true for reload DMAs (output unit emptied buffer, 4 cycles),
-    ///              false for load DMAs ($4015 write with empty buffer, 3 cycles).
-    pub fn request_dmc_dma(&mut self, addr: u16, is_reload: bool) {
-        if self.dmc_dma.is_none() {
-            if is_reload {
-                // Reload DMA: scheduled on PUT cycle -> 4 stall cycles
-                // Halt + Align + Dummy + DmaRead
-                self.dmc_dma = Some((DmcDmaPhase::Halt, addr));
-            } else {
-                // Load DMA: scheduled on GET cycle -> 3 stall cycles
-                // Halt + Dummy + DmaRead (skip Align)
-                self.dmc_dma = Some((DmcDmaPhase::LoadHalt, addr));
-            }
+    pub fn request_dmc_dma(&mut self, addr: u16) {
+        let cycles = get_system_cycles() % SYSTEM_CYCLES_PER_CPU_CYCLE;
+        if cycles % 2 == 0 {
+            // Reload DMA: scheduled on PUT cycle -> 4 stall cycles
+            // Halt + Align + Dummy + DmaRead
+            self.dmc_dma = Some((DmcDmaPhase::Halt, addr));
+        } else {
+            // Load DMA: scheduled on GET cycle -> 3 stall cycles
+            // Halt + Dummy + DmaRead (skip Align)
+            self.dmc_dma = Some((DmcDmaPhase::LoadHalt, addr));
         }
     }
 

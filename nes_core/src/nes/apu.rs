@@ -126,8 +126,7 @@ impl<D: AudioDriver> Apu<D> {
     }
 
     /// Take the pending DMC DMA request, if any.
-    /// Returns (address, is_reload).
-    pub fn take_dmc_dma_request(&mut self) -> Option<(u16, bool)> {
+    pub fn take_dmc_dma_request(&mut self) -> Option<u16> {
         self.dmc.take_dma_request()
     }
 
