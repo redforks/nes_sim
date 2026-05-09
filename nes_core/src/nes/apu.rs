@@ -4,6 +4,7 @@ use bitfield_struct::{bitenum, bitfield};
 mod dmc;
 mod frame_sequencer;
 mod helper;
+mod mixer;
 mod noise;
 mod pulse;
 mod triangle;
@@ -11,6 +12,7 @@ mod triangle;
 use dmc::Dmc;
 use frame_sequencer::FrameSequencer;
 use helper::{Envelope, LengthControl};
+use mixer::Mixer;
 use noise::Noise;
 use pulse::Pulse;
 use triangle::Triangle;
@@ -326,8 +328,6 @@ impl AudioDriver for () {
     fn push_sample(&mut self, _sample: f32) {}
 }
 
-const CPU_CLOCK_HZ: u64 = 1_789_773;
-
 /// APU status information for debugging/inspection
 #[derive(Debug, Clone, Copy)]
 pub struct ApuStatusInfo {
@@ -347,11 +347,8 @@ pub struct Apu<D: AudioDriver = ()> {
     noise: Noise,
     dmc: Dmc,
     driver: D,
-    sample_rate: u32,
-    sample_accumulator: u64,
+    mixer: Mixer,
     frame_sequencer: FrameSequencer,
-    dc_last_input: f32,
-    dc_last_output: f32,
 }
 
 impl Default for Apu<()> {
@@ -370,11 +367,8 @@ impl<D: AudioDriver> Apu<D> {
             noise: Noise::default(),
             dmc: Dmc::default(),
             driver,
-            sample_rate,
-            sample_accumulator: 0,
+            mixer: Mixer::new(sample_rate),
             frame_sequencer: FrameSequencer::default(),
-            dc_last_input: 0.0,
-            dc_last_output: 0.0,
         }
     }
 
@@ -557,41 +551,14 @@ impl<D: AudioDriver> Apu<D> {
     }
 
     fn emit_samples(&mut self) {
-        self.sample_accumulator = self
-            .sample_accumulator
-            .wrapping_add(self.sample_rate as u64);
-        while self.sample_accumulator >= CPU_CLOCK_HZ {
-            self.sample_accumulator -= CPU_CLOCK_HZ;
-            let sample = self.mix_sample();
-            self.driver.push_sample(sample);
-        }
-    }
-
-    fn mix_sample(&mut self) -> f32 {
-        let pulse_1 = self.pulse1.output() as f32;
-        let pulse_2 = self.pulse2.output() as f32;
-        let triangle = self.triangle.output() as f32;
-        let noise = self.noise.output() as f32;
-        let dmc = self.dmc.output() as f32;
-
-        let pulse_mix = if pulse_1 + pulse_2 == 0.0 {
-            0.0
-        } else {
-            95.88 / ((8128.0 / (pulse_1 + pulse_2)) + 100.0)
-        };
-
-        let tnd_input = triangle / 8227.0 + noise / 12241.0 + dmc / 22638.0;
-        let tnd_mix = if tnd_input == 0.0 {
-            0.0
-        } else {
-            159.79 / ((1.0 / tnd_input) + 100.0)
-        };
-
-        let input = pulse_mix + tnd_mix;
-        let output = input - self.dc_last_input + (0.995 * self.dc_last_output);
-        self.dc_last_input = input;
-        self.dc_last_output = output;
-        (output * 2.0).clamp(-1.0, 1.0)
+        self.mixer.emit_samples(
+            self.pulse1.output(),
+            self.pulse2.output(),
+            self.triangle.output(),
+            self.noise.output(),
+            self.dmc.output(),
+            |sample| self.driver.push_sample(sample),
+        );
     }
 }
 
