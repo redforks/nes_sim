@@ -227,9 +227,6 @@ impl<D: AudioDriver> Apu<D> {
         self.triangle.set_enabled(flags.triangle_enabled());
         self.noise.set_enabled(flags.noise_enabled());
         self.dmc.set_enabled(flags.dmc_enabled());
-
-        // Always clear DMC interrupt on $4015 write
-        self.dmc.clear_interrupt_flag();
     }
 
     fn tick_envelop_and_linear(&mut self) {

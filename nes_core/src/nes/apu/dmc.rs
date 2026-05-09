@@ -140,6 +140,13 @@ impl OutputUnit {
     fn is_buffer_empty(&self) -> bool {
         self.sample_buffer.is_none()
     }
+
+    fn clear(&mut self) {
+        // If the DMC bit is clear, the DMC bytes remaining will be set to 0 and the DMC will silence when it empties.
+        self.sample_buffer = None;
+        self.output = 0;
+        self.remain_bits = 0;
+    }
 }
 
 #[derive(Debug)]
@@ -161,7 +168,13 @@ impl Default for Dmc {
 
 impl Dmc {
     pub fn set_enabled(&mut self, enabled: bool) {
+        // Always clear DMC interrupt on $4015 write
+        self.clear_interrupt_flag();
+
         self.dma_reader.set_enabled(enabled);
+        if !enabled {
+            self.output.clear();
+        }
     }
 
     pub fn status_bit(&self) -> bool {
