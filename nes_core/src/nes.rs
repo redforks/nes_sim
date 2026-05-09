@@ -30,8 +30,8 @@ pub struct NesMcu<R: Render, D: AudioDriver> {
     apu: Apu<D>,
     oam_dma_pending: Option<u8>,
     oam_dma: Option<OamDmaState>,
-    /// Pending DMC DMA: (address, is_reload).
-    dmc_dma_pending: Option<(u16, bool)>,
+    /// Pending DMC DMA address
+    dmc_dma_pending: Option<u16>,
     /// CPU data bus open bus value: the last value read by the CPU.
     /// Reading write-only or unmapped addresses returns this value.
     open_bus: u8,
@@ -140,7 +140,7 @@ impl<R: Render, D: AudioDriver> NesMcu<R, D> {
     /// Returns (took_pending, is_reload) if a DMA was queued.
     pub fn take_dmc_dma_pending(&mut self) -> Option<bool> {
         if let Some((addr, is_reload)) = self.apu.take_dmc_dma_request() {
-            self.dmc_dma_pending = Some((addr, is_reload));
+            self.dmc_dma_pending = Some(addr);
             Some(is_reload)
         } else {
             None
@@ -258,7 +258,7 @@ impl<R: Render, D: AudioDriver> Mcu for NesMcu<R, D> {
     }
 
     fn take_dmc_dma_address(&mut self) -> Option<u16> {
-        self.dmc_dma_pending.take().map(|(addr, _)| addr)
+        self.dmc_dma_pending.take()
     }
 
     fn supply_dmc_dma_byte(&mut self, byte: u8) {
