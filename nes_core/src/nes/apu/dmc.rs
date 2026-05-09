@@ -174,7 +174,9 @@ impl Dmc {
         self.dma_reader.set_enabled(enabled);
         if !enabled {
             self.output.clear();
-        }
+        } else if self.output.is_buffer_empty() {
+            self.dma_reader.check_and_request_dma();
+        };
     }
 
     pub fn status_bit(&self) -> bool {
@@ -187,13 +189,6 @@ impl Dmc {
             if self.output.is_buffer_empty() {
                 self.dma_reader.tick();
             }
-        }
-    }
-
-    pub fn check_and_request_dma(&mut self) {
-        // Load DMA: triggered by $4015 write with empty buffer
-        if self.output.is_buffer_empty() {
-            self.dma_reader.check_and_request_dma();
         }
     }
 

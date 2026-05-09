@@ -136,16 +136,6 @@ impl<D: AudioDriver> Apu<D> {
         self.dmc.supply_dma_byte(byte);
     }
 
-    /// Re-check if DMC DMA is needed after a CPU write to $4015.
-    /// On real hardware the write and DMA check happen simultaneously,
-    /// but in our sequential model the APU tick (with DMA check) runs
-    /// before the CPU write. This extra check catches the case where
-    /// `sta $4015` enables DMC with an empty buffer, which should
-    /// trigger an immediate DMA on the same cycle.
-    pub fn recheck_dmc_dma(&mut self) {
-        self.dmc.check_and_request_dma();
-    }
-
     pub fn flush(&mut self) {
         self.driver.flush();
     }

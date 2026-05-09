@@ -108,17 +108,7 @@ where
             }
         }
 
-        let result = self.machine.tick();
-
-        // After the CPU tick, re-check DMC DMA in case the CPU just
-        // wrote to $4015 enabling DMC with an empty sample buffer.
-        // On real hardware the APU and CPU are clocked simultaneously,
-        // so the DMA check sees the $4015 write on the same cycle.
-        if cpu_tick {
-            self.machine.mcu_mut().recheck_dmc_dma();
-        }
-
-        result
+        self.machine.tick()
     }
 
     pub fn mcu(&self) -> &NesMcu<R, D> {
