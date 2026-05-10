@@ -351,18 +351,7 @@ impl<M: Mcu> Cpu<M> {
                         self.nmi_requested_at = None;
                         self.mode = CpuMode::Nmi;
                         self.irq_is_brk = false;
-                        self.push_microcodes(&[
-                            Microcode::Nop,
-                            Microcode::PushPcH,
-                            Microcode::PushPcL,
-                            Microcode::PushStatus {
-                                set_disable_interrupt: true,
-                                break_flag: false,
-                            },
-                            Microcode::LoadNmiPcL,
-                            Microcode::LoadNmiPcH,
-                        ]);
-                        Microcode::Nop
+                        self.push_enter_interrupt_microcodes(true)
                     } else if irq_pending {
                         let defer_for_branch = branch_defer
                             && self.irq_requested_at.is_some_and(|at| {
@@ -386,19 +375,8 @@ impl<M: Mcu> Cpu<M> {
                             } else {
                                 self.post_dma_irq_defer = None;
                                 self.irq_is_brk = false;
-                                self.push_microcodes(&[
-                                    Microcode::Nop,
-                                    Microcode::PushPcH,
-                                    Microcode::PushPcL,
-                                    Microcode::PushStatus {
-                                        set_disable_interrupt: true,
-                                        break_flag: false,
-                                    },
-                                    Microcode::LoadIrqPcL,
-                                    Microcode::LoadIrqPcH,
-                                ]);
                                 self.allow_late_irq_nmi_hijack = true;
-                                Microcode::Nop
+                                self.push_enter_interrupt_microcodes(false)
                             }
                         }
                     } else {
@@ -476,6 +454,12 @@ impl<M: Mcu> Cpu<M> {
 
     pub fn peek_byte(&mut self, addr: u16) -> u8 {
         self.mcu.peek(addr)
+    }
+
+    fn read_pc_byte(&mut self) {
+        let addr = self.pc;
+        self.inc_mem_count();
+        self.mcu.read(addr);
     }
 
     fn inc_read_byte(&mut self) -> u8 {
@@ -775,22 +759,12 @@ impl<M: Mcu> Cpu<M> {
         self.alu = self.pop_stack();
     }
 
-    fn push_status(&mut self, set_disable_interrupt: bool, break_flag: bool) {
+    fn push_status(&mut self, break_flag: bool) {
         self.push_stack(if break_flag {
             self.status | Flag::Break as u8 | Flag::NotUsed as u8
         } else {
             self.status | Flag::NotUsed as u8
         });
-        if set_disable_interrupt && self.mode == CpuMode::Normal {
-            self.irq_is_brk = break_flag;
-            self.irq_vector_is_nmi = self.nmi_hijack_ready();
-            if self.irq_vector_is_nmi {
-                self.nmi_requested_at = None;
-            }
-        }
-        if set_disable_interrupt {
-            self.inner_set_flag(Flag::InterruptDisabled, true);
-        }
     }
 
     fn plp(&mut self) {
@@ -823,6 +797,27 @@ impl<M: Mcu> Cpu<M> {
 
     fn push_microcodes(&mut self, microcodes: &[Microcode]) {
         self.microcode_queue.extend_back(microcodes.iter().copied());
+    }
+
+    /// And return the first microcode
+    fn push_enter_interrupt_microcodes(&mut self, nmi: bool) -> Microcode {
+        self.push_microcodes(&[
+            Microcode::FetchOnly,
+            Microcode::PushPcH,
+            Microcode::PushPcL,
+            Microcode::PushStatus { break_flag: false },
+            if nmi {
+                Microcode::LoadNmiPcL
+            } else {
+                Microcode::LoadIrqPcL
+            },
+            if nmi {
+                Microcode::LoadNmiPcH
+            } else {
+                Microcode::LoadIrqPcH
+            },
+        ]);
+        Microcode::FetchOnly
     }
 
     /// Return how many microcodes are in queue, used for draining pending reset/interrupt work.
@@ -877,6 +872,7 @@ impl<M: Mcu> Cpu<M> {
                 || self.nmi_hijack_ready()
                 || late_nmi_hijack
         };
+        self.set_flag(Flag::InterruptDisabled, true);
         let low = if hijacked {
             self.nmi_requested_at = None;
             self.irq_hijacked = true;
@@ -896,7 +892,7 @@ impl<M: Mcu> Cpu<M> {
         let high = if self.irq_hijacked {
             // hijacked by nmi
             self.mode = CpuMode::Nmi;
-            self.inner_set_flag(Flag::InterruptDisabled, true);
+            // self.inner_set_flag(Flag::InterruptDisabled, true);
             self.read_byte(0xFFFB)
         } else {
             self.defer_nmi_poll = true;

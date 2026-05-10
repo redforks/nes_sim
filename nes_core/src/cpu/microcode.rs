@@ -395,13 +395,7 @@ const fn build_opcode_table() -> [ArrayVec<[Microcode; 7]>; 256] {
     r[BVS as usize] = microcode_arr!(BranchRelative(BranchTest::IfOverflowSet));
     r[PHA as usize] = microcode_arr!(Nop, Pha);
     r[PLA as usize] = microcode_arr!(Nop, PopStack, UpdateAFromAlu);
-    r[PHP as usize] = microcode_arr!(
-        Nop,
-        PushStatus {
-            set_disable_interrupt: false,
-            break_flag: true
-        }
-    );
+    r[PHP as usize] = microcode_arr!(Nop, PushStatus { break_flag: true });
     r[PLP as usize] = microcode_arr!(Nop, Nop, Plp);
     r[JMP_ABSOLUTE as usize] = microcode_arr!(AbsoluteL, LoadPcAbsoluteH);
     r[JMP_INDIRECT as usize] = microcode_arr!(AbsoluteL, AbsoluteH, IndexedL, IndexedHAndJump);
@@ -465,10 +459,7 @@ const fn build_opcode_table() -> [ArrayVec<[Microcode; 7]>; 256] {
         SkipImmediate,
         PushPcH,
         PushPcL,
-        PushStatus {
-            break_flag: true,
-            set_disable_interrupt: true,
-        },
+        PushStatus { break_flag: true },
         LoadIrqPcL,
         LoadIrqPcH
     );
@@ -847,6 +838,8 @@ pub enum CrossPageBehavior {
 /// Each Microcode instruction executed by the CPU in a single cycle
 #[derive(Debug, Clone, Copy, Default)]
 pub enum Microcode {
+    /// Fetch byte at the pc address, but do nothing, pc not increase
+    FetchOnly,
     /// Fetch and decode next op code
     FetchAndDecode,
     /// Load register with value from memory
@@ -965,8 +958,6 @@ pub enum Microcode {
     PushPcH,
     /// Push cpu status register into stack
     PushStatus {
-        /// after push status, set disable interrupt flag
-        set_disable_interrupt: bool,
         /// break flag of status to set
         break_flag: bool,
     },
@@ -1414,6 +1405,7 @@ impl Microcode {
     /// perform second phase of this Microcode
     pub fn exec<M: Mcu>(self, cpu: &mut Cpu<M>) {
         match self {
+            Self::FetchOnly => cpu.read_pc_byte(),
             Self::FetchAndDecode => Self::fetch_and_decode(cpu),
             Self::LoadR(r) => Self::load_register(cpu, r),
             Self::StoreR(r) => Self::store_register(cpu, r),
@@ -1493,6 +1485,7 @@ impl Microcode {
             Self::LoadIrqPcL => cpu.load_irq_pcl(),
             Self::LoadNmiPcL => {
                 cpu.pc = cpu.read_byte(0xFFFA) as u16;
+                cpu.set_flag(Flag::InterruptDisabled, true);
             }
             Self::LoadNmiPcH => {
                 cpu.pc |= (cpu.read_byte(0xFFFB) as u16) << 8;
@@ -1503,10 +1496,7 @@ impl Microcode {
             Self::PushPcL => {
                 cpu.push_stack((cpu.pc & 0xFF) as u8);
             }
-            Self::PushStatus {
-                set_disable_interrupt,
-                break_flag,
-            } => cpu.push_status(set_disable_interrupt, break_flag),
+            Self::PushStatus { break_flag } => cpu.push_status(break_flag),
             Self::Plp => cpu.plp(),
             Self::PopPcL => {
                 cpu.pc = cpu.pop_stack() as u16;
@@ -1536,8 +1526,6 @@ impl Microcode {
             Self::ImmediateWithOp(op) => Self::immediate_with_op(cpu, op),
         }
     }
-
-    /// Execute the micro code
 
     fn fetch_and_decode<M: Mcu>(cpu: &mut Cpu<M>) {
         let opcode = cpu.inc_read_byte();

@@ -127,7 +127,7 @@ fn test_push_status() {
     cpu.sp = 0xFF;
     cpu.status = 0b0000_0000;
 
-    cpu.push_status(false, false);
+    cpu.push_status(false);
     let status_on_stack = cpu.read_byte(0x1FF);
     // NotUsed flag (0x20) should be set
     assert_eq!(status_on_stack & 0x20, 0x20);
@@ -3586,7 +3586,7 @@ fn test_push_status_with_all_flags() {
     cpu.set_flag(Flag::Negative, true);
     // Note: Break flag is NOT set, so it won't be pushed
 
-    cpu.push_status(true, false);
+    cpu.push_status(false);
 
     // push_status writes to current SP, then decrements
     // With SP=0xFF, it writes to 0x100 + 0xFF = 0x01FF, then SP becomes 0xFE
@@ -3970,11 +3970,7 @@ fn stack_and_misc_microcodes_manipulate_state() {
     Microcode::UpdateAFromAlu.exec(&mut cpu);
     assert_eq!(cpu.a, 0xAB);
 
-    Microcode::PushStatus {
-        set_disable_interrupt: false,
-        break_flag: true,
-    }
-    .exec(&mut cpu);
+    Microcode::PushStatus { break_flag: true }.exec(&mut cpu);
     assert_eq!(
         cpu.mcu().mem[0x01FF] & (Flag::Break as u8),
         Flag::Break as u8
