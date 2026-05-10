@@ -1,7 +1,7 @@
 use super::microcode::{BranchTest, ImmediateOp, TransferDirection, opcode};
 use super::*;
-use crate::{SYSTEM_CYCLES_PER_CPU_CYCLE, SYSTEM_CYCLES_PER_PPU_CYCLE, set_system_cycles};
 use crate::test_utils::MockMcu;
+use crate::{SYSTEM_CYCLES_PER_CPU_CYCLE, SYSTEM_CYCLES_PER_PPU_CYCLE, set_system_cycles};
 
 // NES vector addresses
 const IRQ_VECTOR: u16 = 0xFFFE;

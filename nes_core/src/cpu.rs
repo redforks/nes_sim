@@ -1,9 +1,9 @@
-use self::microcode::{Microcode, opcode};
 use crate::{
     SYSTEM_CYCLES_PER_CPU_CYCLE, SYSTEM_CYCLES_PER_PPU_CYCLE, get_system_cycles, inc_system_cycles,
     mcu::Mcu,
 };
 use arraydeque::ArrayDeque;
+use microcode::{Microcode, opcode};
 #[cfg(debug_assertions)]
 use std::{cell::Cell, rc::Rc};
 
@@ -25,26 +25,20 @@ enum CpuMode {
     Halt,
 }
 
-/// DMC DMA state machine.
+/// DMC DMA state.
 ///
-/// On real hardware the DMC DMA steals 3–4 CPU cycles depending on
-/// bus alignment.  Each phase is a pure CPU stall cycle.  During the
-/// DmaRead phase the sample byte is fetched and any side-effecting
-/// "phantom reads" ($4016/$4017, $2007) are modelled using the CPU's
-/// microcode queue and address bus value (`cpu.ab`).
+/// On real hardware the DMC DMA steals 3–4 CPU cycles depending on bus
+/// alignment.  The DMA halts the CPU on a read cycle (delaying if the
+/// CPU is currently writing), then runs a fixed sequence: halt, dummy,
+/// optional alignment, then the actual DMA read on a GET cycle.
 ///
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum DmcDmaPhase {
-    LoadHalt,
-    /// First stall cycle (CPU halted).
-    Halt,
-    /// Bus alignment stall.
-    Align,
-    /// Dummy read stall.
-    Dummy,
-    /// DMA read cycle — sample byte is fetched here.
-    DmaRead,
-}
+/// During the DmaRead cycle the sample byte is fetched and any
+/// side-effecting "phantom reads" ($4016/$4017, $2007) are modelled
+/// using the CPU's microcode queue and address bus value (`cpu.ab`).
+///
+/// The `dmc_dma_stall` counter tracks remaining stall cycles (0 = idle).
+/// `dmc_dma_pending` holds the sample address while waiting to halt or
+/// while the DMA is in progress (consumed on the final read cycle).
 
 pub struct Cpu<M: Mcu> {
     pub a: u8,
@@ -85,9 +79,14 @@ pub struct Cpu<M: Mcu> {
     /// asserted for at least 1 CPU cycle before being acted on.
     /// Cleared when the IRQ is taken or the window expires.
     post_dma_irq_defer: Option<u64>,
-    /// DMC DMA state machine – `None` when no DMC DMA is in progress.
-    /// Stores (phase, address) for the DMA operation.
-    dmc_dma: Option<(DmcDmaPhase, u16)>,
+    /// DMC DMA sample address.  Set by `request_dmc_dma`, consumed
+    /// when the DMA read completes.
+    dmc_dma_pending: Option<u16>,
+    /// Remaining DMC DMA stall cycles (0 = no DMA in progress).
+    /// Always set to 3 on a successful halt; the total DMA length
+    /// (3 or 4 CPU cycles) is determined by whether the halt lands
+    /// on first-phase (GET → 3 cycles) or second-phase (PUT → 4).
+    dmc_dma_stall: u8,
     mode: CpuMode,
     resume_second_phase_after_stall: bool,
 
@@ -126,7 +125,8 @@ impl<M: Mcu> Cpu<M> {
             branch_irq_defer: false,
             allow_late_irq_nmi_hijack: false,
             post_dma_irq_defer: None,
-            dmc_dma: None,
+            dmc_dma_pending: None,
+            dmc_dma_stall: 0,
             resume_second_phase_after_stall: false,
             irq_hijacked: false,
             #[cfg(debug_assertions)]
@@ -177,7 +177,8 @@ impl<M: Mcu> Cpu<M> {
         self.branch_irq_defer = false;
         self.allow_late_irq_nmi_hijack = false;
         self.post_dma_irq_defer = None;
-        self.dmc_dma = None;
+        self.dmc_dma_pending = None;
+        self.dmc_dma_stall = 0;
         self.mode = CpuMode::Normal;
         self.resume_second_phase_after_stall = false;
         self.sp = self.sp.wrapping_sub(3);
@@ -218,17 +219,14 @@ impl<M: Mcu> Cpu<M> {
 
     /// Request a DMC DMA stall.
     /// `addr`: the sample address to read from.
+    ///
+    /// The DMA will attempt to halt the CPU on the next read cycle.
+    /// If the CPU is currently writing the halt is deferred until a
+    /// read cycle occurs.  The total stall length (3 or 4 CPU cycles)
+    /// is determined by whether the halt lands on first-phase (GET)
+    /// or second-phase (PUT).
     pub fn request_dmc_dma(&mut self, addr: u16) {
-        let cycles = get_system_cycles() % SYSTEM_CYCLES_PER_CPU_CYCLE;
-        if cycles % 2 == 0 {
-            // Reload DMA: scheduled on PUT cycle -> 4 stall cycles
-            // Halt + Align + Dummy + DmaRead
-            self.dmc_dma = Some((DmcDmaPhase::Halt, addr));
-        } else {
-            // Load DMA: scheduled on GET cycle -> 3 stall cycles
-            // Halt + Dummy + DmaRead (skip Align)
-            self.dmc_dma = Some((DmcDmaPhase::LoadHalt, addr));
-        }
+        self.dmc_dma_pending = Some(addr);
     }
 
     fn inc_mem_count(&mut self) {
@@ -263,9 +261,8 @@ impl<M: Mcu> Cpu<M> {
             return (ExecuteResult::Continue, false);
         };
 
-        // ── Advance DMC DMA state machine ──
-        // Each phase is a pure CPU stall cycle.
-        if self.dmc_dma.is_some() {
+        // ── Active DMC DMA (CPU is halted) ──
+        if self.dmc_dma_stall > 0 {
             if first_phase {
                 return (ExecuteResult::Continue, false);
             }
@@ -273,8 +270,11 @@ impl<M: Mcu> Cpu<M> {
             if self.cur_microcode.is_some() {
                 self.resume_second_phase_after_stall = true;
             }
-            if self.advance_dmc_dma_phase() {
-                self.perform_dmc_dma_on_stall();
+            if self.dmc_dma_stall == 1 {
+                self.perform_dmc_dma_read();
+                self.dmc_dma_stall = 0;
+            } else {
+                self.dmc_dma_stall -= 1;
             }
             return (ExecuteResult::Continue, false);
         }
@@ -301,6 +301,36 @@ impl<M: Mcu> Cpu<M> {
             }
 
             return (ExecuteResult::Continue, false);
+        }
+
+        // DMC DMA halt-delay: on a pending DMA, check whether we can halt
+        // BEFORE popping a new microcode or executing the current one.
+        // This avoids side effects like NMI/IRQ polling while DMA is pending.
+        if self.dmc_dma_pending.is_some() {
+            let can_halt = if first_phase {
+                // Peek: if queue is non-empty, check the front microcode.
+                // If empty, the next code would be FetchAndDecode (a read),
+                // so we can halt without popping.
+                self.microcode_queue
+                    .front()
+                    .map_or(true, |m| !m.is_write_operation())
+            } else {
+                // Second phase: check the microcode about to execute.
+                self.cur_microcode
+                    .map_or(false, |m| !m.is_write_operation())
+            };
+
+            if can_halt {
+                // Counter always starts at 3.  The total DMA length
+                // (3 or 4 CPU cycles) flows from where the halt lands:
+                // first-phase → 3 cycles, second-phase → 4 cycles.
+                self.dmc_dma_stall = 3;
+                if !first_phase {
+                    // Save cur_microcode for resume after DMA.
+                    self.resume_second_phase_after_stall = self.cur_microcode.is_some();
+                }
+                return (ExecuteResult::Continue, false);
+            }
         }
 
         let code = if first_phase {
@@ -473,18 +503,19 @@ impl<M: Mcu> Cpu<M> {
         self.mcu.read(addr)
     }
 
-    /// Perform the DMC DMA read during a dedicated stall cycle.
+    /// Perform the DMC DMA read on the final stall cycle.
     /// Uses the CPU's microcode queue and `self.ab` to detect phantom-read
     /// side effects: on real hardware the CPU's address bus holds the
     /// address of whatever memory operation it was about to perform when
     /// it was halted.
-    fn perform_dmc_dma_on_stall(&mut self) {
-        if let Some((_, sample_addr)) = self.dmc_dma {
-            let phantom_addr = self.dmc_dma_phantom_addr();
-            let byte = self.dmc_dma_read(sample_addr, phantom_addr);
-            self.mcu.supply_dmc_dma_byte(byte);
-        }
-        self.dmc_dma = None;
+    fn perform_dmc_dma_read(&mut self) {
+        let sample_addr = self
+            .dmc_dma_pending
+            .take()
+            .expect("dmc_dma_pending must be set during DMA");
+        let phantom_addr = self.dmc_dma_phantom_addr();
+        let byte = self.dmc_dma_read(sample_addr, phantom_addr);
+        self.mcu.supply_dmc_dma_byte(byte);
     }
 
     /// Perform the DMC DMA bus read while the CPU is reading `cpu_read_addr`.
@@ -509,21 +540,10 @@ impl<M: Mcu> Cpu<M> {
         self.mcu.read(addr)
     }
 
-    /// Advance DMC DMA state machine phase.
-    /// Returns `true` if the DMA read should be performed this cycle.
-    fn advance_dmc_dma_phase(&mut self) -> bool {
-        let (next_phase, addr) = match self.dmc_dma {
-            Some((DmcDmaPhase::LoadHalt, addr)) => (DmcDmaPhase::Dummy, addr),
-            Some((DmcDmaPhase::Halt, addr)) => (DmcDmaPhase::Align, addr),
-            Some((DmcDmaPhase::Align, addr)) => (DmcDmaPhase::Dummy, addr),
-            Some((DmcDmaPhase::Dummy, addr)) => (DmcDmaPhase::DmaRead, addr),
-            Some((DmcDmaPhase::DmaRead, _)) => return true,
-            None => return false,
-        };
-        self.dmc_dma = Some((next_phase, addr));
-        false
-    }
-
+    /// Determine the phantom address for DMC DMA's extra read side effects.
+    /// Returns `self.ab` if the stalled microcode is a read operation that
+    /// could cause side-effecting "phantom reads" ($4016/$4017, $2007);
+    /// otherwise returns `self.pc`.
     fn dmc_dma_phantom_addr(&self) -> u16 {
         let has_phantom = self
             .cur_microcode

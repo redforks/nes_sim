@@ -1377,6 +1377,40 @@ impl Microcode {
         )
     }
 
+    /// Returns true if this microcode performs a memory write cycle.
+    /// DMC DMA must not halt the CPU during a write cycle.
+    pub const fn is_write_operation(self) -> bool {
+        matches!(
+            self,
+            Self::StoreR(_)
+                | Self::StoreAlu
+                | Self::Shx
+                | Self::Shy
+                | Self::Sha
+                | Self::Tas
+                | Self::Sax
+                | Self::Rla
+                | Self::Dcp
+                | Self::Isc
+                | Self::Rra
+                | Self::Slo
+                | Self::Sre
+                | Self::PushPcL
+                | Self::PushPcH
+                | Self::PushStatus { .. }
+                | Self::Pha
+        ) || matches!(
+            self,
+            Self::Asl(AOrMemory::Memory)
+                | Self::Lsr(AOrMemory::Memory)
+                | Self::Rol(AOrMemory::Memory)
+                | Self::Ror(AOrMemory::Memory)
+        ) || matches!(
+            self,
+            Self::IncDec(IncDecTarget::IncrementAlu | IncDecTarget::DecrementAlu)
+        )
+    }
+
     /// perform second phase of this Microcode
     pub fn exec<M: Mcu>(self, cpu: &mut Cpu<M>) {
         match self {
