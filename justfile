@@ -353,7 +353,10 @@ passed_apu_tests: apu_mixer apu_reset apu_test dmc_dma_during_read4
 todo_tests: sprdma_and_dmc_dma mmc3_test_6 cpu_interrupts_v2
 
 [parallel]
-passed: unit-test passed_cpu_tests passed_ppu_tests passed_apu_tests passed_mapper
+passed_rom_tests: passed_cpu_tests passed_ppu_tests passed_apu_tests passed_mapper
+
+[parallel]
+passed: unit-test passed_rom_tests
 
 wasm-debug-build:
     cd nes_web && wasm-pack build --release
