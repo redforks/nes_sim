@@ -37,6 +37,33 @@ fn execute_next(cpu: &mut Cpu<MockMcu>) {
 }
 
 #[test]
+fn test_nmi_detector() {
+    // default
+    let mut v = NmiDetector::default();
+    assert!(!v.take_nmi_pending());
+
+    fn update_detect_and_report(v: &mut NmiDetector, new_nmi_val: bool) -> bool {
+        v.update_nmi_input(new_nmi_val);
+        v.detect_nmi();
+        v.take_nmi_pending()
+    }
+
+    // enter nmi
+    v.update_nmi_input(true);
+    assert!(!v.take_nmi_pending());
+    v.detect_nmi();
+    assert!(v.take_nmi_pending());
+    v.enter_nmi();
+    assert!(!update_detect_and_report(&mut v, false));
+    assert!(!update_detect_and_report(&mut v, true)); // in nmi, is_nmi_pending() never returns true
+    v.leave_nmi();
+    assert!(!v.take_nmi_pending()); // leaves nmi, still no nmi_pending, because nmi is edge detected
+
+    assert!(!update_detect_and_report(&mut v, false)); // disabled
+    assert!(update_detect_and_report(&mut v, true)); // enabled and detected
+}
+
+#[test]
 fn test_cpu_initialization() {
     let cpu = create_cpu();
     assert_eq!(cpu.a, 0);
@@ -127,7 +154,7 @@ fn test_push_status() {
     cpu.sp = 0xFF;
     cpu.status = 0b0000_0000;
 
-    cpu.push_status(false);
+    cpu.push_status(false, false);
     let status_on_stack = cpu.read_byte(0x1FF);
     // NotUsed flag (0x20) should be set
     assert_eq!(status_on_stack & 0x20, 0x20);
@@ -3135,14 +3162,17 @@ fn test_ready_nmi_is_taken_even_while_already_in_nmi_mode() {
     cpu.mode = CpuMode::Nmi;
     set_system_cycles(SYSTEM_CYCLES_PER_CPU_CYCLE + SYSTEM_CYCLES_PER_PPU_CYCLE - 1);
     cpu.microcode_queue.clear();
-    cpu.nmi_requested_at = Some(0);
+
+    // Simulate a pending NMI for the instruction boundary check.
+    // CpuMode::Nmi alone does not prevent NMI detection — only
+    // the in_nmi guard does (tested separately in test_nmi_detector).
+    cpu.nmi_detecteor.nmi_pending = true;
 
     let mut plugin = EmptyPlugin::new();
     inc_system_cycles();
     let (_, finished) = cpu.tick(&mut plugin);
     assert!(!finished);
     assert_eq!(cpu.mode, CpuMode::Nmi);
-    assert_eq!(cpu.nmi_requested_at, None);
     assert_eq!(cpu.microcodes_len(), 6);
 }
 
@@ -3586,7 +3616,7 @@ fn test_push_status_with_all_flags() {
     cpu.set_flag(Flag::Negative, true);
     // Note: Break flag is NOT set, so it won't be pushed
 
-    cpu.push_status(false);
+    cpu.push_status(false, false);
 
     // push_status writes to current SP, then decrements
     // With SP=0xFF, it writes to 0x100 + 0xFF = 0x01FF, then SP becomes 0xFE
@@ -3970,7 +4000,11 @@ fn stack_and_misc_microcodes_manipulate_state() {
     Microcode::UpdateAFromAlu.exec(&mut cpu);
     assert_eq!(cpu.a, 0xAB);
 
-    Microcode::PushStatus { break_flag: true }.exec(&mut cpu);
+    Microcode::PushStatus {
+        break_flag: true,
+        check_nmi: false,
+    }
+    .exec(&mut cpu);
     assert_eq!(
         cpu.mcu().mem[0x01FF] & (Flag::Break as u8),
         Flag::Break as u8

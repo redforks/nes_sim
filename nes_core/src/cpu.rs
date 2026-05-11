@@ -25,20 +25,39 @@ enum CpuMode {
     Halt,
 }
 
-/// DMC DMA state.
-///
-/// On real hardware the DMC DMA steals 3–4 CPU cycles depending on bus
-/// alignment.  The DMA halts the CPU on a read cycle (delaying if the
-/// CPU is currently writing), then runs a fixed sequence: halt, dummy,
-/// optional alignment, then the actual DMA read on a GET cycle.
-///
-/// During the DmaRead cycle the sample byte is fetched and any
-/// side-effecting "phantom reads" ($4016/$4017, $2007) are modelled
-/// using the CPU's microcode queue and address bus value (`cpu.ab`).
-///
-/// The `dmc_dma_stall` counter tracks remaining stall cycles (0 = idle).
-/// `dmc_dma_pending` holds the sample address while waiting to halt or
-/// while the DMA is in progress (consumed on the final read cycle).
+#[derive(Default)]
+struct NmiDetector {
+    last_nmi_input: bool,
+    nmi_input: bool,
+    nmi_pending: bool,
+    in_nmi: bool,
+}
+
+impl NmiDetector {
+    fn update_nmi_input(&mut self, v: bool) {
+        self.nmi_input = v;
+    }
+
+    fn detect_nmi(&mut self) {
+        if self.last_nmi_input != self.nmi_input && self.nmi_input && !self.in_nmi {
+            self.nmi_pending = true;
+        }
+        self.last_nmi_input = self.nmi_input;
+    }
+
+    fn take_nmi_pending(&mut self) -> bool {
+        std::mem::take(&mut self.nmi_pending)
+    }
+
+    fn enter_nmi(&mut self) {
+        debug_assert!(!self.in_nmi);
+        self.in_nmi = true;
+    }
+
+    fn leave_nmi(&mut self) {
+        self.in_nmi = false;
+    }
+}
 
 pub struct Cpu<M: Mcu> {
     pub a: u8,
@@ -61,19 +80,11 @@ pub struct Cpu<M: Mcu> {
     irq_line: bool,
     irq_requested_at: Option<u64>,
     irq_inhibit: Option<bool>,
-    nmi_line: bool,
-    /// cycles that nmi_requested, in real 6502 cpu, cpu check nmi at the last cycle of instruction,
-    /// if set nmi line of ppu, such as STA $2000, nmi line set after last cycle of STA instruction, then
-    /// cpu can not know nmi signal until the next instruction, we save the cycle that nmi requested to detect this
-    nmi_requested_at: Option<u64>,
-    defer_nmi_poll: bool,
-    irq_vector_is_nmi: bool,
-    irq_is_brk: bool,
+    nmi_detecteor: NmiDetector,
     /// A taken non-page-crossing branch suppresses IRQ on its last
     /// cycle.  This flag is set when such a branch completes, causing
     /// the next instruction-boundary IRQ check to be skipped.
     branch_irq_defer: bool,
-    allow_late_irq_nmi_hijack: bool,
     /// Set to the DMA completion cycle when DMA ends without IRQ pending.
     /// While set, apply penultimate-cycle IRQ sampling: the IRQ must have been
     /// asserted for at least 1 CPU cycle before being acted on.
@@ -91,7 +102,6 @@ pub struct Cpu<M: Mcu> {
     resume_second_phase_after_stall: bool,
 
     microcode_queue: ArrayDeque<Microcode, 8>,
-    irq_hijacked: bool,
 
     #[cfg(debug_assertions)]
     mem_acc_count: Rc<Cell<usize>>,
@@ -109,26 +119,20 @@ impl<M: Mcu> Cpu<M> {
             mcu,
             opcode: 0,
             cur_microcode: None,
+            nmi_detecteor: Default::default(),
             ab: 0,
             db: 0,
             alu: 0,
             irq_line: false,
             irq_requested_at: None,
             irq_inhibit: None,
-            nmi_line: false,
             microcode_queue: ArrayDeque::new(),
             mode: CpuMode::Normal,
-            nmi_requested_at: None,
-            defer_nmi_poll: false,
-            irq_vector_is_nmi: false,
-            irq_is_brk: false,
             branch_irq_defer: false,
-            allow_late_irq_nmi_hijack: false,
             post_dma_irq_defer: None,
             dmc_dma_pending: None,
             dmc_dma_stall: 0,
             resume_second_phase_after_stall: false,
-            irq_hijacked: false,
             #[cfg(debug_assertions)]
             mem_acc_count: Default::default(),
         };
@@ -170,18 +174,14 @@ impl<M: Mcu> Cpu<M> {
         self.irq_requested_at = None;
         self.irq_inhibit = None;
         self.microcode_queue.clear();
-        self.nmi_requested_at = None;
-        self.defer_nmi_poll = false;
-        self.irq_vector_is_nmi = false;
-        self.irq_is_brk = false;
         self.branch_irq_defer = false;
-        self.allow_late_irq_nmi_hijack = false;
         self.post_dma_irq_defer = None;
         self.dmc_dma_pending = None;
         self.dmc_dma_stall = 0;
         self.mode = CpuMode::Normal;
         self.resume_second_phase_after_stall = false;
         self.sp = self.sp.wrapping_sub(3);
+        self.nmi_detecteor = NmiDetector::default();
 
         // Reset process takes 7 cycles, push 7 Nop microcodes to ppu/apu run as a real device, and make Plugin to get correct total cycles
         self.push_microcodes(&[
@@ -202,15 +202,6 @@ impl<M: Mcu> Cpu<M> {
             self.irq_requested_at = None;
         }
         self.irq_line = enabled;
-    }
-
-    fn nmi_hijack_ready(&self) -> bool {
-        self.nmi_ready_at(get_system_cycles().wrapping_add(2 * SYSTEM_CYCLES_PER_PPU_CYCLE))
-    }
-
-    fn nmi_ready_at(&self, cycles: u64) -> bool {
-        self.nmi_requested_at
-            .is_some_and(|requested_at| cycles > requested_at + 5 * SYSTEM_CYCLES_PER_PPU_CYCLE)
     }
 
     pub fn is_halted(&self) -> bool {
@@ -292,9 +283,9 @@ impl<M: Mcu> Cpu<M> {
             code.exec(self);
 
             if self.microcode_queue.is_empty() && self.cur_microcode.is_none() {
-                self.allow_late_irq_nmi_hijack = false;
                 if self.opcode == opcode::RTI {
                     self.mode = CpuMode::Normal;
+                    self.nmi_detecteor.leave_nmi();
                 };
                 plugin.end(self);
                 return (plugin.should_stop(), true);
@@ -340,24 +331,14 @@ impl<M: Mcu> Cpu<M> {
                     plugin.start(self);
                     let irq_inhibit = self.irq_inhibit.take();
                     let branch_defer = std::mem::take(&mut self.branch_irq_defer);
-                    let poll_cycles =
-                        get_system_cycles().wrapping_add(2 * SYSTEM_CYCLES_PER_PPU_CYCLE);
                     let irq_pending = self.irq_line
                         && !irq_inhibit.unwrap_or_else(|| self.flag(Flag::InterruptDisabled));
 
-                    if std::mem::take(&mut self.defer_nmi_poll) {
-                        Microcode::FetchAndDecode
-                    } else if self.nmi_ready_at(poll_cycles) {
-                        self.nmi_requested_at = None;
+                    if self.nmi_detecteor.take_nmi_pending() {
                         self.mode = CpuMode::Nmi;
-                        self.irq_is_brk = false;
                         self.push_enter_interrupt_microcodes(true)
                     } else if irq_pending {
-                        let defer_for_branch = branch_defer
-                            && self.irq_requested_at.is_some_and(|at| {
-                                get_system_cycles().wrapping_sub(at) <= SYSTEM_CYCLES_PER_CPU_CYCLE
-                            });
-                        if defer_for_branch {
+                        if branch_defer {
                             Microcode::FetchAndDecode
                         } else {
                             let should_defer = self.post_dma_irq_defer.is_some_and(|dma_end| {
@@ -374,8 +355,6 @@ impl<M: Mcu> Cpu<M> {
                                 Microcode::FetchAndDecode
                             } else {
                                 self.post_dma_irq_defer = None;
-                                self.irq_is_brk = false;
-                                self.allow_late_irq_nmi_hijack = true;
                                 self.push_enter_interrupt_microcodes(false)
                             }
                         }
@@ -401,12 +380,13 @@ impl<M: Mcu> Cpu<M> {
         } else {
             code.exec(self);
             self.cur_microcode = None;
+            self.nmi_detecteor.detect_nmi();
         }
 
         if self.microcode_queue.is_empty() && self.cur_microcode.is_none() {
-            self.allow_late_irq_nmi_hijack = false;
             if self.opcode == opcode::RTI {
                 self.mode = CpuMode::Normal;
+                self.nmi_detecteor.leave_nmi();
             };
             plugin.end(self);
             (plugin.should_stop(), true)
@@ -759,7 +739,16 @@ impl<M: Mcu> Cpu<M> {
         self.alu = self.pop_stack();
     }
 
-    fn push_status(&mut self, break_flag: bool) {
+    fn push_status(&mut self, break_flag: bool, check_nmi: bool) {
+        if check_nmi {
+            if self.nmi_detecteor.take_nmi_pending() {
+                self.push_status(break_flag, false);
+                self.microcode_queue.clear();
+                self.push_microcodes(&[Microcode::LoadNmiPcL, Microcode::LoadNmiPcH]);
+                return;
+            }
+        }
+
         self.push_stack(if break_flag {
             self.status | Flag::Break as u8 | Flag::NotUsed as u8
         } else {
@@ -805,7 +794,10 @@ impl<M: Mcu> Cpu<M> {
             Microcode::FetchOnly,
             Microcode::PushPcH,
             Microcode::PushPcL,
-            Microcode::PushStatus { break_flag: false },
+            Microcode::PushStatus {
+                break_flag: false,
+                check_nmi: !nmi,
+            },
             if nmi {
                 Microcode::LoadNmiPcL
             } else {
@@ -846,58 +838,19 @@ impl<M: Mcu> Cpu<M> {
 
     /// Update cpu nmi signal line, may trigger nmi
     pub fn update_nmi_line(&mut self, nmi: bool, (scanline, dot): (u16, u16)) {
-        if self.nmi_line != nmi {
-            self.nmi_line = nmi;
-            if nmi {
-                self.nmi_requested_at =
-                    Some(get_system_cycles().wrapping_sub(SYSTEM_CYCLES_PER_PPU_CYCLE));
-            }
+        if !nmi && (scanline == 241 && dot <= 4) {
+            self.nmi_detecteor.nmi_pending = false;
         }
-
-        if !nmi && scanline == 241 && dot <= 4 {
-            self.nmi_requested_at = None;
-        }
+        self.nmi_detecteor.update_nmi_input(nmi);
     }
 
     fn load_irq_pcl(&mut self) {
-        let late_nmi_hijack = std::mem::take(&mut self.allow_late_irq_nmi_hijack)
-            && self.mode == CpuMode::Normal
-            && self.nmi_requested_at.is_some_and(|cycles| {
-                get_system_cycles() > cycles + 4 * SYSTEM_CYCLES_PER_PPU_CYCLE
-            });
-        let hijacked = if self.irq_is_brk {
-            std::mem::take(&mut self.irq_vector_is_nmi)
-        } else {
-            std::mem::take(&mut self.irq_vector_is_nmi)
-                || self.nmi_hijack_ready()
-                || late_nmi_hijack
-        };
         self.set_flag(Flag::InterruptDisabled, true);
-        let low = if hijacked {
-            self.nmi_requested_at = None;
-            self.irq_hijacked = true;
-            // hijacked by nmi
-            self.mode = CpuMode::Nmi;
-            self.read_byte(0xFFFA)
-        } else {
-            self.irq_hijacked = false;
-            self.irq_is_brk = false;
-            self.defer_nmi_poll = true;
-            self.read_byte(0xFFFE)
-        };
-        self.pc = low as u16;
+        self.pc = self.read_byte(0xFFFE) as u16;
     }
 
     fn load_irq_pch(&mut self) {
-        let high = if self.irq_hijacked {
-            // hijacked by nmi
-            self.mode = CpuMode::Nmi;
-            // self.inner_set_flag(Flag::InterruptDisabled, true);
-            self.read_byte(0xFFFB)
-        } else {
-            self.defer_nmi_poll = true;
-            self.read_byte(0xFFFF)
-        };
+        let high = self.read_byte(0xFFFF);
         self.pc |= (high as u16) << 8;
     }
 

@@ -395,7 +395,13 @@ const fn build_opcode_table() -> [ArrayVec<[Microcode; 7]>; 256] {
     r[BVS as usize] = microcode_arr!(BranchRelative(BranchTest::IfOverflowSet));
     r[PHA as usize] = microcode_arr!(Nop, Pha);
     r[PLA as usize] = microcode_arr!(Nop, PopStack, UpdateAFromAlu);
-    r[PHP as usize] = microcode_arr!(Nop, PushStatus { break_flag: true });
+    r[PHP as usize] = microcode_arr!(
+        Nop,
+        PushStatus {
+            break_flag: true,
+            check_nmi: false
+        }
+    );
     r[PLP as usize] = microcode_arr!(Nop, Nop, Plp);
     r[JMP_ABSOLUTE as usize] = microcode_arr!(AbsoluteL, LoadPcAbsoluteH);
     r[JMP_INDIRECT as usize] = microcode_arr!(AbsoluteL, AbsoluteH, IndexedL, IndexedHAndJump);
@@ -459,7 +465,10 @@ const fn build_opcode_table() -> [ArrayVec<[Microcode; 7]>; 256] {
         SkipImmediate,
         PushPcH,
         PushPcL,
-        PushStatus { break_flag: true },
+        PushStatus {
+            break_flag: true,
+            check_nmi: true
+        },
         LoadIrqPcL,
         LoadIrqPcH
     );
@@ -954,6 +963,8 @@ pub enum Microcode {
     PushStatus {
         /// break flag of status to set
         break_flag: bool,
+        /// Used in BRK opcode to detect nmi hiijacking
+        check_nmi: bool,
     },
     /// Pop cpu status register from stack, used to return from interrupt handler, and PLP
     Plp,
@@ -1479,6 +1490,7 @@ impl Microcode {
             Self::LoadIrqPcL => cpu.load_irq_pcl(),
             Self::LoadNmiPcL => {
                 cpu.pc = cpu.read_byte(0xFFFA) as u16;
+                cpu.nmi_detecteor.enter_nmi();
                 cpu.set_flag(Flag::InterruptDisabled, true);
             }
             Self::LoadNmiPcH => {
@@ -1490,7 +1502,10 @@ impl Microcode {
             Self::PushPcL => {
                 cpu.push_stack((cpu.pc & 0xFF) as u8);
             }
-            Self::PushStatus { break_flag } => cpu.push_status(break_flag),
+            Self::PushStatus {
+                break_flag,
+                check_nmi,
+            } => cpu.push_status(break_flag, check_nmi),
             Self::Plp => cpu.plp(),
             Self::PopPcL => {
                 cpu.pc = cpu.pop_stack() as u16;
