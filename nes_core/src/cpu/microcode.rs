@@ -507,14 +507,8 @@ const fn build_opcode_table() -> [ArrayVec<[Microcode; 7]>; 256] {
             first_clock: CrossPageBehavior::FirstClock
         }
     );
-    r[CMP_INDEXED_INDIRECT as usize] = microcode_arr!(
-        ZeroPage,
-        LoadIntoAlu, // dummy read
-        ZeroPageIndexedX,
-        IndexedL,
-        IndexedH,
-        Cmp
-    );
+    r[CMP_INDEXED_INDIRECT as usize] =
+        microcode_arr!(ZeroPage, ZeroPageIndexedX, IndexedL, IndexedH, Cmp);
     r[CMP_INDIRECT_INDEXED as usize] =
         indirect_indexed_op(OpAfterAddressing::Cmp, CrossPageBehavior::FirstClock);
     r[CPX_IMMEDIATE as usize] = microcode_arr!(ImmediateWithOp(ImmediateOp::Cpx));
