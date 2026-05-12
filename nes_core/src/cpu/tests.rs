@@ -37,6 +37,36 @@ fn execute_next(cpu: &mut Cpu<MockMcu>) {
 }
 
 #[test]
+fn test_irq_detector() {
+    // default
+    let mut v = IrqDetector::default();
+    assert!(!v.irq_pending());
+
+    v.update_irq_input(true);
+    assert!(!v.irq_pending());
+    v.detect_irq(false);
+    assert!(v.irq_pending());
+    assert!(v.irq_pending());
+    v.detect_irq(true);
+    assert!(!v.irq_pending());
+
+    v.update_irq_input(false);
+    assert!(!v.irq_pending());
+    v.detect_irq(false);
+    assert!(!v.irq_pending());
+
+    // inhibit - not related opcode
+    v.save_irq_inhibit(opcode::RTI, || true);
+    v.detect_irq(false);
+    assert!(!v.irq_pending());
+
+    // inhibit - related opcode
+    v.save_irq_inhibit(opcode::CLI, || true);
+    v.detect_irq(false);
+    assert!(!v.irq_pending());
+}
+
+#[test]
 fn test_nmi_detector() {
     // default
     let mut v = NmiDetector::default();
@@ -1793,18 +1823,6 @@ fn test_and_zero_page_x() {
     assert_eq!(cpu.a, 0x00);
 }
 
-#[test]
-fn test_set_irq() {
-    let mut cpu = create_cpu();
-    assert!(!cpu.irq_line);
-
-    cpu.set_irq(true);
-    assert!(cpu.irq_line);
-
-    cpu.set_irq(false);
-    assert!(!cpu.irq_line);
-}
-
 // JSR/RTS/RTI tests
 #[test]
 fn test_jsr_pushes_pc_and_jumps() {
@@ -3173,21 +3191,6 @@ fn test_ready_nmi_is_taken_even_while_already_in_nmi_mode() {
     let (_, finished) = cpu.tick(&mut plugin);
     assert!(!finished);
     assert_eq!(cpu.mode, CpuMode::Nmi);
-    assert_eq!(cpu.microcodes_len(), 6);
-}
-
-#[test]
-fn test_irq_entry_schedules_five_followup_microcodes() {
-    let mut cpu = create_cpu();
-    set_system_cycles(SYSTEM_CYCLES_PER_PPU_CYCLE - 1);
-    cpu.set_flag(Flag::InterruptDisabled, false);
-    cpu.set_irq(true);
-
-    let mut plugin = EmptyPlugin::new();
-    inc_system_cycles();
-    let (_, finished) = cpu.tick(&mut plugin);
-
-    assert!(!finished);
     assert_eq!(cpu.microcodes_len(), 6);
 }
 

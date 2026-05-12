@@ -84,11 +84,6 @@ where
             }
         }
 
-        // Cartridge IRQs are exposed on the next CPU boundary, while APU IRQs
-        // keep the existing immediate visibility used by the interrupt tests.
-        let irq_pending = self.machine.mcu().apu_irq_pending() || self.cartridge_irq_latched;
-        self.machine.cpu_mut().set_irq(irq_pending);
-
         self.machine.mcu_mut().tick_apu();
         if let Some(addr) = self.machine.mcu_mut().take_dmc_dma_pending() {
             self.machine.cpu_mut().request_dmc_dma(addr);
@@ -109,8 +104,13 @@ where
 
         let r = self.machine.tick();
         let nmi_line = self.machine.mcu().ppu().nmi_line_out();
+        // Cartridge IRQs are exposed on the next CPU boundary, while APU IRQs
+        // keep the existing immediate visibility used by the interrupt tests.
+        let irq_pending = self.machine.mcu().apu_irq_pending() || self.cartridge_irq_latched;
+        self.machine.cpu_mut().set_irq(irq_pending);
+
         self.machine.cpu_mut().update_nmi_line(nmi_line);
-        self.machine.cpu_mut().detect_nmi();
+        self.machine.cpu_mut().detect_interrupt();
         r
     }
 

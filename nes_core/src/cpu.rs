@@ -26,6 +26,46 @@ enum CpuMode {
 }
 
 #[derive(Default)]
+struct IrqDetector {
+    irq_pending: bool,
+    irq_input: bool,
+    irq_inhibit: Option<bool>,
+    irq_requested_at: Option<u64>,
+}
+
+impl IrqDetector {
+    fn update_irq_input(&mut self, v: bool) {
+        self.irq_requested_at = if v && !self.irq_input {
+            Some(get_system_cycles())
+        } else {
+            None
+        };
+        self.irq_input = v;
+    }
+
+    fn detect_irq(&mut self, interrupt_disabled: bool) {
+        let disabled = if let Some(v) = self.irq_inhibit.take() {
+            v
+        } else {
+            interrupt_disabled
+        };
+        self.irq_pending = !disabled && self.irq_input;
+    }
+
+    fn irq_pending(&self) -> bool {
+        self.irq_pending
+    }
+
+    fn save_irq_inhibit(&mut self, opcode: u8, f_interrupt_disable: impl FnOnce() -> bool) {
+        self.irq_inhibit = if matches!(opcode, opcode::CLI | opcode::SEI | opcode::PLP) {
+            Some(f_interrupt_disable())
+        } else {
+            None
+        };
+    }
+}
+
+#[derive(Default)]
 struct NmiDetector {
     last_nmi_input: bool,
     nmi_input: bool,
@@ -76,11 +116,8 @@ pub struct Cpu<M: Mcu> {
     db: u8, // save low byte during indexed addressing
     alu: u8,
 
-    /// cpu irq line, true means irq is requested, map to Low level of cpu irq pin
-    irq_line: bool,
-    irq_requested_at: Option<u64>,
-    irq_inhibit: Option<bool>,
     nmi_detecteor: NmiDetector,
+    irq_detector: IrqDetector,
     /// A taken non-page-crossing branch suppresses IRQ on its last
     /// cycle.  This flag is set when such a branch completes, causing
     /// the next instruction-boundary IRQ check to be skipped.
@@ -120,12 +157,10 @@ impl<M: Mcu> Cpu<M> {
             opcode: 0,
             cur_microcode: None,
             nmi_detecteor: Default::default(),
+            irq_detector: Default::default(),
             ab: 0,
             db: 0,
             alu: 0,
-            irq_line: false,
-            irq_requested_at: None,
-            irq_inhibit: None,
             microcode_queue: ArrayDeque::new(),
             mode: CpuMode::Normal,
             branch_irq_defer: false,
@@ -170,9 +205,6 @@ impl<M: Mcu> Cpu<M> {
     pub fn reset(&mut self) {
         self.inner_set_flag(Flag::InterruptDisabled, true);
         self.inner_set_flag(Flag::NotUsed, true);
-        self.irq_line = false;
-        self.irq_requested_at = None;
-        self.irq_inhibit = None;
         self.microcode_queue.clear();
         self.branch_irq_defer = false;
         self.post_dma_irq_defer = None;
@@ -181,7 +213,8 @@ impl<M: Mcu> Cpu<M> {
         self.mode = CpuMode::Normal;
         self.resume_second_phase_after_stall = false;
         self.sp = self.sp.wrapping_sub(3);
-        self.nmi_detecteor = NmiDetector::default();
+        self.nmi_detecteor = Default::default();
+        self.irq_detector = Default::default();
 
         // Reset process takes 7 cycles, push 7 Nop microcodes to ppu/apu run as a real device, and make Plugin to get correct total cycles
         self.push_microcodes(&[
@@ -196,12 +229,7 @@ impl<M: Mcu> Cpu<M> {
     }
 
     pub fn set_irq(&mut self, enabled: bool) {
-        if enabled && !self.irq_line {
-            self.irq_requested_at = Some(get_system_cycles());
-        } else if !enabled {
-            self.irq_requested_at = None;
-        }
-        self.irq_line = enabled;
+        self.irq_detector.update_irq_input(enabled);
     }
 
     pub fn is_halted(&self) -> bool {
@@ -329,10 +357,8 @@ impl<M: Mcu> Cpu<M> {
                 Some(v) => v,
                 None => {
                     plugin.start(self);
-                    let irq_inhibit = self.irq_inhibit.take();
                     let branch_defer = std::mem::take(&mut self.branch_irq_defer);
-                    let irq_pending = self.irq_line
-                        && !irq_inhibit.unwrap_or_else(|| self.flag(Flag::InterruptDisabled));
+                    let irq_pending = self.irq_detector.irq_pending();
 
                     if self.nmi_detecteor.take_nmi_pending() {
                         self.mode = CpuMode::Nmi;
@@ -342,7 +368,7 @@ impl<M: Mcu> Cpu<M> {
                             Microcode::FetchAndDecode
                         } else {
                             let should_defer = self.post_dma_irq_defer.is_some_and(|dma_end| {
-                                self.irq_requested_at.is_some_and(|at| {
+                                self.irq_detector.irq_requested_at.is_some_and(|at| {
                                     if get_system_cycles() <= dma_end + SYSTEM_CYCLES_PER_CPU_CYCLE
                                     {
                                         at + SYSTEM_CYCLES_PER_CPU_CYCLE >= dma_end
@@ -394,11 +420,13 @@ impl<M: Mcu> Cpu<M> {
         }
     }
 
-    pub fn detect_nmi(&mut self) {
+    pub fn detect_interrupt(&mut self) {
         let cycle_phase = get_system_cycles().wrapping_sub(1) % SYSTEM_CYCLES_PER_CPU_CYCLE;
         let first_phase = cycle_phase == SYSTEM_CYCLES_PER_PPU_CYCLE - 1;
         if first_phase {
             self.nmi_detecteor.detect_nmi();
+            self.irq_detector
+                .detect_irq(self.flag(Flag::InterruptDisabled));
         }
     }
 
@@ -412,9 +440,8 @@ impl<M: Mcu> Cpu<M> {
     }
 
     fn save_irq_inhibit(&mut self) {
-        if matches!(self.opcode, opcode::CLI | opcode::SEI | opcode::PLP) {
-            self.irq_inhibit = Some(self.flag(Flag::InterruptDisabled));
-        }
+        let flag = self.flag(Flag::InterruptDisabled);
+        self.irq_detector.save_irq_inhibit(self.opcode, || flag);
     }
 
     fn set_flag(&mut self, flag: Flag, v: bool) {
