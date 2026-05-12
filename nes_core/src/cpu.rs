@@ -118,10 +118,6 @@ pub struct Cpu<M: Mcu> {
 
     nmi_detecteor: NmiDetector,
     irq_detector: IrqDetector,
-    /// A taken non-page-crossing branch suppresses IRQ on its last
-    /// cycle.  This flag is set when such a branch completes, causing
-    /// the next instruction-boundary IRQ check to be skipped.
-    branch_irq_defer: bool,
     /// Set to the DMA completion cycle when DMA ends without IRQ pending.
     /// While set, apply penultimate-cycle IRQ sampling: the IRQ must have been
     /// asserted for at least 1 CPU cycle before being acted on.
@@ -163,7 +159,6 @@ impl<M: Mcu> Cpu<M> {
             alu: 0,
             microcode_queue: ArrayDeque::new(),
             mode: CpuMode::Normal,
-            branch_irq_defer: false,
             post_dma_irq_defer: None,
             dmc_dma_pending: None,
             dmc_dma_stall: 0,
@@ -206,7 +201,6 @@ impl<M: Mcu> Cpu<M> {
         self.inner_set_flag(Flag::InterruptDisabled, true);
         self.inner_set_flag(Flag::NotUsed, true);
         self.microcode_queue.clear();
-        self.branch_irq_defer = false;
         self.post_dma_irq_defer = None;
         self.dmc_dma_pending = None;
         self.dmc_dma_stall = 0;
@@ -357,32 +351,24 @@ impl<M: Mcu> Cpu<M> {
                 Some(v) => v,
                 None => {
                     plugin.start(self);
-                    let branch_defer = std::mem::take(&mut self.branch_irq_defer);
-                    let irq_pending = self.irq_detector.irq_pending();
-
                     if self.nmi_detecteor.take_nmi_pending() {
                         self.mode = CpuMode::Nmi;
                         self.push_enter_interrupt_microcodes(true)
-                    } else if irq_pending {
-                        if branch_defer {
+                    } else if self.irq_detector.irq_pending() {
+                        let should_defer = self.post_dma_irq_defer.is_some_and(|dma_end| {
+                            self.irq_detector.irq_requested_at.is_some_and(|at| {
+                                if get_system_cycles() <= dma_end + SYSTEM_CYCLES_PER_CPU_CYCLE {
+                                    at + SYSTEM_CYCLES_PER_CPU_CYCLE >= dma_end
+                                } else {
+                                    at + SYSTEM_CYCLES_PER_CPU_CYCLE > get_system_cycles()
+                                }
+                            })
+                        });
+                        if should_defer {
                             Microcode::FetchAndDecode
                         } else {
-                            let should_defer = self.post_dma_irq_defer.is_some_and(|dma_end| {
-                                self.irq_detector.irq_requested_at.is_some_and(|at| {
-                                    if get_system_cycles() <= dma_end + SYSTEM_CYCLES_PER_CPU_CYCLE
-                                    {
-                                        at + SYSTEM_CYCLES_PER_CPU_CYCLE >= dma_end
-                                    } else {
-                                        at + SYSTEM_CYCLES_PER_CPU_CYCLE > get_system_cycles()
-                                    }
-                                })
-                            });
-                            if should_defer {
-                                Microcode::FetchAndDecode
-                            } else {
-                                self.post_dma_irq_defer = None;
-                                self.push_enter_interrupt_microcodes(false)
-                            }
+                            self.post_dma_irq_defer = None;
+                            self.push_enter_interrupt_microcodes(false)
                         }
                     } else {
                         if self.post_dma_irq_defer.is_some_and(|dma_end| {
