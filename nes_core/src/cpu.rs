@@ -118,11 +118,6 @@ pub struct Cpu<M: Mcu> {
 
     nmi_detecteor: NmiDetector,
     irq_detector: IrqDetector,
-    /// Set to the DMA completion cycle when DMA ends without IRQ pending.
-    /// While set, apply penultimate-cycle IRQ sampling: the IRQ must have been
-    /// asserted for at least 1 CPU cycle before being acted on.
-    /// Cleared when the IRQ is taken or the window expires.
-    post_dma_irq_defer: Option<u64>,
     /// DMC DMA sample address.  Set by `request_dmc_dma`, consumed
     /// when the DMA read completes.
     dmc_dma_pending: Option<u16>,
@@ -159,7 +154,6 @@ impl<M: Mcu> Cpu<M> {
             alu: 0,
             microcode_queue: ArrayDeque::new(),
             mode: CpuMode::Normal,
-            post_dma_irq_defer: None,
             dmc_dma_pending: None,
             dmc_dma_stall: 0,
             resume_second_phase_after_stall: false,
@@ -201,7 +195,6 @@ impl<M: Mcu> Cpu<M> {
         self.inner_set_flag(Flag::InterruptDisabled, true);
         self.inner_set_flag(Flag::NotUsed, true);
         self.microcode_queue.clear();
-        self.post_dma_irq_defer = None;
         self.dmc_dma_pending = None;
         self.dmc_dma_stall = 0;
         self.mode = CpuMode::Normal;
@@ -355,27 +348,8 @@ impl<M: Mcu> Cpu<M> {
                         self.mode = CpuMode::Nmi;
                         self.push_enter_interrupt_microcodes(true)
                     } else if self.irq_detector.irq_pending() {
-                        let should_defer = self.post_dma_irq_defer.is_some_and(|dma_end| {
-                            self.irq_detector.irq_requested_at.is_some_and(|at| {
-                                if get_system_cycles() <= dma_end + SYSTEM_CYCLES_PER_CPU_CYCLE {
-                                    at + SYSTEM_CYCLES_PER_CPU_CYCLE >= dma_end
-                                } else {
-                                    at + SYSTEM_CYCLES_PER_CPU_CYCLE > get_system_cycles()
-                                }
-                            })
-                        });
-                        if should_defer {
-                            Microcode::FetchAndDecode
-                        } else {
-                            self.post_dma_irq_defer = None;
-                            self.push_enter_interrupt_microcodes(false)
-                        }
+                        self.push_enter_interrupt_microcodes(false)
                     } else {
-                        if self.post_dma_irq_defer.is_some_and(|dma_end| {
-                            get_system_cycles() > dma_end + 4 * SYSTEM_CYCLES_PER_CPU_CYCLE
-                        }) {
-                            self.post_dma_irq_defer = None;
-                        }
                         Microcode::FetchAndDecode
                     }
                 }
