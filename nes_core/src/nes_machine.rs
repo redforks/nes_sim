@@ -78,8 +78,6 @@ where
 
         if ppu_tick {
             self.machine.mcu_mut().tick_ppu();
-            let nmi_line = self.machine.mcu().ppu().nmi_line_out();
-            self.machine.cpu_mut().update_nmi_line(nmi_line);
             self.cartridge_irq_next = self.machine.mcu().cartridge_irq_pending();
             if cpu_tick {
                 self.cartridge_irq_latched = self.cartridge_irq_next;
@@ -109,7 +107,11 @@ where
             }
         }
 
-        self.machine.tick()
+        let r = self.machine.tick();
+        let nmi_line = self.machine.mcu().ppu().nmi_line_out();
+        self.machine.cpu_mut().update_nmi_line(nmi_line);
+        self.machine.cpu_mut().detect_nmi();
+        r
     }
 
     pub fn reset(&mut self) {

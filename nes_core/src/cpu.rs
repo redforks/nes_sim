@@ -380,7 +380,6 @@ impl<M: Mcu> Cpu<M> {
         } else {
             code.exec(self);
             self.cur_microcode = None;
-            self.nmi_detecteor.detect_nmi();
         }
 
         if self.microcode_queue.is_empty() && self.cur_microcode.is_none() {
@@ -392,6 +391,14 @@ impl<M: Mcu> Cpu<M> {
             (plugin.should_stop(), true)
         } else {
             (ExecuteResult::Continue, false)
+        }
+    }
+
+    pub fn detect_nmi(&mut self) {
+        let cycle_phase = get_system_cycles().wrapping_sub(1) % SYSTEM_CYCLES_PER_CPU_CYCLE;
+        let first_phase = cycle_phase == SYSTEM_CYCLES_PER_PPU_CYCLE - 1;
+        if first_phase {
+            self.nmi_detecteor.detect_nmi();
         }
     }
 

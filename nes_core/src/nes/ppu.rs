@@ -1,4 +1,4 @@
-use crate::{nes::mapper::Cartridge, render::Render};
+use crate::{get_system_cycles, nes::mapper::Cartridge, render::Render};
 use std::fmt::Write;
 
 mod palette;
@@ -59,7 +59,6 @@ impl BackgroundActivation {
 pub struct Ppu<R: Render = ()> {
     registers: Registers,
     palette: Palette, // palette memory
-    suppress_vblank_for_current_frame: bool,
     renderer: R,
 
     // PPU timing
@@ -69,6 +68,8 @@ pub struct Ppu<R: Render = ()> {
     pending_background_activation: Option<BackgroundActivation>,
     odd_frame: bool,
     sprite: SpriteManager,
+    /// system clock when suppress nmi by reading status register
+    suppressed_vblank_at: Option<u64>,
 
     /// PPU mask register changes are not visible until the next PPU tick;
     /// this delayed copy models the 1-dot internal pipeline delay.
@@ -96,7 +97,7 @@ impl<R: Render> Ppu<R> {
             pending_background_activation: None,
             odd_frame: false,
             sprite: SpriteManager::new(),
-            suppress_vblank_for_current_frame: false,
+            suppressed_vblank_at: None,
             frame_no: 0,
             effective_mask: PpuMask::new(),
             rendering_enabled_at_scanline_start: false,
@@ -392,7 +393,11 @@ impl<R: Render> Ppu<R> {
 
         if self.scanline == VBLANK_SET_SCANLINE && self.dot == VBLANK_SET_DOT {
             self.renderer.finish();
-            if !self.suppress_vblank_for_current_frame {
+            if self
+                .suppressed_vblank_at
+                .take()
+                .is_none_or(|clock| get_system_cycles() - clock > 1)
+            {
                 self.registers.status.set_v_blank(true);
             }
         }
@@ -415,25 +420,22 @@ impl<R: Render> Ppu<R> {
             self.dot = 0;
             self.scanline = 0;
             self.odd_frame = !self.odd_frame;
-            self.suppress_vblank_for_current_frame = false;
             self.frame_no += 1;
-            return;
-        }
-
-        // Advance dot/scanline counters
-        self.dot += 1;
-        if self.dot >= DOTS_PER_SCANLINE {
-            self.dot = 0;
-            self.scanline += 1;
-            if self.scanline >= SCANLINES_PER_FRAME {
-                self.scanline = 0;
-                self.odd_frame = !self.odd_frame;
-                self.suppress_vblank_for_current_frame = false;
-                self.frame_no += 1;
+        } else {
+            // Advance dot/scanline counters
+            self.dot += 1;
+            if self.dot >= DOTS_PER_SCANLINE {
+                self.dot = 0;
+                self.scanline += 1;
+                if self.scanline >= SCANLINES_PER_FRAME {
+                    self.scanline = 0;
+                    self.odd_frame = !self.odd_frame;
+                    self.frame_no += 1;
+                }
             }
-        }
 
-        self.effective_mask = self.registers.mask;
+            self.effective_mask = self.registers.mask;
+        }
     }
 
     /// Return ppu nmi signal, it connect to Cpu nmi input line
@@ -728,11 +730,10 @@ impl<R: Render> Ppu<R> {
     /// Returns the current status and clears the v_blank flag
     fn read_status(&mut self) -> PpuStatus {
         let r = self.registers.status;
-        if self.scanline == VBLANK_SET_SCANLINE {
-            if self.dot == 1 {
-                self.suppress_vblank_for_current_frame = true;
-            }
+        if self.scanline == VBLANK_SET_SCANLINE && self.dot == VBLANK_SET_DOT {
+            self.suppressed_vblank_at = Some(get_system_cycles());
         }
+
         // Clear v_blank flag on read
         self.registers.status.set_v_blank(false);
         self.registers.write_toggle = false; // Also reset write toggle on status read
