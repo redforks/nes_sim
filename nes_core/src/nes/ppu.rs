@@ -58,12 +58,8 @@ impl BackgroundActivation {
 
 pub struct Ppu<R: Render = ()> {
     registers: Registers,
-
     palette: Palette, // palette memory
-
     suppress_vblank_for_current_frame: bool,
-    suppress_nmi_for_current_frame: bool,
-
     renderer: R,
 
     // PPU timing
@@ -101,7 +97,6 @@ impl<R: Render> Ppu<R> {
             odd_frame: false,
             sprite: SpriteManager::new(),
             suppress_vblank_for_current_frame: false,
-            suppress_nmi_for_current_frame: false,
             frame_no: 0,
             effective_mask: PpuMask::new(),
             rendering_enabled_at_scanline_start: false,
@@ -421,7 +416,6 @@ impl<R: Render> Ppu<R> {
             self.scanline = 0;
             self.odd_frame = !self.odd_frame;
             self.suppress_vblank_for_current_frame = false;
-            self.suppress_nmi_for_current_frame = false;
             self.frame_no += 1;
             return;
         }
@@ -435,7 +429,6 @@ impl<R: Render> Ppu<R> {
                 self.scanline = 0;
                 self.odd_frame = !self.odd_frame;
                 self.suppress_vblank_for_current_frame = false;
-                self.suppress_nmi_for_current_frame = false;
                 self.frame_no += 1;
             }
         }
@@ -445,9 +438,7 @@ impl<R: Render> Ppu<R> {
 
     /// Return ppu nmi signal, it connect to Cpu nmi input line
     pub fn nmi_line_out(&self) -> bool {
-        self.registers.status.v_blank()
-            && self.registers.ctrl.nmi_enable()
-            && !self.suppress_nmi_for_current_frame
+        self.registers.status.v_blank() && self.registers.ctrl.nmi_enable()
     }
 
     /// Read by cpu memory bus. Uses Cartridge for CHR/name-table access.
@@ -738,15 +729,8 @@ impl<R: Render> Ppu<R> {
     fn read_status(&mut self) -> PpuStatus {
         let r = self.registers.status;
         if self.scanline == VBLANK_SET_SCANLINE {
-            match self.dot {
-                1 => {
-                    self.suppress_vblank_for_current_frame = true;
-                    self.suppress_nmi_for_current_frame = true;
-                }
-                2..=4 => {
-                    self.suppress_nmi_for_current_frame = true;
-                }
-                _ => {}
+            if self.dot == 1 {
+                self.suppress_vblank_for_current_frame = true;
             }
         }
         // Clear v_blank flag on read

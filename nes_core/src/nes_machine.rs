@@ -78,19 +78,8 @@ where
 
         if ppu_tick {
             self.machine.mcu_mut().tick_ppu();
-            let nmi_line = {
-                let this = &self;
-                this.machine.mcu()
-            }
-            .ppu()
-            .nmi_line_out();
-            let timing = {
-                let this = &self;
-                this.machine.mcu()
-            }
-            .ppu()
-            .timing();
-            self.machine.cpu_mut().update_nmi_line(nmi_line, timing);
+            let nmi_line = self.machine.mcu().ppu().nmi_line_out();
+            self.machine.cpu_mut().update_nmi_line(nmi_line);
             self.cartridge_irq_next = self.machine.mcu().cartridge_irq_pending();
             if cpu_tick {
                 self.cartridge_irq_latched = self.cartridge_irq_next;

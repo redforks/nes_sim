@@ -837,10 +837,7 @@ impl<M: Mcu> Cpu<M> {
     }
 
     /// Update cpu nmi signal line, may trigger nmi
-    pub fn update_nmi_line(&mut self, nmi: bool, (scanline, dot): (u16, u16)) {
-        if !nmi && (scanline == 241 && dot <= 4) {
-            self.nmi_detecteor.nmi_pending = false;
-        }
+    pub fn update_nmi_line(&mut self, nmi: bool) {
         self.nmi_detecteor.update_nmi_input(nmi);
     }
 
