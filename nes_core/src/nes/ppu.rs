@@ -432,9 +432,9 @@ impl<R: Render> Ppu<R> {
                     self.frame_no += 1;
                 }
             }
-
-            self.effective_mask = self.registers.mask;
         }
+
+        self.effective_mask = self.registers.mask;
     }
 
     /// Return ppu nmi signal, it connect to Cpu nmi input line
