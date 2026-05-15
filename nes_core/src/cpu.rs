@@ -337,7 +337,6 @@ impl<M: Mcu> Cpu<M> {
                 None => {
                     plugin.start(self);
                     if self.nmi_detecteor.take_nmi_pending() {
-                        self.mode = CpuMode::Nmi;
                         self.push_enter_interrupt_microcodes(true)
                     } else if self.irq_detector.irq_pending() {
                         self.push_enter_interrupt_microcodes(false)
@@ -819,6 +818,17 @@ impl<M: Mcu> Cpu<M> {
     /// Update cpu nmi signal line, may trigger nmi
     pub fn update_nmi_line(&mut self, nmi: bool) {
         self.nmi_detecteor.update_nmi_input(nmi);
+    }
+
+    fn load_nmi_pcl(&mut self) {
+        self.pc = self.read_byte(0xFFFA) as u16;
+        self.nmi_detecteor.enter_nmi();
+        self.mode = CpuMode::Nmi;
+        self.set_flag(Flag::InterruptDisabled, true);
+    }
+
+    fn load_nmi_pch(&mut self) {
+        self.pc |= (self.read_byte(0xFFFB) as u16) << 8;
     }
 
     fn load_irq_pcl(&mut self) {

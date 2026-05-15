@@ -1506,14 +1506,8 @@ impl Microcode {
 
             Self::LoadIrqPcH => cpu.load_irq_pch(),
             Self::LoadIrqPcL => cpu.load_irq_pcl(),
-            Self::LoadNmiPcL => {
-                cpu.pc = cpu.read_byte(0xFFFA) as u16;
-                cpu.nmi_detecteor.enter_nmi();
-                cpu.set_flag(Flag::InterruptDisabled, true);
-            }
-            Self::LoadNmiPcH => {
-                cpu.pc |= (cpu.read_byte(0xFFFB) as u16) << 8;
-            }
+            Self::LoadNmiPcL => cpu.load_nmi_pcl(),
+            Self::LoadNmiPcH => cpu.load_nmi_pch(),
             Self::PushPcH => {
                 cpu.push_stack((cpu.pc >> 8) as u8);
             }
