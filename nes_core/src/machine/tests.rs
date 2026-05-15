@@ -45,7 +45,6 @@ fn test_reset() {
     // Reset enqueues microcodes that load the reset vector; run them to apply
     let mut plugin = EmptyPlugin::<MockMcu>::new();
     // Tick until the CPU reports the current instruction is finished
-    inc_system_clock();
     while !machine.cpu_mut().tick(&mut plugin).1 {
         inc_system_clock();
     }

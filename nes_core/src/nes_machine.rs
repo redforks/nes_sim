@@ -49,8 +49,8 @@ where
         // Delegate to `tick()` which executes a single CPU instruction and
         // advances PPU/APU accordingly. Loop until VBlank or safety limit.
         for _ in 0..MAX_TICKS_PER_FRAME {
-            let cycles = inc_system_clock();
             self.tick();
+            let cycles = inc_system_clock();
 
             if self.machine.cpu_mut().is_halted() {
                 self.flush_audio();

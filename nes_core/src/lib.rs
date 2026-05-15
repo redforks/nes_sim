@@ -19,7 +19,7 @@ pub struct SystemClock(u64);
 
 impl SystemClock {
     pub fn is_apu_clock(self) -> bool {
-        self.is_cpu_clock()
+        self.cpu_clock_phase() == CpuClockPhase::Last
     }
 
     pub fn is_cpu_clock(self) -> bool {
@@ -31,13 +31,13 @@ impl SystemClock {
         self.0 % (SYSTEM_CYCLES_PER_CPU_CYCLE * 2) < SYSTEM_CYCLES_PER_CPU_CYCLE
     }
 
-    pub fn is_ppu_clock(self) -> bool {
+    pub const fn is_ppu_clock(self) -> bool {
         // self.0 % SYSTEM_CYCLES_PER_PPU_CYCLE == 0
         true
     }
 
     pub fn cpu_clock_phase(self) -> CpuClockPhase {
-        match (self.0.wrapping_sub(1)) % SYSTEM_CYCLES_PER_CPU_CYCLE {
+        match self.0 % SYSTEM_CYCLES_PER_CPU_CYCLE {
             0 => CpuClockPhase::First,
             2 => CpuClockPhase::Last,
             _ => CpuClockPhase::Middle,
@@ -74,7 +74,7 @@ pub fn get_system_cycles() -> u64 {
     get_system_clock().0
 }
 
-#[derive(Debug, Copy, Clone)]
+#[derive(Debug, Copy, Clone, Eq, PartialEq)]
 pub enum CpuClockPhase {
     First,
     // should ignored

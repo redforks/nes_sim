@@ -174,8 +174,8 @@ impl<M: Mcu> Cpu<M> {
     fn drain_microcodes<P: Plugin<M>>(&mut self, plugin: &mut P) {
         while self.cur_microcode.is_some() || !self.microcode_queue.is_empty() {
             // Ignore execute result; we're only interested in running queued microcodes.
-            inc_system_clock();
             let _ = self.tick(plugin);
+            inc_system_clock();
         }
     }
 

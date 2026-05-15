@@ -266,12 +266,13 @@ pub enum MachineWrapper {
 
 impl MachineWrapper {
     pub fn tick(&mut self) -> nes_core::ExecuteResult {
-        inc_system_clock();
-        match self {
+        let r = match self {
             MachineWrapper::Bin(m) => m.tick(),
             MachineWrapper::INes(m) => m.tick(),
             MachineWrapper::PngFrameMatch(m) => m.tick(),
-        }
+        };
+        inc_system_clock();
+        r
     }
 
     pub fn reset(&mut self) {
