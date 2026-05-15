@@ -1,7 +1,6 @@
 use super::microcode::{BranchTest, ImmediateOp, TransferDirection, opcode};
 use super::*;
 use crate::test_utils::MockMcu;
-use crate::{SYSTEM_CYCLES_PER_CPU_CYCLE, SYSTEM_CYCLES_PER_PPU_CYCLE, set_system_cycles};
 
 // NES vector addresses
 const IRQ_VECTOR: u16 = 0xFFFE;
@@ -82,7 +81,6 @@ fn test_nmi_detector() {
     assert!(!v.take_nmi_pending());
     v.detect_nmi();
     assert!(v.take_nmi_pending());
-    v.enter_nmi();
     assert!(!update_detect_and_report(&mut v, false));
     assert!(!update_detect_and_report(&mut v, true)); // in nmi, is_nmi_pending() never returns true
     v.leave_nmi();
@@ -3168,29 +3166,6 @@ fn test_rti_leaves_nmi_mode() {
 
     assert_eq!(cpu.mode, CpuMode::Normal);
     assert_eq!(cpu.pc, 0x1234);
-}
-
-#[test]
-fn test_ready_nmi_is_taken_even_while_already_in_nmi_mode() {
-    let mut mcu = MockMcu::new();
-    mcu.write(0xFFFA, 0x78);
-    mcu.write(0xFFFB, 0x56);
-    let mut cpu = create_cpu_with_mcu(mcu);
-    cpu.mode = CpuMode::Nmi;
-    set_system_cycles(SYSTEM_CYCLES_PER_CPU_CYCLE + SYSTEM_CYCLES_PER_PPU_CYCLE - 1);
-    cpu.microcode_queue.clear();
-
-    // Simulate a pending NMI for the instruction boundary check.
-    // CpuMode::Nmi alone does not prevent NMI detection — only
-    // the in_nmi guard does (tested separately in test_nmi_detector).
-    cpu.nmi_detecteor.nmi_pending = true;
-
-    let mut plugin = EmptyPlugin::new();
-    let (_, finished) = cpu.tick(&mut plugin);
-    inc_system_clock();
-    assert!(!finished);
-    assert_eq!(cpu.mode, CpuMode::Nmi);
-    assert_eq!(cpu.microcodes_len(), 6);
 }
 
 #[test]

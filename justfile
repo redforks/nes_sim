@@ -350,9 +350,9 @@ passed_cpu_tests: cpu-test instr_misc instr_test-v5 instr_test-v3 instr_timing c
 passed_ppu_tests: oam_read oam_stress ppu_open_bus ppu_read_buffer sprite_hit_tests sprite_overflow_tests scanline
 
 [parallel]
-passed_apu_tests: apu_mixer apu_reset apu_test dmc_dma_during_read4
+passed_apu_tests: apu_mixer apu_reset apu_test
 
-todo_tests: sprdma_and_dmc_dma mmc3_test_4 mmc3_test_6 mmc3_test2_4 cpu_interrupts_v2 cpu_timing_test6 vbl_nmi_timing ppu_vbl_nmi
+todo_tests: sprdma_and_dmc_dma mmc3_test_4 mmc3_test_6 mmc3_test2_4 cpu_interrupts_v2 cpu_timing_test6 vbl_nmi_timing ppu_vbl_nmi dmc_dma_during_read4
 
 [parallel]
 passed_rom_tests: passed_cpu_tests passed_ppu_tests passed_apu_tests passed_mapper

@@ -87,13 +87,9 @@ impl NmiDetector {
         let r = std::mem::take(&mut self.nmi_pending);
         if r {
             // eprintln!("take nmi, @{}", get_system_cycles());
+            self.in_nmi = true;
         }
         r
-    }
-
-    fn enter_nmi(&mut self) {
-        debug_assert!(!self.in_nmi);
-        self.in_nmi = true;
     }
 
     fn leave_nmi(&mut self) {
@@ -111,7 +107,6 @@ pub struct Cpu<M: Mcu> {
     mcu: M,
 
     opcode: u8,
-    cur_microcode: Option<Microcode>,
     /// address bus, which memory byte that cpu current select
     ab: u16,
     /// data bus, what byte that cpu will save or get from memory bus
@@ -129,7 +124,6 @@ pub struct Cpu<M: Mcu> {
     /// on first-phase (GET → 3 cycles) or second-phase (PUT → 4).
     dmc_dma_stall: u8,
     mode: CpuMode,
-    resume_second_phase_after_stall: bool,
 
     microcode_queue: ArrayDeque<Microcode, 8>,
 
@@ -148,7 +142,6 @@ impl<M: Mcu> Cpu<M> {
             status: 0,
             mcu,
             opcode: 0,
-            cur_microcode: None,
             nmi_detecteor: Default::default(),
             irq_detector: Default::default(),
             ab: 0,
@@ -158,7 +151,6 @@ impl<M: Mcu> Cpu<M> {
             mode: CpuMode::Normal,
             dmc_dma_pending: None,
             dmc_dma_stall: 0,
-            resume_second_phase_after_stall: false,
             #[cfg(debug_assertions)]
             mem_acc_count: Default::default(),
         };
@@ -177,7 +169,7 @@ impl<M: Mcu> Cpu<M> {
     /// Drain all pending microcodes by ticking the CPU while the microcode queue
     /// is non-empty. The provided `plugin` will be used for tick hooks.
     fn drain_microcodes<P: Plugin<M>>(&mut self, plugin: &mut P) {
-        while self.cur_microcode.is_some() || !self.microcode_queue.is_empty() {
+        while !self.microcode_queue.is_empty() {
             // Ignore execute result; we're only interested in running queued microcodes.
             let _ = self.tick(plugin);
             inc_system_clock();
@@ -200,7 +192,6 @@ impl<M: Mcu> Cpu<M> {
         self.dmc_dma_pending = None;
         self.dmc_dma_stall = 0;
         self.mode = CpuMode::Normal;
-        self.resume_second_phase_after_stall = false;
         self.sp = self.sp.wrapping_sub(3);
         self.nmi_detecteor = Default::default();
         self.irq_detector = Default::default();
@@ -260,23 +251,15 @@ impl<M: Mcu> Cpu<M> {
             );
         });
 
-        let first_phase = match get_system_clock().cpu_clock_phase() {
-            crate::CpuClockPhase::First => true,
-            crate::CpuClockPhase::Middle => {
-                return (ExecuteResult::Continue, false);
-            }
-            crate::CpuClockPhase::Last => false,
-        };
+        if matches!(
+            get_system_clock().cpu_clock_phase(),
+            crate::CpuClockPhase::First | crate::CpuClockPhase::Middle
+        ) {
+            return (ExecuteResult::Continue, false);
+        }
 
         // ── Active DMC DMA (CPU is halted) ──
         if self.dmc_dma_stall > 0 {
-            if first_phase {
-                return (ExecuteResult::Continue, false);
-            }
-
-            if self.cur_microcode.is_some() {
-                self.resume_second_phase_after_stall = true;
-            }
             if self.dmc_dma_stall == 1 {
                 self.perform_dmc_dma_read();
                 self.dmc_dma_stall = 0;
@@ -290,81 +273,42 @@ impl<M: Mcu> Cpu<M> {
             return (ExecuteResult::Halt, false);
         }
 
-        if first_phase && self.resume_second_phase_after_stall {
-            self.resume_second_phase_after_stall = false;
-            let code = self
-                .cur_microcode
-                .take()
-                .expect("cur_microcode should exist when resuming stalled second phase");
-            code.exec(self);
-
-            if self.microcode_queue.is_empty() && self.cur_microcode.is_none() {
-                plugin.end(self);
-                return (plugin.should_stop(), true);
-            }
-
-            return (ExecuteResult::Continue, false);
-        }
-
         // DMC DMA halt-delay: on a pending DMA, check whether we can halt
         // BEFORE popping a new microcode or executing the current one.
         // This avoids side effects like NMI/IRQ polling while DMA is pending.
         if self.dmc_dma_pending.is_some() {
-            let can_halt = if first_phase {
-                // Peek: if queue is non-empty, check the front microcode.
-                // If empty, the next code would be FetchAndDecode (a read),
-                // so we can halt without popping.
-                self.microcode_queue
-                    .front()
-                    .map_or(true, |m| !m.is_write_operation())
-            } else {
-                // Second phase: check the microcode about to execute.
-                self.cur_microcode
-                    .map_or(false, |m| !m.is_write_operation())
-            };
+            // dmc dma can not block cpu if current is write cycle
+            let can_halt = self
+                .microcode_queue
+                .front()
+                .map_or(true, |m| !m.is_write_operation());
 
             if can_halt {
                 // Counter always starts at 3.  The total DMA length
                 // (3 or 4 CPU cycles) flows from where the halt lands:
                 // first-phase → 3 cycles, second-phase → 4 cycles.
                 self.dmc_dma_stall = 3;
-                if !first_phase {
-                    // Save cur_microcode for resume after DMA.
-                    self.resume_second_phase_after_stall = self.cur_microcode.is_some();
-                }
                 return (ExecuteResult::Continue, false);
             }
         }
 
-        let code = if first_phase {
-            match self.pop_microcode() {
-                Some(v) => v,
-                None => {
-                    plugin.start(self);
-                    if self.nmi_detecteor.take_nmi_pending() {
-                        self.push_enter_interrupt_microcodes(true)
-                    } else if self.irq_detector.irq_pending() {
-                        self.push_enter_interrupt_microcodes(false)
-                    } else {
-                        Microcode::FetchAndDecode
-                    }
+        let code = match self.pop_microcode() {
+            Some(v) => v,
+            None => {
+                plugin.start(self);
+                if self.nmi_detecteor.take_nmi_pending() {
+                    self.push_enter_interrupt_microcodes(true)
+                } else if self.irq_detector.irq_pending() {
+                    self.push_enter_interrupt_microcodes(false)
+                } else {
+                    Microcode::FetchAndDecode
                 }
-            }
-        } else {
-            match self.cur_microcode.take() {
-                Some(code) => code,
-                None => return (ExecuteResult::Continue, false),
             }
         };
 
-        if first_phase {
-            self.cur_microcode = Some(code);
-        } else {
-            code.exec(self);
-            self.cur_microcode = None;
-        }
+        code.exec(self);
 
-        if self.microcode_queue.is_empty() && self.cur_microcode.is_none() {
+        if self.microcode_queue.is_empty() {
             plugin.end(self);
             (plugin.should_stop(), true)
         } else {
@@ -500,8 +444,8 @@ impl<M: Mcu> Cpu<M> {
     /// otherwise returns `self.pc`.
     fn dmc_dma_phantom_addr(&self) -> u16 {
         let has_phantom = self
-            .cur_microcode
-            .or_else(|| self.microcode_queue.front().copied())
+            .microcode_queue
+            .front()
             .map(|m| m.is_read_operation())
             .unwrap_or(false);
         if has_phantom { self.ab } else { self.pc }
@@ -803,12 +747,6 @@ impl<M: Mcu> Cpu<M> {
         Microcode::FetchOnly
     }
 
-    /// Return how many microcodes are in queue, used for draining pending reset/interrupt work.
-    #[cfg(test)]
-    fn microcodes_len(&self) -> usize {
-        self.microcode_queue.len()
-    }
-
     fn pop_microcode(&mut self) -> Option<Microcode> {
         self.microcode_queue.pop_front()
     }
@@ -834,7 +772,6 @@ impl<M: Mcu> Cpu<M> {
 
     fn load_nmi_pcl(&mut self) {
         self.pc = self.read_byte(0xFFFA) as u16;
-        self.nmi_detecteor.enter_nmi();
         self.mode = CpuMode::Nmi;
         self.set_flag(Flag::InterruptDisabled, true);
     }
