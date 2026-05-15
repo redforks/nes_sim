@@ -13,15 +13,6 @@ pub enum Register {
     Y,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum CpuMode {
-    Normal,
-    /// Set when cpu detected nmi_requested, reset to Normal if nmi handle complete
-    Nmi,
-    /// Set when hit some illegal/undocument hlt instruction, reset to normal if call `reset()`
-    Halt,
-}
-
 #[derive(Default)]
 struct IrqDetector {
     irq_pending: bool,
@@ -123,7 +114,7 @@ pub struct Cpu<M: Mcu> {
     /// (3 or 4 CPU cycles) is determined by whether the halt lands
     /// on first-phase (GET → 3 cycles) or second-phase (PUT → 4).
     dmc_dma_stall: u8,
-    mode: CpuMode,
+    halt: bool,
 
     microcode_queue: ArrayDeque<Microcode, 8>,
 
@@ -148,7 +139,7 @@ impl<M: Mcu> Cpu<M> {
             db: 0,
             alu: 0,
             microcode_queue: ArrayDeque::new(),
-            mode: CpuMode::Normal,
+            halt: false,
             dmc_dma_pending: None,
             dmc_dma_stall: 0,
             #[cfg(debug_assertions)]
@@ -191,7 +182,7 @@ impl<M: Mcu> Cpu<M> {
         self.microcode_queue.clear();
         self.dmc_dma_pending = None;
         self.dmc_dma_stall = 0;
-        self.mode = CpuMode::Normal;
+        self.halt = false;
         self.sp = self.sp.wrapping_sub(3);
         self.nmi_detecteor = Default::default();
         self.irq_detector = Default::default();
@@ -213,7 +204,7 @@ impl<M: Mcu> Cpu<M> {
     }
 
     pub fn is_halted(&self) -> bool {
-        self.mode == CpuMode::Halt
+        self.halt
     }
 
     /// Request a DMC DMA stall.
@@ -458,7 +449,7 @@ impl<M: Mcu> Cpu<M> {
     }
 
     fn halt(&mut self) {
-        self.mode = CpuMode::Halt;
+        self.halt = true;
     }
 
     fn pch(&self) -> u8 {
@@ -772,7 +763,6 @@ impl<M: Mcu> Cpu<M> {
 
     fn load_nmi_pcl(&mut self) {
         self.pc = self.read_byte(0xFFFA) as u16;
-        self.mode = CpuMode::Nmi;
         self.set_flag(Flag::InterruptDisabled, true);
     }
 

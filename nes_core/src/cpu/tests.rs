@@ -3151,24 +3151,6 @@ fn test_rti_clears_b_flag() {
 }
 
 #[test]
-fn test_rti_leaves_nmi_mode() {
-    let mut mcu = MockMcu::new();
-    mcu.write(0x0000, opcode::RTI);
-    let mut cpu = create_cpu_with_mcu(mcu);
-    cpu.pc = 0x0000;
-    cpu.sp = 0xFA;
-    cpu.write_byte(0x01FB, 0x00);
-    cpu.write_byte(0x01FC, 0x34);
-    cpu.write_byte(0x01FD, 0x12);
-    cpu.mode = CpuMode::Nmi;
-
-    execute_next(&mut cpu);
-
-    assert_eq!(cpu.mode, CpuMode::Normal);
-    assert_eq!(cpu.pc, 0x1234);
-}
-
-#[test]
 fn test_transfer_no_touch_flags_zero_page() {
     // Load Y from zero page (0xA4 - LDY zero page)
     let mut mcu = MockMcu::new();

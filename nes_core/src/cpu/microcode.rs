@@ -1,5 +1,5 @@
 use super::{Cpu, Flag, Register};
-use crate::{cpu::CpuMode, mcu::Mcu};
+use crate::mcu::Mcu;
 use tinyvec::ArrayVec;
 
 macro_rules! microcode_arr {
@@ -1527,7 +1527,6 @@ impl Microcode {
             } => {
                 cpu.pc |= (cpu.pop_stack() as u16) << 8;
                 if exit_from_interrupt {
-                    cpu.mode = CpuMode::Normal;
                     cpu.nmi_detecteor.leave_nmi();
                 }
             }
