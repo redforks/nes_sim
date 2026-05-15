@@ -72,15 +72,12 @@ where
     /// Execute one master clock tick. Returns the `ExecuteResult`.
     pub fn tick(&mut self) -> ExecuteResult {
         let cycles = get_system_clock();
-        let ppu_tick = cycles.is_ppu_clock();
         let cpu_tick = cycles.is_cpu_clock();
 
-        if ppu_tick {
-            self.machine.mcu_mut().tick_ppu();
-            self.cartridge_irq_next = self.machine.mcu().cartridge_irq_pending();
-            if cpu_tick {
-                self.cartridge_irq_latched = self.cartridge_irq_next;
-            }
+        self.machine.mcu_mut().tick_ppu();
+        self.cartridge_irq_next = self.machine.mcu().cartridge_irq_pending();
+        if cpu_tick {
+            self.cartridge_irq_latched = self.cartridge_irq_next;
         }
 
         // Cartridge IRQs are exposed on the next CPU boundary, while APU IRQs
@@ -93,10 +90,8 @@ where
             self.machine.cpu_mut().request_dmc_dma(addr);
         }
 
-        if ppu_tick {
-            if self.machine.mcu_mut().tick_oam_dma() {
-                return ExecuteResult::Continue;
-            }
+        if self.machine.mcu_mut().tick_oam_dma() {
+            return ExecuteResult::Continue;
         }
 
         let nmi_line = self.machine.mcu().ppu().nmi_line_out();

@@ -282,7 +282,7 @@ impl<M: Mcu> Cpu<M> {
         }
 
         if self.is_halted() {
-            return (ExecuteResult::Halt, !first_phase);
+            return (ExecuteResult::Halt, false);
         }
 
         if first_phase && self.resume_second_phase_after_stall {
@@ -294,10 +294,6 @@ impl<M: Mcu> Cpu<M> {
             code.exec(self);
 
             if self.microcode_queue.is_empty() && self.cur_microcode.is_none() {
-                if self.opcode == opcode::RTI {
-                    self.mode = CpuMode::Normal;
-                    self.nmi_detecteor.leave_nmi();
-                };
                 plugin.end(self);
                 return (plugin.should_stop(), true);
             }
@@ -365,10 +361,6 @@ impl<M: Mcu> Cpu<M> {
         }
 
         if self.microcode_queue.is_empty() && self.cur_microcode.is_none() {
-            if self.opcode == opcode::RTI {
-                self.mode = CpuMode::Normal;
-                self.nmi_detecteor.leave_nmi();
-            };
             plugin.end(self);
             (plugin.should_stop(), true)
         } else {

@@ -1,5 +1,5 @@
 use super::{Cpu, Flag, Register};
-use crate::mcu::Mcu;
+use crate::{cpu::CpuMode, mcu::Mcu};
 use tinyvec::ArrayVec;
 
 macro_rules! microcode_arr {
@@ -406,8 +406,24 @@ const fn build_opcode_table() -> [ArrayVec<[Microcode; 7]>; 256] {
     r[JMP_ABSOLUTE as usize] = microcode_arr!(AbsoluteL, LoadPcAbsoluteH);
     r[JMP_INDIRECT as usize] = microcode_arr!(AbsoluteL, AbsoluteH, IndexedL, IndexedHAndJump);
     r[JSR as usize] = microcode_arr!(AbsoluteL, Nop, PushPcH, PushPcL, LoadPcAbsoluteH);
-    r[RTS as usize] = microcode_arr!(SkipImmediate, Nop, PopPcL, PopPcH, IncPc);
-    r[RTI as usize] = microcode_arr!(SkipImmediate, Nop, Plp, PopPcL, PopPcH);
+    r[RTS as usize] = microcode_arr!(
+        SkipImmediate,
+        Nop,
+        PopPcL,
+        PopPcH {
+            exit_from_interrupt: false
+        },
+        IncPc
+    );
+    r[RTI as usize] = microcode_arr!(
+        SkipImmediate,
+        Nop,
+        Plp,
+        PopPcL,
+        PopPcH {
+            exit_from_interrupt: true
+        }
+    );
     r[CLC as usize] = microcode_arr!(ClearFlag(Carry));
     r[SEC as usize] = microcode_arr!(SetFlag(Carry));
     r[CLD as usize] = microcode_arr!(ClearFlag(Decimal));
@@ -971,7 +987,9 @@ pub enum Microcode {
     /// Pop low byte of PC from stack
     PopPcL,
     /// Pop high byte of PC from stack
-    PopPcH,
+    PopPcH {
+        exit_from_interrupt: bool,
+    },
     IncPc,
     /// Push register A to stack
     Pha,
@@ -1510,8 +1528,14 @@ impl Microcode {
             Self::PopPcL => {
                 cpu.pc = cpu.pop_stack() as u16;
             }
-            Self::PopPcH => {
+            Self::PopPcH {
+                exit_from_interrupt,
+            } => {
                 cpu.pc |= (cpu.pop_stack() as u16) << 8;
+                if exit_from_interrupt {
+                    cpu.mode = CpuMode::Normal;
+                    cpu.nmi_detecteor.leave_nmi();
+                }
             }
             Self::IncPc => {
                 cpu.pc += 1;
