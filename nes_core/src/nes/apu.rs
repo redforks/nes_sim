@@ -1,5 +1,3 @@
-use crate::{SYSTEM_CYCLES_PER_CPU_CYCLE, get_system_cycles};
-
 mod dmc;
 mod frame_sequencer;
 mod helper;
@@ -9,6 +7,7 @@ mod pulse;
 mod registers;
 mod triangle;
 
+use crate::get_system_clock;
 use dmc::Dmc;
 use frame_sequencer::FrameSequencer;
 use helper::{ControlGate, Divider, Envelope, LengthControl, Sequencer};
@@ -98,7 +97,7 @@ impl<D: AudioDriver> Apu<D> {
 
     pub fn tick(&mut self) {
         self.frame_sequencer.tick_timer();
-        if get_system_cycles().is_multiple_of(SYSTEM_CYCLES_PER_CPU_CYCLE) {
+        if get_system_clock().is_apu_clock() {
             self.frame_sequencer.tick();
             self.triangle.tick_timer();
             self.pulse1.tick_timer();

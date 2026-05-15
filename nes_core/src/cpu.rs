@@ -1,7 +1,4 @@
-use crate::{
-    SYSTEM_CYCLES_PER_CPU_CYCLE, SYSTEM_CYCLES_PER_PPU_CYCLE, get_system_cycles, inc_system_cycles,
-    mcu::Mcu,
-};
+use crate::{CpuClockPhase, get_system_clock, get_system_cycles, inc_system_clock, mcu::Mcu};
 use arraydeque::ArrayDeque;
 use microcode::{Microcode, opcode};
 #[cfg(debug_assertions)]
@@ -177,7 +174,7 @@ impl<M: Mcu> Cpu<M> {
     fn drain_microcodes<P: Plugin<M>>(&mut self, plugin: &mut P) {
         while self.cur_microcode.is_some() || !self.microcode_queue.is_empty() {
             // Ignore execute result; we're only interested in running queued microcodes.
-            inc_system_cycles();
+            inc_system_clock();
             let _ = self.tick(plugin);
         }
     }
@@ -258,13 +255,12 @@ impl<M: Mcu> Cpu<M> {
             );
         });
 
-        let cycle_phase = get_system_cycles().wrapping_sub(1) % SYSTEM_CYCLES_PER_CPU_CYCLE;
-        let first_phase = if cycle_phase == SYSTEM_CYCLES_PER_PPU_CYCLE - 1 {
-            true
-        } else if cycle_phase == SYSTEM_CYCLES_PER_CPU_CYCLE - 1 {
-            false
-        } else {
-            return (ExecuteResult::Continue, false);
+        let first_phase = match get_system_clock().cpu_clock_phase() {
+            crate::CpuClockPhase::First => true,
+            crate::CpuClockPhase::Middle => {
+                return (ExecuteResult::Continue, false);
+            }
+            crate::CpuClockPhase::Last => false,
         };
 
         // ── Active DMC DMA (CPU is halted) ──
@@ -381,9 +377,7 @@ impl<M: Mcu> Cpu<M> {
     }
 
     pub fn detect_interrupt(&mut self) {
-        let cycle_phase = get_system_cycles().wrapping_sub(1) % SYSTEM_CYCLES_PER_CPU_CYCLE;
-        let first_phase = cycle_phase == SYSTEM_CYCLES_PER_PPU_CYCLE - 1;
-        if first_phase {
+        if matches!(get_system_clock().cpu_clock_phase(), CpuClockPhase::Last) {
             self.nmi_detecteor.detect_nmi();
             self.irq_detector
                 .detect_irq(self.flag(Flag::InterruptDisabled));

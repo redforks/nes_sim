@@ -6,6 +6,7 @@ use crate::nes::lower_ram::LowerRam;
 use crate::nes::mapper::Cartridge;
 use crate::nes::ppu::Ppu;
 use crate::render::Render;
+use crate::{CpuClockPhase, get_system_clock};
 
 pub mod apu;
 pub mod controller;
@@ -86,9 +87,10 @@ impl<R: Render, D: AudioDriver> NesMcu<R, D> {
         self.apu.flush();
     }
 
-    pub fn tick_oam_dma(&mut self, cycle_phase: u64, cpu_cycle: u64) -> bool {
+    pub fn tick_oam_dma(&mut self) -> bool {
+        let system_clock = get_system_clock();
         if let Some(mut dma) = self.oam_dma.take() {
-            if cycle_phase == 2 {
+            if matches!(system_clock.cpu_clock_phase(), CpuClockPhase::Last) {
                 if dma.startup_cycles > 0 {
                     dma.startup_cycles -= 1;
                 } else {
@@ -112,11 +114,15 @@ impl<R: Render, D: AudioDriver> NesMcu<R, D> {
         }
 
         if let Some(page) = self.oam_dma_pending {
-            if cycle_phase == 2 {
+            if matches!(system_clock.cpu_clock_phase(), CpuClockPhase::Last) {
                 self.oam_dma_pending = None;
                 self.oam_dma = Some(OamDmaState {
                     page,
-                    startup_cycles: if cpu_cycle.is_multiple_of(2) { 1 } else { 2 },
+                    startup_cycles: if system_clock.is_even_cpu_cycle() {
+                        1
+                    } else {
+                        2
+                    },
                     transfer_cycle: 0,
                     latch: 0,
                 });
@@ -159,12 +165,6 @@ impl<R: Render, D: AudioDriver> NesMcu<R, D> {
 
     pub fn dump_ppu_state(&self) -> String {
         self.ppu.dump_state(&self.cartridge)
-    }
-
-    /// Get OAM data (256 bytes)
-    #[cfg(test)]
-    fn get_oam_data(&self) -> [u8; 256] {
-        self.ppu.get_oam_data()
     }
 }
 

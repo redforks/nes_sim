@@ -4,7 +4,7 @@ use super::plugin::{
     ReportPlugin, Timeout,
 };
 use nes_core::{
-    Plugin, inc_system_cycles, ines::INesFile, machine::Machine, mcu::RamMcu,
+    Plugin, inc_system_clock, ines::INesFile, machine::Machine, mcu::RamMcu,
     nes_machine::NesMachine, render::ImageRender,
 };
 use std::{
@@ -266,7 +266,7 @@ pub enum MachineWrapper {
 
 impl MachineWrapper {
     pub fn tick(&mut self) -> nes_core::ExecuteResult {
-        inc_system_cycles();
+        inc_system_clock();
         match self {
             MachineWrapper::Bin(m) => m.tick(),
             MachineWrapper::INes(m) => m.tick(),

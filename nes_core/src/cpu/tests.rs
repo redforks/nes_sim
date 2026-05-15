@@ -30,9 +30,9 @@ fn execute_next(cpu: &mut Cpu<MockMcu>) {
 
     cpu.drain_microcodes(&mut plugin);
 
-    inc_system_cycles();
+    inc_system_clock();
     while !cpu.tick(&mut plugin).1 {
-        inc_system_cycles();
+        inc_system_clock();
     }
 }
 
@@ -3187,7 +3187,7 @@ fn test_ready_nmi_is_taken_even_while_already_in_nmi_mode() {
     cpu.nmi_detecteor.nmi_pending = true;
 
     let mut plugin = EmptyPlugin::new();
-    inc_system_cycles();
+    inc_system_clock();
     let (_, finished) = cpu.tick(&mut plugin);
     assert!(!finished);
     assert_eq!(cpu.mode, CpuMode::Nmi);

@@ -1,6 +1,5 @@
 use crate::{
-    ExecuteResult, Plugin, SYSTEM_CYCLES_PER_CPU_CYCLE, SYSTEM_CYCLES_PER_PPU_CYCLE,
-    get_system_cycles, inc_system_cycles,
+    ExecuteResult, Plugin, get_system_clock, inc_system_clock,
     ines::INesFile,
     machine::Machine,
     nes::{
@@ -50,7 +49,7 @@ where
         // Delegate to `tick()` which executes a single CPU instruction and
         // advances PPU/APU accordingly. Loop until VBlank or safety limit.
         for _ in 0..MAX_TICKS_PER_FRAME {
-            let cycles = inc_system_cycles();
+            let cycles = inc_system_clock();
             self.tick();
 
             if self.machine.cpu_mut().is_halted() {
@@ -59,7 +58,7 @@ where
             }
 
             // Check for VBlank signalled by the PPU
-            if cycles.is_multiple_of(SYSTEM_CYCLES_PER_PPU_CYCLE)
+            if cycles.is_ppu_clock()
                 && self.machine.mcu().ppu_timing() == (VBLANK_SET_SCANLINE, VBLANK_SET_DOT)
             {
                 break;
@@ -72,9 +71,9 @@ where
 
     /// Execute one master clock tick. Returns the `ExecuteResult`.
     pub fn tick(&mut self) -> ExecuteResult {
-        let cycles = get_system_cycles();
-        let ppu_tick = cycles.is_multiple_of(SYSTEM_CYCLES_PER_PPU_CYCLE);
-        let cpu_tick = cycles.is_multiple_of(SYSTEM_CYCLES_PER_CPU_CYCLE);
+        let cycles = get_system_clock();
+        let ppu_tick = cycles.is_ppu_clock();
+        let cpu_tick = cycles.is_cpu_clock();
 
         if ppu_tick {
             self.machine.mcu_mut().tick_ppu();
@@ -84,32 +83,25 @@ where
             }
         }
 
+        // Cartridge IRQs are exposed on the next CPU boundary, while APU IRQs
+        // keep the existing immediate visibility used by the interrupt tests.
+        let irq_pending = self.machine.mcu().apu_irq_pending() || self.cartridge_irq_latched;
+        self.machine.cpu_mut().set_irq(irq_pending);
+
         self.machine.mcu_mut().tick_apu();
         if let Some(addr) = self.machine.mcu_mut().take_dmc_dma_pending() {
             self.machine.cpu_mut().request_dmc_dma(addr);
         }
 
         if ppu_tick {
-            let ppu_cycle = (cycles / SYSTEM_CYCLES_PER_PPU_CYCLE).wrapping_sub(1);
-            let cpu_tick_phase = ppu_cycle % 3;
-            let cpu_cycle = ppu_cycle / 3;
-            if self
-                .machine
-                .mcu_mut()
-                .tick_oam_dma(cpu_tick_phase, cpu_cycle)
-            {
+            if self.machine.mcu_mut().tick_oam_dma() {
                 return ExecuteResult::Continue;
             }
         }
 
-        let r = self.machine.tick();
         let nmi_line = self.machine.mcu().ppu().nmi_line_out();
-        // Cartridge IRQs are exposed on the next CPU boundary, while APU IRQs
-        // keep the existing immediate visibility used by the interrupt tests.
-        let irq_pending = self.machine.mcu().apu_irq_pending() || self.cartridge_irq_latched;
-        self.machine.cpu_mut().set_irq(irq_pending);
-
         self.machine.cpu_mut().update_nmi_line(nmi_line);
+        let r = self.machine.tick();
         self.machine.cpu_mut().detect_interrupt();
         r
     }

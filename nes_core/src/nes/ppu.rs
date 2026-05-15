@@ -1,15 +1,14 @@
-use crate::{get_system_cycles, nes::mapper::Cartridge, render::Render};
-use std::fmt::Write;
-
 mod palette;
 mod pattern;
 mod registers;
 mod sprite;
 
+use crate::{get_system_cycles, nes::mapper::Cartridge, render::Render};
 use palette::{Palette, Pixel};
 pub use pattern::{PatternBand, draw_pattern};
 use registers::{PpuCtrl, PpuMask, PpuStatus, Registers};
 use sprite::SpriteManager;
+use std::fmt::Write;
 
 // Pixel, palette data and COLORS are defined in the submodule `palette`.
 

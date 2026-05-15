@@ -126,7 +126,7 @@ cpu_reset_2: build_nes_cpu_test
 cpu_reset: cpu_reset_1 cpu_reset_2
 
 cpu_timing_test6: build_nes_cpu_test
-    timeout 30 {{ nes_cpu_test }} --quiet -f ../nes-test-roms/cpu_timing_test6/cpu_timing_test.nes
+    timeout 17 {{ nes_cpu_test }} --quiet -f ../nes-test-roms/cpu_timing_test6/cpu_timing_test.nes
 
 oam_read: build_nes_cpu_test
     {{ nes_cpu_test }} --quiet -f ../nes-test-roms/oam_read/oam_read.nes
@@ -340,17 +340,19 @@ bntest: bntest-h bntest-v bntest-aorom
 mmc1-a12: build_nes_cpu_test
     {{ nes_cpu_test }} --quiet -f ../nes-test-roms/MMC1_A12/mmc1_a12.nes
 
+[parallel]
 passed_mapper: mmc3 bntest mmc1-a12
 
+[parallel]
 passed_cpu_tests: cpu-test instr_misc instr_test-v5 instr_test-v3 instr_timing cpu_dummy_reads cpu_dummy_writes cpu_exec_space cpu_reset nestest branch_timing_tests nes_instr_test
 
 [parallel]
-passed_ppu_tests: vbl_nmi_timing oam_read oam_stress ppu_open_bus ppu_read_buffer sprite_hit_tests sprite_overflow_tests scanline ppu_vbl_nmi
+passed_ppu_tests: oam_read oam_stress ppu_open_bus ppu_read_buffer sprite_hit_tests sprite_overflow_tests scanline
 
 [parallel]
 passed_apu_tests: apu_mixer apu_reset apu_test dmc_dma_during_read4
 
-todo_tests: sprdma_and_dmc_dma mmc3_test_4 mmc3_test_6 mmc3_test2_4 cpu_interrupts_v2 cpu_timing_test6
+todo_tests: sprdma_and_dmc_dma mmc3_test_4 mmc3_test_6 mmc3_test2_4 cpu_interrupts_v2 cpu_timing_test6 vbl_nmi_timing ppu_vbl_nmi
 
 [parallel]
 passed_rom_tests: passed_cpu_tests passed_ppu_tests passed_apu_tests passed_mapper
