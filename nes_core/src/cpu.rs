@@ -176,6 +176,13 @@ impl<M: Mcu> Cpu<M> {
         self.pc = pc;
     }
 
+    /// Return true if cpu can be paused for execute dma, return true if next microcode
+    /// not write operation
+    pub fn can_pause(&self) -> bool {
+        self.next_microcode()
+            .map_or_else(|| true, |code| !code.is_write_operation())
+    }
+
     pub fn reset(&mut self) {
         self.inner_set_flag(Flag::InterruptDisabled, true);
         self.inner_set_flag(Flag::NotUsed, true);
@@ -270,8 +277,7 @@ impl<M: Mcu> Cpu<M> {
         if self.dmc_dma_pending.is_some() {
             // dmc dma can not block cpu if current is write cycle
             let can_halt = self
-                .microcode_queue
-                .front()
+                .next_microcode()
                 .map_or(true, |m| !m.is_write_operation());
 
             if can_halt {
@@ -435,8 +441,7 @@ impl<M: Mcu> Cpu<M> {
     /// otherwise returns `self.pc`.
     fn dmc_dma_phantom_addr(&self) -> u16 {
         let has_phantom = self
-            .microcode_queue
-            .front()
+            .next_microcode()
             .map(|m| m.is_read_operation())
             .unwrap_or(false);
         if has_phantom { self.ab } else { self.pc }
@@ -736,6 +741,10 @@ impl<M: Mcu> Cpu<M> {
             },
         ]);
         Microcode::FetchOnly
+    }
+
+    fn next_microcode(&self) -> Option<Microcode> {
+        self.microcode_queue.front().copied()
     }
 
     fn pop_microcode(&mut self) -> Option<Microcode> {

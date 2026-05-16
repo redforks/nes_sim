@@ -1413,15 +1413,11 @@ impl Microcode {
                 | Self::PushPcH
                 | Self::PushStatus { .. }
                 | Self::Pha
-        ) || matches!(
-            self,
-            Self::Asl(AOrMemory::Memory)
+                | Self::Asl(AOrMemory::Memory)
                 | Self::Lsr(AOrMemory::Memory)
                 | Self::Rol(AOrMemory::Memory)
                 | Self::Ror(AOrMemory::Memory)
-        ) || matches!(
-            self,
-            Self::IncDec(IncDecTarget::IncrementAlu | IncDecTarget::DecrementAlu)
+                | Self::IncDec(IncDecTarget::IncrementAlu | IncDecTarget::DecrementAlu)
         )
     }
 
