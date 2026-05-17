@@ -737,7 +737,7 @@ const fn build_opcode_table() -> [ArrayVec<[Microcode; 7]>; 256] {
 
 const OPCODE_TABLE: [ArrayVec<[Microcode; 7]>; 256] = build_opcode_table();
 
-#[derive(Debug, Copy, Clone)]
+#[derive(Debug, Copy, Clone, PartialEq, Eq)]
 pub enum OpAfterAddressing {
     And,
     /// Read byte from address_latch into register A,
@@ -785,7 +785,7 @@ impl OpAfterAddressing {
     }
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ImmediateOp {
     Adc,
     And,
@@ -797,7 +797,7 @@ pub enum ImmediateOp {
     Eor,
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TransferDirection {
     AtoX,
     XtoA,
@@ -807,7 +807,7 @@ pub enum TransferDirection {
     XtoSP,
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum IncDecTarget {
     IncrementX,
     IncrementY,
@@ -817,7 +817,7 @@ pub enum IncDecTarget {
     DecrementAlu,
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AOrMemory {
     Accumulator,
     Memory,
@@ -846,7 +846,7 @@ impl ImmediateOp {
     }
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CrossPageBehavior {
     /// If not cross paged, will not push the op microcode into cpu
     FirstClock,
@@ -855,7 +855,7 @@ pub enum CrossPageBehavior {
 }
 
 /// Each Microcode instruction executed by the CPU in a single cycle
-#[derive(Debug, Clone, Copy, Default)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub enum Microcode {
     /// Fetch byte at the pc address, but do nothing, pc not increase
     FetchOnly,

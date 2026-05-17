@@ -106,17 +106,17 @@ fn test_cpu_initialization() {
 #[test]
 fn can_pause() {
     let mut cpu = create_cpu();
-    // return true if microcode queue is empty, empty queue means next microcode always is read operation,
-    // such as FetchAndDecode or Nop (first microcode of interrupt/reset sequence)
     assert!(cpu.can_pause());
 
     cpu.push_microcode(Microcode::Cmp);
-    // can pause if next microcode is read operation
+    cpu.drain_microcodes(&mut EmptyPlugin::new());
+    // can pause if microcode is read operation
     assert!(cpu.can_pause());
 
-    cpu.drain_microcodes(&mut EmptyPlugin::new());
     cpu.push_microcode(Microcode::StoreAlu);
-    // can not pause if next microcode is write operation
+    cpu.drain_microcodes(&mut EmptyPlugin::new());
+    assert_eq!(cpu.last_microcode, Microcode::StoreAlu);
+    // can not pause if microcode is write operation
     assert!(!cpu.can_pause());
 }
 

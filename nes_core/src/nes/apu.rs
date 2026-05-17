@@ -7,7 +7,7 @@ mod pulse;
 mod registers;
 mod triangle;
 
-use crate::get_system_clock;
+use crate::{get_system_clock, nes::dmc_dma::DmcDmaType};
 use dmc::Dmc;
 use frame_sequencer::FrameSequencer;
 use helper::{ControlGate, Divider, Envelope, LengthControl, Sequencer};
@@ -125,7 +125,7 @@ impl<D: AudioDriver> Apu<D> {
     }
 
     /// Take the pending DMC DMA request, if any.
-    pub fn take_dmc_dma_request(&mut self) -> Option<u16> {
+    pub fn take_dmc_dma_request(&mut self) -> Option<(DmcDmaType, u16)> {
         self.dmc.take_dma_request()
     }
 

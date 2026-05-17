@@ -16,7 +16,7 @@ struct DmaReader {
     request_interrupt: bool,
 
     dma_pending: bool,
-    dma_request: Option<u16>,
+    dma_request: Option<(DmcDmaType, u16)>,
 }
 
 impl DmaReader {
@@ -58,7 +58,7 @@ impl DmaReader {
     fn tick(&mut self) {
         if self.enabled() && !self.dma_pending {
             self.dma_pending = true;
-            self.dma_request = Some(self.current_address);
+            self.dma_request = Some((DmcDmaType::Reload, self.current_address));
         }
     }
 
@@ -66,11 +66,11 @@ impl DmaReader {
         // Load DMA: triggered by $4015 write with empty buffer
         if self.dma_request.is_none() && self.enabled() && !self.dma_pending {
             self.dma_pending = true;
-            self.dma_request = Some(self.current_address);
+            self.dma_request = Some((DmcDmaType::Load, self.current_address));
         }
     }
 
-    fn take_dma_request(&mut self) -> Option<u16> {
+    fn take_dma_request(&mut self) -> Option<(DmcDmaType, u16)> {
         self.dma_request.take()
     }
 
@@ -213,7 +213,7 @@ impl Dmc {
         self.dma_reader.sample_length = value;
     }
 
-    pub fn take_dma_request(&mut self) -> Option<u16> {
+    pub fn take_dma_request(&mut self) -> Option<(DmcDmaType, u16)> {
         self.dma_reader.take_dma_request()
     }
 

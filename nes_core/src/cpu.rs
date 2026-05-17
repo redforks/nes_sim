@@ -115,7 +115,7 @@ pub struct Cpu<M: Mcu> {
     mem_acc_count: Rc<Cell<usize>>,
 
     pub(crate) frozen: bool,
-    pub(crate) last_microcode: Microcode,
+    last_microcode: Microcode,
 }
 
 impl<M: Mcu> Cpu<M> {

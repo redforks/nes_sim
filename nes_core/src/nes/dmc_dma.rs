@@ -4,6 +4,17 @@ use crate::{
     render::Render,
 };
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DmcDmaType {
+    // Load DMAs occur after $4015 D4 is set, but only if the sample buffer is
+    // empty. They are scheduled to halt the CPU on a get cycle during the 2nd
+    // APU cycle after the write (that is, the 3rd or 4th CPU cycle).
+    Load,
+    // Reload DMAs occur in response to the sample buffer being emptied. Unlike
+    // load DMAs, they are scheduled to halt the CPU on a put cycle.
+    Reload,
+}
+
 #[cfg_attr(test, mockall::automock)]
 pub(crate) trait NesDmaSupport {
     /// Return false if cpu next operation is write, return true
@@ -19,7 +30,7 @@ pub(crate) trait NesDmaSupport {
     fn read_mem(&mut self, addr: u16) -> u8;
 
     /// Take dmc dma request from apu, None if no current request
-    fn take_dmc_dma_request(&mut self) -> Option<u16>;
+    fn take_dmc_dma_request(&mut self) -> Option<(DmcDmaType, u16)>;
 
     /// Supply dmc dma result to apu
     fn supply_dmc_byte(&mut self, byte: u8);
@@ -47,7 +58,7 @@ impl<R: Render, D: AudioDriver> NesDmaSupport for Cpu<NesMcu<R, D>> {
         self.read_byte_for_dma(addr)
     }
 
-    fn take_dmc_dma_request(&mut self) -> Option<u16> {
+    fn take_dmc_dma_request(&mut self) -> Option<(DmcDmaType, u16)> {
         self.mcu_mut().apu_mut().take_dmc_dma_request()
     }
 
@@ -79,15 +90,18 @@ impl DmcDma {
     pub fn tick(&mut self, cpu: &mut impl NesDmaSupport) {
         match self.state {
             State::Inactive => {
-                if let Some(addr) = cpu.take_dmc_dma_request() {
+                if let Some((_dmc_dma_type, addr)) = cpu.take_dmc_dma_request() {
                     self.addr = addr;
-                    self.state = State::TryHaltCpu;
+                    self.state = State::TryHalt;
                 }
             }
-            State::TryHaltCpu => {
+            State::TryHalt => {
                 if cpu.try_freeze() {
-                    self.state = State::Dummy;
+                    self.state = State::Halt;
                 }
+            }
+            State::Halt => {
+                self.state = State::Dummy;
             }
             State::AlignOrRead => {
                 if cpu.is_get_cycle() {
@@ -108,7 +122,8 @@ impl DmcDma {
 enum State {
     #[default]
     Inactive,
-    TryHaltCpu,
+    TryHalt,
+    Halt,
     AlignOrRead,
     Dummy,
     Read,
@@ -138,14 +153,13 @@ mod tests {
         let mut seq = Sequence::new();
         let mut dma = DmcDma::default();
 
+        // get request
         cpu.expect_take_dmc_dma_request()
             .times(1)
             .in_sequence(&mut seq)
-            .return_const(Some(0x1234));
-
-        // get request
+            .return_const(Some((DmcDmaType::Reload, 0x1234)));
         dma.tick(&mut cpu);
-        assert_eq!(State::TryHaltCpu, dma.state);
+        assert_eq!(State::TryHalt, dma.state);
         cpu.checkpoint();
         cpu.checkpoint();
 
@@ -155,7 +169,7 @@ mod tests {
             .in_sequence(&mut seq)
             .return_const(false);
         dma.tick(&mut cpu);
-        assert_eq!(State::TryHaltCpu, dma.state);
+        assert_eq!(State::TryHalt, dma.state);
         cpu.checkpoint();
         cpu.checkpoint();
 
@@ -165,9 +179,13 @@ mod tests {
             .in_sequence(&mut seq)
             .return_const(true);
         dma.tick(&mut cpu);
+        assert_eq!(State::Halt, dma.state);
+        cpu.checkpoint();
+        cpu.checkpoint();
+
+        // do nothing in halt cycle
+        dma.tick(&mut cpu);
         assert_eq!(State::Dummy, dma.state);
-        cpu.checkpoint();
-        cpu.checkpoint();
 
         // dummy
         dma.tick(&mut cpu);
