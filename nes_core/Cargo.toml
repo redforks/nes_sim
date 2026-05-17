@@ -22,4 +22,5 @@ scopeguard = "1.2.0"
 
 [dev-dependencies]
 env_logger = { workspace = true }
+mockall = "0.14.0"
 test-log = { workspace = true }

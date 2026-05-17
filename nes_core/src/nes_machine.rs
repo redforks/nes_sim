@@ -5,6 +5,7 @@ use crate::{
     nes::{
         NesMcu,
         controller::Button,
+        dmc_dma::DmcDma,
         ppu::{VBLANK_SET_DOT, VBLANK_SET_SCANLINE},
     },
     render::Render,
@@ -20,6 +21,7 @@ pub struct NesMachine<P, R: Render, D: crate::nes::apu::AudioDriver> {
     machine: Machine<P, NesMcu<R, D>>,
     cartridge_irq_latched: bool,
     cartridge_irq_next: bool,
+    dmc_dma: DmcDma,
 }
 
 impl<P, R, D> NesMachine<P, R, D>
@@ -34,6 +36,7 @@ where
             machine: Machine::with_plugin(plugin, mcu),
             cartridge_irq_latched: false,
             cartridge_irq_next: false,
+            dmc_dma: DmcDma::default(),
         }
     }
 
@@ -86,12 +89,11 @@ where
         self.machine.cpu_mut().set_irq(irq_pending);
 
         self.machine.mcu_mut().tick_apu();
-        if let Some(addr) = self.machine.mcu_mut().take_dmc_dma_pending() {
-            self.machine.cpu_mut().request_dmc_dma(addr);
-        }
-
-        if self.machine.mcu_mut().tick_oam_dma() {
-            return ExecuteResult::Continue;
+        if cycles.is_apu_clock() {
+            self.dmc_dma.tick(self.machine.cpu_mut());
+            if self.machine.mcu_mut().tick_oam_dma() {
+                return ExecuteResult::Continue;
+            }
         }
 
         let nmi_line = self.machine.mcu().ppu().nmi_line_out();

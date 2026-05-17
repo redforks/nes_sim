@@ -106,20 +106,16 @@ pub struct Cpu<M: Mcu> {
 
     nmi_detecteor: NmiDetector,
     irq_detector: IrqDetector,
-    /// DMC DMA sample address.  Set by `request_dmc_dma`, consumed
-    /// when the DMA read completes.
-    dmc_dma_pending: Option<u16>,
-    /// Remaining DMC DMA stall cycles (0 = no DMA in progress).
-    /// Always set to 3 on a successful halt; the total DMA length
-    /// (3 or 4 CPU cycles) is determined by whether the halt lands
-    /// on first-phase (GET → 3 cycles) or second-phase (PUT → 4).
-    dmc_dma_stall: u8,
     halt: bool,
+    last_read_addr: Option<u16>,
 
     microcode_queue: ArrayDeque<Microcode, 8>,
 
     #[cfg(debug_assertions)]
     mem_acc_count: Rc<Cell<usize>>,
+
+    pub(crate) frozen: bool,
+    pub(crate) last_microcode: Microcode,
 }
 
 impl<M: Mcu> Cpu<M> {
@@ -140,10 +136,11 @@ impl<M: Mcu> Cpu<M> {
             alu: 0,
             microcode_queue: ArrayDeque::new(),
             halt: false,
-            dmc_dma_pending: None,
-            dmc_dma_stall: 0,
             #[cfg(debug_assertions)]
             mem_acc_count: Default::default(),
+            frozen: false,
+            last_read_addr: None,
+            last_microcode: Microcode::Nop,
         };
         r.reset();
         r
@@ -178,21 +175,22 @@ impl<M: Mcu> Cpu<M> {
 
     /// Return true if cpu can be paused for execute dma, return true if next microcode
     /// not write operation
-    pub fn can_pause(&self) -> bool {
-        self.next_microcode()
-            .map_or_else(|| true, |code| !code.is_write_operation())
+    pub(crate) fn can_pause(&self) -> bool {
+        // in the same cycle, dma tick after cpu tick, see `NesMachine::tick`, so
+        // the rast microcode is the current microcode for dmc
+        !self.last_microcode.is_write_operation()
     }
 
     pub fn reset(&mut self) {
         self.inner_set_flag(Flag::InterruptDisabled, true);
         self.inner_set_flag(Flag::NotUsed, true);
         self.microcode_queue.clear();
-        self.dmc_dma_pending = None;
-        self.dmc_dma_stall = 0;
         self.halt = false;
         self.sp = self.sp.wrapping_sub(3);
         self.nmi_detecteor = Default::default();
         self.irq_detector = Default::default();
+        self.frozen = false;
+        self.last_read_addr = None;
 
         // Reset process takes 7 cycles, push 7 Nop microcodes to ppu/apu run as a real device, and make Plugin to get correct total cycles
         self.push_microcodes(&[
@@ -212,18 +210,6 @@ impl<M: Mcu> Cpu<M> {
 
     pub fn is_halted(&self) -> bool {
         self.halt
-    }
-
-    /// Request a DMC DMA stall.
-    /// `addr`: the sample address to read from.
-    ///
-    /// The DMA will attempt to halt the CPU on the next read cycle.
-    /// If the CPU is currently writing the halt is deferred until a
-    /// read cycle occurs.  The total stall length (3 or 4 CPU cycles)
-    /// is determined by whether the halt lands on first-phase (GET)
-    /// or second-phase (PUT).
-    pub fn request_dmc_dma(&mut self, addr: u16) {
-        self.dmc_dma_pending = Some(addr);
     }
 
     fn inc_mem_count(&mut self) {
@@ -249,6 +235,11 @@ impl<M: Mcu> Cpu<M> {
             );
         });
 
+        if self.frozen {
+            self.read_byte(self.last_read_addr.unwrap_or_else(|| self.pc));
+            return (ExecuteResult::Continue, false);
+        }
+
         if matches!(
             get_system_clock().cpu_clock_phase(),
             crate::CpuClockPhase::First | crate::CpuClockPhase::Middle
@@ -256,37 +247,8 @@ impl<M: Mcu> Cpu<M> {
             return (ExecuteResult::Continue, false);
         }
 
-        // ── Active DMC DMA (CPU is halted) ──
-        if self.dmc_dma_stall > 0 {
-            if self.dmc_dma_stall == 1 {
-                self.perform_dmc_dma_read();
-                self.dmc_dma_stall = 0;
-            } else {
-                self.dmc_dma_stall -= 1;
-            }
-            return (ExecuteResult::Continue, false);
-        }
-
         if self.is_halted() {
             return (ExecuteResult::Halt, false);
-        }
-
-        // DMC DMA halt-delay: on a pending DMA, check whether we can halt
-        // BEFORE popping a new microcode or executing the current one.
-        // This avoids side effects like NMI/IRQ polling while DMA is pending.
-        if self.dmc_dma_pending.is_some() {
-            // dmc dma can not block cpu if current is write cycle
-            let can_halt = self
-                .next_microcode()
-                .map_or(true, |m| !m.is_write_operation());
-
-            if can_halt {
-                // Counter always starts at 3.  The total DMA length
-                // (3 or 4 CPU cycles) flows from where the halt lands:
-                // first-phase → 3 cycles, second-phase → 4 cycles.
-                self.dmc_dma_stall = 3;
-                return (ExecuteResult::Continue, false);
-            }
         }
 
         let code = match self.pop_microcode() {
@@ -303,6 +265,7 @@ impl<M: Mcu> Cpu<M> {
             }
         };
 
+        self.last_microcode = code;
         code.exec(self);
 
         if self.microcode_queue.is_empty() {
@@ -358,7 +321,12 @@ impl<M: Mcu> Cpu<M> {
         self.inner_set_flag(Flag::Zero, value == 0);
     }
 
+    pub(crate) fn read_byte_for_dma(&mut self, addr: u16) -> u8 {
+        self.mcu.read(addr)
+    }
+
     fn read_byte(&mut self, addr: u16) -> u8 {
+        self.last_read_addr = Some(addr);
         self.inc_mem_count();
         self.mcu.read(addr)
     }
@@ -396,55 +364,6 @@ impl<M: Mcu> Cpu<M> {
         let addr = 0x100 + self.sp as u16;
         self.inc_mem_count();
         self.mcu.read(addr)
-    }
-
-    /// Perform the DMC DMA read on the final stall cycle.
-    /// Uses the CPU's microcode queue and `self.ab` to detect phantom-read
-    /// side effects: on real hardware the CPU's address bus holds the
-    /// address of whatever memory operation it was about to perform when
-    /// it was halted.
-    fn perform_dmc_dma_read(&mut self) {
-        let sample_addr = self
-            .dmc_dma_pending
-            .take()
-            .expect("dmc_dma_pending must be set during DMA");
-        let phantom_addr = self.dmc_dma_phantom_addr();
-        let byte = self.dmc_dma_read(sample_addr, phantom_addr);
-        self.mcu.supply_dmc_dma_byte(byte);
-    }
-
-    /// Perform the DMC DMA bus read while the CPU is reading `cpu_read_addr`.
-    /// This models the read4 test behavior where the overlap can trigger an
-    /// extra side-effecting CPU register read before the actual sample fetch.
-    fn dmc_dma_read(&mut self, addr: u16, phantom_addr: u16) -> u8 {
-        match phantom_addr {
-            0x4016 | 0x4017 => {
-                // DMC DMA during controller read causes an extra controller read.
-                let _ = self.mcu.read(phantom_addr);
-            }
-            0x2007 => {
-                // DMC DMA during PPUDATA read causes extra PPUDATA reads.
-                // The read4 tests accept 2-3 extra reads depending on power-on
-                // CPU/PPU phase; use the stable 2-read variant here.
-                let _ = self.mcu.read(0x2007);
-                let _ = self.mcu.read(0x2007);
-            }
-            _ => {}
-        }
-
-        self.mcu.read(addr)
-    }
-
-    /// Determine the phantom address for DMC DMA's extra read side effects.
-    /// Returns `self.ab` if the stalled microcode is a read operation that
-    /// could cause side-effecting "phantom reads" ($4016/$4017, $2007);
-    /// otherwise returns `self.pc`.
-    fn dmc_dma_phantom_addr(&self) -> u16 {
-        let has_phantom = self
-            .next_microcode()
-            .map(|m| m.is_read_operation())
-            .unwrap_or(false);
-        if has_phantom { self.ab } else { self.pc }
     }
 
     #[cfg(test)]
@@ -743,10 +662,6 @@ impl<M: Mcu> Cpu<M> {
         Microcode::FetchOnly
     }
 
-    fn next_microcode(&self) -> Option<Microcode> {
-        self.microcode_queue.front().copied()
-    }
-
     fn pop_microcode(&mut self) -> Option<Microcode> {
         self.microcode_queue.pop_front()
     }
@@ -812,8 +727,6 @@ impl<M: Mcu> Cpu<M> {
         self.update_negative_flag(val);
     }
 }
-
-// ExecuteResult, Plugin, EmptyPlugin, and Flag remain from original cpu.rs
 
 #[derive(Eq, PartialEq, Clone, Copy, Debug)]
 pub enum ExecuteResult {

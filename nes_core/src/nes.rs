@@ -1,3 +1,4 @@
+use crate::get_system_clock;
 use crate::ines::INesFile;
 use crate::mcu::Mcu;
 use crate::nes::apu::{Apu, AudioDriver};
@@ -6,10 +7,10 @@ use crate::nes::lower_ram::LowerRam;
 use crate::nes::mapper::Cartridge;
 use crate::nes::ppu::Ppu;
 use crate::render::Render;
-use crate::{CpuClockPhase, get_system_clock};
 
 pub mod apu;
 pub mod controller;
+pub(crate) mod dmc_dma;
 mod lower_ram;
 mod mapper;
 pub mod ppu;
@@ -90,19 +91,17 @@ impl<R: Render, D: AudioDriver> NesMcu<R, D> {
     pub fn tick_oam_dma(&mut self) -> bool {
         let system_clock = get_system_clock();
         if let Some(mut dma) = self.oam_dma.take() {
-            if matches!(system_clock.cpu_clock_phase(), CpuClockPhase::Last) {
-                if dma.startup_cycles > 0 {
-                    dma.startup_cycles -= 1;
+            if dma.startup_cycles > 0 {
+                dma.startup_cycles -= 1;
+            } else {
+                let byte_index = dma.transfer_cycle / 2;
+                if dma.transfer_cycle.is_multiple_of(2) {
+                    let addr = ((dma.page as u16) << 8) | byte_index as u16;
+                    dma.latch = self.read(addr);
                 } else {
-                    let byte_index = dma.transfer_cycle / 2;
-                    if dma.transfer_cycle.is_multiple_of(2) {
-                        let addr = ((dma.page as u16) << 8) | byte_index as u16;
-                        dma.latch = self.read(addr);
-                    } else {
-                        self.ppu.write_oam_dma_byte(dma.latch);
-                    }
-                    dma.transfer_cycle += 1;
+                    self.ppu.write_oam_dma_byte(dma.latch);
                 }
+                dma.transfer_cycle += 1;
             }
 
             if dma.startup_cycles == 0 && dma.transfer_cycle == 512 {
@@ -114,20 +113,18 @@ impl<R: Render, D: AudioDriver> NesMcu<R, D> {
         }
 
         if let Some(page) = self.oam_dma_pending {
-            if matches!(system_clock.cpu_clock_phase(), CpuClockPhase::Last) {
-                self.oam_dma_pending = None;
-                self.oam_dma = Some(OamDmaState {
-                    page,
-                    startup_cycles: if system_clock.is_even_cpu_cycle() {
-                        1
-                    } else {
-                        2
-                    },
-                    transfer_cycle: 0,
-                    latch: 0,
-                });
-                self.cartridge.on_oam_dma();
-            }
+            self.oam_dma_pending = None;
+            self.oam_dma = Some(OamDmaState {
+                page,
+                startup_cycles: if system_clock.is_even_cpu_cycle() {
+                    1
+                } else {
+                    2
+                },
+                transfer_cycle: 0,
+                latch: 0,
+            });
+            self.cartridge.on_oam_dma();
 
             return true;
         }
@@ -165,6 +162,10 @@ impl<R: Render, D: AudioDriver> NesMcu<R, D> {
 
     pub fn dump_ppu_state(&self) -> String {
         self.ppu.dump_state(&self.cartridge)
+    }
+
+    pub fn apu_mut(&mut self) -> &mut Apu<D> {
+        &mut self.apu
     }
 }
 

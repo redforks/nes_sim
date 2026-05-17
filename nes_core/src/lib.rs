@@ -1,4 +1,4 @@
-mod cpu;
+pub(crate) mod cpu;
 pub mod ines;
 pub mod machine;
 pub mod mcu;
@@ -42,6 +42,10 @@ impl SystemClock {
             2 => CpuClockPhase::Last,
             _ => CpuClockPhase::Middle,
         }
+    }
+
+    pub fn is_apu_get_clock(self) -> bool {
+        self.is_even_cpu_cycle()
     }
 }
 

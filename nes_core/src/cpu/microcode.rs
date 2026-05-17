@@ -1371,26 +1371,6 @@ pub(crate) mod opcode {
 }
 
 impl Microcode {
-    /// Returns true if this microcode performs a memory read operation.
-    /// Used for DMC DMA phantom address detection.
-    pub const fn is_read_operation(self) -> bool {
-        matches!(
-            self,
-            Self::LoadR(_)
-                | Self::Bit
-                | Self::Lax
-                | Self::LoadIntoAlu
-                | Self::Adc
-                | Self::Sbc
-                | Self::Cmp
-                | Self::Cpx
-                | Self::Cpy
-                | Self::Ora
-                | Self::Eor
-                | Self::And
-        )
-    }
-
     /// Returns true if this microcode performs a memory write cycle.
     /// DMC DMA must not halt the CPU during a write cycle.
     pub const fn is_write_operation(self) -> bool {
