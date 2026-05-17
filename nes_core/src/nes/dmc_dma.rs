@@ -71,6 +71,21 @@ impl<R: Render, D: AudioDriver> NesDmaSupport for Cpu<NesMcu<R, D>> {
     }
 }
 
+#[derive(Debug, Copy, Clone, Default, PartialEq, Eq)]
+enum State {
+    #[default]
+    Inactive,
+    // If dmc started because `DmcDmaType::Load`, should delay a apu cycle (two cpu cycles), then try to halt
+    DelayForLoad(u8),
+    TryHalt {
+        first_attempt: bool,
+        halt_on_put: bool,
+    },
+    AlignOrRead,
+    Dummy,
+    Read,
+}
+
 /// Dma controller for apu dmc channel
 #[derive(Debug, Default)]
 pub struct DmcDma {
@@ -90,18 +105,50 @@ impl DmcDma {
     pub fn tick(&mut self, cpu: &mut impl NesDmaSupport) {
         match self.state {
             State::Inactive => {
-                if let Some((_dmc_dma_type, addr)) = cpu.take_dmc_dma_request() {
+                if let Some((dmc_dma_type, addr)) = cpu.take_dmc_dma_request() {
                     self.addr = addr;
-                    self.state = State::TryHalt;
+                    self.state = if dmc_dma_type == DmcDmaType::Load {
+                        State::DelayForLoad(2)
+                    } else {
+                        State::TryHalt {
+                            halt_on_put: true,
+                            first_attempt: true,
+                        }
+                    };
                 }
             }
-            State::TryHalt => {
+            State::DelayForLoad(mut n) => {
+                n -= 1;
+                self.state = if n == 0 {
+                    State::TryHalt {
+                        halt_on_put: false,
+                        first_attempt: true,
+                    }
+                } else {
+                    State::DelayForLoad(n)
+                };
+            }
+            State::TryHalt {
+                halt_on_put,
+                first_attempt,
+            } => {
+                // 如果是第一次尝试，必须严格对齐目标相位
+                if first_attempt && (!halt_on_put != cpu.is_get_cycle()) {
+                    // 相位不对，CPU 照常运行，不消耗 DMA 周期
+                    return;
+                }
+
+                // 尝试挂起 CPU
                 if cpu.try_freeze() {
-                    self.state = State::Halt;
+                    self.state = State::Dummy;
+                } else {
+                    // 挂起失败（CPU 正在执行写操作）
+                    // 下一个周期继续尝试，但此时不再是 "first_attempt"，解绑相位限制
+                    self.state = State::TryHalt {
+                        first_attempt: false,
+                        halt_on_put,
+                    };
                 }
-            }
-            State::Halt => {
-                self.state = State::Dummy;
             }
             State::AlignOrRead => {
                 if cpu.is_get_cycle() {
@@ -118,107 +165,5 @@ impl DmcDma {
     }
 }
 
-#[derive(Debug, Copy, Clone, Default, PartialEq, Eq)]
-enum State {
-    #[default]
-    Inactive,
-    TryHalt,
-    Halt,
-    AlignOrRead,
-    Dummy,
-    Read,
-}
-
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use mockall::predicate::*;
-    use mockall::*;
-
-    #[test]
-    fn dma_not_activated() {
-        let mut cpu = MockNesDmaSupport::new();
-        let mut dma = DmcDma::default();
-
-        cpu.expect_take_dmc_dma_request()
-            .times(1)
-            .return_const(None);
-        dma.tick(&mut cpu);
-        assert_eq!(State::Inactive, dma.state);
-    }
-
-    #[test]
-    fn dma_requested() {
-        let mut cpu = MockNesDmaSupport::new();
-        let mut seq = Sequence::new();
-        let mut dma = DmcDma::default();
-
-        // get request
-        cpu.expect_take_dmc_dma_request()
-            .times(1)
-            .in_sequence(&mut seq)
-            .return_const(Some((DmcDmaType::Reload, 0x1234)));
-        dma.tick(&mut cpu);
-        assert_eq!(State::TryHalt, dma.state);
-        cpu.checkpoint();
-        cpu.checkpoint();
-
-        // try freeze cpu but failed
-        cpu.expect_try_freeze()
-            .times(1)
-            .in_sequence(&mut seq)
-            .return_const(false);
-        dma.tick(&mut cpu);
-        assert_eq!(State::TryHalt, dma.state);
-        cpu.checkpoint();
-        cpu.checkpoint();
-
-        // try freeze cpu again and succeed
-        cpu.expect_try_freeze()
-            .times(1)
-            .in_sequence(&mut seq)
-            .return_const(true);
-        dma.tick(&mut cpu);
-        assert_eq!(State::Halt, dma.state);
-        cpu.checkpoint();
-        cpu.checkpoint();
-
-        // do nothing in halt cycle
-        dma.tick(&mut cpu);
-        assert_eq!(State::Dummy, dma.state);
-
-        // dummy
-        dma.tick(&mut cpu);
-        assert_eq!(State::AlignOrRead, dma.state);
-        cpu.checkpoint();
-        cpu.checkpoint();
-
-        // apu is put cycle, so it is an align cycle, no dma read
-        cpu.expect_is_get_cycle()
-            .times(1)
-            .in_sequence(&mut seq)
-            .return_const(false);
-        dma.tick(&mut cpu);
-        assert_eq!(State::Read, dma.state);
-        cpu.checkpoint();
-        cpu.checkpoint();
-
-        // read and supply to apu
-        cpu.expect_read_mem()
-            .with(eq(0x1234))
-            .times(1)
-            .in_sequence(&mut seq)
-            .return_const(0xcd);
-        cpu.expect_supply_dmc_byte()
-            .with(eq(0xcd))
-            .times(1)
-            .in_sequence(&mut seq)
-            .return_const(());
-        cpu.expect_unfreeze()
-            .times(1)
-            .in_sequence(&mut seq)
-            .return_const(());
-        dma.tick(&mut cpu);
-        assert_eq!(State::Inactive, dma.state);
-    }
-}
+mod tests;

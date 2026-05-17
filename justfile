@@ -253,7 +253,7 @@ apu_reset_6: build_nes_cpu_test
     timeout 15 {{ nes_cpu_test }} --quiet -f ../nes-test-roms/apu_reset/works_immediately.nes
 
 [parallel]
-apu_reset: apu_reset_1 apu_reset_2 apu_reset_3 apu_reset_4 apu_reset_5 apu_reset_6
+apu_reset: apu_reset_1 apu_reset_2 apu_reset_3 apu_reset_4 apu_reset_5 apu_reset_6 dmc_dma_during_read4_4 dmc_dma_during_read4_5
 
 apu_test: build_nes_cpu_test
     timeout 10 {{ nes_cpu_test }} --quiet -f ../nes-test-roms/apu_test/apu_test.nes
