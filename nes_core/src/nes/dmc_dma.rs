@@ -21,6 +21,8 @@ pub(crate) trait NesDmaSupport {
     /// if cpu freezed.
     fn try_freeze(&mut self) -> bool;
 
+    fn last_read_addr(&self) -> u16;
+
     /// unfreeze cpu, called when finished dma
     fn unfreeze(&mut self);
 
@@ -47,6 +49,12 @@ impl<R: Render, D: AudioDriver> NesDmaSupport for Cpu<NesMcu<R, D>> {
         } else {
             false
         }
+    }
+
+    fn last_read_addr(&self) -> u16 {
+        // dbg!(self.ab);
+        // self.last_read_addr.unwrap_or_else(|| self.pc)
+        self.ab
     }
 
     fn unfreeze(&mut self) {
@@ -92,6 +100,7 @@ pub struct DmcDma {
     /// true after `.request()` method, and before dma finished
     state: State,
     addr: u16,
+    cpu_last_read_addr: u16,
 }
 
 impl DmcDma {
@@ -100,6 +109,10 @@ impl DmcDma {
         cpu.supply_dmc_byte(byte);
         self.state = State::Inactive;
         cpu.unfreeze();
+    }
+
+    fn dummy_read(&self, cpu: &mut impl NesDmaSupport) {
+        cpu.read_mem(self.cpu_last_read_addr);
     }
 
     pub fn tick(&mut self, cpu: &mut impl NesDmaSupport) {
@@ -140,6 +153,7 @@ impl DmcDma {
 
                 // 尝试挂起 CPU
                 if cpu.try_freeze() {
+                    self.cpu_last_read_addr = cpu.last_read_addr();
                     self.state = State::Dummy;
                 } else {
                     // 挂起失败（CPU 正在执行写操作）
@@ -155,10 +169,12 @@ impl DmcDma {
                     self.read(cpu);
                 } else {
                     self.state = State::Read;
+                    self.dummy_read(cpu);
                 }
             }
             State::Dummy => {
                 self.state = State::AlignOrRead;
+                self.dummy_read(cpu);
             }
             State::Read => self.read(cpu),
         }

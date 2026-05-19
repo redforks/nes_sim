@@ -99,7 +99,7 @@ pub struct Cpu<M: Mcu> {
 
     opcode: u8,
     /// address bus, which memory byte that cpu current select
-    ab: u16,
+    pub(crate) ab: u16,
     /// data bus, what byte that cpu will save or get from memory bus
     db: u8, // save low byte during indexed addressing
     alu: u8,
@@ -107,7 +107,7 @@ pub struct Cpu<M: Mcu> {
     nmi_detecteor: NmiDetector,
     irq_detector: IrqDetector,
     halt: bool,
-    last_read_addr: Option<u16>,
+    pub(crate) last_read_addr: Option<u16>,
 
     microcode_queue: ArrayDeque<Microcode, 8>,
 
@@ -236,7 +236,6 @@ impl<M: Mcu> Cpu<M> {
         });
 
         if self.frozen {
-            self.read_byte(self.last_read_addr.unwrap_or_else(|| self.pc));
             return (ExecuteResult::Continue, false);
         }
 
@@ -336,16 +335,13 @@ impl<M: Mcu> Cpu<M> {
     }
 
     fn read_pc_byte(&mut self) {
-        let addr = self.pc;
-        self.inc_mem_count();
-        self.mcu.read(addr);
+        self.read_byte(self.pc);
     }
 
     fn inc_read_byte(&mut self) -> u8 {
         let addr = self.pc;
         self.inc_pc(1);
-        self.inc_mem_count();
-        self.mcu.read(addr)
+        self.read_byte(addr)
     }
 
     fn write_byte(&mut self, addr: u16, value: u8) {
@@ -362,8 +358,7 @@ impl<M: Mcu> Cpu<M> {
     fn pop_stack(&mut self) -> u8 {
         self.sp = self.sp.wrapping_add(1);
         let addr = 0x100 + self.sp as u16;
-        self.inc_mem_count();
-        self.mcu.read(addr)
+        self.read_byte(addr)
     }
 
     #[cfg(test)]
@@ -397,8 +392,7 @@ impl<M: Mcu> Cpu<M> {
     }
 
     fn load_alu(&mut self) {
-        self.inc_mem_count();
-        self.alu = self.mcu.read(self.ab);
+        self.alu = self.read_byte(self.ab);
     }
 
     fn adc(&mut self, load_alu: bool) {
