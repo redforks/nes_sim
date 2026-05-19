@@ -126,13 +126,8 @@ fn reload_dmc_dma() {
     //          (put) CPU reads from address A  <- CPU resumes execution
 
     // get request
-    t.expect_take_dmc_dma_request(Some((DmcDmaType::Reload, 0x1234)));
-    t.tick_and_assert(State::TryHalt {
-        halt_on_put: true,
-        first_attempt: true,
-    });
-
     // try freeze and succeed
+    t.expect_take_dmc_dma_request(Some((DmcDmaType::Reload, 0x1234)));
     t.expect_is_get_cycle_and_freeze(false, true);
     t.expect_last_read_addr(0x2234);
     t.tick_and_assert(State::Dummy);
@@ -163,13 +158,8 @@ fn reload_dmc_dma_delayed_1_cycle() {
     //          (put) CPU reads from address A  <- CPU resumes execution
 
     // get request
-    t.expect_take_dmc_dma_request(Some((DmcDmaType::Reload, 0x1234)));
-    t.tick_and_assert(State::TryHalt {
-        halt_on_put: true,
-        first_attempt: true,
-    });
-
     // try freeze but cpu is write
+    t.expect_take_dmc_dma_request(Some((DmcDmaType::Reload, 0x1234)));
     t.expect_is_get_cycle(false);
     t.expect_try_freeze(false);
     t.tick_and_assert(State::TryHalt {
@@ -206,13 +196,8 @@ fn reload_dmc_dma_delayed_2_cycle() {
     //          (put) CPU reads from address A  <- CPU resumes execution
 
     // get request
-    t.expect_take_dmc_dma_request(Some((DmcDmaType::Reload, 0x1234)));
-    t.tick_and_assert(State::TryHalt {
-        halt_on_put: true,
-        first_attempt: true,
-    });
-
     // try freeze but cpu is write
+    t.expect_take_dmc_dma_request(Some((DmcDmaType::Reload, 0x1234)));
     t.expect_is_get_cycle(false);
     t.expect_try_freeze(false);
     t.tick_and_assert(State::TryHalt {
@@ -260,13 +245,8 @@ fn reload_dmc_dma_delayed_3_cycle() {
     //     (put) CPU reads from address A  <- CPU resumes execution
 
     // get request
-    t.expect_take_dmc_dma_request(Some((DmcDmaType::Reload, 0x1234)));
-    t.tick_and_assert(State::TryHalt {
-        halt_on_put: true,
-        first_attempt: true,
-    });
-
     // try freeze but cpu is write
+    t.expect_take_dmc_dma_request(Some((DmcDmaType::Reload, 0x1234)));
     t.expect_is_get_cycle(false);
     t.expect_try_freeze(false);
     t.tick_and_assert(State::TryHalt {

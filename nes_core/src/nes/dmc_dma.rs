@@ -120,13 +120,15 @@ impl DmcDma {
             State::Inactive => {
                 if let Some((dmc_dma_type, addr)) = cpu.take_dmc_dma_request() {
                     self.addr = addr;
-                    self.state = if dmc_dma_type == DmcDmaType::Load {
-                        State::DelayForLoad(2)
+                    if dmc_dma_type == DmcDmaType::Load {
+                        self.state = State::DelayForLoad(2);
                     } else {
-                        State::TryHalt {
+                        self.state = State::TryHalt {
                             halt_on_put: true,
                             first_attempt: true,
-                        }
+                        };
+                        // reload requests, no request cycle
+                        self.tick(cpu);
                     };
                 }
             }
