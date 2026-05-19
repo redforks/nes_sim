@@ -225,6 +225,7 @@ impl<M: Mcu> Cpu<M> {
     /// Return true if just execute current instruction
     pub fn tick<P: Plugin<M>>(&mut self, plugin: &mut P) -> (ExecuteResult, bool) {
         self.reset_mem_count();
+        self.last_read_addr = None;
 
         #[cfg(debug_assertions)]
         let _guard = scopeguard::guard(self.mem_acc_count.clone(), |acc_count| {
