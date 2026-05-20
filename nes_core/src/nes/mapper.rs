@@ -1,23 +1,25 @@
 use crate::ines::INesFile;
 use crate::ines::NametableArrangement;
-use crate::nes::mapper::mapper0::Mapper0;
-use crate::nes::mapper::mapper2::Mapper2;
-use crate::nes::mapper::mapper3::Mapper3;
-use crate::nes::mapper::mapper7::Mapper7;
-use crate::nes::mapper::mapper34::Mapper34;
-use crate::nes::mapper::mmc1::MMC1;
-use crate::nes::mapper::mmc3::MMC3;
 use crate::nes::ppu::BackgroundTileOverride;
 use crate::nes::ppu::PatternAccess;
+use j87::MapperJ87;
+use mapper0::Mapper0;
+use mapper2::Mapper2;
+use mapper3::Mapper3;
+use mapper7::Mapper7;
+use mapper34::Mapper34;
+use mmc1::MMC1;
+use mmc3::MMC3;
 
 const CARTRIDGE_START_ADDR: u16 = 0x4020;
 const MMC3_ALT_TEST_SIGNATURE: &str = "6-MMC3_alt";
 
+mod j87;
 mod mapper0;
 mod mapper2;
 mod mapper3;
-mod mapper7;
 mod mapper34;
+mod mapper7;
 mod mmc1;
 mod mmc3;
 mod mmc5;
@@ -132,6 +134,11 @@ pub fn create_cartridge(f: &INesFile) -> Cartridge {
             f.read_chr_rom(),
             mirroring,
         ))),
+        87 => Cartridge::Mapper87(Box::new(MapperJ87::new(
+            f.read_prg_rom(),
+            f.read_chr_rom(),
+            mirroring,
+        ))),
         _ => panic!("Unsupported cartridge mapper no: {}", f.header().mapper_no),
     }
 }
@@ -148,6 +155,7 @@ pub enum Cartridge {
     Mapper3(Box<Mapper3>),
     Mapper7(Box<Mapper7>),
     Mapper34(Box<Mapper34>),
+    Mapper87(Box<MapperJ87>),
     MMC1(Box<MMC1>),
     MMC3(Box<MMC3>),
     MMC5(Box<MMC5>),
@@ -225,6 +233,7 @@ impl Cartridge {
             Cartridge::MMC1(cartridge) => cartridge.pattern_ref(),
             Cartridge::MMC3(cartridge) => cartridge.pattern_ref(),
             Cartridge::MMC5(cartridge) => cartridge.pattern_ref(),
+            Cartridge::Mapper87(cartridge) => cartridge.pattern_ref(),
             #[cfg(test)]
             Cartridge::Test(cartridge) => cartridge.pattern_ref(),
         }
@@ -240,6 +249,7 @@ impl Cartridge {
             Cartridge::Mapper34(cartridge) => cartridge.write_pattern(address, value),
             Cartridge::MMC3(cartridge) => cartridge.write_pattern(address, value),
             Cartridge::MMC5(cartridge) => cartridge.write_pattern(address, value),
+            Cartridge::Mapper87(cartridge) => cartridge.write_pattern(address, value),
             #[cfg(test)]
             Cartridge::Test(cartridge) => cartridge.write_pattern(address, value),
         }
@@ -255,6 +265,7 @@ impl Cartridge {
             Cartridge::MMC1(cartridge) => cartridge.read(address),
             Cartridge::MMC3(cartridge) => cartridge.read(address),
             Cartridge::MMC5(cartridge) => cartridge.read(address),
+            Cartridge::Mapper87(cartridge) => cartridge.read(address),
             #[cfg(test)]
             Cartridge::Test(cartridge) => cartridge.read(address),
         }
@@ -270,6 +281,7 @@ impl Cartridge {
             Cartridge::MMC1(cartridge) => cartridge.peek(address),
             Cartridge::MMC3(cartridge) => cartridge.peek(address),
             Cartridge::MMC5(cartridge) => cartridge.peek(address),
+            Cartridge::Mapper87(cartridge) => cartridge.peek(address),
             #[cfg(test)]
             Cartridge::Test(cartridge) => cartridge.peek(address),
         }
@@ -285,6 +297,7 @@ impl Cartridge {
             Cartridge::MMC1(cartridge) => cartridge.write(address, value),
             Cartridge::MMC3(cartridge) => cartridge.write(address, value),
             Cartridge::MMC5(cartridge) => cartridge.write(address, value),
+            Cartridge::Mapper87(cartridge) => cartridge.write(address, value),
             #[cfg(test)]
             Cartridge::Test(_) => {}
         }
@@ -300,6 +313,7 @@ impl Cartridge {
             | Cartridge::MMC1(_) => {}
             Cartridge::MMC3(cartridge) => cartridge.on_ppu_tick(scanline, dot, rendering_enabled),
             Cartridge::MMC5(cartridge) => cartridge.on_ppu_tick(scanline, dot, rendering_enabled),
+            Cartridge::Mapper87(_) => {},
             #[cfg(test)]
             Cartridge::Test(_) => {}
         }
@@ -321,6 +335,7 @@ impl Cartridge {
             | Cartridge::MMC1(_) => false,
             Cartridge::MMC3(cartridge) => cartridge.irq_pending(),
             Cartridge::MMC5(cartridge) => cartridge.irq_pending(),
+            Cartridge::Mapper87(_) => false,
             #[cfg(test)]
             Cartridge::Test(cartridge) => cartridge.irq_pending(),
         }
@@ -348,6 +363,9 @@ impl Cartridge {
                 cartridge.pattern_ref()[address as usize % cartridge.pattern_ref().len()]
             }
             Cartridge::MMC5(cartridge) => cartridge.read_chr(address, access),
+            Cartridge::Mapper87(cartridge) => {
+                cartridge.pattern_ref()[address as usize % cartridge.pattern_ref().len()]
+            }
             #[cfg(test)]
             Cartridge::Test(cartridge) => cartridge.read_chr(address),
         }
@@ -363,6 +381,7 @@ impl Cartridge {
             Cartridge::MMC1(cartridge) => cartridge.write_nametable(address, value),
             Cartridge::MMC3(cartridge) => cartridge.write_nametable(address, value),
             Cartridge::MMC5(cartridge) => cartridge.write_nametable(address, value),
+            Cartridge::Mapper87(cartridge) => cartridge.write_nametable(address, value),
             #[cfg(test)]
             Cartridge::Test(cartridge) => cartridge.write_nametable(address, value),
         }
@@ -378,6 +397,7 @@ impl Cartridge {
             Cartridge::MMC1(cartridge) => cartridge.read_nametable(address),
             Cartridge::MMC3(cartridge) => cartridge.read_nametable(address),
             Cartridge::MMC5(cartridge) => cartridge.read_nametable(address),
+            Cartridge::Mapper87(cartridge) => cartridge.read_nametable(address),
             #[cfg(test)]
             Cartridge::Test(cartridge) => cartridge.read_nametable(address),
         }
@@ -401,7 +421,8 @@ impl Cartridge {
             | Cartridge::Mapper7(_)
             | Cartridge::Mapper34(_)
             | Cartridge::MMC1(_)
-            | Cartridge::MMC3(_) => None,
+            | Cartridge::MMC3(_)
+            | Cartridge::Mapper87(_) => None,
             Cartridge::MMC5(cartridge) => cartridge.background_override(
                 screen_x,
                 screen_y,
