@@ -115,7 +115,6 @@ pub struct Cpu<M: Mcu> {
     mem_acc_count: Rc<Cell<usize>>,
 
     pub(crate) frozen: bool,
-    last_microcode: Microcode,
 }
 
 impl<M: Mcu> Cpu<M> {
@@ -140,7 +139,6 @@ impl<M: Mcu> Cpu<M> {
             mem_acc_count: Default::default(),
             frozen: false,
             last_read_addr: None,
-            last_microcode: Microcode::Nop,
         };
         r.reset();
         r
@@ -173,12 +171,17 @@ impl<M: Mcu> Cpu<M> {
         self.pc = pc;
     }
 
+    pub(crate) fn next_microcode(&self) -> Microcode {
+        self.microcode_queue
+            .front()
+            .copied()
+            .unwrap_or(Microcode::FetchAndDecode)
+    }
+
     /// Return true if cpu can be paused for execute dma, return true if next microcode
     /// not write operation
     pub(crate) fn can_pause(&self) -> bool {
-        // in the same cycle, dma tick after cpu tick, see `NesMachine::tick`, so
-        // the rast microcode is the current microcode for dmc
-        !self.last_microcode.is_write_operation()
+        !self.next_microcode().is_write_operation()
     }
 
     pub fn reset(&mut self) {
@@ -265,7 +268,6 @@ impl<M: Mcu> Cpu<M> {
             }
         };
 
-        self.last_microcode = code;
         code.exec(self);
 
         if self.microcode_queue.is_empty() {

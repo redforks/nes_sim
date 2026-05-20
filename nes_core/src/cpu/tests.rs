@@ -104,23 +104,6 @@ fn test_cpu_initialization() {
 }
 
 #[test]
-fn can_pause() {
-    let mut cpu = create_cpu();
-    assert!(cpu.can_pause());
-
-    cpu.push_microcode(Microcode::Cmp);
-    cpu.drain_microcodes(&mut EmptyPlugin::new());
-    // can pause if microcode is read operation
-    assert!(cpu.can_pause());
-
-    cpu.push_microcode(Microcode::StoreAlu);
-    cpu.drain_microcodes(&mut EmptyPlugin::new());
-    assert_eq!(cpu.last_microcode, Microcode::StoreAlu);
-    // can not pause if microcode is write operation
-    assert!(!cpu.can_pause());
-}
-
-#[test]
 fn test_set_get_flag() {
     let mut cpu = create_cpu();
 

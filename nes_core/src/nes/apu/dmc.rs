@@ -115,6 +115,10 @@ impl OutputUnit {
         self.output = v;
     }
 
+    fn output(&self) -> u8 {
+        if self.silence_flag { 0 } else { self.output }
+    }
+
     fn tick(&mut self) {
         if self.remain_bits == 0 {
             self.start_cycle();
@@ -198,7 +202,7 @@ impl Dmc {
     }
 
     pub fn output(&self) -> u8 {
-        self.output.output
+        self.output.output()
     }
 
     pub fn write_dac(&mut self, value: DmcDacBits) {

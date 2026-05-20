@@ -205,10 +205,6 @@ impl<R: Render, D: AudioDriver> Mcu for NesMcu<R, D> {
             0x4100..=0xffff => self.cartridge.write(address, value),
         }
     }
-
-    fn supply_dmc_dma_byte(&mut self, byte: u8) {
-        self.apu.supply_dmc_byte(byte);
-    }
 }
 
 #[cfg(test)]
