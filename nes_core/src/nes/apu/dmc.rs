@@ -116,7 +116,7 @@ impl OutputUnit {
     }
 
     fn output(&self) -> u8 {
-        if self.silence_flag { 0 } else { self.output }
+        self.output
     }
 
     fn tick(&mut self) {
@@ -144,13 +144,6 @@ impl OutputUnit {
     fn is_buffer_empty(&self) -> bool {
         self.sample_buffer.is_none()
     }
-
-    fn clear(&mut self) {
-        // If the DMC bit is clear, the DMC bytes remaining will be set to 0 and the DMC will silence when it empties.
-        self.sample_buffer = None;
-        self.output = 0;
-        self.remain_bits = 0;
-    }
 }
 
 #[derive(Debug)]
@@ -176,9 +169,7 @@ impl Dmc {
         self.clear_interrupt_flag();
 
         self.dma_reader.set_enabled(enabled);
-        if !enabled {
-            self.output.clear();
-        } else if self.output.is_buffer_empty() {
+        if enabled && self.output.is_buffer_empty() {
             self.dma_reader.check_and_request_dma();
         };
     }
