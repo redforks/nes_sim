@@ -2,6 +2,7 @@ pub(crate) mod cpu;
 pub mod ines;
 pub mod machine;
 pub mod mcu;
+pub mod movie;
 pub mod nes;
 pub mod nes_machine;
 pub mod render;

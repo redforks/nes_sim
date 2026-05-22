@@ -753,6 +753,7 @@ dependencies = [
 name = "nes_core"
 version = "0.1.0"
 dependencies = [
+ "anyhow",
  "arraydeque",
  "bitfield-struct",
  "env_logger",
@@ -761,6 +762,7 @@ dependencies = [
  "log",
  "mockall",
  "scopeguard",
+ "serde",
  "strum_macros",
  "test-log",
  "thiserror",
