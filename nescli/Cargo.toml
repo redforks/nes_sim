@@ -12,4 +12,4 @@ env_logger.workspace =true
 log.workspace =true
 image = { workspace = true, features = ["png"] }
 nes_core = { workspace = true }
-sdl2 = "0.38"
+nes_sdl = { path = "../nes_sdl" }

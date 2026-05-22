@@ -1,0 +1,9 @@
+[package]
+name = "nes_sdl"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+sdl2 = "0.38"
+nes_core = { workspace = true }
+image = { workspace = true }
