@@ -1,61 +1,65 @@
 use anyhow::Result;
-use nes_core::EmptyPlugin;
-use nes_core::ines::INesFile;
-use nes_core::nes_machine::NesMachine;
-use nes_core::render::ImageRender;
-use nes_sdl;
-use nes_sdl::sdl2::audio::AudioSpecDesired;
-use nes_sdl::sdl2::event::Event;
-use nes_sdl::sdl2::keyboard::Keycode;
+use nes_core::{
+    EmptyPlugin,
+    ines::INesFile,
+    nes::apu::AudioDriver,
+    nes_machine::NesMachine,
+    render::{ImageRender, Render},
+};
 use nes_sdl::{
-    AUDIO_CHUNK_SAMPLES, AUDIO_SAMPLE_RATE, SdlAudioDriver, SdlRender, map_keycode_to_button,
+    self, AUDIO_CHUNK_SAMPLES, AUDIO_SAMPLE_RATE, SdlAudioDriver, SdlRender, map_keycode_to_button,
+    sdl2::{Sdl, audio::AudioSpecDesired, event::Event, keyboard::Keycode},
 };
 use std::time::{Duration, Instant};
 
+fn create_sdl_drivers(sdl_context: &Sdl) -> Result<(impl Render, impl AudioDriver)> {
+    let video_subsystem = sdl_context.video().map_err(|e| anyhow::anyhow!(e))?;
+    let audio_subsystem = sdl_context.audio().map_err(|e| anyhow::anyhow!(e))?;
+    let audio_spec = AudioSpecDesired {
+        freq: Some(AUDIO_SAMPLE_RATE),
+        channels: Some(1),
+        samples: Some(AUDIO_CHUNK_SAMPLES as u16),
+    };
+    let audio_queue = audio_subsystem
+        .open_queue::<f32, _>(None, &audio_spec)
+        .map_err(|e| anyhow::anyhow!(e))?;
+    audio_queue.resume();
+    let audio_driver = SdlAudioDriver::new(audio_queue, AUDIO_SAMPLE_RATE as u32);
+
+    // Create window (2x scale for better visibility: 256x240 -> 512x480)
+    let window = video_subsystem
+        .window(
+            "NES Simulator - Arrows move, Z/X A/B, Space Select, Enter Start",
+            512,
+            480,
+        )
+        .position_centered()
+        .build()
+        .map_err(|e| anyhow::anyhow!(e))?;
+
+    // Create canvas/renderer
+    let canvas = window
+        .into_canvas()
+        .build()
+        .map_err(|e| anyhow::anyhow!(e))?;
+
+    // Create shared image buffer so we can save screenshots from the event loop
+    let image_render = ImageRender::default_dimension();
+    let sdl_render = SdlRender::with_image(image_render, canvas);
+    Ok((sdl_render, audio_driver))
+}
+
 #[derive(clap::Args)]
-pub struct RunAction {}
+pub struct RunAction;
 
 impl RunAction {
     pub fn run(&self, f: &INesFile) -> Result<()> {
         // Initialize SDL2
         let sdl_context = nes_sdl::sdl2::init().map_err(|e| anyhow::anyhow!(e))?;
-        let video_subsystem = sdl_context.video().map_err(|e| anyhow::anyhow!(e))?;
-        let audio_subsystem = sdl_context.audio().map_err(|e| anyhow::anyhow!(e))?;
-
-        let audio_spec = AudioSpecDesired {
-            freq: Some(AUDIO_SAMPLE_RATE),
-            channels: Some(1),
-            samples: Some(AUDIO_CHUNK_SAMPLES as u16),
-        };
-        let audio_queue = audio_subsystem
-            .open_queue::<f32, _>(None, &audio_spec)
-            .map_err(|e| anyhow::anyhow!(e))?;
-        audio_queue.resume();
-        let audio_driver = SdlAudioDriver::new(audio_queue, AUDIO_SAMPLE_RATE as u32);
-
-        // Create window (2x scale for better visibility: 256x240 -> 512x480)
-        let window = video_subsystem
-            .window(
-                "NES Simulator - Arrows move, Z/X A/B, Space Select, Enter Start",
-                512,
-                480,
-            )
-            .position_centered()
-            .build()
-            .map_err(|e| anyhow::anyhow!(e))?;
-
-        // Create canvas/renderer
-        let canvas = window
-            .into_canvas()
-            .build()
-            .map_err(|e| anyhow::anyhow!(e))?;
-
-        // Create shared image buffer so we can save screenshots from the event loop
-        let image_render = ImageRender::default_dimension();
-        let sdl_render = SdlRender::with_image(image_render, canvas);
+        let (render, audio_driver) = create_sdl_drivers(&sdl_context)?;
 
         // Create NES machine with SDL-backed renderer
-        let mut machine = NesMachine::new(f, EmptyPlugin::new(), sdl_render, audio_driver);
+        let mut machine = NesMachine::new(f, EmptyPlugin::new(), render, audio_driver);
 
         // Initialize event pump
         let mut event_pump = sdl_context.event_pump().map_err(|e| anyhow::anyhow!(e))?;
