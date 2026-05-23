@@ -115,6 +115,7 @@ comment author  HappyLee
             new_ppu: None,
             fds: None,
             fourscore: false,
+            microphone: None,
             port0: InputDevice::Gamepad,
             port1: InputDevice::Gamepad,
             port2: ExpPortDevice::None,

@@ -2,6 +2,7 @@
 
 use std::{fmt::Display, str::from_utf8};
 
+use anyhow::Context;
 use bitfield_struct::bitfield;
 use serde::{
     Deserialize, Deserializer,
@@ -46,11 +47,15 @@ pub struct Fm2Header {
     /// true if the movie uses PAL timing
     pub pal_flag: Option<bool>,
     /// true if the movie uses New PPU
+    #[serde(rename = "NewPPU")]
     pub new_ppu: Option<bool>,
     /// true if the movie was recorded on a Famicom Disk System (FDS) game
+    #[serde(rename = "FDS")]
     pub fds: Option<bool>,
     /// true if a fourscore was used. If fourscore is not used, then port0 and port1 are required
     pub fourscore: bool,
+    /// whether microphone is enabled, this field not defined in document, see fceux/src/movic.h
+    pub microphone: Option<bool>,
     /// indicates the type of input device attached to the port 0. Supported values are:
     pub port0: InputDevice,
     /// indicates the type of input device attached to the port 1. Supported values are:
@@ -152,6 +157,26 @@ impl InputLog {
 pub struct Fm2File {
     pub header: Fm2Header,
     pub input_logs: Box<[InputLog]>,
+}
+
+impl Fm2File {
+    /// Use checksum to valid rom file
+    pub fn valid_rom_file(&self, file_content: &[u8]) -> Result<bool, anyhow::Error> {
+        use base64::prelude::*;
+        let checksum = self
+            .header
+            .rom_checksum
+            .as_bytes()
+            .strip_prefix(b"base64:")
+            .unwrap_or_else(|| self.header.rom_checksum.as_bytes());
+        let checksum = BASE64_STANDARD
+            .decode(checksum)
+            .context("decode base64 encoded rom checksum")?;
+        let act = md5::compute(file_content);
+        eprintln!("{:x}", act);
+        eprintln!("{:?}", checksum.as_slice());
+        Ok(act.0.as_slice() == checksum.as_slice())
+    }
 }
 
 fn new_input_log_parser<Input, E>() -> impl Parser<Input, InputLog, E>
