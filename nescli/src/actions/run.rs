@@ -12,7 +12,7 @@ use nes_sdl::{
 };
 use std::time::{Duration, Instant};
 
-fn create_sdl_drivers(sdl_context: &Sdl) -> Result<(impl Render, impl AudioDriver)> {
+pub(crate) fn create_sdl_drivers(sdl_context: &Sdl) -> Result<(impl Render, impl AudioDriver)> {
     let video_subsystem = sdl_context.video().map_err(|e| anyhow::anyhow!(e))?;
     let audio_subsystem = sdl_context.audio().map_err(|e| anyhow::anyhow!(e))?;
     let audio_spec = AudioSpecDesired {
