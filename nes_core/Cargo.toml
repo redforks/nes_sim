@@ -21,6 +21,8 @@ bitfield-struct.workspace = true
 scopeguard.workspace = true
 serde.workspace = true
 anyhow.workspace = true
+base64 = "0.22.1"
+md5 = "0.8.0"
 
 [dev-dependencies]
 env_logger = { workspace = true }

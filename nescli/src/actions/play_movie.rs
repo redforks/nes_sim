@@ -80,10 +80,15 @@ pub struct PlayMovieAction {
 }
 
 impl PlayMovieAction {
-    pub fn run(&self, f: &INesFile) -> Result<()> {
+    pub fn run(&self, file_path: PathBuf, f: &INesFile) -> Result<()> {
         let fm2_data = fs::read(&self.fm2_file)?;
         let fm2 = movie::parse(&fm2_data)?;
         let input_logs = &fm2.input_logs;
+
+        let file_content = std::fs::read(file_path)?;
+        if !fm2.valid_rom_file(&file_content)? {
+            eprintln!("Warning: rom file checksum not match");
+        }
 
         if input_logs.is_empty() {
             anyhow::bail!("FM2 file has no input logs");
@@ -97,21 +102,14 @@ impl PlayMovieAction {
 
         let target_frame_duration = Duration::new(0, 1_000_000_000u32 / 60);
 
-        let mut frame_index = 0;
-
         'running: loop {
             let frame_start = Instant::now();
-
-            if frame_index < input_logs.len() {
-                set_buttons_from_gamepad(&mut machine, &input_logs[frame_index].port0);
-            }
 
             match machine.process_frame() {
                 nes_core::ExecuteResult::Continue => {}
                 nes_core::ExecuteResult::ShouldReset => {
                     eprintln!("CPU reset requested");
                     machine.reset();
-                    frame_index = 0;
                 }
                 nes_core::ExecuteResult::Stop(code) => {
                     eprintln!("Execution stopped with code {}", code);
@@ -123,7 +121,10 @@ impl PlayMovieAction {
                 }
             }
 
-            frame_index += 1;
+            let frame_index = machine.frame_no();
+            if let Some(input_log) = input_logs.get(frame_index) {
+                set_buttons_from_gamepad(&mut machine, &input_log.port0);
+            }
 
             if frame_index >= input_logs.len() {
                 eprintln!(">> End of movie reached");

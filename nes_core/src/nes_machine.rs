@@ -40,6 +40,10 @@ where
         }
     }
 
+    pub fn frame_no(&self) -> usize {
+        self.machine.mcu().ppu().frame_no()
+    }
+
     /// Run the machine for a single frame.
     ///
     /// Executes CPU instructions until the PPU enters VBlank (scanline 241, dot 1),
