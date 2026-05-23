@@ -118,12 +118,20 @@ where
         self.machine.mcu_mut().flush_audio();
     }
 
-    pub fn press_button(&mut self, button: Button) {
-        self.machine.mcu_mut().press_button(button);
+    pub fn press_controller_a(&mut self, button: Button) {
+        self.machine.mcu_mut().press_controller_a(button);
     }
 
-    pub fn release_button(&mut self, button: Button) {
-        self.machine.mcu_mut().release_button(button);
+    pub fn release_controller_a(&mut self, button: Button) {
+        self.machine.mcu_mut().release_controller_a(button);
+    }
+
+    pub fn press_controller_b(&mut self, button: Button) {
+        self.machine.mcu_mut().press_controller_b(button);
+    }
+
+    pub fn release_controller_b(&mut self, button: Button) {
+        self.machine.mcu_mut().release_controller_b(button);
     }
 
     /// Set the CPU program counter.

@@ -111,7 +111,7 @@ impl RunAction {
                         ..
                     } => {
                         if let Some(button) = map_keycode_to_button(keycode) {
-                            machine.press_button(button);
+                            machine.press_controller_a(button);
                         }
                     }
                     Event::KeyUp {
@@ -120,7 +120,7 @@ impl RunAction {
                         ..
                     } => {
                         if let Some(button) = map_keycode_to_button(keycode) {
-                            machine.release_button(button);
+                            machine.release_controller_a(button);
                         }
                     }
                     _ => {}

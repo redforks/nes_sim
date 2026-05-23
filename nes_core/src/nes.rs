@@ -132,12 +132,20 @@ impl<R: Render, D: AudioDriver> NesMcu<R, D> {
         false
     }
 
-    pub fn press_button(&mut self, button: Button) {
+    pub fn press_controller_a(&mut self, button: Button) {
         self.controller.a.press(button);
     }
 
-    pub fn release_button(&mut self, button: Button) {
+    pub fn release_controller_a(&mut self, button: Button) {
         self.controller.a.release(button);
+    }
+
+    pub fn press_controller_b(&mut self, button: Button) {
+        self.controller.b.press(button);
+    }
+
+    pub fn release_controller_b(&mut self, button: Button) {
+        self.controller.b.release(button);
     }
 
     pub fn ppu_timing(&self) -> (u16, u16) {

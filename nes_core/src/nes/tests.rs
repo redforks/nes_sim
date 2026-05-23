@@ -74,8 +74,8 @@ fn test_ppu_pattern_writes_route_to_cartridge() {
 fn test_controller_reads_route_through_nes_mcu() {
     let mut mcu = test_mcu();
 
-    mcu.press_button(Button::A);
-    mcu.press_button(Button::Left);
+    mcu.press_controller_a(Button::A);
+    mcu.press_controller_a(Button::Left);
     mcu.write(0x4016, 0);
 
     assert_eq!(mcu.read(0x4016), 0x41);
