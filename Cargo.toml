@@ -60,7 +60,7 @@ split-debuginfo = "unpacked"
 [profile.release]
 codegen-units=1
 # uncomment below to enable profile release build
-# debug = 1
+debug = 1
 
 # uncomment below to enable profile release build
 # [rust]

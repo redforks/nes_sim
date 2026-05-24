@@ -43,7 +43,7 @@ pub(crate) struct SpriteManager {
 fn sprite_in_range(y_byte: u8, target_scanline: u16, sprite_height: i16) -> bool {
     let top = y_byte as i16 + 1;
     let sprite_y = target_scanline as i16 - top;
-    (0..sprite_height).contains(&sprite_y)
+    sprite_y >= 0 && sprite_y < sprite_height
 }
 
 fn read_sprite_color(

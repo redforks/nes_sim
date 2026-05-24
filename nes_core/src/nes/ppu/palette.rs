@@ -43,7 +43,7 @@ pub struct Palette {
 
 impl Palette {
     pub fn render_disabled_color(&self, address: u16) -> Pixel {
-        if (0x3f00..0x4000).contains(&address) {
+        if (address & 0xff00) == 0x3f00 {
             color(self.read(address))
         } else {
             color(self.read(0x3f00))
@@ -51,11 +51,11 @@ impl Palette {
     }
 
     pub fn read(&self, address: u16) -> u8 {
-        self.data[Self::index(address)]
+        self.data[Self::index(address) & 0x1f]
     }
 
     pub fn write(&mut self, address: u16, value: u8) {
-        self.data[Self::index(address)] = value;
+        self.data[Self::index(address) & 0x1f] = value;
     }
 
     const fn index(addr: u16) -> usize {
@@ -68,7 +68,7 @@ impl Palette {
     }
 
     pub fn black_color(&self) -> Pixel {
-        color(self.data[0])
+        color(self.data[0] & 0x1f)
     }
 
     fn get_color(&self, start: u8, palette_idx: u8, idx: u8) -> Pixel {
@@ -77,7 +77,7 @@ impl Palette {
         } else {
             (start | idx | (palette_idx << 2)) as usize
         };
-        color(self.data[offset])
+        color(self.data[offset & 0x1f])
     }
 
     pub fn get_background_color(&self, palette_idx: u8, idx: u8) -> Pixel {
