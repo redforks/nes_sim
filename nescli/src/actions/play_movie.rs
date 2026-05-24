@@ -87,11 +87,13 @@ pub struct PlayMovieAction {
     no_throttle: bool,
     #[arg(long, default_value_t = 600)]
     extra_frames: u32,
+    #[arg(long)]
+    headless: bool,
 }
 
 struct RecordRender {
     buffer: ImageRender,
-    canvas: Canvas<Window>,
+    canvas: Option<Canvas<Window>>,
     video_tx: Option<mpsc::Sender<Vec<u8>>>,
 }
 
@@ -113,17 +115,20 @@ impl Render for RecordRender {
     fn finish(&mut self) {
         let image = self.buffer.borrow_image();
         let (width, height) = image.dimensions();
-        let texture_creator = self.canvas.texture_creator();
-        let mut texture = texture_creator
-            .create_texture_streaming(PixelFormatEnum::ABGR8888, width, height)
-            .expect("failed to create SDL texture");
-        texture
-            .update(None, image.as_bytes(), (width * 4) as usize)
-            .expect("failed to upload SDL texture");
-        self.canvas
-            .copy(&texture, None, None)
-            .expect("failed to copy SDL texture");
-        self.canvas.present();
+
+        if let Some(ref mut canvas) = self.canvas {
+            let texture_creator = canvas.texture_creator();
+            let mut texture = texture_creator
+                .create_texture_streaming(PixelFormatEnum::ABGR8888, width, height)
+                .expect("failed to create SDL texture");
+            texture
+                .update(None, image.as_bytes(), (width * 4) as usize)
+                .expect("failed to upload SDL texture");
+            canvas
+                .copy(&texture, None, None)
+                .expect("failed to copy SDL texture");
+            canvas.present();
+        }
 
         if let Some(ref tx) = self.video_tx {
             let _ = tx.send(image.as_bytes().to_vec());
@@ -184,10 +189,10 @@ impl Drop for FfmpegCleanup {
 
 fn init_sdl_drivers(
     sdl_context: &Sdl,
+    headless: bool,
     video_tx: Option<mpsc::Sender<Vec<u8>>>,
     audio_tx: Option<mpsc::Sender<Vec<u8>>>,
 ) -> Result<(RecordRender, RecordAudioDriver)> {
-    let video_subsystem = sdl_context.video().map_err(|e| anyhow::anyhow!(e))?;
     let audio_subsystem = sdl_context.audio().map_err(|e| anyhow::anyhow!(e))?;
 
     let audio_spec = AudioSpecDesired {
@@ -201,15 +206,17 @@ fn init_sdl_drivers(
     audio_queue.resume();
     let sdl_audio = SdlAudioDriver::new(audio_queue, AUDIO_SAMPLE_RATE as u32);
 
-    let window = video_subsystem
-        .window("NES Simulator - Movie Playback", 512, 480)
-        .position_centered()
-        .build()
-        .map_err(|e| anyhow::anyhow!(e))?;
-    let canvas = window
-        .into_canvas()
-        .build()
-        .map_err(|e| anyhow::anyhow!(e))?;
+    let canvas = if !headless {
+        let video_subsystem = sdl_context.video().map_err(|e| anyhow::anyhow!(e))?;
+        let window = video_subsystem
+            .window("NES Simulator - Movie Playback", 512, 480)
+            .position_centered()
+            .build()
+            .map_err(|e| anyhow::anyhow!(e))?;
+        Some(window.into_canvas().build().map_err(|e| anyhow::anyhow!(e))?)
+    } else {
+        None
+    };
 
     let render = RecordRender {
         buffer: ImageRender::default_dimension(),
@@ -339,23 +346,29 @@ impl PlayMovieAction {
         };
 
         let sdl_context = nes_sdl::sdl2::init().map_err(|e| anyhow::anyhow!(e))?;
-        let (render, audio_driver) = init_sdl_drivers(&sdl_context, video_tx, audio_tx)?;
+        let (render, audio_driver) = init_sdl_drivers(&sdl_context, self.headless, video_tx, audio_tx)?;
 
         let mut machine = NesMachine::new(f, EmptyPlugin::new(), render, audio_driver);
 
-        let mut event_pump = sdl_context.event_pump().map_err(|e| anyhow::anyhow!(e))?;
+        let mut event_pump = if !self.headless {
+            Some(sdl_context.event_pump().map_err(|e| anyhow::anyhow!(e))?)
+        } else {
+            None
+        };
         let target_frame_duration = Duration::new(0, 1_000_000_000u32 / 60);
         let mut frame_offset = 0;
         let mut extra_frames_remaining = self.extra_frames;
 
         'running: loop {
             let frame_start = Instant::now();
-            for event in event_pump.poll_iter() {
-                match event {
-                    Event::Quit { .. } => {
-                        break 'running;
+            if let Some(ref mut pump) = event_pump {
+                for event in pump.poll_iter() {
+                    match event {
+                        Event::Quit { .. } => {
+                            break 'running;
+                        }
+                        _ => {}
                     }
-                    _ => {}
                 }
             }
 
@@ -396,7 +409,7 @@ impl PlayMovieAction {
                 extra_frames_remaining -= 1;
             }
 
-            if !self.no_throttle && self.output.is_none() {
+            if !self.headless && !self.no_throttle && self.output.is_none() {
                 let elapsed = frame_start.elapsed();
                 if elapsed < target_frame_duration {
                     std::thread::sleep(target_frame_duration - elapsed);
