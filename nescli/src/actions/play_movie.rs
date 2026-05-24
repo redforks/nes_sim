@@ -76,13 +76,12 @@ pub struct PlayMovieAction {
 }
 
 impl PlayMovieAction {
-    pub fn run(&self, file_path: PathBuf, f: &INesFile) -> Result<()> {
+    pub fn run(&self, f: &INesFile) -> Result<()> {
         let fm2_data = fs::read(&self.fm2_file)?;
         let fm2 = movie::parse(&fm2_data).context("parse fm2 file")?;
         let input_logs = &fm2.input_logs;
 
-        let file_content = std::fs::read(file_path)?;
-        if !fm2.valid_rom_file(&file_content)? {
+        if !fm2.valid_rom_file(f)? {
             eprintln!("Warning: rom file checksum not match");
         }
 
@@ -98,6 +97,7 @@ impl PlayMovieAction {
 
         let mut event_pump = sdl_context.event_pump().map_err(|e| anyhow::anyhow!(e))?;
         let target_frame_duration = Duration::new(0, 1_000_000_000u32 / 60);
+        let mut frame_offset = 0;
 
         'running: loop {
             let frame_start = Instant::now();
@@ -111,7 +111,14 @@ impl PlayMovieAction {
             }
 
             let frame_index = machine.frame_no();
-            if let Some(input_log) = input_logs.get(frame_index + 2) {
+            if let Some(input_log) = input_logs.get(frame_index + frame_offset) {
+                if input_log.command.soft_reset() {
+                    frame_offset += 2;
+                }
+                assert!(
+                    !input_log.command.hard_reset(),
+                    "unsupported command: hard_reset"
+                );
                 set_controller_a_from_gamepad(&mut machine, &input_log.port0);
                 set_controller_b_from_gamepad(&mut machine, &input_log.port1);
             }

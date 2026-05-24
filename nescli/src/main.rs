@@ -39,12 +39,12 @@ enum Action {
 }
 
 impl Action {
-    fn run(&self, file_path: PathBuf, nes_file: INesFile) -> AppResult<()> {
+    fn run(&self, nes_file: INesFile) -> AppResult<()> {
         match self {
             Action::Info(action) => action.run(&nes_file),
             Action::ReadChr(action) => action.run(&nes_file),
             Action::Run(action) => action.run(&nes_file),
-            Action::PlayMovie(action) => action.run(file_path, &nes_file),
+            Action::PlayMovie(action) => action.run(&nes_file),
         }
     }
 }
@@ -52,7 +52,5 @@ impl Action {
 fn main() -> AppResult<()> {
     env_logger::init();
     let args = Args::parse();
-    let ines_file = args.read_file()?;
-    let file_path = args.nes_file;
-    args.action.run(file_path, ines_file)
+    args.action.run(args.read_file()?)
 }

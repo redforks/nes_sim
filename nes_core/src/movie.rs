@@ -17,6 +17,8 @@ use winnow::{
     token::{any, literal},
 };
 
+use crate::ines::INesFile;
+
 #[derive(Deserialize, Clone, Copy, Debug, PartialEq, Eq, Default)]
 pub enum InputDevice {
     #[default]
@@ -106,11 +108,11 @@ pub struct Fm2Header {
 #[bitfield(u8)]
 #[derive(PartialEq)]
 pub struct Command {
-    soft_reset: bool,
-    hard_reset: bool,
-    fds_disk_insert: bool,
-    fds_disk_select: bool,
-    vs_insert_coin: bool,
+    pub soft_reset: bool,
+    pub hard_reset: bool,
+    pub fds_disk_insert: bool,
+    pub fds_disk_select: bool,
+    pub vs_insert_coin: bool,
     #[bits(3)]
     __: u8,
 }
@@ -161,7 +163,7 @@ pub struct Fm2File {
 
 impl Fm2File {
     /// Use checksum to valid rom file
-    pub fn valid_rom_file(&self, file_content: &[u8]) -> Result<bool, anyhow::Error> {
+    pub fn valid_rom_file(&self, file: &INesFile) -> Result<bool, anyhow::Error> {
         use base64::prelude::*;
         let checksum = self
             .header
@@ -172,7 +174,10 @@ impl Fm2File {
         let checksum = BASE64_STANDARD
             .decode(checksum)
             .context("decode base64 encoded rom checksum")?;
-        let act = md5::compute(file_content);
+        let mut md5context = md5::Context::new();
+        md5context.consume(file.read_prg_rom());
+        md5context.consume(file.read_chr_rom());
+        let act = md5context.finalize();
         eprintln!("{:x}", act);
         eprintln!("{:?}", checksum.as_slice());
         Ok(act.0.as_slice() == checksum.as_slice())
