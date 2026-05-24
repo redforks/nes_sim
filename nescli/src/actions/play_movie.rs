@@ -83,6 +83,8 @@ pub struct PlayMovieAction {
     fm2_file: PathBuf,
     #[arg(short, long)]
     output: Option<PathBuf>,
+    #[arg(long)]
+    no_throttle: bool,
 }
 
 struct RecordRender {
@@ -384,9 +386,11 @@ impl PlayMovieAction {
                 break 'running;
             }
 
-            let elapsed = frame_start.elapsed();
-            if elapsed < target_frame_duration {
-                std::thread::sleep(target_frame_duration - elapsed);
+            if !self.no_throttle && self.output.is_none() {
+                let elapsed = frame_start.elapsed();
+                if elapsed < target_frame_duration {
+                    std::thread::sleep(target_frame_duration - elapsed);
+                }
             }
         }
 
