@@ -85,6 +85,8 @@ pub struct PlayMovieAction {
     output: Option<PathBuf>,
     #[arg(long)]
     no_throttle: bool,
+    #[arg(long, default_value_t = 600)]
+    extra_frames: u32,
 }
 
 struct RecordRender {
@@ -344,6 +346,7 @@ impl PlayMovieAction {
         let mut event_pump = sdl_context.event_pump().map_err(|e| anyhow::anyhow!(e))?;
         let target_frame_duration = Duration::new(0, 1_000_000_000u32 / 60);
         let mut frame_offset = 0;
+        let mut extra_frames_remaining = self.extra_frames;
 
         'running: loop {
             let frame_start = Instant::now();
@@ -386,8 +389,11 @@ impl PlayMovieAction {
             }
 
             if frame_index >= input_logs.len() {
-                eprintln!(">> End of movie reached");
-                break 'running;
+                if extra_frames_remaining == 0 {
+                    eprintln!(">> End of movie reached (after {} extra frames)", self.extra_frames);
+                    break 'running;
+                }
+                extra_frames_remaining -= 1;
             }
 
             if !self.no_throttle && self.output.is_none() {
