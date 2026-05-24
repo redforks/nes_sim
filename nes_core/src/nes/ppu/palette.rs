@@ -33,7 +33,7 @@ const COLORS: [Pixel; 64] = [
 
 /// Return palette color by index (0..63).
 pub fn color(index: u8) -> Pixel {
-    COLORS[(index & 0x3F) as usize]
+    COLORS[(index as usize) & 0x3F]
 }
 
 #[derive(Default)]
