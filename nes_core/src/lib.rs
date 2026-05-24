@@ -53,13 +53,11 @@ pub const SYSTEM_CYCLES_PER_CPU_CYCLE: u64 = SYSTEM_CYCLES_PER_PPU_CYCLE * PPU_C
 
 #[cfg(test)]
 fn set_system_cycles(cycles: u64) {
-    SYSTEM_CLOCK
-        .try_update(Ordering::Relaxed, Ordering::Relaxed, |_| Some(cycles))
-        .unwrap();
+    SYSTEM_CLOCK.update(Ordering::SeqCst, Ordering::SeqCst, |_| cycles);
 }
 
 pub fn inc_system_clock() -> SystemClock {
-    SystemClock(SYSTEM_CLOCK.fetch_add(1, Ordering::Relaxed))
+    SystemClock(SYSTEM_CLOCK.fetch_add(1, Ordering::Relaxed).wrapping_add(1))
 }
 
 pub fn get_system_clock() -> SystemClock {

@@ -186,6 +186,7 @@ fn test_open_bus_bits_decay_to_zero() {
     let mut ppu = Ppu::new(());
     let mut cartridge = new_test_cartridge();
 
+    set_system_cycles(0);
     ppu.write(0x2002, 0xFF, &mut cartridge);
     set_system_cycles(PPU_OPEN_BUS_DECAY_TICKS);
 
@@ -197,6 +198,7 @@ fn test_status_read_only_refreshes_high_bits() {
     let mut ppu = Ppu::new(());
     let mut cartridge = new_test_cartridge();
 
+    set_system_cycles(0);
     ppu.write(0x2002, 0xFF, &mut cartridge);
     set_system_cycles(PPU_OPEN_BUS_DECAY_TICKS);
     ppu.registers.status.set_v_blank(true);
