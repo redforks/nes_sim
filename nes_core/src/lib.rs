@@ -11,7 +11,7 @@ pub mod render;
 #[cfg(test)]
 mod test_utils;
 
-use std::cell::Cell;
+use std::sync::atomic::{AtomicU64, Ordering};
 
 pub use cpu::*;
 
@@ -32,11 +32,6 @@ impl SystemClock {
         self.0 % (SYSTEM_CYCLES_PER_CPU_CYCLE * 2) < SYSTEM_CYCLES_PER_CPU_CYCLE
     }
 
-    pub const fn is_ppu_clock(self) -> bool {
-        // self.0 % SYSTEM_CYCLES_PER_PPU_CYCLE == 0
-        true
-    }
-
     pub fn cpu_clock_phase(self) -> CpuClockPhase {
         match self.0 % SYSTEM_CYCLES_PER_CPU_CYCLE {
             0 => CpuClockPhase::First,
@@ -50,9 +45,7 @@ impl SystemClock {
     }
 }
 
-thread_local! {
-    static SYSTEM_CLOCK: Cell<SystemClock> = Cell::new(Default::default());
-}
+static SYSTEM_CLOCK: AtomicU64 = AtomicU64::new(0);
 
 pub const SYSTEM_CYCLES_PER_PPU_CYCLE: u64 = 1;
 const PPU_CYCLES_PER_CPU_CYCLE: u64 = 3;
@@ -60,19 +53,17 @@ pub const SYSTEM_CYCLES_PER_CPU_CYCLE: u64 = SYSTEM_CYCLES_PER_PPU_CYCLE * PPU_C
 
 #[cfg(test)]
 fn set_system_cycles(cycles: u64) {
-    SYSTEM_CLOCK.with(|sc| sc.set(SystemClock(cycles)));
+    SYSTEM_CLOCK
+        .try_update(Ordering::Relaxed, Ordering::Relaxed, |_| Some(cycles))
+        .unwrap();
 }
 
 pub fn inc_system_clock() -> SystemClock {
-    SYSTEM_CLOCK.with(|sc| {
-        let r = SystemClock(sc.get().0.wrapping_add(1));
-        sc.set(r);
-        r
-    })
+    SystemClock(SYSTEM_CLOCK.fetch_add(1, Ordering::Relaxed))
 }
 
 pub fn get_system_clock() -> SystemClock {
-    SYSTEM_CLOCK.with(|sc| sc.get())
+    SystemClock(SYSTEM_CLOCK.load(Ordering::Relaxed))
 }
 
 pub fn get_system_cycles() -> u64 {

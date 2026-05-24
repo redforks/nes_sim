@@ -57,7 +57,7 @@ where
         // advances PPU/APU accordingly. Loop until VBlank or safety limit.
         for _ in 0..MAX_TICKS_PER_FRAME {
             self.tick();
-            let cycles = inc_system_clock();
+            inc_system_clock();
 
             if self.machine.cpu_mut().is_halted() {
                 self.flush_audio();
@@ -65,9 +65,7 @@ where
             }
 
             // Check for VBlank signalled by the PPU
-            if cycles.is_ppu_clock()
-                && self.machine.mcu().ppu_timing() == (VBLANK_SET_SCANLINE, VBLANK_SET_DOT)
-            {
+            if self.machine.mcu().ppu_timing() == (VBLANK_SET_SCANLINE, VBLANK_SET_DOT) {
                 break;
             }
         }
