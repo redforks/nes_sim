@@ -11,7 +11,7 @@ pub mod render;
 #[cfg(test)]
 mod test_utils;
 
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::cell::Cell;
 
 pub use cpu::*;
 
@@ -45,7 +45,9 @@ impl SystemClock {
     }
 }
 
-static SYSTEM_CLOCK: AtomicU64 = AtomicU64::new(0);
+thread_local! {
+    static SYSTEM_CLOCK: Cell<u64> = Cell::new(0);
+}
 
 pub const SYSTEM_CYCLES_PER_PPU_CYCLE: u64 = 1;
 const PPU_CYCLES_PER_CPU_CYCLE: u64 = 3;
@@ -53,15 +55,18 @@ pub const SYSTEM_CYCLES_PER_CPU_CYCLE: u64 = SYSTEM_CYCLES_PER_PPU_CYCLE * PPU_C
 
 #[cfg(test)]
 fn set_system_cycles(cycles: u64) {
-    SYSTEM_CLOCK.update(Ordering::SeqCst, Ordering::SeqCst, |_| cycles);
+    SYSTEM_CLOCK.with(|sc| sc.set(cycles));
 }
 
 pub fn inc_system_clock() -> SystemClock {
-    SystemClock(SYSTEM_CLOCK.fetch_add(1, Ordering::Relaxed).wrapping_add(1))
+    SYSTEM_CLOCK.with(|sc| {
+        sc.update(|v| v.wrapping_add(1));
+        SystemClock(sc.get())
+    })
 }
 
 pub fn get_system_clock() -> SystemClock {
-    SystemClock(SYSTEM_CLOCK.load(Ordering::Relaxed))
+    SystemClock(SYSTEM_CLOCK.get())
 }
 
 pub fn get_system_cycles() -> u64 {
