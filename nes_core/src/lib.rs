@@ -56,14 +56,17 @@ fn set_system_cycles(cycles: u64) {
     SYSTEM_CLOCK.update(Ordering::SeqCst, Ordering::SeqCst, |_| cycles);
 }
 
+#[inline]
 pub fn inc_system_clock() -> SystemClock {
     SystemClock(SYSTEM_CLOCK.fetch_add(1, Ordering::Relaxed).wrapping_add(1))
 }
 
+#[inline]
 pub fn get_system_clock() -> SystemClock {
     SystemClock(SYSTEM_CLOCK.load(Ordering::Relaxed))
 }
 
+#[inline]
 pub fn get_system_cycles() -> u64 {
     get_system_clock().0
 }
