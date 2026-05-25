@@ -2,7 +2,7 @@ use crate::nes::{mapper::Cartridge, ppu::registers::Registers};
 
 use super::PatternAccess;
 
-const MAX_SPRITES_PER_SCANLINE: usize = 8;
+const MAX_SPRITES_PER_SCANLINE: u8 = 8;
 
 #[derive(Copy, Clone)]
 pub(crate) struct SpritePixel {
@@ -30,7 +30,7 @@ struct SpriteOverflowEval {
     target_scanline: u16,
     oam_index: usize,
     byte_index: usize,
-    visible_sprites: usize,
+    visible_sprites: u8,
     mode: SpriteOverflowEvalMode,
 }
 
@@ -40,6 +40,7 @@ pub(crate) struct SpriteManager {
     sprite_overflow_eval: SpriteOverflowEval,
 }
 
+#[inline]
 fn sprite_in_range(y_byte: u8, target_scanline: u16, sprite_height: i16) -> bool {
     let top = y_byte as i16 + 1;
     let sprite_y = target_scanline as i16 - top;
@@ -219,16 +220,16 @@ impl SpriteManager {
             return None;
         }
 
-        let sprite_height: i16 = if sprite_size_16 { 16 } else { 8 };
-        let mut visible_count = 0usize;
+        let sprite_height: u8 = if sprite_size_16 { 16 } else { 8 };
+        let mut visible_count = 0u8;
 
         for sprite_idx in 0..64 {
-            let byte_idx = sprite_idx * 4;
-            let y_byte = oam_data[byte_idx];
-            if !sprite_in_range(y_byte, screen_y as u16, sprite_height) {
+            let y_byte = oam_data[sprite_idx * 4];
+            if !sprite_in_range(y_byte, screen_y as u16, sprite_height as i16) {
                 continue;
             }
 
+            let byte_idx = sprite_idx * 4;
             visible_count += 1;
             if visible_count > MAX_SPRITES_PER_SCANLINE {
                 break;
@@ -236,7 +237,7 @@ impl SpriteManager {
 
             let x = oam_data[byte_idx + 3];
             let rel_x = screen_x as i16 - x as i16;
-            if !(0..8).contains(&rel_x) {
+            if !(rel_x >= 0 && rel_x < 8) {
                 continue;
             }
 
@@ -255,7 +256,7 @@ impl SpriteManager {
                 rel_x as usize
             };
             let src_y = if flip_vertical {
-                (sprite_height - 1 - sprite_y) as u8
+                (sprite_height as i16 - 1 - sprite_y) as u8
             } else {
                 sprite_y as u8
             };
@@ -305,7 +306,7 @@ impl SpriteManager {
         let flip_horizontal = (attributes & 0x40) != 0;
 
         let rel_x = screen_x as i16 - x as i16;
-        if !(0..8).contains(&rel_x) {
+        if !(rel_x >= 0 && rel_x < 8) {
             return false;
         }
 
