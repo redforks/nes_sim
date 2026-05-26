@@ -1,5 +1,6 @@
 use super::*;
 use crate::ines::INesFile;
+use test_case::test_case;
 
 /// Creates a minimal valid iNES ROM for testing
 fn create_test_nes(mapper: u8, prg_pages: u8, chr_pages: u8) -> Vec<u8> {
@@ -35,6 +36,38 @@ fn create_test_nes(mapper: u8, prg_pages: u8, chr_pages: u8) -> Vec<u8> {
     rom.extend(std::iter::repeat_n(0, chr_size));
 
     rom
+}
+
+#[test_case(Mirroring::LowerBank, 0x2000 => 0)]
+#[test_case(Mirroring::LowerBank, 0x2001 => 1)]
+#[test_case(Mirroring::LowerBank, 0x23ff => 1023)]
+#[test_case(Mirroring::LowerBank, 0x27ff => 1023)]
+#[test_case(Mirroring::UpperBank, 0x2000 => 0x400)]
+#[test_case(Mirroring::UpperBank, 0x2001 => 0x401)]
+#[test_case(Mirroring::UpperBank, 0x23ff => 0x7ff)]
+#[test_case(Mirroring::UpperBank, 0x27ff => 0x7ff)]
+#[test_case(Mirroring::Vertical, 0x2000 => 0)]
+#[test_case(Mirroring::Vertical, 0x2001 => 1)]
+#[test_case(Mirroring::Vertical, 0x2400 => 0x400)]
+#[test_case(Mirroring::Vertical, 0x2401 => 0x401)]
+#[test_case(Mirroring::Vertical, 0x2800 => 0)]
+#[test_case(Mirroring::Vertical, 0x2801 => 1)]
+#[test_case(Mirroring::Vertical, 0x2c00 => 0x400)]
+#[test_case(Mirroring::Vertical, 0x2c01 => 0x401)]
+#[test_case(Mirroring::Horizontal, 0x2000 => 0)]
+#[test_case(Mirroring::Horizontal, 0x2001 => 1)]
+#[test_case(Mirroring::Horizontal, 0x2400 => 0)]
+#[test_case(Mirroring::Horizontal, 0x2401 => 1)]
+#[test_case(Mirroring::Horizontal, 0x2800 => 0x400)]
+#[test_case(Mirroring::Horizontal, 0x2801 => 0x401)]
+#[test_case(Mirroring::Horizontal, 0x2c00 => 0x400)]
+#[test_case(Mirroring::Horizontal, 0x2c02 => 0x402)]
+#[test_case(Mirroring::Four, 0x2000 => 0)]
+#[test_case(Mirroring::Four, 0x2400 => 0x400)]
+#[test_case(Mirroring::Four, 0x2800 => 0x800)]
+#[test_case(Mirroring::Four, 0x2c00 => 0xc00)]
+fn test_name_table_offset(mirroring: Mirroring, addr: u16) -> u16 {
+    name_table_offset(mirroring, addr)
 }
 
 #[test]

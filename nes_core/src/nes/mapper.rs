@@ -26,8 +26,6 @@ mod mmc5;
 
 use crate::nes::mapper::mmc5::MMC5;
 
-const NAME_TABLE_MEM_START: u16 = 0x2000;
-
 #[derive(Debug, Eq, PartialEq, Copy, Clone)]
 pub enum Mirroring {
     LowerBank, // single screen use lower bank
@@ -64,26 +62,25 @@ impl NameTableControl {
         self.mirroring = mirroring;
     }
 
-    fn offset(&self, addr: u16) -> usize {
-        let offset = addr - NAME_TABLE_MEM_START;
-        let page = (offset / 1024) as usize;
-        let offset_in_page = (offset % 1024) as usize;
-        let page_start = match self.mirroring {
-            Mirroring::LowerBank => [0, 0, 0, 0][page],
-            Mirroring::UpperBank => [1024, 1024, 1024, 1024][page],
-            Mirroring::Vertical => [0, 1024, 0, 1024][page],
-            Mirroring::Horizontal => [0, 0, 1024, 1024][page],
-            Mirroring::Four => page * 1024,
-        };
-        page_start + offset_in_page
-    }
-
     pub(crate) fn read(&self, address: u16) -> u8 {
-        self.mem[self.offset(address)]
+        self.mem[name_table_offset(self.mirroring, address) as usize & 4095]
     }
 
     pub(crate) fn write(&mut self, address: u16, value: u8) {
-        self.mem[self.offset(address)] = value;
+        self.mem[name_table_offset(self.mirroring, address) as usize & 4095] = value;
+    }
+}
+
+fn name_table_offset(mirroring: Mirroring, addr: u16) -> u16 {
+    match mirroring {
+        Mirroring::LowerBank => addr & 0x3ff,
+        Mirroring::UpperBank => addr & 0x3ff | 0x400,
+        Mirroring::Horizontal => {
+            let bit = addr & 0x800;
+            addr & (!0xfc00) | (bit >> 1)
+        }
+        Mirroring::Vertical => addr & (!0xf800),
+        Mirroring::Four => addr & (!0xf000),
     }
 }
 
@@ -313,7 +310,7 @@ impl Cartridge {
             | Cartridge::MMC1(_) => {}
             Cartridge::MMC3(cartridge) => cartridge.on_ppu_tick(scanline, dot, rendering_enabled),
             Cartridge::MMC5(cartridge) => cartridge.on_ppu_tick(scanline, dot, rendering_enabled),
-            Cartridge::Mapper87(_) => {},
+            Cartridge::Mapper87(_) => {}
             #[cfg(test)]
             Cartridge::Test(_) => {}
         }
