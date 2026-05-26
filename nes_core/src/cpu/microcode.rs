@@ -735,8 +735,6 @@ const fn build_opcode_table() -> [ArrayVec<[Microcode; 7]>; 256] {
     r
 }
 
-const OPCODE_TABLE: [ArrayVec<[Microcode; 7]>; 256] = build_opcode_table();
-
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
 pub enum OpAfterAddressing {
     And,
@@ -1405,7 +1403,7 @@ impl Microcode {
     pub fn exec<M: Mcu>(self, cpu: &mut Cpu<M>) {
         match self {
             Self::FetchOnly => cpu.read_pc_byte(),
-            Self::FetchAndDecode => Self::fetch_and_decode(cpu),
+            Self::FetchAndDecode => fetch_and_decode(cpu),
             Self::LoadR(r) => Self::load_register(cpu, r),
             Self::StoreR(r) => Self::store_register(cpu, r),
             Self::LoadImmediate(r) => Self::load_immediate(cpu, r),
@@ -1527,12 +1525,6 @@ impl Microcode {
             }
             Self::ImmediateWithOp(op) => Self::immediate_with_op(cpu, op),
         }
-    }
-
-    fn fetch_and_decode<M: Mcu>(cpu: &mut Cpu<M>) {
-        let opcode = cpu.inc_read_byte();
-        cpu.opcode = opcode;
-        cpu.push_microcodes(&OPCODE_TABLE[opcode as usize]);
     }
 
     fn load_register<M: Mcu>(cpu: &mut Cpu<M>, r: Register) {
@@ -1778,4 +1770,12 @@ impl Microcode {
             }
         }
     }
+}
+
+fn fetch_and_decode<M: Mcu>(cpu: &mut Cpu<M>) {
+    const OPCODE_TABLE: [ArrayVec<[Microcode; 7]>; 256] = build_opcode_table();
+
+    let opcode = cpu.inc_read_byte();
+    cpu.opcode = opcode;
+    cpu.push_microcodes(&OPCODE_TABLE[opcode as usize]);
 }
