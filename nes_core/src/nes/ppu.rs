@@ -1,27 +1,16 @@
+mod nametable;
 mod palette;
 mod registers;
 mod sprite;
 
-use crate::{get_system_cycles, nes::mapper::Cartridge, render::Render};
+use crate::{get_system_cycles, nes::mapper::Cartridge, nes::mapper::Mirroring, render::Render};
+use nametable::Nametable;
 use palette::{Palette, Pixel};
 use registers::{PpuCtrl, PpuMask, PpuStatus, Registers};
 use sprite::SpriteManager;
 use std::fmt::Write;
 
 // Pixel, palette data and COLORS are defined in the submodule `palette`.
-
-#[derive(Copy, Clone, Debug, Eq, PartialEq)]
-pub enum PatternAccess {
-    Cpu,
-    Background,
-    Sprite,
-}
-
-#[derive(Copy, Clone, Debug, Eq, PartialEq)]
-pub struct BackgroundTileOverride {
-    pub palette_idx: u8,
-    pub color_idx: u8,
-}
 
 const TILES_PER_ROW: u8 = 32;
 
@@ -56,6 +45,7 @@ impl BackgroundActivation {
 pub struct Ppu<R: Render = ()> {
     registers: Registers,
     palette: Palette, // palette memory
+    nametable: Nametable,
     renderer: R,
 
     // PPU timing
@@ -87,6 +77,7 @@ impl<R: Render> Ppu<R> {
         Ppu {
             registers: Registers::new(),
             palette: Palette::default(),
+            nametable: Nametable::new(),
             renderer,
             scanline: 0,
             dot: 0,
@@ -115,6 +106,14 @@ impl<R: Render> Ppu<R> {
 
     pub fn timing(&self) -> (u16, u16) {
         (self.scanline, self.dot)
+    }
+
+    pub fn write_nametable(&mut self, addr: u16, value: u8, mirroring: Mirroring) {
+        self.nametable.write(mirroring, addr, value);
+    }
+
+    pub fn read_nametable(&self, mirroring: Mirroring, addr: u16) -> u8 {
+        self.nametable.read(mirroring, addr)
     }
 
     pub fn frame_no(&self) -> usize {
@@ -484,14 +483,12 @@ impl<R: Render> Ppu<R> {
         match reg {
             // PPUCTRL
             0x2000 => {
-                cartridge.on_ppu_ctrl_write(value);
                 self.set_control_flags(PpuCtrl::from_bits(value));
                 self.schedule_background_activation_if_visible();
                 // Update name table selection
             }
             // PPUMASK
             0x2001 => {
-                cartridge.on_ppu_mask_write(value);
                 self.registers.mask = PpuMask::from_bits(value);
                 // mask changed; no cache to mark
             }
@@ -506,7 +503,6 @@ impl<R: Render> Ppu<R> {
             }
             // PPUSCROLL
             0x2005 => {
-                cartridge.on_ppu_scroll_write(value);
                 self.write_scroll(value);
                 // scroll changed; no cache to mark
             }
@@ -538,10 +534,10 @@ impl<R: Render> Ppu<R> {
             // Read from pattern table or name table
             if addr < 0x2000 {
                 // Pattern table (CHR ROM/RAM)
-                cartridge.read_chr(addr, PatternAccess::Cpu)
+                cartridge.read_chr(addr)
             } else {
-                // Name table
-                self.read_name_table_byte(addr, cartridge)
+                // Name table via PPU's built-in storage
+                self.nametable.read(cartridge.mirroring(), addr)
             }
         } else {
             // Palette
@@ -556,8 +552,7 @@ impl<R: Render> Ppu<R> {
         }
         if addr < 0x3f00 {
             if addr >= 0x2000 {
-                // Name table (pattern table 0x0000-0x1FFF is read-only for CHR ROM)
-                cartridge.write_nametable(addr, value);
+                self.nametable.write(cartridge.mirroring(), addr, value);
             } else {
                 cartridge.write_pattern(addr, value);
             }
@@ -576,21 +571,16 @@ impl<R: Render> Ppu<R> {
         }
     }
 
-    fn read_name_table_byte(&self, address: u16, cartridge: &Cartridge) -> u8 {
-        cartridge.read_nametable(address)
-    }
-
     fn read_pattern_pixel(
         cartridge: &Cartridge,
         base_addr: u16,
         tile_idx: u8,
         tile_x: usize,
         tile_y: usize,
-        access: PatternAccess,
     ) -> u8 {
         let tile_addr = base_addr + tile_idx as u16 * 16;
-        let low = cartridge.read_chr(tile_addr + tile_y as u16, access);
-        let high = cartridge.read_chr(tile_addr + tile_y as u16 + 8, access);
+        let low = cartridge.read_chr(tile_addr + tile_y as u16);
+        let high = cartridge.read_chr(tile_addr + tile_y as u16 + 8);
         let bit = 7 - tile_x;
         ((low >> bit) & 1) | (((high >> bit) & 1) << 1)
     }
@@ -632,38 +622,19 @@ impl<R: Render> Ppu<R> {
 
         let nt_base = 0x2000 + nt_idx as u16 * 0x0400;
         let nt_addr = nt_base + nt_y as u16 * TILES_PER_ROW as u16 + nt_x as u16;
-        let tile_idx = self.read_name_table_byte(nt_addr, cartridge);
+        let tile_idx = self.nametable.read(cartridge.mirroring(), nt_addr);
         let attr_addr = nt_base + 0x03c0 + (nt_y as u16 / 4) * 8 + (nt_x as u16 / 4);
-        let attr_byte = self.read_name_table_byte(attr_addr, cartridge);
+        let attr_byte = self.nametable.read(cartridge.mirroring(), attr_addr);
         let shift = (((nt_y >> 1) & 0x01) << 2) | (((nt_x >> 1) & 0x01) << 1);
         let palette_idx = (attr_byte >> shift) & 0x03;
-
-        let screen_y = self.scanline as u8;
-        if let Some(override_pixel) = cartridge.background_override(
-            screen_x,
-            screen_y,
-            nt_addr,
-            tile_idx,
-            palette_idx,
-            tile_fine_x,
-            tile_fine_y,
-        ) {
-            return (override_pixel.palette_idx, override_pixel.color_idx);
-        }
 
         let base_addr = if background.ctrl.background_pattern_table() {
             0x1000
         } else {
             0x0000
         };
-        let color_idx = Self::read_pattern_pixel(
-            cartridge,
-            base_addr,
-            tile_idx,
-            tile_fine_x,
-            tile_fine_y,
-            PatternAccess::Background,
-        );
+        let color_idx =
+            Self::read_pattern_pixel(cartridge, base_addr, tile_idx, tile_fine_x, tile_fine_y);
 
         (palette_idx, color_idx)
     }

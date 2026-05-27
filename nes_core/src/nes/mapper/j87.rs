@@ -1,11 +1,11 @@
-use crate::nes::mapper::{Mirroring, NameTableControl};
+use crate::nes::mapper::Mirroring;
 
 pub struct MapperJ87 {
     prg_rom: [u8; 32768],
     is_16k_prg_rom: bool,
     chr_rom_bands: [[u8; 8192]; 4],
     cur_chr_band: u8,
-    name_table: NameTableControl,
+    mirroring: Mirroring,
 }
 
 impl MapperJ87 {
@@ -16,7 +16,7 @@ impl MapperJ87 {
             is_16k_prg_rom: prg_rom.len() == 16 * 1024,
             chr_rom_bands: [[0; 8192]; 4],
             cur_chr_band: 0,
-            name_table: NameTableControl::new(mirroring),
+            mirroring,
         };
         r.prg_rom[..prg_rom.len()].copy_from_slice(prg_rom);
 
@@ -41,14 +41,6 @@ impl MapperJ87 {
 
     pub fn pattern_ref(&self) -> &[u8] {
         &self.chr_rom_bands[self.cur_chr_band as usize]
-    }
-
-    pub fn write_nametable(&mut self, address: u16, value: u8) {
-        self.name_table.write(address, value);
-    }
-
-    pub fn read_nametable(&self, address: u16) -> u8 {
-        self.name_table.read(address)
     }
 
     pub fn read(&mut self, address: u16) -> u8 {
@@ -82,7 +74,7 @@ impl MapperJ87 {
     }
 
     pub fn mirroring(&self) -> Mirroring {
-        self.name_table.mirroring()
+        self.mirroring
     }
 }
 

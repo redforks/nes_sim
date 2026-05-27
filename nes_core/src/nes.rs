@@ -124,7 +124,6 @@ impl<R: Render, D: AudioDriver> NesMcu<R, D> {
                 transfer_cycle: 0,
                 latch: 0,
             });
-            self.cartridge.on_oam_dma();
 
             return true;
         }
@@ -156,16 +155,16 @@ impl<R: Render, D: AudioDriver> NesMcu<R, D> {
         &self.ppu
     }
 
-    pub fn read_nametable(&self, address: u16) -> u8 {
-        self.cartridge.read_nametable(address)
-    }
-
     pub fn dump_ppu_state(&self) -> String {
         self.ppu.dump_state(&self.cartridge)
     }
 
     pub fn apu_mut(&mut self) -> &mut Apu<D> {
         &mut self.apu
+    }
+
+    pub fn read_nametable(&self, addr: u16) -> u8 {
+        self.ppu().read_nametable(self.cartridge.mirroring(), addr)
     }
 }
 

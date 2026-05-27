@@ -1,6 +1,5 @@
 use super::CARTRIDGE_START_ADDR;
 use crate::nes::mapper::Mirroring;
-use crate::nes::mapper::NameTableControl;
 
 const PRG_ROM_SIZE: usize = 0x8000;
 const CHR_BANK_SIZE: usize = 0x2000;
@@ -15,7 +14,7 @@ pub struct Mapper3 {
     selected_chr_bank: usize,
     chr_bank_count: usize,
     ram: [u8; CARTRIDGE_RAM_SIZE],
-    name_table: NameTableControl,
+    mirroring: Mirroring,
 }
 
 impl Mapper3 {
@@ -33,7 +32,7 @@ impl Mapper3 {
             selected_chr_bank: 0,
             chr_bank_count: chr_rom.len() / CHR_BANK_SIZE,
             ram: [0; CARTRIDGE_RAM_SIZE],
-            name_table: NameTableControl::new(mirroring),
+            mirroring,
         };
         mapper.prg_rom[..prg_rom.len()].copy_from_slice(prg_rom);
         mapper.refresh_chr_window();
@@ -88,16 +87,8 @@ impl Mapper3 {
         }
     }
 
-    pub fn write_nametable(&mut self, address: u16, value: u8) {
-        self.name_table.write(address, value);
-    }
-
-    pub fn read_nametable(&self, address: u16) -> u8 {
-        self.name_table.read(address)
-    }
-
     pub fn mirroring(&self) -> Mirroring {
-        self.name_table.mirroring()
+        self.mirroring
     }
 }
 

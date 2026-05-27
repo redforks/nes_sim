@@ -248,9 +248,10 @@ fn new_test_cartridge() -> Cartridge {
     Cartridge::Test(Box::new(TestCartridge::new()))
 }
 
-fn set_bg_tile(cartridge: &mut Cartridge, tile: u8, palette_idx: u8) {
-    cartridge.write_nametable(0x2000, tile);
-    cartridge.write_nametable(0x23c0, palette_idx & 0x03);
+fn set_bg_tile(ppu: &mut Ppu, cartridge: &Cartridge, tile: u8, palette_idx: u8) {
+    let mirroring = cartridge.mirroring();
+    ppu.write_nametable(0x2000, tile, mirroring);
+    ppu.write_nametable(0x23c0, palette_idx & 0x03, mirroring);
 }
 
 fn set_bg_palette_color(ppu: &mut Ppu, palette_idx: u8, color_idx: u8, color: u8) {
@@ -303,7 +304,7 @@ fn run_scanline(ppu: &mut Ppu, pattern: &[u8], scanline: u16) {
 
 fn render_pixel_with_setup<F>(ppu: &mut Ppu, pattern: &[u8], setup: F, x: u8, y: u8) -> Pixel
 where
-    F: FnOnce(&mut Cartridge),
+    F: FnOnce(&mut Ppu, &mut Cartridge),
 {
     let mut cart = new_test_cartridge();
     if !pattern.is_empty()
@@ -313,7 +314,7 @@ where
             tc.chr_rom[i] = pattern[i % pattern.len()];
         }
     }
-    setup(&mut cart);
+    setup(ppu, &mut cart);
     // ensure ppu.scanline matches requested y for on-the-fly sprite lookup
     ppu.scanline = y as u16;
     let pixel = ppu.render_pixel(x, &mut cart);
@@ -331,7 +332,7 @@ fn test_render_pixel_returns_background_color() {
     set_tile_solid(&mut pattern, 0, 0, 1);
     set_bg_palette_color(&mut ppu, 0, 1, 0x16);
 
-    let pixel = render_pixel_with_setup(&mut ppu, &pattern, |cart| set_bg_tile(cart, 0, 0), 0, 0);
+    let pixel = render_pixel_with_setup(&mut ppu, &pattern, |ppu, cart| set_bg_tile(ppu, cart, 0, 0), 0, 0);
     assert_eq!(pixel, color(0x16));
 }
 
@@ -427,7 +428,7 @@ fn test_render_pixel_transparent_sprite_falls_back_to_background() {
     set_bg_palette_color(&mut ppu, 0, 1, 0x12);
     setup_sprite(&mut ppu, 0, 0, 1, 0, 0);
 
-    let pixel = render_pixel_with_setup(&mut ppu, &pattern, |cart| set_bg_tile(cart, 0, 0), 0, 1);
+    let pixel = render_pixel_with_setup(&mut ppu, &pattern, |ppu, cart| set_bg_tile(ppu, cart, 0, 0), 0, 1);
     assert_eq!(pixel, color(0x12));
 }
 
@@ -447,7 +448,7 @@ fn test_render_pixel_sprite_in_front_of_background() {
     set_sprite_palette_color(&mut ppu, 0, 2, 0x22);
     setup_sprite(&mut ppu, 0, 0, 1, 0, 0);
 
-    let pixel = render_pixel_with_setup(&mut ppu, &pattern, |cart| set_bg_tile(cart, 0, 0), 0, 1);
+    let pixel = render_pixel_with_setup(&mut ppu, &pattern, |ppu, cart| set_bg_tile(ppu, cart, 0, 0), 0, 1);
     assert_eq!(pixel, color(0x22));
 }
 
@@ -467,7 +468,7 @@ fn test_render_pixel_background_priority_when_sprite_is_behind() {
     set_sprite_palette_color(&mut ppu, 0, 2, 0x24);
     setup_sprite(&mut ppu, 0, 0, 1, 0x20, 0);
 
-    let pixel = render_pixel_with_setup(&mut ppu, &pattern, |cart| set_bg_tile(cart, 0, 0), 0, 1);
+    let pixel = render_pixel_with_setup(&mut ppu, &pattern, |ppu, cart| set_bg_tile(ppu, cart, 0, 0), 0, 1);
     assert_eq!(pixel, color(0x14));
 }
 
@@ -485,7 +486,7 @@ fn test_render_pixel_sprite_behind_transparent_background() {
     set_sprite_palette_color(&mut ppu, 0, 2, 0x25);
     setup_sprite(&mut ppu, 0, 0, 1, 0x20, 0);
 
-    let pixel = render_pixel_with_setup(&mut ppu, &pattern, |cart| set_bg_tile(cart, 0, 0), 0, 1);
+    let pixel = render_pixel_with_setup(&mut ppu, &pattern, |ppu, cart| set_bg_tile(ppu, cart, 0, 0), 0, 1);
     assert_eq!(pixel, color(0x25));
 }
 
@@ -504,7 +505,7 @@ fn test_render_pixel_applies_left_column_clipping() {
     set_sprite_palette_color(&mut ppu, 0, 2, 0x30);
     setup_sprite(&mut ppu, 0, 0, 1, 0, 0);
 
-    let pixel = render_pixel_with_setup(&mut ppu, &pattern, |cart| set_bg_tile(cart, 0, 0), 0, 1);
+    let pixel = render_pixel_with_setup(&mut ppu, &pattern, |ppu, cart| set_bg_tile(ppu, cart, 0, 0), 0, 1);
     assert_eq!(pixel, color(0x20));
 }
 
@@ -543,7 +544,7 @@ fn test_render_pixel_applies_sprite_priority_before_background_priority() {
     set_sprite_palette_color(&mut ppu, 0, 2, 0x24);
     setup_sprite(&mut ppu, 0, 0, 1, 0, 0); // sprite in front (not behind)
 
-    let pixel = render_pixel_with_setup(&mut ppu, &pattern, |cart| set_bg_tile(cart, 0, 0), 0, 1);
+    let pixel = render_pixel_with_setup(&mut ppu, &pattern, |ppu, cart| set_bg_tile(ppu, cart, 0, 0), 0, 1);
     // Sprite is in front and opaque, so sprite color should show
     assert_eq!(pixel, color(0x24));
 }
@@ -579,7 +580,7 @@ fn test_render_pixel_respects_background_pattern_table_selection() {
     set_bg_palette_color(&mut ppu, 0, 2, 0x28);
     ppu.set_control_flags(PpuCtrl::new().with_background_pattern_table(true));
 
-    let pixel = render_pixel_with_setup(&mut ppu, &pattern, |cart| set_bg_tile(cart, 0, 0), 0, 0);
+    let pixel = render_pixel_with_setup(&mut ppu, &pattern, |ppu, cart| set_bg_tile(ppu, cart, 0, 0), 0, 0);
     assert_eq!(pixel, color(0x28));
 }
 
@@ -770,7 +771,7 @@ fn test_render_pixel_sprite_zero_hit() {
     render_pixel_with_setup(
         &mut ppu,
         &pattern,
-        |cart| cart.write_nametable(0x2001, 0),
+        |ppu, cart| ppu.write_nametable(0x2001, 0, cart.mirroring()),
         8,
         1,
     );
@@ -791,7 +792,7 @@ fn test_render_pixel_sprite_zero_hit_requires_opaque_background() {
     set_tile_solid(&mut pattern, 0, 1, 2);
     setup_sprite(&mut ppu, 0, 0, 1, 0, 0);
 
-    render_pixel_with_setup(&mut ppu, &pattern, |cart| set_bg_tile(cart, 0, 0), 0, 1);
+    render_pixel_with_setup(&mut ppu, &pattern, |ppu, cart| set_bg_tile(ppu, cart, 0, 0), 0, 1);
     assert!(!ppu.registers.status.sprite_zero_hit());
 }
 
@@ -808,7 +809,7 @@ fn test_render_pixel_sprite_zero_hit_respects_background_left_mask() {
     set_tile_solid(&mut pattern, 0, 1, 2);
     setup_sprite(&mut ppu, 0, 0, 1, 0, 0);
 
-    render_pixel_with_setup(&mut ppu, &pattern, |cart| set_bg_tile(cart, 0, 0), 0, 1);
+    render_pixel_with_setup(&mut ppu, &pattern, |ppu, cart| set_bg_tile(ppu, cart, 0, 0), 0, 1);
     assert!(!ppu.registers.status.sprite_zero_hit());
 }
 
@@ -825,7 +826,7 @@ fn test_render_pixel_sprite_zero_hit_respects_sprite_left_mask() {
     set_tile_solid(&mut pattern, 0, 1, 2);
     setup_sprite(&mut ppu, 0, 0, 1, 0, 0);
 
-    render_pixel_with_setup(&mut ppu, &pattern, |cart| set_bg_tile(cart, 0, 0), 0, 1);
+    render_pixel_with_setup(&mut ppu, &pattern, |ppu, cart| set_bg_tile(ppu, cart, 0, 0), 0, 1);
     assert!(!ppu.registers.status.sprite_zero_hit());
 }
 
@@ -844,7 +845,7 @@ fn test_render_pixel_sprite_zero_hit_requires_sprite_zero() {
     setup_sprite(&mut ppu, 0, 20, 1, 0, 20);
     setup_sprite(&mut ppu, 1, 0, 1, 0, 0);
 
-    render_pixel_with_setup(&mut ppu, &pattern, |cart| set_bg_tile(cart, 0, 0), 0, 1);
+    render_pixel_with_setup(&mut ppu, &pattern, |ppu, cart| set_bg_tile(ppu, cart, 0, 0), 0, 1);
     assert!(!ppu.registers.status.sprite_zero_hit());
 }
 
@@ -863,7 +864,7 @@ fn test_render_pixel_sprite_zero_not_at_x255() {
     render_pixel_with_setup(
         &mut ppu,
         &pattern,
-        |cart| cart.write_nametable(0x201f, 0),
+        |ppu, cart| ppu.write_nametable(0x201f, 0, cart.mirroring()),
         255,
         10,
     );
@@ -892,7 +893,7 @@ fn test_render_pixel_grayscale_mode() {
     set_tile_solid(&mut pattern, 0, 0, 1);
     set_bg_palette_color(&mut ppu, 0, 1, 0x16); // Color 0x16 is blue-ish
 
-    let pixel = render_pixel_with_setup(&mut ppu, &pattern, |cart| set_bg_tile(cart, 0, 0), 0, 0);
+    let pixel = render_pixel_with_setup(&mut ppu, &pattern, |ppu, cart| set_bg_tile(ppu, cart, 0, 0), 0, 0);
     let (r, g, b) = pixel_to_rgb(pixel);
 
     // In grayscale mode, R, G, and B should all be equal
@@ -935,7 +936,7 @@ fn test_render_pixel_red_emphasis() {
     set_bg_palette_color(&mut ppu, 0, 1, 0x16);
 
     let pixel_with_emphasis =
-        render_pixel_with_setup(&mut ppu, &pattern, |cart| set_bg_tile(cart, 0, 0), 0, 0);
+        render_pixel_with_setup(&mut ppu, &pattern, |ppu, cart| set_bg_tile(ppu, cart, 0, 0), 0, 0);
 
     // Compare with no emphasis
     {
@@ -946,7 +947,7 @@ fn test_render_pixel_red_emphasis() {
         this.registers.mask = mask;
     };
     let pixel_without_emphasis =
-        render_pixel_with_setup(&mut ppu, &pattern, |cart| set_bg_tile(cart, 0, 0), 0, 0);
+        render_pixel_with_setup(&mut ppu, &pattern, |ppu, cart| set_bg_tile(ppu, cart, 0, 0), 0, 0);
 
     let (r_with, g_with, b_with) = pixel_to_rgb(pixel_with_emphasis);
     let (r_without, g_without, b_without) = pixel_to_rgb(pixel_without_emphasis);
@@ -976,7 +977,7 @@ fn test_render_pixel_green_emphasis() {
     set_bg_palette_color(&mut ppu, 0, 1, 0x16);
 
     let pixel_with_emphasis =
-        render_pixel_with_setup(&mut ppu, &pattern, |cart| set_bg_tile(cart, 0, 0), 0, 0);
+        render_pixel_with_setup(&mut ppu, &pattern, |ppu, cart| set_bg_tile(ppu, cart, 0, 0), 0, 0);
 
     // Compare with no emphasis
     {
@@ -987,7 +988,7 @@ fn test_render_pixel_green_emphasis() {
         this.registers.mask = mask;
     };
     let pixel_without_emphasis =
-        render_pixel_with_setup(&mut ppu, &pattern, |cart| set_bg_tile(cart, 0, 0), 0, 0);
+        render_pixel_with_setup(&mut ppu, &pattern, |ppu, cart| set_bg_tile(ppu, cart, 0, 0), 0, 0);
 
     let (r_with, g_with, b_with) = pixel_to_rgb(pixel_with_emphasis);
     let (r_without, g_without, b_without) = pixel_to_rgb(pixel_without_emphasis);
@@ -1020,7 +1021,7 @@ fn test_render_pixel_blue_emphasis() {
     set_bg_palette_color(&mut ppu, 0, 1, 0x16);
 
     let pixel_with_emphasis =
-        render_pixel_with_setup(&mut ppu, &pattern, |cart| set_bg_tile(cart, 0, 0), 0, 0);
+        render_pixel_with_setup(&mut ppu, &pattern, |ppu, cart| set_bg_tile(ppu, cart, 0, 0), 0, 0);
 
     // Compare with no emphasis
     {
@@ -1031,7 +1032,7 @@ fn test_render_pixel_blue_emphasis() {
         this.registers.mask = mask;
     };
     let pixel_without_emphasis =
-        render_pixel_with_setup(&mut ppu, &pattern, |cart| set_bg_tile(cart, 0, 0), 0, 0);
+        render_pixel_with_setup(&mut ppu, &pattern, |ppu, cart| set_bg_tile(ppu, cart, 0, 0), 0, 0);
 
     let (r_with, g_with, b_with) = pixel_to_rgb(pixel_with_emphasis);
     let (r_without, g_without, b_without) = pixel_to_rgb(pixel_without_emphasis);
@@ -1065,7 +1066,7 @@ fn test_render_pixel_multiple_emphasis_bits() {
     set_bg_palette_color(&mut ppu, 0, 1, 0x16);
 
     let pixel_with_emphasis =
-        render_pixel_with_setup(&mut ppu, &pattern, |cart| set_bg_tile(cart, 0, 0), 0, 0);
+        render_pixel_with_setup(&mut ppu, &pattern, |ppu, cart| set_bg_tile(ppu, cart, 0, 0), 0, 0);
 
     // Compare with no emphasis
     {
@@ -1076,7 +1077,7 @@ fn test_render_pixel_multiple_emphasis_bits() {
         this.registers.mask = mask;
     };
     let pixel_without_emphasis =
-        render_pixel_with_setup(&mut ppu, &pattern, |cart| set_bg_tile(cart, 0, 0), 0, 0);
+        render_pixel_with_setup(&mut ppu, &pattern, |ppu, cart| set_bg_tile(ppu, cart, 0, 0), 0, 0);
 
     let (r_with, g_with, b_with) = pixel_to_rgb(pixel_with_emphasis);
     let (r_without, g_without, b_without) = pixel_to_rgb(pixel_without_emphasis);
@@ -1111,7 +1112,7 @@ fn test_render_pixel_all_emphasis_bits() {
     set_bg_palette_color(&mut ppu, 0, 1, 0x16);
 
     let pixel_with_emphasis =
-        render_pixel_with_setup(&mut ppu, &pattern, |cart| set_bg_tile(cart, 0, 0), 0, 0);
+        render_pixel_with_setup(&mut ppu, &pattern, |ppu, cart| set_bg_tile(ppu, cart, 0, 0), 0, 0);
 
     // Compare with no emphasis - all channels should remain the same
     {
@@ -1122,7 +1123,7 @@ fn test_render_pixel_all_emphasis_bits() {
         this.registers.mask = mask;
     };
     let pixel_without_emphasis =
-        render_pixel_with_setup(&mut ppu, &pattern, |cart| set_bg_tile(cart, 0, 0), 0, 0);
+        render_pixel_with_setup(&mut ppu, &pattern, |ppu, cart| set_bg_tile(ppu, cart, 0, 0), 0, 0);
 
     let (r_with, g_with, b_with) = pixel_to_rgb(pixel_with_emphasis);
     let (r_without, g_without, b_without) = pixel_to_rgb(pixel_without_emphasis);
@@ -1155,7 +1156,7 @@ fn test_render_pixel_grayscale_and_emphasis_combined() {
     set_tile_solid(&mut pattern, 0, 0, 1);
     set_bg_palette_color(&mut ppu, 0, 1, 0x16);
 
-    let pixel = render_pixel_with_setup(&mut ppu, &pattern, |cart| set_bg_tile(cart, 0, 0), 0, 0);
+    let pixel = render_pixel_with_setup(&mut ppu, &pattern, |ppu, cart| set_bg_tile(ppu, cart, 0, 0), 0, 0);
     let (r, g, b) = pixel_to_rgb(pixel);
 
     // In grayscale mode with emphasis, result should still be grayscale
@@ -1174,7 +1175,7 @@ fn test_render_pixel_no_emphasis_no_change() {
     set_tile_solid(&mut pattern, 0, 0, 1);
     set_bg_palette_color(&mut ppu, 0, 1, 0x16);
 
-    let pixel = render_pixel_with_setup(&mut ppu, &pattern, |cart| set_bg_tile(cart, 0, 0), 0, 0);
+    let pixel = render_pixel_with_setup(&mut ppu, &pattern, |ppu, cart| set_bg_tile(ppu, cart, 0, 0), 0, 0);
 
     // Without any effects, pixel should match palette color lookup directly
     assert_eq!(pixel, color(0x16));

@@ -1,6 +1,5 @@
 use super::CARTRIDGE_START_ADDR;
 use crate::nes::mapper::Mirroring;
-use crate::nes::mapper::NameTableControl;
 
 const PRG_ROM_BANK_SIZE: usize = 0x8000;
 const CHR_SIZE: usize = 0x2000;
@@ -13,7 +12,7 @@ pub struct Mapper7 {
     ram: [u8; CARTRIDGE_RAM_SIZE],
     selected_prg_bank: usize,
     prg_bank_count: usize,
-    name_table: NameTableControl,
+    mirroring: Mirroring,
 }
 
 impl Mapper7 {
@@ -29,7 +28,7 @@ impl Mapper7 {
             ram: [0; CARTRIDGE_RAM_SIZE],
             selected_prg_bank: 0,
             prg_bank_count: prg_rom.len() / PRG_ROM_BANK_SIZE,
-            name_table: NameTableControl::new(Mirroring::LowerBank),
+            mirroring: Mirroring::LowerBank,
         };
         mapper.chr[..chr_rom.len()].copy_from_slice(chr_rom);
         mapper
@@ -74,27 +73,18 @@ impl Mapper7 {
             }
             0x8000..=0xffff => {
                 self.selected_prg_bank = (value & 0x0f) as usize;
-                let mirroring = if value & 0x10 == 0 {
+                self.mirroring = if value & 0x10 == 0 {
                     Mirroring::LowerBank
                 } else {
                     Mirroring::UpperBank
                 };
-                self.name_table.set_mirroring(mirroring);
             }
             _ => unreachable!(),
         }
     }
 
-    pub fn write_nametable(&mut self, address: u16, value: u8) {
-        self.name_table.write(address, value);
-    }
-
-    pub fn read_nametable(&self, address: u16) -> u8 {
-        self.name_table.read(address)
-    }
-
     pub fn mirroring(&self) -> Mirroring {
-        self.name_table.mirroring()
+        self.mirroring
     }
 }
 
@@ -124,20 +114,9 @@ mod tests {
     #[test]
     fn switches_single_screen_mirroring() {
         let mut mapper = Mapper7::new(&[0; PRG_ROM_BANK_SIZE], &[]);
-
-        mapper.write_nametable(0x2000, 0x11);
-
-        assert_eq!(mapper.read_nametable(0x2000), 0x11);
-        assert_eq!(mapper.read_nametable(0x2400), 0x11);
-        assert_eq!(mapper.read_nametable(0x2800), 0x11);
-        assert_eq!(mapper.read_nametable(0x2c00), 0x11);
+        assert_eq!(mapper.mirroring(), Mirroring::LowerBank);
 
         mapper.write(0x8000, 0x10);
-        mapper.write_nametable(0x2400, 0x22);
-
-        assert_eq!(mapper.read_nametable(0x2000), 0x22);
-        assert_eq!(mapper.read_nametable(0x2800), 0x22);
-        assert_eq!(mapper.read_nametable(0x2400), 0x22);
-        assert_eq!(mapper.read_nametable(0x2c00), 0x22);
+        assert_eq!(mapper.mirroring(), Mirroring::UpperBank);
     }
 }

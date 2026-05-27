@@ -1,6 +1,5 @@
 use super::CARTRIDGE_START_ADDR;
 use crate::nes::mapper::Mirroring;
-use crate::nes::mapper::NameTableControl;
 
 const PRG_ROM_BANK_SIZE: usize = 0x8000;
 const CHR_SIZE: usize = 0x2000;
@@ -22,7 +21,7 @@ pub struct Mapper34 {
     selected_chr_bank_1: usize,
     prg_bank_count: usize,
     board: Board,
-    name_table: NameTableControl,
+    mirroring: Mirroring,
 }
 
 impl Mapper34 {
@@ -52,7 +51,7 @@ impl Mapper34 {
             selected_chr_bank_1: 0,
             prg_bank_count: prg_rom.len() / PRG_ROM_BANK_SIZE,
             board,
-            name_table: NameTableControl::new(mirroring),
+            mirroring,
         }
     }
 
@@ -134,16 +133,8 @@ impl Mapper34 {
         }
     }
 
-    pub fn write_nametable(&mut self, address: u16, value: u8) {
-        self.name_table.write(address, value);
-    }
-
-    pub fn read_nametable(&self, address: u16) -> u8 {
-        self.name_table.read(address)
-    }
-
     pub fn mirroring(&self) -> Mirroring {
-        self.name_table.mirroring()
+        self.mirroring
     }
 }
 
@@ -183,15 +174,8 @@ mod tests {
 
     #[test]
     fn keeps_hardwired_mirroring() {
-        let mut mapper = Mapper34::new(&[0; PRG_ROM_BANK_SIZE], &[], Mirroring::Vertical);
-
-        mapper.write_nametable(0x2000, 0x11);
-        mapper.write_nametable(0x2400, 0x22);
-
-        assert_eq!(mapper.read_nametable(0x2000), 0x11);
-        assert_eq!(mapper.read_nametable(0x2800), 0x11);
-        assert_eq!(mapper.read_nametable(0x2400), 0x22);
-        assert_eq!(mapper.read_nametable(0x2c00), 0x22);
+        let mapper = Mapper34::new(&[0; PRG_ROM_BANK_SIZE], &[], Mirroring::Vertical);
+        assert_eq!(mapper.mirroring(), Mirroring::Vertical);
     }
 
     #[test]

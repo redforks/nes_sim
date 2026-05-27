@@ -1,7 +1,5 @@
 use crate::ines::INesFile;
 use crate::ines::NametableArrangement;
-use crate::nes::ppu::BackgroundTileOverride;
-use crate::nes::ppu::PatternAccess;
 use j87::MapperJ87;
 use mapper0::Mapper0;
 use mapper2::Mapper2;
@@ -22,9 +20,6 @@ mod mapper34;
 mod mapper7;
 mod mmc1;
 mod mmc3;
-mod mmc5;
-
-use crate::nes::mapper::mmc5::MMC5;
 
 #[derive(Debug, Eq, PartialEq, Copy, Clone)]
 pub enum Mirroring {
@@ -57,36 +52,6 @@ impl From<NametableArrangement> for Mirroring {
             NametableArrangement::Vertical => Self::Horizontal,
             NametableArrangement::Horizontal => Self::Vertical,
         }
-    }
-}
-
-pub(crate) struct NameTableControl {
-    mem: [u8; 4096],
-    mirroring: Mirroring,
-}
-
-impl NameTableControl {
-    pub(crate) fn new(mirroring: Mirroring) -> Self {
-        Self {
-            mem: [0; 4096],
-            mirroring,
-        }
-    }
-
-    pub(crate) fn mirroring(&self) -> Mirroring {
-        self.mirroring
-    }
-
-    pub(crate) fn set_mirroring(&mut self, mirroring: Mirroring) {
-        self.mirroring = mirroring;
-    }
-
-    pub(crate) fn read(&self, address: u16) -> u8 {
-        self.mem[self.mirroring.name_table_offset(address) as usize & 4095]
-    }
-
-    pub(crate) fn write(&mut self, address: u16, value: u8) {
-        self.mem[self.mirroring.name_table_offset(address) as usize & 4095] = value;
     }
 }
 
@@ -125,12 +90,6 @@ pub fn create_cartridge(f: &INesFile) -> Cartridge {
             f.header().ignore_mirror_control,
             rom_contains_signature(f, MMC3_ALT_TEST_SIGNATURE),
         ))),
-        5 => Cartridge::MMC5(Box::new(MMC5::new(
-            f.read_prg_rom(),
-            f.read_chr_rom(),
-            f.header().prg_ram_size.or(f.header().prg_nvram_size),
-            f.header().ignore_mirror_control,
-        ))),
         7 => Cartridge::Mapper7(Box::new(Mapper7::new(f.read_prg_rom(), f.read_chr_rom()))),
         34 => Cartridge::Mapper34(Box::new(Mapper34::new(
             f.read_prg_rom(),
@@ -161,7 +120,6 @@ pub enum Cartridge {
     Mapper87(Box<MapperJ87>),
     MMC1(Box<MMC1>),
     MMC3(Box<MMC3>),
-    MMC5(Box<MMC5>),
     #[cfg(test)]
     Test(Box<TestCartridge>),
 }
@@ -170,7 +128,7 @@ pub enum Cartridge {
 pub struct TestCartridge {
     pub(crate) prg_rom: [u8; 0x8000],
     pub(crate) chr_rom: [u8; 0x2000],
-    name_table: NameTableControl,
+    mirroring: Mirroring,
 }
 
 #[cfg(test)]
@@ -179,12 +137,12 @@ impl TestCartridge {
         Self {
             prg_rom: [0; 0x8000],
             chr_rom: [0; 0x2000],
-            name_table: NameTableControl::new(Mirroring::Horizontal),
+            mirroring: Mirroring::Horizontal,
         }
     }
 
     pub fn mirroring(&self) -> Mirroring {
-        self.name_table.mirroring()
+        self.mirroring
     }
 
     pub fn pattern_ref(&self) -> &[u8] {
@@ -218,18 +176,9 @@ impl TestCartridge {
     pub fn irq_pending(&self) -> bool {
         false
     }
-
-    pub fn write_nametable(&mut self, address: u16, value: u8) {
-        self.name_table.write(address, value);
-    }
-
-    pub fn read_nametable(&self, address: u16) -> u8 {
-        self.name_table.read(address)
-    }
 }
 
 impl Cartridge {
-    #[cfg(test)]
     pub fn pattern_ref(&self) -> &[u8] {
         match self {
             Cartridge::Mapper0(cartridge) => cartridge.pattern_ref(),
@@ -239,7 +188,6 @@ impl Cartridge {
             Cartridge::Mapper34(cartridge) => cartridge.pattern_ref(),
             Cartridge::MMC1(cartridge) => cartridge.pattern_ref(),
             Cartridge::MMC3(cartridge) => cartridge.pattern_ref(),
-            Cartridge::MMC5(cartridge) => cartridge.pattern_ref(),
             Cartridge::Mapper87(cartridge) => cartridge.pattern_ref(),
             #[cfg(test)]
             Cartridge::Test(cartridge) => cartridge.pattern_ref(),
@@ -255,7 +203,6 @@ impl Cartridge {
             Cartridge::Mapper7(cartridge) => cartridge.write_pattern(address, value),
             Cartridge::Mapper34(cartridge) => cartridge.write_pattern(address, value),
             Cartridge::MMC3(cartridge) => cartridge.write_pattern(address, value),
-            Cartridge::MMC5(cartridge) => cartridge.write_pattern(address, value),
             Cartridge::Mapper87(cartridge) => cartridge.write_pattern(address, value),
             #[cfg(test)]
             Cartridge::Test(cartridge) => cartridge.write_pattern(address, value),
@@ -271,7 +218,6 @@ impl Cartridge {
             Cartridge::Mapper34(cartridge) => cartridge.read(address),
             Cartridge::MMC1(cartridge) => cartridge.read(address),
             Cartridge::MMC3(cartridge) => cartridge.read(address),
-            Cartridge::MMC5(cartridge) => cartridge.read(address),
             Cartridge::Mapper87(cartridge) => cartridge.read(address),
             #[cfg(test)]
             Cartridge::Test(cartridge) => cartridge.read(address),
@@ -287,7 +233,6 @@ impl Cartridge {
             Cartridge::Mapper34(cartridge) => cartridge.peek(address),
             Cartridge::MMC1(cartridge) => cartridge.peek(address),
             Cartridge::MMC3(cartridge) => cartridge.peek(address),
-            Cartridge::MMC5(cartridge) => cartridge.peek(address),
             Cartridge::Mapper87(cartridge) => cartridge.peek(address),
             #[cfg(test)]
             Cartridge::Test(cartridge) => cartridge.peek(address),
@@ -303,7 +248,6 @@ impl Cartridge {
             Cartridge::Mapper34(cartridge) => cartridge.write(address, value),
             Cartridge::MMC1(cartridge) => cartridge.write(address, value),
             Cartridge::MMC3(cartridge) => cartridge.write(address, value),
-            Cartridge::MMC5(cartridge) => cartridge.write(address, value),
             Cartridge::Mapper87(cartridge) => cartridge.write(address, value),
             #[cfg(test)]
             Cartridge::Test(_) => {}
@@ -319,7 +263,6 @@ impl Cartridge {
             | Cartridge::Mapper34(_)
             | Cartridge::MMC1(_) => {}
             Cartridge::MMC3(cartridge) => cartridge.on_ppu_tick(scanline, dot, rendering_enabled),
-            Cartridge::MMC5(cartridge) => cartridge.on_ppu_tick(scanline, dot, rendering_enabled),
             Cartridge::Mapper87(_) => {}
             #[cfg(test)]
             Cartridge::Test(_) => {}
@@ -341,107 +284,15 @@ impl Cartridge {
             | Cartridge::Mapper34(_)
             | Cartridge::MMC1(_) => false,
             Cartridge::MMC3(cartridge) => cartridge.irq_pending(),
-            Cartridge::MMC5(cartridge) => cartridge.irq_pending(),
             Cartridge::Mapper87(_) => false,
             #[cfg(test)]
             Cartridge::Test(cartridge) => cartridge.irq_pending(),
         }
     }
 
-    pub fn read_chr(&self, address: u16, access: PatternAccess) -> u8 {
-        match self {
-            Cartridge::Mapper0(cartridge) => {
-                cartridge.pattern_ref()[address as usize % cartridge.pattern_ref().len()]
-            }
-            Cartridge::Mapper2(cartridge) => {
-                cartridge.pattern_ref()[address as usize % cartridge.pattern_ref().len()]
-            }
-            Cartridge::Mapper3(cartridge) => {
-                cartridge.pattern_ref()[address as usize % cartridge.pattern_ref().len()]
-            }
-            Cartridge::Mapper7(cartridge) => {
-                cartridge.pattern_ref()[address as usize % cartridge.pattern_ref().len()]
-            }
-            Cartridge::Mapper34(cartridge) => cartridge.read_chr(address),
-            Cartridge::MMC1(cartridge) => {
-                cartridge.pattern_ref()[address as usize % cartridge.pattern_ref().len()]
-            }
-            Cartridge::MMC3(cartridge) => {
-                cartridge.pattern_ref()[address as usize % cartridge.pattern_ref().len()]
-            }
-            Cartridge::MMC5(cartridge) => cartridge.read_chr(address, access),
-            Cartridge::Mapper87(cartridge) => {
-                cartridge.pattern_ref()[address as usize % cartridge.pattern_ref().len()]
-            }
-            #[cfg(test)]
-            Cartridge::Test(cartridge) => cartridge.read_chr(address),
-        }
-    }
-
-    pub fn write_nametable(&mut self, address: u16, value: u8) {
-        match self {
-            Cartridge::Mapper0(cartridge) => cartridge.write_nametable(address, value),
-            Cartridge::Mapper2(cartridge) => cartridge.write_nametable(address, value),
-            Cartridge::Mapper3(cartridge) => cartridge.write_nametable(address, value),
-            Cartridge::Mapper7(cartridge) => cartridge.write_nametable(address, value),
-            Cartridge::Mapper34(cartridge) => cartridge.write_nametable(address, value),
-            Cartridge::MMC1(cartridge) => cartridge.write_nametable(address, value),
-            Cartridge::MMC3(cartridge) => cartridge.write_nametable(address, value),
-            Cartridge::MMC5(cartridge) => cartridge.write_nametable(address, value),
-            Cartridge::Mapper87(cartridge) => cartridge.write_nametable(address, value),
-            #[cfg(test)]
-            Cartridge::Test(cartridge) => cartridge.write_nametable(address, value),
-        }
-    }
-
-    pub fn read_nametable(&self, address: u16) -> u8 {
-        match self {
-            Cartridge::Mapper0(cartridge) => cartridge.read_nametable(address),
-            Cartridge::Mapper2(cartridge) => cartridge.read_nametable(address),
-            Cartridge::Mapper3(cartridge) => cartridge.read_nametable(address),
-            Cartridge::Mapper7(cartridge) => cartridge.read_nametable(address),
-            Cartridge::Mapper34(cartridge) => cartridge.read_nametable(address),
-            Cartridge::MMC1(cartridge) => cartridge.read_nametable(address),
-            Cartridge::MMC3(cartridge) => cartridge.read_nametable(address),
-            Cartridge::MMC5(cartridge) => cartridge.read_nametable(address),
-            Cartridge::Mapper87(cartridge) => cartridge.read_nametable(address),
-            #[cfg(test)]
-            Cartridge::Test(cartridge) => cartridge.read_nametable(address),
-        }
-    }
-
-    #[allow(clippy::too_many_arguments)]
-    pub fn background_override(
-        &self,
-        screen_x: u8,
-        screen_y: u8,
-        nametable_addr: u16,
-        tile_idx: u8,
-        palette_idx: u8,
-        tile_fine_x: usize,
-        tile_fine_y: usize,
-    ) -> Option<BackgroundTileOverride> {
-        match self {
-            Cartridge::Mapper0(_)
-            | Cartridge::Mapper2(_)
-            | Cartridge::Mapper3(_)
-            | Cartridge::Mapper7(_)
-            | Cartridge::Mapper34(_)
-            | Cartridge::MMC1(_)
-            | Cartridge::MMC3(_)
-            | Cartridge::Mapper87(_) => None,
-            Cartridge::MMC5(cartridge) => cartridge.background_override(
-                screen_x,
-                screen_y,
-                nametable_addr,
-                tile_idx,
-                palette_idx,
-                tile_fine_x,
-                tile_fine_y,
-            ),
-            #[cfg(test)]
-            Cartridge::Test(_) => None,
-        }
+    pub fn read_chr(&self, address: u16) -> u8 {
+        let pattern = self.pattern_ref();
+        pattern[address as usize % pattern.len()]
     }
 
     /// Return current nametable mirroring
@@ -455,33 +306,8 @@ impl Cartridge {
             Cartridge::Mapper87(mapper_j87) => mapper_j87.mirroring(),
             Cartridge::MMC1(mmc1) => mmc1.mirroring(),
             Cartridge::MMC3(mmc3) => mmc3.mirroring(),
-            Cartridge::MMC5(mmc5) => mmc5.mirroring(),
             #[cfg(test)]
             Cartridge::Test(test_cartridge) => test_cartridge.mirroring(),
-        }
-    }
-
-    pub fn on_ppu_ctrl_write(&mut self, value: u8) {
-        if let Cartridge::MMC5(cartridge) = self {
-            cartridge.on_ppu_ctrl_write(value);
-        }
-    }
-
-    pub fn on_ppu_mask_write(&mut self, value: u8) {
-        if let Cartridge::MMC5(cartridge) = self {
-            cartridge.on_ppu_mask_write(value);
-        }
-    }
-
-    pub fn on_ppu_scroll_write(&mut self, value: u8) {
-        if let Cartridge::MMC5(cartridge) = self {
-            cartridge.on_ppu_scroll_write(value);
-        }
-    }
-
-    pub fn on_oam_dma(&mut self) {
-        if let Cartridge::MMC5(cartridge) = self {
-            cartridge.on_oam_dma();
         }
     }
 }

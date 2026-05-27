@@ -1,6 +1,5 @@
 use super::CARTRIDGE_START_ADDR;
 use crate::nes::mapper::Mirroring;
-use crate::nes::mapper::NameTableControl;
 
 pub struct Mapper0 {
     prg_rom: [u8; 0x8000],
@@ -8,7 +7,7 @@ pub struct Mapper0 {
     chr_rom: [u8; 0x2000],
     has_chr_ram: bool,
     ram: [u8; 0x4000 - 0x20],
-    name_table: NameTableControl,
+    mirroring: Mirroring,
 }
 
 impl Mapper0 {
@@ -17,10 +16,12 @@ impl Mapper0 {
         debug_assert!(chr_rom.len() <= 0x2000);
 
         let mut r = Self {
+            prg_rom: [0; 0x8000],
             prg_rom_len: prg_rom.len(),
+            chr_rom: [0; 0x2000],
             has_chr_ram: chr_rom.is_empty(),
-            name_table: NameTableControl::new(mirroring),
-            ..Self::default()
+            ram: [0; 0x4000 - 0x20],
+            mirroring,
         };
         r.prg_rom[0..prg_rom.len()].copy_from_slice(prg_rom);
         r.chr_rom[0..chr_rom.len()].copy_from_slice(chr_rom);
@@ -36,7 +37,7 @@ impl Default for Mapper0 {
             chr_rom: [0; 0x2000],
             has_chr_ram: false,
             ram: [0; 0x4000 - 0x20],
-            name_table: NameTableControl::new(Mirroring::Horizontal),
+            mirroring: Mirroring::Horizontal,
         }
     }
 }
@@ -81,16 +82,8 @@ impl Mapper0 {
         }
     }
 
-    pub fn write_nametable(&mut self, address: u16, value: u8) {
-        self.name_table.write(address, value);
-    }
-
-    pub fn read_nametable(&self, address: u16) -> u8 {
-        self.name_table.read(address)
-    }
-
     pub fn mirroring(&self) -> Mirroring {
-        self.name_table.mirroring()
+        self.mirroring
     }
 }
 

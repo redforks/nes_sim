@@ -1,7 +1,6 @@
 #![allow(dead_code)]
 
 use crate::nes::mapper::Mirroring;
-use crate::nes::mapper::NameTableControl;
 use bitfield_struct::bitfield;
 
 const CHR_WINDOW_SIZE: usize = 0x2000;
@@ -65,7 +64,7 @@ pub struct MMC1 {
     chr_bank1: u8,
     prg_bank: u8,
     shift_register: u8,
-    name_table: NameTableControl,
+    mirroring: Mirroring,
 }
 
 impl MMC1 {
@@ -90,7 +89,7 @@ impl MMC1 {
             chr_bank1: 0,
             prg_bank: 0,
             shift_register: INITIAL_SHIFT_REGISTER,
-            name_table: NameTableControl::new(mirroring),
+            mirroring,
         };
 
         mapper.apply_control();
@@ -181,7 +180,7 @@ impl MMC1 {
     }
 
     fn apply_control(&mut self) {
-        self.name_table.set_mirroring(self.control.into());
+        self.mirroring = self.control.into();
         self.refresh_chr_window();
     }
 
@@ -331,16 +330,8 @@ impl MMC1 {
         self.prg_bank = value & 0x1f;
     }
 
-    pub fn write_nametable(&mut self, address: u16, value: u8) {
-        self.name_table.write(address, value);
-    }
-
-    pub fn read_nametable(&self, address: u16) -> u8 {
-        self.name_table.read(address)
-    }
-
     pub fn mirroring(&self) -> Mirroring {
-        self.name_table.mirroring()
+        self.mirroring
     }
 }
 
@@ -425,8 +416,7 @@ mod tests {
     fn control_ppu_mirroring() {
         let (mut mmc1, _ppu) = create(|_| {});
         mmc1.control(ControlFlags::new().with_mirroring(0));
-        mmc1.write_nametable(0x2400, 0x55);
-        assert_eq!(mmc1.read_nametable(0x2000), 0x55);
+        assert_eq!(mmc1.mirroring(), Mirroring::LowerBank);
     }
 
     #[test]

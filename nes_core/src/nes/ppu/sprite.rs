@@ -1,7 +1,5 @@
 use crate::nes::{mapper::Cartridge, ppu::registers::Registers};
 
-use super::PatternAccess;
-
 const MAX_SPRITES_PER_SCANLINE: u8 = 8;
 
 #[derive(Copy, Clone)]
@@ -54,7 +52,7 @@ fn read_sprite_color(
     src_y: u8,
     sprite_size_16: bool,
     sprite_pattern_table: bool,
-    read_pattern_pixel: &impl Fn(&Cartridge, u16, u8, usize, usize, PatternAccess) -> u8,
+    read_pattern_pixel: &impl Fn(&Cartridge, u16, u8, usize, usize) -> u8,
 ) -> u8 {
     if sprite_size_16 {
         let pattern_table_idx = (tile_idx & 0x01) as u16;
@@ -67,7 +65,6 @@ fn read_sprite_color(
             tile_base.wrapping_add(tile_offset),
             src_x,
             tile_row,
-            PatternAccess::Sprite,
         )
     } else {
         let pattern_table_idx = if sprite_pattern_table { 0x1000 } else { 0 };
@@ -77,7 +74,6 @@ fn read_sprite_color(
             tile_idx,
             src_x,
             src_y as usize,
-            PatternAccess::Sprite,
         )
     }
 }
@@ -214,7 +210,7 @@ impl SpriteManager {
         cartridge: &Cartridge,
         screen_x: u8,
         screen_y: u8,
-        read_pattern_pixel: impl Fn(&Cartridge, u16, u8, usize, usize, PatternAccess) -> u8,
+        read_pattern_pixel: impl Fn(&Cartridge, u16, u8, usize, usize) -> u8,
     ) -> Option<SpritePixel> {
         if !sprite_left_enabled && screen_x < 8 {
             return None;
@@ -291,7 +287,7 @@ impl SpriteManager {
         cartridge: &Cartridge,
         screen_x: u8,
         screen_y: u8,
-        read_pattern_pixel: impl Fn(&Cartridge, u16, u8, usize, usize, PatternAccess) -> u8,
+        read_pattern_pixel: impl Fn(&Cartridge, u16, u8, usize, usize) -> u8,
     ) -> bool {
         let sprite_height: i16 = if sprite_size_16 { 16 } else { 8 };
         let y_byte = oam_data[0];

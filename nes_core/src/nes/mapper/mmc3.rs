@@ -1,6 +1,5 @@
 use super::CARTRIDGE_START_ADDR;
 use crate::nes::mapper::Mirroring;
-use crate::nes::mapper::NameTableControl;
 
 const PRG_RAM_SIZE: usize = 0x2000;
 const PRG_ROM_BANK_SIZE: usize = 0x2000;
@@ -21,7 +20,7 @@ pub struct MMC3 {
     current_chr: [u8; CHR_WINDOW_SIZE],
     has_chr_ram: bool,
     mirroring_locked: bool,
-    name_table: NameTableControl,
+    mirroring: Mirroring,
     bank_select: u8,
     bank_registers: [u8; 8],
     prg_ram_enabled: bool,
@@ -67,7 +66,7 @@ impl MMC3 {
             current_chr: [0; CHR_WINDOW_SIZE],
             has_chr_ram,
             mirroring_locked,
-            name_table: NameTableControl::new(mirroring),
+            mirroring,
             bank_select: 0,
             bank_registers: [0; 8],
             prg_ram_enabled: true,
@@ -190,12 +189,11 @@ impl MMC3 {
             return;
         }
 
-        let mirroring = if value & 0x01 == 0 {
+        self.mirroring = if value & 0x01 == 0 {
             Mirroring::Vertical
         } else {
             Mirroring::Horizontal
         };
-        self.name_table.set_mirroring(mirroring);
     }
 
     fn set_prg_ram_protect(&mut self, value: u8) {
@@ -356,16 +354,8 @@ impl MMC3 {
         self.irq_pending
     }
 
-    pub fn write_nametable(&mut self, address: u16, value: u8) {
-        self.name_table.write(address, value);
-    }
-
-    pub fn read_nametable(&self, address: u16) -> u8 {
-        self.name_table.read(address)
-    }
-
     pub fn mirroring(&self) -> Mirroring {
-        self.name_table.mirroring()
+        self.mirroring
     }
 }
 
@@ -495,18 +485,14 @@ mod tests {
         let mut mapper = MMC3::new(&create_prg(), &create_chr(), Mirroring::Horizontal, false, false);
 
         mapper.write(0xa000, 0x00);
-        mapper.write_nametable(0x2400, 0x12);
-        assert_eq!(mapper.read_nametable(0x2c00), 0x12);
+        assert_eq!(mapper.mirroring(), Mirroring::Vertical);
 
         mapper.write(0xa000, 0x01);
-        mapper.write_nametable(0x2800, 0x34);
-        assert_eq!(mapper.read_nametable(0x2c00), 0x34);
+        assert_eq!(mapper.mirroring(), Mirroring::Horizontal);
 
         let mut locked_mapper = MMC3::new(&create_prg(), &create_chr(), Mirroring::Four, true, false);
         locked_mapper.write(0xa000, 0x01);
-        locked_mapper.write_nametable(0x2c00, 0x56);
-        assert_eq!(locked_mapper.read_nametable(0x2c00), 0x56);
-        assert_eq!(locked_mapper.read_nametable(0x2000), 0x00);
+        assert_eq!(locked_mapper.mirroring(), Mirroring::Four);
     }
 
     #[test]

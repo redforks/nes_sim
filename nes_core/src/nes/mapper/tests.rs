@@ -67,7 +67,7 @@ fn create_test_nes(mapper: u8, prg_pages: u8, chr_pages: u8) -> Vec<u8> {
 #[test_case(Mirroring::Four, 0x2800 => 0x800)]
 #[test_case(Mirroring::Four, 0x2c00 => 0xc00)]
 fn test_name_table_offset(mirroring: Mirroring, addr: u16) -> u16 {
-    name_table_offset(mirroring, addr)
+    mirroring.name_table_offset(addr)
 }
 
 #[test]
@@ -191,18 +191,6 @@ fn create_cartridge_mapper4_with_chr_ram() {
     cartridge.write_pattern(0x0010, 0xab);
 
     assert_eq!(cartridge.pattern_ref()[0x0010], 0xab);
-}
-
-#[test]
-fn create_cartridge_mapper5() {
-    let rom = create_test_nes(5, 4, 2);
-    let file = INesFile::new(rom).unwrap();
-    let mut cartridge = create_cartridge(&file);
-
-    let val = cartridge.read(0x8000);
-    assert_eq!(val, 0);
-
-    assert_eq!(cartridge.pattern_ref().len(), 8 * 1024);
 }
 
 #[test]
