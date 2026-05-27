@@ -1,11 +1,9 @@
 mod palette;
-mod pattern;
 mod registers;
 mod sprite;
 
 use crate::{get_system_cycles, nes::mapper::Cartridge, render::Render};
 use palette::{Palette, Pixel};
-pub use pattern::{PatternBand, draw_pattern};
 use registers::{PpuCtrl, PpuMask, PpuStatus, Registers};
 use sprite::SpriteManager;
 use std::fmt::Write;
@@ -752,9 +750,7 @@ impl<R: Render> Ppu<R> {
                 cartridge,
                 x,
                 self.scanline as u8,
-                |cartridge, base_addr, tile_idx, tile_x, tile_y, access| {
-                    Self::read_pattern_pixel(cartridge, base_addr, tile_idx, tile_x, tile_y, access)
-                },
+                Self::read_pattern_pixel,
             )
         } else {
             None
@@ -773,9 +769,7 @@ impl<R: Render> Ppu<R> {
                 cartridge,
                 x,
                 self.scanline as u8,
-                |cartridge, base_addr, tile_idx, tile_x, tile_y, access| {
-                    Self::read_pattern_pixel(cartridge, base_addr, tile_idx, tile_x, tile_y, access)
-                },
+                Self::read_pattern_pixel,
             )
         {
             self.sprite.set_zero_hit_pending();

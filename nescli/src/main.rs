@@ -1,4 +1,4 @@
-use crate::actions::{InfoAction, PlayMovieAction, ReadChrAction, RunAction};
+use crate::actions::{InfoAction, PlayMovieAction, RunAction};
 use clap::Parser;
 use nes_core::ines::INesFile;
 use std::fs::File;
@@ -30,8 +30,6 @@ impl Args {
 enum Action {
     /// Show information about the ines file
     Info(InfoAction),
-    /// Read CHR ROM and output as PNG into stdout
-    ReadChr(ReadChrAction),
     /// Run the NES simulator with SDL2 display
     Run(RunAction),
     /// Play back a .fm2 movie file
@@ -42,7 +40,6 @@ impl Action {
     fn run(&self, nes_file: INesFile) -> AppResult<()> {
         match self {
             Action::Info(action) => action.run(&nes_file),
-            Action::ReadChr(action) => action.run(&nes_file),
             Action::Run(action) => action.run(&nes_file),
             Action::PlayMovie(action) => action.run(&nes_file),
         }
