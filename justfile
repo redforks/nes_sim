@@ -1,4 +1,4 @@
-nes_cpu_test := "/tmp/nes-sim-target/debug/nes_cpu_test"
+nes_cpu_test := "/tmp/nes-sim-target/release/nes_cpu_test"
 
 cpu-test: build_nes_cpu_test
     {{ nes_cpu_test }} --quiet -f nes_cpu_test/src/6502_functional_test.bin
@@ -69,7 +69,7 @@ nmi_sync: build_nes_cpu_test
     {{ nes_cpu_test }} --quiet -f ../nes-test-roms/nmi_sync/demo_ntsc.nes
 
 build_nes_cpu_test:
-    cargo build -p nes_cpu_test
+    cargo build -p nes_cpu_test --release
 
 vbl_nmi_timing_1: build_nes_cpu_test
     {{ nes_cpu_test }} --quiet -f ../nes-test-roms/vbl_nmi_timing/1.frame_basics.nes
