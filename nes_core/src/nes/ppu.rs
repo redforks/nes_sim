@@ -359,7 +359,7 @@ impl<R: Render> Ppu<R> {
                 self.render_pixel(x, cartridge)
             } else {
                 self.palette
-                    .render_disabled_color(self.registers.vram_addr % 0x4000)
+                    .disabled_color(self.registers.vram_addr % 0x4000)
             };
             let pixel = self.effective_mask.apply_effects(pixel);
             self.renderer
@@ -386,7 +386,7 @@ impl<R: Render> Ppu<R> {
 
         // At end of pre-render scanline (261), clear screen for next frame
         if rendering_enabled && self.scanline == VBLANK_CLEAR_SCANLINE && self.dot == 0 {
-            let bg_color = self.palette.black_color();
+            let bg_color = self.palette.backdrop_color();
             self.renderer.clear(bg_color.0);
         }
 
@@ -786,7 +786,7 @@ impl<R: Render> Ppu<R> {
                 if bg_color_idx == 0 || !sprite_pixel.behind_bg {
                     // Background is transparent OR sprite has priority
                     self.palette
-                        .get_sprit_color(sprite_pixel.palette_idx, sprite_pixel.color_idx)
+                        .get_sprite_color(sprite_pixel.palette_idx, sprite_pixel.color_idx)
                 } else {
                     // Background has priority and is opaque
                     self.palette

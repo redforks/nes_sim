@@ -41,34 +41,34 @@ pub struct Palette {
     pub data: [u8; 0x20],
 }
 
+const fn addr_to_index(addr: u16) -> u16 {
+    let addr = addr & 0x1f;
+    if matches!(addr, 0x10 | 0x14 | 0x18 | 0x1c) {
+        addr & 0xf
+    } else {
+        addr
+    }
+}
+
 impl Palette {
-    pub fn render_disabled_color(&self, address: u16) -> Pixel {
+    pub fn disabled_color(&self, address: u16) -> Pixel {
         if (address & 0xff00) == 0x3f00 {
             color(self.read(address))
         } else {
-            color(self.read(0x3f00))
+            self.backdrop_color()
         }
     }
 
     pub fn read(&self, address: u16) -> u8 {
-        self.data[Self::index(address) & 0x1f]
+        self.data[addr_to_index(address) as usize]
     }
 
     pub fn write(&mut self, address: u16, value: u8) {
-        self.data[Self::index(address) & 0x1f] = value;
+        self.data[addr_to_index(address) as usize] = value;
     }
 
-    const fn index(addr: u16) -> usize {
-        let addr = addr & 0x1f;
-        if let 0x10 | 0x14 | 0x18 | 0x1C = addr {
-            (addr & 0xf) as usize
-        } else {
-            addr as usize
-        }
-    }
-
-    pub fn black_color(&self) -> Pixel {
-        color(self.data[0] & 0x1f)
+    pub fn backdrop_color(&self) -> Pixel {
+        color(self.data[0])
     }
 
     fn get_color(&self, start: u8, palette_idx: u8, idx: u8) -> Pixel {
@@ -84,7 +84,7 @@ impl Palette {
         self.get_color(0, palette_idx, idx)
     }
 
-    pub fn get_sprit_color(&self, palette_idx: u8, idx: u8) -> Pixel {
+    pub fn get_sprite_color(&self, palette_idx: u8, idx: u8) -> Pixel {
         self.get_color(0x10, palette_idx, idx)
     }
 }
@@ -92,6 +92,7 @@ impl Palette {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use test_case::test_case;
 
     #[test]
     fn palette_ram_read_write() {
@@ -121,5 +122,23 @@ mod tests {
         assert_eq!(color(17), p.get_background_color(0, 2));
         assert_eq!(color(18), p.get_background_color(0, 3));
         assert_eq!(color(19), p.get_background_color(1, 1));
+    }
+
+    #[test_case(0x3f00 => 0)]
+    #[test_case(0x3f11 => 0x11)]
+    #[test_case(0x3f1f => 0x1f)]
+    fn test_addr_to_index(addr: u16) -> u16 {
+        addr_to_index(addr)
+    }
+
+    #[test_case(0x3f00, 0x3f10, 0)]
+    #[test_case(0x3f04, 0x3f14, 0x04)]
+    #[test_case(0x3f08, 0x3f18, 0x08)]
+    #[test_case(0x3f0c, 0x3f1c, 0x0c)]
+    fn background_sprite_shares_transparent(back_addr: u16, sprite_addr: u16, exp_index: u16) {
+        let back = addr_to_index(back_addr);
+        let sprite = addr_to_index(sprite_addr);
+        assert_eq!(back, exp_index);
+        assert_eq!(sprite, exp_index);
     }
 }
