@@ -88,3 +88,38 @@ impl Palette {
         self.get_color(0x10, palette_idx, idx)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn palette_ram_read_write() {
+        let mut p = Palette::default();
+        for i in 0..0x20 {
+            p.write(0x3f00 + i, i as u8);
+            assert_eq!(i as u8, p.read(0x3f00 + i));
+        }
+        for i in 0..0x20 {
+            if i % 4 != 0 {
+                // exclude mirrored address
+                assert_eq!(i as u8, p.read(0x3f00 + i));
+            }
+        }
+    }
+
+    #[test]
+    fn palette_ram_get_color() {
+        let mut p = Palette::default();
+        p.write(0x3f00, 15);
+        p.write(0x3f01, 16);
+        p.write(0x3f02, 17);
+        p.write(0x3f03, 18);
+        p.write(0x3f05, 19);
+        assert_eq!(color(15), p.get_background_color(0, 0));
+        assert_eq!(color(16), p.get_background_color(0, 1));
+        assert_eq!(color(17), p.get_background_color(0, 2));
+        assert_eq!(color(18), p.get_background_color(0, 3));
+        assert_eq!(color(19), p.get_background_color(1, 1));
+    }
+}
