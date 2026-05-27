@@ -35,6 +35,21 @@ pub enum Mirroring {
     Four,
 }
 
+impl Mirroring {
+    pub fn name_table_offset(self, addr: u16) -> u16 {
+        match self {
+            Mirroring::LowerBank => addr & 0x3ff,
+            Mirroring::UpperBank => addr & 0x3ff | 0x400,
+            Mirroring::Horizontal => {
+                let bit = addr & 0x800;
+                addr & (!0xfc00) | (bit >> 1)
+            }
+            Mirroring::Vertical => addr & (!0xf800),
+            Mirroring::Four => addr & (!0xf000),
+        }
+    }
+}
+
 impl From<NametableArrangement> for Mirroring {
     fn from(value: NametableArrangement) -> Self {
         match value {
@@ -58,29 +73,20 @@ impl NameTableControl {
         }
     }
 
+    pub(crate) fn mirroring(&self) -> Mirroring {
+        self.mirroring
+    }
+
     pub(crate) fn set_mirroring(&mut self, mirroring: Mirroring) {
         self.mirroring = mirroring;
     }
 
     pub(crate) fn read(&self, address: u16) -> u8 {
-        self.mem[name_table_offset(self.mirroring, address) as usize & 4095]
+        self.mem[self.mirroring.name_table_offset(address) as usize & 4095]
     }
 
     pub(crate) fn write(&mut self, address: u16, value: u8) {
-        self.mem[name_table_offset(self.mirroring, address) as usize & 4095] = value;
-    }
-}
-
-fn name_table_offset(mirroring: Mirroring, addr: u16) -> u16 {
-    match mirroring {
-        Mirroring::LowerBank => addr & 0x3ff,
-        Mirroring::UpperBank => addr & 0x3ff | 0x400,
-        Mirroring::Horizontal => {
-            let bit = addr & 0x800;
-            addr & (!0xfc00) | (bit >> 1)
-        }
-        Mirroring::Vertical => addr & (!0xf800),
-        Mirroring::Four => addr & (!0xf000),
+        self.mem[self.mirroring.name_table_offset(address) as usize & 4095] = value;
     }
 }
 
@@ -175,6 +181,10 @@ impl TestCartridge {
             chr_rom: [0; 0x2000],
             name_table: NameTableControl::new(Mirroring::Horizontal),
         }
+    }
+
+    pub fn mirroring(&self) -> Mirroring {
+        self.name_table.mirroring()
     }
 
     pub fn pattern_ref(&self) -> &[u8] {
@@ -431,6 +441,23 @@ impl Cartridge {
             ),
             #[cfg(test)]
             Cartridge::Test(_) => None,
+        }
+    }
+
+    /// Return current nametable mirroring
+    pub fn mirroring(&self) -> Mirroring {
+        match self {
+            Cartridge::Mapper0(mapper0) => mapper0.mirroring(),
+            Cartridge::Mapper2(mapper2) => mapper2.mirroring(),
+            Cartridge::Mapper3(mapper3) => mapper3.mirroring(),
+            Cartridge::Mapper7(mapper7) => mapper7.mirroring(),
+            Cartridge::Mapper34(mapper34) => mapper34.mirroring(),
+            Cartridge::Mapper87(mapper_j87) => mapper_j87.mirroring(),
+            Cartridge::MMC1(mmc1) => mmc1.mirroring(),
+            Cartridge::MMC3(mmc3) => mmc3.mirroring(),
+            Cartridge::MMC5(mmc5) => mmc5.mirroring(),
+            #[cfg(test)]
+            Cartridge::Test(test_cartridge) => test_cartridge.mirroring(),
         }
     }
 

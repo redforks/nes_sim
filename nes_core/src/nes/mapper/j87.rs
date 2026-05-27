@@ -80,6 +80,10 @@ impl MapperJ87 {
     pub fn write_pattern(&mut self, address: u16, value: u8) {
         self.chr_rom_bands[self.cur_chr_band as usize][address as usize] = value;
     }
+
+    pub fn mirroring(&self) -> Mirroring {
+        self.name_table.mirroring()
+    }
 }
 
 fn extract_band_selector_value(value: u8) -> u8 {

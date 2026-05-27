@@ -1,4 +1,5 @@
 use super::CARTRIDGE_START_ADDR;
+use crate::nes::mapper::Mirroring;
 use crate::nes::ppu::{BackgroundTileOverride, PatternAccess};
 
 const PRG_BANK_SIZE_8K: usize = 0x2000;
@@ -306,6 +307,17 @@ impl MMC5 {
     pub fn on_oam_dma(&mut self) {
         self.current_scanline = 0;
         self.irq_pending = false;
+    }
+
+    pub fn mirroring(&self) -> Mirroring {
+        match (self.nt_mapping[0], self.nt_mapping[1], self.nt_mapping[2], self.nt_mapping[3]) {
+            (0, 0, 1, 1) => Mirroring::Horizontal,
+            (0, 1, 0, 1) => Mirroring::Vertical,
+            (a, b, c, d) if a == b && b == c && c == d && (a == 0 || a == 1) => {
+                if a == 0 { Mirroring::LowerBank } else { Mirroring::UpperBank }
+            }
+            _ => Mirroring::Four,
+        }
     }
 
     fn product(&self) -> u16 {

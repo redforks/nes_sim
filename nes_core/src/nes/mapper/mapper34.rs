@@ -141,6 +141,10 @@ impl Mapper34 {
     pub fn read_nametable(&self, address: u16) -> u8 {
         self.name_table.read(address)
     }
+
+    pub fn mirroring(&self) -> Mirroring {
+        self.name_table.mirroring()
+    }
 }
 
 #[cfg(test)]
