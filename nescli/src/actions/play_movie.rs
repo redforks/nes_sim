@@ -308,7 +308,7 @@ impl Render for RecordRender {
         }
 
         let send_video = if self.ff_skip {
-            let send = self.ff_counter % 2 == 0;
+            let send = self.ff_counter % 4 == 0;
             self.ff_counter += 1;
             send
         } else {
@@ -346,7 +346,7 @@ impl AudioDriver for RecordAudioDriver {
     fn flush(&mut self) {
         self.inner.flush();
         let send_audio = if self.ff_skip.get() {
-            let send = self.ff_counter % 2 == 0;
+            let send = self.ff_counter % 4 == 0;
             self.ff_counter += 1;
             send
         } else {
