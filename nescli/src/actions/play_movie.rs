@@ -218,7 +218,7 @@ impl RecordRender {
     fn overlay_input_icons(&mut self) {
         let image = self.buffer.borrow_image_mut();
         if self.dual_player {
-            self.p1.draw(image, &self.icons, 8, 80, 152, 888);
+            self.p1.draw(image, &self.icons, 8, 152, 80, 888);
             self.p2.draw(image, &self.icons, 820, 952, 888, 888);
         } else {
             self.p1.draw(image, &self.icons, 820, 952, 888, 888);
