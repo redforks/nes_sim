@@ -102,6 +102,14 @@ struct RecordRender {
     down: bool,
     left: bool,
     right: bool,
+    disp_a: bool,
+    disp_b: bool,
+    disp_up: bool,
+    disp_down: bool,
+    disp_left: bool,
+    disp_right: bool,
+    hold_dir: u8,
+    hold_ab: u8,
 }
 
 impl std::fmt::Debug for RecordRender {
@@ -118,6 +126,22 @@ impl RecordRender {
         self.down = input.down();
         self.left = input.left();
         self.right = input.right();
+
+        let any_dir = self.up || self.down || self.left || self.right;
+        if any_dir {
+            self.disp_up = self.up;
+            self.disp_down = self.down;
+            self.disp_left = self.left;
+            self.disp_right = self.right;
+            self.hold_dir = 18;
+        }
+
+        let any_ab = self.a_pressed || self.b_pressed;
+        if any_ab {
+            self.disp_a = self.a_pressed;
+            self.disp_b = self.b_pressed;
+            self.hold_ab = 18;
+        }
     }
 
     fn direction_icon_index(up: bool, down: bool, left: bool, right: bool) -> Option<usize> {
@@ -144,18 +168,27 @@ impl RecordRender {
     fn overlay_input_icons(&mut self) {
         let image = self.buffer.borrow_image_mut();
 
-        if let Some(direction_idx) =
-            Self::direction_icon_index(self.up, self.down, self.left, self.right)
-        {
-            imageops::overlay(image, &self.icons[direction_idx], 8, 888);
+        if self.hold_dir > 0 {
+            self.hold_dir -= 1;
+            if let Some(direction_idx) = Self::direction_icon_index(
+                self.disp_up,
+                self.disp_down,
+                self.disp_left,
+                self.disp_right,
+            ) {
+                imageops::overlay(image, &self.icons[direction_idx], 8, 888);
+            }
         }
 
-        if self.a_pressed {
-            imageops::overlay(image, &self.icons[0], 952, 888);
-        }
+        if self.hold_ab > 0 {
+            self.hold_ab -= 1;
+            if self.disp_a {
+                imageops::overlay(image, &self.icons[0], 952, 888);
+            }
 
-        if self.b_pressed {
-            imageops::overlay(image, &self.icons[1], 888, 888);
+            if self.disp_b {
+                imageops::overlay(image, &self.icons[1], 888, 888);
+            }
         }
     }
 }
@@ -311,6 +344,14 @@ fn init_sdl_drivers(
         down: false,
         left: false,
         right: false,
+        disp_a: false,
+        disp_b: false,
+        disp_up: false,
+        disp_down: false,
+        disp_left: false,
+        disp_right: false,
+        hold_dir: 0,
+        hold_ab: 0,
     };
 
     let audio_driver = RecordAudioDriver {
