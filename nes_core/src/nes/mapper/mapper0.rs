@@ -1,5 +1,4 @@
-use super::CARTRIDGE_START_ADDR;
-use crate::nes::mapper::Mirroring;
+use super::{CARTRIDGE_START_ADDR, CartridgeOperation};
 
 pub struct Mapper0 {
     prg_rom: [u8; 0x8000],
@@ -7,11 +6,10 @@ pub struct Mapper0 {
     chr_rom: [u8; 0x2000],
     has_chr_ram: bool,
     ram: [u8; 0x4000 - 0x20],
-    mirroring: Mirroring,
 }
 
 impl Mapper0 {
-    pub fn new(prg_rom: &[u8], chr_rom: &[u8], mirroring: Mirroring) -> Self {
+    pub fn new(prg_rom: &[u8], chr_rom: &[u8]) -> Self {
         debug_assert!(prg_rom.len() <= 0x8000);
         debug_assert!(chr_rom.len() <= 0x2000);
 
@@ -21,7 +19,6 @@ impl Mapper0 {
             chr_rom: [0; 0x2000],
             has_chr_ram: chr_rom.is_empty(),
             ram: [0; 0x4000 - 0x20],
-            mirroring,
         };
         r.prg_rom[0..prg_rom.len()].copy_from_slice(prg_rom);
         r.chr_rom[0..chr_rom.len()].copy_from_slice(chr_rom);
@@ -37,7 +34,6 @@ impl Default for Mapper0 {
             chr_rom: [0; 0x2000],
             has_chr_ram: false,
             ram: [0; 0x4000 - 0x20],
-            mirroring: Mirroring::Horizontal,
         }
     }
 }
@@ -72,18 +68,15 @@ impl Mapper0 {
         }
     }
 
-    pub fn write(&mut self, address: u16, value: u8) {
+    pub fn write(&mut self, address: u16, value: u8) -> CartridgeOperation {
         match address {
             CARTRIDGE_START_ADDR..=0x7fff => {
-                self.ram[(address - CARTRIDGE_START_ADDR) as usize] = value
+                self.ram[(address - CARTRIDGE_START_ADDR) as usize] = value;
             }
             0x8000..=0xffff => {}
             _ => unreachable!(),
         }
-    }
-
-    pub fn mirroring(&self) -> Mirroring {
-        self.mirroring
+        CartridgeOperation::None
     }
 }
 
@@ -112,14 +105,14 @@ mod tests {
 
     #[test]
     fn cartridge() {
-        let mcu = Mapper0::new(&[0; 0], &[1, 2], Mirroring::Horizontal);
+        let mcu = Mapper0::new(&[0; 0], &[1, 2]);
         assert_eq!(1, mcu.pattern_ref()[0]);
         assert_eq!(2, mcu.pattern_ref()[1]);
     }
 
     #[test]
     fn writes_to_chr_ram_when_chr_rom_is_absent() {
-        let mut mcu = Mapper0::new(&[0; 0], &[], Mirroring::Horizontal);
+        let mut mcu = Mapper0::new(&[0; 0], &[]);
 
         mcu.write_pattern(0x0000, 0x12);
         mcu.write_pattern(0x1fff, 0x34);
@@ -134,7 +127,7 @@ mod tests {
         prg[0x3ffc] = 0x00;
         prg[0x3ffd] = 0x80;
 
-        let mut mcu = Mapper0::new(&prg, &[], Mirroring::Horizontal);
+        let mut mcu = Mapper0::new(&prg, &[]);
 
         assert_eq!(mcu.read(0xfffc), 0x00);
         assert_eq!(mcu.read(0xfffd), 0x80);

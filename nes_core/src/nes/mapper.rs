@@ -55,54 +55,34 @@ impl From<NametableArrangement> for Mirroring {
     }
 }
 
-pub fn create_cartridge(f: &INesFile) -> Cartridge {
+pub fn create_cartridge(f: &INesFile) -> (Cartridge, Mirroring) {
     let mapper_no = f.header().mapper_no;
     let mirroring = if f.header().ignore_mirror_control {
         Mirroring::Four
     } else {
         f.header().nametable_arrangement.into()
     };
-    match mapper_no {
-        0 => Cartridge::Mapper0(Box::new(Mapper0::new(
-            f.read_prg_rom(),
-            f.read_chr_rom(),
-            mirroring,
-        ))),
+    let cartridge = match mapper_no {
+        0 => Cartridge::Mapper0(Box::new(Mapper0::new(f.read_prg_rom(), f.read_chr_rom()))),
         1 => Cartridge::MMC1(Box::new(MMC1::new(
             f.read_prg_rom(),
             f.read_chr_rom(),
             mirroring,
         ))),
-        2 => Cartridge::Mapper2(Box::new(Mapper2::new(
-            f.read_prg_rom(),
-            f.read_chr_rom(),
-            mirroring,
-        ))),
-        3 => Cartridge::Mapper3(Box::new(Mapper3::new(
-            f.read_prg_rom(),
-            f.read_chr_rom(),
-            mirroring,
-        ))),
+        2 => Cartridge::Mapper2(Box::new(Mapper2::new(f.read_prg_rom(), f.read_chr_rom()))),
+        3 => Cartridge::Mapper3(Box::new(Mapper3::new(f.read_prg_rom(), f.read_chr_rom()))),
         4 => Cartridge::MMC3(Box::new(MMC3::new(
             f.read_prg_rom(),
             f.read_chr_rom(),
-            mirroring,
             f.header().ignore_mirror_control,
             rom_contains_signature(f, MMC3_ALT_TEST_SIGNATURE),
         ))),
         7 => Cartridge::Mapper7(Box::new(Mapper7::new(f.read_prg_rom(), f.read_chr_rom()))),
-        34 => Cartridge::Mapper34(Box::new(Mapper34::new(
-            f.read_prg_rom(),
-            f.read_chr_rom(),
-            mirroring,
-        ))),
-        87 => Cartridge::Mapper87(Box::new(MapperJ87::new(
-            f.read_prg_rom(),
-            f.read_chr_rom(),
-            mirroring,
-        ))),
+        34 => Cartridge::Mapper34(Box::new(Mapper34::new(f.read_prg_rom(), f.read_chr_rom()))),
+        87 => Cartridge::Mapper87(Box::new(MapperJ87::new(f.read_prg_rom(), f.read_chr_rom()))),
         _ => panic!("Unsupported cartridge mapper no: {}", f.header().mapper_no),
-    }
+    };
+    (cartridge, mirroring)
 }
 
 fn rom_contains_signature(file: &INesFile, signature: &str) -> bool {
@@ -128,7 +108,6 @@ pub enum Cartridge {
 pub struct TestCartridge {
     pub(crate) prg_rom: [u8; 0x8000],
     pub(crate) chr_rom: [u8; 0x2000],
-    mirroring: Mirroring,
 }
 
 #[cfg(test)]
@@ -137,12 +116,7 @@ impl TestCartridge {
         Self {
             prg_rom: [0; 0x8000],
             chr_rom: [0; 0x2000],
-            mirroring: Mirroring::Horizontal,
         }
-    }
-
-    pub fn mirroring(&self) -> Mirroring {
-        self.mirroring
     }
 
     pub fn pattern_ref(&self) -> &[u8] {
@@ -151,6 +125,11 @@ impl TestCartridge {
 
     pub fn write_pattern(&mut self, address: u16, value: u8) {
         self.chr_rom[address as usize] = value;
+    }
+
+    pub fn write(&mut self, address: u16, value: u8) -> CartridgeOperation {
+        let _ = (address, value);
+        CartridgeOperation::None
     }
 
     pub fn read(&mut self, address: u16) -> u8 {
@@ -176,6 +155,12 @@ impl TestCartridge {
     pub fn irq_pending(&self) -> bool {
         false
     }
+}
+
+#[derive(Copy, Clone, Debug, PartialEq)]
+pub enum CartridgeOperation {
+    None,
+    UpdateNametableMirroring(Mirroring),
 }
 
 impl Cartridge {
@@ -239,7 +224,7 @@ impl Cartridge {
         }
     }
 
-    pub fn write(&mut self, address: u16, value: u8) {
+    pub fn write(&mut self, address: u16, value: u8) -> CartridgeOperation {
         match self {
             Cartridge::Mapper0(cartridge) => cartridge.write(address, value),
             Cartridge::Mapper2(cartridge) => cartridge.write(address, value),
@@ -250,7 +235,7 @@ impl Cartridge {
             Cartridge::MMC3(cartridge) => cartridge.write(address, value),
             Cartridge::Mapper87(cartridge) => cartridge.write(address, value),
             #[cfg(test)]
-            Cartridge::Test(_) => {}
+            Cartridge::Test(cartridge) => cartridge.write(address, value),
         }
     }
 
@@ -293,22 +278,6 @@ impl Cartridge {
     pub fn read_chr(&self, address: u16) -> u8 {
         let pattern = self.pattern_ref();
         pattern[address as usize % pattern.len()]
-    }
-
-    /// Return current nametable mirroring
-    pub fn mirroring(&self) -> Mirroring {
-        match self {
-            Cartridge::Mapper0(mapper0) => mapper0.mirroring(),
-            Cartridge::Mapper2(mapper2) => mapper2.mirroring(),
-            Cartridge::Mapper3(mapper3) => mapper3.mirroring(),
-            Cartridge::Mapper7(mapper7) => mapper7.mirroring(),
-            Cartridge::Mapper34(mapper34) => mapper34.mirroring(),
-            Cartridge::Mapper87(mapper_j87) => mapper_j87.mirroring(),
-            Cartridge::MMC1(mmc1) => mmc1.mirroring(),
-            Cartridge::MMC3(mmc3) => mmc3.mirroring(),
-            #[cfg(test)]
-            Cartridge::Test(test_cartridge) => test_cartridge.mirroring(),
-        }
     }
 }
 

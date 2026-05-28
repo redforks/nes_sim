@@ -1,5 +1,4 @@
-use super::CARTRIDGE_START_ADDR;
-use crate::nes::mapper::Mirroring;
+use super::{CartridgeOperation, Mirroring, CARTRIDGE_START_ADDR};
 
 const PRG_ROM_BANK_SIZE: usize = 0x8000;
 const CHR_SIZE: usize = 0x2000;
@@ -12,7 +11,6 @@ pub struct Mapper7 {
     ram: [u8; CARTRIDGE_RAM_SIZE],
     selected_prg_bank: usize,
     prg_bank_count: usize,
-    mirroring: Mirroring,
 }
 
 impl Mapper7 {
@@ -28,7 +26,6 @@ impl Mapper7 {
             ram: [0; CARTRIDGE_RAM_SIZE],
             selected_prg_bank: 0,
             prg_bank_count: prg_rom.len() / PRG_ROM_BANK_SIZE,
-            mirroring: Mirroring::LowerBank,
         };
         mapper.chr[..chr_rom.len()].copy_from_slice(chr_rom);
         mapper
@@ -66,25 +63,23 @@ impl Mapper7 {
         }
     }
 
-    pub fn write(&mut self, address: u16, value: u8) {
+    pub fn write(&mut self, address: u16, value: u8) -> CartridgeOperation {
         match address {
             CARTRIDGE_START_ADDR..=0x7fff => {
                 self.ram[(address - CARTRIDGE_START_ADDR) as usize] = value;
+                CartridgeOperation::None
             }
             0x8000..=0xffff => {
                 self.selected_prg_bank = (value & 0x0f) as usize;
-                self.mirroring = if value & 0x10 == 0 {
+                let mirroring = if value & 0x10 == 0 {
                     Mirroring::LowerBank
                 } else {
                     Mirroring::UpperBank
                 };
+                CartridgeOperation::UpdateNametableMirroring(mirroring)
             }
             _ => unreachable!(),
         }
-    }
-
-    pub fn mirroring(&self) -> Mirroring {
-        self.mirroring
     }
 }
 
@@ -114,9 +109,10 @@ mod tests {
     #[test]
     fn switches_single_screen_mirroring() {
         let mut mapper = Mapper7::new(&[0; PRG_ROM_BANK_SIZE], &[]);
-        assert_eq!(mapper.mirroring(), Mirroring::LowerBank);
 
-        mapper.write(0x8000, 0x10);
-        assert_eq!(mapper.mirroring(), Mirroring::UpperBank);
+        assert_eq!(
+            mapper.write(0x8000, 0x10),
+            CartridgeOperation::UpdateNametableMirroring(Mirroring::UpperBank)
+        );
     }
 }

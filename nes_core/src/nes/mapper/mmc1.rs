@@ -1,5 +1,6 @@
 #![allow(dead_code)]
 
+use super::CartridgeOperation;
 use crate::nes::mapper::Mirroring;
 use bitfield_struct::bitfield;
 
@@ -64,7 +65,6 @@ pub struct MMC1 {
     chr_bank1: u8,
     prg_bank: u8,
     shift_register: u8,
-    mirroring: Mirroring,
 }
 
 impl MMC1 {
@@ -89,10 +89,8 @@ impl MMC1 {
             chr_bank1: 0,
             prg_bank: 0,
             shift_register: INITIAL_SHIFT_REGISTER,
-            mirroring,
         };
 
-        mapper.apply_control();
         mapper.refresh_chr_window();
         mapper
     }
@@ -132,25 +130,25 @@ impl MMC1 {
         }
     }
 
-    pub fn write(&mut self, address: u16, value: u8) {
+    pub fn write(&mut self, address: u16, value: u8) -> CartridgeOperation {
         match address {
-            0x4020..=0x5fff => {}
+            0x4020..=0x5fff => CartridgeOperation::None,
             0x6000..=0x7fff => {
                 if self.prg_ram_enabled() {
                     self.prg_ram[address as usize - 0x6000] = value;
                 }
+                CartridgeOperation::None
             }
             0x8000..=0xffff => self.write_load_register(address, value),
             _ => panic!("write address out of range: {:04x}", address),
         }
     }
 
-    fn write_load_register(&mut self, address: u16, value: u8) {
+    fn write_load_register(&mut self, address: u16, value: u8) -> CartridgeOperation {
         if value & 0x80 != 0 {
             self.shift_register = INITIAL_SHIFT_REGISTER;
             self.control = ControlFlags::from_bits(self.control.into_bits() | 0x0c);
-            self.apply_control();
-            return;
+            return self.apply_control();
         }
 
         let register_ready = self.shift_register & 0x01 != 0;
@@ -159,14 +157,26 @@ impl MMC1 {
 
         if register_ready {
             let register_value = self.shift_register & 0x1f;
-            match address {
+            let result = match address {
                 0x8000..=0x9fff => self.control(ControlFlags::from_bits(register_value)),
-                0xa000..=0xbfff => self.select_chr_bank0(register_value),
-                0xc000..=0xdfff => self.select_chr_bank1(register_value),
-                0xe000..=0xffff => self.select_prg_bank(register_value),
+                0xa000..=0xbfff => {
+                    self.select_chr_bank0(register_value);
+                    CartridgeOperation::None
+                }
+                0xc000..=0xdfff => {
+                    self.select_chr_bank1(register_value);
+                    CartridgeOperation::None
+                }
+                0xe000..=0xffff => {
+                    self.select_prg_bank(register_value);
+                    CartridgeOperation::None
+                }
                 _ => unreachable!(),
-            }
+            };
             self.shift_register = INITIAL_SHIFT_REGISTER;
+            result
+        } else {
+            CartridgeOperation::None
         }
     }
 
@@ -179,14 +189,15 @@ impl MMC1 {
         }
     }
 
-    fn apply_control(&mut self) {
-        self.mirroring = self.control.into();
+    fn apply_control(&mut self) -> CartridgeOperation {
+        let mirroring: Mirroring = self.control.into();
         self.refresh_chr_window();
+        CartridgeOperation::UpdateNametableMirroring(mirroring)
     }
 
-    fn control(&mut self, flags: ControlFlags) {
+    fn control(&mut self, flags: ControlFlags) -> CartridgeOperation {
         self.control = flags;
-        self.apply_control();
+        self.apply_control()
     }
 
     fn chr_bank_size(&self) -> usize {
@@ -329,10 +340,6 @@ impl MMC1 {
     fn select_prg_bank(&mut self, value: u8) {
         self.prg_bank = value & 0x1f;
     }
-
-    pub fn mirroring(&self) -> Mirroring {
-        self.mirroring
-    }
 }
 
 #[cfg(test)]
@@ -354,7 +361,7 @@ mod tests {
         init_prg(&mut prg_rom);
         (
             MMC1::new(&prg_rom, &[], Mirroring::Horizontal),
-            Ppu::new(()),
+            Ppu::new((), Mirroring::Horizontal),
         )
     }
 
@@ -366,7 +373,7 @@ mod tests {
         init_chr(&mut chr_rom);
         (
             MMC1::new(&[0; 32 * 1024], &chr_rom, Mirroring::Horizontal),
-            Ppu::new(()),
+            Ppu::new((), Mirroring::Horizontal),
         )
     }
 
@@ -415,8 +422,11 @@ mod tests {
     #[test]
     fn control_ppu_mirroring() {
         let (mut mmc1, _ppu) = create(|_| {});
-        mmc1.control(ControlFlags::new().with_mirroring(0));
-        assert_eq!(mmc1.mirroring(), Mirroring::LowerBank);
+        let result = mmc1.control(ControlFlags::new().with_mirroring(0));
+        assert_eq!(
+            result,
+            CartridgeOperation::UpdateNametableMirroring(Mirroring::LowerBank)
+        );
     }
 
     #[test]

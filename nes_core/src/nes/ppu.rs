@@ -64,6 +64,8 @@ pub struct Ppu<R: Render = ()> {
     rendering_enabled_at_scanline_start: bool,
 
     frame_no: usize,
+
+    mirroring: Mirroring,
 }
 
 /// PPU registers are mirrored every 8 bytes in range $2000-$3FFF
@@ -73,7 +75,7 @@ fn normalize_ppu_addr(addr: u16) -> u16 {
 }
 
 impl<R: Render> Ppu<R> {
-    pub fn new(renderer: R) -> Self {
+    pub fn new(renderer: R, mirroring: Mirroring) -> Self {
         Ppu {
             registers: Registers::new(),
             palette: Palette::default(),
@@ -89,6 +91,7 @@ impl<R: Render> Ppu<R> {
             frame_no: 0,
             effective_mask: PpuMask::new(),
             rendering_enabled_at_scanline_start: false,
+            mirroring,
         }
     }
 
@@ -108,12 +111,20 @@ impl<R: Render> Ppu<R> {
         (self.scanline, self.dot)
     }
 
-    pub fn write_nametable(&mut self, addr: u16, value: u8, mirroring: Mirroring) {
-        self.nametable.write(mirroring, addr, value);
+    pub fn set_mirroring(&mut self, mirroring: Mirroring) {
+        self.mirroring = mirroring;
     }
 
-    pub fn read_nametable(&self, mirroring: Mirroring, addr: u16) -> u8 {
-        self.nametable.read(mirroring, addr)
+    pub fn mirroring(&self) -> Mirroring {
+        self.mirroring
+    }
+
+    pub fn write_nametable(&mut self, addr: u16, value: u8) {
+        self.nametable.write(self.mirroring, addr, value);
+    }
+
+    pub fn read_nametable(&self, addr: u16) -> u8 {
+        self.nametable.read(self.mirroring, addr)
     }
 
     pub fn frame_no(&self) -> usize {
@@ -537,7 +548,7 @@ impl<R: Render> Ppu<R> {
                 cartridge.read_chr(addr)
             } else {
                 // Name table via PPU's built-in storage
-                self.nametable.read(cartridge.mirroring(), addr)
+                self.nametable.read(self.mirroring, addr)
             }
         } else {
             // Palette
@@ -552,7 +563,7 @@ impl<R: Render> Ppu<R> {
         }
         if addr < 0x3f00 {
             if addr >= 0x2000 {
-                self.nametable.write(cartridge.mirroring(), addr, value);
+                self.nametable.write(self.mirroring, addr, value);
             } else {
                 cartridge.write_pattern(addr, value);
             }
@@ -622,9 +633,9 @@ impl<R: Render> Ppu<R> {
 
         let nt_base = 0x2000 + nt_idx as u16 * 0x0400;
         let nt_addr = nt_base + nt_y as u16 * TILES_PER_ROW as u16 + nt_x as u16;
-        let tile_idx = self.nametable.read(cartridge.mirroring(), nt_addr);
+        let tile_idx = self.nametable.read(self.mirroring, nt_addr);
         let attr_addr = nt_base + 0x03c0 + (nt_y as u16 / 4) * 8 + (nt_x as u16 / 4);
-        let attr_byte = self.nametable.read(cartridge.mirroring(), attr_addr);
+        let attr_byte = self.nametable.read(self.mirroring, attr_addr);
         let shift = (((nt_y >> 1) & 0x01) << 2) | (((nt_x >> 1) & 0x01) << 1);
         let palette_idx = (attr_byte >> shift) & 0x03;
 

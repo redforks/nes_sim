@@ -1,4 +1,4 @@
-use super::CARTRIDGE_START_ADDR;
+use super::{CARTRIDGE_START_ADDR, CartridgeOperation};
 use crate::nes::mapper::Mirroring;
 
 const PRG_RAM_SIZE: usize = 0x2000;
@@ -20,7 +20,6 @@ pub struct MMC3 {
     current_chr: [u8; CHR_WINDOW_SIZE],
     has_chr_ram: bool,
     mirroring_locked: bool,
-    mirroring: Mirroring,
     bank_select: u8,
     bank_registers: [u8; 8],
     prg_ram_enabled: bool,
@@ -42,7 +41,6 @@ impl MMC3 {
     pub fn new(
         prg_rom: &[u8],
         chr_rom: &[u8],
-        mirroring: Mirroring,
         mirroring_locked: bool,
         alternate_irq_revision: bool,
     ) -> Self {
@@ -66,7 +64,6 @@ impl MMC3 {
             current_chr: [0; CHR_WINDOW_SIZE],
             has_chr_ram,
             mirroring_locked,
-            mirroring,
             bank_select: 0,
             bank_registers: [0; 8],
             prg_ram_enabled: true,
@@ -184,16 +181,17 @@ impl MMC3 {
         self.sync_banks();
     }
 
-    fn set_mirroring(&mut self, value: u8) {
+    fn set_mirroring(&mut self, value: u8) -> CartridgeOperation {
         if self.mirroring_locked {
-            return;
+            return CartridgeOperation::None;
         }
 
-        self.mirroring = if value & 0x01 == 0 {
+        let mirroring = if value & 0x01 == 0 {
             Mirroring::Vertical
         } else {
             Mirroring::Horizontal
         };
+        CartridgeOperation::UpdateNametableMirroring(mirroring)
     }
 
     fn set_prg_ram_protect(&mut self, value: u8) {
@@ -216,9 +214,7 @@ impl MMC3 {
         let should_set_irq = match self.irq_revision {
             IrqRevision::Standard => self.irq_enabled && self.irq_counter == 0,
             IrqRevision::Alternate => {
-                self.irq_enabled
-                    && self.irq_counter == 0
-                    && (!counter_was_zero || reload_requested)
+                self.irq_enabled && self.irq_counter == 0 && (!counter_was_zero || reload_requested)
             }
         };
 
@@ -268,13 +264,14 @@ impl MMC3 {
         }
     }
 
-    pub fn write(&mut self, address: u16, value: u8) {
+    pub fn write(&mut self, address: u16, value: u8) -> CartridgeOperation {
         match address {
-            CARTRIDGE_START_ADDR..=0x5fff => {}
+            CARTRIDGE_START_ADDR..=0x5fff => CartridgeOperation::None,
             0x6000..=0x7fff => {
                 if self.prg_ram_enabled && !self.prg_ram_write_protect {
                     self.prg_ram[(address - 0x6000) as usize] = value;
                 }
+                CartridgeOperation::None
             }
             0x8000..=0x9fff => {
                 if address & 0x01 == 0 {
@@ -282,12 +279,14 @@ impl MMC3 {
                 } else {
                     self.write_bank_data(value);
                 }
+                CartridgeOperation::None
             }
             0xa000..=0xbfff => {
                 if address & 0x01 == 0 {
-                    self.set_mirroring(value);
+                    self.set_mirroring(value)
                 } else {
                     self.set_prg_ram_protect(value);
+                    CartridgeOperation::None
                 }
             }
             0xc000..=0xdfff => {
@@ -296,6 +295,7 @@ impl MMC3 {
                 } else {
                     self.irq_reload = true;
                 }
+                CartridgeOperation::None
             }
             0xe000..=0xffff => {
                 if address & 0x01 == 0 {
@@ -304,6 +304,7 @@ impl MMC3 {
                 } else {
                     self.irq_enabled = true;
                 }
+                CartridgeOperation::None
             }
             _ => unreachable!(),
         }
@@ -353,10 +354,6 @@ impl MMC3 {
     pub fn irq_pending(&self) -> bool {
         self.irq_pending
     }
-
-    pub fn mirroring(&self) -> Mirroring {
-        self.mirroring
-    }
 }
 
 #[cfg(test)]
@@ -383,7 +380,7 @@ mod tests {
     #[test]
     fn switches_prg_bank_in_normal_mode() {
         let prg = create_prg();
-        let mut mapper = MMC3::new(&prg, &create_chr(), Mirroring::Horizontal, false, false);
+        let mut mapper = MMC3::new(&prg, &create_chr(), false, false);
 
         mapper.write(0x8000, 0x06);
         mapper.write(0x8001, 0x03);
@@ -400,7 +397,7 @@ mod tests {
     #[test]
     fn swaps_fixed_and_switchable_prg_regions_in_prg_mode_1() {
         let prg = create_prg();
-        let mut mapper = MMC3::new(&prg, &create_chr(), Mirroring::Horizontal, false, false);
+        let mut mapper = MMC3::new(&prg, &create_chr(), false, false);
 
         mapper.write(0x8000, 0x46);
         mapper.write(0x8001, 0x03);
@@ -416,7 +413,7 @@ mod tests {
     #[test]
     fn switches_chr_layout_in_chr_mode_0() {
         let chr = create_chr();
-        let mut mapper = MMC3::new(&create_prg(), &chr, Mirroring::Horizontal, false, false);
+        let mut mapper = MMC3::new(&create_prg(), &chr, false, false);
 
         mapper.write(0x8000, 0x00);
         mapper.write(0x8001, 0x06);
@@ -444,7 +441,7 @@ mod tests {
     #[test]
     fn switches_chr_layout_in_chr_mode_1() {
         let chr = create_chr();
-        let mut mapper = MMC3::new(&create_prg(), &chr, Mirroring::Horizontal, false, false);
+        let mut mapper = MMC3::new(&create_prg(), &chr, false, false);
 
         mapper.write(0x8000, 0x80);
         mapper.write(0x8001, 0x06);
@@ -471,7 +468,7 @@ mod tests {
 
     #[test]
     fn writes_to_chr_ram_through_current_mapping() {
-        let mut mapper = MMC3::new(&create_prg(), &[], Mirroring::Horizontal, false, false);
+        let mut mapper = MMC3::new(&create_prg(), &[], false, false);
 
         mapper.write(0x8000, 0x02);
         mapper.write(0x8001, 0x03);
@@ -482,22 +479,25 @@ mod tests {
 
     #[test]
     fn changes_mirroring_unless_four_screen_is_forced() {
-        let mut mapper = MMC3::new(&create_prg(), &create_chr(), Mirroring::Horizontal, false, false);
+        let mut mapper = MMC3::new(&create_prg(), &create_chr(), false, false);
 
-        mapper.write(0xa000, 0x00);
-        assert_eq!(mapper.mirroring(), Mirroring::Vertical);
+        assert_eq!(
+            mapper.write(0xa000, 0x00),
+            CartridgeOperation::UpdateNametableMirroring(Mirroring::Vertical)
+        );
 
-        mapper.write(0xa000, 0x01);
-        assert_eq!(mapper.mirroring(), Mirroring::Horizontal);
+        assert_eq!(
+            mapper.write(0xa000, 0x01),
+            CartridgeOperation::UpdateNametableMirroring(Mirroring::Horizontal)
+        );
 
-        let mut locked_mapper = MMC3::new(&create_prg(), &create_chr(), Mirroring::Four, true, false);
-        locked_mapper.write(0xa000, 0x01);
-        assert_eq!(locked_mapper.mirroring(), Mirroring::Four);
+        let mut locked_mapper = MMC3::new(&create_prg(), &create_chr(), true, false);
+        assert_eq!(locked_mapper.write(0xa000, 0x01), CartridgeOperation::None);
     }
 
     #[test]
     fn triggers_irq_after_scanline_clocks() {
-        let mut mapper = MMC3::new(&create_prg(), &create_chr(), Mirroring::Horizontal, false, false);
+        let mut mapper = MMC3::new(&create_prg(), &create_chr(), false, false);
 
         mapper.write(0xc000, 0x01); // Set IRQ latch to 1
         mapper.write(0xc001, 0x00); // Set irq_reload flag

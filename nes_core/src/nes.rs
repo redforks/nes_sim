@@ -4,7 +4,7 @@ use crate::mcu::Mcu;
 use crate::nes::apu::{Apu, AudioDriver};
 use crate::nes::controller::{Button, Controller};
 use crate::nes::lower_ram::LowerRam;
-use crate::nes::mapper::Cartridge;
+use crate::nes::mapper::{Cartridge, CartridgeOperation};
 use crate::nes::ppu::Ppu;
 use crate::render::Render;
 
@@ -38,8 +38,8 @@ pub struct NesMcu<R: Render, D: AudioDriver> {
 
 impl<R: Render, D: AudioDriver> NesMcu<R, D> {
     pub fn new(file: &INesFile, renderer: R, audio_driver: D) -> Self {
-        let cartridge = mapper::create_cartridge(file);
-        let ppu = Ppu::new(renderer);
+        let (cartridge, mirroring) = mapper::create_cartridge(file);
+        let ppu = Ppu::new(renderer, mirroring);
 
         Self {
             lower_ram: LowerRam::new(),
@@ -164,7 +164,7 @@ impl<R: Render, D: AudioDriver> NesMcu<R, D> {
     }
 
     pub fn read_nametable(&self, addr: u16) -> u8 {
-        self.ppu().read_nametable(self.cartridge.mirroring(), addr)
+        self.ppu().read_nametable(addr)
     }
 }
 
@@ -209,7 +209,13 @@ impl<R: Render, D: AudioDriver> Mcu for NesMcu<R, D> {
             },
             // Unallocated I/O space: writes are ignored
             0x4020..=0x40ff => {}
-            0x4100..=0xffff => self.cartridge.write(address, value),
+            0x4100..=0xffff => {
+                if let CartridgeOperation::UpdateNametableMirroring(mirroring) =
+                    self.cartridge.write(address, value)
+                {
+                    self.ppu.set_mirroring(mirroring);
+                }
+            }
         }
     }
 }

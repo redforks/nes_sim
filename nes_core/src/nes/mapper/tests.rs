@@ -74,7 +74,7 @@ fn test_name_table_offset(mirroring: Mirroring, addr: u16) -> u16 {
 fn create_cartridge_mapper0() {
     let rom = create_test_nes(0, 1, 1);
     let file = INesFile::new(rom).unwrap();
-    let mut cartridge = create_cartridge(&file);
+    let (mut cartridge, _mirroring) = create_cartridge(&file);
 
     // Test that we can read from cartridge
     let val = cartridge.read(CARTRIDGE_START_ADDR);
@@ -88,7 +88,7 @@ fn create_cartridge_mapper0() {
 fn create_cartridge_mapper1() {
     let rom = create_test_nes(1, 2, 1);
     let file = INesFile::new(rom).unwrap();
-    let mut cartridge = create_cartridge(&file);
+    let (mut cartridge, _mirroring) = create_cartridge(&file);
 
     // Test that we can read from cartridge
     let val = cartridge.read(0x8000);
@@ -102,7 +102,7 @@ fn create_cartridge_mapper1() {
 fn create_cartridge_mapper1_with_chr_ram() {
     let rom = create_test_nes(1, 2, 0);
     let file = INesFile::new(rom).unwrap();
-    let mut cartridge = create_cartridge(&file);
+    let (mut cartridge, _mirroring) = create_cartridge(&file);
 
     cartridge.write_pattern(0x0010, 0xab);
 
@@ -114,7 +114,7 @@ fn create_cartridge_mapper1_with_chr_ram() {
 fn create_cartridge_mapper2() {
     let rom = create_test_nes(2, 2, 1);
     let file = INesFile::new(rom).unwrap();
-    let mut cartridge = create_cartridge(&file);
+    let (mut cartridge, _mirroring) = create_cartridge(&file);
 
     let val = cartridge.read(0x8000);
     assert_eq!(val, 0);
@@ -126,7 +126,7 @@ fn create_cartridge_mapper2() {
 fn create_cartridge_mapper2_with_chr_ram() {
     let rom = create_test_nes(2, 2, 0);
     let file = INesFile::new(rom).unwrap();
-    let mut cartridge = create_cartridge(&file);
+    let (mut cartridge, _mirroring) = create_cartridge(&file);
 
     cartridge.write_pattern(0x0010, 0xab);
 
@@ -138,7 +138,7 @@ fn create_cartridge_mapper2_with_chr_ram() {
 fn create_cartridge_mapper3() {
     let rom = create_test_nes(3, 2, 2);
     let file = INesFile::new(rom).unwrap();
-    let mut cartridge = create_cartridge(&file);
+    let (mut cartridge, _mirroring) = create_cartridge(&file);
 
     let val = cartridge.read(0x8000);
     assert_eq!(val, 0);
@@ -150,7 +150,7 @@ fn create_cartridge_mapper3() {
 fn create_cartridge_mapper4() {
     let rom = create_test_nes(4, 4, 1);
     let file = INesFile::new(rom).unwrap();
-    let mut cartridge = create_cartridge(&file);
+    let (mut cartridge, _mirroring) = create_cartridge(&file);
 
     let val = cartridge.read(0x8000);
     assert_eq!(val, 0);
@@ -162,7 +162,7 @@ fn create_cartridge_mapper4() {
 fn create_cartridge_mapper7() {
     let rom = create_test_nes(7, 4, 0);
     let file = INesFile::new(rom).unwrap();
-    let mut cartridge = create_cartridge(&file);
+    let (mut cartridge, _mirroring) = create_cartridge(&file);
 
     cartridge.write_pattern(0x0010, 0xab);
 
@@ -174,7 +174,7 @@ fn create_cartridge_mapper7() {
 fn create_cartridge_mapper34_bnrom() {
     let rom = create_test_nes(34, 4, 0);
     let file = INesFile::new(rom).unwrap();
-    let mut cartridge = create_cartridge(&file);
+    let (mut cartridge, _mirroring) = create_cartridge(&file);
 
     cartridge.write_pattern(0x0010, 0xab);
 
@@ -186,7 +186,7 @@ fn create_cartridge_mapper34_bnrom() {
 fn create_cartridge_mapper4_with_chr_ram() {
     let rom = create_test_nes(4, 4, 0);
     let file = INesFile::new(rom).unwrap();
-    let mut cartridge = create_cartridge(&file);
+    let (mut cartridge, _mirroring) = create_cartridge(&file);
 
     cartridge.write_pattern(0x0010, 0xab);
 
@@ -199,7 +199,7 @@ fn create_cartridge_unsupported_mapper() {
     let rom = create_test_nes(99, 1, 1);
     let file = INesFile::new(rom).unwrap();
     // This should panic
-    let _cartridge = create_cartridge(&file);
+    let (_cartridge, _mirroring) = create_cartridge(&file);
 }
 
 #[test]
@@ -207,7 +207,7 @@ fn create_cartridge_different_sizes() {
     // Test with 2 PRG pages (Mapper0 supports up to 32KB PRG ROM)
     let rom = create_test_nes(0, 2, 1);
     let file = INesFile::new(rom).unwrap();
-    let cartridge = create_cartridge(&file);
+    let (cartridge, _mirroring) = create_cartridge(&file);
 
     // Mapper0 has fixed 8KB CHR ROM regardless of input size
     assert_eq!(cartridge.pattern_ref().len(), 8 * 1024);

@@ -1,12 +1,12 @@
 use super::palette::color;
 use super::*;
-use crate::nes::mapper::{Cartridge, TestCartridge};
+use crate::nes::mapper::{Cartridge, Mirroring, TestCartridge};
 use crate::render::ImageRender;
 use crate::set_system_cycles;
 use image::Rgba;
 
 fn new_test_ppu_and_pattern() -> (Ppu, [u8; 8192]) {
-    (Ppu::new(()), [0; 8192])
+    (Ppu::new((), Mirroring::Horizontal), [0; 8192])
 }
 
 #[test]
@@ -153,7 +153,7 @@ fn test_peek_status_does_not_clear_vblank() {
 
 #[test]
 fn test_open_bus_bits_decay_to_zero() {
-    let mut ppu = Ppu::new(());
+    let mut ppu = Ppu::new((), Mirroring::Horizontal);
     let mut cartridge = new_test_cartridge();
 
     set_system_cycles(0);
@@ -165,7 +165,7 @@ fn test_open_bus_bits_decay_to_zero() {
 
 #[test]
 fn test_status_read_only_refreshes_high_bits() {
-    let mut ppu = Ppu::new(());
+    let mut ppu = Ppu::new((), Mirroring::Horizontal);
     let mut cartridge = new_test_cartridge();
 
     set_system_cycles(0);
@@ -185,7 +185,7 @@ fn create_test_ppu_with_mask(mask: PpuMask) -> Ppu {
     // Initialize PPU with the provided mask to avoid field reassignment
     let mut ppu = Ppu {
         effective_mask: mask,
-        ..Ppu::new(())
+        ..Ppu::new((), Mirroring::Horizontal)
     };
     ppu.registers.mask = mask;
     // Clear OAM
@@ -248,10 +248,9 @@ fn new_test_cartridge() -> Cartridge {
     Cartridge::Test(Box::new(TestCartridge::new()))
 }
 
-fn set_bg_tile(ppu: &mut Ppu, cartridge: &Cartridge, tile: u8, palette_idx: u8) {
-    let mirroring = cartridge.mirroring();
-    ppu.write_nametable(0x2000, tile, mirroring);
-    ppu.write_nametable(0x23c0, palette_idx & 0x03, mirroring);
+fn set_bg_tile(ppu: &mut Ppu, _cartridge: &Cartridge, tile: u8, palette_idx: u8) {
+    ppu.write_nametable(0x2000, tile);
+    ppu.write_nametable(0x23c0, palette_idx & 0x03);
 }
 
 fn set_bg_palette_color(ppu: &mut Ppu, palette_idx: u8, color_idx: u8, color: u8) {
@@ -349,7 +348,7 @@ fn test_render_pixel_both_disabled() {
 #[test]
 fn test_tick_renders_palette_color_when_rendering_disabled_and_vram_points_to_palette() {
     let mut ppu = Ppu {
-        ..Ppu::new(ImageRender::default_dimension())
+        ..Ppu::new(ImageRender::default_dimension(), Mirroring::Horizontal)
     };
     ppu.palette.write(0x3f00, 0x21);
     ppu.registers.vram_addr = 0x3f10;
@@ -367,7 +366,7 @@ fn test_tick_renders_palette_color_when_rendering_disabled_and_vram_points_to_pa
 #[test]
 fn test_tick_renders_background_color_when_rendering_disabled_and_vram_not_palette() {
     let mut ppu = Ppu {
-        ..Ppu::new(ImageRender::default_dimension())
+        ..Ppu::new(ImageRender::default_dimension(), Mirroring::Horizontal)
     };
     ppu.palette.write(0x3f00, 0x16);
     ppu.registers.vram_addr = 0x2000;
@@ -771,7 +770,7 @@ fn test_render_pixel_sprite_zero_hit() {
     render_pixel_with_setup(
         &mut ppu,
         &pattern,
-        |ppu, cart| ppu.write_nametable(0x2001, 0, cart.mirroring()),
+        |ppu, _cart| ppu.write_nametable(0x2001, 0),
         8,
         1,
     );
@@ -864,7 +863,7 @@ fn test_render_pixel_sprite_zero_not_at_x255() {
     render_pixel_with_setup(
         &mut ppu,
         &pattern,
-        |ppu, cart| ppu.write_nametable(0x201f, 0, cart.mirroring()),
+        |ppu, _cart| ppu.write_nametable(0x201f, 0),
         255,
         10,
     );

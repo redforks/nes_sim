@@ -1,5 +1,4 @@
-use super::CARTRIDGE_START_ADDR;
-use crate::nes::mapper::Mirroring;
+use super::{CARTRIDGE_START_ADDR, CartridgeOperation};
 
 const PRG_ROM_BANK_SIZE: usize = 0x8000;
 const CHR_SIZE: usize = 0x2000;
@@ -21,11 +20,10 @@ pub struct Mapper34 {
     selected_chr_bank_1: usize,
     prg_bank_count: usize,
     board: Board,
-    mirroring: Mirroring,
 }
 
 impl Mapper34 {
-    pub fn new(prg_rom: &[u8], chr_rom: &[u8], mirroring: Mirroring) -> Self {
+    pub fn new(prg_rom: &[u8], chr_rom: &[u8]) -> Self {
         debug_assert!(!prg_rom.is_empty());
         debug_assert_eq!(prg_rom.len() % PRG_ROM_BANK_SIZE, 0);
 
@@ -51,7 +49,6 @@ impl Mapper34 {
             selected_chr_bank_1: 0,
             prg_bank_count: prg_rom.len() / PRG_ROM_BANK_SIZE,
             board,
-            mirroring,
         }
     }
 
@@ -113,7 +110,7 @@ impl Mapper34 {
         }
     }
 
-    pub fn write(&mut self, address: u16, value: u8) {
+    pub fn write(&mut self, address: u16, value: u8) -> CartridgeOperation {
         match address {
             CARTRIDGE_START_ADDR..=0x7fff => {
                 self.ram[(address - CARTRIDGE_START_ADDR) as usize] = value;
@@ -131,10 +128,7 @@ impl Mapper34 {
             }
             _ => unreachable!("Invalid write address: {:#04x}", address),
         }
-    }
-
-    pub fn mirroring(&self) -> Mirroring {
-        self.mirroring
+        CartridgeOperation::None
     }
 }
 
@@ -150,7 +144,7 @@ mod tests {
         prg_rom[PRG_ROM_BANK_SIZE * 2] = 0x30;
         prg_rom[PRG_ROM_BANK_SIZE * 3] = 0x40;
 
-        let mut mapper = Mapper34::new(&prg_rom, &[], Mirroring::Horizontal);
+        let mut mapper = Mapper34::new(&prg_rom, &[]);
 
         assert_eq!(mapper.read(0x8000), 0x10);
 
@@ -163,19 +157,13 @@ mod tests {
 
     #[test]
     fn writes_to_chr_ram_when_chr_rom_is_absent() {
-        let mut mapper = Mapper34::new(&[0; PRG_ROM_BANK_SIZE], &[], Mirroring::Horizontal);
+        let mut mapper = Mapper34::new(&[0; PRG_ROM_BANK_SIZE], &[]);
 
         mapper.write_pattern(0x0000, 0x12);
         mapper.write_pattern(0x1fff, 0x34);
 
         assert_eq!(mapper.pattern_ref()[0], 0x12);
         assert_eq!(mapper.pattern_ref()[0x1fff], 0x34);
-    }
-
-    #[test]
-    fn keeps_hardwired_mirroring() {
-        let mapper = Mapper34::new(&[0; PRG_ROM_BANK_SIZE], &[], Mirroring::Vertical);
-        assert_eq!(mapper.mirroring(), Mirroring::Vertical);
     }
 
     #[test]
@@ -192,7 +180,7 @@ mod tests {
         chr_rom[0x6000] = 0xa4;
         chr_rom[0x7000] = 0xb4;
 
-        let mut mapper = Mapper34::new(&prg_rom, &chr_rom, Mirroring::Horizontal);
+        let mut mapper = Mapper34::new(&prg_rom, &chr_rom);
 
         mapper.write(0x7ffd, 0x01);
         mapper.write(0x7ffe, 0x02);

@@ -1,5 +1,4 @@
-use super::CARTRIDGE_START_ADDR;
-use crate::nes::mapper::Mirroring;
+use super::{CARTRIDGE_START_ADDR, CartridgeOperation};
 
 const PRG_ROM_SIZE: usize = 0x8000;
 const CHR_BANK_SIZE: usize = 0x2000;
@@ -14,11 +13,10 @@ pub struct Mapper3 {
     selected_chr_bank: usize,
     chr_bank_count: usize,
     ram: [u8; CARTRIDGE_RAM_SIZE],
-    mirroring: Mirroring,
 }
 
 impl Mapper3 {
-    pub fn new(prg_rom: &[u8], chr_rom: &[u8], mirroring: Mirroring) -> Self {
+    pub fn new(prg_rom: &[u8], chr_rom: &[u8]) -> Self {
         debug_assert!(!prg_rom.is_empty());
         debug_assert!(prg_rom.len() <= PRG_ROM_SIZE);
         debug_assert!(!chr_rom.is_empty());
@@ -32,7 +30,6 @@ impl Mapper3 {
             selected_chr_bank: 0,
             chr_bank_count: chr_rom.len() / CHR_BANK_SIZE,
             ram: [0; CARTRIDGE_RAM_SIZE],
-            mirroring,
         };
         mapper.prg_rom[..prg_rom.len()].copy_from_slice(prg_rom);
         mapper.refresh_chr_window();
@@ -74,7 +71,7 @@ impl Mapper3 {
         }
     }
 
-    pub fn write(&mut self, address: u16, value: u8) {
+    pub fn write(&mut self, address: u16, value: u8) -> CartridgeOperation {
         match address {
             CARTRIDGE_START_ADDR..=0x7fff => {
                 self.ram[(address - CARTRIDGE_START_ADDR) as usize] = value;
@@ -85,10 +82,7 @@ impl Mapper3 {
             }
             _ => unreachable!(),
         }
-    }
-
-    pub fn mirroring(&self) -> Mirroring {
-        self.mirroring
+        CartridgeOperation::None
     }
 }
 
@@ -98,7 +92,7 @@ mod tests {
 
     #[test]
     fn reads_and_writes_cartridge_ram() {
-        let mut mapper = Mapper3::new(&[0; 0x8000], &[0; CHR_BANK_SIZE], Mirroring::Horizontal);
+        let mut mapper = Mapper3::new(&[0; 0x8000], &[0; CHR_BANK_SIZE]);
 
         mapper.write(CARTRIDGE_START_ADDR, 0x12);
         mapper.write(0x7fff, 0x34);
@@ -113,7 +107,7 @@ mod tests {
         prg[0x0000] = 0x11;
         prg[0x3fff] = 0x22;
 
-        let mut mapper = Mapper3::new(&prg, &[0; CHR_BANK_SIZE], Mirroring::Horizontal);
+        let mut mapper = Mapper3::new(&prg, &[0; CHR_BANK_SIZE]);
 
         assert_eq!(mapper.read(0x8000), 0x11);
         assert_eq!(mapper.read(0xbfff), 0x22);
@@ -130,7 +124,7 @@ mod tests {
         chr[CHR_BANK_SIZE * 2] = 0x30;
         chr[CHR_BANK_SIZE * 3] = 0x40;
 
-        let mut mapper = Mapper3::new(&prg, &chr, Mirroring::Horizontal);
+        let mut mapper = Mapper3::new(&prg, &chr);
 
         assert_eq!(mapper.pattern_ref()[0], 0x10);
 
@@ -151,7 +145,7 @@ mod tests {
         chr[0] = 0xaa;
         chr[CHR_BANK_SIZE] = 0xbb;
 
-        let mut mapper = Mapper3::new(&prg, &chr, Mirroring::Horizontal);
+        let mut mapper = Mapper3::new(&prg, &chr);
 
         mapper.write(0x8000, 0x03);
 

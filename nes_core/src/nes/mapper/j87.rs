@@ -1,22 +1,20 @@
-use crate::nes::mapper::Mirroring;
+use super::CartridgeOperation;
 
 pub struct MapperJ87 {
     prg_rom: [u8; 32768],
     is_16k_prg_rom: bool,
     chr_rom_bands: [[u8; 8192]; 4],
     cur_chr_band: u8,
-    mirroring: Mirroring,
 }
 
 impl MapperJ87 {
-    pub fn new(prg_rom: &[u8], chr_rom: &[u8], mirroring: Mirroring) -> Self {
+    pub fn new(prg_rom: &[u8], chr_rom: &[u8]) -> Self {
         assert!(prg_rom.len() == (32 * 1024) || prg_rom.len() == (16 * 1024));
         let mut r = Self {
             prg_rom: [0; 32768],
             is_16k_prg_rom: prg_rom.len() == 16 * 1024,
             chr_rom_bands: [[0; 8192]; 4],
             cur_chr_band: 0,
-            mirroring,
         };
         r.prg_rom[..prg_rom.len()].copy_from_slice(prg_rom);
 
@@ -60,21 +58,18 @@ impl MapperJ87 {
         }
     }
 
-    pub fn write(&mut self, address: u16, value: u8) {
+    pub fn write(&mut self, address: u16, value: u8) -> CartridgeOperation {
         match address {
             0x6000..=0xffff => {
                 self.cur_chr_band = extract_band_selector_value(value);
             }
             _ => unreachable!(),
         }
+        CartridgeOperation::None
     }
 
     pub fn write_pattern(&mut self, address: u16, value: u8) {
         self.chr_rom_bands[self.cur_chr_band as usize][address as usize] = value;
-    }
-
-    pub fn mirroring(&self) -> Mirroring {
-        self.mirroring
     }
 }
 
