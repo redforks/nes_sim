@@ -109,7 +109,13 @@ impl Render for RecordRender {
     }
 
     fn set_pixel(&mut self, x: u32, y: u32, color: [u8; 4]) {
-        self.buffer.set_pixel(x, y, color);
+        let bx = x * 4;
+        let by = y * 4;
+        for dy in 0..4 {
+            for dx in 0..4 {
+                self.buffer.set_pixel(bx + dx, by + dy, color);
+            }
+        }
     }
 
     fn finish(&mut self) {
@@ -209,7 +215,7 @@ fn init_sdl_drivers(
     let canvas = if !headless {
         let video_subsystem = sdl_context.video().map_err(|e| anyhow::anyhow!(e))?;
         let window = video_subsystem
-            .window("NES Simulator - Movie Playback", 512, 480)
+            .window("NES Simulator - Movie Playback", 1024, 960)
             .position_centered()
             .build()
             .map_err(|e| anyhow::anyhow!(e))?;
@@ -219,7 +225,7 @@ fn init_sdl_drivers(
     };
 
     let render = RecordRender {
-        buffer: ImageRender::default_dimension(),
+        buffer: ImageRender::new(1024, 960),
         canvas,
         video_tx,
     };
@@ -272,7 +278,7 @@ impl PlayMovieAction {
                     "-pix_fmt",
                     "rgba",
                     "-s",
-                    "256x240",
+                    "1024x960",
                     "-r",
                     "60",
                     "-i",
@@ -289,8 +295,6 @@ impl PlayMovieAction {
                     "libx264",
                     "-crf",
                     "18",
-                    "-vf",
-                    "scale=1024:960:flags=neighbor",
                     "-pix_fmt",
                     "yuv420p",
                     "-c:a",
