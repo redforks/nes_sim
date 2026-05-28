@@ -91,13 +91,9 @@ pub struct PlayMovieAction {
     headless: bool,
 }
 
-struct RecordRender {
-    buffer: ImageRender,
-    canvas: Option<Canvas<Window>>,
-    video_tx: Option<mpsc::Sender<Vec<u8>>>,
-    icons: Vec<RgbaImage>,
-    a_pressed: bool,
-    b_pressed: bool,
+struct GamepadOverlay {
+    a: bool,
+    b: bool,
     up: bool,
     down: bool,
     left: bool,
@@ -112,16 +108,19 @@ struct RecordRender {
     hold_ab: u8,
 }
 
-impl std::fmt::Debug for RecordRender {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("RecordRender").finish_non_exhaustive()
+impl GamepadOverlay {
+    fn new() -> Self {
+        Self {
+            a: false, b: false, up: false, down: false, left: false, right: false,
+            disp_a: false, disp_b: false, disp_up: false, disp_down: false,
+            disp_left: false, disp_right: false,
+            hold_dir: 0, hold_ab: 0,
+        }
     }
-}
 
-impl RecordRender {
     fn set_input(&mut self, input: &GamepadInput) {
-        self.a_pressed = input.a();
-        self.b_pressed = input.b();
+        self.a = input.a();
+        self.b = input.b();
         self.up = input.up();
         self.down = input.down();
         self.left = input.left();
@@ -136,11 +135,35 @@ impl RecordRender {
             self.hold_dir = 18;
         }
 
-        let any_ab = self.a_pressed || self.b_pressed;
+        let any_ab = self.a || self.b;
         if any_ab {
-            self.disp_a = self.a_pressed;
-            self.disp_b = self.b_pressed;
+            self.disp_a = self.a;
+            self.disp_b = self.b;
             self.hold_ab = 18;
+        }
+    }
+
+    fn draw(&mut self, image: &mut RgbaImage, icons: &[RgbaImage], dir_x: i64, ab_x: i64, b_x: i64, y: i64) {
+        let draw_dir = self.hold_dir > 0;
+        let draw_ab = self.hold_ab > 0;
+        if draw_dir { self.hold_dir -= 1; }
+        if draw_ab { self.hold_ab -= 1; }
+        if !draw_dir && !draw_ab {
+            return;
+        }
+        if let Some(direction_idx) = Self::direction_icon_index(
+            draw_dir && self.disp_up,
+            draw_dir && self.disp_down,
+            draw_dir && self.disp_left,
+            draw_dir && self.disp_right,
+        ) {
+            imageops::overlay(image, &icons[direction_idx], dir_x, y);
+        }
+        if draw_ab && self.disp_a {
+            imageops::overlay(image, &icons[0], ab_x, y);
+        }
+        if draw_ab && self.disp_b {
+            imageops::overlay(image, &icons[1], b_x, y);
         }
     }
 
@@ -164,31 +187,41 @@ impl RecordRender {
             (true, true, true, true) => Some(16),
         }
     }
+}
+
+struct RecordRender {
+    buffer: ImageRender,
+    canvas: Option<Canvas<Window>>,
+    video_tx: Option<mpsc::Sender<Vec<u8>>>,
+    icons: Vec<RgbaImage>,
+    dual_player: bool,
+    p1: GamepadOverlay,
+    p2: GamepadOverlay,
+}
+
+impl std::fmt::Debug for RecordRender {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("RecordRender").finish_non_exhaustive()
+    }
+}
+
+impl RecordRender {
+    fn set_dual_player(&mut self, dual: bool) {
+        self.dual_player = dual;
+    }
+
+    fn set_input(&mut self, port0: &GamepadInput, port1: &GamepadInput) {
+        self.p1.set_input(port0);
+        self.p2.set_input(port1);
+    }
 
     fn overlay_input_icons(&mut self) {
         let image = self.buffer.borrow_image_mut();
-
-        if self.hold_dir > 0 {
-            self.hold_dir -= 1;
-            if let Some(direction_idx) = Self::direction_icon_index(
-                self.disp_up,
-                self.disp_down,
-                self.disp_left,
-                self.disp_right,
-            ) {
-                imageops::overlay(image, &self.icons[direction_idx], 820, 888);
-            }
-        }
-
-        if self.hold_ab > 0 {
-            self.hold_ab -= 1;
-            if self.disp_a {
-                imageops::overlay(image, &self.icons[0], 952, 888);
-            }
-
-            if self.disp_b {
-                imageops::overlay(image, &self.icons[1], 888, 888);
-            }
+        if self.dual_player {
+            self.p1.draw(image, &self.icons, 8, 80, 152, 888);
+            self.p2.draw(image, &self.icons, 820, 952, 888, 888);
+        } else {
+            self.p1.draw(image, &self.icons, 820, 952, 888, 888);
         }
     }
 }
@@ -338,20 +371,9 @@ fn init_sdl_drivers(
         canvas,
         video_tx,
         icons,
-        a_pressed: false,
-        b_pressed: false,
-        up: false,
-        down: false,
-        left: false,
-        right: false,
-        disp_a: false,
-        disp_b: false,
-        disp_up: false,
-        disp_down: false,
-        disp_left: false,
-        disp_right: false,
-        hold_dir: 0,
-        hold_ab: 0,
+        dual_player: false,
+        p1: GamepadOverlay::new(),
+        p2: GamepadOverlay::new(),
     };
 
     let audio_driver = RecordAudioDriver {
@@ -478,6 +500,7 @@ impl PlayMovieAction {
             init_sdl_drivers(&sdl_context, self.headless, video_tx, audio_tx)?;
 
         let mut machine = NesMachine::new(f, EmptyPlugin::new(), render, audio_driver);
+        machine.render_mut().set_dual_player(fm2.header.port1 == movie::InputDevice::Gamepad);
 
         let mut event_pump = if !self.headless {
             Some(sdl_context.event_pump().map_err(|e| anyhow::anyhow!(e))?)
@@ -512,7 +535,7 @@ impl PlayMovieAction {
                 );
                 set_controller_a_from_gamepad(&mut machine, &input_log.port0);
                 set_controller_b_from_gamepad(&mut machine, &input_log.port1);
-                machine.render_mut().set_input(&input_log.port0);
+                machine.render_mut().set_input(&input_log.port0, &input_log.port1);
             }
 
             match machine.process_frame() {
