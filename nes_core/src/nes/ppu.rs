@@ -128,6 +128,10 @@ impl<R: Render> Ppu<R> {
         &self.renderer
     }
 
+    pub fn renderer_mut(&mut self) -> &mut R {
+        &mut self.renderer
+    }
+
     fn scroll_xy(&self) -> (u16, u16) {
         let scroll_addr = self.registers.temp_vram_addr;
         let scroll_x = ((scroll_addr & 0x001f) << 3) | self.registers.fine_x as u16;

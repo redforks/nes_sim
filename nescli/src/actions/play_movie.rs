@@ -1,5 +1,5 @@
 use anyhow::{Context as _, Result};
-use image::EncodableLayout;
+use image::{EncodableLayout, RgbaImage, imageops, load_from_memory};
 use nes_core::{
     EmptyPlugin,
     ines::INesFile,
@@ -95,11 +95,68 @@ struct RecordRender {
     buffer: ImageRender,
     canvas: Option<Canvas<Window>>,
     video_tx: Option<mpsc::Sender<Vec<u8>>>,
+    icons: Vec<RgbaImage>,
+    a_pressed: bool,
+    b_pressed: bool,
+    up: bool,
+    down: bool,
+    left: bool,
+    right: bool,
 }
 
 impl std::fmt::Debug for RecordRender {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("RecordRender").finish_non_exhaustive()
+    }
+}
+
+impl RecordRender {
+    fn set_input(&mut self, input: &GamepadInput) {
+        self.a_pressed = input.a();
+        self.b_pressed = input.b();
+        self.up = input.up();
+        self.down = input.down();
+        self.left = input.left();
+        self.right = input.right();
+    }
+
+    fn direction_icon_index(up: bool, down: bool, left: bool, right: bool) -> Option<usize> {
+        match (up, down, left, right) {
+            (false, false, false, false) => None,
+            (false, false, false, true) => Some(4),
+            (false, false, true, false) => Some(3),
+            (false, false, true, true) => Some(10),
+            (false, true, false, false) => Some(2),
+            (false, true, false, true) => Some(9),
+            (false, true, true, false) => Some(7),
+            (false, true, true, true) => Some(12),
+            (true, false, false, false) => Some(5),
+            (true, false, false, true) => Some(6),
+            (true, false, true, false) => Some(8),
+            (true, false, true, true) => Some(14),
+            (true, true, false, false) => Some(11),
+            (true, true, false, true) => Some(15),
+            (true, true, true, false) => Some(13),
+            (true, true, true, true) => Some(16),
+        }
+    }
+
+    fn overlay_input_icons(&mut self) {
+        let image = self.buffer.borrow_image_mut();
+
+        if let Some(direction_idx) =
+            Self::direction_icon_index(self.up, self.down, self.left, self.right)
+        {
+            imageops::overlay(image, &self.icons[direction_idx], 8, 888);
+        }
+
+        if self.a_pressed {
+            imageops::overlay(image, &self.icons[0], 952, 888);
+        }
+
+        if self.b_pressed {
+            imageops::overlay(image, &self.icons[1], 888, 888);
+        }
     }
 }
 
@@ -119,6 +176,8 @@ impl Render for RecordRender {
     }
 
     fn finish(&mut self) {
+        self.overlay_input_icons();
+
         let image = self.buffer.borrow_image();
         let (width, height) = image.dimensions();
 
@@ -219,15 +278,39 @@ fn init_sdl_drivers(
             .position_centered()
             .build()
             .map_err(|e| anyhow::anyhow!(e))?;
-        Some(window.into_canvas().build().map_err(|e| anyhow::anyhow!(e))?)
+        Some(
+            window
+                .into_canvas()
+                .build()
+                .map_err(|e| anyhow::anyhow!(e))?,
+        )
     } else {
         None
     };
+
+    let sprite_bytes = include_bytes!("../../design/gamepad_sprite.png");
+    let sprite_sheet = load_from_memory(sprite_bytes)
+        .expect("failed to decode gamepad sprite")
+        .into_rgba8();
+    assert_eq!(sprite_sheet.width(), 1088);
+    assert_eq!(sprite_sheet.height(), 64);
+    let mut icons = Vec::with_capacity(17);
+    for i in 0..17 {
+        let icon = imageops::crop_imm(&sprite_sheet, i * 64, 0, 64, 64).to_image();
+        icons.push(icon);
+    }
 
     let render = RecordRender {
         buffer: ImageRender::new(1024, 960),
         canvas,
         video_tx,
+        icons,
+        a_pressed: false,
+        b_pressed: false,
+        up: false,
+        down: false,
+        left: false,
+        right: false,
     };
 
     let audio_driver = RecordAudioDriver {
@@ -350,7 +433,8 @@ impl PlayMovieAction {
         };
 
         let sdl_context = nes_sdl::sdl2::init().map_err(|e| anyhow::anyhow!(e))?;
-        let (render, audio_driver) = init_sdl_drivers(&sdl_context, self.headless, video_tx, audio_tx)?;
+        let (render, audio_driver) =
+            init_sdl_drivers(&sdl_context, self.headless, video_tx, audio_tx)?;
 
         let mut machine = NesMachine::new(f, EmptyPlugin::new(), render, audio_driver);
 
@@ -387,6 +471,7 @@ impl PlayMovieAction {
                 );
                 set_controller_a_from_gamepad(&mut machine, &input_log.port0);
                 set_controller_b_from_gamepad(&mut machine, &input_log.port1);
+                machine.render_mut().set_input(&input_log.port0);
             }
 
             match machine.process_frame() {
@@ -407,7 +492,10 @@ impl PlayMovieAction {
 
             if frame_index >= input_logs.len() {
                 if extra_frames_remaining == 0 {
-                    eprintln!(">> End of movie reached (after {} extra frames)", self.extra_frames);
+                    eprintln!(
+                        ">> End of movie reached (after {} extra frames)",
+                        self.extra_frames
+                    );
                     break 'running;
                 }
                 extra_frames_remaining -= 1;

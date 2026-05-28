@@ -37,6 +37,11 @@ impl ImageRender {
     pub fn borrow_image(&self) -> &RgbaImage {
         &self.image
     }
+
+    /// Get a mutable reference to the underlying image buffer
+    pub fn borrow_image_mut(&mut self) -> &mut RgbaImage {
+        &mut self.image
+    }
 }
 
 impl Render for ImageRender {

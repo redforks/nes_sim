@@ -155,6 +155,10 @@ impl<R: Render, D: AudioDriver> NesMcu<R, D> {
         &self.ppu
     }
 
+    pub fn ppu_mut(&mut self) -> &mut Ppu<R> {
+        &mut self.ppu
+    }
+
     pub fn dump_ppu_state(&self) -> String {
         self.ppu.dump_state(&self.cartridge)
     }

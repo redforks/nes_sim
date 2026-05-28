@@ -132,6 +132,10 @@ where
         self.machine.mcu_mut().release_controller_b(button);
     }
 
+    pub fn render_mut(&mut self) -> &mut R {
+        self.machine.mcu_mut().ppu_mut().renderer_mut()
+    }
+
     /// Set the CPU program counter.
     pub fn set_pc(&mut self, pc: u16) {
         self.machine.set_pc(pc);
