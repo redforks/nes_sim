@@ -16,9 +16,11 @@ use nes_sdl::{
     },
 };
 use std::{
+    cell::Cell,
     fs,
     io::Write,
     path::PathBuf,
+    rc::Rc,
     sync::mpsc,
     thread,
     time::{Duration, Instant},
@@ -89,6 +91,10 @@ pub struct PlayMovieAction {
     extra_frames: u32,
     #[arg(long)]
     headless: bool,
+    #[arg(long)]
+    auto_fast_forward: bool,
+    #[arg(long, default_value_t = 60)]
+    idle_frames: u32,
     #[arg(long)]
     gamepad_overlay: bool,
 }
@@ -222,6 +228,8 @@ struct RecordRender {
     enabled: bool,
     p1: GamepadOverlay,
     p2: GamepadOverlay,
+    ff_skip: bool,
+    ff_counter: u32,
 }
 
 impl std::fmt::Debug for RecordRender {
@@ -231,6 +239,13 @@ impl std::fmt::Debug for RecordRender {
 }
 
 impl RecordRender {
+    fn set_fast_forward(&mut self, enabled: bool) {
+        self.ff_skip = enabled;
+        if !enabled {
+            self.ff_counter = 0;
+        }
+    }
+
     fn set_dual_player(&mut self, dual: bool) {
         self.dual_player = dual;
     }
@@ -292,8 +307,18 @@ impl Render for RecordRender {
             canvas.present();
         }
 
+        let send_video = if self.ff_skip {
+            let send = self.ff_counter % 2 == 0;
+            self.ff_counter += 1;
+            send
+        } else {
+            true
+        };
+
         if let Some(ref tx) = self.video_tx {
-            let _ = tx.send(image.as_bytes().to_vec());
+            if send_video {
+                let _ = tx.send(image.as_bytes().to_vec());
+            }
         }
     }
 }
@@ -302,6 +327,8 @@ struct RecordAudioDriver {
     inner: SdlAudioDriver,
     audio_tx: Option<mpsc::Sender<Vec<u8>>>,
     sample_buf: Vec<f32>,
+    ff_skip: Rc<Cell<bool>>,
+    ff_counter: u32,
 }
 
 impl AudioDriver for RecordAudioDriver {
@@ -318,16 +345,24 @@ impl AudioDriver for RecordAudioDriver {
 
     fn flush(&mut self) {
         self.inner.flush();
+        let send_audio = if self.ff_skip.get() {
+            let send = self.ff_counter % 2 == 0;
+            self.ff_counter += 1;
+            send
+        } else {
+            self.ff_counter = 0;
+            true
+        };
         if let Some(ref tx) = self.audio_tx {
-            if !self.sample_buf.is_empty() {
+            if !self.sample_buf.is_empty() && send_audio {
                 let bytes: Vec<u8> = self
                     .sample_buf
                     .iter()
                     .flat_map(|s| s.to_le_bytes())
                     .collect();
                 let _ = tx.send(bytes);
-                self.sample_buf.clear();
             }
+            self.sample_buf.clear();
         }
     }
 }
@@ -349,11 +384,41 @@ impl Drop for FfmpegCleanup {
     }
 }
 
+/// Prescan input_logs to find fast-forward ranges.
+/// A frame at index `i` is fast-forward eligible if frames `i..i+idle_frames`
+/// all have empty input on both ports.
+fn compute_fast_forward_ranges(input_logs: &[movie::InputLog], idle_frames: usize) -> Vec<(usize, usize)> {
+    if input_logs.len() < idle_frames {
+        return Vec::new();
+    }
+    let mut ranges = Vec::new();
+    let mut i = 0;
+    while i < input_logs.len() {
+        if input_logs[i].port0.is_empty() && input_logs[i].port1.is_empty() {
+            let stretch_start = i;
+            while i < input_logs.len()
+                && input_logs[i].port0.is_empty()
+                && input_logs[i].port1.is_empty()
+            {
+                i += 1;
+            }
+            let stretch_len = i - stretch_start;
+            if stretch_len >= idle_frames {
+                ranges.push((stretch_start, i - (idle_frames - 1)));
+            }
+        } else {
+            i += 1;
+        }
+    }
+    ranges
+}
+
 fn init_sdl_drivers(
     sdl_context: &Sdl,
     headless: bool,
     video_tx: Option<mpsc::Sender<Vec<u8>>>,
     audio_tx: Option<mpsc::Sender<Vec<u8>>>,
+    ff_skip: Rc<Cell<bool>>,
 ) -> Result<(RecordRender, RecordAudioDriver)> {
     let audio_subsystem = sdl_context.audio().map_err(|e| anyhow::anyhow!(e))?;
 
@@ -406,12 +471,16 @@ fn init_sdl_drivers(
         enabled: false,
         p1: GamepadOverlay::new(),
         p2: GamepadOverlay::new(),
+        ff_skip: false,
+        ff_counter: 0,
     };
 
     let audio_driver = RecordAudioDriver {
         inner: sdl_audio,
         audio_tx,
         sample_buf: Vec::new(),
+        ff_skip,
+        ff_counter: 0,
     };
 
     Ok((render, audio_driver))
@@ -527,9 +596,21 @@ impl PlayMovieAction {
             )
         };
 
+        let ff_skip = Rc::new(Cell::new(false));
+        let fast_forward_ranges = if self.auto_fast_forward {
+            compute_fast_forward_ranges(input_logs, self.idle_frames as usize)
+        } else {
+            Vec::new()
+        };
+
         let sdl_context = nes_sdl::sdl2::init().map_err(|e| anyhow::anyhow!(e))?;
-        let (render, audio_driver) =
-            init_sdl_drivers(&sdl_context, self.headless, video_tx, audio_tx)?;
+        let (render, audio_driver) = init_sdl_drivers(
+            &sdl_context,
+            self.headless,
+            video_tx,
+            audio_tx,
+            ff_skip.clone(),
+        )?;
 
         let mut machine = NesMachine::new(f, EmptyPlugin::new(), render, audio_driver);
         let dual_player = input_logs.iter().any(|log| !log.port1.is_empty());
@@ -576,6 +657,19 @@ impl PlayMovieAction {
                     .set_input(&input_log.port0, &input_log.port1);
             }
 
+            if self.auto_fast_forward {
+                let current_idx = frame_index + frame_offset;
+                let is_idle = if current_idx >= input_logs.len() {
+                    true
+                } else {
+                    fast_forward_ranges
+                        .iter()
+                        .any(|&(start, end)| current_idx >= start && current_idx < end)
+                };
+                ff_skip.set(is_idle);
+                machine.render_mut().set_fast_forward(is_idle);
+            }
+
             match machine.process_frame() {
                 nes_core::ExecuteResult::Continue => {}
                 nes_core::ExecuteResult::ShouldReset => {
@@ -616,5 +710,149 @@ impl PlayMovieAction {
         drop(machine);
         drop(cleanup);
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use nes_core::movie::{Command, GamepadInput, InputLog};
+
+    use super::compute_fast_forward_ranges;
+
+    fn idle() -> InputLog {
+        InputLog::new(Command::from(0), GamepadInput::from(0), GamepadInput::from(0))
+    }
+
+    fn active_port0() -> InputLog {
+        InputLog::new(Command::from(0), GamepadInput::from(1), GamepadInput::from(0))
+    }
+
+    fn active_port1() -> InputLog {
+        InputLog::new(Command::from(0), GamepadInput::from(0), GamepadInput::from(1))
+    }
+
+    const IDLE_FRAMES: usize = 60;
+
+    #[test]
+    fn empty_logs() {
+        assert!(compute_fast_forward_ranges(&[], IDLE_FRAMES).is_empty());
+    }
+
+    #[test]
+    fn less_than_idle_frames_all_idle() {
+        let logs: Vec<_> = (0..59).map(|_| idle()).collect();
+        assert!(compute_fast_forward_ranges(&logs, IDLE_FRAMES).is_empty());
+    }
+
+    #[test]
+    fn exactly_idle_frames_idle() {
+        let logs: Vec<_> = (0..60).map(|_| idle()).collect();
+        assert_eq!(compute_fast_forward_ranges(&logs, IDLE_FRAMES), vec![(0, 1)]);
+    }
+
+    #[test]
+    fn exactly_idle_plus_one_idle() {
+        let logs: Vec<_> = (0..61).map(|_| idle()).collect();
+        assert_eq!(compute_fast_forward_ranges(&logs, IDLE_FRAMES), vec![(0, 2)]);
+    }
+
+    #[test]
+    fn hundred_idle_frames() {
+        let logs: Vec<_> = (0..100).map(|_| idle()).collect();
+        assert_eq!(compute_fast_forward_ranges(&logs, IDLE_FRAMES), vec![(0, 41)]);
+    }
+
+    #[test]
+    fn no_idle_frames() {
+        let logs: Vec<_> = (0..100).map(|_| active_port0()).collect();
+        assert!(compute_fast_forward_ranges(&logs, IDLE_FRAMES).is_empty());
+    }
+
+    #[test]
+    fn idle_stretch_too_short() {
+        let mut logs: Vec<_> = (0..50).map(|_| idle()).collect();
+        logs.extend((0..50).map(|_| active_port0()));
+        assert!(compute_fast_forward_ranges(&logs, IDLE_FRAMES).is_empty());
+    }
+
+    #[test]
+    fn active_frame_breaks_idle_stretch() {
+        let mut logs: Vec<_> = (0..50).map(|_| idle()).collect();
+        logs.push(active_port0());
+        logs.extend((0..49).map(|_| idle()));
+        assert!(compute_fast_forward_ranges(&logs, IDLE_FRAMES).is_empty());
+    }
+
+    #[test]
+    fn two_separate_idle_ranges() {
+        let mut logs: Vec<_> = (0..100).map(|_| idle()).collect();
+        logs.push(active_port0());
+        logs.extend((0..100).map(|_| idle()));
+        assert_eq!(
+            compute_fast_forward_ranges(&logs, IDLE_FRAMES),
+            vec![(0, 41), (101, 142)]
+        );
+    }
+
+    #[test]
+    fn only_last_idle_frames_idle() {
+        let mut logs: Vec<_> = (0..60).map(|_| active_port0()).collect();
+        logs.extend((0..60).map(|_| idle()));
+        assert_eq!(compute_fast_forward_ranges(&logs, IDLE_FRAMES), vec![(60, 61)]);
+    }
+
+    #[test]
+    fn first_frame_active_rest_idle() {
+        let mut logs = vec![active_port0()];
+        logs.extend((0..99).map(|_| idle()));
+        assert_eq!(compute_fast_forward_ranges(&logs, IDLE_FRAMES), vec![(1, 41)]);
+    }
+
+    #[test]
+    fn active_frame_within_lookahead_window() {
+        let mut logs: Vec<_> = (0..40).map(|_| idle()).collect();
+        logs.push(active_port1());
+        logs.extend((0..39).map(|_| idle()));
+        assert!(compute_fast_forward_ranges(&logs, IDLE_FRAMES).is_empty());
+    }
+
+    #[test]
+    fn port0_active_counts_as_non_idle() {
+        let mut logs: Vec<_> = (0..60).map(|_| idle()).collect();
+        logs.push(InputLog::new(
+            Command::from(0),
+            GamepadInput::from(0b00001000),
+            GamepadInput::from(0),
+        ));
+        assert_eq!(compute_fast_forward_ranges(&logs, IDLE_FRAMES), vec![(0, 1)]);
+    }
+
+    #[test]
+    fn port1_active_counts_as_non_idle() {
+        let mut logs: Vec<_> = (0..60).map(|_| idle()).collect();
+        logs.push(InputLog::new(
+            Command::from(0),
+            GamepadInput::from(0),
+            GamepadInput::from(0b00000010),
+        ));
+        assert_eq!(compute_fast_forward_ranges(&logs, IDLE_FRAMES), vec![(0, 1)]);
+    }
+
+    #[test]
+    fn both_ports_must_be_empty() {
+        let mut logs: Vec<_> = (0..60).map(|_| idle()).collect();
+        logs.push(InputLog::new(
+            Command::from(0),
+            GamepadInput::from(0),
+            GamepadInput::from(0b00000001),
+        ));
+        assert_eq!(compute_fast_forward_ranges(&logs, IDLE_FRAMES), vec![(0, 1)]);
+    }
+
+    #[test]
+    fn custom_idle_frames() {
+        let logs: Vec<_> = (0..30).map(|_| idle()).collect();
+        assert_eq!(compute_fast_forward_ranges(&logs, 30), vec![(0, 1)]);
+        assert!(compute_fast_forward_ranges(&logs, 31).is_empty());
     }
 }
