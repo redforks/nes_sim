@@ -17,10 +17,6 @@ impl Nametable {
         self.mirroring = mirroring;
     }
 
-    pub fn mirroring(&self) -> Mirroring {
-        self.mirroring
-    }
-
     pub fn read(&self, addr: u16) -> u8 {
         self.mem[self.mirroring.name_table_offset(addr) as usize]
     }
