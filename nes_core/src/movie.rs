@@ -130,6 +130,13 @@ pub struct GamepadInput {
     pub right: bool,
 }
 
+impl GamepadInput {
+    /// Returns true if all buttons are not pressed
+    pub fn is_empty(self) -> bool {
+        u8::from(self) == 0
+    }
+}
+
 pub struct ZapperInput {
     pub z: i32,
     pub q: u8,

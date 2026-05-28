@@ -500,7 +500,8 @@ impl PlayMovieAction {
             init_sdl_drivers(&sdl_context, self.headless, video_tx, audio_tx)?;
 
         let mut machine = NesMachine::new(f, EmptyPlugin::new(), render, audio_driver);
-        machine.render_mut().set_dual_player(fm2.header.port1 == movie::InputDevice::Gamepad);
+        let dual_player = input_logs.iter().any(|log| !log.port1.is_empty());
+        machine.render_mut().set_dual_player(dual_player);
 
         let mut event_pump = if !self.headless {
             Some(sdl_context.event_pump().map_err(|e| anyhow::anyhow!(e))?)
