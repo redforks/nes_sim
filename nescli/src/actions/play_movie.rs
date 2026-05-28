@@ -176,7 +176,7 @@ impl RecordRender {
                 self.disp_left,
                 self.disp_right,
             ) {
-                imageops::overlay(image, &self.icons[direction_idx], 8, 888);
+                imageops::overlay(image, &self.icons[direction_idx], 820, 888);
             }
         }
 
