@@ -271,10 +271,6 @@ impl RecordRender {
 }
 
 impl Render for RecordRender {
-    fn clear(&mut self, color: [u8; 4]) {
-        self.buffer.clear(color);
-    }
-
     fn set_pixel(&mut self, x: u32, y: u32, color: [u8; 4]) {
         let bx = x * 4;
         let by = y * 4;

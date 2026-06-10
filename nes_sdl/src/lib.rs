@@ -96,10 +96,6 @@ impl SdlRender {
 }
 
 impl Render for SdlRender {
-    fn clear(&mut self, color: [u8; 4]) {
-        self.image.clear(color);
-    }
-
     fn set_pixel(&mut self, x: u32, y: u32, color: [u8; 4]) {
         self.image.set_pixel(x, y, color);
     }

@@ -45,13 +45,6 @@ impl ImageRender {
 }
 
 impl Render for ImageRender {
-    fn clear(&mut self, color: [u8; 4]) {
-        let pixel = Rgba(color);
-        for p in self.image.pixels_mut() {
-            *p = pixel;
-        }
-    }
-
     fn set_pixel(&mut self, x: u32, y: u32, color: [u8; 4]) {
         self.image.put_pixel(x, y, Rgba(color));
     }
@@ -60,18 +53,6 @@ impl Render for ImageRender {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn test_image_render_clear() {
-        let mut renderer = ImageRender::new(10, 10);
-        renderer.clear([255, 0, 0, 255]);
-
-        // Check that all pixels are red
-        let image = renderer.borrow_image();
-        for pixel in image.pixels() {
-            assert_eq!(*pixel, Rgba([255, 0, 0, 255]));
-        }
-    }
 
     #[test]
     fn test_image_render_set_pixel() {

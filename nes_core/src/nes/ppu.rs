@@ -389,12 +389,6 @@ impl<R: Render> Ppu<R> {
             }
         }
 
-        // At end of pre-render scanline (261), clear screen for next frame
-        if rendering_enabled && self.scanline == VBLANK_CLEAR_SCANLINE && self.dot == 0 {
-            let bg_color = self.palette.backdrop_color();
-            self.renderer.clear(bg_color.0);
-        }
-
         if self.scanline == VBLANK_SET_SCANLINE && self.dot == VBLANK_SET_DOT {
             self.renderer.finish();
             if self

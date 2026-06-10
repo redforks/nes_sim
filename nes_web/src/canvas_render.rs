@@ -42,12 +42,6 @@ impl CanvasRender {
 }
 
 impl Render for CanvasRender {
-    fn clear(&mut self, color: [u8; 4]) {
-        for px in self.buffer.chunks_exact_mut(4) {
-            px.copy_from_slice(&color);
-        }
-    }
-
     fn set_pixel(&mut self, x: u32, y: u32, color: [u8; 4]) {
         if x >= self.width || y >= self.height {
             return;
