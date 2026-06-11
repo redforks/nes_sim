@@ -268,8 +268,7 @@ fn set_universal_bg_color(ppu: &mut Ppu, color: u8) {
 }
 
 /// Render a single pixel (for testing)
-fn render_pixel(ppu: &mut Ppu, pattern: &[u8], x: u8, y: u8) -> Pixel {
-    // Build a temporary Cartridge::Test and fill its CHR with pattern bytes
+fn render_pixel(ppu: &mut Ppu, pattern: &[u8], x: u8, y: u8) -> u8 {
     let mut cart = Cartridge::Test(Box::new(TestCartridge::new()));
     if !pattern.is_empty()
         && let Cartridge::Test(tc) = &mut cart
@@ -278,8 +277,6 @@ fn render_pixel(ppu: &mut Ppu, pattern: &[u8], x: u8, y: u8) -> Pixel {
             tc.chr_rom[i] = pattern[i % pattern.len()];
         }
     }
-    // prepare_scanline_cache is now a no-op; render_pixel computes sprites on-the-fly
-    // ensure ppu.scanline matches requested y for on-the-fly sprite lookup
     ppu.scanline = y as u16;
     ppu.render_pixel(x, &mut cart)
 }
@@ -314,10 +311,9 @@ where
         }
     }
     setup(ppu, &mut cart);
-    // ensure ppu.scanline matches requested y for on-the-fly sprite lookup
     ppu.scanline = y as u16;
-    let pixel = ppu.render_pixel(x, &mut cart);
-    ppu.registers.mask.apply_effects(pixel)
+    let pixel_idx = ppu.render_pixel(x, &mut cart);
+    ppu.registers.mask.apply_effects(color(pixel_idx))
 }
 
 #[test]
@@ -342,7 +338,7 @@ fn test_render_pixel_both_disabled() {
     set_universal_bg_color(&mut ppu, 0x21);
 
     let pixel = render_pixel(&mut ppu, &pattern, 10, 10);
-    assert_eq!(pixel, color(0x21));
+    assert_eq!(pixel, 0x21);
 }
 
 #[test]
@@ -394,7 +390,7 @@ fn test_render_pixel_transparent_bg_and_sprite_use_backdrop_color() {
     set_universal_bg_color(&mut ppu, 0x2c);
 
     let pixel = render_pixel(&mut ppu, &pattern, 12, 34);
-    assert_eq!(pixel, color(0x2c));
+    assert_eq!(pixel, 0x2c);
 }
 
 #[test]
@@ -410,7 +406,7 @@ fn test_render_pixel_returns_sprite_color_when_background_disabled() {
     setup_sprite(&mut ppu, 0, 0, 1, 0, 0);
 
     let pixel = render_pixel(&mut ppu, &pattern, 0, 1);
-    assert_eq!(pixel, color(0x27));
+    assert_eq!(pixel, 0x27);
 }
 
 #[test]
@@ -524,7 +520,7 @@ fn test_render_pixel_uses_highest_priority_opaque_sprite() {
     setup_sprite(&mut ppu, 1, 0, 2, 1, 0);
 
     let pixel = render_pixel(&mut ppu, &pattern, 0, 1);
-    assert_eq!(pixel, color(0x26));
+    assert_eq!(pixel, 0x26);
 }
 
 #[test]
@@ -562,7 +558,7 @@ fn test_render_pixel_skips_transparent_higher_priority_sprite() {
     setup_sprite(&mut ppu, 1, 0, 2, 1, 0);
 
     let pixel = render_pixel(&mut ppu, &pattern, 0, 1);
-    assert_eq!(pixel, color(0x37));
+    assert_eq!(pixel, 0x37);
 }
 
 #[test]
@@ -599,7 +595,7 @@ fn test_render_pixel_respects_sprite_pattern_table_selection() {
     setup_sprite(&mut ppu, 0, 0, 1, 0, 0);
 
     let pixel = render_pixel(&mut ppu, &pattern, 0, 1);
-    assert_eq!(pixel, color(0x29));
+    assert_eq!(pixel, 0x29);
 }
 
 #[test]
@@ -620,7 +616,7 @@ fn test_render_pixel_respects_sprite_flipping() {
     // If sprite_pos.x = 0, then screen_x = 7
     // If sprite_pos.y = 10, then screen_y = 10 + 7 = 17
     let pixel = render_pixel(&mut ppu, &pattern, 7, 18);
-    assert_eq!(pixel, color(0x2a));
+    assert_eq!(pixel, 0x2a);
 }
 
 #[test]
@@ -637,7 +633,7 @@ fn test_render_pixel_uses_second_tile_for_8x16_sprites() {
     setup_sprite(&mut ppu, 0, 0, 0, 0, 0);
 
     let pixel = render_pixel(&mut ppu, &pattern, 0, 9);
-    assert_eq!(pixel, color(0x2b));
+    assert_eq!(pixel, 0x2b);
 }
 
 #[test]
@@ -654,7 +650,7 @@ fn test_render_pixel_uses_odd_tile_bank_for_8x16_sprites() {
     setup_sprite(&mut ppu, 0, 0, 3, 0, 0);
 
     let pixel = render_pixel(&mut ppu, &pattern, 0, 1);
-    assert_eq!(pixel, color(0x2c));
+    assert_eq!(pixel, 0x2c);
 }
 
 #[test]
@@ -671,7 +667,7 @@ fn test_render_pixel_uses_vertical_flip_for_8x16_sprites() {
     setup_sprite(&mut ppu, 0, 0, 0, 0x80, 0);
 
     let pixel = render_pixel(&mut ppu, &pattern, 0, 15);
-    assert_eq!(pixel, color(0x2d));
+    assert_eq!(pixel, 0x2d);
 }
 
 #[test]
@@ -913,7 +909,7 @@ fn test_render_pixel_grayscale_mode_with_sprite() {
     set_sprite_palette_color(&mut ppu, 0, 1, 0x27);
     setup_sprite(&mut ppu, 0, 0, 1, 0, 0);
 
-    let pixel = render_pixel(&mut ppu, &pattern, 0, 1);
+    let pixel = color(render_pixel(&mut ppu, &pattern, 0, 1));
     let pixel = ppu.registers.mask.apply_effects(pixel);
     let (r, g, b) = pixel_to_rgb(pixel);
 

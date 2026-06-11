@@ -5,7 +5,7 @@ mod sprite;
 
 use crate::{get_system_cycles, nes::mapper::Cartridge, nes::mapper::Mirroring, render::Render};
 use nametable::Nametable;
-use palette::{Palette, Pixel};
+use palette::{Palette, Pixel, color};
 use registers::{PpuCtrl, PpuMask, PpuStatus, Registers};
 use sprite::SpriteManager;
 use std::fmt::Write;
@@ -360,12 +360,12 @@ impl<R: Render> Ppu<R> {
         // Visible pixels are output on dots 1-256; dot 0 is the idle fetch slot.
         if self.scanline < 240 && (1..=256).contains(&self.dot) {
             let x = (self.dot - 1) as u8;
-            let pixel = if rendering_enabled {
+            let pixel_idx = if rendering_enabled {
                 self.render_pixel(x, cartridge)
             } else {
-                self.palette.disabled_color(self.registers.vram_addr)
+                self.palette.disabled_color_index(self.registers.vram_addr)
             };
-            let pixel = self.effective_mask.apply_effects(pixel);
+            let pixel = self.effective_mask.apply_effects(color(pixel_idx));
             self.renderer
                 .set_pixel(x as u32, self.scanline as u32, pixel.0);
         }
@@ -491,7 +491,6 @@ impl<R: Render> Ppu<R> {
             // PPUMASK
             0x2001 => {
                 self.registers.mask = PpuMask::from_bits(value);
-                // mask changed; no cache to mark
             }
             // OAMADDR
             0x2003 => {
@@ -703,17 +702,14 @@ impl<R: Render> Ppu<R> {
         r
     }
 
-    fn render_pixel(&mut self, x: u8, cartridge: &mut Cartridge) -> Pixel {
-        // Compute background pixel on-the-fly (no cache) so that mid-scanline
-        // register writes ($2000, $2001, $2005, $2006) take effect immediately.
+    fn render_pixel(&mut self, x: u8, cartridge: &mut Cartridge) -> u8 {
         let (bg_palette_idx, bg_color_idx) = if self.effective_mask.background_enabled() {
             self.get_background_pixel(cartridge, x)
         } else {
-            (0, 0) // transparent
+            (0, 0)
         };
 
         let sprite_pixel = if self.effective_mask.sprite_enabled() {
-            // compute sprite pixel on-the-fly for this x and current scanline
             self.sprite.find_sprite_pixel(
                 &self.registers.oam_data,
                 self.registers.ctrl.sprite_size(),
@@ -750,20 +746,16 @@ impl<R: Render> Ppu<R> {
         match sprite_pixel {
             Some(sprite_pixel) => {
                 if bg_color_idx == 0 || !sprite_pixel.behind_bg {
-                    // Background is transparent OR sprite has priority
                     self.palette
-                        .get_sprite_color(sprite_pixel.palette_idx, sprite_pixel.color_idx)
+                        .get_sprite_color_index(sprite_pixel.palette_idx, sprite_pixel.color_idx)
                 } else {
-                    // Background has priority and is opaque
                     self.palette
-                        .get_background_color(bg_palette_idx, bg_color_idx)
+                        .get_background_color_index(bg_palette_idx, bg_color_idx)
                 }
             }
-            None => {
-                // No sprite, just show background
-                self.palette
-                    .get_background_color(bg_palette_idx, bg_color_idx)
-            }
+            None => self
+                .palette
+                .get_background_color_index(bg_palette_idx, bg_color_idx),
         }
     }
 }

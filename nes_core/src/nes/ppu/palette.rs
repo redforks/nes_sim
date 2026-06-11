@@ -51,14 +51,6 @@ const fn addr_to_index(addr: u16) -> u16 {
 }
 
 impl Palette {
-    pub fn disabled_color(&self, address: u16) -> Pixel {
-        if (address & 0xff00) == 0x3f00 {
-            color(self.read(address))
-        } else {
-            self.backdrop_color()
-        }
-    }
-
     pub fn read(&self, address: u16) -> u8 {
         self.data[addr_to_index(address) as usize]
     }
@@ -67,25 +59,29 @@ impl Palette {
         self.data[addr_to_index(address) as usize] = value;
     }
 
-    pub fn backdrop_color(&self) -> Pixel {
-        color(self.data[0])
+    pub fn disabled_color_index(&self, address: u16) -> u8 {
+        if (address & 0xff00) == 0x3f00 {
+            self.read(address)
+        } else {
+            self.data[0]
+        }
     }
 
-    fn get_color(&self, start: u8, palette_idx: u8, idx: u8) -> Pixel {
+    fn get_color_index(&self, start: u8, palette_idx: u8, idx: u8) -> u8 {
         let offset = if idx == 0 {
             0
         } else {
             (start | idx | (palette_idx << 2)) as usize
         };
-        color(self.data[offset & 0x1f])
+        self.data[offset & 0x1f]
     }
 
-    pub fn get_background_color(&self, palette_idx: u8, idx: u8) -> Pixel {
-        self.get_color(0, palette_idx, idx)
+    pub fn get_background_color_index(&self, palette_idx: u8, idx: u8) -> u8 {
+        self.get_color_index(0, palette_idx, idx)
     }
 
-    pub fn get_sprite_color(&self, palette_idx: u8, idx: u8) -> Pixel {
-        self.get_color(0x10, palette_idx, idx)
+    pub fn get_sprite_color_index(&self, palette_idx: u8, idx: u8) -> u8 {
+        self.get_color_index(0x10, palette_idx, idx)
     }
 }
 
@@ -117,11 +113,11 @@ mod tests {
         p.write(0x3f02, 17);
         p.write(0x3f03, 18);
         p.write(0x3f05, 19);
-        assert_eq!(color(15), p.get_background_color(0, 0));
-        assert_eq!(color(16), p.get_background_color(0, 1));
-        assert_eq!(color(17), p.get_background_color(0, 2));
-        assert_eq!(color(18), p.get_background_color(0, 3));
-        assert_eq!(color(19), p.get_background_color(1, 1));
+        assert_eq!(15, p.get_background_color_index(0, 0));
+        assert_eq!(16, p.get_background_color_index(0, 1));
+        assert_eq!(17, p.get_background_color_index(0, 2));
+        assert_eq!(18, p.get_background_color_index(0, 3));
+        assert_eq!(19, p.get_background_color_index(1, 1));
     }
 
     #[test_case(0x3f00 => 0)]
