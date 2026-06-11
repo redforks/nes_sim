@@ -363,8 +363,7 @@ impl<R: Render> Ppu<R> {
             let pixel = if rendering_enabled {
                 self.render_pixel(x, cartridge)
             } else {
-                self.palette
-                    .disabled_color(self.registers.vram_addr % 0x4000)
+                self.palette.disabled_color(self.registers.vram_addr)
             };
             let pixel = self.effective_mask.apply_effects(pixel);
             self.renderer
