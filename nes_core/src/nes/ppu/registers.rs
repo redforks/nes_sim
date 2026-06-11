@@ -38,32 +38,26 @@ pub struct PpuMask {
 impl PpuMask {
     /// Apply grayscale and emphasis effects to a pixel color using this mask's flags.
     pub fn apply_effects(&self, pixel: super::Pixel) -> super::Pixel {
-        let Rgba([r, g, b, a]) = pixel;
+        let Rgba([mut r, mut g, mut b, _]) = pixel;
 
-        let r = if self.red_tint() || (!self.green_tint() && !self.blue_tint()) {
-            r
-        } else {
-            (r as u16 * 192 / 256) as u8
-        };
-        let g = if self.green_tint() || (!self.red_tint() && !self.blue_tint()) {
-            g
-        } else {
-            (g as u16 * 192 / 256) as u8
-        };
-        let b = if self.blue_tint() || (!self.red_tint() && !self.green_tint()) {
-            b
-        } else {
-            (b as u16 * 192 / 256) as u8
-        };
+        if !self.red_tint() && (self.green_tint() || self.blue_tint()) {
+            r = (r as u16 * 192 / 256) as u8;
+        }
+        if !self.green_tint() && (self.red_tint() || self.blue_tint()) {
+            g = (g as u16 * 192 / 256) as u8;
+        }
+        if !self.blue_tint() && (self.red_tint() || self.green_tint()) {
+            b = (b as u16 * 192 / 256) as u8;
+        }
 
-        let (r, g, b) = if self.grayscale() {
+        if self.grayscale() {
             let gray = (r as u16 * 77 + g as u16 * 150 + b as u16 * 29) / 256;
-            (gray as u8, gray as u8, gray as u8)
-        } else {
-            (r, g, b)
+            r = gray as u8;
+            g = gray as u8;
+            b = gray as u8;
         };
 
-        Rgba([r, g, b, a])
+        Rgba([r, g, b, 0xff])
     }
 }
 
