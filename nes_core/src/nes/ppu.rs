@@ -42,18 +42,71 @@ impl BackgroundActivation {
     }
 }
 
+#[derive(Copy, Clone)]
+struct Timing {
+    scanline: u16,
+    dot: u16,
+    odd_frame: bool,
+    frame_no: usize,
+}
+
+impl Timing {
+    fn new() -> Self {
+        Self {
+            scanline: 0,
+            dot: 0,
+            odd_frame: false,
+            frame_no: 0,
+        }
+    }
+
+    fn reset(&mut self) {
+        self.odd_frame = false;
+    }
+
+    fn next_visible_x(&self) -> Option<u8> {
+        if self.scanline < 240 && (1..=256).contains(&self.dot) {
+            Some((self.dot - 1) as u8)
+        } else {
+            None
+        }
+    }
+
+    fn advance(&mut self, rendering_enabled: bool) {
+        if self.scanline == VBLANK_CLEAR_SCANLINE
+            && self.dot == DOTS_PER_SCANLINE - 2
+            && self.odd_frame
+            && rendering_enabled
+        {
+            self.dot = 0;
+            self.scanline = 0;
+            self.odd_frame = !self.odd_frame;
+            self.frame_no += 1;
+        } else {
+            self.dot += 1;
+            if self.dot >= DOTS_PER_SCANLINE {
+                self.dot = 0;
+                self.scanline += 1;
+                if self.scanline >= SCANLINES_PER_FRAME {
+                    self.scanline = 0;
+                    self.odd_frame = !self.odd_frame;
+                    self.frame_no += 1;
+                }
+            }
+        }
+    }
+}
+
 pub struct Ppu<R: Render = ()> {
     registers: Registers,
     palette: Palette, // palette memory
     nametable: Nametable,
     renderer: R,
 
-    // PPU timing
-    scanline: u16, // 0-261
-    dot: u16,      // 0-340
+    timing: Timing,
+
     background_anchor: Option<BackgroundActivation>,
     pending_background_activation: Option<BackgroundActivation>,
-    odd_frame: bool,
     sprite: SpriteManager,
     /// system clock when suppress nmi by reading status register
     suppressed_vblank_at: Option<u64>,
@@ -62,8 +115,6 @@ pub struct Ppu<R: Render = ()> {
     /// this delayed copy models the 1-dot internal pipeline delay.
     effective_mask: PpuMask,
     rendering_enabled_at_scanline_start: bool,
-
-    frame_no: usize,
 }
 
 /// PPU registers are mirrored every 8 bytes in range $2000-$3FFF
@@ -79,14 +130,11 @@ impl<R: Render> Ppu<R> {
             palette: Palette::default(),
             nametable: Nametable::new(mirroring),
             renderer,
-            scanline: 0,
-            dot: 0,
+            timing: Timing::new(),
             background_anchor: None,
             pending_background_activation: None,
-            odd_frame: false,
             sprite: SpriteManager::new(),
             suppressed_vblank_at: None,
-            frame_no: 0,
             effective_mask: PpuMask::new(),
             rendering_enabled_at_scanline_start: false,
         }
@@ -98,14 +146,14 @@ impl<R: Render> Ppu<R> {
         self.effective_mask = PpuMask::new();
         self.background_anchor = None;
         self.pending_background_activation = None;
-        self.odd_frame = false;
+        self.timing.reset();
         self.sprite.reset();
         self.registers.write_scroll(0);
         self.rendering_enabled_at_scanline_start = false;
     }
 
     pub fn timing(&self) -> (u16, u16) {
-        (self.scanline, self.dot)
+        (self.timing.scanline, self.timing.dot)
     }
 
     pub fn set_mirroring(&mut self, mirroring: Mirroring) {
@@ -121,7 +169,7 @@ impl<R: Render> Ppu<R> {
     }
 
     pub fn frame_no(&self) -> usize {
-        self.frame_no
+        self.timing.frame_no
     }
 
     pub fn renderer(&self) -> &R {
@@ -141,7 +189,7 @@ impl<R: Render> Ppu<R> {
 
     fn schedule_background_activation_if_visible(&mut self) {
         if self.rendering_enabled()
-            && let Some(screen_x) = self.next_visible_x()
+            && let Some(screen_x) = self.timing.next_visible_x()
         {
             let screen_x = screen_x.saturating_add(16);
             self.pending_background_activation =
@@ -155,14 +203,6 @@ impl<R: Render> Ppu<R> {
         {
             self.background_anchor = Some(pending);
             self.pending_background_activation = None;
-        }
-    }
-
-    fn next_visible_x(&self) -> Option<u8> {
-        if self.scanline < 240 && (1..=256).contains(&self.dot) {
-            Some((self.dot - 1) as u8)
-        } else {
-            None
         }
     }
 
@@ -207,11 +247,11 @@ impl<R: Render> Ppu<R> {
         let mut out = String::new();
 
         let _ = writeln!(out, "# PPU State");
-        let _ = writeln!(out, "- Frame: {}", self.frame_no);
+        let _ = writeln!(out, "- Frame: {}", self.timing.frame_no);
         let _ = writeln!(
             out,
             "- Timing: scanline {}, dot {}",
-            self.scanline, self.dot
+            self.timing.scanline, self.timing.dot
         );
         let cur_name_table_addr = 0x2000 + (self.registers.ctrl.name_table_select() as u16 * 0x400);
         let _ = writeln!(
@@ -255,7 +295,7 @@ impl<R: Render> Ppu<R> {
     pub fn tick(&mut self, cartridge: &mut Cartridge) {
         let rendering_enabled = self.rendering_enabled();
 
-        if self.dot == 0 {
+        if self.timing.dot == 0 {
             self.rendering_enabled_at_scanline_start = rendering_enabled;
         }
 
@@ -282,22 +322,23 @@ impl<R: Render> Ppu<R> {
         //
         // Manual $2006/$2007 writes still reach the mapper directly.
         if rendering_enabled
-            && (self.scanline < 240
-                || (self.scanline == 261 && self.rendering_enabled_at_scanline_start))
+            && (self.timing.scanline < 240
+                || (self.timing.scanline == 261 && self.rendering_enabled_at_scanline_start))
         {
-            let fetch_addr = if ((1..=256).contains(&self.dot) || (321..=336).contains(&self.dot))
-                && self.dot % 2 == 1
+            let fetch_addr = if ((1..=256).contains(&self.timing.dot)
+                || (321..=336).contains(&self.timing.dot))
+                && self.timing.dot % 2 == 1
             {
                 // BG tile fetch: only pattern-table accesses (fetch types 2-3).
                 // Notifications are shifted +2 dots (base 3/323 instead of 1/321)
                 // so that the first BG pattern appears at dot 7 rather than dot 5.
                 // Together with the sprite base (first pattern at dot 263), this
                 // gives the real hardware's 256-dot gap between mode $10 and $08.
-                let base_dot = if self.dot <= 256 { 3 } else { 323 };
-                if self.dot < base_dot {
+                let base_dot = if self.timing.dot <= 256 { 3 } else { 323 };
+                if self.timing.dot < base_dot {
                     None
                 } else {
-                    let fetch_type = (((self.dot - base_dot) / 2) % 4) as usize;
+                    let fetch_type = (((self.timing.dot - base_dot) / 2) % 4) as usize;
                     if fetch_type >= 2 {
                         Some(if self.registers.ctrl.background_pattern_table() {
                             0x1000
@@ -308,11 +349,11 @@ impl<R: Render> Ppu<R> {
                         None
                     }
                 }
-            } else if (259..=320).contains(&self.dot) && self.dot % 2 == 1 {
+            } else if (259..=320).contains(&self.timing.dot) && self.timing.dot % 2 == 1 {
                 // Sprite tile fetch: only pattern-table accesses (fetch types 2-3).
                 // Emitted on odd dots to align the MMC3 counter clock with the
                 // observed ~dot-260 hardware timing.
-                let fetch_type = (((self.dot - 259) / 2) % 4) as usize;
+                let fetch_type = (((self.timing.dot - 259) / 2) % 4) as usize;
                 if fetch_type >= 2 {
                     Some(
                         if self.registers.ctrl.sprite_size()
@@ -335,31 +376,31 @@ impl<R: Render> Ppu<R> {
             }
         }
 
-        if self.scanline < 240 && self.dot == 0 {
+        if self.timing.scanline < 240 && self.timing.dot == 0 {
             // compute background anchor at start of visible scanline
             self.background_anchor = Some(BackgroundActivation::snapshot(self, 0));
             self.pending_background_activation = None;
         }
 
-        if self.scanline < 240 && self.dot == 65 {
-            self.sprite.begin_sprite_overflow_eval(self.scanline);
+        if self.timing.scanline < 240 && self.timing.dot == 65 {
+            self.sprite.begin_sprite_overflow_eval(self.timing.scanline);
         }
 
         if rendering_enabled
-            && self.scanline < 240
-            && (65..=256).contains(&self.dot)
-            && self.dot % 2 == 1
+            && self.timing.scanline < 240
+            && (65..=256).contains(&self.timing.dot)
+            && self.timing.dot % 2 == 1
         {
             self.sprite.step_sprite_overflow_eval(
-                self.scanline,
+                self.timing.scanline,
                 self.registers.ctrl.sprite_size(),
                 &self.registers.oam_data,
             );
         }
 
         // Visible pixels are output on dots 1-256; dot 0 is the idle fetch slot.
-        if self.scanline < 240 && (1..=256).contains(&self.dot) {
-            let x = (self.dot - 1) as u8;
+        if self.timing.scanline < 240 && (1..=256).contains(&self.timing.dot) {
+            let x = (self.timing.dot - 1) as u8;
             let pixel_idx = if rendering_enabled {
                 self.render_pixel(x, cartridge)
             } else {
@@ -367,28 +408,32 @@ impl<R: Render> Ppu<R> {
             };
             let pixel = self.effective_mask.apply_effects(color(pixel_idx));
             self.renderer
-                .set_pixel(x as u32, self.scanline as u32, pixel.0);
+                .set_pixel(x as u32, self.timing.scanline as u32, pixel.0);
         }
 
         // --- vram_addr management (rendering-enabled only) ---
         // These model the real NES PPU's internal v-register updates:
         if rendering_enabled {
             // Fine Y increment at dot 256 of each visible scanline
-            if self.scanline < 240 && self.dot == 256 {
+            if self.timing.scanline < 240 && self.timing.dot == 256 {
                 self.increment_vram_y();
             }
             // Horizontal bits reload from temp at dot 257
             // (visible scanlines and pre-render scanline)
-            if (self.scanline < 240 || self.scanline == VBLANK_CLEAR_SCANLINE) && self.dot == 257 {
+            if (self.timing.scanline < 240 || self.timing.scanline == VBLANK_CLEAR_SCANLINE)
+                && self.timing.dot == 257
+            {
                 self.reload_horizontal_from_temp();
             }
             // Vertical bits reload from temp at dots 280-304 of pre-render scanline
-            if self.scanline == VBLANK_CLEAR_SCANLINE && (280..=304).contains(&self.dot) {
+            if self.timing.scanline == VBLANK_CLEAR_SCANLINE
+                && (280..=304).contains(&self.timing.dot)
+            {
                 self.reload_vertical_from_temp();
             }
         }
 
-        if self.scanline == VBLANK_SET_SCANLINE && self.dot == VBLANK_SET_DOT {
+        if self.timing.scanline == VBLANK_SET_SCANLINE && self.timing.dot == VBLANK_SET_DOT {
             self.renderer.finish();
             if self
                 .suppressed_vblank_at
@@ -400,37 +445,14 @@ impl<R: Render> Ppu<R> {
         }
 
         // VBlank clear: pre-render scanline 261, dot 1
-        if self.scanline == VBLANK_CLEAR_SCANLINE && self.dot == VBLANK_CLEAR_DOT {
+        if self.timing.scanline == VBLANK_CLEAR_SCANLINE && self.timing.dot == VBLANK_CLEAR_DOT {
             self.registers.status.set_v_blank(false);
             self.registers.status.set_sprite_overflow(false);
             self.registers.status.set_sprite_zero_hit(false);
             self.sprite.clear_pending();
         }
 
-        // On odd frames with rendering enabled, the pre-render scanline skips the
-        // final idle dot and wraps directly to scanline 0 dot 0.
-        if self.scanline == VBLANK_CLEAR_SCANLINE
-            && self.dot == DOTS_PER_SCANLINE - 2
-            && self.odd_frame
-            && rendering_enabled
-        {
-            self.dot = 0;
-            self.scanline = 0;
-            self.odd_frame = !self.odd_frame;
-            self.frame_no += 1;
-        } else {
-            // Advance dot/scanline counters
-            self.dot += 1;
-            if self.dot >= DOTS_PER_SCANLINE {
-                self.dot = 0;
-                self.scanline += 1;
-                if self.scanline >= SCANLINES_PER_FRAME {
-                    self.scanline = 0;
-                    self.odd_frame = !self.odd_frame;
-                    self.frame_no += 1;
-                }
-            }
-        }
+        self.timing.advance(rendering_enabled);
 
         self.effective_mask = self.registers.mask;
     }
@@ -692,7 +714,7 @@ impl<R: Render> Ppu<R> {
     /// Returns the current status and clears the v_blank flag
     fn read_status(&mut self) -> PpuStatus {
         let r = self.registers.status;
-        if self.scanline == VBLANK_SET_SCANLINE && self.dot == VBLANK_SET_DOT {
+        if self.timing.scanline == VBLANK_SET_SCANLINE && self.timing.dot == VBLANK_SET_DOT {
             self.suppressed_vblank_at = Some(get_system_cycles());
         }
 
@@ -717,7 +739,7 @@ impl<R: Render> Ppu<R> {
                 self.effective_mask.sprite_left_enabled(),
                 cartridge,
                 x,
-                self.scanline as u8,
+                self.timing.scanline as u8,
                 Self::read_pattern_pixel,
             )
         } else {
@@ -736,7 +758,7 @@ impl<R: Render> Ppu<R> {
                 self.registers.ctrl.sprite_pattern_table(),
                 cartridge,
                 x,
-                self.scanline as u8,
+                self.timing.scanline as u8,
                 Self::read_pattern_pixel,
             )
         {
