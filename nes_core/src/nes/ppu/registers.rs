@@ -224,3 +224,28 @@ impl Registers {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use image::Rgba;
+    use test_case::test_case;
+
+    const INPUT: Rgba<u8> = Rgba([180, 120, 60, 0xff]);
+
+    #[test_case(0b00000000, 180, 120, 60 ; "no effects")]
+    #[test_case(0b00100000, 180, 90, 45 ; "red_tint only")]
+    #[test_case(0b01000000, 135, 120, 45 ; "green_tint only")]
+    #[test_case(0b10000000, 135, 90, 60 ; "blue_tint only")]
+    #[test_case(0b01100000, 180, 120, 45 ; "red+green tint")]
+    #[test_case(0b10100000, 180, 90, 60 ; "red+blue tint")]
+    #[test_case(0b11000000, 135, 120, 60 ; "green+blue tint")]
+    #[test_case(0b11100000, 180, 120, 60 ; "all three tints")]
+    #[test_case(0b00000001, 131, 131, 131 ; "grayscale only")]
+    #[test_case(0b00100001, 111, 111, 111 ; "grayscale + red_tint")]
+    #[test_case(0b11100001, 131, 131, 131 ; "grayscale + all tints")]
+    fn test_apply_effects(mask_bits: u8, r: u8, g: u8, b: u8) {
+        let mask = PpuMask::from(mask_bits);
+        assert_eq!(mask.apply_effects(INPUT), Rgba([r, g, b, 0xff]));
+    }
+}
