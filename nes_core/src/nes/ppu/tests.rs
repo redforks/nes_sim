@@ -1,4 +1,3 @@
-use super::palette::color;
 use super::*;
 use crate::nes::mapper::{Cartridge, Mirroring, TestCartridge};
 use crate::render::ImageRender;
@@ -186,7 +185,7 @@ fn run_scanline(ppu: &mut Ppu, pattern: &[u8], scanline: u16) {
     }
 }
 
-fn render_pixel_with_setup<F>(ppu: &mut Ppu, pattern: &[u8], setup: F, x: u8, y: u8) -> Pixel
+fn render_pixel_with_setup<F>(ppu: &mut Ppu, pattern: &[u8], setup: F, x: u8, y: u8) -> u8
 where
     F: FnOnce(&mut Ppu, &mut Cartridge),
 {
@@ -200,8 +199,7 @@ where
     }
     setup(ppu, &mut cart);
     ppu.timing.scanline = y as u16;
-    let pixel_idx = ppu.render_pixel(x, &mut cart);
-    ppu.registers.mask.apply_effects(color(pixel_idx))
+    ppu.render_pixel(x, &mut cart)
 }
 
 #[test]
@@ -222,7 +220,7 @@ fn test_render_pixel_returns_background_color() {
         0,
         0,
     );
-    assert_eq!(pixel, color(0x16));
+    assert_eq!(pixel, 0x16);
 }
 
 #[test]
@@ -250,7 +248,10 @@ fn test_tick_renders_palette_color_when_rendering_disabled_and_vram_points_to_pa
     ppu.tick(&mut cart);
 
     let image = ppu.renderer.borrow_image();
-    assert_eq!(image.get_pixel(0, 0), &image::Rgba(color(0x21).0));
+    assert_eq!(
+        image.get_pixel(0, 0),
+        &image::Rgba(ppu.color_theme.color(0x21).0)
+    );
 }
 
 #[test]
@@ -268,7 +269,10 @@ fn test_tick_renders_background_color_when_rendering_disabled_and_vram_not_palet
     ppu.tick(&mut cart);
 
     let image = ppu.renderer.borrow_image();
-    assert_eq!(image.get_pixel(0, 0), &image::Rgba(color(0x16).0));
+    assert_eq!(
+        image.get_pixel(0, 0),
+        &image::Rgba(ppu.color_theme.color(0x16).0)
+    );
 }
 
 #[test]
@@ -324,7 +328,7 @@ fn test_render_pixel_transparent_sprite_falls_back_to_background() {
         0,
         1,
     );
-    assert_eq!(pixel, color(0x12));
+    assert_eq!(pixel, 0x12);
 }
 
 #[test]
@@ -350,7 +354,7 @@ fn test_render_pixel_sprite_in_front_of_background() {
         0,
         1,
     );
-    assert_eq!(pixel, color(0x22));
+    assert_eq!(pixel, 0x22);
 }
 
 #[test]
@@ -376,7 +380,7 @@ fn test_render_pixel_background_priority_when_sprite_is_behind() {
         0,
         1,
     );
-    assert_eq!(pixel, color(0x14));
+    assert_eq!(pixel, 0x14);
 }
 
 #[test]
@@ -400,7 +404,7 @@ fn test_render_pixel_sprite_behind_transparent_background() {
         0,
         1,
     );
-    assert_eq!(pixel, color(0x25));
+    assert_eq!(pixel, 0x25);
 }
 
 #[test]
@@ -425,7 +429,7 @@ fn test_render_pixel_applies_left_column_clipping() {
         0,
         1,
     );
-    assert_eq!(pixel, color(0x20));
+    assert_eq!(pixel, 0x20);
 }
 
 #[test]
@@ -471,7 +475,7 @@ fn test_render_pixel_applies_sprite_priority_before_background_priority() {
         1,
     );
     // Sprite is in front and opaque, so sprite color should show
-    assert_eq!(pixel, color(0x24));
+    assert_eq!(pixel, 0x24);
 }
 
 #[test]
@@ -512,7 +516,7 @@ fn test_render_pixel_respects_background_pattern_table_selection() {
         0,
         0,
     );
-    assert_eq!(pixel, color(0x28));
+    assert_eq!(pixel, 0x28);
 }
 
 #[test]
@@ -826,11 +830,7 @@ fn test_render_pixel_sprite_zero_not_at_x255() {
     assert!(!ppu.registers.status.sprite_zero_hit());
 }
 
-fn pixel_to_rgb(pixel: Pixel) -> (u8, u8, u8) {
-    pixel.to_rgb()
-}
-
-fn render_bg_pixel(mask: PpuMask) -> Pixel {
+fn render_bg_pixel(mask: PpuMask) -> u8 {
     let mut ppu = create_test_ppu_with_mask(mask);
     let mut pattern = create_pattern();
     set_tile_solid(&mut pattern, 0, 0, 1);
@@ -844,87 +844,6 @@ fn render_bg_pixel(mask: PpuMask) -> Pixel {
     )
 }
 
-#[test_case(0b00000000, true, true, true ; "no effects")]
-#[test_case(0b00100000, true, false, false ; "red emphasis")]
-#[test_case(0b01000000, false, true, false ; "green emphasis")]
-#[test_case(0b10000000, false, false, true ; "blue emphasis")]
-#[test_case(0b01100000, true, true, false ; "red+green emphasis")]
-#[test_case(0b10100000, true, false, true ; "red+blue emphasis")]
-#[test_case(0b11000000, false, true, true ; "green+blue emphasis")]
-#[test_case(0b11100000, true, true, true ; "all emphasis bits")]
-fn test_render_pixel_emphasis(
-    tint_bits: u8,
-    r_preserved: bool,
-    g_preserved: bool,
-    b_preserved: bool,
-) {
-    let with = render_bg_pixel(
-        PpuMask::from(tint_bits)
-            .with_background_enabled(true)
-            .with_background_left_enabled(true),
-    );
-    let without = render_bg_pixel(
-        PpuMask::new()
-            .with_background_enabled(true)
-            .with_background_left_enabled(true),
-    );
-
-    let (r_with, g_with, b_with) = pixel_to_rgb(with);
-    let (r_without, g_without, b_without) = pixel_to_rgb(without);
-
-    fn check(name: &str, channel: u8, reference: u8, preserved: bool) {
-        if preserved {
-            assert_eq!(channel, reference, "{name} should not change");
-        } else {
-            assert!(
-                channel < reference || reference == 0,
-                "{name} should be attenuated",
-            );
-        }
-    }
-
-    check("Red", r_with, r_without, r_preserved);
-    check("Green", g_with, g_without, g_preserved);
-    check("Blue", b_with, b_without, b_preserved);
-}
-
-#[test_case(false ; "background grayscale")]
-#[test_case(true ; "background grayscale with red emphasis")]
-fn test_render_pixel_grayscale_background(with_red_tint: bool) {
-    let pixel = render_bg_pixel(
-        PpuMask::new()
-            .with_background_enabled(true)
-            .with_background_left_enabled(true)
-            .with_grayscale(true)
-            .with_red_tint(with_red_tint),
-    );
-    let (r, g, b) = pixel_to_rgb(pixel);
-    assert_eq!(r, g, "Red and Green should be equal in grayscale mode");
-    assert_eq!(g, b, "Green and Blue should be equal in grayscale mode");
-}
-
-#[test]
-fn test_render_pixel_grayscale_mode_with_sprite() {
-    let mut ppu = create_test_ppu_with_mask(
-        PpuMask::new()
-            .with_sprite_enabled(true)
-            .with_sprite_left_enabled(true)
-            .with_grayscale(true),
-    );
-    let mut pattern = create_pattern();
-    set_tile_solid(&mut pattern, 0, 1, 1);
-    set_sprite_palette_color(&mut ppu, 0, 1, 0x27);
-    setup_sprite(&mut ppu, 0, 0, 1, 0, 0);
-
-    let pixel = color(render_pixel(&mut ppu, &pattern, 0, 1));
-    let pixel = ppu.registers.mask.apply_effects(pixel);
-    let (r, g, b) = pixel_to_rgb(pixel);
-
-    // In grayscale mode, R, G, and B should all be equal
-    assert_eq!(r, g, "Red and Green should be equal in grayscale mode");
-    assert_eq!(g, b, "Green and Blue should be equal in grayscale mode");
-}
-
 #[test]
 fn test_render_pixel_no_emphasis_no_change() {
     let pixel = render_bg_pixel(
@@ -932,7 +851,7 @@ fn test_render_pixel_no_emphasis_no_change() {
             .with_background_enabled(true)
             .with_background_left_enabled(true),
     );
-    assert_eq!(pixel, color(0x16));
+    assert_eq!(pixel, 0x16);
 }
 
 #[test_case(0, 340, false, false => (1, 0, false, 0); "dot wraps at scanline end")]

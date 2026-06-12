@@ -3,9 +3,16 @@ mod palette;
 mod registers;
 mod sprite;
 
-use crate::{get_system_cycles, nes::mapper::Cartridge, nes::mapper::Mirroring, render::Render};
+use crate::{
+    get_system_cycles,
+    nes::{
+        mapper::{Cartridge, Mirroring},
+        ppu::palette::ColorTheme,
+    },
+    render::Render,
+};
 use nametable::Nametable;
-use palette::{Palette, Pixel, color};
+use palette::{Palette, Pixel};
 use registers::{PpuCtrl, PpuMask, PpuStatus, Registers};
 use sprite::SpriteManager;
 
@@ -97,6 +104,7 @@ impl Timing {
 pub struct Ppu<R: Render = ()> {
     registers: Registers,
     palette: Palette, // palette memory
+    color_theme: ColorTheme,
     nametable: Nametable,
     renderer: R,
 
@@ -125,6 +133,7 @@ impl<R: Render> Ppu<R> {
         Ppu {
             registers: Registers::new(),
             palette: Palette::default(),
+            color_theme: ColorTheme::default(),
             nametable: Nametable::new(mirroring),
             renderer,
             timing: Timing::new(),
@@ -359,7 +368,9 @@ impl<R: Render> Ppu<R> {
             } else {
                 self.palette.disabled_color_index(self.registers.vram_addr)
             };
-            let pixel = self.effective_mask.apply_effects(color(pixel_idx));
+            let pixel = self
+                .effective_mask
+                .apply_effects(self.color_theme.color(pixel_idx));
             self.renderer.set_pixel(x, self.timing.scanline, pixel.0);
         }
 

@@ -15,44 +15,16 @@ impl Pixel {
     }
 }
 
-const fn rgb(v: [u8; 3]) -> Pixel {
-    let [r, g, b] = v;
-    Pixel::new(r, g, b)
-}
-
-#[rustfmt::skip]
-const COLORS: [Pixel; 64] = [
-    // 2C02
-    rgb([102, 102, 102]), rgb([0, 42, 136]), rgb([20, 18, 167]), rgb([59, 0, 164]),
-    rgb([92, 0, 126]), rgb([110, 0, 64]), rgb([108, 6, 0]), rgb([86, 29, 0]),
-    rgb([51, 53, 0]), rgb([11, 72, 0]), rgb([0, 82, 0]), rgb([0, 79, 8]),
-    rgb([0, 64, 77]), rgb([0, 0, 0]), rgb([0, 0, 0]), rgb([0, 0, 0]),
-
-    rgb([173, 173, 173]), rgb([21, 95, 217]), rgb([66, 64, 255]), rgb([117, 39, 254]),
-    rgb([160, 26, 204]), rgb([183, 30, 123]), rgb([181, 49, 32]), rgb([153, 78, 0]),
-    rgb([107, 109, 0]), rgb([56, 135, 0]), rgb([12, 147, 0]), rgb([0, 143, 50]),
-    rgb([0, 124, 141]), rgb([0, 0, 0]), rgb([0, 0, 0]), rgb([0, 0, 0]),
-
-    rgb([255, 254, 255]), rgb([100, 176, 255]), rgb([146, 144, 255]), rgb([198, 118, 255]),
-    rgb([243, 106, 255]), rgb([254, 110, 204]), rgb([254, 129, 112]), rgb([234, 158, 34]),
-    rgb([188, 190, 0]), rgb([136, 216, 0]), rgb([92, 228, 48]), rgb([69, 224, 130]),
-    rgb([72, 205, 222]), rgb([79, 79, 79]), rgb([0, 0, 0]), rgb([0, 0, 0]),
-
-    rgb([255, 254, 255]), rgb([192, 223, 255]), rgb([211, 210, 255]), rgb([232, 200, 255]),
-    rgb([251, 194, 255]), rgb([254, 196, 234]), rgb([254, 204, 197]), rgb([247, 216, 165]),
-    rgb([228, 229, 148]), rgb([207, 239, 150]), rgb([189, 244, 171]), rgb([179, 243, 204]),
-    rgb([179, 235, 242]), rgb([184, 184, 184]), rgb([0, 0, 0]), rgb([0, 0, 0]),
-];
-
-/// Return palette color by index (0..63).
-pub fn color(index: u8) -> Pixel {
-    COLORS[(index as usize) & 0x3F]
-}
-
 /// Memory layout of .pal file, contains 64 pixels, each pixes has three bytes (r, g, b)
 pub type PalBuf = [u8; 192];
 
 pub struct ColorTheme([Pixel; 64]);
+
+impl Default for ColorTheme {
+    fn default() -> Self {
+        Self::load_from_pal_buf(include_bytes!("./default.pal"))
+    }
+}
 
 impl ColorTheme {
     pub fn load_from_pal_buf(buf: &PalBuf) -> Self {
@@ -63,16 +35,8 @@ impl ColorTheme {
         Self(pixels)
     }
 
-    pub fn into_pal_buf(self) -> PalBuf {
-        let mut buf = [0u8; 192];
-        for (i, pixel) in self.0.iter().enumerate() {
-            let (r, g, b) = pixel.to_rgb();
-            let offset = i * 3;
-            buf[offset] = r;
-            buf[offset + 1] = g;
-            buf[offset + 2] = b;
-        }
-        buf
+    pub fn color(&self, index: u8) -> Pixel {
+        self.0[(index as usize) & 0x3F]
     }
 }
 
@@ -168,20 +132,6 @@ mod tests {
     }
 
     #[test]
-    fn load_from_pal_buf_roundtrip() {
-        let mut buf = [0u8; 192];
-        for i in 0..64u8 {
-            let offset = i as usize * 3;
-            buf[offset] = i.wrapping_mul(11);
-            buf[offset + 1] = i.wrapping_mul(23);
-            buf[offset + 2] = i.wrapping_mul(37);
-        }
-        let theme = ColorTheme::load_from_pal_buf(&buf);
-        let out = theme.into_pal_buf();
-        assert_eq!(buf, out);
-    }
-
-    #[test]
     fn load_from_pal_buf_all_black() {
         let buf = [0u8; 192];
         let theme = ColorTheme::load_from_pal_buf(&buf);
@@ -202,17 +152,6 @@ mod tests {
         assert_eq!(theme.0[2], Pixel::new(0, 0, 255));
     }
 
-    #[test]
-    fn into_pal_buf_expected_layout() {
-        let pixels = [Pixel::new(0, 0, 0); 64];
-        let theme = ColorTheme(pixels);
-        let buf = theme.into_pal_buf();
-        assert_eq!(buf.len(), 192);
-        for (i, chunk) in buf.chunks_exact(3).enumerate() {
-            assert_eq!(chunk, &[0, 0, 0], "pixel {i} is not zero");
-        }
-    }
-
     #[test_case(0x3f00, 0x3f10, 0)]
     #[test_case(0x3f04, 0x3f14, 0x04)]
     #[test_case(0x3f08, 0x3f18, 0x08)]
@@ -222,13 +161,5 @@ mod tests {
         let sprite = addr_to_index(sprite_addr);
         assert_eq!(back, exp_index);
         assert_eq!(sprite, exp_index);
-    }
-
-    #[test]
-    fn save_default_pal() {
-        let theme = ColorTheme(COLORS);
-        let buf = theme.into_pal_buf();
-        let mut f = std::fs::File::create("/tmp/default.pal").unwrap();
-        std::io::Write::write_all(&mut f, &buf).unwrap();
     }
 }
