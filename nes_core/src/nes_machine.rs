@@ -10,7 +10,6 @@ use crate::{
     },
     render::Render,
 };
-use std::fs;
 
 /// Safety limit: maximum system ticks per `process_frame()` call.
 /// A full frame is 89,342 PPU dots, and one system tick now maps to one PPU dot.
@@ -139,15 +138,6 @@ where
     /// Set the CPU program counter.
     pub fn set_pc(&mut self, pc: u16) {
         self.machine.set_pc(pc);
-    }
-
-    pub fn dump_ppu_state_to_file(&self) -> std::io::Result<String> {
-        let mcu = self.machine.mcu();
-        let (scanline, dot) = mcu.ppu_timing();
-        let frame_no = mcu.ppu().frame_no();
-        let path = format!("/tmp/ppu-{}-{}-{}.md", frame_no, scanline, dot);
-        fs::write(&path, mcu.dump_ppu_state())?;
-        Ok(path)
     }
 }
 

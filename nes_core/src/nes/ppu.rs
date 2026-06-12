@@ -8,7 +8,6 @@ use nametable::Nametable;
 use palette::{Palette, Pixel, color};
 use registers::{PpuCtrl, PpuMask, PpuStatus, Registers};
 use sprite::SpriteManager;
-use std::fmt::Write;
 
 // Pixel, palette data and COLORS are defined in the submodule `palette`.
 
@@ -191,13 +190,6 @@ impl<R: Render> Ppu<R> {
         &mut self.renderer
     }
 
-    fn scroll_xy(&self) -> (u16, u16) {
-        let scroll_addr = self.registers.temp_vram_addr;
-        let scroll_x = ((scroll_addr & 0x001f) << 3) | self.registers.fine_x as u16;
-        let scroll_y = (((scroll_addr >> 5) & 0x001f) << 3) | ((scroll_addr >> 12) & 0x0007);
-        (scroll_x, scroll_y)
-    }
-
     fn schedule_background_activation_if_visible(&mut self) {
         if self.rendering_enabled()
             && let Some(screen_x) = self.timing.next_visible_x()
@@ -252,43 +244,6 @@ impl<R: Render> Ppu<R> {
         // Vertical bits: coarse Y (bits 5-9), nametable Y (bit 11), fine Y (bits 12-14)
         self.registers.vram_addr =
             (self.registers.vram_addr & !0x7BE0) | (self.registers.temp_vram_addr & 0x7BE0);
-    }
-
-    pub fn dump_state(&self, _cartridge: &Cartridge) -> String {
-        let mut out = String::new();
-
-        let _ = writeln!(out, "# PPU State");
-        let _ = writeln!(out, "- Frame: {}", self.timing.frame_no);
-        let _ = writeln!(
-            out,
-            "- Timing: scanline {}, dot {}",
-            self.timing.scanline, self.timing.dot
-        );
-        let cur_name_table_addr = 0x2000 + (self.registers.ctrl.name_table_select() as u16 * 0x400);
-        let _ = writeln!(
-            out,
-            "- Current nametable address: 0x{:04X}",
-            cur_name_table_addr
-        );
-        let _ = writeln!(out, "- PPUCTRL: 0x{:02X}", self.registers.ctrl.into_bits());
-        let _ = writeln!(out, "- PPUMASK: 0x{:02X}", self.registers.mask.into_bits());
-        let _ = writeln!(
-            out,
-            "- PPUSTATUS: 0x{:02X}",
-            self.registers.status.into_bits()
-        );
-        let _ = writeln!(out, "- OAMADDR: 0x{:02X}", self.registers.oam_addr);
-        let _ = writeln!(out, "- VRAM address: 0x{:04X}", self.registers.vram_addr);
-        let _ = writeln!(
-            out,
-            "- Temporary VRAM address: 0x{:04X}",
-            self.registers.temp_vram_addr
-        );
-        let _ = writeln!(out, "- Fine X: 0x{:02X}", self.registers.fine_x);
-        let _ = writeln!(out, "- Write toggle: {}", self.registers.write_toggle);
-        let _ = writeln!(out, "- Scroll X/Y: {:?}", self.scroll_xy());
-
-        out
     }
 
     pub fn rendering_enabled(&self) -> bool {
