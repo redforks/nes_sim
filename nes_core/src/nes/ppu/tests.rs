@@ -294,7 +294,7 @@ fn run_scanline(ppu: &mut Ppu, pattern: &[u8], scanline: u16) {
 
     ppu.timing.scanline = scanline;
     ppu.timing.dot = 0;
-    for _ in 0..DOTS_PER_SCANLINE {
+    for _ in 0..Timing::DOTS_PER_SCANLINE {
         ppu.tick(&mut cart);
     }
 }
@@ -1317,14 +1317,14 @@ fn test_render_pixel_no_emphasis_no_change() {
     assert_eq!(pixel, color(0x16));
 }
 
-#[test_case(0, DOTS_PER_SCANLINE - 1, false, 0, false => (1, 0, false, 0); "dot wraps at scanline end")]
-#[test_case(SCANLINES_PER_FRAME - 1, DOTS_PER_SCANLINE - 1, false, 0, false => (0, 0, true, 1); "frame wraps")]
-#[test_case(VBLANK_CLEAR_SCANLINE, DOTS_PER_SCANLINE - 2, true, 0, true => (0, 0, false, 1); "odd frame skip")]
-#[test_case(VBLANK_CLEAR_SCANLINE, DOTS_PER_SCANLINE - 2, true, 0, false => (VBLANK_CLEAR_SCANLINE, DOTS_PER_SCANLINE - 1, true, 0); "skip requires rendering")]
-#[test_case(VBLANK_CLEAR_SCANLINE, DOTS_PER_SCANLINE - 2, false, 0, true => (VBLANK_CLEAR_SCANLINE, DOTS_PER_SCANLINE - 1, false, 0); "skip requires odd_frame")]
-#[test_case(VBLANK_CLEAR_SCANLINE, DOTS_PER_SCANLINE - 3, true, 0, true => (VBLANK_CLEAR_SCANLINE, DOTS_PER_SCANLINE - 2, true, 0); "skip requires correct dot")]
-#[test_case(VBLANK_CLEAR_SCANLINE - 1, DOTS_PER_SCANLINE - 2, true, 0, true => (VBLANK_CLEAR_SCANLINE - 1, DOTS_PER_SCANLINE - 1, true, 0); "skip requires correct scanline")]
-#[test_case(VBLANK_CLEAR_SCANLINE, DOTS_PER_SCANLINE - 1, true, 0, true => (0, 0, false, 1); "normal frame wrap from last dot")]
+#[test_case(0, 340, false, 0, false => (1, 0, false, 0); "dot wraps at scanline end")]
+#[test_case(261, 340, false, 0, false => (0, 0, true, 1); "frame wraps")]
+#[test_case(261, 339, true, 0, true => (0, 0, false, 1); "odd frame skip")]
+#[test_case(261, 339, true, 0, false => (261, 340, true, 0); "skip requires rendering")]
+#[test_case(261, 339, false, 0, true => (261, 340, false, 0); "skip requires odd_frame")]
+#[test_case(261, 338, true, 0, true => (261, 339, true, 0); "skip requires correct dot")]
+#[test_case(260, 339, true, 0, true => (261 - 1, 340, true, 0); "skip requires correct scanline")]
+#[test_case(261, 340, true, 0, true => (0, 0, false, 1); "normal frame wrap from last dot")]
 fn timing_advance_state(
     scanline: u16,
     dot: u16,
@@ -1341,4 +1341,60 @@ fn timing_advance_state(
 
     t.advance(rendering_enabled);
     (t.scanline, t.dot, t.odd_frame, t.frame_no)
+}
+
+#[test_case(0, 1, true; "scanline 0 dot 1 is visible")]
+#[test_case(0, 256, true; "scanline 0 dot 256 is visible")]
+#[test_case(239, 128, true; "scanline 239 dot 128 is visible")]
+#[test_case(0, 0, false; "dot 0 is not visible")]
+#[test_case(0, 257, false; "dot 257 is not visible")]
+#[test_case(240, 1, false; "scanline 240 dot 1 is not visible")]
+#[test_case(261, 1, false; "pre-render scanline is not visible")]
+#[test_case(239, 340, false; "hblank dot is not visible")]
+fn timing_is_visible(scanline: u16, dot: u16, expected: bool) {
+    let t = Timing {
+        scanline,
+        dot,
+        odd_frame: false,
+        frame_no: 0,
+    };
+    assert_eq!(t.is_visible(), expected);
+}
+
+#[test_case(241, 1, true; "scanline 241 dot 1 enters vblank")]
+#[test_case(241, 0, false; "one dot before vblank")]
+#[test_case(241, 2, false; "one dot after vblank")]
+#[test_case(240, 1, false; "one scanline before vblank")]
+#[test_case(242, 1, false; "one scanline after vblank")]
+#[test_case(0, 0, false; "arbitrary timing not vblank")]
+#[test_case(261, 1, false; "pre-render scanline not vblank")]
+fn timing_enter_vblank(scanline: u16, dot: u16, expected: bool) {
+    let t = Timing {
+        scanline,
+        dot,
+        odd_frame: false,
+        frame_no: 0,
+    };
+    assert_eq!(t.enter_vblank(), expected);
+}
+
+// ============================================================================
+// leave_vblank() Tests
+// ============================================================================
+
+#[test_case(261, 1, true; "scanline 261 dot 1 leaves vblank")]
+#[test_case(261, 0, false; "one dot before leave vblank")]
+#[test_case(261, 2, false; "one dot after leave vblank")]
+#[test_case(260, 1, false; "one scanline before leave vblank")]
+#[test_case(0, 1, false; "frame start not leave vblank")]
+#[test_case(0, 0, false; "arbitrary timing not leave vblank")]
+#[test_case(241, 1, false; "vblank set not leave vblank")]
+fn timing_leave_vblank(scanline: u16, dot: u16, expected: bool) {
+    let t = Timing {
+        scanline,
+        dot,
+        odd_frame: false,
+        frame_no: 0,
+    };
+    assert_eq!(t.leave_vblank(), expected);
 }

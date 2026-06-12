@@ -16,12 +16,10 @@ const TILES_PER_ROW: u8 = 32;
 
 // PPU Timing Constants
 const SCANLINES_PER_FRAME: u16 = 262;
-const DOTS_PER_SCANLINE: u16 = 341;
 const PPU_OPEN_BUS_DECAY_TICKS: u64 = 3_221_591 * crate::SYSTEM_CYCLES_PER_PPU_CYCLE;
 pub const VBLANK_SET_SCANLINE: u16 = 241;
 pub const VBLANK_SET_DOT: u16 = 1;
 const VBLANK_CLEAR_SCANLINE: u16 = 261;
-const VBLANK_CLEAR_DOT: u16 = 1;
 
 #[derive(Copy, Clone)]
 struct BackgroundActivation {
@@ -51,6 +49,8 @@ struct Timing {
 }
 
 impl Timing {
+    const DOTS_PER_SCANLINE: u16 = 341;
+
     fn new() -> Self {
         Self {
             scanline: 0,
@@ -65,16 +65,17 @@ impl Timing {
     }
 
     fn next_visible_x(&self) -> Option<u8> {
-        if self.scanline < 240 && (1..=256).contains(&self.dot) {
-            Some((self.dot - 1) as u8)
-        } else {
-            None
-        }
+        self.is_visible().then(|| (self.dot - 1) as u8)
+    }
+
+    /// Return true if scanline and dot is in visible area
+    fn is_visible(&self) -> bool {
+        self.scanline < 240 && (1..=256).contains(&self.dot)
     }
 
     fn advance(&mut self, rendering_enabled: bool) {
         if self.scanline == VBLANK_CLEAR_SCANLINE
-            && self.dot == DOTS_PER_SCANLINE - 2
+            && self.dot == Self::DOTS_PER_SCANLINE - 2
             && self.odd_frame
             && rendering_enabled
         {
@@ -84,7 +85,7 @@ impl Timing {
             self.frame_no += 1;
         } else {
             self.dot += 1;
-            if self.dot >= DOTS_PER_SCANLINE {
+            if self.dot >= Self::DOTS_PER_SCANLINE {
                 self.dot = 0;
                 self.scanline += 1;
                 if self.scanline >= SCANLINES_PER_FRAME {
@@ -94,6 +95,16 @@ impl Timing {
                 }
             }
         }
+    }
+
+    /// Return true if just enter vblank timing, scanline 241, dot 1, should set vblank flag
+    fn enter_vblank(&self) -> bool {
+        self.scanline == 241 && self.dot == 1
+    }
+
+    /// Return true if just leave vblank timing, scanline 261, dot 1, should clear vblank flag
+    fn leave_vblank(&self) -> bool {
+        self.scanline == 261 && self.dot == 1
     }
 }
 
@@ -399,7 +410,7 @@ impl<R: Render> Ppu<R> {
         }
 
         // Visible pixels are output on dots 1-256; dot 0 is the idle fetch slot.
-        if self.timing.scanline < 240 && (1..=256).contains(&self.timing.dot) {
+        if self.timing.is_visible() {
             let x = (self.timing.dot - 1) as u8;
             let pixel_idx = if rendering_enabled {
                 self.render_pixel(x, cartridge)
@@ -433,7 +444,7 @@ impl<R: Render> Ppu<R> {
             }
         }
 
-        if self.timing.scanline == VBLANK_SET_SCANLINE && self.timing.dot == VBLANK_SET_DOT {
+        if self.timing.enter_vblank() {
             self.renderer.finish();
             if self
                 .suppressed_vblank_at
@@ -444,8 +455,7 @@ impl<R: Render> Ppu<R> {
             }
         }
 
-        // VBlank clear: pre-render scanline 261, dot 1
-        if self.timing.scanline == VBLANK_CLEAR_SCANLINE && self.timing.dot == VBLANK_CLEAR_DOT {
+        if self.timing.leave_vblank() {
             self.registers.status.set_v_blank(false);
             self.registers.status.set_sprite_overflow(false);
             self.registers.status.set_sprite_zero_hit(false);
@@ -714,7 +724,7 @@ impl<R: Render> Ppu<R> {
     /// Returns the current status and clears the v_blank flag
     fn read_status(&mut self) -> PpuStatus {
         let r = self.registers.status;
-        if self.timing.scanline == VBLANK_SET_SCANLINE && self.timing.dot == VBLANK_SET_DOT {
+        if self.timing.enter_vblank() {
             self.suppressed_vblank_at = Some(get_system_cycles());
         }
 
