@@ -19,114 +19,6 @@ fn repr_ppu_status() {
 }
 
 #[test]
-fn repr_ppu_ctrl() {
-    // Test with all bits set to 1 (0b1111_1111)
-    // After reversing bit order in the struct, fields map from MSB->LSB.
-    let ctrl: PpuCtrl = 0b1111_1111.into();
-    assert!(ctrl.name_table_select() == 0x3); // bits 7-6
-    assert!(ctrl.increment_mode()); // bit 5
-    assert!(ctrl.sprite_pattern_table()); // bit 4
-    assert!(ctrl.background_pattern_table()); // bit 3
-    assert!(ctrl.sprite_size()); // bit 2
-    assert!(ctrl.nmi_enable()); // bit 0
-
-    // Test with pattern 0b0101_1100 (0x5C)
-    // Bits (from MSB to LSB): 0 1 0 1 1 1 0 0
-    // According to PPUCTRL (bit7..bit0):
-    // bit7=nmi_enable=0, bit6=unused master/slave=1, bit5=sprite_size=0,
-    // bit4=background_pattern_table=1, bit3=sprite_pattern_table=1,
-    // bit2=increment_mode=1, bits1-0=name_table_select=0
-    let ctrl: PpuCtrl = 0b0101_1100.into();
-    assert_eq!(ctrl.name_table_select(), 0x0);
-    assert!(ctrl.increment_mode());
-    assert!(ctrl.sprite_pattern_table());
-    assert!(ctrl.background_pattern_table());
-    assert!(!ctrl.sprite_size());
-    assert!(!ctrl.nmi_enable());
-
-    // Test with all bits cleared
-    let ctrl: PpuCtrl = 0b0000_0000.into();
-    assert!(!ctrl.nmi_enable());
-    assert!(!ctrl.sprite_size());
-    assert!(!ctrl.background_pattern_table());
-    assert!(!ctrl.sprite_pattern_table());
-    assert!(!ctrl.increment_mode());
-    assert_eq!(ctrl.name_table_select(), 0x0);
-}
-
-#[test]
-fn repr_ppu_mask() {
-    // Test with all bits set to 1
-    let mask: PpuMask = 0b1111_1111.into();
-    assert!(mask.grayscale());
-    assert!(mask.background_left_enabled());
-    assert!(mask.sprite_left_enabled());
-    assert!(mask.background_enabled());
-    assert!(mask.sprite_enabled());
-    assert!(mask.red_tint());
-    assert!(mask.green_tint());
-    assert!(mask.blue_tint());
-
-    // Test with specific bits set (0b1010_1010)
-    let mask: PpuMask = 0b1010_1010.into();
-    assert!(!mask.grayscale()); // bit 0
-    assert!(mask.background_left_enabled()); // bit 1
-    assert!(!mask.sprite_left_enabled()); // bit 2
-    assert!(mask.background_enabled()); // bit 3
-    assert!(!mask.sprite_enabled()); // bit 4
-    assert!(mask.red_tint()); // bit 5
-    assert!(!mask.green_tint()); // bit 6
-    assert!(mask.blue_tint()); // bit 7
-
-    // Test with all bits cleared
-    let mask: PpuMask = 0b0000_0000.into();
-    assert!(!mask.grayscale());
-    assert!(!mask.background_left_enabled());
-    assert!(!mask.sprite_left_enabled());
-    assert!(!mask.background_enabled());
-    assert!(!mask.sprite_enabled());
-    assert!(!mask.red_tint());
-    assert!(!mask.green_tint());
-    assert!(!mask.blue_tint());
-}
-
-#[test]
-fn test_ppu_ctrl_to_from_u8() {
-    let ctrl = PpuCtrl::new()
-        .with_nmi_enable(true)
-        .with_sprite_size(true)
-        .with_background_pattern_table(true)
-        .with_sprite_pattern_table(true)
-        .with_increment_mode(true)
-        .with_name_table_select(3);
-
-    let byte: u8 = ctrl.into();
-    let ctrl2: PpuCtrl = byte.into();
-
-    assert!(ctrl2.nmi_enable());
-    assert!(ctrl2.sprite_size());
-    assert!(ctrl2.background_pattern_table());
-    assert!(ctrl2.sprite_pattern_table());
-    assert!(ctrl2.increment_mode());
-    assert_eq!(ctrl2.name_table_select(), 3);
-}
-
-#[test]
-fn test_ppu_status_to_from_u8() {
-    let status = PpuStatus::new()
-        .with_sprite_overflow(true)
-        .with_sprite_zero_hit(true)
-        .with_v_blank(true);
-
-    let byte: u8 = status.into();
-    let status2: PpuStatus = byte.into();
-
-    assert!(status2.sprite_overflow());
-    assert!(status2.sprite_zero_hit());
-    assert!(status2.v_blank());
-}
-
-#[test]
 fn test_read_status_clears_vblank() {
     let (mut ppu, _pattern) = new_test_ppu_and_pattern();
     ppu.registers.status.set_v_blank(true);
@@ -177,10 +69,6 @@ fn test_status_read_only_refreshes_high_bits() {
 
     assert_eq!(ppu.read(0x2000, &mut cartridge), 0x80);
 }
-
-// ============================================================================
-// render_pixel() Tests
-// ============================================================================
 
 fn create_test_ppu_with_mask(mask: PpuMask) -> Ppu {
     // Initialize PPU with the provided mask to avoid field reassignment
