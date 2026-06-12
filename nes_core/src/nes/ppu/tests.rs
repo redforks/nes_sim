@@ -294,7 +294,7 @@ fn run_scanline(ppu: &mut Ppu, pattern: &[u8], scanline: u16) {
 
     ppu.timing.scanline = scanline;
     ppu.timing.dot = 0;
-    for _ in 0..Timing::DOTS_PER_SCANLINE {
+    for _ in 0..341 {
         ppu.tick(&mut cart);
     }
 }
@@ -1317,26 +1317,25 @@ fn test_render_pixel_no_emphasis_no_change() {
     assert_eq!(pixel, color(0x16));
 }
 
-#[test_case(0, 340, false, 0, false => (1, 0, false, 0); "dot wraps at scanline end")]
-#[test_case(261, 340, false, 0, false => (0, 0, true, 1); "frame wraps")]
-#[test_case(261, 339, true, 0, true => (0, 0, false, 1); "odd frame skip")]
-#[test_case(261, 339, true, 0, false => (261, 340, true, 0); "skip requires rendering")]
-#[test_case(261, 339, false, 0, true => (261, 340, false, 0); "skip requires odd_frame")]
-#[test_case(261, 338, true, 0, true => (261, 339, true, 0); "skip requires correct dot")]
-#[test_case(260, 339, true, 0, true => (261 - 1, 340, true, 0); "skip requires correct scanline")]
-#[test_case(261, 340, true, 0, true => (0, 0, false, 1); "normal frame wrap from last dot")]
+#[test_case(0, 340, false, false => (1, 0, false, 0); "dot wraps at scanline end")]
+#[test_case(261, 340, false, false => (0, 0, true, 1); "frame wraps")]
+#[test_case(261, 339, true, true => (0, 0, false, 1); "odd frame skip")]
+#[test_case(261, 339, true, false => (261, 340, true, 0); "skip requires rendering")]
+#[test_case(261, 339, false, true => (261, 340, false, 0); "skip requires odd_frame")]
+#[test_case(261, 338, true, true => (261, 339, true, 0); "skip requires correct dot")]
+#[test_case(260, 339, true, true => (260, 340, true, 0); "skip requires correct scanline")]
+#[test_case(261, 340, true, true => (0, 0, false, 1); "normal frame wrap from last dot")]
 fn timing_advance_state(
     scanline: u16,
     dot: u16,
     odd_frame: bool,
-    frame_no: usize,
     rendering_enabled: bool,
 ) -> (u16, u16, bool, usize) {
     let mut t = Timing {
         scanline,
         dot,
         odd_frame,
-        frame_no,
+        frame_no: 0,
     };
 
     t.advance(rendering_enabled);

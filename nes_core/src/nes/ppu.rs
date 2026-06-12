@@ -14,7 +14,6 @@ use sprite::SpriteManager;
 const TILES_PER_ROW: u8 = 32;
 
 // PPU Timing Constants
-const SCANLINES_PER_FRAME: u16 = 262;
 const PPU_OPEN_BUS_DECAY_TICKS: u64 = 3_221_591 * crate::SYSTEM_CYCLES_PER_PPU_CYCLE;
 const VBLANK_CLEAR_SCANLINE: u16 = 261;
 
@@ -46,8 +45,6 @@ struct Timing {
 }
 
 impl Timing {
-    const DOTS_PER_SCANLINE: u16 = 341;
-
     fn new() -> Self {
         Self {
             scanline: 0,
@@ -71,21 +68,13 @@ impl Timing {
     }
 
     fn advance(&mut self, rendering_enabled: bool) {
-        if self.scanline == VBLANK_CLEAR_SCANLINE
-            && self.dot == Self::DOTS_PER_SCANLINE - 2
-            && self.odd_frame
-            && rendering_enabled
-        {
-            self.dot = 0;
-            self.scanline = 0;
-            self.odd_frame = !self.odd_frame;
-            self.frame_no += 1;
-        } else {
-            self.dot += 1;
-            if self.dot >= Self::DOTS_PER_SCANLINE {
+        match self.dot {
+            ..339 => self.dot += 1,
+            339 if self.scanline != 261 || (!self.odd_frame || !rendering_enabled) => self.dot += 1,
+            _ => {
                 self.dot = 0;
                 self.scanline += 1;
-                if self.scanline >= SCANLINES_PER_FRAME {
+                if self.scanline >= 262 {
                     self.scanline = 0;
                     self.odd_frame = !self.odd_frame;
                     self.frame_no += 1;
