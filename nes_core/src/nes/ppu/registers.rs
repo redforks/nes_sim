@@ -1,9 +1,8 @@
 use bitfield_struct::bitfield;
-use image::Rgba;
 
 use crate::get_system_cycles;
 
-use super::PPU_OPEN_BUS_DECAY_TICKS;
+use super::{PPU_OPEN_BUS_DECAY_TICKS, Pixel};
 
 #[bitfield(u8)]
 pub struct PpuCtrl {
@@ -37,7 +36,7 @@ pub struct PpuMask {
 
 impl PpuMask {
     /// Apply grayscale and emphasis effects to a pixel color using this mask's flags.
-    pub fn apply_effects(&self, pixel: super::Pixel) -> super::Pixel {
+    pub fn apply_effects(&self, pixel: Pixel) -> Pixel {
         if !self.grayscale() && !self.red_tint() && !self.green_tint() && !self.blue_tint() {
             pixel
         } else {
@@ -45,8 +44,8 @@ impl PpuMask {
         }
     }
 
-    fn do_apply_effects(&self, pixel: super::Pixel) -> super::Pixel {
-        let Rgba([mut r, mut g, mut b, _]) = pixel;
+    fn do_apply_effects(&self, pixel: Pixel) -> Pixel {
+        let (mut r, mut g, mut b) = pixel.to_rgb();
 
         if !self.red_tint() && (self.green_tint() || self.blue_tint()) {
             r = (r as u16 * 192 / 256) as u8;
@@ -65,7 +64,7 @@ impl PpuMask {
             b = gray as u8;
         };
 
-        Rgba([r, g, b, 0xff])
+        Pixel::new(r, g, b)
     }
 }
 
@@ -236,10 +235,9 @@ impl Registers {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use image::Rgba;
     use test_case::test_case;
 
-    const INPUT: Rgba<u8> = Rgba([180, 120, 60, 0xff]);
+    const INPUT: Pixel = Pixel::new(180, 120, 60);
 
     #[test_case(0b00000000, 180, 120, 60 ; "no effects")]
     #[test_case(0b00100000, 180, 90, 45 ; "red_tint only")]
@@ -254,6 +252,6 @@ mod tests {
     #[test_case(0b11100001, 131, 131, 131 ; "grayscale + all tints")]
     fn test_apply_effects(mask_bits: u8, r: u8, g: u8, b: u8) {
         let mask = PpuMask::from(mask_bits);
-        assert_eq!(mask.apply_effects(INPUT), Rgba([r, g, b, 0xff]));
+        assert_eq!(mask.apply_effects(INPUT), Pixel::new(r, g, b));
     }
 }

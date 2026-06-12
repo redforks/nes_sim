@@ -383,7 +383,10 @@ impl Drop for FfmpegCleanup {
 /// Prescan input_logs to find fast-forward ranges.
 /// A frame at index `i` is fast-forward eligible if frames `i..i+idle_frames`
 /// all have empty input on both ports.
-fn compute_fast_forward_ranges(input_logs: &[movie::InputLog], idle_frames: usize) -> Vec<(usize, usize)> {
+fn compute_fast_forward_ranges(
+    input_logs: &[movie::InputLog],
+    idle_frames: usize,
+) -> Vec<(usize, usize)> {
     if input_logs.len() < idle_frames {
         return Vec::new();
     }
@@ -716,15 +719,27 @@ mod tests {
     use super::compute_fast_forward_ranges;
 
     fn idle() -> InputLog {
-        InputLog::new(Command::from(0), GamepadInput::from(0), GamepadInput::from(0))
+        InputLog::new(
+            Command::from(0),
+            GamepadInput::from(0),
+            GamepadInput::from(0),
+        )
     }
 
     fn active_port0() -> InputLog {
-        InputLog::new(Command::from(0), GamepadInput::from(1), GamepadInput::from(0))
+        InputLog::new(
+            Command::from(0),
+            GamepadInput::from(1),
+            GamepadInput::from(0),
+        )
     }
 
     fn active_port1() -> InputLog {
-        InputLog::new(Command::from(0), GamepadInput::from(0), GamepadInput::from(1))
+        InputLog::new(
+            Command::from(0),
+            GamepadInput::from(0),
+            GamepadInput::from(1),
+        )
     }
 
     const IDLE_FRAMES: usize = 60;
@@ -743,19 +758,28 @@ mod tests {
     #[test]
     fn exactly_idle_frames_idle() {
         let logs: Vec<_> = (0..60).map(|_| idle()).collect();
-        assert_eq!(compute_fast_forward_ranges(&logs, IDLE_FRAMES), vec![(0, 1)]);
+        assert_eq!(
+            compute_fast_forward_ranges(&logs, IDLE_FRAMES),
+            vec![(0, 1)]
+        );
     }
 
     #[test]
     fn exactly_idle_plus_one_idle() {
         let logs: Vec<_> = (0..61).map(|_| idle()).collect();
-        assert_eq!(compute_fast_forward_ranges(&logs, IDLE_FRAMES), vec![(0, 2)]);
+        assert_eq!(
+            compute_fast_forward_ranges(&logs, IDLE_FRAMES),
+            vec![(0, 2)]
+        );
     }
 
     #[test]
     fn hundred_idle_frames() {
         let logs: Vec<_> = (0..100).map(|_| idle()).collect();
-        assert_eq!(compute_fast_forward_ranges(&logs, IDLE_FRAMES), vec![(0, 41)]);
+        assert_eq!(
+            compute_fast_forward_ranges(&logs, IDLE_FRAMES),
+            vec![(0, 41)]
+        );
     }
 
     #[test]
@@ -794,14 +818,20 @@ mod tests {
     fn only_last_idle_frames_idle() {
         let mut logs: Vec<_> = (0..60).map(|_| active_port0()).collect();
         logs.extend((0..60).map(|_| idle()));
-        assert_eq!(compute_fast_forward_ranges(&logs, IDLE_FRAMES), vec![(60, 61)]);
+        assert_eq!(
+            compute_fast_forward_ranges(&logs, IDLE_FRAMES),
+            vec![(60, 61)]
+        );
     }
 
     #[test]
     fn first_frame_active_rest_idle() {
         let mut logs = vec![active_port0()];
         logs.extend((0..99).map(|_| idle()));
-        assert_eq!(compute_fast_forward_ranges(&logs, IDLE_FRAMES), vec![(1, 41)]);
+        assert_eq!(
+            compute_fast_forward_ranges(&logs, IDLE_FRAMES),
+            vec![(1, 41)]
+        );
     }
 
     #[test]
@@ -820,7 +850,10 @@ mod tests {
             GamepadInput::from(0b00001000),
             GamepadInput::from(0),
         ));
-        assert_eq!(compute_fast_forward_ranges(&logs, IDLE_FRAMES), vec![(0, 1)]);
+        assert_eq!(
+            compute_fast_forward_ranges(&logs, IDLE_FRAMES),
+            vec![(0, 1)]
+        );
     }
 
     #[test]
@@ -831,7 +864,10 @@ mod tests {
             GamepadInput::from(0),
             GamepadInput::from(0b00000010),
         ));
-        assert_eq!(compute_fast_forward_ranges(&logs, IDLE_FRAMES), vec![(0, 1)]);
+        assert_eq!(
+            compute_fast_forward_ranges(&logs, IDLE_FRAMES),
+            vec![(0, 1)]
+        );
     }
 
     #[test]
@@ -842,7 +878,10 @@ mod tests {
             GamepadInput::from(0),
             GamepadInput::from(0b00000001),
         ));
-        assert_eq!(compute_fast_forward_ranges(&logs, IDLE_FRAMES), vec![(0, 1)]);
+        assert_eq!(
+            compute_fast_forward_ranges(&logs, IDLE_FRAMES),
+            vec![(0, 1)]
+        );
     }
 
     #[test]

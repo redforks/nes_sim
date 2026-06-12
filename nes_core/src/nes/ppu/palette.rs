@@ -1,10 +1,23 @@
-use image::Rgba;
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Pixel(pub [u8; 4]);
 
-pub type Pixel = Rgba<u8>;
+impl Pixel {
+    pub const fn new(r: u8, g: u8, b: u8) -> Self {
+        Self([r, g, b, 0xff])
+    }
+
+    pub fn to_u32(self) -> u32 {
+        u32::from_le_bytes(self.0)
+    }
+
+    pub fn to_rgb(self) -> (u8, u8, u8) {
+        (self.0[0], self.0[1], self.0[2])
+    }
+}
 
 const fn rgb(v: [u8; 3]) -> Pixel {
     let [r, g, b] = v;
-    Rgba::<u8>([r, g, b, 0xff])
+    Pixel::new(r, g, b)
 }
 
 /// Return palette color by index (0..63).

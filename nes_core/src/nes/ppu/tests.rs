@@ -3,7 +3,6 @@ use super::*;
 use crate::nes::mapper::{Cartridge, Mirroring, TestCartridge};
 use crate::render::ImageRender;
 use crate::set_system_cycles;
-use image::Rgba;
 use test_case::test_case;
 
 fn new_test_ppu_and_pattern() -> (Ppu, [u8; 8192]) {
@@ -828,8 +827,7 @@ fn test_render_pixel_sprite_zero_not_at_x255() {
 }
 
 fn pixel_to_rgb(pixel: Pixel) -> (u8, u8, u8) {
-    let Rgba([r, g, b, _]) = pixel;
-    (r, g, b)
+    pixel.to_rgb()
 }
 
 fn render_bg_pixel(mask: PpuMask) -> Pixel {
