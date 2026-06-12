@@ -38,6 +38,14 @@ pub struct PpuMask {
 impl PpuMask {
     /// Apply grayscale and emphasis effects to a pixel color using this mask's flags.
     pub fn apply_effects(&self, pixel: super::Pixel) -> super::Pixel {
+        if !self.grayscale() && !self.red_tint() && !self.green_tint() && !self.blue_tint() {
+            pixel
+        } else {
+            self.do_apply_effects(pixel)
+        }
+    }
+
+    fn do_apply_effects(&self, pixel: super::Pixel) -> super::Pixel {
         let Rgba([mut r, mut g, mut b, _]) = pixel;
 
         if !self.red_tint() && (self.green_tint() || self.blue_tint()) {
