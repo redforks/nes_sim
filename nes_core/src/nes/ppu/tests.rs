@@ -939,38 +939,80 @@ fn test_render_pixel_sprite_zero_not_at_x255() {
     assert!(!ppu.registers.status.sprite_zero_hit());
 }
 
-// ============================================================================
-// Grayscale and Emphasis Tests
-// ============================================================================
-
-/// Helper to extract RGB components from a pixel
 fn pixel_to_rgb(pixel: Pixel) -> (u8, u8, u8) {
     let Rgba([r, g, b, _]) = pixel;
     (r, g, b)
 }
 
-#[test]
-fn test_render_pixel_grayscale_mode() {
-    let mut ppu = create_test_ppu_with_mask(
-        PpuMask::new()
-            .with_background_enabled(true)
-            .with_background_left_enabled(true)
-            .with_grayscale(true),
-    );
+fn render_bg_pixel(mask: PpuMask) -> Pixel {
+    let mut ppu = create_test_ppu_with_mask(mask);
     let mut pattern = create_pattern();
     set_tile_solid(&mut pattern, 0, 0, 1);
-    set_bg_palette_color(&mut ppu, 0, 1, 0x16); // Color 0x16 is blue-ish
-
-    let pixel = render_pixel_with_setup(
+    set_bg_palette_color(&mut ppu, 0, 1, 0x16);
+    render_pixel_with_setup(
         &mut ppu,
         &pattern,
         |ppu, cart| set_bg_tile(ppu, cart, 0, 0),
         0,
         0,
+    )
+}
+
+#[test_case(0b00000000, true, true, true ; "no effects")]
+#[test_case(0b00100000, true, false, false ; "red emphasis")]
+#[test_case(0b01000000, false, true, false ; "green emphasis")]
+#[test_case(0b10000000, false, false, true ; "blue emphasis")]
+#[test_case(0b01100000, true, true, false ; "red+green emphasis")]
+#[test_case(0b10100000, true, false, true ; "red+blue emphasis")]
+#[test_case(0b11000000, false, true, true ; "green+blue emphasis")]
+#[test_case(0b11100000, true, true, true ; "all emphasis bits")]
+fn test_render_pixel_emphasis(
+    tint_bits: u8,
+    r_preserved: bool,
+    g_preserved: bool,
+    b_preserved: bool,
+) {
+    let with = render_bg_pixel(
+        PpuMask::from(tint_bits)
+            .with_background_enabled(true)
+            .with_background_left_enabled(true),
+    );
+    let without = render_bg_pixel(
+        PpuMask::new()
+            .with_background_enabled(true)
+            .with_background_left_enabled(true),
+    );
+
+    let (r_with, g_with, b_with) = pixel_to_rgb(with);
+    let (r_without, g_without, b_without) = pixel_to_rgb(without);
+
+    fn check(name: &str, channel: u8, reference: u8, preserved: bool) {
+        if preserved {
+            assert_eq!(channel, reference, "{name} should not change");
+        } else {
+            assert!(
+                channel < reference || reference == 0,
+                "{name} should be attenuated",
+            );
+        }
+    }
+
+    check("Red", r_with, r_without, r_preserved);
+    check("Green", g_with, g_without, g_preserved);
+    check("Blue", b_with, b_without, b_preserved);
+}
+
+#[test_case(false ; "background grayscale")]
+#[test_case(true ; "background grayscale with red emphasis")]
+fn test_render_pixel_grayscale_background(with_red_tint: bool) {
+    let pixel = render_bg_pixel(
+        PpuMask::new()
+            .with_background_enabled(true)
+            .with_background_left_enabled(true)
+            .with_grayscale(true)
+            .with_red_tint(with_red_tint),
     );
     let (r, g, b) = pixel_to_rgb(pixel);
-
-    // In grayscale mode, R, G, and B should all be equal
     assert_eq!(r, g, "Red and Green should be equal in grayscale mode");
     assert_eq!(g, b, "Green and Blue should be equal in grayscale mode");
 }
@@ -998,322 +1040,12 @@ fn test_render_pixel_grayscale_mode_with_sprite() {
 }
 
 #[test]
-fn test_render_pixel_red_emphasis() {
-    let mut ppu = create_test_ppu_with_mask(
-        PpuMask::new()
-            .with_background_enabled(true)
-            .with_background_left_enabled(true)
-            .with_red_tint(true),
-    );
-    let mut pattern = create_pattern();
-    set_tile_solid(&mut pattern, 0, 0, 1);
-    set_bg_palette_color(&mut ppu, 0, 1, 0x16);
-
-    let pixel_with_emphasis = render_pixel_with_setup(
-        &mut ppu,
-        &pattern,
-        |ppu, cart| set_bg_tile(ppu, cart, 0, 0),
-        0,
-        0,
-    );
-
-    // Compare with no emphasis
-    {
-        let this = &mut ppu;
-        let mask = PpuMask::new()
-            .with_background_enabled(true)
-            .with_background_left_enabled(true);
-        this.registers.mask = mask;
-    };
-    let pixel_without_emphasis = render_pixel_with_setup(
-        &mut ppu,
-        &pattern,
-        |ppu, cart| set_bg_tile(ppu, cart, 0, 0),
-        0,
-        0,
-    );
-
-    let (r_with, g_with, b_with) = pixel_to_rgb(pixel_with_emphasis);
-    let (r_without, g_without, b_without) = pixel_to_rgb(pixel_without_emphasis);
-
-    // Red should stay the same, green and blue should be attenuated
-    assert_eq!(r_with, r_without, "Red should not change with red emphasis");
-    assert!(
-        g_with < g_without || g_without == 0,
-        "Green should be attenuated with red emphasis"
-    );
-    assert!(
-        b_with < b_without || b_without == 0,
-        "Blue should be attenuated with red emphasis"
-    );
-}
-
-#[test]
-fn test_render_pixel_green_emphasis() {
-    let mut ppu = create_test_ppu_with_mask(
-        PpuMask::new()
-            .with_background_enabled(true)
-            .with_background_left_enabled(true)
-            .with_green_tint(true),
-    );
-    let mut pattern = create_pattern();
-    set_tile_solid(&mut pattern, 0, 0, 1);
-    set_bg_palette_color(&mut ppu, 0, 1, 0x16);
-
-    let pixel_with_emphasis = render_pixel_with_setup(
-        &mut ppu,
-        &pattern,
-        |ppu, cart| set_bg_tile(ppu, cart, 0, 0),
-        0,
-        0,
-    );
-
-    // Compare with no emphasis
-    {
-        let this = &mut ppu;
-        let mask = PpuMask::new()
-            .with_background_enabled(true)
-            .with_background_left_enabled(true);
-        this.registers.mask = mask;
-    };
-    let pixel_without_emphasis = render_pixel_with_setup(
-        &mut ppu,
-        &pattern,
-        |ppu, cart| set_bg_tile(ppu, cart, 0, 0),
-        0,
-        0,
-    );
-
-    let (r_with, g_with, b_with) = pixel_to_rgb(pixel_with_emphasis);
-    let (r_without, g_without, b_without) = pixel_to_rgb(pixel_without_emphasis);
-
-    // Green should stay the same, red and blue should be attenuated
-    assert!(
-        r_with < r_without || r_without == 0,
-        "Red should be attenuated with green emphasis"
-    );
-    assert_eq!(
-        g_with, g_without,
-        "Green should not change with green emphasis"
-    );
-    assert!(
-        b_with < b_without || b_without == 0,
-        "Blue should be attenuated with green emphasis"
-    );
-}
-
-#[test]
-fn test_render_pixel_blue_emphasis() {
-    let mut ppu = create_test_ppu_with_mask(
-        PpuMask::new()
-            .with_background_enabled(true)
-            .with_background_left_enabled(true)
-            .with_blue_tint(true),
-    );
-    let mut pattern = create_pattern();
-    set_tile_solid(&mut pattern, 0, 0, 1);
-    set_bg_palette_color(&mut ppu, 0, 1, 0x16);
-
-    let pixel_with_emphasis = render_pixel_with_setup(
-        &mut ppu,
-        &pattern,
-        |ppu, cart| set_bg_tile(ppu, cart, 0, 0),
-        0,
-        0,
-    );
-
-    // Compare with no emphasis
-    {
-        let this = &mut ppu;
-        let mask = PpuMask::new()
-            .with_background_enabled(true)
-            .with_background_left_enabled(true);
-        this.registers.mask = mask;
-    };
-    let pixel_without_emphasis = render_pixel_with_setup(
-        &mut ppu,
-        &pattern,
-        |ppu, cart| set_bg_tile(ppu, cart, 0, 0),
-        0,
-        0,
-    );
-
-    let (r_with, g_with, b_with) = pixel_to_rgb(pixel_with_emphasis);
-    let (r_without, g_without, b_without) = pixel_to_rgb(pixel_without_emphasis);
-
-    // Blue should stay the same, red and green should be attenuated
-    assert!(
-        r_with < r_without || r_without == 0,
-        "Red should be attenuated with blue emphasis"
-    );
-    assert!(
-        g_with < g_without || g_without == 0,
-        "Green should be attenuated with blue emphasis"
-    );
-    assert_eq!(
-        b_with, b_without,
-        "Blue should not change with blue emphasis"
-    );
-}
-
-#[test]
-fn test_render_pixel_multiple_emphasis_bits() {
-    let mut ppu = create_test_ppu_with_mask(
-        PpuMask::new()
-            .with_background_enabled(true)
-            .with_background_left_enabled(true)
-            .with_red_tint(true)
-            .with_green_tint(true),
-    );
-    let mut pattern = create_pattern();
-    set_tile_solid(&mut pattern, 0, 0, 1);
-    set_bg_palette_color(&mut ppu, 0, 1, 0x16);
-
-    let pixel_with_emphasis = render_pixel_with_setup(
-        &mut ppu,
-        &pattern,
-        |ppu, cart| set_bg_tile(ppu, cart, 0, 0),
-        0,
-        0,
-    );
-
-    // Compare with no emphasis
-    {
-        let this = &mut ppu;
-        let mask = PpuMask::new()
-            .with_background_enabled(true)
-            .with_background_left_enabled(true);
-        this.registers.mask = mask;
-    };
-    let pixel_without_emphasis = render_pixel_with_setup(
-        &mut ppu,
-        &pattern,
-        |ppu, cart| set_bg_tile(ppu, cart, 0, 0),
-        0,
-        0,
-    );
-
-    let (r_with, g_with, b_with) = pixel_to_rgb(pixel_with_emphasis);
-    let (r_without, g_without, b_without) = pixel_to_rgb(pixel_without_emphasis);
-
-    // With red + green emphasis, only blue should be attenuated
-    assert_eq!(
-        r_with, r_without,
-        "Red should not change with red+green emphasis"
-    );
-    assert_eq!(
-        g_with, g_without,
-        "Green should not change with red+green emphasis"
-    );
-    assert!(
-        b_with < b_without || b_without == 0,
-        "Blue should be attenuated with red+green emphasis"
-    );
-}
-
-#[test]
-fn test_render_pixel_all_emphasis_bits() {
-    let mut ppu = create_test_ppu_with_mask(
-        PpuMask::new()
-            .with_background_enabled(true)
-            .with_background_left_enabled(true)
-            .with_red_tint(true)
-            .with_green_tint(true)
-            .with_blue_tint(true),
-    );
-    let mut pattern = create_pattern();
-    set_tile_solid(&mut pattern, 0, 0, 1);
-    set_bg_palette_color(&mut ppu, 0, 1, 0x16);
-
-    let pixel_with_emphasis = render_pixel_with_setup(
-        &mut ppu,
-        &pattern,
-        |ppu, cart| set_bg_tile(ppu, cart, 0, 0),
-        0,
-        0,
-    );
-
-    // Compare with no emphasis - all channels should remain the same
-    {
-        let this = &mut ppu;
-        let mask = PpuMask::new()
-            .with_background_enabled(true)
-            .with_background_left_enabled(true);
-        this.registers.mask = mask;
-    };
-    let pixel_without_emphasis = render_pixel_with_setup(
-        &mut ppu,
-        &pattern,
-        |ppu, cart| set_bg_tile(ppu, cart, 0, 0),
-        0,
-        0,
-    );
-
-    let (r_with, g_with, b_with) = pixel_to_rgb(pixel_with_emphasis);
-    let (r_without, g_without, b_without) = pixel_to_rgb(pixel_without_emphasis);
-
-    // With all emphasis bits set, nothing should be attenuated
-    assert_eq!(
-        r_with, r_without,
-        "Red should not change with all emphasis bits"
-    );
-    assert_eq!(
-        g_with, g_without,
-        "Green should not change with all emphasis bits"
-    );
-    assert_eq!(
-        b_with, b_without,
-        "Blue should not change with all emphasis bits"
-    );
-}
-
-#[test]
-fn test_render_pixel_grayscale_and_emphasis_combined() {
-    let mut ppu = create_test_ppu_with_mask(
-        PpuMask::new()
-            .with_background_enabled(true)
-            .with_background_left_enabled(true)
-            .with_grayscale(true)
-            .with_red_tint(true),
-    );
-    let mut pattern = create_pattern();
-    set_tile_solid(&mut pattern, 0, 0, 1);
-    set_bg_palette_color(&mut ppu, 0, 1, 0x16);
-
-    let pixel = render_pixel_with_setup(
-        &mut ppu,
-        &pattern,
-        |ppu, cart| set_bg_tile(ppu, cart, 0, 0),
-        0,
-        0,
-    );
-    let (r, g, b) = pixel_to_rgb(pixel);
-
-    // In grayscale mode with emphasis, result should still be grayscale
-    assert_eq!(r, g, "Red and Green should be equal in grayscale mode");
-    assert_eq!(g, b, "Green and Blue should be equal in grayscale mode");
-}
-
-#[test]
 fn test_render_pixel_no_emphasis_no_change() {
-    let mut ppu = create_test_ppu_with_mask(
+    let pixel = render_bg_pixel(
         PpuMask::new()
             .with_background_enabled(true)
             .with_background_left_enabled(true),
     );
-    let mut pattern = create_pattern();
-    set_tile_solid(&mut pattern, 0, 0, 1);
-    set_bg_palette_color(&mut ppu, 0, 1, 0x16);
-
-    let pixel = render_pixel_with_setup(
-        &mut ppu,
-        &pattern,
-        |ppu, cart| set_bg_tile(ppu, cart, 0, 0),
-        0,
-        0,
-    );
-
-    // Without any effects, pixel should match palette color lookup directly
     assert_eq!(pixel, color(0x16));
 }
 
