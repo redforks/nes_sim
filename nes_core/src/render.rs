@@ -34,7 +34,7 @@ pub trait Render: Debug {
     /// # Behavior
     /// Implementations may choose to ignore out-of-bounds coordinates
     /// rather than panic, for performance reasons.
-    fn set_pixel(&mut self, x: u32, y: u32, color: [u8; 4]);
+    fn set_pixel(&mut self, x: u8, y: u16, color: [u8; 4]);
 
     /// Called after rendering a complete frame
     ///
@@ -47,5 +47,5 @@ pub trait Render: Debug {
 }
 
 impl Render for () {
-    fn set_pixel(&mut self, _x: u32, _y: u32, _color: [u8; 4]) {}
+    fn set_pixel(&mut self, _x: u8, _y: u16, _color: [u8; 4]) {}
 }

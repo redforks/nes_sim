@@ -360,8 +360,7 @@ impl<R: Render> Ppu<R> {
                 self.palette.disabled_color_index(self.registers.vram_addr)
             };
             let pixel = self.effective_mask.apply_effects(color(pixel_idx));
-            self.renderer
-                .set_pixel(x as u32, self.timing.scanline as u32, pixel.0);
+            self.renderer.set_pixel(x, self.timing.scanline, pixel.0);
         }
 
         // --- vram_addr management (rendering-enabled only) ---

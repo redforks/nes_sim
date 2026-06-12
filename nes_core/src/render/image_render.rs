@@ -45,8 +45,8 @@ impl ImageRender {
 }
 
 impl Render for ImageRender {
-    fn set_pixel(&mut self, x: u32, y: u32, color: [u8; 4]) {
-        self.image.put_pixel(x, y, Rgba(color));
+    fn set_pixel(&mut self, x: u8, y: u16, color: [u8; 4]) {
+        self.image.put_pixel(x as u32, y as u32, Rgba(color));
     }
 }
 
