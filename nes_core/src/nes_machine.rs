@@ -2,12 +2,7 @@ use crate::{
     ExecuteResult, Plugin, get_system_clock, inc_system_clock,
     ines::INesFile,
     machine::Machine,
-    nes::{
-        NesMcu,
-        controller::Button,
-        dmc_dma::DmcDma,
-        ppu::{VBLANK_SET_DOT, VBLANK_SET_SCANLINE},
-    },
+    nes::{NesMcu, controller::Button, dmc_dma::DmcDma},
     render::Render,
 };
 
@@ -54,6 +49,7 @@ where
     pub fn process_frame(&mut self) -> ExecuteResult {
         // Delegate to `tick()` which executes a single CPU instruction and
         // advances PPU/APU accordingly. Loop until VBlank or safety limit.
+        let mut last_in_vblank = self.machine.mcu().ppu().in_vblank();
         for _ in 0..MAX_TICKS_PER_FRAME {
             self.tick();
             inc_system_clock();
@@ -63,10 +59,11 @@ where
                 return ExecuteResult::Halt;
             }
 
-            // Check for VBlank signalled by the PPU
-            if self.machine.mcu().ppu_timing() == (VBLANK_SET_SCANLINE, VBLANK_SET_DOT) {
+            let in_vblank = self.machine.mcu().ppu().in_vblank();
+            if !last_in_vblank && in_vblank {
                 break;
             }
+            last_in_vblank = in_vblank;
         }
 
         self.flush_audio();

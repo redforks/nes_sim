@@ -16,8 +16,6 @@ const TILES_PER_ROW: u8 = 32;
 // PPU Timing Constants
 const SCANLINES_PER_FRAME: u16 = 262;
 const PPU_OPEN_BUS_DECAY_TICKS: u64 = 3_221_591 * crate::SYSTEM_CYCLES_PER_PPU_CYCLE;
-pub const VBLANK_SET_SCANLINE: u16 = 241;
-pub const VBLANK_SET_DOT: u16 = 1;
 const VBLANK_CLEAR_SCANLINE: u16 = 261;
 
 #[derive(Copy, Clone)]
