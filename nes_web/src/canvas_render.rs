@@ -42,7 +42,7 @@ impl CanvasRender {
 }
 
 impl Render for CanvasRender {
-    fn set_pixel(&mut self, x: u8, y: u16, color: [u8; 4]) {
+    fn set_pixel(&mut self, x: u32, y: u32, color: [u8; 4]) {
         if x >= self.width || y >= self.height {
             return;
         }
