@@ -97,6 +97,8 @@ pub struct PlayMovieAction {
     idle_frames: u32,
     #[arg(long)]
     gamepad_overlay: bool,
+    #[arg(long, default_value_t = 0)]
+    trim_frames: u32,
 }
 
 struct GamepadOverlay {
@@ -230,6 +232,8 @@ struct RecordRender {
     p2: GamepadOverlay,
     ff_skip: bool,
     ff_counter: u32,
+    trim_frames: u32,
+    trim_counter: u32,
 }
 
 impl std::fmt::Debug for RecordRender {
@@ -303,7 +307,10 @@ impl Render for RecordRender {
             canvas.present();
         }
 
-        let send_video = if self.ff_skip {
+        let send_video = if self.trim_counter < self.trim_frames {
+            self.trim_counter += 1;
+            false
+        } else if self.ff_skip {
             let send = self.ff_counter % 4 == 0;
             self.ff_counter += 1;
             send
@@ -325,6 +332,8 @@ struct RecordAudioDriver {
     sample_buf: Vec<f32>,
     ff_skip: Rc<Cell<bool>>,
     ff_counter: u32,
+    trim_frames: u32,
+    trim_counter: u32,
 }
 
 impl AudioDriver for RecordAudioDriver {
@@ -341,7 +350,10 @@ impl AudioDriver for RecordAudioDriver {
 
     fn flush(&mut self) {
         self.inner.flush();
-        let send_audio = if self.ff_skip.get() {
+        let send_audio = if self.trim_counter < self.trim_frames {
+            self.trim_counter += 1;
+            false
+        } else if self.ff_skip.get() {
             let send = self.ff_counter % 4 == 0;
             self.ff_counter += 1;
             send
@@ -418,6 +430,7 @@ fn init_sdl_drivers(
     video_tx: Option<mpsc::Sender<Vec<u8>>>,
     audio_tx: Option<mpsc::Sender<Vec<u8>>>,
     ff_skip: Rc<Cell<bool>>,
+    trim_frames: u32,
 ) -> Result<(RecordRender, RecordAudioDriver)> {
     let audio_subsystem = sdl_context.audio().map_err(|e| anyhow::anyhow!(e))?;
 
@@ -472,6 +485,8 @@ fn init_sdl_drivers(
         p2: GamepadOverlay::new(),
         ff_skip: false,
         ff_counter: 0,
+        trim_frames,
+        trim_counter: 0,
     };
 
     let audio_driver = RecordAudioDriver {
@@ -480,6 +495,8 @@ fn init_sdl_drivers(
         sample_buf: Vec::new(),
         ff_skip,
         ff_counter: 0,
+        trim_frames,
+        trim_counter: 0,
     };
 
     Ok((render, audio_driver))
@@ -609,6 +626,7 @@ impl PlayMovieAction {
             video_tx,
             audio_tx,
             ff_skip.clone(),
+            self.trim_frames,
         )?;
 
         let mut machine = NesMachine::new(f, EmptyPlugin::new(), render, audio_driver);
