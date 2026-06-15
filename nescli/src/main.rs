@@ -1,6 +1,6 @@
 use crate::actions::{InfoAction, PlayMovieAction, RunAction};
 use clap::Parser;
-use nes_core::ines::INesFile;
+use nes_core::{ines::INesFile, nes::ppu::palette::ColorTheme};
 use std::fs::File;
 use std::io::Read;
 use std::path::PathBuf;
@@ -13,6 +13,9 @@ struct Args {
     #[command(subcommand)]
     action: Action,
     nes_file: PathBuf,
+    /// Path to a .pal palette file (64 RGB entries, 192 bytes)
+    #[arg(long)]
+    palette: Option<PathBuf>,
 }
 
 type AppResult<T> = Result<T, anyhow::Error>;
@@ -23,6 +26,16 @@ impl Args {
         let mut buffer = Vec::new();
         file.read_to_end(&mut buffer)?;
         Ok(INesFile::new(buffer)?)
+    }
+
+    pub fn load_palette(&self) -> AppResult<Option<ColorTheme>> {
+        let Some(path) = &self.palette else {
+            return Ok(None);
+        };
+        let mut buf = [0u8; 192];
+        let mut file = File::open(path)?;
+        file.read_exact(&mut buf)?;
+        Ok(Some(ColorTheme::load_from_pal_buf(&buf)))
     }
 }
 
@@ -37,11 +50,11 @@ enum Action {
 }
 
 impl Action {
-    fn run(&self, nes_file: INesFile) -> AppResult<()> {
+    fn run(&self, nes_file: INesFile, palette: Option<ColorTheme>) -> AppResult<()> {
         match self {
             Action::Info(action) => action.run(&nes_file),
-            Action::Run(action) => action.run(&nes_file),
-            Action::PlayMovie(action) => action.run(&nes_file),
+            Action::Run(action) => action.run(&nes_file, palette),
+            Action::PlayMovie(action) => action.run(&nes_file, palette),
         }
     }
 }
@@ -49,5 +62,6 @@ impl Action {
 fn main() -> AppResult<()> {
     env_logger::init();
     let args = Args::parse();
-    args.action.run(args.read_file()?)
+    let palette = args.load_palette()?;
+    args.action.run(args.read_file()?, palette)
 }

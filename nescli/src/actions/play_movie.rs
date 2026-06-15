@@ -4,7 +4,7 @@ use nes_core::{
     EmptyPlugin,
     ines::INesFile,
     movie::{self, GamepadInput},
-    nes::{NesMcu, apu::AudioDriver, controller::Button},
+    nes::{NesMcu, apu::AudioDriver, controller::Button, ppu::palette::ColorTheme},
     nes_machine::NesMachine,
     render::{ImageRender, Render},
 };
@@ -486,7 +486,7 @@ fn init_sdl_drivers(
 }
 
 impl PlayMovieAction {
-    pub fn run(&self, f: &INesFile) -> Result<()> {
+    pub fn run(&self, f: &INesFile, palette: Option<ColorTheme>) -> Result<()> {
         let fm2_data = fs::read(&self.fm2_file)?;
         let fm2 = movie::parse(&fm2_data).context("parse fm2 file")?;
         let input_logs = &fm2.input_logs;
@@ -612,6 +612,9 @@ impl PlayMovieAction {
         )?;
 
         let mut machine = NesMachine::new(f, EmptyPlugin::new(), render, audio_driver);
+        if let Some(theme) = palette {
+            machine.set_color_theme(theme);
+        }
         let dual_player = input_logs.iter().any(|log| !log.port1.is_empty());
         machine.render_mut().set_dual_player(dual_player);
         machine

@@ -1,5 +1,5 @@
 mod nametable;
-mod palette;
+pub mod palette;
 mod registers;
 mod sprite;
 
@@ -144,6 +144,10 @@ impl<R: Render> Ppu<R> {
             effective_mask: PpuMask::new(),
             rendering_enabled_at_scanline_start: false,
         }
+    }
+
+    pub fn set_color_theme(&mut self, theme: ColorTheme) {
+        self.color_theme = theme;
     }
 
     pub fn reset(&mut self) {

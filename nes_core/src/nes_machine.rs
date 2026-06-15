@@ -2,7 +2,10 @@ use crate::{
     ExecuteResult, Plugin, get_system_clock, inc_system_clock,
     ines::INesFile,
     machine::Machine,
-    nes::{NesMcu, controller::Button, dmc_dma::DmcDma},
+    nes::{
+        NesMcu, controller::Button, dmc_dma::DmcDma,
+        ppu::palette::ColorTheme,
+    },
     render::Render,
 };
 
@@ -130,6 +133,10 @@ where
 
     pub fn render_mut(&mut self) -> &mut R {
         self.machine.mcu_mut().ppu_mut().renderer_mut()
+    }
+
+    pub fn set_color_theme(&mut self, theme: ColorTheme) {
+        self.machine.mcu_mut().ppu_mut().set_color_theme(theme);
     }
 
     /// Set the CPU program counter.
