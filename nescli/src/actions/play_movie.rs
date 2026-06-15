@@ -101,6 +101,8 @@ pub struct PlayMovieAction {
     crf: u32,
     #[arg(long, default_value_t = 0)]
     trim_frames: u32,
+    #[arg(long, default_value_t = 0)]
+    trim_after: u32,
 }
 
 struct GamepadOverlay {
@@ -706,6 +708,11 @@ impl PlayMovieAction {
                     eprintln!("CPU halt, possible because of an invalid instruction");
                     break 'running;
                 }
+            }
+
+            if self.trim_after > 0 && machine.frame_no() >= self.trim_after as usize {
+                eprintln!(">> Trim after {} frames", self.trim_after);
+                break 'running;
             }
 
             if frame_index >= input_logs.len() {
