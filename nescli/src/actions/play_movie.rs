@@ -97,6 +97,8 @@ pub struct PlayMovieAction {
     idle_frames: u32,
     #[arg(long)]
     gamepad_overlay: bool,
+    #[arg(long, default_value_t = 18)]
+    crf: u32,
     #[arg(long, default_value_t = 0)]
     trim_frames: u32,
 }
@@ -557,7 +559,7 @@ impl PlayMovieAction {
                     "-c:v",
                     "libx264",
                     "-crf",
-                    "18",
+                    &self.crf.to_string(),
                     "-pix_fmt",
                     "yuv420p",
                     "-c:a",
