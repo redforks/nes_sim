@@ -340,6 +340,35 @@ bntest: bntest-h bntest-v bntest-aorom
 mmc1-a12: build_nes_cpu_test
     {{ nes_cpu_test }} --quiet -f ../nes-test-roms/MMC1_A12/mmc1_a12.nes
 
+vrc21-s1: build_nes_cpu_test
+    {{ nes_cpu_test }} --quiet -f  test-roms/vrctests/vrctest21s1.nes
+
+vrc21-s2: build_nes_cpu_test
+    {{ nes_cpu_test }} --quiet -f  test-roms/vrctests/vrctest21s2.nes
+
+vrc22: build_nes_cpu_test
+    {{ nes_cpu_test }} --quiet -f  test-roms/vrctests/vrctest22.nes
+
+vrc23-s1: build_nes_cpu_test
+    {{ nes_cpu_test }} --quiet -f  test-roms/vrctests/vrctest23s1.nes
+
+vrc23-s2: build_nes_cpu_test
+    {{ nes_cpu_test }} --quiet -f  test-roms/vrctests/vrctest23s2.nes
+
+vrc23-s3: build_nes_cpu_test
+    {{ nes_cpu_test }} --quiet -f  test-roms/vrctests/vrctest23s3.nes
+
+vrc25-s1: build_nes_cpu_test
+    {{ nes_cpu_test }} --quiet -f  test-roms/vrctests/vrctest25s1.nes
+
+vrc25-s2: build_nes_cpu_test
+    {{ nes_cpu_test }} --quiet -f  test-roms/vrctests/vrctest25s2.nes
+
+vrc25-s3: build_nes_cpu_test
+    {{ nes_cpu_test }} --quiet -f  test-roms/vrctests/vrctest25s3.nes
+
+vrc2-and-4-roms: vrc21-s1 vrc21-s2 vrc22 vrc23-s1 vrc23-s2 vrc23-s3 vrc25-s1 vrc25-s2 vrc25-s3
+
 [parallel]
 passed_mapper: mmc3 bntest mmc1-a12
 
