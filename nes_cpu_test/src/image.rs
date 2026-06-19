@@ -72,7 +72,7 @@ impl Image {
         start_pc: Option<u16>,
         max_instructions: u64,
     ) -> MachineWrapper {
-        if let Some(f) = file_name.file_name() {
+        if let Some(f) = file_name.file_name().and_then(|f| f.to_str()) {
             if f == "scanline.nes" {
                 return self.create_scanline_machine(ines, quiet, start_pc, max_instructions);
             } else if f == "mmc1_a12.nes" {
@@ -84,6 +84,16 @@ impl Image {
                     .is_some_and(|s| s.contains("nmi_sync"))
             {
                 return self.create_nmi_sync_machine(ines, quiet, start_pc, max_instructions);
+            } else if let Some(stem) = f.strip_suffix(".nes") {
+                if stem.starts_with("vrctest") {
+                    return self.create_exp_png_machine(
+                        ines,
+                        quiet,
+                        start_pc,
+                        max_instructions,
+                        vec![format!("{}.png", stem)],
+                    );
+                }
             }
         }
 
@@ -166,7 +176,7 @@ impl Image {
         quiet: bool,
         start_pc: Option<u16>,
         max_instructions: u64,
-        exp_img_paths: Vec<&str>,
+        exp_img_paths: Vec<String>,
     ) -> MachineWrapper {
         let expected_pngs: Vec<PathBuf> = exp_img_paths
             .into_iter()
@@ -204,7 +214,7 @@ impl Image {
             quiet,
             start_pc,
             max_instructions,
-            vec!["mmc1_a12-exp.png"],
+            vec!["mmc1_a12-exp.png".to_string()],
         )
     }
 
@@ -220,7 +230,7 @@ impl Image {
             quiet,
             start_pc,
             max_instructions,
-            vec!["nmi-sync-ntsc-exp-1.png", "nmi-sync-ntsc-exp-2.png"],
+            vec!["nmi-sync-ntsc-exp-1.png".to_string(), "nmi-sync-ntsc-exp-2.png".to_string()],
         )
     }
 
