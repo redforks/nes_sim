@@ -167,7 +167,8 @@ impl Image {
         start_pc: Option<u16>,
         max_instructions: u64,
     ) -> MachineWrapper {
-        let expected_png = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("src/mmc1_a12-exp.png");
+        let expected_png =
+            PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("src/png-exps/mmc1_a12-exp.png");
         let mut plugins: Vec<Box<dyn Plugin<nes_core::nes::NesMcu<ImageRender, ()>>>> = vec![
             Box::new(NesReportPlugin::create(quiet)),
             Box::new(PngFrameMatch::new(expected_png).expect("failed to load mmc1_a12_exp.png")),
@@ -194,9 +195,9 @@ impl Image {
         max_instructions: u64,
     ) -> MachineWrapper {
         let expected_png_1 =
-            PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("src/nmi-sync-ntsc-exp-1.png");
+            PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("src/png-exps/nmi-sync-ntsc-exp-1.png");
         let expected_png_2 =
-            PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("src/nmi-sync-ntsc-exp-2.png");
+            PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("src/png-exps/nmi-sync-ntsc-exp-2.png");
         let mut plugins: Vec<Box<dyn Plugin<nes_core::nes::NesMcu<ImageRender, ()>>>> = vec![
             Box::new(NesReportPlugin::create(quiet)),
             Box::new(
