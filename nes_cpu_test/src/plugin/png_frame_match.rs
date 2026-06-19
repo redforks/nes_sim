@@ -19,28 +19,17 @@ impl PngFrameMatch {
         self.matched.iter().all(|matched| *matched)
     }
 
-    pub fn new(path: impl Into<PathBuf>) -> image::ImageResult<Self> {
-        let expected_path = path.into();
-        let expected = image::open(&expected_path)?.to_rgba8();
-
+    pub fn new<I: Into<PathBuf>>(paths: Vec<I>) -> image::ImageResult<Self> {
+        let mut expected: Vec<(PathBuf, RgbaImage)> = Vec::new();
+        for path in paths {
+            let expected_path = path.into();
+            let expected_img = image::open(&expected_path)?.to_rgba8();
+            expected.push((expected_path, expected_img));
+        }
+        let n = expected.len();
         Ok(Self {
-            expected: vec![(expected_path, expected)],
-            matched: vec![false],
-        })
-    }
-
-    pub fn new_two(
-        path1: impl Into<PathBuf>,
-        path2: impl Into<PathBuf>,
-    ) -> image::ImageResult<Self> {
-        let expected_path1 = path1.into();
-        let expected_path2 = path2.into();
-        let expected1 = image::open(&expected_path1)?.to_rgba8();
-        let expected2 = image::open(&expected_path2)?.to_rgba8();
-
-        Ok(Self {
-            expected: vec![(expected_path1, expected1), (expected_path2, expected2)],
-            matched: vec![false, false],
+            expected,
+            matched: vec![false; n],
         })
     }
 

@@ -160,50 +160,25 @@ impl Image {
         MachineWrapper::INes(Box::new(machine))
     }
 
-    fn create_mmc1_a12_machine(
+    fn create_exp_png_machine(
         &self,
         ines: &INesFile,
         quiet: bool,
         start_pc: Option<u16>,
         max_instructions: u64,
+        exp_img_paths: Vec<&str>,
     ) -> MachineWrapper {
-        let expected_png =
-            PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("src/png-exps/mmc1_a12-exp.png");
+        let expected_pngs: Vec<PathBuf> = exp_img_paths
+            .into_iter()
+            .map(|f| {
+                PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+                    .join("src/png-exps/")
+                    .join(f)
+            })
+            .collect();
         let mut plugins: Vec<Box<dyn Plugin<nes_core::nes::NesMcu<ImageRender, ()>>>> = vec![
             Box::new(NesReportPlugin::create(quiet)),
-            Box::new(PngFrameMatch::new(expected_png).expect("failed to load mmc1_a12_exp.png")),
-            // MMC1 A12 needs substantially more time than the other image tests
-            // to settle on the matching frame in debug builds.
-            Box::new(Timeout::new(Duration::from_secs(3))),
-        ];
-        if max_instructions > 0 {
-            plugins.push(Box::new(MaxInstructions::new(max_instructions)));
-        }
-        let plugin = CompositePlugin::new(plugins);
-        let mut machine = NesMachine::new(ines, plugin, ImageRender::default_dimension(), ());
-        if let Some(pc) = start_pc {
-            machine.set_pc(pc);
-        }
-        MachineWrapper::PngFrameMatch(Box::new(machine))
-    }
-
-    fn create_nmi_sync_machine(
-        &self,
-        ines: &INesFile,
-        quiet: bool,
-        start_pc: Option<u16>,
-        max_instructions: u64,
-    ) -> MachineWrapper {
-        let expected_png_1 =
-            PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("src/png-exps/nmi-sync-ntsc-exp-1.png");
-        let expected_png_2 =
-            PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("src/png-exps/nmi-sync-ntsc-exp-2.png");
-        let mut plugins: Vec<Box<dyn Plugin<nes_core::nes::NesMcu<ImageRender, ()>>>> = vec![
-            Box::new(NesReportPlugin::create(quiet)),
-            Box::new(
-                PngFrameMatch::new_two(expected_png_1, expected_png_2)
-                    .expect("failed to load mmc1_a12_exp.png"),
-            ),
+            Box::new(PngFrameMatch::new(expected_pngs).expect("failed to load expected PNG")),
             Box::new(Timeout::new(Duration::from_secs(2))),
         ];
         if max_instructions > 0 {
@@ -217,6 +192,38 @@ impl Image {
         MachineWrapper::PngFrameMatch(Box::new(machine))
     }
 
+    fn create_mmc1_a12_machine(
+        &self,
+        ines: &INesFile,
+        quiet: bool,
+        start_pc: Option<u16>,
+        max_instructions: u64,
+    ) -> MachineWrapper {
+        self.create_exp_png_machine(
+            ines,
+            quiet,
+            start_pc,
+            max_instructions,
+            vec!["mmc1_a12-exp.png"],
+        )
+    }
+
+    fn create_nmi_sync_machine(
+        &self,
+        ines: &INesFile,
+        quiet: bool,
+        start_pc: Option<u16>,
+        max_instructions: u64,
+    ) -> MachineWrapper {
+        self.create_exp_png_machine(
+            ines,
+            quiet,
+            start_pc,
+            max_instructions,
+            vec!["nmi-sync-ntsc-exp-1.png", "nmi-sync-ntsc-exp-2.png"],
+        )
+    }
+
     fn create_scanline_machine(
         &self,
         ines: &INesFile,
@@ -228,7 +235,9 @@ impl Image {
         let mut plugins: Vec<Box<dyn Plugin<nes_core::nes::NesMcu<ImageRender, ()>>>> = vec![
             Box::new(NesReportPlugin::create(quiet)),
             Box::new(NametableConsole::default()),
-            Box::new(PngFrameMatch::new(expected_png).expect("failed to load scanline-exp.png")),
+            Box::new(
+                PngFrameMatch::new(vec![expected_png]).expect("failed to load scanline-exp.png"),
+            ),
             Box::new(Timeout::new(Duration::from_secs(2))),
         ];
         if max_instructions > 0 {
