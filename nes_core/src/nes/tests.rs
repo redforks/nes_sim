@@ -67,7 +67,7 @@ fn test_ppu_pattern_writes_route_to_cartridge() {
     mcu.write(0x2006, 0x10);
     mcu.write(0x2007, 0xab);
 
-    assert_eq!(mcu.cartridge.pattern_ref()[0x10], 0xab);
+    assert_eq!(mcu.cartridge.read_chr(0x10), 0xab);
 }
 
 #[test]

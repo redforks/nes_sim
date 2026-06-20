@@ -211,7 +211,7 @@ pub enum CartridgeOperation {
 }
 
 impl Cartridge {
-    pub fn pattern_ref(&self) -> &[u8] {
+    fn pattern_ref(&self) -> &[u8] {
         match self {
             Cartridge::Mapper0(cartridge) => cartridge.pattern_ref(),
             Cartridge::Mapper2(cartridge) => cartridge.pattern_ref(),
