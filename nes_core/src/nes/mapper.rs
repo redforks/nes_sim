@@ -8,6 +8,8 @@ use mapper7::Mapper7;
 use mapper34::Mapper34;
 use mmc1::MMC1;
 use mmc3::MMC3;
+use vrc24::Vrc24;
+use vrc24::VrcVariant;
 
 const CARTRIDGE_START_ADDR: u16 = 0x4020;
 const MMC3_ALT_TEST_SIGNATURE: &str = "6-MMC3_alt";
@@ -20,6 +22,7 @@ mod mapper34;
 mod mapper7;
 mod mmc1;
 mod mmc3;
+mod vrc24;
 
 #[derive(Debug, Eq, PartialEq, Copy, Clone)]
 pub enum Mirroring {
@@ -79,6 +82,49 @@ pub fn create_cartridge(f: &INesFile) -> (Cartridge, Mirroring) {
         ))),
         7 => Cartridge::Mapper7(Box::new(Mapper7::new(f.read_prg_rom(), f.read_chr_rom()))),
         34 => Cartridge::Mapper34(Box::new(Mapper34::new(f.read_prg_rom(), f.read_chr_rom()))),
+        21 => {
+            let submapper = f.header().submapper_no.unwrap_or(1);
+            let variant = match submapper {
+                2 => VrcVariant::Vrc4c,
+                _ => VrcVariant::Vrc4a, // default: submapper 1
+            };
+            Cartridge::Vrc24(Box::new(Vrc24::new(
+                f.read_prg_rom(),
+                f.read_chr_rom(),
+                variant,
+            )))
+        }
+        22 => Cartridge::Vrc24(Box::new(Vrc24::new(
+            f.read_prg_rom(),
+            f.read_chr_rom(),
+            VrcVariant::Vrc2a,
+        ))),
+        23 => {
+            let submapper = f.header().submapper_no.unwrap_or(1);
+            let variant = match submapper {
+                2 => VrcVariant::Vrc4e,
+                3 => VrcVariant::Vrc2b,
+                _ => VrcVariant::Vrc4f, // default: submapper 1
+            };
+            Cartridge::Vrc24(Box::new(Vrc24::new(
+                f.read_prg_rom(),
+                f.read_chr_rom(),
+                variant,
+            )))
+        }
+        25 => {
+            let submapper = f.header().submapper_no.unwrap_or(1);
+            let variant = match submapper {
+                2 => VrcVariant::Vrc4d,
+                3 => VrcVariant::Vrc2c,
+                _ => VrcVariant::Vrc4b, // default: submapper 1
+            };
+            Cartridge::Vrc24(Box::new(Vrc24::new(
+                f.read_prg_rom(),
+                f.read_chr_rom(),
+                variant,
+            )))
+        }
         87 => Cartridge::Mapper87(Box::new(MapperJ87::new(f.read_prg_rom(), f.read_chr_rom()))),
         _ => panic!("Unsupported cartridge mapper no: {}", f.header().mapper_no),
     };
@@ -100,6 +146,7 @@ pub enum Cartridge {
     Mapper87(Box<MapperJ87>),
     MMC1(Box<MMC1>),
     MMC3(Box<MMC3>),
+    Vrc24(Box<Vrc24>),
     #[cfg(test)]
     Test(Box<TestCartridge>),
 }
@@ -174,6 +221,7 @@ impl Cartridge {
             Cartridge::MMC1(cartridge) => cartridge.pattern_ref(),
             Cartridge::MMC3(cartridge) => cartridge.pattern_ref(),
             Cartridge::Mapper87(cartridge) => cartridge.pattern_ref(),
+            Cartridge::Vrc24(cartridge) => cartridge.pattern_ref(),
             #[cfg(test)]
             Cartridge::Test(cartridge) => cartridge.pattern_ref(),
         }
@@ -188,6 +236,7 @@ impl Cartridge {
             Cartridge::Mapper7(cartridge) => cartridge.write_pattern(address, value),
             Cartridge::Mapper34(cartridge) => cartridge.write_pattern(address, value),
             Cartridge::MMC3(cartridge) => cartridge.write_pattern(address, value),
+            Cartridge::Vrc24(cartridge) => cartridge.write_pattern(address, value),
             Cartridge::Mapper87(cartridge) => cartridge.write_pattern(address, value),
             #[cfg(test)]
             Cartridge::Test(cartridge) => cartridge.write_pattern(address, value),
@@ -204,6 +253,7 @@ impl Cartridge {
             Cartridge::MMC1(cartridge) => cartridge.read(address),
             Cartridge::MMC3(cartridge) => cartridge.read(address),
             Cartridge::Mapper87(cartridge) => cartridge.read(address),
+            Cartridge::Vrc24(cartridge) => cartridge.read(address),
             #[cfg(test)]
             Cartridge::Test(cartridge) => cartridge.read(address),
         }
@@ -219,6 +269,7 @@ impl Cartridge {
             Cartridge::MMC1(cartridge) => cartridge.peek(address),
             Cartridge::MMC3(cartridge) => cartridge.peek(address),
             Cartridge::Mapper87(cartridge) => cartridge.peek(address),
+            Cartridge::Vrc24(cartridge) => cartridge.peek(address),
             #[cfg(test)]
             Cartridge::Test(cartridge) => cartridge.peek(address),
         }
@@ -234,6 +285,7 @@ impl Cartridge {
             Cartridge::MMC1(cartridge) => cartridge.write(address, value),
             Cartridge::MMC3(cartridge) => cartridge.write(address, value),
             Cartridge::Mapper87(cartridge) => cartridge.write(address, value),
+            Cartridge::Vrc24(cartridge) => cartridge.write(address, value),
             #[cfg(test)]
             Cartridge::Test(cartridge) => cartridge.write(address, value),
         }
@@ -248,6 +300,7 @@ impl Cartridge {
             | Cartridge::Mapper34(_)
             | Cartridge::MMC1(_) => {}
             Cartridge::MMC3(cartridge) => cartridge.on_ppu_tick(scanline, dot, rendering_enabled),
+            Cartridge::Vrc24(cartridge) => cartridge.on_ppu_tick(scanline, dot, rendering_enabled),
             Cartridge::Mapper87(_) => {}
             #[cfg(test)]
             Cartridge::Test(_) => {}
@@ -269,6 +322,7 @@ impl Cartridge {
             | Cartridge::Mapper34(_)
             | Cartridge::MMC1(_) => false,
             Cartridge::MMC3(cartridge) => cartridge.irq_pending(),
+            Cartridge::Vrc24(cartridge) => cartridge.irq_pending(),
             Cartridge::Mapper87(_) => false,
             #[cfg(test)]
             Cartridge::Test(cartridge) => cartridge.irq_pending(),
