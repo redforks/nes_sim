@@ -166,11 +166,7 @@ impl TestCartridge {
         }
     }
 
-    pub fn read_pattern(&self, address: u16) -> u8 {
-        self.chr_rom[address as usize % self.chr_rom.len()]
-    }
-
-    pub fn write_pattern(&mut self, address: u16, value: u8) {
+    pub fn write_chr(&mut self, address: u16, value: u8) {
         self.chr_rom[address as usize] = value;
     }
 
@@ -211,35 +207,35 @@ pub enum CartridgeOperation {
 }
 
 impl Cartridge {
-    pub fn read_pattern(&self, address: u16) -> u8 {
+    pub fn read_chr(&self, address: u16) -> u8 {
         match self {
-            Cartridge::Mapper0(cartridge) => cartridge.read_pattern(address),
-            Cartridge::Mapper2(cartridge) => cartridge.read_pattern(address),
-            Cartridge::Mapper3(cartridge) => cartridge.read_pattern(address),
-            Cartridge::Mapper7(cartridge) => cartridge.read_pattern(address),
-            Cartridge::Mapper34(cartridge) => cartridge.read_pattern(address),
-            Cartridge::MMC1(cartridge) => cartridge.read_pattern(address),
-            Cartridge::MMC3(cartridge) => cartridge.read_pattern(address),
-            Cartridge::Mapper87(cartridge) => cartridge.read_pattern(address),
-            Cartridge::Vrc24(cartridge) => cartridge.read_pattern(address),
+            Cartridge::Mapper0(cartridge) => cartridge.read_chr(address),
+            Cartridge::Mapper2(cartridge) => cartridge.read_chr(address),
+            Cartridge::Mapper3(cartridge) => cartridge.read_chr(address),
+            Cartridge::Mapper7(cartridge) => cartridge.read_chr(address),
+            Cartridge::Mapper34(cartridge) => cartridge.read_chr(address),
+            Cartridge::MMC1(cartridge) => cartridge.read_chr(address),
+            Cartridge::MMC3(cartridge) => cartridge.read_chr(address),
+            Cartridge::Mapper87(cartridge) => cartridge.read_chr(address),
+            Cartridge::Vrc24(cartridge) => cartridge.read_chr(address),
             #[cfg(test)]
-            Cartridge::Test(cartridge) => cartridge.read_pattern(address),
+            Cartridge::Test(cartridge) => cartridge.read_chr(address),
         }
     }
 
-    pub fn write_pattern(&mut self, address: u16, value: u8) {
+    pub fn write_chr(&mut self, address: u16, value: u8) {
         match self {
-            Cartridge::Mapper0(cartridge) => cartridge.write_pattern(address, value),
-            Cartridge::Mapper2(cartridge) => cartridge.write_pattern(address, value),
+            Cartridge::Mapper0(cartridge) => cartridge.write_chr(address, value),
+            Cartridge::Mapper2(cartridge) => cartridge.write_chr(address, value),
             Cartridge::Mapper3(_) => {}
-            Cartridge::MMC1(cartridge) => cartridge.write_pattern(address, value),
-            Cartridge::Mapper7(cartridge) => cartridge.write_pattern(address, value),
-            Cartridge::Mapper34(cartridge) => cartridge.write_pattern(address, value),
-            Cartridge::MMC3(cartridge) => cartridge.write_pattern(address, value),
-            Cartridge::Vrc24(cartridge) => cartridge.write_pattern(address, value),
-            Cartridge::Mapper87(cartridge) => cartridge.write_pattern(address, value),
+            Cartridge::MMC1(cartridge) => cartridge.write_chr(address, value),
+            Cartridge::Mapper7(cartridge) => cartridge.write_chr(address, value),
+            Cartridge::Mapper34(cartridge) => cartridge.write_chr(address, value),
+            Cartridge::MMC3(cartridge) => cartridge.write_chr(address, value),
+            Cartridge::Vrc24(cartridge) => cartridge.write_chr(address, value),
+            Cartridge::Mapper87(cartridge) => cartridge.write_chr(address, value),
             #[cfg(test)]
-            Cartridge::Test(cartridge) => cartridge.write_pattern(address, value),
+            Cartridge::Test(cartridge) => cartridge.write_chr(address, value),
         }
     }
 

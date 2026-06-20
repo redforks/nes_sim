@@ -1,4 +1,4 @@
-use super::{CartridgeOperation, Mirroring, CARTRIDGE_START_ADDR};
+use super::{CARTRIDGE_START_ADDR, CartridgeOperation, Mirroring};
 
 const PRG_ROM_BANK_SIZE: usize = 0x8000;
 const CHR_SIZE: usize = 0x2000;
@@ -41,11 +41,11 @@ impl Mapper7 {
         self.prg_rom[bank_start + offset]
     }
 
-    pub fn read_pattern(&self, address: u16) -> u8 {
+    pub fn read_chr(&self, address: u16) -> u8 {
         self.chr[address as usize % CHR_SIZE]
     }
 
-    pub fn write_pattern(&mut self, address: u16, value: u8) {
+    pub fn write_chr(&mut self, address: u16, value: u8) {
         if self.has_chr_ram {
             self.chr[address as usize % CHR_SIZE] = value;
         }

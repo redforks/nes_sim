@@ -95,11 +95,11 @@ impl MMC1 {
         mapper
     }
 
-    pub fn read_pattern(&self, address: u16) -> u8 {
+    pub fn read_chr(&self, address: u16) -> u8 {
         self.chr_window[address as usize % CHR_WINDOW_SIZE]
     }
 
-    pub fn write_pattern(&mut self, address: u16, value: u8) {
+    pub fn write_chr(&mut self, address: u16, value: u8) {
         if !self.has_chr_ram {
             return;
         }
@@ -494,12 +494,12 @@ mod tests {
             rom[12 * 1024] = 4;
         });
 
-        assert_eq!(mmc1.read_pattern(0x0000), 1);
-        assert_eq!(mmc1.read_pattern(0x1000), 2);
+        assert_eq!(mmc1.read_chr(0x0000), 1);
+        assert_eq!(mmc1.read_chr(0x1000), 2);
 
         mmc1.control(ControlFlags::new().with_chr_in_4k(true));
         mmc1.select_chr_bank0(2);
-        assert_eq!(mmc1.read_pattern(0x0000), 3);
+        assert_eq!(mmc1.read_chr(0x0000), 3);
     }
 
     #[test]
@@ -513,17 +513,17 @@ mod tests {
 
         mmc1.control(ControlFlags::new().with_chr_in_4k(true));
         mmc1.select_chr_bank1(3);
-        assert_eq!(mmc1.read_pattern(0x1000), 4);
+        assert_eq!(mmc1.read_chr(0x1000), 4);
     }
 
     #[test]
     fn writes_to_chr_ram_when_chr_rom_is_absent() {
         let mut mmc1 = MMC1::new(&[0; 32 * 1024], &[], Mirroring::Horizontal);
 
-        mmc1.write_pattern(0x0000, 0x12);
-        mmc1.write_pattern(0x1fff, 0x34);
+        mmc1.write_chr(0x0000, 0x12);
+        mmc1.write_chr(0x1fff, 0x34);
 
-        assert_eq!(mmc1.read_pattern(0x0000), 0x12);
-        assert_eq!(mmc1.read_pattern(0x1fff), 0x34);
+        assert_eq!(mmc1.read_chr(0x0000), 0x12);
+        assert_eq!(mmc1.read_chr(0x1fff), 0x34);
     }
 }

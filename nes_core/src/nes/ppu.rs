@@ -523,7 +523,7 @@ impl<R: Render> Ppu<R> {
             // Read from pattern table or name table
             if addr < 0x2000 {
                 // Pattern table (CHR ROM/RAM)
-                cartridge.read_pattern(addr)
+                cartridge.read_chr(addr)
             } else {
                 // Name table via PPU's built-in storage
                 self.read_nametable(addr)
@@ -543,7 +543,7 @@ impl<R: Render> Ppu<R> {
             if addr >= 0x2000 {
                 self.write_nametable(addr, value);
             } else {
-                cartridge.write_pattern(addr, value);
+                cartridge.write_chr(addr, value);
             }
         } else {
             self.palette.write(addr, value);
@@ -568,8 +568,8 @@ impl<R: Render> Ppu<R> {
         tile_y: usize,
     ) -> u8 {
         let tile_addr = base_addr + tile_idx as u16 * 16;
-        let low = cartridge.read_pattern(tile_addr + tile_y as u16);
-        let high = cartridge.read_pattern(tile_addr + tile_y as u16 + 8);
+        let low = cartridge.read_chr(tile_addr + tile_y as u16);
+        let high = cartridge.read_chr(tile_addr + tile_y as u16 + 8);
         let bit = 7 - tile_x;
         ((low >> bit) & 1) | (((high >> bit) & 1) << 1)
     }

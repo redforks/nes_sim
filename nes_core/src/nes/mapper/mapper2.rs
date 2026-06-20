@@ -47,11 +47,11 @@ impl Mapper2 {
 }
 
 impl Mapper2 {
-    pub fn read_pattern(&self, address: u16) -> u8 {
+    pub fn read_chr(&self, address: u16) -> u8 {
         self.chr[address as usize % CHR_ROM_SIZE]
     }
 
-    pub fn write_pattern(&mut self, address: u16, value: u8) {
+    pub fn write_chr(&mut self, address: u16, value: u8) {
         if self.has_chr_ram {
             self.chr[address as usize % CHR_ROM_SIZE] = value;
         }
@@ -125,28 +125,28 @@ mod tests {
     fn exposes_chr_rom_patterns() {
         let mapper = Mapper2::new(&[0; PRG_ROM_BANK_SIZE * 2], &[1, 2, 3]);
 
-        assert_eq!(mapper.read_pattern(0), 1);
-        assert_eq!(mapper.read_pattern(1), 2);
-        assert_eq!(mapper.read_pattern(2), 3);
+        assert_eq!(mapper.read_chr(0), 1);
+        assert_eq!(mapper.read_chr(1), 2);
+        assert_eq!(mapper.read_chr(2), 3);
     }
 
     #[test]
     fn writes_to_chr_ram_when_chr_rom_is_absent() {
         let mut mapper = Mapper2::new(&[0; PRG_ROM_BANK_SIZE * 2], &[]);
 
-        mapper.write_pattern(0x0000, 0x12);
-        mapper.write_pattern(0x1fff, 0x34);
+        mapper.write_chr(0x0000, 0x12);
+        mapper.write_chr(0x1fff, 0x34);
 
-        assert_eq!(mapper.read_pattern(0), 0x12);
-        assert_eq!(mapper.read_pattern(0x1fff), 0x34);
+        assert_eq!(mapper.read_chr(0), 0x12);
+        assert_eq!(mapper.read_chr(0x1fff), 0x34);
     }
 
     #[test]
     fn ignores_pattern_writes_when_chr_rom_is_present() {
         let mut mapper = Mapper2::new(&[0; PRG_ROM_BANK_SIZE * 2], &[0x56]);
 
-        mapper.write_pattern(0x0000, 0x12);
+        mapper.write_chr(0x0000, 0x12);
 
-        assert_eq!(mapper.read_pattern(0), 0x56);
+        assert_eq!(mapper.read_chr(0), 0x56);
     }
 }

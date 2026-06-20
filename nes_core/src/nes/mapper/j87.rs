@@ -37,7 +37,7 @@ impl MapperJ87 {
         r
     }
 
-    pub fn read_pattern(&self, address: u16) -> u8 {
+    pub fn read_chr(&self, address: u16) -> u8 {
         self.chr_rom_bands[self.cur_chr_band as usize][address as usize % 8192]
     }
 
@@ -68,7 +68,7 @@ impl MapperJ87 {
         CartridgeOperation::None
     }
 
-    pub fn write_pattern(&mut self, address: u16, value: u8) {
+    pub fn write_chr(&mut self, address: u16, value: u8) {
         self.chr_rom_bands[self.cur_chr_band as usize][address as usize] = value;
     }
 }

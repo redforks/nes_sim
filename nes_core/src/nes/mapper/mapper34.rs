@@ -70,11 +70,7 @@ impl Mapper34 {
         self.prg_rom[bank_start + offset]
     }
 
-    pub fn read_pattern(&self, address: u16) -> u8 {
-        self.chr[address as usize % self.chr.len()]
-    }
-
-    pub fn write_pattern(&mut self, address: u16, value: u8) {
+    pub fn write_chr(&mut self, address: u16, value: u8) {
         if self.board == Board::BxRom && self.has_chr_ram {
             let index = address as usize % self.chr.len();
             self.chr[index] = value;
@@ -159,11 +155,11 @@ mod tests {
     fn writes_to_chr_ram_when_chr_rom_is_absent() {
         let mut mapper = Mapper34::new(&[0; PRG_ROM_BANK_SIZE], &[]);
 
-        mapper.write_pattern(0x0000, 0x12);
-        mapper.write_pattern(0x1fff, 0x34);
+        mapper.write_chr(0x0000, 0x12);
+        mapper.write_chr(0x1fff, 0x34);
 
-        assert_eq!(mapper.read_pattern(0), 0x12);
-        assert_eq!(mapper.read_pattern(0x1fff), 0x34);
+        assert_eq!(mapper.read_chr(0), 0x12);
+        assert_eq!(mapper.read_chr(0x1fff), 0x34);
     }
 
     #[test]

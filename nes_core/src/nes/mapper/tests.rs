@@ -98,9 +98,9 @@ fn create_cartridge_mapper1_with_chr_ram() {
     let file = INesFile::new(rom).unwrap();
     let (mut cartridge, _mirroring) = create_cartridge(&file);
 
-    cartridge.write_pattern(0x0010, 0xab);
+    cartridge.write_chr(0x0010, 0xab);
 
-    assert_eq!(cartridge.read_pattern(0x0010), 0xab);
+    assert_eq!(cartridge.read_chr(0x0010), 0xab);
 }
 
 #[test]
@@ -119,9 +119,9 @@ fn create_cartridge_mapper2_with_chr_ram() {
     let file = INesFile::new(rom).unwrap();
     let (mut cartridge, _mirroring) = create_cartridge(&file);
 
-    cartridge.write_pattern(0x0010, 0xab);
+    cartridge.write_chr(0x0010, 0xab);
 
-    assert_eq!(cartridge.read_pattern(0x0010), 0xab);
+    assert_eq!(cartridge.read_chr(0x0010), 0xab);
 }
 
 #[test]
@@ -150,10 +150,10 @@ fn create_cartridge_mapper7() {
     let file = INesFile::new(rom).unwrap();
     let (mut cartridge, _mirroring) = create_cartridge(&file);
 
-    cartridge.write_pattern(0x0010, 0xab);
+    cartridge.write_chr(0x0010, 0xab);
 
     assert_eq!(cartridge.read(0x8000), 0);
-    assert_eq!(cartridge.read_pattern(0x0010), 0xab);
+    assert_eq!(cartridge.read_chr(0x0010), 0xab);
 }
 
 #[test]
@@ -162,10 +162,10 @@ fn create_cartridge_mapper34_bnrom() {
     let file = INesFile::new(rom).unwrap();
     let (mut cartridge, _mirroring) = create_cartridge(&file);
 
-    cartridge.write_pattern(0x0010, 0xab);
+    cartridge.write_chr(0x0010, 0xab);
 
     assert_eq!(cartridge.read(0x8000), 0);
-    assert_eq!(cartridge.read_pattern(0x0010), 0xab);
+    assert_eq!(cartridge.read_chr(0x0010), 0xab);
 }
 
 #[test]
@@ -174,9 +174,9 @@ fn create_cartridge_mapper4_with_chr_ram() {
     let file = INesFile::new(rom).unwrap();
     let (mut cartridge, _mirroring) = create_cartridge(&file);
 
-    cartridge.write_pattern(0x0010, 0xab);
+    cartridge.write_chr(0x0010, 0xab);
 
-    assert_eq!(cartridge.read_pattern(0x0010), 0xab);
+    assert_eq!(cartridge.read_chr(0x0010), 0xab);
 }
 
 #[test]

@@ -48,7 +48,7 @@ impl Mapper3 {
 }
 
 impl Mapper3 {
-    pub fn read_pattern(&self, address: u16) -> u8 {
+    pub fn read_chr(&self, address: u16) -> u8 {
         self.chr_window[address as usize % CHR_WINDOW_SIZE]
     }
 
@@ -126,16 +126,16 @@ mod tests {
 
         let mut mapper = Mapper3::new(&prg, &chr);
 
-        assert_eq!(mapper.read_pattern(0), 0x10);
+        assert_eq!(mapper.read_chr(0), 0x10);
 
         mapper.write(0x8000, 0x01);
-        assert_eq!(mapper.read_pattern(0), 0x20);
+        assert_eq!(mapper.read_chr(0), 0x20);
 
         mapper.write(0x9000, 0x02);
-        assert_eq!(mapper.read_pattern(0), 0x30);
+        assert_eq!(mapper.read_chr(0), 0x30);
 
         mapper.write(0xffff, 0x03);
-        assert_eq!(mapper.read_pattern(0), 0x40);
+        assert_eq!(mapper.read_chr(0), 0x40);
     }
 
     #[test]
@@ -149,6 +149,6 @@ mod tests {
 
         mapper.write(0x8000, 0x03);
 
-        assert_eq!(mapper.read_pattern(0), 0xbb);
+        assert_eq!(mapper.read_chr(0), 0xbb);
     }
 }

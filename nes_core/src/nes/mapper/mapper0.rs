@@ -39,11 +39,11 @@ impl Default for Mapper0 {
 }
 
 impl Mapper0 {
-    pub fn read_pattern(&self, address: u16) -> u8 {
+    pub fn read_chr(&self, address: u16) -> u8 {
         self.chr_rom[address as usize % self.chr_rom.len()]
     }
 
-    pub fn write_pattern(&mut self, address: u16, value: u8) {
+    pub fn write_chr(&mut self, address: u16, value: u8) {
         if self.has_chr_ram {
             self.chr_rom[address as usize % self.chr_rom.len()] = value;
         }
@@ -106,19 +106,19 @@ mod tests {
     #[test]
     fn cartridge() {
         let mcu = Mapper0::new(&[0; 0], &[1, 2]);
-        assert_eq!(1, mcu.read_pattern(0));
-        assert_eq!(2, mcu.read_pattern(1));
+        assert_eq!(1, mcu.read_chr(0));
+        assert_eq!(2, mcu.read_chr(1));
     }
 
     #[test]
     fn writes_to_chr_ram_when_chr_rom_is_absent() {
         let mut mcu = Mapper0::new(&[0; 0], &[]);
 
-        mcu.write_pattern(0x0000, 0x12);
-        mcu.write_pattern(0x1fff, 0x34);
+        mcu.write_chr(0x0000, 0x12);
+        mcu.write_chr(0x1fff, 0x34);
 
-        assert_eq!(mcu.read_pattern(0), 0x12);
-        assert_eq!(mcu.read_pattern(0x1fff), 0x34);
+        assert_eq!(mcu.read_chr(0), 0x12);
+        assert_eq!(mcu.read_chr(0x1fff), 0x34);
     }
 
     #[test]
