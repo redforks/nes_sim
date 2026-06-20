@@ -37,8 +37,8 @@ impl MapperJ87 {
         r
     }
 
-    pub fn pattern_ref(&self) -> &[u8] {
-        &self.chr_rom_bands[self.cur_chr_band as usize]
+    pub fn read_pattern(&self, address: u16) -> u8 {
+        self.chr_rom_bands[self.cur_chr_band as usize][address as usize % 8192]
     }
 
     pub fn read(&mut self, address: u16) -> u8 {

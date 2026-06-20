@@ -79,9 +79,6 @@ fn create_cartridge_mapper0() {
     // Test that we can read from cartridge
     let val = cartridge.read(CARTRIDGE_START_ADDR);
     assert_eq!(val, 0);
-
-    // Test pattern reference
-    assert_eq!(cartridge.pattern_ref().len(), 8 * 1024);
 }
 
 #[test]
@@ -93,9 +90,6 @@ fn create_cartridge_mapper1() {
     // Test that we can read from cartridge
     let val = cartridge.read(0x8000);
     assert_eq!(val, 0);
-
-    // Test pattern reference
-    assert_eq!(cartridge.pattern_ref().len(), 8 * 1024);
 }
 
 #[test]
@@ -106,8 +100,7 @@ fn create_cartridge_mapper1_with_chr_ram() {
 
     cartridge.write_pattern(0x0010, 0xab);
 
-    assert_eq!(cartridge.pattern_ref().len(), 8 * 1024);
-    assert_eq!(cartridge.pattern_ref()[0x0010], 0xab);
+    assert_eq!(cartridge.read_pattern(0x0010), 0xab);
 }
 
 #[test]
@@ -118,8 +111,6 @@ fn create_cartridge_mapper2() {
 
     let val = cartridge.read(0x8000);
     assert_eq!(val, 0);
-
-    assert_eq!(cartridge.pattern_ref().len(), 8 * 1024);
 }
 
 #[test]
@@ -130,8 +121,7 @@ fn create_cartridge_mapper2_with_chr_ram() {
 
     cartridge.write_pattern(0x0010, 0xab);
 
-    assert_eq!(cartridge.pattern_ref().len(), 8 * 1024);
-    assert_eq!(cartridge.pattern_ref()[0x0010], 0xab);
+    assert_eq!(cartridge.read_pattern(0x0010), 0xab);
 }
 
 #[test]
@@ -142,8 +132,6 @@ fn create_cartridge_mapper3() {
 
     let val = cartridge.read(0x8000);
     assert_eq!(val, 0);
-
-    assert_eq!(cartridge.pattern_ref().len(), 8 * 1024);
 }
 
 #[test]
@@ -154,8 +142,6 @@ fn create_cartridge_mapper4() {
 
     let val = cartridge.read(0x8000);
     assert_eq!(val, 0);
-
-    assert_eq!(cartridge.pattern_ref().len(), 8 * 1024);
 }
 
 #[test]
@@ -167,7 +153,7 @@ fn create_cartridge_mapper7() {
     cartridge.write_pattern(0x0010, 0xab);
 
     assert_eq!(cartridge.read(0x8000), 0);
-    assert_eq!(cartridge.pattern_ref()[0x0010], 0xab);
+    assert_eq!(cartridge.read_pattern(0x0010), 0xab);
 }
 
 #[test]
@@ -179,7 +165,7 @@ fn create_cartridge_mapper34_bnrom() {
     cartridge.write_pattern(0x0010, 0xab);
 
     assert_eq!(cartridge.read(0x8000), 0);
-    assert_eq!(cartridge.pattern_ref()[0x0010], 0xab);
+    assert_eq!(cartridge.read_pattern(0x0010), 0xab);
 }
 
 #[test]
@@ -190,7 +176,7 @@ fn create_cartridge_mapper4_with_chr_ram() {
 
     cartridge.write_pattern(0x0010, 0xab);
 
-    assert_eq!(cartridge.pattern_ref()[0x0010], 0xab);
+    assert_eq!(cartridge.read_pattern(0x0010), 0xab);
 }
 
 #[test]
@@ -200,15 +186,4 @@ fn create_cartridge_unsupported_mapper() {
     let file = INesFile::new(rom).unwrap();
     // This should panic
     let (_cartridge, _mirroring) = create_cartridge(&file);
-}
-
-#[test]
-fn create_cartridge_different_sizes() {
-    // Test with 2 PRG pages (Mapper0 supports up to 32KB PRG ROM)
-    let rom = create_test_nes(0, 2, 1);
-    let file = INesFile::new(rom).unwrap();
-    let (cartridge, _mirroring) = create_cartridge(&file);
-
-    // Mapper0 has fixed 8KB CHR ROM regardless of input size
-    assert_eq!(cartridge.pattern_ref().len(), 8 * 1024);
 }

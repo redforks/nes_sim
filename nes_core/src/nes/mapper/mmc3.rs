@@ -225,8 +225,8 @@ impl MMC3 {
 }
 
 impl MMC3 {
-    pub fn pattern_ref(&self) -> &[u8] {
-        &self.current_chr
+    pub fn read_pattern(&self, address: u16) -> u8 {
+        self.current_chr[address as usize % CHR_WINDOW_SIZE]
     }
 
     pub fn write_pattern(&mut self, address: u16, value: u8) {
@@ -428,14 +428,14 @@ mod tests {
         mapper.write(0x8000, 0x05);
         mapper.write(0x8001, 0x0d);
 
-        assert_eq!(mapper.pattern_ref()[0x0000], 0x06);
-        assert_eq!(mapper.pattern_ref()[0x0400], 0x07);
-        assert_eq!(mapper.pattern_ref()[0x0800], 0x08);
-        assert_eq!(mapper.pattern_ref()[0x0c00], 0x09);
-        assert_eq!(mapper.pattern_ref()[0x1000], 0x0a);
-        assert_eq!(mapper.pattern_ref()[0x1400], 0x0b);
-        assert_eq!(mapper.pattern_ref()[0x1800], 0x0c);
-        assert_eq!(mapper.pattern_ref()[0x1c00], 0x0d);
+        assert_eq!(mapper.read_pattern(0x0000), 0x06);
+        assert_eq!(mapper.read_pattern(0x0400), 0x07);
+        assert_eq!(mapper.read_pattern(0x0800), 0x08);
+        assert_eq!(mapper.read_pattern(0x0c00), 0x09);
+        assert_eq!(mapper.read_pattern(0x1000), 0x0a);
+        assert_eq!(mapper.read_pattern(0x1400), 0x0b);
+        assert_eq!(mapper.read_pattern(0x1800), 0x0c);
+        assert_eq!(mapper.read_pattern(0x1c00), 0x0d);
     }
 
     #[test]
@@ -456,14 +456,14 @@ mod tests {
         mapper.write(0x8000, 0x85);
         mapper.write(0x8001, 0x0d);
 
-        assert_eq!(mapper.pattern_ref()[0x0000], 0x0a);
-        assert_eq!(mapper.pattern_ref()[0x0400], 0x0b);
-        assert_eq!(mapper.pattern_ref()[0x0800], 0x0c);
-        assert_eq!(mapper.pattern_ref()[0x0c00], 0x0d);
-        assert_eq!(mapper.pattern_ref()[0x1000], 0x06);
-        assert_eq!(mapper.pattern_ref()[0x1400], 0x07);
-        assert_eq!(mapper.pattern_ref()[0x1800], 0x08);
-        assert_eq!(mapper.pattern_ref()[0x1c00], 0x09);
+        assert_eq!(mapper.read_pattern(0x0000), 0x0a);
+        assert_eq!(mapper.read_pattern(0x0400), 0x0b);
+        assert_eq!(mapper.read_pattern(0x0800), 0x0c);
+        assert_eq!(mapper.read_pattern(0x0c00), 0x0d);
+        assert_eq!(mapper.read_pattern(0x1000), 0x06);
+        assert_eq!(mapper.read_pattern(0x1400), 0x07);
+        assert_eq!(mapper.read_pattern(0x1800), 0x08);
+        assert_eq!(mapper.read_pattern(0x1c00), 0x09);
     }
 
     #[test]
@@ -474,7 +474,7 @@ mod tests {
         mapper.write(0x8001, 0x03);
         mapper.write_pattern(0x1000, 0xaa);
 
-        assert_eq!(mapper.pattern_ref()[0x1000], 0xaa);
+        assert_eq!(mapper.read_pattern(0x1000), 0xaa);
     }
 
     #[test]

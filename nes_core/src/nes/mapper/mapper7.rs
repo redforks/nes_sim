@@ -41,8 +41,8 @@ impl Mapper7 {
         self.prg_rom[bank_start + offset]
     }
 
-    pub fn pattern_ref(&self) -> &[u8] {
-        &self.chr
+    pub fn read_pattern(&self, address: u16) -> u8 {
+        self.chr[address as usize % CHR_SIZE]
     }
 
     pub fn write_pattern(&mut self, address: u16, value: u8) {

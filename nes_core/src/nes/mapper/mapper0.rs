@@ -39,8 +39,8 @@ impl Default for Mapper0 {
 }
 
 impl Mapper0 {
-    pub fn pattern_ref(&self) -> &[u8] {
-        &self.chr_rom
+    pub fn read_pattern(&self, address: u16) -> u8 {
+        self.chr_rom[address as usize % self.chr_rom.len()]
     }
 
     pub fn write_pattern(&mut self, address: u16, value: u8) {
@@ -106,8 +106,8 @@ mod tests {
     #[test]
     fn cartridge() {
         let mcu = Mapper0::new(&[0; 0], &[1, 2]);
-        assert_eq!(1, mcu.pattern_ref()[0]);
-        assert_eq!(2, mcu.pattern_ref()[1]);
+        assert_eq!(1, mcu.read_pattern(0));
+        assert_eq!(2, mcu.read_pattern(1));
     }
 
     #[test]
@@ -117,8 +117,8 @@ mod tests {
         mcu.write_pattern(0x0000, 0x12);
         mcu.write_pattern(0x1fff, 0x34);
 
-        assert_eq!(mcu.pattern_ref()[0], 0x12);
-        assert_eq!(mcu.pattern_ref()[0x1fff], 0x34);
+        assert_eq!(mcu.read_pattern(0), 0x12);
+        assert_eq!(mcu.read_pattern(0x1fff), 0x34);
     }
 
     #[test]

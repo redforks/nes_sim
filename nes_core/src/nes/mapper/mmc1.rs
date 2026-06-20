@@ -95,8 +95,8 @@ impl MMC1 {
         mapper
     }
 
-    pub fn pattern_ref(&self) -> &[u8] {
-        &self.chr_window
+    pub fn read_pattern(&self, address: u16) -> u8 {
+        self.chr_window[address as usize % CHR_WINDOW_SIZE]
     }
 
     pub fn write_pattern(&mut self, address: u16, value: u8) {
@@ -494,12 +494,12 @@ mod tests {
             rom[12 * 1024] = 4;
         });
 
-        assert_eq!(mmc1.pattern_ref()[0x0000], 1);
-        assert_eq!(mmc1.pattern_ref()[0x1000], 2);
+        assert_eq!(mmc1.read_pattern(0x0000), 1);
+        assert_eq!(mmc1.read_pattern(0x1000), 2);
 
         mmc1.control(ControlFlags::new().with_chr_in_4k(true));
         mmc1.select_chr_bank0(2);
-        assert_eq!(mmc1.pattern_ref()[0x0000], 3);
+        assert_eq!(mmc1.read_pattern(0x0000), 3);
     }
 
     #[test]
@@ -513,7 +513,7 @@ mod tests {
 
         mmc1.control(ControlFlags::new().with_chr_in_4k(true));
         mmc1.select_chr_bank1(3);
-        assert_eq!(mmc1.pattern_ref()[0x1000], 4);
+        assert_eq!(mmc1.read_pattern(0x1000), 4);
     }
 
     #[test]
@@ -523,7 +523,7 @@ mod tests {
         mmc1.write_pattern(0x0000, 0x12);
         mmc1.write_pattern(0x1fff, 0x34);
 
-        assert_eq!(mmc1.pattern_ref()[0x0000], 0x12);
-        assert_eq!(mmc1.pattern_ref()[0x1fff], 0x34);
+        assert_eq!(mmc1.read_pattern(0x0000), 0x12);
+        assert_eq!(mmc1.read_pattern(0x1fff), 0x34);
     }
 }

@@ -166,8 +166,8 @@ impl TestCartridge {
         }
     }
 
-    pub fn pattern_ref(&self) -> &[u8] {
-        &self.chr_rom
+    pub fn read_pattern(&self, address: u16) -> u8 {
+        self.chr_rom[address as usize % self.chr_rom.len()]
     }
 
     pub fn write_pattern(&mut self, address: u16, value: u8) {
@@ -211,19 +211,19 @@ pub enum CartridgeOperation {
 }
 
 impl Cartridge {
-    fn pattern_ref(&self) -> &[u8] {
+    pub fn read_pattern(&self, address: u16) -> u8 {
         match self {
-            Cartridge::Mapper0(cartridge) => cartridge.pattern_ref(),
-            Cartridge::Mapper2(cartridge) => cartridge.pattern_ref(),
-            Cartridge::Mapper3(cartridge) => cartridge.pattern_ref(),
-            Cartridge::Mapper7(cartridge) => cartridge.pattern_ref(),
-            Cartridge::Mapper34(cartridge) => cartridge.pattern_ref(),
-            Cartridge::MMC1(cartridge) => cartridge.pattern_ref(),
-            Cartridge::MMC3(cartridge) => cartridge.pattern_ref(),
-            Cartridge::Mapper87(cartridge) => cartridge.pattern_ref(),
-            Cartridge::Vrc24(cartridge) => cartridge.pattern_ref(),
+            Cartridge::Mapper0(cartridge) => cartridge.read_pattern(address),
+            Cartridge::Mapper2(cartridge) => cartridge.read_pattern(address),
+            Cartridge::Mapper3(cartridge) => cartridge.read_pattern(address),
+            Cartridge::Mapper7(cartridge) => cartridge.read_pattern(address),
+            Cartridge::Mapper34(cartridge) => cartridge.read_pattern(address),
+            Cartridge::MMC1(cartridge) => cartridge.read_pattern(address),
+            Cartridge::MMC3(cartridge) => cartridge.read_pattern(address),
+            Cartridge::Mapper87(cartridge) => cartridge.read_pattern(address),
+            Cartridge::Vrc24(cartridge) => cartridge.read_pattern(address),
             #[cfg(test)]
-            Cartridge::Test(cartridge) => cartridge.pattern_ref(),
+            Cartridge::Test(cartridge) => cartridge.read_pattern(address),
         }
     }
 
@@ -327,11 +327,6 @@ impl Cartridge {
             #[cfg(test)]
             Cartridge::Test(cartridge) => cartridge.irq_pending(),
         }
-    }
-
-    pub fn read_chr(&self, address: u16) -> u8 {
-        let pattern = self.pattern_ref();
-        pattern[address as usize % pattern.len()]
     }
 }
 

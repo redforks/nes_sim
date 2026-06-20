@@ -47,8 +47,8 @@ impl Mapper2 {
 }
 
 impl Mapper2 {
-    pub fn pattern_ref(&self) -> &[u8] {
-        &self.chr
+    pub fn read_pattern(&self, address: u16) -> u8 {
+        self.chr[address as usize % CHR_ROM_SIZE]
     }
 
     pub fn write_pattern(&mut self, address: u16, value: u8) {
@@ -125,9 +125,9 @@ mod tests {
     fn exposes_chr_rom_patterns() {
         let mapper = Mapper2::new(&[0; PRG_ROM_BANK_SIZE * 2], &[1, 2, 3]);
 
-        assert_eq!(mapper.pattern_ref()[0], 1);
-        assert_eq!(mapper.pattern_ref()[1], 2);
-        assert_eq!(mapper.pattern_ref()[2], 3);
+        assert_eq!(mapper.read_pattern(0), 1);
+        assert_eq!(mapper.read_pattern(1), 2);
+        assert_eq!(mapper.read_pattern(2), 3);
     }
 
     #[test]
@@ -137,8 +137,8 @@ mod tests {
         mapper.write_pattern(0x0000, 0x12);
         mapper.write_pattern(0x1fff, 0x34);
 
-        assert_eq!(mapper.pattern_ref()[0], 0x12);
-        assert_eq!(mapper.pattern_ref()[0x1fff], 0x34);
+        assert_eq!(mapper.read_pattern(0), 0x12);
+        assert_eq!(mapper.read_pattern(0x1fff), 0x34);
     }
 
     #[test]
@@ -147,6 +147,6 @@ mod tests {
 
         mapper.write_pattern(0x0000, 0x12);
 
-        assert_eq!(mapper.pattern_ref()[0], 0x56);
+        assert_eq!(mapper.read_pattern(0), 0x56);
     }
 }

@@ -67,7 +67,7 @@ fn vrc4f_chr_banking() {
     mapper.write(0xb000, 1); // low nibble
     mapper.write(0xb001, 0); // high nibble (bank = 1)
 
-    assert_eq!(mapper.pattern_ref()[0x0000], 1);
+    assert_eq!(mapper.read_pattern(0x0000), 1);
 }
 
 #[test]
@@ -85,7 +85,7 @@ fn vrc4a_register_offsets() {
     // Write CHR via $B004 (index 2 = CHR1 low byte in $B000 group)
     mapper.write(0xb004, 5); // CHR1 low
     mapper.write(0xb006, 0); // CHR1 high
-    assert_eq!(mapper.pattern_ref()[0x0400], 5);
+    assert_eq!(mapper.read_pattern(0x0400), 5);
 }
 
 #[test]
@@ -99,7 +99,7 @@ fn vrc2a_chr_shift() {
     mapper.write(0xb000, 2); // low nibble = 2
     mapper.write(0xb002, 0); // high nibble = 0, total = 2, shifted = 1
 
-    assert_eq!(mapper.pattern_ref()[0x0000], 1);
+    assert_eq!(mapper.read_pattern(0x0000), 1);
 }
 
 #[test]

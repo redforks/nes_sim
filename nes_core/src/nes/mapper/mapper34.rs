@@ -70,8 +70,8 @@ impl Mapper34 {
         self.prg_rom[bank_start + offset]
     }
 
-    pub fn pattern_ref(&self) -> &[u8] {
-        &self.chr
+    pub fn read_pattern(&self, address: u16) -> u8 {
+        self.chr[address as usize % self.chr.len()]
     }
 
     pub fn write_pattern(&mut self, address: u16, value: u8) {
@@ -162,8 +162,8 @@ mod tests {
         mapper.write_pattern(0x0000, 0x12);
         mapper.write_pattern(0x1fff, 0x34);
 
-        assert_eq!(mapper.pattern_ref()[0], 0x12);
-        assert_eq!(mapper.pattern_ref()[0x1fff], 0x34);
+        assert_eq!(mapper.read_pattern(0), 0x12);
+        assert_eq!(mapper.read_pattern(0x1fff), 0x34);
     }
 
     #[test]

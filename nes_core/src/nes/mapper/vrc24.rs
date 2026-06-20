@@ -193,8 +193,8 @@ impl Vrc24 {
 // ── Cartridge interface methods ──
 
 impl Vrc24 {
-    pub fn pattern_ref(&self) -> &[u8] {
-        &self.current_chr
+    pub fn read_pattern(&self, address: u16) -> u8 {
+        self.current_chr[address as usize % CHR_WINDOW_SIZE]
     }
 
     pub fn write_pattern(&mut self, address: u16, value: u8) {
