@@ -1,4 +1,5 @@
-use super::{CARTRIDGE_START_ADDR, CartridgeOperation};
+use super::{ChrStorage, CARTRIDGE_START_ADDR, CartridgeOperation};
+use super::chr_storage::WindowedChr;
 use crate::nes::mapper::Mirroring;
 
 const PRG_RAM_SIZE: usize = 0x2000;
@@ -16,9 +17,8 @@ enum IrqRevision {
 pub struct MMC3 {
     prg_rom: Vec<u8>,
     prg_ram: [u8; PRG_RAM_SIZE],
-    chr_mem: Vec<u8>,
-    current_chr: [u8; CHR_WINDOW_SIZE],
     has_chr_ram: bool,
+    chr_storage: WindowedChr,
     mirroring_locked: bool,
     bank_select: u8,
     bank_registers: [u8; 8],
@@ -60,9 +60,8 @@ impl MMC3 {
         let mut mapper = Self {
             prg_rom: prg_rom.to_vec(),
             prg_ram: [0; PRG_RAM_SIZE],
-            chr_mem,
-            current_chr: [0; CHR_WINDOW_SIZE],
             has_chr_ram,
+            chr_storage: WindowedChr::new(chr_mem),
             mirroring_locked,
             bank_select: 0,
             bank_registers: [0; 8],
@@ -93,7 +92,7 @@ impl MMC3 {
     }
 
     fn chr_bank_count(&self) -> usize {
-        self.chr_mem.len() / CHR_BANK_SIZE
+        self.chr_storage.source_len() / CHR_BANK_SIZE
     }
 
     fn normalize_prg_bank(&self, bank: u8) -> usize {
@@ -160,8 +159,7 @@ impl MMC3 {
         for slot in 0..self.chr_offsets.len() {
             let source = self.chr_offsets[slot];
             let dest = slot * CHR_BANK_SIZE;
-            self.current_chr[dest..dest + CHR_BANK_SIZE]
-                .copy_from_slice(&self.chr_mem[source..source + CHR_BANK_SIZE]);
+            self.chr_storage.copy_from_source(dest, source, CHR_BANK_SIZE);
         }
     }
 
@@ -226,7 +224,7 @@ impl MMC3 {
 
 impl MMC3 {
     pub fn read_chr(&self, address: u16) -> u8 {
-        self.current_chr[address as usize % CHR_WINDOW_SIZE]
+        self.chr_storage.read_chr(address)
     }
 
     pub fn write_chr(&mut self, address: u16, value: u8) {
@@ -238,8 +236,7 @@ impl MMC3 {
         let slot = addr / CHR_BANK_SIZE;
         let offset_in_bank = addr % CHR_BANK_SIZE;
         let source = self.chr_offsets[slot] + offset_in_bank;
-        self.chr_mem[source] = value;
-        self.current_chr[addr] = value;
+        self.chr_storage.write_chr_with_source(address, value, source);
     }
 
     pub fn read(&mut self, address: u16) -> u8 {

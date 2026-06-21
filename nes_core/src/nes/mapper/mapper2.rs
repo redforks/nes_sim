@@ -1,13 +1,13 @@
-use super::{CARTRIDGE_START_ADDR, CartridgeOperation};
+use super::{ChrStorage, CARTRIDGE_START_ADDR, CartridgeOperation};
+use super::chr_storage::DirectChr;
 
 const PRG_ROM_BANK_SIZE: usize = 0x4000;
-const CHR_ROM_SIZE: usize = 0x2000;
 const CARTRIDGE_RAM_SIZE: usize = 0x4000 - 0x20;
 
 pub struct Mapper2 {
     prg_rom: Vec<u8>,
-    chr: [u8; CHR_ROM_SIZE],
     has_chr_ram: bool,
+    chr_storage: DirectChr,
     ram: [u8; CARTRIDGE_RAM_SIZE],
     selected_prg_bank: usize,
     prg_bank_count: usize,
@@ -17,17 +17,19 @@ impl Mapper2 {
     pub fn new(prg_rom: &[u8], chr_rom: &[u8]) -> Self {
         debug_assert!(!prg_rom.is_empty());
         debug_assert_eq!(prg_rom.len() % PRG_ROM_BANK_SIZE, 0);
-        debug_assert!(chr_rom.len() <= CHR_ROM_SIZE);
+        debug_assert!(chr_rom.len() <= 0x2000);
 
         let mut mapper = Self {
             prg_rom: prg_rom.to_vec(),
-            chr: [0; CHR_ROM_SIZE],
             has_chr_ram: chr_rom.is_empty(),
+            chr_storage: DirectChr::empty(),
             ram: [0; CARTRIDGE_RAM_SIZE],
             selected_prg_bank: 0,
             prg_bank_count: prg_rom.len() / PRG_ROM_BANK_SIZE,
         };
-        mapper.chr[..chr_rom.len()].copy_from_slice(chr_rom);
+        for i in 0..chr_rom.len() {
+            mapper.chr_storage.write_chr(i as u16, chr_rom[i]);
+        }
         mapper
     }
 
@@ -48,12 +50,12 @@ impl Mapper2 {
 
 impl Mapper2 {
     pub fn read_chr(&self, address: u16) -> u8 {
-        self.chr[address as usize % CHR_ROM_SIZE]
+        self.chr_storage.read_chr(address)
     }
 
     pub fn write_chr(&mut self, address: u16, value: u8) {
         if self.has_chr_ram {
-            self.chr[address as usize % CHR_ROM_SIZE] = value;
+            self.chr_storage.write_chr(address, value);
         }
     }
 

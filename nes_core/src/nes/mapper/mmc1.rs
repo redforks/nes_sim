@@ -1,6 +1,7 @@
 #![allow(dead_code)]
 
-use super::CartridgeOperation;
+use super::{ChrStorage, CartridgeOperation};
+use super::chr_storage::WindowedChr;
 use crate::nes::mapper::Mirroring;
 use bitfield_struct::bitfield;
 
@@ -53,9 +54,8 @@ impl From<ControlFlags> for PrgRomMode {
 }
 
 pub struct MMC1 {
-    chr: Vec<u8>,
-    chr_window: [u8; CHR_WINDOW_SIZE],
     has_chr_ram: bool,
+    chr_storage: WindowedChr,
 
     prg_rom: Vec<u8>,
     prg_ram: [u8; PRG_RAM_SIZE],
@@ -72,14 +72,16 @@ impl MMC1 {
         debug_assert!(!prg_rom.is_empty());
         debug_assert_eq!(prg_rom.len() % PRG_ROM_BANK_SIZE, 0);
 
+        let has_chr_ram = chr_rom.is_empty();
+        let chr_mem = if has_chr_ram {
+            vec![0; CHR_WINDOW_SIZE]
+        } else {
+            chr_rom.to_vec()
+        };
+
         let mut mapper = Self {
-            chr: if chr_rom.is_empty() {
-                vec![0; CHR_WINDOW_SIZE]
-            } else {
-                chr_rom.to_vec()
-            },
-            chr_window: [0; CHR_WINDOW_SIZE],
-            has_chr_ram: chr_rom.is_empty(),
+            has_chr_ram,
+            chr_storage: WindowedChr::new(chr_mem),
             prg_rom: prg_rom.to_vec(),
             prg_ram: [0; PRG_RAM_SIZE],
             control: ControlFlags::new()
@@ -96,7 +98,7 @@ impl MMC1 {
     }
 
     pub fn read_chr(&self, address: u16) -> u8 {
-        self.chr_window[address as usize % CHR_WINDOW_SIZE]
+        self.chr_storage.read_chr(address)
     }
 
     pub fn write_chr(&mut self, address: u16, value: u8) {
@@ -104,10 +106,8 @@ impl MMC1 {
             return;
         }
 
-        let window_offset = address as usize % CHR_WINDOW_SIZE;
         let chr_index = self.chr_index(address);
-        self.chr[chr_index] = value;
-        self.chr_window[window_offset] = value;
+        self.chr_storage.write_chr_with_source(address, value, chr_index);
     }
 
     pub fn read(&mut self, address: u16) -> u8 {
@@ -217,7 +217,7 @@ impl MMC1 {
     }
 
     fn chr_bank_count_4k(&self) -> usize {
-        self.chr.len() / CHR_BANK_SIZE_4K
+        self.chr_storage.source_len() / CHR_BANK_SIZE_4K
     }
 
     fn prg_ram_enabled(&self) -> bool {
@@ -225,7 +225,7 @@ impl MMC1 {
     }
 
     fn uses_outer_prg_bank(&self) -> bool {
-        self.prg_rom.len() > 0x40000 && self.chr.len() <= CHR_WINDOW_SIZE
+        self.prg_rom.len() > 0x40000 && self.chr_storage.source_len() <= CHR_WINDOW_SIZE
     }
 
     fn outer_prg_bank_base(&self) -> usize {
@@ -321,10 +321,8 @@ impl MMC1 {
         let lower = self.chr_bank_base(false);
         let upper = self.chr_bank_base(true);
 
-        self.chr_window[..CHR_BANK_SIZE_4K]
-            .copy_from_slice(&self.chr[lower..lower + CHR_BANK_SIZE_4K]);
-        self.chr_window[CHR_BANK_SIZE_4K..]
-            .copy_from_slice(&self.chr[upper..upper + CHR_BANK_SIZE_4K]);
+        self.chr_storage.copy_from_source(0, lower, CHR_BANK_SIZE_4K);
+        self.chr_storage.copy_from_source(CHR_BANK_SIZE_4K, upper, CHR_BANK_SIZE_4K);
     }
 
     fn select_chr_bank0(&mut self, value: u8) {

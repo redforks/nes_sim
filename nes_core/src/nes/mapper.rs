@@ -24,6 +24,13 @@ mod mmc1;
 mod mmc3;
 mod vrc24;
 
+pub mod chr_storage;
+
+pub trait ChrStorage {
+    fn read_chr(&self, address: u16) -> u8;
+    fn write_chr(&mut self, address: u16, value: u8);
+}
+
 #[derive(Debug, Eq, PartialEq, Copy, Clone)]
 pub enum Mirroring {
     LowerBank, // single screen use lower bank

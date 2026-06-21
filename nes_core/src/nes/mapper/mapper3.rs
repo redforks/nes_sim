@@ -1,17 +1,16 @@
-use super::{CARTRIDGE_START_ADDR, CartridgeOperation};
+use super::{ChrStorage, CARTRIDGE_START_ADDR, CartridgeOperation};
+use super::chr_storage::WindowedChr;
 
 const PRG_ROM_SIZE: usize = 0x8000;
 const CHR_BANK_SIZE: usize = 0x2000;
-const CHR_WINDOW_SIZE: usize = 0x2000;
 const CARTRIDGE_RAM_SIZE: usize = 0x4000 - 0x20;
 
 pub struct Mapper3 {
     prg_rom: [u8; PRG_ROM_SIZE],
     prg_rom_len: usize,
-    chr_rom: Vec<u8>,
-    chr_window: [u8; CHR_WINDOW_SIZE],
     selected_chr_bank: usize,
     chr_bank_count: usize,
+    chr_storage: WindowedChr,
     ram: [u8; CARTRIDGE_RAM_SIZE],
 }
 
@@ -22,13 +21,13 @@ impl Mapper3 {
         debug_assert!(!chr_rom.is_empty());
         debug_assert_eq!(chr_rom.len() % CHR_BANK_SIZE, 0);
 
+        let chr_bank_count = chr_rom.len() / CHR_BANK_SIZE;
         let mut mapper = Self {
             prg_rom: [0; PRG_ROM_SIZE],
             prg_rom_len: prg_rom.len(),
-            chr_rom: chr_rom.to_vec(),
-            chr_window: [0; CHR_WINDOW_SIZE],
             selected_chr_bank: 0,
-            chr_bank_count: chr_rom.len() / CHR_BANK_SIZE,
+            chr_bank_count,
+            chr_storage: WindowedChr::new(chr_rom.to_vec()),
             ram: [0; CARTRIDGE_RAM_SIZE],
         };
         mapper.prg_rom[..prg_rom.len()].copy_from_slice(prg_rom);
@@ -42,14 +41,13 @@ impl Mapper3 {
 
     fn refresh_chr_window(&mut self) {
         let bank_start = self.selected_chr_bank() * CHR_BANK_SIZE;
-        self.chr_window
-            .copy_from_slice(&self.chr_rom[bank_start..bank_start + CHR_BANK_SIZE]);
+        self.chr_storage.refresh(bank_start);
     }
 }
 
 impl Mapper3 {
     pub fn read_chr(&self, address: u16) -> u8 {
-        self.chr_window[address as usize % CHR_WINDOW_SIZE]
+        self.chr_storage.read_chr(address)
     }
 
     pub fn read(&mut self, address: u16) -> u8 {

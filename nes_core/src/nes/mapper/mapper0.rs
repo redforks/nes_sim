@@ -1,10 +1,11 @@
-use super::{CARTRIDGE_START_ADDR, CartridgeOperation};
+use super::{ChrStorage, CARTRIDGE_START_ADDR, CartridgeOperation};
+use super::chr_storage::DirectChr;
 
 pub struct Mapper0 {
     prg_rom: [u8; 0x8000],
     prg_rom_len: usize,
-    chr_rom: [u8; 0x2000],
     has_chr_ram: bool,
+    chr_storage: DirectChr,
     ram: [u8; 0x4000 - 0x20],
 }
 
@@ -16,12 +17,14 @@ impl Mapper0 {
         let mut r = Self {
             prg_rom: [0; 0x8000],
             prg_rom_len: prg_rom.len(),
-            chr_rom: [0; 0x2000],
             has_chr_ram: chr_rom.is_empty(),
+            chr_storage: DirectChr::empty(),
             ram: [0; 0x4000 - 0x20],
         };
         r.prg_rom[0..prg_rom.len()].copy_from_slice(prg_rom);
-        r.chr_rom[0..chr_rom.len()].copy_from_slice(chr_rom);
+        for i in 0..chr_rom.len() {
+            r.chr_storage.write_chr(i as u16, chr_rom[i]);
+        }
         r
     }
 }
@@ -31,8 +34,8 @@ impl Default for Mapper0 {
         Self {
             prg_rom: [0; 0x8000],
             prg_rom_len: 0,
-            chr_rom: [0; 0x2000],
             has_chr_ram: false,
+            chr_storage: DirectChr::empty(),
             ram: [0; 0x4000 - 0x20],
         }
     }
@@ -40,12 +43,12 @@ impl Default for Mapper0 {
 
 impl Mapper0 {
     pub fn read_chr(&self, address: u16) -> u8 {
-        self.chr_rom[address as usize % self.chr_rom.len()]
+        self.chr_storage.read_chr(address)
     }
 
     pub fn write_chr(&mut self, address: u16, value: u8) {
         if self.has_chr_ram {
-            self.chr_rom[address as usize % self.chr_rom.len()] = value;
+            self.chr_storage.write_chr(address, value);
         }
     }
 

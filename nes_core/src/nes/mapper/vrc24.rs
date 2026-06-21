@@ -1,4 +1,5 @@
-use super::{CARTRIDGE_START_ADDR, CartridgeOperation};
+use super::{ChrStorage, CARTRIDGE_START_ADDR, CartridgeOperation};
+use super::chr_storage::WindowedChr;
 use crate::nes::mapper::Mirroring;
 
 /// PRG ROM bank size: 8 KiB
@@ -68,9 +69,8 @@ impl VrcVariant {
 /// with configurable pin connections.
 pub struct Vrc24 {
     prg_rom: Vec<u8>,
-    chr_mem: Vec<u8>,
-    current_chr: [u8; CHR_WINDOW_SIZE],
     has_chr_ram: bool,
+    chr_storage: WindowedChr,
     prg_ram: [u8; PRG_RAM_SIZE],
     prg_ram_enabled: bool,
 
@@ -123,9 +123,8 @@ impl Vrc24 {
 
         let mut mapper = Self {
             prg_rom: prg_rom.to_vec(),
-            chr_mem,
-            current_chr: [0; CHR_WINDOW_SIZE],
             has_chr_ram,
+            chr_storage: WindowedChr::new(chr_mem),
             prg_ram: [0; PRG_RAM_SIZE],
             prg_ram_enabled: variant.is_vrc4(), // VRC4 enables PRG RAM via $9002
             variant,
@@ -152,7 +151,7 @@ impl Vrc24 {
     }
 
     fn chr_bank_count(&self) -> usize {
-        self.chr_mem.len() / CHR_BANK_SIZE
+        self.chr_storage.source_len() / CHR_BANK_SIZE
     }
 
     fn compute_register_index(&self, address: u16) -> usize {
@@ -184,8 +183,7 @@ impl Vrc24 {
             let bank = (bank as usize) % self.chr_bank_count();
             let source = bank * CHR_BANK_SIZE;
             let dest = slot * CHR_BANK_SIZE;
-            self.current_chr[dest..dest + CHR_BANK_SIZE]
-                .copy_from_slice(&self.chr_mem[source..source + CHR_BANK_SIZE]);
+            self.chr_storage.copy_from_source(dest, source, CHR_BANK_SIZE);
         }
     }
 }
@@ -194,7 +192,7 @@ impl Vrc24 {
 
 impl Vrc24 {
     pub fn read_chr(&self, address: u16) -> u8 {
-        self.current_chr[address as usize % CHR_WINDOW_SIZE]
+        self.chr_storage.read_chr(address)
     }
 
     pub fn write_chr(&mut self, address: u16, value: u8) {
@@ -221,8 +219,7 @@ impl Vrc24 {
         let bank = (bank as usize) % self.chr_bank_count();
         let source = bank * CHR_BANK_SIZE + offset_in_bank;
 
-        self.chr_mem[source] = value;
-        self.current_chr[addr] = value;
+        self.chr_storage.write_chr_with_source(address, value, source);
     }
 
     pub fn read(&mut self, address: u16) -> u8 {
