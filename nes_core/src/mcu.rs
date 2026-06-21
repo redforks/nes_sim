@@ -11,8 +11,6 @@ pub trait Mcu {
     fn read(&mut self, address: u16) -> u8;
     fn peek(&self, address: u16) -> u8;
     fn write(&mut self, address: u16, value: u8);
-
-    fn supply_dmc_dma_byte(&mut self, _byte: u8) {}
 }
 
 #[cfg(test)]
