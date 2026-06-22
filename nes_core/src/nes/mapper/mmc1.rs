@@ -1,7 +1,4 @@
-#![allow(dead_code)]
-
 use super::{Cartridge, CartridgeOperation};
-use super::chr_storage::WindowedChr;
 use crate::nes::mapper::Mirroring;
 use bitfield_struct::bitfield;
 
@@ -54,9 +51,6 @@ impl From<ControlFlags> for PrgRomMode {
 }
 
 pub struct MMC1 {
-    has_chr_ram: bool,
-    chr_storage: WindowedChr,
-
     prg_rom: Vec<u8>,
     prg_ram: [u8; PRG_RAM_SIZE],
 
@@ -68,20 +62,11 @@ pub struct MMC1 {
 }
 
 impl MMC1 {
-    pub fn new(prg_rom: &[u8], chr_rom: &[u8], mirroring: Mirroring) -> Self {
+    pub fn new(prg_rom: &[u8], mirroring: Mirroring) -> Self {
         debug_assert!(!prg_rom.is_empty());
         debug_assert_eq!(prg_rom.len() % PRG_ROM_BANK_SIZE, 0);
 
-        let has_chr_ram = chr_rom.is_empty();
-        let chr_mem = if has_chr_ram {
-            vec![0; CHR_WINDOW_SIZE]
-        } else {
-            chr_rom.to_vec()
-        };
-
-        let mut mapper = Self {
-            has_chr_ram,
-            chr_storage: WindowedChr::new(chr_mem),
+        Self {
             prg_rom: prg_rom.to_vec(),
             prg_ram: [0; PRG_RAM_SIZE],
             control: ControlFlags::new()
@@ -91,10 +76,7 @@ impl MMC1 {
             chr_bank1: 0,
             prg_bank: 0,
             shift_register: INITIAL_SHIFT_REGISTER,
-        };
-
-        mapper.refresh_chr_window();
-        mapper
+        }
     }
 
 }
@@ -150,17 +132,20 @@ impl MMC1 {
         if register_ready {
             let register_value = self.shift_register & 0x1f;
             let result = match address {
-                0x8000..=0x9fff => self.control(ControlFlags::from_bits(register_value)),
+                0x8000..=0x9fff => {
+                    self.control = ControlFlags::from_bits(register_value);
+                    self.apply_control()
+                }
                 0xa000..=0xbfff => {
-                    self.select_chr_bank0(register_value);
+                    self.chr_bank0 = register_value & 0x1f;
                     CartridgeOperation::None
                 }
                 0xc000..=0xdfff => {
-                    self.select_chr_bank1(register_value);
+                    self.chr_bank1 = register_value & 0x1f;
                     CartridgeOperation::None
                 }
                 0xe000..=0xffff => {
-                    self.select_prg_bank(register_value);
+                    self.prg_bank = register_value & 0x1f;
                     CartridgeOperation::None
                 }
                 _ => unreachable!(),
@@ -183,21 +168,7 @@ impl MMC1 {
 
     fn apply_control(&mut self) -> CartridgeOperation {
         let mirroring: Mirroring = self.control.into();
-        self.refresh_chr_window();
         CartridgeOperation::UpdateNametableMirroring(mirroring)
-    }
-
-    fn control(&mut self, flags: ControlFlags) -> CartridgeOperation {
-        self.control = flags;
-        self.apply_control()
-    }
-
-    fn chr_bank_size(&self) -> usize {
-        if self.control.chr_in_4k() {
-            CHR_BANK_SIZE_4K
-        } else {
-            CHR_WINDOW_SIZE
-        }
     }
 
     fn prg_rom_mode(&self) -> PrgRomMode {
@@ -208,16 +179,12 @@ impl MMC1 {
         self.prg_rom.len() / PRG_ROM_BANK_SIZE
     }
 
-    fn chr_bank_count_4k(&self) -> usize {
-        self.chr_storage.source_len() / CHR_BANK_SIZE_4K
-    }
-
     fn prg_ram_enabled(&self) -> bool {
         self.prg_bank & 0x10 == 0
     }
 
     fn uses_outer_prg_bank(&self) -> bool {
-        self.prg_rom.len() > 0x40000 && self.chr_storage.source_len() <= CHR_WINDOW_SIZE
+        self.prg_rom.len() > 0x40000
     }
 
     fn outer_prg_bank_base(&self) -> usize {
@@ -278,55 +245,6 @@ impl MMC1 {
         self.prg_rom[start + offset as usize]
     }
 
-    fn chr_bank_base(&self, upper_half: bool) -> usize {
-        let bank_count = self.chr_bank_count_4k();
-
-        if self.control.chr_in_4k() {
-            let bank = if upper_half {
-                self.chr_bank1
-            } else {
-                self.chr_bank0
-            };
-            usize::from(bank % bank_count as u8) * CHR_BANK_SIZE_4K
-        } else {
-            let bank = usize::from(self.chr_bank0 & 0x1e) % bank_count;
-            let bank = if upper_half {
-                (bank + 1) % bank_count
-            } else {
-                bank
-            };
-            bank * CHR_BANK_SIZE_4K
-        }
-    }
-
-    fn chr_index(&self, address: u16) -> usize {
-        let offset = address as usize % CHR_WINDOW_SIZE;
-        let base = if offset < CHR_BANK_SIZE_4K {
-            self.chr_bank_base(false)
-        } else {
-            self.chr_bank_base(true)
-        };
-        base + (offset % CHR_BANK_SIZE_4K)
-    }
-
-    fn refresh_chr_window(&mut self) {
-        let lower = self.chr_bank_base(false);
-        let upper = self.chr_bank_base(true);
-
-        self.chr_storage.copy_from_source(0, lower, CHR_BANK_SIZE_4K);
-        self.chr_storage.copy_from_source(CHR_BANK_SIZE_4K, upper, CHR_BANK_SIZE_4K);
-    }
-
-    fn select_chr_bank0(&mut self, value: u8) {
-        self.chr_bank0 = value & 0x1f;
-        self.refresh_chr_window();
-    }
-
-    fn select_chr_bank1(&mut self, value: u8) {
-        self.chr_bank1 = value & 0x1f;
-        self.refresh_chr_window();
-    }
-
     fn select_prg_bank(&mut self, value: u8) {
         self.prg_bank = value & 0x1f;
     }
@@ -335,7 +253,6 @@ impl MMC1 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::nes::ppu::Ppu;
 
     fn write_serial(mapper: &mut MMC1, address: u16, value: u8) {
         for bit in 0..5 {
@@ -343,16 +260,13 @@ mod tests {
         }
     }
 
-    fn create<F>(mut init_prg: F) -> (MMC1, Ppu)
+    fn create<F>(mut init_prg: F) -> MMC1
     where
         F: FnMut(&mut [u8]),
     {
         let mut prg_rom = [0; 128 * 1024];
         init_prg(&mut prg_rom);
-        (
-            MMC1::new(&prg_rom, &[], Mirroring::Horizontal),
-            Ppu::new((), Mirroring::Horizontal, Box::new(crate::nes::mapper::chr_storage::DirectChr::empty())),
-        )
+        MMC1::new(&prg_rom, Mirroring::Horizontal)
     }
 
     #[test]
@@ -363,7 +277,7 @@ mod tests {
             prg_rom[prg_rom.len() - 1] = 0xab;
         }
 
-        let (mut mmc1, _ppu) = create(init_prg);
+        let mut mmc1 = create(init_prg);
 
         assert_eq!(mmc1.read(0x8000), 0xba);
         assert_eq!(mmc1.read(0xffff), 0xab);
@@ -375,7 +289,7 @@ mod tests {
 
     #[test]
     fn prg_ram_respects_enable_bit() {
-        let (mut mmc1, _ppu) = create(|_| {});
+        let mut mmc1 = create(|_| {});
 
         mmc1.write(0x6000, 0x12);
         assert_eq!(mmc1.read(0x6000), 0x12);
@@ -387,9 +301,10 @@ mod tests {
 
     #[test]
     fn reset_write_keeps_mirroring_and_chr_mode() {
-        let (mut mmc1, _ppu) = create(|_| {});
+        let mut mmc1 = create(|_| {});
 
-        mmc1.control(ControlFlags::new().with_mirroring(0).with_chr_in_4k(true));
+        let control = ControlFlags::new().with_mirroring(0).with_chr_in_4k(true);
+        mmc1.control = control;
         mmc1.write(0x8000, 0x80);
 
         assert_eq!(Mirroring::LowerBank, mmc1.control.into());
@@ -399,11 +314,12 @@ mod tests {
 
     #[test]
     fn control_ppu_mirroring() {
-        let (mut mmc1, _ppu) = create(|_| {});
-        let result = mmc1.control(ControlFlags::new().with_mirroring(0));
+        let mut mmc1 = create(|_| {});
+        let control = ControlFlags::new().with_mirroring(0);
+        write_serial(&mut mmc1, 0x8000, control.into_bits());
         assert_eq!(
-            result,
-            CartridgeOperation::UpdateNametableMirroring(Mirroring::LowerBank)
+            Mirroring::from(mmc1.control),
+            Mirroring::LowerBank
         );
     }
 
@@ -431,7 +347,7 @@ mod tests {
 
     #[test]
     fn control_prg_rom_mode() {
-        let (mut mmc1, _ppu) = create(|rom| {
+        let mut mmc1 = create(|rom| {
             rom[0] = 1;
             rom[PRG_ROM_BANK_SIZE] = 2;
             rom[PRG_ROM_BANK_SIZE * 2] = 3;
@@ -440,28 +356,16 @@ mod tests {
         });
 
         mmc1.select_prg_bank(2);
-        mmc1.control(ControlFlags::new().with_prg_mode(0));
+        write_serial(&mut mmc1, 0x8000, ControlFlags::new().with_prg_mode(0).into_bits());
         assert_eq!(mmc1.read(0x8000), 3);
         assert_eq!(mmc1.read(0xc000), 4);
 
-        mmc1.control(ControlFlags::new().with_prg_mode(2));
+        write_serial(&mut mmc1, 0x8000, ControlFlags::new().with_prg_mode(2).into_bits());
         assert_eq!(mmc1.read(0x8000), 1);
         assert_eq!(mmc1.read(0xc000), 3);
 
-        mmc1.control(ControlFlags::new().with_prg_mode(3));
+        write_serial(&mut mmc1, 0x8000, ControlFlags::new().with_prg_mode(3).into_bits());
         assert_eq!(mmc1.read(0x8000), 3);
         assert_eq!(mmc1.read(0xc000), 5);
     }
-
-    #[test]
-    fn control_chr_bank_size() {
-        let (mut mmc1, _ppu) = create(|_| {});
-
-        assert_eq!(mmc1.chr_bank_size(), 8 * 1024);
-
-        mmc1.control(ControlFlags::new().with_chr_in_4k(true));
-        assert_eq!(mmc1.chr_bank_size(), 4 * 1024);
-    }
-
-
 }

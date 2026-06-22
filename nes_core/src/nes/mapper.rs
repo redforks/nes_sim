@@ -81,8 +81,8 @@ pub fn create_cartridge(f: &INesFile) -> (Box<dyn Cartridge>, Box<dyn ChrStorage
             mirroring,
         ),
         1 => (
-            Box::new(MMC1::new(f.read_prg_rom(), chr_rom, mirroring)),
-            Box::new(chr_storage::DirectChr::from_chr_rom(chr_rom)),
+            Box::new(MMC1::new(f.read_prg_rom(), mirroring)),
+            Box::new(chr_storage::Mmc1ChrStorage::new(chr_rom)),
             mirroring,
         ),
         2 => (
