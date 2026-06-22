@@ -98,11 +98,10 @@ pub fn create_cartridge(f: &INesFile) -> (Box<dyn Cartridge>, Box<dyn ChrStorage
         4 => (
             Box::new(MMC3::new(
                 f.read_prg_rom(),
-                chr_rom,
                 f.header().ignore_mirror_control,
                 rom_contains_signature(f, MMC3_ALT_TEST_SIGNATURE),
             )),
-            Box::new(chr_storage::DirectChr::from_chr_rom(chr_rom)),
+            Box::new(chr_storage::Mmc3ChrStorage::new(chr_rom)),
             mirroring,
         ),
         7 => (

@@ -38,7 +38,6 @@ fn test_read_status_clears_vblank() {
 #[test]
 fn test_peek_status_does_not_clear_vblank() {
     let (mut ppu, _pattern) = new_test_ppu_and_pattern();
-    let cartridge: Box<dyn Cartridge> = Box::new(TestCartridge::new());
     ppu.registers.status.set_v_blank(true);
 
     let status = ppu.peek(0x2002);
