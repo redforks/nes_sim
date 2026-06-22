@@ -534,3 +534,140 @@ mod mmc1_chr_tests {
         assert_eq!(chr.read_chr(0x0000), 0xab);
     }
 }
+
+pub struct Vrc24ChrStorage {
+    source: Vec<u8>,
+    has_chr_ram: bool,
+    s0: u8,
+    s1: u8,
+    is_vrc4: bool,
+    chr_shift_low_bit: bool,
+    chrs: [u8; 16],
+    bank_offsets: [usize; 8],
+}
+
+impl Vrc24ChrStorage {
+    const BANK_SIZE: usize = 0x0400;
+
+    pub fn new(chr_rom: &[u8], s0: u8, s1: u8, is_vrc4: bool, chr_shift_low_bit: bool) -> Self {
+        let has_chr_ram = chr_rom.is_empty();
+        let size = if has_chr_ram { 0x2000 } else { chr_rom.len() };
+        let mut source = vec![0; size];
+        source[..chr_rom.len()].copy_from_slice(chr_rom);
+        let mut storage = Self {
+            source,
+            has_chr_ram,
+            s0,
+            s1,
+            is_vrc4,
+            chr_shift_low_bit,
+            chrs: [0; 16],
+            bank_offsets: [0; 8],
+        };
+        storage.refresh_banks();
+        storage
+    }
+
+    fn compute_register_index(&self, address: u16) -> usize {
+        let bit0 = ((address >> self.s0) & 1) as usize;
+        let bit1 = ((address >> self.s1) & 1) as usize;
+        bit1 << 1 | bit0
+    }
+
+    fn bank_count(&self) -> usize {
+        if self.source.is_empty() { 1 } else { self.source.len() / Self::BANK_SIZE }
+    }
+
+    fn refresh_banks(&mut self) {
+        for slot in 0..8 {
+            let lo = self.chrs[slot * 2] as u16;
+            let hi = self.chrs[slot * 2 + 1] as u16;
+            let mut bank = lo | (hi << 4);
+            if self.is_vrc4 {
+                bank &= 0x1ff;
+            } else {
+                bank &= 0x0ff;
+            }
+            if self.chr_shift_low_bit {
+                bank >>= 1;
+            }
+            self.bank_offsets[slot] = (bank as usize % self.bank_count()) * Self::BANK_SIZE;
+        }
+    }
+}
+
+impl ChrStorage for Vrc24ChrStorage {
+    fn read_chr(&self, address: u16) -> u8 {
+        let addr = address as usize % 0x2000;
+        let slot = addr / Self::BANK_SIZE;
+        let offset = addr % Self::BANK_SIZE;
+        let src = self.bank_offsets[slot] + offset;
+        let len = self.source.len();
+        self.source[src % len]
+    }
+
+    fn write_chr(&mut self, address: u16, value: u8) {
+        if !self.has_chr_ram {
+            return;
+        }
+        let addr = address as usize % 0x2000;
+        let slot = addr / Self::BANK_SIZE;
+        let offset = addr % Self::BANK_SIZE;
+        let src = self.bank_offsets[slot] + offset;
+        let len = self.source.len();
+        self.source[src % len] = value;
+    }
+
+    fn write_register(&mut self, addr: u16, value: u8) {
+        match addr {
+            0xb000..=0xefff => {
+                let group = ((addr >> 12) & 0x0f) as usize;
+                let idx = self.compute_register_index(addr);
+                let slot = (group - 0xb) * 2 + (idx >> 1);
+
+                if idx & 1 == 0 {
+                    self.chrs[slot * 2] = value & 0x0f;
+                } else {
+                    self.chrs[slot * 2 + 1] = value & 0x1f;
+                }
+                self.refresh_banks();
+            }
+            _ => {}
+        }
+    }
+}
+
+#[cfg(test)]
+mod vrc24_chr_tests {
+    use super::*;
+
+    fn make_chr() -> Vec<u8> {
+        let bank_count = 32;
+        let mut data = vec![0u8; bank_count * 0x0400];
+        for bank in 0..bank_count {
+            data[bank * 0x0400] = bank as u8;
+        }
+        data
+    }
+
+    #[test]
+    fn vrc4f_banking() {
+        let mut chr = Vrc24ChrStorage::new(&make_chr(), 0, 1, true, false);
+        chr.write_register(0xb000, 0x02);
+        assert_eq!(chr.read_chr(0x0000), 0x02);
+    }
+
+    #[test]
+    fn vrc4f_high_nibble() {
+        let mut chr = Vrc24ChrStorage::new(&make_chr(), 0, 1, true, false);
+        chr.write_register(0xb001, 0x01);
+        assert_eq!(chr.read_chr(0x0000), 0x10);
+    }
+
+    #[test]
+    fn writes_to_chr_ram() {
+        let mut chr = Vrc24ChrStorage::new(&[], 0, 1, true, false);
+        chr.write_chr(0x0000, 0xab);
+        assert_eq!(chr.read_chr(0x0000), 0xab);
+    }
+}

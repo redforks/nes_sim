@@ -153,7 +153,7 @@ fn create_cartridge_mapper34_bnrom() {
 fn create_cartridge_mapper4_with_chr_ram() {
     let rom = create_test_nes(4, 4, 0);
     let file = INesFile::new(rom).unwrap();
-    let (mut cartridge, mut chr_storage, _mirroring) = create_cartridge(&file);
+    let (mut _cartridge, mut chr_storage, _mirroring) = create_cartridge(&file);
 
     assert_eq!(chr_storage.read_chr(0x0010), 0);
     chr_storage.write_chr(0x0010, 0xab);
