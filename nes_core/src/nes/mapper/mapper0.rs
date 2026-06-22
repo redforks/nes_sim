@@ -1,30 +1,21 @@
-use super::{Cartridge, ChrStorage, CARTRIDGE_START_ADDR, CartridgeOperation};
-use super::chr_storage::DirectChr;
+use super::{Cartridge, CARTRIDGE_START_ADDR, CartridgeOperation};
 
 pub struct Mapper0 {
     prg_rom: [u8; 0x8000],
     prg_rom_len: usize,
-    has_chr_ram: bool,
-    chr_storage: DirectChr,
     ram: [u8; 0x4000 - 0x20],
 }
 
 impl Mapper0 {
-    pub fn new(prg_rom: &[u8], chr_rom: &[u8]) -> Self {
+    pub fn new(prg_rom: &[u8]) -> Self {
         debug_assert!(prg_rom.len() <= 0x8000);
-        debug_assert!(chr_rom.len() <= 0x2000);
 
         let mut r = Self {
             prg_rom: [0; 0x8000],
             prg_rom_len: prg_rom.len(),
-            has_chr_ram: chr_rom.is_empty(),
-            chr_storage: DirectChr::empty(),
             ram: [0; 0x4000 - 0x20],
         };
         r.prg_rom[0..prg_rom.len()].copy_from_slice(prg_rom);
-        for i in 0..chr_rom.len() {
-            r.chr_storage.write_chr(i as u16, chr_rom[i]);
-        }
         r
     }
 }
@@ -34,24 +25,12 @@ impl Default for Mapper0 {
         Self {
             prg_rom: [0; 0x8000],
             prg_rom_len: 0,
-            has_chr_ram: false,
-            chr_storage: DirectChr::empty(),
             ram: [0; 0x4000 - 0x20],
         }
     }
 }
 
 impl Cartridge for Mapper0 {
-    fn read_chr(&self, address: u16) -> u8 {
-        self.chr_storage.read_chr(address)
-    }
-
-    fn write_chr(&mut self, address: u16, value: u8) {
-        if self.has_chr_ram {
-            self.chr_storage.write_chr(address, value);
-        }
-    }
-
     fn read(&mut self, address: u16) -> u8 {
         self.peek(address)
     }
@@ -107,30 +86,12 @@ mod tests {
     }
 
     #[test]
-    fn cartridge() {
-        let mcu = Mapper0::new(&[0; 0], &[1, 2]);
-        assert_eq!(1, mcu.read_chr(0));
-        assert_eq!(2, mcu.read_chr(1));
-    }
-
-    #[test]
-    fn writes_to_chr_ram_when_chr_rom_is_absent() {
-        let mut mcu = Mapper0::new(&[0; 0], &[]);
-
-        mcu.write_chr(0x0000, 0x12);
-        mcu.write_chr(0x1fff, 0x34);
-
-        assert_eq!(mcu.read_chr(0), 0x12);
-        assert_eq!(mcu.read_chr(0x1fff), 0x34);
-    }
-
-    #[test]
     fn mirrors_16k_prg_into_upper_bank() {
         let mut prg = [0u8; 0x4000];
         prg[0x3ffc] = 0x00;
         prg[0x3ffd] = 0x80;
 
-        let mut mcu = Mapper0::new(&prg, &[]);
+        let mut mcu = Mapper0::new(&prg);
 
         assert_eq!(mcu.read(0xfffc), 0x00);
         assert_eq!(mcu.read(0xfffd), 0x80);

@@ -1,35 +1,26 @@
-use super::{Cartridge, ChrStorage, CARTRIDGE_START_ADDR, CartridgeOperation};
-use super::chr_storage::DirectChr;
+use super::{Cartridge, CARTRIDGE_START_ADDR, CartridgeOperation};
 
 const PRG_ROM_BANK_SIZE: usize = 0x4000;
 const CARTRIDGE_RAM_SIZE: usize = 0x4000 - 0x20;
 
 pub struct Mapper2 {
     prg_rom: Vec<u8>,
-    has_chr_ram: bool,
-    chr_storage: DirectChr,
     ram: [u8; CARTRIDGE_RAM_SIZE],
     selected_prg_bank: usize,
     prg_bank_count: usize,
 }
 
 impl Mapper2 {
-    pub fn new(prg_rom: &[u8], chr_rom: &[u8]) -> Self {
+    pub fn new(prg_rom: &[u8]) -> Self {
         debug_assert!(!prg_rom.is_empty());
         debug_assert_eq!(prg_rom.len() % PRG_ROM_BANK_SIZE, 0);
-        debug_assert!(chr_rom.len() <= 0x2000);
 
-        let mut mapper = Self {
+        let mapper = Self {
             prg_rom: prg_rom.to_vec(),
-            has_chr_ram: chr_rom.is_empty(),
-            chr_storage: DirectChr::empty(),
             ram: [0; CARTRIDGE_RAM_SIZE],
             selected_prg_bank: 0,
             prg_bank_count: prg_rom.len() / PRG_ROM_BANK_SIZE,
         };
-        for i in 0..chr_rom.len() {
-            mapper.chr_storage.write_chr(i as u16, chr_rom[i]);
-        }
         mapper
     }
 
@@ -49,16 +40,6 @@ impl Mapper2 {
 }
 
 impl Cartridge for Mapper2 {
-    fn read_chr(&self, address: u16) -> u8 {
-        self.chr_storage.read_chr(address)
-    }
-
-    fn write_chr(&mut self, address: u16, value: u8) {
-        if self.has_chr_ram {
-            self.chr_storage.write_chr(address, value);
-        }
-    }
-
     fn read(&mut self, address: u16) -> u8 {
         self.peek(address)
     }
@@ -92,7 +73,7 @@ mod tests {
 
     #[test]
     fn reads_and_writes_cartridge_ram() {
-        let mut mapper = Mapper2::new(&[0; PRG_ROM_BANK_SIZE * 2], &[]);
+        let mut mapper = Mapper2::new(&[0; PRG_ROM_BANK_SIZE * 2]);
 
         mapper.write(CARTRIDGE_START_ADDR, 0x12);
         mapper.write(0x7fff, 0x34);
@@ -110,7 +91,7 @@ mod tests {
         prg_rom[PRG_ROM_BANK_SIZE * 3] = 0x40;
         prg_rom[(PRG_ROM_BANK_SIZE * 4) - 1] = 0x4f;
 
-        let mut mapper = Mapper2::new(&prg_rom, &[]);
+        let mut mapper = Mapper2::new(&prg_rom);
 
         assert_eq!(mapper.read(0x8000), 0x10);
         assert_eq!(mapper.read(0xc000), 0x40);
@@ -123,32 +104,4 @@ mod tests {
         assert_eq!(mapper.read(0xffff), 0x4f);
     }
 
-    #[test]
-    fn exposes_chr_rom_patterns() {
-        let mapper = Mapper2::new(&[0; PRG_ROM_BANK_SIZE * 2], &[1, 2, 3]);
-
-        assert_eq!(mapper.read_chr(0), 1);
-        assert_eq!(mapper.read_chr(1), 2);
-        assert_eq!(mapper.read_chr(2), 3);
-    }
-
-    #[test]
-    fn writes_to_chr_ram_when_chr_rom_is_absent() {
-        let mut mapper = Mapper2::new(&[0; PRG_ROM_BANK_SIZE * 2], &[]);
-
-        mapper.write_chr(0x0000, 0x12);
-        mapper.write_chr(0x1fff, 0x34);
-
-        assert_eq!(mapper.read_chr(0), 0x12);
-        assert_eq!(mapper.read_chr(0x1fff), 0x34);
-    }
-
-    #[test]
-    fn ignores_pattern_writes_when_chr_rom_is_present() {
-        let mut mapper = Mapper2::new(&[0; PRG_ROM_BANK_SIZE * 2], &[0x56]);
-
-        mapper.write_chr(0x0000, 0x12);
-
-        assert_eq!(mapper.read_chr(0), 0x56);
-    }
 }

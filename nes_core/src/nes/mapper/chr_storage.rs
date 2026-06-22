@@ -8,6 +8,13 @@ impl DirectChr {
     pub fn empty() -> Self {
         Self { data: [0; 0x2000] }
     }
+
+    pub fn from_chr_rom(chr_rom: &[u8]) -> Self {
+        let mut data = [0; 0x2000];
+        let len = chr_rom.len().min(0x2000);
+        data[..len].copy_from_slice(&chr_rom[..len]);
+        Self { data }
+    }
 }
 
 impl ChrStorage for DirectChr {

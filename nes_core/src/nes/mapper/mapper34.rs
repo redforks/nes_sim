@@ -73,30 +73,6 @@ impl Mapper34 {
 }
 
 impl Cartridge for Mapper34 {
-    fn write_chr(&mut self, address: u16, value: u8) {
-        if self.board == Board::BxRom && self.has_chr_ram {
-            let index = address as usize % self.chr.len();
-            self.chr[index] = value;
-        }
-    }
-
-    fn read_chr(&self, address: u16) -> u8 {
-        match self.board {
-            Board::BxRom => self.chr[address as usize % self.chr.len()],
-            Board::Nina001 => match address {
-                0x0000..=0x0fff => {
-                    let bank_start = self.selected_chr_bank_0() * 0x1000;
-                    self.chr[bank_start + address as usize]
-                }
-                0x1000..=0x1fff => {
-                    let bank_start = self.selected_chr_bank_1() * 0x1000;
-                    self.chr[bank_start + (address as usize & 0x0fff)]
-                }
-                _ => unreachable!(),
-            },
-        }
-    }
-
     fn read(&mut self, address: u16) -> u8 {
         self.peek(address)
     }
@@ -154,42 +130,5 @@ mod tests {
         assert_eq!(mapper.read(0x8000), 0x40);
     }
 
-    #[test]
-    fn writes_to_chr_ram_when_chr_rom_is_absent() {
-        let mut mapper = Mapper34::new(&[0; PRG_ROM_BANK_SIZE], &[]);
 
-        mapper.write_chr(0x0000, 0x12);
-        mapper.write_chr(0x1fff, 0x34);
-
-        assert_eq!(mapper.read_chr(0), 0x12);
-        assert_eq!(mapper.read_chr(0x1fff), 0x34);
-    }
-
-    #[test]
-    fn nina001_banks_chr_with_4k_registers() {
-        let mut prg_rom = vec![0u8; PRG_ROM_BANK_SIZE * 2];
-        prg_rom[0x0000] = 0x11;
-        prg_rom[0x8000] = 0x22;
-
-        let mut chr_rom = vec![0u8; CHR_SIZE * 4];
-        chr_rom[0x0000] = 0xa1;
-        chr_rom[0x1000] = 0xb1;
-        chr_rom[0x2000] = 0xa2;
-        chr_rom[0x3000] = 0xb2;
-        chr_rom[0x6000] = 0xa4;
-        chr_rom[0x7000] = 0xb4;
-
-        let mut mapper = Mapper34::new(&prg_rom, &chr_rom);
-
-        mapper.write(0x7ffd, 0x01);
-        mapper.write(0x7ffe, 0x02);
-        mapper.write(0x7fff, 0x03);
-
-        assert_eq!(mapper.read_chr(0x0000), 0xa2);
-        assert_eq!(mapper.read_chr(0x1000), 0xb2);
-        assert_eq!(mapper.read(0x8000), 0x22);
-        assert_eq!(mapper.read(0x7ffd), 0x01);
-        assert_eq!(mapper.read(0x7ffe), 0x02);
-        assert_eq!(mapper.read(0x7fff), 0x03);
-    }
 }

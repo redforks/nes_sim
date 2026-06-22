@@ -1,35 +1,26 @@
-use super::{Cartridge, ChrStorage, CARTRIDGE_START_ADDR, CartridgeOperation, Mirroring};
-use super::chr_storage::DirectChr;
+use super::{Cartridge, CARTRIDGE_START_ADDR, CartridgeOperation, Mirroring};
 
 const PRG_ROM_BANK_SIZE: usize = 0x8000;
 const CARTRIDGE_RAM_SIZE: usize = 0x4000 - 0x20;
 
 pub struct Mapper7 {
     prg_rom: Vec<u8>,
-    has_chr_ram: bool,
-    chr_storage: DirectChr,
     ram: [u8; CARTRIDGE_RAM_SIZE],
     selected_prg_bank: usize,
     prg_bank_count: usize,
 }
 
 impl Mapper7 {
-    pub fn new(prg_rom: &[u8], chr_rom: &[u8]) -> Self {
+    pub fn new(prg_rom: &[u8]) -> Self {
         debug_assert!(!prg_rom.is_empty());
         debug_assert_eq!(prg_rom.len() % PRG_ROM_BANK_SIZE, 0);
-        debug_assert!(chr_rom.len() <= 0x2000);
 
-        let mut mapper = Self {
+        let mapper = Self {
             prg_rom: prg_rom.to_vec(),
-            has_chr_ram: chr_rom.is_empty(),
-            chr_storage: DirectChr::empty(),
             ram: [0; CARTRIDGE_RAM_SIZE],
             selected_prg_bank: 0,
             prg_bank_count: prg_rom.len() / PRG_ROM_BANK_SIZE,
         };
-        for i in 0..chr_rom.len() {
-            mapper.chr_storage.write_chr(i as u16, chr_rom[i]);
-        }
         mapper
     }
 
@@ -45,16 +36,6 @@ impl Mapper7 {
 }
 
 impl Cartridge for Mapper7 {
-    fn read_chr(&self, address: u16) -> u8 {
-        self.chr_storage.read_chr(address)
-    }
-
-    fn write_chr(&mut self, address: u16, value: u8) {
-        if self.has_chr_ram {
-            self.chr_storage.write_chr(address, value);
-        }
-    }
-
     fn read(&mut self, address: u16) -> u8 {
         self.peek(address)
     }
@@ -99,7 +80,7 @@ mod tests {
         prg_rom[PRG_ROM_BANK_SIZE * 2] = 0x30;
         prg_rom[PRG_ROM_BANK_SIZE * 3] = 0x40;
 
-        let mut mapper = Mapper7::new(&prg_rom, &[]);
+        let mut mapper = Mapper7::new(&prg_rom);
 
         assert_eq!(mapper.read(0x8000), 0x10);
 
@@ -112,7 +93,7 @@ mod tests {
 
     #[test]
     fn switches_single_screen_mirroring() {
-        let mut mapper = Mapper7::new(&[0; PRG_ROM_BANK_SIZE], &[]);
+        let mut mapper = Mapper7::new(&[0; PRG_ROM_BANK_SIZE]);
 
         assert_eq!(
             mapper.write(0x8000, 0x10),

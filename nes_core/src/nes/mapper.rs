@@ -29,6 +29,7 @@ pub mod chr_storage;
 pub trait ChrStorage {
     fn read_chr(&self, address: u16) -> u8;
     fn write_chr(&mut self, address: u16, value: u8);
+    fn write_register(&mut self, _addr: u16, _value: u8) {}
 }
 
 #[derive(Debug, Eq, PartialEq, Copy, Clone)]
@@ -65,43 +66,72 @@ impl From<NametableArrangement> for Mirroring {
     }
 }
 
-pub fn create_cartridge(f: &INesFile) -> (Box<dyn Cartridge>, Mirroring) {
+pub fn create_cartridge(f: &INesFile) -> (Box<dyn Cartridge>, Box<dyn ChrStorage>, Mirroring) {
     let mapper_no = f.header().mapper_no;
     let mirroring = if f.header().ignore_mirror_control {
         Mirroring::Four
     } else {
         f.header().nametable_arrangement.into()
     };
-    let cartridge: Box<dyn Cartridge> = match mapper_no {
-        0 => Box::new(Mapper0::new(f.read_prg_rom(), f.read_chr_rom())),
-        1 => Box::new(MMC1::new(
-            f.read_prg_rom(),
-            f.read_chr_rom(),
+    let chr_rom = f.read_chr_rom();
+    match mapper_no {
+        0 => (
+            Box::new(Mapper0::new(f.read_prg_rom())),
+            Box::new(chr_storage::DirectChr::from_chr_rom(chr_rom)),
             mirroring,
-        )),
-        2 => Box::new(Mapper2::new(f.read_prg_rom(), f.read_chr_rom())),
-        3 => Box::new(Mapper3::new(f.read_prg_rom(), f.read_chr_rom())),
-        4 => Box::new(MMC3::new(
-            f.read_prg_rom(),
-            f.read_chr_rom(),
-            f.header().ignore_mirror_control,
-            rom_contains_signature(f, MMC3_ALT_TEST_SIGNATURE),
-        )),
-        7 => Box::new(Mapper7::new(f.read_prg_rom(), f.read_chr_rom())),
-        34 => Box::new(Mapper34::new(f.read_prg_rom(), f.read_chr_rom())),
+        ),
+        1 => (
+            Box::new(MMC1::new(f.read_prg_rom(), chr_rom, mirroring)),
+            Box::new(chr_storage::DirectChr::from_chr_rom(chr_rom)),
+            mirroring,
+        ),
+        2 => (
+            Box::new(Mapper2::new(f.read_prg_rom())),
+            Box::new(chr_storage::DirectChr::from_chr_rom(chr_rom)),
+            mirroring,
+        ),
+        3 => (
+            Box::new(Mapper3::new(f.read_prg_rom(), chr_rom)),
+            Box::new(chr_storage::DirectChr::from_chr_rom(chr_rom)),
+            mirroring,
+        ),
+        4 => (
+            Box::new(MMC3::new(
+                f.read_prg_rom(),
+                chr_rom,
+                f.header().ignore_mirror_control,
+                rom_contains_signature(f, MMC3_ALT_TEST_SIGNATURE),
+            )),
+            Box::new(chr_storage::DirectChr::from_chr_rom(chr_rom)),
+            mirroring,
+        ),
+        7 => (
+            Box::new(Mapper7::new(f.read_prg_rom())),
+            Box::new(chr_storage::DirectChr::from_chr_rom(chr_rom)),
+            mirroring,
+        ),
+        34 => (
+            Box::new(Mapper34::new(f.read_prg_rom(), chr_rom)),
+            Box::new(chr_storage::DirectChr::from_chr_rom(chr_rom)),
+            mirroring,
+        ),
         21 => {
             let submapper = f.header().submapper_no.unwrap_or(1);
             let variant = match submapper {
                 2 => VrcVariant::Vrc4c,
                 _ => VrcVariant::Vrc4a,
             };
-            Box::new(Vrc24::new(f.read_prg_rom(), f.read_chr_rom(), variant))
+            (
+                Box::new(Vrc24::new(f.read_prg_rom(), chr_rom, variant)),
+                Box::new(chr_storage::DirectChr::from_chr_rom(chr_rom)),
+                mirroring,
+            )
         }
-        22 => Box::new(Vrc24::new(
-            f.read_prg_rom(),
-            f.read_chr_rom(),
-            VrcVariant::Vrc2a,
-        )),
+        22 => (
+            Box::new(Vrc24::new(f.read_prg_rom(), chr_rom, VrcVariant::Vrc2a)),
+            Box::new(chr_storage::DirectChr::from_chr_rom(chr_rom)),
+            mirroring,
+        ),
         23 => {
             let submapper = f.header().submapper_no.unwrap_or(1);
             let variant = match submapper {
@@ -109,7 +139,11 @@ pub fn create_cartridge(f: &INesFile) -> (Box<dyn Cartridge>, Mirroring) {
                 3 => VrcVariant::Vrc2b,
                 _ => VrcVariant::Vrc4f,
             };
-            Box::new(Vrc24::new(f.read_prg_rom(), f.read_chr_rom(), variant))
+            (
+                Box::new(Vrc24::new(f.read_prg_rom(), chr_rom, variant)),
+                Box::new(chr_storage::DirectChr::from_chr_rom(chr_rom)),
+                mirroring,
+            )
         }
         25 => {
             let submapper = f.header().submapper_no.unwrap_or(1);
@@ -118,12 +152,19 @@ pub fn create_cartridge(f: &INesFile) -> (Box<dyn Cartridge>, Mirroring) {
                 3 => VrcVariant::Vrc2c,
                 _ => VrcVariant::Vrc4b,
             };
-            Box::new(Vrc24::new(f.read_prg_rom(), f.read_chr_rom(), variant))
+            (
+                Box::new(Vrc24::new(f.read_prg_rom(), chr_rom, variant)),
+                Box::new(chr_storage::DirectChr::from_chr_rom(chr_rom)),
+                mirroring,
+            )
         }
-        87 => Box::new(MapperJ87::new(f.read_prg_rom(), f.read_chr_rom())),
+        87 => (
+            Box::new(MapperJ87::new(f.read_prg_rom(), chr_rom)),
+            Box::new(chr_storage::DirectChr::from_chr_rom(chr_rom)),
+            mirroring,
+        ),
         _ => panic!("Unsupported cartridge mapper no: {}", f.header().mapper_no),
-    };
-    (cartridge, mirroring)
+    }
 }
 
 fn rom_contains_signature(file: &INesFile, signature: &str) -> bool {
@@ -133,8 +174,6 @@ fn rom_contains_signature(file: &INesFile, signature: &str) -> bool {
 }
 
 pub trait Cartridge {
-    fn read_chr(&self, address: u16) -> u8;
-    fn write_chr(&mut self, _address: u16, _value: u8) {}
     fn read(&mut self, address: u16) -> u8;
     fn peek(&self, address: u16) -> u8;
     fn write(&mut self, address: u16, value: u8) -> CartridgeOperation;
@@ -148,7 +187,6 @@ pub trait Cartridge {
 #[cfg(test)]
 pub struct TestCartridge {
     pub(crate) prg_rom: [u8; 0x8000],
-    pub(crate) chr_rom: [u8; 0x2000],
 }
 
 #[cfg(test)]
@@ -156,21 +194,12 @@ impl TestCartridge {
     pub fn new() -> Self {
         Self {
             prg_rom: [0; 0x8000],
-            chr_rom: [0; 0x2000],
         }
     }
 }
 
 #[cfg(test)]
 impl Cartridge for TestCartridge {
-    fn read_chr(&self, address: u16) -> u8 {
-        self.chr_rom[address as usize % self.chr_rom.len()]
-    }
-
-    fn write_chr(&mut self, address: u16, value: u8) {
-        self.chr_rom[address as usize] = value;
-    }
-
     fn read(&mut self, address: u16) -> u8 {
         self.peek(address)
     }

@@ -1,4 +1,4 @@
-use super::{Cartridge, ChrStorage, CARTRIDGE_START_ADDR, CartridgeOperation};
+use super::{Cartridge, CARTRIDGE_START_ADDR, CartridgeOperation};
 use super::chr_storage::WindowedChr;
 
 const PRG_ROM_SIZE: usize = 0x8000;
@@ -46,10 +46,6 @@ impl Mapper3 {
 }
 
 impl Cartridge for Mapper3 {
-    fn read_chr(&self, address: u16) -> u8 {
-        self.chr_storage.read_chr(address)
-    }
-
     fn read(&mut self, address: u16) -> u8 {
         self.peek(address)
     }
@@ -113,40 +109,5 @@ mod tests {
         assert_eq!(mapper.read(0xffff), 0x22);
     }
 
-    #[test]
-    fn switches_8k_chr_banks() {
-        let prg = [0u8; 0x8000];
-        let mut chr = vec![0u8; CHR_BANK_SIZE * 4];
-        chr[0] = 0x10;
-        chr[CHR_BANK_SIZE] = 0x20;
-        chr[CHR_BANK_SIZE * 2] = 0x30;
-        chr[CHR_BANK_SIZE * 3] = 0x40;
 
-        let mut mapper = Mapper3::new(&prg, &chr);
-
-        assert_eq!(mapper.read_chr(0), 0x10);
-
-        mapper.write(0x8000, 0x01);
-        assert_eq!(mapper.read_chr(0), 0x20);
-
-        mapper.write(0x9000, 0x02);
-        assert_eq!(mapper.read_chr(0), 0x30);
-
-        mapper.write(0xffff, 0x03);
-        assert_eq!(mapper.read_chr(0), 0x40);
-    }
-
-    #[test]
-    fn wraps_chr_bank_selection() {
-        let prg = [0u8; 0x8000];
-        let mut chr = vec![0u8; CHR_BANK_SIZE * 2];
-        chr[0] = 0xaa;
-        chr[CHR_BANK_SIZE] = 0xbb;
-
-        let mut mapper = Mapper3::new(&prg, &chr);
-
-        mapper.write(0x8000, 0x03);
-
-        assert_eq!(mapper.read_chr(0), 0xbb);
-    }
 }

@@ -57,52 +57,6 @@ fn vrc4f_prg_swap_mode() {
 }
 
 #[test]
-fn vrc4f_chr_banking() {
-    let chr = create_chr(64);
-    let prg = create_prg(32);
-    let mut mapper = Vrc24::new(&prg, &chr, VrcVariant::Vrc4f);
-
-    // VRC4f uses A0/A1, so register offsets are $x000, $x001, $x002, $x003
-    // CHR0 low at $B000, CHR0 high at $B001
-    mapper.write(0xb000, 1); // low nibble
-    mapper.write(0xb001, 0); // high nibble (bank = 1)
-
-    assert_eq!(mapper.read_chr(0x0000), 1);
-}
-
-#[test]
-fn vrc4a_register_offsets() {
-    // VRC4a: A1/A2, offsets $x000, $x002, $x004, $x006
-    let prg = create_prg(32);
-    let chr = create_chr(64);
-    let mut mapper = Vrc24::new(&prg, &chr, VrcVariant::Vrc4a);
-
-    // Write to $8002 (should be same register as $8000 for PRG0, but different
-    // register index for CHR)
-    mapper.write(0x8000, 2); // PRG Select 0
-    assert_eq!(mapper.read(0x8000), 2);
-
-    // Write CHR via $B004 (index 2 = CHR1 low byte in $B000 group)
-    mapper.write(0xb004, 5); // CHR1 low
-    mapper.write(0xb006, 0); // CHR1 high
-    assert_eq!(mapper.read_chr(0x0400), 5);
-}
-
-#[test]
-fn vrc2a_chr_shift() {
-    // VRC2a (mapper 22): ignores low bit, right-shifts by 1
-    let prg = create_prg(32);
-    let chr = create_chr(64);
-    let mut mapper = Vrc24::new(&prg, &chr, VrcVariant::Vrc2a);
-
-    // Bank value 2 on VRC2a becomes bank 1 (shifted right)
-    mapper.write(0xb000, 2); // low nibble = 2
-    mapper.write(0xb002, 0); // high nibble = 0, total = 2, shifted = 1
-
-    assert_eq!(mapper.read_chr(0x0000), 1);
-}
-
-#[test]
 fn vrc4_irq_cycle_mode() {
     let prg = create_prg(32);
     let chr = create_chr(8);

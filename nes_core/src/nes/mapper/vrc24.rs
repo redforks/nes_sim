@@ -1,4 +1,4 @@
-use super::{Cartridge, ChrStorage, CARTRIDGE_START_ADDR, CartridgeOperation};
+use super::{Cartridge, CARTRIDGE_START_ADDR, CartridgeOperation};
 use super::chr_storage::WindowedChr;
 use crate::nes::mapper::Mirroring;
 
@@ -189,36 +189,6 @@ impl Vrc24 {
 }
 
 impl Cartridge for Vrc24 {
-    fn read_chr(&self, address: u16) -> u8 {
-        self.chr_storage.read_chr(address)
-    }
-
-    fn write_chr(&mut self, address: u16, value: u8) {
-        if !self.has_chr_ram {
-            return;
-        }
-
-        let addr = address as usize % CHR_WINDOW_SIZE;
-        let slot = addr / CHR_BANK_SIZE;
-        let offset_in_bank = addr % CHR_BANK_SIZE;
-
-        let lo = self.chr_bank[slot * 2] as u16;
-        let hi = self.chr_bank[slot * 2 + 1] as u16;
-        let mut bank = lo | (hi << 4);
-        if self.variant.is_vrc4() {
-            bank &= 0x1ff;
-        } else {
-            bank &= 0x0ff;
-        }
-        if self.variant.chr_shift_low_bit() {
-            bank >>= 1;
-        }
-        let bank = (bank as usize) % self.chr_bank_count();
-        let source = bank * CHR_BANK_SIZE + offset_in_bank;
-
-        self.chr_storage.write_chr_with_source(address, value, source);
-    }
-
     fn read(&mut self, address: u16) -> u8 {
         self.peek(address)
     }

@@ -1,11 +1,15 @@
 use super::*;
+use crate::nes::mapper::chr_storage::DirectChr;
 use crate::nes::mapper::{Cartridge, Mirroring, TestCartridge};
 use crate::render::ImageRender;
 use crate::set_system_cycles;
 use test_case::test_case;
 
 fn new_test_ppu_and_pattern() -> (Ppu, [u8; 8192]) {
-    (Ppu::new((), Mirroring::Horizontal), [0; 8192])
+    (
+        Ppu::new((), Mirroring::Horizontal, Box::new(DirectChr::empty())),
+        [0; 8192],
+    )
 }
 
 #[test]
@@ -37,14 +41,14 @@ fn test_peek_status_does_not_clear_vblank() {
     let cartridge: Box<dyn Cartridge> = Box::new(TestCartridge::new());
     ppu.registers.status.set_v_blank(true);
 
-    let status = ppu.peek(0x2002, &*cartridge);
+    let status = ppu.peek(0x2002);
     assert_eq!(status & 0x80, 0x80);
     assert!(ppu.registers.status.v_blank());
 }
 
 #[test]
 fn test_open_bus_bits_decay_to_zero() {
-    let mut ppu = Ppu::new((), Mirroring::Horizontal);
+    let mut ppu = Ppu::new((), Mirroring::Horizontal, Box::new(DirectChr::empty()));
     let mut cartridge = new_test_cartridge();
 
     set_system_cycles(0);
@@ -56,7 +60,7 @@ fn test_open_bus_bits_decay_to_zero() {
 
 #[test]
 fn test_status_read_only_refreshes_high_bits() {
-    let mut ppu = Ppu::new((), Mirroring::Horizontal);
+    let mut ppu = Ppu::new((), Mirroring::Horizontal, Box::new(DirectChr::empty()));
     let mut cartridge = new_test_cartridge();
 
     set_system_cycles(0);
@@ -69,10 +73,9 @@ fn test_status_read_only_refreshes_high_bits() {
 }
 
 fn create_test_ppu_with_mask(mask: PpuMask) -> Ppu {
-    // Initialize PPU with the provided mask to avoid field reassignment
     let mut ppu = Ppu {
         effective_mask: mask,
-        ..Ppu::new((), Mirroring::Horizontal)
+        ..Ppu::new((), Mirroring::Horizontal, Box::new(DirectChr::empty()))
     };
     ppu.registers.mask = mask;
     // Clear OAM
@@ -135,7 +138,7 @@ fn new_test_cartridge() -> Box<dyn Cartridge> {
     Box::new(TestCartridge::new())
 }
 
-fn set_bg_tile(ppu: &mut Ppu, _cartridge: &dyn Cartridge, tile: u8, palette_idx: u8) {
+fn set_bg_tile(ppu: &mut Ppu, tile: u8, palette_idx: u8) {
     ppu.write_nametable(0x2000, tile);
     ppu.write_nametable(0x23c0, palette_idx & 0x03);
 }
@@ -154,30 +157,29 @@ fn set_universal_bg_color(ppu: &mut Ppu, color: u8) {
     ppu.palette.write(0x3f00, color);
 }
 
-fn fill_chr(cart: &mut dyn Cartridge, pattern: &[u8]) {
+fn fill_chr(ppu: &mut Ppu, pattern: &[u8]) {
     for i in 0..0x2000 {
-        cart.write_chr(i as u16, pattern[i % pattern.len()]);
+        ppu.write_chr(i as u16, pattern[i % pattern.len()]);
     }
 }
 
 /// Render a single pixel (for testing)
 fn render_pixel(ppu: &mut Ppu, pattern: &[u8], x: u8, y: u8) -> u8 {
-    let mut cart: Box<dyn Cartridge> = Box::new(TestCartridge::new());
     if !pattern.is_empty() {
-        fill_chr(&mut *cart, pattern);
+        fill_chr(ppu, pattern);
     }
     ppu.timing.scanline = y as u16;
-    ppu.render_pixel(x, &mut *cart)
+    ppu.render_pixel(x)
 }
 
 fn run_scanline(ppu: &mut Ppu, pattern: &[u8], scanline: u16) {
-    let mut cart: Box<dyn Cartridge> = Box::new(TestCartridge::new());
     if !pattern.is_empty() {
-        fill_chr(&mut *cart, pattern);
+        fill_chr(ppu, pattern);
     }
 
     ppu.timing.scanline = scanline;
     ppu.timing.dot = 0;
+    let mut cart = new_test_cartridge();
     for _ in 0..341 {
         ppu.tick(&mut *cart);
     }
@@ -185,15 +187,14 @@ fn run_scanline(ppu: &mut Ppu, pattern: &[u8], scanline: u16) {
 
 fn render_pixel_with_setup<F>(ppu: &mut Ppu, pattern: &[u8], setup: F, x: u8, y: u8) -> u8
 where
-    F: FnOnce(&mut Ppu, &mut dyn Cartridge),
+    F: FnOnce(&mut Ppu),
 {
-    let mut cart = new_test_cartridge();
     if !pattern.is_empty() {
-        fill_chr(&mut *cart, pattern);
+        fill_chr(ppu, pattern);
     }
-    setup(ppu, &mut *cart);
+    setup(ppu);
     ppu.timing.scanline = y as u16;
-    ppu.render_pixel(x, &mut *cart)
+    ppu.render_pixel(x)
 }
 
 #[test]
@@ -210,7 +211,7 @@ fn test_render_pixel_returns_background_color() {
     let pixel = render_pixel_with_setup(
         &mut ppu,
         &pattern,
-        |ppu, cart| set_bg_tile(ppu, cart, 0, 0),
+        |ppu| set_bg_tile(ppu, 0, 0),
         0,
         0,
     );
@@ -230,7 +231,11 @@ fn test_render_pixel_both_disabled() {
 #[test]
 fn test_tick_renders_palette_color_when_rendering_disabled_and_vram_points_to_palette() {
     let mut ppu = Ppu {
-        ..Ppu::new(ImageRender::default_dimension(), Mirroring::Horizontal)
+        ..Ppu::new(
+            ImageRender::default_dimension(),
+            Mirroring::Horizontal,
+            Box::new(DirectChr::empty()),
+        )
     };
     ppu.palette.write(0x3f00, 0x21);
     ppu.registers.vram_addr = 0x3f10;
@@ -251,7 +256,11 @@ fn test_tick_renders_palette_color_when_rendering_disabled_and_vram_points_to_pa
 #[test]
 fn test_tick_renders_background_color_when_rendering_disabled_and_vram_not_palette() {
     let mut ppu = Ppu {
-        ..Ppu::new(ImageRender::default_dimension(), Mirroring::Horizontal)
+        ..Ppu::new(
+            ImageRender::default_dimension(),
+            Mirroring::Horizontal,
+            Box::new(DirectChr::empty()),
+        )
     };
     ppu.palette.write(0x3f00, 0x16);
     ppu.registers.vram_addr = 0x2000;
@@ -318,7 +327,7 @@ fn test_render_pixel_transparent_sprite_falls_back_to_background() {
     let pixel = render_pixel_with_setup(
         &mut ppu,
         &pattern,
-        |ppu, cart| set_bg_tile(ppu, cart, 0, 0),
+        |ppu| set_bg_tile(ppu, 0, 0),
         0,
         1,
     );
@@ -344,7 +353,7 @@ fn test_render_pixel_sprite_in_front_of_background() {
     let pixel = render_pixel_with_setup(
         &mut ppu,
         &pattern,
-        |ppu, cart| set_bg_tile(ppu, cart, 0, 0),
+        |ppu| set_bg_tile(ppu, 0, 0),
         0,
         1,
     );
@@ -370,7 +379,7 @@ fn test_render_pixel_background_priority_when_sprite_is_behind() {
     let pixel = render_pixel_with_setup(
         &mut ppu,
         &pattern,
-        |ppu, cart| set_bg_tile(ppu, cart, 0, 0),
+        |ppu| set_bg_tile(ppu, 0, 0),
         0,
         1,
     );
@@ -394,7 +403,7 @@ fn test_render_pixel_sprite_behind_transparent_background() {
     let pixel = render_pixel_with_setup(
         &mut ppu,
         &pattern,
-        |ppu, cart| set_bg_tile(ppu, cart, 0, 0),
+        |ppu| set_bg_tile(ppu, 0, 0),
         0,
         1,
     );
@@ -419,7 +428,7 @@ fn test_render_pixel_applies_left_column_clipping() {
     let pixel = render_pixel_with_setup(
         &mut ppu,
         &pattern,
-        |ppu, cart| set_bg_tile(ppu, cart, 0, 0),
+        |ppu| set_bg_tile(ppu, 0, 0),
         0,
         1,
     );
@@ -464,7 +473,7 @@ fn test_render_pixel_applies_sprite_priority_before_background_priority() {
     let pixel = render_pixel_with_setup(
         &mut ppu,
         &pattern,
-        |ppu, cart| set_bg_tile(ppu, cart, 0, 0),
+        |ppu| set_bg_tile(ppu, 0, 0),
         0,
         1,
     );
@@ -506,7 +515,7 @@ fn test_render_pixel_respects_background_pattern_table_selection() {
     let pixel = render_pixel_with_setup(
         &mut ppu,
         &pattern,
-        |ppu, cart| set_bg_tile(ppu, cart, 0, 0),
+        |ppu| set_bg_tile(ppu, 0, 0),
         0,
         0,
     );
@@ -700,7 +709,7 @@ fn test_render_pixel_sprite_zero_hit() {
     render_pixel_with_setup(
         &mut ppu,
         &pattern,
-        |ppu, _cart| ppu.write_nametable(0x2001, 0),
+        |ppu| ppu.write_nametable(0x2001, 0),
         8,
         1,
     );
@@ -724,7 +733,7 @@ fn test_render_pixel_sprite_zero_hit_requires_opaque_background() {
     render_pixel_with_setup(
         &mut ppu,
         &pattern,
-        |ppu, cart| set_bg_tile(ppu, cart, 0, 0),
+        |ppu| set_bg_tile(ppu, 0, 0),
         0,
         1,
     );
@@ -747,7 +756,7 @@ fn test_render_pixel_sprite_zero_hit_respects_background_left_mask() {
     render_pixel_with_setup(
         &mut ppu,
         &pattern,
-        |ppu, cart| set_bg_tile(ppu, cart, 0, 0),
+        |ppu| set_bg_tile(ppu, 0, 0),
         0,
         1,
     );
@@ -770,7 +779,7 @@ fn test_render_pixel_sprite_zero_hit_respects_sprite_left_mask() {
     render_pixel_with_setup(
         &mut ppu,
         &pattern,
-        |ppu, cart| set_bg_tile(ppu, cart, 0, 0),
+        |ppu| set_bg_tile(ppu, 0, 0),
         0,
         1,
     );
@@ -795,7 +804,7 @@ fn test_render_pixel_sprite_zero_hit_requires_sprite_zero() {
     render_pixel_with_setup(
         &mut ppu,
         &pattern,
-        |ppu, cart| set_bg_tile(ppu, cart, 0, 0),
+        |ppu| set_bg_tile(ppu, 0, 0),
         0,
         1,
     );
@@ -817,7 +826,7 @@ fn test_render_pixel_sprite_zero_not_at_x255() {
     render_pixel_with_setup(
         &mut ppu,
         &pattern,
-        |ppu, _cart| ppu.write_nametable(0x201f, 0),
+        |ppu| ppu.write_nametable(0x201f, 0),
         255,
         10,
     );
@@ -832,7 +841,7 @@ fn render_bg_pixel(mask: PpuMask) -> u8 {
     render_pixel_with_setup(
         &mut ppu,
         &pattern,
-        |ppu, cart| set_bg_tile(ppu, cart, 0, 0),
+        |ppu| set_bg_tile(ppu, 0, 0),
         0,
         0,
     )

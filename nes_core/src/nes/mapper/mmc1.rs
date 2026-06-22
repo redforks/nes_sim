@@ -1,6 +1,6 @@
 #![allow(dead_code)]
 
-use super::{Cartridge, ChrStorage, CartridgeOperation};
+use super::{Cartridge, CartridgeOperation};
 use super::chr_storage::WindowedChr;
 use crate::nes::mapper::Mirroring;
 use bitfield_struct::bitfield;
@@ -100,19 +100,6 @@ impl MMC1 {
 }
 
 impl Cartridge for MMC1 {
-    fn read_chr(&self, address: u16) -> u8 {
-        self.chr_storage.read_chr(address)
-    }
-
-    fn write_chr(&mut self, address: u16, value: u8) {
-        if !self.has_chr_ram {
-            return;
-        }
-
-        let chr_index = self.chr_index(address);
-        self.chr_storage.write_chr_with_source(address, value, chr_index);
-    }
-
     fn read(&mut self, address: u16) -> u8 {
         self.peek(address)
     }
@@ -364,19 +351,7 @@ mod tests {
         init_prg(&mut prg_rom);
         (
             MMC1::new(&prg_rom, &[], Mirroring::Horizontal),
-            Ppu::new((), Mirroring::Horizontal),
-        )
-    }
-
-    fn create_with_chr<F>(mut init_chr: F) -> (MMC1, Ppu)
-    where
-        F: FnMut(&mut [u8]),
-    {
-        let mut chr_rom = [0; 128 * 1024];
-        init_chr(&mut chr_rom);
-        (
-            MMC1::new(&[0; 32 * 1024], &chr_rom, Mirroring::Horizontal),
-            Ppu::new((), Mirroring::Horizontal),
+            Ppu::new((), Mirroring::Horizontal, Box::new(crate::nes::mapper::chr_storage::DirectChr::empty())),
         )
     }
 
@@ -488,45 +463,5 @@ mod tests {
         assert_eq!(mmc1.chr_bank_size(), 4 * 1024);
     }
 
-    #[test]
-    fn select_chr_bank0() {
-        let (mut mmc1, _ppu) = create_with_chr(|rom| {
-            rom[0] = 1;
-            rom[4 * 1024] = 2;
-            rom[8 * 1024] = 3;
-            rom[12 * 1024] = 4;
-        });
 
-        assert_eq!(mmc1.read_chr(0x0000), 1);
-        assert_eq!(mmc1.read_chr(0x1000), 2);
-
-        mmc1.control(ControlFlags::new().with_chr_in_4k(true));
-        mmc1.select_chr_bank0(2);
-        assert_eq!(mmc1.read_chr(0x0000), 3);
-    }
-
-    #[test]
-    fn select_chr_bank1() {
-        let (mut mmc1, _ppu) = create_with_chr(|rom| {
-            rom[0] = 1;
-            rom[4 * 1024] = 2;
-            rom[8 * 1024] = 3;
-            rom[12 * 1024] = 4;
-        });
-
-        mmc1.control(ControlFlags::new().with_chr_in_4k(true));
-        mmc1.select_chr_bank1(3);
-        assert_eq!(mmc1.read_chr(0x1000), 4);
-    }
-
-    #[test]
-    fn writes_to_chr_ram_when_chr_rom_is_absent() {
-        let mut mmc1 = MMC1::new(&[0; 32 * 1024], &[], Mirroring::Horizontal);
-
-        mmc1.write_chr(0x0000, 0x12);
-        mmc1.write_chr(0x1fff, 0x34);
-
-        assert_eq!(mmc1.read_chr(0x0000), 0x12);
-        assert_eq!(mmc1.read_chr(0x1fff), 0x34);
-    }
 }

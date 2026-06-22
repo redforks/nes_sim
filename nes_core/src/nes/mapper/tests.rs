@@ -74,109 +74,90 @@ fn test_name_table_offset(mirroring: Mirroring, addr: u16) -> u16 {
 fn create_cartridge_mapper0() {
     let rom = create_test_nes(0, 1, 1);
     let file = INesFile::new(rom).unwrap();
-    let (mut cartridge, _mirroring) = create_cartridge(&file);
+    let (mut cartridge, chr_storage, _mirroring) = create_cartridge(&file);
 
-    // Test that we can read from cartridge
     let val = cartridge.read(CARTRIDGE_START_ADDR);
     assert_eq!(val, 0);
+    assert_eq!(chr_storage.read_chr(0), 0);
 }
 
 #[test]
 fn create_cartridge_mapper1() {
     let rom = create_test_nes(1, 2, 1);
     let file = INesFile::new(rom).unwrap();
-    let (mut cartridge, _mirroring) = create_cartridge(&file);
+    let (mut cartridge, chr_storage, _mirroring) = create_cartridge(&file);
 
-    // Test that we can read from cartridge
     let val = cartridge.read(0x8000);
     assert_eq!(val, 0);
-}
-
-#[test]
-fn create_cartridge_mapper1_with_chr_ram() {
-    let rom = create_test_nes(1, 2, 0);
-    let file = INesFile::new(rom).unwrap();
-    let (mut cartridge, _mirroring) = create_cartridge(&file);
-
-    cartridge.write_chr(0x0010, 0xab);
-
-    assert_eq!(cartridge.read_chr(0x0010), 0xab);
+    assert_eq!(chr_storage.read_chr(0), 0);
 }
 
 #[test]
 fn create_cartridge_mapper2() {
     let rom = create_test_nes(2, 2, 1);
     let file = INesFile::new(rom).unwrap();
-    let (mut cartridge, _mirroring) = create_cartridge(&file);
+    let (mut cartridge, chr_storage, _mirroring) = create_cartridge(&file);
 
     let val = cartridge.read(0x8000);
     assert_eq!(val, 0);
-}
-
-#[test]
-fn create_cartridge_mapper2_with_chr_ram() {
-    let rom = create_test_nes(2, 2, 0);
-    let file = INesFile::new(rom).unwrap();
-    let (mut cartridge, _mirroring) = create_cartridge(&file);
-
-    cartridge.write_chr(0x0010, 0xab);
-
-    assert_eq!(cartridge.read_chr(0x0010), 0xab);
+    assert_eq!(chr_storage.read_chr(0), 0);
 }
 
 #[test]
 fn create_cartridge_mapper3() {
     let rom = create_test_nes(3, 2, 2);
     let file = INesFile::new(rom).unwrap();
-    let (mut cartridge, _mirroring) = create_cartridge(&file);
+    let (mut cartridge, chr_storage, _mirroring) = create_cartridge(&file);
 
     let val = cartridge.read(0x8000);
     assert_eq!(val, 0);
+    assert_eq!(chr_storage.read_chr(0), 0);
 }
 
 #[test]
 fn create_cartridge_mapper4() {
     let rom = create_test_nes(4, 4, 1);
     let file = INesFile::new(rom).unwrap();
-    let (mut cartridge, _mirroring) = create_cartridge(&file);
+    let (mut cartridge, chr_storage, _mirroring) = create_cartridge(&file);
 
     let val = cartridge.read(0x8000);
     assert_eq!(val, 0);
+    assert_eq!(chr_storage.read_chr(0), 0);
 }
 
 #[test]
 fn create_cartridge_mapper7() {
     let rom = create_test_nes(7, 4, 0);
     let file = INesFile::new(rom).unwrap();
-    let (mut cartridge, _mirroring) = create_cartridge(&file);
-
-    cartridge.write_chr(0x0010, 0xab);
+    let (mut cartridge, mut chr_storage, _mirroring) = create_cartridge(&file);
 
     assert_eq!(cartridge.read(0x8000), 0);
-    assert_eq!(cartridge.read_chr(0x0010), 0xab);
+    assert_eq!(chr_storage.read_chr(0x0010), 0);
+    chr_storage.write_chr(0x0010, 0xab);
+    assert_eq!(chr_storage.read_chr(0x0010), 0xab);
 }
 
 #[test]
 fn create_cartridge_mapper34_bnrom() {
     let rom = create_test_nes(34, 4, 0);
     let file = INesFile::new(rom).unwrap();
-    let (mut cartridge, _mirroring) = create_cartridge(&file);
-
-    cartridge.write_chr(0x0010, 0xab);
+    let (mut cartridge, mut chr_storage, _mirroring) = create_cartridge(&file);
 
     assert_eq!(cartridge.read(0x8000), 0);
-    assert_eq!(cartridge.read_chr(0x0010), 0xab);
+    assert_eq!(chr_storage.read_chr(0x0010), 0);
+    chr_storage.write_chr(0x0010, 0xab);
+    assert_eq!(chr_storage.read_chr(0x0010), 0xab);
 }
 
 #[test]
 fn create_cartridge_mapper4_with_chr_ram() {
     let rom = create_test_nes(4, 4, 0);
     let file = INesFile::new(rom).unwrap();
-    let (mut cartridge, _mirroring) = create_cartridge(&file);
+    let (mut cartridge, mut chr_storage, _mirroring) = create_cartridge(&file);
 
-    cartridge.write_chr(0x0010, 0xab);
-
-    assert_eq!(cartridge.read_chr(0x0010), 0xab);
+    assert_eq!(chr_storage.read_chr(0x0010), 0);
+    chr_storage.write_chr(0x0010, 0xab);
+    assert_eq!(chr_storage.read_chr(0x0010), 0xab);
 }
 
 #[test]
@@ -184,6 +165,5 @@ fn create_cartridge_mapper4_with_chr_ram() {
 fn create_cartridge_unsupported_mapper() {
     let rom = create_test_nes(99, 1, 1);
     let file = INesFile::new(rom).unwrap();
-    // This should panic
-    let (_cartridge, _mirroring) = create_cartridge(&file);
+    let (_cartridge, _chr_storage, _mirroring) = create_cartridge(&file);
 }

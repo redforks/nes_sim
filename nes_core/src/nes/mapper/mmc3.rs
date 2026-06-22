@@ -1,4 +1,4 @@
-use super::{Cartridge, ChrStorage, CARTRIDGE_START_ADDR, CartridgeOperation};
+use super::{Cartridge, CARTRIDGE_START_ADDR, CartridgeOperation};
 use super::chr_storage::WindowedChr;
 use crate::nes::mapper::Mirroring;
 
@@ -223,22 +223,6 @@ impl MMC3 {
 }
 
 impl Cartridge for MMC3 {
-    fn read_chr(&self, address: u16) -> u8 {
-        self.chr_storage.read_chr(address)
-    }
-
-    fn write_chr(&mut self, address: u16, value: u8) {
-        if !self.has_chr_ram {
-            return;
-        }
-
-        let addr = address as usize % CHR_WINDOW_SIZE;
-        let slot = addr / CHR_BANK_SIZE;
-        let offset_in_bank = addr % CHR_BANK_SIZE;
-        let source = self.chr_offsets[slot] + offset_in_bank;
-        self.chr_storage.write_chr_with_source(address, value, source);
-    }
-
     fn read(&mut self, address: u16) -> u8 {
         self.peek(address)
     }
@@ -401,73 +385,6 @@ mod tests {
         assert_eq!(mapper.read(0xa000), 0x04);
         assert_eq!(mapper.read(0xc000), 0x03);
         assert_eq!(mapper.read(0xe000), 0x07);
-    }
-
-    #[test]
-    fn switches_chr_layout_in_chr_mode_0() {
-        let chr = create_chr();
-        let mut mapper = MMC3::new(&create_prg(), &chr, false, false);
-
-        mapper.write(0x8000, 0x00);
-        mapper.write(0x8001, 0x06);
-        mapper.write(0x8000, 0x01);
-        mapper.write(0x8001, 0x08);
-        mapper.write(0x8000, 0x02);
-        mapper.write(0x8001, 0x0a);
-        mapper.write(0x8000, 0x03);
-        mapper.write(0x8001, 0x0b);
-        mapper.write(0x8000, 0x04);
-        mapper.write(0x8001, 0x0c);
-        mapper.write(0x8000, 0x05);
-        mapper.write(0x8001, 0x0d);
-
-        assert_eq!(mapper.read_chr(0x0000), 0x06);
-        assert_eq!(mapper.read_chr(0x0400), 0x07);
-        assert_eq!(mapper.read_chr(0x0800), 0x08);
-        assert_eq!(mapper.read_chr(0x0c00), 0x09);
-        assert_eq!(mapper.read_chr(0x1000), 0x0a);
-        assert_eq!(mapper.read_chr(0x1400), 0x0b);
-        assert_eq!(mapper.read_chr(0x1800), 0x0c);
-        assert_eq!(mapper.read_chr(0x1c00), 0x0d);
-    }
-
-    #[test]
-    fn switches_chr_layout_in_chr_mode_1() {
-        let chr = create_chr();
-        let mut mapper = MMC3::new(&create_prg(), &chr, false, false);
-
-        mapper.write(0x8000, 0x80);
-        mapper.write(0x8001, 0x06);
-        mapper.write(0x8000, 0x81);
-        mapper.write(0x8001, 0x08);
-        mapper.write(0x8000, 0x82);
-        mapper.write(0x8001, 0x0a);
-        mapper.write(0x8000, 0x83);
-        mapper.write(0x8001, 0x0b);
-        mapper.write(0x8000, 0x84);
-        mapper.write(0x8001, 0x0c);
-        mapper.write(0x8000, 0x85);
-        mapper.write(0x8001, 0x0d);
-
-        assert_eq!(mapper.read_chr(0x0000), 0x0a);
-        assert_eq!(mapper.read_chr(0x0400), 0x0b);
-        assert_eq!(mapper.read_chr(0x0800), 0x0c);
-        assert_eq!(mapper.read_chr(0x0c00), 0x0d);
-        assert_eq!(mapper.read_chr(0x1000), 0x06);
-        assert_eq!(mapper.read_chr(0x1400), 0x07);
-        assert_eq!(mapper.read_chr(0x1800), 0x08);
-        assert_eq!(mapper.read_chr(0x1c00), 0x09);
-    }
-
-    #[test]
-    fn writes_to_chr_ram_through_current_mapping() {
-        let mut mapper = MMC3::new(&create_prg(), &[], false, false);
-
-        mapper.write(0x8000, 0x02);
-        mapper.write(0x8001, 0x03);
-        mapper.write_chr(0x1000, 0xaa);
-
-        assert_eq!(mapper.read_chr(0x1000), 0xaa);
     }
 
     #[test]

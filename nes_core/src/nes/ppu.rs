@@ -6,7 +6,7 @@ mod sprite;
 use crate::{
     get_system_cycles,
     nes::{
-        mapper::{Cartridge, Mirroring},
+        mapper::{Cartridge, ChrStorage, Mirroring},
         ppu::palette::ColorTheme,
     },
     render::Render,
@@ -107,6 +107,7 @@ pub struct Ppu<R: Render = ()> {
     color_theme: ColorTheme,
     nametable: Nametable,
     renderer: R,
+    chr_storage: Box<dyn ChrStorage>,
 
     timing: Timing,
 
@@ -129,13 +130,14 @@ fn normalize_ppu_addr(addr: u16) -> u16 {
 }
 
 impl<R: Render> Ppu<R> {
-    pub fn new(renderer: R, mirroring: Mirroring) -> Self {
+    pub fn new(renderer: R, mirroring: Mirroring, chr_storage: Box<dyn ChrStorage>) -> Self {
         Ppu {
             registers: Registers::new(),
             palette: Palette::default(),
             color_theme: ColorTheme::default(),
             nametable: Nametable::new(mirroring),
             renderer,
+            chr_storage,
             timing: Timing::new(),
             background_anchor: None,
             pending_background_activation: None,
@@ -168,6 +170,18 @@ impl<R: Render> Ppu<R> {
 
     pub fn set_mirroring(&mut self, mirroring: Mirroring) {
         self.nametable.set_mirroring(mirroring);
+    }
+
+    pub fn write_chr_register(&mut self, addr: u16, value: u8) {
+        self.chr_storage.write_register(addr, value);
+    }
+
+    pub fn read_chr(&self, addr: u16) -> u8 {
+        self.chr_storage.read_chr(addr)
+    }
+
+    pub fn write_chr(&mut self, addr: u16, value: u8) {
+        self.chr_storage.write_chr(addr, value);
     }
 
     fn write_nametable(&mut self, addr: u16, value: u8) {
@@ -368,7 +382,7 @@ impl<R: Render> Ppu<R> {
         if self.timing.is_visible() {
             let x = (self.timing.dot - 1) as u8;
             let pixel_idx = if rendering_enabled {
-                self.render_pixel(x, cartridge)
+                self.render_pixel(x)
             } else {
                 self.palette.disabled_color_index(self.registers.vram_addr)
             };
@@ -456,12 +470,12 @@ impl<R: Render> Ppu<R> {
         }
     }
 
-    pub fn peek(&self, address: u16, cartridge: &dyn Cartridge) -> u8 {
+    pub fn peek(&self, address: u16) -> u8 {
         let reg = normalize_ppu_addr(address);
         match reg {
             0x2002 => self.registers.status.into_bits(),
             0x2004 => self.read_oam_data(),
-            0x2007 => self.read_vram(self.registers.vram_addr, cartridge),
+            0x2007 => self.read_vram(self.registers.vram_addr),
             _ => 0,
         }
     }
@@ -503,7 +517,7 @@ impl<R: Render> Ppu<R> {
             }
             // PPUDATA
             0x2007 => {
-                self.write_vram(self.registers.vram_addr, value, cartridge);
+                self.write_vram(self.registers.vram_addr, value);
                 self.registers
                     .ctrl
                     .inc_ppu_addr(&mut self.registers.vram_addr);
@@ -514,7 +528,7 @@ impl<R: Render> Ppu<R> {
         }
     }
 
-    fn read_vram(&self, address: u16, cartridge: &dyn Cartridge) -> u8 {
+    fn read_vram(&self, address: u16) -> u8 {
         let mut addr = address % 0x4000;
         if (0x3000..0x3f00).contains(&addr) {
             addr -= 0x1000;
@@ -523,7 +537,7 @@ impl<R: Render> Ppu<R> {
             // Read from pattern table or name table
             if addr < 0x2000 {
                 // Pattern table (CHR ROM/RAM)
-                cartridge.read_chr(addr)
+                self.chr_storage.read_chr(addr)
             } else {
                 // Name table via PPU's built-in storage
                 self.read_nametable(addr)
@@ -534,7 +548,7 @@ impl<R: Render> Ppu<R> {
         }
     }
 
-    fn write_vram(&mut self, address: u16, value: u8, cartridge: &mut dyn Cartridge) {
+    fn write_vram(&mut self, address: u16, value: u8) {
         let mut addr = address % 0x4000;
         if (0x3000..0x3f00).contains(&addr) {
             addr -= 0x1000;
@@ -543,7 +557,7 @@ impl<R: Render> Ppu<R> {
             if addr >= 0x2000 {
                 self.write_nametable(addr, value);
             } else {
-                cartridge.write_chr(addr, value);
+                self.chr_storage.write_chr(addr, value);
             }
         } else {
             self.palette.write(addr, value);
@@ -561,20 +575,20 @@ impl<R: Render> Ppu<R> {
     }
 
     fn read_pattern_pixel(
-        cartridge: &dyn Cartridge,
+        chr_storage: &dyn ChrStorage,
         base_addr: u16,
         tile_idx: u8,
         tile_x: usize,
         tile_y: usize,
     ) -> u8 {
         let tile_addr = base_addr + tile_idx as u16 * 16;
-        let low = cartridge.read_chr(tile_addr + tile_y as u16);
-        let high = cartridge.read_chr(tile_addr + tile_y as u16 + 8);
+        let low = chr_storage.read_chr(tile_addr + tile_y as u16);
+        let high = chr_storage.read_chr(tile_addr + tile_y as u16 + 8);
         let bit = 7 - tile_x;
         ((low >> bit) & 1) | (((high >> bit) & 1) << 1)
     }
 
-    fn get_background_pixel(&mut self, cartridge: &dyn Cartridge, screen_x: u8) -> (u8, u8) {
+    fn get_background_pixel(&mut self, screen_x: u8) -> (u8, u8) {
         self.apply_pending_background_activation(screen_x);
 
         // Check left-column clipping
@@ -623,14 +637,14 @@ impl<R: Render> Ppu<R> {
             0x0000
         };
         let color_idx =
-            Self::read_pattern_pixel(cartridge, base_addr, tile_idx, tile_fine_x, tile_fine_y);
+            Self::read_pattern_pixel(&*self.chr_storage, base_addr, tile_idx, tile_fine_x, tile_fine_y);
 
         (palette_idx, color_idx)
     }
 
     fn read_vram_and_inc(&mut self, cartridge: &mut dyn Cartridge) -> u8 {
         let vram_addr = self.registers.vram_addr;
-        let current = self.read_vram(vram_addr, cartridge);
+        let current = self.read_vram(vram_addr);
         self.registers
             .ctrl
             .inc_ppu_addr(&mut self.registers.vram_addr);
@@ -643,7 +657,7 @@ impl<R: Render> Ppu<R> {
         if addr >= 0x3F00 {
             // Palette: fill buffer with the nametable data underneath
             // (mirrored from $2F00-$2FFF)
-            self.registers.ppudata_buffer = self.read_vram(vram_addr - 0x1000, cartridge);
+            self.registers.ppudata_buffer = self.read_vram(vram_addr - 0x1000);
             let result = (current & 0x3F) | (self.current_bus_latch() & 0xC0);
             self.refresh_bus_latch_bits(0x3F, result);
             result
@@ -691,20 +705,21 @@ impl<R: Render> Ppu<R> {
         r
     }
 
-    fn render_pixel(&mut self, x: u8, cartridge: &mut dyn Cartridge) -> u8 {
+    fn render_pixel(&mut self, x: u8) -> u8 {
         let (bg_palette_idx, bg_color_idx) = if self.effective_mask.background_enabled() {
-            self.get_background_pixel(cartridge, x)
+            self.get_background_pixel(x)
         } else {
             (0, 0)
         };
 
         let sprite_pixel = if self.effective_mask.sprite_enabled() {
+            let chr_storage: &dyn ChrStorage = &*self.chr_storage;
             self.sprite.find_sprite_pixel(
                 &self.registers.oam_data,
                 self.registers.ctrl.sprite_size(),
                 self.registers.ctrl.sprite_pattern_table(),
                 self.effective_mask.sprite_left_enabled(),
-                cartridge,
+                chr_storage,
                 x,
                 self.timing.scanline as u8,
                 Self::read_pattern_pixel,
@@ -719,17 +734,19 @@ impl<R: Render> Ppu<R> {
             && x != 255
             && (x >= 8 || self.effective_mask.background_left_enabled())
             && (x >= 8 || self.effective_mask.sprite_left_enabled())
-            && self.sprite.sprite_zero_opaque_at(
+        {
+            let chr_storage: &dyn ChrStorage = &*self.chr_storage;
+            if self.sprite.sprite_zero_opaque_at(
                 &self.registers.oam_data,
                 self.registers.ctrl.sprite_size(),
                 self.registers.ctrl.sprite_pattern_table(),
-                cartridge,
+                chr_storage,
                 x,
                 self.timing.scanline as u8,
                 Self::read_pattern_pixel,
-            )
-        {
-            self.sprite.set_zero_hit_pending();
+            ) {
+                self.sprite.set_zero_hit_pending();
+            }
         }
 
         match sprite_pixel {

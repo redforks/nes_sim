@@ -38,8 +38,8 @@ pub struct NesMcu<R: Render, D: AudioDriver> {
 
 impl<R: Render, D: AudioDriver> NesMcu<R, D> {
     pub fn new(file: &INesFile, renderer: R, audio_driver: D) -> Self {
-        let (cartridge, mirroring) = mapper::create_cartridge(file);
-        let ppu = Ppu::new(renderer, mirroring);
+        let (cartridge, chr_storage, mirroring) = mapper::create_cartridge(file);
+        let ppu = Ppu::new(renderer, mirroring, chr_storage);
 
         Self {
             lower_ram: LowerRam::new(),
@@ -188,7 +188,7 @@ impl<R: Render, D: AudioDriver> Mcu for NesMcu<R, D> {
     fn peek(&self, address: u16) -> u8 {
         match address {
             0x0000..=0x1fff => self.lower_ram.peek(address),
-             0x2000..=0x3fff => self.ppu.peek(address, &*self.cartridge),
+             0x2000..=0x3fff => self.ppu.peek(address),
             0x4015 => self.apu.peek(address),
             0x4016 | 0x4017 => self.controller.peek(address),
             0x4000..=0x401f => self.open_bus,
@@ -209,10 +209,10 @@ impl<R: Render, D: AudioDriver> Mcu for NesMcu<R, D> {
             },
             // Unallocated I/O space: writes are ignored
             0x4020..=0x40ff => {}
-            0x4100..=0xffff => {
-                if let CartridgeOperation::UpdateNametableMirroring(mirroring) =
-                    self.cartridge.write(address, value)
-                {
+             0x4100..=0xffff => {
+                let op = self.cartridge.write(address, value);
+                self.ppu.write_chr_register(address, value);
+                if let CartridgeOperation::UpdateNametableMirroring(mirroring) = op {
                     self.ppu.set_mirroring(mirroring);
                 }
             }
