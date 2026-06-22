@@ -104,6 +104,35 @@ impl ChrStorage for WindowedChr {
     }
 }
 
+pub struct CnromChrStorage {
+    inner: WindowedChr,
+    bank_count: usize,
+}
+
+impl CnromChrStorage {
+    pub fn new(chr_rom: &[u8]) -> Self {
+        let bank_count = chr_rom.len() / 0x2000;
+        let mut inner = WindowedChr::new(chr_rom.to_vec());
+        inner.refresh(0);
+        Self { inner, bank_count }
+    }
+}
+
+impl ChrStorage for CnromChrStorage {
+    fn read_chr(&self, address: u16) -> u8 {
+        self.inner.read_chr(address)
+    }
+
+    fn write_chr(&mut self, address: u16, value: u8) {
+        self.inner.write_chr(address, value);
+    }
+
+    fn write_register(&mut self, _addr: u16, value: u8) {
+        let bank = (value as usize) % self.bank_count;
+        self.inner.refresh(bank * 0x2000);
+    }
+}
+
 #[cfg(test)]
 mod windowed_tests {
     use super::*;
@@ -151,5 +180,37 @@ mod windowed_tests {
     fn windowed_chr_source_len() {
         let chr = WindowedChr::new(vec![0; 0x8000]);
         assert_eq!(chr.source_len(), 0x8000);
+    }
+}
+
+#[cfg(test)]
+mod cnrom_tests {
+    use super::*;
+
+    fn make_chr() -> Vec<u8> {
+        let mut data = vec![0u8; 0x4000];
+        data[0] = 0x10;
+        data[0x2000] = 0x20;
+        data
+    }
+
+    #[test]
+    fn initial_state_reads_bank_0() {
+        let chr = CnromChrStorage::new(&make_chr());
+        assert_eq!(chr.read_chr(0), 0x10);
+    }
+
+    #[test]
+    fn write_register_switches_bank() {
+        let mut chr = CnromChrStorage::new(&make_chr());
+        chr.write_register(0x8000, 1);
+        assert_eq!(chr.read_chr(0), 0x20);
+    }
+
+    #[test]
+    fn bank_wraps_at_bank_count() {
+        let mut chr = CnromChrStorage::new(&make_chr());
+        chr.write_register(0x8000, 2);
+        assert_eq!(chr.read_chr(0), 0x10);
     }
 }

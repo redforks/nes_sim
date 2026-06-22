@@ -1,47 +1,26 @@
 use super::{Cartridge, CARTRIDGE_START_ADDR, CartridgeOperation};
-use super::chr_storage::WindowedChr;
 
 const PRG_ROM_SIZE: usize = 0x8000;
-const CHR_BANK_SIZE: usize = 0x2000;
 const CARTRIDGE_RAM_SIZE: usize = 0x4000 - 0x20;
 
 pub struct Mapper3 {
     prg_rom: [u8; PRG_ROM_SIZE],
     prg_rom_len: usize,
-    selected_chr_bank: usize,
-    chr_bank_count: usize,
-    chr_storage: WindowedChr,
     ram: [u8; CARTRIDGE_RAM_SIZE],
 }
 
 impl Mapper3 {
-    pub fn new(prg_rom: &[u8], chr_rom: &[u8]) -> Self {
+    pub fn new(prg_rom: &[u8]) -> Self {
         debug_assert!(!prg_rom.is_empty());
         debug_assert!(prg_rom.len() <= PRG_ROM_SIZE);
-        debug_assert!(!chr_rom.is_empty());
-        debug_assert_eq!(chr_rom.len() % CHR_BANK_SIZE, 0);
 
-        let chr_bank_count = chr_rom.len() / CHR_BANK_SIZE;
         let mut mapper = Self {
             prg_rom: [0; PRG_ROM_SIZE],
             prg_rom_len: prg_rom.len(),
-            selected_chr_bank: 0,
-            chr_bank_count,
-            chr_storage: WindowedChr::new(chr_rom.to_vec()),
             ram: [0; CARTRIDGE_RAM_SIZE],
         };
         mapper.prg_rom[..prg_rom.len()].copy_from_slice(prg_rom);
-        mapper.refresh_chr_window();
         mapper
-    }
-
-    fn selected_chr_bank(&self) -> usize {
-        self.selected_chr_bank % self.chr_bank_count
-    }
-
-    fn refresh_chr_window(&mut self) {
-        let bank_start = self.selected_chr_bank() * CHR_BANK_SIZE;
-        self.chr_storage.refresh(bank_start);
     }
 }
 
@@ -70,10 +49,7 @@ impl Cartridge for Mapper3 {
             CARTRIDGE_START_ADDR..=0x7fff => {
                 self.ram[(address - CARTRIDGE_START_ADDR) as usize] = value;
             }
-            0x8000..=0xffff => {
-                self.selected_chr_bank = value as usize;
-                self.refresh_chr_window();
-            }
+            0x8000..=0xffff => {}
             _ => unreachable!(),
         }
         CartridgeOperation::None
@@ -86,7 +62,7 @@ mod tests {
 
     #[test]
     fn reads_and_writes_cartridge_ram() {
-        let mut mapper = Mapper3::new(&[0; 0x8000], &[0; CHR_BANK_SIZE]);
+        let mut mapper = Mapper3::new(&[0; 0x8000]);
 
         mapper.write(CARTRIDGE_START_ADDR, 0x12);
         mapper.write(0x7fff, 0x34);
@@ -101,13 +77,11 @@ mod tests {
         prg[0x0000] = 0x11;
         prg[0x3fff] = 0x22;
 
-        let mut mapper = Mapper3::new(&prg, &[0; CHR_BANK_SIZE]);
+        let mut mapper = Mapper3::new(&prg);
 
         assert_eq!(mapper.read(0x8000), 0x11);
         assert_eq!(mapper.read(0xbfff), 0x22);
         assert_eq!(mapper.read(0xc000), 0x11);
         assert_eq!(mapper.read(0xffff), 0x22);
     }
-
-
 }
