@@ -3,37 +3,16 @@ use super::{Cartridge, CartridgeOperation};
 pub struct MapperJ87 {
     prg_rom: [u8; 32768],
     is_16k_prg_rom: bool,
-    chr_rom_bands: [[u8; 8192]; 4],
-    cur_chr_band: u8,
 }
 
 impl MapperJ87 {
-    pub fn new(prg_rom: &[u8], chr_rom: &[u8]) -> Self {
-        assert!(prg_rom.len() == (32 * 1024) || prg_rom.len() == (16 * 1024));
+    pub fn new(prg_rom: &[u8], prg_len: usize) -> Self {
+        assert!(prg_len == (32 * 1024) || prg_len == (16 * 1024));
         let mut r = Self {
             prg_rom: [0; 32768],
-            is_16k_prg_rom: prg_rom.len() == 16 * 1024,
-            chr_rom_bands: [[0; 8192]; 4],
-            cur_chr_band: 0,
+            is_16k_prg_rom: prg_len == 16 * 1024,
         };
         r.prg_rom[..prg_rom.len()].copy_from_slice(prg_rom);
-
-        match chr_rom.len() {
-            16384 => {
-                r.chr_rom_bands[0].copy_from_slice(&chr_rom[0..8192]);
-                r.chr_rom_bands[1].copy_from_slice(&chr_rom[8192..16384]);
-            }
-            32768 => {
-                r.chr_rom_bands[0].copy_from_slice(&chr_rom[0..8192]);
-                r.chr_rom_bands[1].copy_from_slice(&chr_rom[8192..16384]);
-                r.chr_rom_bands[2].copy_from_slice(&chr_rom[16384..24576]);
-                r.chr_rom_bands[3].copy_from_slice(&chr_rom[24576..32768]);
-            }
-            _ => {
-                panic!("Unsupported chr_rom size for MapperJ87");
-            }
-        }
-
         r
     }
 }
@@ -56,28 +35,13 @@ impl Cartridge for MapperJ87 {
         }
     }
 
-    fn write(&mut self, address: u16, value: u8) -> CartridgeOperation {
+    fn write(&mut self, address: u16, _value: u8) -> CartridgeOperation {
         match address {
-            0x6000..=0xffff => {
-                self.cur_chr_band = extract_band_selector_value(value);
-            }
+            0x6000..=0xffff => {}
             _ => unreachable!(),
         }
         CartridgeOperation::None
     }
-}
-
-fn extract_band_selector_value(value: u8) -> u8 {
-    // 7  bit  0
-    // ---- ----
-    // xxxx xxLH
-    //        ||
-    //        |+- High CHR bit
-    //        +-- Low CHR bit
-
-    let mut r = (value & 0x01) << 1;
-    r |= (value & 0x02) >> 1;
-    r
 }
 
 #[cfg(test)]
@@ -86,6 +50,11 @@ mod tests {
 
     #[test]
     fn test_extract_band_selector_value() {
+        fn extract_band_selector_value(value: u8) -> u8 {
+            let mut r = (value & 0x01) << 1;
+            r |= (value & 0x02) >> 1;
+            r
+        }
         assert_eq!(extract_band_selector_value(0x00), 0);
         assert_eq!(extract_band_selector_value(0x02), 1);
         assert_eq!(extract_band_selector_value(0x01), 2);

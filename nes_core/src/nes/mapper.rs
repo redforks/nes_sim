@@ -120,11 +120,19 @@ pub fn create_cartridge(f: &INesFile) -> (Box<dyn Cartridge>, Box<dyn ChrStorage
             Box::new(chr_storage::DirectChr::from_chr_rom(chr_rom)),
             mirroring,
         ),
-        34 => (
-            Box::new(Mapper34::new(f.read_prg_rom(), chr_rom)),
-            Box::new(chr_storage::DirectChr::from_chr_rom(chr_rom)),
-            mirroring,
-        ),
+        34 => {
+            let is_nina = chr_rom.len() > 0x2000;
+            let board = if is_nina {
+                mapper34::Board::Nina001
+            } else {
+                mapper34::Board::BxRom
+            };
+            (
+                Box::new(Mapper34::new(f.read_prg_rom(), board)),
+                Box::new(chr_storage::Mapper34ChrStorage::new(chr_rom, is_nina)),
+                mirroring,
+            )
+        }
         21 => {
             let submapper = f.header().submapper_no.unwrap_or(1);
             let variant = match submapper {
@@ -172,8 +180,8 @@ pub fn create_cartridge(f: &INesFile) -> (Box<dyn Cartridge>, Box<dyn ChrStorage
             )
         }
         87 => (
-            Box::new(MapperJ87::new(f.read_prg_rom(), chr_rom)),
-            Box::new(chr_storage::DirectChr::from_chr_rom(chr_rom)),
+            Box::new(MapperJ87::new(f.read_prg_rom(), f.read_prg_rom().len())),
+            Box::new(chr_storage::J87ChrStorage::new(chr_rom)),
             mirroring,
         ),
         _ => panic!("Unsupported cartridge mapper no: {}", f.header().mapper_no),

@@ -671,3 +671,151 @@ mod vrc24_chr_tests {
         assert_eq!(chr.read_chr(0x0000), 0xab);
     }
 }
+
+pub struct Mapper34ChrStorage {
+    data: Vec<u8>,
+    has_chr_ram: bool,
+    is_nina: bool,
+    bank0: usize,
+    bank1: usize,
+}
+
+impl Mapper34ChrStorage {
+    pub fn new(chr_rom: &[u8], is_nina: bool) -> Self {
+        let has_chr_ram = chr_rom.is_empty();
+        let data = if has_chr_ram {
+            vec![0; 0x2000]
+        } else {
+            chr_rom.to_vec()
+        };
+        Self { data, has_chr_ram, is_nina, bank0: 0, bank1: 0 }
+    }
+}
+
+impl ChrStorage for Mapper34ChrStorage {
+    fn read_chr(&self, address: u16) -> u8 {
+        let addr = address as usize % 0x2000;
+        if self.is_nina {
+            let bank = if addr < 0x1000 { self.bank0 } else { self.bank1 };
+            let src = bank * 0x1000 + (addr % 0x1000);
+            self.data[src % self.data.len()]
+        } else {
+            self.data[addr % self.data.len()]
+        }
+    }
+
+    fn write_chr(&mut self, address: u16, value: u8) {
+        if !self.has_chr_ram {
+            return;
+        }
+        let addr = address as usize % 0x2000;
+        if self.is_nina {
+            let bank = if addr < 0x1000 { self.bank0 } else { self.bank1 };
+            let src = bank * 0x1000 + (addr % 0x1000);
+            let len = self.data.len();
+            self.data[src % len] = value;
+        } else {
+            let len = self.data.len();
+            self.data[addr % len] = value;
+        }
+    }
+
+    fn write_register(&mut self, addr: u16, value: u8) {
+        if self.is_nina && (0x7ffe..=0x7fff).contains(&addr) {
+            match addr {
+                0x7ffe => self.bank0 = (value & 0x0f) as usize,
+                0x7fff => self.bank1 = (value & 0x0f) as usize,
+                _ => {}
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+mod mapper34_chr_tests {
+    use super::*;
+
+    #[test]
+    fn bxrom_flat_access() {
+        let mut chr = Mapper34ChrStorage::new(&[], false);
+        chr.write_chr(0x0000, 0x12);
+        chr.write_chr(0x1fff, 0x34);
+        assert_eq!(chr.read_chr(0), 0x12);
+        assert_eq!(chr.read_chr(0x1fff), 0x34);
+    }
+
+    #[test]
+    fn nina001_banking() {
+        let mut data = vec![0u8; 0x4000];
+        data[0x0000] = 0xa1;
+        data[0x1000] = 0xb1;
+        let mut chr = Mapper34ChrStorage::new(&data, true);
+        chr.write_register(0x7ffe, 0x00);
+        chr.write_register(0x7fff, 0x01);
+        assert_eq!(chr.read_chr(0x0000), 0xa1);
+        assert_eq!(chr.read_chr(0x1000), 0xb1);
+    }
+}
+
+pub struct J87ChrStorage {
+    bands: [[u8; 0x2000]; 4],
+    active_band: u8,
+}
+
+impl J87ChrStorage {
+    pub fn new(chr_rom: &[u8]) -> Self {
+        let mut bands = [[0u8; 0x2000]; 4];
+        match chr_rom.len() {
+            0x4000 => {
+                bands[0].copy_from_slice(&chr_rom[0..0x2000]);
+                bands[1].copy_from_slice(&chr_rom[0x2000..0x4000]);
+            }
+            0x8000 => {
+                bands[0].copy_from_slice(&chr_rom[0..0x2000]);
+                bands[1].copy_from_slice(&chr_rom[0x2000..0x4000]);
+                bands[2].copy_from_slice(&chr_rom[0x4000..0x6000]);
+                bands[3].copy_from_slice(&chr_rom[0x6000..0x8000]);
+            }
+            _ => {}
+        }
+        Self { bands, active_band: 0 }
+    }
+}
+
+impl ChrStorage for J87ChrStorage {
+    fn read_chr(&self, address: u16) -> u8 {
+        self.bands[self.active_band as usize][address as usize % 0x2000]
+    }
+
+    fn write_chr(&mut self, address: u16, value: u8) {
+        self.bands[self.active_band as usize][address as usize % 0x2000] = value;
+    }
+
+    fn write_register(&mut self, _addr: u16, value: u8) {
+        let mut r = (value & 0x01) << 1;
+        r |= (value & 0x02) >> 1;
+        self.active_band = r;
+    }
+}
+
+#[cfg(test)]
+mod j87_chr_tests {
+    use super::*;
+
+    #[test]
+    fn band_switching() {
+        let mut data = vec![0u8; 0x8000];
+        data[0x0000] = 0x10;
+        data[0x2000] = 0x20;
+        data[0x4000] = 0x30;
+        data[0x6000] = 0x40;
+        let mut chr = J87ChrStorage::new(&data);
+        assert_eq!(chr.read_chr(0), 0x10);
+        chr.write_register(0x6000, 0x02);
+        assert_eq!(chr.read_chr(0), 0x20);
+        chr.write_register(0x6000, 0x01);
+        assert_eq!(chr.read_chr(0), 0x30);
+        chr.write_register(0x6000, 0x03);
+        assert_eq!(chr.read_chr(0), 0x40);
+    }
+}

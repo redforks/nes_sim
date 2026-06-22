@@ -1,67 +1,42 @@
 use super::{Cartridge, CARTRIDGE_START_ADDR, CartridgeOperation};
 
 const PRG_ROM_BANK_SIZE: usize = 0x8000;
-const CHR_SIZE: usize = 0x2000;
 const CARTRIDGE_RAM_SIZE: usize = 0x4000 - 0x20;
 
 #[derive(Debug, Copy, Clone, Eq, PartialEq)]
-enum Board {
+pub enum Board {
     BxRom,
     Nina001,
 }
 
 pub struct Mapper34 {
     prg_rom: Vec<u8>,
-    chr: Vec<u8>,
-    has_chr_ram: bool,
     ram: [u8; CARTRIDGE_RAM_SIZE],
     selected_prg_bank: usize,
-    selected_chr_bank_0: usize,
-    selected_chr_bank_1: usize,
     prg_bank_count: usize,
     board: Board,
 }
 
 impl Mapper34 {
-    pub fn new(prg_rom: &[u8], chr_rom: &[u8]) -> Self {
+    pub fn new(prg_rom: &[u8], board: Board) -> Self {
         debug_assert!(!prg_rom.is_empty());
         debug_assert_eq!(prg_rom.len() % PRG_ROM_BANK_SIZE, 0);
 
-        let board = if chr_rom.len() > CHR_SIZE {
-            Board::Nina001
-        } else {
-            Board::BxRom
-        };
-
-        let chr = if chr_rom.is_empty() {
-            vec![0; CHR_SIZE]
-        } else {
-            chr_rom.to_vec()
-        };
-
         Self {
             prg_rom: prg_rom.to_vec(),
-            chr,
-            has_chr_ram: chr_rom.is_empty(),
             ram: [0; CARTRIDGE_RAM_SIZE],
             selected_prg_bank: 0,
-            selected_chr_bank_0: 0,
-            selected_chr_bank_1: 0,
             prg_bank_count: prg_rom.len() / PRG_ROM_BANK_SIZE,
             board,
         }
     }
 
+    pub fn board(&self) -> Board {
+        self.board
+    }
+
     fn selected_prg_bank(&self) -> usize {
         self.selected_prg_bank % self.prg_bank_count
-    }
-
-    fn selected_chr_bank_0(&self) -> usize {
-        self.selected_chr_bank_0 % (self.chr.len() / 0x1000)
-    }
-
-    fn selected_chr_bank_1(&self) -> usize {
-        self.selected_chr_bank_1 % (self.chr.len() / 0x1000)
     }
 
     fn read_prg_bank(&self, bank: usize, address: u16) -> u8 {
@@ -69,7 +44,6 @@ impl Mapper34 {
         let offset = (address as usize) % PRG_ROM_BANK_SIZE;
         self.prg_rom[bank_start + offset]
     }
-
 }
 
 impl Cartridge for Mapper34 {
@@ -92,8 +66,6 @@ impl Cartridge for Mapper34 {
                 if self.board == Board::Nina001 {
                     match address {
                         0x7ffd => self.selected_prg_bank = (value & 0x01) as usize,
-                        0x7ffe => self.selected_chr_bank_0 = (value & 0x0f) as usize,
-                        0x7fff => self.selected_chr_bank_1 = (value & 0x0f) as usize,
                         _ => {}
                     }
                 }
@@ -119,7 +91,7 @@ mod tests {
         prg_rom[PRG_ROM_BANK_SIZE * 2] = 0x30;
         prg_rom[PRG_ROM_BANK_SIZE * 3] = 0x40;
 
-        let mut mapper = Mapper34::new(&prg_rom, &[]);
+        let mut mapper = Mapper34::new(&prg_rom, Board::BxRom);
 
         assert_eq!(mapper.read(0x8000), 0x10);
 
@@ -129,6 +101,4 @@ mod tests {
         mapper.write(0xffff, 0x03);
         assert_eq!(mapper.read(0x8000), 0x40);
     }
-
-
 }
