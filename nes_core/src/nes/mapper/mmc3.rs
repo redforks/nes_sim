@@ -40,7 +40,7 @@ impl MMC3 {
         debug_assert!(!prg_rom.is_empty());
         debug_assert_eq!(prg_rom.len() % PRG_ROM_BANK_SIZE, 0);
 
-        Self {
+        let mut mapper = Self {
             prg_rom: prg_rom.to_vec(),
             prg_ram: [0; PRG_RAM_SIZE],
             mirroring_locked,
@@ -62,7 +62,9 @@ impl MMC3 {
             prev_a12: false,
             a12_low_ticks: 0,
             a12_transition_this_scanline: false,
-        }
+        };
+        mapper.sync_prg_banks();
+        mapper
     }
 
     fn prg_bank_count(&self) -> usize {

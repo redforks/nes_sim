@@ -208,8 +208,11 @@ impl<R: Render, D: AudioDriver> Mcu for NesMcu<R, D> {
                 _ => self.apu.write(address, value),
             },
             // Unallocated I/O space: writes are ignored
-            0x4020..=0x40ff => {}
-             0x4100..=0xffff => {
+             0x4020..=0x40ff => {}
+             0x4100..=0x7fff => {
+                self.cartridge.write(address, value);
+            }
+             0x8000..=0xffff => {
                 let op = self.cartridge.write(address, value);
                 self.ppu.write_chr_register(address, value);
                 if let CartridgeOperation::UpdateNametableMirroring(mirroring) = op {

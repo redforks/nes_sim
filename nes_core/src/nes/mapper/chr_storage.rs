@@ -107,14 +107,16 @@ impl ChrStorage for WindowedChr {
 pub struct CnromChrStorage {
     inner: WindowedChr,
     bank_count: usize,
+    has_chr_ram: bool,
 }
 
 impl CnromChrStorage {
     pub fn new(chr_rom: &[u8]) -> Self {
-        let bank_count = chr_rom.len() / 0x2000;
+        let has_chr_ram = chr_rom.is_empty();
+        let bank_count = if has_chr_ram { 1 } else { chr_rom.len() / 0x2000 };
         let mut inner = WindowedChr::new(chr_rom.to_vec());
         inner.refresh(0);
-        Self { inner, bank_count }
+        Self { inner, bank_count, has_chr_ram }
     }
 }
 
@@ -124,7 +126,9 @@ impl ChrStorage for CnromChrStorage {
     }
 
     fn write_chr(&mut self, address: u16, value: u8) {
-        self.inner.write_chr(address, value);
+        if self.has_chr_ram {
+            self.inner.write_chr(address, value);
+        }
     }
 
     fn write_register(&mut self, _addr: u16, value: u8) {
