@@ -2,7 +2,7 @@ use super::*;
 use crate::inc_system_clock;
 use crate::nes::apu::Apu;
 use crate::nes::controller::Button;
-use crate::nes::mapper::{Cartridge, Mirroring, TestCartridge};
+use crate::nes::mapper::{Mirroring, TestCartridge};
 use crate::render::ImageRender;
 
 fn test_mcu() -> NesMcu<ImageRender, ()> {
@@ -10,7 +10,7 @@ fn test_mcu() -> NesMcu<ImageRender, ()> {
         lower_ram: LowerRam::new(),
         ppu: Ppu::new(ImageRender::default_dimension(), Mirroring::Horizontal),
         controller: Controller::new(),
-        cartridge: Cartridge::Test(Box::new(TestCartridge::new())),
+        cartridge: Box::new(TestCartridge::new()),
         apu: Apu::new(()),
         oam_dma_pending: None,
         oam_dma: None,

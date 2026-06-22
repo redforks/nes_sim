@@ -27,7 +27,7 @@ pub struct NesMcu<R: Render, D: AudioDriver> {
     lower_ram: LowerRam,
     ppu: Ppu<R>,
     controller: Controller,
-    cartridge: Cartridge,
+    cartridge: Box<dyn Cartridge>,
     apu: Apu<D>,
     oam_dma_pending: Option<u8>,
     oam_dma: Option<OamDmaState>,
@@ -67,7 +67,7 @@ impl<R: Render, D: AudioDriver> NesMcu<R, D> {
     pub fn tick_ppu(&mut self) {
         let (scanline, dot) = self.ppu.timing();
         let rendering_enabled = self.ppu.rendering_enabled();
-        self.ppu.tick(&mut self.cartridge);
+        self.ppu.tick(&mut *self.cartridge);
         self.cartridge.on_ppu_tick(scanline, dot, rendering_enabled);
     }
 
@@ -172,7 +172,7 @@ impl<R: Render, D: AudioDriver> Mcu for NesMcu<R, D> {
     fn read(&mut self, address: u16) -> u8 {
         let value = match address {
             0x0000..=0x1fff => self.lower_ram.read(address),
-            0x2000..=0x3fff => self.ppu.read(address, &mut self.cartridge),
+             0x2000..=0x3fff => self.ppu.read(address, &mut *self.cartridge),
             0x4015 => self.apu.read(address),
             0x4016 | 0x4017 => self.controller.read(address),
             // Write-only APU/IO registers and unused test registers: open bus
@@ -188,7 +188,7 @@ impl<R: Render, D: AudioDriver> Mcu for NesMcu<R, D> {
     fn peek(&self, address: u16) -> u8 {
         match address {
             0x0000..=0x1fff => self.lower_ram.peek(address),
-            0x2000..=0x3fff => self.ppu.peek(address, &self.cartridge),
+             0x2000..=0x3fff => self.ppu.peek(address, &*self.cartridge),
             0x4015 => self.apu.peek(address),
             0x4016 | 0x4017 => self.controller.peek(address),
             0x4000..=0x401f => self.open_bus,
@@ -201,7 +201,7 @@ impl<R: Render, D: AudioDriver> Mcu for NesMcu<R, D> {
         self.open_bus = value;
         match address {
             0x0000..=0x1fff => self.lower_ram.write(address, value),
-            0x2000..=0x3fff => self.ppu.write(address, value, &mut self.cartridge),
+             0x2000..=0x3fff => self.ppu.write(address, value, &mut *self.cartridge),
             0x4000..=0x401f => match address {
                 0x4014 => self.ppu_dma(value),
                 0x4016 => self.controller.write(address, value),

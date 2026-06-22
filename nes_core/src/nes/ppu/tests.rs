@@ -34,10 +34,10 @@ fn test_read_status_clears_vblank() {
 #[test]
 fn test_peek_status_does_not_clear_vblank() {
     let (mut ppu, _pattern) = new_test_ppu_and_pattern();
-    let cartridge = Cartridge::Test(Box::new(TestCartridge::new()));
+    let cartridge: Box<dyn Cartridge> = Box::new(TestCartridge::new());
     ppu.registers.status.set_v_blank(true);
 
-    let status = ppu.peek(0x2002, &cartridge);
+    let status = ppu.peek(0x2002, &*cartridge);
     assert_eq!(status & 0x80, 0x80);
     assert!(ppu.registers.status.v_blank());
 }
@@ -48,10 +48,10 @@ fn test_open_bus_bits_decay_to_zero() {
     let mut cartridge = new_test_cartridge();
 
     set_system_cycles(0);
-    ppu.write(0x2002, 0xFF, &mut cartridge);
+    ppu.write(0x2002, 0xFF, &mut *cartridge);
     set_system_cycles(PPU_OPEN_BUS_DECAY_TICKS);
 
-    assert_eq!(ppu.read(0x2000, &mut cartridge), 0x00);
+    assert_eq!(ppu.read(0x2000, &mut *cartridge), 0x00);
 }
 
 #[test]
@@ -60,12 +60,12 @@ fn test_status_read_only_refreshes_high_bits() {
     let mut cartridge = new_test_cartridge();
 
     set_system_cycles(0);
-    ppu.write(0x2002, 0xFF, &mut cartridge);
+    ppu.write(0x2002, 0xFF, &mut *cartridge);
     set_system_cycles(PPU_OPEN_BUS_DECAY_TICKS);
     ppu.registers.status.set_v_blank(true);
-    assert_eq!(ppu.read(0x2002, &mut cartridge), 0x80);
+    assert_eq!(ppu.read(0x2002, &mut *cartridge), 0x80);
 
-    assert_eq!(ppu.read(0x2000, &mut cartridge), 0x80);
+    assert_eq!(ppu.read(0x2000, &mut *cartridge), 0x80);
 }
 
 fn create_test_ppu_with_mask(mask: PpuMask) -> Ppu {
@@ -131,11 +131,11 @@ fn setup_sprite(ppu: &mut Ppu, index: usize, y: u8, tile: u8, attr: u8, x: u8) {
     oam[index * 4 + 3] = x;
 }
 
-fn new_test_cartridge() -> Cartridge {
-    Cartridge::Test(Box::new(TestCartridge::new()))
+fn new_test_cartridge() -> Box<dyn Cartridge> {
+    Box::new(TestCartridge::new())
 }
 
-fn set_bg_tile(ppu: &mut Ppu, _cartridge: &Cartridge, tile: u8, palette_idx: u8) {
+fn set_bg_tile(ppu: &mut Ppu, _cartridge: &dyn Cartridge, tile: u8, palette_idx: u8) {
     ppu.write_nametable(0x2000, tile);
     ppu.write_nametable(0x23c0, palette_idx & 0x03);
 }
@@ -154,52 +154,46 @@ fn set_universal_bg_color(ppu: &mut Ppu, color: u8) {
     ppu.palette.write(0x3f00, color);
 }
 
+fn fill_chr(cart: &mut dyn Cartridge, pattern: &[u8]) {
+    for i in 0..0x2000 {
+        cart.write_chr(i as u16, pattern[i % pattern.len()]);
+    }
+}
+
 /// Render a single pixel (for testing)
 fn render_pixel(ppu: &mut Ppu, pattern: &[u8], x: u8, y: u8) -> u8 {
-    let mut cart = Cartridge::Test(Box::new(TestCartridge::new()));
-    if !pattern.is_empty()
-        && let Cartridge::Test(tc) = &mut cart
-    {
-        for i in 0..tc.chr_rom.len() {
-            tc.chr_rom[i] = pattern[i % pattern.len()];
-        }
+    let mut cart: Box<dyn Cartridge> = Box::new(TestCartridge::new());
+    if !pattern.is_empty() {
+        fill_chr(&mut *cart, pattern);
     }
     ppu.timing.scanline = y as u16;
-    ppu.render_pixel(x, &mut cart)
+    ppu.render_pixel(x, &mut *cart)
 }
 
 fn run_scanline(ppu: &mut Ppu, pattern: &[u8], scanline: u16) {
-    let mut cart = Cartridge::Test(Box::new(TestCartridge::new()));
-    if !pattern.is_empty()
-        && let Cartridge::Test(tc) = &mut cart
-    {
-        for i in 0..tc.chr_rom.len() {
-            tc.chr_rom[i] = pattern[i % pattern.len()];
-        }
+    let mut cart: Box<dyn Cartridge> = Box::new(TestCartridge::new());
+    if !pattern.is_empty() {
+        fill_chr(&mut *cart, pattern);
     }
 
     ppu.timing.scanline = scanline;
     ppu.timing.dot = 0;
     for _ in 0..341 {
-        ppu.tick(&mut cart);
+        ppu.tick(&mut *cart);
     }
 }
 
 fn render_pixel_with_setup<F>(ppu: &mut Ppu, pattern: &[u8], setup: F, x: u8, y: u8) -> u8
 where
-    F: FnOnce(&mut Ppu, &mut Cartridge),
+    F: FnOnce(&mut Ppu, &mut dyn Cartridge),
 {
     let mut cart = new_test_cartridge();
-    if !pattern.is_empty()
-        && let Cartridge::Test(tc) = &mut cart
-    {
-        for i in 0..tc.chr_rom.len() {
-            tc.chr_rom[i] = pattern[i % pattern.len()];
-        }
+    if !pattern.is_empty() {
+        fill_chr(&mut *cart, pattern);
     }
-    setup(ppu, &mut cart);
+    setup(ppu, &mut *cart);
     ppu.timing.scanline = y as u16;
-    ppu.render_pixel(x, &mut cart)
+    ppu.render_pixel(x, &mut *cart)
 }
 
 #[test]
@@ -244,8 +238,8 @@ fn test_tick_renders_palette_color_when_rendering_disabled_and_vram_points_to_pa
     ppu.timing.dot = 0;
 
     let mut cart = new_test_cartridge();
-    ppu.tick(&mut cart);
-    ppu.tick(&mut cart);
+    ppu.tick(&mut *cart);
+    ppu.tick(&mut *cart);
 
     let image = ppu.renderer.borrow_image();
     assert_eq!(
@@ -265,8 +259,8 @@ fn test_tick_renders_background_color_when_rendering_disabled_and_vram_not_palet
     ppu.timing.dot = 0;
 
     let mut cart = new_test_cartridge();
-    ppu.tick(&mut cart);
-    ppu.tick(&mut cart);
+    ppu.tick(&mut *cart);
+    ppu.tick(&mut *cart);
 
     let image = ppu.renderer.borrow_image();
     assert_eq!(

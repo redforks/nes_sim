@@ -1,4 +1,4 @@
-use super::{ChrStorage, CARTRIDGE_START_ADDR, CartridgeOperation};
+use super::{Cartridge, ChrStorage, CARTRIDGE_START_ADDR, CartridgeOperation};
 use super::chr_storage::WindowedChr;
 use crate::nes::mapper::Mirroring;
 
@@ -222,12 +222,12 @@ impl MMC3 {
     }
 }
 
-impl MMC3 {
-    pub fn read_chr(&self, address: u16) -> u8 {
+impl Cartridge for MMC3 {
+    fn read_chr(&self, address: u16) -> u8 {
         self.chr_storage.read_chr(address)
     }
 
-    pub fn write_chr(&mut self, address: u16, value: u8) {
+    fn write_chr(&mut self, address: u16, value: u8) {
         if !self.has_chr_ram {
             return;
         }
@@ -239,11 +239,11 @@ impl MMC3 {
         self.chr_storage.write_chr_with_source(address, value, source);
     }
 
-    pub fn read(&mut self, address: u16) -> u8 {
+    fn read(&mut self, address: u16) -> u8 {
         self.peek(address)
     }
 
-    pub fn peek(&self, address: u16) -> u8 {
+    fn peek(&self, address: u16) -> u8 {
         match address {
             CARTRIDGE_START_ADDR..=0x5fff => 0,
             0x6000..=0x7fff => {
@@ -261,7 +261,7 @@ impl MMC3 {
         }
     }
 
-    pub fn write(&mut self, address: u16, value: u8) -> CartridgeOperation {
+    fn write(&mut self, address: u16, value: u8) -> CartridgeOperation {
         match address {
             CARTRIDGE_START_ADDR..=0x5fff => CartridgeOperation::None,
             0x6000..=0x7fff => {
@@ -307,20 +307,19 @@ impl MMC3 {
         }
     }
 
-    pub fn on_ppu_tick(&mut self, scanline: u16, _dot: u16, _rendering_enabled: bool) {
+    fn on_ppu_tick(&mut self, scanline: u16, _dot: u16, _rendering_enabled: bool) {
         if self.prev_a12 {
             self.a12_low_ticks = 0;
         } else {
             self.a12_low_ticks = self.a12_low_ticks.saturating_add(1);
         }
 
-        // Reset A12 transition flag at the end of each scanline
         if scanline == 261 || scanline == 239 {
             self.a12_transition_this_scanline = false;
         }
     }
 
-    pub fn notify_vram_address(&mut self, addr: u16) {
+    fn notify_vram_address(&mut self, addr: u16) {
         let addr = addr & 0x3fff;
         let a12 = (addr & 0x1000) != 0;
         let should_monitor = addr < 0x2000 || (0x2000..0x3000).contains(&addr);
@@ -333,9 +332,6 @@ impl MMC3 {
             return;
         }
 
-        // MMC3 only recognizes a new rising edge after A12 has remained low
-        // for a few PPU cycles. This filters the multiple high pulses that can
-        // occur within a single scanline when both BG and sprite fetches use $1xxx.
         if a12 && !self.prev_a12 && self.a12_low_ticks >= MMC3_A12_LOW_FILTER_TICKS {
             self.a12_transition_this_scanline = true;
             self.clock_irq();
@@ -348,7 +344,7 @@ impl MMC3 {
         self.prev_a12 = a12;
     }
 
-    pub fn irq_pending(&self) -> bool {
+    fn irq_pending(&self) -> bool {
         self.irq_pending
     }
 }

@@ -65,74 +65,62 @@ impl From<NametableArrangement> for Mirroring {
     }
 }
 
-pub fn create_cartridge(f: &INesFile) -> (Cartridge, Mirroring) {
+pub fn create_cartridge(f: &INesFile) -> (Box<dyn Cartridge>, Mirroring) {
     let mapper_no = f.header().mapper_no;
     let mirroring = if f.header().ignore_mirror_control {
         Mirroring::Four
     } else {
         f.header().nametable_arrangement.into()
     };
-    let cartridge = match mapper_no {
-        0 => Cartridge::Mapper0(Box::new(Mapper0::new(f.read_prg_rom(), f.read_chr_rom()))),
-        1 => Cartridge::MMC1(Box::new(MMC1::new(
+    let cartridge: Box<dyn Cartridge> = match mapper_no {
+        0 => Box::new(Mapper0::new(f.read_prg_rom(), f.read_chr_rom())),
+        1 => Box::new(MMC1::new(
             f.read_prg_rom(),
             f.read_chr_rom(),
             mirroring,
-        ))),
-        2 => Cartridge::Mapper2(Box::new(Mapper2::new(f.read_prg_rom(), f.read_chr_rom()))),
-        3 => Cartridge::Mapper3(Box::new(Mapper3::new(f.read_prg_rom(), f.read_chr_rom()))),
-        4 => Cartridge::MMC3(Box::new(MMC3::new(
+        )),
+        2 => Box::new(Mapper2::new(f.read_prg_rom(), f.read_chr_rom())),
+        3 => Box::new(Mapper3::new(f.read_prg_rom(), f.read_chr_rom())),
+        4 => Box::new(MMC3::new(
             f.read_prg_rom(),
             f.read_chr_rom(),
             f.header().ignore_mirror_control,
             rom_contains_signature(f, MMC3_ALT_TEST_SIGNATURE),
-        ))),
-        7 => Cartridge::Mapper7(Box::new(Mapper7::new(f.read_prg_rom(), f.read_chr_rom()))),
-        34 => Cartridge::Mapper34(Box::new(Mapper34::new(f.read_prg_rom(), f.read_chr_rom()))),
+        )),
+        7 => Box::new(Mapper7::new(f.read_prg_rom(), f.read_chr_rom())),
+        34 => Box::new(Mapper34::new(f.read_prg_rom(), f.read_chr_rom())),
         21 => {
             let submapper = f.header().submapper_no.unwrap_or(1);
             let variant = match submapper {
                 2 => VrcVariant::Vrc4c,
-                _ => VrcVariant::Vrc4a, // default: submapper 1
+                _ => VrcVariant::Vrc4a,
             };
-            Cartridge::Vrc24(Box::new(Vrc24::new(
-                f.read_prg_rom(),
-                f.read_chr_rom(),
-                variant,
-            )))
+            Box::new(Vrc24::new(f.read_prg_rom(), f.read_chr_rom(), variant))
         }
-        22 => Cartridge::Vrc24(Box::new(Vrc24::new(
+        22 => Box::new(Vrc24::new(
             f.read_prg_rom(),
             f.read_chr_rom(),
             VrcVariant::Vrc2a,
-        ))),
+        )),
         23 => {
             let submapper = f.header().submapper_no.unwrap_or(1);
             let variant = match submapper {
                 2 => VrcVariant::Vrc4e,
                 3 => VrcVariant::Vrc2b,
-                _ => VrcVariant::Vrc4f, // default: submapper 1
+                _ => VrcVariant::Vrc4f,
             };
-            Cartridge::Vrc24(Box::new(Vrc24::new(
-                f.read_prg_rom(),
-                f.read_chr_rom(),
-                variant,
-            )))
+            Box::new(Vrc24::new(f.read_prg_rom(), f.read_chr_rom(), variant))
         }
         25 => {
             let submapper = f.header().submapper_no.unwrap_or(1);
             let variant = match submapper {
                 2 => VrcVariant::Vrc4d,
                 3 => VrcVariant::Vrc2c,
-                _ => VrcVariant::Vrc4b, // default: submapper 1
+                _ => VrcVariant::Vrc4b,
             };
-            Cartridge::Vrc24(Box::new(Vrc24::new(
-                f.read_prg_rom(),
-                f.read_chr_rom(),
-                variant,
-            )))
+            Box::new(Vrc24::new(f.read_prg_rom(), f.read_chr_rom(), variant))
         }
-        87 => Cartridge::Mapper87(Box::new(MapperJ87::new(f.read_prg_rom(), f.read_chr_rom()))),
+        87 => Box::new(MapperJ87::new(f.read_prg_rom(), f.read_chr_rom())),
         _ => panic!("Unsupported cartridge mapper no: {}", f.header().mapper_no),
     };
     (cartridge, mirroring)
@@ -144,18 +132,17 @@ fn rom_contains_signature(file: &INesFile, signature: &str) -> bool {
         .any(|window| window == signature.as_bytes())
 }
 
-pub enum Cartridge {
-    Mapper0(Box<Mapper0>),
-    Mapper2(Box<Mapper2>),
-    Mapper3(Box<Mapper3>),
-    Mapper7(Box<Mapper7>),
-    Mapper34(Box<Mapper34>),
-    Mapper87(Box<MapperJ87>),
-    MMC1(Box<MMC1>),
-    MMC3(Box<MMC3>),
-    Vrc24(Box<Vrc24>),
-    #[cfg(test)]
-    Test(Box<TestCartridge>),
+pub trait Cartridge {
+    fn read_chr(&self, address: u16) -> u8;
+    fn write_chr(&mut self, _address: u16, _value: u8) {}
+    fn read(&mut self, address: u16) -> u8;
+    fn peek(&self, address: u16) -> u8;
+    fn write(&mut self, address: u16, value: u8) -> CartridgeOperation;
+    fn on_ppu_tick(&mut self, _scanline: u16, _dot: u16, _rendering_enabled: bool) {}
+    fn notify_vram_address(&mut self, _addr: u16) {}
+    fn irq_pending(&self) -> bool {
+        false
+    }
 }
 
 #[cfg(test)]
@@ -172,38 +159,33 @@ impl TestCartridge {
             chr_rom: [0; 0x2000],
         }
     }
+}
 
-    pub fn write_chr(&mut self, address: u16, value: u8) {
-        self.chr_rom[address as usize] = value;
-    }
-
-    pub fn write(&mut self, address: u16, value: u8) -> CartridgeOperation {
-        let _ = (address, value);
-        CartridgeOperation::None
-    }
-
-    pub fn read(&mut self, address: u16) -> u8 {
-        if address >= 0x8000 {
-            self.prg_rom[(address - 0x8000) as usize]
-        } else {
-            0
-        }
-    }
-
-    pub fn peek(&self, address: u16) -> u8 {
-        if address >= 0x8000 {
-            self.prg_rom[(address - 0x8000) as usize]
-        } else {
-            0
-        }
-    }
-
-    pub fn read_chr(&self, address: u16) -> u8 {
+#[cfg(test)]
+impl Cartridge for TestCartridge {
+    fn read_chr(&self, address: u16) -> u8 {
         self.chr_rom[address as usize % self.chr_rom.len()]
     }
 
-    pub fn irq_pending(&self) -> bool {
-        false
+    fn write_chr(&mut self, address: u16, value: u8) {
+        self.chr_rom[address as usize] = value;
+    }
+
+    fn read(&mut self, address: u16) -> u8 {
+        self.peek(address)
+    }
+
+    fn peek(&self, address: u16) -> u8 {
+        if address >= 0x8000 {
+            self.prg_rom[(address - 0x8000) as usize]
+        } else {
+            0
+        }
+    }
+
+    fn write(&mut self, address: u16, value: u8) -> CartridgeOperation {
+        let _ = (address, value);
+        CartridgeOperation::None
     }
 }
 
@@ -213,125 +195,7 @@ pub enum CartridgeOperation {
     UpdateNametableMirroring(Mirroring),
 }
 
-impl Cartridge {
-    pub fn read_chr(&self, address: u16) -> u8 {
-        match self {
-            Cartridge::Mapper0(cartridge) => cartridge.read_chr(address),
-            Cartridge::Mapper2(cartridge) => cartridge.read_chr(address),
-            Cartridge::Mapper3(cartridge) => cartridge.read_chr(address),
-            Cartridge::Mapper7(cartridge) => cartridge.read_chr(address),
-            Cartridge::Mapper34(cartridge) => cartridge.read_chr(address),
-            Cartridge::MMC1(cartridge) => cartridge.read_chr(address),
-            Cartridge::MMC3(cartridge) => cartridge.read_chr(address),
-            Cartridge::Mapper87(cartridge) => cartridge.read_chr(address),
-            Cartridge::Vrc24(cartridge) => cartridge.read_chr(address),
-            #[cfg(test)]
-            Cartridge::Test(cartridge) => cartridge.read_chr(address),
-        }
-    }
 
-    pub fn write_chr(&mut self, address: u16, value: u8) {
-        match self {
-            Cartridge::Mapper0(cartridge) => cartridge.write_chr(address, value),
-            Cartridge::Mapper2(cartridge) => cartridge.write_chr(address, value),
-            Cartridge::Mapper3(_) => {}
-            Cartridge::MMC1(cartridge) => cartridge.write_chr(address, value),
-            Cartridge::Mapper7(cartridge) => cartridge.write_chr(address, value),
-            Cartridge::Mapper34(cartridge) => cartridge.write_chr(address, value),
-            Cartridge::MMC3(cartridge) => cartridge.write_chr(address, value),
-            Cartridge::Vrc24(cartridge) => cartridge.write_chr(address, value),
-            Cartridge::Mapper87(cartridge) => cartridge.write_chr(address, value),
-            #[cfg(test)]
-            Cartridge::Test(cartridge) => cartridge.write_chr(address, value),
-        }
-    }
-
-    pub fn read(&mut self, address: u16) -> u8 {
-        match self {
-            Cartridge::Mapper0(cartridge) => cartridge.read(address),
-            Cartridge::Mapper2(cartridge) => cartridge.read(address),
-            Cartridge::Mapper3(cartridge) => cartridge.read(address),
-            Cartridge::Mapper7(cartridge) => cartridge.read(address),
-            Cartridge::Mapper34(cartridge) => cartridge.read(address),
-            Cartridge::MMC1(cartridge) => cartridge.read(address),
-            Cartridge::MMC3(cartridge) => cartridge.read(address),
-            Cartridge::Mapper87(cartridge) => cartridge.read(address),
-            Cartridge::Vrc24(cartridge) => cartridge.read(address),
-            #[cfg(test)]
-            Cartridge::Test(cartridge) => cartridge.read(address),
-        }
-    }
-
-    pub fn peek(&self, address: u16) -> u8 {
-        match self {
-            Cartridge::Mapper0(cartridge) => cartridge.peek(address),
-            Cartridge::Mapper2(cartridge) => cartridge.peek(address),
-            Cartridge::Mapper3(cartridge) => cartridge.peek(address),
-            Cartridge::Mapper7(cartridge) => cartridge.peek(address),
-            Cartridge::Mapper34(cartridge) => cartridge.peek(address),
-            Cartridge::MMC1(cartridge) => cartridge.peek(address),
-            Cartridge::MMC3(cartridge) => cartridge.peek(address),
-            Cartridge::Mapper87(cartridge) => cartridge.peek(address),
-            Cartridge::Vrc24(cartridge) => cartridge.peek(address),
-            #[cfg(test)]
-            Cartridge::Test(cartridge) => cartridge.peek(address),
-        }
-    }
-
-    pub fn write(&mut self, address: u16, value: u8) -> CartridgeOperation {
-        match self {
-            Cartridge::Mapper0(cartridge) => cartridge.write(address, value),
-            Cartridge::Mapper2(cartridge) => cartridge.write(address, value),
-            Cartridge::Mapper3(cartridge) => cartridge.write(address, value),
-            Cartridge::Mapper7(cartridge) => cartridge.write(address, value),
-            Cartridge::Mapper34(cartridge) => cartridge.write(address, value),
-            Cartridge::MMC1(cartridge) => cartridge.write(address, value),
-            Cartridge::MMC3(cartridge) => cartridge.write(address, value),
-            Cartridge::Mapper87(cartridge) => cartridge.write(address, value),
-            Cartridge::Vrc24(cartridge) => cartridge.write(address, value),
-            #[cfg(test)]
-            Cartridge::Test(cartridge) => cartridge.write(address, value),
-        }
-    }
-
-    pub fn on_ppu_tick(&mut self, scanline: u16, dot: u16, rendering_enabled: bool) {
-        match self {
-            Cartridge::Mapper0(_)
-            | Cartridge::Mapper2(_)
-            | Cartridge::Mapper3(_)
-            | Cartridge::Mapper7(_)
-            | Cartridge::Mapper34(_)
-            | Cartridge::MMC1(_) => {}
-            Cartridge::MMC3(cartridge) => cartridge.on_ppu_tick(scanline, dot, rendering_enabled),
-            Cartridge::Vrc24(cartridge) => cartridge.on_ppu_tick(scanline, dot, rendering_enabled),
-            Cartridge::Mapper87(_) => {}
-            #[cfg(test)]
-            Cartridge::Test(_) => {}
-        }
-    }
-
-    pub fn notify_vram_address(&mut self, addr: u16) {
-        if let Cartridge::MMC3(cartridge) = self {
-            cartridge.notify_vram_address(addr);
-        }
-    }
-
-    pub fn irq_pending(&self) -> bool {
-        match self {
-            Cartridge::Mapper0(_)
-            | Cartridge::Mapper2(_)
-            | Cartridge::Mapper3(_)
-            | Cartridge::Mapper7(_)
-            | Cartridge::Mapper34(_)
-            | Cartridge::MMC1(_) => false,
-            Cartridge::MMC3(cartridge) => cartridge.irq_pending(),
-            Cartridge::Vrc24(cartridge) => cartridge.irq_pending(),
-            Cartridge::Mapper87(_) => false,
-            #[cfg(test)]
-            Cartridge::Test(cartridge) => cartridge.irq_pending(),
-        }
-    }
-}
 
 #[cfg(test)]
 mod tests;

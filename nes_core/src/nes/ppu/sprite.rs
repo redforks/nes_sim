@@ -46,13 +46,13 @@ fn sprite_in_range(y_byte: u8, target_scanline: u16, sprite_height: i16) -> bool
 }
 
 fn read_sprite_color(
-    cartridge: &Cartridge,
+    cartridge: &dyn Cartridge,
     tile_idx: u8,
     src_x: usize,
     src_y: u8,
     sprite_size_16: bool,
     sprite_pattern_table: bool,
-    read_pattern_pixel: &impl Fn(&Cartridge, u16, u8, usize, usize) -> u8,
+    read_pattern_pixel: &impl Fn(&dyn Cartridge, u16, u8, usize, usize) -> u8,
 ) -> u8 {
     if sprite_size_16 {
         let pattern_table_idx = (tile_idx & 0x01) as u16;
@@ -207,10 +207,10 @@ impl SpriteManager {
         sprite_size_16: bool,
         sprite_pattern_table: bool,
         sprite_left_enabled: bool,
-        cartridge: &Cartridge,
+        cartridge: &dyn Cartridge,
         screen_x: u8,
         screen_y: u8,
-        read_pattern_pixel: impl Fn(&Cartridge, u16, u8, usize, usize) -> u8,
+        read_pattern_pixel: impl Fn(&dyn Cartridge, u16, u8, usize, usize) -> u8,
     ) -> Option<SpritePixel> {
         if !sprite_left_enabled && screen_x < 8 {
             return None;
@@ -284,10 +284,10 @@ impl SpriteManager {
         oam_data: &[u8; 256],
         sprite_size_16: bool,
         sprite_pattern_table: bool,
-        cartridge: &Cartridge,
+        cartridge: &dyn Cartridge,
         screen_x: u8,
         screen_y: u8,
-        read_pattern_pixel: impl Fn(&Cartridge, u16, u8, usize, usize) -> u8,
+        read_pattern_pixel: impl Fn(&dyn Cartridge, u16, u8, usize, usize) -> u8,
     ) -> bool {
         let sprite_height: i16 = if sprite_size_16 { 16 } else { 8 };
         let y_byte = oam_data[0];

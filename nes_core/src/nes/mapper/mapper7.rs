@@ -1,4 +1,4 @@
-use super::{ChrStorage, CARTRIDGE_START_ADDR, CartridgeOperation, Mirroring};
+use super::{Cartridge, ChrStorage, CARTRIDGE_START_ADDR, CartridgeOperation, Mirroring};
 use super::chr_storage::DirectChr;
 
 const PRG_ROM_BANK_SIZE: usize = 0x8000;
@@ -42,22 +42,24 @@ impl Mapper7 {
         let offset = (address as usize) % PRG_ROM_BANK_SIZE;
         self.prg_rom[bank_start + offset]
     }
+}
 
-    pub fn read_chr(&self, address: u16) -> u8 {
+impl Cartridge for Mapper7 {
+    fn read_chr(&self, address: u16) -> u8 {
         self.chr_storage.read_chr(address)
     }
 
-    pub fn write_chr(&mut self, address: u16, value: u8) {
+    fn write_chr(&mut self, address: u16, value: u8) {
         if self.has_chr_ram {
             self.chr_storage.write_chr(address, value);
         }
     }
 
-    pub fn read(&mut self, address: u16) -> u8 {
+    fn read(&mut self, address: u16) -> u8 {
         self.peek(address)
     }
 
-    pub fn peek(&self, address: u16) -> u8 {
+    fn peek(&self, address: u16) -> u8 {
         match address {
             CARTRIDGE_START_ADDR..=0x7fff => self.ram[(address - CARTRIDGE_START_ADDR) as usize],
             0x8000..=0xffff => self.read_prg_bank(self.selected_prg_bank(), address - 0x8000),
@@ -65,7 +67,7 @@ impl Mapper7 {
         }
     }
 
-    pub fn write(&mut self, address: u16, value: u8) -> CartridgeOperation {
+    fn write(&mut self, address: u16, value: u8) -> CartridgeOperation {
         match address {
             CARTRIDGE_START_ADDR..=0x7fff => {
                 self.ram[(address - CARTRIDGE_START_ADDR) as usize] = value;

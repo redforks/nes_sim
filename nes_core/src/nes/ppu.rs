@@ -258,7 +258,7 @@ impl<R: Render> Ppu<R> {
         self.registers.write_oam_data(value);
     }
 
-    pub fn tick(&mut self, cartridge: &mut Cartridge) {
+    pub fn tick(&mut self, cartridge: &mut dyn Cartridge) {
         let rendering_enabled = self.rendering_enabled();
 
         if self.timing.dot == 0 {
@@ -430,7 +430,7 @@ impl<R: Render> Ppu<R> {
     }
 
     /// Read by cpu memory bus. Uses Cartridge for CHR/name-table access.
-    pub fn read(&mut self, address: u16, cartridge: &mut Cartridge) -> u8 {
+    pub fn read(&mut self, address: u16, cartridge: &mut dyn Cartridge) -> u8 {
         // PPU registers are mirrored every 8 bytes in range $2000-$3FFF
         let reg = normalize_ppu_addr(address);
         match reg {
@@ -456,7 +456,7 @@ impl<R: Render> Ppu<R> {
         }
     }
 
-    pub fn peek(&self, address: u16, cartridge: &Cartridge) -> u8 {
+    pub fn peek(&self, address: u16, cartridge: &dyn Cartridge) -> u8 {
         let reg = normalize_ppu_addr(address);
         match reg {
             0x2002 => self.registers.status.into_bits(),
@@ -467,7 +467,7 @@ impl<R: Render> Ppu<R> {
     }
 
     /// Write by cpu memory bus. Uses Cartridge for CHR/name-table writes.
-    pub fn write(&mut self, address: u16, value: u8, cartridge: &mut Cartridge) {
+    pub fn write(&mut self, address: u16, value: u8, cartridge: &mut dyn Cartridge) {
         self.refresh_bus_latch(value);
         let reg = normalize_ppu_addr(address);
         match reg {
@@ -514,7 +514,7 @@ impl<R: Render> Ppu<R> {
         }
     }
 
-    fn read_vram(&self, address: u16, cartridge: &Cartridge) -> u8 {
+    fn read_vram(&self, address: u16, cartridge: &dyn Cartridge) -> u8 {
         let mut addr = address % 0x4000;
         if (0x3000..0x3f00).contains(&addr) {
             addr -= 0x1000;
@@ -534,7 +534,7 @@ impl<R: Render> Ppu<R> {
         }
     }
 
-    fn write_vram(&mut self, address: u16, value: u8, cartridge: &mut Cartridge) {
+    fn write_vram(&mut self, address: u16, value: u8, cartridge: &mut dyn Cartridge) {
         let mut addr = address % 0x4000;
         if (0x3000..0x3f00).contains(&addr) {
             addr -= 0x1000;
@@ -561,7 +561,7 @@ impl<R: Render> Ppu<R> {
     }
 
     fn read_pattern_pixel(
-        cartridge: &Cartridge,
+        cartridge: &dyn Cartridge,
         base_addr: u16,
         tile_idx: u8,
         tile_x: usize,
@@ -574,7 +574,7 @@ impl<R: Render> Ppu<R> {
         ((low >> bit) & 1) | (((high >> bit) & 1) << 1)
     }
 
-    fn get_background_pixel(&mut self, cartridge: &Cartridge, screen_x: u8) -> (u8, u8) {
+    fn get_background_pixel(&mut self, cartridge: &dyn Cartridge, screen_x: u8) -> (u8, u8) {
         self.apply_pending_background_activation(screen_x);
 
         // Check left-column clipping
@@ -628,7 +628,7 @@ impl<R: Render> Ppu<R> {
         (palette_idx, color_idx)
     }
 
-    fn read_vram_and_inc(&mut self, cartridge: &mut Cartridge) -> u8 {
+    fn read_vram_and_inc(&mut self, cartridge: &mut dyn Cartridge) -> u8 {
         let vram_addr = self.registers.vram_addr;
         let current = self.read_vram(vram_addr, cartridge);
         self.registers
@@ -691,7 +691,7 @@ impl<R: Render> Ppu<R> {
         r
     }
 
-    fn render_pixel(&mut self, x: u8, cartridge: &mut Cartridge) -> u8 {
+    fn render_pixel(&mut self, x: u8, cartridge: &mut dyn Cartridge) -> u8 {
         let (bg_palette_idx, bg_color_idx) = if self.effective_mask.background_enabled() {
             self.get_background_pixel(cartridge, x)
         } else {

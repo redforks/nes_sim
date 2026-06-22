@@ -1,4 +1,4 @@
-use super::{ChrStorage, CARTRIDGE_START_ADDR, CartridgeOperation};
+use super::{Cartridge, ChrStorage, CARTRIDGE_START_ADDR, CartridgeOperation};
 use super::chr_storage::WindowedChr;
 use crate::nes::mapper::Mirroring;
 
@@ -188,14 +188,12 @@ impl Vrc24 {
     }
 }
 
-// ── Cartridge interface methods ──
-
-impl Vrc24 {
-    pub fn read_chr(&self, address: u16) -> u8 {
+impl Cartridge for Vrc24 {
+    fn read_chr(&self, address: u16) -> u8 {
         self.chr_storage.read_chr(address)
     }
 
-    pub fn write_chr(&mut self, address: u16, value: u8) {
+    fn write_chr(&mut self, address: u16, value: u8) {
         if !self.has_chr_ram {
             return;
         }
@@ -204,7 +202,6 @@ impl Vrc24 {
         let slot = addr / CHR_BANK_SIZE;
         let offset_in_bank = addr % CHR_BANK_SIZE;
 
-        // Compute the actual CHR bank for this slot
         let lo = self.chr_bank[slot * 2] as u16;
         let hi = self.chr_bank[slot * 2 + 1] as u16;
         let mut bank = lo | (hi << 4);
@@ -222,11 +219,11 @@ impl Vrc24 {
         self.chr_storage.write_chr_with_source(address, value, source);
     }
 
-    pub fn read(&mut self, address: u16) -> u8 {
+    fn read(&mut self, address: u16) -> u8 {
         self.peek(address)
     }
 
-    pub fn peek(&self, address: u16) -> u8 {
+    fn peek(&self, address: u16) -> u8 {
         match address {
             CARTRIDGE_START_ADDR..=0x5fff => 0,
             0x6000..=0x6fff => {
@@ -237,7 +234,6 @@ impl Vrc24 {
                         0
                     }
                 } else {
-                    // VRC2 Microwire - return open bus top 7 bits, latch in bit 0
                     (address as u8) | self.microwire_latch
                 }
             }
@@ -249,13 +245,11 @@ impl Vrc24 {
                         0
                     }
                 } else {
-                    // VRC2: $7000-$7FFF is always open bus
                     0
                 }
             }
             0x8000..=0x9fff => {
                 if self.variant.is_vrc4() && self.prg_swap_mode {
-                    // Fixed to second-last bank
                     let bank = self.prg_bank_count().saturating_sub(2);
                     let offset = address as usize - 0x8000;
                     self.prg_rom[bank * PRG_BANK_SIZE + offset]
@@ -276,12 +270,10 @@ impl Vrc24 {
                     let offset = address as usize - 0xc000;
                     self.prg_rom[bank * PRG_BANK_SIZE + offset % PRG_BANK_SIZE]
                 } else if self.variant.is_vrc4() {
-                    // Fixed to second-last bank
                     let bank = self.prg_bank_count().saturating_sub(2);
                     let offset = address as usize - 0xc000;
                     self.prg_rom[bank * PRG_BANK_SIZE + offset]
                 } else {
-                    // VRC2: $C000-$FFFF fixed to last 16 KiB
                     let last_16k = self.prg_bank_count().saturating_sub(2);
                     let offset = address as usize - 0xc000;
                     self.prg_rom[last_16k * PRG_BANK_SIZE + offset]
@@ -289,12 +281,10 @@ impl Vrc24 {
             }
             0xe000..=0xffff => {
                 if self.variant.is_vrc4() {
-                    // Fixed to last bank
                     let bank = self.prg_bank_count().saturating_sub(1);
                     let offset = address as usize - 0xe000;
                     self.prg_rom[bank * PRG_BANK_SIZE + offset]
                 } else {
-                    // VRC2: part of the fixed 16 KiB
                     let last_16k = self.prg_bank_count().saturating_sub(2);
                     let offset = address as usize - 0xc000;
                     self.prg_rom[last_16k * PRG_BANK_SIZE + offset]
@@ -304,7 +294,7 @@ impl Vrc24 {
         }
     }
 
-    pub fn write(&mut self, address: u16, value: u8) -> CartridgeOperation {
+    fn write(&mut self, address: u16, value: u8) -> CartridgeOperation {
         match address {
             CARTRIDGE_START_ADDR..=0x5fff => CartridgeOperation::None,
             0x6000..=0x7fff => {
@@ -313,27 +303,21 @@ impl Vrc24 {
                         self.prg_ram[(address - 0x6000) as usize % PRG_RAM_SIZE] = value;
                     }
                 } else {
-                    // VRC2 Microwire latch
                     self.microwire_latch = value & 0x01;
                 }
                 CartridgeOperation::None
             }
             0x8000..=0x8fff => {
-                // PRG Select 0
                 self.prg_select_0 = value & 0x1f;
                 CartridgeOperation::None
             }
             0x9000..=0x9fff => {
                 let idx = self.compute_register_index(address);
                 if self.variant.is_vrc4() && idx == 2 {
-                    // VRC4: $9002 = PRG Swap Mode / WRAM control
-                    // Bit 0: WRAM enable
-                    // Bit 1: Swap Mode
                     self.prg_ram_enabled = (value & 0x01) != 0;
                     self.prg_swap_mode = (value & 0x02) != 0;
                     CartridgeOperation::None
                 } else {
-                    // Mirroring control
                     self.mirroring_bits = value & 0x03;
                     let mirroring = if self.variant.is_vrc4() {
                         match value & 0x03 {
@@ -344,7 +328,6 @@ impl Vrc24 {
                             _ => unreachable!(),
                         }
                     } else {
-                        // VRC2: only horizontal or vertical
                         if value & 0x01 == 0 {
                             Mirroring::Vertical
                         } else {
@@ -355,23 +338,17 @@ impl Vrc24 {
                 }
             }
             0xa000..=0xafff => {
-                // PRG Select 1
                 self.prg_select_1 = value & 0x1f;
                 CartridgeOperation::None
             }
             0xb000..=0xefff => {
-                // CHR bank selects
-                // Group = high nibble (B..E)
-                // Register index within group selects low/high byte and bank pair
                 let group = ((address >> 12) & 0x0f) as usize;
                 let idx = self.compute_register_index(address);
                 let slot = (group - 0xb) * 2 + (idx >> 1);
 
                 if idx & 1 == 0 {
-                    // Low byte
                     self.chr_bank[slot * 2] = value & 0x0f;
                 } else {
-                    // High byte
                     self.chr_bank[slot * 2 + 1] = value & 0x1f;
                 }
                 self.refresh_chr_banks();
@@ -382,17 +359,12 @@ impl Vrc24 {
                     let idx = self.compute_register_index(address);
                     match idx {
                         0 => {
-                            // IRQ Latch low 4 bits
                             self.irq_latch = (self.irq_latch & 0xf0) | (value & 0x0f);
                         }
                         1 => {
-                            // IRQ Latch high 4 bits
                             self.irq_latch = (self.irq_latch & 0x0f) | ((value & 0x0f) << 4);
                         }
                         2 => {
-                            // IRQ Control
-                            // Bit 2: Mode (0=scanline prescaler, 1=cycle prescaler)
-                            // Counter always runs after this write
                             self.irq_mode = (value & 0x04) != 0;
                             self.reload_irq_counter();
                             self.irq_prescaler = 0;
@@ -406,7 +378,6 @@ impl Vrc24 {
                             );
                         }
                         3 => {
-                            // IRQ Acknowledge
                             self.irq_pending = false;
                             self.reload_irq_counter();
                             self.irq_prescaler = 0;
@@ -425,20 +396,18 @@ impl Vrc24 {
         }
     }
 
-    pub fn on_ppu_tick(&mut self, _scanline: u16, _dot: u16, _rendering_enabled: bool) {
+    fn on_ppu_tick(&mut self, _scanline: u16, _dot: u16, _rendering_enabled: bool) {
         if !self.variant.is_vrc4() {
             return;
         }
 
         if self.irq_mode {
-            // Cycle mode: decrement counter every CPU cycle (3 PPU ticks)
             self.irq_prescaler += 1;
             if self.irq_prescaler >= 3 {
                 self.irq_prescaler -= 3;
                 self.decrement_irq_counter();
             }
         } else {
-            // Scanline mode: decrement counter every scanline (341 PPU ticks)
             self.irq_prescaler += 1;
             if self.irq_prescaler >= PPU_DOTS_PER_SCANLINE {
                 self.irq_prescaler -= PPU_DOTS_PER_SCANLINE;
@@ -447,6 +416,12 @@ impl Vrc24 {
         }
     }
 
+    fn irq_pending(&self) -> bool {
+        self.irq_pending
+    }
+}
+
+impl Vrc24 {
     fn decrement_irq_counter(&mut self) {
         self.irq_counter = self.irq_counter.wrapping_sub(1);
         if self.irq_counter == 0 {
@@ -458,10 +433,6 @@ impl Vrc24 {
 
     fn reload_irq_counter(&mut self) {
         self.irq_counter = self.irq_latch.wrapping_neg();
-    }
-
-    pub fn irq_pending(&self) -> bool {
-        self.irq_pending
     }
 
     fn normalize_prg_bank(&self, bank: u8) -> usize {

@@ -1,4 +1,4 @@
-use super::CartridgeOperation;
+use super::{Cartridge, CartridgeOperation};
 
 pub struct MapperJ87 {
     prg_rom: [u8; 32768],
@@ -36,16 +36,18 @@ impl MapperJ87 {
 
         r
     }
+}
 
-    pub fn read_chr(&self, address: u16) -> u8 {
+impl Cartridge for MapperJ87 {
+    fn read_chr(&self, address: u16) -> u8 {
         self.chr_rom_bands[self.cur_chr_band as usize][address as usize % 8192]
     }
 
-    pub fn read(&mut self, address: u16) -> u8 {
+    fn read(&mut self, address: u16) -> u8 {
         self.peek(address)
     }
 
-    pub fn peek(&self, address: u16) -> u8 {
+    fn peek(&self, address: u16) -> u8 {
         match address {
             0x8000..=0xffff => {
                 let mut offset = (address - 0x8000) as usize;
@@ -58,7 +60,7 @@ impl MapperJ87 {
         }
     }
 
-    pub fn write(&mut self, address: u16, value: u8) -> CartridgeOperation {
+    fn write(&mut self, address: u16, value: u8) -> CartridgeOperation {
         match address {
             0x6000..=0xffff => {
                 self.cur_chr_band = extract_band_selector_value(value);
@@ -68,7 +70,7 @@ impl MapperJ87 {
         CartridgeOperation::None
     }
 
-    pub fn write_chr(&mut self, address: u16, value: u8) {
+    fn write_chr(&mut self, address: u16, value: u8) {
         self.chr_rom_bands[self.cur_chr_band as usize][address as usize] = value;
     }
 }

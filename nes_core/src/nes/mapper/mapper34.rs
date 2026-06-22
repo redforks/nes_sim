@@ -1,4 +1,4 @@
-use super::{CARTRIDGE_START_ADDR, CartridgeOperation};
+use super::{Cartridge, CARTRIDGE_START_ADDR, CartridgeOperation};
 
 const PRG_ROM_BANK_SIZE: usize = 0x8000;
 const CHR_SIZE: usize = 0x2000;
@@ -70,14 +70,17 @@ impl Mapper34 {
         self.prg_rom[bank_start + offset]
     }
 
-    pub fn write_chr(&mut self, address: u16, value: u8) {
+}
+
+impl Cartridge for Mapper34 {
+    fn write_chr(&mut self, address: u16, value: u8) {
         if self.board == Board::BxRom && self.has_chr_ram {
             let index = address as usize % self.chr.len();
             self.chr[index] = value;
         }
     }
 
-    pub fn read_chr(&self, address: u16) -> u8 {
+    fn read_chr(&self, address: u16) -> u8 {
         match self.board {
             Board::BxRom => self.chr[address as usize % self.chr.len()],
             Board::Nina001 => match address {
@@ -94,11 +97,11 @@ impl Mapper34 {
         }
     }
 
-    pub fn read(&mut self, address: u16) -> u8 {
+    fn read(&mut self, address: u16) -> u8 {
         self.peek(address)
     }
 
-    pub fn peek(&self, address: u16) -> u8 {
+    fn peek(&self, address: u16) -> u8 {
         match address {
             CARTRIDGE_START_ADDR..=0x7fff => self.ram[(address - CARTRIDGE_START_ADDR) as usize],
             0x8000..=0xffff => self.read_prg_bank(self.selected_prg_bank(), address - 0x8000),
@@ -106,7 +109,7 @@ impl Mapper34 {
         }
     }
 
-    pub fn write(&mut self, address: u16, value: u8) -> CartridgeOperation {
+    fn write(&mut self, address: u16, value: u8) -> CartridgeOperation {
         match address {
             CARTRIDGE_START_ADDR..=0x7fff => {
                 self.ram[(address - CARTRIDGE_START_ADDR) as usize] = value;
