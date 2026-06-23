@@ -31,10 +31,6 @@ impl Mapper34 {
         }
     }
 
-    pub fn board(&self) -> Board {
-        self.board
-    }
-
     fn selected_prg_bank(&self) -> usize {
         self.selected_prg_bank % self.prg_bank_count
     }

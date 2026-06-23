@@ -2,8 +2,6 @@ use super::{Cartridge, CartridgeOperation};
 use crate::nes::mapper::Mirroring;
 use bitfield_struct::bitfield;
 
-const CHR_WINDOW_SIZE: usize = 0x2000;
-const CHR_BANK_SIZE_4K: usize = 0x1000;
 const PRG_ROM_BANK_SIZE: usize = 0x4000;
 const PRG_RAM_SIZE: usize = 0x2000;
 const INITIAL_SHIFT_REGISTER: u8 = 0x10;
@@ -78,7 +76,6 @@ impl MMC1 {
             shift_register: INITIAL_SHIFT_REGISTER,
         }
     }
-
 }
 
 impl Cartridge for MMC1 {
@@ -145,7 +142,7 @@ impl MMC1 {
                     CartridgeOperation::None
                 }
                 0xe000..=0xffff => {
-                    self.prg_bank = register_value & 0x1f;
+                    self.select_prg_bank(register_value);
                     CartridgeOperation::None
                 }
                 _ => unreachable!(),
@@ -317,10 +314,7 @@ mod tests {
         let mut mmc1 = create(|_| {});
         let control = ControlFlags::new().with_mirroring(0);
         write_serial(&mut mmc1, 0x8000, control.into_bits());
-        assert_eq!(
-            Mirroring::from(mmc1.control),
-            Mirroring::LowerBank
-        );
+        assert_eq!(Mirroring::from(mmc1.control), Mirroring::LowerBank);
     }
 
     #[test]
@@ -356,15 +350,27 @@ mod tests {
         });
 
         mmc1.select_prg_bank(2);
-        write_serial(&mut mmc1, 0x8000, ControlFlags::new().with_prg_mode(0).into_bits());
+        write_serial(
+            &mut mmc1,
+            0x8000,
+            ControlFlags::new().with_prg_mode(0).into_bits(),
+        );
         assert_eq!(mmc1.read(0x8000), 3);
         assert_eq!(mmc1.read(0xc000), 4);
 
-        write_serial(&mut mmc1, 0x8000, ControlFlags::new().with_prg_mode(2).into_bits());
+        write_serial(
+            &mut mmc1,
+            0x8000,
+            ControlFlags::new().with_prg_mode(2).into_bits(),
+        );
         assert_eq!(mmc1.read(0x8000), 1);
         assert_eq!(mmc1.read(0xc000), 3);
 
-        write_serial(&mut mmc1, 0x8000, ControlFlags::new().with_prg_mode(3).into_bits());
+        write_serial(
+            &mut mmc1,
+            0x8000,
+            ControlFlags::new().with_prg_mode(3).into_bits(),
+        );
         assert_eq!(mmc1.read(0x8000), 3);
         assert_eq!(mmc1.read(0xc000), 5);
     }

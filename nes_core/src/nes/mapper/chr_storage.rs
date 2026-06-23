@@ -5,6 +5,7 @@ pub struct DirectChr {
 }
 
 impl DirectChr {
+    #[cfg(test)]
     pub fn empty() -> Self {
         Self { data: [0; 0x2000] }
     }
@@ -73,24 +74,10 @@ impl WindowedChr {
         }
     }
 
-    pub fn source_len(&self) -> usize {
-        self.source.len()
-    }
-
     pub fn refresh(&mut self, offset_into_source: usize) {
         let end = (offset_into_source + 0x2000).min(self.source.len());
         let len = end - offset_into_source;
         self.cache[..len].copy_from_slice(&self.source[offset_into_source..end]);
-    }
-
-    pub fn copy_from_source(&mut self, dest_offset: usize, source_offset: usize, len: usize) {
-        self.cache[dest_offset..dest_offset + len]
-            .copy_from_slice(&self.source[source_offset..source_offset + len]);
-    }
-
-    pub fn write_chr_with_source(&mut self, address: u16, value: u8, source_offset: usize) {
-        self.cache[address as usize % self.cache.len()] = value;
-        self.source[source_offset] = value;
     }
 }
 
@@ -113,10 +100,18 @@ pub struct CnromChrStorage {
 impl CnromChrStorage {
     pub fn new(chr_rom: &[u8]) -> Self {
         let has_chr_ram = chr_rom.is_empty();
-        let bank_count = if has_chr_ram { 1 } else { chr_rom.len() / 0x2000 };
+        let bank_count = if has_chr_ram {
+            1
+        } else {
+            chr_rom.len() / 0x2000
+        };
         let mut inner = WindowedChr::new(chr_rom.to_vec());
         inner.refresh(0);
-        Self { inner, bank_count, has_chr_ram }
+        Self {
+            inner,
+            bank_count,
+            has_chr_ram,
+        }
     }
 }
 
@@ -149,17 +144,6 @@ mod windowed_tests {
     }
 
     #[test]
-    fn windowed_chr_write_through_survives_refresh() {
-        let mut source = vec![0; 0x4000];
-        source[0x200] = 0xff;
-        let mut chr = WindowedChr::new(source);
-        chr.write_chr_with_source(0x100, 0xab, 0x200);
-        assert_eq!(chr.read_chr(0x100), 0xab);
-        chr.refresh(0x0000);
-        assert_eq!(chr.read_chr(0x200), 0xab);
-    }
-
-    #[test]
     fn windowed_chr_refresh_copies_source_to_cache() {
         let mut source = vec![0; 0x4000];
         source[0x2100] = 0xcd;
@@ -169,21 +153,9 @@ mod windowed_tests {
     }
 
     #[test]
-    fn windowed_chr_copy_from_source_copies_partial() {
-        let mut source = vec![0; 0x4000];
-        source[0x0a00] = 0x11;
-        source[0x0b00] = 0x22;
-        let mut chr = WindowedChr::new(source);
-        chr.copy_from_source(0x0000, 0x0a00, 0x400);
-        chr.copy_from_source(0x0400, 0x0b00, 0x400);
-        assert_eq!(chr.read_chr(0x000), 0x11);
-        assert_eq!(chr.read_chr(0x400), 0x22);
-    }
-
-    #[test]
     fn windowed_chr_source_len() {
         let chr = WindowedChr::new(vec![0; 0x8000]);
-        assert_eq!(chr.source_len(), 0x8000);
+        assert_eq!(chr.source.len(), 0x8000);
     }
 }
 
@@ -233,7 +205,11 @@ impl Mmc3ChrStorage {
 
     pub fn new(chr_rom: &[u8]) -> Self {
         let has_chr_ram = chr_rom.is_empty();
-        let size = if has_chr_ram { Self::WINDOW_SIZE } else { chr_rom.len() };
+        let size = if has_chr_ram {
+            Self::WINDOW_SIZE
+        } else {
+            chr_rom.len()
+        };
         let mut source = vec![0; size];
         source[..chr_rom.len()].copy_from_slice(chr_rom);
         let mut storage = Self {
@@ -252,7 +228,11 @@ impl Mmc3ChrStorage {
     }
 
     fn normalize_bank(&self, bank: u8) -> usize {
-        if self.bank_count() == 0 { 0 } else { (bank as usize) % self.bank_count() }
+        if self.bank_count() == 0 {
+            0
+        } else {
+            (bank as usize) % self.bank_count()
+        }
     }
 
     fn sync_banks(&mut self) {
@@ -425,18 +405,30 @@ impl Mmc1ChrStorage {
     }
 
     fn bank_count_4k(&self) -> usize {
-        if self.source.is_empty() { 1 } else { self.source.len() / 0x1000 }
+        if self.source.is_empty() {
+            1
+        } else {
+            self.source.len() / 0x1000
+        }
     }
 
     fn chr_offset(&self, address: u16) -> usize {
         let offset = address as usize % 0x2000;
         let upper = offset >= 0x1000;
         if self.chr_in_4k {
-            let bank = if upper { self.chr_bank1 } else { self.chr_bank0 };
+            let bank = if upper {
+                self.chr_bank1
+            } else {
+                self.chr_bank0
+            };
             (bank as usize % self.bank_count_4k()) * 0x1000 + (offset % 0x1000)
         } else {
             let bank = usize::from(self.chr_bank0 & 0x1e) % self.bank_count_4k();
-            let bank = if upper { (bank + 1) % self.bank_count_4k() } else { bank };
+            let bank = if upper {
+                (bank + 1) % self.bank_count_4k()
+            } else {
+                bank
+            };
             bank * 0x1000 + (offset % 0x1000)
         }
     }
@@ -579,7 +571,11 @@ impl Vrc24ChrStorage {
     }
 
     fn bank_count(&self) -> usize {
-        if self.source.is_empty() { 1 } else { self.source.len() / Self::BANK_SIZE }
+        if self.source.is_empty() {
+            1
+        } else {
+            self.source.len() / Self::BANK_SIZE
+        }
     }
 
     fn refresh_banks(&mut self) {
@@ -692,7 +688,13 @@ impl Mapper34ChrStorage {
         } else {
             chr_rom.to_vec()
         };
-        Self { data, has_chr_ram, is_nina, bank0: 0, bank1: 0 }
+        Self {
+            data,
+            has_chr_ram,
+            is_nina,
+            bank0: 0,
+            bank1: 0,
+        }
     }
 }
 
@@ -700,7 +702,11 @@ impl ChrStorage for Mapper34ChrStorage {
     fn read_chr(&self, address: u16) -> u8 {
         let addr = address as usize % 0x2000;
         if self.is_nina {
-            let bank = if addr < 0x1000 { self.bank0 } else { self.bank1 };
+            let bank = if addr < 0x1000 {
+                self.bank0
+            } else {
+                self.bank1
+            };
             let src = bank * 0x1000 + (addr % 0x1000);
             self.data[src % self.data.len()]
         } else {
@@ -714,7 +720,11 @@ impl ChrStorage for Mapper34ChrStorage {
         }
         let addr = address as usize % 0x2000;
         if self.is_nina {
-            let bank = if addr < 0x1000 { self.bank0 } else { self.bank1 };
+            let bank = if addr < 0x1000 {
+                self.bank0
+            } else {
+                self.bank1
+            };
             let src = bank * 0x1000 + (addr % 0x1000);
             let len = self.data.len();
             self.data[src % len] = value;
@@ -782,7 +792,10 @@ impl J87ChrStorage {
             }
             _ => {}
         }
-        Self { bands, active_band: 0 }
+        Self {
+            bands,
+            active_band: 0,
+        }
     }
 }
 
