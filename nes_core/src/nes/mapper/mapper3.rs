@@ -1,4 +1,4 @@
-use super::{Cartridge, CARTRIDGE_START_ADDR, CartridgeOperation};
+use super::{Cartridge, CARTRIDGE_START_ADDR, CartridgeOperation, ChrStorage};
 
 const PRG_ROM_SIZE: usize = 0x8000;
 const CARTRIDGE_RAM_SIZE: usize = 0x4000 - 0x20;
@@ -56,6 +56,56 @@ impl Cartridge for Mapper3 {
     }
 }
 
+pub struct CnromChrStorage {
+    cache: [u8; 0x2000],
+    source: Vec<u8>,
+    bank_count: usize,
+    has_chr_ram: bool,
+}
+
+impl CnromChrStorage {
+    pub fn new(chr_rom: &[u8]) -> Self {
+        let has_chr_ram = chr_rom.is_empty();
+        let bank_count = if has_chr_ram {
+            1
+        } else {
+            chr_rom.len() / 0x2000
+        };
+        let mut cache = [0; 0x2000];
+        let len = chr_rom.len().min(0x2000);
+        cache[..len].copy_from_slice(&chr_rom[..len]);
+        Self {
+            cache,
+            source: chr_rom.to_vec(),
+            bank_count,
+            has_chr_ram,
+        }
+    }
+
+    fn refresh(&mut self, offset_into_source: usize) {
+        let end = (offset_into_source + 0x2000).min(self.source.len());
+        let len = end - offset_into_source;
+        self.cache[..len].copy_from_slice(&self.source[offset_into_source..end]);
+    }
+}
+
+impl ChrStorage for CnromChrStorage {
+    fn read_chr(&self, address: u16) -> u8 {
+        self.cache[address as usize % self.cache.len()]
+    }
+
+    fn write_chr(&mut self, address: u16, value: u8) {
+        if self.has_chr_ram {
+            self.cache[address as usize % self.cache.len()] = value;
+        }
+    }
+
+    fn write_register(&mut self, _addr: u16, value: u8) {
+        let bank = (value as usize) % self.bank_count;
+        self.refresh(bank * 0x2000);
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -83,5 +133,48 @@ mod tests {
         assert_eq!(mapper.read(0xbfff), 0x22);
         assert_eq!(mapper.read(0xc000), 0x11);
         assert_eq!(mapper.read(0xffff), 0x22);
+    }
+
+    fn make_chr() -> Vec<u8> {
+        let mut data = vec![0u8; 0x4000];
+        data[0] = 0x10;
+        data[0x2000] = 0x20;
+        data
+    }
+
+    #[test]
+    fn chr_initial_state_reads_bank_0() {
+        let chr = CnromChrStorage::new(&make_chr());
+        assert_eq!(chr.read_chr(0), 0x10);
+    }
+
+    #[test]
+    fn chr_write_register_switches_bank() {
+        let mut chr = CnromChrStorage::new(&make_chr());
+        chr.write_register(0x8000, 1);
+        assert_eq!(chr.read_chr(0), 0x20);
+    }
+
+    #[test]
+    fn chr_bank_wraps_at_bank_count() {
+        let mut chr = CnromChrStorage::new(&make_chr());
+        chr.write_register(0x8000, 2);
+        assert_eq!(chr.read_chr(0), 0x10);
+    }
+
+    #[test]
+    fn chr_ram_writes_and_reads_cache() {
+        let mut chr = CnromChrStorage::new(&[]);
+        chr.write_chr(0x100, 0xab);
+        assert_eq!(chr.read_chr(0x100), 0xab);
+    }
+
+    #[test]
+    fn chr_refresh_copies_source_to_cache() {
+        let mut source = vec![0; 0x4000];
+        source[0x2100] = 0xcd;
+        let mut chr = CnromChrStorage::new(&source);
+        chr.write_register(0x8000, 1);
+        assert_eq!(chr.read_chr(0x100), 0xcd);
     }
 }

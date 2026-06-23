@@ -1,14 +1,14 @@
 use crate::ines::INesFile;
 use crate::ines::NametableArrangement;
-use j87::MapperJ87;
+use j87::{J87ChrStorage, MapperJ87};
 use mapper0::Mapper0;
 use mapper2::Mapper2;
-use mapper3::Mapper3;
+use mapper3::{CnromChrStorage, Mapper3};
 use mapper7::Mapper7;
-use mapper34::Mapper34;
-use mmc1::MMC1;
-use mmc3::MMC3;
-use vrc24::Vrc24;
+use mapper34::{Mapper34, Mapper34ChrStorage};
+use mmc1::{MMC1, Mmc1ChrStorage};
+use mmc3::{MMC3, Mmc3ChrStorage};
+use vrc24::{Vrc24, Vrc24ChrStorage};
 pub use vrc24::VrcVariant;
 
 const CARTRIDGE_START_ADDR: u16 = 0x4020;
@@ -66,17 +66,6 @@ impl From<NametableArrangement> for Mirroring {
     }
 }
 
-fn vrc24_chr_storage(chr_rom: &[u8], variant: VrcVariant) -> Box<dyn ChrStorage> {
-    let (s0, s1) = variant.bit_positions();
-    Box::new(chr_storage::Vrc24ChrStorage::new(
-        chr_rom,
-        s0,
-        s1,
-        variant.is_vrc4(),
-        variant.chr_shift_low_bit(),
-    ))
-}
-
 pub fn create_cartridge(f: &INesFile) -> (Box<dyn Cartridge>, Box<dyn ChrStorage>, Mirroring) {
     let mapper_no = f.header().mapper_no;
     let mirroring = if f.header().ignore_mirror_control {
@@ -93,7 +82,7 @@ pub fn create_cartridge(f: &INesFile) -> (Box<dyn Cartridge>, Box<dyn ChrStorage
         ),
         1 => (
             Box::new(MMC1::new(f.read_prg_rom(), mirroring)),
-            Box::new(chr_storage::Mmc1ChrStorage::new(chr_rom)),
+            Box::new(Mmc1ChrStorage::new(chr_rom)),
             mirroring,
         ),
         2 => (
@@ -103,7 +92,7 @@ pub fn create_cartridge(f: &INesFile) -> (Box<dyn Cartridge>, Box<dyn ChrStorage
         ),
         3 => (
             Box::new(Mapper3::new(f.read_prg_rom())),
-            Box::new(chr_storage::CnromChrStorage::new(chr_rom)),
+            Box::new(CnromChrStorage::new(chr_rom)),
             mirroring,
         ),
         4 => (
@@ -112,7 +101,7 @@ pub fn create_cartridge(f: &INesFile) -> (Box<dyn Cartridge>, Box<dyn ChrStorage
                 f.header().ignore_mirror_control,
                 rom_contains_signature(f, MMC3_ALT_TEST_SIGNATURE),
             )),
-            Box::new(chr_storage::Mmc3ChrStorage::new(chr_rom)),
+            Box::new(Mmc3ChrStorage::new(chr_rom)),
             mirroring,
         ),
         7 => (
@@ -129,7 +118,7 @@ pub fn create_cartridge(f: &INesFile) -> (Box<dyn Cartridge>, Box<dyn ChrStorage
             };
             (
                 Box::new(Mapper34::new(f.read_prg_rom(), board)),
-                Box::new(chr_storage::Mapper34ChrStorage::new(chr_rom, is_nina)),
+                Box::new(Mapper34ChrStorage::new(chr_rom, is_nina)),
                 mirroring,
             )
         }
@@ -139,17 +128,19 @@ pub fn create_cartridge(f: &INesFile) -> (Box<dyn Cartridge>, Box<dyn ChrStorage
                 2 => VrcVariant::Vrc4c,
                 _ => VrcVariant::Vrc4a,
             };
+            let (s0, s1) = variant.bit_positions();
             (
                 Box::new(Vrc24::new(f.read_prg_rom(), variant)),
-                vrc24_chr_storage(chr_rom, variant),
+                Box::new(Vrc24ChrStorage::new(chr_rom, s0, s1, variant.is_vrc4(), variant.chr_shift_low_bit())),
                 mirroring,
             )
         }
         22 => {
             let variant = VrcVariant::Vrc2a;
+            let (s0, s1) = variant.bit_positions();
             (
                 Box::new(Vrc24::new(f.read_prg_rom(), variant)),
-                vrc24_chr_storage(chr_rom, variant),
+                Box::new(Vrc24ChrStorage::new(chr_rom, s0, s1, variant.is_vrc4(), variant.chr_shift_low_bit())),
                 mirroring,
             )
         }
@@ -160,9 +151,10 @@ pub fn create_cartridge(f: &INesFile) -> (Box<dyn Cartridge>, Box<dyn ChrStorage
                 3 => VrcVariant::Vrc2b,
                 _ => VrcVariant::Vrc4f,
             };
+            let (s0, s1) = variant.bit_positions();
             (
                 Box::new(Vrc24::new(f.read_prg_rom(), variant)),
-                vrc24_chr_storage(chr_rom, variant),
+                Box::new(Vrc24ChrStorage::new(chr_rom, s0, s1, variant.is_vrc4(), variant.chr_shift_low_bit())),
                 mirroring,
             )
         }
@@ -173,15 +165,16 @@ pub fn create_cartridge(f: &INesFile) -> (Box<dyn Cartridge>, Box<dyn ChrStorage
                 3 => VrcVariant::Vrc2c,
                 _ => VrcVariant::Vrc4b,
             };
+            let (s0, s1) = variant.bit_positions();
             (
                 Box::new(Vrc24::new(f.read_prg_rom(), variant)),
-                vrc24_chr_storage(chr_rom, variant),
+                Box::new(Vrc24ChrStorage::new(chr_rom, s0, s1, variant.is_vrc4(), variant.chr_shift_low_bit())),
                 mirroring,
             )
         }
         87 => (
             Box::new(MapperJ87::new(f.read_prg_rom(), f.read_prg_rom().len())),
-            Box::new(chr_storage::J87ChrStorage::new(chr_rom)),
+            Box::new(J87ChrStorage::new(chr_rom)),
             mirroring,
         ),
         _ => panic!("Unsupported cartridge mapper no: {}", f.header().mapper_no),
