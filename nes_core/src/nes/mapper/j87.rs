@@ -43,21 +43,3 @@ impl Cartridge for MapperJ87 {
         CartridgeOperation::None
     }
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_extract_band_selector_value() {
-        fn extract_band_selector_value(value: u8) -> u8 {
-            let mut r = (value & 0x01) << 1;
-            r |= (value & 0x02) >> 1;
-            r
-        }
-        assert_eq!(extract_band_selector_value(0x00), 0);
-        assert_eq!(extract_band_selector_value(0x02), 1);
-        assert_eq!(extract_band_selector_value(0x01), 2);
-        assert_eq!(extract_band_selector_value(0x03), 3);
-    }
-}

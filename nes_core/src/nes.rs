@@ -65,10 +65,7 @@ impl<R: Render, D: AudioDriver> NesMcu<R, D> {
     /// Tick PPU by one dot.
     /// Pattern data is passed through from the cartridge for rendering.
     pub fn tick_ppu(&mut self) {
-        let (scanline, dot) = self.ppu.timing();
-        let rendering_enabled = self.ppu.rendering_enabled();
         self.ppu.tick(&mut *self.cartridge);
-        self.cartridge.on_ppu_tick(scanline, dot, rendering_enabled);
     }
 
     /// Tick APU frame counter. Returns true if frame IRQ should be triggered.
