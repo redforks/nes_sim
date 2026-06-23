@@ -16,7 +16,8 @@ pub struct MMC3 {
     prg_ram: [u8; PRG_RAM_SIZE],
     mirroring_locked: bool,
     bank_select: u8,
-    bank_registers: [u8; 8],
+    reg_6: u8,
+    reg_7: u8,
     prg_ram_enabled: bool,
     prg_ram_write_protect: bool,
     prg_offsets: [usize; 4],
@@ -45,7 +46,8 @@ impl MMC3 {
             prg_ram: [0; PRG_RAM_SIZE],
             mirroring_locked,
             bank_select: 0,
-            bank_registers: [0; 8],
+            reg_6: 0,
+            reg_7: 0,
             prg_ram_enabled: true,
             prg_ram_write_protect: false,
             prg_offsets: [0; 4],
@@ -82,8 +84,8 @@ impl MMC3 {
     fn sync_prg_banks(&mut self) {
         let last_bank = self.prg_bank_count() - 1;
         let second_last_bank = last_bank - 1;
-        let bank6 = self.normalize_prg_bank(self.bank_registers[6]);
-        let bank7 = self.normalize_prg_bank(self.bank_registers[7]);
+        let bank6 = self.normalize_prg_bank(self.reg_6);
+        let bank7 = self.normalize_prg_bank(self.reg_7);
         let prg_mode = (self.bank_select & 0x40) != 0;
 
         if prg_mode {
@@ -109,8 +111,11 @@ impl MMC3 {
     }
 
     fn write_bank_data(&mut self, value: u8) {
-        let target = (self.bank_select & 0x07) as usize;
-        self.bank_registers[target] = value;
+        match self.bank_select & 0x07 {
+            6 => self.reg_6 = value,
+            7 => self.reg_7 = value,
+            _ => {}
+        }
         self.sync_prg_banks();
     }
 
