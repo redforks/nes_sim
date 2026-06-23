@@ -18,11 +18,7 @@ impl MapperJ87 {
 }
 
 impl Cartridge for MapperJ87 {
-    fn read(&mut self, address: u16) -> u8 {
-        self.peek(address)
-    }
-
-    fn peek(&self, address: u16) -> u8 {
+    fn read(&self, address: u16) -> u8 {
         match address {
             0x8000..=0xffff => {
                 let mut offset = (address - 0x8000) as usize;

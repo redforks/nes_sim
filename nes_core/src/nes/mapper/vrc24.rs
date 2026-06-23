@@ -118,11 +118,7 @@ impl Vrc24 {
 }
 
 impl Cartridge for Vrc24 {
-    fn read(&mut self, address: u16) -> u8 {
-        self.peek(address)
-    }
-
-    fn peek(&self, address: u16) -> u8 {
+    fn read(&self, address: u16) -> u8 {
         match address {
             CARTRIDGE_START_ADDR..=0x5fff => 0,
             0x6000..=0x6fff => {

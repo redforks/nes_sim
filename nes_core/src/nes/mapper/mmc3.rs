@@ -163,11 +163,7 @@ impl MMC3 {
 }
 
 impl Cartridge for MMC3 {
-    fn read(&mut self, address: u16) -> u8 {
-        self.peek(address)
-    }
-
-    fn peek(&self, address: u16) -> u8 {
+    fn read(&self, address: u16) -> u8 {
         match address {
             CARTRIDGE_START_ADDR..=0x5fff => 0,
             0x6000..=0x7fff => {

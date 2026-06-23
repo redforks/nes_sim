@@ -182,15 +182,15 @@ impl<R: Render, D: AudioDriver> Mcu for NesMcu<R, D> {
         value
     }
 
-    fn peek(&self, address: u16) -> u8 {
+fn peek(&self, address: u16) -> u8 {
         match address {
             0x0000..=0x1fff => self.lower_ram.peek(address),
-             0x2000..=0x3fff => self.ppu.peek(address),
+              0x2000..=0x3fff => self.ppu.peek(address),
             0x4015 => self.apu.peek(address),
             0x4016 | 0x4017 => self.controller.peek(address),
             0x4000..=0x401f => self.open_bus,
             0x4020..=0x40ff => self.open_bus,
-            0x4100..=0xffff => self.cartridge.peek(address),
+            0x4100..=0xffff => self.cartridge.read(address),
         }
     }
 

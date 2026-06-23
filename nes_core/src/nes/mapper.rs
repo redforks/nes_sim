@@ -188,8 +188,7 @@ fn rom_contains_signature(file: &INesFile, signature: &str) -> bool {
 }
 
 pub trait Cartridge {
-    fn read(&mut self, address: u16) -> u8;
-    fn peek(&self, address: u16) -> u8;
+    fn read(&self, address: u16) -> u8;
     fn write(&mut self, address: u16, value: u8) -> CartridgeOperation;
     fn on_ppu_tick(&mut self, _scanline: u16, _dot: u16, _rendering_enabled: bool) {}
     fn notify_vram_address(&mut self, _addr: u16) {}
@@ -214,11 +213,7 @@ impl TestCartridge {
 
 #[cfg(test)]
 impl Cartridge for TestCartridge {
-    fn read(&mut self, address: u16) -> u8 {
-        self.peek(address)
-    }
-
-    fn peek(&self, address: u16) -> u8 {
+    fn read(&self, address: u16) -> u8 {
         if address >= 0x8000 {
             self.prg_rom[(address - 0x8000) as usize]
         } else {

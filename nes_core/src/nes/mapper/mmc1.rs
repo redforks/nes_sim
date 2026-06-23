@@ -79,11 +79,7 @@ impl MMC1 {
 }
 
 impl Cartridge for MMC1 {
-    fn read(&mut self, address: u16) -> u8 {
-        self.peek(address)
-    }
-
-    fn peek(&self, address: u16) -> u8 {
+    fn read(&self, address: u16) -> u8 {
         match address {
             0x8000..=0xbfff => self.read_prg_bank(self.lower_prg_bank(), address - 0x8000),
             0xc000..=0xffff => self.read_prg_bank(self.upper_prg_bank(), address - 0xc000),

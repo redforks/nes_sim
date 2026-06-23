@@ -31,11 +31,7 @@ impl Default for Mapper0 {
 }
 
 impl Cartridge for Mapper0 {
-    fn read(&mut self, address: u16) -> u8 {
-        self.peek(address)
-    }
-
-    fn peek(&self, address: u16) -> u8 {
+    fn read(&self, address: u16) -> u8 {
         match address {
             CARTRIDGE_START_ADDR..=0x7fff => self.ram[(address - CARTRIDGE_START_ADDR) as usize],
             0x8000..=0xffff => {
