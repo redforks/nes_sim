@@ -306,55 +306,47 @@ impl<R: Render> Ppu<R> {
         if rendering_enabled
             && (self.timing.scanline < 240
                 || (self.timing.scanline == 261 && self.rendering_enabled_at_scanline_start))
+            && self.timing.dot % 2 == 1
         {
-            let fetch_addr = if ((1..=256).contains(&self.timing.dot)
-                || (321..=336).contains(&self.timing.dot))
-                && self.timing.dot % 2 == 1
-            {
-                // BG tile fetch: only pattern-table accesses (fetch types 2-3).
-                // Notifications are shifted +2 dots (base 3/323 instead of 1/321)
-                // so that the first BG pattern appears at dot 7 rather than dot 5.
-                // Together with the sprite base (first pattern at dot 263), this
-                // gives the real hardware's 256-dot gap between mode $10 and $08.
-                let base_dot = if self.timing.dot <= 256 { 3 } else { 323 };
-                if self.timing.dot < base_dot {
-                    None
-                } else {
-                    let fetch_type = (((self.timing.dot - base_dot) / 2) % 4) as usize;
-                    if fetch_type >= 2 {
-                        Some(if self.registers.ctrl.background_pattern_table() {
-                            0x1000
-                        } else {
-                            0x0000
-                        })
-                    } else {
-                        None
+            match self.timing.dot {
+                1..=256 | 321..=336 => {
+                    // BG tile fetch: only pattern-table accesses (fetch types 2-3).
+                    // Notifications are shifted +2 dots (base 3/323 instead of 1/321)
+                    // so that the first BG pattern appears at dot 7 rather than dot 5.
+                    // Together with the sprite base (first pattern at dot 263), this
+                    // gives the real hardware's 256-dot gap between mode $10 and $08.
+                    let base_dot = if self.timing.dot <= 256 { 3 } else { 323 };
+                    if self.timing.dot >= base_dot {
+                        let fetch_type = (((self.timing.dot - base_dot) / 2) % 4) as usize;
+                        if fetch_type >= 2 {
+                            self.cartridge.notify_vram_address(
+                                if self.registers.ctrl.background_pattern_table() {
+                                    0x1000
+                                } else {
+                                    0x0000
+                                },
+                            );
+                        }
                     }
                 }
-            } else if (259..=320).contains(&self.timing.dot) && self.timing.dot % 2 == 1 {
-                // Sprite tile fetch: only pattern-table accesses (fetch types 2-3).
-                // Emitted on odd dots to align the MMC3 counter clock with the
-                // observed ~dot-260 hardware timing.
-                let fetch_type = (((self.timing.dot - 259) / 2) % 4) as usize;
-                if fetch_type >= 2 {
-                    Some(
-                        if self.registers.ctrl.sprite_size()
-                            || self.registers.ctrl.sprite_pattern_table()
-                        {
-                            0x1000
-                        } else {
-                            0x0000
-                        },
-                    )
-                } else {
-                    None
+                259..=320 => {
+                    // Sprite tile fetch: only pattern-table accesses (fetch types 2-3).
+                    // Emitted on odd dots to align the MMC3 counter clock with the
+                    // observed ~dot-260 hardware timing.
+                    let fetch_type = (((self.timing.dot - 259) / 2) % 4) as usize;
+                    if fetch_type >= 2 {
+                        self.cartridge.notify_vram_address(
+                            if self.registers.ctrl.sprite_size()
+                                || self.registers.ctrl.sprite_pattern_table()
+                            {
+                                0x1000
+                            } else {
+                                0x0000
+                            },
+                        );
+                    }
                 }
-            } else {
-                None
-            };
-
-            if let Some(fetch_addr) = fetch_addr {
-                self.cartridge.notify_vram_address(fetch_addr);
+                _ => {}
             }
         }
 
