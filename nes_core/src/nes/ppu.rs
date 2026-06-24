@@ -483,7 +483,7 @@ impl<R: Render> Ppu<R> {
         }
     }
 
-        fn write_ppureg(&mut self, address: u16, value: u8) {
+    fn write_ppureg(&mut self, address: u16, value: u8) {
         self.refresh_bus_latch(value);
         let reg = normalize_ppu_addr(address);
         match reg {
@@ -629,8 +629,13 @@ impl<R: Render> Ppu<R> {
         } else {
             0x0000
         };
-        let color_idx =
-            Self::read_pattern_pixel(&*self.cartridge, base_addr, tile_idx, tile_fine_x, tile_fine_y);
+        let color_idx = Self::read_pattern_pixel(
+            &*self.cartridge,
+            base_addr,
+            tile_idx,
+            tile_fine_x,
+            tile_fine_y,
+        );
 
         (palette_idx, color_idx)
     }

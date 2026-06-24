@@ -8,28 +8,19 @@ Core domain for pattern table data access across mapper implementations.
 Tile graphics data stored in pattern tables, accessed by the PPU during rendering.
 _Avoid_: Pattern table data, sprite data
 
-**ChrStorage**:
-A trait defining the interface for CHR read and write operations (`read_chr`, `write_chr`). No constructor, no refresh.
-_Avoid_: ChrInterface, ChrAccess
+**Cartridge**:
+Trait defining CPU+PPU operations for mapper-specific implementations. Contains `read_chr` and `write_chr` methods directly on the trait (alongside `read`, `write` for PRG/CartridgeOperation).
 
 **DirectChr**:
-A ChrStorage implementation where the full CHR data fits in a fixed 8KB array. Read and write map directly by address modulo 0x2000. No caching layer.
-_Avoid_: FlatChr, SimpleChr
-
-**WindowedChr**:
-A ChrStorage implementation where CHR data lives in a full memory pool (`Vec<u8>`) with a cached 8KB read window. `read_chr` reads from the cache; write-through to source is provided via an inherent `write_chr_with_source` method (not on the trait). Window refresh is an inherent method, not on the trait.
-_Avoid_: BankedChr, CachedChr
-
-**Cartridge**:
-Enum dispatching CPU and PPU operations to mapper-specific implementations. Holds a concrete storage type per variant.
-
-**Mapper**:
-Struct implementing PRG/CHR bank switching and memory mapping logic. Composes with a concrete `ChrStorage` (either `DirectChr` or `WindowedChr`). Owns `has_chr_ram` policy for write gating.
+Standalone struct for flat 8KB CHR storage (`[u8; 0x2000]`). Read and write map directly by address modulo 0x2000. Used by mappers with flat (non-banked) CHR: NRom, UxRom, AxRom, CnRom.
 
 **BxRom**:
-Mapper 34 board variant (BNROM). PRG banking via writes to `$8000-$FFFF`; CHR is flat 8KB (no banking).
+Mapper 34 board variant (BNROM). Stores CHR as `Vec<u8>` but it is flat 8KB (no banking, modulo 0x2000). PRG banking via writes to `$8000-$FFFF`.
 _Avoid_: BxROM, BNROM-with-CHR
 
-**Nina001Rom**:
-Mapper 34 board variant (NINA-001). PRG banking via writes to `$8000-$FFFF` and `$7FFD` (bit 0); CHR banking via `$7FFE` (CHR bank 0, 4KB) and `$7FFF` (CHR bank 1, 4KB). Both CHR banks selectable from 0..15.
-_Avoid_: Nina001, Nina-001
+**Nina001**:
+Mapper 34 board variant (NINA-001). CHR data as `Vec<u8>` with 4KB banking via `$7FFE` (bank 0, selectable 0..15) and `$7FFF` (bank 1, selectable 0..15). PRG banking via `$8000-$FFFF` and `$7FFD` (bit 0).
+_Avoid_: Nina-001
+
+**Banked CHR (inline)**:
+Mappers with bankable CHR (MMC1, MMC3, Vrc24, J87, CnRom, Nina001) manage their own `Vec<u8>` and caching window inline — no shared abstraction. Write gating via `has_chr_ram` per mapper. CHR write-back to underlying `Vec` is direct (no write-through cache).
