@@ -17,7 +17,7 @@ struct NewFrameDetector {
 
 impl NewFrameDetector {
     fn is_new_frame<R: Render>(&mut self, ppu: &Ppu<R>) -> bool {
-        let frame_no = ppu.frame_no();
+        let frame_no = ppu.timing().frame_no();
         if frame_no != self.last_frame_no {
             self.last_frame_no = frame_no;
             true

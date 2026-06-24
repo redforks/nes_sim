@@ -38,7 +38,7 @@ where
     }
 
     pub fn frame_no(&self) -> usize {
-        self.machine.mcu().ppu().frame_no()
+        self.machine.mcu().ppu().timing().frame_no()
     }
 
     /// Run the machine for a single frame.

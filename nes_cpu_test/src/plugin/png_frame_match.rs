@@ -69,7 +69,7 @@ impl<A: AudioDriver> Plugin<NesMcu<ImageRender, A>> for PngFrameMatch {
             return;
         }
 
-        let frame_no = cpu.mcu().ppu().frame_no();
+        let frame_no = cpu.mcu().ppu().timing().frame_no();
         let actual = cpu.mcu().ppu().renderer().borrow_image();
         for idx in 0..self.expected.len() {
             if !self.matched[idx] && Self::compare_frame(actual, &self.expected[idx].1) {

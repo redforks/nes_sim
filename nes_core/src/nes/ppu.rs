@@ -44,8 +44,8 @@ impl BackgroundActivation {
     }
 }
 
-#[derive(Copy, Clone)]
-struct Timing {
+#[derive(Copy, Clone, Default)]
+pub struct Timing {
     scanline: u16,
     dot: u16,
     odd_frame: bool,
@@ -99,6 +99,18 @@ impl Timing {
     /// Return true if just leave vblank timing, scanline 261, dot 1, should clear vblank flag
     fn leave_vblank(&self) -> bool {
         self.scanline == 261 && self.dot == 1
+    }
+
+    pub fn frame_no(&self) -> usize {
+        self.frame_no
+    }
+
+    pub fn scanline(&self) -> u16 {
+        self.scanline
+    }
+
+    pub fn dot(&self) -> u16 {
+        self.dot
     }
 }
 
@@ -165,20 +177,12 @@ impl<R: Render> Ppu<R> {
         self.rendering_enabled_at_scanline_start = false;
     }
 
-    pub fn timing(&self) -> (u16, u16) {
-        (self.timing.scanline, self.timing.dot)
-    }
-
-    pub fn set_mirroring(&mut self, mirroring: Mirroring) {
-        self.nametable.set_mirroring(mirroring);
+    pub fn timing(&self) -> &Timing {
+        &self.timing
     }
 
     pub fn cartridge_irq_pending(&self) -> bool {
         self.cartridge.irq_pending()
-    }
-
-    pub fn frame_no(&self) -> usize {
-        self.timing.frame_no
     }
 
     pub fn renderer(&self) -> &R {
@@ -759,7 +763,10 @@ impl<R: Render> Mcu for Ppu<R> {
                 if let CartridgeOperation::UpdateNametableMirroring(mirroring) =
                     self.cartridge.write(address, value)
                 {
-                    self.set_mirroring(mirroring);
+                    {
+                        let this = &mut *self;
+                        this.nametable.set_mirroring(mirroring);
+                    };
                 }
             }
             _ => {}

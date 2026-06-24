@@ -1,6 +1,7 @@
 use nes_core::mcu::Mcu;
 use nes_core::nes::NesMcu;
 use nes_core::nes::apu::AudioDriver;
+use nes_core::nes::ppu::Timing;
 use nes_core::render::Render;
 use nes_core::{Cpu, ExecuteResult, Plugin, SYSTEM_CYCLES_PER_PPU_CYCLE, get_system_cycles};
 
@@ -241,7 +242,7 @@ impl<M: Mcu> Plugin<M> for ExitTestPlugin {
 
 pub struct NesReportPlugin<R, A> {
     inner: ReportPlugin,
-    timing: (u16, u16),
+    timing: Timing,
     _phantom: std::marker::PhantomData<(R, A)>,
 }
 
@@ -251,7 +252,7 @@ impl<R: Render, A: AudioDriver> NesReportPlugin<R, A> {
             quiet,
             NesReportPlugin {
                 inner: ReportPlugin::inner_new(),
-                timing: (0, 0),
+                timing: Timing::default(),
                 _phantom: std::marker::PhantomData,
             },
         )
@@ -261,11 +262,11 @@ impl<R: Render, A: AudioDriver> NesReportPlugin<R, A> {
 impl<R: Render, A: AudioDriver> Plugin<NesMcu<R, A>> for NesReportPlugin<R, A> {
     fn start(&mut self, cpu: &mut Cpu<NesMcu<R, A>>) {
         self.inner.start(cpu);
-        self.timing = cpu.mcu().ppu_timing();
+        self.timing = *cpu.mcu().ppu_timing();
     }
 
     fn end(&mut self, cpu: &mut Cpu<NesMcu<R, A>>) {
-        let ppu = format!("PPU:{:3},{:3} ", self.timing.0, self.timing.1);
+        let ppu = format!("PPU:{:3},{:3} ", self.timing.scanline(), self.timing.dot());
         self.inner.output(cpu, &ppu);
     }
 }

@@ -4,7 +4,7 @@ use crate::mcu::Mcu;
 use crate::nes::apu::{Apu, AudioDriver};
 use crate::nes::controller::{Button, Controller};
 use crate::nes::lower_ram::LowerRam;
-use crate::nes::ppu::Ppu;
+use crate::nes::ppu::{Ppu, Timing};
 use crate::render::Render;
 
 pub mod apu;
@@ -138,7 +138,7 @@ impl<R: Render, D: AudioDriver> NesMcu<R, D> {
         self.controller.b.release(button);
     }
 
-    pub fn ppu_timing(&self) -> (u16, u16) {
+    pub fn ppu_timing(&self) -> &Timing {
         self.ppu.timing()
     }
 
