@@ -1,11 +1,11 @@
 use crate::ines::INesFile;
 use crate::ines::NametableArrangement;
 use axrom::AxRom;
-use cnrom::CnRom;
 use bxrom::BxRom;
-use nina001::Nina001Rom;
+use cnrom::CnRom;
 use mmc1::MMC1;
 use mmc3::MMC3;
+use nina001::Nina001;
 use nrom::NRom;
 use uxrom::UxRom;
 use vrc24::Vrc24;
@@ -15,12 +15,12 @@ const CARTRIDGE_START_ADDR: u16 = 0x4020;
 const MMC3_ALT_TEST_SIGNATURE: &str = "6-MMC3_alt";
 
 mod axrom;
+mod bxrom;
 mod cnrom;
 mod j87;
-mod bxrom;
-mod nina001;
 mod mmc1;
 mod mmc3;
+mod nina001;
 mod nrom;
 mod uxrom;
 mod vrc24;
@@ -90,7 +90,7 @@ pub fn create_cartridge(f: &INesFile) -> (Box<dyn Cartridge>, Mirroring) {
         34 => {
             let is_nina = chr_rom.len() > 0x2000;
             if is_nina {
-                (Box::new(Nina001Rom::new(f.read_prg_rom(), chr_rom)), mirroring)
+                (Box::new(Nina001::new(f.read_prg_rom(), chr_rom)), mirroring)
             } else {
                 (Box::new(BxRom::new(f.read_prg_rom(), chr_rom)), mirroring)
             }
@@ -140,7 +140,7 @@ pub fn create_cartridge(f: &INesFile) -> (Box<dyn Cartridge>, Mirroring) {
         87 => {
             let prg_len = f.read_prg_rom().len();
             (
-                Box::new(j87::MapperJ87::new(f.read_prg_rom(), prg_len, chr_rom)),
+                Box::new(j87::J87::new(f.read_prg_rom(), prg_len, chr_rom)),
                 mirroring,
             )
         }

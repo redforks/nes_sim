@@ -1,9 +1,9 @@
-use super::{Cartridge, CARTRIDGE_START_ADDR, CartridgeOperation};
+use super::{CARTRIDGE_START_ADDR, Cartridge, CartridgeOperation};
 
 const PRG_ROM_BANK_SIZE: usize = 0x8000;
 const CARTRIDGE_RAM_SIZE: usize = 0x4000 - 0x20;
 
-pub struct Nina001Rom {
+pub struct Nina001 {
     prg_rom: Vec<u8>,
     ram: [u8; CARTRIDGE_RAM_SIZE],
     selected_prg_bank: usize,
@@ -14,7 +14,7 @@ pub struct Nina001Rom {
     chr_bank1: usize,
 }
 
-impl Nina001Rom {
+impl Nina001 {
     pub fn new(prg_rom: &[u8], chr_rom: &[u8]) -> Self {
         debug_assert!(!prg_rom.is_empty());
         debug_assert_eq!(prg_rom.len() % PRG_ROM_BANK_SIZE, 0);
@@ -49,7 +49,7 @@ impl Nina001Rom {
     }
 }
 
-impl Cartridge for Nina001Rom {
+impl Cartridge for Nina001 {
     fn read(&self, address: u16) -> u8 {
         match address {
             CARTRIDGE_START_ADDR..=0x7fff => self.ram[(address - CARTRIDGE_START_ADDR) as usize],
@@ -79,7 +79,11 @@ impl Cartridge for Nina001Rom {
 
     fn read_chr(&self, address: u16) -> u8 {
         let addr = address as usize % 0x2000;
-        let bank = if addr < 0x1000 { self.chr_bank0 } else { self.chr_bank1 };
+        let bank = if addr < 0x1000 {
+            self.chr_bank0
+        } else {
+            self.chr_bank1
+        };
         let src = bank * 0x1000 + (addr % 0x1000);
         let len = self.chr_data.len();
         self.chr_data[src % len]
@@ -90,7 +94,11 @@ impl Cartridge for Nina001Rom {
             return;
         }
         let addr = address as usize % 0x2000;
-        let bank = if addr < 0x1000 { self.chr_bank0 } else { self.chr_bank1 };
+        let bank = if addr < 0x1000 {
+            self.chr_bank0
+        } else {
+            self.chr_bank1
+        };
         let src = bank * 0x1000 + (addr % 0x1000);
         let len = self.chr_data.len();
         self.chr_data[src % len] = value;
@@ -106,7 +114,7 @@ mod tests {
         let mut data = vec![0u8; 0x4000];
         data[0x0000] = 0xa1;
         data[0x1000] = 0xb1;
-        let mut mapper = Nina001Rom::new(&[0; PRG_ROM_BANK_SIZE], &data);
+        let mut mapper = Nina001::new(&[0; PRG_ROM_BANK_SIZE], &data);
         mapper.write(0x7ffe, 0x00);
         mapper.write(0x7fff, 0x01);
         assert_eq!(mapper.read_chr(0x0000), 0xa1);

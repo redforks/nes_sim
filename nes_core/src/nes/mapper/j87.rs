@@ -1,13 +1,13 @@
 use super::{Cartridge, CartridgeOperation};
 
-pub struct MapperJ87 {
+pub struct J87 {
     prg_rom: [u8; 32768],
     is_16k_prg_rom: bool,
     chr_bands: [[u8; 0x2000]; 4],
     chr_active_band: u8,
 }
 
-impl MapperJ87 {
+impl J87 {
     pub fn new(prg_rom: &[u8], prg_len: usize, chr_rom: &[u8]) -> Self {
         assert!(prg_len == (32 * 1024) || prg_len == (16 * 1024));
         let mut r = Self {
@@ -34,7 +34,7 @@ impl MapperJ87 {
     }
 }
 
-impl Cartridge for MapperJ87 {
+impl Cartridge for J87 {
     fn read(&self, address: u16) -> u8 {
         match address {
             0x8000..=0xffff => {
@@ -81,7 +81,7 @@ mod tests {
         data[0x4000] = 0x30;
         data[0x6000] = 0x40;
         let prg = vec![0u8; 32768];
-        let mut mapper = MapperJ87::new(&prg, 32768, &data);
+        let mut mapper = J87::new(&prg, 32768, &data);
         assert_eq!(mapper.read_chr(0), 0x10);
         mapper.write(0x6000, 0x02);
         assert_eq!(mapper.read_chr(0), 0x20);
