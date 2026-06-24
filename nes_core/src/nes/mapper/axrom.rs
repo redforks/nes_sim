@@ -1,10 +1,10 @@
 use super::chr_storage::DirectChr;
-use super::{Cartridge, CARTRIDGE_START_ADDR, CartridgeOperation};
+use super::{CARTRIDGE_START_ADDR, Cartridge, CartridgeOperation, Mirroring};
 
-const PRG_ROM_BANK_SIZE: usize = 0x4000;
+const PRG_ROM_BANK_SIZE: usize = 0x8000;
 const CARTRIDGE_RAM_SIZE: usize = 0x4000 - 0x20;
 
-pub struct Mapper2 {
+pub struct AxRom {
     prg_rom: Vec<u8>,
     ram: [u8; CARTRIDGE_RAM_SIZE],
     selected_prg_bank: usize,
@@ -12,7 +12,7 @@ pub struct Mapper2 {
     chr: DirectChr,
 }
 
-impl Mapper2 {
+impl AxRom {
     pub fn new(prg_rom: &[u8], chr_rom: &[u8]) -> Self {
         debug_assert!(!prg_rom.is_empty());
         debug_assert_eq!(prg_rom.len() % PRG_ROM_BANK_SIZE, 0);
@@ -31,10 +31,6 @@ impl Mapper2 {
         self.selected_prg_bank % self.prg_bank_count
     }
 
-    fn last_prg_bank(&self) -> usize {
-        self.prg_bank_count - 1
-    }
-
     fn read_prg_bank(&self, bank: usize, address: u16) -> u8 {
         let bank_start = bank * PRG_ROM_BANK_SIZE;
         let offset = (address as usize) % PRG_ROM_BANK_SIZE;
@@ -42,12 +38,11 @@ impl Mapper2 {
     }
 }
 
-impl Cartridge for Mapper2 {
+impl Cartridge for AxRom {
     fn read(&self, address: u16) -> u8 {
         match address {
             CARTRIDGE_START_ADDR..=0x7fff => self.ram[(address - CARTRIDGE_START_ADDR) as usize],
-            0x8000..=0xbfff => self.read_prg_bank(self.selected_prg_bank(), address - 0x8000),
-            0xc000..=0xffff => self.read_prg_bank(self.last_prg_bank(), address - 0xc000),
+            0x8000..=0xffff => self.read_prg_bank(self.selected_prg_bank(), address - 0x8000),
             _ => unreachable!(),
         }
     }
@@ -56,13 +51,19 @@ impl Cartridge for Mapper2 {
         match address {
             CARTRIDGE_START_ADDR..=0x7fff => {
                 self.ram[(address - CARTRIDGE_START_ADDR) as usize] = value;
+                CartridgeOperation::None
             }
             0x8000..=0xffff => {
-                self.selected_prg_bank = (value as usize) % self.prg_bank_count;
+                self.selected_prg_bank = (value & 0x0f) as usize;
+                let mirroring = if value & 0x10 == 0 {
+                    Mirroring::LowerBank
+                } else {
+                    Mirroring::UpperBank
+                };
+                CartridgeOperation::UpdateNametableMirroring(mirroring)
             }
             _ => unreachable!(),
         }
-        CartridgeOperation::None
     }
 
     fn read_chr(&self, address: u16) -> u8 {
@@ -79,36 +80,31 @@ mod tests {
     use super::*;
 
     #[test]
-    fn reads_and_writes_cartridge_ram() {
-        let mut mapper = Mapper2::new(&[0; PRG_ROM_BANK_SIZE * 2], &[]);
-
-        mapper.write(CARTRIDGE_START_ADDR, 0x12);
-        mapper.write(0x7fff, 0x34);
-
-        assert_eq!(mapper.read(CARTRIDGE_START_ADDR), 0x12);
-        assert_eq!(mapper.read(0x7fff), 0x34);
-    }
-
-    #[test]
-    fn switches_lower_prg_bank_and_keeps_last_bank_fixed() {
+    fn switches_32k_prg_banks() {
         let mut prg_rom = [0u8; PRG_ROM_BANK_SIZE * 4];
         prg_rom[0] = 0x10;
         prg_rom[PRG_ROM_BANK_SIZE] = 0x20;
         prg_rom[PRG_ROM_BANK_SIZE * 2] = 0x30;
         prg_rom[PRG_ROM_BANK_SIZE * 3] = 0x40;
-        prg_rom[(PRG_ROM_BANK_SIZE * 4) - 1] = 0x4f;
 
-        let mut mapper = Mapper2::new(&prg_rom, &[]);
+        let mut mapper = AxRom::new(&prg_rom, &[]);
 
         assert_eq!(mapper.read(0x8000), 0x10);
-        assert_eq!(mapper.read(0xc000), 0x40);
-        assert_eq!(mapper.read(0xffff), 0x4f);
 
         mapper.write(0x8000, 0x02);
         assert_eq!(mapper.read(0x8000), 0x30);
-        assert_eq!(mapper.read(0xbfff), prg_rom[(PRG_ROM_BANK_SIZE * 3) - 1]);
-        assert_eq!(mapper.read(0xc000), 0x40);
-        assert_eq!(mapper.read(0xffff), 0x4f);
+
+        mapper.write(0xffff, 0x03);
+        assert_eq!(mapper.read(0x8000), 0x40);
     }
 
+    #[test]
+    fn switches_single_screen_mirroring() {
+        let mut mapper = AxRom::new(&[0; PRG_ROM_BANK_SIZE], &[]);
+
+        assert_eq!(
+            mapper.write(0x8000, 0x10),
+            CartridgeOperation::UpdateNametableMirroring(Mirroring::UpperBank)
+        );
+    }
 }

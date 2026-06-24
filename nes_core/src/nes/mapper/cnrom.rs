@@ -1,9 +1,9 @@
-use super::{Cartridge, CARTRIDGE_START_ADDR, CartridgeOperation};
+use super::{CARTRIDGE_START_ADDR, Cartridge, CartridgeOperation};
 
 const PRG_ROM_SIZE: usize = 0x8000;
 const CARTRIDGE_RAM_SIZE: usize = 0x4000 - 0x20;
 
-pub struct Mapper3 {
+pub struct CnRom {
     prg_rom: [u8; PRG_ROM_SIZE],
     prg_rom_len: usize,
     ram: [u8; CARTRIDGE_RAM_SIZE],
@@ -13,7 +13,7 @@ pub struct Mapper3 {
     has_chr_ram: bool,
 }
 
-impl Mapper3 {
+impl CnRom {
     pub fn new(prg_rom: &[u8], chr_rom: &[u8]) -> Self {
         debug_assert!(!prg_rom.is_empty());
         debug_assert!(prg_rom.len() <= PRG_ROM_SIZE);
@@ -48,7 +48,7 @@ impl Mapper3 {
     }
 }
 
-impl Cartridge for Mapper3 {
+impl Cartridge for CnRom {
     fn read(&self, address: u16) -> u8 {
         match address {
             CARTRIDGE_START_ADDR..=0x7fff => self.ram[(address - CARTRIDGE_START_ADDR) as usize],
@@ -95,7 +95,7 @@ mod tests {
 
     #[test]
     fn reads_and_writes_cartridge_ram() {
-        let mut mapper = Mapper3::new(&[0; 0x8000], &[]);
+        let mut mapper = CnRom::new(&[0; 0x8000], &[]);
 
         mapper.write(CARTRIDGE_START_ADDR, 0x12);
         mapper.write(0x7fff, 0x34);
@@ -110,7 +110,7 @@ mod tests {
         prg[0x0000] = 0x11;
         prg[0x3fff] = 0x22;
 
-        let mapper = Mapper3::new(&prg, &[]);
+        let mapper = CnRom::new(&prg, &[]);
 
         assert_eq!(mapper.read(0x8000), 0x11);
         assert_eq!(mapper.read(0xbfff), 0x22);
@@ -127,27 +127,27 @@ mod tests {
 
     #[test]
     fn chr_initial_state_reads_bank_0() {
-        let mapper = Mapper3::new(&[0; 0x8000], &make_chr());
+        let mapper = CnRom::new(&[0; 0x8000], &make_chr());
         assert_eq!(mapper.read_chr(0), 0x10);
     }
 
     #[test]
     fn chr_write_register_switches_bank() {
-        let mut mapper = Mapper3::new(&[0; 0x8000], &make_chr());
+        let mut mapper = CnRom::new(&[0; 0x8000], &make_chr());
         mapper.write(0x8000, 1);
         assert_eq!(mapper.read_chr(0), 0x20);
     }
 
     #[test]
     fn chr_bank_wraps_at_bank_count() {
-        let mut mapper = Mapper3::new(&[0; 0x8000], &make_chr());
+        let mut mapper = CnRom::new(&[0; 0x8000], &make_chr());
         mapper.write(0x8000, 2);
         assert_eq!(mapper.read_chr(0), 0x10);
     }
 
     #[test]
     fn chr_ram_writes_and_reads_cache() {
-        let mut mapper = Mapper3::new(&[0; 0x8000], &[]);
+        let mut mapper = CnRom::new(&[0; 0x8000], &[]);
         mapper.write_chr(0x100, 0xab);
         assert_eq!(mapper.read_chr(0x100), 0xab);
     }
@@ -156,7 +156,7 @@ mod tests {
     fn chr_refresh_copies_source_to_cache() {
         let mut source = vec![0; 0x4000];
         source[0x2100] = 0xcd;
-        let mut mapper = Mapper3::new(&[0; 0x8000], &source);
+        let mut mapper = CnRom::new(&[0; 0x8000], &source);
         mapper.write(0x8000, 1);
         assert_eq!(mapper.read_chr(0x100), 0xcd);
     }

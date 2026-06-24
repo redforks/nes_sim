@@ -1,26 +1,26 @@
 use crate::ines::INesFile;
 use crate::ines::NametableArrangement;
-use mapper0::Mapper0;
-use mapper2::Mapper2;
-use mapper3::Mapper3;
-use mapper7::Mapper7;
+use axrom::AxRom;
+use cnrom::CnRom;
 use mapper34::Mapper34;
 use mmc1::MMC1;
 use mmc3::MMC3;
+use nrom::NRom;
+use uxrom::UxRom;
 use vrc24::Vrc24;
 pub use vrc24::VrcVariant;
 
 const CARTRIDGE_START_ADDR: u16 = 0x4020;
 const MMC3_ALT_TEST_SIGNATURE: &str = "6-MMC3_alt";
 
+mod axrom;
+mod cnrom;
 mod j87;
-mod mapper0;
-mod mapper2;
-mod mapper3;
 mod mapper34;
-mod mapper7;
 mod mmc1;
 mod mmc3;
+mod nrom;
+mod uxrom;
 mod vrc24;
 
 pub mod chr_storage;
@@ -68,22 +68,13 @@ pub fn create_cartridge(f: &INesFile) -> (Box<dyn Cartridge>, Mirroring) {
     };
     let chr_rom = f.read_chr_rom();
     match mapper_no {
-        0 => (
-            Box::new(Mapper0::new(f.read_prg_rom(), chr_rom)),
-            mirroring,
-        ),
+        0 => (Box::new(NRom::new(f.read_prg_rom(), chr_rom)), mirroring),
         1 => (
             Box::new(MMC1::new(f.read_prg_rom(), chr_rom, mirroring)),
             mirroring,
         ),
-        2 => (
-            Box::new(Mapper2::new(f.read_prg_rom(), chr_rom)),
-            mirroring,
-        ),
-        3 => (
-            Box::new(Mapper3::new(f.read_prg_rom(), chr_rom)),
-            mirroring,
-        ),
+        2 => (Box::new(UxRom::new(f.read_prg_rom(), chr_rom)), mirroring),
+        3 => (Box::new(CnRom::new(f.read_prg_rom(), chr_rom)), mirroring),
         4 => (
             Box::new(MMC3::new(
                 f.read_prg_rom(),
@@ -93,10 +84,7 @@ pub fn create_cartridge(f: &INesFile) -> (Box<dyn Cartridge>, Mirroring) {
             )),
             mirroring,
         ),
-        7 => (
-            Box::new(Mapper7::new(f.read_prg_rom(), chr_rom)),
-            mirroring,
-        ),
+        7 => (Box::new(AxRom::new(f.read_prg_rom(), chr_rom)), mirroring),
         34 => {
             let is_nina = chr_rom.len() > 0x2000;
             let board = if is_nina {

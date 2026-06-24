@@ -1,14 +1,14 @@
 use super::chr_storage::DirectChr;
-use super::{Cartridge, CARTRIDGE_START_ADDR, CartridgeOperation};
+use super::{CARTRIDGE_START_ADDR, Cartridge, CartridgeOperation};
 
-pub struct Mapper0 {
+pub struct NRom {
     prg_rom: [u8; 0x8000],
     prg_rom_len: usize,
     ram: [u8; 0x4000 - 0x20],
     chr: DirectChr,
 }
 
-impl Mapper0 {
+impl NRom {
     pub fn new(prg_rom: &[u8], chr_rom: &[u8]) -> Self {
         debug_assert!(prg_rom.len() <= 0x8000);
 
@@ -23,7 +23,7 @@ impl Mapper0 {
     }
 }
 
-impl Default for Mapper0 {
+impl Default for NRom {
     fn default() -> Self {
         Self {
             prg_rom: [0; 0x8000],
@@ -34,7 +34,7 @@ impl Default for Mapper0 {
     }
 }
 
-impl Cartridge for Mapper0 {
+impl Cartridge for NRom {
     fn read(&self, address: u16) -> u8 {
         match address {
             CARTRIDGE_START_ADDR..=0x7fff => self.ram[(address - CARTRIDGE_START_ADDR) as usize],
@@ -77,7 +77,7 @@ mod tests {
 
     #[test]
     fn mcu() {
-        let mut mcu = Mapper0::default();
+        let mut mcu = NRom::default();
 
         // read-write ram
         mcu.write(CARTRIDGE_START_ADDR, 0x01);
@@ -99,7 +99,7 @@ mod tests {
         prg[0x3ffc] = 0x00;
         prg[0x3ffd] = 0x80;
 
-        let mcu = Mapper0::new(&prg, &[]);
+        let mcu = NRom::new(&prg, &[]);
 
         assert_eq!(mcu.read(0xfffc), 0x00);
         assert_eq!(mcu.read(0xfffd), 0x80);
