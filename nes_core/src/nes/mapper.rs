@@ -2,7 +2,8 @@ use crate::ines::INesFile;
 use crate::ines::NametableArrangement;
 use axrom::AxRom;
 use cnrom::CnRom;
-use mapper34::Mapper34;
+use bxrom::BxRom;
+use nina001::Nina001Rom;
 use mmc1::MMC1;
 use mmc3::MMC3;
 use nrom::NRom;
@@ -16,7 +17,8 @@ const MMC3_ALT_TEST_SIGNATURE: &str = "6-MMC3_alt";
 mod axrom;
 mod cnrom;
 mod j87;
-mod mapper34;
+mod bxrom;
+mod nina001;
 mod mmc1;
 mod mmc3;
 mod nrom;
@@ -87,15 +89,11 @@ pub fn create_cartridge(f: &INesFile) -> (Box<dyn Cartridge>, Mirroring) {
         7 => (Box::new(AxRom::new(f.read_prg_rom(), chr_rom)), mirroring),
         34 => {
             let is_nina = chr_rom.len() > 0x2000;
-            let board = if is_nina {
-                mapper34::Board::Nina001
+            if is_nina {
+                (Box::new(Nina001Rom::new(f.read_prg_rom(), chr_rom)), mirroring)
             } else {
-                mapper34::Board::BxRom
-            };
-            (
-                Box::new(Mapper34::new(f.read_prg_rom(), chr_rom, board)),
-                mirroring,
-            )
+                (Box::new(BxRom::new(f.read_prg_rom(), chr_rom)), mirroring)
+            }
         }
         21 => {
             let submapper = f.header().submapper_no.unwrap_or(1);

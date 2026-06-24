@@ -25,3 +25,11 @@ Enum dispatching CPU and PPU operations to mapper-specific implementations. Hold
 
 **Mapper**:
 Struct implementing PRG/CHR bank switching and memory mapping logic. Composes with a concrete `ChrStorage` (either `DirectChr` or `WindowedChr`). Owns `has_chr_ram` policy for write gating.
+
+**BxRom**:
+Mapper 34 board variant (BNROM). PRG banking via writes to `$8000-$FFFF`; CHR is flat 8KB (no banking).
+_Avoid_: BxROM, BNROM-with-CHR
+
+**Nina001Rom**:
+Mapper 34 board variant (NINA-001). PRG banking via writes to `$8000-$FFFF` and `$7FFD` (bit 0); CHR banking via `$7FFE` (CHR bank 0, 4KB) and `$7FFF` (CHR bank 1, 4KB). Both CHR banks selectable from 0..15.
+_Avoid_: Nina001, Nina-001
