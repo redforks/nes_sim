@@ -227,7 +227,7 @@ impl Cartridge for MMC3 {
         }
     }
 
-    fn on_ppu_tick(&mut self, scanline: u16, _dot: u16, _rendering_enabled: bool) {
+    fn on_ppu_tick(&mut self, scanline: u16) {
         if self.prev_a12 {
             self.a12_low_ticks = 0;
         } else {

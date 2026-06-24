@@ -70,13 +70,13 @@ fn triggers_irq_after_scanline_clocks() {
     mapper.write(0xe001, 0x00);
 
     for _ in 0..=MMC3_A12_LOW_FILTER_TICKS {
-        mapper.on_ppu_tick(0, 0, true);
+        mapper.on_ppu_tick(0);
     }
     mapper.notify_vram_address(0x1000);
 
     mapper.notify_vram_address(0x0000);
     for _ in 0..=MMC3_A12_LOW_FILTER_TICKS {
-        mapper.on_ppu_tick(0, 0, true);
+        mapper.on_ppu_tick(0);
     }
     mapper.notify_vram_address(0x1000);
 

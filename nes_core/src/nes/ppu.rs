@@ -274,7 +274,7 @@ impl<R: Render> Ppu<R> {
 
     pub fn tick(&mut self, cartridge: &mut dyn Cartridge) {
         let rendering_enabled = self.rendering_enabled();
-        let (prev_scanline, prev_dot) = (self.timing.scanline, self.timing.dot);
+        let (prev_scanline, _prev_dot) = (self.timing.scanline, self.timing.dot);
 
         if self.timing.dot == 0 {
             self.rendering_enabled_at_scanline_start = rendering_enabled;
@@ -437,7 +437,7 @@ impl<R: Render> Ppu<R> {
         self.timing.advance(rendering_enabled);
 
         self.effective_mask = self.registers.mask;
-        cartridge.on_ppu_tick(prev_scanline, prev_dot, rendering_enabled);
+        cartridge.on_ppu_tick(prev_scanline);
     }
 
     /// Return ppu nmi signal, it connect to Cpu nmi input line

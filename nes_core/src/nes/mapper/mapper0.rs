@@ -87,7 +87,7 @@ mod tests {
         prg[0x3ffc] = 0x00;
         prg[0x3ffd] = 0x80;
 
-        let mut mcu = Mapper0::new(&prg);
+        let mcu = Mapper0::new(&prg);
 
         assert_eq!(mcu.read(0xfffc), 0x00);
         assert_eq!(mcu.read(0xfffd), 0x80);

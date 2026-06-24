@@ -123,7 +123,7 @@ mod tests {
         prg[0x0000] = 0x11;
         prg[0x3fff] = 0x22;
 
-        let mut mapper = Mapper3::new(&prg);
+        let mapper = Mapper3::new(&prg);
 
         assert_eq!(mapper.read(0x8000), 0x11);
         assert_eq!(mapper.read(0xbfff), 0x22);

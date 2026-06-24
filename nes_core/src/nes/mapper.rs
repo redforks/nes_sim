@@ -190,7 +190,7 @@ fn rom_contains_signature(file: &INesFile, signature: &str) -> bool {
 pub trait Cartridge {
     fn read(&self, address: u16) -> u8;
     fn write(&mut self, address: u16, value: u8) -> CartridgeOperation;
-    fn on_ppu_tick(&mut self, _scanline: u16, _dot: u16, _rendering_enabled: bool) {}
+    fn on_ppu_tick(&mut self, _scanline: u16) {}
     fn notify_vram_address(&mut self, _addr: u16) {}
     fn irq_pending(&self) -> bool {
         false

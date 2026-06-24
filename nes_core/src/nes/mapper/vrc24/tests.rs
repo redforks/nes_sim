@@ -53,7 +53,7 @@ fn vrc4_irq_cycle_mode() {
     assert!(!mapper.irq_pending());
 
     for _ in 0..48 {
-        mapper.on_ppu_tick(0, 0, true);
+        mapper.on_ppu_tick(0);
     }
 
     assert!(mapper.irq_pending());

@@ -266,7 +266,7 @@ impl Cartridge for Vrc24 {
         }
     }
 
-    fn on_ppu_tick(&mut self, _scanline: u16, _dot: u16, _rendering_enabled: bool) {
+    fn on_ppu_tick(&mut self, _scanline: u16) {
         if !self.variant.is_vrc4() {
             return;
         }
