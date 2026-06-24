@@ -173,14 +173,6 @@ impl<R: Render> Ppu<R> {
         self.nametable.set_mirroring(mirroring);
     }
 
-    pub fn read_chr(&self, addr: u16) -> u8 {
-        self.cartridge.read_chr(addr)
-    }
-
-    pub fn write_chr(&mut self, addr: u16, value: u8) {
-        self.cartridge.write_chr(addr, value);
-    }
-
     pub fn cartridge_irq_pending(&self) -> bool {
         self.cartridge.irq_pending()
     }

@@ -150,7 +150,7 @@ fn set_universal_bg_color(ppu: &mut Ppu, color: u8) {
 
 fn fill_chr(ppu: &mut Ppu, pattern: &[u8]) {
     for i in 0..0x2000 {
-        ppu.write_chr(i as u16, pattern[i % pattern.len()]);
+        ppu.write_vram(i as u16, pattern[i % pattern.len()]);
     }
 }
 
@@ -197,13 +197,7 @@ fn test_render_pixel_returns_background_color() {
     set_tile_solid(&mut pattern, 0, 0, 1);
     set_bg_palette_color(&mut ppu, 0, 1, 0x16);
 
-    let pixel = render_pixel_with_setup(
-        &mut ppu,
-        &pattern,
-        |ppu| set_bg_tile(ppu, 0, 0),
-        0,
-        0,
-    );
+    let pixel = render_pixel_with_setup(&mut ppu, &pattern, |ppu| set_bg_tile(ppu, 0, 0), 0, 0);
     assert_eq!(pixel, 0x16);
 }
 
@@ -311,13 +305,7 @@ fn test_render_pixel_transparent_sprite_falls_back_to_background() {
     set_bg_palette_color(&mut ppu, 0, 1, 0x12);
     setup_sprite(&mut ppu, 0, 0, 1, 0, 0);
 
-    let pixel = render_pixel_with_setup(
-        &mut ppu,
-        &pattern,
-        |ppu| set_bg_tile(ppu, 0, 0),
-        0,
-        1,
-    );
+    let pixel = render_pixel_with_setup(&mut ppu, &pattern, |ppu| set_bg_tile(ppu, 0, 0), 0, 1);
     assert_eq!(pixel, 0x12);
 }
 
@@ -337,13 +325,7 @@ fn test_render_pixel_sprite_in_front_of_background() {
     set_sprite_palette_color(&mut ppu, 0, 2, 0x22);
     setup_sprite(&mut ppu, 0, 0, 1, 0, 0);
 
-    let pixel = render_pixel_with_setup(
-        &mut ppu,
-        &pattern,
-        |ppu| set_bg_tile(ppu, 0, 0),
-        0,
-        1,
-    );
+    let pixel = render_pixel_with_setup(&mut ppu, &pattern, |ppu| set_bg_tile(ppu, 0, 0), 0, 1);
     assert_eq!(pixel, 0x22);
 }
 
@@ -363,13 +345,7 @@ fn test_render_pixel_background_priority_when_sprite_is_behind() {
     set_sprite_palette_color(&mut ppu, 0, 2, 0x24);
     setup_sprite(&mut ppu, 0, 0, 1, 0x20, 0);
 
-    let pixel = render_pixel_with_setup(
-        &mut ppu,
-        &pattern,
-        |ppu| set_bg_tile(ppu, 0, 0),
-        0,
-        1,
-    );
+    let pixel = render_pixel_with_setup(&mut ppu, &pattern, |ppu| set_bg_tile(ppu, 0, 0), 0, 1);
     assert_eq!(pixel, 0x14);
 }
 
@@ -387,13 +363,7 @@ fn test_render_pixel_sprite_behind_transparent_background() {
     set_sprite_palette_color(&mut ppu, 0, 2, 0x25);
     setup_sprite(&mut ppu, 0, 0, 1, 0x20, 0);
 
-    let pixel = render_pixel_with_setup(
-        &mut ppu,
-        &pattern,
-        |ppu| set_bg_tile(ppu, 0, 0),
-        0,
-        1,
-    );
+    let pixel = render_pixel_with_setup(&mut ppu, &pattern, |ppu| set_bg_tile(ppu, 0, 0), 0, 1);
     assert_eq!(pixel, 0x25);
 }
 
@@ -412,13 +382,7 @@ fn test_render_pixel_applies_left_column_clipping() {
     set_sprite_palette_color(&mut ppu, 0, 2, 0x30);
     setup_sprite(&mut ppu, 0, 0, 1, 0, 0);
 
-    let pixel = render_pixel_with_setup(
-        &mut ppu,
-        &pattern,
-        |ppu| set_bg_tile(ppu, 0, 0),
-        0,
-        1,
-    );
+    let pixel = render_pixel_with_setup(&mut ppu, &pattern, |ppu| set_bg_tile(ppu, 0, 0), 0, 1);
     assert_eq!(pixel, 0x20);
 }
 
@@ -457,13 +421,7 @@ fn test_render_pixel_applies_sprite_priority_before_background_priority() {
     set_sprite_palette_color(&mut ppu, 0, 2, 0x24);
     setup_sprite(&mut ppu, 0, 0, 1, 0, 0);
 
-    let pixel = render_pixel_with_setup(
-        &mut ppu,
-        &pattern,
-        |ppu| set_bg_tile(ppu, 0, 0),
-        0,
-        1,
-    );
+    let pixel = render_pixel_with_setup(&mut ppu, &pattern, |ppu| set_bg_tile(ppu, 0, 0), 0, 1);
     assert_eq!(pixel, 0x24);
 }
 
@@ -498,13 +456,7 @@ fn test_render_pixel_respects_background_pattern_table_selection() {
     set_bg_palette_color(&mut ppu, 0, 2, 0x28);
     ppu.set_control_flags(PpuCtrl::new().with_background_pattern_table(true));
 
-    let pixel = render_pixel_with_setup(
-        &mut ppu,
-        &pattern,
-        |ppu| set_bg_tile(ppu, 0, 0),
-        0,
-        0,
-    );
+    let pixel = render_pixel_with_setup(&mut ppu, &pattern, |ppu| set_bg_tile(ppu, 0, 0), 0, 0);
     assert_eq!(pixel, 0x28);
 }
 
@@ -711,13 +663,7 @@ fn test_render_pixel_sprite_zero_hit_requires_opaque_background() {
     set_tile_solid(&mut pattern, 0, 1, 2);
     setup_sprite(&mut ppu, 0, 0, 1, 0, 0);
 
-    render_pixel_with_setup(
-        &mut ppu,
-        &pattern,
-        |ppu| set_bg_tile(ppu, 0, 0),
-        0,
-        1,
-    );
+    render_pixel_with_setup(&mut ppu, &pattern, |ppu| set_bg_tile(ppu, 0, 0), 0, 1);
     assert!(!ppu.registers.status.sprite_zero_hit());
 }
 
@@ -734,13 +680,7 @@ fn test_render_pixel_sprite_zero_hit_respects_background_left_mask() {
     set_tile_solid(&mut pattern, 0, 1, 2);
     setup_sprite(&mut ppu, 0, 0, 1, 0, 0);
 
-    render_pixel_with_setup(
-        &mut ppu,
-        &pattern,
-        |ppu| set_bg_tile(ppu, 0, 0),
-        0,
-        1,
-    );
+    render_pixel_with_setup(&mut ppu, &pattern, |ppu| set_bg_tile(ppu, 0, 0), 0, 1);
     assert!(!ppu.registers.status.sprite_zero_hit());
 }
 
@@ -757,13 +697,7 @@ fn test_render_pixel_sprite_zero_hit_respects_sprite_left_mask() {
     set_tile_solid(&mut pattern, 0, 1, 2);
     setup_sprite(&mut ppu, 0, 0, 1, 0, 0);
 
-    render_pixel_with_setup(
-        &mut ppu,
-        &pattern,
-        |ppu| set_bg_tile(ppu, 0, 0),
-        0,
-        1,
-    );
+    render_pixel_with_setup(&mut ppu, &pattern, |ppu| set_bg_tile(ppu, 0, 0), 0, 1);
     assert!(!ppu.registers.status.sprite_zero_hit());
 }
 
@@ -782,13 +716,7 @@ fn test_render_pixel_sprite_zero_hit_requires_sprite_zero() {
     setup_sprite(&mut ppu, 0, 20, 1, 0, 20);
     setup_sprite(&mut ppu, 1, 0, 1, 0, 0);
 
-    render_pixel_with_setup(
-        &mut ppu,
-        &pattern,
-        |ppu| set_bg_tile(ppu, 0, 0),
-        0,
-        1,
-    );
+    render_pixel_with_setup(&mut ppu, &pattern, |ppu| set_bg_tile(ppu, 0, 0), 0, 1);
     assert!(!ppu.registers.status.sprite_zero_hit());
 }
 
@@ -819,13 +747,7 @@ fn render_bg_pixel(mask: PpuMask) -> u8 {
     let mut pattern = create_pattern();
     set_tile_solid(&mut pattern, 0, 0, 1);
     set_bg_palette_color(&mut ppu, 0, 1, 0x16);
-    render_pixel_with_setup(
-        &mut ppu,
-        &pattern,
-        |ppu| set_bg_tile(ppu, 0, 0),
-        0,
-        0,
-    )
+    render_pixel_with_setup(&mut ppu, &pattern, |ppu| set_bg_tile(ppu, 0, 0), 0, 0)
 }
 
 #[test]

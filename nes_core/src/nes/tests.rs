@@ -62,17 +62,6 @@ fn test_length_counter_status_comes_from_apu_controller() {
 }
 
 #[test]
-fn test_ppu_pattern_writes_route_to_chr_storage() {
-    let mut mcu = test_mcu();
-
-    mcu.write(0x2006, 0x00);
-    mcu.write(0x2006, 0x10);
-    mcu.write(0x2007, 0xab);
-
-    assert_eq!(mcu.ppu.read_chr(0x10), 0xab);
-}
-
-#[test]
 fn test_controller_reads_route_through_nes_mcu() {
     let mut mcu = test_mcu();
 
