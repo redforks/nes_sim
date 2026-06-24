@@ -1,13 +1,12 @@
 use super::*;
-use crate::nes::mapper::chr_storage::DirectChr;
-use crate::nes::mapper::{Cartridge, Mirroring, TestCartridge};
+use crate::nes::mapper::{Mirroring, TestCartridge};
 use crate::render::ImageRender;
 use crate::set_system_cycles;
 use test_case::test_case;
 
 fn new_test_ppu_and_pattern() -> (Ppu, [u8; 8192]) {
     (
-        Ppu::new((), Mirroring::Horizontal, Box::new(DirectChr::empty())),
+        Ppu::new((), Mirroring::Horizontal, Box::new(TestCartridge::new())),
         [0; 8192],
     )
 }
@@ -27,11 +26,9 @@ fn test_read_status_clears_vblank() {
 
     assert!(ppu.registers.status.v_blank());
 
-    // read_status should clear vblank
     let status = ppu.read_status();
     assert!(status.v_blank());
 
-    // v_blank should now be false
     assert!(!ppu.registers.status.v_blank());
 }
 
@@ -47,42 +44,41 @@ fn test_peek_status_does_not_clear_vblank() {
 
 #[test]
 fn test_open_bus_bits_decay_to_zero() {
-    let mut ppu = Ppu::new((), Mirroring::Horizontal, Box::new(DirectChr::empty()));
-    let mut cartridge = new_test_cartridge();
+    let mut ppu = Ppu::new((), Mirroring::Horizontal, Box::new(TestCartridge::new()));
 
     set_system_cycles(0);
-    ppu.write(0x2002, 0xFF, &mut *cartridge);
+    ppu.write(0x2002, 0xFF);
     set_system_cycles(PPU_OPEN_BUS_DECAY_TICKS);
 
-    assert_eq!(ppu.read(0x2000, &mut *cartridge), 0x00);
+    assert_eq!(ppu.read(0x2000), 0x00);
 }
 
 #[test]
 fn test_status_read_only_refreshes_high_bits() {
-    let mut ppu = Ppu::new((), Mirroring::Horizontal, Box::new(DirectChr::empty()));
-    let mut cartridge = new_test_cartridge();
+    let mut ppu = Ppu::new((), Mirroring::Horizontal, Box::new(TestCartridge::new()));
 
     set_system_cycles(0);
-    ppu.write(0x2002, 0xFF, &mut *cartridge);
+    ppu.write(0x2002, 0xFF);
     set_system_cycles(PPU_OPEN_BUS_DECAY_TICKS);
     ppu.registers.status.set_v_blank(true);
-    assert_eq!(ppu.read(0x2002, &mut *cartridge), 0x80);
+    let result = ppu.read(0x2002);
+    // Only high bit should remain; the 0xFF bus latch written to $2002 had 0x80 masked.
+    assert_eq!(result, 0x80);
 
-    assert_eq!(ppu.read(0x2000, &mut *cartridge), 0x80);
+    let result2 = ppu.read(0x2000);
+    assert_eq!(result2, 0x80);
 }
 
 fn create_test_ppu_with_mask(mask: PpuMask) -> Ppu {
     let mut ppu = Ppu {
         effective_mask: mask,
-        ..Ppu::new((), Mirroring::Horizontal, Box::new(DirectChr::empty()))
+        ..Ppu::new((), Mirroring::Horizontal, Box::new(TestCartridge::new()))
     };
     ppu.registers.mask = mask;
-    // Clear OAM
     for i in 0..64 {
         ppu.registers.oam_data[i * 4] = 0x20;
         ppu.registers.oam_data[i * 4 + 3] = 0xFF;
     }
-    // Clear palette RAM
     ppu.palette.data = [0; 0x20];
     ppu
 }
@@ -133,10 +129,6 @@ fn setup_sprite(ppu: &mut Ppu, index: usize, y: u8, tile: u8, attr: u8, x: u8) {
     oam[index * 4 + 3] = x;
 }
 
-fn new_test_cartridge() -> Box<dyn Cartridge> {
-    Box::new(TestCartridge::new())
-}
-
 fn set_bg_tile(ppu: &mut Ppu, tile: u8, palette_idx: u8) {
     ppu.write_nametable(0x2000, tile);
     ppu.write_nametable(0x23c0, palette_idx & 0x03);
@@ -162,7 +154,6 @@ fn fill_chr(ppu: &mut Ppu, pattern: &[u8]) {
     }
 }
 
-/// Render a single pixel (for testing)
 fn render_pixel(ppu: &mut Ppu, pattern: &[u8], x: u8, y: u8) -> u8 {
     if !pattern.is_empty() {
         fill_chr(ppu, pattern);
@@ -178,9 +169,8 @@ fn run_scanline(ppu: &mut Ppu, pattern: &[u8], scanline: u16) {
 
     ppu.timing.scanline = scanline;
     ppu.timing.dot = 0;
-    let mut cart = new_test_cartridge();
     for _ in 0..341 {
-        ppu.tick(&mut *cart);
+        ppu.tick();
     }
 }
 
@@ -233,7 +223,7 @@ fn test_tick_renders_palette_color_when_rendering_disabled_and_vram_points_to_pa
         ..Ppu::new(
             ImageRender::default_dimension(),
             Mirroring::Horizontal,
-            Box::new(DirectChr::empty()),
+            Box::new(TestCartridge::new()),
         )
     };
     ppu.palette.write(0x3f00, 0x21);
@@ -241,9 +231,8 @@ fn test_tick_renders_palette_color_when_rendering_disabled_and_vram_points_to_pa
     ppu.timing.scanline = 0;
     ppu.timing.dot = 0;
 
-    let mut cart = new_test_cartridge();
-    ppu.tick(&mut *cart);
-    ppu.tick(&mut *cart);
+    ppu.tick();
+    ppu.tick();
 
     let image = ppu.renderer.borrow_image();
     assert_eq!(
@@ -258,7 +247,7 @@ fn test_tick_renders_background_color_when_rendering_disabled_and_vram_not_palet
         ..Ppu::new(
             ImageRender::default_dimension(),
             Mirroring::Horizontal,
-            Box::new(DirectChr::empty()),
+            Box::new(TestCartridge::new()),
         )
     };
     ppu.palette.write(0x3f00, 0x16);
@@ -266,9 +255,8 @@ fn test_tick_renders_background_color_when_rendering_disabled_and_vram_not_palet
     ppu.timing.scanline = 0;
     ppu.timing.dot = 0;
 
-    let mut cart = new_test_cartridge();
-    ppu.tick(&mut *cart);
-    ppu.tick(&mut *cart);
+    ppu.tick();
+    ppu.tick();
 
     let image = ppu.renderer.borrow_image();
     assert_eq!(
@@ -443,7 +431,7 @@ fn test_render_pixel_uses_highest_priority_opaque_sprite() {
     );
     let mut pattern = create_pattern();
     set_tile_solid(&mut pattern, 0, 1, 1);
-    set_tile_solid(&mut pattern, 0, 2, 0); // transparent
+    set_tile_solid(&mut pattern, 0, 2, 0);
     set_sprite_palette_color(&mut ppu, 0, 1, 0x26);
     set_sprite_palette_color(&mut ppu, 1, 2, 0x36);
     setup_sprite(&mut ppu, 0, 0, 1, 0, 0);
@@ -467,7 +455,7 @@ fn test_render_pixel_applies_sprite_priority_before_background_priority() {
     set_tile_solid(&mut pattern, 0, 1, 2);
     set_bg_palette_color(&mut ppu, 0, 1, 0x14);
     set_sprite_palette_color(&mut ppu, 0, 2, 0x24);
-    setup_sprite(&mut ppu, 0, 0, 1, 0, 0); // sprite in front (not behind)
+    setup_sprite(&mut ppu, 0, 0, 1, 0, 0);
 
     let pixel = render_pixel_with_setup(
         &mut ppu,
@@ -476,7 +464,6 @@ fn test_render_pixel_applies_sprite_priority_before_background_priority() {
         0,
         1,
     );
-    // Sprite is in front and opaque, so sprite color should show
     assert_eq!(pixel, 0x24);
 }
 
@@ -550,13 +537,8 @@ fn test_render_pixel_respects_sprite_flipping() {
     let mut pattern = create_pattern();
     set_tile_pixel(&mut pattern, 0, 1, 0, 0, 1);
     set_sprite_palette_color(&mut ppu, 0, 1, 0x2a);
-    setup_sprite(&mut ppu, 0, 10, 1, 0xC0, 0); // Both flips enabled
+    setup_sprite(&mut ppu, 0, 10, 1, 0xC0, 0);
 
-    // With both flips, pixel (0,0) in tile becomes (7,7) after flipping
-    // So we need to render at a position where sprite_offset becomes (7,7)
-    // sprite_offset = screen - sprite_pos, so screen = sprite_offset + sprite_pos
-    // If sprite_pos.x = 0, then screen_x = 7
-    // If sprite_pos.y = 10, then screen_y = 10 + 7 = 17
     let pixel = render_pixel(&mut ppu, &pattern, 7, 18);
     assert_eq!(pixel, 0x2a);
 }
@@ -915,10 +897,6 @@ fn timing_enter_vblank(scanline: u16, dot: u16, expected: bool) {
     };
     assert_eq!(t.enter_vblank(), expected);
 }
-
-// ============================================================================
-// leave_vblank() Tests
-// ============================================================================
 
 #[test_case(261, 1, true; "scanline 261 dot 1 leaves vblank")]
 #[test_case(261, 0, false; "one dot before leave vblank")]

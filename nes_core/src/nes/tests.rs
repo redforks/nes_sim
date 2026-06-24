@@ -2,7 +2,6 @@ use super::*;
 use crate::inc_system_clock;
 use crate::nes::apu::Apu;
 use crate::nes::controller::Button;
-use crate::nes::mapper::chr_storage::DirectChr;
 use crate::nes::mapper::{Mirroring, TestCartridge};
 use crate::render::ImageRender;
 
@@ -12,10 +11,9 @@ fn test_mcu() -> NesMcu<ImageRender, ()> {
         ppu: Ppu::new(
             ImageRender::default_dimension(),
             Mirroring::Horizontal,
-            Box::new(DirectChr::empty()),
+            Box::new(TestCartridge::new()),
         ),
         controller: Controller::new(),
-        cartridge: Box::new(TestCartridge::new()),
         apu: Apu::new(()),
         oam_dma_pending: None,
         oam_dma: None,
@@ -54,7 +52,6 @@ fn test_length_counter_status_comes_from_apu_controller() {
 
     mcu.write(0x4000, 0x00);
     mcu.write(0x4002, 0x34);
-    // Enable channel first, then load length counter
     mcu.write(0x4015, 0x01);
     mcu.write(0x4003, 0xF8);
 

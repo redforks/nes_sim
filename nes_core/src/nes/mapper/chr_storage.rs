@@ -1,11 +1,8 @@
-use super::ChrStorage;
-
 pub struct DirectChr {
-    data: [u8; 0x2000],
+    pub data: [u8; 0x2000],
 }
 
 impl DirectChr {
-    #[cfg(test)]
     pub fn empty() -> Self {
         Self { data: [0; 0x2000] }
     }
@@ -16,14 +13,12 @@ impl DirectChr {
         data[..len].copy_from_slice(&chr_rom[..len]);
         Self { data }
     }
-}
 
-impl ChrStorage for DirectChr {
-    fn read_chr(&self, address: u16) -> u8 {
+    pub fn read_chr(&self, address: u16) -> u8 {
         self.data[address as usize % self.data.len()]
     }
 
-    fn write_chr(&mut self, address: u16, value: u8) {
+    pub fn write_chr(&mut self, address: u16, value: u8) {
         self.data[address as usize % self.data.len()] = value;
     }
 }

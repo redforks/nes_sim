@@ -1,4 +1,4 @@
-use super::{Cartridge, CARTRIDGE_START_ADDR, CartridgeOperation, ChrStorage};
+use super::{Cartridge, CARTRIDGE_START_ADDR, CartridgeOperation};
 
 const PRG_ROM_BANK_SIZE: usize = 0x8000;
 const CARTRIDGE_RAM_SIZE: usize = 0x4000 - 0x20;
@@ -15,12 +15,23 @@ pub struct Mapper34 {
     selected_prg_bank: usize,
     prg_bank_count: usize,
     board: Board,
+    chr_data: Vec<u8>,
+    has_chr_ram: bool,
+    chr_bank0: usize,
+    chr_bank1: usize,
 }
 
 impl Mapper34 {
-    pub fn new(prg_rom: &[u8], board: Board) -> Self {
+    pub fn new(prg_rom: &[u8], chr_rom: &[u8], board: Board) -> Self {
         debug_assert!(!prg_rom.is_empty());
         debug_assert_eq!(prg_rom.len() % PRG_ROM_BANK_SIZE, 0);
+
+        let has_chr_ram = chr_rom.is_empty();
+        let chr_data = if has_chr_ram {
+            vec![0; 0x2000]
+        } else {
+            chr_rom.to_vec()
+        };
 
         Self {
             prg_rom: prg_rom.to_vec(),
@@ -28,6 +39,10 @@ impl Mapper34 {
             selected_prg_bank: 0,
             prg_bank_count: prg_rom.len() / PRG_ROM_BANK_SIZE,
             board,
+            chr_data,
+            has_chr_ram,
+            chr_bank0: 0,
+            chr_bank1: 0,
         }
     }
 
@@ -58,6 +73,8 @@ impl Cartridge for Mapper34 {
                 if self.board == Board::Nina001 {
                     match address {
                         0x7ffd => self.selected_prg_bank = (value & 0x01) as usize,
+                        0x7ffe => self.chr_bank0 = (value & 0x0f) as usize,
+                        0x7fff => self.chr_bank1 = (value & 0x0f) as usize,
                         _ => {}
                     }
                 }
@@ -69,47 +86,17 @@ impl Cartridge for Mapper34 {
         }
         CartridgeOperation::None
     }
-}
 
-pub struct Mapper34ChrStorage {
-    data: Vec<u8>,
-    has_chr_ram: bool,
-    is_nina: bool,
-    bank0: usize,
-    bank1: usize,
-}
-
-impl Mapper34ChrStorage {
-    pub fn new(chr_rom: &[u8], is_nina: bool) -> Self {
-        let has_chr_ram = chr_rom.is_empty();
-        let data = if has_chr_ram {
-            vec![0; 0x2000]
-        } else {
-            chr_rom.to_vec()
-        };
-        Self {
-            data,
-            has_chr_ram,
-            is_nina,
-            bank0: 0,
-            bank1: 0,
-        }
-    }
-}
-
-impl ChrStorage for Mapper34ChrStorage {
     fn read_chr(&self, address: u16) -> u8 {
         let addr = address as usize % 0x2000;
-        if self.is_nina {
-            let bank = if addr < 0x1000 {
-                self.bank0
-            } else {
-                self.bank1
-            };
+        if self.board == Board::Nina001 {
+            let bank = if addr < 0x1000 { self.chr_bank0 } else { self.chr_bank1 };
             let src = bank * 0x1000 + (addr % 0x1000);
-            self.data[src % self.data.len()]
+            let len = self.chr_data.len();
+            self.chr_data[src % len]
         } else {
-            self.data[addr % self.data.len()]
+            let len = self.chr_data.len();
+            self.chr_data[addr % len]
         }
     }
 
@@ -118,28 +105,14 @@ impl ChrStorage for Mapper34ChrStorage {
             return;
         }
         let addr = address as usize % 0x2000;
-        if self.is_nina {
-            let bank = if addr < 0x1000 {
-                self.bank0
-            } else {
-                self.bank1
-            };
+        if self.board == Board::Nina001 {
+            let bank = if addr < 0x1000 { self.chr_bank0 } else { self.chr_bank1 };
             let src = bank * 0x1000 + (addr % 0x1000);
-            let len = self.data.len();
-            self.data[src % len] = value;
+            let len = self.chr_data.len();
+            self.chr_data[src % len] = value;
         } else {
-            let len = self.data.len();
-            self.data[addr % len] = value;
-        }
-    }
-
-    fn write_register(&mut self, addr: u16, value: u8) {
-        if self.is_nina && (0x7ffe..=0x7fff).contains(&addr) {
-            match addr {
-                0x7ffe => self.bank0 = (value & 0x0f) as usize,
-                0x7fff => self.bank1 = (value & 0x0f) as usize,
-                _ => {}
-            }
+            let len = self.chr_data.len();
+            self.chr_data[addr % len] = value;
         }
     }
 }
@@ -156,7 +129,7 @@ mod tests {
         prg_rom[PRG_ROM_BANK_SIZE * 2] = 0x30;
         prg_rom[PRG_ROM_BANK_SIZE * 3] = 0x40;
 
-        let mut mapper = Mapper34::new(&prg_rom, Board::BxRom);
+        let mut mapper = Mapper34::new(&prg_rom, &[], Board::BxRom);
 
         assert_eq!(mapper.read(0x8000), 0x10);
 
@@ -169,11 +142,11 @@ mod tests {
 
     #[test]
     fn chr_bxrom_flat_access() {
-        let mut chr = Mapper34ChrStorage::new(&[], false);
-        chr.write_chr(0x0000, 0x12);
-        chr.write_chr(0x1fff, 0x34);
-        assert_eq!(chr.read_chr(0), 0x12);
-        assert_eq!(chr.read_chr(0x1fff), 0x34);
+        let mut mapper = Mapper34::new(&[0; PRG_ROM_BANK_SIZE], &[], Board::BxRom);
+        mapper.write_chr(0x0000, 0x12);
+        mapper.write_chr(0x1fff, 0x34);
+        assert_eq!(mapper.read_chr(0), 0x12);
+        assert_eq!(mapper.read_chr(0x1fff), 0x34);
     }
 
     #[test]
@@ -181,10 +154,10 @@ mod tests {
         let mut data = vec![0u8; 0x4000];
         data[0x0000] = 0xa1;
         data[0x1000] = 0xb1;
-        let mut chr = Mapper34ChrStorage::new(&data, true);
-        chr.write_register(0x7ffe, 0x00);
-        chr.write_register(0x7fff, 0x01);
-        assert_eq!(chr.read_chr(0x0000), 0xa1);
-        assert_eq!(chr.read_chr(0x1000), 0xb1);
+        let mut mapper = Mapper34::new(&[0; PRG_ROM_BANK_SIZE], &data, Board::Nina001);
+        mapper.write(0x7ffe, 0x00);
+        mapper.write(0x7fff, 0x01);
+        assert_eq!(mapper.read_chr(0x0000), 0xa1);
+        assert_eq!(mapper.read_chr(0x1000), 0xb1);
     }
 }

@@ -4,7 +4,6 @@ use crate::mcu::Mcu;
 use crate::nes::apu::{Apu, AudioDriver};
 use crate::nes::controller::{Button, Controller};
 use crate::nes::lower_ram::LowerRam;
-use crate::nes::mapper::{Cartridge, CartridgeOperation};
 use crate::nes::ppu::Ppu;
 use crate::render::Render;
 
@@ -27,7 +26,6 @@ pub struct NesMcu<R: Render, D: AudioDriver> {
     lower_ram: LowerRam,
     ppu: Ppu<R>,
     controller: Controller,
-    cartridge: Box<dyn Cartridge>,
     apu: Apu<D>,
     oam_dma_pending: Option<u8>,
     oam_dma: Option<OamDmaState>,
@@ -38,14 +36,13 @@ pub struct NesMcu<R: Render, D: AudioDriver> {
 
 impl<R: Render, D: AudioDriver> NesMcu<R, D> {
     pub fn new(file: &INesFile, renderer: R, audio_driver: D) -> Self {
-        let (cartridge, chr_storage, mirroring) = mapper::create_cartridge(file);
-        let ppu = Ppu::new(renderer, mirroring, chr_storage);
+        let (cartridge, mirroring) = mapper::create_cartridge(file);
+        let ppu = Ppu::new(renderer, mirroring, cartridge);
 
         Self {
             lower_ram: LowerRam::new(),
             ppu,
             controller: Controller::new(),
-            cartridge,
             apu: Apu::new(audio_driver),
             oam_dma_pending: None,
             oam_dma: None,
@@ -62,13 +59,10 @@ impl<R: Render, D: AudioDriver> NesMcu<R, D> {
         self.oam_dma_pending = Some(address);
     }
 
-    /// Tick PPU by one dot.
-    /// Pattern data is passed through from the cartridge for rendering.
     pub fn tick_ppu(&mut self) {
-        self.ppu.tick(&mut *self.cartridge);
+        self.ppu.tick();
     }
 
-    /// Tick APU frame counter. Returns true if frame IRQ should be triggered.
     pub fn tick_apu(&mut self) {
         self.apu.tick();
     }
@@ -78,7 +72,7 @@ impl<R: Render, D: AudioDriver> NesMcu<R, D> {
     }
 
     pub fn cartridge_irq_pending(&self) -> bool {
-        self.cartridge.irq_pending()
+        self.ppu.cartridge_irq_pending()
     }
 
     pub fn flush_audio(&mut self) {
@@ -169,28 +163,28 @@ impl<R: Render, D: AudioDriver> Mcu for NesMcu<R, D> {
     fn read(&mut self, address: u16) -> u8 {
         let value = match address {
             0x0000..=0x1fff => self.lower_ram.read(address),
-             0x2000..=0x3fff => self.ppu.read(address, &mut *self.cartridge),
+            0x2000..=0x3fff => self.ppu.read(address),
             0x4015 => self.apu.read(address),
             0x4016 | 0x4017 => self.controller.read(address),
             // Write-only APU/IO registers and unused test registers: open bus
             0x4000..=0x401f => self.open_bus,
             // Unallocated I/O space: open bus
             0x4020..=0x40ff => self.open_bus,
-            0x4100..=0xffff => self.cartridge.read(address),
+            0x4100..=0xffff => self.ppu.read(address),
         };
         self.open_bus = value;
         value
     }
 
-fn peek(&self, address: u16) -> u8 {
+    fn peek(&self, address: u16) -> u8 {
         match address {
             0x0000..=0x1fff => self.lower_ram.peek(address),
-              0x2000..=0x3fff => self.ppu.peek(address),
+            0x2000..=0x3fff => self.ppu.peek(address),
             0x4015 => self.apu.peek(address),
             0x4016 | 0x4017 => self.controller.peek(address),
             0x4000..=0x401f => self.open_bus,
             0x4020..=0x40ff => self.open_bus,
-            0x4100..=0xffff => self.cartridge.read(address),
+            0x4100..=0xffff => self.ppu.peek(address),
         }
     }
 
@@ -198,23 +192,16 @@ fn peek(&self, address: u16) -> u8 {
         self.open_bus = value;
         match address {
             0x0000..=0x1fff => self.lower_ram.write(address, value),
-             0x2000..=0x3fff => self.ppu.write(address, value, &mut *self.cartridge),
+            0x2000..=0x3fff => self.ppu.write(address, value),
             0x4000..=0x401f => match address {
                 0x4014 => self.ppu_dma(value),
                 0x4016 => self.controller.write(address, value),
                 _ => self.apu.write(address, value),
             },
             // Unallocated I/O space: writes are ignored
-             0x4020..=0x40ff => {}
-             0x4100..=0x7fff => {
-                self.cartridge.write(address, value);
-            }
-             0x8000..=0xffff => {
-                let op = self.cartridge.write(address, value);
-                self.ppu.write_chr_register(address, value);
-                if let CartridgeOperation::UpdateNametableMirroring(mirroring) = op {
-                    self.ppu.set_mirroring(mirroring);
-                }
+            0x4020..=0x40ff => {}
+            0x4100..=0xffff => {
+                self.ppu.write(address, value);
             }
         }
     }

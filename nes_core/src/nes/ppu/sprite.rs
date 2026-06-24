@@ -1,4 +1,4 @@
-use crate::nes::mapper::ChrStorage;
+use crate::nes::mapper::Cartridge;
 use crate::nes::ppu::registers::Registers;
 
 const MAX_SPRITES_PER_SCANLINE: u8 = 8;
@@ -47,13 +47,13 @@ fn sprite_in_range(y_byte: u8, target_scanline: u16, sprite_height: i16) -> bool
 }
 
 fn read_sprite_color(
-    chr_storage: &dyn ChrStorage,
+    cartridge: &dyn Cartridge,
     tile_idx: u8,
     src_x: usize,
     src_y: u8,
     sprite_size_16: bool,
     sprite_pattern_table: bool,
-    read_pattern_pixel: &impl Fn(&dyn ChrStorage, u16, u8, usize, usize) -> u8,
+    read_pattern_pixel: &impl Fn(&dyn Cartridge, u16, u8, usize, usize) -> u8,
 ) -> u8 {
     if sprite_size_16 {
         let pattern_table_idx = (tile_idx & 0x01) as u16;
@@ -61,7 +61,7 @@ fn read_sprite_color(
         let tile_offset = src_y / 8;
         let tile_row = (src_y % 8) as usize;
         read_pattern_pixel(
-            chr_storage,
+            cartridge,
             pattern_table_idx * 0x1000,
             tile_base.wrapping_add(tile_offset),
             src_x,
@@ -70,7 +70,7 @@ fn read_sprite_color(
     } else {
         let pattern_table_idx = if sprite_pattern_table { 0x1000 } else { 0 };
         read_pattern_pixel(
-            chr_storage,
+            cartridge,
             pattern_table_idx,
             tile_idx,
             src_x,
@@ -208,10 +208,10 @@ impl SpriteManager {
         sprite_size_16: bool,
         sprite_pattern_table: bool,
         sprite_left_enabled: bool,
-        chr_storage: &dyn ChrStorage,
+        cartridge: &dyn Cartridge,
         screen_x: u8,
         screen_y: u8,
-        read_pattern_pixel: impl Fn(&dyn ChrStorage, u16, u8, usize, usize) -> u8,
+        read_pattern_pixel: impl Fn(&dyn Cartridge, u16, u8, usize, usize) -> u8,
     ) -> Option<SpritePixel> {
         if !sprite_left_enabled && screen_x < 8 {
             return None;
@@ -259,7 +259,7 @@ impl SpriteManager {
             };
 
             let color_idx = read_sprite_color(
-                chr_storage,
+                cartridge,
                 tile_idx,
                 src_x,
                 src_y,
@@ -285,10 +285,10 @@ impl SpriteManager {
         oam_data: &[u8; 256],
         sprite_size_16: bool,
         sprite_pattern_table: bool,
-        chr_storage: &dyn ChrStorage,
+        cartridge: &dyn Cartridge,
         screen_x: u8,
         screen_y: u8,
-        read_pattern_pixel: impl Fn(&dyn ChrStorage, u16, u8, usize, usize) -> u8,
+        read_pattern_pixel: impl Fn(&dyn Cartridge, u16, u8, usize, usize) -> u8,
     ) -> bool {
         let sprite_height: i16 = if sprite_size_16 { 16 } else { 8 };
         let y_byte = oam_data[0];
@@ -321,7 +321,7 @@ impl SpriteManager {
         };
 
         let color_idx = read_sprite_color(
-            chr_storage,
+            cartridge,
             tile_idx,
             src_x,
             src_y,

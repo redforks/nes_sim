@@ -1,3 +1,4 @@
+use super::chr_storage::DirectChr;
 use super::{Cartridge, CARTRIDGE_START_ADDR, CartridgeOperation};
 
 const PRG_ROM_BANK_SIZE: usize = 0x4000;
@@ -8,10 +9,11 @@ pub struct Mapper2 {
     ram: [u8; CARTRIDGE_RAM_SIZE],
     selected_prg_bank: usize,
     prg_bank_count: usize,
+    chr: DirectChr,
 }
 
 impl Mapper2 {
-    pub fn new(prg_rom: &[u8]) -> Self {
+    pub fn new(prg_rom: &[u8], chr_rom: &[u8]) -> Self {
         debug_assert!(!prg_rom.is_empty());
         debug_assert_eq!(prg_rom.len() % PRG_ROM_BANK_SIZE, 0);
 
@@ -20,6 +22,7 @@ impl Mapper2 {
             ram: [0; CARTRIDGE_RAM_SIZE],
             selected_prg_bank: 0,
             prg_bank_count: prg_rom.len() / PRG_ROM_BANK_SIZE,
+            chr: DirectChr::from_chr_rom(chr_rom),
         };
         mapper
     }
@@ -61,6 +64,14 @@ impl Cartridge for Mapper2 {
         }
         CartridgeOperation::None
     }
+
+    fn read_chr(&self, address: u16) -> u8 {
+        self.chr.read_chr(address)
+    }
+
+    fn write_chr(&mut self, address: u16, value: u8) {
+        self.chr.write_chr(address, value);
+    }
 }
 
 #[cfg(test)]
@@ -69,7 +80,7 @@ mod tests {
 
     #[test]
     fn reads_and_writes_cartridge_ram() {
-        let mut mapper = Mapper2::new(&[0; PRG_ROM_BANK_SIZE * 2]);
+        let mut mapper = Mapper2::new(&[0; PRG_ROM_BANK_SIZE * 2], &[]);
 
         mapper.write(CARTRIDGE_START_ADDR, 0x12);
         mapper.write(0x7fff, 0x34);
@@ -87,7 +98,7 @@ mod tests {
         prg_rom[PRG_ROM_BANK_SIZE * 3] = 0x40;
         prg_rom[(PRG_ROM_BANK_SIZE * 4) - 1] = 0x4f;
 
-        let mut mapper = Mapper2::new(&prg_rom);
+        let mut mapper = Mapper2::new(&prg_rom, &[]);
 
         assert_eq!(mapper.read(0x8000), 0x10);
         assert_eq!(mapper.read(0xc000), 0x40);

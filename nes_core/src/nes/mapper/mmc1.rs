@@ -1,4 +1,4 @@
-use super::{Cartridge, CartridgeOperation, ChrStorage};
+use super::{Cartridge, CartridgeOperation};
 use crate::nes::mapper::Mirroring;
 use bitfield_struct::bitfield;
 
@@ -51,6 +51,8 @@ impl From<ControlFlags> for PrgRomMode {
 pub struct MMC1 {
     prg_rom: Vec<u8>,
     prg_ram: [u8; PRG_RAM_SIZE],
+    source: Vec<u8>,
+    has_chr_ram: bool,
 
     control: ControlFlags,
     chr_bank0: u8,
@@ -60,13 +62,20 @@ pub struct MMC1 {
 }
 
 impl MMC1 {
-    pub fn new(prg_rom: &[u8], mirroring: Mirroring) -> Self {
+    pub fn new(prg_rom: &[u8], chr_rom: &[u8], mirroring: Mirroring) -> Self {
         debug_assert!(!prg_rom.is_empty());
         debug_assert_eq!(prg_rom.len() % PRG_ROM_BANK_SIZE, 0);
+
+        let has_chr_ram = chr_rom.is_empty();
+        let size = if has_chr_ram { 0x2000 } else { chr_rom.len() };
+        let mut source = vec![0; size];
+        source[..chr_rom.len()].copy_from_slice(chr_rom);
 
         Self {
             prg_rom: prg_rom.to_vec(),
             prg_ram: [0; PRG_RAM_SIZE],
+            source,
+            has_chr_ram,
             control: ControlFlags::new()
                 .with_mirroring(Self::mirroring_bits(mirroring))
                 .with_prg_mode(0b11),
@@ -76,9 +85,45 @@ impl MMC1 {
             shift_register: INITIAL_SHIFT_REGISTER,
         }
     }
+
+    fn bank_count_4k(&self) -> usize {
+        if self.source.is_empty() {
+            1
+        } else {
+            self.source.len() / 0x1000
+        }
+    }
+
+    fn chr_offset(&self, address: u16) -> usize {
+        let offset = address as usize % 0x2000;
+        let upper = offset >= 0x1000;
+        if self.control.chr_in_4k() {
+            let bank = if upper { self.chr_bank1 } else { self.chr_bank0 };
+            (bank as usize % self.bank_count_4k()) * 0x1000 + (offset % 0x1000)
+        } else {
+            let bank = usize::from(self.chr_bank0 & 0x1e) % self.bank_count_4k();
+            let bank = if upper { (bank + 1) % self.bank_count_4k() } else { bank };
+            bank * 0x1000 + (offset % 0x1000)
+        }
+    }
 }
 
 impl Cartridge for MMC1 {
+    fn read_chr(&self, address: u16) -> u8 {
+        let src_offset = self.chr_offset(address);
+        let len = self.source.len();
+        self.source[src_offset % len]
+    }
+
+    fn write_chr(&mut self, address: u16, value: u8) {
+        if !self.has_chr_ram {
+            return;
+        }
+        let src_offset = self.chr_offset(address);
+        let len = self.source.len();
+        self.source[src_offset % len] = value;
+    }
+
     fn read(&self, address: u16) -> u8 {
         match address {
             0x8000..=0xbfff => self.read_prg_bank(self.lower_prg_bank(), address - 0x8000),
@@ -243,111 +288,6 @@ impl MMC1 {
     }
 }
 
-pub struct Mmc1ChrStorage {
-    source: Vec<u8>,
-    has_chr_ram: bool,
-    chr_bank0: u8,
-    chr_bank1: u8,
-    chr_in_4k: bool,
-    shift_register: u8,
-}
-
-impl Mmc1ChrStorage {
-    const INITIAL_SHIFT_REGISTER: u8 = 0x10;
-
-    pub fn new(chr_rom: &[u8]) -> Self {
-        let has_chr_ram = chr_rom.is_empty();
-        let size = if has_chr_ram { 0x2000 } else { chr_rom.len() };
-        let mut source = vec![0; size];
-        source[..chr_rom.len()].copy_from_slice(chr_rom);
-        Self {
-            source,
-            has_chr_ram,
-            chr_bank0: 0,
-            chr_bank1: 0,
-            chr_in_4k: false,
-            shift_register: Self::INITIAL_SHIFT_REGISTER,
-        }
-    }
-
-    fn bank_count_4k(&self) -> usize {
-        if self.source.is_empty() {
-            1
-        } else {
-            self.source.len() / 0x1000
-        }
-    }
-
-    fn chr_offset(&self, address: u16) -> usize {
-        let offset = address as usize % 0x2000;
-        let upper = offset >= 0x1000;
-        if self.chr_in_4k {
-            let bank = if upper {
-                self.chr_bank1
-            } else {
-                self.chr_bank0
-            };
-            (bank as usize % self.bank_count_4k()) * 0x1000 + (offset % 0x1000)
-        } else {
-            let bank = usize::from(self.chr_bank0 & 0x1e) % self.bank_count_4k();
-            let bank = if upper {
-                (bank + 1) % self.bank_count_4k()
-            } else {
-                bank
-            };
-            bank * 0x1000 + (offset % 0x1000)
-        }
-    }
-}
-
-impl ChrStorage for Mmc1ChrStorage {
-    fn read_chr(&self, address: u16) -> u8 {
-        let src_offset = self.chr_offset(address);
-        self.source[src_offset % self.source.len()]
-    }
-
-    fn write_chr(&mut self, address: u16, value: u8) {
-        if !self.has_chr_ram {
-            return;
-        }
-        let src_offset = self.chr_offset(address);
-        let len = self.source.len();
-        self.source[src_offset % len] = value;
-    }
-
-    fn write_register(&mut self, addr: u16, value: u8) {
-        if !(0x8000..=0xffff).contains(&addr) {
-            return;
-        }
-
-        if value & 0x80 != 0 {
-            self.shift_register = Self::INITIAL_SHIFT_REGISTER;
-            return;
-        }
-
-        let ready = self.shift_register & 0x01 != 0;
-        self.shift_register >>= 1;
-        self.shift_register |= (value & 0x01) << 4;
-
-        if ready {
-            let reg_value = self.shift_register & 0x1f;
-            match addr {
-                0x8000..=0x9fff => {
-                    self.chr_in_4k = (reg_value & 0x10) != 0;
-                }
-                0xa000..=0xbfff => {
-                    self.chr_bank0 = reg_value;
-                }
-                0xc000..=0xdfff => {
-                    self.chr_bank1 = reg_value;
-                }
-                _ => {}
-            }
-            self.shift_register = Self::INITIAL_SHIFT_REGISTER;
-        }
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -364,7 +304,7 @@ mod tests {
     {
         let mut prg_rom = [0; 128 * 1024];
         init_prg(&mut prg_rom);
-        MMC1::new(&prg_rom, Mirroring::Horizontal)
+        MMC1::new(&prg_rom, &[], Mirroring::Horizontal)
     }
 
     #[test]
@@ -476,47 +416,51 @@ mod tests {
         assert_eq!(mmc1.read(0xc000), 5);
     }
 
-    fn make_chr() -> Vec<u8> {
+    fn make_mmc1_with_chr() -> (MMC1, usize) {
         let mut data = vec![0u8; 0x8000];
         data[0x0000] = 0x10;
         data[0x1000] = 0x20;
         data[0x2000] = 0x30;
         data[0x3000] = 0x40;
-        data
+        let prg = vec![0u8; 0x8000];
+        let mapper = MMC1::new(&prg, &data, Mirroring::Horizontal);
+        let source_offset = 0x8000 / PRG_ROM_BANK_SIZE * PRG_ROM_BANK_SIZE;
+        (mapper, source_offset)
     }
 
-    fn write_serial_chr(chr: &mut Mmc1ChrStorage, address: u16, value: u8) {
+    fn write_serial_chr(mapper: &mut MMC1, address: u16, value: u8) {
         for bit in 0..5 {
-            chr.write_register(address, (value >> bit) & 0x01);
+            mapper.write(address, (value >> bit) & 0x01);
         }
     }
 
     #[test]
     fn chr_initial_state_reads_bank_0() {
-        let chr = Mmc1ChrStorage::new(&make_chr());
-        assert_eq!(chr.read_chr(0x0000), 0x10);
+        let (mapper, _) = make_mmc1_with_chr();
+        assert_eq!(mapper.read_chr(0x0000), 0x10);
     }
 
     #[test]
     fn chr_select_chr_bank0_in_4k_mode() {
-        let mut chr = Mmc1ChrStorage::new(&make_chr());
-        write_serial_chr(&mut chr, 0x8000, 0x10);
-        write_serial_chr(&mut chr, 0xa000, 0x03);
-        assert_eq!(chr.read_chr(0x0000), 0x40);
+        let (mut mapper, _) = make_mmc1_with_chr();
+        write_serial_chr(&mut mapper, 0x8000, 0x10);
+        write_serial_chr(&mut mapper, 0xa000, 0x03);
+        assert_eq!(mapper.read_chr(0x0000), 0x40);
     }
 
     #[test]
     fn chr_select_chr_bank1_in_4k_mode() {
-        let mut chr = Mmc1ChrStorage::new(&make_chr());
-        write_serial_chr(&mut chr, 0x8000, 0x10);
-        write_serial_chr(&mut chr, 0xc000, 0x01);
-        assert_eq!(chr.read_chr(0x1000), 0x20);
+        let (mut mapper, _) = make_mmc1_with_chr();
+        write_serial_chr(&mut mapper, 0x8000, 0x10);
+        write_serial_chr(&mut mapper, 0xc000, 0x01);
+        assert_eq!(mapper.read_chr(0x1000), 0x20);
     }
 
     #[test]
     fn chr_writes_to_chr_ram_persists() {
-        let mut chr = Mmc1ChrStorage::new(&[]);
-        chr.write_chr(0x0000, 0xab);
-        assert_eq!(chr.read_chr(0x0000), 0xab);
+        let prg = vec![0u8; 0x8000];
+        let mut mapper = MMC1::new(&prg, &[], Mirroring::Horizontal);
+        mapper.write_chr(0x0000, 0xab);
+        assert_eq!(mapper.read_chr(0x0000), 0xab);
     }
 }

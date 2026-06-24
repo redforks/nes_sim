@@ -1,19 +1,22 @@
+use super::chr_storage::DirectChr;
 use super::{Cartridge, CARTRIDGE_START_ADDR, CartridgeOperation};
 
 pub struct Mapper0 {
     prg_rom: [u8; 0x8000],
     prg_rom_len: usize,
     ram: [u8; 0x4000 - 0x20],
+    chr: DirectChr,
 }
 
 impl Mapper0 {
-    pub fn new(prg_rom: &[u8]) -> Self {
+    pub fn new(prg_rom: &[u8], chr_rom: &[u8]) -> Self {
         debug_assert!(prg_rom.len() <= 0x8000);
 
         let mut r = Self {
             prg_rom: [0; 0x8000],
             prg_rom_len: prg_rom.len(),
             ram: [0; 0x4000 - 0x20],
+            chr: DirectChr::from_chr_rom(chr_rom),
         };
         r.prg_rom[0..prg_rom.len()].copy_from_slice(prg_rom);
         r
@@ -26,6 +29,7 @@ impl Default for Mapper0 {
             prg_rom: [0; 0x8000],
             prg_rom_len: 0,
             ram: [0; 0x4000 - 0x20],
+            chr: DirectChr::empty(),
         }
     }
 }
@@ -55,6 +59,14 @@ impl Cartridge for Mapper0 {
             _ => unreachable!(),
         }
         CartridgeOperation::None
+    }
+
+    fn read_chr(&self, address: u16) -> u8 {
+        self.chr.read_chr(address)
+    }
+
+    fn write_chr(&mut self, address: u16, value: u8) {
+        self.chr.write_chr(address, value);
     }
 }
 
@@ -87,7 +99,7 @@ mod tests {
         prg[0x3ffc] = 0x00;
         prg[0x3ffd] = 0x80;
 
-        let mcu = Mapper0::new(&prg);
+        let mcu = Mapper0::new(&prg, &[]);
 
         assert_eq!(mcu.read(0xfffc), 0x00);
         assert_eq!(mcu.read(0xfffd), 0x80);
