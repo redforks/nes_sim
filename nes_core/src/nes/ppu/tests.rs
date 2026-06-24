@@ -130,8 +130,8 @@ fn setup_sprite(ppu: &mut Ppu, index: usize, y: u8, tile: u8, attr: u8, x: u8) {
 }
 
 fn set_bg_tile(ppu: &mut Ppu, tile: u8, palette_idx: u8) {
-    ppu.write_nametable(0x2000, tile);
-    ppu.write_nametable(0x23c0, palette_idx & 0x03);
+    ppu.write_vram(0x2000, tile);
+    ppu.write_vram(0x23c0, palette_idx & 0x03);
 }
 
 fn set_bg_palette_color(ppu: &mut Ppu, palette_idx: u8, color_idx: u8, color: u8) {
@@ -639,13 +639,7 @@ fn test_render_pixel_sprite_zero_hit() {
     setup_sprite(&mut ppu, 0, 0, 1, 0, 8);
 
     assert!(!ppu.registers.status.sprite_zero_hit());
-    render_pixel_with_setup(
-        &mut ppu,
-        &pattern,
-        |ppu| ppu.write_nametable(0x2001, 0),
-        8,
-        1,
-    );
+    render_pixel_with_setup(&mut ppu, &pattern, |ppu| ppu.write_vram(0x2001, 0), 8, 1);
     ppu.sprite.update_ctrl_status(&mut ppu.registers);
     assert!(ppu.registers.status.sprite_zero_hit());
 }
@@ -732,13 +726,7 @@ fn test_render_pixel_sprite_zero_not_at_x255() {
     set_tile_solid(&mut pattern, 0, 1, 2);
     setup_sprite(&mut ppu, 0, 9, 0, 0, 248);
 
-    render_pixel_with_setup(
-        &mut ppu,
-        &pattern,
-        |ppu| ppu.write_nametable(0x201f, 0),
-        255,
-        10,
-    );
+    render_pixel_with_setup(&mut ppu, &pattern, |ppu| ppu.write_vram(0x201f, 0), 255, 10);
     assert!(!ppu.registers.status.sprite_zero_hit());
 }
 

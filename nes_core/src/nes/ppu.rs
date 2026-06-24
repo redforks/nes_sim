@@ -177,14 +177,6 @@ impl<R: Render> Ppu<R> {
         self.cartridge.irq_pending()
     }
 
-    fn write_nametable(&mut self, addr: u16, value: u8) {
-        self.nametable.write(addr, value);
-    }
-
-    pub fn read_nametable(&self, addr: u16) -> u8 {
-        self.nametable.read(addr)
-    }
-
     pub fn frame_no(&self) -> usize {
         self.timing.frame_no
     }
@@ -509,7 +501,7 @@ impl<R: Render> Ppu<R> {
         }
     }
 
-    fn read_vram(&self, address: u16) -> u8 {
+    pub fn read_vram(&self, address: u16) -> u8 {
         let mut addr = address % 0x4000;
         if (0x3000..0x3f00).contains(&addr) {
             addr -= 0x1000;
@@ -518,7 +510,7 @@ impl<R: Render> Ppu<R> {
             if addr < 0x2000 {
                 self.cartridge.read_chr(addr)
             } else {
-                self.read_nametable(addr)
+                self.nametable.read(addr)
             }
         } else {
             self.palette.read(addr)
@@ -532,7 +524,7 @@ impl<R: Render> Ppu<R> {
         }
         if addr < 0x3f00 {
             if addr >= 0x2000 {
-                self.write_nametable(addr, value);
+                self.nametable.write(addr, value);
             } else {
                 self.cartridge.write_chr(addr, value);
             }
@@ -602,9 +594,9 @@ impl<R: Render> Ppu<R> {
 
         let nt_base = 0x2000 + nt_idx as u16 * 0x0400;
         let nt_addr = nt_base + nt_y as u16 * TILES_PER_ROW as u16 + nt_x as u16;
-        let tile_idx = self.read_nametable(nt_addr);
+        let tile_idx = self.nametable.read(nt_addr);
         let attr_addr = nt_base + 0x03c0 + (nt_y as u16 / 4) * 8 + (nt_x as u16 / 4);
-        let attr_byte = self.read_nametable(attr_addr);
+        let attr_byte = self.nametable.read(attr_addr);
         let shift = (((nt_y >> 1) & 0x01) << 2) | (((nt_x >> 1) & 0x01) << 1);
         let palette_idx = (attr_byte >> shift) & 0x03;
 

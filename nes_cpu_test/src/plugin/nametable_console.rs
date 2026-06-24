@@ -106,7 +106,7 @@ fn read_console<R: Render>(cpu: &Cpu<NesMcu<R, ()>>, decoder: &Decoder) -> Strin
 fn read_plain_console<R: Render>(cpu: &Cpu<NesMcu<R, ()>>) -> String {
     let mut buf = Vec::with_capacity(NAMETABLE_LEN);
     for offset in 0..NAMETABLE_LEN as u16 {
-        let value = cpu.mcu().read_nametable(NAMETABLE_START + offset);
+        let value = cpu.mcu().read_vram(NAMETABLE_START + offset);
         if value == 0 {
             break;
         }
@@ -150,7 +150,7 @@ fn read_tall_console<R: Render>(cpu: &Cpu<NesMcu<R, ()>>) -> String {
 
 fn read_nametable_char<R: Render>(cpu: &Cpu<NesMcu<R, ()>>, row: usize, col: usize) -> u8 {
     cpu.mcu()
-        .read_nametable(NAMETABLE_START + (row * SCREEN_WIDTH + col) as u16)
+        .read_vram(NAMETABLE_START + (row * SCREEN_WIDTH + col) as u16)
 }
 
 fn decode_tall_char(top: u8, bottom: u8) -> Option<char> {

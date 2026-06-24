@@ -154,8 +154,8 @@ impl<R: Render, D: AudioDriver> NesMcu<R, D> {
         &mut self.apu
     }
 
-    pub fn read_nametable(&self, addr: u16) -> u8 {
-        self.ppu().read_nametable(addr)
+    pub fn read_vram(&self, addr: u16) -> u8 {
+        self.ppu().read_vram(addr)
     }
 }
 
