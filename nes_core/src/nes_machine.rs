@@ -75,9 +75,15 @@ where
     }
 
     /// Execute one master clock tick. Returns the `ExecuteResult`.
+    ///
+    /// Captures the current clock before advancing so that all device ticks
+    /// (PPU, APU, DMA, CPU) see the same pre-increment cycle value, matching
+    /// the original global-clock semantics where `get_system_clock()` was read
+    /// at the top of tick and the increment happened afterward.
     pub fn tick(&mut self) -> ExecuteResult {
+        let clock = self.clock;
         self.clock = self.clock.inc();
-        let cpu_tick = self.clock.is_cpu_clock();
+        let cpu_tick = clock.is_cpu_clock();
 
         self.machine.mcu_mut().tick_ppu();
         self.cartridge_irq_next = self.machine.mcu().cartridge_irq_pending();
@@ -88,19 +94,19 @@ where
         // Cartridge IRQs are exposed on the next CPU boundary, while APU IRQs
         // keep the existing immediate visibility used by the interrupt tests.
         let irq_pending = self.machine.mcu().apu_irq_pending() || self.cartridge_irq_latched;
-        self.machine.cpu_mut().set_irq(irq_pending, self.clock);
+        self.machine.cpu_mut().set_irq(irq_pending, clock);
 
-        self.machine.mcu_mut().tick_apu(self.clock);
-        if self.clock.is_apu_clock() {
-            self.dmc_dma.tick(self.machine.cpu_mut(), self.clock);
-            if self.machine.mcu_mut().tick_oam_dma(self.clock) {
+        self.machine.mcu_mut().tick_apu(clock);
+        if clock.is_apu_clock() {
+            self.dmc_dma.tick(self.machine.cpu_mut(), clock);
+            if self.machine.mcu_mut().tick_oam_dma(clock) {
                 return ExecuteResult::Continue;
             }
         }
 
         let nmi_line = self.machine.mcu().ppu().nmi_line_out();
         self.machine.cpu_mut().update_nmi_line(nmi_line);
-        self.machine.tick(self.clock)
+        self.machine.tick(clock)
     }
 
     pub fn reset(&mut self) {
@@ -140,9 +146,11 @@ where
 
     /// Set the CPU program counter.
     /// Drains any pending microcodes (e.g. from reset) before setting PC.
+    /// Uses CPU-only ticks so APU/DMA state is not advanced during setup.
     pub fn set_pc(&mut self, pc: u16) {
         while !self.machine.microcodes_empty() {
-            self.tick();
+            self.machine.tick(self.clock);
+            self.clock = self.clock.inc();
         }
         self.machine.set_pc(pc, self.clock);
     }
