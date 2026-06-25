@@ -1,7 +1,6 @@
 use crate::{
-    ExecuteResult, Plugin, SystemClock,
+    Cpu, ExecuteResult, Plugin, SystemClock,
     ines::INesFile,
-    machine::Machine,
     nes::{
         NesMcu, controller::Button, dmc_dma::DmcDma,
         ppu::palette::ColorTheme,
@@ -15,7 +14,8 @@ use crate::{
 const MAX_TICKS_PER_FRAME: u32 = 100000;
 
 pub struct NesMachine<P, R: Render, D: crate::nes::apu::AudioDriver> {
-    machine: Machine<P, NesMcu<R, D>>,
+    cpu: Cpu<NesMcu<R, D>>,
+    p: P,
     cartridge_irq_latched: bool,
     cartridge_irq_next: bool,
     dmc_dma: DmcDma,
@@ -31,7 +31,8 @@ where
     pub fn new(file: &INesFile, plugin: P, render: R, audio_driver: D) -> Self {
         let mcu = NesMcu::new(file, render, audio_driver);
         Self {
-            machine: Machine::with_plugin(plugin, mcu),
+            cpu: Cpu::new(mcu),
+            p: plugin,
             cartridge_irq_latched: false,
             cartridge_irq_next: false,
             dmc_dma: DmcDma::default(),
@@ -40,7 +41,7 @@ where
     }
 
     pub fn frame_no(&self) -> usize {
-        self.machine.mcu().ppu().timing().frame_no()
+        self.cpu.mcu().ppu().timing().frame_no()
     }
 
     /// Run the machine for a single frame.
@@ -52,18 +53,16 @@ where
     /// If VBlank does not occur within `MAX_TICKS_PER_FRAME` instruction ticks
     /// (safety guard for MCUs without a real PPU), the function returns early.
     pub fn process_frame(&mut self) -> ExecuteResult {
-        // Delegate to `tick()` which executes a single CPU instruction and
-        // advances PPU/APU accordingly. Loop until VBlank or safety limit.
-        let mut last_in_vblank = self.machine.mcu().ppu().in_vblank();
+        let mut last_in_vblank = self.cpu.mcu().ppu().in_vblank();
         for _ in 0..MAX_TICKS_PER_FRAME {
             self.tick();
 
-            if self.machine.cpu_mut().is_halted() {
+            if self.cpu.is_halted() {
                 self.flush_audio();
                 return ExecuteResult::Halt;
             }
 
-            let in_vblank = self.machine.mcu().ppu().in_vblank();
+            let in_vblank = self.cpu.mcu().ppu().in_vblank();
             if !last_in_vblank && in_vblank {
                 break;
             }
@@ -85,79 +84,95 @@ where
         self.clock = self.clock.inc();
         let cpu_tick = clock.is_cpu_clock();
 
-        self.machine.mcu_mut().tick_ppu();
-        self.cartridge_irq_next = self.machine.mcu().cartridge_irq_pending();
+        self.cpu.mcu_mut().tick_ppu();
+        self.cartridge_irq_next = self.cpu.mcu().cartridge_irq_pending();
         if cpu_tick {
             self.cartridge_irq_latched = self.cartridge_irq_next;
         }
 
-        // Cartridge IRQs are exposed on the next CPU boundary, while APU IRQs
-        // keep the existing immediate visibility used by the interrupt tests.
-        let irq_pending = self.machine.mcu().apu_irq_pending() || self.cartridge_irq_latched;
-        self.machine.cpu_mut().set_irq(irq_pending, clock);
+        let irq_pending = self.cpu.mcu().apu_irq_pending() || self.cartridge_irq_latched;
+        self.cpu.set_irq(irq_pending, clock);
 
-        self.machine.mcu_mut().tick_apu(clock);
+        self.cpu.mcu_mut().tick_apu(clock);
         if clock.is_apu_clock() {
-            self.dmc_dma.tick(self.machine.cpu_mut(), clock);
-            if self.machine.mcu_mut().tick_oam_dma(clock) {
+            self.dmc_dma.tick(&mut self.cpu, clock);
+            if self.cpu.mcu_mut().tick_oam_dma(clock) {
                 return ExecuteResult::Continue;
             }
         }
 
-        let nmi_line = self.machine.mcu().ppu().nmi_line_out();
-        self.machine.cpu_mut().update_nmi_line(nmi_line);
-        self.machine.tick(clock)
+        let nmi_line = self.cpu.mcu().ppu().nmi_line_out();
+        self.cpu.update_nmi_line(nmi_line);
+        let result = self.cpu.tick(&mut self.p, clock).0;
+        self.cpu.detect_interrupt(clock);
+        result
     }
 
     pub fn reset(&mut self) {
-        self.machine.mcu_mut().reset();
-        self.machine.reset();
+        self.cpu.mcu_mut().reset();
+        self.cpu.reset();
         self.cartridge_irq_latched = false;
         self.cartridge_irq_next = false;
     }
 
     fn flush_audio(&mut self) {
-        self.machine.mcu_mut().flush_audio();
+        self.cpu.mcu_mut().flush_audio();
     }
 
     pub fn press_controller_a(&mut self, button: Button) {
-        self.machine.mcu_mut().press_controller_a(button);
+        self.cpu.mcu_mut().press_controller_a(button);
     }
 
     pub fn release_controller_a(&mut self, button: Button) {
-        self.machine.mcu_mut().release_controller_a(button);
+        self.cpu.mcu_mut().release_controller_a(button);
     }
 
     pub fn press_controller_b(&mut self, button: Button) {
-        self.machine.mcu_mut().press_controller_b(button);
+        self.cpu.mcu_mut().press_controller_b(button);
     }
 
     pub fn release_controller_b(&mut self, button: Button) {
-        self.machine.mcu_mut().release_controller_b(button);
+        self.cpu.mcu_mut().release_controller_b(button);
     }
 
     pub fn render_mut(&mut self) -> &mut R {
-        self.machine.mcu_mut().ppu_mut().renderer_mut()
+        self.cpu.mcu_mut().ppu_mut().renderer_mut()
     }
 
     pub fn set_color_theme(&mut self, theme: ColorTheme) {
-        self.machine.mcu_mut().ppu_mut().set_color_theme(theme);
+        self.cpu.mcu_mut().ppu_mut().set_color_theme(theme);
     }
 
     /// Set the CPU program counter.
     /// Drains any pending microcodes (e.g. from reset) before setting PC.
     /// Uses CPU-only ticks so APU/DMA state is not advanced during setup.
     pub fn set_pc(&mut self, pc: u16) {
-        while !self.machine.microcodes_empty() {
-            self.machine.tick(self.clock);
+        while !self.cpu.microcodes_empty() {
+            self.cpu.tick(&mut self.p, self.clock);
             self.clock = self.clock.inc();
         }
-        self.machine.set_pc(pc, self.clock);
+        self.cpu.set_pc(pc, self.clock);
     }
 
     /// Get the current system clock value.
     pub fn clock(&self) -> SystemClock {
         self.clock
+    }
+
+    pub fn cpu(&self) -> &Cpu<NesMcu<R, D>> {
+        &self.cpu
+    }
+
+    pub fn cpu_mut(&mut self) -> &mut Cpu<NesMcu<R, D>> {
+        &mut self.cpu
+    }
+
+    pub fn mcu(&self) -> &NesMcu<R, D> {
+        self.cpu.mcu()
+    }
+
+    pub fn mcu_mut(&mut self) -> &mut NesMcu<R, D> {
+        self.cpu.mcu_mut()
     }
 }
 
