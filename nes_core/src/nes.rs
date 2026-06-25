@@ -1,4 +1,3 @@
-use crate::get_system_clock;
 use crate::ines::INesFile;
 use crate::mcu::Mcu;
 use crate::nes::apu::{Apu, AudioDriver};
@@ -6,6 +5,7 @@ use crate::nes::controller::{Button, Controller};
 use crate::nes::lower_ram::LowerRam;
 use crate::nes::ppu::{Ppu, Timing};
 use crate::render::Render;
+use crate::SystemClock;
 
 pub mod apu;
 pub mod controller;
@@ -63,8 +63,8 @@ impl<R: Render, D: AudioDriver> NesMcu<R, D> {
         self.ppu.tick();
     }
 
-    pub fn tick_apu(&mut self) {
-        self.apu.tick();
+    pub fn tick_apu(&mut self, clock: SystemClock) {
+        self.apu.tick(clock);
     }
 
     pub fn apu_irq_pending(&self) -> bool {
@@ -79,8 +79,7 @@ impl<R: Render, D: AudioDriver> NesMcu<R, D> {
         self.apu.flush();
     }
 
-    pub fn tick_oam_dma(&mut self) -> bool {
-        let system_clock = get_system_clock();
+    pub fn tick_oam_dma(&mut self, clock: SystemClock) -> bool {
         if let Some(mut dma) = self.oam_dma.take() {
             if dma.startup_cycles > 0 {
                 dma.startup_cycles -= 1;
@@ -107,7 +106,7 @@ impl<R: Render, D: AudioDriver> NesMcu<R, D> {
             self.oam_dma_pending = None;
             self.oam_dma = Some(OamDmaState {
                 page,
-                startup_cycles: if system_clock.is_even_cpu_cycle() {
+                startup_cycles: if clock.is_even_cpu_cycle() {
                     1
                 } else {
                     2

@@ -1,4 +1,4 @@
-use crate::{CpuClockPhase, get_system_clock, get_system_cycles, inc_system_clock, mcu::Mcu};
+use crate::{CpuClockPhase, SystemClock, mcu::Mcu};
 use arraydeque::ArrayDeque;
 use microcode::{Microcode, opcode};
 #[cfg(debug_assertions)]
@@ -22,9 +22,9 @@ struct IrqDetector {
 }
 
 impl IrqDetector {
-    fn update_irq_input(&mut self, v: bool) {
+    fn update_irq_input(&mut self, v: bool, clock: SystemClock) {
         self.irq_requested_at = if v && !self.irq_input {
-            Some(get_system_cycles())
+            Some(clock.0)
         } else {
             None
         };
@@ -115,6 +115,10 @@ pub struct Cpu<M: Mcu> {
     mem_acc_count: Rc<Cell<usize>>,
 
     pub(crate) frozen: bool,
+
+    /// The SystemClock value from the most recent `tick()` call.
+    /// Exposed so plugins can access cycle timing without a global clock.
+    last_clock: SystemClock,
 }
 
 impl<M: Mcu> Cpu<M> {
@@ -139,6 +143,7 @@ impl<M: Mcu> Cpu<M> {
             mem_acc_count: Default::default(),
             frozen: false,
             last_read_addr: None,
+            last_clock: SystemClock::default(),
         };
         r.reset();
         r
@@ -152,23 +157,23 @@ impl<M: Mcu> Cpu<M> {
         &mut self.mcu
     }
 
-    /// Drain all pending microcodes by ticking the CPU while the microcode queue
-    /// is non-empty. The provided `plugin` will be used for tick hooks.
-    fn drain_microcodes<P: Plugin<M>>(&mut self, plugin: &mut P) {
-        while !self.microcode_queue.is_empty() {
-            // Ignore execute result; we're only interested in running queued microcodes.
-            let _ = self.tick(plugin);
-            inc_system_clock();
-        }
+    /// The SystemClock from the most recent `tick()` call.
+    pub fn clock(&self) -> SystemClock {
+        self.last_clock
     }
 
-    /// Set CPU program counter, draining any pending microcodes (e.g. reset vector loads)
-    /// before applying the new PC. This ensures external callers can set PC without
-    /// being later overwritten by queued microcode operations.
-    pub fn set_pc(&mut self, pc: u16) {
-        let mut drain = EmptyPlugin::<M>::new();
-        self.drain_microcodes(&mut drain);
+    /// Set CPU program counter. Panics if there are pending microcodes;
+    /// callers must drain the queue before calling set_pc.
+    pub fn set_pc(&mut self, pc: u16, _clock: SystemClock) {
+        assert!(
+            self.microcodes_empty(),
+            "microcode queue must be empty before setting PC"
+        );
         self.pc = pc;
+    }
+
+    pub fn microcodes_empty(&self) -> bool {
+        self.microcode_queue.is_empty()
     }
 
     pub(crate) fn next_microcode(&self) -> Microcode {
@@ -207,8 +212,8 @@ impl<M: Mcu> Cpu<M> {
         ]);
     }
 
-    pub fn set_irq(&mut self, enabled: bool) {
-        self.irq_detector.update_irq_input(enabled);
+    pub fn set_irq(&mut self, enabled: bool, clock: SystemClock) {
+        self.irq_detector.update_irq_input(enabled, clock);
     }
 
     pub fn is_halted(&self) -> bool {
@@ -226,7 +231,8 @@ impl<M: Mcu> Cpu<M> {
     }
 
     /// Return true if just execute current instruction
-    pub fn tick<P: Plugin<M>>(&mut self, plugin: &mut P) -> (ExecuteResult, bool) {
+    pub fn tick<P: Plugin<M>>(&mut self, plugin: &mut P, clock: SystemClock) -> (ExecuteResult, bool) {
+        self.last_clock = clock;
         self.reset_mem_count();
         self.last_read_addr = None;
 
@@ -244,7 +250,7 @@ impl<M: Mcu> Cpu<M> {
         }
 
         if matches!(
-            get_system_clock().cpu_clock_phase(),
+            clock.cpu_clock_phase(),
             crate::CpuClockPhase::First | crate::CpuClockPhase::Middle
         ) {
             return (ExecuteResult::Continue, false);
@@ -278,8 +284,8 @@ impl<M: Mcu> Cpu<M> {
         }
     }
 
-    pub fn detect_interrupt(&mut self) {
-        if matches!(get_system_clock().cpu_clock_phase(), CpuClockPhase::Last) {
+    pub fn detect_interrupt(&mut self, clock: SystemClock) {
+        if matches!(clock.cpu_clock_phase(), CpuClockPhase::Last) {
             // Detect interrupt at the second-to-last cycle
             if self.microcode_queue.len() == 1 {
                 self.nmi_detecteor.detect_nmi();

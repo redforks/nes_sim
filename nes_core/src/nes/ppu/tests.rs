@@ -1,7 +1,7 @@
 use super::*;
 use crate::nes::mapper::{Mirroring, TestCartridge};
 use crate::render::ImageRender;
-use crate::set_system_cycles;
+
 use test_case::test_case;
 
 fn new_test_ppu_and_pattern() -> (Ppu, [u8; 8192]) {
@@ -46,9 +46,8 @@ fn test_peek_status_does_not_clear_vblank() {
 fn test_open_bus_bits_decay_to_zero() {
     let mut ppu = Ppu::new((), Mirroring::Horizontal, Box::new(TestCartridge::new()));
 
-    set_system_cycles(0);
     ppu.write(0x2002, 0xFF);
-    set_system_cycles(PPU_OPEN_BUS_DECAY_TICKS);
+    ppu.cycle = PPU_OPEN_BUS_DECAY_TICKS;
 
     assert_eq!(ppu.read(0x2000), 0x00);
 }
@@ -57,9 +56,8 @@ fn test_open_bus_bits_decay_to_zero() {
 fn test_status_read_only_refreshes_high_bits() {
     let mut ppu = Ppu::new((), Mirroring::Horizontal, Box::new(TestCartridge::new()));
 
-    set_system_cycles(0);
     ppu.write(0x2002, 0xFF);
-    set_system_cycles(PPU_OPEN_BUS_DECAY_TICKS);
+    ppu.cycle = PPU_OPEN_BUS_DECAY_TICKS;
     ppu.registers.status.set_v_blank(true);
     let result = ppu.read(0x2002);
     // Only high bit should remain; the 0xFF bus latch written to $2002 had 0x80 masked.

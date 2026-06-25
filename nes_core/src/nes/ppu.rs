@@ -4,7 +4,6 @@ mod registers;
 mod sprite;
 
 use crate::{
-    get_system_cycles,
     mcu::Mcu,
     nes::{
         mapper::{Cartridge, CartridgeOperation, Mirroring},
@@ -134,6 +133,10 @@ pub struct Ppu<R: Render = ()> {
     /// this delayed copy models the 1-dot internal pipeline delay.
     effective_mask: PpuMask,
     rendering_enabled_at_scanline_start: bool,
+
+    /// Cumulative system cycle counter, incremented each tick.
+    /// Replaces the global `get_system_cycles()` for PPU-internal timing.
+    cycle: u64,
 }
 
 /// PPU registers are mirrored every 8 bytes in range $2000-$3FFF
@@ -158,6 +161,7 @@ impl<R: Render> Ppu<R> {
             suppressed_vblank_at: None,
             effective_mask: PpuMask::new(),
             rendering_enabled_at_scanline_start: false,
+            cycle: 0,
         }
     }
 
@@ -262,6 +266,7 @@ impl<R: Render> Ppu<R> {
     }
 
     pub fn tick(&mut self) {
+        self.cycle += 1;
         let rendering_enabled = self.rendering_enabled();
         let (prev_scanline, _prev_dot) = (self.timing.scanline, self.timing.dot);
 
@@ -402,7 +407,7 @@ impl<R: Render> Ppu<R> {
             if self
                 .suppressed_vblank_at
                 .take()
-                .is_none_or(|clock| get_system_cycles() - clock > 1)
+                .is_none_or(|clock| self.cycle - clock > 1)
             {
                 self.registers.status.set_v_blank(true);
             }
@@ -648,15 +653,15 @@ impl<R: Render> Ppu<R> {
     }
 
     fn current_bus_latch(&mut self) -> u8 {
-        self.registers.current_bus_latch()
+        self.registers.current_bus_latch(self.cycle)
     }
 
     fn refresh_bus_latch(&mut self, value: u8) {
-        self.registers.refresh_bus_latch(value);
+        self.registers.refresh_bus_latch(value, self.cycle);
     }
 
     fn refresh_bus_latch_bits(&mut self, mask: u8, value: u8) {
-        self.registers.refresh_bus_latch_bits(mask, value);
+        self.registers.refresh_bus_latch_bits(mask, value, self.cycle);
     }
 
     /// Read OAM data at current OAM address (for testing)
@@ -674,7 +679,7 @@ impl<R: Render> Ppu<R> {
     fn read_status(&mut self) -> PpuStatus {
         let r = self.registers.status;
         if self.timing.enter_vblank() {
-            self.suppressed_vblank_at = Some(get_system_cycles());
+            self.suppressed_vblank_at = Some(self.cycle);
         }
 
         // Clear v_blank flag on read

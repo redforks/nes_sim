@@ -1,5 +1,5 @@
 use crate::{
-    ExecuteResult, Plugin, get_system_clock, inc_system_clock,
+    ExecuteResult, Plugin, SystemClock,
     ines::INesFile,
     machine::Machine,
     nes::{
@@ -19,6 +19,7 @@ pub struct NesMachine<P, R: Render, D: crate::nes::apu::AudioDriver> {
     cartridge_irq_latched: bool,
     cartridge_irq_next: bool,
     dmc_dma: DmcDma,
+    clock: SystemClock,
 }
 
 impl<P, R, D> NesMachine<P, R, D>
@@ -34,6 +35,7 @@ where
             cartridge_irq_latched: false,
             cartridge_irq_next: false,
             dmc_dma: DmcDma::default(),
+            clock: SystemClock::default(),
         }
     }
 
@@ -55,7 +57,6 @@ where
         let mut last_in_vblank = self.machine.mcu().ppu().in_vblank();
         for _ in 0..MAX_TICKS_PER_FRAME {
             self.tick();
-            inc_system_clock();
 
             if self.machine.cpu_mut().is_halted() {
                 self.flush_audio();
@@ -75,8 +76,8 @@ where
 
     /// Execute one master clock tick. Returns the `ExecuteResult`.
     pub fn tick(&mut self) -> ExecuteResult {
-        let cycles = get_system_clock();
-        let cpu_tick = cycles.is_cpu_clock();
+        self.clock = self.clock.inc();
+        let cpu_tick = self.clock.is_cpu_clock();
 
         self.machine.mcu_mut().tick_ppu();
         self.cartridge_irq_next = self.machine.mcu().cartridge_irq_pending();
@@ -87,21 +88,19 @@ where
         // Cartridge IRQs are exposed on the next CPU boundary, while APU IRQs
         // keep the existing immediate visibility used by the interrupt tests.
         let irq_pending = self.machine.mcu().apu_irq_pending() || self.cartridge_irq_latched;
-        self.machine.cpu_mut().set_irq(irq_pending);
+        self.machine.cpu_mut().set_irq(irq_pending, self.clock);
 
-        self.machine.mcu_mut().tick_apu();
-        if cycles.is_apu_clock() {
-            self.dmc_dma.tick(self.machine.cpu_mut());
-            if self.machine.mcu_mut().tick_oam_dma() {
+        self.machine.mcu_mut().tick_apu(self.clock);
+        if self.clock.is_apu_clock() {
+            self.dmc_dma.tick(self.machine.cpu_mut(), self.clock);
+            if self.machine.mcu_mut().tick_oam_dma(self.clock) {
                 return ExecuteResult::Continue;
             }
         }
 
         let nmi_line = self.machine.mcu().ppu().nmi_line_out();
         self.machine.cpu_mut().update_nmi_line(nmi_line);
-        let r = self.machine.tick();
-        self.machine.cpu_mut().detect_interrupt();
-        r
+        self.machine.tick(self.clock)
     }
 
     pub fn reset(&mut self) {
@@ -140,8 +139,17 @@ where
     }
 
     /// Set the CPU program counter.
+    /// Drains any pending microcodes (e.g. from reset) before setting PC.
     pub fn set_pc(&mut self, pc: u16) {
-        self.machine.set_pc(pc);
+        while !self.machine.microcodes_empty() {
+            self.tick();
+        }
+        self.machine.set_pc(pc, self.clock);
+    }
+
+    /// Get the current system clock value.
+    pub fn clock(&self) -> SystemClock {
+        self.clock
     }
 }
 

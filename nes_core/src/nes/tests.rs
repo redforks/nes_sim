@@ -1,5 +1,5 @@
 use super::*;
-use crate::inc_system_clock;
+use crate::SystemClock;
 use crate::nes::apu::Apu;
 use crate::nes::controller::Button;
 use crate::nes::mapper::{Mirroring, TestCartridge};
@@ -37,9 +37,10 @@ fn test_frame_counter_inhibit_clears_irq() {
     let mut mcu = test_mcu();
 
     mcu.write(0x4017, 0x00);
+    let mut clock = SystemClock::default();
     for _ in 0..(29_829 * 3) {
-        mcu.tick_apu();
-        inc_system_clock();
+        mcu.tick_apu(clock);
+        clock = clock.inc();
     }
 
     mcu.write(0x4017, 0x40);

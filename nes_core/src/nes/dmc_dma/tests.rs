@@ -300,7 +300,7 @@ impl TestStruct {
     }
 
     fn tick_and_assert(&mut self, exp_state: State) {
-        self.dma.tick(&mut self.cpu);
+        self.dma.tick(&mut self.cpu, SystemClock::default());
         assert_eq!(self.dma.state, exp_state);
         self.cpu.checkpoint();
         self.cpu.checkpoint();
@@ -376,7 +376,7 @@ impl TestStruct {
             .times(1)
             .in_sequence(&mut self.seq)
             .return_const(0x00);
-        self.dma.tick(&mut self.cpu);
+        self.dma.tick(&mut self.cpu, SystemClock::default());
         assert_eq!(State::AlignOrRead, self.dma.state);
         self.cpu.checkpoint();
         self.cpu.checkpoint();

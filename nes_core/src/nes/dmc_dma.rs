@@ -1,5 +1,5 @@
 use crate::{
-    Cpu, get_system_clock,
+    Cpu, SystemClock,
     nes::{NesMcu, apu::AudioDriver},
     render::Render,
 };
@@ -37,7 +37,7 @@ pub(crate) trait NesDmaSupport {
     /// Supply dmc dma result to apu
     fn supply_dmc_byte(&mut self, byte: u8);
 
-    fn is_get_cycle(&self) -> bool;
+    fn is_get_cycle(&self, clock: SystemClock) -> bool;
 }
 
 impl<R: Render, D: AudioDriver> NesDmaSupport for Cpu<NesMcu<R, D>> {
@@ -72,8 +72,8 @@ impl<R: Render, D: AudioDriver> NesDmaSupport for Cpu<NesMcu<R, D>> {
         self.mcu_mut().apu_mut().supply_dmc_byte(byte);
     }
 
-    fn is_get_cycle(&self) -> bool {
-        get_system_clock().is_apu_get_clock()
+    fn is_get_cycle(&self, clock: SystemClock) -> bool {
+        clock.is_apu_get_clock()
     }
 }
 
@@ -113,7 +113,7 @@ impl DmcDma {
         cpu.read_mem(self.cpu_last_read_addr);
     }
 
-    pub fn tick(&mut self, cpu: &mut impl NesDmaSupport) {
+    pub fn tick(&mut self, cpu: &mut impl NesDmaSupport, clock: SystemClock) {
         match self.state {
             State::Inactive => {
                 if let Some((dmc_dma_type, addr)) = cpu.take_dmc_dma_request() {
@@ -126,7 +126,7 @@ impl DmcDma {
                             first_attempt: true,
                         };
                         // reload requests, no request cycle
-                        self.tick(cpu);
+                        self.tick(cpu, clock);
                     };
                 }
             }
@@ -146,7 +146,7 @@ impl DmcDma {
                 first_attempt,
             } => {
                 // 如果是第一次尝试，必须严格对齐目标相位
-                if first_attempt && (!halt_on_put != cpu.is_get_cycle()) {
+                if first_attempt && (!halt_on_put != cpu.is_get_cycle(clock)) {
                     // 相位不对，CPU 照常运行，不消耗 DMA 周期
                     return;
                 }
@@ -165,7 +165,7 @@ impl DmcDma {
                 }
             }
             State::AlignOrRead => {
-                if cpu.is_get_cycle() {
+                if cpu.is_get_cycle(clock) {
                     self.read(cpu);
                 } else {
                     self.state = State::Read;

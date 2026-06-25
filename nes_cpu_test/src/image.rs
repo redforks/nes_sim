@@ -4,7 +4,7 @@ use super::plugin::{
     ReportPlugin, Timeout,
 };
 use nes_core::{
-    Plugin, inc_system_clock, ines::INesFile, machine::Machine, mcu::RamMcu,
+    Plugin, SystemClock, ines::INesFile, machine::Machine, mcu::RamMcu,
     nes_machine::NesMachine, render::ImageRender,
 };
 use std::{
@@ -57,11 +57,17 @@ impl Image {
         }
         let plugin = CompositePlugin::new(plugins);
         let mut machine = Machine::with_plugin(plugin, mcu);
-        match start_pc {
-            Some(pc) => machine.set_pc(pc),
-            None => machine.set_pc(0x400),
+        let mut clock = SystemClock::default();
+        let mut drain_plugin = nes_core::EmptyPlugin::new();
+        while !machine.cpu_mut().microcodes_empty() {
+            machine.cpu_mut().tick(&mut drain_plugin, clock);
+            clock = clock.inc();
         }
-        MachineWrapper::Bin(Box::new(machine))
+        match start_pc {
+            Some(pc) => machine.set_pc(pc, clock),
+            None => machine.set_pc(0x400, clock),
+        }
+        MachineWrapper::Bin(Box::new(machine), clock)
     }
 
     fn create_ines_machine(
@@ -279,25 +285,27 @@ mod machine_types {
 }
 
 pub enum MachineWrapper {
-    Bin(Box<machine_types::BinMachine>),
+    Bin(Box<machine_types::BinMachine>, SystemClock),
     INes(Box<machine_types::INesMachine>),
     PngFrameMatch(Box<machine_types::PngFrameMatchMachine>),
 }
 
 impl MachineWrapper {
     pub fn tick(&mut self) -> nes_core::ExecuteResult {
-        let r = match self {
-            MachineWrapper::Bin(m) => m.tick(),
+        match self {
+            MachineWrapper::Bin(m, clock) => {
+                let r = m.tick(*clock);
+                *clock = clock.inc();
+                r
+            }
             MachineWrapper::INes(m) => m.tick(),
             MachineWrapper::PngFrameMatch(m) => m.tick(),
-        };
-        inc_system_clock();
-        r
+        }
     }
 
     pub fn reset(&mut self) {
         match self {
-            MachineWrapper::Bin(m) => m.reset(),
+            MachineWrapper::Bin(m, _) => m.reset(),
             MachineWrapper::INes(m) => m.reset(),
             MachineWrapper::PngFrameMatch(m) => m.reset(),
         }

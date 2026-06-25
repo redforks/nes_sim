@@ -166,7 +166,7 @@ fn handle_request(state: &mut MachineState, request: Request) -> Response {
                     ExecuteResult::Continue => {
                         // Check if we've reached VBlank (scanline 241, dot 1)
                         let vblank_reached = match &state.machine {
-                            MachineWrapper::Bin(_) => false,
+                            MachineWrapper::Bin(_, _) => false,
                             MachineWrapper::INes(m) => m.mcu().is_at_vblank(),
                             MachineWrapper::PngFrameMatch(m) => m.mcu().is_at_vblank(),
                         };
@@ -212,7 +212,7 @@ fn handle_request(state: &mut MachineState, request: Request) -> Response {
 /// Read a single byte from memory
 fn read_memory_byte(state: &MachineState, addr: u16) -> u8 {
     match &state.machine {
-        MachineWrapper::Bin(m) => m.mcu().peek(addr),
+        MachineWrapper::Bin(m, _) => m.mcu().peek(addr),
         MachineWrapper::INes(m) => m.mcu().peek(addr),
         MachineWrapper::PngFrameMatch(m) => m.mcu().peek(addr),
     }
@@ -221,7 +221,7 @@ fn read_memory_byte(state: &MachineState, addr: u16) -> u8 {
 /// Get current machine status
 fn get_machine_status(state: &mut MachineState) -> nes_mcp_protocol::MachineStatus {
     match &mut state.machine {
-        MachineWrapper::Bin(m) => {
+        MachineWrapper::Bin(m, _) => {
             let cpu = m.cpu_mut();
             nes_mcp_protocol::MachineStatus {
                 pc: cpu.pc,
@@ -263,7 +263,7 @@ fn get_machine_status(state: &mut MachineState) -> nes_mcp_protocol::MachineStat
 /// Get CPU register state with decoded flags
 fn get_cpu_registers(state: &mut MachineState) -> nes_mcp_protocol::CpuRegisters {
     match &mut state.machine {
-        MachineWrapper::Bin(m) => {
+        MachineWrapper::Bin(m, _) => {
             let cpu = m.cpu_mut();
             let status = cpu.status;
             nes_mcp_protocol::CpuRegisters {
@@ -326,7 +326,7 @@ fn get_cpu_registers(state: &mut MachineState) -> nes_mcp_protocol::CpuRegisters
 /// Get APU status
 fn get_apu_status(state: &mut MachineState) -> nes_mcp_protocol::ApuStatus {
     match &state.machine {
-        MachineWrapper::Bin(_) => {
+        MachineWrapper::Bin(_, _) => {
             // Bin machines don't have APU
             nes_mcp_protocol::ApuStatus {
                 pulse1_enabled: false,
@@ -368,7 +368,7 @@ fn get_apu_status(state: &mut MachineState) -> nes_mcp_protocol::ApuStatus {
 /// Get PPU state dump
 fn get_ppu_status(state: &MachineState) -> String {
     match &state.machine {
-        MachineWrapper::Bin(_) => {
+        MachineWrapper::Bin(_, _) => {
             "# PPU State\nNot available (Bin machine has no PPU)\n".to_string()
         }
         MachineWrapper::INes(m) => m.mcu().dump_ppu_state(),
@@ -379,7 +379,7 @@ fn get_ppu_status(state: &MachineState) -> String {
 /// Get OAM data as hexdump
 fn get_oam_data(state: &MachineState) -> String {
     match &state.machine {
-        MachineWrapper::Bin(_) => "OAM not available (Bin machine has no PPU)\n".to_string(),
+        MachineWrapper::Bin(_, _) => "OAM not available (Bin machine has no PPU)\n".to_string(),
         MachineWrapper::INes(m) => {
             let oam = m.mcu().get_oam_data();
             format_hexdump(&oam, 0)
@@ -394,7 +394,7 @@ fn get_oam_data(state: &MachineState) -> String {
 /// Get nametable data as hexdump
 fn get_nametable_data(state: &MachineState, index: u8) -> String {
     match &state.machine {
-        MachineWrapper::Bin(_) => "Nametable not available (Bin machine has no PPU)\n".to_string(),
+        MachineWrapper::Bin(_, _) => "Nametable not available (Bin machine has no PPU)\n".to_string(),
         MachineWrapper::INes(m) => {
             let nametable = m.mcu().get_nametable_data(index);
             format_hexdump(&nametable, 0x2000 + (index as u16 * 0x400))

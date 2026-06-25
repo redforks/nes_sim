@@ -15,7 +15,11 @@ fn create_cpu_with_program(program: &[u8]) -> Cpu<MockMcu> {
 fn create_cpu_with_mcu<M: Mcu>(mcu: M) -> Cpu<M> {
     let mut cpu = Cpu::new(mcu);
     let mut plugin = EmptyPlugin::new();
-    cpu.drain_microcodes(&mut plugin);
+    let mut clock = SystemClock::default();
+    while !cpu.microcodes_empty() {
+        cpu.tick(&mut plugin, clock);
+        clock = clock.inc();
+    }
     cpu
 }
 
@@ -26,11 +30,15 @@ fn create_cpu() -> Cpu<MockMcu> {
 
 fn execute_next(cpu: &mut Cpu<MockMcu>) {
     let mut plugin = EmptyPlugin::new();
+    let mut clock = SystemClock::default();
 
-    cpu.drain_microcodes(&mut plugin);
+    while !cpu.microcodes_empty() {
+        cpu.tick(&mut plugin, clock);
+        clock = clock.inc();
+    }
 
-    while !cpu.tick(&mut plugin).1 {
-        inc_system_clock();
+    while !cpu.tick(&mut plugin, clock).1 {
+        clock = clock.inc();
     }
 }
 
@@ -40,7 +48,8 @@ fn test_irq_detector() {
     let mut v = IrqDetector::default();
     assert!(!v.irq_pending());
 
-    v.update_irq_input(true);
+    let test_clock = SystemClock::default();
+    v.update_irq_input(true, test_clock);
     assert!(!v.irq_pending());
     v.detect_irq(false);
     assert!(v.irq_pending());
@@ -48,7 +57,7 @@ fn test_irq_detector() {
     v.detect_irq(true);
     assert!(!v.irq_pending());
 
-    v.update_irq_input(false);
+    v.update_irq_input(false, test_clock);
     assert!(!v.irq_pending());
     v.detect_irq(false);
     assert!(!v.irq_pending());
@@ -276,7 +285,11 @@ fn test_reset() {
     cpu.reset();
     // Run reset microcodes so the reset vector is actually loaded
     let mut plugin = EmptyPlugin::new();
-    cpu.drain_microcodes(&mut plugin);
+    let mut clock = SystemClock::default();
+    while !cpu.microcodes_empty() {
+        cpu.tick(&mut plugin, clock);
+        clock = clock.inc();
+    }
     // Reset reads PC from 0xFFFC (which is 0x0000 in MockMcu)
     assert_eq!(cpu.pc, 0);
     // Reset now adjusts SP by subtracting 3 from its current value

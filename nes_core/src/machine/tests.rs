@@ -1,5 +1,5 @@
 use super::*;
-use crate::{inc_system_clock, test_utils::MockMcu};
+use crate::{SystemClock, test_utils::MockMcu};
 
 #[test]
 fn test_machine_creation() {
@@ -20,7 +20,13 @@ fn test_set_pc() {
     let mcu = MockMcu::new();
     let mut machine = Machine::new(mcu);
 
-    machine.set_pc(0x1234);
+    let mut clock = SystemClock::default();
+    let mut plugin = EmptyPlugin::new();
+    while !machine.cpu_mut().microcodes_empty() {
+        machine.cpu_mut().tick(&mut plugin, clock);
+        clock = clock.inc();
+    }
+    machine.set_pc(0x1234, clock);
     assert_eq!(machine.cpu.pc, 0x1234);
 }
 
@@ -30,7 +36,13 @@ fn test_set_pc_drains_pending_reset_microcodes() {
     let mut machine = Machine::new(mcu);
 
     machine.reset();
-    machine.set_pc(0x5678);
+    let mut plugin = EmptyPlugin::new();
+    let mut clock = SystemClock::default();
+    while !machine.cpu_mut().microcodes_empty() {
+        machine.cpu_mut().tick(&mut plugin, clock);
+        clock = clock.inc();
+    }
+    machine.set_pc(0x5678, clock);
 
     assert_eq!(machine.cpu.pc, 0x5678);
 }
@@ -40,13 +52,20 @@ fn test_reset() {
     let mcu = MockMcu::new();
     let mut machine = Machine::new(mcu);
 
-    machine.set_pc(0x5678);
+    let mut clock = SystemClock::default();
+    let mut plugin = EmptyPlugin::new();
+    while !machine.cpu_mut().microcodes_empty() {
+        machine.cpu_mut().tick(&mut plugin, clock);
+        clock = clock.inc();
+    }
+    machine.set_pc(0x5678, clock);
     machine.reset();
     // Reset enqueues microcodes that load the reset vector; run them to apply
     let mut plugin = EmptyPlugin::<MockMcu>::new();
+    let mut clock = SystemClock::default();
     // Tick until the CPU reports the current instruction is finished
-    while !machine.cpu_mut().tick(&mut plugin).1 {
-        inc_system_clock();
+    while !machine.cpu_mut().tick(&mut plugin, clock).1 {
+        clock = clock.inc();
     }
     // Reset reads PC from 0xFFFC
     assert_eq!(machine.cpu.pc, 0);

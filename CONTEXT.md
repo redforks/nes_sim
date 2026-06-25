@@ -1,8 +1,8 @@
-# NES Emulator — CHR Storage Domain
+# NES Emulator
+
+## Language — CHR Storage
 
 Core domain for pattern table data access across mapper implementations.
-
-## Language
 
 **CHR (Character Data)**:
 Tile graphics data stored in pattern tables, accessed by the PPU during rendering.
@@ -24,3 +24,21 @@ _Avoid_: Nina-001
 
 **Banked CHR (inline)**:
 Mappers with bankable CHR (MMC1, MMC3, Vrc24, J87, CnRom, Nina001) manage their own `Vec<u8>` and caching window inline — no shared abstraction. Write gating via `has_chr_ram` per mapper. CHR write-back to underlying `Vec` is direct (no write-through cache).
+
+## Language — System Timing
+
+**SystemClock**:
+A `Copy` newtype over `u64`. Represents the current master clock cycle. One system cycle equals one PPU dot. Every tick advances the clock by one. Owned by `NesMachine` and passed down to CPU/APU/DMA modules as an immutable parameter — no global state.
+_Avoid_: system cycles (use for the raw u64 count only), global clock, static clock
+
+**CpuClockPhase**:
+Enum with variants `First`, `Middle`, `Last`. Derived from `SystemClock` modulo `SYSTEM_CYCLES_PER_CPU_CYCLE` (3). One CPU cycle spans 3 system ticks (phases 0, 1, 2). CPU and APU advance only on `Last` phase (cycle % 3 == 2). `Middle` is always skipped.
+
+**Tick**:
+A single system-cycle step. `NesMachine::tick()` advances the clock by one, then calls each device's tick method in order: PPU → cartridge IRQ → APU → DMC DMA → OAM DMA → NMI → CPU → interrupt detection. Each device uses the clock to decide whether to advance its internal state.
+
+**Microcode**:
+A single step of the CPU's internal microcode machine. Multiple microcodes may execute across several ticks to complete one 6502 instruction. Microcodes must be drained with full device interleaving (PPU/APU/DMA ticked between each) — not in a tight loop.
+
+**Frame**:
+One complete PPU frame (262 scanlines × 341 dots). `NesMachine::process_frame()` calls `tick()` in a loop until VBlank (scanline 241, dot 1) or halt.

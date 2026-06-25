@@ -1,5 +1,5 @@
 use crate::mcu::Mcu;
-use crate::{Cpu, EmptyPlugin, ExecuteResult, Plugin};
+use crate::{Cpu, EmptyPlugin, ExecuteResult, Plugin, SystemClock};
 
 pub struct Machine<P, M: Mcu> {
     cpu: Cpu<M>,
@@ -21,16 +21,18 @@ impl<P: Plugin<M>, M: Mcu> Machine<P, M> {
     }
 
     /// Execute one CPU instruction and return its result and cycle count.
-    pub fn tick(&mut self) -> ExecuteResult {
-        self.cpu.tick(&mut self.p).0
+    pub fn tick(&mut self, clock: SystemClock) -> ExecuteResult {
+        let result = self.cpu.tick(&mut self.p, clock).0;
+        self.cpu.detect_interrupt(clock);
+        result
     }
 
     pub fn reset(&mut self) {
         self.cpu.reset()
     }
 
-    pub fn set_pc(&mut self, pc: u16) {
-        self.cpu.set_pc(pc);
+    pub fn set_pc(&mut self, pc: u16, clock: SystemClock) {
+        self.cpu.set_pc(pc, clock);
     }
 
     pub fn mcu(&self) -> &M {
@@ -47,6 +49,10 @@ impl<P: Plugin<M>, M: Mcu> Machine<P, M> {
 
     pub fn cpu_mut(&mut self) -> &mut Cpu<M> {
         &mut self.cpu
+    }
+
+    pub fn microcodes_empty(&self) -> bool {
+        self.cpu.microcodes_empty()
     }
 }
 

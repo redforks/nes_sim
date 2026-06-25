@@ -3,7 +3,7 @@ use nes_core::nes::NesMcu;
 use nes_core::nes::apu::AudioDriver;
 use nes_core::nes::ppu::Timing;
 use nes_core::render::Render;
-use nes_core::{Cpu, ExecuteResult, Plugin, SYSTEM_CYCLES_PER_PPU_CYCLE, get_system_cycles};
+use nes_core::{Cpu, ExecuteResult, Plugin, SYSTEM_CYCLES_PER_PPU_CYCLE};
 
 mod simple_disassembly;
 
@@ -90,7 +90,7 @@ impl ReportPlugin {
 
 impl<M: Mcu> Plugin<M> for ReportPlugin {
     fn start(&mut self, cpu: &mut Cpu<M>) {
-        self.start_cycles = get_system_cycles();
+        self.start_cycles = cpu.clock().cycles();
         self.a = cpu.a;
         self.x = cpu.x;
         self.y = cpu.y;
@@ -127,7 +127,7 @@ impl<M: Mcu> Plugin<M> for ReportNesTestResult {
 
     fn end(&mut self, cpu: &mut Cpu<M>) {
         self.instruction_executed += 1;
-        if !self.result_cycle_captured && get_system_cycles() >= 26560 * SYSTEM_CYCLES_PER_PPU_CYCLE
+        if !self.result_cycle_captured && cpu.clock().cycles() >= 26560 * SYSTEM_CYCLES_PER_PPU_CYCLE
         {
             self.result_cycle_captured = true;
             // 26560 is the old system-cycle threshold after the last instruction executed,
