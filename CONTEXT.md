@@ -42,3 +42,27 @@ A single step of the CPU's internal microcode machine. Multiple microcodes may e
 
 **Frame**:
 One complete PPU frame (262 scanlines × 341 dots). `NesMachine::process_frame()` calls `tick()` in a loop until VBlank (scanline 241, dot 1) or halt.
+
+## Language -- PPU Sprites
+
+Core domain for sprite (OAM) data representation and tile addressing.
+
+**OAM (Object Attribute Memory)**:
+256-byte memory holding 64 Sprites, accessed byte-wise via PPU registers $2003/$2004 and DMA. Typed access through the `Sprite` struct.
+_Avoid_: sprite RAM, sprite buffer, OAM buffer
+
+**Sprite**:
+4-byte OAM entry containing Y position (top screen coordinate + 1), tile index, Attribute (palette/flip/priority flags), and X position.
+_Avoid_: OAM entry, sprite record
+
+**Attribute**:
+Bitfield within each Sprite encoding: palette index (bits 0-1), behind-background priority (bit 5), horizontal flip (bit 6), vertical flip (bit 7). Bits 2-4 are unused.
+_Avoid_: sprite flags, attribute byte
+
+**TilePosition**:
+Decoded sprite tile location combining size (8x8 or 8x16), PatternBank, and tile index within that bank. Produced by `Sprite::tile_position()` given PPU control register state.
+_Avoid_: tile address, sprite tile addr
+
+**PatternBank**:
+Either First ($0000) or Second ($1000) pattern table in VRAM. Selected per-sprite based on sprite size and PPU control register.
+_Avoid_: pattern table, CHR bank

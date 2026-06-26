@@ -273,7 +273,7 @@ impl<R: Render> Ppu<R> {
             self.rendering_enabled_at_scanline_start = rendering_enabled;
         }
 
-        self.sprite.update_ctrl_status(&mut self.registers);
+        self.sprite.update_ctrl_status(&mut self.registers.status);
 
         // MMC3 scanline IRQs are driven by filtered PPU A12 rises.
         //
@@ -359,8 +359,8 @@ impl<R: Render> Ppu<R> {
         {
             self.sprite.step_sprite_overflow_eval(
                 self.timing.scanline,
-                self.registers.ctrl.sprite_size_16(),
-                &self.registers.oam_data,
+                self.registers.ctrl,
+                &self.registers.oam,
             );
         }
 
@@ -697,10 +697,9 @@ impl<R: Render> Ppu<R> {
 
         let sprite_pixel = if self.effective_mask.sprite_enabled() {
             self.sprite.find_sprite_pixel(
-                &self.registers.oam_data,
-                self.registers.ctrl.sprite_size_16(),
-                self.registers.ctrl.sprite_pattern_table(),
-                self.effective_mask.sprite_left_enabled(),
+                &self.registers.oam,
+                self.registers.ctrl,
+                self.effective_mask,
                 &*self.cartridge,
                 x,
                 self.timing.scanline as u8,
@@ -718,9 +717,8 @@ impl<R: Render> Ppu<R> {
             && (x >= 8 || self.effective_mask.sprite_left_enabled())
         {
             if self.sprite.sprite_zero_opaque_at(
-                &self.registers.oam_data,
-                self.registers.ctrl.sprite_size_16(),
-                self.registers.ctrl.sprite_pattern_table(),
+                &self.registers.oam,
+                self.registers.ctrl,
                 &*self.cartridge,
                 x,
                 self.timing.scanline as u8,

@@ -1,5 +1,6 @@
 use bitfield_struct::bitfield;
 
+use super::oam::Oam;
 use super::{PPU_OPEN_BUS_DECAY_TICKS, Pixel};
 
 #[bitfield(u8)]
@@ -81,7 +82,7 @@ pub struct Registers {
     pub status: PpuStatus,
 
     pub oam_addr: u8,
-    pub oam_data: [u8; 0x100],
+    pub oam: Oam,
 
     // VRAM address registers: v (current), t (temporary), x (fine X), w (write toggle)
     pub vram_addr: u16,
@@ -104,7 +105,7 @@ impl Registers {
             mask: PpuMask::new(),
             status: PpuStatus::new(),
             oam_addr: 0,
-            oam_data: [0; 0x100],
+            oam: Oam::default(),
             vram_addr: 0,
             temp_vram_addr: 0,
             fine_x: 0,
@@ -135,7 +136,7 @@ impl Registers {
     }
 
     pub fn read_oam_data(&self) -> u8 {
-        self.oam_data[(self.oam_addr as usize) & 0xff]
+        self.oam.as_bytes()[(self.oam_addr as usize) & 0xff]
     }
 
     pub fn write_oam_data(&mut self, value: u8) {
@@ -148,7 +149,7 @@ impl Registers {
         }
 
         let addr = self.oam_addr;
-        self.oam_data[(addr as usize) & 0xff] = normalize_oam_byte(addr, value);
+        self.oam.as_bytes_mut()[(addr as usize) & 0xff] = normalize_oam_byte(addr, value);
         self.oam_addr = addr.wrapping_add(1);
     }
 

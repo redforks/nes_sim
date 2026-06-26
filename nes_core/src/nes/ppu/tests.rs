@@ -73,9 +73,12 @@ fn create_test_ppu_with_mask(mask: PpuMask) -> Ppu {
         ..Ppu::new((), Mirroring::Horizontal, Box::new(TestCartridge::new()))
     };
     ppu.registers.mask = mask;
-    for i in 0..64 {
-        ppu.registers.oam_data[i * 4] = 0x20;
-        ppu.registers.oam_data[i * 4 + 3] = 0xFF;
+    {
+        let oam = ppu.registers.oam.as_bytes_mut();
+        for i in 0..64 {
+            oam[i * 4] = 0x20;
+            oam[i * 4 + 3] = 0xFF;
+        }
     }
     ppu.palette.data = [0; 0x20];
     ppu
@@ -120,7 +123,7 @@ fn set_tile_pixel(
 }
 
 fn setup_sprite(ppu: &mut Ppu, index: usize, y: u8, tile: u8, attr: u8, x: u8) {
-    let oam = &mut ppu.registers.oam_data;
+    let oam = ppu.registers.oam.as_bytes_mut();
     oam[index * 4] = y;
     oam[index * 4 + 1] = tile;
     oam[index * 4 + 2] = attr;
@@ -638,7 +641,7 @@ fn test_render_pixel_sprite_zero_hit() {
 
     assert!(!ppu.registers.status.sprite_zero_hit());
     render_pixel_with_setup(&mut ppu, &pattern, |ppu| ppu.write_vram(0x2001, 0), 8, 1);
-    ppu.sprite.update_ctrl_status(&mut ppu.registers);
+    ppu.sprite.update_ctrl_status(&mut ppu.registers.status);
     assert!(ppu.registers.status.sprite_zero_hit());
 }
 
