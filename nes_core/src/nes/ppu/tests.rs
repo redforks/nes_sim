@@ -503,7 +503,7 @@ fn test_render_pixel_uses_second_tile_for_8x16_sprites() {
     let mut pattern = create_pattern();
     set_tile_solid(&mut pattern, 0, 1, 3);
     set_sprite_palette_color(&mut ppu, 0, 3, 0x2b);
-    ppu.set_control_flags(PpuCtrl::new().with_sprite_size(true));
+    ppu.set_control_flags(PpuCtrl::new().with_sprite_size_16(true));
     setup_sprite(&mut ppu, 0, 0, 0, 0, 0);
 
     let pixel = render_pixel(&mut ppu, &pattern, 0, 9);
@@ -520,7 +520,7 @@ fn test_render_pixel_uses_odd_tile_bank_for_8x16_sprites() {
     let mut pattern = create_pattern();
     set_tile_solid(&mut pattern, 1, 2, 2);
     set_sprite_palette_color(&mut ppu, 0, 2, 0x2c);
-    ppu.set_control_flags(PpuCtrl::new().with_sprite_size(true));
+    ppu.set_control_flags(PpuCtrl::new().with_sprite_size_16(true));
     setup_sprite(&mut ppu, 0, 0, 3, 0, 0);
 
     let pixel = render_pixel(&mut ppu, &pattern, 0, 1);
@@ -537,7 +537,7 @@ fn test_render_pixel_uses_vertical_flip_for_8x16_sprites() {
     let mut pattern = create_pattern();
     set_tile_solid(&mut pattern, 0, 0, 1);
     set_sprite_palette_color(&mut ppu, 0, 1, 0x2d);
-    ppu.set_control_flags(PpuCtrl::new().with_sprite_size(true));
+    ppu.set_control_flags(PpuCtrl::new().with_sprite_size_16(true));
     setup_sprite(&mut ppu, 0, 0, 0, 0x80, 0);
 
     let pixel = render_pixel(&mut ppu, &pattern, 0, 15);

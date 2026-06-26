@@ -1,4 +1,5 @@
 mod nametable;
+mod oam;
 pub mod palette;
 mod registers;
 mod sprite;
@@ -327,7 +328,7 @@ impl<R: Render> Ppu<R> {
                     let fetch_type = (((self.timing.dot - 259) / 2) % 4) as usize;
                     if fetch_type >= 2 {
                         self.cartridge.notify_vram_address(
-                            if self.registers.ctrl.sprite_size()
+                            if self.registers.ctrl.sprite_size_16()
                                 || self.registers.ctrl.sprite_pattern_table()
                             {
                                 0x1000
@@ -358,7 +359,7 @@ impl<R: Render> Ppu<R> {
         {
             self.sprite.step_sprite_overflow_eval(
                 self.timing.scanline,
-                self.registers.ctrl.sprite_size(),
+                self.registers.ctrl.sprite_size_16(),
                 &self.registers.oam_data,
             );
         }
@@ -697,7 +698,7 @@ impl<R: Render> Ppu<R> {
         let sprite_pixel = if self.effective_mask.sprite_enabled() {
             self.sprite.find_sprite_pixel(
                 &self.registers.oam_data,
-                self.registers.ctrl.sprite_size(),
+                self.registers.ctrl.sprite_size_16(),
                 self.registers.ctrl.sprite_pattern_table(),
                 self.effective_mask.sprite_left_enabled(),
                 &*self.cartridge,
@@ -718,7 +719,7 @@ impl<R: Render> Ppu<R> {
         {
             if self.sprite.sprite_zero_opaque_at(
                 &self.registers.oam_data,
-                self.registers.ctrl.sprite_size(),
+                self.registers.ctrl.sprite_size_16(),
                 self.registers.ctrl.sprite_pattern_table(),
                 &*self.cartridge,
                 x,

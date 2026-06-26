@@ -9,7 +9,7 @@ pub struct PpuCtrl {
     pub increment_mode: bool,
     pub sprite_pattern_table: bool,
     pub background_pattern_table: bool,
-    pub sprite_size: bool,
+    pub sprite_size_16: bool,
     pub ppu_master: bool,
     pub nmi_enable: bool,
 }

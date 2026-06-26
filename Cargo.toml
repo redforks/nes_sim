@@ -32,6 +32,9 @@ is-terminal = "0.4"
 itertools = "0.14"
 arraydeque = "0.5"
 
+# Safe transmute / zero-copy
+bytemuck = { version = "1.25", features = ["derive"] }
+
 # Parsing and serialization
 winnow = {version="1", features = ["alloc"]}
 strum_macros = "0.26"
