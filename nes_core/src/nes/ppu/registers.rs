@@ -219,8 +219,7 @@ impl Registers {
 
             if (value & bit_mask) != 0 {
                 self.bus_latch |= bit_mask;
-                self.bus_latch_decay_deadlines[bit] =
-                    cycle.wrapping_add(PPU_OPEN_BUS_DECAY_TICKS);
+                self.bus_latch_decay_deadlines[bit] = cycle.wrapping_add(PPU_OPEN_BUS_DECAY_TICKS);
             } else {
                 self.bus_latch &= !bit_mask;
                 self.bus_latch_decay_deadlines[bit] = 0;
@@ -234,8 +233,6 @@ mod tests {
     use super::*;
     use test_case::test_case;
 
-    const INPUT: Pixel = Pixel::new(180, 120, 60);
-
     #[test_case(0b00000000, 180, 120, 60 ; "no effects")]
     #[test_case(0b00100000, 180, 90, 45 ; "red_tint only")]
     #[test_case(0b01000000, 135, 120, 45 ; "green_tint only")]
@@ -248,6 +245,8 @@ mod tests {
     #[test_case(0b00100001, 111, 111, 111 ; "grayscale + red_tint")]
     #[test_case(0b11100001, 131, 131, 131 ; "grayscale + all tints")]
     fn test_apply_effects(mask_bits: u8, r: u8, g: u8, b: u8) {
+        const INPUT: Pixel = Pixel::new(180, 120, 60);
+
         let mask = PpuMask::from(mask_bits);
         assert_eq!(mask.apply_effects(INPUT), Pixel::new(r, g, b));
     }

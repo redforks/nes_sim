@@ -18,8 +18,6 @@ use sprite::SpriteManager;
 
 // Pixel, palette data and COLORS are defined in the submodule `palette`.
 
-const TILES_PER_ROW: u8 = 32;
-
 // PPU Timing Constants
 const PPU_OPEN_BUS_DECAY_TICKS: u64 = 3_221_591 * crate::SYSTEM_CYCLES_PER_PPU_CYCLE;
 const VBLANK_CLEAR_SCANLINE: u16 = 261;
@@ -602,7 +600,7 @@ impl<R: Render> Ppu<R> {
         let tile_fine_y = (world_y % 8) as usize;
 
         let nt_base = 0x2000 + nt_idx as u16 * 0x0400;
-        let nt_addr = nt_base + nt_y as u16 * TILES_PER_ROW as u16 + nt_x as u16;
+        let nt_addr = nt_base + nt_y as u16 * 32 + nt_x as u16;
         let tile_idx = self.nametable.read(nt_addr);
         let attr_addr = nt_base + 0x03c0 + (nt_y as u16 / 4) * 8 + (nt_x as u16 / 4);
         let attr_byte = self.nametable.read(attr_addr);
@@ -661,7 +659,8 @@ impl<R: Render> Ppu<R> {
     }
 
     fn refresh_bus_latch_bits(&mut self, mask: u8, value: u8) {
-        self.registers.refresh_bus_latch_bits(mask, value, self.cycle);
+        self.registers
+            .refresh_bus_latch_bits(mask, value, self.cycle);
     }
 
     /// Read OAM data at current OAM address (for testing)
