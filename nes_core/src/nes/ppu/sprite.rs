@@ -49,7 +49,7 @@ fn sprite_in_range(y: u8, target_scanline: u16, sprite_height: i16) -> bool {
 }
 
 fn evaluate_sprite(
-    sprite: &Sprite,
+    sprite: Sprite,
     ctrl: PpuCtrl,
     cartridge: &dyn Cartridge,
     screen_x: u8,
@@ -236,7 +236,7 @@ impl SpriteManager {
             }
 
             if let Some(pixel) =
-                evaluate_sprite(sprite, ctrl, cartridge, screen_x, screen_y, sprite_height)
+                evaluate_sprite(*sprite, ctrl, cartridge, screen_x, screen_y, sprite_height)
             {
                 return Some(pixel);
             }
@@ -255,7 +255,7 @@ impl SpriteManager {
     ) -> bool {
         let sprite_height: u8 = if ctrl.sprite_size_16() { 16 } else { 8 };
         evaluate_sprite(
-            &oam.sprites[0],
+            oam.sprites[0],
             ctrl,
             cartridge,
             screen_x,
