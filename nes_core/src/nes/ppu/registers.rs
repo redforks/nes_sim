@@ -1,6 +1,6 @@
 use bitfield_struct::bitfield;
 
-use super::oam::Oam;
+use super::oam::{Oam, PatternBank, TilePosition};
 use super::{PPU_OPEN_BUS_DECAY_TICKS, Pixel};
 
 #[bitfield(u8)]
@@ -18,6 +18,15 @@ pub struct PpuCtrl {
 impl PpuCtrl {
     pub fn inc_ppu_addr(self, ppu_addr: &mut u16) {
         *ppu_addr = ppu_addr.wrapping_add(if self.increment_mode() { 32 } else { 1 });
+    }
+
+    pub fn background_tile_position(self, tile_idx: u8) -> TilePosition {
+        let bank = if self.background_pattern_table() {
+            PatternBank::Second
+        } else {
+            PatternBank::First
+        };
+        TilePosition::Size8(bank, tile_idx)
     }
 }
 
@@ -233,6 +242,20 @@ impl Registers {
 mod tests {
     use super::*;
     use test_case::test_case;
+
+    #[test_case(false, 5, PatternBank::First ; "background at first bank")]
+    #[test_case(true, 5, PatternBank::Second ; "background at second bank")]
+    fn test_background_tile_position(
+        background_pattern_table: bool,
+        tile_idx: u8,
+        expected_bank: PatternBank,
+    ) {
+        let ctrl = PpuCtrl::new().with_background_pattern_table(background_pattern_table);
+        assert_eq!(
+            ctrl.background_tile_position(tile_idx),
+            TilePosition::Size8(expected_bank, tile_idx)
+        );
+    }
 
     #[test_case(0b00000000, 180, 120, 60 ; "no effects")]
     #[test_case(0b00100000, 180, 90, 45 ; "red_tint only")]

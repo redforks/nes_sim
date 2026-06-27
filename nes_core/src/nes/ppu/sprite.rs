@@ -1,4 +1,4 @@
-use super::oam::{Oam, Sprite, TilePosition};
+use super::oam::{Oam, Sprite};
 use crate::nes::mapper::Cartridge;
 use crate::nes::ppu::registers::{PpuCtrl, PpuMask, PpuStatus};
 
@@ -47,31 +47,6 @@ fn sprite_in_range(y: u8, target_scanline: u16, sprite_height: i16) -> bool {
     sprite_y >= 0 && sprite_y < sprite_height
 }
 
-fn read_sprite_color(
-    cartridge: &dyn Cartridge,
-    tile_position: TilePosition,
-    src_x: usize,
-    src_y: u8,
-    read_pattern_pixel: &impl Fn(&dyn Cartridge, u16, u8, usize, usize) -> u8,
-) -> u8 {
-    match tile_position {
-        TilePosition::Size8(bank, tile_idx) => {
-            read_pattern_pixel(cartridge, bank.start_addr(), tile_idx, src_x, src_y as usize)
-        }
-        TilePosition::Size16(bank, tile_idx) => {
-            let tile_offset = src_y / 8;
-            let tile_row = (src_y % 8) as usize;
-            read_pattern_pixel(
-                cartridge,
-                bank.start_addr(),
-                tile_idx.wrapping_add(tile_offset),
-                src_x,
-                tile_row,
-            )
-        }
-    }
-}
-
 fn evaluate_sprite(
     sprite: &Sprite,
     ctrl: PpuCtrl,
@@ -79,7 +54,6 @@ fn evaluate_sprite(
     screen_x: u8,
     screen_y: u8,
     sprite_height: u8,
-    read_pattern_pixel: &impl Fn(&dyn Cartridge, u16, u8, usize, usize) -> u8,
 ) -> Option<SpritePixel> {
     if !sprite_in_range(sprite.y, screen_y as u16, sprite_height as i16) {
         return None;
@@ -103,13 +77,9 @@ fn evaluate_sprite(
         sprite_y as u8
     };
 
-    let color_idx = read_sprite_color(
-        cartridge,
-        sprite.tile_position(ctrl),
-        src_x,
-        src_y,
-        read_pattern_pixel,
-    );
+    let tile_position = sprite.tile_position(ctrl);
+    let color_idx =
+        super::read_pattern_pixel(cartridge, tile_position, src_x, src_y as usize);
 
     if color_idx == 0 {
         return None;
@@ -252,7 +222,6 @@ impl SpriteManager {
         cartridge: &dyn Cartridge,
         screen_x: u8,
         screen_y: u8,
-        read_pattern_pixel: impl Fn(&dyn Cartridge, u16, u8, usize, usize) -> u8,
     ) -> Option<SpritePixel> {
         if !mask.sprite_left_enabled() && screen_x < 8 {
             return None;
@@ -271,7 +240,7 @@ impl SpriteManager {
                 break;
             }
 
-            if let Some(pixel) = evaluate_sprite(sprite, ctrl, cartridge, screen_x, screen_y, sprite_height, &read_pattern_pixel) {
+            if let Some(pixel) = evaluate_sprite(sprite, ctrl, cartridge, screen_x, screen_y, sprite_height) {
                 return Some(pixel);
             }
         }
@@ -286,7 +255,6 @@ impl SpriteManager {
         cartridge: &dyn Cartridge,
         screen_x: u8,
         screen_y: u8,
-        read_pattern_pixel: impl Fn(&dyn Cartridge, u16, u8, usize, usize) -> u8,
     ) -> bool {
         let sprite_height: u8 = if ctrl.sprite_size_16() { 16 } else { 8 };
         evaluate_sprite(
@@ -296,7 +264,6 @@ impl SpriteManager {
             screen_x,
             screen_y,
             sprite_height,
-            &read_pattern_pixel,
         )
         .is_some()
     }

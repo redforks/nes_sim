@@ -66,6 +66,24 @@ pub enum TilePosition {
     Size16(PatternBank, u8),
 }
 
+impl TilePosition {
+    /// Returns the (plane0_addr, plane1_addr) CHR addresses for the pixel at tile_y.
+    pub fn resolve_pixel_addr(self, tile_y: u8) -> (u16, u16) {
+        match self {
+            TilePosition::Size8(bank, tile_idx) => {
+                let base = bank.start_addr() + tile_idx as u16 * 16 + tile_y as u16;
+                (base, base + 8)
+            }
+            TilePosition::Size16(bank, tile_idx) => {
+                let tile_offset = (tile_y / 8) as u16;
+                let tile_row = (tile_y % 8) as u16;
+                let base = bank.start_addr() + (tile_idx as u16 + tile_offset) * 16 + tile_row;
+                (base, base + 8)
+            }
+        }
+    }
+}
+
 pub struct Oam {
     pub sprites: [Sprite; 64],
 }
@@ -164,6 +182,30 @@ mod tests {
         for byte in oam.as_bytes() {
             assert_eq!(*byte, 0);
         }
+    }
+
+    #[test_case(TilePosition::Size8(PatternBank::First, 0), 0, 0, 8 ; "size8 first bank tile0 y0")]
+    #[test_case(TilePosition::Size8(PatternBank::First, 0), 7, 7, 15 ; "size8 first bank tile0 y7")]
+    #[test_case(TilePosition::Size8(PatternBank::First, 1), 3, 19, 27 ; "size8 first bank tile1 y3")]
+    #[test_case(TilePosition::Size8(PatternBank::Second, 0), 0, 0x1000, 0x1008 ; "size8 second bank tile0 y0")]
+    #[test_case(TilePosition::Size8(PatternBank::Second, 3), 5, 0x1035, 0x103D ; "size8 second bank tile3 y5")]
+    #[test_case(TilePosition::Size16(PatternBank::First, 0), 0, 0, 8 ; "size16 first bank tile0 y0")]
+    #[test_case(TilePosition::Size16(PatternBank::First, 0), 7, 7, 15 ; "size16 first bank tile0 y7")]
+    #[test_case(TilePosition::Size16(PatternBank::First, 0), 8, 16, 24 ; "size16 first bank tile0 y8 wraps to tile1")]
+    #[test_case(TilePosition::Size16(PatternBank::First, 0), 15, 23, 31 ; "size16 first bank tile0 y15 wraps to tile1")]
+    #[test_case(TilePosition::Size16(PatternBank::First, 2), 9, 49, 57 ; "size16 first bank tile2 y9 uses tile3")]
+    #[test_case(TilePosition::Size16(PatternBank::Second, 4), 10, 0x1052, 0x105A ; "size16 second bank tile4 y10 uses tile5")]
+    #[test_case(TilePosition::Size16(PatternBank::Second, 1), 0, 0x1010, 0x1018 ; "size16 second bank tile1 y0")]
+    fn test_resolve_pixel_addr(
+        tile_position: TilePosition,
+        tile_y: u8,
+        expected_plane0: u16,
+        expected_plane1: u16,
+    ) {
+        assert_eq!(
+            tile_position.resolve_pixel_addr(tile_y),
+            (expected_plane0, expected_plane1)
+        );
     }
 
     #[test_case(false, PatternBank::First, 5 ; "first bank")]

@@ -60,9 +60,9 @@ Bitfield within each Sprite encoding: palette index (bits 0-1), behind-backgroun
 _Avoid_: sprite flags, attribute byte
 
 **TilePosition**:
-Decoded sprite tile location combining size (8x8 or 8x16), PatternBank, and tile index within that bank. Produced by `Sprite::tile_position()` given PPU control register state.
+Decoded tile location combining size (8x8 or 8x16), PatternBank, and tile index within that bank. Used for both background and sprite tile addressing. `resolve_pixel_addr(tile_y)` returns a `(plane0_addr, plane1_addr)` pair of CHR addresses for a given vertical pixel offset. Produced by `Sprite::tile_position()` for sprites and `PpuCtrl::background_tile_position(tile_idx)` for background tiles.
 _Avoid_: tile address, sprite tile addr
 
 **PatternBank**:
-Either First ($0000) or Second ($1000) pattern table in VRAM. Selected per-sprite based on sprite size and PPU control register.
+Either First ($0000) or Second ($1000) pattern table in VRAM. Selected per-sprite based on sprite size and PPU control register, or per-background-tile via `PpuCtrl::background_pattern_table()`.
 _Avoid_: pattern table, CHR bank

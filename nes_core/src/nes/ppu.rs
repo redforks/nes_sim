@@ -13,6 +13,7 @@ use crate::{
     render::Render,
 };
 use nametable::Nametable;
+use oam::TilePosition;
 use palette::{Palette, Pixel};
 use registers::{PpuCtrl, PpuMask, PpuStatus, Registers};
 use sprite::SpriteManager;
@@ -551,20 +552,6 @@ impl<R: Render> Ppu<R> {
         }
     }
 
-    fn read_pattern_pixel(
-        cartridge: &dyn Cartridge,
-        base_addr: u16,
-        tile_idx: u8,
-        tile_x: usize,
-        tile_y: usize,
-    ) -> u8 {
-        let tile_addr = base_addr + tile_idx as u16 * 16;
-        let low = cartridge.read_chr(tile_addr + tile_y as u16);
-        let high = cartridge.read_chr(tile_addr + tile_y as u16 + 8);
-        let bit = 7 - tile_x;
-        ((low >> bit) & 1) | (((high >> bit) & 1) << 1)
-    }
-
     fn get_background_pixel(&mut self, screen_x: u8) -> (u8, u8) {
         self.apply_pending_background_activation(screen_x);
 
@@ -608,18 +595,9 @@ impl<R: Render> Ppu<R> {
         let shift = (((nt_y >> 1) & 0x01) << 2) | (((nt_x >> 1) & 0x01) << 1);
         let palette_idx = (attr_byte >> shift) & 0x03;
 
-        let base_addr = if background.ctrl.background_pattern_table() {
-            0x1000
-        } else {
-            0x0000
-        };
-        let color_idx = Self::read_pattern_pixel(
-            &*self.cartridge,
-            base_addr,
-            tile_idx,
-            tile_fine_x,
-            tile_fine_y,
-        );
+        let tile_position = background.ctrl.background_tile_position(tile_idx);
+        let color_idx =
+            read_pattern_pixel(&*self.cartridge, tile_position, tile_fine_x, tile_fine_y);
 
         (palette_idx, color_idx)
     }
@@ -703,7 +681,6 @@ impl<R: Render> Ppu<R> {
                 &*self.cartridge,
                 x,
                 self.timing.scanline as u8,
-                Self::read_pattern_pixel,
             )
         } else {
             None
@@ -722,7 +699,6 @@ impl<R: Render> Ppu<R> {
                 &*self.cartridge,
                 x,
                 self.timing.scanline as u8,
-                Self::read_pattern_pixel,
             ) {
                 self.sprite.set_zero_hit_pending();
             }
@@ -743,6 +719,23 @@ impl<R: Render> Ppu<R> {
                 .get_background_color_index(bg_palette_idx, bg_color_idx),
         }
     }
+}
+
+/// Read a pattern pixel from CHR data using a tile position.
+///
+/// For 8×8 tiles, `tile_y` is the vertical pixel offset within the tile (0..7).
+/// For 16×8 tiles, `tile_y` can span two tiles (0..15).
+fn read_pattern_pixel(
+    cartridge: &dyn Cartridge,
+    tile_position: TilePosition,
+    tile_x: usize,
+    tile_y: usize,
+) -> u8 {
+    let (low_addr, high_addr) = tile_position.resolve_pixel_addr(tile_y as u8);
+    let low = cartridge.read_chr(low_addr);
+    let high = cartridge.read_chr(high_addr);
+    let bit = 7 - tile_x;
+    ((low >> bit) & 1) | (((high >> bit) & 1) << 1)
 }
 
 impl<R: Render> Mcu for Ppu<R> {
