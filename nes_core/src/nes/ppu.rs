@@ -584,8 +584,8 @@ impl<R: Render> Ppu<R> {
 
         let nt_x = ((world_x % 256) / 8) as u8;
         let nt_y = ((world_y % 240) / 8) as u8;
-        let tile_fine_x = (world_x % 8) as usize;
-        let tile_fine_y = (world_y % 8) as usize;
+        let tile_fine_x = (world_x % 8) as u8;
+        let tile_fine_y = (world_y % 8) as u8;
 
         let nt_base = 0x2000 + nt_idx as u16 * 0x0400;
         let nt_addr = nt_base + nt_y as u16 * 32 + nt_x as u16;
@@ -728,10 +728,10 @@ impl<R: Render> Ppu<R> {
 fn read_pattern_pixel(
     cartridge: &dyn Cartridge,
     tile_position: TilePosition,
-    tile_x: usize,
-    tile_y: usize,
+    tile_x: u8,
+    tile_y: u8,
 ) -> u8 {
-    let (low_addr, high_addr) = tile_position.resolve_pixel_addr(tile_y as u8);
+    let (low_addr, high_addr) = tile_position.resolve_pixel_addr(tile_y);
     let low = cartridge.read_chr(low_addr);
     let high = cartridge.read_chr(high_addr);
     let bit = 7 - tile_x;

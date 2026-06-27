@@ -1,4 +1,5 @@
 use super::oam::{Oam, Sprite};
+use super::read_pattern_pixel;
 use crate::nes::mapper::Cartridge;
 use crate::nes::ppu::registers::{PpuCtrl, PpuMask, PpuStatus};
 
@@ -67,9 +68,9 @@ fn evaluate_sprite(
     let top = sprite.y as i16 + 1;
     let sprite_y = screen_y as i16 - top;
     let src_x = if sprite.attributes.flip_horizontally() {
-        (7 - rel_x) as usize
+        (7 - rel_x) as u8
     } else {
-        rel_x as usize
+        rel_x as u8
     };
     let src_y = if sprite.attributes.flip_vertically() {
         (sprite_height as i16 - 1 - sprite_y) as u8
@@ -78,8 +79,7 @@ fn evaluate_sprite(
     };
 
     let tile_position = sprite.tile_position(ctrl);
-    let color_idx =
-        super::read_pattern_pixel(cartridge, tile_position, src_x, src_y as usize);
+    let color_idx = read_pattern_pixel(cartridge, tile_position, src_x, src_y);
 
     if color_idx == 0 {
         return None;
@@ -138,12 +138,7 @@ impl SpriteManager {
         };
     }
 
-    pub fn step_sprite_overflow_eval(
-        &mut self,
-        scanline: u16,
-        ctrl: PpuCtrl,
-        oam: &Oam,
-    ) {
+    pub fn step_sprite_overflow_eval(&mut self, scanline: u16, ctrl: PpuCtrl, oam: &Oam) {
         if self.sprite_overflow_eval.scanline != scanline {
             return;
         }
@@ -240,7 +235,9 @@ impl SpriteManager {
                 break;
             }
 
-            if let Some(pixel) = evaluate_sprite(sprite, ctrl, cartridge, screen_x, screen_y, sprite_height) {
+            if let Some(pixel) =
+                evaluate_sprite(sprite, ctrl, cartridge, screen_x, screen_y, sprite_height)
+            {
                 return Some(pixel);
             }
         }
