@@ -15,12 +15,12 @@ fn sprite_size_is_4_bytes() {
 fn oam_as_bytes_round_trip() {
     let mut oam = Oam::default();
     let bytes = oam.as_bytes_mut();
-    for i in 0..256 {
-        bytes[i] = i as u8;
+    for (i, byte) in bytes.iter_mut().enumerate() {
+        *byte = i as u8;
     }
     let read_back = oam.as_bytes();
-    for i in 0..256 {
-        assert_eq!(read_back[i], i as u8, "byte {i} mismatch");
+    for (i, byte) in read_back.iter().enumerate() {
+        assert_eq!(*byte, i as u8, "byte {i} mismatch");
     }
 }
 

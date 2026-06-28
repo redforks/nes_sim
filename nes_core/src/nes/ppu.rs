@@ -597,8 +597,8 @@ impl<R: Render> Ppu<R> {
             .background_anchor
             .unwrap_or_else(|| BackgroundActivation::snapshot(self, 0));
 
-        let coarse_x = (background.vram_addr & 0x001F) as u16;
-        let coarse_y = ((background.vram_addr >> 5) & 0x001F) as u16;
+        let coarse_x = background.vram_addr & 0x001F ;
+        let coarse_y = (background.vram_addr >> 5) & 0x001F ;
         let fine_y = ((background.vram_addr >> 12) & 0x0007) as usize;
         let nt_select = ((background.vram_addr >> 10) & 0x03) as u8;
 
@@ -724,8 +724,7 @@ impl<R: Render> Ppu<R> {
             && x != 255
             && (x >= 8 || self.effective_mask.background_left_enabled())
             && (x >= 8 || self.effective_mask.sprite_left_enabled())
-        {
-            if sprite_zero_opaque_at(
+            && sprite_zero_opaque_at(
                 &self.oam,
                 self.registers.ctrl,
                 &*self.cartridge,
@@ -734,7 +733,6 @@ impl<R: Render> Ppu<R> {
             ) {
                 self.sprite.set_zero_hit_pending();
             }
-        }
 
         match sprite_pixel {
             Some(sprite_pixel) => {

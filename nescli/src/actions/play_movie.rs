@@ -315,18 +315,17 @@ impl Render for RecordRender {
             self.trim_counter += 1;
             false
         } else if self.ff_skip {
-            let send = self.ff_counter % 4 == 0;
+            let send = self.ff_counter.is_multiple_of(4);
             self.ff_counter += 1;
             send
         } else {
             true
         };
 
-        if let Some(ref tx) = self.video_tx {
-            if send_video {
+        if let Some(ref tx) = self.video_tx
+            && send_video {
                 let _ = tx.send(image.as_bytes().to_vec());
             }
-        }
     }
 }
 
@@ -358,7 +357,7 @@ impl AudioDriver for RecordAudioDriver {
             self.trim_counter += 1;
             false
         } else if self.ff_skip.get() {
-            let send = self.ff_counter % 4 == 0;
+            let send = self.ff_counter.is_multiple_of(4);
             self.ff_counter += 1;
             send
         } else {
@@ -656,11 +655,8 @@ impl PlayMovieAction {
             let frame_start = Instant::now();
             if let Some(ref mut pump) = event_pump {
                 for event in pump.poll_iter() {
-                    match event {
-                        Event::Quit { .. } => {
-                            break 'running;
-                        }
-                        _ => {}
+                    if let Event::Quit { .. } = event {
+                        break 'running;
                     }
                 }
             }

@@ -40,7 +40,7 @@ impl Cartridge for J87 {
             0x8000..=0xffff => {
                 let mut offset = (address - 0x8000) as usize;
                 if self.is_16k_prg_rom {
-                    offset = offset % 0x4000;
+                    offset %= 0x4000;
                 };
                 self.prg_rom[offset]
             }

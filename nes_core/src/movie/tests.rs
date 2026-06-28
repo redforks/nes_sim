@@ -65,10 +65,10 @@ fn command_parser() {
 #[test]
 fn gamepad_flag() {
     let mut p = new_gamepad_flag_parser::<_, ContextError>();
-    assert_eq!(p.parse(b".".as_slice()).unwrap(), false);
-    assert_eq!(p.parse(b" ".as_slice()).unwrap(), false);
-    assert_eq!(p.parse(b"R".as_slice()).unwrap(), true);
-    assert_eq!(p.parse(b"c".as_slice()).unwrap(), true);
+    assert!(!p.parse(b".".as_slice()).unwrap());
+    assert!(!p.parse(b" ".as_slice()).unwrap());
+    assert!(p.parse(b"R".as_slice()).unwrap());
+    assert!(p.parse(b"c".as_slice()).unwrap());
 }
 
 #[test]

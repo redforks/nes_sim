@@ -200,14 +200,10 @@ impl Cartridge for Vrc24 {
                     let bank = self.normalize_prg_bank(self.prg_select_0);
                     let offset = address as usize - 0xc000;
                     self.prg_rom[bank * PRG_BANK_SIZE + offset % PRG_BANK_SIZE]
-                } else if self.variant.is_vrc4() {
+                } else {
                     let bank = self.prg_bank_count().saturating_sub(2);
                     let offset = address as usize - 0xc000;
                     self.prg_rom[bank * PRG_BANK_SIZE + offset]
-                } else {
-                    let last_16k = self.prg_bank_count().saturating_sub(2);
-                    let offset = address as usize - 0xc000;
-                    self.prg_rom[last_16k * PRG_BANK_SIZE + offset]
                 }
             }
             0xe000..=0xffff => {

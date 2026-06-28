@@ -52,7 +52,7 @@ impl<R: Render, D: AudioDriver> NesDmaSupport for Cpu<NesMcu<R, D>> {
     }
 
     fn last_read_addr(&self) -> u16 {
-        self.last_read_addr.unwrap_or_else(|| self.pc)
+        self.last_read_addr.unwrap_or(self.pc)
     }
 
     fn unfreeze(&mut self) {
@@ -146,7 +146,7 @@ impl DmcDma {
                 first_attempt,
             } => {
                 // 如果是第一次尝试，必须严格对齐目标相位
-                if first_attempt && (!halt_on_put != cpu.is_get_cycle(clock)) {
+                if first_attempt && halt_on_put == cpu.is_get_cycle(clock) {
                     // 相位不对，CPU 照常运行，不消耗 DMA 周期
                     return;
                 }

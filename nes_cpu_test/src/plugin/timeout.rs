@@ -27,12 +27,11 @@ impl<M: Mcu> Plugin<M> for Timeout {
     fn end(&mut self, _cpu: &mut nes_core::Cpu<M>) {}
 
     fn should_stop(&self) -> ExecuteResult {
-        if let Some(start_time) = self.start_time {
-            if start_time.elapsed() > self.duration {
+        if let Some(start_time) = self.start_time
+            && start_time.elapsed() > self.duration {
                 eprintln!("Test timed out after {:?}", self.duration);
                 return ExecuteResult::Stop(2);
             }
-        }
         ExecuteResult::Continue
     }
 }

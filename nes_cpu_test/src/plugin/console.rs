@@ -45,7 +45,7 @@ impl Console {
         if self.line_buf.borrow().ends_with('\n') {
             let line_buf = self.line_buf.take();
             if *IS_TERMINAL {
-                let _ = print!("{}", Color::Green.paint(&line_buf));
+                print!("{}", Color::Green.paint(&line_buf));
             } else {
                 print!("{}", &line_buf);
             }

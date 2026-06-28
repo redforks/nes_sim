@@ -1626,7 +1626,7 @@ impl Microcode {
 
     fn indexed_h<M: Mcu>(cpu: &mut Cpu<M>) {
         let page = cpu.ab & 0xFF00;
-        let addr = page | (cpu.ab as u8 & 0xFF).wrapping_add(1) as u16;
+        let addr = page | (cpu.ab as u8).wrapping_add(1) as u16;
         cpu.ab = cpu.db as u16 | ((cpu.read_byte(addr) as u16) << 8);
     }
 

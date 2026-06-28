@@ -31,7 +31,7 @@ fn shifter_update_period_add_mode() {
 
     assert_eq!(shifter.update_period(0x100), 0x100 + 0x20);
     assert_eq!(shifter.update_period(0x080), 0x080 + 0x10);
-    assert_eq!(shifter.update_period(0x001), 0x001 + 0x000);
+    assert_eq!(shifter.update_period(0x001), 0x001);
 }
 
 #[test]

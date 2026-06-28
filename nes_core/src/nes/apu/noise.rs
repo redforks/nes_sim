@@ -18,7 +18,7 @@ impl Shifter {
     }
 }
 
-impl<'a> ControlGate for &'a Shifter {
+impl ControlGate for &Shifter {
     fn control(&self) -> u8 {
         //  When bit 0 of the shift register is set, the DAC receives 0.
         if self.val & 0x1 != 0 { 0 } else { 1 }

@@ -26,7 +26,7 @@ impl SystemClock {
     }
 
     pub fn is_cpu_clock(self) -> bool {
-        self.0 % SYSTEM_CYCLES_PER_CPU_CYCLE == 0
+        self.0.is_multiple_of(SYSTEM_CYCLES_PER_CPU_CYCLE)
     }
 
     pub fn is_even_cpu_cycle(self) -> bool {

@@ -177,7 +177,7 @@ impl Fm2File {
             .rom_checksum
             .as_bytes()
             .strip_prefix(b"base64:")
-            .unwrap_or_else(|| self.header.rom_checksum.as_bytes());
+            .unwrap_or(self.header.rom_checksum.as_bytes());
         let checksum = BASE64_STANDARD
             .decode(checksum)
             .context("decode base64 encoded rom checksum")?;
@@ -446,7 +446,7 @@ where
     }
 }
 
-impl<'de, 'a> Deserializer<'de> for &'a mut SpacedKeyValueDeserialize<'de> {
+impl<'de> Deserializer<'de> for &mut SpacedKeyValueDeserialize<'de> {
     type Error = ParseFm2FileError;
 
     fn deserialize_any<V>(self, _visitor: V) -> Result<V::Value, Self::Error>
@@ -646,7 +646,7 @@ impl<'de, 'a> Deserializer<'de> for &'a mut SpacedKeyValueDeserialize<'de> {
     where
         V: serde::de::Visitor<'de>,
     {
-        Ok(visitor.visit_map(SpaceSeparated::new(self))?)
+        visitor.visit_map(SpaceSeparated::new(self))
     }
 
     fn deserialize_struct<V>(

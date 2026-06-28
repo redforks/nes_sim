@@ -17,14 +17,14 @@ impl AxRom {
         debug_assert!(!prg_rom.is_empty());
         debug_assert_eq!(prg_rom.len() % PRG_ROM_BANK_SIZE, 0);
 
-        let mapper = Self {
+        
+        Self {
             prg_rom: prg_rom.to_vec(),
             ram: [0; CARTRIDGE_RAM_SIZE],
             selected_prg_bank: 0,
             prg_bank_count: prg_rom.len() / PRG_ROM_BANK_SIZE,
             chr: DirectChr::from_chr_rom(chr_rom),
-        };
-        mapper
+        }
     }
 
     fn selected_prg_bank(&self) -> usize {

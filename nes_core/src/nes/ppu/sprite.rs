@@ -181,7 +181,7 @@ fn evaluate_sprite(
     }
 
     let rel_x = screen_x as i16 - sprite.x as i16;
-    if !(rel_x >= 0 && rel_x < 8) {
+    if !(0..8).contains(&rel_x) {
         return None;
     }
 

@@ -68,7 +68,7 @@ impl<M: Mcu> Plugin<M> for MonitorTestStatus {
             }
             Status::ShouldReset => {
                 if self.cycles_request_reset.is_none()
-                    && self.cycles_last_reset.map_or(true, |c| now - c >= RESET_WAIT_SYSTEM_CYCLES)
+                    && self.cycles_last_reset.is_none_or(|c| now - c >= RESET_WAIT_SYSTEM_CYCLES)
                 {
                     self.cycles_request_reset = Some(now);
                 }

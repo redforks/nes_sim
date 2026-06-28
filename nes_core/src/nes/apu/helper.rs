@@ -335,14 +335,14 @@ where
     }
 }
 
-impl<'a> ControlGate for &'a LengthControl {
+impl ControlGate for &LengthControl {
     fn control(&self) -> u8 {
         debug_assert!(self.enabled || self.counter == 0);
         self.counter
     }
 }
 
-impl<'a> ControlGate for &'a AudioSequencer<8> {
+impl ControlGate for &AudioSequencer<8> {
     fn control(&self) -> u8 {
         self.output()
     }

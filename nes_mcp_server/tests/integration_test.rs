@@ -92,7 +92,7 @@ fn test_mcp_server_basics() -> TestResult {
 
         // Check if this looks like JSON
         if trimmed.starts_with('{') {
-            if let Ok(response) = serde_json::from_str::<serde_json::Value>(&trimmed) {
+            if let Ok(response) = serde_json::from_str::<serde_json::Value>(trimmed) {
                 println!("Got JSON response: {}", response);
 
                 // Check if it's a valid initialize response
@@ -148,7 +148,7 @@ fn test_mcp_server_basics() -> TestResult {
 
         let trimmed = line.trim();
         if trimmed.starts_with('{') {
-            if let Ok(response) = serde_json::from_str::<serde_json::Value>(&trimmed) {
+            if let Ok(response) = serde_json::from_str::<serde_json::Value>(trimmed) {
                 if response["result"]["tools"].is_array() {
                     println!("Got tools list: {}", response);
                     tools_ok = true;
@@ -195,7 +195,7 @@ fn test_mcp_server_basics() -> TestResult {
 
         let trimmed = line.trim();
         if trimmed.starts_with('{') {
-            if let Ok(response) = serde_json::from_str::<serde_json::Value>(&trimmed) {
+            if let Ok(response) = serde_json::from_str::<serde_json::Value>(trimmed) {
                 println!("Got start response: {}", response);
 
                 // Check for success or error

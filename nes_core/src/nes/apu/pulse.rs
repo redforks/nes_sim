@@ -72,15 +72,14 @@ impl Sweep {
         let new_period = self.shifter.update_period(*period);
         self.zero_output = *period < 8 || new_period > 0x7ff;
 
-        if self.divider.tick() {
-            if self.enabled && !self.shifter.disabled() && !self.zero_output {
+        if self.divider.tick()
+            && self.enabled && !self.shifter.disabled() && !self.zero_output {
                 *period = new_period;
             }
-        }
     }
 }
 
-impl<'a> ControlGate for &'a Sweep {
+impl ControlGate for &Sweep {
     fn control(&self) -> u8 {
         if self.zero_output { 0 } else { 1 }
     }

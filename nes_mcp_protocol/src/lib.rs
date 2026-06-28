@@ -60,6 +60,7 @@ pub enum Response {
 
 /// Machine status information
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Default)]
 pub struct MachineStatus {
     pub pc: u16,
     pub a: u8,
@@ -101,19 +102,6 @@ pub struct ApuStatus {
     pub dmc_irq_pending: bool,
 }
 
-impl Default for MachineStatus {
-    fn default() -> Self {
-        Self {
-            pc: 0,
-            a: 0,
-            x: 0,
-            y: 0,
-            p: 0,
-            sp: 0,
-            cycles: 0,
-        }
-    }
-}
 
 /// Format memory data as hexdump -C style
 pub fn format_hexdump(data: &[u8], start_addr: u16) -> String {

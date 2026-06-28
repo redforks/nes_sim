@@ -90,8 +90,8 @@ impl Image {
                     .is_some_and(|s| s.contains("nmi_sync"))
             {
                 return self.create_nmi_sync_machine(ines, quiet, start_pc, max_instructions);
-            } else if let Some(stem) = f.strip_suffix(".nes") {
-                if stem.starts_with("vrctest") {
+            } else if let Some(stem) = f.strip_suffix(".nes")
+                && stem.starts_with("vrctest") {
                     return self.create_exp_png_machine(
                         ines,
                         quiet,
@@ -100,7 +100,6 @@ impl Image {
                         vec![format!("{}.png", stem)],
                     );
                 }
-            }
         }
 
         // Build the composite plugin step by step to handle type coercion

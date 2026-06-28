@@ -592,15 +592,14 @@ impl<M: Mcu> Cpu<M> {
     }
 
     fn push_status(&mut self, break_flag: bool, check_nmi: bool) {
-        if check_nmi {
-            if self.nmi_detecteor.take_nmi_pending() {
+        if check_nmi
+            && self.nmi_detecteor.take_nmi_pending() {
                 // eprintln!("nmi hijack, @{}", get_system_cycles());
                 self.push_status(break_flag, false);
                 self.microcode_queue.clear();
                 self.push_microcodes(&[Microcode::LoadNmiPcL, Microcode::LoadNmiPcH]);
                 return;
             }
-        }
 
         self.push_stack(if break_flag {
             self.status | Flag::Break as u8 | Flag::NotUsed as u8
