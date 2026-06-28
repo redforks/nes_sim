@@ -7,7 +7,7 @@ mod sprite;
 use crate::{
     mcu::Mcu,
     nes::{
-        mapper::{Cartridge, CartridgeOperation, Mirroring},
+        mapper::{Cartridge, CartridgeOperation, Mirroring, PpuCapabilities},
         ppu::palette::ColorTheme,
     },
     render::Render,
@@ -122,6 +122,7 @@ pub struct Ppu<R: Render = ()> {
     nametable: Nametable,
     renderer: R,
     cartridge: Box<dyn Cartridge>,
+    cartridge_caps: PpuCapabilities,
 
     timing: Timing,
 
@@ -149,6 +150,7 @@ fn normalize_ppu_addr(addr: u16) -> u16 {
 
 impl<R: Render> Ppu<R> {
     pub fn new(renderer: R, mirroring: Mirroring, cartridge: Box<dyn Cartridge>) -> Self {
+        let cartridge_caps = cartridge.ppu_capabilities();
         Ppu {
             registers: Registers::new(),
             palette: Palette::default(),
@@ -158,6 +160,7 @@ impl<R: Render> Ppu<R> {
             nametable: Nametable::new(mirroring),
             renderer,
             cartridge,
+            cartridge_caps,
             timing: Timing::new(),
             background_anchor: None,
             pending_background_activation: None,
@@ -190,6 +193,9 @@ impl<R: Render> Ppu<R> {
     }
 
     pub fn cartridge_irq_pending(&self) -> bool {
+        if !self.cartridge_caps.irq_pending {
+            return false;
+        }
         self.cartridge.irq_pending()
     }
 
@@ -310,7 +316,8 @@ impl<R: Render> Ppu<R> {
         // memory-access phasing.
         //
         // Manual $2006/$2007 writes still reach the mapper directly.
-        if rendering_enabled
+        if self.cartridge_caps.notify_vram_address
+            && rendering_enabled
             && (self.timing.scanline < 240
                 || (self.timing.scanline == 261 && self.rendering_enabled_at_scanline_start))
             && self.timing.dot % 2 == 1
@@ -437,7 +444,9 @@ impl<R: Render> Ppu<R> {
         self.timing.advance(rendering_enabled);
 
         self.effective_mask = self.registers.mask;
-        self.cartridge.on_ppu_tick(prev_scanline);
+        if self.cartridge_caps.on_ppu_tick {
+            self.cartridge.on_ppu_tick(prev_scanline);
+        }
     }
 
     /// Return ppu nmi signal, it connect to Cpu nmi input line
@@ -510,7 +519,9 @@ impl<R: Render> Ppu<R> {
             // PPUADDR
             0x2006 => {
                 self.write_vram_addr(value);
-                self.cartridge.notify_vram_address(self.registers.vram_addr);
+                if self.cartridge_caps.notify_vram_address {
+                    self.cartridge.notify_vram_address(self.registers.vram_addr);
+                }
             }
             // PPUDATA
             0x2007 => {
@@ -518,7 +529,9 @@ impl<R: Render> Ppu<R> {
                 self.registers
                     .ctrl
                     .inc_ppu_addr(&mut self.registers.vram_addr);
-                self.cartridge.notify_vram_address(self.registers.vram_addr);
+                if self.cartridge_caps.notify_vram_address {
+                    self.cartridge.notify_vram_address(self.registers.vram_addr);
+                }
             }
             _ => {}
         }
@@ -622,7 +635,9 @@ impl<R: Render> Ppu<R> {
         self.registers
             .ctrl
             .inc_ppu_addr(&mut self.registers.vram_addr);
-        self.cartridge.notify_vram_address(self.registers.vram_addr);
+        if self.cartridge_caps.notify_vram_address {
+            self.cartridge.notify_vram_address(self.registers.vram_addr);
+        }
 
         // Non-palette addresses use a read buffer (delayed by one read).
         // Palette addresses ($3F00-$3FFF) return immediately, but still

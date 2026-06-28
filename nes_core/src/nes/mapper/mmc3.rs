@@ -1,4 +1,4 @@
-use super::{Cartridge, CARTRIDGE_START_ADDR, CartridgeOperation};
+use super::{Cartridge, PpuCapabilities, CARTRIDGE_START_ADDR, CartridgeOperation};
 use crate::nes::mapper::Mirroring;
 
 const PRG_RAM_SIZE: usize = 0x2000;
@@ -327,6 +327,14 @@ impl Cartridge for MMC3 {
 
     fn irq_pending(&self) -> bool {
         self.irq_pending
+    }
+
+    fn ppu_capabilities(&self) -> PpuCapabilities {
+        PpuCapabilities {
+            on_ppu_tick: true,
+            notify_vram_address: true,
+            irq_pending: true,
+        }
     }
 
     fn read_chr(&self, address: u16) -> u8 {

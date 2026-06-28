@@ -154,6 +154,13 @@ fn rom_contains_signature(file: &INesFile, signature: &str) -> bool {
         .any(|window| window == signature.as_bytes())
 }
 
+#[derive(Debug, Clone, Copy, Default)]
+pub struct PpuCapabilities {
+    pub on_ppu_tick: bool,
+    pub notify_vram_address: bool,
+    pub irq_pending: bool,
+}
+
 pub trait Cartridge {
     fn read(&self, address: u16) -> u8;
     fn write(&mut self, address: u16, value: u8) -> CartridgeOperation;
@@ -161,6 +168,9 @@ pub trait Cartridge {
     fn notify_vram_address(&mut self, _addr: u16) {}
     fn irq_pending(&self) -> bool {
         false
+    }
+    fn ppu_capabilities(&self) -> PpuCapabilities {
+        PpuCapabilities::default()
     }
     fn read_chr(&self, _address: u16) -> u8 {
         0
