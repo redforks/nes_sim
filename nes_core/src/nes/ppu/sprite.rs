@@ -90,7 +90,7 @@ impl SpriteManager {
     pub fn begin_sprite_overflow_eval(&mut self, scanline: u16) {
         self.sprite_overflow_eval = SpriteOverflowEval {
             scanline,
-            target_scanline: scanline + 1,
+            target_scanline: (scanline + 1) % 262,
             oam_index: 0,
             byte_index: 0,
             visible_sprites: 0,
