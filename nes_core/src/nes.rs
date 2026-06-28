@@ -89,7 +89,7 @@ impl<R: Render, D: AudioDriver> NesMcu<R, D> {
                     let addr = ((dma.page as u16) << 8) | byte_index as u16;
                     dma.latch = self.read(addr);
                 } else {
-                    self.ppu.write_oam_dma_byte(dma.latch);
+                    self.ppu.write_oam_data(dma.latch);
                 }
                 dma.transfer_cycle += 1;
             }

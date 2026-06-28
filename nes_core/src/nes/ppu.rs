@@ -13,7 +13,7 @@ use crate::{
     render::Render,
 };
 use nametable::Nametable;
-use oam::TilePosition;
+use oam::{Oam, TilePosition};
 use palette::{Palette, Pixel};
 use registers::{PpuCtrl, PpuMask, PpuStatus, Registers};
 use sprite::SpriteManager;
@@ -116,6 +116,8 @@ impl Timing {
 pub struct Ppu<R: Render = ()> {
     registers: Registers,
     palette: Palette,
+    oam: Oam,
+    oam_addr: u8,
     color_theme: ColorTheme,
     nametable: Nametable,
     renderer: R,
@@ -150,6 +152,8 @@ impl<R: Render> Ppu<R> {
         Ppu {
             registers: Registers::new(),
             palette: Palette::default(),
+            oam: Oam::default(),
+            oam_addr: 0,
             color_theme: ColorTheme::default(),
             nametable: Nametable::new(mirroring),
             renderer,
@@ -261,8 +265,18 @@ impl<R: Render> Ppu<R> {
         self.registers.status.v_blank()
     }
 
-    pub fn write_oam_dma_byte(&mut self, value: u8) {
-        self.registers.write_oam_data(value);
+    pub fn write_oam_data(&mut self, value: u8) {
+        fn normalize_oam_byte(addr: u8, value: u8) -> u8 {
+            if addr & 0x03 == 0x02 {
+                value & 0xE3
+            } else {
+                value
+            }
+        }
+
+        let addr = self.oam_addr;
+        self.oam.as_bytes_mut()[(addr as usize) & 0xff] = normalize_oam_byte(addr, value);
+        self.oam_addr = addr.wrapping_add(1);
     }
 
     pub fn tick(&mut self) {
@@ -361,7 +375,7 @@ impl<R: Render> Ppu<R> {
             self.sprite.step_sprite_overflow_eval(
                 self.timing.scanline,
                 self.registers.ctrl,
-                &self.registers.oam,
+                &self.oam,
             );
         }
 
@@ -483,11 +497,11 @@ impl<R: Render> Ppu<R> {
             }
             // OAMADDR
             0x2003 => {
-                self.registers.oam_addr = value;
+                self.oam_addr = value;
             }
             // OAMDATA
             0x2004 => {
-                self.write_oam_dma_byte(value);
+                self.write_oam_data(value);
             }
             // PPUSCROLL
             0x2005 => {
@@ -642,9 +656,9 @@ impl<R: Render> Ppu<R> {
             .refresh_bus_latch_bits(mask, value, self.cycle);
     }
 
-    /// Read OAM data at current OAM address (for testing)
+    /// Read OAM data at current OAM address
     fn read_oam_data(&self) -> u8 {
-        self.registers.read_oam_data()
+        self.oam.as_bytes()[(self.oam_addr as usize) & 0xff]
     }
 
     /// Set control flags (for testing)
@@ -675,7 +689,7 @@ impl<R: Render> Ppu<R> {
 
         let sprite_pixel = if self.effective_mask.sprite_enabled() {
             self.sprite.find_sprite_pixel(
-                &self.registers.oam,
+                &self.oam,
                 self.registers.ctrl,
                 self.effective_mask,
                 &*self.cartridge,
@@ -694,7 +708,7 @@ impl<R: Render> Ppu<R> {
             && (x >= 8 || self.effective_mask.sprite_left_enabled())
         {
             if self.sprite.sprite_zero_opaque_at(
-                &self.registers.oam,
+                &self.oam,
                 self.registers.ctrl,
                 &*self.cartridge,
                 x,
@@ -759,10 +773,7 @@ impl<R: Render> Mcu for Ppu<R> {
                 if let CartridgeOperation::UpdateNametableMirroring(mirroring) =
                     self.cartridge.write(address, value)
                 {
-                    {
-                        let this = &mut *self;
-                        this.nametable.set_mirroring(mirroring);
-                    };
+                    self.nametable.set_mirroring(mirroring);
                 }
             }
             _ => {}

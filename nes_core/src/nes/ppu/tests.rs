@@ -74,7 +74,7 @@ fn create_test_ppu_with_mask(mask: PpuMask) -> Ppu {
     };
     ppu.registers.mask = mask;
     {
-        let oam = ppu.registers.oam.as_bytes_mut();
+        let oam = ppu.oam.as_bytes_mut();
         for i in 0..64 {
             oam[i * 4] = 0x20;
             oam[i * 4 + 3] = 0xFF;
@@ -123,7 +123,7 @@ fn set_tile_pixel(
 }
 
 fn setup_sprite(ppu: &mut Ppu, index: usize, y: u8, tile: u8, attr: u8, x: u8) {
-    let oam = ppu.registers.oam.as_bytes_mut();
+    let oam = ppu.oam.as_bytes_mut();
     oam[index * 4] = y;
     oam[index * 4 + 1] = tile;
     oam[index * 4 + 2] = attr;

@@ -1,6 +1,6 @@
 use bitfield_struct::bitfield;
 
-use super::oam::{Oam, PatternBank, TilePosition};
+use super::oam::{PatternBank, TilePosition};
 use super::{PPU_OPEN_BUS_DECAY_TICKS, Pixel};
 
 #[bitfield(u8)]
@@ -90,9 +90,6 @@ pub struct Registers {
     pub mask: PpuMask,
     pub status: PpuStatus,
 
-    pub oam_addr: u8,
-    pub oam: Oam,
-
     // VRAM address registers: v (current), t (temporary), x (fine X), w (write toggle)
     pub vram_addr: u16,
     pub temp_vram_addr: u16,
@@ -113,8 +110,6 @@ impl Registers {
             ctrl: PpuCtrl::new(),
             mask: PpuMask::new(),
             status: PpuStatus::new(),
-            oam_addr: 0,
-            oam: Oam::default(),
             vram_addr: 0,
             temp_vram_addr: 0,
             fine_x: 0,
@@ -142,24 +137,6 @@ impl Registers {
         self.ctrl = flags;
         self.temp_vram_addr =
             (self.temp_vram_addr & !0x0C00) | ((self.ctrl.name_table_select() as u16) << 10);
-    }
-
-    pub fn read_oam_data(&self) -> u8 {
-        self.oam.as_bytes()[(self.oam_addr as usize) & 0xff]
-    }
-
-    pub fn write_oam_data(&mut self, value: u8) {
-        fn normalize_oam_byte(addr: u8, value: u8) -> u8 {
-            if addr & 0x03 == 0x02 {
-                value & 0xE3
-            } else {
-                value
-            }
-        }
-
-        let addr = self.oam_addr;
-        self.oam.as_bytes_mut()[(addr as usize) & 0xff] = normalize_oam_byte(addr, value);
-        self.oam_addr = addr.wrapping_add(1);
     }
 
     pub fn write_scroll(&mut self, value: u8) {
