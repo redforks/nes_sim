@@ -3,8 +3,6 @@ use super::read_pattern_pixel;
 use crate::nes::mapper::Cartridge;
 use crate::nes::ppu::registers::{PpuCtrl, PpuMask, PpuStatus};
 
-const MAX_SPRITES_PER_SCANLINE: u8 = 8;
-
 #[derive(Copy, Clone, Default)]
 enum SpriteOverflowEvalMode {
     #[default]
@@ -108,7 +106,7 @@ impl SpriteManager {
                     ctrl.sprite_height(),
                 ) {
                     self.sprite_overflow_eval.visible_sprites += 1;
-                    if self.sprite_overflow_eval.visible_sprites > MAX_SPRITES_PER_SCANLINE {
+                    if self.sprite_overflow_eval.visible_sprites > 8 {
                         self.overflow_pending = true;
                         self.sprite_overflow_eval.mode = SpriteOverflowEvalMode::Done;
                     } else {
@@ -128,7 +126,7 @@ impl SpriteManager {
                     self.sprite_overflow_eval.oam_index += 1;
                     self.sprite_overflow_eval.byte_index = 0;
                     self.sprite_overflow_eval.mode =
-                        if self.sprite_overflow_eval.visible_sprites >= MAX_SPRITES_PER_SCANLINE {
+                        if self.sprite_overflow_eval.visible_sprites >= 8 {
                             SpriteOverflowEvalMode::OverflowSearchDelay
                         } else {
                             SpriteOverflowEvalMode::ScanY
@@ -232,7 +230,7 @@ pub fn find_sprite_pixel(
         }
 
         visible_count += 1;
-        if visible_count > MAX_SPRITES_PER_SCANLINE {
+        if visible_count > 8 {
             break;
         }
 
