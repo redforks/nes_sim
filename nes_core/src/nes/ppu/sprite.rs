@@ -2,6 +2,7 @@ use super::oam::{Oam, Sprite};
 use super::read_pattern_pixel;
 use crate::nes::mapper::Cartridge;
 use crate::nes::ppu::registers::{PpuCtrl, PpuMask, PpuStatus};
+use tinyvec::ArrayVec;
 
 #[derive(Copy, Clone, Default)]
 enum SpriteOverflowEvalMode {
@@ -24,12 +25,15 @@ struct SpriteOverflowEval {
     byte_index: usize,
     visible_sprites: u8,
     mode: SpriteOverflowEvalMode,
+    pending_sprite_bytes: [u8; 4],
 }
 
 pub struct SpriteManager {
     zero_hit_pending: bool,
     overflow_pending: bool,
     sprite_overflow_eval: SpriteOverflowEval,
+    current_scanline_oam: ArrayVec<[Sprite; 8]>,
+    next_scanline_oam: ArrayVec<[Sprite; 8]>,
 }
 
 #[inline]
@@ -45,6 +49,8 @@ impl SpriteManager {
             zero_hit_pending: false,
             overflow_pending: false,
             sprite_overflow_eval: SpriteOverflowEval::default(),
+            current_scanline_oam: ArrayVec::new(),
+            next_scanline_oam: ArrayVec::new(),
         }
     }
 
@@ -52,6 +58,8 @@ impl SpriteManager {
         self.zero_hit_pending = false;
         self.overflow_pending = false;
         self.sprite_overflow_eval = SpriteOverflowEval::default();
+        self.current_scanline_oam.clear();
+        self.next_scanline_oam.clear();
     }
 
     /// Update sprite status to ppu status register
@@ -74,6 +82,11 @@ impl SpriteManager {
         self.overflow_pending = false;
     }
 
+    pub fn swap_secondary_oam(&mut self) {
+        std::mem::swap(&mut self.current_scanline_oam, &mut self.next_scanline_oam);
+        self.next_scanline_oam.clear();
+    }
+
     pub fn begin_sprite_overflow_eval(&mut self, scanline: u16) {
         self.sprite_overflow_eval = SpriteOverflowEval {
             scanline,
@@ -82,6 +95,7 @@ impl SpriteManager {
             byte_index: 0,
             visible_sprites: 0,
             mode: SpriteOverflowEvalMode::ScanY,
+            pending_sprite_bytes: [0u8; 4],
         };
     }
 
@@ -100,16 +114,14 @@ impl SpriteManager {
 
                 let oam_index = self.sprite_overflow_eval.oam_index;
                 let target_scanline = self.sprite_overflow_eval.target_scanline;
-                if sprite_in_range(
-                    oam.sprites[oam_index].y,
-                    target_scanline,
-                    ctrl.sprite_height(),
-                ) {
+                let y = oam.sprites[oam_index].y;
+                if sprite_in_range(y, target_scanline, ctrl.sprite_height()) {
                     self.sprite_overflow_eval.visible_sprites += 1;
                     if self.sprite_overflow_eval.visible_sprites > 8 {
                         self.overflow_pending = true;
                         self.sprite_overflow_eval.mode = SpriteOverflowEvalMode::Done;
                     } else {
+                        self.sprite_overflow_eval.pending_sprite_bytes[0] = y;
                         self.sprite_overflow_eval.mode =
                             SpriteOverflowEvalMode::CopySprite { remaining_bytes: 3 };
                     }
@@ -118,11 +130,20 @@ impl SpriteManager {
                 }
             }
             SpriteOverflowEvalMode::CopySprite { remaining_bytes } => {
+                let oam_index = self.sprite_overflow_eval.oam_index;
+                let byte_offset = 4 - remaining_bytes as usize;
+                let oam_byte = oam.as_bytes()[oam_index * 4 + byte_offset];
+                self.sprite_overflow_eval.pending_sprite_bytes[byte_offset] = oam_byte;
+
                 if remaining_bytes > 1 {
                     self.sprite_overflow_eval.mode = SpriteOverflowEvalMode::CopySprite {
                         remaining_bytes: remaining_bytes - 1,
                     };
                 } else {
+                    let sprite = bytemuck::cast::<[u8; 4], Sprite>(
+                        self.sprite_overflow_eval.pending_sprite_bytes,
+                    );
+                    self.next_scanline_oam.push(sprite);
                     self.sprite_overflow_eval.oam_index += 1;
                     self.sprite_overflow_eval.byte_index = 0;
                     self.sprite_overflow_eval.mode =
@@ -166,23 +187,19 @@ pub struct SpritePixel {
     pub behind_bg: bool,
 }
 
-fn evaluate_sprite(
-    sprite: Sprite,
+fn evaluate_sprite_from_secondary(
+    sprite: &Sprite,
     ctrl: PpuCtrl,
     cartridge: &dyn Cartridge,
     screen_x: u8,
     screen_y: u8,
 ) -> Option<SpritePixel> {
-    let sprite_height = ctrl.sprite_height();
-    if !sprite_in_range(sprite.y, screen_y as u16, sprite_height) {
-        return None;
-    }
-
     let rel_x = screen_x as i16 - sprite.x as i16;
     if !(0..8).contains(&rel_x) {
         return None;
     }
 
+    let sprite_height = ctrl.sprite_height();
     let top = sprite.y as i16 + 1;
     let sprite_y = screen_y as i16 - top;
     let src_x = if sprite.attributes.flip_horizontally() {
@@ -210,44 +227,50 @@ fn evaluate_sprite(
     })
 }
 
-pub fn find_sprite_pixel(
-    oam: &Oam,
+fn evaluate_sprite(
+    sprite: Sprite,
     ctrl: PpuCtrl,
-    mask: PpuMask,
     cartridge: &dyn Cartridge,
     screen_x: u8,
     screen_y: u8,
 ) -> Option<SpritePixel> {
-    if !mask.sprite_left_enabled() && screen_x < 8 {
+    if !sprite_in_range(sprite.y, screen_y as u16, ctrl.sprite_height()) {
         return None;
     }
-
-    let mut visible_count = 0u8;
-
-    for sprite in &oam.sprites {
-        if !sprite_in_range(sprite.y, screen_y as u16, ctrl.sprite_height()) {
-            continue;
-        }
-
-        visible_count += 1;
-        if visible_count > 8 {
-            break;
-        }
-
-        if let Some(pixel) = evaluate_sprite(*sprite, ctrl, cartridge, screen_x, screen_y) {
-            return Some(pixel);
-        }
-    }
-
-    None
+    evaluate_sprite_from_secondary(&sprite, ctrl, cartridge, screen_x, screen_y)
 }
 
-pub fn sprite_zero_opaque_at(
-    oam: &Oam,
-    ctrl: PpuCtrl,
-    cartridge: &dyn Cartridge,
-    screen_x: u8,
-    screen_y: u8,
-) -> bool {
-    evaluate_sprite(oam.sprites[0], ctrl, cartridge, screen_x, screen_y).is_some()
+impl SpriteManager {
+    pub fn find_sprite_pixel(
+        &self,
+        ctrl: PpuCtrl,
+        mask: PpuMask,
+        cartridge: &dyn Cartridge,
+        screen_x: u8,
+        screen_y: u8,
+    ) -> Option<SpritePixel> {
+        if !mask.sprite_left_enabled() && screen_x < 8 {
+            return None;
+        }
+
+        for sprite in &self.current_scanline_oam {
+            if let Some(pixel) =
+                evaluate_sprite_from_secondary(sprite, ctrl, cartridge, screen_x, screen_y)
+            {
+                return Some(pixel);
+            }
+        }
+
+        None
+    }
+
+    pub fn sprite_zero_opaque_at(
+        oam: &Oam,
+        ctrl: PpuCtrl,
+        cartridge: &dyn Cartridge,
+        screen_x: u8,
+        screen_y: u8,
+    ) -> bool {
+        evaluate_sprite(oam.sprites[0], ctrl, cartridge, screen_x, screen_y).is_some()
+    }
 }

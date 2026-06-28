@@ -10,7 +10,7 @@ use crate::{
         mapper::{Cartridge, CartridgeOperation, Mirroring, PpuCapabilities},
         ppu::{
             palette::ColorTheme,
-            sprite::{find_sprite_pixel, sprite_zero_opaque_at},
+            sprite::SpriteManager,
         },
     },
     render::Render,
@@ -19,7 +19,6 @@ use nametable::Nametable;
 use oam::{Oam, TilePosition};
 use palette::{Palette, Pixel};
 use registers::{PpuCtrl, PpuMask, PpuStatus, Registers};
-use sprite::SpriteManager;
 
 // Pixel, palette data and COLORS are defined in the submodule `palette`.
 
@@ -373,12 +372,18 @@ impl<R: Render> Ppu<R> {
             self.pending_background_activation = None;
         }
 
-        if self.timing.scanline < 240 && self.timing.dot == 65 {
+        if self.timing.dot == 0 {
+            self.sprite.swap_secondary_oam();
+        }
+
+        if rendering_enabled
+            && (self.timing.scanline < 240 || self.timing.scanline == 261)
+            && self.timing.dot == 65 {
             self.sprite.begin_sprite_overflow_eval(self.timing.scanline);
         }
 
         if rendering_enabled
-            && self.timing.scanline < 240
+            && (self.timing.scanline < 240 || self.timing.scanline == 261)
             && (65..=256).contains(&self.timing.dot)
             && self.timing.dot % 2 == 1
         {
@@ -706,8 +711,7 @@ impl<R: Render> Ppu<R> {
         };
 
         let sprite_pixel = if self.effective_mask.sprite_enabled() {
-            find_sprite_pixel(
-                &self.oam,
+            self.sprite.find_sprite_pixel(
                 self.registers.ctrl,
                 self.effective_mask,
                 &*self.cartridge,
@@ -724,7 +728,7 @@ impl<R: Render> Ppu<R> {
             && x != 255
             && (x >= 8 || self.effective_mask.background_left_enabled())
             && (x >= 8 || self.effective_mask.sprite_left_enabled())
-            && sprite_zero_opaque_at(
+            && SpriteManager::sprite_zero_opaque_at(
                 &self.oam,
                 self.registers.ctrl,
                 &*self.cartridge,

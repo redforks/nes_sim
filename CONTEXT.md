@@ -66,3 +66,7 @@ _Avoid_: tile address, sprite tile addr
 **PatternBank**:
 Either First ($0000) or Second ($1000) pattern table in VRAM. Selected per-sprite based on sprite size and PPU control register, or per-background-tile via `PpuCtrl::background_pattern_table()`.
 _Avoid_: pattern table, CHR bank
+
+**Secondary OAM**:
+A double-buffered 8-entry sprite buffer inside the PPU. `SpriteManager` evaluates primary OAM during dots 65–256 and copies up to 8 in-range sprites into the *next* buffer. At dot 0 each scanline, the buffers swap: the freshly populated buffer becomes *current* and feeds `find_sprite_pixel` for the whole scanline. Models the real-hardware internal OAM that avoids a 64-sprite scan per pixel.
+_Avoid_: sec OAM, sprite cache

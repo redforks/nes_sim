@@ -155,9 +155,28 @@ fn fill_chr(ppu: &mut Ppu, pattern: &[u8]) {
     }
 }
 
+fn populate_sprite_secondary_oam(ppu: &mut Ppu, target_scanline: u16) {
+    let eval_scanline = if target_scanline == 0 {
+        261
+    } else {
+        target_scanline - 1
+    };
+    ppu.sprite.begin_sprite_overflow_eval(eval_scanline);
+    for dot in (65..=256).filter(|d| d % 2 == 1) {
+        ppu.timing.dot = dot;
+        ppu.timing.scanline = eval_scanline;
+        ppu.sprite
+            .step_sprite_overflow_eval(eval_scanline, ppu.registers.ctrl, &ppu.oam);
+    }
+    ppu.sprite.swap_secondary_oam();
+}
+
 fn render_pixel(ppu: &mut Ppu, pattern: &[u8], x: u8, y: u8) -> u8 {
     if !pattern.is_empty() {
         fill_chr(ppu, pattern);
+    }
+    if ppu.effective_mask.sprite_enabled() {
+        populate_sprite_secondary_oam(ppu, y as u16);
     }
     ppu.timing.scanline = y as u16;
     ppu.render_pixel(x)
@@ -183,6 +202,9 @@ where
         fill_chr(ppu, pattern);
     }
     setup(ppu);
+    if ppu.effective_mask.sprite_enabled() {
+        populate_sprite_secondary_oam(ppu, y as u16);
+    }
     ppu.timing.scanline = y as u16;
     ppu.render_pixel(x)
 }
