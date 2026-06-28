@@ -8,7 +8,10 @@ use crate::{
     mcu::Mcu,
     nes::{
         mapper::{Cartridge, CartridgeOperation, Mirroring, PpuCapabilities},
-        ppu::palette::ColorTheme,
+        ppu::{
+            palette::ColorTheme,
+            sprite::{find_sprite_pixel, sprite_zero_opaque_at},
+        },
     },
     render::Render,
 };
@@ -703,7 +706,7 @@ impl<R: Render> Ppu<R> {
         };
 
         let sprite_pixel = if self.effective_mask.sprite_enabled() {
-            self.sprite.find_sprite_pixel(
+            find_sprite_pixel(
                 &self.oam,
                 self.registers.ctrl,
                 self.effective_mask,
@@ -722,7 +725,7 @@ impl<R: Render> Ppu<R> {
             && (x >= 8 || self.effective_mask.background_left_enabled())
             && (x >= 8 || self.effective_mask.sprite_left_enabled())
         {
-            if self.sprite.sprite_zero_opaque_at(
+            if sprite_zero_opaque_at(
                 &self.oam,
                 self.registers.ctrl,
                 &*self.cartridge,

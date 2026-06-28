@@ -28,6 +28,10 @@ impl PpuCtrl {
         };
         TilePosition::Size8(bank, tile_idx)
     }
+
+    pub const fn sprite_height(self) -> u8 {
+        if self.sprite_size_16() { 16 } else { 8 }
+    }
 }
 
 #[bitfield(u8)]

@@ -5,13 +5,6 @@ use crate::nes::ppu::registers::{PpuCtrl, PpuMask, PpuStatus};
 
 const MAX_SPRITES_PER_SCANLINE: u8 = 8;
 
-#[derive(Copy, Clone)]
-pub(crate) struct SpritePixel {
-    pub(crate) palette_idx: u8,
-    pub(crate) color_idx: u8,
-    pub(crate) behind_bg: bool,
-}
-
 #[derive(Copy, Clone, Default)]
 enum SpriteOverflowEvalMode {
     #[default]
@@ -35,61 +28,17 @@ struct SpriteOverflowEval {
     mode: SpriteOverflowEvalMode,
 }
 
-pub(crate) struct SpriteManager {
+pub struct SpriteManager {
     zero_hit_pending: bool,
     overflow_pending: bool,
     sprite_overflow_eval: SpriteOverflowEval,
 }
 
 #[inline]
-fn sprite_in_range(y: u8, target_scanline: u16, sprite_height: i16) -> bool {
+fn sprite_in_range(y: u8, target_scanline: u16, sprite_height: u8) -> bool {
     let top = y as i16 + 1;
     let sprite_y = target_scanline as i16 - top;
-    sprite_y >= 0 && sprite_y < sprite_height
-}
-
-fn evaluate_sprite(
-    sprite: Sprite,
-    ctrl: PpuCtrl,
-    cartridge: &dyn Cartridge,
-    screen_x: u8,
-    screen_y: u8,
-    sprite_height: u8,
-) -> Option<SpritePixel> {
-    if !sprite_in_range(sprite.y, screen_y as u16, sprite_height as i16) {
-        return None;
-    }
-
-    let rel_x = screen_x as i16 - sprite.x as i16;
-    if !(rel_x >= 0 && rel_x < 8) {
-        return None;
-    }
-
-    let top = sprite.y as i16 + 1;
-    let sprite_y = screen_y as i16 - top;
-    let src_x = if sprite.attributes.flip_horizontally() {
-        (7 - rel_x) as u8
-    } else {
-        rel_x as u8
-    };
-    let src_y = if sprite.attributes.flip_vertically() {
-        (sprite_height as i16 - 1 - sprite_y) as u8
-    } else {
-        sprite_y as u8
-    };
-
-    let tile_position = sprite.tile_position(ctrl);
-    let color_idx = read_pattern_pixel(cartridge, tile_position, src_x, src_y);
-
-    if color_idx == 0 {
-        return None;
-    }
-
-    Some(SpritePixel {
-        palette_idx: sprite.attributes.palette(),
-        color_idx,
-        behind_bg: sprite.attributes.behind_background(),
-    })
+    sprite_y >= 0 && sprite_y < (sprite_height as i16)
 }
 
 impl SpriteManager {
@@ -143,8 +92,6 @@ impl SpriteManager {
             return;
         }
 
-        let sprite_height: i16 = if ctrl.sprite_size_16() { 16 } else { 8 };
-
         match self.sprite_overflow_eval.mode {
             SpriteOverflowEvalMode::Idle | SpriteOverflowEvalMode::Done => {}
             SpriteOverflowEvalMode::ScanY => {
@@ -155,7 +102,11 @@ impl SpriteManager {
 
                 let oam_index = self.sprite_overflow_eval.oam_index;
                 let target_scanline = self.sprite_overflow_eval.target_scanline;
-                if sprite_in_range(oam.sprites[oam_index].y, target_scanline, sprite_height) {
+                if sprite_in_range(
+                    oam.sprites[oam_index].y,
+                    target_scanline,
+                    ctrl.sprite_height(),
+                ) {
                     self.sprite_overflow_eval.visible_sprites += 1;
                     if self.sprite_overflow_eval.visible_sprites > MAX_SPRITES_PER_SCANLINE {
                         self.overflow_pending = true;
@@ -198,7 +149,7 @@ impl SpriteManager {
                 let target_scanline = self.sprite_overflow_eval.target_scanline;
                 let byte_idx = oam_index * 4 + byte_index;
                 let y_byte = oam.as_bytes()[byte_idx];
-                if sprite_in_range(y_byte, target_scanline, sprite_height) {
+                if sprite_in_range(y_byte, target_scanline, ctrl.sprite_height()) {
                     self.overflow_pending = true;
                     self.sprite_overflow_eval.mode = SpriteOverflowEvalMode::Done;
                 } else {
@@ -208,60 +159,97 @@ impl SpriteManager {
             }
         }
     }
+}
 
-    pub fn find_sprite_pixel(
-        &self,
-        oam: &Oam,
-        ctrl: PpuCtrl,
-        mask: PpuMask,
-        cartridge: &dyn Cartridge,
-        screen_x: u8,
-        screen_y: u8,
-    ) -> Option<SpritePixel> {
-        if !mask.sprite_left_enabled() && screen_x < 8 {
-            return None;
-        }
+#[derive(Copy, Clone)]
+pub struct SpritePixel {
+    pub palette_idx: u8,
+    pub color_idx: u8,
+    pub behind_bg: bool,
+}
 
-        let sprite_height: u8 = if ctrl.sprite_size_16() { 16 } else { 8 };
-        let mut visible_count = 0u8;
-
-        for sprite in &oam.sprites {
-            if !sprite_in_range(sprite.y, screen_y as u16, sprite_height as i16) {
-                continue;
-            }
-
-            visible_count += 1;
-            if visible_count > MAX_SPRITES_PER_SCANLINE {
-                break;
-            }
-
-            if let Some(pixel) =
-                evaluate_sprite(*sprite, ctrl, cartridge, screen_x, screen_y, sprite_height)
-            {
-                return Some(pixel);
-            }
-        }
-
-        None
+fn evaluate_sprite(
+    sprite: Sprite,
+    ctrl: PpuCtrl,
+    cartridge: &dyn Cartridge,
+    screen_x: u8,
+    screen_y: u8,
+) -> Option<SpritePixel> {
+    let sprite_height = ctrl.sprite_height();
+    if !sprite_in_range(sprite.y, screen_y as u16, sprite_height) {
+        return None;
     }
 
-    pub fn sprite_zero_opaque_at(
-        &self,
-        oam: &Oam,
-        ctrl: PpuCtrl,
-        cartridge: &dyn Cartridge,
-        screen_x: u8,
-        screen_y: u8,
-    ) -> bool {
-        let sprite_height: u8 = if ctrl.sprite_size_16() { 16 } else { 8 };
-        evaluate_sprite(
-            oam.sprites[0],
-            ctrl,
-            cartridge,
-            screen_x,
-            screen_y,
-            sprite_height,
-        )
-        .is_some()
+    let rel_x = screen_x as i16 - sprite.x as i16;
+    if !(rel_x >= 0 && rel_x < 8) {
+        return None;
     }
+
+    let top = sprite.y as i16 + 1;
+    let sprite_y = screen_y as i16 - top;
+    let src_x = if sprite.attributes.flip_horizontally() {
+        (7 - rel_x) as u8
+    } else {
+        rel_x as u8
+    };
+    let src_y = if sprite.attributes.flip_vertically() {
+        (sprite_height as i16 - 1 - sprite_y) as u8
+    } else {
+        sprite_y as u8
+    };
+
+    let tile_position = sprite.tile_position(ctrl);
+    let color_idx = read_pattern_pixel(cartridge, tile_position, src_x, src_y);
+
+    if color_idx == 0 {
+        return None;
+    }
+
+    Some(SpritePixel {
+        palette_idx: sprite.attributes.palette(),
+        color_idx,
+        behind_bg: sprite.attributes.behind_background(),
+    })
+}
+
+pub fn find_sprite_pixel(
+    oam: &Oam,
+    ctrl: PpuCtrl,
+    mask: PpuMask,
+    cartridge: &dyn Cartridge,
+    screen_x: u8,
+    screen_y: u8,
+) -> Option<SpritePixel> {
+    if !mask.sprite_left_enabled() && screen_x < 8 {
+        return None;
+    }
+
+    let mut visible_count = 0u8;
+
+    for sprite in &oam.sprites {
+        if !sprite_in_range(sprite.y, screen_y as u16, ctrl.sprite_height()) {
+            continue;
+        }
+
+        visible_count += 1;
+        if visible_count > MAX_SPRITES_PER_SCANLINE {
+            break;
+        }
+
+        if let Some(pixel) = evaluate_sprite(*sprite, ctrl, cartridge, screen_x, screen_y) {
+            return Some(pixel);
+        }
+    }
+
+    None
+}
+
+pub fn sprite_zero_opaque_at(
+    oam: &Oam,
+    ctrl: PpuCtrl,
+    cartridge: &dyn Cartridge,
+    screen_x: u8,
+    screen_y: u8,
+) -> bool {
+    evaluate_sprite(oam.sprites[0], ctrl, cartridge, screen_x, screen_y).is_some()
 }
