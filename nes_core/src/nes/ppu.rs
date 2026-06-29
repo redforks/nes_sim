@@ -21,7 +21,6 @@ use registers::{PpuCtrl, PpuMask, PpuStatus, Registers};
 
 // PPU Timing Constants
 const PPU_OPEN_BUS_DECAY_TICKS: u64 = 3_221_591 * crate::SYSTEM_CYCLES_PER_PPU_CYCLE;
-const VBLANK_CLEAR_SCANLINE: u16 = 261;
 
 #[derive(Copy, Clone)]
 struct BackgroundActivation {
@@ -70,7 +69,7 @@ impl Timing {
 
     /// Return true if scanline and dot is in visible area
     fn is_visible(&self) -> bool {
-        self.scanline < 240 && (1..=256).contains(&self.dot)
+        self.in_visible_scanline() && (1..=256).contains(&self.dot)
     }
 
     fn advance(&mut self, rendering_enabled: bool) {
@@ -109,6 +108,28 @@ impl Timing {
 
     pub fn dot(&self) -> u16 {
         self.dot
+    }
+
+    fn in_visible_scanline(&self) -> bool {
+        self.scanline < 240
+    }
+
+    /// Return true if scanline is 261, in this scanline ppu preparing for the next frame
+    fn is_prepare_line(&self) -> bool {
+        self.scanline == 261
+    }
+
+    /// Return true if ppu should active for current scanline.
+    /// Note, if ppu rendering is disabled (both front and background), ppu is also disactivated
+    fn in_ppu_active_line(&self) -> bool {
+        // although line 261 is not visible, but ppu need to prepare for next frame first line
+        self.in_visible_scanline() || self.is_prepare_line()
+    }
+
+    /// if dot in (1..=64) and scanline is 0..239 and 261,
+    /// note if rendering not enabled, secondary oam not activated.
+    fn clearing_secondary_oam(&self) -> bool {
+        (1..=64).contains(&self.dot) && self.in_ppu_active_line()
     }
 }
 
@@ -287,7 +308,6 @@ impl<R: Render> Ppu<R> {
     pub fn tick(&mut self) {
         self.cycle += 1;
         let rendering_enabled = self.rendering_enabled();
-        let (prev_scanline, _prev_dot) = (self.timing.scanline, self.timing.dot);
 
         if self.timing.dot == 0 {
             self.rendering_enabled_at_scanline_start = rendering_enabled;
@@ -317,8 +337,7 @@ impl<R: Render> Ppu<R> {
         // Manual $2006/$2007 writes still reach the mapper directly.
         if self.cartridge_caps.notify_vram_address
             && rendering_enabled
-            && (self.timing.scanline < 240
-                || (self.timing.scanline == 261 && self.rendering_enabled_at_scanline_start))
+            && (self.timing.in_ppu_active_line() && self.rendering_enabled_at_scanline_start)
             && self.timing.dot % 2 == 1
         {
             match self.timing.dot {
@@ -365,7 +384,7 @@ impl<R: Render> Ppu<R> {
 
         if self.timing.dot == 0 {
             self.sprite.swap_secondary_oam();
-            if self.timing.scanline < 240 {
+            if self.timing.in_visible_scanline() {
                 // compute background anchor at start of visible scanline
                 self.background_anchor = Some(BackgroundActivation::snapshot(self, 0));
                 self.pending_background_activation = None;
@@ -374,7 +393,7 @@ impl<R: Render> Ppu<R> {
 
         if self.timing.dot >= 65
             && self.timing.dot <= 256
-            && (self.timing.scanline < 240 || self.timing.scanline == 261)
+            && self.timing.in_ppu_active_line()
             && rendering_enabled
         {
             if self.timing.dot == 65 {
@@ -409,20 +428,16 @@ impl<R: Render> Ppu<R> {
         // These model the real NES PPU's internal v-register updates:
         if rendering_enabled {
             // Fine Y increment at dot 256 of each visible scanline
-            if self.timing.dot == 256 && self.timing.scanline < 240 {
+            if self.timing.dot == 256 && self.timing.in_visible_scanline() {
                 self.increment_vram_y();
             }
             // Horizontal bits reload from temp at dot 257
             // (visible scanlines and pre-render scanline)
-            if self.timing.dot == 257
-                && (self.timing.scanline < 240 || self.timing.scanline == VBLANK_CLEAR_SCANLINE)
-            {
+            if self.timing.dot == 257 && self.timing.in_ppu_active_line() {
                 self.reload_horizontal_from_temp();
             }
             // Vertical bits reload from temp at dots 280-304 of pre-render scanline
-            if self.timing.scanline == VBLANK_CLEAR_SCANLINE
-                && (280..=304).contains(&self.timing.dot)
-            {
+            if self.timing.is_prepare_line() && (280..=304).contains(&self.timing.dot) {
                 self.reload_vertical_from_temp();
             }
         }
@@ -445,6 +460,7 @@ impl<R: Render> Ppu<R> {
             self.sprite.clear_pending();
         }
 
+        let prev_scanline = self.timing.scanline;
         self.timing.advance(rendering_enabled);
 
         self.effective_mask = self.registers.mask;
