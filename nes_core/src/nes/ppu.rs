@@ -545,6 +545,7 @@ impl<R: Render> Ppu<R> {
             // PPUMASK
             0x2001 => {
                 self.registers.mask = PpuMask::from_bits(value);
+                self.tile_cache = None;
             }
             // OAMADDR
             0x2003 => {
@@ -657,11 +658,8 @@ impl<R: Render> Ppu<R> {
             let shift = (((nt_y >> 1) & 0x01) << 2) | (((nt_x >> 1) & 0x01) << 1);
             let palette_idx = (attr_byte >> shift) & 0x03;
 
-            let batch_size = if screen_x == 0 {
-                8 - background.fine_x
-            } else {
-                8
-            };
+            let tile_fine_x = (world_x % 8) as u8;
+            let batch_size = 8 - tile_fine_x;
 
             self.tile_cache = Some(TileCache {
                 nt_byte,
