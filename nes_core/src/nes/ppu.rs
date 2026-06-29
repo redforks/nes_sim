@@ -8,10 +8,7 @@ use crate::{
     mcu::Mcu,
     nes::{
         mapper::{Cartridge, CartridgeOperation, Mirroring, PpuCapabilities},
-        ppu::{
-            palette::ColorTheme,
-            sprite::SpriteManager,
-        },
+        ppu::{palette::ColorTheme, sprite::SpriteManager},
     },
     render::Render,
 };
@@ -366,32 +363,31 @@ impl<R: Render> Ppu<R> {
             }
         }
 
-        if self.timing.scanline < 240 && self.timing.dot == 0 {
-            // compute background anchor at start of visible scanline
-            self.background_anchor = Some(BackgroundActivation::snapshot(self, 0));
-            self.pending_background_activation = None;
-        }
-
         if self.timing.dot == 0 {
             self.sprite.swap_secondary_oam();
+            if self.timing.scanline < 240 {
+                // compute background anchor at start of visible scanline
+                self.background_anchor = Some(BackgroundActivation::snapshot(self, 0));
+                self.pending_background_activation = None;
+            }
         }
 
-        if rendering_enabled
+        if self.timing.dot >= 65
+            && self.timing.dot <= 256
             && (self.timing.scanline < 240 || self.timing.scanline == 261)
-            && self.timing.dot == 65 {
-            self.sprite.begin_sprite_overflow_eval(self.timing.scanline);
-        }
-
-        if rendering_enabled
-            && (self.timing.scanline < 240 || self.timing.scanline == 261)
-            && (65..=256).contains(&self.timing.dot)
-            && self.timing.dot % 2 == 1
+            && rendering_enabled
         {
-            self.sprite.step_sprite_overflow_eval(
-                self.timing.scanline,
-                self.registers.ctrl,
-                &self.oam,
-            );
+            if self.timing.dot == 65 {
+                self.sprite.begin_sprite_overflow_eval(self.timing.scanline);
+            }
+
+            if (65..=256).contains(&self.timing.dot) && self.timing.dot % 2 == 1 {
+                self.sprite.step_sprite_overflow_eval(
+                    self.timing.scanline,
+                    self.registers.ctrl,
+                    &self.oam,
+                );
+            }
         }
 
         // Visible pixels are output on dots 1-256; dot 0 is the idle fetch slot.
@@ -413,13 +409,13 @@ impl<R: Render> Ppu<R> {
         // These model the real NES PPU's internal v-register updates:
         if rendering_enabled {
             // Fine Y increment at dot 256 of each visible scanline
-            if self.timing.scanline < 240 && self.timing.dot == 256 {
+            if self.timing.dot == 256 && self.timing.scanline < 240 {
                 self.increment_vram_y();
             }
             // Horizontal bits reload from temp at dot 257
             // (visible scanlines and pre-render scanline)
-            if (self.timing.scanline < 240 || self.timing.scanline == VBLANK_CLEAR_SCANLINE)
-                && self.timing.dot == 257
+            if self.timing.dot == 257
+                && (self.timing.scanline < 240 || self.timing.scanline == VBLANK_CLEAR_SCANLINE)
             {
                 self.reload_horizontal_from_temp();
             }
@@ -602,8 +598,8 @@ impl<R: Render> Ppu<R> {
             .background_anchor
             .unwrap_or_else(|| BackgroundActivation::snapshot(self, 0));
 
-        let coarse_x = background.vram_addr & 0x001F ;
-        let coarse_y = (background.vram_addr >> 5) & 0x001F ;
+        let coarse_x = background.vram_addr & 0x001F;
+        let coarse_y = (background.vram_addr >> 5) & 0x001F;
         let fine_y = ((background.vram_addr >> 12) & 0x0007) as usize;
         let nt_select = ((background.vram_addr >> 10) & 0x03) as u8;
 
@@ -722,21 +718,21 @@ impl<R: Render> Ppu<R> {
             None
         };
 
-        if self.effective_mask.background_enabled()
+        if SpriteManager::sprite_zero_opaque_at(
+            &self.oam,
+            self.registers.ctrl,
+            &*self.cartridge,
+            x,
+            self.timing.scanline as u8,
+        ) && ((bg_color_idx != 0) & (x != 255))
+            && (x >= 8
+                || (self.effective_mask.background_left_enabled()
+                    && self.effective_mask.sprite_left_enabled()))
+            && self.effective_mask.background_enabled()
             && self.effective_mask.sprite_enabled()
-            && bg_color_idx != 0
-            && x != 255
-            && (x >= 8 || self.effective_mask.background_left_enabled())
-            && (x >= 8 || self.effective_mask.sprite_left_enabled())
-            && SpriteManager::sprite_zero_opaque_at(
-                &self.oam,
-                self.registers.ctrl,
-                &*self.cartridge,
-                x,
-                self.timing.scanline as u8,
-            ) {
-                self.sprite.set_zero_hit_pending();
-            }
+        {
+            self.sprite.set_zero_hit_pending();
+        }
 
         match sprite_pixel {
             Some(sprite_pixel) => {
