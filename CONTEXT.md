@@ -39,6 +39,10 @@ _Avoid_: tile cache (lowercase c), pattern cache
 
 ## Language — System Timing
 
+**Cold-start**:
+A construction-only phase from `Ppu::new()` until the first 261→0 scanline wrap. The PPU starts at scanline 261 (pre-render) so that vertical scroll reload, background activation, sprite evaluation, and MMC3 A12 toggles all run before the first visible scanline 0. After the first wrap, the PPU enters normal frame operation. `Ppu::reset()` does _not_ re-enter Cold-start. Cold-start is a domain concept — no code field represents it; setting initial scanline to 261 is sufficient.
+_Avoid_: warm-up, boot-phase, pre-frame, initialization phase
+
 **SystemClock**:
 A `Copy` newtype over `u64`. Represents the current master clock cycle. One system cycle equals one PPU dot. Every tick advances the clock by one. Owned by `NesMachine` and passed down to CPU/APU/DMA modules as an immutable parameter — no global state.
 _Avoid_: system cycles (use for the raw u64 count only), global clock, static clock

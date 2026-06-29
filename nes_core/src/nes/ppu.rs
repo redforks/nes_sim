@@ -70,7 +70,7 @@ pub struct Timing {
 impl Timing {
     fn new() -> Self {
         Self {
-            scanline: 0,
+            scanline: 261,
             dot: 0,
             odd_frame: false,
             frame_no: 0,
