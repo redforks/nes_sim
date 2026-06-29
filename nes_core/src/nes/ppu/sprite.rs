@@ -34,7 +34,6 @@ pub struct SpriteManager {
     next_scanline_oam: ArrayVec<[Sprite; 8]>,
 }
 
-#[inline]
 fn sprite_in_range(y: u8, target_scanline: u16, sprite_height: u8) -> bool {
     let top = y as i16 + 1;
     let sprite_y = target_scanline as i16 - top;
@@ -96,7 +95,9 @@ impl SpriteManager {
     }
 
     pub fn step_sprite_overflow_eval(&mut self, scanline: u16, ctrl: PpuCtrl, oam: &Oam) {
-        let target_scanline = (scanline + 1) % 262;
+        fn target_scanline(scanline: u16) -> u16 {
+            (scanline + 1) % 262
+        }
 
         match self.sprite_overflow_eval.mode {
             SpriteOverflowEvalMode::Idle | SpriteOverflowEvalMode::Done => {}
@@ -107,7 +108,7 @@ impl SpriteManager {
                 }
 
                 let y = oam.sprites[self.sprite_overflow_eval.oam_index].y;
-                if sprite_in_range(y, target_scanline, ctrl.sprite_height()) {
+                if sprite_in_range(y, target_scanline(scanline), ctrl.sprite_height()) {
                     self.sprite_overflow_eval.visible_sprites += 1;
                     if self.sprite_overflow_eval.visible_sprites > 8 {
                         self.overflow_pending = true;
@@ -158,7 +159,7 @@ impl SpriteManager {
                 let byte_idx =
                     self.sprite_overflow_eval.oam_index * 4 + self.sprite_overflow_eval.byte_index;
                 let y_byte = oam.as_bytes()[byte_idx];
-                if sprite_in_range(y_byte, target_scanline, ctrl.sprite_height()) {
+                if sprite_in_range(y_byte, target_scanline(scanline), ctrl.sprite_height()) {
                     self.overflow_pending = true;
                     self.sprite_overflow_eval.mode = SpriteOverflowEvalMode::Done;
                 } else {
