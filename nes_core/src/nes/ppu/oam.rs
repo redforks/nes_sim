@@ -68,19 +68,30 @@ pub enum TilePosition {
 
 impl TilePosition {
     /// Returns the (plane0_addr, plane1_addr) CHR addresses for the pixel at tile_y.
-    pub fn resolve_pixel_addr(self, tile_y: u8) -> (u16, u16) {
+    pub fn resolve_pixel_addr(self, tile_y: u8) -> TileVRamAddr {
         match self {
             TilePosition::Size8(bank, tile_idx) => {
                 let base = bank.start_addr() + tile_idx as u16 * 16 + tile_y as u16;
-                (base, base + 8)
+                TileVRamAddr(base)
             }
             TilePosition::Size16(bank, tile_idx) => {
                 let tile_offset = (tile_y / 8) as u16;
                 let tile_row = (tile_y % 8) as u16;
                 let base = bank.start_addr() + (tile_idx as u16 + tile_offset) * 16 + tile_row;
-                (base, base + 8)
+                TileVRamAddr(base)
             }
         }
+    }
+}
+
+/// Wrap tile pixel vram/pattern/chr first plane address
+#[derive(Debug, Copy, Clone)]
+pub struct TileVRamAddr(pub u16);
+
+impl TileVRamAddr {
+    /// Return vram/pattern/chr address for second plane
+    pub fn second_plane_addr(self) -> u16 {
+        self.0 + 8
     }
 }
 

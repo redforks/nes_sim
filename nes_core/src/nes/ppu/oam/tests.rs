@@ -92,8 +92,9 @@ fn test_resolve_pixel_addr(
     expected_plane0: u16,
     expected_plane1: u16,
 ) {
+    let addr = tile_position.resolve_pixel_addr(tile_y);
     assert_eq!(
-        tile_position.resolve_pixel_addr(tile_y),
+        (addr.0, addr.second_plane_addr()),
         (expected_plane0, expected_plane1)
     );
 }

@@ -761,9 +761,9 @@ fn read_pattern_pixel(
     tile_x: u8,
     tile_y: u8,
 ) -> u8 {
-    let (low_addr, high_addr) = tile_position.resolve_pixel_addr(tile_y);
-    let low = cartridge.read_chr(low_addr);
-    let high = cartridge.read_chr(high_addr);
+    let low_addr = tile_position.resolve_pixel_addr(tile_y);
+    let low = cartridge.read_chr(low_addr.0);
+    let high = cartridge.read_chr(low_addr.second_plane_addr());
     let bit = 7 - tile_x;
     ((low >> bit) & 1) | (((high >> bit) & 1) << 1)
 }
