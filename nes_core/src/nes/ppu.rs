@@ -23,6 +23,28 @@ use registers::{PpuCtrl, PpuMask, PpuStatus, Registers};
 const PPU_OPEN_BUS_DECAY_TICKS: u64 = 3_221_591 * crate::SYSTEM_CYCLES_PER_PPU_CYCLE;
 
 #[derive(Copy, Clone)]
+#[allow(dead_code)]
+struct TileCache {
+    nt_byte: u8,
+    attr_byte: u8,
+    bitplane_low: u8,
+    bitplane_high: u8,
+    palette_idx: u8,
+    remaining: u8,
+}
+
+impl TileCache {
+    fn consume(&mut self) -> (u8, u8) {
+        let sub_tile_x = 8 - self.remaining;
+        self.remaining -= 1;
+        let bit = 7 - sub_tile_x;
+        let color_idx =
+            ((self.bitplane_low >> bit) & 1) | (((self.bitplane_high >> bit) & 1) << 1);
+        (self.palette_idx, color_idx)
+    }
+}
+
+#[derive(Copy, Clone)]
 struct BackgroundActivation {
     screen_x: u8,
     vram_addr: u16,
@@ -142,6 +164,7 @@ pub struct Ppu<R: Render = ()> {
 
     background_anchor: Option<BackgroundActivation>,
     pending_background_activation: Option<BackgroundActivation>,
+    tile_cache: Option<TileCache>,
     sprite: SpriteManager,
     /// system clock when suppress nmi by reading status register
     suppressed_vblank_at: Option<u64>,
@@ -178,6 +201,7 @@ impl<R: Render> Ppu<R> {
             timing: Timing::new(),
             background_anchor: None,
             pending_background_activation: None,
+            tile_cache: None,
             sprite: SpriteManager::new(),
             suppressed_vblank_at: None,
             effective_mask: PpuMask::new(),
@@ -196,6 +220,7 @@ impl<R: Render> Ppu<R> {
         self.effective_mask = PpuMask::new();
         self.background_anchor = None;
         self.pending_background_activation = None;
+        self.tile_cache = None;
         self.timing.reset();
         self.sprite.reset();
         self.registers.write_scroll(0);
@@ -382,6 +407,7 @@ impl<R: Render> Ppu<R> {
                 // compute background anchor at start of visible scanline
                 self.background_anchor = Some(BackgroundActivation::snapshot(self, 0));
                 self.pending_background_activation = None;
+                self.tile_cache = None;
             }
         }
 
@@ -512,6 +538,7 @@ impl<R: Render> Ppu<R> {
             // PPUCTRL
             0x2000 => {
                 self.set_control_flags(PpuCtrl::from_bits(value));
+                self.tile_cache = None;
                 self.schedule_background_activation_if_visible();
             }
             // PPUMASK
@@ -589,6 +616,7 @@ impl<R: Render> Ppu<R> {
 
     fn write_vram_addr(&mut self, value: u8) {
         if self.registers.write_vram_addr(value) {
+            self.tile_cache = None;
             self.schedule_background_activation_if_visible();
         }
     }
@@ -596,51 +624,55 @@ impl<R: Render> Ppu<R> {
     fn get_background_pixel(&mut self, screen_x: u8) -> (u8, u8) {
         self.apply_pending_background_activation(screen_x);
 
-        // Check left-column clipping
         if !self.effective_mask.background_left_enabled() && screen_x < 8 {
             return (0, 0);
         }
 
-        // On real hardware, the PPU fetches tiles from the position encoded in
-        // vram_addr (the "v" register), which is maintained by fine-Y increments
-        // and horizontal/vertical reloads from temp_vram_addr (the "t" register).
         let background = self
             .background_anchor
             .unwrap_or_else(|| BackgroundActivation::snapshot(self, 0));
 
-        let coarse_x = background.vram_addr & 0x001F;
-        let coarse_y = (background.vram_addr >> 5) & 0x001F;
-        let fine_y = ((background.vram_addr >> 12) & 0x0007) as usize;
-        let nt_select = ((background.vram_addr >> 10) & 0x03) as u8;
+        // Refill cache when empty or exhausted
+        let needs_refill = self.tile_cache.is_none()
+            || self.tile_cache.as_ref().unwrap().remaining == 0;
 
-        // Background fetches are pipelined ahead of the pixel currently being output.
-        let world_x = coarse_x * 8 + background.fine_x as u16 + screen_x as u16;
-        // Vertical: directly from vram_addr (no screen_y addition; vram_addr is
-        // incremented each scanline by the fine-Y increment at dot 256)
-        let world_y = coarse_y * 8 + fine_y as u16;
+        if needs_refill {
+            let (nt_byte, attr_byte, bitplane_low, bitplane_high) = fetch_tile_data(
+                &background,
+                screen_x,
+                &*self.cartridge,
+                &self.nametable,
+            );
 
-        let nt_select_x = (((nt_select & 0x01) as u16) + (world_x / 256)) & 0x01;
-        let nt_select_y = (((nt_select >> 1) as u16) + (world_y / 240)) & 0x01;
-        let nt_idx = ((nt_select_y << 1) | nt_select_x) as u8;
+            let world_x = (background.vram_addr & 0x001F) * 8
+                + background.fine_x as u16
+                + screen_x as u16;
+            let world_y = ((background.vram_addr >> 5) & 0x001F) * 8
+                + ((background.vram_addr >> 12) & 0x0007) as u16;
 
-        let nt_x = ((world_x % 256) / 8) as u8;
-        let nt_y = ((world_y % 240) / 8) as u8;
-        let tile_fine_x = (world_x % 8) as u8;
-        let tile_fine_y = (world_y % 8) as u8;
+            let nt_x = ((world_x % 256) / 8) as u8;
+            let nt_y = ((world_y % 240) / 8) as u8;
 
-        let nt_base = 0x2000 + nt_idx as u16 * 0x0400;
-        let nt_addr = nt_base + nt_y as u16 * 32 + nt_x as u16;
-        let tile_idx = self.nametable.read(nt_addr);
-        let attr_addr = nt_base + 0x03c0 + (nt_y as u16 / 4) * 8 + (nt_x as u16 / 4);
-        let attr_byte = self.nametable.read(attr_addr);
-        let shift = (((nt_y >> 1) & 0x01) << 2) | (((nt_x >> 1) & 0x01) << 1);
-        let palette_idx = (attr_byte >> shift) & 0x03;
+            let shift = (((nt_y >> 1) & 0x01) << 2) | (((nt_x >> 1) & 0x01) << 1);
+            let palette_idx = (attr_byte >> shift) & 0x03;
 
-        let tile_position = background.ctrl.background_tile_position(tile_idx);
-        let color_idx =
-            read_pattern_pixel(&*self.cartridge, tile_position, tile_fine_x, tile_fine_y);
+            let batch_size = if screen_x == 0 {
+                8 - background.fine_x
+            } else {
+                8
+            };
 
-        (palette_idx, color_idx)
+            self.tile_cache = Some(TileCache {
+                nt_byte,
+                attr_byte,
+                bitplane_low,
+                bitplane_high,
+                palette_idx,
+                remaining: batch_size,
+            });
+        }
+
+        self.tile_cache.as_mut().unwrap().consume()
     }
 
     fn read_vram_and_inc(&mut self) -> u8 {
@@ -776,6 +808,45 @@ fn read_pattern_pixel(
     let high = cartridge.read_chr(low_addr.second_plane_addr());
     let bit = 7 - tile_x;
     ((low >> bit) & 1) | (((high >> bit) & 1) << 1)
+}
+
+/// Fetch all four tile bytes for background rendering at a given screen pixel position.
+///
+/// Returns (nametable byte, attribute byte, bitplane low, bitplane high).
+fn fetch_tile_data(
+    background: &BackgroundActivation,
+    screen_x: u8,
+    cartridge: &dyn Cartridge,
+    nametable: &Nametable,
+) -> (u8, u8, u8, u8) {
+    let coarse_x = background.vram_addr & 0x001F;
+    let coarse_y = (background.vram_addr >> 5) & 0x001F;
+    let fine_y = ((background.vram_addr >> 12) & 0x0007) as usize;
+    let nt_select = ((background.vram_addr >> 10) & 0x03) as u8;
+
+    let world_x = coarse_x * 8 + background.fine_x as u16 + screen_x as u16;
+    let world_y = coarse_y * 8 + fine_y as u16;
+
+    let nt_select_x = (((nt_select & 0x01) as u16) + (world_x / 256)) & 0x01;
+    let nt_select_y = (((nt_select >> 1) as u16) + (world_y / 240)) & 0x01;
+    let nt_idx = ((nt_select_y << 1) | nt_select_x) as u8;
+
+    let nt_x = ((world_x % 256) / 8) as u8;
+    let nt_y = ((world_y % 240) / 8) as u8;
+    let tile_fine_y = (world_y % 8) as u8;
+
+    let nt_base = 0x2000 + nt_idx as u16 * 0x0400;
+    let nt_addr = nt_base + nt_y as u16 * 32 + nt_x as u16;
+    let nt_byte = nametable.read(nt_addr);
+    let attr_addr = nt_base + 0x03c0 + (nt_y as u16 / 4) * 8 + (nt_x as u16 / 4);
+    let attr_byte = nametable.read(attr_addr);
+
+    let tile_position = background.ctrl.background_tile_position(nt_byte);
+    let low_addr = tile_position.resolve_pixel_addr(tile_fine_y);
+    let bitplane_low = cartridge.read_chr(low_addr.0);
+    let bitplane_high = cartridge.read_chr(low_addr.second_plane_addr());
+
+    (nt_byte, attr_byte, bitplane_low, bitplane_high)
 }
 
 impl<R: Render> Mcu for Ppu<R> {

@@ -25,6 +25,18 @@ _Avoid_: Nina-001
 **Banked CHR (inline)**:
 Mappers with bankable CHR (MMC1, MMC3, Vrc24, J87, CnRom, Nina001) manage their own `Vec<u8>` and caching window inline — no shared abstraction. Write gating via `has_chr_ram` per mapper. CHR write-back to underlying `Vec` is direct (no write-through cache).
 
+## Language — PPU Background Rendering
+
+Core domain for how the PPU rasterizes the background layer.
+
+**BackgroundActivation**:
+Scroll-state snapshot latched at dot 0 of each visible scanline (and on-demand via `schedule_background_activation_if_visible` when `$2006` is written mid-scanline). Holds `vram_addr`, `fine_x`, `ctrl`, and `screen_x` activation offset. Provides the positional anchor for all background pixel rendering on that scanline. Once latched, ignores further scroll register changes until the next activation.
+_Avoid_: background latch, scroll anchor
+
+**TileCache**:
+Four-byte cached render state for the current background tile, stored as a field on `Ppu`. Holds the nametable byte (tile index), attribute byte (2-bit palette select), and both bitplane rows (low, high) at the current fine_y. Filled once per tile from mapper `read_chr` and nametable reads — matching the real PPU's tile-fetch cadence — then consumed for up to 8 horizontal pixels before unconditional refill. The first batch is shorter by `fine_x` to handle sub-tile scroll offsets. Invalidated at dot 0 and on `$2000`/`$2006` register writes.
+_Avoid_: tile cache (lowercase c), pattern cache
+
 ## Language — System Timing
 
 **SystemClock**:
