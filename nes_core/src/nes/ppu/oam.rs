@@ -108,12 +108,12 @@ impl Default for Oam {
 }
 
 impl Oam {
-    pub fn as_bytes(&self) -> &[u8] {
-        bytemuck::cast_slice(&self.sprites)
+    pub fn get_byte(&self, idx: u8) -> u8 {
+        bytemuck::cast_ref::<_, [u8; 256]>(&self.sprites)[(idx as usize) & 0xff]
     }
 
-    pub fn as_bytes_mut(&mut self) -> &mut [u8] {
-        bytemuck::cast_slice_mut(&mut self.sprites)
+    pub fn set_byte(&mut self, idx: u8, val: u8) {
+        bytemuck::cast_mut::<_, [u8; 256]>(&mut self.sprites)[(idx as usize) & 0xff] = val;
     }
 }
 

@@ -125,12 +125,6 @@ impl Timing {
         // although line 261 is not visible, but ppu need to prepare for next frame first line
         self.in_visible_scanline() || self.is_prepare_line()
     }
-
-    /// if dot in (1..=64) and scanline is 0..239 and 261,
-    /// note if rendering not enabled, secondary oam not activated.
-    fn clearing_secondary_oam(&self) -> bool {
-        (1..=64).contains(&self.dot) && self.in_ppu_active_line()
-    }
 }
 
 pub struct Ppu<R: Render = ()> {
@@ -301,7 +295,7 @@ impl<R: Render> Ppu<R> {
         }
 
         let addr = self.oam_addr;
-        self.oam.as_bytes_mut()[(addr as usize) & 0xff] = normalize_oam_byte(addr, value);
+        self.oam.set_byte(addr, normalize_oam_byte(addr, value));
         self.oam_addr = addr.wrapping_add(1);
     }
 
@@ -383,8 +377,8 @@ impl<R: Render> Ppu<R> {
         }
 
         if self.timing.dot == 0 {
-            self.sprite.swap_secondary_oam();
             if self.timing.in_visible_scanline() {
+                self.sprite.swap_secondary_oam();
                 // compute background anchor at start of visible scanline
                 self.background_anchor = Some(BackgroundActivation::snapshot(self, 0));
                 self.pending_background_activation = None;
@@ -400,7 +394,7 @@ impl<R: Render> Ppu<R> {
                 self.sprite.begin_sprite_overflow_eval();
             }
 
-            if (65..=256).contains(&self.timing.dot) && self.timing.dot % 2 == 1 {
+            if self.timing.dot % 2 == 0 {
                 self.sprite.step_sprite_overflow_eval(
                     self.timing.scanline,
                     self.registers.ctrl,
@@ -693,7 +687,7 @@ impl<R: Render> Ppu<R> {
 
     /// Read OAM data at current OAM address
     fn read_oam_data(&self) -> u8 {
-        self.oam.as_bytes()[(self.oam_addr as usize) & 0xff]
+        self.oam.get_byte(self.oam_addr)
     }
 
     /// Set control flags (for testing)

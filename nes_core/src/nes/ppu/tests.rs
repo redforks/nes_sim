@@ -73,13 +73,12 @@ fn create_test_ppu_with_mask(mask: PpuMask) -> Ppu {
         ..Ppu::new((), Mirroring::Horizontal, Box::new(TestCartridge::new()))
     };
     ppu.registers.mask = mask;
-    {
-        let oam = ppu.oam.as_bytes_mut();
-        for i in 0..64 {
-            oam[i * 4] = 0x20;
-            oam[i * 4 + 3] = 0xFF;
-        }
+
+    for i in 0..64 {
+        ppu.oam.set_byte(i * 4, 0x20);
+        ppu.oam.set_byte(i * 4 + 3, 0xff);
     }
+
     ppu.palette.data = [0; 0x20];
     ppu
 }
@@ -122,12 +121,11 @@ fn set_tile_pixel(
     }
 }
 
-fn setup_sprite(ppu: &mut Ppu, index: usize, y: u8, tile: u8, attr: u8, x: u8) {
-    let oam = ppu.oam.as_bytes_mut();
-    oam[index * 4] = y;
-    oam[index * 4 + 1] = tile;
-    oam[index * 4 + 2] = attr;
-    oam[index * 4 + 3] = x;
+fn setup_sprite(ppu: &mut Ppu, index: u8, y: u8, tile: u8, attr: u8, x: u8) {
+    ppu.oam.set_byte(index * 4, y);
+    ppu.oam.set_byte(index * 4 + 1, tile);
+    ppu.oam.set_byte(index * 4 + 2, attr);
+    ppu.oam.set_byte(index * 4 + 3, x);
 }
 
 fn set_bg_tile(ppu: &mut Ppu, tile: u8, palette_idx: u8) {

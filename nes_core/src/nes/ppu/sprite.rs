@@ -19,8 +19,8 @@ enum SpriteOverflowEvalMode {
 
 #[derive(Copy, Clone, Default)]
 struct SpriteOverflowEval {
-    oam_index: usize,
-    byte_index: usize,
+    oam_index: u8,
+    byte_index: u8,
     visible_sprites: u8,
     mode: SpriteOverflowEvalMode,
     pending_sprite_bytes: [u8; 4],
@@ -107,7 +107,7 @@ impl SpriteManager {
                     return;
                 }
 
-                let y = oam.sprites[self.sprite_overflow_eval.oam_index].y;
+                let y = oam.sprites[self.sprite_overflow_eval.oam_index as usize].y;
                 if sprite_in_range(y, target_scanline(scanline), ctrl.sprite_height()) {
                     self.sprite_overflow_eval.visible_sprites += 1;
                     if self.sprite_overflow_eval.visible_sprites > 8 {
@@ -124,9 +124,10 @@ impl SpriteManager {
             }
             SpriteOverflowEvalMode::CopySprite { remaining_bytes } => {
                 let oam_index = self.sprite_overflow_eval.oam_index;
-                let byte_offset = 4 - remaining_bytes as usize;
-                let oam_byte = oam.as_bytes()[oam_index * 4 + byte_offset];
-                self.sprite_overflow_eval.pending_sprite_bytes[byte_offset] = oam_byte;
+                let byte_offset = 4 - remaining_bytes;
+                let oam_byte = oam.get_byte((oam_index * 4 + byte_offset) as u8);
+                self.sprite_overflow_eval.pending_sprite_bytes[(byte_offset as usize) & 0x3] =
+                    oam_byte;
 
                 if remaining_bytes > 1 {
                     self.sprite_overflow_eval.mode = SpriteOverflowEvalMode::CopySprite {
@@ -158,7 +159,7 @@ impl SpriteManager {
 
                 let byte_idx =
                     self.sprite_overflow_eval.oam_index * 4 + self.sprite_overflow_eval.byte_index;
-                let y_byte = oam.as_bytes()[byte_idx];
+                let y_byte = oam.get_byte(byte_idx as u8);
                 if sprite_in_range(y_byte, target_scanline(scanline), ctrl.sprite_height()) {
                     self.overflow_pending = true;
                     self.sprite_overflow_eval.mode = SpriteOverflowEvalMode::Done;

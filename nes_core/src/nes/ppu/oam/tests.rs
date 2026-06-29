@@ -14,20 +14,19 @@ fn sprite_size_is_4_bytes() {
 #[test]
 fn oam_as_bytes_round_trip() {
     let mut oam = Oam::default();
-    let bytes = oam.as_bytes_mut();
-    for (i, byte) in bytes.iter_mut().enumerate() {
-        *byte = i as u8;
+    for i in 0..255 {
+        oam.set_byte(i, i);
     }
-    let read_back = oam.as_bytes();
-    for (i, byte) in read_back.iter().enumerate() {
-        assert_eq!(*byte, i as u8, "byte {i} mismatch");
+    for i in 0..255 {
+        let read_back = oam.get_byte(i);
+        assert_eq!(read_back, i, "byte {i} mismatch");
     }
 }
 
 #[test]
 fn oam_as_bytes_mut_modifies_sprites() {
     let mut oam = Oam::default();
-    oam.as_bytes_mut()[0] = 42;
+    oam.set_byte(0, 42);
     assert_eq!(oam.sprites[0].y, 42);
 }
 
@@ -69,8 +68,8 @@ fn attribute_bit_positions_combined() {
 #[test]
 fn oam_default_is_zeroed() {
     let oam = Oam::default();
-    for byte in oam.as_bytes() {
-        assert_eq!(*byte, 0);
+    for i in 0..255 {
+        assert_eq!(oam.get_byte(i), 0);
     }
 }
 
