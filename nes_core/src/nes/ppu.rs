@@ -262,6 +262,7 @@ impl<R: Render> Ppu<R> {
         {
             self.background_anchor = Some(pending);
             self.pending_background_activation = None;
+            self.tile_cache = None;
         }
     }
 
