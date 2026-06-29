@@ -161,7 +161,7 @@ fn populate_sprite_secondary_oam(ppu: &mut Ppu, target_scanline: u16) {
     } else {
         target_scanline - 1
     };
-    ppu.sprite.begin_sprite_overflow_eval(eval_scanline);
+    ppu.sprite.begin_sprite_overflow_eval();
     for dot in (65..=256).filter(|d| d % 2 == 1) {
         ppu.timing.dot = dot;
         ppu.timing.scanline = eval_scanline;

@@ -19,8 +19,6 @@ enum SpriteOverflowEvalMode {
 
 #[derive(Copy, Clone, Default)]
 struct SpriteOverflowEval {
-    scanline: u16,
-    target_scanline: u16,
     oam_index: usize,
     byte_index: usize,
     visible_sprites: u8,
@@ -87,10 +85,8 @@ impl SpriteManager {
         self.next_scanline_oam.clear();
     }
 
-    pub fn begin_sprite_overflow_eval(&mut self, scanline: u16) {
+    pub fn begin_sprite_overflow_eval(&mut self) {
         self.sprite_overflow_eval = SpriteOverflowEval {
-            scanline,
-            target_scanline: (scanline + 1) % 262,
             oam_index: 0,
             byte_index: 0,
             visible_sprites: 0,
@@ -100,9 +96,7 @@ impl SpriteManager {
     }
 
     pub fn step_sprite_overflow_eval(&mut self, scanline: u16, ctrl: PpuCtrl, oam: &Oam) {
-        if self.sprite_overflow_eval.scanline != scanline {
-            return;
-        }
+        let target_scanline = (scanline + 1) % 262;
 
         match self.sprite_overflow_eval.mode {
             SpriteOverflowEvalMode::Idle | SpriteOverflowEvalMode::Done => {}
@@ -112,9 +106,7 @@ impl SpriteManager {
                     return;
                 }
 
-                let oam_index = self.sprite_overflow_eval.oam_index;
-                let target_scanline = self.sprite_overflow_eval.target_scanline;
-                let y = oam.sprites[oam_index].y;
+                let y = oam.sprites[self.sprite_overflow_eval.oam_index].y;
                 if sprite_in_range(y, target_scanline, ctrl.sprite_height()) {
                     self.sprite_overflow_eval.visible_sprites += 1;
                     if self.sprite_overflow_eval.visible_sprites > 8 {
@@ -163,17 +155,16 @@ impl SpriteManager {
                     return;
                 }
 
-                let oam_index = self.sprite_overflow_eval.oam_index;
-                let byte_index = self.sprite_overflow_eval.byte_index;
-                let target_scanline = self.sprite_overflow_eval.target_scanline;
-                let byte_idx = oam_index * 4 + byte_index;
+                let byte_idx =
+                    self.sprite_overflow_eval.oam_index * 4 + self.sprite_overflow_eval.byte_index;
                 let y_byte = oam.as_bytes()[byte_idx];
                 if sprite_in_range(y_byte, target_scanline, ctrl.sprite_height()) {
                     self.overflow_pending = true;
                     self.sprite_overflow_eval.mode = SpriteOverflowEvalMode::Done;
                 } else {
                     self.sprite_overflow_eval.oam_index += 1;
-                    self.sprite_overflow_eval.byte_index = (byte_index + 1) & 0x03;
+                    self.sprite_overflow_eval.byte_index =
+                        (self.sprite_overflow_eval.byte_index + 1) & 0x03;
                 }
             }
         }

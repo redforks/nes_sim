@@ -397,7 +397,7 @@ impl<R: Render> Ppu<R> {
             && rendering_enabled
         {
             if self.timing.dot == 65 {
-                self.sprite.begin_sprite_overflow_eval(self.timing.scanline);
+                self.sprite.begin_sprite_overflow_eval();
             }
 
             if (65..=256).contains(&self.timing.dot) && self.timing.dot % 2 == 1 {
