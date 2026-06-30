@@ -747,13 +747,15 @@ impl<R: Render> Ppu<R> {
             None
         };
 
-        if SpriteManager::sprite_zero_opaque_at(
-            &self.oam,
-            self.registers.ctrl,
-            &*self.cartridge,
-            x,
-            self.timing.scanline as u8,
-        ) && ((bg_color_idx != 0) & (x != 255))
+        if !self.registers.status.sprite_zero_hit()
+            && SpriteManager::sprite_zero_opaque_at(
+                &self.oam,
+                self.registers.ctrl,
+                &*self.cartridge,
+                x,
+                self.timing.scanline as u8,
+            )
+            && ((bg_color_idx != 0) & (x != 255))
             && (x >= 8
                 || (self.effective_mask.background_left_enabled()
                     && self.effective_mask.sprite_left_enabled()))
