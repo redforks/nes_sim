@@ -175,15 +175,10 @@ impl SpriteManager {
     pub fn find_sprite_pixel(
         &self,
         ctrl: PpuCtrl,
-        mask: PpuMask,
         cartridge: &dyn Cartridge,
         screen_x: u8,
         screen_y: u8,
     ) -> Option<SpritePixel> {
-        if !mask.sprite_left_enabled() && screen_x < 8 {
-            return None;
-        }
-
         for sprite in &self.current_scanline_oam {
             if let Some(pixel) =
                 evaluate_sprite_from_secondary(sprite, ctrl, cartridge, screen_x, screen_y)
@@ -196,13 +191,13 @@ impl SpriteManager {
     }
 
     pub fn sprite_zero_opaque_at(
-        oam: &Oam,
+        zero_sprite: &Sprite,
         ctrl: PpuCtrl,
         cartridge: &dyn Cartridge,
         screen_x: u8,
         screen_y: u8,
     ) -> bool {
-        evaluate_sprite(oam.sprites[0], ctrl, cartridge, screen_x, screen_y)
+        evaluate_sprite(&zero_sprite, ctrl, cartridge, screen_x, screen_y)
             .is_some_and(|p| p.color_idx != 0)
     }
 }
@@ -255,7 +250,7 @@ fn evaluate_sprite_from_secondary(
 }
 
 fn evaluate_sprite(
-    sprite: Sprite,
+    sprite: &Sprite,
     ctrl: PpuCtrl,
     cartridge: &dyn Cartridge,
     screen_x: u8,

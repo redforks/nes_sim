@@ -86,8 +86,8 @@ impl Timing {
     }
 
     /// Return true if scanline and dot is in visible area
-    fn is_visible(&self) -> bool {
-        self.in_visible_scanline() && (1..=256).contains(&self.dot)
+    const fn is_visible(&self) -> bool {
+        self.in_visible_scanline() && self.dot >= 1 && self.dot <= 256
     }
 
     fn advance(&mut self, rendering_enabled: bool) {
@@ -128,7 +128,7 @@ impl Timing {
         self.dot
     }
 
-    fn in_visible_scanline(&self) -> bool {
+    const fn in_visible_scanline(&self) -> bool {
         self.scanline < 240
     }
 
@@ -735,10 +735,11 @@ impl<R: Render> Ppu<R> {
             (0, 0)
         };
 
-        let sprite_pixel = if self.effective_mask.sprite_enabled() {
+        let sprite_pixel = if self.effective_mask.sprite_enabled()
+            && (x >= 8 || self.effective_mask.sprite_left_enabled())
+        {
             self.sprite.find_sprite_pixel(
                 self.registers.ctrl,
-                self.effective_mask,
                 &*self.cartridge,
                 x,
                 self.timing.scanline as u8,
@@ -749,7 +750,7 @@ impl<R: Render> Ppu<R> {
 
         if !self.registers.status.sprite_zero_hit()
             && SpriteManager::sprite_zero_opaque_at(
-                &self.oam,
+                &self.oam.sprites[0],
                 self.registers.ctrl,
                 &*self.cartridge,
                 x,
