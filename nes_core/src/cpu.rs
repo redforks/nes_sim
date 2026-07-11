@@ -1,6 +1,6 @@
 use crate::{CpuClockPhase, SystemClock, mcu::Mcu};
 use arraydeque::ArrayDeque;
-use microcode::{Microcode, opcode};
+use microcode::{Microcode, PushTarget, opcode};
 #[cfg(debug_assertions)]
 use std::{cell::Cell, rc::Rc};
 
@@ -231,7 +231,11 @@ impl<M: Mcu> Cpu<M> {
     }
 
     /// Return true if just execute current instruction
-    pub fn tick<P: Plugin<M>>(&mut self, plugin: &mut P, clock: SystemClock) -> (ExecuteResult, bool) {
+    pub fn tick<P: Plugin<M>>(
+        &mut self,
+        plugin: &mut P,
+        clock: SystemClock,
+    ) -> (ExecuteResult, bool) {
         self.last_clock = clock;
         self.reset_mem_count();
         self.last_read_addr = None;
@@ -583,23 +587,14 @@ impl<M: Mcu> Cpu<M> {
         self.write_byte(addr, out);
     }
 
-    fn pha(&mut self) {
-        self.push_stack(self.a);
-    }
-
-    fn pop_stack_into_alu(&mut self) {
-        self.alu = self.pop_stack();
-    }
-
     fn push_status(&mut self, break_flag: bool, check_nmi: bool) {
-        if check_nmi
-            && self.nmi_detecteor.take_nmi_pending() {
-                // eprintln!("nmi hijack, @{}", get_system_cycles());
-                self.push_status(break_flag, false);
-                self.microcode_queue.clear();
-                self.push_microcodes(&[Microcode::LoadNmiPcL, Microcode::LoadNmiPcH]);
-                return;
-            }
+        if check_nmi && self.nmi_detecteor.take_nmi_pending() {
+            // eprintln!("nmi hijack, @{}", get_system_cycles());
+            self.push_status(break_flag, false);
+            self.microcode_queue.clear();
+            self.push_microcodes(&[Microcode::LoadNmiPcL, Microcode::LoadNmiPcH]);
+            return;
+        }
 
         self.push_stack(if break_flag {
             self.status | Flag::Break as u8 | Flag::NotUsed as u8
@@ -644,8 +639,8 @@ impl<M: Mcu> Cpu<M> {
     fn push_enter_interrupt_microcodes(&mut self, nmi: bool) -> Microcode {
         self.push_microcodes(&[
             Microcode::FetchOnly,
-            Microcode::PushPcH,
-            Microcode::PushPcL,
+            Microcode::PushStack(PushTarget::PCH),
+            Microcode::PushStack(PushTarget::PCL),
             Microcode::PushStatus {
                 break_flag: false,
                 check_nmi: !nmi,

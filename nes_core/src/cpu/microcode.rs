@@ -393,7 +393,7 @@ const fn build_opcode_table() -> [ArrayVec<[Microcode; 7]>; 256] {
     r[BPL as usize] = microcode_arr!(BranchRelative(BranchTest::IfNegativeClear));
     r[BVC as usize] = microcode_arr!(BranchRelative(BranchTest::IfOverflowClear));
     r[BVS as usize] = microcode_arr!(BranchRelative(BranchTest::IfOverflowSet));
-    r[PHA as usize] = microcode_arr!(Nop, Pha);
+    r[PHA as usize] = microcode_arr!(Nop, PushStack(PushTarget::A));
     r[PLA as usize] = microcode_arr!(Nop, PopStack, UpdateAFromAlu);
     r[PHP as usize] = microcode_arr!(
         Nop,
@@ -405,7 +405,13 @@ const fn build_opcode_table() -> [ArrayVec<[Microcode; 7]>; 256] {
     r[PLP as usize] = microcode_arr!(Nop, Nop, Plp);
     r[JMP_ABSOLUTE as usize] = microcode_arr!(AbsoluteL, LoadPcAbsoluteH);
     r[JMP_INDIRECT as usize] = microcode_arr!(AbsoluteL, AbsoluteH, IndexedL, IndexedHAndJump);
-    r[JSR as usize] = microcode_arr!(AbsoluteL, Nop, PushPcH, PushPcL, LoadPcAbsoluteH);
+    r[JSR as usize] = microcode_arr!(
+        AbsoluteL,
+        Nop,
+        PushStack(PushTarget::PCH),
+        PushStack(PushTarget::PCL),
+        LoadPcAbsoluteH
+    );
     r[RTS as usize] = microcode_arr!(
         SkipImmediate,
         Nop,
@@ -479,8 +485,8 @@ const fn build_opcode_table() -> [ArrayVec<[Microcode; 7]>; 256] {
     r[KIL12 as usize] = microcode_arr!(Kill);
     r[BRK as usize] = microcode_arr!(
         SkipImmediate,
-        PushPcH,
-        PushPcL,
+        PushStack(PushTarget::PCH),
+        PushStack(PushTarget::PCL),
         PushStatus {
             break_flag: true,
             check_nmi: true
@@ -971,8 +977,6 @@ pub enum Microcode {
     /// If BranchTest is true, pc += offset, push one Noc if not cross page, push two Noc if cross page
     BranchRelative(BranchTest),
 
-    PushPcL,
-    PushPcH,
     /// Push cpu status register into stack
     PushStatus {
         /// break flag of status to set
@@ -989,8 +993,7 @@ pub enum Microcode {
         exit_from_interrupt: bool,
     },
     IncPc,
-    /// Push register A to stack
-    Pha,
+    PushStack(PushTarget),
     /// pop stack into alu
     PopStack,
     /// Set register A to alu
@@ -1368,6 +1371,13 @@ pub(crate) mod opcode {
     pub const KIL12: u8 = 0xF2;
 }
 
+#[derive(Copy, Clone, PartialEq, Eq, Debug)]
+pub enum PushTarget {
+    A,
+    PCL,
+    PCH,
+}
+
 impl Microcode {
     /// Returns true if this microcode performs a memory write cycle.
     /// DMC DMA must not halt the CPU during a write cycle.
@@ -1387,10 +1397,8 @@ impl Microcode {
                 | Self::Rra
                 | Self::Slo
                 | Self::Sre
-                | Self::PushPcL
-                | Self::PushPcH
                 | Self::PushStatus { .. }
-                | Self::Pha
+                | Self::PushStack(..)
                 | Self::Asl(AOrMemory::Memory)
                 | Self::Lsr(AOrMemory::Memory)
                 | Self::Rol(AOrMemory::Memory)
@@ -1482,12 +1490,6 @@ impl Microcode {
             Self::LoadIrqPcL => cpu.load_irq_pcl(),
             Self::LoadNmiPcL => cpu.load_nmi_pcl(),
             Self::LoadNmiPcH => cpu.load_nmi_pch(),
-            Self::PushPcH => {
-                cpu.push_stack((cpu.pc >> 8) as u8);
-            }
-            Self::PushPcL => {
-                cpu.push_stack((cpu.pc & 0xFF) as u8);
-            }
             Self::PushStatus {
                 break_flag,
                 check_nmi,
@@ -1504,11 +1506,13 @@ impl Microcode {
                     cpu.nmi_detecteor.leave_nmi();
                 }
             }
-            Self::IncPc => {
-                cpu.pc += 1;
-            }
-            Self::Pha => cpu.pha(),
-            Self::PopStack => cpu.pop_stack_into_alu(),
+            Self::IncPc => cpu.pc += 1,
+            Self::PushStack(target) => match target {
+                PushTarget::A => cpu.push_stack(cpu.a),
+                PushTarget::PCL => cpu.push_stack((cpu.pc & 0xFF) as u8),
+                PushTarget::PCH => cpu.push_stack((cpu.pc >> 8) as u8),
+            },
+            Self::PopStack => cpu.alu = cpu.pop_stack(),
             Self::UpdateAFromAlu => cpu.set_a(cpu.alu),
 
             Self::LoadResetPcL => {

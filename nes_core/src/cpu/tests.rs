@@ -1,4 +1,4 @@
-use super::microcode::{BranchTest, ImmediateOp, TransferDirection, opcode};
+use super::microcode::{BranchTest, ImmediateOp, PushTarget, TransferDirection, opcode};
 use super::*;
 use crate::test_utils::MockMcu;
 
@@ -3962,7 +3962,7 @@ fn stack_and_misc_microcodes_manipulate_state() {
     cpu.sp = 0xFF;
     cpu.status = Flag::Carry as u8;
 
-    Microcode::Pha.exec(&mut cpu);
+    Microcode::PushStack(PushTarget::A).exec(&mut cpu);
     assert_eq!(cpu.sp, 0xFE);
     assert_eq!(cpu.mcu().mem[0x01FF], 0xAB);
 
