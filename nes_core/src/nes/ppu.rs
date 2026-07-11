@@ -165,9 +165,6 @@ pub struct Ppu<R: Render = ()> {
     /// system clock when suppress nmi by reading status register
     suppressed_vblank_at: Option<u64>,
 
-    /// PPU mask register changes are not visible until the next PPU tick;
-    /// this delayed copy models the 1-dot internal pipeline delay.
-    effective_mask: PpuMask,
     rendering_enabled_at_scanline_start: bool,
 
     /// Cumulative system cycle counter, incremented each tick.
@@ -200,7 +197,6 @@ impl<R: Render> Ppu<R> {
             tile_cache: TileCache::default(),
             sprite: SpriteManager::new(),
             suppressed_vblank_at: None,
-            effective_mask: PpuMask::new(),
             rendering_enabled_at_scanline_start: false,
             cycle: 0,
         }
@@ -213,7 +209,6 @@ impl<R: Render> Ppu<R> {
     pub fn reset(&mut self) {
         // https://www.nesdev.org/wiki/PPU_power_up_state
         self.registers.reset();
-        self.effective_mask = PpuMask::new();
         self.background_anchor = None;
         self.pending_background_activation = None;
         self.tile_cache = TileCache::default();
@@ -299,7 +294,7 @@ impl<R: Render> Ppu<R> {
     }
 
     pub fn rendering_enabled(&self) -> bool {
-        self.effective_mask.background_enabled() || self.effective_mask.sprite_enabled()
+        self.registers.mask.background_enabled() || self.registers.mask.sprite_enabled()
     }
 
     pub fn in_vblank(&self) -> bool {
@@ -433,9 +428,7 @@ impl<R: Render> Ppu<R> {
             } else {
                 self.palette.disabled_color_index(self.registers.vram_addr)
             };
-            let pixel = self
-                .effective_mask
-                .apply_effects(self.color_theme.color(pixel_idx));
+            let pixel = self.registers.mask.apply_effects(self.color_theme.color(pixel_idx));
             self.renderer
                 .set_pixel(x as u32, self.timing.scanline as u32, pixel.0);
         }
@@ -479,7 +472,6 @@ impl<R: Render> Ppu<R> {
         let prev_scanline = self.timing.scanline;
         self.timing.advance(rendering_enabled);
 
-        self.effective_mask = self.registers.mask;
         if self.cartridge_caps.on_ppu_tick {
             self.cartridge.on_ppu_tick(prev_scanline);
         }
@@ -618,7 +610,7 @@ impl<R: Render> Ppu<R> {
     fn get_background_pixel(&mut self, screen_x: u8) -> (u8, u8) {
         self.apply_pending_background_activation(screen_x);
 
-        if !self.effective_mask.background_left_enabled() && screen_x < 8 {
+        if !self.registers.mask.background_left_enabled() && screen_x < 8 {
             return (0, 0);
         }
 
@@ -729,14 +721,14 @@ impl<R: Render> Ppu<R> {
     }
 
     fn render_pixel(&mut self, x: u8) -> u8 {
-        let (bg_palette_idx, bg_color_idx) = if self.effective_mask.background_enabled() {
+        let (bg_palette_idx, bg_color_idx) = if self.registers.mask.background_enabled() {
             self.get_background_pixel(x)
         } else {
             (0, 0)
         };
 
-        let sprite_pixel = if self.effective_mask.sprite_enabled()
-            && (x >= 8 || self.effective_mask.sprite_left_enabled())
+        let sprite_pixel = if self.registers.mask.sprite_enabled()
+            && (x >= 8 || self.registers.mask.sprite_left_enabled())
         {
             self.sprite.find_sprite_pixel(
                 self.registers.ctrl,
@@ -758,10 +750,10 @@ impl<R: Render> Ppu<R> {
             )
             && ((bg_color_idx != 0) & (x != 255))
             && (x >= 8
-                || (self.effective_mask.background_left_enabled()
-                    && self.effective_mask.sprite_left_enabled()))
-            && self.effective_mask.background_enabled()
-            && self.effective_mask.sprite_enabled()
+                || (self.registers.mask.background_left_enabled()
+                    && self.registers.mask.sprite_left_enabled()))
+            && self.registers.mask.background_enabled()
+            && self.registers.mask.sprite_enabled()
         {
             self.sprite.set_zero_hit_pending();
         }

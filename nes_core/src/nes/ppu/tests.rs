@@ -69,7 +69,6 @@ fn test_status_read_only_refreshes_high_bits() {
 
 fn create_test_ppu_with_mask(mask: PpuMask) -> Ppu {
     let mut ppu = Ppu {
-        effective_mask: mask,
         ..Ppu::new((), Mirroring::Horizontal, Box::new(TestCartridge::new()))
     };
     ppu.registers.mask = mask;
@@ -173,7 +172,7 @@ fn render_pixel(ppu: &mut Ppu, pattern: &[u8], x: u8, y: u8) -> u8 {
     if !pattern.is_empty() {
         fill_chr(ppu, pattern);
     }
-    if ppu.effective_mask.sprite_enabled() {
+    if ppu.registers.mask.sprite_enabled() {
         populate_sprite_secondary_oam(ppu, y as u16);
     }
     ppu.timing.scanline = y as u16;
@@ -200,7 +199,7 @@ where
         fill_chr(ppu, pattern);
     }
     setup(ppu);
-    if ppu.effective_mask.sprite_enabled() {
+    if ppu.registers.mask.sprite_enabled() {
         populate_sprite_secondary_oam(ppu, y as u16);
     }
     ppu.timing.scanline = y as u16;

@@ -1,7 +1,7 @@
 use super::oam::{Oam, Sprite};
 use super::read_pattern_pixel;
 use crate::nes::mapper::Cartridge;
-use crate::nes::ppu::registers::{PpuCtrl, PpuMask, PpuStatus};
+use crate::nes::ppu::registers::{PpuCtrl, PpuStatus};
 use tinyvec::ArrayVec;
 
 #[derive(Copy, Clone, Default)]
