@@ -1,4 +1,4 @@
-use super::{Cartridge, PpuCapabilities, CARTRIDGE_START_ADDR, CartridgeOperation};
+use super::{Cartridge, CartridgeCaps, CARTRIDGE_START_ADDR, CartridgeOperation};
 use crate::nes::mapper::Mirroring;
 
 const PRG_BANK_SIZE: usize = 0x2000;
@@ -334,8 +334,8 @@ impl Cartridge for Vrc24 {
         self.irq_pending
     }
 
-    fn ppu_capabilities(&self) -> PpuCapabilities {
-        PpuCapabilities {
+    fn ppu_capabilities(&self) -> CartridgeCaps {
+        CartridgeCaps {
             on_ppu_tick: true,
             notify_vram_address: false,
             irq_pending: true,

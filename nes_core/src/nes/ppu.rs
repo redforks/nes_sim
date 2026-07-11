@@ -7,7 +7,7 @@ mod sprite;
 use crate::{
     mcu::Mcu,
     nes::{
-        mapper::{Cartridge, CartridgeOperation, Mirroring, PpuCapabilities},
+        mapper::{Cartridge, CartridgeOperation, Mirroring, CartridgeCaps},
         ppu::{palette::ColorTheme, sprite::SpriteManager},
     },
     render::Render,
@@ -154,7 +154,7 @@ pub struct Ppu<R: Render = ()> {
     nametable: Nametable,
     renderer: R,
     cartridge: Box<dyn Cartridge>,
-    cartridge_caps: PpuCapabilities,
+    cartridge_caps: CartridgeCaps,
 
     timing: Timing,
 
