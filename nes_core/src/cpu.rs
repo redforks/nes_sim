@@ -7,7 +7,7 @@ use std::{cell::Cell, rc::Rc};
 mod microcode;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Register {
+enum Register {
     A,
     X,
     Y,
@@ -177,7 +177,7 @@ impl<M: Mcu> Cpu<M> {
         self.microcode_queue.is_empty()
     }
 
-    pub(crate) fn next_microcode(&self) -> Microcode {
+    fn next_microcode(&self) -> Microcode {
         self.microcode_queue
             .front()
             .copied()
