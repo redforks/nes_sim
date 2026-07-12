@@ -44,9 +44,9 @@ impl IrqDetector {
         self.irq_pending
     }
 
-    fn save_irq_inhibit(&mut self, opcode: u8, f_interrupt_disable: impl FnOnce() -> bool) {
+    fn save_irq_inhibit(&mut self, opcode: u8, interrupt_disabled: bool) {
         self.irq_inhibit = if matches!(opcode, opcode::CLI | opcode::SEI | opcode::PLP) {
-            Some(f_interrupt_disable())
+            Some(interrupt_disabled)
         } else {
             None
         };
@@ -320,7 +320,7 @@ impl<M: Mcu> Cpu<M> {
 
     fn save_irq_inhibit(&mut self) {
         let flag = self.flag(Flag::InterruptDisabled);
-        self.irq_detector.save_irq_inhibit(self.opcode, || flag);
+        self.irq_detector.save_irq_inhibit(self.opcode, flag);
     }
 
     fn set_flag(&mut self, flag: Flag, v: bool) {

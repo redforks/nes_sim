@@ -63,12 +63,12 @@ fn test_irq_detector() {
     assert!(!v.irq_pending());
 
     // inhibit - not related opcode
-    v.save_irq_inhibit(opcode::RTI, || true);
+    v.save_irq_inhibit(opcode::RTI, true);
     v.detect_irq(false);
     assert!(!v.irq_pending());
 
     // inhibit - related opcode
-    v.save_irq_inhibit(opcode::CLI, || true);
+    v.save_irq_inhibit(opcode::CLI, true);
     v.detect_irq(false);
     assert!(!v.irq_pending());
 }
