@@ -1,4 +1,4 @@
-use crate::{CpuClockPhase, SystemClock, mcu::Mcu};
+use crate::{SystemClock, mcu::Mcu};
 use arraydeque::ArrayDeque;
 use microcode::{Microcode, PushTarget, opcode};
 #[cfg(debug_assertions)]
@@ -250,14 +250,7 @@ impl<M: Mcu> Cpu<M> {
             );
         });
 
-        if self.frozen {
-            return (ExecuteResult::Continue, false);
-        }
-
-        if matches!(
-            clock.cpu_clock_phase(),
-            crate::CpuClockPhase::First | crate::CpuClockPhase::Middle
-        ) {
+        if !clock.is_cpu_clock() || self.frozen {
             return (ExecuteResult::Continue, false);
         }
 
@@ -290,7 +283,7 @@ impl<M: Mcu> Cpu<M> {
     }
 
     pub fn detect_interrupt(&mut self, clock: SystemClock) {
-        if matches!(clock.cpu_clock_phase(), CpuClockPhase::Last) {
+        if clock.is_cpu_clock() {
             // Detect interrupt at the second-to-last cycle
             if self.microcode_queue.len() == 1 {
                 self.nmi_detecteor.detect_nmi();
