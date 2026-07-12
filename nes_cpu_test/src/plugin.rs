@@ -1,5 +1,5 @@
 use nes_core::mcu::Mcu;
-use nes_core::{Cpu, ExecuteResult, Plugin};
+use nes_core::{Cpu, ExecuteResult, Plugin, SystemClock};
 
 mod console;
 mod detect_dead_loop;
@@ -30,15 +30,15 @@ impl<M: Mcu> CompositePlugin<M> {
 }
 
 impl<M: Mcu> Plugin<M> for CompositePlugin<M> {
-    fn start(&mut self, cpu: &mut Cpu<M>) {
+    fn start(&mut self, cpu: &mut Cpu<M>, system_clock: SystemClock) {
         for p in self.0.iter_mut() {
-            p.start(cpu);
+            p.start(cpu, system_clock);
         }
     }
 
-    fn end(&mut self, cpu: &mut Cpu<M>) {
+    fn end(&mut self, cpu: &mut Cpu<M>, system_clock: SystemClock) {
         for p in self.0.iter_mut() {
-            p.end(cpu);
+            p.end(cpu, system_clock);
         }
     }
 

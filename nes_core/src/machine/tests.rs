@@ -26,7 +26,7 @@ fn test_set_pc() {
         machine.cpu_mut().tick(&mut plugin, clock);
         clock = clock.inc();
     }
-    machine.set_pc(0x1234, clock);
+    machine.set_pc(0x1234);
     assert_eq!(machine.cpu.pc, 0x1234);
 }
 
@@ -42,7 +42,7 @@ fn test_set_pc_drains_pending_reset_microcodes() {
         machine.cpu_mut().tick(&mut plugin, clock);
         clock = clock.inc();
     }
-    machine.set_pc(0x5678, clock);
+    machine.set_pc(0x5678);
 
     assert_eq!(machine.cpu.pc, 0x5678);
 }
@@ -58,7 +58,7 @@ fn test_reset() {
         machine.cpu_mut().tick(&mut plugin, clock);
         clock = clock.inc();
     }
-    machine.set_pc(0x5678, clock);
+    machine.set_pc(0x5678);
     machine.reset();
     // Reset enqueues microcodes that load the reset vector; run them to apply
     let mut plugin = EmptyPlugin::<MockMcu>::new();

@@ -31,8 +31,8 @@ impl<P: Plugin<M>, M: Mcu> Machine<P, M> {
         self.cpu.reset()
     }
 
-    pub fn set_pc(&mut self, pc: u16, clock: SystemClock) {
-        self.cpu.set_pc(pc, clock);
+    pub fn set_pc(&mut self, pc: u16) {
+        self.cpu.set_pc(pc);
     }
 
     pub fn mcu(&self) -> &M {

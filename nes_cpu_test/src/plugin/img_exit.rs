@@ -1,5 +1,5 @@
 use nes_core::mcu::Mcu;
-use nes_core::{Cpu, ExecuteResult, Flag, Plugin};
+use nes_core::{Cpu, ExecuteResult, Flag, Plugin, SystemClock};
 
 #[derive(Default)]
 pub struct ImageExit {
@@ -8,9 +8,9 @@ pub struct ImageExit {
 }
 
 impl<M: Mcu> Plugin<M> for ImageExit {
-    fn start(&mut self, _: &mut Cpu<M>) {}
+    fn start(&mut self, _: &mut Cpu<M>, _: SystemClock) {}
 
-    fn end(&mut self, cpu: &mut Cpu<M>) {
+    fn end(&mut self, cpu: &mut Cpu<M>, _: SystemClock) {
         if let Some(last) = self.last_pc
             && last == cpu.pc
         {

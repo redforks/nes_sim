@@ -64,8 +64,8 @@ impl Image {
             clock = clock.inc();
         }
         match start_pc {
-            Some(pc) => machine.set_pc(pc, clock),
-            None => machine.set_pc(0x400, clock),
+            Some(pc) => machine.set_pc(pc),
+            None => machine.set_pc(0x400),
         }
         MachineWrapper::Bin(Box::new(machine), clock)
     }

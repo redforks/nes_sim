@@ -3,7 +3,7 @@ use is_terminal::IsTerminal;
 use nes_core::nes::NesMcu;
 use nes_core::nes::ppu::Ppu;
 use nes_core::render::Render;
-use nes_core::{Cpu, Plugin};
+use nes_core::{Cpu, Plugin, SystemClock};
 use std::cell::RefCell;
 use std::fmt::Write as _;
 use std::sync::LazyLock;
@@ -54,9 +54,9 @@ impl Console {
 }
 
 impl<R: Render> Plugin<NesMcu<R, ()>> for Console {
-    fn start(&mut self, _: &mut Cpu<NesMcu<R, ()>>) {}
+    fn start(&mut self, _: &mut Cpu<NesMcu<R, ()>>, _: SystemClock) {}
 
-    fn end(&mut self, cpu: &mut Cpu<NesMcu<R, ()>>) {
+    fn end(&mut self, cpu: &mut Cpu<NesMcu<R, ()>>, _: SystemClock) {
         if self.new_frame_detector.is_new_frame(cpu.mcu().ppu()) {
             if cpu.peek_byte(0x6001) != 0xDE
                 || cpu.peek_byte(0x6002) != 0xB0

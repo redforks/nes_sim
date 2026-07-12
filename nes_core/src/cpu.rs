@@ -116,10 +116,6 @@ pub struct Cpu<M: Mcu> {
     mem_acc_count: Rc<Cell<usize>>,
 
     pub(crate) frozen: bool,
-
-    /// The SystemClock value from the most recent `tick()` call.
-    /// Exposed so plugins can access cycle timing without a global clock.
-    last_clock: SystemClock,
 }
 
 impl<M: Mcu> Cpu<M> {
@@ -144,7 +140,6 @@ impl<M: Mcu> Cpu<M> {
             mem_acc_count: Default::default(),
             frozen: false,
             last_read_addr: None,
-            last_clock: SystemClock::default(),
         };
         r.reset();
         r
@@ -158,14 +153,9 @@ impl<M: Mcu> Cpu<M> {
         &mut self.mcu
     }
 
-    /// The SystemClock from the most recent `tick()` call.
-    pub fn clock(&self) -> SystemClock {
-        self.last_clock
-    }
-
     /// Set CPU program counter. Panics if there are pending microcodes;
     /// callers must drain the queue before calling set_pc.
-    pub fn set_pc(&mut self, pc: u16, _clock: SystemClock) {
+    pub fn set_pc(&mut self, pc: u16) {
         assert!(
             self.microcodes_empty(),
             "microcode queue must be empty before setting PC"
@@ -237,7 +227,6 @@ impl<M: Mcu> Cpu<M> {
         plugin: &mut P,
         clock: SystemClock,
     ) -> (ExecuteResult, bool) {
-        self.last_clock = clock;
         self.reset_mem_count();
         self.last_read_addr = None;
 
@@ -261,7 +250,7 @@ impl<M: Mcu> Cpu<M> {
         let code = match self.pop_microcode() {
             Some(v) => v,
             None => {
-                plugin.start(self);
+                plugin.start(self, clock);
                 if self.nmi_detecteor.take_nmi_pending() {
                     self.push_enter_interrupt_microcodes(true)
                 } else if self.irq_detector.irq_pending() {
@@ -275,7 +264,7 @@ impl<M: Mcu> Cpu<M> {
         code.exec(self);
 
         if self.microcode_queue.is_empty() {
-            plugin.end(self);
+            plugin.end(self, clock);
             (plugin.should_stop(), true)
         } else {
             (ExecuteResult::Continue, false)
@@ -730,10 +719,10 @@ pub enum ExecuteResult {
 
 pub trait Plugin<M: Mcu> {
     /// Before start execute new instruction
-    fn start(&mut self, cpu: &mut Cpu<M>);
+    fn start(&mut self, cpu: &mut Cpu<M>, system_clock: SystemClock);
 
     /// After execute instruction
-    fn end(&mut self, cpu: &mut Cpu<M>);
+    fn end(&mut self, cpu: &mut Cpu<M>, system_clock: SystemClock);
 
     /// After execute an instruction, tell cpu should stop execution or not
     fn should_stop(&self) -> ExecuteResult {
@@ -754,9 +743,9 @@ impl<M: Mcu> EmptyPlugin<M> {
 }
 
 impl<M: Mcu> Plugin<M> for EmptyPlugin<M> {
-    fn start(&mut self, _: &mut Cpu<M>) {}
+    fn start(&mut self, _: &mut Cpu<M>, _: SystemClock) {}
 
-    fn end(&mut self, _: &mut Cpu<M>) {}
+    fn end(&mut self, _: &mut Cpu<M>, _: SystemClock) {}
 }
 
 impl<M: Mcu> Default for EmptyPlugin<M> {

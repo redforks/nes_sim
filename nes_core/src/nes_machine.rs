@@ -1,5 +1,5 @@
 use crate::{
-    Cpu, ExecuteResult, Plugin, SystemClock,
+    Cpu, EmptyPlugin, ExecuteResult, Plugin, SystemClock,
     ines::INesFile,
     nes::{NesMcu, controller::Button, dmc_dma::DmcDma, ppu::palette::ColorTheme},
     render::Render,
@@ -144,16 +144,12 @@ where
     /// Drains any pending microcodes (e.g. from reset) before setting PC.
     /// Uses CPU-only ticks so APU/DMA state is not advanced during setup.
     pub fn set_pc(&mut self, pc: u16) {
+        let mut empty = EmptyPlugin::new();
         while !self.cpu.microcodes_empty() {
-            self.cpu.tick(&mut self.p, self.clock);
+            self.cpu.tick(&mut empty, self.clock);
             self.clock = self.clock.inc();
         }
-        self.cpu.set_pc(pc, self.clock);
-    }
-
-    /// Get the current system clock value.
-    pub fn clock(&self) -> SystemClock {
-        self.clock
+        self.cpu.set_pc(pc);
     }
 
     pub fn cpu(&self) -> &Cpu<NesMcu<R, D>> {

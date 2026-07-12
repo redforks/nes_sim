@@ -1,5 +1,5 @@
 use nes_core::mcu::Mcu;
-use nes_core::{Cpu, ExecuteResult, Plugin};
+use nes_core::{Cpu, ExecuteResult, Plugin, SystemClock};
 use std::collections::VecDeque;
 
 pub struct DetectDeadLoop<const DEPTH: usize, const REPEATS: u32 = 200000> {
@@ -21,9 +21,9 @@ impl<const DEPTH: usize, const REPEATS: u32> DetectDeadLoop<DEPTH, REPEATS> {
 }
 
 impl<const DEPTH: usize, const REPEATS: u32, M: Mcu> Plugin<M> for DetectDeadLoop<DEPTH, REPEATS> {
-    fn start(&mut self, _: &mut Cpu<M>) {}
+    fn start(&mut self, _: &mut Cpu<M>, _: SystemClock) {}
 
-    fn end(&mut self, cpu: &mut Cpu<M>) {
+    fn end(&mut self, cpu: &mut Cpu<M>, _: SystemClock) {
         if self.recent_pc.len() == DEPTH * 2 {
             self.recent_pc.pop_front();
         }
@@ -88,20 +88,11 @@ mod tests {
         let mut p = DetectDeadLoop::<2, 2>::new();
         for pc in pcs.iter().copied() {
             cpu.pc = pc;
-            p.end(&mut cpu);
+            p.end(&mut cpu, SystemClock::default());
         }
 
         assert_eq!(exp_count, p.count);
         assert_eq!(should_exit, p.should_exit);
-
-        // assert_eq!((0, false), feed_pcs(&mut cpu, &[10]));
-        // assert_eq!((1, false), feed_pcs(&mut cpu, &[10, 11, 10, 11]));
-        // assert_eq!((2, false), feed_pcs(&mut cpu, &[10, 11, 10, 11, 10]));
-        // assert_eq!((0, false), feed_pcs(&mut cpu, &[10, 11, 10, 11, 10, 9]));
-        // assert_eq!(
-        //     (3, true),
-        //     feed_pcs(&mut cpu, &[10, 11, 10, 11, 10, 9, 10, 9, 10, 9])
-        // );
     }
 
     #[test]
@@ -117,8 +108,8 @@ mod tests {
         let mut p = DetectDeadLoop::<1, 0>::new();
 
         cpu.pc = 0x8000;
-        p.end(&mut cpu);
-        p.end(&mut cpu);
+        p.end(&mut cpu, SystemClock::default());
+        p.end(&mut cpu, SystemClock::default());
 
         assert!(p.should_exit);
         assert_eq!(0, p.exit_code);
@@ -135,8 +126,8 @@ mod tests {
         let mut p = DetectDeadLoop::<1, 0>::new();
 
         cpu.pc = 0x8000;
-        p.end(&mut cpu);
-        p.end(&mut cpu);
+        p.end(&mut cpu, SystemClock::default());
+        p.end(&mut cpu, SystemClock::default());
 
         assert!(p.should_exit);
         assert_eq!(1, p.exit_code);

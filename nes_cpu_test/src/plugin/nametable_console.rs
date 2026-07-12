@@ -2,7 +2,7 @@ use ansi_term::Color;
 use is_terminal::IsTerminal;
 use nes_core::nes::NesMcu;
 use nes_core::render::Render;
-use nes_core::{Cpu, ExecuteResult, Plugin};
+use nes_core::{Cpu, ExecuteResult, Plugin, SystemClock};
 use std::sync::LazyLock;
 
 static IS_TERMINAL: LazyLock<bool> = LazyLock::new(|| std::io::stdout().is_terminal());
@@ -64,9 +64,9 @@ impl Default for NametableConsole {
 }
 
 impl<R: Render> Plugin<NesMcu<R, ()>> for NametableConsole {
-    fn start(&mut self, _: &mut Cpu<NesMcu<R, ()>>) {}
+    fn start(&mut self, _: &mut Cpu<NesMcu<R, ()>>, _: SystemClock) {}
 
-    fn end(&mut self, cpu: &mut Cpu<NesMcu<R, ()>>) {
+    fn end(&mut self, cpu: &mut Cpu<NesMcu<R, ()>>, _: SystemClock) {
         if !cpu.mcu().ppu().in_vblank() || !cpu.mcu().ppu().rendering_enabled() {
             return;
         }
