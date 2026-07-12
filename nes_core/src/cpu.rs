@@ -53,12 +53,19 @@ impl IrqDetector {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+enum NmiState {
+    #[default]
+    Idle,
+    NmiPending,
+    InNmi,
+}
+
 #[derive(Default)]
 struct NmiDetector {
+    state: NmiState,
     last_nmi_input: bool,
     nmi_input: bool,
-    nmi_pending: bool,
-    in_nmi: bool,
 }
 
 impl NmiDetector {
@@ -67,24 +74,24 @@ impl NmiDetector {
     }
 
     fn detect_nmi(&mut self) {
-        if self.last_nmi_input != self.nmi_input && self.nmi_input && !self.in_nmi {
-            // eprintln!("nmi detected, @{}", get_system_cycles());
-            self.nmi_pending = true;
-        }
+        let rising_edge = self.last_nmi_input != self.nmi_input && self.nmi_input;
         self.last_nmi_input = self.nmi_input;
+        if rising_edge && self.state == NmiState::Idle {
+            self.state = NmiState::NmiPending;
+        }
     }
 
     fn take_nmi_pending(&mut self) -> bool {
-        let r = std::mem::take(&mut self.nmi_pending);
-        if r {
-            // eprintln!("take nmi, @{}", get_system_cycles());
-            self.in_nmi = true;
+        if self.state == NmiState::NmiPending {
+            self.state = NmiState::InNmi;
+            true
+        } else {
+            false
         }
-        r
     }
 
     fn leave_nmi(&mut self) {
-        self.in_nmi = false;
+        self.state = NmiState::Idle;
     }
 }
 
@@ -293,9 +300,9 @@ impl<M: Mcu> Cpu<M> {
             // Detect interrupt at the second-to-last cycle
             if self.microcode_queue.len() == 1 {
                 self.nmi_detecteor.detect_nmi();
-                if self.nmi_detecteor.nmi_pending {
-                    // eprintln!("current op: 0x{:x} @{}", self.opcode, get_system_cycles());
-                }
+                // if self.nmi_detecteor.state == NmiState::NmiPending {
+                // eprintln!("current op: 0x{:x} @{}", self.opcode, get_system_cycles());
+                // }
                 self.irq_detector
                     .detect_irq(self.flag(Flag::InterruptDisabled));
             }
