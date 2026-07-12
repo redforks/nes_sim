@@ -239,7 +239,7 @@ impl<M: Mcu> Cpu<M> {
             );
         });
 
-        if !clock.is_cpu_clock() || self.frozen {
+        if self.frozen {
             return (ExecuteResult::Continue, false);
         }
 
