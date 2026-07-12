@@ -100,7 +100,7 @@ pub struct Cpu<M: Mcu> {
 
     opcode: u8,
     /// address bus, which memory byte that cpu current select
-    pub(crate) ab: u16,
+    ab: u16,
     /// data bus, what byte that cpu will save or get from memory bus
     db: u8, // save low byte during indexed addressing
     alu: u8,
