@@ -1,10 +1,7 @@
 use crate::{
     Cpu, ExecuteResult, Plugin, SystemClock,
     ines::INesFile,
-    nes::{
-        NesMcu, controller::Button, dmc_dma::DmcDma,
-        ppu::palette::ColorTheme,
-    },
+    nes::{NesMcu, controller::Button, dmc_dma::DmcDma, ppu::palette::ColorTheme},
     render::Render,
 };
 
@@ -91,7 +88,7 @@ where
         }
 
         let irq_pending = self.cpu.mcu().apu_irq_pending() || self.cartridge_irq_latched;
-        self.cpu.set_irq(irq_pending, clock);
+        self.cpu.set_irq(irq_pending);
 
         self.cpu.mcu_mut().tick_apu(clock);
         if clock.is_apu_clock() {

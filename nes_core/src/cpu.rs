@@ -18,16 +18,10 @@ struct IrqDetector {
     irq_pending: bool,
     irq_input: bool,
     irq_inhibit: Option<bool>,
-    irq_requested_at: Option<u64>,
 }
 
 impl IrqDetector {
-    fn update_irq_input(&mut self, v: bool, clock: SystemClock) {
-        self.irq_requested_at = if v && !self.irq_input {
-            Some(clock.0)
-        } else {
-            None
-        };
+    fn update_irq_input(&mut self, v: bool) {
         self.irq_input = v;
     }
 
@@ -219,8 +213,8 @@ impl<M: Mcu> Cpu<M> {
         ]);
     }
 
-    pub fn set_irq(&mut self, enabled: bool, clock: SystemClock) {
-        self.irq_detector.update_irq_input(enabled, clock);
+    pub fn set_irq(&mut self, enabled: bool) {
+        self.irq_detector.update_irq_input(enabled);
     }
 
     pub fn is_halted(&self) -> bool {
