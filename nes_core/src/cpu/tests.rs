@@ -97,6 +97,8 @@ fn test_nmi_detector() {
 
     assert!(!update_detect_and_report(&mut v, false)); // disabled
     assert!(update_detect_and_report(&mut v, true)); // enabled and detected
+    v.leave_nmi();
+    assert!(!update_detect_and_report(&mut v, true)); // nmi line not changed, even it is true
 }
 
 #[test]
