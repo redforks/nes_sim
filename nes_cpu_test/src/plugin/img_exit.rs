@@ -8,9 +8,9 @@ pub struct ImageExit {
 }
 
 impl<M: Mcu> Plugin<M> for ImageExit {
-    fn start(&mut self, _: &mut Cpu<M>, _: SystemClock) {}
+    fn start(&mut self, _: &Cpu<M>, _: SystemClock) {}
 
-    fn end(&mut self, cpu: &mut Cpu<M>, _: SystemClock) {
+    fn end(&mut self, cpu: &Cpu<M>, _: SystemClock) {
         if let Some(last) = self.last_pc
             && last == cpu.pc
         {

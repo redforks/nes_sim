@@ -18,13 +18,13 @@ impl Timeout {
 }
 
 impl<M: Mcu> Plugin<M> for Timeout {
-    fn start(&mut self, _cpu: &mut nes_core::Cpu<M>, _: SystemClock) {
+    fn start(&mut self, _cpu: &nes_core::Cpu<M>, _: SystemClock) {
         if self.start_time.is_none() {
             self.start_time = Some(std::time::Instant::now());
         }
     }
 
-    fn end(&mut self, _cpu: &mut nes_core::Cpu<M>, _: SystemClock) {}
+    fn end(&mut self, _cpu: &nes_core::Cpu<M>, _: SystemClock) {}
 
     fn should_stop(&self) -> ExecuteResult {
         if let Some(start_time) = self.start_time

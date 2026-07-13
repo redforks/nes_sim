@@ -64,9 +64,9 @@ impl Default for NametableConsole {
 }
 
 impl<R: Render> Plugin<NesMcu<R, ()>> for NametableConsole {
-    fn start(&mut self, _: &mut Cpu<NesMcu<R, ()>>, _: SystemClock) {}
+    fn start(&mut self, _: &Cpu<NesMcu<R, ()>>, _: SystemClock) {}
 
-    fn end(&mut self, cpu: &mut Cpu<NesMcu<R, ()>>, _: SystemClock) {
+    fn end(&mut self, cpu: &Cpu<NesMcu<R, ()>>, _: SystemClock) {
         if !cpu.mcu().ppu().in_vblank() || !cpu.mcu().ppu().rendering_enabled() {
             return;
         }

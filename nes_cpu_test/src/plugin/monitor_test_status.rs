@@ -14,7 +14,7 @@ enum Status {
 }
 
 impl Status {
-    fn parse<M: Mcu>(cpu: &mut Cpu<M>) -> Status {
+    fn parse<M: Mcu>(cpu: &Cpu<M>) -> Status {
         if cpu.peek_byte(0x6001) != 0xDE
             || cpu.peek_byte(0x6002) != 0xB0
             || cpu.peek_byte(0x6003) != 0x61
@@ -42,9 +42,9 @@ pub struct MonitorTestStatus {
 }
 
 impl<M: Mcu> Plugin<M> for MonitorTestStatus {
-    fn start(&mut self, _: &mut Cpu<M>, _: SystemClock) {}
+    fn start(&mut self, _: &Cpu<M>, _: SystemClock) {}
 
-    fn end(&mut self, cpu: &mut Cpu<M>, system_clock: SystemClock) {
+    fn end(&mut self, cpu: &Cpu<M>, system_clock: SystemClock) {
         let status = Status::parse(cpu);
         let now = system_clock.cycles();
         self.should_reset = if let Some(cycles) = self.cycles_request_reset {

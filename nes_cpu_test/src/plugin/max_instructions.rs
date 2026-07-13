@@ -15,9 +15,9 @@ impl MaxInstructions {
 }
 
 impl<M: Mcu> Plugin<M> for MaxInstructions {
-    fn start(&mut self, _: &mut Cpu<M>, _: SystemClock) {}
+    fn start(&mut self, _: &Cpu<M>, _: SystemClock) {}
 
-    fn end(&mut self, _cpu: &mut Cpu<M>, _: SystemClock) {
+    fn end(&mut self, _cpu: &Cpu<M>, _: SystemClock) {
         self.count = self.count.saturating_add(1);
         if self.count > self.max {
             // nothing to do here; should_stop will return Stop

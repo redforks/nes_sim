@@ -58,9 +58,9 @@ fn pixel_within_threshold(actual: Rgba<u8>, expected: Rgba<u8>) -> bool {
 }
 
 impl<A: AudioDriver> Plugin<NesMcu<ImageRender, A>> for PngFrameMatch {
-    fn start(&mut self, _cpu: &mut Cpu<NesMcu<ImageRender, A>>, _: SystemClock) {}
+    fn start(&mut self, _cpu: &Cpu<NesMcu<ImageRender, A>>, _: SystemClock) {}
 
-    fn end(&mut self, cpu: &mut Cpu<NesMcu<ImageRender, A>>, _: SystemClock) {
+    fn end(&mut self, cpu: &Cpu<NesMcu<ImageRender, A>>, _: SystemClock) {
         if self.is_complete() {
             return;
         }

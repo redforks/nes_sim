@@ -3783,7 +3783,7 @@ fn peek_byte_uses_non_mutating_mcu_path() {
     let mut mcu = TestMcu::default();
     mcu.mem[0x2002] = 0x80;
 
-    let mut cpu = create_cpu_with_mcu(mcu);
+    let cpu = create_cpu_with_mcu(mcu);
     let reads_before = cpu.mcu().reads.len();
 
     assert_eq!(cpu.peek_byte(0x2002), 0x80);

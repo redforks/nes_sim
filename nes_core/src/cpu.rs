@@ -326,7 +326,7 @@ impl<M: Mcu> Cpu<M> {
         self.mcu.read(addr)
     }
 
-    pub fn peek_byte(&mut self, addr: u16) -> u8 {
+    pub fn peek_byte(&self, addr: u16) -> u8 {
         self.mcu.peek(addr)
     }
 
@@ -719,10 +719,10 @@ pub enum ExecuteResult {
 
 pub trait Plugin<M: Mcu> {
     /// Before start execute new instruction
-    fn start(&mut self, cpu: &mut Cpu<M>, system_clock: SystemClock);
+    fn start(&mut self, cpu: &Cpu<M>, system_clock: SystemClock);
 
     /// After execute instruction
-    fn end(&mut self, cpu: &mut Cpu<M>, system_clock: SystemClock);
+    fn end(&mut self, cpu: &Cpu<M>, system_clock: SystemClock);
 
     /// After execute an instruction, tell cpu should stop execution or not
     fn should_stop(&self) -> ExecuteResult {
@@ -743,9 +743,9 @@ impl<M: Mcu> EmptyPlugin<M> {
 }
 
 impl<M: Mcu> Plugin<M> for EmptyPlugin<M> {
-    fn start(&mut self, _: &mut Cpu<M>, _: SystemClock) {}
+    fn start(&mut self, _: &Cpu<M>, _: SystemClock) {}
 
-    fn end(&mut self, _: &mut Cpu<M>, _: SystemClock) {}
+    fn end(&mut self, _: &Cpu<M>, _: SystemClock) {}
 }
 
 impl<M: Mcu> Default for EmptyPlugin<M> {

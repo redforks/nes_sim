@@ -21,9 +21,9 @@ impl<const DEPTH: usize, const REPEATS: u32> DetectDeadLoop<DEPTH, REPEATS> {
 }
 
 impl<const DEPTH: usize, const REPEATS: u32, M: Mcu> Plugin<M> for DetectDeadLoop<DEPTH, REPEATS> {
-    fn start(&mut self, _: &mut Cpu<M>, _: SystemClock) {}
+    fn start(&mut self, _: &Cpu<M>, _: SystemClock) {}
 
-    fn end(&mut self, cpu: &mut Cpu<M>, _: SystemClock) {
+    fn end(&mut self, cpu: &Cpu<M>, _: SystemClock) {
         if self.recent_pc.len() == DEPTH * 2 {
             self.recent_pc.pop_front();
         }

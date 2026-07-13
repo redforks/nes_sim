@@ -25,13 +25,13 @@ impl<P> QuietPlugin<P> {
 }
 
 impl<M: Mcu, P: Plugin<M>> Plugin<M> for QuietPlugin<P> {
-    fn start(&mut self, cpu: &mut Cpu<M>, system_clock: SystemClock) {
+    fn start(&mut self, cpu: &Cpu<M>, system_clock: SystemClock) {
         if !self.quiet {
             self.inner.start(cpu, system_clock);
         }
     }
 
-    fn end(&mut self, cpu: &mut Cpu<M>, system_clock: SystemClock) {
+    fn end(&mut self, cpu: &Cpu<M>, system_clock: SystemClock) {
         if !self.quiet {
             self.inner.end(cpu, system_clock);
         }
@@ -73,7 +73,7 @@ impl ReportPlugin {
         QuietPlugin::new(quiet, ReportPlugin::inner_new())
     }
 
-    fn output<M: Mcu>(&mut self, cpu: &mut Cpu<M>, ppu: &str) {
+    fn output<M: Mcu>(&mut self, cpu: &Cpu<M>, ppu: &str) {
         let (op, low, high) = (
             cpu.peek_byte(self.pc),
             cpu.peek_byte(self.pc + 1),
@@ -89,7 +89,7 @@ impl ReportPlugin {
 }
 
 impl<M: Mcu> Plugin<M> for ReportPlugin {
-    fn start(&mut self, cpu: &mut Cpu<M>, system_clock: SystemClock) {
+    fn start(&mut self, cpu: &Cpu<M>, system_clock: SystemClock) {
         self.start_cycles = system_clock.cycles();
         self.a = cpu.a;
         self.x = cpu.x;
@@ -99,7 +99,7 @@ impl<M: Mcu> Plugin<M> for ReportPlugin {
         self.p = cpu.status;
     }
 
-    fn end(&mut self, cpu: &mut Cpu<M>, _: SystemClock) {
+    fn end(&mut self, cpu: &Cpu<M>, _: SystemClock) {
         self.output(cpu, "")
     }
 }
@@ -123,9 +123,9 @@ impl ReportNesTestResult {
 }
 
 impl<M: Mcu> Plugin<M> for ReportNesTestResult {
-    fn start(&mut self, _cpu: &mut Cpu<M>, _: SystemClock) {}
+    fn start(&mut self, _cpu: &Cpu<M>, _: SystemClock) {}
 
-    fn end(&mut self, cpu: &mut Cpu<M>, system_clock: SystemClock) {
+    fn end(&mut self, cpu: &Cpu<M>, system_clock: SystemClock) {
         self.instruction_executed += 1;
         if !self.result_cycle_captured && system_clock.cycles() >= 26560 * SYSTEM_CYCLES_PER_PPU_CYCLE
         {
@@ -172,9 +172,9 @@ impl ExitTestPlugin {
 }
 
 impl<M: Mcu> Plugin<M> for ExitTestPlugin {
-    fn start(&mut self, _cpu: &mut Cpu<M>, _: SystemClock) {}
+    fn start(&mut self, _cpu: &Cpu<M>, _: SystemClock) {}
 
-    fn end(&mut self, cpu: &mut Cpu<M>, _: SystemClock) {
+    fn end(&mut self, cpu: &Cpu<M>, _: SystemClock) {
         // Check for CPU halt - if halted, the test is complete
         if cpu.is_halted() {
             let result = cpu.peek_byte(TEST_RESULT_ADDR);
@@ -260,12 +260,12 @@ impl<R: Render, A: AudioDriver> NesReportPlugin<R, A> {
 }
 
 impl<R: Render, A: AudioDriver> Plugin<NesMcu<R, A>> for NesReportPlugin<R, A> {
-    fn start(&mut self, cpu: &mut Cpu<NesMcu<R, A>>, system_clock: SystemClock) {
+    fn start(&mut self, cpu: &Cpu<NesMcu<R, A>>, system_clock: SystemClock) {
         self.inner.start(cpu, system_clock);
         self.timing = *cpu.mcu().ppu_timing();
     }
 
-    fn end(&mut self, cpu: &mut Cpu<NesMcu<R, A>>, _: SystemClock) {
+    fn end(&mut self, cpu: &Cpu<NesMcu<R, A>>, _: SystemClock) {
         let ppu = format!("PPU:{:3},{:3} ", self.timing.scanline(), self.timing.dot());
         self.inner.output(cpu, &ppu);
     }

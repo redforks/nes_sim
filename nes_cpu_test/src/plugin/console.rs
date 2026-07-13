@@ -54,9 +54,9 @@ impl Console {
 }
 
 impl<R: Render> Plugin<NesMcu<R, ()>> for Console {
-    fn start(&mut self, _: &mut Cpu<NesMcu<R, ()>>, _: SystemClock) {}
+    fn start(&mut self, _: &Cpu<NesMcu<R, ()>>, _: SystemClock) {}
 
-    fn end(&mut self, cpu: &mut Cpu<NesMcu<R, ()>>, _: SystemClock) {
+    fn end(&mut self, cpu: &Cpu<NesMcu<R, ()>>, _: SystemClock) {
         if self.new_frame_detector.is_new_frame(cpu.mcu().ppu()) {
             if cpu.peek_byte(0x6001) != 0xDE
                 || cpu.peek_byte(0x6002) != 0xB0
