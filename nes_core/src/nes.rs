@@ -1,3 +1,4 @@
+use crate::SystemClock;
 use crate::ines::INesFile;
 use crate::mcu::Mcu;
 use crate::nes::apu::{Apu, AudioDriver};
@@ -5,7 +6,6 @@ use crate::nes::controller::{Button, Controller};
 use crate::nes::lower_ram::LowerRam;
 use crate::nes::ppu::{Ppu, Timing};
 use crate::render::Render;
-use crate::SystemClock;
 
 pub mod apu;
 pub mod controller;
@@ -106,11 +106,7 @@ impl<R: Render, D: AudioDriver> NesMcu<R, D> {
             self.oam_dma_pending = None;
             self.oam_dma = Some(OamDmaState {
                 page,
-                startup_cycles: if clock.is_even_cpu_cycle() {
-                    1
-                } else {
-                    2
-                },
+                startup_cycles: if clock.is_even_cpu_cycle() { 1 } else { 2 },
                 transfer_cycle: 0,
                 latch: 0,
             });

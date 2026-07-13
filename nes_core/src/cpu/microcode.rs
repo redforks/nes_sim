@@ -1411,15 +1411,52 @@ impl Microcode {
     pub fn exec<M: Mcu>(self, cpu: &mut Cpu<M>) {
         match self {
             Self::FetchOnly => cpu.read_pc_byte(),
-            Self::FetchAndDecode => fetch_and_decode(cpu),
-            Self::LoadR(r) => Self::load_register(cpu, r),
-            Self::StoreR(r) => Self::store_register(cpu, r),
-            Self::LoadImmediate(r) => Self::load_immediate(cpu, r),
-            Self::ZeroPage => Self::zero_page(cpu),
-            Self::ZeroPageIndexedX => Self::zero_page_indexed_x(cpu),
-            Self::ZeroPageIndexedY => Self::zero_page_indexed_y(cpu),
-            Self::AbsoluteL => Self::absolute_l(cpu),
-            Self::AbsoluteH => Self::absolute_h(cpu),
+            Self::FetchAndDecode => {
+                const OPCODE_TABLE: [ArrayVec<[Microcode; 7]>; 256] = build_opcode_table();
+
+                let opcode = cpu.inc_read_byte();
+                cpu.opcode = opcode;
+                cpu.push_microcodes(&OPCODE_TABLE[opcode as usize]);
+            }
+            Self::LoadR(r) => {
+                let value = cpu.read_byte(cpu.ab);
+                match r {
+                    Register::A => cpu.set_a(value),
+                    Register::X => cpu.set_x(value),
+                    Register::Y => cpu.set_y(value),
+                }
+            }
+            Self::StoreR(r) => match r {
+                Register::A => cpu.write_byte(cpu.ab, cpu.a),
+                Register::X => cpu.write_byte(cpu.ab, cpu.x),
+                Register::Y => cpu.write_byte(cpu.ab, cpu.y),
+            },
+            Self::LoadImmediate(r) => {
+                let value = cpu.inc_read_byte();
+                match r {
+                    Register::A => cpu.set_a(value),
+                    Register::X => cpu.set_x(value),
+                    Register::Y => cpu.set_y(value),
+                }
+            }
+            Self::ZeroPage => {
+                let addr = cpu.inc_read_byte();
+                cpu.ab = addr as u16;
+            }
+            Self::ZeroPageIndexedX => {
+                cpu.ab = cpu.abl().wrapping_add(cpu.x) as u16;
+            }
+            Self::ZeroPageIndexedY => {
+                cpu.ab = cpu.abl().wrapping_add(cpu.y) as u16;
+            }
+            Self::AbsoluteL => {
+                let low = cpu.inc_read_byte();
+                cpu.set_abl(low);
+            }
+            Self::AbsoluteH => {
+                let high = cpu.inc_read_byte();
+                cpu.set_abh(high);
+            }
 
             Self::Adc => cpu.adc(true),
             Self::Sbc => cpu.sbc(true),
@@ -1434,31 +1471,67 @@ impl Microcode {
             Self::Sha => cpu.sha(),
             Self::Tas => cpu.tas(),
             Self::IndexedXWithOp { op, first_clock } => {
-                Self::absolute_indexed_x_with_op(cpu, op, first_clock)
+                Self::absolute_indexed_with_op_generic(cpu, op, first_clock, cpu.x)
             }
             Self::IndexedYWithOp { op, first_clock } => {
-                Self::absolute_indexed_y_with_op(cpu, op, first_clock)
+                Self::absolute_indexed_with_op_generic(cpu, op, first_clock, cpu.y)
             }
             Self::Bit => cpu.bit(),
-            Self::StoreAlu => Self::store_alu(cpu),
+            Self::StoreAlu => cpu.write_byte(cpu.ab, cpu.alu),
             Self::Nop => {}
             Self::SkipImmediate => {
                 cpu.inc_read_byte();
             }
-            Self::IndexedL => Self::indexed_l(cpu),
-            Self::IndexedH => Self::indexed_h(cpu),
+            Self::IndexedL => {
+                cpu.db = cpu.read_byte(cpu.ab);
+            }
+            Self::IndexedH => {
+                let page = cpu.ab & 0xFF00;
+                let addr = page | (cpu.ab as u8).wrapping_add(1) as u16;
+                cpu.ab = cpu.db as u16 | ((cpu.read_byte(addr) as u16) << 8);
+            }
             Self::Asl(target) => Self::shift_rotate(cpu, target, ShiftRotateOp::Asl),
             Self::Lsr(target) => Self::shift_rotate(cpu, target, ShiftRotateOp::Lsr),
             Self::Rol(target) => Self::shift_rotate(cpu, target, ShiftRotateOp::Rol),
             Self::Ror(target) => Self::shift_rotate(cpu, target, ShiftRotateOp::Ror),
 
-            Self::AlrImmediate => Self::alr_immediate(cpu),
-            Self::AncImmediate => Self::anc_immediate(cpu),
-            Self::ArrImmediate => Self::arr_immediate(cpu),
-            Self::AxsImmediate => Self::axs_immediate(cpu),
-            Self::AneImmediate => Self::ane_immediate(cpu),
-            Self::LaxImmediate => Self::lax_immediate(cpu),
-            Self::Las => Self::las(cpu),
+            Self::AlrImmediate => {
+                cpu.alu = cpu.inc_read_byte();
+                cpu.alr();
+            }
+            Self::AncImmediate => {
+                cpu.alu = cpu.inc_read_byte();
+                cpu.anc();
+            }
+            Self::ArrImmediate => {
+                cpu.alu = cpu.inc_read_byte();
+                cpu.arr();
+            }
+            Self::AxsImmediate => {
+                cpu.alu = cpu.inc_read_byte();
+                cpu.axs();
+            }
+            Self::AneImmediate => {
+                // Undocumented ANE/XAA: hardware behaviour uncertain; use deterministic
+                // approximation: A := X & oper. Read immediate operand into alu first.
+                let t = cpu.inc_read_byte();
+                // Compute X & operand into A, update flags accordingly
+                cpu.set_a(cpu.x & t);
+            }
+            Self::LaxImmediate => {
+                // Read immediate operand into alu and perform LAX semantics in one micro-op.
+                let t = cpu.inc_read_byte();
+                cpu.set_a(t);
+                cpu.set_x(t);
+            }
+            Self::Las => {
+                // LAS/LAR: load memory into ALU already (addressing microcode sets cpu.alu)
+                // Then perform: M AND SP -> A, X, SP
+                let v = cpu.alu & cpu.sp;
+                cpu.set_a(v);
+                cpu.set_x(v);
+                cpu.sp = v;
+            }
 
             Self::Lax => {
                 cpu.load_alu();
@@ -1473,7 +1546,11 @@ impl Microcode {
             Self::Sre => cpu.sre(),
 
             Self::IndexedHAndJump => {
-                Self::indexed_h(cpu);
+                {
+                    let page = cpu.ab & 0xFF00;
+                    let addr = page | (cpu.ab as u8).wrapping_add(1) as u16;
+                    cpu.ab = cpu.db as u16 | ((cpu.read_byte(addr) as u16) << 8);
+                };
                 cpu.set_pc_to_ab()
             }
 
@@ -1531,113 +1608,6 @@ impl Microcode {
         }
     }
 
-    fn load_register<M: Mcu>(cpu: &mut Cpu<M>, r: Register) {
-        let value = cpu.read_byte(cpu.ab);
-        match r {
-            Register::A => cpu.set_a(value),
-            Register::X => cpu.set_x(value),
-            Register::Y => cpu.set_y(value),
-        }
-    }
-
-    fn store_register<M: Mcu>(cpu: &mut Cpu<M>, r: Register) {
-        match r {
-            Register::A => cpu.write_byte(cpu.ab, cpu.a),
-            Register::X => cpu.write_byte(cpu.ab, cpu.x),
-            Register::Y => cpu.write_byte(cpu.ab, cpu.y),
-        }
-    }
-
-    fn load_immediate<M: Mcu>(cpu: &mut Cpu<M>, r: Register) {
-        let value = cpu.inc_read_byte();
-        match r {
-            Register::A => cpu.set_a(value),
-            Register::X => cpu.set_x(value),
-            Register::Y => cpu.set_y(value),
-        }
-    }
-
-    fn ane_immediate<M: Mcu>(cpu: &mut Cpu<M>) {
-        // Undocumented ANE/XAA: hardware behaviour uncertain; use deterministic
-        // approximation: A := X & oper. Read immediate operand into alu first.
-        let t = cpu.inc_read_byte();
-        // Compute X & operand into A, update flags accordingly
-        cpu.set_a(cpu.x & t);
-    }
-
-    fn las<M: Mcu>(cpu: &mut Cpu<M>) {
-        // LAS/LAR: load memory into ALU already (addressing microcode sets cpu.alu)
-        // Then perform: M AND SP -> A, X, SP
-        let v = cpu.alu & cpu.sp;
-        cpu.set_a(v);
-        cpu.set_x(v);
-        cpu.sp = v;
-    }
-
-    fn lax_immediate<M: Mcu>(cpu: &mut Cpu<M>) {
-        // Read immediate operand into alu and perform LAX semantics in one micro-op.
-        let t = cpu.inc_read_byte();
-        cpu.set_a(t);
-        cpu.set_x(t);
-    }
-
-    fn alr_immediate<M: Mcu>(cpu: &mut Cpu<M>) {
-        cpu.alu = cpu.inc_read_byte();
-        cpu.alr();
-    }
-
-    fn anc_immediate<M: Mcu>(cpu: &mut Cpu<M>) {
-        cpu.alu = cpu.inc_read_byte();
-        cpu.anc();
-    }
-
-    fn arr_immediate<M: Mcu>(cpu: &mut Cpu<M>) {
-        cpu.alu = cpu.inc_read_byte();
-        cpu.arr();
-    }
-
-    fn axs_immediate<M: Mcu>(cpu: &mut Cpu<M>) {
-        cpu.alu = cpu.inc_read_byte();
-        cpu.axs();
-    }
-
-    fn zero_page<M: Mcu>(cpu: &mut Cpu<M>) {
-        let addr = cpu.inc_read_byte();
-        cpu.ab = addr as u16;
-    }
-
-    fn zero_page_indexed_x<M: Mcu>(cpu: &mut Cpu<M>) {
-        cpu.ab = cpu.abl().wrapping_add(cpu.x) as u16;
-    }
-
-    fn zero_page_indexed_y<M: Mcu>(cpu: &mut Cpu<M>) {
-        cpu.ab = cpu.abl().wrapping_add(cpu.y) as u16;
-    }
-
-    fn absolute_l<M: Mcu>(cpu: &mut Cpu<M>) {
-        let low = cpu.inc_read_byte();
-        cpu.set_abl(low);
-    }
-
-    fn absolute_h<M: Mcu>(cpu: &mut Cpu<M>) {
-        let high = cpu.inc_read_byte();
-        cpu.set_abh(high);
-    }
-
-    fn indexed_l<M: Mcu>(cpu: &mut Cpu<M>) {
-        cpu.db = cpu.read_byte(cpu.ab);
-    }
-
-    fn indexed_h<M: Mcu>(cpu: &mut Cpu<M>) {
-        let page = cpu.ab & 0xFF00;
-        let addr = page | (cpu.ab as u8).wrapping_add(1) as u16;
-        cpu.ab = cpu.db as u16 | ((cpu.read_byte(addr) as u16) << 8);
-    }
-
-    fn store_alu<M: Mcu>(cpu: &mut Cpu<M>) {
-        cpu.write_byte(cpu.ab, cpu.alu);
-    }
-
     fn branch_relative<M: Mcu>(cpu: &mut Cpu<M>, branch_test: BranchTest) {
         let offset = cpu.inc_read_byte();
         if branch_test.test(cpu) {
@@ -1648,22 +1618,6 @@ impl Microcode {
                 cpu.retain_cycle();
             }
         }
-    }
-
-    fn absolute_indexed_x_with_op<M: Mcu>(
-        cpu: &mut Cpu<M>,
-        op: OpAfterAddressing,
-        first_clock: CrossPageBehavior,
-    ) {
-        Self::absolute_indexed_with_op_generic(cpu, op, first_clock, cpu.x)
-    }
-
-    fn absolute_indexed_y_with_op<M: Mcu>(
-        cpu: &mut Cpu<M>,
-        op: OpAfterAddressing,
-        first_clock: CrossPageBehavior,
-    ) {
-        Self::absolute_indexed_with_op_generic(cpu, op, first_clock, cpu.y)
     }
 
     fn absolute_indexed_with_op_generic<M: Mcu>(
@@ -1770,16 +1724,10 @@ impl Microcode {
             }
             AOrMemory::Memory => {
                 calc(cpu, op);
-                Self::store_alu(cpu);
+                {
+                    cpu.write_byte(cpu.ab, cpu.alu);
+                };
             }
         }
     }
-}
-
-fn fetch_and_decode<M: Mcu>(cpu: &mut Cpu<M>) {
-    const OPCODE_TABLE: [ArrayVec<[Microcode; 7]>; 256] = build_opcode_table();
-
-    let opcode = cpu.inc_read_byte();
-    cpu.opcode = opcode;
-    cpu.push_microcodes(&OPCODE_TABLE[opcode as usize]);
 }
