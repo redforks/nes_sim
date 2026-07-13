@@ -622,8 +622,8 @@ impl<M: Mcu> Cpu<M> {
     fn push_enter_interrupt_microcodes(&mut self, nmi: bool) -> Microcode {
         self.push_microcodes(&[
             Microcode::FetchOnly,
-            Microcode::PushStack(PushTarget::PCH),
-            Microcode::PushStack(PushTarget::PCL),
+            Microcode::PushStack(PushTarget::Pch),
+            Microcode::PushStack(PushTarget::Pcl),
             Microcode::PushStatus {
                 break_flag: false,
                 check_nmi: !nmi,

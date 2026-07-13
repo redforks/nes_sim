@@ -88,7 +88,7 @@ mod tests {
         let mut p = DetectDeadLoop::<2, 2>::new();
         for pc in pcs.iter().copied() {
             cpu.pc = pc;
-            p.end(&mut cpu, SystemClock::default());
+            p.end(&cpu, SystemClock::default());
         }
 
         assert_eq!(exp_count, p.count);
@@ -108,8 +108,8 @@ mod tests {
         let mut p = DetectDeadLoop::<1, 0>::new();
 
         cpu.pc = 0x8000;
-        p.end(&mut cpu, SystemClock::default());
-        p.end(&mut cpu, SystemClock::default());
+        p.end(&cpu, SystemClock::default());
+        p.end(&cpu, SystemClock::default());
 
         assert!(p.should_exit);
         assert_eq!(0, p.exit_code);
@@ -126,8 +126,8 @@ mod tests {
         let mut p = DetectDeadLoop::<1, 0>::new();
 
         cpu.pc = 0x8000;
-        p.end(&mut cpu, SystemClock::default());
-        p.end(&mut cpu, SystemClock::default());
+        p.end(&cpu, SystemClock::default());
+        p.end(&cpu, SystemClock::default());
 
         assert!(p.should_exit);
         assert_eq!(1, p.exit_code);

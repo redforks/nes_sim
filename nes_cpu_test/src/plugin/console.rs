@@ -47,7 +47,7 @@ impl Console {
             if *IS_TERMINAL {
                 print!("{}", Color::Green.paint(&line_buf));
             } else {
-                print!("{}", &line_buf);
+                print!("{}", line_buf);
             }
         }
     }

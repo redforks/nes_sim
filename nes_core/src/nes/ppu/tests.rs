@@ -576,7 +576,7 @@ fn test_render_pixel_sets_sprite_overflow_with_nine_sprites_on_scanline() {
     let pattern = create_pattern();
 
     for idx in 0..9 {
-        setup_sprite(&mut ppu, idx, 20, 0, 0, (idx * 8) as u8);
+        setup_sprite(&mut ppu, idx, 20, 0, 0, idx * 8);
     }
 
     assert!(!ppu.registers.status.sprite_overflow());
@@ -590,7 +590,7 @@ fn test_render_pixel_does_not_set_sprite_overflow_with_eight_sprites_on_scanline
     let pattern = create_pattern();
 
     for idx in 0..8 {
-        setup_sprite(&mut ppu, idx, 20, 0, 0, (idx * 8) as u8);
+        setup_sprite(&mut ppu, idx, 20, 0, 0, idx * 8);
     }
 
     render_pixel(&mut ppu, &pattern, 0, 20);
@@ -603,7 +603,7 @@ fn test_render_pixel_does_not_set_sprite_overflow_when_rendering_disabled() {
     let pattern = create_pattern();
 
     for idx in 0..9 {
-        setup_sprite(&mut ppu, idx, 20, 0, 0, (idx * 8) as u8);
+        setup_sprite(&mut ppu, idx, 20, 0, 0, idx * 8);
     }
 
     render_pixel(&mut ppu, &pattern, 0, 20);
@@ -620,7 +620,7 @@ fn test_sprite_overflow_sets_for_next_scanline_at_y239() {
     let pattern = create_pattern();
 
     for idx in 0..9 {
-        setup_sprite(&mut ppu, idx, 239, 0, 0, (idx * 8) as u8);
+        setup_sprite(&mut ppu, idx, 239, 0, 0, idx * 8);
     }
 
     run_scanline(&mut ppu, &pattern, 239);
@@ -637,7 +637,7 @@ fn test_sprite_overflow_does_not_set_for_next_scanline_at_y240() {
     let pattern = create_pattern();
 
     for idx in 0..9 {
-        setup_sprite(&mut ppu, idx, 240, 0, 0, (idx * 8) as u8);
+        setup_sprite(&mut ppu, idx, 240, 0, 0, idx * 8);
     }
 
     run_scanline(&mut ppu, &pattern, 239);

@@ -171,6 +171,10 @@ where
     pub fn mcu_mut(&mut self) -> &mut NesMcu<R, D> {
         self.cpu.mcu_mut()
     }
+
+    pub fn system_cycles(&self) -> u64 {
+        self.clock.cycles()
+    }
 }
 
 #[cfg(test)]

@@ -301,6 +301,10 @@ impl<R: Render> Ppu<R> {
         self.registers.status.v_blank()
     }
 
+    pub fn oam_data(&self) -> &[u8; 256] {
+        self.oam.as_bytes()
+    }
+
     pub fn write_oam_data(&mut self, value: u8) {
         fn normalize_oam_byte(addr: u8, value: u8) -> u8 {
             if addr & 0x03 == 0x02 {
@@ -392,15 +396,14 @@ impl<R: Render> Ppu<R> {
             }
         }
 
-        if self.timing.dot == 0 {
-            if self.timing.in_visible_scanline() {
+        if self.timing.dot == 0
+            && self.timing.in_visible_scanline() {
                 self.sprite.swap_secondary_oam();
                 // compute background anchor at start of visible scanline
                 self.background_anchor = Some(BackgroundActivation::snapshot(self, 0));
                 self.pending_background_activation = None;
                 self.fill_tile_cache(0);
             }
-        }
 
         if self.timing.dot >= 65
             && self.timing.dot <= 256
@@ -411,7 +414,7 @@ impl<R: Render> Ppu<R> {
                 self.sprite.begin_sprite_overflow_eval();
             }
 
-            if self.timing.dot % 2 == 0 {
+            if self.timing.dot.is_multiple_of(2) {
                 self.sprite.step_sprite_overflow_eval(
                     self.timing.scanline,
                     self.registers.ctrl,
@@ -635,7 +638,7 @@ impl<R: Render> Ppu<R> {
         let world_x =
             (background.vram_addr & 0x001F) * 8 + background.fine_x as u16 + screen_x as u16;
         let world_y = ((background.vram_addr >> 5) & 0x001F) * 8
-            + ((background.vram_addr >> 12) & 0x0007) as u16;
+            + ((background.vram_addr >> 12) & 0x0007);
 
         let nt_x = ((world_x % 256) / 8) as u8;
         let nt_y = ((world_y % 240) / 8) as u8;

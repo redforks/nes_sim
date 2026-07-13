@@ -145,6 +145,10 @@ impl<R: Render, D: AudioDriver> NesMcu<R, D> {
         &mut self.ppu
     }
 
+    pub fn apu(&self) -> &Apu<D> {
+        &self.apu
+    }
+
     pub fn apu_mut(&mut self) -> &mut Apu<D> {
         &mut self.apu
     }

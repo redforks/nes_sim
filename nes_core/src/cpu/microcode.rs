@@ -408,8 +408,8 @@ const fn build_opcode_table() -> [ArrayVec<[Microcode; 7]>; 256] {
     r[JSR as usize] = microcode_arr!(
         AbsoluteL,
         Nop,
-        PushStack(PushTarget::PCH),
-        PushStack(PushTarget::PCL),
+        PushStack(PushTarget::Pch),
+        PushStack(PushTarget::Pcl),
         LoadPcAbsoluteH
     );
     r[RTS as usize] = microcode_arr!(
@@ -485,8 +485,8 @@ const fn build_opcode_table() -> [ArrayVec<[Microcode; 7]>; 256] {
     r[KIL12 as usize] = microcode_arr!(Kill);
     r[BRK as usize] = microcode_arr!(
         SkipImmediate,
-        PushStack(PushTarget::PCH),
-        PushStack(PushTarget::PCL),
+        PushStack(PushTarget::Pch),
+        PushStack(PushTarget::Pcl),
         PushStatus {
             break_flag: true,
             check_nmi: true
@@ -1374,8 +1374,8 @@ pub(crate) mod opcode {
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub enum PushTarget {
     A,
-    PCL,
-    PCH,
+    Pcl,
+    Pch,
 }
 
 impl Microcode {
@@ -1586,8 +1586,8 @@ impl Microcode {
             Self::IncPc => cpu.pc += 1,
             Self::PushStack(target) => match target {
                 PushTarget::A => cpu.push_stack(cpu.a),
-                PushTarget::PCL => cpu.push_stack((cpu.pc & 0xFF) as u8),
-                PushTarget::PCH => cpu.push_stack((cpu.pc >> 8) as u8),
+                PushTarget::Pcl => cpu.push_stack((cpu.pc & 0xFF) as u8),
+                PushTarget::Pch => cpu.push_stack((cpu.pc >> 8) as u8),
             },
             Self::PopStack => cpu.alu = cpu.pop_stack(),
             Self::UpdateAFromAlu => cpu.set_a(cpu.alu),

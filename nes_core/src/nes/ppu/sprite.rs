@@ -125,7 +125,7 @@ impl SpriteManager {
             SpriteOverflowEvalMode::CopySprite { remaining_bytes } => {
                 let oam_index = self.sprite_overflow_eval.oam_index;
                 let byte_offset = 4 - remaining_bytes;
-                let oam_byte = oam.get_byte((oam_index * 4 + byte_offset) as u8);
+                let oam_byte = oam.get_byte(oam_index * 4 + byte_offset);
                 self.sprite_overflow_eval.pending_sprite_bytes[(byte_offset as usize) & 0x3] =
                     oam_byte;
 
@@ -159,7 +159,7 @@ impl SpriteManager {
 
                 let byte_idx =
                     self.sprite_overflow_eval.oam_index * 4 + self.sprite_overflow_eval.byte_index;
-                let y_byte = oam.get_byte(byte_idx as u8);
+                let y_byte = oam.get_byte(byte_idx);
                 if sprite_in_range(y_byte, target_scanline(scanline), ctrl.sprite_height()) {
                     self.overflow_pending = true;
                     self.sprite_overflow_eval.mode = SpriteOverflowEvalMode::Done;
@@ -197,7 +197,7 @@ impl SpriteManager {
         screen_x: u8,
         screen_y: u8,
     ) -> bool {
-        evaluate_sprite(&zero_sprite, ctrl, cartridge, screen_x, screen_y)
+        evaluate_sprite(zero_sprite, ctrl, cartridge, screen_x, screen_y)
             .is_some_and(|p| p.color_idx != 0)
     }
 }
@@ -259,5 +259,5 @@ fn evaluate_sprite(
     if !sprite_in_range(sprite.y, screen_y as u16, ctrl.sprite_height()) {
         return None;
     }
-    evaluate_sprite_from_secondary(&sprite, ctrl, cartridge, screen_x, screen_y)
+    evaluate_sprite_from_secondary(sprite, ctrl, cartridge, screen_x, screen_y)
 }
