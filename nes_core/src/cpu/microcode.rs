@@ -1554,8 +1554,14 @@ impl Microcode {
                 cpu.set_pc_to_ab()
             }
 
-            Self::SetFlag(flag) => cpu.set_flag(flag, true),
-            Self::ClearFlag(flag) => cpu.set_flag(flag, false),
+            Self::SetFlag(flag) => {
+                let this = &mut *cpu;
+                this.set_flag(flag, true);
+            }
+            Self::ClearFlag(flag) => {
+                let this = &mut *cpu;
+                this.set_flag(flag, false);
+            }
 
             Self::Transfer(direction) => Self::transfer(cpu, direction),
             Self::IncDec(target) => Self::inc_dec(cpu, target),
@@ -1694,22 +1700,22 @@ impl Microcode {
         fn calc<M: Mcu>(cpu: &mut Cpu<M>, op: ShiftRotateOp) {
             match op {
                 ShiftRotateOp::Asl => {
-                    cpu.inner_set_flag(Flag::Carry, cpu.alu & 0x80 != 0);
+                    cpu.set_flag(Flag::Carry, cpu.alu & 0x80 != 0);
                     cpu.alu <<= 1;
                 }
                 ShiftRotateOp::Lsr => {
-                    cpu.inner_set_flag(Flag::Carry, cpu.alu & 0x01 != 0);
+                    cpu.set_flag(Flag::Carry, cpu.alu & 0x01 != 0);
                     cpu.alu >>= 1;
                 }
                 ShiftRotateOp::Rol => {
                     let carry = cpu.alu & 0x80 != 0;
                     cpu.alu = (cpu.alu << 1) | (cpu.flag(Flag::Carry) as u8);
-                    cpu.inner_set_flag(Flag::Carry, carry);
+                    cpu.set_flag(Flag::Carry, carry);
                 }
                 ShiftRotateOp::Ror => {
                     let carry = cpu.alu & 0x01 != 0;
                     cpu.alu = (cpu.alu >> 1) | ((cpu.flag(Flag::Carry) as u8) << 7);
-                    cpu.inner_set_flag(Flag::Carry, carry);
+                    cpu.set_flag(Flag::Carry, carry);
                 }
             }
 

@@ -1,4 +1,6 @@
 /target
+perf.data*
+
 findings.md
 task_plan.md
 progress.md

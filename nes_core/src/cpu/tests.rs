@@ -1,4 +1,4 @@
-use super::microcode::{BranchTest, ImmediateOp, PushTarget, TransferDirection, opcode};
+use super::microcode::{BranchTest, ImmediateOp, PushTarget, TransferDirection};
 use super::*;
 use crate::test_utils::MockMcu;
 
@@ -58,16 +58,6 @@ fn test_irq_detector() {
 
     v.update_irq_input(false);
     assert!(!v.irq_pending());
-    v.detect_irq(false);
-    assert!(!v.irq_pending());
-
-    // inhibit - not related opcode
-    v.save_irq_inhibit(opcode::RTI, true);
-    v.detect_irq(false);
-    assert!(!v.irq_pending());
-
-    // inhibit - related opcode
-    v.save_irq_inhibit(opcode::CLI, true);
     v.detect_irq(false);
     assert!(!v.irq_pending());
 }
