@@ -61,13 +61,16 @@ impl SpriteManager {
 
     /// Update sprite status to ppu status register
     pub fn update_ctrl_status(&mut self, status: &mut PpuStatus) {
+        let mut v = PpuStatus::new();
         if std::mem::take(&mut self.zero_hit_pending) {
-            status.set_sprite_zero_hit(true);
+            v.set_sprite_zero_hit(true);
         }
 
         if std::mem::take(&mut self.overflow_pending) {
-            status.set_sprite_overflow(true);
+            v.set_sprite_overflow(true);
         }
+
+        *status = PpuStatus::from_bits(status.into_bits() | v.into_bits());
     }
 
     pub fn set_zero_hit_pending(&mut self) {
