@@ -1546,21 +1546,17 @@ impl Microcode {
             Self::Sre => cpu.sre(),
 
             Self::IndexedHAndJump => {
-                {
-                    let page = cpu.ab & 0xFF00;
-                    let addr = page | (cpu.ab as u8).wrapping_add(1) as u16;
-                    cpu.ab = cpu.db as u16 | ((cpu.read_byte(addr) as u16) << 8);
-                };
+                let page = cpu.ab & 0xFF00;
+                let addr = page | (cpu.ab as u8).wrapping_add(1) as u16;
+                cpu.ab = cpu.db as u16 | ((cpu.read_byte(addr) as u16) << 8);
                 cpu.set_pc_to_ab()
             }
 
             Self::SetFlag(flag) => {
-                let this = &mut *cpu;
-                this.set_flag(flag, true);
+                cpu.set_flag(flag, true);
             }
             Self::ClearFlag(flag) => {
-                let this = &mut *cpu;
-                this.set_flag(flag, false);
+                cpu.set_flag(flag, false);
             }
 
             Self::Transfer(direction) => Self::transfer(cpu, direction),

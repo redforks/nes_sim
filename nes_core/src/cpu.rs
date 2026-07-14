@@ -13,7 +13,7 @@ enum Register {
     Y,
 }
 
-#[derive(Default)]
+#[derive(Default, Debug)]
 struct IrqDetector {
     irq_pending: bool,
     irq_input: bool,
@@ -642,8 +642,8 @@ impl<M: Mcu> Cpu<M> {
     }
 
     fn load_nmi_pcl(&mut self) {
-        self.pc = self.read_byte(0xFFFA) as u16;
         self.set_flag(Flag::InterruptDisabled, true);
+        self.pc = self.read_byte(0xFFFA) as u16;
     }
 
     fn load_nmi_pch(&mut self) {
