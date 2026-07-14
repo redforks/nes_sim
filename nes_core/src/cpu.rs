@@ -640,11 +640,7 @@ impl<M: Mcu> Cpu<M> {
 
     fn load_nmi_pcl(&mut self) {
         self.pc = self.read_byte(0xFFFA) as u16;
-        {
-            let this = &mut *self;
-            let flag = Flag::InterruptDisabled;
-            this.set_flag(flag, true);
-        };
+        self.set_flag(Flag::InterruptDisabled, true);
     }
 
     fn load_nmi_pch(&mut self) {
@@ -652,11 +648,7 @@ impl<M: Mcu> Cpu<M> {
     }
 
     fn load_irq_pcl(&mut self) {
-        {
-            let this = &mut *self;
-            let flag = Flag::InterruptDisabled;
-            this.set_flag(flag, true);
-        };
+        self.set_flag(Flag::InterruptDisabled, true);
         self.pc = self.read_byte(0xFFFE) as u16;
     }
 
