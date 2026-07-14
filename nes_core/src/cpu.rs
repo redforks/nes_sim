@@ -41,7 +41,7 @@ enum NmiState {
     InNmi,
 }
 
-#[derive(Default)]
+#[derive(Default, Debug)]
 struct NmiDetector {
     state: NmiState,
     last_nmi_input: bool,
@@ -547,12 +547,15 @@ impl<M: Mcu> Cpu<M> {
     }
 
     fn push_status(&mut self, break_flag: bool, check_nmi: bool) {
-        if check_nmi && self.nmi_detecteor.take_nmi_pending() {
-            // eprintln!("nmi hijack, @{}", get_system_cycles());
-            self.push_status(break_flag, false);
-            self.microcode_queue.clear();
-            self.push_microcodes(&[Microcode::LoadNmiPcL, Microcode::LoadNmiPcH]);
-            return;
+        if check_nmi {
+            self.nmi_detecteor.detect_nmi();
+            if self.nmi_detecteor.take_nmi_pending() {
+                // eprintln!("nmi hijack");
+                self.push_status(break_flag, false);
+                self.microcode_queue.clear();
+                self.push_microcodes(&[Microcode::LoadNmiPcL, Microcode::LoadNmiPcH]);
+                return;
+            }
         }
 
         self.push_stack(if break_flag {
