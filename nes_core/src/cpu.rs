@@ -17,7 +17,7 @@ enum Register {
 struct IrqDetector {
     irq_pending: bool,
     irq_input: bool,
-    irq_inhibit: Option<bool>,
+    irq_inhibit: bool,
 }
 
 impl IrqDetector {
@@ -26,8 +26,8 @@ impl IrqDetector {
     }
 
     fn detect_irq(&mut self, interrupt_disabled: bool) {
-        let disabled = if let Some(v) = self.irq_inhibit.take() {
-            v
+        let disabled = if std::mem::take(&mut self.irq_inhibit) {
+            true
         } else {
             interrupt_disabled
         };
@@ -39,11 +39,8 @@ impl IrqDetector {
     }
 
     fn save_irq_inhibit(&mut self, opcode: u8, interrupt_disabled: bool) {
-        self.irq_inhibit = if matches!(opcode, opcode::CLI | opcode::SEI | opcode::PLP) {
-            Some(interrupt_disabled)
-        } else {
-            None
-        };
+        self.irq_inhibit =
+            interrupt_disabled && matches!(opcode, opcode::CLI | opcode::SEI | opcode::PLP);
     }
 }
 
@@ -588,12 +585,10 @@ impl<M: Mcu> Cpu<M> {
 
     fn plp(&mut self) {
         self.save_irq_inhibit();
-        let saved = self.pop_stack();
         let break_flag = self.flag(Flag::Break);
-        let not_used = self.flag(Flag::NotUsed);
-        self.status = saved;
+        self.status = self.pop_stack();
         self.inner_set_flag(Flag::Break, break_flag);
-        self.inner_set_flag(Flag::NotUsed, not_used);
+        self.inner_set_flag(Flag::NotUsed, true);
     }
 
     fn set_pc_to_ab(&mut self) {
