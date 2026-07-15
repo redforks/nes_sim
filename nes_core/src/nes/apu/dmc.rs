@@ -99,7 +99,8 @@ struct OutputUnit {
 impl OutputUnit {
     fn start_cycle(&mut self) {
         self.remain_bits = 8;
-        if let Some(byte) = self.sample_buffer.take() {
+        if let Some(byte) = self.sample_buffer {
+            self.sample_buffer = None;
             self.silence_flag = false;
             self.shift_register = byte;
         } else {

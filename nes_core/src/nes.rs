@@ -80,7 +80,8 @@ impl<R: Render, D: AudioDriver> NesMcu<R, D> {
     }
 
     pub fn tick_oam_dma(&mut self, clock: SystemClock) -> bool {
-        if let Some(mut dma) = self.oam_dma.take() {
+        if let Some(mut dma) = self.oam_dma {
+            self.oam_dma = None;
             if dma.startup_cycles > 0 {
                 dma.startup_cycles -= 1;
             } else {

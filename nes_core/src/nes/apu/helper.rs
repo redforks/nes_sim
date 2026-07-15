@@ -132,7 +132,8 @@ impl Envelope {
     }
 
     pub fn tick(&mut self) {
-        if std::mem::take(&mut self.request_reset) {
+        if self.request_reset {
+            self.request_reset = false;
             self.counter = 15;
             self.divider.reset();
         } else {
