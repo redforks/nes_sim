@@ -598,6 +598,9 @@ impl<M: Mcu> Cpu<M> {
 
     /// And return the first microcode
     fn push_enter_interrupt_microcodes(&mut self, nmi: bool) -> Microcode {
+        // if nmi {
+        //     eprintln!("enter nmi");
+        // }
         self.push_microcodes(if nmi {
             &InterruptSequences::NMI
         } else {

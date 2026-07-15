@@ -101,8 +101,8 @@ where
         let nmi_line = self.cpu.mcu().ppu().nmi_line_out();
         self.cpu.update_nmi_line(nmi_line);
         let result = if clock.is_cpu_clock() {
-            self.cpu.detect_interrupt();
             let r = self.cpu.tick(&mut self.p, clock).0;
+            self.cpu.detect_interrupt();
             r
         } else {
             ExecuteResult::Continue
