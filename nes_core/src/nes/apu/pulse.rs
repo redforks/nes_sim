@@ -72,10 +72,9 @@ impl Sweep {
         let new_period = self.shifter.update_period(*period);
         self.zero_output = *period < 8 || new_period > 0x7ff;
 
-        if self.divider.tick()
-            && self.enabled && !self.shifter.disabled() && !self.zero_output {
-                *period = new_period;
-            }
+        if self.divider.tick() && self.enabled && !self.shifter.disabled() && !self.zero_output {
+            *period = new_period;
+        }
     }
 }
 

@@ -7,7 +7,7 @@ mod sprite;
 use crate::{
     mcu::Mcu,
     nes::{
-        mapper::{Cartridge, CartridgeOperation, Mirroring, CartridgeCaps},
+        mapper::{Cartridge, CartridgeCaps, CartridgeOperation, Mirroring},
         ppu::{palette::ColorTheme, sprite::SpriteManager},
     },
     render::Render,
@@ -396,14 +396,13 @@ impl<R: Render> Ppu<R> {
             }
         }
 
-        if self.timing.dot == 0
-            && self.timing.in_visible_scanline() {
-                self.sprite.swap_secondary_oam();
-                // compute background anchor at start of visible scanline
-                self.background_anchor = Some(BackgroundActivation::snapshot(self, 0));
-                self.pending_background_activation = None;
-                self.fill_tile_cache(0);
-            }
+        if self.timing.dot == 0 && self.timing.in_visible_scanline() {
+            self.sprite.swap_secondary_oam();
+            // compute background anchor at start of visible scanline
+            self.background_anchor = Some(BackgroundActivation::snapshot(self, 0));
+            self.pending_background_activation = None;
+            self.fill_tile_cache(0);
+        }
 
         if self.timing.dot >= 65
             && self.timing.dot <= 256
@@ -431,7 +430,10 @@ impl<R: Render> Ppu<R> {
             } else {
                 self.palette.disabled_color_index(self.registers.vram_addr)
             };
-            let pixel = self.registers.mask.apply_effects(self.color_theme.color(pixel_idx));
+            let pixel = self
+                .registers
+                .mask
+                .apply_effects(self.color_theme.color(pixel_idx));
             self.renderer
                 .set_pixel(x as u32, self.timing.scanline as u32, pixel.0);
         }
@@ -637,8 +639,8 @@ impl<R: Render> Ppu<R> {
 
         let world_x =
             (background.vram_addr & 0x001F) * 8 + background.fine_x as u16 + screen_x as u16;
-        let world_y = ((background.vram_addr >> 5) & 0x001F) * 8
-            + ((background.vram_addr >> 12) & 0x0007);
+        let world_y =
+            ((background.vram_addr >> 5) & 0x001F) * 8 + ((background.vram_addr >> 12) & 0x0007);
 
         let nt_x = ((world_x % 256) / 8) as u8;
         let nt_y = ((world_y % 240) / 8) as u8;

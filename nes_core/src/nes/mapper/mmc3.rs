@@ -1,4 +1,4 @@
-use super::{Cartridge, CartridgeCaps, CARTRIDGE_START_ADDR, CartridgeOperation};
+use super::{CARTRIDGE_START_ADDR, Cartridge, CartridgeCaps, CartridgeOperation};
 use crate::nes::mapper::Mirroring;
 
 const PRG_RAM_SIZE: usize = 0x2000;
@@ -382,10 +382,17 @@ mod tests {
     #[test]
     fn switches_chr_layout_in_chr_mode_0() {
         let (mut mapper, _) = make_mmc3_with_chr();
-        setup_chr_banks(&mut mapper, &[
-            (0x00, 0x06), (0x01, 0x08), (0x02, 0x0a),
-            (0x03, 0x0b), (0x04, 0x0c), (0x05, 0x0d),
-        ]);
+        setup_chr_banks(
+            &mut mapper,
+            &[
+                (0x00, 0x06),
+                (0x01, 0x08),
+                (0x02, 0x0a),
+                (0x03, 0x0b),
+                (0x04, 0x0c),
+                (0x05, 0x0d),
+            ],
+        );
 
         assert_eq!(mapper.read_chr(0x0000), 0x06);
         assert_eq!(mapper.read_chr(0x0400), 0x07);
@@ -400,10 +407,17 @@ mod tests {
     #[test]
     fn switches_chr_layout_in_chr_mode_1() {
         let (mut mapper, _) = make_mmc3_with_chr();
-        setup_chr_banks(&mut mapper, &[
-            (0x80, 0x06), (0x81, 0x08), (0x82, 0x0a),
-            (0x83, 0x0b), (0x84, 0x0c), (0x85, 0x0d),
-        ]);
+        setup_chr_banks(
+            &mut mapper,
+            &[
+                (0x80, 0x06),
+                (0x81, 0x08),
+                (0x82, 0x0a),
+                (0x83, 0x0b),
+                (0x84, 0x0c),
+                (0x85, 0x0d),
+            ],
+        );
 
         assert_eq!(mapper.read_chr(0x0000), 0x0a);
         assert_eq!(mapper.read_chr(0x0400), 0x0b);

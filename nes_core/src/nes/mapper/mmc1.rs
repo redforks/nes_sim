@@ -98,11 +98,19 @@ impl MMC1 {
         let offset = address as usize % 0x2000;
         let upper = offset >= 0x1000;
         if self.control.chr_in_4k() {
-            let bank = if upper { self.chr_bank1 } else { self.chr_bank0 };
+            let bank = if upper {
+                self.chr_bank1
+            } else {
+                self.chr_bank0
+            };
             (bank as usize % self.bank_count_4k()) * 0x1000 + (offset % 0x1000)
         } else {
             let bank = usize::from(self.chr_bank0 & 0x1e) % self.bank_count_4k();
-            let bank = if upper { (bank + 1) % self.bank_count_4k() } else { bank };
+            let bank = if upper {
+                (bank + 1) % self.bank_count_4k()
+            } else {
+                bank
+            };
             bank * 0x1000 + (offset % 0x1000)
         }
     }

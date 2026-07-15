@@ -17,7 +17,6 @@ impl UxRom {
         debug_assert!(!prg_rom.is_empty());
         debug_assert_eq!(prg_rom.len() % PRG_ROM_BANK_SIZE, 0);
 
-        
         Self {
             prg_rom: prg_rom.to_vec(),
             ram: [0; CARTRIDGE_RAM_SIZE],

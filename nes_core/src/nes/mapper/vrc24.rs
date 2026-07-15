@@ -1,4 +1,4 @@
-use super::{Cartridge, CartridgeCaps, CARTRIDGE_START_ADDR, CartridgeOperation};
+use super::{CARTRIDGE_START_ADDR, Cartridge, CartridgeCaps, CartridgeOperation};
 use crate::nes::mapper::Mirroring;
 
 const PRG_BANK_SIZE: usize = 0x2000;
