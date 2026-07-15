@@ -23,7 +23,7 @@ impl<P: Plugin<M>, M: Mcu> Machine<P, M> {
     /// Execute one CPU instruction and return its result and cycle count.
     pub fn tick(&mut self, clock: SystemClock) -> ExecuteResult {
         let result = self.cpu.tick(&mut self.p, clock).0;
-        self.cpu.detect_interrupt(clock);
+        self.cpu.detect_interrupt();
         result
     }
 

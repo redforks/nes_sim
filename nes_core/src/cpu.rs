@@ -257,17 +257,15 @@ impl<M: Mcu> Cpu<M> {
         }
     }
 
-    pub fn detect_interrupt(&mut self, clock: SystemClock) {
-        if clock.is_cpu_clock() {
-            // Detect interrupt at the second-to-last cycle
-            if self.microcode_queue.len() == 1 {
-                self.nmi_detecteor.detect_nmi();
-                // if self.nmi_detecteor.state == NmiState::NmiPending {
-                // eprintln!("current op: 0x{:x} @{}", self.opcode, get_system_cycles());
-                // }
-                self.irq_detector
-                    .detect_irq(self.flag(Flag::InterruptDisabled));
-            }
+    pub fn detect_interrupt(&mut self) {
+        // Detect interrupt at the second-to-last cycle
+        if self.microcode_queue.len() == 1 {
+            self.nmi_detecteor.detect_nmi();
+            // if self.nmi_detecteor.state == NmiState::NmiPending {
+            // eprintln!("current op: 0x{:x} @{}", self.opcode, get_system_cycles());
+            // }
+            self.irq_detector
+                .detect_irq(self.flag(Flag::InterruptDisabled));
         }
     }
 
