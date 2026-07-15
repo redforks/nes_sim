@@ -297,6 +297,62 @@ const fn indirect_indexed_store_a() -> ArrayVec<[Microcode; 7]> {
     )
 }
 
+pub struct InterruptSequences;
+
+impl InterruptSequences {
+    pub const RESET: [Microcode; 7] = [
+        Microcode::Nop,
+        Microcode::Nop,
+        Microcode::Nop,
+        Microcode::Nop,
+        Microcode::Nop,
+        Microcode::LoadResetPcL,
+        Microcode::LoadResetPcH,
+    ];
+
+    pub const NMI: [Microcode; 6] = [
+        Microcode::FetchOnly,
+        Microcode::PushStack(PushTarget::Pch),
+        Microcode::PushStack(PushTarget::Pcl),
+        Microcode::PushStatus {
+            break_flag: false,
+            check_nmi: false,
+        },
+        Microcode::LoadNmiPcL,
+        Microcode::LoadNmiPcH,
+    ];
+
+    pub const IRQ: [Microcode; 6] = [
+        Microcode::FetchOnly,
+        Microcode::PushStack(PushTarget::Pch),
+        Microcode::PushStack(PushTarget::Pcl),
+        Microcode::PushStatus {
+            break_flag: false,
+            check_nmi: true,
+        },
+        Microcode::LoadIrqPcL,
+        Microcode::LoadIrqPcH,
+    ];
+
+    pub const BRK: ArrayVec<[Microcode; 7]> = microcode_arr![
+        Microcode::SkipImmediate,
+        Microcode::PushStack(PushTarget::Pch),
+        Microcode::PushStack(PushTarget::Pcl),
+        Microcode::PushStatus {
+            break_flag: true,
+            check_nmi: true,
+        },
+        Microcode::LoadIrqPcL,
+        Microcode::LoadIrqPcH
+    ];
+
+    /// Return true if the `microcode` is one of Microcode that ends interrupt sequence.
+    pub const fn is_end(microcode: Microcode) -> bool {
+        use Microcode::*;
+        matches!(microcode, LoadResetPcH | LoadNmiPcH | LoadIrqPcH)
+    }
+}
+
 const fn build_opcode_table() -> [ArrayVec<[Microcode; 7]>; 256] {
     use super::Flag::*;
     use AOrMemory::*;
@@ -483,17 +539,7 @@ const fn build_opcode_table() -> [ArrayVec<[Microcode; 7]>; 256] {
     r[KIL10 as usize] = microcode_arr!(Kill);
     r[KIL11 as usize] = microcode_arr!(Kill);
     r[KIL12 as usize] = microcode_arr!(Kill);
-    r[BRK as usize] = microcode_arr!(
-        SkipImmediate,
-        PushStack(PushTarget::Pch),
-        PushStack(PushTarget::Pcl),
-        PushStatus {
-            break_flag: true,
-            check_nmi: true
-        },
-        LoadIrqPcL,
-        LoadIrqPcH
-    );
+    r[BRK as usize] = InterruptSequences::BRK;
     r[SBC_IMMEDIATE as usize] = microcode_arr!(ImmediateWithOp(ImmediateOp::Sbc));
     r[USBC as usize] = microcode_arr!(ImmediateWithOp(ImmediateOp::Sbc));
     r[SBC_ZERO_PAGE as usize] = microcode_arr!(ZeroPage, Sbc);

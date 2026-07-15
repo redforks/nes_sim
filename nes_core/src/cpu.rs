@@ -1,6 +1,6 @@
-use crate::{SystemClock, mcu::Mcu};
+use crate::{SystemClock, cpu::microcode::opcode, mcu::Mcu};
 use arraydeque::ArrayDeque;
-use microcode::{Microcode, PushTarget};
+use microcode::{InterruptSequences, Microcode};
 #[cfg(debug_assertions)]
 use std::{cell::Cell, rc::Rc};
 
@@ -177,16 +177,7 @@ impl<M: Mcu> Cpu<M> {
         self.frozen = false;
         self.last_read_addr = None;
 
-        // Reset process takes 7 cycles, push 7 Nop microcodes to ppu/apu run as a real device, and make Plugin to get correct total cycles
-        self.push_microcodes(&[
-            Microcode::Nop,
-            Microcode::Nop,
-            Microcode::Nop,
-            Microcode::Nop,
-            Microcode::Nop,
-            Microcode::LoadResetPcL,
-            Microcode::LoadResetPcH,
-        ]);
+        self.push_microcodes(&InterruptSequences::RESET);
     }
 
     pub fn set_irq(&mut self, enabled: bool) {
@@ -259,11 +250,8 @@ impl<M: Mcu> Cpu<M> {
 
     pub fn detect_interrupt(&mut self) {
         // Detect interrupt at the second-to-last cycle
-        if self.microcode_queue.len() == 1 {
+        if self.microcode_queue.len() == 1 && !InterruptSequences::is_end(self.microcode_queue[0]) {
             self.nmi_detecteor.detect_nmi();
-            // if self.nmi_detecteor.state == NmiState::NmiPending {
-            // eprintln!("current op: 0x{:x} @{}", self.opcode, get_system_cycles());
-            // }
             self.irq_detector
                 .detect_irq(self.flag(Flag::InterruptDisabled));
         }
@@ -594,25 +582,11 @@ impl<M: Mcu> Cpu<M> {
 
     /// And return the first microcode
     fn push_enter_interrupt_microcodes(&mut self, nmi: bool) -> Microcode {
-        self.push_microcodes(&[
-            Microcode::FetchOnly,
-            Microcode::PushStack(PushTarget::Pch),
-            Microcode::PushStack(PushTarget::Pcl),
-            Microcode::PushStatus {
-                break_flag: false,
-                check_nmi: !nmi,
-            },
-            if nmi {
-                Microcode::LoadNmiPcL
-            } else {
-                Microcode::LoadIrqPcL
-            },
-            if nmi {
-                Microcode::LoadNmiPcH
-            } else {
-                Microcode::LoadIrqPcH
-            },
-        ]);
+        self.push_microcodes(if nmi {
+            &InterruptSequences::NMI
+        } else {
+            &InterruptSequences::IRQ
+        });
         Microcode::FetchOnly
     }
 
@@ -650,6 +624,7 @@ impl<M: Mcu> Cpu<M> {
 
     fn load_irq_pcl(&mut self) {
         self.set_flag(Flag::InterruptDisabled, true);
+        self.irq_detector.irq_pending = false;
         self.pc = self.read_byte(0xFFFE) as u16;
     }
 
