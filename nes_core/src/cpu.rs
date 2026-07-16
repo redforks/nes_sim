@@ -53,11 +53,14 @@ impl NmiDetector {
         self.nmi_input = v;
     }
 
-    fn detect_nmi(&mut self) {
+    fn detect_nmi(&mut self) -> bool {
         let rising_edge = self.last_nmi_input != self.nmi_input && self.nmi_input;
         self.last_nmi_input = self.nmi_input;
         if rising_edge && self.state == NmiState::Idle {
             self.state = NmiState::NmiPending;
+            true
+        } else {
+            false
         }
     }
 
@@ -260,7 +263,9 @@ impl<M: Mcu> Cpu<M> {
     }
 
     pub fn detect_interrupt(&mut self) {
-        self.nmi_detecteor.detect_nmi();
+        if self.nmi_detecteor.detect_nmi() {
+            self.need_check_interrupt = false;
+        }
         let disabled = if matches!(self.opcode, opcode::CLI | opcode::SEI | opcode::PLP) {
             (self.last_status & Flag::InterruptDisabled as u8) != 0
         } else {
