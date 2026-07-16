@@ -555,7 +555,6 @@ impl<M: Mcu> Cpu<M> {
 
     fn push_status(&mut self, break_flag: bool, check_nmi: bool) {
         if check_nmi {
-            self.nmi_detecteor.detect_nmi();
             if self.nmi_detecteor.take_nmi_pending() {
                 // eprintln!("nmi hijack");
                 self.push_status(break_flag, false);
