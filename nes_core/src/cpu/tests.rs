@@ -48,7 +48,7 @@ fn test_irq_detector() {
     let mut v = IrqDetector::default();
     assert!(!v.irq_pending());
 
-    v.update_irq_input(true);
+    v.update_irq_input(true, SystemClock::default());
     assert!(!v.irq_pending());
     v.detect_irq(false);
     assert!(v.irq_pending());
@@ -56,7 +56,7 @@ fn test_irq_detector() {
     v.detect_irq(true);
     assert!(!v.irq_pending());
 
-    v.update_irq_input(false);
+    v.update_irq_input(false, SystemClock::default());
     assert!(!v.irq_pending());
     v.detect_irq(false);
     assert!(!v.irq_pending());
@@ -69,13 +69,13 @@ fn test_nmi_detector() {
     assert!(!v.take_nmi_pending());
 
     fn update_detect_and_report(v: &mut NmiDetector, new_nmi_val: bool) -> bool {
-        v.update_nmi_input(new_nmi_val);
+        v.update_nmi_input(new_nmi_val, SystemClock::default());
         v.detect_nmi();
         v.take_nmi_pending()
     }
 
     // enter nmi
-    v.update_nmi_input(true);
+    v.update_nmi_input(true, SystemClock::default());
     assert!(!v.take_nmi_pending());
     v.detect_nmi();
     assert!(v.take_nmi_pending());

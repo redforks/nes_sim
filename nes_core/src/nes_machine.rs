@@ -88,7 +88,7 @@ where
         }
 
         let irq_pending = self.cpu.mcu().apu_irq_pending() || self.cartridge_irq_latched;
-        self.cpu.set_irq(irq_pending);
+        self.cpu.set_irq(irq_pending, clock);
 
         self.cpu.mcu_mut().tick_apu(clock);
         if clock.is_apu_clock() {
@@ -99,7 +99,7 @@ where
         }
 
         let nmi_line = self.cpu.mcu().ppu().nmi_line_out();
-        self.cpu.update_nmi_line(nmi_line);
+        self.cpu.update_nmi_line(nmi_line, clock);
         let result = if clock.is_cpu_clock() {
             self.cpu.tick(&mut self.p, clock).0
         } else {

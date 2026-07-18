@@ -15,10 +15,14 @@ enum Register {
 struct IrqDetector {
     irq_pending: bool,
     irq_input: bool,
+    irq_line_changed_at: Option<SystemClock>,
 }
 
 impl IrqDetector {
-    fn update_irq_input(&mut self, v: bool) {
+    fn update_irq_input(&mut self, v: bool, clock: SystemClock) {
+        if self.irq_input != v {
+            self.irq_line_changed_at = Some(clock);
+        }
         self.irq_input = v;
     }
 
@@ -44,10 +48,14 @@ struct NmiDetector {
     state: NmiState,
     last_nmi_input: bool,
     nmi_input: bool,
+    nmi_line_changed_at: Option<SystemClock>,
 }
 
 impl NmiDetector {
-    fn update_nmi_input(&mut self, v: bool) {
+    fn update_nmi_input(&mut self, v: bool, clock: SystemClock) {
+        if self.nmi_input != v {
+            self.nmi_line_changed_at = Some(clock);
+        }
         self.nmi_input = v;
     }
 
@@ -107,6 +115,7 @@ pub struct Cpu<M: Mcu> {
 
     microcode_queue: ArrayDeque<Microcode, 8>,
 
+    track_interrupt: bool,
     pub(crate) frozen: bool,
 }
 
@@ -131,6 +140,7 @@ impl<M: Mcu> Cpu<M> {
             alu: 0,
             microcode_queue: ArrayDeque::new(),
             halt: false,
+            track_interrupt: std::env::var("NES_INTERRUPT_TRACK").is_ok(),
             frozen: false,
             last_read_addr: None,
         };
@@ -190,8 +200,8 @@ impl<M: Mcu> Cpu<M> {
         self.push_microcodes(&InterruptSequences::RESET);
     }
 
-    pub fn set_irq(&mut self, enabled: bool) {
-        self.irq_detector.update_irq_input(enabled);
+    pub fn set_irq(&mut self, enabled: bool, clock: SystemClock) {
+        self.irq_detector.update_irq_input(enabled, clock);
     }
 
     pub fn is_halted(&self) -> bool {
@@ -207,10 +217,16 @@ impl<M: Mcu> Cpu<M> {
         self.last_read_addr = None;
 
         if self.frozen {
+            if self.track_interrupt {
+                eprintln!("[{}] (frozen)", clock.cycles());
+            }
             return (ExecuteResult::Continue, false);
         }
 
         if self.is_halted() {
+            if self.track_interrupt {
+                eprintln!("[{}] (halted)", clock.cycles());
+            }
             return (ExecuteResult::Halt, false);
         }
 
@@ -229,6 +245,10 @@ impl<M: Mcu> Cpu<M> {
         self.last_status = self.status;
         code.exec(self);
         self.detect_interrupt();
+
+        if self.track_interrupt {
+            self.dump_interrupt_track(clock);
+        }
 
         if self.microcode_queue.is_empty() {
             plugin.end(self, clock);
@@ -613,8 +633,8 @@ impl<M: Mcu> Cpu<M> {
     }
 
     /// Update cpu nmi signal line, may trigger nmi
-    pub fn update_nmi_line(&mut self, nmi: bool) {
-        self.nmi_detecteor.update_nmi_input(nmi);
+    pub fn update_nmi_line(&mut self, nmi: bool, clock: SystemClock) {
+        self.nmi_detecteor.update_nmi_input(nmi, clock);
     }
 
     fn load_nmi_pcl(&mut self) {
@@ -658,8 +678,299 @@ impl<M: Mcu> Cpu<M> {
         self.update_zero_flag(val);
         self.update_negative_flag(val);
     }
+
+    fn dump_interrupt_track(&self, clock: SystemClock) {
+        let irq_str = match self.irq_detector.irq_line_changed_at {
+            Some(t) => format!("{}@{}", self.irq_detector.irq_input as u8, t.cycles()),
+            None => format!("{}", self.irq_detector.irq_input as u8),
+        };
+        let nmi_str = match self.nmi_detecteor.nmi_line_changed_at {
+            Some(t) => format!("{}@{}", self.nmi_detecteor.nmi_input as u8, t.cycles()),
+            None => format!("{}", self.nmi_detecteor.nmi_input as u8),
+        };
+        let int_str = match self.interrupt_detected {
+            Some(InterruptType::Nmi) => "NMI",
+            Some(InterruptType::Irq) => "IRQ",
+            None => "none",
+        };
+        let next = self.next_microcode().to_string();
+        let opcode_mnemonic = OPCODE_MNEMONICS[self.opcode as usize];
+        eprintln!(
+            "[{}] irq={} nmi={} nmi_st={:?} i={} op=${:02X}/{} q={} next={} int={}",
+            clock.cycles(),
+            irq_str,
+            nmi_str,
+            self.nmi_detecteor.state,
+            self.flag(Flag::InterruptDisabled) as u8,
+            self.opcode,
+            opcode_mnemonic,
+            self.microcode_queue.len(),
+            next,
+            int_str,
+        );
+    }
 }
 
+const OPCODE_MNEMONICS: [&str; 256] = {
+    let mut m = ["???"; 256];
+    m[0] = "BRK";
+    m[1] = "ORA";
+    m[2] = "KIL";
+    m[3] = "SLO";
+    m[4] = "NOP";
+    m[5] = "ORA";
+    m[6] = "ASL";
+    m[7] = "SLO";
+    m[8] = "PHP";
+    m[9] = "ORA";
+    m[10] = "ASL";
+    m[11] = "ANC";
+    m[12] = "NOP";
+    m[13] = "ORA";
+    m[14] = "ASL";
+    m[15] = "SLO";
+    m[16] = "BPL";
+    m[17] = "ORA";
+    m[18] = "KIL";
+    m[19] = "SLO";
+    m[20] = "NOP";
+    m[21] = "ORA";
+    m[22] = "ASL";
+    m[23] = "SLO";
+    m[24] = "CLC";
+    m[25] = "ORA";
+    m[26] = "NOP";
+    m[27] = "SLO";
+    m[28] = "NOP";
+    m[29] = "ORA";
+    m[30] = "ASL";
+    m[31] = "SLO";
+    m[32] = "JSR";
+    m[33] = "AND";
+    m[34] = "KIL";
+    m[35] = "RLA";
+    m[36] = "BIT";
+    m[37] = "AND";
+    m[38] = "ROL";
+    m[39] = "RLA";
+    m[40] = "PLP";
+    m[41] = "AND";
+    m[42] = "ROL";
+    m[43] = "ANC";
+    m[44] = "BIT";
+    m[45] = "AND";
+    m[46] = "ROL";
+    m[47] = "RLA";
+    m[48] = "BMI";
+    m[49] = "AND";
+    m[50] = "KIL";
+    m[51] = "RLA";
+    m[52] = "NOP";
+    m[53] = "AND";
+    m[54] = "ROL";
+    m[55] = "RLA";
+    m[56] = "SEC";
+    m[57] = "AND";
+    m[58] = "NOP";
+    m[59] = "RLA";
+    m[60] = "NOP";
+    m[61] = "AND";
+    m[62] = "ROL";
+    m[63] = "RLA";
+    m[64] = "RTI";
+    m[65] = "EOR";
+    m[66] = "KIL";
+    m[67] = "SRE";
+    m[68] = "NOP";
+    m[69] = "EOR";
+    m[70] = "LSR";
+    m[71] = "SRE";
+    m[72] = "PHA";
+    m[73] = "EOR";
+    m[74] = "LSR";
+    m[75] = "ALR";
+    m[76] = "JMP";
+    m[77] = "EOR";
+    m[78] = "LSR";
+    m[79] = "SRE";
+    m[80] = "BVC";
+    m[81] = "EOR";
+    m[82] = "KIL";
+    m[83] = "SRE";
+    m[84] = "NOP";
+    m[85] = "EOR";
+    m[86] = "LSR";
+    m[87] = "SRE";
+    m[88] = "CLI";
+    m[89] = "EOR";
+    m[90] = "NOP";
+    m[91] = "SRE";
+    m[92] = "NOP";
+    m[93] = "EOR";
+    m[94] = "LSR";
+    m[95] = "SRE";
+    m[96] = "RTS";
+    m[97] = "ADC";
+    m[98] = "KIL";
+    m[99] = "RRA";
+    m[100] = "NOP";
+    m[101] = "ADC";
+    m[102] = "ROR";
+    m[103] = "RRA";
+    m[104] = "PLA";
+    m[105] = "ADC";
+    m[106] = "ROR";
+    m[107] = "ARR";
+    m[108] = "JMP";
+    m[109] = "ADC";
+    m[110] = "ROR";
+    m[111] = "RRA";
+    m[112] = "BVS";
+    m[113] = "ADC";
+    m[114] = "KIL";
+    m[115] = "RRA";
+    m[116] = "NOP";
+    m[117] = "ADC";
+    m[118] = "ROR";
+    m[119] = "RRA";
+    m[120] = "SEI";
+    m[121] = "ADC";
+    m[122] = "NOP";
+    m[123] = "RRA";
+    m[124] = "NOP";
+    m[125] = "ADC";
+    m[126] = "ROR";
+    m[127] = "RRA";
+    m[128] = "NOP";
+    m[129] = "STA";
+    m[130] = "NOP";
+    m[131] = "SAX";
+    m[132] = "STY";
+    m[133] = "STA";
+    m[134] = "STX";
+    m[135] = "SAX";
+    m[136] = "DEY";
+    m[137] = "NOP";
+    m[138] = "TXA";
+    m[139] = "ANE";
+    m[140] = "STY";
+    m[141] = "STA";
+    m[142] = "STX";
+    m[143] = "SAX";
+    m[144] = "BCC";
+    m[145] = "STA";
+    m[146] = "KIL";
+    m[147] = "SHA";
+    m[148] = "STY";
+    m[149] = "STA";
+    m[150] = "STX";
+    m[151] = "SAX";
+    m[152] = "TYA";
+    m[153] = "STA";
+    m[154] = "TXS";
+    m[155] = "TAS";
+    m[156] = "SHY";
+    m[157] = "STA";
+    m[158] = "SHX";
+    m[159] = "SHA";
+    m[160] = "LDY";
+    m[161] = "LDA";
+    m[162] = "LDX";
+    m[163] = "LAX";
+    m[164] = "LDY";
+    m[165] = "LDA";
+    m[166] = "LDX";
+    m[167] = "LAX";
+    m[168] = "TAY";
+    m[169] = "LDA";
+    m[170] = "TAX";
+    m[171] = "LAX";
+    m[172] = "LDY";
+    m[173] = "LDA";
+    m[174] = "LDX";
+    m[175] = "LAX";
+    m[176] = "BCS";
+    m[177] = "LDA";
+    m[178] = "KIL";
+    m[179] = "LAX";
+    m[180] = "LDY";
+    m[181] = "LDA";
+    m[182] = "LDX";
+    m[183] = "LAX";
+    m[184] = "CLV";
+    m[185] = "LDA";
+    m[186] = "TSX";
+    m[187] = "LAS";
+    m[188] = "LDY";
+    m[189] = "LDA";
+    m[190] = "LDX";
+    m[191] = "LAX";
+    m[192] = "CPY";
+    m[193] = "CMP";
+    m[194] = "NOP";
+    m[195] = "DCP";
+    m[196] = "CPY";
+    m[197] = "CMP";
+    m[198] = "DEC";
+    m[199] = "DCP";
+    m[200] = "INY";
+    m[201] = "CMP";
+    m[202] = "DEX";
+    m[203] = "AXS";
+    m[204] = "CPY";
+    m[205] = "CMP";
+    m[206] = "DEC";
+    m[207] = "DCP";
+    m[208] = "BNE";
+    m[209] = "CMP";
+    m[210] = "KIL";
+    m[211] = "DCP";
+    m[212] = "NOP";
+    m[213] = "CMP";
+    m[214] = "DEC";
+    m[215] = "DCP";
+    m[216] = "CLD";
+    m[217] = "CMP";
+    m[218] = "NOP";
+    m[219] = "DCP";
+    m[220] = "NOP";
+    m[221] = "CMP";
+    m[222] = "DEC";
+    m[223] = "DCP";
+    m[224] = "CPX";
+    m[225] = "SBC";
+    m[226] = "NOP";
+    m[227] = "ISC";
+    m[228] = "CPX";
+    m[229] = "SBC";
+    m[230] = "INC";
+    m[231] = "ISC";
+    m[232] = "INX";
+    m[233] = "SBC";
+    m[234] = "NOP";
+    m[235] = "SBC";
+    m[236] = "CPX";
+    m[237] = "SBC";
+    m[238] = "INC";
+    m[239] = "ISC";
+    m[240] = "BEQ";
+    m[241] = "SBC";
+    m[242] = "KIL";
+    m[243] = "ISC";
+    m[244] = "NOP";
+    m[245] = "SBC";
+    m[246] = "INC";
+    m[247] = "ISC";
+    m[248] = "SED";
+    m[249] = "SBC";
+    m[250] = "NOP";
+    m[251] = "ISC";
+    m[252] = "NOP";
+    m[253] = "SBC";
+    m[254] = "INC";
+    m[255] = "ISC";
+    m
+};
 #[derive(Eq, PartialEq, Clone, Copy, Debug)]
 pub enum ExecuteResult {
     Continue,

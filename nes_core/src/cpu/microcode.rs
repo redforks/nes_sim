@@ -905,7 +905,7 @@ pub enum CrossPageBehavior {
 }
 
 /// Each Microcode instruction executed by the CPU in a single cycle
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, strum_macros::Display)]
 pub enum Microcode {
     /// Fetch byte at the pc address, but do nothing, pc not increase
     FetchOnly,
