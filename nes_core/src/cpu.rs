@@ -78,6 +78,11 @@ impl NmiDetector {
     }
 }
 
+enum InterruptType {
+    Nmi,
+    Irq,
+}
+
 pub struct Cpu<M: Mcu> {
     pub a: u8,
     pub x: u8,
@@ -95,8 +100,9 @@ pub struct Cpu<M: Mcu> {
     db: u8, // save low byte during indexed addressing
     alu: u8,
 
-    need_check_interrupt: bool,
+    entering_interrupt: bool,
     nmi_detecteor: NmiDetector,
+    interrupt_detected: Option<InterruptType>,
     irq_detector: IrqDetector,
     halt: bool,
     pub(crate) last_read_addr: Option<u16>,
@@ -121,7 +127,8 @@ impl<M: Mcu> Cpu<M> {
             last_status: 0,
             mcu,
             opcode: 0,
-            need_check_interrupt: false,
+            entering_interrupt: false,
+            interrupt_detected: None,
             nmi_detecteor: Default::default(),
             irq_detector: Default::default(),
             ab: 0,
@@ -176,8 +183,9 @@ impl<M: Mcu> Cpu<M> {
     pub fn reset(&mut self) {
         self.set_flag(Flag::InterruptDisabled, true);
         self.set_flag(Flag::NotUsed, true);
-        self.need_check_interrupt = false;
+        self.entering_interrupt = false;
         self.microcode_queue.clear();
+        self.interrupt_detected = None;
         self.halt = false;
         self.sp = self.sp.wrapping_sub(3);
         self.nmi_detecteor = Default::default();
@@ -237,22 +245,17 @@ impl<M: Mcu> Cpu<M> {
             Some(v) => v,
             None => {
                 plugin.start(self, clock);
-                if std::mem::take(&mut self.need_check_interrupt) {
-                    if self.nmi_detecteor.take_nmi_pending() {
-                        self.push_enter_interrupt_microcodes(true)
-                    } else if self.irq_detector.irq_pending() {
-                        self.push_enter_interrupt_microcodes(false)
-                    } else {
-                        Microcode::FetchAndDecode
-                    }
-                } else {
-                    Microcode::FetchAndDecode
+                match self.interrupt_detected.take() {
+                    Some(InterruptType::Nmi) => self.push_enter_interrupt_microcodes(true),
+                    Some(InterruptType::Irq) => self.push_enter_interrupt_microcodes(false),
+                    None => Microcode::FetchAndDecode,
                 }
             }
         };
 
         self.last_status = self.status;
         code.exec(self);
+        self.detect_interrupt();
 
         if self.microcode_queue.is_empty() {
             plugin.end(self, clock);
@@ -262,10 +265,8 @@ impl<M: Mcu> Cpu<M> {
         }
     }
 
-    pub fn detect_interrupt(&mut self) {
-        if self.nmi_detecteor.detect_nmi() {
-            self.need_check_interrupt = false;
-        }
+    fn detect_interrupt(&mut self) {
+        self.nmi_detecteor.detect_nmi();
         let disabled = if matches!(self.opcode, opcode::CLI | opcode::SEI | opcode::PLP) {
             (self.last_status & Flag::InterruptDisabled as u8) != 0
         } else {
@@ -273,8 +274,18 @@ impl<M: Mcu> Cpu<M> {
         };
         self.irq_detector.detect_irq(disabled);
         // Detect interrupt at the second-to-last cycle
-        if self.microcode_queue.len() == 1 && !InterruptSequences::is_end(self.microcode_queue[0]) {
-            self.need_check_interrupt = true;
+        if self.microcode_queue.len() == 1 && InterruptSequences::is_end(self.microcode_queue[0]) {
+            self.entering_interrupt = true;
+        }
+        // Detect interrupt at the second-to-last cycle
+        if self.microcode_queue.len() == 0 && !std::mem::take(&mut self.entering_interrupt) {
+            if self.nmi_detecteor.take_nmi_pending() {
+                self.interrupt_detected = Some(InterruptType::Nmi);
+            } else if self.irq_detector.irq_pending() {
+                self.interrupt_detected = Some(InterruptType::Irq);
+            } else {
+                assert!(self.interrupt_detected.is_none());
+            }
         }
     }
 
