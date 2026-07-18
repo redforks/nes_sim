@@ -259,7 +259,7 @@ impl<M: Mcu> Cpu<M> {
     }
 
     fn detect_interrupt(&mut self) {
-        self.nmi_detecteor.detect_nmi();
+        let just_detected = self.nmi_detecteor.detect_nmi();
         let disabled = if matches!(self.opcode, opcode::CLI | opcode::SEI | opcode::PLP) {
             (self.last_status & Flag::InterruptDisabled as u8) != 0
         } else {
@@ -272,7 +272,8 @@ impl<M: Mcu> Cpu<M> {
         }
         // Detect interrupt at the second-to-last cycle
         if self.microcode_queue.len() == 0 && !std::mem::take(&mut self.entering_interrupt) {
-            if self.nmi_detecteor.take_nmi_pending() {
+            if !just_detected && self.nmi_detecteor.take_nmi_pending() {
+                println!("${:x}, carry flag: {}", self.status, self.flag(Flag::Carry));
                 self.interrupt_detected = Some(InterruptType::Nmi);
             } else if self.irq_detector.irq_pending() {
                 self.interrupt_detected = Some(InterruptType::Irq);
@@ -558,6 +559,7 @@ impl<M: Mcu> Cpu<M> {
         if check_nmi {
             if self.nmi_detecteor.take_nmi_pending() {
                 // eprintln!("nmi hijack");
+                println!("hijack: ${:x}", self.status);
                 self.push_status(break_flag, false);
                 self.microcode_queue.clear();
                 self.push_microcodes(&[Microcode::LoadNmiPcL, Microcode::LoadNmiPcH]);
