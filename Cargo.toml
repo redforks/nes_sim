@@ -17,7 +17,6 @@ log = {version = "0.4", features = ["release_max_level_info"]}
 thiserror = "2"
 anyhow = "1"
 serde = {version="1.0.228", features = ["derive"]}
-scopeguard = "1.2.0"
 bitfield-struct = "0.12.1"
 
 # CLI and argument parsing

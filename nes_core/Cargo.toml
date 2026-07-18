@@ -19,7 +19,6 @@ image = { workspace = true }
 tinyvec = { version = "1.11.0", features = ["latest_stable_rust"] }
 bitfield-struct.workspace = true
 bytemuck.workspace = true
-scopeguard.workspace = true
 serde.workspace = true
 anyhow.workspace = true
 base64 = "0.22.1"

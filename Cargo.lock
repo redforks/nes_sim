@@ -784,7 +784,6 @@ dependencies = [
  "log",
  "md5 0.8.0",
  "mockall",
- "scopeguard",
  "serde",
  "strum_macros",
  "test-case",

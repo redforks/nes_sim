@@ -1,8 +1,6 @@
 use crate::{SystemClock, cpu::microcode::opcode, mcu::Mcu};
 use arraydeque::ArrayDeque;
 use microcode::{InterruptSequences, Microcode};
-#[cfg(debug_assertions)]
-use std::{cell::Cell, rc::Rc};
 
 mod microcode;
 
@@ -109,9 +107,6 @@ pub struct Cpu<M: Mcu> {
 
     microcode_queue: ArrayDeque<Microcode, 8>,
 
-    #[cfg(debug_assertions)]
-    mem_acc_count: Rc<Cell<usize>>,
-
     pub(crate) frozen: bool,
 }
 
@@ -136,8 +131,6 @@ impl<M: Mcu> Cpu<M> {
             alu: 0,
             microcode_queue: ArrayDeque::new(),
             halt: false,
-            #[cfg(debug_assertions)]
-            mem_acc_count: Default::default(),
             frozen: false,
             last_read_addr: None,
         };
@@ -205,33 +198,13 @@ impl<M: Mcu> Cpu<M> {
         self.halt
     }
 
-    fn inc_mem_count(&mut self) {
-        #[cfg(debug_assertions)]
-        self.mem_acc_count.set(self.mem_acc_count.get() + 1);
-    }
-
-    fn reset_mem_count(&mut self) {
-        #[cfg(debug_assertions)]
-        self.mem_acc_count.set(0);
-    }
-
     /// Return true if just execute current instruction
     pub fn tick<P: Plugin<M>>(
         &mut self,
         plugin: &mut P,
         clock: SystemClock,
     ) -> (ExecuteResult, bool) {
-        self.reset_mem_count();
         self.last_read_addr = None;
-
-        #[cfg(debug_assertions)]
-        let _guard = scopeguard::guard(self.mem_acc_count.clone(), |acc_count| {
-            assert!(
-                acc_count.get() <= 1,
-                "Multiple memory accesses in a single tick: {}",
-                acc_count.get()
-            );
-        });
 
         if self.frozen {
             return (ExecuteResult::Continue, false);
@@ -316,7 +289,6 @@ impl<M: Mcu> Cpu<M> {
 
     fn read_byte(&mut self, addr: u16) -> u8 {
         self.last_read_addr = Some(addr);
-        self.inc_mem_count();
         self.mcu.read(addr)
     }
 
@@ -335,12 +307,10 @@ impl<M: Mcu> Cpu<M> {
     }
 
     fn write_byte(&mut self, addr: u16, value: u8) {
-        self.inc_mem_count();
         self.mcu.write(addr, value);
     }
 
     fn push_stack(&mut self, value: u8) {
-        self.inc_mem_count();
         self.mcu.write(0x100 + self.sp as u16, value);
         self.sp = self.sp.wrapping_sub(1);
     }
