@@ -1466,24 +1466,16 @@ impl Microcode {
             }
             Self::LoadR(r) => {
                 let value = cpu.read_byte(cpu.ab);
-                match r {
-                    Register::A => cpu.set_a(value),
-                    Register::X => cpu.set_x(value),
-                    Register::Y => cpu.set_y(value),
-                }
+                cpu.set_register(r, value);
             }
             Self::StoreR(r) => match r {
-                Register::A => cpu.write_byte(cpu.ab, cpu.a),
-                Register::X => cpu.write_byte(cpu.ab, cpu.x),
-                Register::Y => cpu.write_byte(cpu.ab, cpu.y),
+                Register::A => cpu.write_byte(cpu.a),
+                Register::X => cpu.write_byte(cpu.x),
+                Register::Y => cpu.write_byte(cpu.y),
             },
             Self::LoadImmediate(r) => {
                 let value = cpu.inc_read_byte();
-                match r {
-                    Register::A => cpu.set_a(value),
-                    Register::X => cpu.set_x(value),
-                    Register::Y => cpu.set_y(value),
-                }
+                cpu.set_register(r, value);
             }
             Self::ZeroPage => {
                 let addr = cpu.inc_read_byte();
@@ -1523,7 +1515,7 @@ impl Microcode {
                 Self::absolute_indexed_with_op_generic(cpu, op, first_clock, cpu.y)
             }
             Self::Bit => cpu.bit(),
-            Self::StoreAlu => cpu.write_byte(cpu.ab, cpu.alu),
+            Self::StoreAlu => cpu.write_byte(cpu.alu),
             Self::Nop => {}
             Self::SkipImmediate => {
                 cpu.inc_read_byte();
@@ -1562,20 +1554,20 @@ impl Microcode {
                 // approximation: A := X & oper. Read immediate operand into alu first.
                 let t = cpu.inc_read_byte();
                 // Compute X & operand into A, update flags accordingly
-                cpu.set_a(cpu.x & t);
+                cpu.set_register(Register::A, cpu.x & t);
             }
             Self::LaxImmediate => {
                 // Read immediate operand into alu and perform LAX semantics in one micro-op.
                 let t = cpu.inc_read_byte();
-                cpu.set_a(t);
-                cpu.set_x(t);
+                cpu.set_register(Register::A, t);
+                cpu.set_register(Register::X, t);
             }
             Self::Las => {
                 // LAS/LAR: load memory into ALU already (addressing microcode sets cpu.alu)
                 // Then perform: M AND SP -> A, X, SP
                 let v = cpu.alu & cpu.sp;
-                cpu.set_a(v);
-                cpu.set_x(v);
+                cpu.set_register(Register::A, v);
+                cpu.set_register(Register::X, v);
                 cpu.sp = v;
             }
 
@@ -1638,7 +1630,7 @@ impl Microcode {
                 PushTarget::Pch => cpu.push_stack((cpu.pc >> 8) as u8),
             },
             Self::PopStack => cpu.alu = cpu.pop_stack(),
-            Self::UpdateAFromAlu => cpu.set_a(cpu.alu),
+            Self::UpdateAFromAlu => cpu.set_register(Register::A, cpu.alu),
 
             Self::LoadResetPcL => {
                 cpu.pc = cpu.read_byte(0xFFFC) as u16;
@@ -1696,11 +1688,11 @@ impl Microcode {
 
     fn transfer<M: Mcu>(cpu: &mut Cpu<M>, direction: TransferDirection) {
         match direction {
-            TransferDirection::AtoX => cpu.set_x(cpu.a),
-            TransferDirection::XtoA => cpu.set_a(cpu.x),
-            TransferDirection::AtoY => cpu.set_y(cpu.a),
-            TransferDirection::YtoA => cpu.set_a(cpu.y),
-            TransferDirection::SPtoX => cpu.set_x(cpu.sp),
+            TransferDirection::AtoX => cpu.set_register(Register::X, cpu.a),
+            TransferDirection::XtoA => cpu.set_register(Register::A, cpu.x),
+            TransferDirection::AtoY => cpu.set_register(Register::Y, cpu.a),
+            TransferDirection::YtoA => cpu.set_register(Register::A, cpu.y),
+            TransferDirection::SPtoX => cpu.set_register(Register::X, cpu.sp),
             TransferDirection::XtoSP => {
                 cpu.sp = cpu.x;
             }
@@ -1710,29 +1702,29 @@ impl Microcode {
     fn inc_dec<M: Mcu>(cpu: &mut Cpu<M>, target: IncDecTarget) {
         match target {
             IncDecTarget::IncrementX => {
-                cpu.set_x(cpu.x.wrapping_add(1));
+                cpu.set_register(Register::X, cpu.x.wrapping_add(1));
                 cpu.alu = cpu.x;
             }
             IncDecTarget::IncrementY => {
-                cpu.set_y(cpu.y.wrapping_add(1));
+                cpu.set_register(Register::Y, cpu.y.wrapping_add(1));
                 cpu.alu = cpu.y;
             }
             IncDecTarget::DecrementX => {
-                cpu.set_x(cpu.x.wrapping_sub(1));
+                cpu.set_register(Register::X, cpu.x.wrapping_sub(1));
                 cpu.alu = cpu.x;
             }
             IncDecTarget::DecrementY => {
-                cpu.set_y(cpu.y.wrapping_sub(1));
+                cpu.set_register(Register::Y, cpu.y.wrapping_sub(1));
                 cpu.alu = cpu.y;
             }
             IncDecTarget::IncrementAlu => {
                 cpu.alu = cpu.alu.wrapping_add(1);
-                cpu.write_byte(cpu.ab, cpu.alu);
+                cpu.write_byte(cpu.alu);
                 cpu.update_zero_negative_flags(cpu.alu);
             }
             IncDecTarget::DecrementAlu => {
                 cpu.alu = cpu.alu.wrapping_sub(1);
-                cpu.write_byte(cpu.ab, cpu.alu);
+                cpu.write_byte(cpu.alu);
                 cpu.update_zero_negative_flags(cpu.alu);
             }
         }
@@ -1772,9 +1764,7 @@ impl Microcode {
             }
             AOrMemory::Memory => {
                 calc(cpu, op);
-                {
-                    cpu.write_byte(cpu.ab, cpu.alu);
-                };
+                cpu.write_byte(cpu.alu);
             }
         }
     }

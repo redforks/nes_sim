@@ -334,7 +334,11 @@ impl<M: Mcu> Cpu<M> {
         self.read_byte(addr)
     }
 
-    fn write_byte(&mut self, addr: u16, value: u8) {
+    fn write_byte(&mut self, value: u8) {
+        self.write_mem(self.ab, value);
+    }
+
+    fn write_mem(&mut self, addr: u16, value: u8) {
         self.mcu.write(addr, value);
     }
 
@@ -394,7 +398,7 @@ impl<M: Mcu> Cpu<M> {
         let (sum, carry1) = sum.overflowing_add(carry);
         self.set_flag(Flag::Carry, carry0 || carry1);
         self.set_flag(Flag::Overflow, !(self.a ^ val) & (self.a ^ sum) & 0x80 != 0);
-        self.set_a(sum);
+        self.set_register(Register::A, sum);
     }
 
     fn sbc(&mut self, load_alu: bool) {
@@ -408,7 +412,7 @@ impl<M: Mcu> Cpu<M> {
         let (sum, carry1) = sum.overflowing_add(carry);
         self.set_flag(Flag::Carry, carry0 || carry1);
         self.set_flag(Flag::Overflow, !(self.a ^ val) & (self.a ^ sum) & 0x80 != 0);
-        self.set_a(sum);
+        self.set_register(Register::A, sum);
     }
 
     fn ora(&mut self, load_alu: bool) {
@@ -416,7 +420,7 @@ impl<M: Mcu> Cpu<M> {
             self.load_alu();
         }
 
-        self.set_a(self.a | self.alu);
+        self.set_register(Register::A, self.a | self.alu);
     }
 
     fn eor(&mut self, load_alu: bool) {
@@ -424,7 +428,7 @@ impl<M: Mcu> Cpu<M> {
             self.load_alu();
         }
 
-        self.set_a(self.a ^ self.alu);
+        self.set_register(Register::A, self.a ^ self.alu);
     }
 
     fn cmp(&mut self, load_alu: bool) {
@@ -458,19 +462,20 @@ impl<M: Mcu> Cpu<M> {
     }
 
     fn alr(&mut self) {
-        self.a &= self.alu;
-        self.set_flag(Flag::Carry, self.a & 0x01 != 0);
-        self.set_a(self.a >> 1);
+        let a_and_alu = self.a & self.alu;
+        self.set_register(Register::A, a_and_alu >> 1);
+        self.set_flag(Flag::Carry, a_and_alu & 0x01 != 0);
     }
 
     fn anc(&mut self) {
-        self.set_a(self.a & self.alu);
+        self.set_register(Register::A, self.a & self.alu);
         self.set_flag(Flag::Carry, self.a & 0x80 != 0);
     }
 
     fn arr(&mut self) {
         self.a &= self.alu;
-        self.set_a((self.a >> 1) | ((self.flag(Flag::Carry) as u8) << 7));
+        let val = (self.a >> 1) | ((self.flag(Flag::Carry) as u8) << 7);
+        self.set_register(Register::A, val);
         self.set_flag(Flag::Carry, self.a & 0x40 != 0);
         self.set_flag(Flag::Overflow, ((self.a >> 6) ^ (self.a >> 5)) & 1 != 0);
     }
@@ -478,29 +483,29 @@ impl<M: Mcu> Cpu<M> {
     fn axs(&mut self) {
         let v = self.a & self.x;
         let (x, borrow) = v.overflowing_sub(self.alu);
-        self.set_x(x);
+        self.set_register(Register::X, x);
         self.set_flag(Flag::Carry, !borrow);
     }
 
     fn lax(&mut self) {
-        self.set_a(self.alu);
-        self.set_x(self.alu);
+        self.set_register(Register::A, self.alu);
+        self.set_register(Register::X, self.alu);
     }
 
     fn sax(&mut self) {
-        self.write_byte(self.ab, self.a & self.x);
+        self.write_byte(self.a & self.x);
     }
 
     fn dcp(&mut self) {
         let v = self.alu.wrapping_sub(1);
-        self.write_byte(self.ab, v);
+        self.write_byte(v);
         self.update_zero_negative_flags(self.a.wrapping_sub(v));
         self.set_flag(Flag::Carry, self.a >= v);
     }
 
     fn isc(&mut self) {
         let v = self.alu.wrapping_add(1);
-        self.write_byte(self.ab, v);
+        self.write_byte(v);
         self.alu = v;
         self.sbc(false);
     }
@@ -508,7 +513,7 @@ impl<M: Mcu> Cpu<M> {
     fn rra(&mut self) {
         let carry = self.alu & 0x01 != 0;
         self.alu = (self.alu >> 1) | ((self.flag(Flag::Carry) as u8) << 7);
-        self.write_byte(self.ab, self.alu);
+        self.write_byte(self.alu);
         self.set_flag(Flag::Carry, carry);
         self.adc(false);
     }
@@ -517,49 +522,49 @@ impl<M: Mcu> Cpu<M> {
         let new = (self.alu << 1) | (self.flag(Flag::Carry) as u8);
         self.set_flag(Flag::Carry, self.alu & 0x80 != 0);
         self.alu = new;
-        self.write_byte(self.ab, self.alu);
+        self.write_byte(self.alu);
         self.and(false);
     }
 
     fn slo(&mut self) {
         self.set_flag(Flag::Carry, self.alu & 0x80 != 0);
         self.alu <<= 1;
-        self.write_byte(self.ab, self.alu);
+        self.write_byte(self.alu);
         self.ora(false);
     }
 
     fn sre(&mut self) {
         self.set_flag(Flag::Carry, self.alu & 0x01 != 0);
         self.alu >>= 1;
-        self.write_byte(self.ab, self.alu);
+        self.write_byte(self.alu);
         self.eor(false);
     }
 
     fn shx(&mut self) {
         let v = self.x & self.abh().wrapping_add(1);
-        let addr = (self.abl() as u16) | ((v as u16) << 8);
-        self.write_byte(addr, v);
+        self.ab = (self.abl() as u16) | ((v as u16) << 8);
+        self.write_byte(v);
     }
 
     fn shy(&mut self) {
         let v = self.y & self.abh().wrapping_add(1);
-        let addr = (self.abl() as u16) | ((v as u16) << 8);
-        self.write_byte(addr, v);
+        self.ab = (self.abl() as u16) | ((v as u16) << 8);
+        self.write_byte(v);
     }
 
     fn sha(&mut self) {
         // SHA (AHX/AXA): store A & X & (high-byte of addr + 1) at address
         let out = self.a & self.x & self.abh().wrapping_add(1);
-        let addr = (self.abl() as u16) | ((out as u16) << 8);
-        self.write_byte(addr, out);
+        self.ab = (self.abl() as u16) | ((out as u16) << 8);
+        self.write_byte(out);
     }
 
     fn tas(&mut self) {
         let v = self.a & self.x;
         self.sp = v;
         let out = v & self.abh().wrapping_add(1);
-        let addr = (self.abl() as u16) | ((out as u16) << 8);
-        self.write_byte(addr, out);
+        self.ab = (self.abl() as u16) | ((out as u16) << 8);
+        self.write_byte(out);
     }
 
     fn push_status(&mut self, break_flag: bool, check_nmi: bool) {
@@ -601,7 +606,7 @@ impl<M: Mcu> Cpu<M> {
         if load_alu {
             self.load_alu();
         }
-        self.set_a(self.a & self.alu);
+        self.set_register(Register::A, self.a & self.alu);
     }
 
     fn bit(&mut self) {
@@ -670,24 +675,14 @@ impl<M: Mcu> Cpu<M> {
         self.pc |= (high as u16) << 8;
     }
 
-    /// Set register A and update negative and zero flags.
-    fn set_a(&mut self, val: u8) {
-        self.a = val;
+    fn set_register(&mut self, register: Register, val: u8) {
+        match register {
+            Register::A => self.a = val,
+            Register::X => self.x = val,
+            Register::Y => self.y = val,
+        }
         self.update_zero_negative_flags(val);
     }
-
-    /// Set register X and update negative and zero flags.
-    fn set_x(&mut self, val: u8) {
-        self.x = val;
-        self.update_zero_negative_flags(val);
-    }
-
-    /// Set register Y and update negative and zero flags.
-    fn set_y(&mut self, val: u8) {
-        self.y = val;
-        self.update_zero_negative_flags(val);
-    }
-
     fn update_zero_negative_flags(&mut self, val: u8) {
         self.update_zero_flag(val);
         self.update_negative_flag(val);

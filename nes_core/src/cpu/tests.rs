@@ -143,7 +143,7 @@ fn test_flag_toggle() {
 #[test]
 fn test_read_write_byte() {
     let mut cpu = create_cpu();
-    cpu.write_byte(0x1000, 0x42);
+    cpu.write_mem(0x1000, 0x42);
     assert_eq!(cpu.read_byte(0x1000), 0x42);
 }
 
@@ -191,7 +191,7 @@ fn test_push_status() {
 fn test_peek_stack() {
     let mut cpu = create_cpu();
     cpu.sp = 0xFE;
-    cpu.write_byte(0x1FF, 0x55);
+    cpu.write_mem(0x1FF, 0x55);
 
     let peeked = cpu.peek_stack();
     assert_eq!(peeked, 0x55);
@@ -318,7 +318,7 @@ fn test_multiple_flags_simultaneously() {
 #[test]
 fn test_mcu_access() {
     let mut cpu = create_cpu();
-    cpu.write_byte(0x8000, 0x99);
+    cpu.write_mem(0x8000, 0x99);
     assert_eq!(cpu.read_byte(0x8000), 0x99);
 }
 
@@ -415,8 +415,8 @@ fn test_sta_zero_page() {
     cpu.a = 0x77;
 
     // STA $50 (opcode 85 50)
-    cpu.write_byte(0, 0x85);
-    cpu.write_byte(1, 0x50);
+    cpu.write_mem(0, 0x85);
+    cpu.write_mem(1, 0x50);
 
     execute_next(&mut cpu);
     assert_eq!(cpu.read_byte(0x50), 0x77);
@@ -511,12 +511,12 @@ fn test_sec_clc_instructions() {
     let mut cpu = create_cpu();
 
     // SEC (38)
-    cpu.write_byte(0, 0x38);
+    cpu.write_mem(0, 0x38);
     execute_next(&mut cpu);
     assert!(cpu.flag(Flag::Carry));
 
     // CLC (18)
-    cpu.write_byte(1, 0x18);
+    cpu.write_mem(1, 0x18);
     execute_next(&mut cpu);
     assert!(!cpu.flag(Flag::Carry));
 }
@@ -527,13 +527,13 @@ fn test_sei_cli_instructions() {
     cpu.set_flag(Flag::InterruptDisabled, false);
 
     // SEI (78) - sets interrupt disabled with pending flag
-    cpu.write_byte(0, 0x78);
+    cpu.write_mem(0, 0x78);
     execute_next(&mut cpu);
     // SEI uses pending flag, so it won't be set immediately
     // But set_flag should have marked it as pending
 
     // CLI (58) - clears interrupt disabled
-    cpu.write_byte(1, 0x58);
+    cpu.write_mem(1, 0x58);
     execute_next(&mut cpu);
     // After two instructions, the flag may not be what we expect
     // due to the pending flag behavior
@@ -547,12 +547,12 @@ fn test_sed_cld_instructions() {
     let mut cpu = create_cpu();
 
     // SED (F8)
-    cpu.write_byte(0, 0xF8);
+    cpu.write_mem(0, 0xF8);
     execute_next(&mut cpu);
     assert!(cpu.flag(Flag::Decimal));
 
     // CLD (D8)
-    cpu.write_byte(1, 0xD8);
+    cpu.write_mem(1, 0xD8);
     execute_next(&mut cpu);
     assert!(!cpu.flag(Flag::Decimal));
 }
@@ -563,7 +563,7 @@ fn test_clv_instruction() {
     cpu.set_flag(Flag::Overflow, true);
 
     // CLV (B8)
-    cpu.write_byte(0, 0xB8);
+    cpu.write_mem(0, 0xB8);
     execute_next(&mut cpu);
     assert!(!cpu.flag(Flag::Overflow));
 }
@@ -628,7 +628,7 @@ fn test_stack_operations_pla() {
     // Set up stack with value, PLA
     let mut cpu = create_cpu_with_program(&[0x68, 0xEA]);
     cpu.sp = 0xFE;
-    cpu.write_byte(0x1FF, 0x88);
+    cpu.write_mem(0x1FF, 0x88);
 
     execute_next(&mut cpu);
 
@@ -724,7 +724,7 @@ fn test_bit_instruction() {
     ]);
 
     // Set up memory at 0x50 with value that has bit 7 set (and bits 6-4 non-zero)
-    cpu.write_byte(0x50, 0xE0); // 1110_0000
+    cpu.write_mem(0x50, 0xE0); // 1110_0000
 
     // Execute LDA #$FF
     execute_next(&mut cpu);
@@ -819,7 +819,7 @@ fn test_sbc_basic() {
 fn test_ldx_zero_page() {
     // Set up memory then do LDX with zero page addressing
     let mut cpu = create_cpu_with_program(&[0xA6, 0x50, 0xEA]);
-    cpu.write_byte(0x50, 0x77);
+    cpu.write_mem(0x50, 0x77);
 
     execute_next(&mut cpu);
     assert_eq!(cpu.x, 0x77);
@@ -828,7 +828,7 @@ fn test_ldx_zero_page() {
 #[test]
 fn test_ldy_zero_page() {
     let mut cpu = create_cpu_with_program(&[0xA4, 0x60, 0xEA]);
-    cpu.write_byte(0x60, 0x88);
+    cpu.write_mem(0x60, 0x88);
 
     execute_next(&mut cpu);
     assert_eq!(cpu.y, 0x88);
@@ -858,7 +858,7 @@ fn test_inx_wrapping() {
     cpu.x = 0xFF;
 
     // INX (E8)
-    cpu.write_byte(0, 0xE8);
+    cpu.write_mem(0, 0xE8);
     execute_next(&mut cpu);
 
     assert_eq!(cpu.x, 0x00);
@@ -871,7 +871,7 @@ fn test_iny_wrapping() {
     cpu.y = 0xFF;
 
     // INY (C8)
-    cpu.write_byte(0, 0xC8);
+    cpu.write_mem(0, 0xC8);
     execute_next(&mut cpu);
 
     assert_eq!(cpu.y, 0x00);
@@ -884,7 +884,7 @@ fn test_dey_to_zero() {
     cpu.y = 0x01;
 
     // DEY (88)
-    cpu.write_byte(0, 0x88);
+    cpu.write_mem(0, 0x88);
     execute_next(&mut cpu);
 
     assert_eq!(cpu.y, 0x00);
@@ -934,7 +934,7 @@ fn test_php_pla() {
 fn test_plp_restores_flags() {
     let mut cpu = create_cpu_with_program(&[0x28, 0xEA]); // PLP, NOP
     cpu.sp = 0xFE;
-    cpu.write_byte(0x1FF, 0xCF); // Status with various flags
+    cpu.write_mem(0x1FF, 0xCF); // Status with various flags
 
     execute_next(&mut cpu);
     // Flags should be restored from stack
@@ -944,7 +944,7 @@ fn test_plp_restores_flags() {
 #[test]
 fn test_asl_zero_page() {
     let mut cpu = create_cpu_with_program(&[0x06, 0x50, 0xEA]);
-    cpu.write_byte(0x50, 0x40);
+    cpu.write_mem(0x50, 0x40);
 
     execute_next(&mut cpu);
     assert_eq!(cpu.read_byte(0x50), 0x80);
@@ -953,7 +953,7 @@ fn test_asl_zero_page() {
 #[test]
 fn test_lsr_zero_page() {
     let mut cpu = create_cpu_with_program(&[0x46, 0x60, 0xEA]);
-    cpu.write_byte(0x60, 0x82);
+    cpu.write_mem(0x60, 0x82);
 
     execute_next(&mut cpu);
     // 0x82 >> 1 = 0x41, carry from bit 0
@@ -964,7 +964,7 @@ fn test_lsr_zero_page() {
 #[test]
 fn test_rol_zero_page() {
     let mut cpu = create_cpu_with_program(&[0x26, 0x70, 0xEA]);
-    cpu.write_byte(0x70, 0x42);
+    cpu.write_mem(0x70, 0x42);
 
     execute_next(&mut cpu);
     // 0x42 rotated left = 0x84
@@ -974,7 +974,7 @@ fn test_rol_zero_page() {
 #[test]
 fn test_ror_zero_page() {
     let mut cpu = create_cpu_with_program(&[0x66, 0x80, 0xEA]);
-    cpu.write_byte(0x80, 0x41);
+    cpu.write_mem(0x80, 0x41);
 
     execute_next(&mut cpu);
     // 0x41 rotated right = 0x20, with carry from bit 0
@@ -985,7 +985,7 @@ fn test_ror_zero_page() {
 #[test]
 fn test_dec_zero_page() {
     let mut cpu = create_cpu_with_program(&[0xC6, 0x90, 0xEA]);
-    cpu.write_byte(0x90, 0x01);
+    cpu.write_mem(0x90, 0x01);
 
     execute_next(&mut cpu);
     assert_eq!(cpu.read_byte(0x90), 0x00);
@@ -995,7 +995,7 @@ fn test_dec_zero_page() {
 #[test]
 fn test_inc_zero_page() {
     let mut cpu = create_cpu_with_program(&[0xE6, 0xA0, 0xEA]);
-    cpu.write_byte(0xA0, 0xFF);
+    cpu.write_mem(0xA0, 0xFF);
 
     execute_next(&mut cpu);
     assert_eq!(cpu.read_byte(0xA0), 0x00);
@@ -1034,7 +1034,7 @@ fn test_txs_instruction() {
 #[test]
 fn test_and_zero_page() {
     let mut cpu = create_cpu_with_program(&[0xA9, 0xF3, 0x25, 0x50, 0xEA]);
-    cpu.write_byte(0x50, 0x3F);
+    cpu.write_mem(0x50, 0x3F);
 
     execute_next(&mut cpu);
     execute_next(&mut cpu);
@@ -1045,7 +1045,7 @@ fn test_and_zero_page() {
 #[test]
 fn test_ora_zero_page() {
     let mut cpu = create_cpu_with_program(&[0xA9, 0x55, 0x05, 0x60, 0xEA]);
-    cpu.write_byte(0x60, 0xAA);
+    cpu.write_mem(0x60, 0xAA);
 
     execute_next(&mut cpu);
     execute_next(&mut cpu);
@@ -1057,7 +1057,7 @@ fn test_ora_zero_page() {
 #[test]
 fn test_eor_zero_page() {
     let mut cpu = create_cpu_with_program(&[0xA9, 0xFF, 0x45, 0x70, 0xEA]);
-    cpu.write_byte(0x70, 0x0F);
+    cpu.write_mem(0x70, 0x0F);
 
     execute_next(&mut cpu);
     execute_next(&mut cpu);
@@ -1068,7 +1068,7 @@ fn test_eor_zero_page() {
 #[test]
 fn test_adc_zero_page() {
     let mut cpu = create_cpu_with_program(&[0xA9, 0x50, 0x65, 0x80, 0xEA]);
-    cpu.write_byte(0x80, 0x30);
+    cpu.write_mem(0x80, 0x30);
 
     execute_next(&mut cpu);
     execute_next(&mut cpu);
@@ -1079,7 +1079,7 @@ fn test_adc_zero_page() {
 #[test]
 fn test_sbc_zero_page() {
     let mut cpu = create_cpu_with_program(&[0xA9, 0x50, 0xE5, 0x90, 0xEA]);
-    cpu.write_byte(0x90, 0x30);
+    cpu.write_mem(0x90, 0x30);
     cpu.set_flag(Flag::Carry, true);
 
     execute_next(&mut cpu);
@@ -1091,7 +1091,7 @@ fn test_sbc_zero_page() {
 #[test]
 fn test_cmp_zero_page() {
     let mut cpu = create_cpu_with_program(&[0xA9, 0x50, 0xC5, 0xA0, 0xEA]);
-    cpu.write_byte(0xA0, 0x50);
+    cpu.write_mem(0xA0, 0x50);
 
     execute_next(&mut cpu);
     execute_next(&mut cpu);
@@ -1103,7 +1103,7 @@ fn test_cmp_zero_page() {
 #[test]
 fn test_cpx_zero_page() {
     let mut cpu = create_cpu_with_program(&[0xA2, 0x42, 0xE4, 0xB0, 0xEA]);
-    cpu.write_byte(0xB0, 0x42);
+    cpu.write_mem(0xB0, 0x42);
 
     execute_next(&mut cpu);
     execute_next(&mut cpu);
@@ -1114,7 +1114,7 @@ fn test_cpx_zero_page() {
 #[test]
 fn test_cpy_zero_page() {
     let mut cpu = create_cpu_with_program(&[0xA0, 0x55, 0xC4, 0xC0, 0xEA]);
-    cpu.write_byte(0xC0, 0x55);
+    cpu.write_mem(0xC0, 0x55);
 
     execute_next(&mut cpu);
     execute_next(&mut cpu);
@@ -1125,7 +1125,7 @@ fn test_cpy_zero_page() {
 #[test]
 fn test_bit_zero_page() {
     let mut cpu = create_cpu_with_program(&[0xA9, 0xFF, 0x24, 0xD0, 0xEA]);
-    cpu.write_byte(0xD0, 0xE0);
+    cpu.write_mem(0xD0, 0xE0);
 
     execute_next(&mut cpu);
     execute_next(&mut cpu);
@@ -1137,7 +1137,7 @@ fn test_bit_zero_page() {
 #[test]
 fn test_lda_absolute() {
     let mut cpu = create_cpu_with_program(&[0xAD, 0x34, 0x12, 0xEA]);
-    cpu.write_byte(0x1234, 0x42);
+    cpu.write_mem(0x1234, 0x42);
 
     execute_next(&mut cpu);
     assert_eq!(cpu.a, 0x42);
@@ -1146,7 +1146,7 @@ fn test_lda_absolute() {
 #[test]
 fn test_ldx_absolute() {
     let mut cpu = create_cpu_with_program(&[0xAE, 0x34, 0x12, 0xEA]);
-    cpu.write_byte(0x1234, 0x55);
+    cpu.write_mem(0x1234, 0x55);
 
     execute_next(&mut cpu);
     assert_eq!(cpu.x, 0x55);
@@ -1155,7 +1155,7 @@ fn test_ldx_absolute() {
 #[test]
 fn test_ldy_absolute() {
     let mut cpu = create_cpu_with_program(&[0xBC, 0x34, 0x12, 0xEA]);
-    cpu.write_byte(0x1234, 0x66);
+    cpu.write_mem(0x1234, 0x66);
 
     execute_next(&mut cpu);
     assert_eq!(cpu.y, 0x66);
@@ -1164,7 +1164,7 @@ fn test_ldy_absolute() {
 #[test]
 fn test_bit_absolute() {
     let mut cpu = create_cpu_with_program(&[0xA9, 0xFF, 0x2C, 0x50, 0x20, 0xEA]);
-    cpu.write_byte(0x2050, 0xC0);
+    cpu.write_mem(0x2050, 0xC0);
 
     execute_next(&mut cpu);
     execute_next(&mut cpu);
@@ -1268,7 +1268,7 @@ fn test_bvc_branch_taken() {
 #[test]
 fn test_lda_absolute_x() {
     let mut cpu = create_cpu_with_program(&[0xA2, 0x10, 0xBD, 0x34, 0x12, 0xEA]);
-    cpu.write_byte(0x1244, 0x77); // 0x1234 + 0x10
+    cpu.write_mem(0x1244, 0x77); // 0x1234 + 0x10
 
     execute_next(&mut cpu); // LDX #$10
     execute_next(&mut cpu); // LDA $1234,X
@@ -1278,7 +1278,7 @@ fn test_lda_absolute_x() {
 #[test]
 fn test_lda_absolute_y() {
     let mut cpu = create_cpu_with_program(&[0xA0, 0x10, 0xB9, 0x34, 0x12, 0xEA]);
-    cpu.write_byte(0x1244, 0x88); // 0x1234 + 0x10
+    cpu.write_mem(0x1244, 0x88); // 0x1234 + 0x10
 
     execute_next(&mut cpu); // LDY #$10
     execute_next(&mut cpu); // LDA $1234,Y
@@ -1335,7 +1335,7 @@ fn test_sty_absolute() {
 #[test]
 fn test_ldx_absolute_y() {
     let mut cpu = create_cpu_with_program(&[0xA0, 0x10, 0xBE, 0x34, 0x12, 0xEA]);
-    cpu.write_byte(0x1244, 0x99); // 0x1234 + 0x10
+    cpu.write_mem(0x1244, 0x99); // 0x1234 + 0x10
 
     execute_next(&mut cpu); // LDY #$10
     execute_next(&mut cpu); // LDX $1234,Y
@@ -1345,7 +1345,7 @@ fn test_ldx_absolute_y() {
 #[test]
 fn test_ldy_absolute_x() {
     let mut cpu = create_cpu_with_program(&[0xA2, 0x10, 0xBC, 0x34, 0x12, 0xEA]);
-    cpu.write_byte(0x1244, 0xAA); // 0x1234 + 0x10
+    cpu.write_mem(0x1244, 0xAA); // 0x1234 + 0x10
 
     execute_next(&mut cpu); // LDX #$10
     execute_next(&mut cpu); // LDY $1234,X
@@ -1356,7 +1356,7 @@ fn test_ldy_absolute_x() {
 #[test]
 fn test_adc_absolute() {
     let mut cpu = create_cpu_with_program(&[0xA9, 0x30, 0x6D, 0x34, 0x12, 0xEA]);
-    cpu.write_byte(0x1234, 0x20);
+    cpu.write_mem(0x1234, 0x20);
 
     execute_next(&mut cpu); // LDA #$30
     execute_next(&mut cpu); // ADC $1234
@@ -1366,7 +1366,7 @@ fn test_adc_absolute() {
 #[test]
 fn test_adc_with_overflow() {
     let mut cpu = create_cpu_with_program(&[0xA9, 0x70, 0x6D, 0x34, 0x12, 0xEA]);
-    cpu.write_byte(0x1234, 0x70);
+    cpu.write_mem(0x1234, 0x70);
 
     execute_next(&mut cpu); // LDA #$70
     execute_next(&mut cpu); // ADC $1234 (0x70 + 0x70 = 0xE0, sets negative, clears zero)
@@ -1378,7 +1378,7 @@ fn test_adc_with_overflow() {
 #[test]
 fn test_sbc_absolute() {
     let mut cpu = create_cpu_with_program(&[0xA9, 0x50, 0xED, 0x34, 0x12, 0xEA]);
-    cpu.write_byte(0x1234, 0x30);
+    cpu.write_mem(0x1234, 0x30);
 
     execute_next(&mut cpu); // LDA #$50
     execute_next(&mut cpu); // SBC $1234 (carry is set by default, so 0x50 - 0x30 = 0x20)
@@ -1388,7 +1388,7 @@ fn test_sbc_absolute() {
 #[test]
 fn test_ora_absolute() {
     let mut cpu = create_cpu_with_program(&[0xA9, 0x0F, 0x0D, 0x34, 0x12, 0xEA]);
-    cpu.write_byte(0x1234, 0xF0);
+    cpu.write_mem(0x1234, 0xF0);
 
     execute_next(&mut cpu); // LDA #$0F
     execute_next(&mut cpu); // ORA $1234 (0x0F | 0xF0 = 0xFF)
@@ -1398,7 +1398,7 @@ fn test_ora_absolute() {
 #[test]
 fn test_and_absolute() {
     let mut cpu = create_cpu_with_program(&[0xA9, 0xF0, 0x2D, 0x34, 0x12, 0xEA]);
-    cpu.write_byte(0x1234, 0x0F);
+    cpu.write_mem(0x1234, 0x0F);
 
     execute_next(&mut cpu); // LDA #$F0
     execute_next(&mut cpu); // AND $1234 (0xF0 & 0x0F = 0x00)
@@ -1409,7 +1409,7 @@ fn test_and_absolute() {
 #[test]
 fn test_eor_absolute() {
     let mut cpu = create_cpu_with_program(&[0xA9, 0xAA, 0x4D, 0x34, 0x12, 0xEA]);
-    cpu.write_byte(0x1234, 0x55);
+    cpu.write_mem(0x1234, 0x55);
 
     execute_next(&mut cpu); // LDA #$AA
     execute_next(&mut cpu); // EOR $1234 (0xAA ^ 0x55 = 0xFF)
@@ -1419,7 +1419,7 @@ fn test_eor_absolute() {
 #[test]
 fn test_asl_absolute() {
     let mut cpu = create_cpu_with_program(&[0x0E, 0x34, 0x12, 0xEA]);
-    cpu.write_byte(0x1234, 0x40);
+    cpu.write_mem(0x1234, 0x40);
 
     execute_next(&mut cpu); // ASL $1234 (0x40 << 1 = 0x80)
     assert_eq!(cpu.read_byte(0x1234), 0x80);
@@ -1429,7 +1429,7 @@ fn test_asl_absolute() {
 #[test]
 fn test_lsr_absolute() {
     let mut cpu = create_cpu_with_program(&[0x4E, 0x34, 0x12, 0xEA]);
-    cpu.write_byte(0x1234, 0x81);
+    cpu.write_mem(0x1234, 0x81);
 
     execute_next(&mut cpu); // LSR $1234 (0x81 >> 1 = 0x40, carry=1)
     assert_eq!(cpu.read_byte(0x1234), 0x40);
@@ -1439,7 +1439,7 @@ fn test_lsr_absolute() {
 #[test]
 fn test_rol_absolute() {
     let mut cpu = create_cpu_with_program(&[0x2E, 0x34, 0x12, 0xEA]);
-    cpu.write_byte(0x1234, 0x80);
+    cpu.write_mem(0x1234, 0x80);
 
     execute_next(&mut cpu); // ROL $1234 (0x80 << 1 = 0x00, carry becomes 1)
     assert_eq!(cpu.read_byte(0x1234), 0x00);
@@ -1449,7 +1449,7 @@ fn test_rol_absolute() {
 #[test]
 fn test_ror_absolute() {
     let mut cpu = create_cpu_with_program(&[0x6E, 0x34, 0x12, 0xEA]);
-    cpu.write_byte(0x1234, 0x01);
+    cpu.write_mem(0x1234, 0x01);
 
     execute_next(&mut cpu); // ROR $1234 (0x01 >> 1 = 0x00, carry becomes 1)
     assert_eq!(cpu.read_byte(0x1234), 0x00);
@@ -1459,7 +1459,7 @@ fn test_ror_absolute() {
 #[test]
 fn test_inc_absolute() {
     let mut cpu = create_cpu_with_program(&[0xEE, 0x34, 0x12, 0xEA]);
-    cpu.write_byte(0x1234, 0x42);
+    cpu.write_mem(0x1234, 0x42);
 
     execute_next(&mut cpu); // INC $1234
     assert_eq!(cpu.read_byte(0x1234), 0x43);
@@ -1468,7 +1468,7 @@ fn test_inc_absolute() {
 #[test]
 fn test_dec_absolute() {
     let mut cpu = create_cpu_with_program(&[0xCE, 0x34, 0x12, 0xEA]);
-    cpu.write_byte(0x1234, 0x42);
+    cpu.write_mem(0x1234, 0x42);
 
     execute_next(&mut cpu); // DEC $1234
     assert_eq!(cpu.read_byte(0x1234), 0x41);
@@ -1477,7 +1477,7 @@ fn test_dec_absolute() {
 #[test]
 fn test_cmp_absolute() {
     let mut cpu = create_cpu_with_program(&[0xA9, 0x42, 0xCD, 0x34, 0x12, 0xEA]);
-    cpu.write_byte(0x1234, 0x42);
+    cpu.write_mem(0x1234, 0x42);
 
     execute_next(&mut cpu); // LDA #$42
     execute_next(&mut cpu); // CMP $1234
@@ -1488,7 +1488,7 @@ fn test_cmp_absolute() {
 #[test]
 fn test_cpx_absolute() {
     let mut cpu = create_cpu_with_program(&[0xA2, 0x50, 0xEC, 0x34, 0x12, 0xEA]);
-    cpu.write_byte(0x1234, 0x42);
+    cpu.write_mem(0x1234, 0x42);
 
     execute_next(&mut cpu); // LDX #$50
     execute_next(&mut cpu); // CPX $1234
@@ -1498,7 +1498,7 @@ fn test_cpx_absolute() {
 #[test]
 fn test_cpy_absolute() {
     let mut cpu = create_cpu_with_program(&[0xA0, 0x42, 0xCC, 0x34, 0x12, 0xEA]);
-    cpu.write_byte(0x1234, 0x50);
+    cpu.write_mem(0x1234, 0x50);
 
     execute_next(&mut cpu); // LDY #$42
     execute_next(&mut cpu); // CPY $1234
@@ -1517,8 +1517,8 @@ fn test_jmp_absolute() {
 #[test]
 fn test_jmp_indirect() {
     let mut cpu = create_cpu_with_program(&[0x6C, 0x34, 0x12, 0xEA]);
-    cpu.write_byte(0x1234, 0x78);
-    cpu.write_byte(0x1235, 0x56);
+    cpu.write_mem(0x1234, 0x78);
+    cpu.write_mem(0x1235, 0x56);
 
     execute_next(&mut cpu); // JMP ($1234)
     assert_eq!(cpu.pc, 0x5678);
@@ -1527,8 +1527,8 @@ fn test_jmp_indirect() {
 #[test]
 fn test_brk_instruction() {
     let mut cpu = create_cpu_with_program(&[0x00, 0xEA]);
-    cpu.write_byte(IRQ_VECTOR, 0x00);
-    cpu.write_byte(IRQ_VECTOR + 1, 0x04);
+    cpu.write_mem(IRQ_VECTOR, 0x00);
+    cpu.write_mem(IRQ_VECTOR + 1, 0x04);
 
     execute_next(&mut cpu); // BRK
     assert!(!cpu.flag(Flag::Break));
@@ -1542,9 +1542,9 @@ fn test_lda_indirect_x() {
     // LDA ($20,X) - indexed indirect
     let mut cpu = create_cpu_with_program(&[0xA2, 0x05, 0xA1, 0x20, 0xEA]);
     // Write word at 0x0025 (low byte, high byte)
-    cpu.write_byte(0x0025, 0x34);
-    cpu.write_byte(0x0026, 0x12);
-    cpu.write_byte(0x1234, 0x42);
+    cpu.write_mem(0x0025, 0x34);
+    cpu.write_mem(0x0026, 0x12);
+    cpu.write_mem(0x1234, 0x42);
 
     execute_next(&mut cpu); // LDX #$05
     execute_next(&mut cpu); // LDA ($20,X)
@@ -1556,9 +1556,9 @@ fn test_lda_indirect_y() {
     // LDA ($20),Y - indirect indexed
     let mut cpu = create_cpu_with_program(&[0xA0, 0x05, 0xB1, 0x20, 0xEA]);
     // Write word at 0x0020 (low byte, high byte)
-    cpu.write_byte(0x0020, 0x34);
-    cpu.write_byte(0x0021, 0x12);
-    cpu.write_byte(0x1239, 0x55); // 0x1234 + 0x05
+    cpu.write_mem(0x0020, 0x34);
+    cpu.write_mem(0x0021, 0x12);
+    cpu.write_mem(0x1239, 0x55); // 0x1234 + 0x05
 
     execute_next(&mut cpu); // LDY #$05
     execute_next(&mut cpu); // LDA ($20),Y
@@ -1568,8 +1568,8 @@ fn test_lda_indirect_y() {
 #[test]
 fn test_sta_indirect_x() {
     let mut cpu = create_cpu_with_program(&[0xA2, 0x05, 0xA9, 0x42, 0x81, 0x20, 0xEA]);
-    cpu.write_byte(0x0025, 0x34);
-    cpu.write_byte(0x0026, 0x12);
+    cpu.write_mem(0x0025, 0x34);
+    cpu.write_mem(0x0026, 0x12);
 
     execute_next(&mut cpu); // LDX #$05
     execute_next(&mut cpu); // LDA #$42
@@ -1580,8 +1580,8 @@ fn test_sta_indirect_x() {
 #[test]
 fn test_sta_indirect_y() {
     let mut cpu = create_cpu_with_program(&[0xA0, 0x05, 0xA9, 0x42, 0x91, 0x20, 0xEA]);
-    cpu.write_byte(0x0020, 0x34);
-    cpu.write_byte(0x0021, 0x12);
+    cpu.write_mem(0x0020, 0x34);
+    cpu.write_mem(0x0021, 0x12);
 
     execute_next(&mut cpu); // LDY #$05
     execute_next(&mut cpu); // LDA #$42
@@ -1593,7 +1593,7 @@ fn test_sta_indirect_y() {
 #[test]
 fn test_lda_zero_page_x() {
     let mut cpu = create_cpu_with_program(&[0xA2, 0x10, 0xB5, 0x20, 0xEA]);
-    cpu.write_byte(0x0030, 0x77); // ZP $20 + X($10)
+    cpu.write_mem(0x0030, 0x77); // ZP $20 + X($10)
 
     execute_next(&mut cpu); // LDX #$10
     execute_next(&mut cpu); // LDA $20,X
@@ -1603,7 +1603,7 @@ fn test_lda_zero_page_x() {
 #[test]
 fn test_lda_zero_page_y() {
     let mut cpu = create_cpu_with_program(&[0xA0, 0x10, 0xB6, 0x20, 0xEA]);
-    cpu.write_byte(0x0030, 0x88); // ZP $20 + Y($10)
+    cpu.write_mem(0x0030, 0x88); // ZP $20 + Y($10)
 
     execute_next(&mut cpu); // LDY #$10
     execute_next(&mut cpu); // LDX $20,Y
@@ -1613,9 +1613,9 @@ fn test_lda_zero_page_y() {
 #[test]
 fn test_adc_indirect_x() {
     let mut cpu = create_cpu_with_program(&[0xA2, 0x05, 0xA9, 0x30, 0x61, 0x20, 0xEA]);
-    cpu.write_byte(0x0025, 0x34);
-    cpu.write_byte(0x0026, 0x12);
-    cpu.write_byte(0x1234, 0x20);
+    cpu.write_mem(0x0025, 0x34);
+    cpu.write_mem(0x0026, 0x12);
+    cpu.write_mem(0x1234, 0x20);
 
     execute_next(&mut cpu); // LDX #$05
     execute_next(&mut cpu); // LDA #$30
@@ -1626,9 +1626,9 @@ fn test_adc_indirect_x() {
 #[test]
 fn test_adc_indirect_y() {
     let mut cpu = create_cpu_with_program(&[0xA0, 0x05, 0xA9, 0x30, 0x71, 0x20, 0xEA]);
-    cpu.write_byte(0x0020, 0x34);
-    cpu.write_byte(0x0021, 0x12);
-    cpu.write_byte(0x1239, 0x20); // 0x1234 + Y
+    cpu.write_mem(0x0020, 0x34);
+    cpu.write_mem(0x0021, 0x12);
+    cpu.write_mem(0x1239, 0x20); // 0x1234 + Y
 
     execute_next(&mut cpu); // LDY #$05
     execute_next(&mut cpu); // LDA #$30
@@ -1639,7 +1639,7 @@ fn test_adc_indirect_y() {
 #[test]
 fn test_asl_absolute_x() {
     let mut cpu = create_cpu_with_program(&[0xA2, 0x10, 0x1E, 0x34, 0x12, 0xEA]);
-    cpu.write_byte(0x1244, 0x40);
+    cpu.write_mem(0x1244, 0x40);
 
     execute_next(&mut cpu); // LDX #$10
     execute_next(&mut cpu); // ASL $1234,X
@@ -1649,7 +1649,7 @@ fn test_asl_absolute_x() {
 #[test]
 fn test_lsr_absolute_x() {
     let mut cpu = create_cpu_with_program(&[0xA2, 0x10, 0x5E, 0x34, 0x12, 0xEA]);
-    cpu.write_byte(0x1244, 0x81);
+    cpu.write_mem(0x1244, 0x81);
 
     execute_next(&mut cpu); // LDX #$10
     execute_next(&mut cpu); // LSR $1234,X
@@ -1660,7 +1660,7 @@ fn test_lsr_absolute_x() {
 #[test]
 fn test_rol_absolute_x() {
     let mut cpu = create_cpu_with_program(&[0xA2, 0x10, 0x3E, 0x34, 0x12, 0xEA]);
-    cpu.write_byte(0x1244, 0x80);
+    cpu.write_mem(0x1244, 0x80);
 
     execute_next(&mut cpu); // LDX #$10
     execute_next(&mut cpu); // ROL $1234,X
@@ -1671,7 +1671,7 @@ fn test_rol_absolute_x() {
 #[test]
 fn test_ror_absolute_x() {
     let mut cpu = create_cpu_with_program(&[0xA2, 0x10, 0x7E, 0x34, 0x12, 0xEA]);
-    cpu.write_byte(0x1244, 0x01);
+    cpu.write_mem(0x1244, 0x01);
 
     execute_next(&mut cpu); // LDX #$10
     execute_next(&mut cpu); // ROR $1234,X
@@ -1682,7 +1682,7 @@ fn test_ror_absolute_x() {
 #[test]
 fn test_inc_absolute_x() {
     let mut cpu = create_cpu_with_program(&[0xA2, 0x10, 0xFE, 0x34, 0x12, 0xEA]);
-    cpu.write_byte(0x1244, 0x42);
+    cpu.write_mem(0x1244, 0x42);
 
     execute_next(&mut cpu); // LDX #$10
     execute_next(&mut cpu); // INC $1234,X
@@ -1692,7 +1692,7 @@ fn test_inc_absolute_x() {
 #[test]
 fn test_dec_absolute_x() {
     let mut cpu = create_cpu_with_program(&[0xA2, 0x10, 0xDE, 0x34, 0x12, 0xEA]);
-    cpu.write_byte(0x1244, 0x42);
+    cpu.write_mem(0x1244, 0x42);
 
     execute_next(&mut cpu); // LDX #$10
     execute_next(&mut cpu); // DEC $1234,X
@@ -1702,9 +1702,9 @@ fn test_dec_absolute_x() {
 #[test]
 fn test_ora_indirect_x() {
     let mut cpu = create_cpu_with_program(&[0xA2, 0x05, 0xA9, 0x0F, 0x01, 0x20, 0xEA]);
-    cpu.write_byte(0x0025, 0x34);
-    cpu.write_byte(0x0026, 0x12);
-    cpu.write_byte(0x1234, 0xF0);
+    cpu.write_mem(0x0025, 0x34);
+    cpu.write_mem(0x0026, 0x12);
+    cpu.write_mem(0x1234, 0xF0);
 
     execute_next(&mut cpu); // LDX #$05
     execute_next(&mut cpu); // LDA #$0F
@@ -1715,9 +1715,9 @@ fn test_ora_indirect_x() {
 #[test]
 fn test_and_indirect_y() {
     let mut cpu = create_cpu_with_program(&[0xA0, 0x05, 0xA9, 0xF0, 0x31, 0x20, 0xEA]);
-    cpu.write_byte(0x0020, 0x34);
-    cpu.write_byte(0x0021, 0x12);
-    cpu.write_byte(0x1239, 0x0F);
+    cpu.write_mem(0x0020, 0x34);
+    cpu.write_mem(0x0021, 0x12);
+    cpu.write_mem(0x1239, 0x0F);
 
     execute_next(&mut cpu); // LDY #$05
     execute_next(&mut cpu); // LDA #$F0
@@ -1819,7 +1819,7 @@ fn test_and_zero_page_x() {
     let mut cpu = create_cpu_with_program(&[0x35, 0x20, 0xEA]);
     cpu.a = 0xF0;
     cpu.x = 5;
-    cpu.write_byte(0x0025, 0x0F);
+    cpu.write_mem(0x0025, 0x0F);
     execute_next(&mut cpu); // AND $20,X
     assert_eq!(cpu.a, 0x00);
 }
@@ -1828,7 +1828,7 @@ fn test_and_zero_page_x() {
 #[test]
 fn test_jsr_pushes_pc_and_jumps() {
     let mut cpu = create_cpu_with_program(&[0x20, 0x34, 0x12, 0xEA]); // JSR $1234
-    cpu.write_byte(0x1234, 0xEA);
+    cpu.write_mem(0x1234, 0xEA);
 
     execute_next(&mut cpu);
 
@@ -1850,8 +1850,8 @@ fn test_rts_pops_pc() {
     // First pop: SP=0xFD+1=0xFE, reads 0x1FE → 0x33
     // Second pop: SP=0xFE+1=0xFF, reads 0x1FF → 0x12
     cpu.sp = 0xFD;
-    cpu.write_byte(0x1FE, 0x33); // Low byte
-    cpu.write_byte(0x1FF, 0x12); // High byte
+    cpu.write_mem(0x1FE, 0x33); // Low byte
+    cpu.write_mem(0x1FF, 0x12); // High byte
 
     execute_next(&mut cpu);
 
@@ -1891,9 +1891,9 @@ fn test_rti_restores_pc_and_flags() {
     let mut cpu = create_cpu_with_program(&[0x40]); // RTI
     // Setup stack with status then PC (RTI pops in reverse order)
     cpu.sp = 0xFD; // Stack at 0x100, 0x1FF, 0x1FE
-    cpu.write_byte(0x1FE, 0xFF); // Status (popped first)
-    cpu.write_byte(0x1FF, 0x34); // PC low
-    cpu.write_byte(0x100, 0x12); // PC high (popped last)
+    cpu.write_mem(0x1FE, 0xFF); // Status (popped first)
+    cpu.write_mem(0x1FF, 0x34); // PC low
+    cpu.write_mem(0x100, 0x12); // PC high (popped last)
 
     execute_next(&mut cpu);
 
@@ -1963,9 +1963,9 @@ fn test_jmp_indirect_page_boundary_bug() {
     // The famous 6502 bug: JMP ($01FF) should fetch from $01FF and $0200
     // but instead wraps to $01FF and $0100
     let mut cpu = create_cpu_with_program(&[0x6C, 0xFF, 0x01]); // JMP ($01FF)
-    cpu.write_byte(0x01FF, 0x34); // Low byte at $01FF
-    cpu.write_byte(0x0100, 0x12); // High byte at $0100 (due to bug, wraps from $0200)
-    cpu.write_byte(0x0200, 0x56); // Should be read but bug wraps
+    cpu.write_mem(0x01FF, 0x34); // Low byte at $01FF
+    cpu.write_mem(0x0100, 0x12); // High byte at $0100 (due to bug, wraps from $0200)
+    cpu.write_mem(0x0200, 0x56); // Should be read but bug wraps
 
     execute_next(&mut cpu);
 
@@ -1980,8 +1980,8 @@ fn test_jmp_indirect_page_boundary_bug() {
 fn test_jmp_indirect_no_page_boundary() {
     // Normal case: JMP ($01FE) - no page boundary crossing
     let mut cpu = create_cpu_with_program(&[0x6C, 0xFE, 0x01]); // JMP ($01FE)
-    cpu.write_byte(0x01FE, 0xCD); // Pointer low byte at $01FE
-    cpu.write_byte(0x01FF, 0xAB); // Pointer high byte at $01FF
+    cpu.write_mem(0x01FE, 0xCD); // Pointer low byte at $01FE
+    cpu.write_mem(0x01FF, 0xAB); // Pointer high byte at $01FF
 
     execute_next(&mut cpu);
 
