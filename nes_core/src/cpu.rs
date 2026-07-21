@@ -387,18 +387,24 @@ impl<M: Mcu> Cpu<M> {
         self.alu = self.read_byte(self.ab);
     }
 
+    fn do_adc(&mut self, val: u8) {
+        let carry = self.flag(Flag::Carry) as u16;
+        let sum = (self.a as u16) + (val as u16) + carry;
+        self.set_flag(Flag::Carry, (sum >> 8) != 0);
+        let result = sum as u8;
+        self.set_flag(
+            Flag::Overflow,
+            (self.a ^ result) & (val ^ result) & 0x80 != 0,
+        );
+        self.set_register(Register::A, result);
+    }
+
     fn adc(&mut self, load_alu: bool) {
         if load_alu {
             self.load_alu();
         }
 
-        let val = self.alu;
-        let carry = self.flag(Flag::Carry) as u8;
-        let (sum, carry0) = self.a.overflowing_add(val);
-        let (sum, carry1) = sum.overflowing_add(carry);
-        self.set_flag(Flag::Carry, carry0 || carry1);
-        self.set_flag(Flag::Overflow, !(self.a ^ val) & (self.a ^ sum) & 0x80 != 0);
-        self.set_register(Register::A, sum);
+        self.do_adc(self.alu);
     }
 
     fn sbc(&mut self, load_alu: bool) {
@@ -407,12 +413,7 @@ impl<M: Mcu> Cpu<M> {
         }
 
         let val = self.alu ^ 0xFF;
-        let carry = self.flag(Flag::Carry) as u8;
-        let (sum, carry0) = self.a.overflowing_add(val);
-        let (sum, carry1) = sum.overflowing_add(carry);
-        self.set_flag(Flag::Carry, carry0 || carry1);
-        self.set_flag(Flag::Overflow, !(self.a ^ val) & (self.a ^ sum) & 0x80 != 0);
-        self.set_register(Register::A, sum);
+        self.do_adc(val);
     }
 
     fn ora(&mut self, load_alu: bool) {
@@ -611,8 +612,8 @@ impl<M: Mcu> Cpu<M> {
 
     fn bit(&mut self) {
         let v = self.read_byte(self.ab);
-        self.set_flag(Flag::Negative, v & 0x80 != 0);
         self.set_flag(Flag::Overflow, v & 0x40 != 0);
+        self.update_negative_flag(v);
         self.update_zero_flag(self.a & v);
     }
 
@@ -683,6 +684,7 @@ impl<M: Mcu> Cpu<M> {
         }
         self.update_zero_negative_flags(val);
     }
+
     fn update_zero_negative_flags(&mut self, val: u8) {
         self.update_zero_flag(val);
         self.update_negative_flag(val);
