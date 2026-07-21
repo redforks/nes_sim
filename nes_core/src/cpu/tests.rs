@@ -179,7 +179,6 @@ fn test_stack_push_pop_wrapping() {
 fn test_push_status() {
     let mut cpu = create_cpu();
     cpu.sp = 0xFF;
-    cpu.status = 0b0000_0000;
 
     cpu.push_status(false, false);
     let status_on_stack = cpu.read_byte(0x1FF);

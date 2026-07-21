@@ -586,9 +586,9 @@ impl<M: Mcu> Cpu<M> {
         }
 
         self.push_stack(if break_flag {
-            self.status | Flag::Break as u8 | Flag::NotUsed as u8
+            self.status | Flag::Break as u8
         } else {
-            self.status | Flag::NotUsed as u8
+            self.status
         });
     }
 
