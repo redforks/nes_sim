@@ -23,6 +23,22 @@ impl Mcu for LowerRam {
     fn write(&mut self, address: u16, value: u8) {
         self.ram[address as usize & 0x7ff] = value;
     }
+
+    fn read_zero_page(&mut self, address: u8) -> u8 {
+        self.ram[address as usize & 0xff]
+    }
+
+    fn read_stack_page(&mut self, address: u8) -> u8 {
+        self.ram[0x100 + address as usize]
+    }
+
+    fn write_zero_page(&mut self, address: u8, value: u8) {
+        self.ram[address as usize & 0xff] = value;
+    }
+
+    fn write_stack_page(&mut self, address: u8, value: u8) {
+        self.ram[0x100 + address as usize] = value;
+    }
 }
 
 #[cfg(test)]

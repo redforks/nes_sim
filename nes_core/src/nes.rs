@@ -205,6 +205,22 @@ impl<R: Render, D: AudioDriver> Mcu for NesMcu<R, D> {
             }
         }
     }
+
+    fn read_zero_page(&mut self, address: u8) -> u8 {
+        self.lower_ram.read(address as u16)
+    }
+
+    fn read_stack_page(&mut self, address: u8) -> u8 {
+        self.lower_ram.read(0x100 + address as u16)
+    }
+
+    fn write_zero_page(&mut self, address: u8, value: u8) {
+        self.lower_ram.write(address as u16, value);
+    }
+
+    fn write_stack_page(&mut self, address: u8, value: u8) {
+        self.lower_ram.write(0x100 + address as u16, value);
+    }
 }
 
 #[cfg(test)]

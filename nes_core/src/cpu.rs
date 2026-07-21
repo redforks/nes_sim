@@ -343,14 +343,13 @@ impl<M: Mcu> Cpu<M> {
     }
 
     fn push_stack(&mut self, value: u8) {
-        self.mcu.write(0x100 + self.sp as u16, value);
+        self.mcu.write_stack_page(self.sp, value);
         self.sp = self.sp.wrapping_sub(1);
     }
 
     fn pop_stack(&mut self) -> u8 {
         self.sp = self.sp.wrapping_add(1);
-        let addr = 0x100 + self.sp as u16;
-        self.read_byte(addr)
+        self.mcu.read_stack_page(self.sp)
     }
 
     #[cfg(test)]

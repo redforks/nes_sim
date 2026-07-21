@@ -11,6 +11,34 @@ pub trait Mcu {
     fn read(&mut self, address: u16) -> u8;
     fn peek(&self, address: u16) -> u8;
     fn write(&mut self, address: u16, value: u8);
+
+    /// Fast-path: read from zero page ($0000-$00FF).
+    /// `address` is the direct zero-page offset ($00..=$FF).
+    /// Default falls back to read(), but implementations can bypass address-range dispatch.
+    fn read_zero_page(&mut self, address: u8) -> u8 {
+        self.read(address as u16)
+    }
+
+    /// Fast-path: read from stack page ($0100-$01FF).
+    /// `address` is the offset from $0100 ($00..=$FF).
+    /// Default falls back to read(), but implementations can bypass address-range dispatch.
+    fn read_stack_page(&mut self, address: u8) -> u8 {
+        self.read(0x100 + address as u16)
+    }
+
+    /// Fast-path: write to zero page ($0000-$00FF).
+    /// `address` is the direct zero-page offset ($00..=$FF).
+    /// Default falls back to write(), but implementations can bypass address-range dispatch.
+    fn write_zero_page(&mut self, address: u8, value: u8) {
+        self.write(address as u16, value)
+    }
+
+    /// Fast-path: write to stack page ($0100-$01FF).
+    /// `address` is the offset from $0100 ($00..=$FF).
+    /// Default falls back to write(), but implementations can bypass address-range dispatch.
+    fn write_stack_page(&mut self, address: u8, value: u8) {
+        self.write(0x100 + address as u16, value)
+    }
 }
 
 #[cfg(test)]
