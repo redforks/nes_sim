@@ -764,7 +764,7 @@ impl<M: Mcu> Cpu<M> {
     }
 
     fn indexed_h(&mut self) {
-        self.ab.set_low(self.ab.low().wrapping_add(1));
+        self.ab.wrapping_inc_low();
         let high = self.read_byte(self.ab.get());
         self.ab.set(self.db as u16 | ((high as u16) << 8));
     }

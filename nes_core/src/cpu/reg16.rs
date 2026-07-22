@@ -66,6 +66,19 @@ impl Register16 {
     pub fn wrapping_add(&mut self, v: u16) {
         self.set(self.get().wrapping_add(v));
     }
+
+    /// Increment the low byte by 1 with wrapping (0xFF → 0x00).
+    /// High byte is unchanged.
+    pub fn wrapping_inc_low(&mut self) {
+        cfg_select! {
+            target_endian = "little" => {
+                self.bytes[0] = self.bytes[0].wrapping_add(1);
+            }
+            target_endian = "big" => {
+                self.bytes[1] = self.bytes[1].wrapping_add(1);
+            }
+        }
+    }
 }
 
 impl core::ops::AddAssign<u16> for Register16 {
@@ -294,5 +307,33 @@ mod tests {
         r.set(0x1234);
         r.wrapping_add(0);
         assert_eq!(r.get(), 0x1234);
+    }
+
+    #[test]
+    fn test_wrapping_inc_low() {
+        let mut r = Register16::default();
+        r.set(0x1234);
+        r.wrapping_inc_low();
+        assert_eq!(r.get(), 0x1235);
+        assert_eq!(r.low(), 0x35);
+        assert_eq!(r.high(), 0x12);
+    }
+
+    #[test]
+    fn test_wrapping_inc_low_wrap() {
+        let mut r = Register16::default();
+        r.set(0x12FF);
+        r.wrapping_inc_low();
+        assert_eq!(r.get(), 0x1200);
+        assert_eq!(r.low(), 0x00);
+        assert_eq!(r.high(), 0x12);
+    }
+
+    #[test]
+    fn test_wrapping_inc_low_preserves_high() {
+        let mut r = Register16::default();
+        r.set(0xDEAD);
+        r.wrapping_inc_low();
+        assert_eq!(r.high(), 0xDE);
     }
 }
