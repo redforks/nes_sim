@@ -1,4 +1,5 @@
-use super::{Cpu, Flag, Register};
+use super::{Cpu, Flag, Register, ValueSource};
+use crate::cpu::{Alu, Immediate, Mem, ValueSourceTrait, ZeroPage};
 use crate::mcu::Mcu;
 use tinyvec::ArrayVec;
 
@@ -362,37 +363,43 @@ const fn build_opcode_table() -> [ArrayVec<[Microcode; 7]>; 256] {
 
     let mut r = include!("init_microtable.inc.rs");
     r[AND_IMMEDIATE as usize] = microcode_arr!(ImmediateWithOp(ImmediateOp::And));
-    r[AND_ZERO_PAGE as usize] = zero_page_op(And);
-    r[AND_ZERO_PAGE_X as usize] = zero_page_x_op(And);
-    r[AND_ABSOLUTE as usize] = absolute_op(And);
-    r[AND_ABSOLUTE_INDEXED_X as usize] =
-        absolute_indexed_x_op(OpAfterAddressing::And, CrossPageBehavior::FirstClock);
-    r[AND_ABSOLUTE_INDEXED_Y as usize] =
-        absolute_indexed_y_op(OpAfterAddressing::And, CrossPageBehavior::FirstClock);
-    r[AND_INDEXED_INDIRECT as usize] = indexed_indirect_op(And);
-    r[AND_INDIRECT_INDEXED as usize] =
-        indirect_indexed_op(OpAfterAddressing::And, CrossPageBehavior::FirstClock);
-    r[LDA_IMMEDIATE as usize] = microcode_arr!(LoadImmediate(Register::A));
-    r[LDA_ZERO_PAGE as usize] = zero_page_op(LoadR(A));
-    r[LDA_ZERO_PAGE_X as usize] = zero_page_x_op(LoadR(A));
-    r[LDA_ABSOLUTE as usize] = absolute_op(LoadR(A));
+    r[AND_ZERO_PAGE as usize] = zero_page_op(And(ValueSource::ZeroPage));
+    r[AND_ZERO_PAGE_X as usize] = zero_page_x_op(And(ValueSource::ZeroPage));
+    r[AND_ABSOLUTE as usize] = absolute_op(And(ValueSource::Mem));
+    r[AND_ABSOLUTE_INDEXED_X as usize] = absolute_indexed_x_op(
+        OpAfterAddressing::And(ValueSource::Mem),
+        CrossPageBehavior::FirstClock,
+    );
+    r[AND_ABSOLUTE_INDEXED_Y as usize] = absolute_indexed_y_op(
+        OpAfterAddressing::And(ValueSource::Mem),
+        CrossPageBehavior::FirstClock,
+    );
+    r[AND_INDEXED_INDIRECT as usize] = indexed_indirect_op(And(ValueSource::Mem));
+    r[AND_INDIRECT_INDEXED as usize] = indirect_indexed_op(
+        OpAfterAddressing::And(ValueSource::Mem),
+        CrossPageBehavior::FirstClock,
+    );
+    r[LDA_IMMEDIATE as usize] = microcode_arr!(LoadR(ValueSource::Immediate, Register::A));
+    r[LDA_ZERO_PAGE as usize] = zero_page_op(LoadR(ValueSource::ZeroPage, A));
+    r[LDA_ZERO_PAGE_X as usize] = zero_page_x_op(LoadR(ValueSource::ZeroPage, A));
+    r[LDA_ABSOLUTE as usize] = absolute_op(LoadR(ValueSource::Mem, A));
     r[LDA_ABSOLUTE_INDEXED_X as usize] =
         absolute_indexed_x_op(OpAfterAddressing::LoadIntoA, CrossPageBehavior::FirstClock);
     r[LDA_ABSOLUTE_INDEXED_Y as usize] =
         absolute_indexed_y_op(OpAfterAddressing::LoadIntoA, CrossPageBehavior::FirstClock);
-    r[LDA_INDIRECT_INDEXED as usize] = indexed_indirect_op(LoadR(A));
+    r[LDA_INDIRECT_INDEXED as usize] = indexed_indirect_op(LoadR(ValueSource::Mem, A));
     r[LDA_INDIRECT_INDEXED_Y as usize] =
         indirect_indexed_op(OpAfterAddressing::LoadIntoA, CrossPageBehavior::FirstClock);
-    r[LDX_IMMEDIATE as usize] = microcode_arr!(LoadImmediate(Register::X));
-    r[LDX_ZERO_PAGE as usize] = zero_page_op(LoadR(X));
-    r[LDX_ZERO_PAGE_Y as usize] = zero_page_y_op(LoadR(X));
-    r[LDX_ABSOLUTE as usize] = absolute_op(LoadR(X));
+    r[LDX_IMMEDIATE as usize] = microcode_arr!(LoadR(ValueSource::Immediate, Register::X));
+    r[LDX_ZERO_PAGE as usize] = zero_page_op(LoadR(ValueSource::ZeroPage, X));
+    r[LDX_ZERO_PAGE_Y as usize] = zero_page_y_op(LoadR(ValueSource::ZeroPage, X));
+    r[LDX_ABSOLUTE as usize] = absolute_op(LoadR(ValueSource::Mem, X));
     r[LDX_ABSOLUTE_INDEXED_Y as usize] =
         absolute_indexed_y_op(OpAfterAddressing::LoadIntoX, CrossPageBehavior::FirstClock);
-    r[LDY_IMMEDIATE as usize] = microcode_arr!(LoadImmediate(Register::Y));
-    r[LDY_ZERO_PAGE as usize] = zero_page_op(LoadR(Y));
-    r[LDY_ZERO_PAGE_X as usize] = zero_page_x_op(LoadR(Y));
-    r[LDY_ABSOLUTE as usize] = absolute_op(LoadR(Y));
+    r[LDY_IMMEDIATE as usize] = microcode_arr!(LoadR(ValueSource::Immediate, Register::Y));
+    r[LDY_ZERO_PAGE as usize] = zero_page_op(LoadR(ValueSource::ZeroPage, Y));
+    r[LDY_ZERO_PAGE_X as usize] = zero_page_x_op(LoadR(ValueSource::ZeroPage, Y));
+    r[LDY_ABSOLUTE as usize] = absolute_op(LoadR(ValueSource::Mem, Y));
     r[LDY_ABSOLUTE_INDEXED_X as usize] =
         absolute_indexed_x_op(OpAfterAddressing::LoadIntoY, CrossPageBehavior::FirstClock);
     r[STA_ZERO_PAGE as usize] = zero_page_op(StoreR(A));
@@ -789,7 +796,7 @@ const fn build_opcode_table() -> [ArrayVec<[Microcode; 7]>; 256] {
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
 pub enum OpAfterAddressing {
-    And,
+    And(ValueSource),
     /// Read byte from address_latch into register A,
     LoadIntoA,
     LoadIntoX,
@@ -813,10 +820,10 @@ pub enum OpAfterAddressing {
 impl OpAfterAddressing {
     const fn to_microcode(self) -> Microcode {
         match self {
-            OpAfterAddressing::And => Microcode::And,
-            OpAfterAddressing::LoadIntoA => Microcode::LoadR(Register::A),
-            OpAfterAddressing::LoadIntoX => Microcode::LoadR(Register::X),
-            OpAfterAddressing::LoadIntoY => Microcode::LoadR(Register::Y),
+            OpAfterAddressing::And(s) => Microcode::And(s),
+            OpAfterAddressing::LoadIntoA => Microcode::LoadR(ValueSource::Mem, Register::A),
+            OpAfterAddressing::LoadIntoX => Microcode::LoadR(ValueSource::Mem, Register::X),
+            OpAfterAddressing::LoadIntoY => Microcode::LoadR(ValueSource::Mem, Register::Y),
             OpAfterAddressing::LoadIntoAlu => Microcode::LoadIntoAlu,
             OpAfterAddressing::StoreA => Microcode::StoreR(Register::A),
             OpAfterAddressing::Ora => Microcode::Ora,
@@ -885,7 +892,7 @@ impl ImmediateOp {
     pub fn exec<M: Mcu>(self, cpu: &mut Cpu<M>) {
         match self {
             ImmediateOp::Adc => cpu.adc(false),
-            ImmediateOp::And => cpu.and(false),
+            ImmediateOp::And => cpu.and::<Alu>(),
             ImmediateOp::Sbc => cpu.sbc(false),
             ImmediateOp::Cmp => cpu.cmp(false),
             ImmediateOp::Cpx => cpu.cpx(false),
@@ -912,11 +919,9 @@ pub enum Microcode {
     /// Fetch and decode next op code
     FetchAndDecode,
     /// Load register with value from memory
-    LoadR(Register),
+    LoadR(ValueSource, Register),
     /// Store register value to memory
     StoreR(Register),
-    /// Read immediate value into register
-    LoadImmediate(Register),
 
     /// Store cpu alu register into memory at cpu.ab
     StoreAlu,
@@ -980,7 +985,7 @@ pub enum Microcode {
     /// Fetch a byte from memory, then xor with accumulator
     Eor,
     /// Fetch a byte from memory, then and with accumulator
-    And,
+    And(ValueSource),
     /// Undocumented ANE/XAA: (A OR CONST) AND X AND oper -> A
     /// Implemented deterministically as A := X & oper
     AneImmediate,
@@ -1464,19 +1469,15 @@ impl Microcode {
                 cpu.opcode = opcode;
                 cpu.push_microcodes(&OPCODE_TABLE[opcode as usize]);
             }
-            Self::LoadR(r) => {
-                let value = cpu.read_byte(cpu.ab);
-                cpu.set_register(r, value);
-            }
+            Self::LoadR(ValueSource::Immediate, r) => load_r::<_, Immediate>(cpu, r),
+            Self::LoadR(ValueSource::Alu, r) => load_r::<_, Alu>(cpu, r),
+            Self::LoadR(ValueSource::ZeroPage, r) => load_r::<_, ZeroPage>(cpu, r),
+            Self::LoadR(ValueSource::Mem, r) => load_r::<_, Mem>(cpu, r),
             Self::StoreR(r) => match r {
                 Register::A => cpu.write_byte(cpu.a),
                 Register::X => cpu.write_byte(cpu.x),
                 Register::Y => cpu.write_byte(cpu.y),
             },
-            Self::LoadImmediate(r) => {
-                let value = cpu.inc_read_byte();
-                cpu.set_register(r, value);
-            }
             Self::ZeroPage => {
                 let addr = cpu.inc_read_byte();
                 cpu.ab = addr as u16;
@@ -1503,7 +1504,10 @@ impl Microcode {
             Self::Cpy => cpu.cpy(true),
             Self::Ora => cpu.ora(true),
             Self::Eor => cpu.eor(true),
-            Self::And => cpu.and(true),
+            Self::And(ValueSource::Immediate) => cpu.and::<Immediate>(),
+            Self::And(ValueSource::Alu) => cpu.and::<Alu>(),
+            Self::And(ValueSource::ZeroPage) => cpu.and::<ZeroPage>(),
+            Self::And(ValueSource::Mem) => cpu.and::<Mem>(),
             Self::Shx => cpu.shx(),
             Self::Shy => cpu.shy(),
             Self::Sha => cpu.sha(),
@@ -1768,4 +1772,9 @@ impl Microcode {
             }
         }
     }
+}
+
+fn load_r<M: Mcu, S: ValueSourceTrait>(cpu: &mut Cpu<M>, r: Register) {
+    let value = cpu.read_byte2::<S>();
+    cpu.set_register(r, value);
 }

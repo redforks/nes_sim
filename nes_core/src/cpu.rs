@@ -89,6 +89,52 @@ enum InterruptType {
     Irq,
 }
 
+#[derive(Debug, PartialEq, Eq, Clone, Copy)]
+enum ValueSource {
+    Immediate,
+    /// Use alu register
+    Alu,
+    /// Read mem from zero page
+    ZeroPage,
+    /// Read mem for other cases
+    Mem,
+}
+
+trait ValueSourceTrait {
+    fn value<M: Mcu>(cpu: &mut Cpu<M>) -> u8;
+}
+
+struct Immediate;
+struct Alu;
+struct ZeroPage;
+struct Mem;
+
+impl ValueSourceTrait for Immediate {
+    fn value<M: Mcu>(cpu: &mut Cpu<M>) -> u8 {
+        cpu.inc_read_byte()
+    }
+}
+
+impl ValueSourceTrait for Alu {
+    fn value<M: Mcu>(cpu: &mut Cpu<M>) -> u8 {
+        cpu.alu
+    }
+}
+
+impl ValueSourceTrait for ZeroPage {
+    fn value<M: Mcu>(cpu: &mut Cpu<M>) -> u8 {
+        cpu.last_read_addr = Some(cpu.ab);
+        cpu.mcu.read_zero_page(cpu.ab as u8)
+    }
+}
+
+impl ValueSourceTrait for Mem {
+    fn value<M: Mcu>(cpu: &mut Cpu<M>) -> u8 {
+        cpu.last_read_addr = Some(cpu.ab);
+        cpu.mcu.read(cpu.ab)
+    }
+}
+
 pub struct Cpu<M: Mcu> {
     pub a: u8,
     pub x: u8,
@@ -315,6 +361,11 @@ impl<M: Mcu> Cpu<M> {
         self.mcu.read(addr)
     }
 
+    #[inline(always)]
+    fn read_byte2<S: ValueSourceTrait>(&mut self) -> u8 {
+        S::value(self)
+    }
+
     fn read_byte(&mut self, addr: u16) -> u8 {
         self.last_read_addr = Some(addr);
         self.mcu.read(addr)
@@ -523,7 +574,7 @@ impl<M: Mcu> Cpu<M> {
         self.set_flag(Flag::Carry, self.alu & 0x80 != 0);
         self.alu = new;
         self.write_byte(self.alu);
-        self.and(false);
+        self.and::<Alu>();
     }
 
     fn slo(&mut self) {
@@ -602,11 +653,9 @@ impl<M: Mcu> Cpu<M> {
         self.pc = self.ab;
     }
 
-    fn and(&mut self, load_alu: bool) {
-        if load_alu {
-            self.load_alu();
-        }
-        self.set_register(Register::A, self.a & self.alu);
+    fn and<S: ValueSourceTrait>(&mut self) {
+        let v = self.read_byte2::<S>();
+        self.set_register(Register::A, self.a & v);
     }
 
     fn bit(&mut self) {

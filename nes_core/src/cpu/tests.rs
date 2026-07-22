@@ -3805,13 +3805,13 @@ fn branch_relative_taken_and_not_taken_behaves() {
 fn load_immediate_x_and_y_read_operand_and_update_flags() {
     let mut cpu = cpu_with_memory(0x8000, &[(0x8000, 0x80), (0x8001, 0x00)]);
 
-    Microcode::LoadImmediate(Register::X).exec(&mut cpu);
+    Microcode::LoadR(ValueSource::Immediate, Register::X).exec(&mut cpu);
     assert_eq!(cpu.x, 0x80);
     assert_eq!(cpu.pc, 0x8001);
     assert!(cpu.flag(Flag::Negative));
     assert!(!cpu.flag(Flag::Zero));
 
-    Microcode::LoadImmediate(Register::Y).exec(&mut cpu);
+    Microcode::LoadR(ValueSource::Immediate, Register::Y).exec(&mut cpu);
     assert_eq!(cpu.y, 0x00);
     assert_eq!(cpu.pc, 0x8002);
     assert!(cpu.flag(Flag::Zero));
@@ -3849,7 +3849,7 @@ fn store_and_load_microcodes_use_alu_and_memory() {
     cpu.load_alu();
     assert_eq!(cpu.alu, 0x44);
 
-    Microcode::LoadR(Register::A).exec(&mut cpu);
+    Microcode::LoadR(ValueSource::Mem, Register::A).exec(&mut cpu);
     assert_eq!(cpu.a, 0x44);
 
     cpu.ab = 0x0055;
@@ -4016,7 +4016,7 @@ fn load_immediate_a_reads_operand_and_updates_flags() {
     let mut cpu = cpu_with_memory(0x8000, &[(0x8000, 0x00)]);
     cpu.status = Flag::Negative as u8;
 
-    Microcode::LoadImmediate(Register::A).exec(&mut cpu);
+    Microcode::LoadR(ValueSource::Immediate, Register::A).exec(&mut cpu);
 
     assert_eq!(cpu.a, 0x00);
     assert_eq!(cpu.pc, 0x8001);
@@ -4073,7 +4073,7 @@ fn and_immediate_and_memory_microcodes_update_accumulator_and_flags() {
 
     cpu.ab = 0x0042;
     cpu.alu = 0b1010_1010;
-    cpu.and(false);
+    cpu.and::<Alu>();
     assert_eq!(cpu.a, 0b1000_0000);
     assert!(!cpu.flag(Flag::Zero));
     assert!(cpu.flag(Flag::Negative));
