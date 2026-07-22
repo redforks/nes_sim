@@ -1,5 +1,5 @@
 use super::{Cpu, Flag, Register, ValueSource};
-use crate::cpu::{Alu, Immediate, Mem, ValueSourceTrait, ZeroPage};
+use crate::cpu::{Alu, Immediate, Mem, ValueSourceTrait, ValueTargetTrait, ZeroPage};
 use crate::mcu::Mcu;
 use tinyvec::ArrayVec;
 
@@ -180,8 +180,8 @@ const fn indirect_indexed_op(
 const fn zero_page_rmw_op(op: Microcode) -> ArrayVec<[Microcode; 7]> {
     microcode_arr!(
         Microcode::ZeroPage,
-        Microcode::LoadIntoAlu,
-        Microcode::StoreAlu,
+        Microcode::LoadIntoAlu(ValueSource::ZeroPage),
+        Microcode::StoreAlu(ValueSource::ZeroPage),
         op
     )
 }
@@ -190,8 +190,8 @@ const fn zero_page_x_rmw_op(op: Microcode) -> ArrayVec<[Microcode; 7]> {
     microcode_arr!(
         Microcode::ZeroPage,
         Microcode::ZeroPageIndexedX,
-        Microcode::LoadIntoAlu,
-        Microcode::StoreAlu,
+        Microcode::LoadIntoAlu(ValueSource::ZeroPage),
+        Microcode::StoreAlu(ValueSource::ZeroPage),
         op
     )
 }
@@ -200,8 +200,8 @@ const fn absolute_rmw_op(op: Microcode) -> ArrayVec<[Microcode; 7]> {
     microcode_arr!(
         Microcode::AbsoluteL,
         Microcode::AbsoluteH,
-        Microcode::LoadIntoAlu,
-        Microcode::StoreAlu,
+        Microcode::LoadIntoAlu(ValueSource::Mem),
+        Microcode::StoreAlu(ValueSource::Mem),
         op
     )
 }
@@ -214,8 +214,8 @@ const fn absolute_indexed_x_rmw_op(op: Microcode) -> ArrayVec<[Microcode; 7]> {
             op: OpAfterAddressing::LoadIntoAlu,
             first_clock: CrossPageBehavior::FirstClockAlways
         },
-        Microcode::LoadIntoAlu,
-        Microcode::StoreAlu,
+        Microcode::LoadIntoAlu(ValueSource::Mem),
+        Microcode::StoreAlu(ValueSource::Mem),
         op
     )
 }
@@ -228,8 +228,8 @@ const fn absolute_indexed_y_rmw_op(op: Microcode) -> ArrayVec<[Microcode; 7]> {
             op: OpAfterAddressing::LoadIntoAlu,
             first_clock: CrossPageBehavior::FirstClockAlways
         },
-        Microcode::LoadIntoAlu,
-        Microcode::StoreAlu,
+        Microcode::LoadIntoAlu(ValueSource::Mem),
+        Microcode::StoreAlu(ValueSource::Mem),
         op
     )
 }
@@ -240,8 +240,8 @@ const fn indexed_indirect_rmw_op(op: Microcode) -> ArrayVec<[Microcode; 7]> {
         Microcode::ZeroPageIndexedX,
         Microcode::IndexedL,
         Microcode::IndexedH,
-        Microcode::LoadIntoAlu,
-        Microcode::StoreAlu,
+        Microcode::LoadIntoAlu(ValueSource::Mem),
+        Microcode::StoreAlu(ValueSource::Mem),
         op
     )
 }
@@ -255,8 +255,8 @@ const fn indirect_indexed_rmw_op(op: Microcode) -> ArrayVec<[Microcode; 7]> {
             op: OpAfterAddressing::LoadIntoAlu,
             first_clock: CrossPageBehavior::FirstClockAlways
         },
-        Microcode::LoadIntoAlu,
-        Microcode::StoreAlu,
+        Microcode::LoadIntoAlu(ValueSource::Mem),
+        Microcode::StoreAlu(ValueSource::Mem),
         op
     )
 }
@@ -269,7 +269,7 @@ const fn absolute_indexed_x_store_a() -> ArrayVec<[Microcode; 7]> {
             op: OpAfterAddressing::StoreA,
             first_clock: CrossPageBehavior::FirstClockAlways
         },
-        Microcode::StoreR(Register::A)
+        Microcode::StoreR(ValueSource::Mem, Register::A)
     )
 }
 
@@ -281,7 +281,7 @@ const fn absolute_indexed_y_store_a() -> ArrayVec<[Microcode; 7]> {
             op: OpAfterAddressing::StoreA,
             first_clock: CrossPageBehavior::FirstClockAlways
         },
-        Microcode::StoreR(Register::A)
+        Microcode::StoreR(ValueSource::Mem, Register::A)
     )
 }
 
@@ -294,7 +294,7 @@ const fn indirect_indexed_store_a() -> ArrayVec<[Microcode; 7]> {
             op: OpAfterAddressing::StoreA,
             first_clock: CrossPageBehavior::FirstClockAlways
         },
-        Microcode::StoreR(Register::A)
+        Microcode::StoreR(ValueSource::Mem, Register::A)
     )
 }
 
@@ -402,21 +402,21 @@ const fn build_opcode_table() -> [ArrayVec<[Microcode; 7]>; 256] {
     r[LDY_ABSOLUTE as usize] = absolute_op(LoadR(ValueSource::Mem, Y));
     r[LDY_ABSOLUTE_INDEXED_X as usize] =
         absolute_indexed_x_op(OpAfterAddressing::LoadIntoY, CrossPageBehavior::FirstClock);
-    r[STA_ZERO_PAGE as usize] = zero_page_op(StoreR(A));
-    r[STA_ZERO_PAGE_X as usize] = zero_page_x_op(StoreR(A));
-    r[STA_ABSOLUTE as usize] = absolute_op(StoreR(A));
+    r[STA_ZERO_PAGE as usize] = zero_page_op(StoreR(ValueSource::ZeroPage, A));
+    r[STA_ZERO_PAGE_X as usize] = zero_page_x_op(StoreR(ValueSource::ZeroPage, A));
+    r[STA_ABSOLUTE as usize] = absolute_op(StoreR(ValueSource::Mem, A));
     r[STA_ABSOLUTE_INDEXED_X as usize] = absolute_indexed_x_store_a();
     r[STA_ABSOLUTE_INDEXED_Y as usize] = absolute_indexed_y_store_a();
-    r[STA_INDEXED_INDIRECT as usize] = indexed_indirect_op(StoreR(A));
+    r[STA_INDEXED_INDIRECT as usize] = indexed_indirect_op(StoreR(ValueSource::Mem, A));
     r[STA_INDIRECT_INDEXED_Y as usize] = indirect_indexed_store_a();
-    r[STX_ZERO_PAGE as usize] = zero_page_op(StoreR(X));
-    r[STX_ZERO_PAGE_Y as usize] = zero_page_y_op(StoreR(X));
-    r[STX_ABSOLUTE as usize] = absolute_op(StoreR(X));
-    r[STY_ZERO_PAGE as usize] = zero_page_op(StoreR(Y));
-    r[STY_ZERO_PAGE_X as usize] = zero_page_x_op(StoreR(Y));
-    r[STY_ABSOLUTE as usize] = absolute_op(StoreR(Y));
-    r[BIT_ZERO_PAGE as usize] = zero_page_op(Bit);
-    r[BIT_ABSOLUTE as usize] = absolute_op(Bit);
+    r[STX_ZERO_PAGE as usize] = zero_page_op(StoreR(ValueSource::ZeroPage, X));
+    r[STX_ZERO_PAGE_Y as usize] = zero_page_y_op(StoreR(ValueSource::ZeroPage, X));
+    r[STX_ABSOLUTE as usize] = absolute_op(StoreR(ValueSource::Mem, X));
+    r[STY_ZERO_PAGE as usize] = zero_page_op(StoreR(ValueSource::ZeroPage, Y));
+    r[STY_ZERO_PAGE_X as usize] = zero_page_x_op(StoreR(ValueSource::ZeroPage, Y));
+    r[STY_ABSOLUTE as usize] = absolute_op(StoreR(ValueSource::Mem, Y));
+    r[BIT_ZERO_PAGE as usize] = zero_page_op(Bit(ValueSource::ZeroPage));
+    r[BIT_ABSOLUTE as usize] = absolute_op(Bit(ValueSource::Mem));
     r[ADC_IMMEDIATE as usize] = microcode_arr!(ImmediateWithOp(ImmediateOp::Adc));
     r[ADC_ZERO_PAGE as usize] = zero_page_op(Adc);
     r[ADC_ZERO_PAGE_X as usize] = zero_page_x_op(Adc);
@@ -693,7 +693,12 @@ const fn build_opcode_table() -> [ArrayVec<[Microcode; 7]>; 256] {
     r[SAX_ZERO_PAGE_Y as usize] = zero_page_y_op(Sax);
     r[SAX_ABSOLUTE as usize] = absolute_op(Sax);
     r[SAX_INDEXED_INDIRECT as usize] = indexed_indirect_op(Sax);
-    r[DCP_ZERO_PAGE as usize] = microcode_arr!(ZeroPage, LoadIntoAlu, StoreAlu, Dcp);
+    r[DCP_ZERO_PAGE as usize] = microcode_arr!(
+        ZeroPage,
+        LoadIntoAlu(ValueSource::ZeroPage),
+        StoreAlu(ValueSource::ZeroPage),
+        Dcp
+    );
     r[DCP_ZERO_PAGE_X as usize] = zero_page_x_rmw_op(Dcp);
     r[DCP_ABSOLUTE as usize] = absolute_rmw_op(Dcp);
     r[DCP_ABSOLUTE_INDEXED_X as usize] = absolute_indexed_x_rmw_op(Dcp);
@@ -824,8 +829,8 @@ impl OpAfterAddressing {
             OpAfterAddressing::LoadIntoA => Microcode::LoadR(ValueSource::Mem, Register::A),
             OpAfterAddressing::LoadIntoX => Microcode::LoadR(ValueSource::Mem, Register::X),
             OpAfterAddressing::LoadIntoY => Microcode::LoadR(ValueSource::Mem, Register::Y),
-            OpAfterAddressing::LoadIntoAlu => Microcode::LoadIntoAlu,
-            OpAfterAddressing::StoreA => Microcode::StoreR(Register::A),
+            OpAfterAddressing::LoadIntoAlu => Microcode::LoadIntoAlu(ValueSource::Mem),
+            OpAfterAddressing::StoreA => Microcode::StoreR(ValueSource::Mem, Register::A),
             OpAfterAddressing::Ora => Microcode::Ora,
             OpAfterAddressing::Eor => Microcode::Eor,
             OpAfterAddressing::Lax => Microcode::Lax,
@@ -921,10 +926,10 @@ pub enum Microcode {
     /// Load register with value from memory
     LoadR(ValueSource, Register),
     /// Store register value to memory
-    StoreR(Register),
+    StoreR(ValueSource, Register),
 
     /// Store cpu alu register into memory at cpu.ab
-    StoreAlu,
+    StoreAlu(ValueSource),
 
     // addressing microcodes
     /// Take a byte from instruction data stream, set cpu address_bus field by read from memory use zero page addressing
@@ -957,7 +962,7 @@ pub enum Microcode {
     SkipImmediate,
 
     /// Load byte into alu at memory ab
-    LoadIntoAlu,
+    LoadIntoAlu(ValueSource),
     /// Store SHX result at memory ab
     Shx,
     /// Store SHY result at memory ab
@@ -994,7 +999,7 @@ pub enum Microcode {
     /// Execute LAS/LAR semantics
     Las,
     /// Test bits in accumulator against ALU value
-    Bit,
+    Bit(ValueSource),
 
     Asl(AOrMemory),
     Lsr(AOrMemory),
@@ -1435,8 +1440,8 @@ impl Microcode {
     pub const fn is_write_operation(self) -> bool {
         matches!(
             self,
-            Self::StoreR(_)
-                | Self::StoreAlu
+            Self::StoreR(..)
+                | Self::StoreAlu(..)
                 | Self::Shx
                 | Self::Shy
                 | Self::Sha
@@ -1473,11 +1478,9 @@ impl Microcode {
             Self::LoadR(ValueSource::Alu, r) => load_r::<_, Alu>(cpu, r),
             Self::LoadR(ValueSource::ZeroPage, r) => load_r::<_, ZeroPage>(cpu, r),
             Self::LoadR(ValueSource::Mem, r) => load_r::<_, Mem>(cpu, r),
-            Self::StoreR(r) => match r {
-                Register::A => cpu.write_byte(cpu.a),
-                Register::X => cpu.write_byte(cpu.x),
-                Register::Y => cpu.write_byte(cpu.y),
-            },
+            Self::StoreR(ValueSource::ZeroPage, r) => store_r::<_, ZeroPage>(cpu, r),
+            Self::StoreR(ValueSource::Mem, r) => store_r::<_, Mem>(cpu, r),
+            Self::StoreR(_, _) => unreachable!(),
             Self::ZeroPage => {
                 let addr = cpu.inc_read_byte();
                 cpu.ab = addr as u16;
@@ -1518,8 +1521,12 @@ impl Microcode {
             Self::IndexedYWithOp { op, first_clock } => {
                 Self::absolute_indexed_with_op_generic(cpu, op, first_clock, cpu.y)
             }
-            Self::Bit => cpu.bit(),
-            Self::StoreAlu => cpu.write_byte(cpu.alu),
+            Self::Bit(ValueSource::ZeroPage) => cpu.bit::<ZeroPage>(),
+            Self::Bit(ValueSource::Mem) => cpu.bit::<Mem>(),
+            Self::Bit(_) => unreachable!(),
+            Self::StoreAlu(ValueSource::ZeroPage) => cpu.write_byte2::<ZeroPage>(cpu.alu),
+            Self::StoreAlu(ValueSource::Mem) => cpu.write_byte(cpu.alu),
+            Self::StoreAlu(_) => unreachable!(),
             Self::Nop => {}
             Self::SkipImmediate => {
                 cpu.inc_read_byte();
@@ -1645,9 +1652,13 @@ impl Microcode {
             Self::LoadPcAbsoluteH => {
                 cpu.pc = (cpu.ab & 0xff) | ((cpu.inc_read_byte() as u16) << 8);
             }
-            Self::LoadIntoAlu => {
+            Self::LoadIntoAlu(ValueSource::ZeroPage) => {
+                cpu.alu = cpu.mcu.read_zero_page(cpu.ab as u8);
+            }
+            Self::LoadIntoAlu(ValueSource::Mem) => {
                 cpu.load_alu();
             }
+            Self::LoadIntoAlu(_) => unreachable!(),
             Self::ImmediateWithOp(op) => Self::immediate_with_op(cpu, op),
         }
     }
@@ -1777,4 +1788,12 @@ impl Microcode {
 fn load_r<M: Mcu, S: ValueSourceTrait>(cpu: &mut Cpu<M>, r: Register) {
     let value = cpu.read_byte2::<S>();
     cpu.set_register(r, value);
+}
+
+fn store_r<M: Mcu, S: ValueTargetTrait>(cpu: &mut Cpu<M>, r: Register) {
+    match r {
+        Register::A => cpu.write_byte2::<S>(cpu.a),
+        Register::X => cpu.write_byte2::<S>(cpu.x),
+        Register::Y => cpu.write_byte2::<S>(cpu.y),
+    }
 }

@@ -135,6 +135,22 @@ impl ValueSourceTrait for Mem {
     }
 }
 
+trait ValueTargetTrait {
+    fn write<M: Mcu>(cpu: &mut Cpu<M>, value: u8);
+}
+
+impl ValueTargetTrait for ZeroPage {
+    fn write<M: Mcu>(cpu: &mut Cpu<M>, value: u8) {
+        cpu.mcu.write_zero_page(cpu.ab as u8, value);
+    }
+}
+
+impl ValueTargetTrait for Mem {
+    fn write<M: Mcu>(cpu: &mut Cpu<M>, value: u8) {
+        cpu.mcu.write(cpu.ab, value);
+    }
+}
+
 pub struct Cpu<M: Mcu> {
     pub a: u8,
     pub x: u8,
@@ -364,6 +380,11 @@ impl<M: Mcu> Cpu<M> {
     #[inline(always)]
     fn read_byte2<S: ValueSourceTrait>(&mut self) -> u8 {
         S::value(self)
+    }
+
+    #[inline(always)]
+    fn write_byte2<S: ValueTargetTrait>(&mut self, value: u8) {
+        S::write(self, value);
     }
 
     fn read_byte(&mut self, addr: u16) -> u8 {
@@ -658,8 +679,8 @@ impl<M: Mcu> Cpu<M> {
         self.set_register(Register::A, self.a & v);
     }
 
-    fn bit(&mut self) {
-        let v = self.read_byte(self.ab);
+    fn bit<S: ValueSourceTrait>(&mut self) {
+        let v = self.read_byte2::<S>();
         self.set_flag(Flag::Overflow, v & 0x40 != 0);
         self.update_negative_flag(v);
         self.update_zero_flag(self.a & v);

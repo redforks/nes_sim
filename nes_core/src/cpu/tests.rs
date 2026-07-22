@@ -3826,11 +3826,11 @@ fn store_microcodes_write_registers_to_memory() {
     cpu.x = 0x22;
     cpu.y = 0x33;
 
-    Microcode::StoreR(Register::A).exec(&mut cpu);
+    Microcode::StoreR(ValueSource::Mem, Register::A).exec(&mut cpu);
     cpu.ab = 0x1235;
-    Microcode::StoreR(Register::X).exec(&mut cpu);
+    Microcode::StoreR(ValueSource::Mem, Register::X).exec(&mut cpu);
     cpu.ab = 0x1236;
-    Microcode::StoreR(Register::Y).exec(&mut cpu);
+    Microcode::StoreR(ValueSource::Mem, Register::Y).exec(&mut cpu);
 
     assert_eq!(cpu.mcu().mem[0x1234], 0x11);
     assert_eq!(cpu.mcu().mem[0x1235], 0x22);
@@ -3854,7 +3854,7 @@ fn store_and_load_microcodes_use_alu_and_memory() {
 
     cpu.ab = 0x0055;
     cpu.a = 0xAA;
-    Microcode::StoreR(Register::A).exec(&mut cpu);
+    Microcode::StoreR(ValueSource::Mem, Register::A).exec(&mut cpu);
     assert_eq!(cpu.mcu().mem[0x0055], 0xAA);
 }
 
@@ -3899,7 +3899,7 @@ fn compare_and_bit_microcodes_update_flags() {
     cpu.a = 0x41;
     cpu.ab = 0x0001;
     cpu.load_alu();
-    Microcode::Bit.exec(&mut cpu);
+    Microcode::Bit(ValueSource::Mem).exec(&mut cpu);
     assert!(cpu.flag(Flag::Overflow));
     assert!(!cpu.flag(Flag::Negative));
     assert!(!cpu.flag(Flag::Zero));
@@ -4085,7 +4085,7 @@ fn bit_updates_flags_from_alu_and_accumulator() {
     cpu.a = 0b0011_0000;
     cpu.status = Flag::Zero as u8;
 
-    Microcode::Bit.exec(&mut cpu);
+    Microcode::Bit(ValueSource::Mem).exec(&mut cpu);
 
     assert!(cpu.flag(Flag::Negative));
     assert!(cpu.flag(Flag::Overflow));
@@ -4093,7 +4093,7 @@ fn bit_updates_flags_from_alu_and_accumulator() {
 
     let mut cpu = cpu_with_memory(0x0000, &[(0, 0b0100_0000)]);
     cpu.a = 0b1111_0000;
-    Microcode::Bit.exec(&mut cpu);
+    Microcode::Bit(ValueSource::Mem).exec(&mut cpu);
     assert!(!cpu.flag(Flag::Negative));
     assert!(cpu.flag(Flag::Overflow));
     assert!(!cpu.flag(Flag::Zero));
