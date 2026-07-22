@@ -1543,11 +1543,8 @@ impl Microcode {
             Self::IndexedL => {
                 cpu.db = cpu.read_byte(cpu.ab);
             }
-            Self::IndexedH => {
-                let page = cpu.ab & 0xFF00;
-                let addr = page | (cpu.ab as u8).wrapping_add(1) as u16;
-                cpu.ab = cpu.db as u16 | ((cpu.read_byte(addr) as u16) << 8);
-            }
+            Self::IndexedH => cpu.indexed_h(),
+
             Self::Asl(target) => Self::shift_rotate(cpu, target, ShiftRotateOp::Asl),
             Self::Lsr(target) => Self::shift_rotate(cpu, target, ShiftRotateOp::Lsr),
             Self::Rol(target) => Self::shift_rotate(cpu, target, ShiftRotateOp::Rol),
@@ -1604,9 +1601,7 @@ impl Microcode {
             Self::Sre => cpu.sre(),
 
             Self::IndexedHAndJump => {
-                let page = cpu.ab & 0xFF00;
-                let addr = page | (cpu.ab as u8).wrapping_add(1) as u16;
-                cpu.ab = cpu.db as u16 | ((cpu.read_byte(addr) as u16) << 8);
+                cpu.indexed_h();
                 cpu.set_pc_to_ab()
             }
 

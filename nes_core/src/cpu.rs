@@ -752,6 +752,12 @@ impl<M: Mcu> Cpu<M> {
             int_str,
         );
     }
+
+    fn indexed_h(&mut self) {
+        let page = self.ab & 0xFF00;
+        let addr = page | (self.ab as u8).wrapping_add(1) as u16;
+        self.ab = self.db as u16 | ((self.read_byte(addr) as u16) << 8);
+    }
 }
 
 const OPCODE_MNEMONICS: [&str; 256] = {
