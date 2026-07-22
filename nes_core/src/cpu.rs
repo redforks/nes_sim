@@ -3,6 +3,7 @@ use arraydeque::ArrayDeque;
 use microcode::{InterruptSequences, Microcode};
 
 mod microcode;
+mod reg16;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Register {
