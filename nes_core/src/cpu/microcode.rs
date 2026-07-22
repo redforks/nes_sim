@@ -1543,7 +1543,9 @@ impl Microcode {
             Self::Bit(ValueSource::ZeroPage) => cpu.bit::<ZeroPage>(),
             Self::Bit(ValueSource::Mem) => cpu.bit::<Mem>(),
             Self::Bit(_) => unreachable!(),
-            Self::StoreAlu(ValueSource::ZeroPage) => cpu.write_byte2::<ZeroPage>(cpu.alu),
+            Self::StoreAlu(ValueSource::ZeroPage) => {
+                <ZeroPage as ValueTargetTrait>::write(cpu, cpu.alu)
+            }
             Self::StoreAlu(ValueSource::Mem) => cpu.write_byte(cpu.alu),
             Self::StoreAlu(_) => unreachable!(),
             Self::Nop => {}
@@ -1805,14 +1807,14 @@ impl Microcode {
 }
 
 fn load_r<M: Mcu, S: ValueSourceTrait>(cpu: &mut Cpu<M>, r: Register) {
-    let value = cpu.read_byte2::<S>();
+    let value = S::value(cpu);
     cpu.set_register(r, value);
 }
 
 fn store_r<M: Mcu, S: ValueTargetTrait>(cpu: &mut Cpu<M>, r: Register) {
     match r {
-        Register::A => cpu.write_byte2::<S>(cpu.a),
-        Register::X => cpu.write_byte2::<S>(cpu.x),
-        Register::Y => cpu.write_byte2::<S>(cpu.y),
+        Register::A => S::write(cpu, cpu.a),
+        Register::X => S::write(cpu, cpu.x),
+        Register::Y => S::write(cpu, cpu.y),
     }
 }

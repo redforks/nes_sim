@@ -377,16 +377,6 @@ impl<M: Mcu> Cpu<M> {
         self.mcu.read(addr)
     }
 
-    #[inline(always)]
-    fn read_byte2<S: ValueSourceTrait>(&mut self) -> u8 {
-        S::value(self)
-    }
-
-    #[inline(always)]
-    fn write_byte2<S: ValueTargetTrait>(&mut self, value: u8) {
-        S::write(self, value);
-    }
-
     fn read_byte(&mut self, addr: u16) -> u8 {
         self.last_read_addr = Some(addr);
         self.mcu.read(addr)
@@ -471,42 +461,42 @@ impl<M: Mcu> Cpu<M> {
     }
 
     fn adc<S: ValueSourceTrait>(&mut self) {
-        let val = self.read_byte2::<S>();
+        let val = S::value(self);
         self.do_adc(val);
     }
 
     fn sbc<S: ValueSourceTrait>(&mut self) {
-        let val = self.read_byte2::<S>();
+        let val = S::value(self);
         let val = val ^ 0xFF;
         self.do_adc(val);
     }
 
     fn ora<S: ValueSourceTrait>(&mut self) {
-        let val = self.read_byte2::<S>();
+        let val = S::value(self);
         self.set_register(Register::A, self.a | val);
     }
 
     fn eor<S: ValueSourceTrait>(&mut self) {
-        let val = self.read_byte2::<S>();
+        let val = S::value(self);
         self.set_register(Register::A, self.a ^ val);
     }
 
     fn cmp<S: ValueSourceTrait>(&mut self) {
-        let val = self.read_byte2::<S>();
+        let val = S::value(self);
         let t = self.a.wrapping_sub(val);
         self.update_zero_negative_flags(t);
         self.set_flag(Flag::Carry, self.a >= val);
     }
 
     fn cpx<S: ValueSourceTrait>(&mut self) {
-        let val = self.read_byte2::<S>();
+        let val = S::value(self);
         let t = self.x.wrapping_sub(val);
         self.update_zero_negative_flags(t);
         self.set_flag(Flag::Carry, self.x >= val);
     }
 
     fn cpy<S: ValueSourceTrait>(&mut self) {
-        let val = self.read_byte2::<S>();
+        let val = S::value(self);
         let t = self.y.wrapping_sub(val);
         self.update_zero_negative_flags(t);
         self.set_flag(Flag::Carry, self.y >= val);
@@ -654,12 +644,12 @@ impl<M: Mcu> Cpu<M> {
     }
 
     fn and<S: ValueSourceTrait>(&mut self) {
-        let v = self.read_byte2::<S>();
+        let v = S::value(self);
         self.set_register(Register::A, self.a & v);
     }
 
     fn bit<S: ValueSourceTrait>(&mut self) {
-        let v = self.read_byte2::<S>();
+        let v = S::value(self);
         self.set_flag(Flag::Overflow, v & 0x40 != 0);
         self.update_negative_flag(v);
         self.update_zero_flag(self.a & v);
