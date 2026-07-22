@@ -157,7 +157,6 @@ pub struct Cpu<M: Mcu> {
     pub sp: u8,
     pub status: u8,
     last_status: u8,
-    mcu: M,
 
     opcode: u8,
     /// address bus, which memory byte that cpu current select
@@ -170,13 +169,14 @@ pub struct Cpu<M: Mcu> {
     nmi_detecteor: NmiDetector,
     interrupt_detected: Option<InterruptType>,
     irq_detector: IrqDetector,
-    halt: bool,
     pub(crate) last_read_addr: Option<u16>,
-
-    microcode_queue: ArrayDeque<Microcode, 8>,
 
     track_interrupt: bool,
     pub(crate) frozen: bool,
+    halt: bool,
+
+    microcode_queue: ArrayDeque<Microcode, 8>,
+    mcu: M,
 }
 
 impl<M: Mcu> Cpu<M> {
