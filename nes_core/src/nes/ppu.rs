@@ -839,8 +839,8 @@ fn fetch_tile_data(
 impl<R: Render> Mcu for Ppu<R> {
     fn read(&mut self, address: u16) -> u8 {
         match address {
-            0x2000..=0x3fff => self.read_ppureg(address),
             0x4100..=0xffff => self.cartridge.read(address),
+            0x2000..=0x3fff => self.read_ppureg(address),
             _ => 0,
         }
     }
