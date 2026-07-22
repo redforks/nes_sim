@@ -418,14 +418,14 @@ const fn build_opcode_table() -> [ArrayVec<[Microcode; 7]>; 256] {
     r[BIT_ZERO_PAGE as usize] = zero_page_op(Bit(ValueSource::ZeroPage));
     r[BIT_ABSOLUTE as usize] = absolute_op(Bit(ValueSource::Mem));
     r[ADC_IMMEDIATE as usize] = microcode_arr!(ImmediateWithOp(ImmediateOp::Adc));
-    r[ADC_ZERO_PAGE as usize] = zero_page_op(Adc);
-    r[ADC_ZERO_PAGE_X as usize] = zero_page_x_op(Adc);
-    r[ADC_ABSOLUTE as usize] = absolute_op(Adc);
+    r[ADC_ZERO_PAGE as usize] = zero_page_op(Adc(ValueSource::ZeroPage));
+    r[ADC_ZERO_PAGE_X as usize] = zero_page_x_op(Adc(ValueSource::ZeroPage));
+    r[ADC_ABSOLUTE as usize] = absolute_op(Adc(ValueSource::Mem));
     r[ADC_ABSOLUTE_INDEXED_X as usize] =
         absolute_indexed_x_op(OpAfterAddressing::Adc, CrossPageBehavior::FirstClock);
     r[ADC_ABSOLUTE_INDEXED_Y as usize] =
         absolute_indexed_y_op(OpAfterAddressing::Adc, CrossPageBehavior::FirstClock);
-    r[ADC_INDEXED_INDIRECT as usize] = indexed_indirect_op(Adc);
+    r[ADC_INDEXED_INDIRECT as usize] = indexed_indirect_op(Adc(ValueSource::Mem));
     r[ADC_INDIRECT_INDEXED as usize] =
         indirect_indexed_op(OpAfterAddressing::Adc, CrossPageBehavior::FirstClock);
     r[ASL_ACCUMULATOR as usize] = microcode_arr!(Asl(Accumulator));
@@ -836,7 +836,7 @@ impl OpAfterAddressing {
             OpAfterAddressing::Lax => Microcode::Lax,
             OpAfterAddressing::Las => Microcode::Las,
             OpAfterAddressing::Sbc => Microcode::Sbc,
-            OpAfterAddressing::Adc => Microcode::Adc,
+            OpAfterAddressing::Adc => Microcode::Adc(ValueSource::Mem),
             OpAfterAddressing::Shx => Microcode::Shx,
             OpAfterAddressing::Shy => Microcode::Shy,
             OpAfterAddressing::Sha => Microcode::Sha,
@@ -896,7 +896,7 @@ pub enum ShiftRotateOp {
 impl ImmediateOp {
     pub fn exec<M: Mcu>(self, cpu: &mut Cpu<M>) {
         match self {
-            ImmediateOp::Adc => cpu.adc(false),
+            ImmediateOp::Adc => cpu.adc::<Alu>(),
             ImmediateOp::And => cpu.and::<Alu>(),
             ImmediateOp::Sbc => cpu.sbc(false),
             ImmediateOp::Cmp => cpu.cmp(false),
@@ -976,7 +976,7 @@ pub enum Microcode {
     ImmediateWithOp(ImmediateOp),
 
     /// Fetch a byte from memory, then add to accumulator with carry
-    Adc,
+    Adc(ValueSource),
     /// Fetch a byte from memory, then subtract with carry from accumulator
     Sbc,
     /// Fetch a byte from memory, then compare with accumulator
@@ -1500,7 +1500,9 @@ impl Microcode {
                 cpu.set_abh(high);
             }
 
-            Self::Adc => cpu.adc(true),
+            Self::Adc(ValueSource::ZeroPage) => cpu.adc::<ZeroPage>(),
+            Self::Adc(ValueSource::Mem) => cpu.adc::<Mem>(),
+            Self::Adc(_) => unreachable!(),
             Self::Sbc => cpu.sbc(true),
             Self::Cmp => cpu.cmp(true),
             Self::Cpx => cpu.cpx(true),

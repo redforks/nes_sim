@@ -470,12 +470,9 @@ impl<M: Mcu> Cpu<M> {
         self.set_register(Register::A, result);
     }
 
-    fn adc(&mut self, load_alu: bool) {
-        if load_alu {
-            self.load_alu();
-        }
-
-        self.do_adc(self.alu);
+    fn adc<S: ValueSourceTrait>(&mut self) {
+        let val = self.read_byte2::<S>();
+        self.do_adc(val);
     }
 
     fn sbc(&mut self, load_alu: bool) {
@@ -587,7 +584,7 @@ impl<M: Mcu> Cpu<M> {
         self.alu = (self.alu >> 1) | ((self.flag(Flag::Carry) as u8) << 7);
         self.write_byte(self.alu);
         self.set_flag(Flag::Carry, carry);
-        self.adc(false);
+        self.adc::<Alu>();
     }
 
     fn rla(&mut self) {
