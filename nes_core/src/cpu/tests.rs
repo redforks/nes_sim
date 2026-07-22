@@ -245,27 +245,6 @@ fn test_halt_flag() {
 }
 
 #[test]
-fn test_inc_pc() {
-    let mut cpu = create_cpu();
-    cpu.pc = 0x1000;
-
-    cpu.inc_pc(2);
-    assert_eq!(cpu.pc, 0x1002);
-
-    cpu.inc_pc(-1);
-    assert_eq!(cpu.pc, 0x1001);
-}
-
-#[test]
-fn test_inc_pc_wrapping() {
-    let mut cpu = create_cpu();
-    cpu.pc = 0xFFFF;
-
-    cpu.inc_pc(1);
-    assert_eq!(cpu.pc, 0x0000);
-}
-
-#[test]
 fn test_reset() {
     let mut cpu = create_cpu();
     cpu.pc = 0x1234;
@@ -3526,16 +3505,6 @@ fn test_adc_all_flags() {
     assert!(cpu.flag(Flag::Carry)); // overflow occurred
     // Overflow: -1 + 0 + 1 = 0, which is within range, so no signed overflow
     assert!(!cpu.flag(Flag::Overflow)); // no signed overflow
-}
-
-#[test]
-fn test_inc_pc_edge_cases() {
-    // Test PC increment edge cases
-    let mut cpu = create_cpu();
-    cpu.pc = 0xFFFF;
-    cpu.inc_pc(1);
-
-    assert_eq!(cpu.pc, 0x0000); // wraps
 }
 
 #[test]

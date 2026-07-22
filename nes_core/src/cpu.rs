@@ -361,10 +361,6 @@ impl<M: Mcu> Cpu<M> {
         self.status = (self.status & !mask) | (if v { mask } else { 0 });
     }
 
-    fn inc_pc(&mut self, delta: i8) {
-        self.pc = self.pc.wrapping_add(delta as u16);
-    }
-
     fn update_negative_flag(&mut self, value: u8) {
         self.set_flag(Flag::Negative, value & 0x80 != 0);
     }
@@ -392,7 +388,7 @@ impl<M: Mcu> Cpu<M> {
 
     fn inc_read_byte(&mut self) -> u8 {
         let addr = self.pc;
-        self.inc_pc(1);
+        self.pc = self.pc.wrapping_add(1);
         self.read_byte(addr)
     }
 
