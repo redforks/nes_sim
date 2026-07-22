@@ -124,15 +124,15 @@ impl ValueSourceTrait for Alu {
 
 impl ValueSourceTrait for ZeroPage {
     fn value<M: Mcu>(cpu: &mut Cpu<M>) -> u8 {
-        cpu.last_read_addr = Some(cpu.ab);
-        cpu.mcu.read_zero_page(cpu.ab as u8)
+        cpu.last_read_addr = Some(cpu.ab.get());
+        cpu.mcu.read_zero_page(cpu.ab.low())
     }
 }
 
 impl ValueSourceTrait for Mem {
     fn value<M: Mcu>(cpu: &mut Cpu<M>) -> u8 {
-        cpu.last_read_addr = Some(cpu.ab);
-        cpu.mcu.read(cpu.ab)
+        cpu.last_read_addr = Some(cpu.ab.get());
+        cpu.mcu.read(cpu.ab.get())
     }
 }
 
@@ -142,13 +142,13 @@ trait ValueTargetTrait {
 
 impl ValueTargetTrait for ZeroPage {
     fn write<M: Mcu>(cpu: &mut Cpu<M>, value: u8) {
-        cpu.mcu.write_zero_page(cpu.ab as u8, value);
+        cpu.mcu.write_zero_page(cpu.ab.low(), value);
     }
 }
 
 impl ValueTargetTrait for Mem {
     fn write<M: Mcu>(cpu: &mut Cpu<M>, value: u8) {
-        cpu.mcu.write(cpu.ab, value);
+        cpu.mcu.write(cpu.ab.get(), value);
     }
 }
 
@@ -163,7 +163,7 @@ pub struct Cpu<M: Mcu> {
 
     opcode: u8,
     /// address bus, which memory byte that cpu current select
-    ab: u16,
+    ab: Register16,
     /// data bus, what byte that cpu will save or get from memory bus
     db: u8, // save low byte during indexed addressing
     alu: u8,
@@ -198,7 +198,7 @@ impl<M: Mcu> Cpu<M> {
             interrupt_detected: None,
             nmi_detecteor: Default::default(),
             irq_detector: Default::default(),
-            ab: 0,
+            ab: Register16::default(),
             db: 0,
             alu: 0,
             microcode_queue: ArrayDeque::new(),
@@ -398,7 +398,7 @@ impl<M: Mcu> Cpu<M> {
     }
 
     fn write_byte(&mut self, value: u8) {
-        self.write_mem(self.ab, value);
+        self.write_mem(self.ab.get(), value);
     }
 
     fn write_mem(&mut self, addr: u16, value: u8) {
@@ -430,23 +430,23 @@ impl<M: Mcu> Cpu<M> {
     }
 
     fn abh(&self) -> u8 {
-        (self.ab >> 8) as u8
+        self.ab.high()
     }
 
     fn abl(&self) -> u8 {
-        (self.ab & 0xff) as u8
+        self.ab.low()
     }
 
     fn set_abh(&mut self, v: u8) {
-        self.ab = (self.ab & 0x00ff) | ((v as u16) << 8);
+        self.ab.set_high(v);
     }
 
     fn set_abl(&mut self, v: u8) {
-        self.ab = (self.ab & 0xff00) | v as u16;
+        self.ab.set_low(v);
     }
 
     fn load_alu(&mut self) {
-        self.alu = self.read_byte(self.ab);
+        self.alu = self.read_byte(self.ab.get());
     }
 
     fn do_adc(&mut self, val: u8) {
@@ -584,20 +584,20 @@ impl<M: Mcu> Cpu<M> {
 
     fn shx(&mut self) {
         let v = self.x & self.abh().wrapping_add(1);
-        self.ab = (self.abl() as u16) | ((v as u16) << 8);
+        self.ab.set_high(v);
         self.write_byte(v);
     }
 
     fn shy(&mut self) {
         let v = self.y & self.abh().wrapping_add(1);
-        self.ab = (self.abl() as u16) | ((v as u16) << 8);
+        self.ab.set_high(v);
         self.write_byte(v);
     }
 
     fn sha(&mut self) {
         // SHA (AHX/AXA): store A & X & (high-byte of addr + 1) at address
         let out = self.a & self.x & self.abh().wrapping_add(1);
-        self.ab = (self.abl() as u16) | ((out as u16) << 8);
+        self.ab.set_high(out);
         self.write_byte(out);
     }
 
@@ -605,7 +605,7 @@ impl<M: Mcu> Cpu<M> {
         let v = self.a & self.x;
         self.sp = v;
         let out = v & self.abh().wrapping_add(1);
-        self.ab = (self.abl() as u16) | ((out as u16) << 8);
+        self.ab.set_high(out);
         self.write_byte(out);
     }
 
@@ -641,7 +641,7 @@ impl<M: Mcu> Cpu<M> {
     }
 
     fn set_pc_to_ab(&mut self) {
-        self.pc.set(self.ab);
+        self.pc.set(self.ab.get());
     }
 
     fn and<S: ValueSourceTrait>(&mut self) {
@@ -764,9 +764,9 @@ impl<M: Mcu> Cpu<M> {
     }
 
     fn indexed_h(&mut self) {
-        let page = self.ab & 0xFF00;
-        let addr = page | (self.ab as u8).wrapping_add(1) as u16;
-        self.ab = self.db as u16 | ((self.read_byte(addr) as u16) << 8);
+        self.ab.set_low(self.ab.low().wrapping_add(1));
+        let high = self.read_byte(self.ab.get());
+        self.ab.set(self.db as u16 | ((high as u16) << 8));
     }
 }
 

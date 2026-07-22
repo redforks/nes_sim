@@ -1486,13 +1486,13 @@ impl Microcode {
             Self::StoreR(ValueSource::Mem, r) => store_r::<_, Mem>(cpu, r),
             Self::ZeroPage => {
                 let addr = cpu.inc_read_byte();
-                cpu.ab = addr as u16;
+                cpu.ab.set(addr as u16);
             }
             Self::ZeroPageIndexedX => {
-                cpu.ab = cpu.abl().wrapping_add(cpu.x) as u16;
+                cpu.ab.set(cpu.abl().wrapping_add(cpu.x) as u16);
             }
             Self::ZeroPageIndexedY => {
-                cpu.ab = cpu.abl().wrapping_add(cpu.y) as u16;
+                cpu.ab.set(cpu.abl().wrapping_add(cpu.y) as u16);
             }
             Self::AbsoluteL => {
                 let low = cpu.inc_read_byte();
@@ -1541,7 +1541,7 @@ impl Microcode {
                 cpu.inc_read_byte();
             }
             Self::IndexedL => {
-                cpu.db = cpu.read_byte(cpu.ab);
+                cpu.db = cpu.read_byte(cpu.ab.get());
             }
             Self::IndexedH => cpu.indexed_h(),
 
@@ -1660,7 +1660,7 @@ impl Microcode {
             Self::LoadPcAbsoluteH => load_pc_absolute_h(cpu),
 
             Self::LoadIntoAlu(ValueSource::ZeroPage) => {
-                cpu.alu = cpu.mcu.read_zero_page(cpu.ab as u8);
+                cpu.alu = cpu.mcu.read_zero_page(cpu.ab.low());
             }
             Self::LoadIntoAlu(ValueSource::Mem) => {
                 cpu.load_alu();
@@ -1699,7 +1699,7 @@ impl Microcode {
         idx: u8,
     ) {
         let abh = cpu.abh();
-        cpu.ab = cpu.ab.wrapping_add(idx as u16);
+        cpu.ab.wrapping_add(idx as u16);
         let is_first_clock_always = matches!(first_clock, CrossPageBehavior::FirstClockAlways);
 
         if is_first_clock_always || abh != cpu.abh() {
@@ -1816,7 +1816,7 @@ fn store_r<M: Mcu, S: ValueTargetTrait>(cpu: &mut Cpu<M>, r: Register) {
 }
 
 fn load_pc_absolute_h<M: Mcu>(cpu: &mut Cpu<M>) {
-    let low = cpu.ab as u8;
+    let low = cpu.ab.low();
     let high = cpu.inc_read_byte();
     cpu.pc.set(low as u16 | (high as u16) << 8);
 }
