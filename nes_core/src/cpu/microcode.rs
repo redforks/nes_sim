@@ -1484,7 +1484,6 @@ impl Microcode {
             Self::LoadR(ValueSource::Mem, r) => load_r::<_, Mem>(cpu, r),
             Self::StoreR(ValueSource::ZeroPage, r) => store_r::<_, ZeroPage>(cpu, r),
             Self::StoreR(ValueSource::Mem, r) => store_r::<_, Mem>(cpu, r),
-            Self::StoreR(_, _) => unreachable!(),
             Self::ZeroPage => {
                 let addr = cpu.inc_read_byte();
                 cpu.ab = addr as u16;
@@ -1506,25 +1505,18 @@ impl Microcode {
 
             Self::Adc(ValueSource::ZeroPage) => cpu.adc::<ZeroPage>(),
             Self::Adc(ValueSource::Mem) => cpu.adc::<Mem>(),
-            Self::Adc(_) => unreachable!(),
             Self::Sbc(ValueSource::ZeroPage) => cpu.sbc::<ZeroPage>(),
             Self::Sbc(ValueSource::Mem) => cpu.sbc::<Mem>(),
-            Self::Sbc(_) => unreachable!(),
             Self::Cmp(ValueSource::ZeroPage) => cpu.cmp::<ZeroPage>(),
             Self::Cmp(ValueSource::Mem) => cpu.cmp::<Mem>(),
-            Self::Cmp(_) => unreachable!(),
             Self::Cpx(ValueSource::ZeroPage) => cpu.cpx::<ZeroPage>(),
             Self::Cpx(ValueSource::Mem) => cpu.cpx::<Mem>(),
-            Self::Cpx(_) => unreachable!(),
             Self::Cpy(ValueSource::ZeroPage) => cpu.cpy::<ZeroPage>(),
             Self::Cpy(ValueSource::Mem) => cpu.cpy::<Mem>(),
-            Self::Cpy(_) => unreachable!(),
             Self::Ora(ValueSource::ZeroPage) => cpu.ora::<ZeroPage>(),
             Self::Ora(ValueSource::Mem) => cpu.ora::<Mem>(),
-            Self::Ora(_) => unreachable!(),
             Self::Eor(ValueSource::ZeroPage) => cpu.eor::<ZeroPage>(),
             Self::Eor(ValueSource::Mem) => cpu.eor::<Mem>(),
-            Self::Eor(_) => unreachable!(),
             Self::And(ValueSource::Immediate) => cpu.and::<Immediate>(),
             Self::And(ValueSource::ZeroPage) => cpu.and::<ZeroPage>(),
             Self::And(ValueSource::Mem) => cpu.and::<Mem>(),
@@ -1540,12 +1532,10 @@ impl Microcode {
             }
             Self::Bit(ValueSource::ZeroPage) => cpu.bit::<ZeroPage>(),
             Self::Bit(ValueSource::Mem) => cpu.bit::<Mem>(),
-            Self::Bit(_) => unreachable!(),
             Self::StoreAlu(ValueSource::ZeroPage) => {
                 <ZeroPage as ValueTargetTrait>::write(cpu, cpu.alu)
             }
             Self::StoreAlu(ValueSource::Mem) => cpu.write_byte(cpu.alu),
-            Self::StoreAlu(_) => unreachable!(),
             Self::Nop => {}
             Self::SkipImmediate => {
                 cpu.inc_read_byte();
@@ -1677,8 +1667,18 @@ impl Microcode {
             Self::LoadIntoAlu(ValueSource::Mem) => {
                 cpu.load_alu();
             }
-            Self::LoadIntoAlu(_) => unreachable!(),
             Self::ImmediateWithOp(op) => Self::immediate_with_op(cpu, op),
+            Self::StoreAlu(_)
+            | Self::Bit(_)
+            | Self::LoadIntoAlu(_)
+            | Self::StoreR(_, _)
+            | Self::Adc(_)
+            | Self::Sbc(_)
+            | Self::Cmp(_)
+            | Self::Cpx(_)
+            | Self::Cpy(_)
+            | Self::Ora(_)
+            | Self::Eor(_) => unreachable!(),
         }
     }
 
