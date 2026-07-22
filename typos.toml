@@ -1,0 +1,9 @@
+[default]
+
+[default.extend-words]
+CPY = "CPY"
+Yto = "Yto"
+ANE = "ANE"
+ANC = "ANC"
+abl = "abl"
+aso = "aso"
