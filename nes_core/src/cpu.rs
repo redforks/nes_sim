@@ -92,8 +92,6 @@ enum InterruptType {
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
 enum ValueSource {
     Immediate,
-    /// Use alu register
-    Alu,
     /// Read mem from zero page
     ZeroPage,
     /// Read mem for other cases

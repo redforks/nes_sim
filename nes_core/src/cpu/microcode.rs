@@ -1480,7 +1480,6 @@ impl Microcode {
                 cpu.push_microcodes(&OPCODE_TABLE[opcode as usize]);
             }
             Self::LoadR(ValueSource::Immediate, r) => load_r::<_, Immediate>(cpu, r),
-            Self::LoadR(ValueSource::Alu, r) => load_r::<_, Alu>(cpu, r),
             Self::LoadR(ValueSource::ZeroPage, r) => load_r::<_, ZeroPage>(cpu, r),
             Self::LoadR(ValueSource::Mem, r) => load_r::<_, Mem>(cpu, r),
             Self::StoreR(ValueSource::ZeroPage, r) => store_r::<_, ZeroPage>(cpu, r),
@@ -1527,7 +1526,6 @@ impl Microcode {
             Self::Eor(ValueSource::Mem) => cpu.eor::<Mem>(),
             Self::Eor(_) => unreachable!(),
             Self::And(ValueSource::Immediate) => cpu.and::<Immediate>(),
-            Self::And(ValueSource::Alu) => cpu.and::<Alu>(),
             Self::And(ValueSource::ZeroPage) => cpu.and::<ZeroPage>(),
             Self::And(ValueSource::Mem) => cpu.and::<Mem>(),
             Self::Shx => cpu.shx(),
