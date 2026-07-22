@@ -1628,12 +1628,14 @@ impl Microcode {
             } => cpu.push_status(break_flag, check_nmi),
             Self::Plp => cpu.plp(),
             Self::PopPcL => {
-                cpu.pc = cpu.pop_stack() as u16;
+                let low = cpu.pop_stack();
+                cpu.pc.set_low(low);
             }
             Self::PopPcH {
                 exit_from_interrupt,
             } => {
-                cpu.pc |= (cpu.pop_stack() as u16) << 8;
+                let high = cpu.pop_stack();
+                cpu.pc.set_high(high);
                 if exit_from_interrupt {
                     cpu.nmi_detecteor.leave_nmi();
                 }
@@ -1641,21 +1643,22 @@ impl Microcode {
             Self::IncPc => cpu.pc += 1,
             Self::PushStack(target) => match target {
                 PushTarget::A => cpu.push_stack(cpu.a),
-                PushTarget::Pcl => cpu.push_stack((cpu.pc & 0xFF) as u8),
-                PushTarget::Pch => cpu.push_stack((cpu.pc >> 8) as u8),
+                PushTarget::Pcl => cpu.push_stack(cpu.pc.low()),
+                PushTarget::Pch => cpu.push_stack(cpu.pc.high()),
             },
             Self::PopStack => cpu.alu = cpu.pop_stack(),
             Self::UpdateAFromAlu => cpu.set_register(Register::A, cpu.alu),
 
             Self::LoadResetPcL => {
-                cpu.pc = cpu.read_byte(0xFFFC) as u16;
+                let low = cpu.read_byte(0xFFFC);
+                cpu.pc.set_low(low);
             }
             Self::LoadResetPcH => {
-                cpu.pc |= (cpu.read_byte(0xFFFD) as u16) << 8;
+                let high = cpu.read_byte(0xFFFD);
+                cpu.pc.set_high(high);
             }
-            Self::LoadPcAbsoluteH => {
-                cpu.pc = (cpu.ab & 0xff) | ((cpu.inc_read_byte() as u16) << 8);
-            }
+            Self::LoadPcAbsoluteH => load_pc_absolute_h(cpu),
+
             Self::LoadIntoAlu(ValueSource::ZeroPage) => {
                 cpu.alu = cpu.mcu.read_zero_page(cpu.ab as u8);
             }
@@ -1681,7 +1684,7 @@ impl Microcode {
         let offset = cpu.inc_read_byte();
         if branch_test.test(cpu) {
             let pch = cpu.pch();
-            cpu.pc = cpu.pc.wrapping_add((offset as i8) as u16);
+            cpu.pc.wrapping_add((offset as i8) as u16);
             cpu.retain_cycle();
             if pch != cpu.pch() {
                 cpu.retain_cycle();
@@ -1810,4 +1813,10 @@ fn store_r<M: Mcu, S: ValueTargetTrait>(cpu: &mut Cpu<M>, r: Register) {
         Register::X => S::write(cpu, cpu.x),
         Register::Y => S::write(cpu, cpu.y),
     }
+}
+
+fn load_pc_absolute_h<M: Mcu>(cpu: &mut Cpu<M>) {
+    let low = cpu.ab as u8;
+    let high = cpu.inc_read_byte();
+    cpu.pc.set(low as u16 | (high as u16) << 8);
 }

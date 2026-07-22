@@ -5,6 +5,8 @@ use microcode::{InterruptSequences, Microcode};
 mod microcode;
 mod reg16;
 
+use self::reg16::Register16;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Register {
     A,
@@ -154,7 +156,7 @@ pub struct Cpu<M: Mcu> {
     pub a: u8,
     pub x: u8,
     pub y: u8,
-    pub pc: u16,
+    pc: Register16,
     pub sp: u8,
     pub status: u8,
     last_status: u8,
@@ -186,7 +188,7 @@ impl<M: Mcu> Cpu<M> {
             a: 0,
             x: 0,
             y: 0,
-            pc: 0,
+            pc: Register16::default(),
             sp: 0,
             status: 0,
             last_status: 0,
@@ -224,7 +226,11 @@ impl<M: Mcu> Cpu<M> {
             self.microcodes_empty(),
             "microcode queue must be empty before setting PC"
         );
-        self.pc = pc;
+        self.pc.set(pc);
+    }
+
+    pub fn pc(&self) -> u16 {
+        self.pc.get()
     }
 
     pub fn microcodes_empty(&self) -> bool {
@@ -382,12 +388,12 @@ impl<M: Mcu> Cpu<M> {
     }
 
     fn read_pc_byte(&mut self) {
-        self.read_byte(self.pc);
+        self.read_byte(self.pc.get());
     }
 
     fn inc_read_byte(&mut self) -> u8 {
-        let addr = self.pc;
-        self.pc = self.pc.wrapping_add(1);
+        let addr = self.pc.get();
+        self.pc.wrapping_add(1);
         self.read_byte(addr)
     }
 
@@ -420,7 +426,7 @@ impl<M: Mcu> Cpu<M> {
     }
 
     fn pch(&self) -> u8 {
-        (self.pc >> 8) as u8
+        self.pc.high()
     }
 
     fn abh(&self) -> u8 {
@@ -635,7 +641,7 @@ impl<M: Mcu> Cpu<M> {
     }
 
     fn set_pc_to_ab(&mut self) {
-        self.pc = self.ab;
+        self.pc.set(self.ab);
     }
 
     fn and<S: ValueSourceTrait>(&mut self) {
@@ -692,21 +698,24 @@ impl<M: Mcu> Cpu<M> {
 
     fn load_nmi_pcl(&mut self) {
         self.set_flag(Flag::InterruptDisabled, true);
-        self.pc = self.read_byte(0xFFFA) as u16;
+        let low = self.read_byte(0xFFFA);
+        self.pc.set_low(low);
     }
 
     fn load_nmi_pch(&mut self) {
-        self.pc |= (self.read_byte(0xFFFB) as u16) << 8;
+        let high = self.read_byte(0xFFFB);
+        self.pc.set_high(high);
     }
 
     fn load_irq_pcl(&mut self) {
         self.set_flag(Flag::InterruptDisabled, true);
-        self.pc = self.read_byte(0xFFFE) as u16;
+        let low = self.read_byte(0xFFFE);
+        self.pc.set_low(low);
     }
 
     fn load_irq_pch(&mut self) {
         let high = self.read_byte(0xFFFF);
-        self.pc |= (high as u16) << 8;
+        self.pc.set_high(high);
     }
 
     fn set_register(&mut self, register: Register, val: u8) {

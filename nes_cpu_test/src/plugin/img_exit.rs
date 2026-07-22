@@ -12,7 +12,7 @@ impl<M: Mcu> Plugin<M> for ImageExit {
 
     fn end(&mut self, cpu: &Cpu<M>, _: SystemClock) {
         if let Some(last) = self.last_pc
-            && last == cpu.pc
+            && last == cpu.pc()
         {
             if cpu.flag(Flag::Decimal) {
                 // decimal mode not implemented, it is okay to exit test on decimal error,
@@ -26,7 +26,7 @@ impl<M: Mcu> Plugin<M> for ImageExit {
             self.exit_code = Some(1);
             return;
         }
-        self.last_pc = Some(cpu.pc);
+        self.last_pc = Some(cpu.pc());
     }
 
     fn should_stop(&self) -> ExecuteResult {

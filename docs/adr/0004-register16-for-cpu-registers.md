@@ -1,0 +1,3 @@
+# Register16 wrapper for 16-bit CPU registers
+
+The `Cpu::pc` field was changed from `pub u16` to a private `Register16` (an endian-safe `[u8; 2]` wrapper). This lets the CPU access PC as high/low bytes without manual `>> 8` / `& 0xFF` bit manipulation, which matters on platforms where the compiler can't prove the native representation. Register16 gained `AddAssign<u16>`, `BitOrAssign<u16>`, and `wrapping_add()` to keep the existing call-site patterns (`pc += 1`, `pc |= val`, `pc.wrapping_add(n)`) working. Two-step interrupt-vector loads (low byte then high byte) use `set_low()`/`set_high()`. External consumers go through `cpu.pc()` / `cpu.set_pc()` — the field is private.

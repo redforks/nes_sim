@@ -224,7 +224,7 @@ fn get_machine_status(state: &mut MachineState) -> nes_mcp_protocol::MachineStat
         MachineWrapper::Bin(m, clock) => {
             let cpu = m.cpu_mut();
             nes_mcp_protocol::MachineStatus {
-                pc: cpu.pc,
+                pc: cpu.pc(),
                 a: cpu.a,
                 x: cpu.x,
                 y: cpu.y,
@@ -236,7 +236,7 @@ fn get_machine_status(state: &mut MachineState) -> nes_mcp_protocol::MachineStat
         MachineWrapper::INes(m) => {
             let cpu = m.cpu();
             nes_mcp_protocol::MachineStatus {
-                pc: cpu.pc,
+                pc: cpu.pc(),
                 a: cpu.a,
                 x: cpu.x,
                 y: cpu.y,
@@ -248,7 +248,7 @@ fn get_machine_status(state: &mut MachineState) -> nes_mcp_protocol::MachineStat
         MachineWrapper::PngFrameMatch(m) => {
             let cpu = m.cpu();
             nes_mcp_protocol::MachineStatus {
-                pc: cpu.pc,
+                pc: cpu.pc(),
                 a: cpu.a,
                 x: cpu.x,
                 y: cpu.y,
@@ -267,7 +267,7 @@ fn get_cpu_registers(state: &mut MachineState) -> nes_mcp_protocol::CpuRegisters
             let cpu = m.cpu_mut();
             let status = cpu.status;
             nes_mcp_protocol::CpuRegisters {
-                pc: cpu.pc,
+                pc: cpu.pc(),
                 a: cpu.a,
                 x: cpu.x,
                 y: cpu.y,
@@ -286,7 +286,7 @@ fn get_cpu_registers(state: &mut MachineState) -> nes_mcp_protocol::CpuRegisters
             let cpu = m.cpu();
             let status = cpu.status;
             nes_mcp_protocol::CpuRegisters {
-                pc: cpu.pc,
+                pc: cpu.pc(),
                 a: cpu.a,
                 x: cpu.x,
                 y: cpu.y,
@@ -305,7 +305,7 @@ fn get_cpu_registers(state: &mut MachineState) -> nes_mcp_protocol::CpuRegisters
             let cpu = m.cpu();
             let status = cpu.status;
             nes_mcp_protocol::CpuRegisters {
-                pc: cpu.pc,
+                pc: cpu.pc(),
                 a: cpu.a,
                 x: cpu.x,
                 y: cpu.y,

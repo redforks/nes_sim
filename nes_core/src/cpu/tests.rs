@@ -8,7 +8,7 @@ const IRQ_VECTOR: u16 = 0xFFFE;
 fn create_cpu_with_program(program: &[u8]) -> Cpu<MockMcu> {
     let mcu = MockMcu::new().with_program(0, program);
     let mut r = create_cpu_with_mcu(mcu);
-    r.pc = 0;
+    r.set_pc(0);
     r
 }
 
@@ -96,7 +96,7 @@ fn test_cpu_initialization() {
     assert_eq!(cpu.a, 0);
     assert_eq!(cpu.x, 0);
     assert_eq!(cpu.y, 0);
-    assert_eq!(cpu.pc, 0);
+    assert_eq!(cpu.pc(), 0);
     // Cpu::new calls reset() so SP and status reflect reset state
     assert_eq!(cpu.sp, 0xFD);
     assert!(cpu.flag(Flag::InterruptDisabled));
@@ -200,15 +200,15 @@ fn test_peek_stack() {
 #[test]
 fn test_inc_read_byte() {
     let mut cpu = create_cpu_with_program(&[0xA9, 0x42, 0xEA]);
-    assert_eq!(cpu.pc, 0);
+    assert_eq!(cpu.pc(), 0);
 
     let byte1 = cpu.inc_read_byte();
     assert_eq!(byte1, 0xA9);
-    assert_eq!(cpu.pc, 1);
+    assert_eq!(cpu.pc(), 1);
 
     let byte2 = cpu.inc_read_byte();
     assert_eq!(byte2, 0x42);
-    assert_eq!(cpu.pc, 2);
+    assert_eq!(cpu.pc(), 2);
 }
 
 #[test]
@@ -247,7 +247,7 @@ fn test_halt_flag() {
 #[test]
 fn test_reset() {
     let mut cpu = create_cpu();
-    cpu.pc = 0x1234;
+    cpu.set_pc(0x1234);
     cpu.a = 0x42;
     cpu.sp = 0x80;
 
@@ -260,7 +260,7 @@ fn test_reset() {
         clock = clock.inc();
     }
     // Reset reads PC from 0xFFFC (which is 0x0000 in MockMcu)
-    assert_eq!(cpu.pc, 0);
+    assert_eq!(cpu.pc(), 0);
     // Reset now adjusts SP by subtracting 3 from its current value
     assert_eq!(cpu.sp, 0x80u8.wrapping_sub(3));
     assert!(cpu.flag(Flag::InterruptDisabled)); // InterruptDisabled flag is set
@@ -365,7 +365,7 @@ fn test_nop_instruction() {
 
     execute_next(&mut cpu);
     assert_eq!(cpu.a, a_before);
-    assert_eq!(cpu.pc, 1);
+    assert_eq!(cpu.pc(), 1);
 }
 
 #[test]
@@ -407,14 +407,14 @@ fn test_multiple_instructions() {
 
     execute_next(&mut cpu);
     assert_eq!(cpu.a, 0x42);
-    assert_eq!(cpu.pc, 2);
+    assert_eq!(cpu.pc(), 2);
 
     execute_next(&mut cpu);
     assert_eq!(cpu.x, 0x55);
-    assert_eq!(cpu.pc, 4);
+    assert_eq!(cpu.pc(), 4);
 
     execute_next(&mut cpu);
-    assert_eq!(cpu.pc, 5);
+    assert_eq!(cpu.pc(), 5);
 }
 
 #[test]
@@ -517,7 +517,7 @@ fn test_sei_cli_instructions() {
     // due to the pending flag behavior
 
     // Just verify the instructions execute without panicking
-    assert_eq!(cpu.pc, 2);
+    assert_eq!(cpu.pc(), 2);
 }
 
 #[test]
@@ -1157,18 +1157,18 @@ fn test_beq_branch_taken() {
     // BEQ: 0xF0 (branch if equal/zero flag set)
     let mut cpu = create_cpu_with_program(&[0xA9, 0x00, 0xF0, 0x05, 0xEA]);
     execute_next(&mut cpu); // LDA #$00
-    let pc_before = cpu.pc;
+    let pc_before = cpu.pc();
     execute_next(&mut cpu); // BEQ (should branch)
-    assert_eq!(cpu.pc, pc_before.wrapping_add(7)); // Branch 5 + 2 byte instruction
+    assert_eq!(cpu.pc(), pc_before.wrapping_add(7)); // Branch 5 + 2 byte instruction
 }
 
 #[test]
 fn test_beq_branch_not_taken() {
     let mut cpu = create_cpu_with_program(&[0xA9, 0x01, 0xF0, 0x05, 0xEA]);
     execute_next(&mut cpu); // LDA #$01
-    let pc_before = cpu.pc;
+    let pc_before = cpu.pc();
     execute_next(&mut cpu); // BEQ (should not branch)
-    assert_eq!(cpu.pc, pc_before.wrapping_add(2));
+    assert_eq!(cpu.pc(), pc_before.wrapping_add(2));
 }
 
 #[test]
@@ -1176,9 +1176,9 @@ fn test_bne_branch_taken() {
     // BNE: 0xD0 (branch if not equal/zero flag clear)
     let mut cpu = create_cpu_with_program(&[0xA9, 0x01, 0xD0, 0x05, 0xEA]);
     execute_next(&mut cpu); // LDA #$01
-    let pc_before = cpu.pc;
+    let pc_before = cpu.pc();
     execute_next(&mut cpu); // BNE (should branch)
-    assert_eq!(cpu.pc, pc_before.wrapping_add(7));
+    assert_eq!(cpu.pc(), pc_before.wrapping_add(7));
 }
 
 #[test]
@@ -1186,9 +1186,9 @@ fn test_bcs_branch_taken() {
     // BCS: 0xB0 (branch if carry set)
     let mut cpu = create_cpu_with_program(&[0x38, 0xB0, 0x05, 0xEA]);
     execute_next(&mut cpu); // SEC (set carry)
-    let pc_before = cpu.pc;
+    let pc_before = cpu.pc();
     execute_next(&mut cpu); // BCS (should branch)
-    assert_eq!(cpu.pc, pc_before.wrapping_add(7));
+    assert_eq!(cpu.pc(), pc_before.wrapping_add(7));
 }
 
 #[test]
@@ -1196,9 +1196,9 @@ fn test_bcc_branch_taken() {
     // BCC: 0x90 (branch if carry clear)
     let mut cpu = create_cpu_with_program(&[0x18, 0x90, 0x05, 0xEA]);
     execute_next(&mut cpu); // CLC (clear carry)
-    let pc_before = cpu.pc;
+    let pc_before = cpu.pc();
     execute_next(&mut cpu); // BCC (should branch)
-    assert_eq!(cpu.pc, pc_before.wrapping_add(7));
+    assert_eq!(cpu.pc(), pc_before.wrapping_add(7));
 }
 
 #[test]
@@ -1206,9 +1206,9 @@ fn test_bmi_branch_taken() {
     // BMI: 0x30 (branch if minus/negative flag set)
     let mut cpu = create_cpu_with_program(&[0xA9, 0x80, 0x30, 0x05, 0xEA]);
     execute_next(&mut cpu); // LDA #$80 (sets negative flag)
-    let pc_before = cpu.pc;
+    let pc_before = cpu.pc();
     execute_next(&mut cpu); // BMI (should branch)
-    assert_eq!(cpu.pc, pc_before.wrapping_add(7));
+    assert_eq!(cpu.pc(), pc_before.wrapping_add(7));
 }
 
 #[test]
@@ -1216,9 +1216,9 @@ fn test_bpl_branch_taken() {
     // BPL: 0x10 (branch if plus/negative flag clear)
     let mut cpu = create_cpu_with_program(&[0xA9, 0x01, 0x10, 0x05, 0xEA]);
     execute_next(&mut cpu); // LDA #$01 (clears negative flag)
-    let pc_before = cpu.pc;
+    let pc_before = cpu.pc();
     execute_next(&mut cpu); // BPL (should branch)
-    assert_eq!(cpu.pc, pc_before.wrapping_add(7));
+    assert_eq!(cpu.pc(), pc_before.wrapping_add(7));
 }
 
 #[test]
@@ -1227,9 +1227,9 @@ fn test_bvs_branch_taken() {
     // Set overflow flag manually
     let mut cpu = create_cpu_with_program(&[0x70, 0x05, 0xEA]);
     cpu.set_flag(Flag::Overflow, true);
-    let pc_before = cpu.pc;
+    let pc_before = cpu.pc();
     execute_next(&mut cpu); // BVS (should branch)
-    assert_eq!(cpu.pc, pc_before.wrapping_add(7));
+    assert_eq!(cpu.pc(), pc_before.wrapping_add(7));
 }
 
 #[test]
@@ -1237,9 +1237,9 @@ fn test_bvc_branch_taken() {
     // BVC: 0x50 (branch if overflow clear)
     let mut cpu = create_cpu_with_program(&[0x50, 0x05, 0xEA]);
     cpu.set_flag(Flag::Overflow, false);
-    let pc_before = cpu.pc;
+    let pc_before = cpu.pc();
     execute_next(&mut cpu); // BVC (should branch)
-    assert_eq!(cpu.pc, pc_before.wrapping_add(7));
+    assert_eq!(cpu.pc(), pc_before.wrapping_add(7));
 }
 
 // Additional load/store instruction tests for remaining addressing modes
@@ -1489,7 +1489,7 @@ fn test_jmp_absolute() {
     let mut cpu = create_cpu_with_program(&[0x4C, 0x34, 0x12, 0xEA]);
 
     execute_next(&mut cpu); // JMP $1234
-    assert_eq!(cpu.pc, 0x1234);
+    assert_eq!(cpu.pc(), 0x1234);
 }
 
 #[test]
@@ -1499,7 +1499,7 @@ fn test_jmp_indirect() {
     cpu.write_mem(0x1235, 0x56);
 
     execute_next(&mut cpu); // JMP ($1234)
-    assert_eq!(cpu.pc, 0x5678);
+    assert_eq!(cpu.pc(), 0x5678);
 }
 
 #[test]
@@ -1511,7 +1511,7 @@ fn test_brk_instruction() {
     execute_next(&mut cpu); // BRK
     assert!(!cpu.flag(Flag::Break));
     assert!(cpu.flag(Flag::InterruptDisabled));
-    assert_eq!(cpu.pc, 0x0400);
+    assert_eq!(cpu.pc(), 0x0400);
 }
 
 // Test indirect addressing modes
@@ -1707,9 +1707,9 @@ fn test_and_indirect_y() {
 fn test_nop_zero_page() {
     // 0x04 = NOP zero_page (0, 0, 1)
     let mut cpu = create_cpu_with_program(&[0x04, 0x20, 0xEA]);
-    let initial_pc = cpu.pc;
+    let initial_pc = cpu.pc();
     execute_next(&mut cpu); // NOP $20
-    assert_ne!(cpu.pc, initial_pc);
+    assert_ne!(cpu.pc(), initial_pc);
 }
 
 #[test]
@@ -1810,7 +1810,7 @@ fn test_jsr_pushes_pc_and_jumps() {
 
     execute_next(&mut cpu);
 
-    assert_eq!(cpu.pc, 0x1234);
+    assert_eq!(cpu.pc(), 0x1234);
     // JSR is at 0, after reading 3 bytes PC=3, decrements to 2, pushes 2
     // Stack: SP starts at 0
     // push high byte at 0x100, sp becomes 0xFF
@@ -1834,7 +1834,7 @@ fn test_rts_pops_pc() {
     execute_next(&mut cpu);
 
     // RTS pops and adds 1: 0x1233 + 1 = 0x1234
-    assert_eq!(cpu.pc, 0x1234);
+    assert_eq!(cpu.pc(), 0x1234);
 }
 
 #[test]
@@ -1852,16 +1852,16 @@ fn test_jsr_rts_round_trip() {
     let mut cpu = create_cpu_with_program(&program);
 
     execute_next(&mut cpu); // JSR
-    assert_eq!(cpu.pc, 0x000A);
+    assert_eq!(cpu.pc(), 0x000A);
 
     execute_next(&mut cpu); // NOP at $000A
-    assert_eq!(cpu.pc, 0x000B);
+    assert_eq!(cpu.pc(), 0x000B);
 
     execute_next(&mut cpu); // RTS
-    assert_eq!(cpu.pc, 0x0003); // Should return to instruction after JSR
+    assert_eq!(cpu.pc(), 0x0003); // Should return to instruction after JSR
 
     execute_next(&mut cpu); // NOP at 0x0003
-    assert_eq!(cpu.pc, 0x0004);
+    assert_eq!(cpu.pc(), 0x0004);
 }
 
 #[test]
@@ -1875,7 +1875,7 @@ fn test_rti_restores_pc_and_flags() {
 
     execute_next(&mut cpu);
 
-    assert_eq!(cpu.pc, 0x1234);
+    assert_eq!(cpu.pc(), 0x1234);
     // Status should be 0xFF but with bit 5 (unused) and bit 4 (break) handled
     assert!(cpu.status == 0xFF || cpu.status == 0xCF || cpu.status == 0xEF);
 }
@@ -1951,7 +1951,7 @@ fn test_jmp_indirect_page_boundary_bug() {
     // $01FF contains 0x34 (low byte)
     // $0100 contains 0x12 (high byte - due to bug)
     // So the jump target is $1234
-    assert_eq!(cpu.pc, 0x1234); // Due to page boundary bug
+    assert_eq!(cpu.pc(), 0x1234); // Due to page boundary bug
 }
 
 #[test]
@@ -1963,7 +1963,7 @@ fn test_jmp_indirect_no_page_boundary() {
 
     execute_next(&mut cpu);
 
-    assert_eq!(cpu.pc, 0xABCD);
+    assert_eq!(cpu.pc(), 0xABCD);
 }
 
 // Branch instruction edge cases
@@ -1973,7 +1973,7 @@ fn test_branch_cross_page_boundary() {
     let mcu = MockMcu::new().with_program(0x100, &[0x10, 0xFD]); // BPL $FD (branch back 3 bytes)
     let mut cpu = create_cpu_with_mcu(mcu);
 
-    cpu.pc = 0x100;
+    cpu.set_pc(0x100);
     cpu.set_flag(Flag::Negative, false);
 
     execute_next(&mut cpu);
@@ -1981,7 +1981,7 @@ fn test_branch_cross_page_boundary() {
     // PC starts at 0x100, reads 0x10 (PC becomes 0x101), reads 0xFD (PC becomes 0x102)
     // Offset is -3 (0xFD as signed byte)
     // Target = 0x102 + (-3) = 0xFF
-    assert_eq!(cpu.pc, 0x00FF);
+    assert_eq!(cpu.pc(), 0x00FF);
 }
 
 #[test]
@@ -1993,7 +1993,7 @@ fn test_branch_forward() {
 
     // PC starts at 0, reads 0x10 (PC=1), reads 0x05 (PC=2)
     // Offset is +5, target = 2 + 5 = 7
-    assert_eq!(cpu.pc, 7);
+    assert_eq!(cpu.pc(), 7);
 }
 
 #[test]
@@ -2002,7 +2002,7 @@ fn test_branch_backward_max() {
     let mcu = MockMcu::new().with_program(0x100, &[0x10, 0x80]); // BPL $80 (branch back 128 bytes)
     let mut cpu = create_cpu_with_mcu(mcu);
 
-    cpu.pc = 0x100;
+    cpu.set_pc(0x100);
     cpu.set_flag(Flag::Negative, false);
 
     execute_next(&mut cpu);
@@ -2010,7 +2010,7 @@ fn test_branch_backward_max() {
     // PC after instruction = 0x102
     // Offset is -128 (0x80 as signed byte)
     // Target = 0x102 + (-128) = 0x0082
-    assert_eq!(cpu.pc, 0x0082);
+    assert_eq!(cpu.pc(), 0x0082);
 }
 
 // Additional opcode coverage
@@ -2924,10 +2924,10 @@ fn test_branch_all_conditions() {
         // Test branch taken
         let mut cpu = create_cpu_with_program(&[opcode, 0x02]); // branch forward 2
         cpu.set_flag(flag, take_when_flag_is);
-        let pc_before = cpu.pc;
+        let pc_before = cpu.pc();
         execute_next(&mut cpu);
         assert_ne!(
-            cpu.pc,
+            cpu.pc(),
             pc_before + 2,
             "{} (0x{:02X}) should be taken when flag is {}",
             name,
@@ -2938,10 +2938,10 @@ fn test_branch_all_conditions() {
         // Test branch not taken
         let mut cpu = create_cpu_with_program(&[opcode, 0x02]);
         cpu.set_flag(flag, !take_when_flag_is);
-        let pc_before = cpu.pc;
+        let pc_before = cpu.pc();
         execute_next(&mut cpu);
         assert_eq!(
-            cpu.pc,
+            cpu.pc(),
             pc_before + 2,
             "{} (0x{:02X}) should not be taken when flag is {}",
             name,
@@ -3108,7 +3108,7 @@ fn test_brk_pushes_b_flag() {
     // SP should be decremented 3 times
     assert_eq!(cpu.sp, 0xFC);
     // PC should be loaded from IRQ vector (BRK uses IRQ vector)
-    assert_eq!(cpu.pc, 0x4000);
+    assert_eq!(cpu.pc(), 0x4000);
     // Interrupt disable flag should be set after BRK
     assert!(cpu.flag(Flag::InterruptDisabled));
 }
@@ -3129,7 +3129,7 @@ fn test_rti_clears_b_flag() {
     execute_next(&mut cpu);
 
     // RTI should restore the status and PC
-    assert_eq!(cpu.pc, 0x1234);
+    assert_eq!(cpu.pc(), 0x1234);
 }
 
 #[test]
@@ -3589,7 +3589,7 @@ fn test_rts_adds_one_to_pc() {
 
     // RTS pops low byte first, then high byte, then adds 1
     // So: l = 0x33, h = 0x12, PC = 0x1233, then +1 = 0x1234
-    assert_eq!(cpu.pc, 0x1234);
+    assert_eq!(cpu.pc(), 0x1234);
 }
 
 #[test]
@@ -3730,10 +3730,10 @@ fn inc_read_byte_advances_pc_and_ticks() {
     mcu.mem[0x0200] = 0xAB;
 
     let mut cpu = create_cpu_with_mcu(mcu);
-    cpu.pc = 0x0200;
+    cpu.set_pc(0x0200);
 
     assert_eq!(cpu.inc_read_byte(), 0xAB);
-    assert_eq!(cpu.pc, 0x0201);
+    assert_eq!(cpu.pc(), 0x0201);
 }
 
 #[test]
@@ -3754,7 +3754,7 @@ fn cpu_with_memory(program_start: u16, bytes: &[(u16, u8)]) -> Cpu<TestMcu> {
         mcu.mem[*addr as usize] = *value;
     }
     let mut cpu = create_cpu_with_mcu(mcu);
-    cpu.pc = program_start;
+    cpu.set_pc(program_start);
     cpu
 }
 
@@ -3763,11 +3763,11 @@ fn branch_relative_taken_and_not_taken_behaves() {
     let mut cpu = cpu_with_memory(0x8000, &[(0x8000, 0x02), (0x8001, 0xFE)]);
 
     Microcode::BranchRelative(BranchTest::IfZeroClear).exec(&mut cpu);
-    assert_eq!(cpu.pc, 0x8003);
+    assert_eq!(cpu.pc(), 0x8003);
 
     cpu.set_flag(Flag::Zero, true);
     Microcode::BranchRelative(BranchTest::IfZeroClear).exec(&mut cpu);
-    assert_eq!(cpu.pc, 0x8004);
+    assert_eq!(cpu.pc(), 0x8004);
 }
 
 #[test]
@@ -3776,13 +3776,13 @@ fn load_immediate_x_and_y_read_operand_and_update_flags() {
 
     Microcode::LoadR(ValueSource::Immediate, Register::X).exec(&mut cpu);
     assert_eq!(cpu.x, 0x80);
-    assert_eq!(cpu.pc, 0x8001);
+    assert_eq!(cpu.pc(), 0x8001);
     assert!(cpu.flag(Flag::Negative));
     assert!(!cpu.flag(Flag::Zero));
 
     Microcode::LoadR(ValueSource::Immediate, Register::Y).exec(&mut cpu);
     assert_eq!(cpu.y, 0x00);
-    assert_eq!(cpu.pc, 0x8002);
+    assert_eq!(cpu.pc(), 0x8002);
     assert!(cpu.flag(Flag::Zero));
     assert!(!cpu.flag(Flag::Negative));
 }
@@ -3947,19 +3947,19 @@ fn stack_and_misc_microcodes_manipulate_state() {
     Microcode::Plp.exec(&mut cpu);
     assert_eq!(cpu.status & Flag::Carry as u8, Flag::Carry as u8);
 
-    cpu.pc = 0x2000;
+    cpu.set_pc(0x2000);
     cpu.mcu_mut().mem[0x2000] = 0x34;
     cpu.mcu_mut().mem[0x2001] = 0x12;
     Microcode::AbsoluteL.exec(&mut cpu);
     Microcode::LoadPcAbsoluteH.exec(&mut cpu);
-    assert_eq!(cpu.pc, 0x1234);
+    assert_eq!(cpu.pc(), 0x1234);
 
     cpu.ab = 0x1234;
     cpu.mcu_mut().mem[0x1234] = 0x34;
     cpu.mcu_mut().mem[0x1235] = 0x12;
     Microcode::IndexedL.exec(&mut cpu);
     Microcode::IndexedHAndJump.exec(&mut cpu);
-    assert_eq!(cpu.pc, 0x1234);
+    assert_eq!(cpu.pc(), 0x1234);
 
     cpu.status = Flag::Carry as u8;
     Microcode::ClearFlag(Flag::Carry).exec(&mut cpu);
@@ -3988,7 +3988,7 @@ fn load_immediate_a_reads_operand_and_updates_flags() {
     Microcode::LoadR(ValueSource::Immediate, Register::A).exec(&mut cpu);
 
     assert_eq!(cpu.a, 0x00);
-    assert_eq!(cpu.pc, 0x8001);
+    assert_eq!(cpu.pc(), 0x8001);
     assert!(cpu.flag(Flag::Zero));
     assert!(!cpu.flag(Flag::Negative));
 }
@@ -4001,7 +4001,7 @@ fn adc_immediate_uses_carry_and_updates_flags() {
     Microcode::ImmediateWithOp(ImmediateOp::Adc).exec(&mut cpu);
 
     assert_eq!(cpu.a, 0x80);
-    assert_eq!(cpu.pc, 0x8001);
+    assert_eq!(cpu.pc(), 0x8001);
     assert!(cpu.flag(Flag::Negative));
     assert!(cpu.flag(Flag::Overflow));
     assert!(!cpu.flag(Flag::Carry));
@@ -4016,7 +4016,7 @@ fn sbc_immediate_and_memory_microcodes_update_accumulator_and_flags() {
 
     Microcode::ImmediateWithOp(ImmediateOp::Sbc).exec(&mut cpu);
     assert_eq!(cpu.a, 0x10);
-    assert_eq!(cpu.pc, 0x8001);
+    assert_eq!(cpu.pc(), 0x8001);
     assert!(cpu.flag(Flag::Carry));
     assert!(!cpu.flag(Flag::Zero));
 
@@ -4036,7 +4036,7 @@ fn and_immediate_and_memory_microcodes_update_accumulator_and_flags() {
 
     Microcode::ImmediateWithOp(ImmediateOp::And).exec(&mut cpu);
     assert_eq!(cpu.a, 0b1100_0000);
-    assert_eq!(cpu.pc, 0x8001);
+    assert_eq!(cpu.pc(), 0x8001);
     assert!(!cpu.flag(Flag::Zero));
     assert!(cpu.flag(Flag::Negative));
 

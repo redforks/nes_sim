@@ -61,6 +61,23 @@ impl Register16 {
             }
         }
     }
+
+    /// Wrapping addition — delegates to u16::wrapping_add
+    pub fn wrapping_add(&mut self, v: u16) {
+        self.set(self.get().wrapping_add(v));
+    }
+}
+
+impl core::ops::AddAssign<u16> for Register16 {
+    fn add_assign(&mut self, rhs: u16) {
+        self.set(self.get().wrapping_add(rhs));
+    }
+}
+
+impl core::ops::BitOrAssign<u16> for Register16 {
+    fn bitor_assign(&mut self, rhs: u16) {
+        self.set(self.get() | rhs);
+    }
 }
 
 #[cfg(test)]
@@ -237,5 +254,45 @@ mod tests {
         r.set_low(0x34);
         assert_eq!(r.low(), 0x34);
         assert_eq!(r.high(), 0x12);
+    }
+
+    #[test]
+    fn test_add_assign() {
+        let mut r = Register16::default();
+        r.set(0x0001);
+        r += 1u16;
+        assert_eq!(r.get(), 0x0002);
+    }
+
+    #[test]
+    fn test_add_assign_wrapping() {
+        let mut r = Register16::default();
+        r.set(u16::MAX);
+        r += 1u16;
+        assert_eq!(r.get(), 0);
+    }
+
+    #[test]
+    fn test_bitor_assign() {
+        let mut r = Register16::default();
+        r.set(0x0F00);
+        r |= 0x00F0u16;
+        assert_eq!(r.get(), 0x0FF0);
+    }
+
+    #[test]
+    fn test_wrapping_add() {
+        let mut r = Register16::default();
+        r.set(0xFFFE);
+        r.wrapping_add(3);
+        assert_eq!(r.get(), 1);
+    }
+
+    #[test]
+    fn test_wrapping_add_zero() {
+        let mut r = Register16::default();
+        r.set(0x1234);
+        r.wrapping_add(0);
+        assert_eq!(r.get(), 0x1234);
     }
 }

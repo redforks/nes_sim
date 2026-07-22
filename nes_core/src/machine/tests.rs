@@ -5,14 +5,14 @@ use crate::{SystemClock, test_utils::MockMcu};
 fn test_machine_creation() {
     let mcu = MockMcu::new();
     let machine = Machine::new(mcu);
-    assert_eq!(machine.cpu.pc, 0);
+    assert_eq!(machine.cpu().pc(), 0);
 }
 
 #[test]
 fn test_machine_with_plugin() {
     let mcu = MockMcu::new();
     let machine = Machine::with_plugin(EmptyPlugin::new(), mcu);
-    assert_eq!(machine.cpu.pc, 0);
+    assert_eq!(machine.cpu().pc(), 0);
 }
 
 #[test]
@@ -27,7 +27,7 @@ fn test_set_pc() {
         clock = clock.inc();
     }
     machine.set_pc(0x1234);
-    assert_eq!(machine.cpu.pc, 0x1234);
+    assert_eq!(machine.cpu().pc(), 0x1234);
 }
 
 #[test]
@@ -44,7 +44,7 @@ fn test_set_pc_drains_pending_reset_microcodes() {
     }
     machine.set_pc(0x5678);
 
-    assert_eq!(machine.cpu.pc, 0x5678);
+    assert_eq!(machine.cpu().pc(), 0x5678);
 }
 
 #[test]
@@ -68,5 +68,5 @@ fn test_reset() {
         clock = clock.inc();
     }
     // Reset reads PC from 0xFFFC
-    assert_eq!(machine.cpu.pc, 0);
+    assert_eq!(machine.cpu().pc(), 0);
 }

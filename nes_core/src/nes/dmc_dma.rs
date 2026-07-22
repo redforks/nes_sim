@@ -52,7 +52,7 @@ impl<R: Render, D: AudioDriver> NesDmaSupport for Cpu<NesMcu<R, D>> {
     }
 
     fn last_read_addr(&self) -> u16 {
-        self.last_read_addr.unwrap_or(self.pc)
+        self.last_read_addr.unwrap_or(self.pc())
     }
 
     fn unfreeze(&mut self) {

@@ -27,7 +27,7 @@ impl<const DEPTH: usize, const REPEATS: u32, M: Mcu> Plugin<M> for DetectDeadLoo
         if self.recent_pc.len() == DEPTH * 2 {
             self.recent_pc.pop_front();
         }
-        self.recent_pc.push_back(cpu.pc);
+        self.recent_pc.push_back(cpu.pc());
         if self.recent_pc.len() < DEPTH * 2 {
             return;
         }
@@ -42,7 +42,7 @@ impl<const DEPTH: usize, const REPEATS: u32, M: Mcu> Plugin<M> for DetectDeadLoo
         self.count += 1;
         self.should_exit = self.count > REPEATS;
         if self.should_exit {
-            let pc = cpu.pc;
+            let pc = cpu.pc();
             let op = cpu.peek_byte(pc);
             let lo = cpu.peek_byte(pc.wrapping_add(1));
             let hi = cpu.peek_byte(pc.wrapping_add(2));
@@ -70,8 +70,21 @@ impl<const DEPTH: usize, const REPEATS: u32, M: Mcu> Plugin<M> for DetectDeadLoo
 #[cfg(test)]
 mod tests {
     use super::*;
+    use nes_core::EmptyPlugin;
     use nes_core::mcu::RamMcu;
     use rstest::rstest;
+
+    fn create_cpu(mem: [u8; 65536]) -> Cpu<RamMcu<65536>> {
+        let mcu = RamMcu::new(mem);
+        let mut cpu = Cpu::new(mcu);
+        let mut plugin = EmptyPlugin::new();
+        let mut clock = SystemClock::default();
+        while !cpu.microcodes_empty() {
+            cpu.tick(&mut plugin, clock);
+            clock = clock.inc();
+        }
+        cpu
+    }
 
     #[rstest]
     #[case(0, false, &[10])]
@@ -82,12 +95,11 @@ mod tests {
     #[case(0, false, &[10, 11, 10, 11, 9])]
     #[case(3, true, &[10, 11, 10, 11, 9, 10, 9, 10, 9, 10])]
     fn test(#[case] exp_count: u32, #[case] should_exit: bool, #[case] pcs: &[u16]) {
-        let mcu = RamMcu::new([0; 65536]);
-        let mut cpu = Cpu::new(mcu);
+        let mut cpu = create_cpu([0; 65536]);
 
         let mut p = DetectDeadLoop::<2, 2>::new();
         for pc in pcs.iter().copied() {
-            cpu.pc = pc;
+            cpu.set_pc(pc);
             p.end(&cpu, SystemClock::default());
         }
 
@@ -103,11 +115,10 @@ mod tests {
         mem[0x8002] = 0x80;
         mem[0x6000] = 0x00;
 
-        let mcu = RamMcu::new(mem);
-        let mut cpu = Cpu::new(mcu);
+        let mut cpu = create_cpu(mem);
         let mut p = DetectDeadLoop::<1, 0>::new();
 
-        cpu.pc = 0x8000;
+        cpu.set_pc(0x8000);
         p.end(&cpu, SystemClock::default());
         p.end(&cpu, SystemClock::default());
 
@@ -121,11 +132,10 @@ mod tests {
         mem[0x8000] = 0xea;
         mem[0x6000] = 0x00;
 
-        let mcu = RamMcu::new(mem);
-        let mut cpu = Cpu::new(mcu);
+        let mut cpu = create_cpu(mem);
         let mut p = DetectDeadLoop::<1, 0>::new();
 
-        cpu.pc = 0x8000;
+        cpu.set_pc(0x8000);
         p.end(&cpu, SystemClock::default());
         p.end(&cpu, SystemClock::default());
 
