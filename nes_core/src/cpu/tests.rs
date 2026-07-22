@@ -3870,7 +3870,7 @@ fn ora_and_eor_microcodes_update_accumulator_and_flags() {
 
     cpu.ab = 0x0042;
     cpu.alu = 0b1111_0000;
-    Microcode::Eor.exec(&mut cpu);
+    Microcode::Eor(ValueSource::Mem).exec(&mut cpu);
     assert_eq!(cpu.a, 0b1010_1111);
     assert!(!cpu.flag(Flag::Zero));
     assert!(cpu.flag(Flag::Negative));
@@ -3905,12 +3905,12 @@ fn compare_and_bit_microcodes_update_flags() {
     assert!(!cpu.flag(Flag::Zero));
 
     cpu.ab = 0x0011;
-    Microcode::Cpx.exec(&mut cpu);
+    Microcode::Cpx(ValueSource::Mem).exec(&mut cpu);
     assert!(cpu.flag(Flag::Carry));
     assert!(cpu.flag(Flag::Zero));
 
     cpu.ab = 0x000F;
-    Microcode::Cpy.exec(&mut cpu);
+    Microcode::Cpy(ValueSource::Mem).exec(&mut cpu);
     assert!(cpu.flag(Flag::Carry));
     assert!(!cpu.flag(Flag::Zero));
 }
@@ -4053,7 +4053,7 @@ fn sbc_immediate_and_memory_microcodes_update_accumulator_and_flags() {
 
     cpu.ab = 0x0042;
     cpu.alu = 0x01;
-    Microcode::Sbc.exec(&mut cpu);
+    Microcode::Sbc(ValueSource::Mem).exec(&mut cpu);
     assert_eq!(cpu.a, 0x0F);
     assert!(cpu.flag(Flag::Carry));
     assert!(!cpu.flag(Flag::Zero));

@@ -549,9 +549,9 @@ const fn build_opcode_table() -> [ArrayVec<[Microcode; 7]>; 256] {
     r[BRK as usize] = InterruptSequences::BRK;
     r[SBC_IMMEDIATE as usize] = microcode_arr!(ImmediateWithOp(ImmediateOp::Sbc));
     r[USBC as usize] = microcode_arr!(ImmediateWithOp(ImmediateOp::Sbc));
-    r[SBC_ZERO_PAGE as usize] = microcode_arr!(ZeroPage, Sbc);
-    r[SBC_ZERO_PAGE_X as usize] = zero_page_x_op(Sbc);
-    r[SBC_ABSOLUTE as usize] = absolute_op(Sbc);
+    r[SBC_ZERO_PAGE as usize] = microcode_arr!(ZeroPage, Sbc(ValueSource::ZeroPage));
+    r[SBC_ZERO_PAGE_X as usize] = zero_page_x_op(Sbc(ValueSource::ZeroPage));
+    r[SBC_ABSOLUTE as usize] = absolute_op(Sbc(ValueSource::Mem));
     r[SBC_ABSOLUTE_INDEXED_X as usize] = microcode_arr!(
         AbsoluteL,
         AbsoluteH,
@@ -568,13 +568,13 @@ const fn build_opcode_table() -> [ArrayVec<[Microcode; 7]>; 256] {
             first_clock: CrossPageBehavior::FirstClock
         }
     );
-    r[SBC_INDEXED_INDIRECT as usize] = indexed_indirect_op(Sbc);
+    r[SBC_INDEXED_INDIRECT as usize] = indexed_indirect_op(Sbc(ValueSource::Mem));
     r[SBC_INDIRECT_INDEXED as usize] =
         indirect_indexed_op(OpAfterAddressing::Sbc, CrossPageBehavior::FirstClock);
     r[CMP_IMMEDIATE as usize] = microcode_arr!(ImmediateWithOp(ImmediateOp::Cmp));
-    r[CMP_ZERO_PAGE as usize] = microcode_arr!(ZeroPage, Cmp);
-    r[CMP_ZERO_PAGE_X as usize] = zero_page_x_op(Cmp);
-    r[CMP_ABSOLUTE as usize] = absolute_op(Cmp);
+    r[CMP_ZERO_PAGE as usize] = microcode_arr!(ZeroPage, Cmp(ValueSource::ZeroPage));
+    r[CMP_ZERO_PAGE_X as usize] = zero_page_x_op(Cmp(ValueSource::ZeroPage));
+    r[CMP_ABSOLUTE as usize] = absolute_op(Cmp(ValueSource::Mem));
     r[CMP_ABSOLUTE_INDEXED_X as usize] = microcode_arr!(
         AbsoluteL,
         AbsoluteH,
@@ -591,16 +591,21 @@ const fn build_opcode_table() -> [ArrayVec<[Microcode; 7]>; 256] {
             first_clock: CrossPageBehavior::FirstClock
         }
     );
-    r[CMP_INDEXED_INDIRECT as usize] =
-        microcode_arr!(ZeroPage, ZeroPageIndexedX, IndexedL, IndexedH, Cmp);
+    r[CMP_INDEXED_INDIRECT as usize] = microcode_arr!(
+        ZeroPage,
+        ZeroPageIndexedX,
+        IndexedL,
+        IndexedH,
+        Cmp(ValueSource::Mem)
+    );
     r[CMP_INDIRECT_INDEXED as usize] =
         indirect_indexed_op(OpAfterAddressing::Cmp, CrossPageBehavior::FirstClock);
     r[CPX_IMMEDIATE as usize] = microcode_arr!(ImmediateWithOp(ImmediateOp::Cpx));
-    r[CPX_ZERO_PAGE as usize] = microcode_arr!(ZeroPage, Cpx);
-    r[CPX_ABSOLUTE as usize] = absolute_op(Cpx);
+    r[CPX_ZERO_PAGE as usize] = microcode_arr!(ZeroPage, Cpx(ValueSource::ZeroPage));
+    r[CPX_ABSOLUTE as usize] = absolute_op(Cpx(ValueSource::Mem));
     r[CPY_IMMEDIATE as usize] = microcode_arr!(ImmediateWithOp(ImmediateOp::Cpy));
-    r[CPY_ZERO_PAGE as usize] = microcode_arr!(ZeroPage, Cpy);
-    r[CPY_ABSOLUTE as usize] = absolute_op(Cpy);
+    r[CPY_ZERO_PAGE as usize] = microcode_arr!(ZeroPage, Cpy(ValueSource::ZeroPage));
+    r[CPY_ABSOLUTE as usize] = absolute_op(Cpy(ValueSource::Mem));
     r[TAX as usize] = microcode_arr!(Transfer(TransferDirection::AtoX));
     r[TXA as usize] = microcode_arr!(Transfer(TransferDirection::XtoA));
     r[TAY as usize] = microcode_arr!(Transfer(TransferDirection::AtoY));
@@ -612,9 +617,9 @@ const fn build_opcode_table() -> [ArrayVec<[Microcode; 7]>; 256] {
     r[DEX as usize] = microcode_arr!(IncDec(IncDecTarget::DecrementX));
     r[DEY as usize] = microcode_arr!(IncDec(IncDecTarget::DecrementY));
     r[ORA_IMMEDIATE as usize] = microcode_arr!(ImmediateWithOp(ImmediateOp::Ora));
-    r[ORA_ZERO_PAGE as usize] = microcode_arr!(ZeroPage, Ora);
-    r[ORA_ZERO_PAGE_X as usize] = zero_page_x_op(Ora);
-    r[ORA_ABSOLUTE as usize] = absolute_op(Ora);
+    r[ORA_ZERO_PAGE as usize] = microcode_arr!(ZeroPage, Ora(ValueSource::ZeroPage));
+    r[ORA_ZERO_PAGE_X as usize] = zero_page_x_op(Ora(ValueSource::ZeroPage));
+    r[ORA_ABSOLUTE as usize] = absolute_op(Ora(ValueSource::Mem));
     r[ORA_ABSOLUTE_INDEXED_X as usize] = microcode_arr!(
         AbsoluteL,
         AbsoluteH,
@@ -631,13 +636,13 @@ const fn build_opcode_table() -> [ArrayVec<[Microcode; 7]>; 256] {
             first_clock: CrossPageBehavior::FirstClock
         }
     );
-    r[ORA_INDEXED_INDIRECT as usize] = indexed_indirect_op(Ora);
+    r[ORA_INDEXED_INDIRECT as usize] = indexed_indirect_op(Ora(ValueSource::Mem));
     r[ORA_INDIRECT_INDEXED as usize] =
         indirect_indexed_op(OpAfterAddressing::Ora, CrossPageBehavior::FirstClock);
     r[EOR_IMMEDIATE as usize] = microcode_arr!(ImmediateWithOp(ImmediateOp::Eor));
-    r[EOR_ZERO_PAGE as usize] = microcode_arr!(ZeroPage, Eor);
-    r[EOR_ZERO_PAGE_X as usize] = zero_page_x_op(Eor);
-    r[EOR_ABSOLUTE as usize] = absolute_op(Eor);
+    r[EOR_ZERO_PAGE as usize] = microcode_arr!(ZeroPage, Eor(ValueSource::ZeroPage));
+    r[EOR_ZERO_PAGE_X as usize] = zero_page_x_op(Eor(ValueSource::ZeroPage));
+    r[EOR_ABSOLUTE as usize] = absolute_op(Eor(ValueSource::Mem));
     r[EOR_ABSOLUTE_INDEXED_X as usize] = microcode_arr!(
         AbsoluteL,
         AbsoluteH,
@@ -654,7 +659,7 @@ const fn build_opcode_table() -> [ArrayVec<[Microcode; 7]>; 256] {
             first_clock: CrossPageBehavior::FirstClock
         }
     );
-    r[EOR_INDEXED_INDIRECT as usize] = indexed_indirect_op(Eor);
+    r[EOR_INDEXED_INDIRECT as usize] = indexed_indirect_op(Eor(ValueSource::Mem));
     r[EOR_INDIRECT_INDEXED as usize] =
         indirect_indexed_op(OpAfterAddressing::Eor, CrossPageBehavior::FirstClock);
     r[ALR as usize] = microcode_arr!(AlrImmediate);
@@ -831,18 +836,18 @@ impl OpAfterAddressing {
             OpAfterAddressing::LoadIntoY => Microcode::LoadR(ValueSource::Mem, Register::Y),
             OpAfterAddressing::LoadIntoAlu => Microcode::LoadIntoAlu(ValueSource::Mem),
             OpAfterAddressing::StoreA => Microcode::StoreR(ValueSource::Mem, Register::A),
-            OpAfterAddressing::Ora => Microcode::Ora,
-            OpAfterAddressing::Eor => Microcode::Eor,
+            OpAfterAddressing::Ora => Microcode::Ora(ValueSource::Mem),
+            OpAfterAddressing::Eor => Microcode::Eor(ValueSource::Mem),
             OpAfterAddressing::Lax => Microcode::Lax,
             OpAfterAddressing::Las => Microcode::Las,
-            OpAfterAddressing::Sbc => Microcode::Sbc,
+            OpAfterAddressing::Sbc => Microcode::Sbc(ValueSource::Mem),
             OpAfterAddressing::Adc => Microcode::Adc(ValueSource::Mem),
             OpAfterAddressing::Shx => Microcode::Shx,
             OpAfterAddressing::Shy => Microcode::Shy,
             OpAfterAddressing::Sha => Microcode::Sha,
             OpAfterAddressing::Tas => Microcode::Tas,
             OpAfterAddressing::Nop => Microcode::Nop,
-            OpAfterAddressing::Cmp => Microcode::Cmp,
+            OpAfterAddressing::Cmp => Microcode::Cmp(ValueSource::Mem),
         }
     }
 }
@@ -898,12 +903,12 @@ impl ImmediateOp {
         match self {
             ImmediateOp::Adc => cpu.adc::<Alu>(),
             ImmediateOp::And => cpu.and::<Alu>(),
-            ImmediateOp::Sbc => cpu.sbc(false),
-            ImmediateOp::Cmp => cpu.cmp(false),
-            ImmediateOp::Cpx => cpu.cpx(false),
-            ImmediateOp::Cpy => cpu.cpy(false),
-            ImmediateOp::Ora => cpu.ora(false),
-            ImmediateOp::Eor => cpu.eor(false),
+            ImmediateOp::Sbc => cpu.sbc::<Alu>(),
+            ImmediateOp::Cmp => cpu.cmp::<Alu>(),
+            ImmediateOp::Cpx => cpu.cpx::<Alu>(),
+            ImmediateOp::Cpy => cpu.cpy::<Alu>(),
+            ImmediateOp::Ora => cpu.ora::<Alu>(),
+            ImmediateOp::Eor => cpu.eor::<Alu>(),
         }
     }
 }
@@ -978,17 +983,17 @@ pub enum Microcode {
     /// Fetch a byte from memory, then add to accumulator with carry
     Adc(ValueSource),
     /// Fetch a byte from memory, then subtract with carry from accumulator
-    Sbc,
+    Sbc(ValueSource),
     /// Fetch a byte from memory, then compare with accumulator
-    Cmp,
+    Cmp(ValueSource),
     /// Fetch a byte from memory, then compare with x register
-    Cpx,
+    Cpx(ValueSource),
     /// Fetch a byte from memory, then compare with y register
-    Cpy,
+    Cpy(ValueSource),
     /// Fetch a byte from memory, then or with accumulator
-    Ora,
+    Ora(ValueSource),
     /// Fetch a byte from memory, then xor with accumulator
-    Eor,
+    Eor(ValueSource),
     /// Fetch a byte from memory, then and with accumulator
     And(ValueSource),
     /// Undocumented ANE/XAA: (A OR CONST) AND X AND oper -> A
@@ -1503,12 +1508,24 @@ impl Microcode {
             Self::Adc(ValueSource::ZeroPage) => cpu.adc::<ZeroPage>(),
             Self::Adc(ValueSource::Mem) => cpu.adc::<Mem>(),
             Self::Adc(_) => unreachable!(),
-            Self::Sbc => cpu.sbc(true),
-            Self::Cmp => cpu.cmp(true),
-            Self::Cpx => cpu.cpx(true),
-            Self::Cpy => cpu.cpy(true),
-            Self::Ora => cpu.ora(true),
-            Self::Eor => cpu.eor(true),
+            Self::Sbc(ValueSource::ZeroPage) => cpu.sbc::<ZeroPage>(),
+            Self::Sbc(ValueSource::Mem) => cpu.sbc::<Mem>(),
+            Self::Sbc(_) => unreachable!(),
+            Self::Cmp(ValueSource::ZeroPage) => cpu.cmp::<ZeroPage>(),
+            Self::Cmp(ValueSource::Mem) => cpu.cmp::<Mem>(),
+            Self::Cmp(_) => unreachable!(),
+            Self::Cpx(ValueSource::ZeroPage) => cpu.cpx::<ZeroPage>(),
+            Self::Cpx(ValueSource::Mem) => cpu.cpx::<Mem>(),
+            Self::Cpx(_) => unreachable!(),
+            Self::Cpy(ValueSource::ZeroPage) => cpu.cpy::<ZeroPage>(),
+            Self::Cpy(ValueSource::Mem) => cpu.cpy::<Mem>(),
+            Self::Cpy(_) => unreachable!(),
+            Self::Ora(ValueSource::ZeroPage) => cpu.ora::<ZeroPage>(),
+            Self::Ora(ValueSource::Mem) => cpu.ora::<Mem>(),
+            Self::Ora(_) => unreachable!(),
+            Self::Eor(ValueSource::ZeroPage) => cpu.eor::<ZeroPage>(),
+            Self::Eor(ValueSource::Mem) => cpu.eor::<Mem>(),
+            Self::Eor(_) => unreachable!(),
             Self::And(ValueSource::Immediate) => cpu.and::<Immediate>(),
             Self::And(ValueSource::Alu) => cpu.and::<Alu>(),
             Self::And(ValueSource::ZeroPage) => cpu.and::<ZeroPage>(),

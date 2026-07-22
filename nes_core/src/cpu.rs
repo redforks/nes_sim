@@ -475,59 +475,41 @@ impl<M: Mcu> Cpu<M> {
         self.do_adc(val);
     }
 
-    fn sbc(&mut self, load_alu: bool) {
-        if load_alu {
-            self.load_alu();
-        }
-
-        let val = self.alu ^ 0xFF;
+    fn sbc<S: ValueSourceTrait>(&mut self) {
+        let val = self.read_byte2::<S>();
+        let val = val ^ 0xFF;
         self.do_adc(val);
     }
 
-    fn ora(&mut self, load_alu: bool) {
-        if load_alu {
-            self.load_alu();
-        }
-
-        self.set_register(Register::A, self.a | self.alu);
+    fn ora<S: ValueSourceTrait>(&mut self) {
+        let val = self.read_byte2::<S>();
+        self.set_register(Register::A, self.a | val);
     }
 
-    fn eor(&mut self, load_alu: bool) {
-        if load_alu {
-            self.load_alu();
-        }
-
-        self.set_register(Register::A, self.a ^ self.alu);
+    fn eor<S: ValueSourceTrait>(&mut self) {
+        let val = self.read_byte2::<S>();
+        self.set_register(Register::A, self.a ^ val);
     }
 
-    fn cmp(&mut self, load_alu: bool) {
-        if load_alu {
-            self.load_alu();
-        }
-
-        let t = self.a.wrapping_sub(self.alu);
+    fn cmp<S: ValueSourceTrait>(&mut self) {
+        let val = self.read_byte2::<S>();
+        let t = self.a.wrapping_sub(val);
         self.update_zero_negative_flags(t);
-        self.set_flag(Flag::Carry, self.a >= self.alu);
+        self.set_flag(Flag::Carry, self.a >= val);
     }
 
-    fn cpx(&mut self, load_alu: bool) {
-        if load_alu {
-            self.load_alu();
-        }
-
-        let t = self.x.wrapping_sub(self.alu);
+    fn cpx<S: ValueSourceTrait>(&mut self) {
+        let val = self.read_byte2::<S>();
+        let t = self.x.wrapping_sub(val);
         self.update_zero_negative_flags(t);
-        self.set_flag(Flag::Carry, self.x >= self.alu);
+        self.set_flag(Flag::Carry, self.x >= val);
     }
 
-    fn cpy(&mut self, load_alu: bool) {
-        if load_alu {
-            self.load_alu();
-        }
-
-        let t = self.y.wrapping_sub(self.alu);
+    fn cpy<S: ValueSourceTrait>(&mut self) {
+        let val = self.read_byte2::<S>();
+        let t = self.y.wrapping_sub(val);
         self.update_zero_negative_flags(t);
-        self.set_flag(Flag::Carry, self.y >= self.alu);
+        self.set_flag(Flag::Carry, self.y >= val);
     }
 
     fn alr(&mut self) {
@@ -576,7 +558,7 @@ impl<M: Mcu> Cpu<M> {
         let v = self.alu.wrapping_add(1);
         self.write_byte(v);
         self.alu = v;
-        self.sbc(false);
+        self.sbc::<Alu>();
     }
 
     fn rra(&mut self) {
@@ -599,14 +581,14 @@ impl<M: Mcu> Cpu<M> {
         self.set_flag(Flag::Carry, self.alu & 0x80 != 0);
         self.alu <<= 1;
         self.write_byte(self.alu);
-        self.ora(false);
+        self.ora::<Alu>();
     }
 
     fn sre(&mut self) {
         self.set_flag(Flag::Carry, self.alu & 0x01 != 0);
         self.alu >>= 1;
         self.write_byte(self.alu);
-        self.eor(false);
+        self.eor::<Alu>();
     }
 
     fn shx(&mut self) {
