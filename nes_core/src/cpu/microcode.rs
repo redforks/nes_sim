@@ -1615,7 +1615,31 @@ impl Microcode {
             Self::Transfer(direction) => Self::transfer(cpu, direction),
             Self::IncDec(target) => Self::inc_dec(cpu, target),
 
-            Self::BranchRelative(branch_test) => Self::branch_relative(cpu, branch_test),
+            Self::BranchRelative(BranchTest::IfCarryClear) => {
+                Self::branch_relative(cpu, BranchTest::IfCarryClear.test(cpu))
+            }
+            Self::BranchRelative(BranchTest::IfCarrySet) => {
+                Self::branch_relative(cpu, BranchTest::IfCarrySet.test(cpu))
+            }
+            Self::BranchRelative(BranchTest::IfZeroSet) => {
+                Self::branch_relative(cpu, BranchTest::IfZeroSet.test(cpu))
+            }
+            Self::BranchRelative(BranchTest::IfZeroClear) => {
+                Self::branch_relative(cpu, BranchTest::IfZeroClear.test(cpu))
+            }
+            Self::BranchRelative(BranchTest::IfNegativeSet) => {
+                Self::branch_relative(cpu, BranchTest::IfNegativeSet.test(cpu))
+            }
+            Self::BranchRelative(BranchTest::IfNegativeClear) => {
+                Self::branch_relative(cpu, BranchTest::IfNegativeClear.test(cpu))
+            }
+            Self::BranchRelative(BranchTest::IfOverflowSet) => {
+                Self::branch_relative(cpu, BranchTest::IfOverflowSet.test(cpu))
+            }
+            Self::BranchRelative(BranchTest::IfOverflowClear) => {
+                Self::branch_relative(cpu, BranchTest::IfOverflowClear.test(cpu))
+            }
+
             Self::Kill => cpu.halt(),
 
             Self::LoadIrqPcH => cpu.load_irq_pch(),
@@ -1680,9 +1704,9 @@ impl Microcode {
         }
     }
 
-    fn branch_relative<M: Mcu>(cpu: &mut Cpu<M>, branch_test: BranchTest) {
+    fn branch_relative<M: Mcu>(cpu: &mut Cpu<M>, branch_test_result: bool) {
         let offset = cpu.inc_read_byte();
-        if branch_test.test(cpu) {
+        if branch_test_result {
             let pch = cpu.pch();
             cpu.pc.wrapping_add((offset as i8) as u16);
             cpu.retain_cycle();
