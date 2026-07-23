@@ -1,4 +1,5 @@
 use super::{Cpu, Flag, Register, ValueSource};
+use crate::cpu::reg16::Register16;
 use crate::cpu::{Alu, Immediate, Mem, ValueSourceTrait, ValueTargetTrait, ZeroPage};
 use crate::mcu::Mcu;
 use tinyvec::ArrayVec;
@@ -1840,7 +1841,7 @@ fn store_r<M: Mcu, S: ValueTargetTrait>(cpu: &mut Cpu<M>, r: Register) {
 }
 
 fn load_pc_absolute_h<M: Mcu>(cpu: &mut Cpu<M>) {
-    let low = cpu.ab.low();
     let high = cpu.inc_read_byte();
-    cpu.pc.set(low as u16 | (high as u16) << 8);
+    cpu.pc.set_high(high);
+    cpu.pc.set_low(cpu.ab.low());
 }
