@@ -352,7 +352,7 @@ impl<M: Mcu> Cpu<M> {
             } else if self.irq_detector.irq_pending() {
                 self.interrupt_detected = Some(InterruptType::Irq);
             } else {
-                assert!(self.interrupt_detected.is_none());
+                debug_assert!(self.interrupt_detected.is_none());
             }
         }
     }

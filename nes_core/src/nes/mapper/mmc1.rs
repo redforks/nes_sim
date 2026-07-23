@@ -49,9 +49,9 @@ impl From<ControlFlags> for PrgRomMode {
 }
 
 pub struct MMC1 {
-    prg_rom: Vec<u8>,
+    prg_rom: Box<[u8]>,
     prg_ram: [u8; PRG_RAM_SIZE],
-    source: Vec<u8>,
+    source: Box<[u8]>,
     has_chr_ram: bool,
 
     control: ControlFlags,
@@ -59,22 +59,26 @@ pub struct MMC1 {
     chr_bank1: u8,
     prg_bank: u8,
     shift_register: u8,
+    lower_prg_bank_cache: usize,
+    upper_prg_bank_cache: usize,
+    prg_rom_bank_count_cache: usize,
 }
 
 impl MMC1 {
     pub fn new(prg_rom: &[u8], chr_rom: &[u8], mirroring: Mirroring) -> Self {
-        debug_assert!(!prg_rom.is_empty());
-        debug_assert_eq!(prg_rom.len() % PRG_ROM_BANK_SIZE, 0);
+        assert!(!prg_rom.is_empty());
+        assert_eq!(prg_rom.len() % PRG_ROM_BANK_SIZE, 0);
 
         let has_chr_ram = chr_rom.is_empty();
         let size = if has_chr_ram { 0x2000 } else { chr_rom.len() };
         let mut source = vec![0; size];
         source[..chr_rom.len()].copy_from_slice(chr_rom);
 
-        Self {
-            prg_rom: prg_rom.to_vec(),
+        let bank_count = prg_rom.len() / PRG_ROM_BANK_SIZE;
+        let mut instance = Self {
+            prg_rom: prg_rom.to_vec().into_boxed_slice(),
             prg_ram: [0; PRG_RAM_SIZE],
-            source,
+            source: source.into_boxed_slice(),
             has_chr_ram,
             control: ControlFlags::new()
                 .with_mirroring(Self::mirroring_bits(mirroring))
@@ -83,7 +87,12 @@ impl MMC1 {
             chr_bank1: 0,
             prg_bank: 0,
             shift_register: INITIAL_SHIFT_REGISTER,
-        }
+            lower_prg_bank_cache: 0,
+            upper_prg_bank_cache: 0,
+            prg_rom_bank_count_cache: bank_count,
+        };
+        instance.sync_prg_bank_cache();
+        instance
     }
 
     fn bank_count_4k(&self) -> usize {
@@ -143,8 +152,7 @@ impl Cartridge for MMC1 {
                     0
                 }
             }
-            0x4020..=0x5fff => 0,
-            _ => panic!("read address out of range: {:04x}", address),
+            _ => 0,
         }
     }
 
@@ -180,10 +188,12 @@ impl MMC1 {
             let result = match address {
                 0x8000..=0x9fff => {
                     self.control = ControlFlags::from_bits(register_value);
+                    self.sync_prg_bank_cache();
                     self.apply_control()
                 }
                 0xa000..=0xbfff => {
                     self.chr_bank0 = register_value & 0x1f;
+                    self.sync_prg_bank_cache();
                     CartridgeOperation::None
                 }
                 0xc000..=0xdfff => {
@@ -222,7 +232,7 @@ impl MMC1 {
     }
 
     fn prg_rom_bank_count(&self) -> usize {
-        self.prg_rom.len() / PRG_ROM_BANK_SIZE
+        self.prg_rom_bank_count_cache
     }
 
     fn prg_ram_enabled(&self) -> bool {
@@ -250,7 +260,7 @@ impl MMC1 {
         }
     }
 
-    fn lower_prg_bank(&self) -> usize {
+    fn calc_lower_prg_bank(&self) -> usize {
         if self.prg_rom_bank_count() <= 2 {
             return 0;
         }
@@ -266,7 +276,7 @@ impl MMC1 {
         }
     }
 
-    fn upper_prg_bank(&self) -> usize {
+    fn calc_upper_prg_bank(&self) -> usize {
         let total = self.prg_rom_bank_count();
         if total <= 2 {
             return total.saturating_sub(1);
@@ -285,6 +295,19 @@ impl MMC1 {
         }
     }
 
+    fn sync_prg_bank_cache(&mut self) {
+        self.lower_prg_bank_cache = self.calc_lower_prg_bank();
+        self.upper_prg_bank_cache = self.calc_upper_prg_bank();
+    }
+
+    fn lower_prg_bank(&self) -> usize {
+        self.lower_prg_bank_cache
+    }
+
+    fn upper_prg_bank(&self) -> usize {
+        self.upper_prg_bank_cache
+    }
+
     fn read_prg_bank(&self, bank: usize, offset: u16) -> u8 {
         let bank = bank % self.prg_rom_bank_count();
         let start = bank * PRG_ROM_BANK_SIZE;
@@ -293,6 +316,7 @@ impl MMC1 {
 
     fn select_prg_bank(&mut self, value: u8) {
         self.prg_bank = value & 0x1f;
+        self.sync_prg_bank_cache();
     }
 }
 
