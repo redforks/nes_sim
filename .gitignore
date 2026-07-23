@@ -7,3 +7,4 @@ progress.md
 www/*.nes
 /devop
 nesdev-wiki
+**/graphify-out
