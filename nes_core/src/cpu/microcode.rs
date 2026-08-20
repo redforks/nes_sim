@@ -1,5 +1,4 @@
 use super::{Cpu, Flag, Register, ValueSource};
-use crate::cpu::reg16::Register16;
 use crate::cpu::{Alu, Immediate, Mem, ValueSourceTrait, ValueTargetTrait, ZeroPage};
 use crate::mcu::Mcu;
 use tinyvec::ArrayVec;
