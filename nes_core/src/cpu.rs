@@ -339,12 +339,15 @@ impl<M: Mcu> Cpu<M> {
         }
         // Detect interrupt at the second-to-last cycle
         if self.microcode_queue.len() == 0 && !std::mem::take(&mut self.entering_interrupt) {
-            if self
-                .nmi_detecteor
-                .nmi_line_changed_at
-                .is_some_and(|v| (clock.0 - v.0) > 1)
-                && self.nmi_detecteor.take_nmi_pending()
+            if self.nmi_detecteor.state == NmiState::NmiPending
+                && self.nmi_detecteor.nmi_line_changed_at.is_some_and(|v| {
+                    if self.track_interrupt {
+                        dbg!((clock.0, v.0));
+                    }
+                    (clock.0 - v.0) > 1
+                })
             {
+                self.nmi_detecteor.state = NmiState::InNmi;
                 if self.track_interrupt {
                     println!("${:x}, carry flag: {}", self.status, self.flag(Flag::Carry));
                 }
@@ -707,7 +710,17 @@ impl<M: Mcu> Cpu<M> {
         self.pc.set_high(high);
     }
 
-    fn load_irq_pcl(&mut self) {
+    fn load_irq_pcl(&mut self, is_irq: bool) {
+        if is_irq && self.nmi_detecteor.take_nmi_pending() {
+            if self.track_interrupt {
+                println!("hijack: ${:x}", self.status,);
+            }
+            self.microcode_queue.clear();
+            self.push_microcode(Microcode::LoadNmiPcH);
+            self.load_nmi_pcl();
+            return;
+        }
+
         self.set_flag(Flag::InterruptDisabled, true);
         let low = self.read_byte(0xFFFE);
         self.pc.set_low(low);

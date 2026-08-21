@@ -331,7 +331,7 @@ impl InterruptSequences {
             break_flag: false,
             check_nmi: true,
         },
-        Microcode::LoadIrqPcL,
+        Microcode::LoadIrqPcL { is_irq: true },
         Microcode::LoadIrqPcH,
     ];
 
@@ -343,7 +343,7 @@ impl InterruptSequences {
             break_flag: true,
             check_nmi: true,
         },
-        Microcode::LoadIrqPcL,
+        Microcode::LoadIrqPcL { is_irq: false },
         Microcode::LoadIrqPcH
     ];
 
@@ -1072,7 +1072,9 @@ pub enum Microcode {
 
     /// Set pc to address_latch | absolute << 8
     LoadPcAbsoluteH,
-    LoadIrqPcL,
+    LoadIrqPcL {
+        is_irq: bool,
+    },
     LoadIrqPcH,
 }
 
@@ -1643,7 +1645,7 @@ impl Microcode {
             Self::Kill => cpu.halt(),
 
             Self::LoadIrqPcH => cpu.load_irq_pch(),
-            Self::LoadIrqPcL => cpu.load_irq_pcl(),
+            Self::LoadIrqPcL { is_irq } => cpu.load_irq_pcl(is_irq),
             Self::LoadNmiPcL => cpu.load_nmi_pcl(),
             Self::LoadNmiPcH => cpu.load_nmi_pch(),
             Self::PushStatus {
