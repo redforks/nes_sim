@@ -959,6 +959,7 @@ pub enum Microcode {
     },
     /// Do nothing, used in "oops" cycles of AbsoluteIndexed and Indirect Indexed addressing
     Nop,
+    SkipDetectInterrupt,
     /// Load low byte of address from zero page indirect location
     IndexedL,
     /// Load high byte of address from zero page indirect location
@@ -1703,17 +1704,21 @@ impl Microcode {
             | Self::Cpy(_)
             | Self::Ora(_)
             | Self::Eor(_) => unreachable!(),
+            Self::SkipDetectInterrupt => cpu.request_detect_interrupt = Some(false),
         }
     }
 
     fn branch_relative<M: Mcu>(cpu: &mut Cpu<M>, branch_test_result: bool) {
         let offset = cpu.inc_read_byte();
+        cpu.request_detect_interrupt = Some(true);
         if branch_test_result {
             let pch = cpu.pch();
             cpu.pc.wrapping_add((offset as i8) as u16);
-            cpu.retain_cycle();
             if pch != cpu.pch() {
                 cpu.retain_cycle();
+                cpu.retain_cycle();
+            } else {
+                cpu.push_microcode(Microcode::SkipDetectInterrupt);
             }
         }
     }

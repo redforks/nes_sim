@@ -373,7 +373,7 @@ vrc2-and-4-roms: vrc21-s1 vrc21-s2 vrc22 vrc23-s1 vrc23-s2 vrc23-s3 vrc25-s1 vrc
 passed_mapper: mmc3 bntest mmc1-a12
 
 [parallel]
-passed_cpu_tests: cpu-test instr_misc instr_test-v5 instr_test-v3 instr_timing cpu_dummy_reads cpu_dummy_writes cpu_exec_space cpu_reset nestest branch_timing_tests nes_instr_test
+passed_cpu_tests: cpu-test instr_misc instr_test-v5 instr_test-v3 instr_timing cpu_dummy_reads cpu_dummy_writes cpu_exec_space cpu_reset nestest branch_timing_tests nes_instr_test cpu_interrupts_v2
 
 [parallel]
 passed_ppu_tests: oam_read oam_stress ppu_open_bus ppu_read_buffer sprite_hit_tests sprite_overflow_tests scanline
@@ -381,7 +381,7 @@ passed_ppu_tests: oam_read oam_stress ppu_open_bus ppu_read_buffer sprite_hit_te
 [parallel]
 passed_apu_tests: apu_mixer apu_reset apu_test
 
-todo_tests: sprdma_and_dmc_dma mmc3_test_4 mmc3_test_6 mmc3_test2_4 cpu_interrupts_v2 cpu_timing_test6 vbl_nmi_timing ppu_vbl_nmi dmc_dma_during_read4
+todo_tests: sprdma_and_dmc_dma mmc3_test_4 mmc3_test_6 mmc3_test2_4 cpu_timing_test6 vbl_nmi_timing ppu_vbl_nmi dmc_dma_during_read4
 
 [parallel]
 passed_rom_tests: passed_cpu_tests passed_ppu_tests passed_apu_tests passed_mapper
