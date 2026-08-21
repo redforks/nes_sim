@@ -475,24 +475,8 @@ const fn build_opcode_table() -> [ArrayVec<[Microcode; 7]>; 256] {
         PushStack(PushTarget::Pcl),
         LoadPcAbsoluteH
     );
-    r[RTS as usize] = microcode_arr!(
-        SkipImmediate,
-        Nop,
-        PopPcL,
-        PopPcH {
-            exit_from_interrupt: false
-        },
-        IncPc
-    );
-    r[RTI as usize] = microcode_arr!(
-        SkipImmediate,
-        Nop,
-        Plp,
-        PopPcL,
-        PopPcH {
-            exit_from_interrupt: true
-        }
-    );
+    r[RTS as usize] = microcode_arr!(SkipImmediate, Nop, PopPcL, PopPcH, IncPc);
+    r[RTI as usize] = microcode_arr!(SkipImmediate, Nop, Plp, PopPcL, PopPcH);
     r[CLC as usize] = microcode_arr!(ClearFlag(Carry));
     r[SEC as usize] = microcode_arr!(SetFlag(Carry));
     r[CLD as usize] = microcode_arr!(ClearFlag(Decimal));
@@ -1051,9 +1035,7 @@ pub enum Microcode {
     /// Pop low byte of PC from stack
     PopPcL,
     /// Pop high byte of PC from stack
-    PopPcH {
-        exit_from_interrupt: bool,
-    },
+    PopPcH,
     IncPc,
     PushStack(PushTarget),
     /// pop stack into alu
@@ -1658,14 +1640,9 @@ impl Microcode {
                 let low = cpu.pop_stack();
                 cpu.pc.set_low(low);
             }
-            Self::PopPcH {
-                exit_from_interrupt,
-            } => {
+            Self::PopPcH => {
                 let high = cpu.pop_stack();
                 cpu.pc.set_high(high);
-                if exit_from_interrupt {
-                    cpu.nmi_detecteor.leave_nmi();
-                }
             }
             Self::IncPc => cpu.pc += 1,
             Self::PushStack(target) => match target {

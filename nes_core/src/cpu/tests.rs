@@ -80,14 +80,9 @@ fn test_nmi_detector() {
     v.detect_nmi();
     assert!(v.take_nmi_pending());
     assert!(!update_detect_and_report(&mut v, false));
-    assert!(!update_detect_and_report(&mut v, true)); // in nmi, is_nmi_pending() never returns true
-    v.leave_nmi();
     assert!(!v.take_nmi_pending()); // leaves nmi, still no nmi_pending, because nmi is edge detected
 
     assert!(!update_detect_and_report(&mut v, false)); // disabled
-    assert!(update_detect_and_report(&mut v, true)); // enabled and detected
-    v.leave_nmi();
-    assert!(!update_detect_and_report(&mut v, true)); // nmi line not changed, even it is true
 }
 
 #[test]
