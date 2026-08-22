@@ -90,6 +90,9 @@ enum State {
     AlignOrRead,
     Dummy,
     Read,
+    // DMA read cycle done, CPU still halted; unfreeze on the next cycle so
+    // the CPU resumes execution only after the DMA read cycle
+    Unfreeze,
 }
 
 /// Dma controller for apu dmc channel
@@ -105,8 +108,7 @@ impl DmcDma {
     fn read(&mut self, cpu: &mut impl NesDmaSupport) {
         let byte = cpu.read_mem(self.addr);
         cpu.supply_dmc_byte(byte);
-        self.state = State::Inactive;
-        cpu.unfreeze();
+        self.state = State::Unfreeze;
     }
 
     fn dummy_read(&self, cpu: &mut impl NesDmaSupport) {
@@ -119,7 +121,7 @@ impl DmcDma {
                 if let Some((dmc_dma_type, addr)) = cpu.take_dmc_dma_request() {
                     self.addr = addr;
                     if dmc_dma_type == DmcDmaType::Load {
-                        self.state = State::DelayForLoad(2);
+                        self.state = State::DelayForLoad(1);
                     } else {
                         self.state = State::TryHalt {
                             halt_on_put: true,
@@ -177,6 +179,10 @@ impl DmcDma {
                 self.dummy_read(cpu);
             }
             State::Read => self.read(cpu),
+            State::Unfreeze => {
+                cpu.unfreeze();
+                self.state = State::Inactive;
+            }
         }
     }
 }

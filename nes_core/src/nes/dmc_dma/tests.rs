@@ -16,7 +16,6 @@ fn load_dmc_dma() {
     // (get) \ CPU writes to $4015     <- DMC enabled
     // (put) / during this APU cycle   <- DMC enabled
     // (get) CPU reads
-    // (put) CPU reads
     // (halted) (get) CPU reads from address A  <- DMA halt cycle
     // (halted) (put) CPU reads from address A  <- DMA dummy cycle
     // (halted) (get) DMA reads from address B
@@ -31,12 +30,9 @@ fn load_dmc_dma() {
 
     // get request
     t.expect_take_dmc_dma_request(Some((DmcDmaType::Load, 0x1234)));
-    t.tick_and_assert(State::DelayForLoad(2));
-
-    // delay first cpu cycle
     t.tick_and_assert(State::DelayForLoad(1));
 
-    // delay second cpu cycle
+    // delay cpu cycle
     t.tick_and_assert(State::TryHalt {
         halt_on_put: false,
         first_attempt: true,
@@ -54,6 +50,10 @@ fn load_dmc_dma() {
     t.expect_is_get_cycle(true);
     t.expect_read_mem(0x1234, 0xcd);
     t.expect_supply_dmc_byte_with(0xcd);
+    // fetch cycle: CPU is still halted while the DMA drives the bus
+    t.tick_and_assert(State::Unfreeze);
+
+    // CPU resumes execution on the cycle after the DMA read
     t.expect_unfreeze();
     t.tick_and_assert(State::Inactive);
 }
@@ -65,7 +65,6 @@ fn load_dmc_dmadelayed() {
     //    (get) \ CPU writes to $4015     <- DMC enabled
     //    (put) / during this APU cycle   <- DMC enabled
     //    (get) CPU reads
-    //    (put) CPU reads
     //    (get) CPU writes                <- DMA attempts to halt
     // (halted) (put) CPU reads from address A  <- DMA halt cycle
     // (halted) (get) CPU reads from address A  <- DMA dummy cycle
@@ -77,12 +76,9 @@ fn load_dmc_dmadelayed() {
 
     // get request
     t.expect_take_dmc_dma_request(Some((DmcDmaType::Load, 0x1234)));
-    t.tick_and_assert(State::DelayForLoad(2));
-
-    // delay first cpu cycle
     t.tick_and_assert(State::DelayForLoad(1));
 
-    // delay second cpu cycle
+    // delay cpu cycle
     t.tick_and_assert(State::TryHalt {
         halt_on_put: false,
         first_attempt: true,
@@ -111,6 +107,10 @@ fn load_dmc_dmadelayed() {
     // apu is get cycle, complete the dma
     t.expect_read_mem(0x1234, 0xcd);
     t.expect_supply_dmc_byte_with(0xcd);
+    // fetch cycle: CPU is still halted while the DMA drives the bus
+    t.tick_and_assert(State::Unfreeze);
+
+    // CPU resumes execution on the cycle after the DMA read
     t.expect_unfreeze();
     t.tick_and_assert(State::Inactive);
 }
@@ -143,6 +143,10 @@ fn reload_dmc_dma() {
     // read and supply to apu
     t.expect_read_mem(0x1234, 0xcd);
     t.expect_supply_dmc_byte_with(0xcd);
+    // fetch cycle: CPU is still halted while the DMA drives the bus
+    t.tick_and_assert(State::Unfreeze);
+
+    // CPU resumes execution on the cycle after the DMA read
     t.expect_unfreeze();
     t.tick_and_assert(State::Inactive);
 }
@@ -179,6 +183,10 @@ fn reload_dmc_dma_delayed_1_cycle() {
     t.expect_is_get_cycle(true);
     t.expect_read_mem(0x1234, 0xcd);
     t.expect_supply_dmc_byte_with(0xcd);
+    // fetch cycle: CPU is still halted while the DMA drives the bus
+    t.tick_and_assert(State::Unfreeze);
+
+    // CPU resumes execution on the cycle after the DMA read
     t.expect_unfreeze();
     t.tick_and_assert(State::Inactive);
 }
@@ -228,6 +236,10 @@ fn reload_dmc_dma_delayed_2_cycle() {
     // read and supply to apu
     t.expect_read_mem(0x1234, 0xcd);
     t.expect_supply_dmc_byte_with(0xcd);
+    // fetch cycle: CPU is still halted while the DMA drives the bus
+    t.tick_and_assert(State::Unfreeze);
+
+    // CPU resumes execution on the cycle after the DMA read
     t.expect_unfreeze();
     t.tick_and_assert(State::Inactive);
 }
@@ -280,6 +292,10 @@ fn reload_dmc_dma_delayed_3_cycle() {
     t.expect_is_get_cycle(true);
     t.expect_read_mem(0x1234, 0xcd);
     t.expect_supply_dmc_byte_with(0xcd);
+    // fetch cycle: CPU is still halted while the DMA drives the bus
+    t.tick_and_assert(State::Unfreeze);
+
+    // CPU resumes execution on the cycle after the DMA read
     t.expect_unfreeze();
     t.tick_and_assert(State::Inactive);
 }
