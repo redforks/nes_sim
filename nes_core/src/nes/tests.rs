@@ -168,3 +168,99 @@ fn oam_dma_pauses_on_dmc_read_collision() {
     let dma = mcu.oam_dma.expect("dma active");
     assert_eq!(dma.transfer_cycle, 3, "read redone, transfer resumed");
 }
+
+/// DMC DMA landing at the very start of an OAM DMA whose $4014 write was on a
+/// get cycle: the halt cycle is shared, and the DMC dummy/alignment cycles
+/// overlap the OAM transfer's first read/write. Only the DMC get itself and
+/// one OAM re-alignment cycle cost extra (+2 total).
+///
+/// doc/dma.md §DMC DMA during OAM DMA, example "DMC DMA at the start of OAM
+/// DMA (write on get), taking 2 cycles":
+/// ```text
+///       (get) CPU writes to $4014
+/// (halted) (put) <- shared DMA halt cycle
+/// (halted) (get) OAM reads $xx00   <- DMC dummy cycle
+/// (halted) (put) OAM writes $2004  <- DMC alignment cycle
+/// (halted) (get) DMC reads B       <- OAM paused
+/// (halted) (put)                   <- OAM alignment cycle
+/// (halted) (get) OAM reads $xx01
+/// ```
+#[test]
+fn dmc_collision_at_start_of_oam_write_on_get() {
+    let mut mcu = test_mcu();
+    mcu.write(0x4014, 0x02);
+
+    // Consume pending on a put cycle (shared halt); write was on get so there
+    // is no alignment cycle before the first read.
+    let h = SystemClock(5); // put cycle
+    mcu.tick_oam_dma(h, false);
+    assert_eq!(mcu.oam_dma.as_ref().unwrap().startup_cycles, 0);
+
+    // H+1 (get): first OAM read proceeds under the DMC dummy cycle.
+    mcu.tick_oam_dma(SystemClock(h.cycles() + 3), false);
+    assert_eq!(mcu.oam_dma.as_ref().unwrap().transfer_cycle, 1);
+
+    // H+2 (put): first OAM write proceeds under the DMC alignment cycle.
+    mcu.tick_oam_dma(SystemClock(h.cycles() + 6), false);
+    assert_eq!(mcu.oam_dma.as_ref().unwrap().transfer_cycle, 2);
+
+    // H+3 (get): DMC drives its byte onto the bus; the OAM read of $xx02 is
+    // aborted and will be redone after one alignment cycle.
+    mcu.tick_oam_dma(SystemClock(h.cycles() + 9), true);
+    assert_eq!(mcu.oam_dma.as_ref().unwrap().transfer_cycle, 2);
+    assert_eq!(mcu.oam_dma.as_ref().unwrap().pause_cycles, 1);
+
+    // H+4 (put): OAM alignment cycle, no transfer.
+    mcu.tick_oam_dma(SystemClock(h.cycles() + 12), false);
+    assert_eq!(mcu.oam_dma.as_ref().unwrap().transfer_cycle, 2);
+
+    // H+5 (get): the aborted read is redone.
+    mcu.tick_oam_dma(SystemClock(h.cycles() + 15), false);
+    assert_eq!(mcu.oam_dma.as_ref().unwrap().transfer_cycle, 3);
+}
+
+/// Same as [`dmc_collision_at_start_of_oam_write_on_get`] but for a $4014
+/// write on a put cycle: the OAM alignment cycle doubles as the DMC dummy
+/// cycle, then the DMC get pauses the not-yet-started OAM read.
+///
+/// doc/dma.md §DMC DMA during OAM DMA, example "DMC DMA at the start of OAM
+/// DMA (write on put), taking 2 cycles":
+/// ```text
+///       (put) CPU writes to $4014   <- DMC attempts to halt
+/// (halted) (get)                    <- shared DMA halt cycle
+/// (halted) (put)                    <- DMC dummy + OAM alignment
+/// (halted) (get) DMC reads B        <- OAM paused
+/// (halted) (put)                    <- OAM alignment cycle
+/// (halted) (get) OAM reads $xx00
+/// ```
+#[test]
+fn dmc_collision_at_start_of_oam_write_on_put() {
+    let mut mcu = test_mcu();
+    mcu.write(0x4014, 0x02);
+
+    // Consume pending on a get cycle (shared halt); write was on put so one
+    // alignment cycle precedes the first read.
+    let h = SystemClock(8); // get cycle
+    mcu.tick_oam_dma(h, false);
+    assert_eq!(mcu.oam_dma.as_ref().unwrap().startup_cycles, 1);
+
+    // H+1 (put): OAM alignment cycle doubles as the DMC dummy cycle.
+    mcu.tick_oam_dma(SystemClock(h.cycles() + 3), false);
+    let dma = mcu.oam_dma.as_ref().unwrap();
+    assert_eq!(dma.startup_cycles, 0);
+    assert_eq!(dma.transfer_cycle, 0);
+
+    // H+2 (get): DMC drives its byte; the first OAM read is aborted.
+    mcu.tick_oam_dma(SystemClock(h.cycles() + 6), true);
+    let dma = mcu.oam_dma.as_ref().unwrap();
+    assert_eq!(dma.transfer_cycle, 0);
+    assert_eq!(dma.pause_cycles, 1);
+
+    // H+3 (put): OAM alignment cycle, still no transfer.
+    mcu.tick_oam_dma(SystemClock(h.cycles() + 9), false);
+    assert_eq!(mcu.oam_dma.as_ref().unwrap().transfer_cycle, 0);
+
+    // H+4 (get): the first OAM read finally happens.
+    mcu.tick_oam_dma(SystemClock(h.cycles() + 12), false);
+    assert_eq!(mcu.oam_dma.as_ref().unwrap().transfer_cycle, 1);
+}
