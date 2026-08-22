@@ -109,7 +109,7 @@ impl FrameSequencer {
         self.cycles += 1;
         match self.mode {
             FrameSequencerMode::FourStep => match self.cycles {
-                22641 | 44739 | 67113 | 89487 => self.output_latch = Some(self.sequences.tick()),
+                22371 | 44739 | 67113 | 89487 => self.output_latch = Some(self.sequences.tick()),
                 89484 | 89488 => {
                     self.output_latch = Some(FrameSequenceState {
                         irq: true,
@@ -123,7 +123,7 @@ impl FrameSequencer {
                 _ => {}
             },
             FrameSequencerMode::FiveStep => match self.cycles {
-                22641 | 44739 | 67113 | 89487 | 111843 => {
+                22371 | 44739 | 67113 | 89487 | 111843 => {
                     self.output_latch = Some(self.sequences.tick())
                 }
                 111844 => {
