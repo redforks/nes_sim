@@ -7,7 +7,7 @@
 //! completion (pass or fail verdict both count — the hang is the bug).
 
 use nes_core::nes::NesMcu;
-use nes_core::{ines::INesFile, nes_machine::NesMachine, EmptyPlugin};
+use nes_core::{EmptyPlugin, ines::INesFile, nes_machine::NesMachine};
 
 #[test]
 fn sprdma_and_dmc_dma_rom_terminates() {

@@ -20,6 +20,9 @@ struct OamDmaState {
     startup_cycles: usize,
     transfer_cycle: usize,
     latch: u8,
+    /// Remaining pause cycles inserted after a DMC DMA collision: one OAM
+    /// alignment cycle before the aborted read is redone.
+    pause_cycles: usize,
 }
 
 pub struct NesMcu<R: Render, D: AudioDriver> {
@@ -79,10 +82,21 @@ impl<R: Render, D: AudioDriver> NesMcu<R, D> {
         self.apu.flush();
     }
 
-    pub fn tick_oam_dma(&mut self, clock: SystemClock) -> bool {
+    pub fn tick_oam_dma(&mut self, clock: SystemClock, dmc_drove_bus: bool) -> bool {
         if let Some(mut dma) = self.oam_dma {
             self.oam_dma = None;
-            if dma.startup_cycles > 0 {
+            if dma.pause_cycles > 0 {
+                // OAM alignment cycle after a DMC DMA collision: no transfer.
+                dma.pause_cycles -= 1;
+            } else if dmc_drove_bus
+                && dma.startup_cycles == 0
+                && dma.transfer_cycle.is_multiple_of(2)
+            {
+                // DMC DMA wins the bus: the OAM read is aborted and must be
+                // redone after an alignment cycle. Skipping this cycle and one
+                // alignment cycle preserves the get/put phase.
+                dma.pause_cycles = 1;
+            } else if dma.startup_cycles > 0 {
                 dma.startup_cycles -= 1;
             } else {
                 let byte_index = dma.transfer_cycle / 2;
@@ -105,11 +119,17 @@ impl<R: Render, D: AudioDriver> NesMcu<R, D> {
 
         if let Some(page) = self.oam_dma_pending {
             self.oam_dma_pending = None;
+            // The pending request is consumed on the first tick after the
+            // $4014 write cycle; that tick is the DMA halt cycle. If it is a
+            // get cycle the write happened on a put cycle and one alignment
+            // cycle is needed before the first read; otherwise none.
+            let startup_cycles = if clock.is_apu_get_clock() { 1 } else { 0 };
             self.oam_dma = Some(OamDmaState {
                 page,
-                startup_cycles: if clock.is_even_cpu_cycle() { 1 } else { 2 },
+                startup_cycles,
                 transfer_cycle: 0,
                 latch: 0,
+                pause_cycles: 0,
             });
 
             return true;

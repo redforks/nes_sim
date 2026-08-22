@@ -115,7 +115,9 @@ impl DmcDma {
         cpu.read_mem(self.cpu_last_read_addr);
     }
 
-    pub fn tick(&mut self, cpu: &mut impl NesDmaSupport, clock: SystemClock) {
+    /// Advance the DMA state machine by one tick. Returns true if the DMA
+    /// performed its memory read this cycle (it drove the bus).
+    pub fn tick(&mut self, cpu: &mut impl NesDmaSupport, clock: SystemClock) -> bool {
         match self.state {
             State::Inactive => {
                 if let Some((dmc_dma_type, addr)) = cpu.take_dmc_dma_request() {
@@ -150,7 +152,7 @@ impl DmcDma {
                 // 如果是第一次尝试，必须严格对齐目标相位
                 if first_attempt && halt_on_put == cpu.is_get_cycle(clock) {
                     // 相位不对，CPU 照常运行，不消耗 DMA 周期
-                    return;
+                    return false;
                 }
 
                 // 尝试挂起 CPU
@@ -169,6 +171,7 @@ impl DmcDma {
             State::AlignOrRead => {
                 if cpu.is_get_cycle(clock) {
                     self.read(cpu);
+                    return true;
                 } else {
                     self.state = State::Read;
                     self.dummy_read(cpu);
@@ -178,12 +181,16 @@ impl DmcDma {
                 self.state = State::AlignOrRead;
                 self.dummy_read(cpu);
             }
-            State::Read => self.read(cpu),
+            State::Read => {
+                self.read(cpu);
+                return true;
+            }
             State::Unfreeze => {
                 cpu.unfreeze();
                 self.state = State::Inactive;
             }
         }
+        false
     }
 }
 

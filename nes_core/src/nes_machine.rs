@@ -92,8 +92,8 @@ where
 
         self.cpu.mcu_mut().tick_apu(clock);
         if clock.is_apu_clock() {
-            self.dmc_dma.tick(&mut self.cpu, clock);
-            if self.cpu.mcu_mut().tick_oam_dma(clock) {
+            let dmc_drove_bus = self.dmc_dma.tick(&mut self.cpu, clock);
+            if self.cpu.mcu_mut().tick_oam_dma(clock, dmc_drove_bus) {
                 return ExecuteResult::Continue;
             }
         }
