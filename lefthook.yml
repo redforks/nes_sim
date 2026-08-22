@@ -1,0 +1,9 @@
+# Lefthook git hooks configuration
+# https://lefthook.dev/configuration/
+
+pre-commit:
+  commands:
+    rustfmt:
+      glob: "*.rs"
+      run: rustfmt {staged_files}
+      stage_fixed: true
