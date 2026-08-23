@@ -32,12 +32,15 @@ impl SystemClock {
     }
 
     pub fn is_even_cpu_cycle(self) -> bool {
-        // self.0 / SYSTEM_CYCLES_PER_CPU_CYCLE % 2 == 0
-        self.0 % (SYSTEM_CYCLES_PER_CPU_CYCLE * 2) < SYSTEM_CYCLES_PER_CPU_CYCLE
+        self.0 / SYSTEM_CYCLES_PER_CPU_CYCLE % 2 == 0
     }
 
+    /// DMA get phase. Which CPU-cycle parity carries the get phase is a
+    /// power-on coin flip on hardware; this emulator pins get to odd CPU
+    /// cycles — the alignment blargg's test ROM tables encode
+    /// (cpu_interrupts_v2 4-irq_and_dma, sprdma_and_dmc_dma).
     pub fn is_apu_get_clock(self) -> bool {
-        self.is_even_cpu_cycle()
+        !self.is_even_cpu_cycle()
     }
 
     pub fn cycles(self) -> u64 {

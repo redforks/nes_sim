@@ -147,8 +147,8 @@ fn ppudata_double_read_returns_stale_value_but_advances() {
 fn oam_dma_first_read_alignment() {
     let mut mcu = test_mcu();
 
-    // Simulate a $4014 write completing on an even (get) cpu cycle.
-    let w = SystemClock(8); // 8 % 6 == 2 -> get cycle; 8 % 3 == 2 -> apu clock
+    // Simulate a $4014 write completing on a get cpu cycle.
+    let w = SystemClock(11); // 11 % 6 == 5 -> get cycle; 11 % 3 == 2 -> apu clock
     let mut clock = w;
     // Advance to W+3: the first apu tick after the write, where pending is consumed.
     clock = clock.inc();
@@ -170,6 +170,55 @@ fn oam_dma_first_read_alignment() {
         "write-on-get needs no alignment cycle"
     );
 }
+/// OAM DMA completion spans follow the doc/dma.md §OAM DMA diagrams: a
+/// $4014 write on a put cycle needs one alignment cycle before the first
+/// read (halt + align + 512 = 514 cycles), a write on a get cycle does not
+/// (halt + 512 = 513 cycles).
+///
+/// These spans are pinned end-to-end because they quantize IRQ-relative DMA
+/// end positions onto the get/put grid — the cpu_interrupts_v2 sub-test 4
+/// (4-irq_and_dma) sweep resolves single CPU clocks through them.
+#[test]
+fn oam_dma_completion_spans_follow_doc_diagrams() {
+    fn completion(w: u64) -> u64 {
+        let mut mcu = test_mcu();
+        mcu.write(0x4014, 0x02); // write executes at the end of tick w
+        let mut t = w;
+        let mut last_active = w;
+        let mut saw_active = false;
+        loop {
+            t += 1;
+            let clock = SystemClock(t);
+            if !clock.is_apu_clock() {
+                continue;
+            }
+            if mcu.tick_oam_dma(clock, false) {
+                saw_active = true;
+                last_active = t;
+            } else if saw_active {
+                return last_active;
+            }
+        }
+    }
+
+    // Write on a put cycle (w % 6 == 2): halt lands on a get cycle at w+3,
+    // one alignment cycle precedes the transfers (doc/dma.md diagram 2):
+    // halt + align + 512 transfers = 514 cycles including the halt.
+    // Write on a get cycle (w % 6 == 5): halt lands on a put cycle, no
+    // alignment (diagram 1): halt + 512 = 513 cycles.
+    let put_write = completion(2);
+    let get_write = completion(5);
+    assert_eq!(
+        put_write - 5,
+        1539,
+        "write-on-put DMA spans halt + 514 cycles"
+    );
+    assert_eq!(
+        get_write - 8,
+        1536,
+        "write-on-get DMA spans halt + 513 cycles"
+    );
+}
 
 /// DMC DMA read colliding with an OAM DMA read: DMC wins the cycle, OAM pauses,
 /// then needs one alignment cycle before redoing the read (+2 cycles total).
@@ -181,7 +230,7 @@ fn oam_dma_pauses_on_dmc_read_collision() {
 
     // Consume pending on a put cycle (the halt cycle); write was on get, so
     // startup must be 0 and the first read happens on the very next tick.
-    let start = SystemClock(5); // 5 % 6 == 5 -> put; 5 % 3 == 2 -> apu clock
+    let start = SystemClock(8); // 8 % 6 == 2 -> put; 8 % 3 == 2 -> apu clock
     mcu.tick_oam_dma(start, false);
     let dma = mcu.oam_dma.expect("dma active");
     assert_eq!(
@@ -247,7 +296,7 @@ fn dmc_collision_at_start_of_oam_write_on_get() {
 
     // Consume pending on a put cycle (shared halt); write was on get so there
     // is no alignment cycle before the first read.
-    let h = SystemClock(5); // put cycle
+    let h = SystemClock(8); // put cycle
     mcu.tick_oam_dma(h, false);
     assert_eq!(mcu.oam_dma.as_ref().unwrap().startup_cycles, 0);
 
@@ -295,7 +344,7 @@ fn dmc_collision_at_start_of_oam_write_on_put() {
 
     // Consume pending on a get cycle (shared halt); write was on put so one
     // alignment cycle precedes the first read.
-    let h = SystemClock(8); // get cycle
+    let h = SystemClock(11); // get cycle
     mcu.tick_oam_dma(h, false);
     assert_eq!(mcu.oam_dma.as_ref().unwrap().startup_cycles, 1);
 
