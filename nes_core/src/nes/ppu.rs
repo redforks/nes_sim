@@ -170,9 +170,15 @@ pub struct Ppu<R: Render = ()> {
     /// Cumulative system cycle counter, incremented each tick.
     /// Replaces the global `get_system_cycles()` for PPU-internal timing.
     cycle: u64,
+    /// System cycle of the last PPUDATA ($2007) read, used to detect the
+    /// back-to-back dummy+real read pair of page-crossing `lda abs,X`.
+    ppudata_last_read_at: Option<u64>,
+    /// Value that read returned; re-returned by a read arriving before the
+    /// buffer refill could complete.
+    ppudata_last_return: u8,
 }
 
-/// PPU registers are mirrored every 8 bytes in range $2000-$3FFF
+/// PPU registers are mirrored every 8 bytes in range $2000-$3FFF;
 /// this function normalized $2000, $2008, .. $3ff8 to $2000
 fn normalize_ppu_addr(addr: u16) -> u16 {
     addr & 0x2007
@@ -199,6 +205,8 @@ impl<R: Render> Ppu<R> {
             suppressed_vblank_at: None,
             rendering_enabled_at_scanline_start: false,
             cycle: 0,
+            ppudata_last_read_at: None,
+            ppudata_last_return: 0,
         }
     }
 
@@ -673,7 +681,7 @@ impl<R: Render> Ppu<R> {
         // Palette addresses ($3F00-$3FFF) return immediately, but still
         // update the buffer with the nametable byte "underneath".
         let addr = vram_addr % 0x4000;
-        if addr >= 0x3F00 {
+        let result = if addr >= 0x3F00 {
             // Palette: fill buffer with the nametable data underneath
             // (mirrored from $2F00-$2FFF)
             self.registers.ppudata_buffer = self.read_vram(vram_addr - 0x1000);
@@ -683,9 +691,23 @@ impl<R: Render> Ppu<R> {
         } else {
             let buffered = self.registers.ppudata_buffer;
             self.registers.ppudata_buffer = current;
-            self.refresh_bus_latch(buffered);
-            buffered
-        }
+            // Back-to-back reads (the page-crossing dummy read of
+            // `lda abs,X` immediately followed by the real read) arrive
+            // before the PPU finished refilling its buffer: hardware
+            // returns the previous read's stale value while still
+            // performing the fetch and increment.
+            let early = matches!(self.ppudata_last_read_at, Some(at) if self.cycle <= at + 4);
+            let returned = if early {
+                self.ppudata_last_return
+            } else {
+                buffered
+            };
+            self.refresh_bus_latch(returned);
+            returned
+        };
+        self.ppudata_last_read_at = Some(self.cycle);
+        self.ppudata_last_return = result;
+        result
     }
 
     fn current_bus_latch(&mut self) -> u8 {

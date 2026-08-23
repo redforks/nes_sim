@@ -35,6 +35,11 @@ pub struct NesMcu<R: Render, D: AudioDriver> {
     /// CPU data bus open bus value: the last value read by the CPU.
     /// Reading write-only or unmapped addresses returns this value.
     open_bus: u8,
+    /// Joypad /OE lines stay asserted across contiguous reads of the same
+    /// register on NES-001 hardware, clocking the shift register once per
+    /// contiguous set rather than once per read.
+    joypad1_oe: bool,
+    joypad2_oe: bool,
 }
 
 impl<R: Render, D: AudioDriver> NesMcu<R, D> {
@@ -50,6 +55,8 @@ impl<R: Render, D: AudioDriver> NesMcu<R, D> {
             oam_dma_pending: None,
             oam_dma: None,
             open_bus: 0,
+            joypad1_oe: false,
+            joypad2_oe: false,
         }
     }
 
@@ -181,10 +188,13 @@ impl<R: Render, D: AudioDriver> NesMcu<R, D> {
 
 impl<R: Render, D: AudioDriver> Mcu for NesMcu<R, D> {
     fn read(&mut self, address: u16) -> u8 {
+        let prev_joypad1_oe = std::mem::replace(&mut self.joypad1_oe, address == 0x4016);
+        let prev_joypad2_oe = std::mem::replace(&mut self.joypad2_oe, address == 0x4017);
         let value = match address {
             0x0000..=0x1fff => self.lower_ram.read(address),
             0x2000..=0x3fff | 0x4100..=0xffff => self.ppu.read(address),
-            0x4016 | 0x4017 => self.controller.read(address),
+            0x4016 => self.controller.a.read_strobed(!prev_joypad1_oe),
+            0x4017 => self.controller.b.read_strobed(!prev_joypad2_oe),
             0x4015 => self.apu.read(address),
             // Write-only APU/IO registers and unused test registers: open bus
             0x4000..=0x401f => self.open_bus,
@@ -209,6 +219,8 @@ impl<R: Render, D: AudioDriver> Mcu for NesMcu<R, D> {
 
     fn write(&mut self, address: u16, value: u8) {
         self.open_bus = value;
+        self.joypad1_oe = false;
+        self.joypad2_oe = false;
         match address {
             0x0000..=0x1fff => self.lower_ram.write(address, value),
             0x2000..=0x3fff | 0x4100..=0xffff => self.ppu.write(address, value),

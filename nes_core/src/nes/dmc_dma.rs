@@ -17,6 +17,10 @@ pub enum DmcDmaType {
 
 #[cfg_attr(test, mockall::automock)]
 pub(crate) trait NesDmaSupport {
+    /// Address the pending CPU cycle puts on the bus; repeated externally
+    /// while the CPU is halted by DMA. `None` for purely internal cycles.
+    fn dma_halt_bus_addr(&self) -> Option<u16>;
+
     /// Return false if cpu next operation is write, return true
     /// if cpu freezed.
     fn try_freeze(&mut self) -> bool;
@@ -53,6 +57,10 @@ impl<R: Render, D: AudioDriver> NesDmaSupport for Cpu<NesMcu<R, D>> {
 
     fn last_read_addr(&self) -> u16 {
         self.last_read_addr.unwrap_or(self.pc())
+    }
+
+    fn dma_halt_bus_addr(&self) -> Option<u16> {
+        Cpu::dma_halt_bus_addr(self)
     }
 
     fn unfreeze(&mut self) {
@@ -155,13 +163,20 @@ impl DmcDma {
                     return false;
                 }
 
-                // 尝试挂起 CPU
                 if cpu.try_freeze() {
-                    self.cpu_last_read_addr = cpu.last_read_addr();
+                    // The halt cycle repeats the pending read on the bus;
+                    // later no-op DMA cycles keep repeating that address.
+                    match cpu.dma_halt_bus_addr() {
+                        Some(addr) => {
+                            cpu.read_mem(addr);
+                            self.cpu_last_read_addr = addr;
+                        }
+                        None => {
+                            self.cpu_last_read_addr = cpu.last_read_addr();
+                        }
+                    }
                     self.state = State::Dummy;
                 } else {
-                    // 挂起失败（CPU 正在执行写操作）
-                    // 下一个周期继续尝试，但此时不再是 "first_attempt"，解绑相位限制
                     self.state = State::TryHalt {
                         first_attempt: false,
                         halt_on_put,
@@ -193,6 +208,5 @@ impl DmcDma {
         false
     }
 }
-
 #[cfg(test)]
 mod tests;

@@ -4,8 +4,8 @@ use super::plugin::{
     ReportPlugin, Timeout,
 };
 use nes_core::{
-    Plugin, SystemClock, ines::INesFile, machine::Machine, mcu::RamMcu,
-    nes_machine::NesMachine, render::ImageRender,
+    Plugin, SystemClock, ines::INesFile, machine::Machine, mcu::RamMcu, nes_machine::NesMachine,
+    render::ImageRender,
 };
 use std::{
     io::Read,
@@ -91,15 +91,16 @@ impl Image {
             {
                 return self.create_nmi_sync_machine(ines, quiet, start_pc, max_instructions);
             } else if let Some(stem) = f.strip_suffix(".nes")
-                && stem.starts_with("vrctest") {
-                    return self.create_exp_png_machine(
-                        ines,
-                        quiet,
-                        start_pc,
-                        max_instructions,
-                        vec![format!("{}.png", stem)],
-                    );
-                }
+                && stem.starts_with("vrctest")
+            {
+                return self.create_exp_png_machine(
+                    ines,
+                    quiet,
+                    start_pc,
+                    max_instructions,
+                    vec![format!("{}.png", stem)],
+                );
+            }
         }
 
         // Build the composite plugin step by step to handle type coercion
@@ -129,12 +130,31 @@ impl Image {
                     || p.contains("dmc_dma_during_read4")
                     || p.contains("mmc3_irq_tests")
             }) {
+                // These two blargg ROMs never print "Passed": they print a CRC-32
+                // of their output and then dead-loop, so the harness detects
+                // success by matching that CRC in the console text (the Timeout
+                // below catches mismatches and hangs).
+                //
+                // Both magic words are quoted from the expected-output comments
+                // in the test ROM sources
+                // (../nes-test-roms/dmc_dma_during_read4/source/):
+                // - double_2007_read.s lists "85CFD627 or F018C287 or 440EF923
+                //   or E52F41A5". The outcome depends on CPU-PPU synchronization
+                //   at reset; our deterministic alignment produces the
+                //   first-listed variant (row "22 44 55 66 77" -> 85CFD627).
+                // - dma_2007_read.s lists "159A7A8F or 5E3DF9C4". Our alignment
+                //   produces the second-listed variant (row "44 55" -> 5E3DF9C4).
+                //
+                // The previously blessed words ("D84F6815", "159A7A8F") were
+                // artifacts of an emulator that serviced the back-to-back $2007
+                // reads fully and missed the DMC-DMA collision window; neither
+                // appears in the ROM sources' accepted lists.
                 if file_name
                     .file_name()
                     .is_some_and(|f| f == "double_2007_read.nes")
                 {
                     plugins.push(Box::new(NametableConsole::with_magic_success_word(
-                        "D84F6815",
+                        "85CFD627",
                     )));
                     plugins.push(Box::new(Timeout::new(Duration::from_secs(5))));
                 } else if file_name
@@ -142,7 +162,7 @@ impl Image {
                     .is_some_and(|f| f == "dma_2007_read.nes")
                 {
                     plugins.push(Box::new(NametableConsole::with_magic_success_word(
-                        "159A7A8F",
+                        "5E3DF9C4",
                     )));
                     plugins.push(Box::new(Timeout::new(Duration::from_secs(5))));
                 } else {
@@ -235,7 +255,10 @@ impl Image {
             quiet,
             start_pc,
             max_instructions,
-            vec!["nmi-sync-ntsc-exp-1.png".to_string(), "nmi-sync-ntsc-exp-2.png".to_string()],
+            vec![
+                "nmi-sync-ntsc-exp-1.png".to_string(),
+                "nmi-sync-ntsc-exp-2.png".to_string(),
+            ],
         )
     }
 

@@ -18,6 +18,8 @@ fn test_mcu() -> NesMcu<ImageRender, ()> {
         oam_dma_pending: None,
         oam_dma: None,
         open_bus: 0,
+        joypad1_oe: false,
+        joypad2_oe: false,
     }
 }
 
@@ -70,13 +72,66 @@ fn test_controller_reads_route_through_nes_mcu() {
     mcu.press_controller_a(Button::Left);
     mcu.write(0x4016, 0);
 
+    assert_eq!(mcu.read(0x4016), 0x41); // A pressed (bit 0)
+    // Contiguous reads of $4016 keep /OE asserted: NES-001 clocks the
+    // shift register once per contiguous set, so this read does not
+    // advance the bit position (doc/dma.md "Register conflicts").
     assert_eq!(mcu.read(0x4016), 0x41);
-    assert_eq!(mcu.read(0x4016), 0x40);
-    assert_eq!(mcu.read(0x4016), 0x40);
-    assert_eq!(mcu.read(0x4016), 0x40);
-    assert_eq!(mcu.read(0x4016), 0x40);
-    assert_eq!(mcu.read(0x4016), 0x40);
-    assert_eq!(mcu.read(0x4016), 0x41);
+
+    // Any other bus access deasserts /OE and lets the next read clock.
+    mcu.read(0x0000);
+    assert_eq!(mcu.read(0x4016), 0x40); // B
+    mcu.read(0x0000);
+    assert_eq!(mcu.read(0x4016), 0x40); // Select
+    mcu.read(0x0000);
+    assert_eq!(mcu.read(0x4016), 0x40); // Start
+    mcu.read(0x0000);
+    assert_eq!(mcu.read(0x4016), 0x40); // Up
+    mcu.read(0x0000);
+    assert_eq!(mcu.read(0x4016), 0x40); // Down
+    mcu.read(0x0000);
+    assert_eq!(mcu.read(0x4016), 0x41); // Left pressed (bit 6)
+}
+
+/// Back-to-back PPUDATA reads (the page-crossing dummy read of
+/// `lda abs,X` followed by the real read, 1 CPU cycle apart) arrive before
+/// the PPU finished refilling its buffer: the second read re-returns the
+/// previous read's value while still performing the fetch and increment.
+#[test]
+fn ppudata_double_read_returns_stale_value_but_advances() {
+    let mut mcu = test_mcu();
+
+    // VRAM $0000-$0003 = 11 22 33 44.
+    mcu.write(0x2006, 0x00);
+    mcu.write(0x2006, 0x00);
+    for v in [0x11u8, 0x22, 0x33, 0x44] {
+        mcu.write(0x2007, v);
+    }
+
+    // Rewind to $0000 and prime the buffer with a well-separated read.
+    mcu.write(0x2006, 0x00);
+    mcu.write(0x2006, 0x00);
+    assert_eq!(mcu.read(0x2007), 0x00); // initial buffer, loads VRAM[0]
+    for _ in 0..6 {
+        mcu.tick_ppu();
+    }
+
+    // Normal-paced read: returns VRAM[0], loads VRAM[1].
+    let dummy = mcu.read(0x2007);
+    // Adjacent-CPU-cycle read: stale return, still fetches VRAM[2].
+    let real = mcu.read(0x2007);
+    assert_eq!(dummy, 0x11);
+    assert_eq!(real, 0x11);
+
+    for _ in 0..6 {
+        mcu.tick_ppu();
+    }
+    // Both increments landed: next paced read sees VRAM[2], then VRAM[3].
+    assert_eq!(mcu.read(0x2007), 0x33);
+    for _ in 0..6 {
+        mcu.tick_ppu();
+    }
+    assert_eq!(mcu.read(0x2007), 0x44);
 }
 
 /// OAM DMA startup alignment: the alignment decision must be based on the

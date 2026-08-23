@@ -224,7 +224,7 @@ impl<M: Mcu> Cpu<M> {
         self.microcode_queue.is_empty()
     }
 
-    fn next_microcode(&self) -> Microcode {
+    pub(crate) fn next_microcode(&self) -> Microcode {
         self.microcode_queue
             .front()
             .copied()
@@ -237,6 +237,77 @@ impl<M: Mcu> Cpu<M> {
         !self.next_microcode().is_write_operation()
     }
 
+    /// Address the CPU drives on the bus for its pending cycle, mirroring
+    /// how a RDY-halt externally repeats the current read cycle. Returns
+    /// `None` when the pending cycle is purely internal (no bus access of
+    /// its own); callers then repeat the last completed read instead.
+    pub(crate) fn dma_halt_bus_addr(&self) -> Option<u16> {
+        use ValueSource::{Immediate, Mem, ZeroPage as Zp};
+        use microcode::AOrMemory;
+        match self.next_microcode() {
+            // Cycles fetching from the instruction stream.
+            Microcode::FetchAndDecode
+            | Microcode::FetchOnly
+            | Microcode::AbsoluteL
+            | Microcode::AbsoluteH
+            | Microcode::ZeroPage
+            | Microcode::ZeroPageIndexedX
+            | Microcode::ZeroPageIndexedY
+            | Microcode::SkipImmediate
+            | Microcode::BranchRelative(_)
+            | Microcode::ImmediateWithOp(_)
+            | Microcode::AlrImmediate
+            | Microcode::AncImmediate
+            | Microcode::ArrImmediate
+            | Microcode::AxsImmediate
+            | Microcode::AneImmediate
+            | Microcode::LaxImmediate
+            // Dummy-read cycle of stack/implied ops on hardware.
+            | Microcode::Nop => Some(self.pc.get()),
+            Microcode::LoadR(Immediate, _) => Some(self.pc.get()),
+            // Cycles reading through the address bus latch.
+            Microcode::LoadR(Zp, _)
+            | Microcode::LoadR(Mem, _)
+            | Microcode::LoadIntoAlu(_)
+            | Microcode::IndexedL
+            | Microcode::IndexedH
+            | Microcode::Lax
+            | Microcode::Las
+            | Microcode::Adc(Zp)
+            | Microcode::Adc(Mem)
+            | Microcode::Sbc(Zp)
+            | Microcode::Sbc(Mem)
+            | Microcode::Cmp(Zp)
+            | Microcode::Cmp(Mem)
+            | Microcode::Cpx(Zp)
+            | Microcode::Cpx(Mem)
+            | Microcode::Cpy(Zp)
+            | Microcode::Cpy(Mem)
+            | Microcode::Ora(Zp)
+            | Microcode::Ora(Mem)
+            | Microcode::Eor(Zp)
+            | Microcode::Eor(Mem)
+            | Microcode::And(Zp)
+            | Microcode::And(Mem)
+            | Microcode::Bit(Zp)
+            | Microcode::Bit(Mem)
+            | Microcode::IndexedXWithOp { .. }
+            | Microcode::IndexedYWithOp { .. }
+            | Microcode::Asl(AOrMemory::Memory)
+            | Microcode::Lsr(AOrMemory::Memory)
+            | Microcode::Rol(AOrMemory::Memory)
+            | Microcode::Ror(AOrMemory::Memory)
+            | Microcode::Dcp
+            | Microcode::Isc
+            | Microcode::Rra
+            | Microcode::Slo
+            | Microcode::Sre
+            | Microcode::Rla => Some(self.ab.get()),
+            // Purely internal cycles: flags, transfers, register INC/DEC,
+            // interrupt vector loads.
+            _ => None,
+        }
+    }
     pub fn reset(&mut self) {
         self.set_flag(Flag::InterruptDisabled, true);
         self.set_flag(Flag::NotUsed, true);

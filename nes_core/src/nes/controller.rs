@@ -40,12 +40,25 @@ impl AController {
     }
 
     fn read(&mut self) -> u8 {
+        self.read_strobed(true)
+    }
+
+    /// Read the shift register. `clock` is false when /OE stayed asserted
+    /// from a contiguous preceding read of the same register: the controller
+    /// sees one shift per contiguous set of reads, not one per CPU cycle.
+    pub(crate) fn read_strobed(&mut self, clock: bool) -> u8 {
         let pressed = if self.stroke {
             self.bits & Button::A as u8 != 0
         } else if self.bit_position < 8 {
-            let r = (self.locked_bits >> self.bit_position) & 1 != 0;
-            self.bit_position = self.bit_position.saturating_add(1);
-            r
+            if clock {
+                let r = (self.locked_bits >> self.bit_position) & 1 != 0;
+                self.bit_position = self.bit_position.saturating_add(1);
+                r
+            } else {
+                // /OE stayed asserted: the controller keeps driving the
+                // same shift-register stage it already output.
+                (self.locked_bits >> (self.bit_position - 1)) & 1 != 0
+            }
         } else {
             true
         };

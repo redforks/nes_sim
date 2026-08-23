@@ -39,8 +39,10 @@ fn load_dmc_dma() {
     });
 
     // try freeze and succeed
-    t.expect_is_get_cycle_and_freeze(true, true);
-    t.expect_last_read_addr(0x2234);
+    t.expect_is_get_cycle(true);
+    t.expect_try_freeze(true);
+    t.expect_dma_halt_bus_addr(Some(0x2234));
+    t.expect_read_mem(0x2234, 0x00);
     t.tick_and_assert(State::Dummy);
 
     // dummy
@@ -93,7 +95,8 @@ fn load_dmc_dmadelayed() {
 
     // cpu halt succeed
     t.expect_try_freeze(true);
-    t.expect_last_read_addr(0x2234);
+    t.expect_dma_halt_bus_addr(Some(0x2234));
+    t.expect_read_mem(0x2234, 0x00);
     t.tick_and_assert(State::Dummy);
 
     // dummy
@@ -128,8 +131,10 @@ fn reload_dmc_dma() {
     // get request
     // try freeze and succeed
     t.expect_take_dmc_dma_request(Some((DmcDmaType::Reload, 0x1234)));
-    t.expect_is_get_cycle_and_freeze(false, true);
-    t.expect_last_read_addr(0x2234);
+    t.expect_is_get_cycle(false);
+    t.expect_try_freeze(true);
+    t.expect_dma_halt_bus_addr(Some(0x2234));
+    t.expect_read_mem(0x2234, 0x00);
     t.tick_and_assert(State::Dummy);
 
     // dummy
@@ -173,7 +178,8 @@ fn reload_dmc_dma_delayed_1_cycle() {
 
     // try freeze and succeed
     t.expect_try_freeze(true);
-    t.expect_last_read_addr(0x2234);
+    t.expect_dma_halt_bus_addr(Some(0x2234));
+    t.expect_read_mem(0x2234, 0x00);
     t.tick_and_assert(State::Dummy);
 
     // dummy
@@ -222,7 +228,8 @@ fn reload_dmc_dma_delayed_2_cycle() {
 
     // try freeze and succeed
     t.expect_try_freeze(true);
-    t.expect_last_read_addr(0x2234);
+    t.expect_dma_halt_bus_addr(Some(0x2234));
+    t.expect_read_mem(0x2234, 0x00);
     t.tick_and_assert(State::Dummy);
 
     // dummy
@@ -232,7 +239,6 @@ fn reload_dmc_dma_delayed_2_cycle() {
     t.expect_is_get_cycle(false);
     t.expect_read_mem(0x2234, 0x8f);
     t.tick_and_assert(State::Read);
-
     // read and supply to apu
     t.expect_read_mem(0x1234, 0xcd);
     t.expect_supply_dmc_byte_with(0xcd);
@@ -282,7 +288,8 @@ fn reload_dmc_dma_delayed_3_cycle() {
 
     // try freeze and succeed
     t.expect_try_freeze(true);
-    t.expect_last_read_addr(0x2234);
+    t.expect_dma_halt_bus_addr(Some(0x2234));
+    t.expect_read_mem(0x2234, 0x00);
     t.tick_and_assert(State::Dummy);
 
     // dummy
@@ -378,6 +385,14 @@ impl TestStruct {
             .times(1)
             .in_sequence(&mut self.seq)
             .return_const(());
+    }
+
+    fn expect_dma_halt_bus_addr(&mut self, addr: Option<u16>) {
+        self.cpu
+            .expect_dma_halt_bus_addr()
+            .times(1)
+            .in_sequence(&mut self.seq)
+            .return_const(addr);
     }
 
     fn expect_is_get_cycle_and_freeze(&mut self, is_get: bool, freeze_succeed: bool) {
