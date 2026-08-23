@@ -62,92 +62,146 @@ fn test_irq_detector() {
     assert!(!v.irq_pending());
 }
 
+/// Drive one dot of /NMI line history; on CPU-cycle sample dots
+/// (`t % 3 == 2`, sampling the line as of dot `t - 2`) return whether an
+/// edge was recognised there (consuming it, as the interrupt dispatch would).
+fn dot(v: &mut NmiDetector, t: u64, high: bool) -> bool {
+    v.update_nmi_input(high, SystemClock(t));
+    if t % 3 == 2 && v.detect_nmi() {
+        v.take_nmi_pending();
+        true
+    } else {
+        false
+    }
+}
+
 #[test]
 fn test_nmi_detector() {
     // default
     let mut v = NmiDetector::default();
     assert!(!v.take_nmi_pending());
 
-    fn update_detect_and_report(v: &mut NmiDetector, new_nmi_val: bool) -> bool {
-        v.update_nmi_input(new_nmi_val, SystemClock::default());
-        v.detect_nmi();
-        v.take_nmi_pending()
-    }
-
-    // enter nmi
-    v.update_nmi_input(true, SystemClock::default());
-    assert!(!v.take_nmi_pending());
-    v.detect_nmi();
-    assert!(v.take_nmi_pending());
-    assert!(!update_detect_and_report(&mut v, false));
-    assert!(!v.take_nmi_pending()); // leaves nmi, still no nmi_pending, because nmi is edge detected
-
-    assert!(!update_detect_and_report(&mut v, false)); // disabled
+    // assertion from dot 10 to 15: exactly one edge latches, at the first
+    // sample whose window covers the rise (sample at dot 14 reads dot 12)
+    let fires: Vec<u64> = (0..=20)
+        .filter(|&t| dot(&mut v, t, (10..16).contains(&t)))
+        .collect();
+    assert_eq!(fires, vec![14]);
+    assert!(!v.take_nmi_pending()); // edge-detected: no re-fire while asserted
 }
 
 #[test]
-fn nmi_pulse_shorter_than_cpu_cycle_retracts() {
-    // The 6502 samples /NMI once per CPU cycle (3 PPU dots); an assertion
-    // shorter than that never reaches the internal edge latch.
-    fn pulse_retracts(width_dots: u64) -> bool {
+fn nmi_pulse_visibility_depends_on_cpu_sample_phase() {
+    // The CPU samples /NMI once per CPU cycle, effectively at each cycle's
+    // first PPU dot (clock % 3 == 0): an assertion is seen iff it covers one
+    // of those dots. blargg's ppu_vbl_nmi pins both sides — 06-suppression
+    // requires a 2-dot pulse rising on phase 1 to be missed, while
+    // 07-nmi_on_timing requires 1- and 2-dot pulses rising on phase 0 to fire.
+    fn pulse_seen(rise: u64, width_dots: u64) -> bool {
         let mut v = NmiDetector::default();
-        let t = |n: u64| SystemClock(n);
-        v.update_nmi_input(true, t(10)); // rise
-        assert!(v.detect_nmi()); // cpu tick latches the edge
-        v.update_nmi_input(false, t(10 + width_dots)); // fall
-        v.take_nmi_pending()
+        let fall = rise + width_dots;
+        (0..=fall + 4).any(|t| dot(&mut v, t, t >= rise && t < fall))
     }
 
-    assert!(!pulse_retracts(1));
-    assert!(!pulse_retracts(2));
-    assert!(pulse_retracts(3));
-    assert!(pulse_retracts(100));
+    assert!(pulse_seen(6, 1)); // phase 0: single-dot pulse fires (07 row 4)
+    assert!(pulse_seen(6, 2)); // phase 0 (07 row 3)
+    assert!(!pulse_seen(7, 1)); // phase 1: falls between samples
+    assert!(!pulse_seen(7, 2)); // phase 1: suppression case (06 row 5)
+    assert!(pulse_seen(8, 3)); // any 3-dot pulse is always covered
+    assert!(pulse_seen(9, 90));
 }
-#[test]
-fn nmi_pulse_retraction_keeps_older_pending() {
-    // A pending edge from a long assertion must survive; a later short pulse
-    // on the same line must not.
-    let mut v = NmiDetector::default();
-    let t = |n: u64| SystemClock(n);
-    v.update_nmi_input(true, t(10));
-    assert!(v.detect_nmi()); // pending latched from long assertion
-    v.update_nmi_input(false, t(50)); // long assertion ends
-    assert!(v.detect_nmi()); // still pending: early return
-    assert!(v.take_nmi_pending());
-    assert!(!v.detect_nmi()); // cpu tick samples the low line
 
-    v.update_nmi_input(true, t(60)); // brief pulse
+#[test]
+fn nmi_pending_survives_until_taken() {
+    let mut v = NmiDetector::default();
+
+    // an edge latches mid-assertion…
+    for t in 0..=14u64 {
+        v.update_nmi_input((10..40).contains(&t), SystemClock(t));
+        if t % 3 == 2 {
+            v.detect_nmi();
+        }
+    }
+    assert!(v.nmi_pending);
+
+    // …stays pending across the fall and low samples…
+    for t in 40..=43u64 {
+        v.update_nmi_input(false, SystemClock(t));
+    }
     assert!(v.detect_nmi());
-    v.update_nmi_input(false, t(61)); // falls within one CPU cycle
-    assert!(!v.detect_nmi()); // retraction already cleared the latch
+    assert!(v.take_nmi_pending());
+
+    // …and once taken, the low line raises nothing further
+    for t in 44..=47u64 {
+        v.update_nmi_input(false, SystemClock(t));
+    }
+    assert!(!v.detect_nmi());
     assert!(!v.take_nmi_pending());
 }
+
 #[test]
 fn nmi_rising_edge_cancel_retracts_same_tick_edge() {
     let mut v = NmiDetector::default();
-    let rise = SystemClock(30);
-    v.update_nmi_input(true, rise);
-    assert!(v.detect_nmi());
-    v.cancel_rising_edge_at(rise); // racing $2002 access retracts the edge
+
+    // assertion begins at dot 30 (%3 == 0); the sample at dot 32 latches it
+    let fires: Vec<u64> = (0..=33).filter(|&t| dot(&mut v, t, t >= 30)).collect();
+    assert_eq!(fires, vec![32]);
+    v.cancel_rising_edge_at(SystemClock(30)); // racing $2002 access retracts it
     assert!(!v.take_nmi_pending());
 
     // the line is pulled back low; no new edge may latch
-    v.update_nmi_input(false, SystemClock(31));
-    assert!(!v.detect_nmi()); // samples the pulled-low line
+    assert!(!(34..=44).any(|t| dot(&mut v, t, false)));
     assert!(!v.take_nmi_pending());
 
-    // an edge latched on an older tick is not retractable
-    v.update_nmi_input(true, SystemClock(100));
-    assert!(v.detect_nmi());
-    v.update_nmi_input(false, SystemClock(140));
-    assert!(v.detect_nmi());
+    // an edge whose rise is older than the cancel clock is not retractable
+    for t in 45..=64u64 {
+        v.update_nmi_input((46..64).contains(&t), SystemClock(t));
+        if t % 3 == 2 {
+            v.detect_nmi();
+        }
+    }
     assert!(v.take_nmi_pending());
-    assert!(!v.detect_nmi()); // cpu tick samples the low line
+    v.cancel_rising_edge_at(SystemClock(30)); // stale clock: ignored
 
-    v.update_nmi_input(true, SystemClock(150));
-    assert!(v.detect_nmi());
-    v.cancel_rising_edge_at(SystemClock(100)); // stale clock: ignored
+    // a fresh edge latched on `clock` itself is retractable
+    for t in 76..=92u64 {
+        v.update_nmi_input((78..92).contains(&t), SystemClock(t));
+        if t % 3 == 2 {
+            v.detect_nmi();
+        }
+    }
     assert!(v.take_nmi_pending());
+    v.cancel_rising_edge_at(SystemClock(78));
+    assert!(!v.take_nmi_pending());
+}
+
+#[test]
+fn nmi_pulse_dispatch_latency_runs_from_rising_edge() {
+    // blargg ppu_vbl_nmi 07-nmi_on_timing rows 03/04: /NMI asserts for only
+    // a few PPU dots before vblank ends. Once an edge is latched, dispatch
+    // latency runs from the RISE, so the falling edge cannot postpone
+    // recognition until after the interrupt window has closed.
+    let mut cpu = create_cpu();
+
+    // 5-dot pulse [10, 15); samples at dots ≡ 2 mod 3 read two dots back
+    let mut dispatched = false;
+    let mut latched_at = None;
+    for t in 0..=24u64 {
+        // a dispatched interrupt is consumed by the next machine tick
+        match cpu.interrupt_detected.take() {
+            Some(InterruptType::Nmi) => dispatched = true,
+            other => debug_assert_eq!(other, None),
+        }
+        cpu.update_nmi_line((10..15).contains(&t), SystemClock(t));
+        if t % 3 == 2 {
+            cpu.detect_interrupt(SystemClock(t));
+            if cpu.interrupt_detected.is_some() {
+                latched_at = Some(t);
+            }
+        }
+    }
+    assert_eq!(latched_at, Some(14)); // first sample covering the rise
+    assert!(dispatched);
 }
 
 #[test]

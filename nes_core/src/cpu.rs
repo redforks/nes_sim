@@ -40,8 +40,19 @@ impl IrqDetector {
 #[derive(Default, Debug)]
 struct NmiDetector {
     nmi_pending: bool,
-    last_nmi_input: bool,
+    /// Line level observed by the previous CPU-cycle sample.
+    last_sampled_level: bool,
     nmi_input: bool,
+    /// Levels at the two preceding dots: `[t-2, t-1]` while processing dot
+    /// `t`. The 6502 effectively samples /NMI at the FIRST dot of each CPU
+    /// cycle (`clock % 3 == 0`); blargg's ppu_vbl_nmi 06-suppression and
+    /// 07-nmi_on_timing pin this phase from both sides: an assertion is seen
+    /// iff it covers such a dot.
+    level_history: [bool; 2],
+    /// `asserted_since` value for each of those dots, shifted in lockstep —
+    /// a lagged sample that observes a rise must still know when it rose,
+    /// even if the line has already fallen by sampling time.
+    stamp_history: [Option<u64>; 2],
     nmi_line_changed_at: Option<SystemClock>,
     /// System cycle at which the current /NMI assertion began.
     asserted_since: Option<u64>,
@@ -51,22 +62,15 @@ struct NmiDetector {
 
 impl NmiDetector {
     fn update_nmi_input(&mut self, v: bool, clock: SystemClock) {
-        if self.nmi_input != v {
+        let prev = self.nmi_input;
+        let prev_stamp = self.asserted_since;
+        self.level_history = [self.level_history[1], prev];
+        self.stamp_history = [self.stamp_history[1], prev_stamp];
+        if prev != v {
             self.nmi_line_changed_at = Some(clock);
             if v {
                 self.asserted_since = Some(clock.cycles());
             } else {
-                // The 6502 samples /NMI once per CPU cycle (3 PPU dots); an
-                // assertion shorter than that — e.g. reading $2002 one PPU
-                // clock after the vblank flag sets, or disabling NMI right
-                // after — falls between samples and never reaches the
-                // internal edge latch.
-                if let (Some(t0), Some(p0)) = (self.asserted_since, self.pending_asserted_since) {
-                    if p0 == t0 && clock.cycles() - t0 < 3 {
-                        self.nmi_pending = false;
-                        self.pending_asserted_since = None;
-                    }
-                }
                 self.asserted_since = None;
             }
         }
@@ -82,22 +86,21 @@ impl NmiDetector {
         {
             self.nmi_pending = false;
             self.nmi_input = false;
-            self.last_nmi_input = false;
+            self.last_sampled_level = false;
             self.nmi_line_changed_at = None;
         }
     }
 
     fn detect_nmi(&mut self) -> bool {
-        if self.nmi_pending {
-            return true;
-        }
-
-        let rising_edge = !self.last_nmi_input && self.nmi_input;
-        self.last_nmi_input = self.nmi_input;
-
+        // Sample even while a previous edge is still pending: freezing the
+        // sampler would hide newer edges (and leave a stale last-seen level
+        // behind once the pending edge is taken).
+        let sampled_level = self.level_history[0];
+        let rising_edge = !self.last_sampled_level && sampled_level;
+        self.last_sampled_level = sampled_level;
         if rising_edge {
             self.nmi_pending = true;
-            self.pending_asserted_since = self.asserted_since;
+            self.pending_asserted_since = self.stamp_history[0];
         }
         self.nmi_pending
     }
@@ -107,6 +110,7 @@ impl NmiDetector {
     }
 }
 
+#[derive(Debug, PartialEq, Eq, Clone, Copy)]
 enum InterruptType {
     Nmi,
     Irq,
@@ -421,11 +425,17 @@ impl<M: Mcu> Cpu<M> {
 
     fn do_detect_interrupt(&mut self, clock: SystemClock) {
         if self.nmi_detecteor.nmi_pending
-            && self.nmi_detecteor.nmi_line_changed_at.is_some_and(|v| {
+            && self.nmi_detecteor.pending_asserted_since.is_some_and(|t0| {
                 if self.track_interrupt {
-                    dbg!((clock.0, v.0));
+                    dbg!((clock.0, t0));
                 }
-                (clock.0 - v.0) > 1
+                // Recognition latency runs from the /NMI edge that set the
+                // pending latch — NOT from `nmi_line_changed_at`, which the
+                // falling edge re-stamps. A short assertion (e.g. NMI enabled
+                // a few PPU dots before vblank ends, blargg ppu_vbl_nmi
+                // 07-nmi_on_timing) would otherwise postpone its own
+                // recognition until after the interrupt window closed.
+                (clock.0 - t0) > 1
             })
         {
             self.nmi_detecteor.nmi_pending = false;

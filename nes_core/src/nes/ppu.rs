@@ -173,6 +173,12 @@ pub struct Ppu<R: Render = ()> {
     nmi_race_cancel: bool,
 
     rendering_enabled_at_scanline_start: bool,
+    /// Rendering-enabled sampled at pre-render dot 338. The odd-frame skipped
+    /// clock decision uses this value, not live status at dot 339: blargg
+    /// ppu_vbl_nmi 10-even_odd_timing requires a BG enable that becomes
+    /// visible only at dot 339 to miss the skip, while one visible at 338
+    /// still catches it.
+    ren_latched_at_338: bool,
 
     /// Cumulative system cycle counter, incremented each tick.
     /// Replaces the global `get_system_cycles()` for PPU-internal timing.
@@ -211,6 +217,7 @@ impl<R: Render> Ppu<R> {
             sprite: SpriteManager::new(),
             suppressed_vblank_at: None,
             rendering_enabled_at_scanline_start: false,
+            ren_latched_at_338: false,
             cycle: 0,
             ppudata_last_read_at: None,
             vbl_set_cycle: 0,
@@ -233,6 +240,7 @@ impl<R: Render> Ppu<R> {
         self.sprite.reset();
         self.registers.write_scroll(0);
         self.rendering_enabled_at_scanline_start = false;
+        self.ren_latched_at_338 = false;
     }
 
     pub fn timing(&self) -> &Timing {
@@ -342,6 +350,10 @@ impl<R: Render> Ppu<R> {
 
         if self.timing.dot == 0 {
             self.rendering_enabled_at_scanline_start = rendering_enabled;
+        }
+
+        if self.timing.scanline == 261 && self.timing.dot == 338 {
+            self.ren_latched_at_338 = rendering_enabled;
         }
 
         self.sprite.update_ctrl_status(&mut self.registers.status);
@@ -493,7 +505,12 @@ impl<R: Render> Ppu<R> {
         }
 
         let prev_scanline = self.timing.scanline;
-        self.timing.advance(rendering_enabled);
+        let skip_rendering_enabled = if self.timing.scanline == 261 && self.timing.dot >= 339 {
+            self.ren_latched_at_338
+        } else {
+            rendering_enabled
+        };
+        self.timing.advance(skip_rendering_enabled);
 
         if self.cartridge_caps.on_ppu_tick {
             self.cartridge.on_ppu_tick(prev_scanline);
