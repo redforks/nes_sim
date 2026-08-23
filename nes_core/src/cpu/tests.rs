@@ -86,6 +86,71 @@ fn test_nmi_detector() {
 }
 
 #[test]
+fn nmi_pulse_shorter_than_cpu_cycle_retracts() {
+    // The 6502 samples /NMI once per CPU cycle (3 PPU dots); an assertion
+    // shorter than that never reaches the internal edge latch.
+    fn pulse_retracts(width_dots: u64) -> bool {
+        let mut v = NmiDetector::default();
+        let t = |n: u64| SystemClock(n);
+        v.update_nmi_input(true, t(10)); // rise
+        assert!(v.detect_nmi()); // cpu tick latches the edge
+        v.update_nmi_input(false, t(10 + width_dots)); // fall
+        v.take_nmi_pending()
+    }
+
+    assert!(!pulse_retracts(1));
+    assert!(!pulse_retracts(2));
+    assert!(pulse_retracts(3));
+    assert!(pulse_retracts(100));
+}
+#[test]
+fn nmi_pulse_retraction_keeps_older_pending() {
+    // A pending edge from a long assertion must survive; a later short pulse
+    // on the same line must not.
+    let mut v = NmiDetector::default();
+    let t = |n: u64| SystemClock(n);
+    v.update_nmi_input(true, t(10));
+    assert!(v.detect_nmi()); // pending latched from long assertion
+    v.update_nmi_input(false, t(50)); // long assertion ends
+    assert!(v.detect_nmi()); // still pending: early return
+    assert!(v.take_nmi_pending());
+    assert!(!v.detect_nmi()); // cpu tick samples the low line
+
+    v.update_nmi_input(true, t(60)); // brief pulse
+    assert!(v.detect_nmi());
+    v.update_nmi_input(false, t(61)); // falls within one CPU cycle
+    assert!(!v.detect_nmi()); // retraction already cleared the latch
+    assert!(!v.take_nmi_pending());
+}
+#[test]
+fn nmi_rising_edge_cancel_retracts_same_tick_edge() {
+    let mut v = NmiDetector::default();
+    let rise = SystemClock(30);
+    v.update_nmi_input(true, rise);
+    assert!(v.detect_nmi());
+    v.cancel_rising_edge_at(rise); // racing $2002 access retracts the edge
+    assert!(!v.take_nmi_pending());
+
+    // the line is pulled back low; no new edge may latch
+    v.update_nmi_input(false, SystemClock(31));
+    assert!(!v.detect_nmi()); // samples the pulled-low line
+    assert!(!v.take_nmi_pending());
+
+    // an edge latched on an older tick is not retractable
+    v.update_nmi_input(true, SystemClock(100));
+    assert!(v.detect_nmi());
+    v.update_nmi_input(false, SystemClock(140));
+    assert!(v.detect_nmi());
+    assert!(v.take_nmi_pending());
+    assert!(!v.detect_nmi()); // cpu tick samples the low line
+
+    v.update_nmi_input(true, SystemClock(150));
+    assert!(v.detect_nmi());
+    v.cancel_rising_edge_at(SystemClock(100)); // stale clock: ignored
+    assert!(v.take_nmi_pending());
+}
+
+#[test]
 fn test_cpu_initialization() {
     let cpu = create_cpu();
     assert_eq!(cpu.a, 0);

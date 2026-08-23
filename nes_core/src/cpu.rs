@@ -43,14 +43,48 @@ struct NmiDetector {
     last_nmi_input: bool,
     nmi_input: bool,
     nmi_line_changed_at: Option<SystemClock>,
+    /// System cycle at which the current /NMI assertion began.
+    asserted_since: Option<u64>,
+    /// `asserted_since` value of the assertion that latched `nmi_pending`.
+    pending_asserted_since: Option<u64>,
 }
 
 impl NmiDetector {
     fn update_nmi_input(&mut self, v: bool, clock: SystemClock) {
         if self.nmi_input != v {
             self.nmi_line_changed_at = Some(clock);
+            if v {
+                self.asserted_since = Some(clock.cycles());
+            } else {
+                // The 6502 samples /NMI once per CPU cycle (3 PPU dots); an
+                // assertion shorter than that — e.g. reading $2002 one PPU
+                // clock after the vblank flag sets, or disabling NMI right
+                // after — falls between samples and never reaches the
+                // internal edge latch.
+                if let (Some(t0), Some(p0)) = (self.asserted_since, self.pending_asserted_since) {
+                    if p0 == t0 && clock.cycles() - t0 < 3 {
+                        self.nmi_pending = false;
+                        self.pending_asserted_since = None;
+                    }
+                }
+                self.asserted_since = None;
+            }
         }
         self.nmi_input = v;
+    }
+
+    /// Retract a rising edge latched on `clock` itself. Used when a PPU
+    /// register access later in the same system tick races the vblank set
+    /// that caused the assertion: on hardware the /NMI line never asserts.
+    fn cancel_rising_edge_at(&mut self, clock: SystemClock) {
+        if self.nmi_line_changed_at.map(SystemClock::cycles) == Some(clock.cycles())
+            && self.nmi_input
+        {
+            self.nmi_pending = false;
+            self.nmi_input = false;
+            self.last_nmi_input = false;
+            self.nmi_line_changed_at = None;
+        }
     }
 
     fn detect_nmi(&mut self) -> bool {
@@ -63,6 +97,7 @@ impl NmiDetector {
 
         if rising_edge {
             self.nmi_pending = true;
+            self.pending_asserted_since = self.asserted_since;
         }
         self.nmi_pending
     }
@@ -747,7 +782,6 @@ impl<M: Mcu> Cpu<M> {
     fn pop_microcode(&mut self) -> Option<Microcode> {
         self.microcode_queue.pop_front()
     }
-
     fn push_microcode(&mut self, microcode: Microcode) {
         match self.microcode_queue.push_front(microcode) {
             Ok(_) => (),
@@ -765,6 +799,11 @@ impl<M: Mcu> Cpu<M> {
     /// Update cpu nmi signal line, may trigger nmi
     pub fn update_nmi_line(&mut self, nmi: bool, clock: SystemClock) {
         self.nmi_detecteor.update_nmi_input(nmi, clock);
+    }
+    /// Retract an NMI rising edge latched on `clock` itself (same-tick vblank
+    /// race resolution; see `NmiDetector::cancel_rising_edge_at`).
+    pub fn cancel_nmi_rising_edge(&mut self, clock: SystemClock) {
+        self.nmi_detecteor.cancel_rising_edge_at(clock);
     }
 
     fn load_nmi_pcl(&mut self) {

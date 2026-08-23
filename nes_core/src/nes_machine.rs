@@ -100,13 +100,22 @@ where
 
         let nmi_line = self.cpu.mcu().ppu().nmi_line_out();
         self.cpu.update_nmi_line(nmi_line, clock);
-        if clock.is_cpu_clock() {
+        let result = if clock.is_cpu_clock() {
             self.cpu.tick(&mut self.p, clock).0
         } else {
             ExecuteResult::Continue
-        }
-    }
+        };
 
+        // A PPU register access executed by the CPU on this very tick may have
+        // raced the vblank flag set earlier in the tick (e.g. reading $2002 or
+        // disabling NMI exactly as the flag sets). On hardware the access wins,
+        // so retract an NMI edge that was latched before the access ran.
+        if self.cpu.mcu_mut().ppu_mut().take_nmi_race_cancel() {
+            self.cpu.cancel_nmi_rising_edge(clock);
+        }
+
+        result
+    }
     pub fn reset(&mut self) {
         self.cpu.mcu_mut().reset();
         self.cpu.reset();

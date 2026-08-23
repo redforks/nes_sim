@@ -164,6 +164,13 @@ pub struct Ppu<R: Render = ()> {
     sprite: SpriteManager,
     /// system clock when suppress nmi by reading status register
     suppressed_vblank_at: Option<u64>,
+    /// `cycle` value of the tick that processed the vblank-set (scanline 241,
+    /// dot 1), whether or not the set was suppressed. A $2002 read or $2000
+    /// write landing on the same cycle races the set and wins it, as on hardware.
+    vbl_set_cycle: u64,
+    /// Set when a racing access must retract an NMI edge the machine latched
+    /// earlier in the same tick (see `NesMachine::tick`).
+    nmi_race_cancel: bool,
 
     rendering_enabled_at_scanline_start: bool,
 
@@ -206,6 +213,8 @@ impl<R: Render> Ppu<R> {
             rendering_enabled_at_scanline_start: false,
             cycle: 0,
             ppudata_last_read_at: None,
+            vbl_set_cycle: 0,
+            nmi_race_cancel: false,
             ppudata_last_return: 0,
         }
     }
@@ -466,6 +475,7 @@ impl<R: Render> Ppu<R> {
 
         if self.timing.enter_vblank() {
             self.renderer.finish();
+            self.vbl_set_cycle = self.cycle;
             if self
                 .suppressed_vblank_at
                 .take()
@@ -539,9 +549,15 @@ impl<R: Render> Ppu<R> {
             // PPUCTRL
             0x2000 => {
                 self.set_control_flags(PpuCtrl::from_bits(value));
+                // A $2000 write on the very tick the vblank flag is set races
+                // the set. Disabling NMI on that tick means the /NMI line
+                // never asserts, so retract an edge the machine latched
+                // earlier in this tick.
+                if self.vbl_set_cycle == self.cycle && value & 0x80 == 0 {
+                    self.nmi_race_cancel = true;
+                }
                 self.schedule_background_activation_if_visible();
             }
-            // PPUMASK
             0x2001 => {
                 self.registers.mask = PpuMask::from_bits(value);
             }
@@ -741,10 +757,23 @@ impl<R: Render> Ppu<R> {
             self.suppressed_vblank_at = Some(self.cycle);
         }
 
+        // A read on the very tick the vblank flag is set races the set and
+        // wins it: the flag reads back clear and its set is suppressed for
+        // this frame, so no NMI may assert either.
+        if self.vbl_set_cycle == self.cycle {
+            self.registers.status.set_v_blank(false);
+            self.nmi_race_cancel = true;
+        }
+
         // Clear v_blank flag on read
         self.registers.status.set_v_blank(false);
         self.registers.write_toggle = false; // Also reset write toggle on status read
         r
+    }
+
+    /// Consume the pending same-tick NMI race cancellation, if any.
+    pub fn take_nmi_race_cancel(&mut self) -> bool {
+        std::mem::take(&mut self.nmi_race_cancel)
     }
 
     fn render_pixel(&mut self, x: u8) -> u8 {
