@@ -585,6 +585,43 @@ fn test_render_pixel_sets_sprite_overflow_with_nine_sprites_on_scanline() {
 }
 
 #[test]
+fn ppu_tick_detects_sprite_overflow_on_odd_dots() {
+    // Hardware reads OAM during sprite evaluation on odd dots; the overflow
+    // flag therefore first becomes visible right after an odd evaluation
+    // step. Sprite overflow timing ROMs pin this phase (3.Timing #13/#14).
+    let mut ppu = create_test_ppu_with_mask(
+        PpuMask::new()
+            .with_background_enabled(true)
+            .with_sprite_enabled(true),
+    );
+
+    for idx in 0..9 {
+        setup_sprite(&mut ppu, idx, 20, 0, 0, idx * 8);
+    }
+
+    ppu.timing.scanline = 20;
+    ppu.timing.dot = 64;
+    let mut saw_overflow = false;
+    for _ in 65..=256 {
+        let processed_dot = ppu.timing.dot;
+        ppu.tick();
+        if !saw_overflow && ppu.registers.status.sprite_overflow() {
+            saw_overflow = true;
+            // Pending overflow applies at the top of the tick following the
+            // evaluation step, so the detecting tick is processed_dot - 1.
+            let detection_dot = processed_dot - 1;
+            assert_eq!(
+                detection_dot % 2,
+                1,
+                "overflow must be detected on an odd eval dot"
+            );
+            break;
+        }
+    }
+    assert!(saw_overflow, "nine in-range sprites must set overflow");
+}
+
+#[test]
 fn test_render_pixel_does_not_set_sprite_overflow_with_eight_sprites_on_scanline() {
     let mut ppu = create_test_ppu_with_mask(PpuMask::new());
     let pattern = create_pattern();

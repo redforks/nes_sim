@@ -442,7 +442,7 @@ impl<R: Render> Ppu<R> {
                 self.sprite.begin_sprite_overflow_eval();
             }
 
-            if self.timing.dot.is_multiple_of(2) {
+            if self.timing.dot % 2 == 1 {
                 self.sprite.step_sprite_overflow_eval(
                     self.timing.scanline,
                     self.registers.ctrl,
