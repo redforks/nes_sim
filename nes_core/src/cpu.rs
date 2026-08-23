@@ -8,7 +8,7 @@ mod reg16;
 use self::reg16::Register16;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum Register {
+pub(crate) enum Register {
     A,
     X,
     Y,
@@ -78,7 +78,7 @@ enum InterruptType {
 }
 
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
-enum ValueSource {
+pub(crate) enum ValueSource {
     Immediate,
     /// Read mem from zero page
     ZeroPage,
@@ -424,7 +424,7 @@ impl<M: Mcu> Cpu<M> {
 
         let request = std::mem::take(&mut self.request_detect_interrupt);
         let is_last_op =
-            self.microcode_queue.len() == 0 && !std::mem::take(&mut self.entering_interrupt);
+            self.microcode_queue.is_empty() && !std::mem::take(&mut self.entering_interrupt);
         if let (None, true) | (Some(true), _) = (request, is_last_op) {
             self.do_detect_interrupt(clock)
         }
@@ -683,20 +683,18 @@ impl<M: Mcu> Cpu<M> {
     }
 
     fn push_status(&mut self, break_flag: bool, check_nmi: bool) {
-        if check_nmi {
-            if self.nmi_detecteor.take_nmi_pending() {
-                if self.track_interrupt {
-                    println!(
-                        "hijack: ${:x}, carry flag: {}",
-                        self.status,
-                        self.flag(Flag::Carry)
-                    );
-                }
-                self.push_status(break_flag, false);
-                self.microcode_queue.clear();
-                self.push_microcodes(&[Microcode::LoadNmiPcL, Microcode::LoadNmiPcH]);
-                return;
+        if check_nmi && self.nmi_detecteor.take_nmi_pending() {
+            if self.track_interrupt {
+                println!(
+                    "hijack: ${:x}, carry flag: {}",
+                    self.status,
+                    self.flag(Flag::Carry)
+                );
             }
+            self.push_status(break_flag, false);
+            self.microcode_queue.clear();
+            self.push_microcodes(&[Microcode::LoadNmiPcL, Microcode::LoadNmiPcH]);
+            return;
         }
 
         self.push_stack(if break_flag {

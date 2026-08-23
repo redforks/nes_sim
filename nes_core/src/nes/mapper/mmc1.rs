@@ -145,13 +145,7 @@ impl Cartridge for MMC1 {
         match address {
             0x8000..=0xbfff => self.read_prg_bank(self.lower_prg_bank(), address - 0x8000),
             0xc000..=0xffff => self.read_prg_bank(self.upper_prg_bank(), address - 0xc000),
-            0x6000..=0x7fff => {
-                if self.prg_ram_enabled() {
-                    self.prg_ram[address as usize - 0x6000]
-                } else {
-                    0
-                }
-            }
+            0x6000..=0x7fff if self.prg_ram_enabled() => self.prg_ram[address as usize - 0x6000],
             _ => 0,
         }
     }

@@ -1,6 +1,6 @@
 use ansi_term::Color;
 use nes_core::mcu::Mcu;
-use nes_core::{Cpu, ExecuteResult, Plugin, SystemClock, SYSTEM_CYCLES_PER_PPU_CYCLE};
+use nes_core::{Cpu, ExecuteResult, Plugin, SYSTEM_CYCLES_PER_PPU_CYCLE, SystemClock};
 
 const RESET_WAIT_SYSTEM_CYCLES: u64 = 536_000 * SYSTEM_CYCLES_PER_PPU_CYCLE;
 
@@ -68,7 +68,9 @@ impl<M: Mcu> Plugin<M> for MonitorTestStatus {
             }
             Status::ShouldReset => {
                 if self.cycles_request_reset.is_none()
-                    && self.cycles_last_reset.is_none_or(|c| now - c >= RESET_WAIT_SYSTEM_CYCLES)
+                    && self
+                        .cycles_last_reset
+                        .is_none_or(|c| now - c >= RESET_WAIT_SYSTEM_CYCLES)
                 {
                     self.cycles_request_reset = Some(now);
                 }

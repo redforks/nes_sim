@@ -381,7 +381,9 @@ fn get_ppu_status(state: &MachineState) -> String {
 /// Get OAM data as hexdump
 fn get_oam_data(state: &MachineState) -> String {
     macro_rules! dump {
-        ($ppu:expr) => { format_hexdump($ppu.oam_data(), 0) };
+        ($ppu:expr) => {
+            format_hexdump($ppu.oam_data(), 0)
+        };
     }
     match &state.machine {
         MachineWrapper::Bin(_, _) => "OAM not available (Bin machine has no PPU)\n".to_string(),
@@ -402,7 +404,9 @@ fn get_nametable_data(state: &MachineState, index: u8) -> String {
         }};
     }
     match &state.machine {
-        MachineWrapper::Bin(_, _) => "Nametable not available (Bin machine has no PPU)\n".to_string(),
+        MachineWrapper::Bin(_, _) => {
+            "Nametable not available (Bin machine has no PPU)\n".to_string()
+        }
         MachineWrapper::INes(m) => dump!(m.mcu(), index),
         MachineWrapper::PngFrameMatch(m) => dump!(m.mcu(), index),
     }

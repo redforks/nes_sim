@@ -323,9 +323,10 @@ impl Render for RecordRender {
         };
 
         if let Some(ref tx) = self.video_tx
-            && send_video {
-                let _ = tx.send(image.as_bytes().to_vec());
-            }
+            && send_video
+        {
+            let _ = tx.send(image.as_bytes().to_vec());
+        }
     }
 }
 

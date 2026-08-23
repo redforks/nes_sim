@@ -370,14 +370,6 @@ impl TestStruct {
             .return_const(());
     }
 
-    fn expect_last_read_addr(&mut self, addr: u16) {
-        self.cpu
-            .expect_last_read_addr()
-            .times(1)
-            .in_sequence(&mut self.seq)
-            .return_const(addr);
-    }
-
     fn expect_supply_dmc_byte_with(&mut self, value: u8) {
         self.cpu
             .expect_supply_dmc_byte()

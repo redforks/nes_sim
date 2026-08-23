@@ -59,8 +59,7 @@ pub enum Response {
 }
 
 /// Machine status information
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[derive(Default)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct MachineStatus {
     pub pc: u16,
     pub a: u8,
@@ -101,7 +100,6 @@ pub struct ApuStatus {
     pub frame_irq_pending: bool,
     pub dmc_irq_pending: bool,
 }
-
 
 /// Format memory data as hexdump -C style
 pub fn format_hexdump(data: &[u8], start_addr: u16) -> String {

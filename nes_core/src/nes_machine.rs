@@ -100,12 +100,11 @@ where
 
         let nmi_line = self.cpu.mcu().ppu().nmi_line_out();
         self.cpu.update_nmi_line(nmi_line, clock);
-        let result = if clock.is_cpu_clock() {
+        if clock.is_cpu_clock() {
             self.cpu.tick(&mut self.p, clock).0
         } else {
             ExecuteResult::Continue
-        };
-        result
+        }
     }
 
     pub fn reset(&mut self) {
