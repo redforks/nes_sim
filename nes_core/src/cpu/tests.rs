@@ -4181,3 +4181,134 @@ fn bit_updates_flags_from_alu_and_accumulator() {
     assert!(cpu.flag(Flag::Overflow));
     assert!(!cpu.flag(Flag::Zero));
 }
+
+/// Reproduces blargg cpu_interrupts_v2 "2-nmi_and_brk" at the CPU level:
+/// a /NMI assertion is swept one CPU cycle at a time across the region
+/// `SEC; NOP; NOP; CLC; BRK` (BRK vectors to a handler whose first
+/// instruction is SEC, mirroring the ROM's `irq:` routine).
+///
+/// Hardware-documented classification of each assertion offset (one CPU
+/// cycle later per row):
+/// - before CLC takes effect: NMI handler sees pushed P with C set, B clear;
+///   BRK later completes normally (irq flag recorded with B set)
+/// - after CLC: same but C clear (2 offsets = CLC's 2 cycles)
+/// - the five hijack rows: NMI switches the BRK vector — the pushed P has
+///   B set and the IRQ path never runs. Traced against the ROM's timing,
+///   these span from two cycles before the BRK fetch through its third
+///   cycle: hardware resolves the vector by the end of PushPch.
+/// - the last two rows (BRK cycles 4-5): too late to switch vectors; BRK
+///   completes via the IRQ vector and the NMI dispatches right after the
+///   handler's SEC (NMI sees C set from that SEC)
+#[test]
+fn nmi_hijacks_brk_only_through_its_third_cycle() {
+    const MAIN: u16 = 0x0400;
+    const NMI_HANDLER: u16 = 0x0500;
+    const IRQ_HANDLER: u16 = 0x0600;
+    // Zero-page cells mirroring the ROM's nmi_flag / irq_flag
+    const NMI_FLAG: u16 = 0x10;
+    const IRQ_FLAG: u16 = 0x11;
+    const B_FLAG: u8 = 0x10;
+    const C_FLAG: u8 = 0x01;
+    fn program(mcu: MockMcu) -> Cpu<MockMcu> {
+        let mcu = mcu
+            .with_program(
+                MAIN,
+                &[
+                    0x38, // SEC
+                    0xEA, 0xEA, // NOP NOP
+                    0x18, // CLC
+                    0x00, // BRK (pushes MAIN+7, skipping the placeholder byte)
+                    0xE8, // INX — placeholder byte skipped by BRK's return address
+                    0x4C, 0x06, 0x04, // JMP $0406 (idle loop at the NOP above)
+                ],
+            )
+            .with_program(
+                NMI_HANDLER,
+                &[0x68, 0x85, NMI_FLAG as u8, 0x48, 0x40], // PLA STA PHA RTI
+            )
+            .with_program(
+                IRQ_HANDLER,
+                &[
+                    0x38, // SEC — first instruction, load-bearing for rows 9-10
+                    0x68,
+                    0x85,
+                    IRQ_FLAG as u8,
+                    0x48,
+                    0x40, // PLA STA PHA RTI
+                ],
+            );
+        mcu.write_word(0xFFFA, NMI_HANDLER);
+        mcu.write_word(0xFFFE, IRQ_HANDLER);
+        mcu.write_word(0xFFFC, MAIN);
+        Cpu::new(mcu) // reset sequence runs inside run()'s tick loop
+    }
+
+    /// Run the program from reset, with the /NMI line rising at system
+    /// tick `rise`; return the flags the two handlers recorded.
+    fn run(rise: u64) -> (u8, u8) {
+        let mut cpu = program(MockMcu::new());
+        let mut plugin = EmptyPlugin::new();
+        for t in 0..2000u64 {
+            let clock = SystemClock(t);
+            cpu.update_nmi_line(t >= rise, clock);
+            if clock.is_cpu_clock() && cpu.tick(&mut plugin, clock).0 == ExecuteResult::Halt {
+                break;
+            }
+        }
+        (cpu.mcu().peek(NMI_FLAG), cpu.mcu().peek(IRQ_FLAG))
+    }
+
+    // Calibrate on BRK's PushStatus cycle: the first time the pre-execution
+    // SP reads 0xFB (two bytes pushed) is that cycle, in every flow —
+    // nothing pushes before BRK, and the placeholder INX keeps mainline
+    // flow from re-pushing afterwards.
+    let push_status_tick = {
+        let mut cpu = program(MockMcu::new());
+        let mut plugin = EmptyPlugin::new();
+        let mut found = None;
+        for t in (2..).map(SystemClock).filter(|c| c.is_cpu_clock()) {
+            let at_push_status = cpu.sp == 0xFB;
+            cpu.update_nmi_line(false, t);
+            cpu.tick(&mut plugin, t);
+            if at_push_status {
+                found = Some(t.cycles());
+                break;
+            }
+        }
+        found.unwrap()
+    };
+    let brk_fetch = push_status_tick - 12;
+    // BRK cycle windows in system ticks, seven cycles of three dots each.
+    //
+    // Hardware (blargg cpu_interrupts_v2 "2-nmi_and_brk", rows 8 vs 9)
+    // resolves the vector by the end of BRK's third cycle (PushPch): an
+    // assertion on that cycle's last swept dot still switches the vector to
+    // NMI — the pushed status carries B set and the IRQ path never runs —
+    // while an assertion on the first PushPcl dot defers: BRK completes
+    // through the IRQ vector and the NMI dispatches right after the
+    // handler's SEC, so it observes C set while its own pushed B is clear.
+    let push_window = brk_fetch..push_status_tick - 3; // cycles 1-3
+    let late_window = push_status_tick - 3..push_status_tick + 9; // cycles 4-7
+
+    for rise in push_window {
+        let (nmi_flag, irq_flag) = run(rise);
+        assert!(
+            irq_flag == 0 && nmi_flag & B_FLAG != 0,
+            "rise {rise} (BRK cycle {}): expected vector hijack, got nmi={nmi_flag:#04x} irq={irq_flag:#04x}",
+            (rise - brk_fetch) / 3 + 1,
+        );
+    }
+    for rise in late_window {
+        let (nmi_flag, irq_flag) = run(rise);
+        assert!(
+            irq_flag & B_FLAG != 0,
+            "rise {rise} (BRK cycle {}): BRK must complete via IRQ, got nmi={nmi_flag:#04x} irq={irq_flag:#04x}",
+            (rise - brk_fetch) / 3 + 1,
+        );
+        assert!(
+            nmi_flag & B_FLAG == 0 && nmi_flag & C_FLAG != 0,
+            "rise {rise} (BRK cycle {}): NMI must observe post-SEC status, got {nmi_flag:#04x}",
+            (rise - brk_fetch) / 3 + 1,
+        );
+    }
+}

@@ -58,6 +58,10 @@ struct NmiDetector {
     asserted_since: Option<u64>,
     /// `asserted_since` value of the assertion that latched `nmi_pending`.
     pending_asserted_since: Option<u64>,
+    /// Newest `asserted_since` whose edge has already been consumed by a
+    /// dispatch or vector hijack; suppresses re-latching the same assertion
+    /// while it is still high on the line.
+    consumed_through: Option<u64>,
 }
 
 impl NmiDetector {
@@ -77,14 +81,13 @@ impl NmiDetector {
         self.nmi_input = v;
     }
 
-    /// Retract a rising edge latched on `clock` itself. Used when a PPU
-    /// register access later in the same system tick races the vblank set
-    /// that caused the assertion: on hardware the /NMI line never asserts.
     fn cancel_rising_edge_at(&mut self, clock: SystemClock) {
         if self.nmi_line_changed_at.map(SystemClock::cycles) == Some(clock.cycles())
             && self.nmi_input
         {
-            self.nmi_pending = false;
+            // The line never really asserted: consume the stamp so neither
+            // the sampler nor a vector-hijack check can fire it later.
+            self.mark_consumed();
             self.nmi_input = false;
             self.last_sampled_level = false;
             self.nmi_line_changed_at = None;
@@ -99,10 +102,57 @@ impl NmiDetector {
         let rising_edge = !self.last_sampled_level && sampled_level;
         self.last_sampled_level = sampled_level;
         if rising_edge {
-            self.nmi_pending = true;
-            self.pending_asserted_since = self.stamp_history[0];
+            let stamp = self.stamp_history[0];
+            // Skip edges whose assertion was already consumed while high
+            // (see `mark_consumed`): stamps are monotonic, so only a
+            // genuinely newer assertion may latch.
+            if !self
+                .consumed_through
+                .is_some_and(|c| stamp.is_some_and(|s| s <= c))
+            {
+                self.nmi_pending = true;
+                self.pending_asserted_since = stamp;
+            }
         }
         self.nmi_pending
+    }
+
+    /// Record that the newest visible assertion's edge was consumed (by an
+    /// end-of-instruction dispatch here, or a vector hijack): neither the
+    /// sampler nor a later hijack check may fire it again while the line
+    /// stays high.
+    fn mark_consumed(&mut self) {
+        self.nmi_pending = false;
+        let newest = self
+            .pending_asserted_since
+            .max(self.nmi_input.then_some(self.asserted_since).flatten());
+        self.consumed_through = self.consumed_through.max(newest);
+    }
+
+    /// Decide the interrupt-vector switch performed during BRK / IRQ
+    /// sequences ("NMI hijacks the vector"). Hardware resolves the vector
+    /// early in the sequence: blargg's cpu_interrupts_v2 "2-nmi_and_brk"
+    /// pins an assertion on the last dot of BRK's PushPch cycle as still
+    /// hijacking, and one on the first PushPcl dot as deferring to normal
+    /// post-dispatch service — a decision boundary at the end of cycle 3,
+    /// seven dots before the BRK sequence's vector-fetch tick (the IRQ
+    /// dispatch sequence pins a smaller gap via `decision_lag`). An
+    /// assertion counts iff its newest unconsumed edge had risen by then.
+    /// Consumes the edge.
+    fn take_hijack_pending(&mut self, now: u64, decision_lag: u64) -> bool {
+        let cutoff = now.saturating_sub(decision_lag);
+        let newest = self
+            .nmi_pending
+            .then_some(self.pending_asserted_since)
+            .flatten()
+            .max(self.nmi_input.then_some(self.asserted_since).flatten());
+        match newest {
+            Some(t0) if t0 <= cutoff && !self.consumed_through.is_some_and(|c| c >= t0) => {
+                self.mark_consumed();
+                true
+            }
+            _ => false,
+        }
     }
 
     fn take_nmi_pending(&mut self) -> bool {
@@ -198,6 +248,9 @@ pub struct Cpu<M: Mcu> {
     irq_detector: IrqDetector,
     request_detect_interrupt: Option<bool>,
     pub(crate) last_read_addr: Option<u16>,
+    /// System tick of the microcode executing this `tick()`; interrupt
+    /// decisions (the BRK/IRQ vector-hijack window) measure against it.
+    now: SystemClock,
 
     track_interrupt: bool,
     pub(crate) frozen: bool,
@@ -227,11 +280,12 @@ impl<M: Mcu> Cpu<M> {
             ab: Register16::default(),
             db: 0,
             alu: 0,
+            last_read_addr: None,
+            now: SystemClock::default(),
             microcode_queue: ArrayDeque::new(),
             halt: false,
             track_interrupt: std::env::var("NES_INTERRUPT_TRACK").is_ok(),
             frozen: false,
-            last_read_addr: None,
         };
         r.reset();
         r
@@ -379,7 +433,7 @@ impl<M: Mcu> Cpu<M> {
         plugin: &mut P,
         clock: SystemClock,
     ) -> (ExecuteResult, bool) {
-        self.last_read_addr = None;
+        self.now = clock;
 
         if self.frozen {
             if self.track_interrupt {
@@ -438,7 +492,7 @@ impl<M: Mcu> Cpu<M> {
                 (clock.0 - t0) > 1
             })
         {
-            self.nmi_detecteor.nmi_pending = false;
+            self.nmi_detecteor.mark_consumed();
             if self.track_interrupt {
                 println!(
                     "Enter NMI: ${:x}, carry flag: {}",
@@ -827,8 +881,11 @@ impl<M: Mcu> Cpu<M> {
         self.pc.set_high(high);
     }
 
-    fn load_irq_pcl(&mut self, is_irq: bool) {
-        if is_irq && self.nmi_detecteor.take_nmi_pending() {
+    fn load_irq_pcl(&mut self, decision_lag: u8) {
+        if self
+            .nmi_detecteor
+            .take_hijack_pending(self.now.cycles(), u64::from(decision_lag))
+        {
             if self.track_interrupt {
                 println!("hijack: ${:x}", self.status,);
             }

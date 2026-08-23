@@ -331,7 +331,7 @@ impl InterruptSequences {
             break_flag: false,
             check_nmi: true,
         },
-        Microcode::LoadIrqPcL { is_irq: true },
+        Microcode::LoadIrqPcL { decision_lag: 5 },
         Microcode::LoadIrqPcH,
     ];
 
@@ -343,7 +343,7 @@ impl InterruptSequences {
             break_flag: true,
             check_nmi: true,
         },
-        Microcode::LoadIrqPcL { is_irq: false },
+        Microcode::LoadIrqPcL { decision_lag: 7 },
         Microcode::LoadIrqPcH
     ];
 
@@ -1055,8 +1055,13 @@ pub enum Microcode {
 
     /// Set pc to address_latch | absolute << 8
     LoadPcAbsoluteH,
+    /// Fetch interrupt vector low byte ($FFFE, or $FFFA when an NMI
+    /// assertion hijacks the vector; see `Cpu::load_irq_pcl`). `decision_lag`
+    /// is the dot distance between the sequence's vector-decision deadline
+    /// and this cycle's first tick — the two interrupt sequences pin it at
+    /// different values (blargg cpu_interrupts_v2 tests 2 and 3).
     LoadIrqPcL {
-        is_irq: bool,
+        decision_lag: u8,
     },
     LoadIrqPcH,
 }
@@ -1628,9 +1633,9 @@ impl Microcode {
             Self::Kill => cpu.halt(),
 
             Self::LoadIrqPcH => cpu.load_irq_pch(),
-            Self::LoadIrqPcL { is_irq } => cpu.load_irq_pcl(is_irq),
             Self::LoadNmiPcL => cpu.load_nmi_pcl(),
             Self::LoadNmiPcH => cpu.load_nmi_pch(),
+            Self::LoadIrqPcL { decision_lag } => cpu.load_irq_pcl(decision_lag),
             Self::PushStatus {
                 break_flag,
                 check_nmi,
