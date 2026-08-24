@@ -70,7 +70,8 @@ fn test_controller_reads_route_through_nes_mcu() {
 
     mcu.press_controller_a(Button::A);
     mcu.press_controller_a(Button::Left);
-    mcu.write(0x4016, 0);
+    mcu.write(0x4016, 1); // raise strobe
+    mcu.write(0x4016, 0); // falling edge freezes and rewinds
 
     assert_eq!(mcu.read(0x4016), 0x41); // A pressed (bit 0)
     // Contiguous reads of $4016 keep /OE asserted: NES-001 clocks the

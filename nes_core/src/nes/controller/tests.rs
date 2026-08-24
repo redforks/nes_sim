@@ -44,11 +44,11 @@ fn test_controller_reads_return_one_after_eight_buttons() {
 }
 
 #[test]
-fn test_a_controller_stroke_mode_reads_a_button_only() {
+fn test_a_controller_strobe_mode_reads_a_button_only() {
     let mut a = AController::new();
     a.press(Button::A);
     a.press(Button::B);
-    a.stroke = true;
+    a.strobe = true;
 
     assert_eq!(a.read(), 0x41);
     assert_eq!(a.read(), 0x41);
@@ -88,11 +88,13 @@ fn test_controller_read() {
 fn test_controller_write() {
     let mut controller = Controller::new();
 
-    // Press buttons before write
+    // Press buttons before strobing
     controller.a.press(Button::A);
     controller.a.press(Button::B);
 
-    // Write 0 to address 0x4016 to reset for reading
+    // Hardware polling sequence: raise strobe, lower strobe, then read.
+    // The falling edge freezes button state and rewinds the poll.
+    controller.write(0x4016, 1);
     controller.write(0x4016, 0);
 
     // Now read should return button states starting from first button
@@ -130,6 +132,70 @@ fn test_controller_write_4017_does_nothing() {
     // Controller state should be unchanged
     let val = controller.read(0x4016);
     assert_eq!(val, 0x41); // A button still pressed
+}
+
+#[test]
+fn test_strobe_low_write_mid_poll_does_not_rewind_poll() {
+    let mut controller = Controller::new();
+
+    controller.a.press(Button::A);
+    controller.write(0x4016, 1); // raise strobe
+    controller.write(0x4016, 0); // falling edge freezes and rewinds
+
+    // Poll starts at A...
+    assert_eq!(controller.read(0x4016), 0x41);
+
+    // ...a defensive strobe-low write mid-poll must not rewind the poll...
+    controller.write(0x4016, 0);
+
+    // ...so the next read continues at B instead of reading A again.
+    assert_eq!(controller.read(0x4016), 0x40);
+}
+
+#[test]
+fn test_mid_poll_input_change_reads_frozen_register() {
+    let mut controller = Controller::new();
+
+    controller.a.press(Button::A);
+    controller.a.press(Button::B);
+    controller.write(0x4016, 1); // raise strobe
+    controller.write(0x4016, 0); // falling edge freezes A+B
+
+    assert_eq!(controller.read(0x4016), 0x41); // A
+
+    // Input changes after the falling edge must not leak into the
+    // running poll: remaining reads come from the frozen register.
+    controller.a.release(Button::A);
+    controller.a.release(Button::B);
+    controller.a.press(Button::Start);
+
+    // A defensive strobe-low write after the fall must not refresh
+    // the snapshot either: the poll keeps serving the frozen register.
+    controller.write(0x4016, 0);
+
+    assert_eq!(controller.read(0x4016), 0x41); // B still pressed in the snapshot
+    assert_eq!(controller.read(0x4016), 0x40); // Select
+    assert_eq!(controller.read(0x4016), 0x40); // Start not in the snapshot
+}
+
+#[test]
+fn test_re_strobe_mid_poll_restarts_poll_with_fresh_snapshot() {
+    let mut controller = Controller::new();
+
+    controller.a.press(Button::A);
+    controller.write(0x4016, 1);
+    controller.write(0x4016, 0);
+
+    assert_eq!(controller.read(0x4016), 0x41); // A
+
+    // Re-strobe mid-poll: B was pressed since the last falling edge.
+    controller.a.press(Button::B);
+    controller.write(0x4016, 1);
+    controller.write(0x4016, 0); // falling edge takes a fresh snapshot
+
+    // The poll restarts at bit position zero with fresh button state.
+    assert_eq!(controller.read(0x4016), 0x41); // A
+    assert_eq!(controller.read(0x4016), 0x41); // B
 }
 
 #[test]

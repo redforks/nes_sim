@@ -2,10 +2,11 @@ use crate::mcu::Mcu;
 
 /// nes Controller struct that represent a controller of nes.
 pub struct AController {
-    stroke: bool,
+    strobe: bool,
     /// current button state
     bits: u8,
-    /// copy of bits that is used for locking the state when reading
+    /// snapshot of button state frozen when strobe fell; drives reads
+    /// until the next falling edge
     locked_bits: u8,
     /// the position of the bit that is currently being read
     bit_position: u8,
@@ -15,7 +16,7 @@ pub struct AController {
 impl AController {
     pub fn new() -> AController {
         AController {
-            stroke: false,
+            strobe: false,
             bits: 0,
             locked_bits: 0,
             bit_position: 0,
@@ -28,7 +29,7 @@ impl AController {
     }
 
     fn peek(&self) -> u8 {
-        let pressed = if self.stroke {
+        let pressed = if self.strobe {
             self.bits & Button::A as u8 != 0
         } else if self.bit_position < 8 {
             (self.locked_bits >> self.bit_position) & 1 != 0
@@ -47,7 +48,7 @@ impl AController {
     /// from a contiguous preceding read of the same register: the controller
     /// sees one shift per contiguous set of reads, not one per CPU cycle.
     pub(crate) fn read_strobed(&mut self, clock: bool) -> u8 {
-        let pressed = if self.stroke {
+        let pressed = if self.strobe {
             self.bits & Button::A as u8 != 0
         } else if self.bit_position < 8 {
             if clock {
@@ -123,10 +124,15 @@ impl Mcu for Controller {
 
     fn write(&mut self, address: u16, value: u8) {
         if address == 0x4016 {
-            self.a.stroke = value & 1 != 0;
-            self.b.stroke = value & 1 != 0;
-            self.a.reset_for_read();
-            self.b.reset_for_read();
+            let new_strobe = value & 1 != 0;
+            // Only a high-to-low transition freezes button state and
+            // rewinds the poll; writes that keep strobe low are no-ops.
+            if self.a.strobe && !new_strobe {
+                self.a.reset_for_read();
+                self.b.reset_for_read();
+            }
+            self.a.strobe = new_strobe;
+            self.b.strobe = new_strobe;
         }
     }
 }

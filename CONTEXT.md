@@ -86,3 +86,17 @@ _Avoid_: pattern table, CHR bank
 **Secondary OAM**:
 A double-buffered 8-entry sprite buffer inside the PPU. `SpriteManager` evaluates primary OAM during dots 65–256 and copies up to 8 in-range sprites into the *next* buffer. At dot 0 each scanline, the buffers swap: the freshly populated buffer becomes *current* and feeds `find_sprite_pixel` for the whole scanline. Models the real-hardware internal OAM that avoids a 64-sprite scan per pixel.
 _Avoid_: sec OAM, sprite cache
+
+## Language — Controller Reading
+
+**Strobe**:
+Bit 0 of the value written to `$4016`; drives the 4021 Parallel/Serial control of both controllers. High: the shift register continuously reloads from live button state. Low: reads clock the register one bit each.
+_Avoid_: stroke
+
+**Frozen register**:
+The button-state snapshot taken when strobe falls; all subsequent polled reads come from it until the next falling edge. Mid-poll input changes never leak into it.
+_Avoid_: latch (overloaded), locked copy
+
+**Bit position**:
+Index of the next serial stage the poll reads from the frozen register. Advanced once per `$4016`/`$4017` read; reset only by a strobe falling edge.
+_Avoid_: read offset
