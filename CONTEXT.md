@@ -59,6 +59,40 @@ A single step of the CPU's internal microcode machine. Multiple microcodes may e
 **Frame**:
 One complete PPU frame (262 scanlines × 341 dots). `NesMachine::process_frame()` calls `tick()` in a loop until VBlank (scanline 241, dot 1) or halt.
 
+## Language — Mapper IRQ
+
+Core domain for cartridge-generated interrupt requests on bank-switched mappers.
+
+**IRQ Enable ('E')**:
+Latched mapper control bit gating all IRQ clocking. When clear, neither the prescaler nor the counter advances. Set by IRQ Control writes; overwritten by the acknowledge transfer.
+_Avoid_: enable-less counter, always-on IRQ
+
+**Enable-after-acknowledge ('A')**:
+Latched mapper control bit copied into IRQ Enable by an acknowledge write. Distinguishes one-shot from repeated IRQs.
+_Avoid_: auto-enable, re-arm bit
+
+**IRQ latch**:
+Reload value for the IRQ counter, written as two nibbles on VRC4. Rewriting it alone never touches the counter.
+_Avoid_: reload register
+
+**IRQ prescaler**:
+CPU-cycle divider feeding one counter clock; scanline mode approximates one scanline per count, cycle mode bypasses it. Reset by every IRQ Control write; frozen while disabled.
+_Avoid_: dot counter, phase accumulator
+
+**Inverted IRQ counter**:
+Down-counting representation of the hardware's up-counter, seeded from the negated latch; reaching zero is the trip point and reseeds from the latch.
+_Avoid_: countdown timer, wrapping trick
+
+## Language — APU Timers
+
+**Raw timer period**:
+A channel's timer-register countdown value, loaded directly into a timer. The pulse timer counts once per APU cycle, so a sequencer step lasts 2·(t+1) CPU cycles; the triangle timer counts once per CPU cycle, so a step lasts t+1 CPU cycles.
+_Avoid_: period-table value (reserved for precomputed tables)
+
+**Period table**:
+Precomputed NTSC CPU-cycle intervals between output clocks for the noise (`$400E` shift-register clocks) and DMC (`$4010` output-level changes). Entries are even because hardware counts these channels internally in APU cycles (2 CPU cycles each); the stored value is already the observable CPU-cycle interval.
+_Avoid_: octave framing of noise timing, half-rate correction
+
 ## Language -- PPU Sprites
 
 Core domain for sprite (OAM) data representation and tile addressing.
