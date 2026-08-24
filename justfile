@@ -300,7 +300,7 @@ mmc3_test_6: build_nes_cpu_test
     {{ nes_cpu_test }} --quiet -f ../nes-test-roms/mmc3_test/6-MMC6.nes
 
 [parallel]
-mmc3_tests: mmc3_test_1 mmc3_test_2 mmc3_test_3 mmc3_test_5
+mmc3_tests: mmc3_test_1 mmc3_test_2 mmc3_test_3 mmc3_test_4 mmc3_test_5 mmc3_test_6
 
 mmc3_test2_1: build_nes_cpu_test
     {{ nes_cpu_test }} --quiet -f ../nes-test-roms/mmc3_test_2/rom_singles/1-clocking.nes
@@ -321,7 +321,7 @@ mmc3_test2_6: build_nes_cpu_test
     {{ nes_cpu_test }} --quiet -f ../nes-test-roms/mmc3_test_2/rom_singles/6-MMC3_alt.nes
 
 [parallel]
-mmc3_test2: mmc3_test2_1 mmc3_test2_2 mmc3_test2_3 mmc3_test2_5 mmc3_test2_6
+mmc3_test2: mmc3_test2_1 mmc3_test2_2 mmc3_test2_3 mmc3_test2_4 mmc3_test2_5 mmc3_test2_6
 
 mmc3: mmc3_tests mmc3_test2 mmc3_irq_tests
 
@@ -381,8 +381,6 @@ passed_ppu_tests: oam_read oam_stress ppu_open_bus ppu_read_buffer sprite_hit_te
 
 [parallel]
 passed_apu_tests: apu_mixer apu_reset apu_test dmc_dma_during_read4
-
-todo_tests: mmc3_test_4 mmc3_test_6 mmc3_test2_4
 
 [parallel]
 passed_rom_tests: passed_cpu_tests passed_ppu_tests passed_apu_tests passed_mapper

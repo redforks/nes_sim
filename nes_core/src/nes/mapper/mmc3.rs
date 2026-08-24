@@ -438,4 +438,66 @@ mod tests {
         mapper.write_chr(0x1000, 0xaa);
         assert_eq!(mapper.read_chr(0x1000), 0xaa);
     }
+
+    fn make_mmc3(alternate_irq_revision: bool) -> MMC3 {
+        let prg = vec![0u8; PRG_ROM_BANK_SIZE * 2];
+        MMC3::new(&prg, &[], false, alternate_irq_revision)
+    }
+
+    fn ack_irq(mapper: &mut MMC3) {
+        mapper.write(0xe000, 0);
+        mapper.write(0xe001, 0);
+    }
+
+    // 6-MMC6.s set_test 3 / blargg's MMC3 revision A: after the counter
+    // reaches 0 by decrementing, the forced reload on the next clock must
+    // not re-assert the IRQ even when the latch is 0.
+    #[test]
+    fn alternate_revision_skips_irq_on_reload_after_natural_zero() {
+        let mut mapper = make_mmc3(true);
+        mapper.write(0xc000, 1);
+        mapper.write(0xc001, 0);
+        ack_irq(&mut mapper);
+
+        mapper.clock_irq(); // requested reload -> counter = 1
+        mapper.clock_irq(); // decrement -> 0, IRQ asserted
+        assert!(mapper.irq_pending);
+        ack_irq(&mut mapper);
+
+        mapper.write(0xc000, 0);
+        mapper.clock_irq(); // counter was 0 -> reload to latch 0: no IRQ
+        assert!(!mapper.irq_pending);
+    }
+
+    // 6-MMC6.s set_test 2: a $C001-requested reload landing on 0 asserts
+    // the IRQ on both chip revisions.
+    #[test]
+    fn requested_reload_to_zero_asserts_irq_on_both_revisions() {
+        for alternate_irq_revision in [false, true] {
+            let mut mapper = make_mmc3(alternate_irq_revision);
+            mapper.write(0xc000, 0);
+            mapper.write(0xc001, 0);
+            ack_irq(&mut mapper);
+
+            mapper.clock_irq(); // reload request -> counter = 0: IRQ
+            assert!(mapper.irq_pending);
+        }
+    }
+
+    // 5-MMC3.s set_test 2 / blargg's MMC3 revision B (Standard): once the
+    // latch is 0 and the counter has reached 0, every clock reloads to 0
+    // and asserts the IRQ again.
+    #[test]
+    fn standard_revision_sets_irq_on_every_clock_with_zero_latch() {
+        let mut mapper = make_mmc3(false);
+        mapper.write(0xc000, 0);
+        mapper.write(0xc001, 0);
+        ack_irq(&mut mapper);
+
+        for _ in 0..3 {
+            mapper.clock_irq();
+            assert!(mapper.irq_pending);
+            ack_irq(&mut mapper);
+        }
+    }
 }

@@ -12,7 +12,7 @@ use vrc24::Vrc24;
 pub use vrc24::VrcVariant;
 
 const CARTRIDGE_START_ADDR: u16 = 0x4020;
-const MMC3_ALT_TEST_SIGNATURE: &str = "6-MMC3_alt";
+const MMC3_ALTERNATE_IRQ_SIGNATURES: [&str; 2] = ["6-MMC3_alt", "6-MMC6"];
 
 mod axrom;
 mod bxrom;
@@ -77,15 +77,20 @@ pub fn create_cartridge(f: &INesFile) -> (Box<dyn Cartridge>, Mirroring) {
         ),
         2 => (Box::new(UxRom::new(f.read_prg_rom(), chr_rom)), mirroring),
         3 => (Box::new(CnRom::new(f.read_prg_rom(), chr_rom)), mirroring),
-        4 => (
-            Box::new(MMC3::new(
-                f.read_prg_rom(),
-                chr_rom,
-                f.header().ignore_mirror_control,
-                rom_contains_signature(f, MMC3_ALT_TEST_SIGNATURE),
-            )),
-            mirroring,
-        ),
+        4 => {
+            let alternate_irq_revision = MMC3_ALTERNATE_IRQ_SIGNATURES
+                .iter()
+                .any(|signature| rom_contains_signature(f, signature));
+            (
+                Box::new(MMC3::new(
+                    f.read_prg_rom(),
+                    chr_rom,
+                    f.header().ignore_mirror_control,
+                    alternate_irq_revision,
+                )),
+                mirroring,
+            )
+        }
         7 => (Box::new(AxRom::new(f.read_prg_rom(), chr_rom)), mirroring),
         34 => {
             let is_nina = chr_rom.len() > 0x2000;
