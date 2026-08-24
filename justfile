@@ -367,10 +367,11 @@ vrc25-s2: build_nes_cpu_test
 vrc25-s3: build_nes_cpu_test
     {{ nes_cpu_test }} --quiet -f  test-roms/vrctests/vrctest25s3.nes
 
+[parallel]
 vrc2-and-4-roms: vrc21-s1 vrc21-s2 vrc22 vrc23-s1 vrc23-s2 vrc23-s3 vrc25-s1 vrc25-s2 vrc25-s3
 
 [parallel]
-passed_mapper: mmc3 bntest mmc1-a12
+passed_mapper: mmc3 bntest mmc1-a12 vrc2-and-4-roms
 
 [parallel]
 passed_cpu_tests: cpu-test instr_misc instr_test-v5 instr_test-v3 instr_timing cpu_dummy_reads cpu_dummy_writes cpu_exec_space cpu_reset nestest branch_timing_tests nes_instr_test cpu_timing_test6 cpu_interrupts_v2
