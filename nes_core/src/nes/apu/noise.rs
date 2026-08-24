@@ -44,7 +44,9 @@ impl Default for Noise {
     fn default() -> Self {
         Self {
             period: NoisePeriod::default(),
-            timer: Divider::new(NOISE_PERIOD_TABLE[0]),
+            // $400E powers up cleared: rate index 0, so load entry 0 - 1 to
+            // match what writing that index produces (see write_period).
+            timer: Divider::new(NOISE_PERIOD_TABLE[0] - 1),
             length: LengthControl::default(),
             envelope: Envelope::new(0),
             shifter: Shifter::default(),
@@ -64,8 +66,13 @@ impl Noise {
 
     pub fn write_period(&mut self, value: NoisePeriod) {
         self.period = value;
+        // https://www.nesdev.org/wiki/APU_Noise — "The period determines how
+        // many CPU cycles happen between shift register clocks": table entries
+        // already are CPU-cycle intervals. The divider fires once per
+        // period + 1 ticks, so loading entry - 1 makes the shift interval
+        // equal the documented entry for all sixteen rates.
         self.timer
-            .set_period(NOISE_PERIOD_TABLE[self.period.period() as usize]);
+            .set_period(NOISE_PERIOD_TABLE[self.period.period() as usize] - 1);
         self.shifter.mode = if value.is_halt() { 1 } else { 0 };
     }
 

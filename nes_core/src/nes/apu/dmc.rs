@@ -159,7 +159,10 @@ impl Default for Dmc {
         Self {
             dma_reader: DmaReader::default(),
             output: OutputUnit::default(),
-            timer: Divider::new(DMC_RATE_TABLE[0]),
+            // $4010 powers up with rate 0; mirror the write path's
+            // minus-one convention so pre-write playback runs at the
+            // documented 428-CPU-cycle rate.
+            timer: Divider::new(DMC_RATE_TABLE[0] - 1),
         }
     }
 }

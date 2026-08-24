@@ -330,3 +330,53 @@ fn divider() {
     assert!(divider.tick());
     assert!(divider.tick());
 }
+
+// Golden-timeline gate for the noise channel's shift cadence. The expected
+// sequence derives only from primary-source facts, not from the emulator's
+// tables: https://www.nesdev.org/wiki/APU_Noise — "The period determines how
+// many CPU cycles happen between shift register clocks" (rates $0/$7/$F mean
+// shifts every 4/160/4068 CPU cycles); the LFSR powers up as 1 in mode 0,
+// feeding back XOR of bits 0 and 1 into bit 14 on a right shift; $400E powers
+// up cleared, so the divider starts counting down from 4 - 1; a period write
+// changes only the reload value, not the current count (doc/apu_ref.txt).
+// Any drift in a loaded interval shifts the timeline and fails here.
+#[test]
+fn noise_shift_rate_matches_documented_intervals() {
+    // (period index, documented CPU-cycle interval between LFSR shifts)
+    const CASES: [(u8, u16); 3] = [(0, 4), (7, 160), (15, 4068)];
+    const CONSTANT_VOLUME: u8 = 15;
+
+    for &(index, interval) in &CASES {
+        let mut noise = Noise::default();
+        // $4015 noise enable; the length load below is ignored while disabled.
+        noise.set_enabled(true);
+        // --lc vvvv: length halt, constant-volume mode, volume 15.
+        noise.write_envelope(0x3F.into());
+        // lllll___ = 31: nonzero length counter keeps the output gate open.
+        noise.write_length(0xF8.into());
+        noise.write_period(index.into());
+
+        let total_ticks = 3 * interval as usize + 8;
+        let mut lfsr: u16 = 1;
+        // Power-up rate index 0: first shift lands on CPU cycle 4.
+        let mut counter: u16 = 4 - 1;
+
+        for tick in 1..=total_ticks {
+            if counter == 0 {
+                counter = interval - 1;
+                let feedback = (lfsr ^ (lfsr >> 1)) & 0x0001;
+                lfsr = (lfsr >> 1) | (feedback << 14);
+            } else {
+                counter -= 1;
+            }
+            noise.tick_timer();
+            // Bit 0 set means the DAC receives 0; constant volume otherwise.
+            let expected = if lfsr & 1 == 0 { CONSTANT_VOLUME } else { 0 };
+            assert_eq!(
+                noise.output(),
+                expected,
+                "period index {index} diverges from the documented timeline at CPU cycle {tick}"
+            );
+        }
+    }
+}
