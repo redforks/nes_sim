@@ -1,7 +1,7 @@
 use super::plugin::{
-    CompositePlugin, Console, DetectDeadLoop, ExitTestPlugin, ImageExit, MaxInstructions,
-    MonitorTestStatus, NametableConsole, NesReportPlugin, PngFrameMatch, ReportNesTestResult,
-    ReportPlugin, Timeout,
+    CompositePlugin, Console, DetectDeadLoop, ExitTestPlugin, FramePngDump, ImageExit,
+    MaxInstructions, MonitorTestStatus, NametableConsole, NesReportPlugin, PngFrameMatch,
+    ReportNesTestResult, ReportPlugin, Timeout,
 };
 use nes_core::{
     Plugin, SystemClock, ines::INesFile, machine::Machine, mcu::RamMcu, nes_machine::NesMachine,
@@ -99,6 +99,28 @@ impl Image {
                     start_pc,
                     max_instructions,
                     vec![format!("{}.png", stem)],
+                );
+            } else if file_name
+                .to_str()
+                .is_some_and(|p| p.contains("test-roms/ppu/"))
+                && matches!(
+                    f,
+                    "color.nes" | "ntsc_torture.nes" | "palette.nes" | "_240pee.nes"
+                )
+            {
+                // Visual-only tetanes ROMs: no self-reporting protocol, so success
+                // is a blessed snapshot of the rendered frame under png-exps/
+                // (frame-snapshot scheme ported from tetanes-core's tests.json;
+                // frame numbers quoted from there).
+                return self.create_exp_png_machine(
+                    ines,
+                    quiet,
+                    start_pc,
+                    max_instructions,
+                    vec![format!(
+                        "{}.png",
+                        f.strip_suffix(".nes").expect("checked suffix")
+                    )],
                 );
             }
         }
@@ -224,7 +246,37 @@ impl Image {
         if let Some(pc) = start_pc {
             machine.set_pc(pc);
         }
-        MachineWrapper::PngFrameMatch(Box::new(machine))
+        MachineWrapper::Rendered(Box::new(machine))
+    }
+
+    /// Blessing machine: renders until [`FramePngDump`] saves frame
+    /// `target_frame` to `out_path`, then stops.
+    pub fn create_dump_machine(
+        &self,
+        quiet: bool,
+        start_pc: Option<u16>,
+        max_instructions: u64,
+        target_frame: usize,
+        out_path: PathBuf,
+    ) -> MachineWrapper {
+        let Image::INes { nes_file, .. } = self else {
+            panic!("--dump-frame requires an iNES ROM (needs the PPU renderer)");
+        };
+        let mut plugins: Vec<Box<dyn Plugin<nes_core::nes::NesMcu<ImageRender, ()>>>> = vec![
+            Box::new(NesReportPlugin::create(quiet)),
+            Box::new(FramePngDump::new(target_frame, out_path)),
+            Box::new(Timeout::new(Duration::from_secs(15))),
+        ];
+        if max_instructions > 0 {
+            plugins.push(Box::new(MaxInstructions::new(max_instructions)));
+        }
+        let plugin = CompositePlugin::new(plugins);
+        let mut machine =
+            NesMachine::new(&**nes_file, plugin, ImageRender::default_dimension(), ());
+        if let Some(pc) = start_pc {
+            machine.set_pc(pc);
+        }
+        MachineWrapper::Rendered(Box::new(machine))
     }
 
     fn create_mmc1_a12_machine(
@@ -286,7 +338,7 @@ impl Image {
         if let Some(pc) = start_pc {
             machine.set_pc(pc);
         }
-        MachineWrapper::PngFrameMatch(Box::new(machine))
+        MachineWrapper::Rendered(Box::new(machine))
     }
 }
 
@@ -303,13 +355,13 @@ mod machine_types {
     pub type INesMachine = NesMachine<INesPlugin, (), ()>;
 
     pub type ImageRenderPlugin = CompositePlugin<nes_core::nes::NesMcu<ImageRender, ()>>;
-    pub type PngFrameMatchMachine = NesMachine<ImageRenderPlugin, ImageRender, ()>;
+    pub type RenderedMachine = NesMachine<ImageRenderPlugin, ImageRender, ()>;
 }
 
 pub enum MachineWrapper {
     Bin(Box<machine_types::BinMachine>, SystemClock),
     INes(Box<machine_types::INesMachine>),
-    PngFrameMatch(Box<machine_types::PngFrameMatchMachine>),
+    Rendered(Box<machine_types::RenderedMachine>),
 }
 
 impl MachineWrapper {
@@ -321,7 +373,7 @@ impl MachineWrapper {
                 r
             }
             MachineWrapper::INes(m) => m.tick(),
-            MachineWrapper::PngFrameMatch(m) => m.tick(),
+            MachineWrapper::Rendered(m) => m.tick(),
         }
     }
 
@@ -329,7 +381,7 @@ impl MachineWrapper {
         match self {
             MachineWrapper::Bin(m, _) => m.reset(),
             MachineWrapper::INes(m) => m.reset(),
-            MachineWrapper::PngFrameMatch(m) => m.reset(),
+            MachineWrapper::Rendered(m) => m.reset(),
         }
     }
 }

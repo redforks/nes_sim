@@ -370,17 +370,182 @@ vrc25-s3: build_nes_cpu_test
 [parallel]
 vrc2-and-4-roms: vrc21-s1 vrc21-s2 vrc22 vrc23-s1 vrc23-s2 vrc23-s3 vrc25-s1 vrc25-s2 vrc25-s3
 
+# ---- Imported from tetanes/tetanes-core/test_roms --------------------------
+# Deduplicated against ../nes-test-roms and test-roms by iNES file content
+# (SHA-1), not by name: every ROM below is byte-distinct from anything already
+# hosted. Assertion schemes follow tetanes-core: self-reporting ROMs use the
+# $DE $B0 $61 signature at $6000 (MonitorTestStatus plugin); visual-only ROMs
+# assert a blessed rendered-frame snapshot under nes_cpu_test/src/png-exps/
+# (PngFrameMatch), at frame numbers quoted from
+# tetanes-core/test_roms/ppu/tests.json.
+
+imported_apu_misc_1: build_nes_cpu_test
+    {{ nes_cpu_test }} --quiet -f test-roms/apu/apu_env.nes
+
+imported_apu_misc_2: build_nes_cpu_test
+    {{ nes_cpu_test }} --quiet -f test-roms/apu/dmc_pitch.nes
+
+imported_apu_misc_3: build_nes_cpu_test
+    {{ nes_cpu_test }} --quiet -f test-roms/apu/lin_ctr.nes
+
+imported_apu_misc_4: build_nes_cpu_test
+    {{ nes_cpu_test }} --quiet -f test-roms/apu/phase_reset.nes
+
+imported_apu_misc_5: build_nes_cpu_test
+    {{ nes_cpu_test }} --quiet -f test-roms/apu/sweep_cutoff.nes
+
+imported_apu_misc_6: build_nes_cpu_test
+    {{ nes_cpu_test }} --quiet -f test-roms/apu/sweep_sub.nes
+
+[parallel]
+imported_apu_misc: imported_apu_misc_1 imported_apu_misc_2 imported_apu_misc_3 imported_apu_misc_4 imported_apu_misc_5 imported_apu_misc_6
+
+imported_cpu_misc_1: build_nes_cpu_test
+    {{ nes_cpu_test }} --quiet -f test-roms/cpu/exec_space_apu.nes
+
+imported_cpu_misc_2: build_nes_cpu_test
+    {{ nes_cpu_test }} --quiet -f test-roms/cpu/exec_space_ppuio.nes
+
+imported_cpu_misc_3: build_nes_cpu_test
+    {{ nes_cpu_test }} --quiet -f test-roms/cpu/flag_concurrency.nes
+
+[parallel]
+imported_cpu_misc: imported_cpu_misc_1 imported_cpu_misc_2 imported_cpu_misc_3
+
+spr_hit_extra_1: build_nes_cpu_test
+    {{ nes_cpu_test }} --quiet -f test-roms/ppu/spr_hit_alignment.nes
+
+spr_hit_extra_2: build_nes_cpu_test
+    {{ nes_cpu_test }} --quiet -f test-roms/ppu/spr_hit_basics.nes
+
+spr_hit_extra_3: build_nes_cpu_test
+    {{ nes_cpu_test }} --quiet -f test-roms/ppu/spr_hit_corners.nes
+
+spr_hit_extra_4: build_nes_cpu_test
+    {{ nes_cpu_test }} --quiet -f test-roms/ppu/spr_hit_double_height.nes
+
+spr_hit_extra_5: build_nes_cpu_test
+    {{ nes_cpu_test }} --quiet -f test-roms/ppu/spr_hit_flip.nes
+
+spr_hit_extra_6: build_nes_cpu_test
+    {{ nes_cpu_test }} --quiet -f test-roms/ppu/spr_hit_left_clip.nes
+
+spr_hit_extra_7: build_nes_cpu_test
+    {{ nes_cpu_test }} --quiet -f test-roms/ppu/spr_hit_right_edge.nes
+
+spr_hit_extra_8: build_nes_cpu_test
+    {{ nes_cpu_test }} --quiet -f test-roms/ppu/spr_hit_screen_bottom.nes
+
+[parallel]
+spr_hit_extra: spr_hit_extra_1 spr_hit_extra_2 spr_hit_extra_3 spr_hit_extra_4 spr_hit_extra_5 spr_hit_extra_6 spr_hit_extra_7 spr_hit_extra_8
+
+ppu_240pee: build_nes_cpu_test
+    {{ nes_cpu_test }} --quiet -f test-roms/ppu/_240pee.nes
+
+ppu_color: build_nes_cpu_test
+    {{ nes_cpu_test }} --quiet -f test-roms/ppu/color.nes
+
+ntsc_torture: build_nes_cpu_test
+    {{ nes_cpu_test }} --quiet -f test-roms/ppu/ntsc_torture.nes
+
+ppu_palette: build_nes_cpu_test
+    {{ nes_cpu_test }} --quiet -f test-roms/ppu/palette.nes
+
+[parallel]
+imported_ppu_visual: ppu_240pee ppu_color ntsc_torture ppu_palette
+
+# Known-failing imports, kept runnable but excluded from passed_* groups until
+# the core implements what they probe:
+
+# blargg's forum APU tests: poll the APU frame IRQ flag with BVC loops the
+# current frame sequencer never satisfies; the dead-loop detector exits 1.
+apu_forum_test_1: build_nes_cpu_test
+    timeout 15 {{ nes_cpu_test }} --quiet -f test-roms/apu/test_1.nes
+
+apu_forum_test_2: build_nes_cpu_test
+    timeout 15 {{ nes_cpu_test }} --quiet -f test-roms/apu/test_2.nes
+
+apu_forum_test_3: build_nes_cpu_test
+    timeout 15 {{ nes_cpu_test }} --quiet -f test-roms/apu/test_3.nes
+
+apu_forum_test_4: build_nes_cpu_test
+    timeout 15 {{ nes_cpu_test }} --quiet -f test-roms/apu/test_4.nes
+
+apu_forum_test_5: build_nes_cpu_test
+    timeout 15 {{ nes_cpu_test }} --quiet -f test-roms/apu/test_5.nes
+
+apu_forum_test_6: build_nes_cpu_test
+    timeout 15 {{ nes_cpu_test }} --quiet -f test-roms/apu/test_6.nes
+
+apu_forum_test_7: build_nes_cpu_test
+    timeout 15 {{ nes_cpu_test }} --quiet -f test-roms/apu/test_7.nes
+
+apu_forum_test_8: build_nes_cpu_test
+    timeout 15 {{ nes_cpu_test }} --quiet -f test-roms/apu/test_8.nes
+
+apu_forum_test_9: build_nes_cpu_test
+    timeout 15 {{ nes_cpu_test }} --quiet -f test-roms/apu/test_9.nes
+
+apu_forum_test_10: build_nes_cpu_test
+    timeout 15 {{ nes_cpu_test }} --quiet -f test-roms/apu/test_10.nes
+
+[parallel]
+apu_forum_tests: apu_forum_test_1 apu_forum_test_2 apu_forum_test_3 apu_forum_test_4 apu_forum_test_5 apu_forum_test_6 apu_forum_test_7 apu_forum_test_8 apu_forum_test_9 apu_forum_test_10
+
+# Pitch/env/sweep audio tests: no self-reporting protocol (upstream tetanes
+# leaves them ignored too); run and compare the captured audio by ear/waveform.
+audio_compare_manual_1: build_nes_cpu_test
+    timeout 15 {{ nes_cpu_test }} --quiet -f test-roms/apu/noise_pitch.nes
+
+audio_compare_manual_2: build_nes_cpu_test
+    timeout 15 {{ nes_cpu_test }} --quiet -f test-roms/apu/square_pitch.nes
+
+audio_compare_manual_3: build_nes_cpu_test
+    timeout 15 {{ nes_cpu_test }} --quiet -f test-roms/apu/triangle_pitch.nes
+
+[parallel]
+audio_compare_manual: audio_compare_manual_1 audio_compare_manual_2 audio_compare_manual_3
+
+# Zapper light-gun tests: need Zapper input (light sense + trigger on $4017),
+# which nes_core does not emulate yet.
+zapper_flip: build_nes_cpu_test
+    timeout 10 {{ nes_cpu_test }} --quiet -f test-roms/input/zapper_flip.nes
+
+zapper_light: build_nes_cpu_test
+    timeout 10 {{ nes_cpu_test }} --quiet -f test-roms/input/zapper_light.nes
+
+zapper_stream: build_nes_cpu_test
+    timeout 10 {{ nes_cpu_test }} --quiet -f test-roms/input/zapper_stream.nes
+
+zapper_trigger: build_nes_cpu_test
+    timeout 10 {{ nes_cpu_test }} --quiet -f test-roms/input/zapper_trigger.nes
+
+[parallel]
+zapper_tests: zapper_flip zapper_light zapper_stream zapper_trigger
+
+# MMC3 CHR-RAM banking probe: spins waiting on pattern data it wrote to CHR
+# RAM, which the TxROM mapper does not allocate for CHR-RAM carts yet.
+big_chr_ram: build_nes_cpu_test
+    timeout 15 {{ nes_cpu_test }} --quiet -f test-roms/mapper/m004_txrom/big_chr_ram.nes
+
+# All 18 imported ROMs not yet passing: known-failing or manual-only, kept as
+# a single runnable checklist. Each graduates into the passed_* aggregates as
+# nes_core gains what it probes (frame-IRQ timing, Zapper input, MMC3
+# CHR-RAM banking; audio-compare tests stay manual).
+[parallel]
+todo_tests: apu_forum_tests audio_compare_manual zapper_tests big_chr_ram
+
 [parallel]
 passed_mapper: mmc3 bntest mmc1-a12 vrc2-and-4-roms
 
 [parallel]
-passed_cpu_tests: cpu-test instr_misc instr_test-v5 instr_test-v3 instr_timing cpu_dummy_reads cpu_dummy_writes cpu_exec_space cpu_reset nestest branch_timing_tests nes_instr_test cpu_timing_test6 cpu_interrupts_v2
+passed_cpu_tests: cpu-test instr_misc instr_test-v5 instr_test-v3 instr_timing cpu_dummy_reads cpu_dummy_writes cpu_exec_space cpu_reset nestest branch_timing_tests nes_instr_test cpu_timing_test6 cpu_interrupts_v2 imported_cpu_misc
 
 [parallel]
-passed_ppu_tests: oam_read oam_stress ppu_open_bus ppu_read_buffer sprite_hit_tests sprite_overflow_tests scanline sprdma_and_dmc_dma vbl_nmi_timing ppu_vbl_nmi
+passed_ppu_tests: oam_read oam_stress ppu_open_bus ppu_read_buffer sprite_hit_tests sprite_overflow_tests scanline sprdma_and_dmc_dma vbl_nmi_timing ppu_vbl_nmi spr_hit_extra imported_ppu_visual
 
 [parallel]
-passed_apu_tests: apu_mixer apu_reset apu_test dmc_dma_during_read4
+passed_apu_tests: apu_mixer apu_reset apu_test dmc_dma_during_read4 imported_apu_misc
 
 [parallel]
 passed_rom_tests: passed_cpu_tests passed_ppu_tests passed_apu_tests passed_mapper

@@ -3,6 +3,7 @@ use nes_core::{Cpu, ExecuteResult, Plugin, SystemClock};
 
 mod console;
 mod detect_dead_loop;
+mod frame_png_dump;
 mod img_exit;
 mod max_instructions;
 mod monitor_test_status;
@@ -13,6 +14,7 @@ mod timeout;
 
 pub use console::*;
 pub use detect_dead_loop::*;
+pub use frame_png_dump::*;
 pub use img_exit::*;
 pub use max_instructions::*;
 pub use monitor_test_status::*;

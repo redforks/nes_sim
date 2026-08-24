@@ -28,6 +28,14 @@ struct Args {
     /// Start TCP server on port 28800 for MCP communication
     #[arg(long = "tcp-server")]
     tcp_server: bool,
+    /// Dump the rendered frame at this frame number (first vblank observed at
+    /// or after it) to --dump-out and exit; blessing tool for PngFrameMatch
+    /// expected images
+    #[arg(long = "dump-frame")]
+    dump_frame: Option<usize>,
+    /// Output PNG path for --dump-frame
+    #[arg(long = "dump-out")]
+    dump_out: Option<PathBuf>,
 }
 
 fn main() {
@@ -37,6 +45,8 @@ fn main() {
         max_instructions,
         start_pc,
         tcp_server,
+        dump_frame,
+        dump_out,
     } = Args::parse();
 
     env_logger::builder().format_timestamp(None).init();
@@ -67,7 +77,12 @@ fn main() {
         None => None,
     };
 
-    let mut machine = image.create_machine(quiet, start_pc, max_instructions);
+    let mut machine = if let Some(dump_frame) = dump_frame {
+        let dump_out = dump_out.expect("--dump-out is required with --dump-frame");
+        image.create_dump_machine(quiet, start_pc, max_instructions, dump_frame, dump_out)
+    } else {
+        image.create_machine(quiet, start_pc, max_instructions)
+    };
     exec(&mut machine, |m| m.tick());
 }
 
