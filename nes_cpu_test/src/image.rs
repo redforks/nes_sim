@@ -173,6 +173,16 @@ impl Image {
                     start_pc,
                     max_instructions,
                 );
+            } else if file_name
+                .to_str()
+                .is_some_and(|p| p.contains("blargg_nes_cpu_test5"))
+            {
+                return self.create_blargg_cpu_test5_machine(
+                    ines,
+                    quiet,
+                    start_pc,
+                    max_instructions,
+                );
             }
         }
 
@@ -323,6 +333,56 @@ impl Image {
             machine.set_pc(pc);
         }
         MachineWrapper::INes(Box::new(machine))
+    }
+
+    /// blargg's NES CPU test set v5 (cpu.nes: all instructions incl.
+    /// undocumented; official.nes: official only). The ROMs stream progress as
+    /// nametable text ("Running tests...", one line per sub-test) and finish
+    /// with "All tests complete" — those strings ship in the ROM binaries even
+    /// though the set's bundled source/ predates them. The verdict is the
+    /// guarded magic word: any failure marker ("Failed", "Error ",
+    /// "Errors: <nonzero>") stops immediately with a failure so a completion
+    /// epilogue can't mask errors, while a clean screen containing the word
+    /// exits 0. As with the 2005 PPU family this omits DetectDeadLoop: the
+    /// ROMs terminate in a clean infinite loop that dead-loop detection would
+    /// report as a vacuous exit-0 pass regardless of the printed verdict.
+    ///
+    /// Two ROM-specific sampling quirks, both verified against the real ROMs:
+    /// the shell zeroes PPUCTRL as it prints the verdict, so the console
+    /// samples without the rendering-enabled gate
+    /// (`sampling_without_rendering`); and the console scrolls its text up as
+    /// sub-tests complete, so the fixed 960-tile window at 0x2000 goes stale
+    /// mid-run and the verdict must be scanned across the whole nametable
+    /// address space (`with_full_nametable_scan`). The machines run on
+    /// ImageRender like the scanline machine, where this family's end-to-end
+    /// completion is verified. Timeout turns a hang (word never printed) into
+    /// a structured failure; the justfile wraps the same 15 s budget with an
+    /// outer `timeout 15`.
+    fn create_blargg_cpu_test5_machine(
+        &self,
+        ines: &INesFile,
+        quiet: bool,
+        start_pc: Option<u16>,
+        max_instructions: u64,
+    ) -> MachineWrapper {
+        let mut plugins: Vec<Box<dyn Plugin<nes_core::nes::NesMcu<ImageRender, ()>>>> = vec![
+            Box::new(NesReportPlugin::create(quiet)),
+            Box::new(
+                NametableConsole::with_magic_success_word_unless_failed("All tests complete")
+                    .sampling_without_rendering()
+                    .with_full_nametable_scan(),
+            ),
+            Box::new(Timeout::new(Duration::from_secs(15))),
+        ];
+        if max_instructions > 0 {
+            plugins.push(Box::new(MaxInstructions::new(max_instructions)));
+        }
+        let plugin = CompositePlugin::new(plugins);
+        let mut machine = NesMachine::new(ines, plugin, ImageRender::default_dimension(), ());
+        if let Some(pc) = start_pc {
+            machine.set_pc(pc);
+        }
+        MachineWrapper::Rendered(Box::new(machine))
     }
 
     fn create_exp_png_machine(

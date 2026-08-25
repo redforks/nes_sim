@@ -155,6 +155,21 @@ vbl_clear_time: build_nes_cpu_test
 vram_access: build_nes_cpu_test
     {{ nes_cpu_test }} --quiet -f ../nes-test-roms/blargg_ppu_tests_2005.09.15b/vram_access.nes
 
+# blargg's NES CPU test set v5: cpu.nes exercises all instructions including
+# undocumented ones, official.nes official only. Progress and verdict render as
+# nametable text ending in "All tests complete" plus an "Errors: <n>" count;
+# NametableConsole waits for that word and fails fast on any failure marker
+# (guarded magic-success-word variant, see nes_cpu_test/src/image.rs). The
+# inner Timeout(15 s) matches the outer `timeout 15`.
+blargg_nes_cpu_test5_cpu: build_nes_cpu_test
+    timeout 15 {{ nes_cpu_test }} --quiet -f ../nes-test-roms/blargg_nes_cpu_test5/cpu.nes
+
+blargg_nes_cpu_test5_official: build_nes_cpu_test
+    timeout 15 {{ nes_cpu_test }} --quiet -f ../nes-test-roms/blargg_nes_cpu_test5/official.nes
+
+[parallel]
+blargg_nes_cpu_test5: blargg_nes_cpu_test5_cpu blargg_nes_cpu_test5_official
+
 # blargg's 2005.09.15b NTSC PPU tests: verdict is an on-screen result code
 # ("$01" = all tests passed, per the set's readme.txt), decoded by the
 # NametableConsole magic-success-word plugin (see nes_cpu_test/src/image.rs).
@@ -566,7 +581,7 @@ big_chr_ram: build_nes_cpu_test
 passed_mapper: mmc3 bntest mmc1-a12 vrc2-and-4-roms big_chr_ram
 
 [parallel]
-passed_cpu_tests: cpu-test instr_misc instr_test-v5 instr_test-v3 instr_timing cpu_dummy_reads cpu_dummy_writes cpu_exec_space cpu_reset nestest branch_timing_tests nes_instr_test cpu_timing_test6 cpu_interrupts_v2 imported_cpu_misc
+passed_cpu_tests: cpu-test instr_misc instr_test-v5 instr_test-v3 instr_timing cpu_dummy_reads cpu_dummy_writes cpu_exec_space cpu_reset nestest branch_timing_tests nes_instr_test cpu_timing_test6 cpu_interrupts_v2 imported_cpu_misc blargg_nes_cpu_test5
 
 [parallel]
 passed_ppu_tests: oam_read oam_stress ppu_open_bus ppu_read_buffer sprite_hit_tests sprite_overflow_tests scanline sprdma_and_dmc_dma vbl_nmi_timing ppu_vbl_nmi spr_hit_extra imported_ppu_visual palette_ram power_up_palette sprite_ram vbl_clear_time vram_access

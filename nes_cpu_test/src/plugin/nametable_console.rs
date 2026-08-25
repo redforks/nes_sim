@@ -22,6 +22,7 @@ enum Decoder {
 enum SuccessCondition {
     PassedOrFailed,
     MagicSuccessWord(String),
+    MagicSuccessWordUnlessFailed(String),
 }
 
 pub struct NametableConsole {
@@ -29,6 +30,8 @@ pub struct NametableConsole {
     decoder: Decoder,
     success_condition: SuccessCondition,
     last: String,
+    sample_without_rendering: bool,
+    full_nametable_scan: bool,
 }
 
 impl NametableConsole {
@@ -38,6 +41,8 @@ impl NametableConsole {
             decoder: Decoder::Plain,
             success_condition: SuccessCondition::PassedOrFailed,
             last: String::new(),
+            sample_without_rendering: false,
+            full_nametable_scan: false,
         }
     }
 
@@ -46,6 +51,33 @@ impl NametableConsole {
             success_condition: SuccessCondition::MagicSuccessWord(word.to_owned()),
             ..Self::new()
         }
+    }
+
+    pub fn with_magic_success_word_unless_failed(word: &str) -> Self {
+        Self {
+            success_condition: SuccessCondition::MagicSuccessWordUnlessFailed(word.to_owned()),
+            ..Self::new()
+        }
+    }
+
+    /// Opts the console into sampling while PPU rendering is disabled.
+    /// blargg's shell zeroes PPUCTRL immediately after printing its final
+    /// message and dead-loops, so a strictly rendering-gated sampler never
+    /// sees the verdict text.
+    pub fn sampling_without_rendering(mut self) -> Self {
+        self.sample_without_rendering = true;
+        self
+    }
+
+    /// Opts the console into scanning the whole nametable address space
+    /// (0x2000-0x2FFF, through every mirroring fold) instead of the fixed
+    /// 960-tile window at 0x2000. ROMs whose console scrolls (blargg's CPU
+    /// test set v5 moves its text up as sub-tests complete) leave the fixed
+    /// window holding a stale prefix, so only the full scan keeps seeing the
+    /// verdict text.
+    pub fn with_full_nametable_scan(mut self) -> Self {
+        self.full_nametable_scan = true;
+        self
     }
 
     pub fn with_tall_text_magic_success_word(word: &str) -> Self {
@@ -67,11 +99,13 @@ impl<R: Render> Plugin<NesMcu<R, ()>> for NametableConsole {
     fn start(&mut self, _: &Cpu<NesMcu<R, ()>>, _: SystemClock) {}
 
     fn end(&mut self, cpu: &Cpu<NesMcu<R, ()>>, _: SystemClock) {
-        if !cpu.mcu().ppu().in_vblank() || !cpu.mcu().ppu().rendering_enabled() {
+        if !cpu.mcu().ppu().in_vblank()
+            || (!self.sample_without_rendering && !cpu.mcu().ppu().rendering_enabled())
+        {
             return;
         }
 
-        let buf = read_console(cpu, &self.decoder);
+        let buf = read_console(cpu, &self.decoder, self.full_nametable_scan);
         if buf.is_empty() || buf == self.last {
             return;
         }
@@ -96,14 +130,21 @@ impl<R: Render> Plugin<NesMcu<R, ()>> for NametableConsole {
     }
 }
 
-fn read_console<R: Render>(cpu: &Cpu<NesMcu<R, ()>>, decoder: &Decoder) -> String {
+fn read_console<R: Render>(
+    cpu: &Cpu<NesMcu<R, ()>>,
+    decoder: &Decoder,
+    full_nametable_scan: bool,
+) -> String {
     match decoder {
-        Decoder::Plain => read_plain_console(cpu),
+        Decoder::Plain => read_plain_console(cpu, full_nametable_scan),
         Decoder::TallText => read_tall_console(cpu),
     }
 }
 
-fn read_plain_console<R: Render>(cpu: &Cpu<NesMcu<R, ()>>) -> String {
+fn read_plain_console<R: Render>(cpu: &Cpu<NesMcu<R, ()>>, full_nametable_scan: bool) -> String {
+    if full_nametable_scan {
+        return read_full_nametable(cpu);
+    }
     let mut buf = Vec::with_capacity(NAMETABLE_LEN);
     // Some ROMs (e.g. blargg's forum APU tests) place their text at an offset
     // instead of the nametable origin, so skip leading NUL tiles; the scan
@@ -135,6 +176,21 @@ fn read_plain_console<R: Render>(cpu: &Cpu<NesMcu<R, ()>>) -> String {
         }
     }
     r
+}
+
+/// Scans the whole nametable address space (0x2000-0x2FFF; mirroring folds
+/// the physical 2 KiB twice) and joins every run of non-zero tiles with
+/// newlines. Verdict matching is substring-based, so where the ROM's console
+/// scroll placed each line doesn't matter.
+fn read_full_nametable<R: Render>(cpu: &Cpu<NesMcu<R, ()>>) -> String {
+    let mut all = Vec::with_capacity(0x1000);
+    for offset in 0..0x1000u16 {
+        all.push(cpu.mcu().read_vram(NAMETABLE_START + offset));
+    }
+    all.split(|&b| b == 0)
+        .map(|run| String::from_utf8_lossy(run).to_string())
+        .collect::<Vec<_>>()
+        .join("\n")
 }
 
 fn read_tall_console<R: Render>(cpu: &Cpu<NesMcu<R, ()>>) -> String {
@@ -187,6 +243,14 @@ fn evaluate_result(buf: &str, success_condition: &SuccessCondition) -> Option<Ex
         SuccessCondition::MagicSuccessWord(magic_success_word) => buf
             .contains(magic_success_word)
             .then_some(ExecuteResult::Stop(0)),
+        SuccessCondition::MagicSuccessWordUnlessFailed(magic_success_word) => {
+            if contains_failed(buf) {
+                Some(ExecuteResult::Stop(1))
+            } else {
+                buf.contains(magic_success_word)
+                    .then_some(ExecuteResult::Stop(0))
+            }
+        }
     }
 }
 
@@ -194,8 +258,19 @@ fn contains_passed(s: &str) -> bool {
     s.contains("PASSED") || s.contains("Passed\n")
 }
 
+fn contains_nonzero_error_count(s: &str) -> bool {
+    s.match_indices("Errors:").any(|(i, _)| {
+        s[i + "Errors:".len()..]
+            .trim_start()
+            .starts_with(|c: char| c.is_ascii_digit() && c != '0')
+    })
+}
+
 fn contains_failed(s: &str) -> bool {
-    s.contains("FAILED") || s.contains("Error ") || s.contains("Failed")
+    s.contains("FAILED")
+        || s.contains("Error ")
+        || s.contains("Failed")
+        || contains_nonzero_error_count(s)
 }
 
 fn output<S: AsRef<str>>(s: S) {
@@ -229,6 +304,33 @@ mod tests {
                 &SuccessCondition::MagicSuccessWord("0123456789ABCDEF".to_owned())
             ),
             Some(ExecuteResult::Stop(0))
+        );
+    }
+
+    #[test]
+    fn magic_word_unless_failed_rejects_epilogue_with_errors() {
+        let cond =
+            || SuccessCondition::MagicSuccessWordUnlessFailed("All tests complete".to_owned());
+        assert_eq!(
+            evaluate_result("Test: 01-implied\nFailed\nAll tests complete\n", &cond()),
+            Some(ExecuteResult::Stop(1))
+        );
+        assert_eq!(
+            evaluate_result("Running tests...\nErrors: 2\nAll tests complete\n", &cond()),
+            Some(ExecuteResult::Stop(1))
+        );
+    }
+
+    #[test]
+    fn magic_word_unless_failed_accepts_clean_completion() {
+        let cond = SuccessCondition::MagicSuccessWordUnlessFailed("All tests complete".to_owned());
+        assert_eq!(
+            evaluate_result("Running tests...\nAll tests complete\nErrors: 0\n", &cond),
+            Some(ExecuteResult::Stop(0))
+        );
+        assert_eq!(
+            evaluate_result("Running tests...\nTest: 01-implied\n", &cond),
+            None
         );
     }
 }
