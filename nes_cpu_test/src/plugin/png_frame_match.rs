@@ -12,6 +12,9 @@ use std::path::PathBuf;
 pub struct PngFrameMatch {
     expected: Vec<(PathBuf, RgbaImage)>,
     matched: Vec<bool>,
+    /// Plugin hooks run per CPU instruction, and `in_vblank` stays true for
+    /// ~2200 cycles; this edge-detector samples each vblank exactly once.
+    sampled_vblank: bool,
 }
 
 impl PngFrameMatch {
@@ -30,6 +33,7 @@ impl PngFrameMatch {
         Ok(Self {
             expected,
             matched: vec![false; n],
+            sampled_vblank: false,
         })
     }
 
@@ -40,6 +44,12 @@ impl PngFrameMatch {
             "Actual frame dimensions do not match expected image dimensions"
         );
 
+        // Blessed frames are deterministic re-renders, so the common case is
+        // byte equality; the threshold scan only runs for near misses.
+        if actual.as_raw() == expected.as_raw() {
+            return true;
+        }
+
         actual
             .pixels()
             .zip(expected.pixels())
@@ -48,13 +58,15 @@ impl PngFrameMatch {
 }
 
 fn pixel_within_threshold(actual: Rgba<u8>, expected: Rgba<u8>) -> bool {
+    // Same predicate as `diff / (255 * 4) < 0.05` without float math: the
+    // per-pixel channel abs-diff sum must stay under 5% of its 1020 maximum.
     let diff: u32 = actual
         .0
         .into_iter()
         .zip(expected.0)
         .map(|(a, e)| a.abs_diff(e) as u32)
         .sum();
-    diff as f32 / (255.0 * 4.0) < 0.05
+    diff <= 50
 }
 
 impl<A: AudioDriver> Plugin<NesMcu<ImageRender, A>> for PngFrameMatch {
@@ -65,9 +77,15 @@ impl<A: AudioDriver> Plugin<NesMcu<ImageRender, A>> for PngFrameMatch {
             return;
         }
 
-        if !cpu.mcu().ppu().in_vblank() {
+        let in_vblank = cpu.mcu().ppu().in_vblank();
+        if !in_vblank {
+            self.sampled_vblank = false;
             return;
         }
+        if self.sampled_vblank {
+            return;
+        }
+        self.sampled_vblank = true;
 
         let frame_no = cpu.mcu().ppu().timing().frame_no();
         let actual = cpu.mcu().ppu().renderer().borrow_image();

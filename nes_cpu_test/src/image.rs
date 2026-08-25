@@ -99,6 +99,33 @@ impl Image {
                     start_pc,
                     max_instructions,
                     vec![format!("{}.png", stem)],
+                    Duration::from_secs(2),
+                );
+            } else if file_name
+                .to_str()
+                .is_some_and(|p| p.contains("test-roms/mapper/"))
+                && f == "big_chr_ram.nes"
+            {
+                // Tetanes mapper ROM (Damian Yerrick's "big CHR RAM test"):
+                // draws through CHR-RAM windows, then waits for Start. Success
+                // is a blessed snapshot of the rendered frames under
+                // png-exps/ (frame-snapshot scheme ported from tetanes-core's
+                // tests.json: frames 10 and 80; the Start press at frame 11
+                // is supplied by --press start@11 in the recipe).
+                return self.create_exp_png_machine(
+                    ines,
+                    quiet,
+                    start_pc,
+                    max_instructions,
+                    vec![
+                        "big_chr_ram-f10.png".to_string(),
+                        "big_chr_ram-f80.png".to_string(),
+                    ],
+                    // 80 frames of emulation need headroom over the other
+                    // visual tests (debug builds run ~10x slower), but must
+                    // stay under the recipe's outer `timeout 15` so the
+                    // plugin's diagnostic fires first.
+                    Duration::from_secs(10),
                 );
             } else if file_name
                 .to_str()
@@ -121,6 +148,7 @@ impl Image {
                         "{}.png",
                         f.strip_suffix(".nes").expect("checked suffix")
                     )],
+                    Duration::from_secs(2),
                 );
             }
         }
@@ -249,6 +277,7 @@ impl Image {
         start_pc: Option<u16>,
         max_instructions: u64,
         exp_img_paths: Vec<String>,
+        timeout: Duration,
     ) -> MachineWrapper {
         let expected_pngs: Vec<PathBuf> = exp_img_paths
             .into_iter()
@@ -261,7 +290,7 @@ impl Image {
         let mut plugins: Vec<Box<dyn Plugin<nes_core::nes::NesMcu<ImageRender, ()>>>> = vec![
             Box::new(NesReportPlugin::create(quiet)),
             Box::new(PngFrameMatch::new(expected_pngs).expect("failed to load expected PNG")),
-            Box::new(Timeout::new(Duration::from_secs(2))),
+            Box::new(Timeout::new(timeout)),
         ];
         if max_instructions > 0 {
             plugins.push(Box::new(MaxInstructions::new(max_instructions)));
@@ -317,6 +346,7 @@ impl Image {
             start_pc,
             max_instructions,
             vec!["mmc1_a12-exp.png".to_string()],
+            Duration::from_secs(2),
         )
     }
 
@@ -336,6 +366,7 @@ impl Image {
                 "nmi-sync-ntsc-exp-1.png".to_string(),
                 "nmi-sync-ntsc-exp-2.png".to_string(),
             ],
+            Duration::from_secs(2),
         )
     }
 
@@ -407,6 +438,23 @@ impl MachineWrapper {
             MachineWrapper::Bin(m, _) => m.reset(),
             MachineWrapper::INes(m) => m.reset(),
             MachineWrapper::Rendered(m) => m.reset(),
+        }
+    }
+    pub fn frame_no(&self) -> usize {
+        match self {
+            MachineWrapper::Bin(..) => {
+                panic!("--press requires an iNES ROM (needs the PPU frame counter)")
+            }
+            MachineWrapper::INes(m) => m.frame_no(),
+            MachineWrapper::Rendered(m) => m.frame_no(),
+        }
+    }
+
+    pub fn press_controller_a(&mut self, button: nes_core::nes::controller::Button) {
+        match self {
+            MachineWrapper::Bin(..) => panic!("--press requires an iNES ROM"),
+            MachineWrapper::INes(m) => m.press_controller_a(button),
+            MachineWrapper::Rendered(m) => m.press_controller_a(button),
         }
     }
 }

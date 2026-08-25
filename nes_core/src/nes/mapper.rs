@@ -85,6 +85,7 @@ pub fn create_cartridge(f: &INesFile) -> (Box<dyn Cartridge>, Mirroring) {
                 Box::new(MMC3::new(
                     f.read_prg_rom(),
                     chr_rom,
+                    f.header().chr_ram_size,
                     f.header().ignore_mirror_control,
                     alternate_irq_revision,
                 )),

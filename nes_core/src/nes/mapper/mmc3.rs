@@ -42,6 +42,7 @@ impl MMC3 {
     pub fn new(
         prg_rom: &[u8],
         chr_rom: &[u8],
+        chr_ram_size: Option<usize>,
         mirroring_locked: bool,
         alternate_irq_revision: bool,
     ) -> Self {
@@ -49,7 +50,14 @@ impl MMC3 {
         debug_assert_eq!(prg_rom.len() % PRG_ROM_BANK_SIZE, 0);
 
         let has_chr_ram = chr_rom.is_empty();
-        let size = if has_chr_ram { 0x2000 } else { chr_rom.len() };
+        let size = if has_chr_ram {
+            // NES 2.0 encodes CHR-RAM size as a shift count in header byte
+            // 11; the parser already decodes it to bytes. Carts that declare
+            // none get the TxROM's standard 8 KiB.
+            chr_ram_size.unwrap_or(0x2000)
+        } else {
+            chr_rom.len()
+        };
         let mut chr_source = vec![0; size];
         chr_source[..chr_rom.len()].copy_from_slice(chr_rom);
 
@@ -362,14 +370,13 @@ impl Cartridge for MMC3 {
 #[cfg(test)]
 mod tests {
     use super::*;
-
     fn make_mmc3_with_chr() -> (MMC3, Vec<u8>) {
         let prg = vec![0u8; PRG_ROM_BANK_SIZE * 2];
         let mut chr_data = vec![0u8; CHR_BANK_SIZE * 16];
         for bank in 0..16 {
             chr_data[bank * CHR_BANK_SIZE] = bank as u8;
         }
-        (MMC3::new(&prg, &chr_data, false, false), chr_data)
+        (MMC3::new(&prg, &chr_data, None, false, false), chr_data)
     }
 
     fn setup_chr_banks(mapper: &mut MMC3, banks: &[(u8, u8)]) {
@@ -432,16 +439,74 @@ mod tests {
     #[test]
     fn writes_to_chr_ram_through_current_mapping() {
         let prg = vec![0u8; PRG_ROM_BANK_SIZE * 2];
-        let mut mapper = MMC3::new(&prg, &[], false, false);
+        let mut mapper = MMC3::new(&prg, &[], None, false, false);
         mapper.write(0x8000, 0x02);
         mapper.write(0x8001, 0x03);
         mapper.write_chr(0x1000, 0xaa);
         assert_eq!(mapper.read_chr(0x1000), 0xaa);
     }
 
+    // big_chr_ram.nes (NES 2.0, header byte 11 = 0x09): the ROM writes tiles
+    // through banks 0..31 and probes that bank 8 does not alias bank 0, so
+    // the declared 32 KiB must back all 32 bank registers.
+    #[test]
+    fn chr_ram_spans_declared_banks_without_aliasing() {
+        let prg = vec![0u8; PRG_ROM_BANK_SIZE * 2];
+        let mut mapper = MMC3::new(&prg, &[], Some(32 * 1024), false, false);
+        // R2 (1 KiB window) -> bank 0: marker; then bank 8: distinct value.
+        mapper.write(0x8000, 0x02);
+        mapper.write(0x8001, 0x00);
+        mapper.write_chr(0x1000, 0x11);
+        mapper.write(0x8000, 0x02);
+        mapper.write(0x8001, 0x08);
+        mapper.write_chr(0x1000, 0x22);
+        assert_eq!(mapper.read_chr(0x1000), 0x22);
+        mapper.write(0x8000, 0x02);
+        mapper.write(0x8001, 0x00);
+        assert_eq!(mapper.read_chr(0x1000), 0x11);
+    }
+
+    #[test]
+    fn chr_ram_defaults_to_8kib_when_undeclared() {
+        let prg = vec![0u8; PRG_ROM_BANK_SIZE * 2];
+        let mut mapper = MMC3::new(&prg, &[], None, false, false);
+        mapper.write(0x8000, 0x02);
+        mapper.write(0x8001, 0x08);
+        mapper.write_chr(0x1000, 0x22);
+        // Bank 8 wraps onto bank 0 in an 8 KiB CHR-RAM cart.
+        mapper.write(0x8000, 0x02);
+        mapper.write(0x8001, 0x00);
+        assert_eq!(mapper.read_chr(0x1000), 0x22);
+    }
+
+    // CHR mode 1 moves the 1 KiB R2-R5 windows to $0000-$0FFF and makes R0/R1
+    // 2 KiB windows at $1000-$1FFF, so CHR-RAM writes must follow whichever
+    // layout the mode bit selects.
+    #[test]
+    fn chr_ram_write_follows_chr_mode_1_window_layout() {
+        let prg = vec![0u8; PRG_ROM_BANK_SIZE * 2];
+        let mut mapper = MMC3::new(&prg, &[], None, false, false);
+        mapper.write(0x8000, 0x82); // chr mode 1, bank register R2
+        mapper.write(0x8001, 0x01);
+        mapper.write_chr(0x0000, 0x5a); // R2's 1 KiB window -> bank 1
+        assert_eq!(mapper.read_chr(0x0000), 0x5a);
+
+        // The R0 pair stays a 2 KiB window at $1000-$17FF, untouched by the
+        // bank 1 write.
+        mapper.write(0x8000, 0x80); // chr mode 1, bank register R0
+        mapper.write(0x8001, 0x00);
+        assert_eq!(mapper.read_chr(0x1000), 0);
+
+        // Bank 1 and bank 0 are distinct: repointing R2 at bank 0 exposes the
+        // original zeroes, not the 0x5a.
+        mapper.write(0x8000, 0x82);
+        mapper.write(0x8001, 0x00);
+        assert_eq!(mapper.read_chr(0x0000), 0);
+    }
+
     fn make_mmc3(alternate_irq_revision: bool) -> MMC3 {
         let prg = vec![0u8; PRG_ROM_BANK_SIZE * 2];
-        MMC3::new(&prg, &[], false, alternate_irq_revision)
+        MMC3::new(&prg, &[], None, false, alternate_irq_revision)
     }
 
     fn ack_irq(mapper: &mut MMC3) {

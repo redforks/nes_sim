@@ -518,20 +518,23 @@ zapper_trigger: build_nes_cpu_test
 [parallel]
 zapper_tests: zapper_flip zapper_light zapper_stream zapper_trigger
 
-# MMC3 CHR-RAM banking probe: spins waiting on pattern data it wrote to CHR
-# RAM, which the TxROM mapper does not allocate for CHR-RAM carts yet.
+# MMC3 CHR-RAM banking (Damian Yerrick's "big CHR RAM test", NES 2.0 with 32
+# KiB CHR RAM declared): draws through CHR-RAM windows, then waits for Start.
+# Success is the blessed rendered frames at tetanes tests.json's frame numbers
+# (10 and 80); the recipe supplies the Start press at frame 11.
 big_chr_ram: build_nes_cpu_test
-    timeout 15 {{ nes_cpu_test }} --quiet -f test-roms/mapper/m004_txrom/big_chr_ram.nes
+    timeout 15 {{ nes_cpu_test }} --quiet --press start@11 -f test-roms/mapper/m004_txrom/big_chr_ram.nes
 
-# The 8 imported ROMs still not passing: known-failing or manual-only, kept as
+# The 7 imported ROMs still not passing: known-failing or manual-only, kept as
 # a single runnable checklist. Each graduates into the passed_* aggregates as
-# nes_core gains what it probes (Zapper input, MMC3 CHR-RAM banking;
-# audio-compare tests stay manual).
-[parallel]
-todo_tests: audio_compare_manual zapper_tests big_chr_ram
+# nes_core gains what it probes (Zapper input; audio-compare tests stay
+# manual).
 
 [parallel]
-passed_mapper: mmc3 bntest mmc1-a12 vrc2-and-4-roms
+todo_tests: audio_compare_manual zapper_tests
+
+[parallel]
+passed_mapper: mmc3 bntest mmc1-a12 vrc2-and-4-roms big_chr_ram
 
 [parallel]
 passed_cpu_tests: cpu-test instr_misc instr_test-v5 instr_test-v3 instr_timing cpu_dummy_reads cpu_dummy_writes cpu_exec_space cpu_reset nestest branch_timing_tests nes_instr_test cpu_timing_test6 cpu_interrupts_v2 imported_cpu_misc
