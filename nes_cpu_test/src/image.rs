@@ -15,6 +15,8 @@ use std::{
 
 mod driver;
 
+pub use driver::WavRecorder;
+
 pub enum Image {
     Bin(Box<[u8; 64 * 1024]>),
     INes {
@@ -333,6 +335,33 @@ impl Image {
         MachineWrapper::Rendered(Box::new(machine))
     }
 
+    /// Audio-capture machine: runs the ROM with a [`WavRecorder`] as the APU
+    /// sink and no test-protocol plugins; termination comes from the CLI's
+    /// frame budget (`--frames`), after which the CLI exports the buffered
+    /// samples as WAV.
+    pub fn create_audio_dump_machine(
+        &self,
+        recorder: WavRecorder,
+        quiet: bool,
+        start_pc: Option<u16>,
+        max_instructions: u64,
+    ) -> MachineWrapper {
+        let Image::INes { nes_file, .. } = self else {
+            panic!("--dump-audio requires an iNES ROM (needs the NES APU)");
+        };
+        let mut plugins: Vec<Box<dyn Plugin<nes_core::nes::NesMcu<(), WavRecorder>>>> =
+            vec![Box::new(NesReportPlugin::create(quiet))];
+        if max_instructions > 0 {
+            plugins.push(Box::new(MaxInstructions::new(max_instructions)));
+        }
+        let plugin = CompositePlugin::new(plugins);
+        let mut machine = NesMachine::new(nes_file, plugin, (), recorder);
+        if let Some(pc) = start_pc {
+            machine.set_pc(pc);
+        }
+        MachineWrapper::AudioDump(Box::new(machine))
+    }
+
     fn create_mmc1_a12_machine(
         &self,
         ines: &INesFile,
@@ -412,12 +441,15 @@ mod machine_types {
 
     pub type ImageRenderPlugin = CompositePlugin<nes_core::nes::NesMcu<ImageRender, ()>>;
     pub type RenderedMachine = NesMachine<ImageRenderPlugin, ImageRender, ()>;
+    pub type AudioDumpPlugin = CompositePlugin<nes_core::nes::NesMcu<(), WavRecorder>>;
+    pub type AudioDumpMachine = NesMachine<AudioDumpPlugin, (), WavRecorder>;
 }
 
 pub enum MachineWrapper {
     Bin(Box<machine_types::BinMachine>, SystemClock),
     INes(Box<machine_types::INesMachine>),
     Rendered(Box<machine_types::RenderedMachine>),
+    AudioDump(Box<machine_types::AudioDumpMachine>),
 }
 
 impl MachineWrapper {
@@ -430,6 +462,7 @@ impl MachineWrapper {
             }
             MachineWrapper::INes(m) => m.tick(),
             MachineWrapper::Rendered(m) => m.tick(),
+            MachineWrapper::AudioDump(m) => m.tick(),
         }
     }
 
@@ -438,6 +471,7 @@ impl MachineWrapper {
             MachineWrapper::Bin(m, _) => m.reset(),
             MachineWrapper::INes(m) => m.reset(),
             MachineWrapper::Rendered(m) => m.reset(),
+            MachineWrapper::AudioDump(m) => m.reset(),
         }
     }
     pub fn frame_no(&self) -> usize {
@@ -447,6 +481,7 @@ impl MachineWrapper {
             }
             MachineWrapper::INes(m) => m.frame_no(),
             MachineWrapper::Rendered(m) => m.frame_no(),
+            MachineWrapper::AudioDump(m) => m.frame_no(),
         }
     }
 
@@ -455,6 +490,7 @@ impl MachineWrapper {
             MachineWrapper::Bin(..) => panic!("--press requires an iNES ROM"),
             MachineWrapper::INes(m) => m.press_controller_a(button),
             MachineWrapper::Rendered(m) => m.press_controller_a(button),
+            MachineWrapper::AudioDump(m) => m.press_controller_a(button),
         }
     }
 }

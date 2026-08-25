@@ -488,18 +488,24 @@ imported_ppu_visual: ppu_240pee ppu_color ntsc_torture ppu_palette
 
 
 # Pitch/env/sweep audio tests: no self-reporting protocol (upstream tetanes
-# leaves them ignored too); run and compare the captured audio by ear/waveform.
-audio_compare_manual_1: build_nes_cpu_test
-    timeout 15 {{ nes_cpu_test }} --quiet -f test-roms/apu/noise_pitch.nes
+# leaves them ignored too); verified instead against the captured WAVs from
+# --dump-audio (verdicts in issue #16). Each ROM plays one steady tone next to
+# a software-timed $4011 reference square, so the register-derived pitches are
+# checkable: square_pitch pulse t=$123 -> 383.08 Hz; triangle_pitch triangle
+# t=$091 -> 383.08 Hz (both next to a ~383.4 Hz reference toggled every 2334
+# cycles); noise_pitch mode-0 period $F LFSR clocked every 4068 cycles
+# (~440 Hz) next to a ~220 Hz reference toggled every 4069 cycles.
+noise_pitch: build_nes_cpu_test
+    timeout 15 {{ nes_cpu_test }} --quiet --frames 600 --dump-audio /tmp/noise_pitch.wav -f test-roms/apu/noise_pitch.nes
 
-audio_compare_manual_2: build_nes_cpu_test
-    timeout 15 {{ nes_cpu_test }} --quiet -f test-roms/apu/square_pitch.nes
+square_pitch: build_nes_cpu_test
+    timeout 15 {{ nes_cpu_test }} --quiet --frames 600 --dump-audio /tmp/square_pitch.wav -f test-roms/apu/square_pitch.nes
 
-audio_compare_manual_3: build_nes_cpu_test
-    timeout 15 {{ nes_cpu_test }} --quiet -f test-roms/apu/triangle_pitch.nes
+triangle_pitch: build_nes_cpu_test
+    timeout 15 {{ nes_cpu_test }} --quiet --frames 600 --dump-audio /tmp/triangle_pitch.wav -f test-roms/apu/triangle_pitch.nes
 
 [parallel]
-audio_compare_manual: audio_compare_manual_1 audio_compare_manual_2 audio_compare_manual_3
+passed_audio_manual_ok: noise_pitch square_pitch triangle_pitch
 
 # Zapper light-gun tests: need Zapper input (light sense + trigger on $4017),
 # which nes_core does not emulate yet.
@@ -525,13 +531,12 @@ zapper_tests: zapper_flip zapper_light zapper_stream zapper_trigger
 big_chr_ram: build_nes_cpu_test
     timeout 15 {{ nes_cpu_test }} --quiet --press start@11 -f test-roms/mapper/m004_txrom/big_chr_ram.nes
 
-# The 7 imported ROMs still not passing: known-failing or manual-only, kept as
-# a single runnable checklist. Each graduates into the passed_* aggregates as
-# nes_core gains what it probes (Zapper input; audio-compare tests stay
-# manual).
+# The remaining imported ROMs still not passing: known-failing, kept as a
+# single runnable checklist. Each graduates into the passed_* aggregates as
+# nes_core gains what it probes (Zapper input).
 
 [parallel]
-todo_tests: audio_compare_manual zapper_tests
+todo_tests: zapper_tests
 
 [parallel]
 passed_mapper: mmc3 bntest mmc1-a12 vrc2-and-4-roms big_chr_ram
@@ -543,7 +548,7 @@ passed_cpu_tests: cpu-test instr_misc instr_test-v5 instr_test-v3 instr_timing c
 passed_ppu_tests: oam_read oam_stress ppu_open_bus ppu_read_buffer sprite_hit_tests sprite_overflow_tests scanline sprdma_and_dmc_dma vbl_nmi_timing ppu_vbl_nmi spr_hit_extra imported_ppu_visual
 
 [parallel]
-passed_apu_tests: apu_mixer apu_reset apu_test dmc_dma_during_read4 imported_apu_misc
+passed_apu_tests: apu_mixer apu_reset apu_test dmc_dma_during_read4 imported_apu_misc passed_audio_manual_ok
 
 [parallel]
 passed_rom_tests: passed_cpu_tests passed_ppu_tests passed_apu_tests passed_mapper

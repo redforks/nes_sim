@@ -42,6 +42,14 @@ struct Args {
     /// Output PNG path for --dump-frame
     #[arg(long = "dump-out")]
     dump_out: Option<PathBuf>,
+    /// Capture APU output for manual listening: run the ROM for --frames PPU
+    /// frames, then write every mixed sample to this path as a 44.1 kHz mono
+    /// 16-bit WAV and exit (e.g. --dump-audio noise_pitch.wav)
+    #[arg(long = "dump-audio")]
+    dump_audio: Option<PathBuf>,
+    /// PPU frames to execute before the --dump-audio export; 600 is ~10 s NTSC
+    #[arg(long, requires = "dump_audio", default_value_t = 600)]
+    frames: usize,
 }
 
 fn main() {
@@ -54,6 +62,8 @@ fn main() {
         dump_frame,
         dump_out,
         presses,
+        dump_audio,
+        frames,
     } = Args::parse();
 
     env_logger::builder().format_timestamp(None).init();
@@ -83,6 +93,27 @@ fn main() {
         }
         None => None,
     };
+
+    if let Some(wav_out) = dump_audio {
+        let recorder = image::WavRecorder::new();
+        let mut machine =
+            image.create_audio_dump_machine(recorder.clone(), quiet, start_pc, max_instructions);
+        let mut presses = presses;
+        let code = run_capture(&mut machine, frames, &mut presses);
+        match recorder.write_wav(&wav_out) {
+            Ok(samples) => eprintln!(
+                "captured {} samples ({:.2} s) to {}",
+                samples,
+                samples as f64 / 44_100.0,
+                wav_out.display()
+            ),
+            Err(e) => {
+                eprintln!("failed to write {}: {e}", wav_out.display());
+                std::process::exit(1);
+            }
+        }
+        std::process::exit(code);
+    }
 
     let mut machine = if let Some(dump_frame) = dump_frame {
         let dump_out = dump_out.expect("--dump-frame requires --dump-out");
@@ -175,6 +206,28 @@ where
     }
 }
 
+/// Audio-capture run loop: ticks until `frames` PPU frames have elapsed (the
+/// ROM's own termination, if any, ends the capture early and its status
+/// becomes the exit code), applying --press actions along the way. The caller
+/// exports the APU buffer afterwards.
+fn run_capture(m: &mut MachineWrapper, frames: usize, presses: &mut [PressAction]) -> i32 {
+    loop {
+        match m.tick() {
+            ExecuteResult::Continue => {}
+            ExecuteResult::ShouldReset => {
+                eprintln!("{}", Color::Red.paint("RESET"));
+                m.reset();
+            }
+            ExecuteResult::Stop(result) => return result as i32,
+            ExecuteResult::Halt => return 128,
+        }
+        apply_presses(m, presses);
+        if m.frame_no() >= frames {
+            return 0;
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -207,5 +260,45 @@ mod tests {
         assert!(press.pressed);
         assert_eq!(press.due(12), None);
         assert_eq!(press.due(80), None);
+    }
+    #[test]
+    fn wav_recorder_writes_mono_pcm16_header_and_samples() {
+        use crate::image::WavRecorder;
+        use nes_core::nes::apu::AudioDriver;
+
+        let mut recorder = WavRecorder::new();
+        for sample in [-1.0f32, 0.0, 0.5, 1.5] {
+            recorder.push_sample(sample);
+        }
+        let dir = std::env::temp_dir().join(format!("nes_cpu_test-wav-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("out.wav");
+        let written = recorder.write_wav(&path).unwrap();
+        assert_eq!(written, 4);
+
+        let bytes = std::fs::read(&path).unwrap();
+        assert_eq!(&bytes[0..4], b"RIFF");
+        assert_eq!(&bytes[8..12], b"WAVE");
+        assert_eq!(&bytes[12..16], b"fmt ");
+        // PCM, mono, 44.1 kHz, 16-bit
+        assert_eq!(u16::from_le_bytes(bytes[20..22].try_into().unwrap()), 1);
+        assert_eq!(u16::from_le_bytes(bytes[22..24].try_into().unwrap()), 1);
+        assert_eq!(
+            u32::from_le_bytes(bytes[24..28].try_into().unwrap()),
+            44_100
+        );
+        assert_eq!(u16::from_le_bytes(bytes[34..36].try_into().unwrap()), 16);
+        assert_eq!(&bytes[36..40], b"data");
+        assert_eq!(u32::from_le_bytes(bytes[40..44].try_into().unwrap()), 8);
+        assert_eq!(u32::from_le_bytes(bytes[4..8].try_into().unwrap()), 44);
+        // -1.0 -> -32767, 0.0 -> 0, 0.5 -> ~16384, clamped 1.5 -> 32767
+        assert_eq!(
+            i16::from_le_bytes(bytes[44..46].try_into().unwrap()),
+            -32767
+        );
+        assert_eq!(i16::from_le_bytes(bytes[46..48].try_into().unwrap()), 0);
+        assert_eq!(i16::from_le_bytes(bytes[48..50].try_into().unwrap()), 16384);
+        assert_eq!(i16::from_le_bytes(bytes[50..52].try_into().unwrap()), 32767);
+        std::fs::remove_dir_all(&dir).unwrap();
     }
 }
