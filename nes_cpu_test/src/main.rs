@@ -1,6 +1,7 @@
 use std::path::PathBuf;
 
 use crate::image::MachineWrapper;
+use crate::zapper_test::ZapperTest;
 use ansi_term::Color;
 use clap::Parser;
 use nes_core::ExecuteResult;
@@ -8,6 +9,7 @@ use nes_core::nes::controller::Button;
 
 mod image;
 mod plugin;
+mod zapper_test;
 
 #[cfg(feature = "tcp-server")]
 mod tcp_server;
@@ -80,6 +82,11 @@ fn main() {
         std::process::exit(1);
     }
 
+    let rom_name = f
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or("")
+        .to_owned();
     let image = image::load_image(f).unwrap();
 
     let start_pc = match start_pc {
@@ -115,6 +122,11 @@ fn main() {
         std::process::exit(code);
     }
 
+    // Zapper ROMs run a scripted light-gun session (zapper_test.rs).
+    // Blessing dumps (--dump-frame) still apply the actions but skip
+    // expectation checks, so frames can be re-blessed deterministically.
+    let mut zapper = ZapperTest::for_rom(&rom_name);
+    let verify = dump_frame.is_none();
     let mut machine = if let Some(dump_frame) = dump_frame {
         let dump_out = dump_out.expect("--dump-frame requires --dump-out");
         image.create_dump_machine(quiet, start_pc, max_instructions, dump_frame, dump_out)
@@ -122,11 +134,7 @@ fn main() {
         image.create_machine(quiet, start_pc, max_instructions)
     };
     let mut presses = presses;
-    exec(&mut machine, |m| {
-        let result = m.tick();
-        apply_presses(m, &mut presses);
-        result
-    });
+    exec(&mut machine, &mut presses, zapper.as_mut(), verify);
 }
 /// A joypad button held from `frame` onward: the CLI form of tetanes-core's
 /// tests.json `{"action": {"Joypad": ["One", "<Button>"]}}` frame action,
@@ -189,12 +197,19 @@ fn apply_presses(m: &mut MachineWrapper, presses: &mut [PressAction]) {
     }
 }
 
-fn exec<F>(m: &mut MachineWrapper, mut f: F)
-where
-    F: FnMut(&mut MachineWrapper) -> ExecuteResult,
-{
+fn exec(
+    m: &mut MachineWrapper,
+    presses: &mut [PressAction],
+    mut zapper: Option<&mut ZapperTest>,
+    verify: bool,
+) {
     loop {
-        match f(m) {
+        // Scripted Zapper events land at the start of their target frame,
+        // before that frame's scanlines run.
+        if let Some(z) = zapper.as_deref_mut() {
+            z.apply_due_actions(m);
+        }
+        match m.tick() {
             ExecuteResult::Continue => {}
             ExecuteResult::ShouldReset => {
                 eprintln!("{}", Color::Red.paint("RESET"));
@@ -202,6 +217,10 @@ where
             }
             ExecuteResult::Stop(result) => std::process::exit(result as i32),
             ExecuteResult::Halt => std::process::exit(128),
+        }
+        apply_presses(m, presses);
+        if let Some(code) = zapper.as_deref_mut().and_then(|z| z.after_tick(m, verify)) {
+            std::process::exit(code);
         }
     }
 }

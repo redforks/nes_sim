@@ -8,7 +8,7 @@ mod img_exit;
 mod max_instructions;
 mod monitor_test_status;
 mod nametable_console;
-mod png_frame_match;
+pub(crate) mod png_frame_match;
 mod report;
 mod timeout;
 

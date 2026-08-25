@@ -3,6 +3,8 @@ use super::plugin::{
     MaxInstructions, MonitorTestStatus, NametableConsole, NesReportPlugin, PngFrameMatch,
     ReportNesTestResult, ReportPlugin, Timeout,
 };
+use super::zapper_test::ZapperAction;
+use image::RgbaImage;
 use nes_core::{
     Plugin, SystemClock, ines::INesFile, machine::Machine, mcu::RamMcu, nes_machine::NesMachine,
     render::ImageRender,
@@ -103,6 +105,15 @@ impl Image {
                     vec![format!("{}.png", stem)],
                     Duration::from_secs(2),
                 );
+            } else if matches!(
+                f,
+                "zapper_flip.nes" | "zapper_light.nes" | "zapper_stream.nes" | "zapper_trigger.nes"
+            ) {
+                // Tetanes Zapper light-gun ROMs: no self-reporting protocol;
+                // the harness (zapper_test.rs) scripts input per frame and
+                // verifies blessed frames + $4011 click counts. The machine
+                // itself only needs a rendered framebuffer.
+                return self.create_zapper_machine(ines, quiet, start_pc, max_instructions);
             } else if file_name
                 .to_str()
                 .is_some_and(|p| p.contains("test-roms/mapper/"))
@@ -305,6 +316,31 @@ impl Image {
         MachineWrapper::Rendered(Box::new(machine))
     }
 
+    /// Zapper ROM machine: rendered framebuffer for light sensing, no
+    /// frame-matching plugin — verdicts come from the scripted
+    /// [`super::zapper_test::ZapperTest`] expectations in main's run loop.
+    fn create_zapper_machine(
+        &self,
+        ines: &INesFile,
+        quiet: bool,
+        start_pc: Option<u16>,
+        max_instructions: u64,
+    ) -> MachineWrapper {
+        let mut plugins: Vec<Box<dyn Plugin<nes_core::nes::NesMcu<ImageRender, ()>>>> = vec![
+            Box::new(NesReportPlugin::create(quiet)),
+            Box::new(Timeout::new(Duration::from_secs(5))),
+        ];
+        if max_instructions > 0 {
+            plugins.push(Box::new(MaxInstructions::new(max_instructions)));
+        }
+        let plugin = CompositePlugin::new(plugins);
+        let mut machine = NesMachine::new(ines, plugin, ImageRender::default_dimension(), ());
+        if let Some(pc) = start_pc {
+            machine.set_pc(pc);
+        }
+        MachineWrapper::Rendered(Box::new(machine))
+    }
+
     /// Blessing machine: renders until [`FramePngDump`] saves frame
     /// `target_frame` to `out_path`, then stops.
     pub fn create_dump_machine(
@@ -327,8 +363,7 @@ impl Image {
             plugins.push(Box::new(MaxInstructions::new(max_instructions)));
         }
         let plugin = CompositePlugin::new(plugins);
-        let mut machine =
-            NesMachine::new(&**nes_file, plugin, ImageRender::default_dimension(), ());
+        let mut machine = NesMachine::new(nes_file, plugin, ImageRender::default_dimension(), ());
         if let Some(pc) = start_pc {
             machine.set_pc(pc);
         }
@@ -472,6 +507,56 @@ impl MachineWrapper {
             MachineWrapper::INes(m) => m.reset(),
             MachineWrapper::Rendered(m) => m.reset(),
             MachineWrapper::AudioDump(m) => m.reset(),
+        }
+    }
+
+    /// True while the PPU is in vblank (vblank flag set).
+    pub fn in_vblank(&self) -> bool {
+        match self {
+            MachineWrapper::Bin(..) => panic!("in_vblank requires an iNES ROM (needs the PPU)"),
+            MachineWrapper::INes(m) => m.mcu().ppu().in_vblank(),
+            MachineWrapper::Rendered(m) => m.mcu().ppu().in_vblank(),
+            MachineWrapper::AudioDump(m) => m.mcu().ppu().in_vblank(),
+        }
+    }
+
+    /// Total DMC $4011 DAC-register writes so far (Zapper ROM click counter).
+    pub fn dmc_dac_writes(&self) -> u64 {
+        match self {
+            MachineWrapper::Bin(..) => panic!("dmc_dac_writes requires an iNES ROM"),
+            MachineWrapper::INes(m) => m.mcu().apu().dmc_dac_writes(),
+            MachineWrapper::Rendered(m) => m.mcu().apu().dmc_dac_writes(),
+            MachineWrapper::AudioDump(m) => m.mcu().apu().dmc_dac_writes(),
+        }
+    }
+
+    /// The rendered framebuffer, for frame-snapshot comparison.
+    pub fn renderer_image(&self) -> &RgbaImage {
+        match self {
+            MachineWrapper::Rendered(m) => m.mcu().ppu().renderer().borrow_image(),
+            _ => panic!("renderer_image requires a rendered iNES machine"),
+        }
+    }
+
+    /// Apply one scripted Zapper event.
+    pub fn apply_zapper_action(&mut self, action: ZapperAction) {
+        match self {
+            MachineWrapper::Bin(..) => panic!("zapper actions require an iNES ROM"),
+            MachineWrapper::INes(m) => match action {
+                ZapperAction::Connect => m.connect_zapper(true),
+                ZapperAction::Aim(x, y) => m.aim_zapper(x, y),
+                ZapperAction::Trigger => m.trigger_zapper(),
+            },
+            MachineWrapper::Rendered(m) => match action {
+                ZapperAction::Connect => m.connect_zapper(true),
+                ZapperAction::Aim(x, y) => m.aim_zapper(x, y),
+                ZapperAction::Trigger => m.trigger_zapper(),
+            },
+            MachineWrapper::AudioDump(m) => match action {
+                ZapperAction::Connect => m.connect_zapper(true),
+                ZapperAction::Aim(x, y) => m.aim_zapper(x, y),
+                ZapperAction::Trigger => m.trigger_zapper(),
+            },
         }
     }
     pub fn frame_no(&self) -> usize {

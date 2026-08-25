@@ -235,3 +235,166 @@ fn test_release_buttons() {
     assert_eq!(a.read(), 0x40); // A (released)
     assert_eq!(a.read(), 0x41); // B (still pressed)
 }
+
+// --- Zapper (light gun on controller port 2) ---
+
+/// All-bright frame: every pixel senses as light.
+fn bright(_: u32, _: u32) -> u32 {
+    255 * 3
+}
+
+/// All-black frame: no pixel ever senses light.
+fn dark(_: u32, _: u32) -> u32 {
+    0
+}
+
+#[test]
+fn zapper_disconnected_reads_zero() {
+    let mut zapper = Zapper::new();
+    zapper.trigger();
+
+    // Trigger pulled and beam over a bright screen, but the gun is not
+    // plugged in: port 2 must show plain open-controller bits, not zapper
+    // state.
+    assert_eq!(zapper.read(100, 128, bright), 0x00);
+}
+
+#[test]
+fn zapper_dark_frame_reports_no_light() {
+    let mut zapper = Zapper::new();
+    zapper.set_connected(true);
+    zapper.aim(100, 100);
+
+    assert_eq!(zapper.read(50, 128, dark), 0x08);
+}
+
+#[test]
+fn zapper_bright_aperture_reports_light_detected() {
+    let mut zapper = Zapper::new();
+    zapper.set_connected(true);
+    zapper.aim(100, 100);
+
+    // Beam at scanline 110 has already drawn every aperture row (97..=103)
+    // within the 20-scanline persistence window.
+    assert_eq!(zapper.read(110, 128, bright), 0x00);
+}
+
+#[test]
+fn zapper_trigger_bit_holds_for_release_delay() {
+    let mut zapper = Zapper::new();
+    zapper.set_connected(true);
+    zapper.aim(100, 100);
+
+    zapper.trigger();
+    assert_eq!(zapper.read(0, 0, dark), 0x10 | 0x08);
+
+    for _ in 0..ZAPPER_TRIGGER_RELEASE_DELAY - 1 {
+        zapper.clock();
+    }
+    assert_eq!(
+        zapper.read(0, 0, dark),
+        0x10 | 0x08,
+        "trigger must still read held one cycle before the delay elapses"
+    );
+
+    zapper.clock();
+    assert_eq!(
+        zapper.read(0, 0, dark),
+        0x08,
+        "trigger released after ~100 ms"
+    );
+}
+
+#[test]
+fn zapper_retrigger_does_not_extend_in_flight_hold() {
+    let mut zapper = Zapper::new();
+    zapper.set_connected(true);
+
+    zapper.trigger();
+    for _ in 0..ZAPPER_TRIGGER_RELEASE_DELAY - 5 {
+        zapper.clock();
+    }
+
+    // Second pull while still held must not restart the release timer.
+    zapper.trigger();
+    for _ in 0..5 {
+        zapper.clock();
+    }
+    assert_eq!(
+        zapper.read(0, 0, dark) & 0x10,
+        0x00,
+        "hold must end on the original schedule"
+    );
+}
+
+#[test]
+fn zapper_aim_row_needs_beam_past_pixel() {
+    // One bright pixel exactly at the aim point.
+    let spot_at_aim = |x: u32, y: u32| u32::from(x == 100 && y == 100) * 255 * 3;
+    let mut zapper = Zapper::new();
+    zapper.set_connected(true);
+    zapper.aim(100, 100);
+
+    // Beam has not reached x=100 on the aim row yet.
+    assert_eq!(zapper.read(100, 100, spot_at_aim), 0x08);
+    // One dot later the pixel is behind the beam and senses.
+    assert_eq!(zapper.read(100, 101, spot_at_aim), 0x00);
+}
+
+#[test]
+fn zapper_persistence_window_is_twenty_scanlines() {
+    // Bright row at the aim row only; sampled while scanning rows below it.
+    let row_100 = |_: u32, y: u32| u32::from(y == 100) * 255 * 3;
+    let mut zapper = Zapper::new();
+    zapper.set_connected(true);
+    zapper.aim(100, 100);
+
+    // Phosphor from rows above decays over ~20 scanlines.
+    for scanline in [101u16, 110, 120] {
+        assert_eq!(
+            zapper.read(scanline, 0, row_100),
+            0x00,
+            "scanline {scanline}"
+        );
+    }
+    assert_eq!(zapper.read(121, 0, row_100), 0x08, "decay window closed");
+    // Rows below the aim are never sensed: the beam has not drawn them yet.
+    assert_eq!(zapper.read(99, 200, row_100), 0x08);
+}
+
+#[test]
+fn zapper_aperture_spans_radius_pixels() {
+    let mut zapper = Zapper::new();
+    zapper.set_connected(true);
+    zapper.aim(100, 100);
+
+    // radius=3 aperture: a bright pixel at either edge is enough…
+    let spot =
+        |x: u32, y: u32| u32::from((x == 103 && y == 100) || (x == 97 && y == 103)) * 255 * 3;
+    assert_eq!(zapper.read(120, 0, spot), 0x00);
+    // …one pixel beyond the edge is not.
+    let outside =
+        |x: u32, y: u32| u32::from((x == 104 && y == 100) || (x == 96 && y == 100)) * 255 * 3;
+    assert_eq!(zapper.read(120, 0, outside), 0x08);
+}
+
+#[test]
+fn zapper_brightness_threshold_is_eighty_five() {
+    let mut zapper = Zapper::new();
+    zapper.set_connected(true);
+    zapper.aim(100, 100);
+
+    let of_brightness = |v: u32| move |_: u32, _: u32| v;
+    assert_eq!(zapper.read(120, 0, of_brightness(84)), 0x08);
+    assert_eq!(zapper.read(120, 0, of_brightness(85)), 0x00);
+}
+
+#[test]
+fn zapper_aim_clamps_to_screen_edges() {
+    let mut zapper = Zapper::new();
+    zapper.set_connected(true);
+    zapper.aim(0, 0);
+    assert_eq!(zapper.read(10, 0, bright), 0x00); // aperture clamps at x/y 0
+    zapper.aim(255, 239);
+    assert_eq!(zapper.read(250, 340, bright), 0x00); // clamps at x 255 / y 239
+}

@@ -369,3 +369,41 @@ fn dmc_collision_at_start_of_oam_write_on_put() {
     mcu.tick_oam_dma(SystemClock(h.cycles() + 12), false);
     assert_eq!(mcu.oam_dma.as_ref().unwrap().transfer_cycle, 1);
 }
+
+#[test]
+fn test_4017_reads_include_zapper_bits_alongside_controller_b() {
+    let mut mcu = test_mcu();
+
+    // Disconnected: $4017 is a plain controller B read (no buttons pressed).
+    assert_eq!(mcu.read(0x4017), 0x40);
+    assert_eq!(mcu.read(0x4017), 0x40);
+
+    // Connected, aimed at a black pixel (ImageRender starts all-black):
+    // every $4017 read now carries the light-sense bit.
+    mcu.connect_zapper(true);
+    mcu.aim_zapper(10, 10);
+    mcu.write(0x4016, 1);
+    mcu.write(0x4016, 0);
+    assert_eq!(mcu.read(0x4017), 0x48); // no buttons + light absent
+    assert_eq!(mcu.read(0x4017), 0x48);
+
+    // Trigger pull ORs bit 4 on top of the controller bits.
+    mcu.trigger_zapper();
+    mcu.press_controller_b(Button::A);
+    mcu.write(0x4016, 1);
+    // Trigger pull ORs bit 4 into every read: held trigger + light absent
+    // on the black framebuffer = 0x10 | 0x08.
+    assert_eq!(mcu.read(0x4017) & 0x18, 0x18);
+
+    // Controller A ($4016) never sees zapper bits.
+    assert_eq!(mcu.read(0x4016), 0x40);
+}
+
+#[test]
+fn test_4017_peek_includes_zapper_bits() {
+    let mut mcu = test_mcu();
+    mcu.connect_zapper(true);
+    mcu.aim_zapper(10, 10);
+    assert_eq!(mcu.peek(0x4017) & 0x18, 0x08);
+    assert_eq!(mcu.peek(0x4016) & 0x18, 0x00);
+}

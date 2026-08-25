@@ -37,7 +37,7 @@ impl PngFrameMatch {
         })
     }
 
-    fn compare_frame(actual: &RgbaImage, expected: &RgbaImage) -> bool {
+    pub(crate) fn compare_frame(actual: &RgbaImage, expected: &RgbaImage) -> bool {
         assert_eq!(
             actual.dimensions(),
             expected.dimensions(),

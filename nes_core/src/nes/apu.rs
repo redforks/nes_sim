@@ -125,6 +125,11 @@ impl<D: AudioDriver> Apu<D> {
         self.frame_sequencer.request_irq() || self.dmc.interrupt_flag()
     }
 
+    /// Total $4011 DAC-register writes (the Zapper ROMs' click counter).
+    pub fn dmc_dac_writes(&self) -> u64 {
+        self.dmc.dac_writes()
+    }
+
     /// Take the pending DMC DMA request, if any.
     pub fn take_dmc_dma_request(&mut self) -> Option<(DmcDmaType, u16)> {
         self.dmc.take_dma_request()

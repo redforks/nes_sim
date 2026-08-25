@@ -2,7 +2,7 @@ use crate::SystemClock;
 use crate::ines::INesFile;
 use crate::mcu::Mcu;
 use crate::nes::apu::{Apu, AudioDriver};
-use crate::nes::controller::{Button, Controller};
+use crate::nes::controller::{Button, Controller, Zapper};
 use crate::nes::lower_ram::LowerRam;
 use crate::nes::ppu::{Ppu, Timing};
 use crate::render::Render;
@@ -161,6 +161,43 @@ impl<R: Render, D: AudioDriver> NesMcu<R, D> {
         self.controller.b.release(button);
     }
 
+    pub fn connect_zapper(&mut self, connected: bool) {
+        self.controller.zapper.set_connected(connected);
+    }
+
+    pub fn aim_zapper(&mut self, x: u16, y: u16) {
+        self.controller.zapper.aim(x, y);
+    }
+
+    pub fn trigger_zapper(&mut self) {
+        self.controller.zapper.trigger();
+    }
+
+    /// Advance the Zapper by one CPU cycle.
+    pub fn tick_zapper(&mut self) {
+        self.controller.zapper.clock();
+    }
+
+    pub fn zapper(&self) -> &Zapper {
+        &self.controller.zapper
+    }
+
+    pub fn zapper_mut(&mut self) -> &mut Zapper {
+        &mut self.controller.zapper
+    }
+
+    /// Port-2 status bits at the current beam position: trigger on bit 4,
+    /// light sense on bit 3. Sampled against the PPU's live framebuffer.
+    fn zapper_bits(&self) -> u8 {
+        let timing = self.ppu.timing();
+        let renderer = self.ppu.renderer();
+        self.controller
+            .zapper
+            .read(timing.scanline(), timing.dot(), |x, y| {
+                renderer.pixel_brightness(x, y)
+            })
+    }
+
     pub fn ppu_timing(&self) -> &Timing {
         self.ppu.timing()
     }
@@ -194,7 +231,7 @@ impl<R: Render, D: AudioDriver> Mcu for NesMcu<R, D> {
             0x0000..=0x1fff => self.lower_ram.read(address),
             0x2000..=0x3fff | 0x4100..=0xffff => self.ppu.read(address),
             0x4016 => self.controller.a.read_strobed(!prev_joypad1_oe),
-            0x4017 => self.controller.b.read_strobed(!prev_joypad2_oe),
+            0x4017 => self.controller.b.read_strobed(!prev_joypad2_oe) | self.zapper_bits(),
             0x4015 => self.apu.read(address),
             // Write-only APU/IO registers and unused test registers: open bus
             0x4000..=0x401f => self.open_bus,
@@ -210,7 +247,8 @@ impl<R: Render, D: AudioDriver> Mcu for NesMcu<R, D> {
             0x0000..=0x1fff => self.lower_ram.peek(address),
             0x2000..=0x3fff => self.ppu.peek(address),
             0x4015 => self.apu.peek(address),
-            0x4016 | 0x4017 => self.controller.peek(address),
+            0x4016 => self.controller.peek(address),
+            0x4017 => self.controller.peek(address) | self.zapper_bits(),
             0x4000..=0x401f => self.open_bus,
             0x4020..=0x40ff => self.open_bus,
             0x4100..=0xffff => self.ppu.peek(address),

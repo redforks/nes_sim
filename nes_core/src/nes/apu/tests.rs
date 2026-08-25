@@ -1,6 +1,20 @@
 use super::*;
 
 #[test]
+fn dmc_counts_dac_register_writes() {
+    let mut apu = Apu::new(());
+    assert_eq!(apu.dmc_dac_writes(), 0);
+
+    apu.write(0x4011, 0x40);
+    apu.write(0x4011, 0x7f);
+    // Other DMC registers are not DAC writes.
+    apu.write(0x4010, 0x0f);
+    apu.write(0x4015, 0x10);
+
+    assert_eq!(apu.dmc_dac_writes(), 2);
+}
+
+#[test]
 fn test_sweep_bitfield() {
     let mut sweep = SweepBits::new();
     sweep.set_enabled(true);

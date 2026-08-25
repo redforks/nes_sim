@@ -134,3 +134,17 @@ _Avoid_: latch (overloaded), locked copy
 **Bit position**:
 Index of the next serial stage the poll reads from the frozen register. Advanced once per `$4016`/`$4017` read; reset only by a strobe falling edge.
 _Avoid_: read offset
+
+## Language — Zapper
+
+**Zapper**:
+Light gun on controller port 2, read through `$4017`: trigger on bit 4, light sense on bit 3 (0 = light detected, 1 = none). Disconnected reads return 0 and leave plain controller-B bits.
+_Avoid_: light gun (in identifiers), zapper gun
+
+**Light sense**:
+Aperture sampling of the rendered framebuffer around the aim point (7×7 pixels, radius 3): a pixel counts as light when brightness (R+G+B) ≥ 85. Gated by beam position — a row senses only once the beam has scanned it, and its phosphor persists ~20 scanlines.
+_Avoid_: pixel detection, photodetection, light detect flag
+
+**Trigger release delay**:
+A pulled trigger reads held for ~100 ms (178,977 CPU cycles) from the pull, regardless of how long the button stays down; re-pulling mid-hold does not extend it.
+_Avoid_: trigger timeout, debounce

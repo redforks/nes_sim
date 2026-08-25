@@ -48,8 +48,14 @@ impl Render for ImageRender {
     fn set_pixel(&mut self, x: u32, y: u32, color: [u8; 4]) {
         self.image.put_pixel(x, y, Rgba(color));
     }
+    fn pixel_brightness(&self, x: u32, y: u32) -> u32 {
+        if x >= self.image.width() || y >= self.image.height() {
+            return 0;
+        }
+        let [r, g, b, _] = self.image.get_pixel(x, y).0;
+        u32::from(r) + u32::from(g) + u32::from(b)
+    }
 }
-
 #[cfg(test)]
 mod tests {
     use super::*;

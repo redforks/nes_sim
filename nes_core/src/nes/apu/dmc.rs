@@ -152,6 +152,9 @@ pub struct Dmc {
     dma_reader: DmaReader,
     output: OutputUnit,
     timer: Divider<u16>,
+    /// Total $4011 writes. The Zapper test ROMs signal per-frame progress
+    /// with DAC-register "clicks"; the harness counts them.
+    dac_writes: u64,
 }
 
 impl Default for Dmc {
@@ -163,6 +166,7 @@ impl Default for Dmc {
             // minus-one convention so pre-write playback runs at the
             // documented 428-CPU-cycle rate.
             timer: Divider::new(DMC_RATE_TABLE[0] - 1),
+            dac_writes: 0,
         }
     }
 }
@@ -201,7 +205,12 @@ impl Dmc {
     }
 
     pub fn write_dac(&mut self, value: DmcDacBits) {
+        self.dac_writes += 1;
         self.output.set_output(value.dac_value());
+    }
+
+    pub fn dac_writes(&self) -> u64 {
+        self.dac_writes
     }
 
     pub fn write_sample_address(&mut self, value: u8) {

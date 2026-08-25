@@ -82,6 +82,9 @@ where
         let cpu_tick = clock.is_cpu_clock();
 
         self.cpu.mcu_mut().tick_ppu();
+        if cpu_tick {
+            self.cpu.mcu_mut().tick_zapper();
+        }
         self.cartridge_irq_next = self.cpu.mcu().cartridge_irq_pending();
         if cpu_tick {
             self.cartridge_irq_latched = self.cartridge_irq_next;
@@ -141,6 +144,18 @@ where
 
     pub fn release_controller_b(&mut self, button: Button) {
         self.cpu.mcu_mut().release_controller_b(button);
+    }
+
+    pub fn connect_zapper(&mut self, connected: bool) {
+        self.cpu.mcu_mut().connect_zapper(connected);
+    }
+
+    pub fn aim_zapper(&mut self, x: u16, y: u16) {
+        self.cpu.mcu_mut().aim_zapper(x, y);
+    }
+
+    pub fn trigger_zapper(&mut self) {
+        self.cpu.mcu_mut().trigger_zapper();
     }
 
     pub fn render_mut(&mut self) -> &mut R {

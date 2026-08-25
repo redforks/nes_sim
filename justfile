@@ -512,8 +512,11 @@ triangle_pitch: build_nes_cpu_test
 [parallel]
 passed_audio_manual_ok: noise_pitch square_pitch triangle_pitch
 
-# Zapper light-gun tests: need Zapper input (light sense + trigger on $4017),
-# which nes_core does not emulate yet.
+# Zapper light-gun tests (tetanes input suite): nes_core emulates the Zapper
+# on $4017 (trigger bit + light sense sampled from the rendered framebuffer).
+# The ROMs self-report only via screen + $4011 DAC "clicks", so the harness
+# (nes_cpu_test/src/zapper_test.rs) scripts trigger/aim per frame and checks
+# blessed frame snapshots under nes_cpu_test/src/png-exps/ plus click counts.
 zapper_flip: build_nes_cpu_test
     timeout 10 {{ nes_cpu_test }} --quiet -f test-roms/input/zapper_flip.nes
 
@@ -527,7 +530,7 @@ zapper_trigger: build_nes_cpu_test
     timeout 10 {{ nes_cpu_test }} --quiet -f test-roms/input/zapper_trigger.nes
 
 [parallel]
-zapper_tests: zapper_flip zapper_light zapper_stream zapper_trigger
+passed_input_tests: zapper_flip zapper_light zapper_stream zapper_trigger
 
 # MMC3 CHR-RAM banking (Damian Yerrick's "big CHR RAM test", NES 2.0 with 32
 # KiB CHR RAM declared): draws through CHR-RAM windows, then waits for Start.
@@ -535,13 +538,6 @@ zapper_tests: zapper_flip zapper_light zapper_stream zapper_trigger
 # (10 and 80); the recipe supplies the Start press at frame 11.
 big_chr_ram: build_nes_cpu_test
     timeout 15 {{ nes_cpu_test }} --quiet --press start@11 -f test-roms/mapper/m004_txrom/big_chr_ram.nes
-
-# The remaining imported ROMs still not passing: known-failing, kept as a
-# single runnable checklist. Each graduates into the passed_* aggregates as
-# nes_core gains what it probes (Zapper input).
-
-[parallel]
-todo_tests: zapper_tests
 
 [parallel]
 passed_mapper: mmc3 bntest mmc1-a12 vrc2-and-4-roms big_chr_ram
@@ -556,7 +552,7 @@ passed_ppu_tests: oam_read oam_stress ppu_open_bus ppu_read_buffer sprite_hit_te
 passed_apu_tests: apu_mixer apu_reset apu_test dmc_dma_during_read4 imported_apu_misc passed_audio_manual_ok
 
 [parallel]
-passed_rom_tests: passed_cpu_tests passed_ppu_tests passed_apu_tests passed_mapper
+passed_rom_tests: passed_cpu_tests passed_ppu_tests passed_apu_tests passed_mapper passed_input_tests
 
 [parallel]
 passed: unit-test passed_rom_tests

@@ -168,7 +168,8 @@ fn handle_request(state: &mut MachineState, request: Request) -> Response {
                         let vblank_reached = match &state.machine {
                             MachineWrapper::Bin(_, _) => false,
                             MachineWrapper::INes(m) => m.mcu().ppu().in_vblank(),
-                            MachineWrapper::PngFrameMatch(m) => m.mcu().ppu().in_vblank(),
+                            MachineWrapper::Rendered(m) => m.mcu().ppu().in_vblank(),
+                            MachineWrapper::AudioDump(m) => m.mcu().ppu().in_vblank(),
                         };
 
                         if vblank_reached {
@@ -214,7 +215,8 @@ fn read_memory_byte(state: &MachineState, addr: u16) -> u8 {
     match &state.machine {
         MachineWrapper::Bin(m, _) => m.mcu().peek(addr),
         MachineWrapper::INes(m) => m.mcu().peek(addr),
-        MachineWrapper::PngFrameMatch(m) => m.mcu().peek(addr),
+        MachineWrapper::Rendered(m) => m.mcu().peek(addr),
+        MachineWrapper::AudioDump(m) => m.mcu().peek(addr),
     }
 }
 
@@ -245,7 +247,19 @@ fn get_machine_status(state: &mut MachineState) -> nes_mcp_protocol::MachineStat
                 cycles: m.system_cycles() / 3,
             }
         }
-        MachineWrapper::PngFrameMatch(m) => {
+        MachineWrapper::Rendered(m) => {
+            let cpu = m.cpu();
+            nes_mcp_protocol::MachineStatus {
+                pc: cpu.pc(),
+                a: cpu.a,
+                x: cpu.x,
+                y: cpu.y,
+                p: cpu.status,
+                sp: cpu.sp,
+                cycles: m.system_cycles() / 3,
+            }
+        }
+        MachineWrapper::AudioDump(m) => {
             let cpu = m.cpu();
             nes_mcp_protocol::MachineStatus {
                 pc: cpu.pc(),
@@ -301,7 +315,26 @@ fn get_cpu_registers(state: &mut MachineState) -> nes_mcp_protocol::CpuRegisters
                 flag_c: (status & 0x01) != 0,
             }
         }
-        MachineWrapper::PngFrameMatch(m) => {
+        MachineWrapper::Rendered(m) => {
+            let cpu = m.cpu();
+            let status = cpu.status;
+            nes_mcp_protocol::CpuRegisters {
+                pc: cpu.pc(),
+                a: cpu.a,
+                x: cpu.x,
+                y: cpu.y,
+                sp: cpu.sp,
+                status,
+                cycles: m.system_cycles() / 3,
+                flag_n: (status & 0x80) != 0,
+                flag_v: (status & 0x40) != 0,
+                flag_d: (status & 0x08) != 0,
+                flag_i: (status & 0x04) != 0,
+                flag_z: (status & 0x02) != 0,
+                flag_c: (status & 0x01) != 0,
+            }
+        }
+        MachineWrapper::AudioDump(m) => {
             let cpu = m.cpu();
             let status = cpu.status;
             nes_mcp_protocol::CpuRegisters {
@@ -350,7 +383,8 @@ fn get_apu_status(state: &MachineState) -> nes_mcp_protocol::ApuStatus {
             dmc_irq_pending: false,
         },
         MachineWrapper::INes(m) => from_mcu!(m.mcu()),
-        MachineWrapper::PngFrameMatch(m) => from_mcu!(m.mcu()),
+        MachineWrapper::Rendered(m) => from_mcu!(m.mcu()),
+        MachineWrapper::AudioDump(m) => from_mcu!(m.mcu()),
     }
 }
 
@@ -374,7 +408,8 @@ fn get_ppu_status(state: &MachineState) -> String {
             "# PPU State\nNot available (Bin machine has no PPU)\n".to_string()
         }
         MachineWrapper::INes(m) => dump!(m.mcu().ppu()),
-        MachineWrapper::PngFrameMatch(m) => dump!(m.mcu().ppu()),
+        MachineWrapper::Rendered(m) => dump!(m.mcu().ppu()),
+        MachineWrapper::AudioDump(m) => dump!(m.mcu().ppu()),
     }
 }
 
@@ -388,7 +423,8 @@ fn get_oam_data(state: &MachineState) -> String {
     match &state.machine {
         MachineWrapper::Bin(_, _) => "OAM not available (Bin machine has no PPU)\n".to_string(),
         MachineWrapper::INes(m) => dump!(m.mcu().ppu()),
-        MachineWrapper::PngFrameMatch(m) => dump!(m.mcu().ppu()),
+        MachineWrapper::Rendered(m) => dump!(m.mcu().ppu()),
+        MachineWrapper::AudioDump(m) => dump!(m.mcu().ppu()),
     }
 }
 
@@ -408,16 +444,9 @@ fn get_nametable_data(state: &MachineState, index: u8) -> String {
             "Nametable not available (Bin machine has no PPU)\n".to_string()
         }
         MachineWrapper::INes(m) => dump!(m.mcu(), index),
-        MachineWrapper::PngFrameMatch(m) => dump!(m.mcu(), index),
+        MachineWrapper::Rendered(m) => dump!(m.mcu(), index),
+        MachineWrapper::AudioDump(m) => dump!(m.mcu(), index),
     }
-}
-
-fn parse_query_param(uri: &str, key: &str) -> Option<String> {
-    let query = uri.split_once('?')?.1;
-    query.split('&').find_map(|pair| {
-        let (k, v) = pair.split_once('=')?;
-        (k == key).then(|| v.to_string())
-    })
 }
 
 /// Run the TCP server

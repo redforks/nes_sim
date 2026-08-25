@@ -44,6 +44,15 @@ pub trait Render: Debug {
     ///
     /// The default implementation does nothing.
     fn finish(&mut self) {}
+
+    /// R+G+B luminance of the pixel at (x, y), for light-gun sensing.
+    ///
+    /// Out-of-bounds coordinates and backends without a readable
+    /// framebuffer report 0 (black). The default suits such backends and
+    /// keeps non-image renderers compiling unchanged.
+    fn pixel_brightness(&self, _x: u32, _y: u32) -> u32 {
+        0
+    }
 }
 
 impl Render for () {
