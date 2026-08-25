@@ -488,21 +488,26 @@ imported_ppu_visual: ppu_240pee ppu_color ntsc_torture ppu_palette
 
 
 # Pitch/env/sweep audio tests: no self-reporting protocol (upstream tetanes
-# leaves them ignored too); verified instead against the captured WAVs from
-# --dump-audio (verdicts in issue #16). Each ROM plays one steady tone next to
-# a software-timed $4011 reference square, so the register-derived pitches are
+# leaves them ignored too). Each ROM plays one steady tone next to a
+# software-timed $4011 reference square, so the register-derived pitches are
 # checkable: square_pitch pulse t=$123 -> 383.08 Hz; triangle_pitch triangle
 # t=$091 -> 383.08 Hz (both next to a ~383.4 Hz reference toggled every 2334
 # cycles); noise_pitch mode-0 period $F LFSR clocked every 4068 cycles
-# (~440 Hz) next to a ~220 Hz reference toggled every 4069 cycles.
+# (~440 Hz) next to a ~220 Hz reference toggled every 4069 cycles. Verdicts
+# recorded from the blessed captures in issue #16; each run re-captures and
+# byte-compares against those captures, so any APU/mixer change that alters
+# these ROMs' audio fails here.
 noise_pitch: build_nes_cpu_test
     timeout 15 {{ nes_cpu_test }} --quiet --frames 600 --dump-audio /tmp/noise_pitch.wav -f test-roms/apu/noise_pitch.nes
+    cmp /tmp/noise_pitch.wav test-roms/apu/captures/noise_pitch.wav
 
 square_pitch: build_nes_cpu_test
     timeout 15 {{ nes_cpu_test }} --quiet --frames 600 --dump-audio /tmp/square_pitch.wav -f test-roms/apu/square_pitch.nes
+    cmp /tmp/square_pitch.wav test-roms/apu/captures/square_pitch.wav
 
 triangle_pitch: build_nes_cpu_test
     timeout 15 {{ nes_cpu_test }} --quiet --frames 600 --dump-audio /tmp/triangle_pitch.wav -f test-roms/apu/triangle_pitch.nes
+    cmp /tmp/triangle_pitch.wav test-roms/apu/captures/triangle_pitch.wav
 
 [parallel]
 passed_audio_manual_ok: noise_pitch square_pitch triangle_pitch
