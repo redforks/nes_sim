@@ -105,7 +105,15 @@ fn read_console<R: Render>(cpu: &Cpu<NesMcu<R, ()>>, decoder: &Decoder) -> Strin
 
 fn read_plain_console<R: Render>(cpu: &Cpu<NesMcu<R, ()>>) -> String {
     let mut buf = Vec::with_capacity(NAMETABLE_LEN);
-    for offset in 0..NAMETABLE_LEN as u16 {
+    // Some ROMs (e.g. blargg's forum APU tests) place their text at an offset
+    // instead of the nametable origin, so skip leading NUL tiles; the scan
+    // still stops at the first NUL after the first non-NUL byte.
+    let first_nonzero = (0..NAMETABLE_LEN as u16)
+        .find(|&offset| cpu.mcu().read_vram(NAMETABLE_START + offset) != 0);
+    let Some(start) = first_nonzero else {
+        return String::new();
+    };
+    for offset in start..NAMETABLE_LEN as u16 {
         let value = cpu.mcu().read_vram(NAMETABLE_START + offset);
         if value == 0 {
             break;

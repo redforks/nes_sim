@@ -380,3 +380,328 @@ fn noise_shift_rate_matches_documented_intervals() {
         }
     }
 }
+
+// Golden-timeline gate for the APU frame counter. Expectations derive from
+// https://www.nesdev.org/wiki/APU_Frame_Counter (NTSC) cross-checked against
+// blargg's forum APU tests (test-roms/apu/test_1.nes..test_10.nes): mode 0
+// steps at CPU cycles 7457 (quarter), 14913 (quarter+half), 22371 (quarter),
+// 29828/29829/29830 (frame IRQ set three times in a row; the 29829 event also
+// clocks quarter+half), period 29830; mode 1 steps at 7457 (quarter), 14913
+// (quarter+half), 22371 (quarter), 29829 (nothing), 37281 (quarter+half),
+// period 37282, IRQ never set. A $4017 write with bit 7 set resets the
+// divider on the write cycle itself and clocks a half frame immediately
+// (length counters included); $00/$40 writes reset after the usual 3-4 CPU
+// cycle delay and clock nothing. Any drift in a loaded interval shifts the
+// timeline and fails.
+
+use super::frame_sequencer::{FrameSequenceState, FrameSequencer};
+
+const QUARTER: FrameSequenceState = FrameSequenceState {
+    irq: false,
+    length_and_sweep: false,
+    envelop_and_linear: true,
+};
+const HALF: FrameSequenceState = FrameSequenceState {
+    irq: false,
+    length_and_sweep: true,
+    envelop_and_linear: true,
+};
+const HALF_IRQ: FrameSequenceState = FrameSequenceState {
+    irq: true,
+    length_and_sweep: true,
+    envelop_and_linear: true,
+};
+const IRQ_ONLY: FrameSequenceState = FrameSequenceState {
+    irq: true,
+    length_and_sweep: false,
+    envelop_and_linear: false,
+};
+const NOTHING: FrameSequenceState = FrameSequenceState {
+    irq: false,
+    length_and_sweep: false,
+    envelop_and_linear: false,
+};
+
+/// Drives [`FrameSequencer`] the way [`Apu`] does: `tick_timer` every system
+/// tick, `tick` and latch consumption on CPU clocks (tick % 3 == 2).
+struct FrameSeqDriver {
+    seq: FrameSequencer,
+    tick: u64,
+    write_tick: u64,
+}
+
+impl FrameSeqDriver {
+    fn new() -> Self {
+        Self {
+            seq: FrameSequencer::default(),
+            tick: 0,
+            write_tick: 0,
+        }
+    }
+
+    fn step(&mut self, events: &mut Vec<(u64, FrameSequenceState)>) {
+        self.tick += 1;
+        let clock = SystemClock(self.tick);
+        self.seq.tick_timer();
+        if clock.is_apu_clock() {
+            self.seq.tick();
+            if let Some(state) = self.seq.output_latch.take() {
+                // Apu sets the frame interrupt flag when it consumes a latch.
+                if state.irq {
+                    self.seq.set_interrupt();
+                }
+                events.push((self.tick, state));
+            }
+        }
+    }
+
+    /// Runs `cpu_cycles` CPU cycles, collecting sequencer latch events.
+    fn run(&mut self, cpu_cycles: u64) -> Vec<(u64, FrameSequenceState)> {
+        let mut events = Vec::new();
+        for _ in 0..cpu_cycles * 3 {
+            self.step(&mut events);
+        }
+        events
+    }
+
+    /// Writes $4017 on the next CPU clock, where a STA $4017 would land.
+    fn write_control(&mut self, bits: FrameSequencerBits) {
+        let mut events = Vec::new();
+        loop {
+            self.step(&mut events);
+            if SystemClock(self.tick).is_apu_clock() {
+                self.seq.write_control_bits(bits);
+                self.write_tick = self.tick;
+                return;
+            }
+        }
+    }
+}
+
+/// Asserts `events` carry `states` in order, spaced at `tick_deltas` system
+/// ticks after the $4017 write plus the shared 3-4 CPU cycle apply latency
+/// (9-12 ticks). The frame sequencer's step constants are system ticks
+/// (3 per CPU cycle); the documented CPU-cycle steps are those divided by 3.
+fn assert_timeline(
+    write_tick: u64,
+    events: &[(u64, FrameSequenceState)],
+    states: &[FrameSequenceState],
+    tick_deltas: &[u64],
+) {
+    assert_eq!(
+        events.len(),
+        states.len(),
+        "event count mismatch: {events:?}"
+    );
+    let apply_latency = (events[0].0 - write_tick) - tick_deltas[0];
+    assert!(
+        (9..=12).contains(&apply_latency),
+        "write apply latency {apply_latency} ticks outside the documented 3-4 CPU cycles; events={events:?} write_tick={write_tick}"
+    );
+    for (i, ((tick, state), (expected_state, delta))) in events
+        .iter()
+        .zip(states.iter().zip(tick_deltas.iter()))
+        .enumerate()
+    {
+        assert_eq!(state, expected_state, "event {i} state mismatch");
+        assert_eq!(
+            tick - write_tick,
+            delta + apply_latency,
+            "event {i} lands at write+{} ticks, expected write+{delta}+latency",
+            tick - write_tick
+        );
+    }
+}
+
+#[test]
+fn frame_counter_mode0_matches_documented_step_timeline() {
+    let mut driver = FrameSeqDriver::new();
+    driver.write_control(FrameSequencerBits::default()); // $00: mode 0
+    let events = driver.run(2 * 29830 + 20);
+
+    let states = [QUARTER, HALF, QUARTER, IRQ_ONLY, HALF_IRQ, IRQ_ONLY];
+    let deltas: Vec<u64> = [22371u64, 44739, 67113, 89484, 89487, 89490]
+        .into_iter()
+        .chain(
+            [22371u64, 44739, 67113, 89484, 89487, 89490]
+                .into_iter()
+                .map(|d| d + 89490),
+        )
+        .collect();
+    assert_timeline(driver.write_tick, &events, &[states; 2].concat(), &deltas);
+}
+
+#[test]
+fn frame_counter_mode0_sets_irq_flag_on_three_consecutive_cpu_cycles() {
+    // Reading $4015 clears the frame IRQ flag; within the 29828-29830 window
+    // a cleared flag is set again by the next step event, which is what
+    // blargg's frame-IRQ probes observe.
+    let mut driver = FrameSeqDriver::new();
+    driver.write_control(FrameSequencerBits::default());
+    let events = driver.run(29831 + 10);
+    let irq_ticks: Vec<u64> = events
+        .iter()
+        .filter(|(_, s)| s.irq)
+        .map(|(t, _)| *t)
+        .collect();
+    assert_eq!(
+        irq_ticks.len(),
+        3,
+        "three IRQ sets per period: {irq_ticks:?}"
+    );
+    for pair in irq_ticks.windows(2) {
+        assert_eq!(pair[1] - pair[0], 3, "IRQ sets on consecutive CPU cycles");
+    }
+
+    // Second period: the flag is still set from period 1's third step; clear
+    // it (as a $4015 read would), then the next set must come from period 2's
+    // first IRQ step, and clearing inside the window must be answered by the
+    // following step events. After the third set no further set happens
+    // until the next period.
+    driver.seq.clear_interrupt();
+    assert!(!driver.seq.request_irq());
+    let mut events = Vec::new();
+    while !driver.seq.request_irq() {
+        driver.step(&mut events);
+    }
+    driver.seq.clear_interrupt();
+    assert!(!driver.seq.request_irq());
+    for _ in 0..3 {
+        driver.step(&mut events);
+    }
+    assert!(driver.seq.request_irq(), "second IRQ set after clear");
+    driver.seq.clear_interrupt();
+    for _ in 0..3 {
+        driver.step(&mut events);
+    }
+    assert!(driver.seq.request_irq(), "third IRQ set after clear");
+    driver.seq.clear_interrupt();
+    for _ in 0..6 {
+        driver.step(&mut events);
+    }
+    assert!(
+        !driver.seq.request_irq(),
+        "no fourth set before period wrap"
+    );
+}
+
+#[test]
+fn frame_counter_mode1_matches_documented_step_timeline() {
+    let mut driver = FrameSeqDriver::new();
+    driver.write_control(FrameSequencerBits::default().with_mode(FrameSequencerMode::FiveStep));
+    let events = driver.run(2 * 37282 + 20);
+
+    // The write clocks an immediate half frame (consumed on the next CPU
+    // clock, +3 ticks); the delayed reset then restarts the documented table
+    // from step 1, so the scheduled events carry the 3-4 cycle apply latency.
+    assert_eq!(
+        events[0],
+        (driver.write_tick + 3, HALF),
+        "immediate half frame on the write"
+    );
+    let states = [QUARTER, HALF, QUARTER, NOTHING, HALF];
+    let deltas: Vec<u64> = [22371u64, 44739, 67113, 89487, 111843]
+        .into_iter()
+        .chain(
+            [22371u64, 44739, 67113, 89487, 111843]
+                .into_iter()
+                .map(|d| d + 111846),
+        )
+        .collect();
+    assert_timeline(
+        driver.write_tick,
+        &events[1..],
+        &[states; 2].concat(),
+        &deltas,
+    );
+    assert!(events.iter().all(|(_, s)| !s.irq), "mode 1 never sets IRQ");
+}
+
+#[test]
+fn write_4017_mode1_immediate_clock_is_half_frame() {
+    // A $4017 write with bit 7 set clocks a half frame (length counters,
+    // sweep, envelopes, linear counter) immediately — blargg's 01.len_ctr
+    // test 4 zeroes a length-2 counter with two back-to-back $80 writes.
+    let mut driver = FrameSeqDriver::new();
+    driver.write_control(FrameSequencerBits::default());
+    driver.run(10);
+    driver.write_control(FrameSequencerBits::default().with_mode(FrameSequencerMode::FiveStep));
+    let events = driver.run(20);
+    assert_eq!(events.len(), 1, "exactly the immediate clock: {events:?}");
+    assert_eq!(events[0].1, HALF, "immediate clock is a half frame");
+}
+
+#[test]
+fn write_4017_mode0_does_not_immediately_clock_length() {
+    // blargg's 01.len_ctr test 5: two $00 writes leave the length counter
+    // untouched (the scheduled mode-0 events are far beyond this window).
+    let mut driver = FrameSeqDriver::new();
+    driver.write_control(FrameSequencerBits::default().with_mode(FrameSequencerMode::FiveStep));
+    driver.run(10);
+    driver.write_control(FrameSequencerBits::default());
+    let events = driver.run(20);
+    assert!(
+        events.is_empty(),
+        "no immediate clock for $00 writes: {events:?}"
+    );
+}
+
+#[test]
+fn blargg_forum_test_1_length_counter_survives_the_write_dance() {
+    // Mirrors test-roms/apu/test_1.nes: enable pulse1, load length 10, seven
+    // $4017=$80 writes 9 CPU cycles apart, $4017=$00, one full 29830-cycle
+    // mode-0 period, then the $4017=$80 halt landing on the period wrap. The
+    // counter may only be clocked by the mode-0 half-frame steps (14913 and
+    // 29829), so $4015 bit 0 must still read 1 — and the frame IRQ the
+    // 29828-29830 steps raised must show up on bit 6 before the halt clears it.
+    struct ApuDriver {
+        apu: Apu<()>,
+        tick: u64,
+    }
+
+    impl ApuDriver {
+        /// Runs until the next CPU clock (tick % 3 == 2), then writes.
+        fn write_on_cpu_clock(&mut self, address: u16, value: u8) {
+            loop {
+                self.tick += 1;
+                let clock = SystemClock(self.tick);
+                self.apu.tick(clock);
+                if clock.is_cpu_clock() {
+                    self.apu.write(address, value);
+                    return;
+                }
+            }
+        }
+
+        fn run_cpu(&mut self, cpu_cycles: u64) {
+            for _ in 0..cpu_cycles * 3 {
+                self.tick += 1;
+                let clock = SystemClock(self.tick);
+                self.apu.tick(clock);
+            }
+        }
+    }
+
+    let mut driver = ApuDriver {
+        apu: Apu::new(()),
+        tick: 0,
+    };
+    driver.write_on_cpu_clock(0x4015, 0x01); // enable pulse1
+    driver.write_on_cpu_clock(0x4003, 0x00); // load length counter, index 0 -> 10
+    for _ in 0..7 {
+        // mode 1 + inhibit: reset timer + quarter-frame-only immediate clock
+        driver.write_on_cpu_clock(0x4017, 0x80);
+        driver.run_cpu(8); // STA $4017 + DEX + BNE taken = 9-cycle spacing
+    }
+    driver.write_on_cpu_clock(0x4017, 0x80); // halt on the period wrap
+    for _ in 0..6 {
+        driver.tick += 1;
+        driver.apu.tick(SystemClock(driver.tick));
+    }
+
+    assert_eq!(
+        driver.apu.read(0x4015) & 0x01,
+        0x01,
+        "pulse1 length counter must be nonzero"
+    );
+}

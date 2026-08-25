@@ -190,6 +190,31 @@ impl Image {
                 } else {
                     plugins.push(Box::new(NametableConsole::default()));
                 }
+            } else if file_name
+                .to_str()
+                .is_some_and(|p| p.contains("test-roms/apu/"))
+                && matches!(
+                    file_name_str,
+                    "test_1.nes"
+                        | "test_2.nes"
+                        | "test_3.nes"
+                        | "test_4.nes"
+                        | "test_5.nes"
+                        | "test_6.nes"
+                        | "test_7.nes"
+                        | "test_8.nes"
+                        | "test_9.nes"
+                        | "test_10.nes"
+                )
+            {
+                // blargg's forum APU tests (frame counter timing probes): they
+                // print "TEST PASSED"/"TEST FAILED" as ASCII tiles at a nametable
+                // offset (hence read_plain_console's leading-NUL skip) and then
+                // hang in a CLV/BVC spin — no $6000 signature, so the nametable
+                // text is the verdict (PassedOrFailed) and the Timeout catches a
+                // hang with neither verdict.
+                plugins.push(Box::new(NametableConsole::default()));
+                plugins.push(Box::new(Timeout::new(Duration::from_secs(5))));
             } else {
                 plugins.push(Box::<Console>::default());
                 plugins.push(Box::<MonitorTestStatus>::default());

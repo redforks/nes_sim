@@ -397,8 +397,40 @@ imported_apu_misc_5: build_nes_cpu_test
 imported_apu_misc_6: build_nes_cpu_test
     {{ nes_cpu_test }} --quiet -f test-roms/apu/sweep_sub.nes
 
+imported_apu_misc_7: build_nes_cpu_test
+    {{ nes_cpu_test }} --quiet -f test-roms/apu/test_1.nes
+
+imported_apu_misc_8: build_nes_cpu_test
+    {{ nes_cpu_test }} --quiet -f test-roms/apu/test_2.nes
+
+imported_apu_misc_9: build_nes_cpu_test
+    {{ nes_cpu_test }} --quiet -f test-roms/apu/test_3.nes
+
+imported_apu_misc_10: build_nes_cpu_test
+    {{ nes_cpu_test }} --quiet -f test-roms/apu/test_4.nes
+
+imported_apu_misc_11: build_nes_cpu_test
+    {{ nes_cpu_test }} --quiet -f test-roms/apu/test_5.nes
+
+imported_apu_misc_12: build_nes_cpu_test
+    {{ nes_cpu_test }} --quiet -f test-roms/apu/test_6.nes
+
+imported_apu_misc_13: build_nes_cpu_test
+    {{ nes_cpu_test }} --quiet -f test-roms/apu/test_7.nes
+
+imported_apu_misc_14: build_nes_cpu_test
+    {{ nes_cpu_test }} --quiet -f test-roms/apu/test_8.nes
+
+imported_apu_misc_15: build_nes_cpu_test
+    {{ nes_cpu_test }} --quiet -f test-roms/apu/test_9.nes
+
+imported_apu_misc_16: build_nes_cpu_test
+    {{ nes_cpu_test }} --quiet -f test-roms/apu/test_10.nes
+
+# blargg's forum APU tests: frame-counter timing probes that print their
+# verdict as nametable text and hang (see nes_cpu_test/src/image.rs).
 [parallel]
-imported_apu_misc: imported_apu_misc_1 imported_apu_misc_2 imported_apu_misc_3 imported_apu_misc_4 imported_apu_misc_5 imported_apu_misc_6
+imported_apu_misc: imported_apu_misc_1 imported_apu_misc_2 imported_apu_misc_3 imported_apu_misc_4 imported_apu_misc_5 imported_apu_misc_6 imported_apu_misc_7 imported_apu_misc_8 imported_apu_misc_9 imported_apu_misc_10 imported_apu_misc_11 imported_apu_misc_12 imported_apu_misc_13 imported_apu_misc_14 imported_apu_misc_15 imported_apu_misc_16
 
 imported_cpu_misc_1: build_nes_cpu_test
     {{ nes_cpu_test }} --quiet -f test-roms/cpu/exec_space_apu.nes
@@ -454,43 +486,6 @@ ppu_palette: build_nes_cpu_test
 [parallel]
 imported_ppu_visual: ppu_240pee ppu_color ntsc_torture ppu_palette
 
-# Known-failing imports, kept runnable but excluded from passed_* groups until
-# the core implements what they probe:
-
-# blargg's forum APU tests: poll the APU frame IRQ flag with BVC loops the
-# current frame sequencer never satisfies; the dead-loop detector exits 1.
-apu_forum_test_1: build_nes_cpu_test
-    timeout 15 {{ nes_cpu_test }} --quiet -f test-roms/apu/test_1.nes
-
-apu_forum_test_2: build_nes_cpu_test
-    timeout 15 {{ nes_cpu_test }} --quiet -f test-roms/apu/test_2.nes
-
-apu_forum_test_3: build_nes_cpu_test
-    timeout 15 {{ nes_cpu_test }} --quiet -f test-roms/apu/test_3.nes
-
-apu_forum_test_4: build_nes_cpu_test
-    timeout 15 {{ nes_cpu_test }} --quiet -f test-roms/apu/test_4.nes
-
-apu_forum_test_5: build_nes_cpu_test
-    timeout 15 {{ nes_cpu_test }} --quiet -f test-roms/apu/test_5.nes
-
-apu_forum_test_6: build_nes_cpu_test
-    timeout 15 {{ nes_cpu_test }} --quiet -f test-roms/apu/test_6.nes
-
-apu_forum_test_7: build_nes_cpu_test
-    timeout 15 {{ nes_cpu_test }} --quiet -f test-roms/apu/test_7.nes
-
-apu_forum_test_8: build_nes_cpu_test
-    timeout 15 {{ nes_cpu_test }} --quiet -f test-roms/apu/test_8.nes
-
-apu_forum_test_9: build_nes_cpu_test
-    timeout 15 {{ nes_cpu_test }} --quiet -f test-roms/apu/test_9.nes
-
-apu_forum_test_10: build_nes_cpu_test
-    timeout 15 {{ nes_cpu_test }} --quiet -f test-roms/apu/test_10.nes
-
-[parallel]
-apu_forum_tests: apu_forum_test_1 apu_forum_test_2 apu_forum_test_3 apu_forum_test_4 apu_forum_test_5 apu_forum_test_6 apu_forum_test_7 apu_forum_test_8 apu_forum_test_9 apu_forum_test_10
 
 # Pitch/env/sweep audio tests: no self-reporting protocol (upstream tetanes
 # leaves them ignored too); run and compare the captured audio by ear/waveform.
@@ -528,12 +523,12 @@ zapper_tests: zapper_flip zapper_light zapper_stream zapper_trigger
 big_chr_ram: build_nes_cpu_test
     timeout 15 {{ nes_cpu_test }} --quiet -f test-roms/mapper/m004_txrom/big_chr_ram.nes
 
-# All 18 imported ROMs not yet passing: known-failing or manual-only, kept as
+# The 8 imported ROMs still not passing: known-failing or manual-only, kept as
 # a single runnable checklist. Each graduates into the passed_* aggregates as
-# nes_core gains what it probes (frame-IRQ timing, Zapper input, MMC3
-# CHR-RAM banking; audio-compare tests stay manual).
+# nes_core gains what it probes (Zapper input, MMC3 CHR-RAM banking;
+# audio-compare tests stay manual).
 [parallel]
-todo_tests: apu_forum_tests audio_compare_manual zapper_tests big_chr_ram
+todo_tests: audio_compare_manual zapper_tests big_chr_ram
 
 [parallel]
 passed_mapper: mmc3 bntest mmc1-a12 vrc2-and-4-roms
