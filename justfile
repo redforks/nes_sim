@@ -140,6 +140,29 @@ ppu_open_bus: build_nes_cpu_test
 ppu_read_buffer: build_nes_cpu_test
     {{ nes_cpu_test }} --quiet -f ../nes-test-roms/ppu_read_buffer/test_ppu_read_buffer.nes
 
+palette_ram: build_nes_cpu_test
+    {{ nes_cpu_test }} --quiet -f ../nes-test-roms/blargg_ppu_tests_2005.09.15b/palette_ram.nes
+
+power_up_palette: build_nes_cpu_test
+    {{ nes_cpu_test }} --quiet -f ../nes-test-roms/blargg_ppu_tests_2005.09.15b/power_up_palette.nes
+
+sprite_ram: build_nes_cpu_test
+    {{ nes_cpu_test }} --quiet -f ../nes-test-roms/blargg_ppu_tests_2005.09.15b/sprite_ram.nes
+
+vbl_clear_time: build_nes_cpu_test
+    {{ nes_cpu_test }} --quiet -f ../nes-test-roms/blargg_ppu_tests_2005.09.15b/vbl_clear_time.nes
+
+vram_access: build_nes_cpu_test
+    {{ nes_cpu_test }} --quiet -f ../nes-test-roms/blargg_ppu_tests_2005.09.15b/vram_access.nes
+
+# blargg's 2005.09.15b NTSC PPU tests: verdict is an on-screen result code
+# ("$01" = all tests passed, per the set's readme.txt), decoded by the
+# NametableConsole magic-success-word plugin (see nes_cpu_test/src/image.rs).
+# power_up_palette passes because nes_core powers up palette RAM with
+# blargg's table (nes_core/src/nes/ppu/palette.rs).
+[parallel]
+blargg_ppu_tests: palette_ram power_up_palette sprite_ram vbl_clear_time vram_access
+
 sprite_hit_tests_1: build_nes_cpu_test
     {{ nes_cpu_test }} --quiet -f ../nes-test-roms/sprite_hit_tests_2005.10.05/01.basics.nes
 
@@ -546,7 +569,7 @@ passed_mapper: mmc3 bntest mmc1-a12 vrc2-and-4-roms big_chr_ram
 passed_cpu_tests: cpu-test instr_misc instr_test-v5 instr_test-v3 instr_timing cpu_dummy_reads cpu_dummy_writes cpu_exec_space cpu_reset nestest branch_timing_tests nes_instr_test cpu_timing_test6 cpu_interrupts_v2 imported_cpu_misc
 
 [parallel]
-passed_ppu_tests: oam_read oam_stress ppu_open_bus ppu_read_buffer sprite_hit_tests sprite_overflow_tests scanline sprdma_and_dmc_dma vbl_nmi_timing ppu_vbl_nmi spr_hit_extra imported_ppu_visual
+passed_ppu_tests: oam_read oam_stress ppu_open_bus ppu_read_buffer sprite_hit_tests sprite_overflow_tests scanline sprdma_and_dmc_dma vbl_nmi_timing ppu_vbl_nmi spr_hit_extra imported_ppu_visual palette_ram power_up_palette sprite_ram vbl_clear_time vram_access
 
 [parallel]
 passed_apu_tests: apu_mixer apu_reset apu_test dmc_dma_during_read4 imported_apu_misc passed_audio_manual_ok

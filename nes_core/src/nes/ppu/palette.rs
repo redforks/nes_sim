@@ -40,9 +40,27 @@ impl ColorTheme {
     }
 }
 
-#[derive(Default)]
 pub struct Palette {
     pub data: [u8; 0x20],
+}
+
+impl Default for Palette {
+    /// Power-up palette RAM values as required by blargg's power_up_palette
+    /// test ROM (nes-test-roms/blargg_ppu_tests_2005.09.15b): these are the
+    /// values his NES powers up with (source/power_up_palette.asm `table:`).
+    /// The four mirrored cells ($3F10/$14/$18/$1C) alias $3F00/$04/$08/$0C
+    /// through addr_to_index, so only the 28 reachable cells matter; the
+    /// table is mirror-consistent, so filling all 32 verbatim is equivalent.
+    fn default() -> Self {
+        Self {
+            data: [
+                0x09, 0x01, 0x00, 0x01, 0x00, 0x02, 0x02, 0x0D, //
+                0x08, 0x10, 0x08, 0x24, 0x00, 0x00, 0x04, 0x2C, //
+                0x09, 0x01, 0x34, 0x03, 0x00, 0x04, 0x00, 0x14, //
+                0x08, 0x3A, 0x00, 0x02, 0x00, 0x20, 0x2C, 0x08,
+            ],
+        }
+    }
 }
 
 const fn addr_to_index(addr: u16) -> u16 {
@@ -94,6 +112,29 @@ mod tests {
     use super::*;
     use test_case::test_case;
 
+    /// Power-up palette RAM must match blargg's NES, as required by the
+    /// power_up_palette ROM (nes-test-roms/blargg_ppu_tests_2005.09.15b,
+    /// result code 1 = "Palette matches"). Table quoted verbatim from
+    /// source/power_up_palette.asm — kept inline (not shared with the impl)
+    /// so this test stays an independent source of truth.
+    #[test]
+    fn power_up_palette_matches_blargg_table() {
+        const BLARGG_POWER_UP_PALETTE: [u8; 0x20] = [
+            0x09, 0x01, 0x00, 0x01, 0x00, 0x02, 0x02, 0x0D, //
+            0x08, 0x10, 0x08, 0x24, 0x00, 0x00, 0x04, 0x2C, //
+            0x09, 0x01, 0x34, 0x03, 0x00, 0x04, 0x00, 0x14, //
+            0x08, 0x3A, 0x00, 0x02, 0x00, 0x20, 0x2C, 0x08,
+        ];
+        let p = Palette::default();
+        for (i, expected) in BLARGG_POWER_UP_PALETTE.iter().enumerate() {
+            assert_eq!(
+                p.read(0x3f00 + i as u16),
+                *expected,
+                "palette ${:02X} at power-up",
+                0x3f00 + i as u16
+            );
+        }
+    }
     #[test]
     fn palette_ram_read_write() {
         let mut p = Palette::default();
