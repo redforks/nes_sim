@@ -17,6 +17,8 @@ fn test_mcu() -> NesMcu<ImageRender, ()> {
         apu: Apu::new(()),
         oam_dma_pending: None,
         oam_dma: None,
+        deferred_apu_writes: Vec::new(),
+        last_apu_tick: 0,
         open_bus: 0,
         joypad1_oe: false,
         joypad2_oe: false,
@@ -57,6 +59,11 @@ fn test_length_counter_status_comes_from_apu_controller() {
     mcu.write(0x4002, 0x34);
     mcu.write(0x4015, 0x01);
     mcu.write(0x4003, 0xF8);
+    // Length-register writes land one CPU cycle late; run ticks so the
+    // queued store reaches the APU before the status read.
+    for t in 0..6u64 {
+        mcu.tick_apu(SystemClock(t));
+    }
 
     assert_eq!(mcu.read(0x4015) & 0x01, 0x01);
 

@@ -44,6 +44,12 @@ pub struct Apu<D: AudioDriver = ()> {
     driver: D,
     mixer: Mixer,
     frame_sequencer: FrameSequencer,
+    /// Per-channel latch recording length clocks that decremented a nonzero
+    /// counter (pulse1, pulse2, triangle, noise) on this very APU tick. A
+    /// reload-register write landing on the same tick loses the
+    /// read-modify-write race on hardware and must not reload — blargg's
+    /// 11.len_reload_timing test 5. Cleared at the start of every APU tick.
+    length_race_clobber: [bool; 4],
 }
 
 impl Default for Apu<()> {
@@ -64,6 +70,7 @@ impl<D: AudioDriver> Apu<D> {
             driver,
             mixer: Mixer::new(sample_rate),
             frame_sequencer: FrameSequencer::default(),
+            length_race_clobber: [false; 4],
         }
     }
 
@@ -98,6 +105,7 @@ impl<D: AudioDriver> Apu<D> {
     pub fn tick(&mut self, clock: SystemClock) {
         self.frame_sequencer.tick_timer();
         if clock.is_apu_clock() {
+            self.length_race_clobber = [false; 4];
             self.frame_sequencer.tick();
             self.triangle.tick_timer();
             self.pulse1.tick_timer();
@@ -180,17 +188,29 @@ impl<D: AudioDriver> Apu<D> {
             0x4000 => self.pulse1.write_control(value.into()),
             0x4001 => self.pulse1.write_sweep(value.into()),
             0x4002 => self.pulse1.write_timer_low(value),
-            0x4003 => self.pulse1.write_timer_high(value.into()),
+            0x4003 => {
+                let suppress = std::mem::take(&mut self.length_race_clobber[0]);
+                self.pulse1.write_timer_high(value.into(), suppress);
+            }
             0x4004 => self.pulse2.write_control(value.into()),
             0x4005 => self.pulse2.write_sweep(value.into()),
             0x4006 => self.pulse2.write_timer_low(value),
-            0x4007 => self.pulse2.write_timer_high(value.into()),
+            0x4007 => {
+                let suppress = std::mem::take(&mut self.length_race_clobber[1]);
+                self.pulse2.write_timer_high(value.into(), suppress);
+            }
             0x4008 => self.triangle.write_control(value.into()),
             0x400A => self.triangle.write_timer_low(value),
-            0x400B => self.triangle.write_timer_high(value.into()),
+            0x400B => {
+                let suppress = std::mem::take(&mut self.length_race_clobber[2]);
+                self.triangle.write_timer_high(value.into(), suppress);
+            }
             0x400C => self.noise.write_envelope(value.into()),
             0x400E => self.noise.write_period(value.into()),
-            0x400F => self.noise.write_length(value.into()),
+            0x400F => {
+                let suppress = std::mem::take(&mut self.length_race_clobber[3]);
+                self.noise.write_length(value.into(), suppress);
+            }
             0x4010 => self.dmc.write_dmc_irq_loop_freq(value.into()),
             0x4011 => self.dmc.write_dac(value.into()),
             0x4012 => self.dmc.write_sample_address(value),
@@ -229,6 +249,12 @@ impl<D: AudioDriver> Apu<D> {
     }
 
     fn tick_length_and_sweep(&mut self) {
+        self.length_race_clobber = [
+            self.pulse1.length_will_decrement(),
+            self.pulse2.length_will_decrement(),
+            self.triangle.length_will_decrement(),
+            self.noise.length_will_decrement(),
+        ];
         self.pulse1.tick_length_and_sweep();
         self.pulse2.tick_length_and_sweep();
         self.triangle.tick_length();

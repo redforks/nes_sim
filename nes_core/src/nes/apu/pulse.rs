@@ -131,9 +131,11 @@ impl Pulse {
         self.timer.set_period_low(value);
     }
 
-    pub fn write_timer_high(&mut self, load: LengthTimerHigh3Bits) {
+    pub fn write_timer_high(&mut self, load: LengthTimerHigh3Bits, suppress_length: bool) {
         self.timer.set_period_high(load.high3());
-        self.length.load(load);
+        if !suppress_length {
+            self.length.load(load);
+        }
         self.envelope.request_reset();
         // When the fourth register is written to, the sequencer is restarted.
         self.sequencer.reset();
@@ -161,6 +163,10 @@ impl Pulse {
 
     pub fn status_bit(&self) -> bool {
         !self.length.is_zero()
+    }
+
+    pub fn length_will_decrement(&self) -> bool {
+        self.length.will_decrement()
     }
 }
 

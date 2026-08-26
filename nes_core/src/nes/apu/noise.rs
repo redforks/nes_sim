@@ -76,9 +76,15 @@ impl Noise {
         self.shifter.mode = if value.is_halt() { 1 } else { 0 };
     }
 
-    pub fn write_length(&mut self, value: NoiseLength) {
-        self.length.load(value);
+    pub fn write_length(&mut self, value: NoiseLength, suppress_length: bool) {
+        if !suppress_length {
+            self.length.load(value);
+        }
         self.envelope.request_reset();
+    }
+
+    pub fn length_will_decrement(&self) -> bool {
+        self.length.will_decrement()
     }
 
     pub fn tick_timer(&mut self) {

@@ -367,7 +367,7 @@ fn noise_shift_rate_matches_documented_intervals() {
         // --lc vvvv: length halt, constant-volume mode, volume 15.
         noise.write_envelope(0x3F.into());
         // lllll___ = 31: nonzero length counter keeps the output gate open.
-        noise.write_length(0xF8.into());
+        noise.write_length(0xF8.into(), false);
         noise.write_period(index.into());
 
         let total_ticks = 3 * interval as usize + 8;

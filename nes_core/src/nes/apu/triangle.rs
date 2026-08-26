@@ -86,9 +86,11 @@ impl Triangle {
         self.timer.set_period_low(value);
     }
 
-    pub fn write_timer_high(&mut self, load: LengthTimerHigh3Bits) {
+    pub fn write_timer_high(&mut self, load: LengthTimerHigh3Bits, suppress_length: bool) {
         self.timer.set_period_high(load.high3());
-        self.length.load(load);
+        if !suppress_length {
+            self.length.load(load);
+        }
 
         // When register $400B is written to, the halt flag is set.
         self.linear.set_halt();
@@ -98,6 +100,10 @@ impl Triangle {
         if self.timer.tick() && !self.length.is_zero() && self.linear.counter > 0 {
             self.sequencer.tick();
         }
+    }
+
+    pub fn length_will_decrement(&self) -> bool {
+        self.length.will_decrement()
     }
 
     pub fn tick_linear(&mut self) {

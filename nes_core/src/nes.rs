@@ -40,6 +40,15 @@ pub struct NesMcu<R: Render, D: AudioDriver> {
     /// contiguous set rather than once per read.
     joypad1_oe: bool,
     joypad2_oe: bool,
+    /// Length-counter register writes ($4000/$4003/…) queued to land one CPU
+    /// cycle after their store instruction: on hardware the 6502 write
+    /// completes on the following phi2 edge, so a scheduled length clock
+    /// sharing that boundary resolves BEFORE the write does — blargg's
+    /// len_halt/len_reload timing races. Entries are (apply_at_tick,
+    /// address, value), kept in ascending time order.
+    deferred_apu_writes: Vec<(u64, u16, u8)>,
+    /// Most recent system tick seen by [`Self::tick_apu`].
+    last_apu_tick: u64,
 }
 
 impl<R: Render, D: AudioDriver> NesMcu<R, D> {
@@ -57,10 +66,14 @@ impl<R: Render, D: AudioDriver> NesMcu<R, D> {
             open_bus: 0,
             joypad1_oe: false,
             joypad2_oe: false,
+            deferred_apu_writes: Vec::new(),
+            last_apu_tick: 0,
         }
     }
 
     pub fn reset(&mut self) {
+        self.deferred_apu_writes.clear();
+        self.last_apu_tick = 0;
         self.ppu.reset();
         self.apu.reset();
     }
@@ -74,7 +87,16 @@ impl<R: Render, D: AudioDriver> NesMcu<R, D> {
     }
 
     pub fn tick_apu(&mut self, clock: SystemClock) {
+        self.last_apu_tick = clock.cycles();
         self.apu.tick(clock);
+        while self
+            .deferred_apu_writes
+            .first()
+            .is_some_and(|(at, _, _)| *at <= clock.cycles())
+        {
+            let (_, address, value) = self.deferred_apu_writes.remove(0);
+            self.apu.write(address, value);
+        }
     }
 
     pub fn apu_irq_pending(&self) -> bool {
@@ -265,6 +287,10 @@ impl<R: Render, D: AudioDriver> Mcu for NesMcu<R, D> {
             0x4000..=0x401f => match address {
                 0x4014 => self.ppu_dma(value),
                 0x4016 => self.controller.write(address, value),
+                0x4000 | 0x4003 | 0x4004 | 0x4007 | 0x400B | 0x400F | 0x4013 => {
+                    self.deferred_apu_writes
+                        .push((self.last_apu_tick + 3, address, value));
+                }
                 _ => self.apu.write(address, value),
             },
             // Unallocated I/O space: writes are ignored

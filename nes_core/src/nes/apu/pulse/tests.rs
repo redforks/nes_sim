@@ -188,3 +188,44 @@ fn sweep_second_channel_affects_negate_subtraction() {
     assert_eq!(period1, expected1);
     assert_eq!(period2, expected2);
 }
+
+fn make_load_bits(idx: u8) -> LengthTimerHigh3Bits {
+    LengthTimerHigh3Bits::new().with_length_idx(idx)
+}
+
+// blargg's 11.len_reload_timing pins how $4003 reloads race a length clock:
+// a write landing on the clock tick is clobbered by the hardware
+// read-modify-write when the counter was nonzero (suppressed here), but
+// reloads normally otherwise. The nes.rs deferral layer decides which writes
+// are suppressed; these tests pin the channel-side contract.
+#[test]
+fn clobbered_write_skips_length_reload() {
+    let mut pulse = Pulse::new(false);
+    pulse.set_enabled(true);
+    pulse.write_control(PulseControlBits::new());
+    assert!(!pulse.status_bit(), "counter starts at zero");
+
+    // Length table index $08 = 16: an unmistakable nonzero reload value.
+    pulse.write_timer_high(make_load_bits(0x08), true);
+    assert!(!pulse.status_bit(), "clobbered reload must not load");
+}
+
+#[test]
+fn unclobbered_write_reloads_length_counter() {
+    let mut pulse = Pulse::new(false);
+    pulse.set_enabled(true);
+    pulse.write_control(PulseControlBits::new());
+
+    pulse.write_timer_high(make_load_bits(0x18), false); // table[$18] = 2
+    assert!(pulse.status_bit());
+    assert!(
+        pulse.length_will_decrement(),
+        "unhalted nonzero counter clocks"
+    );
+
+    pulse.write_control(PulseControlBits::new().with_loop_and_is_halt(true));
+    assert!(
+        !pulse.length_will_decrement(),
+        "halt flag must suspend length clocking"
+    );
+}

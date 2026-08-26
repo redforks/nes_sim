@@ -73,6 +73,13 @@ impl LengthControl {
         self.counter == 0
     }
 
+    /// True when a length clock on this channel would decrement the counter
+    /// (halt clear, counter nonzero). Detects the reload-vs-clock same-tick
+    /// race blargg's 11.len_reload_timing pins down.
+    pub fn will_decrement(&self) -> bool {
+        !self.is_halt && self.counter > 0
+    }
+
     /// Load counter from length timer high 5 bits. Length timer high also reloads the counter.
     pub fn load(&mut self, bits: impl GetLengthIndex) {
         if self.enabled {
