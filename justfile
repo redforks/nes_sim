@@ -178,6 +178,48 @@ blargg_nes_cpu_test5: blargg_nes_cpu_test5_cpu blargg_nes_cpu_test5_official
 [parallel]
 blargg_ppu_tests: palette_ram power_up_palette sprite_ram vbl_clear_time vram_access
 
+# blargg's 2005.07.30 APU tests (length counter, frame counter, IRQ timing):
+# verdict is an on-screen result code where "$01" = all tests passed (per
+# tests.txt), decoded by the NametableConsole magic-success-word plugin (see
+# nes_cpu_test/src/image.rs). len_halt_timing ($03) and len_reload_timing
+# ($04) currently expose real nes_core length-counter timing deficiencies;
+# they stay out of passed_apu_tests until fixed.
+blargg_apu_len_ctr: build_nes_cpu_test
+    {{ nes_cpu_test }} --quiet -f ../nes-test-roms/blargg_apu_2005.07.30/01.len_ctr.nes
+
+blargg_apu_len_table: build_nes_cpu_test
+    {{ nes_cpu_test }} --quiet -f ../nes-test-roms/blargg_apu_2005.07.30/02.len_table.nes
+
+blargg_apu_irq_flag: build_nes_cpu_test
+    {{ nes_cpu_test }} --quiet -f ../nes-test-roms/blargg_apu_2005.07.30/03.irq_flag.nes
+
+blargg_apu_clock_jitter: build_nes_cpu_test
+    {{ nes_cpu_test }} --quiet -f ../nes-test-roms/blargg_apu_2005.07.30/04.clock_jitter.nes
+
+blargg_apu_len_timing_mode0: build_nes_cpu_test
+    {{ nes_cpu_test }} --quiet -f ../nes-test-roms/blargg_apu_2005.07.30/05.len_timing_mode0.nes
+
+blargg_apu_len_timing_mode1: build_nes_cpu_test
+    {{ nes_cpu_test }} --quiet -f ../nes-test-roms/blargg_apu_2005.07.30/06.len_timing_mode1.nes
+
+blargg_apu_irq_flag_timing: build_nes_cpu_test
+    {{ nes_cpu_test }} --quiet -f ../nes-test-roms/blargg_apu_2005.07.30/07.irq_flag_timing.nes
+
+blargg_apu_irq_timing: build_nes_cpu_test
+    {{ nes_cpu_test }} --quiet -f ../nes-test-roms/blargg_apu_2005.07.30/08.irq_timing.nes
+
+blargg_apu_reset_timing: build_nes_cpu_test
+    {{ nes_cpu_test }} --quiet -f ../nes-test-roms/blargg_apu_2005.07.30/09.reset_timing.nes
+
+blargg_apu_len_halt_timing: build_nes_cpu_test
+    {{ nes_cpu_test }} --quiet -f ../nes-test-roms/blargg_apu_2005.07.30/10.len_halt_timing.nes
+
+blargg_apu_len_reload_timing: build_nes_cpu_test
+    {{ nes_cpu_test }} --quiet -f ../nes-test-roms/blargg_apu_2005.07.30/11.len_reload_timing.nes
+
+[parallel]
+blargg_apu_tests: blargg_apu_len_ctr blargg_apu_len_table blargg_apu_irq_flag blargg_apu_clock_jitter blargg_apu_len_timing_mode0 blargg_apu_len_timing_mode1 blargg_apu_irq_flag_timing blargg_apu_irq_timing blargg_apu_reset_timing blargg_apu_len_halt_timing blargg_apu_len_reload_timing
+
 sprite_hit_tests_1: build_nes_cpu_test
     {{ nes_cpu_test }} --quiet -f ../nes-test-roms/sprite_hit_tests_2005.10.05/01.basics.nes
 
@@ -587,7 +629,7 @@ passed_cpu_tests: cpu-test instr_misc instr_test-v5 instr_test-v3 instr_timing c
 passed_ppu_tests: oam_read oam_stress ppu_open_bus ppu_read_buffer sprite_hit_tests sprite_overflow_tests scanline sprdma_and_dmc_dma vbl_nmi_timing ppu_vbl_nmi spr_hit_extra imported_ppu_visual palette_ram power_up_palette sprite_ram vbl_clear_time vram_access
 
 [parallel]
-passed_apu_tests: apu_mixer apu_reset apu_test dmc_dma_during_read4 imported_apu_misc passed_audio_manual_ok
+passed_apu_tests: apu_mixer apu_reset apu_test dmc_dma_during_read4 imported_apu_misc passed_audio_manual_ok blargg_apu_len_ctr blargg_apu_len_table blargg_apu_irq_flag blargg_apu_clock_jitter blargg_apu_len_timing_mode0 blargg_apu_len_timing_mode1 blargg_apu_irq_flag_timing blargg_apu_irq_timing blargg_apu_reset_timing
 
 [parallel]
 passed_rom_tests: passed_cpu_tests passed_ppu_tests passed_apu_tests passed_mapper passed_input_tests

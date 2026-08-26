@@ -167,11 +167,23 @@ impl Image {
                 .to_str()
                 .is_some_and(|p| p.contains("blargg_ppu_tests_2005.09.15b"))
             {
-                return self.create_blargg_ppu_2005_machine(
+                return self.create_blargg_result_code_machine(
                     ines,
                     quiet,
                     start_pc,
                     max_instructions,
+                    Duration::from_secs(5),
+                );
+            } else if file_name
+                .to_str()
+                .is_some_and(|p| p.contains("blargg_apu_2005.07.30"))
+            {
+                return self.create_blargg_result_code_machine(
+                    ines,
+                    quiet,
+                    start_pc,
+                    max_instructions,
+                    Duration::from_secs(2),
                 );
             } else if file_name
                 .to_str()
@@ -302,27 +314,30 @@ impl Image {
         }
         MachineWrapper::INes(Box::new(machine))
     }
-    /// blargg's 2005.09.15b NTSC PPU tests: no $6000 status protocol — each
-    /// prints a result code as ASCII nametable text ("$01" = all tests
-    /// passed, per the set's readme.txt) and then dead-loops in a bare
-    /// `jmp self`, which DetectDeadLoop would report as a spurious exit-0
-    /// pass on any ROM whose final code differs from the magic word (e.g.
-    /// power_up_palette did render "$02" before nes_core adopted blargg's
-    /// power-up palette). So this family omits DetectDeadLoop: the
-    /// NametableConsole magic word is the only success verdict, and the
-    /// Timeout turns any other final code — or a hang before printing —
-    /// into a nonzero exit.
-    fn create_blargg_ppu_2005_machine(
+    /// blargg's 2005-era test ROM families that report a numeric result code
+    /// as ASCII nametable text ("$01" = all tests passed, per each set's
+    /// readme/tests notes) instead of any $6000 status protocol: the NTSC PPU
+    /// set (2005.09.15b, timeout 5 s) and the APU length/frame-counter set
+    /// (2005.07.30, timeout 2 s). Each ROM prints its code and then
+    /// dead-loops in a bare `jmp self`, which DetectDeadLoop would report as
+    /// a spurious exit-0 pass on any ROM whose final code differs from the
+    /// magic word (e.g. power_up_palette did render "$02" before nes_core
+    /// adopted blargg's power-up palette). So this family omits
+    /// DetectDeadLoop: the NametableConsole magic word is the only success
+    /// verdict, and the Timeout turns any other final code — or a hang
+    /// before printing — into a nonzero exit.
+    fn create_blargg_result_code_machine(
         &self,
         ines: &INesFile,
         quiet: bool,
         start_pc: Option<u16>,
         max_instructions: u64,
+        timeout: Duration,
     ) -> MachineWrapper {
         let mut plugins: Vec<Box<dyn Plugin<nes_core::nes::NesMcu<(), ()>>>> = vec![
             Box::new(NesReportPlugin::create(quiet)),
             Box::new(NametableConsole::with_magic_success_word("$01")),
-            Box::new(Timeout::new(Duration::from_secs(5))),
+            Box::new(Timeout::new(timeout)),
         ];
         if max_instructions > 0 {
             plugins.push(Box::new(MaxInstructions::new(max_instructions)));
