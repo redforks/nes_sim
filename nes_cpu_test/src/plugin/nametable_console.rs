@@ -3,6 +3,8 @@ use is_terminal::IsTerminal;
 use nes_core::nes::NesMcu;
 use nes_core::render::Render;
 use nes_core::{Cpu, ExecuteResult, Plugin, SystemClock};
+use std::collections::HashMap;
+use std::collections::HashSet;
 use std::sync::LazyLock;
 
 static IS_TERMINAL: LazyLock<bool> = LazyLock::new(|| std::io::stdout().is_terminal());
@@ -29,7 +31,7 @@ pub struct NametableConsole {
     stop: Option<ExecuteResult>,
     decoder: Decoder,
     success_condition: SuccessCondition,
-    last: String,
+    last_lines: Vec<String>,
     sample_without_rendering: bool,
     full_nametable_scan: bool,
 }
@@ -40,7 +42,7 @@ impl NametableConsole {
             stop: None,
             decoder: Decoder::Plain,
             success_condition: SuccessCondition::PassedOrFailed,
-            last: String::new(),
+            last_lines: Vec::new(),
             sample_without_rendering: false,
             full_nametable_scan: false,
         }
@@ -106,28 +108,64 @@ impl<R: Render> Plugin<NesMcu<R, ()>> for NametableConsole {
         }
 
         let buf = read_console(cpu, &self.decoder, self.full_nametable_scan);
-        if buf.is_empty() || buf == self.last {
+        if buf.is_empty() {
             return;
         }
 
-        if !self.last.is_empty() && buf.starts_with(&self.last[..]) {
-            let s = &buf[self.last.len()..];
-            if !s.is_empty() {
-                output(s);
-                output("\n");
-            }
-        } else {
-            output(&buf);
-            output("\n");
+        // Rolling diff against the last sampled screen: print only genuinely
+        // new lines (right-trimmed, empty rows dropped), so ROMs that scroll
+        // or re-dump their screen don't repeat themselves.
+        let (lines, transcript) = next_transcript(&self.last_lines, &buf);
+        if lines == self.last_lines {
+            return;
         }
 
+        output(transcript); // empty when every sampled line was already printed
         self.stop = evaluate_result(&buf, &self.success_condition);
-        self.last = buf;
+        self.last_lines = lines;
     }
 
     fn should_stop(&self) -> ExecuteResult {
         self.stop.unwrap_or(ExecuteResult::Continue)
     }
+}
+
+/// Normalizes a raw console buffer into right-trimmed, non-empty lines and
+/// computes what to print given the previously seen lines: a line prints once
+/// when it first appears. Lines are deduplicated within a single sample
+/// (address-space folding makes full-nametable scans see the same row several
+/// times) and against the previous sample's line set, so screens that scroll
+/// or re-dump themselves print each distinct line exactly once. Returns the
+/// updated state and the transcript chunk to emit (empty when nothing is
+/// new). Pure, so the rolling-diff policy is unit-testable without a machine.
+fn next_transcript(last: &[String], buf: &str) -> (Vec<String>, String) {
+    let mut counts: HashMap<&str, usize> = HashMap::new();
+    for line in last {
+        *counts.entry(line.as_str()).or_default() += 1;
+    }
+    let mut fresh = Vec::new();
+    let mut lines = Vec::with_capacity(buf.lines().count());
+    let mut seen = HashSet::new();
+    for line in buf
+        .lines()
+        .map(str::trim_end)
+        .filter(|line| !line.is_empty())
+    {
+        if !seen.insert(line) {
+            continue;
+        }
+        match counts.get_mut(line) {
+            Some(0) | None => fresh.push(line),
+            Some(count) => *count -= 1,
+        }
+        lines.push(line.to_owned());
+    }
+    if fresh.is_empty() {
+        return (lines, String::new());
+    }
+    let mut transcript = fresh.join("\n");
+    transcript.push('\n');
+    (lines, transcript)
 }
 
 fn read_console<R: Render>(
@@ -332,5 +370,53 @@ mod tests {
             evaluate_result("Running tests...\nTest: 01-implied\n", &cond),
             None
         );
+    }
+
+    #[test]
+    fn transcript_drops_blank_and_padded_rows() {
+        let (lines, out) = next_transcript(&[], "  \n   Running tests...   \n\n\n 01-implied \n");
+        assert_eq!(out, "   Running tests...\n 01-implied\n");
+        assert_eq!(lines, ["   Running tests...", " 01-implied"]);
+    }
+
+    #[test]
+    fn transcript_suppresses_unchanged_screen_resamples() {
+        let screen = "-----------------------------\n 01-implied\n 02-immediate\n";
+        let (state, out) = next_transcript(&[], screen);
+        assert_eq!(
+            out,
+            "-----------------------------\n 01-implied\n 02-immediate\n"
+        );
+        let (_, out) = next_transcript(&state, screen);
+        assert_eq!(out, "");
+    }
+
+    #[test]
+    fn transcript_emits_only_new_line_when_screen_scrolls() {
+        let (s1, _) = next_transcript(&[], "A\nB\nC\n");
+        let (s2, out) = next_transcript(&s1, "B\nC\nD\n");
+        assert_eq!(out, "D\n");
+        let (_, out) = next_transcript(&s2, "C\nD\nA\n");
+        assert_eq!(out, "A\n");
+    }
+
+    #[test]
+    fn transcript_collapses_lines_duplicated_within_one_sample() {
+        // Full-nametable scans fold mirrored pages, duplicating every row;
+        // one sample must print each distinct line exactly once.
+        let (_, out) = next_transcript(&[], "A\nA\nA\nA\n");
+        assert_eq!(out, "A\n");
+        let (s1, _) = next_transcript(&[], "A\nB\nC\nC\n");
+        let (_, out) = next_transcript(&s1, "B\nC\nD\nD\n");
+        assert_eq!(out, "D\n");
+    }
+
+    #[test]
+    fn transcript_state_tracks_lines_scrolled_off_screen() {
+        let (s1, _) = next_transcript(&[], "A\nB\n");
+        let (s2, out) = next_transcript(&s1, "B\n");
+        assert_eq!(out, "");
+        let (_, out) = next_transcript(&s2, "B\nA\n");
+        assert_eq!(out, "A\n");
     }
 }
