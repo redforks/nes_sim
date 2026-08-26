@@ -41,7 +41,7 @@ impl Mixer {
         let output = input - self.dc_last_input + (0.995 * self.dc_last_output);
         self.dc_last_input = input;
         self.dc_last_output = output;
-        (output * 2.0).clamp(-1.0, 1.0)
+        output.clamp(-1.0, 1.0)
     }
 }
 
