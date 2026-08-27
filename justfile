@@ -614,6 +614,20 @@ triangle_pitch: build_nes_cpu_test
 [parallel]
 passed_audio_manual_ok: noise_pitch square_pitch triangle_pitch
 
+# Damian Yerrick's volume_tests ROM: no self-reporting protocol; the README's
+# intent (relative channel-volume balance across the 12-tone pattern with
+# channel 5 stepping 0/48/96) is checked here by pinning mixer output: run is
+# byte-compared against a blessed capture (test-roms/apu/volume_tests/
+# volumes.wav), like the *_pitch tests above. The ROM plays nothing until A is
+# pressed and then loops forever, so --press a@30 + --frames 600 are frozen
+# parts of the capture contract; the dump necessarily cuts off mid-pattern.
+volumes: build_nes_cpu_test
+    timeout 15 {{ nes_cpu_test }} --quiet --press a@30 --frames 600 --dump-audio /tmp/volumes.wav -f ../nes-test-roms/volume_tests/volumes.nes
+    cmp /tmp/volumes.wav test-roms/apu/volume_tests/volumes.wav
+
+[parallel]
+volume_tests: volumes
+
 # Zapper light-gun tests (tetanes input suite): nes_core emulates the Zapper
 # on $4017 (trigger bit + light sense sampled from the rendered framebuffer).
 # The ROMs self-report only via screen + $4011 DAC "clicks", so the harness
@@ -651,7 +665,7 @@ passed_cpu_tests: cpu-test instr_misc instr_test-v5 instr_test-v3 instr_timing c
 passed_ppu_tests: oam_read oam_stress ppu_open_bus ppu_read_buffer sprite_hit_tests sprite_overflow_tests scanline sprdma_and_dmc_dma vbl_nmi_timing ppu_vbl_nmi nmi_sync spr_hit_extra imported_ppu_visual palette_ram power_up_palette sprite_ram vbl_clear_time vram_access
 
 [parallel]
-passed_apu_tests: apu_mixer apu_reset apu_test dmc_dma_during_read4 imported_apu_misc passed_audio_manual_ok blargg_apu_tests dmc_tests dpcmletterbox
+passed_apu_tests: apu_mixer apu_reset apu_test dmc_dma_during_read4 imported_apu_misc passed_audio_manual_ok blargg_apu_tests dmc_tests dpcmletterbox volume_tests
 
 [parallel]
 passed_rom_tests: passed_cpu_tests passed_ppu_tests passed_apu_tests passed_mapper passed_input_tests
