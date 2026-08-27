@@ -190,10 +190,13 @@ pub struct Ppu<R: Render = ()> {
     /// buffer refill could complete.
     ppudata_last_return: u8,
     /// Two-dot pixel output pipeline: pixels rendered on visible dots wait
-    /// here (with their target coordinates) before committing to the
-    /// renderer, so CPU register writes landing in between color them —
-    /// see the commit site in [`Ppu::tick`].
-    pixel_pipeline: std::collections::VecDeque<(u8, u16, u8)>,
+    /// here (due cycle, target coordinates, palette index) before committing
+    /// to the renderer, so CPU register writes landing in between color them.
+    /// Commit is due-cycle driven: a scanline's final two pixels commit on
+    /// that scanline's own dots +2 — not on the next line's first pushes —
+    /// so a $2001 write in the fetch/idle phase cannot retro-recolor them
+    /// (DPCM Letterbox depends on this).
+    pixel_pipeline: std::collections::VecDeque<(u64, u8, u16, u8)>,
 }
 
 /// PPU registers are mirrored every 8 bytes in range $2000-$3FFF;
@@ -473,10 +476,14 @@ impl<R: Render> Ppu<R> {
                 self.palette.disabled_color_index(self.registers.vram_addr)
             };
             self.pixel_pipeline
-                .push_back((x, self.timing.scanline, pixel_idx));
+                .push_back((self.cycle + 2, x, self.timing.scanline, pixel_idx));
         }
-        if self.pixel_pipeline.len() > 2 {
-            if let Some((x, y, pixel_idx)) = self.pixel_pipeline.pop_front() {
+        while self
+            .pixel_pipeline
+            .front()
+            .is_some_and(|(due, ..)| *due <= self.cycle)
+        {
+            if let Some((_, x, y, pixel_idx)) = self.pixel_pipeline.pop_front() {
                 // Hardware grayscale ANDs the 6-bit palette entry with $30
                 // before the color lookup ($3F black renders as $30 white);
                 // emphasis tints are analog effects on the looked-up RGB.
@@ -510,7 +517,7 @@ impl<R: Render> Ppu<R> {
         if self.timing.enter_vblank() {
             // Drain the output pipeline: the frame is presented only once
             // its last pixels have left it.
-            while let Some((x, y, pixel_idx)) = self.pixel_pipeline.pop_front() {
+            while let Some((_, x, y, pixel_idx)) = self.pixel_pipeline.pop_front() {
                 let pixel_idx = self.registers.mask.grayscale_index(pixel_idx);
                 let pixel = self
                     .registers

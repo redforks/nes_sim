@@ -142,6 +142,23 @@ impl Image {
                 );
             } else if file_name
                 .to_str()
+                .is_some_and(|p| p.contains("dpcmletterbox"))
+            {
+                // Damian Yerrick's DPCM Letterbox demo (NROM): visual-only,
+                // no self-reporting protocol. Uses the DMC IRQ as a raster
+                // split timer (top and bottom letterbox bands), so success is
+                // a blessed Mesen-rendered frame under png-exps/ matched at
+                // any point in the demo's scroll cycle.
+                return self.create_exp_png_machine(
+                    ines,
+                    quiet,
+                    start_pc,
+                    max_instructions,
+                    vec!["dpcmletterbox.png".to_string()],
+                    Duration::from_secs(2),
+                );
+            } else if file_name
+                .to_str()
                 .is_some_and(|p| p.contains("test-roms/ppu/"))
                 && matches!(
                     f,
