@@ -649,7 +649,7 @@ impl PlayMovieAction {
             None
         };
         let target_frame_duration = Duration::new(0, 1_000_000_000u32 / 60);
-        let mut frame_offset = 0;
+        let mut frame_offset = 1;
         let mut extra_frames_remaining = self.extra_frames;
 
         'running: loop {
