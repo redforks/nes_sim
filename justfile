@@ -92,6 +92,21 @@ vbl_nmi_timing_6: build_nes_cpu_test
 vbl_nmi_timing_7: build_nes_cpu_test
     {{ nes_cpu_test }} --quiet -f ../nes-test-roms/vbl_nmi_timing/7.nmi_timing.nes
 
+dmc_tests_buffer_retained: build_nes_cpu_test
+    {{ nes_cpu_test }} --quiet -f ../nes-test-roms/dmc_tests/buffer_retained.nes
+
+dmc_tests_latency: build_nes_cpu_test
+    {{ nes_cpu_test }} --quiet -f ../nes-test-roms/dmc_tests/latency.nes
+
+dmc_tests_status: build_nes_cpu_test
+    {{ nes_cpu_test }} --quiet -f ../nes-test-roms/dmc_tests/status.nes
+
+dmc_tests_status_irq: build_nes_cpu_test
+    {{ nes_cpu_test }} --quiet -f ../nes-test-roms/dmc_tests/status_irq.nes
+
+[parallel]
+dmc_tests: dmc_tests_buffer_retained dmc_tests_latency dmc_tests_status dmc_tests_status_irq
+
 [parallel]
 vbl_nmi_timing: vbl_nmi_timing_1 vbl_nmi_timing_2 vbl_nmi_timing_3 vbl_nmi_timing_4 vbl_nmi_timing_5 vbl_nmi_timing_6 vbl_nmi_timing_7
 
@@ -566,7 +581,6 @@ ppu_palette: build_nes_cpu_test
 [parallel]
 imported_ppu_visual: ppu_240pee ppu_color ntsc_torture ppu_palette
 
-
 # Pitch/env/sweep audio tests: no self-reporting protocol (upstream tetanes
 # leaves them ignored too). Each ROM plays one steady tone next to a
 # software-timed $4011 reference square, so the register-derived pitches are
@@ -629,7 +643,7 @@ passed_cpu_tests: cpu-test instr_misc instr_test-v5 instr_test-v3 instr_timing c
 passed_ppu_tests: oam_read oam_stress ppu_open_bus ppu_read_buffer sprite_hit_tests sprite_overflow_tests scanline sprdma_and_dmc_dma vbl_nmi_timing ppu_vbl_nmi nmi_sync spr_hit_extra imported_ppu_visual palette_ram power_up_palette sprite_ram vbl_clear_time vram_access
 
 [parallel]
-passed_apu_tests: apu_mixer apu_reset apu_test dmc_dma_during_read4 imported_apu_misc passed_audio_manual_ok blargg_apu_tests
+passed_apu_tests: apu_mixer apu_reset apu_test dmc_dma_during_read4 imported_apu_misc passed_audio_manual_ok blargg_apu_tests dmc_tests
 
 [parallel]
 passed_rom_tests: passed_cpu_tests passed_ppu_tests passed_apu_tests passed_mapper passed_input_tests
