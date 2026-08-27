@@ -17,14 +17,14 @@ const AUDIO_MAX_QUEUED_BYTES: u32 = (AUDIO_SAMPLE_RATE as u32) * 4 / 2;
 
 pub fn map_keycode_to_button(keycode: Keycode) -> Option<Button> {
     match keycode {
-        Keycode::Z => Some(Button::A),
-        Keycode::X => Some(Button::B),
+        Keycode::Z | Keycode::M => Some(Button::A),
+        Keycode::X | Keycode::W => Some(Button::B),
         Keycode::Space => Some(Button::Select),
         Keycode::Return => Some(Button::Start),
-        Keycode::Up => Some(Button::Up),
-        Keycode::Down => Some(Button::Down),
-        Keycode::Left => Some(Button::Left),
-        Keycode::Right => Some(Button::Right),
+        Keycode::Up | Keycode::E => Some(Button::Up),
+        Keycode::Down | Keycode::J => Some(Button::Down),
+        Keycode::Left | Keycode::Q => Some(Button::Left),
+        Keycode::Right | Keycode::K => Some(Button::Right),
         _ => None,
     }
 }
