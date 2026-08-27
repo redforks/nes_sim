@@ -250,6 +250,9 @@ impl<R: Render> Ppu<R> {
         self.registers.write_scroll(0);
         self.rendering_enabled_at_scanline_start = false;
         self.ren_latched_at_338 = false;
+        // A reset landing mid-frame must not let already-rendered pixels of
+        // the old frame commit into the fresh frame's framebuffer.
+        self.pixel_pipeline.clear();
     }
 
     pub fn timing(&self) -> &Timing {

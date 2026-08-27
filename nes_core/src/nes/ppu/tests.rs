@@ -323,6 +323,60 @@ fn test_tick_grayscale_masks_palette_index_before_lookup(entry: u8, expected: u8
 }
 
 #[test]
+fn test_reset_clears_pending_pixel_pipeline() {
+    let mut ppu = Ppu {
+        ..Ppu::new(
+            ImageRender::default_dimension(),
+            Mirroring::Horizontal,
+            Box::new(TestCartridge::new()),
+        )
+    };
+    ppu.palette.write(0x3f00, 0x21);
+    ppu.registers.vram_addr = 0x3f10;
+
+    // Land mid-frame on a visible scanline and drive dots 0-3: the idle
+    // slot, two visible dots whose pixels enter the two-dot output
+    // pipeline, and the tick on which the first pixel commits.
+    ppu.timing.scanline = 100;
+    ppu.timing.dot = 0;
+    ppu.tick();
+    ppu.tick();
+    ppu.tick();
+    ppu.tick();
+
+    {
+        let image = ppu.renderer.borrow_image();
+        // The dot-1 pixel committed before the reset...
+        assert_eq!(
+            image.get_pixel(0, 100),
+            &image::Rgba(ppu.color_theme.color(0x21).0)
+        );
+        // ...and the dot-2 pixel is still pending.
+        assert_eq!(image.get_pixel(1, 100), &image::Rgba([0, 0, 0, 0]));
+    }
+
+    ppu.reset();
+
+    // Post-reset rendering uses a different backdrop color so stale and
+    // fresh output are distinguishable.
+    ppu.palette.write(0x3f00, 0x16);
+    for _ in 0..3 {
+        ppu.tick();
+    }
+
+    let image = ppu.renderer.borrow_image();
+    // The pending pre-reset pixel for (1, 100) must never commit into the
+    // fresh post-reset frame.
+    assert_eq!(image.get_pixel(1, 100), &image::Rgba([0, 0, 0, 0]));
+    // Post-reset rendering at the reset scanline still commits normally
+    // (the first post-reset push is dot 4's pixel, x=3).
+    assert_eq!(
+        image.get_pixel(3, 100),
+        &image::Rgba(ppu.color_theme.color(0x16).0)
+    );
+}
+
+#[test]
 fn test_render_pixel_transparent_bg_and_sprite_use_backdrop_color() {
     let mut ppu = create_test_ppu_with_mask(
         PpuMask::new()
