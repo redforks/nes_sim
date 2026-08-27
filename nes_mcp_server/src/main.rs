@@ -1,11 +1,12 @@
 use anyhow::Result;
 use nes_mcp_protocol::{Request, Response};
 use rmcp::{
+    ServerHandler, ServiceExt,
     handler::server::{router::tool::ToolRouter, tool::Parameters},
     model::{PaginatedRequestParam, ServerCapabilities, ServerInfo},
     schemars,
     service::{RequestContext, RoleServer},
-    tool, tool_handler, tool_router, ServerHandler, ServiceExt,
+    tool, tool_handler, tool_router,
 };
 use serde::Deserialize;
 use std::future::Future;
@@ -14,7 +15,7 @@ use std::sync::Arc;
 use std::time::Duration;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::process::Command;
-use tokio::signal::unix::{signal, SignalKind};
+use tokio::signal::unix::{SignalKind, signal};
 use tokio::sync::Mutex;
 use tracing::{error, info, warn};
 
@@ -136,10 +137,13 @@ impl NesMcpServer {
 
     #[tool(description = "Start the NES emulator with the specified ROM/image file path.")]
     async fn start(&self, Parameters(StartParams { rom_path }): Parameters<StartParams>) -> String {
-        // Validate the ROM path exists
-        if !std::path::Path::new(&rom_path).exists() {
-            return format!("Error: ROM file not found: {}", rom_path);
-        }
+        // Resolve relative paths against our cwd into an absolute path: the
+        // child emulator re-anchors relative paths against the workspace root,
+        // not against its own working directory.
+        let rom_path = match std::fs::canonicalize(&rom_path) {
+            Ok(path) => path.to_string_lossy().into_owned(),
+            Err(_) => return format!("Error: ROM file not found: {}", rom_path),
+        };
 
         // Store the ROM path
         *self.rom_path.lock().await = Some(rom_path.clone());

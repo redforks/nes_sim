@@ -6,6 +6,7 @@
 //! 3. Checking the process can be shut down cleanly
 
 use std::io::{BufRead, BufReader, Write};
+use std::path::PathBuf;
 use std::process::{Command, Stdio};
 use std::thread;
 use std::time::Duration;
@@ -14,24 +15,22 @@ type TestResult = Result<(), Box<dyn std::error::Error>>;
 
 #[test]
 fn test_mcp_server_basics() -> TestResult {
-    // Find the nestest ROM
-    let rom_paths = vec![
-        "../nes-test-roms/other/nestest.nes",
-        "../../nes-test-roms/other/nestest.nes",
-        "/home/forks/rust/nes-test-roms/other/nestest.nes",
+    // Locate nestest.nes relative to this crate, independent of the cargo invocation cwd
+    let rom_candidates = vec![
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../nes-test-roms/other/nestest.nes"),
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../nes-test-roms/other/nestest.nes"),
     ];
 
-    let rom_path = rom_paths
-        .into_iter()
-        .find(|p| std::path::Path::new(p).exists());
+    let rom_path = rom_candidates.into_iter().find(|p| p.exists());
 
     let rom_path = match rom_path {
-        Some(p) => p.to_string(),
+        Some(p) => p,
         None => {
             eprintln!("Warning: nestest.nes not found, skipping test");
             return Ok(());
         }
     };
+    let rom_path = rom_path.to_string_lossy().into_owned();
 
     println!("Testing MCP server with ROM: {}", rom_path);
 
@@ -198,14 +197,25 @@ fn test_mcp_server_basics() -> TestResult {
             if let Ok(response) = serde_json::from_str::<serde_json::Value>(trimmed) {
                 println!("Got start response: {}", response);
 
-                // Check for success or error
-                if response["result"].is_object()
-                    || (response["error"].is_object()
-                        && response["error"]["message"]
-                            .as_str()
-                            .map(|m| m.contains("success") || m.contains("started"))
-                            .unwrap_or(false))
-                {
+                // Success requires the tool's text output confirming the
+                // TCP server came up; any JSON-RPC error is an immediate fail.
+                if let Some(msg) = response["error"]["message"].as_str() {
+                    eprintln!("start tool returned error: {}", msg);
+                    break;
+                }
+
+                let text = response["result"]["content"]
+                    .as_array()
+                    .map(|items| {
+                        items
+                            .iter()
+                            .filter_map(|item| item["text"].as_str())
+                            .collect::<Vec<_>>()
+                            .join("\n")
+                    })
+                    .unwrap_or_default();
+
+                if text.contains("started successfully") {
                     start_ok = true;
                     break;
                 }
@@ -214,8 +224,14 @@ fn test_mcp_server_basics() -> TestResult {
     }
 
     if !start_ok {
-        eprintln!("Warning: start tool may have failed, but continuing...");
+        return Err(
+            "start tool did not confirm the emulator started successfully (TCP server ready) — \
+            the child nes_cpu_test likely failed to load the ROM"
+                .into(),
+        );
     }
+
+    println!("✓ Start tool confirmed emulator running");
 
     // Test 4: Shutdown and verify cleanup
     println!("Test 4: Shutting down server...");
