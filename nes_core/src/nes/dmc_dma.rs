@@ -113,6 +113,21 @@ pub struct DmcDma {
 }
 
 impl DmcDma {
+    /// Cancel all DMA work: the next `tick` is a no-op. Callers dropping
+    /// pending CPU activity (machine reset) must clear this state, or a
+    /// mid-transfer machine would resume post-reset with a stale address.
+    pub fn reset(&mut self) {
+        *self = DmcDma::default();
+    }
+
+    /// True while a transfer is in flight (or waiting to halt the bus).
+    /// When the CPU is frozen by DMA-halt semantics this stays true until
+    /// the read cycle completes and the CPU is unfrozen.
+    pub fn is_busy(&self) -> bool {
+        !matches!(self.state, State::Inactive)
+    }
+}
+impl DmcDma {
     fn read(&mut self, cpu: &mut impl NesDmaSupport) {
         let byte = cpu.read_mem(self.addr);
         cpu.supply_dmc_byte(byte);

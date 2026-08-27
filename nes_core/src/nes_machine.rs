@@ -17,6 +17,10 @@ pub struct NesMachine<P, R: Render, D: crate::nes::apu::AudioDriver> {
     cartridge_irq_next: bool,
     dmc_dma: DmcDma,
     clock: SystemClock,
+    /// Set while `reset()` is draining in-flight DMA work: the CPU gets no
+    /// more cycles (hardware holds the reset line asserted), but PPU/APU/DMA
+    /// keep interleaving until the bus is quiet.
+    reset_requested: bool,
 }
 
 impl<P, R, D> NesMachine<P, R, D>
@@ -34,6 +38,7 @@ where
             cartridge_irq_next: false,
             dmc_dma: DmcDma::default(),
             clock: SystemClock::default(),
+            reset_requested: false,
         }
     }
 
@@ -86,42 +91,84 @@ where
             self.cpu.mcu_mut().tick_zapper();
         }
         self.cartridge_irq_next = self.cpu.mcu().cartridge_irq_pending();
-        if cpu_tick {
-            self.cartridge_irq_latched = self.cartridge_irq_next;
-        }
 
-        let irq_pending = self.cpu.mcu().apu_irq_pending() || self.cartridge_irq_latched;
-        self.cpu.set_irq(irq_pending, clock);
-
-        self.cpu.mcu_mut().tick_apu(clock);
-        if clock.is_apu_clock() {
-            let dmc_drove_bus = self.dmc_dma.tick(&mut self.cpu, clock);
-            if self.cpu.mcu_mut().tick_oam_dma(clock, dmc_drove_bus) {
-                return ExecuteResult::Continue;
+        // While a machine reset is draining DMA work the CPU stays frozen:
+        // no IRQ/NMI latching, no microcode, no same-tick race retract (the
+        // CPU state is about to be discarded wholesale).
+        if !self.reset_requested {
+            if cpu_tick {
+                self.cartridge_irq_latched = self.cartridge_irq_next;
             }
-        }
 
-        let nmi_line = self.cpu.mcu().ppu().nmi_line_out();
-        self.cpu.update_nmi_line(nmi_line, clock);
-        let result = if clock.is_cpu_clock() {
-            self.cpu.tick(&mut self.p, clock).0
+            let irq_pending = self.cpu.mcu().apu_irq_pending() || self.cartridge_irq_latched;
+            self.cpu.set_irq(irq_pending, clock);
+
+            self.cpu.mcu_mut().tick_apu(clock);
+            if clock.is_apu_clock() {
+                let dmc_drove_bus = self.dmc_dma.tick(&mut self.cpu, clock);
+                if self.cpu.mcu_mut().tick_oam_dma(clock, dmc_drove_bus) {
+                    return ExecuteResult::Continue;
+                }
+            }
+
+            let nmi_line = self.cpu.mcu().ppu().nmi_line_out();
+            self.cpu.update_nmi_line(nmi_line, clock);
+            let result = if clock.is_cpu_clock() {
+                self.cpu.tick(&mut self.p, clock).0
+            } else {
+                ExecuteResult::Continue
+            };
+
+            if self.cpu.mcu_mut().ppu_mut().take_nmi_race_cancel() {
+                self.cpu.cancel_nmi_rising_edge(clock);
+            }
+            result
         } else {
+            self.cpu.mcu_mut().tick_apu(clock);
+            if clock.is_apu_clock() {
+                let dmc_drove_bus = self.dmc_dma.tick(&mut self.cpu, clock);
+                let _ = self.cpu.mcu_mut().tick_oam_dma(clock, dmc_drove_bus);
+            }
             ExecuteResult::Continue
-        };
-
-        // A PPU register access executed by the CPU on this very tick may have
-        // raced the vblank flag set earlier in the tick (e.g. reading $2002 or
-        // disabling NMI exactly as the flag sets). On hardware the access wins,
-        // so retract an NMI edge that was latched before the access ran.
-        if self.cpu.mcu_mut().ppu_mut().take_nmi_race_cancel() {
-            self.cpu.cancel_nmi_rising_edge(clock);
         }
-
-        result
     }
+    /// Maximum dots spent draining in-flight DMA on a machine reset. One
+    /// OAM DMA is ~1539 dots; a running DMC channel is suppressed for fresh
+    /// requests, so anything beyond this bound means a stuck bus.
+    const RESET_DRAIN_LIMIT_DOTS: u32 = 4000;
+
+    /// Reset the machine to its power-up contract.
+    ///
+    /// Hardware model chosen (see review round 2): once the reset line is
+    /// asserted, the CPU stops being fed immediately; PPU/APU keep running
+    /// and any DMA work already accepted by the bus completes first. Fresh
+    /// DMC fetch requests are suppressed during the drain so a playing
+    /// sample channel cannot extend it indefinitely.
     pub fn reset(&mut self) {
-        self.cpu.mcu_mut().reset();
+        debug_assert!(
+            !self.reset_requested,
+            "nested reset while a previous drain is active"
+        );
+        let mut drained = 0_u32;
+        self.reset_requested = true;
+        while (self.dmc_dma.is_busy() || self.cpu.mcu().oam_dma_active())
+            && drained < Self::RESET_DRAIN_LIMIT_DOTS
+        {
+            // Kill freshly generated DMC fetch requests before each step so
+            // the drain terminates even with the DMC channel still playing.
+            self.cpu.mcu_mut().suppress_new_dmc_dma_requests();
+            self.tick();
+            drained += 1;
+        }
+        self.reset_requested = false;
+        debug_assert!(!self.dmc_dma.is_busy(), "DMA bus did not quiesce");
+        debug_assert!(!self.cpu.mcu().oam_dma_active(), "OAM DMA did not quiesce");
+
+        let clock = self.clock;
+        self.cpu.mcu_mut().reset(clock);
+        self.dmc_dma.reset();
         self.cpu.reset();
+
         self.cartridge_irq_latched = false;
         self.cartridge_irq_next = false;
     }
@@ -253,5 +300,50 @@ mod tests {
         // the safety limit, proving VBlank fires consistently every frame.
         let result = machine.process_frame();
         assert_eq!(result, ExecuteResult::Continue);
+    }
+
+    /// PRG: `LDA #$02; STA $4014; JMP $8002` — arms a fresh OAM DMA every
+    /// ~9 CPU cycles, so the bus is virtually never idle.
+    fn dma_loop_nes_file() -> INesFile {
+        let mut rom = Vec::new();
+        rom.extend_from_slice(&[0x4e, 0x45, 0x53, 0x1a, 1, 1, 0x00, 0x00]);
+        rom.extend_from_slice(&[0; 8]);
+
+        let mut prg = vec![0_u8; 16 * 1024];
+        let program: [u8; 8] = [0xA9, 0x02, 0x8D, 0x14, 0x40, 0x4C, 0x02, 0x80];
+        prg[..program.len()].copy_from_slice(&program);
+        // Reset vector $8000 (NROM-128 mirrors its single page at $C000 too).
+        prg[0x3FFA..=0x3FFF].copy_from_slice(&[0x00, 0x80, 0x00, 0x80, 0x00, 0x80]);
+        rom.extend_from_slice(&prg);
+        rom.extend(std::iter::repeat_n(0, 8 * 1024));
+        INesFile::new(rom).unwrap()
+    }
+
+    #[test]
+    fn reset_drains_in_flight_oam_dma_before_applying() {
+        let file = dma_loop_nes_file();
+        let mut machine = NesMachine::new(&file, EmptyPlugin::new(), (), ());
+
+        // Warm up until the loop's first $4014 write has armed a DMA.
+        for _ in 0..10_000 {
+            machine.tick();
+            if machine.cpu.mcu().oam_dma_active() {
+                break;
+            }
+        }
+        assert!(
+            machine.cpu.mcu().oam_dma_active(),
+            "test ROM never armed an OAM DMA"
+        );
+
+        // Resetting mid-DMA must quiesce the bus first, bounded by the
+        // internal drain limit (no hang), then apply cleanly.
+        machine.reset();
+
+        assert!(!machine.cpu.mcu().oam_dma_active());
+        assert!(!machine.dmc_dma.is_busy());
+
+        // The post-reset machine still runs: frames complete normally.
+        assert_eq!(machine.process_frame(), ExecuteResult::Continue);
     }
 }

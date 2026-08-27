@@ -59,6 +59,10 @@ A single step of the CPU's internal microcode machine. Multiple microcodes may e
 **Frame**:
 One complete PPU frame (262 scanlines × 341 dots). `NesMachine::process_frame()` calls `tick()` in a loop until VBlank (scanline 241, dot 1) or halt.
 
+**Reset quiescence**:
+The bus-drain contract of `NesMachine::reset()`. Once the reset line is asserted the CPU stops being fed; PPU/APU keep interleaving and any DMA work already accepted by the bus completes before the device resets apply. Fresh DMC fetch requests are suppressed during the drain so a playing sample channel cannot extend it. Each owner resets its own state under this one seam (`Cpu::reset`, `NesMcu::reset(clock)`, `DmcDma::reset`), and time-relative state re-anchors to the running `SystemClock`.
+_Avoid_: hard abort, mid-DMA teardown, stale DMA
+
 ## Language — Mapper IRQ
 
 Core domain for cartridge-generated interrupt requests on bank-switched mappers.

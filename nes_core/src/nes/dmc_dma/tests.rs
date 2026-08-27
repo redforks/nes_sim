@@ -307,6 +307,23 @@ fn reload_dmc_dma_delayed_3_cycle() {
     t.tick_and_assert(State::Inactive);
 }
 
+#[test]
+fn is_busy_tracks_state_and_reset_clears_in_flight_work() {
+    let mut t = TestStruct::new();
+    assert!(!t.dma.is_busy(), "fresh controller must be idle");
+
+    // Start a load DMA so the machine leaves Inactive.
+    t.expect_take_dmc_dma_request(Some((DmcDmaType::Load, 0x1234)));
+    t.tick_and_assert(State::DelayForLoad(1));
+    assert!(t.dma.is_busy());
+
+    // Reset must drop everything: a tick on a reset controller is a no-op.
+    t.dma.reset();
+    assert!(!t.dma.is_busy());
+    t.expect_take_dmc_dma_request(None);
+    t.tick_and_assert(State::Inactive);
+}
+
 struct TestStruct {
     seq: Sequence,
     dma: DmcDma,

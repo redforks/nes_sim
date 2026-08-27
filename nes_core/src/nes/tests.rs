@@ -414,3 +414,35 @@ fn test_4017_peek_includes_zapper_bits() {
     assert_eq!(mcu.peek(0x4017) & 0x18, 0x08);
     assert_eq!(mcu.peek(0x4016) & 0x18, 0x00);
 }
+
+/// Regression: `reset` used to zero `last_apu_tick` while the master clock
+/// kept running, so deferred length-counter writes were anchored against a
+/// restarted timeline and could flush immediately instead of one CPU cycle
+/// after their issuing store. After the fix they anchor to the running clock.
+#[test]
+fn reset_reanchors_deferred_apu_writes_to_running_clock() {
+    let big = 5_000_000_u64;
+    let mut mcu = test_mcu();
+    mcu.reset(SystemClock(big));
+
+    // Enable the triangle channel (direct register, not deferred).
+    mcu.write(0x4015, 0x04);
+    // Arm a deferred length-counter reload: it must land ~one CPU cycle
+    // after this write cycle relative to the running clock.
+    mcu.write(0x400B, 0x08);
+    // Before the anchored landing point the deferred reload must not have
+    // flushed: triangle status bit (bit 2 of $4015) stays clear.
+    mcu.tick_apu(SystemClock(big + 2));
+    let status = mcu.read(0x4015);
+    assert_eq!(
+        status & 0x04,
+        0,
+        "length counter reloaded before the deferred write landed"
+    );
+
+    // Crossing the landing point flushes the deferred write and the channel
+    // becomes active.
+    mcu.tick_apu(SystemClock(big + 3));
+    let status = mcu.read(0x4015);
+    assert_ne!(status & 0x04, 0, "deferred reload never landed");
+}

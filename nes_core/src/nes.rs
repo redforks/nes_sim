@@ -71,11 +71,34 @@ impl<R: Render, D: AudioDriver> NesMcu<R, D> {
         }
     }
 
-    pub fn reset(&mut self) {
+    /// Reset all bus devices to their power-up contract. The CPU-side DMA
+    /// controller (`DmcDma`) is owned by [`crate::NesMachine`] and reset
+    /// separately; by the time this runs, DMA work must already be quiesced
+    /// (see [`NesMachine::reset`]), so OAM state should be idle here.
+    ///
+    /// The master clock keeps running across resets, so time-relative state
+    /// (deferred APU write landing points) must be re-anchored from `clock`
+    /// instead of restarting at zero.
+    pub fn reset(&mut self, clock: SystemClock) {
+        debug_assert!(self.oam_dma.is_none());
+        debug_assert!(self.oam_dma_pending.is_none());
+        self.last_apu_tick = clock.cycles();
         self.deferred_apu_writes.clear();
-        self.last_apu_tick = 0;
         self.ppu.reset();
         self.apu.reset();
+    }
+
+    /// True while any OAM DMA transfer/alignment cycle is outstanding.
+    pub fn oam_dma_active(&self) -> bool {
+        self.oam_dma.is_some() || self.oam_dma_pending.is_some()
+    }
+
+    /// Discard DMC sample-fetch requests generated while a machine reset is
+    /// pending. Without this, a continuously playing DMC channel would spawn
+    /// fresh DMA requests forever during the reset drain, keeping the bus
+    /// busy until the safety bound trips.
+    pub fn suppress_new_dmc_dma_requests(&mut self) {
+        while self.apu.take_dmc_dma_request().is_some() {}
     }
 
     fn ppu_dma(&mut self, address: u8) {
