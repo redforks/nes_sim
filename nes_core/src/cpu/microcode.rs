@@ -311,8 +311,15 @@ impl InterruptSequences {
         Microcode::LoadResetPcH,
     ];
 
-    pub const NMI: [Microcode; 6] = [
-        Microcode::FetchOnly,
+    /// Hardware interrupt entry, exactly seven CPU cycles: two dead reads
+    /// of PC (T1/T2 — the 6502's internal interrupt-sequence setup; the
+    /// bus read happens but the fetched byte is discarded), then three
+    /// stack pushes and the two vector fetches. Both dead cycles belong
+    /// to the sequence itself; the dispatcher only hands back the
+    /// sequence's head (T1).
+    pub const NMI: [Microcode; 7] = [
+        Microcode::FetchOnly, // T1: dead read of PC
+        Microcode::FetchOnly, // T2: dead read of PC
         Microcode::PushStack(PushTarget::Pch),
         Microcode::PushStack(PushTarget::Pcl),
         Microcode::PushStatus {
@@ -323,8 +330,9 @@ impl InterruptSequences {
         Microcode::LoadNmiPcH,
     ];
 
-    pub const IRQ: [Microcode; 6] = [
-        Microcode::FetchOnly,
+    pub const IRQ: [Microcode; 7] = [
+        Microcode::FetchOnly, // T1: dead read of PC
+        Microcode::FetchOnly, // T2: dead read of PC
         Microcode::PushStack(PushTarget::Pch),
         Microcode::PushStack(PushTarget::Pcl),
         Microcode::PushStatus {

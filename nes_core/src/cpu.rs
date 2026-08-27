@@ -830,17 +830,20 @@ impl<M: Mcu> Cpu<M> {
         self.microcode_queue.extend_back(microcodes.iter().copied());
     }
 
-    /// And return the first microcode
+    /// Push the NMI/IRQ microcode sequence and return its head for
+    /// execution on the current cycle. The sequence owns both hardware
+    /// dead cycles (T1/T2) as its first two ops, so interrupt entry is
+    /// exactly seven CPU cycles from dispatch to vector fetch.
     fn push_enter_interrupt_microcodes(&mut self, nmi: bool) -> Microcode {
-        // if nmi {
-        //     eprintln!("enter nmi");
-        // }
-        self.push_microcodes(if nmi {
+        let sequence = if nmi {
             &InterruptSequences::NMI
         } else {
             &InterruptSequences::IRQ
-        });
-        Microcode::FetchOnly
+        };
+        // The head (T1) runs on this cycle; the rest drains from the
+        // queue on the following ticks.
+        self.push_microcodes(&sequence[1..]);
+        sequence[0]
     }
 
     fn pop_microcode(&mut self) -> Option<Microcode> {

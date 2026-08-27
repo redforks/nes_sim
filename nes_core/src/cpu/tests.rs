@@ -4312,3 +4312,74 @@ fn nmi_hijacks_brk_only_through_its_third_cycle() {
         );
     }
 }
+
+/// Pin the interrupt-sequence length contract: handler entry lands exactly
+/// 21 system dots (seven CPU cycles) after the last instruction-boundary
+/// tick, for both the NMI and the IRQ path. The seven cycles are the two
+/// dead reads of PC (hardware T1/T2), the three stack pushes, and the two
+/// vector fetches, and they must all come from the pushed interrupt
+/// sequence itself — a dispatch path that adds or drops a cycle shifts
+/// every interrupt by three dots silently.
+#[test]
+fn interrupt_handler_entry_21_dots_after_boundary() {
+    const MAIN: u16 = 0x0400;
+    const HANDLER: u16 = 0x0500;
+
+    /// Run until the CPU dispatches the interrupt raised by `assert_line`
+    /// and enters HANDLER; return (boundary tick, handler-entry tick) in
+    /// system dots. The boundary tick is the tick completing the
+    /// interrupted instruction; handler entry is the tick completing the
+    /// sequence's vector fetch, after which the very next cycle fetches
+    /// the handler's first opcode.
+    fn run(assert_line: impl Fn(&mut Cpu<MockMcu>, SystemClock)) -> (u64, u64) {
+        let mcu = MockMcu::new().with_program(MAIN, &[0x58, 0x4C, 0x01, 0x04]); // CLI; JMP $0401
+        mcu.write_word(0xFFFA, HANDLER); // NMI vector
+        mcu.write_word(0xFFFE, HANDLER); // IRQ vector
+        mcu.write_word(0xFFFC, MAIN); // reset vector
+        let mut cpu = Cpu::new(mcu);
+        let mut plugin = EmptyPlugin::new();
+
+        let mut boundary = None;
+        let mut dispatched = false;
+        let mut entry = None;
+        for t in 0..2000u64 {
+            let clock = SystemClock(t);
+            assert_line(&mut cpu, clock);
+            if !clock.is_cpu_clock() {
+                continue;
+            }
+            // The CPU dispatches on the first cycle after an instruction
+            // boundary whose end-of-cycle interrupt poll detected one.
+            let dispatching = cpu.microcodes_empty() && cpu.interrupt_detected.is_some();
+            let (_, instruction_done) = cpu.tick(&mut plugin, clock);
+            if dispatching {
+                dispatched = true;
+            } else if !dispatched && instruction_done {
+                boundary = Some(clock.cycles());
+            } else if dispatched && instruction_done {
+                entry = Some(clock.cycles());
+                break;
+            }
+        }
+        let (boundary, entry) = (boundary.unwrap(), entry.unwrap());
+
+        // Handler entry: the cycle after the vector fetch reads the
+        // handler's first opcode.
+        let clock = SystemClock(entry + 3);
+        assert_line(&mut cpu, clock);
+        cpu.tick(&mut plugin, clock);
+        assert_eq!(cpu.last_read_addr, Some(HANDLER));
+
+        (boundary, entry)
+    }
+
+    // NMI: a rising /NMI edge early in the run; dispatch lands on the
+    // first instruction boundary after the edge is recognised.
+    let (boundary, entry) = run(|cpu, clock| cpu.update_nmi_line(clock.cycles() >= 40, clock));
+    assert_eq!(entry - boundary, 21, "NMI: boundary → handler entry");
+
+    // IRQ: line asserted from the start; CLI clears I, so the pending IRQ
+    // dispatches after the next instruction boundary.
+    let (boundary, entry) = run(|cpu, clock| cpu.set_irq(true, clock));
+    assert_eq!(entry - boundary, 21, "IRQ: boundary → handler entry");
+}
