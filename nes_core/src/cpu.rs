@@ -18,12 +18,15 @@ pub(crate) enum Register {
 struct IrqDetector {
     irq_pending: bool,
     irq_input: bool,
+    /// Last line-transition dot. Write-only outside interrupt tracking —
+    /// stamped only while `NES_INTERRUPT_TRACK` is set so production builds
+    /// carry no dead bookkeeping; read by `dump_interrupt_track`.
     irq_line_changed_at: Option<SystemClock>,
 }
 
 impl IrqDetector {
-    fn update_irq_input(&mut self, v: bool, clock: SystemClock) {
-        if self.irq_input != v {
+    fn update_irq_input(&mut self, v: bool, clock: SystemClock, track: bool) {
+        if track && self.irq_input != v {
             self.irq_line_changed_at = Some(clock);
         }
         self.irq_input = v;
@@ -420,7 +423,8 @@ impl<M: Mcu> Cpu<M> {
     }
 
     pub fn set_irq(&mut self, enabled: bool, clock: SystemClock) {
-        self.irq_detector.update_irq_input(enabled, clock);
+        self.irq_detector
+            .update_irq_input(enabled, clock, self.track_interrupt);
     }
 
     pub fn is_halted(&self) -> bool {

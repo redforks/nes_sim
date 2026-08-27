@@ -48,7 +48,7 @@ fn test_irq_detector() {
     let mut v = IrqDetector::default();
     assert!(!v.irq_pending());
 
-    v.update_irq_input(true, SystemClock::default());
+    v.update_irq_input(true, SystemClock::default(), true);
     assert!(!v.irq_pending());
     v.detect_irq(false);
     assert!(v.irq_pending());
@@ -56,7 +56,7 @@ fn test_irq_detector() {
     v.detect_irq(true);
     assert!(!v.irq_pending());
 
-    v.update_irq_input(false, SystemClock::default());
+    v.update_irq_input(false, SystemClock::default(), true);
     assert!(!v.irq_pending());
     v.detect_irq(false);
     assert!(!v.irq_pending());

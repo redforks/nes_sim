@@ -100,6 +100,21 @@ where
                 self.cartridge_irq_latched = self.cartridge_irq_next;
             }
 
+            // Stated invariant (IRQ-producer ordering): the APU level is
+            // deliberately sampled BEFORE `tick_apu` runs this dot, so a
+            // transition the step raises (frame IRQ flag at CPU 29828-29830 /
+            // DMC timer expiry) or clears ($4017 inhibit via deferred
+            // writes) reaches the CPU's IRQ input on the NEXT dot — a
+            // one-dot skew. This is not an accident to fix: the internal APU
+            // flag never drives a physical line, so the mapping of "flag
+            // transition dot → CPU-visible IRQ dot" is an emulation choice,
+            // and the +1 mapping is pinned by blargg's cpu_interrupts_v2
+            // 3-nmi_and_irq (moving `tick_apu` ahead of the sample fails
+            // that ROM). The cartridge level is instead latched once per CPU
+            // cycle (`cartridge_irq_latched`, cpu_tick dots only) from the
+            // level captured after `tick_ppu` above — mapper IRQ counters
+            // are clocked on PPU dots, and cpu_interrupts_v2 / mmc3_irq_tests
+            // pin that quantization.
             let irq_pending = self.cpu.mcu().apu_irq_pending() || self.cartridge_irq_latched;
             self.cpu.set_irq(irq_pending, clock);
 
