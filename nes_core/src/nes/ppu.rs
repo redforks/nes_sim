@@ -189,6 +189,11 @@ pub struct Ppu<R: Render = ()> {
     /// Value that read returned; re-returned by a read arriving before the
     /// buffer refill could complete.
     ppudata_last_return: u8,
+    /// Two-dot pixel output pipeline: pixels rendered on visible dots wait
+    /// here (with their target coordinates) before committing to the
+    /// renderer, so CPU register writes landing in between color them —
+    /// see the commit site in [`Ppu::tick`].
+    pixel_pipeline: std::collections::VecDeque<(u8, u16, u8)>,
 }
 
 /// PPU registers are mirrored every 8 bytes in range $2000-$3FFF;
@@ -223,6 +228,7 @@ impl<R: Render> Ppu<R> {
             vbl_set_cycle: 0,
             nmi_race_cancel: false,
             ppudata_last_return: 0,
+            pixel_pipeline: std::collections::VecDeque::new(),
         }
     }
 
@@ -451,7 +457,14 @@ impl<R: Render> Ppu<R> {
             }
         }
 
-        // Visible pixels are output on dots 1-256; dot 0 is the idle fetch slot.
+        // Visible pixels are output on dots 1-256; dot 0 is the idle fetch
+        // slot. Pixels leave a two-dot output pipeline: a pixel rendered on
+        // dot X commits to the framebuffer on dot X+2, after any CPU
+        // register write that landed in between. This is the hardware
+        // output-stage latency — grayscale and emphasis tint are applied at
+        // commit time (the color-modifying stage), so a mid-scanline $2001
+        // write takes effect two dots earlier than the write cycle itself
+        // (blargg nmi_sync draws its line with exactly this landing).
         if self.timing.is_visible() {
             let x = (self.timing.dot - 1) as u8;
             let pixel_idx = if rendering_enabled {
@@ -459,12 +472,21 @@ impl<R: Render> Ppu<R> {
             } else {
                 self.palette.disabled_color_index(self.registers.vram_addr)
             };
-            let pixel = self
-                .registers
-                .mask
-                .apply_effects(self.color_theme.color(pixel_idx));
-            self.renderer
-                .set_pixel(x as u32, self.timing.scanline as u32, pixel.0);
+            self.pixel_pipeline
+                .push_back((x, self.timing.scanline, pixel_idx));
+        }
+        if self.pixel_pipeline.len() > 2 {
+            if let Some((x, y, pixel_idx)) = self.pixel_pipeline.pop_front() {
+                // Hardware grayscale ANDs the 6-bit palette entry with $30
+                // before the color lookup ($3F black renders as $30 white);
+                // emphasis tints are analog effects on the looked-up RGB.
+                let pixel_idx = self.registers.mask.grayscale_index(pixel_idx);
+                let pixel = self
+                    .registers
+                    .mask
+                    .apply_effects(self.color_theme.color(pixel_idx));
+                self.renderer.set_pixel(x as u32, y as u32, pixel.0);
+            }
         }
 
         // --- vram_addr management (rendering-enabled only) ---
@@ -486,6 +508,16 @@ impl<R: Render> Ppu<R> {
         }
 
         if self.timing.enter_vblank() {
+            // Drain the output pipeline: the frame is presented only once
+            // its last pixels have left it.
+            while let Some((x, y, pixel_idx)) = self.pixel_pipeline.pop_front() {
+                let pixel_idx = self.registers.mask.grayscale_index(pixel_idx);
+                let pixel = self
+                    .registers
+                    .mask
+                    .apply_effects(self.color_theme.color(pixel_idx));
+                self.renderer.set_pixel(x as u32, y as u32, pixel.0);
+            }
             self.renderer.finish();
             self.vbl_set_cycle = self.cycle;
             if self

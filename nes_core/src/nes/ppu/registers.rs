@@ -47,9 +47,22 @@ pub struct PpuMask {
 }
 
 impl PpuMask {
-    /// Apply grayscale and emphasis effects to a pixel color using this mask's flags.
+    /// Mask a palette entry for grayscale rendering: hardware ANDs the
+    /// 6-bit entry with $30 before the color lookup, so dark entries like
+    /// $3F (black) render as their $3x row ($30, white).
+    pub fn grayscale_index(&self, index: u8) -> u8 {
+        if self.grayscale() {
+            index & 0x30
+        } else {
+            index
+        }
+    }
+
+    /// Apply emphasis tints to a looked-up pixel color. Grayscale is not
+    /// handled here: it applies to the palette index before the lookup
+    /// (see [`PpuMask::grayscale_index`]).
     pub fn apply_effects(&self, pixel: Pixel) -> Pixel {
-        if !self.grayscale() && !self.red_tint() && !self.green_tint() && !self.blue_tint() {
+        if !self.red_tint() && !self.green_tint() && !self.blue_tint() {
             pixel
         } else {
             self.do_apply_effects(pixel)
@@ -68,13 +81,6 @@ impl PpuMask {
         if !self.blue_tint() && (self.red_tint() || self.green_tint()) {
             b = (b as u16 * 192 / 256) as u8;
         }
-
-        if self.grayscale() {
-            let gray = (r as u16 * 77 + g as u16 * 150 + b as u16 * 29) / 256;
-            r = gray as u8;
-            g = gray as u8;
-            b = gray as u8;
-        };
 
         Pixel::new(r, g, b)
     }

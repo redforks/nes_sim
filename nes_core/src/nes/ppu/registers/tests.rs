@@ -23,9 +23,6 @@ fn test_background_tile_position(
 #[test_case(0b10100000, 180, 90, 60 ; "red+blue tint")]
 #[test_case(0b11000000, 135, 120, 60 ; "green+blue tint")]
 #[test_case(0b11100000, 180, 120, 60 ; "all three tints")]
-#[test_case(0b00000001, 131, 131, 131 ; "grayscale only")]
-#[test_case(0b00100001, 111, 111, 111 ; "grayscale + red_tint")]
-#[test_case(0b11100001, 131, 131, 131 ; "grayscale + all tints")]
 fn test_apply_effects(mask_bits: u8, r: u8, g: u8, b: u8) {
     const INPUT: Pixel = Pixel::new(180, 120, 60);
 

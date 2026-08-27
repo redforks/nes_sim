@@ -247,6 +247,10 @@ fn test_tick_renders_palette_color_when_rendering_disabled_and_vram_points_to_pa
 
     ppu.tick();
     ppu.tick();
+    ppu.tick();
+    // The pixel leaves the two-dot output pipeline on this tick (tick 1 is
+    // the idle dot 0).
+    ppu.tick();
 
     let image = ppu.renderer.borrow_image();
     assert_eq!(
@@ -271,11 +275,50 @@ fn test_tick_renders_background_color_when_rendering_disabled_and_vram_not_palet
 
     ppu.tick();
     ppu.tick();
+    ppu.tick();
+    // The pixel leaves the two-dot output pipeline on this tick (tick 1 is
+    // the idle dot 0).
+    ppu.tick();
 
     let image = ppu.renderer.borrow_image();
     assert_eq!(
         image.get_pixel(0, 0),
         &image::Rgba(ppu.color_theme.color(0x16).0)
+    );
+}
+
+#[test_case(0x3f, 0x30 ; "black mirror entry renders white")]
+#[test_case(0x0f, 0x00 ; "black entry renders gray")]
+fn test_tick_grayscale_masks_palette_index_before_lookup(entry: u8, expected: u8) {
+    // Hardware grayscale ANDs the 6-bit palette entry with $30 before the
+    // color lookup; it is not a luminance filter on the output RGB. Entry
+    // $3F (black) must render as $30 (white) — blargg's nmi_sync demo
+    // draws its line exactly this way through the disabled-rendering
+    // backdrop.
+    let mut ppu = Ppu {
+        ..Ppu::new(
+            ImageRender::default_dimension(),
+            Mirroring::Horizontal,
+            Box::new(TestCartridge::new()),
+        )
+    };
+    ppu.palette.write(0x3f00, entry);
+    ppu.registers.vram_addr = 0x2000;
+    ppu.registers.mask = PpuMask::new().with_grayscale(true);
+    ppu.timing.scanline = 0;
+    ppu.timing.dot = 0;
+
+    ppu.tick();
+    ppu.tick();
+    ppu.tick();
+    // The pixel leaves the two-dot output pipeline on this tick (tick 1 is
+    // the idle dot 0).
+    ppu.tick();
+
+    let image = ppu.renderer.borrow_image();
+    assert_eq!(
+        image.get_pixel(0, 0),
+        &image::Rgba(ppu.color_theme.color(expected).0)
     );
 }
 
