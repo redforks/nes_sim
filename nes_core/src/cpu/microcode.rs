@@ -298,6 +298,42 @@ const fn indirect_indexed_store_a() -> ArrayVec<[Microcode; 7]> {
     )
 }
 
+/// Eligibility rule of a hijack site. The two sites' hardware semantics
+/// differ observably (blargg cpu_interrupts_v2):
+/// - `LatchedOnly` — the `PushStatus` site consumes the sampler-latched
+///   pending edge; newer un-latched rises on the line do not participate
+///   and stay eligible for the later vector-decision site.
+/// - `NewestVisible` — the vector-fetch site decides on the newest
+///   unconsumed assertion, latched or not: an assertion counts iff its
+///   newest unconsumed edge had risen by the site's deadline.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum HijackEligibility {
+    LatchedOnly,
+    NewestVisible,
+}
+
+/// One NMI-hijack site declared by an [`InterruptWindow`]: the micro-op
+/// index that performs the check and the Hijack deadline — an /NMI rise at
+/// or before `sequence_start + deadline_dots` is eligible there.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct HijackSite {
+    pub op_index: u8,
+    pub deadline_dots: u64,
+    pub eligibility: HijackEligibility,
+}
+
+/// The interrupt recognition window of one interrupt sequence, declared
+/// next to its micro-ops (ADR-0006): the sequence's cycle count, whether
+/// its final cycle suppresses the standard end-of-instruction interrupt
+/// poll, and its NMI-hijack sites with deadlines in dots from sequence
+/// start (the cycle executing micro-op 0).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct InterruptWindow {
+    pub sequence_cycles: u8,
+    pub suppress_final_poll: bool,
+    pub hijack_sites: &'static [HijackSite],
+}
+
 pub struct InterruptSequences;
 
 impl InterruptSequences {
@@ -322,10 +358,7 @@ impl InterruptSequences {
         Microcode::FetchOnly, // T2: dead read of PC
         Microcode::PushStack(PushTarget::Pch),
         Microcode::PushStack(PushTarget::Pcl),
-        Microcode::PushStatus {
-            break_flag: false,
-            check_nmi: false,
-        },
+        Microcode::PushStatus { break_flag: false },
         Microcode::LoadNmiPcL,
         Microcode::LoadNmiPcH,
     ];
@@ -335,11 +368,8 @@ impl InterruptSequences {
         Microcode::FetchOnly, // T2: dead read of PC
         Microcode::PushStack(PushTarget::Pch),
         Microcode::PushStack(PushTarget::Pcl),
-        Microcode::PushStatus {
-            break_flag: false,
-            check_nmi: true,
-        },
-        Microcode::LoadIrqPcL { decision_lag: 5 },
+        Microcode::PushStatus { break_flag: false },
+        Microcode::LoadIrqPcL,
         Microcode::LoadIrqPcH,
     ];
 
@@ -347,18 +377,72 @@ impl InterruptSequences {
         Microcode::SkipImmediate,
         Microcode::PushStack(PushTarget::Pch),
         Microcode::PushStack(PushTarget::Pcl),
-        Microcode::PushStatus {
-            break_flag: true,
-            check_nmi: true,
-        },
-        Microcode::LoadIrqPcL { decision_lag: 7 },
+        Microcode::PushStatus { break_flag: true },
+        Microcode::LoadIrqPcL,
         Microcode::LoadIrqPcH
     ];
 
-    /// Return true if the `microcode` is one of Microcode that ends interrupt sequence.
-    pub const fn is_end(microcode: Microcode) -> bool {
-        use Microcode::*;
-        matches!(microcode, LoadResetPcH | LoadNmiPcH | LoadIrqPcH)
+    /// Interrupt recognition windows (ADR-0006), declared next to the
+    /// sequences they schedule. Deadlines are dots from sequence start —
+    /// the cycle executing micro-op 0 — and values are captured from
+    /// blargg-green behavior (cpu_interrupts_v2):
+    /// - the vector-fetch site's cutoff is the hardware decision boundary
+    ///   (`site_tick − lag`, lags 5/7 pinned by blargg tests 2 and 3);
+    /// - the PushStatus site consumes sampler-latched edges only: a rise
+    ///   is latched strictly before the take tick iff it rose by
+    ///   `site_tick − 5` (2-dot sample lag plus one full cycle, see
+    ///   `NmiDetector` sampling).
+    pub const NMI_WINDOW: InterruptWindow = InterruptWindow {
+        sequence_cycles: 7,
+        suppress_final_poll: true,
+        hijack_sites: &[],
+    };
+    pub const IRQ_WINDOW: InterruptWindow = InterruptWindow {
+        sequence_cycles: 7,
+        suppress_final_poll: true,
+        hijack_sites: &[
+            HijackSite {
+                op_index: 4,
+                deadline_dots: 7,
+                eligibility: HijackEligibility::LatchedOnly,
+            },
+            HijackSite {
+                op_index: 5,
+                deadline_dots: 10,
+                eligibility: HijackEligibility::NewestVisible,
+            },
+        ],
+    };
+    pub const BRK_WINDOW: InterruptWindow = InterruptWindow {
+        sequence_cycles: 6,
+        suppress_final_poll: true,
+        hijack_sites: &[
+            HijackSite {
+                op_index: 3,
+                deadline_dots: 4,
+                eligibility: HijackEligibility::LatchedOnly,
+            },
+            HijackSite {
+                op_index: 4,
+                deadline_dots: 5,
+                eligibility: HijackEligibility::NewestVisible,
+            },
+        ],
+    };
+    pub const RESET_WINDOW: InterruptWindow = InterruptWindow {
+        sequence_cycles: 7,
+        suppress_final_poll: true,
+        hijack_sites: &[],
+    };
+
+    /// The recognition window declared for a fetched opcode's sequence —
+    /// only BRK is an interrupt sequence in the opcode table.
+    pub const fn window_for_opcode(op: u8) -> Option<&'static InterruptWindow> {
+        if op == opcode::BRK {
+            Some(&Self::BRK_WINDOW)
+        } else {
+            None
+        }
     }
 }
 
@@ -466,13 +550,7 @@ const fn build_opcode_table() -> [ArrayVec<[Microcode; 7]>; 256] {
     r[BVS as usize] = microcode_arr!(BranchRelative(BranchTest::IfOverflowSet));
     r[PHA as usize] = microcode_arr!(Nop, PushStack(PushTarget::A));
     r[PLA as usize] = microcode_arr!(Nop, PopStack, UpdateAFromAlu);
-    r[PHP as usize] = microcode_arr!(
-        Nop,
-        PushStatus {
-            break_flag: true,
-            check_nmi: false
-        }
-    );
+    r[PHP as usize] = microcode_arr!(Nop, PushStatus { break_flag: true });
     r[PLP as usize] = microcode_arr!(Nop, Nop, Plp);
     r[JMP_ABSOLUTE as usize] = microcode_arr!(AbsoluteL, LoadPcAbsoluteH);
     r[JMP_INDIRECT as usize] = microcode_arr!(AbsoluteL, AbsoluteH, IndexedL, IndexedHAndJump);
@@ -1031,12 +1109,13 @@ pub enum Microcode {
     /// If BranchTest is true, pc += offset, push one Noc if not cross page, push two Noc if cross page
     BranchRelative(BranchTest),
 
-    /// Push cpu status register into stack
+    /// Push cpu status register into stack. When executed inside an
+    /// interrupt sequence whose window declares a LatchedOnly hijack site
+    /// at this index, the NMI-hijack check runs before the push (see
+    /// `Cpu::push_status`).
     PushStatus {
         /// break flag of status to set
         break_flag: bool,
-        /// Used in BRK opcode to detect nmi hiijacking
-        check_nmi: bool,
     },
     /// Pop cpu status register from stack, used to return from interrupt handler, and PLP
     Plp,
@@ -1063,14 +1142,10 @@ pub enum Microcode {
 
     /// Set pc to address_latch | absolute << 8
     LoadPcAbsoluteH,
-    /// Fetch interrupt vector low byte ($FFFE, or $FFFA when an NMI
-    /// assertion hijacks the vector; see `Cpu::load_irq_pcl`). `decision_lag`
-    /// is the dot distance between the sequence's vector-decision deadline
-    /// and this cycle's first tick — the two interrupt sequences pin it at
-    /// different values (blargg cpu_interrupts_v2 tests 2 and 3).
-    LoadIrqPcL {
-        decision_lag: u8,
-    },
+    /// Fetch the interrupt vector low byte ($FFFE, or $FFFA when an NMI
+    /// assertion hijacks the vector; see `Cpu::load_irq_pcl`). The
+    /// sequence's window declares this site's hijack deadline.
+    LoadIrqPcL,
     LoadIrqPcH,
 }
 
@@ -1476,6 +1551,9 @@ impl Microcode {
                 let opcode = cpu.inc_read_byte();
                 cpu.opcode = opcode;
                 cpu.push_microcodes(&OPCODE_TABLE[opcode as usize]);
+                if let Some(window) = InterruptSequences::window_for_opcode(opcode) {
+                    cpu.arm_interrupt_window(window, false);
+                }
             }
             Self::LoadR(ValueSource::Immediate, r) => load_r::<_, Immediate>(cpu, r),
             Self::LoadR(ValueSource::ZeroPage, r) => load_r::<_, ZeroPage>(cpu, r),
@@ -1643,11 +1721,8 @@ impl Microcode {
             Self::LoadIrqPcH => cpu.load_irq_pch(),
             Self::LoadNmiPcL => cpu.load_nmi_pcl(),
             Self::LoadNmiPcH => cpu.load_nmi_pch(),
-            Self::LoadIrqPcL { decision_lag } => cpu.load_irq_pcl(decision_lag),
-            Self::PushStatus {
-                break_flag,
-                check_nmi,
-            } => cpu.push_status(break_flag, check_nmi),
+            Self::LoadIrqPcL => cpu.load_irq_pcl(),
+            Self::PushStatus { break_flag } => cpu.push_status(break_flag),
             Self::Plp => cpu.plp(),
             Self::PopPcL => {
                 let low = cpu.pop_stack();
@@ -1840,4 +1915,165 @@ fn load_pc_absolute_h<M: Mcu>(cpu: &mut Cpu<M>) {
     let high = cpu.inc_read_byte();
     cpu.pc.set_high(high);
     cpu.pc.set_low(cpu.ab.low());
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Golden captured 2026-08-28 from the blargg-green pre-refactor table
+    /// (ADR-0006): for each opcode, the CPU cycle — counting the fetch as
+    /// cycle 1 — whose tick performs the standard end-of-instruction
+    /// interrupt poll (`1 + sequence length`). 0 marks a suppressed poll:
+    /// BRK recognizes through its declared hijack sites instead.
+    const GOLDEN_POLL_CYCLE: [u8; 256] = [
+        0, 6, 2, 8, 3, 3, 5, 5, 3, 2, 2, 2, 4, 4, 6, 6, 2, 5, 2, 8, 4, 4, 6, 6, 2, 4, 2, 7, 4, 4,
+        7, 7, 6, 6, 2, 8, 3, 3, 5, 5, 4, 2, 2, 2, 4, 4, 6, 6, 2, 5, 2, 8, 4, 4, 6, 6, 2, 4, 2, 7,
+        4, 4, 7, 7, 6, 6, 2, 8, 3, 3, 5, 5, 3, 2, 2, 2, 3, 4, 6, 6, 2, 5, 2, 8, 4, 4, 6, 6, 2, 4,
+        2, 7, 4, 4, 7, 7, 6, 6, 2, 8, 3, 3, 5, 5, 4, 2, 2, 2, 5, 4, 6, 6, 2, 5, 2, 8, 4, 4, 6, 6,
+        2, 4, 2, 7, 4, 4, 7, 7, 2, 6, 2, 6, 3, 3, 3, 3, 2, 2, 2, 2, 4, 4, 4, 4, 2, 6, 2, 6, 4, 4,
+        4, 4, 2, 5, 2, 5, 5, 5, 5, 5, 2, 6, 2, 6, 3, 3, 3, 3, 2, 2, 2, 2, 4, 4, 4, 4, 2, 5, 2, 5,
+        4, 4, 4, 4, 2, 4, 2, 4, 4, 4, 4, 4, 2, 6, 2, 8, 3, 3, 5, 5, 2, 2, 2, 2, 4, 4, 6, 6, 2, 5,
+        2, 8, 4, 4, 6, 6, 2, 4, 2, 7, 4, 4, 7, 7, 2, 6, 2, 8, 3, 3, 5, 5, 2, 2, 2, 2, 4, 4, 6, 6,
+        2, 5, 2, 8, 4, 4, 6, 6, 2, 4, 2, 7, 4, 4, 7, 7,
+    ];
+
+    #[test]
+    fn per_opcode_poll_cycle_matches_golden() {
+        let table = build_opcode_table();
+        for (op, &expected) in GOLDEN_POLL_CYCLE.iter().enumerate() {
+            let suppressed = InterruptSequences::window_for_opcode(op as u8)
+                .is_some_and(|w| w.suppress_final_poll);
+            let actual = if suppressed {
+                0
+            } else {
+                table[op].len() as u8 + 1
+            };
+            assert_eq!(actual, expected, "opcode {op:#04x} poll cycle drifted");
+        }
+    }
+
+    #[test]
+    fn branch_opcodes_poll_through_the_shifted_mechanism() {
+        // The taken-branch poll shift — poll on the branch's second cycle;
+        // final poll suppressed without a page cross — stays a runtime
+        // mechanism (ADR-0006) whose observable timing is pinned by
+        // `just branch_timing_tests`. This walk pins which opcodes carry
+        // the mechanism; the golden's 2 for branches is the shared
+        // final-cycle rule (fetch + branch cycle), not the shift itself.
+        const BRANCHES: [u8; 8] = [0x10, 0x30, 0x50, 0x70, 0x90, 0xB0, 0xD0, 0xF0];
+        let table = build_opcode_table();
+        for op in BRANCHES {
+            assert!(
+                matches!(table[op as usize][0], Microcode::BranchRelative(_)),
+                "{op:#04x} must open with the branch micro-op"
+            );
+            assert_eq!(GOLDEN_POLL_CYCLE[op as usize], 2, "{op:#04x}");
+        }
+        for (op, seq) in table.iter().enumerate() {
+            let is_branch = matches!(seq[0], Microcode::BranchRelative(_));
+            assert_eq!(
+                is_branch,
+                BRANCHES.contains(&(op as u8)),
+                "{op:#04x} branch-mechanism membership drifted"
+            );
+        }
+    }
+
+    /// Golden captured 2026-08-28 from the blargg-green behavior
+    /// (`nmi_hijacks_brk_only_through_its_third_cycle` pins the BRK
+    /// boundary at dot granularity; the IRQ values ride the same
+    /// conversion and the cpu_interrupts_v2 ROM gate). Deadlines are dots
+    /// from sequence start — the cycle executing micro-op 0.
+    #[test]
+    fn interrupt_windows_match_golden() {
+        let brk = InterruptSequences::BRK_WINDOW;
+        assert_eq!(brk.sequence_cycles, 6);
+        assert!(brk.suppress_final_poll);
+        assert_eq!(
+            brk.hijack_sites,
+            &[
+                HijackSite {
+                    op_index: 3,
+                    deadline_dots: 4,
+                    eligibility: HijackEligibility::LatchedOnly,
+                },
+                HijackSite {
+                    op_index: 4,
+                    deadline_dots: 5,
+                    eligibility: HijackEligibility::NewestVisible,
+                },
+            ]
+        );
+
+        let irq = InterruptSequences::IRQ_WINDOW;
+        assert_eq!(irq.sequence_cycles, 7);
+        assert!(irq.suppress_final_poll);
+        assert_eq!(
+            irq.hijack_sites,
+            &[
+                HijackSite {
+                    op_index: 4,
+                    deadline_dots: 7,
+                    eligibility: HijackEligibility::LatchedOnly,
+                },
+                HijackSite {
+                    op_index: 5,
+                    deadline_dots: 10,
+                    eligibility: HijackEligibility::NewestVisible,
+                },
+            ]
+        );
+
+        for window in [
+            &InterruptSequences::NMI_WINDOW,
+            &InterruptSequences::RESET_WINDOW,
+        ] {
+            assert_eq!(window.sequence_cycles, 7);
+            assert!(window.suppress_final_poll);
+            assert_eq!(window.hijack_sites, &[]);
+        }
+    }
+
+    #[test]
+    fn interrupt_windows_are_consistent_with_sequences() {
+        let brk = InterruptSequences::BRK;
+        let windows: [(&[Microcode], &InterruptWindow); 4] = [
+            (
+                &InterruptSequences::RESET,
+                &InterruptSequences::RESET_WINDOW,
+            ),
+            (&InterruptSequences::NMI, &InterruptSequences::NMI_WINDOW),
+            (&InterruptSequences::IRQ, &InterruptSequences::IRQ_WINDOW),
+            (brk.as_slice(), &InterruptSequences::BRK_WINDOW),
+        ];
+        for (ops, window) in windows {
+            assert_eq!(usize::from(window.sequence_cycles), ops.len());
+            for site in window.hijack_sites {
+                let op = &ops[site.op_index as usize];
+                match site.eligibility {
+                    HijackEligibility::LatchedOnly => {
+                        assert!(matches!(op, Microcode::PushStatus { .. }));
+                        // Latched-only cutoff = site tick − 5: a rise is
+                        // latched strictly before the take tick iff it
+                        // rose by then (2-dot sample lag plus the one full
+                        // cycle between the last sampler tick and the
+                        // take), see `NmiDetector` sampling.
+                        assert_eq!(site.deadline_dots, 3 * u64::from(site.op_index) - 5);
+                    }
+                    HijackEligibility::NewestVisible => {
+                        assert!(matches!(op, Microcode::LoadIrqPcL));
+                    }
+                }
+            }
+            assert!(window.suppress_final_poll);
+            // Structural invariant: every suppressing sequence ends with a
+            // vector-fetch op. (Runtime suppression now reads the armed
+            // window, not op identity.)
+            assert!(matches!(
+                ops.last().unwrap(),
+                Microcode::LoadResetPcH | Microcode::LoadNmiPcH | Microcode::LoadIrqPcH
+            ));
+        }
+    }
 }

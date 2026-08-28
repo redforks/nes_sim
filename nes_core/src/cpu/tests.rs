@@ -68,7 +68,7 @@ fn test_irq_detector() {
 fn dot(v: &mut NmiDetector, t: u64, high: bool) -> bool {
     v.update_nmi_input(high, SystemClock(t));
     if t % 3 == 2 && v.detect_nmi() {
-        v.take_nmi_pending();
+        v.mark_consumed();
         true
     } else {
         false
@@ -79,7 +79,7 @@ fn dot(v: &mut NmiDetector, t: u64, high: bool) -> bool {
 fn test_nmi_detector() {
     // default
     let mut v = NmiDetector::default();
-    assert!(!v.take_nmi_pending());
+    assert!(!v.nmi_pending);
 
     // assertion from dot 10 to 15: exactly one edge latches, at the first
     // sample whose window covers the rise (sample at dot 14 reads dot 12)
@@ -87,7 +87,7 @@ fn test_nmi_detector() {
         .filter(|&t| dot(&mut v, t, (10..16).contains(&t)))
         .collect();
     assert_eq!(fires, vec![14]);
-    assert!(!v.take_nmi_pending()); // edge-detected: no re-fire while asserted
+    assert!(!v.nmi_pending); // edge-detected: no re-fire while asserted
 }
 
 #[test]
@@ -129,14 +129,15 @@ fn nmi_pending_survives_until_taken() {
         v.update_nmi_input(false, SystemClock(t));
     }
     assert!(v.detect_nmi());
-    assert!(v.take_nmi_pending());
+    assert!(v.nmi_pending);
+    v.mark_consumed();
 
     // …and once taken, the low line raises nothing further
     for t in 44..=47u64 {
         v.update_nmi_input(false, SystemClock(t));
     }
     assert!(!v.detect_nmi());
-    assert!(!v.take_nmi_pending());
+    assert!(!v.nmi_pending);
 }
 
 #[test]
@@ -147,11 +148,11 @@ fn nmi_rising_edge_cancel_retracts_same_tick_edge() {
     let fires: Vec<u64> = (0..=33).filter(|&t| dot(&mut v, t, t >= 30)).collect();
     assert_eq!(fires, vec![32]);
     v.cancel_rising_edge_at(SystemClock(30)); // racing $2002 access retracts it
-    assert!(!v.take_nmi_pending());
+    assert!(!v.nmi_pending);
 
     // the line is pulled back low; no new edge may latch
     assert!(!(34..=44).any(|t| dot(&mut v, t, false)));
-    assert!(!v.take_nmi_pending());
+    assert!(!v.nmi_pending);
 
     // an edge whose rise is older than the cancel clock is not retractable
     for t in 45..=64u64 {
@@ -160,7 +161,8 @@ fn nmi_rising_edge_cancel_retracts_same_tick_edge() {
             v.detect_nmi();
         }
     }
-    assert!(v.take_nmi_pending());
+    assert!(v.nmi_pending);
+    v.mark_consumed();
     v.cancel_rising_edge_at(SystemClock(30)); // stale clock: ignored
 
     // a fresh edge latched on `clock` itself is retractable
@@ -170,9 +172,10 @@ fn nmi_rising_edge_cancel_retracts_same_tick_edge() {
             v.detect_nmi();
         }
     }
-    assert!(v.take_nmi_pending());
+    assert!(v.nmi_pending);
+    v.mark_consumed();
     v.cancel_rising_edge_at(SystemClock(78));
-    assert!(!v.take_nmi_pending());
+    assert!(!v.nmi_pending);
 }
 
 #[test]
@@ -194,7 +197,7 @@ fn nmi_pulse_dispatch_latency_runs_from_rising_edge() {
         }
         cpu.update_nmi_line((10..15).contains(&t), SystemClock(t));
         if t % 3 == 2 {
-            cpu.detect_interrupt(SystemClock(t));
+            cpu.detect_interrupt(SystemClock(t), false);
             if cpu.interrupt_detected.is_some() {
                 latched_at = Some(t);
             }
@@ -294,7 +297,7 @@ fn test_push_status() {
     let mut cpu = create_cpu();
     cpu.sp = 0xFF;
 
-    cpu.push_status(false, false);
+    cpu.push_status(false);
     let status_on_stack = cpu.read_byte(0x1FF);
     // NotUsed flag (0x20) should be set
     assert_eq!(status_on_stack & 0x20, 0x20);
@@ -3661,7 +3664,7 @@ fn test_push_status_with_all_flags() {
     cpu.set_flag(Flag::Negative, true);
     // Note: Break flag is NOT set, so it won't be pushed
 
-    cpu.push_status(false, false);
+    cpu.push_status(false);
 
     // push_status writes to current SP, then decrements
     // With SP=0xFF, it writes to 0x100 + 0xFF = 0x01FF, then SP becomes 0xFE
@@ -4045,11 +4048,7 @@ fn stack_and_misc_microcodes_manipulate_state() {
     Microcode::UpdateAFromAlu.exec(&mut cpu);
     assert_eq!(cpu.a, 0xAB);
 
-    Microcode::PushStatus {
-        break_flag: true,
-        check_nmi: false,
-    }
-    .exec(&mut cpu);
+    Microcode::PushStatus { break_flag: true }.exec(&mut cpu);
     assert_eq!(
         cpu.mcu().mem[0x01FF] & (Flag::Break as u8),
         Flag::Break as u8

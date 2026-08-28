@@ -87,6 +87,24 @@ _Avoid_: dot counter, phase accumulator
 Down-counting representation of the hardware's up-counter, seeded from the negated latch; reaching zero is the trip point and reseeds from the latch.
 _Avoid_: countdown timer, wrapping trick
 
+## Language — CPU Interrupt Recognition
+
+**Interrupt recognition window**:
+The span of dots during which an /NMI assertion's newest unconsumed rise is eligible at a hijack site, ending at that site's Hijack deadline. Declared per interrupt sequence as table data next to its micro-ops.
+_Avoid_: poll window, recognition period, decision window
+
+**Poll point**:
+The CPU cycle within an instruction's microcode sequence where the interrupt lines are sampled for dispatch. Final micro-op by default; taken branches shift it to their last internal cycle; interrupt sequences suppress it on their final cycle.
+_Avoid_: detect point, sample point, poll cycle
+
+**Hijack deadline**:
+Table-declared cutoff, in dots from sequence start, bounding which NMI rise can switch an in-flight BRK/IRQ vector fetch to the NMI vector.
+_Avoid_: decision lag, decision_lag, lag constant
+
+**Edge consumption**:
+The single protocol marking an NMI rise consumed — recording the consumed assertion's rise time in `consumed_through` — so the sampler and later hijack checks cannot re-fire it while the line stays high.
+_Avoid_: edge take, pending clear, hijack take
+
 ## Language — APU Timers
 
 **Raw timer period**:

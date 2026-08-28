@@ -1,6 +1,6 @@
 use crate::{SystemClock, cpu::microcode::opcode, mcu::Mcu};
 use arraydeque::ArrayDeque;
-use microcode::{InterruptSequences, Microcode};
+use microcode::{HijackEligibility, HijackSite, InterruptSequences, InterruptWindow, Microcode};
 
 mod microcode;
 mod reg16;
@@ -138,12 +138,11 @@ impl NmiDetector {
     /// pins an assertion on the last dot of BRK's PushPch cycle as still
     /// hijacking, and one on the first PushPcl dot as deferring to normal
     /// post-dispatch service — a decision boundary at the end of cycle 3,
-    /// seven dots before the BRK sequence's vector-fetch tick (the IRQ
-    /// dispatch sequence pins a smaller gap via `decision_lag`). An
-    /// assertion counts iff its newest unconsumed edge had risen by then.
-    /// Consumes the edge.
-    fn take_hijack_pending(&mut self, now: u64, decision_lag: u64) -> bool {
-        let cutoff = now.saturating_sub(decision_lag);
+    /// seven dots before the BRK sequence's vector-fetch tick. The site's
+    /// deadline is declared in the sequence's window; an assertion counts
+    /// iff its newest unconsumed edge had risen by then. Consumes the
+    /// edge.
+    fn consume_hijack_edge(&mut self, cutoff: u64) -> bool {
         let newest = self
             .nmi_pending
             .then_some(self.pending_asserted_since)
@@ -158,8 +157,28 @@ impl NmiDetector {
         }
     }
 
-    fn take_nmi_pending(&mut self) -> bool {
-        std::mem::take(&mut self.nmi_pending)
+    /// The PushStatus site's rule: consume the sampler-latched pending
+    /// edge iff it had risen by `cutoff`. Newer un-latched rises on the
+    /// line do not participate and stay eligible for the later
+    /// vector-decision site; only the consumed edge is stamped.
+    fn consume_latched_edge(&mut self, cutoff: u64) -> bool {
+        match self
+            .nmi_pending
+            .then_some(self.pending_asserted_since)
+            .flatten()
+        {
+            Some(t0) if t0 <= cutoff && !self.consumed_through.is_some_and(|c| c >= t0) => {
+                self.consume_at(t0);
+                true
+            }
+            _ => false,
+        }
+    }
+
+    /// Stamp `consumed_through` through `t0`, clearing the pending latch.
+    fn consume_at(&mut self, t0: u64) {
+        self.nmi_pending = false;
+        self.consumed_through = self.consumed_through.max(Some(t0));
     }
 }
 
@@ -229,6 +248,17 @@ impl ValueTargetTrait for Mem {
     }
 }
 
+/// The interrupt recognition window armed for the microcode sequence
+/// currently executing (ADR-0006). `started_at` is the cycle executing
+/// micro-op 0: stamped eagerly when the sequence dispatches its head on
+/// the arming tick (NMI/IRQ), lazily on the first pop otherwise (RESET,
+/// BRK after its fetch, hijack continuations).
+#[derive(Clone, Copy)]
+struct ActiveInterruptWindow {
+    window: &'static InterruptWindow,
+    started_at: Option<SystemClock>,
+}
+
 pub struct Cpu<M: Mcu> {
     pub a: u8,
     pub x: u8,
@@ -245,7 +275,7 @@ pub struct Cpu<M: Mcu> {
     db: u8, // save low byte during indexed addressing
     alu: u8,
 
-    entering_interrupt: bool,
+    active_interrupt_window: Option<ActiveInterruptWindow>,
     nmi_detecteor: NmiDetector,
     interrupt_detected: Option<InterruptType>,
     irq_detector: IrqDetector,
@@ -275,7 +305,7 @@ impl<M: Mcu> Cpu<M> {
             last_status: 0,
             mcu,
             opcode: 0,
-            entering_interrupt: false,
+            active_interrupt_window: None,
             interrupt_detected: None,
             nmi_detecteor: Default::default(),
             irq_detector: Default::default(),
@@ -407,7 +437,6 @@ impl<M: Mcu> Cpu<M> {
     pub fn reset(&mut self) {
         self.set_flag(Flag::InterruptDisabled, true);
         self.set_flag(Flag::NotUsed, true);
-        self.entering_interrupt = false;
         self.microcode_queue.clear();
         self.interrupt_detected = None;
         self.halt = false;
@@ -420,6 +449,7 @@ impl<M: Mcu> Cpu<M> {
         self.last_status = self.status;
 
         self.push_microcodes(&InterruptSequences::RESET);
+        self.arm_interrupt_window(&InterruptSequences::RESET_WINDOW, false);
     }
 
     pub fn set_irq(&mut self, enabled: bool, clock: SystemClock) {
@@ -453,6 +483,11 @@ impl<M: Mcu> Cpu<M> {
             return (ExecuteResult::Halt, false);
         }
 
+        if let Some(active) = self.active_interrupt_window.as_mut() {
+            if active.started_at.is_none() {
+                active.started_at = Some(clock);
+            }
+        }
         let code = match self.pop_microcode() {
             Some(v) => v,
             None => {
@@ -467,7 +502,17 @@ impl<M: Mcu> Cpu<M> {
 
         self.last_status = self.status;
         code.exec(self);
-        self.detect_interrupt(clock);
+        // Suppression is declared: the armed window's `suppress_final_poll`
+        // owns the final-cycle poll. The queue drains exactly on the final
+        // op of the armed sequence (or a hijack continuation's tail), so
+        // an armed window over an empty queue is that cycle.
+        let suppress = self.active_interrupt_window.is_some_and(|active| {
+            active.window.suppress_final_poll && self.microcode_queue.is_empty()
+        });
+        if self.microcode_queue.is_empty() {
+            self.active_interrupt_window = None;
+        }
+        self.detect_interrupt(clock, suppress);
 
         if self.track_interrupt {
             self.dump_interrupt_track(clock);
@@ -512,7 +557,7 @@ impl<M: Mcu> Cpu<M> {
         }
     }
 
-    fn detect_interrupt(&mut self, clock: SystemClock) {
+    fn detect_interrupt(&mut self, clock: SystemClock, suppress_final_poll: bool) {
         self.nmi_detecteor.detect_nmi();
         let disabled = if matches!(self.opcode, opcode::CLI | opcode::SEI | opcode::PLP) {
             (self.last_status & Flag::InterruptDisabled as u8) != 0
@@ -520,14 +565,12 @@ impl<M: Mcu> Cpu<M> {
             self.flag(Flag::InterruptDisabled)
         };
         self.irq_detector.detect_irq(disabled);
-        // Detect interrupt at the second-to-last cycle
-        if self.microcode_queue.len() == 1 && InterruptSequences::is_end(self.microcode_queue[0]) {
-            self.entering_interrupt = true;
-        }
 
         let request = std::mem::take(&mut self.request_detect_interrupt);
-        let is_last_op =
-            self.microcode_queue.is_empty() && !std::mem::take(&mut self.entering_interrupt);
+        // The standard poll fires on the instruction's final cycle —
+        // suppressed on the final cycle of an interrupt sequence, whose
+        // recognition belongs to its declared hijack sites.
+        let is_last_op = self.microcode_queue.is_empty() && !suppress_final_poll;
         if let (None, true) | (Some(true), _) = (request, is_last_op) {
             self.do_detect_interrupt(clock)
         }
@@ -785,19 +828,13 @@ impl<M: Mcu> Cpu<M> {
         self.write_byte(out);
     }
 
-    fn push_status(&mut self, break_flag: bool, check_nmi: bool) {
-        if check_nmi && self.nmi_detecteor.take_nmi_pending() {
-            if self.track_interrupt {
-                println!(
-                    "hijack: ${:x}, carry flag: {}",
-                    self.status,
-                    self.flag(Flag::Carry)
-                );
+    fn push_status(&mut self, break_flag: bool) {
+        if let Some((_, cutoff)) = self.declared_hijack_site(HijackEligibility::LatchedOnly) {
+            if self.nmi_detecteor.consume_latched_edge(cutoff) {
+                self.switch_to_nmi_vector(&[Microcode::LoadNmiPcL, Microcode::LoadNmiPcH]);
+                self.push_status(break_flag);
+                return;
             }
-            self.push_status(break_flag, false);
-            self.microcode_queue.clear();
-            self.push_microcodes(&[Microcode::LoadNmiPcL, Microcode::LoadNmiPcH]);
-            return;
         }
 
         self.push_stack(if break_flag {
@@ -834,18 +871,73 @@ impl<M: Mcu> Cpu<M> {
         self.microcode_queue.extend_back(microcodes.iter().copied());
     }
 
+    /// Arm the recognition window of an interrupt sequence about to run.
+    /// With `starts_now` the sequence's first micro-op executes on the
+    /// current tick (the dispatch head); otherwise the start is stamped
+    /// on the first pop after arming (RESET, BRK after its fetch, hijack
+    /// continuations).
+    fn arm_interrupt_window(&mut self, window: &'static InterruptWindow, starts_now: bool) {
+        self.active_interrupt_window = Some(ActiveInterruptWindow {
+            window,
+            started_at: starts_now.then_some(self.now),
+        });
+    }
+
+    /// The declared hijack site for the micro-op executing this cycle, if
+    /// the armed window schedules one at this sequence index, with its
+    /// cutoff in dots. `expected` pins the caller's op kind to the
+    /// declared rule (PushStatus = LatchedOnly, LoadIrqPcL = NewestVisible).
+    fn declared_hijack_site(
+        &self,
+        expected: HijackEligibility,
+    ) -> Option<(&'static HijackSite, u64)> {
+        let active = self.active_interrupt_window.as_ref()?;
+        let started = active.started_at?;
+        let index = (self.now.cycles() - started.cycles()) / 3;
+        debug_assert!(
+            index < u64::from(active.window.sequence_cycles),
+            "sequence index past the declared window"
+        );
+        let site = active
+            .window
+            .hijack_sites
+            .iter()
+            .find(|s| u64::from(s.op_index) == index)?;
+        debug_assert_eq!(site.eligibility, expected, "window and op disagree");
+        Some((site, started.cycles() + site.deadline_dots))
+    }
+
+    /// Switch an in-flight BRK/IRQ vector fetch to the NMI vector: stamp
+    /// the hijack for the interrupt tracker, arm the NMI window for the
+    /// continuation (lazy start — its first op runs next cycle; the tail
+    /// is the NMI sequence's final cycles), and replace the remaining
+    /// queue with the tail ops.
+    fn switch_to_nmi_vector(&mut self, tail: &[Microcode]) {
+        if self.track_interrupt {
+            println!(
+                "hijack: ${:x}, carry flag: {}",
+                self.status,
+                self.flag(Flag::Carry)
+            );
+        }
+        self.arm_interrupt_window(&InterruptSequences::NMI_WINDOW, false);
+        self.microcode_queue.clear();
+        self.push_microcodes(tail);
+    }
+
     /// Push the NMI/IRQ microcode sequence and return its head for
     /// execution on the current cycle. The sequence owns both hardware
     /// dead cycles (T1/T2) as its first two ops, so interrupt entry is
     /// exactly seven CPU cycles from dispatch to vector fetch.
     fn push_enter_interrupt_microcodes(&mut self, nmi: bool) -> Microcode {
-        let sequence = if nmi {
-            &InterruptSequences::NMI
+        let (sequence, window) = if nmi {
+            (&InterruptSequences::NMI, &InterruptSequences::NMI_WINDOW)
         } else {
-            &InterruptSequences::IRQ
+            (&InterruptSequences::IRQ, &InterruptSequences::IRQ_WINDOW)
         };
-        // The head (T1) runs on this cycle; the rest drains from the
-        // queue on the following ticks.
+        // The head (T1) runs on this cycle — the sequence starts now; the
+        // rest drains from the queue on the following ticks.
+        self.arm_interrupt_window(window, true);
         self.push_microcodes(&sequence[1..]);
         sequence[0]
     }
@@ -888,18 +980,13 @@ impl<M: Mcu> Cpu<M> {
         self.pc.set_high(high);
     }
 
-    fn load_irq_pcl(&mut self, decision_lag: u8) {
-        if self
-            .nmi_detecteor
-            .take_hijack_pending(self.now.cycles(), u64::from(decision_lag))
-        {
-            if self.track_interrupt {
-                println!("hijack: ${:x}", self.status,);
+    fn load_irq_pcl(&mut self) {
+        if let Some((_, cutoff)) = self.declared_hijack_site(HijackEligibility::NewestVisible) {
+            if self.nmi_detecteor.consume_hijack_edge(cutoff) {
+                self.switch_to_nmi_vector(&[Microcode::LoadNmiPcH]);
+                self.load_nmi_pcl();
+                return;
             }
-            self.microcode_queue.clear();
-            self.push_microcode(Microcode::LoadNmiPcH);
-            self.load_nmi_pcl();
-            return;
         }
 
         self.set_flag(Flag::InterruptDisabled, true);
