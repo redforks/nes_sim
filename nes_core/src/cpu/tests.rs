@@ -1,4 +1,7 @@
-use super::microcode::{BranchTest, ImmediateOp, PushTarget, TransferDirection};
+use super::microcode::{
+    BranchTest, CrossPageBehavior, ImmediateOp, OpAfterAddressing, PushTarget, TransferDirection,
+    build_opcode_table,
+};
 use super::*;
 use crate::test_utils::MockMcu;
 
@@ -4381,4 +4384,551 @@ fn interrupt_handler_entry_21_dots_after_boundary() {
     // dispatches after the next instruction boundary.
     let (boundary, entry) = run(|cpu, clock| cpu.set_irq(true, clock));
     assert_eq!(entry - boundary, 21, "IRQ: boundary → handler entry");
+}
+
+// ---- Bus cycle classification (ADR-0007) --------------------------------
+//
+// Stub state: pc = 0x1234, ab = 0x56FF (low byte 0xFF pins the no-carry
+// high-byte increment of (ind) addressing), sp = 0xFD (pop reads 0x01FE),
+// x = y = 0 (indexed with-op cycles stay on their non-crossing path).
+
+const STUB_PC: u16 = 0x1234;
+const STUB_AB: u16 = 0x56FF;
+const STUB_AB_LOW_INCREMENTED: u16 = 0x5600;
+const STUB_POP_ADDR: u16 = 0x01FE;
+
+fn classification_cpu() -> Cpu<MockMcu> {
+    let mut cpu = create_cpu();
+    cpu.pc.set(STUB_PC);
+    cpu.ab.set(STUB_AB);
+    cpu.sp = 0xFD;
+    cpu
+}
+
+fn pending(cpu: &mut Cpu<MockMcu>, mc: Microcode) {
+    cpu.microcode_queue.clear();
+    cpu.push_microcode(mc);
+}
+
+#[test]
+fn dma_halt_bus_addr_projects_the_pending_bus_cycle() {
+    let mut cpu = classification_cpu();
+
+    // Read through the latch: the halt cycle repeats the latch address.
+    pending(&mut cpu, Microcode::LoadIntoAlu(ValueSource::Mem));
+    assert_eq!(cpu.dma_halt_bus_addr(), Some(STUB_AB));
+    assert!(cpu.can_pause());
+
+    // Write cycle: never freezable — DMC DMA must not swallow writes.
+    pending(&mut cpu, Microcode::StoreAlu(ValueSource::Mem));
+    assert!(!cpu.can_pause());
+
+    // Internal cycle: no address of its own; repeat the last read.
+    pending(&mut cpu, Microcode::SetFlag(Flag::InterruptDisabled));
+    assert_eq!(cpu.dma_halt_bus_addr(), None);
+    assert!(cpu.can_pause());
+}
+
+#[test]
+fn indexed_h_halt_repeat_uses_the_no_carry_low_increment() {
+    let mut cpu = classification_cpu();
+    pending(&mut cpu, Microcode::IndexedH);
+    assert_eq!(cpu.dma_halt_bus_addr(), Some(STUB_AB_LOW_INCREMENTED));
+}
+
+#[test]
+fn indexed_h_and_jump_drives_the_adjusted_read() {
+    let mut cpu = classification_cpu();
+    pending(&mut cpu, Microcode::IndexedHAndJump);
+    assert_eq!(cpu.dma_halt_bus_addr(), Some(STUB_AB_LOW_INCREMENTED));
+}
+
+#[test]
+fn vector_fetches_read_fixed_vector_addresses() {
+    let mut cpu = classification_cpu();
+    for (mc, addr) in [
+        (Microcode::LoadNmiPcL, 0xFFFA),
+        (Microcode::LoadNmiPcH, 0xFFFB),
+        (Microcode::LoadResetPcL, 0xFFFC),
+        (Microcode::LoadResetPcH, 0xFFFD),
+        (Microcode::LoadIrqPcL, 0xFFFE),
+        (Microcode::LoadIrqPcH, 0xFFFF),
+    ] {
+        pending(&mut cpu, mc);
+        assert_eq!(cpu.dma_halt_bus_addr(), Some(addr));
+    }
+}
+
+#[test]
+fn stack_pops_read_the_stack() {
+    let mut cpu = classification_cpu();
+    for mc in [
+        Microcode::Plp,
+        Microcode::PopPcL,
+        Microcode::PopPcH,
+        Microcode::PopStack,
+    ] {
+        pending(&mut cpu, mc);
+        assert_eq!(cpu.dma_halt_bus_addr(), Some(STUB_POP_ADDR));
+    }
+}
+
+#[test]
+fn jsr_high_byte_fetch_repeats_at_pc() {
+    let mut cpu = classification_cpu();
+    pending(&mut cpu, Microcode::LoadPcAbsoluteH);
+    assert_eq!(cpu.dma_halt_bus_addr(), Some(STUB_PC));
+}
+
+#[test]
+fn zero_page_index_add_repeats_the_unindexed_read() {
+    // The index-add cycle of zero-page,X/Y reads the unindexed address on
+    // hardware (the emulator's exec omits it); the halt repeat mirrors the
+    // hardware cycle, not the instruction stream.
+    let mut cpu = classification_cpu();
+    pending(&mut cpu, Microcode::ZeroPageIndexedX);
+    assert_eq!(cpu.dma_halt_bus_addr(), Some(STUB_AB));
+    pending(&mut cpu, Microcode::ZeroPageIndexedY);
+    assert_eq!(cpu.dma_halt_bus_addr(), Some(STUB_AB));
+}
+
+#[test]
+fn indexed_with_op_reads_the_op_or_dummy_address() {
+    let mut cpu = classification_cpu();
+
+    // Non-crossing read op: the cycle reads the operand at the indexed address.
+    pending(
+        &mut cpu,
+        Microcode::IndexedXWithOp {
+            op: OpAfterAddressing::LoadIntoA,
+            first_clock: CrossPageBehavior::FirstClock,
+        },
+    );
+    assert_eq!(cpu.dma_halt_bus_addr(), Some(STUB_AB));
+
+    // Crossing read op: the cycle is the dummy read at (old high | new low).
+    cpu.ab.set(0x12FF);
+    cpu.x = 1;
+    pending(
+        &mut cpu,
+        Microcode::IndexedXWithOp {
+            op: OpAfterAddressing::LoadIntoA,
+            first_clock: CrossPageBehavior::FirstClock,
+        },
+    );
+    assert_eq!(cpu.dma_halt_bus_addr(), Some(0x1200));
+
+    // Store ops always run the dummy-read cycle first (FirstClockAlways),
+    // at (old high | new low) even without a page cross.
+    cpu.ab.set(STUB_AB);
+    cpu.y = 2;
+    pending(
+        &mut cpu,
+        Microcode::IndexedYWithOp {
+            op: OpAfterAddressing::StoreA,
+            first_clock: CrossPageBehavior::FirstClockAlways,
+        },
+    );
+    assert_eq!(
+        cpu.dma_halt_bus_addr(),
+        Some((STUB_AB & 0xFF00) | ((STUB_AB + 2) & 0xFF))
+    );
+}
+
+#[test]
+fn las_cross_refetch_reads_the_latch() {
+    // Page-crossed LAS abs,y pushes standalone `Las` as the refetch cycle;
+    // hardware drives the operand read at the (already index-adjusted)
+    // latch there, even though exec only performs register math on the
+    // stale ALU (pre-existing exec defect — the with-op cycle's read is
+    // what normally feeds it).
+    let mut cpu = classification_cpu();
+    pending(&mut cpu, Microcode::Las);
+    assert_eq!(cpu.dma_halt_bus_addr(), Some(STUB_AB));
+}
+
+// ---- GOLDEN_BUS_CYCLE (ADR-0007) ----------------------------------------
+//
+// Stub-state shorthand (see `classification_cpu`): BC_PC = instruction-stream
+// fetch, BC_AB = latch read at 0x56FF, BC_AB_INC = the (ind) high-byte read
+// with the no-carry low increment (0x5600), BC_STK = stack pop at 0x01FE,
+// BC_V_* = fixed vector reads, BC_W = write, BC_I = internal.
+//
+// Known per-variant limitation (ADR-0007): `Nop` classifies as BC_PC, which
+// is exact for implied ops, stack ops, branch add cycles and the RESET dead
+// cycles — but the NOP-addr modes (0x04/0x0C/0x14/...) end in a final dummy
+// read of the effective address on hardware; a per-variant classifier cannot
+// see sequence context and repeats PC there.
+
+const BC_PC: BusCycle = BusCycle::Read(ReadAddress::ProgramCounter);
+const BC_AB: BusCycle = BusCycle::Read(ReadAddress::Latch(0x56FF));
+const BC_AB_INC: BusCycle = BusCycle::Read(ReadAddress::Latch(0x5600));
+const BC_STK: BusCycle = BusCycle::Read(ReadAddress::Stack(0x01FE));
+const BC_V_NL: BusCycle = BusCycle::Read(ReadAddress::Fixed(0xFFFA));
+const BC_V_NH: BusCycle = BusCycle::Read(ReadAddress::Fixed(0xFFFB));
+const BC_V_RL: BusCycle = BusCycle::Read(ReadAddress::Fixed(0xFFFC));
+const BC_V_RH: BusCycle = BusCycle::Read(ReadAddress::Fixed(0xFFFD));
+const BC_V_IL: BusCycle = BusCycle::Read(ReadAddress::Fixed(0xFFFE));
+const BC_V_IH: BusCycle = BusCycle::Read(ReadAddress::Fixed(0xFFFF));
+const BC_W: BusCycle = BusCycle::Write;
+const BC_I: BusCycle = BusCycle::Internal;
+
+const GOLDEN_BUS_CYCLE: [&[BusCycle]; 256] = [
+    &[BC_PC, BC_W, BC_W, BC_W, BC_V_IL, BC_V_IH], // 0x00
+    &[BC_PC, BC_AB, BC_AB, BC_AB_INC, BC_AB],     // 0x01
+    &[BC_I],                                      // 0x02
+    &[BC_PC, BC_AB, BC_AB, BC_AB_INC, BC_AB, BC_W, BC_W], // 0x03
+    &[BC_PC, BC_PC],                              // 0x04
+    &[BC_PC, BC_AB],                              // 0x05
+    &[BC_PC, BC_AB, BC_W, BC_W],                  // 0x06
+    &[BC_PC, BC_AB, BC_W, BC_W],                  // 0x07
+    &[BC_PC, BC_W],                               // 0x08
+    &[BC_PC],                                     // 0x09
+    &[BC_I],                                      // 0x0A
+    &[BC_PC],                                     // 0x0B
+    &[BC_PC, BC_PC, BC_PC],                       // 0x0C
+    &[BC_PC, BC_PC, BC_AB],                       // 0x0D
+    &[BC_PC, BC_PC, BC_AB, BC_W, BC_W],           // 0x0E
+    &[BC_PC, BC_PC, BC_AB, BC_W, BC_W],           // 0x0F
+    &[BC_PC],                                     // 0x10
+    &[BC_PC, BC_AB, BC_AB_INC, BC_AB],            // 0x11
+    &[BC_I],                                      // 0x12
+    &[BC_PC, BC_AB, BC_AB_INC, BC_AB, BC_AB, BC_W, BC_W], // 0x13
+    &[BC_PC, BC_AB, BC_PC],                       // 0x14
+    &[BC_PC, BC_AB, BC_AB],                       // 0x15
+    &[BC_PC, BC_AB, BC_AB, BC_W, BC_W],           // 0x16
+    &[BC_PC, BC_AB, BC_AB, BC_W, BC_W],           // 0x17
+    &[BC_I],                                      // 0x18
+    &[BC_PC, BC_PC, BC_AB],                       // 0x19
+    &[BC_PC],                                     // 0x1A
+    &[BC_PC, BC_PC, BC_AB, BC_AB, BC_W, BC_W],    // 0x1B
+    &[BC_PC, BC_PC, BC_AB],                       // 0x1C
+    &[BC_PC, BC_PC, BC_AB],                       // 0x1D
+    &[BC_PC, BC_PC, BC_AB, BC_AB, BC_W, BC_W],    // 0x1E
+    &[BC_PC, BC_PC, BC_AB, BC_AB, BC_W, BC_W],    // 0x1F
+    &[BC_PC, BC_PC, BC_W, BC_W, BC_PC],           // 0x20
+    &[BC_PC, BC_AB, BC_AB, BC_AB_INC, BC_AB],     // 0x21
+    &[BC_I],                                      // 0x22
+    &[BC_PC, BC_AB, BC_AB, BC_AB_INC, BC_AB, BC_W, BC_W], // 0x23
+    &[BC_PC, BC_AB],                              // 0x24
+    &[BC_PC, BC_AB],                              // 0x25
+    &[BC_PC, BC_AB, BC_W, BC_W],                  // 0x26
+    &[BC_PC, BC_AB, BC_W, BC_W],                  // 0x27
+    &[BC_PC, BC_PC, BC_STK],                      // 0x28
+    &[BC_PC],                                     // 0x29
+    &[BC_I],                                      // 0x2A
+    &[BC_PC],                                     // 0x2B
+    &[BC_PC, BC_PC, BC_AB],                       // 0x2C
+    &[BC_PC, BC_PC, BC_AB],                       // 0x2D
+    &[BC_PC, BC_PC, BC_AB, BC_W, BC_W],           // 0x2E
+    &[BC_PC, BC_PC, BC_AB, BC_W, BC_W],           // 0x2F
+    &[BC_PC],                                     // 0x30
+    &[BC_PC, BC_AB, BC_AB_INC, BC_AB],            // 0x31
+    &[BC_I],                                      // 0x32
+    &[BC_PC, BC_AB, BC_AB_INC, BC_AB, BC_AB, BC_W, BC_W], // 0x33
+    &[BC_PC, BC_AB, BC_PC],                       // 0x34
+    &[BC_PC, BC_AB, BC_AB],                       // 0x35
+    &[BC_PC, BC_AB, BC_AB, BC_W, BC_W],           // 0x36
+    &[BC_PC, BC_AB, BC_AB, BC_W, BC_W],           // 0x37
+    &[BC_I],                                      // 0x38
+    &[BC_PC, BC_PC, BC_AB],                       // 0x39
+    &[BC_PC],                                     // 0x3A
+    &[BC_PC, BC_PC, BC_AB, BC_AB, BC_W, BC_W],    // 0x3B
+    &[BC_PC, BC_PC, BC_AB],                       // 0x3C
+    &[BC_PC, BC_PC, BC_AB],                       // 0x3D
+    &[BC_PC, BC_PC, BC_AB, BC_AB, BC_W, BC_W],    // 0x3E
+    &[BC_PC, BC_PC, BC_AB, BC_AB, BC_W, BC_W],    // 0x3F
+    &[BC_PC, BC_PC, BC_STK, BC_STK, BC_STK],      // 0x40
+    &[BC_PC, BC_AB, BC_AB, BC_AB_INC, BC_AB],     // 0x41
+    &[BC_I],                                      // 0x42
+    &[BC_PC, BC_AB, BC_AB, BC_AB_INC, BC_AB, BC_W, BC_W], // 0x43
+    &[BC_PC, BC_PC],                              // 0x44
+    &[BC_PC, BC_AB],                              // 0x45
+    &[BC_PC, BC_AB, BC_W, BC_W],                  // 0x46
+    &[BC_PC, BC_AB, BC_W, BC_W],                  // 0x47
+    &[BC_PC, BC_W],                               // 0x48
+    &[BC_PC],                                     // 0x49
+    &[BC_I],                                      // 0x4A
+    &[BC_PC],                                     // 0x4B
+    &[BC_PC, BC_PC],                              // 0x4C
+    &[BC_PC, BC_PC, BC_AB],                       // 0x4D
+    &[BC_PC, BC_PC, BC_AB, BC_W, BC_W],           // 0x4E
+    &[BC_PC, BC_PC, BC_AB, BC_W, BC_W],           // 0x4F
+    &[BC_PC],                                     // 0x50
+    &[BC_PC, BC_AB, BC_AB_INC, BC_AB],            // 0x51
+    &[BC_I],                                      // 0x52
+    &[BC_PC, BC_AB, BC_AB_INC, BC_AB, BC_AB, BC_W, BC_W], // 0x53
+    &[BC_PC, BC_AB, BC_PC],                       // 0x54
+    &[BC_PC, BC_AB, BC_AB],                       // 0x55
+    &[BC_PC, BC_AB, BC_AB, BC_W, BC_W],           // 0x56
+    &[BC_PC, BC_AB, BC_AB, BC_W, BC_W],           // 0x57
+    &[BC_I],                                      // 0x58
+    &[BC_PC, BC_PC, BC_AB],                       // 0x59
+    &[BC_PC],                                     // 0x5A
+    &[BC_PC, BC_PC, BC_AB, BC_AB, BC_W, BC_W],    // 0x5B
+    &[BC_PC, BC_PC, BC_AB],                       // 0x5C
+    &[BC_PC, BC_PC, BC_AB],                       // 0x5D
+    &[BC_PC, BC_PC, BC_AB, BC_AB, BC_W, BC_W],    // 0x5E
+    &[BC_PC, BC_PC, BC_AB, BC_AB, BC_W, BC_W],    // 0x5F
+    &[BC_PC, BC_PC, BC_STK, BC_STK, BC_I],        // 0x60
+    &[BC_PC, BC_AB, BC_AB, BC_AB_INC, BC_AB],     // 0x61
+    &[BC_I],                                      // 0x62
+    &[BC_PC, BC_AB, BC_AB, BC_AB_INC, BC_AB, BC_W, BC_W], // 0x63
+    &[BC_PC, BC_PC],                              // 0x64
+    &[BC_PC, BC_AB],                              // 0x65
+    &[BC_PC, BC_AB, BC_W, BC_W],                  // 0x66
+    &[BC_PC, BC_AB, BC_W, BC_W],                  // 0x67
+    &[BC_PC, BC_STK, BC_I],                       // 0x68
+    &[BC_PC],                                     // 0x69
+    &[BC_I],                                      // 0x6A
+    &[BC_PC],                                     // 0x6B
+    &[BC_PC, BC_PC, BC_AB, BC_AB_INC],            // 0x6C
+    &[BC_PC, BC_PC, BC_AB],                       // 0x6D
+    &[BC_PC, BC_PC, BC_AB, BC_W, BC_W],           // 0x6E
+    &[BC_PC, BC_PC, BC_AB, BC_W, BC_W],           // 0x6F
+    &[BC_PC],                                     // 0x70
+    &[BC_PC, BC_AB, BC_AB_INC, BC_AB],            // 0x71
+    &[BC_I],                                      // 0x72
+    &[BC_PC, BC_AB, BC_AB_INC, BC_AB, BC_AB, BC_W, BC_W], // 0x73
+    &[BC_PC, BC_AB, BC_PC],                       // 0x74
+    &[BC_PC, BC_AB, BC_AB],                       // 0x75
+    &[BC_PC, BC_AB, BC_AB, BC_W, BC_W],           // 0x76
+    &[BC_PC, BC_AB, BC_AB, BC_W, BC_W],           // 0x77
+    &[BC_I],                                      // 0x78
+    &[BC_PC, BC_PC, BC_AB],                       // 0x79
+    &[BC_PC],                                     // 0x7A
+    &[BC_PC, BC_PC, BC_AB, BC_AB, BC_W, BC_W],    // 0x7B
+    &[BC_PC, BC_PC, BC_AB],                       // 0x7C
+    &[BC_PC, BC_PC, BC_AB],                       // 0x7D
+    &[BC_PC, BC_PC, BC_AB, BC_AB, BC_W, BC_W],    // 0x7E
+    &[BC_PC, BC_PC, BC_AB, BC_AB, BC_W, BC_W],    // 0x7F
+    &[BC_PC],                                     // 0x80
+    &[BC_PC, BC_AB, BC_AB, BC_AB_INC, BC_W],      // 0x81
+    &[BC_PC],                                     // 0x82
+    &[BC_PC, BC_AB, BC_AB, BC_AB_INC, BC_W],      // 0x83
+    &[BC_PC, BC_W],                               // 0x84
+    &[BC_PC, BC_W],                               // 0x85
+    &[BC_PC, BC_W],                               // 0x86
+    &[BC_PC, BC_W],                               // 0x87
+    &[BC_I],                                      // 0x88
+    &[BC_PC],                                     // 0x89
+    &[BC_I],                                      // 0x8A
+    &[BC_PC],                                     // 0x8B
+    &[BC_PC, BC_PC, BC_W],                        // 0x8C
+    &[BC_PC, BC_PC, BC_W],                        // 0x8D
+    &[BC_PC, BC_PC, BC_W],                        // 0x8E
+    &[BC_PC, BC_PC, BC_W],                        // 0x8F
+    &[BC_PC],                                     // 0x90
+    &[BC_PC, BC_AB, BC_AB_INC, BC_AB, BC_W],      // 0x91
+    &[BC_I],                                      // 0x92
+    &[BC_PC, BC_AB, BC_AB_INC, BC_AB, BC_W],      // 0x93
+    &[BC_PC, BC_AB, BC_W],                        // 0x94
+    &[BC_PC, BC_AB, BC_W],                        // 0x95
+    &[BC_PC, BC_AB, BC_W],                        // 0x96
+    &[BC_PC, BC_AB, BC_W],                        // 0x97
+    &[BC_I],                                      // 0x98
+    &[BC_PC, BC_PC, BC_AB, BC_W],                 // 0x99
+    &[BC_I],                                      // 0x9A
+    &[BC_PC, BC_PC, BC_AB, BC_W],                 // 0x9B
+    &[BC_PC, BC_PC, BC_AB, BC_W],                 // 0x9C
+    &[BC_PC, BC_PC, BC_AB, BC_W],                 // 0x9D
+    &[BC_PC, BC_PC, BC_AB, BC_W],                 // 0x9E
+    &[BC_PC, BC_PC, BC_AB, BC_W],                 // 0x9F
+    &[BC_PC],                                     // 0xA0
+    &[BC_PC, BC_AB, BC_AB, BC_AB_INC, BC_AB],     // 0xA1
+    &[BC_PC],                                     // 0xA2
+    &[BC_PC, BC_AB, BC_AB, BC_AB_INC, BC_AB],     // 0xA3
+    &[BC_PC, BC_AB],                              // 0xA4
+    &[BC_PC, BC_AB],                              // 0xA5
+    &[BC_PC, BC_AB],                              // 0xA6
+    &[BC_PC, BC_AB],                              // 0xA7
+    &[BC_I],                                      // 0xA8
+    &[BC_PC],                                     // 0xA9
+    &[BC_I],                                      // 0xAA
+    &[BC_PC],                                     // 0xAB
+    &[BC_PC, BC_PC, BC_AB],                       // 0xAC
+    &[BC_PC, BC_PC, BC_AB],                       // 0xAD
+    &[BC_PC, BC_PC, BC_AB],                       // 0xAE
+    &[BC_PC, BC_PC, BC_AB],                       // 0xAF
+    &[BC_PC],                                     // 0xB0
+    &[BC_PC, BC_AB, BC_AB_INC, BC_AB],            // 0xB1
+    &[BC_I],                                      // 0xB2
+    &[BC_PC, BC_AB, BC_AB_INC, BC_AB],            // 0xB3
+    &[BC_PC, BC_AB, BC_AB],                       // 0xB4
+    &[BC_PC, BC_AB, BC_AB],                       // 0xB5
+    &[BC_PC, BC_AB, BC_AB],                       // 0xB6
+    &[BC_PC, BC_AB, BC_AB],                       // 0xB7
+    &[BC_I],                                      // 0xB8
+    &[BC_PC, BC_PC, BC_AB],                       // 0xB9
+    &[BC_I],                                      // 0xBA
+    &[BC_PC, BC_PC, BC_AB],                       // 0xBB
+    &[BC_PC, BC_PC, BC_AB],                       // 0xBC
+    &[BC_PC, BC_PC, BC_AB],                       // 0xBD
+    &[BC_PC, BC_PC, BC_AB],                       // 0xBE
+    &[BC_PC, BC_PC, BC_AB],                       // 0xBF
+    &[BC_PC],                                     // 0xC0
+    &[BC_PC, BC_AB, BC_AB, BC_AB_INC, BC_AB],     // 0xC1
+    &[BC_PC],                                     // 0xC2
+    &[BC_PC, BC_AB, BC_AB, BC_AB_INC, BC_AB, BC_W, BC_W], // 0xC3
+    &[BC_PC, BC_AB],                              // 0xC4
+    &[BC_PC, BC_AB],                              // 0xC5
+    &[BC_PC, BC_AB, BC_W, BC_W],                  // 0xC6
+    &[BC_PC, BC_AB, BC_W, BC_W],                  // 0xC7
+    &[BC_I],                                      // 0xC8
+    &[BC_PC],                                     // 0xC9
+    &[BC_I],                                      // 0xCA
+    &[BC_PC],                                     // 0xCB
+    &[BC_PC, BC_PC, BC_AB],                       // 0xCC
+    &[BC_PC, BC_PC, BC_AB],                       // 0xCD
+    &[BC_PC, BC_PC, BC_AB, BC_W, BC_W],           // 0xCE
+    &[BC_PC, BC_PC, BC_AB, BC_W, BC_W],           // 0xCF
+    &[BC_PC],                                     // 0xD0
+    &[BC_PC, BC_AB, BC_AB_INC, BC_AB],            // 0xD1
+    &[BC_I],                                      // 0xD2
+    &[BC_PC, BC_AB, BC_AB_INC, BC_AB, BC_AB, BC_W, BC_W], // 0xD3
+    &[BC_PC, BC_AB, BC_PC],                       // 0xD4
+    &[BC_PC, BC_AB, BC_AB],                       // 0xD5
+    &[BC_PC, BC_AB, BC_AB, BC_W, BC_W],           // 0xD6
+    &[BC_PC, BC_AB, BC_AB, BC_W, BC_W],           // 0xD7
+    &[BC_I],                                      // 0xD8
+    &[BC_PC, BC_PC, BC_AB],                       // 0xD9
+    &[BC_PC],                                     // 0xDA
+    &[BC_PC, BC_PC, BC_AB, BC_AB, BC_W, BC_W],    // 0xDB
+    &[BC_PC, BC_PC, BC_AB],                       // 0xDC
+    &[BC_PC, BC_PC, BC_AB],                       // 0xDD
+    &[BC_PC, BC_PC, BC_AB, BC_AB, BC_W, BC_W],    // 0xDE
+    &[BC_PC, BC_PC, BC_AB, BC_AB, BC_W, BC_W],    // 0xDF
+    &[BC_PC],                                     // 0xE0
+    &[BC_PC, BC_AB, BC_AB, BC_AB_INC, BC_AB],     // 0xE1
+    &[BC_PC],                                     // 0xE2
+    &[BC_PC, BC_AB, BC_AB, BC_AB_INC, BC_AB, BC_W, BC_W], // 0xE3
+    &[BC_PC, BC_AB],                              // 0xE4
+    &[BC_PC, BC_AB],                              // 0xE5
+    &[BC_PC, BC_AB, BC_W, BC_W],                  // 0xE6
+    &[BC_PC, BC_AB, BC_W, BC_W],                  // 0xE7
+    &[BC_I],                                      // 0xE8
+    &[BC_PC],                                     // 0xE9
+    &[BC_PC],                                     // 0xEA
+    &[BC_PC],                                     // 0xEB
+    &[BC_PC, BC_PC, BC_AB],                       // 0xEC
+    &[BC_PC, BC_PC, BC_AB],                       // 0xED
+    &[BC_PC, BC_PC, BC_AB, BC_W, BC_W],           // 0xEE
+    &[BC_PC, BC_PC, BC_AB, BC_W, BC_W],           // 0xEF
+    &[BC_PC],                                     // 0xF0
+    &[BC_PC, BC_AB, BC_AB_INC, BC_AB],            // 0xF1
+    &[BC_I],                                      // 0xF2
+    &[BC_PC, BC_AB, BC_AB_INC, BC_AB, BC_AB, BC_W, BC_W], // 0xF3
+    &[BC_PC, BC_AB, BC_PC],                       // 0xF4
+    &[BC_PC, BC_AB, BC_AB],                       // 0xF5
+    &[BC_PC, BC_AB, BC_AB, BC_W, BC_W],           // 0xF6
+    &[BC_PC, BC_AB, BC_AB, BC_W, BC_W],           // 0xF7
+    &[BC_I],                                      // 0xF8
+    &[BC_PC, BC_PC, BC_AB],                       // 0xF9
+    &[BC_PC],                                     // 0xFA
+    &[BC_PC, BC_PC, BC_AB, BC_AB, BC_W, BC_W],    // 0xFB
+    &[BC_PC, BC_PC, BC_AB],                       // 0xFC
+    &[BC_PC, BC_PC, BC_AB],                       // 0xFD
+    &[BC_PC, BC_PC, BC_AB, BC_AB, BC_W, BC_W],    // 0xFE
+    &[BC_PC, BC_PC, BC_AB, BC_AB, BC_W, BC_W],    // 0xFF
+];
+
+const GOLDEN_INTERRUPT_BUS_CYCLE: [&[BusCycle]; 4] = [
+    &[BC_PC, BC_PC, BC_PC, BC_PC, BC_PC, BC_V_RL, BC_V_RH], // RESET
+    &[BC_PC, BC_PC, BC_W, BC_W, BC_W, BC_V_NL, BC_V_NH],    // NMI
+    &[BC_PC, BC_PC, BC_W, BC_W, BC_W, BC_V_IL, BC_V_IH],    // IRQ
+    &[BC_PC, BC_W, BC_W, BC_W, BC_V_IL, BC_V_IH],           // BRK
+];
+
+#[test]
+fn per_opcode_bus_cycle_matches_golden() {
+    let cpu = classification_cpu();
+    for (op, seq) in build_opcode_table().iter().enumerate() {
+        for (cycle, mc) in seq.iter().enumerate() {
+            assert_eq!(
+                cpu.bus_cycle(*mc),
+                GOLDEN_BUS_CYCLE[op][cycle],
+                "opcode 0x{op:02X} cycle {cycle} ({mc:?})"
+            );
+        }
+    }
+}
+
+#[test]
+fn interrupt_sequences_bus_cycle_matches_golden() {
+    let cpu = classification_cpu();
+    let sequences: [(&str, &[Microcode], &[BusCycle]); 4] = [
+        (
+            "RESET",
+            &InterruptSequences::RESET,
+            GOLDEN_INTERRUPT_BUS_CYCLE[0],
+        ),
+        (
+            "NMI",
+            &InterruptSequences::NMI,
+            GOLDEN_INTERRUPT_BUS_CYCLE[1],
+        ),
+        (
+            "IRQ",
+            &InterruptSequences::IRQ,
+            GOLDEN_INTERRUPT_BUS_CYCLE[2],
+        ),
+        (
+            "BRK",
+            InterruptSequences::BRK.as_slice(),
+            GOLDEN_INTERRUPT_BUS_CYCLE[3],
+        ),
+    ];
+    for (name, seq, expected) in sequences {
+        for (cycle, mc) in seq.iter().enumerate() {
+            assert_eq!(
+                cpu.bus_cycle(*mc),
+                expected[cycle],
+                "{name} cycle {cycle} ({mc:?})"
+            );
+        }
+    }
+}
+
+#[test]
+fn bus_cycle_invariants() {
+    let cpu = classification_cpu();
+
+    // Nop is the hardware dummy read at PC (implied ops, stack ops, branch
+    // add cycles, RESET dead cycles) — pinned explicitly so a fetch-arm
+    // grouping can never silently absorb it.
+    assert_eq!(cpu.bus_cycle(Microcode::Nop), BC_PC);
+
+    // Fixed reads are exactly the six interrupt vector constants.
+    let vectors = [0xFFFA, 0xFFFB, 0xFFFC, 0xFFFD, 0xFFFE, 0xFFFF];
+    let table = build_opcode_table();
+    let mut seqs: Vec<&[Microcode]> = table.iter().map(|seq| seq.as_slice()).collect();
+    seqs.push(&InterruptSequences::RESET);
+    seqs.push(&InterruptSequences::NMI);
+    seqs.push(&InterruptSequences::IRQ);
+    seqs.push(InterruptSequences::BRK.as_slice());
+    for seq in &seqs {
+        for mc in *seq {
+            if let BusCycle::Read(ReadAddress::Fixed(addr)) = cpu.bus_cycle(*mc) {
+                assert!(vectors.contains(&addr), "{mc:?} reads fixed {addr:#X}");
+            }
+        }
+    }
+
+    // At most two consecutive write cycles per opcode sequence — the RMW
+    // double-write (old value, then the modified one). The one exception is
+    // BRK (0x00, in the table): its interrupt entry stacks three pushes,
+    // like the NMI/IRQ sequences in GOLDEN_INTERRUPT_BUS_CYCLE.
+    for (op, seq) in table.iter().enumerate() {
+        let mut run = 0;
+        for mc in seq {
+            run = match cpu.bus_cycle(*mc) {
+                BusCycle::Write => run + 1,
+                _ => 0,
+            };
+            assert!(
+                run <= 2 || (op == opcode::BRK as usize && run == 3),
+                "opcode 0x{op:02X} has {run} consecutive writes"
+            );
+        }
+    }
 }

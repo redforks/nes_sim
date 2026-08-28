@@ -105,6 +105,16 @@ _Avoid_: decision lag, decision_lag, lag constant
 The single protocol marking an NMI rise consumed — recording the consumed assertion's rise time in `consumed_through` — so the sampler and later hijack checks cannot re-fire it while the line stays high.
 _Avoid_: edge take, pending clear, hijack take
 
+## Language — CPU Bus Cycles
+
+**Bus cycle classification**:
+The single source of truth for what a pending Microcode cycle drives on the bus: a read from the program counter (instruction stream, including the hardware dummy read of implied ops), a read through the address latch (per-variant adjusted — the no-carry low-byte increment), a read from the stack (pop cycles, $0100 | SP+1), a read at a fixed vector address, a write, or internal (no bus access of its own). Declared in one exhaustive match; DMC DMA halt decisions consume it and nothing else.
+_Avoid_: cycle kind, write-operation check, bus op
+
+**Halt-repeat read**:
+The bus behavior while the CPU is RDY-halted by DMA: the bus re-drives the address the pending read cycle would drive. Internal cycles have no address of their own and repeat the last completed read. Write cycles never sit under a halt — the CPU is only halted between them.
+_Avoid_: RDY repeat, dummy read (the DMA's own alignment cycles), repeated fetch
+
 ## Language — APU Timers
 
 **Raw timer period**:

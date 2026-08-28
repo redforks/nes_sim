@@ -446,7 +446,7 @@ impl InterruptSequences {
     }
 }
 
-const fn build_opcode_table() -> [ArrayVec<[Microcode; 7]>; 256] {
+pub(crate) const fn build_opcode_table() -> [ArrayVec<[Microcode; 7]>; 256] {
     use super::Flag::*;
     use AOrMemory::*;
     use Microcode::*;
@@ -1513,34 +1513,6 @@ pub enum PushTarget {
 }
 
 impl Microcode {
-    /// Returns true if this microcode performs a memory write cycle.
-    /// DMC DMA must not halt the CPU during a write cycle.
-    pub const fn is_write_operation(self) -> bool {
-        matches!(
-            self,
-            Self::StoreR(..)
-                | Self::StoreAlu(..)
-                | Self::Shx
-                | Self::Shy
-                | Self::Sha
-                | Self::Tas
-                | Self::Sax
-                | Self::Rla
-                | Self::Dcp
-                | Self::Isc
-                | Self::Rra
-                | Self::Slo
-                | Self::Sre
-                | Self::PushStatus { .. }
-                | Self::PushStack(..)
-                | Self::Asl(AOrMemory::Memory)
-                | Self::Lsr(AOrMemory::Memory)
-                | Self::Rol(AOrMemory::Memory)
-                | Self::Ror(AOrMemory::Memory)
-                | Self::IncDec(IncDecTarget::IncrementAlu | IncDecTarget::DecrementAlu)
-        )
-    }
-
     /// perform second phase of this Microcode
     pub fn exec<M: Mcu>(self, cpu: &mut Cpu<M>) {
         match self {
