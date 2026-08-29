@@ -624,9 +624,28 @@ impl<M: Mcu> Cpu<M> {
         self.arm_interrupt_window(&InterruptSequences::RESET_WINDOW, false);
     }
 
-    pub fn set_irq(&mut self, enabled: bool, clock: SystemClock) {
+    pub(crate) fn set_irq(&mut self, enabled: bool, clock: SystemClock) {
         self.irq_detector
             .update_irq_input(enabled, clock, self.track_interrupt);
+    }
+
+    /// Single published interrupt entry — updates both IRQ level and NMI
+    /// line atomically, owning the same-tick race-retract internally.
+    ///
+    /// `lines.irq_level` is already time-corrected (APU +1, cartridge
+    /// latch quantized); `lines.nmi.race_cancel` is the same-dot vblank
+    /// race suppression consumed via `consumed_through` (ADR-0006 third
+    /// writer alongside the two hijack sites).
+    pub fn update_interrupt_lines(
+        &mut self,
+        lines: crate::interrupt::InterruptLines,
+        clock: SystemClock,
+    ) {
+        self.set_irq(lines.irq_level, clock);
+        self.update_nmi_line(lines.nmi.level, clock);
+        if lines.nmi.race_cancel {
+            self.cancel_nmi_rising_edge(clock);
+        }
     }
 
     pub fn is_halted(&self) -> bool {
@@ -1132,12 +1151,14 @@ impl<M: Mcu> Cpu<M> {
     }
 
     /// Update cpu nmi signal line, may trigger nmi
-    pub fn update_nmi_line(&mut self, nmi: bool, clock: SystemClock) {
+    pub(crate) fn update_nmi_line(&mut self, nmi: bool, clock: SystemClock) {
         self.nmi_detecteor.update_nmi_input(nmi, clock);
     }
     /// Retract an NMI rising edge latched on `clock` itself (same-tick vblank
     /// race resolution; see `NmiDetector::cancel_rising_edge_at`).
-    pub fn cancel_nmi_rising_edge(&mut self, clock: SystemClock) {
+    /// Third writer of `consumed_through` alongside the two hijack sites
+    /// (ADR-0006 / ADR-0008).
+    pub(crate) fn cancel_nmi_rising_edge(&mut self, clock: SystemClock) {
         self.nmi_detecteor.cancel_rising_edge_at(clock);
     }
 

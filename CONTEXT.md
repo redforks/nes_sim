@@ -108,6 +108,30 @@ _Avoid_: decision lag, decision_lag, lag constant
 The single protocol marking an NMI rise consumed — recording the consumed assertion's rise time in `consumed_through` — so the sampler and later hijack checks cannot re-fire it while the line stays high.
 _Avoid_: edge take, pending clear, hijack take
 
+## Language — CPU Interrupt Handshake
+
+Core domain for the per-dot PPU↔CPU and IRQ-producer↔CPU line sampling that feeds interrupt recognition.
+
+**Interrupt lines**:
+The per-dot bundle `{nmi, irq_level}` driven from devices into the CPU detectors. `nmi` is the `NmiLines` bundle; `irq_level` is the already time-corrected (APU +1, cartridge-quantized) level for this dot.
+_Avoid_: interrupt bundle, irq_lines, line bundle
+
+**NMI line bundle (NmiLines)**:
+Atomically produced `{level, race_cancel}` from the PPU for one dot. `level = v_blank && nmi_enable`; `race_cancel = true` when a `$2000`/`$2002` access on the `vbl_set_cycle` dot suppressed the assertion — the level's same-dot rise never asserted and the edge must be retracted via `consumed_through`.
+_Avoid_: nmi flag, race flag, nmi_race_cancel (field name only)
+
+**APU IRQ skew (sampled IRQ)**:
+The one-dot `pre-tick → visible next dot` mapping of the APU IRQ level. The level sampled BEFORE `tick_apu(clock)` becomes CPU-visible on `clock+1`; a transition `tick_apu` raises or clears reaches the detector on the next dot.
+_Avoid_: delayed irq, apu lag, one-cycle delay
+
+**Cartridge IRQ latch**:
+The two-stage dot-captured / CPU-cycle-latched quantization of mapper IRQ. `next` captures `cartridge_irq_pending()` every dot (post-PPU); `latched` copies `next` on CPU dots only; the CPU sees `latched`. MMC3/VRC counters are PPU-dot-clocked; tests pin the CPU-cycle quantization.
+_Avoid_: cartridge bool, irq buffer, latched irq (ambiguous)
+
+**Same-tick retract (race-retract)**:
+The same-dot suppression of an NMI edge that `NmiLines.race_cancel` flags, consumed via the unified `consumed_through` edge protocol (`cancel_rising_edge_at(clock)` → `mark_consumed()`), clearing `nmi_input`/`last_sampled_level` so neither sampler nor hijack can re-fire the same assertion while the line stays high.
+_Avoid_: nmi cancel, vblank suppression (overloaded), race kill
+
 ## Language — CPU Bus Cycles
 
 **Bus cycle classification**:

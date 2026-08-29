@@ -1,6 +1,7 @@
 use crate::{
     Cpu, EmptyPlugin, ExecuteResult, Plugin, SystemClock,
     ines::INesFile,
+    interrupt::{ApuIrqSampler, CartridgeIrqLatch, InterruptLines},
     nes::{NesMcu, controller::Button, dmc_dma::DmcDma, ppu::palette::ColorTheme},
     render::Render,
 };
@@ -13,8 +14,8 @@ const MAX_TICKS_PER_FRAME: u32 = 100000;
 pub struct NesMachine<P, R: Render, D: crate::nes::apu::AudioDriver> {
     cpu: Cpu<NesMcu<R, D>>,
     p: P,
-    cartridge_irq_latched: bool,
-    cartridge_irq_next: bool,
+    cart_latch: CartridgeIrqLatch,
+    apu_sampler: ApuIrqSampler,
     dmc_dma: DmcDma,
     clock: SystemClock,
     /// Set while `reset()` is draining in-flight DMA work: the CPU gets no
@@ -34,8 +35,8 @@ where
         Self {
             cpu: Cpu::new(mcu),
             p: plugin,
-            cartridge_irq_latched: false,
-            cartridge_irq_next: false,
+            cart_latch: CartridgeIrqLatch::new(),
+            apu_sampler: ApuIrqSampler::new(),
             dmc_dma: DmcDma::default(),
             clock: SystemClock::default(),
             reset_requested: false,
@@ -90,33 +91,26 @@ where
         if cpu_tick {
             self.cpu.mcu_mut().tick_zapper();
         }
-        self.cartridge_irq_next = self.cpu.mcu().cartridge_irq_pending();
+        self.cart_latch
+            .capture_next(self.cpu.mcu().cartridge_irq_pending());
 
         // While a machine reset is draining DMA work the CPU stays frozen:
         // no IRQ/NMI latching, no microcode, no same-tick race retract (the
         // CPU state is about to be discarded wholesale).
         if !self.reset_requested {
             if cpu_tick {
-                self.cartridge_irq_latched = self.cartridge_irq_next;
+                self.cart_latch.latch_on_cpu_tick();
             }
 
-            // Stated invariant (IRQ-producer ordering): the APU level is
-            // deliberately sampled BEFORE `tick_apu` runs this dot, so a
-            // transition the step raises (frame IRQ flag at CPU 29828-29830 /
-            // DMC timer expiry) or clears ($4017 inhibit via deferred
-            // writes) reaches the CPU's IRQ input on the NEXT dot — a
-            // one-dot skew. This is not an accident to fix: the internal APU
-            // flag never drives a physical line, so the mapping of "flag
-            // transition dot → CPU-visible IRQ dot" is an emulation choice,
-            // and the +1 mapping is pinned by blargg's cpu_interrupts_v2
-            // 3-nmi_and_irq (moving `tick_apu` ahead of the sample fails
-            // that ROM). The cartridge level is instead latched once per CPU
-            // cycle (`cartridge_irq_latched`, cpu_tick dots only) from the
-            // level captured after `tick_ppu` above — mapper IRQ counters
-            // are clocked on PPU dots, and cpu_interrupts_v2 / mmc3_irq_tests
-            // pin that quantization.
-            let irq_pending = self.cpu.mcu().apu_irq_pending() || self.cartridge_irq_latched;
-            self.cpu.set_irq(irq_pending, clock);
+            // APU IRQ is sampled BEFORE `tick_apu` — a transition the step
+            // raises or clears becomes CPU-visible on the NEXT dot (one-dot
+            // skew, see `ApuIrqSampler`). The level is OR-ed with the
+            // cartridge latch's CPU-quantized level before building the
+            // single `InterruptLines` bundle.
+            let apu_sampled = self
+                .apu_sampler
+                .sample_before_tick(self.cpu.mcu().apu_irq_pending());
+            let irq_level = apu_sampled || self.cart_latch.level();
 
             self.cpu.mcu_mut().tick_apu(clock);
             if clock.is_apu_clock() {
@@ -126,17 +120,14 @@ where
                 }
             }
 
-            let nmi_line = self.cpu.mcu().ppu().nmi_line_out();
-            self.cpu.update_nmi_line(nmi_line, clock);
+            let nmi = self.cpu.mcu_mut().ppu_mut().nmi_lines();
+            let lines = InterruptLines { nmi, irq_level };
+            self.cpu.update_interrupt_lines(lines, clock);
             let result = if clock.is_cpu_clock() {
                 self.cpu.tick(&mut self.p, clock).0
             } else {
                 ExecuteResult::Continue
             };
-
-            if self.cpu.mcu_mut().ppu_mut().take_nmi_race_cancel() {
-                self.cpu.cancel_nmi_rising_edge(clock);
-            }
             result
         } else {
             self.cpu.mcu_mut().tick_apu(clock);
@@ -184,8 +175,7 @@ where
         self.dmc_dma.reset();
         self.cpu.reset();
 
-        self.cartridge_irq_latched = false;
-        self.cartridge_irq_next = false;
+        self.cart_latch.reset();
     }
 
     fn flush_audio(&mut self) {

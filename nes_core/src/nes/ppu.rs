@@ -5,6 +5,7 @@ mod registers;
 mod sprite;
 
 use crate::{
+    interrupt::NmiLines,
     mcu::Mcu,
     nes::{
         mapper::{Cartridge, CartridgeCaps, CartridgeOperation, Mirroring},
@@ -559,7 +560,20 @@ impl<R: Render> Ppu<R> {
         }
     }
 
-    /// Return ppu nmi signal, it connect to Cpu nmi input line
+    /// Atomically sampled NMI line bundle for this dot.
+    ///
+    /// `level = v_blank && nmi_enable`; `race_cancel` coalesces the
+    /// same-dot `$2000`/`$2002` race (see `vbl_set_cycle`).
+    /// The two are returned together so a racing site cannot emit
+    /// `race_cancel` without its `level` — the flag is never exposed alone.
+    pub fn nmi_lines(&mut self) -> NmiLines {
+        let level = self.registers.status.v_blank() && self.registers.ctrl.nmi_enable();
+        let race_cancel = std::mem::take(&mut self.nmi_race_cancel);
+        NmiLines { level, race_cancel }
+    }
+
+    /// Legacy: NMI line level only (without the race-cancel flag).
+    /// Prefer [`Self::nmi_lines`] — this exists for external diagnostics.
     pub fn nmi_line_out(&self) -> bool {
         self.registers.status.v_blank() && self.registers.ctrl.nmi_enable()
     }
@@ -828,11 +842,6 @@ impl<R: Render> Ppu<R> {
         self.registers.status.set_v_blank(false);
         self.registers.write_toggle = false; // Also reset write toggle on status read
         r
-    }
-
-    /// Consume the pending same-tick NMI race cancellation, if any.
-    pub fn take_nmi_race_cancel(&mut self) -> bool {
-        std::mem::take(&mut self.nmi_race_cancel)
     }
 
     fn render_pixel(&mut self, x: u8) -> u8 {
