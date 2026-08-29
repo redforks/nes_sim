@@ -75,18 +75,13 @@ impl<const N: usize> ImageRender<N> {
     /// Raw byte view (`W*H*4` bytes, row-major RGBA) for SDL `texture.update`.
     #[inline]
     pub fn as_bytes(&self) -> &[u8] {
-        // SAFETY: `[[u8;4]]` is a transparent contiguous `u8` array.
-        unsafe {
-            std::slice::from_raw_parts(self.image.as_ptr() as *const u8, self.image.len() * 4)
-        }
+        bytemuck::cast_slice(&self.image)
     }
 
     /// Mutable raw bytes.
     #[inline]
     pub fn as_bytes_mut(&mut self) -> &mut [u8] {
-        unsafe {
-            std::slice::from_raw_parts_mut(self.image.as_mut_ptr() as *mut u8, self.image.len() * 4)
-        }
+        bytemuck::cast_slice_mut(&mut self.image)
     }
 
     /// Typed pixel view (`W*H` entries of `[R,G,B,A]`).

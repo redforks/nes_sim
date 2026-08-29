@@ -10,7 +10,7 @@
 
 ## Decision
 
-`ImageRender<const N: usize = 1>` as above; `new()`/`default()` only (no `new(w,h)`); silent-ignore OOB with caller-guaranteed `x<256,y<240`; `const { assert!(N>0)}` guard; no `Clone`; `nes_core/Cargo.toml` removes `image`, `bytemuck` stays for `cast_slice`.
+`ImageRender<const N: usize = 1>` as above; `new()`/`default()` only (no `new(w,h)`); silent-ignore OOB with caller-guaranteed `x<256,y<240`; runtime `assert!(N>0)` guard (const assert not allowed in generic const); no `Clone`; `nes_core/Cargo.toml` removes `image`, `bytemuck` stays for `cast_slice`.
 
 ## Consequences
 
