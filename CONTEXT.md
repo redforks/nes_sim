@@ -256,3 +256,35 @@ _Avoid_: zoom ratio (use Zoom Factor), scale factor (overloaded), N (bare)
 **ImageRender<N>**:
 `Render` implementation owning the Framebuffer. `set_pixel(x, y, color)` is called at NES logical coordinates `x < 256, y < 240` and writes an `N×N` block at `(x*N .. x*N+N, y*N .. y*N+N)`. Out-of-bounds logical coordinates are silently ignored; callers guarantee in-range. Exposes `as_bytes()`, `width()/height()`, and `pixel_brightness(x,y)` without depending on the `image` crate. Does not implement `Clone` — framebuffer copies are multi-MiB.
 _Avoid_: ImageRender (without `N`), RgbaImage wrapper, cloning the framebuffer
+
+## Language — Profiling & Performance
+
+Core domain for measuring and optimizing emulation throughput. Headless != no-render; Self >3% defines a Hot Path.
+
+**Profiling Profile**:
+Cargo build profile `[profile.profiling]` inheriting `release` with full debug symbols (`debug=2`, `strip=false`, `lto=false`). Frame pointers forced via `RUSTFLAGS="-C force-frame-pointers=yes"` so `perf record -g` yields complete stacks. Never shipped; only for `perf.data`/`flamegraph`.
+_Avoid_: release with debug, bench profile
+
+**Headless Execution**:
+Movie playback with no host window (`--headless`), still rendering to `RecordRender` on a DummyWindow. Incurs `set_pixel` cost (~2.3% Self). Distinct from a future `NullRender` zero-render mode.
+_Avoid_: no-render, offscreen
+
+**No-throttle**:
+Disabling the 60Hz sleep in `PlayMovieAction` (`--no-throttle` skips `target_frame_duration` sleep). Required for throughput measurement; with it, wall time is sleep-bound, not emulation-bound.
+_Avoid_: unlimited fps, uncapped
+
+**Frame Budget**:
+Wall-clock budget per emulated frame at 60fps: `16.6ms` (`target_frame_duration = 1_000_000_000/60` ns). Headless+no-throttle measures headroom against this budget.
+_Avoid_: frame limit, fps target
+
+**Hot Path**:
+Instruction sampling Self overhead >3% in `perf report --no-children`. Leaf cost after inlining; Children is call-graph roll-up. Baseline 500-frame `warped.fm2` sample: `Ppu::tick` 42%, `NesMachine::tick` 11%, `tick_apu` 6.7%, `Cpu::tick` 5%, `Pulse::output` 3.6%.
+_Avoid_: hot spot (ambiguous), bottleneck (use only after budget miss)
+
+**Sampling (perf)**:
+`perf record -F 997 -g` sampling `cpu/cycles:Pu` at ~1kHz with call-graph into `/tmp/perf.data`. Text report via `perf report --stdio`. Overhead 1–2%; trade-off vs Cachegrind's cache-miss model (20× slower, not installed).
+_Avoid_: tracing, instrumentation
+
+**Flamegraph**:
+Folded-stack visualization via `cargo flamegraph --profile profiling` collapsing `perf` samples into width proportional to Self overhead. Output `/tmp/flamegraph.svg`; complements `perf report` for call-graph navigation.
+_Avoid_: flame chart (different), perf report (text)

@@ -688,3 +688,62 @@ test-cov-text:
 
 mount_nes_dev_wiki:
     fuse-zip ../nesdevwiki.zip nesdev-wiki/
+
+# ---- Profiling (perf + flamegraph) -----------------------------------------
+# Cargo profile `profiling` inherits release with full symbols (debug=2, lto=false).
+# Frame pointers forced via RUSTFLAGS so `perf record -g` yields complete stacks.
+# Default movie is the warped SMB1 TAS (17868 frames, ~5min); --trim-after caps it.
+# Outputs: /tmp/perf.data, /tmp/perf-report.txt, /tmp/perf-report-self.txt,
+#          /tmp/flamegraph.svg (when flamegraph=true).
+# Hot Path = Self overhead >3% (`perf report --no-children`).
+profile frames="500" flamegraph="true":
+    #!/usr/bin/env bash
+    set -euo pipefail
+    if ! command -v perf >/dev/null 2>&1; then echo "error: perf not found (linux perf-tools)" >&2; exit 1; fi
+    NES_ROM="../Super Mario Bros. (Japan, USA).nes"
+    NES_MOVIE="../happylee-supermariobros,warped.fm2"
+    if [ ! -f "$NES_ROM" ]; then echo "error: ROM not found: $NES_ROM" >&2; exit 1; fi
+    if [ ! -f "$NES_MOVIE" ]; then echo "error: movie not found: $NES_MOVIE" >&2; exit 1; fi
+    echo ">> Building profiling binary (profile.profiling, force-frame-pointers)..."
+    RUSTFLAGS="-C force-frame-pointers=yes" cargo build --profile profiling -p nescli
+    echo ">> Sampling {{frames}} frames headless/no-throttle via perf record -F 997 -g..."
+    perf record -o /tmp/perf.data -F 997 -g -- /tmp/nes-sim-target/profiling/nescli "$NES_ROM" play-movie "$NES_MOVIE" --no-throttle --headless --trim-after {{frames}}
+    echo ">> perf report (children) -> /tmp/perf-report.txt"
+    perf report -i /tmp/perf.data --stdio --percent-limit 1 > /tmp/perf-report.txt 2>&1 || true
+    echo ">> perf report (self) -> /tmp/perf-report-self.txt"
+    perf report -i /tmp/perf.data --stdio --no-children --percent-limit 2 > /tmp/perf-report-self.txt 2>&1 || true
+    echo ">> Top Self overhead:"
+    head -n 60 /tmp/perf-report-self.txt
+    echo ""
+    echo ">> Top Children overhead:"
+    head -n 80 /tmp/perf-report.txt
+    if [ "{{flamegraph}}" = "true" ]; then \
+        if command -v cargo-flamegraph >/dev/null 2>&1; then \
+            echo ">> Generating flamegraph via cargo flamegraph -> /tmp/flamegraph.svg..."; \
+            RUSTFLAGS="-C force-frame-pointers=yes" cargo flamegraph --profile profiling -p nescli --output /tmp/flamegraph.svg -- "$NES_ROM" play-movie "$NES_MOVIE" --no-throttle --headless --trim-after {{frames}} || echo "warning: cargo flamegraph failed (check perf permissions)" >&2; \
+            ls -lh /tmp/flamegraph.svg 2>&1 | head -n 5; \
+        else \
+            echo "note: cargo-flamegraph not installed; skipping flamegraph (cargo install flamegraph)" >&2; \
+        fi; \
+    fi
+    echo ">> Done. Artifacts: /tmp/perf.data, /tmp/perf-report.txt, /tmp/perf-report-self.txt"
+
+# Quick perf report without re-sampling (reads /tmp/perf.data)
+profile-report:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    if [ ! -f /tmp/perf.data ]; then echo "error: /tmp/perf.data not found; run 'just profile' first" >&2; exit 1; fi
+    perf report -i /tmp/perf.data --stdio --percent-limit 1 | head -n 100
+    echo "--- Self (>2%) ---"
+    perf report -i /tmp/perf.data --stdio --no-children --percent-limit 2 | head -n 60
+
+# Cachegrind fallback (when valgrind installed) — slower, cache-miss focused
+profile-cachegrind frames="200":
+    #!/usr/bin/env bash
+    set -euo pipefail
+    if ! command -v valgrind >/dev/null 2>&1; then echo "error: valgrind not found; install valgrind for Cachegrind" >&2; exit 1; fi
+    NES_ROM="../Super Mario Bros. (Japan, USA).nes"
+    NES_MOVIE="../happylee-supermariobros,warped.fm2"
+    RUSTFLAGS="-C force-frame-pointers=yes" cargo build --profile profiling -p nescli
+    valgrind --tool=cachegrind --cachegrind-out-file=/tmp/cachegrind.out -- /tmp/nes-sim-target/profiling/nescli "$NES_ROM" play-movie "$NES_MOVIE" --no-throttle --headless --trim-after {{frames}}
+    if command -v cg_annotate >/dev/null 2>&1; then cg_annotate /tmp/cachegrind.out | head -n 80; else echo "cg_annotate not found; raw output at /tmp/cachegrind.out"; fi

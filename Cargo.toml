@@ -63,6 +63,14 @@ split-debuginfo = "unpacked"
 # uncomment below to enable profile release build
 debug = 1
 
-# uncomment below to enable profile release build
-# [rust]
-# debuginfo-level = 1
+# Profiling profile: inherits release with full debug symbols and no stripping.
+# Used by `just profile` (perf + flamegraph) for accurate call graphs.
+# Frame pointers are forced via RUSTFLAGS="-C force-frame-pointers=yes" in the
+# just recipe (not here) so `perf record -g` yields complete stacks.
+[profile.profiling]
+inherits = "release"
+debug = 2
+strip = false
+lto = false
+overflow-checks = false
+debug-assertions = false
