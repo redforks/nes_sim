@@ -54,10 +54,13 @@ Enum with variants `First`, `Middle`, `Last`. Derived from `SystemClock` modulo 
 A single system-cycle step. `NesMachine::tick()` advances the clock by one, then calls each device's tick method in order: PPU → cartridge IRQ → APU → DMC DMA → OAM DMA → NMI → CPU → interrupt detection. Each device uses the clock to decide whether to advance its internal state.
 
 **Microcode**:
-A single step of the CPU's internal microcode machine. Multiple microcodes may execute across several ticks to complete one 6502 instruction. Microcodes must be drained with full device interleaving (PPU/APU/DMA ticked between each) — not in a tight loop.
+A single step of the CPU's internal microcode machine. Multiple microcodes may execute across several ticks to complete one 6502 instruction.
+
+**Run to instruction boundary**:
+Draining the CPU's microcode queue until it is empty — the edge between two 6502 instructions (including the interrupt/BRK/RESET tails). Two seams: `Cpu::run_to_instruction_boundary(&mut plugin, &mut clock)` is the CPU-only drain (advances `clock` by one dot per microcode, no device ticks — the setup-time seam used by `NesMachine::set_pc` and tests); `NesMachine::run_to_instruction_boundary()` is the full-interleaving drain (advances `self.clock` via `NesMachine::tick()` with PPU/APU/DMA/NMI interleaving — the faithful seam). Microcodes must be drained via one of these named primitives, never in an ad-hoc tight loop.
+_Avoid_: drain, flush queue, run until empty (use the canonical name)
 
 **Frame**:
-One complete PPU frame (262 scanlines × 341 dots). `NesMachine::process_frame()` calls `tick()` in a loop until VBlank (scanline 241, dot 1) or halt.
 
 **Reset quiescence**:
 The bus-drain contract of `NesMachine::reset()`. Once the reset line is asserted the CPU stops being fed; PPU/APU keep interleaving and any DMA work already accepted by the bus completes before the device resets apply. Fresh DMC fetch requests are suppressed during the drain so a playing sample channel cannot extend it. Each owner resets its own state under this one seam (`Cpu::reset`, `NesMcu::reset(clock)`, `DmcDma::reset`), and time-relative state re-anchors to the running `SystemClock`.

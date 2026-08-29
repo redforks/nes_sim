@@ -19,10 +19,7 @@ fn create_cpu_with_mcu<M: Mcu>(mcu: M) -> Cpu<M> {
     let mut cpu = Cpu::new(mcu);
     let mut plugin = EmptyPlugin::new();
     let mut clock = SystemClock::default();
-    while !cpu.microcodes_empty() {
-        cpu.tick(&mut plugin, clock);
-        clock = clock.inc();
-    }
+    cpu.run_to_instruction_boundary(&mut plugin, &mut clock);
     cpu
 }
 
@@ -35,10 +32,7 @@ fn execute_next(cpu: &mut Cpu<MockMcu>) {
     let mut plugin = EmptyPlugin::new();
     let mut clock = SystemClock::default();
 
-    while !cpu.microcodes_empty() {
-        cpu.tick(&mut plugin, clock);
-        clock = clock.inc();
-    }
+    cpu.run_to_instruction_boundary(&mut plugin, &mut clock);
 
     while !cpu.tick(&mut plugin, clock).1 {
         clock = clock.inc();
@@ -375,10 +369,7 @@ fn test_reset() {
     // Run reset microcodes so the reset vector is actually loaded
     let mut plugin = EmptyPlugin::new();
     let mut clock = SystemClock::default();
-    while !cpu.microcodes_empty() {
-        cpu.tick(&mut plugin, clock);
-        clock = clock.inc();
-    }
+    cpu.run_to_instruction_boundary(&mut plugin, &mut clock);
     // Reset reads PC from 0xFFFC (which is 0x0000 in MockMcu)
     assert_eq!(cpu.pc(), 0);
     // Reset now adjusts SP by subtracting 3 from its current value

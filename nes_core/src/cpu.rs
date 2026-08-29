@@ -379,6 +379,25 @@ impl<M: Mcu> Cpu<M> {
         self.microcode_queue.is_empty()
     }
 
+    /// Drain microcodes to the next instruction boundary (queue empty).
+    ///
+    /// CPU-only drain: each step calls `self.tick(plugin, *clock)` then
+    /// `*clock = clock.inc()`. No PPU/APU/DMA device is ticked and time
+    /// advances by exactly `queue.len()` dots (one per microcode, not one
+    /// per CPU cycle) — the setup-time seam. For full device interleaving
+    /// use `NesMachine::run_to_instruction_boundary` which ticks via
+    /// `NesMachine::tick()`.
+    pub fn run_to_instruction_boundary<P: Plugin<M>>(
+        &mut self,
+        plugin: &mut P,
+        clock: &mut SystemClock,
+    ) {
+        while !self.microcodes_empty() {
+            self.tick(plugin, *clock);
+            *clock = clock.inc();
+        }
+    }
+
     pub(crate) fn next_microcode(&self) -> Microcode {
         self.microcode_queue
             .front()

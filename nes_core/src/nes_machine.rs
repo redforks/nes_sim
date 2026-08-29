@@ -228,15 +228,30 @@ where
         self.cpu.mcu_mut().ppu_mut().set_color_theme(theme);
     }
 
+    /// Drain to instruction boundary with full device interleaving.
+    ///
+    /// Advances `self.clock` and calls `self.tick()` per dot (PPU →
+    /// cartridge IRQ → APU → DMA → NMI → CPU), satisfying CONTEXT.md
+    /// *Microcode* invariant. Each CPU microcode still consumes one CPU
+    /// cycle (3 dots) because `tick()` only drives the CPU on
+    /// `is_cpu_clock()` dots — unlike the CPU-only drain
+    /// (`Cpu::run_to_instruction_boundary`) which consumes one dot per
+    /// microcode for setup-time speed.
+    pub fn run_to_instruction_boundary(&mut self) {
+        while !self.cpu.microcodes_empty() {
+            self.tick();
+        }
+    }
+
     /// Set the CPU program counter.
     /// Drains any pending microcodes (e.g. from reset) before setting PC.
-    /// Uses CPU-only ticks so APU/DMA state is not advanced during setup.
+    /// Uses the CPU-only drain so APU/DMA state is not advanced during
+    /// setup; `clock` advances by `queue.len()` dots. For full
+    /// interleaving, call `run_to_instruction_boundary` instead.
     pub fn set_pc(&mut self, pc: u16) {
         let mut empty = EmptyPlugin::new();
-        while !self.cpu.microcodes_empty() {
-            self.cpu.tick(&mut empty, self.clock);
-            self.clock = self.clock.inc();
-        }
+        self.cpu
+            .run_to_instruction_boundary(&mut empty, &mut self.clock);
         self.cpu.set_pc(pc);
     }
 

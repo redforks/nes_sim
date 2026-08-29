@@ -79,10 +79,7 @@ mod tests {
         let mut cpu = Cpu::new(mcu);
         let mut plugin = EmptyPlugin::new();
         let mut clock = SystemClock::default();
-        while !cpu.microcodes_empty() {
-            cpu.tick(&mut plugin, clock);
-            clock = clock.inc();
-        }
+        cpu.run_to_instruction_boundary(&mut plugin, &mut clock);
         cpu
     }
 

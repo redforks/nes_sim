@@ -22,10 +22,9 @@ fn test_set_pc() {
 
     let mut clock = SystemClock::default();
     let mut plugin = EmptyPlugin::new();
-    while !machine.cpu_mut().microcodes_empty() {
-        machine.cpu_mut().tick(&mut plugin, clock);
-        clock = clock.inc();
-    }
+    machine
+        .cpu_mut()
+        .run_to_instruction_boundary(&mut plugin, &mut clock);
     machine.set_pc(0x1234);
     assert_eq!(machine.cpu().pc(), 0x1234);
 }
@@ -38,10 +37,9 @@ fn test_set_pc_drains_pending_reset_microcodes() {
     machine.reset();
     let mut plugin = EmptyPlugin::new();
     let mut clock = SystemClock::default();
-    while !machine.cpu_mut().microcodes_empty() {
-        machine.cpu_mut().tick(&mut plugin, clock);
-        clock = clock.inc();
-    }
+    machine
+        .cpu_mut()
+        .run_to_instruction_boundary(&mut plugin, &mut clock);
     machine.set_pc(0x5678);
 
     assert_eq!(machine.cpu().pc(), 0x5678);
@@ -54,10 +52,9 @@ fn test_reset() {
 
     let mut clock = SystemClock::default();
     let mut plugin = EmptyPlugin::new();
-    while !machine.cpu_mut().microcodes_empty() {
-        machine.cpu_mut().tick(&mut plugin, clock);
-        clock = clock.inc();
-    }
+    machine
+        .cpu_mut()
+        .run_to_instruction_boundary(&mut plugin, &mut clock);
     machine.set_pc(0x5678);
     machine.reset();
     // Reset enqueues microcodes that load the reset vector; run them to apply

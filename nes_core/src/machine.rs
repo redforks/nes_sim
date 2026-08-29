@@ -33,6 +33,16 @@ impl<P: Plugin<M>, M: Mcu> Machine<P, M> {
         self.cpu.set_pc(pc);
     }
 
+    /// Drain to instruction boundary via the CPU-only seam.
+    ///
+    /// Advances `clock` by `queue.len()` dots (one per microcode) without
+    /// ticking PPU/APU/DMA. For full interleaving on a `NesMachine`, use
+    /// `NesMachine::run_to_instruction_boundary`.
+    pub fn run_to_instruction_boundary(&mut self, clock: &mut SystemClock) {
+        let (cpu, p) = (&mut self.cpu, &mut self.p);
+        cpu.run_to_instruction_boundary(p, clock);
+    }
+
     pub fn mcu(&self) -> &M {
         self.cpu.mcu()
     }
