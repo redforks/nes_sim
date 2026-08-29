@@ -42,17 +42,10 @@ pub(crate) enum Register {
 struct IrqDetector {
     irq_pending: bool,
     irq_input: bool,
-    /// Last line-transition dot. Write-only outside interrupt tracking —
-    /// stamped only while `NES_INTERRUPT_TRACK` is set so production builds
-    /// carry no dead bookkeeping; read by `dump_interrupt_track`.
-    irq_line_changed_at: Option<SystemClock>,
 }
 
 impl IrqDetector {
-    fn update_irq_input(&mut self, v: bool, clock: SystemClock, track: bool) {
-        if track && self.irq_input != v {
-            self.irq_line_changed_at = Some(clock);
-        }
+    fn update_irq_input(&mut self, v: bool) {
         self.irq_input = v;
     }
 
@@ -80,7 +73,6 @@ struct NmiDetector {
     /// a lagged sample that observes a rise must still know when it rose,
     /// even if the line has already fallen by sampling time.
     stamp_history: [Option<u64>; 2],
-    nmi_line_changed_at: Option<SystemClock>,
     /// System cycle at which the current /NMI assertion began.
     asserted_since: Option<u64>,
     /// `asserted_since` value of the assertion that latched `nmi_pending`.
@@ -98,7 +90,6 @@ impl NmiDetector {
         self.level_history = [self.level_history[1], prev];
         self.stamp_history = [self.stamp_history[1], prev_stamp];
         if prev != v {
-            self.nmi_line_changed_at = Some(clock);
             if v {
                 self.asserted_since = Some(clock.cycles());
             } else {
@@ -109,15 +100,12 @@ impl NmiDetector {
     }
 
     fn cancel_rising_edge_at(&mut self, clock: SystemClock) {
-        if self.nmi_line_changed_at.map(SystemClock::cycles) == Some(clock.cycles())
-            && self.nmi_input
-        {
+        if self.asserted_since == Some(clock.cycles()) && self.nmi_input {
             // The line never really asserted: consume the stamp so neither
             // the sampler nor a vector-hijack check can fire it later.
             self.mark_consumed();
             self.nmi_input = false;
             self.last_sampled_level = false;
-            self.nmi_line_changed_at = None;
         }
     }
 
@@ -335,7 +323,6 @@ pub struct Cpu<M: Mcu> {
     /// decisions (the BRK/IRQ vector-hijack window) measure against it.
     now: SystemClock,
 
-    track_interrupt: bool,
     pub(crate) frozen: bool,
     halt: bool,
 
@@ -367,7 +354,6 @@ impl<M: Mcu> Cpu<M> {
             now: SystemClock::default(),
             microcode_queue: ArrayDeque::new(),
             halt: false,
-            track_interrupt: std::env::var("NES_INTERRUPT_TRACK").is_ok(),
             frozen: false,
         };
         r.reset();
@@ -702,9 +688,8 @@ impl<M: Mcu> Cpu<M> {
         self.arm_interrupt_window(&InterruptSequences::RESET_WINDOW, false);
     }
 
-    pub(crate) fn set_irq(&mut self, enabled: bool, clock: SystemClock) {
-        self.irq_detector
-            .update_irq_input(enabled, clock, self.track_interrupt);
+    pub(crate) fn set_irq(&mut self, enabled: bool) {
+        self.irq_detector.update_irq_input(enabled);
     }
 
     /// Single published interrupt entry — updates both IRQ level and NMI
@@ -719,7 +704,7 @@ impl<M: Mcu> Cpu<M> {
         lines: crate::interrupt::InterruptLines,
         clock: SystemClock,
     ) {
-        self.set_irq(lines.irq_level, clock);
+        self.set_irq(lines.irq_level);
         self.update_nmi_line(lines.nmi.level, clock);
         if lines.nmi.race_cancel {
             self.cancel_nmi_rising_edge(clock);
@@ -735,9 +720,6 @@ impl<M: Mcu> Cpu<M> {
         self.now = clock;
 
         if self.frozen {
-            if self.track_interrupt {
-                println!("[{}] (frozen)", clock.cycles());
-            }
             return TickOutcome {
                 control: ExecuteResult::Continue,
                 instruction_complete: false,
@@ -745,9 +727,6 @@ impl<M: Mcu> Cpu<M> {
         }
 
         if self.is_halted() {
-            if self.track_interrupt {
-                println!("[{}] (halted)", clock.cycles());
-            }
             return TickOutcome {
                 control: ExecuteResult::Halt,
                 instruction_complete: false,
@@ -786,9 +765,6 @@ impl<M: Mcu> Cpu<M> {
         }
         self.detect_interrupt(clock, suppress);
 
-        if self.track_interrupt {
-            self.dump_interrupt_track(clock);
-        }
         if self.microcode_queue.is_empty() {
             let view = MachineView::new(self.snapshot(), &self.mcu, clock);
             plugin.end(&view, clock);
@@ -806,27 +782,12 @@ impl<M: Mcu> Cpu<M> {
 
     fn do_detect_interrupt(&mut self, clock: SystemClock) {
         if self.nmi_detecteor.nmi_pending
-            && self.nmi_detecteor.pending_asserted_since.is_some_and(|t0| {
-                if self.track_interrupt {
-                    dbg!((clock.0, t0));
-                }
-                // Recognition latency runs from the /NMI edge that set the
-                // pending latch — NOT from `nmi_line_changed_at`, which the
-                // falling edge re-stamps. A short assertion (e.g. NMI enabled
-                // a few PPU dots before vblank ends, blargg ppu_vbl_nmi
-                // 07-nmi_on_timing) would otherwise postpone its own
-                // recognition until after the interrupt window closed.
-                (clock.0 - t0) > 1
-            })
+            && self
+                .nmi_detecteor
+                .pending_asserted_since
+                .is_some_and(|t0| (clock.0 - t0) > 1)
         {
             self.nmi_detecteor.mark_consumed();
-            if self.track_interrupt {
-                println!(
-                    "Enter NMI: ${:x}, carry flag: {}",
-                    self.status,
-                    self.flag(Flag::Carry)
-                );
-            }
             self.interrupt_detected = Some(InterruptType::Nmi);
         } else if self.irq_detector.irq_pending() {
             self.interrupt_detected = Some(InterruptType::Irq);
@@ -1191,13 +1152,6 @@ impl<M: Mcu> Cpu<M> {
     /// is the NMI sequence's final cycles), and replace the remaining
     /// queue with the tail ops.
     fn switch_to_nmi_vector(&mut self, tail: &[Microcode]) {
-        if self.track_interrupt {
-            println!(
-                "hijack: ${:x}, carry flag: {}",
-                self.status,
-                self.flag(Flag::Carry)
-            );
-        }
         self.arm_interrupt_window(&InterruptSequences::NMI_WINDOW, false);
         self.microcode_queue.clear();
         self.push_microcodes(tail);
@@ -1293,305 +1247,12 @@ impl<M: Mcu> Cpu<M> {
         self.update_negative_flag(val);
     }
 
-    fn dump_interrupt_track(&self, clock: SystemClock) {
-        let irq_str = match self.irq_detector.irq_line_changed_at {
-            Some(t) => format!("{}@{}", self.irq_detector.irq_input as u8, t.cycles()),
-            None => format!("{}", self.irq_detector.irq_input as u8),
-        };
-        let nmi_str = match self.nmi_detecteor.nmi_line_changed_at {
-            Some(t) => format!("{}@{}", self.nmi_detecteor.nmi_input as u8, t.cycles()),
-            None => format!("{}", self.nmi_detecteor.nmi_input as u8),
-        };
-        let int_str = match self.interrupt_detected {
-            Some(InterruptType::Nmi) => "NMI",
-            Some(InterruptType::Irq) => "IRQ",
-            None => "none",
-        };
-        let next = self.next_microcode().to_string();
-        let opcode_mnemonic = OPCODE_MNEMONICS[self.opcode as usize];
-        println!(
-            "[{}] pc={:X} irq={} nmi={} nmi_st={:?} i={} op=${:02X}/{} q={} next={} int={}",
-            clock.cycles(),
-            self.pc(),
-            irq_str,
-            nmi_str,
-            self.nmi_detecteor.nmi_pending,
-            self.flag(Flag::InterruptDisabled) as u8,
-            self.opcode,
-            opcode_mnemonic,
-            self.microcode_queue.len(),
-            next,
-            int_str,
-        );
-    }
-
     fn indexed_h(&mut self) {
         self.ab.wrapping_inc_low();
         let high = self.read_byte(self.ab.get());
         self.ab.set(self.db as u16 | ((high as u16) << 8));
     }
 }
-
-const OPCODE_MNEMONICS: [&str; 256] = {
-    let mut m = ["???"; 256];
-    m[0] = "BRK";
-    m[1] = "ORA";
-    m[2] = "KIL";
-    m[3] = "SLO";
-    m[4] = "NOP";
-    m[5] = "ORA";
-    m[6] = "ASL";
-    m[7] = "SLO";
-    m[8] = "PHP";
-    m[9] = "ORA";
-    m[10] = "ASL";
-    m[11] = "ANC";
-    m[12] = "NOP";
-    m[13] = "ORA";
-    m[14] = "ASL";
-    m[15] = "SLO";
-    m[16] = "BPL";
-    m[17] = "ORA";
-    m[18] = "KIL";
-    m[19] = "SLO";
-    m[20] = "NOP";
-    m[21] = "ORA";
-    m[22] = "ASL";
-    m[23] = "SLO";
-    m[24] = "CLC";
-    m[25] = "ORA";
-    m[26] = "NOP";
-    m[27] = "SLO";
-    m[28] = "NOP";
-    m[29] = "ORA";
-    m[30] = "ASL";
-    m[31] = "SLO";
-    m[32] = "JSR";
-    m[33] = "AND";
-    m[34] = "KIL";
-    m[35] = "RLA";
-    m[36] = "BIT";
-    m[37] = "AND";
-    m[38] = "ROL";
-    m[39] = "RLA";
-    m[40] = "PLP";
-    m[41] = "AND";
-    m[42] = "ROL";
-    m[43] = "ANC";
-    m[44] = "BIT";
-    m[45] = "AND";
-    m[46] = "ROL";
-    m[47] = "RLA";
-    m[48] = "BMI";
-    m[49] = "AND";
-    m[50] = "KIL";
-    m[51] = "RLA";
-    m[52] = "NOP";
-    m[53] = "AND";
-    m[54] = "ROL";
-    m[55] = "RLA";
-    m[56] = "SEC";
-    m[57] = "AND";
-    m[58] = "NOP";
-    m[59] = "RLA";
-    m[60] = "NOP";
-    m[61] = "AND";
-    m[62] = "ROL";
-    m[63] = "RLA";
-    m[64] = "RTI";
-    m[65] = "EOR";
-    m[66] = "KIL";
-    m[67] = "SRE";
-    m[68] = "NOP";
-    m[69] = "EOR";
-    m[70] = "LSR";
-    m[71] = "SRE";
-    m[72] = "PHA";
-    m[73] = "EOR";
-    m[74] = "LSR";
-    m[75] = "ALR";
-    m[76] = "JMP";
-    m[77] = "EOR";
-    m[78] = "LSR";
-    m[79] = "SRE";
-    m[80] = "BVC";
-    m[81] = "EOR";
-    m[82] = "KIL";
-    m[83] = "SRE";
-    m[84] = "NOP";
-    m[85] = "EOR";
-    m[86] = "LSR";
-    m[87] = "SRE";
-    m[88] = "CLI";
-    m[89] = "EOR";
-    m[90] = "NOP";
-    m[91] = "SRE";
-    m[92] = "NOP";
-    m[93] = "EOR";
-    m[94] = "LSR";
-    m[95] = "SRE";
-    m[96] = "RTS";
-    m[97] = "ADC";
-    m[98] = "KIL";
-    m[99] = "RRA";
-    m[100] = "NOP";
-    m[101] = "ADC";
-    m[102] = "ROR";
-    m[103] = "RRA";
-    m[104] = "PLA";
-    m[105] = "ADC";
-    m[106] = "ROR";
-    m[107] = "ARR";
-    m[108] = "JMP";
-    m[109] = "ADC";
-    m[110] = "ROR";
-    m[111] = "RRA";
-    m[112] = "BVS";
-    m[113] = "ADC";
-    m[114] = "KIL";
-    m[115] = "RRA";
-    m[116] = "NOP";
-    m[117] = "ADC";
-    m[118] = "ROR";
-    m[119] = "RRA";
-    m[120] = "SEI";
-    m[121] = "ADC";
-    m[122] = "NOP";
-    m[123] = "RRA";
-    m[124] = "NOP";
-    m[125] = "ADC";
-    m[126] = "ROR";
-    m[127] = "RRA";
-    m[128] = "NOP";
-    m[129] = "STA";
-    m[130] = "NOP";
-    m[131] = "SAX";
-    m[132] = "STY";
-    m[133] = "STA";
-    m[134] = "STX";
-    m[135] = "SAX";
-    m[136] = "DEY";
-    m[137] = "NOP";
-    m[138] = "TXA";
-    m[139] = "ANE";
-    m[140] = "STY";
-    m[141] = "STA";
-    m[142] = "STX";
-    m[143] = "SAX";
-    m[144] = "BCC";
-    m[145] = "STA";
-    m[146] = "KIL";
-    m[147] = "SHA";
-    m[148] = "STY";
-    m[149] = "STA";
-    m[150] = "STX";
-    m[151] = "SAX";
-    m[152] = "TYA";
-    m[153] = "STA";
-    m[154] = "TXS";
-    m[155] = "TAS";
-    m[156] = "SHY";
-    m[157] = "STA";
-    m[158] = "SHX";
-    m[159] = "SHA";
-    m[160] = "LDY";
-    m[161] = "LDA";
-    m[162] = "LDX";
-    m[163] = "LAX";
-    m[164] = "LDY";
-    m[165] = "LDA";
-    m[166] = "LDX";
-    m[167] = "LAX";
-    m[168] = "TAY";
-    m[169] = "LDA";
-    m[170] = "TAX";
-    m[171] = "LAX";
-    m[172] = "LDY";
-    m[173] = "LDA";
-    m[174] = "LDX";
-    m[175] = "LAX";
-    m[176] = "BCS";
-    m[177] = "LDA";
-    m[178] = "KIL";
-    m[179] = "LAX";
-    m[180] = "LDY";
-    m[181] = "LDA";
-    m[182] = "LDX";
-    m[183] = "LAX";
-    m[184] = "CLV";
-    m[185] = "LDA";
-    m[186] = "TSX";
-    m[187] = "LAS";
-    m[188] = "LDY";
-    m[189] = "LDA";
-    m[190] = "LDX";
-    m[191] = "LAX";
-    m[192] = "CPY";
-    m[193] = "CMP";
-    m[194] = "NOP";
-    m[195] = "DCP";
-    m[196] = "CPY";
-    m[197] = "CMP";
-    m[198] = "DEC";
-    m[199] = "DCP";
-    m[200] = "INY";
-    m[201] = "CMP";
-    m[202] = "DEX";
-    m[203] = "AXS";
-    m[204] = "CPY";
-    m[205] = "CMP";
-    m[206] = "DEC";
-    m[207] = "DCP";
-    m[208] = "BNE";
-    m[209] = "CMP";
-    m[210] = "KIL";
-    m[211] = "DCP";
-    m[212] = "NOP";
-    m[213] = "CMP";
-    m[214] = "DEC";
-    m[215] = "DCP";
-    m[216] = "CLD";
-    m[217] = "CMP";
-    m[218] = "NOP";
-    m[219] = "DCP";
-    m[220] = "NOP";
-    m[221] = "CMP";
-    m[222] = "DEC";
-    m[223] = "DCP";
-    m[224] = "CPX";
-    m[225] = "SBC";
-    m[226] = "NOP";
-    m[227] = "ISC";
-    m[228] = "CPX";
-    m[229] = "SBC";
-    m[230] = "INC";
-    m[231] = "ISC";
-    m[232] = "INX";
-    m[233] = "SBC";
-    m[234] = "NOP";
-    m[235] = "SBC";
-    m[236] = "CPX";
-    m[237] = "SBC";
-    m[238] = "INC";
-    m[239] = "ISC";
-    m[240] = "BEQ";
-    m[241] = "SBC";
-    m[242] = "KIL";
-    m[243] = "ISC";
-    m[244] = "NOP";
-    m[245] = "SBC";
-    m[246] = "INC";
-    m[247] = "ISC";
-    m[248] = "SED";
-    m[249] = "SBC";
-    m[250] = "NOP";
-    m[251] = "ISC";
-    m[252] = "NOP";
-    m[253] = "SBC";
-    m[254] = "INC";
-    m[255] = "ISC";
-    m
-};
 #[derive(Eq, PartialEq, Clone, Copy, Debug)]
 pub enum ExecuteResult {
     Continue,

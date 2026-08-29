@@ -45,7 +45,7 @@ fn test_irq_detector() {
     let mut v = IrqDetector::default();
     assert!(!v.irq_pending());
 
-    v.update_irq_input(true, SystemClock::default(), true);
+    v.update_irq_input(true);
     assert!(!v.irq_pending());
     v.detect_irq(false);
     assert!(v.irq_pending());
@@ -53,7 +53,7 @@ fn test_irq_detector() {
     v.detect_irq(true);
     assert!(!v.irq_pending());
 
-    v.update_irq_input(false, SystemClock::default(), true);
+    v.update_irq_input(false);
     assert!(!v.irq_pending());
     v.detect_irq(false);
     assert!(!v.irq_pending());
@@ -4374,7 +4374,7 @@ fn interrupt_handler_entry_21_dots_after_boundary() {
 
     // IRQ: line asserted from the start; CLI clears I, so the pending IRQ
     // dispatches after the next instruction boundary.
-    let (boundary, entry) = run(|cpu, clock| cpu.set_irq(true, clock));
+    let (boundary, entry) = run(|cpu, _clock| cpu.set_irq(true));
     assert_eq!(entry - boundary, 21, "IRQ: boundary → handler entry");
 }
 

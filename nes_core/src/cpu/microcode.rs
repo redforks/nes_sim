@@ -453,7 +453,7 @@ pub(crate) const fn build_opcode_table() -> [ArrayVec<[Microcode; 7]>; 256] {
     use Register::*;
     use opcode::*;
 
-    let mut r = include!("init_microtable.inc.rs");
+    let mut r = [ArrayVec::from_array_empty([Microcode::Kill; 7]); 256];
     r[AND_IMMEDIATE as usize] = microcode_arr!(ImmediateWithOp(ImmediateOp::And));
     r[AND_ZERO_PAGE as usize] = zero_page_op(And(ValueSource::ZeroPage));
     r[AND_ZERO_PAGE_X as usize] = zero_page_x_op(And(ValueSource::ZeroPage));
