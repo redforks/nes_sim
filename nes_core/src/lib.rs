@@ -1,3 +1,4 @@
+pub mod bus;
 pub(crate) mod cpu;
 pub mod ines;
 pub mod interrupt;
@@ -7,7 +8,6 @@ pub mod movie;
 pub mod nes;
 pub mod nes_machine;
 pub mod render;
-
 // Test utilities (private, for tests only)
 #[cfg(test)]
 mod test_utils;

@@ -51,8 +51,7 @@ _Avoid_: system cycles (use for the raw u64 count only), global clock, static cl
 Enum with variants `First`, `Middle`, `Last`. Derived from `SystemClock` modulo `SYSTEM_CYCLES_PER_CPU_CYCLE` (3). One CPU cycle spans 3 system ticks (phases 0, 1, 2). CPU and APU advance only on `Last` phase (cycle % 3 == 2). `Middle` is always skipped.
 
 **Tick**:
-A single system-cycle step. `NesMachine::tick()` advances the clock by one, then calls each device's tick method in order: PPU → cartridge IRQ → APU → DMC DMA → OAM DMA → NMI → CPU → interrupt detection. Each device uses the clock to decide whether to advance its internal state.
-
+A single system-cycle step. `NesMachine::tick()` advances the clock by one, then calls each device's tick method in order: PPU → cartridge IRQ latch capture → APU (sample IRQ, tick) → Bus (DMC + OAM DMA arbitration) → interrupt lines → CPU (if the bus is `Idle`). Each device uses the clock to decide whether to advance its internal state. The bus is the only DMA owner; DMC and OAM are not ticked separately outside it.
 **Microcode**:
 A single step of the CPU's internal microcode machine. Multiple microcodes may execute across several ticks to complete one 6502 instruction.
 
@@ -63,7 +62,7 @@ _Avoid_: drain, flush queue, run until empty (use the canonical name)
 **Frame**:
 
 **Reset quiescence**:
-The bus-drain contract of `NesMachine::reset()`. Once the reset line is asserted the CPU stops being fed; PPU/APU keep interleaving and any DMA work already accepted by the bus completes before the device resets apply. Fresh DMC fetch requests are suppressed during the drain so a playing sample channel cannot extend it. Each owner resets its own state under this one seam (`Cpu::reset`, `NesMcu::reset(clock)`, `DmcDma::reset`), and time-relative state re-anchors to the running `SystemClock`.
+The bus-drain contract of `NesMachine::reset()`. Once the reset line is asserted the CPU stops being fed; PPU/APU keep interleaving and any DMA work already accepted by the bus completes before the device resets apply. Fresh DMC fetch requests are suppressed during the drain so a playing sample channel cannot extend it. The bus owns DMA quiescence (`Bus::is_busy` / `Bus::suppress_new_dmc_requests` / `Bus::reset`); `NesMcu::reset(clock)` re-anchors only time-relative PPU/APU state and `Cpu::reset` clears CPU state — time keeps running on the master `SystemClock`.
 _Avoid_: hard abort, mid-DMA teardown, stale DMA
 
 ## Language — Mapper IRQ
@@ -142,7 +141,25 @@ _Avoid_: cycle kind, write-operation check, bus op
 The bus behavior while the CPU is RDY-halted by DMA: the bus re-drives the address the pending read cycle would drive. Internal cycles have no address of their own and repeat the last completed read. Write cycles never sit under a halt — the CPU is only halted between them.
 _Avoid_: RDY repeat, dummy read (the DMA's own alignment cycles), repeated fetch
 
-## Language — APU Timers
+## Language — DMA Bus
+
+Core domain for the single bus that the CPU, OAM DMA, and DMC DMA time-share. The bus is the deep module that localizes DMA arbitration; the PPU/APU/MCU are not bus owners.
+
+**Bus (DMA Bus)**:
+The module that owns the active DMA transfer for both channels and the arbitration policy between them. Lives in `nes_core::bus` (or `nes::bus`) as `struct Bus { dmc: DmcDma, oam: Option<OamActive> }`. Its interface is `tick(cpu, clock) -> BusOwner`, `is_busy(&mcu) -> bool`, `suppress_new_dmc_requests(&mut mcu)`, `reset()`. `DmcDma`'s 7-state machine stays a private implementation detail behind the bus.
+_Avoid_: DMA coordinator (acceptable alias in prose, not in code), bus controller, DMA engine
+
+**BusOwner**:
+Per-dot holder of the bus returned by `Bus::tick`: `Idle` (CPU owns the bus), `Oam` (OAM DMA held the bus this dot — includes halt, alignment, and transfer cycles), or `Dmc` (DMC DMA held/drove the bus this dot). The caller (`NesMachine::tick`) skips `Cpu::tick` / `update_interrupt_lines` when the owner is not `Idle`; DMC's `cpu.frozen` stall remains the same mechanism but is driven from inside `Bus::tick`.
+_Avoid_: bus state, dma owner, active dma
+
+**DMA arbitration (DMC-wins)**:
+The single arbitration policy the bus implements: a DMC DMA read (`dmc_drove_bus` true) that lands on an OAM DMA read phase (`startup_cycles == 0 && transfer_cycle.is_multiple_of(2)`) aborts the OAM read, which is redone after one alignment cycle (`pause_cycles = 1`). The `dmc_drove_bus` bool and the `NesMcu` collision predicate become a private branch inside `Bus::tick`; no external bool is threaded.
+_Avoid_: collision handling (ok in commentary, not the canonical term), dma priority
+
+**Bus quiescence**:
+The condition `Bus::is_busy(&mcu)` used by `NesMachine::reset` to drain the bus. True while any DMA is active (`dmc.is_busy()` or OAM active) or a `$4014` OAM request is still queued in the producer. Drain loops `while bus.is_busy()` with `bus.suppress_new_dmc_requests()` each dot until quiet, then `bus.reset()` clears both channels at once.
+_Avoid_: dma busy, oam active, pending dma
 
 **Raw timer period**:
 A channel's timer-register countdown value, loaded directly into a timer. The pulse timer counts once per APU cycle, so a sequencer step lasts 2·(t+1) CPU cycles; the triangle timer counts once per CPU cycle, so a step lasts t+1 CPU cycles.

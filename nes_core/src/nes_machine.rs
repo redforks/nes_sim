@@ -1,11 +1,11 @@
 use crate::{
     Cpu, EmptyPlugin, ExecuteResult, Plugin, SystemClock,
+    bus::{Bus, BusOwner},
     ines::INesFile,
     interrupt::{ApuIrqSampler, CartridgeIrqLatch, InterruptLines},
-    nes::{NesMcu, controller::Button, dmc_dma::DmcDma, ppu::palette::ColorTheme},
+    nes::{NesMcu, controller::Button, ppu::palette::ColorTheme},
     render::Render,
 };
-
 /// Safety limit: maximum system ticks per `process_frame()` call.
 /// A full frame is 89,342 PPU dots, and one system tick now maps to one PPU dot.
 /// This leaves a little headroom while still guarding against infinite loops.
@@ -16,7 +16,7 @@ pub struct NesMachine<P, R: Render, D: crate::nes::apu::AudioDriver> {
     p: P,
     cart_latch: CartridgeIrqLatch,
     apu_sampler: ApuIrqSampler,
-    dmc_dma: DmcDma,
+    bus: Bus,
     clock: SystemClock,
     /// Set while `reset()` is draining in-flight DMA work: the CPU gets no
     /// more cycles (hardware holds the reset line asserted), but PPU/APU/DMA
@@ -37,7 +37,7 @@ where
             p: plugin,
             cart_latch: CartridgeIrqLatch::new(),
             apu_sampler: ApuIrqSampler::new(),
-            dmc_dma: DmcDma::default(),
+            bus: Bus::new(),
             clock: SystemClock::default(),
             reset_requested: false,
         }
@@ -114,8 +114,8 @@ where
 
             self.cpu.mcu_mut().tick_apu(clock);
             if clock.is_apu_clock() {
-                let dmc_drove_bus = self.dmc_dma.tick(&mut self.cpu, clock);
-                if self.cpu.mcu_mut().tick_oam_dma(clock, dmc_drove_bus) {
+                let owner = self.bus.tick(&mut self.cpu, clock);
+                if !matches!(owner, BusOwner::Idle) {
                     return ExecuteResult::Continue;
                 }
             }
@@ -132,8 +132,7 @@ where
         } else {
             self.cpu.mcu_mut().tick_apu(clock);
             if clock.is_apu_clock() {
-                let dmc_drove_bus = self.dmc_dma.tick(&mut self.cpu, clock);
-                let _ = self.cpu.mcu_mut().tick_oam_dma(clock, dmc_drove_bus);
+                let _ = self.bus.tick(&mut self.cpu, clock);
             }
             ExecuteResult::Continue
         }
@@ -157,22 +156,19 @@ where
         );
         let mut drained = 0_u32;
         self.reset_requested = true;
-        while (self.dmc_dma.is_busy() || self.cpu.mcu().oam_dma_active())
-            && drained < Self::RESET_DRAIN_LIMIT_DOTS
-        {
+        while self.bus.is_busy(self.cpu.mcu()) && drained < Self::RESET_DRAIN_LIMIT_DOTS {
             // Kill freshly generated DMC fetch requests before each step so
             // the drain terminates even with the DMC channel still playing.
-            self.cpu.mcu_mut().suppress_new_dmc_dma_requests();
+            self.bus.suppress_new_dmc_requests(self.cpu.mcu_mut());
             self.tick();
             drained += 1;
         }
         self.reset_requested = false;
-        debug_assert!(!self.dmc_dma.is_busy(), "DMA bus did not quiesce");
-        debug_assert!(!self.cpu.mcu().oam_dma_active(), "OAM DMA did not quiesce");
+        debug_assert!(!self.bus.is_busy(self.cpu.mcu()), "DMA bus did not quiesce");
 
         let clock = self.clock;
         self.cpu.mcu_mut().reset(clock);
-        self.dmc_dma.reset();
+        self.bus.reset();
         self.cpu.reset();
 
         self.cart_latch.reset();
@@ -347,12 +343,12 @@ mod tests {
         // Warm up until the loop's first $4014 write has armed a DMA.
         for _ in 0..10_000 {
             machine.tick();
-            if machine.cpu.mcu().oam_dma_active() {
+            if machine.bus.is_busy(machine.cpu.mcu()) {
                 break;
             }
         }
         assert!(
-            machine.cpu.mcu().oam_dma_active(),
+            machine.bus.is_busy(machine.cpu.mcu()),
             "test ROM never armed an OAM DMA"
         );
 
@@ -360,8 +356,7 @@ mod tests {
         // internal drain limit (no hang), then apply cleanly.
         machine.reset();
 
-        assert!(!machine.cpu.mcu().oam_dma_active());
-        assert!(!machine.dmc_dma.is_busy());
+        assert!(!machine.bus.is_busy(machine.cpu.mcu()));
 
         // The post-reset machine still runs: frames complete normally.
         assert_eq!(machine.process_frame(), ExecuteResult::Continue);

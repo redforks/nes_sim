@@ -14,24 +14,12 @@ mod lower_ram;
 mod mapper;
 pub mod ppu;
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-struct OamDmaState {
-    page: u8,
-    startup_cycles: usize,
-    transfer_cycle: usize,
-    latch: u8,
-    /// Remaining pause cycles inserted after a DMC DMA collision: one OAM
-    /// alignment cycle before the aborted read is redone.
-    pause_cycles: usize,
-}
-
 pub struct NesMcu<R: Render, D: AudioDriver> {
     lower_ram: LowerRam,
     ppu: Ppu<R>,
     controller: Controller,
     apu: Apu<D>,
     oam_dma_pending: Option<u8>,
-    oam_dma: Option<OamDmaState>,
     /// CPU data bus open bus value: the last value read by the CPU.
     /// Reading write-only or unmapped addresses returns this value.
     open_bus: u8,
@@ -62,7 +50,6 @@ impl<R: Render, D: AudioDriver> NesMcu<R, D> {
             controller: Controller::new(),
             apu: Apu::new(audio_driver),
             oam_dma_pending: None,
-            oam_dma: None,
             open_bus: 0,
             joypad1_oe: false,
             joypad2_oe: false,
@@ -71,16 +58,15 @@ impl<R: Render, D: AudioDriver> NesMcu<R, D> {
         }
     }
 
-    /// Reset all bus devices to their power-up contract. The CPU-side DMA
-    /// controller (`DmcDma`) is owned by [`crate::NesMachine`] and reset
-    /// separately; by the time this runs, DMA work must already be quiesced
-    /// (see [`NesMachine::reset`]), so OAM state should be idle here.
+    /// Reset all bus devices to their power-up contract. The DMA bus is now
+    /// owned by [`crate::bus::Bus`] and reset separately; by the time this
+    /// runs, DMA work must already be quiesced (see [`crate::NesMachine::reset`]),
+    /// so OAM pending should be idle here. The bus owns the active OAM state.
     ///
     /// The master clock keeps running across resets, so time-relative state
     /// (deferred APU write landing points) must be re-anchored from `clock`
     /// instead of restarting at zero.
     pub fn reset(&mut self, clock: SystemClock) {
-        debug_assert!(self.oam_dma.is_none());
         debug_assert!(self.oam_dma_pending.is_none());
         self.last_apu_tick = clock.cycles();
         self.deferred_apu_writes.clear();
@@ -88,9 +74,15 @@ impl<R: Render, D: AudioDriver> NesMcu<R, D> {
         self.apu.reset();
     }
 
-    /// True while any OAM DMA transfer/alignment cycle is outstanding.
-    pub fn oam_dma_active(&self) -> bool {
-        self.oam_dma.is_some() || self.oam_dma_pending.is_some()
+    /// True while an OAM DMA request is still queued in the producer.
+    /// The active transfer lives in [`crate::bus::Bus`]; use
+    /// `Bus::is_busy(mcu)` for the full quiescence predicate.
+    pub fn has_oam_dma_pending(&self) -> bool {
+        self.oam_dma_pending.is_some()
+    }
+
+    pub(crate) fn take_oam_dma_pending(&mut self) -> Option<u8> {
+        self.oam_dma_pending.take()
     }
 
     /// Discard DMC sample-fetch requests generated while a machine reset is
@@ -132,62 +124,6 @@ impl<R: Render, D: AudioDriver> NesMcu<R, D> {
 
     pub fn flush_audio(&mut self) {
         self.apu.flush();
-    }
-
-    pub fn tick_oam_dma(&mut self, clock: SystemClock, dmc_drove_bus: bool) -> bool {
-        if let Some(mut dma) = self.oam_dma {
-            self.oam_dma = None;
-            if dma.pause_cycles > 0 {
-                // OAM alignment cycle after a DMC DMA collision: no transfer.
-                dma.pause_cycles -= 1;
-            } else if dmc_drove_bus
-                && dma.startup_cycles == 0
-                && dma.transfer_cycle.is_multiple_of(2)
-            {
-                // DMC DMA wins the bus: the OAM read is aborted and must be
-                // redone after an alignment cycle. Skipping this cycle and one
-                // alignment cycle preserves the get/put phase.
-                dma.pause_cycles = 1;
-            } else if dma.startup_cycles > 0 {
-                dma.startup_cycles -= 1;
-            } else {
-                let byte_index = dma.transfer_cycle / 2;
-                if dma.transfer_cycle.is_multiple_of(2) {
-                    let addr = ((dma.page as u16) << 8) | byte_index as u16;
-                    dma.latch = self.read(addr);
-                } else {
-                    self.ppu.write_oam_data(dma.latch);
-                }
-                dma.transfer_cycle += 1;
-            }
-
-            if dma.startup_cycles == 0 && dma.transfer_cycle == 512 {
-                return true;
-            }
-
-            self.oam_dma = Some(dma);
-            return true;
-        }
-
-        if let Some(page) = self.oam_dma_pending {
-            self.oam_dma_pending = None;
-            // The pending request is consumed on the first tick after the
-            // $4014 write cycle; that tick is the DMA halt cycle. If it is a
-            // get cycle the write happened on a put cycle and one alignment
-            // cycle is needed before the first read; otherwise none.
-            let startup_cycles = if clock.is_apu_get_clock() { 1 } else { 0 };
-            self.oam_dma = Some(OamDmaState {
-                page,
-                startup_cycles,
-                transfer_cycle: 0,
-                latch: 0,
-                pause_cycles: 0,
-            });
-
-            return true;
-        }
-
-        false
     }
 
     pub fn press_controller_a(&mut self, button: Button) {
