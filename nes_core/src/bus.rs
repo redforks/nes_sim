@@ -209,16 +209,6 @@ impl Bus {
         self.oam.as_ref()
     }
 
-    #[cfg(test)]
-    pub(crate) fn set_oam(&mut self, state: Option<OamActive>) {
-        self.oam = state;
-    }
-
-    #[cfg(test)]
-    pub(crate) fn dmc_is_busy(&self) -> bool {
-        self.dmc.is_busy()
-    }
-
     /// For migrating the hand-fed-bool OAM tests without booting a full Cpu.
     /// Drives only the OAM side with an injected `dmc_drove` flag, using a
     /// direct `&mut NesMcu` (no Cpu frozen handling). Mirrors the old
