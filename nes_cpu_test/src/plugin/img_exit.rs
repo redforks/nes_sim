@@ -1,5 +1,6 @@
 use nes_core::mcu::Mcu;
-use nes_core::{Cpu, ExecuteResult, Flag, Plugin, SystemClock};
+use nes_core::view::MachineView;
+use nes_core::{ExecuteResult, Flag, Plugin, SystemClock};
 
 #[derive(Default)]
 pub struct ImageExit {
@@ -8,13 +9,13 @@ pub struct ImageExit {
 }
 
 impl<M: Mcu> Plugin<M> for ImageExit {
-    fn start(&mut self, _: &Cpu<M>, _: SystemClock) {}
+    fn start(&mut self, _: &MachineView<M>, _: SystemClock) {}
 
-    fn end(&mut self, cpu: &Cpu<M>, _: SystemClock) {
+    fn end(&mut self, view: &MachineView<M>, _: SystemClock) {
         if let Some(last) = self.last_pc
-            && last == cpu.pc()
+            && last == view.cpu.pc
         {
-            if cpu.flag(Flag::Decimal) {
+            if (view.cpu.status & Flag::Decimal as u8) != 0 {
                 // decimal mode not implemented, it is okay to exit test on decimal error,
                 // decimal test is the last of opCode test.
                 println!("test succeed!");
@@ -26,7 +27,7 @@ impl<M: Mcu> Plugin<M> for ImageExit {
             self.exit_code = Some(1);
             return;
         }
-        self.last_pc = Some(cpu.pc());
+        self.last_pc = Some(view.cpu.pc);
     }
 
     fn should_stop(&self) -> ExecuteResult {

@@ -1,6 +1,7 @@
 use ansi_term::Color;
 use nes_core::mcu::Mcu;
-use nes_core::{Cpu, ExecuteResult, Plugin, SYSTEM_CYCLES_PER_PPU_CYCLE, SystemClock};
+use nes_core::view::MachineView;
+use nes_core::{ExecuteResult, Plugin, SYSTEM_CYCLES_PER_PPU_CYCLE, SystemClock};
 
 const RESET_WAIT_SYSTEM_CYCLES: u64 = 536_000 * SYSTEM_CYCLES_PER_PPU_CYCLE;
 
@@ -14,15 +15,12 @@ enum Status {
 }
 
 impl Status {
-    fn parse<M: Mcu>(cpu: &Cpu<M>) -> Status {
-        if cpu.peek_byte(0x6001) != 0xDE
-            || cpu.peek_byte(0x6002) != 0xB0
-            || cpu.peek_byte(0x6003) != 0x61
-        {
+    fn parse<M: Mcu>(view: &MachineView<M>) -> Status {
+        if view.peek(0x6001) != 0xDE || view.peek(0x6002) != 0xB0 || view.peek(0x6003) != 0x61 {
             return Status::Unknown;
         }
 
-        let status = cpu.peek_byte(0x6000);
+        let status = view.peek(0x6000);
         match status {
             0x80 => Status::Running,
             0x81 => Status::ShouldReset,
@@ -42,10 +40,10 @@ pub struct MonitorTestStatus {
 }
 
 impl<M: Mcu> Plugin<M> for MonitorTestStatus {
-    fn start(&mut self, _: &Cpu<M>, _: SystemClock) {}
+    fn start(&mut self, _: &MachineView<M>, _: SystemClock) {}
 
-    fn end(&mut self, cpu: &Cpu<M>, system_clock: SystemClock) {
-        let status = Status::parse(cpu);
+    fn end(&mut self, view: &MachineView<M>, system_clock: SystemClock) {
+        let status = Status::parse(view);
         let now = system_clock.cycles();
         self.should_reset = if let Some(cycles) = self.cycles_request_reset {
             // PPU clock is 5.320342 MHz, so 100ms is about 532,000 PPU cycles.

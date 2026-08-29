@@ -47,8 +47,8 @@ _Avoid_: warm-up, boot-phase, pre-frame, initialization phase
 A `Copy` newtype over `u64`. Represents the current master clock cycle. One system cycle equals one PPU dot. Every tick advances the clock by one. Owned by `NesMachine` and passed down to CPU/APU/DMA modules as an immutable parameter — no global state.
 _Avoid_: system cycles (use for the raw u64 count only), global clock, static clock
 
-**CpuClockPhase**:
-Enum with variants `First`, `Middle`, `Last`. Derived from `SystemClock` modulo `SYSTEM_CYCLES_PER_CPU_CYCLE` (3). One CPU cycle spans 3 system ticks (phases 0, 1, 2). CPU and APU advance only on `Last` phase (cycle % 3 == 2). `Middle` is always skipped.
+**SystemClock phase**:
+`SystemClock` phase helpers `is_cpu_clock()` (`cycles % 3 == 2`, the Last phase), `is_apu_clock()` (same), and `is_even_cpu_cycle()` derive CPU/APU cadence from the master dot. One CPU cycle spans 3 dots; the former `CpuClockPhase {First,Middle,Last}` enum was removed — callers use `clock.is_cpu_clock()` etc, not `clock.phase()`.
 
 **Tick**:
 A single system-cycle step. `NesMachine::tick()` advances the clock by one, then calls each device's tick method in order: PPU → cartridge IRQ latch capture → APU (sample IRQ, tick) → Bus (DMC + OAM DMA arbitration) → interrupt lines → CPU (if the bus is `Idle`). Each device uses the clock to decide whether to advance its internal state. The bus is the only DMA owner; DMC and OAM are not ticked separately outside it.
@@ -64,6 +64,23 @@ _Avoid_: drain, flush queue, run until empty (use the canonical name)
 **Reset quiescence**:
 The bus-drain contract of `NesMachine::reset()`. Once the reset line is asserted the CPU stops being fed; PPU/APU keep interleaving and any DMA work already accepted by the bus completes before the device resets apply. Fresh DMC fetch requests are suppressed during the drain so a playing sample channel cannot extend it. The bus owns DMA quiescence (`Bus::is_busy` / `Bus::suppress_new_dmc_requests` / `Bus::reset`); `NesMcu::reset(clock)` re-anchors only time-relative PPU/APU state and `Cpu::reset` clears CPU state — time keeps running on the master `SystemClock`.
 _Avoid_: hard abort, mid-DMA teardown, stale DMA
+
+**Per-dot contract**:
+The minimal pub surface of `Cpu<M>` (ADR-0010): `tick` (→ `TickOutcome`), `update_interrupt_lines`, `reset`, `is_halted`, `microcodes_empty`, `run_to_instruction_boundary`, plus read-only `a() / x() / y() / sp() / status() / pc() / flag()` and `snapshot()`/`view()`. No `mcu()` walk, no `pub` register fields, no `pub(crate)` DMA helpers — those live behind `Bus`. The one seam for instruction-boundary work is `run_to_instruction_boundary`, not a hand-rolled `while`.
+_Avoid_: pub register fields, `cpu.mcu().ppu()`, `(ExecuteResult, bool)` tuple
+
+**CpuSnapshot**:
+Owned copy `CpuSnapshot {a, x, y, sp, status, pc, halt}` returned by `Cpu::snapshot()` and held as `MachineView::cpu`. The read-model for register inspection; plugins/tools read `view.cpu.a` not `cpu.a`.
+_Avoid_: direct `cpu.a` field access
+
+**MachineView**:
+Read-model snapshot `MachineView<'a, M: Mcu> {cpu: CpuSnapshot, mcu: &M, clock}` exposed to `Plugin::start(&MachineView, clock)` / `end`. For `NesMcu` it exposes `ppu_in_vblank()`, `ppu_rendering_enabled()`, `ppu_frame_no()`, `read_vram()`, `borrow_image()` without exposing `&Cpu` or `&Mcu` walks. Built in `Cpu::tick` as `MachineView::new(snapshot, &mcu, clock)` and via `Cpu::view(clock)`.
+_Avoid_: `&Cpu<M>` in Plugin, `cpu.mcu().ppu()`, `mcu().peek` outside view
+
+**TickOutcome**:
+Named result `TickOutcome {control: ExecuteResult, instruction_complete: bool}` returned by `Cpu::tick`. `instruction_complete` is true when the microcode queue drained (instruction boundary). Replaces the unnamed `(ExecuteResult, bool)` tuple.
+_Avoid_: `(ExecuteResult, bool)`, `tick(...).0/.1`, `instruction_done` unnamed bool
+
 
 ## Language — Mapper IRQ
 

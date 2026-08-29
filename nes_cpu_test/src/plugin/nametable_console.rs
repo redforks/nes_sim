@@ -2,7 +2,8 @@ use ansi_term::Color;
 use is_terminal::IsTerminal;
 use nes_core::nes::NesMcu;
 use nes_core::render::Render;
-use nes_core::{Cpu, ExecuteResult, Plugin, SystemClock};
+use nes_core::view::MachineView;
+use nes_core::{ExecuteResult, Plugin, SystemClock};
 use std::collections::HashMap;
 use std::collections::HashSet;
 use std::sync::LazyLock;
@@ -98,16 +99,16 @@ impl Default for NametableConsole {
 }
 
 impl<R: Render> Plugin<NesMcu<R, ()>> for NametableConsole {
-    fn start(&mut self, _: &Cpu<NesMcu<R, ()>>, _: SystemClock) {}
+    fn start(&mut self, _: &MachineView<NesMcu<R, ()>>, _: SystemClock) {}
 
-    fn end(&mut self, cpu: &Cpu<NesMcu<R, ()>>, _: SystemClock) {
-        if !cpu.mcu().ppu().in_vblank()
-            || (!self.sample_without_rendering && !cpu.mcu().ppu().rendering_enabled())
+    fn end(&mut self, view: &MachineView<NesMcu<R, ()>>, _: SystemClock) {
+        if !view.ppu_in_vblank()
+            || (!self.sample_without_rendering && !view.ppu_rendering_enabled())
         {
             return;
         }
 
-        let buf = read_console(cpu, &self.decoder, self.full_nametable_scan);
+        let buf = read_console(view, &self.decoder, self.full_nametable_scan);
         if buf.is_empty() {
             return;
         }
@@ -169,31 +170,34 @@ fn next_transcript(last: &[String], buf: &str) -> (Vec<String>, String) {
 }
 
 fn read_console<R: Render>(
-    cpu: &Cpu<NesMcu<R, ()>>,
+    view: &MachineView<NesMcu<R, ()>>,
     decoder: &Decoder,
     full_nametable_scan: bool,
 ) -> String {
     match decoder {
-        Decoder::Plain => read_plain_console(cpu, full_nametable_scan),
-        Decoder::TallText => read_tall_console(cpu),
+        Decoder::Plain => read_plain_console(view, full_nametable_scan),
+        Decoder::TallText => read_tall_console(view),
     }
 }
 
-fn read_plain_console<R: Render>(cpu: &Cpu<NesMcu<R, ()>>, full_nametable_scan: bool) -> String {
+fn read_plain_console<R: Render>(
+    view: &MachineView<NesMcu<R, ()>>,
+    full_nametable_scan: bool,
+) -> String {
     if full_nametable_scan {
-        return read_full_nametable(cpu);
+        return read_full_nametable(view);
     }
     let mut buf = Vec::with_capacity(NAMETABLE_LEN);
     // Some ROMs (e.g. blargg's forum APU tests) place their text at an offset
     // instead of the nametable origin, so skip leading NUL tiles; the scan
     // still stops at the first NUL after the first non-NUL byte.
-    let first_nonzero = (0..NAMETABLE_LEN as u16)
-        .find(|&offset| cpu.mcu().read_vram(NAMETABLE_START + offset) != 0);
+    let first_nonzero =
+        (0..NAMETABLE_LEN as u16).find(|&offset| view.read_vram(NAMETABLE_START + offset) != 0);
     let Some(start) = first_nonzero else {
         return String::new();
     };
     for offset in start..NAMETABLE_LEN as u16 {
-        let value = cpu.mcu().read_vram(NAMETABLE_START + offset);
+        let value = view.read_vram(NAMETABLE_START + offset);
         if value == 0 {
             break;
         }
@@ -220,10 +224,10 @@ fn read_plain_console<R: Render>(cpu: &Cpu<NesMcu<R, ()>>, full_nametable_scan: 
 /// the physical 2 KiB twice) and joins every run of non-zero tiles with
 /// newlines. Verdict matching is substring-based, so where the ROM's console
 /// scroll placed each line doesn't matter.
-fn read_full_nametable<R: Render>(cpu: &Cpu<NesMcu<R, ()>>) -> String {
+fn read_full_nametable<R: Render>(view: &MachineView<NesMcu<R, ()>>) -> String {
     let mut all = Vec::with_capacity(0x1000);
     for offset in 0..0x1000u16 {
-        all.push(cpu.mcu().read_vram(NAMETABLE_START + offset));
+        all.push(view.read_vram(NAMETABLE_START + offset));
     }
     all.split(|&b| b == 0)
         .map(|run| String::from_utf8_lossy(run).to_string())
@@ -231,14 +235,14 @@ fn read_full_nametable<R: Render>(cpu: &Cpu<NesMcu<R, ()>>) -> String {
         .join("\n")
 }
 
-fn read_tall_console<R: Render>(cpu: &Cpu<NesMcu<R, ()>>) -> String {
+fn read_tall_console<R: Render>(view: &MachineView<NesMcu<R, ()>>) -> String {
     let mut lines = Vec::with_capacity(SCREEN_HEIGHT / 2);
 
     for row in (0..SCREEN_HEIGHT).step_by(2) {
         let mut line = String::with_capacity(SCREEN_WIDTH);
         for col in 0..SCREEN_WIDTH {
-            let top = read_nametable_char(cpu, row, col);
-            let bottom = read_nametable_char(cpu, row + 1, col);
+            let top = read_nametable_char(view, row, col);
+            let bottom = read_nametable_char(view, row + 1, col);
             line.push(decode_tall_char(top, bottom).unwrap_or(' '));
         }
         let trimmed = line.trim_end();
@@ -250,9 +254,8 @@ fn read_tall_console<R: Render>(cpu: &Cpu<NesMcu<R, ()>>) -> String {
     lines.join("\n")
 }
 
-fn read_nametable_char<R: Render>(cpu: &Cpu<NesMcu<R, ()>>, row: usize, col: usize) -> u8 {
-    cpu.mcu()
-        .read_vram(NAMETABLE_START + (row * SCREEN_WIDTH + col) as u16)
+fn read_nametable_char<R: Render>(view: &MachineView<NesMcu<R, ()>>, row: usize, col: usize) -> u8 {
+    view.read_vram(NAMETABLE_START + (row * SCREEN_WIDTH + col) as u16)
 }
 
 fn decode_tall_char(top: u8, bottom: u8) -> Option<char> {

@@ -4,7 +4,8 @@ use image::{Rgba, RgbaImage};
 use nes_core::nes::NesMcu;
 use nes_core::nes::apu::AudioDriver;
 use nes_core::render::ImageRender;
-use nes_core::{Cpu, ExecuteResult, Plugin, SystemClock};
+use nes_core::view::MachineView;
+use nes_core::{ExecuteResult, Plugin, SystemClock};
 use std::path::Path;
 use std::path::PathBuf;
 
@@ -70,14 +71,14 @@ fn pixel_within_threshold(actual: Rgba<u8>, expected: Rgba<u8>) -> bool {
 }
 
 impl<A: AudioDriver> Plugin<NesMcu<ImageRender, A>> for PngFrameMatch {
-    fn start(&mut self, _cpu: &Cpu<NesMcu<ImageRender, A>>, _: SystemClock) {}
+    fn start(&mut self, _view: &MachineView<NesMcu<ImageRender, A>>, _: SystemClock) {}
 
-    fn end(&mut self, cpu: &Cpu<NesMcu<ImageRender, A>>, _: SystemClock) {
+    fn end(&mut self, view: &MachineView<NesMcu<ImageRender, A>>, _: SystemClock) {
         if self.is_complete() {
             return;
         }
 
-        let in_vblank = cpu.mcu().ppu().in_vblank();
+        let in_vblank = view.ppu_in_vblank();
         if !in_vblank {
             self.sampled_vblank = false;
             return;
@@ -87,11 +88,10 @@ impl<A: AudioDriver> Plugin<NesMcu<ImageRender, A>> for PngFrameMatch {
         }
         self.sampled_vblank = true;
 
-        let frame_no = cpu.mcu().ppu().timing().frame_no();
-        let actual = cpu.mcu().ppu().renderer().borrow_image();
+        let frame_no = view.ppu_frame_no();
+        let actual = view.borrow_image();
         for idx in 0..self.expected.len() {
             if !self.matched[idx] && Self::compare_frame(actual, &self.expected[idx].1) {
-                let _ = actual.save(Path::new("/tmp/png-frame-match.png"));
                 eprintln!(
                     "Frame {} matches expected image {}",
                     frame_no,

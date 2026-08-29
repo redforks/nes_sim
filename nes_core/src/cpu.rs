@@ -1,3 +1,4 @@
+use crate::view::MachineView;
 use crate::{SystemClock, cpu::microcode::opcode, mcu::Mcu};
 use arraydeque::ArrayDeque;
 use microcode::{
@@ -9,6 +10,26 @@ mod microcode;
 mod reg16;
 
 use self::reg16::Register16;
+/// Snapshot of CPU registers — the read-model exposed to plugins/tools.
+/// Replaces direct `cpu.a/x/y/sp/status/pc` field access (ADR-0010).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct CpuSnapshot {
+    pub a: u8,
+    pub x: u8,
+    pub y: u8,
+    pub sp: u8,
+    pub status: u8,
+    pub pc: u16,
+    pub halt: bool,
+}
+
+/// Named result of `Cpu::tick` — replaces the unnamed `(ExecuteResult, bool)` tuple.
+/// `instruction_complete` is true when the microcode queue drained (instruction boundary).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct TickOutcome {
+    pub control: ExecuteResult,
+    pub instruction_complete: bool,
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Register {
@@ -289,12 +310,12 @@ struct ActiveInterruptWindow {
 }
 
 pub struct Cpu<M: Mcu> {
-    pub a: u8,
-    pub x: u8,
-    pub y: u8,
+    a: u8,
+    x: u8,
+    y: u8,
     pc: Register16,
-    pub sp: u8,
-    pub status: u8,
+    sp: u8,
+    status: u8,
     last_status: u8,
 
     opcode: u8,
@@ -353,11 +374,11 @@ impl<M: Mcu> Cpu<M> {
         r
     }
 
-    pub fn mcu(&self) -> &M {
+    pub(crate) fn mcu(&self) -> &M {
         &self.mcu
     }
 
-    pub fn mcu_mut(&mut self) -> &mut M {
+    pub(crate) fn mcu_mut(&mut self) -> &mut M {
         &mut self.mcu
     }
 
@@ -373,6 +394,63 @@ impl<M: Mcu> Cpu<M> {
 
     pub fn pc(&self) -> u16 {
         self.pc.get()
+    }
+
+    /// Read-only accessors for the register file — the per-dot contract (ADR-0010).
+    /// Fields are private; writes go via internal methods or test helpers.
+    pub fn a(&self) -> u8 {
+        self.a
+    }
+    pub fn x(&self) -> u8 {
+        self.x
+    }
+    pub fn y(&self) -> u8 {
+        self.y
+    }
+    pub fn sp(&self) -> u8 {
+        self.sp
+    }
+    pub fn status(&self) -> u8 {
+        self.status
+    }
+    /// Owned snapshot of the register file for plugins/tools.
+    pub fn snapshot(&self) -> CpuSnapshot {
+        CpuSnapshot {
+            a: self.a,
+            x: self.x,
+            y: self.y,
+            sp: self.sp,
+            status: self.status,
+            pc: self.pc.get(),
+            halt: self.halt,
+        }
+    }
+
+    /// Read-model view for plugins — snapshot + address-space peek (ADR-0010).
+    pub fn view(&self, clock: SystemClock) -> crate::view::MachineView<'_, M> {
+        crate::view::MachineView::new(self.snapshot(), &self.mcu, clock)
+    }
+
+    /// Test-only helpers to set registers without exposing `pub` writes.
+    #[cfg(test)]
+    pub fn set_a(&mut self, v: u8) {
+        self.a = v;
+    }
+    #[cfg(test)]
+    pub fn set_x(&mut self, v: u8) {
+        self.x = v;
+    }
+    #[cfg(test)]
+    pub fn set_y(&mut self, v: u8) {
+        self.y = v;
+    }
+    #[cfg(test)]
+    pub fn set_sp(&mut self, v: u8) {
+        self.sp = v;
+    }
+    #[cfg(test)]
+    pub fn set_status(&mut self, v: u8) {
+        self.status = v;
     }
 
     pub fn microcodes_empty(&self) -> bool {
@@ -653,25 +731,27 @@ impl<M: Mcu> Cpu<M> {
     }
 
     /// Return true if just execute current instruction
-    pub fn tick<P: Plugin<M>>(
-        &mut self,
-        plugin: &mut P,
-        clock: SystemClock,
-    ) -> (ExecuteResult, bool) {
+    pub fn tick<P: Plugin<M>>(&mut self, plugin: &mut P, clock: SystemClock) -> TickOutcome {
         self.now = clock;
 
         if self.frozen {
             if self.track_interrupt {
                 println!("[{}] (frozen)", clock.cycles());
             }
-            return (ExecuteResult::Continue, false);
+            return TickOutcome {
+                control: ExecuteResult::Continue,
+                instruction_complete: false,
+            };
         }
 
         if self.is_halted() {
             if self.track_interrupt {
                 println!("[{}] (halted)", clock.cycles());
             }
-            return (ExecuteResult::Halt, false);
+            return TickOutcome {
+                control: ExecuteResult::Halt,
+                instruction_complete: false,
+            };
         }
 
         if let Some(active) = self.active_interrupt_window.as_mut() {
@@ -682,7 +762,8 @@ impl<M: Mcu> Cpu<M> {
         let code = match self.pop_microcode() {
             Some(v) => v,
             None => {
-                plugin.start(self, clock);
+                let view = MachineView::new(self.snapshot(), &self.mcu, clock);
+                plugin.start(&view, clock);
                 match self.interrupt_detected.take() {
                     Some(InterruptType::Nmi) => self.push_enter_interrupt_microcodes(true),
                     Some(InterruptType::Irq) => self.push_enter_interrupt_microcodes(false),
@@ -708,12 +789,18 @@ impl<M: Mcu> Cpu<M> {
         if self.track_interrupt {
             self.dump_interrupt_track(clock);
         }
-
         if self.microcode_queue.is_empty() {
-            plugin.end(self, clock);
-            (plugin.should_stop(), true)
+            let view = MachineView::new(self.snapshot(), &self.mcu, clock);
+            plugin.end(&view, clock);
+            TickOutcome {
+                control: plugin.should_stop(),
+                instruction_complete: true,
+            }
         } else {
-            (ExecuteResult::Continue, false)
+            TickOutcome {
+                control: ExecuteResult::Continue,
+                instruction_complete: false,
+            }
         }
     }
 
@@ -1515,11 +1602,11 @@ pub enum ExecuteResult {
 }
 
 pub trait Plugin<M: Mcu> {
-    /// Before start execute new instruction
-    fn start(&mut self, cpu: &Cpu<M>, system_clock: SystemClock);
+    /// Before start execute new instruction — receives a read-model view (ADR-0010).
+    fn start(&mut self, view: &MachineView<M>, system_clock: SystemClock);
 
-    /// After execute instruction
-    fn end(&mut self, cpu: &Cpu<M>, system_clock: SystemClock);
+    /// After execute instruction — receives the same view.
+    fn end(&mut self, view: &MachineView<M>, system_clock: SystemClock);
 
     /// After execute an instruction, tell cpu should stop execution or not
     fn should_stop(&self) -> ExecuteResult {
@@ -1540,9 +1627,9 @@ impl<M: Mcu> EmptyPlugin<M> {
 }
 
 impl<M: Mcu> Plugin<M> for EmptyPlugin<M> {
-    fn start(&mut self, _: &Cpu<M>, _: SystemClock) {}
+    fn start(&mut self, _: &MachineView<M>, _: SystemClock) {}
 
-    fn end(&mut self, _: &Cpu<M>, _: SystemClock) {}
+    fn end(&mut self, _: &MachineView<M>, _: SystemClock) {}
 }
 
 impl<M: Mcu> Default for EmptyPlugin<M> {

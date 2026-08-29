@@ -1,6 +1,6 @@
 use nes_core::mcu::Mcu;
-use nes_core::{Cpu, ExecuteResult, Plugin, SystemClock};
-
+use nes_core::view::MachineView;
+use nes_core::{ExecuteResult, Plugin, SystemClock};
 mod console;
 mod detect_dead_loop;
 mod frame_png_dump;
@@ -32,15 +32,15 @@ impl<M: Mcu> CompositePlugin<M> {
 }
 
 impl<M: Mcu> Plugin<M> for CompositePlugin<M> {
-    fn start(&mut self, cpu: &Cpu<M>, system_clock: SystemClock) {
+    fn start(&mut self, view: &MachineView<M>, system_clock: SystemClock) {
         for p in self.0.iter_mut() {
-            p.start(cpu, system_clock);
+            p.start(view, system_clock);
         }
     }
 
-    fn end(&mut self, cpu: &Cpu<M>, system_clock: SystemClock) {
+    fn end(&mut self, view: &MachineView<M>, system_clock: SystemClock) {
         for p in self.0.iter_mut() {
-            p.end(cpu, system_clock);
+            p.end(view, system_clock);
         }
     }
 

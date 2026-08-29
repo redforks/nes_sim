@@ -124,7 +124,7 @@ where
             let lines = InterruptLines { nmi, irq_level };
             self.cpu.update_interrupt_lines(lines, clock);
             let result = if clock.is_cpu_clock() {
-                self.cpu.tick(&mut self.p, clock).0
+                self.cpu.tick(&mut self.p, clock).control
             } else {
                 ExecuteResult::Continue
             };

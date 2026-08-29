@@ -1,7 +1,8 @@
 use nes_core::nes::NesMcu;
 use nes_core::nes::apu::AudioDriver;
 use nes_core::render::ImageRender;
-use nes_core::{Cpu, ExecuteResult, Plugin, SystemClock};
+use nes_core::view::MachineView;
+use nes_core::{ExecuteResult, Plugin, SystemClock};
 use std::path::PathBuf;
 
 /// Development tool: renders until `target_frame` (observed at vblank, matching
@@ -29,19 +30,19 @@ impl FramePngDump {
 }
 
 impl<A: AudioDriver> Plugin<NesMcu<ImageRender, A>> for FramePngDump {
-    fn start(&mut self, _cpu: &Cpu<NesMcu<ImageRender, A>>, _: SystemClock) {}
+    fn start(&mut self, _view: &MachineView<NesMcu<ImageRender, A>>, _: SystemClock) {}
 
-    fn end(&mut self, cpu: &Cpu<NesMcu<ImageRender, A>>, _: SystemClock) {
-        if self.dumped || !cpu.mcu().ppu().in_vblank() {
+    fn end(&mut self, view: &MachineView<NesMcu<ImageRender, A>>, _: SystemClock) {
+        if self.dumped || !view.ppu_in_vblank() {
             return;
         }
 
-        let frame_no = cpu.mcu().ppu().timing().frame_no();
+        let frame_no = view.ppu_frame_no();
         if frame_no < self.target_frame {
             return;
         }
 
-        let image = cpu.mcu().ppu().renderer().borrow_image();
+        let image = view.borrow_image();
         if let Err(e) = image.save(&self.out_path) {
             eprintln!("failed to save {}: {e}", self.out_path.display());
             return;

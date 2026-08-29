@@ -1,4 +1,5 @@
 use nes_core::mcu::Mcu;
+use nes_core::view::MachineView;
 use nes_core::{Cpu, ExecuteResult, Plugin, SystemClock};
 use std::collections::VecDeque;
 
@@ -21,13 +22,13 @@ impl<const DEPTH: usize, const REPEATS: u32> DetectDeadLoop<DEPTH, REPEATS> {
 }
 
 impl<const DEPTH: usize, const REPEATS: u32, M: Mcu> Plugin<M> for DetectDeadLoop<DEPTH, REPEATS> {
-    fn start(&mut self, _: &Cpu<M>, _: SystemClock) {}
+    fn start(&mut self, _: &MachineView<M>, _: SystemClock) {}
 
-    fn end(&mut self, cpu: &Cpu<M>, _: SystemClock) {
+    fn end(&mut self, view: &MachineView<M>, _: SystemClock) {
         if self.recent_pc.len() == DEPTH * 2 {
             self.recent_pc.pop_front();
         }
-        self.recent_pc.push_back(cpu.pc());
+        self.recent_pc.push_back(view.cpu.pc);
         if self.recent_pc.len() < DEPTH * 2 {
             return;
         }
@@ -42,12 +43,12 @@ impl<const DEPTH: usize, const REPEATS: u32, M: Mcu> Plugin<M> for DetectDeadLoo
         self.count += 1;
         self.should_exit = self.count > REPEATS;
         if self.should_exit {
-            let pc = cpu.pc();
-            let op = cpu.peek_byte(pc);
-            let lo = cpu.peek_byte(pc.wrapping_add(1));
-            let hi = cpu.peek_byte(pc.wrapping_add(2));
+            let pc = view.cpu.pc;
+            let op = view.peek(pc);
+            let lo = view.peek(pc.wrapping_add(1));
+            let hi = view.peek(pc.wrapping_add(2));
             let jmp_target = ((hi as u16) << 8) | lo as u16;
-            let status = cpu.peek_byte(0x6000);
+            let status = view.peek(0x6000);
 
             if op == 0x4c && jmp_target == pc && status == 0 {
                 self.exit_code = 0;
@@ -97,7 +98,8 @@ mod tests {
         let mut p = DetectDeadLoop::<2, 2>::new();
         for pc in pcs.iter().copied() {
             cpu.set_pc(pc);
-            p.end(&cpu, SystemClock::default());
+            let view = cpu.view(SystemClock::default());
+            p.end(&view, SystemClock::default());
         }
 
         assert_eq!(exp_count, p.count);
@@ -116,8 +118,10 @@ mod tests {
         let mut p = DetectDeadLoop::<1, 0>::new();
 
         cpu.set_pc(0x8000);
-        p.end(&cpu, SystemClock::default());
-        p.end(&cpu, SystemClock::default());
+        let view = cpu.view(SystemClock::default());
+        p.end(&view, SystemClock::default());
+        let view = cpu.view(SystemClock::default());
+        p.end(&view, SystemClock::default());
 
         assert!(p.should_exit);
         assert_eq!(0, p.exit_code);
@@ -133,8 +137,10 @@ mod tests {
         let mut p = DetectDeadLoop::<1, 0>::new();
 
         cpu.set_pc(0x8000);
-        p.end(&cpu, SystemClock::default());
-        p.end(&cpu, SystemClock::default());
+        let view = cpu.view(SystemClock::default());
+        p.end(&view, SystemClock::default());
+        let view = cpu.view(SystemClock::default());
+        p.end(&view, SystemClock::default());
 
         assert!(p.should_exit);
         assert_eq!(1, p.exit_code);

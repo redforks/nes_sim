@@ -1,9 +1,9 @@
 use ansi_term::Color;
 use is_terminal::IsTerminal;
 use nes_core::nes::NesMcu;
-use nes_core::nes::ppu::Ppu;
 use nes_core::render::Render;
-use nes_core::{Cpu, Plugin, SystemClock};
+use nes_core::view::MachineView;
+use nes_core::{Plugin, SystemClock};
 use std::cell::RefCell;
 use std::fmt::Write as _;
 use std::sync::LazyLock;
@@ -16,8 +16,8 @@ struct NewFrameDetector {
 }
 
 impl NewFrameDetector {
-    fn is_new_frame<R: Render>(&mut self, ppu: &Ppu<R>) -> bool {
-        let frame_no = ppu.timing().frame_no();
+    fn is_new_frame<R: Render>(&mut self, view: &MachineView<NesMcu<R, ()>>) -> bool {
+        let frame_no = view.ppu_frame_no();
         if frame_no != self.last_frame_no {
             self.last_frame_no = frame_no;
             true
@@ -54,14 +54,11 @@ impl Console {
 }
 
 impl<R: Render> Plugin<NesMcu<R, ()>> for Console {
-    fn start(&mut self, _: &Cpu<NesMcu<R, ()>>, _: SystemClock) {}
+    fn start(&mut self, _: &MachineView<NesMcu<R, ()>>, _: SystemClock) {}
 
-    fn end(&mut self, cpu: &Cpu<NesMcu<R, ()>>, _: SystemClock) {
-        if self.new_frame_detector.is_new_frame(cpu.mcu().ppu()) {
-            if cpu.peek_byte(0x6001) != 0xDE
-                || cpu.peek_byte(0x6002) != 0xB0
-                || cpu.peek_byte(0x6003) != 0x61
-            {
+    fn end(&mut self, view: &MachineView<NesMcu<R, ()>>, _: SystemClock) {
+        if self.new_frame_detector.is_new_frame(view) {
+            if view.peek(0x6001) != 0xDE || view.peek(0x6002) != 0xB0 || view.peek(0x6003) != 0x61 {
                 return;
             }
 
@@ -69,7 +66,7 @@ impl<R: Render> Plugin<NesMcu<R, ()>> for Console {
             self.read_buf.clear();
             let mut addr = 0x6004;
             loop {
-                let c = cpu.peek_byte(addr);
+                let c = view.peek(addr);
                 if c == 0 {
                     break;
                 }

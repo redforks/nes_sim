@@ -227,11 +227,11 @@ fn get_machine_status(state: &mut MachineState) -> nes_mcp_protocol::MachineStat
             let cpu = m.cpu_mut();
             nes_mcp_protocol::MachineStatus {
                 pc: cpu.pc(),
-                a: cpu.a,
-                x: cpu.x,
-                y: cpu.y,
-                p: cpu.status,
-                sp: cpu.sp,
+                a: cpu.a(),
+                x: cpu.x(),
+                y: cpu.y(),
+                p: cpu.status(),
+                sp: cpu.sp(),
                 cycles: clock.cycles() / 3,
             }
         }
@@ -239,11 +239,11 @@ fn get_machine_status(state: &mut MachineState) -> nes_mcp_protocol::MachineStat
             let cpu = m.cpu();
             nes_mcp_protocol::MachineStatus {
                 pc: cpu.pc(),
-                a: cpu.a,
-                x: cpu.x,
-                y: cpu.y,
-                p: cpu.status,
-                sp: cpu.sp,
+                a: cpu.a(),
+                x: cpu.x(),
+                y: cpu.y(),
+                p: cpu.status(),
+                sp: cpu.sp(),
                 cycles: m.system_cycles() / 3,
             }
         }
@@ -251,11 +251,11 @@ fn get_machine_status(state: &mut MachineState) -> nes_mcp_protocol::MachineStat
             let cpu = m.cpu();
             nes_mcp_protocol::MachineStatus {
                 pc: cpu.pc(),
-                a: cpu.a,
-                x: cpu.x,
-                y: cpu.y,
-                p: cpu.status,
-                sp: cpu.sp,
+                a: cpu.a(),
+                x: cpu.x(),
+                y: cpu.y(),
+                p: cpu.status(),
+                sp: cpu.sp(),
                 cycles: m.system_cycles() / 3,
             }
         }
@@ -263,11 +263,11 @@ fn get_machine_status(state: &mut MachineState) -> nes_mcp_protocol::MachineStat
             let cpu = m.cpu();
             nes_mcp_protocol::MachineStatus {
                 pc: cpu.pc(),
-                a: cpu.a,
-                x: cpu.x,
-                y: cpu.y,
-                p: cpu.status,
-                sp: cpu.sp,
+                a: cpu.a(),
+                x: cpu.x(),
+                y: cpu.y(),
+                p: cpu.status(),
+                sp: cpu.sp(),
                 cycles: m.system_cycles() / 3,
             }
         }
@@ -279,13 +279,13 @@ fn get_cpu_registers(state: &mut MachineState) -> nes_mcp_protocol::CpuRegisters
     match &mut state.machine {
         MachineWrapper::Bin(m, clock) => {
             let cpu = m.cpu_mut();
-            let status = cpu.status;
+            let status = cpu.status();
             nes_mcp_protocol::CpuRegisters {
                 pc: cpu.pc(),
-                a: cpu.a,
-                x: cpu.x,
-                y: cpu.y,
-                sp: cpu.sp,
+                a: cpu.a(),
+                x: cpu.x(),
+                y: cpu.y(),
+                sp: cpu.sp(),
                 status,
                 cycles: clock.cycles() / 3,
                 flag_n: (status & 0x80) != 0,
@@ -298,13 +298,13 @@ fn get_cpu_registers(state: &mut MachineState) -> nes_mcp_protocol::CpuRegisters
         }
         MachineWrapper::INes(m) => {
             let cpu = m.cpu();
-            let status = cpu.status;
+            let status = cpu.status();
             nes_mcp_protocol::CpuRegisters {
                 pc: cpu.pc(),
-                a: cpu.a,
-                x: cpu.x,
-                y: cpu.y,
-                sp: cpu.sp,
+                a: cpu.a(),
+                x: cpu.x(),
+                y: cpu.y(),
+                sp: cpu.sp(),
                 status,
                 cycles: m.system_cycles() / 3,
                 flag_n: (status & 0x80) != 0,
@@ -317,13 +317,13 @@ fn get_cpu_registers(state: &mut MachineState) -> nes_mcp_protocol::CpuRegisters
         }
         MachineWrapper::Rendered(m) => {
             let cpu = m.cpu();
-            let status = cpu.status;
+            let status = cpu.status();
             nes_mcp_protocol::CpuRegisters {
                 pc: cpu.pc(),
-                a: cpu.a,
-                x: cpu.x,
-                y: cpu.y,
-                sp: cpu.sp,
+                a: cpu.a(),
+                x: cpu.x(),
+                y: cpu.y(),
+                sp: cpu.sp(),
                 status,
                 cycles: m.system_cycles() / 3,
                 flag_n: (status & 0x80) != 0,
@@ -336,13 +336,13 @@ fn get_cpu_registers(state: &mut MachineState) -> nes_mcp_protocol::CpuRegisters
         }
         MachineWrapper::AudioDump(m) => {
             let cpu = m.cpu();
-            let status = cpu.status;
+            let status = cpu.status();
             nes_mcp_protocol::CpuRegisters {
                 pc: cpu.pc(),
-                a: cpu.a,
-                x: cpu.x,
-                y: cpu.y,
-                sp: cpu.sp,
+                a: cpu.a(),
+                x: cpu.x(),
+                y: cpu.y(),
+                sp: cpu.sp(),
                 status,
                 cycles: m.system_cycles() / 3,
                 flag_n: (status & 0x80) != 0,

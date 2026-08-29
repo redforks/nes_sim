@@ -61,7 +61,11 @@ fn test_reset() {
     let mut plugin = EmptyPlugin::<MockMcu>::new();
     let mut clock = SystemClock::default();
     // Tick until the CPU reports the current instruction is finished
-    while !machine.cpu_mut().tick(&mut plugin, clock).1 {
+    while !machine
+        .cpu_mut()
+        .tick(&mut plugin, clock)
+        .instruction_complete
+    {
         clock = clock.inc();
     }
     // Reset reads PC from 0xFFFC

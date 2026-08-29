@@ -3,7 +3,8 @@ use nes_core::nes::NesMcu;
 use nes_core::nes::apu::AudioDriver;
 use nes_core::nes::ppu::Timing;
 use nes_core::render::Render;
-use nes_core::{Cpu, ExecuteResult, Plugin, SYSTEM_CYCLES_PER_PPU_CYCLE, SystemClock};
+use nes_core::view::MachineView;
+use nes_core::{ExecuteResult, Plugin, SYSTEM_CYCLES_PER_PPU_CYCLE, SystemClock};
 
 mod simple_disassembly;
 
@@ -25,15 +26,15 @@ impl<P> QuietPlugin<P> {
 }
 
 impl<M: Mcu, P: Plugin<M>> Plugin<M> for QuietPlugin<P> {
-    fn start(&mut self, cpu: &Cpu<M>, system_clock: SystemClock) {
+    fn start(&mut self, view: &MachineView<M>, system_clock: SystemClock) {
         if !self.quiet {
-            self.inner.start(cpu, system_clock);
+            self.inner.start(view, system_clock);
         }
     }
 
-    fn end(&mut self, cpu: &Cpu<M>, system_clock: SystemClock) {
+    fn end(&mut self, view: &MachineView<M>, system_clock: SystemClock) {
         if !self.quiet {
-            self.inner.end(cpu, system_clock);
+            self.inner.end(view, system_clock);
         }
     }
 
@@ -73,11 +74,11 @@ impl ReportPlugin {
         QuietPlugin::new(quiet, ReportPlugin::inner_new())
     }
 
-    fn output<M: Mcu>(&mut self, cpu: &Cpu<M>, ppu: &str) {
+    fn output<M: Mcu>(&mut self, view: &MachineView<M>, ppu: &str) {
         let (op, low, high) = (
-            cpu.peek_byte(self.pc),
-            cpu.peek_byte(self.pc + 1),
-            cpu.peek_byte(self.pc + 2),
+            view.peek(self.pc),
+            view.peek(self.pc + 1),
+            view.peek(self.pc + 2),
         );
         let instruction = format!("{}", simple_disassembly::AsAsm(op, self.pc, low, high));
 
@@ -89,18 +90,18 @@ impl ReportPlugin {
 }
 
 impl<M: Mcu> Plugin<M> for ReportPlugin {
-    fn start(&mut self, cpu: &Cpu<M>, system_clock: SystemClock) {
+    fn start(&mut self, view: &MachineView<M>, system_clock: SystemClock) {
         self.start_cycles = system_clock.cycles();
-        self.a = cpu.a;
-        self.x = cpu.x;
-        self.y = cpu.y;
-        self.pc = cpu.pc();
-        self.sp = cpu.sp;
-        self.p = cpu.status;
+        self.a = view.cpu.a;
+        self.x = view.cpu.x;
+        self.y = view.cpu.y;
+        self.pc = view.cpu.pc;
+        self.sp = view.cpu.sp;
+        self.p = view.cpu.status;
     }
 
-    fn end(&mut self, cpu: &Cpu<M>, _: SystemClock) {
-        self.output(cpu, "")
+    fn end(&mut self, view: &MachineView<M>, _: SystemClock) {
+        self.output(view, "")
     }
 }
 
@@ -123,9 +124,9 @@ impl ReportNesTestResult {
 }
 
 impl<M: Mcu> Plugin<M> for ReportNesTestResult {
-    fn start(&mut self, _cpu: &Cpu<M>, _: SystemClock) {}
+    fn start(&mut self, _view: &MachineView<M>, _: SystemClock) {}
 
-    fn end(&mut self, cpu: &Cpu<M>, system_clock: SystemClock) {
+    fn end(&mut self, view: &MachineView<M>, system_clock: SystemClock) {
         self.instruction_executed += 1;
         if !self.result_cycle_captured
             && system_clock.cycles() >= 26560 * SYSTEM_CYCLES_PER_PPU_CYCLE
@@ -133,8 +134,8 @@ impl<M: Mcu> Plugin<M> for ReportNesTestResult {
             self.result_cycle_captured = true;
             // 26560 is the old system-cycle threshold after the last instruction executed,
             // 26554 is the threshold before the last instruction.
-            let low = cpu.peek_byte(0x0002) as u16;
-            let high = cpu.peek_byte(0x0003) as u16;
+            let low = view.peek(0x0002) as u16;
+            let high = view.peek(0x0003) as u16;
             self.result = Some((high << 8) | low);
         }
     }
@@ -173,18 +174,18 @@ impl ExitTestPlugin {
 }
 
 impl<M: Mcu> Plugin<M> for ExitTestPlugin {
-    fn start(&mut self, _cpu: &Cpu<M>, _: SystemClock) {}
+    fn start(&mut self, _view: &MachineView<M>, _: SystemClock) {}
 
-    fn end(&mut self, cpu: &Cpu<M>, _: SystemClock) {
+    fn end(&mut self, view: &MachineView<M>, _: SystemClock) {
         // Check for CPU halt - if halted, the test is complete
-        if cpu.is_halted() {
-            let result = cpu.peek_byte(TEST_RESULT_ADDR);
+        if view.is_halted() {
+            let result = view.peek(TEST_RESULT_ADDR);
 
             // Read text output from $6004+
             let mut text_output = String::new();
             let mut addr = 0x6004u16;
             loop {
-                let ch = cpu.peek_byte(addr);
+                let ch = view.peek(addr);
                 if ch == 0 {
                     break;
                 }
@@ -221,11 +222,11 @@ impl<M: Mcu> Plugin<M> for ExitTestPlugin {
 
             // Always check $6000 memory
             let sig = [
-                cpu.peek_byte(TEST_SIGNATURE_ADDR),
-                cpu.peek_byte(TEST_SIGNATURE_ADDR + 1),
-                cpu.peek_byte(TEST_SIGNATURE_ADDR + 2),
+                view.peek(TEST_SIGNATURE_ADDR),
+                view.peek(TEST_SIGNATURE_ADDR + 1),
+                view.peek(TEST_SIGNATURE_ADDR + 2),
             ];
-            let result = cpu.peek_byte(TEST_RESULT_ADDR);
+            let result = view.peek(TEST_RESULT_ADDR);
 
             if sig == TEST_SIGNATURE && result != 0x80 {
                 let msg = if result == 0 {
@@ -261,13 +262,13 @@ impl<R: Render, A: AudioDriver> NesReportPlugin<R, A> {
 }
 
 impl<R: Render, A: AudioDriver> Plugin<NesMcu<R, A>> for NesReportPlugin<R, A> {
-    fn start(&mut self, cpu: &Cpu<NesMcu<R, A>>, system_clock: SystemClock) {
-        self.inner.start(cpu, system_clock);
-        self.timing = *cpu.mcu().ppu_timing();
+    fn start(&mut self, view: &MachineView<NesMcu<R, A>>, system_clock: SystemClock) {
+        self.inner.start(view, system_clock);
+        self.timing = *view.ppu_timing();
     }
 
-    fn end(&mut self, cpu: &Cpu<NesMcu<R, A>>, _: SystemClock) {
+    fn end(&mut self, view: &MachineView<NesMcu<R, A>>, _: SystemClock) {
         let ppu = format!("PPU:{:3},{:3} ", self.timing.scanline(), self.timing.dot());
-        self.inner.output(cpu, &ppu);
+        self.inner.output(view, &ppu);
     }
 }

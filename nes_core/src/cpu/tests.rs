@@ -34,7 +34,7 @@ fn execute_next(cpu: &mut Cpu<MockMcu>) {
 
     cpu.run_to_instruction_boundary(&mut plugin, &mut clock);
 
-    while !cpu.tick(&mut plugin, clock).1 {
+    while !cpu.tick(&mut plugin, clock).instruction_complete {
         clock = clock.inc();
     }
 }
@@ -207,12 +207,12 @@ fn nmi_pulse_dispatch_latency_runs_from_rising_edge() {
 #[test]
 fn test_cpu_initialization() {
     let cpu = create_cpu();
-    assert_eq!(cpu.a, 0);
-    assert_eq!(cpu.x, 0);
-    assert_eq!(cpu.y, 0);
+    assert_eq!(cpu.a(), 0);
+    assert_eq!(cpu.x(), 0);
+    assert_eq!(cpu.y(), 0);
     assert_eq!(cpu.pc(), 0);
     // Cpu::new calls reset() so SP and status reflect reset state
-    assert_eq!(cpu.sp, 0xFD);
+    assert_eq!(cpu.sp(), 0xFD);
     assert!(cpu.flag(Flag::InterruptDisabled));
     assert!(!cpu.is_halted());
 }
@@ -264,35 +264,35 @@ fn test_read_write_byte() {
 #[test]
 fn test_stack_push_pop() {
     let mut cpu = create_cpu();
-    cpu.sp = 0xFF;
+    cpu.set_sp(0xFF);
 
     cpu.push_stack(0x42);
-    assert_eq!(cpu.sp, 0xFE);
+    assert_eq!(cpu.sp(), 0xFE);
     assert_eq!(cpu.read_byte(0x1FF), 0x42);
 
     let value = cpu.pop_stack();
     assert_eq!(value, 0x42);
-    assert_eq!(cpu.sp, 0xFF);
+    assert_eq!(cpu.sp(), 0xFF);
 }
 
 #[test]
 fn test_stack_push_pop_wrapping() {
     let mut cpu = create_cpu();
-    cpu.sp = 0x00;
+    cpu.set_sp(0x00);
 
     cpu.push_stack(0xAA);
-    assert_eq!(cpu.sp, 0xFF);
+    assert_eq!(cpu.sp(), 0xFF);
     assert_eq!(cpu.read_byte(0x100), 0xAA);
 
     let value = cpu.pop_stack();
     assert_eq!(value, 0xAA);
-    assert_eq!(cpu.sp, 0x00);
+    assert_eq!(cpu.sp(), 0x00);
 }
 
 #[test]
 fn test_push_status() {
     let mut cpu = create_cpu();
-    cpu.sp = 0xFF;
+    cpu.set_sp(0xFF);
 
     cpu.push_status(false);
     let status_on_stack = cpu.read_byte(0x1FF);
@@ -303,12 +303,12 @@ fn test_push_status() {
 #[test]
 fn test_peek_stack() {
     let mut cpu = create_cpu();
-    cpu.sp = 0xFE;
+    cpu.set_sp(0xFE);
     cpu.write_mem(0x1FF, 0x55);
 
     let peeked = cpu.peek_stack();
     assert_eq!(peeked, 0x55);
-    assert_eq!(cpu.sp, 0xFE); // SP unchanged
+    assert_eq!(cpu.sp(), 0xFE); // SP unchanged
 }
 
 #[test]
@@ -362,8 +362,8 @@ fn test_halt_flag() {
 fn test_reset() {
     let mut cpu = create_cpu();
     cpu.set_pc(0x1234);
-    cpu.a = 0x42;
-    cpu.sp = 0x80;
+    cpu.set_a(0x42);
+    cpu.set_sp(0x80);
 
     cpu.reset();
     // Run reset microcodes so the reset vector is actually loaded
@@ -373,7 +373,7 @@ fn test_reset() {
     // Reset reads PC from 0xFFFC (which is 0x0000 in MockMcu)
     assert_eq!(cpu.pc(), 0);
     // Reset now adjusts SP by subtracting 3 from its current value
-    assert_eq!(cpu.sp, 0x80u8.wrapping_sub(3));
+    assert_eq!(cpu.sp(), 0x80u8.wrapping_sub(3));
     assert!(cpu.flag(Flag::InterruptDisabled)); // InterruptDisabled flag is set
 }
 
@@ -427,12 +427,12 @@ fn test_status_register_all_flags() {
             || flag_value == 0x02
             || flag_value == 0x20
         {
-            cpu.status |= flag_value;
+            cpu.set_status(cpu.status() | flag_value);
         }
     }
 
     // Status should reflect all set flags
-    assert_eq!(cpu.status, 0xFF);
+    assert_eq!(cpu.status(), 0xFF);
 }
 
 // Additional instruction execution tests
@@ -442,7 +442,7 @@ fn test_lda_immediate() {
     let mut cpu = create_cpu_with_program(&[0xA9, 0x42, 0xEA]);
 
     execute_next(&mut cpu);
-    assert_eq!(cpu.a, 0x42);
+    assert_eq!(cpu.a(), 0x42);
     assert!(!cpu.flag(Flag::Zero));
     assert!(!cpu.flag(Flag::Negative));
 }
@@ -453,7 +453,7 @@ fn test_lda_zero_flag() {
     let mut cpu = create_cpu_with_program(&[0xA9, 0x00, 0xEA]);
 
     execute_next(&mut cpu);
-    assert_eq!(cpu.a, 0x00);
+    assert_eq!(cpu.a(), 0x00);
     assert!(cpu.flag(Flag::Zero));
 }
 
@@ -463,7 +463,7 @@ fn test_lda_negative_flag() {
     let mut cpu = create_cpu_with_program(&[0xA9, 0x80, 0xEA]);
 
     execute_next(&mut cpu);
-    assert_eq!(cpu.a, 0x80);
+    assert_eq!(cpu.a(), 0x80);
     assert!(cpu.flag(Flag::Negative));
     assert!(!cpu.flag(Flag::Zero));
 }
@@ -472,10 +472,10 @@ fn test_lda_negative_flag() {
 fn test_nop_instruction() {
     // NOP (opcode EA)
     let mut cpu = create_cpu_with_program(&[0xEA, 0xEA, 0xEA]);
-    let a_before = cpu.a;
+    let a_before = cpu.a();
 
     execute_next(&mut cpu);
-    assert_eq!(cpu.a, a_before);
+    assert_eq!(cpu.a(), a_before);
     assert_eq!(cpu.pc(), 1);
 }
 
@@ -485,7 +485,7 @@ fn test_ldx_immediate() {
     let mut cpu = create_cpu_with_program(&[0xA2, 0x55, 0xEA]);
 
     execute_next(&mut cpu);
-    assert_eq!(cpu.x, 0x55);
+    assert_eq!(cpu.x(), 0x55);
 }
 
 #[test]
@@ -494,14 +494,14 @@ fn test_ldy_immediate() {
     let mut cpu = create_cpu_with_program(&[0xA0, 0xAA, 0xEA]);
 
     execute_next(&mut cpu);
-    assert_eq!(cpu.y, 0xAA);
+    assert_eq!(cpu.y(), 0xAA);
 }
 
 #[test]
 fn test_sta_zero_page() {
     // Store A to zero page address
     let mut cpu = create_cpu();
-    cpu.a = 0x77;
+    cpu.set_a(0x77);
 
     // STA $50 (opcode 85 50)
     cpu.write_mem(0, 0x85);
@@ -517,11 +517,11 @@ fn test_multiple_instructions() {
     let mut cpu = create_cpu_with_program(&[0xA9, 0x42, 0xA2, 0x55, 0xEA]);
 
     execute_next(&mut cpu);
-    assert_eq!(cpu.a, 0x42);
+    assert_eq!(cpu.a(), 0x42);
     assert_eq!(cpu.pc(), 2);
 
     execute_next(&mut cpu);
-    assert_eq!(cpu.x, 0x55);
+    assert_eq!(cpu.x(), 0x55);
     assert_eq!(cpu.pc(), 4);
 
     execute_next(&mut cpu);
@@ -534,11 +534,11 @@ fn test_ora_operation() {
     let mut cpu = create_cpu_with_program(&[0xA9, 0x55, 0x09, 0xAA, 0xEA]);
 
     execute_next(&mut cpu);
-    assert_eq!(cpu.a, 0x55);
+    assert_eq!(cpu.a(), 0x55);
 
     execute_next(&mut cpu);
     // 0x55 | 0xAA = 0xFF
-    assert_eq!(cpu.a, 0xFF);
+    assert_eq!(cpu.a(), 0xFF);
     assert!(cpu.flag(Flag::Negative));
     assert!(!cpu.flag(Flag::Zero));
 }
@@ -549,11 +549,11 @@ fn test_and_operation() {
     let mut cpu = create_cpu_with_program(&[0xA9, 0xF3, 0x29, 0x3F, 0xEA]);
 
     execute_next(&mut cpu);
-    assert_eq!(cpu.a, 0xF3);
+    assert_eq!(cpu.a(), 0xF3);
 
     execute_next(&mut cpu);
     // 0xF3 & 0x3F = 0x33
-    assert_eq!(cpu.a, 0x33);
+    assert_eq!(cpu.a(), 0x33);
 }
 
 #[test]
@@ -562,11 +562,11 @@ fn test_eor_operation() {
     let mut cpu = create_cpu_with_program(&[0xA9, 0xFF, 0x49, 0x0F, 0xEA]);
 
     execute_next(&mut cpu);
-    assert_eq!(cpu.a, 0xFF);
+    assert_eq!(cpu.a(), 0xFF);
 
     execute_next(&mut cpu);
     // 0xFF ^ 0x0F = 0xF0
-    assert_eq!(cpu.a, 0xF0);
+    assert_eq!(cpu.a(), 0xF0);
     assert!(cpu.flag(Flag::Negative));
 }
 
@@ -576,10 +576,10 @@ fn test_inc_register() {
     let mut cpu = create_cpu_with_program(&[0xA2, 0x42, 0xE8, 0xEA]);
 
     execute_next(&mut cpu);
-    assert_eq!(cpu.x, 0x42);
+    assert_eq!(cpu.x(), 0x42);
 
     execute_next(&mut cpu);
-    assert_eq!(cpu.x, 0x43);
+    assert_eq!(cpu.x(), 0x43);
 }
 
 #[test]
@@ -588,10 +588,10 @@ fn test_dec_register() {
     let mut cpu = create_cpu_with_program(&[0xA2, 0x01, 0xCA, 0xEA]);
 
     execute_next(&mut cpu);
-    assert_eq!(cpu.x, 0x01);
+    assert_eq!(cpu.x(), 0x01);
 
     execute_next(&mut cpu);
-    assert_eq!(cpu.x, 0x00);
+    assert_eq!(cpu.x(), 0x00);
     assert!(cpu.flag(Flag::Zero));
 }
 
@@ -663,10 +663,10 @@ fn test_transfer_instruction_tax() {
     let mut cpu = create_cpu_with_program(&[0xA9, 0x42, 0xAA, 0xEA]);
 
     execute_next(&mut cpu);
-    assert_eq!(cpu.a, 0x42);
+    assert_eq!(cpu.a(), 0x42);
 
     execute_next(&mut cpu);
-    assert_eq!(cpu.x, 0x42);
+    assert_eq!(cpu.x(), 0x42);
 }
 
 #[test]
@@ -676,7 +676,7 @@ fn test_transfer_instruction_tay() {
 
     execute_next(&mut cpu);
     execute_next(&mut cpu);
-    assert_eq!(cpu.y, 0x55);
+    assert_eq!(cpu.y(), 0x55);
 }
 
 #[test]
@@ -686,7 +686,7 @@ fn test_transfer_instruction_txa() {
 
     execute_next(&mut cpu);
     execute_next(&mut cpu);
-    assert_eq!(cpu.a, 0x99);
+    assert_eq!(cpu.a(), 0x99);
 }
 
 #[test]
@@ -696,33 +696,33 @@ fn test_transfer_instruction_tya() {
 
     execute_next(&mut cpu);
     execute_next(&mut cpu);
-    assert_eq!(cpu.a, 0xBB);
+    assert_eq!(cpu.a(), 0xBB);
 }
 
 #[test]
 fn test_stack_operations_pha() {
     // LDA #$42, PHA
     let mut cpu = create_cpu_with_program(&[0xA9, 0x42, 0x48, 0xEA]);
-    cpu.sp = 0xFF;
+    cpu.set_sp(0xFF);
 
     execute_next(&mut cpu);
     execute_next(&mut cpu);
 
     assert_eq!(cpu.read_byte(0x1FF), 0x42);
-    assert_eq!(cpu.sp, 0xFE);
+    assert_eq!(cpu.sp(), 0xFE);
 }
 
 #[test]
 fn test_stack_operations_pla() {
     // Set up stack with value, PLA
     let mut cpu = create_cpu_with_program(&[0x68, 0xEA]);
-    cpu.sp = 0xFE;
+    cpu.set_sp(0xFE);
     cpu.write_mem(0x1FF, 0x88);
 
     execute_next(&mut cpu);
 
-    assert_eq!(cpu.a, 0x88);
-    assert_eq!(cpu.sp, 0xFF);
+    assert_eq!(cpu.a(), 0x88);
+    assert_eq!(cpu.sp(), 0xFF);
     assert!(cpu.flag(Flag::Negative));
 }
 
@@ -732,11 +732,11 @@ fn test_asl_accumulator() {
     let mut cpu = create_cpu_with_program(&[0xA9, 0x40, 0x0A, 0xEA]);
 
     execute_next(&mut cpu);
-    assert_eq!(cpu.a, 0x40);
+    assert_eq!(cpu.a(), 0x40);
 
     execute_next(&mut cpu);
     // 0x40 << 1 = 0x80
-    assert_eq!(cpu.a, 0x80);
+    assert_eq!(cpu.a(), 0x80);
     assert!(cpu.flag(Flag::Negative));
     assert!(!cpu.flag(Flag::Carry));
 }
@@ -749,7 +749,7 @@ fn test_asl_with_carry() {
     execute_next(&mut cpu);
     execute_next(&mut cpu);
     // 0x80 << 1 = 0x100, overflow sets carry
-    assert_eq!(cpu.a, 0x00);
+    assert_eq!(cpu.a(), 0x00);
     assert!(cpu.flag(Flag::Carry));
     assert!(cpu.flag(Flag::Zero));
 }
@@ -762,7 +762,7 @@ fn test_lsr_accumulator() {
     execute_next(&mut cpu);
     execute_next(&mut cpu);
     // 0x82 >> 1 = 0x41, with carry = 0 (bit 0)
-    assert_eq!(cpu.a, 0x41);
+    assert_eq!(cpu.a(), 0x41);
     // Carry flag is set to bit 0 of original value, which is 0
     assert!(!cpu.flag(Flag::Carry));
 }
@@ -775,7 +775,7 @@ fn test_lsr_accumulator_with_carry() {
     execute_next(&mut cpu);
     execute_next(&mut cpu);
     // 0x83 >> 1 = 0x41, with carry = 1 (bit 0 of 0x83)
-    assert_eq!(cpu.a, 0x41);
+    assert_eq!(cpu.a(), 0x41);
     assert!(cpu.flag(Flag::Carry));
 }
 
@@ -787,7 +787,7 @@ fn test_rol_accumulator() {
     execute_next(&mut cpu);
     execute_next(&mut cpu);
     // 0x42 rotated left = 0x84
-    assert_eq!(cpu.a, 0x84);
+    assert_eq!(cpu.a(), 0x84);
 }
 
 #[test]
@@ -798,7 +798,7 @@ fn test_ror_accumulator() {
     execute_next(&mut cpu);
     execute_next(&mut cpu);
     // 0x41 rotated right = 0x20
-    assert_eq!(cpu.a, 0x20);
+    assert_eq!(cpu.a(), 0x20);
     assert!(cpu.flag(Flag::Carry));
 }
 
@@ -817,7 +817,7 @@ fn test_bit_instruction() {
 
     // Execute LDA #$FF
     execute_next(&mut cpu);
-    assert_eq!(cpu.a, 0xFF);
+    assert_eq!(cpu.a(), 0xFF);
 
     // Execute BIT $50
     execute_next(&mut cpu);
@@ -873,7 +873,7 @@ fn test_adc_basic() {
     execute_next(&mut cpu);
     execute_next(&mut cpu);
     // 0x50 + 0x30 = 0x80
-    assert_eq!(cpu.a, 0x80);
+    assert_eq!(cpu.a(), 0x80);
     assert!(cpu.flag(Flag::Negative));
     assert!(!cpu.flag(Flag::Carry));
 }
@@ -882,12 +882,12 @@ fn test_adc_basic() {
 fn test_adc_with_carry() {
     // ADC with carry-in
     let mut cpu = create_cpu_with_program(&[0x69, 0xFF, 0xEA]);
-    cpu.a = 0x00;
+    cpu.set_a(0x00);
     cpu.set_flag(Flag::Carry, true);
 
     execute_next(&mut cpu);
     // 0x00 + 0xFF + 1 = 0x100, overflow to 0x00 with carry
-    assert_eq!(cpu.a, 0x00);
+    assert_eq!(cpu.a(), 0x00);
     assert!(cpu.flag(Flag::Carry));
     assert!(cpu.flag(Flag::Zero));
 }
@@ -901,7 +901,7 @@ fn test_sbc_basic() {
     execute_next(&mut cpu);
     execute_next(&mut cpu);
     // 0x50 - 0x30 = 0x20
-    assert_eq!(cpu.a, 0x20);
+    assert_eq!(cpu.a(), 0x20);
 }
 
 #[test]
@@ -911,7 +911,7 @@ fn test_ldx_zero_page() {
     cpu.write_mem(0x50, 0x77);
 
     execute_next(&mut cpu);
-    assert_eq!(cpu.x, 0x77);
+    assert_eq!(cpu.x(), 0x77);
 }
 
 #[test]
@@ -920,7 +920,7 @@ fn test_ldy_zero_page() {
     cpu.write_mem(0x60, 0x88);
 
     execute_next(&mut cpu);
-    assert_eq!(cpu.y, 0x88);
+    assert_eq!(cpu.y(), 0x88);
 }
 
 #[test]
@@ -944,39 +944,39 @@ fn test_sty_zero_page() {
 #[test]
 fn test_inx_wrapping() {
     let mut cpu = create_cpu();
-    cpu.x = 0xFF;
+    cpu.set_x(0xFF);
 
     // INX (E8)
     cpu.write_mem(0, 0xE8);
     execute_next(&mut cpu);
 
-    assert_eq!(cpu.x, 0x00);
+    assert_eq!(cpu.x(), 0x00);
     assert!(cpu.flag(Flag::Zero));
 }
 
 #[test]
 fn test_iny_wrapping() {
     let mut cpu = create_cpu();
-    cpu.y = 0xFF;
+    cpu.set_y(0xFF);
 
     // INY (C8)
     cpu.write_mem(0, 0xC8);
     execute_next(&mut cpu);
 
-    assert_eq!(cpu.y, 0x00);
+    assert_eq!(cpu.y(), 0x00);
     assert!(cpu.flag(Flag::Zero));
 }
 
 #[test]
 fn test_dey_to_zero() {
     let mut cpu = create_cpu();
-    cpu.y = 0x01;
+    cpu.set_y(0x01);
 
     // DEY (88)
     cpu.write_mem(0, 0x88);
     execute_next(&mut cpu);
 
-    assert_eq!(cpu.y, 0x00);
+    assert_eq!(cpu.y(), 0x00);
     assert!(cpu.flag(Flag::Zero));
 }
 
@@ -1007,8 +1007,8 @@ fn test_cpy_instruction() {
 #[test]
 fn test_php_pla() {
     let mut cpu = create_cpu_with_program(&[0x08, 0x68, 0xEA]); // PHP, PLA
-    cpu.sp = 0xFF;
-    cpu.status = 0x54;
+    cpu.set_sp(0xFF);
+    cpu.set_status(0x54);
 
     execute_next(&mut cpu);
     // Status pushed to stack
@@ -1016,13 +1016,13 @@ fn test_php_pla() {
     execute_next(&mut cpu);
     // Status pulled from stack (into A)
     // Note: bit 5 (NotUsed) is always 1 when pushed
-    assert_eq!(cpu.a & 0xDF, 0x54 & 0xDF);
+    assert_eq!(cpu.a() & 0xDF, 0x54 & 0xDF);
 }
 
 #[test]
 fn test_plp_restores_flags() {
     let mut cpu = create_cpu_with_program(&[0x28, 0xEA]); // PLP, NOP
-    cpu.sp = 0xFE;
+    cpu.set_sp(0xFE);
     cpu.write_mem(0x1FF, 0xCF); // Status with various flags
 
     execute_next(&mut cpu);
@@ -1098,17 +1098,17 @@ fn test_txa_affects_flags() {
     execute_next(&mut cpu);
     execute_next(&mut cpu);
 
-    assert_eq!(cpu.a, 0x00);
+    assert_eq!(cpu.a(), 0x00);
     assert!(cpu.flag(Flag::Zero));
 }
 
 #[test]
 fn test_tsx_instruction() {
     let mut cpu = create_cpu_with_program(&[0xBA, 0xEA]); // TSX
-    cpu.sp = 0x80;
+    cpu.set_sp(0x80);
 
     execute_next(&mut cpu);
-    assert_eq!(cpu.x, 0x80);
+    assert_eq!(cpu.x(), 0x80);
 }
 
 #[test]
@@ -1117,7 +1117,7 @@ fn test_txs_instruction() {
 
     execute_next(&mut cpu);
     execute_next(&mut cpu);
-    assert_eq!(cpu.sp, 0x42);
+    assert_eq!(cpu.sp(), 0x42);
 }
 
 #[test]
@@ -1128,7 +1128,7 @@ fn test_and_zero_page() {
     execute_next(&mut cpu);
     execute_next(&mut cpu);
     // 0xF3 & 0x3F = 0x33
-    assert_eq!(cpu.a, 0x33);
+    assert_eq!(cpu.a(), 0x33);
 }
 
 #[test]
@@ -1139,7 +1139,7 @@ fn test_ora_zero_page() {
     execute_next(&mut cpu);
     execute_next(&mut cpu);
     // 0x55 | 0xAA = 0xFF
-    assert_eq!(cpu.a, 0xFF);
+    assert_eq!(cpu.a(), 0xFF);
     assert!(cpu.flag(Flag::Negative));
 }
 
@@ -1151,7 +1151,7 @@ fn test_eor_zero_page() {
     execute_next(&mut cpu);
     execute_next(&mut cpu);
     // 0xFF ^ 0x0F = 0xF0
-    assert_eq!(cpu.a, 0xF0);
+    assert_eq!(cpu.a(), 0xF0);
 }
 
 #[test]
@@ -1162,7 +1162,7 @@ fn test_adc_zero_page() {
     execute_next(&mut cpu);
     execute_next(&mut cpu);
     // 0x50 + 0x30 = 0x80
-    assert_eq!(cpu.a, 0x80);
+    assert_eq!(cpu.a(), 0x80);
 }
 
 #[test]
@@ -1174,7 +1174,7 @@ fn test_sbc_zero_page() {
     execute_next(&mut cpu);
     execute_next(&mut cpu);
     // 0x50 - 0x30 = 0x20
-    assert_eq!(cpu.a, 0x20);
+    assert_eq!(cpu.a(), 0x20);
 }
 
 #[test]
@@ -1229,7 +1229,7 @@ fn test_lda_absolute() {
     cpu.write_mem(0x1234, 0x42);
 
     execute_next(&mut cpu);
-    assert_eq!(cpu.a, 0x42);
+    assert_eq!(cpu.a(), 0x42);
 }
 
 #[test]
@@ -1238,7 +1238,7 @@ fn test_ldx_absolute() {
     cpu.write_mem(0x1234, 0x55);
 
     execute_next(&mut cpu);
-    assert_eq!(cpu.x, 0x55);
+    assert_eq!(cpu.x(), 0x55);
 }
 
 #[test]
@@ -1247,7 +1247,7 @@ fn test_ldy_absolute() {
     cpu.write_mem(0x1234, 0x66);
 
     execute_next(&mut cpu);
-    assert_eq!(cpu.y, 0x66);
+    assert_eq!(cpu.y(), 0x66);
 }
 
 #[test]
@@ -1361,7 +1361,7 @@ fn test_lda_absolute_x() {
 
     execute_next(&mut cpu); // LDX #$10
     execute_next(&mut cpu); // LDA $1234,X
-    assert_eq!(cpu.a, 0x77);
+    assert_eq!(cpu.a(), 0x77);
 }
 
 #[test]
@@ -1371,7 +1371,7 @@ fn test_lda_absolute_y() {
 
     execute_next(&mut cpu); // LDY #$10
     execute_next(&mut cpu); // LDA $1234,Y
-    assert_eq!(cpu.a, 0x88);
+    assert_eq!(cpu.a(), 0x88);
 }
 
 #[test]
@@ -1428,7 +1428,7 @@ fn test_ldx_absolute_y() {
 
     execute_next(&mut cpu); // LDY #$10
     execute_next(&mut cpu); // LDX $1234,Y
-    assert_eq!(cpu.x, 0x99);
+    assert_eq!(cpu.x(), 0x99);
 }
 
 #[test]
@@ -1438,7 +1438,7 @@ fn test_ldy_absolute_x() {
 
     execute_next(&mut cpu); // LDX #$10
     execute_next(&mut cpu); // LDY $1234,X
-    assert_eq!(cpu.y, 0xAA);
+    assert_eq!(cpu.y(), 0xAA);
 }
 
 // More arithmetic and logic tests
@@ -1449,7 +1449,7 @@ fn test_adc_absolute() {
 
     execute_next(&mut cpu); // LDA #$30
     execute_next(&mut cpu); // ADC $1234
-    assert_eq!(cpu.a, 0x50);
+    assert_eq!(cpu.a(), 0x50);
 }
 
 #[test]
@@ -1459,7 +1459,7 @@ fn test_adc_with_overflow() {
 
     execute_next(&mut cpu); // LDA #$70
     execute_next(&mut cpu); // ADC $1234 (0x70 + 0x70 = 0xE0, sets negative, clears zero)
-    assert_eq!(cpu.a, 0xE0);
+    assert_eq!(cpu.a(), 0xE0);
     assert!(cpu.flag(Flag::Negative));
     assert!(!cpu.flag(Flag::Zero));
 }
@@ -1471,7 +1471,7 @@ fn test_sbc_absolute() {
 
     execute_next(&mut cpu); // LDA #$50
     execute_next(&mut cpu); // SBC $1234 (carry is set by default, so 0x50 - 0x30 = 0x20)
-    assert_eq!(cpu.a, 0x1F); // SBC uses borrow (inverse of carry), carry=1 means no borrow
+    assert_eq!(cpu.a(), 0x1F); // SBC uses borrow (inverse of carry), carry=1 means no borrow
 }
 
 #[test]
@@ -1481,7 +1481,7 @@ fn test_ora_absolute() {
 
     execute_next(&mut cpu); // LDA #$0F
     execute_next(&mut cpu); // ORA $1234 (0x0F | 0xF0 = 0xFF)
-    assert_eq!(cpu.a, 0xFF);
+    assert_eq!(cpu.a(), 0xFF);
 }
 
 #[test]
@@ -1491,7 +1491,7 @@ fn test_and_absolute() {
 
     execute_next(&mut cpu); // LDA #$F0
     execute_next(&mut cpu); // AND $1234 (0xF0 & 0x0F = 0x00)
-    assert_eq!(cpu.a, 0x00);
+    assert_eq!(cpu.a(), 0x00);
     assert!(cpu.flag(Flag::Zero));
 }
 
@@ -1502,7 +1502,7 @@ fn test_eor_absolute() {
 
     execute_next(&mut cpu); // LDA #$AA
     execute_next(&mut cpu); // EOR $1234 (0xAA ^ 0x55 = 0xFF)
-    assert_eq!(cpu.a, 0xFF);
+    assert_eq!(cpu.a(), 0xFF);
 }
 
 #[test]
@@ -1637,7 +1637,7 @@ fn test_lda_indirect_x() {
 
     execute_next(&mut cpu); // LDX #$05
     execute_next(&mut cpu); // LDA ($20,X)
-    assert_eq!(cpu.a, 0x42);
+    assert_eq!(cpu.a(), 0x42);
 }
 
 #[test]
@@ -1651,7 +1651,7 @@ fn test_lda_indirect_y() {
 
     execute_next(&mut cpu); // LDY #$05
     execute_next(&mut cpu); // LDA ($20),Y
-    assert_eq!(cpu.a, 0x55);
+    assert_eq!(cpu.a(), 0x55);
 }
 
 #[test]
@@ -1686,7 +1686,7 @@ fn test_lda_zero_page_x() {
 
     execute_next(&mut cpu); // LDX #$10
     execute_next(&mut cpu); // LDA $20,X
-    assert_eq!(cpu.a, 0x77);
+    assert_eq!(cpu.a(), 0x77);
 }
 
 #[test]
@@ -1696,7 +1696,7 @@ fn test_lda_zero_page_y() {
 
     execute_next(&mut cpu); // LDY #$10
     execute_next(&mut cpu); // LDX $20,Y
-    assert_eq!(cpu.x, 0x88);
+    assert_eq!(cpu.x(), 0x88);
 }
 
 #[test]
@@ -1709,7 +1709,7 @@ fn test_adc_indirect_x() {
     execute_next(&mut cpu); // LDX #$05
     execute_next(&mut cpu); // LDA #$30
     execute_next(&mut cpu); // ADC ($20,X)
-    assert_eq!(cpu.a, 0x50);
+    assert_eq!(cpu.a(), 0x50);
 }
 
 #[test]
@@ -1722,7 +1722,7 @@ fn test_adc_indirect_y() {
     execute_next(&mut cpu); // LDY #$05
     execute_next(&mut cpu); // LDA #$30
     execute_next(&mut cpu); // ADC ($20),Y
-    assert_eq!(cpu.a, 0x50);
+    assert_eq!(cpu.a(), 0x50);
 }
 
 #[test]
@@ -1798,7 +1798,7 @@ fn test_ora_indirect_x() {
     execute_next(&mut cpu); // LDX #$05
     execute_next(&mut cpu); // LDA #$0F
     execute_next(&mut cpu); // ORA ($20,X)
-    assert_eq!(cpu.a, 0xFF);
+    assert_eq!(cpu.a(), 0xFF);
 }
 
 #[test]
@@ -1811,7 +1811,7 @@ fn test_and_indirect_y() {
     execute_next(&mut cpu); // LDY #$05
     execute_next(&mut cpu); // LDA #$F0
     execute_next(&mut cpu); // AND ($20),Y
-    assert_eq!(cpu.a, 0x00);
+    assert_eq!(cpu.a(), 0x00);
 }
 
 #[test]
@@ -1827,7 +1827,7 @@ fn test_nop_zero_page() {
 fn test_nop_zero_page_x() {
     // 0x14 = NOP zero_page_x (0, 0, 5)
     let mut cpu = create_cpu_with_program(&[0x14, 0x20, 0xEA]);
-    cpu.x = 5;
+    cpu.set_x(5);
     execute_next(&mut cpu); // NOP $20,X
 }
 
@@ -1842,7 +1842,7 @@ fn test_nop_absolute() {
 fn test_nop_absolute_x() {
     // 0x1C = NOP absolute_x (0, 0, 7)
     let mut cpu = create_cpu_with_program(&[0x1C, 0x34, 0x12, 0xEA]);
-    cpu.x = 5;
+    cpu.set_x(5);
     execute_next(&mut cpu); // NOP $1234,X
 }
 
@@ -1850,8 +1850,8 @@ fn test_nop_absolute_x() {
 fn test_stx_zero_page_y() {
     // 0x96 = STX zero_page_y (2, 6, 5)
     let mut cpu = create_cpu_with_program(&[0x96, 0x20, 0xEA]);
-    cpu.x = 0x42;
-    cpu.y = 5;
+    cpu.set_x(0x42);
+    cpu.set_y(5);
     execute_next(&mut cpu); // STX $20,Y
     assert_eq!(cpu.read_byte(0x0025), 0x42);
 }
@@ -1860,8 +1860,8 @@ fn test_stx_zero_page_y() {
 fn test_sty_zero_page_x() {
     // 0x94 = STY zero_page_x (2, 4, 5)
     let mut cpu = create_cpu_with_program(&[0x94, 0x20, 0xEA]);
-    cpu.y = 0x35;
-    cpu.x = 3;
+    cpu.set_y(0x35);
+    cpu.set_x(3);
     execute_next(&mut cpu); // STY $20,X
     assert_eq!(cpu.read_byte(0x0023), 0x35);
 }
@@ -1870,47 +1870,47 @@ fn test_sty_zero_page_x() {
 fn test_dey() {
     // 0x88 = DEY (0, 6, 2)
     let mut cpu = create_cpu_with_program(&[0x88, 0xEA]);
-    cpu.y = 5;
+    cpu.set_y(5);
     execute_next(&mut cpu); // DEY
-    assert_eq!(cpu.y, 4);
+    assert_eq!(cpu.y(), 4);
 }
 
 #[test]
 fn test_dex() {
     // 0xCA = DEX (0, 7, 2)
     let mut cpu = create_cpu_with_program(&[0xCA, 0xEA]);
-    cpu.x = 5;
+    cpu.set_x(5);
     execute_next(&mut cpu); // DEX
-    assert_eq!(cpu.x, 4);
+    assert_eq!(cpu.x(), 4);
 }
 
 #[test]
 fn test_tay() {
     // 0xA8 = TAY (0, 5, 2)
     let mut cpu = create_cpu_with_program(&[0xA8, 0xEA]);
-    cpu.a = 0x42;
+    cpu.set_a(0x42);
     execute_next(&mut cpu); // TAY
-    assert_eq!(cpu.y, 0x42);
+    assert_eq!(cpu.y(), 0x42);
 }
 
 #[test]
 fn test_tya() {
     // 0x98 = TYA (2, 5, 2)
     let mut cpu = create_cpu_with_program(&[0x98, 0xEA]);
-    cpu.y = 0x35;
+    cpu.set_y(0x35);
     execute_next(&mut cpu); // TYA
-    assert_eq!(cpu.a, 0x35);
+    assert_eq!(cpu.a(), 0x35);
 }
 
 #[test]
 fn test_and_zero_page_x() {
     // 0x35 = AND zero_page_x (1, 1, 5)
     let mut cpu = create_cpu_with_program(&[0x35, 0x20, 0xEA]);
-    cpu.a = 0xF0;
-    cpu.x = 5;
+    cpu.set_a(0xF0);
+    cpu.set_x(5);
     cpu.write_mem(0x0025, 0x0F);
     execute_next(&mut cpu); // AND $20,X
-    assert_eq!(cpu.a, 0x00);
+    assert_eq!(cpu.a(), 0x00);
 }
 
 // JSR/RTS/RTI tests
@@ -1938,7 +1938,7 @@ fn test_rts_pops_pc() {
     // pop_stack: SP++, read from 0x100 + SP
     // First pop: SP=0xFD+1=0xFE, reads 0x1FE → 0x33
     // Second pop: SP=0xFE+1=0xFF, reads 0x1FF → 0x12
-    cpu.sp = 0xFD;
+    cpu.set_sp(0xFD);
     cpu.write_mem(0x1FE, 0x33); // Low byte
     cpu.write_mem(0x1FF, 0x12); // High byte
 
@@ -1979,7 +1979,7 @@ fn test_jsr_rts_round_trip() {
 fn test_rti_restores_pc_and_flags() {
     let mut cpu = create_cpu_with_program(&[0x40]); // RTI
     // Setup stack with status then PC (RTI pops in reverse order)
-    cpu.sp = 0xFD; // Stack at 0x100, 0x1FF, 0x1FE
+    cpu.set_sp(0xFD); // Stack at 0x100, 0x1FF, 0x1FE
     cpu.write_mem(0x1FE, 0xFF); // Status (popped first)
     cpu.write_mem(0x1FF, 0x34); // PC low
     cpu.write_mem(0x100, 0x12); // PC high (popped last)
@@ -1988,19 +1988,19 @@ fn test_rti_restores_pc_and_flags() {
 
     assert_eq!(cpu.pc(), 0x1234);
     // Status should be 0xFF but with bit 5 (unused) and bit 4 (break) handled
-    assert!(cpu.status == 0xFF || cpu.status == 0xCF || cpu.status == 0xEF);
+    assert!(cpu.status() == 0xFF || cpu.status() == 0xCF || cpu.status() == 0xEF);
 }
 
 // ADC overflow tests
 #[test]
 fn test_adc_overflow_positive_plus_positive() {
     let mut cpu = create_cpu_with_program(&[0x69, 0x40]); // ADC #$40
-    cpu.a = 0x40;
+    cpu.set_a(0x40);
     cpu.set_flag(Flag::Carry, false);
 
     execute_next(&mut cpu);
 
-    assert_eq!(cpu.a, 0x80);
+    assert_eq!(cpu.a(), 0x80);
     assert!(cpu.flag(Flag::Negative)); // Bit 7 set
     assert!(cpu.flag(Flag::Overflow)); // Overflow: positive + positive = negative
 }
@@ -2008,12 +2008,12 @@ fn test_adc_overflow_positive_plus_positive() {
 #[test]
 fn test_adc_overflow_negative_plus_negative() {
     let mut cpu = create_cpu_with_program(&[0x69, 0x80]); // ADC #$80
-    cpu.a = 0x80;
+    cpu.set_a(0x80);
     cpu.set_flag(Flag::Carry, false);
 
     execute_next(&mut cpu);
 
-    assert_eq!(cpu.a, 0x00);
+    assert_eq!(cpu.a(), 0x00);
     assert!(cpu.flag(Flag::Zero));
     assert!(cpu.flag(Flag::Overflow)); // Overflow: negative + negative = positive
     assert!(cpu.flag(Flag::Carry)); // Carry out
@@ -2022,12 +2022,12 @@ fn test_adc_overflow_negative_plus_negative() {
 #[test]
 fn test_adc_no_overflow_positive_plus_negative() {
     let mut cpu = create_cpu_with_program(&[0x69, 0x80]); // ADC #$80
-    cpu.a = 0x40;
+    cpu.set_a(0x40);
     cpu.set_flag(Flag::Carry, false);
 
     execute_next(&mut cpu);
 
-    assert_eq!(cpu.a, 0xC0);
+    assert_eq!(cpu.a(), 0xC0);
     assert!(!cpu.flag(Flag::Overflow)); // No overflow: positive + negative
     assert!(cpu.flag(Flag::Negative));
 }
@@ -2035,12 +2035,12 @@ fn test_adc_no_overflow_positive_plus_negative() {
 #[test]
 fn test_adc_with_carry_overflow() {
     let mut cpu = create_cpu_with_program(&[0x69, 0x01]); // ADC #$01
-    cpu.a = 0x7F;
+    cpu.set_a(0x7F);
     cpu.set_flag(Flag::Carry, true);
 
     execute_next(&mut cpu);
 
-    assert_eq!(cpu.a, 0x81);
+    assert_eq!(cpu.a(), 0x81);
     assert!(cpu.flag(Flag::Overflow)); // Overflow
     assert!(cpu.flag(Flag::Negative));
     assert!(!cpu.flag(Flag::Carry)); // No carry out from 0x7F + 0x01 + 1 = 0x81
@@ -2129,11 +2129,11 @@ fn test_branch_backward_max() {
 fn test_anc_immediate() {
     // ANC is an unofficial opcode that ANDs with A and sets N and C flags
     let mut cpu = create_cpu_with_program(&[0x0B, 0xF0]); // ANC #$F0
-    cpu.a = 0xFF;
+    cpu.set_a(0xFF);
 
     execute_next(&mut cpu);
 
-    assert_eq!(cpu.a, 0xF0);
+    assert_eq!(cpu.a(), 0xF0);
     assert!(cpu.flag(Flag::Negative));
 }
 
@@ -2141,11 +2141,11 @@ fn test_anc_immediate() {
 fn test_alr_immediate() {
     // ALR: AND then LSR
     let mut cpu = create_cpu_with_program(&[0x4B, 0xF0]); // ALR #$F0
-    cpu.a = 0xFF;
+    cpu.set_a(0xFF);
 
     execute_next(&mut cpu);
 
-    assert_eq!(cpu.a, 0x78); // 0xF0 >> 1 = 0x78
+    assert_eq!(cpu.a(), 0x78); // 0xF0 >> 1 = 0x78
     assert!(!cpu.flag(Flag::Negative));
     assert!(!cpu.flag(Flag::Carry));
 }
@@ -2154,12 +2154,12 @@ fn test_alr_immediate() {
 fn test_arr_immediate() {
     // ARR: AND then ROR
     let mut cpu = create_cpu_with_program(&[0x6B, 0x80]); // ARR #$80
-    cpu.a = 0xFF;
+    cpu.set_a(0xFF);
     cpu.set_flag(Flag::Carry, true);
 
     execute_next(&mut cpu);
 
-    assert_eq!(cpu.a, 0xC0); // (0xFF & 0x80) = 0x80, ROR with carry = 0xC0
+    assert_eq!(cpu.a(), 0xC0); // (0xFF & 0x80) = 0x80, ROR with carry = 0xC0
     assert!(cpu.flag(Flag::Negative));
 }
 
@@ -2174,11 +2174,11 @@ fn test_lda_indirect_x_unofficial() {
     mcu.write(0, 0xA1); // opcode
     mcu.write(1, 0x10); // zero page addr
     let mut cpu = create_cpu_with_mcu(mcu);
-    cpu.x = 0;
+    cpu.set_x(0);
 
     execute_next(&mut cpu);
 
-    assert_eq!(cpu.a, 0x42);
+    assert_eq!(cpu.a(), 0x42);
 }
 
 #[test]
@@ -2192,11 +2192,11 @@ fn test_lda_indirect_y_unofficial() {
     mcu.write(0, 0xB1); // opcode
     mcu.write(1, 0x10); // zero page addr
     let mut cpu = create_cpu_with_mcu(mcu);
-    cpu.y = 5;
+    cpu.set_y(5);
 
     execute_next(&mut cpu);
 
-    assert_eq!(cpu.a, 0x42);
+    assert_eq!(cpu.a(), 0x42);
 }
 
 #[test]
@@ -2209,8 +2209,8 @@ fn test_sta_indirect_y_unofficial() {
     mcu.write(0, 0x91); // opcode
     mcu.write(1, 0x10); // zero page addr
     let mut cpu = create_cpu_with_mcu(mcu);
-    cpu.a = 0x42;
-    cpu.y = 5;
+    cpu.set_a(0x42);
+    cpu.set_y(5);
 
     execute_next(&mut cpu);
 
@@ -2228,8 +2228,8 @@ fn test_cmp_indirect_x_unofficial() {
     mcu.write(0, 0xC1); // opcode
     mcu.write(1, 0x10); // zero page addr
     let mut cpu = create_cpu_with_mcu(mcu);
-    cpu.a = 0x42;
-    cpu.x = 0;
+    cpu.set_a(0x42);
+    cpu.set_x(0);
 
     execute_next(&mut cpu);
 
@@ -2247,8 +2247,8 @@ fn test_cmp_indirect_y_unofficial() {
     mcu.write(0, 0xD1); // opcode
     mcu.write(1, 0x10); // zero page addr
     let mut cpu = create_cpu_with_mcu(mcu);
-    cpu.a = 0x42;
-    cpu.y = 5;
+    cpu.set_a(0x42);
+    cpu.set_y(5);
 
     execute_next(&mut cpu);
 
@@ -2266,13 +2266,13 @@ fn test_sbc_indirect_x_unofficial() {
     mcu.write(0, 0xE1); // opcode
     mcu.write(1, 0x10); // zero page addr
     let mut cpu = create_cpu_with_mcu(mcu);
-    cpu.a = 0x20;
+    cpu.set_a(0x20);
     cpu.set_flag(Flag::Carry, true);
-    cpu.x = 0;
+    cpu.set_x(0);
 
     execute_next(&mut cpu);
 
-    assert_eq!(cpu.a, 0x10); // 0x20 - 0x10 = 0x10
+    assert_eq!(cpu.a(), 0x10); // 0x20 - 0x10 = 0x10
 }
 
 #[test]
@@ -2286,13 +2286,13 @@ fn test_sbc_indirect_y_unofficial() {
     mcu.write(0, 0xF1); // opcode
     mcu.write(1, 0x10); // zero page addr
     let mut cpu = create_cpu_with_mcu(mcu);
-    cpu.a = 0x20;
+    cpu.set_a(0x20);
     cpu.set_flag(Flag::Carry, true);
-    cpu.y = 5;
+    cpu.set_y(5);
 
     execute_next(&mut cpu);
 
-    assert_eq!(cpu.a, 0x10); // 0x20 - 0x10 = 0x10
+    assert_eq!(cpu.a(), 0x10); // 0x20 - 0x10 = 0x10
 }
 
 #[test]
@@ -2302,8 +2302,8 @@ fn test_lax_immediate() {
 
     execute_next(&mut cpu);
 
-    assert_eq!(cpu.a, 0x42);
-    assert_eq!(cpu.x, 0x42);
+    assert_eq!(cpu.a(), 0x42);
+    assert_eq!(cpu.x(), 0x42);
 }
 
 #[test]
@@ -2317,8 +2317,8 @@ fn test_lax_zero_page() {
 
     execute_next(&mut cpu);
 
-    assert_eq!(cpu.a, 0x42);
-    assert_eq!(cpu.x, 0x42);
+    assert_eq!(cpu.a(), 0x42);
+    assert_eq!(cpu.x(), 0x42);
 }
 
 #[test]
@@ -2328,8 +2328,8 @@ fn test_sax_zero_page() {
     mcu.write(0, 0x87); // opcode
     mcu.write(1, 0x10); // zero page addr
     let mut cpu = create_cpu_with_mcu(mcu);
-    cpu.a = 0x30;
-    cpu.x = 0x12;
+    cpu.set_a(0x30);
+    cpu.set_x(0x12);
 
     execute_next(&mut cpu);
 
@@ -2344,7 +2344,7 @@ fn test_dcp_zero_page() {
     mcu.write(0, 0xC7); // opcode
     mcu.write(1, 0x10); // zero page addr
     let mut cpu = create_cpu_with_mcu(mcu);
-    cpu.a = 0x10;
+    cpu.set_a(0x10);
 
     execute_next(&mut cpu);
 
@@ -2361,13 +2361,13 @@ fn test_isc_zero_page() {
     mcu.write(0, 0xE7); // opcode
     mcu.write(1, 0x10); // zero page addr
     let mut cpu = create_cpu_with_mcu(mcu);
-    cpu.a = 0x20;
+    cpu.set_a(0x20);
     cpu.set_flag(Flag::Carry, true);
 
     execute_next(&mut cpu);
 
     assert_eq!(cpu.mcu_mut().read(0x10), 0x10); // incremented
-    assert_eq!(cpu.a, 0x10); // 0x20 - 0x10 = 0x10
+    assert_eq!(cpu.a(), 0x10); // 0x20 - 0x10 = 0x10
 }
 
 #[test]
@@ -2378,12 +2378,12 @@ fn test_aso_zero_page() {
     mcu.write(0, 0x07); // opcode
     mcu.write(1, 0x10); // zero page addr
     let mut cpu = create_cpu_with_mcu(mcu);
-    cpu.a = 0x0F;
+    cpu.set_a(0x0F);
 
     execute_next(&mut cpu);
 
     assert_eq!(cpu.mcu_mut().read(0x10), 0x80); // ASL: 0x40 << 1 = 0x80
-    assert_eq!(cpu.a, 0x8F); // ORA: 0x0F | 0x80 = 0x8F
+    assert_eq!(cpu.a(), 0x8F); // ORA: 0x0F | 0x80 = 0x8F
     assert!(cpu.flag(Flag::Negative));
 }
 
@@ -2395,13 +2395,13 @@ fn test_rla_zero_page() {
     mcu.write(0, 0x27); // opcode
     mcu.write(1, 0x10); // zero page addr
     let mut cpu = create_cpu_with_mcu(mcu);
-    cpu.a = 0x0F;
+    cpu.set_a(0x0F);
     cpu.set_flag(Flag::Carry, true);
 
     execute_next(&mut cpu);
 
     assert_eq!(cpu.mcu_mut().read(0x10), 0x03); // ROL: (0x81 << 1) | 1 = 0x103 -> 0x03
-    assert_eq!(cpu.a, 0x0F & 0x03); // AND: 0x0F & 0x03 = 0x03
+    assert_eq!(cpu.a(), 0x0F & 0x03); // AND: 0x0F & 0x03 = 0x03
 }
 
 #[test]
@@ -2412,7 +2412,7 @@ fn test_lse_zero_page() {
     mcu.write(0, 0x47); // opcode
     mcu.write(1, 0x10); // zero page addr
     let mut cpu = create_cpu_with_mcu(mcu);
-    cpu.a = 0xFF;
+    cpu.set_a(0xFF);
     cpu.set_flag(Flag::Carry, true);
 
     execute_next(&mut cpu);
@@ -2421,7 +2421,7 @@ fn test_lse_zero_page() {
     // LSR: 0x81 >> 1 = 0x40 (the incoming carry is ignored, LSR just shifts)
     // EOR: 0xFF ^ 0x40 = 0xBF
     assert_eq!(cpu.mcu_mut().read(0x10), 0x40); // LSR result
-    assert_eq!(cpu.a, 0xBF); // 0xFF ^ 0x40 = 0xBF
+    assert_eq!(cpu.a(), 0xBF); // 0xFF ^ 0x40 = 0xBF
     assert!(cpu.flag(Flag::Carry)); // bit 0 of original value (0x81) was 1
 }
 
@@ -2433,28 +2433,28 @@ fn test_rra_zero_page() {
     mcu.write(0, 0x67); // opcode
     mcu.write(1, 0x10); // zero page addr
     let mut cpu = create_cpu_with_mcu(mcu);
-    cpu.a = 0x05;
+    cpu.set_a(0x05);
     cpu.set_flag(Flag::Carry, true);
 
     execute_next(&mut cpu);
 
     assert_eq!(cpu.mcu_mut().read(0x10), 0xC0); // ROR: (0x81 >> 1) with carry = 0xC0
     // ADC: 0x05 + 0xC0 + 1(carry)
-    assert_eq!(cpu.a, 0xC6); // 0x05 + 0xC0 + 1 = 0xC6
+    assert_eq!(cpu.a(), 0xC6); // 0x05 + 0xC0 + 1 = 0xC6
 }
 
 #[test]
 fn test_sbx_immediate() {
     // SBX immediate - 0xCB
     let mut cpu = create_cpu_with_program(&[0xCB, 0x10]); // SBX #$10
-    cpu.a = 0x30;
-    cpu.x = 0x20;
+    cpu.set_a(0x30);
+    cpu.set_x(0x20);
 
     execute_next(&mut cpu);
 
-    assert_eq!(cpu.x, (0x30 & 0x20) - 0x10); // (A & X) - operand
+    assert_eq!(cpu.x(), (0x30 & 0x20) - 0x10); // (A & X) - operand
     // 0x30 & 0x20 = 0x20, 0x20 - 0x10 = 0x10
-    assert_eq!(cpu.x, 0x10);
+    assert_eq!(cpu.x(), 0x10);
 }
 
 #[test]
@@ -2465,12 +2465,12 @@ fn test_and_absolute_y() {
     mcu.write(0, 0x39); // opcode
     mcu.write_word(1, 0x200); // absolute addr
     let mut cpu = create_cpu_with_mcu(mcu);
-    cpu.a = 0xFF;
-    cpu.y = 5;
+    cpu.set_a(0xFF);
+    cpu.set_y(5);
 
     execute_next(&mut cpu);
 
-    assert_eq!(cpu.a, 0x0F); // 0xFF & 0x0F
+    assert_eq!(cpu.a(), 0x0F); // 0xFF & 0x0F
 }
 
 #[test]
@@ -2481,12 +2481,12 @@ fn test_eor_absolute_y() {
     mcu.write(0, 0x59); // opcode
     mcu.write_word(1, 0x200); // absolute addr
     let mut cpu = create_cpu_with_mcu(mcu);
-    cpu.a = 0xFF;
-    cpu.y = 5;
+    cpu.set_a(0xFF);
+    cpu.set_y(5);
 
     execute_next(&mut cpu);
 
-    assert_eq!(cpu.a, 0x0F); // 0xFF ^ 0xF0
+    assert_eq!(cpu.a(), 0x0F); // 0xFF ^ 0xF0
 }
 
 #[test]
@@ -2497,12 +2497,12 @@ fn test_ora_absolute_y() {
     mcu.write(0, 0x19); // opcode
     mcu.write_word(1, 0x200); // absolute addr
     let mut cpu = create_cpu_with_mcu(mcu);
-    cpu.a = 0x0F;
-    cpu.y = 5;
+    cpu.set_a(0x0F);
+    cpu.set_y(5);
 
     execute_next(&mut cpu);
 
-    assert_eq!(cpu.a, 0xFF); // 0x0F | 0xF0
+    assert_eq!(cpu.a(), 0xFF); // 0x0F | 0xF0
 }
 
 #[test]
@@ -2513,13 +2513,13 @@ fn test_adc_absolute_y() {
     mcu.write(0, 0x79); // opcode
     mcu.write_word(1, 0x200); // absolute addr
     let mut cpu = create_cpu_with_mcu(mcu);
-    cpu.a = 0x20;
+    cpu.set_a(0x20);
     cpu.set_flag(Flag::Carry, false);
-    cpu.y = 5;
+    cpu.set_y(5);
 
     execute_next(&mut cpu);
 
-    assert_eq!(cpu.a, 0x30); // 0x20 + 0x10
+    assert_eq!(cpu.a(), 0x30); // 0x20 + 0x10
     assert!(!cpu.flag(Flag::Carry));
 }
 
@@ -2531,8 +2531,8 @@ fn test_cmp_absolute_y() {
     mcu.write(0, 0xD9); // opcode
     mcu.write_word(1, 0x200); // absolute addr
     let mut cpu = create_cpu_with_mcu(mcu);
-    cpu.a = 0x42;
-    cpu.y = 5;
+    cpu.set_a(0x42);
+    cpu.set_y(5);
 
     execute_next(&mut cpu);
 
@@ -2547,13 +2547,13 @@ fn test_sbc_absolute_y() {
     mcu.write(0, 0xF9); // opcode
     mcu.write_word(1, 0x200); // absolute addr
     let mut cpu = create_cpu_with_mcu(mcu);
-    cpu.a = 0x20;
+    cpu.set_a(0x20);
     cpu.set_flag(Flag::Carry, true);
-    cpu.y = 5;
+    cpu.set_y(5);
 
     execute_next(&mut cpu);
 
-    assert_eq!(cpu.a, 0x10); // 0x20 - 0x10 = 0x10
+    assert_eq!(cpu.a(), 0x10); // 0x20 - 0x10 = 0x10
 }
 
 #[test]
@@ -2564,12 +2564,12 @@ fn test_and_absolute_x() {
     mcu.write(0, 0x3D); // opcode
     mcu.write_word(1, 0x200); // absolute addr
     let mut cpu = create_cpu_with_mcu(mcu);
-    cpu.a = 0xFF;
-    cpu.x = 5;
+    cpu.set_a(0xFF);
+    cpu.set_x(5);
 
     execute_next(&mut cpu);
 
-    assert_eq!(cpu.a, 0x0F); // 0xFF & 0x0F
+    assert_eq!(cpu.a(), 0x0F); // 0xFF & 0x0F
 }
 
 #[test]
@@ -2580,12 +2580,12 @@ fn test_eor_absolute_x() {
     mcu.write(0, 0x5D); // opcode
     mcu.write_word(1, 0x200); // absolute addr
     let mut cpu = create_cpu_with_mcu(mcu);
-    cpu.a = 0xFF;
-    cpu.x = 5;
+    cpu.set_a(0xFF);
+    cpu.set_x(5);
 
     execute_next(&mut cpu);
 
-    assert_eq!(cpu.a, 0x0F); // 0xFF ^ 0xF0
+    assert_eq!(cpu.a(), 0x0F); // 0xFF ^ 0xF0
 }
 
 #[test]
@@ -2596,12 +2596,12 @@ fn test_ora_absolute_x() {
     mcu.write(0, 0x1D); // opcode
     mcu.write_word(1, 0x200); // absolute addr
     let mut cpu = create_cpu_with_mcu(mcu);
-    cpu.a = 0x0F;
-    cpu.x = 5;
+    cpu.set_a(0x0F);
+    cpu.set_x(5);
 
     execute_next(&mut cpu);
 
-    assert_eq!(cpu.a, 0xFF); // 0x0F | 0xF0
+    assert_eq!(cpu.a(), 0xFF); // 0x0F | 0xF0
 }
 
 #[test]
@@ -2612,13 +2612,13 @@ fn test_adc_absolute_x() {
     mcu.write(0, 0x7D); // opcode
     mcu.write_word(1, 0x200); // absolute addr
     let mut cpu = create_cpu_with_mcu(mcu);
-    cpu.a = 0x20;
+    cpu.set_a(0x20);
     cpu.set_flag(Flag::Carry, false);
-    cpu.x = 5;
+    cpu.set_x(5);
 
     execute_next(&mut cpu);
 
-    assert_eq!(cpu.a, 0x30); // 0x20 + 0x10
+    assert_eq!(cpu.a(), 0x30); // 0x20 + 0x10
     assert!(!cpu.flag(Flag::Carry));
 }
 
@@ -2630,8 +2630,8 @@ fn test_cmp_absolute_x() {
     mcu.write(0, 0xDD); // opcode
     mcu.write_word(1, 0x200); // absolute addr
     let mut cpu = create_cpu_with_mcu(mcu);
-    cpu.a = 0x42;
-    cpu.x = 5;
+    cpu.set_a(0x42);
+    cpu.set_x(5);
 
     execute_next(&mut cpu);
 
@@ -2646,13 +2646,13 @@ fn test_sbc_absolute_x() {
     mcu.write(0, 0xFD); // opcode
     mcu.write_word(1, 0x200); // absolute addr
     let mut cpu = create_cpu_with_mcu(mcu);
-    cpu.a = 0x20;
+    cpu.set_a(0x20);
     cpu.set_flag(Flag::Carry, true);
-    cpu.x = 5;
+    cpu.set_x(5);
 
     execute_next(&mut cpu);
 
-    assert_eq!(cpu.a, 0x10); // 0x20 - 0x10 = 0x10
+    assert_eq!(cpu.a(), 0x10); // 0x20 - 0x10 = 0x10
 }
 
 #[test]
@@ -2691,12 +2691,12 @@ fn test_lax_indirect_y() {
     mcu.write(0, 0xB3); // opcode
     mcu.write(1, 0x10); // zero page addr
     let mut cpu = create_cpu_with_mcu(mcu);
-    cpu.y = 5;
+    cpu.set_y(5);
 
     execute_next(&mut cpu);
 
-    assert_eq!(cpu.a, 0x42);
-    assert_eq!(cpu.x, 0x42);
+    assert_eq!(cpu.a(), 0x42);
+    assert_eq!(cpu.x(), 0x42);
 }
 
 #[test]
@@ -2706,8 +2706,8 @@ fn test_sax_absolute() {
     mcu.write(0, 0x8F); // opcode
     mcu.write_word(1, 0x200); // absolute addr
     let mut cpu = create_cpu_with_mcu(mcu);
-    cpu.a = 0x30;
-    cpu.x = 0x12;
+    cpu.set_a(0x30);
+    cpu.set_x(0x12);
 
     execute_next(&mut cpu);
 
@@ -2722,8 +2722,8 @@ fn test_sax_indirect_x() {
     mcu.write(0, 0x83); // opcode
     mcu.write(1, 0x10); // zero page addr
     let mut cpu = create_cpu_with_mcu(mcu);
-    cpu.a = 0x30;
-    cpu.x = 5;
+    cpu.set_a(0x30);
+    cpu.set_x(5);
 
     execute_next(&mut cpu);
 
@@ -2738,7 +2738,7 @@ fn test_dcp_absolute() {
     mcu.write(0, 0xCF); // opcode
     mcu.write_word(1, 0x200); // absolute addr
     let mut cpu = create_cpu_with_mcu(mcu);
-    cpu.a = 0x10;
+    cpu.set_a(0x10);
 
     execute_next(&mut cpu);
 
@@ -2755,8 +2755,8 @@ fn test_dcp_absolute_x() {
     mcu.write(0, 0xDF); // opcode
     mcu.write_word(1, 0x200); // absolute addr
     let mut cpu = create_cpu_with_mcu(mcu);
-    cpu.a = 0x10;
-    cpu.x = 5;
+    cpu.set_a(0x10);
+    cpu.set_x(5);
 
     execute_next(&mut cpu);
 
@@ -2771,8 +2771,8 @@ fn test_dcp_absolute_y() {
     mcu.write(0, 0xDB); // opcode
     mcu.write_word(1, 0x200); // absolute addr
     let mut cpu = create_cpu_with_mcu(mcu);
-    cpu.a = 0x10;
-    cpu.y = 5;
+    cpu.set_a(0x10);
+    cpu.set_y(5);
 
     execute_next(&mut cpu);
 
@@ -2787,13 +2787,13 @@ fn test_isc_absolute() {
     mcu.write(0, 0xEF); // opcode
     mcu.write_word(1, 0x200); // absolute addr
     let mut cpu = create_cpu_with_mcu(mcu);
-    cpu.a = 0x20;
+    cpu.set_a(0x20);
     cpu.set_flag(Flag::Carry, true);
 
     execute_next(&mut cpu);
 
     assert_eq!(cpu.mcu_mut().read(0x200), 0x10); // incremented
-    assert_eq!(cpu.a, 0x10); // 0x20 - 0x10
+    assert_eq!(cpu.a(), 0x10); // 0x20 - 0x10
 }
 
 #[test]
@@ -2804,14 +2804,14 @@ fn test_isc_absolute_x() {
     mcu.write(0, 0xFF); // opcode
     mcu.write_word(1, 0x200); // absolute addr
     let mut cpu = create_cpu_with_mcu(mcu);
-    cpu.a = 0x20;
+    cpu.set_a(0x20);
     cpu.set_flag(Flag::Carry, true);
-    cpu.x = 5;
+    cpu.set_x(5);
 
     execute_next(&mut cpu);
 
     assert_eq!(cpu.mcu_mut().read(0x205), 0x10); // incremented
-    assert_eq!(cpu.a, 0x10); // 0x20 - 0x10
+    assert_eq!(cpu.a(), 0x10); // 0x20 - 0x10
 }
 
 #[test]
@@ -2822,14 +2822,14 @@ fn test_isc_absolute_y() {
     mcu.write(0, 0xFB); // opcode
     mcu.write_word(1, 0x200); // absolute addr
     let mut cpu = create_cpu_with_mcu(mcu);
-    cpu.a = 0x20;
+    cpu.set_a(0x20);
     cpu.set_flag(Flag::Carry, true);
-    cpu.y = 5;
+    cpu.set_y(5);
 
     execute_next(&mut cpu);
 
     assert_eq!(cpu.mcu_mut().read(0x205), 0x10); // incremented
-    assert_eq!(cpu.a, 0x10); // 0x20 - 0x10
+    assert_eq!(cpu.a(), 0x10); // 0x20 - 0x10
 }
 
 #[test]
@@ -2840,12 +2840,12 @@ fn test_aso_absolute() {
     mcu.write(0, 0x0F); // opcode
     mcu.write_word(1, 0x200); // absolute addr
     let mut cpu = create_cpu_with_mcu(mcu);
-    cpu.a = 0x0F;
+    cpu.set_a(0x0F);
 
     execute_next(&mut cpu);
 
     assert_eq!(cpu.mcu_mut().read(0x200), 0x80); // ASL: 0x40 << 1 = 0x80
-    assert_eq!(cpu.a, 0x8F); // ORA: 0x0F | 0x80 = 0x8F
+    assert_eq!(cpu.a(), 0x8F); // ORA: 0x0F | 0x80 = 0x8F
 }
 
 #[test]
@@ -2856,13 +2856,13 @@ fn test_aso_absolute_x() {
     mcu.write(0, 0x1F); // opcode
     mcu.write_word(1, 0x200); // absolute addr
     let mut cpu = create_cpu_with_mcu(mcu);
-    cpu.a = 0x0F;
-    cpu.x = 5;
+    cpu.set_a(0x0F);
+    cpu.set_x(5);
 
     execute_next(&mut cpu);
 
     assert_eq!(cpu.mcu_mut().read(0x205), 0x80); // ASL result
-    assert_eq!(cpu.a, 0x8F); // ORA result
+    assert_eq!(cpu.a(), 0x8F); // ORA result
 }
 
 #[test]
@@ -2873,13 +2873,13 @@ fn test_aso_absolute_y() {
     mcu.write(0, 0x1B); // opcode
     mcu.write_word(1, 0x200); // absolute addr
     let mut cpu = create_cpu_with_mcu(mcu);
-    cpu.a = 0x0F;
-    cpu.y = 5;
+    cpu.set_a(0x0F);
+    cpu.set_y(5);
 
     execute_next(&mut cpu);
 
     assert_eq!(cpu.mcu_mut().read(0x205), 0x80); // ASL result
-    assert_eq!(cpu.a, 0x8F); // ORA result
+    assert_eq!(cpu.a(), 0x8F); // ORA result
 }
 
 #[test]
@@ -2890,13 +2890,13 @@ fn test_rla_absolute() {
     mcu.write(0, 0x2F); // opcode
     mcu.write_word(1, 0x200); // absolute addr
     let mut cpu = create_cpu_with_mcu(mcu);
-    cpu.a = 0x0F;
+    cpu.set_a(0x0F);
     cpu.set_flag(Flag::Carry, true);
 
     execute_next(&mut cpu);
 
     assert_eq!(cpu.mcu_mut().read(0x200), 0x03); // ROL result
-    assert_eq!(cpu.a, 0x0F & 0x03); // AND result
+    assert_eq!(cpu.a(), 0x0F & 0x03); // AND result
 }
 
 #[test]
@@ -2907,14 +2907,14 @@ fn test_rla_absolute_x() {
     mcu.write(0, 0x3F); // opcode
     mcu.write_word(1, 0x200); // absolute addr
     let mut cpu = create_cpu_with_mcu(mcu);
-    cpu.a = 0x0F;
+    cpu.set_a(0x0F);
     cpu.set_flag(Flag::Carry, true);
-    cpu.x = 5;
+    cpu.set_x(5);
 
     execute_next(&mut cpu);
 
     assert_eq!(cpu.mcu_mut().read(0x205), 0x03); // ROL result
-    assert_eq!(cpu.a, 0x0F & 0x03); // AND result
+    assert_eq!(cpu.a(), 0x0F & 0x03); // AND result
 }
 
 #[test]
@@ -2925,14 +2925,14 @@ fn test_rla_absolute_y() {
     mcu.write(0, 0x3B); // opcode
     mcu.write_word(1, 0x200); // absolute addr
     let mut cpu = create_cpu_with_mcu(mcu);
-    cpu.a = 0x0F;
+    cpu.set_a(0x0F);
     cpu.set_flag(Flag::Carry, true);
-    cpu.y = 5;
+    cpu.set_y(5);
 
     execute_next(&mut cpu);
 
     assert_eq!(cpu.mcu_mut().read(0x205), 0x03); // ROL result
-    assert_eq!(cpu.a, 0x0F & 0x03); // AND result
+    assert_eq!(cpu.a(), 0x0F & 0x03); // AND result
 }
 
 #[test]
@@ -2943,13 +2943,13 @@ fn test_rra_absolute() {
     mcu.write(0, 0x6F); // opcode
     mcu.write_word(1, 0x200); // absolute addr
     let mut cpu = create_cpu_with_mcu(mcu);
-    cpu.a = 0x05;
+    cpu.set_a(0x05);
     cpu.set_flag(Flag::Carry, true);
 
     execute_next(&mut cpu);
 
     assert_eq!(cpu.mcu_mut().read(0x200), 0xC0); // ROR result
-    assert_eq!(cpu.a, 0xC6); // ADC: 0x05 + 0xC0 + 1 = 0xC6
+    assert_eq!(cpu.a(), 0xC6); // ADC: 0x05 + 0xC0 + 1 = 0xC6
 }
 
 #[test]
@@ -2960,14 +2960,14 @@ fn test_rra_absolute_x() {
     mcu.write(0, 0x7F); // opcode
     mcu.write_word(1, 0x200); // absolute addr
     let mut cpu = create_cpu_with_mcu(mcu);
-    cpu.a = 0x05;
+    cpu.set_a(0x05);
     cpu.set_flag(Flag::Carry, true);
-    cpu.x = 5;
+    cpu.set_x(5);
 
     execute_next(&mut cpu);
 
     assert_eq!(cpu.mcu_mut().read(0x205), 0xC0); // ROR result
-    assert_eq!(cpu.a, 0xC6); // ADC result
+    assert_eq!(cpu.a(), 0xC6); // ADC result
 }
 
 #[test]
@@ -2978,27 +2978,27 @@ fn test_rra_absolute_y() {
     mcu.write(0, 0x7B); // opcode
     mcu.write_word(1, 0x200); // absolute addr
     let mut cpu = create_cpu_with_mcu(mcu);
-    cpu.a = 0x05;
+    cpu.set_a(0x05);
     cpu.set_flag(Flag::Carry, true);
-    cpu.y = 5;
+    cpu.set_y(5);
 
     execute_next(&mut cpu);
 
     assert_eq!(cpu.mcu_mut().read(0x205), 0xC0); // ROR result
-    assert_eq!(cpu.a, 0xC6); // ADC result
+    assert_eq!(cpu.a(), 0xC6); // ADC result
 }
 
 #[test]
 fn test_sbc_underflow() {
     // Test SBC with borrow
     let mut cpu = create_cpu_with_program(&[0xE9, 0x10]); // SBC #$10
-    cpu.a = 0x05;
+    cpu.set_a(0x05);
     cpu.set_flag(Flag::Carry, true);
 
     execute_next(&mut cpu);
 
     // 0x05 - 0x10 = -11, which wraps to 0xF5
-    assert_eq!(cpu.a, 0xF5);
+    assert_eq!(cpu.a(), 0xF5);
     assert!(!cpu.flag(Flag::Carry)); // borrow occurred
 }
 
@@ -3006,13 +3006,13 @@ fn test_sbc_underflow() {
 fn test_sbc_with_borrow() {
     // Test SBC when carry is clear (borrow)
     let mut cpu = create_cpu_with_program(&[0xE9, 0x10]); // SBC #$10
-    cpu.a = 0x20;
+    cpu.set_a(0x20);
     cpu.set_flag(Flag::Carry, false);
 
     execute_next(&mut cpu);
 
     // 0x20 - 0x10 - 1 = 0x0F
-    assert_eq!(cpu.a, 0x0F);
+    assert_eq!(cpu.a(), 0x0F);
     assert!(cpu.flag(Flag::Carry)); // no borrow
 }
 
@@ -3066,11 +3066,11 @@ fn test_branch_all_conditions() {
 fn test_anc_with_carry() {
     // ANC sets carry flag when bit 7 of result is set
     let mut cpu = create_cpu_with_program(&[0x0B, 0x80]); // ANC #$80
-    cpu.a = 0xFF;
+    cpu.set_a(0xFF);
 
     execute_next(&mut cpu);
 
-    assert_eq!(cpu.a, 0x80);
+    assert_eq!(cpu.a(), 0x80);
     assert!(cpu.flag(Flag::Negative)); // bit 7 is set
     assert!(cpu.flag(Flag::Carry)); // carry is set when bit 7 is set
 }
@@ -3079,11 +3079,11 @@ fn test_anc_with_carry() {
 fn test_anc_without_carry() {
     // ANC doesn't set carry when bit 7 of result is not set
     let mut cpu = create_cpu_with_program(&[0x0B, 0x7F]); // ANC #$7F
-    cpu.a = 0xFF;
+    cpu.set_a(0xFF);
 
     execute_next(&mut cpu);
 
-    assert_eq!(cpu.a, 0x7F);
+    assert_eq!(cpu.a(), 0x7F);
     assert!(!cpu.flag(Flag::Negative)); // bit 7 is not set
     assert!(!cpu.flag(Flag::Carry)); // carry is not set when bit 7 is not set
 }
@@ -3092,11 +3092,11 @@ fn test_anc_without_carry() {
 fn test_alr_with_carry() {
     // ALR: AND then LSR
     let mut cpu = create_cpu_with_program(&[0x4B, 0x81]); // ALR #$81
-    cpu.a = 0xFF;
+    cpu.set_a(0xFF);
 
     execute_next(&mut cpu);
 
-    assert_eq!(cpu.a, 0x40); // (0xFF & 0x81) >> 1 = 0x81 >> 1 = 0x40
+    assert_eq!(cpu.a(), 0x40); // (0xFF & 0x81) >> 1 = 0x81 >> 1 = 0x40
     assert!(!cpu.flag(Flag::Negative));
     assert!(cpu.flag(Flag::Carry)); // bit 0 of 0x81 was 1
 }
@@ -3105,13 +3105,13 @@ fn test_alr_with_carry() {
 fn test_arr_without_carry() {
     // ARR: AND then ROR, without carry
     let mut cpu = create_cpu_with_program(&[0x6B, 0x80]); // ARR #$80
-    cpu.a = 0xFF;
+    cpu.set_a(0xFF);
     cpu.set_flag(Flag::Carry, false);
 
     execute_next(&mut cpu);
 
     // (0xFF & 0x80) = 0x80, ROR without carry = 0x40
-    assert_eq!(cpu.a, 0x40);
+    assert_eq!(cpu.a(), 0x40);
     assert!(!cpu.flag(Flag::Negative));
 }
 
@@ -3119,13 +3119,13 @@ fn test_arr_without_carry() {
 fn test_sbx_with_borrow() {
     // SBX: (A & X) - operand
     let mut cpu = create_cpu_with_program(&[0xCB, 0x20]); // SBX #$20
-    cpu.a = 0x30;
-    cpu.x = 0x10;
+    cpu.set_a(0x30);
+    cpu.set_x(0x10);
 
     execute_next(&mut cpu);
 
     // (0x30 & 0x10) = 0x10, 0x10 - 0x20 = -16 = 0xF0
-    assert_eq!(cpu.x, 0xF0);
+    assert_eq!(cpu.x(), 0xF0);
     assert!(!cpu.flag(Flag::Carry)); // borrow occurred
 }
 
@@ -3137,12 +3137,12 @@ fn test_lax_zero_page_y() {
     mcu.write(0, 0xB7); // opcode
     mcu.write(1, 0x10); // zero page addr
     let mut cpu = create_cpu_with_mcu(mcu);
-    cpu.y = 5;
+    cpu.set_y(5);
 
     execute_next(&mut cpu);
 
-    assert_eq!(cpu.a, 0x42);
-    assert_eq!(cpu.x, 0x42);
+    assert_eq!(cpu.a(), 0x42);
+    assert_eq!(cpu.x(), 0x42);
 }
 
 #[test]
@@ -3156,8 +3156,8 @@ fn test_lax_absolute() {
 
     execute_next(&mut cpu);
 
-    assert_eq!(cpu.a, 0x42);
-    assert_eq!(cpu.x, 0x42);
+    assert_eq!(cpu.a(), 0x42);
+    assert_eq!(cpu.x(), 0x42);
 }
 
 #[test]
@@ -3168,25 +3168,25 @@ fn test_lax_absolute_y() {
     mcu.write(0, 0xBF); // opcode
     mcu.write_word(1, 0x200); // absolute addr
     let mut cpu = create_cpu_with_mcu(mcu);
-    cpu.y = 5;
+    cpu.set_y(5);
 
     execute_next(&mut cpu);
 
-    assert_eq!(cpu.a, 0x42);
-    assert_eq!(cpu.x, 0x42);
+    assert_eq!(cpu.a(), 0x42);
+    assert_eq!(cpu.x(), 0x42);
 }
 
 #[test]
 fn test_sbc_overflow() {
     // Test SBC overflow detection
     let mut cpu = create_cpu_with_program(&[0xE9, 0x01]); // SBC #$01
-    cpu.a = 0x80; // -128 in two's complement
+    cpu.set_a(0x80); // -128 in two's complement
     cpu.set_flag(Flag::Carry, true);
 
     execute_next(&mut cpu);
 
     // 0x80 - 0x01 = 0x7F (overflow from -128 to 127)
-    assert_eq!(cpu.a, 0x7F);
+    assert_eq!(cpu.a(), 0x7F);
     assert!(cpu.flag(Flag::Overflow)); // overflow occurred
 }
 
@@ -3194,13 +3194,13 @@ fn test_sbc_overflow() {
 fn test_adc_decimal_mode_not_supported() {
     // Even if decimal mode is set, ADC doesn't actually use BCD
     let mut cpu = create_cpu_with_program(&[0x69, 0x10]); // ADC #$10
-    cpu.a = 0x20;
+    cpu.set_a(0x20);
     cpu.set_flag(Flag::Decimal, true);
 
     execute_next(&mut cpu);
 
     // Still does binary addition: 0x20 + 0x10 = 0x30
-    assert_eq!(cpu.a, 0x30);
+    assert_eq!(cpu.a(), 0x30);
 }
 
 #[test]
@@ -3211,13 +3211,13 @@ fn test_brk_pushes_b_flag() {
     mcu.write(0xFFFF, 0x40);
     mcu.write(0, 0x00); // BRK
     let mut cpu = create_cpu_with_mcu(mcu);
-    cpu.sp = 0xFF;
+    cpu.set_sp(0xFF);
     cpu.set_flag(Flag::Carry, true);
 
     execute_next(&mut cpu);
 
     // SP should be decremented 3 times
-    assert_eq!(cpu.sp, 0xFC);
+    assert_eq!(cpu.sp(), 0xFC);
     // PC should be loaded from IRQ vector (BRK uses IRQ vector)
     assert_eq!(cpu.pc(), 0x4000);
     // Interrupt disable flag should be set after BRK
@@ -3230,7 +3230,7 @@ fn test_rti_clears_b_flag() {
     let mut mcu = MockMcu::new();
     mcu.write(0, 0x40); // RTI
     let mut cpu = create_cpu_with_mcu(mcu);
-    cpu.sp = 0xFC;
+    cpu.set_sp(0xFC);
 
     // Set up stack: status (with B flag set), PCL, PCH
     cpu.push_stack(0x12); // PCH
@@ -3255,7 +3255,7 @@ fn test_transfer_no_touch_flags_zero_page() {
 
     execute_next(&mut cpu);
 
-    assert_eq!(cpu.y, 0x42);
+    assert_eq!(cpu.y(), 0x42);
     assert!(!cpu.flag(Flag::Zero));
 }
 
@@ -3268,8 +3268,8 @@ fn test_dcp_indirect_x() {
     mcu.write(0, 0xC3); // DCP ($10, X)
     mcu.write(1, 0x10);
     let mut cpu = create_cpu_with_mcu(mcu);
-    cpu.a = 0x10;
-    cpu.x = 5;
+    cpu.set_a(0x10);
+    cpu.set_x(5);
 
     execute_next(&mut cpu);
 
@@ -3286,8 +3286,8 @@ fn test_dcp_indirect_y() {
     mcu.write(0, 0xD3); // DCP ($10), Y
     mcu.write(1, 0x10);
     let mut cpu = create_cpu_with_mcu(mcu);
-    cpu.a = 0x10;
-    cpu.y = 5;
+    cpu.set_a(0x10);
+    cpu.set_y(5);
 
     execute_next(&mut cpu);
 
@@ -3303,14 +3303,14 @@ fn test_isc_indirect_x() {
     mcu.write(0, 0xE3); // ISC ($10, X)
     mcu.write(1, 0x10);
     let mut cpu = create_cpu_with_mcu(mcu);
-    cpu.a = 0x20;
+    cpu.set_a(0x20);
     cpu.set_flag(Flag::Carry, true);
-    cpu.x = 5;
+    cpu.set_x(5);
 
     execute_next(&mut cpu);
 
     assert_eq!(cpu.mcu_mut().read(0x200), 0x10); // incremented
-    assert_eq!(cpu.a, 0x10); // 0x20 - 0x10
+    assert_eq!(cpu.a(), 0x10); // 0x20 - 0x10
 }
 
 #[test]
@@ -3322,14 +3322,14 @@ fn test_isc_indirect_y() {
     mcu.write(0, 0xF3); // ISC ($10), Y
     mcu.write(1, 0x10);
     let mut cpu = create_cpu_with_mcu(mcu);
-    cpu.a = 0x20;
+    cpu.set_a(0x20);
     cpu.set_flag(Flag::Carry, true);
-    cpu.y = 5;
+    cpu.set_y(5);
 
     execute_next(&mut cpu);
 
     assert_eq!(cpu.mcu_mut().read(0x205), 0x10); // incremented
-    assert_eq!(cpu.a, 0x10); // 0x20 - 0x10
+    assert_eq!(cpu.a(), 0x10); // 0x20 - 0x10
 }
 
 #[test]
@@ -3341,13 +3341,13 @@ fn test_aso_indirect_x() {
     mcu.write(0, 0x03); // ASO ($10, X)
     mcu.write(1, 0x10);
     let mut cpu = create_cpu_with_mcu(mcu);
-    cpu.a = 0x0F;
-    cpu.x = 5;
+    cpu.set_a(0x0F);
+    cpu.set_x(5);
 
     execute_next(&mut cpu);
 
     assert_eq!(cpu.mcu_mut().read(0x200), 0x80); // ASL result
-    assert_eq!(cpu.a, 0x8F); // ORA result
+    assert_eq!(cpu.a(), 0x8F); // ORA result
 }
 
 #[test]
@@ -3359,13 +3359,13 @@ fn test_aso_indirect_y() {
     mcu.write(0, 0x13); // ASO ($10), Y
     mcu.write(1, 0x10);
     let mut cpu = create_cpu_with_mcu(mcu);
-    cpu.a = 0x0F;
-    cpu.y = 5;
+    cpu.set_a(0x0F);
+    cpu.set_y(5);
 
     execute_next(&mut cpu);
 
     assert_eq!(cpu.mcu_mut().read(0x205), 0x80); // ASL result
-    assert_eq!(cpu.a, 0x8F); // ORA result
+    assert_eq!(cpu.a(), 0x8F); // ORA result
 }
 
 #[test]
@@ -3377,14 +3377,14 @@ fn test_rla_indirect_x() {
     mcu.write(0, 0x23); // RLA ($10, X)
     mcu.write(1, 0x10);
     let mut cpu = create_cpu_with_mcu(mcu);
-    cpu.a = 0x0F;
+    cpu.set_a(0x0F);
     cpu.set_flag(Flag::Carry, true);
-    cpu.x = 5;
+    cpu.set_x(5);
 
     execute_next(&mut cpu);
 
     assert_eq!(cpu.mcu_mut().read(0x200), 0x03); // ROL result
-    assert_eq!(cpu.a, 0x0F & 0x03); // AND result
+    assert_eq!(cpu.a(), 0x0F & 0x03); // AND result
 }
 
 #[test]
@@ -3396,14 +3396,14 @@ fn test_rla_indirect_y() {
     mcu.write(0, 0x33); // RLA ($10), Y
     mcu.write(1, 0x10);
     let mut cpu = create_cpu_with_mcu(mcu);
-    cpu.a = 0x0F;
+    cpu.set_a(0x0F);
     cpu.set_flag(Flag::Carry, true);
-    cpu.y = 5;
+    cpu.set_y(5);
 
     execute_next(&mut cpu);
 
     assert_eq!(cpu.mcu_mut().read(0x205), 0x03); // ROL result
-    assert_eq!(cpu.a, 0x0F & 0x03); // AND result
+    assert_eq!(cpu.a(), 0x0F & 0x03); // AND result
 }
 
 #[test]
@@ -3415,14 +3415,14 @@ fn test_lse_indirect_x() {
     mcu.write(0, 0x43); // LSE ($10, X)
     mcu.write(1, 0x10);
     let mut cpu = create_cpu_with_mcu(mcu);
-    cpu.a = 0xFF;
+    cpu.set_a(0xFF);
     cpu.set_flag(Flag::Carry, true);
-    cpu.x = 5;
+    cpu.set_x(5);
 
     execute_next(&mut cpu);
 
     assert_eq!(cpu.mcu_mut().read(0x200), 0x40); // LSR result
-    assert_eq!(cpu.a, 0xBF); // 0xFF ^ 0x40 = 0xBF
+    assert_eq!(cpu.a(), 0xBF); // 0xFF ^ 0x40 = 0xBF
 }
 
 #[test]
@@ -3434,14 +3434,14 @@ fn test_lse_indirect_y() {
     mcu.write(0, 0x53); // LSE ($10), Y
     mcu.write(1, 0x10);
     let mut cpu = create_cpu_with_mcu(mcu);
-    cpu.a = 0xFF;
+    cpu.set_a(0xFF);
     cpu.set_flag(Flag::Carry, true);
-    cpu.y = 5;
+    cpu.set_y(5);
 
     execute_next(&mut cpu);
 
     assert_eq!(cpu.mcu_mut().read(0x205), 0x40); // LSR result
-    assert_eq!(cpu.a, 0xBF); // 0xFF ^ 0x40 = 0xBF
+    assert_eq!(cpu.a(), 0xBF); // 0xFF ^ 0x40 = 0xBF
 }
 
 #[test]
@@ -3453,14 +3453,14 @@ fn test_rra_indirect_x() {
     mcu.write(0, 0x63); // RRA ($10, X)
     mcu.write(1, 0x10);
     let mut cpu = create_cpu_with_mcu(mcu);
-    cpu.a = 0x05;
+    cpu.set_a(0x05);
     cpu.set_flag(Flag::Carry, true);
-    cpu.x = 5;
+    cpu.set_x(5);
 
     execute_next(&mut cpu);
 
     assert_eq!(cpu.mcu_mut().read(0x200), 0xC0); // ROR result
-    assert_eq!(cpu.a, 0xC6); // ADC: 0x05 + 0xC0 + 1 = 0xC6
+    assert_eq!(cpu.a(), 0xC6); // ADC: 0x05 + 0xC0 + 1 = 0xC6
 }
 
 #[test]
@@ -3472,14 +3472,14 @@ fn test_rra_indirect_y() {
     mcu.write(0, 0x73); // RRA ($10), Y
     mcu.write(1, 0x10);
     let mut cpu = create_cpu_with_mcu(mcu);
-    cpu.a = 0x05;
+    cpu.set_a(0x05);
     cpu.set_flag(Flag::Carry, true);
-    cpu.y = 5;
+    cpu.set_y(5);
 
     execute_next(&mut cpu);
 
     assert_eq!(cpu.mcu_mut().read(0x205), 0xC0); // ROR result
-    assert_eq!(cpu.a, 0xC6); // ADC result
+    assert_eq!(cpu.a(), 0xC6); // ADC result
 }
 
 #[test]
@@ -3490,8 +3490,8 @@ fn test_dcp_zero_page_x() {
     mcu.write(0, 0xD7); // DCP $10, X
     mcu.write(1, 0x10);
     let mut cpu = create_cpu_with_mcu(mcu);
-    cpu.a = 0x10;
-    cpu.x = 5;
+    cpu.set_a(0x10);
+    cpu.set_x(5);
 
     execute_next(&mut cpu);
 
@@ -3507,14 +3507,14 @@ fn test_isc_zero_page_x() {
     mcu.write(0, 0xF7); // ISC $10, X
     mcu.write(1, 0x10);
     let mut cpu = create_cpu_with_mcu(mcu);
-    cpu.a = 0x20;
+    cpu.set_a(0x20);
     cpu.set_flag(Flag::Carry, true);
-    cpu.x = 5;
+    cpu.set_x(5);
 
     execute_next(&mut cpu);
 
     assert_eq!(cpu.mcu_mut().read(0x15), 0x10); // incremented
-    assert_eq!(cpu.a, 0x10); // 0x20 - 0x10
+    assert_eq!(cpu.a(), 0x10); // 0x20 - 0x10
 }
 
 #[test]
@@ -3525,13 +3525,13 @@ fn test_aso_zero_page_x() {
     mcu.write(0, 0x17); // ASO $10, X
     mcu.write(1, 0x10);
     let mut cpu = create_cpu_with_mcu(mcu);
-    cpu.a = 0x0F;
-    cpu.x = 5;
+    cpu.set_a(0x0F);
+    cpu.set_x(5);
 
     execute_next(&mut cpu);
 
     assert_eq!(cpu.mcu_mut().read(0x15), 0x80); // ASL result
-    assert_eq!(cpu.a, 0x8F); // ORA result
+    assert_eq!(cpu.a(), 0x8F); // ORA result
 }
 
 #[test]
@@ -3542,14 +3542,14 @@ fn test_rla_zero_page_x() {
     mcu.write(0, 0x37); // RLA $10, X
     mcu.write(1, 0x10);
     let mut cpu = create_cpu_with_mcu(mcu);
-    cpu.a = 0x0F;
+    cpu.set_a(0x0F);
     cpu.set_flag(Flag::Carry, true);
-    cpu.x = 5;
+    cpu.set_x(5);
 
     execute_next(&mut cpu);
 
     assert_eq!(cpu.mcu_mut().read(0x15), 0x03); // ROL result
-    assert_eq!(cpu.a, 0x0F & 0x03); // AND result
+    assert_eq!(cpu.a(), 0x0F & 0x03); // AND result
 }
 
 #[test]
@@ -3560,14 +3560,14 @@ fn test_lse_zero_page_x() {
     mcu.write(0, 0x57); // LSE $10, X
     mcu.write(1, 0x10);
     let mut cpu = create_cpu_with_mcu(mcu);
-    cpu.a = 0xFF;
+    cpu.set_a(0xFF);
     cpu.set_flag(Flag::Carry, true);
-    cpu.x = 5;
+    cpu.set_x(5);
 
     execute_next(&mut cpu);
 
     assert_eq!(cpu.mcu_mut().read(0x15), 0x40); // LSR result
-    assert_eq!(cpu.a, 0xBF); // 0xFF ^ 0x40 = 0xBF
+    assert_eq!(cpu.a(), 0xBF); // 0xFF ^ 0x40 = 0xBF
 }
 
 #[test]
@@ -3578,26 +3578,26 @@ fn test_rra_zero_page_x() {
     mcu.write(0, 0x77); // RRA $10, X
     mcu.write(1, 0x10);
     let mut cpu = create_cpu_with_mcu(mcu);
-    cpu.a = 0x05;
+    cpu.set_a(0x05);
     cpu.set_flag(Flag::Carry, true);
-    cpu.x = 5;
+    cpu.set_x(5);
 
     execute_next(&mut cpu);
 
     assert_eq!(cpu.mcu_mut().read(0x15), 0xC0); // ROR result
-    assert_eq!(cpu.a, 0xC6); // ADC: 0x05 + 0xC0 + 1 = 0xC6
+    assert_eq!(cpu.a(), 0xC6); // ADC: 0x05 + 0xC0 + 1 = 0xC6
 }
 
 #[test]
 fn test_sbc_all_flags() {
     // Test SBC sets all flags correctly
     let mut cpu = create_cpu_with_program(&[0xE9, 0x01]); // SBC #$01
-    cpu.a = 0x01;
+    cpu.set_a(0x01);
     cpu.set_flag(Flag::Carry, true);
 
     execute_next(&mut cpu);
 
-    assert_eq!(cpu.a, 0x00);
+    assert_eq!(cpu.a(), 0x00);
     assert!(cpu.flag(Flag::Zero)); // result is zero
     assert!(cpu.flag(Flag::Carry)); // no borrow
 }
@@ -3606,12 +3606,12 @@ fn test_sbc_all_flags() {
 fn test_adc_all_flags() {
     // Test ADC with 0xFF + 0x01 + carry = wraps to 0x00 with overflow
     let mut cpu = create_cpu_with_program(&[0x69, 0x00]); // ADC #$00
-    cpu.a = 0xFF;
+    cpu.set_a(0xFF);
     cpu.set_flag(Flag::Carry, true);
 
     execute_next(&mut cpu);
 
-    assert_eq!(cpu.a, 0x00); // 0xFF + 0x00 + 1 = 0x100, truncated to 0x00
+    assert_eq!(cpu.a(), 0x00); // 0xFF + 0x00 + 1 = 0x100, truncated to 0x00
     assert!(cpu.flag(Flag::Zero)); // result is zero
     assert!(cpu.flag(Flag::Carry)); // overflow occurred
     // Overflow: -1 + 0 + 1 = 0, which is within range, so no signed overflow
@@ -3622,10 +3622,10 @@ fn test_adc_all_flags() {
 fn test_stack_wrap_around() {
     // Test stack pointer wrap around
     let mut cpu = create_cpu();
-    cpu.sp = 0x00;
+    cpu.set_sp(0x00);
     cpu.push_stack(0x42);
 
-    assert_eq!(cpu.sp, 0xFF); // wraps to 0xFF after decrement
+    assert_eq!(cpu.sp(), 0xFF); // wraps to 0xFF after decrement
     // push_stack writes to current SP, then decrements
     // So with SP=0x00, it writes to 0x100, then SP becomes 0xFF
     assert_eq!(cpu.mcu_mut().read(0x0100), 0x42);
@@ -3635,21 +3635,21 @@ fn test_stack_wrap_around() {
 fn test_pop_stack_wrap_around() {
     // Test stack pointer wrap around on pop
     let mut cpu = create_cpu();
-    cpu.sp = 0xFF;
+    cpu.set_sp(0xFF);
     cpu.mcu_mut().write(0x0100, 0x42);
     let value = cpu.pop_stack();
 
     // pop_stack increments SP first, then reads
     // So with SP=0xFF, it becomes 0x00, then reads from 0x100 + 0x00 = 0x100
     assert_eq!(value, 0x42);
-    assert_eq!(cpu.sp, 0x00); // wraps
+    assert_eq!(cpu.sp(), 0x00); // wraps
 }
 
 #[test]
 fn test_push_status_with_all_flags() {
     // Test that all flags are correctly pushed to stack
     let mut cpu = create_cpu();
-    cpu.sp = 0xFF;
+    cpu.set_sp(0xFF);
     cpu.set_flag(Flag::Carry, true);
     cpu.set_flag(Flag::Zero, true);
     cpu.set_flag(Flag::InterruptDisabled, true);
@@ -3671,7 +3671,7 @@ fn test_push_status_with_all_flags() {
 fn test_pop_stack_into_pc() {
     // Test that popping stack works correctly
     let mut cpu = create_cpu();
-    cpu.sp = 0xFD;
+    cpu.set_sp(0xFD);
     // Push values to stack manually
     cpu.push_stack(0x12); // writes to 0x01FD, SP -> 0xFC
     cpu.push_stack(0x34); // writes to 0x01FC, SP -> 0xFB
@@ -3690,7 +3690,7 @@ fn test_rts_adds_one_to_pc() {
     let mut mcu = MockMcu::new();
     mcu.write(0, 0x60); // RTS
     let mut cpu = create_cpu_with_mcu(mcu);
-    cpu.sp = 0xFD;
+    cpu.set_sp(0xFD);
     // Push PC value to stack
     // Push PC high byte then low byte onto stack
     cpu.push_stack(0x12); // PCH
@@ -3707,12 +3707,12 @@ fn test_rts_adds_one_to_pc() {
 fn test_adc_overflow_positive() {
     // Test ADC overflow with positive numbers
     let mut cpu = create_cpu_with_program(&[0x69, 0x40]); // ADC #$40
-    cpu.a = 0x40; // 64
+    cpu.set_a(0x40); // 64
     cpu.set_flag(Flag::Carry, false);
 
     execute_next(&mut cpu);
 
-    assert_eq!(cpu.a, 0x80); // 64 + 64 = 128 = -128 in signed
+    assert_eq!(cpu.a(), 0x80); // 64 + 64 = 128 = -128 in signed
     assert!(cpu.flag(Flag::Negative)); // bit 7 is set
     assert!(cpu.flag(Flag::Overflow)); // signed overflow: 64 + 64 = 128 > 127
 }
@@ -3721,12 +3721,12 @@ fn test_adc_overflow_positive() {
 fn test_adc_overflow_negative() {
     // Test ADC overflow with negative numbers
     let mut cpu = create_cpu_with_program(&[0x69, 0x80]); // ADC #$80
-    cpu.a = 0x80; // -128
+    cpu.set_a(0x80); // -128
     cpu.set_flag(Flag::Carry, false);
 
     execute_next(&mut cpu);
 
-    assert_eq!(cpu.a, 0x00); // -128 + -128 = -256 wraps to 0
+    assert_eq!(cpu.a(), 0x00); // -128 + -128 = -256 wraps to 0
     assert!(!cpu.flag(Flag::Negative));
     assert!(cpu.flag(Flag::Overflow)); // signed overflow: -128 + -128 = -256 < -128
 }
@@ -3735,13 +3735,13 @@ fn test_adc_overflow_negative() {
 fn test_sbc_overflow_positive_minus_negative() {
     // Test SBC when subtracting a negative number
     let mut cpu = create_cpu_with_program(&[0xE9, 0x80]); // SBC #$80
-    cpu.a = 0x40; // 64
+    cpu.set_a(0x40); // 64
     cpu.set_flag(Flag::Carry, true);
 
     execute_next(&mut cpu);
 
     // 64 - (-128) = 64 + 128 = 192 = -64 in signed (overflow)
-    assert_eq!(cpu.a, 0xC0); // 192
+    assert_eq!(cpu.a(), 0xC0); // 192
     assert!(cpu.flag(Flag::Negative)); // bit 7 is set
     assert!(cpu.flag(Flag::Overflow)); // signed overflow
 }
@@ -3750,13 +3750,13 @@ fn test_sbc_overflow_positive_minus_negative() {
 fn test_sbc_no_overflow_negative_minus_positive() {
     // Test SBC when subtracting positive from negative, where result is still negative
     let mut cpu = create_cpu_with_program(&[0xE9, 0x01]); // SBC #$01
-    cpu.a = 0x80; // -128
+    cpu.set_a(0x80); // -128
     cpu.set_flag(Flag::Carry, true);
 
     execute_next(&mut cpu);
 
     // -128 - 1 = -129 = 127 in signed (no overflow within valid range)
-    assert_eq!(cpu.a, 0x7F);
+    assert_eq!(cpu.a(), 0x7F);
     assert!(cpu.flag(Flag::Overflow)); // -128 - 1 = 127, which overflows from negative to positive
 }
 
@@ -3769,11 +3769,11 @@ fn test_transfer_no_touch_flags_indirect() {
     mcu.write(0, 0xA1); // LDA ($10, X)
     mcu.write(1, 0x10);
     let mut cpu = create_cpu_with_mcu(mcu);
-    cpu.x = 5;
+    cpu.set_x(5);
 
     execute_next(&mut cpu);
 
-    assert_eq!(cpu.a, 0x00);
+    assert_eq!(cpu.a(), 0x00);
     assert!(cpu.flag(Flag::Zero)); // loading 0 sets zero flag
 }
 
@@ -3781,7 +3781,7 @@ fn test_transfer_no_touch_flags_indirect() {
 fn test_compare_sets_zero_flag() {
     // Test that compare instructions set zero flag correctly
     let mut cpu = create_cpu_with_program(&[0xC9, 0x42]); // CMP #$42
-    cpu.a = 0x42;
+    cpu.set_a(0x42);
 
     execute_next(&mut cpu);
 
@@ -3793,7 +3793,7 @@ fn test_compare_sets_zero_flag() {
 fn test_compare_clears_zero_flag() {
     // Test that compare instructions clear zero flag when not equal
     let mut cpu = create_cpu_with_program(&[0xC9, 0x42]); // CMP #$42
-    cpu.a = 0x41;
+    cpu.set_a(0x41);
 
     execute_next(&mut cpu);
 
@@ -3886,13 +3886,13 @@ fn load_immediate_x_and_y_read_operand_and_update_flags() {
     let mut cpu = cpu_with_memory(0x8000, &[(0x8000, 0x80), (0x8001, 0x00)]);
 
     Microcode::LoadR(ValueSource::Immediate, Register::X).exec(&mut cpu);
-    assert_eq!(cpu.x, 0x80);
+    assert_eq!(cpu.x(), 0x80);
     assert_eq!(cpu.pc(), 0x8001);
     assert!(cpu.flag(Flag::Negative));
     assert!(!cpu.flag(Flag::Zero));
 
     Microcode::LoadR(ValueSource::Immediate, Register::Y).exec(&mut cpu);
-    assert_eq!(cpu.y, 0x00);
+    assert_eq!(cpu.y(), 0x00);
     assert_eq!(cpu.pc(), 0x8002);
     assert!(cpu.flag(Flag::Zero));
     assert!(!cpu.flag(Flag::Negative));
@@ -3902,9 +3902,9 @@ fn load_immediate_x_and_y_read_operand_and_update_flags() {
 fn store_microcodes_write_registers_to_memory() {
     let mut cpu = cpu_with_memory(0x0000, &[]);
     cpu.ab.set(0x1234);
-    cpu.a = 0x11;
-    cpu.x = 0x22;
-    cpu.y = 0x33;
+    cpu.set_a(0x11);
+    cpu.set_x(0x22);
+    cpu.set_y(0x33);
 
     Microcode::StoreR(ValueSource::Mem, Register::A).exec(&mut cpu);
     cpu.ab.set(0x1235);
@@ -3930,10 +3930,10 @@ fn store_and_load_microcodes_use_alu_and_memory() {
     assert_eq!(cpu.alu, 0x44);
 
     Microcode::LoadR(ValueSource::Mem, Register::A).exec(&mut cpu);
-    assert_eq!(cpu.a, 0x44);
+    assert_eq!(cpu.a(), 0x44);
 
     cpu.ab.set(0x0055);
-    cpu.a = 0xAA;
+    cpu.set_a(0xAA);
     Microcode::StoreR(ValueSource::Mem, Register::A).exec(&mut cpu);
     assert_eq!(cpu.mcu().mem[0x0055], 0xAA);
 }
@@ -3941,17 +3941,17 @@ fn store_and_load_microcodes_use_alu_and_memory() {
 #[test]
 fn ora_and_eor_microcodes_update_accumulator_and_flags() {
     let mut cpu = cpu_with_memory(0x8000, &[(0x8000, 0b0000_1111), (0x0042, 0b1111_0000)]);
-    cpu.a = 0b0101_0000;
+    cpu.set_a(0b0101_0000);
 
     Microcode::ImmediateWithOp(ImmediateOp::Ora).exec(&mut cpu);
-    assert_eq!(cpu.a, 0b0101_1111);
+    assert_eq!(cpu.a(), 0b0101_1111);
     assert!(!cpu.flag(Flag::Zero));
     assert!(!cpu.flag(Flag::Negative));
 
     cpu.ab.set(0x0042);
     cpu.alu = 0b1111_0000;
     Microcode::Eor(ValueSource::Mem).exec(&mut cpu);
-    assert_eq!(cpu.a, 0b1010_1111);
+    assert_eq!(cpu.a(), 0b1010_1111);
     assert!(!cpu.flag(Flag::Zero));
     assert!(cpu.flag(Flag::Negative));
 }
@@ -3967,16 +3967,16 @@ fn compare_and_bit_microcodes_update_flags() {
             (0x000F, 0x0F),
         ],
     );
-    cpu.a = 0x20;
-    cpu.x = 0x11;
-    cpu.y = 0x10;
+    cpu.set_a(0x20);
+    cpu.set_x(0x11);
+    cpu.set_y(0x10);
 
     Microcode::ImmediateWithOp(ImmediateOp::Cmp).exec(&mut cpu);
     assert!(cpu.flag(Flag::Carry));
     assert!(!cpu.flag(Flag::Zero));
     assert!(!cpu.flag(Flag::Negative));
 
-    cpu.a = 0x41;
+    cpu.set_a(0x41);
     cpu.ab.set(0x0001);
     cpu.load_alu();
     Microcode::Bit(ValueSource::Mem).exec(&mut cpu);
@@ -3998,49 +3998,49 @@ fn compare_and_bit_microcodes_update_flags() {
 #[test]
 fn transfer_microcodes_copy_registers_and_update_flags() {
     let mut cpu = cpu_with_memory(0x0000, &[]);
-    cpu.a = 0x80;
-    cpu.x = 0x00;
-    cpu.y = 0x7F;
-    cpu.sp = 0x42;
+    cpu.set_a(0x80);
+    cpu.set_x(0x00);
+    cpu.set_y(0x7F);
+    cpu.set_sp(0x42);
 
     Microcode::Transfer(TransferDirection::AtoX).exec(&mut cpu);
-    assert_eq!(cpu.x, 0x80);
+    assert_eq!(cpu.x(), 0x80);
     assert!(cpu.flag(Flag::Negative));
 
     Microcode::Transfer(TransferDirection::XtoA).exec(&mut cpu);
-    assert_eq!(cpu.a, 0x80);
+    assert_eq!(cpu.a(), 0x80);
 
     Microcode::Transfer(TransferDirection::AtoY).exec(&mut cpu);
-    assert_eq!(cpu.y, 0x80);
+    assert_eq!(cpu.y(), 0x80);
 
     Microcode::Transfer(TransferDirection::YtoA).exec(&mut cpu);
-    assert_eq!(cpu.a, 0x80);
+    assert_eq!(cpu.a(), 0x80);
 
     Microcode::Transfer(TransferDirection::SPtoX).exec(&mut cpu);
-    assert_eq!(cpu.x, 0x42);
+    assert_eq!(cpu.x(), 0x42);
     assert!(!cpu.flag(Flag::Zero));
 
-    cpu.x = 0x55;
+    cpu.set_x(0x55);
     Microcode::Transfer(TransferDirection::XtoSP).exec(&mut cpu);
-    assert_eq!(cpu.sp, 0x55);
+    assert_eq!(cpu.sp(), 0x55);
 }
 
 #[test]
 fn stack_and_misc_microcodes_manipulate_state() {
     let mut cpu = cpu_with_memory(0x8000, &[(0xFFFE, 0x34), (0xFFFF, 0x12)]);
-    cpu.a = 0xAB;
-    cpu.sp = 0xFF;
-    cpu.status = Flag::Carry as u8;
+    cpu.set_a(0xAB);
+    cpu.set_sp(0xFF);
+    cpu.set_status(Flag::Carry as u8);
 
     Microcode::PushStack(PushTarget::A).exec(&mut cpu);
-    assert_eq!(cpu.sp, 0xFE);
+    assert_eq!(cpu.sp(), 0xFE);
     assert_eq!(cpu.mcu().mem[0x01FF], 0xAB);
 
     // Restore stack pointer for next test (simulating what Pla would have done)
-    cpu.a = 0x00;
+    cpu.set_a(0x00);
     Microcode::PopStack.exec(&mut cpu);
     Microcode::UpdateAFromAlu.exec(&mut cpu);
-    assert_eq!(cpu.a, 0xAB);
+    assert_eq!(cpu.a(), 0xAB);
 
     Microcode::PushStatus { break_flag: true }.exec(&mut cpu);
     assert_eq!(
@@ -4048,11 +4048,11 @@ fn stack_and_misc_microcodes_manipulate_state() {
         Flag::Break as u8
     );
 
-    cpu.status = 0;
-    cpu.sp = 0xFD;
+    cpu.set_status(0);
+    cpu.set_sp(0xFD);
     cpu.mcu_mut().mem[0x01FE] = Flag::Carry as u8;
     Microcode::Plp.exec(&mut cpu);
-    assert_eq!(cpu.status & Flag::Carry as u8, Flag::Carry as u8);
+    assert_eq!(cpu.status() & Flag::Carry as u8, Flag::Carry as u8);
 
     cpu.set_pc(0x2000);
     cpu.mcu_mut().mem[0x2000] = 0x34;
@@ -4068,12 +4068,12 @@ fn stack_and_misc_microcodes_manipulate_state() {
     Microcode::IndexedHAndJump.exec(&mut cpu);
     assert_eq!(cpu.pc(), 0x1234);
 
-    cpu.status = Flag::Carry as u8;
+    cpu.set_status(Flag::Carry as u8);
     Microcode::ClearFlag(Flag::Carry).exec(&mut cpu);
     assert!(!cpu.flag(Flag::Carry));
     Microcode::SetFlag(Flag::Carry).exec(&mut cpu);
     assert!(cpu.flag(Flag::Carry));
-    cpu.status = Flag::Decimal as u8;
+    cpu.set_status(Flag::Decimal as u8);
     Microcode::ClearFlag(Flag::Decimal).exec(&mut cpu);
     assert!(!cpu.flag(Flag::Decimal));
     Microcode::SetFlag(Flag::Decimal).exec(&mut cpu);
@@ -4082,7 +4082,7 @@ fn stack_and_misc_microcodes_manipulate_state() {
     assert!(!cpu.flag(Flag::InterruptDisabled));
     Microcode::SetFlag(Flag::InterruptDisabled).exec(&mut cpu);
     assert!(cpu.flag(Flag::InterruptDisabled));
-    cpu.status = Flag::Overflow as u8;
+    cpu.set_status(Flag::Overflow as u8);
     Microcode::ClearFlag(Flag::Overflow).exec(&mut cpu);
     assert!(!cpu.flag(Flag::Overflow));
 }
@@ -4090,11 +4090,11 @@ fn stack_and_misc_microcodes_manipulate_state() {
 #[test]
 fn load_immediate_a_reads_operand_and_updates_flags() {
     let mut cpu = cpu_with_memory(0x8000, &[(0x8000, 0x00)]);
-    cpu.status = Flag::Negative as u8;
+    cpu.set_status(Flag::Negative as u8);
 
     Microcode::LoadR(ValueSource::Immediate, Register::A).exec(&mut cpu);
 
-    assert_eq!(cpu.a, 0x00);
+    assert_eq!(cpu.a(), 0x00);
     assert_eq!(cpu.pc(), 0x8001);
     assert!(cpu.flag(Flag::Zero));
     assert!(!cpu.flag(Flag::Negative));
@@ -4103,11 +4103,11 @@ fn load_immediate_a_reads_operand_and_updates_flags() {
 #[test]
 fn adc_immediate_uses_carry_and_updates_flags() {
     let mut cpu = cpu_with_memory(0x8000, &[(0x8000, 0x30)]);
-    cpu.a = 0x50;
+    cpu.set_a(0x50);
 
     Microcode::ImmediateWithOp(ImmediateOp::Adc).exec(&mut cpu);
 
-    assert_eq!(cpu.a, 0x80);
+    assert_eq!(cpu.a(), 0x80);
     assert_eq!(cpu.pc(), 0x8001);
     assert!(cpu.flag(Flag::Negative));
     assert!(cpu.flag(Flag::Overflow));
@@ -4118,11 +4118,11 @@ fn adc_immediate_uses_carry_and_updates_flags() {
 #[test]
 fn sbc_immediate_and_memory_microcodes_update_accumulator_and_flags() {
     let mut cpu = cpu_with_memory(0x8000, &[(0x8000, 0x10), (0x0042, 0x01)]);
-    cpu.a = 0x20;
+    cpu.set_a(0x20);
     cpu.set_flag(Flag::Carry, true);
 
     Microcode::ImmediateWithOp(ImmediateOp::Sbc).exec(&mut cpu);
-    assert_eq!(cpu.a, 0x10);
+    assert_eq!(cpu.a(), 0x10);
     assert_eq!(cpu.pc(), 0x8001);
     assert!(cpu.flag(Flag::Carry));
     assert!(!cpu.flag(Flag::Zero));
@@ -4130,7 +4130,7 @@ fn sbc_immediate_and_memory_microcodes_update_accumulator_and_flags() {
     cpu.ab.set(0x0042);
     cpu.alu = 0x01;
     Microcode::Sbc(ValueSource::Mem).exec(&mut cpu);
-    assert_eq!(cpu.a, 0x0F);
+    assert_eq!(cpu.a(), 0x0F);
     assert!(cpu.flag(Flag::Carry));
     assert!(!cpu.flag(Flag::Zero));
     assert!(!cpu.flag(Flag::Negative));
@@ -4139,10 +4139,10 @@ fn sbc_immediate_and_memory_microcodes_update_accumulator_and_flags() {
 #[test]
 fn and_immediate_and_memory_microcodes_update_accumulator_and_flags() {
     let mut cpu = cpu_with_memory(0x8000, &[(0x8000, 0b1100_1100), (0x0042, 0b1010_1010)]);
-    cpu.a = 0b1111_0000;
+    cpu.set_a(0b1111_0000);
 
     Microcode::ImmediateWithOp(ImmediateOp::And).exec(&mut cpu);
-    assert_eq!(cpu.a, 0b1100_0000);
+    assert_eq!(cpu.a(), 0b1100_0000);
     assert_eq!(cpu.pc(), 0x8001);
     assert!(!cpu.flag(Flag::Zero));
     assert!(cpu.flag(Flag::Negative));
@@ -4150,7 +4150,7 @@ fn and_immediate_and_memory_microcodes_update_accumulator_and_flags() {
     cpu.ab.set(0x0042);
     cpu.alu = 0b1010_1010;
     cpu.and::<Alu>();
-    assert_eq!(cpu.a, 0b1000_0000);
+    assert_eq!(cpu.a(), 0b1000_0000);
     assert!(!cpu.flag(Flag::Zero));
     assert!(cpu.flag(Flag::Negative));
 }
@@ -4158,8 +4158,8 @@ fn and_immediate_and_memory_microcodes_update_accumulator_and_flags() {
 #[test]
 fn bit_updates_flags_from_alu_and_accumulator() {
     let mut cpu = cpu_with_memory(0x0000, &[(0, 0b1100_0000)]);
-    cpu.a = 0b0011_0000;
-    cpu.status = Flag::Zero as u8;
+    cpu.set_a(0b0011_0000);
+    cpu.set_status(Flag::Zero as u8);
 
     Microcode::Bit(ValueSource::Mem).exec(&mut cpu);
 
@@ -4168,7 +4168,7 @@ fn bit_updates_flags_from_alu_and_accumulator() {
     assert!(cpu.flag(Flag::Zero));
 
     let mut cpu = cpu_with_memory(0x0000, &[(0, 0b0100_0000)]);
-    cpu.a = 0b1111_0000;
+    cpu.set_a(0b1111_0000);
     Microcode::Bit(ValueSource::Mem).exec(&mut cpu);
     assert!(!cpu.flag(Flag::Negative));
     assert!(cpu.flag(Flag::Overflow));
@@ -4244,7 +4244,7 @@ fn nmi_hijacks_brk_only_through_its_third_cycle() {
         for t in 0..2000u64 {
             let clock = SystemClock(t);
             cpu.update_nmi_line(t >= rise, clock);
-            if clock.is_cpu_clock() && cpu.tick(&mut plugin, clock).0 == ExecuteResult::Halt {
+            if clock.is_cpu_clock() && cpu.tick(&mut plugin, clock).control == ExecuteResult::Halt {
                 break;
             }
         }
@@ -4260,7 +4260,7 @@ fn nmi_hijacks_brk_only_through_its_third_cycle() {
         let mut plugin = EmptyPlugin::new();
         let mut found = None;
         for t in (2..).map(SystemClock).filter(|c| c.is_cpu_clock()) {
-            let at_push_status = cpu.sp == 0xFB;
+            let at_push_status = cpu.sp() == 0xFB;
             cpu.update_nmi_line(false, t);
             cpu.tick(&mut plugin, t);
             if at_push_status {
@@ -4344,7 +4344,8 @@ fn interrupt_handler_entry_21_dots_after_boundary() {
             // The CPU dispatches on the first cycle after an instruction
             // boundary whose end-of-cycle interrupt poll detected one.
             let dispatching = cpu.microcodes_empty() && cpu.interrupt_detected.is_some();
-            let (_, instruction_done) = cpu.tick(&mut plugin, clock);
+            let outcome = cpu.tick(&mut plugin, clock);
+            let instruction_done = outcome.instruction_complete;
             if dispatching {
                 dispatched = true;
             } else if !dispatched && instruction_done {
@@ -4392,7 +4393,7 @@ fn classification_cpu() -> Cpu<MockMcu> {
     let mut cpu = create_cpu();
     cpu.pc.set(STUB_PC);
     cpu.ab.set(STUB_AB);
-    cpu.sp = 0xFD;
+    cpu.set_sp(0xFD);
     cpu
 }
 
@@ -4499,7 +4500,7 @@ fn indexed_with_op_reads_the_op_or_dummy_address() {
 
     // Crossing read op: the cycle is the dummy read at (old high | new low).
     cpu.ab.set(0x12FF);
-    cpu.x = 1;
+    cpu.set_x(1);
     pending(
         &mut cpu,
         Microcode::IndexedXWithOp {
@@ -4512,7 +4513,7 @@ fn indexed_with_op_reads_the_op_or_dummy_address() {
     // Store ops always run the dummy-read cycle first (FirstClockAlways),
     // at (old high | new low) even without a page cross.
     cpu.ab.set(STUB_AB);
-    cpu.y = 2;
+    cpu.set_y(2);
     pending(
         &mut cpu,
         Microcode::IndexedYWithOp {
