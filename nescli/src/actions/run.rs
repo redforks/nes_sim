@@ -44,7 +44,7 @@ pub(crate) fn create_sdl_drivers(sdl_context: &Sdl) -> Result<(impl Render, impl
         .map_err(|e| anyhow::anyhow!(e))?;
 
     // Create shared image buffer so we can save screenshots from the event loop
-    let image_render = ImageRender::default_dimension();
+    let image_render = ImageRender::<1>::default_dimension();
     let sdl_render = SdlRender::with_image(image_render, canvas);
     Ok((sdl_render, audio_driver))
 }

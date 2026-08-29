@@ -1,5 +1,5 @@
 use anyhow::{Context as _, Result};
-use image::{EncodableLayout, RgbaImage, imageops, load_from_memory};
+use image::{RgbaImage, imageops, load_from_memory};
 use nes_core::{
     EmptyPlugin,
     ines::INesFile,
@@ -169,7 +169,8 @@ impl GamepadOverlay {
 
     fn draw(
         &mut self,
-        image: &mut RgbaImage,
+        pixels: &mut [[u8; 4]],
+        stride: u32,
         icons: &[RgbaImage],
         dir_x: i64,
         ab_x: i64,
@@ -187,19 +188,49 @@ impl GamepadOverlay {
         if !draw_dir && !draw_ab {
             return;
         }
+        // helper to blit a 64×64 icon onto the framebuffer with alpha
+        let mut blit = |icon: &RgbaImage, dst_x: i64, dst_y: i64| {
+            let (iw, ih) = icon.dimensions();
+            for iy in 0..ih as i64 {
+                for ix in 0..iw as i64 {
+                    let dx = dst_x + ix;
+                    let dy = dst_y + iy;
+                    if dx < 0 || dy < 0 || dx >= stride as i64 || dy >= 960 {
+                        continue;
+                    }
+                    let src = icon.get_pixel(ix as u32, iy as u32).0;
+                    if src[3] == 0 {
+                        continue;
+                    }
+                    let idx = dy as usize * stride as usize + dx as usize;
+                    let dst = &mut pixels[idx];
+                    if src[3] == 255 {
+                        *dst = src;
+                    } else {
+                        // alpha blend src over dst (straight alpha, non-premul)
+                        let a = src[3] as u32;
+                        let inv = 255 - a;
+                        for c in 0..3 {
+                            dst[c] = ((src[c] as u32 * a + dst[c] as u32 * inv) / 255) as u8;
+                        }
+                        dst[3] = 255;
+                    }
+                }
+            }
+        };
         if let Some(direction_idx) = Self::direction_icon_index(
             draw_dir && self.disp_up,
             draw_dir && self.disp_down,
             draw_dir && self.disp_left,
             draw_dir && self.disp_right,
         ) {
-            imageops::overlay(image, &icons[direction_idx], dir_x, y);
+            blit(&icons[direction_idx], dir_x, y);
         }
         if draw_ab && self.disp_a {
-            imageops::overlay(image, &icons[0], ab_x, y);
+            blit(&icons[0], ab_x, y);
         }
         if draw_ab && self.disp_b {
-            imageops::overlay(image, &icons[1], b_x, y);
+            blit(&icons[1], b_x, y);
         }
     }
 
@@ -226,7 +257,7 @@ impl GamepadOverlay {
 }
 
 struct RecordRender {
-    buffer: ImageRender,
+    buffer: ImageRender<4>,
     canvas: Option<Canvas<Window>>,
     video_tx: Option<mpsc::Sender<Vec<u8>>>,
     icons: Vec<RgbaImage>,
@@ -268,25 +299,22 @@ impl RecordRender {
     }
 
     fn overlay_input_icons(&mut self) {
-        let image = self.buffer.borrow_image_mut();
+        let stride = ImageRender::<4>::width();
+        let pixels = self.buffer.as_pixels_mut();
         if self.dual_player {
-            self.p1.draw(image, &self.icons, 8, 152, 80, 888);
-            self.p2.draw(image, &self.icons, 820, 952, 888, 888);
+            self.p1.draw(pixels, stride, &self.icons, 8, 152, 80, 888);
+            self.p2
+                .draw(pixels, stride, &self.icons, 820, 952, 888, 888);
         } else {
-            self.p1.draw(image, &self.icons, 820, 952, 888, 888);
+            self.p1
+                .draw(pixels, stride, &self.icons, 820, 952, 888, 888);
         }
     }
 }
 
 impl Render for RecordRender {
     fn set_pixel(&mut self, x: u32, y: u32, color: [u8; 4]) {
-        let bx = x * 4;
-        let by = y * 4;
-        for dy in 0..4 {
-            for dx in 0..4 {
-                self.buffer.set_pixel(bx + dx, by + dy, color);
-            }
-        }
+        self.buffer.set_pixel(x, y, color);
     }
 
     fn finish(&mut self) {
@@ -294,8 +322,8 @@ impl Render for RecordRender {
             self.overlay_input_icons();
         }
 
-        let image = self.buffer.borrow_image();
-        let (width, height) = image.dimensions();
+        let width = ImageRender::<4>::width();
+        let height = ImageRender::<4>::height();
 
         if let Some(ref mut canvas) = self.canvas {
             let texture_creator = canvas.texture_creator();
@@ -303,7 +331,7 @@ impl Render for RecordRender {
                 .create_texture_streaming(PixelFormatEnum::ABGR8888, width, height)
                 .expect("failed to create SDL texture");
             texture
-                .update(None, image.as_bytes(), (width * 4) as usize)
+                .update(None, self.buffer.as_bytes(), (width * 4) as usize)
                 .expect("failed to upload SDL texture");
             canvas
                 .copy(&texture, None, None)
@@ -325,7 +353,7 @@ impl Render for RecordRender {
         if let Some(ref tx) = self.video_tx
             && send_video
         {
-            let _ = tx.send(image.as_bytes().to_vec());
+            let _ = tx.send(self.buffer.as_bytes().to_vec());
         }
     }
 }
@@ -479,7 +507,7 @@ fn init_sdl_drivers(
     }
 
     let render = RecordRender {
-        buffer: ImageRender::new(1024, 960),
+        buffer: ImageRender::<4>::new(),
         canvas,
         video_tx,
         icons,

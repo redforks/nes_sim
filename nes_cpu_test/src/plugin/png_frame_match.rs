@@ -38,23 +38,25 @@ impl PngFrameMatch {
         })
     }
 
-    pub(crate) fn compare_frame(actual: &RgbaImage, expected: &RgbaImage) -> bool {
+    pub(crate) fn compare_frame(actual: &[[u8; 4]], expected: &RgbaImage) -> bool {
+        let (ew, eh) = expected.dimensions();
+        let expected_len = (ew * eh) as usize;
         assert_eq!(
-            actual.dimensions(),
-            expected.dimensions(),
+            actual.len(),
+            expected_len,
             "Actual frame dimensions do not match expected image dimensions"
         );
 
-        // Blessed frames are deterministic re-renders, so the common case is
-        // byte equality; the threshold scan only runs for near misses.
-        if actual.as_raw() == expected.as_raw() {
+        if actual.len() * 4 == expected.as_raw().len()
+            && bytemuck::cast_slice::<[u8; 4], u8>(actual) == expected.as_raw().as_slice()
+        {
             return true;
         }
 
-        actual
-            .pixels()
-            .zip(expected.pixels())
-            .all(|(actual, expected)| pixel_within_threshold(*actual, *expected))
+        actual.iter().zip(expected.pixels()).all(|(a, e)| {
+            let actual_rgba = Rgba(*a);
+            pixel_within_threshold(actual_rgba, *e)
+        })
     }
 }
 
@@ -69,11 +71,10 @@ fn pixel_within_threshold(actual: Rgba<u8>, expected: Rgba<u8>) -> bool {
         .sum();
     diff <= 50
 }
+impl<A: AudioDriver> Plugin<NesMcu<ImageRender<1>, A>> for PngFrameMatch {
+    fn start(&mut self, _view: &MachineView<NesMcu<ImageRender<1>, A>>, _: SystemClock) {}
 
-impl<A: AudioDriver> Plugin<NesMcu<ImageRender, A>> for PngFrameMatch {
-    fn start(&mut self, _view: &MachineView<NesMcu<ImageRender, A>>, _: SystemClock) {}
-
-    fn end(&mut self, view: &MachineView<NesMcu<ImageRender, A>>, _: SystemClock) {
+    fn end(&mut self, view: &MachineView<NesMcu<ImageRender<1>, A>>, _: SystemClock) {
         if self.is_complete() {
             return;
         }
@@ -105,7 +106,13 @@ impl<A: AudioDriver> Plugin<NesMcu<ImageRender, A>> for PngFrameMatch {
         if self.is_complete() {
             eprintln!("Frame {} matched both expected images", frame_no);
         } else if frame_no.is_multiple_of(50) {
-            let _ = actual.save(Path::new("/tmp/png-frame-match.png"));
+            let w = view.image_width();
+            let h = view.image_height();
+            if let Some(img) =
+                RgbaImage::from_raw(w, h, bytemuck::cast_slice::<[u8; 4], u8>(actual).to_vec())
+            {
+                let _ = img.save(Path::new("/tmp/png-frame-match.png"));
+            }
         }
     }
 

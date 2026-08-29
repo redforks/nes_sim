@@ -1,4 +1,3 @@
-use image::EncodableLayout;
 use nes_core::nes::apu::AudioDriver;
 use nes_core::nes::controller::Button;
 use nes_core::render::{ImageRender, Render};
@@ -78,38 +77,38 @@ impl AudioDriver for SdlAudioDriver {
     }
 }
 
-pub struct SdlRender {
-    image: ImageRender,
+pub struct SdlRender<const N: usize = 1> {
+    image: ImageRender<N>,
     canvas: Canvas<Window>,
 }
 
-impl std::fmt::Debug for SdlRender {
+impl<const N: usize> std::fmt::Debug for SdlRender<N> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("SdlRender").finish_non_exhaustive()
     }
 }
 
-impl SdlRender {
-    pub fn with_image(image: ImageRender, canvas: Canvas<Window>) -> Self {
+impl<const N: usize> SdlRender<N> {
+    pub fn with_image(image: ImageRender<N>, canvas: Canvas<Window>) -> Self {
         Self { image, canvas }
     }
 }
 
-impl Render for SdlRender {
+impl<const N: usize> Render for SdlRender<N> {
     fn set_pixel(&mut self, x: u32, y: u32, color: [u8; 4]) {
         self.image.set_pixel(x, y, color);
     }
 
     fn finish(&mut self) {
-        let image = self.image.borrow_image();
-        let (width, height) = image.dimensions();
+        let width = ImageRender::<N>::width();
+        let height = ImageRender::<N>::height();
         let texture_creator = self.canvas.texture_creator();
         let mut texture = texture_creator
             .create_texture_streaming(PixelFormatEnum::ABGR8888, width, height)
             .expect("failed to create SDL texture");
 
         texture
-            .update(None, image.as_bytes(), (width * 4) as usize)
+            .update(None, self.image.as_bytes(), (width * 4) as usize)
             .expect("failed to upload SDL texture");
         self.canvas
             .copy(&texture, None, None)

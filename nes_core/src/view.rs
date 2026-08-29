@@ -69,11 +69,31 @@ where
     }
 }
 
-impl<'a, D> MachineView<'a, crate::nes::NesMcu<crate::render::ImageRender, D>>
+impl<'a, const N: usize, D> MachineView<'a, crate::nes::NesMcu<crate::render::ImageRender<N>, D>>
 where
     D: crate::nes::apu::AudioDriver,
 {
-    pub fn borrow_image(&self) -> &image::RgbaImage {
-        self.mcu.ppu().renderer().borrow_image()
+    pub fn borrow_image_bytes(&self) -> &[u8] {
+        self.mcu.ppu().renderer().as_bytes()
+    }
+
+    /// Typed RGBA pixels (`width*height` entries of `[R,G,B,A]`).
+    pub fn borrow_pixels(&self) -> &[[u8; 4]] {
+        self.mcu.ppu().renderer().as_pixels()
+    }
+
+    /// Output width (`256*N`).
+    pub fn image_width(&self) -> u32 {
+        crate::render::ImageRender::<N>::width()
+    }
+
+    /// Output height (`240*N`).
+    pub fn image_height(&self) -> u32 {
+        crate::render::ImageRender::<N>::height()
+    }
+
+    /// Compatibility alias — returns typed pixels (was `&RgbaImage`).
+    pub fn borrow_image(&self) -> &[[u8; 4]] {
+        self.borrow_pixels()
     }
 }

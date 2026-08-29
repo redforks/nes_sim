@@ -10,7 +10,7 @@ fn test_mcu() -> NesMcu<ImageRender, ()> {
     NesMcu {
         lower_ram: LowerRam::new(),
         ppu: Ppu::new(
-            ImageRender::default_dimension(),
+            ImageRender::<1>::default_dimension(),
             Mirroring::Horizontal,
             Box::new(TestCartridge::new()),
         ),

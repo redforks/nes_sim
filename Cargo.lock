@@ -779,7 +779,6 @@ dependencies = [
  "bitfield-struct",
  "bytemuck",
  "env_logger",
- "image",
  "itertools",
  "log",
  "md5 0.8.0",
@@ -798,6 +797,7 @@ name = "nes_cpu_test"
 version = "0.1.0"
 dependencies = [
  "ansi_term",
+ "bytemuck",
  "clap",
  "env_logger",
  "image",

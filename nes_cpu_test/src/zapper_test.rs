@@ -17,8 +17,6 @@
 
 use std::path::PathBuf;
 
-use image::RgbaImage;
-
 use crate::image::MachineWrapper;
 
 #[derive(Debug, Clone, Copy)]
@@ -202,7 +200,7 @@ fn check_expectation(m: &MachineWrapper, expected: Expectation) -> Result<(), St
             let expected = image::open(&path)
                 .map_err(|e| format!("failed to load {}: {e}", path.display()))?
                 .to_rgba8();
-            let actual: &RgbaImage = m.renderer_image();
+            let actual: &[[u8; 4]] = m.renderer_image();
             if crate::plugin::png_frame_match::PngFrameMatch::compare_frame(actual, &expected) {
                 Ok(())
             } else {

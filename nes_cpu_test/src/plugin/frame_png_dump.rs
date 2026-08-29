@@ -1,11 +1,10 @@
+use image::RgbaImage;
 use nes_core::nes::NesMcu;
 use nes_core::nes::apu::AudioDriver;
 use nes_core::render::ImageRender;
 use nes_core::view::MachineView;
 use nes_core::{ExecuteResult, Plugin, SystemClock};
 use std::path::PathBuf;
-
-/// Development tool: renders until `target_frame` (observed at vblank, matching
 /// [`crate::plugin::PngFrameMatch`] sampling), saves the frame to `out_path`,
 /// and stops. Used to bless expected PNGs for PngFrameMatch-based tests.
 ///
@@ -29,10 +28,10 @@ impl FramePngDump {
     }
 }
 
-impl<A: AudioDriver> Plugin<NesMcu<ImageRender, A>> for FramePngDump {
-    fn start(&mut self, _view: &MachineView<NesMcu<ImageRender, A>>, _: SystemClock) {}
+impl<A: AudioDriver> Plugin<NesMcu<ImageRender<1>, A>> for FramePngDump {
+    fn start(&mut self, _view: &MachineView<NesMcu<ImageRender<1>, A>>, _: SystemClock) {}
 
-    fn end(&mut self, view: &MachineView<NesMcu<ImageRender, A>>, _: SystemClock) {
+    fn end(&mut self, view: &MachineView<NesMcu<ImageRender<1>, A>>, _: SystemClock) {
         if self.dumped || !view.ppu_in_vblank() {
             return;
         }
@@ -42,8 +41,12 @@ impl<A: AudioDriver> Plugin<NesMcu<ImageRender, A>> for FramePngDump {
             return;
         }
 
-        let image = view.borrow_image();
-        if let Err(e) = image.save(&self.out_path) {
+        let w = view.image_width();
+        let h = view.image_height();
+        let bytes = view.borrow_image_bytes();
+        let img = RgbaImage::from_raw(w, h, bytes.to_vec())
+            .expect("framebuffer bytes must form valid RgbaImage");
+        if let Err(e) = img.save(&self.out_path) {
             eprintln!("failed to save {}: {e}", self.out_path.display());
             return;
         }

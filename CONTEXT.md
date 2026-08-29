@@ -241,3 +241,18 @@ _Avoid_: pixel detection, photodetection, light detect flag
 **Trigger release delay**:
 A pulled trigger reads held for ~100 ms (178,977 CPU cycles) from the pull, regardless of how long the button stays down; re-pulling mid-hold does not extend it.
 _Avoid_: trigger timeout, debounce
+
+## Language — Framebuffer Rendering
+
+Core domain for PPU pixel output and host-side presentation. Replaces the former `image::RgbaImage` backing.
+
+**Framebuffer**:
+Heap-allocated RGBA pixel store `Box<[[u8; 4]; 256 * 240 * N * N]>` owned by `ImageRender<N>`, row-major at `256*N` by `240*N` output pixels, one `[u8; 4]` per pixel.
+_Avoid_: RgbaImage, image buffer (ambiguous), raw bytes (when meaning typed pixels)
+
+**Zoom Factor (N)**:
+Const generic `N` on `ImageRender<N>`, default `1`. Logical scale where one NES logical pixel (256×240) replicates to an `N×N` block of output pixels. Backing size is `256*240*N*N` entries; `width() = 256*N`, `height() = 240*N`.
+_Avoid_: zoom ratio (use Zoom Factor), scale factor (overloaded), N (bare)
+**ImageRender<N>**:
+`Render` implementation owning the Framebuffer. `set_pixel(x, y, color)` is called at NES logical coordinates `x < 256, y < 240` and writes an `N×N` block at `(x*N .. x*N+N, y*N .. y*N+N)`. Out-of-bounds logical coordinates are silently ignored; callers guarantee in-range. Exposes `as_bytes()`, `width()/height()`, and `pixel_brightness(x,y)` without depending on the `image` crate. Does not implement `Clone` — framebuffer copies are multi-MiB.
+_Avoid_: ImageRender (without `N`), RgbaImage wrapper, cloning the framebuffer
