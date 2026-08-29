@@ -1,8 +1,7 @@
 use nes_core::mcu::Mcu;
 use nes_core::view::MachineView;
-use nes_core::{Cpu, ExecuteResult, Plugin, SystemClock};
+use nes_core::{ExecuteResult, Plugin, SystemClock};
 use std::collections::VecDeque;
-
 pub struct DetectDeadLoop<const DEPTH: usize, const REPEATS: u32 = 200000> {
     recent_pc: VecDeque<u16>,
     should_exit: bool,
@@ -71,6 +70,7 @@ impl<const DEPTH: usize, const REPEATS: u32, M: Mcu> Plugin<M> for DetectDeadLoo
 #[cfg(test)]
 mod tests {
     use super::*;
+    use nes_core::Cpu;
     use nes_core::EmptyPlugin;
     use nes_core::mcu::RamMcu;
     use rstest::rstest;

@@ -733,10 +733,10 @@ impl<M: Mcu> Cpu<M> {
             };
         }
 
-        if let Some(active) = self.active_interrupt_window.as_mut() {
-            if active.started_at.is_none() {
-                active.started_at = Some(clock);
-            }
+        if let Some(active) = self.active_interrupt_window.as_mut()
+            && active.started_at.is_none()
+        {
+            active.started_at = Some(clock);
         }
         let code = match self.pop_microcode() {
             Some(v) => v,
@@ -1068,12 +1068,12 @@ impl<M: Mcu> Cpu<M> {
     }
 
     fn push_status(&mut self, break_flag: bool) {
-        if let Some((_, cutoff)) = self.declared_hijack_site(HijackEligibility::LatchedOnly) {
-            if self.nmi_detecteor.consume_latched_edge(cutoff) {
-                self.switch_to_nmi_vector(&[Microcode::LoadNmiPcL, Microcode::LoadNmiPcH]);
-                self.push_status(break_flag);
-                return;
-            }
+        if let Some((_, cutoff)) = self.declared_hijack_site(HijackEligibility::LatchedOnly)
+            && self.nmi_detecteor.consume_latched_edge(cutoff)
+        {
+            self.switch_to_nmi_vector(&[Microcode::LoadNmiPcL, Microcode::LoadNmiPcH]);
+            self.push_status(break_flag);
+            return;
         }
 
         self.push_stack(if break_flag {
@@ -1215,12 +1215,12 @@ impl<M: Mcu> Cpu<M> {
     }
 
     fn load_irq_pcl(&mut self) {
-        if let Some((_, cutoff)) = self.declared_hijack_site(HijackEligibility::NewestVisible) {
-            if self.nmi_detecteor.consume_hijack_edge(cutoff) {
-                self.switch_to_nmi_vector(&[Microcode::LoadNmiPcH]);
-                self.load_nmi_pcl();
-                return;
-            }
+        if let Some((_, cutoff)) = self.declared_hijack_site(HijackEligibility::NewestVisible)
+            && self.nmi_detecteor.consume_hijack_edge(cutoff)
+        {
+            self.switch_to_nmi_vector(&[Microcode::LoadNmiPcH]);
+            self.load_nmi_pcl();
+            return;
         }
 
         self.set_flag(Flag::InterruptDisabled, true);

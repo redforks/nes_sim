@@ -123,12 +123,11 @@ where
             let nmi = self.cpu.mcu_mut().ppu_mut().nmi_lines();
             let lines = InterruptLines { nmi, irq_level };
             self.cpu.update_interrupt_lines(lines, clock);
-            let result = if clock.is_cpu_clock() {
+            if clock.is_cpu_clock() {
                 self.cpu.tick(&mut self.p, clock).control
             } else {
                 ExecuteResult::Continue
-            };
-            result
+            }
         } else {
             self.cpu.mcu_mut().tick_apu(clock);
             if clock.is_apu_clock() {

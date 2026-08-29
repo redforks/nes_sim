@@ -34,7 +34,7 @@ impl SystemClock {
     }
 
     pub fn is_even_cpu_cycle(self) -> bool {
-        self.0 / SYSTEM_CYCLES_PER_CPU_CYCLE % 2 == 0
+        (self.0 / SYSTEM_CYCLES_PER_CPU_CYCLE).is_multiple_of(2)
     }
 
     /// DMA get phase. Which CPU-cycle parity carries the get phase is a

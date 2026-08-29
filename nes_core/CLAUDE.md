@@ -9,7 +9,7 @@ Core emulation library for the NES emulator. This crate has no std dependency ex
 - `Cpu` struct holds registers (A, X, Y, PC, SP, status)
 - **Microcode queue**: Instructions execute as a sequence of micro-operations
 - `Microcode` enum defines all micro-operations (fetch, decode, ALU ops, memory access)
-- `microcode.rs` contains opcode-to-microcode mapping (`build_opcode_table` via `std::array::from_fn` over `[Microcode::Kill; 7]` defaults)
+- `microcode.rs` contains opcode-to-microcode mapping (`build_opcode_table` via `[ArrayVec::from_array_empty([Microcode::Kill; 7]); 256]`)
 - All official and unofficial opcodes supported
 - Cycle-accurate timing with proper interrupt handling
 - `Plugin` trait allows hooking into instruction execution for test result detection
