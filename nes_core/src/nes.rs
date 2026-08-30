@@ -5,7 +5,7 @@ use crate::nes::{
     apu::{Apu, AudioDriver},
     controller::{Button, Controller, Zapper},
     lower_ram::LowerRam,
-    mapper::{Cartridge, CartridgeOperation},
+    mapper::CartridgeOperation,
     ppu::{Ppu, Timing},
 };
 use crate::render::Render;
@@ -294,12 +294,11 @@ impl<R: Render, D: AudioDriver> Mcu for NesMcu<R, D> {
             },
             0x4020..=0x5fff => {}
             0x6000..=0x7fff => {
-                if self.cartridge.prg_ram_enabled() {
-                    if let CartridgeOperation::UpdateNametableMirroring(mirroring) =
+                if self.cartridge.prg_ram_enabled()
+                    && let CartridgeOperation::UpdateNametableMirroring(mirroring) =
                         self.cartridge.write(address, value, self.current_clock)
-                    {
-                        self.ppu.set_mirroring(mirroring);
-                    }
+                {
+                    self.ppu.set_mirroring(mirroring);
                 }
             }
             0x8000..=0xffff => {

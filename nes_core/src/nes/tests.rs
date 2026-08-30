@@ -3,7 +3,7 @@ use crate::SystemClock;
 use crate::bus::Bus;
 use crate::nes::apu::Apu;
 use crate::nes::controller::Button;
-use crate::nes::mapper::{Mirroring, TestCartridge};
+use crate::nes::mapper::{Cartridge, Mirroring, TestCartridge};
 use crate::render::ImageRender;
 
 fn test_mcu() -> NesMcu<ImageRender<1>, ()> {

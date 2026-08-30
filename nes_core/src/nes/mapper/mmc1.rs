@@ -170,10 +170,10 @@ impl Cartridge for MMC1 {
                     self.last_write_cycle = Some(cycle);
                     return self.write_load_register(address, value);
                 }
-                if let Some(last) = self.last_write_cycle {
-                    if cycle.cycles().wrapping_sub(last.cycles()) <= 3 {
-                        return CartridgeOperation::None;
-                    }
+                if let Some(last) = self.last_write_cycle
+                    && cycle.cycles().wrapping_sub(last.cycles()) <= 3
+                {
+                    return CartridgeOperation::None;
                 }
                 self.last_write_cycle = Some(cycle);
                 self.write_load_register(address, value)
