@@ -163,8 +163,10 @@ pub struct Ppu<R: Render = ()> {
     pending_background_activation: Option<BackgroundActivation>,
     tile_cache: TileCache,
     sprite: SpriteManager,
-    /// system clock when suppress nmi by reading status register
-    suppressed_vblank_at: Option<u64>,
+    /// Set when a $2002 read lands one PPU clock before VBL flag set
+    /// (scanline 241 dot 0); the next VBL set is suppressed entirely —
+    /// flag never rises, NMI never asserts.
+    suppress_vblank_pending: bool,
     /// `cycle` value of the tick that processed the vblank-set (scanline 241,
     /// dot 1), whether or not the set was suppressed. A $2002 read or $2000
     /// write landing on the same cycle races the set and wins it, as on hardware.
@@ -224,7 +226,7 @@ impl<R: Render> Ppu<R> {
             pending_background_activation: None,
             tile_cache: TileCache::default(),
             sprite: SpriteManager::new(),
-            suppressed_vblank_at: None,
+            suppress_vblank_pending: false,
             rendering_enabled_at_scanline_start: false,
             ren_latched_at_338: false,
             cycle: 0,
@@ -540,11 +542,9 @@ impl<R: Render> Ppu<R> {
             }
             self.renderer.finish();
             self.vbl_set_cycle = self.cycle;
-            if self
-                .suppressed_vblank_at
-                .take()
-                .is_none_or(|clock| self.cycle - clock > 1)
-            {
+            if self.suppress_vblank_pending {
+                self.suppress_vblank_pending = false;
+            } else {
                 self.registers.status.set_v_blank(true);
             }
         }
@@ -835,8 +835,14 @@ impl<R: Render> Ppu<R> {
     /// Returns the current status and clears the v_blank flag
     fn read_status(&mut self) -> PpuStatus {
         let r = self.registers.status;
-        if self.timing.enter_vblank() {
-            self.suppressed_vblank_at = Some(self.cycle);
+        // One PPU clock before the VBL flag would set — hardware dot 0 of
+        // scanline 241 — a $2002 read there reads 0 and flag never rises
+        // this frame (PPU_frame_timing). At read time `timing` already
+        // reflects the *next* dot (PPU tick runs before the CPU read in
+        // `NesMachine::tick`), so hardware dot 0 appears as dot==1 here.
+        // No edge to retract — the line never asserted.
+        if self.timing.scanline == 241 && self.timing.dot == 1 {
+            self.suppress_vblank_pending = true;
         }
 
         // A read on the very tick the vblank flag is set races the set and

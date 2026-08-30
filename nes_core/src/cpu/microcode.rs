@@ -928,7 +928,6 @@ impl OpAfterAddressing {
             OpAfterAddressing::Nop => Microcode::LoadIntoAlu(ValueSource::Mem),
             OpAfterAddressing::Sha => Microcode::Sha,
             OpAfterAddressing::Tas => Microcode::Tas,
-            OpAfterAddressing::Nop => Microcode::Nop,
             OpAfterAddressing::Cmp => Microcode::Cmp(ValueSource::Mem),
         }
     }
