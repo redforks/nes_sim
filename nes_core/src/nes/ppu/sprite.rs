@@ -19,11 +19,24 @@ enum SpriteOverflowEvalMode {
 
 #[derive(Copy, Clone, Default)]
 struct SpriteOverflowEval {
+    /// Count of sprites scanned so far this line (0..=64); the effective
+    /// OAM index is (start_index + oam_index) % 64 — hardware evaluation
+    /// starts at OAMADDR and wraps.
     oam_index: u8,
     byte_index: u8,
     visible_sprites: u8,
+    start_index: u8,
     mode: SpriteOverflowEvalMode,
     pending_sprite_bytes: [u8; 4],
+}
+
+impl SpriteOverflowEval {
+    /// OAM index this evaluation step reads: hardware evaluation starts at
+    /// OAMADDR and wraps at 64, so the effective index is
+    /// (start_index + oam_index) mod 64 while `oam_index` counts 0..=64.
+    fn effective_index(&self) -> u8 {
+        self.start_index.wrapping_add(self.oam_index) & 0x3f
+    }
 }
 
 pub struct SpriteManager {
@@ -32,6 +45,11 @@ pub struct SpriteManager {
     sprite_overflow_eval: SpriteOverflowEval,
     current_scanline_oam: ArrayVec<[Sprite; 8]>,
     next_scanline_oam: ArrayVec<[Sprite; 8]>,
+    /// OAM entry 0 as evaluated onto the current/next scanline. The
+    /// sprite-0 hit applies only to a sprite 0 that evaluation actually
+    /// picked (≤8 in-range sprites, evaluation starting at OAMADDR).
+    current_zero_sprite: Option<Sprite>,
+    next_zero_sprite: Option<Sprite>,
 }
 
 fn sprite_in_range(y: u8, target_scanline: u16, sprite_height: u8) -> bool {
@@ -48,6 +66,8 @@ impl SpriteManager {
             sprite_overflow_eval: SpriteOverflowEval::default(),
             current_scanline_oam: ArrayVec::new(),
             next_scanline_oam: ArrayVec::new(),
+            current_zero_sprite: None,
+            next_zero_sprite: None,
         }
     }
 
@@ -57,6 +77,8 @@ impl SpriteManager {
         self.sprite_overflow_eval = SpriteOverflowEval::default();
         self.current_scanline_oam.clear();
         self.next_scanline_oam.clear();
+        self.current_zero_sprite = None;
+        self.next_zero_sprite = None;
     }
 
     /// Update sprite status to ppu status register
@@ -87,13 +109,16 @@ impl SpriteManager {
     pub fn swap_secondary_oam(&mut self) {
         std::mem::swap(&mut self.current_scanline_oam, &mut self.next_scanline_oam);
         self.next_scanline_oam.clear();
+        std::mem::swap(&mut self.current_zero_sprite, &mut self.next_zero_sprite);
+        self.next_zero_sprite = None;
     }
 
-    pub fn begin_sprite_overflow_eval(&mut self) {
+    pub fn begin_sprite_overflow_eval(&mut self, start_index: u8) {
         self.sprite_overflow_eval = SpriteOverflowEval {
             oam_index: 0,
             byte_index: 0,
             visible_sprites: 0,
+            start_index,
             mode: SpriteOverflowEvalMode::ScanY,
             pending_sprite_bytes: [0u8; 4],
         };
@@ -112,7 +137,7 @@ impl SpriteManager {
                     return;
                 }
 
-                let y = oam.sprites[self.sprite_overflow_eval.oam_index as usize].y;
+                let y = oam.sprites[self.sprite_overflow_eval.effective_index() as usize].y;
                 if sprite_in_range(y, target_scanline(scanline), ctrl.sprite_height()) {
                     self.sprite_overflow_eval.visible_sprites += 1;
                     if self.sprite_overflow_eval.visible_sprites > 8 {
@@ -128,7 +153,7 @@ impl SpriteManager {
                 }
             }
             SpriteOverflowEvalMode::CopySprite { remaining_bytes } => {
-                let oam_index = self.sprite_overflow_eval.oam_index;
+                let oam_index = self.sprite_overflow_eval.effective_index();
                 let byte_offset = 4 - remaining_bytes;
                 let oam_byte = oam.get_byte(oam_index * 4 + byte_offset);
                 self.sprite_overflow_eval.pending_sprite_bytes[(byte_offset as usize) & 0x3] =
@@ -143,6 +168,9 @@ impl SpriteManager {
                         self.sprite_overflow_eval.pending_sprite_bytes,
                     );
                     self.next_scanline_oam.push(sprite);
+                    if self.sprite_overflow_eval.effective_index() == 0 {
+                        self.next_zero_sprite = Some(sprite);
+                    }
                     self.sprite_overflow_eval.oam_index += 1;
                     self.sprite_overflow_eval.byte_index = 0;
                     self.sprite_overflow_eval.mode =
@@ -162,8 +190,8 @@ impl SpriteManager {
                     return;
                 }
 
-                let byte_idx =
-                    self.sprite_overflow_eval.oam_index * 4 + self.sprite_overflow_eval.byte_index;
+                let byte_idx = self.sprite_overflow_eval.effective_index() * 4
+                    + self.sprite_overflow_eval.byte_index;
                 let y_byte = oam.get_byte(byte_idx);
                 if sprite_in_range(y_byte, target_scanline(scanline), ctrl.sprite_height()) {
                     self.overflow_pending = true;
@@ -175,6 +203,18 @@ impl SpriteManager {
                 }
             }
         }
+    }
+
+    /// Read-model for tests: count of evaluated sprites on the live line.
+    #[cfg(test)]
+    pub(crate) fn secondary_oam_len(&self) -> usize {
+        self.current_scanline_oam.len()
+    }
+
+    /// Read-model for tests: whether OAM entry 0 survived evaluation.
+    #[cfg(test)]
+    pub(crate) fn current_zero_sprite(&self) -> Option<Sprite> {
+        self.current_zero_sprite
     }
 
     pub fn find_sprite_pixel(
@@ -195,15 +235,22 @@ impl SpriteManager {
         None
     }
 
-    pub fn sprite_zero_opaque_at(
-        zero_sprite: &Sprite,
+    /// Sprite-0 hit source pixel: opaque only when OAM entry 0 survived
+    /// this scanline's evaluation and its pixel overlaps the beam.
+    pub fn sprite_zero_pixel_opaque(
+        &self,
         ctrl: PpuCtrl,
         cartridge: &dyn Cartridge,
         screen_x: u8,
         screen_y: u8,
     ) -> bool {
-        evaluate_sprite(zero_sprite, ctrl, cartridge, screen_x, screen_y)
-            .is_some_and(|p| p.color_idx != 0)
+        match self.current_zero_sprite {
+            Some(zero) => {
+                evaluate_sprite_from_secondary(&zero, ctrl, cartridge, screen_x, screen_y)
+                    .is_some_and(|p| p.color_idx != 0)
+            }
+            None => false,
+        }
     }
 }
 
@@ -213,7 +260,6 @@ pub struct SpritePixel {
     pub color_idx: u8,
     pub behind_bg: bool,
 }
-
 fn evaluate_sprite_from_secondary(
     sprite: &Sprite,
     ctrl: PpuCtrl,
@@ -252,17 +298,4 @@ fn evaluate_sprite_from_secondary(
         color_idx,
         behind_bg: sprite.attributes.behind_background(),
     })
-}
-
-fn evaluate_sprite(
-    sprite: &Sprite,
-    ctrl: PpuCtrl,
-    cartridge: &dyn Cartridge,
-    screen_x: u8,
-    screen_y: u8,
-) -> Option<SpritePixel> {
-    if !sprite_in_range(sprite.y, screen_y as u16, ctrl.sprite_height()) {
-        return None;
-    }
-    evaluate_sprite_from_secondary(sprite, ctrl, cartridge, screen_x, screen_y)
 }

@@ -452,7 +452,7 @@ impl<R: Render> Ppu<R> {
             && rendering_enabled
         {
             if self.timing.dot == 65 {
-                self.sprite.begin_sprite_overflow_eval();
+                self.sprite.begin_sprite_overflow_eval(self.oam_addr);
             }
 
             if self.timing.dot % 2 == 1 {
@@ -464,6 +464,15 @@ impl<R: Render> Ppu<R> {
             }
         }
 
+        // During sprite tile loading (dots 257-320 of visible scanlines)
+        // hardware drives OAMADDR to 0; software polling $2003 mid-frame
+        // observes that.
+        if rendering_enabled
+            && self.timing.in_visible_scanline()
+            && (257..=320).contains(&self.timing.dot)
+        {
+            self.oam_addr = 0;
+        }
         // Visible pixels are output on dots 1-256; dot 0 is the idle fetch
         // slot. Pixels leave a two-dot output pipeline: a pixel rendered on
         // dot X commits to the framebuffer on dot X+2, after any CPU
@@ -865,8 +874,7 @@ impl<R: Render> Ppu<R> {
         };
 
         if !self.registers.status.sprite_zero_hit()
-            && SpriteManager::sprite_zero_opaque_at(
-                &self.oam.sprites[0],
+            && self.sprite.sprite_zero_pixel_opaque(
                 self.registers.ctrl,
                 &*self.cartridge,
                 x,

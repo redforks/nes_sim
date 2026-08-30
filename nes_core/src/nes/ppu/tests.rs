@@ -158,7 +158,7 @@ fn populate_sprite_secondary_oam(ppu: &mut Ppu, target_scanline: u16) {
     } else {
         target_scanline - 1
     };
-    ppu.sprite.begin_sprite_overflow_eval();
+    ppu.sprite.begin_sprite_overflow_eval(ppu.oam_addr);
     for dot in (65..=256).filter(|d| d % 2 == 1) {
         ppu.timing.dot = dot;
         ppu.timing.scanline = eval_scanline;
@@ -851,6 +851,67 @@ fn test_render_pixel_sprite_zero_hit_requires_sprite_zero() {
 
     render_pixel_with_setup(&mut ppu, &pattern, |ppu| set_bg_tile(ppu, 0, 0), 0, 1);
     assert!(!ppu.registers.status.sprite_zero_hit());
+}
+
+#[test]
+fn test_render_pixel_sprite_zero_hit_requires_evaluation() {
+    // Hardware: the hit only comes from a sprite 0 that evaluation picked.
+    // With OAMADDR=1 and sprites 1..=9 in range, sprite 0 is never
+    // evaluated (8-sprite limit trips first) — no hit despite opaque
+    // sprite-0/BG overlap.
+    let mut ppu = create_test_ppu_with_mask(
+        PpuMask::new()
+            .with_background_enabled(true)
+            .with_sprite_enabled(true)
+            .with_background_left_enabled(true)
+            .with_sprite_left_enabled(true),
+    );
+    let mut pattern = create_pattern();
+    set_tile_solid(&mut pattern, 0, 0, 1);
+    set_tile_solid(&mut pattern, 0, 1, 2);
+    setup_sprite(&mut ppu, 0, 20, 1, 0, 0);
+    for i in 1..=9u8 {
+        setup_sprite(&mut ppu, i, 20, 1, 0, 0);
+    }
+    ppu.oam_addr = 1;
+
+    render_pixel_with_setup(&mut ppu, &pattern, |ppu| set_bg_tile(ppu, 0, 0), 0, 21);
+    assert!(!ppu.registers.status.sprite_zero_hit());
+}
+
+#[test]
+fn test_evaluation_starts_at_oamaddr_and_wraps() {
+    let mut ppu = create_test_ppu_with_mask(PpuMask::new());
+    for i in 0..=9u8 {
+        setup_sprite(&mut ppu, i, 20, 0, 0, 0);
+    }
+    ppu.oam_addr = 1;
+    populate_sprite_secondary_oam(&mut ppu, 21);
+
+    // Sprites 1..=8 fill the secondary OAM; the 9th in-range sprite trips
+    // overflow before the wrap ever reaches OAM entry 0.
+    assert_eq!(ppu.sprite.secondary_oam_len(), 8);
+    assert!(ppu.sprite.current_zero_sprite().is_none());
+}
+
+#[test]
+fn test_oamaddr_is_zeroed_during_sprite_fetches() {
+    let mut ppu = create_test_ppu_with_mask(
+        PpuMask::new()
+            .with_background_enabled(true)
+            .with_sprite_enabled(true),
+    );
+    ppu.timing.scanline = 0;
+    ppu.timing.dot = 256;
+    ppu.write(0x2003, 0x50);
+    assert_eq!(ppu.oam_addr, 0x50);
+    // Tick 1 processes dot 256 (last background fetch) and leaves
+    // OAMADDR alone; the tick that processes dot 257 — the start of the
+    // sprite tile-fetch window — drives it to 0.
+    ppu.tick();
+    assert_eq!(ppu.oam_addr, 0x50);
+    ppu.tick();
+    assert_eq!(ppu.oam_addr, 0);
 }
 
 #[test]
