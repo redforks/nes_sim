@@ -93,7 +93,7 @@ fn sweep_tick_zero_output_when_period_less_than_8() {
 
     sweep.tick(&mut period);
 
-    assert_eq!((&sweep).control(), 0);
+    assert!(sweep.is_muted(period));
 }
 
 #[test]
@@ -103,7 +103,7 @@ fn sweep_tick_zero_output_when_new_period_exceeds_0x7ff() {
     let mut period = 0x600u16;
 
     sweep.tick(&mut period);
-    assert_eq!((&sweep).control(), 0);
+    assert!(sweep.is_muted(period));
 }
 
 #[test]
@@ -153,7 +153,7 @@ fn sweep_zero_output_returns_false_for_valid_period() {
 
     sweep.tick(&mut period);
 
-    assert_eq!((&sweep).control(), 1);
+    assert!(!sweep.is_muted(period));
 }
 
 #[test]

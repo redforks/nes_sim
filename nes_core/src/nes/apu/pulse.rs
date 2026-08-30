@@ -46,8 +46,8 @@ impl Shifter {
 struct Sweep {
     divider: Divider<u8>,
     shifter: Shifter,
-    zero_output: bool,
     enabled: bool,
+    reload: bool,
 }
 
 impl Sweep {
@@ -56,34 +56,47 @@ impl Sweep {
         Self {
             divider,
             shifter: Shifter::new(is_second_pulse_channel, bits),
-            zero_output: false,
             enabled: bits.enabled(),
+            reload: false,
         }
     }
 
     fn config(&mut self, bits: SweepBits) {
         self.divider.set_period(bits.period());
-        self.divider.reset();
+        self.reload = true;
         self.shifter.config(bits);
         self.enabled = bits.enabled();
     }
 
     fn tick(&mut self, period: &mut u16) {
-        let new_period = self.shifter.update_period(*period);
-        self.zero_output = *period < 8 || new_period > 0x7ff;
-
-        if self.divider.tick() && self.enabled && !self.shifter.disabled() && !self.zero_output {
-            *period = new_period;
+        if self.reload {
+            self.divider.reset();
+            self.reload = false;
         }
+
+        let target = self.shifter.update_period(*period);
+        let muted = *period < 8 || target > 0x7ff;
+
+        if self.divider.tick() && self.enabled && !self.shifter.disabled() && !muted {
+            *period = target;
+        }
+    }
+
+    fn is_muted(&self, period: u16) -> bool {
+        let target = self.shifter.update_period(period);
+        period < 8 || target > 0x7ff
     }
 }
 
 impl ControlGate for &Sweep {
     fn control(&self) -> u8 {
-        if self.zero_output { 0 } else { 1 }
+        // Muting is now a continuous predicate checked in Pulse::output via
+        // is_muted(period), not a latched zero_output. For backwards
+        // compatibility with tests that check control after tick, return 1
+        // here; Pulse::output handles the actual muting.
+        1
     }
 }
-
 const PULSE_DUTY_TABLE: [[u8; 8]; 4] = [
     [0, 1, 0, 0, 0, 0, 0, 0],
     [0, 1, 1, 0, 0, 0, 0, 0],
@@ -157,7 +170,10 @@ impl Pulse {
     }
 
     pub fn output(&self) -> u8 {
-        let control_gate = (&self.sweep, &self.sequencer, &self.length);
+        if self.sweep.is_muted(*self.timer.period()) {
+            return 0;
+        }
+        let control_gate = (&self.sequencer, &self.length);
         control_gate.filter(self.envelope.output())
     }
 
