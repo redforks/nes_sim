@@ -149,11 +149,9 @@ The same-dot suppression of an NMI edge that `NmiLines.race_cancel` flags, consu
 _Avoid_: nmi cancel, vblank suppression (overloaded), race kill
 
 ## Language — CPU Bus Cycles
-
 **Bus cycle classification**:
-The single source of truth for what a pending Microcode cycle drives on the bus: a read from the program counter (instruction stream, including the hardware dummy read of implied ops), a read through the address latch (per-variant adjusted — the no-carry low-byte increment), a read from the stack (pop cycles, $0100 | SP+1), a read at a fixed vector address, a write, or internal (no bus access of its own). Declared in one exhaustive match; DMC DMA halt decisions consume it and nothing else.
+The single source of truth for what a pending Microcode cycle drives on the bus — driven by `Microcode::exec` itself (ADR-0013, revises ADR-0007). Each `exec` drives its access (PC dummy fetch for `Nop`, `read_zero_page` for `ZeroPage` dummy, `DummyReadAt` for branch fixup, `DummyStackRead` for RTS/RTI/PLP, etc.) and `bus_cycle` is derived from that execution, not a parallel classifier. The exhaustive match over `Microcode` (including `DummyReadAt(u16)`, `DummyStackRead`) classifies each driven access as `Read(ReadAddress::Latch(addr))`, `Read(Stack(...))`, `Write`, or `Internal`; DMC DMA halt decisions consume it and nothing else.
 _Avoid_: cycle kind, write-operation check, bus op
-
 **Halt-repeat read**:
 The bus behavior while the CPU is RDY-halted by DMA: the bus re-drives the address the pending read cycle would drive. Internal cycles have no address of their own and repeat the last completed read. Write cycles never sit under a halt — the CPU is only halted between them.
 _Avoid_: RDY repeat, dummy read (the DMA's own alignment cycles), repeated fetch
@@ -211,8 +209,30 @@ Either First ($0000) or Second ($1000) pattern table in VRAM. Selected per-sprit
 _Avoid_: pattern table, CHR bank
 
 **Secondary OAM**:
-A double-buffered 8-entry sprite buffer inside the PPU. `SpriteManager` evaluates primary OAM during dots 65–256 and copies up to 8 in-range sprites into the *next* buffer. At dot 0 each scanline, the buffers swap: the freshly populated buffer becomes *current* and feeds `find_sprite_pixel` for the whole scanline. Models the real-hardware internal OAM that avoids a 64-sprite scan per pixel.
+A double-buffered 8-entry sprite buffer inside the PPU. `SpriteManager` evaluates primary OAM during dots 65–256, starting at `OAMADDR` (`effective_index = (start_index + oam_index) & 0x3F` wrapping at 64, termination at 64 scanned) and copies up to 8 in-range sprites into the *next* buffer; `next_zero_sprite`/`current_zero_sprite` (`Option<Sprite>`) tracks whether OAM entry 0 survived evaluation so `sprite_zero_pixel_opaque` only fires for evaluated zero. At dot 0 each scanline, the buffers swap: the freshly populated buffer becomes *current* and feeds `find_sprite_pixel` for the whole scanline. During sprite tile fetches (dots 257–320 of visible scanlines while rendering is enabled) hardware drives `OAMADDR` to 0; software polling `$2003` mid-frame observes that.
 _Avoid_: sec OAM, sprite cache
+
+## Language — PPU VBL/NMI Race
+
+**VBL set dot (enter_vblank)**:
+Scanline 241 dot 1 — the single PPU tick where the VBL flag would set and the NMI edge would assert. `Ppu::tick` processes the current `timing.dot` then `advance`s; `enter_vblank()` is true only at `(241,1)`.
+_Avoid_: vblank flag set, nmi set
+
+**$2002 race window**:
+Hardware PPU_frame_timing: a `$2002` read one PPU clock before the set dot (hardware dot 0 of scanline 241, observed as `timing.dot==1` at read time because `NesMachine::tick` advances PPU before the CPU read) suppresses the upcoming set entirely — flag never rises, NMI never asserts, no `race_cancel` needed. A read on the set dot itself (same `vbl_set_cycle`) races the set and wins: flag is set then immediately cleared, `nmi_race_cancel` retracts the edge latched earlier in the same tick. `vbl_set_cycle` stamps the tick that processed `(241,1)` whether or not it was suppressed; `suppress_vblank_pending` is the one-dot pending flag set at `dot==1` read time and consumed at the next `enter_vblank`.
+_Avoid_: vblank suppression (overloaded), nmi suppression
+
+## Language — Mapper MMC1
+
+**MMC1 consecutive-cycle write filter**:
+MMC1's serial port ignores data-bit writes (`$8000-$FFFF` with bit7 clear) that occur within 1 CPU cycle (3 PPU/system cycles) of the previous mapper write. Reset writes (`bit7 set`) are never ignored but do update the timestamp (`last_write_cycle: Option<SystemClock>`). The filter is checked in `Cartridge::write(address, value, cycle: SystemClock)` — only `Cartridge::write` takes `SystemClock`, not `Mcu::write`; `NesMcu` stamps `current_clock` from `NesMachine::tick` via `set_clock`. Bill & Ted's `INC $FF` (reset $FF then data $00 on next cycle) and Shinsenden's `RRA` (data then reset) pin the two sides.
+_Avoid_: write filter, consecutive writes (without qualifier)
+
+## Language — Bus Decoding
+
+**Decode into NesMcu (not Ppu)**:
+`Ppu` no longer owns `Box<dyn Cartridge>` nor implements `Mcu`. `NesMcu` owns `cartridge: Box<dyn Cartridge> + cartridge_caps: CartridgeCaps + current_clock: SystemClock` and performs all CPU address decode: `0x0000-0x1FFF` LowerRam, `0x2000-0x3FFF` PPU regs via `Ppu::read_ppureg`/`write_ppureg` (taking `&mut dyn Cartridge, CartridgeCaps`), `0x4000-0x401F` APU/IO, `0x4020-0x5FFF` open bus, `0x6000-0x7FFF` PRG-RAM (open bus if `!prg_ram_enabled()`), `0x8000-0xFFFF` PRG-ROM via `cartridge.read`/`write(cycle)`. Undriven reads (`0x4020-0x5FFF`, disabled PRG-RAM) refresh the CPU open bus (`open_bus` latch) and the PPU latch decays via `PPU_OPEN_BUS_DECAY_TICKS`.
+_Avoid_: Ppu as Mcu, cartridge in Ppu, open bus (without qualifier)
 
 ## Language — Controller Reading
 
