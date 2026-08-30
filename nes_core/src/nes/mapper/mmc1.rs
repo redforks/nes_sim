@@ -1,4 +1,5 @@
 use super::{Cartridge, CartridgeOperation};
+use crate::SystemClock;
 use crate::nes::mapper::Mirroring;
 use bitfield_struct::bitfield;
 
@@ -62,8 +63,8 @@ pub struct MMC1 {
     lower_prg_bank_cache: usize,
     upper_prg_bank_cache: usize,
     prg_rom_bank_count_cache: usize,
+    last_write_cycle: Option<SystemClock>,
 }
-
 impl MMC1 {
     pub fn new(prg_rom: &[u8], chr_rom: &[u8], mirroring: Mirroring) -> Self {
         assert!(!prg_rom.is_empty());
@@ -90,6 +91,7 @@ impl MMC1 {
             lower_prg_bank_cache: 0,
             upper_prg_bank_cache: 0,
             prg_rom_bank_count_cache: bank_count,
+            last_write_cycle: None,
         };
         instance.sync_prg_bank_cache();
         instance
@@ -150,7 +152,7 @@ impl Cartridge for MMC1 {
         }
     }
 
-    fn write(&mut self, address: u16, value: u8) -> CartridgeOperation {
+    fn write(&mut self, address: u16, value: u8, cycle: SystemClock) -> CartridgeOperation {
         match address {
             0x4020..=0x5fff => CartridgeOperation::None,
             0x6000..=0x7fff => {
@@ -159,7 +161,23 @@ impl Cartridge for MMC1 {
                 }
                 CartridgeOperation::None
             }
-            0x8000..=0xffff => self.write_load_register(address, value),
+            0x8000..=0xffff => {
+                // Consecutive-cycle filter: data writes (bit7 clear) within
+                // 1 CPU cycle (3 PPU cycles) of the previous mapper write
+                // are ignored. Reset writes (bit7 set) are never ignored
+                // but do update the timestamp.
+                if value & 0x80 != 0 {
+                    self.last_write_cycle = Some(cycle);
+                    return self.write_load_register(address, value);
+                }
+                if let Some(last) = self.last_write_cycle {
+                    if cycle.cycles().wrapping_sub(last.cycles()) <= 3 {
+                        return CartridgeOperation::None;
+                    }
+                }
+                self.last_write_cycle = Some(cycle);
+                self.write_load_register(address, value)
+            }
             _ => panic!("write address out of range: {:04x}", address),
         }
     }
@@ -323,8 +341,19 @@ mod tests {
     use super::*;
 
     fn write_serial(mapper: &mut MMC1, address: u16, value: u8) {
+        // Start far enough from any previous write to avoid the
+        // consecutive-cycle filter (data writes within 1 CPU cycle / 3 PPU
+        // cycles are ignored). Use a fresh base and advance past the
+        // window before the first real data write.
+        let mut cycle = SystemClock::default();
+        for _ in 0..6 {
+            cycle = cycle.inc();
+        }
         for bit in 0..5 {
-            mapper.write(address, (value >> bit) & 0x01);
+            mapper.write(address, (value >> bit) & 0x01, cycle);
+            for _ in 0..6 {
+                cycle = cycle.inc();
+            }
         }
     }
 
@@ -359,11 +388,11 @@ mod tests {
     fn prg_ram_respects_enable_bit() {
         let mut mmc1 = create(|_| {});
 
-        mmc1.write(0x6000, 0x12);
+        mmc1.write(0x6000, 0x12, SystemClock::default());
         assert_eq!(mmc1.read(0x6000), 0x12);
 
         write_serial(&mut mmc1, 0xe000, 0x10);
-        mmc1.write(0x6000, 0x34);
+        mmc1.write(0x6000, 0x34, SystemClock::default());
         assert_eq!(mmc1.read(0x6000), 0x00);
     }
 
@@ -373,7 +402,7 @@ mod tests {
 
         let control = ControlFlags::new().with_mirroring(0).with_chr_in_4k(true);
         mmc1.control = control;
-        mmc1.write(0x8000, 0x80);
+        mmc1.write(0x8000, 0x80, SystemClock::default());
 
         assert_eq!(Mirroring::LowerBank, mmc1.control.into());
         assert!(mmc1.control.chr_in_4k());
@@ -459,8 +488,15 @@ mod tests {
     }
 
     fn write_serial_chr(mapper: &mut MMC1, address: u16, value: u8) {
+        let mut cycle = SystemClock::default();
+        for _ in 0..6 {
+            cycle = cycle.inc();
+        }
         for bit in 0..5 {
-            mapper.write(address, (value >> bit) & 0x01);
+            mapper.write(address, (value >> bit) & 0x01, cycle);
+            for _ in 0..6 {
+                cycle = cycle.inc();
+            }
         }
     }
 
@@ -492,5 +528,42 @@ mod tests {
         let mut mapper = MMC1::new(&prg, &[], Mirroring::Horizontal);
         mapper.write_chr(0x0000, 0xab);
         assert_eq!(mapper.read_chr(0x0000), 0xab);
+    }
+
+    #[test]
+    fn consecutive_data_writes_are_ignored() {
+        let mut mapper = create(|_| {});
+        let mut cycle = SystemClock::default();
+        // First data write at cycle 0
+        mapper.write(0x8000, 0x00, cycle);
+        let shift_after_first = mapper.shift_register;
+        // Second data write on next CPU cycle (3 PPU cycles later) should be ignored
+        for _ in 0..3 {
+            cycle = cycle.inc();
+        }
+        mapper.write(0x8000, 0x01, cycle);
+        // Shift register should not have advanced for the ignored write
+        assert_eq!(
+            mapper.shift_register, shift_after_first,
+            "consecutive data write within 1 CPU cycle must be ignored"
+        );
+    }
+
+    #[test]
+    fn reset_write_is_never_ignored_even_when_consecutive() {
+        let mut mapper = create(|_| {});
+        let mut cycle = SystemClock::default();
+        // First data write
+        mapper.write(0x8000, 0x00, cycle);
+        for _ in 0..3 {
+            cycle = cycle.inc();
+        }
+        // Reset write (bit7 set) on next CPU cycle must NOT be ignored
+        // and must reset shift register to initial state
+        mapper.write(0x8000, 0x80, cycle);
+        assert_eq!(
+            mapper.shift_register, INITIAL_SHIFT_REGISTER,
+            "reset write must not be ignored even when consecutive"
+        );
     }
 }

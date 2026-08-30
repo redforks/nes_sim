@@ -1,3 +1,4 @@
+use crate::SystemClock;
 use crate::ines::INesFile;
 use crate::ines::NametableArrangement;
 use axrom::AxRom;
@@ -169,7 +170,7 @@ pub struct CartridgeCaps {
 
 pub trait Cartridge {
     fn read(&self, address: u16) -> u8;
-    fn write(&mut self, address: u16, value: u8) -> CartridgeOperation;
+    fn write(&mut self, address: u16, value: u8, cycle: SystemClock) -> CartridgeOperation;
     fn on_ppu_tick(&mut self, _scanline: u16) {}
     fn notify_vram_address(&mut self, _addr: u16) {}
     fn irq_pending(&self) -> bool {
@@ -214,7 +215,7 @@ impl Cartridge for TestCartridge {
         }
     }
 
-    fn write(&mut self, address: u16, value: u8) -> CartridgeOperation {
+    fn write(&mut self, address: u16, value: u8, _cycle: SystemClock) -> CartridgeOperation {
         let _ = (address, value);
         CartridgeOperation::None
     }

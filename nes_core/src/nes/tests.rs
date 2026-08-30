@@ -19,6 +19,7 @@ fn test_mcu() -> NesMcu<ImageRender<1>, ()> {
         oam_dma_pending: None,
         deferred_apu_writes: Vec::new(),
         last_apu_tick: 0,
+        current_clock: SystemClock::default(),
         open_bus: 0,
         joypad1_oe: false,
         joypad2_oe: false,

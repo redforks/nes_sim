@@ -1,4 +1,5 @@
 use super::{CARTRIDGE_START_ADDR, Cartridge, CartridgeCaps, CartridgeOperation};
+use crate::SystemClock;
 use crate::nes::mapper::Mirroring;
 
 const PRG_RAM_SIZE: usize = 0x2000;
@@ -250,7 +251,7 @@ impl Cartridge for MMC3 {
         }
     }
 
-    fn write(&mut self, address: u16, value: u8) -> CartridgeOperation {
+    fn write(&mut self, address: u16, value: u8, _cycle: SystemClock) -> CartridgeOperation {
         match address {
             CARTRIDGE_START_ADDR..=0x5fff => CartridgeOperation::None,
             0x6000..=0x7fff => {
@@ -385,8 +386,8 @@ mod tests {
 
     fn setup_chr_banks(mapper: &mut MMC3, banks: &[(u8, u8)]) {
         for &(bank_reg, value) in banks {
-            mapper.write(0x8000, bank_reg);
-            mapper.write(0x8001, value);
+            mapper.write(0x8000, bank_reg, SystemClock::default());
+            mapper.write(0x8001, value, SystemClock::default());
         }
     }
 
@@ -444,8 +445,8 @@ mod tests {
     fn writes_to_chr_ram_through_current_mapping() {
         let prg = vec![0u8; PRG_ROM_BANK_SIZE * 2];
         let mut mapper = MMC3::new(&prg, &[], None, false, false);
-        mapper.write(0x8000, 0x02);
-        mapper.write(0x8001, 0x03);
+        mapper.write(0x8000, 0x02, SystemClock::default());
+        mapper.write(0x8001, 0x03, SystemClock::default());
         mapper.write_chr(0x1000, 0xaa);
         assert_eq!(mapper.read_chr(0x1000), 0xaa);
     }
@@ -458,15 +459,15 @@ mod tests {
         let prg = vec![0u8; PRG_ROM_BANK_SIZE * 2];
         let mut mapper = MMC3::new(&prg, &[], Some(32 * 1024), false, false);
         // R2 (1 KiB window) -> bank 0: marker; then bank 8: distinct value.
-        mapper.write(0x8000, 0x02);
-        mapper.write(0x8001, 0x00);
+        mapper.write(0x8000, 0x02, SystemClock::default());
+        mapper.write(0x8001, 0x00, SystemClock::default());
         mapper.write_chr(0x1000, 0x11);
-        mapper.write(0x8000, 0x02);
-        mapper.write(0x8001, 0x08);
+        mapper.write(0x8000, 0x02, SystemClock::default());
+        mapper.write(0x8001, 0x08, SystemClock::default());
         mapper.write_chr(0x1000, 0x22);
         assert_eq!(mapper.read_chr(0x1000), 0x22);
-        mapper.write(0x8000, 0x02);
-        mapper.write(0x8001, 0x00);
+        mapper.write(0x8000, 0x02, SystemClock::default());
+        mapper.write(0x8001, 0x00, SystemClock::default());
         assert_eq!(mapper.read_chr(0x1000), 0x11);
     }
 
@@ -474,12 +475,12 @@ mod tests {
     fn chr_ram_defaults_to_8kib_when_undeclared() {
         let prg = vec![0u8; PRG_ROM_BANK_SIZE * 2];
         let mut mapper = MMC3::new(&prg, &[], None, false, false);
-        mapper.write(0x8000, 0x02);
-        mapper.write(0x8001, 0x08);
+        mapper.write(0x8000, 0x02, SystemClock::default());
+        mapper.write(0x8001, 0x08, SystemClock::default());
         mapper.write_chr(0x1000, 0x22);
         // Bank 8 wraps onto bank 0 in an 8 KiB CHR-RAM cart.
-        mapper.write(0x8000, 0x02);
-        mapper.write(0x8001, 0x00);
+        mapper.write(0x8000, 0x02, SystemClock::default());
+        mapper.write(0x8001, 0x00, SystemClock::default());
         assert_eq!(mapper.read_chr(0x1000), 0x22);
     }
 
@@ -490,21 +491,21 @@ mod tests {
     fn chr_ram_write_follows_chr_mode_1_window_layout() {
         let prg = vec![0u8; PRG_ROM_BANK_SIZE * 2];
         let mut mapper = MMC3::new(&prg, &[], None, false, false);
-        mapper.write(0x8000, 0x82); // chr mode 1, bank register R2
-        mapper.write(0x8001, 0x01);
+        mapper.write(0x8000, 0x82, SystemClock::default()); // chr mode 1, bank register R2
+        mapper.write(0x8001, 0x01, SystemClock::default());
         mapper.write_chr(0x0000, 0x5a); // R2's 1 KiB window -> bank 1
         assert_eq!(mapper.read_chr(0x0000), 0x5a);
 
         // The R0 pair stays a 2 KiB window at $1000-$17FF, untouched by the
         // bank 1 write.
-        mapper.write(0x8000, 0x80); // chr mode 1, bank register R0
-        mapper.write(0x8001, 0x00);
+        mapper.write(0x8000, 0x80, SystemClock::default()); // chr mode 1, bank register R0
+        mapper.write(0x8001, 0x00, SystemClock::default());
         assert_eq!(mapper.read_chr(0x1000), 0);
 
         // Bank 1 and bank 0 are distinct: repointing R2 at bank 0 exposes the
         // original zeroes, not the 0x5a.
-        mapper.write(0x8000, 0x82);
-        mapper.write(0x8001, 0x00);
+        mapper.write(0x8000, 0x82, SystemClock::default());
+        mapper.write(0x8001, 0x00, SystemClock::default());
         assert_eq!(mapper.read_chr(0x0000), 0);
     }
 
@@ -514,8 +515,8 @@ mod tests {
     }
 
     fn ack_irq(mapper: &mut MMC3) {
-        mapper.write(0xe000, 0);
-        mapper.write(0xe001, 0);
+        mapper.write(0xe000, 0, SystemClock::default());
+        mapper.write(0xe001, 0, SystemClock::default());
     }
 
     // 6-MMC6.s set_test 3 / blargg's MMC3 revision A: after the counter
@@ -524,8 +525,8 @@ mod tests {
     #[test]
     fn alternate_revision_skips_irq_on_reload_after_natural_zero() {
         let mut mapper = make_mmc3(true);
-        mapper.write(0xc000, 1);
-        mapper.write(0xc001, 0);
+        mapper.write(0xc000, 1, SystemClock::default());
+        mapper.write(0xc001, 0, SystemClock::default());
         ack_irq(&mut mapper);
 
         mapper.clock_irq(); // requested reload -> counter = 1
@@ -533,7 +534,7 @@ mod tests {
         assert!(mapper.irq_pending);
         ack_irq(&mut mapper);
 
-        mapper.write(0xc000, 0);
+        mapper.write(0xc000, 0, SystemClock::default());
         mapper.clock_irq(); // counter was 0 -> reload to latch 0: no IRQ
         assert!(!mapper.irq_pending);
     }
@@ -544,8 +545,8 @@ mod tests {
     fn requested_reload_to_zero_asserts_irq_on_both_revisions() {
         for alternate_irq_revision in [false, true] {
             let mut mapper = make_mmc3(alternate_irq_revision);
-            mapper.write(0xc000, 0);
-            mapper.write(0xc001, 0);
+            mapper.write(0xc000, 0, SystemClock::default());
+            mapper.write(0xc001, 0, SystemClock::default());
             ack_irq(&mut mapper);
 
             mapper.clock_irq(); // reload request -> counter = 0: IRQ
@@ -559,8 +560,8 @@ mod tests {
     #[test]
     fn standard_revision_sets_irq_on_every_clock_with_zero_latch() {
         let mut mapper = make_mmc3(false);
-        mapper.write(0xc000, 0);
-        mapper.write(0xc001, 0);
+        mapper.write(0xc000, 0, SystemClock::default());
+        mapper.write(0xc001, 0, SystemClock::default());
         ack_irq(&mut mapper);
 
         for _ in 0..3 {

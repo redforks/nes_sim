@@ -1,4 +1,5 @@
 use super::{CARTRIDGE_START_ADDR, Cartridge, CartridgeCaps, CartridgeOperation};
+use crate::SystemClock;
 use crate::nes::mapper::Mirroring;
 
 const PRG_BANK_SIZE: usize = 0x2000;
@@ -225,7 +226,7 @@ impl Cartridge for Vrc24 {
         }
     }
 
-    fn write(&mut self, address: u16, value: u8) -> CartridgeOperation {
+    fn write(&mut self, address: u16, value: u8, _cycle: SystemClock) -> CartridgeOperation {
         match address {
             CARTRIDGE_START_ADDR..=0x5fff => CartridgeOperation::None,
             0x6000..=0x7fff => {
@@ -410,14 +411,14 @@ mod tests {
     #[test]
     fn vrc4f_banking() {
         let mut mapper = make_vrc24_with_chr();
-        mapper.write(0xb000, 0x02);
+        mapper.write(0xb000, 0x02, SystemClock::default());
         assert_eq!(mapper.read_chr(0x0000), 0x02);
     }
 
     #[test]
     fn vrc4f_high_nibble() {
         let mut mapper = make_vrc24_with_chr();
-        mapper.write(0xb001, 0x01);
+        mapper.write(0xb001, 0x01, SystemClock::default());
         assert_eq!(mapper.read_chr(0x0000), 0x10);
     }
 
@@ -439,12 +440,12 @@ mod tests {
     }
 
     fn write_irq_latch(mapper: &mut Vrc24, latch: u8) {
-        mapper.write(irq_addr(0), latch & 0x0f);
-        mapper.write(irq_addr(1), latch >> 4);
+        mapper.write(irq_addr(0), latch & 0x0f, SystemClock::default());
+        mapper.write(irq_addr(1), latch >> 4, SystemClock::default());
     }
 
     fn write_irq_control(mapper: &mut Vrc24, control: u8) {
-        mapper.write(irq_addr(2), control);
+        mapper.write(irq_addr(2), control, SystemClock::default());
     }
 
     /// First window-relative tick at which the IRQ level asserts, if it does.
@@ -459,7 +460,7 @@ mod tests {
     }
 
     fn acknowledge_irq(mapper: &mut Vrc24) {
-        mapper.write(irq_addr(3), 0);
+        mapper.write(irq_addr(3), 0, SystemClock::default());
     }
 
     /// Drives `ticks` PPU dots, returning the 1-based tick indices at which

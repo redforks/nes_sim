@@ -41,6 +41,10 @@ pub struct NesMcu<R: Render, D: AudioDriver> {
     deferred_apu_writes: Vec<(u64, u16, u8)>,
     /// Most recent system tick seen by [`Self::tick_apu`].
     last_apu_tick: u64,
+    /// Current system clock sampled at the top of `NesMachine::tick`.
+    /// Used to timestamp `Cartridge::write` for MMC1's consecutive-cycle
+    /// filter (1 CPU cycle = 3 PPU cycles).
+    current_clock: SystemClock,
 }
 
 impl<R: Render, D: AudioDriver> NesMcu<R, D> {
@@ -62,6 +66,7 @@ impl<R: Render, D: AudioDriver> NesMcu<R, D> {
             joypad2_oe: false,
             deferred_apu_writes: Vec::new(),
             last_apu_tick: 0,
+            current_clock: SystemClock::default(),
         }
     }
 
@@ -110,6 +115,9 @@ impl<R: Render, D: AudioDriver> NesMcu<R, D> {
         self.ppu.tick(cartridge, caps);
     }
 
+    pub(crate) fn set_clock(&mut self, clock: SystemClock) {
+        self.current_clock = clock;
+    }
     pub fn tick_apu(&mut self, clock: SystemClock) {
         self.last_apu_tick = clock.cycles();
         self.apu.tick(clock);
@@ -288,7 +296,7 @@ impl<R: Render, D: AudioDriver> Mcu for NesMcu<R, D> {
             0x6000..=0x7fff => {
                 if self.cartridge.prg_ram_enabled() {
                     if let CartridgeOperation::UpdateNametableMirroring(mirroring) =
-                        self.cartridge.write(address, value)
+                        self.cartridge.write(address, value, self.current_clock)
                     {
                         self.ppu.set_mirroring(mirroring);
                     }
@@ -296,7 +304,7 @@ impl<R: Render, D: AudioDriver> Mcu for NesMcu<R, D> {
             }
             0x8000..=0xffff => {
                 if let CartridgeOperation::UpdateNametableMirroring(mirroring) =
-                    self.cartridge.write(address, value)
+                    self.cartridge.write(address, value, self.current_clock)
                 {
                     self.ppu.set_mirroring(mirroring);
                 }

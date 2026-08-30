@@ -1,5 +1,6 @@
 use super::chr_storage::DirectChr;
 use super::{CARTRIDGE_START_ADDR, Cartridge, CartridgeOperation};
+use crate::SystemClock;
 
 pub struct NRom {
     prg_rom: [u8; 0x8000],
@@ -50,7 +51,7 @@ impl Cartridge for NRom {
         }
     }
 
-    fn write(&mut self, address: u16, value: u8) -> CartridgeOperation {
+    fn write(&mut self, address: u16, value: u8, _cycle: SystemClock) -> CartridgeOperation {
         match address {
             CARTRIDGE_START_ADDR..=0x7fff => {
                 self.ram[(address - CARTRIDGE_START_ADDR) as usize] = value;
@@ -80,16 +81,16 @@ mod tests {
         let mut mcu = NRom::default();
 
         // read-write ram
-        mcu.write(CARTRIDGE_START_ADDR, 0x01);
+        mcu.write(CARTRIDGE_START_ADDR, 0x01, SystemClock::default());
         assert_eq!(mcu.read(CARTRIDGE_START_ADDR), 0x01);
         assert_eq!(mcu.ram[0], 0x01);
-        mcu.write(0x7fff, 0x03);
+        mcu.write(0x7fff, 0x03, SystemClock::default());
         assert_eq!(mcu.read(0x7fff), 0x03);
 
         // read-write rom
         assert_eq!(mcu.read(0x8000), 0);
         // ignore write to rom
-        mcu.write(0x8000, 0x03);
+        mcu.write(0x8000, 0x03, SystemClock::default());
         assert_eq!(mcu.read(0x8000), 0);
     }
 

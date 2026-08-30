@@ -1,4 +1,5 @@
 use super::{CARTRIDGE_START_ADDR, Cartridge, CartridgeOperation};
+use crate::SystemClock;
 
 const PRG_ROM_SIZE: usize = 0x8000;
 const CARTRIDGE_RAM_SIZE: usize = 0x4000 - 0x20;
@@ -64,7 +65,7 @@ impl Cartridge for CnRom {
         }
     }
 
-    fn write(&mut self, address: u16, value: u8) -> CartridgeOperation {
+    fn write(&mut self, address: u16, value: u8, _cycle: SystemClock) -> CartridgeOperation {
         match address {
             CARTRIDGE_START_ADDR..=0x7fff => {
                 self.ram[(address - CARTRIDGE_START_ADDR) as usize] = value;
@@ -97,8 +98,8 @@ mod tests {
     fn reads_and_writes_cartridge_ram() {
         let mut mapper = CnRom::new(&[0; 0x8000], &[]);
 
-        mapper.write(CARTRIDGE_START_ADDR, 0x12);
-        mapper.write(0x7fff, 0x34);
+        mapper.write(CARTRIDGE_START_ADDR, 0x12, SystemClock::default());
+        mapper.write(0x7fff, 0x34, SystemClock::default());
 
         assert_eq!(mapper.read(CARTRIDGE_START_ADDR), 0x12);
         assert_eq!(mapper.read(0x7fff), 0x34);
@@ -134,14 +135,14 @@ mod tests {
     #[test]
     fn chr_write_register_switches_bank() {
         let mut mapper = CnRom::new(&[0; 0x8000], &make_chr());
-        mapper.write(0x8000, 1);
+        mapper.write(0x8000, 1, SystemClock::default());
         assert_eq!(mapper.read_chr(0), 0x20);
     }
 
     #[test]
     fn chr_bank_wraps_at_bank_count() {
         let mut mapper = CnRom::new(&[0; 0x8000], &make_chr());
-        mapper.write(0x8000, 2);
+        mapper.write(0x8000, 2, SystemClock::default());
         assert_eq!(mapper.read_chr(0), 0x10);
     }
 
@@ -157,7 +158,7 @@ mod tests {
         let mut source = vec![0; 0x4000];
         source[0x2100] = 0xcd;
         let mut mapper = CnRom::new(&[0; 0x8000], &source);
-        mapper.write(0x8000, 1);
+        mapper.write(0x8000, 1, SystemClock::default());
         assert_eq!(mapper.read_chr(0x100), 0xcd);
     }
 }

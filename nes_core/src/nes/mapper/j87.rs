@@ -1,4 +1,5 @@
 use super::{Cartridge, CartridgeOperation};
+use crate::SystemClock;
 
 pub struct J87 {
     prg_rom: [u8; 32768],
@@ -48,7 +49,7 @@ impl Cartridge for J87 {
         }
     }
 
-    fn write(&mut self, address: u16, value: u8) -> CartridgeOperation {
+    fn write(&mut self, address: u16, value: u8, _cycle: SystemClock) -> CartridgeOperation {
         match address {
             0x6000..=0xffff => {
                 let mut r = (value & 0x01) << 1;
@@ -83,11 +84,11 @@ mod tests {
         let prg = vec![0u8; 32768];
         let mut mapper = J87::new(&prg, 32768, &data);
         assert_eq!(mapper.read_chr(0), 0x10);
-        mapper.write(0x6000, 0x02);
+        mapper.write(0x6000, 0x02, SystemClock::default());
         assert_eq!(mapper.read_chr(0), 0x20);
-        mapper.write(0x6000, 0x01);
+        mapper.write(0x6000, 0x01, SystemClock::default());
         assert_eq!(mapper.read_chr(0), 0x30);
-        mapper.write(0x6000, 0x03);
+        mapper.write(0x6000, 0x03, SystemClock::default());
         assert_eq!(mapper.read_chr(0), 0x40);
     }
 }

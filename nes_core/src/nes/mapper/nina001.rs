@@ -1,5 +1,5 @@
 use super::{CARTRIDGE_START_ADDR, Cartridge, CartridgeOperation};
-
+use crate::SystemClock;
 const PRG_ROM_BANK_SIZE: usize = 0x8000;
 const CARTRIDGE_RAM_SIZE: usize = 0x4000 - 0x20;
 
@@ -58,7 +58,7 @@ impl Cartridge for Nina001 {
         }
     }
 
-    fn write(&mut self, address: u16, value: u8) -> CartridgeOperation {
+    fn write(&mut self, address: u16, value: u8, _cycle: SystemClock) -> CartridgeOperation {
         match address {
             CARTRIDGE_START_ADDR..=0x7fff => {
                 self.ram[(address - CARTRIDGE_START_ADDR) as usize] = value;
@@ -115,8 +115,8 @@ mod tests {
         data[0x0000] = 0xa1;
         data[0x1000] = 0xb1;
         let mut mapper = Nina001::new(&[0; PRG_ROM_BANK_SIZE], &data);
-        mapper.write(0x7ffe, 0x00);
-        mapper.write(0x7fff, 0x01);
+        mapper.write(0x7ffe, 0x00, SystemClock::default());
+        mapper.write(0x7fff, 0x01, SystemClock::default());
         assert_eq!(mapper.read_chr(0x0000), 0xa1);
         assert_eq!(mapper.read_chr(0x1000), 0xb1);
     }

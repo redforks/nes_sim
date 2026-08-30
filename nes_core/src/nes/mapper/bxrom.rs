@@ -1,4 +1,5 @@
 use super::{CARTRIDGE_START_ADDR, Cartridge, CartridgeOperation};
+use crate::SystemClock;
 
 const PRG_ROM_BANK_SIZE: usize = 0x8000;
 const CARTRIDGE_RAM_SIZE: usize = 0x4000 - 0x20;
@@ -54,7 +55,7 @@ impl Cartridge for BxRom {
         }
     }
 
-    fn write(&mut self, address: u16, value: u8) -> CartridgeOperation {
+    fn write(&mut self, address: u16, value: u8, _cycle: SystemClock) -> CartridgeOperation {
         match address {
             CARTRIDGE_START_ADDR..=0x7fff => {
                 self.ram[(address - CARTRIDGE_START_ADDR) as usize] = value;
@@ -99,10 +100,10 @@ mod tests {
 
         assert_eq!(mapper.read(0x8000), 0x10);
 
-        mapper.write(0x8000, 0x02);
+        mapper.write(0x8000, 0x02, SystemClock::default());
         assert_eq!(mapper.read(0x8000), 0x30);
 
-        mapper.write(0xffff, 0x03);
+        mapper.write(0xffff, 0x03, SystemClock::default());
         assert_eq!(mapper.read(0x8000), 0x40);
     }
 

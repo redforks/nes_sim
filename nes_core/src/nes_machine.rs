@@ -85,6 +85,7 @@ where
     pub fn tick(&mut self) -> ExecuteResult {
         let clock = self.clock;
         self.clock = self.clock.inc();
+        self.cpu.mcu_mut().set_clock(clock);
         let cpu_tick = clock.is_cpu_clock();
 
         self.cpu.mcu_mut().tick_ppu();
