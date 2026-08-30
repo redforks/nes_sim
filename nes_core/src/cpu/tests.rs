@@ -28,7 +28,7 @@ fn create_cpu() -> Cpu<MockMcu> {
     create_cpu_with_mcu(mcu)
 }
 
-fn execute_next(cpu: &mut Cpu<MockMcu>) {
+fn execute_next<M: Mcu>(cpu: &mut Cpu<M>) {
     let mut plugin = EmptyPlugin::new();
     let mut clock = SystemClock::default();
 
@@ -4531,14 +4531,74 @@ fn indexed_with_op_reads_the_op_or_dummy_address() {
 fn las_cross_refetch_reads_the_latch() {
     // Page-crossed LAS abs,y pushes standalone `Las` as the refetch cycle;
     // hardware drives the operand read at the (already index-adjusted)
-    // latch there, even though exec only performs register math on the
-    // stale ALU (pre-existing exec defect — the with-op cycle's read is
-    // what normally feeds it).
+    // latch there. Exec performs that read via `load_alu`, and the
+    // projection classifies the cycle as Read(Latch).
     let mut cpu = classification_cpu();
     pending(&mut cpu, Microcode::Las);
     assert_eq!(cpu.dma_halt_bus_addr(), Some(STUB_AB));
 }
 
+#[test]
+fn las_loads_operand_into_a_x_and_sp() {
+    // LAS abs,y ($BB): A = X = S = M & S.
+    let mut mcu = TestMcu::default();
+    mcu.mem[0x0000] = 0xA0; // LDY #$02
+    mcu.mem[0x0001] = 0x02;
+    mcu.mem[0x0002] = 0xBB; // LAS $AB33,Y
+    mcu.mem[0x0003] = 0x33;
+    mcu.mem[0x0004] = 0xAB;
+    mcu.mem[0xAB35] = 0x96;
+
+    let mut cpu = create_cpu_with_mcu(mcu);
+    cpu.set_pc(0x0000);
+    execute_next(&mut cpu);
+    let sp_before = cpu.snapshot().sp;
+    execute_next(&mut cpu);
+    let expected = 0x96 & sp_before;
+    let s = cpu.snapshot();
+    assert_eq!(s.a, expected);
+    assert_eq!(s.x, expected);
+    assert_eq!(s.sp, expected);
+    assert_eq!(cpu.flag(Flag::Negative), expected & 0x80 != 0);
+    assert_eq!(cpu.flag(Flag::Zero), expected == 0);
+    assert_eq!(cpu.last_read_addr, Some(0xAB35));
+}
+
+#[test]
+fn nop_absolute_reads_its_operand() {
+    // NOP $2002 (0x0C): hardware reads the operand on the final cycle;
+    // reads of $2002 clear the vblank flag on real hardware.
+    let mut mcu = TestMcu::default();
+    mcu.mem[0x0000] = 0x0C;
+    mcu.mem[0x0001] = 0x02;
+    mcu.mem[0x0002] = 0x20;
+
+    let mut cpu = create_cpu_with_mcu(mcu);
+    cpu.set_pc(0x0000);
+    execute_next(&mut cpu);
+
+    assert_eq!(*cpu.mcu().reads.last().unwrap(), 0x2002);
+}
+
+#[test]
+fn nop_zero_page_x_reads_base_then_effective() {
+    // NOP $40,X (0x14), X=3: hardware reads the base address on the index
+    // cycle, then the effective address $43.
+    let mut mcu = TestMcu::default();
+    mcu.mem[0x0000] = 0xA2; // LDX #$03
+    mcu.mem[0x0001] = 0x03;
+    mcu.mem[0x0002] = 0x14; // NOP $40,X
+    mcu.mem[0x0003] = 0x40;
+
+    let mut cpu = create_cpu_with_mcu(mcu);
+    cpu.set_pc(0x0000);
+    execute_next(&mut cpu);
+    execute_next(&mut cpu);
+
+    let reads = &cpu.mcu().reads;
+    let n = reads.len();
+    assert_eq!(&reads[n - 2..], &[0x40, 0x43]);
+}
 // ---- GOLDEN_BUS_CYCLE (ADR-0007) ----------------------------------------
 //
 // Stub-state shorthand (see `classification_cpu`): BC_PC = instruction-stream
@@ -4546,16 +4606,34 @@ fn las_cross_refetch_reads_the_latch() {
 // with the no-carry low increment (0x5600), BC_STK = stack pop at 0x01FE,
 // BC_V_* = fixed vector reads, BC_W = write, BC_I = internal.
 //
-// Known per-variant limitation (ADR-0007): `Nop` classifies as BC_PC, which
-// is exact for implied ops, stack ops, branch add cycles and the RESET dead
-// cycles — but the NOP-addr modes (0x04/0x0C/0x14/...) end in a final dummy
-// read of the effective address on hardware; a per-variant classifier cannot
-// see sequence context and repeats PC there.
+// Sequence-context note (ADR-0007): the NOP-addr modes (0x04/0x0C/0x14/…)
+// were restructured to end in `LoadIntoAlu` so the classifier's Read(Latch)
+// matches exec. `Nop` itself classifies as BC_PC and is exact for implied
+// ops, stack ops, branch add cycles and the RESET dead cycles; stage-2
+// unification makes exec drive those cycles too.
+
+#[test]
+fn taken_branch_page_cross_fixup_reads_fault_address() {
+    // Taken branch crossing a page: cycle 4 of the instruction drives
+    // (old PCH | new PBL) on the bus while the high byte is fixed.
+    let mut mcu = TestMcu::default();
+    mcu.mem[0x80FC] = 0xD0; // BNE +4
+    mcu.mem[0x80FD] = 0x04;
+
+    let mut cpu = create_cpu_with_mcu(mcu);
+    cpu.set_pc(0x80FC);
+    cpu.set_flag(Flag::Zero, false);
+    execute_next(&mut cpu);
+    assert_eq!(cpu.pc(), 0x8102);
+    assert!(cpu.mcu().reads.contains(&0x8002));
+}
 
 const BC_PC: BusCycle = BusCycle::Read(ReadAddress::ProgramCounter);
 const BC_AB: BusCycle = BusCycle::Read(ReadAddress::Latch(0x56FF));
 const BC_AB_INC: BusCycle = BusCycle::Read(ReadAddress::Latch(0x5600));
 const BC_STK: BusCycle = BusCycle::Read(ReadAddress::Stack(0x01FE));
+/// RTS/RTI/PLP pre-increment cycle: $0100 | SP with the stub's SP = $FD.
+const BC_STK_DUMMY: BusCycle = BusCycle::Read(ReadAddress::Stack(0x01FD));
 const BC_V_NL: BusCycle = BusCycle::Read(ReadAddress::Fixed(0xFFFA));
 const BC_V_NH: BusCycle = BusCycle::Read(ReadAddress::Fixed(0xFFFB));
 const BC_V_RL: BusCycle = BusCycle::Read(ReadAddress::Fixed(0xFFFC));
@@ -4570,7 +4648,7 @@ const GOLDEN_BUS_CYCLE: [&[BusCycle]; 256] = [
     &[BC_PC, BC_AB, BC_AB, BC_AB_INC, BC_AB],     // 0x01
     &[BC_I],                                      // 0x02
     &[BC_PC, BC_AB, BC_AB, BC_AB_INC, BC_AB, BC_W, BC_W], // 0x03
-    &[BC_PC, BC_PC],                              // 0x04
+    &[BC_PC, BC_AB],                              // 0x04
     &[BC_PC, BC_AB],                              // 0x05
     &[BC_PC, BC_AB, BC_W, BC_W],                  // 0x06
     &[BC_PC, BC_AB, BC_W, BC_W],                  // 0x07
@@ -4578,7 +4656,7 @@ const GOLDEN_BUS_CYCLE: [&[BusCycle]; 256] = [
     &[BC_PC],                                     // 0x09
     &[BC_I],                                      // 0x0A
     &[BC_PC],                                     // 0x0B
-    &[BC_PC, BC_PC, BC_PC],                       // 0x0C
+    &[BC_PC, BC_PC, BC_AB],                       // 0x0C
     &[BC_PC, BC_PC, BC_AB],                       // 0x0D
     &[BC_PC, BC_PC, BC_AB, BC_W, BC_W],           // 0x0E
     &[BC_PC, BC_PC, BC_AB, BC_W, BC_W],           // 0x0F
@@ -4586,7 +4664,7 @@ const GOLDEN_BUS_CYCLE: [&[BusCycle]; 256] = [
     &[BC_PC, BC_AB, BC_AB_INC, BC_AB],            // 0x11
     &[BC_I],                                      // 0x12
     &[BC_PC, BC_AB, BC_AB_INC, BC_AB, BC_AB, BC_W, BC_W], // 0x13
-    &[BC_PC, BC_AB, BC_PC],                       // 0x14
+    &[BC_PC, BC_AB, BC_AB],                       // 0x14
     &[BC_PC, BC_AB, BC_AB],                       // 0x15
     &[BC_PC, BC_AB, BC_AB, BC_W, BC_W],           // 0x16
     &[BC_PC, BC_AB, BC_AB, BC_W, BC_W],           // 0x17
@@ -4606,7 +4684,7 @@ const GOLDEN_BUS_CYCLE: [&[BusCycle]; 256] = [
     &[BC_PC, BC_AB],                              // 0x25
     &[BC_PC, BC_AB, BC_W, BC_W],                  // 0x26
     &[BC_PC, BC_AB, BC_W, BC_W],                  // 0x27
-    &[BC_PC, BC_PC, BC_STK],                      // 0x28
+    &[BC_PC, BC_STK_DUMMY, BC_STK],               // 0x28
     &[BC_PC],                                     // 0x29
     &[BC_I],                                      // 0x2A
     &[BC_PC],                                     // 0x2B
@@ -4618,7 +4696,7 @@ const GOLDEN_BUS_CYCLE: [&[BusCycle]; 256] = [
     &[BC_PC, BC_AB, BC_AB_INC, BC_AB],            // 0x31
     &[BC_I],                                      // 0x32
     &[BC_PC, BC_AB, BC_AB_INC, BC_AB, BC_AB, BC_W, BC_W], // 0x33
-    &[BC_PC, BC_AB, BC_PC],                       // 0x34
+    &[BC_PC, BC_AB, BC_AB],                       // 0x34
     &[BC_PC, BC_AB, BC_AB],                       // 0x35
     &[BC_PC, BC_AB, BC_AB, BC_W, BC_W],           // 0x36
     &[BC_PC, BC_AB, BC_AB, BC_W, BC_W],           // 0x37
@@ -4630,11 +4708,11 @@ const GOLDEN_BUS_CYCLE: [&[BusCycle]; 256] = [
     &[BC_PC, BC_PC, BC_AB],                       // 0x3D
     &[BC_PC, BC_PC, BC_AB, BC_AB, BC_W, BC_W],    // 0x3E
     &[BC_PC, BC_PC, BC_AB, BC_AB, BC_W, BC_W],    // 0x3F
-    &[BC_PC, BC_PC, BC_STK, BC_STK, BC_STK],      // 0x40
+    &[BC_PC, BC_STK_DUMMY, BC_STK, BC_STK, BC_STK], // 0x40
     &[BC_PC, BC_AB, BC_AB, BC_AB_INC, BC_AB],     // 0x41
     &[BC_I],                                      // 0x42
     &[BC_PC, BC_AB, BC_AB, BC_AB_INC, BC_AB, BC_W, BC_W], // 0x43
-    &[BC_PC, BC_PC],                              // 0x44
+    &[BC_PC, BC_AB],                              // 0x44
     &[BC_PC, BC_AB],                              // 0x45
     &[BC_PC, BC_AB, BC_W, BC_W],                  // 0x46
     &[BC_PC, BC_AB, BC_W, BC_W],                  // 0x47
@@ -4650,7 +4728,7 @@ const GOLDEN_BUS_CYCLE: [&[BusCycle]; 256] = [
     &[BC_PC, BC_AB, BC_AB_INC, BC_AB],            // 0x51
     &[BC_I],                                      // 0x52
     &[BC_PC, BC_AB, BC_AB_INC, BC_AB, BC_AB, BC_W, BC_W], // 0x53
-    &[BC_PC, BC_AB, BC_PC],                       // 0x54
+    &[BC_PC, BC_AB, BC_AB],                       // 0x54
     &[BC_PC, BC_AB, BC_AB],                       // 0x55
     &[BC_PC, BC_AB, BC_AB, BC_W, BC_W],           // 0x56
     &[BC_PC, BC_AB, BC_AB, BC_W, BC_W],           // 0x57
@@ -4662,11 +4740,11 @@ const GOLDEN_BUS_CYCLE: [&[BusCycle]; 256] = [
     &[BC_PC, BC_PC, BC_AB],                       // 0x5D
     &[BC_PC, BC_PC, BC_AB, BC_AB, BC_W, BC_W],    // 0x5E
     &[BC_PC, BC_PC, BC_AB, BC_AB, BC_W, BC_W],    // 0x5F
-    &[BC_PC, BC_PC, BC_STK, BC_STK, BC_I],        // 0x60
+    &[BC_PC, BC_STK_DUMMY, BC_STK, BC_STK, BC_I], // 0x60
     &[BC_PC, BC_AB, BC_AB, BC_AB_INC, BC_AB],     // 0x61
     &[BC_I],                                      // 0x62
     &[BC_PC, BC_AB, BC_AB, BC_AB_INC, BC_AB, BC_W, BC_W], // 0x63
-    &[BC_PC, BC_PC],                              // 0x64
+    &[BC_PC, BC_AB],                              // 0x64
     &[BC_PC, BC_AB],                              // 0x65
     &[BC_PC, BC_AB, BC_W, BC_W],                  // 0x66
     &[BC_PC, BC_AB, BC_W, BC_W],                  // 0x67
@@ -4682,7 +4760,7 @@ const GOLDEN_BUS_CYCLE: [&[BusCycle]; 256] = [
     &[BC_PC, BC_AB, BC_AB_INC, BC_AB],            // 0x71
     &[BC_I],                                      // 0x72
     &[BC_PC, BC_AB, BC_AB_INC, BC_AB, BC_AB, BC_W, BC_W], // 0x73
-    &[BC_PC, BC_AB, BC_PC],                       // 0x74
+    &[BC_PC, BC_AB, BC_AB],                       // 0x74
     &[BC_PC, BC_AB, BC_AB],                       // 0x75
     &[BC_PC, BC_AB, BC_AB, BC_W, BC_W],           // 0x76
     &[BC_PC, BC_AB, BC_AB, BC_W, BC_W],           // 0x77
@@ -4778,7 +4856,7 @@ const GOLDEN_BUS_CYCLE: [&[BusCycle]; 256] = [
     &[BC_PC, BC_AB, BC_AB_INC, BC_AB],            // 0xD1
     &[BC_I],                                      // 0xD2
     &[BC_PC, BC_AB, BC_AB_INC, BC_AB, BC_AB, BC_W, BC_W], // 0xD3
-    &[BC_PC, BC_AB, BC_PC],                       // 0xD4
+    &[BC_PC, BC_AB, BC_AB],                       // 0xD4
     &[BC_PC, BC_AB, BC_AB],                       // 0xD5
     &[BC_PC, BC_AB, BC_AB, BC_W, BC_W],           // 0xD6
     &[BC_PC, BC_AB, BC_AB, BC_W, BC_W],           // 0xD7
@@ -4810,7 +4888,7 @@ const GOLDEN_BUS_CYCLE: [&[BusCycle]; 256] = [
     &[BC_PC, BC_AB, BC_AB_INC, BC_AB],            // 0xF1
     &[BC_I],                                      // 0xF2
     &[BC_PC, BC_AB, BC_AB_INC, BC_AB, BC_AB, BC_W, BC_W], // 0xF3
-    &[BC_PC, BC_AB, BC_PC],                       // 0xF4
+    &[BC_PC, BC_AB, BC_AB],                       // 0xF4
     &[BC_PC, BC_AB, BC_AB],                       // 0xF5
     &[BC_PC, BC_AB, BC_AB, BC_W, BC_W],           // 0xF6
     &[BC_PC, BC_AB, BC_AB, BC_W, BC_W],           // 0xF7

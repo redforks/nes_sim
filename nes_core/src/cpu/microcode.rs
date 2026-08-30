@@ -551,7 +551,7 @@ pub(crate) const fn build_opcode_table() -> [ArrayVec<[Microcode; 7]>; 256] {
     r[PHA as usize] = microcode_arr!(Nop, PushStack(PushTarget::A));
     r[PLA as usize] = microcode_arr!(Nop, PopStack, UpdateAFromAlu);
     r[PHP as usize] = microcode_arr!(Nop, PushStatus { break_flag: true });
-    r[PLP as usize] = microcode_arr!(Nop, Nop, Plp);
+    r[PLP as usize] = microcode_arr!(Nop, DummyStackRead, Plp);
     r[JMP_ABSOLUTE as usize] = microcode_arr!(AbsoluteL, LoadPcAbsoluteH);
     r[JMP_INDIRECT as usize] = microcode_arr!(AbsoluteL, AbsoluteH, IndexedL, IndexedHAndJump);
     r[JSR as usize] = microcode_arr!(
@@ -561,8 +561,8 @@ pub(crate) const fn build_opcode_table() -> [ArrayVec<[Microcode; 7]>; 256] {
         PushStack(PushTarget::Pcl),
         LoadPcAbsoluteH
     );
-    r[RTS as usize] = microcode_arr!(SkipImmediate, Nop, PopPcL, PopPcH, IncPc);
-    r[RTI as usize] = microcode_arr!(SkipImmediate, Nop, Plp, PopPcL, PopPcH);
+    r[RTS as usize] = microcode_arr!(SkipImmediate, DummyStackRead, PopPcL, PopPcH, IncPc);
+    r[RTI as usize] = microcode_arr!(SkipImmediate, DummyStackRead, Plp, PopPcL, PopPcH);
     r[CLC as usize] = microcode_arr!(ClearFlag(Carry));
     r[SEC as usize] = microcode_arr!(SetFlag(Carry));
     r[CLD as usize] = microcode_arr!(ClearFlag(Decimal));
@@ -582,16 +582,25 @@ pub(crate) const fn build_opcode_table() -> [ArrayVec<[Microcode; 7]>; 256] {
     r[NOP_IMMEDIATE3 as usize] = microcode_arr!(SkipImmediate);
     r[NOP_IMMEDIATE4 as usize] = microcode_arr!(SkipImmediate);
     r[NOP_IMMEDIATE5 as usize] = microcode_arr!(SkipImmediate);
-    r[NOP_ZERO_PAGE1 as usize] = microcode_arr!(SkipImmediate, Nop);
-    r[NOP_ZERO_PAGE2 as usize] = microcode_arr!(SkipImmediate, Nop);
-    r[NOP_ZERO_PAGE3 as usize] = microcode_arr!(SkipImmediate, Nop);
-    r[NOP_ZERO_PAGE_X1 as usize] = zero_page_x_op(Nop);
-    r[NOP_ZERO_PAGE_X2 as usize] = zero_page_x_op(Nop);
-    r[NOP_ZERO_PAGE_X3 as usize] = zero_page_x_op(Nop);
-    r[NOP_ZERO_PAGE_X4 as usize] = zero_page_x_op(Nop);
-    r[NOP_ZERO_PAGE_X5 as usize] = zero_page_x_op(Nop);
-    r[NOP_ZERO_PAGE_X6 as usize] = zero_page_x_op(Nop);
-    r[NOP_ABSOLUTE as usize] = absolute_op(Nop);
+    r[NOP_ZERO_PAGE1 as usize] = microcode_arr!(
+        Microcode::ZeroPage,
+        Microcode::LoadIntoAlu(ValueSource::ZeroPage)
+    );
+    r[NOP_ZERO_PAGE2 as usize] = microcode_arr!(
+        Microcode::ZeroPage,
+        Microcode::LoadIntoAlu(ValueSource::ZeroPage)
+    );
+    r[NOP_ZERO_PAGE3 as usize] = microcode_arr!(
+        Microcode::ZeroPage,
+        Microcode::LoadIntoAlu(ValueSource::ZeroPage)
+    );
+    r[NOP_ZERO_PAGE_X1 as usize] = zero_page_x_op(Microcode::LoadIntoAlu(ValueSource::ZeroPage));
+    r[NOP_ZERO_PAGE_X2 as usize] = zero_page_x_op(Microcode::LoadIntoAlu(ValueSource::ZeroPage));
+    r[NOP_ZERO_PAGE_X3 as usize] = zero_page_x_op(Microcode::LoadIntoAlu(ValueSource::ZeroPage));
+    r[NOP_ZERO_PAGE_X4 as usize] = zero_page_x_op(Microcode::LoadIntoAlu(ValueSource::ZeroPage));
+    r[NOP_ZERO_PAGE_X5 as usize] = zero_page_x_op(Microcode::LoadIntoAlu(ValueSource::ZeroPage));
+    r[NOP_ZERO_PAGE_X6 as usize] = zero_page_x_op(Microcode::LoadIntoAlu(ValueSource::ZeroPage));
+    r[NOP_ABSOLUTE as usize] = absolute_op(Microcode::LoadIntoAlu(ValueSource::Mem));
     r[NOP_ABSOLUTE_INDEXED_X1 as usize] =
         absolute_indexed_x_op(OpAfterAddressing::Nop, CrossPageBehavior::FirstClock);
     r[NOP_ABSOLUTE_INDEXED_X2 as usize] =
@@ -914,6 +923,9 @@ impl OpAfterAddressing {
             OpAfterAddressing::Adc => Microcode::Adc(ValueSource::Mem),
             OpAfterAddressing::Shx => Microcode::Shx,
             OpAfterAddressing::Shy => Microcode::Shy,
+            // Unofficial NOP abs,X: the with-op cycle reads and discards,
+            // exactly like every other read op on this path.
+            OpAfterAddressing::Nop => Microcode::LoadIntoAlu(ValueSource::Mem),
             OpAfterAddressing::Sha => Microcode::Sha,
             OpAfterAddressing::Tas => Microcode::Tas,
             OpAfterAddressing::Nop => Microcode::Nop,
@@ -1027,8 +1039,16 @@ pub enum Microcode {
         /// if cross paged, push this Microcode with `first_clock` to be false
         first_clock: CrossPageBehavior,
     },
-    /// Do nothing, used in "oops" cycles of AbsoluteIndexed and Indirect Indexed addressing
+    /// Dummy fetch at PC ("read next instruction byte and throw it away"):
+    /// implied ops, stack-op padding, JSR cycle 3, the first taken-branch
+    /// fixup cycle, and the interrupt/RESET dead cycles.
     Nop,
+    /// Taken-branch page-cross fixup cycle: hardware re-reads the
+    /// (old PCH | new PBL) address while fixing the high byte.
+    DummyReadAt(u16),
+    /// Stack-page dummy read at $0100 | SP (the RTS/RTI/PLP pre-increment
+    /// cycle): hardware reads and discards without changing SP.
+    DummyStackRead,
     SkipDetectInterrupt,
     /// Load low byte of address from zero page indirect location
     IndexedL,
@@ -1537,9 +1557,14 @@ impl Microcode {
                 cpu.ab.set(addr as u16);
             }
             Self::ZeroPageIndexedX => {
+                // Hardware adds the index on this cycle while re-reading the
+                // base address on the bus (dummy read). Zero page is RAM
+                // only, so the read is side-effect-free by construction.
+                let _ = cpu.mcu.read_zero_page(cpu.ab.low());
                 cpu.ab.set(cpu.abl().wrapping_add(cpu.x) as u16);
             }
             Self::ZeroPageIndexedY => {
+                let _ = cpu.mcu.read_zero_page(cpu.ab.low());
                 cpu.ab.set(cpu.abl().wrapping_add(cpu.y) as u16);
             }
             Self::AbsoluteL => {
@@ -1584,7 +1609,6 @@ impl Microcode {
                 <ZeroPage as ValueTargetTrait>::write(cpu, cpu.alu)
             }
             Self::StoreAlu(ValueSource::Mem) => cpu.write_byte(cpu.alu),
-            Self::Nop => {}
             Self::SkipImmediate => {
                 cpu.inc_read_byte();
             }
@@ -1592,7 +1616,13 @@ impl Microcode {
                 cpu.db = cpu.read_byte(cpu.ab.get());
             }
             Self::IndexedH => cpu.indexed_h(),
-
+            Self::Nop => cpu.read_pc_byte(),
+            Self::DummyReadAt(addr) => {
+                cpu.read_byte(addr);
+            }
+            Self::DummyStackRead => {
+                let _ = cpu.mcu.read_stack_page(cpu.sp);
+            }
             Self::Asl(target) => Self::shift_rotate(cpu, target, ShiftRotateOp::Asl),
             Self::Lsr(target) => Self::shift_rotate(cpu, target, ShiftRotateOp::Lsr),
             Self::Rol(target) => Self::shift_rotate(cpu, target, ShiftRotateOp::Rol),
@@ -1628,8 +1658,12 @@ impl Microcode {
                 cpu.set_register(Register::X, t);
             }
             Self::Las => {
-                // LAS/LAR: load memory into ALU already (addressing microcode sets cpu.alu)
-                // Then perform: M AND SP -> A, X, SP
+                // LAS/LAR: M AND SP -> A, X, SP. The operand read happens
+                // here on both paths — the with-op cycle execs Las directly
+                // (non-page-cross) or as the page-crossed refetch at the
+                // (already index-adjusted) latch — closing the former exec
+                // defect where register math ran on a stale ALU.
+                cpu.load_alu();
                 let v = cpu.alu & cpu.sp;
                 cpu.set_register(Register::A, v);
                 cpu.set_register(Register::X, v);
@@ -1749,11 +1783,16 @@ impl Microcode {
         let offset = cpu.inc_read_byte();
         cpu.request_detect_interrupt = Some(true);
         if branch_test_result {
-            let pch = cpu.pch();
+            let old_pch = cpu.pch();
             cpu.pc.wrapping_add((offset as i8) as u16);
-            if pch != cpu.pch() {
+            if old_pch != cpu.pch() {
+                // Taken with page cross: cycle 3 re-reads PC (already final
+                // in this model), cycle 4 drives the page-fault emulation
+                // address (old PCH | new PBL) while PCH is fixed.
                 cpu.retain_cycle();
-                cpu.retain_cycle();
+                cpu.push_microcode(Microcode::DummyReadAt(
+                    ((old_pch as u16) << 8) | cpu.pc.low() as u16,
+                ));
             } else {
                 cpu.push_microcode(Microcode::SkipDetectInterrupt);
             }

@@ -502,11 +502,10 @@ impl<M: Mcu> Cpu<M> {
     }
 
     /// The bus cycle this Microcode would drive as the pending cycle,
-    /// resolved against current CPU state. Its contract is the cycle
-    /// *hardware* would drive — which may be richer than what `exec`
-    /// touches: `Nop` repeats a PC fetch (the implied-op dummy read) and
-    /// the zero-page index-add cycle repeats the unindexed read, though
-    /// exec performs neither.
+    /// resolved against current CPU state. Exec drives every classified
+    /// cycle: `Nop` repeats a PC fetch (the implied-op dummy read), the
+    /// zero-page index-add cycle repeats the unindexed read, and the
+    /// stack/branch dummy reads drive their hardware addresses.
     pub(crate) fn bus_cycle(&self, mc: Microcode) -> BusCycle {
         match mc {
             // Instruction-stream fetches (opcode, operands, branch offsets,
@@ -531,11 +530,18 @@ impl<M: Mcu> Cpu<M> {
             Microcode::LoadR(ValueSource::Immediate, _) => {
                 BusCycle::Read(ReadAddress::ProgramCounter)
             }
-            // Zero-page index add: hardware reads the unindexed address
-            // while adding the index; exec skips that read.
+            // Hardware adds the index while re-reading the base address on
+            // the bus; exec performs that dummy read (zero page is RAM only,
+            // so it is side-effect-free).
             Microcode::ZeroPageIndexedX | Microcode::ZeroPageIndexedY => {
                 BusCycle::Read(ReadAddress::Latch(self.ab.get()))
             }
+            // Taken-branch page-cross fixup: the address was computed when
+            // the cycle was queued.
+            Microcode::DummyReadAt(addr) => BusCycle::Read(ReadAddress::Latch(addr)),
+            // RTS/RTI/PLP pre-increment cycle: hardware reads $0100 | SP
+            // and increments SP without pulling a value.
+            Microcode::DummyStackRead => BusCycle::Read(ReadAddress::Stack(0x100 | self.sp as u16)),
             // (ind) high byte: low-byte increment without page carry.
             Microcode::IndexedH | Microcode::IndexedHAndJump => {
                 let ab = self.ab.get();
@@ -564,8 +570,7 @@ impl<M: Mcu> Cpu<M> {
             // Reads through the address latch. Standalone `Las` is queued
             // only as the page-crossed LAS abs,y refetch cycle: hardware
             // drives the operand read at the (already index-adjusted) latch
-            // there, even though exec performs register math on the stale
-            // ALU (pre-existing exec defect — see the golden's LAS row).
+            // there, and exec performs it via `load_alu`.
             Microcode::LoadR(ValueSource::ZeroPage, _)
             | Microcode::LoadR(ValueSource::Mem, _)
             | Microcode::LoadIntoAlu(_)
