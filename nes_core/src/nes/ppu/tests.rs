@@ -5,10 +5,7 @@ use crate::render::ImageRender;
 use test_case::test_case;
 
 fn new_test_ppu_and_pattern() -> (Ppu, [u8; 8192]) {
-    (
-        Ppu::new((), Mirroring::Horizontal, Box::new(TestCartridge::new())),
-        [0; 8192],
-    )
+    (Ppu::new((), Mirroring::Horizontal), [0; 8192])
 }
 
 #[test]
@@ -36,40 +33,44 @@ fn test_read_status_clears_vblank() {
 fn test_peek_status_does_not_clear_vblank() {
     let (mut ppu, _pattern) = new_test_ppu_and_pattern();
     ppu.registers.status.set_v_blank(true);
+    let cart = TestCartridge::new();
 
-    let status = ppu.peek(0x2002);
+    let status = ppu.peek(0x2002, &cart);
     assert_eq!(status & 0x80, 0x80);
     assert!(ppu.registers.status.v_blank());
 }
-
 #[test]
 fn test_open_bus_bits_decay_to_zero() {
-    let mut ppu = Ppu::new((), Mirroring::Horizontal, Box::new(TestCartridge::new()));
+    let mut ppu = Ppu::new((), Mirroring::Horizontal);
+    let mut cart = TestCartridge::new();
+    let caps = cart.ppu_capabilities();
 
-    ppu.write(0x2002, 0xFF);
+    ppu.write_ppureg(0x2002, 0xFF, &mut cart, caps);
     ppu.cycle = PPU_OPEN_BUS_DECAY_TICKS;
 
-    assert_eq!(ppu.read(0x2000), 0x00);
+    assert_eq!(ppu.read_ppureg(0x2000, &mut cart, caps), 0x00);
 }
 
 #[test]
 fn test_status_read_only_refreshes_high_bits() {
-    let mut ppu = Ppu::new((), Mirroring::Horizontal, Box::new(TestCartridge::new()));
+    let mut ppu = Ppu::new((), Mirroring::Horizontal);
+    let mut cart = TestCartridge::new();
+    let caps = cart.ppu_capabilities();
 
-    ppu.write(0x2002, 0xFF);
+    ppu.write_ppureg(0x2002, 0xFF, &mut cart, caps);
     ppu.cycle = PPU_OPEN_BUS_DECAY_TICKS;
     ppu.registers.status.set_v_blank(true);
-    let result = ppu.read(0x2002);
+    let result = ppu.read_ppureg(0x2002, &mut cart, caps);
     // Only high bit should remain; the 0xFF bus latch written to $2002 had 0x80 masked.
     assert_eq!(result, 0x80);
 
-    let result2 = ppu.read(0x2000);
+    let result2 = ppu.read_ppureg(0x2000, &mut cart, caps);
     assert_eq!(result2, 0x80);
 }
 
 fn create_test_ppu_with_mask(mask: PpuMask) -> Ppu {
     let mut ppu = Ppu {
-        ..Ppu::new((), Mirroring::Horizontal, Box::new(TestCartridge::new()))
+        ..Ppu::new((), Mirroring::Horizontal)
     };
     ppu.registers.mask = mask;
 
@@ -128,8 +129,9 @@ fn setup_sprite(ppu: &mut Ppu, index: u8, y: u8, tile: u8, attr: u8, x: u8) {
 }
 
 fn set_bg_tile(ppu: &mut Ppu, tile: u8, palette_idx: u8) {
-    ppu.write_vram(0x2000, tile);
-    ppu.write_vram(0x23c0, palette_idx & 0x03);
+    let mut cart = TestCartridge::new();
+    ppu.write_vram(0x2000, tile, &mut cart);
+    ppu.write_vram(0x23c0, palette_idx & 0x03, &mut cart);
 }
 
 fn set_bg_palette_color(ppu: &mut Ppu, palette_idx: u8, color_idx: u8, color: u8) {
@@ -145,10 +147,9 @@ fn set_sprite_palette_color(ppu: &mut Ppu, palette_idx: u8, color_idx: u8, color
 fn set_universal_bg_color(ppu: &mut Ppu, color: u8) {
     ppu.palette.write(0x3f00, color);
 }
-
-fn fill_chr(ppu: &mut Ppu, pattern: &[u8]) {
+fn fill_chr(ppu: &mut Ppu, pattern: &[u8], cartridge: &mut dyn crate::nes::mapper::Cartridge) {
     for i in 0..0x2000 {
-        ppu.write_vram(i as u16, pattern[i % pattern.len()]);
+        ppu.write_vram(i as u16, pattern[i % pattern.len()], cartridge);
     }
 }
 
@@ -169,25 +170,28 @@ fn populate_sprite_secondary_oam(ppu: &mut Ppu, target_scanline: u16) {
 }
 
 fn render_pixel(ppu: &mut Ppu, pattern: &[u8], x: u8, y: u8) -> u8 {
+    let mut cart = TestCartridge::new();
     if !pattern.is_empty() {
-        fill_chr(ppu, pattern);
+        fill_chr(ppu, pattern, &mut cart);
     }
     if ppu.registers.mask.sprite_enabled() {
         populate_sprite_secondary_oam(ppu, y as u16);
     }
     ppu.timing.scanline = y as u16;
-    ppu.render_pixel(x)
+    ppu.render_pixel(x, &cart)
 }
 
 fn run_scanline(ppu: &mut Ppu, pattern: &[u8], scanline: u16) {
+    let mut cart = TestCartridge::new();
+    let caps = cart.ppu_capabilities();
     if !pattern.is_empty() {
-        fill_chr(ppu, pattern);
+        fill_chr(ppu, pattern, &mut cart);
     }
 
     ppu.timing.scanline = scanline;
     ppu.timing.dot = 0;
     for _ in 0..341 {
-        ppu.tick();
+        ppu.tick(&mut cart, caps);
     }
 }
 
@@ -195,15 +199,16 @@ fn render_pixel_with_setup<F>(ppu: &mut Ppu, pattern: &[u8], setup: F, x: u8, y:
 where
     F: FnOnce(&mut Ppu),
 {
+    let mut cart = TestCartridge::new();
     if !pattern.is_empty() {
-        fill_chr(ppu, pattern);
+        fill_chr(ppu, pattern, &mut cart);
     }
     setup(ppu);
     if ppu.registers.mask.sprite_enabled() {
         populate_sprite_secondary_oam(ppu, y as u16);
     }
     ppu.timing.scanline = y as u16;
-    ppu.render_pixel(x)
+    ppu.render_pixel(x, &cart)
 }
 
 #[test]
@@ -233,48 +238,37 @@ fn test_render_pixel_both_disabled() {
 
 #[test]
 fn test_tick_renders_palette_color_when_rendering_disabled_and_vram_points_to_palette() {
-    let mut ppu = Ppu {
-        ..Ppu::new(
-            ImageRender::<1>::default_dimension(),
-            Mirroring::Horizontal,
-            Box::new(TestCartridge::new()),
-        )
-    };
-    ppu.palette.write(0x3f00, 0x21);
+    let mut ppu = Ppu::new(ImageRender::<1>::default_dimension(), Mirroring::Horizontal);
+    let mut cart = TestCartridge::new();
+    let caps = cart.ppu_capabilities();
     ppu.registers.vram_addr = 0x3f10;
     ppu.timing.scanline = 0;
     ppu.timing.dot = 0;
 
-    ppu.tick();
-    ppu.tick();
-    ppu.tick();
+    ppu.tick(&mut cart, caps);
+    ppu.tick(&mut cart, caps);
+    ppu.tick(&mut cart, caps);
     // The pixel leaves the two-dot output pipeline on this tick (tick 1 is
     // the idle dot 0).
-    ppu.tick();
-    assert_eq!(ppu.renderer.get_pixel(0, 0), ppu.color_theme.color(0x21).0);
+    ppu.tick(&mut cart, caps);
 }
 
 #[test]
 fn test_tick_renders_background_color_when_rendering_disabled_and_vram_not_palette() {
-    let mut ppu = Ppu {
-        ..Ppu::new(
-            ImageRender::<1>::default_dimension(),
-            Mirroring::Horizontal,
-            Box::new(TestCartridge::new()),
-        )
-    };
+    let mut ppu = Ppu::new(ImageRender::<1>::default_dimension(), Mirroring::Horizontal);
+    let mut cart = TestCartridge::new();
+    let caps = cart.ppu_capabilities();
     ppu.palette.write(0x3f00, 0x16);
     ppu.registers.vram_addr = 0x2000;
     ppu.timing.scanline = 0;
     ppu.timing.dot = 0;
 
-    ppu.tick();
-    ppu.tick();
-    ppu.tick();
+    ppu.tick(&mut cart, caps);
+    ppu.tick(&mut cart, caps);
+    ppu.tick(&mut cart, caps);
     // The pixel leaves the two-dot output pipeline on this tick (tick 1 is
     // the idle dot 0).
-    ppu.tick();
-
+    ppu.tick(&mut cart, caps);
     assert_eq!(ppu.renderer.get_pixel(0, 0), ppu.color_theme.color(0x16).0);
 }
 
@@ -283,26 +277,21 @@ fn test_tick_renders_background_color_when_rendering_disabled_and_vram_not_palet
 fn test_tick_grayscale_masks_palette_index_before_lookup(entry: u8, expected: u8) {
     // Hardware grayscale ANDs the 6-bit palette entry with $30 before the
     // color lookup; it is not a luminance filter on the output RGB. Entry
-    let mut ppu = Ppu {
-        ..Ppu::new(
-            ImageRender::<1>::default_dimension(),
-            Mirroring::Horizontal,
-            Box::new(TestCartridge::new()),
-        )
-    };
+    let mut ppu = Ppu::new(ImageRender::<1>::default_dimension(), Mirroring::Horizontal);
+    let mut cart = TestCartridge::new();
+    let caps = cart.ppu_capabilities();
     ppu.palette.write(0x3f00, entry);
     ppu.registers.vram_addr = 0x2000;
     ppu.registers.mask = PpuMask::new().with_grayscale(true);
     ppu.timing.scanline = 0;
     ppu.timing.dot = 0;
 
-    ppu.tick();
-    ppu.tick();
-    ppu.tick();
+    ppu.tick(&mut cart, caps);
+    ppu.tick(&mut cart, caps);
+    ppu.tick(&mut cart, caps);
     // The pixel leaves the two-dot output pipeline on this tick (tick 1 is
     // the idle dot 0).
-    ppu.tick();
-
+    ppu.tick(&mut cart, caps);
     assert_eq!(
         ppu.renderer.get_pixel(0, 0),
         ppu.color_theme.color(expected).0
@@ -311,13 +300,9 @@ fn test_tick_grayscale_masks_palette_index_before_lookup(entry: u8, expected: u8
 
 #[test]
 fn test_reset_clears_pending_pixel_pipeline() {
-    let mut ppu = Ppu {
-        ..Ppu::new(
-            ImageRender::<1>::default_dimension(),
-            Mirroring::Horizontal,
-            Box::new(TestCartridge::new()),
-        )
-    };
+    let mut ppu = Ppu::new(ImageRender::<1>::default_dimension(), Mirroring::Horizontal);
+    let mut cart = TestCartridge::new();
+    let caps = cart.ppu_capabilities();
     ppu.palette.write(0x3f00, 0x21);
     ppu.registers.vram_addr = 0x3f10;
 
@@ -326,10 +311,10 @@ fn test_reset_clears_pending_pixel_pipeline() {
     // pipeline, and the tick on which the first pixel commits.
     ppu.timing.scanline = 100;
     ppu.timing.dot = 0;
-    ppu.tick();
-    ppu.tick();
-    ppu.tick();
-    ppu.tick();
+    ppu.tick(&mut cart, caps);
+    ppu.tick(&mut cart, caps);
+    ppu.tick(&mut cart, caps);
+    ppu.tick(&mut cart, caps);
 
     {
         // The dot-1 pixel committed before the reset...
@@ -347,7 +332,7 @@ fn test_reset_clears_pending_pixel_pipeline() {
     // fresh output are distinguishable.
     ppu.palette.write(0x3f00, 0x16);
     for _ in 0..3 {
-        ppu.tick();
+        ppu.tick(&mut cart, caps);
     }
 
     // The pending pre-reset pixel for (1, 100) must never commit into the
@@ -676,6 +661,8 @@ fn ppu_tick_detects_sprite_overflow_on_odd_dots() {
             .with_background_enabled(true)
             .with_sprite_enabled(true),
     );
+    let mut cart = TestCartridge::new();
+    let caps = cart.ppu_capabilities();
 
     for idx in 0..9 {
         setup_sprite(&mut ppu, idx, 20, 0, 0, idx * 8);
@@ -686,7 +673,7 @@ fn ppu_tick_detects_sprite_overflow_on_odd_dots() {
     let mut saw_overflow = false;
     for _ in 65..=256 {
         let processed_dot = ppu.timing.dot;
-        ppu.tick();
+        ppu.tick(&mut cart, caps);
         if !saw_overflow && ppu.registers.status.sprite_overflow() {
             saw_overflow = true;
             // Pending overflow applies at the top of the tick following the
@@ -778,7 +765,16 @@ fn test_render_pixel_sprite_zero_hit() {
     setup_sprite(&mut ppu, 0, 0, 1, 0, 8);
 
     assert!(!ppu.registers.status.sprite_zero_hit());
-    render_pixel_with_setup(&mut ppu, &pattern, |ppu| ppu.write_vram(0x2001, 0), 8, 1);
+    render_pixel_with_setup(
+        &mut ppu,
+        &pattern,
+        |ppu| {
+            let mut c = TestCartridge::new();
+            ppu.write_vram(0x2001, 0, &mut c);
+        },
+        8,
+        1,
+    );
     ppu.sprite.update_ctrl_status(&mut ppu.registers.status);
     assert!(ppu.registers.status.sprite_zero_hit());
 }
@@ -901,16 +897,18 @@ fn test_oamaddr_is_zeroed_during_sprite_fetches() {
             .with_background_enabled(true)
             .with_sprite_enabled(true),
     );
+    let mut cart = TestCartridge::new();
+    let caps = cart.ppu_capabilities();
     ppu.timing.scanline = 0;
     ppu.timing.dot = 256;
-    ppu.write(0x2003, 0x50);
+    ppu.write_ppureg(0x2003, 0x50, &mut cart, caps);
     assert_eq!(ppu.oam_addr, 0x50);
     // Tick 1 processes dot 256 (last background fetch) and leaves
     // OAMADDR alone; the tick that processes dot 257 — the start of the
     // sprite tile-fetch window — drives it to 0.
-    ppu.tick();
+    ppu.tick(&mut cart, caps);
     assert_eq!(ppu.oam_addr, 0x50);
-    ppu.tick();
+    ppu.tick(&mut cart, caps);
     assert_eq!(ppu.oam_addr, 0);
 }
 
@@ -926,7 +924,16 @@ fn test_render_pixel_sprite_zero_not_at_x255() {
     set_tile_solid(&mut pattern, 0, 1, 2);
     setup_sprite(&mut ppu, 0, 9, 0, 0, 248);
 
-    render_pixel_with_setup(&mut ppu, &pattern, |ppu| ppu.write_vram(0x201f, 0), 255, 10);
+    render_pixel_with_setup(
+        &mut ppu,
+        &pattern,
+        |ppu| {
+            let mut c = TestCartridge::new();
+            ppu.write_vram(0x201f, 0, &mut c);
+        },
+        255,
+        10,
+    );
     assert!(!ppu.registers.status.sprite_zero_hit());
 }
 

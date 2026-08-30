@@ -358,6 +358,11 @@ impl Cartridge for Vrc24 {
         self.irq_pending
     }
 
+    fn prg_ram_enabled(&self) -> bool {
+        // VRC2 has no PRG-RAM, VRC4's enable lives in $F002
+        !self.variant.is_vrc4() || self.prg_ram_enabled
+    }
+
     fn ppu_capabilities(&self) -> CartridgeCaps {
         CartridgeCaps {
             on_ppu_tick: true,

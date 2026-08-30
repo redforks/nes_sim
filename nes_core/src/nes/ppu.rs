@@ -6,9 +6,8 @@ mod sprite;
 
 use crate::{
     interrupt::NmiLines,
-    mcu::Mcu,
     nes::{
-        mapper::{Cartridge, CartridgeCaps, CartridgeOperation, Mirroring},
+        mapper::{Cartridge, CartridgeCaps, Mirroring},
         ppu::{palette::ColorTheme, sprite::SpriteManager},
     },
     render::Render,
@@ -154,8 +153,6 @@ pub struct Ppu<R: Render = ()> {
     color_theme: ColorTheme,
     nametable: Nametable,
     renderer: R,
-    cartridge: Box<dyn Cartridge>,
-    cartridge_caps: CartridgeCaps,
 
     timing: Timing,
 
@@ -209,8 +206,7 @@ fn normalize_ppu_addr(addr: u16) -> u16 {
 }
 
 impl<R: Render> Ppu<R> {
-    pub fn new(renderer: R, mirroring: Mirroring, cartridge: Box<dyn Cartridge>) -> Self {
-        let cartridge_caps = cartridge.ppu_capabilities();
+    pub fn new(renderer: R, mirroring: Mirroring) -> Self {
         Ppu {
             registers: Registers::new(),
             palette: Palette::default(),
@@ -219,8 +215,6 @@ impl<R: Render> Ppu<R> {
             color_theme: ColorTheme::default(),
             nametable: Nametable::new(mirroring),
             renderer,
-            cartridge,
-            cartridge_caps,
             timing: Timing::new(),
             background_anchor: None,
             pending_background_activation: None,
@@ -242,6 +236,9 @@ impl<R: Render> Ppu<R> {
         self.color_theme = theme;
     }
 
+    pub fn set_mirroring(&mut self, mirroring: Mirroring) {
+        self.nametable.set_mirroring(mirroring);
+    }
     pub fn reset(&mut self) {
         // https://www.nesdev.org/wiki/PPU_power_up_state
         self.registers.reset();
@@ -260,13 +257,6 @@ impl<R: Render> Ppu<R> {
 
     pub fn timing(&self) -> &Timing {
         &self.timing
-    }
-
-    pub fn cartridge_irq_pending(&self) -> bool {
-        if !self.cartridge_caps.irq_pending {
-            return false;
-        }
-        self.cartridge.irq_pending()
     }
 
     pub fn renderer(&self) -> &R {
@@ -359,7 +349,7 @@ impl<R: Render> Ppu<R> {
         self.oam_addr = addr.wrapping_add(1);
     }
 
-    pub fn tick(&mut self) {
+    pub fn tick(&mut self, cartridge: &mut dyn Cartridge, cartridge_caps: CartridgeCaps) {
         self.cycle += 1;
         let rendering_enabled = self.rendering_enabled();
 
@@ -393,7 +383,7 @@ impl<R: Render> Ppu<R> {
         // memory-access phasing.
         //
         // Manual $2006/$2007 writes still reach the mapper directly.
-        if self.cartridge_caps.notify_vram_address
+        if cartridge_caps.notify_vram_address
             && rendering_enabled
             && (self.timing.in_ppu_active_line() && self.rendering_enabled_at_scanline_start)
             && self.timing.dot % 2 == 1
@@ -409,7 +399,7 @@ impl<R: Render> Ppu<R> {
                     if self.timing.dot >= base_dot {
                         let fetch_type = (((self.timing.dot - base_dot) / 2) % 4) as usize;
                         if fetch_type >= 2 {
-                            self.cartridge.notify_vram_address(
+                            cartridge.notify_vram_address(
                                 if self.registers.ctrl.background_pattern_table() {
                                     0x1000
                                 } else {
@@ -425,7 +415,7 @@ impl<R: Render> Ppu<R> {
                     // observed ~dot-260 hardware timing.
                     let fetch_type = (((self.timing.dot - 259) / 2) % 4) as usize;
                     if fetch_type >= 2 {
-                        self.cartridge.notify_vram_address(
+                        cartridge.notify_vram_address(
                             if self.registers.ctrl.sprite_size_16()
                                 || self.registers.ctrl.sprite_pattern_table()
                             {
@@ -445,7 +435,7 @@ impl<R: Render> Ppu<R> {
             // compute background anchor at start of visible scanline
             self.background_anchor = Some(BackgroundActivation::snapshot(self, 0));
             self.pending_background_activation = None;
-            self.fill_tile_cache(0);
+            self.fill_tile_cache(0, cartridge);
         }
 
         if self.timing.dot >= 65
@@ -486,7 +476,7 @@ impl<R: Render> Ppu<R> {
         if self.timing.is_visible() {
             let x = (self.timing.dot - 1) as u8;
             let pixel_idx = if rendering_enabled {
-                self.render_pixel(x)
+                self.render_pixel(x, cartridge)
             } else {
                 self.palette.disabled_color_index(self.registers.vram_addr)
             };
@@ -564,8 +554,8 @@ impl<R: Render> Ppu<R> {
         };
         self.timing.advance(skip_rendering_enabled);
 
-        if self.cartridge_caps.on_ppu_tick {
-            self.cartridge.on_ppu_tick(prev_scanline);
+        if cartridge_caps.on_ppu_tick {
+            cartridge.on_ppu_tick(prev_scanline);
         }
     }
 
@@ -587,7 +577,12 @@ impl<R: Render> Ppu<R> {
         self.registers.status.v_blank() && self.registers.ctrl.nmi_enable()
     }
 
-    fn read_ppureg(&mut self, address: u16) -> u8 {
+    pub(crate) fn read_ppureg(
+        &mut self,
+        address: u16,
+        cartridge: &mut dyn Cartridge,
+        cartridge_caps: CartridgeCaps,
+    ) -> u8 {
         let reg = normalize_ppu_addr(address);
         match reg {
             0x2002 => {
@@ -603,28 +598,33 @@ impl<R: Render> Ppu<R> {
                 self.refresh_bus_latch(result);
                 result
             }
-            0x2007 => self.read_vram_and_inc(),
+            0x2007 => self.read_vram_and_inc(cartridge, cartridge_caps),
             _ => self.current_bus_latch(),
         }
     }
-
-    pub fn peek(&self, address: u16) -> u8 {
+    pub fn peek(&self, address: u16, cartridge: &dyn Cartridge) -> u8 {
         match address {
             0x2000..=0x3fff => {
                 let reg = normalize_ppu_addr(address);
                 match reg {
                     0x2002 => self.registers.status.into_bits(),
                     0x2004 => self.read_oam_data(),
-                    0x2007 => self.read_vram(self.registers.vram_addr),
+                    0x2007 => self.read_vram(self.registers.vram_addr, cartridge),
                     _ => 0,
                 }
             }
-            0x4100..=0xffff => self.cartridge.read(address),
+            0x4100..=0xffff => cartridge.read(address),
             _ => 0,
         }
     }
 
-    fn write_ppureg(&mut self, address: u16, value: u8) {
+    pub(crate) fn write_ppureg(
+        &mut self,
+        address: u16,
+        value: u8,
+        cartridge: &mut dyn Cartridge,
+        cartridge_caps: CartridgeCaps,
+    ) {
         self.refresh_bus_latch(value);
         let reg = normalize_ppu_addr(address);
         match reg {
@@ -658,32 +658,32 @@ impl<R: Render> Ppu<R> {
             // PPUADDR
             0x2006 => {
                 self.write_vram_addr(value);
-                if self.cartridge_caps.notify_vram_address {
-                    self.cartridge.notify_vram_address(self.registers.vram_addr);
+                if cartridge_caps.notify_vram_address {
+                    cartridge.notify_vram_address(self.registers.vram_addr);
                 }
             }
             // PPUDATA
             0x2007 => {
-                self.write_vram(self.registers.vram_addr, value);
+                self.write_vram(self.registers.vram_addr, value, cartridge);
                 self.registers
                     .ctrl
                     .inc_ppu_addr(&mut self.registers.vram_addr);
-                if self.cartridge_caps.notify_vram_address {
-                    self.cartridge.notify_vram_address(self.registers.vram_addr);
+                if cartridge_caps.notify_vram_address {
+                    cartridge.notify_vram_address(self.registers.vram_addr);
                 }
             }
             _ => {}
         }
     }
 
-    pub fn read_vram(&self, address: u16) -> u8 {
+    pub fn read_vram(&self, address: u16, cartridge: &dyn Cartridge) -> u8 {
         let mut addr = address % 0x4000;
         if (0x3000..0x3f00).contains(&addr) {
             addr -= 0x1000;
         }
         if addr < 0x3f00 {
             if addr < 0x2000 {
-                self.cartridge.read_chr(addr)
+                cartridge.read_chr(addr)
             } else {
                 self.nametable.read(addr)
             }
@@ -692,7 +692,7 @@ impl<R: Render> Ppu<R> {
         }
     }
 
-    fn write_vram(&mut self, address: u16, value: u8) {
+    fn write_vram(&mut self, address: u16, value: u8, cartridge: &mut dyn Cartridge) {
         let mut addr = address % 0x4000;
         if (0x3000..0x3f00).contains(&addr) {
             addr -= 0x1000;
@@ -701,7 +701,7 @@ impl<R: Render> Ppu<R> {
             if addr >= 0x2000 {
                 self.nametable.write(addr, value);
             } else {
-                self.cartridge.write_chr(addr, value);
+                cartridge.write_chr(addr, value);
             }
         } else {
             self.palette.write(addr, value);
@@ -718,7 +718,7 @@ impl<R: Render> Ppu<R> {
         }
     }
 
-    fn get_background_pixel(&mut self, screen_x: u8) -> (u8, u8) {
+    fn get_background_pixel(&mut self, screen_x: u8, cartridge: &dyn Cartridge) -> (u8, u8) {
         self.apply_pending_background_activation(screen_x);
 
         if !self.registers.mask.background_left_enabled() && screen_x < 8 {
@@ -729,19 +729,19 @@ impl<R: Render> Ppu<R> {
         let needs_refill = self.tile_cache.remaining == 0;
 
         if needs_refill {
-            self.fill_tile_cache(screen_x);
+            self.fill_tile_cache(screen_x, cartridge);
         }
 
         self.tile_cache.consume()
     }
 
-    fn fill_tile_cache(&mut self, screen_x: u8) {
+    fn fill_tile_cache(&mut self, screen_x: u8, cartridge: &dyn Cartridge) {
         let background = self
             .background_anchor
             .unwrap_or_else(|| BackgroundActivation::snapshot(self, 0));
 
         let (attr_byte, bitplane_low, bitplane_high) =
-            fetch_tile_data(&background, screen_x, &*self.cartridge, &self.nametable);
+            fetch_tile_data(&background, screen_x, cartridge, &self.nametable);
 
         let world_x =
             (background.vram_addr & 0x001F) * 8 + background.fine_x as u16 + screen_x as u16;
@@ -765,14 +765,18 @@ impl<R: Render> Ppu<R> {
         };
     }
 
-    fn read_vram_and_inc(&mut self) -> u8 {
+    fn read_vram_and_inc(
+        &mut self,
+        cartridge: &mut dyn Cartridge,
+        cartridge_caps: CartridgeCaps,
+    ) -> u8 {
         let vram_addr = self.registers.vram_addr;
-        let current = self.read_vram(vram_addr);
+        let current = self.read_vram(vram_addr, cartridge);
         self.registers
             .ctrl
             .inc_ppu_addr(&mut self.registers.vram_addr);
-        if self.cartridge_caps.notify_vram_address {
-            self.cartridge.notify_vram_address(self.registers.vram_addr);
+        if cartridge_caps.notify_vram_address {
+            cartridge.notify_vram_address(self.registers.vram_addr);
         }
 
         // Non-palette addresses use a read buffer (delayed by one read).
@@ -782,14 +786,13 @@ impl<R: Render> Ppu<R> {
         let result = if addr >= 0x3F00 {
             // Palette: fill buffer with the nametable data underneath
             // (mirrored from $2F00-$2FFF)
-            self.registers.ppudata_buffer = self.read_vram(vram_addr - 0x1000);
+            self.registers.ppudata_buffer = self.read_vram(vram_addr - 0x1000, cartridge);
             let result = (current & 0x3F) | (self.current_bus_latch() & 0xC0);
             self.refresh_bus_latch_bits(0x3F, result);
             result
         } else {
             let buffered = self.registers.ppudata_buffer;
             self.registers.ppudata_buffer = current;
-            // Back-to-back reads (the page-crossing dummy read of
             // `lda abs,X` immediately followed by the real read) arrive
             // before the PPU finished refilling its buffer: hardware
             // returns the previous read's stale value while still
@@ -859,9 +862,9 @@ impl<R: Render> Ppu<R> {
         r
     }
 
-    fn render_pixel(&mut self, x: u8) -> u8 {
+    fn render_pixel(&mut self, x: u8, cartridge: &dyn Cartridge) -> u8 {
         let (bg_palette_idx, bg_color_idx) = if self.registers.mask.background_enabled() {
-            self.get_background_pixel(x)
+            self.get_background_pixel(x, cartridge)
         } else {
             (0, 0)
         };
@@ -871,7 +874,7 @@ impl<R: Render> Ppu<R> {
         {
             self.sprite.find_sprite_pixel(
                 self.registers.ctrl,
-                &*self.cartridge,
+                cartridge,
                 x,
                 self.timing.scanline as u8,
             )
@@ -882,7 +885,7 @@ impl<R: Render> Ppu<R> {
         if !self.registers.status.sprite_zero_hit()
             && self.sprite.sprite_zero_pixel_opaque(
                 self.registers.ctrl,
-                &*self.cartridge,
+                cartridge,
                 x,
                 self.timing.scanline as u8,
             )
@@ -967,35 +970,6 @@ fn fetch_tile_data(
     let bitplane_high = cartridge.read_chr(low_addr.second_plane_addr());
 
     (attr_byte, bitplane_low, bitplane_high)
-}
-
-impl<R: Render> Mcu for Ppu<R> {
-    fn read(&mut self, address: u16) -> u8 {
-        match address {
-            0x4100..=0xffff => self.cartridge.read(address),
-            0x2000..=0x3fff => self.read_ppureg(address),
-            _ => 0,
-        }
-    }
-
-    fn peek(&self, address: u16) -> u8 {
-        self.peek(address)
-    }
-
-    fn write(&mut self, address: u16, value: u8) {
-        match address {
-            0x2000..=0x3fff => self.write_ppureg(address, value),
-            0x4020..=0x40ff => {}
-            0x4100..=0xffff => {
-                if let CartridgeOperation::UpdateNametableMirroring(mirroring) =
-                    self.cartridge.write(address, value)
-                {
-                    self.nametable.set_mirroring(mirroring);
-                }
-            }
-            _ => {}
-        }
-    }
 }
 
 #[cfg(test)]

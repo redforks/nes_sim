@@ -182,8 +182,12 @@ pub trait Cartridge {
         0
     }
     fn write_chr(&mut self, _address: u16, _value: u8) {}
+    /// Whether PRG-RAM at $6000-$7FFF is currently enabled (open bus if disabled).
+    /// Mappers with a PRG-RAM disable bit override this.
+    fn prg_ram_enabled(&self) -> bool {
+        true
+    }
 }
-
 #[cfg(test)]
 pub struct TestCartridge {
     pub(crate) prg_rom: [u8; 0x8000],

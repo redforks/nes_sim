@@ -6,14 +6,14 @@ use crate::nes::controller::Button;
 use crate::nes::mapper::{Mirroring, TestCartridge};
 use crate::render::ImageRender;
 
-fn test_mcu() -> NesMcu<ImageRender, ()> {
+fn test_mcu() -> NesMcu<ImageRender<1>, ()> {
+    let cartridge = Box::new(TestCartridge::new());
+    let cartridge_caps = cartridge.ppu_capabilities();
     NesMcu {
         lower_ram: LowerRam::new(),
-        ppu: Ppu::new(
-            ImageRender::<1>::default_dimension(),
-            Mirroring::Horizontal,
-            Box::new(TestCartridge::new()),
-        ),
+        ppu: Ppu::new(ImageRender::<1>::default_dimension(), Mirroring::Horizontal),
+        cartridge,
+        cartridge_caps,
         controller: Controller::new(),
         apu: Apu::new(()),
         oam_dma_pending: None,

@@ -337,6 +337,10 @@ impl Cartridge for MMC3 {
         self.irq_pending
     }
 
+    fn prg_ram_enabled(&self) -> bool {
+        self.prg_ram_enabled
+    }
+
     fn ppu_capabilities(&self) -> CartridgeCaps {
         CartridgeCaps {
             on_ppu_tick: true,

@@ -163,6 +163,10 @@ impl Cartridge for MMC1 {
             _ => panic!("write address out of range: {:04x}", address),
         }
     }
+
+    fn prg_ram_enabled(&self) -> bool {
+        self.prg_bank & 0x10 == 0
+    }
 }
 
 impl MMC1 {
