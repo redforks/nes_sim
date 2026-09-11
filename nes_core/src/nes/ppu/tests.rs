@@ -128,6 +128,26 @@ fn setup_sprite(ppu: &mut Ppu, index: u8, y: u8, tile: u8, attr: u8, x: u8) {
     ppu.oam.set_byte(index * 4 + 3, x);
 }
 
+/// Fill OAM with a ramp (`oam[i] == i`) and apply `mask` unchanged.
+/// Reads of $2004 then identify the *address* by the byte value alone, so
+/// OAMADDR movement is observable without touching internals.
+fn ppu_with_ramp_oam(mask: PpuMask) -> Ppu {
+    let mut ppu = create_test_ppu_with_mask(mask);
+    for i in 0..=255u8 {
+        ppu.oam.set_byte(i, i);
+    }
+    ppu
+}
+
+/// Behavioral OAM probe: anchor `$2003` to `addr`, then read the byte
+/// back through `$2004`. Reads do not move OAMADDR.
+fn read_oam_at(ppu: &mut Ppu, addr: u8) -> u8 {
+    let mut cart = TestCartridge::new();
+    let caps = cart.ppu_capabilities();
+    ppu.write_ppureg(0x2003, addr, &mut cart, caps);
+    ppu.read_ppureg(0x2004, &mut cart, caps)
+}
+
 fn set_bg_tile(ppu: &mut Ppu, tile: u8, palette_idx: u8) {
     let mut cart = TestCartridge::new();
     ppu.write_vram(0x2000, tile, &mut cart);
@@ -915,6 +935,88 @@ fn test_oamaddr_is_zeroed_during_sprite_fetches(scanline: u16) {
     assert_eq!(ppu.oam_addr, 0x50);
     ppu.tick(&mut cart, caps);
     assert_eq!(ppu.oam_addr, 0);
+}
+
+/// Hardware (nesdev PPU registers §OAMDATA): with background or sprite
+/// rendering enabled, $2004 writes on the pre-render line and visible
+/// lines 0-239 are ignored — OAM is untouched — while OAMADDR does a
+/// glitchy +4 that bumps only its high 6 bits, leaving the low 2 bits
+/// unchanged. The ramp makes the observed byte equal to the address, so
+/// an unanchored $2004 read pins OAMADDR's new value exactly.
+#[test_case(0,   0x02, 0x06; "visible scanline, addr 2 -> 6")]
+#[test_case(0,   0x03, 0x07; "visible scanline, low 2 bits preserved")]
+#[test_case(0,   0xFC, 0x00; "visible scanline, high 6 bits wrap")]
+#[test_case(261, 0x02, 0x06; "pre-render line, addr 2 -> 6")]
+#[test_case(261, 0xFF, 0x03; "pre-render line, addr FF -> 03")]
+fn test_oam_data_write_during_rendering_ignored_with_glitchy_oamaddr(
+    scanline: u16,
+    oamaddr: u8,
+    glitched: u8,
+) {
+    let mut ppu = ppu_with_ramp_oam(PpuMask::new().with_background_enabled(true));
+    ppu.timing.scanline = scanline;
+    ppu.timing.dot = 100;
+    let mut cart = TestCartridge::new();
+    let caps = cart.ppu_capabilities();
+
+    ppu.write_ppureg(0x2003, oamaddr, &mut cart, caps);
+    ppu.write_ppureg(0x2004, 0xEE, &mut cart, caps);
+
+    // OAMADDR glitched to the +4 address: an unanchored $2004 read
+    // (reads do not move OAMADDR) returns the ramp byte there.
+    assert_eq!(ppu.read_ppureg(0x2004, &mut cart, caps), glitched);
+    // The write itself was dropped: anchoring back to the original
+    // address reads the intact ramp byte, not 0xEE.
+    assert_eq!(read_oam_at(&mut ppu, oamaddr), oamaddr);
+}
+
+#[test]
+fn test_oam_data_write_during_sprite_only_rendering_also_glitches() {
+    let mut ppu = ppu_with_ramp_oam(PpuMask::new().with_sprite_enabled(true));
+    ppu.timing.scanline = 100;
+    ppu.timing.dot = 100;
+    let mut cart = TestCartridge::new();
+    let caps = cart.ppu_capabilities();
+
+    ppu.write_ppureg(0x2003, 0x02, &mut cart, caps);
+    ppu.write_ppureg(0x2004, 0xEE, &mut cart, caps);
+
+    assert_eq!(ppu.read_ppureg(0x2004, &mut cart, caps), 0x06);
+    assert_eq!(read_oam_at(&mut ppu, 0x02), 0x02);
+}
+
+#[test]
+fn test_oam_data_write_outside_render_windows_takes_effect() {
+    // Writes land normally during vblank even with rendering enabled, and
+    // on active lines once rendering is disabled: the ignore only applies
+    // on the pre-render/visible lines while a renderer is enabled.
+    let mut cart = TestCartridge::new();
+    let caps = cart.ppu_capabilities();
+
+    // Rendering enabled but in vblank: normal write.
+    let mut ppu = ppu_with_ramp_oam(PpuMask::new().with_background_enabled(true));
+    ppu.timing.scanline = 241;
+    ppu.timing.dot = 10;
+    ppu.write_ppureg(0x2003, 0x04, &mut cart, caps);
+    ppu.write_ppureg(0x2004, 0xEE, &mut cart, caps);
+    assert_eq!(ppu.read_ppureg(0x2004, &mut cart, caps), 0x05);
+    assert_eq!(read_oam_at(&mut ppu, 0x04), 0xEE);
+
+    // Rendering disabled on a visible line: normal write.
+    let mut ppu = ppu_with_ramp_oam(PpuMask::new());
+    ppu.timing.scanline = 100;
+    ppu.timing.dot = 100;
+    ppu.write_ppureg(0x2003, 0x08, &mut cart, caps);
+    ppu.write_ppureg(0x2004, 0xEE, &mut cart, caps);
+    assert_eq!(read_oam_at(&mut ppu, 0x08), 0xEE);
+    // Attribute-byte normalization (addr & 3 == 2) still applies.
+    ppu.write_ppureg(0x2003, 0x0A, &mut cart, caps);
+    ppu.write_ppureg(0x2004, 0xFF, &mut cart, caps);
+    assert_eq!(read_oam_at(&mut ppu, 0x0A), 0xFF & 0xE3);
+    // Non-attribute addresses stay unmasked.
+    ppu.write_ppureg(0x2003, 0x0C, &mut cart, caps);
+    ppu.write_ppureg(0x2004, 0xFF, &mut cart, caps);
+    assert_eq!(read_oam_at(&mut ppu, 0x0C), 0xFF);
 }
 
 #[test]

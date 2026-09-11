@@ -369,6 +369,56 @@ fn dmc_collision_at_start_of_oam_write_on_put() {
     assert_eq!(bus.oam_ref().unwrap().transfer_cycle, 1);
 }
 
+/// OAM DMA writes ride the $2004 write path, so a DMA landing mid-render
+/// must hit the same hardware ignore+glitch contract as a CPU $2004 write:
+/// OAM stays exactly as it was (nesdev PPU registers §OAMDATA: "This
+/// extends to DMA transfers via OAMDMA"). Everything is probed through
+/// the MMIO registers — nothing is inspected internally.
+#[test]
+fn oam_dma_during_rendering_does_not_corrupt_oam() {
+    let mut mcu = test_mcu();
+    let mut bus = Bus::new();
+
+    // Seed OAM with a sentinel through the registers while rendering is
+    // off (default mask), then enable background rendering and advance
+    // into the middle of a visible line.
+    for i in 0..=255u8 {
+        mcu.write(0x2003, i);
+        mcu.write(0x2004, 0x00);
+    }
+    mcu.write(0x2001, 0x08); // background enable
+    for _ in 0..(100 * 341 + 100) {
+        mcu.tick_ppu();
+    }
+
+    // Scratch page $0200 with a ramp that differs from the OAM sentinel.
+    for i in 0..=255u8 {
+        mcu.write(0x0200 + i as u16, i ^ 0x5A);
+    }
+
+    // Arm the DMA ($4014 with source page $02) and run it to completion.
+    mcu.write(0x4014, 0x02);
+    let mut t = SystemClock(11);
+    let mut saw_active = false;
+    loop {
+        t = t.inc();
+        if !t.is_apu_clock() {
+            continue;
+        }
+        if bus.tick_oam_for_test(&mut mcu, t, false) {
+            saw_active = true;
+        } else if saw_active {
+            break;
+        }
+    }
+
+    // Nothing was written: every OAM byte still reads back its sentinel.
+    for i in 0..=255u8 {
+        mcu.write(0x2003, i);
+        assert_eq!(mcu.read(0x2004), 0x00, "OAM byte {i:#04x} was corrupted");
+    }
+}
+
 #[test]
 fn test_4017_reads_include_zapper_bits_alongside_controller_b() {
     let mut mcu = test_mcu();

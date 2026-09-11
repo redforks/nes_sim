@@ -344,9 +344,29 @@ impl<R: Render> Ppu<R> {
             }
         }
 
+        if self.oam_data_writes_ignored() {
+            // Hardware: with background or sprite rendering enabled, $2004 writes
+            // on visible lines 0-239 and the pre-render line (261) do not touch
+            // OAM. OAMADDR instead does a glitchy +4 that bumps only its high
+            // 6 bits, leaving the low 2 bits unchanged (nesdev PPU registers
+            // §OAMDATA). `wrapping_add(4)` lands exactly on that mod-64 carry:
+            // the low two bits of addr+4 equal the original low two bits. OAM
+            // DMA rides this same path via the bus.
+            self.oam_addr = self.oam_addr.wrapping_add(4);
+            return;
+        }
+
         let addr = self.oam_addr;
         self.oam.set_byte(addr, normalize_oam_byte(addr, value));
         self.oam_addr = addr.wrapping_add(1);
+    }
+
+    /// True while `$2004` writes are ignored on hardware: the pre-render
+    /// line (261) or visible lines 0-239, provided either background or
+    /// sprite rendering is enabled. Outside these windows writes take
+    /// normal effect (readable during vblank, for example).
+    fn oam_data_writes_ignored(&self) -> bool {
+        self.rendering_enabled() && self.timing.in_ppu_active_line()
     }
 
     pub fn tick(&mut self, cartridge: &mut dyn Cartridge, cartridge_caps: CartridgeCaps) {
