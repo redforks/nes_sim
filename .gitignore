@@ -8,3 +8,5 @@ www/*.nes
 /devop
 nesdev-wiki
 **/graphify-out
+.pi/tasks/
+@.pi/tasks/
