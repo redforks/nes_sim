@@ -430,8 +430,14 @@ impl<R: Render> Ppu<R> {
             }
         }
 
-        if self.timing.dot == 0 && self.timing.in_visible_scanline() {
+        if self.timing.dot == 0 {
+            // The secondary-OAM swap runs on every line, including the
+            // pre-render line (261). Sprite evaluation itself only runs on
+            // visible scanlines 0-239, so scanline 0's swap brings in the
+            // empty buffer: no freshly evaluated sprites on line 0.
             self.sprite.swap_secondary_oam();
+        }
+        if self.timing.dot == 0 && self.timing.in_visible_scanline() {
             // compute background anchor at start of visible scanline
             self.background_anchor = Some(BackgroundActivation::snapshot(self, 0));
             self.pending_background_activation = None;
@@ -440,7 +446,7 @@ impl<R: Render> Ppu<R> {
 
         if self.timing.dot >= 65
             && self.timing.dot <= 256
-            && self.timing.in_ppu_active_line()
+            && self.timing.in_visible_scanline()
             && rendering_enabled
         {
             if self.timing.dot == 65 {
@@ -456,11 +462,11 @@ impl<R: Render> Ppu<R> {
             }
         }
 
-        // During sprite tile loading (dots 257-320 of visible scanlines)
-        // hardware drives OAMADDR to 0; software polling $2003 mid-frame
-        // observes that.
+        // During sprite tile loading (dots 257-320 of visible scanlines and
+        // the pre-render line) hardware drives OAMADDR to 0; software
+        // polling $2003 mid-frame observes that.
         if rendering_enabled
-            && self.timing.in_visible_scanline()
+            && self.timing.in_ppu_active_line()
             && (257..=320).contains(&self.timing.dot)
         {
             self.oam_addr = 0;

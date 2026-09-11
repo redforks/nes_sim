@@ -40,7 +40,7 @@ _Avoid_: tile cache (lowercase c), pattern cache
 ## Language — System Timing
 
 **Cold-start**:
-A construction-only phase from `Ppu::new()` until the first 261→0 scanline wrap. The PPU starts at scanline 261 (pre-render) so that vertical scroll reload, background activation, sprite evaluation, and MMC3 A12 toggles all run before the first visible scanline 0. After the first wrap, the PPU enters normal frame operation. `Ppu::reset()` does _not_ re-enter Cold-start. Cold-start is a domain concept — no code field represents it; setting initial scanline to 261 is sufficient.
+A construction-only phase from `Ppu::new()` until the first 261→0 scanline wrap. The PPU starts at scanline 261 (pre-render) so that vertical scroll reload, background activation, and MMC3 A12 toggles all run before the first visible scanline 0; sprite evaluation is not part of this preparation — it does not happen on the pre-render line, so scanline 0 starts with no evaluated sprites. After the first wrap, the PPU enters normal frame operation. `Ppu::reset()` does _not_ re-enter Cold-start. Cold-start is a domain concept — no code field represents it; setting initial scanline to 261 is sufficient.
 _Avoid_: warm-up, boot-phase, pre-frame, initialization phase
 
 **SystemClock**:
@@ -209,7 +209,7 @@ Either First ($0000) or Second ($1000) pattern table in VRAM. Selected per-sprit
 _Avoid_: pattern table, CHR bank
 
 **Secondary OAM**:
-A double-buffered 8-entry sprite buffer inside the PPU. `SpriteManager` evaluates primary OAM during dots 65–256, starting at `OAMADDR` (`effective_index = (start_index + oam_index) & 0x3F` wrapping at 64, termination at 64 scanned) and copies up to 8 in-range sprites into the *next* buffer; `next_zero_sprite`/`current_zero_sprite` (`Option<Sprite>`) tracks whether OAM entry 0 survived evaluation so `sprite_zero_pixel_opaque` only fires for evaluated zero. At dot 0 each scanline, the buffers swap: the freshly populated buffer becomes *current* and feeds `find_sprite_pixel` for the whole scanline. During sprite tile fetches (dots 257–320 of visible scanlines while rendering is enabled) hardware drives `OAMADDR` to 0; software polling `$2003` mid-frame observes that.
+A double-buffered 8-entry sprite buffer inside the PPU. `SpriteManager` evaluates primary OAM during dots 65–256 of visible scanlines (0–239), starting at `OAMADDR` (`effective_index = (start_index + oam_index) & 0x3F` wrapping at 64, termination at 64 scanned) and copies up to 8 in-range sprites into the *next* buffer; the pre-render line (261) evaluates nothing, so scanline 0 starts with an empty buffer. `next_zero_sprite`/`current_zero_sprite` (`Option<Sprite>`) tracks whether OAM entry 0 survived evaluation so `sprite_zero_pixel_opaque` only fires for evaluated zero. At dot 0 each scanline, the buffers swap: the freshly populated buffer becomes *current* and feeds `find_sprite_pixel` for the whole scanline. During sprite tile fetches (dots 257–320 of visible and pre-render scanlines while rendering is enabled) hardware drives `OAMADDR` to 0; software polling `$2003` mid-frame observes that.
 _Avoid_: sec OAM, sprite cache
 
 ## Language — PPU VBL/NMI Race

@@ -154,11 +154,14 @@ fn fill_chr(ppu: &mut Ppu, pattern: &[u8], cartridge: &mut dyn crate::nes::mappe
 }
 
 fn populate_sprite_secondary_oam(ppu: &mut Ppu, target_scanline: u16) {
-    let eval_scanline = if target_scanline == 0 {
-        261
-    } else {
-        target_scanline - 1
-    };
+    // Hardware evaluates sprites for the *next* scanline during dots 65-256 of
+    // each visible scanline only. The pre-render line (261) evaluates nothing
+    // (nesdev wiki: "Sprite evaluation does not happen on the pre-render
+    // scanline"), so scanline 0's secondary OAM is empty: no eval to simulate.
+    if target_scanline == 0 {
+        return;
+    }
+    let eval_scanline = target_scanline - 1;
     ppu.sprite.begin_sprite_overflow_eval(ppu.oam_addr);
     for dot in (65..=256).filter(|d| d % 2 == 1) {
         ppu.timing.dot = dot;
@@ -890,8 +893,9 @@ fn test_evaluation_starts_at_oamaddr_and_wraps() {
     assert!(ppu.sprite.current_zero_sprite().is_none());
 }
 
-#[test]
-fn test_oamaddr_is_zeroed_during_sprite_fetches() {
+#[test_case(0; "visible scanline")]
+#[test_case(261; "pre-render scanline")]
+fn test_oamaddr_is_zeroed_during_sprite_fetches(scanline: u16) {
     let mut ppu = create_test_ppu_with_mask(
         PpuMask::new()
             .with_background_enabled(true)
@@ -899,17 +903,92 @@ fn test_oamaddr_is_zeroed_during_sprite_fetches() {
     );
     let mut cart = TestCartridge::new();
     let caps = cart.ppu_capabilities();
-    ppu.timing.scanline = 0;
+    ppu.timing.scanline = scanline;
     ppu.timing.dot = 256;
     ppu.write_ppureg(0x2003, 0x50, &mut cart, caps);
     assert_eq!(ppu.oam_addr, 0x50);
     // Tick 1 processes dot 256 (last background fetch) and leaves
     // OAMADDR alone; the tick that processes dot 257 — the start of the
-    // sprite tile-fetch window — drives it to 0.
+    // sprite tile-fetch window — drives it to 0, on visible lines and
+    // the pre-render line alike.
     ppu.tick(&mut cart, caps);
     assert_eq!(ppu.oam_addr, 0x50);
     ppu.tick(&mut cart, caps);
     assert_eq!(ppu.oam_addr, 0);
+}
+
+#[test]
+fn test_pre_render_line_skips_sprite_evaluation() {
+    // Hardware performs no sprite evaluation on the pre-render scanline
+    // (nesdev wiki). The +1 Y offset means target-line 0 can never be
+    // populated, so this pins the gate contract itself rather than a
+    // pixel-visible effect: neither buffer may gain entries from the
+    // 261 eval window (a future change to target math or eval side
+    // effects would surface here).
+    let mut ppu = create_test_ppu_with_mask(
+        PpuMask::new()
+            .with_background_enabled(true)
+            .with_sprite_enabled(true),
+    );
+    let mut cart = TestCartridge::new();
+    let caps = cart.ppu_capabilities();
+    for idx in 0..=9u8 {
+        setup_sprite(&mut ppu, idx, 0, 0, 0, idx * 8);
+    }
+
+    ppu.timing.scanline = 261;
+    ppu.timing.dot = 64;
+    // Process dots 65..=256 of scanline 261: the next-scanline eval
+    // window must not run here.
+    for _ in 65..=256 {
+        ppu.tick(&mut cart, caps);
+    }
+    // Nothing was copied into either buffer: the dot-0 swap crossed an
+    // already-empty next-buffer, so the live line is empty too.
+    assert_eq!(ppu.sprite.next_scanline_oam_len(), 0);
+    assert_eq!(ppu.sprite.secondary_oam_len(), 0);
+}
+
+#[test]
+fn test_scanline_zero_renders_no_freshly_evaluated_sprites() {
+    let mut ppu = create_test_ppu_with_mask(
+        PpuMask::new()
+            .with_background_enabled(true)
+            .with_sprite_enabled(true)
+            .with_background_left_enabled(true)
+            .with_sprite_left_enabled(true),
+    );
+    let mut cart = TestCartridge::new();
+    let caps = cart.ppu_capabilities();
+    setup_sprite(&mut ppu, 0, 0, 1, 0, 0);
+    setup_sprite(&mut ppu, 1, 0, 1, 0, 8);
+
+    // A sprite at Y=0 covers scanline 1 (the +1 offset), and is in range
+    // for line-1 evaluation only. With no evaluation on the pre-render
+    // line, scanline 0 must render nothing even though evaluation of the
+    // very next line picks both sprites.
+    ppu.timing.scanline = 261;
+    ppu.timing.dot = 339;
+    // Process dots 339-340 of 261, then render all of scanline 0 (dots
+    // 0..340): its eval window (65-256) targets line 1, unused here.
+    for _ in 0..343 {
+        ppu.tick(&mut cart, caps);
+    }
+    // Scanline 0's dot-0 swap brought in an empty next-buffer: line 0
+    // has no sprites.
+    assert_eq!(ppu.sprite.secondary_oam_len(), 0);
+    assert!(ppu.sprite.current_zero_sprite().is_none());
+    assert!(
+        ppu.sprite
+            .find_sprite_pixel(ppu.registers.ctrl, &cart, 0, 0)
+            .is_none(),
+        "scanline 0 must render no sprites (empty secondary OAM)"
+    );
+    // Now cross scanline 0's wrap: line 1's dot-0 swap brings in the sprites
+    // evaluation selected during scanline 0 — both Y=0 sprites.
+    ppu.tick(&mut cart, caps);
+    assert_eq!(ppu.sprite.secondary_oam_len(), 2);
+    assert!(ppu.sprite.current_zero_sprite().is_some());
 }
 
 #[test]

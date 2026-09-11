@@ -211,6 +211,12 @@ impl SpriteManager {
         self.current_scanline_oam.len()
     }
 
+    /// Read-model for tests: count of evaluated sprites for the next line.
+    #[cfg(test)]
+    pub(crate) fn next_scanline_oam_len(&self) -> usize {
+        self.next_scanline_oam.len()
+    }
+
     /// Read-model for tests: whether OAM entry 0 survived evaluation.
     #[cfg(test)]
     pub(crate) fn current_zero_sprite(&self) -> Option<Sprite> {

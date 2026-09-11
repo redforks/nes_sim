@@ -9,5 +9,6 @@ We decided to model the real hardware's secondary OAM with a double-buffered des
 - `[Sprite; 8]` fixed array: Vec with capacity 8 avoids bounds brittleness when ≤8 entries are pushed.
 
 **Consequences:**
-- Sprite evaluation now runs on scanline 261 (pre-render) so scanline 0 has sprites.
+- Sprite evaluation runs only on visible scanlines 0-239. The pre-render line (261) evaluates nothing — the nesdev wiki's PPU sprite evaluation page states: "Sprite evaluation does not happen on the pre-render scanline. Because evaluation applies to the next line's sprite rendering, no sprites will be rendered on the first scanline" — so scanline 0 renders with an empty secondary OAM (matching Mesen2's `_spriteCount = 0`).
+- The dot-0 swap still runs on every line, including 261: it moves the empty next-buffer into `current_scanline_oam`, keeping the sprite-0-hit machinery and the `$2003`-readback-relevant `OAMADDR` lifecycle aligned with hardware on every line.
 - `evaluate_sprite_from_secondary` skips the Y-range check (already verified during evaluation).
