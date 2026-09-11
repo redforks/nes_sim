@@ -369,6 +369,61 @@ fn dmc_collision_at_start_of_oam_write_on_put() {
     assert_eq!(bus.oam_ref().unwrap().transfer_cycle, 1);
 }
 
+/// Arm `$4014` (source page $02) and drive the shared OAM state machine to
+/// completion. Returns false if the transfer never started or did not
+/// finish, so a missing DMA fails the test instead of hanging it.
+fn drive_oam_dma(mcu: &mut NesMcu<ImageRender<1>, ()>, bus: &mut Bus) -> bool {
+    let mut t = SystemClock(11);
+    let mut ran = false;
+    for _ in 0..2048 {
+        t = t.inc();
+        if !t.is_apu_clock() {
+            continue;
+        }
+        if bus.tick_oam_for_test(mcu, t, false) {
+            ran = true;
+        } else if ran {
+            return true;
+        }
+    }
+    false
+}
+
+/// Positive control for the mid-render case below: with rendering disabled
+/// the very same $4014 transfer must land in OAM. Without this, "OAM
+/// unchanged" could pass simply because the DMA never transferred anything.
+/// OAM is seeded with a 0x00 sentinel and the source page sets bit 7, so
+/// every transferred byte differs from the sentinel and is detectable.
+#[test]
+fn oam_dma_with_rendering_disabled_writes_oam() {
+    let mut mcu = test_mcu();
+    let mut bus = Bus::new();
+
+    for i in 0..=255u8 {
+        mcu.write(0x2003, i);
+        mcu.write(0x2004, 0x00);
+        mcu.write(0x0200 + i as u16, i | 0x80);
+    }
+
+    mcu.write(0x4014, 0x02);
+    assert!(drive_oam_dma(&mut mcu, &mut bus), "OAM DMA never completed");
+
+    for i in 0..=255u8 {
+        mcu.write(0x2003, i);
+        // Rendering disabled keeps the attribute-byte $E3 mask.
+        let expected = if i & 0x03 == 0x02 {
+            (i | 0x80) & 0xE3
+        } else {
+            i | 0x80
+        };
+        assert_eq!(
+            mcu.read(0x2004),
+            expected,
+            "OAM byte {i:#04x} did not receive its DMA byte"
+        );
+    }
+}
+
 /// OAM DMA writes ride the $2004 write path, so a DMA landing mid-render
 /// must hit the same hardware ignore+glitch contract as a CPU $2004 write:
 /// OAM stays exactly as it was (nesdev PPU registers §OAMDATA: "This
@@ -379,8 +434,8 @@ fn oam_dma_during_rendering_does_not_corrupt_oam() {
     let mut mcu = test_mcu();
     let mut bus = Bus::new();
 
-    // Seed OAM with a sentinel through the registers while rendering is
-    // off (default mask), then enable background rendering and advance
+    // Seed OAM with a 0x00 sentinel through the registers while rendering
+    // is off (default mask), then enable background rendering and advance
     // into the middle of a visible line.
     for i in 0..=255u8 {
         mcu.write(0x2003, i);
@@ -391,28 +446,16 @@ fn oam_dma_during_rendering_does_not_corrupt_oam() {
         mcu.tick_ppu();
     }
 
-    // Scratch page $0200 with a ramp that differs from the OAM sentinel.
+    // Scratch page $0200 with a ramp whose every byte differs from the
+    // sentinel: bit 7 is always set, so no zero can pass unnoticed.
     for i in 0..=255u8 {
-        mcu.write(0x0200 + i as u16, i ^ 0x5A);
+        mcu.write(0x0200 + i as u16, i | 0x80);
     }
 
-    // Arm the DMA ($4014 with source page $02) and run it to completion.
     mcu.write(0x4014, 0x02);
-    let mut t = SystemClock(11);
-    let mut saw_active = false;
-    loop {
-        t = t.inc();
-        if !t.is_apu_clock() {
-            continue;
-        }
-        if bus.tick_oam_for_test(&mut mcu, t, false) {
-            saw_active = true;
-        } else if saw_active {
-            break;
-        }
-    }
+    assert!(drive_oam_dma(&mut mcu, &mut bus), "OAM DMA never completed");
 
-    // Nothing was written: every OAM byte still reads back its sentinel.
+    // The transfer ran but wrote nothing: every OAM byte is the sentinel.
     for i in 0..=255u8 {
         mcu.write(0x2003, i);
         assert_eq!(mcu.read(0x2004), 0x00, "OAM byte {i:#04x} was corrupted");

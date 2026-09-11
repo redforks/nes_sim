@@ -129,8 +129,10 @@ fn setup_sprite(ppu: &mut Ppu, index: u8, y: u8, tile: u8, attr: u8, x: u8) {
 }
 
 /// Fill OAM with a ramp (`oam[i] == i`) and apply `mask` unchanged.
-/// Reads of $2004 then identify the *address* by the byte value alone, so
-/// OAMADDR movement is observable without touching internals.
+/// Reads of $2004 then identify the *address* by the byte value alone.
+/// Seeding OAM directly is arrange-time only (no register writes 256
+/// arbitrary bytes), but every assertion built on it reads back through
+/// the registers, so OAMADDR movement stays behaviorally observable.
 fn ppu_with_ramp_oam(mask: PpuMask) -> Ppu {
     let mut ppu = create_test_ppu_with_mask(mask);
     for i in 0..=255u8 {
@@ -1012,7 +1014,8 @@ fn test_oam_data_write_outside_render_windows_takes_effect() {
     // Attribute-byte normalization (addr & 3 == 2) still applies.
     ppu.write_ppureg(0x2003, 0x0A, &mut cart, caps);
     ppu.write_ppureg(0x2004, 0xFF, &mut cart, caps);
-    assert_eq!(read_oam_at(&mut ppu, 0x0A), 0xFF & 0xE3);
+    // 0xFF & 0xE3 == 0xE3
+    assert_eq!(read_oam_at(&mut ppu, 0x0A), 0xE3);
     // Non-attribute addresses stay unmasked.
     ppu.write_ppureg(0x2003, 0x0C, &mut cart, caps);
     ppu.write_ppureg(0x2004, 0xFF, &mut cart, caps);
