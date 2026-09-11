@@ -1,5 +1,6 @@
 use super::*;
-use crate::nes::mapper::{Mirroring, TestCartridge};
+use crate::SystemClock;
+use crate::nes::mapper::{CartridgeOperation, Mirroring, TestCartridge};
 use crate::render::ImageRender;
 
 use test_case::test_case;
@@ -66,6 +67,161 @@ fn test_status_read_only_refreshes_high_bits() {
 
     let result2 = ppu.read_ppureg(0x2000, &mut cart, caps);
     assert_eq!(result2, 0x80);
+}
+
+/// A cartridge that records every mapper VRAM-address notification, so a
+/// test can assert that an ignored $2007 read does not reach the mapper.
+struct NotifyRecorder {
+    notified: Vec<u16>,
+}
+
+impl NotifyRecorder {
+    fn new() -> Self {
+        Self {
+            notified: Vec::new(),
+        }
+    }
+}
+
+impl Cartridge for NotifyRecorder {
+    fn read(&self, _address: u16) -> u8 {
+        0
+    }
+
+    fn write(&mut self, _address: u16, _value: u8, _cycle: SystemClock) -> CartridgeOperation {
+        CartridgeOperation::None
+    }
+
+    fn notify_vram_address(&mut self, addr: u16) {
+        self.notified.push(addr);
+    }
+
+    fn ppu_capabilities(&self) -> CartridgeCaps {
+        CartridgeCaps {
+            notify_vram_address: true,
+            ..CartridgeCaps::default()
+        }
+    }
+}
+
+/// The back-to-back $2007 ignore window is 6 PPU dots wide (Mesen2's
+/// `_ignoreVramRead = 6` decremented once per PPU cycle): a read landing
+/// up to 5 dots after a completing read is ignored, one 6 dots later is
+/// normal, and the ignored read neither advances the address nor refills
+/// the read buffer.
+#[test]
+fn vram_read_ignore_window_is_six_dots() {
+    let mut ppu = Ppu::new((), Mirroring::Horizontal);
+    let mut cart = TestCartridge::new();
+    let caps = cart.ppu_capabilities();
+
+    // VRAM $0000-$0002 = 11 22 33.
+    ppu.write_ppureg(0x2006, 0x00, &mut cart, caps);
+    ppu.write_ppureg(0x2006, 0x00, &mut cart, caps);
+    for v in [0x11u8, 0x22, 0x33] {
+        ppu.write_ppureg(0x2007, v, &mut cart, caps);
+    }
+
+    // Rewind to $0000; prime the buffer at cycle 0 (returns the initial
+    // buffer, loads VRAM[0], increments to $0001).
+    ppu.write_ppureg(0x2006, 0x00, &mut cart, caps);
+    ppu.write_ppureg(0x2006, 0x00, &mut cart, caps);
+    assert_eq!(ppu.read_ppureg(0x2007, &mut cart, caps), 0x00);
+    assert_eq!(ppu.registers.vram_addr, 0x0001);
+
+    // At window edge (5 dots later): still ignored — stale return, no
+    // increment, and the buffer still holds VRAM[0] (a refill would have
+    // replaced it with VRAM[1]).
+    ppu.cycle = PPUDATA_IGNORE_WINDOW_DOTS;
+    assert_eq!(ppu.read_ppureg(0x2007, &mut cart, caps), 0x00);
+    assert_eq!(ppu.registers.vram_addr, 0x0001);
+
+    // 6 dots later: outside the window, so the normal read path runs.
+    ppu.cycle = PPUDATA_IGNORE_WINDOW_DOTS + 1;
+    assert_eq!(ppu.read_ppureg(0x2007, &mut cart, caps), 0x11);
+    assert_eq!(ppu.registers.vram_addr, 0x0002);
+}
+
+/// An ignored back-to-back read must not reach the mapper's A12 watcher —
+/// otherwise double reads would clock MMC3's IRQ counter (Mesen2 skips the
+/// whole access, not just the returned value).
+#[test]
+fn vram_read_ignored_within_window_does_not_notify_mapper() {
+    let mut ppu = Ppu::new((), Mirroring::Horizontal);
+    let mut cart = NotifyRecorder::new();
+    let caps = cart.ppu_capabilities();
+
+    ppu.write_ppureg(0x2006, 0x00, &mut cart, caps);
+    ppu.write_ppureg(0x2006, 0x00, &mut cart, caps);
+    let after_setup = cart.notified.len();
+
+    // Completing read: increments to $0001 and notifies the mapper.
+    assert_eq!(ppu.read_ppureg(0x2007, &mut cart, caps), 0x00);
+    assert_eq!(cart.notified.len(), after_setup + 1);
+    assert_eq!(cart.notified.last(), Some(&0x0001));
+
+    // Same-cycle read: fully ignored — no second notification.
+    assert_eq!(ppu.read_ppureg(0x2007, &mut cart, caps), 0x00);
+    assert_eq!(cart.notified.len(), after_setup + 1);
+
+    // Once outside the window the mapper is notified again ($0002).
+    ppu.cycle = PPUDATA_IGNORE_WINDOW_DOTS + 1;
+    assert_eq!(ppu.read_ppureg(0x2007, &mut cart, caps), 0x00);
+    assert_eq!(cart.notified.len(), after_setup + 2);
+    assert_eq!(cart.notified.last(), Some(&0x0002));
+}
+
+/// The ignore branch sits above the palette/non-palette split, so an
+/// ignored back-to-back read of a palette address must behave the same:
+/// stale value, no increment, no mapper notification.
+#[test]
+fn vram_read_ignored_palette_read_returns_stale_value() {
+    let mut ppu = Ppu::new((), Mirroring::Horizontal);
+    let mut cart = NotifyRecorder::new();
+    let caps = cart.ppu_capabilities();
+
+    ppu.palette.write(0x3F01, 0x2C);
+    ppu.write_ppureg(0x2006, 0x3F, &mut cart, caps);
+    ppu.write_ppureg(0x2006, 0x01, &mut cart, caps);
+    let after_setup = cart.notified.len();
+
+    // Completing palette read: returns $2C, increments to $3F02, notifies.
+    assert_eq!(ppu.read_ppureg(0x2007, &mut cart, caps), 0x2C);
+    assert_eq!(ppu.registers.vram_addr, 0x3F02);
+    assert_eq!(cart.notified.len(), after_setup + 1);
+
+    // Same-cycle read: ignored — stale $2C, address stays put, no notify.
+    assert_eq!(ppu.read_ppureg(0x2007, &mut cart, caps), 0x2C);
+    assert_eq!(ppu.registers.vram_addr, 0x3F02);
+    assert_eq!(cart.notified.len(), after_setup + 1);
+}
+
+/// $2007 reads of the palette return the value with the grayscale mask
+/// ($30) applied when grayscale is enabled, while the read buffer is still
+/// refilled from the nametable underneath (Mesen2 `_paletteRamMask`).
+#[test_case(false, 0x2C ; "no grayscale keeps the full 6-bit entry")]
+#[test_case(true, 0x20 ; "grayscale masks the entry to its $3x row")]
+fn vram_read_palette_applies_grayscale_mask(grayscale: bool, expected: u8) {
+    let mut ppu = Ppu::new((), Mirroring::Horizontal);
+    ppu.registers.mask = PpuMask::new().with_grayscale(grayscale);
+    let mut cart = TestCartridge::new();
+    let caps = cart.ppu_capabilities();
+
+    // Palette $3F01 = $2C; the nametable byte underneath ($2F01) = $81.
+    ppu.palette.write(0x3F01, 0x2C);
+    ppu.nametable.write(0x2F01, 0x81);
+
+    ppu.write_ppureg(0x2006, 0x3F, &mut cart, caps);
+    ppu.write_ppureg(0x2006, 0x01, &mut cart, caps);
+    // $2C AND $30 = $20 with grayscale, plus the open-bus bits 6-7
+    // (latch cleared by the $2006 writes above).
+    assert_eq!(ppu.read_ppureg(0x2007, &mut cart, caps), expected);
+
+    // The buffer was filled from the nametable underneath, not masked.
+    ppu.cycle = PPUDATA_IGNORE_WINDOW_DOTS + 1;
+    ppu.write_ppureg(0x2006, 0x2F, &mut cart, caps);
+    ppu.write_ppureg(0x2006, 0x01, &mut cart, caps);
+    assert_eq!(ppu.read_ppureg(0x2007, &mut cart, caps), 0x81);
 }
 
 fn create_test_ppu_with_mask(mask: PpuMask) -> Ppu {

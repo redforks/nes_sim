@@ -103,11 +103,12 @@ fn test_controller_reads_route_through_nes_mcu() {
 }
 
 /// Back-to-back PPUDATA reads (the page-crossing dummy read of
-/// `lda abs,X` followed by the real read, 1 CPU cycle apart) arrive before
-/// the PPU finished refilling its buffer: the second read re-returns the
-/// previous read's value while still performing the fetch and increment.
+/// `lda abs,X` followed by the real read, 1 CPU cycle apart) land inside
+/// the 6-dot ignore window: hardware fully ignores the second read — it
+/// re-returns the previous read's value with no address increment, no
+/// read-buffer refill and no mapper notification (Mesen2).
 #[test]
-fn ppudata_double_read_returns_stale_value_but_advances() {
+fn ppudata_second_read_fully_ignored_within_window() {
     let mut mcu = test_mcu();
 
     // VRAM $0000-$0003 = 11 22 33 44.
@@ -121,23 +122,32 @@ fn ppudata_double_read_returns_stale_value_but_advances() {
     mcu.write(0x2006, 0x00);
     mcu.write(0x2006, 0x00);
     assert_eq!(mcu.read(0x2007), 0x00); // initial buffer, loads VRAM[0]
-    for _ in 0..6 {
+    // 9 dots (3 CPU cycles) clear the 6-dot ignore window: the next read
+    // is normal-paced.
+    for _ in 0..9 {
         mcu.tick_ppu();
     }
 
-    // Normal-paced read: returns VRAM[0], loads VRAM[1].
+    // Normal-paced read: returns buffered VRAM[0], loads VRAM[1],
+    // increments the address.
     let dummy = mcu.read(0x2007);
-    // Adjacent-CPU-cycle read: stale return, still fetches VRAM[2].
+    // Same-cycle read: fully ignored — stale value, no increment, no
+    // refill, no mapper notification.
     let real = mcu.read(0x2007);
     assert_eq!(dummy, 0x11);
     assert_eq!(real, 0x11);
 
-    for _ in 0..6 {
+    // The ignored read must not have advanced the address: paced reads
+    // continue from VRAM[1] (only `dummy`'s increment landed), then VRAM[2].
+    for _ in 0..9 {
         mcu.tick_ppu();
     }
-    // Both increments landed: next paced read sees VRAM[2], then VRAM[3].
+    assert_eq!(mcu.read(0x2007), 0x22);
+    for _ in 0..9 {
+        mcu.tick_ppu();
+    }
     assert_eq!(mcu.read(0x2007), 0x33);
-    for _ in 0..6 {
+    for _ in 0..9 {
         mcu.tick_ppu();
     }
     assert_eq!(mcu.read(0x2007), 0x44);

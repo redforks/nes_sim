@@ -256,24 +256,30 @@ impl Image {
                 //
                 // Both magic words are quoted from the expected-output comments
                 // in the test ROM sources
-                // (../nes-test-roms/dmc_dma_during_read4/source/):
+                // (../nes-test-roms/dmc_dma_during_read4/source/), so they are
+                // hardware-legit outcomes even though the outcome "depends on
+                // CPU-PPU synchronization at reset":
                 // - double_2007_read.s lists "85CFD627 or F018C287 or 440EF923
-                //   or E52F41A5". The outcome depends on CPU-PPU synchronization
-                //   at reset; our deterministic alignment produces the
-                //   first-listed variant (row "22 44 55 66 77" -> 85CFD627).
-                // - dma_2007_read.s lists "159A7A8F or 5E3DF9C4". Our alignment
-                //   produces the second-listed variant (row "44 55" -> 5E3DF9C4).
+                //   or E52F41A5". Issue #35's full-ignore model (the second
+                //   $2007 read does not advance or refill) puts our deterministic
+                //   alignment on the second-listed variant (row
+                //   "22 33 44 55 66" -> F018C287).
+                // - dma_2007_read.s lists "159A7A8F or 5E3DF9C4". With the
+                //   Mesen2-width ignore window our alignment produces the
+                //   first-listed variant (row "33 44" -> 159A7A8F).
                 //
-                // The previously blessed words ("D84F6815", "159A7A8F") were
-                // artifacts of an emulator that serviced the back-to-back $2007
-                // reads fully and missed the DMC-DMA collision window; neither
-                // appears in the ROM sources' accepted lists.
+                // The previously blessed words ("85CFD627", "5E3DF9C4") matched
+                // an emulator whose back-to-back reads returned stale data but
+                // still advanced and refilled; the fully-ignored model shifts
+                // both ROMs onto other variants from their sources' accepted
+                // lists (F018C287 and 159A7A8F respectively).
+
                 if file_name
                     .file_name()
                     .is_some_and(|f| f == "double_2007_read.nes")
                 {
                     plugins.push(Box::new(NametableConsole::with_magic_success_word(
-                        "85CFD627",
+                        "F018C287",
                     )));
                     plugins.push(Box::new(Timeout::new(Duration::from_secs(5))));
                 } else if file_name
@@ -281,7 +287,7 @@ impl Image {
                     .is_some_and(|f| f == "dma_2007_read.nes")
                 {
                     plugins.push(Box::new(NametableConsole::with_magic_success_word(
-                        "5E3DF9C4",
+                        "159A7A8F",
                     )));
                     plugins.push(Box::new(Timeout::new(Duration::from_secs(5))));
                 } else {

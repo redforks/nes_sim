@@ -21,6 +21,11 @@ use registers::{PpuCtrl, PpuMask, PpuStatus, Registers};
 
 // PPU Timing Constants
 const PPU_OPEN_BUS_DECAY_TICKS: u64 = 3_221_591 * crate::SYSTEM_CYCLES_PER_PPU_CYCLE;
+/// Width of the back-to-back $2007 PPUDATA ignore window, in PPU dots
+/// (~2 CPU cycles): a second read landing inside it is fully ignored.
+/// Mesen2 sets `_ignoreVramRead = 6` at the read and decrements once per
+/// PPU cycle, so read cycles through +5 are ignored and +6 is normal.
+const PPUDATA_IGNORE_WINDOW_DOTS: u64 = 5;
 
 #[derive(Copy, Clone, Default)]
 struct TileCache {
@@ -183,11 +188,13 @@ pub struct Ppu<R: Render = ()> {
     /// Cumulative system cycle counter, incremented each tick.
     /// Replaces the global `get_system_cycles()` for PPU-internal timing.
     cycle: u64,
-    /// System cycle of the last PPUDATA ($2007) read, used to detect the
-    /// back-to-back dummy+real read pair of page-crossing `lda abs,X`.
-    ppudata_last_read_at: Option<u64>,
-    /// Value that read returned; re-returned by a read arriving before the
-    /// buffer refill could complete.
+    /// System cycle of the last completing PPUDATA ($2007) read. A second
+    /// read landing inside the PPUDATA ignore window (back-to-back
+    /// dummy+real reads of page-crossing `lda abs,X`) is fully ignored on
+    /// hardware (Mesen2). Ignored reads do not stamp this field.
+    ppudata_last_completed_read_at: Option<u64>,
+    /// Value that read returned; re-returned verbatim by an ignored
+    /// back-to-back read that lands inside the ignore window.
     ppudata_last_return: u8,
     /// Two-dot pixel output pipeline: pixels rendered on visible dots wait
     /// here (due cycle, target coordinates, palette index) before committing
@@ -224,7 +231,7 @@ impl<R: Render> Ppu<R> {
             rendering_enabled_at_scanline_start: false,
             ren_latched_at_338: false,
             cycle: 0,
-            ppudata_last_read_at: None,
+            ppudata_last_completed_read_at: None,
             vbl_set_cycle: 0,
             nmi_race_cancel: false,
             ppudata_last_return: 0,
@@ -796,6 +803,19 @@ impl<R: Render> Ppu<R> {
         cartridge: &mut dyn Cartridge,
         cartridge_caps: CartridgeCaps,
     ) -> u8 {
+        // Two $2007 reads in quick succession (within the PPUDATA ignore
+        // window, ~2 CPU cycles — the page-crossing dummy read of
+        // `lda abs,X` followed by the real read) make the second read fully
+        // ignored on hardware (Mesen2 `NesPpu::Read`): it re-returns the
+        // previous read's value with no VRAM access, no address increment,
+        // no read-buffer refill and no mapper notification. Ignored reads
+        // do not re-arm the window — only a completing read does.
+        if let Some(at) = self.ppudata_last_completed_read_at
+            && self.cycle <= at + PPUDATA_IGNORE_WINDOW_DOTS
+        {
+            return self.ppudata_last_return;
+        }
+
         let vram_addr = self.registers.vram_addr;
         let current = self.read_vram(vram_addr, cartridge);
         self.registers
@@ -811,28 +831,21 @@ impl<R: Render> Ppu<R> {
         let addr = vram_addr % 0x4000;
         let result = if addr >= 0x3F00 {
             // Palette: fill buffer with the nametable data underneath
-            // (mirrored from $2F00-$2FFF)
+            // (mirrored from $2F00-$2FFF). The returned value carries the
+            // grayscale mask ($30) when grayscale is enabled, exactly like
+            // the rendering path (Mesen2 `_paletteRamMask`).
             self.registers.ppudata_buffer = self.read_vram(vram_addr - 0x1000, cartridge);
-            let result = (current & 0x3F) | (self.current_bus_latch() & 0xC0);
+            let masked = self.registers.mask.grayscale_index(current);
+            let result = (masked & 0x3F) | (self.current_bus_latch() & 0xC0);
             self.refresh_bus_latch_bits(0x3F, result);
             result
         } else {
             let buffered = self.registers.ppudata_buffer;
             self.registers.ppudata_buffer = current;
-            // `lda abs,X` immediately followed by the real read) arrive
-            // before the PPU finished refilling its buffer: hardware
-            // returns the previous read's stale value while still
-            // performing the fetch and increment.
-            let early = matches!(self.ppudata_last_read_at, Some(at) if self.cycle <= at + 4);
-            let returned = if early {
-                self.ppudata_last_return
-            } else {
-                buffered
-            };
-            self.refresh_bus_latch(returned);
-            returned
+            self.refresh_bus_latch(buffered);
+            buffered
         };
-        self.ppudata_last_read_at = Some(self.cycle);
+        self.ppudata_last_completed_read_at = Some(self.cycle);
         self.ppudata_last_return = result;
         result
     }
