@@ -3,7 +3,7 @@ use crate::{
     bus::{Bus, BusOwner},
     ines::INesFile,
     interrupt::{ApuIrqSampler, CartridgeIrqLatch, InterruptLines},
-    nes::{NesMcu, controller::Button, ppu::palette::ColorTheme},
+    nes::{Mmc3IrqOverride, NesMcu, controller::Button, ppu::palette::ColorTheme},
     render::Render,
 };
 /// Safety limit: maximum system ticks per `process_frame()` call.
@@ -31,7 +31,22 @@ where
     D: crate::nes::apu::AudioDriver,
 {
     pub fn new(file: &INesFile, plugin: P, render: R, audio_driver: D) -> Self {
-        let mcu = NesMcu::new(file, render, audio_driver);
+        Self::new_with_mmc3_irq_override(file, plugin, render, audio_driver, Mmc3IrqOverride::Auto)
+    }
+
+    /// [`Self::new`] with an explicit MMC3 IRQ-revision override — the
+    /// harness/test hook (step 1) of [`mmc3_irq_revision_is_alternate`]:
+    /// [`Mmc3IrqOverride::ForceAlternate`] forces revision-A (Alternate)
+    /// semantics, [`Mmc3IrqOverride::ForceStandard`] forces Standard, and
+    /// [`Mmc3IrqOverride::Auto`] uses [`NesMcu::new`] auto-detection.
+    pub fn new_with_mmc3_irq_override(
+        file: &INesFile,
+        plugin: P,
+        render: R,
+        audio_driver: D,
+        irq_override: Mmc3IrqOverride,
+    ) -> Self {
+        let mcu = NesMcu::new_with_mmc3_irq_override(file, render, audio_driver, irq_override);
         Self {
             cpu: Cpu::new(mcu),
             p: plugin,

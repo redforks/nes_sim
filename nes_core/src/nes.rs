@@ -14,6 +14,7 @@ pub mod controller;
 pub(crate) mod dmc_dma;
 mod lower_ram;
 mod mapper;
+pub use mapper::Mmc3IrqOverride;
 pub mod ppu;
 
 pub struct NesMcu<R: Render, D: AudioDriver> {
@@ -49,7 +50,21 @@ pub struct NesMcu<R: Render, D: AudioDriver> {
 
 impl<R: Render, D: AudioDriver> NesMcu<R, D> {
     pub fn new(file: &INesFile, renderer: R, audio_driver: D) -> Self {
-        let (cartridge, mirroring) = mapper::create_cartridge(file);
+        Self::new_with_mmc3_irq_override(file, renderer, audio_driver, Mmc3IrqOverride::Auto)
+    }
+
+    /// [`Self::new`] with an explicit MMC3 IRQ-revision override — the
+    /// harness/test hook (step 1) of [`mmc3_irq_revision_is_alternate`].
+    /// [`Mmc3IrqOverride::Auto`] uses [`mapper::create_cartridge_with_mmc3_irq_override`]
+    /// auto-detection.
+    pub(crate) fn new_with_mmc3_irq_override(
+        file: &INesFile,
+        renderer: R,
+        audio_driver: D,
+        irq_override: Mmc3IrqOverride,
+    ) -> Self {
+        let (cartridge, mirroring) =
+            mapper::create_cartridge_with_mmc3_irq_override(file, irq_override);
         let cartridge_caps = cartridge.ppu_capabilities();
         let ppu = Ppu::new(renderer, mirroring);
 

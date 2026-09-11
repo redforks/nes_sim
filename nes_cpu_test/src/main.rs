@@ -52,6 +52,11 @@ struct Args {
     /// PPU frames to execute before the --dump-audio export; 600 is ~10 s NTSC
     #[arg(long, requires = "dump_audio", default_value_t = 600)]
     frames: usize,
+    /// Force MMC3 revision-A (Alternate) IRQ semantics regardless of the
+    /// detection predicate; required by blargg's mmc3_irq_tests
+    /// 5.MMC3_rev_A.nes (an iNES ROM that predates NES 2.0 submapper 004:4).
+    #[arg(long = "force-mmc3-rev-a")]
+    force_mmc3_rev_a: bool,
 }
 
 fn main() {
@@ -66,6 +71,7 @@ fn main() {
         presses,
         dump_audio,
         frames,
+        force_mmc3_rev_a,
     } = Args::parse();
 
     env_logger::builder().format_timestamp(None).init();
@@ -131,7 +137,7 @@ fn main() {
         let dump_out = dump_out.expect("--dump-frame requires --dump-out");
         image.create_dump_machine(quiet, start_pc, max_instructions, dump_frame, dump_out)
     } else {
-        image.create_machine(quiet, start_pc, max_instructions)
+        image.create_machine(quiet, start_pc, max_instructions, force_mmc3_rev_a)
     };
     let mut presses = presses;
     exec(&mut machine, &mut presses, zapper.as_mut(), verify);

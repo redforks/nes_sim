@@ -196,9 +196,8 @@ blargg_ppu_tests: palette_ram power_up_palette sprite_ram vbl_clear_time vram_ac
 # blargg's 2005.07.30 APU tests (length counter, frame counter, IRQ timing):
 # verdict is an on-screen result code where "$01" = all tests passed (per
 # tests.txt), decoded by the NametableConsole magic-success-word plugin (see
-# nes_cpu_test/src/image.rs). len_halt_timing ($03) and len_reload_timing
-# ($04) currently expose real nes_core length-counter timing deficiencies;
-# they stay out of passed_apu_tests until fixed.
+# nes_cpu_test/src/image.rs). The whole set — including len_halt_timing
+# ($03) and len_reload_timing ($04) — is green.
 blargg_apu_len_ctr: build_nes_cpu_test
     {{ nes_cpu_test }} --quiet -f ../nes-test-roms/blargg_apu_2005.07.30/01.len_ctr.nes
 
@@ -377,12 +376,13 @@ mmc3_irq_test_4: build_nes_cpu_test
     {{ nes_cpu_test }} --quiet -f ../nes-test-roms/mmc3_irq_tests/4.Scanline_timing.nes
 
 mmc3_irq_test_5: build_nes_cpu_test
-    {{ nes_cpu_test }} --quiet -f ../nes-test-roms/mmc3_irq_tests/5.MMC3_rev_A.nes
+    {{ nes_cpu_test }} --quiet --force-mmc3-rev-a -f ../nes-test-roms/mmc3_irq_tests/5.MMC3_rev_A.nes
 
 mmc3_irq_test_6: build_nes_cpu_test
     {{ nes_cpu_test }} --quiet -f ../nes-test-roms/mmc3_irq_tests/6.MMC3_rev_B.nes
 
-mmc3_irq_tests: mmc3_irq_test_1 mmc3_irq_test_2 mmc3_irq_test_3 mmc3_irq_test_4 mmc3_irq_test_6
+# blargg's MMC3 IRQ tests 1-6; test 5 (rev A) runs with the harness override.
+mmc3_irq_tests: mmc3_irq_test_1 mmc3_irq_test_2 mmc3_irq_test_3 mmc3_irq_test_4 mmc3_irq_test_5 mmc3_irq_test_6
 
 mmc3_test_1: build_nes_cpu_test
     {{ nes_cpu_test }} --quiet -f ../nes-test-roms/mmc3_test/1-clocking.nes

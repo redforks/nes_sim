@@ -13,8 +13,13 @@ use vrc24::Vrc24;
 pub use vrc24::VrcVariant;
 
 const CARTRIDGE_START_ADDR: u16 = 0x4020;
+/// NES 2.0 submapper marking an early TxROM board carrying the MMC3A
+/// (NEC "old-style") IRQ counter. Per the NESdev iNES-004 submapper
+/// table (wiki "NES 2.0 submappers", mirrored by rom-properties'
+/// `NESMappers.cpp`): 004:0 = MMC3C, 1 = MMC6, 2 = MMC3C with
+/// hard-wired mirroring, 3 = MC-ACC, 4 = MMC3A.
+const MMC3A_NES20_SUBMAPPER: u8 = 4;
 const MMC3_ALTERNATE_IRQ_SIGNATURES: [&str; 2] = ["6-MMC3_alt", "6-MMC6"];
-
 mod axrom;
 mod bxrom;
 mod cnrom;
@@ -62,7 +67,29 @@ impl From<NametableArrangement> for Mirroring {
     }
 }
 
-pub fn create_cartridge(f: &INesFile) -> (Box<dyn Cartridge>, Mirroring) {
+/// Selects the MMC3 IRQ scanline-counter revision for a cartridge — the
+/// harness/test hook (step 1) of [`mmc3_irq_revision_is_alternate`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum Mmc3IrqOverride {
+    /// Run automatic detection: NES 2.0 submapper 004:4 (MMC3A), then
+    /// content signatures, then Standard.
+    #[default]
+    Auto,
+    /// Force revision-A (Alternate) semantics.
+    ForceAlternate,
+    /// Force Standard (revision-B/C) semantics.
+    ForceStandard,
+}
+
+/// Create a cartridge, with an explicit MMC3 IRQ-revision override — the
+/// harness/test hook (step 1) of [`mmc3_irq_revision_is_alternate`]:
+/// [`Mmc3IrqOverride::ForceAlternate`] forces revision-A (Alternate)
+/// semantics, [`Mmc3IrqOverride::ForceStandard`] forces Standard, and
+/// [`Mmc3IrqOverride::Auto`] falls back to automatic detection.
+pub fn create_cartridge_with_mmc3_irq_override(
+    f: &INesFile,
+    irq_override: Mmc3IrqOverride,
+) -> (Box<dyn Cartridge>, Mirroring) {
     let mapper_no = f.header().mapper_no;
     let mirroring = if f.header().ignore_mirror_control {
         Mirroring::Four
@@ -79,9 +106,11 @@ pub fn create_cartridge(f: &INesFile) -> (Box<dyn Cartridge>, Mirroring) {
         2 => (Box::new(UxRom::new(f.read_prg_rom(), chr_rom)), mirroring),
         3 => (Box::new(CnRom::new(f.read_prg_rom(), chr_rom)), mirroring),
         4 => {
-            let alternate_irq_revision = MMC3_ALTERNATE_IRQ_SIGNATURES
-                .iter()
-                .any(|signature| rom_contains_signature(f, signature));
+            let alternate_irq_revision = mmc3_irq_revision_is_alternate(
+                irq_override,
+                f.header().submapper_no,
+                f.read_prg_rom(),
+            );
             (
                 Box::new(MMC3::new(
                     f.read_prg_rom(),
@@ -155,9 +184,40 @@ pub fn create_cartridge(f: &INesFile) -> (Box<dyn Cartridge>, Mirroring) {
     }
 }
 
-fn rom_contains_signature(file: &INesFile, signature: &str) -> bool {
-    file.read_prg_rom()
-        .windows(signature.len())
+/// Single detection predicate for the MMC3 IRQ scanline-counter revision
+/// (issue #32; decision order pinned by the #31 audit):
+///   1. explicit override (harness/test hook),
+///   2. NES 2.0 submapper 004:4 (MMC3A / early TxROM) => revision A,
+///   3. existing content signatures (`6-MMC6`, `6-MMC3_alt`) as fallback,
+///   4. Standard by default.
+///
+/// Returns `true` when the revision-A (Alternate) semantics apply:
+/// after the counter reaches 0 by decrementing, the forced reload must
+/// not re-assert the IRQ even with a zero latch (see `mmc3::clock_irq`).
+///
+/// Unit-testable without ROM probing: `prg_rom` is passed as bytes
+/// directly, so an empty slice exercises steps 1, 2 and 4 with no
+/// content scan.
+pub fn mmc3_irq_revision_is_alternate(
+    irq_override: Mmc3IrqOverride,
+    submapper_no: Option<u8>,
+    prg_rom: &[u8],
+) -> bool {
+    match irq_override {
+        Mmc3IrqOverride::ForceAlternate => return true,
+        Mmc3IrqOverride::ForceStandard => return false,
+        Mmc3IrqOverride::Auto => {}
+    }
+    if submapper_no == Some(MMC3A_NES20_SUBMAPPER) {
+        return true;
+    }
+    MMC3_ALTERNATE_IRQ_SIGNATURES
+        .iter()
+        .any(|signature| rom_contains_signature_bytes(prg_rom, signature))
+}
+
+fn rom_contains_signature_bytes(rom: &[u8], signature: &str) -> bool {
+    rom.windows(signature.len())
         .any(|window| window == signature.as_bytes())
 }
 

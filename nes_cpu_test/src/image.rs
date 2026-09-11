@@ -5,8 +5,8 @@ use super::plugin::{
 };
 use super::zapper_test::ZapperAction;
 use nes_core::{
-    Plugin, SystemClock, ines::INesFile, machine::Machine, mcu::RamMcu, nes_machine::NesMachine,
-    render::ImageRender,
+    Plugin, SystemClock, ines::INesFile, machine::Machine, mcu::RamMcu, nes::Mmc3IrqOverride,
+    nes_machine::NesMachine, render::ImageRender,
 };
 use std::{
     io::Read,
@@ -32,13 +32,21 @@ impl Image {
         quiet: bool,
         start_pc: Option<u16>,
         max_instructions: u64,
+        force_mmc3_rev_a: bool,
     ) -> MachineWrapper {
         match self {
             Image::Bin(arr) => self.create_bin_machine(arr, quiet, start_pc, max_instructions),
             Image::INes {
                 nes_file,
                 file_name,
-            } => self.create_ines_machine(nes_file, file_name, quiet, start_pc, max_instructions),
+            } => self.create_ines_machine(
+                nes_file,
+                file_name,
+                quiet,
+                start_pc,
+                max_instructions,
+                force_mmc3_rev_a,
+            ),
         }
     }
 
@@ -79,6 +87,7 @@ impl Image {
         quiet: bool,
         start_pc: Option<u16>,
         max_instructions: u64,
+        force_mmc3_rev_a: bool,
     ) -> MachineWrapper {
         if let Some(f) = file_name.file_name().and_then(|f| f.to_str()) {
             if f == "scanline.nes" {
@@ -316,7 +325,20 @@ impl Image {
             plugins.push(Box::new(MaxInstructions::new(max_instructions)));
         }
         let plugin = CompositePlugin::new(plugins);
-        let mut machine = NesMachine::new(ines, plugin, (), ());
+        let mut machine = if force_mmc3_rev_a {
+            // Harness hook for blargg's 5.MMC3_rev_A.nes: the ROM is plain
+            // iNES (no NES 2.0 submapper 004:4 header), so the test runner
+            // selects revision-A (Alternate) IRQ semantics explicitly.
+            NesMachine::new_with_mmc3_irq_override(
+                ines,
+                plugin,
+                (),
+                (),
+                Mmc3IrqOverride::ForceAlternate,
+            )
+        } else {
+            NesMachine::new(ines, plugin, (), ())
+        };
         if let Some(pc) = start_pc {
             machine.set_pc(pc);
         }

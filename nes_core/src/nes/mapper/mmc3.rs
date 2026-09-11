@@ -4,7 +4,7 @@ use crate::nes::mapper::Mirroring;
 
 const PRG_RAM_SIZE: usize = 0x2000;
 const PRG_ROM_BANK_SIZE: usize = 0x2000;
-const MMC3_A12_LOW_FILTER_TICKS: u8 = 12;
+pub(crate) const MMC3_A12_LOW_FILTER_TICKS: u8 = 12;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum IrqRevision {
