@@ -10,3 +10,5 @@ nesdev-wiki
 **/graphify-out
 .pi/tasks/
 @.pi/tasks/
+@.pi/delegate/
+.pi/delegate/
