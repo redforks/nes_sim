@@ -50,6 +50,12 @@ pub struct SpriteManager {
     /// picked (≤8 in-range sprites, evaluation starting at OAMADDR).
     current_zero_sprite: Option<Sprite>,
     next_zero_sprite: Option<Sprite>,
+    /// Internal OAM bus latch exposed by $2004 reads mid-render (Mesen
+    /// `_oamCopybuffer`): $FF during the 1-64 clear phase, the last primary
+    /// OAM byte read on odd eval dots during 65-256. Written only by the
+    /// eval machine; the register layer observes it through `copy_buffer()`
+    /// and never mutates it.
+    oam_copybuffer: u8,
 }
 
 fn sprite_in_range(y: u8, target_scanline: u16, sprite_height: u8) -> bool {
@@ -68,6 +74,7 @@ impl SpriteManager {
             next_scanline_oam: ArrayVec::new(),
             current_zero_sprite: None,
             next_zero_sprite: None,
+            oam_copybuffer: 0xFF,
         }
     }
 
@@ -79,6 +86,7 @@ impl SpriteManager {
         self.next_scanline_oam.clear();
         self.current_zero_sprite = None;
         self.next_zero_sprite = None;
+        self.oam_copybuffer = 0xFF;
     }
 
     /// Update sprite status to ppu status register
@@ -111,6 +119,9 @@ impl SpriteManager {
         self.next_scanline_oam.clear();
         std::mem::swap(&mut self.current_zero_sprite, &mut self.next_zero_sprite);
         self.next_zero_sprite = None;
+        // A new line starts with an empty copy buffer (clear phase returns
+        // $FF); evaluation steps on odd dots 65-256 overwrite it byte by byte.
+        self.oam_copybuffer = 0xFF;
     }
 
     pub fn begin_sprite_overflow_eval(&mut self, start_index: u8) {
@@ -138,6 +149,9 @@ impl SpriteManager {
                 }
 
                 let y = oam.sprites[self.sprite_overflow_eval.effective_index() as usize].y;
+                // Odd-cycle primary-OAM read lands on the internal bus: a $2004
+                // read during dots 65-256 observes this copy buffer.
+                self.oam_copybuffer = y;
                 if sprite_in_range(y, target_scanline(scanline), ctrl.sprite_height()) {
                     self.sprite_overflow_eval.visible_sprites += 1;
                     if self.sprite_overflow_eval.visible_sprites > 8 {
@@ -156,6 +170,7 @@ impl SpriteManager {
                 let oam_index = self.sprite_overflow_eval.effective_index();
                 let byte_offset = 4 - remaining_bytes;
                 let oam_byte = oam.get_byte(oam_index * 4 + byte_offset);
+                self.oam_copybuffer = oam_byte;
                 self.sprite_overflow_eval.pending_sprite_bytes[(byte_offset as usize) & 0x3] =
                     oam_byte;
 
@@ -193,6 +208,7 @@ impl SpriteManager {
                 let byte_idx = self.sprite_overflow_eval.effective_index() * 4
                     + self.sprite_overflow_eval.byte_index;
                 let y_byte = oam.get_byte(byte_idx);
+                self.oam_copybuffer = y_byte;
                 if sprite_in_range(y_byte, target_scanline(scanline), ctrl.sprite_height()) {
                     self.overflow_pending = true;
                     self.sprite_overflow_eval.mode = SpriteOverflowEvalMode::Done;
@@ -221,6 +237,27 @@ impl SpriteManager {
     #[cfg(test)]
     pub(crate) fn current_zero_sprite(&self) -> Option<Sprite> {
         self.current_zero_sprite
+    }
+
+    /// Read-only projection of the evaluation copy buffer for $2004 reads
+    /// on dots 65-256 of visible lines (rendering on). Takes `&self` only:
+    /// the register layer observes eval traffic without mutating it.
+    pub fn copy_buffer(&self) -> u8 {
+        self.oam_copybuffer
+    }
+
+    /// Read-only projection of secondary OAM (the next-line buffer under
+    /// construction) for $2004 reads on dots 257-320. Unwritten slots read
+    /// as $FF, matching the hardware clear phase. Takes `&self` only.
+    pub fn secondary_byte(&self, index: usize) -> u8 {
+        let sprite_idx = index / 4;
+        let byte = index % 4;
+        if sprite_idx < self.next_scanline_oam.len() {
+            let raw: [u8; 4] = bytemuck::cast(self.next_scanline_oam[sprite_idx]);
+            raw[byte]
+        } else {
+            0xFF
+        }
     }
 
     pub fn find_sprite_pixel(

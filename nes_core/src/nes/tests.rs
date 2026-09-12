@@ -464,7 +464,10 @@ fn oam_dma_during_rendering_does_not_corrupt_oam() {
 
     mcu.write(0x4014, 0x02);
     assert!(drive_oam_dma(&mut mcu, &mut bus), "OAM DMA never completed");
-
+    // Disable rendering before probing: mid-render $2004 reads expose
+    // eval/fetch traffic, not primary OAM, so the sentinel is pinned with
+    // rendering off.
+    mcu.write(0x2001, 0x00);
     // The transfer ran but wrote nothing: every OAM byte is the sentinel.
     for i in 0..=255u8 {
         mcu.write(0x2003, i);

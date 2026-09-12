@@ -863,8 +863,34 @@ impl<R: Render> Ppu<R> {
             .refresh_bus_latch_bits(mask, value, self.cycle);
     }
 
-    /// Read OAM data at current OAM address
+    /// Read OAM data at current OAM address.
+    ///
+    /// With rendering enabled on visible lines (0-239) the PPU is
+    /// mid-evaluation/fetch and $2004 exposes internal traffic instead of
+    /// primary OAM (nesdev PPU registers §OAMDATA; Micro Machines relies on
+    /// this): dots 1-64 return $FF (secondary-OAM clear phase), dots 65-256
+    /// return the evaluation copy buffer, dots 257-320 return secondary OAM
+    /// at the fetch position `(dot-257)/8*4 + min((dot-257)%8, 3)`. All other
+    /// states (rendering disabled, blanking incl. the pre-render line) keep
+    /// the primary-OAM-at-OAMADDR behavior. The eval machine is observed
+    /// through a read-only projection (`copy_buffer`/`secondary_byte` take
+    /// `&self`); this layer never mutates eval internals.
     fn read_oam_data(&self) -> u8 {
+        if self.rendering_enabled() && self.timing.in_visible_scanline() {
+            let dot = self.timing.dot;
+            if (1..=64).contains(&dot) {
+                return 0xFF;
+            }
+            if (65..=256).contains(&dot) {
+                return self.sprite.copy_buffer();
+            }
+            if (257..=320).contains(&dot) {
+                let rel = dot - 257;
+                let step = (rel % 8).min(3);
+                let index = (rel / 8 * 4 + step) as usize;
+                return self.sprite.secondary_byte(index);
+            }
+        }
         self.oam.get_byte(self.oam_addr)
     }
 

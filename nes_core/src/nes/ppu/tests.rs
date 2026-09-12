@@ -1099,8 +1099,10 @@ fn test_oamaddr_is_zeroed_during_sprite_fetches(scanline: u16) {
 /// rendering enabled, $2004 writes on the pre-render line and visible
 /// lines 0-239 are ignored — OAM is untouched — while OAMADDR does a
 /// glitchy +4 that bumps only its high 6 bits, leaving the low 2 bits
-/// unchanged. The ramp makes the observed byte equal to the address, so
-/// an unanchored $2004 read pins OAMADDR's new value exactly.
+/// unchanged. The ramp makes the observed byte equal to the address, so an
+/// unanchored $2004 read pins OAMADDR's new value exactly — parked in
+/// hblank (dot 340), since mid-render reads expose eval/fetch traffic,
+/// not primary OAM.
 #[test_case(0,   0x02, 0x06; "visible scanline, addr 2 -> 6")]
 #[test_case(0,   0x03, 0x07; "visible scanline, low 2 bits preserved")]
 #[test_case(0,   0xFC, 0x00; "visible scanline, high 6 bits wrap")]
@@ -1119,7 +1121,9 @@ fn test_oam_data_write_during_rendering_ignored_with_glitchy_oamaddr(
 
     ppu.write_ppureg(0x2003, oamaddr, &mut cart, caps);
     ppu.write_ppureg(0x2004, 0xEE, &mut cart, caps);
-
+    // Park in hblank for the probe reads: mid-render $2004 reads expose
+    // eval/fetch traffic, not primary OAM, so OAMADDR is pinned from dot 340.
+    ppu.timing.dot = 340;
     // OAMADDR glitched to the +4 address: an unanchored $2004 read
     // (reads do not move OAMADDR) returns the ramp byte there.
     assert_eq!(ppu.read_ppureg(0x2004, &mut cart, caps), glitched);
@@ -1138,7 +1142,8 @@ fn test_oam_data_write_during_sprite_only_rendering_also_glitches() {
 
     ppu.write_ppureg(0x2003, 0x02, &mut cart, caps);
     ppu.write_ppureg(0x2004, 0xEE, &mut cart, caps);
-
+    // Park in hblank: mid-render reads expose traffic, not primary OAM.
+    ppu.timing.dot = 340;
     assert_eq!(ppu.read_ppureg(0x2004, &mut cart, caps), 0x06);
     assert_eq!(read_oam_at(&mut ppu, 0x02), 0x02);
 }
@@ -1176,6 +1181,146 @@ fn test_oam_data_write_outside_render_windows_takes_effect() {
     ppu.write_ppureg(0x2003, 0x0C, &mut cart, caps);
     ppu.write_ppureg(0x2004, 0xFF, &mut cart, caps);
     assert_eq!(read_oam_at(&mut ppu, 0x0C), 0xFF);
+}
+
+/// Drive the PPU from dot 0 of `scanline` to `dot`: after the call
+/// `timing.dot == dot` and dots 0..dot have been processed (evaluation,
+/// fetches, OAMADDR forcing — the full per-dot pipeline).
+fn tick_to_dot(ppu: &mut Ppu, scanline: u16, dot: u16) {
+    let mut cart = TestCartridge::new();
+    let caps = cart.ppu_capabilities();
+    ppu.timing.scanline = scanline;
+    ppu.timing.dot = 0;
+    for _ in 0..dot {
+        ppu.tick(&mut cart, caps);
+    }
+}
+
+/// Read $2004 without advancing the PPU clock (register reads never move
+/// timing; the dot under test is whatever the driver parked beforehand).
+fn read_oamdata_now(ppu: &mut Ppu) -> u8 {
+    let mut cart = TestCartridge::new();
+    let caps = cart.ppu_capabilities();
+    ppu.read_ppureg(0x2004, &mut cart, caps)
+}
+
+/// Seed all 64 sprites with one in-range sprite 0 (Y=20 covers line 21)
+/// and every other Y parked at $FF (out of range for line 21).
+fn seed_single_sprite_for_line_21(ppu: &mut Ppu) {
+    for i in 0..64u8 {
+        setup_sprite(ppu, i, 0xFF, 0x00, 0x00, 0x00);
+    }
+    setup_sprite(ppu, 0, 20, 0xAA, 0x55, 0x33);
+}
+
+/// Dots 1-64 with rendering on expose the secondary-OAM clear ($FF), not
+/// primary OAM — even with a ramp behind OAMADDR.
+#[test]
+fn test_oamdata_read_clear_phase_returns_ff() {
+    let mut ppu = ppu_with_ramp_oam(PpuMask::new().with_background_enabled(true));
+    for dot in [1u16, 32, 64] {
+        tick_to_dot(&mut ppu, 20, dot);
+        assert_eq!(read_oamdata_now(&mut ppu), 0xFF, "dot {dot}");
+    }
+}
+
+/// Dots 65-256 with rendering on expose the evaluation copy buffer: the
+/// last primary-OAM byte latched, walking Y → tile → attr → X as sprite 0
+/// is copied, then the next sprite's Y once it is done.
+#[test]
+fn test_oamdata_read_eval_returns_copy_buffer() {
+    let mut ppu = create_test_ppu_with_mask(PpuMask::new().with_sprite_enabled(true));
+    seed_single_sprite_for_line_21(&mut ppu);
+
+    // Dot 65 scans sprite 0's Y (in range for line 21) into the buffer.
+    tick_to_dot(&mut ppu, 20, 66);
+    assert_eq!(read_oamdata_now(&mut ppu), 20);
+    // Dots 67/69/71 copy tile, attributes, X.
+    tick_to_dot(&mut ppu, 20, 68);
+    assert_eq!(read_oamdata_now(&mut ppu), 0xAA);
+    tick_to_dot(&mut ppu, 20, 70);
+    assert_eq!(read_oamdata_now(&mut ppu), 0x55);
+    tick_to_dot(&mut ppu, 20, 72);
+    assert_eq!(read_oamdata_now(&mut ppu), 0x33);
+    // Sprite 0 is fully copied: the next odd dot scans sprite 1's Y ($FF).
+    tick_to_dot(&mut ppu, 20, 74);
+    assert_eq!(read_oamdata_now(&mut ppu), 0xFF);
+}
+
+/// Dots 257-320 with rendering on expose secondary OAM at the fetch
+/// position `(dot-257)/8*4 + min((dot-257)%8, 3)`: bytes 0-3 walk Y, tile,
+/// attr, X and dots 4-7 of each slot repeat X; unwritten slots read $FF.
+/// Reads are side-effect free — the buffer is intact afterwards.
+#[test]
+fn test_oamdata_read_fetch_returns_secondary_at_position() {
+    let mut ppu = create_test_ppu_with_mask(PpuMask::new().with_sprite_enabled(true));
+    seed_single_sprite_for_line_21(&mut ppu);
+    tick_to_dot(&mut ppu, 20, 321);
+    assert_eq!(ppu.sprite.next_scanline_oam_len(), 1);
+    for (dot, expected) in [
+        (257u16, 20u8),
+        (258, 0xAA),
+        (259, 0x55),
+        (260, 0x33),
+        (261, 0x33),
+        (264, 0x33),
+        (265, 0xFF),
+        (320, 0xFF),
+    ] {
+        ppu.timing.dot = dot;
+        assert_eq!(read_oamdata_now(&mut ppu), expected, "dot {dot}");
+    }
+    // The probe reads mutated nothing: same bytes, same buffer length.
+    ppu.timing.dot = 257;
+    assert_eq!(read_oamdata_now(&mut ppu), 20);
+    assert_eq!(ppu.sprite.next_scanline_oam_len(), 1);
+}
+
+/// Scanline 0 builds from an empty buffer (no evaluation ran on the
+/// pre-render line per #33): with every Y parked out of range for line 1,
+/// the clear, eval and fetch windows all read $FF.
+#[test]
+fn test_oamdata_read_scanline_zero_empty_copy_buffer() {
+    let mut ppu = create_test_ppu_with_mask(
+        PpuMask::new()
+            .with_background_enabled(true)
+            .with_sprite_enabled(true),
+    );
+    for i in 0..64u8 {
+        setup_sprite(&mut ppu, i, 0xFF, 0x11, 0x22, 0x33);
+    }
+    tick_to_dot(&mut ppu, 0, 30);
+    assert_eq!(read_oamdata_now(&mut ppu), 0xFF);
+    tick_to_dot(&mut ppu, 0, 100);
+    assert_eq!(read_oamdata_now(&mut ppu), 0xFF);
+    tick_to_dot(&mut ppu, 0, 321);
+    for dot in [257u16, 260, 280, 320] {
+        ppu.timing.dot = dot;
+        assert_eq!(read_oamdata_now(&mut ppu), 0xFF, "dot {dot}");
+    }
+}
+
+/// Rendering disabled — or blanking lines (vblank, hblank dots, the
+/// pre-render line) even with rendering enabled — keeps the
+/// primary-OAM-at-OAMADDR behavior on every dot.
+#[test]
+fn test_oamdata_read_outside_rendering_returns_primary_oam() {
+    let mut ppu = ppu_with_ramp_oam(PpuMask::new());
+    for dot in [0u16, 10, 100, 260, 321, 340] {
+        ppu.timing.scanline = 20;
+        ppu.timing.dot = dot;
+        assert_eq!(read_oam_at(&mut ppu, 0x42), 0x42, "dot {dot}");
+    }
+    let mut ppu = ppu_with_ramp_oam(PpuMask::new().with_background_enabled(true));
+    for (scanline, dot) in [(241u16, 10u16), (240, 100), (261, 100), (20, 0), (20, 340)] {
+        ppu.timing.scanline = scanline;
+        ppu.timing.dot = dot;
+        assert_eq!(
+            read_oam_at(&mut ppu, 0x42),
+            0x42,
+            "line {scanline} dot {dot}"
+        );
+    }
 }
 
 #[test]
