@@ -667,6 +667,15 @@ passed_ppu_tests: oam_read oam_stress ppu_open_bus ppu_read_buffer sprite_hit_te
 [parallel]
 passed_apu_tests: apu_mixer apu_reset apu_test dmc_dma_during_read4 imported_apu_misc passed_audio_manual_ok blargg_apu_tests dmc_tests dpcmletterbox volume_tests
 
+# Tier A ROM-gate verification sweep (issue #37): the full named gate set of
+# the Tier A cycle-accuracy parent (#31) in one go — MMC3 rev-A IRQ detection,
+# PPU OAM render-path, and $2007 quirks — confirming no regression across the
+# oam/PPU-timing/MMC3/APU gates after all five tickets (#32-#36) landed. Gate
+# names are the groups quoted in the ticket: sprite_overflow 1-5,
+# sprdma_and_dmc_dma, ppu_vbl_nmi, vbl_nmi_timing, mmc3_irq_tests 1-6 (incl.
+# 5, re-joined), mmc3_test 1-6, mmc3_test_2 1-6, blargg APU 01-11.
+[parallel]
+tier_a_sweep: oam_read oam_stress sprite_overflow_tests sprdma_and_dmc_dma ppu_vbl_nmi vbl_nmi_timing mmc3_irq_tests mmc3_tests mmc3_test2 blargg_apu_tests
 [parallel]
 passed_rom_tests: passed_cpu_tests passed_ppu_tests passed_apu_tests passed_mapper passed_input_tests
 
