@@ -172,10 +172,12 @@ impl GamepadOverlay {
         pixels: &mut [[u8; 4]],
         stride: u32,
         icons: &[RgbaImage],
-        dir_x: i64,
-        ab_x: i64,
-        b_x: i64,
-        y: i64,
+        OverlayIconLayout {
+            dir_x,
+            ab_x,
+            b_x,
+            y,
+        }: OverlayIconLayout,
     ) {
         let draw_dir = self.hold_dir > 0;
         let draw_ab = self.hold_ab > 0;
@@ -256,6 +258,14 @@ impl GamepadOverlay {
     }
 }
 
+#[derive(Debug, Clone, Copy)]
+struct OverlayIconLayout {
+    dir_x: i64,
+    ab_x: i64,
+    b_x: i64,
+    y: i64,
+}
+
 struct RecordRender {
     buffer: ImageRender<4>,
     canvas: Option<Canvas<Window>>,
@@ -302,12 +312,40 @@ impl RecordRender {
         let stride = ImageRender::<4>::width();
         let pixels = self.buffer.as_pixels_mut();
         if self.dual_player {
-            self.p1.draw(pixels, stride, &self.icons, 8, 152, 80, 888);
-            self.p2
-                .draw(pixels, stride, &self.icons, 820, 952, 888, 888);
+            self.p1.draw(
+                pixels,
+                stride,
+                &self.icons,
+                OverlayIconLayout {
+                    dir_x: 8,
+                    ab_x: 152,
+                    b_x: 80,
+                    y: 888,
+                },
+            );
+            self.p2.draw(
+                pixels,
+                stride,
+                &self.icons,
+                OverlayIconLayout {
+                    dir_x: 820,
+                    ab_x: 952,
+                    b_x: 888,
+                    y: 888,
+                },
+            );
         } else {
-            self.p1
-                .draw(pixels, stride, &self.icons, 820, 952, 888, 888);
+            self.p1.draw(
+                pixels,
+                stride,
+                &self.icons,
+                OverlayIconLayout {
+                    dir_x: 820,
+                    ab_x: 952,
+                    b_x: 888,
+                    y: 888,
+                },
+            );
         }
     }
 }

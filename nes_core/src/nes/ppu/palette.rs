@@ -29,7 +29,7 @@ impl Default for ColorTheme {
 impl ColorTheme {
     pub fn load_from_pal_buf(buf: &PalBuf) -> Self {
         let mut pixels = [Pixel::new(0, 0, 0); 64];
-        for (i, chunk) in buf.chunks_exact(3).enumerate() {
+        for (i, chunk) in buf.as_chunks::<3>().0.iter().enumerate() {
             pixels[i] = Pixel::new(chunk[0], chunk[1], chunk[2]);
         }
         Self(pixels)
