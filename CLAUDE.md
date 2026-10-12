@@ -10,8 +10,6 @@ An NES (Nintendo Entertainment System) emulator implemented in Rust with a modul
 | `nes_cpu_test/` | CLI tool for running CPU test ROMs with exit code detection | [nes_cpu_test/CLAUDE.md](nes_cpu_test/CLAUDE.md) |
 | `nes_web/` | WebAssembly build for browser-based emulation | [nes_web/CLAUDE.md](nes_web/CLAUDE.md) |
 | `nescli/` | CLI tools with SDL2 display and CHR ROM inspection | [nescli/CLAUDE.md](nescli/CLAUDE.md) |
-| `nes_mcp_protocol/` | MCP protocol definitions for NES emulator communication | - |
-| `nes_mcp_server/` | MCP server exposing NES emulator as tools and resources | - |
 | `www/` | Frontend for WASM build | - |
 
 ## Quick Start

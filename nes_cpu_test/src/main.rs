@@ -11,9 +11,6 @@ mod image;
 mod plugin;
 mod zapper_test;
 
-#[cfg(feature = "tcp-server")]
-mod tcp_server;
-
 #[derive(Debug, Parser)]
 #[command(author, version, about, long_about = None)]
 struct Args {
@@ -28,9 +25,6 @@ struct Args {
     /// Set the CPU start PC after reset (hex with 0x prefix or decimal)
     #[arg(long = "start-pc")]
     start_pc: Option<String>,
-    /// Start TCP server on port 28800 for MCP communication
-    #[arg(long = "tcp-server")]
-    tcp_server: bool,
     /// Press and hold a controller 1 button from a frame onward, as
     /// <button>@<frame> (e.g. --press start@11); repeatable. Frames count
     /// PPU frames from reset, matching --dump-frame.
@@ -65,7 +59,6 @@ fn main() {
         quiet,
         max_instructions,
         start_pc,
-        tcp_server,
         dump_frame,
         dump_out,
         presses,
@@ -75,18 +68,6 @@ fn main() {
     } = Args::parse();
 
     env_logger::builder().format_timestamp(None).init();
-
-    // TCP server mode
-    #[cfg(feature = "tcp-server")]
-    if tcp_server {
-        tcp_server::run_tcp_server(f, quiet, start_pc, max_instructions);
-    }
-
-    #[cfg(not(feature = "tcp-server"))]
-    if tcp_server {
-        eprintln!("Error: --tcp-server requires the tcp-server feature");
-        std::process::exit(1);
-    }
 
     let rom_name = f
         .file_name()
