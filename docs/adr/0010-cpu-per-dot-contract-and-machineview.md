@@ -112,10 +112,10 @@ Replaces `-> (ExecuteResult, bool)` (`cpu.rs:660`). `instruction_complete` is `m
   3. `Cpu::mcu/mcu_mut` are `pub(crate)`; `rg "\.mcu\(\)" -g '!nes.rs' -g '!nes_machine.rs'` finds 0 outside `view.rs`/`bus.rs` crate internals (NesMachine's `mcu()` remains pub).
   4. `grep -rn "dma_halt_bus_addr\|can_pause" nes_core/src --include="*.rs" | grep -v "cpu.rs.*pub(crate)"` == 0 outside `bus.rs`.
   5. `grep -rn "tick.*ExecuteResult.*bool" nes_core` == 0; `rg "TickOutcome"` >0 and `cargo test -p nes_core --lib` uses `.instruction_complete`/`.control`.
-  6. `CONTEXT.md` contains MachineView/TickOutcome/per-dot contract, no CpuClockPhase enum; `cargo test -p nes_core` + `/tmp/nes-sim-target/release/nes_cpu_test --quiet -f blargg_nes_cpu_test5` + `vbl_nmi_timing` green (no behavioral change).
+  6. `GLOSSARY.md` contains MachineView/TickOutcome/per-dot contract, no CpuClockPhase enum; `cargo test -p nes_core` + `/tmp/nes-sim-target/release/nes_cpu_test --quiet -f blargg_nes_cpu_test5` + `vbl_nmi_timing` green (no behavioral change).
   7. No behavioral change gate: `cargo test -p nes_core` and full `nes_cpu_test` suite green; capture PNG/WAV gates untouched.
 
-- **Vocabulary.** CONTEXT.md gains `MachineView`, `CpuSnapshot`, `TickOutcome`, `per-dot contract` under "System Timing"; `CpuClockPhase` removed.
+- **Vocabulary.** GLOSSARY.md gains `MachineView`, `CpuSnapshot`, `TickOutcome`, `per-dot contract` under "System Timing"; `CpuClockPhase` removed.
 
 - **Seam with Bus.** `Cpu` narrowing retains `can_pause`/`dma_halt_bus_addr` as `pub(crate)` for the `Bus ↔ Cpu` seam; Bus remains the one owner for `is_busy`/`suppress`/`reset`.
 

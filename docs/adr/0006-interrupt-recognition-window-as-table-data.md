@@ -13,4 +13,4 @@ The CPU's interrupt poll/hijack schedule was implicit: the poll point was keyed 
 - Candidate 4 (line-level interrupt handshake between PPU, Tick, CPU) integrates with the unified edge-consumption protocol instead of redesigning it.
 - A hijack arms the NMI window for its continuation tail — the tail is the NMI sequence's final cycles, so its final-cycle poll is suppressed by declaration.
 - Golden-table drift is only legitimate alongside a green `cpu_interrupts_v2` run in the same change.
-- Vocabulary lives in CONTEXT.md under "CPU Interrupt Recognition": interrupt recognition window, poll point, hijack deadline, edge consumption.
+- Vocabulary lives in GLOSSARY.md under "CPU Interrupt Recognition": interrupt recognition window, poll point, hijack deadline, edge consumption.

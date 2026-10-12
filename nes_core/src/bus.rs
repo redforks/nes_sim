@@ -5,7 +5,7 @@
 //! behind `tick(clock) -> BusOwner`. The `dmc_drove_bus` bool and the
 //! `NesMcu` collision predicate become a private branch inside this module.
 //!
-//! See ADR-0009 and CONTEXT.md "DMA Bus".
+//! See ADR-0009 and GLOSSARY.md "DMA Bus".
 
 use crate::nes::dmc_dma::DmcDma;
 use crate::{

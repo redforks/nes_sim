@@ -133,7 +133,7 @@ self.cart_latch.reset();
   - Exactly one `bus.tick` call site in `NesMachine::tick` on the APU-clock path, one `bus.is_busy` call site in `NesMachine::reset`, one `bus.suppress_new_dmc_requests` call site in the drain loop, one `bus.reset` call site.
   - `cargo test --lib oam_dma` suites still green, now via `bus` paths. No capture re-bless (`dpcmletterbox`/`nmi_sync` frames untouched — bus path does not touch render).
 
-- **Vocabulary.** CONTEXT.md gains under a new "DMA Bus" section (or "System Bus"): *Bus / DMA Bus*, *BusOwner*, *DMA arbitration (DMC-wins)*, *bus quiescence* — see ADR-0008 terms for interrupt-line sibling vocabulary.
+- **Vocabulary.** GLOSSARY.md gains under a new "DMA Bus" section (or "System Bus"): *Bus / DMA Bus*, *BusOwner*, *DMA arbitration (DMC-wins)*, *bus quiescence* — see ADR-0008 terms for interrupt-line sibling vocabulary.
 
 - **Seam with Candidates 6 & 7.** `Cpu` narrowing (Candidate 6) retains `try_freeze`/`dma_halt_bus_addr` as `pub(crate)` implementation detail of the `Bus ↔ Cpu` seam; the public per-dot contract stays `{tick, update_interrupt_lines, reset, is_halted, microcodes_empty}`. Tracing cleanup (Candidate 7) does not touch `Bus`.
 

@@ -2,7 +2,7 @@
 
 Cache the four bytes relevant to a single background tile row — nametable byte, attribute byte, and both bitplane rows — to avoid per-pixel `cartridge.read_chr()` calls during background rendering. This matches the real PPU's tile-fetch cadence where mapper side effects fire once per tile, not once per pixel.
 
-See [ADR-0002](../../docs/adr/0002-tile-cache.md) and [CONTEXT.md](../../CONTEXT.md#language--ppu-background-rendering) for the full domain vocabulary.
+See [ADR-0002](../../docs/adr/0002-tile-cache.md) and [GLOSSARY.md](../../GLOSSARY.md#language--ppu-background-rendering) for the full domain vocabulary.
 
 ## Design decisions (from grilling session)
 

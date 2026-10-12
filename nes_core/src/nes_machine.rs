@@ -232,7 +232,7 @@ where
     /// Drain to instruction boundary with full device interleaving.
     ///
     /// Advances `self.clock` and calls `self.tick()` per dot (PPU →
-    /// cartridge IRQ → APU → DMA → NMI → CPU), satisfying CONTEXT.md
+    /// cartridge IRQ → APU → DMA → NMI → CPU), satisfying GLOSSARY.md
     /// *Microcode* invariant. Each CPU microcode still consumes one CPU
     /// cycle (3 dots) because `tick()` only drives the CPU on
     /// `is_cpu_clock()` dots — unlike the CPU-only drain

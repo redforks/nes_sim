@@ -112,5 +112,5 @@ Mapper34 (BNROM/NINA-001) and Mapper87 (J87) keep their bespoke CHR storage. The
 ## Further Notes
 
 - The ADR at `docs/adr/0001-chr-storage-trait.md` captures the architectural decision and rejected alternatives
-- The glossary at `CONTEXT.md` defines the terminology (ChrStorage, DirectChr, WindowedChr)
+- The glossary at `GLOSSARY.md` defines the terminology (ChrStorage, DirectChr, WindowedChr)
 - Each mapper conversion can be done incrementally as a separate PR — this PRD covers the extraction of the types and conversion of at least one mapper of each pattern (e.g. Mapper0 for DirectChr, MMC3 for WindowedChr) to validate the design

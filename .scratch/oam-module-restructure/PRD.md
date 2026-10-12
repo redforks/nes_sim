@@ -68,7 +68,7 @@ Integrate the typed `Oam` module throughout `Registers`, `SpriteManager`, and `P
 
 ### Domain Documentation
 
-Four new terms added to `CONTEXT.md`:
+Four new terms added to `GLOSSARY.md`:
 - **OAM (Object Attribute Memory)**: 256-byte memory holding 64 Sprites, accessed byte-wise via $2003/$2004 and DMA, typed via `Sprite` struct.
 - **Sprite**: 4-byte OAM entry containing Y position, tile index, Attribute, X position.
 - **TilePosition**: Decoded sprite tile location encoding size (8x8 or 8x16), PatternBank, and tile index.

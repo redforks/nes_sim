@@ -18,4 +18,4 @@ This ADR makes `exec` the single source of truth: every `Microcode::exec` drives
 
 - `Las` defect fixed, `Nop` operand reads fixed, ZP dummy reads fixed, branch fixup and RTS/RTI/PLP stack dummies fixed; `Pla`/`Plp` pull-address resequencing left as a one-cycle-early stack read (both stack RAM, side-effect-free) to avoid `irq_inhibit` risk.
 - `bus_cycle` can no longer drift from `exec`; DMC halt decisions consume the driven classification.
-- Vocabulary lives in CONTEXT.md under "CPU Bus Cycles": bus cycle classification (exec drives it).
+- Vocabulary lives in GLOSSARY.md under "CPU Bus Cycles": bus cycle classification (exec drives it).

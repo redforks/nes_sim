@@ -6,7 +6,7 @@
 //! interface: one `InterruptLines` value per dot, produced atomically,
 //! consumed atomically.
 //!
-//! See ADR-0008 and CONTEXT.md "CPU Interrupt Handshake".
+//! See ADR-0008 and GLOSSARY.md "CPU Interrupt Handshake".
 
 /// Atomically produced PPU NMI bundle for one dot.
 ///

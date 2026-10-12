@@ -25,4 +25,4 @@ Under the exact-address rule, applying the contract surfaced more wrong arms tha
 - `GOLDEN_BUS_CYCLE` walks a stub CPU (pc = 0x1234, ab = 0x56FF so the no-carry increment is observable, sp = 0xFD, x = y = 0) over all 256 opcode sequences and `InterruptSequences::{BRK, NMI, IRQ, RESET}`, pinning every cycle's classification. Invariants: at most two consecutive write cycles per opcode sequence — the RMW double-write (old value, then the modified one) — with BRK's three-push interrupt entry as the sole table exception; fixed reads are exactly the six vector constants; `Nop` pinned as its own case rather than swept under a broad fetch invariant.
 - The seam (`NesDmaSupport::try_freeze`/`dma_halt_bus_addr`) is unchanged — two adapters (real CPU, test mock) keep it real; only the classification feeding it unifies.
 - Golden-table drift is only legitimate alongside a green `cpu_interrupts_v2` run in the same change (same rule as ADR-0006).
-- Vocabulary lives in CONTEXT.md under "CPU Bus Cycles": bus cycle classification, halt-repeat read.
+- Vocabulary lives in GLOSSARY.md under "CPU Bus Cycles": bus cycle classification, halt-repeat read.

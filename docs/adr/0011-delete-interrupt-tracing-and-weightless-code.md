@@ -52,4 +52,4 @@ No new interface; per-dot contract from ADR-0010 (`tick→TickOutcome`, `update_
   5. `rg -n "dump_interrupt_track" nes_core` → 0; no `println! "[` in `cpu.rs` hot path; `rg "dbg!\(" nes_core/src/cpu.rs` finds no `dbg!((clock`.
   6. `cargo check -p nes_core` + `cargo test -p nes_core --lib` green; `nes_cpu_test` suites (`blargg_nes_cpu_test5`, `cpu_interrupts_v2`, `ppu_vbl_nmi` 06/07) identical before/after.
   7. `rg "Cpu::new.*env" nes_core` → 0.
-- **Vocabulary.** No new `CONTEXT.md` terms; sweep any lingering "interrupt tracing" commentary — `MachineView`, `BusOwner`, `InterruptLines`, `consumed_through` from ADR-0006/0008/0009/0010 remain canonical. Next ADR is `0012`.
+- **Vocabulary.** No new `GLOSSARY.md` terms; sweep any lingering "interrupt tracing" commentary — `MachineView`, `BusOwner`, `InterruptLines`, `consumed_through` from ADR-0006/0008/0009/0010 remain canonical. Next ADR is `0012`.

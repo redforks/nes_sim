@@ -156,4 +156,4 @@ No NesMcu-level routing tests. The routing is simple enough (two independent `wr
 
 - `WindowedChr`'s inherent `write_chr_with_source`, `refresh`, and `copy_from_source` methods become part of the companion ChrStorage's internal implementation. The trait only exposes `read_chr`, `write_chr`, and `write_register`.
 - `DirectChr` stays as-is: `write_register` is a no-op. Mappers 0, 2, and 7 all use `DirectChr` constructed from the full `chr_rom`.
-- The CONTEXT.md domain glossary needs updating: "Cartridge" no longer dispatches CHR operations; "ChrStorage" gains `write_register`; "Mapper" no longer owns `has_chr_ram` policy (it moves to the companion ChrStorage). ADR-0001 is superseded.
+- The GLOSSARY.md domain glossary needs updating: "Cartridge" no longer dispatches CHR operations; "ChrStorage" gains `write_register`; "Mapper" no longer owns `has_chr_ram` policy (it moves to the companion ChrStorage). ADR-0001 is superseded.

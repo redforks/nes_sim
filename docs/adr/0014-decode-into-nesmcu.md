@@ -22,4 +22,4 @@ This ADR moves cartridge ownership and all CPU address decode into `NesMcu`.
 - No `Ppu`-as-`Mcu` indirection; all CPU decode lives in `NesMcu` and is testable via `NesMcu`'s `Mcu` impl.
 - Undriven CPU reads correctly refresh open bus; disabled PRG-RAM no longer drives `0`.
 - `Ppu` tests construct `Ppu::new((), mirroring)` and thread a `TestCartridge` through `tick`/`read_vram`/`render_pixel`; `NesMcu` tests construct `NesMcu` with `cartridge`/`cartridge_caps`/`current_clock`.
-- Vocabulary lives in CONTEXT.md under "Bus Decoding": decode into NesMcu (not Ppu).
+- Vocabulary lives in GLOSSARY.md under "Bus Decoding": decode into NesMcu (not Ppu).
