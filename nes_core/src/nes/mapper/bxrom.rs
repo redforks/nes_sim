@@ -15,8 +15,20 @@ pub struct BxRom {
 
 impl BxRom {
     pub fn new(prg_rom: &[u8], chr_rom: &[u8]) -> Self {
-        debug_assert!(!prg_rom.is_empty());
-        debug_assert_eq!(prg_rom.len() % PRG_ROM_BANK_SIZE, 0);
+        assert!(!prg_rom.is_empty());
+        // Same tolerance as AxRom: mirror a short (<32K) image across 32K
+        // instead of leaving prg_bank_count == 0 (div-by-zero).
+        let mut rom = prg_rom.to_vec();
+        if rom.len() < PRG_ROM_BANK_SIZE {
+            let mut expanded = Vec::with_capacity(PRG_ROM_BANK_SIZE);
+            while expanded.len() < PRG_ROM_BANK_SIZE {
+                let take = (PRG_ROM_BANK_SIZE - expanded.len()).min(rom.len());
+                expanded.extend_from_slice(&rom[..take]);
+            }
+            rom = expanded;
+        } else {
+            debug_assert_eq!(rom.len() % PRG_ROM_BANK_SIZE, 0);
+        }
 
         let has_chr_ram = chr_rom.is_empty();
         let chr_data = if has_chr_ram {
@@ -25,11 +37,12 @@ impl BxRom {
             chr_rom.to_vec()
         };
 
+        let prg_bank_count = rom.len() / PRG_ROM_BANK_SIZE;
         Self {
-            prg_rom: prg_rom.to_vec(),
+            prg_rom: rom,
             ram: [0; CARTRIDGE_RAM_SIZE],
             selected_prg_bank: 0,
-            prg_bank_count: prg_rom.len() / PRG_ROM_BANK_SIZE,
+            prg_bank_count,
             chr_data,
             has_chr_ram,
         }

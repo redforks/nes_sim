@@ -169,7 +169,7 @@ impl Image {
                 .is_some_and(|p| p.contains("test-roms/ppu/"))
                 && matches!(
                     f,
-                    "color.nes" | "ntsc_torture.nes" | "palette.nes" | "_240pee.nes"
+                    "color.nes" | "ntsc_torture.nes" | "palette.nes" | "_240pee.nes" | "oam3.nes"
                 )
             {
                 // Visual-only tetanes ROMs: no self-reporting protocol, so success

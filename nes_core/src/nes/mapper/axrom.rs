@@ -15,14 +15,29 @@ pub struct AxRom {
 
 impl AxRom {
     pub fn new(prg_rom: &[u8], chr_rom: &[u8]) -> Self {
-        debug_assert!(!prg_rom.is_empty());
-        debug_assert_eq!(prg_rom.len() % PRG_ROM_BANK_SIZE, 0);
+        assert!(!prg_rom.is_empty());
+        // Tolerate undersized images: oamtest3/oam3.nes ships a mapper-7
+        // header with only 16K PRG. Mirror it across 32K the way NROM
+        // mirrors 16K (see nrom.rs), so the reset vector at $FFFA stays
+        // reachable instead of panicking / dividing by zero.
+        let mut rom = prg_rom.to_vec();
+        if rom.len() < PRG_ROM_BANK_SIZE {
+            let mut expanded = Vec::with_capacity(PRG_ROM_BANK_SIZE);
+            while expanded.len() < PRG_ROM_BANK_SIZE {
+                let take = (PRG_ROM_BANK_SIZE - expanded.len()).min(rom.len());
+                expanded.extend_from_slice(&rom[..take]);
+            }
+            rom = expanded;
+        } else {
+            debug_assert_eq!(rom.len() % PRG_ROM_BANK_SIZE, 0);
+        }
 
+        let prg_bank_count = rom.len() / PRG_ROM_BANK_SIZE;
         Self {
-            prg_rom: prg_rom.to_vec(),
+            prg_rom: rom,
             ram: [0; CARTRIDGE_RAM_SIZE],
             selected_prg_bank: 0,
-            prg_bank_count: prg_rom.len() / PRG_ROM_BANK_SIZE,
+            prg_bank_count,
             chr: DirectChr::from_chr_rom(chr_rom),
         }
     }
@@ -106,5 +121,21 @@ mod tests {
             mapper.write(0x8000, 0x10, SystemClock::default()),
             CartridgeOperation::UpdateNametableMirroring(Mirroring::UpperBank)
         );
+    }
+
+    #[test]
+    fn mirrors_16k_prg_across_32k() {
+        // oamtest3/oam3.nes: mapper 7 header with a single 16K bank.
+        let mut prg_rom = [0u8; 0x4000];
+        prg_rom[0] = 0x42;
+        prg_rom[0x3ffc] = 0x00;
+        prg_rom[0x3ffd] = 0x80;
+
+        let mapper = AxRom::new(&prg_rom, &[]);
+
+        assert_eq!(mapper.read(0x8000), 0x42);
+        assert_eq!(mapper.read(0xc000), 0x42);
+        assert_eq!(mapper.read(0xfffc), 0x00);
+        assert_eq!(mapper.read(0xfffd), 0x80);
     }
 }
