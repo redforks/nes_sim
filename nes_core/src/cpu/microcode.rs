@@ -337,7 +337,15 @@ pub struct InterruptWindow {
 pub struct InterruptSequences;
 
 impl InterruptSequences {
-    pub const RESET: [Microcode; 7] = [
+    /// Reset entry, one cycle longer than the generic 6502's seven-cycle
+    /// sequence: Mesen2 models the NES/2A03 as taking eight CPU cycles after
+    /// reset/power-up before the ROM's code runs. That extra cycle is the
+    /// boot-alignment phase the APU frame counter and the CPU/APU divide-by-2
+    /// phase are measured from; without it `$4017` effects land on the wrong
+    /// cycle and the non-`sync_apu` length-counter probes (imported forum
+    /// tests, test_apu_2) disagree with cpu_interrupts_v2 `sync_apu`.
+    pub const RESET: [Microcode; 8] = [
+        Microcode::Nop,
         Microcode::Nop,
         Microcode::Nop,
         Microcode::Nop,
@@ -430,7 +438,7 @@ impl InterruptSequences {
         ],
     };
     pub const RESET_WINDOW: InterruptWindow = InterruptWindow {
-        sequence_cycles: 7,
+        sequence_cycles: 8,
         suppress_final_poll: true,
         hijack_sites: &[],
     };
@@ -2035,11 +2043,12 @@ mod tests {
             ]
         );
 
+        assert_eq!(InterruptSequences::NMI_WINDOW.sequence_cycles, 7);
+        assert_eq!(InterruptSequences::RESET_WINDOW.sequence_cycles, 8);
         for window in [
             &InterruptSequences::NMI_WINDOW,
             &InterruptSequences::RESET_WINDOW,
         ] {
-            assert_eq!(window.sequence_cycles, 7);
             assert!(window.suppress_final_poll);
             assert_eq!(window.hijack_sites, &[]);
         }

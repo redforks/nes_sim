@@ -4903,10 +4903,10 @@ const GOLDEN_BUS_CYCLE: [&[BusCycle]; 256] = [
 ];
 
 const GOLDEN_INTERRUPT_BUS_CYCLE: [&[BusCycle]; 4] = [
-    &[BC_PC, BC_PC, BC_PC, BC_PC, BC_PC, BC_V_RL, BC_V_RH], // RESET
-    &[BC_PC, BC_PC, BC_W, BC_W, BC_W, BC_V_NL, BC_V_NH],    // NMI
-    &[BC_PC, BC_PC, BC_W, BC_W, BC_W, BC_V_IL, BC_V_IH],    // IRQ
-    &[BC_PC, BC_W, BC_W, BC_W, BC_V_IL, BC_V_IH],           // BRK
+    &[BC_PC, BC_PC, BC_PC, BC_PC, BC_PC, BC_PC, BC_V_RL, BC_V_RH], // RESET
+    &[BC_PC, BC_PC, BC_W, BC_W, BC_W, BC_V_NL, BC_V_NH],           // NMI
+    &[BC_PC, BC_PC, BC_W, BC_W, BC_W, BC_V_IL, BC_V_IH],           // IRQ
+    &[BC_PC, BC_W, BC_W, BC_W, BC_V_IL, BC_V_IH],                  // BRK
 ];
 
 #[test]

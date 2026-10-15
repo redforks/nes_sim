@@ -425,16 +425,6 @@ const HALF_IRQ: FrameSequenceState = FrameSequenceState {
     length_and_sweep: true,
     envelop_and_linear: true,
 };
-const IRQ_ONLY: FrameSequenceState = FrameSequenceState {
-    irq: true,
-    length_and_sweep: false,
-    envelop_and_linear: false,
-};
-const NOTHING: FrameSequenceState = FrameSequenceState {
-    irq: false,
-    length_and_sweep: false,
-    envelop_and_linear: false,
-};
 
 /// Drives [`FrameSequencer`] the way [`Apu`] does: `tick_timer` every system
 /// tick, `tick` and latch consumption on CPU clocks (tick % 3 == 2).
@@ -509,17 +499,20 @@ impl FrameSeqDriver {
     }
 
     /// Writes a mode-set $80 so its reset and half-frame clock land exactly
-    /// on `landing`: an odd-cycle write lands 3 CPU cycles later, an
-    /// even-cycle write 4.
+    /// on `landing`. Mesen sense: effects land on odd CPU cycles (an even
+    /// write 3 cycles later, an odd write 4), so `landing` must be an odd
+    /// CPU cycle.
     fn write_mode_set_landing_at(&mut self, landing: u64) {
-        let odd_write = landing - 9;
-        let write = if (odd_write / 3) % 2 == 1 {
-            odd_write
-        } else {
-            landing - 12
-        };
+        let landing_cycle = landing / 3;
+        assert_eq!(landing % 3, 2, "landing must be a CPU clock");
+        assert_eq!(
+            landing_cycle % 2,
+            1,
+            "Mesen $4017 effects land on odd cycles"
+        );
+        // An odd-cycle write lands 4 CPU cycles later (+12 ticks).
         self.write_control_at(
-            write,
+            (landing_cycle - 4) * 3 + 2,
             FrameSequencerBits::default().with_mode(FrameSequencerMode::FiveStep),
         );
     }
@@ -566,11 +559,13 @@ fn frame_counter_mode0_matches_documented_step_timeline() {
     driver.write_control(FrameSequencerBits::default()); // $00: mode 0
     let events = driver.run(2 * 29830 + 20);
 
-    let states = [QUARTER, HALF, QUARTER, IRQ_ONLY, HALF_IRQ, IRQ_ONLY];
-    let deltas: Vec<u64> = [22371u64, 44739, 67113, 89484, 89487, 89490]
+    // IRQ-only steps do not clock a unit, so they are not latched as events;
+    // the half step at 29829 carries the IRQ flag.
+    let states = [QUARTER, HALF, QUARTER, HALF_IRQ];
+    let deltas: Vec<u64> = [22371u64, 44739, 67113, 89487]
         .into_iter()
         .chain(
-            [22371u64, 44739, 67113, 89484, 89487, 89490]
+            [22371u64, 44739, 67113, 89487]
                 .into_iter()
                 .map(|d| d + 89490),
         )
@@ -580,56 +575,33 @@ fn frame_counter_mode0_matches_documented_step_timeline() {
 
 #[test]
 fn frame_counter_mode0_sets_irq_flag_on_three_consecutive_cpu_cycles() {
-    // Reading $4015 clears the frame IRQ flag; within the 29828-29830 window
-    // a cleared flag is set again by the next step event, which is what
-    // blargg's frame-IRQ probes observe.
+    // The raw frame IRQ flag is raised on three consecutive CPU cycles at the
+    // end of each mode-0 period (29828, 29829, 29830). Clear it after each
+    // detection (as a $4015 read would) so the next set is observed.
     let mut driver = FrameSeqDriver::new();
     driver.write_control(FrameSequencerBits::default());
-    let events = driver.run(29831 + 10);
-    let irq_ticks: Vec<u64> = events
-        .iter()
-        .filter(|(_, s)| s.irq)
-        .map(|(t, _)| *t)
-        .collect();
-    assert_eq!(
-        irq_ticks.len(),
-        3,
-        "three IRQ sets per period: {irq_ticks:?}"
-    );
-    for pair in irq_ticks.windows(2) {
-        assert_eq!(pair[1] - pair[0], 3, "IRQ sets on consecutive CPU cycles");
-    }
-
-    // Second period: the flag is still set from period 1's third step; clear
-    // it (as a $4015 read would), then the next set must come from period 2's
-    // first IRQ step, and clearing inside the window must be answered by the
-    // following step events. After the third set no further set happens
-    // until the next period.
-    driver.seq.clear_interrupt();
-    assert!(!driver.seq.request_irq());
+    let mut set_ticks = Vec::new();
     let mut events = Vec::new();
-    while !driver.seq.request_irq() {
+    for _ in 0..(2 * 89490 + 100) {
         driver.step(&mut events);
+        if driver.seq.interrupt_flag() {
+            set_ticks.push(driver.tick);
+            driver.seq.clear_interrupt();
+        }
     }
-    driver.seq.clear_interrupt();
-    assert!(!driver.seq.request_irq());
-    for _ in 0..3 {
-        driver.step(&mut events);
-    }
-    assert!(driver.seq.request_irq(), "second IRQ set after clear");
-    driver.seq.clear_interrupt();
-    for _ in 0..3 {
-        driver.step(&mut events);
-    }
-    assert!(driver.seq.request_irq(), "third IRQ set after clear");
-    driver.seq.clear_interrupt();
-    for _ in 0..6 {
-        driver.step(&mut events);
-    }
-    assert!(
-        !driver.seq.request_irq(),
-        "no fourth set before period wrap"
+    assert_eq!(
+        set_ticks.len(),
+        6,
+        "three IRQ sets per period over two periods: {set_ticks:?}"
     );
+    for (i, pair) in set_ticks.windows(2).enumerate() {
+        if i % 3 == 2 {
+            // Gap between the third set of one period and the first of the next.
+            assert_eq!(pair[1] - pair[0], 89490 - 6, "period gap");
+        } else {
+            assert_eq!(pair[1] - pair[0], 3, "IRQ sets on consecutive CPU cycles");
+        }
+    }
 }
 
 #[test]
@@ -638,20 +610,21 @@ fn frame_counter_mode1_matches_documented_step_timeline() {
     driver.write_control(FrameSequencerBits::default().with_mode(FrameSequencerMode::FiveStep));
     let events = driver.run(2 * 37282 + 20);
 
-    // The first write lands on an even CPU cycle (4 cycles later, +12
-    // ticks), clocking the half frame together with the reset; the reset then
+    // The first write lands on an even CPU cycle (3 cycles later, +9 ticks),
+    // clocking the half frame together with the reset; the reset then
     // restarts the documented table from step 1, so the scheduled events
-    // carry the same apply latency.
+    // carry the same apply latency. The 5-step table's step 4 clocks nothing
+    // and so produces no event.
     assert_eq!(
         events[0],
-        (driver.write_tick + 12, HALF),
+        (driver.write_tick + 9, HALF),
         "half frame lands with the reset"
     );
-    let states = [QUARTER, HALF, QUARTER, NOTHING, HALF];
-    let deltas: Vec<u64> = [22371u64, 44739, 67113, 89487, 111843]
+    let states = [QUARTER, HALF, QUARTER, HALF];
+    let deltas: Vec<u64> = [22371u64, 44739, 67113, 111843]
         .into_iter()
         .chain(
-            [22371u64, 44739, 67113, 89487, 111843]
+            [22371u64, 44739, 67113, 111843]
                 .into_iter()
                 .map(|d| d + 111846),
         )
@@ -677,10 +650,10 @@ fn write_4017_mode1_clock_lands_with_reset_as_half_frame() {
     driver.write_control(FrameSequencerBits::default().with_mode(FrameSequencerMode::FiveStep));
     let events = driver.run(20);
     assert_eq!(events.len(), 1, "exactly the landing clock: {events:?}");
-    // The write lands on an odd CPU cycle: 3 cycles later (+9 ticks).
+    // The write lands on an odd CPU cycle: 4 cycles later (+12 ticks).
     assert_eq!(
         events[0],
-        (driver.write_tick + 9, HALF),
+        (driver.write_tick + 12, HALF),
         "landing clock is a half frame"
     );
 }
@@ -760,28 +733,32 @@ fn blargg_forum_test_1_length_counter_survives_the_write_dance() {
     );
 }
 
-/// An odd-cycle $00 lands its reset 3 CPU cycles later (+9 ticks): the first
-/// quarter step then fires at landing + 22371.
+/// An odd-cycle $00 lands its reset 4 CPU cycles later (+12 ticks): the
+/// first quarter step then fires at landing + 22371.
 #[test]
-fn odd_cycle_00_lands_three_cycles_later() {
+fn odd_cycle_00_lands_four_cycles_later() {
     let mut driver = FrameSeqDriver::new();
     driver.write_control_at(5, FrameSequencerBits::default()); // tick 5: CPU cycle 1, odd
     let write = driver.write_tick;
     let events = driver.run(8000);
-    assert_eq!(events[0], (write + 9 + 22371, QUARTER), "odd $00 lands C+3");
+    assert_eq!(
+        events[0],
+        (write + 12 + 22371, QUARTER),
+        "odd $00 lands C+4"
+    );
 }
 
-/// An even-cycle $00 lands its reset 4 CPU cycles later (+12 ticks).
+/// An even-cycle $00 lands its reset 3 CPU cycles later (+9 ticks).
 #[test]
-fn even_cycle_00_lands_four_cycles_later() {
+fn even_cycle_00_lands_three_cycles_later() {
     let mut driver = FrameSeqDriver::new();
     driver.write_control(FrameSequencerBits::default()); // tick 2: CPU cycle 0, even
     let write = driver.write_tick;
     let events = driver.run(8000);
     assert_eq!(
         events[0],
-        (write + 12 + 22371, QUARTER),
-        "even $00 lands C+4"
+        (write + 9 + 22371, QUARTER),
+        "even $00 lands C+3"
     );
 }
 
@@ -798,47 +775,52 @@ fn odd_cycle_base() -> FrameSeqDriver {
     driver
 }
 
-/// A mode-set reset landing on the same dot as a scheduled half step: the
-/// step clocks once, and the landing does not clock a second half frame.
+/// A mode-set landing one CPU cycle before a scheduled half step clocks its
+/// own half frame and then blocks that scheduled step (the landing's block
+/// window covers the step's cycle), so only one half frame fires.
 #[test]
-fn mode_set_landing_on_half_step_clocks_once() {
+fn mode_set_landing_one_cycle_before_half_step_clocks() {
     let mut driver = odd_cycle_base();
-    let step = 5 + 44739; // mode-0 half step, counted from the landing at tick 5
-    driver.write_mode_set_landing_at(step);
+    let half = 5 + 44739; // scheduled mode-0 half step (even CPU cycle)
+    let landing = half - 3; // previous (odd) CPU cycle
+    driver.write_mode_set_landing_at(landing);
     let events = driver.run(8000);
-    assert_eq!(events[0], (step, HALF), "scheduled half clocks once");
+    assert_eq!(events[0], (landing, HALF), "landing clocks its half frame");
     assert_eq!(
         events[1],
-        (step + 22371, QUARTER),
-        "landing-half blocked; table restarts at the landing"
+        (landing + 22371, QUARTER),
+        "scheduled half blocked; table restarts at the landing"
     );
 }
 
-/// A mode-set landing one CPU cycle after a half step is blocked too.
+/// A mode-set landing one CPU cycle after a half step is blocked by that
+/// step's block window.
 #[test]
 fn mode_set_landing_one_cycle_after_half_step_is_blocked() {
-    let mut driver = FrameSeqDriver::new();
-    driver.write_control(FrameSequencerBits::default());
-    let step = driver.write_tick + 12 + 44739;
-    driver.write_mode_set_landing_at(step + 3);
+    let mut driver = odd_cycle_base();
+    let half = 5 + 44739;
+    let landing = half + 3;
+    driver.write_mode_set_landing_at(landing);
     let events = driver.run(8000);
-    assert_eq!(events[0], (step, HALF), "scheduled half clocks once");
+    assert_eq!(events[0], (half, HALF), "scheduled half clocks once");
     assert_eq!(
         events[1],
-        (step + 3 + 22371, QUARTER),
-        "no landing half at step + 3"
+        (landing + 22371, QUARTER),
+        "no landing half at half + 1 CPU cycle"
     );
 }
 
-/// Six ticks (two CPU cycles) after a half step the window has closed: the
-/// landing clocks its own half frame.
+/// Two CPU cycles after a half step the block window has closed: the landing
+/// clocks its own half frame (the intervening odd cycle was blocked; the next
+/// odd cycle is half + 3).
 #[test]
 fn mode_set_landing_two_cycles_after_half_step_clocks() {
     let mut driver = odd_cycle_base();
-    let step = 5 + 44739;
-    driver.write_mode_set_landing_at(step + 6);
+    let half = 5 + 44739;
+    let landing = half + 9; // half + 3 CPU cycles (next reachable odd cycle)
+    driver.write_mode_set_landing_at(landing);
     let events = driver.run(8000);
-    assert_eq!(events[0], (step, HALF), "scheduled half clocks once");
-    assert_eq!(events[1], (step + 6, HALF), "landing half not blocked");
-    assert_eq!(events[2], (step + 6 + 22371, QUARTER));
+    assert_eq!(events[0], (half, HALF), "scheduled half clocks once");
+    assert_eq!(events[1], (landing, HALF), "landing half not blocked");
+    assert_eq!(events[2], (landing + 22371, QUARTER));
 }

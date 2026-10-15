@@ -234,7 +234,7 @@ impl<D: AudioDriver> Apu<D> {
         status.set_triangle_enabled(self.triangle.status_bit());
         status.set_noise_enabled(self.noise.status_bit());
         status.set_dmc_enabled(self.dmc.status_bit());
-        status.set_frame_interrupt(self.frame_sequencer.request_irq());
+        status.set_frame_interrupt(self.frame_sequencer.interrupt_flag());
         status.set_dmc_interrupt(self.dmc.interrupt_flag());
         status.into_bits()
     }
