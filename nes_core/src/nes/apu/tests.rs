@@ -5,11 +5,11 @@ fn dmc_counts_dac_register_writes() {
     let mut apu = Apu::new(());
     assert_eq!(apu.dmc_dac_writes(), 0);
 
-    apu.write(0x4011, 0x40);
-    apu.write(0x4011, 0x7f);
+    apu.write(0x4011, 0x40, SystemClock(2));
+    apu.write(0x4011, 0x7f, SystemClock(2));
     // Other DMC registers are not DAC writes.
-    apu.write(0x4010, 0x0f);
-    apu.write(0x4015, 0x10);
+    apu.write(0x4010, 0x0f, SystemClock(2));
+    apu.write(0x4015, 0x10, SystemClock(2));
 
     assert_eq!(apu.dmc_dac_writes(), 2);
 }
@@ -307,13 +307,13 @@ fn test_apu_controller_read_status() {
 #[test]
 fn test_apu_controller_write_control_flags() {
     let mut channel = Apu::new(());
-    channel.write(0x4015, 0x1F); // Should call set_control_flags
+    channel.write(0x4015, 0x1F, SystemClock(2)); // Should call set_control_flags
 }
 
 #[test]
 fn test_apu_controller_write_frame_counter() {
     let mut channel = Apu::new(());
-    channel.write(0x4017, 0xC0); // Should call set_frame_counter
+    channel.write(0x4017, 0xC0, SystemClock(2)); // Should call set_frame_counter
 }
 
 #[test]
@@ -321,8 +321,8 @@ fn test_apu_controller_driver_control_flags_status() {
     let mut driver = Apu::new(());
 
     // First enable the channel, then load the length counter
-    driver.write(0x4015, 0x01);
-    driver.write(0x4003, 0xF8);
+    driver.write(0x4015, 0x01, SystemClock(2));
+    driver.write(0x4003, 0xF8, SystemClock(2));
 
     let status = driver.read(0x4015);
     assert_eq!(status & 0x01, 0x01);
@@ -484,11 +484,44 @@ impl FrameSeqDriver {
         loop {
             self.step(&mut events);
             if SystemClock(self.tick).is_apu_clock() {
-                self.seq.write_control_bits(bits);
+                let cpu_odd = (self.tick / 3) % 2 == 1;
+                self.seq.write_control_bits(bits, cpu_odd);
                 self.write_tick = self.tick;
                 return;
             }
         }
+    }
+
+    /// Steps to the APU clock `target` and writes $4017 there, discarding
+    /// events before the write.
+    fn write_control_at(&mut self, target: u64, bits: FrameSequencerBits) {
+        let mut events = Vec::new();
+        while self.tick < target {
+            self.step(&mut events);
+        }
+        assert!(
+            SystemClock(self.tick).is_apu_clock(),
+            "write must land on a CPU clock"
+        );
+        let cpu_odd = (self.tick / 3) % 2 == 1;
+        self.seq.write_control_bits(bits, cpu_odd);
+        self.write_tick = self.tick;
+    }
+
+    /// Writes a mode-set $80 so its reset and half-frame clock land exactly
+    /// on `landing`: an odd-cycle write lands 3 CPU cycles later, an
+    /// even-cycle write 4.
+    fn write_mode_set_landing_at(&mut self, landing: u64) {
+        let odd_write = landing - 9;
+        let write = if (odd_write / 3) % 2 == 1 {
+            odd_write
+        } else {
+            landing - 12
+        };
+        self.write_control_at(
+            write,
+            FrameSequencerBits::default().with_mode(FrameSequencerMode::FiveStep),
+        );
     }
 }
 
@@ -605,13 +638,14 @@ fn frame_counter_mode1_matches_documented_step_timeline() {
     driver.write_control(FrameSequencerBits::default().with_mode(FrameSequencerMode::FiveStep));
     let events = driver.run(2 * 37282 + 20);
 
-    // The write clocks an immediate half frame (consumed on the next CPU
-    // clock, +3 ticks); the delayed reset then restarts the documented table
-    // from step 1, so the scheduled events carry the 3-4 cycle apply latency.
+    // The first write lands on an even CPU cycle (4 cycles later, +12
+    // ticks), clocking the half frame together with the reset; the reset then
+    // restarts the documented table from step 1, so the scheduled events
+    // carry the same apply latency.
     assert_eq!(
         events[0],
-        (driver.write_tick + 3, HALF),
-        "immediate half frame on the write"
+        (driver.write_tick + 12, HALF),
+        "half frame lands with the reset"
     );
     let states = [QUARTER, HALF, QUARTER, NOTHING, HALF];
     let deltas: Vec<u64> = [22371u64, 44739, 67113, 89487, 111843]
@@ -632,17 +666,23 @@ fn frame_counter_mode1_matches_documented_step_timeline() {
 }
 
 #[test]
-fn write_4017_mode1_immediate_clock_is_half_frame() {
+fn write_4017_mode1_clock_lands_with_reset_as_half_frame() {
     // A $4017 write with bit 7 set clocks a half frame (length counters,
-    // sweep, envelopes, linear counter) immediately — blargg's 01.len_ctr
-    // test 4 zeroes a length-2 counter with two back-to-back $80 writes.
+    // sweep, envelopes, linear counter) together with the delayed reset,
+    // never on the write itself. Blargg's 01.len_ctr test 4 zeroes a
+    // length-2 counter with two back-to-back $80 writes.
     let mut driver = FrameSeqDriver::new();
     driver.write_control(FrameSequencerBits::default());
     driver.run(10);
     driver.write_control(FrameSequencerBits::default().with_mode(FrameSequencerMode::FiveStep));
     let events = driver.run(20);
-    assert_eq!(events.len(), 1, "exactly the immediate clock: {events:?}");
-    assert_eq!(events[0].1, HALF, "immediate clock is a half frame");
+    assert_eq!(events.len(), 1, "exactly the landing clock: {events:?}");
+    // The write lands on an odd CPU cycle: 3 cycles later (+9 ticks).
+    assert_eq!(
+        events[0],
+        (driver.write_tick + 9, HALF),
+        "landing clock is a half frame"
+    );
 }
 
 #[test]
@@ -681,7 +721,7 @@ fn blargg_forum_test_1_length_counter_survives_the_write_dance() {
                 let clock = SystemClock(self.tick);
                 self.apu.tick(clock);
                 if clock.is_cpu_clock() {
-                    self.apu.write(address, value);
+                    self.apu.write(address, value, clock);
                     return;
                 }
             }
@@ -703,7 +743,7 @@ fn blargg_forum_test_1_length_counter_survives_the_write_dance() {
     driver.write_on_cpu_clock(0x4015, 0x01); // enable pulse1
     driver.write_on_cpu_clock(0x4003, 0x00); // load length counter, index 0 -> 10
     for _ in 0..7 {
-        // mode 1 + inhibit: reset timer + quarter-frame-only immediate clock
+        // mode 1: reset timer, with the half-frame clock landing alongside
         driver.write_on_cpu_clock(0x4017, 0x80);
         driver.run_cpu(8); // STA $4017 + DEX + BNE taken = 9-cycle spacing
     }
@@ -718,4 +758,87 @@ fn blargg_forum_test_1_length_counter_survives_the_write_dance() {
         0x01,
         "pulse1 length counter must be nonzero"
     );
+}
+
+/// An odd-cycle $00 lands its reset 3 CPU cycles later (+9 ticks): the first
+/// quarter step then fires at landing + 22371.
+#[test]
+fn odd_cycle_00_lands_three_cycles_later() {
+    let mut driver = FrameSeqDriver::new();
+    driver.write_control_at(5, FrameSequencerBits::default()); // tick 5: CPU cycle 1, odd
+    let write = driver.write_tick;
+    let events = driver.run(8000);
+    assert_eq!(events[0], (write + 9 + 22371, QUARTER), "odd $00 lands C+3");
+}
+
+/// An even-cycle $00 lands its reset 4 CPU cycles later (+12 ticks).
+#[test]
+fn even_cycle_00_lands_four_cycles_later() {
+    let mut driver = FrameSeqDriver::new();
+    driver.write_control(FrameSequencerBits::default()); // tick 2: CPU cycle 0, even
+    let write = driver.write_tick;
+    let events = driver.run(8000);
+    assert_eq!(
+        events[0],
+        (write + 12 + 22371, QUARTER),
+        "even $00 lands C+4"
+    );
+}
+
+/// Driver whose frame counter restarted on an odd CPU cycle (reset landing
+/// at tick 5). Its mode-0 half step falls on an even CPU cycle, which a
+/// mode-set landing can reach (see `write_mode_set_landing_at`).
+fn odd_cycle_base() -> FrameSeqDriver {
+    let mut driver = FrameSeqDriver::new();
+    let mut events = Vec::new();
+    while driver.tick < 4 {
+        driver.step(&mut events);
+    }
+    driver.seq.reset();
+    driver
+}
+
+/// A mode-set reset landing on the same dot as a scheduled half step: the
+/// step clocks once, and the landing does not clock a second half frame.
+#[test]
+fn mode_set_landing_on_half_step_clocks_once() {
+    let mut driver = odd_cycle_base();
+    let step = 5 + 44739; // mode-0 half step, counted from the landing at tick 5
+    driver.write_mode_set_landing_at(step);
+    let events = driver.run(8000);
+    assert_eq!(events[0], (step, HALF), "scheduled half clocks once");
+    assert_eq!(
+        events[1],
+        (step + 22371, QUARTER),
+        "landing-half blocked; table restarts at the landing"
+    );
+}
+
+/// A mode-set landing one CPU cycle after a half step is blocked too.
+#[test]
+fn mode_set_landing_one_cycle_after_half_step_is_blocked() {
+    let mut driver = FrameSeqDriver::new();
+    driver.write_control(FrameSequencerBits::default());
+    let step = driver.write_tick + 12 + 44739;
+    driver.write_mode_set_landing_at(step + 3);
+    let events = driver.run(8000);
+    assert_eq!(events[0], (step, HALF), "scheduled half clocks once");
+    assert_eq!(
+        events[1],
+        (step + 3 + 22371, QUARTER),
+        "no landing half at step + 3"
+    );
+}
+
+/// Six ticks (two CPU cycles) after a half step the window has closed: the
+/// landing clocks its own half frame.
+#[test]
+fn mode_set_landing_two_cycles_after_half_step_clocks() {
+    let mut driver = odd_cycle_base();
+    let step = 5 + 44739;
+    driver.write_mode_set_landing_at(step + 6);
+    let events = driver.run(8000);
+    assert_eq!(events[0], (step, HALF), "scheduled half clocks once");
+    assert_eq!(events[1], (step + 6, HALF), "landing half not blocked");
+    assert_eq!(events[2], (step + 6 + 22371, QUARTER));
 }

@@ -142,7 +142,7 @@ impl<R: Render, D: AudioDriver> NesMcu<R, D> {
             .is_some_and(|(at, _, _)| *at <= clock.cycles())
         {
             let (_, address, value) = self.deferred_apu_writes.remove(0);
-            self.apu.write(address, value);
+            self.apu.write(address, value, clock);
         }
     }
 
@@ -305,7 +305,7 @@ impl<R: Render, D: AudioDriver> Mcu for NesMcu<R, D> {
                     self.deferred_apu_writes
                         .push((self.last_apu_tick + 3, address, value));
                 }
-                _ => self.apu.write(address, value),
+                _ => self.apu.write(address, value, self.current_clock),
             },
             0x4020..=0x5fff => {}
             0x6000..=0x7fff => {

@@ -183,7 +183,9 @@ impl<D: AudioDriver> Apu<D> {
         }
     }
 
-    pub fn write(&mut self, address: u16, value: u8) {
+    /// Register write at machine time `clock`: the $4017 frame-counter
+    /// reset delay keys off the CPU-cycle parity of the write.
+    pub fn write(&mut self, address: u16, value: u8, clock: SystemClock) {
         match address {
             0x4000 => self.pulse1.write_control(value.into()),
             0x4001 => self.pulse1.write_sweep(value.into()),
@@ -216,7 +218,11 @@ impl<D: AudioDriver> Apu<D> {
             0x4012 => self.dmc.write_sample_address(value),
             0x4013 => self.dmc.write_sample_length(value),
             0x4015 => self.set_control_flags(value.into()),
-            0x4017 => self.frame_sequencer.write_control_bits(value.into()),
+            0x4017 => {
+                let cpu_odd = (clock.cycles() / 3) % 2 == 1;
+                self.frame_sequencer
+                    .write_control_bits(value.into(), cpu_odd)
+            }
             _ => {}
         }
     }

@@ -12,11 +12,13 @@ use crate::nes::apu::Sequencer;
 //
 // The frame IRQ flag is therefore set on three consecutive CPU cycles
 // (29828-29830) at the end of every mode-0 period; reading $4015 inside that
-// window is answered by the next set. A $4017 write with bit 7 set resets the
-// divider on the write cycle itself and clocks a half frame immediately
-// (length counters included), the behavior blargg's forum APU tests
-// (test-roms/apu/test_*.nes) pin down; $00/$40 writes reset after the usual
-// 3-4 CPU cycle delay and clock nothing.
+// window is answered by the next set. A $4017 write takes effect 3 or 4 CPU
+// cycles later (by the write cycle's parity). A write with bit 7 set then
+// resets the divider and clocks a half frame (length counters included)
+// together with the reset, unless a unit-clocking step falls on that cycle or
+// the one before: that step already clocked them. $00/$40 writes reset and
+// clock nothing. Follows blargg's forum APU tests (test-roms/apu/test_*.nes,
+// test-roms/test_apu_2/*.nes).
 
 /// IRQ-flag-only pulse between scheduled steps (mode 0: CPU 29828 and 29830).
 const IRQ_PULSE: FrameSequenceState = FrameSequenceState {
@@ -100,6 +102,11 @@ pub(super) struct FrameSequencer {
     pub output_latch: Option<FrameSequenceState>,
 
     frame_interrupt: bool,
+    /// A unit-clocking step (quarter or half frame) was latched on this
+    /// CPU cycle / on the previous one. A mode-set reset landing within
+    /// that window does not clock a second half frame.
+    clock_step_this_cpu: bool,
+    clock_step_prev_cpu: bool,
     cycles: u32,
     sequences: Sequencer<FrameSequenceState>,
     frame_interrupt_inhibit: bool,
@@ -114,6 +121,8 @@ impl Default for FrameSequencer {
     fn default() -> Self {
         Self {
             frame_interrupt: false,
+            clock_step_this_cpu: false,
+            clock_step_prev_cpu: false,
             cycles: 0,
             output_latch: Default::default(),
             sequences: Sequencer::new(&FOUR_STEP_TRIGGERS),
@@ -136,6 +145,8 @@ pub struct FrameSequenceState {
 impl FrameSequencer {
     pub fn reset(&mut self) {
         self.frame_interrupt = false;
+        self.clock_step_this_cpu = false;
+        self.clock_step_prev_cpu = false;
         self.output_latch = Default::default();
         self.pending_mode = Some(self.saved_bits);
         self.frame_interrupt_inhibit = self.saved_bits.disable_interrupt();
@@ -146,7 +157,10 @@ impl FrameSequencer {
         self.cycles += 1;
         match self.mode {
             FrameSequencerMode::FourStep => match self.cycles {
-                22371 | 44739 | 67113 | 89487 => self.output_latch = Some(self.sequences.tick()),
+                22371 | 44739 | 67113 | 89487 => {
+                    let state = self.sequences.tick();
+                    self.latch_step(state);
+                }
                 89484 => self.output_latch = Some(IRQ_PULSE),
                 // Period wrap: last IRQ set of the period lands on the reset.
                 89490 => {
@@ -157,7 +171,8 @@ impl FrameSequencer {
             },
             FrameSequencerMode::FiveStep => match self.cycles {
                 22371 | 44739 | 67113 | 89487 | 111843 => {
-                    self.output_latch = Some(self.sequences.tick())
+                    let state = self.sequences.tick();
+                    self.latch_step(state);
                 }
                 111846 => {
                     self.cycles = 0;
@@ -167,12 +182,22 @@ impl FrameSequencer {
         }
     }
 
+    /// Latches a scheduled step and records whether it clocks any unit.
+    fn latch_step(&mut self, state: FrameSequenceState) {
+        self.output_latch = Some(state);
+        self.clock_step_this_cpu |= state.length_and_sweep || state.envelop_and_linear;
+    }
+
     /// Applies a buffered $4017 write once its 3-4 CPU cycle delay elapses.
-    /// The mode switch and timer reset land here for $00/$40 writes; $80/$C0
-    /// writes already reset and clocked at the write itself (see
-    /// [`Self::write_control_bits`]), so only the inhibit bookkeeping and the
-    /// (re)reset happen here.
+    /// The divider reset and sequence restart land here. A mode-set
+    /// ($80/$C0) landing also clocks a half frame together with the reset,
+    /// unless a unit-clocking step was latched on this CPU cycle or the
+    /// previous one (that step already clocked the units).
     pub fn tick(&mut self) {
+        let blocked = self.clock_step_this_cpu || self.clock_step_prev_cpu;
+        self.clock_step_prev_cpu = self.clock_step_this_cpu;
+        self.clock_step_this_cpu = false;
+
         if self.request_timer_delay > 0 {
             self.request_timer_delay -= 1;
         } else if let Some(counter) = self.pending_mode.take() {
@@ -182,6 +207,13 @@ impl FrameSequencer {
                 FrameSequencerMode::FiveStep => &FIVE_STEP_TRIGGERS,
             });
             self.mode = counter.mode();
+            if counter.mode() == FrameSequencerMode::FiveStep && !blocked {
+                // OR-merged: a same-dot IRQ pulse keeps its flag.
+                let mut latch = self.output_latch.unwrap_or_default();
+                latch.length_and_sweep |= HALF_FRAME.length_and_sweep;
+                latch.envelop_and_linear |= HALF_FRAME.envelop_and_linear;
+                self.output_latch = Some(latch);
+            }
 
             if self.frame_interrupt_inhibit {
                 self.frame_interrupt = false;
@@ -201,21 +233,22 @@ impl FrameSequencer {
         self.frame_interrupt = false;
     }
 
-    pub fn write_control_bits(&mut self, bits: FrameSequencerBits) {
+    /// Applies a $4017 write issued on CPU cycle parity `cpu_odd_cycle`.
+    /// Nothing happens at the write itself: the divider reset, the mode
+    /// switch and (for $80/$C0) the half-frame clock all land together
+    /// `request_timer_delay + 1` CPU cycles later. An odd-cycle write lands
+    /// 3 CPU cycles later, an even-cycle write 4.
+    ///
+    /// The 3 / 4 cycle delay follows Mesen2's `ApuFrameCounter`, but the
+    /// parity sense is inverted: with Mesen2's sense, test-roms/apu test_1 and
+    /// test_6 and test-roms/test_apu_2 test_3 and test_7 fail. Why the sense
+    /// is inverted is not established. This timing also breaks
+    /// cpu_interrupts_v2 4-irq_and_dma, whose `sync_apu` routine needs the
+    /// v2 $00 mapping.
+    pub fn write_control_bits(&mut self, bits: FrameSequencerBits, cpu_odd_cycle: bool) {
         debug_assert!(self.pending_mode.is_none());
         self.frame_interrupt_inhibit = bits.disable_interrupt();
-        self.request_timer_delay = if self.cycles % 2 == 1 { 2 } else { 3 };
-        if bits.mode() == FrameSequencerMode::FiveStep {
-            // A $4017 write with the mode flag set resets the divider on the
-            // write cycle itself and clocks a half frame (length counters,
-            // sweep, envelopes, linear counter) immediately — the behavior
-            // blargg's forum APU tests pin down. Only the mode switch runs
-            // through the usual delayed path below.
-            self.cycles = 0;
-            self.mode = FrameSequencerMode::FiveStep;
-            self.sequences.reset_items(&FIVE_STEP_TRIGGERS);
-            self.output_latch = Some(HALF_FRAME);
-        }
+        self.request_timer_delay = if cpu_odd_cycle { 2 } else { 3 };
         self.pending_mode = Some(bits);
         self.saved_bits = bits;
     }
