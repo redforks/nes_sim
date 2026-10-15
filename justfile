@@ -535,6 +535,49 @@ imported_apu_misc_16: build_nes_cpu_test
 [parallel]
 imported_apu_misc: imported_apu_misc_1 imported_apu_misc_2 imported_apu_misc_3 imported_apu_misc_4 imported_apu_misc_5 imported_apu_misc_6 imported_apu_misc_7 imported_apu_misc_8 imported_apu_misc_9 imported_apu_misc_10 imported_apu_misc_11 imported_apu_misc_12 imported_apu_misc_13 imported_apu_misc_14 imported_apu_misc_15 imported_apu_misc_16
 
+# blargg's forum APU tests, second batch (test-roms/test_apu_2/, cf. thread
+# https://forums.nesdev.org/viewtopic.php?f=3&t=11174): same verdict protocol
+# as imported_apu_misc_* — "TEST PASSED"/"TEST FAILED" nametable text, then a
+# CLV/BVC spin caught by the harness Timeout (see nes_cpu_test/src/image.rs).
+# Byte-distinct from test-roms/apu/test_*.nes (SHA-1) and adds test_11.nes.
+# Known status: test_1 passes; most others (e.g. test_3) currently fail —
+# emulation work pending, not harness work.
+test_apu_2_1: build_nes_cpu_test
+    {{ nes_cpu_test }} --quiet -f test-roms/test_apu_2/test_1.nes
+
+test_apu_2_2: build_nes_cpu_test
+    {{ nes_cpu_test }} --quiet -f test-roms/test_apu_2/test_2.nes
+
+test_apu_2_3: build_nes_cpu_test
+    {{ nes_cpu_test }} --quiet -f test-roms/test_apu_2/test_3.nes
+
+test_apu_2_4: build_nes_cpu_test
+    {{ nes_cpu_test }} --quiet -f test-roms/test_apu_2/test_4.nes
+
+test_apu_2_5: build_nes_cpu_test
+    {{ nes_cpu_test }} --quiet -f test-roms/test_apu_2/test_5.nes
+
+test_apu_2_6: build_nes_cpu_test
+    {{ nes_cpu_test }} --quiet -f test-roms/test_apu_2/test_6.nes
+
+test_apu_2_7: build_nes_cpu_test
+    {{ nes_cpu_test }} --quiet -f test-roms/test_apu_2/test_7.nes
+
+test_apu_2_8: build_nes_cpu_test
+    {{ nes_cpu_test }} --quiet -f test-roms/test_apu_2/test_8.nes
+
+test_apu_2_9: build_nes_cpu_test
+    {{ nes_cpu_test }} --quiet -f test-roms/test_apu_2/test_9.nes
+
+test_apu_2_10: build_nes_cpu_test
+    {{ nes_cpu_test }} --quiet -f test-roms/test_apu_2/test_10.nes
+
+test_apu_2_11: build_nes_cpu_test
+    {{ nes_cpu_test }} --quiet -f test-roms/test_apu_2/test_11.nes
+
+[parallel]
+test_apu_2: test_apu_2_1 test_apu_2_2 test_apu_2_3 test_apu_2_4 test_apu_2_5 test_apu_2_6 test_apu_2_7 test_apu_2_8 test_apu_2_9 test_apu_2_10 test_apu_2_11
+
 imported_cpu_misc_1: build_nes_cpu_test
     {{ nes_cpu_test }} --quiet -f test-roms/cpu/exec_space_apu.nes
 

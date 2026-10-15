@@ -293,23 +293,22 @@ impl Image {
                 } else {
                     plugins.push(Box::new(NametableConsole::default()));
                 }
-            } else if file_name
-                .to_str()
-                .is_some_and(|p| p.contains("test-roms/apu/"))
-                && matches!(
-                    file_name_str,
-                    "test_1.nes"
-                        | "test_2.nes"
-                        | "test_3.nes"
-                        | "test_4.nes"
-                        | "test_5.nes"
-                        | "test_6.nes"
-                        | "test_7.nes"
-                        | "test_8.nes"
-                        | "test_9.nes"
-                        | "test_10.nes"
-                )
-            {
+            } else if file_name.to_str().is_some_and(|p| {
+                p.contains("test-roms/apu/") || p.contains("test-roms/test_apu_2/")
+            }) && matches!(
+                file_name_str,
+                "test_1.nes"
+                    | "test_2.nes"
+                    | "test_3.nes"
+                    | "test_4.nes"
+                    | "test_5.nes"
+                    | "test_6.nes"
+                    | "test_7.nes"
+                    | "test_8.nes"
+                    | "test_9.nes"
+                    | "test_10.nes"
+                    | "test_11.nes"
+            ) {
                 // blargg's forum APU tests (frame counter timing probes): they
                 // print "TEST PASSED"/"TEST FAILED" as ASCII tiles at a nametable
                 // offset (hence read_plain_console's leading-NUL skip) and then
