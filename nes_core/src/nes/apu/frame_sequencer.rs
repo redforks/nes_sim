@@ -236,36 +236,19 @@ impl FrameSequencer {
     /// Applies a $4017 write issued on CPU cycle parity `cpu_odd_cycle`.
     /// Nothing happens at the write itself: the divider reset, the mode
     /// switch and (for $80/$C0) the half-frame clock all land together
-    /// `request_timer_delay + 1` CPU cycles later.
+    /// `request_timer_delay + 1` CPU cycles later. An odd-cycle write lands
+    /// 3 CPU cycles later, an even-cycle write 4.
     ///
     /// The 3 / 4 cycle delay follows Mesen2's `ApuFrameCounter`, but the
-    /// parity sense is inverted — except for a mode-keeping $00/$40 write
-    /// issued while the IRQ inhibit flag is still raised by the previous
-    /// write, which uses the Mesen sense (even-cycle write lands 3 CPU
-    /// cycles later, odd-cycle 4). That narrow exception is for
-    /// cpu_interrupts_v2's `sync_apu`: after its $40 raised inhibit, the
-    /// following $00 (mode 0 -> 0) must land C+3 on even cycles and C+4 on
-    /// odd (the Mesen-literal mapping); the inverted sense lands it a cycle
-    /// off and the $4015 edge sample (~29825 cycles later) misreads the APU
-    /// alignment, failing 4-irq_and_dma. Anything else (including
-    /// mode-changing writes after inhibit, like apu_test's $C0 -> $00 in
-    /// 5-len_timing) keeps the inverted sense: with Mesen2's sense
-    /// everywhere, test-roms/apu test_1 and test_6 and test-roms/test_apu_2
-    /// test_3 and test_7 fail instead. Why the senses differ is not
-    /// established (the codebase's CPU-cycle numbering may run one step
-    /// against Mesen2's except right after inhibit is raised).
+    /// parity sense is inverted: with Mesen2's sense, test-roms/apu test_1 and
+    /// test_6 and test-roms/test_apu_2 test_3 and test_7 fail. Why the sense
+    /// is inverted is not established. This timing also breaks
+    /// cpu_interrupts_v2 4-irq_and_dma, whose `sync_apu` routine needs the
+    /// v2 $00 mapping.
     pub fn write_control_bits(&mut self, bits: FrameSequencerBits, cpu_odd_cycle: bool) {
         debug_assert!(self.pending_mode.is_none());
-        // Mesen sense only for a mode-keeping $00/$40 issued while inhibit
-        // is still raised ($40 -> $00 in sync_apu); read the old flag before
-        // overwriting. Everything else ($80/$C0 always; $00/$40 after clear
-        // or across a mode change) uses the inverted sense.
-        let inhibited = self.frame_interrupt_inhibit;
-        let keeping = bits.mode() == self.mode;
-        let mode_clear = bits.mode() == FrameSequencerMode::FourStep;
-        let mesen_sense = inhibited && keeping && mode_clear;
         self.frame_interrupt_inhibit = bits.disable_interrupt();
-        self.request_timer_delay = if cpu_odd_cycle != mesen_sense { 2 } else { 3 };
+        self.request_timer_delay = if cpu_odd_cycle { 2 } else { 3 };
         self.pending_mode = Some(bits);
         self.saved_bits = bits;
     }
