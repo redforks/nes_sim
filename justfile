@@ -711,7 +711,7 @@ passed_cpu_tests: cpu-test instr_misc instr_test-v5 instr_test-v3 instr_timing c
 passed_ppu_tests: oam_read oam_stress oam3 ppu_open_bus ppu_read_buffer sprite_hit_tests sprite_overflow_tests scanline sprdma_and_dmc_dma vbl_nmi_timing ppu_vbl_nmi nmi_sync spr_hit_extra imported_ppu_visual palette_ram power_up_palette sprite_ram vbl_clear_time vram_access
 
 [parallel]
-passed_apu_tests: apu_mixer apu_reset apu_test dmc_dma_during_read4 imported_apu_misc passed_audio_manual_ok blargg_apu_tests dmc_tests dpcmletterbox volume_tests
+passed_apu_tests: apu_mixer apu_reset apu_test dmc_dma_during_read4 imported_apu_misc passed_audio_manual_ok blargg_apu_tests dmc_tests dpcmletterbox volume_tests test_apu_2
 
 # Tier A ROM-gate verification sweep (issue #37): the full named gate set of
 # the Tier A cycle-accuracy parent (#31) in one go — MMC3 rev-A IRQ detection,
