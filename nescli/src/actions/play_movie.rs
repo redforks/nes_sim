@@ -715,8 +715,8 @@ impl PlayMovieAction {
             None
         };
         let target_frame_duration = Duration::new(0, 1_000_000_000u32 / 60);
-        let mut frame_offset = 1;
         let mut extra_frames_remaining = self.extra_frames;
+        let mut frame_index = 0;
 
         'running: loop {
             let frame_start = Instant::now();
@@ -728,10 +728,9 @@ impl PlayMovieAction {
                 }
             }
 
-            let frame_index = machine.frame_no();
-            if let Some(input_log) = input_logs.get(frame_index + frame_offset) {
+            if let Some(input_log) = input_logs.get(frame_index) {
                 if input_log.command.soft_reset() {
-                    frame_offset += 2;
+                    frame_index += 1;
                 }
                 assert!(
                     !input_log.command.hard_reset(),
@@ -745,13 +744,12 @@ impl PlayMovieAction {
             }
 
             if self.auto_fast_forward {
-                let current_idx = frame_index + frame_offset;
-                let is_idle = if current_idx >= input_logs.len() {
+                let is_idle = if frame_index >= input_logs.len() {
                     true
                 } else {
                     fast_forward_ranges
                         .iter()
-                        .any(|&(start, end)| current_idx >= start && current_idx < end)
+                        .any(|&(start, end)| frame_index >= start && frame_index < end)
                 };
                 ff_skip.set(is_idle);
                 machine.render_mut().set_fast_forward(is_idle);
@@ -795,6 +793,8 @@ impl PlayMovieAction {
                     std::thread::sleep(target_frame_duration - elapsed);
                 }
             }
+
+            frame_index += 1;
         }
 
         // Drop machine first to close channel senders, which lets pipe-writing
