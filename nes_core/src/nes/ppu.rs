@@ -204,6 +204,12 @@ pub struct Ppu<R: Render = ()> {
     /// so a $2001 write in the fetch/idle phase cannot retro-recolor them
     /// (DPCM Letterbox depends on this).
     pixel_pipeline: std::collections::VecDeque<(u64, u8, u16, u8)>,
+    /// Set when the PPU timing enters vblank (scanline 241, dot 1).
+    /// This is a pure timing event, independent of the $2002 VBL flag
+    /// (which `$2002` reads clear and the dot-0 race can suppress).
+    /// `NesMachine::process_frame` consumes it via
+    /// [`Self::take_vblank_entered`].
+    vblank_entered: bool,
 }
 
 /// PPU registers are mirrored every 8 bytes in range $2000-$3FFF;
@@ -236,6 +242,7 @@ impl<R: Render> Ppu<R> {
             nmi_race_cancel: false,
             ppudata_last_return: 0,
             pixel_pipeline: std::collections::VecDeque::new(),
+            vblank_entered: false,
         }
     }
 
@@ -257,6 +264,7 @@ impl<R: Render> Ppu<R> {
         self.registers.write_scroll(0);
         self.rendering_enabled_at_scanline_start = false;
         self.ren_latched_at_338 = false;
+        self.vblank_entered = false;
         // A reset landing mid-frame must not let already-rendered pixels of
         // the old frame commit into the fresh frame's framebuffer.
         self.pixel_pipeline.clear();
@@ -336,6 +344,15 @@ impl<R: Render> Ppu<R> {
 
     pub fn in_vblank(&self) -> bool {
         self.registers.status.v_blank()
+    }
+
+    /// Consume the vblank-entry timing event.
+    ///
+    /// Returns `true` once per entry into vblank (scanline 241, dot 1)
+    /// and resets the internal flag, so `$2002` reads by the emulated
+    /// program cannot interfere with frame stepping.
+    pub fn take_vblank_entered(&mut self) -> bool {
+        std::mem::take(&mut self.vblank_entered)
     }
 
     pub fn oam_data(&self) -> &[u8; 256] {
@@ -553,6 +570,10 @@ impl<R: Render> Ppu<R> {
         }
 
         if self.timing.enter_vblank() {
+            // Timing event for frame stepping: reported even when the $2002
+            // VBL flag set itself is suppressed by the dot-0 race, so
+            // `process_frame` always terminates at the frame boundary.
+            self.vblank_entered = true;
             // Drain the output pipeline: the frame is presented only once
             // its last pixels have left it.
             while let Some((_, x, y, pixel_idx)) = self.pixel_pipeline.pop_front() {

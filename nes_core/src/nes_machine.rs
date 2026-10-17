@@ -6,11 +6,6 @@ use crate::{
     nes::{Mmc3IrqOverride, NesMcu, controller::Button, ppu::palette::ColorTheme},
     render::Render,
 };
-/// Safety limit: maximum system ticks per `process_frame()` call.
-/// A full frame is 89,342 PPU dots, and one system tick now maps to one PPU dot.
-/// This leaves a little headroom while still guarding against infinite loops.
-const MAX_TICKS_PER_FRAME: u32 = 100000;
-
 pub struct NesMachine<P, R: Render, D: crate::nes::apu::AudioDriver> {
     cpu: Cpu<NesMcu<R, D>>,
     p: P,
@@ -64,27 +59,22 @@ where
 
     /// Run the machine for a single frame.
     ///
-    /// Executes CPU instructions until the PPU enters VBlank (scanline 241, dot 1),
-    /// which marks the natural end of a rendered frame. This is the correct approach
-    /// because the PPU has finished rendering all 240 visible scanlines at that point.
+    /// Ticks until the PPU reports entering vblank (scanline 241, dot 1),
+    /// which marks the natural end of a rendered frame: the PPU has finished
+    /// rendering all 240 visible scanlines at that point.
     ///
-    /// If VBlank does not occur within `MAX_TICKS_PER_FRAME` instruction ticks
-    /// (safety guard for MCUs without a real PPU), the function returns early.
+    /// The stop condition consumes the PPU's dedicated vblank-entry event
+    /// ([`crate::nes::ppu::Ppu::take_vblank_entered`]), not the `$2002` VBL
+    /// status flag, so emulated-program reads of `$2002` (which clear the
+    /// flag) cannot interfere with frame stepping. PPU timing always
+    /// advances in `tick`, so the event fires within one frame (~89k dots)
+    /// and no tick-count guard is needed.
     pub fn process_frame(&mut self) -> ExecuteResult {
-        let mut last_in_vblank = self.cpu.mcu().ppu().in_vblank();
-        for _ in 0..MAX_TICKS_PER_FRAME {
+        loop {
             self.tick();
-
-            if self.cpu.is_halted() {
-                self.flush_audio();
-                return ExecuteResult::Halt;
-            }
-
-            let in_vblank = self.cpu.mcu().ppu().in_vblank();
-            if !last_in_vblank && in_vblank {
+            if self.cpu.mcu_mut().ppu_mut().take_vblank_entered() {
                 break;
             }
-            last_in_vblank = in_vblank;
         }
 
         self.flush_audio();
@@ -322,7 +312,7 @@ mod tests {
 
         // process_frame should return as soon as the PPU reaches VBlank
         // (scanline 241, dot 1 = after 241*341 + 1 = 82,262 PPU dots = ~27,421 CPU cycles).
-        // The call must complete well within MAX_TICKS_PER_FRAME.
+        // The call must complete within one frame (~89k dots).
         let result = machine.process_frame();
         assert_eq!(result, ExecuteResult::Continue);
 
