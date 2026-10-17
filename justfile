@@ -671,7 +671,6 @@ volumes: build_nes_cpu_test
     timeout 15 {{ nes_cpu_test }} --quiet --press a@30 --frames 600 --dump-audio /tmp/volumes.wav -f ../nes-test-roms/volume_tests/volumes.nes
     cmp /tmp/volumes.wav test-roms/apu/volume_tests/volumes.wav
 
-[parallel]
 volume_tests: volumes
 
 # Zapper light-gun tests (tetanes input suite): nes_core emulates the Zapper
