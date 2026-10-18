@@ -9,11 +9,9 @@ use nes_core::{
     render::{ImageRender, Render},
 };
 use nes_sdl::{
-    self, AUDIO_CHUNK_SAMPLES, AUDIO_SAMPLE_RATE, SdlAudioDriver,
-    sdl2::{
-        Sdl, audio::AudioSpecDesired, event::Event, pixels::PixelFormatEnum, render::Canvas,
-        video::Window,
-    },
+    self, AUDIO_CHUNK_SAMPLES, AUDIO_SAMPLE_RATE, FramePresenter, SdlAudioDriver,
+    presentation::plan,
+    sdl2::{Sdl, audio::AudioSpecDesired, event::Event, render::Canvas, video::Window},
 };
 use std::{
     cell::Cell,
@@ -269,6 +267,7 @@ struct OverlayIconLayout {
 struct RecordRender {
     buffer: ImageRender<4>,
     canvas: Option<Canvas<Window>>,
+    presenter: FramePresenter,
     video_tx: Option<mpsc::Sender<Vec<u8>>>,
     icons: Vec<RgbaImage>,
     dual_player: bool,
@@ -360,21 +359,12 @@ impl Render for RecordRender {
             self.overlay_input_icons();
         }
 
-        let width = ImageRender::<4>::width();
-        let height = ImageRender::<4>::height();
-
         if let Some(ref mut canvas) = self.canvas {
-            let texture_creator = canvas.texture_creator();
-            let mut texture = texture_creator
-                .create_texture_streaming(PixelFormatEnum::ABGR8888, width, height)
-                .expect("failed to create SDL texture");
-            texture
-                .update(None, self.buffer.as_bytes(), (width * 4) as usize)
-                .expect("failed to upload SDL texture");
-            canvas
-                .copy(&texture, None, None)
-                .expect("failed to copy SDL texture");
-            canvas.present();
+            let dst_size = canvas
+                .output_size()
+                .expect("failed to query SDL renderer output size");
+            let frame = plan(&self.buffer, &[], dst_size);
+            self.presenter.present(canvas, &frame);
         }
 
         let send_video = if self.trim_counter < self.trim_frames {
@@ -547,6 +537,7 @@ fn init_sdl_drivers(
     let render = RecordRender {
         buffer: ImageRender::<4>::new(),
         canvas,
+        presenter: FramePresenter::new(),
         video_tx,
         icons,
         dual_player: false,
