@@ -99,6 +99,14 @@ mod tests {
     }
 
     #[test]
+    fn presentation_bytes_are_the_frame_bytes() {
+        let mut frame = ImageRender::<4>::new();
+        frame.set_pixel(2, 3, [9, 8, 7, 255]);
+        let p = plan(&frame, &[], (1024, 960));
+        assert_eq!(p.bytes, frame.as_bytes());
+    }
+
+    #[test]
     fn destination_rect_is_the_whole_window() {
         let frame = ImageRender::<1>::new();
         let p = plan(&frame, &[], (1024, 960));
