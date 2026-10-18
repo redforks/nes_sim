@@ -247,6 +247,8 @@ pub struct Cartridge {
     memory: CartridgeMemory,
     mapper: Box<dyn Mapper>,
     caps: CartridgeCaps,
+    #[cfg(test)]
+    vram_read_log: Option<VramReadLog>,
 }
 
 impl Cartridge {
@@ -256,6 +258,8 @@ impl Cartridge {
             memory,
             mapper,
             caps,
+            #[cfg(test)]
+            vram_read_log: None,
         }
     }
 
@@ -301,6 +305,10 @@ impl Cartridge {
     /// Cartridge PPU space: pattern tables in `$0000-$1FFF` (CHR ROM or CHR
     /// RAM), nametables in `$2000-$2EFF`.
     pub fn read_vram(&self, address: u16) -> u8 {
+        #[cfg(test)]
+        if let Some(log) = &self.vram_read_log {
+            log.record(address);
+        }
         self.memory.read_vram(address)
     }
 
@@ -311,6 +319,50 @@ impl Cartridge {
     pub fn prg_ram_enabled(&self) -> bool {
         self.memory.prg_ram_enabled()
     }
+}
+
+/// Test-only log of the cartridge VRAM reads made through
+/// [`Cartridge::read_vram`]: the pattern-table bytes the PPU fetches and the
+/// nametable/attribute bytes it reads. Addresses are recorded in read order;
+/// pattern-table reads are the entries below `$2000`.
+#[cfg(test)]
+#[derive(Clone, Default)]
+pub struct VramReadLog {
+    addresses: std::rc::Rc<std::cell::RefCell<Vec<u16>>>,
+}
+
+#[cfg(test)]
+impl VramReadLog {
+    /// Every recorded address, in the order the cartridge was read.
+    pub fn addresses(&self) -> Vec<u16> {
+        self.addresses.borrow().clone()
+    }
+
+    /// Number of reads recorded so far.
+    pub fn count(&self) -> usize {
+        self.addresses.borrow().len()
+    }
+
+    /// Drops every recorded read, so a later [`Self::addresses`] starts empty.
+    pub fn clear(&self) {
+        self.addresses.borrow_mut().clear();
+    }
+
+    fn record(&self, address: u16) {
+        self.addresses.borrow_mut().push(address);
+    }
+}
+
+/// Test-only recorder attached to a cartridge, holding both observable logs:
+/// the mapper VRAM-address notifications and the cartridge VRAM reads.
+/// Obtained from [`Cartridge::test_recording_all`].
+#[cfg(test)]
+#[derive(Clone, Default)]
+pub struct TestRecorder {
+    /// Mapper VRAM-address notifications (the log `test_recording` returns).
+    pub notified: std::rc::Rc<std::cell::RefCell<Vec<u16>>>,
+    /// Cartridge VRAM reads, in read order.
+    pub vram_reads: VramReadLog,
 }
 
 /// Test mapper: no banking, no IRQ. It always records the VRAM-address
@@ -372,13 +424,27 @@ impl Cartridge {
     }
 
     /// Same board, with VRAM-address notifications recorded; the second value
-    /// is the observable log.
+    /// is the observable log. For both logs (notifications and cartridge VRAM
+    /// reads), see [`Self::test_recording_all`].
     pub fn test_recording() -> (Self, std::rc::Rc<std::cell::RefCell<Vec<u16>>>) {
+        let (cartridge, recorder) = Self::test_recording_all();
+        (cartridge, recorder.notified)
+    }
+
+    /// Same board, with both observable logs: mapper VRAM-address
+    /// notifications and every cartridge VRAM read, in read order.
+    pub fn test_recording_all() -> (Self, TestRecorder) {
         let mapper = TestMapper::recording();
         let notified = mapper.notified.clone();
+        let vram_reads = VramReadLog::default();
+        let mut cartridge = Self::new(Box::new(mapper), CartridgeMemory::test(&[], &[]));
+        cartridge.vram_read_log = Some(vram_reads.clone());
         (
-            Self::new(Box::new(mapper), CartridgeMemory::test(&[], &[])),
-            notified,
+            cartridge,
+            TestRecorder {
+                notified,
+                vram_reads,
+            },
         )
     }
 }

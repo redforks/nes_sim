@@ -366,6 +366,35 @@ fn test_render_pixel_returns_background_color() {
     assert_eq!(pixel, 0x16);
 }
 
+/// The PPU reaches the cartridge for pattern bytes through
+/// `Cartridge::read_vram`; the test recorder makes that traffic visible from a
+/// PPU test, in read order. Ticket #44 builds its sprite pattern-read
+/// assertion on this seam.
+#[test]
+fn ppu_background_fetch_logs_cartridge_vram_reads_in_order() {
+    let mut ppu = create_test_ppu_with_mask(
+        PpuMask::new()
+            .with_background_enabled(true)
+            .with_background_left_enabled(true),
+    );
+    let mut pattern = create_pattern();
+    set_tile_solid(&mut pattern, 0, 0, 1);
+    let (mut cart, recorder) = Cartridge::test_recording_all();
+    fill_chr(&mut ppu, &pattern, &mut cart);
+    set_bg_tile(&mut ppu, &mut cart, 0, 0);
+    recorder.vram_reads.clear();
+
+    ppu.timing.scanline = 0;
+    ppu.render_pixel(0, &cart);
+
+    assert_eq!(
+        vec![0x2000, 0x23c0, 0x0000, 0x0008],
+        recorder.vram_reads.addresses(),
+        "nametable, attribute, then the tile's two pattern planes"
+    );
+    assert_eq!(4, recorder.vram_reads.count());
+}
+
 #[test]
 fn test_render_pixel_both_disabled() {
     let mut ppu = create_test_ppu_with_mask(PpuMask::new());
