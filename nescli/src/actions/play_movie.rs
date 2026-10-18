@@ -12,8 +12,8 @@ use nes_core::{
     },
 };
 use nes_sdl::{
-    self, AUDIO_CHUNK_SAMPLES, AUDIO_SAMPLE_RATE, FramePresenter, SdlAudioDriver,
-    presentation::{OverlayIcon, OverlayPlacement, plan},
+    self, AUDIO_CHUNK_SAMPLES, AUDIO_SAMPLE_RATE, FramePresenter, SdlAudioDriver, present_frame,
+    presentation::{OverlayIcon, OverlayPlacement},
     sdl2::{Sdl, audio::AudioSpecDesired, event::Event, render::Canvas, video::Window},
 };
 use std::{
@@ -258,9 +258,12 @@ const OVERLAY_LAYOUT_RIGHT: OverlayIconLayout = OverlayIconLayout {
     y: 222,
 };
 
-/// Overlay icon size in logical 1x pixels: the 64x64 sprite-sheet crops at the
+/// Sprite-sheet crop size in pixels: one square icon per artwork cell.
+const OVERLAY_SHEET_ICON_SIZE: u32 = 64;
+
+/// Overlay icon size in logical 1x pixels: a sprite-sheet crop divided by the
 /// playback Zoom Factor of 4.
-const OVERLAY_ICON_SIZE: u32 = 16;
+const OVERLAY_ICON_SIZE: u32 = OVERLAY_SHEET_ICON_SIZE / 4;
 
 /// Which overlay icons to show this frame and where, in logical 1x
 /// coordinates. Advances both players' hold counters exactly once per frame.
@@ -373,11 +376,15 @@ fn blit_icon(
 
 struct RecordRender {
     buffer: ImageRender<1>,
+    /// 1024x960 recording frame: raw RGBA pixels in the format fed to ffmpeg
+    /// (`RECORD_WIDTH * RECORD_HEIGHT * 4` bytes). The allocation is reused
+    /// across frames; each frame actually sent is cloned into a fresh buffer
+    /// for the encoder thread.
     record_scratch: Vec<u8>,
     canvas: Option<Canvas<Window>>,
     presenter: FramePresenter,
     video_tx: Option<mpsc::Sender<Vec<u8>>>,
-    icons: Vec<OverlayIcon>,
+    icons: Rc<[OverlayIcon]>,
     dual_player: bool,
     enabled: bool,
     p1: GamepadOverlay,
@@ -446,11 +453,7 @@ impl Render for RecordRender {
         };
 
         if let Some(ref mut canvas) = self.canvas {
-            let dst_size = canvas
-                .output_size()
-                .expect("failed to query SDL renderer output size");
-            let frame = plan(&self.buffer, &overlays, dst_size);
-            self.presenter.present(canvas, &frame);
+            present_frame(canvas, &mut self.presenter, &self.buffer, &overlays);
         }
 
         if let Some(ref tx) = self.video_tx
@@ -563,6 +566,33 @@ fn compute_fast_forward_ranges(
     ranges
 }
 
+/// Decode the gamepad sprite sheet into the fixed overlay icon table (17
+/// square crops: 0 = A, 1 = B, 2..=16 = the held-direction combinations).
+fn load_overlay_icons() -> Vec<OverlayIcon> {
+    let sprite_sheet = load_from_memory(include_bytes!("../../design/gamepad_sprite.png"))
+        .expect("failed to decode gamepad sprite")
+        .into_rgba8();
+    assert_eq!(sprite_sheet.width(), 17 * OVERLAY_SHEET_ICON_SIZE);
+    assert_eq!(sprite_sheet.height(), OVERLAY_SHEET_ICON_SIZE);
+    (0..17)
+        .map(|i| {
+            let icon = imageops::crop_imm(
+                &sprite_sheet,
+                i * OVERLAY_SHEET_ICON_SIZE,
+                0,
+                OVERLAY_SHEET_ICON_SIZE,
+                OVERLAY_SHEET_ICON_SIZE,
+            )
+            .to_image();
+            OverlayIcon {
+                bytes: icon.into_raw(),
+                width: OVERLAY_SHEET_ICON_SIZE,
+                height: OVERLAY_SHEET_ICON_SIZE,
+            }
+        })
+        .collect()
+}
+
 fn init_sdl_drivers(
     sdl_context: &Sdl,
     headless: bool,
@@ -601,23 +631,9 @@ fn init_sdl_drivers(
         None
     };
 
-    let sprite_bytes = include_bytes!("../../design/gamepad_sprite.png");
-    let sprite_sheet = load_from_memory(sprite_bytes)
-        .expect("failed to decode gamepad sprite")
-        .into_rgba8();
-    assert_eq!(sprite_sheet.width(), 1088);
-    assert_eq!(sprite_sheet.height(), 64);
-    let icons: Vec<OverlayIcon> = (0..17)
-        .map(|i| {
-            let icon = imageops::crop_imm(&sprite_sheet, i * 64, 0, 64, 64).to_image();
-            OverlayIcon {
-                bytes: icon.into_raw(),
-                width: 64,
-                height: 64,
-            }
-        })
-        .collect();
-
+    // One shared icon table: the presenter draws its texture sources while
+    // the recording composite reads the same pixels, so no clone is needed.
+    let icons: Rc<[OverlayIcon]> = Rc::from(load_overlay_icons());
     let mut presenter = FramePresenter::new();
     presenter.set_overlay_icons(icons.clone());
 
@@ -888,10 +904,12 @@ impl PlayMovieAction {
 mod tests {
     use nes_core::movie::{Command, GamepadInput, InputLog};
     use nes_core::render::{ImageRender, Render};
-    use nes_sdl::presentation::{OverlayIcon, OverlayPlacement};
+    use nes_sdl::presentation::{OverlayIcon, OverlayPlacement, plan};
+    use std::rc::Rc;
 
     use super::{
-        GamepadOverlay, OVERLAY_LAYOUT_RIGHT, composite_overlay_icons, compute_fast_forward_ranges,
+        FramePresenter, GamepadOverlay, NES_WIDTH, OVERLAY_LAYOUT_RIGHT, RECORD_HEIGHT,
+        RECORD_WIDTH, composite_overlay_icons, compute_fast_forward_ranges, load_overlay_icons,
         project_overlay_icons, upscale_into,
     };
 
@@ -918,6 +936,11 @@ mod tests {
             GamepadInput::from(1),
         )
     }
+
+    /// Serializes the SDL tests. The sdl2 crate allows `init` on only one
+    /// thread per process lifetime, so two tests must not initialise SDL at
+    /// the same time or the loser silently skips.
+    static SDL_TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
     const IDLE_FRAMES: usize = 60;
 
@@ -1328,5 +1351,168 @@ mod tests {
         composite_overlay_icons(&mut four_bytes, &placements, &icons);
         assert_ne!(four_bytes, plain, "the composite must change the frame");
         assert_eq!(scratch, four_bytes);
+    }
+
+    // --- SDL overlay blend parity with the legacy integer blend -----------
+
+    /// Renders a frame plus overlay icons through FramePresenter on a
+    /// software renderer, reads the window back, and compares it with the
+    /// legacy host-side composite (composite_overlay_icons). Zero delta is
+    /// required outside the icon rectangles; anti-aliased icon edges are
+    /// allowed at most 1 LSB per channel because SDL's BlendMode::Blend
+    /// rounds while the legacy blend truncates.
+    ///
+    /// Self-skips when SDL cannot initialise a window and software renderer,
+    /// so it is safe on a headless CI host.
+    #[test]
+    fn sdl_overlay_blend_matches_legacy_integer_blend() {
+        use nes_sdl::sdl2::pixels::PixelFormatEnum;
+
+        let _sdl_guard = SDL_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let Ok(sdl) = nes_sdl::sdl2::init() else {
+            eprintln!("skip: SDL init failed");
+            return;
+        };
+        let Ok(video) = sdl.video() else {
+            eprintln!("skip: SDL video subsystem unavailable");
+            return;
+        };
+        let dst_size = (RECORD_WIDTH as u32, RECORD_HEIGHT as u32);
+        let Ok(window) = video
+            .window("overlay-blend-test", dst_size.0, dst_size.1)
+            .hidden()
+            .build()
+        else {
+            eprintln!("skip: SDL window unavailable");
+            return;
+        };
+        let Ok(mut canvas) = window.into_canvas().software().build() else {
+            eprintln!("skip: SDL software renderer unavailable");
+            return;
+        };
+
+        // A frame with a distinct colour per logical pixel, so any blend or
+        // upscale mistake changes the comparison.
+        let mut frame = ImageRender::<1>::new();
+        for y in 0..240u32 {
+            for x in 0..256u32 {
+                frame.set_pixel(
+                    x,
+                    y,
+                    [
+                        (x.wrapping_mul(3)) as u8,
+                        (y.wrapping_mul(5)) as u8,
+                        (x ^ y) as u8,
+                        255,
+                    ],
+                );
+            }
+        }
+
+        // The real gamepad icons: their anti-aliased edges are exactly where
+        // a rounded SDL blend could diverge from the truncating legacy blend.
+        let icons: Rc<[OverlayIcon]> = Rc::from(load_overlay_icons());
+        let placements = [
+            OverlayPlacement {
+                icon: 0,
+                dst: (2, 3, 16, 16),
+            },
+            OverlayPlacement {
+                icon: 5,
+                dst: (200, 206, 16, 16),
+            },
+            OverlayPlacement {
+                icon: 16,
+                dst: (120, 100, 16, 16),
+            },
+        ];
+
+        // SDL path: plan + presenter (software renderer, then read back).
+        let presentation = plan(&frame, &placements, dst_size);
+        let mut presenter = FramePresenter::new();
+        presenter.set_overlay_icons(icons.clone());
+        presenter.present(&mut canvas, &presentation);
+        let sdl_pixels = canvas
+            .read_pixels(None, PixelFormatEnum::ABGR8888)
+            .expect("software renderer read-back");
+
+        // Legacy path: the same 4x upscale plus the host integer blend.
+        let mut expected = vec![0u8; RECORD_WIDTH * RECORD_HEIGHT * 4];
+        upscale_into(frame.as_bytes(), &mut expected);
+        composite_overlay_icons(&mut expected, &placements, &icons);
+        let mut plain = vec![0u8; RECORD_WIDTH * RECORD_HEIGHT * 4];
+        upscale_into(frame.as_bytes(), &mut plain);
+        assert_ne!(plain, expected, "the icon composite must change the frame");
+
+        let scale = (RECORD_WIDTH / NES_WIDTH) as u32;
+        let inside = |px: u32, py: u32| {
+            placements.iter().any(|p| {
+                let x0 = p.dst.0 as u32 * scale;
+                let y0 = p.dst.1 as u32 * scale;
+                let x1 = x0 + p.dst.2 * scale;
+                let y1 = y0 + p.dst.3 * scale;
+                px >= x0 && px < x1 && py >= y0 && py < y1
+            })
+        };
+
+        let mut max_inside = 0u8;
+        let mut max_outside = 0u8;
+        for y in 0..RECORD_HEIGHT as u32 {
+            for x in 0..RECORD_WIDTH as u32 {
+                let i = ((y * RECORD_WIDTH as u32 + x) * 4) as usize;
+                for c in 0..4 {
+                    let delta = sdl_pixels[i + c].abs_diff(expected[i + c]);
+                    if inside(x, y) {
+                        max_inside = max_inside.max(delta);
+                    } else {
+                        max_outside = max_outside.max(delta);
+                    }
+                }
+            }
+        }
+        eprintln!(
+            "SDL overlay blend delta: max inside icon pixels = {max_inside} LSB, max outside = {max_outside} LSB"
+        );
+        assert_eq!(max_outside, 0, "pixels outside the icons must be identical");
+        assert!(
+            max_inside <= 1,
+            "icon pixels may differ by at most 1 LSB, got {max_inside}"
+        );
+    }
+
+    /// `run` keeps SDL's default texture scale mode; the spec only needs
+    /// nearest for playback. SDL documents Nearest as the default and this
+    /// pins it: if a future SDL changed the default to linear, forcing
+    /// nearest would start changing the `run` 2x picture.
+    #[test]
+    fn sdl_default_texture_scale_mode_is_nearest() {
+        use nes_sdl::sdl2::pixels::PixelFormatEnum;
+        use nes_sdl::sdl2::render::ScaleMode;
+
+        let _sdl_guard = SDL_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let Ok(sdl) = nes_sdl::sdl2::init() else {
+            eprintln!("skip: SDL init failed");
+            return;
+        };
+        let Ok(video) = sdl.video() else {
+            eprintln!("skip: SDL video subsystem unavailable");
+            return;
+        };
+        let Ok(window) = video.window("scale-mode-test", 256, 240).hidden().build() else {
+            eprintln!("skip: SDL window unavailable");
+            return;
+        };
+        let Ok(canvas) = window.into_canvas().software().build() else {
+            eprintln!("skip: SDL software renderer unavailable");
+            return;
+        };
+        let texture = canvas
+            .texture_creator()
+            .create_texture_streaming(PixelFormatEnum::ABGR8888, 256, 240)
+            .expect("create texture");
+        assert!(
+            matches!(texture.scale_mode(), ScaleMode::Nearest),
+            "SDL default scale mode must be Nearest for the run path to be unchanged"
+        );
     }
 }
