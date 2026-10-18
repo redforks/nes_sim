@@ -317,7 +317,7 @@ Cargo build profile `[profile.profiling]` inheriting `release` with full debug s
 _Avoid_: release with debug, bench profile
 
 **Headless Execution**:
-Movie playback with no host window (`--headless`), still rendering to `RecordRender` on a DummyWindow. Incurs `set_pixel` cost (~2.3% Self). Distinct from a future `NullRender` zero-render mode.
+Movie playback with no host window (`--headless`), still rendering to `RecordRender` on a DummyWindow. Playback renders a logical 1x frame since spec #38, so `set_pixel` and the frame upload stay below the 1% Self cut-off (the spec measured `set_pixel` ~2.3% while the display path replicated every pixel 4x4). Distinct from a future `NullRender` zero-render mode.
 _Avoid_: no-render, offscreen
 
 **No-throttle**:
@@ -329,7 +329,7 @@ Wall-clock budget per emulated frame at 60fps: `16.6ms` (`target_frame_duration 
 _Avoid_: frame limit, fps target
 
 **Hot Path**:
-Instruction sampling Self overhead >3% in `perf report --no-children`. Leaf cost after inlining; Children is call-graph roll-up. Baseline 500-frame `warped.fm2` sample: `Ppu::tick` 42%, `NesMachine::tick` 11%, `tick_apu` 6.7%, `Cpu::tick` 5%, `Pulse::output` 3.6%.
+Instruction sampling Self overhead >3% in `perf report --no-children`. Leaf cost after inlining; Children is call-graph roll-up. Baseline 2000-frame windowed `warped.fm2` sample (`--no-throttle`, profiling profile, frame pointers, `perf record -F 997 -g`): `Ppu::tick` 47.7%, `NesMachine::tick` 6.5%, `Microcode::exec` 6.2%, `Cartridge::read` 3.6%, `Cpu::tick` 3.4%, `SpriteManager::update_ctrl_status` 3.4%, `NesMcu::tick_apu` 3.3%, `Cartridge::on_ppu_tick` 3.0%. The shares are relative: spec #38 removed work around these leaves, so the survivors rank higher over a smaller total (instructions per frame 59.0 M to 51.0 M). A small per-Dot leaf can sample above its true cost — `update_ctrl_status` shows 3.4% Self, while removing the per-Dot status merge measured 0.4% of instructions in the spec #38 ablations; confirm a candidate with an ablation instead of acting on one symbol.
 _Avoid_: hot spot (ambiguous), bottleneck (use only after budget miss)
 
 **Sampling (perf)**:
