@@ -5,18 +5,20 @@
 //! texture can be created on first use and reused for the lifetime of the
 //! canvas instead of being recreated every frame. No `unsafe` code is needed.
 
-use crate::presentation::{FramePresentation, OverlayIcon, OverlayPlacement};
+use crate::presentation::{FramePresentation, OverlayIcon, OverlayPlacement, plan};
+use nes_core::render::ImageRender;
 use sdl2::pixels::PixelFormatEnum;
 use sdl2::rect::Rect;
 use sdl2::render::{BlendMode, Canvas, ScaleMode, Texture};
 use sdl2::video::Window;
+use std::rc::Rc;
 
 /// Owns the reusable frame texture plus one lazily created texture per overlay
 /// icon, and performs one upload plus one scaled copy per frame.
 pub struct FramePresenter {
     texture: Option<Texture>,
     size: (u32, u32),
-    icons: Vec<OverlayIcon>,
+    icons: Rc<[OverlayIcon]>,
     icon_textures: Vec<Option<Texture>>,
 }
 
@@ -41,14 +43,15 @@ impl FramePresenter {
         Self {
             texture: None,
             size: (0, 0),
-            icons: Vec::new(),
+            icons: Rc::from(Vec::new()),
             icon_textures: Vec::new(),
         }
     }
 
     /// Provide the overlay icon pixel sources. The matching SDL textures are
-    /// created lazily on first use and reused across frames.
-    pub fn set_overlay_icons(&mut self, icons: Vec<OverlayIcon>) {
+    /// created lazily on first use and reused across frames. The table is
+    /// shared with the caller (one `Rc`) rather than cloned.
+    pub fn set_overlay_icons(&mut self, icons: Rc<[OverlayIcon]>) {
         self.icon_textures = icons.iter().map(|_| None).collect();
         self.icons = icons;
     }
@@ -115,4 +118,21 @@ impl FramePresenter {
             )
             .expect("failed to copy SDL overlay icon texture");
     }
+}
+
+/// The shared display sequence: query the renderer output size, build the pure
+/// presentation plan, and present it through the reused texture. `SdlRender`
+/// and playback's `RecordRender` both use this so the plan/present seam has a
+/// single call site.
+pub fn present_frame<const N: usize>(
+    canvas: &mut Canvas<Window>,
+    presenter: &mut FramePresenter,
+    frame: &ImageRender<N>,
+    overlays: &[OverlayPlacement],
+) {
+    let dst_size = canvas
+        .output_size()
+        .expect("failed to query SDL renderer output size");
+    let presentation = plan(frame, overlays, dst_size);
+    presenter.present(canvas, &presentation);
 }

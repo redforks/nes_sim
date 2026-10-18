@@ -32,14 +32,14 @@ accepted
 - The plan is unit-tested without a window: frame bytes and dimensions, the destination rect, and overlay scaling.
 - ADR-0012's Zoom Factor stays a capability of `ImageRender<N>`; the playback display path no longer uses it, and ADR-0012 records that revision.
 - Overlay icon placements flow through `plan` as data; the overlay policy (hold counters, icon table, 18-frame hold) stays in `nescli`.
-- The window draws the gamepad overlay as SDL textures instead of writing icon pixels into the Framebuffer. `GamepadOverlay` projects its state into pure `OverlayPlacement` values (logical 1x 256x240 coordinates), and `FramePresenter` owns one texture per icon index, created lazily by `set_overlay_icons` on first use and reused across frames. The `--output` recording path still composites the icons host-side into its 4x scratch frame, so the recorded artefact is byte-identical.
-- The recorded `--output` artefact and the `run` 2x window picture are unchanged.
+- The window draws the gamepad overlay as SDL textures instead of writing icon pixels into the Framebuffer. `GamepadOverlay` projects its state into pure `OverlayPlacement` values (logical 1x 256x240 coordinates), and `FramePresenter` owns one texture per icon index, created lazily by `set_overlay_icons` on first use and reused across frames. The `--output` recording path still composites the icons host-side into its 4x scratch frame, so the recorded artefact is byte-identical. On the window, SDL's `BlendMode::Blend` reproduces the legacy truncating straight-alpha blend: a software-renderer read-back of the real gamepad icon set matches the host composite with a measured maximum delta of 0 LSB, and the pinned test allows at most 1 LSB on anti-aliased icon edges.
+- The recorded `--output` artefact and the `run` 2x window picture are unchanged. The `run` path forces `ScaleMode::Nearest`; SDL's texture default is already `Nearest`, so forcing it is a no-op (a read-back of a default-mode and a nearest-mode 2x copy is byte-identical, and a test pins the default).
 
 ## Playback at 1x with SDL scaling and a 4x recording scratch
 
 Spec #38, ticket #43. The frame texture is the logical 256x240 picture; the only frame-size work on the display path is one `Texture::update` and one nearest `Canvas::copy` to the 1024x960 window rect.
 
-Recording keeps its contract with ffmpeg: raw RGBA at 1024x960. So the recording path owns a separate 1024x960 scratch frame and builds it host-side by upscaling the 1x frame 4x (`upscale_into`, exactly the replication `ImageRender<4>::set_pixel` performs) and compositing the overlay icons with the same straight-alpha blend as before. It reuses one scratch allocation across frames.
+Recording keeps its contract with ffmpeg: raw RGBA at 1024x960. So the recording path owns a separate 1024x960 scratch frame and builds it host-side by upscaling the 1x frame 4x (`upscale_into`, exactly the replication `ImageRender<4>::set_pixel` performs) and compositing the overlay icons with the same straight-alpha blend as before. The scratch `Vec` is allocated once and reused across frames; each frame actually sent to ffmpeg is cloned into a fresh buffer handed to the encoder thread.
 
 Why a separate scratch frame instead of the old shared 4x buffer:
 

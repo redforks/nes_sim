@@ -1,9 +1,8 @@
 pub mod presentation;
 pub mod presenter;
 
-pub use presenter::FramePresenter;
+pub use presenter::{FramePresenter, present_frame};
 
-use crate::presentation::plan;
 use nes_core::nes::apu::AudioDriver;
 use nes_core::nes::controller::Button;
 use nes_core::render::{ImageRender, Render};
@@ -110,11 +109,6 @@ impl<const N: usize> Render for SdlRender<N> {
     }
 
     fn finish(&mut self) {
-        let dst_size = self
-            .canvas
-            .output_size()
-            .expect("failed to query SDL renderer output size");
-        let frame = plan(&self.image, &[], dst_size);
-        self.presenter.present(&mut self.canvas, &frame);
+        present_frame(&mut self.canvas, &mut self.presenter, &self.image, &[]);
     }
 }
