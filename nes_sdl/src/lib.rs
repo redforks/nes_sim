@@ -1,9 +1,13 @@
+pub mod presentation;
+pub mod presenter;
+
+pub use presenter::{FramePresenter, present_frame};
+
 use nes_core::nes::apu::AudioDriver;
 use nes_core::nes::controller::Button;
 use nes_core::render::{ImageRender, Render};
 use sdl2::audio::AudioQueue;
 use sdl2::keyboard::Keycode;
-use sdl2::pixels::PixelFormatEnum;
 use sdl2::render::Canvas;
 use sdl2::video::Window;
 
@@ -80,6 +84,7 @@ impl AudioDriver for SdlAudioDriver {
 pub struct SdlRender<const N: usize = 1> {
     image: ImageRender<N>,
     canvas: Canvas<Window>,
+    presenter: FramePresenter,
 }
 
 impl<const N: usize> std::fmt::Debug for SdlRender<N> {
@@ -90,7 +95,11 @@ impl<const N: usize> std::fmt::Debug for SdlRender<N> {
 
 impl<const N: usize> SdlRender<N> {
     pub fn with_image(image: ImageRender<N>, canvas: Canvas<Window>) -> Self {
-        Self { image, canvas }
+        Self {
+            image,
+            canvas,
+            presenter: FramePresenter::new(),
+        }
     }
 }
 
@@ -100,19 +109,6 @@ impl<const N: usize> Render for SdlRender<N> {
     }
 
     fn finish(&mut self) {
-        let width = ImageRender::<N>::width();
-        let height = ImageRender::<N>::height();
-        let texture_creator = self.canvas.texture_creator();
-        let mut texture = texture_creator
-            .create_texture_streaming(PixelFormatEnum::ABGR8888, width, height)
-            .expect("failed to create SDL texture");
-
-        texture
-            .update(None, self.image.as_bytes(), (width * 4) as usize)
-            .expect("failed to upload SDL texture");
-        self.canvas
-            .copy(&texture, None, None)
-            .expect("failed to copy SDL texture");
-        self.canvas.present();
+        present_frame(&mut self.canvas, &mut self.presenter, &self.image, &[]);
     }
 }

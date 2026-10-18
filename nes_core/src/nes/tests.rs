@@ -40,10 +40,13 @@ fn test_frame_counter_inhibit_clears_irq() {
     let mut mcu = test_mcu();
 
     mcu.write(0x4017, 0x00);
-    let mut clock = SystemClock::default();
-    for _ in 0..(29_829 * 3) {
+    // Step the APU on APU clocks (dot % 3 == 2) for one full 29,830-cycle
+    // mode-0 period, through the frame IRQ set at CPU cycle 29,828.
+    let mut clock = SystemClock(2);
+    mcu.tick_apu(clock);
+    for _ in 0..29_828 {
+        clock = clock.inc().inc().inc();
         mcu.tick_apu(clock);
-        clock = clock.inc();
     }
 
     mcu.write(0x4017, 0x40);
@@ -58,10 +61,10 @@ fn test_length_counter_status_comes_from_apu_controller() {
     mcu.write(0x4002, 0x34);
     mcu.write(0x4015, 0x01);
     mcu.write(0x4003, 0xF8);
-    // Length-register writes land one CPU cycle late; run ticks so the
-    // queued store reaches the APU before the status read.
-    for t in 0..6u64 {
-        mcu.tick_apu(SystemClock(t));
+    // Length-register writes land one CPU cycle late; step APU clocks
+    // (dot % 3 == 2) so the queued store lands before the status read.
+    for cpu_cycle in 0..2u64 {
+        mcu.tick_apu(SystemClock(cpu_cycle * 3 + 2));
     }
 
     assert_eq!(mcu.read(0x4015) & 0x01, 0x01);
@@ -527,8 +530,9 @@ fn reset_reanchors_deferred_apu_writes_to_running_clock() {
     // after this write cycle relative to the running clock.
     mcu.write(0x400B, 0x08);
     // Before the anchored landing point the deferred reload must not have
-    // flushed: triangle status bit (bit 2 of $4015) stays clear.
-    mcu.tick_apu(SystemClock(big + 2));
+    // flushed: triangle status bit (bit 2 of $4015) stays clear. `big` is an
+    // APU clock (big % 3 == 2), the last one before the landing at big + 3.
+    mcu.tick_apu(SystemClock(big));
     let status = mcu.read(0x4015);
     assert_eq!(
         status & 0x04,

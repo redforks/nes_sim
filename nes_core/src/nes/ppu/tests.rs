@@ -1,6 +1,6 @@
 use super::*;
 use crate::nes::mapper::Cartridge;
-use crate::render::ImageRender;
+use crate::render::{ImageRender, Render};
 
 use test_case::test_case;
 
@@ -233,7 +233,7 @@ fn set_tile_pixel(
     }
 }
 
-fn setup_sprite(ppu: &mut Ppu, index: u8, y: u8, tile: u8, attr: u8, x: u8) {
+fn setup_sprite<R: Render>(ppu: &mut Ppu<R>, index: u8, y: u8, tile: u8, attr: u8, x: u8) {
     ppu.oam.set_byte(index * 4, y);
     ppu.oam.set_byte(index * 4 + 1, tile);
     ppu.oam.set_byte(index * 4 + 2, attr);
@@ -261,31 +261,36 @@ fn read_oam_at(ppu: &mut Ppu, addr: u8) -> u8 {
     ppu.read_ppureg(0x2004, &mut cart)
 }
 
-fn set_bg_tile(ppu: &mut Ppu, cartridge: &mut Cartridge, tile: u8, palette_idx: u8) {
+fn set_bg_tile<R: Render>(ppu: &mut Ppu<R>, cartridge: &mut Cartridge, tile: u8, palette_idx: u8) {
     ppu.write_vram(0x2000, tile, cartridge);
     ppu.write_vram(0x23c0, palette_idx & 0x03, cartridge);
 }
 
-fn set_bg_palette_color(ppu: &mut Ppu, palette_idx: u8, color_idx: u8, color: u8) {
+fn set_bg_palette_color<R: Render>(ppu: &mut Ppu<R>, palette_idx: u8, color_idx: u8, color: u8) {
     let addr = 0x3f00 + palette_idx as u16 * 4 + color_idx as u16;
     ppu.palette.write(addr, color);
 }
 
-fn set_sprite_palette_color(ppu: &mut Ppu, palette_idx: u8, color_idx: u8, color: u8) {
+fn set_sprite_palette_color<R: Render>(
+    ppu: &mut Ppu<R>,
+    palette_idx: u8,
+    color_idx: u8,
+    color: u8,
+) {
     let addr = 0x3f10 + palette_idx as u16 * 4 + color_idx as u16;
     ppu.palette.write(addr, color);
 }
 
-fn set_universal_bg_color(ppu: &mut Ppu, color: u8) {
+fn set_universal_bg_color<R: Render>(ppu: &mut Ppu<R>, color: u8) {
     ppu.palette.write(0x3f00, color);
 }
-fn fill_chr(ppu: &mut Ppu, pattern: &[u8], cartridge: &mut Cartridge) {
+fn fill_chr<R: Render>(ppu: &mut Ppu<R>, pattern: &[u8], cartridge: &mut Cartridge) {
     for i in 0..0x2000 {
         ppu.write_vram(i as u16, pattern[i % pattern.len()], cartridge);
     }
 }
 
-fn populate_sprite_secondary_oam(ppu: &mut Ppu, target_scanline: u16) {
+fn populate_sprite_secondary_oam<R: Render>(ppu: &mut Ppu<R>, target_scanline: u16) {
     // Hardware evaluates sprites for the *next* scanline during dots 65-256 of
     // each visible scanline only. The pre-render line (261) evaluates nothing
     // (nesdev wiki: "Sprite evaluation does not happen on the pre-render
@@ -304,7 +309,7 @@ fn populate_sprite_secondary_oam(ppu: &mut Ppu, target_scanline: u16) {
     ppu.sprite.swap_secondary_oam();
 }
 
-fn render_pixel(ppu: &mut Ppu, pattern: &[u8], x: u8, y: u8) -> u8 {
+fn render_pixel<R: Render>(ppu: &mut Ppu<R>, pattern: &[u8], x: u8, y: u8) -> u8 {
     let mut cart = Cartridge::test();
     if !pattern.is_empty() {
         fill_chr(ppu, pattern, &mut cart);
@@ -316,7 +321,7 @@ fn render_pixel(ppu: &mut Ppu, pattern: &[u8], x: u8, y: u8) -> u8 {
     ppu.render_pixel(x, &cart)
 }
 
-fn run_scanline(ppu: &mut Ppu, pattern: &[u8], scanline: u16) {
+fn run_scanline<R: Render>(ppu: &mut Ppu<R>, pattern: &[u8], scanline: u16) {
     let mut cart = Cartridge::test();
     if !pattern.is_empty() {
         fill_chr(ppu, pattern, &mut cart);
@@ -329,9 +334,41 @@ fn run_scanline(ppu: &mut Ppu, pattern: &[u8], scanline: u16) {
     }
 }
 
-fn render_pixel_with_setup<F>(ppu: &mut Ppu, pattern: &[u8], setup: F, x: u8, y: u8) -> u8
+/// Like create_test_ppu_with_mask, but with a readable 1x framebuffer so a
+/// test can assert the pixels a ticked scanline committed.
+fn create_test_ppu_render(mask: PpuMask) -> Ppu<ImageRender<1>> {
+    let mut ppu = Ppu::new(ImageRender::<1>::default_dimension());
+    ppu.registers.mask = mask;
+    for i in 0..64 {
+        ppu.oam.set_byte(i * 4, 0x20);
+        ppu.oam.set_byte(i * 4 + 3, 0xff);
+    }
+    ppu.palette.data = [0; 0x20];
+    ppu
+}
+
+/// Populate secondary OAM for the target scanline, then run the whole visible
+/// line dot by dot so its pixels reach the framebuffer. Starts at dot 1: the
+/// dot-0 swap belongs to the line boundary and must not discard the freshly
+/// evaluated Sprites.
+fn run_visible_scanline<R: Render>(ppu: &mut Ppu<R>, cart: &mut Cartridge, scanline: u16) {
+    populate_sprite_secondary_oam(ppu, scanline);
+    ppu.timing.scanline = scanline;
+    ppu.timing.dot = 1;
+    for _ in 1..=340 {
+        ppu.tick(cart);
+    }
+}
+
+fn render_pixel_with_setup<R: Render, F>(
+    ppu: &mut Ppu<R>,
+    pattern: &[u8],
+    setup: F,
+    x: u8,
+    y: u8,
+) -> u8
 where
-    F: FnOnce(&mut Ppu, &mut Cartridge),
+    F: FnOnce(&mut Ppu<R>, &mut Cartridge),
 {
     let mut cart = Cartridge::test();
     if !pattern.is_empty() {
@@ -364,6 +401,35 @@ fn test_render_pixel_returns_background_color() {
         0,
     );
     assert_eq!(pixel, 0x16);
+}
+
+/// The PPU reaches the cartridge for pattern bytes through
+/// `Cartridge::read_vram`; the test recorder makes that traffic visible from a
+/// PPU test, in read order. Ticket #44 builds its sprite pattern-read
+/// assertion on this seam.
+#[test]
+fn ppu_background_fetch_logs_cartridge_vram_reads_in_order() {
+    let mut ppu = create_test_ppu_with_mask(
+        PpuMask::new()
+            .with_background_enabled(true)
+            .with_background_left_enabled(true),
+    );
+    let mut pattern = create_pattern();
+    set_tile_solid(&mut pattern, 0, 0, 1);
+    let (mut cart, recorder) = Cartridge::test_recording_all();
+    fill_chr(&mut ppu, &pattern, &mut cart);
+    set_bg_tile(&mut ppu, &mut cart, 0, 0);
+    recorder.vram_reads.clear();
+
+    ppu.timing.scanline = 0;
+    ppu.render_pixel(0, &cart);
+
+    assert_eq!(
+        vec![0x2000, 0x23c0, 0x0000, 0x0008],
+        recorder.vram_reads.addresses(),
+        "nametable, attribute, then the tile's two pattern planes"
+    );
+    assert_eq!(4, recorder.vram_reads.count());
 }
 
 #[test]
@@ -809,6 +875,376 @@ fn test_render_pixel_uses_vertical_flip_for_8x16_sprites() {
 
     let pixel = render_pixel(&mut ppu, &pattern, 0, 15);
     assert_eq!(pixel, 0x2d);
+}
+
+/// Ticket #44 acceptance: a fully populated scanline fetches each evaluated
+/// Sprite's two pattern planes exactly once. The row cache makes 8 x 2
+/// pattern-table reads, and the recorded bytes still decode to the pixels the
+/// framebuffer holds.
+#[test]
+fn sprite_row_cache_reads_each_evaluated_sprite_once_per_scanline() {
+    let mut ppu = create_test_ppu_render(
+        PpuMask::new()
+            .with_sprite_enabled(true)
+            .with_sprite_left_enabled(true),
+    );
+    let mut pattern = create_pattern();
+    set_universal_bg_color(&mut ppu, 0x0f);
+    for color_idx in 1..=3u8 {
+        set_sprite_palette_color(&mut ppu, 0, color_idx, 0x20 + color_idx);
+    }
+    // Eight Sprites side by side, each with its own tile and a distinct
+    // row-0 bit pair, so each Sprite owns exactly its 8-pixel window.
+    for i in 0..8u8 {
+        let tile = i + 1;
+        let low = 0b1010_1010 ^ i.wrapping_mul(0x11);
+        let high = 0b1100_0011 ^ (i << 1);
+        pattern[tile as usize * 16] = low;
+        pattern[tile as usize * 16 + 8] = high;
+        setup_sprite(&mut ppu, i, 0, tile, 0, i * 8);
+    }
+
+    let (mut cart, recorder) = Cartridge::test_recording_all();
+    fill_chr(&mut ppu, &pattern, &mut cart);
+    recorder.vram_reads.clear();
+
+    run_visible_scanline(&mut ppu, &mut cart, 1);
+
+    let pattern_reads: Vec<u16> = recorder
+        .vram_reads
+        .addresses()
+        .into_iter()
+        .filter(|addr| *addr < 0x2000)
+        .collect();
+    let expected_addresses: Vec<u16> = (0..8u16)
+        .flat_map(|i| {
+            let base = (i + 1) * 16;
+            [base, base + 8]
+        })
+        .collect();
+    assert_eq!(
+        expected_addresses, pattern_reads,
+        "one low+high pair per evaluated Sprite, in Secondary OAM order"
+    );
+
+    // The addresses the cache read still decode to the framebuffer pixels.
+    let backdrop = ppu.color_theme.color(0x0f).0;
+    for i in 0..8usize {
+        let low = cart.read_vram(pattern_reads[i * 2]);
+        let high = cart.read_vram(pattern_reads[i * 2 + 1]);
+        for dx in 0..8u8 {
+            let bit = 7 - dx;
+            let color_idx = ((low >> bit) & 1) | (((high >> bit) & 1) << 1);
+            let expected = if color_idx == 0 {
+                backdrop
+            } else {
+                ppu.color_theme.color(0x20 + color_idx).0
+            };
+            let x = i as u32 * 8 + dx as u32;
+            assert_eq!(
+                expected,
+                ppu.renderer.get_pixel(x, 1),
+                "sprite {i} pixel dx={dx} must decode from the recorded bytes"
+            );
+        }
+    }
+    assert_eq!(backdrop, ppu.renderer.get_pixel(255, 1));
+}
+
+#[test]
+fn scanline_renders_plain_sprite_from_cached_row() {
+    let mut ppu = create_test_ppu_render(
+        PpuMask::new()
+            .with_sprite_enabled(true)
+            .with_sprite_left_enabled(true),
+    );
+    let mut pattern = create_pattern();
+    set_universal_bg_color(&mut ppu, 0x0f);
+    set_tile_solid(&mut pattern, 0, 1, 2);
+    set_sprite_palette_color(&mut ppu, 0, 2, 0x22);
+    setup_sprite(&mut ppu, 0, 0, 1, 0, 4);
+    let mut cart = Cartridge::test();
+    fill_chr(&mut ppu, &pattern, &mut cart);
+
+    run_visible_scanline(&mut ppu, &mut cart, 1);
+
+    let sprite_color = ppu.color_theme.color(0x22).0;
+    let backdrop = ppu.color_theme.color(0x0f).0;
+    for x in 4..12u32 {
+        assert_eq!(sprite_color, ppu.renderer.get_pixel(x, 1), "x={x}");
+    }
+    assert_eq!(backdrop, ppu.renderer.get_pixel(3, 1));
+    assert_eq!(backdrop, ppu.renderer.get_pixel(12, 1));
+}
+
+#[test]
+fn scanline_renders_horizontally_flipped_sprite() {
+    let mut ppu = create_test_ppu_render(
+        PpuMask::new()
+            .with_sprite_enabled(true)
+            .with_sprite_left_enabled(true),
+    );
+    let mut pattern = create_pattern();
+    set_universal_bg_color(&mut ppu, 0x0f);
+    // Only the leftmost pixel of the tile row is opaque; h-flip must move it
+    // to the Sprite's rightmost screen pixel.
+    set_tile_pixel(&mut pattern, 0, 1, 0, 0, 2);
+    set_sprite_palette_color(&mut ppu, 0, 2, 0x22);
+    setup_sprite(&mut ppu, 0, 0, 1, 0x40, 4);
+    let mut cart = Cartridge::test();
+    fill_chr(&mut ppu, &pattern, &mut cart);
+
+    run_visible_scanline(&mut ppu, &mut cart, 1);
+
+    let sprite_color = ppu.color_theme.color(0x22).0;
+    let backdrop = ppu.color_theme.color(0x0f).0;
+    assert_eq!(backdrop, ppu.renderer.get_pixel(4, 1));
+    assert_eq!(sprite_color, ppu.renderer.get_pixel(11, 1));
+}
+
+#[test]
+fn scanline_renders_vertically_flipped_sprite() {
+    let mut ppu = create_test_ppu_render(
+        PpuMask::new()
+            .with_sprite_enabled(true)
+            .with_sprite_left_enabled(true),
+    );
+    let mut pattern = create_pattern();
+    set_universal_bg_color(&mut ppu, 0x0f);
+    // Only the bottom tile row (row 7) is opaque; v-flip must select it for
+    // the Sprite's top screen row (screen row 1 -> src row 7).
+    set_universal_bg_color(&mut ppu, 0x21);
+    set_tile_pixel(&mut pattern, 0, 1, 0, 7, 2);
+    set_sprite_palette_color(&mut ppu, 0, 2, 0x22);
+    setup_sprite(&mut ppu, 0, 0, 1, 0x80, 4);
+    let mut cart = Cartridge::test();
+    fill_chr(&mut ppu, &pattern, &mut cart);
+
+    run_visible_scanline(&mut ppu, &mut cart, 1);
+    run_visible_scanline(&mut ppu, &mut cart, 2);
+
+    let sprite_color = ppu.color_theme.color(0x22).0;
+    let backdrop = ppu.color_theme.color(0x21).0;
+    assert_eq!(sprite_color, ppu.renderer.get_pixel(4, 1));
+    assert_eq!(backdrop, ppu.renderer.get_pixel(4, 2));
+}
+
+#[test]
+fn scanline_renders_doubly_flipped_sprite() {
+    let mut ppu = create_test_ppu_render(
+        PpuMask::new()
+            .with_sprite_enabled(true)
+            .with_sprite_left_enabled(true),
+    );
+    let mut pattern = create_pattern();
+    set_universal_bg_color(&mut ppu, 0x0f);
+    set_tile_pixel(&mut pattern, 0, 1, 0, 7, 2);
+    set_sprite_palette_color(&mut ppu, 0, 2, 0x22);
+    setup_sprite(&mut ppu, 0, 0, 1, 0xc0, 4);
+    let mut cart = Cartridge::test();
+    fill_chr(&mut ppu, &pattern, &mut cart);
+
+    run_visible_scanline(&mut ppu, &mut cart, 1);
+
+    let sprite_color = ppu.color_theme.color(0x22).0;
+    let backdrop = ppu.color_theme.color(0x0f).0;
+    assert_eq!(sprite_color, ppu.renderer.get_pixel(11, 1));
+    assert_eq!(backdrop, ppu.renderer.get_pixel(4, 1));
+}
+
+#[test]
+fn scanline_renders_8x16_sprite_second_tile() {
+    let mut ppu = create_test_ppu_render(
+        PpuMask::new()
+            .with_sprite_enabled(true)
+            .with_sprite_left_enabled(true),
+    );
+    let mut pattern = create_pattern();
+    set_universal_bg_color(&mut ppu, 0x0f);
+    set_tile_solid(&mut pattern, 0, 1, 3);
+    set_sprite_palette_color(&mut ppu, 0, 3, 0x2b);
+    ppu.set_control_flags(PpuCtrl::new().with_sprite_size_16(true));
+    setup_sprite(&mut ppu, 0, 0, 0, 0, 4);
+    let mut cart = Cartridge::test();
+    fill_chr(&mut ppu, &pattern, &mut cart);
+
+    // Sprite Y=0 covers screen rows 1..16; row 9 uses the second tile.
+    run_visible_scanline(&mut ppu, &mut cart, 9);
+
+    let sprite_color = ppu.color_theme.color(0x2b).0;
+    for x in 4..12u32 {
+        assert_eq!(sprite_color, ppu.renderer.get_pixel(x, 9), "x={x}");
+    }
+}
+
+#[test]
+fn scanline_renders_sprite_behind_background() {
+    let mut ppu = create_test_ppu_render(
+        PpuMask::new()
+            .with_background_enabled(true)
+            .with_sprite_enabled(true)
+            .with_background_left_enabled(true)
+            .with_sprite_left_enabled(true),
+    );
+    let mut pattern = create_pattern();
+    set_tile_solid(&mut pattern, 0, 0, 1);
+    set_tile_solid(&mut pattern, 0, 1, 2);
+    set_bg_palette_color(&mut ppu, 0, 1, 0x14);
+    set_sprite_palette_color(&mut ppu, 0, 2, 0x24);
+    setup_sprite(&mut ppu, 0, 0, 1, 0x20, 4);
+    let mut cart = Cartridge::test();
+    fill_chr(&mut ppu, &pattern, &mut cart);
+    set_bg_tile(&mut ppu, &mut cart, 0, 0);
+
+    run_visible_scanline(&mut ppu, &mut cart, 1);
+
+    let bg_color = ppu.color_theme.color(0x14).0;
+    for x in 4..12u32 {
+        assert_eq!(bg_color, ppu.renderer.get_pixel(x, 1), "x={x}");
+    }
+}
+
+#[test]
+fn scanline_clips_sprite_left_columns() {
+    let mut ppu = create_test_ppu_render(PpuMask::new().with_sprite_enabled(true));
+    let mut pattern = create_pattern();
+    set_universal_bg_color(&mut ppu, 0x0f);
+    set_tile_solid(&mut pattern, 0, 1, 2);
+    set_sprite_palette_color(&mut ppu, 0, 2, 0x30);
+    setup_sprite(&mut ppu, 0, 0, 1, 0, 4);
+    let mut cart = Cartridge::test();
+    fill_chr(&mut ppu, &pattern, &mut cart);
+
+    run_visible_scanline(&mut ppu, &mut cart, 1);
+
+    let sprite_color = ppu.color_theme.color(0x30).0;
+    let backdrop = ppu.color_theme.color(0x0f).0;
+    // Sprite covers x=4..11; without sprite_left_enabled columns 0..7 clip.
+    for x in 4..8u32 {
+        assert_eq!(backdrop, ppu.renderer.get_pixel(x, 1), "clipped x={x}");
+    }
+    for x in 8..12u32 {
+        assert_eq!(sprite_color, ppu.renderer.get_pixel(x, 1), "drawn x={x}");
+    }
+}
+
+#[test]
+fn scanline_first_opaque_sprite_wins() {
+    let mut ppu = create_test_ppu_render(
+        PpuMask::new()
+            .with_sprite_enabled(true)
+            .with_sprite_left_enabled(true),
+    );
+    let mut pattern = create_pattern();
+    set_tile_solid(&mut pattern, 0, 1, 1);
+    set_tile_solid(&mut pattern, 0, 2, 2);
+    set_sprite_palette_color(&mut ppu, 0, 1, 0x26);
+    set_sprite_palette_color(&mut ppu, 1, 2, 0x36);
+    setup_sprite(&mut ppu, 0, 0, 1, 0, 0);
+    setup_sprite(&mut ppu, 1, 0, 2, 1, 0);
+    let mut cart = Cartridge::test();
+    fill_chr(&mut ppu, &pattern, &mut cart);
+
+    run_visible_scanline(&mut ppu, &mut cart, 1);
+
+    assert_eq!(
+        ppu.color_theme.color(0x26).0,
+        ppu.renderer.get_pixel(0, 1),
+        "the earlier opaque Sprite in Secondary OAM order wins"
+    );
+}
+
+#[test]
+fn scanline_sets_sprite_zero_hit_from_cached_row() {
+    let mut ppu = create_test_ppu_render(
+        PpuMask::new()
+            .with_background_enabled(true)
+            .with_sprite_enabled(true)
+            .with_background_left_enabled(true)
+            .with_sprite_left_enabled(true),
+    );
+    let mut pattern = create_pattern();
+    set_tile_solid(&mut pattern, 0, 0, 1);
+    set_tile_solid(&mut pattern, 0, 1, 2);
+    set_bg_palette_color(&mut ppu, 0, 1, 0x14);
+    set_sprite_palette_color(&mut ppu, 0, 2, 0x24);
+    setup_sprite(&mut ppu, 0, 0, 1, 0, 0);
+    let mut cart = Cartridge::test();
+    fill_chr(&mut ppu, &pattern, &mut cart);
+    set_bg_tile(&mut ppu, &mut cart, 0, 0);
+
+    run_visible_scanline(&mut ppu, &mut cart, 1);
+
+    assert!(
+        ppu.registers.status.sprite_zero_hit(),
+        "opaque OAM entry 0 over opaque background must set the hit"
+    );
+    assert_eq!(
+        ppu.color_theme.color(0x24).0,
+        ppu.renderer.get_pixel(0, 1),
+        "the in-front Sprite shows through"
+    );
+}
+
+#[test]
+fn ctrl_write_invalidates_sprite_row_cache() {
+    let mut ppu = create_test_ppu_render(
+        PpuMask::new()
+            .with_sprite_enabled(true)
+            .with_sprite_left_enabled(true),
+    );
+    let mut pattern = create_pattern();
+    set_tile_solid(&mut pattern, 0, 1, 1);
+    set_tile_solid(&mut pattern, 1, 1, 2);
+    set_sprite_palette_color(&mut ppu, 0, 1, 0x2a);
+    set_sprite_palette_color(&mut ppu, 0, 2, 0x2b);
+    setup_sprite(&mut ppu, 0, 0, 1, 0, 0);
+    let mut cart = Cartridge::test();
+    fill_chr(&mut ppu, &pattern, &mut cart);
+    populate_sprite_secondary_oam(&mut ppu, 1);
+    ppu.timing.scanline = 1;
+
+    // First pixel fills the row cache from sprite pattern table 0.
+    assert_eq!(0x2a, ppu.render_pixel(0, &cart));
+    // A $2000 write must drop the cache so the same scanline reads the new
+    // sprite pattern table.
+    ppu.write_ppureg(0x2000, 0x08, &mut cart);
+    assert_eq!(
+        0x2b,
+        ppu.render_pixel(1, &cart),
+        "a $2000 write must invalidate the cached Sprite row"
+    );
+}
+
+#[test]
+fn ppudata_pattern_write_invalidates_sprite_row_cache() {
+    let mut ppu = create_test_ppu_render(
+        PpuMask::new()
+            .with_sprite_enabled(true)
+            .with_sprite_left_enabled(true),
+    );
+    let mut pattern = create_pattern();
+    set_tile_solid(&mut pattern, 0, 1, 1);
+    set_sprite_palette_color(&mut ppu, 0, 1, 0x2a);
+    set_sprite_palette_color(&mut ppu, 0, 3, 0x2c);
+    setup_sprite(&mut ppu, 0, 0, 1, 0, 0);
+    let mut cart = Cartridge::test();
+    fill_chr(&mut ppu, &pattern, &mut cart);
+    populate_sprite_secondary_oam(&mut ppu, 1);
+    ppu.timing.scanline = 1;
+
+    assert_eq!(0x2a, ppu.render_pixel(0, &cart));
+    // Rewrite tile 1 row 0 through PPUDATA: both planes all ones => colour 3.
+    for (addr, value) in [(0x0010u16, 0xffu8), (0x0018, 0xff)] {
+        ppu.write_ppureg(0x2006, (addr >> 8) as u8, &mut cart);
+        ppu.write_ppureg(0x2006, addr as u8, &mut cart);
+        ppu.write_ppureg(0x2007, value, &mut cart);
+    }
+    assert_eq!(
+        0x2c,
+        ppu.render_pixel(1, &cart),
+        "a PPUDATA pattern write must invalidate the cached Sprite row"
+    );
 }
 
 #[test]

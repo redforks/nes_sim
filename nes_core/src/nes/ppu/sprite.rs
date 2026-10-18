@@ -1,5 +1,4 @@
 use super::oam::{Oam, Sprite};
-use super::read_pattern_pixel;
 use crate::nes::mapper::Cartridge;
 use crate::nes::ppu::registers::{PpuCtrl, PpuStatus};
 use tinyvec::ArrayVec;
@@ -50,6 +49,17 @@ pub struct SpriteManager {
     /// picked (≤8 in-range sprites, evaluation starting at OAMADDR).
     current_zero_sprite: Option<Sprite>,
     next_zero_sprite: Option<Sprite>,
+    /// Pattern row cache, index-parallel to current_scanline_oam: one entry
+    /// per evaluated Sprite for the scanline being rendered. Filled lazily on
+    /// the first pixel request of a scanline (one resolve_pixel_addr plus two
+    /// cartridge VRAM reads per Sprite), then decoded per pixel.
+    rows: ArrayVec<[SpriteRow; 8]>,
+    /// Screen Y the rows were resolved for; None means the cache is empty or
+    /// invalidated.
+    rows_scanline: Option<u8>,
+    /// Index of the evaluated OAM entry 0 within rows, when it survived
+    /// evaluation; the sprite-0 hit reads that cached row.
+    zero_row_idx: Option<usize>,
     /// Internal OAM bus latch exposed by $2004 reads mid-render (Mesen
     /// `_oamCopybuffer`): $FF during the 1-64 clear phase, the last primary
     /// OAM byte read on odd eval dots during 65-256. Written only by the
@@ -74,6 +84,9 @@ impl SpriteManager {
             next_scanline_oam: ArrayVec::new(),
             current_zero_sprite: None,
             next_zero_sprite: None,
+            rows: ArrayVec::new(),
+            rows_scanline: None,
+            zero_row_idx: None,
             oam_copybuffer: 0xFF,
         }
     }
@@ -86,7 +99,18 @@ impl SpriteManager {
         self.next_scanline_oam.clear();
         self.current_zero_sprite = None;
         self.next_zero_sprite = None;
+        self.invalidate_rows();
         self.oam_copybuffer = 0xFF;
+    }
+
+    /// Drop the scanline cached pattern rows: the next pixel request refills
+    /// them from the cartridge. Called at dot 0 (secondary-OAM swap), on
+    /// $2000 control writes, on PPUDATA writes below the pattern-table
+    /// boundary, and on reset.
+    pub(crate) fn invalidate_rows(&mut self) {
+        self.rows.clear();
+        self.rows_scanline = None;
+        self.zero_row_idx = None;
     }
 
     /// Update sprite status to ppu status register
@@ -119,6 +143,8 @@ impl SpriteManager {
         self.next_scanline_oam.clear();
         std::mem::swap(&mut self.current_zero_sprite, &mut self.next_zero_sprite);
         self.next_zero_sprite = None;
+        // The incoming line has its own pattern rows.
+        self.invalidate_rows();
         // A new line starts with an empty copy buffer (clear phase returns
         // $FF); evaluation steps on odd dots 65-256 overwrite it byte by byte.
         self.oam_copybuffer = 0xFF;
@@ -260,40 +286,119 @@ impl SpriteManager {
         }
     }
 
+    /// Fill the row cache for one scanline, lazily on the first pixel
+    /// request. One fill per evaluated Sprite resolves its vertical position
+    /// (vertical flip and 8x16 height applied here) and reads the two pattern
+    /// planes; afterwards the per-pixel path decodes from the cached planes.
+    fn ensure_rows(&mut self, ctrl: PpuCtrl, cartridge: &Cartridge, screen_y: u8) {
+        if self.rows_scanline == Some(screen_y) {
+            return;
+        }
+
+        self.rows.clear();
+        self.zero_row_idx = None;
+        let sprite_height = ctrl.sprite_height();
+
+        for i in 0..self.current_scanline_oam.len() {
+            let sprite = self.current_scanline_oam[i];
+            let src_y = sprite_src_y(&sprite, sprite_height, screen_y);
+            let tile_position = sprite.tile_position(ctrl);
+            let addr = tile_position.resolve_pixel_addr(src_y);
+            let low = cartridge.read_vram(addr.0);
+            let high = cartridge.read_vram(addr.second_plane_addr());
+
+            self.rows.push(SpriteRow {
+                x: sprite.x,
+                palette: sprite.attributes.palette(),
+                behind_bg: sprite.attributes.behind_background(),
+                flip_horizontally: sprite.attributes.flip_horizontally(),
+                low,
+                high,
+            });
+
+            if self.current_zero_sprite == Some(sprite) {
+                self.zero_row_idx = Some(i);
+            }
+        }
+
+        self.rows_scanline = Some(screen_y);
+    }
+
     pub fn find_sprite_pixel(
-        &self,
+        &mut self,
         ctrl: PpuCtrl,
         cartridge: &Cartridge,
         screen_x: u8,
         screen_y: u8,
     ) -> Option<SpritePixel> {
-        for sprite in &self.current_scanline_oam {
-            if let Some(pixel) =
-                evaluate_sprite_from_secondary(sprite, ctrl, cartridge, screen_x, screen_y)
-            {
-                return Some(pixel);
-            }
-        }
-
-        None
+        self.ensure_rows(ctrl, cartridge, screen_y);
+        self.rows.iter().find_map(|row| row.pixel(screen_x))
     }
 
     /// Sprite-0 hit source pixel: opaque only when OAM entry 0 survived
-    /// this scanline's evaluation and its pixel overlaps the beam.
-    pub fn sprite_zero_pixel_opaque(
-        &self,
-        ctrl: PpuCtrl,
-        cartridge: &Cartridge,
-        screen_x: u8,
-        screen_y: u8,
-    ) -> bool {
-        match self.current_zero_sprite {
-            Some(zero) => {
-                evaluate_sprite_from_secondary(&zero, ctrl, cartridge, screen_x, screen_y)
-                    .is_some_and(|p| p.color_idx != 0)
-            }
-            None => false,
+    /// this scanline's evaluation and its pixel overlaps the beam. Reads the
+    /// already-filled cached row of the evaluated zero Sprite and never
+    /// fetches from the cartridge itself. When the row cache has not been
+    /// filled for this scanline, no pixel request reached the Sprite path,
+    /// and the hit cannot fire in that window, so this reports transparent.
+    pub fn sprite_zero_pixel_opaque(&self, screen_x: u8, screen_y: u8) -> bool {
+        if self.rows_scanline != Some(screen_y) {
+            return false;
         }
+        self.zero_row_idx
+            .and_then(|idx| self.rows[idx].pixel(screen_x))
+            .is_some_and(|pixel| pixel.color_idx != 0)
+    }
+}
+
+/// One evaluated Sprite decoded pattern row for the current scanline.
+/// Vertical flip and 8x16 height are already applied to the plane bytes;
+/// horizontal flip stays a per-pixel selection of 7 - rel_x.
+#[derive(Copy, Clone, Default)]
+struct SpriteRow {
+    x: u8,
+    palette: u8,
+    behind_bg: bool,
+    flip_horizontally: bool,
+    low: u8,
+    high: u8,
+}
+
+impl SpriteRow {
+    fn pixel(&self, screen_x: u8) -> Option<SpritePixel> {
+        let rel_x = screen_x as i16 - self.x as i16;
+        if !(0..8).contains(&rel_x) {
+            return None;
+        }
+
+        let src_x = if self.flip_horizontally {
+            (7 - rel_x) as u8
+        } else {
+            rel_x as u8
+        };
+        let color_idx = ((self.low >> (7 - src_x)) & 1) | (((self.high >> (7 - src_x)) & 1) << 1);
+
+        if color_idx == 0 {
+            return None;
+        }
+
+        Some(SpritePixel {
+            palette_idx: self.palette,
+            color_idx,
+            behind_bg: self.behind_bg,
+        })
+    }
+}
+
+/// Vertical source row for one Sprite: vertical flip and 8x16 height are
+/// applied here, when src_y is resolved, not per pixel.
+fn sprite_src_y(sprite: &Sprite, sprite_height: u8, screen_y: u8) -> u8 {
+    let top = sprite.y as i16 + 1;
+    let sprite_y = screen_y as i16 - top;
+    if sprite.attributes.flip_vertically() {
+        (sprite_height as i16 - 1 - sprite_y) as u8
+    } else {
+        sprite_y as u8
     }
 }
 
@@ -302,43 +407,4 @@ pub struct SpritePixel {
     pub palette_idx: u8,
     pub color_idx: u8,
     pub behind_bg: bool,
-}
-fn evaluate_sprite_from_secondary(
-    sprite: &Sprite,
-    ctrl: PpuCtrl,
-    cartridge: &Cartridge,
-    screen_x: u8,
-    screen_y: u8,
-) -> Option<SpritePixel> {
-    let rel_x = screen_x as i16 - sprite.x as i16;
-    if !(0..8).contains(&rel_x) {
-        return None;
-    }
-
-    let sprite_height = ctrl.sprite_height();
-    let top = sprite.y as i16 + 1;
-    let sprite_y = screen_y as i16 - top;
-    let src_x = if sprite.attributes.flip_horizontally() {
-        (7 - rel_x) as u8
-    } else {
-        rel_x as u8
-    };
-    let src_y = if sprite.attributes.flip_vertically() {
-        (sprite_height as i16 - 1 - sprite_y) as u8
-    } else {
-        sprite_y as u8
-    };
-
-    let tile_position = sprite.tile_position(ctrl);
-    let color_idx = read_pattern_pixel(cartridge, tile_position, src_x, src_y);
-
-    if color_idx == 0 {
-        return None;
-    }
-
-    Some(SpritePixel {
-        palette_idx: sprite.attributes.palette(),
-        color_idx,
-        behind_bg: sprite.attributes.behind_background(),
-    })
 }

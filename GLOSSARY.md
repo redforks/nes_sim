@@ -231,6 +231,10 @@ _Avoid_: pattern table, CHR bank
 A double-buffered 8-entry sprite buffer inside the PPU. `SpriteManager` evaluates primary OAM during dots 65–256 of visible scanlines (0–239), starting at `OAMADDR` (`effective_index = (start_index + oam_index) & 0x3F` wrapping at 64, termination at 64 scanned) and copies up to 8 in-range sprites into the *next* buffer; the pre-render line (261) evaluates nothing, so scanline 0 starts with an empty buffer. `next_zero_sprite`/`current_zero_sprite` (`Option<Sprite>`) tracks whether OAM entry 0 survived evaluation so `sprite_zero_pixel_opaque` only fires for evaluated zero. At dot 0 each scanline, the buffers swap: the freshly populated buffer becomes *current* and feeds `find_sprite_pixel` for the whole scanline. During sprite tile fetches (dots 257–320 of visible and pre-render scanlines while rendering is enabled) hardware drives `OAMADDR` to 0; software polling `$2003` mid-frame observes that.
 _Avoid_: sec OAM, sprite cache
 
+**Sprite Row Cache**:
+The `SpriteManager`'s per-scanline pattern-plane cache, index-parallel to Secondary OAM. Filled lazily on the first pixel request of a scanline: one `resolve_pixel_addr(src_y)` plus two cartridge VRAM reads per evaluated Sprite, with vertical flip and 8x16 height applied at fill time. The per-pixel path decodes from the cached `low`/`high` planes, and `sprite_zero_pixel_opaque` reads the cached row of the evaluated zero Sprite (no own fetch). Invalidated on the same events as the background `TileCache`: the dot-0 Secondary OAM swap, `$2000` control writes, PPUDATA writes below `$2000`, and reset.
+_Avoid_: sprite cache, OAM cache
+
 ## Language — PPU VBL/NMI Race
 
 **VBL set dot (enter_vblank)**:
@@ -296,6 +300,14 @@ _Avoid_: zoom ratio (use Zoom Factor), scale factor (overloaded), N (bare)
 `Render` implementation owning the Framebuffer. `set_pixel(x, y, color)` is called at NES logical coordinates `x < 256, y < 240` and writes an `N×N` block at `(x*N .. x*N+N, y*N .. y*N+N)`. Out-of-bounds logical coordinates are silently ignored; callers guarantee in-range. Exposes `as_bytes()`, `width()/height()`, and `pixel_brightness(x,y)` without depending on the `image` crate. Does not implement `Clone` — framebuffer copies are multi-MiB.
 _Avoid_: ImageRender (without `N`), RgbaImage wrapper, cloning the framebuffer
 
+**Presentation Plan**:
+The pure, SDL-free description of what one frame puts on screen: `FramePresentation { bytes, width, height, dst, overlays }`, built by `plan<N>(frame, overlays, dst_size)` in `nes_sdl::presentation`. It carries the frame's RGBA bytes and dimensions (Zoom Factor applied), the destination rect (the whole window), and the overlay placements scaled from logical 1x 256x240 coordinates into destination pixels. Generic over the Framebuffer Zoom Factor `N`; consumed by the SDL adapter `FramePresenter`. Playback passes an `ImageRender<1>` frame, so SDL scales the logical picture to the window with one nearest copy; the `--output` recording path instead upscales the frame host-side into its own 1024x960 scratch frame.
+_Avoid_: render plan, draw plan, frame plan
+
+**Reused Frame Texture**:
+The single sdl2 streaming texture owned by `FramePresenter`, created on first present and reused for every frame (recreated only when the frame dimensions change). Upload is one `Texture::update`; drawing is one scaled `Canvas::copy` to the plan's destination rect. Expressible without `unsafe` because sdl2's `unsafe_textures` feature makes a `Texture` owned by the `Canvas` and free of a borrow.
+_Avoid_: per-frame texture, texture per frame
+
 ## Language — Profiling & Performance
 
 Core domain for measuring and optimizing emulation throughput. Headless != no-render; Self >3% defines a Hot Path.
@@ -305,7 +317,7 @@ Cargo build profile `[profile.profiling]` inheriting `release` with full debug s
 _Avoid_: release with debug, bench profile
 
 **Headless Execution**:
-Movie playback with no host window (`--headless`), still rendering to `RecordRender` on a DummyWindow. Incurs `set_pixel` cost (~2.3% Self). Distinct from a future `NullRender` zero-render mode.
+Movie playback with no host window (`--headless`), still rendering to `RecordRender` on a DummyWindow. Playback renders a logical 1x frame since spec #38, so `set_pixel` and the frame upload stay below the 1% Self cut-off (the spec measured `set_pixel` ~2.3% while the display path replicated every pixel 4x4). Distinct from a future `NullRender` zero-render mode.
 _Avoid_: no-render, offscreen
 
 **No-throttle**:
@@ -317,7 +329,7 @@ Wall-clock budget per emulated frame at 60fps: `16.6ms` (`target_frame_duration 
 _Avoid_: frame limit, fps target
 
 **Hot Path**:
-Instruction sampling Self overhead >3% in `perf report --no-children`. Leaf cost after inlining; Children is call-graph roll-up. Baseline 500-frame `warped.fm2` sample: `Ppu::tick` 42%, `NesMachine::tick` 11%, `tick_apu` 6.7%, `Cpu::tick` 5%, `Pulse::output` 3.6%.
+Instruction sampling Self overhead >3% in `perf report --no-children`. Leaf cost after inlining; Children is call-graph roll-up. Baseline 2000-frame windowed `warped.fm2` sample (`--no-throttle`, profiling profile, frame pointers, `perf record -F 997 -g`): `Ppu::tick` 47.7%, `NesMachine::tick` 6.5%, `Microcode::exec` 6.2%, `Cartridge::read` 3.6%, `Cpu::tick` 3.4%, `SpriteManager::update_ctrl_status` 3.4%, `NesMcu::tick_apu` 3.3%, `Cartridge::on_ppu_tick` 3.0%. The shares are relative: spec #38 removed work around these leaves, so the survivors rank higher over a smaller total (instructions per frame 59.0 M to 51.0 M). A small per-Dot leaf can sample above its true cost — `update_ctrl_status` shows 3.4% Self, while removing the per-Dot status merge measured 0.4% of instructions in the spec #38 ablations; confirm a candidate with an ablation instead of acting on one symbol.
 _Avoid_: hot spot (ambiguous), bottleneck (use only after budget miss)
 
 **Sampling (perf)**:

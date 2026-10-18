@@ -2,8 +2,8 @@ use super::{FrameSequencerBits, FrameSequencerMode};
 use crate::nes::apu::Sequencer;
 
 // Step events per https://www.nesdev.org/wiki/APU_Frame_Counter (NTSC), in
-// CPU cycles after the timer reset; the sequencer is clocked at the system
-// clock rate (3 ticks per CPU cycle). "e" clocks envelopes and the triangle
+// CPU cycles after the timer reset. The divider advances once per APU clock
+// (one CPU cycle). "e" clocks envelopes and the triangle
 // linear counter (quarter frame), "l" clocks length counters and sweep units
 // (half frame), "f" sets the frame interrupt flag:
 //
@@ -108,7 +108,9 @@ pub(super) struct FrameSequencer {
     /// step inside the window is dropped, a mode-set landing does not clock
     /// its extra half frame. Mesen's `_blockFrameCounterTick`.
     block: u8,
-    cycles: u32,
+    /// Frame-counter divider, in CPU cycles. Advanced once per APU clock by
+    /// [`Self::tick_timer`].
+    cpu_cycles: u32,
     sequences: Sequencer<FrameSequenceState>,
     frame_interrupt_inhibit: bool,
     request_timer_delay: u8,
@@ -123,7 +125,7 @@ impl Default for FrameSequencer {
         Self {
             frame_interrupt: false,
             block: 0,
-            cycles: 0,
+            cpu_cycles: 0,
             output_latch: Default::default(),
             sequences: Sequencer::new(&FOUR_STEP_TRIGGERS),
             frame_interrupt_inhibit: false,
@@ -155,38 +157,41 @@ impl FrameSequencer {
         self.request_timer_delay = 0;
     }
 
+    /// Advance the frame-counter divider by one CPU cycle. Called once per
+    /// APU clock ([`crate::SystemClock::is_apu_clock`]); the thresholds below
+    /// are CPU-cycle counts.
     pub fn tick_timer(&mut self) {
-        self.cycles += 1;
+        self.cpu_cycles += 1;
         match self.mode {
-            FrameSequencerMode::FourStep => match self.cycles {
-                22371 | 44739 | 67113 => {
+            FrameSequencerMode::FourStep => match self.cpu_cycles {
+                7457 | 14913 | 22371 => {
                     let state = self.sequences.tick();
                     self.apply_step(state);
                 }
                 // Steps 3 and 5 of the four-step sequence only raise the IRQ
                 // flag; step 5 clears it again when interrupts are inhibited.
-                89484 => self.set_interrupt(),
-                89487 => {
+                29828 => self.set_interrupt(),
+                29829 => {
                     let state = self.sequences.tick();
                     self.apply_step(state);
                 }
                 // Period wrap: last IRQ set of the period lands on the reset.
-                89490 => {
+                29830 => {
                     self.set_interrupt();
                     if self.frame_interrupt_inhibit {
                         self.frame_interrupt = false;
                     }
-                    self.cycles = 0;
+                    self.cpu_cycles = 0;
                 }
                 _ => {}
             },
-            FrameSequencerMode::FiveStep => match self.cycles {
-                22371 | 44739 | 67113 | 89487 | 111843 => {
+            FrameSequencerMode::FiveStep => match self.cpu_cycles {
+                7457 | 14913 | 22371 | 29829 | 37281 => {
                     let state = self.sequences.tick();
                     self.apply_step(state);
                 }
-                111846 => {
-                    self.cycles = 0;
+                37282 => {
+                    self.cpu_cycles = 0;
                 }
                 _ => {}
             },
@@ -215,7 +220,7 @@ impl FrameSequencer {
         if self.request_timer_delay > 0 {
             self.request_timer_delay -= 1;
         } else if let Some(counter) = self.pending_mode.take() {
-            self.cycles = 0;
+            self.cpu_cycles = 0;
             self.sequences.reset_items(match counter.mode() {
                 FrameSequencerMode::FourStep => &FOUR_STEP_TRIGGERS,
                 FrameSequencerMode::FiveStep => &FIVE_STEP_TRIGGERS,
