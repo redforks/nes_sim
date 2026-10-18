@@ -1,9 +1,9 @@
-use super::{CARTRIDGE_START_ADDR, Cartridge, CartridgeCaps, CartridgeOperation};
+use super::{CartridgeCaps, Mapper, memory::CartridgeMemory};
 use crate::SystemClock;
 use crate::nes::mapper::Mirroring;
 
+#[cfg(test)]
 const PRG_BANK_SIZE: usize = 0x2000;
-const PRG_RAM_SIZE: usize = 0x2000;
 const PPU_DOTS_PER_SCANLINE: u16 = 341;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -47,15 +47,12 @@ impl VrcVariant {
 }
 
 pub struct Vrc24 {
-    prg_rom: Vec<u8>,
-    prg_ram: [u8; PRG_RAM_SIZE],
-    prg_ram_enabled: bool,
     variant: VrcVariant,
     s0: u8,
     s1: u8,
+    prg_ram_enabled: bool,
     prg_select_0: u8,
     prg_select_1: u8,
-    mirroring_bits: u8,
     prg_swap_mode: bool,
     irq_latch: u8,
     irq_counter: u8,
@@ -65,32 +62,21 @@ pub struct Vrc24 {
     irq_enable_after_ack: bool,
     irq_pending: bool,
     microwire_latch: u8,
-    chr_source: Vec<u8>,
-    has_chr_ram: bool,
     chr_nibbles: [u8; 16],
-    chr_bank_offsets: [usize; 8],
+    prg_bank_count: usize,
+    chr_bank_count: usize,
 }
 
 impl Vrc24 {
-    pub fn new(prg_rom: &[u8], chr_rom: &[u8], variant: VrcVariant) -> Self {
-        debug_assert!(!prg_rom.is_empty());
-
+    pub fn new(memory: &mut CartridgeMemory, variant: VrcVariant) -> Self {
         let (s0, s1) = variant.bit_positions();
-        let has_chr_ram = chr_rom.is_empty();
-        let size = if has_chr_ram { 0x2000 } else { chr_rom.len() };
-        let mut chr_source = vec![0; size];
-        chr_source[..chr_rom.len()].copy_from_slice(chr_rom);
-
-        let mut mapper = Self {
-            prg_rom: prg_rom.to_vec(),
-            prg_ram: [0; PRG_RAM_SIZE],
-            prg_ram_enabled: variant.is_vrc4(),
+        let mapper = Self {
             variant,
             s0,
             s1,
+            prg_ram_enabled: variant.is_vrc4(),
             prg_select_0: 0,
             prg_select_1: 0,
-            mirroring_bits: 0,
             prg_swap_mode: false,
             irq_latch: 0,
             irq_counter: 0,
@@ -100,17 +86,16 @@ impl Vrc24 {
             irq_enable_after_ack: false,
             irq_pending: false,
             microwire_latch: 0,
-            chr_source,
-            has_chr_ram,
             chr_nibbles: [0; 16],
-            chr_bank_offsets: [0; 8],
+            prg_bank_count: memory.prg_bank_count_8k(),
+            chr_bank_count: memory.chr_bank_count(),
         };
-        mapper.chr_refresh_banks();
+        // VRC2 boards carry no PRG-RAM, but `$6000-$7FFF` still answers with
+        // the bus byte, so the cart must see those accesses.
+        memory.set_prg_ram_enabled(!variant.is_vrc4() || mapper.prg_ram_enabled);
+        mapper.sync_prg(memory);
+        mapper.refresh_chr_banks(memory);
         mapper
-    }
-
-    fn prg_bank_count(&self) -> usize {
-        self.prg_rom.len() / PRG_BANK_SIZE
     }
 
     fn compute_register_index(&self, address: u16) -> usize {
@@ -119,8 +104,41 @@ impl Vrc24 {
         bit1 << 1 | bit0
     }
 
-    fn normalize_prg_bank(&self, bank: u8) -> usize {
-        (bank as usize) % self.prg_bank_count().max(1)
+    fn normalize_prg_bank(&self, bank: u8) -> u16 {
+        (bank as usize % self.prg_bank_count.max(1)) as u16
+    }
+
+    fn sync_prg(&self, memory: &mut CartridgeMemory) {
+        let last = self.prg_bank_count.saturating_sub(1) as u16;
+        let second_last = self.prg_bank_count.saturating_sub(2) as u16;
+        let switchable = self.normalize_prg_bank(self.prg_select_0);
+        let (bank0, bank2) = if self.prg_swap_mode {
+            (second_last, switchable)
+        } else {
+            (switchable, second_last)
+        };
+        memory.map_prg_8k(0, bank0);
+        memory.map_prg_8k(1, self.normalize_prg_bank(self.prg_select_1));
+        memory.map_prg_8k(2, bank2);
+        memory.map_prg_8k(3, last);
+    }
+
+    fn refresh_chr_banks(&self, memory: &mut CartridgeMemory) {
+        for slot in 0..8 {
+            let lo = self.chr_nibbles[slot * 2] as u16;
+            let hi = self.chr_nibbles[slot * 2 + 1] as u16;
+            let mut bank = lo | (hi << 4);
+            if self.variant.is_vrc4() {
+                bank &= 0x1ff;
+            } else {
+                bank &= 0x0ff;
+            }
+            if self.variant.chr_shift_low_bit() {
+                bank >>= 1;
+            }
+            let bank = (bank as usize % self.chr_bank_count.max(1)) as u16;
+            memory.map_chr_1k(slot as u16, bank);
+        }
     }
 
     fn decrement_irq_counter(&mut self) {
@@ -134,123 +152,38 @@ impl Vrc24 {
     fn reload_irq_counter(&mut self) {
         self.irq_counter = self.irq_latch.wrapping_neg();
     }
-
-    fn chr_bank_count(&self) -> usize {
-        if self.chr_source.is_empty() {
-            1
-        } else {
-            self.chr_source.len() / 0x0400
-        }
-    }
-
-    fn chr_refresh_banks(&mut self) {
-        for slot in 0..8 {
-            let lo = self.chr_nibbles[slot * 2] as u16;
-            let hi = self.chr_nibbles[slot * 2 + 1] as u16;
-            let mut bank = lo | (hi << 4);
-            if self.variant.is_vrc4() {
-                bank &= 0x1ff;
-            } else {
-                bank &= 0x0ff;
-            }
-            if self.variant.chr_shift_low_bit() {
-                bank >>= 1;
-            }
-            self.chr_bank_offsets[slot] = (bank as usize % self.chr_bank_count()) * 0x0400;
-        }
-    }
 }
 
-impl Cartridge for Vrc24 {
-    fn read(&self, address: u16) -> u8 {
+impl Mapper for Vrc24 {
+    fn cpu_write(
+        &mut self,
+        address: u16,
+        value: u8,
+        _cycle: SystemClock,
+        memory: &mut CartridgeMemory,
+    ) {
         match address {
-            CARTRIDGE_START_ADDR..=0x5fff => 0,
-            0x6000..=0x6fff => {
-                if self.variant.is_vrc4() {
-                    if self.prg_ram_enabled {
-                        self.prg_ram[(address - 0x6000) as usize]
-                    } else {
-                        0
-                    }
-                } else {
-                    (address as u8) | self.microwire_latch
-                }
-            }
-            0x7000..=0x7fff => {
-                let idx = (address as usize - 0x7000) % PRG_RAM_SIZE;
-                if self.variant.is_vrc4() && self.prg_ram_enabled {
-                    self.prg_ram[idx]
-                } else {
-                    0
-                }
-            }
-            0x8000..=0x9fff => {
-                if self.prg_swap_mode {
-                    let bank = self.prg_bank_count().saturating_sub(2);
-                    let offset = address as usize - 0x8000;
-                    self.prg_rom[bank * PRG_BANK_SIZE + offset]
-                } else {
-                    let bank = self.normalize_prg_bank(self.prg_select_0);
-                    let offset = address as usize - 0x8000;
-                    self.prg_rom[bank * PRG_BANK_SIZE + offset]
-                }
-            }
-            0xa000..=0xbfff => {
-                let bank = self.normalize_prg_bank(self.prg_select_1);
-                let offset = address as usize - 0xa000;
-                self.prg_rom[bank * PRG_BANK_SIZE + offset]
-            }
-            0xc000..=0xdfff => {
-                if self.prg_swap_mode {
-                    let bank = self.normalize_prg_bank(self.prg_select_0);
-                    let offset = address as usize - 0xc000;
-                    self.prg_rom[bank * PRG_BANK_SIZE + offset % PRG_BANK_SIZE]
-                } else {
-                    let bank = self.prg_bank_count().saturating_sub(2);
-                    let offset = address as usize - 0xc000;
-                    self.prg_rom[bank * PRG_BANK_SIZE + offset]
-                }
-            }
-            0xe000..=0xffff => {
-                if self.variant.is_vrc4() {
-                    let bank = self.prg_bank_count().saturating_sub(1);
-                    let offset = address as usize - 0xe000;
-                    self.prg_rom[bank * PRG_BANK_SIZE + offset]
-                } else {
-                    let last_16k = self.prg_bank_count().saturating_sub(2);
-                    let offset = address as usize - 0xc000;
-                    self.prg_rom[last_16k * PRG_BANK_SIZE + offset]
-                }
-            }
-            _ => 0,
-        }
-    }
-
-    fn write(&mut self, address: u16, value: u8, _cycle: SystemClock) -> CartridgeOperation {
-        match address {
-            CARTRIDGE_START_ADDR..=0x5fff => CartridgeOperation::None,
             0x6000..=0x7fff => {
                 if self.variant.is_vrc4() {
                     if self.prg_ram_enabled {
-                        self.prg_ram[(address - 0x6000) as usize % PRG_RAM_SIZE] = value;
+                        memory.write_prg(address, value);
                     }
                 } else {
                     self.microwire_latch = value & 0x01;
                 }
-                CartridgeOperation::None
             }
             0x8000..=0x8fff => {
                 self.prg_select_0 = value & 0x1f;
-                CartridgeOperation::None
+                self.sync_prg(memory);
             }
             0x9000..=0x9fff => {
                 let idx = self.compute_register_index(address);
                 if self.variant.is_vrc4() && idx == 2 {
                     self.prg_ram_enabled = (value & 0x01) != 0;
                     self.prg_swap_mode = (value & 0x02) != 0;
-                    CartridgeOperation::None
+                    memory.set_prg_ram_enabled(self.prg_ram_enabled);
+                    self.sync_prg(memory);
                 } else {
-                    self.mirroring_bits = value & 0x03;
                     let mirroring = if self.variant.is_vrc4() {
                         match value & 0x03 {
                             0 => Mirroring::Vertical,
@@ -259,19 +192,17 @@ impl Cartridge for Vrc24 {
                             3 => Mirroring::UpperBank,
                             _ => unreachable!(),
                         }
+                    } else if value & 0x01 == 0 {
+                        Mirroring::Vertical
                     } else {
-                        if value & 0x01 == 0 {
-                            Mirroring::Vertical
-                        } else {
-                            Mirroring::Horizontal
-                        }
+                        Mirroring::Horizontal
                     };
-                    CartridgeOperation::UpdateNametableMirroring(mirroring)
+                    memory.apply_mirroring(mirroring);
                 }
             }
             0xa000..=0xafff => {
                 self.prg_select_1 = value & 0x1f;
-                CartridgeOperation::None
+                self.sync_prg(memory);
             }
             0xb000..=0xefff => {
                 let group = ((address >> 12) & 0x0f) as usize;
@@ -282,8 +213,7 @@ impl Cartridge for Vrc24 {
                 } else {
                     self.chr_nibbles[slot * 2 + 1] = value & 0x1f;
                 }
-                self.chr_refresh_banks();
-                CartridgeOperation::None
+                self.refresh_chr_banks(memory);
             }
             0xf000..=0xffff => {
                 if self.variant.is_vrc4() {
@@ -325,9 +255,8 @@ impl Cartridge for Vrc24 {
                         _ => {}
                     }
                 }
-                CartridgeOperation::None
             }
-            _ => CartridgeOperation::None,
+            _ => {}
         }
     }
 
@@ -359,12 +288,7 @@ impl Cartridge for Vrc24 {
         self.irq_pending
     }
 
-    fn prg_ram_enabled(&self) -> bool {
-        // VRC2 has no PRG-RAM, VRC4's enable lives in $F002
-        !self.variant.is_vrc4() || self.prg_ram_enabled
-    }
-
-    fn ppu_capabilities(&self) -> CartridgeCaps {
+    fn caps(&self) -> CartridgeCaps {
         CartridgeCaps {
             on_ppu_tick: true,
             notify_vram_address: false,
@@ -372,25 +296,17 @@ impl Cartridge for Vrc24 {
         }
     }
 
-    fn read_chr(&self, address: u16) -> u8 {
-        let addr = address as usize % 0x2000;
-        let slot = addr / 0x0400;
-        let offset = addr % 0x0400;
-        let src = self.chr_bank_offsets[slot] + offset;
-        let len = self.chr_source.len();
-        self.chr_source[src % len]
-    }
-
-    fn write_chr(&mut self, address: u16, value: u8) {
-        if !self.has_chr_ram {
-            return;
+    /// VRC2 boards have no PRG-RAM: `$6000-$6FFF` reads return the address
+    /// byte with the microwire latch bit ORed in, `$7000-$7FFF` reads 0.
+    fn read_prg(&self, address: u16) -> Option<u8> {
+        if self.variant.is_vrc4() {
+            return None;
         }
-        let addr = address as usize % 0x2000;
-        let slot = addr / 0x0400;
-        let offset = addr % 0x0400;
-        let src = self.chr_bank_offsets[slot] + offset;
-        let len = self.chr_source.len();
-        self.chr_source[src % len] = value;
+        match address {
+            0x6000..=0x6fff => Some((address as u8) | self.microwire_latch),
+            0x7000..=0x7fff => Some(0),
+            _ => None,
+        }
     }
 }
 
@@ -398,39 +314,59 @@ impl Cartridge for Vrc24 {
 mod tests {
     use super::*;
 
-    fn make_vrc24_with_chr() -> Vrc24 {
+    fn board(variant: VrcVariant, chr: &[u8]) -> (Vrc24, CartridgeMemory) {
+        let prg = vec![0u8; PRG_BANK_SIZE * 2];
+        let mut memory = CartridgeMemory::from_rom(&prg, chr, None, Mirroring::Horizontal);
+        let mapper = Vrc24::new(&mut memory, variant);
+        (mapper, memory)
+    }
+
+    fn make_vrc24_with_chr() -> (Vrc24, CartridgeMemory) {
         let bank_count = 32;
         let mut chr_data = vec![0u8; bank_count * 0x0400];
         for bank in 0..bank_count {
             chr_data[bank * 0x0400] = bank as u8;
         }
-        let prg = vec![0u8; PRG_BANK_SIZE * 2];
-        Vrc24::new(&prg, &chr_data, VrcVariant::Vrc4f)
+        board(VrcVariant::Vrc4f, &chr_data)
     }
 
     #[test]
     fn vrc4f_banking() {
-        let mut mapper = make_vrc24_with_chr();
-        mapper.write(0xb000, 0x02, SystemClock::default());
-        assert_eq!(mapper.read_chr(0x0000), 0x02);
+        let (mut mapper, mut memory) = make_vrc24_with_chr();
+        mapper.cpu_write(0xb000, 0x02, SystemClock::default(), &mut memory);
+        assert_eq!(memory.read_vram(0x0000), 0x02);
     }
 
     #[test]
     fn vrc4f_high_nibble() {
-        let mut mapper = make_vrc24_with_chr();
-        mapper.write(0xb001, 0x01, SystemClock::default());
-        assert_eq!(mapper.read_chr(0x0000), 0x10);
+        let (mut mapper, mut memory) = make_vrc24_with_chr();
+        mapper.cpu_write(0xb001, 0x01, SystemClock::default(), &mut memory);
+        assert_eq!(memory.read_vram(0x0000), 0x10);
     }
 
     #[test]
     fn writes_to_chr_ram() {
-        let prg = vec![0u8; PRG_BANK_SIZE * 2];
-        let mut mapper = Vrc24::new(&prg, &[], VrcVariant::Vrc4f);
-        mapper.write_chr(0x0000, 0xab);
-        assert_eq!(mapper.read_chr(0x0000), 0xab);
+        let (_mapper, mut memory) = board(VrcVariant::Vrc4f, &[]);
+        memory.write_vram(0x0000, 0xab);
+        assert_eq!(memory.read_vram(0x0000), 0xab);
     }
 
-    // --- IRQ pins: black-box, driving only the Cartridge surface ---
+    #[test]
+    fn vrc2_prg_space_reads_the_bus_byte() {
+        let (mut mapper, mut memory) = board(VrcVariant::Vrc2b, &[]);
+        let read = |mapper: &Vrc24, memory: &CartridgeMemory, addr: u16| {
+            mapper
+                .read_prg(addr)
+                .unwrap_or_else(|| memory.read_prg(addr))
+        };
+        assert_eq!(read(&mapper, &memory, 0x6123), 0x23);
+        assert_eq!(read(&mapper, &memory, 0x7000), 0x00);
+
+        mapper.cpu_write(0x6123, 0x01, SystemClock::default(), &mut memory);
+        assert_eq!(read(&mapper, &memory, 0x6123), 0x23 | 0x01);
+    }
+
+    // --- IRQ pins: black-box, driving only the Mapper surface ---
 
     const VARIANT: VrcVariant = VrcVariant::Vrc4f;
 
@@ -439,13 +375,13 @@ mod tests {
         0xf000u16 | (((idx & 1) as u16) << s0) | (((idx >> 1) as u16) << s1)
     }
 
-    fn write_irq_latch(mapper: &mut Vrc24, latch: u8) {
-        mapper.write(irq_addr(0), latch & 0x0f, SystemClock::default());
-        mapper.write(irq_addr(1), latch >> 4, SystemClock::default());
+    fn write_irq_latch(mapper: &mut Vrc24, memory: &mut CartridgeMemory, latch: u8) {
+        mapper.cpu_write(irq_addr(0), latch & 0x0f, SystemClock::default(), memory);
+        mapper.cpu_write(irq_addr(1), latch >> 4, SystemClock::default(), memory);
     }
 
-    fn write_irq_control(mapper: &mut Vrc24, control: u8) {
-        mapper.write(irq_addr(2), control, SystemClock::default());
+    fn write_irq_control(mapper: &mut Vrc24, memory: &mut CartridgeMemory, control: u8) {
+        mapper.cpu_write(irq_addr(2), control, SystemClock::default(), memory);
     }
 
     /// First window-relative tick at which the IRQ level asserts, if it does.
@@ -459,8 +395,8 @@ mod tests {
         None
     }
 
-    fn acknowledge_irq(mapper: &mut Vrc24) {
-        mapper.write(irq_addr(3), 0, SystemClock::default());
+    fn acknowledge_irq(mapper: &mut Vrc24, memory: &mut CartridgeMemory) {
+        mapper.cpu_write(irq_addr(3), 0, SystemClock::default(), memory);
     }
 
     /// Drives `ticks` PPU dots, returning the 1-based tick indices at which
@@ -478,19 +414,19 @@ mod tests {
 
     #[test]
     fn disabled_irq_never_clocks() {
-        let mut mapper = make_vrc24_with_chr();
-        write_irq_latch(&mut mapper, 0xfe);
-        write_irq_control(&mut mapper, 0x04); // cycle mode, 'E' clear
+        let (mut mapper, mut memory) = make_vrc24_with_chr();
+        write_irq_latch(&mut mapper, &mut memory, 0xfe);
+        write_irq_control(&mut mapper, &mut memory, 0x04); // cycle mode, 'E' clear
         assert!(drive(&mut mapper, 100_000).is_empty());
     }
 
     #[test]
     fn reenabling_control_write_rearms_full_period() {
-        let mut mapper = make_vrc24_with_chr();
-        write_irq_latch(&mut mapper, 0xfe); // cycle-mode period: 3*(256-254) = 6 ticks
-        write_irq_control(&mut mapper, 0x07); // M|E|A
+        let (mut mapper, mut memory) = make_vrc24_with_chr();
+        write_irq_latch(&mut mapper, &mut memory, 0xfe); // cycle period: 3*(256-254) = 6
+        write_irq_control(&mut mapper, &mut memory, 0x07); // M|E|A
         drive(&mut mapper, 3); // mid-count
-        write_irq_control(&mut mapper, 0x07); // re-sync: reload + phase reset
+        write_irq_control(&mut mapper, &mut memory, 0x07); // re-sync: reload + phase reset
         assert_eq!(drive(&mut mapper, 5), Vec::<usize>::new());
         assert_eq!(
             first_pending_tick(&mut mapper, 8),
@@ -500,36 +436,36 @@ mod tests {
 
     #[test]
     fn acknowledge_preserves_schedule() {
-        let mut mapper = make_vrc24_with_chr();
-        write_irq_latch(&mut mapper, 0xfa); // scanline period: 341*(256-250) = 2046 dots
-        write_irq_control(&mut mapper, 0x03); // scanline mode, E|A
+        let (mut mapper, mut memory) = make_vrc24_with_chr();
+        write_irq_latch(&mut mapper, &mut memory, 0xfa); // 341*(256-250) = 2046 dots
+        write_irq_control(&mut mapper, &mut memory, 0x03); // scanline mode, E|A
         drive(&mut mapper, 1000); // mid-interval
-        acknowledge_irq(&mut mapper);
+        acknowledge_irq(&mut mapper, &mut memory);
         assert_eq!(drive(&mut mapper, 1046), vec![1046]); // edge at total tick 2046
     }
 
     #[test]
     fn control_write_resyncs_phase_and_counter() {
-        let mut mapper = make_vrc24_with_chr();
-        write_irq_latch(&mut mapper, 0xfe); // scanline period: 341*2 = 682 dots
-        write_irq_control(&mut mapper, 0x03);
+        let (mut mapper, mut memory) = make_vrc24_with_chr();
+        write_irq_latch(&mut mapper, &mut memory, 0xfe); // 341*2 = 682 dots
+        write_irq_control(&mut mapper, &mut memory, 0x03);
         drive(&mut mapper, 340); // one dot short of the first decrement
-        write_irq_control(&mut mapper, 0x03); // re-sync resets phase
+        write_irq_control(&mut mapper, &mut memory, 0x03); // re-sync resets phase
         assert_eq!(drive(&mut mapper, 681), Vec::<usize>::new());
         assert_eq!(drive(&mut mapper, 1), vec![1]); // global tick 1022
     }
 
     #[test]
     fn repeated_irq_spacing_follows_latch() {
-        let mut mapper = make_vrc24_with_chr();
-        write_irq_latch(&mut mapper, 0xfe); // interval 3*2 = 6 ticks
-        write_irq_control(&mut mapper, 0x07); // M|E|A: repeats via copy-on-acknowledge
+        let (mut mapper, mut memory) = make_vrc24_with_chr();
+        write_irq_latch(&mut mapper, &mut memory, 0xfe); // interval 3*2 = 6 ticks
+        write_irq_control(&mut mapper, &mut memory, 0x07); // M|E|A
         let mut edges = Vec::new();
         for tick in 1..=20 {
             mapper.on_ppu_tick(0);
             if mapper.irq_pending() {
                 edges.push(tick);
-                acknowledge_irq(&mut mapper); // 'A'=1 keeps 'E' set: re-trips
+                acknowledge_irq(&mut mapper, &mut memory); // 'A'=1 keeps 'E' set
             }
         }
         assert_eq!(edges, vec![6, 12, 18]); // uniform interval: 3*(256-latch)
@@ -537,19 +473,19 @@ mod tests {
 
     #[test]
     fn acknowledge_with_a_clear_disables() {
-        let mut mapper = make_vrc24_with_chr();
-        write_irq_latch(&mut mapper, 0xfe);
-        write_irq_control(&mut mapper, 0x06); // M|E, 'A' clear: one-shot
+        let (mut mapper, mut memory) = make_vrc24_with_chr();
+        write_irq_latch(&mut mapper, &mut memory, 0xfe);
+        write_irq_control(&mut mapper, &mut memory, 0x06); // M|E, 'A' clear: one-shot
         assert_eq!(drive(&mut mapper, 6), vec![6]);
-        acknowledge_irq(&mut mapper); // 'A'=0 moves to 'E': disabled
+        acknowledge_irq(&mut mapper, &mut memory); // 'A'=0 moves to 'E': disabled
         assert!(drive(&mut mapper, 10_000).is_empty());
     }
 
     #[test]
     fn scanline_mode_uniform_period() {
-        let mut mapper = make_vrc24_with_chr();
-        write_irq_latch(&mut mapper, 0xfe); // 2 decrements of 341 dots
-        write_irq_control(&mut mapper, 0x03);
+        let (mut mapper, mut memory) = make_vrc24_with_chr();
+        write_irq_latch(&mut mapper, &mut memory, 0xfe); // 2 decrements of 341 dots
+        write_irq_control(&mut mapper, &mut memory, 0x03);
         assert_eq!(drive(&mut mapper, 681), Vec::<usize>::new());
         assert_eq!(drive(&mut mapper, 1), vec![1]); // global tick 682
     }

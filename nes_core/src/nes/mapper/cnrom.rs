@@ -1,91 +1,42 @@
-use super::{CARTRIDGE_START_ADDR, Cartridge, CartridgeOperation};
+use super::{Mapper, memory::CartridgeMemory};
 use crate::SystemClock;
 
-const PRG_ROM_SIZE: usize = 0x8000;
-const CARTRIDGE_RAM_SIZE: usize = 0x4000 - 0x20;
-
+/// CNROM: 32 KB PRG fixed (16 KB images mirror), CHR banked in 8 KB units.
 pub struct CnRom {
-    prg_rom: [u8; PRG_ROM_SIZE],
-    prg_rom_len: usize,
-    ram: [u8; CARTRIDGE_RAM_SIZE],
-    chr_cache: [u8; 0x2000],
-    chr_source: Vec<u8>,
     chr_bank_count: usize,
-    has_chr_ram: bool,
 }
 
 impl CnRom {
-    pub fn new(prg_rom: &[u8], chr_rom: &[u8]) -> Self {
-        debug_assert!(!prg_rom.is_empty());
-        debug_assert!(prg_rom.len() <= PRG_ROM_SIZE);
-
-        let has_chr_ram = chr_rom.is_empty();
-        let bank_count = if has_chr_ram {
-            1
+    pub fn new(memory: &mut CartridgeMemory) -> Self {
+        memory.map_prg_16k(0, 0);
+        let upper = if memory.prg_bank_count_16k() == 1 {
+            0
         } else {
-            chr_rom.len() / 0x2000
+            1
         };
-        let mut cache = [0; 0x2000];
-        let len = chr_rom.len().min(0x2000);
-        cache[..len].copy_from_slice(&chr_rom[..len]);
-
-        let mut mapper = Self {
-            prg_rom: [0; PRG_ROM_SIZE],
-            prg_rom_len: prg_rom.len(),
-            ram: [0; CARTRIDGE_RAM_SIZE],
-            chr_cache: cache,
-            chr_source: chr_rom.to_vec(),
-            chr_bank_count: bank_count,
-            has_chr_ram,
-        };
-        mapper.prg_rom[..prg_rom.len()].copy_from_slice(prg_rom);
-        mapper
-    }
-
-    fn chr_refresh(&mut self, offset_into_source: usize) {
-        let end = (offset_into_source + 0x2000).min(self.chr_source.len());
-        let len = end - offset_into_source;
-        self.chr_cache[..len].copy_from_slice(&self.chr_source[offset_into_source..end]);
+        memory.map_prg_16k(1, upper);
+        memory.map_chr_8k(0);
+        Self {
+            chr_bank_count: memory.chr_bank_count_8k(),
+        }
     }
 }
 
-impl Cartridge for CnRom {
-    fn read(&self, address: u16) -> u8 {
+impl Mapper for CnRom {
+    fn cpu_write(
+        &mut self,
+        address: u16,
+        value: u8,
+        _cycle: SystemClock,
+        memory: &mut CartridgeMemory,
+    ) {
         match address {
-            CARTRIDGE_START_ADDR..=0x7fff => self.ram[(address - CARTRIDGE_START_ADDR) as usize],
-            0x8000..=0xffff => {
-                let offset = (address - 0x8000) as usize;
-                let prg_offset = match self.prg_rom_len {
-                    0x4000 => offset % 0x4000,
-                    _ => offset,
-                };
-                self.prg_rom[prg_offset]
-            }
-            _ => unreachable!(),
-        }
-    }
-
-    fn write(&mut self, address: u16, value: u8, _cycle: SystemClock) -> CartridgeOperation {
-        match address {
-            CARTRIDGE_START_ADDR..=0x7fff => {
-                self.ram[(address - CARTRIDGE_START_ADDR) as usize] = value;
-            }
+            0x6000..=0x7fff => memory.write_prg(address, value),
             0x8000..=0xffff => {
                 let bank = (value as usize) % self.chr_bank_count;
-                self.chr_refresh(bank * 0x2000);
+                memory.map_chr_8k(bank as u16);
             }
-            _ => unreachable!(),
-        }
-        CartridgeOperation::None
-    }
-
-    fn read_chr(&self, address: u16) -> u8 {
-        self.chr_cache[address as usize % self.chr_cache.len()]
-    }
-
-    fn write_chr(&mut self, address: u16, value: u8) {
-        if self.has_chr_ram {
-            self.chr_cache[address as usize % self.chr_cache.len()] = value;
+            _ => {}
         }
     }
 }
@@ -96,13 +47,14 @@ mod tests {
 
     #[test]
     fn reads_and_writes_cartridge_ram() {
-        let mut mapper = CnRom::new(&[0; 0x8000], &[]);
+        let mut memory = CartridgeMemory::test(&[], &[]);
+        let mut mapper = CnRom::new(&mut memory);
 
-        mapper.write(CARTRIDGE_START_ADDR, 0x12, SystemClock::default());
-        mapper.write(0x7fff, 0x34, SystemClock::default());
+        mapper.cpu_write(0x6000, 0x12, SystemClock::default(), &mut memory);
+        mapper.cpu_write(0x7fff, 0x34, SystemClock::default(), &mut memory);
 
-        assert_eq!(mapper.read(CARTRIDGE_START_ADDR), 0x12);
-        assert_eq!(mapper.read(0x7fff), 0x34);
+        assert_eq!(memory.read_prg(0x6000), 0x12);
+        assert_eq!(memory.read_prg(0x7fff), 0x34);
     }
 
     #[test]
@@ -111,12 +63,13 @@ mod tests {
         prg[0x0000] = 0x11;
         prg[0x3fff] = 0x22;
 
-        let mapper = CnRom::new(&prg, &[]);
+        let mut memory = CartridgeMemory::test(&prg, &[]);
+        CnRom::new(&mut memory);
 
-        assert_eq!(mapper.read(0x8000), 0x11);
-        assert_eq!(mapper.read(0xbfff), 0x22);
-        assert_eq!(mapper.read(0xc000), 0x11);
-        assert_eq!(mapper.read(0xffff), 0x22);
+        assert_eq!(memory.read_prg(0x8000), 0x11);
+        assert_eq!(memory.read_prg(0xbfff), 0x22);
+        assert_eq!(memory.read_prg(0xc000), 0x11);
+        assert_eq!(memory.read_prg(0xffff), 0x22);
     }
 
     fn make_chr() -> Vec<u8> {
@@ -128,37 +81,52 @@ mod tests {
 
     #[test]
     fn chr_initial_state_reads_bank_0() {
-        let mapper = CnRom::new(&[0; 0x8000], &make_chr());
-        assert_eq!(mapper.read_chr(0), 0x10);
+        let mut memory = CartridgeMemory::test(&[], &make_chr());
+        CnRom::new(&mut memory);
+        assert_eq!(memory.read_vram(0), 0x10);
     }
 
     #[test]
     fn chr_write_register_switches_bank() {
-        let mut mapper = CnRom::new(&[0; 0x8000], &make_chr());
-        mapper.write(0x8000, 1, SystemClock::default());
-        assert_eq!(mapper.read_chr(0), 0x20);
+        let mut memory = CartridgeMemory::test(&[], &make_chr());
+        let mut mapper = CnRom::new(&mut memory);
+        mapper.cpu_write(0x8000, 1, SystemClock::default(), &mut memory);
+        assert_eq!(memory.read_vram(0), 0x20);
     }
 
     #[test]
     fn chr_bank_wraps_at_bank_count() {
-        let mut mapper = CnRom::new(&[0; 0x8000], &make_chr());
-        mapper.write(0x8000, 2, SystemClock::default());
-        assert_eq!(mapper.read_chr(0), 0x10);
+        let mut memory = CartridgeMemory::test(&[], &make_chr());
+        let mut mapper = CnRom::new(&mut memory);
+        mapper.cpu_write(0x8000, 2, SystemClock::default(), &mut memory);
+        assert_eq!(memory.read_vram(0), 0x10);
     }
 
     #[test]
-    fn chr_ram_writes_and_reads_cache() {
-        let mut mapper = CnRom::new(&[0; 0x8000], &[]);
-        mapper.write_chr(0x100, 0xab);
-        assert_eq!(mapper.read_chr(0x100), 0xab);
+    fn chr_ram_writes_and_reads_through_the_bank() {
+        let mut memory = CartridgeMemory::test(&[], &[]);
+        CnRom::new(&mut memory);
+        memory.write_vram(0x100, 0xab);
+        assert_eq!(memory.read_vram(0x100), 0xab);
     }
 
     #[test]
-    fn chr_refresh_copies_source_to_cache() {
-        let mut source = vec![0; 0x4000];
-        source[0x2100] = 0xcd;
-        let mut mapper = CnRom::new(&[0; 0x8000], &source);
-        mapper.write(0x8000, 1, SystemClock::default());
-        assert_eq!(mapper.read_chr(0x100), 0xcd);
+    fn chr_ram_writes_survive_a_bank_switch() {
+        // The old window cache copied from the ROM image on every switch and
+        // lost writes; the bank itself is now the storage.
+        let mut memory = CartridgeMemory::test(&[], &[]);
+        let mut mapper = CnRom::new(&mut memory);
+        memory.write_vram(0x100, 0xab);
+        mapper.cpu_write(0x8000, 3, SystemClock::default(), &mut memory);
+        mapper.cpu_write(0x8000, 0, SystemClock::default(), &mut memory);
+        assert_eq!(memory.read_vram(0x100), 0xab);
+    }
+
+    #[test]
+    fn chr_rom_ignores_writes() {
+        let mut memory = CartridgeMemory::test(&[], &make_chr());
+        CnRom::new(&mut memory);
+        memory.write_vram(0x100, 0xab);
+        assert_eq!(memory.read_vram(0x100), 0x00);
     }
 }

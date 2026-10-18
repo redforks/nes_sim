@@ -1,92 +1,51 @@
-use super::chr_storage::DirectChr;
-use super::{CARTRIDGE_START_ADDR, Cartridge, CartridgeOperation, Mirroring};
+use super::{Mapper, Mirroring, memory::CartridgeMemory};
 use crate::SystemClock;
 
-const PRG_ROM_BANK_SIZE: usize = 0x8000;
-const CARTRIDGE_RAM_SIZE: usize = 0x4000 - 0x20;
-
+/// AxROM: one 32 KB PRG bank over the whole window, flat 8 KB CHR, and the
+/// single-screen mirroring bit written with every bank select.
 pub struct AxRom {
-    prg_rom: Vec<u8>,
-    ram: [u8; CARTRIDGE_RAM_SIZE],
     selected_prg_bank: usize,
     prg_bank_count: usize,
-    chr: DirectChr,
 }
 
 impl AxRom {
-    pub fn new(prg_rom: &[u8], chr_rom: &[u8]) -> Self {
-        assert!(!prg_rom.is_empty());
-        // Tolerate undersized images: oamtest3/oam3.nes ships a mapper-7
-        // header with only 16K PRG. Mirror it across 32K the way NROM
-        // mirrors 16K (see nrom.rs), so the reset vector at $FFFA stays
-        // reachable instead of panicking / dividing by zero.
-        let mut rom = prg_rom.to_vec();
-        if rom.len() < PRG_ROM_BANK_SIZE {
-            let mut expanded = Vec::with_capacity(PRG_ROM_BANK_SIZE);
-            while expanded.len() < PRG_ROM_BANK_SIZE {
-                let take = (PRG_ROM_BANK_SIZE - expanded.len()).min(rom.len());
-                expanded.extend_from_slice(&rom[..take]);
-            }
-            rom = expanded;
-        } else {
-            debug_assert_eq!(rom.len() % PRG_ROM_BANK_SIZE, 0);
-        }
-
-        let prg_bank_count = rom.len() / PRG_ROM_BANK_SIZE;
-        Self {
-            prg_rom: rom,
-            ram: [0; CARTRIDGE_RAM_SIZE],
+    pub fn new(memory: &mut CartridgeMemory) -> Self {
+        let prg_bank_count = memory.prg_bank_count_32k();
+        let mapper = Self {
             selected_prg_bank: 0,
             prg_bank_count,
-            chr: DirectChr::from_chr_rom(chr_rom),
-        }
+        };
+        mapper.install(memory);
+        mapper
     }
 
-    fn selected_prg_bank(&self) -> usize {
-        self.selected_prg_bank % self.prg_bank_count
-    }
-
-    fn read_prg_bank(&self, bank: usize, address: u16) -> u8 {
-        let bank_start = bank * PRG_ROM_BANK_SIZE;
-        let offset = (address as usize) % PRG_ROM_BANK_SIZE;
-        self.prg_rom[bank_start + offset]
+    fn install(&self, memory: &mut CartridgeMemory) {
+        memory.map_prg_32k(self.selected_prg_bank as u16);
     }
 }
 
-impl Cartridge for AxRom {
-    fn read(&self, address: u16) -> u8 {
+impl Mapper for AxRom {
+    fn cpu_write(
+        &mut self,
+        address: u16,
+        value: u8,
+        _cycle: SystemClock,
+        memory: &mut CartridgeMemory,
+    ) {
         match address {
-            CARTRIDGE_START_ADDR..=0x7fff => self.ram[(address - CARTRIDGE_START_ADDR) as usize],
-            0x8000..=0xffff => self.read_prg_bank(self.selected_prg_bank(), address - 0x8000),
-            _ => unreachable!(),
-        }
-    }
-
-    fn write(&mut self, address: u16, value: u8, _cycle: SystemClock) -> CartridgeOperation {
-        match address {
-            CARTRIDGE_START_ADDR..=0x7fff => {
-                self.ram[(address - CARTRIDGE_START_ADDR) as usize] = value;
-                CartridgeOperation::None
-            }
+            0x6000..=0x7fff => memory.write_prg(address, value),
             0x8000..=0xffff => {
-                self.selected_prg_bank = (value & 0x0f) as usize;
+                self.selected_prg_bank = (value & 0x0f) as usize % self.prg_bank_count;
+                memory.map_prg_32k(self.selected_prg_bank as u16);
                 let mirroring = if value & 0x10 == 0 {
                     Mirroring::LowerBank
                 } else {
                     Mirroring::UpperBank
                 };
-                CartridgeOperation::UpdateNametableMirroring(mirroring)
+                memory.apply_mirroring(mirroring);
             }
-            _ => unreachable!(),
+            _ => {}
         }
-    }
-
-    fn read_chr(&self, address: u16) -> u8 {
-        self.chr.read_chr(address)
-    }
-
-    fn write_chr(&mut self, address: u16, value: u8) {
-        self.chr.write_chr(address, value);
     }
 }
 
@@ -94,48 +53,56 @@ impl Cartridge for AxRom {
 mod tests {
     use super::*;
 
+    const PRG_BANK_SIZE: usize = 0x8000;
+
     #[test]
     fn switches_32k_prg_banks() {
-        let mut prg_rom = [0u8; PRG_ROM_BANK_SIZE * 4];
-        prg_rom[0] = 0x10;
-        prg_rom[PRG_ROM_BANK_SIZE] = 0x20;
-        prg_rom[PRG_ROM_BANK_SIZE * 2] = 0x30;
-        prg_rom[PRG_ROM_BANK_SIZE * 3] = 0x40;
+        let mut prg = [0u8; PRG_BANK_SIZE * 4];
+        prg[0] = 0x10;
+        prg[PRG_BANK_SIZE] = 0x20;
+        prg[PRG_BANK_SIZE * 2] = 0x30;
+        prg[PRG_BANK_SIZE * 3] = 0x40;
 
-        let mut mapper = AxRom::new(&prg_rom, &[]);
+        let mut memory = CartridgeMemory::test(&prg, &[]);
+        let mut mapper = AxRom::new(&mut memory);
 
-        assert_eq!(mapper.read(0x8000), 0x10);
+        assert_eq!(memory.read_prg(0x8000), 0x10);
 
-        mapper.write(0x8000, 0x02, SystemClock::default());
-        assert_eq!(mapper.read(0x8000), 0x30);
+        mapper.cpu_write(0x8000, 0x02, SystemClock::default(), &mut memory);
+        assert_eq!(memory.read_prg(0x8000), 0x30);
 
-        mapper.write(0xffff, 0x03, SystemClock::default());
-        assert_eq!(mapper.read(0x8000), 0x40);
+        mapper.cpu_write(0xffff, 0x03, SystemClock::default(), &mut memory);
+        assert_eq!(memory.read_prg(0x8000), 0x40);
     }
 
     #[test]
-    fn switches_single_screen_mirroring() {
-        let mut mapper = AxRom::new(&[0; PRG_ROM_BANK_SIZE], &[]);
+    fn writes_single_screen_mirroring() {
+        let mut memory = CartridgeMemory::test(&[], &[]);
+        let mut mapper = AxRom::new(&mut memory);
 
-        assert_eq!(
-            mapper.write(0x8000, 0x10, SystemClock::default()),
-            CartridgeOperation::UpdateNametableMirroring(Mirroring::UpperBank)
-        );
+        mapper.cpu_write(0x8000, 0x10, SystemClock::default(), &mut memory);
+        memory.write_vram(0x2000, 0x5a);
+        assert_eq!(memory.read_vram(0x2000), 0x5a);
+        // Single-screen upper bank: every slot is the same physical bank.
+        assert_eq!(memory.read_vram(0x2400), 0x5a);
+        assert_eq!(memory.read_vram(0x2800), 0x5a);
+        assert_eq!(memory.read_vram(0x2c00), 0x5a);
     }
 
     #[test]
     fn mirrors_16k_prg_across_32k() {
         // oamtest3/oam3.nes: mapper 7 header with a single 16K bank.
-        let mut prg_rom = [0u8; 0x4000];
-        prg_rom[0] = 0x42;
-        prg_rom[0x3ffc] = 0x00;
-        prg_rom[0x3ffd] = 0x80;
+        let mut prg = [0u8; 0x4000];
+        prg[0] = 0x42;
+        prg[0x3ffc] = 0x00;
+        prg[0x3ffd] = 0x80;
 
-        let mapper = AxRom::new(&prg_rom, &[]);
+        let mut memory = CartridgeMemory::test(&prg, &[]);
+        AxRom::new(&mut memory);
 
-        assert_eq!(mapper.read(0x8000), 0x42);
-        assert_eq!(mapper.read(0xc000), 0x42);
-        assert_eq!(mapper.read(0xfffc), 0x00);
-        assert_eq!(mapper.read(0xfffd), 0x80);
+        assert_eq!(memory.read_prg(0x8000), 0x42);
+        assert_eq!(memory.read_prg(0xc000), 0x42);
+        assert_eq!(memory.read_prg(0xfffc), 0x00);
+        assert_eq!(memory.read_prg(0xfffd), 0x80);
     }
 }

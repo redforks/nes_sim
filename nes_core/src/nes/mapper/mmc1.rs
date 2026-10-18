@@ -1,10 +1,10 @@
-use super::{Cartridge, CartridgeOperation};
+use super::{Mapper, memory::CartridgeMemory};
 use crate::SystemClock;
 use crate::nes::mapper::Mirroring;
 use bitfield_struct::bitfield;
 
+#[cfg(test)]
 const PRG_ROM_BANK_SIZE: usize = 0x4000;
-const PRG_RAM_SIZE: usize = 0x2000;
 const INITIAL_SHIFT_REGISTER: u8 = 0x10;
 
 #[bitfield(u8)]
@@ -50,183 +50,55 @@ impl From<ControlFlags> for PrgRomMode {
 }
 
 pub struct MMC1 {
-    prg_rom: Box<[u8]>,
-    prg_ram: [u8; PRG_RAM_SIZE],
-    source: Box<[u8]>,
-    has_chr_ram: bool,
-
     control: ControlFlags,
     chr_bank0: u8,
     chr_bank1: u8,
     prg_bank: u8,
     shift_register: u8,
-    lower_prg_bank_cache: usize,
-    upper_prg_bank_cache: usize,
-    prg_rom_bank_count_cache: usize,
+    prg_bank_count: usize,
+    prg_len_bytes: usize,
     last_write_cycle: Option<SystemClock>,
 }
+
 impl MMC1 {
-    pub fn new(prg_rom: &[u8], chr_rom: &[u8], mirroring: Mirroring) -> Self {
-        assert!(!prg_rom.is_empty());
-        assert_eq!(prg_rom.len() % PRG_ROM_BANK_SIZE, 0);
-
-        let has_chr_ram = chr_rom.is_empty();
-        let size = if has_chr_ram { 0x2000 } else { chr_rom.len() };
-        let mut source = vec![0; size];
-        source[..chr_rom.len()].copy_from_slice(chr_rom);
-
-        let bank_count = prg_rom.len() / PRG_ROM_BANK_SIZE;
-        let mut instance = Self {
-            prg_rom: prg_rom.to_vec().into_boxed_slice(),
-            prg_ram: [0; PRG_RAM_SIZE],
-            source: source.into_boxed_slice(),
-            has_chr_ram,
+    pub fn new(memory: &mut CartridgeMemory) -> Self {
+        let instance = Self {
             control: ControlFlags::new()
-                .with_mirroring(Self::mirroring_bits(mirroring))
+                .with_mirroring(Self::mirroring_bits(memory.mirroring()))
                 .with_prg_mode(0b11),
             chr_bank0: 0,
             chr_bank1: 0,
             prg_bank: 0,
             shift_register: INITIAL_SHIFT_REGISTER,
-            lower_prg_bank_cache: 0,
-            upper_prg_bank_cache: 0,
-            prg_rom_bank_count_cache: bank_count,
+            prg_bank_count: memory.prg_bank_count_16k(),
+            prg_len_bytes: memory.prg_len_bytes(),
             last_write_cycle: None,
         };
-        instance.sync_prg_bank_cache();
+        instance.sync_prg(memory);
+        instance.sync_chr(memory);
+        instance.sync_prg_ram(memory);
         instance
     }
 
-    fn bank_count_4k(&self) -> usize {
-        if self.source.is_empty() {
-            1
-        } else {
-            self.source.len() / 0x1000
-        }
-    }
-
-    fn chr_offset(&self, address: u16) -> usize {
-        let offset = address as usize % 0x2000;
-        let upper = offset >= 0x1000;
+    fn sync_chr(&self, memory: &mut CartridgeMemory) {
+        let count = memory.chr_bank_count_4k();
         if self.control.chr_in_4k() {
-            let bank = if upper {
-                self.chr_bank1
-            } else {
-                self.chr_bank0
-            };
-            (bank as usize % self.bank_count_4k()) * 0x1000 + (offset % 0x1000)
+            memory.map_chr_4k(0, (self.chr_bank0 as usize % count) as u16);
+            memory.map_chr_4k(1, (self.chr_bank1 as usize % count) as u16);
         } else {
-            let bank = usize::from(self.chr_bank0 & 0x1e) % self.bank_count_4k();
-            let bank = if upper {
-                (bank + 1) % self.bank_count_4k()
-            } else {
-                bank
-            };
-            bank * 0x1000 + (offset % 0x1000)
-        }
-    }
-}
-
-impl Cartridge for MMC1 {
-    fn read_chr(&self, address: u16) -> u8 {
-        let src_offset = self.chr_offset(address);
-        let len = self.source.len();
-        self.source[src_offset % len]
-    }
-
-    fn write_chr(&mut self, address: u16, value: u8) {
-        if !self.has_chr_ram {
-            return;
-        }
-        let src_offset = self.chr_offset(address);
-        let len = self.source.len();
-        self.source[src_offset % len] = value;
-    }
-
-    fn read(&self, address: u16) -> u8 {
-        match address {
-            0x8000..=0xbfff => self.read_prg_bank(self.lower_prg_bank(), address - 0x8000),
-            0xc000..=0xffff => self.read_prg_bank(self.upper_prg_bank(), address - 0xc000),
-            0x6000..=0x7fff if self.prg_ram_enabled() => self.prg_ram[address as usize - 0x6000],
-            _ => 0,
+            let bank = usize::from(self.chr_bank0 & 0x1e) % count;
+            memory.map_chr_4k(0, bank as u16);
+            memory.map_chr_4k(1, ((bank + 1) % count) as u16);
         }
     }
 
-    fn write(&mut self, address: u16, value: u8, cycle: SystemClock) -> CartridgeOperation {
-        match address {
-            0x4020..=0x5fff => CartridgeOperation::None,
-            0x6000..=0x7fff => {
-                if self.prg_ram_enabled() {
-                    self.prg_ram[address as usize - 0x6000] = value;
-                }
-                CartridgeOperation::None
-            }
-            0x8000..=0xffff => {
-                // Consecutive-cycle filter: data writes (bit7 clear) within
-                // 1 CPU cycle (3 PPU cycles) of the previous mapper write
-                // are ignored. Reset writes (bit7 set) are never ignored
-                // but do update the timestamp.
-                if value & 0x80 != 0 {
-                    self.last_write_cycle = Some(cycle);
-                    return self.write_load_register(address, value);
-                }
-                if let Some(last) = self.last_write_cycle
-                    && cycle.cycles().wrapping_sub(last.cycles()) <= 3
-                {
-                    return CartridgeOperation::None;
-                }
-                self.last_write_cycle = Some(cycle);
-                self.write_load_register(address, value)
-            }
-            _ => panic!("write address out of range: {:04x}", address),
-        }
+    fn sync_prg(&self, memory: &mut CartridgeMemory) {
+        memory.map_prg_16k(0, self.calc_lower_prg_bank() as u16);
+        memory.map_prg_16k(1, self.calc_upper_prg_bank() as u16);
     }
 
-    fn prg_ram_enabled(&self) -> bool {
-        self.prg_bank & 0x10 == 0
-    }
-}
-
-impl MMC1 {
-    fn write_load_register(&mut self, address: u16, value: u8) -> CartridgeOperation {
-        if value & 0x80 != 0 {
-            self.shift_register = INITIAL_SHIFT_REGISTER;
-            self.control = ControlFlags::from_bits(self.control.into_bits() | 0x0c);
-            return self.apply_control();
-        }
-
-        let register_ready = self.shift_register & 0x01 != 0;
-        self.shift_register >>= 1;
-        self.shift_register |= (value & 0x01) << 4;
-
-        if register_ready {
-            let register_value = self.shift_register & 0x1f;
-            let result = match address {
-                0x8000..=0x9fff => {
-                    self.control = ControlFlags::from_bits(register_value);
-                    self.sync_prg_bank_cache();
-                    self.apply_control()
-                }
-                0xa000..=0xbfff => {
-                    self.chr_bank0 = register_value & 0x1f;
-                    self.sync_prg_bank_cache();
-                    CartridgeOperation::None
-                }
-                0xc000..=0xdfff => {
-                    self.chr_bank1 = register_value & 0x1f;
-                    CartridgeOperation::None
-                }
-                0xe000..=0xffff => {
-                    self.select_prg_bank(register_value);
-                    CartridgeOperation::None
-                }
-                _ => unreachable!(),
-            };
-            self.shift_register = INITIAL_SHIFT_REGISTER;
-            result
-        } else {
-            CartridgeOperation::None
-        }
+    fn sync_prg_ram(&self, memory: &mut CartridgeMemory) {
+        memory.set_prg_ram_enabled(self.prg_ram_enabled());
     }
 
     fn mirroring_bits(mirroring: Mirroring) -> u8 {
@@ -238,17 +110,12 @@ impl MMC1 {
         }
     }
 
-    fn apply_control(&mut self) -> CartridgeOperation {
-        let mirroring: Mirroring = self.control.into();
-        CartridgeOperation::UpdateNametableMirroring(mirroring)
-    }
-
     fn prg_rom_mode(&self) -> PrgRomMode {
         self.control.into()
     }
 
     fn prg_rom_bank_count(&self) -> usize {
-        self.prg_rom_bank_count_cache
+        self.prg_bank_count
     }
 
     fn prg_ram_enabled(&self) -> bool {
@@ -256,7 +123,7 @@ impl MMC1 {
     }
 
     fn uses_outer_prg_bank(&self) -> bool {
-        self.prg_rom.len() > 0x40000
+        self.prg_len_bytes > 0x40000
     }
 
     fn outer_prg_bank_base(&self) -> usize {
@@ -311,28 +178,92 @@ impl MMC1 {
         }
     }
 
-    fn sync_prg_bank_cache(&mut self) {
-        self.lower_prg_bank_cache = self.calc_lower_prg_bank();
-        self.upper_prg_bank_cache = self.calc_upper_prg_bank();
-    }
-
-    fn lower_prg_bank(&self) -> usize {
-        self.lower_prg_bank_cache
-    }
-
-    fn upper_prg_bank(&self) -> usize {
-        self.upper_prg_bank_cache
-    }
-
-    fn read_prg_bank(&self, bank: usize, offset: u16) -> u8 {
-        let bank = bank % self.prg_rom_bank_count();
-        let start = bank * PRG_ROM_BANK_SIZE;
-        self.prg_rom[start + offset as usize]
-    }
-
     fn select_prg_bank(&mut self, value: u8) {
         self.prg_bank = value & 0x1f;
-        self.sync_prg_bank_cache();
+    }
+
+    fn apply_control(&self, memory: &mut CartridgeMemory) {
+        memory.apply_mirroring(self.control.into());
+        self.sync_chr(memory);
+        self.sync_prg(memory);
+    }
+
+    fn write_load_register(&mut self, address: u16, value: u8, memory: &mut CartridgeMemory) {
+        if value & 0x80 != 0 {
+            self.shift_register = INITIAL_SHIFT_REGISTER;
+            self.control = ControlFlags::from_bits(self.control.into_bits() | 0x0c);
+            self.apply_control(memory);
+            self.sync_prg(memory);
+            return;
+        }
+
+        let register_ready = self.shift_register & 0x01 != 0;
+        self.shift_register >>= 1;
+        self.shift_register |= (value & 0x01) << 4;
+
+        if register_ready {
+            let register_value = self.shift_register & 0x1f;
+            match address {
+                0x8000..=0x9fff => {
+                    self.control = ControlFlags::from_bits(register_value);
+                    self.apply_control(memory);
+                    self.sync_prg(memory);
+                }
+                0xa000..=0xbfff => {
+                    self.chr_bank0 = register_value & 0x1f;
+                    self.sync_chr(memory);
+                    self.sync_prg(memory);
+                }
+                0xc000..=0xdfff => {
+                    self.chr_bank1 = register_value & 0x1f;
+                    self.sync_chr(memory);
+                }
+                0xe000..=0xffff => {
+                    self.select_prg_bank(register_value);
+                    self.sync_prg(memory);
+                    self.sync_prg_ram(memory);
+                }
+                _ => unreachable!(),
+            }
+            self.shift_register = INITIAL_SHIFT_REGISTER;
+        }
+    }
+}
+
+impl Mapper for MMC1 {
+    fn cpu_write(
+        &mut self,
+        address: u16,
+        value: u8,
+        cycle: SystemClock,
+        memory: &mut CartridgeMemory,
+    ) {
+        match address {
+            0x6000..=0x7fff => {
+                if memory.prg_ram_enabled() {
+                    memory.write_prg(address, value);
+                }
+            }
+            0x8000..=0xffff => {
+                // Consecutive-cycle filter: data writes (bit7 clear) within
+                // 1 CPU cycle (3 PPU cycles) of the previous mapper write
+                // are ignored. Reset writes (bit7 set) are never ignored
+                // but do update the timestamp.
+                if value & 0x80 != 0 {
+                    self.last_write_cycle = Some(cycle);
+                    self.write_load_register(address, value, memory);
+                    return;
+                }
+                if let Some(last) = self.last_write_cycle
+                    && cycle.cycles().wrapping_sub(last.cycles()) <= 3
+                {
+                    return;
+                }
+                self.last_write_cycle = Some(cycle);
+                self.write_load_register(address, value, memory)
+            }
+            _ => {}
+        }
     }
 }
 
@@ -340,69 +271,86 @@ impl MMC1 {
 mod tests {
     use super::*;
 
-    fn write_serial(mapper: &mut MMC1, address: u16, value: u8) {
+    type Board = (MMC1, CartridgeMemory);
+
+    fn advance(mut cycle: SystemClock) -> SystemClock {
+        for _ in 0..6 {
+            cycle = cycle.inc();
+        }
+        cycle
+    }
+
+    fn write_serial(mapper: &mut MMC1, memory: &mut CartridgeMemory, address: u16, value: u8) {
         // Start far enough from any previous write to avoid the
         // consecutive-cycle filter (data writes within 1 CPU cycle / 3 PPU
         // cycles are ignored). Use a fresh base and advance past the
         // window before the first real data write.
-        let mut cycle = SystemClock::default();
-        for _ in 0..6 {
-            cycle = cycle.inc();
-        }
+        let mut cycle = advance(SystemClock::default());
         for bit in 0..5 {
-            mapper.write(address, (value >> bit) & 0x01, cycle);
-            for _ in 0..6 {
-                cycle = cycle.inc();
-            }
+            mapper.cpu_write(address, (value >> bit) & 0x01, cycle, memory);
+            cycle = advance(cycle);
         }
     }
 
-    fn create<F>(mut init_prg: F) -> MMC1
+    fn create<F>(mut init_prg: F) -> Board
     where
         F: FnMut(&mut [u8]),
     {
         let mut prg_rom = [0; 128 * 1024];
         init_prg(&mut prg_rom);
-        MMC1::new(&prg_rom, &[], Mirroring::Horizontal)
+        let mut memory = CartridgeMemory::test(&prg_rom, &[]);
+        let mapper = MMC1::new(&mut memory);
+        (mapper, memory)
+    }
+
+    fn create_with_chr() -> Board {
+        let mut data = vec![0u8; 0x8000];
+        data[0x0000] = 0x10;
+        data[0x1000] = 0x20;
+        data[0x2000] = 0x30;
+        data[0x3000] = 0x40;
+        let prg = vec![0u8; 0x8000];
+        let mut memory = CartridgeMemory::test(&prg, &data);
+        let mapper = MMC1::new(&mut memory);
+        (mapper, memory)
     }
 
     #[test]
     fn prg_rom_switching_uses_serial_load_register() {
-        fn init_prg(prg_rom: &mut [u8]) {
+        let (mut mmc1, mut memory) = create(|prg_rom| {
             prg_rom[0] = 0xba;
             prg_rom[PRG_ROM_BANK_SIZE] = 0xcd;
             prg_rom[prg_rom.len() - 1] = 0xab;
-        }
+        });
 
-        let mut mmc1 = create(init_prg);
+        assert_eq!(memory.read_prg(0x8000), 0xba);
+        assert_eq!(memory.read_prg(0xffff), 0xab);
 
-        assert_eq!(mmc1.read(0x8000), 0xba);
-        assert_eq!(mmc1.read(0xffff), 0xab);
-
-        write_serial(&mut mmc1, 0xe000, 1);
-        assert_eq!(mmc1.read(0x8000), 0xcd);
-        assert_eq!(mmc1.read(0xffff), 0xab);
+        write_serial(&mut mmc1, &mut memory, 0xe000, 1);
+        assert_eq!(memory.read_prg(0x8000), 0xcd);
+        assert_eq!(memory.read_prg(0xffff), 0xab);
     }
 
     #[test]
     fn prg_ram_respects_enable_bit() {
-        let mut mmc1 = create(|_| {});
+        let (mut mmc1, mut memory) = create(|_| {});
 
-        mmc1.write(0x6000, 0x12, SystemClock::default());
-        assert_eq!(mmc1.read(0x6000), 0x12);
+        mmc1.cpu_write(0x6000, 0x12, SystemClock::default(), &mut memory);
+        assert_eq!(memory.read_prg(0x6000), 0x12);
 
-        write_serial(&mut mmc1, 0xe000, 0x10);
-        mmc1.write(0x6000, 0x34, SystemClock::default());
-        assert_eq!(mmc1.read(0x6000), 0x00);
+        write_serial(&mut mmc1, &mut memory, 0xe000, 0x10);
+        assert!(!memory.prg_ram_enabled());
+        mmc1.cpu_write(0x6000, 0x34, SystemClock::default(), &mut memory);
+        assert_eq!(memory.read_prg(0x6000), 0x12);
     }
 
     #[test]
     fn reset_write_keeps_mirroring_and_chr_mode() {
-        let mut mmc1 = create(|_| {});
+        let (mut mmc1, mut memory) = create(|_| {});
 
         let control = ControlFlags::new().with_mirroring(0).with_chr_in_4k(true);
         mmc1.control = control;
-        mmc1.write(0x8000, 0x80, SystemClock::default());
+        mmc1.cpu_write(0x8000, 0x80, SystemClock::default(), &mut memory);
 
         assert_eq!(Mirroring::LowerBank, mmc1.control.into());
         assert!(mmc1.control.chr_in_4k());
@@ -411,10 +359,27 @@ mod tests {
 
     #[test]
     fn control_ppu_mirroring() {
-        let mut mmc1 = create(|_| {});
+        let (mut mmc1, mut memory) = create(|_| {});
         let control = ControlFlags::new().with_mirroring(0);
-        write_serial(&mut mmc1, 0x8000, control.into_bits());
+        write_serial(&mut mmc1, &mut memory, 0x8000, control.into_bits());
         assert_eq!(Mirroring::from(mmc1.control), Mirroring::LowerBank);
+        assert_eq!(memory.mirroring(), Mirroring::LowerBank);
+        // Single-screen lower bank: all four nametable slots alias.
+        memory.write_vram(0x2000, 0x5a);
+        assert_eq!(memory.read_vram(0x2400), 0x5a);
+        assert_eq!(memory.read_vram(0x2800), 0x5a);
+        assert_eq!(memory.read_vram(0x2c00), 0x5a);
+    }
+
+    #[test]
+    fn vertical_mirroring_pairs_nametables() {
+        let (mut mmc1, mut memory) = create(|_| {});
+        let control = ControlFlags::new().with_mirroring(0b10);
+        write_serial(&mut mmc1, &mut memory, 0x8000, control.into_bits());
+        assert_eq!(memory.mirroring(), Mirroring::Vertical);
+        memory.write_vram(0x2000, 0x11);
+        assert_eq!(memory.read_vram(0x2800), 0x11);
+        assert_ne!(memory.read_vram(0x2400), 0x11);
     }
 
     #[test]
@@ -441,7 +406,7 @@ mod tests {
 
     #[test]
     fn control_prg_rom_mode() {
-        let mut mmc1 = create(|rom| {
+        let (mut mmc1, mut memory) = create(|rom| {
             rom[0] = 1;
             rom[PRG_ROM_BANK_SIZE] = 2;
             rom[PRG_ROM_BANK_SIZE * 2] = 3;
@@ -452,96 +417,75 @@ mod tests {
         mmc1.select_prg_bank(2);
         write_serial(
             &mut mmc1,
+            &mut memory,
             0x8000,
             ControlFlags::new().with_prg_mode(0).into_bits(),
         );
-        assert_eq!(mmc1.read(0x8000), 3);
-        assert_eq!(mmc1.read(0xc000), 4);
+        assert_eq!(memory.read_prg(0x8000), 3);
+        assert_eq!(memory.read_prg(0xc000), 4);
 
         write_serial(
             &mut mmc1,
+            &mut memory,
             0x8000,
             ControlFlags::new().with_prg_mode(2).into_bits(),
         );
-        assert_eq!(mmc1.read(0x8000), 1);
-        assert_eq!(mmc1.read(0xc000), 3);
+        assert_eq!(memory.read_prg(0x8000), 1);
+        assert_eq!(memory.read_prg(0xc000), 3);
 
         write_serial(
             &mut mmc1,
+            &mut memory,
             0x8000,
             ControlFlags::new().with_prg_mode(3).into_bits(),
         );
-        assert_eq!(mmc1.read(0x8000), 3);
-        assert_eq!(mmc1.read(0xc000), 5);
-    }
-
-    fn make_mmc1_with_chr() -> (MMC1, usize) {
-        let mut data = vec![0u8; 0x8000];
-        data[0x0000] = 0x10;
-        data[0x1000] = 0x20;
-        data[0x2000] = 0x30;
-        data[0x3000] = 0x40;
-        let prg = vec![0u8; 0x8000];
-        let mapper = MMC1::new(&prg, &data, Mirroring::Horizontal);
-        let source_offset = 0x8000 / PRG_ROM_BANK_SIZE * PRG_ROM_BANK_SIZE;
-        (mapper, source_offset)
-    }
-
-    fn write_serial_chr(mapper: &mut MMC1, address: u16, value: u8) {
-        let mut cycle = SystemClock::default();
-        for _ in 0..6 {
-            cycle = cycle.inc();
-        }
-        for bit in 0..5 {
-            mapper.write(address, (value >> bit) & 0x01, cycle);
-            for _ in 0..6 {
-                cycle = cycle.inc();
-            }
-        }
+        assert_eq!(memory.read_prg(0x8000), 3);
+        assert_eq!(memory.read_prg(0xc000), 5);
     }
 
     #[test]
     fn chr_initial_state_reads_bank_0() {
-        let (mapper, _) = make_mmc1_with_chr();
-        assert_eq!(mapper.read_chr(0x0000), 0x10);
+        let (_mapper, memory) = create_with_chr();
+        assert_eq!(memory.read_vram(0x0000), 0x10);
     }
 
     #[test]
     fn chr_select_chr_bank0_in_4k_mode() {
-        let (mut mapper, _) = make_mmc1_with_chr();
-        write_serial_chr(&mut mapper, 0x8000, 0x10);
-        write_serial_chr(&mut mapper, 0xa000, 0x03);
-        assert_eq!(mapper.read_chr(0x0000), 0x40);
+        let (mut mapper, mut memory) = create_with_chr();
+        write_serial(&mut mapper, &mut memory, 0x8000, 0x10);
+        write_serial(&mut mapper, &mut memory, 0xa000, 0x03);
+        assert_eq!(memory.read_vram(0x0000), 0x40);
     }
 
     #[test]
     fn chr_select_chr_bank1_in_4k_mode() {
-        let (mut mapper, _) = make_mmc1_with_chr();
-        write_serial_chr(&mut mapper, 0x8000, 0x10);
-        write_serial_chr(&mut mapper, 0xc000, 0x01);
-        assert_eq!(mapper.read_chr(0x1000), 0x20);
+        let (mut mapper, mut memory) = create_with_chr();
+        write_serial(&mut mapper, &mut memory, 0x8000, 0x10);
+        write_serial(&mut mapper, &mut memory, 0xc000, 0x01);
+        assert_eq!(memory.read_vram(0x1000), 0x20);
     }
 
     #[test]
     fn chr_writes_to_chr_ram_persists() {
         let prg = vec![0u8; 0x8000];
-        let mut mapper = MMC1::new(&prg, &[], Mirroring::Horizontal);
-        mapper.write_chr(0x0000, 0xab);
-        assert_eq!(mapper.read_chr(0x0000), 0xab);
+        let mut memory = CartridgeMemory::test(&prg, &[]);
+        let _mapper = MMC1::new(&mut memory);
+        memory.write_vram(0x0000, 0xab);
+        assert_eq!(memory.read_vram(0x0000), 0xab);
     }
 
     #[test]
     fn consecutive_data_writes_are_ignored() {
-        let mut mapper = create(|_| {});
+        let (mut mapper, mut memory) = create(|_| {});
         let mut cycle = SystemClock::default();
         // First data write at cycle 0
-        mapper.write(0x8000, 0x00, cycle);
+        mapper.cpu_write(0x8000, 0x00, cycle, &mut memory);
         let shift_after_first = mapper.shift_register;
         // Second data write on next CPU cycle (3 PPU cycles later) should be ignored
         for _ in 0..3 {
             cycle = cycle.inc();
         }
-        mapper.write(0x8000, 0x01, cycle);
+        mapper.cpu_write(0x8000, 0x01, cycle, &mut memory);
         // Shift register should not have advanced for the ignored write
         assert_eq!(
             mapper.shift_register, shift_after_first,
@@ -551,16 +495,16 @@ mod tests {
 
     #[test]
     fn reset_write_is_never_ignored_even_when_consecutive() {
-        let mut mapper = create(|_| {});
+        let (mut mapper, mut memory) = create(|_| {});
         let mut cycle = SystemClock::default();
         // First data write
-        mapper.write(0x8000, 0x00, cycle);
+        mapper.cpu_write(0x8000, 0x00, cycle, &mut memory);
         for _ in 0..3 {
             cycle = cycle.inc();
         }
         // Reset write (bit7 set) on next CPU cycle must NOT be ignored
         // and must reset shift register to initial state
-        mapper.write(0x8000, 0x80, cycle);
+        mapper.cpu_write(0x8000, 0x80, cycle, &mut memory);
         assert_eq!(
             mapper.shift_register, INITIAL_SHIFT_REGISTER,
             "reset write must not be ignored even when consecutive"

@@ -38,134 +38,131 @@ fn create_test_nes(mapper: u8, prg_pages: u8, chr_pages: u8) -> Vec<u8> {
     rom
 }
 
-#[test_case(Mirroring::LowerBank, 0x2000 => 0)]
-#[test_case(Mirroring::LowerBank, 0x2001 => 1)]
-#[test_case(Mirroring::LowerBank, 0x23ff => 1023)]
-#[test_case(Mirroring::LowerBank, 0x27ff => 1023)]
-#[test_case(Mirroring::UpperBank, 0x2000 => 0x400)]
-#[test_case(Mirroring::UpperBank, 0x2001 => 0x401)]
-#[test_case(Mirroring::UpperBank, 0x23ff => 0x7ff)]
-#[test_case(Mirroring::UpperBank, 0x27ff => 0x7ff)]
-#[test_case(Mirroring::Vertical, 0x2000 => 0)]
-#[test_case(Mirroring::Vertical, 0x2001 => 1)]
-#[test_case(Mirroring::Vertical, 0x2400 => 0x400)]
-#[test_case(Mirroring::Vertical, 0x2401 => 0x401)]
-#[test_case(Mirroring::Vertical, 0x2800 => 0)]
-#[test_case(Mirroring::Vertical, 0x2801 => 1)]
-#[test_case(Mirroring::Vertical, 0x2c00 => 0x400)]
-#[test_case(Mirroring::Vertical, 0x2c01 => 0x401)]
-#[test_case(Mirroring::Horizontal, 0x2000 => 0)]
-#[test_case(Mirroring::Horizontal, 0x2001 => 1)]
-#[test_case(Mirroring::Horizontal, 0x2400 => 0)]
-#[test_case(Mirroring::Horizontal, 0x2401 => 1)]
-#[test_case(Mirroring::Horizontal, 0x2800 => 0x400)]
-#[test_case(Mirroring::Horizontal, 0x2801 => 0x401)]
-#[test_case(Mirroring::Horizontal, 0x2c00 => 0x400)]
-#[test_case(Mirroring::Horizontal, 0x2c02 => 0x402)]
-#[test_case(Mirroring::Four, 0x2000 => 0)]
-#[test_case(Mirroring::Four, 0x2400 => 0x400)]
-#[test_case(Mirroring::Four, 0x2800 => 0x800)]
-#[test_case(Mirroring::Four, 0x2c00 => 0xc00)]
-fn test_name_table_offset(mirroring: Mirroring, addr: u16) -> u16 {
-    mirroring.name_table_offset(addr)
+/// Mirroring is *which* nametable bank each of the four slots shows: write
+/// through `$2000` and read back through a slot that may alias it.
+#[test_case(Mirroring::LowerBank, 0x2405, true ; "single lower: all slots alias")]
+#[test_case(Mirroring::LowerBank, 0x2c05, true ; "single lower: third slot aliases")]
+#[test_case(Mirroring::UpperBank, 0x2405, true ; "single upper: second slot aliases")]
+#[test_case(Mirroring::Vertical, 0x2805, true ; "vertical: third slot repeats first")]
+#[test_case(Mirroring::Vertical, 0x2405, false ; "vertical: second slot is distinct")]
+#[test_case(Mirroring::Horizontal, 0x2405, true ; "horizontal: second slot repeats first")]
+#[test_case(Mirroring::Horizontal, 0x2805, false ; "horizontal: third slot is distinct")]
+#[test_case(Mirroring::Four, 0x2405, false ; "four screen: second slot distinct")]
+#[test_case(Mirroring::Four, 0x2805, false ; "four screen: third slot distinct")]
+fn mirroring_selects_nametable_banks(mirroring: Mirroring, probe: u16, aliases: bool) {
+    let mut memory = CartridgeMemory::from_rom(&[0; 0x8000], &[], None, mirroring);
+    memory.write_vram(0x2005, 0x5a);
+    assert_eq!(memory.read_vram(0x2005), 0x5a);
+    assert_eq!(memory.read_vram(probe) == 0x5a, aliases);
+}
+
+/// `$3000-$3EFF` is the hardware alias of `$2000-$2EFF`: each alias window
+/// slot carries the same nametable bank as the slot it repeats, so writes and
+/// reads agree in both directions.
+#[test]
+fn vram_alias_slots_repeat_the_nametable_slots() {
+    let mut memory = CartridgeMemory::from_rom(&[0; 0x8000], &[], None, Mirroring::Horizontal);
+    for (base, alias, value) in [
+        (0x2005u16, 0x3005u16, 0x11u8),
+        (0x2405, 0x3405, 0x22),
+        (0x2805, 0x3805, 0x33),
+        (0x2c05, 0x3c05, 0x44),
+    ] {
+        memory.write_vram(base, value);
+        assert_eq!(memory.read_vram(alias), value, "alias of {base:#06x}");
+        memory.write_vram(alias, !value);
+        assert_eq!(memory.read_vram(base), !value, "write through {alias:#06x}");
+    }
 }
 
 #[test]
 fn create_cartridge_mapper0() {
     let rom = create_test_nes(0, 1, 1);
     let file = INesFile::new(rom).unwrap();
-    let (cartridge, _mirroring) =
-        create_cartridge_with_mmc3_irq_override(&file, Mmc3IrqOverride::Auto);
+    let cartridge = create_cartridge_with_mmc3_irq_override(&file, Mmc3IrqOverride::Auto);
 
-    let val = cartridge.read(CARTRIDGE_START_ADDR);
+    let val = cartridge.read(0x6000);
     assert_eq!(val, 0);
-    assert_eq!(cartridge.read_chr(0), 0);
+    assert_eq!(cartridge.read_vram(0), 0);
 }
 
 #[test]
 fn create_cartridge_mapper1() {
     let rom = create_test_nes(1, 2, 1);
     let file = INesFile::new(rom).unwrap();
-    let (cartridge, _mirroring) =
-        create_cartridge_with_mmc3_irq_override(&file, Mmc3IrqOverride::Auto);
+    let cartridge = create_cartridge_with_mmc3_irq_override(&file, Mmc3IrqOverride::Auto);
 
     let val = cartridge.read(0x8000);
     assert_eq!(val, 0);
-    assert_eq!(cartridge.read_chr(0), 0);
+    assert_eq!(cartridge.read_vram(0), 0);
 }
 
 #[test]
 fn create_cartridge_mapper2() {
     let rom = create_test_nes(2, 2, 1);
     let file = INesFile::new(rom).unwrap();
-    let (cartridge, _mirroring) =
-        create_cartridge_with_mmc3_irq_override(&file, Mmc3IrqOverride::Auto);
+    let cartridge = create_cartridge_with_mmc3_irq_override(&file, Mmc3IrqOverride::Auto);
 
     let val = cartridge.read(0x8000);
     assert_eq!(val, 0);
-    assert_eq!(cartridge.read_chr(0), 0);
+    assert_eq!(cartridge.read_vram(0), 0);
 }
 
 #[test]
 fn create_cartridge_mapper3() {
     let rom = create_test_nes(3, 2, 2);
     let file = INesFile::new(rom).unwrap();
-    let (cartridge, _mirroring) =
-        create_cartridge_with_mmc3_irq_override(&file, Mmc3IrqOverride::Auto);
+    let cartridge = create_cartridge_with_mmc3_irq_override(&file, Mmc3IrqOverride::Auto);
 
     let val = cartridge.read(0x8000);
     assert_eq!(val, 0);
-    assert_eq!(cartridge.read_chr(0), 0);
+    assert_eq!(cartridge.read_vram(0), 0);
 }
 
 #[test]
 fn create_cartridge_mapper4() {
     let rom = create_test_nes(4, 4, 1);
     let file = INesFile::new(rom).unwrap();
-    let (cartridge, _mirroring) =
-        create_cartridge_with_mmc3_irq_override(&file, Mmc3IrqOverride::Auto);
+    let cartridge = create_cartridge_with_mmc3_irq_override(&file, Mmc3IrqOverride::Auto);
 
     let val = cartridge.read(0x8000);
     assert_eq!(val, 0);
-    assert_eq!(cartridge.read_chr(0), 0);
+    assert_eq!(cartridge.read_vram(0), 0);
 }
 
 #[test]
 fn create_cartridge_mapper7() {
     let rom = create_test_nes(7, 4, 0);
     let file = INesFile::new(rom).unwrap();
-    let (mut cartridge, _mirroring) =
-        create_cartridge_with_mmc3_irq_override(&file, Mmc3IrqOverride::Auto);
+    let mut cartridge = create_cartridge_with_mmc3_irq_override(&file, Mmc3IrqOverride::Auto);
 
     assert_eq!(cartridge.read(0x8000), 0);
-    assert_eq!(cartridge.read_chr(0x0010), 0);
-    cartridge.write_chr(0x0010, 0xab);
-    assert_eq!(cartridge.read_chr(0x0010), 0xab);
+    assert_eq!(cartridge.read_vram(0x0010), 0);
+    cartridge.write_vram(0x0010, 0xab);
+    assert_eq!(cartridge.read_vram(0x0010), 0xab);
 }
 
 #[test]
 fn create_cartridge_mapper34_bnrom() {
     let rom = create_test_nes(34, 4, 0);
     let file = INesFile::new(rom).unwrap();
-    let (mut cartridge, _mirroring) =
-        create_cartridge_with_mmc3_irq_override(&file, Mmc3IrqOverride::Auto);
+    let mut cartridge = create_cartridge_with_mmc3_irq_override(&file, Mmc3IrqOverride::Auto);
 
     assert_eq!(cartridge.read(0x8000), 0);
-    assert_eq!(cartridge.read_chr(0x0010), 0);
-    cartridge.write_chr(0x0010, 0xab);
-    assert_eq!(cartridge.read_chr(0x0010), 0xab);
+    assert_eq!(cartridge.read_vram(0x0010), 0);
+    cartridge.write_vram(0x0010, 0xab);
+    assert_eq!(cartridge.read_vram(0x0010), 0xab);
 }
 
 #[test]
 fn create_cartridge_mapper4_with_chr_ram() {
     let rom = create_test_nes(4, 4, 0);
     let file = INesFile::new(rom).unwrap();
-    let (mut cartridge, _mirroring) =
-        create_cartridge_with_mmc3_irq_override(&file, Mmc3IrqOverride::Auto);
+    let mut cartridge = create_cartridge_with_mmc3_irq_override(&file, Mmc3IrqOverride::Auto);
 
-    assert_eq!(cartridge.read_chr(0x0010), 0);
-    cartridge.write_chr(0x0010, 0xab);
-    assert_eq!(cartridge.read_chr(0x0010), 0xab);
+    assert_eq!(cartridge.read_vram(0x0010), 0);
+    cartridge.write_vram(0x0010, 0xab);
+    assert_eq!(cartridge.read_vram(0x0010), 0xab);
 }
 
 #[test]
@@ -173,8 +170,7 @@ fn create_cartridge_mapper4_with_chr_ram() {
 fn create_cartridge_unsupported_mapper() {
     let rom = create_test_nes(99, 1, 1);
     let file = INesFile::new(rom).unwrap();
-    let (_cartridge, _mirroring) =
-        create_cartridge_with_mmc3_irq_override(&file, Mmc3IrqOverride::Auto);
+    let _cartridge = create_cartridge_with_mmc3_irq_override(&file, Mmc3IrqOverride::Auto);
 }
 
 // ---------------------------------------------------------------------------
@@ -268,7 +264,7 @@ fn mmc3_revision_defaults_to_standard() {
 use super::mmc3::MMC3_A12_LOW_FILTER_TICKS; // shared with the mapper implementation
 
 /// Drop A12 low, wait out the filter window, then raise A12 -> one IRQ clock.
-fn mmc3_irq_clock(cartridge: &mut Box<dyn Cartridge>) {
+fn mmc3_irq_clock(cartridge: &mut Cartridge) {
     cartridge.notify_vram_address(0x0000);
     for _ in 0..=MMC3_A12_LOW_FILTER_TICKS {
         cartridge.on_ppu_tick(0);
@@ -278,7 +274,7 @@ fn mmc3_irq_clock(cartridge: &mut Box<dyn Cartridge>) {
 
 /// Arm latch=1 with a pending reload, enable IRQ, clock twice: the counter
 /// lands on 0 via decrement and the IRQ asserts on both revisions.
-fn mmc3_arm_counter_one_and_reach_zero(cartridge: &mut Box<dyn Cartridge>) {
+fn mmc3_arm_counter_one_and_reach_zero(cartridge: &mut Cartridge) {
     cartridge.write(0xc000, 1, SystemClock::default()); // latch = 1
     cartridge.write(0xc001, 0, SystemClock::default()); // request reload
     cartridge.write(0xe001, 0, SystemClock::default()); // enable IRQ
@@ -293,7 +289,7 @@ fn mmc3_arm_counter_one_and_reach_zero(cartridge: &mut Box<dyn Cartridge>) {
 
 /// The rev-A / Standard discriminator: with latch 0 and the counter already
 /// at 0 naturally, does one more clock re-assert the IRQ?
-fn mmc3_zero_latch_reload(cartridge: &mut Box<dyn Cartridge>) {
+fn mmc3_zero_latch_reload(cartridge: &mut Cartridge) {
     cartridge.write(0xc000, 0, SystemClock::default());
     mmc3_irq_clock(cartridge);
 }
@@ -302,7 +298,7 @@ fn mmc3_zero_latch_reload(cartridge: &mut Box<dyn Cartridge>) {
 fn mmc3_override_rev_a_skips_irq_on_reload_after_natural_zero() {
     let rom = create_test_nes(4, 2, 1);
     let file = INesFile::new(rom).unwrap();
-    let (mut cartridge, _mirroring) =
+    let mut cartridge =
         create_cartridge_with_mmc3_irq_override(&file, Mmc3IrqOverride::ForceAlternate);
 
     mmc3_arm_counter_one_and_reach_zero(&mut cartridge);
@@ -314,7 +310,7 @@ fn mmc3_override_rev_a_skips_irq_on_reload_after_natural_zero() {
 fn mmc3_override_standard_asserts_irq_every_clock_with_zero_latch() {
     let rom = create_test_nes(4, 2, 1);
     let file = INesFile::new(rom).unwrap();
-    let (mut cartridge, _mirroring) =
+    let mut cartridge =
         create_cartridge_with_mmc3_irq_override(&file, Mmc3IrqOverride::ForceStandard);
 
     mmc3_arm_counter_one_and_reach_zero(&mut cartridge);
@@ -345,8 +341,7 @@ fn nes20_mapper4_rom(submapper: u8) -> Vec<u8> {
 fn nes20_submapper_4_auto_detects_revision_a() {
     let file = INesFile::new(nes20_mapper4_rom(4)).unwrap();
     assert_eq!(Some(4), file.header().submapper_no);
-    let (mut cartridge, _mirroring) =
-        create_cartridge_with_mmc3_irq_override(&file, Mmc3IrqOverride::Auto);
+    let mut cartridge = create_cartridge_with_mmc3_irq_override(&file, Mmc3IrqOverride::Auto);
 
     mmc3_arm_counter_one_and_reach_zero(&mut cartridge);
     mmc3_zero_latch_reload(&mut cartridge);
@@ -357,8 +352,7 @@ fn nes20_submapper_4_auto_detects_revision_a() {
 fn nes20_submapper_0_defaults_to_standard() {
     let file = INesFile::new(nes20_mapper4_rom(0)).unwrap();
     assert_eq!(Some(0), file.header().submapper_no);
-    let (mut cartridge, _mirroring) =
-        create_cartridge_with_mmc3_irq_override(&file, Mmc3IrqOverride::Auto);
+    let mut cartridge = create_cartridge_with_mmc3_irq_override(&file, Mmc3IrqOverride::Auto);
 
     mmc3_arm_counter_one_and_reach_zero(&mut cartridge);
     mmc3_zero_latch_reload(&mut cartridge);

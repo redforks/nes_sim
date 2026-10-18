@@ -4,6 +4,7 @@ use crate::ines::NametableArrangement;
 use axrom::AxRom;
 use bxrom::BxRom;
 use cnrom::CnRom;
+use memory::CartridgeMemory;
 use mmc1::MMC1;
 use mmc3::MMC3;
 use nina001::Nina001;
@@ -12,7 +13,6 @@ use uxrom::UxRom;
 use vrc24::Vrc24;
 pub use vrc24::VrcVariant;
 
-const CARTRIDGE_START_ADDR: u16 = 0x4020;
 /// NES 2.0 submapper marking an early TxROM board carrying the MMC3A
 /// (NEC "old-style") IRQ counter. Per the NESdev iNES-004 submapper
 /// table (wiki "NES 2.0 submappers", mirrored by rom-properties'
@@ -24,14 +24,13 @@ mod axrom;
 mod bxrom;
 mod cnrom;
 mod j87;
+mod memory;
 mod mmc1;
 mod mmc3;
 mod nina001;
 mod nrom;
 mod uxrom;
 mod vrc24;
-
-pub mod chr_storage;
 
 #[derive(Debug, Eq, PartialEq, Copy, Clone)]
 pub enum Mirroring {
@@ -43,16 +42,15 @@ pub enum Mirroring {
 }
 
 impl Mirroring {
-    pub fn name_table_offset(self, addr: u16) -> u16 {
+    /// Which physical nametable bank (`$2000`, `$2400`, `$2800`, `$2C00`)
+    /// each of the four nametable slots shows.
+    pub fn nt_slots(self) -> [u8; 4] {
         match self {
-            Mirroring::LowerBank => addr & 0x3ff,
-            Mirroring::UpperBank => addr & 0x3ff | 0x400,
-            Mirroring::Horizontal => {
-                let bit = addr & 0x800;
-                addr & (!0xfc00) | (bit >> 1)
-            }
-            Mirroring::Vertical => addr & (!0xf800),
-            Mirroring::Four => addr & (!0xf000),
+            Mirroring::LowerBank => [0, 0, 0, 0],
+            Mirroring::UpperBank => [1, 1, 1, 1],
+            Mirroring::Vertical => [0, 1, 0, 1],
+            Mirroring::Horizontal => [0, 0, 1, 1],
+            Mirroring::Four => [0, 1, 2, 3],
         }
     }
 }
@@ -89,46 +87,44 @@ pub enum Mmc3IrqOverride {
 pub fn create_cartridge_with_mmc3_irq_override(
     f: &INesFile,
     irq_override: Mmc3IrqOverride,
-) -> (Box<dyn Cartridge>, Mirroring) {
+) -> Cartridge {
     let mapper_no = f.header().mapper_no;
     let mirroring = if f.header().ignore_mirror_control {
         Mirroring::Four
     } else {
         f.header().nametable_arrangement.into()
     };
-    let chr_rom = f.read_chr_rom();
-    match mapper_no {
-        0 => (Box::new(NRom::new(f.read_prg_rom(), chr_rom)), mirroring),
-        1 => (
-            Box::new(MMC1::new(f.read_prg_rom(), chr_rom, mirroring)),
-            mirroring,
-        ),
-        2 => (Box::new(UxRom::new(f.read_prg_rom(), chr_rom)), mirroring),
-        3 => (Box::new(CnRom::new(f.read_prg_rom(), chr_rom)), mirroring),
+    let mut memory = CartridgeMemory::from_rom(
+        f.read_prg_rom(),
+        f.read_chr_rom(),
+        f.header().chr_ram_size,
+        mirroring,
+    );
+
+    let mapper: Box<dyn Mapper> = match mapper_no {
+        0 => Box::new(NRom::new(&mut memory)),
+        1 => Box::new(MMC1::new(&mut memory)),
+        2 => Box::new(UxRom::new(&mut memory)),
+        3 => Box::new(CnRom::new(&mut memory)),
         4 => {
             let alternate_irq_revision = mmc3_irq_revision_is_alternate(
                 irq_override,
                 f.header().submapper_no,
                 f.read_prg_rom(),
             );
-            (
-                Box::new(MMC3::new(
-                    f.read_prg_rom(),
-                    chr_rom,
-                    f.header().chr_ram_size,
-                    f.header().ignore_mirror_control,
-                    alternate_irq_revision,
-                )),
-                mirroring,
-            )
+            Box::new(MMC3::new(
+                &mut memory,
+                f.header().ignore_mirror_control,
+                alternate_irq_revision,
+            ))
         }
-        7 => (Box::new(AxRom::new(f.read_prg_rom(), chr_rom)), mirroring),
+        7 => Box::new(AxRom::new(&mut memory)),
         34 => {
-            let is_nina = chr_rom.len() > 0x2000;
-            if is_nina {
-                (Box::new(Nina001::new(f.read_prg_rom(), chr_rom)), mirroring)
+            // A 16 KB-or-smaller CHR image means the BNROM half of mapper 34.
+            if memory.chr_len_bytes() > 0x2000 {
+                Box::new(Nina001::new(&mut memory))
             } else {
-                (Box::new(BxRom::new(f.read_prg_rom(), chr_rom)), mirroring)
+                Box::new(BxRom::new(&mut memory))
             }
         }
         21 => {
@@ -137,18 +133,9 @@ pub fn create_cartridge_with_mmc3_irq_override(
                 2 => VrcVariant::Vrc4c,
                 _ => VrcVariant::Vrc4a,
             };
-            (
-                Box::new(Vrc24::new(f.read_prg_rom(), chr_rom, variant)),
-                mirroring,
-            )
+            Box::new(Vrc24::new(&mut memory, variant))
         }
-        22 => {
-            let variant = VrcVariant::Vrc2a;
-            (
-                Box::new(Vrc24::new(f.read_prg_rom(), chr_rom, variant)),
-                mirroring,
-            )
-        }
+        22 => Box::new(Vrc24::new(&mut memory, VrcVariant::Vrc2a)),
         23 => {
             let submapper = f.header().submapper_no.unwrap_or(1);
             let variant = match submapper {
@@ -156,10 +143,7 @@ pub fn create_cartridge_with_mmc3_irq_override(
                 3 => VrcVariant::Vrc2b,
                 _ => VrcVariant::Vrc4f,
             };
-            (
-                Box::new(Vrc24::new(f.read_prg_rom(), chr_rom, variant)),
-                mirroring,
-            )
+            Box::new(Vrc24::new(&mut memory, variant))
         }
         25 => {
             let submapper = f.header().submapper_no.unwrap_or(1);
@@ -168,20 +152,13 @@ pub fn create_cartridge_with_mmc3_irq_override(
                 3 => VrcVariant::Vrc2c,
                 _ => VrcVariant::Vrc4b,
             };
-            (
-                Box::new(Vrc24::new(f.read_prg_rom(), chr_rom, variant)),
-                mirroring,
-            )
+            Box::new(Vrc24::new(&mut memory, variant))
         }
-        87 => {
-            let prg_len = f.read_prg_rom().len();
-            (
-                Box::new(j87::J87::new(f.read_prg_rom(), prg_len, chr_rom)),
-                mirroring,
-            )
-        }
+        87 => Box::new(j87::J87::new(&mut memory)),
         _ => panic!("Unsupported cartridge mapper no: {}", f.header().mapper_no),
-    }
+    };
+
+    Cartridge::new(mapper, memory)
 }
 
 /// Single detection predicate for the MMC3 IRQ scanline-counter revision
@@ -228,71 +205,167 @@ pub struct CartridgeCaps {
     pub irq_pending: bool,
 }
 
-pub trait Cartridge {
-    fn read(&self, address: u16) -> u8;
-    fn write(&mut self, address: u16, value: u8, cycle: SystemClock) -> CartridgeOperation;
+/// The bank-switching chip on a cartridge board. A mapper owns no cartridge
+/// memory and performs no data read: it rewrites bank-window slots, may write
+/// PRG-RAM, and reports IRQ lines. See `docs/adr/0015`.
+pub trait Mapper {
+    /// Called for every CPU write in `$6000-$FFFF`.
+    fn cpu_write(
+        &mut self,
+        address: u16,
+        value: u8,
+        cycle: SystemClock,
+        memory: &mut CartridgeMemory,
+    );
+    /// Overrides the PRG-RAM window read when the board answers the address
+    /// itself (VRC2 has no PRG-RAM). Only consulted for `$6000-$7FFF`, so
+    /// CPU instruction fetches never pay for it.
+    fn read_prg(&self, _address: u16) -> Option<u8> {
+        None
+    }
     fn on_ppu_tick(&mut self, _scanline: u16) {}
     fn notify_vram_address(&mut self, _addr: u16) {}
     fn irq_pending(&self) -> bool {
         false
     }
-    fn ppu_capabilities(&self) -> CartridgeCaps {
+    fn caps(&self) -> CartridgeCaps {
         CartridgeCaps::default()
     }
-    fn read_chr(&self, _address: u16) -> u8 {
-        0
-    }
-    fn write_chr(&mut self, _address: u16, _value: u8) {}
-    /// Whether PRG-RAM at $6000-$7FFF is currently enabled (open bus if disabled).
-    /// Mappers with a PRG-RAM disable bit override this.
-    fn prg_ram_enabled(&self) -> bool {
-        true
-    }
-}
-#[cfg(test)]
-pub struct TestCartridge {
-    pub(crate) prg_rom: [u8; 0x8000],
-    pub(crate) chr: chr_storage::DirectChr,
 }
 
-#[cfg(test)]
-impl TestCartridge {
-    pub fn new() -> Self {
+/// The cartridge board: bank-mapped memory, the mapper chip, and the
+/// capability snapshot the rest of the machine reads without a dynamic call.
+pub struct Cartridge {
+    memory: CartridgeMemory,
+    mapper: Box<dyn Mapper>,
+    caps: CartridgeCaps,
+}
+
+impl Cartridge {
+    pub fn new(mapper: Box<dyn Mapper>, memory: CartridgeMemory) -> Self {
+        let caps = mapper.caps();
         Self {
-            prg_rom: [0; 0x8000],
-            chr: chr_storage::DirectChr::empty(),
+            memory,
+            mapper,
+            caps,
+        }
+    }
+
+    /// PRG window read for `$6000-$FFFF`.
+    pub fn read(&self, address: u16) -> u8 {
+        if address < 0x6000 {
+            return 0;
+        }
+        if address < 0x8000
+            && let Some(value) = self.mapper.read_prg(address)
+        {
+            return value;
+        }
+        self.memory.read_prg(address)
+    }
+
+    pub fn write(&mut self, address: u16, value: u8, cycle: SystemClock) {
+        let Self { memory, mapper, .. } = self;
+        mapper.cpu_write(address, value, cycle, memory);
+    }
+
+    pub fn on_ppu_tick(&mut self, scanline: u16) {
+        self.mapper.on_ppu_tick(scanline);
+    }
+
+    pub fn notify_vram_address(&mut self, addr: u16) {
+        self.mapper.notify_vram_address(addr);
+    }
+
+    pub fn irq_pending(&self) -> bool {
+        self.mapper.irq_pending()
+    }
+
+    pub fn caps(&self) -> CartridgeCaps {
+        self.caps
+    }
+
+    /// Cartridge PPU space: pattern tables in `$0000-$1FFF` (CHR ROM or CHR
+    /// RAM), nametables in `$2000-$2EFF`.
+    pub fn read_vram(&self, address: u16) -> u8 {
+        self.memory.read_vram(address)
+    }
+
+    pub fn write_vram(&mut self, address: u16, value: u8) {
+        self.memory.write_vram(address, value);
+    }
+
+    pub fn prg_ram_enabled(&self) -> bool {
+        self.memory.prg_ram_enabled()
+    }
+}
+
+/// Test mapper: no banking, no IRQ, optionally records the VRAM-address
+/// notifications the PPU emits.
+#[cfg(test)]
+pub struct TestMapper {
+    caps: CartridgeCaps,
+    pub notified: std::rc::Rc<std::cell::RefCell<Vec<u16>>>,
+}
+
+#[cfg(test)]
+impl TestMapper {
+    fn new() -> Self {
+        Self {
+            caps: CartridgeCaps::default(),
+            notified: Default::default(),
+        }
+    }
+
+    fn recording() -> Self {
+        Self {
+            caps: CartridgeCaps {
+                notify_vram_address: true,
+                ..CartridgeCaps::default()
+            },
+            ..Self::new()
         }
     }
 }
 
 #[cfg(test)]
-impl Cartridge for TestCartridge {
-    fn read(&self, address: u16) -> u8 {
-        if address >= 0x8000 {
-            self.prg_rom[(address - 0x8000) as usize]
-        } else {
-            0
-        }
+impl Mapper for TestMapper {
+    fn cpu_write(
+        &mut self,
+        _address: u16,
+        _value: u8,
+        _cycle: SystemClock,
+        _memory: &mut CartridgeMemory,
+    ) {
     }
 
-    fn write(&mut self, address: u16, value: u8, _cycle: SystemClock) -> CartridgeOperation {
-        let _ = (address, value);
-        CartridgeOperation::None
+    fn notify_vram_address(&mut self, addr: u16) {
+        self.notified.borrow_mut().push(addr);
     }
 
-    fn read_chr(&self, address: u16) -> u8 {
-        self.chr.read_chr(address)
-    }
-
-    fn write_chr(&mut self, address: u16, value: u8) {
-        self.chr.write_chr(address, value);
+    fn caps(&self) -> CartridgeCaps {
+        self.caps
     }
 }
 
-#[derive(Copy, Clone, Debug, PartialEq)]
-pub enum CartridgeOperation {
-    None,
-    UpdateNametableMirroring(Mirroring),
+#[cfg(test)]
+impl Cartridge {
+    /// A cartridge carrying the test mapper: 32 KB zeroed PRG ROM, 8 KB CHR
+    /// RAM, horizontal mirroring.
+    pub fn test() -> Self {
+        Self::new(Box::new(TestMapper::new()), CartridgeMemory::test(&[], &[]))
+    }
+
+    /// Same board, with VRAM-address notifications recorded; the second value
+    /// is the observable log.
+    pub fn test_recording() -> (Self, std::rc::Rc<std::cell::RefCell<Vec<u16>>>) {
+        let mapper = TestMapper::recording();
+        let notified = mapper.notified.clone();
+        (
+            Self::new(Box::new(mapper), CartridgeMemory::test(&[], &[])),
+            notified,
+        )
+    }
 }
 
 #[cfg(test)]

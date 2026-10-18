@@ -1,76 +1,46 @@
-use super::chr_storage::DirectChr;
-use super::{CARTRIDGE_START_ADDR, Cartridge, CartridgeOperation};
+use super::{Mapper, memory::CartridgeMemory};
 use crate::SystemClock;
 
-const PRG_ROM_BANK_SIZE: usize = 0x4000;
-const CARTRIDGE_RAM_SIZE: usize = 0x4000 - 0x20;
-
+/// UxROM: a switchable 16 KB lower PRG bank, the last 16 KB bank fixed at
+/// `$C000`, flat 8 KB CHR.
 pub struct UxRom {
-    prg_rom: Vec<u8>,
-    ram: [u8; CARTRIDGE_RAM_SIZE],
     selected_prg_bank: usize,
     prg_bank_count: usize,
-    chr: DirectChr,
 }
 
 impl UxRom {
-    pub fn new(prg_rom: &[u8], chr_rom: &[u8]) -> Self {
-        debug_assert!(!prg_rom.is_empty());
-        debug_assert_eq!(prg_rom.len() % PRG_ROM_BANK_SIZE, 0);
-
-        Self {
-            prg_rom: prg_rom.to_vec(),
-            ram: [0; CARTRIDGE_RAM_SIZE],
+    pub fn new(memory: &mut CartridgeMemory) -> Self {
+        let prg_bank_count = memory.prg_bank_count_16k();
+        let mapper = Self {
             selected_prg_bank: 0,
-            prg_bank_count: prg_rom.len() / PRG_ROM_BANK_SIZE,
-            chr: DirectChr::from_chr_rom(chr_rom),
-        }
+            prg_bank_count,
+        };
+        mapper.install(memory);
+        mapper
     }
 
-    fn selected_prg_bank(&self) -> usize {
-        self.selected_prg_bank % self.prg_bank_count
-    }
-
-    fn last_prg_bank(&self) -> usize {
-        self.prg_bank_count - 1
-    }
-
-    fn read_prg_bank(&self, bank: usize, address: u16) -> u8 {
-        let bank_start = bank * PRG_ROM_BANK_SIZE;
-        let offset = (address as usize) % PRG_ROM_BANK_SIZE;
-        self.prg_rom[bank_start + offset]
+    fn install(&self, memory: &mut CartridgeMemory) {
+        memory.map_prg_16k(0, self.selected_prg_bank as u16);
+        memory.map_prg_16k(1, (self.prg_bank_count - 1) as u16);
     }
 }
 
-impl Cartridge for UxRom {
-    fn read(&self, address: u16) -> u8 {
+impl Mapper for UxRom {
+    fn cpu_write(
+        &mut self,
+        address: u16,
+        value: u8,
+        _cycle: SystemClock,
+        memory: &mut CartridgeMemory,
+    ) {
         match address {
-            CARTRIDGE_START_ADDR..=0x7fff => self.ram[(address - CARTRIDGE_START_ADDR) as usize],
-            0x8000..=0xbfff => self.read_prg_bank(self.selected_prg_bank(), address - 0x8000),
-            0xc000..=0xffff => self.read_prg_bank(self.last_prg_bank(), address - 0xc000),
-            _ => unreachable!(),
-        }
-    }
-
-    fn write(&mut self, address: u16, value: u8, _cycle: SystemClock) -> CartridgeOperation {
-        match address {
-            CARTRIDGE_START_ADDR..=0x7fff => {
-                self.ram[(address - CARTRIDGE_START_ADDR) as usize] = value;
-            }
+            0x6000..=0x7fff => memory.write_prg(address, value),
             0x8000..=0xffff => {
                 self.selected_prg_bank = (value as usize) % self.prg_bank_count;
+                memory.map_prg_16k(0, self.selected_prg_bank as u16);
             }
-            _ => unreachable!(),
+            _ => {}
         }
-        CartridgeOperation::None
-    }
-
-    fn read_chr(&self, address: u16) -> u8 {
-        self.chr.read_chr(address)
-    }
-
-    fn write_chr(&mut self, address: u16, value: u8) {
-        self.chr.write_chr(address, value);
     }
 }
 
@@ -78,36 +48,44 @@ impl Cartridge for UxRom {
 mod tests {
     use super::*;
 
+    const PRG_BANK_SIZE: usize = 0x4000;
+
+    fn mapper_for(prg: &[u8]) -> (UxRom, CartridgeMemory) {
+        let mut memory = CartridgeMemory::test(prg, &[]);
+        let mapper = UxRom::new(&mut memory);
+        (mapper, memory)
+    }
+
     #[test]
     fn reads_and_writes_cartridge_ram() {
-        let mut mapper = UxRom::new(&[0; PRG_ROM_BANK_SIZE * 2], &[]);
+        let (mut mapper, mut memory) = mapper_for(&[0; PRG_BANK_SIZE * 2]);
 
-        mapper.write(CARTRIDGE_START_ADDR, 0x12, SystemClock::default());
-        mapper.write(0x7fff, 0x34, SystemClock::default());
+        mapper.cpu_write(0x6000, 0x12, SystemClock::default(), &mut memory);
+        mapper.cpu_write(0x7fff, 0x34, SystemClock::default(), &mut memory);
 
-        assert_eq!(mapper.read(CARTRIDGE_START_ADDR), 0x12);
-        assert_eq!(mapper.read(0x7fff), 0x34);
+        assert_eq!(memory.read_prg(0x6000), 0x12);
+        assert_eq!(memory.read_prg(0x7fff), 0x34);
     }
 
     #[test]
     fn switches_lower_prg_bank_and_keeps_last_bank_fixed() {
-        let mut prg_rom = [0u8; PRG_ROM_BANK_SIZE * 4];
-        prg_rom[0] = 0x10;
-        prg_rom[PRG_ROM_BANK_SIZE] = 0x20;
-        prg_rom[PRG_ROM_BANK_SIZE * 2] = 0x30;
-        prg_rom[PRG_ROM_BANK_SIZE * 3] = 0x40;
-        prg_rom[(PRG_ROM_BANK_SIZE * 4) - 1] = 0x4f;
+        let mut prg = [0u8; PRG_BANK_SIZE * 4];
+        prg[0] = 0x10;
+        prg[PRG_BANK_SIZE] = 0x20;
+        prg[PRG_BANK_SIZE * 2] = 0x30;
+        prg[PRG_BANK_SIZE * 3] = 0x40;
+        prg[(PRG_BANK_SIZE * 4) - 1] = 0x4f;
 
-        let mut mapper = UxRom::new(&prg_rom, &[]);
+        let (mut mapper, mut memory) = mapper_for(&prg);
 
-        assert_eq!(mapper.read(0x8000), 0x10);
-        assert_eq!(mapper.read(0xc000), 0x40);
-        assert_eq!(mapper.read(0xffff), 0x4f);
+        assert_eq!(memory.read_prg(0x8000), 0x10);
+        assert_eq!(memory.read_prg(0xc000), 0x40);
+        assert_eq!(memory.read_prg(0xffff), 0x4f);
 
-        mapper.write(0x8000, 0x02, SystemClock::default());
-        assert_eq!(mapper.read(0x8000), 0x30);
-        assert_eq!(mapper.read(0xbfff), prg_rom[(PRG_ROM_BANK_SIZE * 3) - 1]);
-        assert_eq!(mapper.read(0xc000), 0x40);
-        assert_eq!(mapper.read(0xffff), 0x4f);
+        mapper.cpu_write(0x8000, 0x02, SystemClock::default(), &mut memory);
+        assert_eq!(memory.read_prg(0x8000), 0x30);
+        assert_eq!(memory.read_prg(0xbfff), prg[(PRG_BANK_SIZE * 3) - 1]);
+        assert_eq!(memory.read_prg(0xc000), 0x40);
+        assert_eq!(memory.read_prg(0xffff), 0x4f);
     }
 }

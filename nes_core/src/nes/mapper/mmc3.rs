@@ -1,10 +1,12 @@
-use super::{CARTRIDGE_START_ADDR, Cartridge, CartridgeCaps, CartridgeOperation};
+use super::{CartridgeCaps, Mapper, memory::CartridgeMemory};
 use crate::SystemClock;
 use crate::nes::mapper::Mirroring;
 
-const PRG_RAM_SIZE: usize = 0x2000;
-const PRG_ROM_BANK_SIZE: usize = 0x2000;
 pub(crate) const MMC3_A12_LOW_FILTER_TICKS: u8 = 12;
+#[cfg(test)]
+const PRG_ROM_BANK_SIZE: usize = 0x2000;
+#[cfg(test)]
+const CHR_BANK_SIZE: usize = 0x0400;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum IrqRevision {
@@ -12,18 +14,13 @@ enum IrqRevision {
     Alternate,
 }
 
-const CHR_BANK_SIZE: usize = 0x0400;
-
 pub struct MMC3 {
-    prg_rom: Vec<u8>,
-    prg_ram: [u8; PRG_RAM_SIZE],
     mirroring_locked: bool,
     bank_select: u8,
     reg_6: u8,
     reg_7: u8,
     prg_ram_enabled: bool,
     prg_ram_write_protect: bool,
-    prg_offsets: [usize; 4],
     irq_latch: u8,
     irq_counter: u8,
     irq_reload: bool,
@@ -33,45 +30,24 @@ pub struct MMC3 {
     prev_a12: bool,
     a12_low_ticks: u8,
     a12_transition_this_scanline: bool,
-    chr_source: Vec<u8>,
-    has_chr_ram: bool,
     chr_bank_registers: [u8; 8],
-    chr_bank_offsets: [usize; 8],
+    prg_bank_count: usize,
+    chr_bank_count: usize,
 }
 
 impl MMC3 {
     pub fn new(
-        prg_rom: &[u8],
-        chr_rom: &[u8],
-        chr_ram_size: Option<usize>,
+        memory: &mut CartridgeMemory,
         mirroring_locked: bool,
         alternate_irq_revision: bool,
     ) -> Self {
-        debug_assert!(!prg_rom.is_empty());
-        debug_assert_eq!(prg_rom.len() % PRG_ROM_BANK_SIZE, 0);
-
-        let has_chr_ram = chr_rom.is_empty();
-        let size = if has_chr_ram {
-            // NES 2.0 encodes CHR-RAM size as a shift count in header byte
-            // 11; the parser already decodes it to bytes. Carts that declare
-            // none get the TxROM's standard 8 KiB.
-            chr_ram_size.unwrap_or(0x2000)
-        } else {
-            chr_rom.len()
-        };
-        let mut chr_source = vec![0; size];
-        chr_source[..chr_rom.len()].copy_from_slice(chr_rom);
-
-        let mut mapper = Self {
-            prg_rom: prg_rom.to_vec(),
-            prg_ram: [0; PRG_RAM_SIZE],
+        let mapper = Self {
             mirroring_locked,
             bank_select: 0,
             reg_6: 0,
             reg_7: 0,
             prg_ram_enabled: true,
             prg_ram_write_protect: false,
-            prg_offsets: [0; 4],
             irq_latch: 0,
             irq_counter: 0,
             irq_reload: false,
@@ -85,69 +61,42 @@ impl MMC3 {
             prev_a12: false,
             a12_low_ticks: 0,
             a12_transition_this_scanline: false,
-            chr_source,
-            has_chr_ram,
             chr_bank_registers: [0; 8],
-            chr_bank_offsets: [0; 8],
+            prg_bank_count: memory.prg_bank_count_8k(),
+            chr_bank_count: memory.chr_bank_count(),
         };
-        mapper.sync_prg_banks();
-        mapper.chr_sync_banks();
+        mapper.sync_prg_banks(memory);
+        mapper.sync_chr_banks(memory);
         mapper
     }
 
-    fn prg_bank_count(&self) -> usize {
-        self.prg_rom.len() / PRG_ROM_BANK_SIZE
+    fn normalize_prg_bank(&self, bank: u8) -> u16 {
+        (bank as usize % self.prg_bank_count) as u16
     }
 
-    fn normalize_prg_bank(&self, bank: u8) -> usize {
-        (bank as usize) % self.prg_bank_count()
-    }
-
-    fn set_prg_slot(&mut self, slot: usize, bank: usize) {
-        self.prg_offsets[slot] = bank * PRG_ROM_BANK_SIZE;
-    }
-
-    fn sync_prg_banks(&mut self) {
-        let last_bank = self.prg_bank_count() - 1;
-        let second_last_bank = last_bank - 1;
+    fn sync_prg_banks(&self, memory: &mut CartridgeMemory) {
+        let last_bank = self.prg_bank_count - 1;
+        let second_last_bank = last_bank.saturating_sub(1);
         let bank6 = self.normalize_prg_bank(self.reg_6);
         let bank7 = self.normalize_prg_bank(self.reg_7);
         let prg_mode = (self.bank_select & 0x40) != 0;
 
-        if prg_mode {
-            self.set_prg_slot(0, second_last_bank);
-            self.set_prg_slot(1, bank7);
-            self.set_prg_slot(2, bank6);
+        let (slot0, slot2) = if prg_mode {
+            (second_last_bank as u16, bank6)
         } else {
-            self.set_prg_slot(0, bank6);
-            self.set_prg_slot(1, bank7);
-            self.set_prg_slot(2, second_last_bank);
-        }
-        self.set_prg_slot(3, last_bank);
+            (bank6, second_last_bank as u16)
+        };
+        memory.map_prg_8k(0, slot0);
+        memory.map_prg_8k(1, bank7);
+        memory.map_prg_8k(2, slot2);
+        memory.map_prg_8k(3, last_bank as u16);
     }
 
-    fn read_prg(&self, slot: usize, address: u16) -> u8 {
-        let offset = self.prg_offsets[slot] + ((address as usize) % PRG_ROM_BANK_SIZE);
-        self.prg_rom[offset]
+    fn chr_normalize_bank(&self, bank: u8) -> u16 {
+        (bank as usize % self.chr_bank_count) as u16
     }
 
-    fn chr_bank_count(&self) -> usize {
-        if self.chr_source.is_empty() {
-            1
-        } else {
-            self.chr_source.len() / CHR_BANK_SIZE
-        }
-    }
-
-    fn chr_normalize_bank(&self, bank: u8) -> usize {
-        if self.chr_bank_count() == 0 {
-            0
-        } else {
-            (bank as usize) % self.chr_bank_count()
-        }
-    }
-
-    fn chr_sync_banks(&mut self) {
+    fn sync_chr_banks(&self, memory: &mut CartridgeMemory) {
         let chr_mode = (self.bank_select & 0x80) != 0;
         let r0_even = self.chr_normalize_bank(self.chr_bank_registers[0] & !1);
         let r0_odd = self.chr_normalize_bank(self.chr_bank_registers[0] | 1);
@@ -165,46 +114,46 @@ impl MMC3 {
         };
 
         for (slot, bank) in banks.into_iter().enumerate() {
-            self.chr_bank_offsets[slot] = bank * CHR_BANK_SIZE;
+            memory.map_chr_1k(slot as u16, bank);
         }
     }
 
-    fn select_bank(&mut self, value: u8) {
+    fn select_bank(&mut self, value: u8, memory: &mut CartridgeMemory) {
         self.bank_select = value;
-        self.sync_prg_banks();
-        self.chr_sync_banks();
+        self.sync_prg_banks(memory);
+        self.sync_chr_banks(memory);
     }
 
-    fn write_bank_data(&mut self, value: u8) {
+    fn write_bank_data(&mut self, value: u8, memory: &mut CartridgeMemory) {
         let target = self.bank_select & 0x07;
         match target {
             6 => self.reg_6 = value,
             7 => self.reg_7 = value,
             _ => {}
         }
-        self.sync_prg_banks();
+        self.sync_prg_banks(memory);
         if target < 6 {
             self.chr_bank_registers[target as usize] = value;
-            self.chr_sync_banks();
+            self.sync_chr_banks(memory);
         }
     }
 
-    fn set_mirroring(&mut self, value: u8) -> CartridgeOperation {
+    fn apply_mirroring(&self, value: u8, memory: &mut CartridgeMemory) {
         if self.mirroring_locked {
-            return CartridgeOperation::None;
+            return;
         }
-
         let mirroring = if value & 0x01 == 0 {
             Mirroring::Vertical
         } else {
             Mirroring::Horizontal
         };
-        CartridgeOperation::UpdateNametableMirroring(mirroring)
+        memory.apply_mirroring(mirroring);
     }
 
-    fn set_prg_ram_protect(&mut self, value: u8) {
+    fn set_prg_ram_protect(&mut self, value: u8, memory: &mut CartridgeMemory) {
         self.prg_ram_write_protect = (value & 0x40) != 0;
         self.prg_ram_enabled = (value & 0x80) != 0;
+        memory.set_prg_ram_enabled(self.prg_ram_enabled);
     }
 
     fn clock_irq(&mut self) {
@@ -232,48 +181,32 @@ impl MMC3 {
     }
 }
 
-impl Cartridge for MMC3 {
-    fn read(&self, address: u16) -> u8 {
+impl Mapper for MMC3 {
+    fn cpu_write(
+        &mut self,
+        address: u16,
+        value: u8,
+        _cycle: SystemClock,
+        memory: &mut CartridgeMemory,
+    ) {
         match address {
-            CARTRIDGE_START_ADDR..=0x5fff => 0,
-            0x6000..=0x7fff => {
-                if self.prg_ram_enabled {
-                    self.prg_ram[(address - 0x6000) as usize]
-                } else {
-                    0
-                }
-            }
-            0x8000..=0x9fff => self.read_prg(0, address - 0x8000),
-            0xa000..=0xbfff => self.read_prg(1, address - 0xa000),
-            0xc000..=0xdfff => self.read_prg(2, address - 0xc000),
-            0xe000..=0xffff => self.read_prg(3, address - 0xe000),
-            _ => unreachable!(),
-        }
-    }
-
-    fn write(&mut self, address: u16, value: u8, _cycle: SystemClock) -> CartridgeOperation {
-        match address {
-            CARTRIDGE_START_ADDR..=0x5fff => CartridgeOperation::None,
             0x6000..=0x7fff => {
                 if self.prg_ram_enabled && !self.prg_ram_write_protect {
-                    self.prg_ram[(address - 0x6000) as usize] = value;
+                    memory.write_prg(address, value);
                 }
-                CartridgeOperation::None
             }
             0x8000..=0x9fff => {
                 if address & 0x01 == 0 {
-                    self.select_bank(value);
+                    self.select_bank(value, memory);
                 } else {
-                    self.write_bank_data(value);
+                    self.write_bank_data(value, memory);
                 }
-                CartridgeOperation::None
             }
             0xa000..=0xbfff => {
                 if address & 0x01 == 0 {
-                    self.set_mirroring(value)
+                    self.apply_mirroring(value, memory);
                 } else {
-                    self.set_prg_ram_protect(value);
-                    CartridgeOperation::None
+                    self.set_prg_ram_protect(value, memory);
                 }
             }
             0xc000..=0xdfff => {
@@ -282,7 +215,6 @@ impl Cartridge for MMC3 {
                 } else {
                     self.irq_reload = true;
                 }
-                CartridgeOperation::None
             }
             0xe000..=0xffff => {
                 if address & 0x01 == 0 {
@@ -291,9 +223,8 @@ impl Cartridge for MMC3 {
                 } else {
                     self.irq_enabled = true;
                 }
-                CartridgeOperation::None
             }
-            _ => unreachable!(),
+            _ => {}
         }
     }
 
@@ -338,64 +269,52 @@ impl Cartridge for MMC3 {
         self.irq_pending
     }
 
-    fn prg_ram_enabled(&self) -> bool {
-        self.prg_ram_enabled
-    }
-
-    fn ppu_capabilities(&self) -> CartridgeCaps {
+    fn caps(&self) -> CartridgeCaps {
         CartridgeCaps {
             on_ppu_tick: true,
             notify_vram_address: true,
             irq_pending: true,
         }
     }
-
-    fn read_chr(&self, address: u16) -> u8 {
-        let addr = address as usize % 0x2000;
-        let slot = addr / CHR_BANK_SIZE;
-        let offset = addr % CHR_BANK_SIZE;
-        let source_addr = self.chr_bank_offsets[slot] + offset;
-        let len = self.chr_source.len();
-        self.chr_source[source_addr % len]
-    }
-
-    fn write_chr(&mut self, address: u16, value: u8) {
-        if !self.has_chr_ram {
-            return;
-        }
-        let addr = address as usize % 0x2000;
-        let slot = addr / CHR_BANK_SIZE;
-        let offset = addr % CHR_BANK_SIZE;
-        let source_addr = self.chr_bank_offsets[slot] + offset;
-        let len = self.chr_source.len();
-        self.chr_source[source_addr % len] = value;
-    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    fn make_mmc3_with_chr() -> (MMC3, Vec<u8>) {
+
+    fn board(prg: &[u8], chr: &[u8], chr_ram_size: Option<usize>) -> (MMC3, CartridgeMemory) {
+        let mut memory = CartridgeMemory::from_rom(prg, chr, chr_ram_size, Mirroring::Horizontal);
+        let mapper = MMC3::new(&mut memory, false, false);
+        (mapper, memory)
+    }
+
+    fn make_mmc3_with_chr() -> (MMC3, CartridgeMemory) {
         let prg = vec![0u8; PRG_ROM_BANK_SIZE * 2];
         let mut chr_data = vec![0u8; CHR_BANK_SIZE * 16];
         for bank in 0..16 {
             chr_data[bank * CHR_BANK_SIZE] = bank as u8;
         }
-        (MMC3::new(&prg, &chr_data, None, false, false), chr_data)
+        board(&prg, &chr_data, None)
     }
 
-    fn setup_chr_banks(mapper: &mut MMC3, banks: &[(u8, u8)]) {
+    fn chr_ram_board() -> (MMC3, CartridgeMemory) {
+        let prg = vec![0u8; PRG_ROM_BANK_SIZE * 2];
+        board(&prg, &[], None)
+    }
+
+    fn setup_chr_banks(mapper: &mut MMC3, memory: &mut CartridgeMemory, banks: &[(u8, u8)]) {
         for &(bank_reg, value) in banks {
-            mapper.write(0x8000, bank_reg, SystemClock::default());
-            mapper.write(0x8001, value, SystemClock::default());
+            mapper.cpu_write(0x8000, bank_reg, SystemClock::default(), memory);
+            mapper.cpu_write(0x8001, value, SystemClock::default(), memory);
         }
     }
 
     #[test]
     fn switches_chr_layout_in_chr_mode_0() {
-        let (mut mapper, _) = make_mmc3_with_chr();
+        let (mut mapper, mut memory) = make_mmc3_with_chr();
         setup_chr_banks(
             &mut mapper,
+            &mut memory,
             &[
                 (0x00, 0x06),
                 (0x01, 0x08),
@@ -406,21 +325,22 @@ mod tests {
             ],
         );
 
-        assert_eq!(mapper.read_chr(0x0000), 0x06);
-        assert_eq!(mapper.read_chr(0x0400), 0x07);
-        assert_eq!(mapper.read_chr(0x0800), 0x08);
-        assert_eq!(mapper.read_chr(0x0c00), 0x09);
-        assert_eq!(mapper.read_chr(0x1000), 0x0a);
-        assert_eq!(mapper.read_chr(0x1400), 0x0b);
-        assert_eq!(mapper.read_chr(0x1800), 0x0c);
-        assert_eq!(mapper.read_chr(0x1c00), 0x0d);
+        assert_eq!(memory.read_vram(0x0000), 0x06);
+        assert_eq!(memory.read_vram(0x0400), 0x07);
+        assert_eq!(memory.read_vram(0x0800), 0x08);
+        assert_eq!(memory.read_vram(0x0c00), 0x09);
+        assert_eq!(memory.read_vram(0x1000), 0x0a);
+        assert_eq!(memory.read_vram(0x1400), 0x0b);
+        assert_eq!(memory.read_vram(0x1800), 0x0c);
+        assert_eq!(memory.read_vram(0x1c00), 0x0d);
     }
 
     #[test]
     fn switches_chr_layout_in_chr_mode_1() {
-        let (mut mapper, _) = make_mmc3_with_chr();
+        let (mut mapper, mut memory) = make_mmc3_with_chr();
         setup_chr_banks(
             &mut mapper,
+            &mut memory,
             &[
                 (0x80, 0x06),
                 (0x81, 0x08),
@@ -431,24 +351,23 @@ mod tests {
             ],
         );
 
-        assert_eq!(mapper.read_chr(0x0000), 0x0a);
-        assert_eq!(mapper.read_chr(0x0400), 0x0b);
-        assert_eq!(mapper.read_chr(0x0800), 0x0c);
-        assert_eq!(mapper.read_chr(0x0c00), 0x0d);
-        assert_eq!(mapper.read_chr(0x1000), 0x06);
-        assert_eq!(mapper.read_chr(0x1400), 0x07);
-        assert_eq!(mapper.read_chr(0x1800), 0x08);
-        assert_eq!(mapper.read_chr(0x1c00), 0x09);
+        assert_eq!(memory.read_vram(0x0000), 0x0a);
+        assert_eq!(memory.read_vram(0x0400), 0x0b);
+        assert_eq!(memory.read_vram(0x0800), 0x0c);
+        assert_eq!(memory.read_vram(0x0c00), 0x0d);
+        assert_eq!(memory.read_vram(0x1000), 0x06);
+        assert_eq!(memory.read_vram(0x1400), 0x07);
+        assert_eq!(memory.read_vram(0x1800), 0x08);
+        assert_eq!(memory.read_vram(0x1c00), 0x09);
     }
 
     #[test]
     fn writes_to_chr_ram_through_current_mapping() {
-        let prg = vec![0u8; PRG_ROM_BANK_SIZE * 2];
-        let mut mapper = MMC3::new(&prg, &[], None, false, false);
-        mapper.write(0x8000, 0x02, SystemClock::default());
-        mapper.write(0x8001, 0x03, SystemClock::default());
-        mapper.write_chr(0x1000, 0xaa);
-        assert_eq!(mapper.read_chr(0x1000), 0xaa);
+        let (mut mapper, mut memory) = chr_ram_board();
+        mapper.cpu_write(0x8000, 0x02, SystemClock::default(), &mut memory);
+        mapper.cpu_write(0x8001, 0x03, SystemClock::default(), &mut memory);
+        memory.write_vram(0x1000, 0xaa);
+        assert_eq!(memory.read_vram(0x1000), 0xaa);
     }
 
     // big_chr_ram.nes (NES 2.0, header byte 11 = 0x09): the ROM writes tiles
@@ -457,31 +376,30 @@ mod tests {
     #[test]
     fn chr_ram_spans_declared_banks_without_aliasing() {
         let prg = vec![0u8; PRG_ROM_BANK_SIZE * 2];
-        let mut mapper = MMC3::new(&prg, &[], Some(32 * 1024), false, false);
+        let (mut mapper, mut memory) = board(&prg, &[], Some(32 * 1024));
         // R2 (1 KiB window) -> bank 0: marker; then bank 8: distinct value.
-        mapper.write(0x8000, 0x02, SystemClock::default());
-        mapper.write(0x8001, 0x00, SystemClock::default());
-        mapper.write_chr(0x1000, 0x11);
-        mapper.write(0x8000, 0x02, SystemClock::default());
-        mapper.write(0x8001, 0x08, SystemClock::default());
-        mapper.write_chr(0x1000, 0x22);
-        assert_eq!(mapper.read_chr(0x1000), 0x22);
-        mapper.write(0x8000, 0x02, SystemClock::default());
-        mapper.write(0x8001, 0x00, SystemClock::default());
-        assert_eq!(mapper.read_chr(0x1000), 0x11);
+        mapper.cpu_write(0x8000, 0x02, SystemClock::default(), &mut memory);
+        mapper.cpu_write(0x8001, 0x00, SystemClock::default(), &mut memory);
+        memory.write_vram(0x1000, 0x11);
+        mapper.cpu_write(0x8000, 0x02, SystemClock::default(), &mut memory);
+        mapper.cpu_write(0x8001, 0x08, SystemClock::default(), &mut memory);
+        memory.write_vram(0x1000, 0x22);
+        assert_eq!(memory.read_vram(0x1000), 0x22);
+        mapper.cpu_write(0x8000, 0x02, SystemClock::default(), &mut memory);
+        mapper.cpu_write(0x8001, 0x00, SystemClock::default(), &mut memory);
+        assert_eq!(memory.read_vram(0x1000), 0x11);
     }
 
     #[test]
     fn chr_ram_defaults_to_8kib_when_undeclared() {
-        let prg = vec![0u8; PRG_ROM_BANK_SIZE * 2];
-        let mut mapper = MMC3::new(&prg, &[], None, false, false);
-        mapper.write(0x8000, 0x02, SystemClock::default());
-        mapper.write(0x8001, 0x08, SystemClock::default());
-        mapper.write_chr(0x1000, 0x22);
+        let (mut mapper, mut memory) = chr_ram_board();
+        mapper.cpu_write(0x8000, 0x02, SystemClock::default(), &mut memory);
+        mapper.cpu_write(0x8001, 0x08, SystemClock::default(), &mut memory);
+        memory.write_vram(0x1000, 0x22);
         // Bank 8 wraps onto bank 0 in an 8 KiB CHR-RAM cart.
-        mapper.write(0x8000, 0x02, SystemClock::default());
-        mapper.write(0x8001, 0x00, SystemClock::default());
-        assert_eq!(mapper.read_chr(0x1000), 0x22);
+        mapper.cpu_write(0x8000, 0x02, SystemClock::default(), &mut memory);
+        mapper.cpu_write(0x8001, 0x00, SystemClock::default(), &mut memory);
+        assert_eq!(memory.read_vram(0x1000), 0x22);
     }
 
     // CHR mode 1 moves the 1 KiB R2-R5 windows to $0000-$0FFF and makes R0/R1
@@ -489,34 +407,57 @@ mod tests {
     // layout the mode bit selects.
     #[test]
     fn chr_ram_write_follows_chr_mode_1_window_layout() {
-        let prg = vec![0u8; PRG_ROM_BANK_SIZE * 2];
-        let mut mapper = MMC3::new(&prg, &[], None, false, false);
-        mapper.write(0x8000, 0x82, SystemClock::default()); // chr mode 1, bank register R2
-        mapper.write(0x8001, 0x01, SystemClock::default());
-        mapper.write_chr(0x0000, 0x5a); // R2's 1 KiB window -> bank 1
-        assert_eq!(mapper.read_chr(0x0000), 0x5a);
+        let (mut mapper, mut memory) = chr_ram_board();
+        mapper.cpu_write(0x8000, 0x82, SystemClock::default(), &mut memory); // chr mode 1, R2
+        mapper.cpu_write(0x8001, 0x01, SystemClock::default(), &mut memory);
+        memory.write_vram(0x0000, 0x5a); // R2's 1 KiB window -> bank 1
+        assert_eq!(memory.read_vram(0x0000), 0x5a);
 
         // The R0 pair stays a 2 KiB window at $1000-$17FF, untouched by the
         // bank 1 write.
-        mapper.write(0x8000, 0x80, SystemClock::default()); // chr mode 1, bank register R0
-        mapper.write(0x8001, 0x00, SystemClock::default());
-        assert_eq!(mapper.read_chr(0x1000), 0);
+        mapper.cpu_write(0x8000, 0x80, SystemClock::default(), &mut memory); // chr mode 1, R0
+        mapper.cpu_write(0x8001, 0x00, SystemClock::default(), &mut memory);
+        assert_eq!(memory.read_vram(0x1000), 0);
 
         // Bank 1 and bank 0 are distinct: repointing R2 at bank 0 exposes the
         // original zeroes, not the 0x5a.
-        mapper.write(0x8000, 0x82, SystemClock::default());
-        mapper.write(0x8001, 0x00, SystemClock::default());
-        assert_eq!(mapper.read_chr(0x0000), 0);
+        mapper.cpu_write(0x8000, 0x82, SystemClock::default(), &mut memory);
+        mapper.cpu_write(0x8001, 0x00, SystemClock::default(), &mut memory);
+        assert_eq!(memory.read_vram(0x0000), 0);
     }
 
-    fn make_mmc3(alternate_irq_revision: bool) -> MMC3 {
+    #[test]
+    fn prg_mode_swaps_fixed_and_switchable_8k_windows() {
+        let mut prg = vec![0u8; PRG_ROM_BANK_SIZE * 4];
+        for bank in 0..4 {
+            prg[bank * PRG_ROM_BANK_SIZE] = bank as u8 + 1;
+        }
+        let (mut mapper, mut memory) = board(&prg, &[], None);
+
+        // Mode 0: R6 at $8000, second-last at $C000, last at $E000.
+        mapper.cpu_write(0x8000, 0x06, SystemClock::default(), &mut memory);
+        mapper.cpu_write(0x8001, 0x01, SystemClock::default(), &mut memory);
+        assert_eq!(memory.read_prg(0x8000), 0x02);
+        assert_eq!(memory.read_prg(0xc000), 0x03);
+        assert_eq!(memory.read_prg(0xe000), 0x04);
+
+        // Mode 1: second-last at $8000, R6 at $C000.
+        mapper.cpu_write(0x8000, 0x46, SystemClock::default(), &mut memory);
+        assert_eq!(memory.read_prg(0x8000), 0x03);
+        assert_eq!(memory.read_prg(0xc000), 0x02);
+        assert_eq!(memory.read_prg(0xe000), 0x04);
+    }
+
+    fn make_mmc3(alternate_irq_revision: bool) -> (MMC3, CartridgeMemory) {
         let prg = vec![0u8; PRG_ROM_BANK_SIZE * 2];
-        MMC3::new(&prg, &[], None, false, alternate_irq_revision)
+        let mut memory = CartridgeMemory::from_rom(&prg, &[], None, Mirroring::Horizontal);
+        let mapper = MMC3::new(&mut memory, false, alternate_irq_revision);
+        (mapper, memory)
     }
 
-    fn ack_irq(mapper: &mut MMC3) {
-        mapper.write(0xe000, 0, SystemClock::default());
-        mapper.write(0xe001, 0, SystemClock::default());
+    fn ack_irq(mapper: &mut MMC3, memory: &mut CartridgeMemory) {
+        mapper.cpu_write(0xe000, 0, SystemClock::default(), memory);
+        mapper.cpu_write(0xe001, 0, SystemClock::default(), memory);
     }
 
     // 6-MMC6.s set_test 3 / blargg's MMC3 revision A: after the counter
@@ -524,17 +465,17 @@ mod tests {
     // not re-assert the IRQ even when the latch is 0.
     #[test]
     fn alternate_revision_skips_irq_on_reload_after_natural_zero() {
-        let mut mapper = make_mmc3(true);
-        mapper.write(0xc000, 1, SystemClock::default());
-        mapper.write(0xc001, 0, SystemClock::default());
-        ack_irq(&mut mapper);
+        let (mut mapper, mut memory) = make_mmc3(true);
+        mapper.cpu_write(0xc000, 1, SystemClock::default(), &mut memory);
+        mapper.cpu_write(0xc001, 0, SystemClock::default(), &mut memory);
+        ack_irq(&mut mapper, &mut memory);
 
         mapper.clock_irq(); // requested reload -> counter = 1
         mapper.clock_irq(); // decrement -> 0, IRQ asserted
         assert!(mapper.irq_pending);
-        ack_irq(&mut mapper);
+        ack_irq(&mut mapper, &mut memory);
 
-        mapper.write(0xc000, 0, SystemClock::default());
+        mapper.cpu_write(0xc000, 0, SystemClock::default(), &mut memory);
         mapper.clock_irq(); // counter was 0 -> reload to latch 0: no IRQ
         assert!(!mapper.irq_pending);
     }
@@ -544,10 +485,10 @@ mod tests {
     #[test]
     fn requested_reload_to_zero_asserts_irq_on_both_revisions() {
         for alternate_irq_revision in [false, true] {
-            let mut mapper = make_mmc3(alternate_irq_revision);
-            mapper.write(0xc000, 0, SystemClock::default());
-            mapper.write(0xc001, 0, SystemClock::default());
-            ack_irq(&mut mapper);
+            let (mut mapper, mut memory) = make_mmc3(alternate_irq_revision);
+            mapper.cpu_write(0xc000, 0, SystemClock::default(), &mut memory);
+            mapper.cpu_write(0xc001, 0, SystemClock::default(), &mut memory);
+            ack_irq(&mut mapper, &mut memory);
 
             mapper.clock_irq(); // reload request -> counter = 0: IRQ
             assert!(mapper.irq_pending);
@@ -559,15 +500,15 @@ mod tests {
     // and asserts the IRQ again.
     #[test]
     fn standard_revision_sets_irq_on_every_clock_with_zero_latch() {
-        let mut mapper = make_mmc3(false);
-        mapper.write(0xc000, 0, SystemClock::default());
-        mapper.write(0xc001, 0, SystemClock::default());
-        ack_irq(&mut mapper);
+        let (mut mapper, mut memory) = make_mmc3(false);
+        mapper.cpu_write(0xc000, 0, SystemClock::default(), &mut memory);
+        mapper.cpu_write(0xc001, 0, SystemClock::default(), &mut memory);
+        ack_irq(&mut mapper, &mut memory);
 
         for _ in 0..3 {
             mapper.clock_irq();
             assert!(mapper.irq_pending);
-            ack_irq(&mut mapper);
+            ack_irq(&mut mapper, &mut memory);
         }
     }
 }

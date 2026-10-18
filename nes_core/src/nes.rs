@@ -5,7 +5,6 @@ use crate::nes::{
     apu::{Apu, AudioDriver},
     controller::{Button, Controller, Zapper},
     lower_ram::LowerRam,
-    mapper::CartridgeOperation,
     ppu::{Ppu, Timing},
 };
 use crate::render::Render;
@@ -20,8 +19,7 @@ pub mod ppu;
 pub struct NesMcu<R: Render, D: AudioDriver> {
     lower_ram: LowerRam,
     ppu: Ppu<R>,
-    cartridge: Box<dyn mapper::Cartridge>,
-    cartridge_caps: mapper::CartridgeCaps,
+    cartridge: mapper::Cartridge,
     controller: Controller,
     apu: Apu<D>,
     oam_dma_pending: Option<u8>,
@@ -63,16 +61,13 @@ impl<R: Render, D: AudioDriver> NesMcu<R, D> {
         audio_driver: D,
         irq_override: Mmc3IrqOverride,
     ) -> Self {
-        let (cartridge, mirroring) =
-            mapper::create_cartridge_with_mmc3_irq_override(file, irq_override);
-        let cartridge_caps = cartridge.ppu_capabilities();
-        let ppu = Ppu::new(renderer, mirroring);
+        let cartridge = mapper::create_cartridge_with_mmc3_irq_override(file, irq_override);
+        let ppu = Ppu::new(renderer);
 
         Self {
             lower_ram: LowerRam::new(),
             ppu,
             cartridge,
-            cartridge_caps,
             controller: Controller::new(),
             apu: Apu::new(audio_driver),
             oam_dma_pending: None,
@@ -125,9 +120,7 @@ impl<R: Render, D: AudioDriver> NesMcu<R, D> {
     }
 
     pub fn tick_ppu(&mut self) {
-        let caps = self.cartridge_caps;
-        let cartridge = &mut *self.cartridge;
-        self.ppu.tick(cartridge, caps);
+        self.ppu.tick(&mut self.cartridge);
     }
 
     pub(crate) fn set_clock(&mut self, clock: SystemClock) {
@@ -151,7 +144,7 @@ impl<R: Render, D: AudioDriver> NesMcu<R, D> {
     }
 
     pub fn cartridge_irq_pending(&self) -> bool {
-        if !self.cartridge_caps.irq_pending {
+        if !self.cartridge.caps().irq_pending {
             return false;
         }
         self.cartridge.irq_pending()
@@ -235,7 +228,7 @@ impl<R: Render, D: AudioDriver> NesMcu<R, D> {
     }
 
     pub fn read_vram(&self, addr: u16) -> u8 {
-        self.ppu().read_vram(addr, &*self.cartridge)
+        self.ppu().read_vram(addr, &self.cartridge)
     }
 }
 
@@ -243,10 +236,9 @@ impl<R: Render, D: AudioDriver> Mcu for NesMcu<R, D> {
     fn read(&mut self, address: u16) -> u8 {
         let prev_joypad1_oe = std::mem::replace(&mut self.joypad1_oe, address == 0x4016);
         let prev_joypad2_oe = std::mem::replace(&mut self.joypad2_oe, address == 0x4017);
-        let caps = self.cartridge_caps;
         let value = match address {
             0x0000..=0x1fff => self.lower_ram.read(address),
-            0x2000..=0x3fff => self.ppu.read_ppureg(address, &mut *self.cartridge, caps),
+            0x2000..=0x3fff => self.ppu.read_ppureg(address, &mut self.cartridge),
             0x4016 => self.controller.a.read_strobed(!prev_joypad1_oe),
             0x4017 => self.controller.b.read_strobed(!prev_joypad2_oe) | self.zapper_bits(),
             0x4015 => self.apu.read(address),
@@ -270,7 +262,7 @@ impl<R: Render, D: AudioDriver> Mcu for NesMcu<R, D> {
     fn peek(&self, address: u16) -> u8 {
         match address {
             0x0000..=0x1fff => self.lower_ram.peek(address),
-            0x2000..=0x3fff => self.ppu.peek(address, &*self.cartridge),
+            0x2000..=0x3fff => self.ppu.peek(address, &self.cartridge),
             0x4015 => self.apu.peek(address),
             0x4016 => self.controller.peek(address),
             0x4017 => self.controller.peek(address) | self.zapper_bits(),
@@ -293,11 +285,7 @@ impl<R: Render, D: AudioDriver> Mcu for NesMcu<R, D> {
         self.joypad2_oe = false;
         match address {
             0x0000..=0x1fff => self.lower_ram.write(address, value),
-            0x2000..=0x3fff => {
-                let caps = self.cartridge_caps;
-                let cart = &mut *self.cartridge;
-                self.ppu.write_ppureg(address, value, cart, caps)
-            }
+            0x2000..=0x3fff => self.ppu.write_ppureg(address, value, &mut self.cartridge),
             0x4000..=0x401f => match address {
                 0x4014 => self.ppu_dma(value),
                 0x4016 => self.controller.write(address, value),
@@ -309,20 +297,11 @@ impl<R: Render, D: AudioDriver> Mcu for NesMcu<R, D> {
             },
             0x4020..=0x5fff => {}
             0x6000..=0x7fff => {
-                if self.cartridge.prg_ram_enabled()
-                    && let CartridgeOperation::UpdateNametableMirroring(mirroring) =
-                        self.cartridge.write(address, value, self.current_clock)
-                {
-                    self.ppu.set_mirroring(mirroring);
+                if self.cartridge.prg_ram_enabled() {
+                    self.cartridge.write(address, value, self.current_clock);
                 }
             }
-            0x8000..=0xffff => {
-                if let CartridgeOperation::UpdateNametableMirroring(mirroring) =
-                    self.cartridge.write(address, value, self.current_clock)
-                {
-                    self.ppu.set_mirroring(mirroring);
-                }
-            }
+            0x8000..=0xffff => self.cartridge.write(address, value, self.current_clock),
         }
     }
 

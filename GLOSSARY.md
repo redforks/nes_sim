@@ -1,29 +1,48 @@
 # NES Emulator
 
-## Language — CHR Storage
+## Language — Cartridge and Mapper
 
-Core domain for pattern table data access across mapper implementations.
+Core domain for the cartridge board: the memory it carries, and the chip that decides which bank each address slot points at.
 
 **CHR (Character Data)**:
 Tile graphics data stored in pattern tables, accessed by the PPU during rendering.
 _Avoid_: Pattern table data, sprite data
 
 **Cartridge**:
-Trait defining CPU+PPU operations for mapper-specific implementations. Contains `read_chr` and `write_chr` methods directly on the trait (alongside `read`, `write` for PRG/CartridgeOperation).
+The board model: the memory the cartridge carries (PRG ROM, PRG RAM, CHR, nametables) together with the mapper chip that decides which bank every slot of the CPU and PPU address windows points at. Owns all cartridge memory and exposes CPU reads/writes plus PPU-side VRAM access.
+_Avoid_: Cartridge trait, mapper-as-cartridge
 
-**DirectChr**:
-Standalone struct for flat 8KB CHR storage (`[u8; 0x2000]`). Read and write map directly by address modulo 0x2000. Used by mappers with flat (non-banked) CHR: NRom, UxRom, AxRom, CnRom.
+**Mapper**:
+The bank-switching chip on a cartridge board (NROM, UxROM, AxROM, CNROM, MMC1, MMC3, VRC4, Nina-001, BxROM, J87). Reacts to CPU register writes and PPU clock events by pointing slots at banks; it carries no cartridge memory and performs no data read of its own.
+_Avoid_: Board, cartridge, CHR ROM
+
+**Bank**:
+The unit of switchable cartridge memory: 1 KB of bytes. Every switchable granularity (1 KB, 4 KB, 8 KB, 32 KB) is one bank or a run of consecutive banks.
+_Avoid_: Page, block, chunk
+
+**Bank slot**:
+One position in a bank window. A slot holds a bank number.
+_Avoid_: Entry, offset
+
+**Bank window**:
+The fixed set of slots the CPU or PPU can address. The PPU window covers `$0000-$3FFF` (8 pattern-table slots, 4 nametable slots, and the 4 `$3000-$3EFF` alias slots that repeat them); the PRG window covers `$6000-$FFFF` (8 PRG-RAM slots + 32 PRG-ROM slots) plus padding slots that exist only so the slot index can be masked instead of bounds-checked. The mapper rewrites it; every access reads it.
+_Avoid_: Page table, mapping array
+
+**VRAM (cartridge)**:
+The cartridge's PPU-addressable memory as a single address space: pattern tables (`$0000-$1FFF`, CHR ROM or CHR RAM) followed by the four nametable banks (`$2000-$3EFF`). Reached through one read/write pair, so no caller distinguishes CHR from nametable.
+_Avoid_: CIRAM (nametable RAM only), CHR (pattern tables only)
+
+**Mirroring**:
+The board wiring that decides which nametable bank each of the four nametable slots shows: vertical repeats horizontally, horizontal repeats vertically, single-screen shows one bank in all four slots, four-screen wires all four banks. Expressed as slot entries, never as an address transform.
+_Avoid_: address folding, NT remapping
 
 **BxRom**:
-Mapper 34 board variant (BNROM). Stores CHR as `Vec<u8>` but it is flat 8KB (no banking, modulo 0x2000). PRG banking via writes to `$8000-$FFFF`.
+Mapper 34 board variant (BNROM): flat 8KB CHR (no banking) and PRG banking via writes to `$8000-$FFFF`.
 _Avoid_: BxROM, BNROM-with-CHR
 
 **Nina001**:
-Mapper 34 board variant (NINA-001). CHR data as `Vec<u8>` with 4KB banking via `$7FFE` (bank 0, selectable 0..15) and `$7FFF` (bank 1, selectable 0..15). PRG banking via `$8000-$FFFF` and `$7FFD` (bit 0).
+Mapper 34 board variant (NINA-001): CHR in two 4KB banks via `$7FFE` (slot 0, selectable 0..15) and `$7FFF` (slot 1, selectable 0..15); PRG banking via `$8000-$FFFF` and `$7FFD` (bit 0).
 _Avoid_: Nina-001
-
-**Banked CHR (inline)**:
-Mappers with bankable CHR (MMC1, MMC3, Vrc24, J87, CnRom, Nina001) manage their own `Vec<u8>` and caching window inline — no shared abstraction. Write gating via `has_chr_ram` per mapper. CHR write-back to underlying `Vec` is direct (no write-through cache).
 
 ## Language — PPU Background Rendering
 
@@ -34,7 +53,7 @@ Scroll-state snapshot latched at dot 0 of each visible scanline (and on-demand v
 _Avoid_: background latch, scroll anchor
 
 **TileCache**:
-Four-byte cached render state for the current background tile, stored as a field on `Ppu`. Holds the nametable byte (tile index), attribute byte (2-bit palette select), and both bitplane rows (low, high) at the current fine_y. Filled once per tile from mapper `read_chr` and nametable reads — matching the real PPU's tile-fetch cadence — then consumed for up to 8 horizontal pixels before unconditional refill. The first batch is shorter by `fine_x` to handle sub-tile scroll offsets. Invalidated at dot 0 and on `$2000`/`$2006` register writes.
+Four-byte cached render state for the current background tile, stored as a field on `Ppu`. Holds the nametable byte (tile index), attribute byte (2-bit palette select), and both bitplane rows (low, high) at the current fine_y. Filled once per tile from cartridge VRAM reads — matching the real PPU's tile-fetch cadence — then consumed for up to 8 horizontal pixels before unconditional refill. The first batch is shorter by `fine_x` to handle sub-tile scroll offsets. Invalidated at dot 0 and on `$2000`/`$2006` register writes.
 _Avoid_: tile cache (lowercase c), pattern cache
 
 ## Language — System Timing
@@ -225,13 +244,13 @@ _Avoid_: vblank suppression (overloaded), nmi suppression
 ## Language — Mapper MMC1
 
 **MMC1 consecutive-cycle write filter**:
-MMC1's serial port ignores data-bit writes (`$8000-$FFFF` with bit7 clear) that occur within 1 CPU cycle (3 PPU/system cycles) of the previous mapper write. Reset writes (`bit7 set`) are never ignored but do update the timestamp (`last_write_cycle: Option<SystemClock>`). The filter is checked in `Cartridge::write(address, value, cycle: SystemClock)` — only `Cartridge::write` takes `SystemClock`, not `Mcu::write`; `NesMcu` stamps `current_clock` from `NesMachine::tick` via `set_clock`. Bill & Ted's `INC $FF` (reset $FF then data $00 on next cycle) and Shinsenden's `RRA` (data then reset) pin the two sides.
+MMC1's serial port ignores data-bit writes (`$8000-$FFFF` with bit7 clear) that occur within 1 CPU cycle (3 PPU/system cycles) of the previous mapper write. Reset writes (`bit7 set`) are never ignored but do update the timestamp (`last_write_cycle: Option<SystemClock>`). The filter is checked in the mapper's CPU-write entry point (`Mapper::cpu_write(address, value, cycle: SystemClock)`) — only mapper writes take `SystemClock`, not `Mcu::write`; `NesMcu` stamps `current_clock` from `NesMachine::tick` via `set_clock`. Bill & Ted's `INC $FF` (reset $FF then data $00 on next cycle) and Shinsenden's `RRA` (data then reset) pin the two sides.
 _Avoid_: write filter, consecutive writes (without qualifier)
 
 ## Language — Bus Decoding
 
 **Decode into NesMcu (not Ppu)**:
-`Ppu` no longer owns `Box<dyn Cartridge>` nor implements `Mcu`. `NesMcu` owns `cartridge: Box<dyn Cartridge> + cartridge_caps: CartridgeCaps + current_clock: SystemClock` and performs all CPU address decode: `0x0000-0x1FFF` LowerRam, `0x2000-0x3FFF` PPU regs via `Ppu::read_ppureg`/`write_ppureg` (taking `&mut dyn Cartridge, CartridgeCaps`), `0x4000-0x401F` APU/IO, `0x4020-0x5FFF` open bus, `0x6000-0x7FFF` PRG-RAM (open bus if `!prg_ram_enabled()`), `0x8000-0xFFFF` PRG-ROM via `cartridge.read`/`write(cycle)`. Undriven reads (`0x4020-0x5FFF`, disabled PRG-RAM) refresh the CPU open bus (`open_bus` latch) and the PPU latch decays via `PPU_OPEN_BUS_DECAY_TICKS`.
+`Ppu` does not own the cartridge and does not implement `Mcu`. `NesMcu` owns `cartridge: Cartridge + current_clock: SystemClock` and performs all CPU address decode: `0x0000-0x1FFF` LowerRam, `0x2000-0x3FFF` PPU regs via `Ppu::read_ppureg`/`write_ppureg` (taking `&mut Cartridge`), `0x4000-0x401F` APU/IO, `0x4020-0x5FFF` open bus, `0x6000-0x7FFF` PRG-RAM (open bus if `!prg_ram_enabled()`), `0x8000-0xFFFF` PRG-ROM via `cartridge.read`/`write(cycle)`. Undriven reads (`0x4020-0x5FFF`, disabled PRG-RAM) refresh the CPU open bus (`open_bus` latch) and the PPU latch decays via `PPU_OPEN_BUS_DECAY_TICKS`.
 _Avoid_: Ppu as Mcu, cartridge in Ppu, open bus (without qualifier)
 
 ## Language — Controller Reading

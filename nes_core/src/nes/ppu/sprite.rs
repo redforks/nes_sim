@@ -263,7 +263,7 @@ impl SpriteManager {
     pub fn find_sprite_pixel(
         &self,
         ctrl: PpuCtrl,
-        cartridge: &dyn Cartridge,
+        cartridge: &Cartridge,
         screen_x: u8,
         screen_y: u8,
     ) -> Option<SpritePixel> {
@@ -283,7 +283,7 @@ impl SpriteManager {
     pub fn sprite_zero_pixel_opaque(
         &self,
         ctrl: PpuCtrl,
-        cartridge: &dyn Cartridge,
+        cartridge: &Cartridge,
         screen_x: u8,
         screen_y: u8,
     ) -> bool {
@@ -306,7 +306,7 @@ pub struct SpritePixel {
 fn evaluate_sprite_from_secondary(
     sprite: &Sprite,
     ctrl: PpuCtrl,
-    cartridge: &dyn Cartridge,
+    cartridge: &Cartridge,
     screen_x: u8,
     screen_y: u8,
 ) -> Option<SpritePixel> {

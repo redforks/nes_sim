@@ -1,107 +1,65 @@
-use super::{CARTRIDGE_START_ADDR, Cartridge, CartridgeOperation};
+use super::{Mapper, memory::CartridgeMemory};
 use crate::SystemClock;
-const PRG_ROM_BANK_SIZE: usize = 0x8000;
-const CARTRIDGE_RAM_SIZE: usize = 0x4000 - 0x20;
 
+/// NINA-001 (mapper 34, CHR larger than 8 KB): one 32 KB PRG bank over the
+/// whole window, CHR in two 4 KB banks selected by registers at `$7FFE`
+/// and `$7FFF`, PRG bank selected by `$7FFD` bit 0 and by
+/// `$8000-$FFFF`.
 pub struct Nina001 {
-    prg_rom: Vec<u8>,
-    ram: [u8; CARTRIDGE_RAM_SIZE],
     selected_prg_bank: usize,
     prg_bank_count: usize,
-    chr_data: Vec<u8>,
-    has_chr_ram: bool,
-    chr_bank0: usize,
-    chr_bank1: usize,
+    chr_bank0: u16,
+    chr_bank1: u16,
 }
 
 impl Nina001 {
-    pub fn new(prg_rom: &[u8], chr_rom: &[u8]) -> Self {
-        debug_assert!(!prg_rom.is_empty());
-        debug_assert_eq!(prg_rom.len() % PRG_ROM_BANK_SIZE, 0);
-
-        let has_chr_ram = chr_rom.is_empty();
-        let chr_data = if has_chr_ram {
-            vec![0; 0x2000]
-        } else {
-            chr_rom.to_vec()
-        };
-
+    pub fn new(memory: &mut CartridgeMemory) -> Self {
+        let prg_bank_count = memory.prg_bank_count_32k();
+        memory.map_prg_32k(0);
+        memory.map_chr_4k(0, 0);
+        memory.map_chr_4k(1, 0);
         Self {
-            prg_rom: prg_rom.to_vec(),
-            ram: [0; CARTRIDGE_RAM_SIZE],
             selected_prg_bank: 0,
-            prg_bank_count: prg_rom.len() / PRG_ROM_BANK_SIZE,
-            chr_data,
-            has_chr_ram,
+            prg_bank_count,
             chr_bank0: 0,
             chr_bank1: 0,
         }
     }
-
-    fn selected_prg_bank(&self) -> usize {
-        self.selected_prg_bank % self.prg_bank_count
-    }
-
-    fn read_prg_bank(&self, bank: usize, address: u16) -> u8 {
-        let bank_start = bank * PRG_ROM_BANK_SIZE;
-        let offset = (address as usize) % PRG_ROM_BANK_SIZE;
-        self.prg_rom[bank_start + offset]
-    }
 }
 
-impl Cartridge for Nina001 {
-    fn read(&self, address: u16) -> u8 {
+impl Mapper for Nina001 {
+    fn cpu_write(
+        &mut self,
+        address: u16,
+        value: u8,
+        _cycle: SystemClock,
+        memory: &mut CartridgeMemory,
+    ) {
         match address {
-            CARTRIDGE_START_ADDR..=0x7fff => self.ram[(address - CARTRIDGE_START_ADDR) as usize],
-            0x8000..=0xffff => self.read_prg_bank(self.selected_prg_bank(), address - 0x8000),
-            _ => unreachable!(),
-        }
-    }
-
-    fn write(&mut self, address: u16, value: u8, _cycle: SystemClock) -> CartridgeOperation {
-        match address {
-            CARTRIDGE_START_ADDR..=0x7fff => {
-                self.ram[(address - CARTRIDGE_START_ADDR) as usize] = value;
+            0x6000..=0x7fff => {
+                memory.write_prg(address, value);
                 match address {
-                    0x7ffd => self.selected_prg_bank = (value & 0x01) as usize,
-                    0x7ffe => self.chr_bank0 = (value & 0x0f) as usize,
-                    0x7fff => self.chr_bank1 = (value & 0x0f) as usize,
+                    0x7ffd => {
+                        self.selected_prg_bank = (value & 0x01) as usize;
+                        memory.map_prg_32k(self.selected_prg_bank as u16);
+                    }
+                    0x7ffe => {
+                        self.chr_bank0 = (value & 0x0f) as u16;
+                        memory.map_chr_4k(0, self.chr_bank0);
+                    }
+                    0x7fff => {
+                        self.chr_bank1 = (value & 0x0f) as u16;
+                        memory.map_chr_4k(1, self.chr_bank1);
+                    }
                     _ => {}
                 }
             }
             0x8000..=0xffff => {
-                self.selected_prg_bank = value as usize;
+                self.selected_prg_bank = value as usize % self.prg_bank_count;
+                memory.map_prg_32k(self.selected_prg_bank as u16);
             }
-            _ => unreachable!("Invalid write address: {:#04x}", address),
+            _ => {}
         }
-        CartridgeOperation::None
-    }
-
-    fn read_chr(&self, address: u16) -> u8 {
-        let addr = address as usize % 0x2000;
-        let bank = if addr < 0x1000 {
-            self.chr_bank0
-        } else {
-            self.chr_bank1
-        };
-        let src = bank * 0x1000 + (addr % 0x1000);
-        let len = self.chr_data.len();
-        self.chr_data[src % len]
-    }
-
-    fn write_chr(&mut self, address: u16, value: u8) {
-        if !self.has_chr_ram {
-            return;
-        }
-        let addr = address as usize % 0x2000;
-        let bank = if addr < 0x1000 {
-            self.chr_bank0
-        } else {
-            self.chr_bank1
-        };
-        let src = bank * 0x1000 + (addr % 0x1000);
-        let len = self.chr_data.len();
-        self.chr_data[src % len] = value;
     }
 }
 
@@ -109,15 +67,49 @@ impl Cartridge for Nina001 {
 mod tests {
     use super::*;
 
-    #[test]
-    fn chr_banking() {
+    const PRG_BANK_SIZE: usize = 0x8000;
+
+    fn make_chr() -> Vec<u8> {
         let mut data = vec![0u8; 0x4000];
         data[0x0000] = 0xa1;
         data[0x1000] = 0xb1;
-        let mut mapper = Nina001::new(&[0; PRG_ROM_BANK_SIZE], &data);
-        mapper.write(0x7ffe, 0x00, SystemClock::default());
-        mapper.write(0x7fff, 0x01, SystemClock::default());
-        assert_eq!(mapper.read_chr(0x0000), 0xa1);
-        assert_eq!(mapper.read_chr(0x1000), 0xb1);
+        data[0x2000] = 0xa2;
+        data[0x3000] = 0xb2;
+        // Only the first two 4 KB banks are reachable through the two
+        // registers in this test.
+        data
+    }
+
+    #[test]
+    fn chr_banking() {
+        let mut memory = CartridgeMemory::test(&[0; PRG_BANK_SIZE], &make_chr());
+        let mut mapper = Nina001::new(&mut memory);
+
+        mapper.cpu_write(0x7ffe, 0x00, SystemClock::default(), &mut memory);
+        mapper.cpu_write(0x7fff, 0x01, SystemClock::default(), &mut memory);
+        assert_eq!(memory.read_vram(0x0000), 0xa1);
+        assert_eq!(memory.read_vram(0x1000), 0xb1);
+
+        // 4 KB granularity: bank 1 is the second 4 KB half of the image.
+        mapper.cpu_write(0x7ffe, 0x01, SystemClock::default(), &mut memory);
+        mapper.cpu_write(0x7fff, 0x00, SystemClock::default(), &mut memory);
+        assert_eq!(memory.read_vram(0x0000), 0xb1);
+        assert_eq!(memory.read_vram(0x1000), 0xa1);
+    }
+
+    #[test]
+    fn prg_bank_register_selects_32k_bank() {
+        let mut prg = vec![0u8; PRG_BANK_SIZE * 2];
+        prg[0] = 0x11;
+        prg[PRG_BANK_SIZE] = 0x22;
+
+        let mut memory = CartridgeMemory::test(&prg, &make_chr());
+        let mut mapper = Nina001::new(&mut memory);
+
+        assert_eq!(memory.read_prg(0x8000), 0x11);
+        mapper.cpu_write(0x8000, 0x01, SystemClock::default(), &mut memory);
+        assert_eq!(memory.read_prg(0x8000), 0x22);
+        mapper.cpu_write(0x7ffd, 0x00, SystemClock::default(), &mut memory);
+        assert_eq!(memory.read_prg(0x8000), 0x11);
     }
 }

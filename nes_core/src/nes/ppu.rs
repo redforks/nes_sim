@@ -1,4 +1,3 @@
-mod nametable;
 mod oam;
 pub mod palette;
 mod registers;
@@ -7,12 +6,11 @@ mod sprite;
 use crate::{
     interrupt::NmiLines,
     nes::{
-        mapper::{Cartridge, CartridgeCaps, Mirroring},
+        mapper::Cartridge,
         ppu::{palette::ColorTheme, sprite::SpriteManager},
     },
     render::Render,
 };
-use nametable::Nametable;
 use oam::{Oam, TilePosition};
 use palette::{Palette, Pixel};
 use registers::{PpuCtrl, PpuMask, PpuStatus, Registers};
@@ -156,7 +154,6 @@ pub struct Ppu<R: Render = ()> {
     oam: Oam,
     oam_addr: u8,
     color_theme: ColorTheme,
-    nametable: Nametable,
     renderer: R,
 
     timing: Timing,
@@ -219,14 +216,13 @@ fn normalize_ppu_addr(addr: u16) -> u16 {
 }
 
 impl<R: Render> Ppu<R> {
-    pub fn new(renderer: R, mirroring: Mirroring) -> Self {
+    pub fn new(renderer: R) -> Self {
         Ppu {
             registers: Registers::new(),
             palette: Palette::default(),
             oam: Oam::default(),
             oam_addr: 0,
             color_theme: ColorTheme::default(),
-            nametable: Nametable::new(mirroring),
             renderer,
             timing: Timing::new(),
             background_anchor: None,
@@ -250,9 +246,6 @@ impl<R: Render> Ppu<R> {
         self.color_theme = theme;
     }
 
-    pub fn set_mirroring(&mut self, mirroring: Mirroring) {
-        self.nametable.set_mirroring(mirroring);
-    }
     pub fn reset(&mut self) {
         // https://www.nesdev.org/wiki/PPU_power_up_state
         self.registers.reset();
@@ -393,7 +386,8 @@ impl<R: Render> Ppu<R> {
         self.rendering_enabled() && self.timing.in_ppu_active_line()
     }
 
-    pub fn tick(&mut self, cartridge: &mut dyn Cartridge, cartridge_caps: CartridgeCaps) {
+    pub fn tick(&mut self, cartridge: &mut Cartridge) {
+        let cartridge_caps = cartridge.caps();
         self.cycle += 1;
         let rendering_enabled = self.rendering_enabled();
 
@@ -631,12 +625,7 @@ impl<R: Render> Ppu<R> {
         self.registers.status.v_blank() && self.registers.ctrl.nmi_enable()
     }
 
-    pub(crate) fn read_ppureg(
-        &mut self,
-        address: u16,
-        cartridge: &mut dyn Cartridge,
-        cartridge_caps: CartridgeCaps,
-    ) -> u8 {
+    pub(crate) fn read_ppureg(&mut self, address: u16, cartridge: &mut Cartridge) -> u8 {
         let reg = normalize_ppu_addr(address);
         match reg {
             0x2002 => {
@@ -652,11 +641,11 @@ impl<R: Render> Ppu<R> {
                 self.refresh_bus_latch(result);
                 result
             }
-            0x2007 => self.read_vram_and_inc(cartridge, cartridge_caps),
+            0x2007 => self.read_vram_and_inc(cartridge),
             _ => self.current_bus_latch(),
         }
     }
-    pub fn peek(&self, address: u16, cartridge: &dyn Cartridge) -> u8 {
+    pub fn peek(&self, address: u16, cartridge: &Cartridge) -> u8 {
         match address {
             0x2000..=0x3fff => {
                 let reg = normalize_ppu_addr(address);
@@ -672,13 +661,8 @@ impl<R: Render> Ppu<R> {
         }
     }
 
-    pub(crate) fn write_ppureg(
-        &mut self,
-        address: u16,
-        value: u8,
-        cartridge: &mut dyn Cartridge,
-        cartridge_caps: CartridgeCaps,
-    ) {
+    pub(crate) fn write_ppureg(&mut self, address: u16, value: u8, cartridge: &mut Cartridge) {
+        let cartridge_caps = cartridge.caps();
         self.refresh_bus_latch(value);
         let reg = normalize_ppu_addr(address);
         match reg {
@@ -730,33 +714,25 @@ impl<R: Render> Ppu<R> {
         }
     }
 
-    pub fn read_vram(&self, address: u16, cartridge: &dyn Cartridge) -> u8 {
+    pub fn read_vram(&self, address: u16, cartridge: &Cartridge) -> u8 {
         let mut addr = address % 0x4000;
         if (0x3000..0x3f00).contains(&addr) {
             addr -= 0x1000;
         }
         if addr < 0x3f00 {
-            if addr < 0x2000 {
-                cartridge.read_chr(addr)
-            } else {
-                self.nametable.read(addr)
-            }
+            cartridge.read_vram(addr)
         } else {
             self.palette.read(addr)
         }
     }
 
-    fn write_vram(&mut self, address: u16, value: u8, cartridge: &mut dyn Cartridge) {
+    fn write_vram(&mut self, address: u16, value: u8, cartridge: &mut Cartridge) {
         let mut addr = address % 0x4000;
         if (0x3000..0x3f00).contains(&addr) {
             addr -= 0x1000;
         }
         if addr < 0x3f00 {
-            if addr >= 0x2000 {
-                self.nametable.write(addr, value);
-            } else {
-                cartridge.write_chr(addr, value);
-            }
+            cartridge.write_vram(addr, value);
         } else {
             self.palette.write(addr, value);
         }
@@ -772,7 +748,7 @@ impl<R: Render> Ppu<R> {
         }
     }
 
-    fn get_background_pixel(&mut self, screen_x: u8, cartridge: &dyn Cartridge) -> (u8, u8) {
+    fn get_background_pixel(&mut self, screen_x: u8, cartridge: &Cartridge) -> (u8, u8) {
         self.apply_pending_background_activation(screen_x);
 
         if !self.registers.mask.background_left_enabled() && screen_x < 8 {
@@ -789,13 +765,13 @@ impl<R: Render> Ppu<R> {
         self.tile_cache.consume()
     }
 
-    fn fill_tile_cache(&mut self, screen_x: u8, cartridge: &dyn Cartridge) {
+    fn fill_tile_cache(&mut self, screen_x: u8, cartridge: &Cartridge) {
         let background = self
             .background_anchor
             .unwrap_or_else(|| BackgroundActivation::snapshot(self, 0));
 
         let (attr_byte, bitplane_low, bitplane_high) =
-            fetch_tile_data(&background, screen_x, cartridge, &self.nametable);
+            fetch_tile_data(&background, screen_x, cartridge);
 
         let world_x =
             (background.vram_addr & 0x001F) * 8 + background.fine_x as u16 + screen_x as u16;
@@ -819,11 +795,8 @@ impl<R: Render> Ppu<R> {
         };
     }
 
-    fn read_vram_and_inc(
-        &mut self,
-        cartridge: &mut dyn Cartridge,
-        cartridge_caps: CartridgeCaps,
-    ) -> u8 {
+    fn read_vram_and_inc(&mut self, cartridge: &mut Cartridge) -> u8 {
+        let cartridge_caps = cartridge.caps();
         // Two $2007 reads in quick succession (within the PPUDATA ignore
         // window, ~2 CPU cycles — the page-crossing dummy read of
         // `lda abs,X` followed by the real read) make the second read fully
@@ -948,7 +921,7 @@ impl<R: Render> Ppu<R> {
         r
     }
 
-    fn render_pixel(&mut self, x: u8, cartridge: &dyn Cartridge) -> u8 {
+    fn render_pixel(&mut self, x: u8, cartridge: &Cartridge) -> u8 {
         let (bg_palette_idx, bg_color_idx) = if self.registers.mask.background_enabled() {
             self.get_background_pixel(x, cartridge)
         } else {
@@ -1007,14 +980,14 @@ impl<R: Render> Ppu<R> {
 /// For 8×8 tiles, `tile_y` is the vertical pixel offset within the tile (0..7).
 /// For 16×8 tiles, `tile_y` can span two tiles (0..15).
 fn read_pattern_pixel(
-    cartridge: &dyn Cartridge,
+    cartridge: &Cartridge,
     tile_position: TilePosition,
     tile_x: u8,
     tile_y: u8,
 ) -> u8 {
     let low_addr = tile_position.resolve_pixel_addr(tile_y);
-    let low = cartridge.read_chr(low_addr.0);
-    let high = cartridge.read_chr(low_addr.second_plane_addr());
+    let low = cartridge.read_vram(low_addr.0);
+    let high = cartridge.read_vram(low_addr.second_plane_addr());
     let bit = 7 - tile_x;
     ((low >> bit) & 1) | (((high >> bit) & 1) << 1)
 }
@@ -1025,8 +998,7 @@ fn read_pattern_pixel(
 fn fetch_tile_data(
     background: &BackgroundActivation,
     screen_x: u8,
-    cartridge: &dyn Cartridge,
-    nametable: &Nametable,
+    cartridge: &Cartridge,
 ) -> (u8, u8, u8) {
     let coarse_x = background.vram_addr & 0x001F;
     let coarse_y = (background.vram_addr >> 5) & 0x001F;
@@ -1046,14 +1018,14 @@ fn fetch_tile_data(
 
     let nt_base = 0x2000 + nt_idx as u16 * 0x0400;
     let nt_addr = nt_base + nt_y as u16 * 32 + nt_x as u16;
-    let nt_byte = nametable.read(nt_addr);
+    let nt_byte = cartridge.read_vram(nt_addr);
     let attr_addr = nt_base + 0x03c0 + (nt_y as u16 / 4) * 8 + (nt_x as u16 / 4);
-    let attr_byte = nametable.read(attr_addr);
+    let attr_byte = cartridge.read_vram(attr_addr);
 
     let tile_position = background.ctrl.background_tile_position(nt_byte);
     let low_addr = tile_position.resolve_pixel_addr(tile_fine_y);
-    let bitplane_low = cartridge.read_chr(low_addr.0);
-    let bitplane_high = cartridge.read_chr(low_addr.second_plane_addr());
+    let bitplane_low = cartridge.read_vram(low_addr.0);
+    let bitplane_high = cartridge.read_vram(low_addr.second_plane_addr());
 
     (attr_byte, bitplane_low, bitplane_high)
 }
