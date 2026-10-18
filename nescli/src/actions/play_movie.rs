@@ -6,7 +6,10 @@ use nes_core::{
     movie::{self, GamepadInput},
     nes::{NesMcu, apu::AudioDriver, controller::Button, ppu::palette::ColorTheme},
     nes_machine::NesMachine,
-    render::{ImageRender, Render, image_render::NES_WIDTH},
+    render::{
+        ImageRender, Render,
+        image_render::{NES_HEIGHT, NES_WIDTH},
+    },
 };
 use nes_sdl::{
     self, AUDIO_CHUNK_SAMPLES, AUDIO_SAMPLE_RATE, FramePresenter, SdlAudioDriver,
@@ -276,6 +279,34 @@ fn project_overlay_icons(
     icons
 }
 
+/// Recording frame size in pixels: the playback window, an exact 4x upscale
+/// of the logical 1x frame.
+const RECORD_WIDTH: usize = 1024;
+const RECORD_HEIGHT: usize = 960;
+
+/// Expand a logical 1x playback frame into the 1024x960 RGBA recording
+/// scratch frame, replicating each logical pixel into a 4x4 block. This is
+/// exactly the replication `ImageRender<4>::set_pixel` performs, so a
+/// recording built from the 1x frame is byte-identical to one built from a
+/// 4x frame.
+fn upscale_into(src: &[u8], dst: &mut [u8]) {
+    debug_assert_eq!(src.len(), NES_WIDTH * NES_HEIGHT * 4);
+    debug_assert_eq!(dst.len(), RECORD_WIDTH * RECORD_HEIGHT * 4);
+    let src_stride = NES_WIDTH * 4;
+    let dst_stride = RECORD_WIDTH * 4;
+    for y in 0..NES_HEIGHT {
+        for x in 0..NES_WIDTH {
+            let pixel = &src[y * src_stride + x * 4..][..4];
+            for dy in 0..4 {
+                let row = (y * 4 + dy) * dst_stride;
+                for dx in 0..4 {
+                    dst[row + (x * 4 + dx) * 4..][..4].copy_from_slice(pixel);
+                }
+            }
+        }
+    }
+}
+
 /// Composite overlay icons into a recording frame (RGBA bytes). The recording
 /// artefact keeps today's shape: the 4x 1024x960 frame with the overlay baked
 /// in, straight-alpha blended by the host.
@@ -284,8 +315,8 @@ fn composite_overlay_icons(
     placements: &[OverlayPlacement],
     icons: &[OverlayIcon],
 ) {
-    let stride = ImageRender::<4>::width() as i64;
-    let height = ImageRender::<4>::height() as i64;
+    let stride = RECORD_WIDTH as i64;
+    let height = RECORD_HEIGHT as i64;
     let scale = stride / NES_WIDTH as i64;
     for placement in placements {
         let Some(icon) = icons.get(placement.icon) else {
@@ -341,7 +372,8 @@ fn blit_icon(
 }
 
 struct RecordRender {
-    buffer: ImageRender<4>,
+    buffer: ImageRender<1>,
+    record_scratch: Vec<u8>,
     canvas: Option<Canvas<Window>>,
     presenter: FramePresenter,
     video_tx: Option<mpsc::Sender<Vec<u8>>>,
@@ -390,9 +422,23 @@ impl Render for RecordRender {
     }
 
     fn finish(&mut self) {
-        // Advance the hold counters and decide the icon placements once per
+        // Decide whether this frame reaches the recording before building any
+        // recording frame, so a trimmed or fast-forwarded frame is never
+        // upscaled. The window still presents every frame.
+        let send_video = if self.trim_counter < self.trim_frames {
+            self.trim_counter += 1;
+            false
+        } else if self.ff_skip {
+            let send = self.ff_counter.is_multiple_of(4);
+            self.ff_counter += 1;
+            send
+        } else {
+            true
+        };
+
+        // Advance the hold counters and derive the icon placements once per
         // frame. The window draws them as textures; recording composites them
-        // into its own scratch frame so the display frame stays clean.
+        // into its own 4x scratch frame so the display frame stays clean.
         let overlays = if self.enabled {
             project_overlay_icons(&mut self.p1, &mut self.p2, self.dual_player)
         } else {
@@ -407,25 +453,14 @@ impl Render for RecordRender {
             self.presenter.present(canvas, &frame);
         }
 
-        let send_video = if self.trim_counter < self.trim_frames {
-            self.trim_counter += 1;
-            false
-        } else if self.ff_skip {
-            let send = self.ff_counter.is_multiple_of(4);
-            self.ff_counter += 1;
-            send
-        } else {
-            true
-        };
-
         if let Some(ref tx) = self.video_tx
             && send_video
         {
-            let mut bytes = self.buffer.as_bytes().to_vec();
+            upscale_into(self.buffer.as_bytes(), &mut self.record_scratch);
             if self.enabled {
-                composite_overlay_icons(&mut bytes, &overlays, &self.icons);
+                composite_overlay_icons(&mut self.record_scratch, &overlays, &self.icons);
             }
-            let _ = tx.send(bytes);
+            let _ = tx.send(self.record_scratch.clone());
         }
     }
 }
@@ -587,7 +622,8 @@ fn init_sdl_drivers(
     presenter.set_overlay_icons(icons.clone());
 
     let render = RecordRender {
-        buffer: ImageRender::<4>::new(),
+        buffer: ImageRender::<1>::new(),
+        record_scratch: vec![0u8; RECORD_WIDTH * RECORD_HEIGHT * 4],
         canvas,
         presenter,
         video_tx,
@@ -851,10 +887,12 @@ impl PlayMovieAction {
 #[cfg(test)]
 mod tests {
     use nes_core::movie::{Command, GamepadInput, InputLog};
-    use nes_sdl::presentation::OverlayPlacement;
+    use nes_core::render::{ImageRender, Render};
+    use nes_sdl::presentation::{OverlayIcon, OverlayPlacement};
 
     use super::{
-        GamepadOverlay, OVERLAY_LAYOUT_RIGHT, compute_fast_forward_ranges, project_overlay_icons,
+        GamepadOverlay, OVERLAY_LAYOUT_RIGHT, composite_overlay_icons, compute_fast_forward_ranges,
+        project_overlay_icons, upscale_into,
     };
 
     fn idle() -> InputLog {
@@ -1230,5 +1268,65 @@ mod tests {
         let mut p1 = GamepadOverlay::new();
         let mut p2 = GamepadOverlay::new();
         assert!(project_overlay_icons(&mut p1, &mut p2, true).is_empty());
+    }
+
+    // --- recording frame construction --------------------------------------
+
+    /// One logical 1x frame and the equivalent 4x frame, with a distinct
+    /// colour per pixel so a mis-mapped block is caught.
+    fn one_x_and_four_x_frames() -> (ImageRender<1>, ImageRender<4>) {
+        let mut one = ImageRender::<1>::new();
+        let mut four = ImageRender::<4>::new();
+        for y in 0..240u32 {
+            for x in 0..256u32 {
+                let color = [
+                    (x as u8).wrapping_mul(3),
+                    (y as u8).wrapping_mul(5),
+                    (x as u8) ^ (y as u8),
+                    255,
+                ];
+                one.set_pixel(x, y, color);
+                four.set_pixel(x, y, color);
+            }
+        }
+        (one, four)
+    }
+
+    #[test]
+    fn upscaling_a_one_x_frame_reproduces_the_four_x_frame() {
+        let (one, four) = one_x_and_four_x_frames();
+        let mut scratch = vec![0u8; 1024 * 960 * 4];
+        upscale_into(one.as_bytes(), &mut scratch);
+        assert_eq!(scratch.as_slice(), four.as_bytes());
+    }
+
+    #[test]
+    fn compositing_over_the_upscaled_frame_matches_the_four_x_frame() {
+        let (one, four) = one_x_and_four_x_frames();
+        let icons = vec![OverlayIcon {
+            bytes: {
+                let mut b = vec![0u8; 4 * 4 * 4];
+                for (i, px) in b.chunks_mut(4).enumerate() {
+                    px.copy_from_slice(&[200, 100u8.wrapping_add(i as u8), 50, 200]);
+                }
+                b
+            },
+            width: 4,
+            height: 4,
+        }];
+        let placements = [OverlayPlacement {
+            icon: 0,
+            dst: (2, 3, 16, 16),
+        }];
+
+        let mut scratch = vec![0u8; 1024 * 960 * 4];
+        upscale_into(one.as_bytes(), &mut scratch);
+        composite_overlay_icons(&mut scratch, &placements, &icons);
+
+        let mut four_bytes = four.as_bytes().to_vec();
+        let plain = four_bytes.clone();
+        composite_overlay_icons(&mut four_bytes, &placements, &icons);
+        assert_ne!(four_bytes, plain, "the composite must change the frame");
+        assert_eq!(scratch, four_bytes);
     }
 }

@@ -14,7 +14,16 @@
 
 ## Consequences
 
-- `ImageRender` == `ImageRender<1>` stays spellable via default generic; `RecordRender.buffer: ImageRender<4>` and `SdlRender<N>` replace manual replication.
+- `ImageRender` == `ImageRender<1>` stays spellable via default generic; `SdlRender<N>` replaces manual replication, and `RecordRender` rendered `ImageRender<4>` until the playback display path left the Zoom Factor (see Revision).
 - `MachineView::borrow_image() -> &RgbaImage` removed in favor of `renderer().as_bytes()/as_pixels()/width()/height()`; `FramePngDump`/`PngFrameMatch` build one-off `RgbaImage::from_raw` from bytes.
 - `Ppu` tests compare `as_pixels()[y*W + x]` not `get_pixel`.
 - `cargo tree -p nes_core` no longer pulls `image`/`png` crates.
+
+## Revision — the playback display path leaves the Zoom Factor
+
+Spec #38, ticket #43. The Zoom Factor stays a capability: `ImageRender<4>` still replicates each `set_pixel` into a 4x4 block and remains the reference the recording upscale must match. What changed is the playback display path.
+
+- Playback renders `ImageRender<1>` (the logical 256x240 frame). `FramePresenter` uploads that frame into the reused texture and performs one nearest-neighbour `Canvas::copy` to the whole 1024x960 window: an exact integer 4x upscale of the former 4x framebuffer, so the picture is unchanged.
+- This removes the per-pixel `N×N` replication and the 1024x960 upload from the playback hot path, and makes PPU rendering cost independent of the window size. Windowed instructions per frame fell from 55.4 M to 51.0 M and task-clock from 2.66 ms to 2.36 ms on the reference movie.
+- The `run` action already rendered `ImageRender<1>` in a 2x window and is unchanged.
+- The `--output` recording path no longer reads a 4x Framebuffer. It owns its own 1024x960 RGBA scratch frame, built host-side by `upscale_into` (the same 4x4 replication `ImageRender<4>::set_pixel` performs) only for frames actually sent to ffmpeg; the trim and fast-forward send decision runs before frame construction, so skipped frames are never upscaled. Recordings stay byte-identical (see ADR-0016).

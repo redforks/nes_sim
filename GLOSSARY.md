@@ -297,7 +297,7 @@ _Avoid_: zoom ratio (use Zoom Factor), scale factor (overloaded), N (bare)
 _Avoid_: ImageRender (without `N`), RgbaImage wrapper, cloning the framebuffer
 
 **Presentation Plan**:
-The pure, SDL-free description of what one frame puts on screen: `FramePresentation { bytes, width, height, dst, overlays }`, built by `plan<N>(frame, overlays, dst_size)` in `nes_sdl::presentation`. It carries the frame's RGBA bytes and dimensions (Zoom Factor applied), the destination rect (the whole window), and the overlay placements scaled from logical 1x 256x240 coordinates into destination pixels. Generic over the Framebuffer Zoom Factor `N`; consumed by the SDL adapter `FramePresenter`.
+The pure, SDL-free description of what one frame puts on screen: `FramePresentation { bytes, width, height, dst, overlays }`, built by `plan<N>(frame, overlays, dst_size)` in `nes_sdl::presentation`. It carries the frame's RGBA bytes and dimensions (Zoom Factor applied), the destination rect (the whole window), and the overlay placements scaled from logical 1x 256x240 coordinates into destination pixels. Generic over the Framebuffer Zoom Factor `N`; consumed by the SDL adapter `FramePresenter`. Playback passes an `ImageRender<1>` frame, so SDL scales the logical picture to the window with one nearest copy; the `--output` recording path instead upscales the frame host-side into its own 1024x960 scratch frame.
 _Avoid_: render plan, draw plan, frame plan
 
 **Reused Frame Texture**:

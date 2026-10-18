@@ -8,7 +8,7 @@
 use crate::presentation::{FramePresentation, OverlayIcon, OverlayPlacement};
 use sdl2::pixels::PixelFormatEnum;
 use sdl2::rect::Rect;
-use sdl2::render::{BlendMode, Canvas, Texture};
+use sdl2::render::{BlendMode, Canvas, ScaleMode, Texture};
 use sdl2::video::Window;
 
 /// Owns the reusable frame texture plus one lazily created texture per overlay
@@ -58,11 +58,13 @@ impl FramePresenter {
     pub fn present(&mut self, canvas: &mut Canvas<Window>, frame: &FramePresentation<'_>) {
         let size = (frame.width, frame.height);
         if self.texture.is_none() || self.size != size {
-            self.texture = Some(
-                canvas
-                    .create_texture_streaming(PixelFormatEnum::ABGR8888, size.0, size.1)
-                    .expect("failed to create SDL frame texture"),
-            );
+            let mut texture = canvas
+                .create_texture_streaming(PixelFormatEnum::ABGR8888, size.0, size.1)
+                .expect("failed to create SDL frame texture");
+            // The frame is an exact integer multiple of the logical 256x240
+            // picture, so nearest sampling reproduces it exactly.
+            texture.set_scale_mode(ScaleMode::Nearest);
+            self.texture = Some(texture);
             self.size = size;
         }
         let texture = self
