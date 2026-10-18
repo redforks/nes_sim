@@ -198,7 +198,11 @@ fn rom_contains_signature_bytes(rom: &[u8], signature: &str) -> bool {
         .any(|window| window == signature.as_bytes())
 }
 
-#[derive(Debug, Clone, Copy, Default)]
+/// Which PPU-side hooks a mapper chip implements, snapshotted by [`Cartridge`]
+/// once at construction. Each flag mirrors one [`Mapper`] method: overriding
+/// `on_ppu_tick`/`notify_vram_address`/`irq_pending` without setting the
+/// matching flag here means the override is never called.
+#[derive(Debug, Eq, PartialEq, Clone, Copy, Default)]
 pub struct CartridgeCaps {
     pub on_ppu_tick: bool,
     pub notify_vram_address: bool,
@@ -228,13 +232,17 @@ pub trait Mapper {
     fn irq_pending(&self) -> bool {
         false
     }
+    /// Which of the three hooks above this chip implements. [`Cartridge`]
+    /// snapshots this once, so an override that is not declared here is dead
+    /// code — `just passed` is what catches a forgotten flag.
     fn caps(&self) -> CartridgeCaps {
         CartridgeCaps::default()
     }
 }
 
 /// The cartridge board: bank-mapped memory, the mapper chip, and the
-/// capability snapshot the rest of the machine reads without a dynamic call.
+/// capability snapshot taken from that chip at construction. The snapshot
+/// gates the board's own forwards, so callers never read capability bits.
 pub struct Cartridge {
     memory: CartridgeMemory,
     mapper: Box<dyn Mapper>,
@@ -269,20 +277,25 @@ impl Cartridge {
         mapper.cpu_write(address, value, cycle, memory);
     }
 
+    /// Forwarded only when the mapper declares [`CartridgeCaps::on_ppu_tick`].
     pub fn on_ppu_tick(&mut self, scanline: u16) {
-        self.mapper.on_ppu_tick(scanline);
+        if self.caps.on_ppu_tick {
+            self.mapper.on_ppu_tick(scanline);
+        }
     }
 
+    /// Forwarded only when the mapper declares
+    /// [`CartridgeCaps::notify_vram_address`].
     pub fn notify_vram_address(&mut self, addr: u16) {
-        self.mapper.notify_vram_address(addr);
+        if self.caps.notify_vram_address {
+            self.mapper.notify_vram_address(addr);
+        }
     }
 
+    /// The mapper's IRQ line, held low for a board that declares no IRQ
+    /// hardware, so the per-CPU-cycle poll never enters the vtable.
     pub fn irq_pending(&self) -> bool {
-        self.mapper.irq_pending()
-    }
-
-    pub fn caps(&self) -> CartridgeCaps {
-        self.caps
+        self.caps.irq_pending && self.mapper.irq_pending()
     }
 
     /// Cartridge PPU space: pattern tables in `$0000-$1FFF` (CHR ROM or CHR
@@ -300,8 +313,10 @@ impl Cartridge {
     }
 }
 
-/// Test mapper: no banking, no IRQ, optionally records the VRAM-address
-/// notifications the PPU emits.
+/// Test mapper: no banking, no IRQ. It always records the VRAM-address
+/// notifications it *receives*; whether it receives any is up to its declared
+/// capabilities, so `new()` (none declared) probes the capability gate and
+/// `recording()` (notification declared) is the one the PPU tests use.
 #[cfg(test)]
 pub struct TestMapper {
     caps: CartridgeCaps,

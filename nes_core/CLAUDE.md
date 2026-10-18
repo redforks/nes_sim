@@ -37,7 +37,7 @@ Core emulation library for the NES emulator. This crate has no std dependency ex
 - Safety limit of 60,000 ticks per frame to prevent infinite loops
 
 ### Cartridge System (`src/nes/mapper.rs`, `mapper/`)
-- `Cartridge` enum for different mappers
+- `Cartridge` struct owns the bank-mapped cartridge memory plus the `Mapper` chip (one implementation per board); the chip's declared capabilities gate which PPU hooks reach it
 
 ### ROM Loading (`src/ines.rs`, `ines/`)
 - `INesFile` parser for iNES .nes format

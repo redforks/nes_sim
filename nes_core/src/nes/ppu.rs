@@ -387,7 +387,6 @@ impl<R: Render> Ppu<R> {
     }
 
     pub fn tick(&mut self, cartridge: &mut Cartridge) {
-        let cartridge_caps = cartridge.caps();
         self.cycle += 1;
         let rendering_enabled = self.rendering_enabled();
 
@@ -421,8 +420,7 @@ impl<R: Render> Ppu<R> {
         // memory-access phasing.
         //
         // Manual $2006/$2007 writes still reach the mapper directly.
-        if cartridge_caps.notify_vram_address
-            && rendering_enabled
+        if rendering_enabled
             && (self.timing.in_ppu_active_line() && self.rendering_enabled_at_scanline_start)
             && self.timing.dot % 2 == 1
         {
@@ -602,9 +600,7 @@ impl<R: Render> Ppu<R> {
         };
         self.timing.advance(skip_rendering_enabled);
 
-        if cartridge_caps.on_ppu_tick {
-            cartridge.on_ppu_tick(prev_scanline);
-        }
+        cartridge.on_ppu_tick(prev_scanline);
     }
 
     /// Atomically sampled NMI line bundle for this dot.
@@ -662,7 +658,6 @@ impl<R: Render> Ppu<R> {
     }
 
     pub(crate) fn write_ppureg(&mut self, address: u16, value: u8, cartridge: &mut Cartridge) {
-        let cartridge_caps = cartridge.caps();
         self.refresh_bus_latch(value);
         let reg = normalize_ppu_addr(address);
         match reg {
@@ -696,9 +691,7 @@ impl<R: Render> Ppu<R> {
             // PPUADDR
             0x2006 => {
                 self.write_vram_addr(value);
-                if cartridge_caps.notify_vram_address {
-                    cartridge.notify_vram_address(self.registers.vram_addr);
-                }
+                cartridge.notify_vram_address(self.registers.vram_addr);
             }
             // PPUDATA
             0x2007 => {
@@ -706,9 +699,7 @@ impl<R: Render> Ppu<R> {
                 self.registers
                     .ctrl
                     .inc_ppu_addr(&mut self.registers.vram_addr);
-                if cartridge_caps.notify_vram_address {
-                    cartridge.notify_vram_address(self.registers.vram_addr);
-                }
+                cartridge.notify_vram_address(self.registers.vram_addr);
             }
             _ => {}
         }
@@ -796,7 +787,6 @@ impl<R: Render> Ppu<R> {
     }
 
     fn read_vram_and_inc(&mut self, cartridge: &mut Cartridge) -> u8 {
-        let cartridge_caps = cartridge.caps();
         // Two $2007 reads in quick succession (within the PPUDATA ignore
         // window, ~2 CPU cycles — the page-crossing dummy read of
         // `lda abs,X` followed by the real read) make the second read fully
@@ -815,9 +805,7 @@ impl<R: Render> Ppu<R> {
         self.registers
             .ctrl
             .inc_ppu_addr(&mut self.registers.vram_addr);
-        if cartridge_caps.notify_vram_address {
-            cartridge.notify_vram_address(self.registers.vram_addr);
-        }
+        cartridge.notify_vram_address(self.registers.vram_addr);
 
         // Non-palette addresses use a read buffer (delayed by one read).
         // Palette addresses ($3F00-$3FFF) return immediately, but still

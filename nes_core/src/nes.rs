@@ -144,9 +144,6 @@ impl<R: Render, D: AudioDriver> NesMcu<R, D> {
     }
 
     pub fn cartridge_irq_pending(&self) -> bool {
-        if !self.cartridge.caps().irq_pending {
-            return false;
-        }
         self.cartridge.irq_pending()
     }
 

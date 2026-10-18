@@ -22,7 +22,7 @@ The board model moves into the cartridge:
 - **Mirroring is slot entries**, not an address transform: `Mirroring` maps to four nametable slot entries, so `name_table_offset`, `Nametable::set_mirroring`, `Ppu::set_mirroring` and `Ppu.nametable` disappear.
 - CHR ROM/RAM gating is one bit on the cartridge (`chr_is_ram`), not a per-mapper `has_chr_ram`; PRG-RAM enable is a flag on the memory struct that mappers toggle, while open bus stays a CPU-bus decision in `NesMcu`.
 - `read_chr`/`write_chr` become `Cartridge::read_vram`/`write_vram` over the whole cartridge PPU space (pattern tables + nametables), so no caller distinguishes CHR from nametable.
-- `NesMcu` owns `Cartridge` **by value**; `Ppu` takes `&Cartridge`/`&mut Cartridge` and reads `caps` from it (the `NesMcu.cartridge_caps` copy is deleted).
+- `NesMcu` owns `Cartridge` **by value**; `Ppu` takes `&Cartridge`/`&mut Cartridge` and calls the cartridge's PPU hooks unconditionally. `Cartridge` holds the mapper's `caps` snapshot and forwards a hook only when the chip declares it: there is no `Cartridge::caps()`, so no caller reads capability bits (the `NesMcu.cartridge_caps` copy is deleted).
 
 ## Considered Options
 
@@ -37,12 +37,13 @@ The board model moves into the cartridge:
 - **There is no `Mapper::reset`.** The reset button does not rewind a mapper on real hardware; bank windows are power-on state mutated only by mapper writes. Do not add one for symmetry.
 - **The MMC3 A12 notifier stays synthetic.** `Ppu::tick` keeps emitting modelled addresses by dot parity; deriving IRQ clocking from actual cartridge VRAM accesses would look cleaner and silently retime scanline IRQs.
 - Mapper unit tests no longer exercise read paths directly; they assert window/slot state and read back through the cartridge.
+- **The capability snapshot is consulted inside `Cartridge`.** `on_ppu_tick`/`notify_vram_address`/`irq_pending` gate the mapper call on it, and a mapper must declare a hook in `Mapper::caps` for its override to be called at all. Because the PPU keeps no copy, the per-dot A12 notification block in `Ppu::tick` now runs its dot-phase arithmetic on every board instead of short-circuiting; that is the deliberate cost of this shape, and the rationale for the snapshot in the first place is kept in `.scratch/cartridge-capability-query/PRD.md`.
 
 ## Migration
 
 Three steps, each green under `just unit-test` and `just passed`:
 
-1. Rename the trait `Cartridge` → `Mapper`; add the `Cartridge` struct delegating to `Box<dyn Mapper>`; drop `Box<dyn Cartridge>`, the `dyn` parameters and the duplicated `cartridge_caps` field (`Ppu` reads `caps` from the cartridge).
+1. Rename the trait `Cartridge` → `Mapper`; add the `Cartridge` struct delegating to `Box<dyn Mapper>`; drop `Box<dyn Cartridge>`, the `dyn` parameters and the duplicated `cartridge_caps` field (`Cartridge` consults its own snapshot; no caller reads `caps`).
 2. Move `Nametable` into `Cartridge` and rename `read_chr`/`write_chr` → `Cartridge::read_vram`/`write_vram` in the same step: once the nametable lives in the cartridge, one accessor for `$0000-$2EFF` is the natural seam, so the rename has nothing left to be done in.
 3. Introduce `Bank`/`CartridgeMemory`/windows, convert the mappers, delete `CartridgeOperation`, `Mirroring::name_table_offset`, `DirectChr` and every per-mapper window cache.
 

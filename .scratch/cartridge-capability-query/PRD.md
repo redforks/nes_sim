@@ -1,6 +1,6 @@
 # PRD: Cartridge PPU Capability Query
 
-Status: ready-for-agent
+Status: superseded — the capability gate now lives inside `Cartridge` (see the ADR 0015 consequence on the snapshot), and the PPU-side early-out for the per-dot A12 block was deliberately dropped when `Cartridge::caps()` was removed. Kept as the record of why the snapshot exists at all.
 
 ## Problem Statement
 

@@ -358,3 +358,62 @@ fn nes20_submapper_0_defaults_to_standard() {
     mmc3_zero_latch_reload(&mut cartridge);
     assert!(cartridge.irq_pending());
 }
+
+/// The capability snapshot is the only gate on a mapper's PPU hooks: a board
+/// that declares none receives no call, even though `TestMapper` implements
+/// `notify_vram_address` unconditionally.
+#[test]
+fn declared_capabilities_gate_the_mapper_hooks() {
+    let mapper = TestMapper::new();
+    let notified = mapper.notified.clone();
+    let mut cartridge = Cartridge::new(Box::new(mapper), CartridgeMemory::test(&[], &[]));
+
+    assert_eq!(CartridgeCaps::default(), cartridge.caps);
+    cartridge.notify_vram_address(0x1000);
+    cartridge.on_ppu_tick(0);
+    assert!(notified.borrow().is_empty());
+    assert!(!cartridge.irq_pending());
+
+    // The same board declaring the notification does receive it.
+    let (mut cartridge, notified) = Cartridge::test_recording();
+    cartridge.notify_vram_address(0x1000);
+    assert_eq!(vec![0x1000], *notified.borrow());
+}
+
+const NO_CAPS: CartridgeCaps = CartridgeCaps {
+    on_ppu_tick: false,
+    notify_vram_address: false,
+    irq_pending: false,
+};
+const SCANLINE_AND_IRQ: CartridgeCaps = CartridgeCaps {
+    on_ppu_tick: true,
+    notify_vram_address: false,
+    irq_pending: true,
+};
+const ALL_CAPS: CartridgeCaps = CartridgeCaps {
+    on_ppu_tick: true,
+    notify_vram_address: true,
+    irq_pending: true,
+};
+
+/// The declaration table: what each board tells the cartridge it implements.
+/// This is the table the machine dispatches on, not a behaviour test: a new
+/// mapper adds a row, and a new override in an existing mapper must set the
+/// matching flag here, or `just passed` is the only thing that would notice.
+#[test_case(0, NO_CAPS ; "NROM")]
+#[test_case(1, NO_CAPS ; "MMC1")]
+#[test_case(2, NO_CAPS ; "UxROM")]
+#[test_case(3, NO_CAPS ; "CNROM")]
+#[test_case(4, ALL_CAPS ; "MMC3")]
+#[test_case(7, NO_CAPS ; "AxROM")]
+#[test_case(34, NO_CAPS ; "BNROM, 8 KB CHR")]
+#[test_case(87, NO_CAPS ; "J87")]
+#[test_case(21, SCANLINE_AND_IRQ ; "VRC4a")]
+#[test_case(22, SCANLINE_AND_IRQ ; "VRC2a")]
+#[test_case(23, SCANLINE_AND_IRQ ; "VRC4f")]
+#[test_case(25, SCANLINE_AND_IRQ ; "VRC4b")]
+fn mapper_declares_its_ppu_capabilities(mapper_no: u8, expected: CartridgeCaps) {
+    let file = INesFile::new(create_test_nes(mapper_no, 2, 1)).unwrap();
+    let cartridge = create_cartridge_with_mmc3_irq_override(&file, Mmc3IrqOverride::Auto);
+    assert_eq!(expected, cartridge.caps, "mapper {}", mapper_no);
+}
