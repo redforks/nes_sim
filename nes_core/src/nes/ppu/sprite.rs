@@ -316,10 +316,7 @@ impl SpriteManager {
                 high,
             });
 
-            if self
-                .current_zero_sprite
-                .is_some_and(|zero| sprite_bytes(zero) == sprite_bytes(sprite))
-            {
+            if self.current_zero_sprite == Some(sprite) {
                 self.zero_row_idx = Some(i);
             }
         }
@@ -344,13 +341,7 @@ impl SpriteManager {
     /// fetches from the cartridge itself. When the row cache has not been
     /// filled for this scanline, no pixel request reached the Sprite path,
     /// and the hit cannot fire in that window, so this reports transparent.
-    pub fn sprite_zero_pixel_opaque(
-        &self,
-        _ctrl: PpuCtrl,
-        _cartridge: &Cartridge,
-        screen_x: u8,
-        screen_y: u8,
-    ) -> bool {
+    pub fn sprite_zero_pixel_opaque(&self, screen_x: u8, screen_y: u8) -> bool {
         if self.rows_scanline != Some(screen_y) {
             return false;
         }
@@ -409,10 +400,6 @@ fn sprite_src_y(sprite: &Sprite, sprite_height: u8, screen_y: u8) -> u8 {
     } else {
         sprite_y as u8
     }
-}
-
-fn sprite_bytes(sprite: Sprite) -> [u8; 4] {
-    bytemuck::cast(sprite)
 }
 
 #[derive(Copy, Clone)]

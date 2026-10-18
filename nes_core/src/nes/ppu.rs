@@ -939,12 +939,9 @@ impl<R: Render> Ppu<R> {
         };
 
         if !self.registers.status.sprite_zero_hit()
-            && self.sprite.sprite_zero_pixel_opaque(
-                self.registers.ctrl,
-                cartridge,
-                x,
-                self.timing.scanline as u8,
-            )
+            && self
+                .sprite
+                .sprite_zero_pixel_opaque(x, self.timing.scanline as u8)
             && ((bg_color_idx != 0) & (x != 255))
             && (x >= 8
                 || (self.registers.mask.background_left_enabled()
