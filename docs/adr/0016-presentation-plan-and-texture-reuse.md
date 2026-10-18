@@ -17,7 +17,7 @@ accepted
 - The SDL adapter `nes_sdl::presenter::FramePresenter` owns the frame texture. It creates the texture on first present and reuses it for the life of the canvas, recreating it only when the frame dimensions change. Each frame it does one `Texture::update` and one `Canvas::copy` to the plan's destination rect.
 - Enable the sdl2 dependency feature `unsafe_textures` in `nes_sdl`. It makes the `Texture` owned by the `Canvas` and free of a lifetime, so the reused texture is expressible with zero `unsafe` code in this repository. No `unsafe` block is added anywhere.
 - Apply the seam and the reuse to both display paths: `SdlRender` (`run`) and `RecordRender` (playback window).
-- Playback keeps its 4x framebuffer (`ImageRender<4>`) and the host-side overlay compositing in this change; the destination rect is the whole 1024x960 window, so the picture is unchanged. The 1x display path and the overlay icon textures are separate follow-ups. Recording (`--output`) is untouched.
+- Playback keeps its 4x framebuffer (`ImageRender<4>`) and the host-side overlay compositing in this change; the destination rect is the whole 1024x960 window, so the picture is unchanged. The 1x display path is a separate follow-up. Recording (`--output`) is untouched.
 
 ## Considered Options
 
@@ -32,4 +32,5 @@ accepted
 - The plan is unit-tested without a window: frame bytes and dimensions, the destination rect, and overlay scaling.
 - ADR-0012's Zoom Factor stays a capability of `ImageRender<N>`; it is still used by playback and recording in this change. When the playback display path moves to a 1x frame, that revision to ADR-0012 lands with it.
 - Overlay icon placements flow through `plan` as data; the overlay policy (hold counters, icon table, 18-frame hold) stays in `nescli`.
+- The window draws the gamepad overlay as SDL textures instead of writing icon pixels into the Framebuffer. `GamepadOverlay` projects its state into pure `OverlayPlacement` values (logical 1x 256x240 coordinates), and `FramePresenter` owns one texture per icon index, created lazily by `set_overlay_icons` on first use and reused across frames. The `--output` recording path still composites the icons host-side into its 4x scratch frame, so the recorded artefact is byte-identical.
 - The recorded `--output` artefact and the `run` 2x window picture are unchanged.
