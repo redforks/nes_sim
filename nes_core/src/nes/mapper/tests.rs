@@ -417,3 +417,30 @@ fn mapper_declares_its_ppu_capabilities(mapper_no: u8, expected: CartridgeCaps) 
     let cartridge = create_cartridge_with_mmc3_irq_override(&file, Mmc3IrqOverride::Auto);
     assert_eq!(expected, cartridge.caps, "mapper {}", mapper_no);
 }
+
+/// The recorder reaches past the mapper hooks to the cartridge's own VRAM
+/// reads: every `Cartridge::read_vram` is logged, in the order it was made,
+/// and the log can be cleared to open a fresh measurement window.
+#[test]
+fn test_recording_logs_cartridge_vram_reads_in_order() {
+    let (mut cartridge, recorder) = Cartridge::test_recording_all();
+    assert_eq!(0, recorder.vram_reads.count(), "nothing read yet");
+
+    cartridge.write_vram(0x0010, 0xab);
+    cartridge.write_vram(0x0100, 0xcd);
+
+    assert_eq!(0xab, cartridge.read_vram(0x0010));
+    assert_eq!(0xcd, cartridge.read_vram(0x0100));
+    assert_eq!(0xab, cartridge.read_vram(0x0010));
+
+    assert_eq!(3, recorder.vram_reads.count());
+    assert_eq!(
+        vec![0x0010, 0x0100, 0x0010],
+        recorder.vram_reads.addresses(),
+        "addresses are recorded in the order the cartridge was read"
+    );
+
+    recorder.vram_reads.clear();
+    assert_eq!(0, recorder.vram_reads.count());
+    assert!(recorder.vram_reads.addresses().is_empty());
+}
