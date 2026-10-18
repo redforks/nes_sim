@@ -1,16 +1,16 @@
 use anyhow::{Context as _, Result};
-use image::{RgbaImage, imageops, load_from_memory};
+use image::{imageops, load_from_memory};
 use nes_core::{
     EmptyPlugin,
     ines::INesFile,
     movie::{self, GamepadInput},
     nes::{NesMcu, apu::AudioDriver, controller::Button, ppu::palette::ColorTheme},
     nes_machine::NesMachine,
-    render::{ImageRender, Render},
+    render::{ImageRender, Render, image_render::NES_WIDTH},
 };
 use nes_sdl::{
     self, AUDIO_CHUNK_SAMPLES, AUDIO_SAMPLE_RATE, FramePresenter, SdlAudioDriver,
-    presentation::plan,
+    presentation::{OverlayIcon, OverlayPlacement, plan},
     sdl2::{Sdl, audio::AudioSpecDesired, event::Event, render::Canvas, video::Window},
 };
 use std::{
@@ -165,18 +165,10 @@ impl GamepadOverlay {
         }
     }
 
-    fn draw(
-        &mut self,
-        pixels: &mut [[u8; 4]],
-        stride: u32,
-        icons: &[RgbaImage],
-        OverlayIconLayout {
-            dir_x,
-            ab_x,
-            b_x,
-            y,
-        }: OverlayIconLayout,
-    ) {
+    /// Advance the hold counters and project the icons to show this frame, in
+    /// logical 1x 256x240 coordinates. Pure: it touches no pixels and needs no
+    /// display, so the hold countdown and the icon table are unit-testable.
+    fn project(&mut self, layout: OverlayIconLayout) -> Vec<OverlayPlacement> {
         let draw_dir = self.hold_dir > 0;
         let draw_ab = self.hold_ab > 0;
         if draw_dir {
@@ -185,53 +177,35 @@ impl GamepadOverlay {
         if draw_ab {
             self.hold_ab -= 1;
         }
+        let mut icons = Vec::with_capacity(3);
         if !draw_dir && !draw_ab {
-            return;
+            return icons;
         }
-        // helper to blit a 64×64 icon onto the framebuffer with alpha
-        let mut blit = |icon: &RgbaImage, dst_x: i64, dst_y: i64| {
-            let (iw, ih) = icon.dimensions();
-            for iy in 0..ih as i64 {
-                for ix in 0..iw as i64 {
-                    let dx = dst_x + ix;
-                    let dy = dst_y + iy;
-                    if dx < 0 || dy < 0 || dx >= stride as i64 || dy >= 960 {
-                        continue;
-                    }
-                    let src = icon.get_pixel(ix as u32, iy as u32).0;
-                    if src[3] == 0 {
-                        continue;
-                    }
-                    let idx = dy as usize * stride as usize + dx as usize;
-                    let dst = &mut pixels[idx];
-                    if src[3] == 255 {
-                        *dst = src;
-                    } else {
-                        // alpha blend src over dst (straight alpha, non-premul)
-                        let a = src[3] as u32;
-                        let inv = 255 - a;
-                        for c in 0..3 {
-                            dst[c] = ((src[c] as u32 * a + dst[c] as u32 * inv) / 255) as u8;
-                        }
-                        dst[3] = 255;
-                    }
-                }
-            }
-        };
+        let slot = |x: i32| (x, layout.y, OVERLAY_ICON_SIZE, OVERLAY_ICON_SIZE);
         if let Some(direction_idx) = Self::direction_icon_index(
             draw_dir && self.disp_up,
             draw_dir && self.disp_down,
             draw_dir && self.disp_left,
             draw_dir && self.disp_right,
         ) {
-            blit(&icons[direction_idx], dir_x, y);
+            icons.push(OverlayPlacement {
+                icon: direction_idx,
+                dst: slot(layout.dir_x),
+            });
         }
         if draw_ab && self.disp_a {
-            blit(&icons[0], ab_x, y);
+            icons.push(OverlayPlacement {
+                icon: 0,
+                dst: slot(layout.ab_x),
+            });
         }
         if draw_ab && self.disp_b {
-            blit(&icons[1], b_x, y);
+            icons.push(OverlayPlacement {
+                icon: 1,
+                dst: slot(layout.b_x),
+            });
         }
+        icons
     }
 
     fn direction_icon_index(up: bool, down: bool, left: bool, right: bool) -> Option<usize> {
@@ -256,12 +230,114 @@ impl GamepadOverlay {
     }
 }
 
+/// Logical 1x 256x240 x-positions of one player's three overlay icon slots.
 #[derive(Debug, Clone, Copy)]
 struct OverlayIconLayout {
-    dir_x: i64,
-    ab_x: i64,
-    b_x: i64,
-    y: i64,
+    dir_x: i32,
+    ab_x: i32,
+    b_x: i32,
+    y: i32,
+}
+
+/// Dual-player layout: player 1's icons on the left.
+const OVERLAY_LAYOUT_LEFT: OverlayIconLayout = OverlayIconLayout {
+    dir_x: 2,
+    ab_x: 38,
+    b_x: 20,
+    y: 222,
+};
+
+/// Single-player layout, also player 2's side of the dual-player layout.
+const OVERLAY_LAYOUT_RIGHT: OverlayIconLayout = OverlayIconLayout {
+    dir_x: 205,
+    ab_x: 238,
+    b_x: 222,
+    y: 222,
+};
+
+/// Overlay icon size in logical 1x pixels: the 64x64 sprite-sheet crops at the
+/// playback Zoom Factor of 4.
+const OVERLAY_ICON_SIZE: u32 = 16;
+
+/// Which overlay icons to show this frame and where, in logical 1x
+/// coordinates. Advances both players' hold counters exactly once per frame.
+fn project_overlay_icons(
+    p1: &mut GamepadOverlay,
+    p2: &mut GamepadOverlay,
+    dual_player: bool,
+) -> Vec<OverlayPlacement> {
+    let mut icons = Vec::new();
+    if dual_player {
+        icons.extend(p1.project(OVERLAY_LAYOUT_LEFT));
+        icons.extend(p2.project(OVERLAY_LAYOUT_RIGHT));
+    } else {
+        icons.extend(p1.project(OVERLAY_LAYOUT_RIGHT));
+    }
+    icons
+}
+
+/// Composite overlay icons into a recording frame (RGBA bytes). The recording
+/// artefact keeps today's shape: the 4x 1024x960 frame with the overlay baked
+/// in, straight-alpha blended by the host.
+fn composite_overlay_icons(
+    bytes: &mut [u8],
+    placements: &[OverlayPlacement],
+    icons: &[OverlayIcon],
+) {
+    let stride = ImageRender::<4>::width() as i64;
+    let height = ImageRender::<4>::height() as i64;
+    let scale = stride / NES_WIDTH as i64;
+    for placement in placements {
+        let Some(icon) = icons.get(placement.icon) else {
+            continue;
+        };
+        blit_icon(
+            bytes,
+            stride,
+            height,
+            icon,
+            placement.dst.0 as i64 * scale,
+            placement.dst.1 as i64 * scale,
+        );
+    }
+}
+
+/// Blit one RGBA icon over an RGBA frame with straight-alpha blending.
+fn blit_icon(
+    bytes: &mut [u8],
+    stride: i64,
+    height: i64,
+    icon: &OverlayIcon,
+    dst_x: i64,
+    dst_y: i64,
+) {
+    let iw = icon.width as i64;
+    let ih = icon.height as i64;
+    for iy in 0..ih {
+        for ix in 0..iw {
+            let dx = dst_x + ix;
+            let dy = dst_y + iy;
+            if dx < 0 || dy < 0 || dx >= stride || dy >= height {
+                continue;
+            }
+            let src = &icon.bytes[((iy * iw + ix) * 4) as usize..][..4];
+            if src[3] == 0 {
+                continue;
+            }
+            let dst = &mut bytes[(dy * stride + dx) as usize * 4..][..4];
+            if src[3] == 255 {
+                dst.copy_from_slice(src);
+            } else {
+                // alpha blend src over dst (straight alpha, non-premul)
+                let a = src[3] as u32;
+                let inv = 255 - a;
+                for c in 0..3 {
+                    dst[c] = ((src[c] as u32 * a + dst[c] as u32 * inv) / 255) as u8;
+                }
+                dst[3] = 255;
+            }
+        }
+    }
 }
 
 struct RecordRender {
@@ -269,7 +345,7 @@ struct RecordRender {
     canvas: Option<Canvas<Window>>,
     presenter: FramePresenter,
     video_tx: Option<mpsc::Sender<Vec<u8>>>,
-    icons: Vec<RgbaImage>,
+    icons: Vec<OverlayIcon>,
     dual_player: bool,
     enabled: bool,
     p1: GamepadOverlay,
@@ -306,47 +382,6 @@ impl RecordRender {
         self.p1.set_input(port0);
         self.p2.set_input(port1);
     }
-
-    fn overlay_input_icons(&mut self) {
-        let stride = ImageRender::<4>::width();
-        let pixels = self.buffer.as_pixels_mut();
-        if self.dual_player {
-            self.p1.draw(
-                pixels,
-                stride,
-                &self.icons,
-                OverlayIconLayout {
-                    dir_x: 8,
-                    ab_x: 152,
-                    b_x: 80,
-                    y: 888,
-                },
-            );
-            self.p2.draw(
-                pixels,
-                stride,
-                &self.icons,
-                OverlayIconLayout {
-                    dir_x: 820,
-                    ab_x: 952,
-                    b_x: 888,
-                    y: 888,
-                },
-            );
-        } else {
-            self.p1.draw(
-                pixels,
-                stride,
-                &self.icons,
-                OverlayIconLayout {
-                    dir_x: 820,
-                    ab_x: 952,
-                    b_x: 888,
-                    y: 888,
-                },
-            );
-        }
-    }
 }
 
 impl Render for RecordRender {
@@ -355,15 +390,20 @@ impl Render for RecordRender {
     }
 
     fn finish(&mut self) {
-        if self.enabled {
-            self.overlay_input_icons();
-        }
+        // Advance the hold counters and decide the icon placements once per
+        // frame. The window draws them as textures; recording composites them
+        // into its own scratch frame so the display frame stays clean.
+        let overlays = if self.enabled {
+            project_overlay_icons(&mut self.p1, &mut self.p2, self.dual_player)
+        } else {
+            Vec::new()
+        };
 
         if let Some(ref mut canvas) = self.canvas {
             let dst_size = canvas
                 .output_size()
                 .expect("failed to query SDL renderer output size");
-            let frame = plan(&self.buffer, &[], dst_size);
+            let frame = plan(&self.buffer, &overlays, dst_size);
             self.presenter.present(canvas, &frame);
         }
 
@@ -381,7 +421,11 @@ impl Render for RecordRender {
         if let Some(ref tx) = self.video_tx
             && send_video
         {
-            let _ = tx.send(self.buffer.as_bytes().to_vec());
+            let mut bytes = self.buffer.as_bytes().to_vec();
+            if self.enabled {
+                composite_overlay_icons(&mut bytes, &overlays, &self.icons);
+            }
+            let _ = tx.send(bytes);
         }
     }
 }
@@ -528,16 +572,24 @@ fn init_sdl_drivers(
         .into_rgba8();
     assert_eq!(sprite_sheet.width(), 1088);
     assert_eq!(sprite_sheet.height(), 64);
-    let mut icons = Vec::with_capacity(17);
-    for i in 0..17 {
-        let icon = imageops::crop_imm(&sprite_sheet, i * 64, 0, 64, 64).to_image();
-        icons.push(icon);
-    }
+    let icons: Vec<OverlayIcon> = (0..17)
+        .map(|i| {
+            let icon = imageops::crop_imm(&sprite_sheet, i * 64, 0, 64, 64).to_image();
+            OverlayIcon {
+                bytes: icon.into_raw(),
+                width: 64,
+                height: 64,
+            }
+        })
+        .collect();
+
+    let mut presenter = FramePresenter::new();
+    presenter.set_overlay_icons(icons.clone());
 
     let render = RecordRender {
         buffer: ImageRender::<4>::new(),
         canvas,
-        presenter: FramePresenter::new(),
+        presenter,
         video_tx,
         icons,
         dual_player: false,
@@ -799,8 +851,11 @@ impl PlayMovieAction {
 #[cfg(test)]
 mod tests {
     use nes_core::movie::{Command, GamepadInput, InputLog};
+    use nes_sdl::presentation::OverlayPlacement;
 
-    use super::compute_fast_forward_ranges;
+    use super::{
+        GamepadOverlay, OVERLAY_LAYOUT_RIGHT, compute_fast_forward_ranges, project_overlay_icons,
+    };
 
     fn idle() -> InputLog {
         InputLog::new(
@@ -973,5 +1028,207 @@ mod tests {
         let logs: Vec<_> = (0..30).map(|_| idle()).collect();
         assert_eq!(compute_fast_forward_ranges(&logs, 30), vec![(0, 1)]);
         assert!(compute_fast_forward_ranges(&logs, 31).is_empty());
+    }
+
+    // --- gamepad overlay placement projection ------------------------------
+
+    const PAD_A: u8 = 1 << 0;
+    const PAD_B: u8 = 1 << 1;
+    const PAD_UP: u8 = 1 << 4;
+    const PAD_DOWN: u8 = 1 << 5;
+    const PAD_LEFT: u8 = 1 << 6;
+    const PAD_RIGHT: u8 = 1 << 7;
+
+    fn pad(bits: u8) -> GamepadInput {
+        GamepadInput::from(bits)
+    }
+
+    /// The sprite sheet's fixed icon ids: 0 = A, 1 = B, 2..=16 = the fifteen
+    /// held-direction combinations. This is artwork, not a restatement of the
+    /// implementation.
+    const DIRECTION_ICON_TABLE: [(bool, bool, bool, bool, Option<usize>); 16] = [
+        (false, false, false, false, None),
+        (false, false, false, true, Some(4)),
+        (false, false, true, false, Some(3)),
+        (false, false, true, true, Some(6)),
+        (false, true, false, false, Some(2)),
+        (false, true, false, true, Some(9)),
+        (false, true, true, false, Some(7)),
+        (false, true, true, true, Some(12)),
+        (true, false, false, false, Some(5)),
+        (true, false, false, true, Some(10)),
+        (true, false, true, false, Some(8)),
+        (true, false, true, true, Some(14)),
+        (true, true, false, false, Some(11)),
+        (true, true, false, true, Some(15)),
+        (true, true, true, false, Some(13)),
+        (true, true, true, true, Some(16)),
+    ];
+
+    #[test]
+    fn direction_icon_table_covers_all_sixteen_combinations_plus_none() {
+        for (up, down, left, right, expected) in DIRECTION_ICON_TABLE {
+            assert_eq!(
+                GamepadOverlay::direction_icon_index(up, down, left, right),
+                expected,
+                "up={up} down={down} left={left} right={right}"
+            );
+        }
+    }
+
+    #[test]
+    fn no_held_button_projects_nothing() {
+        let mut p = GamepadOverlay::new();
+        p.set_input(&pad(0));
+        assert!(p.project(OVERLAY_LAYOUT_RIGHT).is_empty());
+    }
+
+    #[test]
+    fn every_direction_combination_projects_its_table_icon() {
+        for (up, down, left, right, expected) in DIRECTION_ICON_TABLE {
+            let Some(expected) = expected else {
+                continue;
+            };
+            let mut bits = 0u8;
+            if up {
+                bits |= PAD_UP;
+            }
+            if down {
+                bits |= PAD_DOWN;
+            }
+            if left {
+                bits |= PAD_LEFT;
+            }
+            if right {
+                bits |= PAD_RIGHT;
+            }
+            let mut p = GamepadOverlay::new();
+            p.set_input(&pad(bits));
+            assert_eq!(
+                p.project(OVERLAY_LAYOUT_RIGHT),
+                vec![OverlayPlacement {
+                    icon: expected,
+                    dst: (205, 222, 16, 16),
+                }],
+                "up={up} down={down} left={left} right={right}"
+            );
+        }
+    }
+
+    #[test]
+    fn direction_icon_holds_for_eighteen_frames_then_disappears() {
+        let mut p = GamepadOverlay::new();
+        p.set_input(&pad(PAD_UP));
+        for frame in 0..18 {
+            let icons = p.project(OVERLAY_LAYOUT_RIGHT);
+            assert_eq!(icons.len(), 1, "icon still shown on frame {frame}");
+            assert_eq!(icons[0].icon, 5);
+        }
+        assert!(
+            p.project(OVERLAY_LAYOUT_RIGHT).is_empty(),
+            "icon disappears on the 19th frame"
+        );
+    }
+
+    #[test]
+    fn a_and_b_icons_project_onto_their_slots() {
+        let mut p = GamepadOverlay::new();
+        p.set_input(&pad(PAD_A | PAD_B));
+        assert_eq!(
+            p.project(OVERLAY_LAYOUT_RIGHT),
+            vec![
+                OverlayPlacement {
+                    icon: 0,
+                    dst: (238, 222, 16, 16),
+                },
+                OverlayPlacement {
+                    icon: 1,
+                    dst: (222, 222, 16, 16),
+                },
+            ]
+        );
+    }
+
+    #[test]
+    fn a_alone_projects_the_a_icon_only() {
+        let mut p = GamepadOverlay::new();
+        p.set_input(&pad(PAD_A));
+        assert_eq!(
+            p.project(OVERLAY_LAYOUT_RIGHT),
+            vec![OverlayPlacement {
+                icon: 0,
+                dst: (238, 222, 16, 16),
+            }]
+        );
+    }
+
+    #[test]
+    fn b_alone_projects_the_b_icon_only() {
+        let mut p = GamepadOverlay::new();
+        p.set_input(&pad(PAD_B));
+        assert_eq!(
+            p.project(OVERLAY_LAYOUT_RIGHT),
+            vec![OverlayPlacement {
+                icon: 1,
+                dst: (222, 222, 16, 16),
+            }]
+        );
+    }
+
+    #[test]
+    fn ab_icons_hold_for_eighteen_frames_then_disappear() {
+        let mut p = GamepadOverlay::new();
+        p.set_input(&pad(PAD_A));
+        for frame in 0..18 {
+            assert_eq!(
+                p.project(OVERLAY_LAYOUT_RIGHT).len(),
+                1,
+                "icon still shown on frame {frame}"
+            );
+        }
+        assert!(p.project(OVERLAY_LAYOUT_RIGHT).is_empty());
+    }
+
+    #[test]
+    fn single_player_projects_into_the_right_hand_layout() {
+        let mut p1 = GamepadOverlay::new();
+        p1.set_input(&pad(PAD_A));
+        let icons = project_overlay_icons(&mut p1, &mut GamepadOverlay::new(), false);
+        assert_eq!(
+            icons,
+            vec![OverlayPlacement {
+                icon: 0,
+                dst: (238, 222, 16, 16),
+            }]
+        );
+    }
+
+    #[test]
+    fn dual_player_projects_player_one_left_and_player_two_right() {
+        let mut p1 = GamepadOverlay::new();
+        p1.set_input(&pad(PAD_A));
+        let mut p2 = GamepadOverlay::new();
+        p2.set_input(&pad(PAD_B));
+        let icons = project_overlay_icons(&mut p1, &mut p2, true);
+        assert_eq!(
+            icons,
+            vec![
+                OverlayPlacement {
+                    icon: 0,
+                    dst: (38, 222, 16, 16),
+                },
+                OverlayPlacement {
+                    icon: 1,
+                    dst: (222, 222, 16, 16),
+                },
+            ]
+        );
+    }
+
+    #[test]
+    fn dual_player_with_no_input_projects_nothing() {
+        let mut p1 = GamepadOverlay::new();
+        let mut p2 = GamepadOverlay::new();
+        assert!(project_overlay_icons(&mut p1, &mut p2, true).is_empty());
     }
 }
