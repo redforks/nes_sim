@@ -118,8 +118,8 @@ where
                 .sample_before_tick(self.cpu.mcu().apu_irq_pending());
             let irq_level = apu_sampled || self.cart_latch.level();
 
-            self.cpu.mcu_mut().tick_apu(clock);
             if clock.is_apu_clock() {
+                self.cpu.mcu_mut().tick_apu(clock);
                 let owner = self.bus.tick(&mut self.cpu, clock);
                 if !matches!(owner, BusOwner::Idle) {
                     return ExecuteResult::Continue;
@@ -135,8 +135,8 @@ where
                 ExecuteResult::Continue
             }
         } else {
-            self.cpu.mcu_mut().tick_apu(clock);
             if clock.is_apu_clock() {
+                self.cpu.mcu_mut().tick_apu(clock);
                 let _ = self.bus.tick(&mut self.cpu, clock);
             }
             ExecuteResult::Continue

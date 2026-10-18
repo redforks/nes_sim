@@ -426,8 +426,56 @@ const HALF_IRQ: FrameSequenceState = FrameSequenceState {
     envelop_and_linear: true,
 };
 
-/// Drives [`FrameSequencer`] the way [`Apu`] does: `tick_timer` every system
-/// tick, `tick` and latch consumption on CPU clocks (tick % 3 == 2).
+/// The frame sequencer's divider counts CPU cycles: advancing it once per
+/// CPU cycle puts the first mode-0 quarter step on cycle 7457. (The timer is
+/// only advanced on APU clocks, so this is exactly what `Apu::tick` does.)
+#[test]
+fn frame_sequencer_counts_cpu_cycles() {
+    let mut seq = FrameSequencer::default();
+    for cycle in 1..=7456 {
+        seq.tick_timer();
+        assert!(
+            seq.output_latch.is_none(),
+            "a step fired at CPU cycle {cycle}, before 7457"
+        );
+    }
+    seq.tick_timer(); // CPU cycle 7457
+    assert_eq!(
+        seq.output_latch,
+        Some(QUARTER),
+        "mode-0 quarter step must land on CPU cycle 7457"
+    );
+}
+
+/// The frame sequencer advances on APU clocks only: feeding `Apu::tick` the
+/// non-APU dots of more than two mode-0 periods must leave the frame IRQ
+/// flag clear. This is the contract that lets `NesMachine::tick` skip the
+/// APU call on those dots without changing emulated timing.
+#[test]
+fn frame_sequencer_ignores_non_apu_clock_ticks() {
+    let mut apu = Apu::new(());
+    apu.write(0x4017, 0x00, SystemClock(2)); // mode 0, even CPU cycle
+
+    let mut clock = SystemClock(3); // first non-APU dot after the write
+    for _ in 0..(3 * 2 * 29830) {
+        clock = clock.inc();
+        if clock.is_apu_clock() {
+            continue;
+        }
+        apu.tick(clock);
+    }
+
+    assert_eq!(
+        apu.peek(0x4015) & 0x40,
+        0,
+        "non-APU-clock ticks advanced the frame sequencer"
+    );
+}
+
+/// Drives [`FrameSequencer`] the way [`Apu`] does: `tick_timer`, `tick` and
+/// latch consumption on CPU clocks (tick % 3 == 2). Events are still measured
+/// in system ticks so the golden timeline below stays bit-for-bit the one the
+/// emulator produced before the timer moved inside the APU-clock gate.
 struct FrameSeqDriver {
     seq: FrameSequencer,
     tick: u64,
@@ -446,8 +494,8 @@ impl FrameSeqDriver {
     fn step(&mut self, events: &mut Vec<(u64, FrameSequenceState)>) {
         self.tick += 1;
         let clock = SystemClock(self.tick);
-        self.seq.tick_timer();
         if clock.is_apu_clock() {
+            self.seq.tick_timer();
             self.seq.tick();
             if let Some(state) = self.seq.output_latch.take() {
                 // Apu sets the frame interrupt flag when it consumes a latch.
@@ -520,8 +568,9 @@ impl FrameSeqDriver {
 
 /// Asserts `events` carry `states` in order, spaced at `tick_deltas` system
 /// ticks after the $4017 write plus the shared 3-4 CPU cycle apply latency
-/// (9-12 ticks). The frame sequencer's step constants are system ticks
-/// (3 per CPU cycle); the documented CPU-cycle steps are those divided by 3.
+/// (9-12 ticks). The driver advances the sequencer on APU clocks only, so
+/// these system-tick positions are the documented CPU-cycle steps times 3 and
+/// stay bit-for-bit what the emulator produced before the move.
 fn assert_timeline(
     write_tick: u64,
     events: &[(u64, FrameSequenceState)],
@@ -687,24 +736,24 @@ fn blargg_forum_test_1_length_counter_survives_the_write_dance() {
     }
 
     impl ApuDriver {
-        /// Runs until the next CPU clock (tick % 3 == 2), then writes.
+        /// Runs until the next APU clock (tick % 3 == 2), then writes.
         fn write_on_cpu_clock(&mut self, address: u16, value: u8) {
             loop {
                 self.tick += 1;
                 let clock = SystemClock(self.tick);
-                self.apu.tick(clock);
-                if clock.is_cpu_clock() {
+                if clock.is_apu_clock() {
+                    self.apu.tick(clock);
                     self.apu.write(address, value, clock);
                     return;
                 }
             }
         }
 
+        /// Runs `cpu_cycles` CPU cycles, ticking the APU once per APU clock.
         fn run_cpu(&mut self, cpu_cycles: u64) {
-            for _ in 0..cpu_cycles * 3 {
-                self.tick += 1;
-                let clock = SystemClock(self.tick);
-                self.apu.tick(clock);
+            for _ in 0..cpu_cycles {
+                self.tick += 3;
+                self.apu.tick(SystemClock(self.tick));
             }
         }
     }
@@ -721,8 +770,8 @@ fn blargg_forum_test_1_length_counter_survives_the_write_dance() {
         driver.run_cpu(8); // STA $4017 + DEX + BNE taken = 9-cycle spacing
     }
     driver.write_on_cpu_clock(0x4017, 0x80); // halt on the period wrap
-    for _ in 0..6 {
-        driver.tick += 1;
+    for _ in 0..2 {
+        driver.tick += 3;
         driver.apu.tick(SystemClock(driver.tick));
     }
 
