@@ -103,9 +103,9 @@ impl<D: AudioDriver> Apu<D> {
     }
 
     pub fn tick(&mut self, clock: SystemClock) {
-        self.frame_sequencer.tick_timer();
         if clock.is_apu_clock() {
             self.length_race_clobber = [false; 4];
+            self.frame_sequencer.tick_timer();
             self.frame_sequencer.tick();
             self.triangle.tick_timer();
             self.pulse1.tick_timer();
