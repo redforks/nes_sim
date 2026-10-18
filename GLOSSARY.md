@@ -231,6 +231,10 @@ _Avoid_: pattern table, CHR bank
 A double-buffered 8-entry sprite buffer inside the PPU. `SpriteManager` evaluates primary OAM during dots 65–256 of visible scanlines (0–239), starting at `OAMADDR` (`effective_index = (start_index + oam_index) & 0x3F` wrapping at 64, termination at 64 scanned) and copies up to 8 in-range sprites into the *next* buffer; the pre-render line (261) evaluates nothing, so scanline 0 starts with an empty buffer. `next_zero_sprite`/`current_zero_sprite` (`Option<Sprite>`) tracks whether OAM entry 0 survived evaluation so `sprite_zero_pixel_opaque` only fires for evaluated zero. At dot 0 each scanline, the buffers swap: the freshly populated buffer becomes *current* and feeds `find_sprite_pixel` for the whole scanline. During sprite tile fetches (dots 257–320 of visible and pre-render scanlines while rendering is enabled) hardware drives `OAMADDR` to 0; software polling `$2003` mid-frame observes that.
 _Avoid_: sec OAM, sprite cache
 
+**Sprite Row Cache**:
+The `SpriteManager`'s per-scanline pattern-plane cache, index-parallel to Secondary OAM. Filled lazily on the first pixel request of a scanline: one `resolve_pixel_addr(src_y)` plus two cartridge VRAM reads per evaluated Sprite, with vertical flip and 8x16 height applied at fill time. The per-pixel path decodes from the cached `low`/`high` planes, and `sprite_zero_pixel_opaque` reads the cached row of the evaluated zero Sprite (no own fetch). Invalidated on the same events as the background `TileCache`: the dot-0 Secondary OAM swap, `$2000` control writes, PPUDATA writes below `$2000`, and reset.
+_Avoid_: sprite cache, OAM cache
+
 ## Language — PPU VBL/NMI Race
 
 **VBL set dot (enter_vblank)**:
