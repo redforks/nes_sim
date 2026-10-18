@@ -300,6 +300,14 @@ _Avoid_: zoom ratio (use Zoom Factor), scale factor (overloaded), N (bare)
 `Render` implementation owning the Framebuffer. `set_pixel(x, y, color)` is called at NES logical coordinates `x < 256, y < 240` and writes an `N×N` block at `(x*N .. x*N+N, y*N .. y*N+N)`. Out-of-bounds logical coordinates are silently ignored; callers guarantee in-range. Exposes `as_bytes()`, `width()/height()`, and `pixel_brightness(x,y)` without depending on the `image` crate. Does not implement `Clone` — framebuffer copies are multi-MiB.
 _Avoid_: ImageRender (without `N`), RgbaImage wrapper, cloning the framebuffer
 
+**Presentation Plan**:
+The pure, SDL-free description of what one frame puts on screen: `FramePresentation { bytes, width, height, dst, overlays }`, built by `plan<N>(frame, overlays, dst_size)` in `nes_sdl::presentation`. It carries the frame's RGBA bytes and dimensions (Zoom Factor applied), the destination rect (the whole window), and the overlay placements scaled from logical 1x 256x240 coordinates into destination pixels. Generic over the Framebuffer Zoom Factor `N`; consumed by the SDL adapter `FramePresenter`.
+_Avoid_: render plan, draw plan, frame plan
+
+**Reused Frame Texture**:
+The single sdl2 streaming texture owned by `FramePresenter`, created on first present and reused for every frame (recreated only when the frame dimensions change). Upload is one `Texture::update`; drawing is one scaled `Canvas::copy` to the plan's destination rect. Expressible without `unsafe` because sdl2's `unsafe_textures` feature makes a `Texture` owned by the `Canvas` and free of a borrow.
+_Avoid_: per-frame texture, texture per frame
+
 ## Language — Profiling & Performance
 
 Core domain for measuring and optimizing emulation throughput. Headless != no-render; Self >3% defines a Hot Path.
