@@ -1,3 +1,5 @@
+pub mod presentation;
+
 use nes_core::nes::apu::AudioDriver;
 use nes_core::nes::controller::Button;
 use nes_core::render::{ImageRender, Render};
