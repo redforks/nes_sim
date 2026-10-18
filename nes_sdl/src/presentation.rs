@@ -24,6 +24,17 @@ pub struct OverlayPlacement {
     pub dst: DstRect,
 }
 
+/// Raw RGBA pixels for one overlay icon (the sprite-sheet crop).
+///
+/// The SDL adapter turns each of these into one texture the first time the
+/// icon is needed and reuses it for the life of the canvas.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct OverlayIcon {
+    pub bytes: Vec<u8>,
+    pub width: u32,
+    pub height: u32,
+}
+
 /// Everything one frame puts on screen, ready for the SDL adapter.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FramePresentation<'a> {
