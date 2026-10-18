@@ -11,7 +11,7 @@ use crate::{
     },
     render::Render,
 };
-use oam::{Oam, TilePosition};
+use oam::Oam;
 use palette::{Palette, Pixel};
 use registers::{PpuCtrl, PpuMask, PpuStatus, Registers};
 
@@ -695,11 +695,17 @@ impl<R: Render> Ppu<R> {
             }
             // PPUDATA
             0x2007 => {
-                self.write_vram(self.registers.vram_addr, value, cartridge);
+                let write_addr = self.registers.vram_addr;
+                self.write_vram(write_addr, value, cartridge);
                 self.registers
                     .ctrl
                     .inc_ppu_addr(&mut self.registers.vram_addr);
                 cartridge.notify_vram_address(self.registers.vram_addr);
+                // A pattern-table write changes Sprite plane bytes; drop the
+                // cached rows so the next pixel refetches.
+                if write_addr < 0x2000 {
+                    self.sprite.invalidate_rows();
+                }
             }
             _ => {}
         }
@@ -879,6 +885,9 @@ impl<R: Render> Ppu<R> {
     /// Set control flags (for testing)
     fn set_control_flags(&mut self, flags: PpuCtrl) {
         self.registers.set_control_flags(flags);
+        // The sprite pattern table / sprite size selection lives in ctrl, so
+        // the cached Sprite rows no longer match.
+        self.sprite.invalidate_rows();
     }
 
     /// Read status register (for testing) - behaves like reading from 0x2002
@@ -961,23 +970,6 @@ impl<R: Render> Ppu<R> {
                 .get_background_color_index(bg_palette_idx, bg_color_idx),
         }
     }
-}
-
-/// Read a pattern pixel from CHR data using a tile position.
-///
-/// For 8×8 tiles, `tile_y` is the vertical pixel offset within the tile (0..7).
-/// For 16×8 tiles, `tile_y` can span two tiles (0..15).
-fn read_pattern_pixel(
-    cartridge: &Cartridge,
-    tile_position: TilePosition,
-    tile_x: u8,
-    tile_y: u8,
-) -> u8 {
-    let low_addr = tile_position.resolve_pixel_addr(tile_y);
-    let low = cartridge.read_vram(low_addr.0);
-    let high = cartridge.read_vram(low_addr.second_plane_addr());
-    let bit = 7 - tile_x;
-    ((low >> bit) & 1) | (((high >> bit) & 1) << 1)
 }
 
 /// Fetch all four tile bytes for background rendering at a given screen pixel position.
