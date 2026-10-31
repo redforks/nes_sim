@@ -3943,7 +3943,7 @@ fn store_and_load_microcodes_use_alu_and_memory() {
     let mut cpu = cpu_with_memory(0x0000, &[(0x0042, 0x44), (0x0055, 0x55)]);
 
     cpu.ab.set(0x0042);
-    cpu.load_alu();
+    cpu.load_alu::<Mem>();
     assert_eq!(cpu.alu, 0x44);
 
     Microcode::LoadR(ValueSource::Mem, Register::A).exec(&mut cpu);
@@ -3995,7 +3995,7 @@ fn compare_and_bit_microcodes_update_flags() {
 
     cpu.set_a(0x41);
     cpu.ab.set(0x0001);
-    cpu.load_alu();
+    cpu.load_alu::<Mem>();
     Microcode::Bit(ValueSource::Mem).exec(&mut cpu);
     assert!(cpu.flag(Flag::Overflow));
     assert!(!cpu.flag(Flag::Negative));

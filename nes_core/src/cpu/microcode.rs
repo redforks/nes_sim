@@ -1030,7 +1030,8 @@ pub enum Microcode {
     /// Store register value to memory
     StoreR(ValueSource, Register),
 
-    /// Store cpu alu register into memory at cpu.ab
+    /// Store cpu alu register into memory at cpu.ab, through the payload's
+    /// route: `ZeroPage` for `$zp` modes, `Mem` otherwise.
     StoreAlu(ValueSource),
 
     // addressing microcodes
@@ -1065,15 +1066,21 @@ pub enum Microcode {
     /// cycle): hardware reads and discards without changing SP.
     DummyStackRead,
     SkipDetectInterrupt,
-    /// Load low byte of address from zero page indirect location
+    /// Load the low byte of the address latch through the payload's route:
+    /// `ZeroPage` reads the `(zp,X)`/`(zp),Y` pointer through
+    /// `Mcu::read_zero_page`; `Mem` reads it through the generic path, which
+    /// is what `JMP ($xxxx)` needs (its pointer is a program-chosen absolute
+    /// address with no zero-page guarantee).
     IndexedL(ValueSource),
-    /// Load high byte of address from zero page indirect location, at the
-    /// incremented (no carry) low byte
+    /// Load the high byte of the address latch, at the incremented (no
+    /// carry) low byte, through the payload's route — the same contract as
+    /// [`Microcode::IndexedL`].
     IndexedH(ValueSource),
     /// Read immediate value from instruction data stream, but do not use it
     SkipImmediate,
 
-    /// Load byte into alu at memory ab
+    /// Load byte into alu at memory ab, through the payload's route:
+    /// `ZeroPage` for `$zp` modes, `Mem` otherwise.
     LoadIntoAlu(ValueSource),
     /// Store SHX result at memory ab
     Shx,
@@ -1114,11 +1121,10 @@ pub enum Microcode {
     Bit(ValueSource),
 
     /// Shift/rotate one byte. The first field selects the accumulator (no
-    /// bus access) or memory at the address latch; the second carries the
-    /// addressing flavour the sequence builder chose (spec #46, ticket
-    /// #48), so the write of the result takes `Mcu::write_zero_page` for
-    /// a `$zp` sequence and `Mcu::write` otherwise. The accumulator form
-    /// carries `ValueSource::Mem` for uniformity and never touches memory.
+    /// bus access) or memory at the address latch. The second is the write
+    /// route of the result: the builders pass `ZeroPage` for `$zp`/`$zp,X`
+    /// and `Mem` for absolute and pointer-target modes; the accumulator
+    /// form carries `Mem` because it never reaches memory.
     Asl(AOrMemory, ValueSource),
     Lsr(AOrMemory, ValueSource),
     Rol(AOrMemory, ValueSource),
@@ -1129,18 +1135,16 @@ pub enum Microcode {
     ArrImmediate,
     AxsImmediate,
 
-    /// Fetch a byte from memory, then load into accumulator and X. The
-    /// payload is the addressing flavour the sequence builder chose (spec
-    /// #46, ticket #50), so the `$zp` / `$zp,Y` sequences read through
-    /// `Mcu::read_zero_page` and every other mode through the generic path.
+    /// Fetch a byte from memory, then load it into A and X. The payload is
+    /// the read route: the builders pass `ZeroPage` for `$zp`/`$zp,Y` and
+    /// `Mem` for absolute, absolute-indexed and pointer-target modes.
     Lax(ValueSource),
 
-    /// The undocumented RMW and `SAX` micro-ops carry the addressing
-    /// flavour their sequence builder chose (spec #46, ticket #49), so the
-    /// real write after the read-modify-write takes `Mcu::write_zero_page`
-    /// for a `$zp` sequence and `Mcu::write` otherwise. The field is named
-    /// `ValueSource` for uniformity with `StoreAlu`; the dispatch is through
-    /// `ValueTargetTrait`.
+    /// The undocumented RMW and `SAX` micro-ops. The payload is the write
+    /// route of the modified value: the builders pass `ZeroPage` for `$zp`
+    /// modes and `Mem` for absolute, absolute-indexed and pointer-target
+    /// modes, so the real write after the read-modify-write takes
+    /// `Mcu::write_zero_page` or the generic path accordingly.
     Sax(ValueSource),
     Rla(ValueSource),
     Dcp(ValueSource),
@@ -1149,17 +1153,21 @@ pub enum Microcode {
     Slo(ValueSource),
     Sre(ValueSource),
 
+    /// `JMP ($xxxx)`: load the address latch through the pointer's high
+    /// byte and jump to it. Both pointer bytes use the `Mem` route by
+    /// design — the pointer is a program-chosen absolute address, not an
+    /// addressing-mode guarantee, so a legal `JMP ($00FF)` must not be
+    /// re-routed through the zero-page fast path.
     IndexedHAndJump,
 
     SetFlag(Flag),
     ClearFlag(Flag),
 
     Transfer(TransferDirection),
-    /// Increment/decrement a register or the ALU latch. The second field
-    /// is the addressing flavour of the ALU write (spec #46, ticket #48):
-    /// `$zp` sequences write through `Mcu::write_zero_page`. The register
-    /// forms never touch memory and carry `ValueSource::Mem` for
-    /// uniformity.
+    /// Increment/decrement a register or the ALU latch. The second field is
+    /// the write route of the ALU result: the builders pass `ZeroPage` for
+    /// `$zp` modes and `Mem` for absolute and pointer-target modes. The
+    /// register forms never touch memory and carry `Mem`.
     IncDec(IncDecTarget, ValueSource),
 
     /// Read offset value from instruction data stream,
@@ -1642,19 +1650,14 @@ impl Microcode {
             }
             Self::Bit(ValueSource::ZeroPage) => cpu.bit::<ZeroPage>(),
             Self::Bit(ValueSource::Mem) => cpu.bit::<Mem>(),
-            Self::StoreAlu(ValueSource::ZeroPage) => {
-                <ZeroPage as ValueTargetTrait>::write(cpu, cpu.alu)
+            Self::StoreAlu(src @ (ValueSource::ZeroPage | ValueSource::Mem)) => {
+                Self::write_alu(cpu, src)
             }
-            Self::StoreAlu(ValueSource::Mem) => cpu.write_byte(cpu.alu),
             Self::SkipImmediate => {
                 cpu.inc_read_byte();
             }
-            Self::IndexedL(ValueSource::ZeroPage) => {
-                cpu.db = <ZeroPage as ValueSourceTrait>::value(cpu)
-            }
-            Self::IndexedL(ValueSource::Mem) => {
-                cpu.db = cpu.read_byte(cpu.ab.get());
-            }
+            Self::IndexedL(ValueSource::ZeroPage) => cpu.indexed_l::<ZeroPage>(),
+            Self::IndexedL(ValueSource::Mem) => cpu.indexed_l::<Mem>(),
             Self::IndexedH(ValueSource::ZeroPage) => cpu.indexed_h::<ZeroPage>(),
             Self::IndexedH(ValueSource::Mem) => cpu.indexed_h::<Mem>(),
             Self::Nop => cpu.read_pc_byte(),
@@ -1704,21 +1707,15 @@ impl Microcode {
                 // (non-page-cross) or as the page-crossed refetch at the
                 // (already index-adjusted) latch — closing the former exec
                 // defect where register math ran on a stale ALU.
-                cpu.load_alu();
+                cpu.load_alu::<Mem>();
                 let v = cpu.alu & cpu.sp;
                 cpu.set_register(Register::A, v);
                 cpu.set_register(Register::X, v);
                 cpu.sp = v;
             }
 
-            Self::Lax(ValueSource::ZeroPage) => {
-                cpu.alu = ZeroPage::value(cpu);
-                cpu.lax();
-            }
-            Self::Lax(ValueSource::Mem) => {
-                cpu.load_alu();
-                cpu.lax();
-            }
+            Self::Lax(ValueSource::ZeroPage) => cpu.lax::<ZeroPage>(),
+            Self::Lax(ValueSource::Mem) => cpu.lax::<Mem>(),
             Self::Sax(src) => cpu.sax(src),
             Self::Rla(src) => cpu.rla(src),
             Self::Dcp(src) => cpu.dcp(src),
@@ -1803,10 +1800,10 @@ impl Microcode {
             Self::LoadPcAbsoluteH => load_pc_absolute_h(cpu),
 
             Self::LoadIntoAlu(ValueSource::ZeroPage) => {
-                cpu.alu = ZeroPage::value(cpu);
+                cpu.load_alu::<ZeroPage>();
             }
             Self::LoadIntoAlu(ValueSource::Mem) => {
-                cpu.load_alu();
+                cpu.load_alu::<Mem>();
             }
             Self::ImmediateWithOp(op) => Self::immediate_with_op(cpu, op),
             Self::StoreAlu(_)
@@ -1886,10 +1883,10 @@ impl Microcode {
         }
     }
 
-    /// Writes the ALU latch through the addressing flavour carried by the
-    /// micro-op. The zero-page RMW sequences are built with
-    /// `ValueSource::ZeroPage` (spec #46, ticket #48), so the second, real
-    /// write of an `INC`/`DEC`/shift/rotate at `$zp` skips the bus
+    /// Writes the ALU latch through the write route carried by the
+    /// micro-op — the one place an ALU result reaches memory. The zero-page
+    /// RMW sequences are built with `ValueSource::ZeroPage`, so the second,
+    /// real write of an `INC`/`DEC`/shift/rotate at `$zp` skips the bus
     /// address-range match exactly as the read and the dummy write already
     /// do. Everything else — absolute, absolute-indexed, and the register
     /// forms, which never reach here — writes through the generic path.

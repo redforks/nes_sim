@@ -924,8 +924,10 @@ impl<M: Mcu> Cpu<M> {
         self.ab.set_low(v);
     }
 
-    fn load_alu(&mut self) {
-        self.alu = self.read_byte(self.ab.get());
+    /// Loads the byte at the address latch into the ALU through `S`: the
+    /// zero-page fast path for `$zp` sequences, the generic path otherwise.
+    fn load_alu<S: ValueSourceTrait>(&mut self) {
+        self.alu = S::value(self);
     }
 
     fn do_adc(&mut self, val: u8) {
@@ -1008,7 +1010,13 @@ impl<M: Mcu> Cpu<M> {
         self.set_flag(Flag::Carry, !borrow);
     }
 
-    fn lax(&mut self) {
+    /// Loads the operand through `S` and copies it to A and X. `S` is the
+    /// read route the sequence builder chose (`ZeroPage` for `$zp` modes,
+    /// `Mem` for absolute and pointer targets), so the zero-page decision is
+    /// a monomorphised trait impl, not a run-time test (spec #46, ticket
+    /// #50).
+    fn lax<S: ValueSourceTrait>(&mut self) {
+        self.alu = S::value(self);
         self.set_register(Register::A, self.alu);
         self.set_register(Register::X, self.alu);
     }
@@ -1270,6 +1278,12 @@ impl<M: Mcu> Cpu<M> {
     fn update_zero_negative_flags(&mut self, val: u8) {
         self.update_zero_flag(val);
         self.update_negative_flag(val);
+    }
+
+    /// Reads the pointer's low byte through `S`: the zero-page fast path
+    /// for the `(zp,X)`/`(zp),Y` modes, the generic path for `JMP ($xxxx)`.
+    fn indexed_l<S: ValueSourceTrait>(&mut self) {
+        self.db = S::value(self);
     }
 
     /// Reads the pointer's high byte at the low-byte-incremented (no
