@@ -766,9 +766,9 @@ pub(crate) const fn build_opcode_table() -> [ArrayVec<[Microcode; 7]>; 256] {
     // LAX immediate should be a two-cycle instruction: FetchAndDecode + LaxImmediate
     // Make the immediate microcode a single micro-op (LaxImmediate) so total cycles = 2
     r[LAX_IMMEDIATE as usize] = microcode_arr!(LaxImmediate);
-    r[LAX_ZERO_PAGE as usize] = microcode_arr!(ZeroPage, Lax);
-    r[LAX_ZERO_PAGE_Y as usize] = zero_page_y_op(Lax);
-    r[LAX_ABSOLUTE as usize] = absolute_op(Lax);
+    r[LAX_ZERO_PAGE as usize] = microcode_arr!(ZeroPage, Lax(ValueSource::ZeroPage));
+    r[LAX_ZERO_PAGE_Y as usize] = zero_page_y_op(Lax(ValueSource::ZeroPage));
+    r[LAX_ABSOLUTE as usize] = absolute_op(Lax(ValueSource::Mem));
     r[LAX_ABSOLUTE_INDEXED_Y as usize] = microcode_arr!(
         AbsoluteL,
         AbsoluteH,
@@ -785,7 +785,7 @@ pub(crate) const fn build_opcode_table() -> [ArrayVec<[Microcode; 7]>; 256] {
             first_clock: CrossPageBehavior::FirstClock
         }
     );
-    r[LAX_INDEXED_INDIRECT as usize] = indexed_indirect_op(Lax);
+    r[LAX_INDEXED_INDIRECT as usize] = indexed_indirect_op(Lax(ValueSource::Mem));
     r[LAX_INDIRECT_INDEXED as usize] =
         indirect_indexed_op(OpAfterAddressing::Lax, CrossPageBehavior::FirstClock);
     r[SAX_ZERO_PAGE as usize] = microcode_arr!(ZeroPage, Sax(ValueSource::ZeroPage));
@@ -933,7 +933,7 @@ impl OpAfterAddressing {
             OpAfterAddressing::StoreA => Microcode::StoreR(ValueSource::Mem, Register::A),
             OpAfterAddressing::Ora => Microcode::Ora(ValueSource::Mem),
             OpAfterAddressing::Eor => Microcode::Eor(ValueSource::Mem),
-            OpAfterAddressing::Lax => Microcode::Lax,
+            OpAfterAddressing::Lax => Microcode::Lax(ValueSource::Mem),
             OpAfterAddressing::Las => Microcode::Las,
             OpAfterAddressing::Sbc => Microcode::Sbc(ValueSource::Mem),
             OpAfterAddressing::Adc => Microcode::Adc(ValueSource::Mem),
@@ -1129,8 +1129,11 @@ pub enum Microcode {
     ArrImmediate,
     AxsImmediate,
 
-    /// Fetch a byte from memory, then load into accumulator and X
-    Lax,
+    /// Fetch a byte from memory, then load into accumulator and X. The
+    /// payload is the addressing flavour the sequence builder chose (spec
+    /// #46, ticket #50), so the `$zp` / `$zp,Y` sequences read through
+    /// `Mcu::read_zero_page` and every other mode through the generic path.
+    Lax(ValueSource),
 
     /// The undocumented RMW and `SAX` micro-ops carry the addressing
     /// flavour their sequence builder chose (spec #46, ticket #49), so the
@@ -1708,7 +1711,11 @@ impl Microcode {
                 cpu.sp = v;
             }
 
-            Self::Lax => {
+            Self::Lax(ValueSource::ZeroPage) => {
+                cpu.alu = ZeroPage::value(cpu);
+                cpu.lax();
+            }
+            Self::Lax(ValueSource::Mem) => {
                 cpu.load_alu();
                 cpu.lax();
             }
@@ -1805,6 +1812,7 @@ impl Microcode {
             Self::StoreAlu(_)
             | Self::Bit(_)
             | Self::LoadIntoAlu(_)
+            | Self::Lax(ValueSource::Immediate)
             | Self::StoreR(_, _)
             | Self::Adc(_)
             | Self::Sbc(_)
