@@ -575,7 +575,7 @@ impl<M: Mcu> Cpu<M> {
             | Microcode::LoadR(ValueSource::Mem, _)
             | Microcode::LoadIntoAlu(_)
             | Microcode::IndexedL
-            | Microcode::Lax
+            | Microcode::Lax(_)
             | Microcode::Las => BusCycle::Read(ReadAddress::Latch(self.ab.get())),
             // ALU operand reads; the immediate payload (never built into
             // sequences) classifies as its mode's fetch.

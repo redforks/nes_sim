@@ -142,6 +142,23 @@ const FAST_PATH_GROUPS: &[FastPathGroup] = &[
         opcodes: &[opcode::BIT_ZERO_PAGE],
     },
     FastPathGroup {
+        // The only zero-page read of `LAX $zp`, so `min: 1` pins the
+        // `Lax` load itself (spec #46, ticket #50).
+        group: "LAX $zp load",
+        fast_path: ZeroPageRead,
+        min: 1,
+        opcodes: &[opcode::LAX_ZERO_PAGE],
+    },
+    FastPathGroup {
+        // `LAX $zp,Y` makes one zero-page read for the index-add dummy
+        // read (pinned by the group below) and one for the load, so
+        // `min: 2` pins the load this ticket routes.
+        group: "LAX $zp,Y load",
+        fast_path: ZeroPageRead,
+        min: 2,
+        opcodes: &[opcode::LAX_ZERO_PAGE_Y],
+    },
+    FastPathGroup {
         // Every `$zp,X`/`$zp,Y` mode and every `(zp,X)` mode re-reads the
         // un-indexed base address while adding the index (hardware's dummy
         // read); that read is already on the zero-page fast path.
@@ -279,8 +296,8 @@ struct AllowedMiss {
 /// The documented allow-list: exactly the 60 opcodes the spec #46 audit
 /// measured as mis-routed, grouped per follow-up ticket.
 ///
-/// Ticket #49 deletes the first two entries (12 + 2), #50 the LAX entry
-/// (2), and #51 the pointer-fetch entry (32).
+/// Ticket #49 deletes the first two entries (12 + 2) and #51 the
+/// pointer-fetch entry (32); #50 deleted the LAX entry (2).
 const ALLOWED_MISSES: &[AllowedMiss] = &[
     AllowedMiss {
         ticket: 49,
@@ -306,12 +323,6 @@ const ALLOWED_MISSES: &[AllowedMiss] = &[
         group: "SAX $zp / SAX $zp,Y",
         kind: GenericAccessKind::Write,
         opcodes: &[opcode::SAX_ZERO_PAGE, opcode::SAX_ZERO_PAGE_Y],
-    },
-    AllowedMiss {
-        ticket: 50,
-        group: "LAX $zp / LAX $zp,Y",
-        kind: GenericAccessKind::Read,
-        opcodes: &[opcode::LAX_ZERO_PAGE, opcode::LAX_ZERO_PAGE_Y],
     },
     AllowedMiss {
         ticket: 51,
@@ -597,6 +608,34 @@ fn already_routed_groups_use_the_fast_path() {
                 group.fast_path,
             );
         }
+    }
+}
+
+/// The flavour is per addressing mode, not global (spec #46, ticket #50):
+/// `LAX $abs` / `LAX $abs,Y` keep the generic operand read. The walk's
+/// uniform filler (`$10`) and `Y` (`$12`) put those reads at `$1010` and
+/// `$1022`, above the layer the fast path covers.
+#[test]
+fn lax_absolute_keeps_the_generic_operand_read() {
+    let cases = [
+        (opcode::LAX_ABSOLUTE, 0x1010),
+        (opcode::LAX_ABSOLUTE_INDEXED_Y, 0x1022),
+    ];
+    for (op, expected_addr) in cases {
+        let walk = walk_opcode(op);
+        assert_eq!(
+            walk.fast_count(FastPath::ZeroPageRead),
+            0,
+            "{}: an absolute LAX must not read through the zero-page fast path",
+            walk.name,
+        );
+        assert!(
+            walk.calls
+                .iter()
+                .any(|call| matches!(call, McuCall::Read { addr, .. } if *addr == expected_addr)),
+            "{}: expected the operand read at {expected_addr:#06X} through the generic path",
+            walk.name,
+        );
     }
 }
 
