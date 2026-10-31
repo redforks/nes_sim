@@ -1318,4 +1318,6 @@ pub enum Flag {
 }
 
 #[cfg(test)]
+mod routing_tests;
+#[cfg(test)]
 mod tests;
