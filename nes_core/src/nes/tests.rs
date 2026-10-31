@@ -5,6 +5,7 @@ use crate::nes::apu::Apu;
 use crate::nes::controller::Button;
 use crate::nes::mapper::Cartridge;
 use crate::render::ImageRender;
+use crate::test_utils::{McuCall, RecordingMcu};
 
 fn test_mcu() -> NesMcu<ImageRender<1>, ()> {
     let cartridge = Cartridge::test();
@@ -513,77 +514,65 @@ fn drive_oam_dma<M: OamDmaMcu>(mcu: &mut M, bus: &mut Bus) -> Option<usize> {
     None
 }
 
-/// Recording `Mcu` double: answers OAM DMA source reads from a flat 64 KiB
-/// image and records which route each read took, so a test can assert on the
-/// `Mcu` seam what a real program cannot observe — fast path versus generic
-/// dispatch. `Peek`/`write` are only here to satisfy the trait.
-struct RecordingOamMcu {
-    ram: [u8; 0x10000],
+/// Page ramp for the routing tests: every byte distinct and non-zero, so a
+/// stuck, skipped or reordered byte is visible in the recorded order.
+fn page_ramp() -> Vec<u8> {
+    (0..=255u8).map(|i| i | 0x80).collect()
+}
+
+/// The shared recording `Mcu` plus the two things an OAM transfer needs
+/// beyond `Mcu`: the `$4014` request queue and the OAM write of the put
+/// phase. Reads delegate to [`RecordingMcu`], so the recorded calls say which
+/// route each of the 512 source reads took — the one thing a real program
+/// cannot observe.
+struct OamDmaRecordingMcu {
+    mcu: RecordingMcu,
     pending: Option<u8>,
-    generic_reads: Vec<u16>,
-    zero_page_reads: Vec<u8>,
-    stack_page_reads: Vec<u8>,
     oam_writes: Vec<u8>,
 }
 
-impl RecordingOamMcu {
-    fn new() -> Self {
+impl OamDmaRecordingMcu {
+    /// A 64 KiB image whose `page` holds [`page_ramp`]. Seeding writes the
+    /// image directly, so the recording starts empty.
+    fn with_page(page: u8) -> Self {
+        let base = (page as u16) << 8;
+        let ramp = page_ramp();
         Self {
-            ram: [0; 0x10000],
+            mcu: RecordingMcu::filled(0).with_program(base, &ramp),
             pending: None,
-            generic_reads: Vec::new(),
-            zero_page_reads: Vec::new(),
-            stack_page_reads: Vec::new(),
             oam_writes: Vec::new(),
         }
     }
-
-    /// Fill `page` with a ramp whose bytes are all distinct and all non-zero,
-    /// so a stuck or skipped byte is visible in the recorded order.
-    fn fill_page(&mut self, page: u8) {
-        let base = (page as usize) << 8;
-        for i in 0..=255u8 {
-            self.ram[base + i as usize] = i | 0x80;
-        }
-    }
-
-    fn page_bytes(&self, page: u8) -> Vec<u8> {
-        let base = (page as usize) << 8;
-        self.ram[base..base + 256].to_vec()
-    }
 }
 
-impl Mcu for RecordingOamMcu {
+impl Mcu for OamDmaRecordingMcu {
     fn read(&mut self, address: u16) -> u8 {
-        self.generic_reads.push(address);
-        self.ram[address as usize]
+        self.mcu.read(address)
     }
 
     fn peek(&self, address: u16) -> u8 {
-        self.ram[address as usize]
+        self.mcu.peek(address)
     }
 
     fn write(&mut self, address: u16, value: u8) {
         if address == 0x4014 {
-            // Same trigger a program uses: a store to $4014 queues the DMA.
+            // The trigger a program uses: a store to $4014 queues the DMA.
             self.pending = Some(value);
         } else {
-            self.ram[address as usize] = value;
+            self.mcu.write(address, value);
         }
     }
 
     fn read_zero_page(&mut self, address: u8) -> u8 {
-        self.zero_page_reads.push(address);
-        self.ram[address as usize]
+        self.mcu.read_zero_page(address)
     }
 
     fn read_stack_page(&mut self, address: u8) -> u8 {
-        self.stack_page_reads.push(address);
-        self.ram[0x100 + address as usize]
+        self.mcu.read_stack_page(address)
     }
 }
 
-impl OamDmaMcu for RecordingOamMcu {
+impl OamDmaMcu for OamDmaRecordingMcu {
     fn take_oam_dma_pending(&mut self) -> Option<u8> {
         self.pending.take()
     }
@@ -597,9 +586,7 @@ impl OamDmaMcu for RecordingOamMcu {
 /// zero-page fast path, in order, and puts exactly those bytes into OAM.
 #[test]
 fn oam_dma_from_zero_page_reads_through_zero_page_fast_path() {
-    let mut mcu = RecordingOamMcu::new();
-    mcu.fill_page(0x00);
-    let expected = mcu.page_bytes(0x00);
+    let mut mcu = OamDmaRecordingMcu::with_page(0x00);
     let mut bus = Bus::new();
     mcu.write(0x4014, 0x00);
 
@@ -615,10 +602,17 @@ fn oam_dma_from_zero_page_reads_through_zero_page_fast_path() {
         "OAM DMA never completed"
     );
 
-    assert_eq!(mcu.zero_page_reads, (0..=255u8).collect::<Vec<_>>());
-    assert_eq!(mcu.generic_reads, Vec::<u16>::new());
-    assert_eq!(mcu.stack_page_reads, Vec::<u8>::new());
-    assert_eq!(mcu.oam_writes, expected);
+    let reads = mcu.mcu.calls();
+    assert_eq!(reads.len(), 256, "one read per OAM byte: {reads:?}");
+    assert!(
+        reads.iter().all(McuCall::is_read_zero_page),
+        "zero-page source took another route: {reads:?}"
+    );
+    assert_eq!(
+        reads.iter().map(McuCall::address).collect::<Vec<_>>(),
+        (0..=255u16).collect::<Vec<_>>()
+    );
+    assert_eq!(mcu.oam_writes, page_ramp());
 }
 
 /// Positive control for the mid-render case below: with rendering disabled
@@ -778,9 +772,7 @@ fn reset_reanchors_deferred_apu_writes_to_running_clock() {
 /// stack-page fast path, in order, and puts exactly those bytes into OAM.
 #[test]
 fn oam_dma_from_stack_page_reads_through_stack_page_fast_path() {
-    let mut mcu = RecordingOamMcu::new();
-    mcu.fill_page(0x01);
-    let expected = mcu.page_bytes(0x01);
+    let mut mcu = OamDmaRecordingMcu::with_page(0x01);
     let mut bus = Bus::new();
     mcu.write(0x4014, 0x01);
 
@@ -789,19 +781,25 @@ fn oam_dma_from_stack_page_reads_through_stack_page_fast_path() {
         "OAM DMA never completed"
     );
 
-    assert_eq!(mcu.stack_page_reads, (0..=255u8).collect::<Vec<_>>());
-    assert_eq!(mcu.generic_reads, Vec::<u16>::new());
-    assert_eq!(mcu.zero_page_reads, Vec::<u8>::new());
-    assert_eq!(mcu.oam_writes, expected);
+    let reads = mcu.mcu.calls();
+    assert_eq!(reads.len(), 256, "one read per OAM byte: {reads:?}");
+    assert!(
+        reads.iter().all(McuCall::is_read_stack_page),
+        "stack-page source took another route: {reads:?}"
+    );
+    assert_eq!(
+        reads.iter().map(McuCall::address).collect::<Vec<_>>(),
+        (0x100..=0x1ffu16).collect::<Vec<_>>()
+    );
+    assert_eq!(mcu.oam_writes, page_ramp());
 }
 
 /// Any other source page keeps today's routing, today's byte order and the
 /// same cycle budget: only the read path of a `$0000`/`$0100` source changed.
 #[test]
 fn oam_dma_from_other_pages_routes_and_cycles_are_unchanged() {
-    fn dma_from(page: u8) -> (Option<usize>, RecordingOamMcu) {
-        let mut mcu = RecordingOamMcu::new();
-        mcu.fill_page(page);
+    fn dma_from(page: u8) -> (Option<usize>, OamDmaRecordingMcu) {
+        let mut mcu = OamDmaRecordingMcu::with_page(page);
         let mut bus = Bus::new();
         mcu.write(0x4014, page);
         let apu_clocks = drive_oam_dma(&mut mcu, &mut bus);
@@ -809,13 +807,19 @@ fn oam_dma_from_other_pages_routes_and_cycles_are_unchanged() {
     }
 
     let (plain_clocks, plain) = dma_from(0x02);
-    assert_eq!(
-        plain.generic_reads,
-        (0x0200..=0x02ffu16).collect::<Vec<_>>()
+    let reads = plain.mcu.calls();
+    assert_eq!(reads.len(), 256, "one read per OAM byte: {reads:?}");
+    assert!(
+        reads
+            .iter()
+            .all(|call| matches!(call, McuCall::Read { .. })),
+        "plain source took a fast path: {reads:?}"
     );
-    assert_eq!(plain.zero_page_reads, Vec::<u8>::new());
-    assert_eq!(plain.stack_page_reads, Vec::<u8>::new());
-    assert_eq!(plain.oam_writes, plain.page_bytes(0x02));
+    assert_eq!(
+        reads.iter().map(McuCall::address).collect::<Vec<_>>(),
+        (0x200..=0x2ffu16).collect::<Vec<_>>()
+    );
+    assert_eq!(plain.oam_writes, page_ramp());
 
     let (zero_page_clocks, _) = dma_from(0x00);
     let (stack_page_clocks, _) = dma_from(0x01);
