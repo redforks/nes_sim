@@ -1092,6 +1092,23 @@ fn test_inc_zero_page() {
 }
 
 #[test]
+fn zero_page_rmw_load_stamps_last_read_addr() {
+    // INC $A0 reads $00A0 on its RMW read cycle. That is the last completed
+    // read, so a DMC halt during the instruction must repeat $00A0 instead
+    // of the program counter.
+    let mut mcu = TestMcu::default();
+    mcu.mem[0x0000] = 0xE6; // INC $A0
+    mcu.mem[0x0001] = 0xA0;
+    mcu.mem[0x00A0] = 0x10;
+
+    let mut cpu = create_cpu_with_mcu(mcu);
+    cpu.set_pc(0x0000);
+    execute_next(&mut cpu);
+
+    assert_eq!(cpu.last_read_addr, Some(0x00A0));
+}
+
+#[test]
 fn test_txa_affects_flags() {
     let mut cpu = create_cpu_with_program(&[0xA2, 0x00, 0x8A, 0xEA]);
 

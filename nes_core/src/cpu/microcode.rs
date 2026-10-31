@@ -1765,7 +1765,7 @@ impl Microcode {
             Self::LoadPcAbsoluteH => load_pc_absolute_h(cpu),
 
             Self::LoadIntoAlu(ValueSource::ZeroPage) => {
-                cpu.alu = cpu.mcu.read_zero_page(cpu.ab.low());
+                cpu.alu = ZeroPage::value(cpu);
             }
             Self::LoadIntoAlu(ValueSource::Mem) => {
                 cpu.load_alu();
