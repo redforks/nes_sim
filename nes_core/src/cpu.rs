@@ -610,24 +610,25 @@ impl<M: Mcu> Cpu<M> {
             | Microcode::Sre
             | Microcode::PushStatus { .. }
             | Microcode::PushStack(_)
-            | Microcode::Asl(AOrMemory::Memory)
-            | Microcode::Lsr(AOrMemory::Memory)
-            | Microcode::Rol(AOrMemory::Memory)
-            | Microcode::Ror(AOrMemory::Memory)
-            | Microcode::IncDec(IncDecTarget::IncrementAlu | IncDecTarget::DecrementAlu) => {
+            | Microcode::Asl(AOrMemory::Memory, _)
+            | Microcode::Lsr(AOrMemory::Memory, _)
+            | Microcode::Rol(AOrMemory::Memory, _)
+            | Microcode::Ror(AOrMemory::Memory, _)
+            | Microcode::IncDec(IncDecTarget::IncrementAlu | IncDecTarget::DecrementAlu, _) => {
                 BusCycle::Write
             }
             // Purely internal cycles: flags, transfers, register INC/DEC,
             // the ALU shift/rotate step, JAM.
-            Microcode::Asl(AOrMemory::Accumulator)
-            | Microcode::Lsr(AOrMemory::Accumulator)
-            | Microcode::Rol(AOrMemory::Accumulator)
-            | Microcode::Ror(AOrMemory::Accumulator)
+            Microcode::Asl(AOrMemory::Accumulator, _)
+            | Microcode::Lsr(AOrMemory::Accumulator, _)
+            | Microcode::Rol(AOrMemory::Accumulator, _)
+            | Microcode::Ror(AOrMemory::Accumulator, _)
             | Microcode::IncDec(
                 IncDecTarget::IncrementX
                 | IncDecTarget::IncrementY
                 | IncDecTarget::DecrementX
                 | IncDecTarget::DecrementY,
+                _,
             )
             | Microcode::SetFlag(_)
             | Microcode::ClearFlag(_)
