@@ -215,45 +215,43 @@ impl Mapper for Vrc24 {
                 }
                 self.refresh_chr_banks(memory);
             }
-            0xf000..=0xffff => {
-                if self.variant.is_vrc4() {
-                    let idx = self.compute_register_index(address);
-                    match idx {
-                        0 => {
-                            self.irq_latch = (self.irq_latch & 0xf0) | (value & 0x0f);
-                        }
-                        1 => {
-                            self.irq_latch = (self.irq_latch & 0x0f) | ((value & 0x0f) << 4);
-                        }
-                        2 => {
-                            // nesdev wiki, VRC_IRQ: "Any write to this register
-                            // will acknowledge the pending IRQ and reset the
-                            // prescaler. If this register is written to with 'E'
-                            // set, the IRQ counter is reloaded with the latch
-                            // value. If 'E' is clear, the IRQ counter remains
-                            // unchanged."
-                            self.irq_mode = (value & 0x04) != 0;
-                            self.irq_enable_after_ack = (value & 0x01) != 0;
-                            self.irq_enable = (value & 0x02) != 0;
-                            self.irq_pending = false;
-                            self.irq_prescaler = 0;
-                            if self.irq_enable {
-                                self.reload_irq_counter();
-                            }
-                        }
-                        3 => {
-                            // nesdev wiki, VRC_IRQ: "Any write to this register
-                            // will acknowledge the pending IRQ. In addition, the
-                            // 'A' control bit moves to the 'E' control bit...
-                            // Writes to this register do not affect the current
-                            // state of the IRQ counter or prescaler." 'A' itself
-                            // persists until the next Control write (copy, not
-                            // move), so back-to-back acknowledges are idempotent.
-                            self.irq_pending = false;
-                            self.irq_enable = self.irq_enable_after_ack;
-                        }
-                        _ => {}
+            0xf000..=0xffff if self.variant.is_vrc4() => {
+                let idx = self.compute_register_index(address);
+                match idx {
+                    0 => {
+                        self.irq_latch = (self.irq_latch & 0xf0) | (value & 0x0f);
                     }
+                    1 => {
+                        self.irq_latch = (self.irq_latch & 0x0f) | ((value & 0x0f) << 4);
+                    }
+                    2 => {
+                        // nesdev wiki, VRC_IRQ: "Any write to this register
+                        // will acknowledge the pending IRQ and reset the
+                        // prescaler. If this register is written to with 'E'
+                        // set, the IRQ counter is reloaded with the latch
+                        // value. If 'E' is clear, the IRQ counter remains
+                        // unchanged."
+                        self.irq_mode = (value & 0x04) != 0;
+                        self.irq_enable_after_ack = (value & 0x01) != 0;
+                        self.irq_enable = (value & 0x02) != 0;
+                        self.irq_pending = false;
+                        self.irq_prescaler = 0;
+                        if self.irq_enable {
+                            self.reload_irq_counter();
+                        }
+                    }
+                    3 => {
+                        // nesdev wiki, VRC_IRQ: "Any write to this register
+                        // will acknowledge the pending IRQ. In addition, the
+                        // 'A' control bit moves to the 'E' control bit...
+                        // Writes to this register do not affect the current
+                        // state of the IRQ counter or prescaler." 'A' itself
+                        // persists until the next Control write (copy, not
+                        // move), so back-to-back acknowledges are idempotent.
+                        self.irq_pending = false;
+                        self.irq_enable = self.irq_enable_after_ack;
+                    }
+                    _ => {}
                 }
             }
             _ => {}

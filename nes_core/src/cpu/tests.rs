@@ -1092,6 +1092,23 @@ fn test_inc_zero_page() {
 }
 
 #[test]
+fn zero_page_rmw_load_stamps_last_read_addr() {
+    // INC $A0 reads $00A0 on its RMW read cycle. That is the last completed
+    // read, so a DMC halt during the instruction must repeat $00A0 instead
+    // of the program counter.
+    let mut mcu = TestMcu::default();
+    mcu.mem[0x0000] = 0xE6; // INC $A0
+    mcu.mem[0x0001] = 0xA0;
+    mcu.mem[0x00A0] = 0x10;
+
+    let mut cpu = create_cpu_with_mcu(mcu);
+    cpu.set_pc(0x0000);
+    execute_next(&mut cpu);
+
+    assert_eq!(cpu.last_read_addr, Some(0x00A0));
+}
+
+#[test]
 fn test_txa_affects_flags() {
     let mut cpu = create_cpu_with_program(&[0xA2, 0x00, 0x8A, 0xEA]);
 
@@ -3926,7 +3943,7 @@ fn store_and_load_microcodes_use_alu_and_memory() {
     let mut cpu = cpu_with_memory(0x0000, &[(0x0042, 0x44), (0x0055, 0x55)]);
 
     cpu.ab.set(0x0042);
-    cpu.load_alu();
+    cpu.load_alu::<Mem>();
     assert_eq!(cpu.alu, 0x44);
 
     Microcode::LoadR(ValueSource::Mem, Register::A).exec(&mut cpu);
@@ -3978,7 +3995,7 @@ fn compare_and_bit_microcodes_update_flags() {
 
     cpu.set_a(0x41);
     cpu.ab.set(0x0001);
-    cpu.load_alu();
+    cpu.load_alu::<Mem>();
     Microcode::Bit(ValueSource::Mem).exec(&mut cpu);
     assert!(cpu.flag(Flag::Overflow));
     assert!(!cpu.flag(Flag::Negative));
@@ -4064,7 +4081,7 @@ fn stack_and_misc_microcodes_manipulate_state() {
     cpu.ab.set(0x1234);
     cpu.mcu_mut().mem[0x1234] = 0x34;
     cpu.mcu_mut().mem[0x1235] = 0x12;
-    Microcode::IndexedL.exec(&mut cpu);
+    Microcode::IndexedL(ValueSource::Mem).exec(&mut cpu);
     Microcode::IndexedHAndJump.exec(&mut cpu);
     assert_eq!(cpu.pc(), 0x1234);
 
@@ -4424,7 +4441,7 @@ fn dma_halt_bus_addr_projects_the_pending_bus_cycle() {
 #[test]
 fn indexed_h_halt_repeat_uses_the_no_carry_low_increment() {
     let mut cpu = classification_cpu();
-    pending(&mut cpu, Microcode::IndexedH);
+    pending(&mut cpu, Microcode::IndexedH(ValueSource::Mem));
     assert_eq!(cpu.dma_halt_bus_addr(), Some(STUB_AB_LOW_INCREMENTED));
 }
 

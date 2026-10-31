@@ -257,6 +257,10 @@ _Avoid_: write filter, consecutive writes (without qualifier)
 `Ppu` does not own the cartridge and does not implement `Mcu`. `NesMcu` owns `cartridge: Cartridge + current_clock: SystemClock` and performs all CPU address decode: `0x0000-0x1FFF` LowerRam, `0x2000-0x3FFF` PPU regs via `Ppu::read_ppureg`/`write_ppureg` (taking `&mut Cartridge`), `0x4000-0x401F` APU/IO, `0x4020-0x5FFF` open bus, `0x6000-0x7FFF` PRG-RAM (open bus if `!prg_ram_enabled()`), `0x8000-0xFFFF` PRG-ROM via `cartridge.read`/`write(cycle)`. Undriven reads (`0x4020-0x5FFF`, disabled PRG-RAM) refresh the CPU open bus (`open_bus` latch) and the PPU latch decays via `PPU_OPEN_BUS_DECAY_TICKS`.
 _Avoid_: Ppu as Mcu, cartridge in Ppu, open bus (without qualifier)
 
+**Fast Path Contract**:
+The `Mcu` fast-path methods (`read_zero_page`, `read_stack_page`, `write_zero_page`, `write_stack_page`) may skip the address-range dispatch of `read`/`write`, never an observable side effect. A fast read latches the CPU open bus (`open_bus`) with the value read; a fast write latches it and deasserts both joypad `/OE` lines (`joypad1_oe`, `joypad2_oe`), in that order and at the same point in the sequence as a generic write. The bus wrapper (`NesMcu`) owns these effects and applies the identical ones on both routes, so the generic and fast paths cannot drift; the memory device (`LowerRam`) answers with pure array indexing and owns no bus state. The CPU's zero-page RMW read stamps `last_read_addr` like every other read.
+_Avoid_: cheap read, direct RAM access, bypassing the bus
+
 ## Language — Controller Reading
 
 **Strobe**:

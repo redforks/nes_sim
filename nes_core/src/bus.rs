@@ -38,6 +38,52 @@ pub(crate) struct OamActive {
     pub(crate) transfer_cycle: usize,
     pub(crate) latch: u8,
     pub(crate) pause_cycles: usize,
+    /// How each of the 512 source reads is routed. Resolved once, when the
+    /// pending `$4014` request is taken: the source page cannot change
+    /// mid-transfer, so the per-byte loop never re-classifies it.
+    pub(crate) source_access: OamSourceAccess,
+}
+
+/// Which `Mcu` read route an OAM DMA transfer uses for its source page.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum OamSourceAccess {
+    /// Source page `$0000`: zero-page fast path.
+    ZeroPage,
+    /// Source page `$0100`: stack-page fast path.
+    StackPage,
+    /// Any page other than `$00`/`$01`: the generic `read` path.
+    Generic,
+}
+
+impl OamSourceAccess {
+    /// Classify a source page for a whole transfer.
+    fn for_page(page: u8) -> Self {
+        match page {
+            0x00 => Self::ZeroPage,
+            0x01 => Self::StackPage,
+            _ => Self::Generic,
+        }
+    }
+}
+
+/// What the OAM transfer needs from the machine besides plain `Mcu` reads:
+/// the queued `$4014` request and the OAM write of the put phase.
+///
+/// The production impl is `NesMcu`; tests implement it for a recording `Mcu`
+/// double, so the routing of the source read is observable at the `Mcu` seam.
+pub(crate) trait OamDmaMcu: Mcu {
+    fn take_oam_dma_pending(&mut self) -> Option<u8>;
+    fn write_oam_data(&mut self, value: u8);
+}
+
+impl<R: Render, D: AudioDriver> OamDmaMcu for NesMcu<R, D> {
+    fn take_oam_dma_pending(&mut self) -> Option<u8> {
+        NesMcu::take_oam_dma_pending(self)
+    }
+
+    fn write_oam_data(&mut self, value: u8) {
+        self.ppu_mut().write_oam_data(value);
+    }
 }
 
 /// Bus owning the active DMA transfer for both channels.
@@ -125,8 +171,8 @@ impl Bus {
 
     /// Shared OAM state machine — single source of truth for both the
     /// production `tick` (via `Cpu`) and the hand-fed-bool test seam.
-    fn oam_tick<R: Render, D: AudioDriver>(
-        mcu: &mut NesMcu<R, D>,
+    fn oam_tick<M: OamDmaMcu>(
+        mcu: &mut M,
         oam: &mut Option<OamActive>,
         clock: SystemClock,
         dmc_drove: bool,
@@ -145,10 +191,16 @@ impl Bus {
             } else {
                 let byte_index = dma.transfer_cycle / 2;
                 if dma.transfer_cycle.is_multiple_of(2) {
-                    let addr = ((dma.page as u16) << 8) | byte_index as u16;
-                    dma.latch = mcu.read(addr);
+                    let offset = byte_index as u8;
+                    dma.latch = match dma.source_access {
+                        OamSourceAccess::ZeroPage => mcu.read_zero_page(offset),
+                        OamSourceAccess::StackPage => mcu.read_stack_page(offset),
+                        OamSourceAccess::Generic => {
+                            mcu.read(((dma.page as u16) << 8) | offset as u16)
+                        }
+                    };
                 } else {
-                    mcu.ppu_mut().write_oam_data(dma.latch);
+                    mcu.write_oam_data(dma.latch);
                 }
                 dma.transfer_cycle += 1;
             }
@@ -174,6 +226,7 @@ impl Bus {
                 transfer_cycle: 0,
                 latch: 0,
                 pause_cycles: 0,
+                source_access: OamSourceAccess::for_page(page),
             });
             return true;
         }
@@ -215,9 +268,9 @@ impl Bus {
     /// `NesMcu::tick_oam_dma` signature for mechanical migration; new tests
     /// should drive `Bus::tick` with a real `Cpu`.
     #[cfg(test)]
-    pub(crate) fn tick_oam_for_test<R: Render, D: AudioDriver>(
+    pub(crate) fn tick_oam_for_test<M: OamDmaMcu>(
         &mut self,
-        mcu: &mut NesMcu<R, D>,
+        mcu: &mut M,
         clock: SystemClock,
         dmc_drove: bool,
     ) -> bool {
