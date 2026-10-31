@@ -386,7 +386,13 @@ impl<R: Render> Ppu<R> {
         self.rendering_enabled() && self.timing.in_ppu_active_line()
     }
 
+    #[hotpath::measure(impl_type = "Ppu")]
     pub fn tick(&mut self, cartridge: &mut Cartridge) {
+        crate::hotpath_cpu::hotpath_cpu_alias!(
+            Self,
+            concat!(module_path!(), "::Ppu::tick"),
+            "tick"
+        );
         self.cycle += 1;
         let rendering_enabled = self.rendering_enabled();
 

@@ -102,7 +102,13 @@ impl<D: AudioDriver> Apu<D> {
         self.frame_sequencer.reset();
     }
 
+    #[hotpath::measure(impl_type = "Apu")]
     pub fn tick(&mut self, clock: SystemClock) {
+        crate::hotpath_cpu::hotpath_cpu_alias!(
+            Self,
+            concat!(module_path!(), "::Apu::tick"),
+            "tick"
+        );
         if clock.is_apu_clock() {
             self.length_race_clobber = [false; 4];
             self.frame_sequencer.tick_timer();

@@ -417,14 +417,17 @@ dependencies = [
  "arc-swap",
  "cfg-if",
  "crossbeam-channel",
+ "flate2",
  "futures-core",
  "hdrhistogram",
  "hotpath-drain",
  "hotpath-macros",
  "libc",
+ "object",
  "pin-project-lite",
  "quanta",
  "regex-lite",
+ "rustc-demangle",
  "serde",
  "serde_json",
  "time",
@@ -720,6 +723,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "object"
+version = "0.36.7"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "62948e14d923ea95ea2c7c86c71013138b66525b86bdc08d2dcc262bdb497b87"
+dependencies = [
+ "memchr",
+]
+
+[[package]]
 name = "once_cell"
 version = "1.21.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -912,6 +924,12 @@ dependencies = [
  "syn",
  "unicode-ident",
 ]
+
+[[package]]
+name = "rustc-demangle"
+version = "0.1.28"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b74b56ffa8bb2830709a538c2cbcae9aa062db0d2a42563bfb09bdaae44020eb"
 
 [[package]]
 name = "rustc_version"

@@ -69,8 +69,13 @@ where
     /// flag) cannot interfere with frame stepping. PPU timing always
     /// advances in `tick`, so the event fires within one frame (~89k dots)
     /// and no tick-count guard is needed.
-    #[hotpath::measure]
+    #[hotpath::measure(impl_type = "NesMachine")]
     pub fn process_frame(&mut self) -> ExecuteResult {
+        crate::hotpath_cpu::hotpath_cpu_alias!(
+            Self,
+            concat!(module_path!(), "::NesMachine::process_frame"),
+            "process_frame"
+        );
         loop {
             self.tick();
             if self.cpu.mcu_mut().ppu_mut().take_vblank_entered() {

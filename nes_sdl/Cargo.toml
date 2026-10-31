@@ -5,6 +5,7 @@ edition = "2024"
 
 [features]
 hotpath = ["hotpath/hotpath"]
+hotpath-cpu = ["hotpath/hotpath-cpu"]
 
 [dependencies]
 sdl2 = { version = "0.38", features = ["unsafe_textures"] }

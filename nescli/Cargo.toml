@@ -7,6 +7,10 @@ edition = "2024"
 
 [features]
 hotpath = ["hotpath/hotpath", "nes_core/hotpath", "nes_sdl/hotpath"]
+# Sampling-based CPU profiling (samply): per-function CPU sample attribution.
+# Needs samply + hotpath-samply in PATH and kernel perf permissions; see
+# `just profile-cpu`.
+hotpath-cpu = ["hotpath/hotpath-cpu", "nes_core/hotpath-cpu", "nes_sdl/hotpath-cpu"]
 
 [dependencies]
 anyhow = { workspace = true }

@@ -803,7 +803,68 @@ profile-cachegrind frames="200":
     if command -v cg_annotate >/dev/null 2>&1; then cg_annotate /tmp/cachegrind.out | head -n 80; else echo "cg_annotate not found; raw output at /tmp/cachegrind.out"; fi
 
 # Instrumented timing (hotpath crate): builds nescli with `-F hotpath`, so
-# `#[hotpath::measure]` rows (main, process_frame) print on stdout at exit.
-# `frames` defaults to 100 to keep runs ~0.2s; raise it for a longer sample.
-hotpath frames="100":
-    cargo run -p nescli -F hotpath --release "../Super Mario Bros. (Japan, USA).nes" play-movie "../happylee-supermariobros,warped.fm2" --headless --no-throttle --trim-after {{frames}}
+# `#[hotpath::measure]` rows (main, process_frame, Cpu/Ppu/Apu::tick) print on
+# stdout at exit. Cpu/Apu::tick fire once per CPU cycle and Ppu::tick once per
+# dot — ~15M calls over 100 frames — so:
+#   * HOTPATH_FUNCTIONS_TIME_SAMPLING_RATE times `rate` of the calls (counts stay
+#     exact, avg/p95 come from the sample). Per-frame rows (process_frame, main)
+#     need rate=1.0 or hundreds of frames: at 0.01 only ~1 in 100 calls is timed.
+#   * HOTPATH_DRAIN_INTERVAL_MS=1 keeps hotpath's per-thread event backlog from
+#     eating memory: every call still queues an event (~90 B) and the default
+#     50 ms drain cannot keep up at ~25M events/s (~7 MB/frame backlog at 1 ms).
+# `frames` defaults to 100 (~800 MB); each added frame costs ~7 MB and the
+# per-call guards roughly triple the frame time, so compare builds, not
+# absolute numbers, when the ticks are measured.
+hotpath frames="100" rate="0.01":
+    HOTPATH_FUNCTIONS_TIME_SAMPLING_RATE={{rate}} HOTPATH_DRAIN_INTERVAL_MS=1 cargo run -p nescli -F hotpath --release "../Super Mario Bros. (Japan, USA).nes" play-movie "../happylee-supermariobros,warped.fm2" --headless --no-throttle --trim-after {{frames}}
+
+# CPU profiling (samply + hotpath): sampling profiler over the frame loop, with
+# per-function CPU attribution. Follows https://hotpath.rs/cpu_profiling.
+# One-time prerequisites:
+#   cargo install samply --locked
+#   cargo install hotpath --bin hotpath-samply --version '^0.30'
+#   # Linux: let samply attach by PID and read kernel frames (resets on reboot)
+#   echo -1 | sudo tee /proc/sys/kernel/perf_event_paranoid
+#   echo  0 | sudo tee /proc/sys/kernel/yama/ptrace_scope
+#   echo  0 | sudo tee /proc/sys/kernel/kptr_restrict
+# The CLI spawns `hotpath-samply`, which in turn drives `samply record --pid`;
+# on Linux the run is wrapped in `setsid -w` so the profile is still written if
+# the host exits first. The `profiling` cargo profile (release + debug = 2)
+# supplies the symbols that map samples back to instrumented functions.
+# Output: the CPU table plus a `samply load <path>` line for the flamegraph UI.
+# The per-cycle Cpu/Ppu/Apu::tick measures queue ~150k events per frame, which
+# costs ~7 MB of backlog per frame even with HOTPATH_DRAIN_INTERVAL_MS=1, hence
+# the modest default; raise `frames` for more samply samples if RAM allows.
+profile-cpu frames="100" rate="0.01":
+    #!/usr/bin/env bash
+    set -euo pipefail
+    missing=()
+    command -v samply >/dev/null 2>&1 || missing+=("samply (cargo install samply --locked)")
+    command -v hotpath-samply >/dev/null 2>&1 || missing+=("hotpath-samply (cargo install hotpath --bin hotpath-samply --version '^0.30')")
+    if [ ${#missing[@]} -gt 0 ]; then
+        printf 'error: missing %s\n' "${missing[@]}" >&2
+        exit 1
+    fi
+    paranoid=$(cat /proc/sys/kernel/perf_event_paranoid)
+    ptrace_scope=$(cat /proc/sys/kernel/yama/ptrace_scope 2>/dev/null || echo 0)
+    if [ "$paranoid" -gt 1 ] || [ "$ptrace_scope" -ne 0 ]; then
+        echo "warning: perf_event_paranoid=$paranoid, ptrace_scope=$ptrace_scope;" >&2
+        echo "         samply may record no samples (see the sysctls in this recipe's comment)" >&2
+    fi
+    NES_ROM="../Super Mario Bros. (Japan, USA).nes"
+    NES_MOVIE="../happylee-supermariobros,warped.fm2"
+    if [ ! -f "$NES_ROM" ]; then echo "error: ROM not found: $NES_ROM" >&2; exit 1; fi
+    if [ ! -f "$NES_MOVIE" ]; then echo "error: movie not found: $NES_MOVIE" >&2; exit 1; fi
+    # samply attaches by PID, so on Linux the run must lead its own session or
+    # the parent exits before hotpath returns the report.
+    RUNNER=()
+    if command -v setsid >/dev/null 2>&1; then RUNNER=(setsid -w); fi
+    echo ">> Building CPU-profiling binary (hotpath-cpu, profile.profiling)..."
+    cargo build -p nescli -F hotpath-cpu --profile profiling
+    echo ">> Sampling {{frames}} frames headless/no-throttle..."
+    HOTPATH_FUNCTIONS_TIME_SAMPLING_RATE={{rate}} HOTPATH_DRAIN_INTERVAL_MS=1 "${RUNNER[@]}" /tmp/nes-sim-target/profiling/nescli "$NES_ROM" play-movie "$NES_MOVIE" --no-throttle --headless --trim-after {{frames}}
+    profile=$(ls -t /tmp/hotpath/*/hp.json.gz 2>/dev/null | head -n 1 || true)
+    if [ -n "$profile" ]; then
+        echo ""
+        echo ">> Interactive flamegraph: samply load $profile"
+    fi

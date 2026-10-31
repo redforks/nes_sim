@@ -722,7 +722,13 @@ impl<M: Mcu> Cpu<M> {
     }
 
     /// Return true if just execute current instruction
+    #[hotpath::measure(impl_type = "Cpu")]
     pub fn tick<P: Plugin<M>>(&mut self, plugin: &mut P, clock: SystemClock) -> TickOutcome {
+        crate::hotpath_cpu::hotpath_cpu_alias!(
+            Self,
+            concat!(module_path!(), "::Cpu::tick"),
+            "tick"
+        );
         self.now = clock;
 
         if self.frozen {
