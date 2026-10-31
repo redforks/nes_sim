@@ -59,6 +59,10 @@ impl<R: Render, D: AudioDriver> NesMcu<R, D> {
     /// Apply the observable side effects of a CPU write: latch the open bus
     /// and deassert both joypad /OE lines, so a store breaks contiguous-read
     /// detection regardless of which route performed it.
+    ///
+    /// Called first thing by both the generic `write` and the two fast-path
+    /// write overrides — the same point in the sequence — so the routes
+    /// cannot drift in either effect or order.
     fn latch_write(&mut self, value: u8) {
         self.open_bus = value;
         self.joypad1_oe = false;
@@ -327,13 +331,13 @@ impl<R: Render, D: AudioDriver> Mcu for NesMcu<R, D> {
     }
 
     fn write_zero_page(&mut self, address: u8, value: u8) {
-        self.lower_ram.write_zero_page(address, value);
         self.latch_write(value);
+        self.lower_ram.write_zero_page(address, value);
     }
 
     fn write_stack_page(&mut self, address: u8, value: u8) {
-        self.lower_ram.write_stack_page(address, value);
         self.latch_write(value);
+        self.lower_ram.write_stack_page(address, value);
     }
 }
 

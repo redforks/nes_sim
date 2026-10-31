@@ -51,8 +51,8 @@ pub(crate) enum OamSourceAccess {
     ZeroPage,
     /// Source page `$0100`: stack-page fast path.
     StackPage,
-    /// Any other source page: the generic dispatch.
-    Plain,
+    /// Any page other than `$00`/`$01`: the generic `read` path.
+    Generic,
 }
 
 impl OamSourceAccess {
@@ -61,7 +61,7 @@ impl OamSourceAccess {
         match page {
             0x00 => Self::ZeroPage,
             0x01 => Self::StackPage,
-            _ => Self::Plain,
+            _ => Self::Generic,
         }
     }
 }
@@ -195,7 +195,7 @@ impl Bus {
                     dma.latch = match dma.source_access {
                         OamSourceAccess::ZeroPage => mcu.read_zero_page(offset),
                         OamSourceAccess::StackPage => mcu.read_stack_page(offset),
-                        OamSourceAccess::Plain => {
+                        OamSourceAccess::Generic => {
                             mcu.read(((dma.page as u16) << 8) | offset as u16)
                         }
                     };
