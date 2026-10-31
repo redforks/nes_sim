@@ -103,6 +103,115 @@ fn test_controller_reads_route_through_nes_mcu() {
     assert_eq!(mcu.read(0x4016), 0x41); // Left pressed (bit 6)
 }
 
+/// The fast path may skip address dispatch, never an observable side
+/// effect: a zero-page read latches the open bus with the value read,
+/// exactly as the generic route does.
+#[test]
+fn zero_page_read_latches_open_bus_like_generic_read() {
+    fn open_bus_after_read(generic: bool) -> u8 {
+        let mut mcu = test_mcu();
+        mcu.write(0x0010, 0x5A);
+        // Park the latch on a different value so only the read below can
+        // move it to $5A.
+        mcu.write(0x0020, 0x00);
+
+        let value = if generic {
+            mcu.read(0x0010)
+        } else {
+            mcu.read_zero_page(0x10)
+        };
+        assert_eq!(value, 0x5A);
+        mcu.read(0x4020)
+    }
+
+    assert_eq!(open_bus_after_read(true), 0x5A, "generic read latches");
+    assert_eq!(open_bus_after_read(false), 0x5A, "fast read latches");
+}
+
+/// The stack-page read fast path latches the open bus like the generic
+/// route, so the "last value read by the CPU" stays true for pulls too.
+#[test]
+fn stack_page_read_latches_open_bus_like_generic_read() {
+    fn open_bus_after_read(generic: bool) -> u8 {
+        let mut mcu = test_mcu();
+        mcu.write(0x0180, 0xC3);
+        mcu.write(0x0020, 0x00);
+
+        let value = if generic {
+            mcu.read(0x0180)
+        } else {
+            mcu.read_stack_page(0x80)
+        };
+        assert_eq!(value, 0xC3);
+        mcu.read(0x4020)
+    }
+
+    assert_eq!(open_bus_after_read(true), 0xC3, "generic read latches");
+    assert_eq!(open_bus_after_read(false), 0xC3, "fast read latches");
+}
+
+/// The stack-page write fast path latches the open bus identically to the
+/// same write through the generic route.
+#[test]
+fn stack_page_write_latches_open_bus_like_generic_write() {
+    fn open_bus_after_write(generic: bool) -> u8 {
+        let mut mcu = test_mcu();
+        if generic {
+            mcu.write(0x0180, 0x7E);
+        } else {
+            mcu.write_stack_page(0x80, 0x7E);
+        }
+        mcu.read(0x4020)
+    }
+
+    assert_eq!(open_bus_after_write(true), 0x7E, "generic write latches");
+    assert_eq!(open_bus_after_write(false), 0x7E, "fast write latches");
+}
+
+/// A zero-page store clears both joypad /OE lines, exactly like any other
+/// store: two $4016 reads separated by one are not contiguous, and the bits
+/// they return match a generic store's schedule.
+#[test]
+fn zero_page_store_clears_joypad_oe_lines() {
+    fn poll(generic_store: bool) -> Vec<u8> {
+        let mut mcu = test_mcu();
+        // A pressed (stage 0) and Select pressed (stage 2), so a skipped
+        // clock would be visible as a wrong bit.
+        mcu.press_controller_a(Button::A);
+        mcu.press_controller_a(Button::Select);
+        mcu.press_controller_b(Button::A);
+        mcu.press_controller_b(Button::Select);
+        mcu.write(0x4016, 1);
+        mcu.write(0x4016, 0);
+
+        let mut bits = Vec::new();
+        for _ in 0..4 {
+            bits.push(mcu.read(0x4016) & 0x01);
+            if generic_store {
+                mcu.write(0x0010, 0);
+            } else {
+                mcu.write_zero_page(0x10, 0);
+            }
+        }
+        bits
+    }
+
+    assert_eq!(poll(false), poll(true));
+    assert_eq!(poll(false), vec![0x01, 0x00, 0x01, 0x00]);
+
+    // The same rule holds on the port-2 /OE line ($4017).
+    let mut mcu = test_mcu();
+    mcu.press_controller_b(Button::A);
+    mcu.press_controller_b(Button::Select);
+    mcu.write(0x4016, 1);
+    mcu.write(0x4016, 0);
+
+    assert_eq!(mcu.read(0x4017) & 0x01, 0x01); // A
+    mcu.write_zero_page(0x10, 0);
+    assert_eq!(mcu.read(0x4017) & 0x01, 0x00); // B: not contiguous
+    assert_eq!(mcu.read(0x4017) & 0x01, 0x00); // contiguous: no advance
+}
+
 /// Back-to-back PPUDATA reads (the page-crossing dummy read of
 /// `lda abs,X` followed by the real read, 1 CPU cycle apart) land inside
 /// the 6-dot ignore window: hardware fully ignores the second read — it
