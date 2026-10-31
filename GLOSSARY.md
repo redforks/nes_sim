@@ -258,7 +258,7 @@ _Avoid_: write filter, consecutive writes (without qualifier)
 _Avoid_: Ppu as Mcu, cartridge in Ppu, open bus (without qualifier)
 
 **Fast Path Contract**:
-The `Mcu` fast-path methods (`read_zero_page`, `read_stack_page`, `write_zero_page`, `write_stack_page`) may skip the address-range dispatch of `read`/`write`, never an observable side effect. A fast read latches the CPU open bus (`open_bus`) with the value read; a fast write latches it and deasserts both joypad `/OE` lines (`joypad1_oe`, `joypad2_oe`). `NesMcu` applies these effects through the shared private helpers `latch_read`/`latch_write`, so the generic and fast routes cannot drift; the memory device (`LowerRam`) answers with pure array indexing and owns no bus state. The CPU's zero-page RMW read stamps `last_read_addr` like every other read.
+The `Mcu` fast-path methods (`read_zero_page`, `read_stack_page`, `write_zero_page`, `write_stack_page`) may skip the address-range dispatch of `read`/`write`, never an observable side effect. A fast read latches the CPU open bus (`open_bus`) with the value read; a fast write latches it and deasserts both joypad `/OE` lines (`joypad1_oe`, `joypad2_oe`), in that order and at the same point in the sequence as a generic write. The bus wrapper (`NesMcu`) owns these effects and applies the identical ones on both routes, so the generic and fast paths cannot drift; the memory device (`LowerRam`) answers with pure array indexing and owns no bus state. The CPU's zero-page RMW read stamps `last_read_addr` like every other read.
 _Avoid_: cheap read, direct RAM access, bypassing the bus
 
 ## Language — Controller Reading
