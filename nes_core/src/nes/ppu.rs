@@ -174,7 +174,6 @@ pub struct Ppu<R: Render = ()> {
     /// earlier in the same tick (see `NesMachine::tick`).
     nmi_race_cancel: bool,
 
-    rendering_enabled_at_scanline_start: bool,
     /// Rendering-enabled sampled at pre-render dot 338. The odd-frame skipped
     /// clock decision uses this value, not live status at dot 339: blargg
     /// ppu_vbl_nmi 10-even_odd_timing requires a BG enable that becomes
@@ -230,7 +229,6 @@ impl<R: Render> Ppu<R> {
             tile_cache: TileCache::default(),
             sprite: SpriteManager::new(),
             suppress_vblank_pending: false,
-            rendering_enabled_at_scanline_start: false,
             ren_latched_at_338: false,
             cycle: 0,
             ppudata_last_completed_read_at: None,
@@ -255,7 +253,6 @@ impl<R: Render> Ppu<R> {
         self.timing.reset();
         self.sprite.reset();
         self.registers.write_scroll(0);
-        self.rendering_enabled_at_scanline_start = false;
         self.ren_latched_at_338 = false;
         self.vblank_entered = false;
         // A reset landing mid-frame must not let already-rendered pixels of
@@ -396,10 +393,6 @@ impl<R: Render> Ppu<R> {
         self.cycle += 1;
         let rendering_enabled = self.rendering_enabled();
 
-        if self.timing.dot == 0 {
-            self.rendering_enabled_at_scanline_start = rendering_enabled;
-        }
-
         if self.timing.scanline == 261 && self.timing.dot == 338 {
             self.ren_latched_at_338 = rendering_enabled;
         }
@@ -426,10 +419,7 @@ impl<R: Render> Ppu<R> {
         // memory-access phasing.
         //
         // Manual $2006/$2007 writes still reach the mapper directly.
-        if rendering_enabled
-            && (self.timing.in_ppu_active_line() && self.rendering_enabled_at_scanline_start)
-            && self.timing.dot % 2 == 1
-        {
+        if rendering_enabled && self.timing.in_ppu_active_line() && self.timing.dot % 2 == 1 {
             match self.timing.dot {
                 1..=256 | 321..=336 => {
                     // BG tile fetch: only pattern-table accesses (fetch types 2-3).
