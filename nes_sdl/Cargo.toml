@@ -5,7 +5,6 @@ edition = "2024"
 
 [features]
 hotpath = ["hotpath/hotpath"]
-hotpath-alloc = ["hotpath", "hotpath/hotpath-alloc"]
 
 [dependencies]
 sdl2 = { version = "0.38", features = ["unsafe_textures"] }
