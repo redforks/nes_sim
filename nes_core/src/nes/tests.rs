@@ -1,6 +1,6 @@
 use super::*;
 use crate::SystemClock;
-use crate::bus::Bus;
+use crate::bus::{Bus, OamDmaMcu, OamSourceAccess};
 use crate::nes::apu::Apu;
 use crate::nes::controller::Button;
 use crate::nes::mapper::Cartridge;
@@ -489,12 +489,15 @@ fn dmc_collision_at_start_of_oam_write_on_put() {
     assert_eq!(bus.oam_ref().unwrap().transfer_cycle, 1);
 }
 
-/// Arm `$4014` (source page $02) and drive the shared OAM state machine to
-/// completion. Returns false if the transfer never started or did not
-/// finish, so a missing DMA fails the test instead of hanging it.
-fn drive_oam_dma(mcu: &mut NesMcu<ImageRender<1>, ()>, bus: &mut Bus) -> bool {
+/// Drive an armed `$4014` transfer (caller writes the source page first) to
+/// completion. Returns `None` if the transfer never started or did not
+/// finish, so a missing DMA fails the test instead of hanging it; otherwise
+/// the number of APU clocks the transfer held the bus, so cycle counts can
+/// be compared across source pages.
+fn drive_oam_dma<M: OamDmaMcu>(mcu: &mut M, bus: &mut Bus) -> Option<usize> {
     let mut t = SystemClock(11);
     let mut ran = false;
+    let mut apu_clocks = 0;
     for _ in 0..2048 {
         t = t.inc();
         if !t.is_apu_clock() {
@@ -502,11 +505,120 @@ fn drive_oam_dma(mcu: &mut NesMcu<ImageRender<1>, ()>, bus: &mut Bus) -> bool {
         }
         if bus.tick_oam_for_test(mcu, t, false) {
             ran = true;
+            apu_clocks += 1;
         } else if ran {
-            return true;
+            return Some(apu_clocks);
         }
     }
-    false
+    None
+}
+
+/// Recording `Mcu` double: answers OAM DMA source reads from a flat 64 KiB
+/// image and records which route each read took, so a test can assert on the
+/// `Mcu` seam what a real program cannot observe — fast path versus generic
+/// dispatch. `Peek`/`write` are only here to satisfy the trait.
+struct RecordingOamMcu {
+    ram: [u8; 0x10000],
+    pending: Option<u8>,
+    generic_reads: Vec<u16>,
+    zero_page_reads: Vec<u8>,
+    stack_page_reads: Vec<u8>,
+    oam_writes: Vec<u8>,
+}
+
+impl RecordingOamMcu {
+    fn new() -> Self {
+        Self {
+            ram: [0; 0x10000],
+            pending: None,
+            generic_reads: Vec::new(),
+            zero_page_reads: Vec::new(),
+            stack_page_reads: Vec::new(),
+            oam_writes: Vec::new(),
+        }
+    }
+
+    /// Fill `page` with a ramp whose bytes are all distinct and all non-zero,
+    /// so a stuck or skipped byte is visible in the recorded order.
+    fn fill_page(&mut self, page: u8) {
+        let base = (page as usize) << 8;
+        for i in 0..=255u8 {
+            self.ram[base + i as usize] = i | 0x80;
+        }
+    }
+
+    fn page_bytes(&self, page: u8) -> Vec<u8> {
+        let base = (page as usize) << 8;
+        self.ram[base..base + 256].to_vec()
+    }
+}
+
+impl Mcu for RecordingOamMcu {
+    fn read(&mut self, address: u16) -> u8 {
+        self.generic_reads.push(address);
+        self.ram[address as usize]
+    }
+
+    fn peek(&self, address: u16) -> u8 {
+        self.ram[address as usize]
+    }
+
+    fn write(&mut self, address: u16, value: u8) {
+        if address == 0x4014 {
+            // Same trigger a program uses: a store to $4014 queues the DMA.
+            self.pending = Some(value);
+        } else {
+            self.ram[address as usize] = value;
+        }
+    }
+
+    fn read_zero_page(&mut self, address: u8) -> u8 {
+        self.zero_page_reads.push(address);
+        self.ram[address as usize]
+    }
+
+    fn read_stack_page(&mut self, address: u8) -> u8 {
+        self.stack_page_reads.push(address);
+        self.ram[0x100 + address as usize]
+    }
+}
+
+impl OamDmaMcu for RecordingOamMcu {
+    fn take_oam_dma_pending(&mut self) -> Option<u8> {
+        self.pending.take()
+    }
+
+    fn write_oam_data(&mut self, value: u8) {
+        self.oam_writes.push(value);
+    }
+}
+
+/// An OAM DMA whose source page is `$0000` reads all 512 bytes through the
+/// zero-page fast path, in order, and puts exactly those bytes into OAM.
+#[test]
+fn oam_dma_from_zero_page_reads_through_zero_page_fast_path() {
+    let mut mcu = RecordingOamMcu::new();
+    mcu.fill_page(0x00);
+    let expected = mcu.page_bytes(0x00);
+    let mut bus = Bus::new();
+    mcu.write(0x4014, 0x00);
+
+    // The access kind is decided once, when the transfer starts — the 512-byte
+    // loop only matches on the stored value.
+    bus.tick_oam_for_test(&mut mcu, SystemClock(8), false);
+    assert_eq!(
+        bus.oam_ref().unwrap().source_access,
+        OamSourceAccess::ZeroPage
+    );
+    assert!(
+        drive_oam_dma(&mut mcu, &mut bus).is_some(),
+        "OAM DMA never completed"
+    );
+
+    assert_eq!(mcu.zero_page_reads, (0..=255u8).collect::<Vec<_>>());
+    assert_eq!(mcu.generic_reads, Vec::<u16>::new());
+    assert_eq!(mcu.stack_page_reads, Vec::<u8>::new());
+    assert_eq!(mcu.oam_writes, expected);
 }
 
 /// Positive control for the mid-render case below: with rendering disabled
@@ -526,7 +638,10 @@ fn oam_dma_with_rendering_disabled_writes_oam() {
     }
 
     mcu.write(0x4014, 0x02);
-    assert!(drive_oam_dma(&mut mcu, &mut bus), "OAM DMA never completed");
+    assert!(
+        drive_oam_dma(&mut mcu, &mut bus).is_some(),
+        "OAM DMA never completed"
+    );
 
     for i in 0..=255u8 {
         mcu.write(0x2003, i);
@@ -573,7 +688,10 @@ fn oam_dma_during_rendering_does_not_corrupt_oam() {
     }
 
     mcu.write(0x4014, 0x02);
-    assert!(drive_oam_dma(&mut mcu, &mut bus), "OAM DMA never completed");
+    assert!(
+        drive_oam_dma(&mut mcu, &mut bus).is_some(),
+        "OAM DMA never completed"
+    );
     // Disable rendering before probing: mid-render $2004 reads expose
     // eval/fetch traffic, not primary OAM, so the sentinel is pinned with
     // rendering off.
@@ -654,4 +772,91 @@ fn reset_reanchors_deferred_apu_writes_to_running_clock() {
     mcu.tick_apu(SystemClock(big + 3));
     let status = mcu.read(0x4015);
     assert_ne!(status & 0x04, 0, "deferred reload never landed");
+}
+
+/// An OAM DMA whose source page is `$0100` reads all 512 bytes through the
+/// stack-page fast path, in order, and puts exactly those bytes into OAM.
+#[test]
+fn oam_dma_from_stack_page_reads_through_stack_page_fast_path() {
+    let mut mcu = RecordingOamMcu::new();
+    mcu.fill_page(0x01);
+    let expected = mcu.page_bytes(0x01);
+    let mut bus = Bus::new();
+    mcu.write(0x4014, 0x01);
+
+    assert!(
+        drive_oam_dma(&mut mcu, &mut bus).is_some(),
+        "OAM DMA never completed"
+    );
+
+    assert_eq!(mcu.stack_page_reads, (0..=255u8).collect::<Vec<_>>());
+    assert_eq!(mcu.generic_reads, Vec::<u16>::new());
+    assert_eq!(mcu.zero_page_reads, Vec::<u8>::new());
+    assert_eq!(mcu.oam_writes, expected);
+}
+
+/// Any other source page keeps today's routing, today's byte order and the
+/// same cycle budget: only the read path of a `$0000`/`$0100` source changed.
+#[test]
+fn oam_dma_from_other_pages_routes_and_cycles_are_unchanged() {
+    fn dma_from(page: u8) -> (Option<usize>, RecordingOamMcu) {
+        let mut mcu = RecordingOamMcu::new();
+        mcu.fill_page(page);
+        let mut bus = Bus::new();
+        mcu.write(0x4014, page);
+        let apu_clocks = drive_oam_dma(&mut mcu, &mut bus);
+        (apu_clocks, mcu)
+    }
+
+    let (plain_clocks, plain) = dma_from(0x02);
+    assert_eq!(
+        plain.generic_reads,
+        (0x0200..=0x02ffu16).collect::<Vec<_>>()
+    );
+    assert_eq!(plain.zero_page_reads, Vec::<u8>::new());
+    assert_eq!(plain.stack_page_reads, Vec::<u8>::new());
+    assert_eq!(plain.oam_writes, plain.page_bytes(0x02));
+
+    let (zero_page_clocks, _) = dma_from(0x00);
+    let (stack_page_clocks, _) = dma_from(0x01);
+    assert_eq!(zero_page_clocks, plain_clocks);
+    assert_eq!(stack_page_clocks, plain_clocks);
+}
+
+/// The same 256 bytes DMA'd from zero page, from the stack page and from a
+/// plain page leave identical OAM contents, probed through `$2003`/`$2004`.
+#[test]
+fn oam_dma_from_zero_and_stack_pages_write_the_same_oam_bytes() {
+    fn oam_after_dma_from(source_page: u8) -> Vec<u8> {
+        let mut mcu = test_mcu();
+        let mut bus = Bus::new();
+        // 0x00 sentinel so a byte that was never transferred is visible.
+        for i in 0..=255u8 {
+            mcu.write(0x2003, i);
+            mcu.write(0x2004, 0x00);
+            mcu.write(
+                ((source_page as u16) << 8) | i as u16,
+                i.wrapping_mul(3).wrapping_add(0x40),
+            );
+        }
+        mcu.write(0x4014, source_page);
+        assert!(
+            drive_oam_dma(&mut mcu, &mut bus).is_some(),
+            "OAM DMA from page {source_page:#04x} never completed"
+        );
+
+        let mut oam = Vec::with_capacity(256);
+        for i in 0..=255u8 {
+            mcu.write(0x2003, i);
+            oam.push(mcu.read(0x2004));
+        }
+        oam
+    }
+
+    let plain = oam_after_dma_from(0x02);
+    // Positive control: the transfer landed and the attribute mask applied.
+    assert_eq!(plain[1], 0x40u8.wrapping_add(3));
+    assert_eq!(plain.len(), 256);
+    assert_eq!(oam_after_dma_from(0x00), plain);
+    assert_eq!(oam_after_dma_from(0x01), plain);
 }
