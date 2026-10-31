@@ -58,6 +58,7 @@ impl FramePresenter {
 
     /// Upload the frame into the reused texture and scale-copy it to the
     /// plan's destination rect, then present.
+    #[hotpath::measure(impl_type = "FramePresenter")]
     pub fn present(&mut self, canvas: &mut Canvas<Window>, frame: &FramePresentation<'_>) {
         let size = (frame.width, frame.height);
         if self.texture.is_none() || self.size != size {
@@ -74,17 +75,25 @@ impl FramePresenter {
             .texture
             .as_mut()
             .expect("frame texture is created on first present");
-        texture
-            .update(None, frame.bytes, (frame.width * 4) as usize)
-            .expect("failed to upload SDL frame texture");
+        hotpath::measure_block!("sdl_texture_upload", {
+            texture
+                .update(None, frame.bytes, (frame.width * 4) as usize)
+                .expect("failed to upload SDL frame texture");
+        });
         let dst = Rect::new(frame.dst.0, frame.dst.1, frame.dst.2, frame.dst.3);
-        canvas
-            .copy(texture, None, dst)
-            .expect("failed to copy SDL frame texture");
-        for placement in &frame.overlays {
-            self.draw_icon(canvas, placement);
-        }
-        canvas.present();
+        hotpath::measure_block!("sdl_canvas_copy", {
+            canvas
+                .copy(texture, None, dst)
+                .expect("failed to copy SDL frame texture");
+        });
+        hotpath::measure_block!("sdl_overlay_draw", {
+            for placement in &frame.overlays {
+                self.draw_icon(canvas, placement);
+            }
+        });
+        hotpath::measure_block!("sdl_canvas_present", {
+            canvas.present();
+        });
     }
 
     /// Draw one overlay icon, creating its texture on first use.
@@ -124,6 +133,7 @@ impl FramePresenter {
 /// presentation plan, and present it through the reused texture. `SdlRender`
 /// and playback's `RecordRender` both use this so the plan/present seam has a
 /// single call site.
+#[hotpath::measure]
 pub fn present_frame<const N: usize>(
     canvas: &mut Canvas<Window>,
     presenter: &mut FramePresenter,

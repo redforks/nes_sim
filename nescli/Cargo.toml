@@ -5,6 +5,15 @@ edition = "2024"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
+[features]
+hotpath = ["hotpath/hotpath", "nes_core/hotpath", "nes_sdl/hotpath"]
+hotpath-alloc = [
+    "hotpath",
+    "hotpath/hotpath-alloc",
+    "nes_core/hotpath-alloc",
+    "nes_sdl/hotpath-alloc",
+]
+
 [dependencies]
 anyhow = { workspace = true }
 clap = { workspace = true }
@@ -13,3 +22,4 @@ log.workspace =true
 image = { workspace = true, features = ["png"] }
 nes_core = { workspace = true }
 nes_sdl = { path = "../nes_sdl" }
+hotpath = "0.30"

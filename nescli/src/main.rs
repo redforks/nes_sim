@@ -59,6 +59,7 @@ impl Action {
     }
 }
 
+#[hotpath::main]
 fn main() -> AppResult<()> {
     env_logger::init();
     let args = Args::parse();

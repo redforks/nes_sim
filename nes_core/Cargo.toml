@@ -6,6 +6,10 @@ edition = "2024"
 [lib]
 doctest = false
 
+[features]
+hotpath = ["hotpath/hotpath"]
+hotpath-alloc = ["hotpath", "hotpath/hotpath-alloc"]
+
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
@@ -22,6 +26,7 @@ serde.workspace = true
 anyhow.workspace = true
 base64 = "0.22.1"
 md5 = "0.8.0"
+hotpath = "0.30"
 
 [dev-dependencies]
 env_logger = { workspace = true }

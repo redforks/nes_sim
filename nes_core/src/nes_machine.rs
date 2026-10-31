@@ -69,6 +69,7 @@ where
     /// flag) cannot interfere with frame stepping. PPU timing always
     /// advances in `tick`, so the event fires within one frame (~89k dots)
     /// and no tick-count guard is needed.
+    #[hotpath::measure]
     pub fn process_frame(&mut self) -> ExecuteResult {
         loop {
             self.tick();
