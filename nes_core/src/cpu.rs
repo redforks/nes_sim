@@ -543,7 +543,7 @@ impl<M: Mcu> Cpu<M> {
             // and increments SP without pulling a value.
             Microcode::DummyStackRead => BusCycle::Read(ReadAddress::Stack(0x100 | self.sp as u16)),
             // (ind) high byte: low-byte increment without page carry.
-            Microcode::IndexedH | Microcode::IndexedHAndJump => {
+            Microcode::IndexedH(_) | Microcode::IndexedHAndJump => {
                 let ab = self.ab.get();
                 let low = (ab as u8).wrapping_add(1) as u16;
                 BusCycle::Read(ReadAddress::Latch((ab & 0xFF00) | low))
@@ -574,7 +574,7 @@ impl<M: Mcu> Cpu<M> {
             Microcode::LoadR(ValueSource::ZeroPage, _)
             | Microcode::LoadR(ValueSource::Mem, _)
             | Microcode::LoadIntoAlu(_)
-            | Microcode::IndexedL
+            | Microcode::IndexedL(_)
             | Microcode::Lax
             | Microcode::Las => BusCycle::Read(ReadAddress::Latch(self.ab.get())),
             // ALU operand reads; the immediate payload (never built into
@@ -1252,9 +1252,12 @@ impl<M: Mcu> Cpu<M> {
         self.update_negative_flag(val);
     }
 
-    fn indexed_h(&mut self) {
+    /// Reads the pointer's high byte at the low-byte-incremented (no
+    /// carry) address, through `S`: the zero-page fast path for the
+    /// `(zp,X)`/`(zp),Y` modes, the generic path for `JMP ($xxxx)`.
+    fn indexed_h<S: ValueSourceTrait>(&mut self) {
         self.ab.wrapping_inc_low();
-        let high = self.read_byte(self.ab.get());
+        let high = S::value(self);
         self.ab.set(self.db as u16 | ((high as u16) << 8));
     }
 }

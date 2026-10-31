@@ -218,6 +218,51 @@ const FAST_PATH_GROUPS: &[FastPathGroup] = &[
         ],
     },
     FastPathGroup {
+        // Both pointer bytes land in the zero page by construction for
+        // these modes, so each sequence reads two bytes at $00xx on the
+        // fast path. `(zp,X)` additionally re-reads the index-add base
+        // address, which the group above already pins.
+        group: "(zp,X) / (zp),Y pointer fetches",
+        fast_path: ZeroPageRead,
+        min: 2,
+        opcodes: &[
+            // (zp,X)
+            opcode::ORA_INDEXED_INDIRECT,
+            opcode::AND_INDEXED_INDIRECT,
+            opcode::EOR_INDEXED_INDIRECT,
+            opcode::ADC_INDEXED_INDIRECT,
+            opcode::SBC_INDEXED_INDIRECT,
+            opcode::CMP_INDEXED_INDIRECT,
+            opcode::STA_INDEXED_INDIRECT,
+            opcode::LDA_INDIRECT_INDEXED,
+            opcode::SAX_INDEXED_INDIRECT,
+            opcode::LAX_INDEXED_INDIRECT,
+            opcode::SLO_INDEXED_INDIRECT,
+            opcode::RLA_INDEXED_INDIRECT,
+            opcode::SRE_INDEXED_INDIRECT,
+            opcode::RRA_INDEXED_INDIRECT,
+            opcode::DCP_INDEXED_INDIRECT,
+            opcode::ISC_INDEXED_INDIRECT,
+            // (zp),Y
+            opcode::ORA_INDIRECT_INDEXED,
+            opcode::AND_INDIRECT_INDEXED,
+            opcode::EOR_INDIRECT_INDEXED,
+            opcode::ADC_INDIRECT_INDEXED,
+            opcode::SBC_INDIRECT_INDEXED,
+            opcode::CMP_INDIRECT_INDEXED,
+            opcode::STA_INDIRECT_INDEXED_Y,
+            opcode::LDA_INDIRECT_INDEXED_Y,
+            opcode::SHA_INDIRECT_INDEXED_Y,
+            opcode::LAX_INDIRECT_INDEXED,
+            opcode::SLO_INDIRECT_INDEXED,
+            opcode::RLA_INDIRECT_INDEXED,
+            opcode::SRE_INDIRECT_INDEXED,
+            opcode::RRA_INDIRECT_INDEXED,
+            opcode::DCP_INDIRECT_INDEXED,
+            opcode::ISC_INDIRECT_INDEXED,
+        ],
+    },
+    FastPathGroup {
         group: "stack pushes (PHA / PHP / JSR)",
         fast_path: StackPageWrite,
         min: 1,
@@ -258,7 +303,7 @@ struct AllowedMiss {
 /// measured as mis-routed, grouped per follow-up ticket.
 ///
 /// Ticket #48 deletes the first entry (12 opcodes), #49 the next two
-/// (12 + 2), #50 the LAX entry (2), and #51 the pointer-fetch entry (32).
+/// (12 + 2), and #50 the LAX entry (2).
 const ALLOWED_MISSES: &[AllowedMiss] = &[
     AllowedMiss {
         ticket: 48,
@@ -310,47 +355,6 @@ const ALLOWED_MISSES: &[AllowedMiss] = &[
         kind: GenericAccessKind::Read,
         opcodes: &[opcode::LAX_ZERO_PAGE, opcode::LAX_ZERO_PAGE_Y],
     },
-    AllowedMiss {
-        ticket: 51,
-        group: "(zp,X) / (zp),Y zero-page pointer fetches",
-        kind: GenericAccessKind::Read,
-        opcodes: &[
-            // (zp,X)
-            opcode::ORA_INDEXED_INDIRECT,
-            opcode::AND_INDEXED_INDIRECT,
-            opcode::EOR_INDEXED_INDIRECT,
-            opcode::ADC_INDEXED_INDIRECT,
-            opcode::SBC_INDEXED_INDIRECT,
-            opcode::CMP_INDEXED_INDIRECT,
-            opcode::STA_INDEXED_INDIRECT,
-            opcode::LDA_INDIRECT_INDEXED,
-            opcode::SAX_INDEXED_INDIRECT,
-            opcode::LAX_INDEXED_INDIRECT,
-            opcode::SLO_INDEXED_INDIRECT,
-            opcode::RLA_INDEXED_INDIRECT,
-            opcode::SRE_INDEXED_INDIRECT,
-            opcode::RRA_INDEXED_INDIRECT,
-            opcode::DCP_INDEXED_INDIRECT,
-            opcode::ISC_INDEXED_INDIRECT,
-            // (zp),Y
-            opcode::ORA_INDIRECT_INDEXED,
-            opcode::AND_INDIRECT_INDEXED,
-            opcode::EOR_INDIRECT_INDEXED,
-            opcode::ADC_INDIRECT_INDEXED,
-            opcode::SBC_INDIRECT_INDEXED,
-            opcode::CMP_INDIRECT_INDEXED,
-            opcode::STA_INDIRECT_INDEXED_Y,
-            opcode::LDA_INDIRECT_INDEXED_Y,
-            opcode::SHA_INDIRECT_INDEXED_Y,
-            opcode::LAX_INDIRECT_INDEXED,
-            opcode::SLO_INDIRECT_INDEXED,
-            opcode::RLA_INDIRECT_INDEXED,
-            opcode::SRE_INDIRECT_INDEXED,
-            opcode::RRA_INDIRECT_INDEXED,
-            opcode::DCP_INDIRECT_INDEXED,
-            opcode::ISC_INDIRECT_INDEXED,
-        ],
-    },
 ];
 
 /// The recorded bus activity of one executed sequence.
@@ -390,7 +394,12 @@ impl Walk {
 
 /// Applies the documented fixed register state and leaves the queue empty.
 fn new_walk_cpu(program: &[u8]) -> Cpu<RecordingMcu> {
-    let mcu = RecordingMcu::filled(WALK_FILLER).with_program(WALK_PC, program);
+    new_walk_cpu_with(RecordingMcu::filled(WALK_FILLER).with_program(WALK_PC, program))
+}
+
+/// As [`new_walk_cpu`], over a caller-provided `Mcu` whose memory the test
+/// controls.
+fn new_walk_cpu_with(mcu: RecordingMcu) -> Cpu<RecordingMcu> {
     let mut cpu = Cpu::new(mcu);
     let mut plugin = EmptyPlugin::new();
     let mut clock = SystemClock::default();
@@ -632,4 +641,81 @@ fn interrupt_sequences_route_their_stack_accesses() {
             );
         }
     }
+}
+
+/// Runs `program` from the documented walk state over a memory image the
+/// test controls, and returns the drained walk.
+fn walk_program(mcu: RecordingMcu) -> Walk {
+    let mut cpu = new_walk_cpu_with(mcu);
+    cpu.set_y(0); // keep `(zp),Y` targets a function of the pointer alone
+    cpu.mcu().clear_calls();
+    run_fetched_sequence(&mut cpu);
+    Walk {
+        name: "program".to_string(),
+        opcode: None,
+        calls: cpu.mcu().calls(),
+    }
+}
+
+/// `(zp),Y` fetches its pointer high byte from the *un-carried* low-byte
+/// increment: a pointer low byte of `$FF` wraps to `$00`, still inside the
+/// zero page, and the fast-path call must address that wrapped offset.
+#[test]
+fn indirect_indexed_high_byte_wraps_without_carry_inside_zero_page() {
+    let walk = walk_program(
+        RecordingMcu::filled(WALK_FILLER)
+            .with_program(WALK_PC, &[opcode::LDA_INDIRECT_INDEXED_Y, 0xFF])
+            .with_program(0x00FF, &[0x34])
+            .with_program(0x0000, &[0x12])
+            .with_program(0x1234, &[0xA5]),
+    );
+
+    for offset in [0xFFu8, 0x00] {
+        assert!(
+            walk.calls
+                .iter()
+                .any(|call| matches!(call, McuCall::ReadZeroPage { addr, .. } if *addr == offset)),
+            "expected a zero-page fast read of the pointer byte at ${offset:02X} (wrapped low \
+             byte), saw {:?}",
+            walk.calls
+        );
+    }
+    // The wrap must not escape into the stack page: nothing reads $0100.
+    assert!(
+        !walk
+            .calls
+            .iter()
+            .any(|call| call.address() == 0x0100 || call.address() == 0x0101),
+        "pointer high-byte fetch with a $FF low byte escaped the zero page: {:?}",
+        walk.calls
+    );
+}
+
+/// `JMP ($xxxx)`'s pointer is a program-chosen address, not an
+/// addressing-mode guarantee: a legal `JMP ($00FF)` keeps reading its
+/// pointer through the generic path (and wraps its high byte to `$0000`).
+#[test]
+fn indirect_jmp_keeps_reading_its_pointer_through_the_generic_path() {
+    let walk = walk_program(
+        RecordingMcu::filled(WALK_FILLER)
+            .with_program(WALK_PC, &[opcode::JMP_INDIRECT, 0xFF, 0x00])
+            .with_program(0x00FF, &[0x34])
+            .with_program(0x0000, &[0x12]),
+    );
+
+    for addr in [0x00FFu16, 0x0000] {
+        assert!(
+            walk.calls
+                .iter()
+                .any(|call| matches!(call, McuCall::Read { addr: a, .. } if *a == addr)),
+            "JMP ($00FF) must read its pointer at {addr:#06X} through the generic path, \
+             saw {:?}",
+            walk.calls
+        );
+    }
+    assert!(
+        !walk.calls.iter().any(|call| call.is_read_zero_page()),
+        "JMP ($00FF) must not take the zero-page fast path, saw {:?}",
+        walk.calls
+    );
 }
