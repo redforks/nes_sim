@@ -42,7 +42,7 @@
 //! first reset run its dead cycles at `$0000` would violate property 1 for
 //! a reason the walk is not trying to detect.
 
-use super::microcode::opcode;
+use super::microcode::{build_opcode_table, opcode};
 use super::*;
 use crate::test_utils::{GenericAccessKind, McuCall, RecordingMcu};
 use core::ops::RangeInclusive;
@@ -355,6 +355,77 @@ const FAST_PATH_GROUPS: &[FastPathGroup] = &[
     },
 ];
 
+/// A named group of opcodes that must make **zero** fast-path calls of any
+/// kind.
+///
+/// [`FAST_PATH_GROUPS`] proves the fast path is used where it should be; this
+/// is the inverse direction. It catches a `$zp`-only flavour wrongly applied
+/// to an absolute sequence: such a sequence would write
+/// `write_zero_page(ab.low())` — the wrong memory, silently — and the only
+/// external trace is a fast-path call an absolute opcode must never make.
+/// The walk's filler keeps every absolute target above the stack page, so a
+/// correctly generic absolute sequence shows no fast-path call at all.
+struct GenericOnlyGroup {
+    group: &'static str,
+    opcodes: &'static [u8],
+}
+
+/// Opcodes whose addressing mode resolves an absolute or program-chosen
+/// address, and which therefore must never reach the zero-page or stack-page
+/// fast paths. The `(zp,X)`/`(zp),Y` modes are deliberately absent — their
+/// pointer fetches *are* fast — while `JMP ($xxxx)`, whose pointer is generic
+/// by design, is listed.
+const GENERIC_ONLY_GROUPS: &[GenericOnlyGroup] = &[
+    GenericOnlyGroup {
+        group: "absolute loads / stores / compares",
+        opcodes: &[
+            opcode::LDA_ABSOLUTE,
+            opcode::STA_ABSOLUTE,
+            opcode::LDX_ABSOLUTE,
+            opcode::LDY_ABSOLUTE,
+            opcode::CMP_ABSOLUTE,
+            opcode::ADC_ABSOLUTE,
+        ],
+    },
+    GenericOnlyGroup {
+        group: "absolute-indexed loads / stores",
+        opcodes: &[
+            opcode::LDA_ABSOLUTE_INDEXED_X,
+            opcode::LDA_ABSOLUTE_INDEXED_Y,
+            opcode::STA_ABSOLUTE_INDEXED_X,
+            opcode::STA_ABSOLUTE_INDEXED_Y,
+        ],
+    },
+    GenericOnlyGroup {
+        group: "absolute RMW",
+        opcodes: &[
+            opcode::ASL_ABSOLUTE,
+            opcode::LSR_ABSOLUTE,
+            opcode::ROL_ABSOLUTE,
+            opcode::ROR_ABSOLUTE,
+            opcode::INC_ABSOLUTE,
+            opcode::DEC_ABSOLUTE,
+            opcode::DCP_ABSOLUTE,
+            opcode::ISC_ABSOLUTE,
+            opcode::RRA_ABSOLUTE,
+            opcode::RLA_ABSOLUTE,
+            opcode::SLO_ABSOLUTE,
+            opcode::SRE_ABSOLUTE,
+            opcode::SAX_ABSOLUTE,
+        ],
+    },
+    GenericOnlyGroup {
+        group: "LAX absolute",
+        opcodes: &[opcode::LAX_ABSOLUTE, opcode::LAX_ABSOLUTE_INDEXED_Y],
+    },
+    GenericOnlyGroup {
+        // The pointer read is the `Mem` flavour by design: `JMP ($xxxx)`
+        // has no zero-page addressing-mode guarantee.
+        group: "JMP ($xxxx) pointer",
+        opcodes: &[opcode::JMP_INDIRECT],
+    },
+];
+
 /// One group of opcodes the spec #46 audit found still routing a zero-page
 /// access through the generic `read`/`write` path.
 ///
@@ -369,11 +440,21 @@ struct AllowedMiss {
     opcodes: &'static [u8],
 }
 
-/// The documented allow-list: the 60 opcodes the spec #46 audit measured
-/// as mis-routed, grouped per follow-up ticket. Tickets #48, #49, #50 and
-/// #51 have since routed every group through the fast path, so the list is
-/// now empty. The list and the stale-entry self-check stay in place so a
-/// future regression is still reported here.
+/// The documented allow-list of sequences still sending a zero-page or
+/// stack-page access through the generic `read`/`write` path, grouped per
+/// follow-up ticket.
+///
+/// **The list is empty because every zero-page and stack-page access is
+/// routed.** Tickets #48 (zero-page RMW real write), #49 (undocumented RMW
+/// and `SAX`), #50 (`LAX $zp`) and #51 (`(zp,X)`/`(zp),Y` pointer fetches)
+/// closed the last holes the spec #46 audit measured.
+///
+/// Adding an opcode name here is the only way to let the property pass for
+/// a sequence that still misses, so a new hole must be declared, together
+/// with the ticket that will close it. That is what ticket #54 names this
+/// constant for. `assert_allow_list_is_still_accurate` is the counterweight:
+/// it fails as soon as an entry stops being needed, so the list cannot
+/// outlive its fixes.
 const ALLOWED_MISSES: &[AllowedMiss] = &[];
 
 /// The recorded bus activity of one executed sequence.
@@ -569,10 +650,15 @@ fn assert_no_unlisted_generic_ram_access(walk: &Walk) {
     }
 }
 
-/// Keeps [`ALLOWED_MISSES`] honest: an entry whose opcodes no longer miss
-/// is stale and must be deleted by the ticket that fixed the routing.
-fn assert_allow_list_is_still_accurate(walks: &[Walk]) {
-    for entry in ALLOWED_MISSES {
+/// Keeps an allow-list honest: an entry whose opcodes no longer miss is
+/// stale and must be deleted by the ticket that fixed the routing.
+///
+/// Takes the list as a parameter so the check itself stays exercised: with
+/// [`ALLOWED_MISSES`] empty the loop body never runs, so
+/// `allow_list_self_check_rejects_a_stale_entry` feeds a synthetic stale
+/// entry through this same function and pins that it fails.
+fn assert_allow_list_is_still_accurate(entries: &[AllowedMiss], walks: &[Walk]) {
+    for entry in entries {
         for &op in entry.opcodes {
             let walk = walks
                 .iter()
@@ -599,7 +685,31 @@ fn no_generic_access_in_zero_page_or_stack_page() {
     for walk in &walks {
         assert_no_unlisted_generic_ram_access(walk);
     }
-    assert_allow_list_is_still_accurate(&walks);
+    // Unconditional: with an empty allow-list this checks nothing today,
+    // but it is the only thing that will reject a stale entry tomorrow.
+    assert_allow_list_is_still_accurate(ALLOWED_MISSES, &walks);
+}
+
+/// The empty-list case is the only one the property test exercises, so the
+/// self-check's rejection logic is pinned separately: a synthetic entry
+/// naming an opcode that takes no RAM access must be reported as stale.
+#[test]
+fn allow_list_self_check_rejects_a_stale_entry() {
+    let walks = walk_all_opcodes();
+    let stale = AllowedMiss {
+        ticket: 0,
+        group: "synthetic stale entry",
+        kind: GenericAccessKind::Read,
+        // NOP takes no zero-page or stack-page access at all.
+        opcodes: &[opcode::NOP],
+    };
+    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        assert_allow_list_is_still_accurate(&[stale], &walks)
+    }));
+    assert!(
+        result.is_err(),
+        "a stale ALLOWED_MISSES entry must fail the self-check, not pass silently"
+    );
 }
 
 #[test]
@@ -621,6 +731,52 @@ fn already_routed_groups_use_the_fast_path() {
                 group.min,
                 group.fast_path,
             );
+        }
+    }
+}
+
+/// The inverse of [`FAST_PATH_GROUPS`]: opcodes that resolve an absolute or
+/// program-chosen address must make no fast-path call at all.
+#[test]
+fn generic_only_groups_stay_off_the_fast_path() {
+    let walks = walk_all_opcodes();
+    let table = build_opcode_table();
+    for group in GENERIC_ONLY_GROUPS {
+        for &op in group.opcodes {
+            // Self-check, mirroring `FAST_PATH_GROUPS`: the opcode must exist
+            // in the table, so a renamed or invented constant cannot make the
+            // group pass vacuously.
+            assert!(
+                !table[op as usize].is_empty(),
+                "group \"{}\" names {op:#04X}, which has no opcode-table sequence",
+                group.group,
+            );
+            let walk = walks
+                .iter()
+                .find(|walk| walk.opcode == Some(op))
+                .unwrap_or_else(|| panic!("no walk for opcode {op:#04X}"));
+            assert!(
+                !walk.calls.is_empty(),
+                "{}: group \"{}\" walked an empty sequence; the opcode did not run",
+                walk.name,
+                group.group,
+            );
+            for fast_path in [
+                FastPath::ZeroPageRead,
+                FastPath::ZeroPageWrite,
+                FastPath::StackPageRead,
+                FastPath::StackPageWrite,
+            ] {
+                let count = walk.fast_count(fast_path);
+                assert_eq!(
+                    count, 0,
+                    "{}: group \"{}\" made {count} {fast_path:?} call(s). \
+                     An absolute or program-chosen address must never reach the \
+                     zero-page/stack-page fast path: a `$zp`-only flavour applied \
+                     to it would write the wrong memory. Calls: {:?}",
+                    walk.name, group.group, walk.calls,
+                );
+            }
         }
     }
 }

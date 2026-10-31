@@ -570,6 +570,19 @@ impl Mcu for OamDmaRecordingMcu {
     fn read_stack_page(&mut self, address: u8) -> u8 {
         self.mcu.read_stack_page(address)
     }
+
+    // The two fast writes are overridden for the same reason as the reads:
+    // inheriting the trait's default would forward to `write`, recording the
+    // call as generic, so a test could not tell a fast write from a generic
+    // one. Forwarding to `RecordingMcu` records the route without
+    // synthesising a generic call.
+    fn write_zero_page(&mut self, address: u8, value: u8) {
+        self.mcu.write_zero_page(address, value)
+    }
+
+    fn write_stack_page(&mut self, address: u8, value: u8) {
+        self.mcu.write_stack_page(address, value)
+    }
 }
 
 impl OamDmaMcu for OamDmaRecordingMcu {
