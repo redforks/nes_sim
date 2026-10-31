@@ -218,6 +218,28 @@ const FAST_PATH_GROUPS: &[FastPathGroup] = &[
         ],
     },
     FastPathGroup {
+        // An RMW writes twice: the old value back, then the modified value
+        // (spec #46, ticket #48). `min: 2` therefore pins the second, real
+        // write — with only the dummy write routed this counts 1.
+        group: "zero-page RMW real write ($zp / $zp,X)",
+        fast_path: ZeroPageWrite,
+        min: 2,
+        opcodes: &[
+            opcode::ASL_ZERO_PAGE,
+            opcode::ASL_ZERO_PAGE_X,
+            opcode::LSR_ZERO_PAGE,
+            opcode::LSR_ZERO_PAGE_X,
+            opcode::ROL_ZERO_PAGE,
+            opcode::ROL_ZERO_PAGE_X,
+            opcode::ROR_ZERO_PAGE,
+            opcode::ROR_ZERO_PAGE_X,
+            opcode::INC_ZERO_PAGE,
+            opcode::INC_ZERO_PAGE_X,
+            opcode::DEC_ZERO_PAGE,
+            opcode::DEC_ZERO_PAGE_X,
+        ],
+    },
+    FastPathGroup {
         group: "stack pushes (PHA / PHP / JSR)",
         fast_path: StackPageWrite,
         min: 1,
@@ -257,28 +279,9 @@ struct AllowedMiss {
 /// The documented allow-list: exactly the 60 opcodes the spec #46 audit
 /// measured as mis-routed, grouped per follow-up ticket.
 ///
-/// Ticket #48 deletes the first entry (12 opcodes), #49 the next two
-/// (12 + 2), #50 the LAX entry (2), and #51 the pointer-fetch entry (32).
+/// Ticket #49 deletes the first two entries (12 + 2), #50 the LAX entry
+/// (2), and #51 the pointer-fetch entry (32).
 const ALLOWED_MISSES: &[AllowedMiss] = &[
-    AllowedMiss {
-        ticket: 48,
-        group: "official zero-page RMW second write ($zp/$zp,X)",
-        kind: GenericAccessKind::Write,
-        opcodes: &[
-            opcode::ASL_ZERO_PAGE,
-            opcode::ASL_ZERO_PAGE_X,
-            opcode::LSR_ZERO_PAGE,
-            opcode::LSR_ZERO_PAGE_X,
-            opcode::ROL_ZERO_PAGE,
-            opcode::ROL_ZERO_PAGE_X,
-            opcode::ROR_ZERO_PAGE,
-            opcode::ROR_ZERO_PAGE_X,
-            opcode::INC_ZERO_PAGE,
-            opcode::INC_ZERO_PAGE_X,
-            opcode::DEC_ZERO_PAGE,
-            opcode::DEC_ZERO_PAGE_X,
-        ],
-    },
     AllowedMiss {
         ticket: 49,
         group: "undocumented zero-page RMW second write ($zp/$zp,X)",
