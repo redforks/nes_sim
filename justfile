@@ -801,3 +801,9 @@ profile-cachegrind frames="200":
     RUSTFLAGS="-C force-frame-pointers=yes" cargo build --profile profiling -p nescli
     valgrind --tool=cachegrind --cachegrind-out-file=/tmp/cachegrind.out -- /tmp/nes-sim-target/profiling/nescli "$NES_ROM" play-movie "$NES_MOVIE" --no-throttle --headless --trim-after {{frames}}
     if command -v cg_annotate >/dev/null 2>&1; then cg_annotate /tmp/cachegrind.out | head -n 80; else echo "cg_annotate not found; raw output at /tmp/cachegrind.out"; fi
+
+# Instrumented timing (hotpath crate): builds nescli with `-F hotpath`, so
+# `#[hotpath::measure]` rows (main, process_frame) print on stdout at exit.
+# `frames` defaults to 100 to keep runs ~0.2s; raise it for a longer sample.
+hotpath frames="100":
+    cargo run -p nescli -F hotpath --release "../Super Mario Bros. (Japan, USA).nes" play-movie "../happylee-supermariobros,warped.fm2" --headless --no-throttle --trim-after {{frames}}
