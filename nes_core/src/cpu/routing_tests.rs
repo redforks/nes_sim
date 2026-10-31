@@ -400,7 +400,12 @@ impl Walk {
 
 /// Applies the documented fixed register state and leaves the queue empty.
 fn new_walk_cpu(program: &[u8]) -> Cpu<RecordingMcu> {
-    let mcu = RecordingMcu::filled(WALK_FILLER).with_program(WALK_PC, program);
+    new_walk_cpu_with(RecordingMcu::filled(WALK_FILLER).with_program(WALK_PC, program))
+}
+
+/// As [`new_walk_cpu`], over a caller-provided `Mcu` whose memory the test
+/// controls.
+fn new_walk_cpu_with(mcu: RecordingMcu) -> Cpu<RecordingMcu> {
     let mut cpu = Cpu::new(mcu);
     let mut plugin = EmptyPlugin::new();
     let mut clock = SystemClock::default();
@@ -642,4 +647,81 @@ fn interrupt_sequences_route_their_stack_accesses() {
             );
         }
     }
+}
+
+/// Runs `program` from the documented walk state over a memory image the
+/// test controls, and returns the drained walk.
+fn walk_program(mcu: RecordingMcu) -> Walk {
+    let mut cpu = new_walk_cpu_with(mcu);
+    cpu.set_y(0); // keep `(zp),Y` targets a function of the pointer alone
+    cpu.mcu().clear_calls();
+    run_fetched_sequence(&mut cpu);
+    Walk {
+        name: "program".to_string(),
+        opcode: None,
+        calls: cpu.mcu().calls(),
+    }
+}
+
+/// `(zp),Y` fetches its pointer high byte from the *un-carried* low-byte
+/// increment: a pointer low byte of `$FF` wraps to `$00`, still inside the
+/// zero page, and the fast-path call must address that wrapped offset.
+#[test]
+fn indirect_indexed_high_byte_wraps_without_carry_inside_zero_page() {
+    let walk = walk_program(
+        RecordingMcu::filled(WALK_FILLER)
+            .with_program(WALK_PC, &[opcode::LDA_INDIRECT_INDEXED_Y, 0xFF])
+            .with_program(0x00FF, &[0x34])
+            .with_program(0x0000, &[0x12])
+            .with_program(0x1234, &[0xA5]),
+    );
+
+    for offset in [0xFFu8, 0x00] {
+        assert!(
+            walk.calls
+                .iter()
+                .any(|call| matches!(call, McuCall::ReadZeroPage { addr, .. } if *addr == offset)),
+            "expected a zero-page fast read of the pointer byte at ${offset:02X} (wrapped low \
+             byte), saw {:?}",
+            walk.calls
+        );
+    }
+    // The wrap must not escape into the stack page: nothing reads $0100.
+    assert!(
+        !walk
+            .calls
+            .iter()
+            .any(|call| call.address() == 0x0100 || call.address() == 0x0101),
+        "pointer high-byte fetch with a $FF low byte escaped the zero page: {:?}",
+        walk.calls
+    );
+}
+
+/// `JMP ($xxxx)`'s pointer is a program-chosen address, not an
+/// addressing-mode guarantee: a legal `JMP ($00FF)` keeps reading its
+/// pointer through the generic path (and wraps its high byte to `$0000`).
+#[test]
+fn indirect_jmp_keeps_reading_its_pointer_through_the_generic_path() {
+    let walk = walk_program(
+        RecordingMcu::filled(WALK_FILLER)
+            .with_program(WALK_PC, &[opcode::JMP_INDIRECT, 0xFF, 0x00])
+            .with_program(0x00FF, &[0x34])
+            .with_program(0x0000, &[0x12]),
+    );
+
+    for addr in [0x00FFu16, 0x0000] {
+        assert!(
+            walk.calls
+                .iter()
+                .any(|call| matches!(call, McuCall::Read { addr: a, .. } if *a == addr)),
+            "JMP ($00FF) must read its pointer at {addr:#06X} through the generic path, \
+             saw {:?}",
+            walk.calls
+        );
+    }
+    assert!(
+        !walk.calls.iter().any(|call| call.is_read_zero_page()),
+        "JMP ($00FF) must not take the zero-page fast path, saw {:?}",
+        walk.calls
+    );
 }
