@@ -271,6 +271,51 @@ const FAST_PATH_GROUPS: &[FastPathGroup] = &[
         opcodes: &[opcode::SAX_ZERO_PAGE, opcode::SAX_ZERO_PAGE_Y],
     },
     FastPathGroup {
+        // Both pointer bytes land in the zero page by construction for
+        // these modes, so each sequence reads two bytes at $00xx on the
+        // fast path. `(zp,X)` additionally re-reads the index-add base
+        // address, which the group above already pins.
+        group: "(zp,X) / (zp),Y pointer fetches",
+        fast_path: ZeroPageRead,
+        min: 2,
+        opcodes: &[
+            // (zp,X)
+            opcode::ORA_INDEXED_INDIRECT,
+            opcode::AND_INDEXED_INDIRECT,
+            opcode::EOR_INDEXED_INDIRECT,
+            opcode::ADC_INDEXED_INDIRECT,
+            opcode::SBC_INDEXED_INDIRECT,
+            opcode::CMP_INDEXED_INDIRECT,
+            opcode::STA_INDEXED_INDIRECT,
+            opcode::LDA_INDIRECT_INDEXED,
+            opcode::SAX_INDEXED_INDIRECT,
+            opcode::LAX_INDEXED_INDIRECT,
+            opcode::SLO_INDEXED_INDIRECT,
+            opcode::RLA_INDEXED_INDIRECT,
+            opcode::SRE_INDEXED_INDIRECT,
+            opcode::RRA_INDEXED_INDIRECT,
+            opcode::DCP_INDEXED_INDIRECT,
+            opcode::ISC_INDEXED_INDIRECT,
+            // (zp),Y
+            opcode::ORA_INDIRECT_INDEXED,
+            opcode::AND_INDIRECT_INDEXED,
+            opcode::EOR_INDIRECT_INDEXED,
+            opcode::ADC_INDIRECT_INDEXED,
+            opcode::SBC_INDIRECT_INDEXED,
+            opcode::CMP_INDIRECT_INDEXED,
+            opcode::STA_INDIRECT_INDEXED_Y,
+            opcode::LDA_INDIRECT_INDEXED_Y,
+            opcode::SHA_INDIRECT_INDEXED_Y,
+            opcode::LAX_INDIRECT_INDEXED,
+            opcode::SLO_INDIRECT_INDEXED,
+            opcode::RLA_INDIRECT_INDEXED,
+            opcode::SRE_INDIRECT_INDEXED,
+            opcode::RRA_INDIRECT_INDEXED,
+            opcode::DCP_INDIRECT_INDEXED,
+            opcode::ISC_INDIRECT_INDEXED,
+        ],
+    },
+    FastPathGroup {
         group: "stack pushes (PHA / PHP / JSR)",
         fast_path: StackPageWrite,
         min: 1,
@@ -310,57 +355,13 @@ struct AllowedMiss {
 /// The documented allow-list: exactly the 60 opcodes the spec #46 audit
 /// measured as mis-routed, grouped per follow-up ticket.
 ///
-/// Ticket #50 deletes the LAX entry (2) and #51 the pointer-fetch entry
-/// (32).
-const ALLOWED_MISSES: &[AllowedMiss] = &[
-    AllowedMiss {
-        ticket: 50,
-        group: "LAX $zp / LAX $zp,Y",
-        kind: GenericAccessKind::Read,
-        opcodes: &[opcode::LAX_ZERO_PAGE, opcode::LAX_ZERO_PAGE_Y],
-    },
-    AllowedMiss {
-        ticket: 51,
-        group: "(zp,X) / (zp),Y zero-page pointer fetches",
-        kind: GenericAccessKind::Read,
-        opcodes: &[
-            // (zp,X)
-            opcode::ORA_INDEXED_INDIRECT,
-            opcode::AND_INDEXED_INDIRECT,
-            opcode::EOR_INDEXED_INDIRECT,
-            opcode::ADC_INDEXED_INDIRECT,
-            opcode::SBC_INDEXED_INDIRECT,
-            opcode::CMP_INDEXED_INDIRECT,
-            opcode::STA_INDEXED_INDIRECT,
-            opcode::LDA_INDIRECT_INDEXED,
-            opcode::SAX_INDEXED_INDIRECT,
-            opcode::LAX_INDEXED_INDIRECT,
-            opcode::SLO_INDEXED_INDIRECT,
-            opcode::RLA_INDEXED_INDIRECT,
-            opcode::SRE_INDEXED_INDIRECT,
-            opcode::RRA_INDEXED_INDIRECT,
-            opcode::DCP_INDEXED_INDIRECT,
-            opcode::ISC_INDEXED_INDIRECT,
-            // (zp),Y
-            opcode::ORA_INDIRECT_INDEXED,
-            opcode::AND_INDIRECT_INDEXED,
-            opcode::EOR_INDIRECT_INDEXED,
-            opcode::ADC_INDIRECT_INDEXED,
-            opcode::SBC_INDIRECT_INDEXED,
-            opcode::CMP_INDIRECT_INDEXED,
-            opcode::STA_INDIRECT_INDEXED_Y,
-            opcode::LDA_INDIRECT_INDEXED_Y,
-            opcode::SHA_INDIRECT_INDEXED_Y,
-            opcode::LAX_INDIRECT_INDEXED,
-            opcode::SLO_INDIRECT_INDEXED,
-            opcode::RLA_INDIRECT_INDEXED,
-            opcode::SRE_INDIRECT_INDEXED,
-            opcode::RRA_INDIRECT_INDEXED,
-            opcode::DCP_INDIRECT_INDEXED,
-            opcode::ISC_INDIRECT_INDEXED,
-        ],
-    },
-];
+/// Ticket #50 deletes the LAX entry (2); it is the last one.
+const ALLOWED_MISSES: &[AllowedMiss] = &[AllowedMiss {
+    ticket: 50,
+    group: "LAX $zp / LAX $zp,Y",
+    kind: GenericAccessKind::Read,
+    opcodes: &[opcode::LAX_ZERO_PAGE, opcode::LAX_ZERO_PAGE_Y],
+}];
 
 /// The recorded bus activity of one executed sequence.
 struct Walk {

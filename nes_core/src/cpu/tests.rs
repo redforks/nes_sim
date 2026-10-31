@@ -4081,7 +4081,7 @@ fn stack_and_misc_microcodes_manipulate_state() {
     cpu.ab.set(0x1234);
     cpu.mcu_mut().mem[0x1234] = 0x34;
     cpu.mcu_mut().mem[0x1235] = 0x12;
-    Microcode::IndexedL.exec(&mut cpu);
+    Microcode::IndexedL(ValueSource::Mem).exec(&mut cpu);
     Microcode::IndexedHAndJump.exec(&mut cpu);
     assert_eq!(cpu.pc(), 0x1234);
 
@@ -4441,7 +4441,7 @@ fn dma_halt_bus_addr_projects_the_pending_bus_cycle() {
 #[test]
 fn indexed_h_halt_repeat_uses_the_no_carry_low_increment() {
     let mut cpu = classification_cpu();
-    pending(&mut cpu, Microcode::IndexedH);
+    pending(&mut cpu, Microcode::IndexedH(ValueSource::Mem));
     assert_eq!(cpu.dma_halt_bus_addr(), Some(STUB_AB_LOW_INCREMENTED));
 }
 
