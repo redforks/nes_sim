@@ -159,8 +159,8 @@ const fn indexed_indirect_op(op: Microcode) -> ArrayVec<[Microcode; 7]> {
     microcode_arr!(
         Microcode::ZeroPage,
         Microcode::ZeroPageIndexedX,
-        Microcode::IndexedL,
-        Microcode::IndexedH,
+        Microcode::IndexedL(ValueSource::ZeroPage),
+        Microcode::IndexedH(ValueSource::ZeroPage),
         op
     )
 }
@@ -171,8 +171,8 @@ const fn indirect_indexed_op(
 ) -> ArrayVec<[Microcode; 7]> {
     microcode_arr!(
         Microcode::ZeroPage,
-        Microcode::IndexedL,
-        Microcode::IndexedH,
+        Microcode::IndexedL(ValueSource::ZeroPage),
+        Microcode::IndexedH(ValueSource::ZeroPage),
         Microcode::IndexedYWithOp { op, first_clock }
     )
 }
@@ -238,8 +238,8 @@ const fn indexed_indirect_rmw_op(op: Microcode) -> ArrayVec<[Microcode; 7]> {
     microcode_arr!(
         Microcode::ZeroPage,
         Microcode::ZeroPageIndexedX,
-        Microcode::IndexedL,
-        Microcode::IndexedH,
+        Microcode::IndexedL(ValueSource::ZeroPage),
+        Microcode::IndexedH(ValueSource::ZeroPage),
         Microcode::LoadIntoAlu(ValueSource::Mem),
         Microcode::StoreAlu(ValueSource::Mem),
         op
@@ -249,8 +249,8 @@ const fn indexed_indirect_rmw_op(op: Microcode) -> ArrayVec<[Microcode; 7]> {
 const fn indirect_indexed_rmw_op(op: Microcode) -> ArrayVec<[Microcode; 7]> {
     microcode_arr!(
         Microcode::ZeroPage,
-        Microcode::IndexedL,
-        Microcode::IndexedH,
+        Microcode::IndexedL(ValueSource::ZeroPage),
+        Microcode::IndexedH(ValueSource::ZeroPage),
         Microcode::IndexedYWithOp {
             op: OpAfterAddressing::LoadIntoAlu,
             first_clock: CrossPageBehavior::FirstClockAlways
@@ -288,8 +288,8 @@ const fn absolute_indexed_y_store_a() -> ArrayVec<[Microcode; 7]> {
 const fn indirect_indexed_store_a() -> ArrayVec<[Microcode; 7]> {
     microcode_arr!(
         Microcode::ZeroPage,
-        Microcode::IndexedL,
-        Microcode::IndexedH,
+        Microcode::IndexedL(ValueSource::ZeroPage),
+        Microcode::IndexedH(ValueSource::ZeroPage),
         Microcode::IndexedYWithOp {
             op: OpAfterAddressing::StoreA,
             first_clock: CrossPageBehavior::FirstClockAlways
@@ -561,7 +561,14 @@ pub(crate) const fn build_opcode_table() -> [ArrayVec<[Microcode; 7]>; 256] {
     r[PHP as usize] = microcode_arr!(Nop, PushStatus { break_flag: true });
     r[PLP as usize] = microcode_arr!(Nop, DummyStackRead, Plp);
     r[JMP_ABSOLUTE as usize] = microcode_arr!(AbsoluteL, LoadPcAbsoluteH);
-    r[JMP_INDIRECT as usize] = microcode_arr!(AbsoluteL, AbsoluteH, IndexedL, IndexedHAndJump);
+    // The indirect JMP pointer is a program-chosen address, not an
+    // addressing-mode guarantee, so it keeps the generic pointer read.
+    r[JMP_INDIRECT as usize] = microcode_arr!(
+        AbsoluteL,
+        AbsoluteH,
+        IndexedL(ValueSource::Mem),
+        IndexedHAndJump
+    );
     r[JSR as usize] = microcode_arr!(
         AbsoluteL,
         Nop,
@@ -681,8 +688,8 @@ pub(crate) const fn build_opcode_table() -> [ArrayVec<[Microcode; 7]>; 256] {
     r[CMP_INDEXED_INDIRECT as usize] = microcode_arr!(
         ZeroPage,
         ZeroPageIndexedX,
-        IndexedL,
-        IndexedH,
+        IndexedL(ValueSource::ZeroPage),
+        IndexedH(ValueSource::ZeroPage),
         Cmp(ValueSource::Mem)
     );
     r[CMP_INDIRECT_INDEXED as usize] =
@@ -886,8 +893,8 @@ pub(crate) const fn build_opcode_table() -> [ArrayVec<[Microcode; 7]>; 256] {
     );
     r[SHA_INDIRECT_INDEXED_Y as usize] = microcode_arr!(
         ZeroPage,
-        IndexedL,
-        IndexedH,
+        IndexedL(ValueSource::ZeroPage),
+        IndexedH(ValueSource::ZeroPage),
         IndexedYWithOp {
             op: OpAfterAddressing::Sha,
             first_clock: CrossPageBehavior::FirstClockAlways
@@ -1064,9 +1071,10 @@ pub enum Microcode {
     DummyStackRead,
     SkipDetectInterrupt,
     /// Load low byte of address from zero page indirect location
-    IndexedL,
-    /// Load high byte of address from zero page indirect location
-    IndexedH,
+    IndexedL(ValueSource),
+    /// Load high byte of address from zero page indirect location, at the
+    /// incremented (no carry) low byte
+    IndexedH(ValueSource),
     /// Read immediate value from instruction data stream, but do not use it
     SkipImmediate,
 
@@ -1639,10 +1647,14 @@ impl Microcode {
             Self::SkipImmediate => {
                 cpu.inc_read_byte();
             }
-            Self::IndexedL => {
+            Self::IndexedL(ValueSource::ZeroPage) => {
+                cpu.db = <ZeroPage as ValueSourceTrait>::value(cpu)
+            }
+            Self::IndexedL(ValueSource::Mem) => {
                 cpu.db = cpu.read_byte(cpu.ab.get());
             }
-            Self::IndexedH => cpu.indexed_h(),
+            Self::IndexedH(ValueSource::ZeroPage) => cpu.indexed_h::<ZeroPage>(),
+            Self::IndexedH(ValueSource::Mem) => cpu.indexed_h::<Mem>(),
             Self::Nop => cpu.read_pc_byte(),
             Self::DummyReadAt(addr) => {
                 cpu.read_byte(addr);
@@ -1714,7 +1726,7 @@ impl Microcode {
             Self::Sre => cpu.sre(),
 
             Self::IndexedHAndJump => {
-                cpu.indexed_h();
+                cpu.indexed_h::<Mem>();
                 cpu.set_pc_to_ab()
             }
 
@@ -1806,7 +1818,9 @@ impl Microcode {
             | Self::Cpx(_)
             | Self::Cpy(_)
             | Self::Ora(_)
-            | Self::Eor(_) => unreachable!(),
+            | Self::Eor(_)
+            | Self::IndexedL(ValueSource::Immediate)
+            | Self::IndexedH(ValueSource::Immediate) => unreachable!(),
             Self::SkipDetectInterrupt => cpu.request_detect_interrupt = Some(false),
         }
     }
