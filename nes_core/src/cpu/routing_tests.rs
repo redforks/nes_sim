@@ -240,6 +240,37 @@ const FAST_PATH_GROUPS: &[FastPathGroup] = &[
         ],
     },
     FastPathGroup {
+        // The undocumented RMW family writes twice, exactly as the
+        // documented one does: the old value back, then the modified
+        // value (spec #46, ticket #49). `min: 2` pins the second, real
+        // write — with only the dummy write routed this counts 1.
+        group: "undocumented zero-page RMW real write ($zp / $zp,X)",
+        fast_path: ZeroPageWrite,
+        min: 2,
+        opcodes: &[
+            opcode::DCP_ZERO_PAGE,
+            opcode::DCP_ZERO_PAGE_X,
+            opcode::ISC_ZERO_PAGE,
+            opcode::ISC_ZERO_PAGE_X,
+            opcode::RRA_ZERO_PAGE,
+            opcode::RRA_ZERO_PAGE_X,
+            opcode::RLA_ZERO_PAGE,
+            opcode::RLA_ZERO_PAGE_X,
+            opcode::SLO_ZERO_PAGE,
+            opcode::SLO_ZERO_PAGE_X,
+            opcode::SRE_ZERO_PAGE,
+            opcode::SRE_ZERO_PAGE_X,
+        ],
+    },
+    FastPathGroup {
+        // `SAX` is store-shaped: there is no dummy write, so one
+        // zero-page fast write is the whole store (spec #46, ticket #49).
+        group: "SAX $zp / $zp,Y",
+        fast_path: ZeroPageWrite,
+        min: 1,
+        opcodes: &[opcode::SAX_ZERO_PAGE, opcode::SAX_ZERO_PAGE_Y],
+    },
+    FastPathGroup {
         group: "stack pushes (PHA / PHP / JSR)",
         fast_path: StackPageWrite,
         min: 1,
@@ -279,34 +310,9 @@ struct AllowedMiss {
 /// The documented allow-list: exactly the 60 opcodes the spec #46 audit
 /// measured as mis-routed, grouped per follow-up ticket.
 ///
-/// Ticket #49 deletes the first two entries (12 + 2), #50 the LAX entry
-/// (2), and #51 the pointer-fetch entry (32).
+/// Ticket #50 deletes the LAX entry (2) and #51 the pointer-fetch entry
+/// (32).
 const ALLOWED_MISSES: &[AllowedMiss] = &[
-    AllowedMiss {
-        ticket: 49,
-        group: "undocumented zero-page RMW second write ($zp/$zp,X)",
-        kind: GenericAccessKind::Write,
-        opcodes: &[
-            opcode::DCP_ZERO_PAGE,
-            opcode::DCP_ZERO_PAGE_X,
-            opcode::ISC_ZERO_PAGE,
-            opcode::ISC_ZERO_PAGE_X,
-            opcode::RRA_ZERO_PAGE,
-            opcode::RRA_ZERO_PAGE_X,
-            opcode::RLA_ZERO_PAGE,
-            opcode::RLA_ZERO_PAGE_X,
-            opcode::SLO_ZERO_PAGE,
-            opcode::SLO_ZERO_PAGE_X,
-            opcode::SRE_ZERO_PAGE,
-            opcode::SRE_ZERO_PAGE_X,
-        ],
-    },
-    AllowedMiss {
-        ticket: 49,
-        group: "SAX $zp / SAX $zp,Y",
-        kind: GenericAccessKind::Write,
-        opcodes: &[opcode::SAX_ZERO_PAGE, opcode::SAX_ZERO_PAGE_Y],
-    },
     AllowedMiss {
         ticket: 50,
         group: "LAX $zp / LAX $zp,Y",

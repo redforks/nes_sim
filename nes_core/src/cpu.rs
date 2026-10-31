@@ -601,13 +601,13 @@ impl<M: Mcu> Cpu<M> {
             | Microcode::Shy
             | Microcode::Sha
             | Microcode::Tas
-            | Microcode::Sax
-            | Microcode::Rla
-            | Microcode::Dcp
-            | Microcode::Isc
-            | Microcode::Rra
-            | Microcode::Slo
-            | Microcode::Sre
+            | Microcode::Sax(_)
+            | Microcode::Rla(_)
+            | Microcode::Dcp(_)
+            | Microcode::Isc(_)
+            | Microcode::Rra(_)
+            | Microcode::Slo(_)
+            | Microcode::Sre(_)
             | Microcode::PushStatus { .. }
             | Microcode::PushStack(_)
             | Microcode::Asl(AOrMemory::Memory, _)
@@ -865,6 +865,21 @@ impl<M: Mcu> Cpu<M> {
         self.write_mem(self.ab.get(), value);
     }
 
+    /// Writes a value to the address bus latch through the addressing
+    /// flavour the sequence builder chose (spec #46, ticket #49). A `$zp`
+    /// sequence carries `ValueSource::ZeroPage`, so its write takes
+    /// `Mcu::write_zero_page` and skips the bus address-range match; every
+    /// other sequence carries `ValueSource::Mem` and writes generically.
+    /// The flavour decides *how* the byte is written, never *whether* a
+    /// write happens.
+    fn write_value(&mut self, src: ValueSource, value: u8) {
+        match src {
+            ValueSource::ZeroPage => <ZeroPage as ValueTargetTrait>::write(self, value),
+            ValueSource::Mem => self.write_byte(value),
+            ValueSource::Immediate => unreachable!("an immediate has no write target"),
+        }
+    }
+
     fn write_mem(&mut self, addr: u16, value: u8) {
         self.mcu.write(addr, value);
     }
@@ -998,51 +1013,55 @@ impl<M: Mcu> Cpu<M> {
         self.set_register(Register::X, self.alu);
     }
 
-    fn sax(&mut self) {
-        self.write_byte(self.a & self.x);
+    // The undocumented RMW and SAX helpers below take the addressing
+    // flavour their sequence was built with and route the result through
+    // `Cpu::write_value` (spec #46, ticket #49), exactly as the documented
+    // RMW family does through `Microcode::write_alu`.
+    fn sax(&mut self, src: ValueSource) {
+        self.write_value(src, self.a & self.x);
     }
 
-    fn dcp(&mut self) {
+    fn dcp(&mut self, src: ValueSource) {
         let v = self.alu.wrapping_sub(1);
-        self.write_byte(v);
+        self.write_value(src, v);
         self.update_zero_negative_flags(self.a.wrapping_sub(v));
         self.set_flag(Flag::Carry, self.a >= v);
     }
 
-    fn isc(&mut self) {
+    fn isc(&mut self, src: ValueSource) {
         let v = self.alu.wrapping_add(1);
-        self.write_byte(v);
+        self.write_value(src, v);
         self.alu = v;
         self.sbc::<Alu>();
     }
 
-    fn rra(&mut self) {
+    fn rra(&mut self, src: ValueSource) {
         let carry = self.alu & 0x01 != 0;
         self.alu = (self.alu >> 1) | ((self.flag(Flag::Carry) as u8) << 7);
-        self.write_byte(self.alu);
+        self.write_value(src, self.alu);
         self.set_flag(Flag::Carry, carry);
         self.adc::<Alu>();
     }
 
-    fn rla(&mut self) {
+    fn rla(&mut self, src: ValueSource) {
         let new = (self.alu << 1) | (self.flag(Flag::Carry) as u8);
         self.set_flag(Flag::Carry, self.alu & 0x80 != 0);
         self.alu = new;
-        self.write_byte(self.alu);
+        self.write_value(src, self.alu);
         self.and::<Alu>();
     }
 
-    fn slo(&mut self) {
+    fn slo(&mut self, src: ValueSource) {
         self.set_flag(Flag::Carry, self.alu & 0x80 != 0);
         self.alu <<= 1;
-        self.write_byte(self.alu);
+        self.write_value(src, self.alu);
         self.ora::<Alu>();
     }
 
-    fn sre(&mut self) {
+    fn sre(&mut self, src: ValueSource) {
         self.set_flag(Flag::Carry, self.alu & 0x01 != 0);
         self.alu >>= 1;
-        self.write_byte(self.alu);
+        self.write_value(src, self.alu);
         self.eor::<Alu>();
     }
 

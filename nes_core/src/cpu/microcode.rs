@@ -781,22 +781,17 @@ pub(crate) const fn build_opcode_table() -> [ArrayVec<[Microcode; 7]>; 256] {
     r[LAX_INDEXED_INDIRECT as usize] = indexed_indirect_op(Lax);
     r[LAX_INDIRECT_INDEXED as usize] =
         indirect_indexed_op(OpAfterAddressing::Lax, CrossPageBehavior::FirstClock);
-    r[SAX_ZERO_PAGE as usize] = microcode_arr!(ZeroPage, Sax);
-    r[SAX_ZERO_PAGE_Y as usize] = zero_page_y_op(Sax);
-    r[SAX_ABSOLUTE as usize] = absolute_op(Sax);
-    r[SAX_INDEXED_INDIRECT as usize] = indexed_indirect_op(Sax);
-    r[DCP_ZERO_PAGE as usize] = microcode_arr!(
-        ZeroPage,
-        LoadIntoAlu(ValueSource::ZeroPage),
-        StoreAlu(ValueSource::ZeroPage),
-        Dcp
-    );
-    r[DCP_ZERO_PAGE_X as usize] = zero_page_x_rmw_op(Dcp);
-    r[DCP_ABSOLUTE as usize] = absolute_rmw_op(Dcp);
-    r[DCP_ABSOLUTE_INDEXED_X as usize] = absolute_indexed_x_rmw_op(Dcp);
-    r[DCP_ABSOLUTE_INDEXED_Y as usize] = absolute_indexed_y_rmw_op(Dcp);
-    r[DCP_INDEXED_INDIRECT as usize] = indexed_indirect_rmw_op(Dcp);
-    r[DCP_INDIRECT_INDEXED as usize] = indirect_indexed_rmw_op(Dcp);
+    r[SAX_ZERO_PAGE as usize] = microcode_arr!(ZeroPage, Sax(ValueSource::ZeroPage));
+    r[SAX_ZERO_PAGE_Y as usize] = zero_page_y_op(Sax(ValueSource::ZeroPage));
+    r[SAX_ABSOLUTE as usize] = absolute_op(Sax(ValueSource::Mem));
+    r[SAX_INDEXED_INDIRECT as usize] = indexed_indirect_op(Sax(ValueSource::Mem));
+    r[DCP_ZERO_PAGE as usize] = zero_page_rmw_op(Dcp(ValueSource::ZeroPage));
+    r[DCP_ZERO_PAGE_X as usize] = zero_page_x_rmw_op(Dcp(ValueSource::ZeroPage));
+    r[DCP_ABSOLUTE as usize] = absolute_rmw_op(Dcp(ValueSource::Mem));
+    r[DCP_ABSOLUTE_INDEXED_X as usize] = absolute_indexed_x_rmw_op(Dcp(ValueSource::Mem));
+    r[DCP_ABSOLUTE_INDEXED_Y as usize] = absolute_indexed_y_rmw_op(Dcp(ValueSource::Mem));
+    r[DCP_INDEXED_INDIRECT as usize] = indexed_indirect_rmw_op(Dcp(ValueSource::Mem));
+    r[DCP_INDIRECT_INDEXED as usize] = indirect_indexed_rmw_op(Dcp(ValueSource::Mem));
     r[DEC_ZERO_PAGE as usize] =
         zero_page_rmw_op(IncDec(IncDecTarget::DecrementAlu, ValueSource::ZeroPage));
     r[DEC_ZERO_PAGE_X as usize] =
@@ -813,41 +808,41 @@ pub(crate) const fn build_opcode_table() -> [ArrayVec<[Microcode; 7]>; 256] {
         absolute_rmw_op(IncDec(IncDecTarget::IncrementAlu, ValueSource::Mem));
     r[INC_ABSOLUTE_INDEXED_X as usize] =
         absolute_indexed_x_rmw_op(IncDec(IncDecTarget::IncrementAlu, ValueSource::Mem));
-    r[ISC_ZERO_PAGE as usize] = zero_page_rmw_op(Isc);
-    r[ISC_ZERO_PAGE_X as usize] = zero_page_x_rmw_op(Isc);
-    r[ISC_ABSOLUTE as usize] = absolute_rmw_op(Isc);
-    r[ISC_ABSOLUTE_INDEXED_X as usize] = absolute_indexed_x_rmw_op(Isc);
-    r[ISC_ABSOLUTE_INDEXED_Y as usize] = absolute_indexed_y_rmw_op(Isc);
-    r[ISC_INDEXED_INDIRECT as usize] = indexed_indirect_rmw_op(Isc);
-    r[ISC_INDIRECT_INDEXED as usize] = indirect_indexed_rmw_op(Isc);
-    r[RRA_ZERO_PAGE as usize] = zero_page_rmw_op(Rra);
-    r[RRA_ZERO_PAGE_X as usize] = zero_page_x_rmw_op(Rra);
-    r[RRA_ABSOLUTE as usize] = absolute_rmw_op(Rra);
-    r[RRA_ABSOLUTE_INDEXED_X as usize] = absolute_indexed_x_rmw_op(Rra);
-    r[RRA_ABSOLUTE_INDEXED_Y as usize] = absolute_indexed_y_rmw_op(Rra);
-    r[RRA_INDEXED_INDIRECT as usize] = indexed_indirect_rmw_op(Rra);
-    r[RRA_INDIRECT_INDEXED as usize] = indirect_indexed_rmw_op(Rra);
-    r[RLA_ZERO_PAGE as usize] = zero_page_rmw_op(Rla);
-    r[RLA_ZERO_PAGE_X as usize] = zero_page_x_rmw_op(Rla);
-    r[RLA_ABSOLUTE as usize] = absolute_rmw_op(Rla);
-    r[RLA_ABSOLUTE_INDEXED_X as usize] = absolute_indexed_x_rmw_op(Rla);
-    r[RLA_ABSOLUTE_INDEXED_Y as usize] = absolute_indexed_y_rmw_op(Rla);
-    r[RLA_INDEXED_INDIRECT as usize] = indexed_indirect_rmw_op(Rla);
-    r[RLA_INDIRECT_INDEXED as usize] = indirect_indexed_rmw_op(Rla);
-    r[SLO_ZERO_PAGE as usize] = zero_page_rmw_op(Slo);
-    r[SLO_ZERO_PAGE_X as usize] = zero_page_x_rmw_op(Slo);
-    r[SLO_ABSOLUTE as usize] = absolute_rmw_op(Slo);
-    r[SLO_ABSOLUTE_INDEXED_X as usize] = absolute_indexed_x_rmw_op(Slo);
-    r[SLO_ABSOLUTE_INDEXED_Y as usize] = absolute_indexed_y_rmw_op(Slo);
-    r[SLO_INDEXED_INDIRECT as usize] = indexed_indirect_rmw_op(Slo);
-    r[SLO_INDIRECT_INDEXED as usize] = indirect_indexed_rmw_op(Slo);
-    r[SRE_ZERO_PAGE as usize] = zero_page_rmw_op(Sre);
-    r[SRE_ZERO_PAGE_X as usize] = zero_page_x_rmw_op(Sre);
-    r[SRE_ABSOLUTE as usize] = absolute_rmw_op(Sre);
-    r[SRE_ABSOLUTE_INDEXED_X as usize] = absolute_indexed_x_rmw_op(Sre);
-    r[SRE_ABSOLUTE_INDEXED_Y as usize] = absolute_indexed_y_rmw_op(Sre);
-    r[SRE_INDEXED_INDIRECT as usize] = indexed_indirect_rmw_op(Sre);
-    r[SRE_INDIRECT_INDEXED as usize] = indirect_indexed_rmw_op(Sre);
+    r[ISC_ZERO_PAGE as usize] = zero_page_rmw_op(Isc(ValueSource::ZeroPage));
+    r[ISC_ZERO_PAGE_X as usize] = zero_page_x_rmw_op(Isc(ValueSource::ZeroPage));
+    r[ISC_ABSOLUTE as usize] = absolute_rmw_op(Isc(ValueSource::Mem));
+    r[ISC_ABSOLUTE_INDEXED_X as usize] = absolute_indexed_x_rmw_op(Isc(ValueSource::Mem));
+    r[ISC_ABSOLUTE_INDEXED_Y as usize] = absolute_indexed_y_rmw_op(Isc(ValueSource::Mem));
+    r[ISC_INDEXED_INDIRECT as usize] = indexed_indirect_rmw_op(Isc(ValueSource::Mem));
+    r[ISC_INDIRECT_INDEXED as usize] = indirect_indexed_rmw_op(Isc(ValueSource::Mem));
+    r[RRA_ZERO_PAGE as usize] = zero_page_rmw_op(Rra(ValueSource::ZeroPage));
+    r[RRA_ZERO_PAGE_X as usize] = zero_page_x_rmw_op(Rra(ValueSource::ZeroPage));
+    r[RRA_ABSOLUTE as usize] = absolute_rmw_op(Rra(ValueSource::Mem));
+    r[RRA_ABSOLUTE_INDEXED_X as usize] = absolute_indexed_x_rmw_op(Rra(ValueSource::Mem));
+    r[RRA_ABSOLUTE_INDEXED_Y as usize] = absolute_indexed_y_rmw_op(Rra(ValueSource::Mem));
+    r[RRA_INDEXED_INDIRECT as usize] = indexed_indirect_rmw_op(Rra(ValueSource::Mem));
+    r[RRA_INDIRECT_INDEXED as usize] = indirect_indexed_rmw_op(Rra(ValueSource::Mem));
+    r[RLA_ZERO_PAGE as usize] = zero_page_rmw_op(Rla(ValueSource::ZeroPage));
+    r[RLA_ZERO_PAGE_X as usize] = zero_page_x_rmw_op(Rla(ValueSource::ZeroPage));
+    r[RLA_ABSOLUTE as usize] = absolute_rmw_op(Rla(ValueSource::Mem));
+    r[RLA_ABSOLUTE_INDEXED_X as usize] = absolute_indexed_x_rmw_op(Rla(ValueSource::Mem));
+    r[RLA_ABSOLUTE_INDEXED_Y as usize] = absolute_indexed_y_rmw_op(Rla(ValueSource::Mem));
+    r[RLA_INDEXED_INDIRECT as usize] = indexed_indirect_rmw_op(Rla(ValueSource::Mem));
+    r[RLA_INDIRECT_INDEXED as usize] = indirect_indexed_rmw_op(Rla(ValueSource::Mem));
+    r[SLO_ZERO_PAGE as usize] = zero_page_rmw_op(Slo(ValueSource::ZeroPage));
+    r[SLO_ZERO_PAGE_X as usize] = zero_page_x_rmw_op(Slo(ValueSource::ZeroPage));
+    r[SLO_ABSOLUTE as usize] = absolute_rmw_op(Slo(ValueSource::Mem));
+    r[SLO_ABSOLUTE_INDEXED_X as usize] = absolute_indexed_x_rmw_op(Slo(ValueSource::Mem));
+    r[SLO_ABSOLUTE_INDEXED_Y as usize] = absolute_indexed_y_rmw_op(Slo(ValueSource::Mem));
+    r[SLO_INDEXED_INDIRECT as usize] = indexed_indirect_rmw_op(Slo(ValueSource::Mem));
+    r[SLO_INDIRECT_INDEXED as usize] = indirect_indexed_rmw_op(Slo(ValueSource::Mem));
+    r[SRE_ZERO_PAGE as usize] = zero_page_rmw_op(Sre(ValueSource::ZeroPage));
+    r[SRE_ZERO_PAGE_X as usize] = zero_page_x_rmw_op(Sre(ValueSource::ZeroPage));
+    r[SRE_ABSOLUTE as usize] = absolute_rmw_op(Sre(ValueSource::Mem));
+    r[SRE_ABSOLUTE_INDEXED_X as usize] = absolute_indexed_x_rmw_op(Sre(ValueSource::Mem));
+    r[SRE_ABSOLUTE_INDEXED_Y as usize] = absolute_indexed_y_rmw_op(Sre(ValueSource::Mem));
+    r[SRE_INDEXED_INDIRECT as usize] = indexed_indirect_rmw_op(Sre(ValueSource::Mem));
+    r[SRE_INDIRECT_INDEXED as usize] = indirect_indexed_rmw_op(Sre(ValueSource::Mem));
     r[SHX_ABSOLUTE_INDEXED_Y as usize] = microcode_arr!(
         AbsoluteL,
         AbsoluteH,
@@ -1128,13 +1123,20 @@ pub enum Microcode {
 
     /// Fetch a byte from memory, then load into accumulator and X
     Lax,
-    Sax,
-    Rla,
-    Dcp,
-    Isc,
-    Rra,
-    Slo,
-    Sre,
+
+    /// The undocumented RMW and `SAX` micro-ops carry the addressing
+    /// flavour their sequence builder chose (spec #46, ticket #49), so the
+    /// real write after the read-modify-write takes `Mcu::write_zero_page`
+    /// for a `$zp` sequence and `Mcu::write` otherwise. The field is named
+    /// `ValueSource` for uniformity with `StoreAlu`; the dispatch is through
+    /// `ValueTargetTrait`.
+    Sax(ValueSource),
+    Rla(ValueSource),
+    Dcp(ValueSource),
+    Isc(ValueSource),
+    Rra(ValueSource),
+    Slo(ValueSource),
+    Sre(ValueSource),
 
     IndexedHAndJump,
 
@@ -1698,13 +1700,13 @@ impl Microcode {
                 cpu.load_alu();
                 cpu.lax();
             }
-            Self::Sax => cpu.sax(),
-            Self::Rla => cpu.rla(),
-            Self::Dcp => cpu.dcp(),
-            Self::Isc => cpu.isc(),
-            Self::Rra => cpu.rra(),
-            Self::Slo => cpu.slo(),
-            Self::Sre => cpu.sre(),
+            Self::Sax(src) => cpu.sax(src),
+            Self::Rla(src) => cpu.rla(src),
+            Self::Dcp(src) => cpu.dcp(src),
+            Self::Isc(src) => cpu.isc(src),
+            Self::Rra(src) => cpu.rra(src),
+            Self::Slo(src) => cpu.slo(src),
+            Self::Sre(src) => cpu.sre(src),
 
             Self::IndexedHAndJump => {
                 cpu.indexed_h();
@@ -1870,11 +1872,7 @@ impl Microcode {
     /// do. Everything else — absolute, absolute-indexed, and the register
     /// forms, which never reach here — writes through the generic path.
     fn write_alu<M: Mcu>(cpu: &mut Cpu<M>, src: ValueSource) {
-        match src {
-            ValueSource::ZeroPage => <ZeroPage as ValueTargetTrait>::write(cpu, cpu.alu),
-            ValueSource::Mem => cpu.write_byte(cpu.alu),
-            ValueSource::Immediate => unreachable!("an immediate has no write target"),
-        }
+        cpu.write_value(src, cpu.alu);
     }
 
     fn inc_dec<M: Mcu>(cpu: &mut Cpu<M>, target: IncDecTarget, src: ValueSource) {
