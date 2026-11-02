@@ -3,117 +3,23 @@ use crate::cpu::{Alu, Immediate, Mem, ValueSourceTrait, ValueTargetTrait, ZeroPa
 use crate::mcu::Mcu;
 use tinyvec::ArrayVec;
 
+/// Pad a micro-op list to the seven-slot sequence buffer.
+const fn seq<const N: usize>(items: [Microcode; N]) -> ArrayVec<[Microcode; 7]> {
+    let mut buf = [Microcode::Nop; 7];
+    let mut i = 0;
+    while i < N {
+        buf[i] = items[i];
+        i += 1;
+    }
+    match ArrayVec::try_from_array_len(buf, N) {
+        Ok(v) => v,
+        Err(_) => panic!(),
+    }
+}
+
 macro_rules! microcode_arr {
-    ($item1:expr) => {
-        match ArrayVec::try_from_array_len(
-            [
-                $item1,
-                Microcode::Nop,
-                Microcode::Nop,
-                Microcode::Nop,
-                Microcode::Nop,
-                Microcode::Nop,
-                Microcode::Nop,
-            ],
-            1,
-        ) {
-            Ok(v) => v,
-            Err(_) => panic!(),
-        }
-    };
-    ($item1:expr, $item2:expr) => {
-        match ArrayVec::try_from_array_len(
-            [
-                $item1,
-                $item2,
-                Microcode::Nop,
-                Microcode::Nop,
-                Microcode::Nop,
-                Microcode::Nop,
-                Microcode::Nop,
-            ],
-            2,
-        ) {
-            Ok(v) => v,
-            Err(_) => panic!(),
-        }
-    };
-    ($item1:expr, $item2:expr, $item3:expr) => {
-        match ArrayVec::try_from_array_len(
-            [
-                $item1,
-                $item2,
-                $item3,
-                Microcode::Nop,
-                Microcode::Nop,
-                Microcode::Nop,
-                Microcode::Nop,
-            ],
-            3,
-        ) {
-            Ok(v) => v,
-            Err(_) => panic!(),
-        }
-    };
-    ($item1:expr, $item2:expr, $item3:expr, $item4:expr) => {
-        match ArrayVec::try_from_array_len(
-            [
-                $item1,
-                $item2,
-                $item3,
-                $item4,
-                Microcode::Nop,
-                Microcode::Nop,
-                Microcode::Nop,
-            ],
-            4,
-        ) {
-            Ok(v) => v,
-            Err(_) => panic!(),
-        }
-    };
-    ($item1:expr, $item2:expr, $item3:expr, $item4:expr, $item5:expr) => {
-        match ArrayVec::try_from_array_len(
-            [
-                $item1,
-                $item2,
-                $item3,
-                $item4,
-                $item5,
-                Microcode::Nop,
-                Microcode::Nop,
-            ],
-            5,
-        ) {
-            Ok(v) => v,
-            Err(_) => panic!(),
-        }
-    };
-    ($item1:expr, $item2:expr, $item3:expr, $item4:expr, $item5:expr, $item6:expr) => {
-        match ArrayVec::try_from_array_len(
-            [
-                $item1,
-                $item2,
-                $item3,
-                $item4,
-                $item5,
-                $item6,
-                Microcode::Nop,
-            ],
-            6,
-        ) {
-            Ok(v) => v,
-            Err(_) => panic!(),
-        }
-    };
-    ($item1:expr, $item2:expr, $item3:expr, $item4:expr, $item5:expr, $item6:expr, $item7:expr) => {
-        match ArrayVec::try_from_array_len(
-            [$item1, $item2, $item3, $item4, $item5, $item6, $item7],
-            7,
-        ) {
-            Ok(v) => v,
-            Err(_) => panic!(),
-        }
+    ($($item:expr),* $(,)?) => {
+        seq([$($item),*])
     };
 }
 
@@ -1601,17 +1507,8 @@ impl Microcode {
                 let addr = cpu.inc_read_byte();
                 cpu.ab.set(addr as u16);
             }
-            Self::ZeroPageIndexedX => {
-                // Hardware adds the index on this cycle while re-reading the
-                // base address on the bus (dummy read). Zero page is RAM
-                // only, so the read is side-effect-free by construction.
-                let _ = cpu.mcu.read_zero_page(cpu.ab.low());
-                cpu.ab.set(cpu.abl().wrapping_add(cpu.x) as u16);
-            }
-            Self::ZeroPageIndexedY => {
-                let _ = cpu.mcu.read_zero_page(cpu.ab.low());
-                cpu.ab.set(cpu.abl().wrapping_add(cpu.y) as u16);
-            }
+            Self::ZeroPageIndexedX => cpu.zero_page_indexed(cpu.x),
+            Self::ZeroPageIndexedY => cpu.zero_page_indexed(cpu.y),
             Self::AbsoluteL => {
                 let low = cpu.inc_read_byte();
                 cpu.set_abl(low);
@@ -1698,8 +1595,9 @@ impl Microcode {
             Self::LaxImmediate => {
                 // Read immediate operand into alu and perform LAX semantics in one micro-op.
                 let t = cpu.inc_read_byte();
-                cpu.set_register(Register::A, t);
-                cpu.set_register(Register::X, t);
+                cpu.a = t;
+                cpu.x = t;
+                cpu.update_zero_negative_flags(t);
             }
             Self::Las => {
                 // LAS/LAR: M AND SP -> A, X, SP. The operand read happens
@@ -1709,9 +1607,10 @@ impl Microcode {
                 // defect where register math ran on a stale ALU.
                 cpu.load_alu::<Mem>();
                 let v = cpu.alu & cpu.sp;
-                cpu.set_register(Register::A, v);
-                cpu.set_register(Register::X, v);
+                cpu.a = v;
+                cpu.x = v;
                 cpu.sp = v;
+                cpu.update_zero_negative_flags(v);
             }
 
             Self::Lax(ValueSource::ZeroPage) => cpu.lax::<ZeroPage>(),
@@ -1739,30 +1638,7 @@ impl Microcode {
             Self::Transfer(direction) => Self::transfer(cpu, direction),
             Self::IncDec(target, src) => Self::inc_dec(cpu, target, src),
 
-            Self::BranchRelative(BranchTest::IfCarryClear) => {
-                Self::branch_relative(cpu, BranchTest::IfCarryClear.test(cpu))
-            }
-            Self::BranchRelative(BranchTest::IfCarrySet) => {
-                Self::branch_relative(cpu, BranchTest::IfCarrySet.test(cpu))
-            }
-            Self::BranchRelative(BranchTest::IfZeroSet) => {
-                Self::branch_relative(cpu, BranchTest::IfZeroSet.test(cpu))
-            }
-            Self::BranchRelative(BranchTest::IfZeroClear) => {
-                Self::branch_relative(cpu, BranchTest::IfZeroClear.test(cpu))
-            }
-            Self::BranchRelative(BranchTest::IfNegativeSet) => {
-                Self::branch_relative(cpu, BranchTest::IfNegativeSet.test(cpu))
-            }
-            Self::BranchRelative(BranchTest::IfNegativeClear) => {
-                Self::branch_relative(cpu, BranchTest::IfNegativeClear.test(cpu))
-            }
-            Self::BranchRelative(BranchTest::IfOverflowSet) => {
-                Self::branch_relative(cpu, BranchTest::IfOverflowSet.test(cpu))
-            }
-            Self::BranchRelative(BranchTest::IfOverflowClear) => {
-                Self::branch_relative(cpu, BranchTest::IfOverflowClear.test(cpu))
-            }
+            Self::BranchRelative(test) => Self::branch_relative(cpu, test.test(cpu)),
 
             Self::Kill => cpu.halt(),
 
@@ -1789,14 +1665,8 @@ impl Microcode {
             Self::PopStack => cpu.alu = cpu.pop_stack(),
             Self::UpdateAFromAlu => cpu.set_register(Register::A, cpu.alu),
 
-            Self::LoadResetPcL => {
-                let low = cpu.read_byte(0xFFFC);
-                cpu.pc.set_low(low);
-            }
-            Self::LoadResetPcH => {
-                let high = cpu.read_byte(0xFFFD);
-                cpu.pc.set_high(high);
-            }
+            Self::LoadResetPcL => cpu.load_vector_low(0xFFFC, false),
+            Self::LoadResetPcH => cpu.load_vector_high(0xFFFD),
             Self::LoadPcAbsoluteH => load_pc_absolute_h(cpu),
 
             Self::LoadIntoAlu(ValueSource::ZeroPage) => {
@@ -1897,20 +1767,16 @@ impl Microcode {
     fn inc_dec<M: Mcu>(cpu: &mut Cpu<M>, target: IncDecTarget, src: ValueSource) {
         match target {
             IncDecTarget::IncrementX => {
-                cpu.set_register(Register::X, cpu.x.wrapping_add(1));
-                cpu.alu = cpu.x;
+                Self::inc_dec_register(cpu, Register::X, cpu.x.wrapping_add(1))
             }
             IncDecTarget::IncrementY => {
-                cpu.set_register(Register::Y, cpu.y.wrapping_add(1));
-                cpu.alu = cpu.y;
+                Self::inc_dec_register(cpu, Register::Y, cpu.y.wrapping_add(1))
             }
             IncDecTarget::DecrementX => {
-                cpu.set_register(Register::X, cpu.x.wrapping_sub(1));
-                cpu.alu = cpu.x;
+                Self::inc_dec_register(cpu, Register::X, cpu.x.wrapping_sub(1))
             }
             IncDecTarget::DecrementY => {
-                cpu.set_register(Register::Y, cpu.y.wrapping_sub(1));
-                cpu.alu = cpu.y;
+                Self::inc_dec_register(cpu, Register::Y, cpu.y.wrapping_sub(1))
             }
             IncDecTarget::IncrementAlu => {
                 cpu.alu = cpu.alu.wrapping_add(1);
@@ -1923,6 +1789,12 @@ impl Microcode {
                 cpu.update_zero_negative_flags(cpu.alu);
             }
         }
+    }
+
+    /// Write an index register and mirror the new value into the ALU latch.
+    fn inc_dec_register<M: Mcu>(cpu: &mut Cpu<M>, register: Register, value: u8) {
+        cpu.set_register(register, value);
+        cpu.alu = value;
     }
 
     fn shift_rotate<M: Mcu>(

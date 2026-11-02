@@ -40,7 +40,6 @@ pub(crate) enum Register {
 
 #[derive(Default, Debug)]
 struct IrqDetector {
-    irq_pending: bool,
     irq_input: bool,
 }
 
@@ -49,12 +48,10 @@ impl IrqDetector {
         self.irq_input = v;
     }
 
-    fn detect_irq(&mut self, interrupt_disabled: bool) {
-        self.irq_pending = !interrupt_disabled && self.irq_input;
-    }
-
-    fn irq_pending(&self) -> bool {
-        self.irq_pending
+    /// The IRQ line is edge-latched into the instruction-end poll, but its
+    /// pending state is purely a function of the line and the I flag.
+    fn detect_irq(&self, interrupt_disabled: bool) -> bool {
+        !interrupt_disabled && self.irq_input
     }
 }
 #[derive(Default, Debug)]
@@ -63,16 +60,15 @@ struct NmiDetector {
     /// Line level observed by the previous CPU-cycle sample.
     last_sampled_level: bool,
     nmi_input: bool,
-    /// Levels at the two preceding dots: `[t-2, t-1]` while processing dot
-    /// `t`. The 6502 effectively samples /NMI at the FIRST dot of each CPU
-    /// cycle (`clock % 3 == 0`); blargg's ppu_vbl_nmi 06-suppression and
-    /// 07-nmi_on_timing pin this phase from both sides: an assertion is seen
-    /// iff it covers such a dot.
-    level_history: [bool; 2],
-    /// `asserted_since` value for each of those dots, shifted in lockstep —
-    /// a lagged sample that observes a rise must still know when it rose,
-    /// even if the line has already fallen by sampling time.
-    stamp_history: [Option<u64>; 2],
+    /// Levels and their `asserted_since` stamps at the two preceding dots:
+    /// `[t-2, t-1]` while processing dot `t`. The 6502 effectively samples
+    /// /NMI at the FIRST dot of each CPU cycle (`clock % 3 == 0`);
+    /// blargg's ppu_vbl_nmi 06-suppression and 07-nmi_on_timing pin this
+    /// phase from both sides: an assertion is seen iff it covers such a
+    /// dot. The stamp rides along because a lagged sample that observes a
+    /// rise must still know when it rose, even if the line has already
+    /// fallen by sampling time.
+    history: [(bool, Option<u64>); 2],
     /// System cycle at which the current /NMI assertion began.
     asserted_since: Option<u64>,
     /// `asserted_since` value of the assertion that latched `nmi_pending`.
@@ -87,8 +83,7 @@ impl NmiDetector {
     fn update_nmi_input(&mut self, v: bool, clock: SystemClock) {
         let prev = self.nmi_input;
         let prev_stamp = self.asserted_since;
-        self.level_history = [self.level_history[1], prev];
-        self.stamp_history = [self.stamp_history[1], prev_stamp];
+        self.history = [self.history[1], (prev, prev_stamp)];
         if prev != v {
             if v {
                 self.asserted_since = Some(clock.cycles());
@@ -113,23 +108,26 @@ impl NmiDetector {
         // Sample even while a previous edge is still pending: freezing the
         // sampler would hide newer edges (and leave a stale last-seen level
         // behind once the pending edge is taken).
-        let sampled_level = self.level_history[0];
+        let (sampled_level, stamp) = self.history[0];
         let rising_edge = !self.last_sampled_level && sampled_level;
         self.last_sampled_level = sampled_level;
         if rising_edge {
-            let stamp = self.stamp_history[0];
             // Skip edges whose assertion was already consumed while high
             // (see `mark_consumed`): stamps are monotonic, so only a
             // genuinely newer assertion may latch.
-            if !self
-                .consumed_through
-                .is_some_and(|c| stamp.is_some_and(|s| s <= c))
-            {
+            if !self.edge_consumed(stamp) {
                 self.nmi_pending = true;
                 self.pending_asserted_since = stamp;
             }
         }
         self.nmi_pending
+    }
+
+    /// True when `stamp` names an assertion already consumed by a
+    /// dispatch or vector hijack.
+    fn edge_consumed(&self, stamp: Option<u64>) -> bool {
+        self.consumed_through
+            .is_some_and(|c| stamp.is_some_and(|s| s <= c))
     }
 
     /// Record that the newest visible assertion's edge was consumed (by an
@@ -140,7 +138,7 @@ impl NmiDetector {
         self.nmi_pending = false;
         let newest = self
             .pending_asserted_since
-            .max(self.nmi_input.then_some(self.asserted_since).flatten());
+            .max(self.asserted_since.filter(|_| self.nmi_input));
         self.consumed_through = self.consumed_through.max(newest);
     }
 
@@ -156,12 +154,11 @@ impl NmiDetector {
     /// edge.
     fn consume_hijack_edge(&mut self, cutoff: u64) -> bool {
         let newest = self
-            .nmi_pending
-            .then_some(self.pending_asserted_since)
-            .flatten()
-            .max(self.nmi_input.then_some(self.asserted_since).flatten());
+            .pending_asserted_since
+            .filter(|_| self.nmi_pending)
+            .max(self.asserted_since.filter(|_| self.nmi_input));
         match newest {
-            Some(t0) if t0 <= cutoff && !self.consumed_through.is_some_and(|c| c >= t0) => {
+            Some(t0) if t0 <= cutoff && !self.edge_consumed(Some(t0)) => {
                 self.mark_consumed();
                 true
             }
@@ -174,12 +171,8 @@ impl NmiDetector {
     /// line do not participate and stay eligible for the later
     /// vector-decision site; only the consumed edge is stamped.
     fn consume_latched_edge(&mut self, cutoff: u64) -> bool {
-        match self
-            .nmi_pending
-            .then_some(self.pending_asserted_since)
-            .flatten()
-        {
-            Some(t0) if t0 <= cutoff && !self.consumed_through.is_some_and(|c| c >= t0) => {
+        match self.pending_asserted_since.filter(|_| self.nmi_pending) {
+            Some(t0) if t0 <= cutoff && !self.edge_consumed(Some(t0)) => {
                 self.consume_at(t0);
                 true
             }
@@ -765,19 +758,21 @@ impl<M: Mcu> Cpu<M> {
 
         self.last_status = self.status;
         code.exec(self);
+        let instruction_complete = self.microcode_queue.is_empty();
         // Suppression is declared: the armed window's `suppress_final_poll`
         // owns the final-cycle poll. The queue drains exactly on the final
         // op of the armed sequence (or a hijack continuation's tail), so
         // an armed window over an empty queue is that cycle.
-        let suppress = self.active_interrupt_window.is_some_and(|active| {
-            active.window.suppress_final_poll && self.microcode_queue.is_empty()
-        });
-        if self.microcode_queue.is_empty() {
+        let is_last_op = instruction_complete
+            && !self
+                .active_interrupt_window
+                .is_some_and(|active| active.window.suppress_final_poll);
+        if instruction_complete {
             self.active_interrupt_window = None;
         }
-        self.detect_interrupt(clock, suppress);
+        self.detect_interrupt(clock, is_last_op);
 
-        if self.microcode_queue.is_empty() {
+        if instruction_complete {
             let view = MachineView::new(self.snapshot(), &self.mcu, clock);
             plugin.end(&view, clock);
             TickOutcome {
@@ -792,7 +787,7 @@ impl<M: Mcu> Cpu<M> {
         }
     }
 
-    fn do_detect_interrupt(&mut self, clock: SystemClock) {
+    fn do_detect_interrupt(&mut self, clock: SystemClock, irq_pending: bool) {
         if self.nmi_detecteor.nmi_pending
             && self
                 .nmi_detecteor
@@ -801,29 +796,28 @@ impl<M: Mcu> Cpu<M> {
         {
             self.nmi_detecteor.mark_consumed();
             self.interrupt_detected = Some(InterruptType::Nmi);
-        } else if self.irq_detector.irq_pending() {
+        } else if irq_pending {
             self.interrupt_detected = Some(InterruptType::Irq);
         } else {
             debug_assert!(self.interrupt_detected.is_none());
         }
     }
 
-    fn detect_interrupt(&mut self, clock: SystemClock, suppress_final_poll: bool) {
+    fn detect_interrupt(&mut self, clock: SystemClock, is_last_op: bool) {
         self.nmi_detecteor.detect_nmi();
         let disabled = if matches!(self.opcode, opcode::CLI | opcode::SEI | opcode::PLP) {
             (self.last_status & Flag::InterruptDisabled as u8) != 0
         } else {
             self.flag(Flag::InterruptDisabled)
         };
-        self.irq_detector.detect_irq(disabled);
+        let irq_pending = self.irq_detector.detect_irq(disabled);
 
         let request = std::mem::take(&mut self.request_detect_interrupt);
         // The standard poll fires on the instruction's final cycle —
         // suppressed on the final cycle of an interrupt sequence, whose
         // recognition belongs to its declared hijack sites.
-        let is_last_op = self.microcode_queue.is_empty() && !suppress_final_poll;
-        if let (None, true) | (Some(true), _) = (request, is_last_op) {
-            self.do_detect_interrupt(clock)
+        if request.unwrap_or(is_last_op) {
+            self.do_detect_interrupt(clock, irq_pending)
         }
     }
 
@@ -901,9 +895,8 @@ impl<M: Mcu> Cpu<M> {
     }
 
     #[cfg(test)]
-    fn peek_stack(&mut self) -> u8 {
-        let addr = 0x100 + self.sp.wrapping_add(1) as u16;
-        self.mcu.peek(addr)
+    fn peek_stack(&self) -> u8 {
+        self.mcu.peek(self.stack_pop_addr())
     }
 
     fn halt(&mut self) {
@@ -954,8 +947,7 @@ impl<M: Mcu> Cpu<M> {
     }
 
     fn sbc<S: ValueSourceTrait>(&mut self) {
-        let val = S::value(self);
-        let val = val ^ 0xFF;
+        let val = !S::value(self);
         self.do_adc(val);
     }
 
@@ -969,25 +961,25 @@ impl<M: Mcu> Cpu<M> {
         self.set_register(Register::A, self.a ^ val);
     }
 
+    fn compare(&mut self, lhs: u8, rhs: u8) {
+        let t = lhs.wrapping_sub(rhs);
+        self.update_zero_negative_flags(t);
+        self.set_flag(Flag::Carry, lhs >= rhs);
+    }
+
     fn cmp<S: ValueSourceTrait>(&mut self) {
         let val = S::value(self);
-        let t = self.a.wrapping_sub(val);
-        self.update_zero_negative_flags(t);
-        self.set_flag(Flag::Carry, self.a >= val);
+        self.compare(self.a, val);
     }
 
     fn cpx<S: ValueSourceTrait>(&mut self) {
         let val = S::value(self);
-        let t = self.x.wrapping_sub(val);
-        self.update_zero_negative_flags(t);
-        self.set_flag(Flag::Carry, self.x >= val);
+        self.compare(self.x, val);
     }
 
     fn cpy<S: ValueSourceTrait>(&mut self) {
         let val = S::value(self);
-        let t = self.y.wrapping_sub(val);
-        self.update_zero_negative_flags(t);
-        self.set_flag(Flag::Carry, self.y >= val);
+        self.compare(self.y, val);
     }
 
     fn alr(&mut self) {
@@ -1079,31 +1071,31 @@ impl<M: Mcu> Cpu<M> {
         self.eor::<Alu>();
     }
 
+    /// Store `value & (ABH + 1)` at the address latch — the high-byte
+    /// corruption shared by SHX, SHY, SHA and TAS.
+    fn store_high_byte(&mut self, value: u8) {
+        let out = value & self.abh().wrapping_add(1);
+        self.ab.set_high(out);
+        self.write_byte(out);
+    }
+
     fn shx(&mut self) {
-        let v = self.x & self.abh().wrapping_add(1);
-        self.ab.set_high(v);
-        self.write_byte(v);
+        self.store_high_byte(self.x);
     }
 
     fn shy(&mut self) {
-        let v = self.y & self.abh().wrapping_add(1);
-        self.ab.set_high(v);
-        self.write_byte(v);
+        self.store_high_byte(self.y);
     }
 
     fn sha(&mut self) {
         // SHA (AHX/AXA): store A & X & (high-byte of addr + 1) at address
-        let out = self.a & self.x & self.abh().wrapping_add(1);
-        self.ab.set_high(out);
-        self.write_byte(out);
+        self.store_high_byte(self.a & self.x);
     }
 
     fn tas(&mut self) {
         let v = self.a & self.x;
         self.sp = v;
-        let out = v & self.abh().wrapping_add(1);
-        self.ab.set_high(out);
-        self.write_byte(out);
+        self.store_high_byte(v);
     }
 
     fn push_status(&mut self, break_flag: bool) {
@@ -1127,6 +1119,14 @@ impl<M: Mcu> Cpu<M> {
         self.status = self.pop_stack();
         self.set_flag(Flag::Break, break_flag);
         self.set_flag(Flag::NotUsed, true);
+    }
+
+    /// Zero-page index add cycle: hardware re-reads the unindexed base
+    /// address on the bus (RAM only, so side-effect-free) and latches the
+    /// wrapped indexed address.
+    fn zero_page_indexed(&mut self, index: u8) {
+        let _ = self.mcu.read_zero_page(self.ab.low());
+        self.ab.set(self.abl().wrapping_add(index) as u16);
     }
 
     fn set_pc_to_ab(&mut self) {
@@ -1217,12 +1217,11 @@ impl<M: Mcu> Cpu<M> {
         self.microcode_queue.pop_front()
     }
     fn push_microcode(&mut self, microcode: Microcode) {
-        match self.microcode_queue.push_front(microcode) {
-            Ok(_) => (),
-            Err(_) => debug_assert!(
+        if self.microcode_queue.push_front(microcode).is_err() {
+            debug_assert!(
                 false,
                 "Microcode queue overflow, maybe some microcode is too long?"
-            ),
+            );
         }
     }
 
@@ -1242,15 +1241,25 @@ impl<M: Mcu> Cpu<M> {
         self.nmi_detecteor.cancel_rising_edge_at(clock);
     }
 
-    fn load_nmi_pcl(&mut self) {
-        self.set_flag(Flag::InterruptDisabled, true);
-        let low = self.read_byte(0xFFFA);
+    fn load_vector_low(&mut self, address: u16, disable_interrupt: bool) {
+        if disable_interrupt {
+            self.set_flag(Flag::InterruptDisabled, true);
+        }
+        let low = self.read_byte(address);
         self.pc.set_low(low);
     }
 
-    fn load_nmi_pch(&mut self) {
-        let high = self.read_byte(0xFFFB);
+    fn load_vector_high(&mut self, address: u16) {
+        let high = self.read_byte(address);
         self.pc.set_high(high);
+    }
+
+    fn load_nmi_pcl(&mut self) {
+        self.load_vector_low(0xFFFA, true);
+    }
+
+    fn load_nmi_pch(&mut self) {
+        self.load_vector_high(0xFFFB);
     }
 
     fn load_irq_pcl(&mut self) {
@@ -1262,14 +1271,11 @@ impl<M: Mcu> Cpu<M> {
             return;
         }
 
-        self.set_flag(Flag::InterruptDisabled, true);
-        let low = self.read_byte(0xFFFE);
-        self.pc.set_low(low);
+        self.load_vector_low(0xFFFE, true);
     }
 
     fn load_irq_pch(&mut self) {
-        let high = self.read_byte(0xFFFF);
-        self.pc.set_high(high);
+        self.load_vector_high(0xFFFF);
     }
 
     fn set_register(&mut self, register: Register, val: u8) {
@@ -1350,14 +1356,14 @@ impl<M: Mcu> Default for EmptyPlugin<M> {
 #[derive(Clone, Debug, Copy, PartialEq, Eq)]
 #[repr(u8)]
 pub enum Flag {
-    Carry = 0x01u8,
-    Zero = 0x02u8,
-    InterruptDisabled = 0x04u8,
-    Decimal = 0x08u8,
-    Break = 0x10u8,
-    NotUsed = 0x20u8,
-    Overflow = 0x40u8,
-    Negative = 0x80u8,
+    Carry = 0x01,
+    Zero = 0x02,
+    InterruptDisabled = 0x04,
+    Decimal = 0x08,
+    Break = 0x10,
+    NotUsed = 0x20,
+    Overflow = 0x40,
+    Negative = 0x80,
 }
 
 #[cfg(test)]

@@ -14,52 +14,28 @@ impl Register16 {
         self.bytes = v.to_ne_bytes();
     }
 
+    /// Byte position of the low half in the native-endian byte pair.
+    const LOW: usize = if cfg!(target_endian = "little") { 0 } else { 1 };
+    const HIGH: usize = 1 - Self::LOW;
+
     /// Return low byte
     pub fn low(&self) -> u8 {
-        cfg_select! {
-            target_endian = "little" => {
-                self.bytes[0]
-            }
-            target_endian = "big" => {
-                self.bytes[1]
-            }
-        }
+        self.bytes[Self::LOW]
     }
 
     /// set low byte
     pub fn set_low(&mut self, v: u8) {
-        cfg_select! {
-            target_endian = "little" => {
-                self.bytes[0] = v;
-            }
-            target_endian = "big" => {
-                self.bytes[1] = v;
-            }
-        }
+        self.bytes[Self::LOW] = v;
     }
 
     /// Return high byte
     pub fn high(&self) -> u8 {
-        cfg_select! {
-            target_endian = "little" => {
-                self.bytes[1]
-            }
-            target_endian = "big" => {
-                self.bytes[0]
-            }
-        }
+        self.bytes[Self::HIGH]
     }
 
     /// set high byte
     pub fn set_high(&mut self, v: u8) {
-        cfg_select! {
-            target_endian = "little" => {
-                self.bytes[1] = v;
-            }
-            target_endian = "big" => {
-                self.bytes[0] = v;
-            }
-        }
+        self.bytes[Self::HIGH] = v;
     }
 
     /// Wrapping addition — delegates to u16::wrapping_add
@@ -70,26 +46,13 @@ impl Register16 {
     /// Increment the low byte by 1 with wrapping (0xFF → 0x00).
     /// High byte is unchanged.
     pub fn wrapping_inc_low(&mut self) {
-        cfg_select! {
-            target_endian = "little" => {
-                self.bytes[0] = self.bytes[0].wrapping_add(1);
-            }
-            target_endian = "big" => {
-                self.bytes[1] = self.bytes[1].wrapping_add(1);
-            }
-        }
+        self.bytes[Self::LOW] = self.bytes[Self::LOW].wrapping_add(1);
     }
 }
 
 impl core::ops::AddAssign<u16> for Register16 {
     fn add_assign(&mut self, rhs: u16) {
-        self.set(self.get().wrapping_add(rhs));
-    }
-}
-
-impl core::ops::BitOrAssign<u16> for Register16 {
-    fn bitor_assign(&mut self, rhs: u16) {
-        self.set(self.get() | rhs);
+        self.wrapping_add(rhs);
     }
 }
 
@@ -283,14 +246,6 @@ mod tests {
         r.set(u16::MAX);
         r += 1u16;
         assert_eq!(r.get(), 0);
-    }
-
-    #[test]
-    fn test_bitor_assign() {
-        let mut r = Register16::default();
-        r.set(0x0F00);
-        r |= 0x00F0u16;
-        assert_eq!(r.get(), 0x0FF0);
     }
 
     #[test]

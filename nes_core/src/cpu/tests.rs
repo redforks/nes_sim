@@ -43,20 +43,15 @@ fn execute_next<M: Mcu>(cpu: &mut Cpu<M>) {
 fn test_irq_detector() {
     // default
     let mut v = IrqDetector::default();
-    assert!(!v.irq_pending());
+    assert!(!v.detect_irq(false));
 
     v.update_irq_input(true);
-    assert!(!v.irq_pending());
-    v.detect_irq(false);
-    assert!(v.irq_pending());
-    assert!(v.irq_pending());
-    v.detect_irq(true);
-    assert!(!v.irq_pending());
+    assert!(!v.detect_irq(true));
+    assert!(v.detect_irq(false));
+    assert!(v.detect_irq(false));
 
     v.update_irq_input(false);
-    assert!(!v.irq_pending());
-    v.detect_irq(false);
-    assert!(!v.irq_pending());
+    assert!(!v.detect_irq(false));
 }
 
 /// Drive one dot of /NMI line history; on CPU-cycle sample dots
@@ -194,7 +189,7 @@ fn nmi_pulse_dispatch_latency_runs_from_rising_edge() {
         }
         cpu.update_nmi_line((10..15).contains(&t), SystemClock(t));
         if t % 3 == 2 {
-            cpu.detect_interrupt(SystemClock(t), false);
+            cpu.detect_interrupt(SystemClock(t), true);
             if cpu.interrupt_detected.is_some() {
                 latched_at = Some(t);
             }
