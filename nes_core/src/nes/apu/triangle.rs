@@ -1,5 +1,3 @@
-use crate::nes::apu::helper::AudioSequencer;
-
 use super::*;
 
 const TRIANGLE_SEQUENCE: [u8; 32] = [
@@ -35,28 +33,20 @@ impl Linear {
     }
 }
 
-impl ControlGate for Linear {
-    fn control(&self) -> u8 {
-        self.counter
-    }
-}
-
 #[derive(Debug)]
 pub struct Triangle {
-    control: TriangleControlBits,
     timer: Divider<u16>,
     length: LengthControl,
-    sequencer: AudioSequencer<32>,
+    sequencer: Sequencer<u8>,
     linear: Linear,
 }
 
 impl Default for Triangle {
     fn default() -> Self {
         Self {
-            control: Default::default(),
             timer: Divider::new(u16::MAX),
             length: Default::default(),
-            sequencer: AudioSequencer::new(&TRIANGLE_SEQUENCE),
+            sequencer: Sequencer::new(&TRIANGLE_SEQUENCE),
             linear: Default::default(),
         }
     }
@@ -68,18 +58,16 @@ impl Triangle {
     }
 
     pub fn write_control(&mut self, value: TriangleControlBits) {
-        self.control = value;
         self.length.set_halt(value);
         self.linear.reload_value = value.counter();
     }
 
-    pub fn is_halt(&self) -> bool {
-        self.control.loop_and_is_halt()
-    }
-
-    pub fn restore_is_halt_flag(&mut self, is_halt: bool) {
-        self.control = TriangleControlBits::new().with_loop_and_is_halt(is_halt);
-        self.length.set_halt(self.control);
+    /// Reset the channel while preserving the length-counter halt flag,
+    /// which survives an APU reset.
+    pub fn reset(&mut self) {
+        let length_counter_halt = self.length.is_halt();
+        *self = Self::default();
+        self.length.set_halt_flag(length_counter_halt);
     }
 
     pub fn write_timer_low(&mut self, value: u8) {
@@ -102,16 +90,12 @@ impl Triangle {
         }
     }
 
-    pub fn length_will_decrement(&self) -> bool {
-        self.length.will_decrement()
-    }
-
     pub fn tick_linear(&mut self) {
-        self.linear.tick(self.control.loop_and_is_halt());
+        self.linear.tick(self.length.is_halt());
     }
 
-    pub fn tick_length(&mut self) {
-        self.length.tick();
+    pub fn tick_length(&mut self) -> bool {
+        self.length.tick()
     }
 
     pub fn output(&self) -> u8 {

@@ -98,7 +98,7 @@ pub struct APUStatus {
 
 #[repr(u8)]
 #[bitenum]
-#[derive(Debug, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub enum FrameSequencerMode {
     #[fallback]
     #[default]

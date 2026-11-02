@@ -61,6 +61,14 @@ impl LengthControl {
         self.is_halt = bits.length_halt();
     }
 
+    pub fn is_halt(&self) -> bool {
+        self.is_halt
+    }
+
+    pub fn set_halt_flag(&mut self, is_halt: bool) {
+        self.is_halt = is_halt;
+    }
+
     pub fn set_enabled(&mut self, enabled: bool) {
         self.enabled = enabled;
         if !enabled {
@@ -87,11 +95,14 @@ impl LengthControl {
         }
     }
 
-    /// Decrement counter if it's > 0.
-    pub fn tick(&mut self) {
+    /// Decrement counter if it's > 0, returning whether it did. A same-tick
+    /// reload write must be suppressed when this returns true.
+    pub fn tick(&mut self) -> bool {
+        let decremented = self.will_decrement();
         if !self.is_halt {
             self.counter = self.counter.saturating_sub(1);
         }
+        decremented
     }
 }
 
@@ -114,19 +125,19 @@ pub struct Envelope {
     request_reset: bool,
 }
 
-impl Envelope {
-    pub fn new(bits: u8) -> Self {
-        let mut r = Self {
+impl Default for Envelope {
+    fn default() -> Self {
+        Self {
             divider: Divider::new(0),
             counter: 0,
             enable_loop: false,
             disabled: false,
             request_reset: false,
-        };
-        r.config(bits);
-        r
+        }
     }
+}
 
+impl Envelope {
     pub fn request_reset(&mut self) {
         self.request_reset = true;
     }
@@ -143,15 +154,13 @@ impl Envelope {
             self.request_reset = false;
             self.counter = 15;
             self.divider.reset();
-        } else {
-            if self.divider.tick() {
-                if self.counter == 0 {
-                    if self.enable_loop {
-                        self.counter = 15;
-                    }
-                } else {
-                    self.counter -= 1;
+        } else if self.divider.tick() {
+            if self.counter == 0 {
+                if self.enable_loop {
+                    self.counter = 15;
                 }
+            } else {
+                self.counter -= 1;
             }
         }
     }
@@ -180,22 +189,6 @@ impl CounterPub for u16 {
 }
 
 impl CounterPub for u8 {
-    const ZERO: Self = 0;
-
-    fn dec(self) -> Self {
-        self.wrapping_sub(1)
-    }
-}
-
-impl CounterPub for u32 {
-    const ZERO: Self = 0;
-
-    fn dec(self) -> Self {
-        self.wrapping_sub(1)
-    }
-}
-
-impl CounterPub for u64 {
     const ZERO: Self = 0;
 
     fn dec(self) -> Self {
@@ -265,6 +258,10 @@ impl<I: Copy> Sequencer<I> {
         Self { items, cur_idx: 0 }
     }
 
+    pub fn replace_items(&mut self, items: &'static [I]) {
+        self.items = items;
+    }
+
     pub fn reset_items(&mut self, items: &'static [I]) {
         self.items = items;
         self.reset();
@@ -279,80 +276,9 @@ impl<I: Copy> Sequencer<I> {
         self.cur_idx = (self.cur_idx + 1) % self.items.len();
         item
     }
-}
 
-#[derive(Debug)]
-pub struct AudioSequencer<const N: usize> {
-    items: &'static [u8; N],
-    cur_idx: usize,
-}
-
-impl<const N: usize> AudioSequencer<N> {
-    pub fn new(items: &'static [u8; N]) -> Self {
-        Self { items, cur_idx: 0 }
-    }
-
-    pub fn replace_items(&mut self, items: &'static [u8; N]) {
-        self.items = items;
-    }
-
-    pub fn reset(&mut self) {
-        self.cur_idx = 0;
-    }
-
-    pub fn tick(&mut self) {
-        self.cur_idx = (self.cur_idx + 1) % N;
-    }
-
-    pub fn output(&self) -> u8 {
+    pub fn output(&self) -> I {
         self.items[self.cur_idx]
-    }
-}
-
-pub trait ControlGate {
-    fn control(&self) -> u8;
-
-    fn filter(&self, val: u8) -> u8 {
-        if self.control() == 0 { 0 } else { val }
-    }
-}
-
-impl<U, V> ControlGate for (U, V)
-where
-    U: ControlGate,
-    V: ControlGate,
-{
-    fn control(&self) -> u8 {
-        let a = if self.0.control() != 0 { 1 } else { 0 };
-        let b = if self.1.control() != 0 { 1 } else { 0 };
-        a & b
-    }
-}
-
-impl<U, V, W> ControlGate for (U, V, W)
-where
-    U: ControlGate,
-    V: ControlGate,
-    W: ControlGate,
-{
-    fn control(&self) -> u8 {
-        let a = if self.0.control() != 0 { 1 } else { 0 };
-        let b = if self.1.control() != 0 { 1 } else { 0 };
-        let c = if self.2.control() != 0 { 1 } else { 0 };
-        a & b & c
-    }
-}
-
-impl ControlGate for &LengthControl {
-    fn control(&self) -> u8 {
-        debug_assert!(self.enabled || self.counter == 0);
-        self.counter
-    }
-}
-
-impl ControlGate for &AudioSequencer<8> {
-    fn control(&self) -> u8 {
-        self.output()
     }
 }
 

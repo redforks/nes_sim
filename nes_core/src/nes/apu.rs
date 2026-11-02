@@ -10,7 +10,7 @@ mod triangle;
 use crate::{SystemClock, nes::dmc_dma::DmcDmaType};
 use dmc::Dmc;
 use frame_sequencer::FrameSequencer;
-use helper::{ControlGate, Divider, Envelope, LengthControl, Sequencer};
+use helper::{Divider, Envelope, LengthControl, Sequencer};
 use mixer::Mixer;
 use noise::Noise;
 use pulse::Pulse;
@@ -22,18 +22,6 @@ use registers::{
     LengthTimerHigh3Bits, NoiseControlBits, NoiseLength, NoisePeriod, PulseControlBits, SweepBits,
     TriangleControlBits,
 };
-
-/// APU status information for debugging/inspection
-#[derive(Debug, Clone, Copy)]
-pub struct ApuStatusInfo {
-    pub pulse1_enabled: bool,
-    pub pulse2_enabled: bool,
-    pub triangle_enabled: bool,
-    pub noise_enabled: bool,
-    pub dmc_enabled: bool,
-    pub frame_irq_pending: bool,
-    pub dmc_irq_pending: bool,
-}
 
 pub struct Apu<D: AudioDriver = ()> {
     pulse1: Pulse,
@@ -83,18 +71,14 @@ impl<D: AudioDriver> Apu<D> {
         // 3. Frame IRQ flag is cleared
         // 4. DMC interrupt flag is cleared
 
-        // Clear all interrupt flags
+        // Clear the frame-sequencer interrupt; the $4015 write below
+        // silences all channels and clears the DMC interrupt.
         self.frame_sequencer.clear_interrupt();
-        self.dmc.clear_interrupt_flag();
-
-        // $4015 write with $00 silences all channels and clears DMC interrupt
         self.set_control_flags(ControlFlags::new());
 
-        // Reset triangle channel state, but preserve the length counter halt flag
-        // (control.reload_flag) which should persist across reset
-        let length_counter_halt = self.triangle.is_halt();
-        self.triangle = Triangle::default();
-        self.triangle.restore_is_halt_flag(length_counter_halt);
+        // Reset triangle channel state, but preserve the length counter halt
+        // flag which should persist across reset.
+        self.triangle.reset();
 
         // Re-apply the last value written to $4017 after the reset delay.
         // The test ROMs rely on reset preserving the previous frame counter mode
@@ -109,30 +93,31 @@ impl<D: AudioDriver> Apu<D> {
             concat!(module_path!(), "::Apu::tick"),
             "tick"
         );
-        if clock.is_apu_clock() {
-            self.length_race_clobber = [false; 4];
-            self.frame_sequencer.tick_timer();
-            self.frame_sequencer.tick();
-            self.triangle.tick_timer();
-            self.pulse1.tick_timer();
-            self.pulse2.tick_timer();
-            self.noise.tick_timer();
-            self.dmc.tick_timer();
-
-            if let Some(frame_sequencer) = self.frame_sequencer.output_latch {
-                self.frame_sequencer.output_latch = None;
-                if frame_sequencer.irq {
-                    self.frame_sequencer.set_interrupt();
-                }
-                if frame_sequencer.envelop_and_linear {
-                    self.tick_envelop_and_linear();
-                }
-                if frame_sequencer.length_and_sweep {
-                    self.tick_length_and_sweep();
-                }
-            }
-            self.emit_samples();
+        if !clock.is_apu_clock() {
+            return;
         }
+
+        self.length_race_clobber = [false; 4];
+        self.frame_sequencer.tick_timer();
+        self.frame_sequencer.tick();
+        self.triangle.tick_timer();
+        self.pulse1.tick_timer();
+        self.pulse2.tick_timer();
+        self.noise.tick_timer();
+        self.dmc.tick_timer();
+
+        if let Some(frame_sequencer) = self.frame_sequencer.output_latch.take() {
+            if frame_sequencer.irq {
+                self.frame_sequencer.set_interrupt();
+            }
+            if frame_sequencer.envelop_and_linear {
+                self.tick_envelop_and_linear();
+            }
+            if frame_sequencer.length_and_sweep {
+                self.tick_length_and_sweep();
+            }
+        }
+        self.emit_samples();
     }
 
     pub fn request_irq(&self) -> bool {
@@ -158,28 +143,12 @@ impl<D: AudioDriver> Apu<D> {
         self.driver.flush();
     }
 
-    /// Get current APU status for debugging/inspection
-    pub fn get_status(&self) -> ApuStatusInfo {
-        ApuStatusInfo {
-            pulse1_enabled: self.pulse1.status_bit(),
-            pulse2_enabled: self.pulse2.status_bit(),
-            triangle_enabled: self.triangle.status_bit(),
-            noise_enabled: self.noise.status_bit(),
-            dmc_enabled: self.dmc.status_bit(),
-            frame_irq_pending: self.frame_sequencer.request_irq(),
-            dmc_irq_pending: self.dmc.interrupt_flag(),
-        }
-    }
-
     pub fn read(&mut self, address: u16) -> u8 {
-        match address {
-            0x4015 => {
-                let status = self.status_byte();
-                self.frame_sequencer.clear_interrupt();
-                status
-            }
-            _ => 0,
+        let value = self.peek(address);
+        if address == 0x4015 {
+            self.frame_sequencer.clear_interrupt();
         }
+        value
     }
 
     pub fn peek(&self, address: u16) -> u8 {
@@ -262,15 +231,11 @@ impl<D: AudioDriver> Apu<D> {
 
     fn tick_length_and_sweep(&mut self) {
         self.length_race_clobber = [
-            self.pulse1.length_will_decrement(),
-            self.pulse2.length_will_decrement(),
-            self.triangle.length_will_decrement(),
-            self.noise.length_will_decrement(),
+            self.pulse1.tick_length_and_sweep(),
+            self.pulse2.tick_length_and_sweep(),
+            self.triangle.tick_length(),
+            self.noise.tick_length(),
         ];
-        self.pulse1.tick_length_and_sweep();
-        self.pulse2.tick_length_and_sweep();
-        self.triangle.tick_length();
-        self.noise.tick_length();
     }
 
     fn emit_samples(&mut self) {

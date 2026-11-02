@@ -24,74 +24,33 @@ use crate::nes::apu::Sequencer;
 // immediately. Follows blargg's forum APU tests (test-roms/apu/test_*.nes,
 // test-roms/test_apu_2/*.nes).
 
+const fn step(irq: bool, length_and_sweep: bool, envelop_and_linear: bool) -> FrameSequenceState {
+    FrameSequenceState {
+        irq,
+        length_and_sweep,
+        envelop_and_linear,
+    }
+}
+
 /// The half-frame clock generated immediately by a $4017 write with bit 7
 /// set (length counters, sweep, envelopes, linear counter). It does not
 /// consume a scheduled slot: the timer reset restarts the table from step 1
 /// regardless.
-const HALF_FRAME: FrameSequenceState = FrameSequenceState {
-    irq: false,
-    length_and_sweep: true,
-    envelop_and_linear: true,
-};
+const HALF_FRAME: FrameSequenceState = step(false, true, true);
 
 const FOUR_STEP_TRIGGERS: [FrameSequenceState; 4] = [
-    /*  7457 */
-    FrameSequenceState {
-        irq: false,
-        length_and_sweep: false,
-        envelop_and_linear: true,
-    },
-    /* 14913 */
-    FrameSequenceState {
-        irq: false,
-        length_and_sweep: true,
-        envelop_and_linear: true,
-    },
-    /* 22371 */
-    FrameSequenceState {
-        irq: false,
-        length_and_sweep: false,
-        envelop_and_linear: true,
-    },
-    /* 29829 */
-    FrameSequenceState {
-        irq: true,
-        length_and_sweep: true,
-        envelop_and_linear: true,
-    },
+    /*  7457 */ step(false, false, true),
+    /* 14913 */ step(false, true, true),
+    /* 22371 */ step(false, false, true),
+    /* 29829 */ step(true, true, true),
 ];
 
 const FIVE_STEP_TRIGGERS: [FrameSequenceState; 5] = [
-    /*  7457 */
-    FrameSequenceState {
-        irq: false,
-        length_and_sweep: false,
-        envelop_and_linear: true,
-    },
-    /* 14913 */
-    FrameSequenceState {
-        irq: false,
-        length_and_sweep: true,
-        envelop_and_linear: true,
-    },
-    /* 22371 */
-    FrameSequenceState {
-        irq: false,
-        length_and_sweep: false,
-        envelop_and_linear: true,
-    },
-    /* 29829 */
-    FrameSequenceState {
-        irq: false,
-        length_and_sweep: false,
-        envelop_and_linear: false,
-    },
-    /* 37281 */
-    FrameSequenceState {
-        irq: false,
-        length_and_sweep: true,
-        envelop_and_linear: true,
-    },
+    /*  7457 */ step(false, false, true),
+    /* 14913 */ step(false, true, true),
+    /* 22371 */ step(false, false, true),
+    /* 29829 */ step(false, false, false),
+    /* 37281 */ step(false, true, true),
 ];
 
 #[derive(Debug)]
@@ -113,11 +72,11 @@ pub(super) struct FrameSequencer {
     cpu_cycles: u32,
     sequences: Sequencer<FrameSequenceState>,
     frame_interrupt_inhibit: bool,
-    request_timer_delay: u8,
-    pending_mode: Option<FrameSequencerBits>,
+    /// A buffered `$4017` write and the CPU cycles left before it lands.
+    pending_mode: Option<(FrameSequencerBits, u8)>,
     mode: FrameSequencerMode,
-    /// use it to restore after reset
-    saved_bits: FrameSequencerBits,
+    /// Mode restored after reset (the inhibit bit is always cleared then).
+    saved_mode: FrameSequencerMode,
 }
 
 impl Default for FrameSequencer {
@@ -130,9 +89,8 @@ impl Default for FrameSequencer {
             sequences: Sequencer::new(&FOUR_STEP_TRIGGERS),
             frame_interrupt_inhibit: false,
             pending_mode: None,
-            request_timer_delay: 0,
             mode: FrameSequencerMode::FourStep,
-            saved_bits: FrameSequencerBits::default(),
+            saved_mode: FrameSequencerMode::default(),
         }
     }
 }
@@ -152,9 +110,8 @@ impl FrameSequencer {
         // After reset the APU acts as if the last mode were written again
         // with the IRQ inhibit bit clear (Mesen2
         // `ApuFrameCounter::Reset`).
-        self.pending_mode = Some(FrameSequencerBits::default().with_mode(self.saved_bits.mode()));
+        self.pending_mode = Some((FrameSequencerBits::default().with_mode(self.saved_mode), 0));
         self.frame_interrupt_inhibit = false;
-        self.request_timer_delay = 0;
     }
 
     /// Advance the frame-counter divider by one CPU cycle. Called once per
@@ -217,26 +174,29 @@ impl FrameSequencer {
     /// unless a unit-clocking step was latched on this CPU cycle or the
     /// previous one (that step already clocked the units).
     pub fn tick(&mut self) {
-        if self.request_timer_delay > 0 {
-            self.request_timer_delay -= 1;
-        } else if let Some(counter) = self.pending_mode.take() {
-            self.cpu_cycles = 0;
-            self.sequences.reset_items(match counter.mode() {
-                FrameSequencerMode::FourStep => &FOUR_STEP_TRIGGERS,
-                FrameSequencerMode::FiveStep => &FIVE_STEP_TRIGGERS,
-            });
-            self.mode = counter.mode();
-            if counter.mode() == FrameSequencerMode::FiveStep && self.block == 0 {
-                // OR-merged: a same-dot IRQ pulse keeps its flag.
-                let mut latch = self.output_latch.unwrap_or_default();
-                latch.length_and_sweep |= HALF_FRAME.length_and_sweep;
-                latch.envelop_and_linear |= HALF_FRAME.envelop_and_linear;
-                self.output_latch = Some(latch);
-                self.block = 2;
-            }
+        if let Some((counter, delay)) = self.pending_mode {
+            if delay > 0 {
+                self.pending_mode = Some((counter, delay - 1));
+            } else {
+                self.pending_mode = None;
+                self.cpu_cycles = 0;
+                self.sequences.reset_items(match counter.mode() {
+                    FrameSequencerMode::FourStep => &FOUR_STEP_TRIGGERS,
+                    FrameSequencerMode::FiveStep => &FIVE_STEP_TRIGGERS,
+                });
+                self.mode = counter.mode();
+                if counter.mode() == FrameSequencerMode::FiveStep && self.block == 0 {
+                    // OR-merged: a same-dot IRQ pulse keeps its flag.
+                    let mut latch = self.output_latch.unwrap_or_default();
+                    latch.length_and_sweep |= HALF_FRAME.length_and_sweep;
+                    latch.envelop_and_linear |= HALF_FRAME.envelop_and_linear;
+                    self.output_latch = Some(latch);
+                    self.block = 2;
+                }
 
-            if self.frame_interrupt_inhibit {
-                self.frame_interrupt = false;
+                if self.frame_interrupt_inhibit {
+                    self.frame_interrupt = false;
+                }
             }
         }
 
@@ -264,18 +224,17 @@ impl FrameSequencer {
 
     /// Applies a $4017 write issued on CPU cycle parity `cpu_odd_cycle`.
     /// Nothing happens at the write itself: the divider reset, the mode
-    /// switch and (for $80/$C0) the half-frame clock all land together
-    /// `request_timer_delay + 1` CPU cycles later. An even-cycle write lands
+    /// switch and (for $80/$C0) the half-frame clock all land together after
+    /// the buffered delay plus one CPU cycle. An even-cycle write lands
     /// 3 CPU cycles later, an odd-cycle write 4 (Mesen2 `ApuFrameCounter`).
     /// A write that raises inhibit clears the IRQ flag immediately.
     pub fn write_control_bits(&mut self, bits: FrameSequencerBits, cpu_odd_cycle: bool) {
         debug_assert!(self.pending_mode.is_none());
         self.frame_interrupt_inhibit = bits.disable_interrupt();
-        self.request_timer_delay = if cpu_odd_cycle { 3 } else { 2 };
         if self.frame_interrupt_inhibit {
             self.frame_interrupt = false;
         }
-        self.pending_mode = Some(bits);
-        self.saved_bits = bits;
+        self.pending_mode = Some((bits, if cpu_odd_cycle { 3 } else { 2 }));
+        self.saved_mode = bits.mode();
     }
 }

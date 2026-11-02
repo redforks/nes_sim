@@ -1,6 +1,4 @@
 use super::*;
-use crate::nes::apu::helper::AudioSequencer;
-
 #[derive(Debug)]
 struct Shifter {
     negate: bool,
@@ -10,13 +8,11 @@ struct Shifter {
 
 impl Shifter {
     fn new(is_second_pulse_channel: bool, bits: SweepBits) -> Self {
-        let mut r = Self {
-            negate: Default::default(),
+        Self {
+            negate: bits.negate(),
             is_second_pulse_channel,
-            shift_bits: Default::default(),
-        };
-        r.config(bits);
-        r
+            shift_bits: bits.shift(),
+        }
     }
 
     fn update_period(&self, period: u16) -> u16 {
@@ -88,15 +84,6 @@ impl Sweep {
     }
 }
 
-impl ControlGate for &Sweep {
-    fn control(&self) -> u8 {
-        // Muting is now a continuous predicate checked in Pulse::output via
-        // is_muted(period), not a latched zero_output. For backwards
-        // compatibility with tests that check control after tick, return 1
-        // here; Pulse::output handles the actual muting.
-        1
-    }
-}
 const PULSE_DUTY_TABLE: [[u8; 8]; 4] = [
     [0, 1, 0, 0, 0, 0, 0, 0],
     [0, 1, 1, 0, 0, 0, 0, 0],
@@ -110,7 +97,7 @@ pub struct Pulse {
     length: LengthControl,
     envelope: Envelope,
     sweep: Sweep,
-    sequencer: AudioSequencer<8>,
+    sequencer: Sequencer<u8>,
 }
 
 impl Pulse {
@@ -119,9 +106,9 @@ impl Pulse {
             timer: Divider::new(u16::MAX),
             divider_2: Divider::new(1),
             length: LengthControl::default(),
-            envelope: Envelope::new(0),
+            envelope: Envelope::default(),
             sweep: Sweep::new(is_second_pulse_channel, 0.into()),
-            sequencer: AudioSequencer::new(&PULSE_DUTY_TABLE[0]),
+            sequencer: Sequencer::new(&PULSE_DUTY_TABLE[0]),
         }
     }
 
@@ -164,25 +151,23 @@ impl Pulse {
         self.envelope.tick();
     }
 
-    pub fn tick_length_and_sweep(&mut self) {
-        self.length.tick();
+    pub fn tick_length_and_sweep(&mut self) -> bool {
+        let decremented = self.length.tick();
         self.sweep.tick(self.timer.period_mut());
+        decremented
     }
 
     pub fn output(&self) -> u8 {
-        if self.sweep.is_muted(*self.timer.period()) {
-            return 0;
-        }
-        let control_gate = (&self.sequencer, &self.length);
-        control_gate.filter(self.envelope.output())
+        // Branchless gate: the duty sequencer and length counter both change
+        // often enough that short-circuit branches mispredict.
+        let gate = (self.sequencer.output() != 0)
+            & !self.length.is_zero()
+            & !self.sweep.is_muted(*self.timer.period());
+        self.envelope.output() * gate as u8
     }
 
     pub fn status_bit(&self) -> bool {
         !self.length.is_zero()
-    }
-
-    pub fn length_will_decrement(&self) -> bool {
-        self.length.will_decrement()
     }
 }
 

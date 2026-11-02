@@ -55,18 +55,10 @@ impl DmaReader {
         self.bytes_remaining != 0
     }
 
-    fn tick(&mut self) {
-        if self.enabled() && !self.dma_pending {
-            self.dma_pending = true;
-            self.dma_request = Some((DmcDmaType::Reload, self.current_address));
-        }
-    }
-
-    fn check_and_request_dma(&mut self) {
-        // Load DMA: triggered by $4015 write with empty buffer
+    fn request_dma(&mut self, kind: DmcDmaType) {
         if self.dma_request.is_none() && self.enabled() && !self.dma_pending {
             self.dma_pending = true;
-            self.dma_request = Some((DmcDmaType::Load, self.current_address));
+            self.dma_request = Some((kind, self.current_address));
         }
     }
 
@@ -99,25 +91,12 @@ struct OutputUnit {
 impl OutputUnit {
     fn start_cycle(&mut self) {
         self.remain_bits = 8;
-        if let Some(byte) = self.sample_buffer {
-            self.sample_buffer = None;
+        if let Some(byte) = self.sample_buffer.take() {
             self.silence_flag = false;
             self.shift_register = byte;
         } else {
             self.silence_flag = true;
         }
-    }
-
-    fn receive_sample(&mut self, sample: u8) {
-        self.sample_buffer = Some(sample);
-    }
-
-    fn set_output(&mut self, v: u8) {
-        self.output = v;
-    }
-
-    fn output(&self) -> u8 {
-        self.output
     }
 
     fn tick(&mut self) {
@@ -126,16 +105,12 @@ impl OutputUnit {
         }
 
         if !self.silence_flag {
-            self.output = match self.shift_register & 0x1 {
-                0 => self.output.saturating_sub(2),
-                1 => {
-                    if self.output < 126 {
-                        self.output + 2
-                    } else {
-                        self.output
-                    }
-                }
-                _ => self.output,
+            self.output = if self.shift_register & 1 == 0 {
+                self.output.saturating_sub(2)
+            } else if self.output < 126 {
+                self.output + 2
+            } else {
+                self.output
             };
             self.shift_register >>= 1;
         }
@@ -178,8 +153,9 @@ impl Dmc {
 
         self.dma_reader.set_enabled(enabled);
         if enabled && self.output.is_buffer_empty() {
-            self.dma_reader.check_and_request_dma();
-        };
+            // Load DMA: triggered by a $4015 write with the buffer empty.
+            self.dma_reader.request_dma(DmcDmaType::Load);
+        }
     }
 
     pub fn status_bit(&self) -> bool {
@@ -190,23 +166,23 @@ impl Dmc {
         if self.timer.tick() {
             self.output.tick();
             if self.output.is_buffer_empty() {
-                self.dma_reader.tick();
+                self.dma_reader.request_dma(DmcDmaType::Reload);
             }
         }
     }
 
     pub fn supply_dma_byte(&mut self, byte: u8) {
-        self.output.receive_sample(byte);
+        self.output.sample_buffer = Some(byte);
         self.dma_reader.inc_addr();
     }
 
     pub fn output(&self) -> u8 {
-        self.output.output()
+        self.output.output
     }
 
     pub fn write_dac(&mut self, value: DmcDacBits) {
         self.dac_writes += 1;
-        self.output.set_output(value.dac_value());
+        self.output.output = value.dac_value();
     }
 
     pub fn dac_writes(&self) -> u64 {
