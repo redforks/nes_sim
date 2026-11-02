@@ -11,10 +11,10 @@
 /// Atomically produced PPU NMI bundle for one dot.
 ///
 /// `level = v_blank && nmi_enable` (the `/NMI` line level).
-/// `race_cancel = true` when a `$2000` or `$2002` access on the
-/// `vbl_set_cycle` dot suppressed the same-dot assertion — the level's
-/// rise never asserted and the edge must be retracted via
-/// `consumed_through` (ADR-0006).
+/// `race_cancel = true` when a `$2002` read or a `$2000` write cleared the
+/// `/NMI` level after the machine had sampled a rising edge earlier in the
+/// same tick — the edge must be retracted via `consumed_through`
+/// (ADR-0006).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct NmiLines {
     /// `/NMI` line level after this dot's PPU tick.

@@ -93,10 +93,24 @@ impl Timing {
         self.in_visible_scanline() && self.dot >= 1 && self.dot <= 256
     }
 
-    fn advance(&mut self, rendering_enabled: bool) {
+    /// Return true if dot is in visible dots (65-256), after the
+    /// secondary-OAM clear phase
+    const fn in_visible_dots(&self) -> bool {
+        self.dot >= 65 && self.dot <= 256
+    }
+
+    /// Return true if scanline and dot is in visible area after sprite
+    /// evaluation (dots 65-256 of visible scanlines)
+    const fn in_visible_area(&self) -> bool {
+        self.in_visible_scanline() && self.in_visible_dots()
+    }
+
+    fn advance(&mut self, ren_latched_at_338: bool) {
         match self.dot {
             ..339 => self.dot += 1,
-            339 if self.scanline != 261 || (!self.odd_frame || !rendering_enabled) => self.dot += 1,
+            339 if self.scanline != 261 || (!self.odd_frame || !ren_latched_at_338) => {
+                self.dot += 1
+            }
             _ => {
                 self.dot = 0;
                 self.scanline += 1;
@@ -166,10 +180,6 @@ pub struct Ppu<R: Render = ()> {
     /// (scanline 241 dot 0); the next VBL set is suppressed entirely —
     /// flag never rises, NMI never asserts.
     suppress_vblank_pending: bool,
-    /// `cycle` value of the tick that processed the vblank-set (scanline 241,
-    /// dot 1), whether or not the set was suppressed. A $2002 read or $2000
-    /// write landing on the same cycle races the set and wins it, as on hardware.
-    vbl_set_cycle: u64,
     /// Set when a racing access must retract an NMI edge the machine latched
     /// earlier in the same tick (see `NesMachine::tick`).
     nmi_race_cancel: bool,
@@ -184,14 +194,12 @@ pub struct Ppu<R: Render = ()> {
     /// Cumulative system cycle counter, incremented each tick.
     /// Replaces the global `get_system_cycles()` for PPU-internal timing.
     cycle: u64,
-    /// System cycle of the last completing PPUDATA ($2007) read. A second
-    /// read landing inside the PPUDATA ignore window (back-to-back
+    /// Cycle and returned value of the last completing PPUDATA ($2007) read.
+    /// A second read landing inside the PPUDATA ignore window (back-to-back
     /// dummy+real reads of page-crossing `lda abs,X`) is fully ignored on
-    /// hardware (Mesen2). Ignored reads do not stamp this field.
-    ppudata_last_completed_read_at: Option<u64>,
-    /// Value that read returned; re-returned verbatim by an ignored
-    /// back-to-back read that lands inside the ignore window.
-    ppudata_last_return: u8,
+    /// hardware (Mesen2) and re-returns this value. Ignored reads do not
+    /// stamp the cycle.
+    ppudata_last_read: Option<(u64, u8)>,
     /// Two-dot pixel output pipeline: pixels rendered on visible dots wait
     /// here (due cycle, target coordinates, palette index) before committing
     /// to the renderer, so CPU register writes landing in between color them.
@@ -214,6 +222,17 @@ fn normalize_ppu_addr(addr: u16) -> u16 {
     addr & 0x2007
 }
 
+/// Wrap a PPU address into the 16 KiB bus space.
+///
+/// `vram_addr` is 15 bits, so the `$4000` wrap decides palette vs cartridge:
+/// after wrapping, `$3F00-$3FFF` is palette and everything below is cartridge
+/// space. The `$3000-$3EFF` nametable mirror is deliberately not folded here:
+/// the cartridge PPU window maps its alias slots to the same nametable banks
+/// as `$2000-$2EFF`, so cartridge reads and writes agree either way.
+fn normalize_vram_addr(address: u16) -> u16 {
+    address % 0x4000
+}
+
 impl<R: Render> Ppu<R> {
     pub fn new(renderer: R) -> Self {
         Ppu {
@@ -231,10 +250,8 @@ impl<R: Render> Ppu<R> {
             suppress_vblank_pending: false,
             ren_latched_at_338: false,
             cycle: 0,
-            ppudata_last_completed_read_at: None,
-            vbl_set_cycle: 0,
+            ppudata_last_read: None,
             nmi_race_cancel: false,
-            ppudata_last_return: 0,
             pixel_pipeline: std::collections::VecDeque::new(),
             vblank_entered: false,
         }
@@ -391,44 +408,55 @@ impl<R: Render> Ppu<R> {
             "tick"
         );
         self.cycle += 1;
-        let rendering_enabled = self.rendering_enabled();
 
         if self.timing.scanline == 261 && self.timing.dot == 338 {
-            self.ren_latched_at_338 = rendering_enabled;
+            self.ren_latched_at_338 = self.rendering_enabled();
         }
-
+        if self.timing.dot == 0 {
+            // The secondary-OAM swap runs on every line, including the
+            // pre-render line (261). Sprite evaluation itself only runs on
+            // visible scanlines 0-239, so scanline 0's swap brings in the
+            // empty buffer: no freshly evaluated sprites on line 0.
+            self.sprite.swap_secondary_oam();
+            if self.timing.in_visible_scanline() {
+                // compute background anchor at start of visible scanline
+                self.background_anchor = Some(BackgroundActivation::snapshot(self, 0));
+                self.pending_background_activation = None;
+                self.fill_tile_cache(0, cartridge);
+            }
+        }
         self.sprite.update_ctrl_status(&mut self.registers.status);
 
-        // MMC3 scanline IRQs are driven by filtered PPU A12 rises.
-        //
-        // On the real NES the PPU address bus toggles A12 on each tile
-        // fetch.  The MMC3 filters the rapid bouncing and effectively
-        // clocks its IRQ counter once per scanline at the point where A12
-        // rises from a sustained low period:
-        //
-        //   * When BG uses $0xxx and sprites use $1xxx: the rise occurs at
-        //     the first sprite pattern fetch (~dot 260).
-        //   * When BG uses $1xxx and sprites use $0xxx: the rise occurs at
-        //     the first BG pattern fetch (~dot 4), with a second rise at
-        //     the BG-prefetch after sprite fetches (~dot 324).
-        //
-        // We model this by emitting only pattern-table addresses (skipping
-        // the nametable/attribute-table fetches that cause the filtered
-        // bouncing).  BG pattern addresses are emitted on odd dots and
-        // sprite pattern addresses on even dots, matching the real PPU's
-        // memory-access phasing.
-        //
-        // Manual $2006/$2007 writes still reach the mapper directly.
-        if rendering_enabled && self.timing.in_ppu_active_line() && self.timing.dot % 2 == 1 {
-            match self.timing.dot {
-                1..=256 | 321..=336 => {
-                    // BG tile fetch: only pattern-table accesses (fetch types 2-3).
-                    // Notifications are shifted +2 dots (base 3/323 instead of 1/321)
-                    // so that the first BG pattern appears at dot 7 rather than dot 5.
-                    // Together with the sprite base (first pattern at dot 263), this
-                    // gives the real hardware's 256-dot gap between mode $10 and $08.
-                    let base_dot = if self.timing.dot <= 256 { 3 } else { 323 };
-                    if self.timing.dot >= base_dot {
+        if self.rendering_enabled() {
+            // MMC3 scanline IRQs are driven by filtered PPU A12 rises.
+            //
+            // On the real NES the PPU address bus toggles A12 on each tile
+            // fetch.  The MMC3 filters the rapid bouncing and effectively
+            // clocks its IRQ counter once per scanline at the point where A12
+            // rises from a sustained low period:
+            //
+            //   * When BG uses $0xxx and sprites use $1xxx: the rise occurs at
+            //     the first sprite pattern fetch (~dot 260).
+            //   * When BG uses $1xxx and sprites use $0xxx: the rise occurs at
+            //     the first BG pattern fetch (~dot 4), with a second rise at
+            //     the BG-prefetch after sprite fetches (~dot 324).
+            //
+            // We model this by emitting only pattern-table addresses (skipping
+            // the nametable/attribute-table fetches that cause the filtered
+            // bouncing).  BG pattern addresses are emitted on odd dots and
+            // sprite pattern addresses on even dots, matching the real PPU's
+            // memory-access phasing.
+            //
+            // Manual $2006/$2007 writes still reach the mapper directly.
+            if self.timing.in_ppu_active_line() && self.timing.dot % 2 == 1 {
+                match self.timing.dot {
+                    3..=256 | 323..=336 => {
+                        // BG tile fetch: only pattern-table accesses (fetch types 2-3).
+                        // Notifications are shifted +2 dots (base 3/323 instead of 1/321)
+                        // so that the first BG pattern appears at dot 7 rather than dot 5.
+                        // Together with the sprite base (first pattern at dot 263), this
+                        // gives the real hardware's 256-dot gap between mode $10 and $08.
+                        let base_dot = if self.timing.dot <= 256 { 3 } else { 323 };
                         let fetch_type = (((self.timing.dot - base_dot) / 2) % 4) as usize;
                         if fetch_type >= 2 {
                             cartridge.notify_vram_address(
@@ -440,69 +468,65 @@ impl<R: Render> Ppu<R> {
                             );
                         }
                     }
-                }
-                259..=320 => {
-                    // Sprite tile fetch: only pattern-table accesses (fetch types 2-3).
-                    // Emitted on odd dots to align the MMC3 counter clock with the
-                    // observed ~dot-260 hardware timing.
-                    let fetch_type = (((self.timing.dot - 259) / 2) % 4) as usize;
-                    if fetch_type >= 2 {
-                        cartridge.notify_vram_address(
-                            if self.registers.ctrl.sprite_size_16()
-                                || self.registers.ctrl.sprite_pattern_table()
-                            {
-                                0x1000
-                            } else {
-                                0x0000
-                            },
-                        );
+                    259..=320 => {
+                        // Sprite tile fetch: only pattern-table accesses (fetch types 2-3).
+                        // Emitted on odd dots to align the MMC3 counter clock with the
+                        // observed ~dot-260 hardware timing.
+                        let fetch_type = (((self.timing.dot - 259) / 2) % 4) as usize;
+                        if fetch_type >= 2 {
+                            cartridge.notify_vram_address(
+                                if self.registers.ctrl.sprite_size_16()
+                                    || self.registers.ctrl.sprite_pattern_table()
+                                {
+                                    0x1000
+                                } else {
+                                    0x0000
+                                },
+                            );
+                        }
                     }
+                    _ => {}
                 }
-                _ => {}
+            }
+
+            if self.timing.in_visible_area() {
+                if self.timing.dot == 65 {
+                    self.sprite.begin_sprite_overflow_eval(self.oam_addr);
+                }
+
+                if self.timing.dot % 2 == 1 {
+                    self.sprite.step_sprite_overflow_eval(
+                        self.timing.scanline,
+                        self.registers.ctrl,
+                        &self.oam,
+                    );
+                }
+            }
+
+            // During sprite tile loading (dots 257-320 of visible scanlines and
+            // the pre-render line) hardware drives OAMADDR to 0; software
+            // polling $2003 mid-frame observes that.
+            if self.timing.in_ppu_active_line() && (257..=320).contains(&self.timing.dot) {
+                self.oam_addr = 0;
+            }
+
+            // --- vram_addr management (rendering-enabled only) ---
+            // These model the real NES PPU's internal v-register updates:
+            // Fine Y increment at dot 256 of each visible scanline
+            if self.timing.dot == 256 && self.timing.in_visible_scanline() {
+                self.increment_vram_y();
+            }
+            // Horizontal bits reload from temp at dot 257
+            // (visible scanlines and pre-render scanline)
+            if self.timing.dot == 257 && self.timing.in_ppu_active_line() {
+                self.reload_horizontal_from_temp();
+            }
+            // Vertical bits reload from temp at dots 280-304 of pre-render scanline
+            if self.timing.is_prepare_line() && (280..=304).contains(&self.timing.dot) {
+                self.reload_vertical_from_temp();
             }
         }
 
-        if self.timing.dot == 0 {
-            // The secondary-OAM swap runs on every line, including the
-            // pre-render line (261). Sprite evaluation itself only runs on
-            // visible scanlines 0-239, so scanline 0's swap brings in the
-            // empty buffer: no freshly evaluated sprites on line 0.
-            self.sprite.swap_secondary_oam();
-        }
-        if self.timing.dot == 0 && self.timing.in_visible_scanline() {
-            // compute background anchor at start of visible scanline
-            self.background_anchor = Some(BackgroundActivation::snapshot(self, 0));
-            self.pending_background_activation = None;
-            self.fill_tile_cache(0, cartridge);
-        }
-
-        if self.timing.dot >= 65
-            && self.timing.dot <= 256
-            && self.timing.in_visible_scanline()
-            && rendering_enabled
-        {
-            if self.timing.dot == 65 {
-                self.sprite.begin_sprite_overflow_eval(self.oam_addr);
-            }
-
-            if self.timing.dot % 2 == 1 {
-                self.sprite.step_sprite_overflow_eval(
-                    self.timing.scanline,
-                    self.registers.ctrl,
-                    &self.oam,
-                );
-            }
-        }
-
-        // During sprite tile loading (dots 257-320 of visible scanlines and
-        // the pre-render line) hardware drives OAMADDR to 0; software
-        // polling $2003 mid-frame observes that.
-        if rendering_enabled
-            && self.timing.in_ppu_active_line()
-            && (257..=320).contains(&self.timing.dot)
-        {
-            self.oam_addr = 0;
-        }
         // Visible pixels are output on dots 1-256; dot 0 is the idle fetch
         // slot. Pixels leave a two-dot output pipeline: a pixel rendered on
         // dot X commits to the framebuffer on dot X+2, after any CPU
@@ -513,7 +537,7 @@ impl<R: Render> Ppu<R> {
         // (blargg nmi_sync draws its line with exactly this landing).
         if self.timing.is_visible() {
             let x = (self.timing.dot - 1) as u8;
-            let pixel_idx = if rendering_enabled {
+            let pixel_idx = if self.rendering_enabled() {
                 self.render_pixel(x, cartridge)
             } else {
                 self.palette.disabled_color_index(self.registers.vram_addr)
@@ -539,44 +563,13 @@ impl<R: Render> Ppu<R> {
             }
         }
 
-        // --- vram_addr management (rendering-enabled only) ---
-        // These model the real NES PPU's internal v-register updates:
-        if rendering_enabled {
-            // Fine Y increment at dot 256 of each visible scanline
-            if self.timing.dot == 256 && self.timing.in_visible_scanline() {
-                self.increment_vram_y();
-            }
-            // Horizontal bits reload from temp at dot 257
-            // (visible scanlines and pre-render scanline)
-            if self.timing.dot == 257 && self.timing.in_ppu_active_line() {
-                self.reload_horizontal_from_temp();
-            }
-            // Vertical bits reload from temp at dots 280-304 of pre-render scanline
-            if self.timing.is_prepare_line() && (280..=304).contains(&self.timing.dot) {
-                self.reload_vertical_from_temp();
-            }
-        }
-
         if self.timing.enter_vblank() {
             // Timing event for frame stepping: reported even when the $2002
             // VBL flag set itself is suppressed by the dot-0 race, so
             // `process_frame` always terminates at the frame boundary.
             self.vblank_entered = true;
-            // Drain the output pipeline: the frame is presented only once
-            // its last pixels have left it.
-            while let Some((_, x, y, pixel_idx)) = self.pixel_pipeline.pop_front() {
-                let pixel_idx = self.registers.mask.grayscale_index(pixel_idx);
-                let pixel = self
-                    .registers
-                    .mask
-                    .apply_effects(self.color_theme.color(pixel_idx));
-                self.renderer.set_pixel(x as u32, y as u32, pixel.0);
-            }
             self.renderer.finish();
-            self.vbl_set_cycle = self.cycle;
-            if self.suppress_vblank_pending {
-                self.suppress_vblank_pending = false;
-            } else {
+            if !std::mem::take(&mut self.suppress_vblank_pending) {
                 self.registers.status.set_v_blank(true);
             }
         }
@@ -588,21 +581,16 @@ impl<R: Render> Ppu<R> {
             self.sprite.clear_pending();
         }
 
-        let prev_scanline = self.timing.scanline;
-        let skip_rendering_enabled = if self.timing.scanline == 261 && self.timing.dot >= 339 {
-            self.ren_latched_at_338
-        } else {
-            rendering_enabled
-        };
-        self.timing.advance(skip_rendering_enabled);
-
-        cartridge.on_ppu_tick(prev_scanline);
+        self.timing.advance(self.ren_latched_at_338);
+        cartridge.on_ppu_tick(self.timing.scanline);
     }
 
     /// Atomically sampled NMI line bundle for this dot.
     ///
-    /// `level = v_blank && nmi_enable`; `race_cancel` coalesces the
-    /// same-dot `$2000`/`$2002` race (see `vbl_set_cycle`).
+    /// `level = v_blank && nmi_enable`; `race_cancel` retracts an edge the
+    /// machine latched earlier in the same tick, because a `$2002` read
+    /// (clears vblank) or a `$2000` write that disables NMI dropped the
+    /// line after that edge was sampled.
     /// The two are returned together so a racing site cannot emit
     /// `race_cancel` without its `level` — the flag is never exposed alone.
     pub fn nmi_lines(&mut self) -> NmiLines {
@@ -611,18 +599,11 @@ impl<R: Render> Ppu<R> {
         NmiLines { level, race_cancel }
     }
 
-    /// Legacy: NMI line level only (without the race-cancel flag).
-    /// Prefer [`Self::nmi_lines`] — this exists for external diagnostics.
-    pub fn nmi_line_out(&self) -> bool {
-        self.registers.status.v_blank() && self.registers.ctrl.nmi_enable()
-    }
-
     pub(crate) fn read_ppureg(&mut self, address: u16, cartridge: &mut Cartridge) -> u8 {
         let reg = normalize_ppu_addr(address);
         match reg {
             0x2002 => {
                 let status = self.read_status();
-                self.registers.write_toggle = false;
                 let status_bits = status.into_bits();
                 let result = (status_bits & 0xE0) | (self.current_bus_latch() & 0x1F);
                 self.refresh_bus_latch_bits(0xE0, status_bits);
@@ -659,12 +640,12 @@ impl<R: Render> Ppu<R> {
         match reg {
             // PPUCTRL
             0x2000 => {
-                self.set_control_flags(PpuCtrl::from_bits(value));
-                // A $2000 write on the very tick the vblank flag is set races
-                // the set. Disabling NMI on that tick means the /NMI line
-                // never asserts, so retract an edge the machine latched
-                // earlier in this tick.
-                if self.vbl_set_cycle == self.cycle && value & 0x80 == 0 {
+                let ctrl = PpuCtrl::from_bits(value);
+                self.set_control_flags(ctrl);
+                // Clearing the NMI enable drops the /NMI line for this dot.
+                // If the machine already latched an edge earlier in this
+                // tick, retract it.
+                if !ctrl.nmi_enable() {
                     self.nmi_race_cancel = true;
                 }
                 self.schedule_background_activation_if_visible();
@@ -681,9 +662,7 @@ impl<R: Render> Ppu<R> {
                 self.write_oam_data(value);
             }
             // PPUSCROLL
-            0x2005 => {
-                self.write_scroll(value);
-            }
+            0x2005 => self.registers.write_scroll(value),
             // PPUADDR
             0x2006 => {
                 self.write_vram_addr(value);
@@ -708,10 +687,7 @@ impl<R: Render> Ppu<R> {
     }
 
     pub fn read_vram(&self, address: u16, cartridge: &Cartridge) -> u8 {
-        let mut addr = address % 0x4000;
-        if (0x3000..0x3f00).contains(&addr) {
-            addr -= 0x1000;
-        }
+        let addr = normalize_vram_addr(address);
         if addr < 0x3f00 {
             cartridge.read_vram(addr)
         } else {
@@ -720,19 +696,12 @@ impl<R: Render> Ppu<R> {
     }
 
     fn write_vram(&mut self, address: u16, value: u8, cartridge: &mut Cartridge) {
-        let mut addr = address % 0x4000;
-        if (0x3000..0x3f00).contains(&addr) {
-            addr -= 0x1000;
-        }
+        let addr = normalize_vram_addr(address);
         if addr < 0x3f00 {
             cartridge.write_vram(addr, value);
         } else {
             self.palette.write(addr, value);
         }
-    }
-
-    fn write_scroll(&mut self, value: u8) {
-        self.registers.write_scroll(value);
     }
 
     fn write_vram_addr(&mut self, value: u8) {
@@ -749,9 +718,7 @@ impl<R: Render> Ppu<R> {
         }
 
         // Refill cache when empty or exhausted
-        let needs_refill = self.tile_cache.remaining == 0;
-
-        if needs_refill {
+        if self.tile_cache.remaining == 0 {
             self.fill_tile_cache(screen_x, cartridge);
         }
 
@@ -763,28 +730,14 @@ impl<R: Render> Ppu<R> {
             .background_anchor
             .unwrap_or_else(|| BackgroundActivation::snapshot(self, 0));
 
-        let (attr_byte, bitplane_low, bitplane_high) =
+        let (palette_idx, tile_fine_x, bitplane_low, bitplane_high) =
             fetch_tile_data(&background, screen_x, cartridge);
-
-        let world_x =
-            (background.vram_addr & 0x001F) * 8 + background.fine_x as u16 + screen_x as u16;
-        let world_y =
-            ((background.vram_addr >> 5) & 0x001F) * 8 + ((background.vram_addr >> 12) & 0x0007);
-
-        let nt_x = ((world_x % 256) / 8) as u8;
-        let nt_y = ((world_y % 240) / 8) as u8;
-
-        let shift = (((nt_y >> 1) & 0x01) << 2) | (((nt_x >> 1) & 0x01) << 1);
-        let palette_idx = (attr_byte >> shift) & 0x03;
-
-        let tile_fine_x = (world_x % 8) as u8;
-        let batch_size = 8 - tile_fine_x;
 
         self.tile_cache = TileCache {
             bitplane_low,
             bitplane_high,
             palette_idx,
-            remaining: batch_size,
+            remaining: 8 - tile_fine_x,
         };
     }
 
@@ -796,10 +749,10 @@ impl<R: Render> Ppu<R> {
         // previous read's value with no VRAM access, no address increment,
         // no read-buffer refill and no mapper notification. Ignored reads
         // do not re-arm the window — only a completing read does.
-        if let Some(at) = self.ppudata_last_completed_read_at
+        if let Some((at, value)) = self.ppudata_last_read
             && self.cycle <= at + PPUDATA_IGNORE_WINDOW_DOTS
         {
-            return self.ppudata_last_return;
+            return value;
         }
 
         let vram_addr = self.registers.vram_addr;
@@ -812,13 +765,13 @@ impl<R: Render> Ppu<R> {
         // Non-palette addresses use a read buffer (delayed by one read).
         // Palette addresses ($3F00-$3FFF) return immediately, but still
         // update the buffer with the nametable byte "underneath".
-        let addr = vram_addr % 0x4000;
+        let addr = normalize_vram_addr(vram_addr);
         let result = if addr >= 0x3F00 {
             // Palette: fill buffer with the nametable data underneath
             // (mirrored from $2F00-$2FFF). The returned value carries the
             // grayscale mask ($30) when grayscale is enabled, exactly like
             // the rendering path (Mesen2 `_paletteRamMask`).
-            self.registers.ppudata_buffer = self.read_vram(vram_addr - 0x1000, cartridge);
+            self.registers.ppudata_buffer = self.read_vram(addr - 0x1000, cartridge);
             let masked = self.registers.mask.grayscale_index(current);
             let result = (masked & 0x3F) | (self.current_bus_latch() & 0xC0);
             self.refresh_bus_latch_bits(0x3F, result);
@@ -829,8 +782,7 @@ impl<R: Render> Ppu<R> {
             self.refresh_bus_latch(buffered);
             buffered
         };
-        self.ppudata_last_completed_read_at = Some(self.cycle);
-        self.ppudata_last_return = result;
+        self.ppudata_last_read = Some((self.cycle, result));
         result
     }
 
@@ -865,7 +817,7 @@ impl<R: Render> Ppu<R> {
             if (1..=64).contains(&dot) {
                 return 0xFF;
             }
-            if (65..=256).contains(&dot) {
+            if self.timing.in_visible_dots() {
                 return self.sprite.copy_buffer();
             }
             if (257..=320).contains(&dot) {
@@ -900,21 +852,16 @@ impl<R: Render> Ppu<R> {
             self.suppress_vblank_pending = true;
         }
 
-        // A read on the very tick the vblank flag is set races the set and
-        // wins it: the flag reads back clear and its set is suppressed for
-        // this frame, so no NMI may assert either.
-        if self.vbl_set_cycle == self.cycle {
-            self.registers.status.set_v_blank(false);
-            self.nmi_race_cancel = true;
-        }
-
-        // Clear v_blank flag on read
+        // Clear v_blank flag on read. That also drops the /NMI line for this
+        // dot, so retract any edge the machine latched earlier in this tick.
         self.registers.status.set_v_blank(false);
+        self.nmi_race_cancel = true;
         self.registers.write_toggle = false; // Also reset write toggle on status read
         r
     }
 
     fn render_pixel(&mut self, x: u8, cartridge: &Cartridge) -> u8 {
+        let screen_y = self.timing.scanline as u8;
         let (bg_palette_idx, bg_color_idx) = if self.registers.mask.background_enabled() {
             self.get_background_pixel(x, cartridge)
         } else {
@@ -924,21 +871,16 @@ impl<R: Render> Ppu<R> {
         let sprite_pixel = if self.registers.mask.sprite_enabled()
             && (x >= 8 || self.registers.mask.sprite_left_enabled())
         {
-            self.sprite.find_sprite_pixel(
-                self.registers.ctrl,
-                cartridge,
-                x,
-                self.timing.scanline as u8,
-            )
+            self.sprite
+                .find_sprite_pixel(self.registers.ctrl, cartridge, x, screen_y)
         } else {
             None
         };
 
         if !self.registers.status.sprite_zero_hit()
-            && self
-                .sprite
-                .sprite_zero_pixel_opaque(x, self.timing.scanline as u8)
-            && ((bg_color_idx != 0) & (x != 255))
+            && self.sprite.sprite_zero_pixel_opaque(x, screen_y)
+            && bg_color_idx != 0
+            && x != 255
             && (x >= 8
                 || (self.registers.mask.background_left_enabled()
                     && self.registers.mask.sprite_left_enabled()))
@@ -949,16 +891,10 @@ impl<R: Render> Ppu<R> {
         }
 
         match sprite_pixel {
-            Some(sprite_pixel) => {
-                if bg_color_idx == 0 || !sprite_pixel.behind_bg {
-                    self.palette
-                        .get_sprite_color_index(sprite_pixel.palette_idx, sprite_pixel.color_idx)
-                } else {
-                    self.palette
-                        .get_background_color_index(bg_palette_idx, bg_color_idx)
-                }
-            }
-            None => self
+            Some(sprite_pixel) if bg_color_idx == 0 || !sprite_pixel.behind_bg => self
+                .palette
+                .get_sprite_color_index(sprite_pixel.palette_idx, sprite_pixel.color_idx),
+            _ => self
                 .palette
                 .get_background_color_index(bg_palette_idx, bg_color_idx),
         }
@@ -967,12 +903,13 @@ impl<R: Render> Ppu<R> {
 
 /// Fetch all four tile bytes for background rendering at a given screen pixel position.
 ///
-/// Returns (nametable byte, attribute byte, bitplane low, bitplane high).
+/// Returns the tile's palette index, the pixel's horizontal offset within the
+/// tile, and the two pattern bitplanes.
 fn fetch_tile_data(
     background: &BackgroundActivation,
     screen_x: u8,
     cartridge: &Cartridge,
-) -> (u8, u8, u8) {
+) -> (u8, u8, u8, u8) {
     let coarse_x = background.vram_addr & 0x001F;
     let coarse_y = (background.vram_addr >> 5) & 0x001F;
     let fine_y = ((background.vram_addr >> 12) & 0x0007) as usize;
@@ -995,12 +932,20 @@ fn fetch_tile_data(
     let attr_addr = nt_base + 0x03c0 + (nt_y as u16 / 4) * 8 + (nt_x as u16 / 4);
     let attr_byte = cartridge.read_vram(attr_addr);
 
+    let shift = (((nt_y >> 1) & 0x01) << 2) | (((nt_x >> 1) & 0x01) << 1);
+    let palette_idx = (attr_byte >> shift) & 0x03;
+
     let tile_position = background.ctrl.background_tile_position(nt_byte);
     let low_addr = tile_position.resolve_pixel_addr(tile_fine_y);
     let bitplane_low = cartridge.read_vram(low_addr.0);
     let bitplane_high = cartridge.read_vram(low_addr.second_plane_addr());
 
-    (attr_byte, bitplane_low, bitplane_high)
+    (
+        palette_idx,
+        (world_x % 8) as u8,
+        bitplane_low,
+        bitplane_high,
+    )
 }
 
 #[cfg(test)]

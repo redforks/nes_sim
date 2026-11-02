@@ -23,7 +23,6 @@ struct SpriteOverflowEval {
     /// starts at OAMADDR and wraps.
     oam_index: u8,
     byte_index: u8,
-    visible_sprites: u8,
     start_index: u8,
     mode: SpriteOverflowEvalMode,
     pending_sprite_bytes: [u8; 4],
@@ -115,18 +114,12 @@ impl SpriteManager {
 
     /// Update sprite status to ppu status register
     pub fn update_ctrl_status(&mut self, status: &mut PpuStatus) {
-        let mut v = PpuStatus::new();
-        if self.zero_hit_pending {
-            self.zero_hit_pending = false;
-            v.set_sprite_zero_hit(true);
+        if std::mem::take(&mut self.zero_hit_pending) {
+            status.set_sprite_zero_hit(true);
         }
-
-        if self.overflow_pending {
-            self.overflow_pending = false;
-            v.set_sprite_overflow(true);
+        if std::mem::take(&mut self.overflow_pending) {
+            status.set_sprite_overflow(true);
         }
-
-        *status = PpuStatus::from_bits(status.into_bits() | v.into_bits());
     }
 
     pub fn set_zero_hit_pending(&mut self) {
@@ -139,10 +132,8 @@ impl SpriteManager {
     }
 
     pub fn swap_secondary_oam(&mut self) {
-        std::mem::swap(&mut self.current_scanline_oam, &mut self.next_scanline_oam);
-        self.next_scanline_oam.clear();
-        std::mem::swap(&mut self.current_zero_sprite, &mut self.next_zero_sprite);
-        self.next_zero_sprite = None;
+        self.current_scanline_oam = std::mem::take(&mut self.next_scanline_oam);
+        self.current_zero_sprite = self.next_zero_sprite.take();
         // The incoming line has its own pattern rows.
         self.invalidate_rows();
         // A new line starts with an empty copy buffer (clear phase returns
@@ -154,7 +145,6 @@ impl SpriteManager {
         self.sprite_overflow_eval = SpriteOverflowEval {
             oam_index: 0,
             byte_index: 0,
-            visible_sprites: 0,
             start_index,
             mode: SpriteOverflowEvalMode::ScanY,
             pending_sprite_bytes: [0u8; 4],
@@ -179,8 +169,7 @@ impl SpriteManager {
                 // read during dots 65-256 observes this copy buffer.
                 self.oam_copybuffer = y;
                 if sprite_in_range(y, target_scanline(scanline), ctrl.sprite_height()) {
-                    self.sprite_overflow_eval.visible_sprites += 1;
-                    if self.sprite_overflow_eval.visible_sprites > 8 {
+                    if self.next_scanline_oam.len() >= 8 {
                         self.overflow_pending = true;
                         self.sprite_overflow_eval.mode = SpriteOverflowEvalMode::Done;
                     } else {
@@ -214,12 +203,11 @@ impl SpriteManager {
                     }
                     self.sprite_overflow_eval.oam_index += 1;
                     self.sprite_overflow_eval.byte_index = 0;
-                    self.sprite_overflow_eval.mode =
-                        if self.sprite_overflow_eval.visible_sprites >= 8 {
-                            SpriteOverflowEvalMode::OverflowSearchDelay
-                        } else {
-                            SpriteOverflowEvalMode::ScanY
-                        };
+                    self.sprite_overflow_eval.mode = if self.next_scanline_oam.len() >= 8 {
+                        SpriteOverflowEvalMode::OverflowSearchDelay
+                    } else {
+                        SpriteOverflowEvalMode::ScanY
+                    };
                 }
             }
             SpriteOverflowEvalMode::OverflowSearchDelay => {

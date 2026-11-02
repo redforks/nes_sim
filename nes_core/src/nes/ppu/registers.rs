@@ -131,16 +131,7 @@ impl Registers {
     }
 
     pub fn reset(&mut self) {
-        self.ctrl = PpuCtrl::new();
-        self.status = PpuStatus::new();
-        self.mask = PpuMask::new();
-        self.vram_addr = 0;
-        self.temp_vram_addr = 0;
-        self.fine_x = 0;
-        self.write_toggle = false;
-        self.ppudata_buffer = 0;
-        self.bus_latch = 0;
-        self.bus_latch_decay_deadlines = [0; 8];
+        *self = Self::new();
     }
 
     pub fn set_control_flags(&mut self, flags: PpuCtrl) {
