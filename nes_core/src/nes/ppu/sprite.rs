@@ -112,6 +112,14 @@ impl SpriteManager {
         self.zero_row_idx = None;
     }
 
+    /// True while a sprite status edge is waiting to be latched into
+    /// PPUSTATUS. The PPU consults this before touching the status
+    /// register, so dots without sprite-0 hits or overflows pay no
+    /// per-dot status write.
+    pub(crate) fn status_dirty(&self) -> bool {
+        self.zero_hit_pending || self.overflow_pending
+    }
+
     /// Update sprite status to ppu status register
     pub fn update_ctrl_status(&mut self, status: &mut PpuStatus) {
         if std::mem::take(&mut self.zero_hit_pending) {

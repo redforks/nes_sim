@@ -296,6 +296,15 @@ impl Cartridge {
         }
     }
 
+    /// True when the mapper chip implements `notify_vram_address`
+    /// (MMC3/VRC scanline-IRQ A12 filtering). The PPU consults this before
+    /// computing per-dot pattern-table fetch phases, so boards without
+    /// scanline IRQs pay no per-dot cost for that math.
+    #[inline]
+    pub fn wants_vram_notify(&self) -> bool {
+        self.caps.notify_vram_address
+    }
+
     /// The mapper's IRQ line, held low for a board that declares no IRQ
     /// hardware, so the per-CPU-cycle poll never enters the vtable.
     pub fn irq_pending(&self) -> bool {
