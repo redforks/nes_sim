@@ -16,7 +16,7 @@ fn test_mcu() -> NesMcu<ImageRender<1>, ()> {
         controller: Controller::new(),
         apu: Apu::new(()),
         oam_dma_pending: None,
-        deferred_apu_writes: Vec::new(),
+        deferred_apu_writes: ArrayDeque::new(),
         last_apu_tick: 0,
         current_clock: SystemClock::default(),
         open_bus: 0,

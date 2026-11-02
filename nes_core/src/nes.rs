@@ -8,6 +8,7 @@ use crate::nes::{
     ppu::{Ppu, Timing},
 };
 use crate::render::Render;
+use arraydeque::ArrayDeque;
 pub mod apu;
 pub mod controller;
 pub(crate) mod dmc_dma;
@@ -37,7 +38,12 @@ pub struct NesMcu<R: Render, D: AudioDriver> {
     /// sharing that boundary resolves BEFORE the write does — blargg's
     /// len_halt/len_reload timing races. Entries are (apply_at_tick,
     /// address, value), kept in ascending time order.
-    deferred_apu_writes: Vec<(u64, u16, u8)>,
+    ///
+    /// A fixed 2-slot `ArrayDeque` (no heap): production never holds more
+    /// than 1 (tick_apu drains on the same dots cpu.tick runs, one write
+    /// per cycle max) and the tightest direct-API sequence queues 2, so
+    /// the buffer never fills; the push site debug-asserts this.
+    deferred_apu_writes: ArrayDeque<(u64, u16, u8), 2>,
     /// Most recent system tick seen by [`Self::tick_apu`].
     last_apu_tick: u64,
     /// Current system clock sampled at the top of `NesMachine::tick`.
@@ -95,7 +101,7 @@ impl<R: Render, D: AudioDriver> NesMcu<R, D> {
             open_bus: 0,
             joypad1_oe: false,
             joypad2_oe: false,
-            deferred_apu_writes: Vec::new(),
+            deferred_apu_writes: ArrayDeque::new(),
             last_apu_tick: 0,
             current_clock: SystemClock::default(),
         }
@@ -150,12 +156,11 @@ impl<R: Render, D: AudioDriver> NesMcu<R, D> {
     pub fn tick_apu(&mut self, clock: SystemClock) {
         self.last_apu_tick = clock.cycles();
         self.apu.tick(clock);
-        while self
-            .deferred_apu_writes
-            .first()
-            .is_some_and(|(at, _, _)| *at <= clock.cycles())
-        {
-            let (_, address, value) = self.deferred_apu_writes.remove(0);
+        while let Some(&(at, address, value)) = self.deferred_apu_writes.front() {
+            if at > clock.cycles() {
+                break;
+            }
+            self.deferred_apu_writes.pop_front();
             self.apu.write(address, value, clock);
         }
     }
@@ -305,8 +310,14 @@ impl<R: Render, D: AudioDriver> Mcu for NesMcu<R, D> {
                 0x4014 => self.ppu_dma(value),
                 0x4016 => self.controller.write(address, value),
                 0x4000 | 0x4003 | 0x4004 | 0x4007 | 0x400B | 0x400F | 0x4013 => {
+                    // Production bound is 1 (tick_apu drains on the same
+                    // dots cpu.tick runs, one write per cycle max); the
+                    // tightest direct-API sequence queues 2. Louder than a
+                    // silent `.ok()` drop if that ever stops holding.
+                    debug_assert!(self.deferred_apu_writes.len() < 2);
                     self.deferred_apu_writes
-                        .push((self.last_apu_tick + 3, address, value));
+                        .push_back((self.last_apu_tick + 3, address, value))
+                        .ok();
                 }
                 _ => self.apu.write(address, value, self.current_clock),
             },
