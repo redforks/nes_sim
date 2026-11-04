@@ -1,5 +1,6 @@
 mod oam;
 pub mod palette;
+mod pixel_pipeline;
 mod registers;
 mod sprite;
 
@@ -11,9 +12,9 @@ use crate::{
     },
     render::Render,
 };
-use arraydeque::ArrayDeque;
 use oam::Oam;
 use palette::{Palette, Pixel};
+use pixel_pipeline::PixelPipeline;
 use registers::{PpuCtrl, PpuMask, PpuStatus, Registers};
 
 // Pixel, palette data and COLORS are defined in the submodule `palette`.
@@ -202,17 +203,17 @@ pub struct Ppu<R: Render = ()> {
     /// stamp the cycle.
     ppudata_last_read: Option<(u64, u8)>,
     /// Two-dot pixel output pipeline: pixels rendered on visible dots wait
-    /// here (due cycle, target coordinates, palette index) before committing
-    /// to the renderer, so CPU register writes landing in between color them.
-    /// Commit is due-cycle driven: a scanline's final two pixels commit on
-    /// that scanline's own dots +2 — not on the next line's first pushes —
-    /// so a $2001 write in the fetch/idle phase cannot retro-recolor them
-    /// (DPCM Letterbox depends on this).
+    /// here (target coordinates, palette index) before committing to the
+    /// renderer, so CPU register writes landing in between color them.
+    /// Each dot retires exactly one pixel, so a scanline's final two pixels
+    /// commit on that scanline's own dots +2 — not on the next line's first
+    /// pushes — and a $2001 write in the fetch/idle phase cannot
+    /// retro-recolor them (DPCM Letterbox depends on this).
     ///
-    /// A fixed 8-slot `ArrayDeque` (no heap): pushes happen at most once
-    /// per dot and dues rise strictly with `cycle`, so at most two pixels
-    /// are ever in flight and the buffer can never fill.
-    pixel_pipeline: ArrayDeque<(u64, u8, u16, u8), 8>,
+    /// Fixed two slots (no heap): [`PixelPipeline::take_due`] retires one
+    /// pixel per dot before the dot's own pixel is pushed, so at most two
+    /// are ever in flight.
+    pixel_pipeline: PixelPipeline,
     /// Set when the PPU timing enters vblank (scanline 241, dot 1).
     /// This is a pure timing event, independent of the $2002 VBL flag
     /// (which `$2002` reads clear and the dot-0 race can suppress).
@@ -259,7 +260,7 @@ impl<R: Render> Ppu<R> {
             cycle: 0,
             ppudata_last_read: None,
             nmi_race_cancel: false,
-            pixel_pipeline: ArrayDeque::new(),
+            pixel_pipeline: PixelPipeline::new(),
             vblank_entered: false,
         }
     }
@@ -547,6 +548,19 @@ impl<R: Render> Ppu<R> {
         // commit time (the color-modifying stage), so a mid-scanline $2001
         // write takes effect two dots earlier than the write cycle itself
         // (blargg nmi_sync draws its line with exactly this landing).
+        let pending = self.pixel_pipeline.take_due();
+        if !pending.is_empty() {
+            // Hardware grayscale ANDs the 6-bit palette entry with $30
+            // before the color lookup ($3F black renders as $30 white);
+            // emphasis tints are analog effects on the looked-up RGB.
+            let pixel_idx = self.registers.mask.grayscale_index(pending.pixel_index);
+            let pixel = self
+                .registers
+                .mask
+                .apply_effects(self.color_theme.color(pixel_idx));
+            self.renderer
+                .set_pixel(pending.x as u32, pending.y as u32, pixel.0);
+        }
         if self.timing.is_visible() {
             let x = (dot - 1) as u8;
             let pixel_idx = if rendering {
@@ -554,26 +568,7 @@ impl<R: Render> Ppu<R> {
             } else {
                 self.palette.disabled_color_index(self.registers.vram_addr)
             };
-            self.pixel_pipeline
-                .push_back((self.cycle + 2, x, scanline, pixel_idx))
-                .ok();
-        }
-        while self
-            .pixel_pipeline
-            .front()
-            .is_some_and(|(due, ..)| *due <= self.cycle)
-        {
-            if let Some((_, x, y, pixel_idx)) = self.pixel_pipeline.pop_front() {
-                // Hardware grayscale ANDs the 6-bit palette entry with $30
-                // before the color lookup ($3F black renders as $30 white);
-                // emphasis tints are analog effects on the looked-up RGB.
-                let pixel_idx = self.registers.mask.grayscale_index(pixel_idx);
-                let pixel = self
-                    .registers
-                    .mask
-                    .apply_effects(self.color_theme.color(pixel_idx));
-                self.renderer.set_pixel(x as u32, y as u32, pixel.0);
-            }
+            self.pixel_pipeline.push(x, scanline, pixel_idx);
         }
 
         if self.timing.enter_vblank() {
