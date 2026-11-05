@@ -1,21 +1,15 @@
 [workspace]
 resolver = "2"
-members = [
-  "nes_core",
-  "nes_cpu_test",
-  "nes_web",
-  "nescli",
-  "nes_sdl",
-]
+members = ["nes_core", "nes_cpu_test", "nes_web", "nescli", "nes_sdl"]
 
 # Workspace dependencies - ALL dependencies managed here
 [workspace.dependencies]
 # Core utilities
-log = {version = "0.4", features = ["release_max_level_info"]}
+log = { version = "0.4", features = ["release_max_level_info"] }
 thiserror = "2"
 anyhow = "1"
-serde = {version="1.0.228", features = ["derive"]}
-bitfield-struct = "0.12.1"
+serde = { version = "1.0.228", features = ["derive"] }
+bitfield-struct = "0.13"
 
 # CLI and argument parsing
 clap = { version = "4", features = ["derive"] }
@@ -23,7 +17,7 @@ ansi_term = "0.12"
 is-terminal = "0.4"
 
 # Image handling
- image = { version = "0.25", default-features = false, features = ["png"] }
+image = { version = "0.25", default-features = false, features = ["png"] }
 
 # Iterator utilities
 itertools = "0.14"
@@ -33,22 +27,36 @@ arraydeque = "0.5"
 bytemuck = { version = "1.25", features = ["derive"] }
 
 # Parsing and serialization
-winnow = {version="1", features = ["alloc"]}
+winnow = { version = "1", features = ["alloc"] }
 strum_macros = "0.26"
 
 # Logging
-env_logger = { version = "0.11"}
+env_logger = { version = "0.11" }
 test-log = "0.2"
 
 # Testing
-rstest = {version = "0.23", default-features = false}
+rstest = { version = "0.23", default-features = false }
 
 # WebAssembly (WASM)
 wasm-bindgen = "0.2"
 js-sys = "0.3"
 console_log = "1"
 console_error_panic_hook = "0.1"
-web-sys = { version = "0.3", features = ["HtmlCanvasElement", "CanvasRenderingContext2d", "ImageData", "Window", "Document", "AudioContext", "AudioWorklet", "AudioWorkletNode", "AudioDestinationNode", "AudioNode", "BaseAudioContext", "AudioContextState", "MessagePort"] }
+web-sys = { version = "0.3", features = [
+    "HtmlCanvasElement",
+    "CanvasRenderingContext2d",
+    "ImageData",
+    "Window",
+    "Document",
+    "AudioContext",
+    "AudioWorklet",
+    "AudioWorkletNode",
+    "AudioDestinationNode",
+    "AudioNode",
+    "BaseAudioContext",
+    "AudioContextState",
+    "MessagePort",
+] }
 
 # Local path dependencies (for reference)
 nes_core = { path = "nes_core" }
