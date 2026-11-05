@@ -297,7 +297,6 @@ pub struct Cpu<M: Mcu> {
     pc: Register16,
     sp: u8,
     status: u8,
-    last_status: u8,
 
     opcode: u8,
     /// address bus, which memory byte that cpu current select
@@ -332,7 +331,6 @@ impl<M: Mcu> Cpu<M> {
             pc: Register16::default(),
             sp: 0,
             status: 0,
-            last_status: 0,
             mcu,
             opcode: 0,
             active_interrupt_window: None,
@@ -681,7 +679,6 @@ impl<M: Mcu> Cpu<M> {
         self.request_detect_interrupt = None;
         self.frozen = false;
         self.last_read_addr = None;
-        self.last_status = self.status;
 
         self.push_microcodes(&InterruptSequences::RESET);
         self.arm_interrupt_window(&InterruptSequences::RESET_WINDOW, false);
@@ -756,7 +753,7 @@ impl<M: Mcu> Cpu<M> {
             }
         };
 
-        self.last_status = self.status;
+        let last_status = self.status;
         code.exec(self);
         let instruction_complete = self.microcode_queue.is_empty();
         // Suppression is declared: the armed window's `suppress_final_poll`
@@ -770,7 +767,7 @@ impl<M: Mcu> Cpu<M> {
         if instruction_complete {
             self.active_interrupt_window = None;
         }
-        self.detect_interrupt(clock, is_last_op);
+        self.detect_interrupt(clock, is_last_op, last_status);
 
         if instruction_complete {
             let view = MachineView::new(self.snapshot(), &self.mcu, clock);
@@ -803,10 +800,10 @@ impl<M: Mcu> Cpu<M> {
         }
     }
 
-    fn detect_interrupt(&mut self, clock: SystemClock, is_last_op: bool) {
+    fn detect_interrupt(&mut self, clock: SystemClock, is_last_op: bool, last_status: u8) {
         self.nmi_detecteor.detect_nmi();
         let disabled = if matches!(self.opcode, opcode::CLI | opcode::SEI | opcode::PLP) {
-            (self.last_status & Flag::InterruptDisabled as u8) != 0
+            (last_status & Flag::InterruptDisabled as u8) != 0
         } else {
             self.flag(Flag::InterruptDisabled)
         };

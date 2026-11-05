@@ -189,7 +189,7 @@ fn nmi_pulse_dispatch_latency_runs_from_rising_edge() {
         }
         cpu.update_nmi_line((10..15).contains(&t), SystemClock(t));
         if t % 3 == 2 {
-            cpu.detect_interrupt(SystemClock(t), true);
+            cpu.detect_interrupt(SystemClock(t), true, cpu.status);
             if cpu.interrupt_detected.is_some() {
                 latched_at = Some(t);
             }
