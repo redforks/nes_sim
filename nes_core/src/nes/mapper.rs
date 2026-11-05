@@ -282,6 +282,7 @@ impl Cartridge {
     }
 
     /// Forwarded only when the mapper declares [`CartridgeCaps::on_ppu_tick`].
+    #[inline]
     pub fn on_ppu_tick(&mut self, scanline: u16) {
         if self.caps.on_ppu_tick {
             self.mapper.on_ppu_tick(scanline);
@@ -290,6 +291,7 @@ impl Cartridge {
 
     /// Forwarded only when the mapper declares
     /// [`CartridgeCaps::notify_vram_address`].
+    #[inline]
     pub fn notify_vram_address(&mut self, addr: u16) {
         if self.caps.notify_vram_address {
             self.mapper.notify_vram_address(addr);
@@ -300,13 +302,13 @@ impl Cartridge {
     /// (MMC3/VRC scanline-IRQ A12 filtering). The PPU consults this before
     /// computing per-dot pattern-table fetch phases, so boards without
     /// scanline IRQs pay no per-dot cost for that math.
-    #[inline]
     pub fn wants_vram_notify(&self) -> bool {
         self.caps.notify_vram_address
     }
 
     /// The mapper's IRQ line, held low for a board that declares no IRQ
     /// hardware, so the per-CPU-cycle poll never enters the vtable.
+    #[inline]
     pub fn irq_pending(&self) -> bool {
         self.caps.irq_pending && self.mapper.irq_pending()
     }
