@@ -447,31 +447,6 @@ fn frame_sequencer_counts_cpu_cycles() {
     );
 }
 
-/// The frame sequencer advances on APU clocks only: feeding `Apu::tick` the
-/// non-APU dots of more than two mode-0 periods must leave the frame IRQ
-/// flag clear. This is the contract that lets `NesMachine::tick` skip the
-/// APU call on those dots without changing emulated timing.
-#[test]
-fn frame_sequencer_ignores_non_apu_clock_ticks() {
-    let mut apu = Apu::new(());
-    apu.write(0x4017, 0x00, SystemClock(2)); // mode 0, even CPU cycle
-
-    let mut clock = SystemClock(3); // first non-APU dot after the write
-    for _ in 0..(3 * 2 * 29830) {
-        clock = clock.inc();
-        if clock.is_apu_clock() {
-            continue;
-        }
-        apu.tick(clock);
-    }
-
-    assert_eq!(
-        apu.peek(0x4015) & 0x40,
-        0,
-        "non-APU-clock ticks advanced the frame sequencer"
-    );
-}
-
 /// Drives [`FrameSequencer`] the way [`Apu`] does: `tick_timer`, `tick` and
 /// latch consumption on CPU clocks (tick % 3 == 2). Events are still measured
 /// in system ticks so the golden timeline below stays bit-for-bit the one the
@@ -742,7 +717,7 @@ fn blargg_forum_test_1_length_counter_survives_the_write_dance() {
                 self.tick += 1;
                 let clock = SystemClock(self.tick);
                 if clock.is_apu_clock() {
-                    self.apu.tick(clock);
+                    self.apu.tick();
                     self.apu.write(address, value, clock);
                     return;
                 }
@@ -753,7 +728,7 @@ fn blargg_forum_test_1_length_counter_survives_the_write_dance() {
         fn run_cpu(&mut self, cpu_cycles: u64) {
             for _ in 0..cpu_cycles {
                 self.tick += 3;
-                self.apu.tick(SystemClock(self.tick));
+                self.apu.tick();
             }
         }
     }
@@ -772,7 +747,7 @@ fn blargg_forum_test_1_length_counter_survives_the_write_dance() {
     driver.write_on_cpu_clock(0x4017, 0x80); // halt on the period wrap
     for _ in 0..2 {
         driver.tick += 3;
-        driver.apu.tick(SystemClock(driver.tick));
+        driver.apu.tick();
     }
 
     assert_eq!(

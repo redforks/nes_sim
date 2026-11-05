@@ -155,7 +155,7 @@ impl<R: Render, D: AudioDriver> NesMcu<R, D> {
     }
     pub fn tick_apu(&mut self, clock: SystemClock) {
         self.last_apu_tick = clock.cycles();
-        self.apu.tick(clock);
+        self.apu.tick();
         while let Some(&(at, address, value)) = self.deferred_apu_writes.front() {
             if at > clock.cycles() {
                 break;
