@@ -1,5 +1,5 @@
 use crate::view::MachineView;
-use crate::{SystemClock, cpu::microcode::opcode, mcu::Mcu};
+use crate::{SystemClock, mcu::Mcu};
 use arraydeque::ArrayDeque;
 use microcode::{
     AOrMemory, CrossPageBehavior, HijackEligibility, HijackSite, IncDecTarget, InterruptSequences,
@@ -296,7 +296,6 @@ pub struct Cpu<M: Mcu> {
     sp: u8,
     status: u8,
 
-    opcode: u8,
     /// address bus, which memory byte that cpu current select
     ab: Register16,
     /// data bus, what byte that cpu will save or get from memory bus
@@ -329,7 +328,6 @@ impl<M: Mcu> Cpu<M> {
             sp: 0,
             status: 0,
             mcu,
-            opcode: 0,
             active_interrupt_window: None,
             interrupt_detected: None,
             nmi_detecteor: Default::default(),
@@ -762,7 +760,7 @@ impl<M: Mcu> Cpu<M> {
         if instruction_complete {
             self.active_interrupt_window = None;
         }
-        self.detect_interrupt(clock, is_last_op, last_status);
+        self.detect_interrupt(clock, is_last_op, last_status, code);
 
         if instruction_complete {
             let view = MachineView::new(self.snapshot(), &self.mcu, clock);
@@ -795,9 +793,24 @@ impl<M: Mcu> Cpu<M> {
         }
     }
 
-    fn detect_interrupt(&mut self, clock: SystemClock, is_last_op: bool, last_status: u8) {
+    fn detect_interrupt(
+        &mut self,
+        clock: SystemClock,
+        is_last_op: bool,
+        last_status: u8,
+        last_op: Microcode,
+    ) {
         self.nmi_detecteor.detect_nmi();
-        let disabled = if matches!(self.opcode, opcode::CLI | opcode::SEI | opcode::PLP) {
+        // CLI/SEI/PLP are polled against the pre-cycle status: their own
+        // write to the I flag must not enable or disable the IRQ taken at
+        // their final cycle (blargg cpu_interrupts_v2 1-cli_latency).
+        let writes_interrupt_disable = matches!(
+            last_op,
+            Microcode::ClearFlag(Flag::InterruptDisabled)
+                | Microcode::SetFlag(Flag::InterruptDisabled)
+                | Microcode::Plp
+        );
+        let disabled = if writes_interrupt_disable {
             (last_status & Flag::InterruptDisabled as u8) != 0
         } else {
             self.flag(Flag::InterruptDisabled)

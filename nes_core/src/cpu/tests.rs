@@ -1,6 +1,6 @@
 use super::microcode::{
     BranchTest, CrossPageBehavior, ImmediateOp, OpAfterAddressing, PushTarget, TransferDirection,
-    build_opcode_table,
+    build_opcode_table, opcode,
 };
 use super::*;
 use crate::test_utils::MockMcu;
@@ -189,7 +189,7 @@ fn nmi_pulse_dispatch_latency_runs_from_rising_edge() {
         }
         cpu.update_nmi_line((10..15).contains(&t), SystemClock(t));
         if t % 3 == 2 {
-            cpu.detect_interrupt(SystemClock(t), true, cpu.status);
+            cpu.detect_interrupt(SystemClock(t), true, cpu.status, Microcode::Nop);
             if cpu.interrupt_detected.is_some() {
                 latched_at = Some(t);
             }

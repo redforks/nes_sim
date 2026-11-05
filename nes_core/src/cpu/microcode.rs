@@ -1492,7 +1492,6 @@ impl Microcode {
                 const OPCODE_TABLE: [ArrayVec<[Microcode; 7]>; 256] = build_opcode_table();
 
                 let opcode = cpu.inc_read_byte();
-                cpu.opcode = opcode;
                 cpu.push_microcodes(&OPCODE_TABLE[opcode as usize]);
                 if let Some(window) = InterruptSequences::window_for_opcode(opcode) {
                     cpu.arm_interrupt_window(window, false);
