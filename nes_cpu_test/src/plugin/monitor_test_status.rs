@@ -1,7 +1,7 @@
 use ansi_term::Color;
 use nes_core::mcu::Mcu;
 use nes_core::view::MachineView;
-use nes_core::{ExecuteResult, Plugin, SYSTEM_CYCLES_PER_PPU_CYCLE, SystemClock};
+use nes_core::{ExecuteResult, Plugin, SYSTEM_CYCLES_PER_PPU_CYCLE};
 
 const RESET_WAIT_SYSTEM_CYCLES: u64 = 536_000 * SYSTEM_CYCLES_PER_PPU_CYCLE;
 
@@ -40,11 +40,11 @@ pub struct MonitorTestStatus {
 }
 
 impl<M: Mcu> Plugin<M> for MonitorTestStatus {
-    fn start(&mut self, _: &MachineView<M>, _: SystemClock) {}
+    fn start(&mut self, _: &MachineView<M>) {}
 
-    fn end(&mut self, view: &MachineView<M>, system_clock: SystemClock) {
+    fn end(&mut self, view: &MachineView<M>) {
         let status = Status::parse(view);
-        let now = system_clock.cycles();
+        let now = view.clock().cycles();
         self.should_reset = if let Some(cycles) = self.cycles_request_reset {
             // PPU clock is 5.320342 MHz, so 100ms is about 532,000 PPU cycles.
             if (now > cycles) && (now - cycles >= RESET_WAIT_SYSTEM_CYCLES) {

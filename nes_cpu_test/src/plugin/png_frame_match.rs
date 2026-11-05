@@ -5,7 +5,7 @@ use nes_core::nes::NesMcu;
 use nes_core::nes::apu::AudioDriver;
 use nes_core::render::ImageRender;
 use nes_core::view::MachineView;
-use nes_core::{ExecuteResult, Plugin, SystemClock};
+use nes_core::{ExecuteResult, Plugin};
 use std::path::Path;
 use std::path::PathBuf;
 
@@ -72,9 +72,9 @@ fn pixel_within_threshold(actual: Rgba<u8>, expected: Rgba<u8>) -> bool {
     diff <= 50
 }
 impl<A: AudioDriver> Plugin<NesMcu<ImageRender<1>, A>> for PngFrameMatch {
-    fn start(&mut self, _view: &MachineView<NesMcu<ImageRender<1>, A>>, _: SystemClock) {}
+    fn start(&mut self, _view: &MachineView<NesMcu<ImageRender<1>, A>>) {}
 
-    fn end(&mut self, view: &MachineView<NesMcu<ImageRender<1>, A>>, _: SystemClock) {
+    fn end(&mut self, view: &MachineView<NesMcu<ImageRender<1>, A>>) {
         if self.is_complete() {
             return;
         }

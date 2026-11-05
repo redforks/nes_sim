@@ -79,21 +79,14 @@ impl<M: Mcu> Harness<M> {
         self.bus.mcu()
     }
 
-    fn mcu_mut(&mut self) -> &mut M {
-        self.bus.mcu_mut()
-    }
-
     fn tick<P: Plugin<M>>(&mut self, plugin: &mut P, clock: SystemClock) -> TickOutcome {
-        self.cpu.tick(&mut self.bus, plugin, clock)
+        // Stage the dot on the harness's bus master clock (ADR-0018).
+        self.bus.set_clock(clock);
+        self.cpu.tick(&mut self.bus, plugin)
     }
 
-    fn run_to_instruction_boundary<P: Plugin<M>>(
-        &mut self,
-        plugin: &mut P,
-        clock: &mut SystemClock,
-    ) {
-        self.cpu
-            .run_to_instruction_boundary(&mut self.bus, plugin, clock)
+    fn run_to_instruction_boundary<P: Plugin<M>>(&mut self, plugin: &mut P) {
+        self.cpu.run_to_instruction_boundary(&mut self.bus, plugin)
     }
 }
 use crate::bus::Bus;
@@ -554,9 +547,8 @@ fn new_walk_cpu(program: &[u8]) -> Harness<RecordingMcu> {
 fn new_walk_cpu_with(mcu: RecordingMcu) -> Harness<RecordingMcu> {
     let mut cpu = Harness::new(mcu);
     let mut plugin = EmptyPlugin::new();
-    let mut clock = SystemClock::default();
     // Drain the power-on RESET sequence; the walk starts at a boundary.
-    cpu.run_to_instruction_boundary(&mut plugin, &mut clock);
+    cpu.run_to_instruction_boundary(&mut plugin);
     cpu.set_a(WALK_A);
     cpu.set_x(WALK_X);
     cpu.set_y(WALK_Y);

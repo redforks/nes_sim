@@ -3,7 +3,7 @@ use nes_core::nes::NesMcu;
 use nes_core::nes::apu::AudioDriver;
 use nes_core::render::ImageRender;
 use nes_core::view::MachineView;
-use nes_core::{ExecuteResult, Plugin, SystemClock};
+use nes_core::{ExecuteResult, Plugin};
 use std::path::PathBuf;
 /// [`crate::plugin::PngFrameMatch`] sampling), saves the frame to `out_path`,
 /// and stops. Used to bless expected PNGs for PngFrameMatch-based tests.
@@ -29,9 +29,9 @@ impl FramePngDump {
 }
 
 impl<A: AudioDriver> Plugin<NesMcu<ImageRender<1>, A>> for FramePngDump {
-    fn start(&mut self, _view: &MachineView<NesMcu<ImageRender<1>, A>>, _: SystemClock) {}
+    fn start(&mut self, _view: &MachineView<NesMcu<ImageRender<1>, A>>) {}
 
-    fn end(&mut self, view: &MachineView<NesMcu<ImageRender<1>, A>>, _: SystemClock) {
+    fn end(&mut self, view: &MachineView<NesMcu<ImageRender<1>, A>>) {
         if self.dumped || !view.ppu_in_vblank() {
             return;
         }

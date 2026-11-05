@@ -1,6 +1,6 @@
 use nes_core::mcu::Mcu;
 use nes_core::view::MachineView;
-use nes_core::{ExecuteResult, Plugin, SystemClock};
+use nes_core::{ExecuteResult, Plugin};
 
 /// Plugin that stops execution after a maximum number of instructions.
 #[derive(Debug, Default)]
@@ -16,9 +16,9 @@ impl MaxInstructions {
 }
 
 impl<M: Mcu> Plugin<M> for MaxInstructions {
-    fn start(&mut self, _: &MachineView<M>, _: SystemClock) {}
+    fn start(&mut self, _: &MachineView<M>) {}
 
-    fn end(&mut self, _: &MachineView<M>, _: SystemClock) {
+    fn end(&mut self, _: &MachineView<M>) {
         self.count = self.count.saturating_add(1);
         if self.count > self.max {
             // nothing to do here; should_stop will return Stop

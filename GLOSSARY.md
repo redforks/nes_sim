@@ -63,19 +63,19 @@ A construction-only phase from `Ppu::new()` until the first 261→0 scanline wra
 _Avoid_: warm-up, boot-phase, pre-frame, initialization phase
 
 **SystemClock**:
-A `Copy` newtype over `u64`. Represents the current master clock cycle. One system cycle equals one PPU dot. Every tick advances the clock by one. Owned by `NesMachine` and passed down to CPU/APU/DMA modules as an immutable parameter — no global state.
-_Avoid_: system cycles (use for the raw u64 count only), global clock, static clock
+A `Copy` newtype over `u64`. Represents the current master clock cycle. One system cycle equals one PPU dot. Every tick advances the clock by one. Owned by `Bus` (`Bus<M> {mcu, clock}`, ADR-0018); the machine loop advances it via `Bus::advance()` and CPU/DMA seams read the current dot through `bus.clock()` — no `(bus, clock)` parameter pairs. Device seams that have no bus in their call chain (`Apu::write`, `Mapper::cpu_write`, `NesMcu::reset/set_clock/tick_apu`, `Cpu::update_interrupt_lines`) keep a plain `SystemClock` value. Tests stage dots with `bus.set_clock()`.
+_Avoid_: system cycles (use for the raw u64 count only), global clock, static clock, `(bus, clock)` pairs
 
 **SystemClock phase**:
 `SystemClock` phase helpers `is_cpu_clock()` (`cycles % 3 == 2`, the Last phase), `is_apu_clock()` (same), and `is_even_cpu_cycle()` derive CPU/APU cadence from the master dot. One CPU cycle spans 3 dots; the former `CpuClockPhase {First,Middle,Last}` enum was removed — callers use `clock.is_cpu_clock()` etc, not `clock.phase()`.
 
 **Tick**:
-A single system-cycle step. `NesMachine::tick()` advances the clock by one, then calls each device's tick method in order: PPU → cartridge IRQ latch capture → APU (sample IRQ, tick) → `DmaBus` (DMC + OAM DMA arbitration) → interrupt lines → CPU (unless the `DmaBus` returned a non-`Idle` owner). Each device uses the clock to decide whether to advance its internal state. The `DmaBus` is the only DMA owner; DMC and OAM are not ticked separately outside it.
+A single system-cycle step at the bus's current dot (ADR-0018). `NesMachine::tick()` captures `bus.clock()` and calls each device's tick method in order: PPU → cartridge IRQ latch capture → APU (sample IRQ, tick) → `DmaBus` (DMC + OAM DMA arbitration) → interrupt lines → CPU (unless the `DmaBus` returned a non-`Idle` owner), then advances the bus's master clock once after the dot completes. Each device decides whether to advance its internal state from that dot. The `DmaBus` is the only DMA owner; DMC and OAM are not ticked separately outside it.
 **Microcode**:
 A single step of the CPU's internal microcode machine. Multiple microcodes may execute across several ticks to complete one 6502 instruction.
 
 **Run to instruction boundary**:
-Draining the CPU's microcode queue until it is empty — the edge between two 6502 instructions (including the interrupt/BRK/RESET tails). Three siblings: `Cpu::run_to_instruction_boundary(&mut bus, plugin, clock)` is the CPU-only drain (advances `clock` by one dot per microcode, no device ticks — the setup-time seam wrapped by `Machine::run_to_instruction_boundary` / `Machine::drain_to_instruction_boundary(plugin, ...)`); `NesMachine::run_to_instruction_boundary()` is the full-interleaving drain (advances `self.clock` via `NesMachine::tick()` with PPU/APU/DMA/NMI interleaving — the faithful seam). Microcodes must be drained via one of these named primitives, never in an ad-hoc tight loop.
+Draining the CPU's microcode queue until it is empty — the edge between two 6502 instructions (including the interrupt/BRK/RESET tails). Three siblings: `Cpu::run_to_instruction_boundary(&mut bus, plugin)` is the CPU-only drain (advances the bus's master clock by one dot per microcode, no device ticks — the setup-time seam wrapped by `Machine::run_to_instruction_boundary` / `Machine::drain_to_instruction_boundary(plugin)`); `NesMachine::run_to_instruction_boundary()` is the full-interleaving drain (advances the bus clock via `NesMachine::tick()` with PPU/APU/DMA/NMI interleaving — the faithful seam). Microcodes must be drained via one of these named primitives, never in an ad-hoc tight loop.
 _Avoid_: drain, flush queue, run until empty (use the canonical name)
 
 **Frame**:
@@ -85,7 +85,7 @@ The bus-drain contract of `NesMachine::reset()`. Once the reset line is asserted
 _Avoid_: hard abort, mid-DMA teardown, stale DMA
 
 **Per-dot contract**:
-The minimal pub surface of `Cpu` (ADR-0010, ADR-0017): `tick(&mut self, bus: &mut Bus, plugin, clock)` (→ `TickOutcome`), `update_interrupt_lines`, `reset`, `is_halted`, `microcodes_empty`, `run_to_instruction_boundary(&mut bus, plugin, clock)`, plus read-only `a() / x() / y() / sp() / status() / pc() / flag()` and `snapshot()`. No `mcu()` walk, no `pub` register fields, no `pub(crate)` DMA helpers — memory access goes through the `&mut Bus` parameter and DMA through the `DmaBus`. The one seam for instruction-boundary work is `run_to_instruction_boundary`, not a hand-rolled `while`.
+The minimal pub surface of `Cpu` (ADR-0010, ADR-0017, ADR-0018): `tick(&mut self, bus: &mut Bus, plugin)` (→ `TickOutcome`; the dot is `bus.clock()`), `update_interrupt_lines`, `reset`, `is_halted`, `microcodes_empty`, `run_to_instruction_boundary(&mut bus, plugin)`, plus read-only `a() / x() / y() / sp() / status() / pc() / flag()` and `snapshot()`. No `mcu()` walk, no `pub` register fields, no `pub(crate)` DMA helpers, no standalone `clock` parameter — memory and time both go through the `&mut Bus` parameter and DMA through the `DmaBus`. The one seam for instruction-boundary work is `run_to_instruction_boundary`, not a hand-rolled `while`.
 _Avoid_: pub register fields, `cpu.mcu().ppu()`, `(ExecuteResult, bool)` tuple, `cpu.mcu()`
 
 **CpuSnapshot**:
@@ -93,7 +93,7 @@ Owned copy `CpuSnapshot {a, x, y, sp, status, pc, halt}` returned by `Cpu::snaps
 _Avoid_: direct `cpu.a` field access
 
 **MachineView**:
-Read-model snapshot `MachineView<'a, M: Mcu> {cpu: CpuSnapshot, mcu: &M, clock}` exposed to `Plugin::start(&MachineView, clock)` / `end`. For `NesMcu` it exposes `ppu_in_vblank()`, `ppu_rendering_enabled()`, `ppu_frame_no()`, `read_vram()`, `borrow_image()` without exposing `&Cpu` or `&Mcu` walks. Built as `MachineView::new(cpu.snapshot(), bus.mcu(), clock)` — inside `Cpu::tick` for the per-dot view; external tools (e.g. plugin unit tests) build it over a `(Cpu, Bus)` pair the same way.
+Read-model snapshot `MachineView<'a, M: Mcu> {cpu: CpuSnapshot, mcu: &M, clock}` exposed to `Plugin::start(&MachineView)` / `end` (ADR-0018: the plugin seam reads the dot via `view.clock()`, no trailing `SystemClock`). For `NesMcu` it exposes `ppu_in_vblank()`, `ppu_rendering_enabled()`, `ppu_frame_no()`, `read_vram()`, `borrow_image()` without exposing `&Cpu` or `&Mcu` walks. Built as `MachineView::new(cpu.snapshot(), bus.mcu(), clock)` — inside `Cpu::tick` for the per-dot view; external tools (e.g. plugin unit tests) build it over a `(Cpu, Bus)` pair the same way.
 _Avoid_: `&Cpu` in Plugin, `cpu.mcu().ppu()`, `mcu().peek` outside view
 
 **TickOutcome**:
@@ -184,7 +184,9 @@ The struct that owns the active DMA transfer for both channels and the arbitrati
 _Avoid_: bus (unqualified for DMA), `Bus::tick` for DMA
 
 **Bus (memory bus)**:
-The CPU's external bus, `Bus<M: Mcu>` in `nes_core::bus` (ADR-0017): the owner of the address-space `Mcu` a CPU drives. `Cpu` never stores memory; every CPU method that reads or writes it takes `&mut Bus<M>`, and owners hold `cpu: Cpu` next to `bus: Bus<M>` as paired fields. Tests build the pair the same way (`Cpu::new()` + `Bus::new(mcu)`).
+The CPU's external bus, `Bus<M: Mcu>` in `nes_core::bus` (ADR-0017, ADR-0018): the owner of the address-space `Mcu` **and the master `SystemClock`** a CPU drives. `Cpu` never stores memory or time; every CPU method that reads or writes them takes `&mut Bus<M>` (`bus.clock()` / `Bus::advance()`), and owners hold `cpu: Cpu` next to `bus: Bus<M>` as paired fields. Tests build the pair the same way (`Cpu::new()` + `Bus::new(mcu)`); stage dots with `bus.set_clock()`. `advance()` is machine-loop authority — one call per dot.
+_Avoid_: bus (without qualifier) for the MCU wrapper, putting the `Mcu` back inside `Cpu`, advancing the bus clock per device call
+_Avoid_: DMA coordinator (acceptable alias in prose, not in code), bus controller, DMA engine
 _Avoid_: bus (without qualifier) for the MCU wrapper, putting the `Mcu` back inside `Cpu`
 _Avoid_: DMA coordinator (acceptable alias in prose, not in code), bus controller, DMA engine
 

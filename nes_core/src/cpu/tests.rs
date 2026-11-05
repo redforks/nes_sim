@@ -47,16 +47,14 @@ impl<M: Mcu> Harness<M> {
     }
 
     fn tick<P: Plugin<M>>(&mut self, plugin: &mut P, clock: SystemClock) -> TickOutcome {
-        self.cpu.tick(&mut self.bus, plugin, clock)
+        // Stage the dot on the harness's bus master clock (ADR-0018), then
+        // tick; the clock value itself is what the caller iterates with.
+        self.bus.set_clock(clock);
+        self.cpu.tick(&mut self.bus, plugin)
     }
 
-    fn run_to_instruction_boundary<P: Plugin<M>>(
-        &mut self,
-        plugin: &mut P,
-        clock: &mut SystemClock,
-    ) {
-        self.cpu
-            .run_to_instruction_boundary(&mut self.bus, plugin, clock)
+    fn run_to_instruction_boundary<P: Plugin<M>>(&mut self, plugin: &mut P) {
+        self.cpu.run_to_instruction_boundary(&mut self.bus, plugin)
     }
 
     fn exec(&mut self, mc: Microcode) {
@@ -106,8 +104,7 @@ fn create_cpu_with_program(program: &[u8]) -> Harness<MockMcu> {
 fn create_cpu_with_mcu<M: Mcu>(mcu: M) -> Harness<M> {
     let mut cpu = Harness::new(mcu);
     let mut plugin = EmptyPlugin::new();
-    let mut clock = SystemClock::default();
-    cpu.run_to_instruction_boundary(&mut plugin, &mut clock);
+    cpu.run_to_instruction_boundary(&mut plugin);
     cpu
 }
 
@@ -118,10 +115,10 @@ fn create_cpu() -> Harness<MockMcu> {
 
 fn execute_next<M: Mcu>(cpu: &mut Harness<M>) {
     let mut plugin = EmptyPlugin::new();
-    let mut clock = SystemClock::default();
 
-    cpu.run_to_instruction_boundary(&mut plugin, &mut clock);
+    cpu.run_to_instruction_boundary(&mut plugin);
 
+    let mut clock = cpu.bus.clock();
     while !cpu.tick(&mut plugin, clock).instruction_complete {
         clock = clock.inc();
     }
@@ -452,8 +449,7 @@ fn test_reset() {
     cpu.reset();
     // Run reset microcodes so the reset vector is actually loaded
     let mut plugin = EmptyPlugin::new();
-    let mut clock = SystemClock::default();
-    cpu.run_to_instruction_boundary(&mut plugin, &mut clock);
+    cpu.run_to_instruction_boundary(&mut plugin);
     // Reset reads PC from 0xFFFC (which is 0x0000 in MockMcu)
     assert_eq!(cpu.pc(), 0);
     // Reset now adjusts SP by subtracting 3 from its current value

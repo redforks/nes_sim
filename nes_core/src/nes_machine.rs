@@ -16,7 +16,6 @@ pub struct NesMachine<P, R: Render, D: crate::nes::apu::AudioDriver> {
     bus: Bus<NesMcu<R, D>>,
     /// DMA arbitration on the bus — renamed from the former `Bus` (ADR-0009).
     dma_bus: DmaBus,
-    clock: SystemClock,
     /// Set while `reset()` is draining in-flight DMA work: the CPU gets no
     /// more cycles (hardware holds the reset line asserted), but PPU/APU/DMA
     /// keep interleaving until the bus is quiet.
@@ -53,7 +52,6 @@ where
             apu_sampler: ApuIrqSampler::new(),
             bus: Bus::new(mcu),
             dma_bus: DmaBus::new(),
-            clock: SystemClock::default(),
             reset_requested: false,
         }
     }
@@ -94,14 +92,21 @@ where
 
     /// Execute one master clock tick. Returns the `ExecuteResult`.
     ///
-    /// Captures the current clock before advancing so that all device ticks
-    /// (PPU, APU, DMA, CPU) see the same pre-increment cycle value, matching
-    /// the original global-clock semantics where `get_system_clock()` was read
-    /// at the top of tick and the increment happened afterward.
+    /// Every device tick (PPU, APU, DMA, CPU) observes the same dot: the
+    /// bus's master clock is captured at the top (so all device seams —
+    /// value-threaded or bus-read — see the same pre-increment value) and
+    /// advanced only after the dot completes (ADR-0018).
     pub fn tick(&mut self) -> ExecuteResult {
-        let clock = self.clock;
-        self.clock = self.clock.inc();
+        let clock = self.bus.clock();
         self.bus.mcu_mut().set_clock(clock);
+        let control = self.tick_at_dot(clock);
+        self.bus.advance();
+        control
+    }
+
+    /// Device work for one dot; every `?`/`return` must be paired with the
+    /// clock advance in [`Self::tick`].
+    fn tick_at_dot(&mut self, clock: SystemClock) -> ExecuteResult {
         let cpu_tick = clock.is_cpu_clock();
 
         self.bus.mcu_mut().tick_ppu();
@@ -131,7 +136,7 @@ where
 
             if clock.is_apu_clock() {
                 self.bus.mcu_mut().tick_apu(clock);
-                let owner = self.dma_bus.tick(&mut self.cpu, &mut self.bus, clock);
+                let owner = self.dma_bus.tick(&mut self.cpu, &mut self.bus);
                 if !matches!(owner, BusOwner::Idle) {
                     return ExecuteResult::Continue;
                 }
@@ -141,14 +146,14 @@ where
             let lines = InterruptLines { nmi, irq_level };
             self.cpu.update_interrupt_lines(lines, clock);
             if clock.is_cpu_clock() {
-                self.cpu.tick(&mut self.bus, &mut self.p, clock).control
+                self.cpu.tick(&mut self.bus, &mut self.p).control
             } else {
                 ExecuteResult::Continue
             }
         } else {
             if clock.is_apu_clock() {
                 self.bus.mcu_mut().tick_apu(clock);
-                let _ = self.dma_bus.tick(&mut self.cpu, &mut self.bus, clock);
+                let _ = self.dma_bus.tick(&mut self.cpu, &mut self.bus);
             }
             ExecuteResult::Continue
         }
@@ -185,7 +190,7 @@ where
             "DMA bus did not quiesce"
         );
 
-        let clock = self.clock;
+        let clock = self.bus.clock();
         self.bus.mcu_mut().reset(clock);
         self.dma_bus.reset();
         self.cpu.reset();
@@ -235,7 +240,7 @@ where
 
     /// Drain to instruction boundary with full device interleaving.
     ///
-    /// Advances `self.clock` and calls `self.tick()` per dot (PPU →
+    /// Advances the bus's master clock and calls `self.tick()` per dot (PPU →
     /// cartridge IRQ → APU → DMA → NMI → CPU), satisfying GLOSSARY.md
     /// *Microcode* invariant. Each CPU microcode still consumes one CPU
     /// cycle (3 dots) because `tick()` only drives the CPU on
@@ -256,7 +261,7 @@ where
     pub fn set_pc(&mut self, pc: u16) {
         let mut empty = EmptyPlugin::new();
         self.cpu
-            .run_to_instruction_boundary(&mut self.bus, &mut empty, &mut self.clock);
+            .run_to_instruction_boundary(&mut self.bus, &mut empty);
         self.cpu.set_pc(pc);
     }
 
@@ -277,7 +282,7 @@ where
     }
 
     pub fn system_cycles(&self) -> u64 {
-        self.clock.cycles()
+        self.bus.clock().cycles()
     }
 }
 

@@ -1,5 +1,24 @@
 use super::*;
-use crate::cpu::{Flag, ValueSource, microcode::Microcode}; // cpu freeze staging (ADR-0015)
+use crate::bus::Bus;
+use crate::cpu::{Flag, ValueSource, microcode::Microcode};
+use crate::mcu::Mcu; // cpu freeze staging (ADR-0015)
+
+/// The DMC DMA seam only ever drives the bus's memory through the
+/// `DmcDmaMem` endpoint methods; every other `Mcu` op is never reached on
+/// the mock, so those impl bodies are unreachable.
+impl Mcu for MockDmcDmaMem {
+    fn read(&mut self, _address: u16) -> u8 {
+        unreachable!("DMC DMA never drives plain Mcu reads")
+    }
+
+    fn peek(&self, _address: u16) -> u8 {
+        unreachable!("DMC DMA never drives plain Mcu peeks")
+    }
+
+    fn write(&mut self, _address: u16, _value: u8) {
+        unreachable!("DMC DMA never drives plain Mcu writes")
+    }
+}
 use mockall::predicate::*;
 use mockall::*;
 
@@ -351,15 +370,16 @@ fn is_busy_tracks_state_and_reset_clears_in_flight_work() {
 }
 
 /// The DMC DMA state machine over a production [`Cpu`] plus a mocked
-/// [`DmcDmaMem`]. The real CPU makes the freeze seam
-/// (`try_freeze`/`dma_halt_bus_addr`/`unfreeze`) behave exactly as in
-/// production (ADR-0015): each tick stages the pending bus cycle to control
-/// the freeze outcome, and a mocked put/get clock controls the phase.
+/// [`DmcDmaMem`] held inside a real [`Bus`] (ADR-0015). The real CPU makes
+/// the freeze seam (`try_freeze`/`dma_halt_bus_addr`/`unfreeze`) behave
+/// exactly as in production: each tick stages the pending bus cycle to
+/// control the freeze outcome, and the mocked put/get phase is staged on
+/// the bus's master clock.
 struct TestStruct {
     seq: Sequence,
     dma: DmcDma,
     cpu: Cpu,
-    mem: MockDmcDmaMem,
+    bus: Bus<MockDmcDmaMem>,
 }
 
 impl TestStruct {
@@ -371,7 +391,7 @@ impl TestStruct {
             seq,
             dma,
             cpu,
-            mem: MockDmcDmaMem::new(),
+            bus: Bus::new(MockDmcDmaMem::new()),
         }
     }
 
@@ -404,9 +424,10 @@ impl TestStruct {
         } else {
             SystemClock(0)
         };
-        self.dma.tick(&mut self.cpu, &mut self.mem, clock);
+        self.bus.set_clock(clock);
+        self.dma.tick(&mut self.cpu, &mut self.bus);
         assert_eq!(self.dma.state, exp_state);
-        self.mem.checkpoint();
+        self.bus.mcu_mut().checkpoint();
     }
 
     /// Final Eastern tick: the Unfreeze state releases the CPU, so the next
@@ -417,7 +438,8 @@ impl TestStruct {
     }
 
     fn expect_take_dmc_dma_request(&mut self, req: Option<(DmcDmaType, u16)>) {
-        self.mem
+        self.bus
+            .mcu_mut()
             .expect_take_dmc_dma_request()
             .times(1)
             .in_sequence(&mut self.seq)
@@ -425,7 +447,8 @@ impl TestStruct {
     }
 
     fn expect_read_mem(&mut self, addr: u16, result: u8) {
-        self.mem
+        self.bus
+            .mcu_mut()
             .expect_read_mem()
             .with(eq(addr))
             .times(1)
@@ -434,7 +457,8 @@ impl TestStruct {
     }
 
     fn expect_supply_dmc_byte_with(&mut self, value: u8) {
-        self.mem
+        self.bus
+            .mcu_mut()
             .expect_supply_dmc_byte()
             .with(eq(value))
             .times(1)

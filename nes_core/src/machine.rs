@@ -1,6 +1,6 @@
 use crate::bus::Bus;
 use crate::mcu::Mcu;
-use crate::{Cpu, EmptyPlugin, ExecuteResult, Plugin, SystemClock};
+use crate::{Cpu, EmptyPlugin, ExecuteResult, Plugin};
 
 pub struct Machine<P, M: Mcu> {
     cpu: Cpu,
@@ -26,8 +26,12 @@ impl<P: Plugin<M>, M: Mcu> Machine<P, M> {
     }
 
     /// Execute one CPU instruction and return its result and cycle count.
-    pub fn tick(&mut self, clock: SystemClock) -> ExecuteResult {
-        self.cpu.tick(&mut self.bus, &mut self.p, clock).control
+    /// The executed dot is read from — and advanced by — the bus's master
+    /// clock (ADR-0018).
+    pub fn tick(&mut self) -> ExecuteResult {
+        let control = self.cpu.tick(&mut self.bus, &mut self.p).control;
+        self.bus.advance();
+        control
     }
 
     pub fn reset(&mut self) {
@@ -40,12 +44,12 @@ impl<P: Plugin<M>, M: Mcu> Machine<P, M> {
 
     /// Drain to instruction boundary via the CPU-only seam.
     ///
-    /// Advances `clock` by `queue.len()` dots (one per microcode) without
-    /// ticking PPU/APU/DMA. For full interleaving on a `NesMachine`, use
-    /// `NesMachine::run_to_instruction_boundary`.
-    pub fn run_to_instruction_boundary(&mut self, clock: &mut SystemClock) {
+    /// Advances the bus's master clock by `queue.len()` dots (one per
+    /// microcode) without ticking PPU/APU/DMA. For full interleaving on a
+    /// `NesMachine`, use `NesMachine::run_to_instruction_boundary`.
+    pub fn run_to_instruction_boundary(&mut self) {
         self.cpu
-            .run_to_instruction_boundary(&mut self.bus, &mut self.p, clock);
+            .run_to_instruction_boundary(&mut self.bus, &mut self.p);
     }
 
     /// [`Self::run_to_instruction_boundary`] with an explicit plugin —
@@ -54,10 +58,8 @@ impl<P: Plugin<M>, M: Mcu> Machine<P, M> {
     pub fn drain_to_instruction_boundary<DrainPlugin: Plugin<M>>(
         &mut self,
         plugin: &mut DrainPlugin,
-        clock: &mut SystemClock,
     ) {
-        self.cpu
-            .run_to_instruction_boundary(&mut self.bus, plugin, clock);
+        self.cpu.run_to_instruction_boundary(&mut self.bus, plugin);
     }
 
     pub fn mcu(&self) -> &M {

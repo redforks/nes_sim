@@ -3,7 +3,7 @@ use is_terminal::IsTerminal;
 use nes_core::nes::NesMcu;
 use nes_core::render::Render;
 use nes_core::view::MachineView;
-use nes_core::{ExecuteResult, Plugin, SystemClock};
+use nes_core::{ExecuteResult, Plugin};
 use std::collections::HashMap;
 use std::collections::HashSet;
 use std::sync::LazyLock;
@@ -99,9 +99,9 @@ impl Default for NametableConsole {
 }
 
 impl<R: Render> Plugin<NesMcu<R, ()>> for NametableConsole {
-    fn start(&mut self, _: &MachineView<NesMcu<R, ()>>, _: SystemClock) {}
+    fn start(&mut self, _: &MachineView<NesMcu<R, ()>>) {}
 
-    fn end(&mut self, view: &MachineView<NesMcu<R, ()>>, _: SystemClock) {
+    fn end(&mut self, view: &MachineView<NesMcu<R, ()>>) {
         if !view.ppu_in_vblank()
             || (!self.sample_without_rendering && !view.ppu_rendering_enabled())
         {

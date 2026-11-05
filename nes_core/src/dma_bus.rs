@@ -141,22 +141,23 @@ impl DmaBus {
     ///
     /// Called only on APU clocks from `NesMachine::tick` (or every dot with
     /// an internal no-op). Drives at most one bus access and returns who
-    /// held the bus this dot. Internally `let dmc_drove = dmc.tick(cpu,clock);`
+    /// held the bus this dot. The current dot is read off the bus's
+    /// master clock (ADR-0018). Internally `let dmc_drove = dmc.tick(cpu,bus);`
     /// then `oam_tick(clock, dmc_drove)` — the bool never leaves this method,
     /// and the `NesMcu` predicate becomes a private branch.
     pub fn tick<R: Render, D: AudioDriver>(
         &mut self,
         cpu: &mut Cpu,
         bus: &mut Bus<NesMcu<R, D>>,
-        clock: SystemClock,
     ) -> BusOwner {
+        let clock = bus.clock();
         if !clock.is_apu_clock() {
             return BusOwner::Idle;
         }
 
         // DMC tick first — it may freeze the CPU and it decides `dmc_drove`
         // (true only on the read cycle that actually transfers a byte).
-        let dmc_drove = self.dmc.tick(cpu, bus.mcu_mut(), clock);
+        let dmc_drove = self.dmc.tick(cpu, bus);
 
         let oam_active = Self::oam_tick(bus.mcu_mut(), &mut self.oam, clock, dmc_drove);
 

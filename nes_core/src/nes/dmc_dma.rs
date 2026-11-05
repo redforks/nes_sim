@@ -1,3 +1,4 @@
+use crate::bus::Bus;
 use crate::mcu::Mcu;
 use crate::{
     Cpu, SystemClock,
@@ -105,9 +106,16 @@ impl DmcDma {
         mem.read_mem(self.halt_bus_addr);
     }
 
-    /// Advance the DMA state machine by one tick. Returns true if the DMA
-    /// performed its memory read this cycle (it drove the bus).
-    pub fn tick(&mut self, cpu: &mut Cpu, mem: &mut impl DmcDmaMem, clock: SystemClock) -> bool {
+    /// Advance the DMA state machine by one tick. The current dot (put/get
+    /// phase decisions) is read off the bus's master clock (ADR-0018).
+    /// Returns true if the DMA performed its memory read this cycle (it
+    /// drove the bus).
+    pub fn tick<M: Mcu + DmcDmaMem>(&mut self, cpu: &mut Cpu, bus: &mut Bus<M>) -> bool {
+        let clock = bus.clock();
+        self.tick_mem(cpu, bus.mcu_mut(), clock)
+    }
+
+    fn tick_mem(&mut self, cpu: &mut Cpu, mem: &mut impl DmcDmaMem, clock: SystemClock) -> bool {
         match self.state {
             State::Inactive => {
                 if let Some((dmc_dma_type, addr)) = mem.take_dmc_dma_request() {
@@ -120,7 +128,7 @@ impl DmcDma {
                             first_attempt: true,
                         };
                         // reload requests, no request cycle
-                        self.tick(cpu, mem, clock);
+                        self.tick_mem(cpu, mem, clock);
                     };
                 }
             }

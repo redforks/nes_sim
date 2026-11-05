@@ -1,9 +1,9 @@
 use ansi_term::Color;
 use is_terminal::IsTerminal;
+use nes_core::Plugin;
 use nes_core::nes::NesMcu;
 use nes_core::render::Render;
 use nes_core::view::MachineView;
-use nes_core::{Plugin, SystemClock};
 use std::cell::RefCell;
 use std::fmt::Write as _;
 use std::sync::LazyLock;
@@ -54,9 +54,9 @@ impl Console {
 }
 
 impl<R: Render> Plugin<NesMcu<R, ()>> for Console {
-    fn start(&mut self, _: &MachineView<NesMcu<R, ()>>, _: SystemClock) {}
+    fn start(&mut self, _: &MachineView<NesMcu<R, ()>>) {}
 
-    fn end(&mut self, view: &MachineView<NesMcu<R, ()>>, _: SystemClock) {
+    fn end(&mut self, view: &MachineView<NesMcu<R, ()>>) {
         if self.new_frame_detector.is_new_frame(view) {
             if view.peek(0x6001) != 0xDE || view.peek(0x6002) != 0xB0 || view.peek(0x6003) != 0x61 {
                 return;

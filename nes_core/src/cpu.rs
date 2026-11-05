@@ -415,21 +415,20 @@ impl Cpu {
 
     /// Drain microcodes to the next instruction boundary (queue empty).
     ///
-    /// CPU-only drain: each step calls `self.tick(plugin, *clock)` then
-    /// `*clock = clock.inc()`. No PPU/APU/DMA device is ticked and time
-    /// advances by exactly `queue.len()` dots (one per microcode, not one
-    /// per CPU cycle) — the setup-time seam. For full device interleaving
-    /// use `NesMachine::run_to_instruction_boundary` which ticks via
-    /// `NesMachine::tick()`.
+    /// CPU-only drain: each step calls `self.tick(bus, plugin)` then
+    /// advances the *bus's* master clock by one dot. No PPU/APU/DMA device
+    /// is ticked and time advances by exactly `queue.len()` dots (one per
+    /// microcode, not one per CPU cycle) — the setup-time seam. For full
+    /// device interleaving use `NesMachine::run_to_instruction_boundary`
+    /// which ticks via `NesMachine::tick()`.
     pub fn run_to_instruction_boundary<P: Plugin<M>, M: Mcu>(
         &mut self,
         bus: &mut Bus<M>,
         plugin: &mut P,
-        clock: &mut SystemClock,
     ) {
         while !self.microcodes_empty() {
-            self.tick(bus, plugin, *clock);
-            *clock = clock.inc();
+            self.tick(bus, plugin);
+            bus.advance();
         }
     }
 
@@ -733,12 +732,8 @@ impl Cpu {
 
     /// Return true if just execute current instruction
     #[hotpath::measure(impl_type = "Cpu")]
-    pub fn tick<P: Plugin<M>, M: Mcu>(
-        &mut self,
-        bus: &mut Bus<M>,
-        plugin: &mut P,
-        clock: SystemClock,
-    ) -> TickOutcome {
+    pub fn tick<P: Plugin<M>, M: Mcu>(&mut self, bus: &mut Bus<M>, plugin: &mut P) -> TickOutcome {
+        let clock = bus.clock();
         crate::hotpath_cpu::hotpath_cpu_alias!(
             Self,
             concat!(module_path!(), "::Cpu::tick"),
@@ -769,7 +764,7 @@ impl Cpu {
             Some(v) => v,
             None => {
                 let view = MachineView::new(self.snapshot(), bus.mcu(), clock);
-                plugin.start(&view, clock);
+                plugin.start(&view);
                 match self.interrupt_detected.take() {
                     Some(InterruptType::Nmi) => self.push_enter_interrupt_microcodes(true),
                     Some(InterruptType::Irq) => self.push_enter_interrupt_microcodes(false),
@@ -796,7 +791,7 @@ impl Cpu {
 
         if instruction_complete {
             let view = MachineView::new(self.snapshot(), bus.mcu(), clock);
-            plugin.end(&view, clock);
+            plugin.end(&view);
             TickOutcome {
                 control: plugin.should_stop(),
                 instruction_complete: true,
@@ -1353,10 +1348,11 @@ pub enum ExecuteResult {
 
 pub trait Plugin<M: Mcu> {
     /// Before start execute new instruction — receives a read-model view (ADR-0010).
-    fn start(&mut self, view: &MachineView<M>, system_clock: SystemClock);
+    /// The current dot is read through `view.clock()`.
+    fn start(&mut self, view: &MachineView<M>);
 
     /// After execute instruction — receives the same view.
-    fn end(&mut self, view: &MachineView<M>, system_clock: SystemClock);
+    fn end(&mut self, view: &MachineView<M>);
 
     /// After execute an instruction, tell cpu should stop execution or not
     fn should_stop(&self) -> ExecuteResult {
@@ -1377,9 +1373,9 @@ impl<M: Mcu> EmptyPlugin<M> {
 }
 
 impl<M: Mcu> Plugin<M> for EmptyPlugin<M> {
-    fn start(&mut self, _: &MachineView<M>, _: SystemClock) {}
+    fn start(&mut self, _: &MachineView<M>) {}
 
-    fn end(&mut self, _: &MachineView<M>, _: SystemClock) {}
+    fn end(&mut self, _: &MachineView<M>) {}
 }
 
 impl<M: Mcu> Default for EmptyPlugin<M> {

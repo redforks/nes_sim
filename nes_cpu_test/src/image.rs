@@ -5,7 +5,7 @@ use super::plugin::{
 };
 use super::zapper_test::ZapperAction;
 use nes_core::{
-    Plugin, SystemClock, ines::INesFile, machine::Machine, mcu::RamMcu, nes::Mmc3IrqOverride,
+    Plugin, ines::INesFile, machine::Machine, mcu::RamMcu, nes::Mmc3IrqOverride,
     nes_machine::NesMachine, render::ImageRender,
 };
 use std::{
@@ -68,14 +68,13 @@ impl Image {
         }
         let plugin = CompositePlugin::new(plugins);
         let mut machine = Machine::with_plugin(plugin, mcu);
-        let mut clock = SystemClock::default();
         let mut drain_plugin = nes_core::EmptyPlugin::new();
-        machine.drain_to_instruction_boundary(&mut drain_plugin, &mut clock);
+        machine.drain_to_instruction_boundary(&mut drain_plugin);
         match start_pc {
             Some(pc) => machine.set_pc(pc),
             None => machine.set_pc(0x400),
         }
-        MachineWrapper::Bin(Box::new(machine), clock)
+        MachineWrapper::Bin(Box::new(machine))
     }
 
     fn create_ines_machine(
@@ -639,7 +638,7 @@ mod machine_types {
 }
 
 pub enum MachineWrapper {
-    Bin(Box<machine_types::BinMachine>, SystemClock),
+    Bin(Box<machine_types::BinMachine>),
     INes(Box<machine_types::INesMachine>),
     Rendered(Box<machine_types::RenderedMachine>),
     AudioDump(Box<machine_types::AudioDumpMachine>),
@@ -648,11 +647,7 @@ pub enum MachineWrapper {
 impl MachineWrapper {
     pub fn tick(&mut self) -> nes_core::ExecuteResult {
         match self {
-            MachineWrapper::Bin(m, clock) => {
-                let r = m.tick(*clock);
-                *clock = clock.inc();
-                r
-            }
+            MachineWrapper::Bin(m) => m.tick(),
             MachineWrapper::INes(m) => m.tick(),
             MachineWrapper::Rendered(m) => m.tick(),
             MachineWrapper::AudioDump(m) => m.tick(),
@@ -661,7 +656,7 @@ impl MachineWrapper {
 
     pub fn reset(&mut self) {
         match self {
-            MachineWrapper::Bin(m, _) => m.reset(),
+            MachineWrapper::Bin(m) => m.reset(),
             MachineWrapper::INes(m) => m.reset(),
             MachineWrapper::Rendered(m) => m.reset(),
             MachineWrapper::AudioDump(m) => m.reset(),

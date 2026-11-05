@@ -4,7 +4,7 @@ use nes_core::nes::apu::AudioDriver;
 use nes_core::nes::ppu::Timing;
 use nes_core::render::Render;
 use nes_core::view::MachineView;
-use nes_core::{ExecuteResult, Plugin, SYSTEM_CYCLES_PER_PPU_CYCLE, SystemClock};
+use nes_core::{ExecuteResult, Plugin, SYSTEM_CYCLES_PER_PPU_CYCLE};
 
 mod simple_disassembly;
 
@@ -26,15 +26,15 @@ impl<P> QuietPlugin<P> {
 }
 
 impl<M: Mcu, P: Plugin<M>> Plugin<M> for QuietPlugin<P> {
-    fn start(&mut self, view: &MachineView<M>, system_clock: SystemClock) {
+    fn start(&mut self, view: &MachineView<M>) {
         if !self.quiet {
-            self.inner.start(view, system_clock);
+            self.inner.start(view);
         }
     }
 
-    fn end(&mut self, view: &MachineView<M>, system_clock: SystemClock) {
+    fn end(&mut self, view: &MachineView<M>) {
         if !self.quiet {
-            self.inner.end(view, system_clock);
+            self.inner.end(view);
         }
     }
 
@@ -90,8 +90,8 @@ impl ReportPlugin {
 }
 
 impl<M: Mcu> Plugin<M> for ReportPlugin {
-    fn start(&mut self, view: &MachineView<M>, system_clock: SystemClock) {
-        self.start_cycles = system_clock.cycles();
+    fn start(&mut self, view: &MachineView<M>) {
+        self.start_cycles = view.clock().cycles();
         self.a = view.cpu.a;
         self.x = view.cpu.x;
         self.y = view.cpu.y;
@@ -100,7 +100,7 @@ impl<M: Mcu> Plugin<M> for ReportPlugin {
         self.p = view.cpu.status;
     }
 
-    fn end(&mut self, view: &MachineView<M>, _: SystemClock) {
+    fn end(&mut self, view: &MachineView<M>) {
         self.output(view, "")
     }
 }
@@ -124,12 +124,12 @@ impl ReportNesTestResult {
 }
 
 impl<M: Mcu> Plugin<M> for ReportNesTestResult {
-    fn start(&mut self, _view: &MachineView<M>, _: SystemClock) {}
+    fn start(&mut self, _view: &MachineView<M>) {}
 
-    fn end(&mut self, view: &MachineView<M>, system_clock: SystemClock) {
+    fn end(&mut self, view: &MachineView<M>) {
         self.instruction_executed += 1;
         if !self.result_cycle_captured
-            && system_clock.cycles() >= 26560 * SYSTEM_CYCLES_PER_PPU_CYCLE
+            && view.clock().cycles() >= 26560 * SYSTEM_CYCLES_PER_PPU_CYCLE
         {
             self.result_cycle_captured = true;
             // 26560 is the old system-cycle threshold after the last instruction executed,
@@ -174,9 +174,9 @@ impl ExitTestPlugin {
 }
 
 impl<M: Mcu> Plugin<M> for ExitTestPlugin {
-    fn start(&mut self, _view: &MachineView<M>, _: SystemClock) {}
+    fn start(&mut self, _view: &MachineView<M>) {}
 
-    fn end(&mut self, view: &MachineView<M>, _: SystemClock) {
+    fn end(&mut self, view: &MachineView<M>) {
         // Check for CPU halt - if halted, the test is complete
         if view.is_halted() {
             let result = view.peek(TEST_RESULT_ADDR);
@@ -262,12 +262,12 @@ impl<R: Render, A: AudioDriver> NesReportPlugin<R, A> {
 }
 
 impl<R: Render, A: AudioDriver> Plugin<NesMcu<R, A>> for NesReportPlugin<R, A> {
-    fn start(&mut self, view: &MachineView<NesMcu<R, A>>, system_clock: SystemClock) {
-        self.inner.start(view, system_clock);
+    fn start(&mut self, view: &MachineView<NesMcu<R, A>>) {
+        self.inner.start(view);
         self.timing = *view.ppu_timing();
     }
 
-    fn end(&mut self, view: &MachineView<NesMcu<R, A>>, _: SystemClock) {
+    fn end(&mut self, view: &MachineView<NesMcu<R, A>>) {
         let ppu = format!("PPU:{:3},{:3} ", self.timing.scanline(), self.timing.dot());
         self.inner.output(view, &ppu);
     }
