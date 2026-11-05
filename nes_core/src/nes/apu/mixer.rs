@@ -1,7 +1,7 @@
-const CPU_CLOCK_HZ: u64 = 1_789_773;
+const CPU_CLOCK_HZ: u32 = 1_789_773;
 
 pub struct Mixer {
-    sample_accumulator: u64,
+    sample_accumulator: u32,
     sample_rate: u32,
     dc_last_input: f32,
     dc_last_output: f32,
@@ -19,20 +19,15 @@ impl Mixer {
 
     pub fn emit_samples(
         &mut self,
-        p1: u8,
-        p2: u8,
-        t: u8,
-        n: u8,
-        d: u8,
-        mut recenive_output: impl FnMut(f32),
+        get_channel_samples: impl Fn() -> (u8, u8, u8, u8, u8),
+        mut receive_output: impl FnMut(f32),
     ) {
-        self.sample_accumulator = self
-            .sample_accumulator
-            .wrapping_add(self.sample_rate as u64);
+        self.sample_accumulator = self.sample_accumulator.wrapping_add(self.sample_rate);
         while self.sample_accumulator >= CPU_CLOCK_HZ {
             self.sample_accumulator -= CPU_CLOCK_HZ;
+            let (p1, p2, t, n, d) = get_channel_samples();
             let sample = self.mix_sample(p1, p2, t, n, d);
-            recenive_output(sample);
+            receive_output(sample);
         }
     }
 

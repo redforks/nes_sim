@@ -236,11 +236,15 @@ impl<D: AudioDriver> Apu<D> {
 
     fn emit_samples(&mut self) {
         self.mixer.emit_samples(
-            self.pulse1.output(),
-            self.pulse2.output(),
-            self.triangle.output(),
-            self.noise.output(),
-            self.dmc.output(),
+            || {
+                (
+                    self.pulse1.output(),
+                    self.pulse2.output(),
+                    self.triangle.output(),
+                    self.noise.output(),
+                    self.dmc.output(),
+                )
+            },
             |sample| self.driver.push_sample(sample),
         );
     }
