@@ -442,7 +442,6 @@ impl<R: Render> Ppu<R> {
         }
 
         if rendering {
-            let in_active = self.timing.in_ppu_active_line();
             // MMC3 scanline IRQs are driven by filtered PPU A12 rises.
             //
             // On the real NES the PPU address bus toggles A12 on each tile
@@ -463,45 +462,60 @@ impl<R: Render> Ppu<R> {
             // memory-access phasing.
             //
             // Manual $2006/$2007 writes still reach the mapper directly.
-            if in_active && cartridge.wants_vram_notify() && (dot & 1) == 1 {
-                match dot {
-                    3..=256 | 323..=336 => {
-                        // Notifications are shifted +2 dots (base 3/323 instead of 1/321)
-                        // so that the first BG pattern appears at dot 7 rather than dot 5.
-                        // Together with the sprite base (first pattern at dot 263), this
-                        // gives the real hardware's 256-dot gap between mode $10 and $08.
-                        let base_dot = if dot <= 256 { 3 } else { 323 };
-                        // `/ 2 % 4` on an odd dot with a constant base: the
-                        // shift-and-mask is the same value without the divide.
-                        let fetch_type = (((dot - base_dot) >> 1) & 3) as usize;
-                        if fetch_type >= 2 {
-                            cartridge.notify_vram_address(
-                                if self.registers.ctrl.background_pattern_table() {
-                                    0x1000
-                                } else {
-                                    0x0000
-                                },
-                            );
+            if self.timing.in_ppu_active_line() {
+                // During sprite tile loading (dots 257-320 of visible scanlines and
+                // the pre-render line) hardware drives OAMADDR to 0; software
+                // polling $2003 mid-frame observes that.
+                if (257..=320).contains(&dot) {
+                    self.oam_addr = 0;
+                }
+
+                // Horizontal bits reload from temp at dot 257
+                // (visible scanlines and pre-render scanline)
+                if dot == 257 {
+                    self.reload_horizontal_from_temp();
+                }
+
+                if cartridge.wants_vram_notify() && (dot & 1) == 1 {
+                    match dot {
+                        3..=256 | 323..=336 => {
+                            // Notifications are shifted +2 dots (base 3/323 instead of 1/321)
+                            // so that the first BG pattern appears at dot 7 rather than dot 5.
+                            // Together with the sprite base (first pattern at dot 263), this
+                            // gives the real hardware's 256-dot gap between mode $10 and $08.
+                            let base_dot = if dot <= 256 { 3 } else { 323 };
+                            // `/ 2 % 4` on an odd dot with a constant base: the
+                            // shift-and-mask is the same value without the divide.
+                            let fetch_type = (((dot - base_dot) >> 1) & 3) as usize;
+                            if fetch_type >= 2 {
+                                cartridge.notify_vram_address(
+                                    if self.registers.ctrl.background_pattern_table() {
+                                        0x1000
+                                    } else {
+                                        0x0000
+                                    },
+                                );
+                            }
                         }
-                    }
-                    259..=320 => {
-                        // Sprite tile fetch: only pattern-table accesses (fetch types 2-3).
-                        // Emitted on odd dots to align the MMC3 counter clock with the
-                        // observed ~dot-260 hardware timing.
-                        let fetch_type = (((dot - 259) >> 1) & 3) as usize;
-                        if fetch_type >= 2 {
-                            cartridge.notify_vram_address(
-                                if self.registers.ctrl.sprite_size_16()
-                                    || self.registers.ctrl.sprite_pattern_table()
-                                {
-                                    0x1000
-                                } else {
-                                    0x0000
-                                },
-                            );
+                        259..=320 => {
+                            // Sprite tile fetch: only pattern-table accesses (fetch types 2-3).
+                            // Emitted on odd dots to align the MMC3 counter clock with the
+                            // observed ~dot-260 hardware timing.
+                            let fetch_type = (((dot - 259) >> 1) & 3) as usize;
+                            if fetch_type >= 2 {
+                                cartridge.notify_vram_address(
+                                    if self.registers.ctrl.sprite_size_16()
+                                        || self.registers.ctrl.sprite_pattern_table()
+                                    {
+                                        0x1000
+                                    } else {
+                                        0x0000
+                                    },
+                                );
+                            }
                         }
+                        _ => {}
                     }
-                    _ => {}
                 }
             }
 
@@ -514,26 +528,15 @@ impl<R: Render> Ppu<R> {
                     self.sprite
                         .step_sprite_overflow_eval(scanline, self.registers.ctrl, &self.oam);
                 }
+
+                // --- vram_addr management (rendering-enabled only) ---
+                // These model the real NES PPU's internal v-register updates:
+                // Fine Y increment at dot 256 of each visible scanline
+                if dot == 256 {
+                    self.increment_vram_y();
+                }
             }
 
-            // During sprite tile loading (dots 257-320 of visible scanlines and
-            // the pre-render line) hardware drives OAMADDR to 0; software
-            // polling $2003 mid-frame observes that.
-            if in_active && (257..=320).contains(&dot) {
-                self.oam_addr = 0;
-            }
-
-            // --- vram_addr management (rendering-enabled only) ---
-            // These model the real NES PPU's internal v-register updates:
-            // Fine Y increment at dot 256 of each visible scanline
-            if dot == 256 && self.timing.in_visible_scanline() {
-                self.increment_vram_y();
-            }
-            // Horizontal bits reload from temp at dot 257
-            // (visible scanlines and pre-render scanline)
-            if dot == 257 && in_active {
-                self.reload_horizontal_from_temp();
-            }
             // Vertical bits reload from temp at dots 280-304 of pre-render scanline
             if self.timing.is_prepare_line() && (280..=304).contains(&dot) {
                 self.reload_vertical_from_temp();
@@ -583,9 +586,7 @@ impl<R: Render> Ppu<R> {
         }
 
         if self.timing.leave_vblank() {
-            self.registers.status.set_v_blank(false);
-            self.registers.status.set_sprite_overflow(false);
-            self.registers.status.set_sprite_zero_hit(false);
+            self.registers.status = PpuStatus::EMPTY;
             self.sprite.clear_pending();
         }
 

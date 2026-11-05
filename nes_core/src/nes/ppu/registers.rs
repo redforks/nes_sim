@@ -61,6 +61,7 @@ impl PpuMask {
     /// Apply emphasis tints to a looked-up pixel color. Grayscale is not
     /// handled here: it applies to the palette index before the lookup
     /// (see [`PpuMask::grayscale_index`]).
+    #[inline]
     pub fn apply_effects(&self, pixel: Pixel) -> Pixel {
         if !self.red_tint() && !self.green_tint() && !self.blue_tint() {
             pixel
@@ -93,6 +94,10 @@ pub struct PpuStatus {
     pub sprite_overflow: bool,
     pub sprite_zero_hit: bool,
     pub v_blank: bool,
+}
+
+impl PpuStatus {
+    pub const EMPTY: Self = Self::new();
 }
 
 pub struct Registers {
