@@ -25,7 +25,9 @@ pub(crate) trait NesDmaSupport {
     /// if cpu freezed.
     fn try_freeze(&mut self) -> bool;
 
-    fn last_read_addr(&self) -> u16;
+    /// Address the halt cycle repeats when the pending CPU cycle is purely
+    /// internal (the CPU has no bus address of its own this cycle).
+    fn pc(&self) -> u16;
 
     /// unfreeze cpu, called when finished dma
     fn unfreeze(&mut self);
@@ -55,8 +57,8 @@ impl<R: Render, D: AudioDriver> NesDmaSupport for Cpu<NesMcu<R, D>> {
         }
     }
 
-    fn last_read_addr(&self) -> u16 {
-        self.last_read_addr.unwrap_or(self.pc())
+    fn pc(&self) -> u16 {
+        Cpu::pc(self)
     }
 
     fn dma_halt_bus_addr(&self) -> Option<u16> {
@@ -109,7 +111,10 @@ pub struct DmcDma {
     /// true after `.request()` method, and before dma finished
     state: State,
     addr: u16,
-    cpu_last_read_addr: u16,
+    /// Address the halted CPU repeats on the bus during the halt/dummy
+    /// cycles: the pending read's address, or the next fetch address when
+    /// the halt landed on an internal cycle.
+    halt_bus_addr: u16,
 }
 
 impl DmcDma {
@@ -135,7 +140,7 @@ impl DmcDma {
     }
 
     fn dummy_read(&self, cpu: &mut impl NesDmaSupport) {
-        cpu.read_mem(self.cpu_last_read_addr);
+        cpu.read_mem(self.halt_bus_addr);
     }
 
     /// Advance the DMA state machine by one tick. Returns true if the DMA
@@ -184,10 +189,10 @@ impl DmcDma {
                     match cpu.dma_halt_bus_addr() {
                         Some(addr) => {
                             cpu.read_mem(addr);
-                            self.cpu_last_read_addr = addr;
+                            self.halt_bus_addr = addr;
                         }
                         None => {
-                            self.cpu_last_read_addr = cpu.last_read_addr();
+                            self.halt_bus_addr = cpu.pc();
                         }
                     }
                     self.state = State::Dummy;

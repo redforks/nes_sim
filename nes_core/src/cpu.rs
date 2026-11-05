@@ -251,14 +251,12 @@ impl ValueSourceTrait for Alu {
 
 impl ValueSourceTrait for ZeroPage {
     fn value<M: Mcu>(cpu: &mut Cpu<M>) -> u8 {
-        cpu.last_read_addr = Some(cpu.ab.get());
         cpu.mcu.read_zero_page(cpu.ab.low())
     }
 }
 
 impl ValueSourceTrait for Mem {
     fn value<M: Mcu>(cpu: &mut Cpu<M>) -> u8 {
-        cpu.last_read_addr = Some(cpu.ab.get());
         cpu.mcu.read(cpu.ab.get())
     }
 }
@@ -310,7 +308,6 @@ pub struct Cpu<M: Mcu> {
     interrupt_detected: Option<InterruptType>,
     irq_detector: IrqDetector,
     request_detect_interrupt: Option<bool>,
-    pub(crate) last_read_addr: Option<u16>,
     /// System tick of the microcode executing this `tick()`; interrupt
     /// decisions (the BRK/IRQ vector-hijack window) measure against it.
     now: SystemClock,
@@ -341,7 +338,6 @@ impl<M: Mcu> Cpu<M> {
             ab: Register16::default(),
             db: 0,
             alu: 0,
-            last_read_addr: None,
             now: SystemClock::default(),
             microcode_queue: ArrayDeque::new(),
             halt: false,
@@ -469,7 +465,7 @@ impl<M: Mcu> Cpu<M> {
     /// Address the CPU drives on the bus for its pending cycle, mirroring
     /// how a RDY-halt externally repeats the current read cycle. Returns
     /// `None` when the pending cycle is purely internal (no bus access of
-    /// its own); callers then repeat the last completed read instead. Must
+    /// its own); callers then repeat the next fetch address instead. Must
     /// not be called with a write cycle pending — the `can_pause` gate in
     /// `NesDmaSupport::try_freeze` guarantees that, and this projection
     /// panics if the gate is ever bypassed (a swallowed write would be far
@@ -678,7 +674,6 @@ impl<M: Mcu> Cpu<M> {
         self.irq_detector = Default::default();
         self.request_detect_interrupt = None;
         self.frozen = false;
-        self.last_read_addr = None;
 
         self.push_microcodes(&InterruptSequences::RESET);
         self.arm_interrupt_window(&InterruptSequences::RESET_WINDOW, false);
@@ -840,7 +835,6 @@ impl<M: Mcu> Cpu<M> {
     }
 
     fn read_byte(&mut self, addr: u16) -> u8 {
-        self.last_read_addr = Some(addr);
         self.mcu.read(addr)
     }
 

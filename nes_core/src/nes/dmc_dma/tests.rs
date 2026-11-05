@@ -308,6 +308,29 @@ fn reload_dmc_dma_delayed_3_cycle() {
 }
 
 #[test]
+fn halt_on_internal_cycle_repeats_next_fetch_addr() {
+    // The halt cycle lands on a purely internal CPU cycle, which drives no
+    // bus address of its own: the DMA repeats the CPU's next fetch address.
+    let mut t = TestStruct::new();
+    t.expect_take_dmc_dma_request(Some((DmcDmaType::Load, 0x1234)));
+    t.tick_and_assert(State::DelayForLoad(1));
+    t.tick_and_assert(State::TryHalt {
+        halt_on_put: false,
+        first_attempt: true,
+    });
+
+    t.expect_is_get_cycle(true);
+    t.expect_try_freeze(true);
+    t.expect_dma_halt_bus_addr(None);
+    t.expect_pc(0x0400);
+    t.tick_and_assert(State::Dummy);
+
+    // The dummy cycle drives the fallback address on the bus.
+    t.expect_read_mem(0x0400, 0x00);
+    t.tick_and_assert(State::AlignOrRead);
+}
+
+#[test]
 fn is_busy_tracks_state_and_reset_clears_in_flight_work() {
     let mut t = TestStruct::new();
     assert!(!t.dma.is_busy(), "fresh controller must be idle");
@@ -402,6 +425,14 @@ impl TestStruct {
             .times(1)
             .in_sequence(&mut self.seq)
             .return_const(addr);
+    }
+
+    fn expect_pc(&mut self, pc: u16) {
+        self.cpu
+            .expect_pc()
+            .times(1)
+            .in_sequence(&mut self.seq)
+            .return_const(pc);
     }
 
     fn expect_is_get_cycle_and_freeze(&mut self, is_get: bool, freeze_succeed: bool) {

@@ -1087,10 +1087,10 @@ fn test_inc_zero_page() {
 }
 
 #[test]
-fn zero_page_rmw_load_stamps_last_read_addr() {
-    // INC $A0 reads $00A0 on its RMW read cycle. That is the last completed
-    // read, so a DMC halt during the instruction must repeat $00A0 instead
-    // of the program counter.
+fn zero_page_rmw_read_cycle_projects_zero_page_addr() {
+    // INC $A0 reads $00A0 on its RMW read cycle. A DMC halt on that cycle
+    // must repeat $00A0 instead of the program counter, so the halt
+    // projection has to report the zero-page operand address.
     let mut mcu = TestMcu::default();
     mcu.mem[0x0000] = 0xE6; // INC $A0
     mcu.mem[0x0001] = 0xA0;
@@ -1098,9 +1098,24 @@ fn zero_page_rmw_load_stamps_last_read_addr() {
 
     let mut cpu = create_cpu_with_mcu(mcu);
     cpu.set_pc(0x0000);
-    execute_next(&mut cpu);
 
-    assert_eq!(cpu.last_read_addr, Some(0x00A0));
+    let mut plugin = EmptyPlugin::new();
+    let mut clock = SystemClock::default();
+    let mut projected = false;
+    loop {
+        if matches!(cpu.pending_bus_cycle(), BusCycle::Read(_)) {
+            projected |= cpu.dma_halt_bus_addr() == Some(0x00A0);
+        }
+        if cpu.tick(&mut plugin, clock).instruction_complete {
+            break;
+        }
+        clock = clock.inc();
+    }
+
+    assert!(
+        projected,
+        "INC $A0's RMW read cycle must project $00A0 for a DMC halt"
+    );
 }
 
 #[test]
@@ -4373,8 +4388,9 @@ fn interrupt_handler_entry_21_dots_after_boundary() {
         // handler's first opcode.
         let clock = SystemClock(entry + 3);
         assert_line(&mut cpu, clock);
+        assert_eq!(cpu.dma_halt_bus_addr(), Some(HANDLER));
         cpu.tick(&mut plugin, clock);
-        assert_eq!(cpu.last_read_addr, Some(HANDLER));
+        assert_eq!(cpu.pc(), HANDLER + 1);
 
         (boundary, entry)
     }
@@ -4573,7 +4589,6 @@ fn las_loads_operand_into_a_x_and_sp() {
     assert_eq!(s.sp, expected);
     assert_eq!(cpu.flag(Flag::Negative), expected & 0x80 != 0);
     assert_eq!(cpu.flag(Flag::Zero), expected == 0);
-    assert_eq!(cpu.last_read_addr, Some(0xAB35));
 }
 
 #[test]
