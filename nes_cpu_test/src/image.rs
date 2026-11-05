@@ -70,9 +70,7 @@ impl Image {
         let mut machine = Machine::with_plugin(plugin, mcu);
         let mut clock = SystemClock::default();
         let mut drain_plugin = nes_core::EmptyPlugin::new();
-        machine
-            .cpu_mut()
-            .run_to_instruction_boundary(&mut drain_plugin, &mut clock);
+        machine.drain_to_instruction_boundary(&mut drain_plugin, &mut clock);
         match start_pc {
             Some(pc) => machine.set_pc(pc),
             None => machine.set_pc(0x400),

@@ -45,6 +45,58 @@
 use super::microcode::{build_opcode_table, opcode};
 use super::*;
 use crate::test_utils::{GenericAccessKind, McuCall, RecordingMcu};
+
+/// Test harness pairing the non-generic [`Cpu`] with its memory [`Bus`]
+/// (ADR-0015) so the walk can record MCU traffic through the bus seam.
+struct Harness<M: Mcu> {
+    cpu: Cpu,
+    bus: Bus<M>,
+}
+
+impl<M: Mcu> std::ops::Deref for Harness<M> {
+    type Target = Cpu;
+
+    fn deref(&self) -> &Cpu {
+        &self.cpu
+    }
+}
+
+impl<M: Mcu> std::ops::DerefMut for Harness<M> {
+    fn deref_mut(&mut self) -> &mut Cpu {
+        &mut self.cpu
+    }
+}
+
+impl<M: Mcu> Harness<M> {
+    fn new(mcu: M) -> Self {
+        Harness {
+            cpu: Cpu::new(),
+            bus: Bus::new(mcu),
+        }
+    }
+
+    fn mcu(&self) -> &M {
+        self.bus.mcu()
+    }
+
+    fn mcu_mut(&mut self) -> &mut M {
+        self.bus.mcu_mut()
+    }
+
+    fn tick<P: Plugin<M>>(&mut self, plugin: &mut P, clock: SystemClock) -> TickOutcome {
+        self.cpu.tick(&mut self.bus, plugin, clock)
+    }
+
+    fn run_to_instruction_boundary<P: Plugin<M>>(
+        &mut self,
+        plugin: &mut P,
+        clock: &mut SystemClock,
+    ) {
+        self.cpu
+            .run_to_instruction_boundary(&mut self.bus, plugin, clock)
+    }
+}
+use crate::bus::Bus;
 use core::ops::RangeInclusive;
 
 /// Program counter every walk starts at — above the stack page.
@@ -493,14 +545,14 @@ impl Walk {
 }
 
 /// Applies the documented fixed register state and leaves the queue empty.
-fn new_walk_cpu(program: &[u8]) -> Cpu<RecordingMcu> {
+fn new_walk_cpu(program: &[u8]) -> Harness<RecordingMcu> {
     new_walk_cpu_with(RecordingMcu::filled(WALK_FILLER).with_program(WALK_PC, program))
 }
 
 /// As [`new_walk_cpu`], over a caller-provided `Mcu` whose memory the test
 /// controls.
-fn new_walk_cpu_with(mcu: RecordingMcu) -> Cpu<RecordingMcu> {
-    let mut cpu = Cpu::new(mcu);
+fn new_walk_cpu_with(mcu: RecordingMcu) -> Harness<RecordingMcu> {
+    let mut cpu = Harness::new(mcu);
     let mut plugin = EmptyPlugin::new();
     let mut clock = SystemClock::default();
     // Drain the power-on RESET sequence; the walk starts at a boundary.
@@ -515,7 +567,7 @@ fn new_walk_cpu_with(mcu: RecordingMcu) -> Cpu<RecordingMcu> {
 }
 
 /// Fetches the opcode at `WALK_PC` and drains exactly its sequence.
-fn run_fetched_sequence(cpu: &mut Cpu<RecordingMcu>) {
+fn run_fetched_sequence(cpu: &mut Harness<RecordingMcu>) {
     let mut plugin = EmptyPlugin::new();
     let mut clock = SystemClock::default();
     // The queue is empty: this tick fetches the opcode and queues its

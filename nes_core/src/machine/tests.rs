@@ -22,9 +22,7 @@ fn test_set_pc() {
 
     let mut clock = SystemClock::default();
     let mut plugin = EmptyPlugin::new();
-    machine
-        .cpu_mut()
-        .run_to_instruction_boundary(&mut plugin, &mut clock);
+    machine.drain_to_instruction_boundary(&mut plugin, &mut clock);
     machine.set_pc(0x1234);
     assert_eq!(machine.cpu().pc(), 0x1234);
 }
@@ -37,9 +35,7 @@ fn test_set_pc_drains_pending_reset_microcodes() {
     machine.reset();
     let mut plugin = EmptyPlugin::new();
     let mut clock = SystemClock::default();
-    machine
-        .cpu_mut()
-        .run_to_instruction_boundary(&mut plugin, &mut clock);
+    machine.drain_to_instruction_boundary(&mut plugin, &mut clock);
     machine.set_pc(0x5678);
 
     assert_eq!(machine.cpu().pc(), 0x5678);
@@ -52,22 +48,14 @@ fn test_reset() {
 
     let mut clock = SystemClock::default();
     let mut plugin = EmptyPlugin::new();
-    machine
-        .cpu_mut()
-        .run_to_instruction_boundary(&mut plugin, &mut clock);
+    machine.drain_to_instruction_boundary(&mut plugin, &mut clock);
     machine.set_pc(0x5678);
     machine.reset();
     // Reset enqueues microcodes that load the reset vector; run them to apply
-    let mut plugin = EmptyPlugin::<MockMcu>::new();
     let mut clock = SystemClock::default();
-    // Tick until the CPU reports the current instruction is finished
-    while !machine
-        .cpu_mut()
-        .tick(&mut plugin, clock)
-        .instruction_complete
-    {
-        clock = clock.inc();
-    }
+    // Run the reset sequence to completion (the CPU boundary records each
+    // instruction as finished only when its queue drains).
+    machine.run_to_instruction_boundary(&mut clock);
     // Reset reads PC from 0xFFFC
     assert_eq!(machine.cpu().pc(), 0);
 }

@@ -1,17 +1,21 @@
 use crate::{
     Cpu, EmptyPlugin, ExecuteResult, Plugin, SystemClock,
-    bus::{Bus, BusOwner},
+    bus::Bus,
+    dma_bus::{BusOwner, DmaBus},
     ines::INesFile,
     interrupt::{ApuIrqSampler, CartridgeIrqLatch, InterruptLines},
     nes::{Mmc3IrqOverride, NesMcu, controller::Button, ppu::palette::ColorTheme},
     render::Render,
 };
 pub struct NesMachine<P, R: Render, D: crate::nes::apu::AudioDriver> {
-    cpu: Cpu<NesMcu<R, D>>,
+    cpu: Cpu,
     p: P,
     cart_latch: CartridgeIrqLatch,
     apu_sampler: ApuIrqSampler,
-    bus: Bus,
+    /// The CPU's external bus; owns the memory map `NesMcu` (ADR-0015).
+    bus: Bus<NesMcu<R, D>>,
+    /// DMA arbitration on the bus — renamed from the former `Bus` (ADR-0009).
+    dma_bus: DmaBus,
     clock: SystemClock,
     /// Set while `reset()` is draining in-flight DMA work: the CPU gets no
     /// more cycles (hardware holds the reset line asserted), but PPU/APU/DMA
@@ -43,18 +47,19 @@ where
     ) -> Self {
         let mcu = NesMcu::new_with_mmc3_irq_override(file, render, audio_driver, irq_override);
         Self {
-            cpu: Cpu::new(mcu),
+            cpu: Cpu::new(),
             p: plugin,
             cart_latch: CartridgeIrqLatch::new(),
             apu_sampler: ApuIrqSampler::new(),
-            bus: Bus::new(),
+            bus: Bus::new(mcu),
+            dma_bus: DmaBus::new(),
             clock: SystemClock::default(),
             reset_requested: false,
         }
     }
 
     pub fn frame_no(&self) -> usize {
-        self.cpu.mcu().ppu().timing().frame_no()
+        self.bus.mcu().ppu().timing().frame_no()
     }
 
     /// Run the machine for a single frame.
@@ -78,7 +83,7 @@ where
         );
         loop {
             self.tick();
-            if self.cpu.mcu_mut().ppu_mut().take_vblank_entered() {
+            if self.bus.mcu_mut().ppu_mut().take_vblank_entered() {
                 break;
             }
         }
@@ -96,15 +101,15 @@ where
     pub fn tick(&mut self) -> ExecuteResult {
         let clock = self.clock;
         self.clock = self.clock.inc();
-        self.cpu.mcu_mut().set_clock(clock);
+        self.bus.mcu_mut().set_clock(clock);
         let cpu_tick = clock.is_cpu_clock();
 
-        self.cpu.mcu_mut().tick_ppu();
+        self.bus.mcu_mut().tick_ppu();
         if cpu_tick {
-            self.cpu.mcu_mut().tick_zapper();
+            self.bus.mcu_mut().tick_zapper();
         }
         self.cart_latch
-            .capture_next(self.cpu.mcu().cartridge_irq_pending());
+            .capture_next(self.bus.mcu().cartridge_irq_pending());
 
         // While a machine reset is draining DMA work the CPU stays frozen:
         // no IRQ/NMI latching, no microcode, no same-tick race retract (the
@@ -121,29 +126,29 @@ where
             // single `InterruptLines` bundle.
             let apu_sampled = self
                 .apu_sampler
-                .sample_before_tick(self.cpu.mcu().apu_irq_pending());
+                .sample_before_tick(self.bus.mcu().apu_irq_pending());
             let irq_level = apu_sampled || self.cart_latch.level();
 
             if clock.is_apu_clock() {
-                self.cpu.mcu_mut().tick_apu(clock);
-                let owner = self.bus.tick(&mut self.cpu, clock);
+                self.bus.mcu_mut().tick_apu(clock);
+                let owner = self.dma_bus.tick(&mut self.cpu, &mut self.bus, clock);
                 if !matches!(owner, BusOwner::Idle) {
                     return ExecuteResult::Continue;
                 }
             }
 
-            let nmi = self.cpu.mcu_mut().ppu_mut().nmi_lines();
+            let nmi = self.bus.mcu_mut().ppu_mut().nmi_lines();
             let lines = InterruptLines { nmi, irq_level };
             self.cpu.update_interrupt_lines(lines, clock);
             if clock.is_cpu_clock() {
-                self.cpu.tick(&mut self.p, clock).control
+                self.cpu.tick(&mut self.bus, &mut self.p, clock).control
             } else {
                 ExecuteResult::Continue
             }
         } else {
             if clock.is_apu_clock() {
-                self.cpu.mcu_mut().tick_apu(clock);
-                let _ = self.bus.tick(&mut self.cpu, clock);
+                self.bus.mcu_mut().tick_apu(clock);
+                let _ = self.dma_bus.tick(&mut self.cpu, &mut self.bus, clock);
             }
             ExecuteResult::Continue
         }
@@ -167,62 +172,65 @@ where
         );
         let mut drained = 0_u32;
         self.reset_requested = true;
-        while self.bus.is_busy(self.cpu.mcu()) && drained < Self::RESET_DRAIN_LIMIT_DOTS {
+        while self.dma_bus.is_busy(self.bus.mcu()) && drained < Self::RESET_DRAIN_LIMIT_DOTS {
             // Kill freshly generated DMC fetch requests before each step so
             // the drain terminates even with the DMC channel still playing.
-            self.bus.suppress_new_dmc_requests(self.cpu.mcu_mut());
+            self.dma_bus.suppress_new_dmc_requests(self.bus.mcu_mut());
             self.tick();
             drained += 1;
         }
         self.reset_requested = false;
-        debug_assert!(!self.bus.is_busy(self.cpu.mcu()), "DMA bus did not quiesce");
+        debug_assert!(
+            !self.dma_bus.is_busy(self.bus.mcu()),
+            "DMA bus did not quiesce"
+        );
 
         let clock = self.clock;
-        self.cpu.mcu_mut().reset(clock);
-        self.bus.reset();
+        self.bus.mcu_mut().reset(clock);
+        self.dma_bus.reset();
         self.cpu.reset();
 
         self.cart_latch.reset();
     }
 
     fn flush_audio(&mut self) {
-        self.cpu.mcu_mut().flush_audio();
+        self.bus.mcu_mut().flush_audio();
     }
 
     pub fn press_controller_a(&mut self, button: Button) {
-        self.cpu.mcu_mut().press_controller_a(button);
+        self.bus.mcu_mut().press_controller_a(button);
     }
 
     pub fn release_controller_a(&mut self, button: Button) {
-        self.cpu.mcu_mut().release_controller_a(button);
+        self.bus.mcu_mut().release_controller_a(button);
     }
 
     pub fn press_controller_b(&mut self, button: Button) {
-        self.cpu.mcu_mut().press_controller_b(button);
+        self.bus.mcu_mut().press_controller_b(button);
     }
 
     pub fn release_controller_b(&mut self, button: Button) {
-        self.cpu.mcu_mut().release_controller_b(button);
+        self.bus.mcu_mut().release_controller_b(button);
     }
 
     pub fn connect_zapper(&mut self, connected: bool) {
-        self.cpu.mcu_mut().connect_zapper(connected);
+        self.bus.mcu_mut().connect_zapper(connected);
     }
 
     pub fn aim_zapper(&mut self, x: u16, y: u16) {
-        self.cpu.mcu_mut().aim_zapper(x, y);
+        self.bus.mcu_mut().aim_zapper(x, y);
     }
 
     pub fn trigger_zapper(&mut self) {
-        self.cpu.mcu_mut().trigger_zapper();
+        self.bus.mcu_mut().trigger_zapper();
     }
 
     pub fn render_mut(&mut self) -> &mut R {
-        self.cpu.mcu_mut().ppu_mut().renderer_mut()
+        self.bus.mcu_mut().ppu_mut().renderer_mut()
     }
 
     pub fn set_color_theme(&mut self, theme: ColorTheme) {
-        self.cpu.mcu_mut().ppu_mut().set_color_theme(theme);
+        self.bus.mcu_mut().ppu_mut().set_color_theme(theme);
     }
 
     /// Drain to instruction boundary with full device interleaving.
@@ -248,24 +256,24 @@ where
     pub fn set_pc(&mut self, pc: u16) {
         let mut empty = EmptyPlugin::new();
         self.cpu
-            .run_to_instruction_boundary(&mut empty, &mut self.clock);
+            .run_to_instruction_boundary(&mut self.bus, &mut empty, &mut self.clock);
         self.cpu.set_pc(pc);
     }
 
-    pub fn cpu(&self) -> &Cpu<NesMcu<R, D>> {
+    pub fn cpu(&self) -> &Cpu {
         &self.cpu
     }
 
-    pub fn cpu_mut(&mut self) -> &mut Cpu<NesMcu<R, D>> {
+    pub fn cpu_mut(&mut self) -> &mut Cpu {
         &mut self.cpu
     }
 
     pub fn mcu(&self) -> &NesMcu<R, D> {
-        self.cpu.mcu()
+        self.bus.mcu()
     }
 
     pub fn mcu_mut(&mut self) -> &mut NesMcu<R, D> {
-        self.cpu.mcu_mut()
+        self.bus.mcu_mut()
     }
 
     pub fn system_cycles(&self) -> u64 {
@@ -354,12 +362,12 @@ mod tests {
         // Warm up until the loop's first $4014 write has armed a DMA.
         for _ in 0..10_000 {
             machine.tick();
-            if machine.bus.is_busy(machine.cpu.mcu()) {
+            if machine.dma_bus.is_busy(machine.bus.mcu()) {
                 break;
             }
         }
         assert!(
-            machine.bus.is_busy(machine.cpu.mcu()),
+            machine.dma_bus.is_busy(machine.bus.mcu()),
             "test ROM never armed an OAM DMA"
         );
 
@@ -367,7 +375,7 @@ mod tests {
         // internal drain limit (no hang), then apply cleanly.
         machine.reset();
 
-        assert!(!machine.bus.is_busy(machine.cpu.mcu()));
+        assert!(!machine.dma_bus.is_busy(machine.bus.mcu()));
 
         // The post-reset machine still runs: frames complete normally.
         assert_eq!(machine.process_frame(), ExecuteResult::Continue);

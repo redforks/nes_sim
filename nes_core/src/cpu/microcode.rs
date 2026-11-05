@@ -1,4 +1,5 @@
 use super::{Cpu, Flag, Register, ValueSource};
+use crate::bus::Bus;
 use crate::cpu::{Alu, Immediate, Mem, ValueSourceTrait, ValueTargetTrait, ZeroPage};
 use crate::mcu::Mcu;
 use tinyvec::ArrayVec;
@@ -902,16 +903,16 @@ pub enum ShiftRotateOp {
 }
 
 impl ImmediateOp {
-    pub fn exec<M: Mcu>(self, cpu: &mut Cpu<M>) {
+    pub fn exec<M: Mcu>(self, cpu: &mut Cpu, bus: &mut Bus<M>) {
         match self {
-            ImmediateOp::Adc => cpu.adc::<Alu>(),
-            ImmediateOp::And => cpu.and::<Alu>(),
-            ImmediateOp::Sbc => cpu.sbc::<Alu>(),
-            ImmediateOp::Cmp => cpu.cmp::<Alu>(),
-            ImmediateOp::Cpx => cpu.cpx::<Alu>(),
-            ImmediateOp::Cpy => cpu.cpy::<Alu>(),
-            ImmediateOp::Ora => cpu.ora::<Alu>(),
-            ImmediateOp::Eor => cpu.eor::<Alu>(),
+            ImmediateOp::Adc => cpu.adc::<Alu, _>(bus),
+            ImmediateOp::And => cpu.and::<Alu, _>(bus),
+            ImmediateOp::Sbc => cpu.sbc::<Alu, _>(bus),
+            ImmediateOp::Cmp => cpu.cmp::<Alu, _>(bus),
+            ImmediateOp::Cpx => cpu.cpx::<Alu, _>(bus),
+            ImmediateOp::Cpy => cpu.cpy::<Alu, _>(bus),
+            ImmediateOp::Ora => cpu.ora::<Alu, _>(bus),
+            ImmediateOp::Eor => cpu.eor::<Alu, _>(bus),
         }
     }
 }
@@ -1134,7 +1135,7 @@ pub enum BranchTest {
 }
 
 impl BranchTest {
-    fn test<M: Mcu>(self, cpu: &Cpu<M>) -> bool {
+    fn test(self, cpu: &Cpu) -> bool {
         match self {
             BranchTest::IfCarryClear => !cpu.flag(Flag::Carry),
             BranchTest::IfCarrySet => cpu.flag(Flag::Carry),
@@ -1485,115 +1486,115 @@ pub enum PushTarget {
 
 impl Microcode {
     /// perform second phase of this Microcode
-    pub fn exec<M: Mcu>(self, cpu: &mut Cpu<M>) {
+    pub fn exec<M: Mcu>(self, cpu: &mut Cpu, bus: &mut Bus<M>) {
         match self {
-            Self::FetchOnly => cpu.read_pc_byte(),
+            Self::FetchOnly => cpu.read_pc_byte(bus),
             Self::FetchAndDecode => {
                 const OPCODE_TABLE: [ArrayVec<[Microcode; 7]>; 256] = build_opcode_table();
 
-                let opcode = cpu.inc_read_byte();
+                let opcode = cpu.inc_read_byte(bus);
                 cpu.push_microcodes(&OPCODE_TABLE[opcode as usize]);
                 if let Some(window) = InterruptSequences::window_for_opcode(opcode) {
                     cpu.arm_interrupt_window(window, false);
                 }
             }
-            Self::LoadR(ValueSource::Immediate, r) => load_r::<_, Immediate>(cpu, r),
-            Self::LoadR(ValueSource::ZeroPage, r) => load_r::<_, ZeroPage>(cpu, r),
-            Self::LoadR(ValueSource::Mem, r) => load_r::<_, Mem>(cpu, r),
-            Self::StoreR(ValueSource::ZeroPage, r) => store_r::<_, ZeroPage>(cpu, r),
-            Self::StoreR(ValueSource::Mem, r) => store_r::<_, Mem>(cpu, r),
+            Self::LoadR(ValueSource::Immediate, r) => load_r::<Immediate, _>(cpu, bus, r),
+            Self::LoadR(ValueSource::ZeroPage, r) => load_r::<ZeroPage, _>(cpu, bus, r),
+            Self::LoadR(ValueSource::Mem, r) => load_r::<Mem, _>(cpu, bus, r),
+            Self::StoreR(ValueSource::ZeroPage, r) => store_r::<ZeroPage, _>(cpu, bus, r),
+            Self::StoreR(ValueSource::Mem, r) => store_r::<Mem, _>(cpu, bus, r),
             Self::ZeroPage => {
-                let addr = cpu.inc_read_byte();
+                let addr = cpu.inc_read_byte(bus);
                 cpu.ab.set(addr as u16);
             }
-            Self::ZeroPageIndexedX => cpu.zero_page_indexed(cpu.x),
-            Self::ZeroPageIndexedY => cpu.zero_page_indexed(cpu.y),
+            Self::ZeroPageIndexedX => cpu.zero_page_indexed(bus, cpu.x),
+            Self::ZeroPageIndexedY => cpu.zero_page_indexed(bus, cpu.y),
             Self::AbsoluteL => {
-                let low = cpu.inc_read_byte();
+                let low = cpu.inc_read_byte(bus);
                 cpu.set_abl(low);
             }
             Self::AbsoluteH => {
-                let high = cpu.inc_read_byte();
+                let high = cpu.inc_read_byte(bus);
                 cpu.set_abh(high);
             }
 
-            Self::Adc(ValueSource::ZeroPage) => cpu.adc::<ZeroPage>(),
-            Self::Adc(ValueSource::Mem) => cpu.adc::<Mem>(),
-            Self::Sbc(ValueSource::ZeroPage) => cpu.sbc::<ZeroPage>(),
-            Self::Sbc(ValueSource::Mem) => cpu.sbc::<Mem>(),
-            Self::Cmp(ValueSource::ZeroPage) => cpu.cmp::<ZeroPage>(),
-            Self::Cmp(ValueSource::Mem) => cpu.cmp::<Mem>(),
-            Self::Cpx(ValueSource::ZeroPage) => cpu.cpx::<ZeroPage>(),
-            Self::Cpx(ValueSource::Mem) => cpu.cpx::<Mem>(),
-            Self::Cpy(ValueSource::ZeroPage) => cpu.cpy::<ZeroPage>(),
-            Self::Cpy(ValueSource::Mem) => cpu.cpy::<Mem>(),
-            Self::Ora(ValueSource::ZeroPage) => cpu.ora::<ZeroPage>(),
-            Self::Ora(ValueSource::Mem) => cpu.ora::<Mem>(),
-            Self::Eor(ValueSource::ZeroPage) => cpu.eor::<ZeroPage>(),
-            Self::Eor(ValueSource::Mem) => cpu.eor::<Mem>(),
-            Self::And(ValueSource::Immediate) => cpu.and::<Immediate>(),
-            Self::And(ValueSource::ZeroPage) => cpu.and::<ZeroPage>(),
-            Self::And(ValueSource::Mem) => cpu.and::<Mem>(),
-            Self::Shx => cpu.shx(),
-            Self::Shy => cpu.shy(),
-            Self::Sha => cpu.sha(),
-            Self::Tas => cpu.tas(),
+            Self::Adc(ValueSource::ZeroPage) => cpu.adc::<ZeroPage, _>(bus),
+            Self::Adc(ValueSource::Mem) => cpu.adc::<Mem, _>(bus),
+            Self::Sbc(ValueSource::ZeroPage) => cpu.sbc::<ZeroPage, _>(bus),
+            Self::Sbc(ValueSource::Mem) => cpu.sbc::<Mem, _>(bus),
+            Self::Cmp(ValueSource::ZeroPage) => cpu.cmp::<ZeroPage, _>(bus),
+            Self::Cmp(ValueSource::Mem) => cpu.cmp::<Mem, _>(bus),
+            Self::Cpx(ValueSource::ZeroPage) => cpu.cpx::<ZeroPage, _>(bus),
+            Self::Cpx(ValueSource::Mem) => cpu.cpx::<Mem, _>(bus),
+            Self::Cpy(ValueSource::ZeroPage) => cpu.cpy::<ZeroPage, _>(bus),
+            Self::Cpy(ValueSource::Mem) => cpu.cpy::<Mem, _>(bus),
+            Self::Ora(ValueSource::ZeroPage) => cpu.ora::<ZeroPage, _>(bus),
+            Self::Ora(ValueSource::Mem) => cpu.ora::<Mem, _>(bus),
+            Self::Eor(ValueSource::ZeroPage) => cpu.eor::<ZeroPage, _>(bus),
+            Self::Eor(ValueSource::Mem) => cpu.eor::<Mem, _>(bus),
+            Self::And(ValueSource::Immediate) => cpu.and::<Immediate, _>(bus),
+            Self::And(ValueSource::ZeroPage) => cpu.and::<ZeroPage, _>(bus),
+            Self::And(ValueSource::Mem) => cpu.and::<Mem, _>(bus),
+            Self::Shx => cpu.shx(bus),
+            Self::Shy => cpu.shy(bus),
+            Self::Sha => cpu.sha(bus),
+            Self::Tas => cpu.tas(bus),
             Self::IndexedXWithOp { op, first_clock } => {
-                Self::absolute_indexed_with_op_generic(cpu, op, first_clock, cpu.x)
+                Self::absolute_indexed_with_op_generic(cpu, bus, op, first_clock, cpu.x)
             }
             Self::IndexedYWithOp { op, first_clock } => {
-                Self::absolute_indexed_with_op_generic(cpu, op, first_clock, cpu.y)
+                Self::absolute_indexed_with_op_generic(cpu, bus, op, first_clock, cpu.y)
             }
-            Self::Bit(ValueSource::ZeroPage) => cpu.bit::<ZeroPage>(),
-            Self::Bit(ValueSource::Mem) => cpu.bit::<Mem>(),
+            Self::Bit(ValueSource::ZeroPage) => cpu.bit::<ZeroPage, _>(bus),
+            Self::Bit(ValueSource::Mem) => cpu.bit::<Mem, _>(bus),
             Self::StoreAlu(src @ (ValueSource::ZeroPage | ValueSource::Mem)) => {
-                Self::write_alu(cpu, src)
+                Self::write_alu(cpu, bus, src)
             }
             Self::SkipImmediate => {
-                cpu.inc_read_byte();
+                cpu.inc_read_byte(bus);
             }
-            Self::IndexedL(ValueSource::ZeroPage) => cpu.indexed_l::<ZeroPage>(),
-            Self::IndexedL(ValueSource::Mem) => cpu.indexed_l::<Mem>(),
-            Self::IndexedH(ValueSource::ZeroPage) => cpu.indexed_h::<ZeroPage>(),
-            Self::IndexedH(ValueSource::Mem) => cpu.indexed_h::<Mem>(),
-            Self::Nop => cpu.read_pc_byte(),
+            Self::IndexedL(ValueSource::ZeroPage) => cpu.indexed_l::<ZeroPage, _>(bus),
+            Self::IndexedL(ValueSource::Mem) => cpu.indexed_l::<Mem, _>(bus),
+            Self::IndexedH(ValueSource::ZeroPage) => cpu.indexed_h::<ZeroPage, _>(bus),
+            Self::IndexedH(ValueSource::Mem) => cpu.indexed_h::<Mem, _>(bus),
+            Self::Nop => cpu.read_pc_byte(bus),
             Self::DummyReadAt(addr) => {
-                cpu.read_byte(addr);
+                cpu.read_byte(bus, addr);
             }
             Self::DummyStackRead => {
-                let _ = cpu.mcu.read_stack_page(cpu.sp);
+                let _ = bus.mcu_mut().read_stack_page(cpu.sp);
             }
-            Self::Asl(target, src) => Self::shift_rotate(cpu, target, ShiftRotateOp::Asl, src),
-            Self::Lsr(target, src) => Self::shift_rotate(cpu, target, ShiftRotateOp::Lsr, src),
-            Self::Rol(target, src) => Self::shift_rotate(cpu, target, ShiftRotateOp::Rol, src),
-            Self::Ror(target, src) => Self::shift_rotate(cpu, target, ShiftRotateOp::Ror, src),
+            Self::Asl(target, src) => Self::shift_rotate(cpu, bus, target, ShiftRotateOp::Asl, src),
+            Self::Lsr(target, src) => Self::shift_rotate(cpu, bus, target, ShiftRotateOp::Lsr, src),
+            Self::Rol(target, src) => Self::shift_rotate(cpu, bus, target, ShiftRotateOp::Rol, src),
+            Self::Ror(target, src) => Self::shift_rotate(cpu, bus, target, ShiftRotateOp::Ror, src),
 
             Self::AlrImmediate => {
-                cpu.alu = cpu.inc_read_byte();
+                cpu.alu = cpu.inc_read_byte(bus);
                 cpu.alr();
             }
             Self::AncImmediate => {
-                cpu.alu = cpu.inc_read_byte();
+                cpu.alu = cpu.inc_read_byte(bus);
                 cpu.anc();
             }
             Self::ArrImmediate => {
-                cpu.alu = cpu.inc_read_byte();
+                cpu.alu = cpu.inc_read_byte(bus);
                 cpu.arr();
             }
             Self::AxsImmediate => {
-                cpu.alu = cpu.inc_read_byte();
+                cpu.alu = cpu.inc_read_byte(bus);
                 cpu.axs();
             }
             Self::AneImmediate => {
                 // Undocumented ANE/XAA: hardware behaviour uncertain; use deterministic
                 // approximation: A := X & oper. Read immediate operand into alu first.
-                let t = cpu.inc_read_byte();
+                let t = cpu.inc_read_byte(bus);
                 // Compute X & operand into A, update flags accordingly
                 cpu.set_register(Register::A, cpu.x & t);
             }
             Self::LaxImmediate => {
                 // Read immediate operand into alu and perform LAX semantics in one micro-op.
-                let t = cpu.inc_read_byte();
+                let t = cpu.inc_read_byte(bus);
                 cpu.a = t;
                 cpu.x = t;
                 cpu.update_zero_negative_flags(t);
@@ -1604,7 +1605,7 @@ impl Microcode {
                 // (non-page-cross) or as the page-crossed refetch at the
                 // (already index-adjusted) latch — closing the former exec
                 // defect where register math ran on a stale ALU.
-                cpu.load_alu::<Mem>();
+                cpu.load_alu::<Mem, _>(bus);
                 let v = cpu.alu & cpu.sp;
                 cpu.a = v;
                 cpu.x = v;
@@ -1612,18 +1613,18 @@ impl Microcode {
                 cpu.update_zero_negative_flags(v);
             }
 
-            Self::Lax(ValueSource::ZeroPage) => cpu.lax::<ZeroPage>(),
-            Self::Lax(ValueSource::Mem) => cpu.lax::<Mem>(),
-            Self::Sax(src) => cpu.sax(src),
-            Self::Rla(src) => cpu.rla(src),
-            Self::Dcp(src) => cpu.dcp(src),
-            Self::Isc(src) => cpu.isc(src),
-            Self::Rra(src) => cpu.rra(src),
-            Self::Slo(src) => cpu.slo(src),
-            Self::Sre(src) => cpu.sre(src),
+            Self::Lax(ValueSource::ZeroPage) => cpu.lax::<ZeroPage, _>(bus),
+            Self::Lax(ValueSource::Mem) => cpu.lax::<Mem, _>(bus),
+            Self::Sax(src) => cpu.sax(bus, src),
+            Self::Rla(src) => cpu.rla(bus, src),
+            Self::Dcp(src) => cpu.dcp(bus, src),
+            Self::Isc(src) => cpu.isc(bus, src),
+            Self::Rra(src) => cpu.rra(bus, src),
+            Self::Slo(src) => cpu.slo(bus, src),
+            Self::Sre(src) => cpu.sre(bus, src),
 
             Self::IndexedHAndJump => {
-                cpu.indexed_h::<Mem>();
+                cpu.indexed_h::<Mem, _>(bus);
                 cpu.set_pc_to_ab()
             }
 
@@ -1635,46 +1636,46 @@ impl Microcode {
             }
 
             Self::Transfer(direction) => Self::transfer(cpu, direction),
-            Self::IncDec(target, src) => Self::inc_dec(cpu, target, src),
+            Self::IncDec(target, src) => Self::inc_dec(cpu, bus, target, src),
 
-            Self::BranchRelative(test) => Self::branch_relative(cpu, test.test(cpu)),
+            Self::BranchRelative(test) => Self::branch_relative(cpu, bus, test.test(cpu)),
 
             Self::Kill => cpu.halt(),
 
-            Self::LoadIrqPcH => cpu.load_irq_pch(),
-            Self::LoadNmiPcL => cpu.load_nmi_pcl(),
-            Self::LoadNmiPcH => cpu.load_nmi_pch(),
-            Self::LoadIrqPcL => cpu.load_irq_pcl(),
-            Self::PushStatus { break_flag } => cpu.push_status(break_flag),
-            Self::Plp => cpu.plp(),
+            Self::LoadIrqPcH => cpu.load_irq_pch(bus),
+            Self::LoadNmiPcL => cpu.load_nmi_pcl(bus),
+            Self::LoadNmiPcH => cpu.load_nmi_pch(bus),
+            Self::LoadIrqPcL => cpu.load_irq_pcl(bus),
+            Self::PushStatus { break_flag } => cpu.push_status(bus, break_flag),
+            Self::Plp => cpu.plp(bus),
             Self::PopPcL => {
-                let low = cpu.pop_stack();
+                let low = cpu.pop_stack(bus);
                 cpu.pc.set_low(low);
             }
             Self::PopPcH => {
-                let high = cpu.pop_stack();
+                let high = cpu.pop_stack(bus);
                 cpu.pc.set_high(high);
             }
             Self::IncPc => cpu.pc += 1,
             Self::PushStack(target) => match target {
-                PushTarget::A => cpu.push_stack(cpu.a),
-                PushTarget::Pcl => cpu.push_stack(cpu.pc.low()),
-                PushTarget::Pch => cpu.push_stack(cpu.pc.high()),
+                PushTarget::A => cpu.push_stack(bus, cpu.a),
+                PushTarget::Pcl => cpu.push_stack(bus, cpu.pc.low()),
+                PushTarget::Pch => cpu.push_stack(bus, cpu.pc.high()),
             },
-            Self::PopStack => cpu.alu = cpu.pop_stack(),
+            Self::PopStack => cpu.alu = cpu.pop_stack(bus),
             Self::UpdateAFromAlu => cpu.set_register(Register::A, cpu.alu),
 
-            Self::LoadResetPcL => cpu.load_vector_low(0xFFFC, false),
-            Self::LoadResetPcH => cpu.load_vector_high(0xFFFD),
-            Self::LoadPcAbsoluteH => load_pc_absolute_h(cpu),
+            Self::LoadResetPcL => cpu.load_vector_low(bus, 0xFFFC, false),
+            Self::LoadResetPcH => cpu.load_vector_high(bus, 0xFFFD),
+            Self::LoadPcAbsoluteH => load_pc_absolute_h(cpu, bus),
 
             Self::LoadIntoAlu(ValueSource::ZeroPage) => {
-                cpu.load_alu::<ZeroPage>();
+                cpu.load_alu::<ZeroPage, _>(bus);
             }
             Self::LoadIntoAlu(ValueSource::Mem) => {
-                cpu.load_alu::<Mem>();
+                cpu.load_alu::<Mem, _>(bus);
             }
-            Self::ImmediateWithOp(op) => Self::immediate_with_op(cpu, op),
+            Self::ImmediateWithOp(op) => Self::immediate_with_op(cpu, bus, op),
             Self::StoreAlu(_)
             | Self::Bit(_)
             | Self::LoadIntoAlu(_)
@@ -1693,8 +1694,8 @@ impl Microcode {
         }
     }
 
-    fn branch_relative<M: Mcu>(cpu: &mut Cpu<M>, branch_test_result: bool) {
-        let offset = cpu.inc_read_byte();
+    fn branch_relative<M: Mcu>(cpu: &mut Cpu, bus: &mut Bus<M>, branch_test_result: bool) {
+        let offset = cpu.inc_read_byte(bus);
         cpu.request_detect_interrupt = Some(true);
         if branch_test_result {
             let old_pch = cpu.pch();
@@ -1714,7 +1715,8 @@ impl Microcode {
     }
 
     fn absolute_indexed_with_op_generic<M: Mcu>(
-        cpu: &mut Cpu<M>,
+        cpu: &mut Cpu,
+        bus: &mut Bus<M>,
         op: OpAfterAddressing,
         first_clock: CrossPageBehavior,
         idx: u8,
@@ -1725,21 +1727,21 @@ impl Microcode {
 
         if is_first_clock_always || abh != cpu.abh() {
             let dummy_addr = (u16::from(abh) << 8) | u16::from(cpu.abl());
-            cpu.read_byte(dummy_addr);
+            cpu.read_byte(bus, dummy_addr);
             if !is_first_clock_always {
                 cpu.push_microcode(op.to_microcode());
             }
         } else {
-            op.to_microcode().exec(cpu);
+            op.to_microcode().exec(cpu, bus);
         }
     }
 
-    fn immediate_with_op<M: Mcu>(cpu: &mut Cpu<M>, op: ImmediateOp) {
-        cpu.alu = cpu.inc_read_byte();
-        op.exec(cpu);
+    fn immediate_with_op<M: Mcu>(cpu: &mut Cpu, bus: &mut Bus<M>, op: ImmediateOp) {
+        cpu.alu = cpu.inc_read_byte(bus);
+        op.exec(cpu, bus);
     }
 
-    fn transfer<M: Mcu>(cpu: &mut Cpu<M>, direction: TransferDirection) {
+    fn transfer(cpu: &mut Cpu, direction: TransferDirection) {
         match direction {
             TransferDirection::AtoX => cpu.set_register(Register::X, cpu.a),
             TransferDirection::XtoA => cpu.set_register(Register::A, cpu.x),
@@ -1759,11 +1761,11 @@ impl Microcode {
     /// address-range match exactly as the read and the dummy write already
     /// do. Everything else — absolute, absolute-indexed, and the register
     /// forms, which never reach here — writes through the generic path.
-    fn write_alu<M: Mcu>(cpu: &mut Cpu<M>, src: ValueSource) {
-        cpu.write_value(src, cpu.alu);
+    fn write_alu<M: Mcu>(cpu: &mut Cpu, bus: &mut Bus<M>, src: ValueSource) {
+        cpu.write_value(bus, src, cpu.alu);
     }
 
-    fn inc_dec<M: Mcu>(cpu: &mut Cpu<M>, target: IncDecTarget, src: ValueSource) {
+    fn inc_dec<M: Mcu>(cpu: &mut Cpu, bus: &mut Bus<M>, target: IncDecTarget, src: ValueSource) {
         match target {
             IncDecTarget::IncrementX => {
                 Self::inc_dec_register(cpu, Register::X, cpu.x.wrapping_add(1))
@@ -1779,30 +1781,31 @@ impl Microcode {
             }
             IncDecTarget::IncrementAlu => {
                 cpu.alu = cpu.alu.wrapping_add(1);
-                Self::write_alu(cpu, src);
+                Self::write_alu(cpu, bus, src);
                 cpu.update_zero_negative_flags(cpu.alu);
             }
             IncDecTarget::DecrementAlu => {
                 cpu.alu = cpu.alu.wrapping_sub(1);
-                Self::write_alu(cpu, src);
+                Self::write_alu(cpu, bus, src);
                 cpu.update_zero_negative_flags(cpu.alu);
             }
         }
     }
 
     /// Write an index register and mirror the new value into the ALU latch.
-    fn inc_dec_register<M: Mcu>(cpu: &mut Cpu<M>, register: Register, value: u8) {
+    fn inc_dec_register(cpu: &mut Cpu, register: Register, value: u8) {
         cpu.set_register(register, value);
         cpu.alu = value;
     }
 
     fn shift_rotate<M: Mcu>(
-        cpu: &mut Cpu<M>,
+        cpu: &mut Cpu,
+        bus: &mut Bus<M>,
         target: AOrMemory,
         op: ShiftRotateOp,
         src: ValueSource,
     ) {
-        fn calc<M: Mcu>(cpu: &mut Cpu<M>, op: ShiftRotateOp) {
+        fn calc(cpu: &mut Cpu, op: ShiftRotateOp) {
             match op {
                 ShiftRotateOp::Asl => {
                     cpu.set_flag(Flag::Carry, cpu.alu & 0x80 != 0);
@@ -1835,27 +1838,27 @@ impl Microcode {
             }
             AOrMemory::Memory => {
                 calc(cpu, op);
-                Self::write_alu(cpu, src);
+                Self::write_alu(cpu, bus, src);
             }
         }
     }
 }
 
-fn load_r<M: Mcu, S: ValueSourceTrait>(cpu: &mut Cpu<M>, r: Register) {
-    let value = S::value(cpu);
+fn load_r<S: ValueSourceTrait, M: Mcu>(cpu: &mut Cpu, bus: &mut Bus<M>, r: Register) {
+    let value = S::value(cpu, bus);
     cpu.set_register(r, value);
 }
 
-fn store_r<M: Mcu, S: ValueTargetTrait>(cpu: &mut Cpu<M>, r: Register) {
+fn store_r<S: ValueTargetTrait, M: Mcu>(cpu: &mut Cpu, bus: &mut Bus<M>, r: Register) {
     match r {
-        Register::A => S::write(cpu, cpu.a),
-        Register::X => S::write(cpu, cpu.x),
-        Register::Y => S::write(cpu, cpu.y),
+        Register::A => S::write(cpu, bus, cpu.a),
+        Register::X => S::write(cpu, bus, cpu.x),
+        Register::Y => S::write(cpu, bus, cpu.y),
     }
 }
 
-fn load_pc_absolute_h<M: Mcu>(cpu: &mut Cpu<M>) {
-    let high = cpu.inc_read_byte();
+fn load_pc_absolute_h<M: Mcu>(cpu: &mut Cpu, bus: &mut Bus<M>) {
+    let high = cpu.inc_read_byte(bus);
     cpu.pc.set_high(high);
     cpu.pc.set_low(cpu.ab.low());
 }

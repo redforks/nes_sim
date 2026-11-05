@@ -8,27 +8,115 @@ use crate::test_utils::MockMcu;
 // NES vector addresses
 const IRQ_VECTOR: u16 = 0xFFFE;
 
-fn create_cpu_with_program(program: &[u8]) -> Cpu<MockMcu> {
+/// Test harness pairing a non-generic [`Cpu`] with its memory [`Bus`]
+/// (ADR-0015): tests drive the CPU through the bus seam, and observe memory
+/// state via `mcu()`/`mcu_mut()`.
+struct Harness<M: Mcu> {
+    cpu: Cpu,
+    bus: Bus<M>,
+}
+
+impl<M: Mcu> std::ops::Deref for Harness<M> {
+    type Target = Cpu;
+
+    fn deref(&self) -> &Cpu {
+        &self.cpu
+    }
+}
+
+impl<M: Mcu> std::ops::DerefMut for Harness<M> {
+    fn deref_mut(&mut self) -> &mut Cpu {
+        &mut self.cpu
+    }
+}
+
+impl<M: Mcu> Harness<M> {
+    fn new(mcu: M) -> Self {
+        Harness {
+            cpu: Cpu::new(),
+            bus: Bus::new(mcu),
+        }
+    }
+
+    fn mcu(&self) -> &M {
+        self.bus.mcu()
+    }
+
+    fn mcu_mut(&mut self) -> &mut M {
+        self.bus.mcu_mut()
+    }
+
+    fn tick<P: Plugin<M>>(&mut self, plugin: &mut P, clock: SystemClock) -> TickOutcome {
+        self.cpu.tick(&mut self.bus, plugin, clock)
+    }
+
+    fn run_to_instruction_boundary<P: Plugin<M>>(
+        &mut self,
+        plugin: &mut P,
+        clock: &mut SystemClock,
+    ) {
+        self.cpu
+            .run_to_instruction_boundary(&mut self.bus, plugin, clock)
+    }
+
+    fn exec(&mut self, mc: Microcode) {
+        mc.exec(&mut self.cpu, &mut self.bus)
+    }
+
+    fn read_byte(&mut self, addr: u16) -> u8 {
+        self.cpu.read_byte(&mut self.bus, addr)
+    }
+
+    fn peek_byte(&self, addr: u16) -> u8 {
+        self.cpu.peek_byte(&self.bus, addr)
+    }
+
+    fn write_mem(&mut self, addr: u16, value: u8) {
+        self.cpu.write_mem(&mut self.bus, addr, value)
+    }
+
+    fn push_stack(&mut self, value: u8) {
+        self.cpu.push_stack(&mut self.bus, value)
+    }
+
+    fn pop_stack(&mut self) -> u8 {
+        self.cpu.pop_stack(&mut self.bus)
+    }
+
+    fn peek_stack(&self) -> u8 {
+        self.cpu.peek_stack(&self.bus)
+    }
+
+    fn inc_read_byte(&mut self) -> u8 {
+        self.cpu.inc_read_byte(&mut self.bus)
+    }
+
+    fn push_status(&mut self, break_flag: bool) {
+        self.cpu.push_status(&mut self.bus, break_flag)
+    }
+}
+
+fn create_cpu_with_program(program: &[u8]) -> Harness<MockMcu> {
     let mcu = MockMcu::new().with_program(0, program);
     let mut r = create_cpu_with_mcu(mcu);
     r.set_pc(0);
     r
 }
 
-fn create_cpu_with_mcu<M: Mcu>(mcu: M) -> Cpu<M> {
-    let mut cpu = Cpu::new(mcu);
+fn create_cpu_with_mcu<M: Mcu>(mcu: M) -> Harness<M> {
+    let mut cpu = Harness::new(mcu);
     let mut plugin = EmptyPlugin::new();
     let mut clock = SystemClock::default();
     cpu.run_to_instruction_boundary(&mut plugin, &mut clock);
     cpu
 }
 
-fn create_cpu() -> Cpu<MockMcu> {
+fn create_cpu() -> Harness<MockMcu> {
     let mcu = MockMcu::new();
     create_cpu_with_mcu(mcu)
 }
 
-fn execute_next<M: Mcu>(cpu: &mut Cpu<M>) {
+fn execute_next<M: Mcu>(cpu: &mut Harness<M>) {
     let mut plugin = EmptyPlugin::new();
     let mut clock = SystemClock::default();
 
@@ -189,7 +277,8 @@ fn nmi_pulse_dispatch_latency_runs_from_rising_edge() {
         }
         cpu.update_nmi_line((10..15).contains(&t), SystemClock(t));
         if t % 3 == 2 {
-            cpu.detect_interrupt(SystemClock(t), true, cpu.status, Microcode::Nop);
+            let status = cpu.status();
+            cpu.detect_interrupt(SystemClock(t), true, status, Microcode::Nop);
             if cpu.interrupt_detected.is_some() {
                 latched_at = Some(t);
             }
@@ -422,7 +511,8 @@ fn test_status_register_all_flags() {
             || flag_value == 0x02
             || flag_value == 0x20
         {
-            cpu.set_status(cpu.status() | flag_value);
+            let cur = cpu.status();
+            cpu.set_status(cur | flag_value);
         }
     }
 
@@ -3886,7 +3976,7 @@ fn peek_byte_uses_non_mutating_mcu_path() {
     assert_eq!(cpu.mcu().reads.len(), reads_before);
 }
 
-fn cpu_with_memory(program_start: u16, bytes: &[(u16, u8)]) -> Cpu<TestMcu> {
+fn cpu_with_memory(program_start: u16, bytes: &[(u16, u8)]) -> Harness<TestMcu> {
     let mut mcu = TestMcu::default();
     for (addr, value) in bytes {
         mcu.mem[*addr as usize] = *value;
@@ -3900,11 +3990,11 @@ fn cpu_with_memory(program_start: u16, bytes: &[(u16, u8)]) -> Cpu<TestMcu> {
 fn branch_relative_taken_and_not_taken_behaves() {
     let mut cpu = cpu_with_memory(0x8000, &[(0x8000, 0x02), (0x8001, 0xFE)]);
 
-    Microcode::BranchRelative(BranchTest::IfZeroClear).exec(&mut cpu);
+    cpu.exec(Microcode::BranchRelative(BranchTest::IfZeroClear));
     assert_eq!(cpu.pc(), 0x8003);
 
     cpu.set_flag(Flag::Zero, true);
-    Microcode::BranchRelative(BranchTest::IfZeroClear).exec(&mut cpu);
+    cpu.exec(Microcode::BranchRelative(BranchTest::IfZeroClear));
     assert_eq!(cpu.pc(), 0x8004);
 }
 
@@ -3912,13 +4002,13 @@ fn branch_relative_taken_and_not_taken_behaves() {
 fn load_immediate_x_and_y_read_operand_and_update_flags() {
     let mut cpu = cpu_with_memory(0x8000, &[(0x8000, 0x80), (0x8001, 0x00)]);
 
-    Microcode::LoadR(ValueSource::Immediate, Register::X).exec(&mut cpu);
+    cpu.exec(Microcode::LoadR(ValueSource::Immediate, Register::X));
     assert_eq!(cpu.x(), 0x80);
     assert_eq!(cpu.pc(), 0x8001);
     assert!(cpu.flag(Flag::Negative));
     assert!(!cpu.flag(Flag::Zero));
 
-    Microcode::LoadR(ValueSource::Immediate, Register::Y).exec(&mut cpu);
+    cpu.exec(Microcode::LoadR(ValueSource::Immediate, Register::Y));
     assert_eq!(cpu.y(), 0x00);
     assert_eq!(cpu.pc(), 0x8002);
     assert!(cpu.flag(Flag::Zero));
@@ -3933,11 +4023,11 @@ fn store_microcodes_write_registers_to_memory() {
     cpu.set_x(0x22);
     cpu.set_y(0x33);
 
-    Microcode::StoreR(ValueSource::Mem, Register::A).exec(&mut cpu);
+    cpu.exec(Microcode::StoreR(ValueSource::Mem, Register::A));
     cpu.ab.set(0x1235);
-    Microcode::StoreR(ValueSource::Mem, Register::X).exec(&mut cpu);
+    cpu.exec(Microcode::StoreR(ValueSource::Mem, Register::X));
     cpu.ab.set(0x1236);
-    Microcode::StoreR(ValueSource::Mem, Register::Y).exec(&mut cpu);
+    cpu.exec(Microcode::StoreR(ValueSource::Mem, Register::Y));
 
     assert_eq!(cpu.mcu().mem[0x1234], 0x11);
     assert_eq!(cpu.mcu().mem[0x1235], 0x22);
@@ -3953,15 +4043,15 @@ fn store_and_load_microcodes_use_alu_and_memory() {
     let mut cpu = cpu_with_memory(0x0000, &[(0x0042, 0x44), (0x0055, 0x55)]);
 
     cpu.ab.set(0x0042);
-    cpu.load_alu::<Mem>();
+    cpu.exec(Microcode::LoadIntoAlu(ValueSource::Mem));
     assert_eq!(cpu.alu, 0x44);
 
-    Microcode::LoadR(ValueSource::Mem, Register::A).exec(&mut cpu);
+    cpu.exec(Microcode::LoadR(ValueSource::Mem, Register::A));
     assert_eq!(cpu.a(), 0x44);
 
     cpu.ab.set(0x0055);
     cpu.set_a(0xAA);
-    Microcode::StoreR(ValueSource::Mem, Register::A).exec(&mut cpu);
+    cpu.exec(Microcode::StoreR(ValueSource::Mem, Register::A));
     assert_eq!(cpu.mcu().mem[0x0055], 0xAA);
 }
 
@@ -3970,14 +4060,14 @@ fn ora_and_eor_microcodes_update_accumulator_and_flags() {
     let mut cpu = cpu_with_memory(0x8000, &[(0x8000, 0b0000_1111), (0x0042, 0b1111_0000)]);
     cpu.set_a(0b0101_0000);
 
-    Microcode::ImmediateWithOp(ImmediateOp::Ora).exec(&mut cpu);
+    cpu.exec(Microcode::ImmediateWithOp(ImmediateOp::Ora));
     assert_eq!(cpu.a(), 0b0101_1111);
     assert!(!cpu.flag(Flag::Zero));
     assert!(!cpu.flag(Flag::Negative));
 
     cpu.ab.set(0x0042);
     cpu.alu = 0b1111_0000;
-    Microcode::Eor(ValueSource::Mem).exec(&mut cpu);
+    cpu.exec(Microcode::Eor(ValueSource::Mem));
     assert_eq!(cpu.a(), 0b1010_1111);
     assert!(!cpu.flag(Flag::Zero));
     assert!(cpu.flag(Flag::Negative));
@@ -3998,26 +4088,26 @@ fn compare_and_bit_microcodes_update_flags() {
     cpu.set_x(0x11);
     cpu.set_y(0x10);
 
-    Microcode::ImmediateWithOp(ImmediateOp::Cmp).exec(&mut cpu);
+    cpu.exec(Microcode::ImmediateWithOp(ImmediateOp::Cmp));
     assert!(cpu.flag(Flag::Carry));
     assert!(!cpu.flag(Flag::Zero));
     assert!(!cpu.flag(Flag::Negative));
 
     cpu.set_a(0x41);
     cpu.ab.set(0x0001);
-    cpu.load_alu::<Mem>();
-    Microcode::Bit(ValueSource::Mem).exec(&mut cpu);
+    cpu.exec(Microcode::LoadIntoAlu(ValueSource::Mem));
+    cpu.exec(Microcode::Bit(ValueSource::Mem));
     assert!(cpu.flag(Flag::Overflow));
     assert!(!cpu.flag(Flag::Negative));
     assert!(!cpu.flag(Flag::Zero));
 
     cpu.ab.set(0x0011);
-    Microcode::Cpx(ValueSource::Mem).exec(&mut cpu);
+    cpu.exec(Microcode::Cpx(ValueSource::Mem));
     assert!(cpu.flag(Flag::Carry));
     assert!(cpu.flag(Flag::Zero));
 
     cpu.ab.set(0x000F);
-    Microcode::Cpy(ValueSource::Mem).exec(&mut cpu);
+    cpu.exec(Microcode::Cpy(ValueSource::Mem));
     assert!(cpu.flag(Flag::Carry));
     assert!(!cpu.flag(Flag::Zero));
 }
@@ -4030,25 +4120,25 @@ fn transfer_microcodes_copy_registers_and_update_flags() {
     cpu.set_y(0x7F);
     cpu.set_sp(0x42);
 
-    Microcode::Transfer(TransferDirection::AtoX).exec(&mut cpu);
+    cpu.exec(Microcode::Transfer(TransferDirection::AtoX));
     assert_eq!(cpu.x(), 0x80);
     assert!(cpu.flag(Flag::Negative));
 
-    Microcode::Transfer(TransferDirection::XtoA).exec(&mut cpu);
+    cpu.exec(Microcode::Transfer(TransferDirection::XtoA));
     assert_eq!(cpu.a(), 0x80);
 
-    Microcode::Transfer(TransferDirection::AtoY).exec(&mut cpu);
+    cpu.exec(Microcode::Transfer(TransferDirection::AtoY));
     assert_eq!(cpu.y(), 0x80);
 
-    Microcode::Transfer(TransferDirection::YtoA).exec(&mut cpu);
+    cpu.exec(Microcode::Transfer(TransferDirection::YtoA));
     assert_eq!(cpu.a(), 0x80);
 
-    Microcode::Transfer(TransferDirection::SPtoX).exec(&mut cpu);
+    cpu.exec(Microcode::Transfer(TransferDirection::SPtoX));
     assert_eq!(cpu.x(), 0x42);
     assert!(!cpu.flag(Flag::Zero));
 
     cpu.set_x(0x55);
-    Microcode::Transfer(TransferDirection::XtoSP).exec(&mut cpu);
+    cpu.exec(Microcode::Transfer(TransferDirection::XtoSP));
     assert_eq!(cpu.sp(), 0x55);
 }
 
@@ -4059,17 +4149,17 @@ fn stack_and_misc_microcodes_manipulate_state() {
     cpu.set_sp(0xFF);
     cpu.set_status(Flag::Carry as u8);
 
-    Microcode::PushStack(PushTarget::A).exec(&mut cpu);
+    cpu.exec(Microcode::PushStack(PushTarget::A));
     assert_eq!(cpu.sp(), 0xFE);
     assert_eq!(cpu.mcu().mem[0x01FF], 0xAB);
 
     // Restore stack pointer for next test (simulating what Pla would have done)
     cpu.set_a(0x00);
-    Microcode::PopStack.exec(&mut cpu);
-    Microcode::UpdateAFromAlu.exec(&mut cpu);
+    cpu.exec(Microcode::PopStack);
+    cpu.exec(Microcode::UpdateAFromAlu);
     assert_eq!(cpu.a(), 0xAB);
 
-    Microcode::PushStatus { break_flag: true }.exec(&mut cpu);
+    cpu.exec(Microcode::PushStatus { break_flag: true });
     assert_eq!(
         cpu.mcu().mem[0x01FF] & (Flag::Break as u8),
         Flag::Break as u8
@@ -4078,39 +4168,39 @@ fn stack_and_misc_microcodes_manipulate_state() {
     cpu.set_status(0);
     cpu.set_sp(0xFD);
     cpu.mcu_mut().mem[0x01FE] = Flag::Carry as u8;
-    Microcode::Plp.exec(&mut cpu);
+    cpu.exec(Microcode::Plp);
     assert_eq!(cpu.status() & Flag::Carry as u8, Flag::Carry as u8);
 
     cpu.set_pc(0x2000);
     cpu.mcu_mut().mem[0x2000] = 0x34;
     cpu.mcu_mut().mem[0x2001] = 0x12;
-    Microcode::AbsoluteL.exec(&mut cpu);
-    Microcode::LoadPcAbsoluteH.exec(&mut cpu);
+    cpu.exec(Microcode::AbsoluteL);
+    cpu.exec(Microcode::LoadPcAbsoluteH);
     assert_eq!(cpu.pc(), 0x1234);
 
     cpu.ab.set(0x1234);
     cpu.mcu_mut().mem[0x1234] = 0x34;
     cpu.mcu_mut().mem[0x1235] = 0x12;
-    Microcode::IndexedL(ValueSource::Mem).exec(&mut cpu);
-    Microcode::IndexedHAndJump.exec(&mut cpu);
+    cpu.exec(Microcode::IndexedL(ValueSource::Mem));
+    cpu.exec(Microcode::IndexedHAndJump);
     assert_eq!(cpu.pc(), 0x1234);
 
     cpu.set_status(Flag::Carry as u8);
-    Microcode::ClearFlag(Flag::Carry).exec(&mut cpu);
+    cpu.exec(Microcode::ClearFlag(Flag::Carry));
     assert!(!cpu.flag(Flag::Carry));
-    Microcode::SetFlag(Flag::Carry).exec(&mut cpu);
+    cpu.exec(Microcode::SetFlag(Flag::Carry));
     assert!(cpu.flag(Flag::Carry));
     cpu.set_status(Flag::Decimal as u8);
-    Microcode::ClearFlag(Flag::Decimal).exec(&mut cpu);
+    cpu.exec(Microcode::ClearFlag(Flag::Decimal));
     assert!(!cpu.flag(Flag::Decimal));
-    Microcode::SetFlag(Flag::Decimal).exec(&mut cpu);
+    cpu.exec(Microcode::SetFlag(Flag::Decimal));
     assert!(cpu.flag(Flag::Decimal));
-    Microcode::ClearFlag(Flag::InterruptDisabled).exec(&mut cpu);
+    cpu.exec(Microcode::ClearFlag(Flag::InterruptDisabled));
     assert!(!cpu.flag(Flag::InterruptDisabled));
-    Microcode::SetFlag(Flag::InterruptDisabled).exec(&mut cpu);
+    cpu.exec(Microcode::SetFlag(Flag::InterruptDisabled));
     assert!(cpu.flag(Flag::InterruptDisabled));
     cpu.set_status(Flag::Overflow as u8);
-    Microcode::ClearFlag(Flag::Overflow).exec(&mut cpu);
+    cpu.exec(Microcode::ClearFlag(Flag::Overflow));
     assert!(!cpu.flag(Flag::Overflow));
 }
 
@@ -4119,7 +4209,7 @@ fn load_immediate_a_reads_operand_and_updates_flags() {
     let mut cpu = cpu_with_memory(0x8000, &[(0x8000, 0x00)]);
     cpu.set_status(Flag::Negative as u8);
 
-    Microcode::LoadR(ValueSource::Immediate, Register::A).exec(&mut cpu);
+    cpu.exec(Microcode::LoadR(ValueSource::Immediate, Register::A));
 
     assert_eq!(cpu.a(), 0x00);
     assert_eq!(cpu.pc(), 0x8001);
@@ -4132,7 +4222,7 @@ fn adc_immediate_uses_carry_and_updates_flags() {
     let mut cpu = cpu_with_memory(0x8000, &[(0x8000, 0x30)]);
     cpu.set_a(0x50);
 
-    Microcode::ImmediateWithOp(ImmediateOp::Adc).exec(&mut cpu);
+    cpu.exec(Microcode::ImmediateWithOp(ImmediateOp::Adc));
 
     assert_eq!(cpu.a(), 0x80);
     assert_eq!(cpu.pc(), 0x8001);
@@ -4148,7 +4238,7 @@ fn sbc_immediate_and_memory_microcodes_update_accumulator_and_flags() {
     cpu.set_a(0x20);
     cpu.set_flag(Flag::Carry, true);
 
-    Microcode::ImmediateWithOp(ImmediateOp::Sbc).exec(&mut cpu);
+    cpu.exec(Microcode::ImmediateWithOp(ImmediateOp::Sbc));
     assert_eq!(cpu.a(), 0x10);
     assert_eq!(cpu.pc(), 0x8001);
     assert!(cpu.flag(Flag::Carry));
@@ -4156,7 +4246,7 @@ fn sbc_immediate_and_memory_microcodes_update_accumulator_and_flags() {
 
     cpu.ab.set(0x0042);
     cpu.alu = 0x01;
-    Microcode::Sbc(ValueSource::Mem).exec(&mut cpu);
+    cpu.exec(Microcode::Sbc(ValueSource::Mem));
     assert_eq!(cpu.a(), 0x0F);
     assert!(cpu.flag(Flag::Carry));
     assert!(!cpu.flag(Flag::Zero));
@@ -4168,7 +4258,7 @@ fn and_immediate_and_memory_microcodes_update_accumulator_and_flags() {
     let mut cpu = cpu_with_memory(0x8000, &[(0x8000, 0b1100_1100), (0x0042, 0b1010_1010)]);
     cpu.set_a(0b1111_0000);
 
-    Microcode::ImmediateWithOp(ImmediateOp::And).exec(&mut cpu);
+    cpu.exec(Microcode::ImmediateWithOp(ImmediateOp::And));
     assert_eq!(cpu.a(), 0b1100_0000);
     assert_eq!(cpu.pc(), 0x8001);
     assert!(!cpu.flag(Flag::Zero));
@@ -4176,7 +4266,8 @@ fn and_immediate_and_memory_microcodes_update_accumulator_and_flags() {
 
     cpu.ab.set(0x0042);
     cpu.alu = 0b1010_1010;
-    cpu.and::<Alu>();
+    let Harness { cpu, bus } = &mut cpu;
+    cpu.and::<Alu, _>(bus);
     assert_eq!(cpu.a(), 0b1000_0000);
     assert!(!cpu.flag(Flag::Zero));
     assert!(cpu.flag(Flag::Negative));
@@ -4188,7 +4279,7 @@ fn bit_updates_flags_from_alu_and_accumulator() {
     cpu.set_a(0b0011_0000);
     cpu.set_status(Flag::Zero as u8);
 
-    Microcode::Bit(ValueSource::Mem).exec(&mut cpu);
+    cpu.exec(Microcode::Bit(ValueSource::Mem));
 
     assert!(cpu.flag(Flag::Negative));
     assert!(cpu.flag(Flag::Overflow));
@@ -4196,7 +4287,7 @@ fn bit_updates_flags_from_alu_and_accumulator() {
 
     let mut cpu = cpu_with_memory(0x0000, &[(0, 0b0100_0000)]);
     cpu.set_a(0b1111_0000);
-    Microcode::Bit(ValueSource::Mem).exec(&mut cpu);
+    cpu.exec(Microcode::Bit(ValueSource::Mem));
     assert!(!cpu.flag(Flag::Negative));
     assert!(cpu.flag(Flag::Overflow));
     assert!(!cpu.flag(Flag::Zero));
@@ -4229,7 +4320,7 @@ fn nmi_hijacks_brk_only_through_its_third_cycle() {
     const IRQ_FLAG: u16 = 0x11;
     const B_FLAG: u8 = 0x10;
     const C_FLAG: u8 = 0x01;
-    fn program(mcu: MockMcu) -> Cpu<MockMcu> {
+    fn program(mcu: MockMcu) -> Harness<MockMcu> {
         let mcu = mcu
             .with_program(
                 MAIN,
@@ -4260,7 +4351,7 @@ fn nmi_hijacks_brk_only_through_its_third_cycle() {
         mcu.write_word(0xFFFA, NMI_HANDLER);
         mcu.write_word(0xFFFE, IRQ_HANDLER);
         mcu.write_word(0xFFFC, MAIN);
-        Cpu::new(mcu) // reset sequence runs inside run()'s tick loop
+        Harness::new(mcu) // reset sequence runs inside run()'s tick loop
     }
 
     /// Run the program from reset, with the /NMI line rising at system
@@ -4351,12 +4442,12 @@ fn interrupt_handler_entry_21_dots_after_boundary() {
     /// interrupted instruction; handler entry is the tick completing the
     /// sequence's vector fetch, after which the very next cycle fetches
     /// the handler's first opcode.
-    fn run(assert_line: impl Fn(&mut Cpu<MockMcu>, SystemClock)) -> (u64, u64) {
+    fn run(assert_line: impl Fn(&mut Harness<MockMcu>, SystemClock)) -> (u64, u64) {
         let mcu = MockMcu::new().with_program(MAIN, &[0x58, 0x4C, 0x01, 0x04]); // CLI; JMP $0401
         mcu.write_word(0xFFFA, HANDLER); // NMI vector
         mcu.write_word(0xFFFE, HANDLER); // IRQ vector
         mcu.write_word(0xFFFC, MAIN); // reset vector
-        let mut cpu = Cpu::new(mcu);
+        let mut cpu = Harness::new(mcu);
         let mut plugin = EmptyPlugin::new();
 
         let mut boundary = None;
@@ -4417,7 +4508,7 @@ const STUB_AB: u16 = 0x56FF;
 const STUB_AB_LOW_INCREMENTED: u16 = 0x5600;
 const STUB_POP_ADDR: u16 = 0x01FE;
 
-fn classification_cpu() -> Cpu<MockMcu> {
+fn classification_cpu() -> Harness<MockMcu> {
     let mut cpu = create_cpu();
     cpu.pc.set(STUB_PC);
     cpu.ab.set(STUB_AB);
@@ -4425,7 +4516,7 @@ fn classification_cpu() -> Cpu<MockMcu> {
     cpu
 }
 
-fn pending(cpu: &mut Cpu<MockMcu>, mc: Microcode) {
+fn pending(cpu: &mut Harness<MockMcu>, mc: Microcode) {
     cpu.microcode_queue.clear();
     cpu.push_microcode(mc);
 }

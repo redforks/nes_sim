@@ -1,3 +1,4 @@
+use crate::mcu::Mcu;
 use crate::{
     Cpu, SystemClock,
     nes::{NesMcu, apu::AudioDriver},
@@ -15,26 +16,16 @@ pub enum DmcDmaType {
     Reload,
 }
 
+/// Memory-side seam for DMC DMA: the bus-facing endpoints DMA touches
+/// outside the CPU — decoded memory reads and the APU DMC request/supply
+/// pair. The CPU-side ops (halt projection, freeze/unfreeze) stay direct
+/// `Cpu` calls, not part of this seam: the CPU owns the halt state, the
+/// memory lives on the [`Bus`](crate::bus::Bus) (ADR-0015).
 #[cfg_attr(test, mockall::automock)]
-pub(crate) trait NesDmaSupport {
-    /// Address the pending CPU cycle puts on the bus; repeated externally
-    /// while the CPU is halted by DMA. `None` for purely internal cycles.
-    fn dma_halt_bus_addr(&self) -> Option<u16>;
-
-    /// Return false if cpu next operation is write, return true
-    /// if cpu freezed.
-    fn try_freeze(&mut self) -> bool;
-
-    /// Address the halt cycle repeats when the pending CPU cycle is purely
-    /// internal (the CPU has no bus address of its own this cycle).
-    fn pc(&self) -> u16;
-
-    /// unfreeze cpu, called when finished dma
-    fn unfreeze(&mut self);
-
+pub(crate) trait DmcDmaMem {
     /// Read memory for dma
     ///
-    /// If no memory activitity in this cycle, then cpu will repeat last read operation
+    /// If no memory activity in this cycle, then cpu will repeat last read operation
     fn read_mem(&mut self, addr: u16) -> u8;
 
     /// Take dmc dma request from apu, None if no current request
@@ -42,48 +33,19 @@ pub(crate) trait NesDmaSupport {
 
     /// Supply dmc dma result to apu
     fn supply_dmc_byte(&mut self, byte: u8);
-
-    fn is_get_cycle(&self, clock: SystemClock) -> bool;
 }
 
-impl<R: Render, D: AudioDriver> NesDmaSupport for Cpu<NesMcu<R, D>> {
-    fn try_freeze(&mut self) -> bool {
-        debug_assert!(!self.frozen);
-        if self.can_pause() {
-            self.frozen = true;
-            true
-        } else {
-            false
-        }
-    }
-
-    fn pc(&self) -> u16 {
-        Cpu::pc(self)
-    }
-
-    fn dma_halt_bus_addr(&self) -> Option<u16> {
-        Cpu::dma_halt_bus_addr(self)
-    }
-
-    fn unfreeze(&mut self) {
-        debug_assert!(self.frozen);
-        self.frozen = false;
-    }
-
+impl<R: Render, D: AudioDriver> DmcDmaMem for NesMcu<R, D> {
     fn read_mem(&mut self, addr: u16) -> u8 {
-        self.read_byte_for_dma(addr)
+        self.read(addr)
     }
 
     fn take_dmc_dma_request(&mut self) -> Option<(DmcDmaType, u16)> {
-        self.mcu_mut().apu_mut().take_dmc_dma_request()
+        self.apu_mut().take_dmc_dma_request()
     }
 
     fn supply_dmc_byte(&mut self, byte: u8) {
-        self.mcu_mut().apu_mut().supply_dmc_byte(byte);
-    }
-
-    fn is_get_cycle(&self, clock: SystemClock) -> bool {
-        clock.is_apu_get_clock()
+        self.apu_mut().supply_dmc_byte(byte);
     }
 }
 
@@ -133,22 +95,22 @@ impl DmcDma {
     }
 }
 impl DmcDma {
-    fn read(&mut self, cpu: &mut impl NesDmaSupport) {
-        let byte = cpu.read_mem(self.addr);
-        cpu.supply_dmc_byte(byte);
+    fn read(&mut self, mem: &mut impl DmcDmaMem) {
+        let byte = mem.read_mem(self.addr);
+        mem.supply_dmc_byte(byte);
         self.state = State::Unfreeze;
     }
 
-    fn dummy_read(&self, cpu: &mut impl NesDmaSupport) {
-        cpu.read_mem(self.halt_bus_addr);
+    fn dummy_read(&self, mem: &mut impl DmcDmaMem) {
+        mem.read_mem(self.halt_bus_addr);
     }
 
     /// Advance the DMA state machine by one tick. Returns true if the DMA
     /// performed its memory read this cycle (it drove the bus).
-    pub fn tick(&mut self, cpu: &mut impl NesDmaSupport, clock: SystemClock) -> bool {
+    pub fn tick(&mut self, cpu: &mut Cpu, mem: &mut impl DmcDmaMem, clock: SystemClock) -> bool {
         match self.state {
             State::Inactive => {
-                if let Some((dmc_dma_type, addr)) = cpu.take_dmc_dma_request() {
+                if let Some((dmc_dma_type, addr)) = mem.take_dmc_dma_request() {
                     self.addr = addr;
                     if dmc_dma_type == DmcDmaType::Load {
                         self.state = State::DelayForLoad(1);
@@ -158,7 +120,7 @@ impl DmcDma {
                             first_attempt: true,
                         };
                         // reload requests, no request cycle
-                        self.tick(cpu, clock);
+                        self.tick(cpu, mem, clock);
                     };
                 }
             }
@@ -178,7 +140,7 @@ impl DmcDma {
                 first_attempt,
             } => {
                 // 如果是第一次尝试，必须严格对齐目标相位
-                if first_attempt && halt_on_put == cpu.is_get_cycle(clock) {
+                if first_attempt && halt_on_put == clock.is_apu_get_clock() {
                     // 相位不对，CPU 照常运行，不消耗 DMA 周期
                     return false;
                 }
@@ -188,7 +150,7 @@ impl DmcDma {
                     // later no-op DMA cycles keep repeating that address.
                     match cpu.dma_halt_bus_addr() {
                         Some(addr) => {
-                            cpu.read_mem(addr);
+                            mem.read_mem(addr);
                             self.halt_bus_addr = addr;
                         }
                         None => {
@@ -204,20 +166,20 @@ impl DmcDma {
                 }
             }
             State::AlignOrRead => {
-                if cpu.is_get_cycle(clock) {
-                    self.read(cpu);
+                if clock.is_apu_get_clock() {
+                    self.read(mem);
                     return true;
                 } else {
                     self.state = State::Read;
-                    self.dummy_read(cpu);
+                    self.dummy_read(mem);
                 }
             }
             State::Dummy => {
                 self.state = State::AlignOrRead;
-                self.dummy_read(cpu);
+                self.dummy_read(mem);
             }
             State::Read => {
-                self.read(cpu);
+                self.read(mem);
                 return true;
             }
             State::Unfreeze => {

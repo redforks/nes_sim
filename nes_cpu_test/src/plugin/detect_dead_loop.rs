@@ -71,17 +71,22 @@ impl<const DEPTH: usize, const REPEATS: u32, M: Mcu> Plugin<M> for DetectDeadLoo
 mod tests {
     use super::*;
     use nes_core::Cpu;
-    use nes_core::EmptyPlugin;
+    use nes_core::bus::Bus;
     use nes_core::mcu::RamMcu;
+    use nes_core::view::MachineView;
     use rstest::rstest;
 
-    fn create_cpu(mem: [u8; 65536]) -> Cpu<RamMcu<65536>> {
-        let mcu = RamMcu::new(mem);
-        let mut cpu = Cpu::new(mcu);
-        let mut plugin = EmptyPlugin::new();
-        let mut clock = SystemClock::default();
-        cpu.run_to_instruction_boundary(&mut plugin, &mut clock);
-        cpu
+    /// The non-generic [`Cpu`] paired with its memory bus (ADR-0015); the
+    /// plugin tests build read-model views over the pair directly.
+    fn create_cpu(mem: [u8; 65536]) -> (Cpu, Bus<RamMcu<65536>>) {
+        (Cpu::new(), Bus::new(RamMcu::new(mem)))
+    }
+
+    fn build_view<'a>(
+        cpu: &mut Cpu,
+        bus: &'a Bus<RamMcu<65536>>,
+    ) -> MachineView<'a, RamMcu<65536>> {
+        MachineView::new(cpu.snapshot(), bus.mcu(), SystemClock::default())
     }
 
     #[rstest]
@@ -93,12 +98,12 @@ mod tests {
     #[case(0, false, &[10, 11, 10, 11, 9])]
     #[case(3, true, &[10, 11, 10, 11, 9, 10, 9, 10, 9, 10])]
     fn test(#[case] exp_count: u32, #[case] should_exit: bool, #[case] pcs: &[u16]) {
-        let mut cpu = create_cpu([0; 65536]);
+        let (mut cpu, bus) = create_cpu([0; 65536]);
 
         let mut p = DetectDeadLoop::<2, 2>::new();
         for pc in pcs.iter().copied() {
             cpu.set_pc(pc);
-            let view = cpu.view(SystemClock::default());
+            let view = build_view(&mut cpu, &bus);
             p.end(&view, SystemClock::default());
         }
 
@@ -114,13 +119,13 @@ mod tests {
         mem[0x8002] = 0x80;
         mem[0x6000] = 0x00;
 
-        let mut cpu = create_cpu(mem);
+        let (mut cpu, mut bus) = create_cpu(mem);
         let mut p = DetectDeadLoop::<1, 0>::new();
 
         cpu.set_pc(0x8000);
-        let view = cpu.view(SystemClock::default());
+        let view = build_view(&mut cpu, &mut bus);
         p.end(&view, SystemClock::default());
-        let view = cpu.view(SystemClock::default());
+        let view = build_view(&mut cpu, &mut bus);
         p.end(&view, SystemClock::default());
 
         assert!(p.should_exit);
@@ -133,13 +138,13 @@ mod tests {
         mem[0x8000] = 0xea;
         mem[0x6000] = 0x00;
 
-        let mut cpu = create_cpu(mem);
+        let (mut cpu, mut bus) = create_cpu(mem);
         let mut p = DetectDeadLoop::<1, 0>::new();
 
         cpu.set_pc(0x8000);
-        let view = cpu.view(SystemClock::default());
+        let view = build_view(&mut cpu, &mut bus);
         p.end(&view, SystemClock::default());
-        let view = cpu.view(SystemClock::default());
+        let view = build_view(&mut cpu, &mut bus);
         p.end(&view, SystemClock::default());
 
         assert!(p.should_exit);

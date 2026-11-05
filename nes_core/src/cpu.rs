@@ -1,12 +1,12 @@
 use crate::view::MachineView;
-use crate::{SystemClock, mcu::Mcu};
+use crate::{SystemClock, bus::Bus, mcu::Mcu};
 use arraydeque::ArrayDeque;
 use microcode::{
     AOrMemory, CrossPageBehavior, HijackEligibility, HijackSite, IncDecTarget, InterruptSequences,
     InterruptWindow, Microcode, OpAfterAddressing,
 };
 
-mod microcode;
+pub(crate) mod microcode;
 mod reg16;
 
 use self::reg16::Register16;
@@ -229,7 +229,7 @@ pub(crate) enum ReadAddress {
 }
 
 trait ValueSourceTrait {
-    fn value<M: Mcu>(cpu: &mut Cpu<M>) -> u8;
+    fn value<M: Mcu>(cpu: &mut Cpu, bus: &mut Bus<M>) -> u8;
 }
 
 struct Immediate;
@@ -238,42 +238,42 @@ struct ZeroPage;
 struct Mem;
 
 impl ValueSourceTrait for Immediate {
-    fn value<M: Mcu>(cpu: &mut Cpu<M>) -> u8 {
-        cpu.inc_read_byte()
+    fn value<M: Mcu>(cpu: &mut Cpu, bus: &mut Bus<M>) -> u8 {
+        cpu.inc_read_byte(bus)
     }
 }
 
 impl ValueSourceTrait for Alu {
-    fn value<M: Mcu>(cpu: &mut Cpu<M>) -> u8 {
+    fn value<M: Mcu>(cpu: &mut Cpu, _bus: &mut Bus<M>) -> u8 {
         cpu.alu
     }
 }
 
 impl ValueSourceTrait for ZeroPage {
-    fn value<M: Mcu>(cpu: &mut Cpu<M>) -> u8 {
-        cpu.mcu.read_zero_page(cpu.ab.low())
+    fn value<M: Mcu>(cpu: &mut Cpu, bus: &mut Bus<M>) -> u8 {
+        bus.mcu_mut().read_zero_page(cpu.ab.low())
     }
 }
 
 impl ValueSourceTrait for Mem {
-    fn value<M: Mcu>(cpu: &mut Cpu<M>) -> u8 {
-        cpu.mcu.read(cpu.ab.get())
+    fn value<M: Mcu>(cpu: &mut Cpu, bus: &mut Bus<M>) -> u8 {
+        bus.mcu_mut().read(cpu.ab.get())
     }
 }
 
 trait ValueTargetTrait {
-    fn write<M: Mcu>(cpu: &mut Cpu<M>, value: u8);
+    fn write<M: Mcu>(cpu: &mut Cpu, bus: &mut Bus<M>, value: u8);
 }
 
 impl ValueTargetTrait for ZeroPage {
-    fn write<M: Mcu>(cpu: &mut Cpu<M>, value: u8) {
-        cpu.mcu.write_zero_page(cpu.ab.low(), value);
+    fn write<M: Mcu>(cpu: &mut Cpu, bus: &mut Bus<M>, value: u8) {
+        bus.mcu_mut().write_zero_page(cpu.ab.low(), value);
     }
 }
 
 impl ValueTargetTrait for Mem {
-    fn write<M: Mcu>(cpu: &mut Cpu<M>, value: u8) {
-        cpu.mcu.write(cpu.ab.get(), value);
+    fn write<M: Mcu>(cpu: &mut Cpu, bus: &mut Bus<M>, value: u8) {
+        bus.mcu_mut().write(cpu.ab.get(), value);
     }
 }
 
@@ -288,7 +288,7 @@ struct ActiveInterruptWindow {
     started_at: Option<SystemClock>,
 }
 
-pub struct Cpu<M: Mcu> {
+pub struct Cpu {
     a: u8,
     x: u8,
     y: u8,
@@ -315,11 +315,10 @@ pub struct Cpu<M: Mcu> {
     halt: bool,
 
     microcode_queue: ArrayDeque<Microcode, 8>,
-    mcu: M,
 }
 
-impl<M: Mcu> Cpu<M> {
-    pub fn new(mcu: M) -> Cpu<M> {
+impl Cpu {
+    pub fn new() -> Cpu {
         let mut r = Cpu {
             a: 0,
             x: 0,
@@ -327,7 +326,6 @@ impl<M: Mcu> Cpu<M> {
             pc: Register16::default(),
             sp: 0,
             status: 0,
-            mcu,
             active_interrupt_window: None,
             interrupt_detected: None,
             nmi_detecteor: Default::default(),
@@ -343,14 +341,6 @@ impl<M: Mcu> Cpu<M> {
         };
         r.reset();
         r
-    }
-
-    pub(crate) fn mcu(&self) -> &M {
-        &self.mcu
-    }
-
-    pub(crate) fn mcu_mut(&mut self) -> &mut M {
-        &mut self.mcu
     }
 
     /// Set CPU program counter. Panics if there are pending microcodes;
@@ -397,11 +387,6 @@ impl<M: Mcu> Cpu<M> {
         }
     }
 
-    /// Read-model view for plugins — snapshot + address-space peek (ADR-0010).
-    pub fn view(&self, clock: SystemClock) -> crate::view::MachineView<'_, M> {
-        crate::view::MachineView::new(self.snapshot(), &self.mcu, clock)
-    }
-
     /// Test-only helpers to set registers without exposing `pub` writes.
     #[cfg(test)]
     pub fn set_a(&mut self, v: u8) {
@@ -436,13 +421,14 @@ impl<M: Mcu> Cpu<M> {
     /// per CPU cycle) — the setup-time seam. For full device interleaving
     /// use `NesMachine::run_to_instruction_boundary` which ticks via
     /// `NesMachine::tick()`.
-    pub fn run_to_instruction_boundary<P: Plugin<M>>(
+    pub fn run_to_instruction_boundary<P: Plugin<M>, M: Mcu>(
         &mut self,
+        bus: &mut Bus<M>,
         plugin: &mut P,
         clock: &mut SystemClock,
     ) {
         while !self.microcodes_empty() {
-            self.tick(plugin, *clock);
+            self.tick(bus, plugin, *clock);
             *clock = clock.inc();
         }
     }
@@ -458,6 +444,47 @@ impl<M: Mcu> Cpu<M> {
     /// write. DMC DMA must not freeze the CPU during a write cycle.
     pub(crate) fn can_pause(&self) -> bool {
         !matches!(self.pending_bus_cycle(), BusCycle::Write)
+    }
+
+    /// Freeze entry for DMA-halt (the CPU-side half of the DMC DMA seam):
+    /// true when the halt landed and the CPU is frozen; a pending write
+    /// cycle must never be frozen, so freezing is refused then.
+    pub(crate) fn try_freeze(&mut self) -> bool {
+        debug_assert!(!self.frozen);
+        if self.can_pause() {
+            self.frozen = true;
+            true
+        } else {
+            false
+        }
+    }
+
+    /// Unfreeze counterpart of [`Cpu::try_freeze`], called when the DMA
+    /// read cycle completes.
+    pub(crate) fn unfreeze(&mut self) {
+        debug_assert!(self.frozen);
+        self.frozen = false;
+    }
+
+    /// Test-only staging for DMA-seam unit tests (`dmc_dma/tests.rs`):
+    /// replace the pending microcode — and pin the address latch when the
+    /// staged cycle drives one — so the pending bus cycle, and with it the
+    /// freeze outcome, is exact.
+    #[cfg(test)]
+    pub(crate) fn stage_pending_cycle_for_test(&mut self, mc: Microcode, latch: Option<u16>) {
+        self.frozen = false;
+        self.microcode_queue.clear();
+        self.push_microcode(mc);
+        if let Some(addr) = latch {
+            self.ab.set(addr);
+        }
+    }
+
+    /// Test-only counterpart of the staging above: pin the next fetch
+    /// address (`pc`) that internal-cycle DMA halts repeat on the bus.
+    #[cfg(test)]
+    pub(crate) fn set_next_fetch_pc_for_test(&mut self, pc: u16) {
+        self.pc.set(pc);
     }
 
     /// Address the CPU drives on the bus for its pending cycle, mirroring
@@ -706,7 +733,12 @@ impl<M: Mcu> Cpu<M> {
 
     /// Return true if just execute current instruction
     #[hotpath::measure(impl_type = "Cpu")]
-    pub fn tick<P: Plugin<M>>(&mut self, plugin: &mut P, clock: SystemClock) -> TickOutcome {
+    pub fn tick<P: Plugin<M>, M: Mcu>(
+        &mut self,
+        bus: &mut Bus<M>,
+        plugin: &mut P,
+        clock: SystemClock,
+    ) -> TickOutcome {
         crate::hotpath_cpu::hotpath_cpu_alias!(
             Self,
             concat!(module_path!(), "::Cpu::tick"),
@@ -736,7 +768,7 @@ impl<M: Mcu> Cpu<M> {
         let code = match self.pop_microcode() {
             Some(v) => v,
             None => {
-                let view = MachineView::new(self.snapshot(), &self.mcu, clock);
+                let view = MachineView::new(self.snapshot(), bus.mcu(), clock);
                 plugin.start(&view, clock);
                 match self.interrupt_detected.take() {
                     Some(InterruptType::Nmi) => self.push_enter_interrupt_microcodes(true),
@@ -747,7 +779,7 @@ impl<M: Mcu> Cpu<M> {
         };
 
         let last_status = self.status;
-        code.exec(self);
+        code.exec(self, bus);
         let instruction_complete = self.microcode_queue.is_empty();
         // Suppression is declared: the armed window's `suppress_final_poll`
         // owns the final-cycle poll. The queue drains exactly on the final
@@ -763,7 +795,7 @@ impl<M: Mcu> Cpu<M> {
         self.detect_interrupt(clock, is_last_op, last_status, code);
 
         if instruction_complete {
-            let view = MachineView::new(self.snapshot(), &self.mcu, clock);
+            let view = MachineView::new(self.snapshot(), bus.mcu(), clock);
             plugin.end(&view, clock);
             TickOutcome {
                 control: plugin.should_stop(),
@@ -843,30 +875,26 @@ impl<M: Mcu> Cpu<M> {
         self.set_flag(Flag::Zero, value == 0);
     }
 
-    pub(crate) fn read_byte_for_dma(&mut self, addr: u16) -> u8 {
-        self.mcu.read(addr)
+    fn read_byte<M: Mcu>(&mut self, bus: &mut Bus<M>, addr: u16) -> u8 {
+        bus.mcu_mut().read(addr)
     }
 
-    fn read_byte(&mut self, addr: u16) -> u8 {
-        self.mcu.read(addr)
+    pub fn peek_byte<M: Mcu>(&self, bus: &Bus<M>, addr: u16) -> u8 {
+        bus.mcu().peek(addr)
     }
 
-    pub fn peek_byte(&self, addr: u16) -> u8 {
-        self.mcu.peek(addr)
+    fn read_pc_byte<M: Mcu>(&mut self, bus: &mut Bus<M>) {
+        self.read_byte(bus, self.pc.get());
     }
 
-    fn read_pc_byte(&mut self) {
-        self.read_byte(self.pc.get());
-    }
-
-    fn inc_read_byte(&mut self) -> u8 {
+    fn inc_read_byte<M: Mcu>(&mut self, bus: &mut Bus<M>) -> u8 {
         let addr = self.pc.get();
         self.pc.wrapping_add(1);
-        self.read_byte(addr)
+        self.read_byte(bus, addr)
     }
 
-    fn write_byte(&mut self, value: u8) {
-        self.write_mem(self.ab.get(), value);
+    fn write_byte<M: Mcu>(&mut self, bus: &mut Bus<M>, value: u8) {
+        self.write_mem(bus, self.ab.get(), value);
     }
 
     /// Writes a value to the address bus latch through the addressing
@@ -876,31 +904,31 @@ impl<M: Mcu> Cpu<M> {
     /// other sequence carries `ValueSource::Mem` and writes generically.
     /// The flavour decides *how* the byte is written, never *whether* a
     /// write happens.
-    fn write_value(&mut self, src: ValueSource, value: u8) {
+    fn write_value<M: Mcu>(&mut self, bus: &mut Bus<M>, src: ValueSource, value: u8) {
         match src {
-            ValueSource::ZeroPage => <ZeroPage as ValueTargetTrait>::write(self, value),
-            ValueSource::Mem => self.write_byte(value),
+            ValueSource::ZeroPage => <ZeroPage as ValueTargetTrait>::write(self, bus, value),
+            ValueSource::Mem => self.write_byte(bus, value),
             ValueSource::Immediate => unreachable!("an immediate has no write target"),
         }
     }
 
-    fn write_mem(&mut self, addr: u16, value: u8) {
-        self.mcu.write(addr, value);
+    fn write_mem<M: Mcu>(&mut self, bus: &mut Bus<M>, addr: u16, value: u8) {
+        bus.mcu_mut().write(addr, value);
     }
 
-    fn push_stack(&mut self, value: u8) {
-        self.mcu.write_stack_page(self.sp, value);
+    fn push_stack<M: Mcu>(&mut self, bus: &mut Bus<M>, value: u8) {
+        bus.mcu_mut().write_stack_page(self.sp, value);
         self.sp = self.sp.wrapping_sub(1);
     }
 
-    fn pop_stack(&mut self) -> u8 {
+    fn pop_stack<M: Mcu>(&mut self, bus: &mut Bus<M>) -> u8 {
         self.sp = self.sp.wrapping_add(1);
-        self.mcu.read_stack_page(self.sp)
+        bus.mcu_mut().read_stack_page(self.sp)
     }
 
     #[cfg(test)]
-    fn peek_stack(&self) -> u8 {
-        self.mcu.peek(self.stack_pop_addr())
+    fn peek_stack<M: Mcu>(&self, bus: &Bus<M>) -> u8 {
+        bus.mcu().peek(self.stack_pop_addr())
     }
 
     fn halt(&mut self) {
@@ -929,8 +957,8 @@ impl<M: Mcu> Cpu<M> {
 
     /// Loads the byte at the address latch into the ALU through `S`: the
     /// zero-page fast path for `$zp` sequences, the generic path otherwise.
-    fn load_alu<S: ValueSourceTrait>(&mut self) {
-        self.alu = S::value(self);
+    fn load_alu<S: ValueSourceTrait, M: Mcu>(&mut self, bus: &mut Bus<M>) {
+        self.alu = S::value(self, bus);
     }
 
     fn do_adc(&mut self, val: u8) {
@@ -945,23 +973,23 @@ impl<M: Mcu> Cpu<M> {
         self.set_register(Register::A, result);
     }
 
-    fn adc<S: ValueSourceTrait>(&mut self) {
-        let val = S::value(self);
+    fn adc<S: ValueSourceTrait, M: Mcu>(&mut self, bus: &mut Bus<M>) {
+        let val = S::value(self, bus);
         self.do_adc(val);
     }
 
-    fn sbc<S: ValueSourceTrait>(&mut self) {
-        let val = !S::value(self);
+    fn sbc<S: ValueSourceTrait, M: Mcu>(&mut self, bus: &mut Bus<M>) {
+        let val = !S::value(self, bus);
         self.do_adc(val);
     }
 
-    fn ora<S: ValueSourceTrait>(&mut self) {
-        let val = S::value(self);
+    fn ora<S: ValueSourceTrait, M: Mcu>(&mut self, bus: &mut Bus<M>) {
+        let val = S::value(self, bus);
         self.set_register(Register::A, self.a | val);
     }
 
-    fn eor<S: ValueSourceTrait>(&mut self) {
-        let val = S::value(self);
+    fn eor<S: ValueSourceTrait, M: Mcu>(&mut self, bus: &mut Bus<M>) {
+        let val = S::value(self, bus);
         self.set_register(Register::A, self.a ^ val);
     }
 
@@ -971,18 +999,18 @@ impl<M: Mcu> Cpu<M> {
         self.set_flag(Flag::Carry, lhs >= rhs);
     }
 
-    fn cmp<S: ValueSourceTrait>(&mut self) {
-        let val = S::value(self);
+    fn cmp<S: ValueSourceTrait, M: Mcu>(&mut self, bus: &mut Bus<M>) {
+        let val = S::value(self, bus);
         self.compare(self.a, val);
     }
 
-    fn cpx<S: ValueSourceTrait>(&mut self) {
-        let val = S::value(self);
+    fn cpx<S: ValueSourceTrait, M: Mcu>(&mut self, bus: &mut Bus<M>) {
+        let val = S::value(self, bus);
         self.compare(self.x, val);
     }
 
-    fn cpy<S: ValueSourceTrait>(&mut self) {
-        let val = S::value(self);
+    fn cpy<S: ValueSourceTrait, M: Mcu>(&mut self, bus: &mut Bus<M>) {
+        let val = S::value(self, bus);
         self.compare(self.y, val);
     }
 
@@ -1017,8 +1045,8 @@ impl<M: Mcu> Cpu<M> {
     /// `Mem` for absolute and pointer targets), so the zero-page decision is
     /// a monomorphised trait impl, not a run-time test (spec #46, ticket
     /// #50).
-    fn lax<S: ValueSourceTrait>(&mut self) {
-        self.alu = S::value(self);
+    fn lax<S: ValueSourceTrait, M: Mcu>(&mut self, bus: &mut Bus<M>) {
+        self.alu = S::value(self, bus);
         self.set_register(Register::A, self.alu);
         self.set_register(Register::X, self.alu);
     }
@@ -1027,100 +1055,103 @@ impl<M: Mcu> Cpu<M> {
     // flavour their sequence was built with and route the result through
     // `Cpu::write_value` (spec #46, ticket #49), exactly as the documented
     // RMW family does through `Microcode::write_alu`.
-    fn sax(&mut self, src: ValueSource) {
-        self.write_value(src, self.a & self.x);
+    fn sax<M: Mcu>(&mut self, bus: &mut Bus<M>, src: ValueSource) {
+        self.write_value(bus, src, self.a & self.x);
     }
 
-    fn dcp(&mut self, src: ValueSource) {
+    fn dcp<M: Mcu>(&mut self, bus: &mut Bus<M>, src: ValueSource) {
         let v = self.alu.wrapping_sub(1);
-        self.write_value(src, v);
+        self.write_value(bus, src, v);
         self.update_zero_negative_flags(self.a.wrapping_sub(v));
         self.set_flag(Flag::Carry, self.a >= v);
     }
 
-    fn isc(&mut self, src: ValueSource) {
+    fn isc<M: Mcu>(&mut self, bus: &mut Bus<M>, src: ValueSource) {
         let v = self.alu.wrapping_add(1);
-        self.write_value(src, v);
+        self.write_value(bus, src, v);
         self.alu = v;
-        self.sbc::<Alu>();
+        self.sbc::<Alu, _>(bus);
     }
 
-    fn rra(&mut self, src: ValueSource) {
+    fn rra<M: Mcu>(&mut self, bus: &mut Bus<M>, src: ValueSource) {
         let carry = self.alu & 0x01 != 0;
         self.alu = (self.alu >> 1) | ((self.flag(Flag::Carry) as u8) << 7);
-        self.write_value(src, self.alu);
+        self.write_value(bus, src, self.alu);
         self.set_flag(Flag::Carry, carry);
-        self.adc::<Alu>();
+        self.adc::<Alu, _>(bus);
     }
 
-    fn rla(&mut self, src: ValueSource) {
+    fn rla<M: Mcu>(&mut self, bus: &mut Bus<M>, src: ValueSource) {
         let new = (self.alu << 1) | (self.flag(Flag::Carry) as u8);
         self.set_flag(Flag::Carry, self.alu & 0x80 != 0);
         self.alu = new;
-        self.write_value(src, self.alu);
-        self.and::<Alu>();
+        self.write_value(bus, src, self.alu);
+        self.and::<Alu, _>(bus);
     }
 
-    fn slo(&mut self, src: ValueSource) {
+    fn slo<M: Mcu>(&mut self, bus: &mut Bus<M>, src: ValueSource) {
         self.set_flag(Flag::Carry, self.alu & 0x80 != 0);
         self.alu <<= 1;
-        self.write_value(src, self.alu);
-        self.ora::<Alu>();
+        self.write_value(bus, src, self.alu);
+        self.ora::<Alu, _>(bus);
     }
 
-    fn sre(&mut self, src: ValueSource) {
+    fn sre<M: Mcu>(&mut self, bus: &mut Bus<M>, src: ValueSource) {
         self.set_flag(Flag::Carry, self.alu & 0x01 != 0);
         self.alu >>= 1;
-        self.write_value(src, self.alu);
-        self.eor::<Alu>();
+        self.write_value(bus, src, self.alu);
+        self.eor::<Alu, _>(bus);
     }
 
     /// Store `value & (ABH + 1)` at the address latch — the high-byte
     /// corruption shared by SHX, SHY, SHA and TAS.
-    fn store_high_byte(&mut self, value: u8) {
+    fn store_high_byte<M: Mcu>(&mut self, bus: &mut Bus<M>, value: u8) {
         let out = value & self.abh().wrapping_add(1);
         self.ab.set_high(out);
-        self.write_byte(out);
+        self.write_byte(bus, out);
     }
 
-    fn shx(&mut self) {
-        self.store_high_byte(self.x);
+    fn shx<M: Mcu>(&mut self, bus: &mut Bus<M>) {
+        self.store_high_byte(bus, self.x);
     }
 
-    fn shy(&mut self) {
-        self.store_high_byte(self.y);
+    fn shy<M: Mcu>(&mut self, bus: &mut Bus<M>) {
+        self.store_high_byte(bus, self.y);
     }
 
-    fn sha(&mut self) {
+    fn sha<M: Mcu>(&mut self, bus: &mut Bus<M>) {
         // SHA (AHX/AXA): store A & X & (high-byte of addr + 1) at address
-        self.store_high_byte(self.a & self.x);
+        self.store_high_byte(bus, self.a & self.x);
     }
 
-    fn tas(&mut self) {
+    fn tas<M: Mcu>(&mut self, bus: &mut Bus<M>) {
         let v = self.a & self.x;
         self.sp = v;
-        self.store_high_byte(v);
+        self.store_high_byte(bus, v);
     }
 
-    fn push_status(&mut self, break_flag: bool) {
+    fn push_status<M: Mcu>(&mut self, bus: &mut Bus<M>, break_flag: bool) {
         if let Some((_, cutoff)) = self.declared_hijack_site(HijackEligibility::LatchedOnly)
             && self.nmi_detecteor.consume_latched_edge(cutoff)
         {
             self.switch_to_nmi_vector(&[Microcode::LoadNmiPcL, Microcode::LoadNmiPcH]);
-            self.push_status(break_flag);
+            self.push_status(bus, break_flag);
             return;
         }
 
-        self.push_stack(if break_flag {
-            self.status | Flag::Break as u8
-        } else {
-            self.status
-        });
+        self.push_stack(
+            bus,
+            if break_flag {
+                self.status | Flag::Break as u8
+            } else {
+                self.status
+            },
+        );
     }
 
-    fn plp(&mut self) {
+    fn plp<M: Mcu>(&mut self, bus: &mut Bus<M>) {
         let break_flag = self.flag(Flag::Break);
-        self.status = self.pop_stack();
+        self.status = self.pop_stack(bus);
         self.set_flag(Flag::Break, break_flag);
         self.set_flag(Flag::NotUsed, true);
     }
@@ -1128,8 +1159,8 @@ impl<M: Mcu> Cpu<M> {
     /// Zero-page index add cycle: hardware re-reads the unindexed base
     /// address on the bus (RAM only, so side-effect-free) and latches the
     /// wrapped indexed address.
-    fn zero_page_indexed(&mut self, index: u8) {
-        let _ = self.mcu.read_zero_page(self.ab.low());
+    fn zero_page_indexed<M: Mcu>(&mut self, bus: &mut Bus<M>, index: u8) {
+        let _ = bus.mcu_mut().read_zero_page(self.ab.low());
         self.ab.set(self.abl().wrapping_add(index) as u16);
     }
 
@@ -1137,13 +1168,13 @@ impl<M: Mcu> Cpu<M> {
         self.pc.set(self.ab.get());
     }
 
-    fn and<S: ValueSourceTrait>(&mut self) {
-        let v = S::value(self);
+    fn and<S: ValueSourceTrait, M: Mcu>(&mut self, bus: &mut Bus<M>) {
+        let v = S::value(self, bus);
         self.set_register(Register::A, self.a & v);
     }
 
-    fn bit<S: ValueSourceTrait>(&mut self) {
-        let v = S::value(self);
+    fn bit<S: ValueSourceTrait, M: Mcu>(&mut self, bus: &mut Bus<M>) {
+        let v = S::value(self, bus);
         self.set_flag(Flag::Overflow, v & 0x40 != 0);
         self.update_negative_flag(v);
         self.update_zero_flag(self.a & v);
@@ -1245,41 +1276,41 @@ impl<M: Mcu> Cpu<M> {
         self.nmi_detecteor.cancel_rising_edge_at(clock);
     }
 
-    fn load_vector_low(&mut self, address: u16, disable_interrupt: bool) {
+    fn load_vector_low<M: Mcu>(&mut self, bus: &mut Bus<M>, address: u16, disable_interrupt: bool) {
         if disable_interrupt {
             self.set_flag(Flag::InterruptDisabled, true);
         }
-        let low = self.read_byte(address);
+        let low = self.read_byte(bus, address);
         self.pc.set_low(low);
     }
 
-    fn load_vector_high(&mut self, address: u16) {
-        let high = self.read_byte(address);
+    fn load_vector_high<M: Mcu>(&mut self, bus: &mut Bus<M>, address: u16) {
+        let high = self.read_byte(bus, address);
         self.pc.set_high(high);
     }
 
-    fn load_nmi_pcl(&mut self) {
-        self.load_vector_low(0xFFFA, true);
+    fn load_nmi_pcl<M: Mcu>(&mut self, bus: &mut Bus<M>) {
+        self.load_vector_low(bus, 0xFFFA, true);
     }
 
-    fn load_nmi_pch(&mut self) {
-        self.load_vector_high(0xFFFB);
+    fn load_nmi_pch<M: Mcu>(&mut self, bus: &mut Bus<M>) {
+        self.load_vector_high(bus, 0xFFFB);
     }
 
-    fn load_irq_pcl(&mut self) {
+    fn load_irq_pcl<M: Mcu>(&mut self, bus: &mut Bus<M>) {
         if let Some((_, cutoff)) = self.declared_hijack_site(HijackEligibility::NewestVisible)
             && self.nmi_detecteor.consume_hijack_edge(cutoff)
         {
             self.switch_to_nmi_vector(&[Microcode::LoadNmiPcH]);
-            self.load_nmi_pcl();
+            self.load_nmi_pcl(bus);
             return;
         }
 
-        self.load_vector_low(0xFFFE, true);
+        self.load_vector_low(bus, 0xFFFE, true);
     }
 
-    fn load_irq_pch(&mut self) {
-        self.load_vector_high(0xFFFF);
+    fn load_irq_pch<M: Mcu>(&mut self, bus: &mut Bus<M>) {
+        self.load_vector_high(bus, 0xFFFF);
     }
 
     fn set_register(&mut self, register: Register, val: u8) {
@@ -1298,16 +1329,16 @@ impl<M: Mcu> Cpu<M> {
 
     /// Reads the pointer's low byte through `S`: the zero-page fast path
     /// for the `(zp,X)`/`(zp),Y` modes, the generic path for `JMP ($xxxx)`.
-    fn indexed_l<S: ValueSourceTrait>(&mut self) {
-        self.db = S::value(self);
+    fn indexed_l<S: ValueSourceTrait, M: Mcu>(&mut self, bus: &mut Bus<M>) {
+        self.db = S::value(self, bus);
     }
 
     /// Reads the pointer's high byte at the low-byte-incremented (no
     /// carry) address, through `S`: the zero-page fast path for the
     /// `(zp,X)`/`(zp),Y` modes, the generic path for `JMP ($xxxx)`.
-    fn indexed_h<S: ValueSourceTrait>(&mut self) {
+    fn indexed_h<S: ValueSourceTrait, M: Mcu>(&mut self, bus: &mut Bus<M>) {
         self.ab.wrapping_inc_low();
-        let high = S::value(self);
+        let high = S::value(self, bus);
         self.ab.set(self.db as u16 | ((high as u16) << 8));
     }
 }

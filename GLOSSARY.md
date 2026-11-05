@@ -70,31 +70,31 @@ _Avoid_: system cycles (use for the raw u64 count only), global clock, static cl
 `SystemClock` phase helpers `is_cpu_clock()` (`cycles % 3 == 2`, the Last phase), `is_apu_clock()` (same), and `is_even_cpu_cycle()` derive CPU/APU cadence from the master dot. One CPU cycle spans 3 dots; the former `CpuClockPhase {First,Middle,Last}` enum was removed — callers use `clock.is_cpu_clock()` etc, not `clock.phase()`.
 
 **Tick**:
-A single system-cycle step. `NesMachine::tick()` advances the clock by one, then calls each device's tick method in order: PPU → cartridge IRQ latch capture → APU (sample IRQ, tick) → Bus (DMC + OAM DMA arbitration) → interrupt lines → CPU (if the bus is `Idle`). Each device uses the clock to decide whether to advance its internal state. The bus is the only DMA owner; DMC and OAM are not ticked separately outside it.
+A single system-cycle step. `NesMachine::tick()` advances the clock by one, then calls each device's tick method in order: PPU → cartridge IRQ latch capture → APU (sample IRQ, tick) → `DmaBus` (DMC + OAM DMA arbitration) → interrupt lines → CPU (unless the `DmaBus` returned a non-`Idle` owner). Each device uses the clock to decide whether to advance its internal state. The `DmaBus` is the only DMA owner; DMC and OAM are not ticked separately outside it.
 **Microcode**:
 A single step of the CPU's internal microcode machine. Multiple microcodes may execute across several ticks to complete one 6502 instruction.
 
 **Run to instruction boundary**:
-Draining the CPU's microcode queue until it is empty — the edge between two 6502 instructions (including the interrupt/BRK/RESET tails). Two seams: `Cpu::run_to_instruction_boundary(&mut plugin, &mut clock)` is the CPU-only drain (advances `clock` by one dot per microcode, no device ticks — the setup-time seam used by `NesMachine::set_pc` and tests); `NesMachine::run_to_instruction_boundary()` is the full-interleaving drain (advances `self.clock` via `NesMachine::tick()` with PPU/APU/DMA/NMI interleaving — the faithful seam). Microcodes must be drained via one of these named primitives, never in an ad-hoc tight loop.
+Draining the CPU's microcode queue until it is empty — the edge between two 6502 instructions (including the interrupt/BRK/RESET tails). Three siblings: `Cpu::run_to_instruction_boundary(&mut bus, plugin, clock)` is the CPU-only drain (advances `clock` by one dot per microcode, no device ticks — the setup-time seam wrapped by `Machine::run_to_instruction_boundary` / `Machine::drain_to_instruction_boundary(plugin, ...)`); `NesMachine::run_to_instruction_boundary()` is the full-interleaving drain (advances `self.clock` via `NesMachine::tick()` with PPU/APU/DMA/NMI interleaving — the faithful seam). Microcodes must be drained via one of these named primitives, never in an ad-hoc tight loop.
 _Avoid_: drain, flush queue, run until empty (use the canonical name)
 
 **Frame**:
 
 **Reset quiescence**:
-The bus-drain contract of `NesMachine::reset()`. Once the reset line is asserted the CPU stops being fed; PPU/APU keep interleaving and any DMA work already accepted by the bus completes before the device resets apply. Fresh DMC fetch requests are suppressed during the drain so a playing sample channel cannot extend it. The bus owns DMA quiescence (`Bus::is_busy` / `Bus::suppress_new_dmc_requests` / `Bus::reset`); `NesMcu::reset(clock)` re-anchors only time-relative PPU/APU state and `Cpu::reset` clears CPU state — time keeps running on the master `SystemClock`.
+The bus-drain contract of `NesMachine::reset()`. Once the reset line is asserted the CPU stops being fed; PPU/APU keep interleaving and any DMA work already accepted by the bus completes before the device resets apply. Fresh DMC fetch requests are suppressed during the drain so a playing sample channel cannot extend it. The `DmaBus` owns DMA quiescence (`DmaBus::is_busy(&mcu)` / `DmaBus::suppress_new_dmc_requests(&mut mcu)` / `DmaBus::reset()`); `NesMcu::reset(clock)` re-anchors only time-relative PPU/APU state and `Cpu::reset` clears CPU state — time keeps running on the master `SystemClock`.
 _Avoid_: hard abort, mid-DMA teardown, stale DMA
 
 **Per-dot contract**:
-The minimal pub surface of `Cpu<M>` (ADR-0010): `tick` (→ `TickOutcome`), `update_interrupt_lines`, `reset`, `is_halted`, `microcodes_empty`, `run_to_instruction_boundary`, plus read-only `a() / x() / y() / sp() / status() / pc() / flag()` and `snapshot()`/`view()`. No `mcu()` walk, no `pub` register fields, no `pub(crate)` DMA helpers — those live behind `Bus`. The one seam for instruction-boundary work is `run_to_instruction_boundary`, not a hand-rolled `while`.
-_Avoid_: pub register fields, `cpu.mcu().ppu()`, `(ExecuteResult, bool)` tuple
+The minimal pub surface of `Cpu` (ADR-0010, ADR-0017): `tick(&mut self, bus: &mut Bus, plugin, clock)` (→ `TickOutcome`), `update_interrupt_lines`, `reset`, `is_halted`, `microcodes_empty`, `run_to_instruction_boundary(&mut bus, plugin, clock)`, plus read-only `a() / x() / y() / sp() / status() / pc() / flag()` and `snapshot()`. No `mcu()` walk, no `pub` register fields, no `pub(crate)` DMA helpers — memory access goes through the `&mut Bus` parameter and DMA through the `DmaBus`. The one seam for instruction-boundary work is `run_to_instruction_boundary`, not a hand-rolled `while`.
+_Avoid_: pub register fields, `cpu.mcu().ppu()`, `(ExecuteResult, bool)` tuple, `cpu.mcu()`
 
 **CpuSnapshot**:
 Owned copy `CpuSnapshot {a, x, y, sp, status, pc, halt}` returned by `Cpu::snapshot()` and held as `MachineView::cpu`. The read-model for register inspection; plugins/tools read `view.cpu.a` not `cpu.a`.
 _Avoid_: direct `cpu.a` field access
 
 **MachineView**:
-Read-model snapshot `MachineView<'a, M: Mcu> {cpu: CpuSnapshot, mcu: &M, clock}` exposed to `Plugin::start(&MachineView, clock)` / `end`. For `NesMcu` it exposes `ppu_in_vblank()`, `ppu_rendering_enabled()`, `ppu_frame_no()`, `read_vram()`, `borrow_image()` without exposing `&Cpu` or `&Mcu` walks. Built in `Cpu::tick` as `MachineView::new(snapshot, &mcu, clock)` and via `Cpu::view(clock)`.
-_Avoid_: `&Cpu<M>` in Plugin, `cpu.mcu().ppu()`, `mcu().peek` outside view
+Read-model snapshot `MachineView<'a, M: Mcu> {cpu: CpuSnapshot, mcu: &M, clock}` exposed to `Plugin::start(&MachineView, clock)` / `end`. For `NesMcu` it exposes `ppu_in_vblank()`, `ppu_rendering_enabled()`, `ppu_frame_no()`, `read_vram()`, `borrow_image()` without exposing `&Cpu` or `&Mcu` walks. Built as `MachineView::new(cpu.snapshot(), bus.mcu(), clock)` — inside `Cpu::tick` for the per-dot view; external tools (e.g. plugin unit tests) build it over a `(Cpu, Bus)` pair the same way.
+_Avoid_: `&Cpu` in Plugin, `cpu.mcu().ppu()`, `mcu().peek` outside view
 
 **TickOutcome**:
 Named result `TickOutcome {control: ExecuteResult, instruction_complete: bool}` returned by `Cpu::tick`. `instruction_complete` is true when the microcode queue drained (instruction boundary). Replaces the unnamed `(ExecuteResult, bool)` tuple.
@@ -179,20 +179,25 @@ _Avoid_: RDY repeat, dummy read (the DMA's own alignment cycles), repeated fetch
 
 Core domain for the single bus that the CPU, OAM DMA, and DMC DMA time-share. The bus is the deep module that localizes DMA arbitration; the PPU/APU/MCU are not bus owners.
 
-**Bus (DMA Bus)**:
-The module that owns the active DMA transfer for both channels and the arbitration policy between them. Lives in `nes_core::bus` (or `nes::bus`) as `struct Bus { dmc: DmcDma, oam: Option<OamActive> }`. Its interface is `tick(cpu, clock) -> BusOwner`, `is_busy(&mcu) -> bool`, `suppress_new_dmc_requests(&mut mcu)`, `reset()`. `DmcDma`'s 7-state machine stays a private implementation detail behind the bus.
+**DmaBus**:
+The struct that owns the active DMA transfer for both channels and the arbitration policy between them. Lives in `nes_core::dma_bus` as `struct DmaBus { dmc: DmcDma, oam: Option<OamActive> }`. Its interface is `tick(cpu, bus, clock) -> BusOwner`, `is_busy(&mcu) -> bool`, `suppress_new_dmc_requests(&mut mcu)`, `reset()`. `DmcDma`'s 7-state machine stays a private implementation detail behind it. (Formerly called the "DMA Bus", `Bus` in `nes_core::bus`; renamed `DmaBus` in ADR-0017 when the memory `Bus` took that name.)
+_Avoid_: bus (unqualified for DMA), `Bus::tick` for DMA
+
+**Bus (memory bus)**:
+The CPU's external bus, `Bus<M: Mcu>` in `nes_core::bus` (ADR-0017): the owner of the address-space `Mcu` a CPU drives. `Cpu` never stores memory; every CPU method that reads or writes it takes `&mut Bus<M>`, and owners hold `cpu: Cpu` next to `bus: Bus<M>` as paired fields. Tests build the pair the same way (`Cpu::new()` + `Bus::new(mcu)`).
+_Avoid_: bus (without qualifier) for the MCU wrapper, putting the `Mcu` back inside `Cpu`
 _Avoid_: DMA coordinator (acceptable alias in prose, not in code), bus controller, DMA engine
 
 **BusOwner**:
-Per-dot holder of the bus returned by `Bus::tick`: `Idle` (CPU owns the bus), `Oam` (OAM DMA held the bus this dot — includes halt, alignment, and transfer cycles), or `Dmc` (DMC DMA held/drove the bus this dot). The caller (`NesMachine::tick`) skips `Cpu::tick` / `update_interrupt_lines` when the owner is not `Idle`; DMC's `cpu.frozen` stall remains the same mechanism but is driven from inside `Bus::tick`.
+Per-dot holder of the bus returned by `DmaBus::tick`: `Idle` (CPU owns the bus), `Oam` (OAM DMA held the bus this dot — includes halt, alignment, and transfer cycles), or `Dmc` (DMC DMA held/drove the bus this dot). The caller (`NesMachine::tick`) skips `Cpu::tick` / `update_interrupt_lines` when the owner is not `Idle`; DMC's `cpu.frozen` stall remains the same mechanism but is driven from inside `DmaBus::tick`.
 _Avoid_: bus state, dma owner, active dma
 
 **DMA arbitration (DMC-wins)**:
-The single arbitration policy the bus implements: a DMC DMA read (`dmc_drove_bus` true) that lands on an OAM DMA read phase (`startup_cycles == 0 && transfer_cycle.is_multiple_of(2)`) aborts the OAM read, which is redone after one alignment cycle (`pause_cycles = 1`). The `dmc_drove_bus` bool and the `NesMcu` collision predicate become a private branch inside `Bus::tick`; no external bool is threaded.
+The single arbitration policy the `DmaBus` implements: a DMC DMA read (`dmc_drove_bus` true) that lands on an OAM DMA read phase (`startup_cycles == 0 && transfer_cycle.is_multiple_of(2)`) aborts the OAM read, which is redone after one alignment cycle (`pause_cycles = 1`). The `dmc_drove_bus` bool and the `NesMcu` collision predicate are a private branch inside `DmaBus::tick`; no external bool is threaded.
 _Avoid_: collision handling (ok in commentary, not the canonical term), dma priority
 
 **Bus quiescence**:
-The condition `Bus::is_busy(&mcu)` used by `NesMachine::reset` to drain the bus. True while any DMA is active (`dmc.is_busy()` or OAM active) or a `$4014` OAM request is still queued in the producer. Drain loops `while bus.is_busy()` with `bus.suppress_new_dmc_requests()` each dot until quiet, then `bus.reset()` clears both channels at once.
+The condition `DmaBus::is_busy(&mcu)` used by `NesMachine::reset` to drain the bus. True while any DMA is active (`dmc.is_busy()` or OAM active) or a `$4014` OAM request is still queued in the producer. Drain loops `while dma_bus.is_busy()` with `dma_bus.suppress_new_dmc_requests()` each dot until quiet, then `dma_bus.reset()` clears both channels at once.
 _Avoid_: dma busy, oam active, pending dma
 
 **Raw timer period**:

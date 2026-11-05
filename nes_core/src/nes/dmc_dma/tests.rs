@@ -1,4 +1,5 @@
 use super::*;
+use crate::cpu::{Flag, ValueSource, microcode::Microcode}; // cpu freeze staging (ADR-0015)
 use mockall::predicate::*;
 use mockall::*;
 
@@ -6,7 +7,7 @@ use mockall::*;
 fn dma_not_activated() {
     let mut t = TestStruct::new();
     t.expect_take_dmc_dma_request(None);
-    t.tick_and_assert(State::Inactive);
+    t.tick_and_assert(State::Inactive, false);
 }
 
 #[test]
@@ -30,34 +31,33 @@ fn load_dmc_dma() {
 
     // get request
     t.expect_take_dmc_dma_request(Some((DmcDmaType::Load, 0x1234)));
-    t.tick_and_assert(State::DelayForLoad(1));
+    t.tick_and_assert(State::DelayForLoad(1), false);
 
     // delay cpu cycle
-    t.tick_and_assert(State::TryHalt {
-        halt_on_put: false,
-        first_attempt: true,
-    });
+    t.tick_and_assert(
+        State::TryHalt {
+            halt_on_put: false,
+            first_attempt: true,
+        },
+        false,
+    );
 
-    // try freeze and succeed
-    t.expect_is_get_cycle(true);
-    t.expect_try_freeze(true);
-    t.expect_dma_halt_bus_addr(Some(0x2234));
+    // try freeze and succeed: pending read cycle from $2234
+    t.stage_read_cycle(0x2234);
     t.expect_read_mem(0x2234, 0x00);
-    t.tick_and_assert(State::Dummy);
+    t.tick_and_assert(State::Dummy, true);
 
     // dummy
     t.dummy_step();
 
     // apu is get cycle, it is safe to do dma read
-    t.expect_is_get_cycle(true);
     t.expect_read_mem(0x1234, 0xcd);
     t.expect_supply_dmc_byte_with(0xcd);
     // fetch cycle: CPU is still halted while the DMA drives the bus
-    t.tick_and_assert(State::Unfreeze);
+    t.tick_and_assert(State::Unfreeze, true);
 
     // CPU resumes execution on the cycle after the DMA read
-    t.expect_unfreeze();
-    t.tick_and_assert(State::Inactive);
+    t.unfreeze_tick();
 }
 
 #[test]
@@ -78,44 +78,47 @@ fn load_dmc_dmadelayed() {
 
     // get request
     t.expect_take_dmc_dma_request(Some((DmcDmaType::Load, 0x1234)));
-    t.tick_and_assert(State::DelayForLoad(1));
+    t.tick_and_assert(State::DelayForLoad(1), false);
 
     // delay cpu cycle
-    t.tick_and_assert(State::TryHalt {
-        halt_on_put: false,
-        first_attempt: true,
-    });
+    t.tick_and_assert(
+        State::TryHalt {
+            halt_on_put: false,
+            first_attempt: true,
+        },
+        false,
+    );
 
     // try freeze but cpu is write
-    t.expect_is_get_cycle_and_freeze(true, false);
-    t.tick_and_assert(State::TryHalt {
-        first_attempt: false,
-        halt_on_put: false,
-    });
+    t.stage_write_cycle(0x2234);
+    t.tick_and_assert(
+        State::TryHalt {
+            first_attempt: false,
+            halt_on_put: false,
+        },
+        true,
+    );
 
     // cpu halt succeed
-    t.expect_try_freeze(true);
-    t.expect_dma_halt_bus_addr(Some(0x2234));
+    t.stage_read_cycle(0x2234);
     t.expect_read_mem(0x2234, 0x00);
-    t.tick_and_assert(State::Dummy);
+    t.tick_and_assert(State::Dummy, false);
 
     // dummy
     t.dummy_step();
 
     // apu is put cycle, need an align cycle
-    t.expect_is_get_cycle(false);
     t.expect_read_mem(0x2234, 0x0d);
-    t.tick_and_assert(State::Read);
+    t.tick_and_assert(State::Read, false);
 
     // apu is get cycle, complete the dma
     t.expect_read_mem(0x1234, 0xcd);
     t.expect_supply_dmc_byte_with(0xcd);
     // fetch cycle: CPU is still halted while the DMA drives the bus
-    t.tick_and_assert(State::Unfreeze);
+    t.tick_and_assert(State::Unfreeze, true);
 
     // CPU resumes execution on the cycle after the DMA read
-    t.expect_unfreeze();
-    t.tick_and_assert(State::Inactive);
+    t.unfreeze_tick();
 }
 
 #[test]
@@ -128,32 +131,28 @@ fn reload_dmc_dma() {
     // (halted) (get) DMA reads from address B
     //          (put) CPU reads from address A  <- CPU resumes execution
 
-    // get request
-    // try freeze and succeed
+    // get request; the halt lands on a put cycle (reload requests skip the
+    // request cycle) and succeeds against a pending read
     t.expect_take_dmc_dma_request(Some((DmcDmaType::Reload, 0x1234)));
-    t.expect_is_get_cycle(false);
-    t.expect_try_freeze(true);
-    t.expect_dma_halt_bus_addr(Some(0x2234));
+    t.stage_read_cycle(0x2234);
     t.expect_read_mem(0x2234, 0x00);
-    t.tick_and_assert(State::Dummy);
+    t.tick_and_assert(State::Dummy, false);
 
     // dummy
     t.dummy_step();
 
     // apu is put cycle, so it is an align cycle, no dma read
-    t.expect_is_get_cycle(false);
     t.expect_read_mem(0x2234, 0x00);
-    t.tick_and_assert(State::Read);
+    t.tick_and_assert(State::Read, false);
 
     // read and supply to apu
     t.expect_read_mem(0x1234, 0xcd);
     t.expect_supply_dmc_byte_with(0xcd);
     // fetch cycle: CPU is still halted while the DMA drives the bus
-    t.tick_and_assert(State::Unfreeze);
+    t.tick_and_assert(State::Unfreeze, false);
 
     // CPU resumes execution on the cycle after the DMA read
-    t.expect_unfreeze();
-    t.tick_and_assert(State::Inactive);
+    t.unfreeze_tick();
 }
 
 #[test]
@@ -166,35 +165,33 @@ fn reload_dmc_dma_delayed_1_cycle() {
     // (halted) (get) DMA reads from address B
     //          (put) CPU reads from address A  <- CPU resumes execution
 
-    // get request
-    // try freeze but cpu is write
+    // get request; try freeze but cpu is write
     t.expect_take_dmc_dma_request(Some((DmcDmaType::Reload, 0x1234)));
-    t.expect_is_get_cycle(false);
-    t.expect_try_freeze(false);
-    t.tick_and_assert(State::TryHalt {
-        halt_on_put: true,
-        first_attempt: false,
-    });
+    t.stage_write_cycle(0x2234);
+    t.tick_and_assert(
+        State::TryHalt {
+            halt_on_put: true,
+            first_attempt: false,
+        },
+        false,
+    );
 
     // try freeze and succeed
-    t.expect_try_freeze(true);
-    t.expect_dma_halt_bus_addr(Some(0x2234));
+    t.stage_read_cycle(0x2234);
     t.expect_read_mem(0x2234, 0x00);
-    t.tick_and_assert(State::Dummy);
+    t.tick_and_assert(State::Dummy, false);
 
     // dummy
     t.dummy_step();
 
     // read and supply to apu
-    t.expect_is_get_cycle(true);
     t.expect_read_mem(0x1234, 0xcd);
     t.expect_supply_dmc_byte_with(0xcd);
     // fetch cycle: CPU is still halted while the DMA drives the bus
-    t.tick_and_assert(State::Unfreeze);
+    t.tick_and_assert(State::Unfreeze, true);
 
     // CPU resumes execution on the cycle after the DMA read
-    t.expect_unfreeze();
-    t.tick_and_assert(State::Inactive);
+    t.unfreeze_tick();
 }
 
 #[test]
@@ -209,45 +206,47 @@ fn reload_dmc_dma_delayed_2_cycle() {
     // (halted) (get) DMA reads from address B
     //          (put) CPU reads from address A  <- CPU resumes execution
 
-    // get request
-    // try freeze but cpu is write
+    // get request; try freeze but cpu is write (the reload entry recurses
+    // one tick, so this first tick both takes the request and refuses)
     t.expect_take_dmc_dma_request(Some((DmcDmaType::Reload, 0x1234)));
-    t.expect_is_get_cycle(false);
-    t.expect_try_freeze(false);
-    t.tick_and_assert(State::TryHalt {
-        halt_on_put: true,
-        first_attempt: false,
-    });
+    t.stage_write_cycle(0x2234);
+    t.tick_and_assert(
+        State::TryHalt {
+            halt_on_put: true,
+            first_attempt: false,
+        },
+        false,
+    );
 
     // try again but cpu still write
-    t.expect_try_freeze(false);
-    t.tick_and_assert(State::TryHalt {
-        halt_on_put: true,
-        first_attempt: false,
-    });
+    t.stage_write_cycle(0x2234);
+    t.tick_and_assert(
+        State::TryHalt {
+            halt_on_put: true,
+            first_attempt: false,
+        },
+        false,
+    );
 
     // try freeze and succeed
-    t.expect_try_freeze(true);
-    t.expect_dma_halt_bus_addr(Some(0x2234));
+    t.stage_read_cycle(0x2234);
     t.expect_read_mem(0x2234, 0x00);
-    t.tick_and_assert(State::Dummy);
+    t.tick_and_assert(State::Dummy, false);
 
     // dummy
     t.dummy_step();
 
     // need align
-    t.expect_is_get_cycle(false);
     t.expect_read_mem(0x2234, 0x8f);
-    t.tick_and_assert(State::Read);
+    t.tick_and_assert(State::Read, false);
     // read and supply to apu
     t.expect_read_mem(0x1234, 0xcd);
     t.expect_supply_dmc_byte_with(0xcd);
     // fetch cycle: CPU is still halted while the DMA drives the bus
-    t.tick_and_assert(State::Unfreeze);
+    t.tick_and_assert(State::Unfreeze, false);
 
     // CPU resumes execution on the cycle after the DMA read
-    t.expect_unfreeze();
-    t.tick_and_assert(State::Inactive);
+    t.unfreeze_tick();
 }
 
 #[test]
@@ -262,49 +261,53 @@ fn reload_dmc_dma_delayed_3_cycle() {
     // (halted) (get) DMA reads from address B
     //     (put) CPU reads from address A  <- CPU resumes execution
 
-    // get request
-    // try freeze but cpu is write
+    // get request; try freeze but cpu is write
     t.expect_take_dmc_dma_request(Some((DmcDmaType::Reload, 0x1234)));
-    t.expect_is_get_cycle(false);
-    t.expect_try_freeze(false);
-    t.tick_and_assert(State::TryHalt {
-        halt_on_put: true,
-        first_attempt: false,
-    });
+    t.stage_write_cycle(0x2234);
+    t.tick_and_assert(
+        State::TryHalt {
+            halt_on_put: true,
+            first_attempt: false,
+        },
+        false,
+    );
 
     // try again but cpu still write
-    t.expect_try_freeze(false);
-    t.tick_and_assert(State::TryHalt {
-        halt_on_put: true,
-        first_attempt: false,
-    });
+    t.stage_write_cycle(0x2234);
+    t.tick_and_assert(
+        State::TryHalt {
+            halt_on_put: true,
+            first_attempt: false,
+        },
+        false,
+    );
 
     // try again but cpu still write
-    t.expect_try_freeze(false);
-    t.tick_and_assert(State::TryHalt {
-        halt_on_put: true,
-        first_attempt: false,
-    });
+    t.stage_write_cycle(0x2234);
+    t.tick_and_assert(
+        State::TryHalt {
+            halt_on_put: true,
+            first_attempt: false,
+        },
+        false,
+    );
 
     // try freeze and succeed
-    t.expect_try_freeze(true);
-    t.expect_dma_halt_bus_addr(Some(0x2234));
+    t.stage_read_cycle(0x2234);
     t.expect_read_mem(0x2234, 0x00);
-    t.tick_and_assert(State::Dummy);
+    t.tick_and_assert(State::Dummy, false);
 
     // dummy
     t.dummy_step();
 
     // read and supply to apu
-    t.expect_is_get_cycle(true);
     t.expect_read_mem(0x1234, 0xcd);
     t.expect_supply_dmc_byte_with(0xcd);
     // fetch cycle: CPU is still halted while the DMA drives the bus
-    t.tick_and_assert(State::Unfreeze);
+    t.tick_and_assert(State::Unfreeze, true);
 
     // CPU resumes execution on the cycle after the DMA read
-    t.expect_unfreeze();
-    t.tick_and_assert(State::Inactive);
+    t.unfreeze_tick();
 }
 
 #[test]
@@ -313,21 +316,21 @@ fn halt_on_internal_cycle_repeats_next_fetch_addr() {
     // bus address of its own: the DMA repeats the CPU's next fetch address.
     let mut t = TestStruct::new();
     t.expect_take_dmc_dma_request(Some((DmcDmaType::Load, 0x1234)));
-    t.tick_and_assert(State::DelayForLoad(1));
-    t.tick_and_assert(State::TryHalt {
-        halt_on_put: false,
-        first_attempt: true,
-    });
+    t.tick_and_assert(State::DelayForLoad(1), false);
+    t.tick_and_assert(
+        State::TryHalt {
+            halt_on_put: false,
+            first_attempt: true,
+        },
+        false,
+    );
 
-    t.expect_is_get_cycle(true);
-    t.expect_try_freeze(true);
-    t.expect_dma_halt_bus_addr(None);
-    t.expect_pc(0x0400);
-    t.tick_and_assert(State::Dummy);
+    t.stage_internal_cycle(0x0400);
+    t.tick_and_assert(State::Dummy, true);
 
     // The dummy cycle drives the fallback address on the bus.
     t.expect_read_mem(0x0400, 0x00);
-    t.tick_and_assert(State::AlignOrRead);
+    t.tick_and_assert(State::AlignOrRead, false);
 }
 
 #[test]
@@ -337,64 +340,92 @@ fn is_busy_tracks_state_and_reset_clears_in_flight_work() {
 
     // Start a load DMA so the machine leaves Inactive.
     t.expect_take_dmc_dma_request(Some((DmcDmaType::Load, 0x1234)));
-    t.tick_and_assert(State::DelayForLoad(1));
+    t.tick_and_assert(State::DelayForLoad(1), false);
     assert!(t.dma.is_busy());
 
     // Reset must drop everything: a tick on a reset controller is a no-op.
     t.dma.reset();
     assert!(!t.dma.is_busy());
     t.expect_take_dmc_dma_request(None);
-    t.tick_and_assert(State::Inactive);
+    t.tick_and_assert(State::Inactive, false);
 }
 
+/// The DMC DMA state machine over a production [`Cpu`] plus a mocked
+/// [`DmcDmaMem`]. The real CPU makes the freeze seam
+/// (`try_freeze`/`dma_halt_bus_addr`/`unfreeze`) behave exactly as in
+/// production (ADR-0015): each tick stages the pending bus cycle to control
+/// the freeze outcome, and a mocked put/get clock controls the phase.
 struct TestStruct {
     seq: Sequence,
     dma: DmcDma,
-    cpu: MockNesDmaSupport,
+    cpu: Cpu,
+    mem: MockDmcDmaMem,
 }
 
 impl TestStruct {
     fn new() -> Self {
-        let cpu = MockNesDmaSupport::new();
+        let cpu = Cpu::new();
         let seq = Sequence::new();
         let dma = DmcDma::default();
-
-        Self { seq, dma, cpu }
+        Self {
+            seq,
+            dma,
+            cpu,
+            mem: MockDmcDmaMem::new(),
+        }
     }
 
-    fn tick_and_assert(&mut self, exp_state: State) {
-        self.dma.tick(&mut self.cpu, SystemClock::default());
+    /// Stage a pending read cycle from the address latch: the CPU freezes
+    /// and repeats `addr` on the bus until unfrozen.
+    fn stage_read_cycle(&mut self, addr: u16) {
+        self.cpu
+            .stage_pending_cycle_for_test(Microcode::LoadIntoAlu(ValueSource::Mem), Some(addr));
+    }
+
+    /// Stage a pending write cycle: the freeze is refused (writes must
+    /// never be swallowed).
+    fn stage_write_cycle(&mut self, addr: u16) {
+        self.cpu
+            .stage_pending_cycle_for_test(Microcode::StoreAlu(ValueSource::Mem), Some(addr));
+    }
+
+    /// Stage a purely internal pending cycle whose next fetch address is
+    /// `pc`: the halt cycle repeats that fallback address on the bus.
+    fn stage_internal_cycle(&mut self, pc: u16) {
+        self.cpu
+            .stage_pending_cycle_for_test(Microcode::SetFlag(Flag::InterruptDisabled), None);
+        self.cpu.set_next_fetch_pc_for_test(pc);
+    }
+
+    fn tick_and_assert(&mut self, exp_state: State, is_get: bool) {
+        // `is_apu_get_clock` pins the get phase to odd CPU cycles.
+        let clock = if is_get {
+            SystemClock(3)
+        } else {
+            SystemClock(0)
+        };
+        self.dma.tick(&mut self.cpu, &mut self.mem, clock);
         assert_eq!(self.dma.state, exp_state);
-        self.cpu.checkpoint();
-        self.cpu.checkpoint();
+        self.mem.checkpoint();
+    }
+
+    /// Final Eastern tick: the Unfreeze state releases the CPU, so the next
+    /// tick must leave the CPU running again.
+    fn unfreeze_tick(&mut self) {
+        self.tick_and_assert(State::Inactive, false);
+        assert!(!self.cpu.frozen, "CPU must resume after the DMA read cycle");
     }
 
     fn expect_take_dmc_dma_request(&mut self, req: Option<(DmcDmaType, u16)>) {
-        self.cpu
+        self.mem
             .expect_take_dmc_dma_request()
             .times(1)
             .in_sequence(&mut self.seq)
             .return_const(req);
     }
 
-    fn expect_try_freeze(&mut self, succeed: bool) {
-        self.cpu
-            .expect_try_freeze()
-            .times(1)
-            .in_sequence(&mut self.seq)
-            .return_const(succeed);
-    }
-
-    fn expect_is_get_cycle(&mut self, is_get: bool) {
-        self.cpu
-            .expect_is_get_cycle()
-            .times(1)
-            .in_sequence(&mut self.seq)
-            .return_const(is_get);
-    }
-
     fn expect_read_mem(&mut self, addr: u16, result: u8) {
-        self.cpu
+        self.mem
             .expect_read_mem()
             .with(eq(addr))
             .times(1)
@@ -402,16 +433,8 @@ impl TestStruct {
             .return_const(result);
     }
 
-    fn expect_unfreeze(&mut self) {
-        self.cpu
-            .expect_unfreeze()
-            .times(1)
-            .in_sequence(&mut self.seq)
-            .return_const(());
-    }
-
     fn expect_supply_dmc_byte_with(&mut self, value: u8) {
-        self.cpu
+        self.mem
             .expect_supply_dmc_byte()
             .with(eq(value))
             .times(1)
@@ -419,37 +442,8 @@ impl TestStruct {
             .return_const(());
     }
 
-    fn expect_dma_halt_bus_addr(&mut self, addr: Option<u16>) {
-        self.cpu
-            .expect_dma_halt_bus_addr()
-            .times(1)
-            .in_sequence(&mut self.seq)
-            .return_const(addr);
-    }
-
-    fn expect_pc(&mut self, pc: u16) {
-        self.cpu
-            .expect_pc()
-            .times(1)
-            .in_sequence(&mut self.seq)
-            .return_const(pc);
-    }
-
-    fn expect_is_get_cycle_and_freeze(&mut self, is_get: bool, freeze_succeed: bool) {
-        self.expect_is_get_cycle(is_get);
-        self.expect_try_freeze(freeze_succeed);
-    }
-
     fn dummy_step(&mut self) {
-        self.cpu
-            .expect_read_mem()
-            .with(eq(0x2234u16))
-            .times(1)
-            .in_sequence(&mut self.seq)
-            .return_const(0x00);
-        self.dma.tick(&mut self.cpu, SystemClock::default());
-        assert_eq!(State::AlignOrRead, self.dma.state);
-        self.cpu.checkpoint();
-        self.cpu.checkpoint();
+        self.expect_read_mem(0x2234, 0x00);
+        self.tick_and_assert(State::AlignOrRead, false);
     }
 }

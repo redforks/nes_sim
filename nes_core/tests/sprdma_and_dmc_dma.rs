@@ -6,6 +6,7 @@
 //! never observes the clear and the ROM spins forever. The ROM must reach
 //! completion (pass or fail verdict both count — the hang is the bug).
 
+use nes_core::mcu::Mcu;
 use nes_core::nes::NesMcu;
 use nes_core::{EmptyPlugin, ines::INesFile, nes_machine::NesMachine};
 
@@ -26,14 +27,11 @@ fn sprdma_and_dmc_dma_rom_terminates() {
     // Blargg test ROM interface: `$6000-$6003` must hold the signature
     // `DE B0 61`; `$6000` is `$80` while running and the verdict afterwards.
     let status = |machine: &NesMachine<EmptyPlugin<NesMcu<(), ()>>, (), ()>| {
-        let cpu = machine.cpu();
-        if cpu.peek_byte(0x6001) != 0xDE
-            || cpu.peek_byte(0x6002) != 0xB0
-            || cpu.peek_byte(0x6003) != 0x61
-        {
+        let mcu = machine.mcu();
+        if mcu.peek(0x6001) != 0xDE || mcu.peek(0x6002) != 0xB0 || mcu.peek(0x6003) != 0x61 {
             None
         } else {
-            Some(cpu.peek_byte(0x6000))
+            Some(mcu.peek(0x6000))
         }
     };
 

@@ -108,7 +108,7 @@ impl<R: Render, D: AudioDriver> NesMcu<R, D> {
     }
 
     /// Reset all bus devices to their power-up contract. The DMA bus is now
-    /// owned by [`crate::bus::Bus`] and reset separately; by the time this
+    /// owned by [`crate::dma_bus::DmaBus`] and reset separately; by the time this
     /// runs, DMA work must already be quiesced (see [`crate::NesMachine::reset`]),
     /// so OAM pending should be idle here. The bus owns the active OAM state.
     ///
@@ -124,8 +124,8 @@ impl<R: Render, D: AudioDriver> NesMcu<R, D> {
     }
 
     /// True while an OAM DMA request is still queued in the producer.
-    /// The active transfer lives in [`crate::bus::Bus`]; use
-    /// `Bus::is_busy(mcu)` for the full quiescence predicate.
+    /// The active transfer lives in [`crate::dma_bus::DmaBus`]; use
+    /// `DmaBus::is_busy(mcu)` for the full quiescence predicate.
     pub fn has_oam_dma_pending(&self) -> bool {
         self.oam_dma_pending.is_some()
     }
