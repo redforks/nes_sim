@@ -161,7 +161,7 @@ impl Envelope {
 
     pub fn output(&self) -> u8 {
         if self.disabled {
-            *self.divider.period()
+            self.divider.period()
         } else {
             self.counter
         }
@@ -190,8 +190,8 @@ impl CounterPub for u8 {
     }
 }
 
-#[derive(Debug)]
-pub struct Divider<C> {
+#[derive(Debug, Copy, Clone)]
+pub struct Divider<C: Copy> {
     period: C,
     counter: C,
 }
@@ -222,8 +222,8 @@ impl<C: CounterPub> Divider<C> {
         self.period = period;
     }
 
-    pub fn period(&self) -> &C {
-        &self.period
+    pub fn period(self) -> C {
+        self.period
     }
 }
 

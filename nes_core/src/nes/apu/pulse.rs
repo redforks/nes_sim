@@ -162,7 +162,7 @@ impl Pulse {
         // often enough that short-circuit branches mispredict.
         let gate = (self.sequencer.output() != 0)
             & !self.length.is_zero()
-            & !self.sweep.is_muted(*self.timer.period());
+            & !self.sweep.is_muted(self.timer.period());
         self.envelope.output() * gate as u8
     }
 
