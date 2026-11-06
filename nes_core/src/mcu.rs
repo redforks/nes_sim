@@ -1,3 +1,5 @@
+use crate::SystemClock;
+
 mod ram;
 
 pub use ram::RamMcu;
@@ -10,7 +12,10 @@ pub trait Mcu {
     // Changed to &mut self to allow implementations to mutate state during reads
     fn read(&mut self, address: u16) -> u8;
     fn peek(&self, address: u16) -> u8;
-    fn write(&mut self, address: u16, value: u8);
+    /// Bus write arriving at `clock`, the dot it was issued on. Cartridges
+    /// timestamp writes against the dot (MMC1's consecutive-cycle filter) —
+    /// see GLOSSARY "Per-dot contract".
+    fn write(&mut self, address: u16, value: u8, clock: SystemClock);
 
     /// Fast-path: read from zero page ($0000-$00FF).
     /// `address` is the direct zero-page offset ($00..=$FF).
@@ -29,15 +34,15 @@ pub trait Mcu {
     /// Fast-path: write to zero page ($0000-$00FF).
     /// `address` is the direct zero-page offset ($00..=$FF).
     /// Default falls back to write(), but implementations can bypass address-range dispatch.
-    fn write_zero_page(&mut self, address: u8, value: u8) {
-        self.write(address as u16, value)
+    fn write_zero_page(&mut self, address: u8, value: u8, clock: SystemClock) {
+        self.write(address as u16, value, clock)
     }
 
     /// Fast-path: write to stack page ($0100-$01FF).
     /// `address` is the offset from $0100 ($00..=$FF).
     /// Default falls back to write(), but implementations can bypass address-range dispatch.
-    fn write_stack_page(&mut self, address: u8, value: u8) {
-        self.write(0x100 + address as u16, value)
+    fn write_stack_page(&mut self, address: u8, value: u8, clock: SystemClock) {
+        self.write(0x100 + address as u16, value, clock)
     }
 }
 
@@ -67,7 +72,7 @@ mod tests {
             *self.data.borrow()
         }
 
-        fn write(&mut self, _address: u16, value: u8) {
+        fn write(&mut self, _address: u16, value: u8, _clock: SystemClock) {
             *self.data.borrow_mut() = value;
         }
     }
@@ -75,7 +80,7 @@ mod tests {
     #[test]
     fn test_read_write() {
         let mut mcu = MockMcu::new();
-        mcu.write(0x0000, 0x42);
+        mcu.write(0x0000, 0x42, SystemClock::default());
         assert_eq!(mcu.read(0x0000), 0x42);
     }
 }

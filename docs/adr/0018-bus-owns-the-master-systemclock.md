@@ -23,7 +23,7 @@ threading a separate `clock` value:
   `Machine` no longer exposes clock plumbing.
 - `NesMachine` deletes its `clock: SystemClock` field. Its tick loop
   captures `bus.clock()` at the top for the device ticks (PPU, APU
-  sampler, interrupt lines, `NesMcu::set_clock`) and advances once after
+  sampler, interrupt lines) and advances once after
   the dot completes — bus clock reads *inside* the dot therefore see the
   dot in progress, matching the previous two-line
   `let clock = self.clock; self.clock = self.clock.inc();` capture
@@ -36,10 +36,34 @@ threading a separate `clock` value:
   plugins read `view.clock()` (`MachineView` already carries it).
 
 Seams that receive *only* a clock (the device layer: `Apu::write`,
-`Mapper::cpu_write`, `NesMcu::set_clock`/`reset(clock)`/`tick_apu(clock)`,
+`Mapper::cpu_write`, `NesMcu::reset(clock)`/`tick_apu(clock)`,
 `Cpu::update_interrupt_lines`, and the test helper
 `DmaBus::tick_oam_for_test`) keep their value parameter — there is no bus
 in their call chain to read from.
+
+## Field trims following bus clock ownership
+
+With the master clock living on the bus, two caches of it became
+redundant and were deleted:
+
+- `Cpu::now` (a `SystemClock` stamped from the tick's dot by
+  `Cpu::tick`) — the interrupt-window machinery instead threads the dot
+  explicitly: `arm_interrupt_window(window, started_at:
+  Option<SystemClock>)` (`push_enter_interrupt_microcodes` passes
+  `Some(bus.clock())`; RESET / BRK / hijack continuations pass `None`;
+  the lazy stamping site fills it in) and `declared_hijack_site(expected,
+  clock)` callers read `let clock = bus.clock();` locally.
+- `NesMcu::current_clock` (a per-dot stamp fed by
+  `NesMcu::set_clock(clock)` from the machine tick) — replaced by
+  widening `Mcu::write(address, value, clock)` so every bus write
+  carries its own dot; `NesMcu::write` forwards it to `Apu::write` /
+  `Cartridge::write` (the MMC1 consecutive-cycle filter), and the fast
+  writes (`write_zero_page` / `write_stack_page`) forward the same dot.
+  This revises the ADR-0014 wording "only mapper writes take
+  `SystemClock`, not `Mcu::write`".
+
+Device seams still receiving only a value (`Apu::write`,
+`Mapper::cpu_write`) are unchanged by the trims.
 
 ## Considered options
 

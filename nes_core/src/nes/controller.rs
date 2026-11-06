@@ -1,3 +1,4 @@
+use crate::SystemClock;
 use crate::mcu::Mcu;
 
 /// nes Controller struct that represent a controller of nes.
@@ -218,7 +219,7 @@ impl Mcu for Controller {
         }
     }
 
-    fn write(&mut self, address: u16, value: u8) {
+    fn write(&mut self, address: u16, value: u8, _clock: SystemClock) {
         if address == 0x4016 {
             let new_strobe = value & 1 != 0;
             // Only a high-to-low transition freezes button state and

@@ -18,7 +18,6 @@ fn test_mcu() -> NesMcu<ImageRender<1>, ()> {
         oam_dma_pending: None,
         deferred_apu_writes: ArrayDeque::new(),
         last_apu_tick: 0,
-        current_clock: SystemClock::default(),
         open_bus: 0,
         joypad1_oe: false,
         joypad2_oe: false,
@@ -29,7 +28,7 @@ fn test_mcu() -> NesMcu<ImageRender<1>, ()> {
 fn test_lower_ram_mirroring() {
     let mut mcu = test_mcu();
 
-    mcu.write(0x0000, 0x42);
+    mcu.write(0x0000, 0x42, SystemClock::default());
     assert_eq!(mcu.read(0x0000), 0x42);
     assert_eq!(mcu.read(0x0800), 0x42);
     assert_eq!(mcu.read(0x1000), 0x42);
@@ -40,7 +39,7 @@ fn test_lower_ram_mirroring() {
 fn test_frame_counter_inhibit_clears_irq() {
     let mut mcu = test_mcu();
 
-    mcu.write(0x4017, 0x00);
+    mcu.write(0x4017, 0x00, SystemClock::default());
     // Step the APU on APU clocks (dot % 3 == 2) for one full 29,830-cycle
     // mode-0 period, through the frame IRQ set at CPU cycle 29,828.
     let mut clock = SystemClock(2);
@@ -50,7 +49,7 @@ fn test_frame_counter_inhibit_clears_irq() {
         mcu.tick_apu(clock);
     }
 
-    mcu.write(0x4017, 0x40);
+    mcu.write(0x4017, 0x40, SystemClock::default());
     assert_eq!(mcu.read(0x4015) & 0x40, 0);
 }
 
@@ -58,10 +57,10 @@ fn test_frame_counter_inhibit_clears_irq() {
 fn test_length_counter_status_comes_from_apu_controller() {
     let mut mcu = test_mcu();
 
-    mcu.write(0x4000, 0x00);
-    mcu.write(0x4002, 0x34);
-    mcu.write(0x4015, 0x01);
-    mcu.write(0x4003, 0xF8);
+    mcu.write(0x4000, 0x00, SystemClock::default());
+    mcu.write(0x4002, 0x34, SystemClock::default());
+    mcu.write(0x4015, 0x01, SystemClock::default());
+    mcu.write(0x4003, 0xF8, SystemClock::default());
     // Length-register writes land one CPU cycle late; step APU clocks
     // (dot % 3 == 2) so the queued store lands before the status read.
     for cpu_cycle in 0..2u64 {
@@ -70,7 +69,7 @@ fn test_length_counter_status_comes_from_apu_controller() {
 
     assert_eq!(mcu.read(0x4015) & 0x01, 0x01);
 
-    mcu.write(0x4015, 0x00);
+    mcu.write(0x4015, 0x00, SystemClock::default());
     assert_eq!(mcu.read(0x4015) & 0x01, 0x00);
 }
 
@@ -80,8 +79,8 @@ fn test_controller_reads_route_through_nes_mcu() {
 
     mcu.press_controller_a(Button::A);
     mcu.press_controller_a(Button::Left);
-    mcu.write(0x4016, 1); // raise strobe
-    mcu.write(0x4016, 0); // falling edge freezes and rewinds
+    mcu.write(0x4016, 1, SystemClock::default()); // raise strobe
+    mcu.write(0x4016, 0, SystemClock::default()); // falling edge freezes and rewinds
 
     assert_eq!(mcu.read(0x4016), 0x41); // A pressed (bit 0)
     // Contiguous reads of $4016 keep /OE asserted: NES-001 clocks the
@@ -111,10 +110,10 @@ fn test_controller_reads_route_through_nes_mcu() {
 fn zero_page_read_latches_open_bus_like_generic_read() {
     fn open_bus_after_read(generic: bool) -> u8 {
         let mut mcu = test_mcu();
-        mcu.write(0x0010, 0x5A);
+        mcu.write(0x0010, 0x5A, SystemClock::default());
         // Park the latch on a different value so only the read below can
         // move it to $5A.
-        mcu.write(0x0020, 0x00);
+        mcu.write(0x0020, 0x00, SystemClock::default());
 
         let value = if generic {
             mcu.read(0x0010)
@@ -135,8 +134,8 @@ fn zero_page_read_latches_open_bus_like_generic_read() {
 fn stack_page_read_latches_open_bus_like_generic_read() {
     fn open_bus_after_read(generic: bool) -> u8 {
         let mut mcu = test_mcu();
-        mcu.write(0x0180, 0xC3);
-        mcu.write(0x0020, 0x00);
+        mcu.write(0x0180, 0xC3, SystemClock::default());
+        mcu.write(0x0020, 0x00, SystemClock::default());
 
         let value = if generic {
             mcu.read(0x0180)
@@ -158,9 +157,9 @@ fn stack_page_write_latches_open_bus_like_generic_write() {
     fn open_bus_after_write(generic: bool) -> u8 {
         let mut mcu = test_mcu();
         if generic {
-            mcu.write(0x0180, 0x7E);
+            mcu.write(0x0180, 0x7E, SystemClock::default());
         } else {
-            mcu.write_stack_page(0x80, 0x7E);
+            mcu.write_stack_page(0x80, 0x7E, SystemClock::default());
         }
         mcu.read(0x4020)
     }
@@ -182,16 +181,16 @@ fn zero_page_store_clears_joypad_oe_lines() {
         mcu.press_controller_a(Button::Select);
         mcu.press_controller_b(Button::A);
         mcu.press_controller_b(Button::Select);
-        mcu.write(0x4016, 1);
-        mcu.write(0x4016, 0);
+        mcu.write(0x4016, 1, SystemClock::default());
+        mcu.write(0x4016, 0, SystemClock::default());
 
         let mut bits = Vec::new();
         for _ in 0..4 {
             bits.push(mcu.read(0x4016) & 0x01);
             if generic_store {
-                mcu.write(0x0010, 0);
+                mcu.write(0x0010, 0, SystemClock::default());
             } else {
-                mcu.write_zero_page(0x10, 0);
+                mcu.write_zero_page(0x10, 0, SystemClock::default());
             }
         }
         bits
@@ -204,11 +203,11 @@ fn zero_page_store_clears_joypad_oe_lines() {
     let mut mcu = test_mcu();
     mcu.press_controller_b(Button::A);
     mcu.press_controller_b(Button::Select);
-    mcu.write(0x4016, 1);
-    mcu.write(0x4016, 0);
+    mcu.write(0x4016, 1, SystemClock::default());
+    mcu.write(0x4016, 0, SystemClock::default());
 
     assert_eq!(mcu.read(0x4017) & 0x01, 0x01); // A
-    mcu.write_zero_page(0x10, 0);
+    mcu.write_zero_page(0x10, 0, SystemClock::default());
     assert_eq!(mcu.read(0x4017) & 0x01, 0x00); // B: not contiguous
     assert_eq!(mcu.read(0x4017) & 0x01, 0x00); // contiguous: no advance
 }
@@ -223,15 +222,15 @@ fn ppudata_second_read_fully_ignored_within_window() {
     let mut mcu = test_mcu();
 
     // VRAM $0000-$0003 = 11 22 33 44.
-    mcu.write(0x2006, 0x00);
-    mcu.write(0x2006, 0x00);
+    mcu.write(0x2006, 0x00, SystemClock::default());
+    mcu.write(0x2006, 0x00, SystemClock::default());
     for v in [0x11u8, 0x22, 0x33, 0x44] {
-        mcu.write(0x2007, v);
+        mcu.write(0x2007, v, SystemClock::default());
     }
 
     // Rewind to $0000 and prime the buffer with a well-separated read.
-    mcu.write(0x2006, 0x00);
-    mcu.write(0x2006, 0x00);
+    mcu.write(0x2006, 0x00, SystemClock::default());
+    mcu.write(0x2006, 0x00, SystemClock::default());
     assert_eq!(mcu.read(0x2007), 0x00); // initial buffer, loads VRAM[0]
     // 9 dots (3 CPU cycles) clear the 6-dot ignore window: the next read
     // is normal-paced.
@@ -287,7 +286,7 @@ fn oam_dma_first_read_alignment() {
     clock = clock.inc();
     assert!(clock.is_apu_clock());
 
-    mcu.write(0x4014, 0x02); // happens at end of tick W in the real machine
+    mcu.write(0x4014, 0x02, SystemClock::default()); // happens at end of tick W in the real machine
     dma_bus.tick_oam_for_test(&mut mcu, clock, false);
 
     // Write on get: halt at W+3, first OAM read must be at W+6 (get).
@@ -314,7 +313,7 @@ fn oam_dma_completion_spans_follow_doc_diagrams() {
     fn completion(w: u64) -> u64 {
         let mut mcu = test_mcu();
         let mut dma_bus = DmaBus::new();
-        mcu.write(0x4014, 0x02); // write executes at the end of tick w
+        mcu.write(0x4014, 0x02, SystemClock::default()); // write executes at the end of tick w
         let mut t = w;
         let mut last_active = w;
         let mut saw_active = false;
@@ -359,7 +358,7 @@ fn oam_dma_completion_spans_follow_doc_diagrams() {
 fn oam_dma_pauses_on_dmc_read_collision() {
     let mut mcu = test_mcu();
     let mut dma_bus = DmaBus::new();
-    mcu.write(0x4014, 0x02);
+    mcu.write(0x4014, 0x02, SystemClock::default());
 
     // Consume pending on a put cycle (the halt cycle); write was on get, so
     // startup must be 0 and the first read happens on the very next tick.
@@ -426,7 +425,7 @@ fn oam_dma_pauses_on_dmc_read_collision() {
 fn dmc_collision_at_start_of_oam_write_on_get() {
     let mut mcu = test_mcu();
     let mut dma_bus = DmaBus::new();
-    mcu.write(0x4014, 0x02);
+    mcu.write(0x4014, 0x02, SystemClock::default());
 
     // Consume pending on a put cycle (shared halt); write was on get so there
     // is no alignment cycle before the first read.
@@ -461,7 +460,7 @@ fn dmc_collision_at_start_of_oam_write_on_get() {
 fn dmc_collision_at_start_of_oam_write_on_put() {
     let mut mcu = test_mcu();
     let mut dma_bus = DmaBus::new();
-    mcu.write(0x4014, 0x02);
+    mcu.write(0x4014, 0x02, SystemClock::default());
 
     // Consume pending on a get cycle (shared halt); write was on put so one
     // alignment cycle precedes the first read.
@@ -554,12 +553,12 @@ impl Mcu for OamDmaRecordingMcu {
         self.mcu.peek(address)
     }
 
-    fn write(&mut self, address: u16, value: u8) {
+    fn write(&mut self, address: u16, value: u8, clock: SystemClock) {
         if address == 0x4014 {
             // The trigger a program uses: a store to $4014 queues the DMA.
             self.pending = Some(value);
         } else {
-            self.mcu.write(address, value);
+            self.mcu.write(address, value, clock);
         }
     }
 
@@ -576,12 +575,12 @@ impl Mcu for OamDmaRecordingMcu {
     // call as generic, so a test could not tell a fast write from a generic
     // one. Forwarding to `RecordingMcu` records the route without
     // synthesising a generic call.
-    fn write_zero_page(&mut self, address: u8, value: u8) {
-        self.mcu.write_zero_page(address, value)
+    fn write_zero_page(&mut self, address: u8, value: u8, clock: SystemClock) {
+        self.mcu.write_zero_page(address, value, clock)
     }
 
-    fn write_stack_page(&mut self, address: u8, value: u8) {
-        self.mcu.write_stack_page(address, value)
+    fn write_stack_page(&mut self, address: u8, value: u8, clock: SystemClock) {
+        self.mcu.write_stack_page(address, value, clock)
     }
 }
 
@@ -601,7 +600,7 @@ impl OamDmaMcu for OamDmaRecordingMcu {
 fn oam_dma_from_zero_page_reads_through_zero_page_fast_path() {
     let mut mcu = OamDmaRecordingMcu::with_page(0x00);
     let mut dma_bus = DmaBus::new();
-    mcu.write(0x4014, 0x00);
+    mcu.write(0x4014, 0x00, SystemClock::default());
 
     // The access kind is decided once, when the transfer starts — the 512-byte
     // loop only matches on the stored value.
@@ -639,19 +638,19 @@ fn oam_dma_with_rendering_disabled_writes_oam() {
     let mut dma_bus = DmaBus::new();
 
     for i in 0..=255u8 {
-        mcu.write(0x2003, i);
-        mcu.write(0x2004, 0x00);
-        mcu.write(0x0200 + i as u16, i | 0x80);
+        mcu.write(0x2003, i, SystemClock::default());
+        mcu.write(0x2004, 0x00, SystemClock::default());
+        mcu.write(0x0200 + i as u16, i | 0x80, SystemClock::default());
     }
 
-    mcu.write(0x4014, 0x02);
+    mcu.write(0x4014, 0x02, SystemClock::default());
     assert!(
         drive_oam_dma(&mut mcu, &mut dma_bus).is_some(),
         "OAM DMA never completed"
     );
 
     for i in 0..=255u8 {
-        mcu.write(0x2003, i);
+        mcu.write(0x2003, i, SystemClock::default());
         // Rendering disabled keeps the attribute-byte $E3 mask.
         let expected = if i & 0x03 == 0x02 {
             (i | 0x80) & 0xE3
@@ -680,10 +679,10 @@ fn oam_dma_during_rendering_does_not_corrupt_oam() {
     // is off (default mask), then enable background rendering and advance
     // into the middle of a visible line.
     for i in 0..=255u8 {
-        mcu.write(0x2003, i);
-        mcu.write(0x2004, 0x00);
+        mcu.write(0x2003, i, SystemClock::default());
+        mcu.write(0x2004, 0x00, SystemClock::default());
     }
-    mcu.write(0x2001, 0x08); // background enable
+    mcu.write(0x2001, 0x08, SystemClock::default()); // background enable
     for _ in 0..(100 * 341 + 100) {
         mcu.tick_ppu();
     }
@@ -691,10 +690,10 @@ fn oam_dma_during_rendering_does_not_corrupt_oam() {
     // Scratch page $0200 with a ramp whose every byte differs from the
     // sentinel: bit 7 is always set, so no zero can pass unnoticed.
     for i in 0..=255u8 {
-        mcu.write(0x0200 + i as u16, i | 0x80);
+        mcu.write(0x0200 + i as u16, i | 0x80, SystemClock::default());
     }
 
-    mcu.write(0x4014, 0x02);
+    mcu.write(0x4014, 0x02, SystemClock::default());
     assert!(
         drive_oam_dma(&mut mcu, &mut dma_bus).is_some(),
         "OAM DMA never completed"
@@ -702,10 +701,10 @@ fn oam_dma_during_rendering_does_not_corrupt_oam() {
     // Disable rendering before probing: mid-render $2004 reads expose
     // eval/fetch traffic, not primary OAM, so the sentinel is pinned with
     // rendering off.
-    mcu.write(0x2001, 0x00);
+    mcu.write(0x2001, 0x00, SystemClock::default());
     // The transfer ran but wrote nothing: every OAM byte is the sentinel.
     for i in 0..=255u8 {
-        mcu.write(0x2003, i);
+        mcu.write(0x2003, i, SystemClock::default());
         assert_eq!(mcu.read(0x2004), 0x00, "OAM byte {i:#04x} was corrupted");
     }
 }
@@ -722,15 +721,15 @@ fn test_4017_reads_include_zapper_bits_alongside_controller_b() {
     // every $4017 read now carries the light-sense bit.
     mcu.connect_zapper(true);
     mcu.aim_zapper(10, 10);
-    mcu.write(0x4016, 1);
-    mcu.write(0x4016, 0);
+    mcu.write(0x4016, 1, SystemClock::default());
+    mcu.write(0x4016, 0, SystemClock::default());
     assert_eq!(mcu.read(0x4017), 0x48); // no buttons + light absent
     assert_eq!(mcu.read(0x4017), 0x48);
 
     // Trigger pull ORs bit 4 on top of the controller bits.
     mcu.trigger_zapper();
     mcu.press_controller_b(Button::A);
-    mcu.write(0x4016, 1);
+    mcu.write(0x4016, 1, SystemClock::default());
     // Trigger pull ORs bit 4 into every read: held trigger + light absent
     // on the black framebuffer = 0x10 | 0x08.
     assert_eq!(mcu.read(0x4017) & 0x18, 0x18);
@@ -759,10 +758,10 @@ fn reset_reanchors_deferred_apu_writes_to_running_clock() {
     mcu.reset(SystemClock(big));
 
     // Enable the triangle channel (direct register, not deferred).
-    mcu.write(0x4015, 0x04);
+    mcu.write(0x4015, 0x04, SystemClock::default());
     // Arm a deferred length-counter reload: it must land ~one CPU cycle
     // after this write cycle relative to the running clock.
-    mcu.write(0x400B, 0x08);
+    mcu.write(0x400B, 0x08, SystemClock::default());
     // Before the anchored landing point the deferred reload must not have
     // flushed: triangle status bit (bit 2 of $4015) stays clear. `big` is an
     // APU clock (big % 3 == 2), the last one before the landing at big + 3.
@@ -787,7 +786,7 @@ fn reset_reanchors_deferred_apu_writes_to_running_clock() {
 fn oam_dma_from_stack_page_reads_through_stack_page_fast_path() {
     let mut mcu = OamDmaRecordingMcu::with_page(0x01);
     let mut dma_bus = DmaBus::new();
-    mcu.write(0x4014, 0x01);
+    mcu.write(0x4014, 0x01, SystemClock::default());
 
     assert!(
         drive_oam_dma(&mut mcu, &mut dma_bus).is_some(),
@@ -814,7 +813,7 @@ fn oam_dma_from_other_pages_routes_and_cycles_are_unchanged() {
     fn dma_from(page: u8) -> (Option<usize>, OamDmaRecordingMcu) {
         let mut mcu = OamDmaRecordingMcu::with_page(page);
         let mut dma_bus = DmaBus::new();
-        mcu.write(0x4014, page);
+        mcu.write(0x4014, page, SystemClock::default());
         let apu_clocks = drive_oam_dma(&mut mcu, &mut dma_bus);
         (apu_clocks, mcu)
     }
@@ -849,14 +848,15 @@ fn oam_dma_from_zero_and_stack_pages_write_the_same_oam_bytes() {
         let mut dma_bus = DmaBus::new();
         // 0x00 sentinel so a byte that was never transferred is visible.
         for i in 0..=255u8 {
-            mcu.write(0x2003, i);
-            mcu.write(0x2004, 0x00);
+            mcu.write(0x2003, i, SystemClock::default());
+            mcu.write(0x2004, 0x00, SystemClock::default());
             mcu.write(
                 ((source_page as u16) << 8) | i as u16,
                 i.wrapping_mul(3).wrapping_add(0x40),
+                SystemClock::default(),
             );
         }
-        mcu.write(0x4014, source_page);
+        mcu.write(0x4014, source_page, SystemClock::default());
         assert!(
             drive_oam_dma(&mut mcu, &mut dma_bus).is_some(),
             "OAM DMA from page {source_page:#04x} never completed"
@@ -864,7 +864,7 @@ fn oam_dma_from_zero_and_stack_pages_write_the_same_oam_bytes() {
 
         let mut oam = Vec::with_capacity(256);
         for i in 0..=255u8 {
-            mcu.write(0x2003, i);
+            mcu.write(0x2003, i, SystemClock::default());
             oam.push(mcu.read(0x2004));
         }
         oam

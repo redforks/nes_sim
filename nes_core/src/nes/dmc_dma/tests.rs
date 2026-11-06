@@ -15,7 +15,7 @@ impl Mcu for MockDmcDmaMem {
         unreachable!("DMC DMA never drives plain Mcu peeks")
     }
 
-    fn write(&mut self, _address: u16, _value: u8) {
+    fn write(&mut self, _address: u16, _value: u8, _clock: SystemClock) {
         unreachable!("DMC DMA never drives plain Mcu writes")
     }
 }

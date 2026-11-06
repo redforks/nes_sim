@@ -93,12 +93,11 @@ where
     /// Execute one master clock tick. Returns the `ExecuteResult`.
     ///
     /// Every device tick (PPU, APU, DMA, CPU) observes the same dot: the
-    /// bus's master clock is captured at the top (so all device seams —
-    /// value-threaded or bus-read — see the same pre-increment value) and
-    /// advanced only after the dot completes (ADR-0018).
+    /// bus's master clock is captured at the top, advanced only after the
+    /// dot completes (ADR-0018). Cartridge writes timestamp themselves via
+    /// `Mcu::write` — see GLOSSARY "Per-dot contract".
     pub fn tick(&mut self) -> ExecuteResult {
         let clock = self.bus.clock();
-        self.bus.mcu_mut().set_clock(clock);
         let control = self.tick_at_dot(clock);
         self.bus.advance();
         control

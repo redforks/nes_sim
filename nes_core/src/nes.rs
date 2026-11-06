@@ -46,10 +46,6 @@ pub struct NesMcu<R: Render, D: AudioDriver> {
     deferred_apu_writes: ArrayDeque<(u64, u16, u8), 2>,
     /// Most recent system tick seen by [`Self::tick_apu`].
     last_apu_tick: u64,
-    /// Current system clock sampled at the top of `NesMachine::tick`.
-    /// Used to timestamp `Cartridge::write` for MMC1's consecutive-cycle
-    /// filter (1 CPU cycle = 3 PPU cycles).
-    current_clock: SystemClock,
 }
 
 impl<R: Render, D: AudioDriver> NesMcu<R, D> {
@@ -103,7 +99,6 @@ impl<R: Render, D: AudioDriver> NesMcu<R, D> {
             joypad2_oe: false,
             deferred_apu_writes: ArrayDeque::new(),
             last_apu_tick: 0,
-            current_clock: SystemClock::default(),
         }
     }
 
@@ -150,9 +145,6 @@ impl<R: Render, D: AudioDriver> NesMcu<R, D> {
         self.ppu.tick(&mut self.cartridge);
     }
 
-    pub(crate) fn set_clock(&mut self, clock: SystemClock) {
-        self.current_clock = clock;
-    }
     pub fn tick_apu(&mut self, clock: SystemClock) {
         self.last_apu_tick = clock.cycles();
         self.apu.tick();
@@ -301,14 +293,14 @@ impl<R: Render, D: AudioDriver> Mcu for NesMcu<R, D> {
         }
     }
 
-    fn write(&mut self, address: u16, value: u8) {
+    fn write(&mut self, address: u16, value: u8, clock: SystemClock) {
         self.latch_write(value);
         match address {
-            0x0000..=0x1fff => self.lower_ram.write(address, value),
+            0x0000..=0x1fff => self.lower_ram.write(address, value, clock),
             0x2000..=0x3fff => self.ppu.write_ppureg(address, value, &mut self.cartridge),
             0x4000..=0x401f => match address {
                 0x4014 => self.ppu_dma(value),
-                0x4016 => self.controller.write(address, value),
+                0x4016 => self.controller.write(address, value, clock),
                 0x4000 | 0x4003 | 0x4004 | 0x4007 | 0x400B | 0x400F | 0x4013 => {
                     // Production bound is 1 (tick_apu drains on the same
                     // dots cpu.tick runs, one write per cycle max); the
@@ -319,15 +311,15 @@ impl<R: Render, D: AudioDriver> Mcu for NesMcu<R, D> {
                         .push_back((self.last_apu_tick + 3, address, value))
                         .ok();
                 }
-                _ => self.apu.write(address, value, self.current_clock),
+                _ => self.apu.write(address, value, clock),
             },
             0x4020..=0x5fff => {}
             0x6000..=0x7fff => {
                 if self.cartridge.prg_ram_enabled() {
-                    self.cartridge.write(address, value, self.current_clock);
+                    self.cartridge.write(address, value, clock);
                 }
             }
-            0x8000..=0xffff => self.cartridge.write(address, value, self.current_clock),
+            0x8000..=0xffff => self.cartridge.write(address, value, clock),
         }
     }
 
@@ -341,14 +333,14 @@ impl<R: Render, D: AudioDriver> Mcu for NesMcu<R, D> {
         self.latch_read(value)
     }
 
-    fn write_zero_page(&mut self, address: u8, value: u8) {
+    fn write_zero_page(&mut self, address: u8, value: u8, clock: SystemClock) {
         self.latch_write(value);
-        self.lower_ram.write_zero_page(address, value);
+        self.lower_ram.write_zero_page(address, value, clock);
     }
 
-    fn write_stack_page(&mut self, address: u8, value: u8) {
+    fn write_stack_page(&mut self, address: u8, value: u8, clock: SystemClock) {
         self.latch_write(value);
-        self.lower_ram.write_stack_page(address, value);
+        self.lower_ram.write_stack_page(address, value, clock);
     }
 }
 

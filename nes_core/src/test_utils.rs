@@ -1,5 +1,6 @@
 // Test utilities shared across all test modules
 
+use crate::SystemClock;
 use crate::mcu::Mcu;
 use std::cell::{Cell, RefCell};
 
@@ -91,7 +92,7 @@ impl Mcu for MockMcu {
         self.memory.borrow()[addr as usize]
     }
 
-    fn write(&mut self, addr: u16, value: u8) {
+    fn write(&mut self, addr: u16, value: u8, _clock: SystemClock) {
         self.memory.borrow_mut()[addr as usize] = value;
     }
 }
@@ -233,7 +234,7 @@ impl Mcu for RecordingMcu {
         self.memory.borrow()[addr as usize]
     }
 
-    fn write(&mut self, addr: u16, value: u8) {
+    fn write(&mut self, addr: u16, value: u8, _clock: SystemClock) {
         self.memory.borrow_mut()[addr as usize] = value;
         self.calls.borrow_mut().push(McuCall::Write { addr, value });
     }
@@ -256,7 +257,7 @@ impl Mcu for RecordingMcu {
         value
     }
 
-    fn write_zero_page(&mut self, address: u8, value: u8) {
+    fn write_zero_page(&mut self, address: u8, value: u8, _clock: SystemClock) {
         self.memory.borrow_mut()[address as usize] = value;
         self.calls.borrow_mut().push(McuCall::WriteZeroPage {
             addr: address,
@@ -264,7 +265,7 @@ impl Mcu for RecordingMcu {
         });
     }
 
-    fn write_stack_page(&mut self, address: u8, value: u8) {
+    fn write_stack_page(&mut self, address: u8, value: u8, _clock: SystemClock) {
         self.memory.borrow_mut()[0x100 + address as usize] = value;
         self.calls.borrow_mut().push(McuCall::WriteStackPage {
             addr: address,
@@ -283,9 +284,9 @@ pub trait McuUtils: Mcu {
     }
 
     /// Writes a 16-bit little-endian value to addr
-    fn write_word_le(&mut self, addr: u16, value: u16) {
-        self.write(addr, (value & 0xFF) as u8);
-        self.write(addr + 1, ((value >> 8) & 0xFF) as u8);
+    fn write_word_le(&mut self, addr: u16, value: u16, clock: SystemClock) {
+        self.write(addr, (value & 0xFF) as u8, clock);
+        self.write(addr + 1, ((value >> 8) & 0xFF) as u8, clock);
     }
 }
 
@@ -299,7 +300,7 @@ mod tests {
     #[test]
     fn test_mock_mcu_basic() {
         let mut mcu = MockMcu::new();
-        mcu.write(0x1000, 0x42);
+        mcu.write(0x1000, 0x42, SystemClock::default());
         assert_eq!(mcu.read(0x1000), 0x42);
     }
 
@@ -321,7 +322,7 @@ mod tests {
     #[test]
     fn test_mcu_utils_word_rw() {
         let mut mcu = MockMcu::new();
-        mcu.write_word_le(0x3000, 0xABCD);
+        mcu.write_word_le(0x3000, 0xABCD, SystemClock::default());
         assert_eq!(mcu.read_word_le(0x3000), 0xABCD);
     }
 
@@ -329,7 +330,7 @@ mod tests {
     fn test_mock_mcu_regional() {
         let mut mcu = MockMcu::regional(0x2000, 0x20FF);
         assert_eq!(mcu.region(), Some((0x2000, 0x20FF)));
-        mcu.write(0x2050, 0xAB);
+        mcu.write(0x2050, 0xAB, SystemClock::default());
         assert_eq!(mcu.read(0x2050), 0xAB);
     }
 
@@ -344,11 +345,11 @@ mod tests {
         let mut mcu = RecordingMcu::filled(0).with_program(0x8000, &[0x42]);
 
         assert_eq!(mcu.read(0x8000), 0x42);
-        mcu.write(0x4000, 0x11);
+        mcu.write(0x4000, 0x11, SystemClock::default());
         assert_eq!(mcu.read_zero_page(0x10), 0);
-        mcu.write_zero_page(0x10, 0x22);
+        mcu.write_zero_page(0x10, 0x22, SystemClock::default());
         assert_eq!(mcu.read_stack_page(0xF0), 0);
-        mcu.write_stack_page(0xF0, 0x33);
+        mcu.write_stack_page(0xF0, 0x33, SystemClock::default());
 
         assert_eq!(
             mcu.calls(),

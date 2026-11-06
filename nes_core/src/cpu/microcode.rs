@@ -1495,7 +1495,7 @@ impl Microcode {
                 let opcode = cpu.inc_read_byte(bus);
                 cpu.push_microcodes(&OPCODE_TABLE[opcode as usize]);
                 if let Some(window) = InterruptSequences::window_for_opcode(opcode) {
-                    cpu.arm_interrupt_window(window, false);
+                    cpu.arm_interrupt_window(window, None);
                 }
             }
             Self::LoadR(ValueSource::Immediate, r) => load_r::<Immediate, _>(cpu, bus, r),

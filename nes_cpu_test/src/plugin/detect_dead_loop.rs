@@ -1,6 +1,6 @@
 use nes_core::mcu::Mcu;
 use nes_core::view::MachineView;
-use nes_core::{ExecuteResult, Plugin, SystemClock};
+use nes_core::{ExecuteResult, Plugin};
 use std::collections::VecDeque;
 pub struct DetectDeadLoop<const DEPTH: usize, const REPEATS: u32 = 200000> {
     recent_pc: VecDeque<u16>,
@@ -92,7 +92,7 @@ mod tests {
         cpu: &mut Cpu,
         bus: &'a Bus<RamMcu<65536>>,
     ) -> MachineView<'a, RamMcu<65536>> {
-        MachineView::new(cpu.snapshot(), bus.mcu(), SystemClock::default())
+        MachineView::new(cpu.snapshot(), bus.mcu(), nes_core::SystemClock::default())
     }
 
     #[rstest]

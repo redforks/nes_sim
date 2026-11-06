@@ -1,5 +1,9 @@
 # Decode into NesMcu, delete Ppu-as-Mcu
 
+> Partially superseded (ADR-0018 field trims): `NesMcu::current_clock` /
+> `NesMcu::set_clock` were removed — bus writes now carry their dot via
+> `Mcu::write(address, value, clock)`.
+
 `Ppu` owned `Box<dyn Cartridge>` and implemented `Mcu` (`read`/`write` for `$4100-$FFFF` plus `$2000-$3FFF` registers). `NesMcu::read` delegated `0x2000-0x3FFF | 0x4100-0xFFFF` to `Ppu::read`, so CPU address decode was split between `NesMcu` and `Ppu`. Undriven CPU reads (`$4100-$5FFF`, disabled PRG-RAM) incorrectly drove `0` from `Cartridge::read` instead of refreshing open bus; the PPU register path and cartridge path were interleaved in `Ppu`.
 
 This ADR moves cartridge ownership and all CPU address decode into `NesMcu`.

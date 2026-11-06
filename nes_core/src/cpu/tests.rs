@@ -2282,10 +2282,10 @@ fn test_lda_indirect_x_unofficial() {
     let mut mcu = MockMcu::new();
     // Set up indirect pointer at 0x10 pointing to 0x200
     mcu.write_word(0x10, 0x200);
-    mcu.write(0x200, 0x42);
+    mcu.write(0x200, 0x42, SystemClock::default());
     // Program: LDA ($10, X)
-    mcu.write(0, 0xA1); // opcode
-    mcu.write(1, 0x10); // zero page addr
+    mcu.write(0, 0xA1, SystemClock::default()); // opcode
+    mcu.write(1, 0x10, SystemClock::default()); // zero page addr
     let mut cpu = create_cpu_with_mcu(mcu);
     cpu.set_x(0);
 
@@ -2300,10 +2300,10 @@ fn test_lda_indirect_y_unofficial() {
     let mut mcu = MockMcu::new();
     // Set up indirect pointer at 0x10 pointing to 0x200
     mcu.write_word(0x10, 0x200);
-    mcu.write(0x205, 0x42); // 0x200 + Y(5) = 0x205
+    mcu.write(0x205, 0x42, SystemClock::default()); // 0x200 + Y(5) = 0x205
     // Program: LDA ($10), Y
-    mcu.write(0, 0xB1); // opcode
-    mcu.write(1, 0x10); // zero page addr
+    mcu.write(0, 0xB1, SystemClock::default()); // opcode
+    mcu.write(1, 0x10, SystemClock::default()); // zero page addr
     let mut cpu = create_cpu_with_mcu(mcu);
     cpu.set_y(5);
 
@@ -2319,8 +2319,8 @@ fn test_sta_indirect_y_unofficial() {
     // Set up indirect pointer at 0x10 pointing to 0x200
     mcu.write_word(0x10, 0x200);
     // Program: STA ($10), Y
-    mcu.write(0, 0x91); // opcode
-    mcu.write(1, 0x10); // zero page addr
+    mcu.write(0, 0x91, SystemClock::default()); // opcode
+    mcu.write(1, 0x10, SystemClock::default()); // zero page addr
     let mut cpu = create_cpu_with_mcu(mcu);
     cpu.set_a(0x42);
     cpu.set_y(5);
@@ -2336,10 +2336,10 @@ fn test_cmp_indirect_x_unofficial() {
     let mut mcu = MockMcu::new();
     // Set up indirect pointer at 0x10 pointing to 0x200
     mcu.write_word(0x10, 0x200);
-    mcu.write(0x200, 0x40);
+    mcu.write(0x200, 0x40, SystemClock::default());
     // Program: CMP ($10, X)
-    mcu.write(0, 0xC1); // opcode
-    mcu.write(1, 0x10); // zero page addr
+    mcu.write(0, 0xC1, SystemClock::default()); // opcode
+    mcu.write(1, 0x10, SystemClock::default()); // zero page addr
     let mut cpu = create_cpu_with_mcu(mcu);
     cpu.set_a(0x42);
     cpu.set_x(0);
@@ -2355,10 +2355,10 @@ fn test_cmp_indirect_y_unofficial() {
     let mut mcu = MockMcu::new();
     // Set up indirect pointer at 0x10 pointing to 0x200
     mcu.write_word(0x10, 0x200);
-    mcu.write(0x205, 0x40);
+    mcu.write(0x205, 0x40, SystemClock::default());
     // Program: CMP ($10), Y
-    mcu.write(0, 0xD1); // opcode
-    mcu.write(1, 0x10); // zero page addr
+    mcu.write(0, 0xD1, SystemClock::default()); // opcode
+    mcu.write(1, 0x10, SystemClock::default()); // zero page addr
     let mut cpu = create_cpu_with_mcu(mcu);
     cpu.set_a(0x42);
     cpu.set_y(5);
@@ -2374,10 +2374,10 @@ fn test_sbc_indirect_x_unofficial() {
     let mut mcu = MockMcu::new();
     // Set up indirect pointer at 0x10 pointing to 0x200
     mcu.write_word(0x10, 0x200);
-    mcu.write(0x200, 0x10);
+    mcu.write(0x200, 0x10, SystemClock::default());
     // Program: SBC ($10, X)
-    mcu.write(0, 0xE1); // opcode
-    mcu.write(1, 0x10); // zero page addr
+    mcu.write(0, 0xE1, SystemClock::default()); // opcode
+    mcu.write(1, 0x10, SystemClock::default()); // zero page addr
     let mut cpu = create_cpu_with_mcu(mcu);
     cpu.set_a(0x20);
     cpu.set_flag(Flag::Carry, true);
@@ -2394,10 +2394,10 @@ fn test_sbc_indirect_y_unofficial() {
     let mut mcu = MockMcu::new();
     // Set up indirect pointer at 0x10 pointing to 0x200
     mcu.write_word(0x10, 0x200);
-    mcu.write(0x205, 0x10);
+    mcu.write(0x205, 0x10, SystemClock::default());
     // Program: SBC ($10), Y
-    mcu.write(0, 0xF1); // opcode
-    mcu.write(1, 0x10); // zero page addr
+    mcu.write(0, 0xF1, SystemClock::default()); // opcode
+    mcu.write(1, 0x10, SystemClock::default()); // zero page addr
     let mut cpu = create_cpu_with_mcu(mcu);
     cpu.set_a(0x20);
     cpu.set_flag(Flag::Carry, true);
@@ -2423,9 +2423,9 @@ fn test_lax_immediate() {
 fn test_lax_zero_page() {
     // LAX zero page - 0xA7
     let mut mcu = MockMcu::new();
-    mcu.write(0x10, 0x42);
-    mcu.write(0, 0xA7); // opcode
-    mcu.write(1, 0x10); // zero page addr
+    mcu.write(0x10, 0x42, SystemClock::default());
+    mcu.write(0, 0xA7, SystemClock::default()); // opcode
+    mcu.write(1, 0x10, SystemClock::default()); // zero page addr
     let mut cpu = create_cpu_with_mcu(mcu);
 
     execute_next(&mut cpu);
@@ -2438,8 +2438,8 @@ fn test_lax_zero_page() {
 fn test_sax_zero_page() {
     // SAX zero page - 0x87
     let mut mcu = MockMcu::new();
-    mcu.write(0, 0x87); // opcode
-    mcu.write(1, 0x10); // zero page addr
+    mcu.write(0, 0x87, SystemClock::default()); // opcode
+    mcu.write(1, 0x10, SystemClock::default()); // zero page addr
     let mut cpu = create_cpu_with_mcu(mcu);
     cpu.set_a(0x30);
     cpu.set_x(0x12);
@@ -2453,9 +2453,9 @@ fn test_sax_zero_page() {
 fn test_dcp_zero_page() {
     // DCP zero page - 0xC7
     let mut mcu = MockMcu::new();
-    mcu.write(0x10, 0x10);
-    mcu.write(0, 0xC7); // opcode
-    mcu.write(1, 0x10); // zero page addr
+    mcu.write(0x10, 0x10, SystemClock::default());
+    mcu.write(0, 0xC7, SystemClock::default()); // opcode
+    mcu.write(1, 0x10, SystemClock::default()); // zero page addr
     let mut cpu = create_cpu_with_mcu(mcu);
     cpu.set_a(0x10);
 
@@ -2470,9 +2470,9 @@ fn test_dcp_zero_page() {
 fn test_isc_zero_page() {
     // ISC zero page - 0xE7
     let mut mcu = MockMcu::new();
-    mcu.write(0x10, 0x0F);
-    mcu.write(0, 0xE7); // opcode
-    mcu.write(1, 0x10); // zero page addr
+    mcu.write(0x10, 0x0F, SystemClock::default());
+    mcu.write(0, 0xE7, SystemClock::default()); // opcode
+    mcu.write(1, 0x10, SystemClock::default()); // zero page addr
     let mut cpu = create_cpu_with_mcu(mcu);
     cpu.set_a(0x20);
     cpu.set_flag(Flag::Carry, true);
@@ -2487,9 +2487,9 @@ fn test_isc_zero_page() {
 fn test_aso_zero_page() {
     // ASO zero page - 0x07
     let mut mcu = MockMcu::new();
-    mcu.write(0x10, 0x40); // 0b01000000
-    mcu.write(0, 0x07); // opcode
-    mcu.write(1, 0x10); // zero page addr
+    mcu.write(0x10, 0x40, SystemClock::default()); // 0b01000000
+    mcu.write(0, 0x07, SystemClock::default()); // opcode
+    mcu.write(1, 0x10, SystemClock::default()); // zero page addr
     let mut cpu = create_cpu_with_mcu(mcu);
     cpu.set_a(0x0F);
 
@@ -2504,9 +2504,9 @@ fn test_aso_zero_page() {
 fn test_rla_zero_page() {
     // RLA zero page - 0x27
     let mut mcu = MockMcu::new();
-    mcu.write(0x10, 0x81); // 0b10000001
-    mcu.write(0, 0x27); // opcode
-    mcu.write(1, 0x10); // zero page addr
+    mcu.write(0x10, 0x81, SystemClock::default()); // 0b10000001
+    mcu.write(0, 0x27, SystemClock::default()); // opcode
+    mcu.write(1, 0x10, SystemClock::default()); // zero page addr
     let mut cpu = create_cpu_with_mcu(mcu);
     cpu.set_a(0x0F);
     cpu.set_flag(Flag::Carry, true);
@@ -2521,9 +2521,9 @@ fn test_rla_zero_page() {
 fn test_lse_zero_page() {
     // LSE zero page - 0x47
     let mut mcu = MockMcu::new();
-    mcu.write(0x10, 0x81); // 0b10000001
-    mcu.write(0, 0x47); // opcode
-    mcu.write(1, 0x10); // zero page addr
+    mcu.write(0x10, 0x81, SystemClock::default()); // 0b10000001
+    mcu.write(0, 0x47, SystemClock::default()); // opcode
+    mcu.write(1, 0x10, SystemClock::default()); // zero page addr
     let mut cpu = create_cpu_with_mcu(mcu);
     cpu.set_a(0xFF);
     cpu.set_flag(Flag::Carry, true);
@@ -2542,9 +2542,9 @@ fn test_lse_zero_page() {
 fn test_rra_zero_page() {
     // RRA zero page - 0x67
     let mut mcu = MockMcu::new();
-    mcu.write(0x10, 0x81); // 0b10000001
-    mcu.write(0, 0x67); // opcode
-    mcu.write(1, 0x10); // zero page addr
+    mcu.write(0x10, 0x81, SystemClock::default()); // 0b10000001
+    mcu.write(0, 0x67, SystemClock::default()); // opcode
+    mcu.write(1, 0x10, SystemClock::default()); // zero page addr
     let mut cpu = create_cpu_with_mcu(mcu);
     cpu.set_a(0x05);
     cpu.set_flag(Flag::Carry, true);
@@ -2574,8 +2574,8 @@ fn test_sbx_immediate() {
 fn test_and_absolute_y() {
     // AND absolute Y - 0x39
     let mut mcu = MockMcu::new();
-    mcu.write(0x205, 0x0F);
-    mcu.write(0, 0x39); // opcode
+    mcu.write(0x205, 0x0F, SystemClock::default());
+    mcu.write(0, 0x39, SystemClock::default()); // opcode
     mcu.write_word(1, 0x200); // absolute addr
     let mut cpu = create_cpu_with_mcu(mcu);
     cpu.set_a(0xFF);
@@ -2590,8 +2590,8 @@ fn test_and_absolute_y() {
 fn test_eor_absolute_y() {
     // EOR absolute Y - 0x59
     let mut mcu = MockMcu::new();
-    mcu.write(0x205, 0xF0);
-    mcu.write(0, 0x59); // opcode
+    mcu.write(0x205, 0xF0, SystemClock::default());
+    mcu.write(0, 0x59, SystemClock::default()); // opcode
     mcu.write_word(1, 0x200); // absolute addr
     let mut cpu = create_cpu_with_mcu(mcu);
     cpu.set_a(0xFF);
@@ -2606,8 +2606,8 @@ fn test_eor_absolute_y() {
 fn test_ora_absolute_y() {
     // ORA absolute Y - 0x19
     let mut mcu = MockMcu::new();
-    mcu.write(0x205, 0xF0);
-    mcu.write(0, 0x19); // opcode
+    mcu.write(0x205, 0xF0, SystemClock::default());
+    mcu.write(0, 0x19, SystemClock::default()); // opcode
     mcu.write_word(1, 0x200); // absolute addr
     let mut cpu = create_cpu_with_mcu(mcu);
     cpu.set_a(0x0F);
@@ -2622,8 +2622,8 @@ fn test_ora_absolute_y() {
 fn test_adc_absolute_y() {
     // ADC absolute Y - 0x79
     let mut mcu = MockMcu::new();
-    mcu.write(0x205, 0x10);
-    mcu.write(0, 0x79); // opcode
+    mcu.write(0x205, 0x10, SystemClock::default());
+    mcu.write(0, 0x79, SystemClock::default()); // opcode
     mcu.write_word(1, 0x200); // absolute addr
     let mut cpu = create_cpu_with_mcu(mcu);
     cpu.set_a(0x20);
@@ -2640,8 +2640,8 @@ fn test_adc_absolute_y() {
 fn test_cmp_absolute_y() {
     // CMP absolute Y - 0xD9
     let mut mcu = MockMcu::new();
-    mcu.write(0x205, 0x40);
-    mcu.write(0, 0xD9); // opcode
+    mcu.write(0x205, 0x40, SystemClock::default());
+    mcu.write(0, 0xD9, SystemClock::default()); // opcode
     mcu.write_word(1, 0x200); // absolute addr
     let mut cpu = create_cpu_with_mcu(mcu);
     cpu.set_a(0x42);
@@ -2656,8 +2656,8 @@ fn test_cmp_absolute_y() {
 fn test_sbc_absolute_y() {
     // SBC absolute Y - 0xF9
     let mut mcu = MockMcu::new();
-    mcu.write(0x205, 0x10);
-    mcu.write(0, 0xF9); // opcode
+    mcu.write(0x205, 0x10, SystemClock::default());
+    mcu.write(0, 0xF9, SystemClock::default()); // opcode
     mcu.write_word(1, 0x200); // absolute addr
     let mut cpu = create_cpu_with_mcu(mcu);
     cpu.set_a(0x20);
@@ -2673,8 +2673,8 @@ fn test_sbc_absolute_y() {
 fn test_and_absolute_x() {
     // AND absolute X - 0x3D
     let mut mcu = MockMcu::new();
-    mcu.write(0x205, 0x0F);
-    mcu.write(0, 0x3D); // opcode
+    mcu.write(0x205, 0x0F, SystemClock::default());
+    mcu.write(0, 0x3D, SystemClock::default()); // opcode
     mcu.write_word(1, 0x200); // absolute addr
     let mut cpu = create_cpu_with_mcu(mcu);
     cpu.set_a(0xFF);
@@ -2689,8 +2689,8 @@ fn test_and_absolute_x() {
 fn test_eor_absolute_x() {
     // EOR absolute X - 0x5D
     let mut mcu = MockMcu::new();
-    mcu.write(0x205, 0xF0);
-    mcu.write(0, 0x5D); // opcode
+    mcu.write(0x205, 0xF0, SystemClock::default());
+    mcu.write(0, 0x5D, SystemClock::default()); // opcode
     mcu.write_word(1, 0x200); // absolute addr
     let mut cpu = create_cpu_with_mcu(mcu);
     cpu.set_a(0xFF);
@@ -2705,8 +2705,8 @@ fn test_eor_absolute_x() {
 fn test_ora_absolute_x() {
     // ORA absolute X - 0x1D
     let mut mcu = MockMcu::new();
-    mcu.write(0x205, 0xF0);
-    mcu.write(0, 0x1D); // opcode
+    mcu.write(0x205, 0xF0, SystemClock::default());
+    mcu.write(0, 0x1D, SystemClock::default()); // opcode
     mcu.write_word(1, 0x200); // absolute addr
     let mut cpu = create_cpu_with_mcu(mcu);
     cpu.set_a(0x0F);
@@ -2721,8 +2721,8 @@ fn test_ora_absolute_x() {
 fn test_adc_absolute_x() {
     // ADC absolute X - 0x7D
     let mut mcu = MockMcu::new();
-    mcu.write(0x205, 0x10);
-    mcu.write(0, 0x7D); // opcode
+    mcu.write(0x205, 0x10, SystemClock::default());
+    mcu.write(0, 0x7D, SystemClock::default()); // opcode
     mcu.write_word(1, 0x200); // absolute addr
     let mut cpu = create_cpu_with_mcu(mcu);
     cpu.set_a(0x20);
@@ -2739,8 +2739,8 @@ fn test_adc_absolute_x() {
 fn test_cmp_absolute_x() {
     // CMP absolute X - 0xDD
     let mut mcu = MockMcu::new();
-    mcu.write(0x205, 0x40);
-    mcu.write(0, 0xDD); // opcode
+    mcu.write(0x205, 0x40, SystemClock::default());
+    mcu.write(0, 0xDD, SystemClock::default()); // opcode
     mcu.write_word(1, 0x200); // absolute addr
     let mut cpu = create_cpu_with_mcu(mcu);
     cpu.set_a(0x42);
@@ -2755,8 +2755,8 @@ fn test_cmp_absolute_x() {
 fn test_sbc_absolute_x() {
     // SBC absolute X - 0xFD
     let mut mcu = MockMcu::new();
-    mcu.write(0x205, 0x10);
-    mcu.write(0, 0xFD); // opcode
+    mcu.write(0x205, 0x10, SystemClock::default());
+    mcu.write(0, 0xFD, SystemClock::default()); // opcode
     mcu.write_word(1, 0x200); // absolute addr
     let mut cpu = create_cpu_with_mcu(mcu);
     cpu.set_a(0x20);
@@ -2800,9 +2800,9 @@ fn test_lax_indirect_y() {
     // LAX (indirect), Y - 0xB3
     let mut mcu = MockMcu::new();
     mcu.write_word(0x10, 0x200);
-    mcu.write(0x205, 0x42);
-    mcu.write(0, 0xB3); // opcode
-    mcu.write(1, 0x10); // zero page addr
+    mcu.write(0x205, 0x42, SystemClock::default());
+    mcu.write(0, 0xB3, SystemClock::default()); // opcode
+    mcu.write(1, 0x10, SystemClock::default()); // zero page addr
     let mut cpu = create_cpu_with_mcu(mcu);
     cpu.set_y(5);
 
@@ -2816,7 +2816,7 @@ fn test_lax_indirect_y() {
 fn test_sax_absolute() {
     // SAX absolute - 0x8F
     let mut mcu = MockMcu::new();
-    mcu.write(0, 0x8F); // opcode
+    mcu.write(0, 0x8F, SystemClock::default()); // opcode
     mcu.write_word(1, 0x200); // absolute addr
     let mut cpu = create_cpu_with_mcu(mcu);
     cpu.set_a(0x30);
@@ -2832,8 +2832,8 @@ fn test_sax_indirect_x() {
     // SAX (indirect, X) - 0x83
     let mut mcu = MockMcu::new();
     mcu.write_word(0x15, 0x200); // indirect pointer at 0x10 + X(5)
-    mcu.write(0, 0x83); // opcode
-    mcu.write(1, 0x10); // zero page addr
+    mcu.write(0, 0x83, SystemClock::default()); // opcode
+    mcu.write(1, 0x10, SystemClock::default()); // zero page addr
     let mut cpu = create_cpu_with_mcu(mcu);
     cpu.set_a(0x30);
     cpu.set_x(5);
@@ -2847,8 +2847,8 @@ fn test_sax_indirect_x() {
 fn test_dcp_absolute() {
     // DCP absolute - 0xCF
     let mut mcu = MockMcu::new();
-    mcu.write(0x200, 0x10);
-    mcu.write(0, 0xCF); // opcode
+    mcu.write(0x200, 0x10, SystemClock::default());
+    mcu.write(0, 0xCF, SystemClock::default()); // opcode
     mcu.write_word(1, 0x200); // absolute addr
     let mut cpu = create_cpu_with_mcu(mcu);
     cpu.set_a(0x10);
@@ -2864,8 +2864,8 @@ fn test_dcp_absolute() {
 fn test_dcp_absolute_x() {
     // DCP absolute X - 0xDF
     let mut mcu = MockMcu::new();
-    mcu.write(0x205, 0x10);
-    mcu.write(0, 0xDF); // opcode
+    mcu.write(0x205, 0x10, SystemClock::default());
+    mcu.write(0, 0xDF, SystemClock::default()); // opcode
     mcu.write_word(1, 0x200); // absolute addr
     let mut cpu = create_cpu_with_mcu(mcu);
     cpu.set_a(0x10);
@@ -2880,8 +2880,8 @@ fn test_dcp_absolute_x() {
 fn test_dcp_absolute_y() {
     // DCP absolute Y - 0xDB
     let mut mcu = MockMcu::new();
-    mcu.write(0x205, 0x10);
-    mcu.write(0, 0xDB); // opcode
+    mcu.write(0x205, 0x10, SystemClock::default());
+    mcu.write(0, 0xDB, SystemClock::default()); // opcode
     mcu.write_word(1, 0x200); // absolute addr
     let mut cpu = create_cpu_with_mcu(mcu);
     cpu.set_a(0x10);
@@ -2896,8 +2896,8 @@ fn test_dcp_absolute_y() {
 fn test_isc_absolute() {
     // ISC absolute - 0xEF
     let mut mcu = MockMcu::new();
-    mcu.write(0x200, 0x0F);
-    mcu.write(0, 0xEF); // opcode
+    mcu.write(0x200, 0x0F, SystemClock::default());
+    mcu.write(0, 0xEF, SystemClock::default()); // opcode
     mcu.write_word(1, 0x200); // absolute addr
     let mut cpu = create_cpu_with_mcu(mcu);
     cpu.set_a(0x20);
@@ -2913,8 +2913,8 @@ fn test_isc_absolute() {
 fn test_isc_absolute_x() {
     // ISC absolute X - 0xFF
     let mut mcu = MockMcu::new();
-    mcu.write(0x205, 0x0F);
-    mcu.write(0, 0xFF); // opcode
+    mcu.write(0x205, 0x0F, SystemClock::default());
+    mcu.write(0, 0xFF, SystemClock::default()); // opcode
     mcu.write_word(1, 0x200); // absolute addr
     let mut cpu = create_cpu_with_mcu(mcu);
     cpu.set_a(0x20);
@@ -2931,8 +2931,8 @@ fn test_isc_absolute_x() {
 fn test_isc_absolute_y() {
     // ISC absolute Y - 0xFB
     let mut mcu = MockMcu::new();
-    mcu.write(0x205, 0x0F);
-    mcu.write(0, 0xFB); // opcode
+    mcu.write(0x205, 0x0F, SystemClock::default());
+    mcu.write(0, 0xFB, SystemClock::default()); // opcode
     mcu.write_word(1, 0x200); // absolute addr
     let mut cpu = create_cpu_with_mcu(mcu);
     cpu.set_a(0x20);
@@ -2949,8 +2949,8 @@ fn test_isc_absolute_y() {
 fn test_aso_absolute() {
     // ASO absolute - 0x0F
     let mut mcu = MockMcu::new();
-    mcu.write(0x200, 0x40); // 0b01000000
-    mcu.write(0, 0x0F); // opcode
+    mcu.write(0x200, 0x40, SystemClock::default()); // 0b01000000
+    mcu.write(0, 0x0F, SystemClock::default()); // opcode
     mcu.write_word(1, 0x200); // absolute addr
     let mut cpu = create_cpu_with_mcu(mcu);
     cpu.set_a(0x0F);
@@ -2965,8 +2965,8 @@ fn test_aso_absolute() {
 fn test_aso_absolute_x() {
     // ASO absolute X - 0x1F
     let mut mcu = MockMcu::new();
-    mcu.write(0x205, 0x40);
-    mcu.write(0, 0x1F); // opcode
+    mcu.write(0x205, 0x40, SystemClock::default());
+    mcu.write(0, 0x1F, SystemClock::default()); // opcode
     mcu.write_word(1, 0x200); // absolute addr
     let mut cpu = create_cpu_with_mcu(mcu);
     cpu.set_a(0x0F);
@@ -2982,8 +2982,8 @@ fn test_aso_absolute_x() {
 fn test_aso_absolute_y() {
     // ASO absolute Y - 0x1B
     let mut mcu = MockMcu::new();
-    mcu.write(0x205, 0x40);
-    mcu.write(0, 0x1B); // opcode
+    mcu.write(0x205, 0x40, SystemClock::default());
+    mcu.write(0, 0x1B, SystemClock::default()); // opcode
     mcu.write_word(1, 0x200); // absolute addr
     let mut cpu = create_cpu_with_mcu(mcu);
     cpu.set_a(0x0F);
@@ -2999,8 +2999,8 @@ fn test_aso_absolute_y() {
 fn test_rla_absolute() {
     // RLA absolute - 0x2F
     let mut mcu = MockMcu::new();
-    mcu.write(0x200, 0x81);
-    mcu.write(0, 0x2F); // opcode
+    mcu.write(0x200, 0x81, SystemClock::default());
+    mcu.write(0, 0x2F, SystemClock::default()); // opcode
     mcu.write_word(1, 0x200); // absolute addr
     let mut cpu = create_cpu_with_mcu(mcu);
     cpu.set_a(0x0F);
@@ -3016,8 +3016,8 @@ fn test_rla_absolute() {
 fn test_rla_absolute_x() {
     // RLA absolute X - 0x3F
     let mut mcu = MockMcu::new();
-    mcu.write(0x205, 0x81);
-    mcu.write(0, 0x3F); // opcode
+    mcu.write(0x205, 0x81, SystemClock::default());
+    mcu.write(0, 0x3F, SystemClock::default()); // opcode
     mcu.write_word(1, 0x200); // absolute addr
     let mut cpu = create_cpu_with_mcu(mcu);
     cpu.set_a(0x0F);
@@ -3034,8 +3034,8 @@ fn test_rla_absolute_x() {
 fn test_rla_absolute_y() {
     // RLA absolute Y - 0x3B
     let mut mcu = MockMcu::new();
-    mcu.write(0x205, 0x81);
-    mcu.write(0, 0x3B); // opcode
+    mcu.write(0x205, 0x81, SystemClock::default());
+    mcu.write(0, 0x3B, SystemClock::default()); // opcode
     mcu.write_word(1, 0x200); // absolute addr
     let mut cpu = create_cpu_with_mcu(mcu);
     cpu.set_a(0x0F);
@@ -3052,8 +3052,8 @@ fn test_rla_absolute_y() {
 fn test_rra_absolute() {
     // RRA absolute - 0x6F
     let mut mcu = MockMcu::new();
-    mcu.write(0x200, 0x81);
-    mcu.write(0, 0x6F); // opcode
+    mcu.write(0x200, 0x81, SystemClock::default());
+    mcu.write(0, 0x6F, SystemClock::default()); // opcode
     mcu.write_word(1, 0x200); // absolute addr
     let mut cpu = create_cpu_with_mcu(mcu);
     cpu.set_a(0x05);
@@ -3069,8 +3069,8 @@ fn test_rra_absolute() {
 fn test_rra_absolute_x() {
     // RRA absolute X - 0x7F
     let mut mcu = MockMcu::new();
-    mcu.write(0x205, 0x81);
-    mcu.write(0, 0x7F); // opcode
+    mcu.write(0x205, 0x81, SystemClock::default());
+    mcu.write(0, 0x7F, SystemClock::default()); // opcode
     mcu.write_word(1, 0x200); // absolute addr
     let mut cpu = create_cpu_with_mcu(mcu);
     cpu.set_a(0x05);
@@ -3087,8 +3087,8 @@ fn test_rra_absolute_x() {
 fn test_rra_absolute_y() {
     // RRA absolute Y - 0x7B
     let mut mcu = MockMcu::new();
-    mcu.write(0x205, 0x81);
-    mcu.write(0, 0x7B); // opcode
+    mcu.write(0x205, 0x81, SystemClock::default());
+    mcu.write(0, 0x7B, SystemClock::default()); // opcode
     mcu.write_word(1, 0x200); // absolute addr
     let mut cpu = create_cpu_with_mcu(mcu);
     cpu.set_a(0x05);
@@ -3246,9 +3246,9 @@ fn test_sbx_with_borrow() {
 fn test_lax_zero_page_y() {
     // LAX zero page Y - 0xB7
     let mut mcu = MockMcu::new();
-    mcu.write(0x15, 0x42);
-    mcu.write(0, 0xB7); // opcode
-    mcu.write(1, 0x10); // zero page addr
+    mcu.write(0x15, 0x42, SystemClock::default());
+    mcu.write(0, 0xB7, SystemClock::default()); // opcode
+    mcu.write(1, 0x10, SystemClock::default()); // zero page addr
     let mut cpu = create_cpu_with_mcu(mcu);
     cpu.set_y(5);
 
@@ -3262,8 +3262,8 @@ fn test_lax_zero_page_y() {
 fn test_lax_absolute() {
     // LAX absolute - 0xAF
     let mut mcu = MockMcu::new();
-    mcu.write(0x200, 0x42);
-    mcu.write(0, 0xAF); // opcode
+    mcu.write(0x200, 0x42, SystemClock::default());
+    mcu.write(0, 0xAF, SystemClock::default()); // opcode
     mcu.write_word(1, 0x200); // absolute addr
     let mut cpu = create_cpu_with_mcu(mcu);
 
@@ -3277,8 +3277,8 @@ fn test_lax_absolute() {
 fn test_lax_absolute_y() {
     // LAX absolute Y - 0xBF
     let mut mcu = MockMcu::new();
-    mcu.write(0x205, 0x42);
-    mcu.write(0, 0xBF); // opcode
+    mcu.write(0x205, 0x42, SystemClock::default());
+    mcu.write(0, 0xBF, SystemClock::default()); // opcode
     mcu.write_word(1, 0x200); // absolute addr
     let mut cpu = create_cpu_with_mcu(mcu);
     cpu.set_y(5);
@@ -3320,9 +3320,9 @@ fn test_adc_decimal_mode_not_supported() {
 fn test_brk_pushes_b_flag() {
     // BRK should set B flag and push status with B flag
     let mut mcu = MockMcu::new();
-    mcu.write(0xFFFE, 0x00);
-    mcu.write(0xFFFF, 0x40);
-    mcu.write(0, 0x00); // BRK
+    mcu.write(0xFFFE, 0x00, SystemClock::default());
+    mcu.write(0xFFFF, 0x40, SystemClock::default());
+    mcu.write(0, 0x00, SystemClock::default()); // BRK
     let mut cpu = create_cpu_with_mcu(mcu);
     cpu.set_sp(0xFF);
     cpu.set_flag(Flag::Carry, true);
@@ -3341,7 +3341,7 @@ fn test_brk_pushes_b_flag() {
 fn test_rti_clears_b_flag() {
     // RTI should restore status and B flag should be clear
     let mut mcu = MockMcu::new();
-    mcu.write(0, 0x40); // RTI
+    mcu.write(0, 0x40, SystemClock::default()); // RTI
     let mut cpu = create_cpu_with_mcu(mcu);
     cpu.set_sp(0xFC);
 
@@ -3360,9 +3360,9 @@ fn test_rti_clears_b_flag() {
 fn test_transfer_no_touch_flags_zero_page() {
     // Load Y from zero page (0xA4 - LDY zero page)
     let mut mcu = MockMcu::new();
-    mcu.write(0x10, 0x42);
-    mcu.write(0, 0xA4); // LDY $10
-    mcu.write(1, 0x10);
+    mcu.write(0x10, 0x42, SystemClock::default());
+    mcu.write(0, 0xA4, SystemClock::default()); // LDY $10
+    mcu.write(1, 0x10, SystemClock::default());
     let mut cpu = create_cpu_with_mcu(mcu);
     cpu.set_flag(Flag::Zero, true); // set some flags
 
@@ -3377,9 +3377,9 @@ fn test_dcp_indirect_x() {
     // DCP (indirect, X) - 0xC3
     let mut mcu = MockMcu::new();
     mcu.write_word(0x15, 0x200);
-    mcu.write(0x200, 0x10);
-    mcu.write(0, 0xC3); // DCP ($10, X)
-    mcu.write(1, 0x10);
+    mcu.write(0x200, 0x10, SystemClock::default());
+    mcu.write(0, 0xC3, SystemClock::default()); // DCP ($10, X)
+    mcu.write(1, 0x10, SystemClock::default());
     let mut cpu = create_cpu_with_mcu(mcu);
     cpu.set_a(0x10);
     cpu.set_x(5);
@@ -3395,9 +3395,9 @@ fn test_dcp_indirect_y() {
     // DCP (indirect), Y - 0xD3
     let mut mcu = MockMcu::new();
     mcu.write_word(0x10, 0x200);
-    mcu.write(0x205, 0x10);
-    mcu.write(0, 0xD3); // DCP ($10), Y
-    mcu.write(1, 0x10);
+    mcu.write(0x205, 0x10, SystemClock::default());
+    mcu.write(0, 0xD3, SystemClock::default()); // DCP ($10), Y
+    mcu.write(1, 0x10, SystemClock::default());
     let mut cpu = create_cpu_with_mcu(mcu);
     cpu.set_a(0x10);
     cpu.set_y(5);
@@ -3412,9 +3412,9 @@ fn test_isc_indirect_x() {
     // ISC (indirect, X) - 0xE3
     let mut mcu = MockMcu::new();
     mcu.write_word(0x15, 0x200);
-    mcu.write(0x200, 0x0F);
-    mcu.write(0, 0xE3); // ISC ($10, X)
-    mcu.write(1, 0x10);
+    mcu.write(0x200, 0x0F, SystemClock::default());
+    mcu.write(0, 0xE3, SystemClock::default()); // ISC ($10, X)
+    mcu.write(1, 0x10, SystemClock::default());
     let mut cpu = create_cpu_with_mcu(mcu);
     cpu.set_a(0x20);
     cpu.set_flag(Flag::Carry, true);
@@ -3431,9 +3431,9 @@ fn test_isc_indirect_y() {
     // ISC (indirect), Y - 0xF3
     let mut mcu = MockMcu::new();
     mcu.write_word(0x10, 0x200);
-    mcu.write(0x205, 0x0F);
-    mcu.write(0, 0xF3); // ISC ($10), Y
-    mcu.write(1, 0x10);
+    mcu.write(0x205, 0x0F, SystemClock::default());
+    mcu.write(0, 0xF3, SystemClock::default()); // ISC ($10), Y
+    mcu.write(1, 0x10, SystemClock::default());
     let mut cpu = create_cpu_with_mcu(mcu);
     cpu.set_a(0x20);
     cpu.set_flag(Flag::Carry, true);
@@ -3450,9 +3450,9 @@ fn test_aso_indirect_x() {
     // ASO (indirect, X) - 0x03
     let mut mcu = MockMcu::new();
     mcu.write_word(0x15, 0x200);
-    mcu.write(0x200, 0x40);
-    mcu.write(0, 0x03); // ASO ($10, X)
-    mcu.write(1, 0x10);
+    mcu.write(0x200, 0x40, SystemClock::default());
+    mcu.write(0, 0x03, SystemClock::default()); // ASO ($10, X)
+    mcu.write(1, 0x10, SystemClock::default());
     let mut cpu = create_cpu_with_mcu(mcu);
     cpu.set_a(0x0F);
     cpu.set_x(5);
@@ -3468,9 +3468,9 @@ fn test_aso_indirect_y() {
     // ASO (indirect), Y - 0x13
     let mut mcu = MockMcu::new();
     mcu.write_word(0x10, 0x200);
-    mcu.write(0x205, 0x40);
-    mcu.write(0, 0x13); // ASO ($10), Y
-    mcu.write(1, 0x10);
+    mcu.write(0x205, 0x40, SystemClock::default());
+    mcu.write(0, 0x13, SystemClock::default()); // ASO ($10), Y
+    mcu.write(1, 0x10, SystemClock::default());
     let mut cpu = create_cpu_with_mcu(mcu);
     cpu.set_a(0x0F);
     cpu.set_y(5);
@@ -3486,9 +3486,9 @@ fn test_rla_indirect_x() {
     // RLA (indirect, X) - 0x23
     let mut mcu = MockMcu::new();
     mcu.write_word(0x15, 0x200);
-    mcu.write(0x200, 0x81);
-    mcu.write(0, 0x23); // RLA ($10, X)
-    mcu.write(1, 0x10);
+    mcu.write(0x200, 0x81, SystemClock::default());
+    mcu.write(0, 0x23, SystemClock::default()); // RLA ($10, X)
+    mcu.write(1, 0x10, SystemClock::default());
     let mut cpu = create_cpu_with_mcu(mcu);
     cpu.set_a(0x0F);
     cpu.set_flag(Flag::Carry, true);
@@ -3505,9 +3505,9 @@ fn test_rla_indirect_y() {
     // RLA (indirect), Y - 0x33
     let mut mcu = MockMcu::new();
     mcu.write_word(0x10, 0x200);
-    mcu.write(0x205, 0x81);
-    mcu.write(0, 0x33); // RLA ($10), Y
-    mcu.write(1, 0x10);
+    mcu.write(0x205, 0x81, SystemClock::default());
+    mcu.write(0, 0x33, SystemClock::default()); // RLA ($10), Y
+    mcu.write(1, 0x10, SystemClock::default());
     let mut cpu = create_cpu_with_mcu(mcu);
     cpu.set_a(0x0F);
     cpu.set_flag(Flag::Carry, true);
@@ -3524,9 +3524,9 @@ fn test_lse_indirect_x() {
     // LSE (indirect, X) - 0x43
     let mut mcu = MockMcu::new();
     mcu.write_word(0x15, 0x200);
-    mcu.write(0x200, 0x81);
-    mcu.write(0, 0x43); // LSE ($10, X)
-    mcu.write(1, 0x10);
+    mcu.write(0x200, 0x81, SystemClock::default());
+    mcu.write(0, 0x43, SystemClock::default()); // LSE ($10, X)
+    mcu.write(1, 0x10, SystemClock::default());
     let mut cpu = create_cpu_with_mcu(mcu);
     cpu.set_a(0xFF);
     cpu.set_flag(Flag::Carry, true);
@@ -3543,9 +3543,9 @@ fn test_lse_indirect_y() {
     // LSE (indirect), Y - 0x53
     let mut mcu = MockMcu::new();
     mcu.write_word(0x10, 0x200);
-    mcu.write(0x205, 0x81);
-    mcu.write(0, 0x53); // LSE ($10), Y
-    mcu.write(1, 0x10);
+    mcu.write(0x205, 0x81, SystemClock::default());
+    mcu.write(0, 0x53, SystemClock::default()); // LSE ($10), Y
+    mcu.write(1, 0x10, SystemClock::default());
     let mut cpu = create_cpu_with_mcu(mcu);
     cpu.set_a(0xFF);
     cpu.set_flag(Flag::Carry, true);
@@ -3562,9 +3562,9 @@ fn test_rra_indirect_x() {
     // RRA (indirect, X) - 0x63
     let mut mcu = MockMcu::new();
     mcu.write_word(0x15, 0x200);
-    mcu.write(0x200, 0x81);
-    mcu.write(0, 0x63); // RRA ($10, X)
-    mcu.write(1, 0x10);
+    mcu.write(0x200, 0x81, SystemClock::default());
+    mcu.write(0, 0x63, SystemClock::default()); // RRA ($10, X)
+    mcu.write(1, 0x10, SystemClock::default());
     let mut cpu = create_cpu_with_mcu(mcu);
     cpu.set_a(0x05);
     cpu.set_flag(Flag::Carry, true);
@@ -3581,9 +3581,9 @@ fn test_rra_indirect_y() {
     // RRA (indirect), Y - 0x73
     let mut mcu = MockMcu::new();
     mcu.write_word(0x10, 0x200);
-    mcu.write(0x205, 0x81);
-    mcu.write(0, 0x73); // RRA ($10), Y
-    mcu.write(1, 0x10);
+    mcu.write(0x205, 0x81, SystemClock::default());
+    mcu.write(0, 0x73, SystemClock::default()); // RRA ($10), Y
+    mcu.write(1, 0x10, SystemClock::default());
     let mut cpu = create_cpu_with_mcu(mcu);
     cpu.set_a(0x05);
     cpu.set_flag(Flag::Carry, true);
@@ -3599,9 +3599,9 @@ fn test_rra_indirect_y() {
 fn test_dcp_zero_page_x() {
     // DCP zero page X - 0xD7
     let mut mcu = MockMcu::new();
-    mcu.write(0x15, 0x10);
-    mcu.write(0, 0xD7); // DCP $10, X
-    mcu.write(1, 0x10);
+    mcu.write(0x15, 0x10, SystemClock::default());
+    mcu.write(0, 0xD7, SystemClock::default()); // DCP $10, X
+    mcu.write(1, 0x10, SystemClock::default());
     let mut cpu = create_cpu_with_mcu(mcu);
     cpu.set_a(0x10);
     cpu.set_x(5);
@@ -3616,9 +3616,9 @@ fn test_dcp_zero_page_x() {
 fn test_isc_zero_page_x() {
     // ISC zero page X - 0xF7
     let mut mcu = MockMcu::new();
-    mcu.write(0x15, 0x0F);
-    mcu.write(0, 0xF7); // ISC $10, X
-    mcu.write(1, 0x10);
+    mcu.write(0x15, 0x0F, SystemClock::default());
+    mcu.write(0, 0xF7, SystemClock::default()); // ISC $10, X
+    mcu.write(1, 0x10, SystemClock::default());
     let mut cpu = create_cpu_with_mcu(mcu);
     cpu.set_a(0x20);
     cpu.set_flag(Flag::Carry, true);
@@ -3634,9 +3634,9 @@ fn test_isc_zero_page_x() {
 fn test_aso_zero_page_x() {
     // ASO zero page X - 0x17
     let mut mcu = MockMcu::new();
-    mcu.write(0x15, 0x40);
-    mcu.write(0, 0x17); // ASO $10, X
-    mcu.write(1, 0x10);
+    mcu.write(0x15, 0x40, SystemClock::default());
+    mcu.write(0, 0x17, SystemClock::default()); // ASO $10, X
+    mcu.write(1, 0x10, SystemClock::default());
     let mut cpu = create_cpu_with_mcu(mcu);
     cpu.set_a(0x0F);
     cpu.set_x(5);
@@ -3651,9 +3651,9 @@ fn test_aso_zero_page_x() {
 fn test_rla_zero_page_x() {
     // RLA zero page X - 0x37
     let mut mcu = MockMcu::new();
-    mcu.write(0x15, 0x81);
-    mcu.write(0, 0x37); // RLA $10, X
-    mcu.write(1, 0x10);
+    mcu.write(0x15, 0x81, SystemClock::default());
+    mcu.write(0, 0x37, SystemClock::default()); // RLA $10, X
+    mcu.write(1, 0x10, SystemClock::default());
     let mut cpu = create_cpu_with_mcu(mcu);
     cpu.set_a(0x0F);
     cpu.set_flag(Flag::Carry, true);
@@ -3669,9 +3669,9 @@ fn test_rla_zero_page_x() {
 fn test_lse_zero_page_x() {
     // LSE zero page X - 0x57
     let mut mcu = MockMcu::new();
-    mcu.write(0x15, 0x81);
-    mcu.write(0, 0x57); // LSE $10, X
-    mcu.write(1, 0x10);
+    mcu.write(0x15, 0x81, SystemClock::default());
+    mcu.write(0, 0x57, SystemClock::default()); // LSE $10, X
+    mcu.write(1, 0x10, SystemClock::default());
     let mut cpu = create_cpu_with_mcu(mcu);
     cpu.set_a(0xFF);
     cpu.set_flag(Flag::Carry, true);
@@ -3687,9 +3687,9 @@ fn test_lse_zero_page_x() {
 fn test_rra_zero_page_x() {
     // RRA zero page X - 0x77
     let mut mcu = MockMcu::new();
-    mcu.write(0x15, 0x81);
-    mcu.write(0, 0x77); // RRA $10, X
-    mcu.write(1, 0x10);
+    mcu.write(0x15, 0x81, SystemClock::default());
+    mcu.write(0, 0x77, SystemClock::default()); // RRA $10, X
+    mcu.write(1, 0x10, SystemClock::default());
     let mut cpu = create_cpu_with_mcu(mcu);
     cpu.set_a(0x05);
     cpu.set_flag(Flag::Carry, true);
@@ -3749,7 +3749,7 @@ fn test_pop_stack_wrap_around() {
     // Test stack pointer wrap around on pop
     let mut cpu = create_cpu();
     cpu.set_sp(0xFF);
-    cpu.mcu_mut().write(0x0100, 0x42);
+    cpu.mcu_mut().write(0x0100, 0x42, SystemClock::default());
     let value = cpu.pop_stack();
 
     // pop_stack increments SP first, then reads
@@ -3801,7 +3801,7 @@ fn test_pop_stack_into_pc() {
 fn test_rts_adds_one_to_pc() {
     // Verify that RTS adds 1 to the pulled PC value
     let mut mcu = MockMcu::new();
-    mcu.write(0, 0x60); // RTS
+    mcu.write(0, 0x60, SystemClock::default()); // RTS
     let mut cpu = create_cpu_with_mcu(mcu);
     cpu.set_sp(0xFD);
     // Push PC value to stack
@@ -3878,9 +3878,9 @@ fn test_transfer_no_touch_flags_indirect() {
     // Test LDA (indirect, X) doesn't touch flags in a specific way
     let mut mcu = MockMcu::new();
     mcu.write_word(0x15, 0x200);
-    mcu.write(0x200, 0x00);
-    mcu.write(0, 0xA1); // LDA ($10, X)
-    mcu.write(1, 0x10);
+    mcu.write(0x200, 0x00, SystemClock::default());
+    mcu.write(0, 0xA1, SystemClock::default()); // LDA ($10, X)
+    mcu.write(1, 0x10, SystemClock::default());
     let mut cpu = create_cpu_with_mcu(mcu);
     cpu.set_x(5);
 
@@ -3942,7 +3942,7 @@ impl Mcu for TestMcu {
         self.mem[address as usize]
     }
 
-    fn write(&mut self, address: u16, value: u8) {
+    fn write(&mut self, address: u16, value: u8, _clock: SystemClock) {
         self.mem[address as usize] = value;
         self.writes.push((address, value));
     }

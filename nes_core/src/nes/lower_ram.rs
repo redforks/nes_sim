@@ -1,3 +1,4 @@
+use crate::SystemClock;
 use crate::mcu::Mcu;
 
 /// Lower nes RAM (0x0000-0x07FF) and remap to 0x0800-0x1FFF
@@ -20,7 +21,7 @@ impl Mcu for LowerRam {
         self.ram[address as usize & 0x7ff]
     }
 
-    fn write(&mut self, address: u16, value: u8) {
+    fn write(&mut self, address: u16, value: u8, _clock: SystemClock) {
         self.ram[address as usize & 0x7ff] = value;
     }
 
@@ -32,11 +33,11 @@ impl Mcu for LowerRam {
         self.ram[0x100 + address as usize]
     }
 
-    fn write_zero_page(&mut self, address: u8, value: u8) {
+    fn write_zero_page(&mut self, address: u8, value: u8, _clock: SystemClock) {
         self.ram[address as usize & 0xff] = value;
     }
 
-    fn write_stack_page(&mut self, address: u8, value: u8) {
+    fn write_stack_page(&mut self, address: u8, value: u8, _clock: SystemClock) {
         self.ram[0x100 + address as usize] = value;
     }
 }
@@ -48,9 +49,9 @@ mod tests {
     #[test]
     fn test() {
         let mut mcu = LowerRam::new();
-        mcu.write(0x0000, 0x12);
+        mcu.write(0x0000, 0x12, SystemClock::default());
         assert_eq!(mcu.read(0x0000), 0x12);
-        mcu.write(0x07ff, 0x13);
+        mcu.write(0x07ff, 0x13, SystemClock::default());
         assert_eq!(mcu.read(0x07ff), 0x13);
 
         assert_eq!(mcu.read(0x0800), 0x12);
