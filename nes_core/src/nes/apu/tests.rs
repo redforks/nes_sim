@@ -345,6 +345,65 @@ fn divider() {
     assert!(divider.tick());
 }
 
+// `Sequencer` reads items through `get_unchecked`, so the invariant
+// "cur_idx < items.len()" must hold after every `replace_items`. A duty write
+// swaps in a different table while carrying the old index over; if the new
+// slice is shorter, the stale index is out of bounds and both `output` and
+// `tick` read past the slice (undefined behavior). Today every duty table is
+// 8 entries long, but the type cannot rely on that.
+#[test]
+fn sequencer_replace_items_clamps_out_of_range_index() {
+    const LONG: [u8; 8] = [0, 1, 2, 3, 4, 5, 6, 7];
+    const SHORT: [u8; 3] = [10, 11, 12];
+
+    let mut seq = Sequencer::new(&LONG);
+    for _ in 0..5 {
+        seq.tick(); // cur_idx == 5, past the end of SHORT
+    }
+
+    seq.replace_items(&SHORT);
+
+    // `output` is the dangerous path: it reads before the next tick.
+    assert_eq!(seq.output(), 12);
+    assert_eq!(seq.tick(), 12);
+    assert_eq!(seq.tick(), 10);
+    assert_eq!(seq.tick(), 11);
+    assert_eq!(seq.tick(), 12);
+    assert_eq!(seq.tick(), 10);
+}
+
+// A replacement of the same length must keep the current position instead of
+// restarting the waveform, so clamping cannot be implemented as `reset()`.
+#[test]
+fn sequencer_replace_items_keeps_in_range_index() {
+    const A: [u8; 4] = [0, 1, 2, 3];
+    const B: [u8; 4] = [4, 5, 6, 7];
+
+    let mut seq = Sequencer::new(&A);
+    seq.tick();
+    seq.tick(); // cur_idx == 2
+
+    seq.replace_items(&B);
+    assert_eq!(seq.output(), 6);
+}
+
+// A single-item slice leaves only index 0 valid, whatever the old index was.
+#[test]
+fn sequencer_replace_items_clamps_to_single_item() {
+    const LONG: [u8; 4] = [0, 1, 2, 3];
+    const ONE: [u8; 1] = [42];
+
+    let mut seq = Sequencer::new(&LONG);
+    seq.tick();
+    seq.tick();
+    seq.tick(); // cur_idx == 3
+
+    seq.replace_items(&ONE);
+    assert_eq!(seq.output(), 42);
+    assert_eq!(seq.tick(), 42);
+    assert_eq!(seq.output(), 42);
+}
+
 // Golden-timeline gate for the noise channel's shift cadence. The expected
 // sequence derives only from primary-source facts, not from the emulator's
 // tables: https://www.nesdev.org/wiki/APU_Noise — "The period determines how

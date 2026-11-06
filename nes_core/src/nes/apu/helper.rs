@@ -254,6 +254,7 @@ impl<I: Copy> Sequencer<I> {
 
     pub fn replace_items(&mut self, items: &'static [I]) {
         self.items = items;
+        self.cur_idx = self.cur_idx.min(items.len() - 1);
     }
 
     pub fn reset_items(&mut self, items: &'static [I]) {
