@@ -162,26 +162,26 @@ impl<D: AudioDriver> Apu<D> {
             0x4001 => self.pulse1.write_sweep(value.into()),
             0x4002 => self.pulse1.write_timer_low(value),
             0x4003 => {
-                let suppress = std::mem::take(&mut self.length_race_clobber[0]);
+                let suppress = self.length_race_clobber[0];
                 self.pulse1.write_timer_high(value.into(), suppress);
             }
             0x4004 => self.pulse2.write_control(value.into()),
             0x4005 => self.pulse2.write_sweep(value.into()),
             0x4006 => self.pulse2.write_timer_low(value),
             0x4007 => {
-                let suppress = std::mem::take(&mut self.length_race_clobber[1]);
+                let suppress = self.length_race_clobber[1];
                 self.pulse2.write_timer_high(value.into(), suppress);
             }
             0x4008 => self.triangle.write_control(value.into()),
             0x400A => self.triangle.write_timer_low(value),
             0x400B => {
-                let suppress = std::mem::take(&mut self.length_race_clobber[2]);
+                let suppress = self.length_race_clobber[2];
                 self.triangle.write_timer_high(value.into(), suppress);
             }
             0x400C => self.noise.write_envelope(value.into()),
             0x400E => self.noise.write_period(value.into()),
             0x400F => {
-                let suppress = std::mem::take(&mut self.length_race_clobber[3]);
+                let suppress = self.length_race_clobber[3];
                 self.noise.write_length(value.into(), suppress);
             }
             0x4010 => self.dmc.write_dmc_irq_loop_freq(value.into()),
