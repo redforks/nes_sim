@@ -272,13 +272,13 @@ impl<I: Copy> Sequencer<I> {
     }
 
     pub fn tick(&mut self) -> I {
-        let item = self.items[self.cur_idx];
+        let item = unsafe { *self.items.get_unchecked(self.cur_idx) };
         self.cur_idx = (self.cur_idx + 1) % self.items.len();
         item
     }
 
     pub fn output(&self) -> I {
-        self.items[self.cur_idx]
+        unsafe { *self.items.get_unchecked(self.cur_idx) }
     }
 }
 
