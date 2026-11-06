@@ -218,14 +218,11 @@ fn unclobbered_write_reloads_length_counter() {
 
     pulse.write_timer_high(make_load_bits(0x18), false); // table[$18] = 2
     assert!(pulse.status_bit());
-    assert!(
-        pulse.length.will_decrement(),
-        "unhalted nonzero counter clocks"
-    );
+    assert!(pulse.length.tick(), "unhalted nonzero counter clocks");
 
     pulse.write_control(PulseControlBits::new().with_loop_and_is_halt(true));
     assert!(
-        !pulse.length.will_decrement(),
+        !pulse.length.tick(),
         "halt flag must suspend length clocking"
     );
 }
