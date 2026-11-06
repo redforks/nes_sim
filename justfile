@@ -802,21 +802,69 @@ profile-cachegrind frames="200":
     valgrind --tool=cachegrind --cachegrind-out-file=/tmp/cachegrind.out -- /tmp/nes-sim-target/profiling/nescli "$NES_ROM" play-movie "$NES_MOVIE" --no-throttle --headless --trim-after {{frames}}
     if command -v cg_annotate >/dev/null 2>&1; then cg_annotate /tmp/cachegrind.out | head -n 80; else echo "cg_annotate not found; raw output at /tmp/cachegrind.out"; fi
 
-# Instrumented timing (hotpath crate): builds nescli with `-F hotpath`, so
-# `#[hotpath::measure]` rows (main, process_frame, Cpu/Ppu/Apu::tick) print on
-# stdout at exit. Cpu/Apu::tick fire once per CPU cycle and Ppu::tick once per
-# dot — ~15M calls over 100 frames — so:
-#   * HOTPATH_FUNCTIONS_TIME_SAMPLING_RATE times `rate` of the calls (counts stay
-#     exact, avg/p95 come from the sample). Per-frame rows (process_frame, main)
-#     need rate=1.0 or hundreds of frames: at 0.01 only ~1 in 100 calls is timed.
-#   * HOTPATH_DRAIN_INTERVAL_MS=1 keeps hotpath's per-thread event backlog from
-#     eating memory: every call still queues an event (~90 B) and the default
-#     50 ms drain cannot keep up at ~25M events/s (~7 MB/frame backlog at 1 ms).
+# Instrumented timing + instruction counts (hotpath crate): builds nescli once
+# with `-F hotpath-callgrind`, so `#[hotpath::measure]` rows (main,
+# process_frame, Cpu/Ppu/Apu::tick) print on stdout at exit — one binary, two
+# legs, identical args/env/cwd:
+#   * Native leg prints the timing table. Cpu/Apu::tick fire once per CPU
+#     cycle and Ppu::tick once per dot — ~15M calls over 100 frames — so:
+#       - HOTPATH_FUNCTIONS_TIME_SAMPLING_RATE times `rate` of the calls
+#         (counts stay exact, avg/p95 come from the sample). Per-frame rows
+#         (process_frame, main) need rate=1.0 or hundreds of frames: at 0.01
+#         only ~1 in 100 calls is timed.
+#       - HOTPATH_DRAIN_INTERVAL_MS=1 keeps hotpath's per-thread event
+#         backlog from eating memory: every call still queues an event
+#         (~90 B) and the default 50 ms drain cannot keep up at ~25M events/s
+#         (~7 MB/frame backlog at 1 ms). Needed on both legs.
+#   * Callgrind leg runs the same build under valgrind and prints the icount
+#     table instead: inclusive instructions executed per function. No timings
+#     exist under valgrind (every sampling rate is forced to 0, so `rate`
+#     only shapes the native leg), but the counts are exact regardless.
+#     `--instr-atstart=no` skips simulating everything before the first
+#     guard; HOTPATH_CALLGRIND_OUT_FILE must mirror --callgrind-out-file so
+#     hotpath can find its dump. Counts are reproducible for deterministic
+#     workloads (headless movie, no-throttle) but only comparable within one
+#     valgrind/rustc/arch — the report tags the tool. Follows
+#     https://hotpath.rs/callgrind. The legs build over profile.profiling
+#     with RUSTFLAGS="-C target-cpu=x86-64-v2": the global ~/.cargo/config.toml
+#     target-cpu=znver5 emits AVX-512 instructions valgrind cannot decode.
+#     Switching RUSTFLAGS on the profiling profile makes alternating builds
+#     with profile-cpu (force-frame-pointers) rebuild.
 # `frames` defaults to 100 (~800 MB); each added frame costs ~7 MB and the
 # per-call guards roughly triple the frame time, so compare builds, not
-# absolute numbers, when the ticks are measured.
+# absolute numbers, when the ticks are measured. The callgrind leg runs the
+# whole movie under full simulation — expect it tens of × slower.
 hotpath frames="100" rate="0.01":
-    HOTPATH_FUNCTIONS_TIME_SAMPLING_RATE={{rate}} HOTPATH_DRAIN_INTERVAL_MS=1 cargo run -p nescli -F hotpath --release "../Super Mario Bros. (Japan, USA).nes" play-movie "../happylee-supermariobros,warped.fm2" --headless --no-throttle --trim-after {{frames}}
+    #!/usr/bin/env bash
+    set -euo pipefail
+    if ! command -v valgrind >/dev/null 2>&1; then
+        echo "error: valgrind not found (install valgrind for the icount leg)" >&2
+        exit 1
+    fi
+    NES_ROM="../Super Mario Bros. (Japan, USA).nes"
+    NES_MOVIE="../happylee-supermariobros,warped.fm2"
+    if [ ! -f "$NES_ROM" ]; then echo "error: ROM not found: $NES_ROM" >&2; exit 1; fi
+    if [ ! -f "$NES_MOVIE" ]; then echo "error: movie not found: $NES_MOVIE" >&2; exit 1; fi
+    BIN=/tmp/nes-sim-target/profiling/nescli
+    # Callgrind attribution needs the binary to keep its symbol table, so the
+    # icount legs build over profile.profiling (release + debug = 2, no strip).
+    # Codegen override: the global ~/.cargo/config.toml sets target-cpu=znver5,
+    # which emits AVX-512 (EVEX) instructions valgrind cannot decode (SIGILL,
+    # "unhandled instruction bytes: 0x62 …"); RUSTFLAGS in the env replace it
+    # with an ISA valgrind 3.25 understands. Not needed for samply, which
+    # samples natively and reads znver5 code fine (see profile-cpu).
+    echo ">> Building instrumented binary (hotpath-callgrind, profile.profiling)..."
+    RUSTFLAGS="-C target-cpu=x86-64-v2 -C link-arg=-fuse-ld=mold" \
+        cargo build -p nescli -F hotpath-callgrind --profile profiling
+    ARGS=("$NES_ROM" play-movie "$NES_MOVIE" --headless --no-throttle --trim-after {{frames}})
+    echo ">> Timing {{frames}} frames natively..."
+    HOTPATH_FUNCTIONS_TIME_SAMPLING_RATE={{rate}} HOTPATH_DRAIN_INTERVAL_MS=1 "$BIN" "${ARGS[@]}"
+    echo ">> Counting {{frames}} frames under callgrind (tens of × slower)..."
+    CALLGRIND_OUT=/tmp/hotpath-callgrind/callgrind.out
+    mkdir -p "$(dirname "$CALLGRIND_OUT")"
+    HOTPATH_DRAIN_INTERVAL_MS=1 HOTPATH_CALLGRIND_OUT_FILE="$CALLGRIND_OUT" \
+        valgrind -q --tool=callgrind --instr-atstart=no --callgrind-out-file="$CALLGRIND_OUT" \
+        "$BIN" "${ARGS[@]}"
 
 # CPU profiling (samply + hotpath): sampling profiler over the frame loop, with
 # per-function CPU attribution. Follows https://hotpath.rs/cpu_profiling.

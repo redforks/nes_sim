@@ -6,6 +6,10 @@ edition = "2024"
 [features]
 hotpath = ["hotpath/hotpath"]
 hotpath-cpu = ["hotpath/hotpath-cpu"]
+# Callgrind instruction counts for this crate's measures (icount rows only
+# appear when the process runs under valgrind --tool=callgrind); natively the
+# marker functions cost one extra call per measured invocation.
+hotpath-callgrind = ["hotpath", "hotpath/hotpath-callgrind"]
 
 [dependencies]
 sdl2 = { version = "0.38", features = ["unsafe_textures"] }

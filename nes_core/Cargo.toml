@@ -9,6 +9,10 @@ doctest = false
 [features]
 hotpath = ["hotpath/hotpath"]
 hotpath-cpu = ["hotpath/hotpath-cpu"]
+# Callgrind instruction counts for this crate's measures (icount rows only
+# appear when the process runs under valgrind --tool=callgrind); natively the
+# marker functions cost one extra call per measured invocation.
+hotpath-callgrind = ["hotpath", "hotpath/hotpath-callgrind"]
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 

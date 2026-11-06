@@ -11,6 +11,10 @@ hotpath = ["hotpath/hotpath", "nes_core/hotpath", "nes_sdl/hotpath"]
 # Needs samply + hotpath-samply in PATH and kernel perf permissions; see
 # `just profile-cpu`.
 hotpath-cpu = ["hotpath/hotpath-cpu", "nes_core/hotpath-cpu", "nes_sdl/hotpath-cpu"]
+# Counting instrumentation (valgrind icount): the same binary reports timing
+# natively and Callgrind instruction counts under valgrind --tool=callgrind;
+# see `just hotpath` and https://hotpath.rs/callgrind.
+hotpath-callgrind = ["hotpath", "hotpath/hotpath-callgrind", "nes_core/hotpath-callgrind", "nes_sdl/hotpath-callgrind"]
 
 [dependencies]
 anyhow = { workspace = true }
