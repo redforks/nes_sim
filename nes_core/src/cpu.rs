@@ -731,7 +731,6 @@ impl Cpu {
     /// Return true if just execute current instruction
     #[hotpath::measure(impl_type = "Cpu")]
     pub fn tick<P: Plugin<M>, M: Mcu>(&mut self, bus: &mut Bus<M>, plugin: &mut P) -> TickOutcome {
-        let clock = bus.clock();
         crate::hotpath_cpu::hotpath_cpu_alias!(
             Self,
             concat!(module_path!(), "::Cpu::tick"),
@@ -754,16 +753,20 @@ impl Cpu {
         if let Some(active) = self.active_interrupt_window.as_mut()
             && active.started_at.is_none()
         {
-            active.started_at = Some(clock);
+            active.started_at = Some(bus.clock());
         }
         let code = match self.pop_microcode() {
             Some(v) => v,
             None => {
-                let view = MachineView::new(self.snapshot(), bus.mcu(), clock);
+                let view = MachineView::new(self.snapshot(), bus.mcu(), bus.clock());
                 plugin.start(&view);
                 match self.interrupt_detected.take() {
-                    Some(InterruptType::Nmi) => self.push_enter_interrupt_microcodes(true, clock),
-                    Some(InterruptType::Irq) => self.push_enter_interrupt_microcodes(false, clock),
+                    Some(InterruptType::Nmi) => {
+                        self.push_enter_interrupt_microcodes(true, bus.clock())
+                    }
+                    Some(InterruptType::Irq) => {
+                        self.push_enter_interrupt_microcodes(false, bus.clock())
+                    }
                     None => Microcode::FetchAndDecode,
                 }
             }
@@ -783,10 +786,10 @@ impl Cpu {
         if instruction_complete {
             self.active_interrupt_window = None;
         }
-        self.detect_interrupt(clock, is_last_op, last_status, code);
+        self.detect_interrupt(bus.clock(), is_last_op, last_status, code);
 
         if instruction_complete {
-            let view = MachineView::new(self.snapshot(), bus.mcu(), clock);
+            let view = MachineView::new(self.snapshot(), bus.mcu(), bus.clock());
             plugin.end(&view);
             TickOutcome {
                 control: plugin.should_stop(),
