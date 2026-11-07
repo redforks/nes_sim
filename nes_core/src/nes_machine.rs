@@ -14,10 +14,6 @@ pub struct NesMachine<P, R: Render, D: crate::nes::apu::AudioDriver> {
     bus: Bus<NesMcu<R, D>>,
     /// DMA arbitration on the bus — renamed from the former `Bus` (ADR-0009).
     dma_bus: DmaBus,
-    /// Set while `reset()` is draining in-flight DMA work: the CPU gets no
-    /// more cycles (hardware holds the reset line asserted), but PPU/APU/DMA
-    /// keep interleaving until the bus is quiet.
-    reset_requested: bool,
 }
 
 impl<P, R, D> NesMachine<P, R, D>
@@ -48,7 +44,6 @@ where
             p: plugin,
             bus: Bus::new(mcu),
             dma_bus: DmaBus::new(),
-            reset_requested: false,
         }
     }
 
@@ -112,38 +107,37 @@ where
         self.bus.mcu_mut().tick_ppu();
         self.bus.mcu_mut().tick_zapper();
 
-        // While a machine reset is draining DMA work the CPU stays frozen:
-        // no IRQ/NMI latching, no microcode (the CPU state is about to be
-        // discarded wholesale).
-        if !self.reset_requested {
-            // Cartridge IRQ is sampled only on this CPU dot (post-`tick_ppu`):
-            // mapper counters are PPU-dot-clocked, so sampling here defers a
-            // mid-cycle trip to this CPU-cycle boundary (CPU-cycle
-            // quantization, pinned by `mmc3_irq_tests`).
-            // APU IRQ is read BEFORE `tick_apu` — a transition the step
-            // raises or clears becomes CPU-visible on the NEXT dot (one-dot
-            // skew, pinned by blargg's `cpu_interrupts_v2` 3-nmi_and_irq).
-            // The level is OR-ed before building the single `InterruptLines` bundle.
-            let irq_level =
-                self.bus.mcu().apu_irq_pending() || self.bus.mcu().cartridge_irq_pending();
+        // No reset-drain freeze gate is needed on this path. The only
+        // states `reset()` drains in are already CPU-stalling: an in-flight
+        // OAM DMA returns a non-`Idle` `BusOwner` (early return below) and
+        // an in-flight DMC DMA freezes the CPU in `Cpu::tick`. The brief
+        // pre-freeze window (DMC `DelayForLoad`/`TryHalt` retries) may run
+        // a couple of microcodes, but `reset()` discards them wholesale via
+        // `cpu.reset()` (queue + interrupt latches) after the drain, and
+        // its `is_busy` check runs before each `tick`, so the CPU cannot
+        // re-arm DMA after the bus quiesces.
+        //
+        // Cartridge IRQ is sampled only on this CPU dot (post-`tick_ppu`):
+        // mapper counters are PPU-dot-clocked, so sampling here defers a
+        // mid-cycle trip to this CPU-cycle boundary (CPU-cycle
+        // quantization, pinned by `mmc3_irq_tests`).
+        // APU IRQ is read BEFORE `tick_apu` — a transition the step
+        // raises or clears becomes CPU-visible on the NEXT dot (one-dot
+        // skew, pinned by blargg's `cpu_interrupts_v2` 3-nmi_and_irq).
+        // The level is OR-ed before building the single `InterruptLines` bundle.
+        let irq_level = self.bus.mcu().apu_irq_pending() || self.bus.mcu().cartridge_irq_pending();
 
-            let clock = self.bus.clock();
-            self.bus.mcu_mut().tick_apu(clock);
-            let owner = self.dma_bus.tick(&mut self.cpu, &mut self.bus);
-            if !matches!(owner, BusOwner::Idle) {
-                return ExecuteResult::Continue;
-            }
-
-            let nmi = self.bus.mcu_mut().ppu_mut().nmi_line();
-            let lines = InterruptLines { nmi, irq_level };
-            self.cpu.update_interrupt_lines(lines, self.bus.clock());
-            self.cpu.tick(&mut self.bus, &mut self.p).control
-        } else {
-            let clock = self.bus.clock();
-            self.bus.mcu_mut().tick_apu(clock);
-            let _ = self.dma_bus.tick(&mut self.cpu, &mut self.bus);
-            ExecuteResult::Continue
+        let clock = self.bus.clock();
+        self.bus.mcu_mut().tick_apu(clock);
+        let owner = self.dma_bus.tick(&mut self.cpu, &mut self.bus);
+        if !matches!(owner, BusOwner::Idle) {
+            return ExecuteResult::Continue;
         }
+
+        let nmi = self.bus.mcu_mut().ppu_mut().nmi_line();
+        let lines = InterruptLines { nmi, irq_level };
+        self.cpu.update_interrupt_lines(lines, self.bus.clock());
+        self.cpu.tick(&mut self.bus, &mut self.p).control
     }
 
     /// Maximum dots spent draining in-flight DMA on a machine reset. One
@@ -153,18 +147,16 @@ where
 
     /// Reset the machine to its power-up contract.
     ///
-    /// Hardware model chosen (see review round 2): once the reset line is
-    /// asserted, the CPU stops being fed immediately; PPU/APU keep running
-    /// and any DMA work already accepted by the bus completes first. Fresh
-    /// DMC fetch requests are suppressed during the drain so a playing
-    /// sample channel cannot extend it indefinitely.
+    /// Drain first: any DMA work already accepted by the bus completes
+    /// while PPU/APU keep interleaving, before the device resets apply.
+    /// The CPU needs no explicit freeze gate for the drain (see
+    /// `tick_dot_2`): in-flight DMA already stalls it, any pre-freeze
+    /// microcodes are discarded by the resets below, and the `is_busy`
+    /// check precedes each `tick` so the CPU cannot re-arm DMA once the
+    /// bus is quiet. Fresh DMC fetch requests are suppressed during the
+    /// drain so a playing sample channel cannot extend it indefinitely.
     pub fn reset(&mut self) {
-        debug_assert!(
-            !self.reset_requested,
-            "nested reset while a previous drain is active"
-        );
         let mut drained = 0_u32;
-        self.reset_requested = true;
         while self.dma_bus.is_busy(self.bus.mcu()) && drained < Self::RESET_DRAIN_LIMIT_DOTS {
             // Kill freshly generated DMC fetch requests before each step so
             // the drain terminates even with the DMC channel still playing.
@@ -172,7 +164,6 @@ where
             self.tick();
             drained += 1;
         }
-        self.reset_requested = false;
         debug_assert!(
             !self.dma_bus.is_busy(self.bus.mcu()),
             "DMA bus did not quiesce"

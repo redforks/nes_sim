@@ -81,7 +81,7 @@ _Avoid_: drain, flush queue, run until empty (use the canonical name)
 **Frame**:
 
 **Reset quiescence**:
-The bus-drain contract of `NesMachine::reset()`. Once the reset line is asserted the CPU stops being fed; PPU/APU keep interleaving and any DMA work already accepted by the bus completes before the device resets apply. Fresh DMC fetch requests are suppressed during the drain so a playing sample channel cannot extend it. The `DmaBus` owns DMA quiescence (`DmaBus::is_busy(&mcu)` / `DmaBus::suppress_new_dmc_requests(&mut mcu)` / `DmaBus::reset()`); `NesMcu::reset(clock)` re-anchors only time-relative PPU/APU state and `Cpu::reset` clears CPU state — time keeps running on the master `SystemClock`.
+The bus-drain contract of `NesMachine::reset()`. While draining, in-flight OAM DMA holds the bus and DMC DMA freezes the CPU, so the CPU gets no cycles; PPU/APU keep interleaving and any DMA work already accepted by the bus completes before the device resets apply, and any pre-freeze CPU microcodes are discarded by those resets. Fresh DMC fetch requests are suppressed during the drain so a playing sample channel cannot extend it. The `DmaBus` owns DMA quiescence (`DmaBus::is_busy(&mcu)` / `DmaBus::suppress_new_dmc_requests(&mut mcu)` / `DmaBus::reset()`); `NesMcu::reset(clock)` re-anchors only time-relative PPU/APU state and `Cpu::reset` clears CPU state — time keeps running on the master `SystemClock`.
 _Avoid_: hard abort, mid-DMA teardown, stale DMA
 
 **Per-dot contract**:
