@@ -1167,6 +1167,7 @@ impl Cpu {
         self.set_register(Register::A, self.a & v);
     }
 
+    #[inline(always)]
     fn bit<S: ValueSourceTrait, M: Mcu>(&mut self, bus: &mut Bus<M>) {
         let v = S::value(self, bus);
         self.set_flag(Flag::Overflow, v & 0x40 != 0);
@@ -1175,7 +1176,7 @@ impl Cpu {
     }
 
     fn push_microcodes(&mut self, microcodes: &[Microcode]) {
-        self.microcode_queue.extend_back(microcodes.iter().copied());
+        self.microcode_queue.extend_back(microcodes.iter().copied())
     }
 
     /// Arm the recognition window of an interrupt sequence about to run.

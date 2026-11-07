@@ -928,10 +928,10 @@ pub enum CrossPageBehavior {
 /// Each Microcode instruction executed by the CPU in a single cycle
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, strum_macros::Display)]
 pub enum Microcode {
-    /// Fetch byte at the pc address, but do nothing, pc not increase
-    FetchOnly,
     /// Fetch and decode next op code
     FetchAndDecode,
+    /// Fetch byte at the pc address, but do nothing, pc not increase
+    FetchOnly,
     /// Load register with value from memory
     LoadR(ValueSource, Register),
     /// Store register value to memory
@@ -1488,7 +1488,6 @@ impl Microcode {
     /// perform second phase of this Microcode
     pub fn exec<M: Mcu>(self, cpu: &mut Cpu, bus: &mut Bus<M>) {
         match self {
-            Self::FetchOnly => cpu.read_pc_byte(bus),
             Self::FetchAndDecode => {
                 const OPCODE_TABLE: [ArrayVec<[Microcode; 7]>; 256] = build_opcode_table();
 
@@ -1498,11 +1497,16 @@ impl Microcode {
                     cpu.arm_interrupt_window(window, None);
                 }
             }
+            Self::FetchOnly => cpu.read_pc_byte(bus),
             Self::LoadR(ValueSource::Immediate, r) => load_r::<Immediate, _>(cpu, bus, r),
             Self::LoadR(ValueSource::ZeroPage, r) => load_r::<ZeroPage, _>(cpu, bus, r),
             Self::LoadR(ValueSource::Mem, r) => load_r::<Mem, _>(cpu, bus, r),
-            Self::StoreR(ValueSource::ZeroPage, r) => store_r::<ZeroPage, _>(cpu, bus, r),
-            Self::StoreR(ValueSource::Mem, r) => store_r::<Mem, _>(cpu, bus, r),
+            Self::StoreR(ValueSource::ZeroPage, Register::A) => ZeroPage::write(cpu, bus, cpu.a),
+            Self::StoreR(ValueSource::ZeroPage, Register::X) => ZeroPage::write(cpu, bus, cpu.x),
+            Self::StoreR(ValueSource::ZeroPage, Register::Y) => ZeroPage::write(cpu, bus, cpu.y),
+            Self::StoreR(ValueSource::Mem, Register::A) => Mem::write(cpu, bus, cpu.a),
+            Self::StoreR(ValueSource::Mem, Register::X) => Mem::write(cpu, bus, cpu.x),
+            Self::StoreR(ValueSource::Mem, Register::Y) => Mem::write(cpu, bus, cpu.y),
             Self::ZeroPage => {
                 let addr = cpu.inc_read_byte(bus);
                 cpu.ab.set(addr as u16);
@@ -1539,17 +1543,28 @@ impl Microcode {
             Self::Shy => cpu.shy(bus),
             Self::Sha => cpu.sha(bus),
             Self::Tas => cpu.tas(bus),
-            Self::IndexedXWithOp { op, first_clock } => {
-                Self::absolute_indexed_with_op_generic(cpu, bus, op, first_clock, cpu.x)
-            }
-            Self::IndexedYWithOp { op, first_clock } => {
-                Self::absolute_indexed_with_op_generic(cpu, bus, op, first_clock, cpu.y)
-            }
+            Self::IndexedXWithOp {
+                op,
+                first_clock: CrossPageBehavior::FirstClock,
+            } => Self::absolute_indexed_with_op_first_clock(cpu, bus, op, cpu.x),
+            Self::IndexedXWithOp {
+                op: _,
+                first_clock: CrossPageBehavior::FirstClockAlways,
+            } => Self::absolute_indexed_with_op_always_first_clock(cpu, bus, cpu.x),
+            Self::IndexedYWithOp {
+                op,
+                first_clock: CrossPageBehavior::FirstClock,
+            } => Self::absolute_indexed_with_op_first_clock(cpu, bus, op, cpu.y),
+            Self::IndexedYWithOp {
+                op: _,
+                first_clock: CrossPageBehavior::FirstClockAlways,
+            } => Self::absolute_indexed_with_op_always_first_clock(cpu, bus, cpu.y),
             Self::Bit(ValueSource::ZeroPage) => cpu.bit::<ZeroPage, _>(bus),
             Self::Bit(ValueSource::Mem) => cpu.bit::<Mem, _>(bus),
-            Self::StoreAlu(src @ (ValueSource::ZeroPage | ValueSource::Mem)) => {
-                Self::write_alu(cpu, bus, src)
+            Self::StoreAlu(ValueSource::ZeroPage) => {
+                Self::write_alu(cpu, bus, ValueSource::ZeroPage)
             }
+            Self::StoreAlu(ValueSource::Mem) => Self::write_alu(cpu, bus, ValueSource::Mem),
             Self::SkipImmediate => {
                 cpu.inc_read_byte(bus);
             }
@@ -1635,10 +1650,95 @@ impl Microcode {
                 cpu.set_flag(flag, false);
             }
 
-            Self::Transfer(direction) => Self::transfer(cpu, direction),
-            Self::IncDec(target, src) => Self::inc_dec(cpu, bus, target, src),
+            Self::Transfer(TransferDirection::AtoX) => Self::transfer(cpu, TransferDirection::AtoX),
+            Self::Transfer(TransferDirection::XtoA) => Self::transfer(cpu, TransferDirection::XtoA),
+            Self::Transfer(TransferDirection::AtoY) => Self::transfer(cpu, TransferDirection::AtoY),
+            Self::Transfer(TransferDirection::YtoA) => Self::transfer(cpu, TransferDirection::YtoA),
+            Self::Transfer(TransferDirection::SPtoX) => {
+                Self::transfer(cpu, TransferDirection::SPtoX)
+            }
+            Self::Transfer(TransferDirection::XtoSP) => {
+                Self::transfer(cpu, TransferDirection::XtoSP)
+            }
+            Self::IncDec(IncDecTarget::IncrementX, ValueSource::Immediate) => {
+                Self::inc_dec(cpu, bus, IncDecTarget::IncrementX, ValueSource::Immediate)
+            }
+            Self::IncDec(IncDecTarget::IncrementY, ValueSource::Immediate) => {
+                Self::inc_dec(cpu, bus, IncDecTarget::IncrementY, ValueSource::Immediate)
+            }
+            Self::IncDec(IncDecTarget::IncrementAlu, ValueSource::Immediate) => {
+                Self::inc_dec(cpu, bus, IncDecTarget::IncrementAlu, ValueSource::Immediate)
+            }
+            Self::IncDec(IncDecTarget::DecrementX, ValueSource::Immediate) => {
+                Self::inc_dec(cpu, bus, IncDecTarget::DecrementX, ValueSource::Immediate)
+            }
+            Self::IncDec(IncDecTarget::DecrementY, ValueSource::Immediate) => {
+                Self::inc_dec(cpu, bus, IncDecTarget::DecrementY, ValueSource::Immediate)
+            }
+            Self::IncDec(IncDecTarget::DecrementAlu, ValueSource::Immediate) => {
+                Self::inc_dec(cpu, bus, IncDecTarget::DecrementAlu, ValueSource::Immediate)
+            }
+            Self::IncDec(IncDecTarget::IncrementX, ValueSource::ZeroPage) => {
+                Self::inc_dec(cpu, bus, IncDecTarget::IncrementX, ValueSource::ZeroPage)
+            }
+            Self::IncDec(IncDecTarget::IncrementY, ValueSource::ZeroPage) => {
+                Self::inc_dec(cpu, bus, IncDecTarget::IncrementY, ValueSource::ZeroPage)
+            }
+            Self::IncDec(IncDecTarget::IncrementAlu, ValueSource::ZeroPage) => {
+                Self::inc_dec(cpu, bus, IncDecTarget::IncrementAlu, ValueSource::ZeroPage)
+            }
+            Self::IncDec(IncDecTarget::DecrementX, ValueSource::ZeroPage) => {
+                Self::inc_dec(cpu, bus, IncDecTarget::DecrementX, ValueSource::ZeroPage)
+            }
+            Self::IncDec(IncDecTarget::DecrementY, ValueSource::ZeroPage) => {
+                Self::inc_dec(cpu, bus, IncDecTarget::DecrementY, ValueSource::ZeroPage)
+            }
+            Self::IncDec(IncDecTarget::DecrementAlu, ValueSource::ZeroPage) => {
+                Self::inc_dec(cpu, bus, IncDecTarget::DecrementAlu, ValueSource::ZeroPage)
+            }
+            Self::IncDec(IncDecTarget::IncrementX, ValueSource::Mem) => {
+                Self::inc_dec(cpu, bus, IncDecTarget::IncrementX, ValueSource::Mem)
+            }
+            Self::IncDec(IncDecTarget::IncrementY, ValueSource::Mem) => {
+                Self::inc_dec(cpu, bus, IncDecTarget::IncrementY, ValueSource::Mem)
+            }
+            Self::IncDec(IncDecTarget::IncrementAlu, ValueSource::Mem) => {
+                Self::inc_dec(cpu, bus, IncDecTarget::IncrementAlu, ValueSource::Mem)
+            }
+            Self::IncDec(IncDecTarget::DecrementX, ValueSource::Mem) => {
+                Self::inc_dec(cpu, bus, IncDecTarget::DecrementX, ValueSource::Mem)
+            }
+            Self::IncDec(IncDecTarget::DecrementY, ValueSource::Mem) => {
+                Self::inc_dec(cpu, bus, IncDecTarget::DecrementY, ValueSource::Mem)
+            }
+            Self::IncDec(IncDecTarget::DecrementAlu, ValueSource::Mem) => {
+                Self::inc_dec(cpu, bus, IncDecTarget::DecrementAlu, ValueSource::Mem)
+            }
 
-            Self::BranchRelative(test) => Self::branch_relative(cpu, bus, test.test(cpu)),
+            Self::BranchRelative(BranchTest::IfCarryClear) => {
+                Self::branch_relative(cpu, bus, BranchTest::IfCarryClear.test(cpu))
+            }
+            Self::BranchRelative(BranchTest::IfCarrySet) => {
+                Self::branch_relative(cpu, bus, BranchTest::IfCarrySet.test(cpu))
+            }
+            Self::BranchRelative(BranchTest::IfZeroSet) => {
+                Self::branch_relative(cpu, bus, BranchTest::IfZeroSet.test(cpu))
+            }
+            Self::BranchRelative(BranchTest::IfZeroClear) => {
+                Self::branch_relative(cpu, bus, BranchTest::IfZeroClear.test(cpu))
+            }
+            Self::BranchRelative(BranchTest::IfNegativeSet) => {
+                Self::branch_relative(cpu, bus, BranchTest::IfNegativeSet.test(cpu))
+            }
+            Self::BranchRelative(BranchTest::IfNegativeClear) => {
+                Self::branch_relative(cpu, bus, BranchTest::IfNegativeClear.test(cpu))
+            }
+            Self::BranchRelative(BranchTest::IfOverflowSet) => {
+                Self::branch_relative(cpu, bus, BranchTest::IfOverflowSet.test(cpu))
+            }
+            Self::BranchRelative(BranchTest::IfOverflowClear) => {
+                Self::branch_relative(cpu, bus, BranchTest::IfOverflowClear.test(cpu))
+            }
 
             Self::Kill => cpu.halt(),
 
@@ -1646,7 +1746,8 @@ impl Microcode {
             Self::LoadNmiPcL => cpu.load_nmi_pcl(bus),
             Self::LoadNmiPcH => cpu.load_nmi_pch(bus),
             Self::LoadIrqPcL => cpu.load_irq_pcl(bus),
-            Self::PushStatus { break_flag } => cpu.push_status(bus, break_flag),
+            Self::PushStatus { break_flag: true } => cpu.push_status(bus, true),
+            Self::PushStatus { break_flag: false } => cpu.push_status(bus, false),
             Self::Plp => cpu.plp(bus),
             Self::PopPcL => {
                 let low = cpu.pop_stack(bus);
@@ -1714,23 +1815,31 @@ impl Microcode {
         }
     }
 
-    fn absolute_indexed_with_op_generic<M: Mcu>(
+    fn absolute_indexed_with_op_always_first_clock<M: Mcu>(
         cpu: &mut Cpu,
         bus: &mut Bus<M>,
-        op: OpAfterAddressing,
-        first_clock: CrossPageBehavior,
         idx: u8,
     ) {
         let abh = cpu.abh();
         cpu.ab.wrapping_add(idx as u16);
-        let is_first_clock_always = matches!(first_clock, CrossPageBehavior::FirstClockAlways);
 
-        if is_first_clock_always || abh != cpu.abh() {
+        let dummy_addr = (u16::from(abh) << 8) | u16::from(cpu.abl());
+        cpu.read_byte(bus, dummy_addr);
+    }
+
+    fn absolute_indexed_with_op_first_clock<M: Mcu>(
+        cpu: &mut Cpu,
+        bus: &mut Bus<M>,
+        op: OpAfterAddressing,
+        idx: u8,
+    ) {
+        let abh = cpu.abh();
+        cpu.ab.wrapping_add(idx as u16);
+
+        if abh != cpu.abh() {
             let dummy_addr = (u16::from(abh) << 8) | u16::from(cpu.abl());
             cpu.read_byte(bus, dummy_addr);
-            if !is_first_clock_always {
-                cpu.push_microcode(op.to_microcode());
-            }
+            cpu.push_microcode(op.to_microcode());
         } else {
             op.to_microcode().exec(cpu, bus);
         }
@@ -1741,6 +1850,7 @@ impl Microcode {
         op.exec(cpu, bus);
     }
 
+    #[inline(always)]
     fn transfer(cpu: &mut Cpu, direction: TransferDirection) {
         match direction {
             TransferDirection::AtoX => cpu.set_register(Register::X, cpu.a),
@@ -1793,6 +1903,7 @@ impl Microcode {
     }
 
     /// Write an index register and mirror the new value into the ALU latch.
+    #[inline]
     fn inc_dec_register(cpu: &mut Cpu, register: Register, value: u8) {
         cpu.set_register(register, value);
         cpu.alu = value;
@@ -1847,14 +1958,6 @@ impl Microcode {
 fn load_r<S: ValueSourceTrait, M: Mcu>(cpu: &mut Cpu, bus: &mut Bus<M>, r: Register) {
     let value = S::value(cpu, bus);
     cpu.set_register(r, value);
-}
-
-fn store_r<S: ValueTargetTrait, M: Mcu>(cpu: &mut Cpu, bus: &mut Bus<M>, r: Register) {
-    match r {
-        Register::A => S::write(cpu, bus, cpu.a),
-        Register::X => S::write(cpu, bus, cpu.x),
-        Register::Y => S::write(cpu, bus, cpu.y),
-    }
 }
 
 fn load_pc_absolute_h<M: Mcu>(cpu: &mut Cpu, bus: &mut Bus<M>) {
