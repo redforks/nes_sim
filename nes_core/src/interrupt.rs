@@ -14,9 +14,12 @@
 /// (`v_blank && nmi_enable`, the `/NMI` line level).
 /// `irq_level` is already time-corrected: the APU level sampled
 /// **before** `tick_apu` (visible on the next dot) OR-ed with the
-/// cartridge latch's CPU-quantized level. Callers build this from
-/// the PPU NMI bool + the APU level + `CartridgeIrqLatch` before the
-/// single `Cpu::update_interrupt_lines` call.
+/// cartridge level, which callers sample only on the CPU dot
+/// (post-`tick_ppu`, dot 2) — mapper counters are PPU-dot-clocked, so
+/// this CPU-cycle quantization defers a mid-cycle trip to the next
+/// CPU boundary. Callers build this from the PPU NMI bool + the APU
+/// level + the cartridge level before the single
+/// `Cpu::update_interrupt_lines` call.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct InterruptLines {
     pub nmi: bool,
@@ -29,84 +32,9 @@ impl InterruptLines {
     }
 }
 
-/// Two-stage dot-captured / CPU-cycle-latched quantization of mapper IRQ.
-///
-/// Mapper counters (`MMC3::clock_irq`, `Vrc24`, …) are PPU-dot-clocked, but
-/// `cpu_interrupts_v2` / `mmc3_irq_tests` pin the CPU-cycle quantization:
-/// a counter trip during a PPU dot becomes CPU-visible only on the next
-/// CPU-cycle boundary. The two bools that were free fields in `NesMachine`
-/// live here with the invariant attached.
-///
-/// Protocol per dot (see `NesMachine::tick`):
-/// - `capture_next(level)` every dot, post-`tick_ppu`
-/// - `latch_on_cpu_tick()` only on `is_cpu_clock()` dots — copies `next → latched`
-/// - `level()` is the CPU-visible latched level fed to `InterruptLines`
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub struct CartridgeIrqLatch {
-    next: bool,
-    latched: bool,
-}
-
-impl CartridgeIrqLatch {
-    pub fn new() -> Self {
-        Self::default()
-    }
-
-    /// Capture the raw mapper IRQ level for this dot (call every dot).
-    pub fn capture_next(&mut self, level: bool) {
-        self.next = level;
-    }
-
-    /// Latch `next → latched` on CPU dots only (call only when `is_cpu_clock()`).
-    pub fn latch_on_cpu_tick(&mut self) {
-        self.latched = self.next;
-    }
-
-    /// CPU-visible latched level.
-    pub fn level(&self) -> bool {
-        self.latched
-    }
-
-    /// Raw next value (for debugging / tests).
-    pub fn next(&self) -> bool {
-        self.next
-    }
-
-    pub fn reset(&mut self) {
-        self.next = false;
-        self.latched = false;
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn cartridge_latch_quantizes_to_cpu_cycle() {
-        let mut latch = CartridgeIrqLatch::new();
-        // dot 0: pending false, cpu_tick
-        latch.capture_next(false);
-        latch.latch_on_cpu_tick();
-        assert!(!latch.level());
-
-        // dot 1: mapper raises mid-CPU-cycle (non-CPU dot)
-        latch.capture_next(true);
-        // no latch — level still false (not yet CPU-visible)
-        assert!(!latch.level());
-
-        // dot 2: CPU dot — latch copies
-        latch.latch_on_cpu_tick();
-        assert!(latch.level());
-
-        // dot 3-4: mapper clears on non-CPU dots
-        latch.capture_next(false);
-        assert!(latch.level()); // still latched
-        latch.capture_next(false);
-        // next CPU dot: clears
-        latch.latch_on_cpu_tick();
-        assert!(!latch.level());
-    }
 
     #[test]
     fn interrupt_lines_bundle_nmi_bool() {

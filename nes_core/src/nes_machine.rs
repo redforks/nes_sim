@@ -3,14 +3,13 @@ use crate::{
     bus::Bus,
     dma_bus::{BusOwner, DmaBus},
     ines::INesFile,
-    interrupt::{CartridgeIrqLatch, InterruptLines},
+    interrupt::InterruptLines,
     nes::{Mmc3IrqOverride, NesMcu, controller::Button, ppu::palette::ColorTheme},
     render::Render,
 };
 pub struct NesMachine<P, R: Render, D: crate::nes::apu::AudioDriver> {
     cpu: Cpu,
     p: P,
-    cart_latch: CartridgeIrqLatch,
     /// The CPU's external bus; owns the memory map `NesMcu` (ADR-0015).
     bus: Bus<NesMcu<R, D>>,
     /// DMA arbitration on the bus — renamed from the former `Bus` (ADR-0009).
@@ -47,7 +46,6 @@ where
         Self {
             cpu: Cpu::new(),
             p: plugin,
-            cart_latch: CartridgeIrqLatch::new(),
             bus: Bus::new(mcu),
             dma_bus: DmaBus::new(),
             reset_requested: false,
@@ -113,21 +111,21 @@ where
     fn tick_dot_2(&mut self) -> ExecuteResult {
         self.bus.mcu_mut().tick_ppu();
         self.bus.mcu_mut().tick_zapper();
-        self.cart_latch
-            .capture_next(self.bus.mcu().cartridge_irq_pending());
 
         // While a machine reset is draining DMA work the CPU stays frozen:
         // no IRQ/NMI latching, no microcode (the CPU state is about to be
         // discarded wholesale).
         if !self.reset_requested {
-            self.cart_latch.latch_on_cpu_tick();
-
+            // Cartridge IRQ is sampled only on this CPU dot (post-`tick_ppu`):
+            // mapper counters are PPU-dot-clocked, so sampling here defers a
+            // mid-cycle trip to this CPU-cycle boundary (CPU-cycle
+            // quantization, pinned by `mmc3_irq_tests`).
             // APU IRQ is read BEFORE `tick_apu` — a transition the step
             // raises or clears becomes CPU-visible on the NEXT dot (one-dot
             // skew, pinned by blargg's `cpu_interrupts_v2` 3-nmi_and_irq).
-            // The level is OR-ed with the cartridge latch's CPU-quantized
-            // level before building the single `InterruptLines` bundle.
-            let irq_level = self.bus.mcu().apu_irq_pending() || self.cart_latch.level();
+            // The level is OR-ed before building the single `InterruptLines` bundle.
+            let irq_level =
+                self.bus.mcu().apu_irq_pending() || self.bus.mcu().cartridge_irq_pending();
 
             let clock = self.bus.clock();
             self.bus.mcu_mut().tick_apu(clock);
@@ -183,8 +181,6 @@ where
         self.bus.mcu_mut().reset();
         self.dma_bus.reset();
         self.cpu.reset();
-
-        self.cart_latch.reset();
     }
 
     fn flush_audio(&mut self) {

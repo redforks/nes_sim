@@ -70,7 +70,7 @@ _Avoid_: system cycles (use for the raw u64 count only), global clock, static cl
 `SystemClock` phase helpers `is_cpu_clock()` (`cycles % 3 == 2`, the Last phase), `is_apu_clock()` (same), and `is_even_cpu_cycle()` derive CPU/APU cadence from the master dot. One CPU cycle spans 3 dots; the former `CpuClockPhase {First,Middle,Last}` enum was removed — callers use `clock.is_cpu_clock()` etc, not `clock.phase()`.
 
 **Tick**:
-A single system-cycle step at the bus's current dot (ADR-0018). `NesMachine::tick()` captures `bus.clock()` and calls each device's tick method in order: PPU → cartridge IRQ latch capture → APU (sample IRQ, tick) → `DmaBus` (DMC + OAM DMA arbitration) → interrupt lines → CPU (unless the `DmaBus` returned a non-`Idle` owner), then advances the bus's master clock once after the dot completes. Each device decides whether to advance its internal state from that dot. The `DmaBus` is the only DMA owner; DMC and OAM are not ticked separately outside it.
+A single system-cycle step at the bus's current dot (ADR-0018). `NesMachine::tick()` captures `bus.clock()` and calls each device's tick method in order: PPU → cartridge IRQ sample (CPU dot only) → APU (sample IRQ, tick) → `DmaBus` (DMC + OAM DMA arbitration) → interrupt lines → CPU (unless the `DmaBus` returned a non-`Idle` owner), then advances the bus's master clock once after the dot completes. Each device decides whether to advance its internal state from that dot. The `DmaBus` is the only DMA owner; DMC and OAM are not ticked separately outside it.
 **Microcode**:
 A single step of the CPU's internal microcode machine. Multiple microcodes may execute across several ticks to complete one 6502 instruction.
 
@@ -159,8 +159,8 @@ _Avoid_: nmi flag, nmi bundle, race flag
 The one-dot `pre-tick → visible next dot` mapping of the APU IRQ level. The level sampled BEFORE `tick_apu(clock)` becomes CPU-visible on `clock+1`; a transition `tick_apu` raises or clears reaches the detector on the next dot.
 _Avoid_: delayed irq, apu lag, one-cycle delay
 
-**Cartridge IRQ latch**:
-The two-stage dot-captured / CPU-cycle-latched quantization of mapper IRQ. `next` captures `cartridge_irq_pending()` every dot (post-PPU); `latched` copies `next` on CPU dots only; the CPU sees `latched`. MMC3/VRC counters are PPU-dot-clocked; tests pin the CPU-cycle quantization.
+**Cartridge IRQ sample**:
+The CPU-cycle quantization of mapper IRQ by sampling `cartridge_irq_pending()` only on the CPU dot (post-PPU, dot 2) in `NesMachine::tick_dot_2`. MMC3/VRC counters are PPU-dot-clocked, so a mid-cycle trip becomes CPU-visible at the next CPU boundary; tests pin the CPU-cycle quantization.
 _Avoid_: cartridge bool, irq buffer, latched irq (ambiguous)
 
 ## Language — CPU Bus Cycles
