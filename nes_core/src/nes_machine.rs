@@ -106,8 +106,8 @@ where
 
     fn tick_dot_0_1(&mut self) {
         self.bus.mcu_mut().tick_ppu();
-        let nmi = self.bus.mcu_mut().ppu_mut().nmi_lines();
-        self.cpu.update_nmi_line(nmi.level, self.bus.clock());
+        let nmi = self.bus.mcu_mut().ppu_mut().nmi_line();
+        self.cpu.update_nmi_line(nmi, self.bus.clock());
     }
 
     fn tick_dot_2(&mut self) -> ExecuteResult {
@@ -136,7 +136,7 @@ where
                 return ExecuteResult::Continue;
             }
 
-            let nmi = self.bus.mcu_mut().ppu_mut().nmi_lines();
+            let nmi = self.bus.mcu_mut().ppu_mut().nmi_line();
             let lines = InterruptLines { nmi, irq_level };
             self.cpu.update_interrupt_lines(lines, self.bus.clock());
             self.cpu.tick(&mut self.bus, &mut self.p).control

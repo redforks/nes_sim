@@ -5,7 +5,6 @@ mod registers;
 mod sprite;
 
 use crate::{
-    interrupt::NmiLines,
     nes::{
         mapper::Cartridge,
         ppu::{palette::ColorTheme, sprite::SpriteManager},
@@ -590,15 +589,14 @@ impl<R: Render> Ppu<R> {
         cartridge.on_ppu_tick(self.timing.scanline);
     }
 
-    /// Atomically sampled NMI line bundle for this dot.
+    /// Atomically sampled NMI line for this dot.
     ///
-    /// `level = v_blank && nmi_enable`. A `$2002` read (clears vblank) or a
+    /// `v_blank && nmi_enable`. A `$2002` read (clears vblank) or a
     /// `$2000` write that disables NMI drops the level on the next dot;
     /// same-dot suppression falls out of the CPU sampler's phase (a 1-dot
     /// assertion at the set dot is never sampled — see `NmiDetector`).
-    pub fn nmi_lines(&self) -> NmiLines {
-        let level = self.registers.status.v_blank() && self.registers.ctrl.nmi_enable();
-        NmiLines::new(level)
+    pub fn nmi_line(&self) -> bool {
+        self.registers.status.v_blank() && self.registers.ctrl.nmi_enable()
     }
 
     pub(crate) fn read_ppureg(&mut self, address: u16, cartridge: &mut Cartridge) -> u8 {
@@ -645,7 +643,7 @@ impl<R: Render> Ppu<R> {
                 let ctrl = PpuCtrl::from_bits(value);
                 self.set_control_flags(ctrl);
                 // Clearing the NMI enable drops the /NMI line from the
-                // next dot's `nmi_lines` sample.
+                // next dot's `nmi_line` sample.
                 self.schedule_background_activation_if_visible();
             }
             0x2001 => {
@@ -851,7 +849,7 @@ impl<R: Render> Ppu<R> {
         }
 
         // Clear v_blank flag on read; that drops the /NMI line from the
-        // next dot's `nmi_lines` sample.
+        // next dot's `nmi_line` sample.
         self.registers.status.set_v_blank(false);
         self.registers.write_toggle = false; // Also reset write toggle on status read
         r

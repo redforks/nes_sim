@@ -718,7 +718,7 @@ impl Cpu {
         clock: SystemClock,
     ) {
         self.set_irq(lines.irq_level);
-        self.update_nmi_line(lines.nmi.level, clock);
+        self.update_nmi_line(lines.nmi, clock);
     }
 
     pub fn is_halted(&self) -> bool {

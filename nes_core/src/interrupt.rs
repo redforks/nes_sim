@@ -8,36 +8,23 @@
 //!
 //! See ADR-0008 and GLOSSARY.md "CPU Interrupt Handshake".
 
-/// Atomically produced PPU NMI bundle for one dot.
-///
-/// `level = v_blank && nmi_enable` (the `/NMI` line level).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct NmiLines {
-    /// `/NMI` line level after this dot's PPU tick.
-    pub level: bool,
-}
-
-impl NmiLines {
-    pub fn new(level: bool) -> Self {
-        Self { level }
-    }
-}
-
 /// Per-dot bundle driven into the CPU detectors.
 ///
+/// `nmi` is the PPU NMI line level after this dot's PPU tick
+/// (`v_blank && nmi_enable`, the `/NMI` line level).
 /// `irq_level` is already time-corrected: the APU level sampled
 /// **before** `tick_apu` (visible on the next dot) OR-ed with the
 /// cartridge latch's CPU-quantized level. Callers build this from
-/// `NmiLines` + the APU level + `CartridgeIrqLatch` before the single
-/// `Cpu::update_interrupt_lines` call.
+/// the PPU NMI bool + the APU level + `CartridgeIrqLatch` before the
+/// single `Cpu::update_interrupt_lines` call.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct InterruptLines {
-    pub nmi: NmiLines,
+    pub nmi: bool,
     pub irq_level: bool,
 }
 
 impl InterruptLines {
-    pub fn new(nmi: NmiLines, irq_level: bool) -> Self {
+    pub fn new(nmi: bool, irq_level: bool) -> Self {
         Self { nmi, irq_level }
     }
 }
@@ -122,11 +109,9 @@ mod tests {
     }
 
     #[test]
-    fn nmi_lines_bundles_atomically() {
-        let lines = NmiLines::new(true);
-        assert!(lines.level);
-        let il = InterruptLines::new(lines, false);
-        assert!(il.nmi.level);
+    fn interrupt_lines_bundle_nmi_bool() {
+        let il = InterruptLines::new(true, false);
+        assert!(il.nmi);
         assert!(!il.irq_level);
     }
 }

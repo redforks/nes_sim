@@ -148,12 +148,12 @@ _Avoid_: edge take, pending clear, hijack take
 Core domain for the per-dot PPU↔CPU and IRQ-producer↔CPU line sampling that feeds interrupt recognition.
 
 **Interrupt lines**:
-The per-dot bundle `{nmi, irq_level}` driven from devices into the CPU detectors. `nmi` is the `NmiLines` bundle; `irq_level` is the already time-corrected (APU +1, cartridge-quantized) level for this dot.
+The per-dot bundle `{nmi, irq_level}` driven from devices into the CPU detectors. `nmi` is the PPU NMI bool (`v_blank && nmi_enable`, the `/NMI` line level); `irq_level` is the already time-corrected (APU +1, cartridge-quantized) level for this dot.
 _Avoid_: interrupt bundle, irq_lines, line bundle
 
-**NMI line bundle (NmiLines)**:
-Atomically produced `{level}` from the PPU for one dot. `level = v_blank && nmi_enable` (the `/NMI` line level). Same-dot suppression is not a separate flag: a `$2000`/`$2002` access on the set dot drops the level on the next dot, and the 1-dot assertion falls between the CPU sampler's dots, so no edge latches.
-_Avoid_: nmi flag, race flag
+**NMI line**:
+The PPU NMI bool for one dot: `v_blank && nmi_enable` (the `/NMI` line level), sampled atomically after the PPU tick. Same-dot suppression is not a separate flag: a `$2000`/`$2002` access on the set dot drops the level on the next dot, and the 1-dot assertion falls between the CPU sampler's dots, so no edge latches.
+_Avoid_: nmi flag, nmi bundle, race flag
 
 **APU IRQ skew (sampled IRQ)**:
 The one-dot `pre-tick → visible next dot` mapping of the APU IRQ level. The level sampled BEFORE `tick_apu(clock)` becomes CPU-visible on `clock+1`; a transition `tick_apu` raises or clears reaches the detector on the next dot.
