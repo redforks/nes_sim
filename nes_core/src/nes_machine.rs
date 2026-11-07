@@ -88,19 +88,22 @@ where
     /// dot completes (ADR-0018). Cartridge writes timestamp themselves via
     /// `Mcu::write` — see GLOSSARY "Per-dot contract".
     pub fn tick(&mut self) -> ExecuteResult {
-        self.tick_dot_0_1();
+        self.tick_dot(true); // dot 0 — the /NMI sampling phase
         self.bus.advance();
-        self.tick_dot_0_1();
+        self.tick_dot(false); // dot 1
         self.bus.advance();
         let control = self.tick_dot_2();
         self.bus.advance();
         control
     }
 
-    fn tick_dot_0_1(&mut self) {
+    /// Dots 0 and 1 of a CPU cycle: tick the PPU and publish its /NMI
+    /// line. Only dot 0 is the CPU's sampling phase, so only it passes
+    /// `sample = true` to the detector.
+    fn tick_dot(&mut self, sample: bool) {
         self.bus.mcu_mut().tick_ppu();
         let nmi = self.bus.mcu_mut().ppu_mut().nmi_line();
-        self.cpu.update_nmi_line(nmi, self.bus.clock());
+        self.cpu.update_nmi_line(nmi, self.bus.clock(), sample);
     }
 
     fn tick_dot_2(&mut self) -> ExecuteResult {
@@ -136,7 +139,7 @@ where
 
         let nmi = self.bus.mcu_mut().ppu_mut().nmi_line();
         let lines = InterruptLines { nmi, irq_level };
-        self.cpu.update_interrupt_lines(lines, self.bus.clock());
+        self.cpu.update_interrupt_lines(lines, clock, false);
         self.cpu.tick(&mut self.bus, &mut self.p)
     }
 

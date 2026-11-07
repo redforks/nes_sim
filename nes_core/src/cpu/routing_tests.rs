@@ -616,7 +616,7 @@ fn walk_nmi() -> Walk {
     clock = clock.inc();
     let mut dispatched = false;
     for _ in 0..64 {
-        cpu.update_nmi_line(true, clock);
+        cpu.update_nmi_line(true, clock, clock.cycles() % 3 == 0);
         if clock.is_cpu_clock() {
             if cpu.microcodes_empty() && cpu.interrupt_detected.is_some() {
                 cpu.mcu().clear_calls();

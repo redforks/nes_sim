@@ -147,7 +147,7 @@ fn test_irq_detector() {
 /// (`t % 3 == 2`, sampling the line as of dot `t - 2`) return whether an
 /// edge was recognised there (consuming it, as the interrupt dispatch would).
 fn dot(v: &mut NmiDetector, t: u64, high: bool) -> bool {
-    v.update_nmi_input(high, SystemClock(t));
+    v.update_nmi_input(high, t, t % 3 == 0);
     if t % 3 == 2 && v.detect_nmi() {
         v.mark_consumed();
         true
@@ -198,7 +198,7 @@ fn nmi_pending_survives_until_taken() {
 
     // an edge latches mid-assertion…
     for t in 0..=14u64 {
-        v.update_nmi_input((10..40).contains(&t), SystemClock(t));
+        v.update_nmi_input((10..40).contains(&t), t, t % 3 == 0);
         if t % 3 == 2 {
             v.detect_nmi();
         }
@@ -207,7 +207,7 @@ fn nmi_pending_survives_until_taken() {
 
     // …stays pending across the fall and low samples…
     for t in 40..=43u64 {
-        v.update_nmi_input(false, SystemClock(t));
+        v.update_nmi_input(false, t, t % 3 == 0);
     }
     assert!(v.detect_nmi());
     assert!(v.nmi_pending);
@@ -215,7 +215,7 @@ fn nmi_pending_survives_until_taken() {
 
     // …and once taken, the low line raises nothing further
     for t in 44..=47u64 {
-        v.update_nmi_input(false, SystemClock(t));
+        v.update_nmi_input(false, t, t % 3 == 0);
     }
     assert!(!v.detect_nmi());
     assert!(!v.nmi_pending);
@@ -238,7 +238,7 @@ fn nmi_pulse_dispatch_latency_runs_from_rising_edge() {
             Some(InterruptType::Nmi) => dispatched = true,
             other => debug_assert_eq!(other, None),
         }
-        cpu.update_nmi_line((10..15).contains(&t), SystemClock(t));
+        cpu.update_nmi_line((10..15).contains(&t), SystemClock(t), t % 3 == 0);
         if t % 3 == 2 {
             let status = cpu.status();
             cpu.detect_interrupt(SystemClock(t), true, status, Microcode::Nop);
@@ -4324,7 +4324,7 @@ fn nmi_hijacks_brk_only_through_its_third_cycle() {
         let mut plugin = EmptyPlugin::new();
         for t in 0..2000u64 {
             let clock = SystemClock(t);
-            cpu.update_nmi_line(t >= rise, clock);
+            cpu.update_nmi_line(t >= rise, clock, t % 3 == 0);
             if clock.is_cpu_clock() && cpu.tick(&mut plugin, clock) == ExecuteResult::Halt {
                 break;
             }
@@ -4342,7 +4342,8 @@ fn nmi_hijacks_brk_only_through_its_third_cycle() {
         let mut found = None;
         for t in (2..).map(SystemClock).filter(|c| c.is_cpu_clock()) {
             let at_push_status = cpu.sp() == 0xFB;
-            cpu.update_nmi_line(false, t);
+            // Only CPU dots are visited here, never a sample dot.
+            cpu.update_nmi_line(false, t, false);
             cpu.tick(&mut plugin, t);
             if at_push_status {
                 found = Some(t.cycles());
@@ -4451,7 +4452,8 @@ fn interrupt_handler_entry_21_dots_after_boundary() {
 
     // NMI: a rising /NMI edge early in the run; dispatch lands on the
     // first instruction boundary after the edge is recognised.
-    let (boundary, entry) = run(|cpu, clock| cpu.update_nmi_line(clock.cycles() >= 40, clock));
+    let (boundary, entry) =
+        run(|cpu, clock| cpu.update_nmi_line(clock.cycles() >= 40, clock, clock.cycles() % 3 == 0));
     assert_eq!(entry - boundary, 21, "NMI: boundary → handler entry");
 
     // IRQ: line asserted from the start; CLI clears I, so the pending IRQ

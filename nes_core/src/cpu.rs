@@ -1,7 +1,7 @@
 use std::num::NonZeroU64;
 
 use crate::view::MachineView;
-use crate::{SYSTEM_CYCLES_PER_CPU_CYCLE, SystemClock, bus::Bus, mcu::Mcu};
+use crate::{SystemClock, bus::Bus, mcu::Mcu};
 use arraydeque::ArrayDeque;
 use microcode::{
     AOrMemory, CrossPageBehavior, HijackEligibility, HijackSite, IncDecTarget, InterruptSequences,
@@ -64,8 +64,9 @@ struct NmiDetector {
     /// seen iff it covers such a dot. The stamp rides along because a
     /// lagged sample that observes a rise must still know when it rose,
     /// even if the line has already fallen by sampling time. Captured in
-    /// `update_nmi_input` on `% 3 == 0` dots; `detect_nmi` runs on CPU
-    /// dots (`% 3 == 2`), two dots later, so this is exactly the t-2 sample.
+    /// `update_nmi_input` when the caller marks a sample dot (the first
+    /// dot of a CPU cycle); `detect_nmi` runs on CPU dots (`% 3 == 2`),
+    /// two dots later, so this is exactly the t-2 sample.
     lagged_sample: Option<NonZeroU64>,
     /// System cycle at which the current /NMI assertion began.
     /// `Some` exactly while the line is high.
@@ -82,16 +83,15 @@ struct NmiDetector {
 }
 
 impl NmiDetector {
-    fn update_nmi_input(&mut self, v: bool, clock: SystemClock) {
+    /// `v` is the line level at system cycle `cycles`; `sample` marks the
+    /// first dot of a CPU cycle — the /NMI sampling phase, owned by the
+    /// caller so this per-dot path computes no modulo.
+    fn update_nmi_input(&mut self, v: bool, cycles: u64, sample: bool) {
         // The line is high exactly while a current assertion is stamped.
         if self.asserted_since.is_some() != v {
-            self.asserted_since = if v {
-                NonZeroU64::new(clock.cycles())
-            } else {
-                None
-            };
+            self.asserted_since = if v { NonZeroU64::new(cycles) } else { None };
         }
-        if clock.cycles() % SYSTEM_CYCLES_PER_CPU_CYCLE == 0 {
+        if sample {
             self.lagged_sample = self.asserted_since;
         }
     }
@@ -702,13 +702,16 @@ impl Cpu {
     ///
     /// `lines.irq_level` is already time-corrected (APU +1, cartridge
     /// latch quantized).
+    /// `clock` is the current dot; `sample` marks the first dot of a CPU
+    /// cycle, the /NMI sampling phase.
     pub fn update_interrupt_lines(
         &mut self,
         lines: crate::interrupt::InterruptLines,
         clock: SystemClock,
+        sample: bool,
     ) {
         self.set_irq(lines.irq_level);
-        self.update_nmi_line(lines.nmi, clock);
+        self.update_nmi_line(lines.nmi, clock, sample);
     }
 
     pub fn is_halted(&self) -> bool {
@@ -1244,8 +1247,9 @@ impl Cpu {
     }
 
     /// Update cpu nmi signal line, may trigger nmi
-    pub(crate) fn update_nmi_line(&mut self, nmi: bool, clock: SystemClock) {
-        self.nmi_detecteor.update_nmi_input(nmi, clock);
+    pub(crate) fn update_nmi_line(&mut self, nmi: bool, clock: SystemClock, sample: bool) {
+        self.nmi_detecteor
+            .update_nmi_input(nmi, clock.cycles(), sample);
     }
 
     fn load_vector_low<M: Mcu>(&mut self, bus: &mut Bus<M>, address: u16, disable_interrupt: bool) {
