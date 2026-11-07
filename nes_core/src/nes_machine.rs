@@ -1,5 +1,5 @@
 use crate::{
-    Cpu, EmptyPlugin, ExecuteResult, Plugin, SystemClock,
+    Cpu, EmptyPlugin, ExecuteResult, Plugin,
     bus::Bus,
     dma_bus::{BusOwner, DmaBus},
     ines::INesFile,
@@ -95,21 +95,24 @@ where
     /// dot completes (ADR-0018). Cartridge writes timestamp themselves via
     /// `Mcu::write` — see GLOSSARY "Per-dot contract".
     pub fn tick(&mut self) -> ExecuteResult {
-        let clock = self.bus.clock();
-        let control = self.tick_at_dot(clock);
+        self.tick_dot_0_1();
+        self.bus.advance();
+        self.tick_dot_0_1();
+        self.bus.advance();
+        let control = self.tick_dot_2();
         self.bus.advance();
         control
     }
 
-    /// Device work for one dot; every `?`/`return` must be paired with the
-    /// clock advance in [`Self::tick`].
-    fn tick_at_dot(&mut self, clock: SystemClock) -> ExecuteResult {
-        let cpu_tick = clock.is_cpu_clock();
-
+    fn tick_dot_0_1(&mut self) {
         self.bus.mcu_mut().tick_ppu();
-        if cpu_tick {
-            self.bus.mcu_mut().tick_zapper();
-        }
+        let nmi = self.bus.mcu_mut().ppu_mut().nmi_lines();
+        self.cpu.update_nmi_line(nmi.level, self.bus.clock());
+    }
+
+    fn tick_dot_2(&mut self) -> ExecuteResult {
+        self.bus.mcu_mut().tick_ppu();
+        self.bus.mcu_mut().tick_zapper();
         self.cart_latch
             .capture_next(self.bus.mcu().cartridge_irq_pending());
 
@@ -117,9 +120,7 @@ where
         // no IRQ/NMI latching, no microcode (the CPU state is about to be
         // discarded wholesale).
         if !self.reset_requested {
-            if cpu_tick {
-                self.cart_latch.latch_on_cpu_tick();
-            }
+            self.cart_latch.latch_on_cpu_tick();
 
             // APU IRQ is read BEFORE `tick_apu` — a transition the step
             // raises or clears becomes CPU-visible on the NEXT dot (one-dot
@@ -128,30 +129,25 @@ where
             // level before building the single `InterruptLines` bundle.
             let irq_level = self.bus.mcu().apu_irq_pending() || self.cart_latch.level();
 
-            if clock.is_apu_clock() {
-                self.bus.mcu_mut().tick_apu(clock);
-                let owner = self.dma_bus.tick(&mut self.cpu, &mut self.bus);
-                if !matches!(owner, BusOwner::Idle) {
-                    return ExecuteResult::Continue;
-                }
+            let clock = self.bus.clock();
+            self.bus.mcu_mut().tick_apu(clock);
+            let owner = self.dma_bus.tick(&mut self.cpu, &mut self.bus);
+            if !matches!(owner, BusOwner::Idle) {
+                return ExecuteResult::Continue;
             }
 
             let nmi = self.bus.mcu_mut().ppu_mut().nmi_lines();
             let lines = InterruptLines { nmi, irq_level };
-            self.cpu.update_interrupt_lines(lines, clock);
-            if clock.is_cpu_clock() {
-                self.cpu.tick(&mut self.bus, &mut self.p).control
-            } else {
-                ExecuteResult::Continue
-            }
+            self.cpu.update_interrupt_lines(lines, self.bus.clock());
+            self.cpu.tick(&mut self.bus, &mut self.p).control
         } else {
-            if clock.is_apu_clock() {
-                self.bus.mcu_mut().tick_apu(clock);
-                let _ = self.dma_bus.tick(&mut self.cpu, &mut self.bus);
-            }
+            let clock = self.bus.clock();
+            self.bus.mcu_mut().tick_apu(clock);
+            let _ = self.dma_bus.tick(&mut self.cpu, &mut self.bus);
             ExecuteResult::Continue
         }
     }
+
     /// Maximum dots spent draining in-flight DMA on a machine reset. One
     /// OAM DMA is ~1539 dots; a running DMC channel is suppressed for fresh
     /// requests, so anything beyond this bound means a stuck bus.
