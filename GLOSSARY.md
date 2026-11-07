@@ -152,8 +152,8 @@ The per-dot bundle `{nmi, irq_level}` driven from devices into the CPU detectors
 _Avoid_: interrupt bundle, irq_lines, line bundle
 
 **NMI line bundle (NmiLines)**:
-Atomically produced `{level, race_cancel}` from the PPU for one dot. `level = v_blank && nmi_enable`; `race_cancel = true` when a `$2000`/`$2002` access on the `vbl_set_cycle` dot suppressed the assertion — the level's same-dot rise never asserted and the edge must be retracted via `consumed_through`.
-_Avoid_: nmi flag, race flag, nmi_race_cancel (field name only)
+Atomically produced `{level}` from the PPU for one dot. `level = v_blank && nmi_enable` (the `/NMI` line level). Same-dot suppression is not a separate flag: a `$2000`/`$2002` access on the set dot drops the level on the next dot, and the 1-dot assertion falls between the CPU sampler's dots, so no edge latches.
+_Avoid_: nmi flag, race flag
 
 **APU IRQ skew (sampled IRQ)**:
 The one-dot `pre-tick → visible next dot` mapping of the APU IRQ level. The level sampled BEFORE `tick_apu(clock)` becomes CPU-visible on `clock+1`; a transition `tick_apu` raises or clears reaches the detector on the next dot.
@@ -162,10 +162,6 @@ _Avoid_: delayed irq, apu lag, one-cycle delay
 **Cartridge IRQ latch**:
 The two-stage dot-captured / CPU-cycle-latched quantization of mapper IRQ. `next` captures `cartridge_irq_pending()` every dot (post-PPU); `latched` copies `next` on CPU dots only; the CPU sees `latched`. MMC3/VRC counters are PPU-dot-clocked; tests pin the CPU-cycle quantization.
 _Avoid_: cartridge bool, irq buffer, latched irq (ambiguous)
-
-**Same-tick retract (race-retract)**:
-The same-dot suppression of an NMI edge that `NmiLines.race_cancel` flags, consumed via the unified `consumed_through` edge protocol (`cancel_rising_edge_at(clock)` → `mark_consumed()`), clearing `nmi_input`/`last_sampled_level` so neither sampler nor hijack can re-fire the same assertion while the line stays high.
-_Avoid_: nmi cancel, vblank suppression (overloaded), race kill
 
 ## Language — CPU Bus Cycles
 **Bus cycle classification**:
@@ -249,7 +245,7 @@ Scanline 241 dot 1 — the single PPU tick where the VBL flag would set and the 
 _Avoid_: vblank flag set, nmi set
 
 **$2002 race window**:
-Hardware PPU_frame_timing: a `$2002` read one PPU clock before the set dot (hardware dot 0 of scanline 241, observed as `timing.dot==1` at read time because `NesMachine::tick` advances PPU before the CPU read) suppresses the upcoming set entirely — flag never rises, NMI never asserts, no `race_cancel` needed. A read on the set dot itself (same `vbl_set_cycle`) races the set and wins: flag is set then immediately cleared, `nmi_race_cancel` retracts the edge latched earlier in the same tick. `vbl_set_cycle` stamps the tick that processed `(241,1)` whether or not it was suppressed; `suppress_vblank_pending` is the one-dot pending flag set at `dot==1` read time and consumed at the next `enter_vblank`.
+Hardware PPU_frame_timing: a `$2002` read one PPU clock before the set dot (hardware dot 0 of scanline 241, observed as `timing.dot==1` at read time because `NesMachine::tick` advances PPU before the CPU read) suppresses the upcoming set entirely — flag never rises, NMI never asserts. A read on the set dot itself races the set and clears the flag; the resulting 1-dot `/NMI` assertion at `(241,1)` is never sampled by the CPU (which samples the line two dots back, once per CPU cycle), so no NMI fires. `suppress_vblank_pending` is the one-dot pending flag set at `dot==1` read time and consumed at the next `enter_vblank`.
 _Avoid_: vblank suppression (overloaded), nmi suppression
 
 ## Language — Mapper MMC1

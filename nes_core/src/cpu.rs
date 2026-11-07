@@ -96,16 +96,6 @@ impl NmiDetector {
         self.nmi_input = v;
     }
 
-    fn cancel_rising_edge_at(&mut self, clock: SystemClock) {
-        if self.asserted_since == NonZeroU64::new(clock.cycles()) && self.nmi_input {
-            // The line never really asserted: consume the stamp so neither
-            // the sampler nor a vector-hijack check can fire it later.
-            self.mark_consumed();
-            self.nmi_input = false;
-            self.last_sampled_level = false;
-        }
-    }
-
     fn detect_nmi(&mut self) -> bool {
         // Sample even while a previous edge is still pending: freezing the
         // sampler would hide newer edges (and leave a stale last-seen level
@@ -709,12 +699,10 @@ impl Cpu {
     }
 
     /// Single published interrupt entry — updates both IRQ level and NMI
-    /// line atomically, owning the same-tick race-retract internally.
+    /// line atomically.
     ///
     /// `lines.irq_level` is already time-corrected (APU +1, cartridge
-    /// latch quantized); `lines.nmi.race_cancel` is the same-dot vblank
-    /// race suppression consumed via `consumed_through` (ADR-0006 third
-    /// writer alongside the two hijack sites).
+    /// latch quantized).
     pub fn update_interrupt_lines(
         &mut self,
         lines: crate::interrupt::InterruptLines,
@@ -722,9 +710,6 @@ impl Cpu {
     ) {
         self.set_irq(lines.irq_level);
         self.update_nmi_line(lines.nmi.level, clock);
-        if lines.nmi.race_cancel {
-            self.cancel_nmi_rising_edge(clock);
-        }
     }
 
     pub fn is_halted(&self) -> bool {
@@ -1270,13 +1255,6 @@ impl Cpu {
     /// Update cpu nmi signal line, may trigger nmi
     pub(crate) fn update_nmi_line(&mut self, nmi: bool, clock: SystemClock) {
         self.nmi_detecteor.update_nmi_input(nmi, clock);
-    }
-    /// Retract an NMI rising edge latched on `clock` itself (same-tick vblank
-    /// race resolution; see `NmiDetector::cancel_rising_edge_at`).
-    /// Third writer of `consumed_through` alongside the two hijack sites
-    /// (ADR-0006 / ADR-0008).
-    pub(crate) fn cancel_nmi_rising_edge(&mut self, clock: SystemClock) {
-        self.nmi_detecteor.cancel_rising_edge_at(clock);
     }
 
     fn load_vector_low<M: Mcu>(&mut self, bus: &mut Bus<M>, address: u16, disable_interrupt: bool) {

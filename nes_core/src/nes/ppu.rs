@@ -182,9 +182,6 @@ pub struct Ppu<R: Render = ()> {
     /// (scanline 241 dot 0); the next VBL set is suppressed entirely —
     /// flag never rises, NMI never asserts.
     suppress_vblank_pending: bool,
-    /// Set when a racing access must retract an NMI edge the machine latched
-    /// earlier in the same tick (see `NesMachine::tick`).
-    nmi_race_cancel: bool,
 
     /// Rendering-enabled sampled at pre-render dot 338. The odd-frame skipped
     /// clock decision uses this value, not live status at dot 339: blargg
@@ -259,7 +256,6 @@ impl<R: Render> Ppu<R> {
             ren_latched_at_338: false,
             cycle: 0,
             ppudata_last_read: None,
-            nmi_race_cancel: false,
             pixel_pipeline: PixelPipeline::new(),
             vblank_entered: false,
         }
@@ -596,16 +592,13 @@ impl<R: Render> Ppu<R> {
 
     /// Atomically sampled NMI line bundle for this dot.
     ///
-    /// `level = v_blank && nmi_enable`; `race_cancel` retracts an edge the
-    /// machine latched earlier in the same tick, because a `$2002` read
-    /// (clears vblank) or a `$2000` write that disables NMI dropped the
-    /// line after that edge was sampled.
-    /// The two are returned together so a racing site cannot emit
-    /// `race_cancel` without its `level` — the flag is never exposed alone.
-    pub fn nmi_lines(&mut self) -> NmiLines {
+    /// `level = v_blank && nmi_enable`. A `$2002` read (clears vblank) or a
+    /// `$2000` write that disables NMI drops the level on the next dot;
+    /// same-dot suppression falls out of the CPU sampler's phase (a 1-dot
+    /// assertion at the set dot is never sampled — see `NmiDetector`).
+    pub fn nmi_lines(&self) -> NmiLines {
         let level = self.registers.status.v_blank() && self.registers.ctrl.nmi_enable();
-        let race_cancel = std::mem::take(&mut self.nmi_race_cancel);
-        NmiLines { level, race_cancel }
+        NmiLines::new(level)
     }
 
     pub(crate) fn read_ppureg(&mut self, address: u16, cartridge: &mut Cartridge) -> u8 {
@@ -651,12 +644,8 @@ impl<R: Render> Ppu<R> {
             0x2000 => {
                 let ctrl = PpuCtrl::from_bits(value);
                 self.set_control_flags(ctrl);
-                // Clearing the NMI enable drops the /NMI line for this dot.
-                // If the machine already latched an edge earlier in this
-                // tick, retract it.
-                if !ctrl.nmi_enable() {
-                    self.nmi_race_cancel = true;
-                }
+                // Clearing the NMI enable drops the /NMI line from the
+                // next dot's `nmi_lines` sample.
                 self.schedule_background_activation_if_visible();
             }
             0x2001 => {
@@ -861,10 +850,9 @@ impl<R: Render> Ppu<R> {
             self.suppress_vblank_pending = true;
         }
 
-        // Clear v_blank flag on read. That also drops the /NMI line for this
-        // dot, so retract any edge the machine latched earlier in this tick.
+        // Clear v_blank flag on read; that drops the /NMI line from the
+        // next dot's `nmi_lines` sample.
         self.registers.status.set_v_blank(false);
-        self.nmi_race_cancel = true;
         self.registers.write_toggle = false; // Also reset write toggle on status read
         r
     }

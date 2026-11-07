@@ -116,8 +116,8 @@ where
             .capture_next(self.bus.mcu().cartridge_irq_pending());
 
         // While a machine reset is draining DMA work the CPU stays frozen:
-        // no IRQ/NMI latching, no microcode, no same-tick race retract (the
-        // CPU state is about to be discarded wholesale).
+        // no IRQ/NMI latching, no microcode (the CPU state is about to be
+        // discarded wholesale).
         if !self.reset_requested {
             if cpu_tick {
                 self.cart_latch.latch_on_cpu_tick();

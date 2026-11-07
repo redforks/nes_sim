@@ -11,21 +11,15 @@
 /// Atomically produced PPU NMI bundle for one dot.
 ///
 /// `level = v_blank && nmi_enable` (the `/NMI` line level).
-/// `race_cancel = true` when a `$2002` read or a `$2000` write cleared the
-/// `/NMI` level after the machine had sampled a rising edge earlier in the
-/// same tick — the edge must be retracted via `consumed_through`
-/// (ADR-0006).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct NmiLines {
     /// `/NMI` line level after this dot's PPU tick.
     pub level: bool,
-    /// Same-dot suppression flag coalesced from all racing sites.
-    pub race_cancel: bool,
 }
 
 impl NmiLines {
-    pub fn new(level: bool, race_cancel: bool) -> Self {
-        Self { level, race_cancel }
+    pub fn new(level: bool) -> Self {
+        Self { level }
     }
 }
 
@@ -167,11 +161,10 @@ mod tests {
 
     #[test]
     fn nmi_lines_bundles_atomically() {
-        let lines = NmiLines::new(true, true);
+        let lines = NmiLines::new(true);
         assert!(lines.level);
-        assert!(lines.race_cancel);
         let il = InterruptLines::new(lines, false);
-        assert!(il.nmi.race_cancel);
+        assert!(il.nmi.level);
         assert!(!il.irq_level);
     }
 }

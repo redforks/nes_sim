@@ -218,44 +218,6 @@ fn nmi_pending_survives_until_taken() {
 }
 
 #[test]
-fn nmi_rising_edge_cancel_retracts_same_tick_edge() {
-    let mut v = NmiDetector::default();
-
-    // assertion begins at dot 30 (%3 == 0); the sample at dot 32 latches it
-    let fires: Vec<u64> = (0..=33).filter(|&t| dot(&mut v, t, t >= 30)).collect();
-    assert_eq!(fires, vec![32]);
-    v.cancel_rising_edge_at(SystemClock(30)); // racing $2002 access retracts it
-    assert!(!v.nmi_pending);
-
-    // the line is pulled back low; no new edge may latch
-    assert!(!(34..=44).any(|t| dot(&mut v, t, false)));
-    assert!(!v.nmi_pending);
-
-    // an edge whose rise is older than the cancel clock is not retractable
-    for t in 45..=64u64 {
-        v.update_nmi_input((46..64).contains(&t), SystemClock(t));
-        if t % 3 == 2 {
-            v.detect_nmi();
-        }
-    }
-    assert!(v.nmi_pending);
-    v.mark_consumed();
-    v.cancel_rising_edge_at(SystemClock(30)); // stale clock: ignored
-
-    // a fresh edge latched on `clock` itself is retractable
-    for t in 76..=92u64 {
-        v.update_nmi_input((78..92).contains(&t), SystemClock(t));
-        if t % 3 == 2 {
-            v.detect_nmi();
-        }
-    }
-    assert!(v.nmi_pending);
-    v.mark_consumed();
-    v.cancel_rising_edge_at(SystemClock(78));
-    assert!(!v.nmi_pending);
-}
-
-#[test]
 fn nmi_pulse_dispatch_latency_runs_from_rising_edge() {
     // blargg ppu_vbl_nmi 07-nmi_on_timing rows 03/04: /NMI asserts for only
     // a few PPU dots before vblank ends. Once an edge is latched, dispatch
