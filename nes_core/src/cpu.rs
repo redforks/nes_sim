@@ -50,7 +50,6 @@ impl IrqDetector {
 }
 #[derive(Default, Debug)]
 struct NmiDetector {
-    nmi_pending: bool,
     /// The lagged sample `detect_nmi` saw on the previous CPU dot.
     /// `Some` exactly when the line was high at that sample, so a rising
     /// edge is `last.is_none() && lagged.is_some()` — the level need not
@@ -71,10 +70,11 @@ struct NmiDetector {
     /// System cycle at which the current /NMI assertion began.
     /// `Some` exactly while the line is high.
     asserted_since: Option<NonZeroU64>,
-    /// `asserted_since` value of the assertion that latched `nmi_pending`.
-    /// `Some` exactly while `nmi_pending` is true: set at latch in
-    /// `detect_nmi`, cleared with the latch in `mark_consumed`/
-    /// `consume_at` (the stamp survives in `consumed_through`).
+    /// `asserted_since` value of the assertion that latched the pending
+    /// edge. `Some` exactly while an edge is pending — pending is this
+    /// stamp being present, not a separate latch: set at latch in
+    /// `detect_nmi`, cleared with it in `mark_consumed`/`consume_at`
+    /// (the stamp survives in `consumed_through`).
     pending_asserted_since: Option<NonZeroU64>,
     /// Newest `asserted_since` whose edge has already been consumed by a
     /// dispatch or vector hijack; suppresses re-latching the same assertion
@@ -109,11 +109,16 @@ impl NmiDetector {
             // (see `mark_consumed`): stamps are monotonic, so only a
             // genuinely newer assertion may latch.
             if !self.edge_consumed(stamp) {
-                self.nmi_pending = true;
                 self.pending_asserted_since = stamp;
             }
         }
-        self.nmi_pending
+        self.pending_asserted_since.is_some()
+    }
+
+    /// Newest assertion stamp visible to the consume paths: the pending
+    /// latch's stamp, or the current line assertion if it is newer.
+    fn newest_visible(&self) -> Option<NonZeroU64> {
+        self.pending_asserted_since.max(self.asserted_since)
     }
 
     /// True when `stamp` names an assertion already consumed by a
@@ -130,9 +135,8 @@ impl NmiDetector {
     /// before the pending latch is cleared, so clearing
     /// `pending_asserted_since` loses nothing.
     fn mark_consumed(&mut self) {
-        let newest = self.pending_asserted_since.max(self.asserted_since);
+        let newest = self.newest_visible();
         self.consumed_through = self.consumed_through.max(newest);
-        self.nmi_pending = false;
         self.pending_asserted_since = None;
     }
 
@@ -147,7 +151,7 @@ impl NmiDetector {
     /// iff its newest unconsumed edge had risen by then. Consumes the
     /// edge.
     fn consume_hijack_edge(&mut self, cutoff: u64) -> bool {
-        let newest = self.pending_asserted_since.max(self.asserted_since);
+        let newest = self.newest_visible();
         match newest {
             Some(t0) if u64::from(t0) <= cutoff && !self.edge_consumed(Some(t0)) => {
                 self.mark_consumed();
@@ -174,7 +178,6 @@ impl NmiDetector {
     /// Stamp `consumed_through` through `t0`, clearing the pending latch.
     fn consume_at(&mut self, t0: NonZeroU64) {
         self.consumed_through = self.consumed_through.max(Some(t0));
-        self.nmi_pending = false;
         self.pending_asserted_since = None;
     }
 }
@@ -786,11 +789,10 @@ impl Cpu {
     }
 
     fn do_detect_interrupt(&mut self, clock: SystemClock, irq_pending: bool) {
-        if self.nmi_detecteor.nmi_pending
-            && self
-                .nmi_detecteor
-                .pending_asserted_since
-                .is_some_and(|t0| (clock.0 - u64::from(t0)) > 1)
+        if self
+            .nmi_detecteor
+            .pending_asserted_since
+            .is_some_and(|t0| (clock.0 - u64::from(t0)) > 1)
         {
             self.nmi_detecteor.mark_consumed();
             self.interrupt_detected = Some(InterruptType::Nmi);

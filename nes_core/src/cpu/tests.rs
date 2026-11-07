@@ -160,7 +160,7 @@ fn dot(v: &mut NmiDetector, t: u64, high: bool) -> bool {
 fn test_nmi_detector() {
     // default
     let mut v = NmiDetector::default();
-    assert!(!v.nmi_pending);
+    assert!(v.pending_asserted_since.is_none());
 
     // assertion from dot 10 to 15: exactly one edge latches, at the first
     // sample whose window covers the rise (sample at dot 14 reads dot 12)
@@ -168,7 +168,7 @@ fn test_nmi_detector() {
         .filter(|&t| dot(&mut v, t, (10..16).contains(&t)))
         .collect();
     assert_eq!(fires, vec![14]);
-    assert!(!v.nmi_pending); // edge-detected: no re-fire while asserted
+    assert!(v.pending_asserted_since.is_none()); // edge-detected: no re-fire while asserted
 }
 
 #[test]
@@ -203,14 +203,14 @@ fn nmi_pending_survives_until_taken() {
             v.detect_nmi();
         }
     }
-    assert!(v.nmi_pending);
+    assert!(v.pending_asserted_since.is_some());
 
     // …stays pending across the fall and low samples…
     for t in 40..=43u64 {
         v.update_nmi_input(false, t, t % 3 == 0);
     }
     assert!(v.detect_nmi());
-    assert!(v.nmi_pending);
+    assert!(v.pending_asserted_since.is_some());
     v.mark_consumed();
 
     // …and once taken, the low line raises nothing further
@@ -218,7 +218,7 @@ fn nmi_pending_survives_until_taken() {
         v.update_nmi_input(false, t, t % 3 == 0);
     }
     assert!(!v.detect_nmi());
-    assert!(!v.nmi_pending);
+    assert!(v.pending_asserted_since.is_none());
 }
 
 #[test]
