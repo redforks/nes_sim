@@ -1,5 +1,3 @@
-use std::num::NonZeroU64;
-
 use crate::view::MachineView;
 use crate::{SystemClock, bus::Bus, mcu::Mcu};
 use arraydeque::ArrayDeque;
@@ -51,13 +49,13 @@ impl IrqDetector {
 #[derive(Default, Debug)]
 struct NmiDetector {
     /// The lagged sample `detect_nmi` saw on the previous CPU dot.
-    /// `Some` exactly when the line was high at that sample, so a rising
-    /// edge is `last.is_none() && lagged.is_some()` — the level need not
-    /// be stored separately from the stamp.
-    last_lagged_sample: Option<NonZeroU64>,
+    /// 0 exactly when the line was low at that sample, so a rising edge
+    /// is `last == 0 && lagged != 0` — the level need not be stored
+    /// separately from the stamp.
+    last_lagged_sample: u64,
     /// `asserted_since` stamp as of the FIRST dot of the current CPU cycle
-    /// (`clock % 3 == 0`) — the sample `detect_nmi` reads. `Some` exactly
-    /// when the line was high at that dot. The 6502 effectively samples
+    /// (`clock % 3 == 0`) — the sample `detect_nmi` reads. 0 exactly when
+    /// the line was low at that dot. The 6502 effectively samples
     /// /NMI at that dot; blargg's ppu_vbl_nmi 06-suppression and
     /// 07-nmi_on_timing pin this phase from both sides: an assertion is
     /// seen iff it covers such a dot. The stamp rides along because a
@@ -66,20 +64,21 @@ struct NmiDetector {
     /// `update_nmi_input` when the caller marks a sample dot (the first
     /// dot of a CPU cycle); `detect_nmi` runs on CPU dots (`% 3 == 2`),
     /// two dots later, so this is exactly the t-2 sample.
-    lagged_sample: Option<NonZeroU64>,
+    lagged_sample: u64,
     /// System cycle at which the current /NMI assertion began.
-    /// `Some` exactly while the line is high.
-    asserted_since: Option<NonZeroU64>,
+    /// 0 exactly while the line is low. (A rise at cycle 0 itself stamps
+    /// 0; while the line stays high the stamp becomes 1 at the next dot.)
+    asserted_since: u64,
     /// `asserted_since` value of the assertion that latched the pending
-    /// edge. `Some` exactly while an edge is pending — pending is this
-    /// stamp being present, not a separate latch: set at latch in
-    /// `detect_nmi`, cleared with it in `mark_consumed`/`consume_at`
-    /// (the stamp survives in `consumed_through`).
-    pending_asserted_since: Option<NonZeroU64>,
+    /// edge. 0 exactly while no edge is pending — pending is this stamp
+    /// being non-zero, not a separate latch: set at latch in `detect_nmi`,
+    /// cleared with it in `mark_consumed`/`consume_at` (the stamp survives
+    /// in `consumed_through`).
+    pending_asserted_since: u64,
     /// Newest `asserted_since` whose edge has already been consumed by a
     /// dispatch or vector hijack; suppresses re-latching the same assertion
-    /// while it is still high on the line.
-    consumed_through: Option<NonZeroU64>,
+    /// while it is still high on the line. 0 while none was consumed.
+    consumed_through: u64,
 }
 
 impl NmiDetector {
@@ -88,8 +87,8 @@ impl NmiDetector {
     /// caller so this per-dot path computes no modulo.
     fn update_nmi_input(&mut self, v: bool, cycles: u64, sample: bool) {
         // The line is high exactly while a current assertion is stamped.
-        if self.asserted_since.is_some() != v {
-            self.asserted_since = if v { NonZeroU64::new(cycles) } else { None };
+        if (self.asserted_since != 0) != v {
+            self.asserted_since = if v { cycles } else { 0 };
         }
         if sample {
             self.lagged_sample = self.asserted_since;
@@ -101,7 +100,7 @@ impl NmiDetector {
         // sampler would hide newer edges (and leave a stale last sample
         // behind once the pending edge is taken).
         let sampled = self.lagged_sample;
-        let rising_edge = self.last_lagged_sample.is_none() && sampled.is_some();
+        let rising_edge = self.last_lagged_sample == 0 && sampled != 0;
         self.last_lagged_sample = sampled;
         if rising_edge {
             let stamp = sampled;
@@ -112,20 +111,19 @@ impl NmiDetector {
                 self.pending_asserted_since = stamp;
             }
         }
-        self.pending_asserted_since.is_some()
+        self.pending_asserted_since != 0
     }
 
     /// Newest assertion stamp visible to the consume paths: the pending
     /// latch's stamp, or the current line assertion if it is newer.
-    fn newest_visible(&self) -> Option<NonZeroU64> {
+    fn newest_visible(&self) -> u64 {
         self.pending_asserted_since.max(self.asserted_since)
     }
 
     /// True when `stamp` names an assertion already consumed by a
     /// dispatch or vector hijack.
-    fn edge_consumed(&self, stamp: Option<NonZeroU64>) -> bool {
-        self.consumed_through
-            .is_some_and(|c| stamp.is_some_and(|s| s <= c))
+    fn edge_consumed(&self, stamp: u64) -> bool {
+        stamp != 0 && stamp <= self.consumed_through
     }
 
     /// Record that the newest visible assertion's edge was consumed (by an
@@ -137,7 +135,7 @@ impl NmiDetector {
     fn mark_consumed(&mut self) {
         let newest = self.newest_visible();
         self.consumed_through = self.consumed_through.max(newest);
-        self.pending_asserted_since = None;
+        self.pending_asserted_since = 0;
     }
 
     /// Decide the interrupt-vector switch performed during BRK / IRQ
@@ -152,12 +150,11 @@ impl NmiDetector {
     /// edge.
     fn consume_hijack_edge(&mut self, cutoff: u64) -> bool {
         let newest = self.newest_visible();
-        match newest {
-            Some(t0) if u64::from(t0) <= cutoff && !self.edge_consumed(Some(t0)) => {
-                self.mark_consumed();
-                true
-            }
-            _ => false,
+        if newest != 0 && newest <= cutoff && !self.edge_consumed(newest) {
+            self.mark_consumed();
+            true
+        } else {
+            false
         }
     }
 
@@ -166,19 +163,19 @@ impl NmiDetector {
     /// line do not participate and stay eligible for the later
     /// vector-decision site; only the consumed edge is stamped.
     fn consume_latched_edge(&mut self, cutoff: u64) -> bool {
-        match self.pending_asserted_since {
-            Some(t0) if u64::from(t0) <= cutoff && !self.edge_consumed(Some(t0)) => {
-                self.consume_at(t0);
-                true
-            }
-            _ => false,
+        let t0 = self.pending_asserted_since;
+        if t0 != 0 && t0 <= cutoff && !self.edge_consumed(t0) {
+            self.consume_at(t0);
+            true
+        } else {
+            false
         }
     }
 
     /// Stamp `consumed_through` through `t0`, clearing the pending latch.
-    fn consume_at(&mut self, t0: NonZeroU64) {
-        self.consumed_through = self.consumed_through.max(Some(t0));
-        self.pending_asserted_since = None;
+    fn consume_at(&mut self, t0: u64) {
+        self.consumed_through = self.consumed_through.max(t0);
+        self.pending_asserted_since = 0;
     }
 }
 
@@ -789,11 +786,8 @@ impl Cpu {
     }
 
     fn do_detect_interrupt(&mut self, clock: SystemClock, irq_pending: bool) {
-        if self
-            .nmi_detecteor
-            .pending_asserted_since
-            .is_some_and(|t0| (clock.0 - u64::from(t0)) > 1)
-        {
+        let pending_since = self.nmi_detecteor.pending_asserted_since;
+        if pending_since != 0 && (clock.0 - pending_since) > 1 {
             self.nmi_detecteor.mark_consumed();
             self.interrupt_detected = Some(InterruptType::Nmi);
         } else if irq_pending {

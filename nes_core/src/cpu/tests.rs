@@ -160,7 +160,7 @@ fn dot(v: &mut NmiDetector, t: u64, high: bool) -> bool {
 fn test_nmi_detector() {
     // default
     let mut v = NmiDetector::default();
-    assert!(v.pending_asserted_since.is_none());
+    assert!(v.pending_asserted_since == 0);
 
     // assertion from dot 10 to 15: exactly one edge latches, at the first
     // sample whose window covers the rise (sample at dot 14 reads dot 12)
@@ -168,7 +168,28 @@ fn test_nmi_detector() {
         .filter(|&t| dot(&mut v, t, (10..16).contains(&t)))
         .collect();
     assert_eq!(fires, vec![14]);
-    assert!(v.pending_asserted_since.is_none()); // edge-detected: no re-fire while asserted
+    assert!(v.pending_asserted_since == 0); // edge-detected: no re-fire while asserted
+}
+
+#[test]
+fn nmi_rise_at_cycle_zero_stamps_zero() {
+    // Stamps are plain cycle counts with 0 meaning "no assertion", so a
+    // rise exactly at cycle 0 stamps 0 — indistinguishable from a low
+    // line *at that dot*. While the line stays high the stamp becomes 1
+    // at the next dot, so the edge is seen at the dot-3 sample exactly as
+    // if it had risen at dot 1: cycle 0 latches correctly and is not
+    // special. (Unreachable in production — the PPU's /NMI line is low
+    // at power-on dot 0 — pinned so the representation boundary is
+    // explicit, not accidental.)
+    fn fires_for_pulse(rise: u64) -> Vec<u64> {
+        let mut v = NmiDetector::default();
+        (0..=20)
+            .filter(|&t| dot(&mut v, t, (rise..16).contains(&t)))
+            .collect()
+    }
+
+    assert_eq!(fires_for_pulse(0), vec![5]);
+    assert_eq!(fires_for_pulse(1), vec![5]);
 }
 
 #[test]
@@ -203,14 +224,14 @@ fn nmi_pending_survives_until_taken() {
             v.detect_nmi();
         }
     }
-    assert!(v.pending_asserted_since.is_some());
+    assert!(v.pending_asserted_since != 0);
 
     // …stays pending across the fall and low samples…
     for t in 40..=43u64 {
         v.update_nmi_input(false, t, t % 3 == 0);
     }
     assert!(v.detect_nmi());
-    assert!(v.pending_asserted_since.is_some());
+    assert!(v.pending_asserted_since != 0);
     v.mark_consumed();
 
     // …and once taken, the low line raises nothing further
@@ -218,7 +239,7 @@ fn nmi_pending_survives_until_taken() {
         v.update_nmi_input(false, t, t % 3 == 0);
     }
     assert!(!v.detect_nmi());
-    assert!(v.pending_asserted_since.is_none());
+    assert!(v.pending_asserted_since == 0);
 }
 
 #[test]
