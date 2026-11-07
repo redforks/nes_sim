@@ -3,7 +3,7 @@ use crate::{
     bus::Bus,
     dma_bus::{BusOwner, DmaBus},
     ines::INesFile,
-    interrupt::{ApuIrqSampler, CartridgeIrqLatch, InterruptLines},
+    interrupt::{CartridgeIrqLatch, InterruptLines},
     nes::{Mmc3IrqOverride, NesMcu, controller::Button, ppu::palette::ColorTheme},
     render::Render,
 };
@@ -11,7 +11,6 @@ pub struct NesMachine<P, R: Render, D: crate::nes::apu::AudioDriver> {
     cpu: Cpu,
     p: P,
     cart_latch: CartridgeIrqLatch,
-    apu_sampler: ApuIrqSampler,
     /// The CPU's external bus; owns the memory map `NesMcu` (ADR-0015).
     bus: Bus<NesMcu<R, D>>,
     /// DMA arbitration on the bus — renamed from the former `Bus` (ADR-0009).
@@ -49,7 +48,6 @@ where
             cpu: Cpu::new(),
             p: plugin,
             cart_latch: CartridgeIrqLatch::new(),
-            apu_sampler: ApuIrqSampler::new(),
             bus: Bus::new(mcu),
             dma_bus: DmaBus::new(),
             reset_requested: false,
@@ -123,15 +121,12 @@ where
                 self.cart_latch.latch_on_cpu_tick();
             }
 
-            // APU IRQ is sampled BEFORE `tick_apu` — a transition the step
+            // APU IRQ is read BEFORE `tick_apu` — a transition the step
             // raises or clears becomes CPU-visible on the NEXT dot (one-dot
-            // skew, see `ApuIrqSampler`). The level is OR-ed with the
-            // cartridge latch's CPU-quantized level before building the
-            // single `InterruptLines` bundle.
-            let apu_sampled = self
-                .apu_sampler
-                .sample_before_tick(self.bus.mcu().apu_irq_pending());
-            let irq_level = apu_sampled || self.cart_latch.level();
+            // skew, pinned by blargg's `cpu_interrupts_v2` 3-nmi_and_irq).
+            // The level is OR-ed with the cartridge latch's CPU-quantized
+            // level before building the single `InterruptLines` bundle.
+            let irq_level = self.bus.mcu().apu_irq_pending() || self.cart_latch.level();
 
             if clock.is_apu_clock() {
                 self.bus.mcu_mut().tick_apu(clock);

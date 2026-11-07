@@ -28,7 +28,7 @@ impl NmiLines {
 /// `irq_level` is already time-corrected: the APU level sampled
 /// **before** `tick_apu` (visible on the next dot) OR-ed with the
 /// cartridge latch's CPU-quantized level. Callers build this from
-/// `NmiLines` + `ApuIrqSampler` + `CartridgeIrqLatch` before the single
+/// `NmiLines` + the APU level + `CartridgeIrqLatch` before the single
 /// `Cpu::update_interrupt_lines` call.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct InterruptLines {
@@ -91,37 +91,6 @@ impl CartridgeIrqLatch {
     }
 }
 
-/// APU IRQ sampling with the one-dot skew made structural.
-///
-/// The APU's frame IRQ / DMC IRQ flag is **sampled BEFORE `tick_apu`**
-/// runs this dot; a transition the step raises or clears reaches the
-/// CPU's IRQ input on the **next dot** (a one-dot `pre-tick → visible
-/// next dot` mapping). The APU flag never drives a physical line, so
-/// the mapping is an emulation choice pinned by blargg's
-/// `cpu_interrupts_v2` 3-nmi_and_irq (moving the sample after `tick_apu`
-/// fails that ROM). Calling `sample_before_tick` before `tick_apu`
-/// encodes the ordering in the interface, not in a comment.
-///
-/// The sampler itself is stateless; it exists so the ordering is a
-/// named call, not a free-floating line order in `NesMachine::tick`.
-#[derive(Debug, Clone, Copy, Default)]
-pub struct ApuIrqSampler;
-
-impl ApuIrqSampler {
-    pub fn new() -> Self {
-        Self
-    }
-
-    /// Sample the current APU IRQ level **before** `tick_apu`.
-    /// The returned level is the CPU-visible level for the next dot only
-    /// after OR-ing with the cartridge latch; the caller must not call
-    /// `tick_apu` before this sample.
-    #[inline]
-    pub fn sample_before_tick(&self, pending: bool) -> bool {
-        pending
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -150,13 +119,6 @@ mod tests {
         // next CPU dot: clears
         latch.latch_on_cpu_tick();
         assert!(!latch.level());
-    }
-
-    #[test]
-    fn apu_sampler_is_identity_but_named() {
-        let sampler = ApuIrqSampler::new();
-        assert!(sampler.sample_before_tick(true));
-        assert!(!sampler.sample_before_tick(false));
     }
 
     #[test]
