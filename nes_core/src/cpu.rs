@@ -1,3 +1,5 @@
+use std::num::NonZeroU64;
+
 use crate::view::MachineView;
 use crate::{SystemClock, bus::Bus, mcu::Mcu};
 use arraydeque::ArrayDeque;
@@ -68,15 +70,15 @@ struct NmiDetector {
     /// dot. The stamp rides along because a lagged sample that observes a
     /// rise must still know when it rose, even if the line has already
     /// fallen by sampling time.
-    history: [(bool, Option<u64>); 2],
+    history: [(bool, Option<NonZeroU64>); 2],
     /// System cycle at which the current /NMI assertion began.
-    asserted_since: Option<u64>,
+    asserted_since: Option<NonZeroU64>,
     /// `asserted_since` value of the assertion that latched `nmi_pending`.
-    pending_asserted_since: Option<u64>,
+    pending_asserted_since: Option<NonZeroU64>,
     /// Newest `asserted_since` whose edge has already been consumed by a
     /// dispatch or vector hijack; suppresses re-latching the same assertion
     /// while it is still high on the line.
-    consumed_through: Option<u64>,
+    consumed_through: Option<NonZeroU64>,
 }
 
 impl NmiDetector {
@@ -86,7 +88,7 @@ impl NmiDetector {
         self.history = [self.history[1], (prev, prev_stamp)];
         if prev != v {
             if v {
-                self.asserted_since = Some(clock.cycles());
+                self.asserted_since = NonZeroU64::new(clock.cycles());
             } else {
                 self.asserted_since = None;
             }
@@ -95,7 +97,7 @@ impl NmiDetector {
     }
 
     fn cancel_rising_edge_at(&mut self, clock: SystemClock) {
-        if self.asserted_since == Some(clock.cycles()) && self.nmi_input {
+        if self.asserted_since == NonZeroU64::new(clock.cycles()) && self.nmi_input {
             // The line never really asserted: consume the stamp so neither
             // the sampler nor a vector-hijack check can fire it later.
             self.mark_consumed();
@@ -108,10 +110,11 @@ impl NmiDetector {
         // Sample even while a previous edge is still pending: freezing the
         // sampler would hide newer edges (and leave a stale last-seen level
         // behind once the pending edge is taken).
-        let (sampled_level, stamp) = self.history[0];
+        let sampled_level = self.history[0].0;
         let rising_edge = !self.last_sampled_level && sampled_level;
         self.last_sampled_level = sampled_level;
         if rising_edge {
+            let stamp = self.history[0].1;
             // Skip edges whose assertion was already consumed while high
             // (see `mark_consumed`): stamps are monotonic, so only a
             // genuinely newer assertion may latch.
@@ -125,7 +128,7 @@ impl NmiDetector {
 
     /// True when `stamp` names an assertion already consumed by a
     /// dispatch or vector hijack.
-    fn edge_consumed(&self, stamp: Option<u64>) -> bool {
+    fn edge_consumed(&self, stamp: Option<NonZeroU64>) -> bool {
         self.consumed_through
             .is_some_and(|c| stamp.is_some_and(|s| s <= c))
     }
@@ -158,7 +161,7 @@ impl NmiDetector {
             .filter(|_| self.nmi_pending)
             .max(self.asserted_since.filter(|_| self.nmi_input));
         match newest {
-            Some(t0) if t0 <= cutoff && !self.edge_consumed(Some(t0)) => {
+            Some(t0) if u64::from(t0) <= cutoff && !self.edge_consumed(Some(t0)) => {
                 self.mark_consumed();
                 true
             }
@@ -172,7 +175,7 @@ impl NmiDetector {
     /// vector-decision site; only the consumed edge is stamped.
     fn consume_latched_edge(&mut self, cutoff: u64) -> bool {
         match self.pending_asserted_since.filter(|_| self.nmi_pending) {
-            Some(t0) if t0 <= cutoff && !self.edge_consumed(Some(t0)) => {
+            Some(t0) if u64::from(t0) <= cutoff && !self.edge_consumed(Some(t0)) => {
                 self.consume_at(t0);
                 true
             }
@@ -181,7 +184,7 @@ impl NmiDetector {
     }
 
     /// Stamp `consumed_through` through `t0`, clearing the pending latch.
-    fn consume_at(&mut self, t0: u64) {
+    fn consume_at(&mut self, t0: NonZeroU64) {
         self.nmi_pending = false;
         self.consumed_through = self.consumed_through.max(Some(t0));
     }
@@ -808,7 +811,7 @@ impl Cpu {
             && self
                 .nmi_detecteor
                 .pending_asserted_since
-                .is_some_and(|t0| (clock.0 - t0) > 1)
+                .is_some_and(|t0| (clock.0 - u64::from(t0)) > 1)
         {
             self.nmi_detecteor.mark_consumed();
             self.interrupt_detected = Some(InterruptType::Nmi);

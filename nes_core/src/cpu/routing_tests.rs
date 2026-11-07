@@ -612,6 +612,8 @@ fn walk_nmi() -> Walk {
     let mut cpu = new_walk_cpu(&[opcode::NOP]);
     let mut plugin = EmptyPlugin::new();
     let mut clock = SystemClock::default();
+    // inc clock, because update_nmi_line() assume clock is not zero, it is true in normal run
+    clock = clock.inc();
     let mut dispatched = false;
     for _ in 0..64 {
         cpu.update_nmi_line(true, clock);
