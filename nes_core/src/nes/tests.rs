@@ -17,7 +17,6 @@ fn test_mcu() -> NesMcu<ImageRender<1>, ()> {
         apu: Apu::new(()),
         oam_dma_pending: None,
         deferred_apu_writes: ArrayDeque::new(),
-        last_apu_tick: 0,
         open_bus: 0,
         joypad1_oe: false,
         joypad2_oe: false,
@@ -747,21 +746,23 @@ fn test_4017_peek_includes_zapper_bits() {
     assert_eq!(mcu.peek(0x4016) & 0x18, 0x00);
 }
 
-/// Regression: `reset` used to zero `last_apu_tick` while the master clock
-/// kept running, so deferred length-counter writes were anchored against a
-/// restarted timeline and could flush immediately instead of one CPU cycle
-/// after their issuing store. After the fix they anchor to the running clock.
+/// Regression: deferred length-counter writes used to be anchored against
+/// a `last_apu_tick` cache that `reset` zeroed while the master clock kept
+/// running, so they could flush immediately instead of one CPU cycle after
+/// their issuing store. They now anchor to the clock carried by their own
+/// `write` call, so a write issued at the running clock lands one CPU
+/// cycle later however large that clock is.
 #[test]
-fn reset_reanchors_deferred_apu_writes_to_running_clock() {
+fn deferred_apu_writes_anchor_to_write_clock() {
     let big = 5_000_000_u64;
     let mut mcu = test_mcu();
-    mcu.reset(SystemClock(big));
+    mcu.reset();
 
     // Enable the triangle channel (direct register, not deferred).
-    mcu.write(0x4015, 0x04, SystemClock::default());
+    mcu.write(0x4015, 0x04, SystemClock(big));
     // Arm a deferred length-counter reload: it must land ~one CPU cycle
     // after this write cycle relative to the running clock.
-    mcu.write(0x400B, 0x08, SystemClock::default());
+    mcu.write(0x400B, 0x08, SystemClock(big));
     // Before the anchored landing point the deferred reload must not have
     // flushed: triangle status bit (bit 2 of $4015) stays clear. `big` is an
     // APU clock (big % 3 == 2), the last one before the landing at big + 3.

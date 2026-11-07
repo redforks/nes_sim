@@ -189,8 +189,7 @@ where
             "DMA bus did not quiesce"
         );
 
-        let clock = self.bus.clock();
-        self.bus.mcu_mut().reset(clock);
+        self.bus.mcu_mut().reset();
         self.dma_bus.reset();
         self.cpu.reset();
 

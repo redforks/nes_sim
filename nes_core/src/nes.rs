@@ -44,8 +44,6 @@ pub struct NesMcu<R: Render, D: AudioDriver> {
     /// per cycle max) and the tightest direct-API sequence queues 2, so
     /// the buffer never fills; the push site debug-asserts this.
     deferred_apu_writes: ArrayDeque<(u64, u16, u8), 2>,
-    /// Most recent system tick seen by [`Self::tick_apu`].
-    last_apu_tick: u64,
 }
 
 impl<R: Render, D: AudioDriver> NesMcu<R, D> {
@@ -98,7 +96,6 @@ impl<R: Render, D: AudioDriver> NesMcu<R, D> {
             joypad1_oe: false,
             joypad2_oe: false,
             deferred_apu_writes: ArrayDeque::new(),
-            last_apu_tick: 0,
         }
     }
 
@@ -107,12 +104,11 @@ impl<R: Render, D: AudioDriver> NesMcu<R, D> {
     /// runs, DMA work must already be quiesced (see [`crate::NesMachine::reset`]),
     /// so OAM pending should be idle here. The bus owns the active OAM state.
     ///
-    /// The master clock keeps running across resets, so time-relative state
-    /// (deferred APU write landing points) must be re-anchored from `clock`
-    /// instead of restarting at zero.
-    pub fn reset(&mut self, clock: SystemClock) {
+    /// Deferred APU writes are discarded, not re-anchored: each write
+    /// anchors itself to the `SystemClock` carried by its own `write` call,
+    /// so no time-relative state needs surviving the reset boundary.
+    pub fn reset(&mut self) {
         debug_assert!(self.oam_dma_pending.is_none());
-        self.last_apu_tick = clock.cycles();
         self.deferred_apu_writes.clear();
         self.ppu.reset();
         self.apu.reset();
@@ -146,7 +142,6 @@ impl<R: Render, D: AudioDriver> NesMcu<R, D> {
     }
 
     pub fn tick_apu(&mut self, clock: SystemClock) {
-        self.last_apu_tick = clock.cycles();
         self.apu.tick();
         while let Some(&(at, address, value)) = self.deferred_apu_writes.front() {
             if at > clock.cycles() {
@@ -308,7 +303,7 @@ impl<R: Render, D: AudioDriver> Mcu for NesMcu<R, D> {
                     // silent `.ok()` drop if that ever stops holding.
                     debug_assert!(self.deferred_apu_writes.len() < 2);
                     self.deferred_apu_writes
-                        .push_back((self.last_apu_tick + 3, address, value))
+                        .push_back((clock.cycles() + 3, address, value))
                         .ok();
                 }
                 _ => self.apu.write(address, value, clock),
