@@ -26,7 +26,7 @@ impl Mcu for LowerRam {
     }
 
     fn read_zero_page(&mut self, address: u8) -> u8 {
-        self.ram[address as usize & 0xff]
+        self.ram[address as usize]
     }
 
     fn read_stack_page(&mut self, address: u8) -> u8 {
@@ -34,7 +34,7 @@ impl Mcu for LowerRam {
     }
 
     fn write_zero_page(&mut self, address: u8, value: u8, _clock: SystemClock) {
-        self.ram[address as usize & 0xff] = value;
+        self.ram[address as usize] = value;
     }
 
     fn write_stack_page(&mut self, address: u8, value: u8, _clock: SystemClock) {
