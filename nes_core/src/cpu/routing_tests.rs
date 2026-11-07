@@ -79,7 +79,7 @@ impl<M: Mcu> Harness<M> {
         self.bus.mcu()
     }
 
-    fn tick<P: Plugin<M>>(&mut self, plugin: &mut P, clock: SystemClock) -> TickOutcome {
+    fn tick<P: Plugin<M>>(&mut self, plugin: &mut P, clock: SystemClock) -> ExecuteResult {
         // Stage the dot on the harness's bus master clock (ADR-0018).
         self.bus.set_clock(clock);
         self.cpu.tick(&mut self.bus, plugin)

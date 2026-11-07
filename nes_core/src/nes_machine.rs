@@ -137,7 +137,7 @@ where
         let nmi = self.bus.mcu_mut().ppu_mut().nmi_line();
         let lines = InterruptLines { nmi, irq_level };
         self.cpu.update_interrupt_lines(lines, self.bus.clock());
-        self.cpu.tick(&mut self.bus, &mut self.p).control
+        self.cpu.tick(&mut self.bus, &mut self.p)
     }
 
     /// Maximum dots spent draining in-flight DMA on a machine reset. One

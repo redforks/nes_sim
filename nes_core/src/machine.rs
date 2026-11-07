@@ -29,7 +29,7 @@ impl<P: Plugin<M>, M: Mcu> Machine<P, M> {
     /// The executed dot is read from — and advanced by — the bus's master
     /// clock (ADR-0018).
     pub fn tick(&mut self) -> ExecuteResult {
-        let control = self.cpu.tick(&mut self.bus, &mut self.p).control;
+        let control = self.cpu.tick(&mut self.bus, &mut self.p);
         self.bus.advance();
         control
     }

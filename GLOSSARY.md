@@ -85,7 +85,7 @@ The bus-drain contract of `NesMachine::reset()`. While draining, in-flight OAM D
 _Avoid_: hard abort, mid-DMA teardown, stale DMA
 
 **Per-dot contract**:
-The minimal pub surface of `Cpu` (ADR-0010, ADR-0017, ADR-0018): `tick(&mut self, bus: &mut Bus, plugin)` (→ `TickOutcome`; the dot is `bus.clock()`), `update_interrupt_lines`, `reset`, `is_halted`, `microcodes_empty`, `run_to_instruction_boundary(&mut bus, plugin)`, plus read-only `a() / x() / y() / sp() / status() / pc() / flag()` and `snapshot()`. No `mcu()` walk, no `pub` register fields, no `pub(crate)` DMA helpers, no standalone `clock` parameter — memory and time both go through the `&mut Bus` parameter and DMA through the `DmaBus`. The one seam for instruction-boundary work is `run_to_instruction_boundary`, not a hand-rolled `while`.
+The minimal pub surface of `Cpu` (ADR-0010, ADR-0017, ADR-0018): `tick(&mut self, bus: &mut Bus, plugin)` (→ `ExecuteResult`; the dot is `bus.clock()`), `update_interrupt_lines`, `reset`, `is_halted`, `microcodes_empty`, `run_to_instruction_boundary(&mut bus, plugin)`, plus read-only `a() / x() / y() / sp() / status() / pc() / flag()` and `snapshot()`. No `mcu()` walk, no `pub` register fields, no `pub(crate)` DMA helpers, no standalone `clock` parameter — memory and time both go through the `&mut Bus` parameter and DMA through the `DmaBus`. The one seam for instruction-boundary work is `run_to_instruction_boundary`, not a hand-rolled `while`.
 _Avoid_: pub register fields, `cpu.mcu().ppu()`, `(ExecuteResult, bool)` tuple, `cpu.mcu()`
 
 **CpuSnapshot**:
@@ -96,9 +96,9 @@ _Avoid_: direct `cpu.a` field access
 Read-model snapshot `MachineView<'a, M: Mcu> {cpu: CpuSnapshot, mcu: &M, clock}` exposed to `Plugin::start(&MachineView)` / `end` (ADR-0018: the plugin seam reads the dot via `view.clock()`, no trailing `SystemClock`). For `NesMcu` it exposes `ppu_in_vblank()`, `ppu_rendering_enabled()`, `ppu_frame_no()`, `read_vram()`, `borrow_image()` without exposing `&Cpu` or `&Mcu` walks. Built as `MachineView::new(cpu.snapshot(), bus.mcu(), clock)` — inside `Cpu::tick` for the per-dot view; external tools (e.g. plugin unit tests) build it over a `(Cpu, Bus)` pair the same way.
 _Avoid_: `&Cpu` in Plugin, `cpu.mcu().ppu()`, `mcu().peek` outside view
 
-**TickOutcome**:
-Named result `TickOutcome {control: ExecuteResult, instruction_complete: bool}` returned by `Cpu::tick`. `instruction_complete` is true when the microcode queue drained (instruction boundary). Replaces the unnamed `(ExecuteResult, bool)` tuple.
-_Avoid_: `(ExecuteResult, bool)`, `tick(...).0/.1`, `instruction_done` unnamed bool
+**Instruction boundary**:
+The microcode queue drained, observed via `Cpu::microcodes_empty()`. `Cpu::tick` returns only `ExecuteResult` (`plugin.should_stop()` at a boundary, `Continue` mid-instruction, `Halt` when halted); callers that need the boundary read `microcodes_empty()` after the tick.
+_Avoid_: `TickOutcome`, `(ExecuteResult, bool)` tuple, `instruction_done` unnamed bool
 
 
 ## Language — Mapper IRQ

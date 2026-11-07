@@ -46,7 +46,7 @@ impl<M: Mcu> Harness<M> {
         self.bus.mcu_mut()
     }
 
-    fn tick<P: Plugin<M>>(&mut self, plugin: &mut P, clock: SystemClock) -> TickOutcome {
+    fn tick<P: Plugin<M>>(&mut self, plugin: &mut P, clock: SystemClock) -> ExecuteResult {
         // Stage the dot on the harness's bus master clock (ADR-0018), then
         // tick; the clock value itself is what the caller iterates with.
         self.bus.set_clock(clock);
@@ -119,7 +119,11 @@ fn execute_next<M: Mcu>(cpu: &mut Harness<M>) {
     cpu.run_to_instruction_boundary(&mut plugin);
 
     let mut clock = cpu.bus.clock();
-    while !cpu.tick(&mut plugin, clock).instruction_complete {
+    loop {
+        cpu.tick(&mut plugin, clock);
+        if cpu.microcodes_empty() {
+            break;
+        }
         clock = clock.inc();
     }
 }
@@ -1154,7 +1158,8 @@ fn zero_page_rmw_read_cycle_projects_zero_page_addr() {
         if matches!(cpu.pending_bus_cycle(), BusCycle::Read(_)) {
             projected |= cpu.dma_halt_bus_addr() == Some(0x00A0);
         }
-        if cpu.tick(&mut plugin, clock).instruction_complete {
+        cpu.tick(&mut plugin, clock);
+        if cpu.microcodes_empty() {
             break;
         }
         clock = clock.inc();
@@ -4320,7 +4325,7 @@ fn nmi_hijacks_brk_only_through_its_third_cycle() {
         for t in 0..2000u64 {
             let clock = SystemClock(t);
             cpu.update_nmi_line(t >= rise, clock);
-            if clock.is_cpu_clock() && cpu.tick(&mut plugin, clock).control == ExecuteResult::Halt {
+            if clock.is_cpu_clock() && cpu.tick(&mut plugin, clock) == ExecuteResult::Halt {
                 break;
             }
         }
@@ -4420,8 +4425,8 @@ fn interrupt_handler_entry_21_dots_after_boundary() {
             // The CPU dispatches on the first cycle after an instruction
             // boundary whose end-of-cycle interrupt poll detected one.
             let dispatching = cpu.microcodes_empty() && cpu.interrupt_detected.is_some();
-            let outcome = cpu.tick(&mut plugin, clock);
-            let instruction_done = outcome.instruction_complete;
+            cpu.tick(&mut plugin, clock);
+            let instruction_done = cpu.microcodes_empty();
             if dispatching {
                 dispatched = true;
             } else if !dispatched && instruction_done {

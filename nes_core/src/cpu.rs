@@ -25,14 +25,6 @@ pub struct CpuSnapshot {
     pub halt: bool,
 }
 
-/// Named result of `Cpu::tick` — replaces the unnamed `(ExecuteResult, bool)` tuple.
-/// `instruction_complete` is true when the microcode queue drained (instruction boundary).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct TickOutcome {
-    pub control: ExecuteResult,
-    pub instruction_complete: bool,
-}
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Register {
     A,
@@ -727,24 +719,22 @@ impl Cpu {
 
     /// Return true if just execute current instruction
     #[hotpath::measure(impl_type = "Cpu")]
-    pub fn tick<P: Plugin<M>, M: Mcu>(&mut self, bus: &mut Bus<M>, plugin: &mut P) -> TickOutcome {
+    pub fn tick<P: Plugin<M>, M: Mcu>(
+        &mut self,
+        bus: &mut Bus<M>,
+        plugin: &mut P,
+    ) -> ExecuteResult {
         crate::hotpath_cpu::hotpath_cpu_alias!(
             Self,
             concat!(module_path!(), "::Cpu::tick"),
             "tick"
         );
         if self.frozen {
-            return TickOutcome {
-                control: ExecuteResult::Continue,
-                instruction_complete: false,
-            };
+            return ExecuteResult::Continue;
         }
 
         if self.is_halted() {
-            return TickOutcome {
-                control: ExecuteResult::Halt,
-                instruction_complete: false,
-            };
+            return ExecuteResult::Halt;
         }
 
         if let Some(active) = self.active_interrupt_window.as_mut()
@@ -788,15 +778,9 @@ impl Cpu {
         if instruction_complete {
             let view = MachineView::new(self.snapshot(), bus.mcu(), bus.clock());
             plugin.end(&view);
-            TickOutcome {
-                control: plugin.should_stop(),
-                instruction_complete: true,
-            }
+            plugin.should_stop()
         } else {
-            TickOutcome {
-                control: ExecuteResult::Continue,
-                instruction_complete: false,
-            }
+            ExecuteResult::Continue
         }
     }
 
