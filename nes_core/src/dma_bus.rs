@@ -37,10 +37,10 @@ pub enum BusOwner {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) struct OamActive {
     pub(crate) page: u8,
-    pub(crate) startup_cycles: usize,
-    pub(crate) transfer_cycle: usize,
+    pub(crate) needs_startup_align: bool,
+    pub(crate) transfer_cycle: u16,
     pub(crate) latch: u8,
-    pub(crate) pause_cycles: usize,
+    pub(crate) needs_pause_align: bool,
     /// How each of the 512 source reads is routed. Resolved once, when the
     /// pending `$4014` request is taken: the source page cannot change
     /// mid-transfer, so the per-byte loop never re-classifies it.
@@ -176,16 +176,17 @@ impl DmaBus {
         dmc_drove: bool,
     ) -> bool {
         if let Some(mut dma) = oam.take() {
-            if dma.pause_cycles > 0 {
+            if dma.needs_pause_align {
                 // OAM alignment cycle after a DMC DMA collision: no transfer.
-                dma.pause_cycles -= 1;
-            } else if dmc_drove && dma.startup_cycles == 0 && dma.transfer_cycle.is_multiple_of(2) {
+                dma.needs_pause_align = false;
+            } else if dmc_drove && !dma.needs_startup_align && dma.transfer_cycle.is_multiple_of(2)
+            {
                 // DMC DMA wins the bus: the OAM read is aborted and must be
                 // redone after an alignment cycle. Skipping this cycle and one
                 // alignment cycle preserves the get/put phase.
-                dma.pause_cycles = 1;
-            } else if dma.startup_cycles > 0 {
-                dma.startup_cycles -= 1;
+                dma.needs_pause_align = true;
+            } else if dma.needs_startup_align {
+                dma.needs_startup_align = false;
             } else {
                 let byte_index = dma.transfer_cycle / 2;
                 let mcu = bus.mcu_mut();
@@ -204,7 +205,7 @@ impl DmaBus {
                 dma.transfer_cycle += 1;
             }
 
-            if dma.startup_cycles == 0 && dma.transfer_cycle == 512 {
+            if !dma.needs_startup_align && dma.transfer_cycle == 512 {
                 // Transfer complete — drop, but this final cycle still counted as OAM holding.
                 return true;
             }
@@ -218,13 +219,13 @@ impl DmaBus {
             // $4014 write cycle; that tick is the DMA halt cycle. If it is a
             // get cycle the write happened on a put cycle and one alignment
             // cycle is needed before the first read; otherwise none.
-            let startup_cycles = if bus.clock().is_apu_get_clock() { 1 } else { 0 };
+            let needs_startup_align = bus.clock().is_apu_get_clock();
             *oam = Some(OamActive {
                 page,
-                startup_cycles,
+                needs_startup_align,
                 transfer_cycle: 0,
                 latch: 0,
-                pause_cycles: 0,
+                needs_pause_align: false,
                 source_access: OamSourceAccess::for_page(page),
             });
             return true;

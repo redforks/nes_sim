@@ -297,7 +297,7 @@ fn oam_dma_first_read_alignment() {
     // the very next dma tick performs transfer #0 (the first read).
     let dma = dma_bus.oam_state().expect("dma active");
     assert_eq!(
-        dma.startup_cycles, 0,
+        dma.needs_startup_align, false,
         "write-on-get needs no alignment cycle"
     );
 }
@@ -369,7 +369,7 @@ fn oam_dma_pauses_on_dmc_read_collision() {
     dma_bus.tick_oam_for_test(&mut bus, false);
     let dma = dma_bus.oam_state().expect("dma active");
     assert_eq!(
-        dma.startup_cycles, 0,
+        dma.needs_startup_align, false,
         "write-on-get needs no alignment cycle"
     );
 
@@ -440,7 +440,7 @@ fn dmc_collision_at_start_of_oam_write_on_get() {
     let h = SystemClock(8); // put cycle
     bus.set_clock(h);
     dma_bus.tick_oam_for_test(&mut bus, false);
-    assert_eq!(dma_bus.oam_ref().unwrap().startup_cycles, 0);
+    assert_eq!(dma_bus.oam_ref().unwrap().needs_startup_align, false);
 
     // H+1 (get): first OAM read proceeds under the DMC dummy cycle.
     bus.set_clock(SystemClock(h.cycles() + 3));
@@ -457,7 +457,7 @@ fn dmc_collision_at_start_of_oam_write_on_get() {
     bus.set_clock(SystemClock(h.cycles() + 9));
     dma_bus.tick_oam_for_test(&mut bus, true);
     assert_eq!(dma_bus.oam_ref().unwrap().transfer_cycle, 2);
-    assert_eq!(dma_bus.oam_ref().unwrap().pause_cycles, 1);
+    assert_eq!(dma_bus.oam_ref().unwrap().needs_pause_align, true);
 
     // H+4 (put): OAM alignment cycle, no transfer.
     bus.set_clock(SystemClock(h.cycles() + 12));
@@ -481,13 +481,13 @@ fn dmc_collision_at_start_of_oam_write_on_put() {
     let h = SystemClock(11); // get cycle
     bus.set_clock(h);
     dma_bus.tick_oam_for_test(&mut bus, false);
-    assert_eq!(dma_bus.oam_ref().unwrap().startup_cycles, 1);
+    assert_eq!(dma_bus.oam_ref().unwrap().needs_startup_align, true);
 
     // H+1 (put): OAM alignment cycle doubles as the DMC dummy cycle.
     bus.set_clock(SystemClock(h.cycles() + 3));
     dma_bus.tick_oam_for_test(&mut bus, false);
     let dma = dma_bus.oam_ref().unwrap();
-    assert_eq!(dma.startup_cycles, 0);
+    assert_eq!(dma.needs_startup_align, false);
     assert_eq!(dma.transfer_cycle, 0);
 
     // H+2 (get): DMC drives its byte; the first OAM read is aborted.
@@ -495,7 +495,7 @@ fn dmc_collision_at_start_of_oam_write_on_put() {
     dma_bus.tick_oam_for_test(&mut bus, true);
     let dma = dma_bus.oam_ref().unwrap();
     assert_eq!(dma.transfer_cycle, 0);
-    assert_eq!(dma.pause_cycles, 1);
+    assert_eq!(dma.needs_pause_align, true);
 
     // H+3 (put): OAM alignment cycle, still no transfer.
     bus.set_clock(SystemClock(h.cycles() + 9));

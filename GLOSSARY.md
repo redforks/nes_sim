@@ -191,7 +191,7 @@ Per-dot holder of the bus returned by `DmaBus::tick`: `Idle` (CPU owns the bus),
 _Avoid_: bus state, dma owner, active dma
 
 **DMA arbitration (DMC-wins)**:
-The single arbitration policy the `DmaBus` implements: a DMC DMA read (`dmc_drove_bus` true) that lands on an OAM DMA read phase (`startup_cycles == 0 && transfer_cycle.is_multiple_of(2)`) aborts the OAM read, which is redone after one alignment cycle (`pause_cycles = 1`). The `dmc_drove_bus` bool and the `NesMcu` collision predicate are a private branch inside `DmaBus::tick`; no external bool is threaded.
+The single arbitration policy the `DmaBus` implements: a DMC DMA read (`dmc_drove_bus` true) that lands on an OAM DMA read phase (`!needs_startup_align && transfer_cycle.is_multiple_of(2)`) aborts the OAM read, which is redone after one alignment cycle (`needs_pause_align = true`). The `dmc_drove_bus` bool and the `NesMcu` collision predicate are a private branch inside `DmaBus::tick`; no external bool is threaded.
 _Avoid_: collision handling (ok in commentary, not the canonical term), dma priority
 
 **Bus quiescence**:
