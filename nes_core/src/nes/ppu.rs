@@ -596,7 +596,7 @@ impl<R: Render> Ppu<R> {
     /// same-dot suppression falls out of the CPU sampler's phase (a 1-dot
     /// assertion at the set dot is never sampled — see `NmiDetector`).
     pub fn nmi_line(&self) -> bool {
-        self.registers.status.v_blank() && self.registers.ctrl.nmi_enable()
+        self.registers.status.v_blank() & self.registers.ctrl.nmi_enable()
     }
 
     pub(crate) fn read_ppureg(&mut self, address: u16, cartridge: &mut Cartridge) -> u8 {
