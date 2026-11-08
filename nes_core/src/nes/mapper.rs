@@ -263,39 +263,55 @@ impl Cartridge {
         }
     }
 
-    /// PRG window read for `$6000-$FFFF`.
+    /// PRG-ROM read for `$8000-$FFFF` via the mapper-banked window.
     ///
-    /// `$6000-$7FFF` is PRG-RAM: the mapper chip gets first refusal via
-    /// [`Mapper::read_prg`] (only VRC2's bus-byte reads override it), otherwise
-    /// the board's PRG window answers. `$8000-$FFFF` is the mapper-banked
-    /// PRG-ROM window.
-    ///
-    /// Every other address belongs to another bus device — `$0000-$1FFF` RAM,
-    /// `$2000-$3FFF` PPU, `$4020-$5FFF` expansion, `$4000-$401F` APU/IO — and
-    /// [`crate::nes::NesMcu`] routes those itself in
-    /// [`Mcu::read`](crate::mcu::Mcu::read), so an address below `$6000` here
-    /// is a caller bug. Debug builds assert it; release builds are unchecked
-    /// and the wrapping slot index in [`CartridgeMemory::read_prg`] answers
-    /// with whatever PRG bytes happen to land in that window.
-    ///
-    /// Unlike the PPU's side-effect-free peek, this returns raw cartridge
-    /// data with no open-bus substitution: a disabled PRG-RAM window still
-    /// answers with its bank contents, and `NesMcu` is what turns that into
-    /// open bus.
+    /// PRG-RAM (`$6000-$7FFF`) has its own [`Cartridge::read_prg_ram`]; this
+    /// never serves it. Unlike the PPU's side-effect-free peek, this returns
+    /// raw cartridge data with no open-bus substitution: a disabled PRG-RAM
+    /// window still answers with its bank contents, and `NesMcu` is what
+    /// turns that into open bus.
     pub(crate) fn read(&self, address: u16) -> u8 {
         debug_assert!(
-            address >= 0x6000,
-            "Cartridge::read address {address:#06x} below $6000"
+            address >= 0x8000,
+            "Cartridge::read address {address:#06x} below $8000"
         );
-        if address < 0x8000
-            && let Some(value) = self.mapper.read_prg(address)
-        {
-            return value;
-        }
         self.memory.read_prg(address)
     }
 
+    /// PRG-RAM read for `$6000-$7FFF`.
+    ///
+    /// The mapper chip gets first refusal via [`Mapper::read_prg`] (only
+    /// VRC2's bus-byte reads override it), otherwise the board's PRG-RAM
+    /// bank answers via [`CartridgeMemory::read_prg_ram`].
+    pub(crate) fn read_prg_ram(&self, address: u16) -> u8 {
+        debug_assert!(
+            (0x6000..=0x7fff).contains(&address),
+            "Cartridge::read_prg_ram address {address:#06x} outside $6000-$7FFF"
+        );
+        if let Some(value) = self.mapper.read_prg(address) {
+            return value;
+        }
+        self.memory.read_prg_ram(address)
+    }
+
+    /// PRG-ROM write for `$8000-$FFFF`: mapper register writes only.
     pub fn write(&mut self, address: u16, value: u8, cycle: SystemClock) {
+        debug_assert!(
+            address >= 0x8000,
+            "Cartridge::write address {address:#06x} below $8000"
+        );
+        let Self { memory, mapper, .. } = self;
+        mapper.cpu_write(address, value, cycle, memory);
+    }
+
+    /// PRG-RAM write for `$6000-$7FFF` via the mapper's CPU-write path, so
+    /// mapper side-effects (NINA-001/J87/VRC2 registers, MMC3 write-protect,
+    /// enable gating) stay exactly as on the generic write.
+    pub fn write_prg_ram(&mut self, address: u16, value: u8, cycle: SystemClock) {
+        debug_assert!(
+            (0x6000..=0x7fff).contains(&address),
+            "Cartridge::write_prg_ram address {address:#06x} outside $6000-$7FFF"
+        );
         let Self { memory, mapper, .. } = self;
         mapper.cpu_write(address, value, cycle, memory);
     }

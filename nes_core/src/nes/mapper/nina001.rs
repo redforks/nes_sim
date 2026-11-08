@@ -37,7 +37,7 @@ impl Mapper for Nina001 {
     ) {
         match address {
             0x6000..=0x7fff => {
-                memory.write_prg(address, value);
+                memory.write_prg_ram(address, value);
                 match address {
                     0x7ffd => {
                         self.selected_prg_bank = (value & 0x01) as usize;

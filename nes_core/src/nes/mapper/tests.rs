@@ -86,8 +86,8 @@ fn read_handles_prg_ram_and_prg_rom_windows() {
     let mut cartridge = create_cartridge_with_mmc3_irq_override(&file, Mmc3IrqOverride::Auto);
 
     // $6000-$7FFF is PRG-RAM: writes round-trip through the board window.
-    cartridge.write(0x6000, 0x12, SystemClock::default());
-    assert_eq!(cartridge.read(0x6000), 0x12);
+    cartridge.write_prg_ram(0x6000, 0x12, SystemClock::default());
+    assert_eq!(cartridge.read_prg_ram(0x6000), 0x12);
 
     // $8000-$FFFF is PRG-ROM, which NROM mirrors in 16 KiB halves.
     assert_eq!(cartridge.read(0x8000), 0xAB);
@@ -105,8 +105,8 @@ fn read_prefers_mapper_prg_hook_within_prg_ram_window() {
     let mapper = Vrc24::new(&mut memory, VrcVariant::Vrc2b);
     let cartridge = Cartridge::new(Box::new(mapper), memory);
 
-    assert_eq!(cartridge.read(0x6123), 0x23);
-    assert_eq!(cartridge.read(0x7FFF), 0x00);
+    assert_eq!(cartridge.read_prg_ram(0x6123), 0x23);
+    assert_eq!(cartridge.read_prg_ram(0x7FFF), 0x00);
     assert_eq!(cartridge.read(0x8123), 0x00, "$8000+ stays PRG-ROM");
 }
 
@@ -115,7 +115,7 @@ fn read_prefers_mapper_prg_hook_within_prg_ram_window() {
 /// whatever PRG bytes land there — so the contract is only pinned here.
 #[cfg(debug_assertions)]
 #[test]
-#[should_panic(expected = "below $6000")]
+#[should_panic(expected = "below $8000")]
 fn read_below_prg_window_asserts() {
     let cartridge = Cartridge::test();
     let _ = cartridge.read(0x5FFF);
@@ -147,7 +147,11 @@ fn mmc1_disabled_prg_ram_reads_open_bus_at_bus_level() {
     mcu.write(0x0000, 0x99, clock);
 
     assert_eq!(mcu.read(0x6000), 0x99, "open bus, not PRG-RAM");
-    assert_eq!(mcu.cartridge.read(0x6000), 0x12, "raw cartridge data");
+    assert_eq!(
+        mcu.cartridge.read_prg_ram(0x6000),
+        0x12,
+        "raw cartridge data"
+    );
 }
 
 #[test]
@@ -156,7 +160,7 @@ fn create_cartridge_mapper0() {
     let file = INesFile::new(rom).unwrap();
     let cartridge = create_cartridge_with_mmc3_irq_override(&file, Mmc3IrqOverride::Auto);
 
-    let val = cartridge.read(0x6000);
+    let val = cartridge.read_prg_ram(0x6000);
     assert_eq!(val, 0);
     assert_eq!(cartridge.read_vram(0), 0);
 }

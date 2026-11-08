@@ -31,7 +31,7 @@ impl Mapper for BxRom {
         memory: &mut CartridgeMemory,
     ) {
         match address {
-            0x6000..=0x7fff => memory.write_prg(address, value),
+            0x6000..=0x7fff => memory.write_prg_ram(address, value),
             0x8000..=0xffff => {
                 self.selected_prg_bank = value as usize % self.prg_bank_count;
                 memory.map_prg_32k(self.selected_prg_bank as u16);

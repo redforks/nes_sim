@@ -27,7 +27,7 @@ impl Mapper for NRom {
         memory: &mut CartridgeMemory,
     ) {
         if (0x6000..=0x7fff).contains(&address) {
-            memory.write_prg(address, value);
+            memory.write_prg_ram(address, value);
         }
     }
 }
@@ -49,9 +49,9 @@ mod tests {
         let mut mapper = NRom::new(&mut memory);
 
         mapper.cpu_write(0x6000, 0x01, SystemClock::default(), &mut memory);
-        assert_eq!(memory.read_prg(0x6000), 0x01);
+        assert_eq!(memory.read_prg_ram(0x6000), 0x01);
         mapper.cpu_write(0x7fff, 0x03, SystemClock::default(), &mut memory);
-        assert_eq!(memory.read_prg(0x7fff), 0x03);
+        assert_eq!(memory.read_prg_ram(0x7fff), 0x03);
 
         // ROM is read-only: mapper registers ignore the write.
         let rom_before = memory.read_prg(0x8000);

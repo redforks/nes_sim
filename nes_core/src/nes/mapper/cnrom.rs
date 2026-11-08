@@ -31,7 +31,7 @@ impl Mapper for CnRom {
         memory: &mut CartridgeMemory,
     ) {
         match address {
-            0x6000..=0x7fff => memory.write_prg(address, value),
+            0x6000..=0x7fff => memory.write_prg_ram(address, value),
             0x8000..=0xffff => {
                 let bank = (value as usize) % self.chr_bank_count;
                 memory.map_chr_8k(bank as u16);
@@ -53,8 +53,8 @@ mod tests {
         mapper.cpu_write(0x6000, 0x12, SystemClock::default(), &mut memory);
         mapper.cpu_write(0x7fff, 0x34, SystemClock::default(), &mut memory);
 
-        assert_eq!(memory.read_prg(0x6000), 0x12);
-        assert_eq!(memory.read_prg(0x7fff), 0x34);
+        assert_eq!(memory.read_prg_ram(0x6000), 0x12);
+        assert_eq!(memory.read_prg_ram(0x7fff), 0x34);
     }
 
     #[test]

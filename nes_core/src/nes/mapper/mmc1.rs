@@ -241,7 +241,7 @@ impl Mapper for MMC1 {
         match address {
             0x6000..=0x7fff => {
                 if memory.prg_ram_enabled() {
-                    memory.write_prg(address, value);
+                    memory.write_prg_ram(address, value);
                 }
             }
             0x8000..=0xffff => {
@@ -336,12 +336,12 @@ mod tests {
         let (mut mmc1, mut memory) = create(|_| {});
 
         mmc1.cpu_write(0x6000, 0x12, SystemClock::default(), &mut memory);
-        assert_eq!(memory.read_prg(0x6000), 0x12);
+        assert_eq!(memory.read_prg_ram(0x6000), 0x12);
 
         write_serial(&mut mmc1, &mut memory, 0xe000, 0x10);
         assert!(!memory.prg_ram_enabled());
         mmc1.cpu_write(0x6000, 0x34, SystemClock::default(), &mut memory);
-        assert_eq!(memory.read_prg(0x6000), 0x12);
+        assert_eq!(memory.read_prg_ram(0x6000), 0x12);
     }
 
     #[test]

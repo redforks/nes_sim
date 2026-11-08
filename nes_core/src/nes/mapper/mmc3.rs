@@ -192,7 +192,7 @@ impl Mapper for MMC3 {
         match address {
             0x6000..=0x7fff => {
                 if self.prg_ram_enabled && !self.prg_ram_write_protect {
-                    memory.write_prg(address, value);
+                    memory.write_prg_ram(address, value);
                 }
             }
             0x8000..=0x9fff => {

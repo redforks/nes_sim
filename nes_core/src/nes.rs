@@ -271,7 +271,7 @@ impl<R: Render, D: AudioDriver> Mcu for NesMcu<R, D> {
                 if !self.cartridge.prg_ram_enabled() {
                     self.open_bus
                 } else {
-                    self.cartridge.read(address)
+                    self.cartridge.read_prg_ram(address)
                 }
             }
             0x8000..=0xffff => self.cartridge.read(address),
@@ -294,7 +294,7 @@ impl<R: Render, D: AudioDriver> Mcu for NesMcu<R, D> {
                 if !self.cartridge.prg_ram_enabled() {
                     self.open_bus
                 } else {
-                    self.cartridge.read(address)
+                    self.cartridge.read_prg_ram(address)
                 }
             }
             0x8000..=0xffff => self.cartridge.read(address),
@@ -325,7 +325,7 @@ impl<R: Render, D: AudioDriver> Mcu for NesMcu<R, D> {
             0x4020..=0x5fff => {}
             0x6000..=0x7fff => {
                 if self.cartridge.prg_ram_enabled() {
-                    self.cartridge.write(address, value, clock);
+                    self.cartridge.write_prg_ram(address, value, clock);
                 }
             }
             0x8000..=0xffff => self.cartridge.write(address, value, clock),

@@ -166,7 +166,7 @@ impl Mapper for Vrc24 {
             0x6000..=0x7fff => {
                 if self.variant.is_vrc4() {
                     if self.prg_ram_enabled {
-                        memory.write_prg(address, value);
+                        memory.write_prg_ram(address, value);
                     }
                 } else {
                     self.microwire_latch = value & 0x01;
@@ -355,7 +355,7 @@ mod tests {
         let read = |mapper: &Vrc24, memory: &CartridgeMemory, addr: u16| {
             mapper
                 .read_prg(addr)
-                .unwrap_or_else(|| memory.read_prg(addr))
+                .unwrap_or_else(|| memory.read_prg_ram(addr))
         };
         assert_eq!(read(&mapper, &memory, 0x6123), 0x23);
         assert_eq!(read(&mapper, &memory, 0x7000), 0x00);

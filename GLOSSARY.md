@@ -25,7 +25,7 @@ One position in a bank window. A slot holds a bank number.
 _Avoid_: Entry, offset
 
 **Bank window**:
-The fixed set of slots the CPU or PPU can address. The PPU window covers `$0000-$3FFF` (8 pattern-table slots, 4 nametable slots, and the 4 `$3000-$3EFF` alias slots that repeat them); the PRG window covers `$6000-$FFFF` (8 PRG-RAM slots + 32 PRG-ROM slots) plus padding slots that exist only so the slot index can be masked instead of bounds-checked. The mapper rewrites it; every access reads it.
+The fixed set of slots the CPU or PPU can address. The PPU window covers `$0000-$3FFF` (8 pattern-table slots, 4 nametable slots, and the 4 `$3000-$3EFF` alias slots that repeat them); the PRG window covers `$8000-$FFFF` (32 PRG-ROM slots). PRG RAM (`$6000-$7FFF`) is a separate bank array outside the window with its own read/write pair. The mapper rewrites it; every access reads it.
 _Avoid_: Page table, mapping array
 
 **VRAM (cartridge)**:

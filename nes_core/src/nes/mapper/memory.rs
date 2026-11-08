@@ -8,20 +8,17 @@ use super::Mirroring;
 pub const BANK_SIZE: usize = 0x400;
 /// Physical nametable banks (CIRAM): `$2000`, `$2400`, `$2800`, `$2C00`.
 const NAMETABLE_BANK_COUNT: usize = 4;
+/// PRG-RAM banks: 8 × 1 KB, always at `$6000-$7FFF` when present.
 const PRG_RAM_BANK_COUNT: usize = 8;
-/// Window slot of `$8000`, the first PRG-ROM slot (`$6000-$7FFF` is PRG-RAM).
-const PRG_ROM_SLOT_BASE: usize = PRG_RAM_BANK_COUNT;
 /// Slots covering `$0000-$3FFF`: 8 pattern-table slots + 4 nametable slots,
 /// plus the four `$3000-$3EFF` alias slots. The window is a power of two so
 /// any 14-bit PPU address yields a provably in-range index with no fold and no
 /// bounds check; the alias slots hold the same banks as the slots they repeat.
 const PPU_WINDOW_SLOTS: usize = 16;
-/// Slots covering `$6000-$FFFF`: 8 PRG-RAM + 32 PRG-ROM, padded to 64 so the
-/// slot index can be masked into range for free. Slots 40..64 are never
-/// addressed by the CPU; they exist for the mask only.
-const PRG_WINDOW_SLOTS: usize = 64;
-/// `$6000-$FFFF` = 40 slots; the padding above has no addresses of its own.
-const PRG_WINDOW_USED_SLOTS: usize = 40;
+/// Slots covering `$8000-$FFFF`: 32 PRG-ROM slots. The window is a power of
+/// two so the slot index can be masked into range for free. PRG RAM is not
+/// part of this window; it lives in its own bank array.
+const PRG_WINDOW_SLOTS: usize = 32;
 /// First nametable slot inside the PPU window.
 const NAMETABLE_SLOT_BASE: usize = 8;
 /// First `$3000-$3EFF` alias slot; each repeats `NAMETABLE_SLOT_BASE + i`.
@@ -54,9 +51,11 @@ fn bank_count(len_bytes: usize) -> usize {
 }
 
 /// The cartridge's memory: one pool of banks, laid out as
-/// `[4 nametables][N CHR][8 PRG-RAM][M PRG-ROM]`, plus the two bank windows.
+/// `[4 nametables][N CHR][M PRG-ROM]`, plus the two bank windows, and a
+/// separate PRG-RAM bank array (8 × 1 KB) for `$6000-$7FFF`.
 pub struct CartridgeMemory {
     pool: Box<[Bank]>,
+    prg_ram: Box<[Bank]>,
     chr_base: usize,
     prg_rom_base: usize,
     chr_bank_count: usize,
@@ -89,13 +88,13 @@ impl CartridgeMemory {
         let prg_bank_count = bank_count(prg_rom.len());
 
         let chr_base = NAMETABLE_BANK_COUNT;
-        let prg_ram_base = chr_base + chr_bank_count;
-        let prg_rom_base = prg_ram_base + PRG_RAM_BANK_COUNT;
+        let prg_rom_base = chr_base + chr_bank_count;
 
         let mut memory = Self {
             pool: (0..prg_rom_base + prg_bank_count)
                 .map(|_| Bank::empty())
                 .collect(),
+            prg_ram: (0..PRG_RAM_BANK_COUNT).map(|_| Bank::empty()).collect(),
             chr_base,
             prg_rom_base,
             chr_bank_count,
@@ -118,15 +117,7 @@ impl CartridgeMemory {
 
         memory.apply_mirroring(mirroring);
         memory.map_chr_8k(0);
-        for slot in 0..PRG_RAM_BANK_COUNT {
-            memory.prg_window[slot] = (prg_ram_base + slot) as u16;
-        }
         memory.map_prg_32k(0);
-        memory.map_prg_run(
-            PRG_ROM_SLOT_BASE + 32,
-            0,
-            PRG_WINDOW_SLOTS - PRG_WINDOW_USED_SLOTS,
-        );
         memory
     }
 
@@ -141,12 +132,12 @@ impl CartridgeMemory {
         Self::from_rom(&prg, chr_rom, None, Mirroring::Horizontal)
     }
 
-    /// PRG ROM / PRG-RAM access for `$6000-$FFFF`. The slot index is masked
-    /// rather than bounds-checked: the subtraction wraps for addresses below
-    /// `$6000` (which `Cartridge::read` never passes) and the mask maps the
-    /// result into the padded window.
+    /// PRG-ROM access for `$8000-$FFFF`. The slot index is masked rather
+    /// than bounds-checked: the subtraction wraps for addresses below `$8000`
+    /// (which `Cartridge::read` never passes) and the mask maps the result
+    /// into the window.
     pub fn read_prg(&self, address: u16) -> u8 {
-        let slot = (address.wrapping_sub(0x6000) >> 10) as usize & (PRG_WINDOW_SLOTS - 1);
+        let slot = (address.wrapping_sub(0x8000) >> 10) as usize & (PRG_WINDOW_SLOTS - 1);
         let bank = self.prg_window[slot] as usize;
         debug_assert!(bank < self.pool.len(), "PRG slot {slot} escapes the pool");
         // SAFETY: `prg_window` is private and written only by `map_prg_run`
@@ -155,15 +146,22 @@ impl CartridgeMemory {
         unsafe { self.pool.get_unchecked(bank).read(address) }
     }
 
-    /// Writes land in the bank the slot points at; mapper registers at
-    /// `$8000-$FFFF` are handled by the mapper, never here.
-    pub fn write_prg(&mut self, address: u16, value: u8) {
-        let slot = (address.wrapping_sub(0x6000) >> 10) as usize & (PRG_WINDOW_SLOTS - 1);
-        let bank = self.prg_window[slot] as usize;
-        debug_assert!(bank < self.pool.len(), "PRG slot {slot} escapes the pool");
-        // SAFETY: as in `read_prg`.
+    /// PRG-RAM access for `$6000-$7FFF`: direct bank hit, no window lookup.
+    pub fn read_prg_ram(&self, address: u16) -> u8 {
+        let bank =
+            ((address.wrapping_sub(0x6000) & 0x1fff) >> 10) as usize & (PRG_RAM_BANK_COUNT - 1);
+        // SAFETY: `prg_ram` has exactly PRG_RAM_BANK_COUNT banks and the masked
+        // index is always in range.
+        unsafe { self.prg_ram.get_unchecked(bank).read(address) }
+    }
+
+    /// PRG-RAM writes for `$6000-$7FFF`: direct bank hit, no window lookup.
+    pub fn write_prg_ram(&mut self, address: u16, value: u8) {
+        let bank =
+            ((address.wrapping_sub(0x6000) & 0x1fff) >> 10) as usize & (PRG_RAM_BANK_COUNT - 1);
+        // SAFETY: as in `read_prg_ram`.
         unsafe {
-            self.pool.get_unchecked_mut(bank).write(address, value);
+            self.prg_ram.get_unchecked_mut(bank).write(address, value);
         }
     }
 
@@ -221,21 +219,17 @@ impl CartridgeMemory {
 
     /// Points an 8 KB PRG slot (0..=3 from `$8000`) at an 8 KB PRG bank.
     pub fn map_prg_8k(&mut self, slot: u16, bank: u16) {
-        self.map_prg_run(PRG_ROM_SLOT_BASE + slot as usize * 8, bank as usize * 8, 8);
+        self.map_prg_run(slot as usize * 8, bank as usize * 8, 8);
     }
 
     /// Points a 16 KB PRG slot (0 at `$8000`, 1 at `$C000`) at a 16 KB bank.
     pub fn map_prg_16k(&mut self, slot: u16, bank: u16) {
-        self.map_prg_run(
-            PRG_ROM_SLOT_BASE + slot as usize * 16,
-            bank as usize * 16,
-            16,
-        );
+        self.map_prg_run(slot as usize * 16, bank as usize * 16, 16);
     }
 
     /// Points the whole 32 KB PRG window at a 32 KB bank.
     pub fn map_prg_32k(&mut self, bank: u16) {
-        self.map_prg_run(PRG_ROM_SLOT_BASE, bank as usize * 32, 32);
+        self.map_prg_run(0, bank as usize * 32, 32);
     }
 
     fn map_chr_run(&mut self, first_slot: usize, start_bank: usize, len: usize) {
