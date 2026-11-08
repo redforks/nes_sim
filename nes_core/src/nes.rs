@@ -51,8 +51,12 @@ impl<R: Render, D: AudioDriver> NesMcu<R, D> {
     ///
     /// Every read — generic dispatch or fast path — goes through here, so
     /// the two routes cannot drift (see GLOSSARY "Fast Path Contract").
-    fn latch_read(&mut self, value: u8) -> u8 {
+    fn latch_read(&mut self, value: u8, read_controller: bool) -> u8 {
         self.open_bus = value;
+        if !read_controller {
+            self.joypad1_oe = false;
+            self.joypad2_oe = false;
+        }
         value
     }
 
@@ -244,13 +248,23 @@ impl<R: Render, D: AudioDriver> NesMcu<R, D> {
 
 impl<R: Render, D: AudioDriver> Mcu for NesMcu<R, D> {
     fn read(&mut self, address: u16) -> u8 {
-        let prev_joypad1_oe = std::mem::replace(&mut self.joypad1_oe, address == 0x4016);
-        let prev_joypad2_oe = std::mem::replace(&mut self.joypad2_oe, address == 0x4017);
         let value = match address {
             0x0000..=0x1fff => self.lower_ram.read(address),
             0x2000..=0x3fff => self.ppu.read_ppureg(address, &mut self.cartridge),
-            0x4016 => self.controller.a.read_strobed(!prev_joypad1_oe),
-            0x4017 => self.controller.b.read_strobed(!prev_joypad2_oe) | self.zapper_bits(),
+            0x4016 => {
+                let prev_joypad1_oe = self.joypad1_oe;
+                self.joypad1_oe = true;
+                self.joypad2_oe = false;
+                let value = self.controller.a.read_strobed(!prev_joypad1_oe);
+                return self.latch_read(value, true);
+            }
+            0x4017 => {
+                let prev_joypad2_oe = self.joypad2_oe;
+                self.joypad1_oe = false;
+                self.joypad2_oe = true;
+                let value = self.controller.b.read_strobed(!prev_joypad2_oe) | self.zapper_bits();
+                return self.latch_read(value, true);
+            }
             0x4015 => self.apu.read(address),
             // PRG-ROM / PRG-RAM from cartridge; unmapped and disabled RAM is open bus
             0x6000..=0x7fff => {
@@ -265,7 +279,7 @@ impl<R: Render, D: AudioDriver> Mcu for NesMcu<R, D> {
             // Write-only APU/IO registers and unused test registers: open bus
             0x4000..=0x401f => self.open_bus,
         };
-        self.latch_read(value)
+        self.latch_read(value, false)
     }
 
     fn peek(&self, address: u16) -> u8 {
@@ -320,12 +334,12 @@ impl<R: Render, D: AudioDriver> Mcu for NesMcu<R, D> {
 
     fn read_zero_page(&mut self, address: u8) -> u8 {
         let value = self.lower_ram.read_zero_page(address);
-        self.latch_read(value)
+        self.latch_read(value, false)
     }
 
     fn read_stack_page(&mut self, address: u8) -> u8 {
         let value = self.lower_ram.read_stack_page(address);
-        self.latch_read(value)
+        self.latch_read(value, false)
     }
 
     fn write_zero_page(&mut self, address: u8, value: u8, clock: SystemClock) {
