@@ -41,32 +41,6 @@ pub(crate) struct OamActive {
     pub(crate) transfer_cycle: u16,
     pub(crate) latch: u8,
     pub(crate) needs_pause_align: bool,
-    /// How each of the 512 source reads is routed. Resolved once, when the
-    /// pending `$4014` request is taken: the source page cannot change
-    /// mid-transfer, so the per-byte loop never re-classifies it.
-    pub(crate) source_access: OamSourceAccess,
-}
-
-/// Which `Mcu` read route an OAM DMA transfer uses for its source page.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(crate) enum OamSourceAccess {
-    /// Source page `$0000`: zero-page fast path.
-    ZeroPage,
-    /// Source page `$0100`: stack-page fast path.
-    StackPage,
-    /// Any page other than `$00`/`$01`: the generic `read` path.
-    Generic,
-}
-
-impl OamSourceAccess {
-    /// Classify a source page for a whole transfer.
-    fn for_page(page: u8) -> Self {
-        match page {
-            0x00 => Self::ZeroPage,
-            0x01 => Self::StackPage,
-            _ => Self::Generic,
-        }
-    }
 }
 
 /// What the OAM transfer needs from the machine besides plain `Mcu` reads:
@@ -192,12 +166,10 @@ impl DmaBus {
                 let mcu = bus.mcu_mut();
                 if dma.transfer_cycle.is_multiple_of(2) {
                     let offset = byte_index as u8;
-                    dma.latch = match dma.source_access {
-                        OamSourceAccess::ZeroPage => mcu.read_zero_page(offset),
-                        OamSourceAccess::StackPage => mcu.read_stack_page(offset),
-                        OamSourceAccess::Generic => {
-                            mcu.read(((dma.page as u16) << 8) | offset as u16)
-                        }
+                    dma.latch = match dma.page {
+                        0 => mcu.read_zero_page(offset),
+                        1 => mcu.read_stack_page(offset),
+                        _ => mcu.read(((dma.page as u16) << 8) | offset as u16),
                     };
                 } else {
                     mcu.write_oam_data(dma.latch);
@@ -226,7 +198,6 @@ impl DmaBus {
                 transfer_cycle: 0,
                 latch: 0,
                 needs_pause_align: false,
-                source_access: OamSourceAccess::for_page(page),
             });
             return true;
         }

@@ -1,7 +1,7 @@
 use super::*;
 use crate::SystemClock;
 use crate::bus::Bus;
-use crate::dma_bus::{DmaBus, OamDmaMcu, OamSourceAccess};
+use crate::dma_bus::{DmaBus, OamDmaMcu};
 use crate::nes::apu::Apu;
 use crate::nes::controller::Button;
 use crate::nes::mapper::Cartridge;
@@ -622,14 +622,8 @@ fn oam_dma_from_zero_page_reads_through_zero_page_fast_path() {
     let mut dma_bus = DmaBus::new();
     bus.mcu_mut().write(0x4014, 0x00, SystemClock::default());
 
-    // The access kind is decided once, when the transfer starts — the 512-byte
-    // loop only matches on the stored value.
     bus.set_clock(SystemClock(8));
     dma_bus.tick_oam_for_test(&mut bus, false);
-    assert_eq!(
-        dma_bus.oam_ref().unwrap().source_access,
-        OamSourceAccess::ZeroPage
-    );
     assert!(
         drive_oam_dma(&mut bus, &mut dma_bus).is_some(),
         "OAM DMA never completed"
