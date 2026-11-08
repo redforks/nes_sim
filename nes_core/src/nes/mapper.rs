@@ -88,7 +88,6 @@ pub fn create_cartridge_with_mmc3_irq_override(
     f: &INesFile,
     irq_override: Mmc3IrqOverride,
 ) -> Cartridge {
-    let mapper_no = f.header().mapper_no;
     let mirroring = if f.header().ignore_mirror_control {
         Mirroring::Four
     } else {
@@ -100,6 +99,7 @@ pub fn create_cartridge_with_mmc3_irq_override(
         f.header().chr_ram_size,
         mirroring,
     );
+    let mapper_no = f.header().mapper_no;
 
     let mapper: Box<dyn Mapper> = match mapper_no {
         0 => Box::new(NRom::new(&mut memory)),

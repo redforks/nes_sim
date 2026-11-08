@@ -14,10 +14,10 @@ pub struct Nina001 {
 
 impl Nina001 {
     pub fn new(memory: &mut CartridgeMemory) -> Self {
-        let prg_bank_count = memory.prg_bank_count_32k();
         memory.map_prg_32k(0);
         memory.map_chr_4k(0, 0);
         memory.map_chr_4k(1, 0);
+        let prg_bank_count = memory.prg_bank_count_32k();
         Self {
             selected_prg_bank: 0,
             prg_bank_count,

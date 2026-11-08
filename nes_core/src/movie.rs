@@ -307,12 +307,12 @@ pub fn parse(buf: &[u8]) -> Result<Fm2File, ParseFm2FileError> {
         .position(|v| *v == b'|')
         .ok_or(ParseFm2FileError::MissingInputLog)?;
     let header_part = from_utf8(&buf[0..pos]).map_err(|_| ParseFm2FileError::ExpectAsciiFormat)?;
-    let input_logs_part = &buf[pos..];
     let header: Fm2Header = from_str(header_part)?;
     assert!(
         header.binary.is_none_or(|v| !v),
         "binary fm2 format not supported"
     );
+    let input_logs_part = &buf[pos..];
     let input_logs =
         // new_input_logs_parser::<_, InputError<_>>(header.port0, header.port1, header.port2)
         //     .parse(input_logs_part)

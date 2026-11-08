@@ -778,11 +778,6 @@ impl PlayMovieAction {
         };
 
         let ff_skip = Rc::new(Cell::new(false));
-        let fast_forward_ranges = if self.auto_fast_forward {
-            compute_fast_forward_ranges(input_logs, self.idle_frames as usize)
-        } else {
-            Vec::new()
-        };
 
         let sdl_context = nes_sdl::sdl2::init().map_err(|e| anyhow::anyhow!(e))?;
         let (render, audio_driver) = init_sdl_drivers(
@@ -812,6 +807,11 @@ impl PlayMovieAction {
         let target_frame_duration = Duration::new(0, 1_000_000_000u32 / 60);
         let mut extra_frames_remaining = self.extra_frames;
         let mut frame_index = 0;
+        let fast_forward_ranges = if self.auto_fast_forward {
+            compute_fast_forward_ranges(input_logs, self.idle_frames as usize)
+        } else {
+            Vec::new()
+        };
 
         'running: loop {
             let frame_start = Instant::now();

@@ -932,7 +932,6 @@ fn fetch_tile_data(
 
     let nt_x = ((world_x & 0xFF) >> 3) as u8;
     let nt_y = (wrapped_y >> 3) as u8;
-    let tile_fine_y = (world_y & 7) as u8;
 
     let nt_base = 0x2000 + nt_idx as u16 * 0x0400;
     let nt_addr = nt_base + nt_y as u16 * 32 + nt_x as u16;
@@ -941,12 +940,13 @@ fn fetch_tile_data(
     let attr_byte = cartridge.read_vram(attr_addr);
 
     let shift = (((nt_y >> 1) & 0x01) << 2) | (((nt_x >> 1) & 0x01) << 1);
-    let palette_idx = (attr_byte >> shift) & 0x03;
 
     let tile_position = background.ctrl.background_tile_position(nt_byte);
+    let tile_fine_y = (world_y & 7) as u8;
     let low_addr = tile_position.resolve_pixel_addr(tile_fine_y);
     let bitplane_low = cartridge.read_vram(low_addr.0);
     let bitplane_high = cartridge.read_vram(low_addr.second_plane_addr());
+    let palette_idx = (attr_byte >> shift) & 0x03;
 
     (
         palette_idx,
