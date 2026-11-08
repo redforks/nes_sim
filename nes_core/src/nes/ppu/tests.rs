@@ -39,6 +39,93 @@ fn test_peek_status_does_not_clear_vblank() {
     assert_eq!(status & 0x80, 0x80);
     assert!(ppu.registers.status.v_blank());
 }
+
+/// Registers are mirrored every 8 bytes through `$3FFF`, so peeking a mirror
+/// address must read the same register as its `$2000-$2007` home.
+#[test]
+fn peek_normalizes_mirrored_register_addresses() {
+    let (mut ppu, _pattern) = new_test_ppu_and_pattern();
+    let cart = Cartridge::test();
+    ppu.registers.status.set_v_blank(true);
+    ppu.registers.status.set_sprite_overflow(true);
+
+    let home = ppu.peek(0x2002, &cart);
+    assert_eq!(home, 0xA0);
+    assert_eq!(ppu.peek(0x200A, &cart), home);
+    assert_eq!(ppu.peek(0x2002 + 8 * 0x100, &cart), home);
+    assert_eq!(ppu.peek(0x2FFA, &cart), home);
+    assert_eq!(ppu.peek(0x3E02, &cart), home);
+}
+
+/// Write-only registers are not readable on hardware; peek reports `0` instead
+/// of the CPU bus latch that the mutating read path would return.
+#[test]
+fn peek_write_only_registers_return_zero() {
+    let mut ppu = Ppu::new(());
+    let mut cart = Cartridge::test();
+
+    // Leave a bus latch behind so a latch-returning peek would be visible.
+    ppu.write_ppureg(0x2002, 0xFF, &mut cart);
+    ppu.registers.ctrl = PpuCtrl::from_bits(0xFF);
+
+    for address in [0x2000u16, 0x2001, 0x2003, 0x2005, 0x2006] {
+        assert_eq!(ppu.peek(address, &cart), 0, "{address:#06x}");
+        assert_eq!(ppu.peek(address + 8, &cart), 0, "{address:#06x} mirror");
+    }
+}
+
+/// `$2007` peek reads VRAM at `vram_addr` without the read path's buffer
+/// refill or `PPUCTRL` increment, and without the back-to-back ignore window.
+#[test]
+fn peek_vram_does_not_increment_or_touch_read_buffer() {
+    let mut ppu = Ppu::new(());
+    let mut cart = Cartridge::test();
+
+    ppu.write_ppureg(0x2006, 0x00, &mut cart);
+    ppu.write_ppureg(0x2006, 0x10, &mut cart);
+    ppu.write_ppureg(0x2007, 0x5A, &mut cart);
+
+    ppu.write_ppureg(0x2006, 0x00, &mut cart);
+    ppu.write_ppureg(0x2006, 0x10, &mut cart);
+    ppu.registers.ctrl = PpuCtrl::from_bits(0x04); // increment by 32
+
+    assert_eq!(ppu.peek(0x2007, &cart), 0x5A);
+    assert_eq!(ppu.peek(0x2007, &cart), 0x5A);
+    assert_eq!(ppu.registers.vram_addr, 0x0010);
+    assert_eq!(ppu.registers.ppudata_buffer, 0x00);
+}
+
+/// `$2004` peek is rendering-aware but does not advance `oam_addr`.
+#[test]
+fn peek_oam_data_does_not_advance_oam_addr() {
+    let mut ppu = Ppu::new(());
+    let mut cart = Cartridge::test();
+
+    ppu.write_ppureg(0x2003, 0x05, &mut cart);
+    ppu.write_oam_data(0xAB);
+    assert_eq!(ppu.oam_addr, 0x06);
+
+    ppu.write_ppureg(0x2003, 0x05, &mut cart);
+    assert_eq!(ppu.peek(0x2004, &cart), 0xAB);
+    assert_eq!(ppu.oam_addr, 0x05);
+}
+
+/// Out-of-range peeks are a caller bug: debug builds assert (covered by the
+/// range contract), release builds read `0` instead of wrapping into a
+/// register or reaching into the cartridge.
+#[cfg(not(debug_assertions))]
+#[test]
+fn peek_out_of_range_returns_zero() {
+    let (mut ppu, _pattern) = new_test_ppu_and_pattern();
+    let cart = Cartridge::test();
+    ppu.registers.status.set_v_blank(true);
+
+    for address in [
+        0x0000u16, 0x1FFF, 0x4000, 0x4015, 0x4100, 0x6000, 0x8000, 0xFFFF,
+    ] {
+        assert_eq!(ppu.peek(address, &cart), 0, "{address:#06x}");
+    }
+}
 #[test]
 fn test_open_bus_bits_decay_to_zero() {
     let mut ppu = Ppu::new(());

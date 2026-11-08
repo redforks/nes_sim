@@ -618,18 +618,43 @@ impl<R: Render> Ppu<R> {
             _ => self.current_bus_latch(),
         }
     }
-    pub fn peek(&self, address: u16, cartridge: &Cartridge) -> u8 {
-        match address {
-            0x2000..=0x3fff => {
-                let reg = normalize_ppu_addr(address);
-                match reg {
-                    0x2002 => self.registers.status.into_bits(),
-                    0x2004 => self.read_oam_data(),
-                    0x2007 => self.read_vram(self.registers.vram_addr, cartridge),
-                    _ => 0,
-                }
-            }
-            0x4100..=0xffff => cartridge.read(address),
+
+    /// Side-effect-free peek of the PPU address space.
+    ///
+    /// Only `$2000-$3FFF` is valid: PPU registers are mirrored every 8 bytes
+    /// (`addr & 0x2007`), so `$2008-$3FFF` resolve to `$2000-$2007`. Every
+    /// other range belongs to another bus device, and
+    /// [`crate::nes::NesMcu`] routes those itself in
+    /// [`Mcu::peek`](crate::mcu::Mcu::peek), so an out-of-range address here
+    /// is a caller bug: it asserts in debug builds and reads `0` in release
+    /// rather than wrapping into an unrelated register.
+    ///
+    /// The result approximates what a hardware read would see, minus the side
+    /// effects — exact behaviour lives in [`Self::read_ppureg`]:
+    ///
+    /// - `$2002` returns the status bits without clearing vblank and without
+    ///   latching the open-bus low bits.
+    /// - `$2007` reads VRAM at the current `vram_addr` directly: no read
+    ///   buffer refill, no `PPUCTRL` address increment, no back-to-back ignore
+    ///   window, no palette-grayscale override.
+    /// - `$2004` goes through the rendering-aware [`Self::read_oam_data`].
+    /// - Write-only registers (`$2000`, `$2001`, `$2003`, `$2005`, `$2006`) are
+    ///   not readable on hardware; they read `0` here rather than the CPU bus
+    ///   latch [`Self::read_ppureg`] returns.
+    pub(crate) fn peek(&self, address: u16, cartridge: &Cartridge) -> u8 {
+        if !(0x2000..=0x3fff).contains(&address) {
+            debug_assert!(
+                false,
+                "Ppu::peek address {address:#06x} outside $2000-$3FFF"
+            );
+            return 0;
+        }
+
+        let reg = normalize_ppu_addr(address);
+        match reg {
+            0x2002 => self.registers.status.into_bits(),
+            0x2004 => self.read_oam_data(),
+            0x2007 => self.read_vram(self.registers.vram_addr, cartridge),
             _ => 0,
         }
     }
