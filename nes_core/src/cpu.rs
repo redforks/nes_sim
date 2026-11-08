@@ -1316,6 +1316,12 @@ impl Cpu {
         self.ab.set(self.db as u16 | ((high as u16) << 8));
     }
 }
+
+impl Default for Cpu {
+    fn default() -> Self {
+        Self::new()
+    }
+}
 #[derive(Eq, PartialEq, Clone, Copy, Debug)]
 pub enum ExecuteResult {
     Continue,
