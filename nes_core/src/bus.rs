@@ -7,7 +7,7 @@
 //! methods that read or advance a dot receive `&mut Bus`/`&Bus` instead
 //! of threading a separate `clock` value. DMA arbitration (DMC and OAM)
 //! lives next door, arbitrating *on* this bus: see
-//! [`crate::dma_bus::DmaBus`] (ADR-0009).
+//! `DmaBus` (ADR-0009).
 //!
 //! See ADR-0015, ADR-0018 and GLOSSARY.md "Bus".
 

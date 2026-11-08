@@ -1,5 +1,6 @@
 use super::*;
 use crate::SystemClock;
+use crate::bus::Bus;
 use crate::dma_bus::{DmaBus, OamDmaMcu, OamSourceAccess};
 use crate::nes::apu::Apu;
 use crate::nes::controller::Button;
@@ -273,7 +274,7 @@ fn ppudata_second_read_fully_ignored_within_window() {
 /// unit first sees the request on tick W+3 (opposite parity of W).
 #[test]
 fn oam_dma_first_read_alignment() {
-    let mut mcu = test_mcu();
+    let mut bus = Bus::new(test_mcu());
     let mut dma_bus = DmaBus::new();
 
     // Simulate a $4014 write completing on a get cpu cycle.
@@ -285,8 +286,9 @@ fn oam_dma_first_read_alignment() {
     clock = clock.inc();
     assert!(clock.is_apu_clock());
 
-    mcu.write(0x4014, 0x02, SystemClock::default()); // happens at end of tick W in the real machine
-    dma_bus.tick_oam_for_test(&mut mcu, clock, false);
+    bus.mcu_mut().write(0x4014, 0x02, SystemClock::default()); // happens at end of tick W in the real machine
+    bus.set_clock(clock);
+    dma_bus.tick_oam_for_test(&mut bus, false);
 
     // Write on get: halt at W+3, first OAM read must be at W+6 (get).
     let next = SystemClock(clock.cycles() + 3);
@@ -310,9 +312,9 @@ fn oam_dma_first_read_alignment() {
 #[test]
 fn oam_dma_completion_spans_follow_doc_diagrams() {
     fn completion(w: u64) -> u64 {
-        let mut mcu = test_mcu();
+        let mut bus = Bus::new(test_mcu());
         let mut dma_bus = DmaBus::new();
-        mcu.write(0x4014, 0x02, SystemClock::default()); // write executes at the end of tick w
+        bus.mcu_mut().write(0x4014, 0x02, SystemClock::default()); // write executes at the end of tick w
         let mut t = w;
         let mut last_active = w;
         let mut saw_active = false;
@@ -322,7 +324,8 @@ fn oam_dma_completion_spans_follow_doc_diagrams() {
             if !clock.is_apu_clock() {
                 continue;
             }
-            if dma_bus.tick_oam_for_test(&mut mcu, clock, false) {
+            bus.set_clock(clock);
+            if dma_bus.tick_oam_for_test(&mut bus, false) {
                 saw_active = true;
                 last_active = t;
             } else if saw_active {
@@ -355,14 +358,15 @@ fn oam_dma_completion_spans_follow_doc_diagrams() {
 /// (doc/dma.md §DMC DMA during OAM DMA)
 #[test]
 fn oam_dma_pauses_on_dmc_read_collision() {
-    let mut mcu = test_mcu();
+    let mut bus = Bus::new(test_mcu());
     let mut dma_bus = DmaBus::new();
-    mcu.write(0x4014, 0x02, SystemClock::default());
+    bus.mcu_mut().write(0x4014, 0x02, SystemClock::default());
 
     // Consume pending on a put cycle (the halt cycle); write was on get, so
     // startup must be 0 and the first read happens on the very next tick.
     let start = SystemClock(8); // 8 % 6 == 2 -> put; 8 % 3 == 2 -> apu clock
-    dma_bus.tick_oam_for_test(&mut mcu, start, false);
+    bus.set_clock(start);
+    dma_bus.tick_oam_for_test(&mut bus, false);
     let dma = dma_bus.oam_state().expect("dma active");
     assert_eq!(
         dma.startup_cycles, 0,
@@ -374,16 +378,19 @@ fn oam_dma_pauses_on_dmc_read_collision() {
     assert!(clock.is_apu_get_clock());
 
     // No collision: the read proceeds.
-    dma_bus.tick_oam_for_test(&mut mcu, clock, false);
+    bus.set_clock(clock);
+    dma_bus.tick_oam_for_test(&mut bus, false);
     let dma = dma_bus.oam_state().expect("dma active");
     assert_eq!(dma.transfer_cycle, 1);
 
     clock = SystemClock(clock.cycles() + 3); // put cycle: tc=1 write
 
     // Advance one pair so OAM is at a read phase again (tc=2), then collide:
-    dma_bus.tick_oam_for_test(&mut mcu, clock, false); // tc=1 write on put
+    bus.set_clock(clock);
+    dma_bus.tick_oam_for_test(&mut bus, false); // tc=1 write on put
     clock = SystemClock(clock.cycles() + 3); // get: tc=2 read
-    dma_bus.tick_oam_for_test(&mut mcu, clock, true); // DMC read collides with OAM read
+    bus.set_clock(clock);
+    dma_bus.tick_oam_for_test(&mut bus, true); // DMC read collides with OAM read
 
     // The collided cycle must not advance the transfer...
     let dma = dma_bus.oam_state().expect("dma active after collision");
@@ -392,14 +399,16 @@ fn oam_dma_pauses_on_dmc_read_collision() {
     // ...and the following cycle (put) is an OAM alignment cycle, not the write.
     clock = SystemClock(clock.cycles() + 3);
     assert!(!clock.is_apu_get_clock());
-    dma_bus.tick_oam_for_test(&mut mcu, clock, false);
+    bus.set_clock(clock);
+    dma_bus.tick_oam_for_test(&mut bus, false);
     let dma = dma_bus.oam_state().expect("dma active");
     assert_eq!(dma.transfer_cycle, 2, "alignment cycle must not transfer");
 
     // Then the read is redone on the next get cycle.
     clock = SystemClock(clock.cycles() + 3);
     assert!(clock.is_apu_get_clock());
-    dma_bus.tick_oam_for_test(&mut mcu, clock, false);
+    bus.set_clock(clock);
+    dma_bus.tick_oam_for_test(&mut bus, false);
     let dma = dma_bus.oam_state().expect("dma active");
     assert_eq!(dma.transfer_cycle, 3, "read redone, transfer resumed");
 }
@@ -422,69 +431,80 @@ fn oam_dma_pauses_on_dmc_read_collision() {
 /// ```
 #[test]
 fn dmc_collision_at_start_of_oam_write_on_get() {
-    let mut mcu = test_mcu();
+    let mut bus = Bus::new(test_mcu());
     let mut dma_bus = DmaBus::new();
-    mcu.write(0x4014, 0x02, SystemClock::default());
+    bus.mcu_mut().write(0x4014, 0x02, SystemClock::default());
 
     // Consume pending on a put cycle (shared halt); write was on get so there
     // is no alignment cycle before the first read.
     let h = SystemClock(8); // put cycle
-    dma_bus.tick_oam_for_test(&mut mcu, h, false);
+    bus.set_clock(h);
+    dma_bus.tick_oam_for_test(&mut bus, false);
     assert_eq!(dma_bus.oam_ref().unwrap().startup_cycles, 0);
 
     // H+1 (get): first OAM read proceeds under the DMC dummy cycle.
-    dma_bus.tick_oam_for_test(&mut mcu, SystemClock(h.cycles() + 3), false);
+    bus.set_clock(SystemClock(h.cycles() + 3));
+    dma_bus.tick_oam_for_test(&mut bus, false);
     assert_eq!(dma_bus.oam_ref().unwrap().transfer_cycle, 1);
 
     // H+2 (put): first OAM write proceeds under the DMC alignment cycle.
-    dma_bus.tick_oam_for_test(&mut mcu, SystemClock(h.cycles() + 6), false);
+    bus.set_clock(SystemClock(h.cycles() + 6));
+    dma_bus.tick_oam_for_test(&mut bus, false);
     assert_eq!(dma_bus.oam_ref().unwrap().transfer_cycle, 2);
 
     // H+3 (get): DMC drives its byte onto the bus; the OAM read of $xx02 is
     // aborted and will be redone after one alignment cycle.
-    dma_bus.tick_oam_for_test(&mut mcu, SystemClock(h.cycles() + 9), true);
+    bus.set_clock(SystemClock(h.cycles() + 9));
+    dma_bus.tick_oam_for_test(&mut bus, true);
     assert_eq!(dma_bus.oam_ref().unwrap().transfer_cycle, 2);
     assert_eq!(dma_bus.oam_ref().unwrap().pause_cycles, 1);
 
     // H+4 (put): OAM alignment cycle, no transfer.
-    dma_bus.tick_oam_for_test(&mut mcu, SystemClock(h.cycles() + 12), false);
+    bus.set_clock(SystemClock(h.cycles() + 12));
+    dma_bus.tick_oam_for_test(&mut bus, false);
     assert_eq!(dma_bus.oam_ref().unwrap().transfer_cycle, 2);
 
     // H+5 (get): the aborted read is redone.
-    dma_bus.tick_oam_for_test(&mut mcu, SystemClock(h.cycles() + 15), false);
+    bus.set_clock(SystemClock(h.cycles() + 15));
+    dma_bus.tick_oam_for_test(&mut bus, false);
     assert_eq!(dma_bus.oam_ref().unwrap().transfer_cycle, 3);
 }
 
 #[test]
 fn dmc_collision_at_start_of_oam_write_on_put() {
-    let mut mcu = test_mcu();
+    let mut bus = Bus::new(test_mcu());
     let mut dma_bus = DmaBus::new();
-    mcu.write(0x4014, 0x02, SystemClock::default());
+    bus.mcu_mut().write(0x4014, 0x02, SystemClock::default());
 
     // Consume pending on a get cycle (shared halt); write was on put so one
     // alignment cycle precedes the first read.
     let h = SystemClock(11); // get cycle
-    dma_bus.tick_oam_for_test(&mut mcu, h, false);
+    bus.set_clock(h);
+    dma_bus.tick_oam_for_test(&mut bus, false);
     assert_eq!(dma_bus.oam_ref().unwrap().startup_cycles, 1);
 
     // H+1 (put): OAM alignment cycle doubles as the DMC dummy cycle.
-    dma_bus.tick_oam_for_test(&mut mcu, SystemClock(h.cycles() + 3), false);
+    bus.set_clock(SystemClock(h.cycles() + 3));
+    dma_bus.tick_oam_for_test(&mut bus, false);
     let dma = dma_bus.oam_ref().unwrap();
     assert_eq!(dma.startup_cycles, 0);
     assert_eq!(dma.transfer_cycle, 0);
 
     // H+2 (get): DMC drives its byte; the first OAM read is aborted.
-    dma_bus.tick_oam_for_test(&mut mcu, SystemClock(h.cycles() + 6), true);
+    bus.set_clock(SystemClock(h.cycles() + 6));
+    dma_bus.tick_oam_for_test(&mut bus, true);
     let dma = dma_bus.oam_ref().unwrap();
     assert_eq!(dma.transfer_cycle, 0);
     assert_eq!(dma.pause_cycles, 1);
 
     // H+3 (put): OAM alignment cycle, still no transfer.
-    dma_bus.tick_oam_for_test(&mut mcu, SystemClock(h.cycles() + 9), false);
+    bus.set_clock(SystemClock(h.cycles() + 9));
+    dma_bus.tick_oam_for_test(&mut bus, false);
     assert_eq!(dma_bus.oam_ref().unwrap().transfer_cycle, 0);
 
     // H+4 (get): the first OAM read finally happens.
-    dma_bus.tick_oam_for_test(&mut mcu, SystemClock(h.cycles() + 12), false);
+    bus.set_clock(SystemClock(h.cycles() + 12));
+    dma_bus.tick_oam_for_test(&mut bus, false);
     assert_eq!(dma_bus.oam_ref().unwrap().transfer_cycle, 1);
 }
 
@@ -493,7 +513,7 @@ fn dmc_collision_at_start_of_oam_write_on_put() {
 /// finish, so a missing DMA fails the test instead of hanging it; otherwise
 /// the number of APU clocks the transfer held the bus, so cycle counts can
 /// be compared across source pages.
-fn drive_oam_dma<M: OamDmaMcu>(mcu: &mut M, dma_bus: &mut DmaBus) -> Option<usize> {
+fn drive_oam_dma<M: OamDmaMcu>(bus: &mut Bus<M>, dma_bus: &mut DmaBus) -> Option<usize> {
     let mut t = SystemClock(11);
     let mut ran = false;
     let mut apu_clocks = 0;
@@ -502,7 +522,8 @@ fn drive_oam_dma<M: OamDmaMcu>(mcu: &mut M, dma_bus: &mut DmaBus) -> Option<usiz
         if !t.is_apu_clock() {
             continue;
         }
-        if dma_bus.tick_oam_for_test(mcu, t, false) {
+        bus.set_clock(t);
+        if dma_bus.tick_oam_for_test(bus, false) {
             ran = true;
             apu_clocks += 1;
         } else if ran {
@@ -597,23 +618,24 @@ impl OamDmaMcu for OamDmaRecordingMcu {
 /// zero-page fast path, in order, and puts exactly those bytes into OAM.
 #[test]
 fn oam_dma_from_zero_page_reads_through_zero_page_fast_path() {
-    let mut mcu = OamDmaRecordingMcu::with_page(0x00);
+    let mut bus = Bus::new(OamDmaRecordingMcu::with_page(0x00));
     let mut dma_bus = DmaBus::new();
-    mcu.write(0x4014, 0x00, SystemClock::default());
+    bus.mcu_mut().write(0x4014, 0x00, SystemClock::default());
 
     // The access kind is decided once, when the transfer starts — the 512-byte
     // loop only matches on the stored value.
-    dma_bus.tick_oam_for_test(&mut mcu, SystemClock(8), false);
+    bus.set_clock(SystemClock(8));
+    dma_bus.tick_oam_for_test(&mut bus, false);
     assert_eq!(
         dma_bus.oam_ref().unwrap().source_access,
         OamSourceAccess::ZeroPage
     );
     assert!(
-        drive_oam_dma(&mut mcu, &mut dma_bus).is_some(),
+        drive_oam_dma(&mut bus, &mut dma_bus).is_some(),
         "OAM DMA never completed"
     );
 
-    let reads = mcu.mcu.calls();
+    let reads = bus.mcu_mut().mcu.calls();
     assert_eq!(reads.len(), 256, "one read per OAM byte: {reads:?}");
     assert!(
         reads.iter().all(McuCall::is_read_zero_page),
@@ -623,7 +645,7 @@ fn oam_dma_from_zero_page_reads_through_zero_page_fast_path() {
         reads.iter().map(McuCall::address).collect::<Vec<_>>(),
         (0..=255u16).collect::<Vec<_>>()
     );
-    assert_eq!(mcu.oam_writes, page_ramp());
+    assert_eq!(bus.mcu_mut().oam_writes, page_ramp());
 }
 
 /// Positive control for the mid-render case below: with rendering disabled
@@ -633,23 +655,24 @@ fn oam_dma_from_zero_page_reads_through_zero_page_fast_path() {
 /// every transferred byte differs from the sentinel and is detectable.
 #[test]
 fn oam_dma_with_rendering_disabled_writes_oam() {
-    let mut mcu = test_mcu();
+    let mut bus = Bus::new(test_mcu());
     let mut dma_bus = DmaBus::new();
 
     for i in 0..=255u8 {
-        mcu.write(0x2003, i, SystemClock::default());
-        mcu.write(0x2004, 0x00, SystemClock::default());
-        mcu.write(0x0200 + i as u16, i | 0x80, SystemClock::default());
+        bus.mcu_mut().write(0x2003, i, SystemClock::default());
+        bus.mcu_mut().write(0x2004, 0x00, SystemClock::default());
+        bus.mcu_mut()
+            .write(0x0200 + i as u16, i | 0x80, SystemClock::default());
     }
 
-    mcu.write(0x4014, 0x02, SystemClock::default());
+    bus.mcu_mut().write(0x4014, 0x02, SystemClock::default());
     assert!(
-        drive_oam_dma(&mut mcu, &mut dma_bus).is_some(),
+        drive_oam_dma(&mut bus, &mut dma_bus).is_some(),
         "OAM DMA never completed"
     );
 
     for i in 0..=255u8 {
-        mcu.write(0x2003, i, SystemClock::default());
+        bus.mcu_mut().write(0x2003, i, SystemClock::default());
         // Rendering disabled keeps the attribute-byte $E3 mask.
         let expected = if i & 0x03 == 0x02 {
             (i | 0x80) & 0xE3
@@ -657,7 +680,7 @@ fn oam_dma_with_rendering_disabled_writes_oam() {
             i | 0x80
         };
         assert_eq!(
-            mcu.read(0x2004),
+            bus.mcu_mut().read(0x2004),
             expected,
             "OAM byte {i:#04x} did not receive its DMA byte"
         );
@@ -671,40 +694,45 @@ fn oam_dma_with_rendering_disabled_writes_oam() {
 /// the MMIO registers — nothing is inspected internally.
 #[test]
 fn oam_dma_during_rendering_does_not_corrupt_oam() {
-    let mut mcu = test_mcu();
+    let mut bus = Bus::new(test_mcu());
     let mut dma_bus = DmaBus::new();
 
     // Seed OAM with a 0x00 sentinel through the registers while rendering
     // is off (default mask), then enable background rendering and advance
     // into the middle of a visible line.
     for i in 0..=255u8 {
-        mcu.write(0x2003, i, SystemClock::default());
-        mcu.write(0x2004, 0x00, SystemClock::default());
+        bus.mcu_mut().write(0x2003, i, SystemClock::default());
+        bus.mcu_mut().write(0x2004, 0x00, SystemClock::default());
     }
-    mcu.write(0x2001, 0x08, SystemClock::default()); // background enable
+    bus.mcu_mut().write(0x2001, 0x08, SystemClock::default()); // background enable
     for _ in 0..(100 * 341 + 100) {
-        mcu.tick_ppu();
+        bus.mcu_mut().tick_ppu();
     }
 
     // Scratch page $0200 with a ramp whose every byte differs from the
     // sentinel: bit 7 is always set, so no zero can pass unnoticed.
     for i in 0..=255u8 {
-        mcu.write(0x0200 + i as u16, i | 0x80, SystemClock::default());
+        bus.mcu_mut()
+            .write(0x0200 + i as u16, i | 0x80, SystemClock::default());
     }
 
-    mcu.write(0x4014, 0x02, SystemClock::default());
+    bus.mcu_mut().write(0x4014, 0x02, SystemClock::default());
     assert!(
-        drive_oam_dma(&mut mcu, &mut dma_bus).is_some(),
+        drive_oam_dma(&mut bus, &mut dma_bus).is_some(),
         "OAM DMA never completed"
     );
     // Disable rendering before probing: mid-render $2004 reads expose
     // eval/fetch traffic, not primary OAM, so the sentinel is pinned with
     // rendering off.
-    mcu.write(0x2001, 0x00, SystemClock::default());
+    bus.mcu_mut().write(0x2001, 0x00, SystemClock::default());
     // The transfer ran but wrote nothing: every OAM byte is the sentinel.
     for i in 0..=255u8 {
-        mcu.write(0x2003, i, SystemClock::default());
-        assert_eq!(mcu.read(0x2004), 0x00, "OAM byte {i:#04x} was corrupted");
+        bus.mcu_mut().write(0x2003, i, SystemClock::default());
+        assert_eq!(
+            bus.mcu_mut().read(0x2004),
+            0x00,
+            "OAM byte {i:#04x} was corrupted"
+        );
     }
 }
 
@@ -785,16 +813,16 @@ fn deferred_apu_writes_anchor_to_write_clock() {
 /// stack-page fast path, in order, and puts exactly those bytes into OAM.
 #[test]
 fn oam_dma_from_stack_page_reads_through_stack_page_fast_path() {
-    let mut mcu = OamDmaRecordingMcu::with_page(0x01);
+    let mut bus = Bus::new(OamDmaRecordingMcu::with_page(0x01));
     let mut dma_bus = DmaBus::new();
-    mcu.write(0x4014, 0x01, SystemClock::default());
+    bus.mcu_mut().write(0x4014, 0x01, SystemClock::default());
 
     assert!(
-        drive_oam_dma(&mut mcu, &mut dma_bus).is_some(),
+        drive_oam_dma(&mut bus, &mut dma_bus).is_some(),
         "OAM DMA never completed"
     );
 
-    let reads = mcu.mcu.calls();
+    let reads = bus.mcu_mut().mcu.calls();
     assert_eq!(reads.len(), 256, "one read per OAM byte: {reads:?}");
     assert!(
         reads.iter().all(McuCall::is_read_stack_page),
@@ -804,23 +832,23 @@ fn oam_dma_from_stack_page_reads_through_stack_page_fast_path() {
         reads.iter().map(McuCall::address).collect::<Vec<_>>(),
         (0x100..=0x1ffu16).collect::<Vec<_>>()
     );
-    assert_eq!(mcu.oam_writes, page_ramp());
+    assert_eq!(bus.mcu_mut().oam_writes, page_ramp());
 }
 
 /// Any other source page keeps today's routing, today's byte order and the
 /// same cycle budget: only the read path of a `$0000`/`$0100` source changed.
 #[test]
 fn oam_dma_from_other_pages_routes_and_cycles_are_unchanged() {
-    fn dma_from(page: u8) -> (Option<usize>, OamDmaRecordingMcu) {
-        let mut mcu = OamDmaRecordingMcu::with_page(page);
+    fn dma_from(page: u8) -> (Option<usize>, Bus<OamDmaRecordingMcu>) {
+        let mut bus = Bus::new(OamDmaRecordingMcu::with_page(page));
         let mut dma_bus = DmaBus::new();
-        mcu.write(0x4014, page, SystemClock::default());
-        let apu_clocks = drive_oam_dma(&mut mcu, &mut dma_bus);
-        (apu_clocks, mcu)
+        bus.mcu_mut().write(0x4014, page, SystemClock::default());
+        let apu_clocks = drive_oam_dma(&mut bus, &mut dma_bus);
+        (apu_clocks, bus)
     }
 
-    let (plain_clocks, plain) = dma_from(0x02);
-    let reads = plain.mcu.calls();
+    let (plain_clocks, mut plain) = dma_from(0x02);
+    let reads = plain.mcu_mut().mcu.calls();
     assert_eq!(reads.len(), 256, "one read per OAM byte: {reads:?}");
     assert!(
         reads
@@ -832,7 +860,7 @@ fn oam_dma_from_other_pages_routes_and_cycles_are_unchanged() {
         reads.iter().map(McuCall::address).collect::<Vec<_>>(),
         (0x200..=0x2ffu16).collect::<Vec<_>>()
     );
-    assert_eq!(plain.oam_writes, page_ramp());
+    assert_eq!(plain.mcu_mut().oam_writes, page_ramp());
 
     let (zero_page_clocks, _) = dma_from(0x00);
     let (stack_page_clocks, _) = dma_from(0x01);
@@ -845,28 +873,29 @@ fn oam_dma_from_other_pages_routes_and_cycles_are_unchanged() {
 #[test]
 fn oam_dma_from_zero_and_stack_pages_write_the_same_oam_bytes() {
     fn oam_after_dma_from(source_page: u8) -> Vec<u8> {
-        let mut mcu = test_mcu();
+        let mut bus = Bus::new(test_mcu());
         let mut dma_bus = DmaBus::new();
         // 0x00 sentinel so a byte that was never transferred is visible.
         for i in 0..=255u8 {
-            mcu.write(0x2003, i, SystemClock::default());
-            mcu.write(0x2004, 0x00, SystemClock::default());
-            mcu.write(
+            bus.mcu_mut().write(0x2003, i, SystemClock::default());
+            bus.mcu_mut().write(0x2004, 0x00, SystemClock::default());
+            bus.mcu_mut().write(
                 ((source_page as u16) << 8) | i as u16,
                 i.wrapping_mul(3).wrapping_add(0x40),
                 SystemClock::default(),
             );
         }
-        mcu.write(0x4014, source_page, SystemClock::default());
+        bus.mcu_mut()
+            .write(0x4014, source_page, SystemClock::default());
         assert!(
-            drive_oam_dma(&mut mcu, &mut dma_bus).is_some(),
+            drive_oam_dma(&mut bus, &mut dma_bus).is_some(),
             "OAM DMA from page {source_page:#04x} never completed"
         );
 
         let mut oam = Vec::with_capacity(256);
         for i in 0..=255u8 {
-            mcu.write(0x2003, i, SystemClock::default());
-            oam.push(mcu.read(0x2004));
+            bus.mcu_mut().write(0x2003, i, SystemClock::default());
+            oam.push(bus.mcu_mut().read(0x2004));
         }
         oam
     }

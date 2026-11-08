@@ -12,7 +12,7 @@
 use crate::bus::Bus;
 use crate::nes::dmc_dma::DmcDma;
 use crate::{
-    Cpu, SystemClock,
+    Cpu,
     mcu::Mcu,
     nes::{NesMcu, apu::AudioDriver},
     render::Render,
@@ -139,27 +139,21 @@ impl DmaBus {
 
     /// Advance one dot.
     ///
-    /// Called only on APU clocks from `NesMachine::tick` (or every dot with
-    /// an internal no-op). Drives at most one bus access and returns who
-    /// held the bus this dot. The current dot is read off the bus's
+    /// Called only on APU clocks from `NesMachine::tick`. Drives at most
+    /// one bus access and returns who held the bus this dot. The current
+    /// dot is read off the bus's
     /// master clock (ADR-0018). Internally `let dmc_drove = dmc.tick(cpu,bus);`
-    /// then `oam_tick(clock, dmc_drove)` — the bool never leaves this method,
+    /// then `oam_tick(bus, dmc_drove)` — the bool never leaves this method,
     /// and the `NesMcu` predicate becomes a private branch.
     pub fn tick<R: Render, D: AudioDriver>(
         &mut self,
         cpu: &mut Cpu,
         bus: &mut Bus<NesMcu<R, D>>,
     ) -> BusOwner {
-        let clock = bus.clock();
-        if !clock.is_apu_clock() {
-            return BusOwner::Idle;
-        }
-
         // DMC tick first — it may freeze the CPU and it decides `dmc_drove`
         // (true only on the read cycle that actually transfers a byte).
         let dmc_drove = self.dmc.tick(cpu, bus);
-
-        let oam_active = Self::oam_tick(bus.mcu_mut(), &mut self.oam, clock, dmc_drove);
+        let oam_active = Self::oam_tick(bus, &mut self.oam, dmc_drove);
 
         // Owner reflects OAM activity only; standalone DMC is signalled via
         // `cpu.frozen` (ADR-0009 §2 "Halt unification left explicit").
@@ -177,9 +171,8 @@ impl DmaBus {
     /// Shared OAM state machine — single source of truth for both the
     /// production `tick` (via `Cpu`) and the hand-fed-bool test seam.
     fn oam_tick<M: OamDmaMcu>(
-        mcu: &mut M,
+        bus: &mut Bus<M>,
         oam: &mut Option<OamActive>,
-        clock: SystemClock,
         dmc_drove: bool,
     ) -> bool {
         if let Some(mut dma) = oam.take() {
@@ -195,6 +188,7 @@ impl DmaBus {
                 dma.startup_cycles -= 1;
             } else {
                 let byte_index = dma.transfer_cycle / 2;
+                let mcu = bus.mcu_mut();
                 if dma.transfer_cycle.is_multiple_of(2) {
                     let offset = byte_index as u8;
                     dma.latch = match dma.source_access {
@@ -219,12 +213,12 @@ impl DmaBus {
             return true;
         }
 
-        if let Some(page) = mcu.take_oam_dma_pending() {
+        if let Some(page) = bus.mcu_mut().take_oam_dma_pending() {
             // The pending request is consumed on the first tick after the
             // $4014 write cycle; that tick is the DMA halt cycle. If it is a
             // get cycle the write happened on a put cycle and one alignment
             // cycle is needed before the first read; otherwise none.
-            let startup_cycles = if clock.is_apu_get_clock() { 1 } else { 0 };
+            let startup_cycles = if bus.clock().is_apu_get_clock() { 1 } else { 0 };
             *oam = Some(OamActive {
                 page,
                 startup_cycles,
@@ -255,16 +249,14 @@ impl DmaBus {
 
     /// For migrating the hand-fed-bool OAM tests without booting a full Cpu.
     /// Drives only the OAM side with an injected `dmc_drove` flag, using a
-    /// direct `&mut NesMcu` (no Cpu frozen handling). Mirrors the old
-    /// `NesMcu::tick_oam_dma` signature for mechanical migration; new tests
-    /// should drive `DmaBus::tick` with a real `Cpu`.
+    /// direct `&mut Bus` (no Cpu frozen handling). New tests should drive
+    /// `DmaBus::tick` with a real `Cpu`.
     #[cfg(test)]
     pub(crate) fn tick_oam_for_test<M: OamDmaMcu>(
         &mut self,
-        mcu: &mut M,
-        clock: SystemClock,
+        bus: &mut Bus<M>,
         dmc_drove: bool,
     ) -> bool {
-        Self::oam_tick(mcu, &mut self.oam, clock, dmc_drove)
+        Self::oam_tick(bus, &mut self.oam, dmc_drove)
     }
 }

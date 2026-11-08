@@ -1,6 +1,6 @@
 pub mod bus;
 pub(crate) mod cpu;
-pub mod dma_bus;
+pub(crate) mod dma_bus;
 pub(crate) mod hotpath_cpu;
 pub mod ines;
 pub mod interrupt;
