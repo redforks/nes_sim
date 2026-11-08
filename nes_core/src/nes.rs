@@ -249,8 +249,17 @@ impl<R: Render, D: AudioDriver> NesMcu<R, D> {
 impl<R: Render, D: AudioDriver> Mcu for NesMcu<R, D> {
     fn read(&mut self, address: u16) -> u8 {
         let value = match address {
+            // PRG-ROM / PRG-RAM from cartridge; unmapped and disabled RAM is open bus
+            0x8000..=0xffff => self.cartridge.read(address),
             0x0000..=0x1fff => self.lower_ram.read(address),
             0x2000..=0x3fff => self.ppu.read_ppureg(address, &mut self.cartridge),
+            0x6000..=0x7fff => {
+                if !self.cartridge.prg_ram_enabled() {
+                    self.open_bus
+                } else {
+                    self.cartridge.read_prg_ram(address)
+                }
+            }
             0x4016 => {
                 let prev_joypad1_oe = self.joypad1_oe;
                 self.joypad1_oe = true;
@@ -266,18 +275,8 @@ impl<R: Render, D: AudioDriver> Mcu for NesMcu<R, D> {
                 return self.latch_read(value, true);
             }
             0x4015 => self.apu.read(address),
-            // PRG-ROM / PRG-RAM from cartridge; unmapped and disabled RAM is open bus
-            0x6000..=0x7fff => {
-                if !self.cartridge.prg_ram_enabled() {
-                    self.open_bus
-                } else {
-                    self.cartridge.read_prg_ram(address)
-                }
-            }
-            0x8000..=0xffff => self.cartridge.read(address),
-            0x4020..=0x5fff => self.open_bus,
             // Write-only APU/IO registers and unused test registers: open bus
-            0x4000..=0x401f => self.open_bus,
+            _ => self.open_bus,
         };
         self.latch_read(value, false)
     }
@@ -289,7 +288,6 @@ impl<R: Render, D: AudioDriver> Mcu for NesMcu<R, D> {
             0x4015 => self.apu.peek(address),
             0x4016 => self.controller.peek(address),
             0x4017 => self.controller.peek(address) | self.zapper_bits(),
-            0x4020..=0x5fff => self.open_bus,
             0x6000..=0x7fff => {
                 if !self.cartridge.prg_ram_enabled() {
                     self.open_bus
@@ -298,7 +296,7 @@ impl<R: Render, D: AudioDriver> Mcu for NesMcu<R, D> {
                 }
             }
             0x8000..=0xffff => self.cartridge.read(address),
-            0x4000..=0x401f => self.open_bus,
+            _ => self.open_bus,
         }
     }
 
@@ -322,13 +320,13 @@ impl<R: Render, D: AudioDriver> Mcu for NesMcu<R, D> {
                 }
                 _ => self.apu.write(address, value, clock),
             },
-            0x4020..=0x5fff => {}
             0x6000..=0x7fff => {
                 if self.cartridge.prg_ram_enabled() {
                     self.cartridge.write_prg_ram(address, value, clock);
                 }
             }
             0x8000..=0xffff => self.cartridge.write(address, value, clock),
+            _ => {}
         }
     }
 
