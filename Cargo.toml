@@ -69,6 +69,12 @@ split-debuginfo = "unpacked"
 # uncomment below to enable profile release build
 debug = 1
 
+[profile.release-lto]
+inherits = "release"
+debug = 0
+lto = "fat"
+trim = true
+
 # Profiling profile: inherits release with full debug symbols and no stripping.
 # Used by `just profile` (perf + flamegraph) for accurate call graphs.
 # Frame pointers are forced via RUSTFLAGS="-C force-frame-pointers=yes" in the
