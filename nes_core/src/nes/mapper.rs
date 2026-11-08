@@ -264,10 +264,29 @@ impl Cartridge {
     }
 
     /// PRG window read for `$6000-$FFFF`.
-    pub fn read(&self, address: u16) -> u8 {
-        if address < 0x6000 {
-            return 0;
-        }
+    ///
+    /// `$6000-$7FFF` is PRG-RAM: the mapper chip gets first refusal via
+    /// [`Mapper::read_prg`] (only VRC2's bus-byte reads override it), otherwise
+    /// the board's PRG window answers. `$8000-$FFFF` is the mapper-banked
+    /// PRG-ROM window.
+    ///
+    /// Every other address belongs to another bus device — `$0000-$1FFF` RAM,
+    /// `$2000-$3FFF` PPU, `$4020-$5FFF` expansion, `$4000-$401F` APU/IO — and
+    /// [`crate::nes::NesMcu`] routes those itself in
+    /// [`Mcu::read`](crate::mcu::Mcu::read), so an address below `$6000` here
+    /// is a caller bug. Debug builds assert it; release builds are unchecked
+    /// and the wrapping slot index in [`CartridgeMemory::read_prg`] answers
+    /// with whatever PRG bytes happen to land in that window.
+    ///
+    /// Unlike the PPU's side-effect-free peek, this returns raw cartridge
+    /// data with no open-bus substitution: a disabled PRG-RAM window still
+    /// answers with its bank contents, and `NesMcu` is what turns that into
+    /// open bus.
+    pub(crate) fn read(&self, address: u16) -> u8 {
+        debug_assert!(
+            address >= 0x6000,
+            "Cartridge::read address {address:#06x} below $6000"
+        );
         if address < 0x8000
             && let Some(value) = self.mapper.read_prg(address)
         {

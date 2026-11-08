@@ -1,6 +1,9 @@
 use super::*;
 use crate::SystemClock;
 use crate::ines::INesFile;
+use crate::mcu::Mcu;
+use crate::nes::NesMcu;
+use crate::render::ImageRender;
 use test_case::test_case;
 
 /// Creates a minimal valid iNES ROM for testing
@@ -73,6 +76,78 @@ fn vram_alias_slots_repeat_the_nametable_slots() {
         memory.write_vram(alias, !value);
         assert_eq!(memory.read_vram(base), !value, "write through {alias:#06x}");
     }
+}
+
+#[test]
+fn read_handles_prg_ram_and_prg_rom_windows() {
+    let mut rom = create_test_nes(0, 1, 0);
+    rom[16..16 + 0x4000].fill(0xAB);
+    let file = INesFile::new(rom).unwrap();
+    let mut cartridge = create_cartridge_with_mmc3_irq_override(&file, Mmc3IrqOverride::Auto);
+
+    // $6000-$7FFF is PRG-RAM: writes round-trip through the board window.
+    cartridge.write(0x6000, 0x12, SystemClock::default());
+    assert_eq!(cartridge.read(0x6000), 0x12);
+
+    // $8000-$FFFF is PRG-ROM, which NROM mirrors in 16 KiB halves.
+    assert_eq!(cartridge.read(0x8000), 0xAB);
+    assert_eq!(cartridge.read(0xBFFF), 0xAB);
+    assert_eq!(cartridge.read(0xC000), 0xAB);
+    assert_eq!(cartridge.read(0xFFFF), 0xAB);
+}
+
+/// A mapper-level `$6000-$7FFF` hook keeps precedence over the board's PRG-RAM
+/// window: VRC2 boards have no PRG-RAM and answer with the address byte.
+#[test]
+fn read_prefers_mapper_prg_hook_within_prg_ram_window() {
+    let prg = vec![0u8; 0x4000 * 2];
+    let mut memory = CartridgeMemory::from_rom(&prg, &[], None, Mirroring::Horizontal);
+    let mapper = Vrc24::new(&mut memory, VrcVariant::Vrc2b);
+    let cartridge = Cartridge::new(Box::new(mapper), memory);
+
+    assert_eq!(cartridge.read(0x6123), 0x23);
+    assert_eq!(cartridge.read(0x7FFF), 0x00);
+    assert_eq!(cartridge.read(0x8123), 0x00, "$8000+ stays PRG-ROM");
+}
+
+/// Below `$6000` is another bus device's window: debug builds assert the
+/// caller bug. Release builds are unchecked — the wrapping slot index returns
+/// whatever PRG bytes land there — so the contract is only pinned here.
+#[cfg(debug_assertions)]
+#[test]
+#[should_panic(expected = "below $6000")]
+fn read_below_prg_window_asserts() {
+    let cartridge = Cartridge::test();
+    let _ = cartridge.read(0x5FFF);
+}
+
+/// PRG-RAM enable gating stays a bus concern: with PRG-RAM disabled the bus
+/// returns open bus and never reaches the cartridge, while `Cartridge::read`
+/// still answers with the raw bank contents.
+#[test]
+fn mmc1_disabled_prg_ram_reads_open_bus_at_bus_level() {
+    let rom = create_test_nes(1, 2, 1);
+    let file = INesFile::new(rom).unwrap();
+    let mut mcu = NesMcu::new(&file, ImageRender::<1>::default_dimension(), ());
+
+    mcu.write(0x6000, 0x12, SystemClock::default());
+    assert_eq!(mcu.read(0x6000), 0x12);
+
+    // MMC1's serial port shifts bit 0 of each write; five writes commit $10
+    // into the PRG bank register, whose bit 4 disables PRG-RAM. Writes closer
+    // than one CPU cycle apart are filtered, so step the clock between them.
+    let mut clock = SystemClock::default();
+    for bit in [0u8, 0, 0, 0, 1] {
+        mcu.write(0xE000, bit, clock);
+        for _ in 0..6 {
+            clock = clock.inc();
+        }
+    }
+    // Latch a distinguishable open bus through a RAM write.
+    mcu.write(0x0000, 0x99, clock);
+
+    assert_eq!(mcu.read(0x6000), 0x99, "open bus, not PRG-RAM");
+    assert_eq!(mcu.cartridge.read(0x6000), 0x12, "raw cartridge data");
 }
 
 #[test]
