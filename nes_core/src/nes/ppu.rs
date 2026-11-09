@@ -891,10 +891,32 @@ impl<R: Render> Ppu<R> {
                 let mask = PpuMask::from_bits(value);
                 self.registers.mask = mask;
                 // Only the color bits are deferred: a write that changes
-                // grayscale/emphasis becomes a split point at the next
-                // beam position, carrying the prior color configuration.
+                // grayscale/emphasis becomes a split point carrying the
+                // prior color configuration. The split is the next beam
+                // position minus the pixels still in the retired
+                // two-dot output stage: the old pipeline colored each
+                // pixel with the mask at commit time (two ticks after
+                // render), so rendered-but-uncommitted pixels take the
+                // new color once the write lands. Two pixels are in
+                // flight only while the beam is mid-render (next dots
+                // 3..=257); at the line start (0..=1) the previous
+                // line is fully committed, single pixels are in flight
+                // at dots 2 and 258, and hblank/vblank writes have
+                // nothing pending (blargg nmi_sync / dpcmletterbox draw
+                // their lines with exactly this landing).
                 if ColorConfig::from_mask(mask) != prior {
-                    let index = self.next_beam_index();
+                    let next = self.next_beam_index();
+                    let pending = if self.timing.scanline >= 240 {
+                        0
+                    } else {
+                        match self.timing.dot {
+                            0 | 1 => 0,
+                            2 | 258 => 1,
+                            3..=257 => 2,
+                            _ => 0,
+                        }
+                    };
+                    let index = next.saturating_sub(pending);
                     self.color_splits.push(ColorSplit { index, prior });
                 }
             }

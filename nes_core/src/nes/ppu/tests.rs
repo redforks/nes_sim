@@ -2242,7 +2242,10 @@ fn flush_emits_static_background_frame_in_raster_order() {
 
 /// Single mid-frame grayscale toggle (ticket #63): a `$2001` write after
 /// 100 pixels of scanline 0 have been buffered splits the frame at pixel
-/// index 100. Pixels below the split keep the prior (color) configuration
+/// index 98 — the retired two-dot output stage (ticket #62) meant the
+/// two in-flight pixels (98, 99) committed after the write and take the
+/// new color, i.e. the write lands two pixels before its beam position.
+/// Pixels below the split keep the prior (color) configuration
 /// and pixels at/after it use grayscale. Entry $3F under grayscale renders
 /// as $30 (hardware ANDs the 6-bit entry with $30 before lookup), so the
 /// two segments are distinguishable through the Render seam alone.
@@ -2281,13 +2284,15 @@ fn flush_applies_prior_color_below_midframe_grayscale_split() {
             ((i % 256) as u32, (i / 256) as u32),
             "raster order at {i}"
         );
-        let want = if i < 100 { color } else { grayscale };
+        let want = if i < 98 { color } else { grayscale };
         assert_eq!(color, want, "color at pixel index {i}");
     }
 }
 
 /// Multiple mid-frame grayscale toggles (ticket #63): grayscale on at
-/// pixel index 100, off again at the top of scanline 120. Each of the
+/// pixel index 98, off again at the top of scanline 120 (index
+/// 120 * 256 — a write at the line start has nothing in flight, so it
+/// lands exactly at the beam position). Each of the
 /// three segments must use its own configuration — color, grayscale,
 /// color — so neither the first write nor the final register state may
 /// color the whole frame.
@@ -2333,7 +2338,7 @@ fn flush_applies_each_segment_for_multiple_midframe_grayscale_toggles() {
             ((i % 256) as u32, (i / 256) as u32),
             "raster order at {i}"
         );
-        let want = if !(100..120 * 256).contains(&i) {
+        let want = if !(98..120 * 256).contains(&i) {
             color
         } else {
             grayscale
@@ -2344,7 +2349,8 @@ fn flush_applies_each_segment_for_multiple_midframe_grayscale_toggles() {
 
 /// Mid-frame emphasis toggle (ticket #63): a `$2001` write enabling the
 /// red tint after 100 pixels of scanline 0 have been buffered splits the
-/// frame at pixel index 100. Pixels below the split keep the untinted
+/// frame at pixel index 98 (same two-dot landing as the grayscale test).
+/// Pixels below the split keep the untinted
 /// color; pixels at/after it have red-only emphasis applied (green and
 /// blue scaled by 192/256, red unchanged). Expected colors are derived
 /// from the literal backdrop entry's theme color, not from the PPU's
@@ -2386,7 +2392,7 @@ fn flush_applies_prior_color_below_midframe_emphasis_split() {
             ((i % 256) as u32, (i / 256) as u32),
             "raster order at {i}"
         );
-        let want = if i < 100 { color } else { emphasised };
+        let want = if i < 98 { color } else { emphasised };
         assert_eq!(color, want, "color at pixel index {i}");
     }
 }
