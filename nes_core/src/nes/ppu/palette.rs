@@ -10,6 +10,12 @@ impl Pixel {
         u32::from_le_bytes(self.0)
     }
 
+    /// Inverse of [`Self::to_u32`]: rebuild a pixel from its encoded
+    /// word (used by the batch palette-index flush, ticket #67).
+    pub fn from_u32(word: u32) -> Self {
+        Self(word.to_le_bytes())
+    }
+
     pub fn to_rgb(self) -> (u8, u8, u8) {
         (self.0[0], self.0[1], self.0[2])
     }

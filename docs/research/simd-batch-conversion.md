@@ -1,9 +1,9 @@
 # SIMD batch conversion of palette indices to RGBA in Rust
 
 Research-only. No code changed. This note recommends a concrete SIMD approach
-for the vblank drain proposed in spec #60 (batch PPU palette-index rendering
+for the vblank flush proposed in spec #60 (batch PPU palette-index rendering
 to end of frame), for the child ticket #65 (SIMD-optimized batch conversion
-in the vblank drain). It was written under TDD skill guidance (see
+in the vblank flush). It was written under TDD skill guidance (see
 /home/forks/.agents/skills/tdd/SKILL.md), but this ticket is research: no
 red-green loop applies, no tests were written, and the deliverable is this
 recommendation only.
@@ -56,12 +56,12 @@ verified from a primary source it is labelled **unverified**.
   (`docs/adr/0016-presentation-plan-and-texture-reuse.md`), GLOSSARY.md
   (Hot Path entry), `Cargo.toml`, `justfile`, `nes_web/Cargo.toml`.
 
-## 1. The conversion the drain must do
+## 1. The conversion the flush must do
 
 Spec #60 defers only the palette-index -> RGB step to the VBL set dot: the
 per-dot path keeps background/sprite evaluation, sprite-0 hit, and writes a
 6-bit palette index into a flat `[u8; 61440]` buffer indexed by beam position
-(`y * 256 + x`); the drain replays PPUMASK colour split points segment-wise
+(`y * 256 + x`); the flush replays PPUMASK colour split points segment-wise
 and emits pixels in raster order through `renderer.set_pixel`, before
 `finish()`. The frame is 256 x 240 = 61,440 pixels; at 60 fps that is
 3,686,400 pixels/s, or 61,440 index bytes read + 245,760 RGBA bytes written
@@ -69,7 +69,7 @@ per frame (approx. 14.7 MB/s write rate at 60 fps — **unverified** whether
 this exceeds memory bandwidth on any target in this repo; it is stated here
 only as arithmetic).
 
-The current per-pixel commit (the work the drain batches) is, from
+The current per-pixel commit (the work the flush batches) is, from
 `nes_core/src/nes/ppu.rs:551-562`:
 
 1. `pixel_idx = mask.grayscale_index(pending.pixel_index)` — if grayscale
@@ -100,15 +100,15 @@ Key facts that drive the SIMD design:
   an `N x N` block (Zoom Factor N, ADR-0012); playback renders
   `ImageRender<1>`, the `--output` recording path upscales host-side, and
   `CanvasRender` (web) writes a `Vec<u8>` buffer flushed by `putImageData`
-  at `finish()` (`canvas_render.rs`). Whatever the drain computes, it must
+  at `finish()` (`canvas_render.rs`). Whatever the flush computes, it must
   still call `set_pixel` per logical pixel, or produce byte-identical
   `ImageRender<N>` / canvas buffers through the same calls. SIMD must never
   bypass the seam.
-- **The drain must not disturb Zoom Factor replication or the Presentation
+- **The flush must not disturb Zoom Factor replication or the Presentation
   Plan.** ADR-0012 revision: playback is `ImageRender<1>` with one
   nearest-neighbour SDL copy to the window; ADR-0016: the plan reads
   `frame.as_bytes()` after the frame completes, one `Texture::update` + one
-  `Canvas::copy` per presented frame. A faster drain does not change either
+  `Canvas::copy` per presented frame. A faster flush does not change either
   downstream step, and anything that writes past the logical buffer into the
   N x N block layout would corrupt them.
 
@@ -119,7 +119,7 @@ with measured justification.**
 
 ### Tier 0 (recommended; ship first): per-segment 64-entry LUT + scalar gather
 
-For each drain segment (the maximal run of pixels sharing one PPUMASK
+For each flush segment (the maximal run of pixels sharing one PPUMASK
 colour configuration), build a 64-entry final-colour table once:
 
 ```
@@ -128,7 +128,7 @@ final[idx] = apply_effects(color_theme.color(grayscale_index(idx)))
 ```
 
 stored as `[u32; 64]` (one `Pixel` per entry, LE bytes = RGBA order) so the
-inner loop is a single indexed load + store. The drain then becomes a pure
+inner loop is a single indexed load + store. The flush then becomes a pure
 gather: `out[i] = final[indices[i]]` for the segment, emitting via
 `set_pixel` in raster order.
 
@@ -155,7 +155,7 @@ Why this is the right first step:
 
 Guard for pathological split counts: if a game writes `$2001` so often that
 segments become a few pixels long, rebuilding a 64-entry table per segment
-costs more than it saves. The drain should fall back to the current
+costs more than it saves. The flush should fall back to the current
 per-pixel `grayscale_index` + `apply_effects` application when a segment is
 too short to amortize the table (suggested threshold: **unverified**, decide
 by measurement; a reasonable starting guess is a segment shorter than 64
@@ -163,10 +163,10 @@ pixels). This bounds the worst case at today's per-pixel cost.
 
 ### Tier 1: stable target intrinsics behind runtime dispatch (x86_64 + wasm32)
 
-If profiling (Health of the drain measured before/after, per spec #60
+If profiling (Health of the flush measured before/after, per spec #60
 testing decision) shows the gather loop is a Hot Path, add a SIMD tier
 behind the sanctioned dispatch pattern from the `std::arch` docs:
-`is_x86_feature_detected!` / `#[cfg(target_arch ...)]` checks at the drain
+`is_x86_feature_detected!` / `#[cfg(target_arch ...)]` checks at the flush
 entry, dispatch into a `#[target_feature] unsafe fn`, scalar fallback
 otherwise — exactly the shape of the docs' `hex_encode` example, including
 its static-table scalar fallback.
@@ -233,7 +233,7 @@ base — no usage was prototyped in this ticket.
   (51.0 M instructions/frame, 2.36 ms task-clock on the reference movie).
   Any SIMD gain on a 61,440-pixel gather is bounded by the share of those
   instructions that the gather loop represents. A plausible estimate is
-  **unverified**: even a 4x faster drain is likely to move frame-level
+  **unverified**: even a 4x faster flush is likely to move frame-level
   throughput by a few percent at most. Measure with the repo's
   `--no-throttle --headless` harness before moving beyond tier 0.
 - **Memory, not ALUs.** Tier 0 reads 61,440 index bytes and writes 245,760
@@ -253,14 +253,14 @@ base — no usage was prototyped in this ticket.
   SIMD128-enabled wasm build is accepted as a deliberate product decision
   (with the no-runtime-detection caveat above). Expected wasm gain from
   tier 1 is **unverified**; do not claim web parity with native.
-- **Zoom Factor / presentation cost is outside the drain.** `ImageRender<N>`
+- **Zoom Factor / presentation cost is outside the flush.** `ImageRender<N>`
   replication happens inside `set_pixel` (ADR-0012) and the texture upload
   happens after `finish()` (ADR-0016: one `Texture::update` + one
   `Canvas::copy` + `putImageData` on web). SIMD-ing the gather does not
-  reduce those. A tempting but rejected variant is writing the drained
+  reduce those. A tempting but rejected variant is writing the flushed
   palette straight into the `ImageRender<N>` N x N blocks to skip
   replication — rejected because it bypasses the `Render` trait, breaks
-  `CanvasRender`, and couples the PPU to the framebuffer layout. The drain
+  `CanvasRender`, and couples the PPU to the framebuffer layout. The flush
   must stay behind `set_pixel`.
 
 ## 4. Fallback behaviour
@@ -268,7 +268,7 @@ base — no usage was prototyped in this ticket.
 | Situation | Behaviour |
 |---|---|
 | No SIMD feature detected (x86_64 without SSSE3/AVX2), non-SIMD wasm build, or a target `std::arch` does not cover | Tier 0 scalar gather (`out[i] = final[indices[i]]`), byte-identical output. This is the only path that runs on the default `nes_web` build. |
-| Target with SIMD but feature check fails at runtime | Same scalar path, selected once per drain (or once per process via a cached flag), by the `is_x86_feature_detected!` dispatch pattern. No per-pixel branching. |
+| Target with SIMD but feature check fails at runtime | Same scalar path, selected once per flush (or once per process via a cached flag), by the `is_x86_feature_detected!` dispatch pattern. No per-pixel branching. |
 | Tiny segment (pathological `$2001` write rate, **unverified** threshold) | Bypass the 64-entry table build; apply `grayscale_index` + `apply_effects` per pixel (today's behaviour). Bounds worst case at current cost. |
 | `nes_web` SIMD128 unavailable at runtime | No runtime detection exists (core::arch::wasm32 docs); the scalar build is the default artefact. A SIMD128 build is opt-in only and must not be assumed by the default server config. |
 | Nightly instead of stable | Not a fallback — portable SIMD is rejected on the current stable toolchain (section 2). |
@@ -289,12 +289,12 @@ modification.
   instructions/frame baseline; per second (60 fps) it is 221 M pixels/s,
   well within any vectorizable loop's budget. The design is not
   throughput-limited at this resolution; it is limited by how much of the
-  frame the drain is (section 3).
+  frame the flush is (section 3).
 - Because the buffer is flat (`y * 256 + x`) and segments are contiguous
   runs, the loop is linear and alignment-friendly — no per-pixel coordinate
   math in the SIMD tier. (Spec #60 user story 12 requires this shape.)
 - `nes_web` buffers the 256 x 240 RGBA frame in a `Vec<u8>` and pushes it
-  with `putImageData`; the drain must emit in raster order so the buffer
+  with `putImageData`; the flush must emit in raster order so the buffer
   needs no reordering afterwards. Byte-identical `set_pixel` emission is
   what guarantees this in every tier.
 
@@ -305,17 +305,17 @@ modification.
 - Whether tier 1/2 is ever worth it: that decision needs the
   headless no-throttle before/after measurement spec #60's testing
   decisions describe, run on the maintainer's hardware. The author of this
-  note had no profile evidence for the drain (the delayed-rendering
+  note had no profile evidence for the flush (the delayed-rendering
   research note already marks this as unverified), and made no code change,
   so no numbers are claimed.
 
 ## 7. Suggested ticket-#65 follow-ups (for the implementer, not done here)
 
 1. Land tier 0 (per-segment `[u32; 64]` table + scalar gather) inside
-   spec #60's drain behind the `Render` seam; verify byte-identical frames.
+   spec #60's flush behind the `Render` seam; verify byte-identical frames.
 2. Profile: `perf record -F 997 -g` on the `--no-throttle --headless`
    harness (repo `just` profiling recipes), comparing per-dot commit vs
-   tier-0 drain self-time. Proceed to tier 1 only if the drain registers
+   tier-0 flush self-time. Proceed to tier 1 only if the flush registers
    as a Hot Path (Self > 3% per GLOSSARY).
 3. If profiled hot: add the `is_x86_feature_detected!` /
    `#[target_feature]` SSSE3 shuffle tier with the documented scalar

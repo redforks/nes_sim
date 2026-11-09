@@ -438,7 +438,7 @@ fn create_test_ppu_render(mask: PpuMask) -> Ppu<ImageRender<1>> {
 /// line dot by dot so its pixels reach the (deferred) buffer. Starts at
 /// dot 1: the dot-0 swap belongs to the line boundary and must not discard
 /// the freshly evaluated Sprites. Afterwards the timing fast-forwards to
-/// the VBL set dot, which drains the frame through the Render seam.
+/// the VBL set dot, which flushs the frame through the Render seam.
 fn run_visible_scanline<R: Render>(ppu: &mut Ppu<R>, cart: &mut Cartridge, scanline: u16) {
     populate_sprite_secondary_oam(ppu, scanline);
     ppu.timing.scanline = scanline;
@@ -446,13 +446,13 @@ fn run_visible_scanline<R: Render>(ppu: &mut Ppu<R>, cart: &mut Cartridge, scanl
     for _ in 1..=340 {
         ppu.tick(cart);
     }
-    drain_frame_at_vblank(ppu, cart);
+    flush_frame_at_vblank(ppu, cart);
 }
 
 /// Fast-forward timing to the VBL set dot (scanline 241, dots 0-1) so the
-/// buffered frame drains through the Render seam. Tests asserting one
+/// buffered frame flushs through the Render seam. Tests asserting one
 /// scanline use this instead of ticking the intervening lines.
-fn drain_frame_at_vblank<R: Render>(ppu: &mut Ppu<R>, cart: &mut Cartridge) {
+fn flush_frame_at_vblank<R: Render>(ppu: &mut Ppu<R>, cart: &mut Cartridge) {
     ppu.timing.scanline = 241;
     ppu.timing.dot = 0;
     ppu.tick(cart);
@@ -552,9 +552,9 @@ fn test_tick_renders_palette_color_when_rendering_disabled_and_vram_points_to_pa
     ppu.tick(&mut cart);
     ppu.tick(&mut cart);
     ppu.tick(&mut cart);
-    // Visible dots only buffer palette indices now; the frame drains at
+    // Visible dots only buffer palette indices now; the frame flushs at
     // the VBL set dot.
-    drain_frame_at_vblank(&mut ppu, &mut cart);
+    flush_frame_at_vblank(&mut ppu, &mut cart);
     // $3F10 mirrors $3F00, whose power-up entry is $09.
     assert_eq!(ppu.renderer.get_pixel(0, 0), ppu.color_theme.color(0x09).0);
 }
@@ -571,8 +571,8 @@ fn test_tick_renders_background_color_when_rendering_disabled_and_vram_not_palet
     ppu.tick(&mut cart);
     ppu.tick(&mut cart);
     ppu.tick(&mut cart);
-    // The pixel is buffered on its dot and drains at the VBL set dot.
-    drain_frame_at_vblank(&mut ppu, &mut cart);
+    // The pixel is buffered on its dot and flushs at the VBL set dot.
+    flush_frame_at_vblank(&mut ppu, &mut cart);
     assert_eq!(ppu.renderer.get_pixel(0, 0), ppu.color_theme.color(0x16).0);
 }
 
@@ -592,9 +592,9 @@ fn test_tick_grayscale_masks_palette_index_before_lookup(entry: u8, expected: u8
     ppu.tick(&mut cart);
     ppu.tick(&mut cart);
     ppu.tick(&mut cart);
-    // The pixel is buffered on its dot and drains at the VBL set dot, where
+    // The pixel is buffered on its dot and flushs at the VBL set dot, where
     // the grayscale mask applies to the indexed entry.
-    drain_frame_at_vblank(&mut ppu, &mut cart);
+    flush_frame_at_vblank(&mut ppu, &mut cart);
     assert_eq!(
         ppu.renderer.get_pixel(0, 0),
         ppu.color_theme.color(expected).0
@@ -609,7 +609,7 @@ fn test_reset_clears_buffered_palette_indices() {
     ppu.registers.vram_addr = 0x3f10;
 
     // Land mid-frame on a visible scanline and buffer the first three
-    // visible dots' pixels (x = 0, 1, 2). With deferred colour nothing has
+    // visible dots' pixels (x = 0, 1, 2). With deferred color nothing has
     // reached the framebuffer yet.
     ppu.timing.scanline = 100;
     ppu.timing.dot = 0;
@@ -622,22 +622,28 @@ fn test_reset_clears_buffered_palette_indices() {
     ppu.reset();
 
     // Post-reset rendering uses a different backdrop color so stale and
-    // fresh output are distinguishable. Buffer a few more dots (x = 3, 4).
+    // fresh output are distinguishable. Buffer a few more dots (x = 2, 3).
     ppu.palette.write(0x3f00, 0x16);
     ppu.tick(&mut cart);
     ppu.tick(&mut cart);
 
-    drain_frame_at_vblank(&mut ppu, &mut cart);
+    flush_frame_at_vblank(&mut ppu, &mut cart);
 
-    // The pre-reset buffered indices must never drain into the fresh
-    // frame: positions not rewritten since the reset drain as entry 0...
-    assert_eq!(ppu.renderer.get_pixel(0, 100), ppu.color_theme.color(0).0);
-    assert_eq!(ppu.renderer.get_pixel(1, 100), ppu.color_theme.color(0).0);
+    // The pre-reset buffered indices must never flush into the fresh
+    // frame: positions not rewritten since the reset flush black
+    // (matching the cleared pre-change framebuffer)...
+    assert_eq!(ppu.renderer.get_pixel(0, 100), [0, 0, 0, 0]);
+    assert_eq!(ppu.renderer.get_pixel(1, 100), [0, 0, 0, 0]);
+    // x=2 was rewritten after the reset, so it flushes normally.
+    assert_eq!(
+        ppu.renderer.get_pixel(2, 100),
+        ppu.color_theme.color(0x16).0
+    );
     assert_ne!(
         ppu.renderer.get_pixel(1, 100),
         ppu.color_theme.color(0x21).0
     );
-    // ...while positions written after the reset drain normally.
+    // ...while positions written after the reset flush normally.
     assert_eq!(
         ppu.renderer.get_pixel(3, 100),
         ppu.color_theme.color(0x16).0
@@ -1330,7 +1336,7 @@ fn ppudata_pattern_write_invalidates_sprite_row_cache() {
     ppu.timing.scanline = 1;
 
     assert_eq!(0x2a, ppu.render_pixel(0, &cart));
-    // Rewrite tile 1 row 0 through PPUDATA: both planes all ones => colour 3.
+    // Rewrite tile 1 row 0 through PPUDATA: both planes all ones => color 3.
     for (addr, value) in [(0x0010u16, 0xffu8), (0x0018, 0xff)] {
         ppu.write_ppureg(0x2006, (addr >> 8) as u8, &mut cart);
         ppu.write_ppureg(0x2006, addr as u8, &mut cart);
@@ -2102,14 +2108,14 @@ fn timing_leave_vblank(scanline: u16, dot: u16, expected: bool) {
     assert_eq!(t.leave_vblank(), expected);
 }
 
-// --- Batch palette-index drain (ticket #62) ---------------------------------
+// --- Batch palette-index flush (ticket #62) ---------------------------------
 //
 // These tests observe only the `Render` seam: the sequence of `set_pixel`
 // calls and the `finish` invocation per frame. They do not inspect the
-// internal palette-index buffer layout or drain internals.
+// internal palette-index buffer layout or flush internals.
 
 /// Records every `set_pixel` call in order plus the number of `finish`
-/// calls, so a test can assert drain timing, raster order, and colours
+/// calls, so a test can assert flush timing, raster order, and colors
 /// without reaching into PPU internals.
 #[derive(Debug, Default)]
 struct RecordingRender {
@@ -2127,7 +2133,7 @@ impl Render for RecordingRender {
     }
 }
 
-/// Tick until the VBL set dot (scanline 241, dot 1) has drained one frame.
+/// Tick until the VBL set dot (scanline 241, dot 1) has flushed one frame.
 fn tick_until_vblank(ppu: &mut Ppu<RecordingRender>, cart: &mut Cartridge) {
     for _ in 0..200_000 {
         if ppu.renderer.finishes == 1 {
@@ -2135,16 +2141,16 @@ fn tick_until_vblank(ppu: &mut Ppu<RecordingRender>, cart: &mut Cartridge) {
         }
         ppu.tick(cart);
     }
-    panic!("vblank drain did not happen within the tick budget");
+    panic!("vblank flush did not happen within the tick budget");
 }
 
-/// Deferred colour: while visible dots are still scanning, no pixel has
+/// Deferred color: while visible dots are still scanning, no pixel has
 /// been emitted and `finish` has not fired. Exactly once per frame, at the
 /// VBL set dot, the whole frame is emitted linearly in raster order
 /// (x fastest, then y), each pixel resolved through the backdrop entry —
-/// and a second identical frame drains byte-identically.
+/// and a second identical frame flushs byte-identically.
 #[test]
-fn drain_emits_full_frame_once_at_vblank_in_raster_order() {
+fn flush_emits_full_frame_once_at_vblank_in_raster_order() {
     let mut ppu = Ppu::new(RecordingRender::default());
     let mut cart = Cartridge::test();
     // Rendering disabled: every visible dot resolves to the backdrop entry
@@ -2156,8 +2162,8 @@ fn drain_emits_full_frame_once_at_vblank_in_raster_order() {
     for _ in 0..2_000 {
         ppu.tick(&mut cart);
     }
-    assert!(ppu.renderer.pixels.is_empty(), "no pixel before the drain");
-    assert_eq!(ppu.renderer.finishes, 0, "no finish before the drain");
+    assert!(ppu.renderer.pixels.is_empty(), "no pixel before the flush");
+    assert_eq!(ppu.renderer.finishes, 0, "no finish before the flush");
 
     tick_until_vblank(&mut ppu, &mut cart);
 
@@ -2170,10 +2176,10 @@ fn drain_emits_full_frame_once_at_vblank_in_raster_order() {
             ((i % 256) as u32, (i / 256) as u32),
             "raster order at {i}"
         );
-        assert_eq!(color, expected_color, "backdrop colour at {i}");
+        assert_eq!(color, expected_color, "backdrop color at {i}");
     }
 
-    // A second static frame drains byte-identically (same seam, same bytes).
+    // A second static frame flushs byte-identically (same seam, same bytes).
     ppu.renderer.finishes = 0;
     ppu.renderer.pixels.clear();
     tick_until_vblank(&mut ppu, &mut cart);
@@ -2185,26 +2191,26 @@ fn drain_emits_full_frame_once_at_vblank_in_raster_order() {
             ((i % 256) as u32, (i / 256) as u32),
             "raster order at {i}"
         );
-        assert_eq!(color, expected_color, "backdrop colour at {i}");
+        assert_eq!(color, expected_color, "backdrop color at {i}");
     }
 }
 
-/// Static background image: the drained frame is the per-dot geometry
+/// Static background image: the flushed frame is the per-dot geometry
 /// (TileCache fetch of a solid tile per 8px column) resolved through the
-/// palette, emitted in raster order. Expected colours come from the
+/// palette, emitted in raster order. Expected colors come from the
 /// literal palette entries written here, not from the PPU's own lookup.
 #[test]
-fn drain_emits_static_background_frame_in_raster_order() {
+fn flush_emits_static_background_frame_in_raster_order() {
     let mut ppu = Ppu::new(RecordingRender::default());
     let mut cart = Cartridge::test();
     ppu.registers.mask = PpuMask::new()
         .with_background_enabled(true)
         .with_background_left_enabled(true);
-    // Palette entries for bg colour indices 1..=3 (palette index 0).
+    // Palette entries for bg color indices 1..=3 (palette index 0).
     ppu.palette.write(0x3f01, 0x10);
     ppu.palette.write(0x3f02, 0x20);
     ppu.palette.write(0x3f03, 0x30);
-    // Tiles 0..=31 solid with colour index 1, 2, 3 cycling.
+    // Tiles 0..=31 solid with color index 1, 2, 3 cycling.
     let mut pattern = create_pattern();
     for tile in 0..32u8 {
         set_tile_solid(&mut pattern, 0, tile, tile % 3 + 1);
@@ -2227,21 +2233,21 @@ fn drain_emits_static_background_frame_in_raster_order() {
             "raster order at {i}"
         );
         // Rows 0..8 vary by column (nametable row 0); every later row uses
-        // nametable tile 0 (colour index 1 -> entry $10) since the rest of
+        // nametable tile 0 (color index 1 -> entry $10) since the rest of
         // VRAM is zero.
         let want = if y < 8 { entry_for(x) } else { 0x10 };
-        assert_eq!(color, ppu.color_theme.color(want).0, "colour at {x},{y}");
+        assert_eq!(color, ppu.color_theme.color(want).0, "color at {x},{y}");
     }
 }
 
 /// Single mid-frame grayscale toggle (ticket #63): a `$2001` write after
 /// 100 pixels of scanline 0 have been buffered splits the frame at pixel
-/// index 100. Pixels below the split keep the prior (colour) configuration
+/// index 100. Pixels below the split keep the prior (color) configuration
 /// and pixels at/after it use grayscale. Entry $3F under grayscale renders
 /// as $30 (hardware ANDs the 6-bit entry with $30 before lookup), so the
 /// two segments are distinguishable through the Render seam alone.
 #[test]
-fn drain_applies_prior_colour_below_midframe_grayscale_split() {
+fn flush_applies_prior_color_below_midframe_grayscale_split() {
     let mut ppu = Ppu::new(RecordingRender::default());
     let mut cart = Cartridge::test();
     // Rendering disabled: every visible dot resolves to the backdrop entry
@@ -2256,7 +2262,7 @@ fn drain_applies_prior_colour_below_midframe_grayscale_split() {
     for _ in 0..101 {
         ppu.tick(&mut cart);
     }
-    assert!(ppu.renderer.pixels.is_empty(), "no pixel before the drain");
+    assert!(ppu.renderer.pixels.is_empty(), "no pixel before the flush");
 
     // Mid-frame $2001 write: grayscale on (bit 0). Enable bits stay off,
     // so the per-dot geometry path (disabled backdrop) is unchanged.
@@ -2264,9 +2270,9 @@ fn drain_applies_prior_colour_below_midframe_grayscale_split() {
 
     tick_until_vblank(&mut ppu, &mut cart);
 
-    let colour = ppu.color_theme.color(0x3f).0;
+    let color = ppu.color_theme.color(0x3f).0;
     let grayscale = ppu.color_theme.color(0x30).0;
-    assert_ne!(colour, grayscale, "segments must be distinguishable");
+    assert_ne!(color, grayscale, "segments must be distinguishable");
     assert_eq!(ppu.renderer.finishes, 1, "exactly one finish per frame");
     assert_eq!(ppu.renderer.pixels.len(), 256 * 240);
     for (i, &(x, y, color)) in ppu.renderer.pixels.iter().enumerate() {
@@ -2275,18 +2281,18 @@ fn drain_applies_prior_colour_below_midframe_grayscale_split() {
             ((i % 256) as u32, (i / 256) as u32),
             "raster order at {i}"
         );
-        let want = if i < 100 { colour } else { grayscale };
-        assert_eq!(color, want, "colour at pixel index {i}");
+        let want = if i < 100 { color } else { grayscale };
+        assert_eq!(color, want, "color at pixel index {i}");
     }
 }
 
 /// Multiple mid-frame grayscale toggles (ticket #63): grayscale on at
 /// pixel index 100, off again at the top of scanline 120. Each of the
-/// three segments must use its own configuration — colour, grayscale,
-/// colour — so neither the first write nor the final register state may
-/// colour the whole frame.
+/// three segments must use its own configuration — color, grayscale,
+/// color — so neither the first write nor the final register state may
+/// color the whole frame.
 #[test]
-fn drain_applies_each_segment_for_multiple_midframe_grayscale_toggles() {
+fn flush_applies_each_segment_for_multiple_midframe_grayscale_toggles() {
     let mut ppu = Ppu::new(RecordingRender::default());
     let mut cart = Cartridge::test();
     ppu.palette.write(0x3f00, 0x3f);
@@ -2309,16 +2315,16 @@ fn drain_applies_each_segment_for_multiple_midframe_grayscale_toggles() {
         ppu.tick(&mut cart);
     }
     assert_eq!((ppu.timing.scanline(), ppu.timing.dot()), (120, 1));
-    assert!(ppu.renderer.pixels.is_empty(), "no pixel before the drain");
+    assert!(ppu.renderer.pixels.is_empty(), "no pixel before the flush");
 
     // Toggle grayscale back off at the scanline-120 boundary.
     ppu.write_ppureg(0x2001, 0x00, &mut cart);
 
     tick_until_vblank(&mut ppu, &mut cart);
 
-    let colour = ppu.color_theme.color(0x3f).0;
+    let color = ppu.color_theme.color(0x3f).0;
     let grayscale = ppu.color_theme.color(0x30).0;
-    assert_ne!(colour, grayscale, "segments must be distinguishable");
+    assert_ne!(color, grayscale, "segments must be distinguishable");
     assert_eq!(ppu.renderer.finishes, 1, "exactly one finish per frame");
     assert_eq!(ppu.renderer.pixels.len(), 256 * 240);
     for (i, &(x, y, color)) in ppu.renderer.pixels.iter().enumerate() {
@@ -2328,23 +2334,23 @@ fn drain_applies_each_segment_for_multiple_midframe_grayscale_toggles() {
             "raster order at {i}"
         );
         let want = if !(100..120 * 256).contains(&i) {
-            colour
+            color
         } else {
             grayscale
         };
-        assert_eq!(color, want, "colour at pixel index {i}");
+        assert_eq!(color, want, "color at pixel index {i}");
     }
 }
 
 /// Mid-frame emphasis toggle (ticket #63): a `$2001` write enabling the
 /// red tint after 100 pixels of scanline 0 have been buffered splits the
 /// frame at pixel index 100. Pixels below the split keep the untinted
-/// colour; pixels at/after it have red-only emphasis applied (green and
-/// blue scaled by 192/256, red unchanged). Expected colours are derived
-/// from the literal backdrop entry's theme colour, not from the PPU's
+/// color; pixels at/after it have red-only emphasis applied (green and
+/// blue scaled by 192/256, red unchanged). Expected colors are derived
+/// from the literal backdrop entry's theme color, not from the PPU's
 /// own emphasis code.
 #[test]
-fn drain_applies_prior_colour_below_midframe_emphasis_split() {
+fn flush_applies_prior_color_below_midframe_emphasis_split() {
     let mut ppu = Ppu::new(RecordingRender::default());
     let mut cart = Cartridge::test();
     ppu.palette.write(0x3f00, 0x2c);
@@ -2356,7 +2362,7 @@ fn drain_applies_prior_colour_below_midframe_emphasis_split() {
     for _ in 0..101 {
         ppu.tick(&mut cart);
     }
-    assert!(ppu.renderer.pixels.is_empty(), "no pixel before the drain");
+    assert!(ppu.renderer.pixels.is_empty(), "no pixel before the flush");
 
     // Mid-frame $2001 write: red emphasis on (bit 5 = $20). Enable bits
     // stay off, so the per-dot geometry path is unchanged.
@@ -2364,14 +2370,14 @@ fn drain_applies_prior_colour_below_midframe_emphasis_split() {
 
     tick_until_vblank(&mut ppu, &mut cart);
 
-    let colour = ppu.color_theme.color(0x2c).0;
+    let color = ppu.color_theme.color(0x2c).0;
     let emphasised = [
-        colour[0],
-        (colour[1] as u16 * 192 / 256) as u8,
-        (colour[2] as u16 * 192 / 256) as u8,
-        colour[3],
+        color[0],
+        (color[1] as u16 * 192 / 256) as u8,
+        (color[2] as u16 * 192 / 256) as u8,
+        color[3],
     ];
-    assert_ne!(colour, emphasised, "segments must be distinguishable");
+    assert_ne!(color, emphasised, "segments must be distinguishable");
     assert_eq!(ppu.renderer.finishes, 1, "exactly one finish per frame");
     assert_eq!(ppu.renderer.pixels.len(), 256 * 240);
     for (i, &(x, y, color)) in ppu.renderer.pixels.iter().enumerate() {
@@ -2380,20 +2386,20 @@ fn drain_applies_prior_colour_below_midframe_emphasis_split() {
             ((i % 256) as u32, (i / 256) as u32),
             "raster order at {i}"
         );
-        let want = if i < 100 { colour } else { emphasised };
-        assert_eq!(color, want, "colour at pixel index {i}");
+        let want = if i < 100 { color } else { emphasised };
+        assert_eq!(color, want, "color at pixel index {i}");
     }
 }
 
 /// Ticket #64: palette RAM writes mid-frame take effect from their beam
 /// position without flushing geometry. Pixels buffered before the write
 /// keep the old entry; pixels at/after it use the new one. Observed only
-/// through the `Render` seam (drained `set_pixel` colours).
+/// through the `Render` seam (flushed `set_pixel` colors).
 ///
 /// #62 already reads palette RAM live at per-dot resolve time and the
 /// buffer stores the resolved 6-bit entry value, not a palette address,
 /// so this slice proves the position semantics rather than adding
-/// segment bookkeeping to the drain.
+/// segment bookkeeping to the flush.
 #[test]
 fn palette_write_mid_frame_takes_effect_from_beam_position() {
     let mut ppu = Ppu::new(ImageRender::<1>::default_dimension());
@@ -2409,12 +2415,12 @@ fn palette_write_mid_frame_takes_effect_from_beam_position() {
     for _ in 0..11 {
         ppu.tick(&mut cart);
     }
-    // Write the backdrop entry mid-frame; continue the line and drain.
+    // Write the backdrop entry mid-frame; continue the line and flush.
     ppu.palette.write(0x3f00, 0x16);
     for _ in 0..250 {
         ppu.tick(&mut cart);
     }
-    drain_frame_at_vblank(&mut ppu, &mut cart);
+    flush_frame_at_vblank(&mut ppu, &mut cart);
 
     let old_color = ppu.color_theme.color(0x21).0;
     let new_color = ppu.color_theme.color(0x16).0;
@@ -2439,7 +2445,7 @@ fn palette_write_mid_frame_takes_effect_from_beam_position() {
 /// buffered palette index resolved through the current palette/
 /// grayscale/emphasis logic — not from the materialized framebuffer.
 /// Beam positions not yet written this frame report black. Observed
-/// only through the PPU's brightness seam before any drain.
+/// only through the PPU's brightness seam before any flush.
 #[test]
 fn live_pixel_brightness_resolves_buffered_index_mid_frame() {
     let mut ppu = Ppu::new(ImageRender::<1>::default_dimension());
@@ -2450,7 +2456,7 @@ fn live_pixel_brightness_resolves_buffered_index_mid_frame() {
     ppu.registers.vram_addr = 0x2000;
 
     // Buffer ten pixels of line 0; the framebuffer must stay black until
-    // the drain, so a non-zero answer can only come from the live buffer.
+    // the flush, so a non-zero answer can only come from the live buffer.
     ppu.timing.scanline = 0;
     ppu.timing.dot = 0;
     for _ in 0..11 {
@@ -2459,7 +2465,7 @@ fn live_pixel_brightness_resolves_buffered_index_mid_frame() {
     assert_eq!(
         ppu.renderer.get_pixel(0, 0),
         [0, 0, 0, 0],
-        "no drain yet: framebuffer still black"
+        "no flush yet: framebuffer still black"
     );
 
     assert_eq!(
@@ -2495,7 +2501,7 @@ fn live_pixel_brightness_resolves_buffered_index_mid_frame() {
 }
 
 /// Ticket #64 (Zapper): the live brightness goes through the same
-/// grayscale mapping as the drain — entry $3F (black) with grayscale
+/// grayscale mapping as the flush — entry $3F (black) with grayscale
 /// on resolves to its $3x row $30 (white, default.pal (255, 254, 255)).
 #[test]
 fn live_pixel_brightness_applies_current_grayscale() {
@@ -2522,4 +2528,325 @@ fn live_pixel_brightness_applies_current_grayscale() {
         0,
         "past the beam is still black"
     );
+}
+
+// --- Code-review follow-ups (ticket #67) ------------------------------------
+//
+// Render-seam only: flushed frame pixels / finishes, and the public
+// `pixel_brightness` seam. No palette-index buffer layout assertions.
+
+/// Scroll-tile setup shared by the reload-dot tests: background rendering
+/// on, tiles 0..=31 solid with color indices 1,2,3 cycling, and the same
+/// tile row in nametables 0 and 1, so a one-tile scroll shift is visible
+/// as a color change at x = 0. Palette entries $10/$20/$30.
+fn setup_scroll_tiles(ppu: &mut Ppu<ImageRender<1>>, cart: &mut Cartridge) {
+    ppu.registers.mask = PpuMask::new()
+        .with_background_enabled(true)
+        .with_background_left_enabled(true);
+    ppu.palette.write(0x3f01, 0x10);
+    ppu.palette.write(0x3f02, 0x20);
+    ppu.palette.write(0x3f03, 0x30);
+    let mut pattern = create_pattern();
+    for tile in 0..32u8 {
+        set_tile_solid(&mut pattern, 0, tile, tile % 3 + 1);
+    }
+    fill_chr(ppu, &pattern, cart);
+    for i in 0..32u16 {
+        ppu.write_vram(0x2000 + i, i as u8, cart);
+        ppu.write_vram(0x2020 + i, i as u8, cart);
+        ppu.write_vram(0x2400 + i, i as u8, cart);
+        ppu.write_vram(0x2420 + i, i as u8, cart);
+    }
+}
+
+/// Incomplete frame after a mid-frame reset (ticket #67): positions not
+/// scanned since the reset must flush as black, matching the cleared
+/// pre-change framebuffer — not as entry 0 or stale previous-frame
+/// palette indices.
+#[test]
+fn flush_emits_black_for_unwritten_positions_after_mid_frame_reset() {
+    let mut ppu = Ppu::new(ImageRender::<1>::default_dimension());
+    let mut cart = Cartridge::test();
+    ppu.palette.write(0x3f00, 0x21);
+    ppu.registers.vram_addr = 0x2000;
+
+    // Buffer the first pixels of line 0, then reset mid-frame.
+    ppu.timing.scanline = 0;
+    ppu.timing.dot = 0;
+    for _ in 0..11 {
+        ppu.tick(&mut cart);
+    }
+    ppu.reset();
+
+    // No further scan before the VBL set dot flushes the frame.
+    flush_frame_at_vblank(&mut ppu, &mut cart);
+
+    for y in 0..240u32 {
+        for x in 0..256u32 {
+            assert_eq!(
+                ppu.renderer.get_pixel(x, y),
+                [0, 0, 0, 0],
+                "unwritten position {x},{y} must flush black"
+            );
+        }
+    }
+    assert_eq!(
+        ppu.pixel_brightness(0, 0),
+        0,
+        "live brightness also reports black after reset"
+    );
+}
+
+/// The buffered-pixel cursor is monotonic per frame (ticket #67): a
+/// backward timing jump must not lower it, otherwise already-buffered
+/// beam positions would wrongly report black to the Zapper seam.
+#[test]
+fn buffered_brightness_survives_backward_timing_jump() {
+    let mut ppu = Ppu::new(ImageRender::<1>::default_dimension());
+    let mut cart = Cartridge::test();
+    ppu.palette.write(0x3f00, 0x30);
+    ppu.registers.vram_addr = 0x2000;
+
+    ppu.timing.scanline = 0;
+    ppu.timing.dot = 0;
+    for _ in 0..11 {
+        ppu.tick(&mut cart);
+    }
+    let live = ppu.pixel_brightness(9, 0);
+    assert!(live > 0, "buffered pixel must be live before the jump");
+
+    // Timing jumps backward within the scanline (a frame-start jump to
+    // dot 0 is a new frame and legitimately restarts the cursor); two
+    // more visible dots are scanned.
+    ppu.timing.scanline = 0;
+    ppu.timing.dot = 1;
+    for _ in 0..3 {
+        ppu.tick(&mut cart);
+    }
+
+    assert_eq!(
+        ppu.pixel_brightness(9, 0),
+        live,
+        "already-buffered position must stay live after a backward jump"
+    );
+}
+
+/// Sprite-0 hit and sprite overflow stay precise with deferred color
+/// (ticket #67): flags are set live per-dot during the scan, and the
+/// flushed frame shows the sprite color at the hit pixel.
+#[test]
+fn sprite_zero_hit_and_overflow_unchanged_with_deferred_color() {
+    let mut ppu = Ppu::new(ImageRender::<1>::default_dimension());
+    ppu.registers.mask = PpuMask::new()
+        .with_background_enabled(true)
+        .with_sprite_enabled(true)
+        .with_background_left_enabled(true)
+        .with_sprite_left_enabled(true);
+    let mut pattern = create_pattern();
+    set_tile_solid(&mut pattern, 0, 0, 1);
+    set_tile_solid(&mut pattern, 0, 1, 2);
+    set_bg_palette_color(&mut ppu, 0, 1, 0x14);
+    set_sprite_palette_color(&mut ppu, 0, 2, 0x24);
+    setup_sprite(&mut ppu, 0, 0, 1, 0, 0);
+    // Nine in-range sprites on line 21 (y = 20) force overflow.
+    for idx in 1..=9u8 {
+        setup_sprite(&mut ppu, idx, 20, 0, 0, idx * 8);
+    }
+    let mut cart = Cartridge::test();
+    fill_chr(&mut ppu, &pattern, &mut cart);
+    set_bg_tile(&mut ppu, &mut cart, 0, 0);
+
+    // Sprite evaluation for line 1 normally happens across line 0;
+    // prime it directly, then start after the dot-0 OAM swap.
+    populate_sprite_secondary_oam(&mut ppu, 1);
+    ppu.timing.scanline = 1;
+    ppu.timing.dot = 1;
+    for _ in 0..200_000 {
+        if ppu.timing.scanline() == 30 {
+            break;
+        }
+        ppu.tick(&mut cart);
+    }
+    assert_eq!(
+        ppu.renderer.get_pixel(0, 1),
+        [0, 0, 0, 0],
+        "no pixel reaches the framebuffer before the flush"
+    );
+    assert!(
+        ppu.registers.status.sprite_zero_hit(),
+        "opaque sprite 0 over opaque background must set the hit"
+    );
+    assert!(
+        ppu.registers.status.sprite_overflow(),
+        "nine in-range sprites must set overflow"
+    );
+
+    flush_frame_at_vblank(&mut ppu, &mut cart);
+    assert_eq!(
+        ppu.renderer.get_pixel(0, 1),
+        ppu.color_theme.color(0x24).0,
+        "flushed frame shows the in-front sprite color at the hit pixel"
+    );
+    assert_eq!(
+        ppu.renderer.get_pixel(8, 1),
+        ppu.color_theme.color(0x14).0,
+        "flushed frame shows the background color off the sprite"
+    );
+}
+
+/// Reload dots (ticket #67): a mid-line `$2005` write lands at dot 257 —
+/// the rest of the current line keeps its geometry, the next line starts
+/// one tile further right.
+#[test]
+fn scroll_write_mid_line_takes_effect_at_dot_257() {
+    let mut ppu = Ppu::new(ImageRender::<1>::default_dimension());
+    let mut cart = Cartridge::test();
+    setup_scroll_tiles(&mut ppu, &mut cart);
+
+    // Scan 100 pixels of line 0, then a $2005 X write (coarse X = 1).
+    ppu.timing.scanline = 0;
+    ppu.timing.dot = 0;
+    for _ in 0..101 {
+        ppu.tick(&mut cart);
+    }
+    ppu.write_ppureg(0x2005, 8, &mut cart);
+
+    // Scan to line 1, dot 257 (reload has landed), then flush.
+    for _ in 0..200_000 {
+        if ppu.timing.scanline() == 1 && ppu.timing.dot() == 257 {
+            break;
+        }
+        ppu.tick(&mut cart);
+    }
+    assert_eq!((ppu.timing.scanline(), ppu.timing.dot()), (1, 257));
+    flush_frame_at_vblank(&mut ppu, &mut cart);
+
+    // Line 0 is entirely pre-write geometry.
+    let c = |entry: u8| ppu.color_theme.color(entry).0;
+    assert_eq!(ppu.renderer.get_pixel(0, 0), c(0x10));
+    assert_eq!(ppu.renderer.get_pixel(8, 0), c(0x20));
+    // Line 1 starts one tile (8px) to the right.
+    assert_eq!(ppu.renderer.get_pixel(0, 1), c(0x20));
+    assert_eq!(ppu.renderer.get_pixel(8, 1), c(0x30));
+    assert_eq!(ppu.renderer.get_pixel(16, 1), c(0x10));
+}
+
+/// Reload dots (ticket #67): a mid-line `$2006` second write performs the
+/// full reload via the dot-257 reload — the current line is unchanged,
+/// the next line starts at the new temporary address (coarse X = 7).
+#[test]
+fn ppuaddr_write_mid_line_full_reload_at_dot_257() {
+    let mut ppu = Ppu::new(ImageRender::<1>::default_dimension());
+    let mut cart = Cartridge::test();
+    setup_scroll_tiles(&mut ppu, &mut cart);
+
+    // Scan to dot 250 of line 0 — late enough that the scheduled
+    // background activation (screen_x + 16) falls past the line end and
+    // is discarded at the next line boundary.
+    ppu.timing.scanline = 0;
+    ppu.timing.dot = 0;
+    for _ in 0..251 {
+        ppu.tick(&mut cart);
+    }
+    ppu.write_ppureg(0x2006, 0x24, &mut cart);
+    ppu.write_ppureg(0x2006, 0x07, &mut cart);
+
+    // Scan to line 1, dot 257, then flush.
+    for _ in 0..200_000 {
+        if ppu.timing.scanline() == 1 && ppu.timing.dot() == 257 {
+            break;
+        }
+        ppu.tick(&mut cart);
+    }
+    assert_eq!((ppu.timing.scanline(), ppu.timing.dot()), (1, 257));
+    flush_frame_at_vblank(&mut ppu, &mut cart);
+
+    let c = |entry: u8| ppu.color_theme.color(entry).0;
+    // Current line kept its geometry throughout.
+    assert_eq!(ppu.renderer.get_pixel(0, 0), c(0x10));
+    // Next line starts at tile 7 of nametable 1 (0x2407).
+    assert_eq!(ppu.renderer.get_pixel(0, 1), c(0x20));
+    assert_eq!(ppu.renderer.get_pixel(8, 1), c(0x30));
+}
+
+/// Rendering disabled / PPUMASK all-off (ticket #67): color semantics
+/// still hold for the flush — grayscale masks the backdrop entry before
+/// the lookup even with every enable bit off.
+#[test]
+fn flush_applies_grayscale_with_rendering_disabled() {
+    let mut ppu = Ppu::new(ImageRender::<1>::default_dimension());
+    let mut cart = Cartridge::test();
+    ppu.palette.write(0x3f00, 0x3f);
+    ppu.registers.vram_addr = 0x2000;
+
+    ppu.timing.scanline = 0;
+    ppu.timing.dot = 0;
+    // Grayscale only; all enable bits off (rendering stays disabled).
+    ppu.write_ppureg(0x2001, 0x01, &mut cart);
+
+    // Scan two full lines so every asserted pixel was buffered.
+    for _ in 0..200_000 {
+        if ppu.timing.scanline() == 1 && ppu.timing.dot() == 257 {
+            break;
+        }
+        ppu.tick(&mut cart);
+    }
+    flush_frame_at_vblank(&mut ppu, &mut cart);
+
+    let grayscale = ppu.color_theme.color(0x30).0;
+    let color = ppu.color_theme.color(0x3f).0;
+    assert_ne!(grayscale, color, "segments must be distinguishable");
+    // The write lands before the first pixel, so every buffered pixel
+    // flushes under grayscale.
+    for y in 0..2u32 {
+        for x in 0..256u32 {
+            assert_eq!(
+                ppu.renderer.get_pixel(x, y),
+                grayscale,
+                "backdrop {x},{y} must flush grayscale-masked"
+            );
+        }
+    }
+}
+
+/// Rendering disabled / PPUMASK all-off (ticket #67): red emphasis
+/// applies to the backdrop color at flush time with all enable bits off.
+#[test]
+fn flush_applies_emphasis_with_rendering_disabled() {
+    let mut ppu = Ppu::new(ImageRender::<1>::default_dimension());
+    let mut cart = Cartridge::test();
+    ppu.palette.write(0x3f00, 0x2c);
+    ppu.registers.vram_addr = 0x2000;
+
+    ppu.timing.scanline = 0;
+    ppu.timing.dot = 0;
+    // Red emphasis only; all enable bits off.
+    ppu.write_ppureg(0x2001, 0x20, &mut cart);
+
+    // Scan two full lines so every asserted pixel was buffered.
+    for _ in 0..200_000 {
+        if ppu.timing.scanline() == 1 && ppu.timing.dot() == 257 {
+            break;
+        }
+        ppu.tick(&mut cart);
+    }
+    flush_frame_at_vblank(&mut ppu, &mut cart);
+
+    let color = ppu.color_theme.color(0x2c).0;
+    let emphasized = [
+        color[0],
+        (color[1] as u16 * 192 / 256) as u8,
+        (color[2] as u16 * 192 / 256) as u8,
+        color[3],
+    ];
+    assert_ne!(color, emphasized, "emphasis must change the color");
+    for y in 0..2u32 {
+        for x in 0..256u32 {
+            assert_eq!(
+                ppu.renderer.get_pixel(x, y),
+                emphasized,
+                "backdrop {x},{y} must flush red-emphasised"
+            );
+        }
+    }
 }
