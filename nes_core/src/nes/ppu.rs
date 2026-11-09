@@ -1,3 +1,4 @@
+mod batch_convert;
 mod oam;
 pub mod palette;
 mod pixel_pipeline; // retired stage — see module docs (ticket #62)
@@ -680,16 +681,44 @@ impl<R: Render> Ppu<R> {
                 (frame_len, live)
             };
             if start < end {
-                for index in start..end {
-                    let palette_index = self.palette_index_buffer[index];
-                    // Resolve through the shared point: each segment's
-                    // stored ColourConfig is converted to the mask it
-                    // describes, so grayscale/emphasis application matches
-                    // the live brightness path exactly.
-                    let pixel = self.resolve_pixel(palette_index, config.to_mask());
-                    let x = (index % VISIBLE_WIDTH) as u32;
-                    let y = (index / VISIBLE_WIDTH) as u32;
-                    self.renderer.set_pixel(x, y, pixel.0);
+                // Ticket #65: long segments go through the per-segment
+                // 64-entry LUT + batched gather (scalar or SSSE3,
+                // identical output); short segments resolve per pixel
+                // so a pathological $2001 write rate never costs more
+                // than the pre-#65 per-pixel path. The LUT is built
+                // from the segment's stored ColourConfig converted to
+                // the mask it describes, so grayscale/emphasis
+                // application matches the live brightness path exactly
+                // (both share resolve_pixel for the table build).
+                if end - start < batch_convert::SMALL_SEGMENT_PIXELS {
+                    let mask = config.to_mask();
+                    for index in start..end {
+                        let palette_index = self.palette_index_buffer[index];
+                        let pixel = self.resolve_pixel(palette_index, mask);
+                        let x = (index % VISIBLE_WIDTH) as u32;
+                        let y = (index / VISIBLE_WIDTH) as u32;
+                        self.renderer.set_pixel(x, y, pixel.0);
+                    }
+                } else {
+                    let lut =
+                        batch_convert::build_final_colour_lut(&self.color_theme, config.to_mask());
+                    let mut chunk = [0u32; 16];
+                    let mut index = start;
+                    while index < end {
+                        let chunk_len = (end - index).min(chunk.len());
+                        batch_convert::convert(
+                            &self.palette_index_buffer[index..index + chunk_len],
+                            &lut,
+                            &mut chunk[..chunk_len],
+                        );
+                        for (offset, &word) in chunk[..chunk_len].iter().enumerate() {
+                            let at = index + offset;
+                            let x = (at % VISIBLE_WIDTH) as u32;
+                            let y = (at / VISIBLE_WIDTH) as u32;
+                            self.renderer.set_pixel(x, y, word.to_le_bytes());
+                        }
+                        index += chunk_len;
+                    }
                 }
             }
             // Monotonic start: duplicate or out-of-order split indices
