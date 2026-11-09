@@ -1,6 +1,6 @@
 mod oam;
 pub mod palette;
-mod pixel_pipeline;
+mod pixel_pipeline; // retired stage — see module docs (ticket #62)
 mod registers;
 mod sprite;
 
@@ -13,10 +13,14 @@ use crate::{
 };
 use oam::Oam;
 use palette::{Palette, Pixel};
-use pixel_pipeline::PixelPipeline;
 use registers::{PpuCtrl, PpuMask, PpuStatus, Registers};
 
 // Pixel, palette data and COLORS are defined in the submodule `palette`.
+
+/// Visible frame dimensions: the flat palette-index buffer holds exactly
+/// one entry per visible beam position (`y * 256 + x`).
+const VISIBLE_WIDTH: usize = 256;
+const VISIBLE_HEIGHT: usize = 240;
 
 // PPU Timing Constants
 const PPU_OPEN_BUS_DECAY_TICKS: u64 = 3_221_591 * crate::SYSTEM_CYCLES_PER_PPU_CYCLE;
@@ -198,18 +202,21 @@ pub struct Ppu<R: Render = ()> {
     /// hardware (Mesen2) and re-returns this value. Ignored reads do not
     /// stamp the cycle.
     ppudata_last_read: Option<(u64, u8)>,
-    /// Two-dot pixel output pipeline: pixels rendered on visible dots wait
-    /// here (target coordinates, palette index) before committing to the
-    /// renderer, so CPU register writes landing in between color them.
-    /// Each dot retires exactly one pixel, so a scanline's final two pixels
-    /// commit on that scanline's own dots +2 — not on the next line's first
-    /// pushes — and a $2001 write in the fetch/idle phase cannot
-    /// retro-recolor them (DPCM Letterbox depends on this).
+    /// Flat palette-index buffer for the current frame (ticket #62, batch
+    /// colour): one 6-bit palette entry per visible beam position, indexed
+    /// by `y * 256 + x`. Allocated once in [`Self::new`] and reused every
+    /// frame — no per-frame 61,440-byte allocation, no per-pixel
+    /// `(x, y, palette_index)` tuples. The live per-dot path writes only
+    /// the resolved palette index here; [`Self::drain_palette_index_buffer`]
+    /// resolves indices to RGBA once at the VBL set dot before `finish()`.
     ///
-    /// Fixed two slots (no heap): [`PixelPipeline::take_due`] retires one
-    /// pixel per dot before the dot's own pixel is pushed, so at most two
-    /// are ever in flight.
-    pixel_pipeline: PixelPipeline,
+    /// This retires the former two-dot `PixelPipeline` output stage as a
+    /// per-pixel delay: raster order is preserved by the drain's linear
+    /// scan, and any dot-level colour landing offset becomes the stored
+    /// split position rather than pipeline slots (see #63). Palette RAM is
+    /// still read live at per-dot resolve time, so a palette write takes
+    /// effect from its beam position without flushing geometry.
+    palette_index_buffer: Box<[u8]>,
     /// Set when the PPU timing enters vblank (scanline 241, dot 1).
     /// This is a pure timing event, independent of the $2002 VBL flag
     /// (which `$2002` reads clear and the dot-0 race can suppress).
@@ -255,7 +262,7 @@ impl<R: Render> Ppu<R> {
             ren_latched_at_338: false,
             cycle: 0,
             ppudata_last_read: None,
-            pixel_pipeline: PixelPipeline::new(),
+            palette_index_buffer: vec![0; VISIBLE_WIDTH * VISIBLE_HEIGHT].into_boxed_slice(),
             vblank_entered: false,
         }
     }
@@ -275,9 +282,10 @@ impl<R: Render> Ppu<R> {
         self.registers.write_scroll(0);
         self.ren_latched_at_338 = false;
         self.vblank_entered = false;
-        // A reset landing mid-frame must not let already-rendered pixels of
-        // the old frame commit into the fresh frame's framebuffer.
-        self.pixel_pipeline.clear();
+        // A reset landing mid-frame must not let already-buffered palette
+        // indices of the old frame drain into the fresh frame: positions
+        // not yet rewritten since the reset drain as entry 0.
+        self.palette_index_buffer.fill(0);
     }
 
     pub fn timing(&self) -> &Timing {
@@ -539,26 +547,13 @@ impl<R: Render> Ppu<R> {
         }
 
         // Visible pixels are output on dots 1-256; dot 0 is the idle fetch
-        // slot. Pixels leave a two-dot output pipeline: a pixel rendered on
-        // dot X commits to the framebuffer on dot X+2, after any CPU
-        // register write that landed in between. This is the hardware
-        // output-stage latency — grayscale and emphasis tint are applied at
-        // commit time (the color-modifying stage), so a mid-scanline $2001
-        // write takes effect two dots earlier than the write cycle itself
-        // (blargg nmi_sync draws its line with exactly this landing).
-        let pending = self.pixel_pipeline.take_due();
-        if !pending.is_empty() {
-            // Hardware grayscale ANDs the 6-bit palette entry with $30
-            // before the color lookup ($3F black renders as $30 white);
-            // emphasis tints are analog effects on the looked-up RGB.
-            let pixel_idx = self.registers.mask.grayscale_index(pending.pixel_index);
-            let pixel = self
-                .registers
-                .mask
-                .apply_effects(self.color_theme.color(pixel_idx));
-            self.renderer
-                .set_pixel(pending.x as u32, pending.y as u32, pixel.0);
-        }
+        // slot. Batch colour (ticket #62): the live per-dot path resolves
+        // geometry (TileCache background fetch, sprite evaluation, sprite-0
+        // hit) into a palette index only and stores it in the flat buffer
+        // at the beam position — no RGB work here. Colour (grayscale and
+        // emphasis) is applied once, at the drain in `enter_vblank` below.
+        // (The scalar path uses the mask state at drain time for the whole
+        // frame; #63 records mid-frame splits per segment instead.)
         if self.timing.is_visible() {
             let x = (dot - 1) as u8;
             let pixel_idx = if rendering {
@@ -566,13 +561,15 @@ impl<R: Render> Ppu<R> {
             } else {
                 self.palette.disabled_color_index(self.registers.vram_addr)
             };
-            self.pixel_pipeline.push(x, scanline, pixel_idx);
+            let index = scanline as usize * VISIBLE_WIDTH + x as usize;
+            self.palette_index_buffer[index] = pixel_idx;
         }
 
         if self.timing.enter_vblank() {
-            // Timing event for frame stepping: reported even when the $2002
-            // VBL flag set itself is suppressed by the dot-0 race, so
-            // `process_frame` always terminates at the frame boundary.
+            // Drain the whole frame's buffered palette indices through the
+            // Render seam (raster order) before `finish()`, exactly once
+            // per frame, at the VBL set dot.
+            self.drain_palette_index_buffer();
             self.vblank_entered = true;
             self.renderer.finish();
             if !std::mem::take(&mut self.suppress_vblank_pending) {
@@ -587,6 +584,31 @@ impl<R: Render> Ppu<R> {
 
         self.timing.advance(self.ren_latched_at_338);
         cartridge.on_ppu_tick(self.timing.scanline);
+    }
+
+    /// Drain the frame's buffered palette indices through the Render seam
+    /// in raster (linear buffer) order, applying the colour state current
+    /// at drain time per pixel. Runs once per frame at the VBL set dot,
+    /// before `finish()`. The linear scan preserves the raster order the
+    /// retired two-dot output pipeline used to provide.
+    ///
+    /// `pixel_brightness` (Zapper light sense) is intentionally not served
+    /// from here yet: mid-frame sampling still reads the Render backend's
+    /// materialized framebuffer (previous frame until the drain). Ticket
+    /// #64 serves it live from this buffer; until then the drain is the
+    /// only consumer.
+    fn drain_palette_index_buffer(&mut self) {
+        let mask = self.registers.mask;
+        for (index, &palette_index) in self.palette_index_buffer.iter().enumerate() {
+            // Hardware grayscale ANDs the 6-bit palette entry with $30
+            // before the color lookup ($3F black renders as $30 white);
+            // emphasis tints are analog effects on the looked-up RGB.
+            let pixel =
+                mask.apply_effects(self.color_theme.color(mask.grayscale_index(palette_index)));
+            let x = (index % VISIBLE_WIDTH) as u32;
+            let y = (index / VISIBLE_WIDTH) as u32;
+            self.renderer.set_pixel(x, y, pixel.0);
+        }
     }
 
     /// Atomically sampled NMI line for this dot.
