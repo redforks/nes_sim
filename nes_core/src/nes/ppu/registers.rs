@@ -46,6 +46,40 @@ pub struct PpuMask {
     pub blue_tint: bool,
 }
 
+/// Colour-only projection of [`PpuMask`]: the grayscale and emphasis
+/// (red/green/blue tint) bits, without the per-dot enable bits.
+///
+/// Ticket #63 defers only these bits to the end-of-frame drain, recording
+/// each mid-frame change as a split point. Enable bits stay live per-dot
+/// and are never part of a [`ColourConfig`], so a stored configuration
+/// cannot accidentally freeze rendering enablement for a segment.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ColourConfig {
+    grayscale: bool,
+    red_tint: bool,
+    green_tint: bool,
+    blue_tint: bool,
+}
+
+impl ColourConfig {
+    pub fn from_mask(mask: PpuMask) -> Self {
+        Self {
+            grayscale: mask.grayscale(),
+            red_tint: mask.red_tint(),
+            green_tint: mask.green_tint(),
+            blue_tint: mask.blue_tint(),
+        }
+    }
+
+    pub(crate) fn to_mask(self) -> PpuMask {
+        PpuMask::new()
+            .with_grayscale(self.grayscale)
+            .with_red_tint(self.red_tint)
+            .with_green_tint(self.green_tint)
+            .with_blue_tint(self.blue_tint)
+    }
+}
+
 impl PpuMask {
     /// Mask a palette entry for grayscale rendering: hardware ANDs the
     /// 6-bit entry with $30 before the color lookup, so dark entries like
