@@ -213,7 +213,7 @@ impl<R: Render, D: AudioDriver> NesMcu<R, D> {
     /// light sense on bit 3. Sampled against pixels already buffered
     /// this frame (ticket #64): the PPU resolves the buffered palette
     /// index live, so light is detectable mid-frame instead of waiting
-    /// for the vblank drain to materialize the framebuffer.
+    /// for the vblank flush to materialize the framebuffer.
     fn zapper_bits(&self) -> u8 {
         let timing = self.ppu.timing();
         self.controller

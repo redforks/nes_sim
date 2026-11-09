@@ -2,8 +2,8 @@
 
 Measurement only; no feature code changed. Verdict: **batch colour is a
 small real instruction-count win (~2.6% fewer instructions/frame);
-the SIMD tier over the scalar drain is a wash** (0.04% fewer
-instructions/frame, wall time within run-to-run spread), and the drain
+the SIMD tier over the scalar flush is a wash** (0.04% fewer
+instructions/frame, wall time within run-to-run spread), and the flush
 does not enter the Hot Path. Numbers below are not a claim of a SIMD win.
 
 ## States measured
@@ -11,15 +11,17 @@ does not enter the Hot Path. Numbers below are not a claim of a SIMD win.
 | State | Code | Commit |
 |---|---|---|
 | (a) before batch colour | main, per-dot colour commit | `7ccb7ce` |
-| (b) scalar drain | #62 tip (flat buffer + vblank drain, per-pixel resolve in drain, no LUT, no SIMD, no #63/#64 split/zapper logic) | `0150615` |
-| (c) SIMD drain | integration tip: #62 + #63 segments + #64 brightness + #65 Tier-0 LUT + Tier-1 SSSE3 gather | `fac886e` |
+| (b) scalar flush | integration tip with SIMD dispatch forced off (`NES_SIM_NO_SSSE3=1`: Tier-0 LUT + scalar gather) | `907a93e` |
+| (c) SIMD flush | integration tip: #62 + #63 segments + #64 brightness + #65 Tier-0 LUT + Tier-1 SSSE3 gather | `907a93e` |
 
-Notes on method: #65 provides no env-var/flag to disable SIMD dispatch
-(`batch_convert::convert` dispatches on `is_x86_feature_detected!("ssse3")`
-only), so (b) is the #62-tip commit as instructed. State (b) therefore
-also lacks the #63 split-point and #64 Zapper code; the (b)->(c)
-comparison conflates LUT+SSSE3 with those changes, which is another
-reason to read (b) vs (c) as a wash, not a regression.
+Notes on method (revised ticket #67): the former (b) was the #62-tip
+commit `0150615`, which lacks #63/#64, so the delta conflated LUT+SSSE3
+with segment/brightness logic. (b) and (c) are now the same integration
+code — only the runtime dispatch differs (`NES_SIM_NO_SSSE3=1` forces
+the scalar Tier-0 gather, read once per process via a `OnceLock`), so
+the (b)->(c) comparison isolates the SSSE3 gather alone. The old
+numbers are superseded by the re-measurement below (the original table
+is kept at the end of the file for provenance).
 
 Build hazard found and avoided: all worktrees share
 `CARGO_TARGET_DIR=/tmp/nes-sim-target` via `.cargo/config.toml`, and
@@ -49,34 +51,34 @@ present only in (c)).
 | State | Median | Mean | FPS (median) |
 |---|---|---|---|
 | (a) baseline `7ccb7ce` | 4.0154 s | 4.0135 s | 747.1 |
-| (b) scalar `0150615` | 3.9232 s | 3.9342 s | 764.7 |
-| (c) SIMD `fac886e` | 3.9422 s | 3.9426 s | 761.0 |
+| (b) dispatch off `907a93e` | 3.9506 s | 3.9392 s | 759.4 |
+| (c) dispatch on `907a93e` | 3.9048 s | 3.9158 s | 768.3 |
 
-(b) is 2.3% faster than (a) by median; (c) is 1.8% faster than (a) and
-0.5% slower than (b) by median (0.2% by mean) — inside the run-to-run
-spread (individual runs range 3.91-4.04 s). Wall time alone is not
-conclusive; the instruction counts below are the deterministic signal.
+(c) is 2.8% faster than (a) by median and 1.2% faster than (b) —
+inside the run-to-run spread (individual runs: (b) 3.92-3.96 s, (c)
+3.90-3.95 s). Wall time alone is not conclusive; the instruction
+counts below are the deterministic signal.
 
 ### Instructions per frame (`perf stat -e instructions:u`, same window)
 
-Deterministic to within <10 instructions across 3 repetitions per state
+Deterministic to within <2k instructions across 3 repetitions per state
 (headless deterministic workload):
 
 | State | Total instructions | Instructions/frame |
 |---|---|---|
-| (a) baseline | 92,709,443,xxx | 30,903,14x |
-| (b) scalar | 90,336,55x,xxx | 30,112,19x |
-| (c) SIMD | 90,296,09x,xxx | 30,098,69x |
+| (a) baseline | 92,709,423,050 | 30,903,141 |
+| (b) dispatch off | 90,819,941,245 | 30,273,314 |
+| (c) dispatch on | 91,211,212,673 | 30,403,738 |
 
-Exact totals (rep 1): (a) 92,709,423,050; (b) 90,336,566,513;
-(c) 90,296,070,903. So batching saves ~791k instructions/frame
-(scalar, -2.56%) and ~804k (SIMD, -2.60%) vs baseline; SIMD vs scalar
-saves ~13.5k/frame (-0.045%). Cycles/frame (single `perf stat` sample):
-7.31M / 7.10M / 7.27M — noisy, not used for the verdict.
+Batching saves ~630k instructions/frame (dispatch off, -2.04%) and
+~499k (dispatch on, -1.61%) vs baseline. Dispatch on costs ~130k
+instructions/frame *more* than dispatch off (+0.43%) — the SSSE3 gather
+is a wash on this workload/hardware (see also the instruction-count
+reading below). Cycles/frame (single `perf stat` sample): 7.31M / 7.10M / 7.27M — noisy, not used for the verdict.
 
 Reading: the ~2.6% instruction saving comes from batching itself
-(deferred colour, one drain instead of per-dot commit), already present
-in the scalar drain. The Tier-0 LUT + SSSE3 gather adds nothing
+(deferred colour, one flush instead of per-dot commit), already present
+in the scalar flush. The Tier-0 LUT + SSSE3 gather adds nothing
 measurable on this workload/hardware.
 
 ### Hot Path check (`perf record -F 997`, `--no-children`, 3,000 frames)
@@ -87,10 +89,10 @@ Top Self (SIMD state, 3 samples each 3K samples): `Ppu::tick` 39.2-39.5%,
 evaluation still dominates, as the SIMD research note predicted.
 `batch_convert::convert` Self: **0.36% / 0.52% / 0.80%** across three
 samples. The Hot Path bar used in this repo is Self > 3% (GLOSSARY);
-the drain is well below it, and the drain fn itself does not appear
+the flush is well below it, and the flush fn itself does not appear
 as a separate Self row (inlined under `Ppu::tick`). Baseline top Self
 for contrast: `Ppu::tick` 53.2% (per-dot colour commit inside tick).
-Conclusion: **the drain does not enter the Hot Path; report the SIMD
+Conclusion: **the flush does not enter the Hot Path; report the SIMD
 tier as a wash, not a win.**
 
 ### Allocation check (no per-frame allocation regression)
@@ -101,7 +103,7 @@ tier as a wash, not a win.**
   (61,440 bytes); per frame it is only `.fill(0)`-cleared
   (`ppu.rs:317` in `reset()`, and overwritten by beam position during
   the frame). No realloc.
-- The drain (`drain_palette_index_buffer`, `ppu.rs:671`) and
+- The flush (`flush_palette_index_buffer`, `ppu.rs:671`) and
   `batch_convert.rs` allocate nothing on the heap in non-test code:
   LUT and `[0u32; 16]` chunk are stack values; `Vec` uses in
   `batch_convert.rs` are all inside `#[cfg(test)]`.
@@ -129,3 +131,15 @@ CARGO_TARGET_DIR=/tmp/bench66/<state>-target \
 perf stat -e instructions:u -- <same command>  # instructions/frame
 perf record -F 997 -- <same command>           # Hot Path (Self)
 ```
+
+## Superseded first measurement (ticket #66, pre-#67)
+
+The original (b)/(c) rows measured (b) at the #62 tip `0150615` (no
+#63/#64) vs (c) at `fac886e`, conflating LUT+SSSE3 with the
+segment/brightness logic. Superseded by the re-measurement above:
+
+| State | Wall median | Total instructions |
+|---|---|---|
+| (a) baseline `7ccb7ce` | 4.0154 s | 92,709,423,050 |
+| (b) scalar `0150615` | 3.9232 s | 90,336,566,513 |
+| (c) SIMD `fac886e` | 3.9422 s | 90,296,070,903 |

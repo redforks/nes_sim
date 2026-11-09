@@ -1,9 +1,9 @@
-//! Batch palette-index -> RGBA conversion for the vblank drain (ticket
+//! Batch palette-index -> RGBA conversion for the vblank flush (ticket
 //! #65, design basis: `docs/research/simd-batch-conversion.md`).
 //!
-//! Tier 0 (always): a per-segment 64-entry final-colour LUT. Grayscale
-//! (index-domain), colour lookup, and emphasis (RGB-domain) are folded
-//! into one table per drain segment by calling the same
+//! Tier 0 (always): a per-segment 64-entry final-color LUT. Grayscale
+//! (index-domain), color lookup, and emphasis (RGB-domain) are folded
+//! into one table per flush segment by calling the same
 //! `grayscale_index` / `color` / `apply_effects` functions as the
 //! per-pixel path, so the batched output agrees with the scalar
 //! per-pixel path by construction.
@@ -25,28 +25,24 @@
 //!   detection, and the default `nes_web` build does not enable
 //!   `+simd128`; a SIMD128 module would trap on engines without SIMD
 //!   support. The scalar Tier-0 path is the web path.
-//! - Any change to the `Render` trait: the drain still emits one
+//! - Any change to the `Render` trait: the flush still emits one
 //!   `set_pixel` per logical pixel, so Zoom Factor replication and
 //!   the Presentation Plan stay downstream and unchanged.
 //!
-//! Performance comparison against the scalar drain is deferred to
+//! Performance comparison against the scalar flush is deferred to
 //! the perf-validation ticket (#66); this ticket claims no speed-up
 //! numbers, only byte-identical output.
 
 use super::palette::ColorTheme;
-use super::registers::PpuMask;
+use super::palette::Pixel;
+use super::registers::ColorConfig;
 
-/// Segments shorter than this bypass the LUT build and resolve per
-/// pixel (research note section 2 guard for pathological `$2001`
-/// write rates). Starting guess, pending #66 measurement.
-pub(crate) const SMALL_SEGMENT_PIXELS: usize = 64;
-
-/// Per-segment final-colour table: `[u32; 64]` LE words (RGBA byte
+/// Per-segment final-color table: `[u32; 64]` LE words (RGBA byte
 /// order, as [`super::palette::Pixel::to_u32`]) for the scalar gather,
 /// plus per-channel planes (`[channel][index]`) for the SSSE3 shuffle
 /// gather. Alpha is always `0xFF` (see `Pixel::new`).
 #[derive(Debug, Clone, Copy)]
-pub(crate) struct FinalColourLut {
+pub(crate) struct FinalColorLut {
     pub words: [u32; 64],
     // Only consumed by the x86_64 SSSE3 gather; on other targets
     // (incl. wasm32) the scalar gather uses `words` alone.
@@ -54,27 +50,28 @@ pub(crate) struct FinalColourLut {
     planes: [[u8; 64]; 3],
 }
 
-/// Build the final-colour LUT for one segment's mask from the same
+/// Build the final-color LUT for one segment's color config from the same
 /// three stages as the per-pixel path:
-/// `apply_effects(color(grayscale_index(idx)))` for `idx in 0..64`.
-pub(crate) fn build_final_colour_lut(theme: &ColorTheme, mask: PpuMask) -> FinalColourLut {
+/// `config.apply_effects(theme.color(config.grayscale_index(idx)))`
+/// for `idx in 0..64`.
+pub(crate) fn build_final_color_lut(theme: &ColorTheme, config: ColorConfig) -> FinalColorLut {
     let mut words = [0u32; 64];
     let mut planes = [[0u8; 64]; 3];
     for (idx, word) in words.iter_mut().enumerate() {
-        let pixel = mask.apply_effects(theme.color(mask.grayscale_index(idx as u8)));
+        let pixel = config.apply_effects(theme.color(config.grayscale_index(idx as u8)));
         *word = pixel.to_u32();
         for channel in 0..3 {
             planes[channel][idx] = pixel.0[channel];
         }
     }
-    FinalColourLut { words, planes }
+    FinalColorLut { words, planes }
 }
 
 /// Scalar Tier-0 gather: `out[i] = lut[indices[i] & 0x3F]`.
 /// The `& 0x3F` mask matches `ColorTheme::color` (which masks with
 /// `& 0x3F`), so indices above 63 (e.g. a raw palette-RAM byte from
 /// the disabled backdrop path) resolve exactly as the per-pixel path.
-pub(crate) fn convert_scalar(indices: &[u8], lut: &FinalColourLut, out: &mut [u32]) {
+pub(crate) fn convert_scalar(indices: &[u8], lut: &FinalColorLut, out: &mut [u32]) {
     assert_eq!(indices.len(), out.len(), "indices/out length mismatch");
     for (dst, &index) in out.iter_mut().zip(indices) {
         *dst = lut.words[(index & 0x3F) as usize];
@@ -83,12 +80,19 @@ pub(crate) fn convert_scalar(indices: &[u8], lut: &FinalColourLut, out: &mut [u3
 
 /// Dispatching convert: SSSE3 shuffle gather on x86_64 when the CPU
 /// supports it (detected once per call, no per-pixel branching),
-/// scalar gather otherwise (including all wasm32 builds).
-pub(crate) fn convert(indices: &[u8], lut: &FinalColourLut, out: &mut [u32]) {
+/// scalar gather otherwise (including all wasm32 builds). The
+/// `NES_SIM_NO_SSSE3` environment variable forces the scalar gather
+/// for the fallback-only perf comparison in `docs/research/
+/// perf-batch-color.md` (ticket #67); unset, the dispatch is unchanged.
+/// The flag is read once per process: `convert` runs thousands of times
+/// per frame, and an env lookup per call would itself cost instructions.
+pub(crate) fn convert(indices: &[u8], lut: &FinalColorLut, out: &mut [u32]) {
     assert_eq!(indices.len(), out.len(), "indices/out length mismatch");
     #[cfg(target_arch = "x86_64")]
     {
-        if std::is_x86_feature_detected!("ssse3") {
+        static NO_SSSE3: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+        let disabled = *NO_SSSE3.get_or_init(|| std::env::var_os("NES_SIM_NO_SSSE3").is_some());
+        if std::is_x86_feature_detected!("ssse3") && !disabled {
             // SAFETY: guarded by the runtime SSSE3 check above.
             unsafe { convert_ssse3(indices, lut, out) };
             return;
@@ -99,7 +103,7 @@ pub(crate) fn convert(indices: &[u8], lut: &FinalColourLut, out: &mut [u32]) {
 
 #[cfg(target_arch = "x86_64")]
 #[target_feature(enable = "ssse3")]
-pub(crate) unsafe fn convert_ssse3(indices: &[u8], lut: &FinalColourLut, out: &mut [u32]) {
+pub(crate) unsafe fn convert_ssse3(indices: &[u8], lut: &FinalColorLut, out: &mut [u32]) {
     unsafe {
         use std::arch::x86_64::*;
         let mask6 = _mm_set1_epi8(0x3F);
@@ -143,7 +147,7 @@ pub(crate) unsafe fn convert_ssse3(indices: &[u8], lut: &FinalColourLut, out: &m
                 _mm_storeu_si128(rgb[channel].as_mut_ptr() as *mut __m128i, v);
             }
             for i in 0..16 {
-                dst[i] = u32::from_le_bytes([rgb[0][i], rgb[1][i], rgb[2][i], 0xFF]);
+                dst[i] = Pixel::new(rgb[0][i], rgb[1][i], rgb[2][i]).to_u32();
             }
         }
         let rem = chunks.remainder();
@@ -158,7 +162,7 @@ mod tests {
     use crate::nes::ppu::palette::Pixel;
 
     fn theme() -> ColorTheme {
-        // Distinct colour per entry so any index mix-up is visible.
+        // Distinct color per entry so any index mix-up is visible.
         let mut buf = [0u8; 192];
         for i in 0..64 {
             buf[i * 3] = (i * 4) as u8;
@@ -168,28 +172,31 @@ mod tests {
         ColorTheme::load_from_pal_buf(&buf)
     }
 
-    fn masks() -> [PpuMask; 4] {
+    fn configs() -> [ColorConfig; 4] {
+        use super::super::registers::PpuMask;
         [
-            PpuMask::new(),
-            PpuMask::new().with_grayscale(true),
-            PpuMask::new().with_red_tint(true),
-            PpuMask::new()
-                .with_grayscale(true)
-                .with_green_tint(true)
-                .with_blue_tint(true),
+            ColorConfig::from_mask(PpuMask::new()),
+            ColorConfig::from_mask(PpuMask::new().with_grayscale(true)),
+            ColorConfig::from_mask(PpuMask::new().with_red_tint(true)),
+            ColorConfig::from_mask(
+                PpuMask::new()
+                    .with_grayscale(true)
+                    .with_green_tint(true)
+                    .with_blue_tint(true),
+            ),
         ]
     }
 
     #[test]
-    fn lut_matches_per_pixel_resolution_for_all_masks() {
+    fn lut_matches_per_pixel_resolution_for_all_configs() {
         let theme = theme();
-        for mask in masks() {
-            let lut = build_final_colour_lut(&theme, mask);
+        for config in configs() {
+            let lut = build_final_color_lut(&theme, config);
             for idx in 0..64u8 {
-                let want = mask
-                    .apply_effects(theme.color(mask.grayscale_index(idx)))
+                let want = config
+                    .apply_effects(theme.color(config.grayscale_index(idx)))
                     .to_u32();
-                assert_eq!(lut.words[idx as usize], want, "mask {mask:?} idx {idx}");
+                assert_eq!(lut.words[idx as usize], want, "config {config:?} idx {idx}");
             }
         }
     }
@@ -197,7 +204,7 @@ mod tests {
     #[test]
     fn scalar_convert_masks_index_to_six_bits() {
         let theme = theme();
-        let lut = build_final_colour_lut(&theme, PpuMask::new());
+        let lut = build_final_color_lut(&theme, configs()[0]);
         // Indices above 63 (incl. the 0xFF empty-slot sentinel) wrap
         // exactly as ColorTheme::color's & 0x3F does on the per-pixel path.
         let indices: Vec<u8> = (0..=255u8).collect();
@@ -214,23 +221,23 @@ mod tests {
     }
 
     #[test]
-    fn convert_matches_scalar_for_all_indices_and_masks() {
+    fn convert_matches_scalar_for_all_indices_and_configs() {
         let theme = theme();
         let indices: Vec<u8> = (0..=255u8).collect();
-        for mask in masks() {
-            let lut = build_final_colour_lut(&theme, mask);
+        for config in configs() {
+            let lut = build_final_color_lut(&theme, config);
             let mut scalar = vec![0u32; indices.len()];
             let mut auto = vec![0u32; indices.len()];
             convert_scalar(&indices, &lut, &mut scalar);
             convert(&indices, &lut, &mut auto);
-            assert_eq!(auto, scalar, "mask {mask:?}");
+            assert_eq!(auto, scalar, "config {config:?}");
         }
     }
 
     #[test]
     fn convert_matches_scalar_for_odd_lengths() {
         let theme = theme();
-        let lut = build_final_colour_lut(&theme, masks()[3]);
+        let lut = build_final_color_lut(&theme, configs()[3]);
         // Deterministic pseudo-random index pattern.
         let indices: Vec<u8> = (0..1000u32).map(|i| ((i * 37 + 11) % 256) as u8).collect();
         for len in [0usize, 1, 15, 16, 17, 31, 32, 33, 63, 100, 255, 256, 1000] {
@@ -250,14 +257,14 @@ mod tests {
         }
         let theme = theme();
         let indices: Vec<u8> = (0..=255u8).collect();
-        for mask in masks() {
-            let lut = build_final_colour_lut(&theme, mask);
+        for config in configs() {
+            let lut = build_final_color_lut(&theme, config);
             let mut scalar = vec![0u32; indices.len()];
             let mut simd = vec![0u32; indices.len()];
             convert_scalar(&indices, &lut, &mut scalar);
             // SAFETY: guarded by the runtime check above.
             unsafe { convert_ssse3(&indices, &lut, &mut simd) };
-            assert_eq!(simd, scalar, "mask {mask:?}");
+            assert_eq!(simd, scalar, "config {config:?}");
             // Alpha is always opaque.
             for word in &simd {
                 assert_eq!(Pixel(word.to_le_bytes()).0[3], 0xFF);
