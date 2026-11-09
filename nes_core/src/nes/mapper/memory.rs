@@ -55,7 +55,7 @@ fn bank_count(len_bytes: usize) -> usize {
 /// separate PRG-RAM bank array (8 × 1 KB) for `$6000-$7FFF`.
 pub struct CartridgeMemory {
     pool: Box<[Bank]>,
-    prg_ram: Box<[Bank]>,
+    prg_ram: Box<[Bank; PRG_RAM_BANK_COUNT]>,
     chr_base: usize,
     prg_rom_base: usize,
     chr_bank_count: usize,
@@ -94,7 +94,7 @@ impl CartridgeMemory {
             pool: (0..prg_rom_base + prg_bank_count)
                 .map(|_| Bank::empty())
                 .collect(),
-            prg_ram: (0..PRG_RAM_BANK_COUNT).map(|_| Bank::empty()).collect(),
+            prg_ram: Box::new(std::array::from_fn(|_| Bank::empty())),
             chr_base,
             prg_rom_base,
             chr_bank_count,
