@@ -2384,3 +2384,142 @@ fn drain_applies_prior_colour_below_midframe_emphasis_split() {
         assert_eq!(color, want, "colour at pixel index {i}");
     }
 }
+
+/// Ticket #64: palette RAM writes mid-frame take effect from their beam
+/// position without flushing geometry. Pixels buffered before the write
+/// keep the old entry; pixels at/after it use the new one. Observed only
+/// through the `Render` seam (drained `set_pixel` colours).
+///
+/// #62 already reads palette RAM live at per-dot resolve time and the
+/// buffer stores the resolved 6-bit entry value, not a palette address,
+/// so this slice proves the position semantics rather than adding
+/// segment bookkeeping to the drain.
+#[test]
+fn palette_write_mid_frame_takes_effect_from_beam_position() {
+    let mut ppu = Ppu::new(ImageRender::<1>::default_dimension());
+    let mut cart = Cartridge::test();
+    // Rendering disabled: every visible dot resolves to the backdrop
+    // entry at $3F00 (vram_addr below $3F00).
+    ppu.palette.write(0x3f00, 0x21);
+    ppu.registers.vram_addr = 0x2000;
+
+    // Scan ten pixels of line 0 (x = 0..=9) under the old entry.
+    ppu.timing.scanline = 0;
+    ppu.timing.dot = 0;
+    for _ in 0..11 {
+        ppu.tick(&mut cart);
+    }
+    // Write the backdrop entry mid-frame; continue the line and drain.
+    ppu.palette.write(0x3f00, 0x16);
+    for _ in 0..250 {
+        ppu.tick(&mut cart);
+    }
+    drain_frame_at_vblank(&mut ppu, &mut cart);
+
+    let old_color = ppu.color_theme.color(0x21).0;
+    let new_color = ppu.color_theme.color(0x16).0;
+    assert_ne!(old_color, new_color, "entries must be distinguishable");
+    for x in 0..10u32 {
+        assert_eq!(
+            ppu.renderer.get_pixel(x, 0),
+            old_color,
+            "x={x} buffered before the write keeps the old entry"
+        );
+    }
+    for x in 10..256u32 {
+        assert_eq!(
+            ppu.renderer.get_pixel(x, 0),
+            new_color,
+            "x={x} buffered at/after the write uses the new entry"
+        );
+    }
+}
+
+/// Ticket #64 (Zapper): `pixel_brightness` is served mid-frame from the
+/// buffered palette index resolved through the current palette/
+/// grayscale/emphasis logic — not from the materialized framebuffer.
+/// Beam positions not yet written this frame report black. Observed
+/// only through the PPU's brightness seam before any drain.
+#[test]
+fn live_pixel_brightness_resolves_buffered_index_mid_frame() {
+    let mut ppu = Ppu::new(ImageRender::<1>::default_dimension());
+    let mut cart = Cartridge::test();
+    // Rendering disabled: backdrop entry $3F00 = $30 (white, per
+    // default.pal: (255, 254, 255), luminance 764).
+    ppu.palette.write(0x3f00, 0x30);
+    ppu.registers.vram_addr = 0x2000;
+
+    // Buffer ten pixels of line 0; the framebuffer must stay black until
+    // the drain, so a non-zero answer can only come from the live buffer.
+    ppu.timing.scanline = 0;
+    ppu.timing.dot = 0;
+    for _ in 0..11 {
+        ppu.tick(&mut cart);
+    }
+    assert_eq!(
+        ppu.renderer.get_pixel(0, 0),
+        [0, 0, 0, 0],
+        "no drain yet: framebuffer still black"
+    );
+
+    assert_eq!(
+        ppu.pixel_brightness(0, 0),
+        255 + 254 + 255,
+        "buffered pixel resolves to its live luminance"
+    );
+    assert_eq!(
+        ppu.pixel_brightness(9, 0),
+        255 + 254 + 255,
+        "last buffered pixel is already live"
+    );
+    assert_eq!(
+        ppu.pixel_brightness(10, 0),
+        0,
+        "not-yet-written beam position reports black"
+    );
+    assert_eq!(
+        ppu.pixel_brightness(0, 1),
+        0,
+        "unscanned line reports black"
+    );
+    assert_eq!(
+        ppu.pixel_brightness(256, 0),
+        0,
+        "out-of-bounds x reports black"
+    );
+    assert_eq!(
+        ppu.pixel_brightness(0, 240),
+        0,
+        "out-of-bounds y reports black"
+    );
+}
+
+/// Ticket #64 (Zapper): the live brightness goes through the same
+/// grayscale mapping as the drain — entry $3F (black) with grayscale
+/// on resolves to its $3x row $30 (white, default.pal (255, 254, 255)).
+#[test]
+fn live_pixel_brightness_applies_current_grayscale() {
+    let mut ppu = Ppu::new(ImageRender::<1>::default_dimension());
+    let mut cart = Cartridge::test();
+    ppu.palette.write(0x3f00, 0x3f);
+    ppu.registers.vram_addr = 0x2000;
+    ppu.registers.mask = PpuMask::new().with_grayscale(true);
+
+    ppu.timing.scanline = 0;
+    ppu.timing.dot = 0;
+    for _ in 0..3 {
+        ppu.tick(&mut cart);
+    }
+
+    assert_eq!(
+        ppu.pixel_brightness(0, 0),
+        255 + 254 + 255,
+        "grayscale maps $3F to $30 (white) on the live path"
+    );
+    assert_eq!(ppu.pixel_brightness(1, 0), 255 + 254 + 255);
+    assert_eq!(
+        ppu.pixel_brightness(2, 0),
+        0,
+        "past the beam is still black"
+    );
+}

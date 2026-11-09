@@ -71,23 +71,12 @@ impl ColourConfig {
         }
     }
 
-    fn to_mask(self) -> PpuMask {
+    pub(crate) fn to_mask(self) -> PpuMask {
         PpuMask::new()
             .with_grayscale(self.grayscale)
             .with_red_tint(self.red_tint)
             .with_green_tint(self.green_tint)
             .with_blue_tint(self.blue_tint)
-    }
-
-    /// See [`PpuMask::grayscale_index`].
-    pub fn grayscale_index(self, index: u8) -> u8 {
-        self.to_mask().grayscale_index(index)
-    }
-
-    /// See [`PpuMask::apply_effects`].
-    #[inline]
-    pub fn apply_effects(self, pixel: Pixel) -> Pixel {
-        self.to_mask().apply_effects(pixel)
     }
 }
 
