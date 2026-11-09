@@ -13,7 +13,7 @@ use crate::{
 };
 use oam::Oam;
 use palette::{Palette, Pixel};
-use registers::{PpuCtrl, PpuMask, PpuStatus, Registers};
+use registers::{ColourConfig, PpuCtrl, PpuMask, PpuStatus, Registers};
 
 // Pixel, palette data and COLORS are defined in the submodule `palette`.
 
@@ -46,6 +46,17 @@ impl TileCache {
         let color_idx = ((self.bitplane_low >> bit) & 1) | (((self.bitplane_high >> bit) & 1) << 1);
         (self.palette_idx, color_idx)
     }
+}
+
+/// A mid-frame `$2001` colour change (ticket #63): the beam position at
+/// which the change takes effect, plus the colour configuration in force
+/// before the write. The drain applies `prior` below `index` and the new
+/// configuration at/after it — the new configuration is the next split's
+/// `prior`, or the live mask at drain time for the final segment.
+#[derive(Copy, Clone)]
+struct ColourSplit {
+    index: usize,
+    prior: ColourConfig,
 }
 
 #[derive(Copy, Clone)]
@@ -217,6 +228,12 @@ pub struct Ppu<R: Render = ()> {
     /// still read live at per-dot resolve time, so a palette write takes
     /// effect from its beam position without flushing geometry.
     palette_index_buffer: Box<[u8]>,
+    /// Mid-frame `$2001` colour changes for the frame being buffered
+    /// (ticket #63), in beam order. Consumed and cleared by
+    /// [`Self::drain_palette_index_buffer`]; splits recorded after the
+    /// drain (during vblank/pre-render) are discarded at the next frame
+    /// start, since the live mask already carries them into that frame.
+    colour_splits: Vec<ColourSplit>,
     /// Set when the PPU timing enters vblank (scanline 241, dot 1).
     /// This is a pure timing event, independent of the $2002 VBL flag
     /// (which `$2002` reads clear and the dot-0 race can suppress).
@@ -263,6 +280,7 @@ impl<R: Render> Ppu<R> {
             cycle: 0,
             ppudata_last_read: None,
             palette_index_buffer: vec![0; VISIBLE_WIDTH * VISIBLE_HEIGHT].into_boxed_slice(),
+            colour_splits: Vec::new(),
             vblank_entered: false,
         }
     }
@@ -286,6 +304,7 @@ impl<R: Render> Ppu<R> {
         // indices of the old frame drain into the fresh frame: positions
         // not yet rewritten since the reset drain as entry 0.
         self.palette_index_buffer.fill(0);
+        self.colour_splits.clear();
     }
 
     pub fn timing(&self) -> &Timing {
@@ -428,6 +447,13 @@ impl<R: Render> Ppu<R> {
             self.ren_latched_at_338 = rendering;
         }
         if dot == 0 {
+            if scanline == 0 {
+                // New frame: discard splits recorded after the previous
+                // drain (vblank/pre-render writes). The live mask already
+                // carries those colour changes into this frame, and any
+                // mid-frame split from here on is recorded fresh.
+                self.colour_splits.clear();
+            }
             // The secondary-OAM swap runs on every line, including the
             // pre-render line (261). Sprite evaluation itself only runs on
             // visible scanlines 0-239, so scanline 0's swap brings in the
@@ -552,8 +578,9 @@ impl<R: Render> Ppu<R> {
         // hit) into a palette index only and stores it in the flat buffer
         // at the beam position — no RGB work here. Colour (grayscale and
         // emphasis) is applied once, at the drain in `enter_vblank` below.
-        // (The scalar path uses the mask state at drain time for the whole
-        // frame; #63 records mid-frame splits per segment instead.)
+        // Mid-frame `$2001` colour changes are recorded as split points
+        // in `write_ppureg` and applied per segment by the drain below;
+        // enable bits, by contrast, take effect here immediately.
         if self.timing.is_visible() {
             let x = (dot - 1) as u8;
             let pixel_idx = if rendering {
@@ -586,11 +613,43 @@ impl<R: Render> Ppu<R> {
         cartridge.on_ppu_tick(self.timing.scanline);
     }
 
+    /// Beam index of the next visible pixel to be buffered, for recording
+    /// a `$2001` colour split. `self.timing` points at the next dot to be
+    /// processed (a CPU write lands between ticks, after the previous
+    /// dot has advanced), so the next visible pixel is:
+    ///
+    /// - dot 0 of a visible scanline: `scanline * 256` (its first pixel)
+    /// - dots 1..=256 of a visible scanline: `scanline * 256 + (dot - 1)`
+    /// - dots 257..=339 of a visible scanline: the first pixel of the
+    ///   next scanline, clamped to the end of the frame on scanline 239
+    /// - non-visible scanlines (240-261): the end of the frame, so a write
+    ///   there affects no buffered pixel of the draining frame
+    fn next_beam_index(&self) -> usize {
+        const FRAME_PIXELS: usize = VISIBLE_WIDTH * VISIBLE_HEIGHT;
+        if self.timing.scanline >= 240 {
+            return FRAME_PIXELS;
+        }
+        match self.timing.dot {
+            0 => self.timing.scanline as usize * VISIBLE_WIDTH,
+            1..=256 => {
+                self.timing.scanline as usize * VISIBLE_WIDTH + (self.timing.dot - 1) as usize
+            }
+            _ => ((self.timing.scanline as usize + 1) * VISIBLE_WIDTH).min(FRAME_PIXELS),
+        }
+    }
+
     /// Drain the frame's buffered palette indices through the Render seam
-    /// in raster (linear buffer) order, applying the colour state current
-    /// at drain time per pixel. Runs once per frame at the VBL set dot,
-    /// before `finish()`. The linear scan preserves the raster order the
-    /// retired two-dot output pipeline used to provide.
+    /// in raster (linear buffer) order, segment-wise by recorded colour
+    /// splits (ticket #63). Runs once per frame at the VBL set dot, before
+    /// `finish()`. The linear scan preserves the raster order the retired
+    /// two-dot output pipeline used to provide.
+    ///
+    /// Each [`ColourSplit`] closes a segment: indices below its `index`
+    /// use its `prior` configuration, and the segment starting at `index`
+    /// uses the next split's `prior` — or the live mask at drain time for
+    /// the final segment. Applying only the final mask to the whole frame
+    /// would mis-colour every pixel before a mid-frame write. Splits are
+    /// consumed here and cleared, so they never leak into the next frame.
     ///
     /// `pixel_brightness` (Zapper light sense) is intentionally not served
     /// from here yet: mid-frame sampling still reads the Render backend's
@@ -598,17 +657,37 @@ impl<R: Render> Ppu<R> {
     /// #64 serves it live from this buffer; until then the drain is the
     /// only consumer.
     fn drain_palette_index_buffer(&mut self) {
-        let mask = self.registers.mask;
-        for (index, &palette_index) in self.palette_index_buffer.iter().enumerate() {
-            // Hardware grayscale ANDs the 6-bit palette entry with $30
-            // before the color lookup ($3F black renders as $30 white);
-            // emphasis tints are analog effects on the looked-up RGB.
-            let pixel =
-                mask.apply_effects(self.color_theme.color(mask.grayscale_index(palette_index)));
-            let x = (index % VISIBLE_WIDTH) as u32;
-            let y = (index / VISIBLE_WIDTH) as u32;
-            self.renderer.set_pixel(x, y, pixel.0);
+        let live = ColourConfig::from_mask(self.registers.mask);
+        let frame_len = self.palette_index_buffer.len();
+        let split_count = self.colour_splits.len();
+        let mut start = 0usize;
+        for segment in 0..=split_count {
+            let (end, config) = if segment < split_count {
+                let split = self.colour_splits[segment];
+                (split.index.min(frame_len), split.prior)
+            } else {
+                (frame_len, live)
+            };
+            if start < end {
+                for index in start..end {
+                    let palette_index = self.palette_index_buffer[index];
+                    // Hardware grayscale ANDs the 6-bit palette entry with $30
+                    // before the color lookup ($3F black renders as $30 white);
+                    // emphasis tints are analog effects on the looked-up RGB.
+                    let pixel = config.apply_effects(
+                        self.color_theme
+                            .color(config.grayscale_index(palette_index)),
+                    );
+                    let x = (index % VISIBLE_WIDTH) as u32;
+                    let y = (index / VISIBLE_WIDTH) as u32;
+                    self.renderer.set_pixel(x, y, pixel.0);
+                }
+            }
+            // Monotonic start: duplicate or out-of-order split indices
+            // close empty segments without re-emitting earlier pixels.
+            start = start.max(end);
         }
+        self.colour_splits.clear();
     }
 
     /// Atomically sampled NMI line for this dot.
@@ -694,7 +773,16 @@ impl<R: Render> Ppu<R> {
                 self.schedule_background_activation_if_visible();
             }
             0x2001 => {
-                self.registers.mask = PpuMask::from_bits(value);
+                let prior = ColourConfig::from_mask(self.registers.mask);
+                let mask = PpuMask::from_bits(value);
+                self.registers.mask = mask;
+                // Only the colour bits are deferred: a write that changes
+                // grayscale/emphasis becomes a split point at the next
+                // beam position, carrying the prior colour configuration.
+                if ColourConfig::from_mask(mask) != prior {
+                    let index = self.next_beam_index();
+                    self.colour_splits.push(ColourSplit { index, prior });
+                }
             }
             // OAMADDR
             0x2003 => {

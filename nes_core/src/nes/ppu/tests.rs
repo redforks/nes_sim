@@ -2233,3 +2233,154 @@ fn drain_emits_static_background_frame_in_raster_order() {
         assert_eq!(color, ppu.color_theme.color(want).0, "colour at {x},{y}");
     }
 }
+
+/// Single mid-frame grayscale toggle (ticket #63): a `$2001` write after
+/// 100 pixels of scanline 0 have been buffered splits the frame at pixel
+/// index 100. Pixels below the split keep the prior (colour) configuration
+/// and pixels at/after it use grayscale. Entry $3F under grayscale renders
+/// as $30 (hardware ANDs the 6-bit entry with $30 before lookup), so the
+/// two segments are distinguishable through the Render seam alone.
+#[test]
+fn drain_applies_prior_colour_below_midframe_grayscale_split() {
+    let mut ppu = Ppu::new(RecordingRender::default());
+    let mut cart = Cartridge::test();
+    // Rendering disabled: every visible dot resolves to the backdrop entry
+    // at $3F00 (vram_addr below $3F00, so `disabled_color_index` reads it).
+    ppu.palette.write(0x3f00, 0x3f);
+    ppu.registers.vram_addr = 0x2000;
+    ppu.timing.scanline = 0;
+    ppu.timing.dot = 0;
+
+    // Tick dot 0 (idle) plus dots 1..=100, buffering x = 0..=99 of
+    // scanline 0. Timing now points at dot 101, the next pixel (index 100).
+    for _ in 0..101 {
+        ppu.tick(&mut cart);
+    }
+    assert!(ppu.renderer.pixels.is_empty(), "no pixel before the drain");
+
+    // Mid-frame $2001 write: grayscale on (bit 0). Enable bits stay off,
+    // so the per-dot geometry path (disabled backdrop) is unchanged.
+    ppu.write_ppureg(0x2001, 0x01, &mut cart);
+
+    tick_until_vblank(&mut ppu, &mut cart);
+
+    let colour = ppu.color_theme.color(0x3f).0;
+    let grayscale = ppu.color_theme.color(0x30).0;
+    assert_ne!(colour, grayscale, "segments must be distinguishable");
+    assert_eq!(ppu.renderer.finishes, 1, "exactly one finish per frame");
+    assert_eq!(ppu.renderer.pixels.len(), 256 * 240);
+    for (i, &(x, y, color)) in ppu.renderer.pixels.iter().enumerate() {
+        assert_eq!(
+            (x, y),
+            ((i % 256) as u32, (i / 256) as u32),
+            "raster order at {i}"
+        );
+        let want = if i < 100 { colour } else { grayscale };
+        assert_eq!(color, want, "colour at pixel index {i}");
+    }
+}
+
+/// Multiple mid-frame grayscale toggles (ticket #63): grayscale on at
+/// pixel index 100, off again at the top of scanline 120. Each of the
+/// three segments must use its own configuration — colour, grayscale,
+/// colour — so neither the first write nor the final register state may
+/// colour the whole frame.
+#[test]
+fn drain_applies_each_segment_for_multiple_midframe_grayscale_toggles() {
+    let mut ppu = Ppu::new(RecordingRender::default());
+    let mut cart = Cartridge::test();
+    ppu.palette.write(0x3f00, 0x3f);
+    ppu.registers.vram_addr = 0x2000;
+    ppu.timing.scanline = 0;
+    ppu.timing.dot = 0;
+
+    // Buffer x = 0..=99 of scanline 0, then toggle grayscale on.
+    for _ in 0..101 {
+        ppu.tick(&mut cart);
+    }
+    ppu.write_ppureg(0x2001, 0x01, &mut cart);
+
+    // Scan until timing points at scanline 120, dot 1 (its first pixel,
+    // index 120 * 256), buffering every intervening visible dot.
+    for _ in 0..200_000 {
+        if ppu.timing.scanline() == 120 && ppu.timing.dot() == 1 {
+            break;
+        }
+        ppu.tick(&mut cart);
+    }
+    assert_eq!((ppu.timing.scanline(), ppu.timing.dot()), (120, 1));
+    assert!(ppu.renderer.pixels.is_empty(), "no pixel before the drain");
+
+    // Toggle grayscale back off at the scanline-120 boundary.
+    ppu.write_ppureg(0x2001, 0x00, &mut cart);
+
+    tick_until_vblank(&mut ppu, &mut cart);
+
+    let colour = ppu.color_theme.color(0x3f).0;
+    let grayscale = ppu.color_theme.color(0x30).0;
+    assert_ne!(colour, grayscale, "segments must be distinguishable");
+    assert_eq!(ppu.renderer.finishes, 1, "exactly one finish per frame");
+    assert_eq!(ppu.renderer.pixels.len(), 256 * 240);
+    for (i, &(x, y, color)) in ppu.renderer.pixels.iter().enumerate() {
+        assert_eq!(
+            (x, y),
+            ((i % 256) as u32, (i / 256) as u32),
+            "raster order at {i}"
+        );
+        let want = if !(100..120 * 256).contains(&i) {
+            colour
+        } else {
+            grayscale
+        };
+        assert_eq!(color, want, "colour at pixel index {i}");
+    }
+}
+
+/// Mid-frame emphasis toggle (ticket #63): a `$2001` write enabling the
+/// red tint after 100 pixels of scanline 0 have been buffered splits the
+/// frame at pixel index 100. Pixels below the split keep the untinted
+/// colour; pixels at/after it have red-only emphasis applied (green and
+/// blue scaled by 192/256, red unchanged). Expected colours are derived
+/// from the literal backdrop entry's theme colour, not from the PPU's
+/// own emphasis code.
+#[test]
+fn drain_applies_prior_colour_below_midframe_emphasis_split() {
+    let mut ppu = Ppu::new(RecordingRender::default());
+    let mut cart = Cartridge::test();
+    ppu.palette.write(0x3f00, 0x2c);
+    ppu.registers.vram_addr = 0x2000;
+    ppu.timing.scanline = 0;
+    ppu.timing.dot = 0;
+
+    // Buffer x = 0..=99 of scanline 0. Timing now points at dot 101.
+    for _ in 0..101 {
+        ppu.tick(&mut cart);
+    }
+    assert!(ppu.renderer.pixels.is_empty(), "no pixel before the drain");
+
+    // Mid-frame $2001 write: red emphasis on (bit 5 = $20). Enable bits
+    // stay off, so the per-dot geometry path is unchanged.
+    ppu.write_ppureg(0x2001, 0x20, &mut cart);
+
+    tick_until_vblank(&mut ppu, &mut cart);
+
+    let colour = ppu.color_theme.color(0x2c).0;
+    let emphasised = [
+        colour[0],
+        (colour[1] as u16 * 192 / 256) as u8,
+        (colour[2] as u16 * 192 / 256) as u8,
+        colour[3],
+    ];
+    assert_ne!(colour, emphasised, "segments must be distinguishable");
+    assert_eq!(ppu.renderer.finishes, 1, "exactly one finish per frame");
+    assert_eq!(ppu.renderer.pixels.len(), 256 * 240);
+    for (i, &(x, y, color)) in ppu.renderer.pixels.iter().enumerate() {
+        assert_eq!(
+            (x, y),
+            ((i % 256) as u32, (i / 256) as u32),
+            "raster order at {i}"
+        );
+        let want = if i < 100 { colour } else { emphasised };
+        assert_eq!(color, want, "colour at pixel index {i}");
+    }
+}
