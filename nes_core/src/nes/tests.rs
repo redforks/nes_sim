@@ -768,6 +768,54 @@ fn test_4017_peek_includes_zapper_bits() {
     assert_eq!(mcu.peek(0x4016) & 0x18, 0x00);
 }
 
+/// Ticket #64: Zapper light sense is live mid-frame. With a white
+/// backdrop and the beam already past the Aim aperture — but long
+/// before the VBL drain materializes any framebuffer pixel — $4017
+/// must report light detected ( bit 3 clear), not the black-framebuffer
+/// "no light" (0x08) the pre-#64 framebuffer path returned.
+#[test]
+fn zapper_light_detected_mid_frame_before_drain() {
+    let mut mcu = test_mcu();
+    // Backdrop entry $3F00 = $30 (white per default.pal, luminance 764).
+    mcu.write(0x2006, 0x3f, SystemClock::default());
+    mcu.write(0x2006, 0x00, SystemClock::default());
+    mcu.write(0x2007, 0x30, SystemClock::default());
+    mcu.connect_zapper(true);
+    mcu.aim_zapper(50, 10);
+
+    // Beam is on the pre-render line, nowhere near the aim row: no light.
+    assert_eq!(mcu.read(0x4017) & 0x18, 0x08, "beam not at aim row yet");
+
+    // Tick until the beam has scanned past the aim aperture on the aim
+    // row (scanline 10, dot past the aperture's right edge). The PPU
+    // starts at scanline 261, so a generous tick budget (one full frame
+    // is 262*341 = 89k dots) replaces a scanline bound.
+    let mut reached = false;
+    for _ in 0..90_000 {
+        mcu.tick_ppu();
+        let timing = mcu.ppu_timing();
+        if timing.scanline() == 10 && timing.dot() > 60 {
+            reached = true;
+            break;
+        }
+    }
+    assert!(reached, "beam never scanned past the aim row");
+
+    // Still mid-frame: nothing has drained into the framebuffer yet.
+    assert_eq!(
+        mcu.ppu().renderer().get_pixel(50, 10),
+        [0, 0, 0, 0],
+        "no drain before vblank: framebuffer still black at the aim"
+    );
+
+    // Light detected: bit 3 clear, trigger bit 4 clear (not pulled).
+    assert_eq!(
+        mcu.read(0x4017) & 0x18,
+        0x00,
+        "buffered white backdrop senses as light mid-frame"
+    );
+}
+
 /// Regression: deferred length-counter writes used to be anchored against
 /// a `last_apu_tick` cache that `reset` zeroed while the master clock kept
 /// running, so they could flush immediately instead of one CPU cycle after

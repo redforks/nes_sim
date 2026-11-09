@@ -217,6 +217,14 @@ pub struct Ppu<R: Render = ()> {
     /// still read live at per-dot resolve time, so a palette write takes
     /// effect from its beam position without flushing geometry.
     palette_index_buffer: Box<[u8]>,
+    /// Number of leading buffer entries written this frame. The live
+    /// per-dot path writes strictly in raster order, so a single count
+    /// tracks which beam positions have been buffered: indices below it
+    /// hold this frame's palette indices, indices at/after it are stale
+    /// and have not been scanned yet. [`Self::pixel_brightness`] answers
+    /// black for the latter — matching the materialized framebuffer,
+    /// which is also black until the beam passes.
+    buffered_pixel_count: usize,
     /// Set when the PPU timing enters vblank (scanline 241, dot 1).
     /// This is a pure timing event, independent of the $2002 VBL flag
     /// (which `$2002` reads clear and the dot-0 race can suppress).
@@ -263,6 +271,7 @@ impl<R: Render> Ppu<R> {
             cycle: 0,
             ppudata_last_read: None,
             palette_index_buffer: vec![0; VISIBLE_WIDTH * VISIBLE_HEIGHT].into_boxed_slice(),
+            buffered_pixel_count: 0,
             vblank_entered: false,
         }
     }
@@ -284,8 +293,10 @@ impl<R: Render> Ppu<R> {
         self.vblank_entered = false;
         // A reset landing mid-frame must not let already-buffered palette
         // indices of the old frame drain into the fresh frame: positions
-        // not yet rewritten since the reset drain as entry 0.
+        // not yet rewritten since the reset drain as entry 0, and report
+        // black to live brightness queries.
         self.palette_index_buffer.fill(0);
+        self.buffered_pixel_count = 0;
     }
 
     pub fn timing(&self) -> &Timing {
@@ -563,6 +574,7 @@ impl<R: Render> Ppu<R> {
             };
             let index = scanline as usize * VISIBLE_WIDTH + x as usize;
             self.palette_index_buffer[index] = pixel_idx;
+            self.buffered_pixel_count = index + 1;
         }
 
         if self.timing.enter_vblank() {
@@ -592,23 +604,47 @@ impl<R: Render> Ppu<R> {
     /// before `finish()`. The linear scan preserves the raster order the
     /// retired two-dot output pipeline used to provide.
     ///
-    /// `pixel_brightness` (Zapper light sense) is intentionally not served
-    /// from here yet: mid-frame sampling still reads the Render backend's
-    /// materialized framebuffer (previous frame until the drain). Ticket
-    /// #64 serves it live from this buffer; until then the drain is the
-    /// only consumer.
     fn drain_palette_index_buffer(&mut self) {
         let mask = self.registers.mask;
         for (index, &palette_index) in self.palette_index_buffer.iter().enumerate() {
-            // Hardware grayscale ANDs the 6-bit palette entry with $30
-            // before the color lookup ($3F black renders as $30 white);
-            // emphasis tints are analog effects on the looked-up RGB.
-            let pixel =
-                mask.apply_effects(self.color_theme.color(mask.grayscale_index(palette_index)));
+            let pixel = self.resolve_pixel(palette_index, mask);
             let x = (index % VISIBLE_WIDTH) as u32;
             let y = (index / VISIBLE_WIDTH) as u32;
             self.renderer.set_pixel(x, y, pixel.0);
         }
+    }
+
+    /// Resolve one buffered palette index to its final pixel under a
+    /// given colour configuration. Hardware grayscale ANDs the 6-bit
+    /// entry with $30 before the color lookup ($3F black renders as
+    /// $30 white); emphasis tints are analog effects on the looked-up
+    /// RGB. The drain passes the configuration in effect at the VBL set
+    /// dot (per-segment once #63 records split points); the live brightness
+    /// path ([`Self::pixel_brightness`]) passes the current mask, so the
+    /// two share one resolution point and stay segment-compatible.
+    fn resolve_pixel(&self, palette_index: u8, mask: PpuMask) -> Pixel {
+        mask.apply_effects(self.color_theme.color(mask.grayscale_index(palette_index)))
+    }
+
+    /// R+G+B luminance of the pixel at (`x`, `y`) for Zapper light
+    /// sense, served live from the palette-index buffer: the buffered
+    /// index is resolved on demand through the palette plus the current
+    /// grayscale/emphasis logic, so light is detectable mid-frame,
+    /// before the drain materializes the framebuffer. Beam positions
+    /// not yet written this frame report black, matching the
+    /// framebuffer's behaviour until the drain. Out-of-bounds
+    /// coordinates also report black (same as `Render::pixel_brightness`).
+    pub fn pixel_brightness(&self, x: u32, y: u32) -> u32 {
+        if x >= VISIBLE_WIDTH as u32 || y >= VISIBLE_HEIGHT as u32 {
+            return 0;
+        }
+        let index = y as usize * VISIBLE_WIDTH + x as usize;
+        if index >= self.buffered_pixel_count {
+            return 0;
+        }
+        let pixel = self.resolve_pixel(self.palette_index_buffer[index], self.registers.mask);
+        let (r, g, b) = pixel.to_rgb();
+        u32::from(r) + u32::from(g) + u32::from(b)
     }
 
     /// Atomically sampled NMI line for this dot.
