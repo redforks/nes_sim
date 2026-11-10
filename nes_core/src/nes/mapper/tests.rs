@@ -489,16 +489,31 @@ const NO_CAPS: CartridgeCaps = CartridgeCaps {
     on_ppu_tick: false,
     notify_vram_address: false,
     irq_pending: false,
+    tick_audio: false,
+    notify_prg_read: false,
 };
 const SCANLINE_AND_IRQ: CartridgeCaps = CartridgeCaps {
     on_ppu_tick: true,
     notify_vram_address: false,
     irq_pending: true,
+    tick_audio: false,
+    notify_prg_read: false,
 };
 const ALL_CAPS: CartridgeCaps = CartridgeCaps {
     on_ppu_tick: true,
     notify_vram_address: true,
     irq_pending: true,
+    tick_audio: false,
+    notify_prg_read: false,
+};
+/// MMC5 (ticket #83): PPU hooks arrive in later tickets; audio + PCM
+/// stream + PCM IRQ are live now.
+const MMC5_AUDIO_CAPS: CartridgeCaps = CartridgeCaps {
+    on_ppu_tick: false,
+    notify_vram_address: false,
+    irq_pending: true,
+    tick_audio: true,
+    notify_prg_read: true,
 };
 
 /// The declaration table: what each board tells the cartridge it implements.
@@ -510,6 +525,7 @@ const ALL_CAPS: CartridgeCaps = CartridgeCaps {
 #[test_case(2, NO_CAPS ; "UxROM")]
 #[test_case(3, NO_CAPS ; "CNROM")]
 #[test_case(4, ALL_CAPS ; "MMC3")]
+#[test_case(5, MMC5_AUDIO_CAPS ; "MMC5")]
 #[test_case(7, NO_CAPS ; "AxROM")]
 #[test_case(34, NO_CAPS ; "BNROM, 8 KB CHR")]
 #[test_case(87, NO_CAPS ; "J87")]

@@ -1,6 +1,7 @@
 use crate::SystemClock;
 use crate::ines::INesFile;
 use crate::ines::NametableArrangement;
+use crate::nes::apu::ExpansionMix;
 use axrom::AxRom;
 use bxrom::BxRom;
 use cnrom::CnRom;
@@ -29,6 +30,7 @@ mod memory;
 mod mmc1;
 mod mmc3;
 mod mmc5;
+mod mmc5_audio;
 mod nina001;
 mod nrom;
 mod uxrom;
@@ -210,6 +212,12 @@ pub struct CartridgeCaps {
     pub on_ppu_tick: bool,
     pub notify_vram_address: bool,
     pub irq_pending: bool,
+    /// The chip advances expansion audio (MMC5 `$5000-$5015`) once per CPU
+    /// cycle; gates [`Mapper::tick_audio`].
+    pub tick_audio: bool,
+    /// Every `$8000-$FFFF` read is reported to the chip (MMC5 PCM stream
+    /// read mode); gates [`Mapper::notify_prg_read`].
+    pub notify_prg_read: bool,
 }
 
 /// The bank-switching chip on a cartridge board. A mapper owns no cartridge
@@ -234,6 +242,26 @@ pub trait Mapper {
     fn notify_vram_address(&mut self, _addr: u16) {}
     fn irq_pending(&self) -> bool {
         false
+    }
+    /// Advance expansion audio one CPU cycle and report current channel
+    /// levels for the APU mixer. Silence (zeros) by default: boards without
+    /// expansion audio.
+    fn tick_audio(&mut self) -> ExpansionMix {
+        ExpansionMix::default()
+    }
+    /// Observe a `$8000-$FFFF` byte `value` read at `address`. Only the
+    /// stream-read PCM board (MMC5 read mode) acts on it; ignored by
+    /// default.
+    fn notify_prg_read(&mut self, _address: u16, _value: u8) {}
+    /// Expansion-area (`$5000-$5FFF`) read. `None` reads as open bus.
+    /// May have side effects (MMC5 `$5010` acknowledges the PCM IRQ).
+    fn read_expansion(&mut self, _address: u16) -> Option<u8> {
+        None
+    }
+    /// Side-effect-free expansion-area read (debugger peek): never
+    /// acknowledges IRQs.
+    fn peek_expansion(&self, _address: u16) -> Option<u8> {
+        None
     }
     /// Which of the three hooks above this chip implements. [`Cartridge`]
     /// snapshots this once, so an override that is not declared here is dead
@@ -354,6 +382,39 @@ impl Cartridge {
     /// scanline IRQs pay no per-dot cost for that math.
     pub fn wants_vram_notify(&self) -> bool {
         self.caps.notify_vram_address
+    }
+
+    /// Advance expansion audio one CPU cycle, returning current channel
+    /// levels for the APU mixer (silence when the chip declares no audio,
+    /// so boards without expansion audio pay one branch and nothing more).
+    #[inline]
+    pub fn tick_audio(&mut self) -> ExpansionMix {
+        if self.caps.tick_audio {
+            self.mapper.tick_audio()
+        } else {
+            ExpansionMix::default()
+        }
+    }
+
+    /// Report a `$8000-$FFFF` read to the mapper chip (MMC5 PCM stream read
+    /// mode). Gated by capability, so instruction fetches on other boards
+    /// pay one branch and nothing more.
+    #[inline]
+    pub fn notify_prg_read(&mut self, address: u16, value: u8) {
+        if self.caps.notify_prg_read {
+            self.mapper.notify_prg_read(address, value);
+        }
+    }
+
+    /// Expansion-area (`$5000-$5FFF`) read for the MCU: `None` means the
+    /// caller substitutes open bus.
+    pub fn read_expansion(&mut self, address: u16) -> Option<u8> {
+        self.mapper.read_expansion(address)
+    }
+
+    /// Side-effect-free expansion-area read (debugger peek).
+    pub fn peek_expansion(&self, address: u16) -> Option<u8> {
+        self.mapper.peek_expansion(address)
     }
 
     /// The mapper's IRQ line, held low for a board that declares no IRQ

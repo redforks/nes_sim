@@ -146,6 +146,11 @@ impl<R: Render, D: AudioDriver> NesMcu<R, D> {
     }
 
     pub fn tick_apu(&mut self, clock: SystemClock) {
+        // Expansion audio (MMC5 `$5000-$5015`) advances on the same CPU
+        // cycle and its levels reach the APU mixer before the tick emits:
+        // silence (zeros) for boards without expansion audio.
+        let expansion = self.cartridge.tick_audio();
+        self.apu.set_expansion_mix(expansion);
         self.apu.tick();
         while let Some(&(at, address, value)) = self.deferred_apu_writes.front() {
             if at > clock.cycles() {
@@ -252,7 +257,13 @@ impl<R: Render, D: AudioDriver> Mcu for NesMcu<R, D> {
     fn read(&mut self, address: u16) -> u8 {
         let value = match address {
             // PRG-ROM / PRG-RAM from cartridge; unmapped and disabled RAM is open bus
-            0x8000..=0xffff => self.cartridge.read(address),
+            0x8000..=0xffff => {
+                let value = self.cartridge.read(address);
+                // PCM stream read mode: a `$8000-$BFFF` read feeds the MMC5
+                // DAC (caps-gated, so other boards pay one branch).
+                self.cartridge.notify_prg_read(address, value);
+                value
+            }
             0x0000..=0x1fff => self.lower_ram.read(address),
             0x2000..=0x3fff => self.ppu.read_ppureg(address, &mut self.cartridge),
             0x6000..=0x7fff => {
@@ -277,6 +288,12 @@ impl<R: Render, D: AudioDriver> Mcu for NesMcu<R, D> {
                 return self.latch_read(value, true);
             }
             0x4015 => self.apu.read(address),
+            // Cartridge expansion area (MMC5 audio `$5010`/`$5015` status):
+            // unclaimed addresses read as open bus, as before.
+            0x5000..=0x5fff => self
+                .cartridge
+                .read_expansion(address)
+                .unwrap_or(self.open_bus),
             // Write-only APU/IO registers and unused test registers: open bus
             _ => self.open_bus,
         };
@@ -288,6 +305,11 @@ impl<R: Render, D: AudioDriver> Mcu for NesMcu<R, D> {
             0x0000..=0x1fff => self.lower_ram.peek(address),
             0x2000..=0x3fff => self.ppu.peek(address, &self.cartridge),
             0x4015 => self.apu.peek(address),
+            // Side-effect-free expansion read: never acknowledges IRQs.
+            0x5000..=0x5fff => self
+                .cartridge
+                .peek_expansion(address)
+                .unwrap_or(self.open_bus),
             0x4016 => self.controller.peek(address),
             0x4017 => self.controller.peek(address) | self.zapper_bits(),
             0x6000..=0x7fff => {
