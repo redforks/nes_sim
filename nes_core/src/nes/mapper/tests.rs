@@ -499,18 +499,31 @@ const NO_CAPS: CartridgeCaps = CartridgeCaps {
     notify_vram_address: false,
     irq_pending: false,
     ppu_read: false,
+    read_expansion: false,
 };
 const SCANLINE_AND_IRQ: CartridgeCaps = CartridgeCaps {
     on_ppu_tick: true,
     notify_vram_address: false,
     irq_pending: true,
     ppu_read: false,
+    read_expansion: false,
 };
 const ALL_CAPS: CartridgeCaps = CartridgeCaps {
     on_ppu_tick: true,
     notify_vram_address: true,
     irq_pending: true,
     ppu_read: false,
+    read_expansion: false,
+};
+/// Ticket #81: the MMC5 declares the per-dot tick, the IRQ line, the
+/// per-fetch PPU-read feed and the expansion-area status reads — but no
+/// A12 notification (that is the MMC3/VRC scanline mechanism, not MMC5's).
+const MMC5_CAPS: CartridgeCaps = CartridgeCaps {
+    on_ppu_tick: true,
+    notify_vram_address: false,
+    irq_pending: true,
+    ppu_read: true,
+    read_expansion: true,
 };
 
 /// The declaration table: what each board tells the cartridge it implements.
@@ -522,6 +535,7 @@ const ALL_CAPS: CartridgeCaps = CartridgeCaps {
 #[test_case(2, NO_CAPS ; "UxROM")]
 #[test_case(3, NO_CAPS ; "CNROM")]
 #[test_case(4, ALL_CAPS ; "MMC3")]
+#[test_case(5, MMC5_CAPS ; "MMC5")]
 #[test_case(7, NO_CAPS ; "AxROM")]
 #[test_case(34, NO_CAPS ; "BNROM, 8 KB CHR")]
 #[test_case(87, NO_CAPS ; "J87")]

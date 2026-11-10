@@ -292,6 +292,7 @@ impl Mapper for Vrc24 {
             notify_vram_address: false,
             irq_pending: true,
             ppu_read: false,
+            read_expansion: false,
         }
     }
 
