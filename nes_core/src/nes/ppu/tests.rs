@@ -1,5 +1,5 @@
 use super::*;
-use crate::nes::mapper::Cartridge;
+use crate::nes::mapper::{Cartridge, PpuRenderState};
 use crate::render::{ImageRender, Render};
 
 use test_case::test_case;
@@ -1032,8 +1032,8 @@ fn sprite_row_cache_reads_each_evaluated_sprite_once_per_scanline() {
     // The addresses the cache read still decode to the framebuffer pixels.
     let backdrop = ppu.color_theme.color(0x0f).0;
     for i in 0..8usize {
-        let low = cart.read_vram(pattern_reads[i * 2]);
-        let high = cart.read_vram(pattern_reads[i * 2 + 1]);
+        let low = cart.read_vram(pattern_reads[i * 2], &PpuRenderState::disabled());
+        let high = cart.read_vram(pattern_reads[i * 2 + 1], &PpuRenderState::disabled());
         for dx in 0..8u8 {
             let bit = 7 - dx;
             let color_idx = ((low >> bit) & 1) | (((high >> bit) & 1) << 1);
@@ -1941,7 +1941,7 @@ fn test_scanline_zero_renders_no_freshly_evaluated_sprites() {
     assert!(ppu.sprite.current_zero_sprite().is_none());
     assert!(
         ppu.sprite
-            .find_sprite_pixel(ppu.registers.ctrl, &cart, 0, 0)
+            .find_sprite_pixel(ppu.registers.ctrl, &cart, 0, 0, &PpuRenderState::disabled(),)
             .is_none(),
         "scanline 0 must render no sprites (empty secondary OAM)"
     );

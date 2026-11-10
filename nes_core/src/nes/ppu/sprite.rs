@@ -1,5 +1,5 @@
 use super::oam::{Oam, Sprite};
-use crate::nes::mapper::Cartridge;
+use crate::nes::mapper::{Cartridge, PpuRenderState};
 use crate::nes::ppu::registers::{PpuCtrl, PpuStatus};
 use tinyvec::ArrayVec;
 
@@ -286,7 +286,13 @@ impl SpriteManager {
     /// request. One fill per evaluated Sprite resolves its vertical position
     /// (vertical flip and 8x16 height applied here) and reads the two pattern
     /// planes; afterwards the per-pixel path decodes from the cached planes.
-    fn ensure_rows(&mut self, ctrl: PpuCtrl, cartridge: &Cartridge, screen_y: u8) {
+    fn ensure_rows(
+        &mut self,
+        ctrl: PpuCtrl,
+        cartridge: &Cartridge,
+        screen_y: u8,
+        render: &PpuRenderState,
+    ) {
         if self.rows_scanline == Some(screen_y) {
             return;
         }
@@ -300,8 +306,8 @@ impl SpriteManager {
             let src_y = sprite_src_y(&sprite, sprite_height, screen_y);
             let tile_position = sprite.tile_position(ctrl);
             let addr = tile_position.resolve_pixel_addr(src_y);
-            let low = cartridge.read_vram(addr.0);
-            let high = cartridge.read_vram(addr.second_plane_addr());
+            let low = cartridge.read_vram(addr.0, render);
+            let high = cartridge.read_vram(addr.second_plane_addr(), render);
 
             self.rows.push(SpriteRow {
                 x: sprite.x,
@@ -326,8 +332,9 @@ impl SpriteManager {
         cartridge: &Cartridge,
         screen_x: u8,
         screen_y: u8,
+        render: &PpuRenderState,
     ) -> Option<SpritePixel> {
-        self.ensure_rows(ctrl, cartridge, screen_y);
+        self.ensure_rows(ctrl, cartridge, screen_y, render);
         self.rows.iter().find_map(|row| row.pixel(screen_x))
     }
 
