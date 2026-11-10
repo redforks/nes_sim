@@ -7,7 +7,7 @@ use cnrom::CnRom;
 use memory::CartridgeMemory;
 use mmc1::MMC1;
 use mmc3::MMC3;
-use mmc5::MMC5;
+use mmc5::{MMC5, wram_config};
 use nina001::Nina001;
 use nrom::NRom;
 use uxrom::UxRom;
@@ -120,7 +120,10 @@ pub fn create_cartridge_with_mmc3_irq_override(
                 alternate_irq_revision,
             ))
         }
-        5 => Box::new(MMC5::new(&mut memory)),
+        5 => {
+            let (wram_size, battery_bytes) = wram_config(f.header(), f.file_version());
+            Box::new(MMC5::new(&mut memory, wram_size, battery_bytes))
+        }
         7 => Box::new(AxRom::new(&mut memory)),
         34 => {
             // A 16 KB-or-smaller CHR image means the BNROM half of mapper 34.
