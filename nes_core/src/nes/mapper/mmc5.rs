@@ -34,8 +34,17 @@
 //! [`Mapper::on_ppu_tick`] per-dot heartbeat, with the PPU-passed render
 //! state as the only gate (no PPU-register reads from the mapper).
 //!
-//! Split, multiplier and audio registers are accepted and
-//! ignored here; later tickets implement them.
+//! CL-mode vertical split and unsigned multiplier (ticket #82): the
+//! `$5200` enable/side/threshold, `$5201` independent Y scroll and `$5202`
+//! split CHR bank registers, plus the unsigned 8x8 multiplier (`$5205`/
+//! `$5206`, instant 16-bit readback). The split region is located by a
+//! local NT-tile-fetch counter in [`Mapper::ppu_read`]; pattern fetches
+//! inside the region redirect to the `$5202` 4K bank through
+//! [`Mapper::ppu_chr_bank`], so the split area renders from its own bank
+//! (unit-tested). Only CL mode is implemented; the smooth-split pin mode
+//! is excluded per the spec's Out of Scope list. Scanline/in-frame
+//! counting stays with #81, which resets the fetch counter at each
+//! detected scanline. Audio registers are accepted and ignored.
 
 use super::{CartridgeCaps, Mapper, PpuFetchKind, PpuRenderState, memory::CartridgeMemory};
 use crate::SystemClock;
@@ -181,6 +190,32 @@ pub struct MMC5 {
     /// even with the mask off, so the [`PpuRenderState`] gate — not the bare
     /// fact of a read — is what sets this).
     render_seen: Cell<bool>,
+    /// Raw `$5200` split control (ticket #82): bit 7 enable, bit 6 side
+    /// (0 = left, 1 = right), bits 4-0 threshold tile count (wiki 3.6.1,
+    /// `[ES.T TTTT]`).
+    split_mode: u8,
+    /// `$5201`: independent vertical scroll for the split region (no X
+    /// scroll; wiki 3.6.2).
+    split_scroll: u8,
+    /// `$5202`: 4 KB CHR bank used for both pattern tables while rendering
+    /// the split region (wiki 3.6.3).
+    split_bank: u8,
+    /// `$5205` multiplicand / `$5206` multiplier; both power on as `$FF`
+    /// (wiki 3.6.6).
+    mult_a: u8,
+    mult_b: u8,
+    /// Cached unsigned product, readable instantly as `$5205` low /
+    /// `$5206` high; power-on `$FF * $FF = $FE01` (wiki 3.6.6).
+    mult_result: u16,
+    /// Local NT-tile-fetch counter locating the split threshold (wiki:
+    /// 34 fetches/scanline locate the threshold by count). Counts only
+    /// while split is enabled and the PPU render gate is open; #81 resets
+    /// it from its scanline detection (it owns the in-frame/scanline
+    /// counters).
+    split_fetch: Cell<u8>,
+    /// Whether the most recent counted fetch fell inside the split region;
+    /// read by the [`Mapper::ppu_chr_bank`] split redirect.
+    split_active: Cell<bool>,
 }
 
 impl MMC5 {
@@ -224,6 +259,14 @@ impl MMC5 {
             last_tick_scanline: Cell::new(u16::MAX),
             dots_in_line: Cell::new(0),
             render_seen: Cell::new(false),
+            split_mode: 0,
+            split_scroll: 0,
+            split_bank: 0,
+            mult_a: 0xff,
+            mult_b: 0xff,
+            mult_result: 0xff * 0xff,
+            split_fetch: Cell::new(0),
+            split_active: Cell::new(false),
         };
         if wram_bank_count_8k == 0 {
             // ELROM (0K): `$6000-$7FFF` reads as open bus through the
@@ -331,6 +374,65 @@ impl MMC5 {
         };
         let full = ((self.chr_high as u16) << 8) | (raw & 0x3ff);
         full * size_1k + sub
+    }
+
+    // ---- Ticket #82: CL-mode vertical split + multiplier ----
+
+    /// `$5200` bit 7: split enabled.
+    fn split_enabled(&self) -> bool {
+        self.split_mode & 0x80 != 0
+    }
+
+    /// `$5200` bit 6: split side (false = left, true = right).
+    fn split_right_side(&self) -> bool {
+        self.split_mode & 0x40 != 0
+    }
+
+    /// `$5200` bits 4-0: threshold tile count T.
+    fn split_threshold(&self) -> u8 {
+        self.split_mode & 0x1f
+    }
+
+    /// Whether NT-tile fetch `n` (1-based count this scanline) falls in the
+    /// split region (wiki 3.6.1 Left/Right Split): left side renders fetches
+    /// `1..=T` from the split nametable, right side renders fetches `> T`.
+    /// `control` is the raw `$5200` byte, so the predicate stays pure and
+    /// unit-testable without driving the fetch stream.
+    fn split_in_region(n: u8, control: u8) -> bool {
+        if control & 0x80 == 0 {
+            return false;
+        }
+        let threshold = control & 0x1f;
+        if control & 0x40 == 0 {
+            // Left: tiles `0..T-1` are the split region.
+            n <= threshold && n > 0
+        } else {
+            // Right: tiles `T..` are the split region.
+            n > threshold
+        }
+    }
+
+    /// Split nametable tile row (0-31) for a visible `scanline` under the
+    /// independent `$5201` scroll (wiki 3.6.1 Vertical Behavior: the MMC5
+    /// adds the scanline count to the scroll value). Scrolls 0-239 are
+    /// valid; sums reaching rows 30-31 alias the ExRAM attribute bytes as
+    /// nametable data, and sums past 255 roll over to the top of the
+    /// nametable (32-row wrap, so the split never shows CIRAM attributes).
+    /// In CL mode the fine row comes from the PPU's own scroll at the pins
+    /// (smooth-split wiring excluded per spec Out of Scope), so only the
+    /// coarse row is modelled here. Consumed by #79 (ExRAM-as-nametable);
+    /// takes the scanline as a parameter so no counter logic is duplicated
+    /// (scanline/in-frame counting belongs to #81).
+    fn split_tile_row(scanline: u16, scroll: u8) -> u8 {
+        (((scanline + u16::from(scroll)) / 8) % 32) as u8
+    }
+
+    /// Resets the local split-fetch counter at a scanline boundary. Owned
+    /// by the split logic; #81 (scanline IRQ, which owns the
+    /// in-frame/scanline counters) wires this to its scanline detection
+    /// once it lands.
+    fn reset_split_fetch(&self) {
+        self.split_fetch.set(0);
     }
 
     /// Effective 1K bank of the sprite set (`$5120-$5127`) for pattern-table
@@ -462,6 +564,18 @@ impl Mapper for MMC5 {
         self.rendering.set(render.rendering_enabled);
         if render.rendering_enabled {
             self.render_seen.set(true);
+            // Ticket #82: count nametable tile fetches to locate the split
+            // threshold (wiki 3.6.1: tile fetches per scanline locate it by
+            // count). Attribute (`$x3C0+`) and pattern (`$0000-$1FFF`)
+            // fetches leave the counter alone; `$3000-$3EFF` mirrors share
+            // the low 10 bits, so one range covers both. The region latch
+            // feeds the [`Mapper::ppu_chr_bank`] split redirect.
+            if self.split_enabled() && matches!(addr, 0x2000..=0x3eff) && addr & 0x03ff < 0x03c0 {
+                let n = self.split_fetch.get().wrapping_add(1);
+                self.split_fetch.set(n);
+                self.split_active
+                    .set(Self::split_in_region(n, self.split_mode));
+            }
         }
         // `$3000-$3EFF` mirrors `$2000-$2EFF` (the window maps the alias
         // slots identically); palette space never reaches the cartridge.
@@ -581,9 +695,22 @@ impl Mapper for MMC5 {
             // either way, so disabling then re-enabling re-asserts at once
             // when pending is set.
             0x5204 => self.irq_enabled.set(value & 0x80 != 0),
-            // Every other MMC5 register (`$5200-$5202` split, `$5205-$5206`
-            // multiplier, `$5010/$5015` audio) is accepted and ignored;
-            // later tickets implement them.
+            // Ticket #82: CL-mode vertical split + multiplier.
+            0x5200 => self.split_mode = value,
+            0x5201 => self.split_scroll = value,
+            0x5202 => self.split_bank = value,
+            // Unsigned 8x8 multiplier with instant readback (wiki 3.6.6):
+            // each write recomputes the product immediately.
+            0x5205 => {
+                self.mult_a = value;
+                self.mult_result = u16::from(self.mult_a) * u16::from(self.mult_b);
+            }
+            0x5206 => {
+                self.mult_b = value;
+                self.mult_result = u16::from(self.mult_a) * u16::from(self.mult_b);
+            }
+            // Every other MMC5 register (`$5010/$5015` audio) is accepted
+            // and ignored; later tickets implement sound.
             _ => {}
         }
     }
@@ -593,9 +720,20 @@ impl Mapper for MMC5 {
     /// background fetches use the background set, sprite fetches the sprite
     /// set, and CPU `$2007` reads use whichever set was written last
     /// (wiki §3.5). `$2000+` declines: the nametable plane belongs to #79.
+    ///
+    /// Ticket #82: while the split region is active (located by the
+    /// [`Mapper::ppu_read`] fetch counter), both pattern tables read from
+    /// the `$5202` 4K bank regardless of mode or fetch kind (wiki 3.6.3).
+    /// CPU `$2007` reads never take the split bank: they carry
+    /// [`PpuFetchKind::Cpu`], while the region latch only advances on
+    /// render-enabled nametable fetches.
     fn ppu_chr_bank(&self, addr: u16, render: &PpuRenderState) -> Option<u16> {
         if addr >= 0x2000 {
             return None;
+        }
+        if self.split_active.get() && !matches!(render.fetch, PpuFetchKind::Cpu) {
+            let base = (self.split_bank as u16) << 2;
+            return Some(base + ((addr >> 10) & 3));
         }
         let slot = (addr >> 10) & 7;
         let bank = if !render.sprite_8x16 {
@@ -656,6 +794,11 @@ impl Mapper for MMC5 {
             && self.dots_in_line.get() == DETECT_DOTS_IN_LINE
             && self.render_seen.get()
         {
+            // Ticket #82: each detected scanline restarts the split-fetch
+            // counter so the threshold locates this line's region (#81
+            // owns the scanline detection; the counter itself is split
+            // logic via `reset_split_fetch`).
+            self.reset_split_fetch();
             if !self.irq_in_frame.get() {
                 self.irq_in_frame.set(true);
                 self.irq_counter.set(0);
@@ -680,22 +823,40 @@ impl Mapper for MMC5 {
     /// `$5204` read: bit 7 is the sticky pending flag (cleared as the read
     /// acknowledges the IRQ), bit 6 is the live in-frame flag. Low bits are
     /// zero here; the caller (`NesMcu`) fills them from the open-bus latch.
+    /// `$5204` read: bit 7 is the sticky pending flag (cleared as the read
+    /// acknowledges the IRQ), bit 6 is the live in-frame flag. Low bits are
+    /// zero here; the caller (`NesMcu`) fills them from the open-bus latch.
+    ///
+    /// Ticket #82: split registers (`$5200-$5202`) read back last-written
+    /// (tetanes `m005_exrom.rs` parity) and the multiplier product reads
+    /// `$5205` low / `$5206` high (wiki 3.6.6).
     fn read_expansion(&self, address: u16) -> Option<u8> {
         match address {
             0x5204 => {
                 let pending = self.irq_pending.replace(false);
                 Some(u8::from(pending) << 7 | u8::from(self.irq_in_frame.get()) << 6)
             }
+            0x5200 => Some(self.split_mode),
+            0x5201 => Some(self.split_scroll),
+            0x5202 => Some(self.split_bank),
+            0x5205 => Some((self.mult_result & 0xff) as u8),
+            0x5206 => Some((self.mult_result >> 8) as u8),
             _ => None,
         }
     }
 
-    /// `$5204` peek: same status bits, never acknowledges.
+    /// `$5204` peek: same status bits, never acknowledges. The #82
+    /// registers are side-effect-free, so they peek identically to reads.
     fn peek_expansion(&self, address: u16) -> Option<u8> {
         match address {
             0x5204 => {
                 Some(u8::from(self.irq_pending.get()) << 7 | u8::from(self.irq_in_frame.get()) << 6)
             }
+            0x5200 => Some(self.split_mode),
+            0x5201 => Some(self.split_scroll),
+            0x5202 => Some(self.split_bank),
+            0x5205 => Some((self.mult_result & 0xff) as u8),
+            0x5206 => Some((self.mult_result >> 8) as u8),
             _ => None,
         }
     }
@@ -1990,12 +2151,13 @@ mod tests {
     }
 
     // Unhandled expansion reads fall through: `$5203` is write-only
-    // and every other register belongs to a later ticket.
+    // and every other register belongs to a later ticket (`$5200-$5202`
+    // and `$5205-$5206` are handled by ticket #82; see the split and
+    // multiplier tests below).
     #[test]
     fn unhandled_expansion_reads_fall_through() {
         let (mapper, _) = board_8k(2, [0; 6]);
         assert_eq!(None, mapper.read_expansion(0x5203));
-        assert_eq!(None, mapper.read_expansion(0x5200));
         assert_eq!(None, mapper.peek_expansion(0x5203));
         assert_eq!(None, mapper.peek_expansion(0x5c00));
     }
@@ -2016,5 +2178,329 @@ mod tests {
             },
             mapper.caps()
         );
+    }
+
+    // ---- Ticket #82: CL-mode vertical split + multiplier ----
+
+    fn write_split(
+        mapper: &mut MMC5,
+        memory: &mut CartridgeMemory,
+        mode: u8,
+        scroll: u8,
+        bank: u8,
+    ) {
+        mapper.cpu_write(0x5200, mode, SystemClock::default(), memory);
+        mapper.cpu_write(0x5201, scroll, SystemClock::default(), memory);
+        mapper.cpu_write(0x5202, bank, SystemClock::default(), memory);
+    }
+
+    /// NT-tile fetch through the hook under the background render state.
+    fn nt_fetch(mapper: &MMC5, addr: u16) -> Option<u8> {
+        mapper.ppu_read(addr, &chr_render(PpuFetchKind::Background, false))
+    }
+
+    // Power-on: split off (`$5200 = $00`: disabled, left, threshold 0),
+    // scroll/bank zero; multiplier operands `$FF` so the product reads
+    // `$FE01` (wiki 3.6.5 power-on values).
+    #[test]
+    fn split_and_multiplier_power_on_defaults() {
+        let (mapper, _) = board_8k(2, [0; 6]);
+
+        assert!(!mapper.split_enabled());
+        assert!(!mapper.split_right_side());
+        assert_eq!(mapper.split_threshold(), 0);
+        assert_eq!(mapper.read_expansion(0x5200), Some(0x00));
+        assert_eq!(mapper.read_expansion(0x5201), Some(0x00));
+        assert_eq!(mapper.read_expansion(0x5202), Some(0x00));
+        assert_eq!(mapper.peek_expansion(0x5200), Some(0x00));
+        assert_eq!(mapper.read_expansion(0x5205), Some(0x01));
+        assert_eq!(mapper.read_expansion(0x5206), Some(0xfe));
+        assert_eq!(mapper.peek_expansion(0x5205), Some(0x01));
+        assert_eq!(mapper.peek_expansion(0x5206), Some(0xfe));
+    }
+
+    // `$5200` bit contract `[ES.T TTTT]` (wiki 3.6.1; tetanes `VSplit`):
+    // enable, side and threshold decompose and read back last-written.
+    #[test]
+    fn split_control_register_contract() {
+        let (mut mapper, mut memory) = board_8k(2, [0; 6]);
+
+        mapper.cpu_write(0x5200, 0xc5, SystemClock::default(), &mut memory);
+        assert!(mapper.split_enabled());
+        assert!(mapper.split_right_side());
+        assert_eq!(mapper.split_threshold(), 5);
+        assert_eq!(mapper.read_expansion(0x5200), Some(0xc5));
+        assert_eq!(mapper.peek_expansion(0x5200), Some(0xc5));
+
+        mapper.cpu_write(0x5200, 0x9f, SystemClock::default(), &mut memory);
+        assert!(mapper.split_enabled());
+        assert!(!mapper.split_right_side());
+        assert_eq!(mapper.split_threshold(), 31);
+
+        // Bit 5 is unused: it neither enables the right side nor leaks
+        // into the threshold.
+        mapper.cpu_write(0x5200, 0x20, SystemClock::default(), &mut memory);
+        assert!(!mapper.split_enabled());
+        assert!(!mapper.split_right_side());
+        assert_eq!(mapper.split_threshold(), 0);
+    }
+
+    // `$5201` scroll and `$5202` bank store and read back verbatim, without
+    // disturbing the PRG windows. Split/multiplier registers need no
+    // unlock (the #77 gate covers PRG mapping only).
+    #[test]
+    fn split_scroll_and_bank_registers() {
+        let (mut mapper, mut memory) = board_8k(4, [0; 6]);
+        let before = memory.read_prg(0x8000);
+
+        write_split(&mut mapper, &mut memory, 0x80, 0x37, 0xab);
+
+        assert_eq!(mapper.read_expansion(0x5201), Some(0x37));
+        assert_eq!(mapper.read_expansion(0x5202), Some(0xab));
+        assert_eq!(mapper.peek_expansion(0x5201), Some(0x37));
+        assert_eq!(mapper.peek_expansion(0x5202), Some(0xab));
+        assert_eq!(memory.read_prg(0x8000), before);
+    }
+
+    // Left split (wiki 3.6.1): fetches `1..=T` are the split region;
+    // threshold 0 splits nothing.
+    #[test]
+    fn split_region_left_vectors() {
+        let control = 0x80 | 5;
+        assert!(!MMC5::split_in_region(0, control));
+        for n in 1..=5 {
+            assert!(MMC5::split_in_region(n, control), "fetch {n} in region");
+        }
+        for n in 6..=34 {
+            assert!(!MMC5::split_in_region(n, control), "fetch {n} normal");
+        }
+        // Threshold 0, left side: no split region at all.
+        for n in 0..=34 {
+            assert!(!MMC5::split_in_region(n, 0x80));
+        }
+        // Disabled: never in region, whatever the side/threshold bits say.
+        for n in 0..=34 {
+            assert!(!MMC5::split_in_region(n, 0x45));
+        }
+    }
+
+    // Right split (wiki 3.6.1): fetches `> T` are the split region;
+    // threshold 0 splits the whole scanline.
+    #[test]
+    fn split_region_right_vectors() {
+        let control = 0x80 | 0x40 | 5;
+        for n in 0..=5 {
+            assert!(!MMC5::split_in_region(n, control), "fetch {n} normal");
+        }
+        for n in 6..=34 {
+            assert!(MMC5::split_in_region(n, control), "fetch {n} in region");
+        }
+        for n in 1..=34 {
+            assert!(MMC5::split_in_region(n, 0x80 | 0x40), "T=0: all split");
+        }
+    }
+
+    // Split row = scanline + scroll with 32-row wrap (wiki 3.6.1 Vertical
+    // Behavior): sums reaching rows 30-31 alias ExRAM attribute bytes as
+    // tiles, sums past 255 roll over to the top.
+    #[test]
+    fn split_tile_row_vectors() {
+        assert_eq!(MMC5::split_tile_row(0, 0), 0);
+        assert_eq!(MMC5::split_tile_row(8, 0), 1);
+        assert_eq!(MMC5::split_tile_row(0, 8), 1);
+        assert_eq!(MMC5::split_tile_row(239, 0), 29);
+        // Scan 239 + scroll 1 reaches row 30: attribute alias, not top.
+        assert_eq!(MMC5::split_tile_row(239, 1), 30);
+        // Scroll 240 shows attribute data on the first scanlines.
+        assert_eq!(MMC5::split_tile_row(0, 240), 30);
+        // Past 255 rolls over to the top of the nametable.
+        assert_eq!(MMC5::split_tile_row(17, 239), 0);
+        assert_eq!(MMC5::split_tile_row(100, 100), ((200 / 8) % 32) as u8);
+    }
+
+    // Multiplier spec vectors (wiki 3.6.6): instant recompute on every
+    // write, low byte at `$5205`, high byte at `$5206`.
+    #[test]
+    fn multiplier_vectors() {
+        let (mut mapper, mut memory) = board_8k(2, [0; 6]);
+        let mut product = |mapper: &mut MMC5, memory: &mut CartridgeMemory, a: u8, b: u8| {
+            mapper.cpu_write(0x5205, a, SystemClock::default(), memory);
+            mapper.cpu_write(0x5206, b, SystemClock::default(), memory);
+            (mapper.read_expansion(0x5205), mapper.read_expansion(0x5206))
+        };
+
+        assert_eq!(
+            product(&mut mapper, &mut memory, 0x00, 0x00),
+            (Some(0x00), Some(0x00))
+        );
+        assert_eq!(
+            product(&mut mapper, &mut memory, 0xff, 0xff),
+            (Some(0x01), Some(0xfe))
+        );
+        assert_eq!(
+            product(&mut mapper, &mut memory, 0x12, 0x34),
+            (Some(0xa8), Some(0x03))
+        );
+        assert_eq!(
+            product(&mut mapper, &mut memory, 0x80, 0x02),
+            (Some(0x00), Some(0x01))
+        );
+        assert_eq!(
+            product(&mut mapper, &mut memory, 0x01, 0xcd),
+            (Some(0xcd), Some(0x00))
+        );
+        assert_eq!(
+            product(&mut mapper, &mut memory, 0x07, 0x09),
+            (Some(0x3f), Some(0x00))
+        );
+    }
+
+    // Each multiplier write recomputes instantly from the other operand's
+    // current value: no latch delay, either write order works.
+    #[test]
+    fn multiplier_recomputes_on_each_write() {
+        let (mut mapper, mut memory) = board_8k(2, [0; 6]);
+
+        // Power-on `$5206` is `$FF`: writing only `$5205` multiplies by it.
+        mapper.cpu_write(0x5205, 0x12, SystemClock::default(), &mut memory);
+        assert_eq!(mapper.read_expansion(0x5205), Some(0xee)); // `0x12 * 0xFF` low
+        assert_eq!(mapper.read_expansion(0x5206), Some(0x11)); // high
+
+        mapper.cpu_write(0x5206, 0x34, SystemClock::default(), &mut memory);
+        assert_eq!(mapper.read_expansion(0x5205), Some(0xa8));
+        assert_eq!(mapper.read_expansion(0x5206), Some(0x03));
+    }
+
+    // The PPU-read hook counts NT tile fetches while rendering with split
+    // enabled, tracks the region, and always falls through (`None`):
+    // nametable bytes belong to ExRAM (#79).
+    #[test]
+    fn ppu_read_counts_nt_fetches_and_tracks_region() {
+        let (mut mapper, mut memory) = board_8k(2, [0; 6]);
+        write_split(&mut mapper, &mut memory, 0x80 | 2, 0, 0);
+
+        // Pattern and attribute fetches neither count nor enter the region.
+        assert_eq!(nt_fetch(&mapper, 0x0345), None);
+        assert_eq!(nt_fetch(&mapper, 0x23c0), None);
+        assert_eq!(mapper.split_fetch.get(), 0);
+        assert!(!mapper.split_active.get());
+
+        // `$3000-$3EFF` mirrors count the same as `$2000-$2FFF`.
+        assert_eq!(nt_fetch(&mapper, 0x2000), None);
+        assert_eq!(nt_fetch(&mapper, 0x3001), None);
+        assert_eq!(mapper.split_fetch.get(), 2);
+        assert!(mapper.split_active.get(), "left T=2: fetch 2 in region");
+
+        assert_eq!(nt_fetch(&mapper, 0x2042), None);
+        assert_eq!(mapper.split_fetch.get(), 3);
+        assert!(!mapper.split_active.get(), "left T=2: fetch 3 normal");
+    }
+
+    // Right side: the region starts after the threshold.
+    #[test]
+    fn ppu_read_tracks_right_side_region() {
+        let (mut mapper, mut memory) = board_8k(2, [0; 6]);
+        write_split(&mut mapper, &mut memory, 0x80 | 0x40 | 2, 0, 0);
+
+        nt_fetch(&mapper, 0x2000);
+        nt_fetch(&mapper, 0x2001);
+        assert!(!mapper.split_active.get());
+        nt_fetch(&mapper, 0x2002);
+        assert!(mapper.split_active.get());
+    }
+
+    // Render gate (PPU-owned, seam #75): CPU `$2007` reads with rendering
+    // off, and any fetch while split is disabled, leave the counter alone.
+    #[test]
+    fn ppu_read_respects_render_gate_and_enable() {
+        let (mut mapper, mut memory) = board_8k(2, [0; 6]);
+        write_split(&mut mapper, &mut memory, 0x80 | 2, 0, 0);
+
+        mapper.ppu_read(0x2000, &PpuRenderState::disabled());
+        assert_eq!(mapper.split_fetch.get(), 0);
+
+        // Disabled split never counts, even with rendering on.
+        mapper.cpu_write(0x5200, 0x00, SystemClock::default(), &mut memory);
+        nt_fetch(&mapper, 0x2000);
+        assert_eq!(mapper.split_fetch.get(), 0);
+        assert!(!mapper.split_active.get());
+    }
+
+    // Scanline-boundary reset for #81 to wire to its scanline detection.
+    #[test]
+    fn split_fetch_reset_starts_next_scanline_at_zero() {
+        let (mut mapper, mut memory) = board_8k(2, [0; 6]);
+        write_split(&mut mapper, &mut memory, 0x80 | 0x40 | 2, 0, 0);
+
+        for addr in 0x2000..=0x2002 {
+            nt_fetch(&mapper, addr);
+        }
+        assert_eq!(mapper.split_fetch.get(), 3);
+        mapper.reset_split_fetch();
+        assert_eq!(mapper.split_fetch.get(), 0);
+        nt_fetch(&mapper, 0x2000);
+        assert!(!mapper.split_active.get(), "right T=2 restarts normal");
+    }
+
+    // Split CHR redirect (ticket #82 acceptance): with a left split at
+    // threshold 2, the first two tiles of the scanline read patterns from
+    // the `$5202` 4K bank while the rest use the programmed CHR sets.
+    // `chr_board` fills 1K bank `i` with byte `i`, so bank numbers are
+    // directly observable.
+    #[test]
+    fn split_redirect_serves_split_bank_inside_region() {
+        let (mut mapper, mut memory) = chr_board(8);
+        chr_write(&mut mapper, &mut memory, 0x5101, 3);
+        for slot in 0..8u16 {
+            chr_write(&mut mapper, &mut memory, 0x5120 + slot, slot as u8);
+        }
+        // Split bank 1 = 1K banks 4-7.
+        write_split(&mut mapper, &mut memory, 0x80 | 2, 0, 1);
+        let cart = crate::nes::mapper::Cartridge::new(Box::new(mapper), memory);
+        let bg = chr_render(PpuFetchKind::Background, false);
+
+        // Two NT fetches enter the region...
+        assert_eq!(cart.read_vram(0x2000, &bg), 0x00);
+        assert_eq!(cart.read_vram(0x2001, &bg), 0x00);
+        // ...so the next pattern fetch serves the split bank.
+        assert_eq!(cart.read_vram(0x0400, &bg), 0x05);
+        assert_eq!(cart.read_vram(0x1400, &bg), 0x05);
+    }
+
+    // The third NT fetch leaves a left-T=2 region: patterns fall back to
+    // the programmed sets, and CPU `$2007` reads never take the split
+    // bank even while the latch says region.
+    #[test]
+    fn split_redirect_falls_back_outside_region_and_for_cpu() {
+        let (mut mapper, mut memory) = chr_board(8);
+        chr_write(&mut mapper, &mut memory, 0x5101, 3);
+        for slot in 0..8u16 {
+            chr_write(&mut mapper, &mut memory, 0x5120 + slot, slot as u8);
+        }
+        write_split(&mut mapper, &mut memory, 0x80 | 2, 0, 1);
+        let cart = crate::nes::mapper::Cartridge::new(Box::new(mapper), memory);
+        let bg = chr_render(PpuFetchKind::Background, false);
+        let cpu = chr_render(PpuFetchKind::Cpu, false);
+
+        for addr in 0x2000..=0x2002 {
+            cart.read_vram(addr, &bg);
+        }
+        // Fetch 3 left the region: slot 1 reads the sprite set bank 1.
+        assert_eq!(cart.read_vram(0x0400, &bg), 0x01);
+        // One more NT fetch re-enters nothing (fetch 4, still normal)...
+        cart.read_vram(0x2003, &bg);
+        // ...but the split bank still serves render fetches only: the CPU
+        // path reads the programmed set. Re-enter via reset: two fresh NT
+        // fetches set the latch, then a CPU read declines the redirect.
+        let (mut mapper2, mut memory2) = chr_board(8);
+        chr_write(&mut mapper2, &mut memory2, 0x5101, 3);
+        for slot in 0..8u16 {
+            chr_write(&mut mapper2, &mut memory2, 0x5120 + slot, slot as u8);
+        }
+        write_split(&mut mapper2, &mut memory2, 0x80 | 2, 0, 1);
+        let cart2 = crate::nes::mapper::Cartridge::new(Box::new(mapper2), memory2);
+        cart2.read_vram(0x2000, &bg);
+        cart2.read_vram(0x2001, &bg);
+        assert_eq!(cart2.read_vram(0x0400, &cpu), 0x01);
     }
 }
