@@ -974,6 +974,10 @@ fn expansion_writes_reach_the_mapper_chip() {
     let mut mcu = test_mcu_with(cartridge);
 
     assert_eq!(mcu.read(0xa000), 0);
+    // Ticket #77: PRG bank registers take effect only after the exact
+    // `$5102=$02,$5103=$01` unlock sequence.
+    mcu.write(0x5102, 0x02, SystemClock::default());
+    mcu.write(0x5103, 0x01, SystemClock::default());
     mcu.write(0x5115, 0x80 | 2, SystemClock::default());
     assert_eq!(mcu.read(0xa000), 2);
 }
@@ -1007,11 +1011,9 @@ fn expansion_reads_return_the_mmc5_multiplier_product() {
     assert_eq!(mcu.peek(0x5205), 0xa8);
     assert_eq!(mcu.peek(0x5206), 0x03);
 
-    // Split registers read back last-written through the same path.
+    // Split registers read back last-written through the same path; peeks
+    // never acknowledge (`$5204` status/ack semantics belong to #81).
     mcu.write(0x5200, 0xc5, SystemClock::default());
     assert_eq!(mcu.read(0x5200), 0xc5);
-
-    // Unclaimed expansion addresses stay open bus (`$5204` belongs to #81).
-    mcu.write(0x5201, 0x37, SystemClock::default());
-    assert_eq!(mcu.read(0x5204), mcu.open_bus);
+    assert_eq!(mcu.peek(0x5200), 0xc5);
 }

@@ -277,12 +277,23 @@ impl<R: Render, D: AudioDriver> Mcu for NesMcu<R, D> {
                 return self.latch_read(value, true);
             }
             0x4015 => self.apu.read(address),
-            // Cartridge expansion area (MMC5 multiplier product): the chip
-            // answers or the read is open bus.
-            0x5000..=0x5fff => self
-                .cartridge
-                .read_expansion(address)
-                .unwrap_or(self.open_bus),
+            // Cartridge expansion area (MMC5 `$5204` status): the chip
+            // answers handled registers itself; everything else is open bus.
+            // `$5204` carries status in bits 7-6 only, so its low bits read
+            // the bus latch (same convention as the `$2002` low-bits
+            // combine); later full-byte registers (ExRAM, multiplier) latch
+            // the chip's byte directly.
+            0x5000..=0x5fff => match self.cartridge.read_expansion(address) {
+                Some(value) => {
+                    let value = if address == 0x5204 {
+                        (value & 0xC0) | (self.open_bus & 0x3F)
+                    } else {
+                        value
+                    };
+                    self.latch_read(value, false)
+                }
+                None => self.latch_read(self.open_bus, false),
+            },
             // Write-only APU/IO registers and unused test registers: open bus
             _ => self.open_bus,
         };
@@ -296,10 +307,6 @@ impl<R: Render, D: AudioDriver> Mcu for NesMcu<R, D> {
             0x4015 => self.apu.peek(address),
             0x4016 => self.controller.peek(address),
             0x4017 => self.controller.peek(address) | self.zapper_bits(),
-            0x5000..=0x5fff => self
-                .cartridge
-                .read_expansion(address)
-                .unwrap_or(self.open_bus),
             0x6000..=0x7fff => {
                 if !self.cartridge.prg_ram_enabled() {
                     self.open_bus
@@ -308,6 +315,19 @@ impl<R: Render, D: AudioDriver> Mcu for NesMcu<R, D> {
                 }
             }
             0x8000..=0xffff => self.cartridge.read(address),
+            // Expansion-area peek: never acknowledges, so inspecting `$5204`
+            // cannot clear a pending IRQ. Same bit-7-6-only convention as
+            // the read path above.
+            0x5000..=0x5fff => match self.cartridge.peek_expansion(address) {
+                Some(value) => {
+                    if address == 0x5204 {
+                        (value & 0xC0) | (self.open_bus & 0x3F)
+                    } else {
+                        value
+                    }
+                }
+                None => self.open_bus,
+            },
             _ => self.open_bus,
         }
     }
