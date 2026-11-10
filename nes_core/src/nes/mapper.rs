@@ -204,6 +204,23 @@ fn rom_contains_signature_bytes(rom: &[u8], signature: &str) -> bool {
         .any(|window| window == signature.as_bytes())
 }
 
+/// Which kind of PPU access a cartridge VRAM read serves (ticket #78).
+/// The PPU renders per-pixel, so the MMC5 hardware fetch-counting does not
+/// map: the PPU tags each read at the call site instead. MMC5 uses this to
+/// pick the sprite vs background CHR bank set in 8x16 mode (wiki §3.5).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum PpuFetchKind {
+    /// Background pattern fetch (`fetch_tile_data`).
+    Background,
+    /// Sprite pattern fetch (`SpriteManager::ensure_rows`).
+    Sprite,
+    /// CPU `$2007` path (`Ppu::read_vram`), idle state, and tests: carries
+    /// the last-written-set semantics, so `$2007` sees the most recently
+    /// written CHR register range in 8x16 mode.
+    #[default]
+    Cpu,
+}
+
 /// Render state snapshot the PPU hands to [`Mapper::ppu_read`] on every
 /// cartridge VRAM fetch (ticket #75 seam). The mapper must not read PPU
 /// registers itself: the PPU owns the render gate and passes down exactly
@@ -218,6 +235,9 @@ pub struct PpuRenderState {
     /// this PPU renders per-pixel, not per-dot shifter, so the phase only
     /// documents *when* in the tile fetch the read happens.
     pub fetch_phase: u8,
+    /// What kind of access this read serves (background/sprite pattern
+    /// fetch vs CPU `$2007`). See [`PpuFetchKind`].
+    pub fetch: PpuFetchKind,
 }
 
 impl PpuRenderState {
@@ -237,10 +257,10 @@ pub struct CartridgeCaps {
     pub on_ppu_tick: bool,
     pub notify_vram_address: bool,
     pub irq_pending: bool,
-    /// When set, [`Cartridge::read_vram`] consults [`Mapper::ppu_read`]
-    /// before the bank-window lookup. No mapper sets this yet, so nothing
-    /// behaves differently — this is the gated seam for the MMC5 per-fetch
-    /// overrides (ticket #75).
+    /// When set, [`Cartridge::read_vram`] consults [`Mapper::ppu_chr_bank`]
+    /// (CHR bank redirect, ticket #78) and then [`Mapper::ppu_read`] before
+    /// the bank-window lookup. MMC5 sets this; nothing else does yet, so
+    /// other boards behave exactly as before.
     pub ppu_read: bool,
 }
 
@@ -271,6 +291,24 @@ pub trait Mapper {
     /// Takes `&self`: board state the hook needs (e.g. the MMC5 ExAttr
     /// latch) lives behind interior mutability in the chip impl.
     fn ppu_read(&self, _addr: u16, _render: &PpuRenderState) -> Option<u8> {
+        None
+    }
+    /// Optional CHR bank-redirect channel (ticket #78): consulted by
+    /// [`Cartridge::read_vram`] for `$0000-$1FFF` before [`Mapper::ppu_read`]
+    /// and only when the chip declares [`CartridgeCaps::ppu_read`] (the same
+    /// flag gates both hooks, so no caps churn).
+    ///
+    /// Returns the 1K CHR bank number the address reads from; the cartridge
+    /// applies its pool modulo and serves the byte itself. Returning `None`
+    /// falls through to `ppu_read`/the bank window. Addresses at/above
+    /// `$2000` must return `None`: the nametable plane belongs to the ExRAM
+    /// tickets (#79/#82).
+    ///
+    /// This exists because `ppu_read` cannot serve CHR data: the mapper owns
+    /// no memory (ADR-0015) and `&self` cannot reach the pool, so CHR banking
+    /// redirects the bank while `ppu_read` stays the hook for mapper-owned
+    /// bytes (ExRAM/fill).
+    fn ppu_chr_bank(&self, _addr: u16, _render: &PpuRenderState) -> Option<u16> {
         None
     }
     fn on_ppu_tick(&mut self, _scanline: u16) {}
@@ -416,19 +454,26 @@ impl Cartridge {
     /// Cartridge PPU space: pattern tables in `$0000-$1FFF` (CHR ROM or CHR
     /// RAM), nametables in `$2000-$2EFF`.
     ///
-    /// The mapper-side PPU-read seam (ticket #75): when the chip declares
-    /// [`CartridgeCaps::ppu_read`], [`Mapper::ppu_read`] gets first refusal
-    /// with the PPU-built [`PpuRenderState`]; `None` falls through to the
-    /// 1 KB bank-window lookup below.
+    /// The mapper-side PPU-read seam (tickets #75/#78): when the chip declares
+    /// [`CartridgeCaps::ppu_read`], [`Mapper::ppu_chr_bank`] gets first refusal
+    /// for `$0000-$1FFF` (bank redirect into the CHR pool), then
+    /// [`Mapper::ppu_read`] gets first refusal with the PPU-built
+    /// [`PpuRenderState`]; `None` at each step falls through to the 1 KB
+    /// bank-window lookup below. `$2000+` consults `ppu_read` only.
     pub fn read_vram(&self, address: u16, render: &PpuRenderState) -> u8 {
         #[cfg(test)]
         if let Some(log) = &self.vram_read_log {
             log.record(address);
         }
-        if self.caps.ppu_read
-            && let Some(byte) = self.mapper.ppu_read(address, render)
-        {
-            return byte;
+        if self.caps.ppu_read {
+            if address < 0x2000
+                && let Some(bank) = self.mapper.ppu_chr_bank(address, render)
+            {
+                return self.memory.read_chr_bank(bank, address);
+            }
+            if let Some(byte) = self.mapper.ppu_read(address, render) {
+                return byte;
+            }
         }
         self.memory.read_vram(address)
     }

@@ -276,6 +276,17 @@ impl CartridgeMemory {
         unsafe { self.pool.get_unchecked(bank).read(address) }
     }
 
+    /// CHR bank-redirect read (ticket #78): serves pool bank `bank_1k`
+    /// (modulo the CHR bank count, mirroring `map_chr_run`) at `address`.
+    /// The low 10 bits select the byte, so this shares pool banks with the
+    /// window reads/writes — CHR-RAM writes via windows stay visible here.
+    pub fn read_chr_bank(&self, bank_1k: u16, address: u16) -> u8 {
+        let bank = bank_1k as usize % self.chr_bank_count;
+        // SAFETY: as in `read_vram` — the modulo keeps the pool index inside
+        // the CHR area.
+        unsafe { self.pool.get_unchecked(self.chr_base + bank).read(address) }
+    }
+
     /// Pattern-table writes are dropped when the banks hold CHR ROM; the
     /// nametable banks are always writable.
     pub fn write_vram(&mut self, address: u16, value: u8) {
