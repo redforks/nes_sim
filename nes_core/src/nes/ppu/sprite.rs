@@ -1,5 +1,5 @@
 use super::oam::{Oam, Sprite};
-use crate::nes::mapper::{Cartridge, PpuRenderState};
+use crate::nes::mapper::{Cartridge, PpuFetchKind, PpuRenderState};
 use crate::nes::ppu::registers::{PpuCtrl, PpuStatus};
 use tinyvec::ArrayVec;
 
@@ -306,8 +306,14 @@ impl SpriteManager {
             let src_y = sprite_src_y(&sprite, sprite_height, screen_y);
             let tile_position = sprite.tile_position(ctrl);
             let addr = tile_position.resolve_pixel_addr(src_y);
-            let low = cartridge.read_vram(addr.0, render);
-            let high = cartridge.read_vram(addr.second_plane_addr(), render);
+            // Ticket #78: sprite fetches carry the Sprite kind so MMC5 picks
+            // the sprite CHR bank set in 8x16 mode.
+            let spr_render = PpuRenderState {
+                fetch: PpuFetchKind::Sprite,
+                ..*render
+            };
+            let low = cartridge.read_vram(addr.0, &spr_render);
+            let high = cartridge.read_vram(addr.second_plane_addr(), &spr_render);
 
             self.rows.push(SpriteRow {
                 x: sprite.x,

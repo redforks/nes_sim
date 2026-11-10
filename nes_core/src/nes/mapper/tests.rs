@@ -650,6 +650,7 @@ fn ppu_read_hook_overrides_when_flag_on() {
         rendering_enabled: true,
         sprite_8x16: true,
         fetch_phase: 3,
+        fetch: PpuFetchKind::Cpu,
     };
     assert_eq!(0xff, cartridge.read_vram(0x0010, &render));
     assert_eq!(Some(render), seen.get());
@@ -663,6 +664,7 @@ fn ppu_read_hook_fallthrough_when_flag_on() {
         rendering_enabled: true,
         sprite_8x16: false,
         fetch_phase: 5,
+        fetch: PpuFetchKind::Cpu,
     };
     assert_eq!(0x5a, cartridge.read_vram(0x0010, &render));
     assert_eq!(Some(render), seen.get(), "consulted before the fallthrough");
