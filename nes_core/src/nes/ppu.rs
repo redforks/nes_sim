@@ -1,6 +1,10 @@
+mod batch_convert;
 mod oam;
 pub mod palette;
-mod pixel_pipeline;
+// The former two-dot `pixel_pipeline` output stage is retired (ticket
+// #62): per-dot geometry writes only the palette index into the flat
+// buffer, and the frame is flushed in linear raster order at the VBL
+// set dot — see `Ppu::flush_palette_index_buffer` in `ppu.rs`.
 mod registers;
 mod sprite;
 
@@ -13,10 +17,14 @@ use crate::{
 };
 use oam::Oam;
 use palette::{Palette, Pixel};
-use pixel_pipeline::PixelPipeline;
-use registers::{PpuCtrl, PpuMask, PpuStatus, Registers};
+use registers::{ColorConfig, PpuCtrl, PpuMask, PpuStatus, Registers};
 
 // Pixel, palette data and COLORS are defined in the submodule `palette`.
+
+/// Visible frame dimensions: the flat palette-index buffer holds exactly
+/// one entry per visible beam position (`y * 256 + x`).
+const VISIBLE_WIDTH: usize = 256;
+const VISIBLE_HEIGHT: usize = 240;
 
 // PPU Timing Constants
 const PPU_OPEN_BUS_DECAY_TICKS: u64 = 3_221_591 * crate::SYSTEM_CYCLES_PER_PPU_CYCLE;
@@ -42,6 +50,17 @@ impl TileCache {
         let color_idx = ((self.bitplane_low >> bit) & 1) | (((self.bitplane_high >> bit) & 1) << 1);
         (self.palette_idx, color_idx)
     }
+}
+
+/// A mid-frame `$2001` color change (ticket #63): the beam position at
+/// which the change takes effect, plus the color configuration in force
+/// before the write. The flush applies `prior` below `index` and the new
+/// configuration at/after it — the new configuration is the next split's
+/// `prior`, or the live mask at flush time for the final segment.
+#[derive(Copy, Clone)]
+struct ColorSplit {
+    index: usize,
+    prior: ColorConfig,
 }
 
 #[derive(Copy, Clone)]
@@ -198,18 +217,41 @@ pub struct Ppu<R: Render = ()> {
     /// hardware (Mesen2) and re-returns this value. Ignored reads do not
     /// stamp the cycle.
     ppudata_last_read: Option<(u64, u8)>,
-    /// Two-dot pixel output pipeline: pixels rendered on visible dots wait
-    /// here (target coordinates, palette index) before committing to the
-    /// renderer, so CPU register writes landing in between color them.
-    /// Each dot retires exactly one pixel, so a scanline's final two pixels
-    /// commit on that scanline's own dots +2 — not on the next line's first
-    /// pushes — and a $2001 write in the fetch/idle phase cannot
-    /// retro-recolor them (DPCM Letterbox depends on this).
+    /// Flat palette-index buffer for the current frame (ticket #62, batch
+    /// color): one 6-bit palette entry per visible beam position, indexed
+    /// by `y * 256 + x`. Allocated once in [`Self::new`] and reused every
+    /// frame — no per-frame 61,440-byte allocation, no per-pixel
+    /// `(x, y, palette_index)` tuples. The live per-dot path writes only
+    /// the resolved palette index here; [`Self::flush_palette_index_buffer`]
+    /// resolves indices to RGBA once at the VBL set dot before `finish()`.
     ///
-    /// Fixed two slots (no heap): [`PixelPipeline::take_due`] retires one
-    /// pixel per dot before the dot's own pixel is pushed, so at most two
-    /// are ever in flight.
-    pixel_pipeline: PixelPipeline,
+    /// This retires the former two-dot `PixelPipeline` output stage as a
+    /// per-pixel delay: raster order is preserved by the flush's linear
+    /// scan, and any dot-level color landing offset becomes the stored
+    /// split position rather than pipeline slots (see #63). Palette RAM is
+    /// still read live at per-dot resolve time, so a palette write takes
+    /// effect from its beam position without flushing geometry.
+    palette_index_buffer: Box<[u8]>,
+    /// Mid-frame `$2001` color changes for the frame being buffered
+    /// (ticket #63), in beam order. Consumed and cleared by
+    /// [`Self::flush_palette_index_buffer`]; splits recorded after the
+    /// flush (during vblank/pre-render) are discarded at the next frame
+    /// start, since the live mask already carries them into that frame.
+    color_splits: Vec<ColorSplit>,
+    /// Number of leading buffer entries written this frame. The live
+    /// per-dot path writes strictly in raster order, so a single count
+    /// tracks which beam positions have been buffered: indices below it
+    /// hold this frame's palette indices, indices at/after it are stale
+    /// and have not been scanned yet. [`Self::pixel_brightness`] answers
+    /// black for the latter — matching the materialized framebuffer,
+    /// which is also black until the beam passes.
+    buffered_pixel_count: usize,
+    /// First beam position holding this frame's index (ticket #67).
+    /// Normally 0; a mid-frame reset moves it to the next beam position,
+    /// so positions scanned before the reset flush and report black
+    /// instead of their stale pre-reset indices. The valid range is
+    /// `buffered_pixel_from..buffered_pixel_count`.
+    buffered_pixel_from: usize,
     /// Set when the PPU timing enters vblank (scanline 241, dot 1).
     /// This is a pure timing event, independent of the $2002 VBL flag
     /// (which `$2002` reads clear and the dot-0 race can suppress).
@@ -255,7 +297,10 @@ impl<R: Render> Ppu<R> {
             ren_latched_at_338: false,
             cycle: 0,
             ppudata_last_read: None,
-            pixel_pipeline: PixelPipeline::new(),
+            palette_index_buffer: vec![0; VISIBLE_WIDTH * VISIBLE_HEIGHT].into_boxed_slice(),
+            color_splits: Vec::new(),
+            buffered_pixel_count: 0,
+            buffered_pixel_from: 0,
             vblank_entered: false,
         }
     }
@@ -275,9 +320,16 @@ impl<R: Render> Ppu<R> {
         self.registers.write_scroll(0);
         self.ren_latched_at_338 = false;
         self.vblank_entered = false;
-        // A reset landing mid-frame must not let already-rendered pixels of
-        // the old frame commit into the fresh frame's framebuffer.
-        self.pixel_pipeline.clear();
+        // A reset landing mid-frame must not let already-buffered palette
+        // indices of the old frame flush into the fresh frame: positions
+        // not yet rewritten since the reset flush black (matching the
+        // cleared pre-change framebuffer) and report black to live
+        // brightness queries. No buffer fill is needed: the valid range
+        // (`buffered_pixel_from..buffered_pixel_count`) simply never
+        // reads stale entries.
+        self.color_splits.clear();
+        self.buffered_pixel_from = self.next_beam_index();
+        self.buffered_pixel_count = 0;
     }
 
     pub fn timing(&self) -> &Timing {
@@ -420,6 +472,18 @@ impl<R: Render> Ppu<R> {
             self.ren_latched_at_338 = rendering;
         }
         if dot == 0 {
+            if scanline == 0 {
+                // New frame: discard splits recorded after the previous
+                // flush (vblank/pre-render writes). The live mask already
+                // carries those color changes into this frame, and any
+                // mid-frame split from here on is recorded fresh. The
+                // buffered-pixel cursor likewise restarts, so unscanned
+                // beam positions of the new frame report black until the
+                // beam writes them.
+                self.color_splits.clear();
+                self.buffered_pixel_from = self.next_beam_index();
+                self.buffered_pixel_count = 0;
+            }
             // The secondary-OAM swap runs on every line, including the
             // pre-render line (261). Sprite evaluation itself only runs on
             // visible scanlines 0-239, so scanline 0's swap brings in the
@@ -539,26 +603,14 @@ impl<R: Render> Ppu<R> {
         }
 
         // Visible pixels are output on dots 1-256; dot 0 is the idle fetch
-        // slot. Pixels leave a two-dot output pipeline: a pixel rendered on
-        // dot X commits to the framebuffer on dot X+2, after any CPU
-        // register write that landed in between. This is the hardware
-        // output-stage latency — grayscale and emphasis tint are applied at
-        // commit time (the color-modifying stage), so a mid-scanline $2001
-        // write takes effect two dots earlier than the write cycle itself
-        // (blargg nmi_sync draws its line with exactly this landing).
-        let pending = self.pixel_pipeline.take_due();
-        if !pending.is_empty() {
-            // Hardware grayscale ANDs the 6-bit palette entry with $30
-            // before the color lookup ($3F black renders as $30 white);
-            // emphasis tints are analog effects on the looked-up RGB.
-            let pixel_idx = self.registers.mask.grayscale_index(pending.pixel_index);
-            let pixel = self
-                .registers
-                .mask
-                .apply_effects(self.color_theme.color(pixel_idx));
-            self.renderer
-                .set_pixel(pending.x as u32, pending.y as u32, pixel.0);
-        }
+        // slot. Batch color (ticket #62): the live per-dot path resolves
+        // geometry (TileCache background fetch, sprite evaluation, sprite-0
+        // hit) into a palette index only and stores it in the flat buffer
+        // at the beam position — no RGB work here. Color (grayscale and
+        // emphasis) is applied once, at the flush in `enter_vblank` below.
+        // Mid-frame `$2001` color changes are recorded as split points
+        // in `write_ppureg` and applied per segment by the flush below;
+        // enable bits, by contrast, take effect here immediately.
         if self.timing.is_visible() {
             let x = (dot - 1) as u8;
             let pixel_idx = if rendering {
@@ -566,13 +618,21 @@ impl<R: Render> Ppu<R> {
             } else {
                 self.palette.disabled_color_index(self.registers.vram_addr)
             };
-            self.pixel_pipeline.push(x, scanline, pixel_idx);
+            let index = scanline as usize * VISIBLE_WIDTH + x as usize;
+            self.palette_index_buffer[index] = pixel_idx;
+            // Monotonic per frame (ticket #67): a backward timing jump
+            // must never lower the cursor, or already-buffered beam
+            // positions would wrongly report black ("indices below the
+            // count hold this frame's indices"). reset only at frame
+            // start / reset above.
+            self.buffered_pixel_count = self.buffered_pixel_count.max(index + 1);
         }
 
         if self.timing.enter_vblank() {
-            // Timing event for frame stepping: reported even when the $2002
-            // VBL flag set itself is suppressed by the dot-0 race, so
-            // `process_frame` always terminates at the frame boundary.
+            // Flush the whole frame's buffered palette indices through the
+            // Render seam (raster order) before `finish()`, exactly once
+            // per frame, at the VBL set dot.
+            self.flush_palette_index_buffer();
             self.vblank_entered = true;
             self.renderer.finish();
             if !std::mem::take(&mut self.suppress_vblank_pending) {
@@ -587,6 +647,161 @@ impl<R: Render> Ppu<R> {
 
         self.timing.advance(self.ren_latched_at_338);
         cartridge.on_ppu_tick(self.timing.scanline);
+    }
+
+    /// Beam index of the next visible pixel to be buffered, for recording
+    /// a `$2001` color split. `self.timing` points at the next dot to be
+    /// processed (a CPU write lands between ticks, after the previous
+    /// dot has advanced), so the next visible pixel is:
+    ///
+    /// - dot 0 of a visible scanline: `scanline * 256` (its first pixel)
+    /// - dots 1..=256 of a visible scanline: `scanline * 256 + (dot - 1)`
+    /// - dots 257..=339 of a visible scanline: the first pixel of the
+    ///   next scanline, clamped to the end of the frame on scanline 239
+    /// - non-visible scanlines (240-261): the end of the frame, so a write
+    ///   there affects no buffered pixel of the flushing frame
+    ///
+    /// For dots 1..=256 this is `scanline*256 + (dot-1)`, exactly the
+    /// ticket #63 split formula `scanline*256 + dot` applied to the
+    /// *accounted* dot (dot 0 is the idle fetch slot; the buffered index
+    /// of the current dot is `dot - 1`). Non-visible scanlines clamp to
+    /// the end of the frame: a `$2001` write there cannot colour any
+    /// pixel of the frame being flushed, and the next frame starts with
+    /// a fresh split list (cleared at scanline 0 dot 0).
+    fn next_beam_index(&self) -> usize {
+        const FRAME_PIXELS: usize = VISIBLE_WIDTH * VISIBLE_HEIGHT;
+        if self.timing.scanline >= 240 {
+            return FRAME_PIXELS;
+        }
+        match self.timing.dot {
+            0 => self.timing.scanline as usize * VISIBLE_WIDTH,
+            1..=256 => {
+                self.timing.scanline as usize * VISIBLE_WIDTH + (self.timing.dot - 1) as usize
+            }
+            _ => ((self.timing.scanline as usize + 1) * VISIBLE_WIDTH).min(FRAME_PIXELS),
+        }
+    }
+
+    /// Flush the frame's buffered palette indices through the Render seam
+    /// in raster (linear buffer) order, segment-wise by recorded color
+    /// splits (ticket #63). Runs once per frame at the VBL set dot, before
+    /// `finish()`. The linear scan preserves the raster order the retired
+    /// two-dot output pipeline used to provide.
+    ///
+    /// Each [`ColorSplit`] closes a segment: indices below its `index`
+    /// use its `prior` configuration, and the segment starting at `index`
+    /// uses the next split's `prior` — or the live mask at flush time for
+    /// the final segment. Applying only the final mask to the whole frame
+    /// would mis-color every pixel before a mid-frame write. Splits are
+    /// consumed here and cleared, so they never leak into the next frame.
+    ///
+    /// Only beam positions actually scanned this frame
+    /// (`buffered_pixel_from..buffered_pixel_count`) hold this frame's
+    /// indices. Every other position flushes black, matching the cleared
+    /// framebuffer an incomplete frame (e.g. after a mid-frame reset)
+    /// would have produced per-dot.
+    ///
+    fn flush_palette_index_buffer(&mut self) {
+        let live = ColorConfig::from_mask(self.registers.mask);
+        let frame_len = self.palette_index_buffer.len();
+        let valid_start = self.buffered_pixel_from.min(frame_len);
+        let valid_end = self.buffered_pixel_count.clamp(valid_start, frame_len);
+        // Black here is the zeroed framebuffer pixel `[0, 0, 0, 0]`
+        // (not an opaque palette color): that is what a position the
+        // beam never reached held in the pre-change per-dot framebuffer.
+        for index in 0..valid_start {
+            self.emit_pixel(index, Pixel::from_u32(0));
+        }
+        let split_count = self.color_splits.len();
+        let mut start = 0usize;
+        for segment in 0..=split_count {
+            let (end, config) = if segment < split_count {
+                let split = self.color_splits[segment];
+                (split.index.min(frame_len), split.prior)
+            } else {
+                (frame_len, live)
+            };
+            let seg_start = start;
+            // Every flush segment goes through the per-segment 64-entry
+            // LUT + batched gather (scalar or SSSE3, identical output).
+            // Ticket #67 removed the small-segment bypass: one path, no
+            // extra branch, and `perf` shows the flush is not the Hot Path.
+            let mut index = seg_start.max(valid_start);
+            let seg_end = end.min(valid_end);
+            if index < seg_end {
+                let lut = batch_convert::build_final_color_lut(&self.color_theme, config);
+                let mut chunk = [0u32; 16];
+                while index < seg_end {
+                    let chunk_len = (seg_end - index).min(chunk.len());
+                    batch_convert::convert(
+                        &self.palette_index_buffer[index..index + chunk_len],
+                        &lut,
+                        &mut chunk[..chunk_len],
+                    );
+                    for (offset, &word) in chunk[..chunk_len].iter().enumerate() {
+                        self.emit_pixel(index + offset, Pixel::from_u32(word));
+                    }
+                    index += chunk_len;
+                }
+            }
+            // Monotonic start: duplicate or out-of-order split indices
+            // close empty segments without re-emitting earlier pixels.
+            start = start.max(end);
+        }
+        for index in valid_end..frame_len {
+            self.emit_pixel(index, Pixel::from_u32(0));
+        }
+        self.color_splits.clear();
+    }
+
+    /// Emit one flushed pixel: beam index -> `(x, y, color)` through the
+    /// Render seam. Single per-pixel emit shared by the LUT path, the
+    /// black-fill for unscanned positions, and the segment loop direct
+    /// callers (ticket #67).
+    fn emit_pixel(&mut self, index: usize, pixel: Pixel) {
+        let x = (index % VISIBLE_WIDTH) as u32;
+        let y = (index / VISIBLE_WIDTH) as u32;
+        self.renderer.set_pixel(x, y, pixel.0);
+    }
+
+    /// Resolve one buffered palette index to its final pixel under a
+    /// given stored color config. Hardware grayscale ANDs the 6-bit entry
+    /// with $30 before the color lookup ($3F black renders as $30 white);
+    /// emphasis tints are analog effects on the looked-up RGB. The flush
+    /// passes each segment's stored [`ColorConfig`] and the live
+    /// brightness path ([`Self::pixel_brightness`]) passes the current
+    /// mask's projection, so the two share one resolution point and stay
+    /// segment-compatible (ticket #67: no `ColorConfig` -> mask round
+    /// trip).
+    fn resolve_pixel(&self, palette_index: u8, config: ColorConfig) -> Pixel {
+        config.apply_effects(
+            self.color_theme
+                .color(config.grayscale_index(palette_index)),
+        )
+    }
+
+    /// R+G+B luminance of the pixel at (`x`, `y`) for Zapper light
+    /// sense, served live from the palette-index buffer: the buffered
+    /// index is resolved on demand through the palette plus the current
+    /// grayscale/emphasis logic, so light is detectable mid-frame,
+    /// before the flush materializes the framebuffer. Beam positions
+    /// not yet written this frame report black, matching the
+    /// framebuffer's behaviour until the flush. Out-of-bounds
+    /// coordinates also report black (same as `Render::pixel_brightness`).
+    pub fn pixel_brightness(&self, x: u32, y: u32) -> u32 {
+        if x >= VISIBLE_WIDTH as u32 || y >= VISIBLE_HEIGHT as u32 {
+            return 0;
+        }
+        let index = y as usize * VISIBLE_WIDTH + x as usize;
+        if !(self.buffered_pixel_from..self.buffered_pixel_count).contains(&index) {
+            return 0;
+        }
+        let pixel = self.resolve_pixel(
+            self.palette_index_buffer[index],
+            ColorConfig::from_mask(self.registers.mask),
+        );
+        let (r, g, b) = pixel.to_rgb();
+        u32::from(r) + u32::from(g) + u32::from(b)
     }
 
     /// Atomically sampled NMI line for this dot.
@@ -672,7 +887,38 @@ impl<R: Render> Ppu<R> {
                 self.schedule_background_activation_if_visible();
             }
             0x2001 => {
-                self.registers.mask = PpuMask::from_bits(value);
+                let prior = ColorConfig::from_mask(self.registers.mask);
+                let mask = PpuMask::from_bits(value);
+                self.registers.mask = mask;
+                // Only the color bits are deferred: a write that changes
+                // grayscale/emphasis becomes a split point carrying the
+                // prior color configuration. The split is the next beam
+                // position minus the pixels still in the retired
+                // two-dot output stage: the old pipeline colored each
+                // pixel with the mask at commit time (two ticks after
+                // render), so rendered-but-uncommitted pixels take the
+                // new color once the write lands. Two pixels are in
+                // flight only while the beam is mid-render (next dots
+                // 3..=257); at the line start (0..=1) the previous
+                // line is fully committed, single pixels are in flight
+                // at dots 2 and 258, and hblank/vblank writes have
+                // nothing pending (blargg nmi_sync / dpcmletterbox draw
+                // their lines with exactly this landing).
+                if ColorConfig::from_mask(mask) != prior {
+                    let next = self.next_beam_index();
+                    let pending = if self.timing.scanline >= 240 {
+                        0
+                    } else {
+                        match self.timing.dot {
+                            0 | 1 => 0,
+                            2 | 258 => 1,
+                            3..=257 => 2,
+                            _ => 0,
+                        }
+                    };
+                    let index = next.saturating_sub(pending);
+                    self.color_splits.push(ColorSplit { index, prior });
+                }
             }
             // OAMADDR
             0x2003 => {

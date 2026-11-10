@@ -46,24 +46,47 @@ pub struct PpuMask {
     pub blue_tint: bool,
 }
 
-impl PpuMask {
+/// Color-only projection of [`PpuMask`]: the grayscale and emphasis
+/// (red/green/blue tint) bits, without the per-dot enable bits.
+///
+/// Ticket #63 defers only these bits to the end-of-frame flush, recording
+/// each mid-frame change as a split point. Enable bits stay live per-dot
+/// and are never part of a [`ColorConfig`], so a stored configuration
+/// cannot accidentally freeze rendering enablement for a segment.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ColorConfig {
+    grayscale: bool,
+    red_tint: bool,
+    green_tint: bool,
+    blue_tint: bool,
+}
+
+impl ColorConfig {
+    pub fn from_mask(mask: PpuMask) -> Self {
+        Self {
+            grayscale: mask.grayscale(),
+            red_tint: mask.red_tint(),
+            green_tint: mask.green_tint(),
+            blue_tint: mask.blue_tint(),
+        }
+    }
+
     /// Mask a palette entry for grayscale rendering: hardware ANDs the
     /// 6-bit entry with $30 before the color lookup, so dark entries like
-    /// $3F (black) render as their $3x row ($30, white).
+    /// $3F (black) render as their $3x row ($30, white). Single
+    /// implementation shared by the mask, the segment flush, and the
+    /// live brightness path (ticket #67).
+    #[inline]
     pub fn grayscale_index(&self, index: u8) -> u8 {
-        if self.grayscale() {
-            index & 0x30
-        } else {
-            index
-        }
+        if self.grayscale { index & 0x30 } else { index }
     }
 
     /// Apply emphasis tints to a looked-up pixel color. Grayscale is not
     /// handled here: it applies to the palette index before the lookup
-    /// (see [`PpuMask::grayscale_index`]).
+    /// (see [`Self::grayscale_index`]).
     #[inline]
     pub fn apply_effects(&self, pixel: Pixel) -> Pixel {
-        if !self.red_tint() && !self.green_tint() && !self.blue_tint() {
+        if !self.red_tint && !self.green_tint && !self.blue_tint {
             pixel
         } else {
             self.do_apply_effects(pixel)
@@ -73,17 +96,34 @@ impl PpuMask {
     fn do_apply_effects(&self, pixel: Pixel) -> Pixel {
         let (mut r, mut g, mut b) = pixel.to_rgb();
 
-        if !self.red_tint() && (self.green_tint() || self.blue_tint()) {
+        if !self.red_tint && (self.green_tint || self.blue_tint) {
             r = (r as u16 * 192 / 256) as u8;
         }
-        if !self.green_tint() && (self.red_tint() || self.blue_tint()) {
+        if !self.green_tint && (self.red_tint || self.blue_tint) {
             g = (g as u16 * 192 / 256) as u8;
         }
-        if !self.blue_tint() && (self.red_tint() || self.green_tint()) {
+        if !self.blue_tint && (self.red_tint || self.green_tint) {
             b = (b as u16 * 192 / 256) as u8;
         }
 
         Pixel::new(r, g, b)
+    }
+}
+
+impl PpuMask {
+    /// Mask a palette entry for grayscale rendering. Delegates to the
+    /// color-only projection so the mask, the segment flush, and the
+    /// live brightness path share one implementation (ticket #67).
+    pub fn grayscale_index(&self, index: u8) -> u8 {
+        ColorConfig::from_mask(*self).grayscale_index(index)
+    }
+
+    /// Apply emphasis tints to a looked-up pixel color. Grayscale is not
+    /// handled here: it applies to the palette index before the lookup
+    /// (see [`PpuMask::grayscale_index`]).
+    #[inline]
+    pub fn apply_effects(&self, pixel: Pixel) -> Pixel {
+        ColorConfig::from_mask(*self).apply_effects(pixel)
     }
 }
 

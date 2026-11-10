@@ -210,14 +210,16 @@ impl<R: Render, D: AudioDriver> NesMcu<R, D> {
     }
 
     /// Port-2 status bits at the current beam position: trigger on bit 4,
-    /// light sense on bit 3. Sampled against the PPU's live framebuffer.
+    /// light sense on bit 3. Sampled against pixels already buffered
+    /// this frame (ticket #64): the PPU resolves the buffered palette
+    /// index live, so light is detectable mid-frame instead of waiting
+    /// for the vblank flush to materialize the framebuffer.
     fn zapper_bits(&self) -> u8 {
         let timing = self.ppu.timing();
-        let renderer = self.ppu.renderer();
         self.controller
             .zapper
             .read(timing.scanline(), timing.dot(), |x, y| {
-                renderer.pixel_brightness(x, y)
+                self.ppu.pixel_brightness(x, y)
             })
     }
 
