@@ -276,7 +276,7 @@ fn create_cartridge_mapper5_accepts_1mb_prg_and_chr() {
     let cartridge = create_cartridge_with_mmc3_irq_override(&file, Mmc3IrqOverride::Auto);
 
     assert_eq!(cartridge.read(0x8000), 0);
-    assert_eq!(cartridge.read_vram(0x1000), 0);
+    assert_eq!(cartridge.read_vram(0x1000, &PpuRenderState::disabled()), 0);
 }
 
 #[test]
