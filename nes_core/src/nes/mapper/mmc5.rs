@@ -1,4 +1,5 @@
-//! MMC5 (ExROM, mapper 5): full PRG subsystem for ticket #77.
+//! MMC5 (ExROM, mapper 5): full PRG subsystem (ticket #77) plus ExRAM
+//! operating modes with per-quadrant nametables (ticket #79).
 //!
 //! All four PRG banking modes (`$5100` modes 0-3) with per-size ignore bits
 //! and ROM/RAM select (`$5113-$5117`), header-sized WRAM up to 128K mapped at
@@ -11,13 +12,20 @@
 //! covers `$E000-$FFFF` and the CPU vectors are visible with no register
 //! setup (map #70).
 //!
-//! CHR, ExRAM, nametables, IRQ, split, multiplier and audio registers are
-//! accepted and ignored here; later tickets implement them. The PPU-read
-//! interception seam belongs to ticket #75 and is untouched.
+//! ExRAM (`$5104-$5107`, `$5C00-$5FFF`): all four modes with render-gated
+//! CPU writes, per-quadrant nametable selection (`$5105`, diagonal layouts),
+//! fill tile/palette (`$5106/$5107`), and extended attributes with per-tile
+//! palette (the 4 KB bank bits are exposed for the later CHR ticket, which
+//! owns the pattern-table override). The PPU-read hook serves nametable
+//! fetches; pattern fetches (`$0000-$1FFF`) always fall through.
+//!
+//! CHR banking, IRQ, split, multiplier and audio registers are accepted and
+//! ignored here; later tickets implement them.
 
-use super::{Mapper, memory::CartridgeMemory};
+use super::{CartridgeCaps, Mapper, PpuRenderState, memory::CartridgeMemory};
 use crate::SystemClock;
 use crate::ines::{FileVersion, Header};
+use core::cell::Cell;
 
 /// 8 KB PRG window size in bytes.
 const PRG_8K: usize = 0x2000;
@@ -35,6 +43,18 @@ const PROTECT1_UNLOCK: u8 = 0x02;
 const PROTECT2_UNLOCK: u8 = 0x01;
 /// Largest WRAM board: 128K single SRAM (wiki "PRG RAM capacity").
 const MAX_WRAM_BYTES: usize = 128 * 1024;
+/// ExRAM size in bytes: 1 KB at `$5C00-$5FFF` (wiki `$5104`).
+const EXRAM_SIZE: usize = 0x400;
+/// Nametable offset where the attribute table starts (wiki `$5105`).
+const ATTR_BASE: usize = 0x3c0;
+/// ExRAM mode `$5104 = 1`: per-tile palette plus 4 KB bank (wiki "Extended
+/// attributes", tetanes `Nametable::ExRam` + `ATTR_MIRROR`).
+const EXRAM_MODE_EXT_ATTR: u8 = 1;
+/// ExRAM mode `$5104 = 3`: read-only, CPU writes never take effect.
+const EXRAM_MODE_READ_ONLY: u8 = 3;
+/// Expands one 2-bit palette index to a full attribute byte (one field per
+/// 2x2-tile quadrant): tetanes `ATTR_MIRROR`, FCEUX `$5107` fill expansion.
+const ATTR_MIRROR: [u8; 4] = [0x00, 0x55, 0xaa, 0xff];
 
 /// MMC5 (ExROM, mapper 5): full PRG banking.
 ///
@@ -57,6 +77,29 @@ pub struct MMC5 {
     /// Bit `i` set when the `i`-th 8 KB WRAM bank is battery-backed (16 bits
     /// cover the 128K maximum).
     battery_mask: u16,
+    /// ExRAM mode from `$5104` bits 1-0 (ticket #79): 0 = nametable,
+    /// 1 = extended attribute, 2 = general RAM, 3 = read-only.
+    exram_mode: u8,
+    /// Nametable selection from `$5105`: two bits per quadrant
+    /// (`$2000/$2400/$2800/$2C00`); 0/1 = CIRAM pages, 2 = ExRAM, 3 = fill.
+    nt_select: u8,
+    /// Fill-mode nametable byte from `$5106`.
+    fill_tile: u8,
+    /// Fill-mode palette from `$5107` bits 1-0, expanded with [`ATTR_MIRROR`].
+    fill_attr: u8,
+    /// The 1 KB ExRAM at `$5C00-$5FFF` (wiki `$5104`, tetanes `ex_ram`).
+    exram: [u8; EXRAM_SIZE],
+    /// Last render state seen by the [`Mapper::ppu_read`] hook (ticket #75
+    /// seam: the PPU owns the render gate, the mapper only latches it).
+    /// Gates `$5C00-$5FFF` writes in modes 0/1: blocked while rendering.
+    rendering: Cell<bool>,
+    /// Nametable offset (`addr & $3FF`) of the last tile fetch, latched for
+    /// the extended-attribute palette lookup (tetanes `tile_cache`): the PPU
+    /// reads the tile and attribute bytes as separate fetches, so the hook
+    /// cannot tell which tile an attribute fetch belongs to without it.
+    /// One screen only: quadrant bits are masked off (wiki "1-screen
+    /// mirrored").
+    tile_latch: Cell<u16>,
 }
 
 impl MMC5 {
@@ -80,6 +123,13 @@ impl MMC5 {
             prg_bank_count_8k: memory.prg_bank_count_8k(),
             wram_bank_count_8k,
             battery_mask,
+            exram_mode: 0,
+            nt_select: 0x00,
+            fill_tile: 0xff,
+            fill_attr: 0x03,
+            exram: [0; EXRAM_SIZE],
+            rendering: Cell::new(false),
+            tile_latch: Cell::new(0),
         };
         if wram_bank_count_8k == 0 {
             // ELROM (0K): `$6000-$7FFF` reads as open bus through the
@@ -110,6 +160,29 @@ impl MMC5 {
     #[allow(dead_code)]
     pub fn wram_bank_is_battery_backed(&self, bank_8k: usize) -> bool {
         bank_8k < 16 && self.battery_mask & (1 << bank_8k) != 0
+    }
+
+    /// Extended-attribute 4 KB CHR bank for a nametable tile (ticket #79):
+    /// ExRAM bits 5-0 name the bank (wiki "AACC CCCC", tetanes
+    /// `read_ex_ram(tile_cache) & 0x3F`), `$5130` contributes bits 6-7.
+    ///
+    /// The pattern-table override itself arrives with CHR banking (later
+    /// ticket); this pins the per-tile bank selection for it.
+    pub(crate) fn ext_attr_bank(&self, nametable_offset: u16) -> u8 {
+        self.exram[(nametable_offset & 0x03ff) as usize] & 0x3f
+    }
+
+    /// True when a CPU write to `$5C00-$5FFF` takes effect (ticket #79):
+    /// nametable/extended modes are blocked while the render latch is set,
+    /// general RAM is always writable, read-only never is (wiki `$5104`
+    /// footnotes 3-4, tetanes `ExRamRW`; the `$2001` substitute-disable and
+    /// the active-draw/idle refinements arrive with IRQ/split).
+    fn exram_write_allowed(&self) -> bool {
+        match self.exram_mode {
+            EXRAM_MODE_READ_ONLY => false,
+            EXRAM_MODE_EXT_ATTR | 0 => !self.rendering.get(),
+            _ => true,
+        }
     }
 
     fn map_rom_8k(&self, memory: &mut CartridgeMemory, slot: u16, bank_8k: usize) {
@@ -213,6 +286,67 @@ pub(crate) fn wram_config(header: &Header, version: FileVersion) -> (usize, usiz
 }
 
 impl Mapper for MMC5 {
+    /// Nametable fetch override (ticket #79): per-quadrant ExRAM/fill
+    /// bytes, extended-attribute palettes, and the zeros the PPU reads in
+    /// general-RAM/read-only modes (wiki `$5104`-`$5107`, tetanes
+    /// `chr_peek` `$2000-$3EFF`). Pattern fetches (`$0000-$1FFF`) always
+    /// fall through: CHR banking owns that override (later ticket).
+    ///
+    /// Takes `&self`: the render latch and the ExAttr tile latch live behind
+    /// [`Cell`]s, and the board memory stays cartridge-owned (ADR-0015).
+    fn ppu_read(&self, addr: u16, render: &PpuRenderState) -> Option<u8> {
+        // The mapper owns the render gate (spec #74): every hook call
+        // refreshes the latch the `$5C00-$5FFF` write gate reads.
+        self.rendering.set(render.rendering_enabled);
+        // `$3000-$3EFF` mirrors `$2000-$2EFF` (the window maps the alias
+        // slots identically); palette space never reaches the cartridge.
+        let addr = if (0x3000..0x3f00).contains(&addr) {
+            addr - 0x1000
+        } else {
+            addr
+        };
+        if !(0x2000..0x3000).contains(&addr) {
+            return None;
+        }
+        let off = (addr & 0x03ff) as usize;
+        if self.exram_mode == EXRAM_MODE_EXT_ATTR {
+            if off >= ATTR_BASE {
+                // One palette per tile from the latched fetch, expanded to
+                // all four 2-bit fields, for every nametable regardless of
+                // `$5105` (wiki "Extended attributes", tetanes
+                // `tile_cache` + `ATTR_MIRROR`); `$5107` is ignored here.
+                let palette = (self.exram[self.tile_latch.get() as usize] >> 6) & 0x03;
+                return Some(ATTR_MIRROR[palette as usize]);
+            }
+            self.tile_latch.set(off as u16);
+        }
+        // Two bits per quadrant: `$2000/$2400/$2800/$2C00` (wiki `$5105`,
+        // tetanes `nametable_select`); 0/1 fall through to the CIRAM window.
+        match (self.nt_select >> (((addr >> 10) & 0x03) * 2)) & 0x03 {
+            0 | 1 => None,
+            // ExRAM as nametable (modes 0/1): the full screen including its
+            // attribute bytes; RAM/read-only modes read as zeros (wiki
+            // `$5105`: "will read as all zeros").
+            2 if self.exram_mode <= EXRAM_MODE_EXT_ATTR => Some(self.exram[off]),
+            2 => Some(0x00),
+            // Fill mode: `$5106` tile, `$5107` palette expanded to all four
+            // fields (wiki `$5106/$5107`, tetanes `Fill`), except the tile
+            // byte in extended-attribute mode, whose palette comes from
+            // ExRAM above.
+            _ if off >= ATTR_BASE && self.exram_mode != EXRAM_MODE_EXT_ATTR => {
+                Some(ATTR_MIRROR[self.fill_attr as usize])
+            }
+            _ => Some(self.fill_tile),
+        }
+    }
+
+    fn caps(&self) -> CartridgeCaps {
+        CartridgeCaps {
+            ppu_read: true,
+            ..CartridgeCaps::default()
+        }
+    }
+
     fn cpu_write(
         &mut self,
         address: u16,
@@ -247,10 +381,23 @@ impl Mapper for MMC5 {
             0x8000..=0xffff if self.unlocked() => {
                 memory.write_prg(address, value);
             }
-            // Every other MMC5 register (`$5101` CHR mode, `$5104` ExRAM mode,
-            // `$5105` nametables, `$5120-$512B` CHR banks, `$5130` CHR high,
-            // `$5200-$5206` split/IRQ/multiplier, `$5010/$5015` audio,
-            // `$5C00-$5FFF` ExRAM) is accepted and ignored; later tickets
+            // ExRAM control registers (ticket #79): never behind the PRG
+            // unlock sequence (the matrix ROM sets `$5105-$5107` at boot
+            // with no `$5102/$5103` writes).
+            0x5104 => self.exram_mode = value & 0x03,
+            0x5105 => self.nt_select = value,
+            0x5106 => self.fill_tile = value,
+            0x5107 => self.fill_attr = value & 0x03,
+            // ExRAM data with mode + render gating (ticket #79): blocked
+            // writes are ignored, so the cell keeps its previous value.
+            0x5c00..=0x5fff => {
+                if self.exram_write_allowed() {
+                    self.exram[(address & 0x03ff) as usize] = value;
+                }
+            }
+            // Every other MMC5 register (`$5101` CHR mode, `$5120-$512B`
+            // CHR banks, `$5130` CHR high, `$5200-$5206` split/IRQ/multiplier,
+            // `$5010/$5015` audio) is accepted and ignored; later tickets
             // implement them.
             _ => {}
         }
@@ -697,5 +844,245 @@ mod tests {
             ),
             (128 * 1024, 0)
         );
+    }
+
+    // Ticket #79 helpers: the render latch is driven by the hook, so every
+    // read below spells out which state it leaves latched.
+    fn render_on() -> PpuRenderState {
+        PpuRenderState {
+            rendering_enabled: true,
+            ..PpuRenderState::default()
+        }
+    }
+
+    fn nt_read(mapper: &MMC5, addr: u16) -> Option<u8> {
+        mapper.ppu_read(addr, &PpuRenderState::disabled())
+    }
+
+    fn write_reg(mapper: &mut MMC5, memory: &mut CartridgeMemory, addr: u16, value: u8) {
+        mapper.cpu_write(addr, value, SystemClock::default(), memory);
+    }
+
+    // Ticket #79 acceptance: all ExRAM modes behave with exact CPU-write
+    // gating. Nametable/extended modes store only while the render latch is
+    // clear, general RAM always stores, read-only never does (wiki `$5104`
+    // footnotes 3-4). Cells are observed through mode 0 + all-ExRAM mapping.
+    #[test]
+    fn exram_write_gating_all_modes() {
+        let (mut mapper, mut memory) = board_8k(2, [0; 6]);
+
+        // Mode 0 (nametable): the power-on latch is clear, so this sticks.
+        write_reg(&mut mapper, &mut memory, 0x5104, 0x00);
+        write_reg(&mut mapper, &mut memory, 0x5c42, 0xaa);
+        write_reg(&mut mapper, &mut memory, 0x5105, 0xaa);
+        assert_eq!(nt_read(&mapper, 0x2042), Some(0xaa));
+
+        // Latched rendering blocks mode-0 writes (the cell keeps its value).
+        mapper.ppu_read(0x1000, &render_on());
+        write_reg(&mut mapper, &mut memory, 0x5c42, 0x11);
+        assert_eq!(nt_read(&mapper, 0x2042), Some(0xaa));
+
+        // Mode 1 (extended attribute): same gate, observed the same way.
+        write_reg(&mut mapper, &mut memory, 0x5104, 0x01);
+        mapper.ppu_read(0x1000, &render_on());
+        write_reg(&mut mapper, &mut memory, 0x5c42, 0x11);
+        write_reg(&mut mapper, &mut memory, 0x5104, 0x00);
+        assert_eq!(nt_read(&mapper, 0x2042), Some(0xaa));
+
+        // Mode 2 (general RAM): always writable, even while rendering.
+        write_reg(&mut mapper, &mut memory, 0x5104, 0x02);
+        mapper.ppu_read(0x1000, &render_on());
+        write_reg(&mut mapper, &mut memory, 0x5c42, 0x11);
+        write_reg(&mut mapper, &mut memory, 0x5104, 0x00);
+        assert_eq!(nt_read(&mapper, 0x2042), Some(0x11));
+
+        // Mode 3 (read-only, `$5104` masked to two bits): never writable,
+        // latched idle or rendering.
+        write_reg(&mut mapper, &mut memory, 0x5104, 0xff);
+        write_reg(&mut mapper, &mut memory, 0x5c42, 0x77);
+        mapper.ppu_read(0x1000, &render_on());
+        write_reg(&mut mapper, &mut memory, 0x5c42, 0x77);
+        write_reg(&mut mapper, &mut memory, 0x5104, 0x00);
+        assert_eq!(nt_read(&mapper, 0x2042), Some(0x11));
+
+        // Address window edges: `$5C00` is cell 0, `$5FFF` is cell `$3FF`.
+        write_reg(&mut mapper, &mut memory, 0x5104, 0x02);
+        write_reg(&mut mapper, &mut memory, 0x5c00, 0x01);
+        write_reg(&mut mapper, &mut memory, 0x5fff, 0x02);
+        write_reg(&mut mapper, &mut memory, 0x5104, 0x00);
+        assert_eq!(nt_read(&mapper, 0x2000), Some(0x01));
+        assert_eq!(nt_read(&mapper, 0x23ff), Some(0x02));
+    }
+
+    // The render latch follows the last hook call (spec #74: the mapper owns
+    // the gate, the PPU only passes the state down).
+    #[test]
+    fn render_latch_follows_last_hook_state() {
+        let (mut mapper, mut memory) = board_8k(2, [0; 6]);
+        write_reg(&mut mapper, &mut memory, 0x5104, 0x00);
+        write_reg(&mut mapper, &mut memory, 0x5105, 0xaa);
+
+        write_reg(&mut mapper, &mut memory, 0x5c00, 0x11);
+        assert_eq!(nt_read(&mapper, 0x2000), Some(0x11));
+        // The verify read above latched idle; latch rendering and the next
+        // write is blocked (old value survives).
+        mapper.ppu_read(0x1000, &render_on());
+        write_reg(&mut mapper, &mut memory, 0x5c00, 0x22);
+        assert_eq!(nt_read(&mapper, 0x2000), Some(0x11));
+        // That read latched idle again, so writes flow until the next
+        // rendering hook call.
+        write_reg(&mut mapper, &mut memory, 0x5c00, 0x22);
+        assert_eq!(nt_read(&mapper, 0x2000), Some(0x22));
+    }
+
+    // Ticket #79 acceptance: per-quadrant selection covers CIRAM pages,
+    // ExRAM and fill, including a diagonal ExRAM/fill layout (wiki `$5105`
+    // "Diagonal $14", tetanes `nametable_select`).
+    #[test]
+    fn quadrant_select_covers_all_sources() {
+        let (mut mapper, mut memory) = board_8k(2, [0; 6]);
+        write_reg(&mut mapper, &mut memory, 0x5104, 0x00);
+        // `$E4`: TL = CIRAM 0, TR = CIRAM 1, BL = ExRAM, BR = fill.
+        write_reg(&mut mapper, &mut memory, 0x5105, 0xe4);
+        write_reg(&mut mapper, &mut memory, 0x5c10, 0x37);
+
+        assert_eq!(nt_read(&mapper, 0x2000), None);
+        assert_eq!(nt_read(&mapper, 0x2400), None);
+        assert_eq!(nt_read(&mapper, 0x2810), Some(0x37));
+        assert_eq!(nt_read(&mapper, 0x2c10), Some(0xff));
+        // Attribute rows follow the same quadrants: ExRAM serves its own
+        // last-64-bytes table, fill expands `$5107` (power-on `$03`).
+        assert_eq!(nt_read(&mapper, 0x2bc0), Some(0x00));
+        assert_eq!(nt_read(&mapper, 0x2fc0), Some(0xff));
+        assert_eq!(nt_read(&mapper, 0x23c0), None);
+    }
+
+    #[test]
+    fn diagonal_exram_fill_layout() {
+        let (mut mapper, mut memory) = board_8k(2, [0; 6]);
+        write_reg(&mut mapper, &mut memory, 0x5104, 0x00);
+        write_reg(&mut mapper, &mut memory, 0x5106, 0x25);
+        write_reg(&mut mapper, &mut memory, 0x5c12, 0x42);
+        // `$BE`: TL/BR = ExRAM, TR/BL = fill (diagonal).
+        write_reg(&mut mapper, &mut memory, 0x5105, 0xbe);
+
+        assert_eq!(nt_read(&mapper, 0x2012), Some(0x42));
+        assert_eq!(nt_read(&mapper, 0x2412), Some(0x25));
+        assert_eq!(nt_read(&mapper, 0x2812), Some(0x25));
+        assert_eq!(nt_read(&mapper, 0x2c12), Some(0x42));
+        // One ExRAM screen: opposite corners share the same cell.
+        assert_eq!(nt_read(&mapper, 0x2000), nt_read(&mapper, 0x2c00));
+    }
+
+    // Ticket #79 acceptance: fill mode shows its tile and palette (the
+    // matrix ROM boots with `$5106=$25`, `$5107=$03`).
+    #[test]
+    fn fill_mode_shows_tile_and_palette() {
+        let (mut mapper, mut memory) = board_8k(2, [0; 6]);
+        write_reg(&mut mapper, &mut memory, 0x5104, 0x00);
+        write_reg(&mut mapper, &mut memory, 0x5105, 0xff);
+        write_reg(&mut mapper, &mut memory, 0x5106, 0x25);
+        write_reg(&mut mapper, &mut memory, 0x5107, 0x03);
+
+        assert_eq!(nt_read(&mapper, 0x2000), Some(0x25));
+        assert_eq!(nt_read(&mapper, 0x23bf), Some(0x25));
+        assert_eq!(nt_read(&mapper, 0x2fff), Some(0xff));
+        assert_eq!(nt_read(&mapper, 0x23c0), Some(0xff));
+
+        // `$5107` keeps bits 1-0 only, expanded to all four 2-bit fields.
+        write_reg(&mut mapper, &mut memory, 0x5107, 0x01);
+        assert_eq!(nt_read(&mapper, 0x23c0), Some(0x55));
+        write_reg(&mut mapper, &mut memory, 0x5107, 0xfd);
+        assert_eq!(nt_read(&mapper, 0x23c0), Some(0x55));
+    }
+
+    // Ticket #79 acceptance: extended attributes apply the per-tile palette
+    // from the latched fetch, for every nametable regardless of `$5105`
+    // (wiki "Extended attributes", tetanes `tile_cache` + `ATTR_MIRROR`).
+    // Tile fetches themselves still come from `$5105` (here CIRAM).
+    #[test]
+    fn extended_attr_applies_per_tile_palette() {
+        let (mut mapper, mut memory) = board_8k(2, [0; 6]);
+        // The matrix ROM's diagonal pattern: palettes 0-3 over bank `$03`.
+        for (i, cell) in [0x03u8, 0x43, 0x83, 0xc3].iter().enumerate() {
+            write_reg(&mut mapper, &mut memory, 0x5c00 + i as u16, *cell);
+        }
+        write_reg(&mut mapper, &mut memory, 0x5104, 0x01);
+
+        for (i, palette) in [0x00u8, 0x55, 0xaa, 0xff].iter().enumerate() {
+            let tile = 0x2000 + i as u16;
+            assert_eq!(nt_read(&mapper, tile), None);
+            assert_eq!(nt_read(&mapper, 0x23c0), Some(*palette));
+        }
+
+        // Fill quadrants take the ExRAM palette too; `$5107` is ignored.
+        write_reg(&mut mapper, &mut memory, 0x5105, 0xff);
+        write_reg(&mut mapper, &mut memory, 0x5106, 0x25);
+        write_reg(&mut mapper, &mut memory, 0x5107, 0x00);
+        assert_eq!(nt_read(&mapper, 0x2000), Some(0x25));
+        assert_eq!(nt_read(&mapper, 0x23c0), Some(0x00));
+
+        // ExRAM-as-nametable in mode 1 serves the raw byte as the tile
+        // (wiki footnote 2: the same data twice, as nametable and attribute).
+        write_reg(&mut mapper, &mut memory, 0x5105, 0xaa);
+        assert_eq!(nt_read(&mapper, 0x2000), Some(0x03));
+        assert_eq!(nt_read(&mapper, 0x23c0), Some(0x00));
+    }
+
+    // The 4 KB bank bits ride in ExRAM bits 5-0 for the CHR ticket's
+    // pattern-table override (wiki "AACC CCCC", tetanes bank split).
+    #[test]
+    fn extended_attr_bank_select_is_low_six_bits() {
+        let (mut mapper, mut memory) = board_8k(2, [0; 6]);
+        write_reg(&mut mapper, &mut memory, 0x5c10, 0x03);
+        write_reg(&mut mapper, &mut memory, 0x5c11, 0xff);
+
+        assert_eq!(mapper.ext_attr_bank(0x10), 0x03);
+        assert_eq!(mapper.ext_attr_bank(0x11), 0x3f);
+        // Quadrant bits fold: one screen only.
+        assert_eq!(mapper.ext_attr_bank(0x410), 0x03);
+    }
+
+    // In general-RAM/read-only modes the PPU reads zeros for ExRAM-mapped
+    // quadrants (wiki `$5105`), while CIRAM quadrants render normally (the
+    // ExRAM animation ROM shows CIRAM text in mode 2) and fill still serves.
+    #[test]
+    fn ram_modes_zero_exram_quadrants_but_keep_ciram_and_fill() {
+        let (mut mapper, mut memory) = board_8k(2, [0; 6]);
+        write_reg(&mut mapper, &mut memory, 0x5106, 0x25);
+        write_reg(&mut mapper, &mut memory, 0x5107, 0x02);
+        for mode in [0x02u8, 0x03] {
+            write_reg(&mut mapper, &mut memory, 0x5104, mode);
+
+            write_reg(&mut mapper, &mut memory, 0x5105, 0xaa);
+            assert_eq!(nt_read(&mapper, 0x2000), Some(0x00), "mode {mode}");
+            assert_eq!(nt_read(&mapper, 0x23c0), Some(0x00), "mode {mode}");
+
+            write_reg(&mut mapper, &mut memory, 0x5105, 0x00);
+            assert_eq!(nt_read(&mapper, 0x2000), None, "mode {mode}");
+
+            write_reg(&mut mapper, &mut memory, 0x5105, 0xff);
+            assert_eq!(nt_read(&mapper, 0x2000), Some(0x25), "mode {mode}");
+            assert_eq!(nt_read(&mapper, 0x23c0), Some(0xaa), "mode {mode}");
+        }
+    }
+
+    // Pattern space never intercepts (CHR banking owns it), the
+    // `$3000-$3EFF` alias folds to `$2000-$2EFF`, and palette space passes.
+    #[test]
+    fn hook_only_serves_nametable_space() {
+        let (mut mapper, mut memory) = board_8k(2, [0; 6]);
+        write_reg(&mut mapper, &mut memory, 0x5104, 0x01);
+        write_reg(&mut mapper, &mut memory, 0x5105, 0xaa);
+
+        assert_eq!(nt_read(&mapper, 0x1000), None);
+        assert_eq!(nt_read(&mapper, 0x1fff), None);
+        assert_eq!(mapper.ppu_read(0x3f00, &PpuRenderState::disabled()), None);
+        // Alias `$3005` reads the `$2005` cell (mode 0, ExRAM quadrant).
+        write_reg(&mut mapper, &mut memory, 0x5104, 0x02);
+        write_reg(&mut mapper, &mut memory, 0x5c05, 0x9d);
+        write_reg(&mut mapper, &mut memory, 0x5104, 0x00);
+        assert_eq!(nt_read(&mapper, 0x3005), Some(0x9d));
+        assert_eq!(nt_read(&mapper, 0x3bc0), Some(0x00));
     }
 }
