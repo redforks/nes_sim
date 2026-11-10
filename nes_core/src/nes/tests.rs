@@ -1038,6 +1038,10 @@ fn expansion_writes_reach_the_mapper_chip() {
     let mut mcu = test_mcu_with(cartridge);
 
     assert_eq!(mcu.read(0xa000), 0);
+    // Ticket #77: PRG bank registers take effect only after the exact
+    // `$5102=$02,$5103=$01` unlock sequence.
+    mcu.write(0x5102, 0x02, SystemClock::default());
+    mcu.write(0x5103, 0x01, SystemClock::default());
     mcu.write(0x5115, 0x80 | 2, SystemClock::default());
     assert_eq!(mcu.read(0xa000), 2);
 }

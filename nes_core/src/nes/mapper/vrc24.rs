@@ -291,6 +291,7 @@ impl Mapper for Vrc24 {
             on_ppu_tick: true,
             notify_vram_address: false,
             irq_pending: true,
+            ppu_read: false,
             ..Default::default()
         }
     }

@@ -162,7 +162,7 @@ fn create_cartridge_mapper0() {
 
     let val = cartridge.read_prg_ram(0x6000);
     assert_eq!(val, 0);
-    assert_eq!(cartridge.read_vram(0), 0);
+    assert_eq!(cartridge.read_vram(0, &PpuRenderState::disabled()), 0);
 }
 
 #[test]
@@ -173,7 +173,7 @@ fn create_cartridge_mapper1() {
 
     let val = cartridge.read(0x8000);
     assert_eq!(val, 0);
-    assert_eq!(cartridge.read_vram(0), 0);
+    assert_eq!(cartridge.read_vram(0, &PpuRenderState::disabled()), 0);
 }
 
 #[test]
@@ -184,7 +184,7 @@ fn create_cartridge_mapper2() {
 
     let val = cartridge.read(0x8000);
     assert_eq!(val, 0);
-    assert_eq!(cartridge.read_vram(0), 0);
+    assert_eq!(cartridge.read_vram(0, &PpuRenderState::disabled()), 0);
 }
 
 #[test]
@@ -195,7 +195,7 @@ fn create_cartridge_mapper3() {
 
     let val = cartridge.read(0x8000);
     assert_eq!(val, 0);
-    assert_eq!(cartridge.read_vram(0), 0);
+    assert_eq!(cartridge.read_vram(0, &PpuRenderState::disabled()), 0);
 }
 
 #[test]
@@ -206,7 +206,7 @@ fn create_cartridge_mapper4() {
 
     let val = cartridge.read(0x8000);
     assert_eq!(val, 0);
-    assert_eq!(cartridge.read_vram(0), 0);
+    assert_eq!(cartridge.read_vram(0, &PpuRenderState::disabled()), 0);
 }
 
 #[test]
@@ -216,9 +216,12 @@ fn create_cartridge_mapper7() {
     let mut cartridge = create_cartridge_with_mmc3_irq_override(&file, Mmc3IrqOverride::Auto);
 
     assert_eq!(cartridge.read(0x8000), 0);
-    assert_eq!(cartridge.read_vram(0x0010), 0);
+    assert_eq!(cartridge.read_vram(0x0010, &PpuRenderState::disabled()), 0);
     cartridge.write_vram(0x0010, 0xab);
-    assert_eq!(cartridge.read_vram(0x0010), 0xab);
+    assert_eq!(
+        cartridge.read_vram(0x0010, &PpuRenderState::disabled()),
+        0xab
+    );
 }
 
 #[test]
@@ -228,9 +231,12 @@ fn create_cartridge_mapper34_bnrom() {
     let mut cartridge = create_cartridge_with_mmc3_irq_override(&file, Mmc3IrqOverride::Auto);
 
     assert_eq!(cartridge.read(0x8000), 0);
-    assert_eq!(cartridge.read_vram(0x0010), 0);
+    assert_eq!(cartridge.read_vram(0x0010, &PpuRenderState::disabled()), 0);
     cartridge.write_vram(0x0010, 0xab);
-    assert_eq!(cartridge.read_vram(0x0010), 0xab);
+    assert_eq!(
+        cartridge.read_vram(0x0010, &PpuRenderState::disabled()),
+        0xab
+    );
 }
 
 #[test]
@@ -239,9 +245,12 @@ fn create_cartridge_mapper4_with_chr_ram() {
     let file = INesFile::new(rom).unwrap();
     let mut cartridge = create_cartridge_with_mmc3_irq_override(&file, Mmc3IrqOverride::Auto);
 
-    assert_eq!(cartridge.read_vram(0x0010), 0);
+    assert_eq!(cartridge.read_vram(0x0010, &PpuRenderState::disabled()), 0);
     cartridge.write_vram(0x0010, 0xab);
-    assert_eq!(cartridge.read_vram(0x0010), 0xab);
+    assert_eq!(
+        cartridge.read_vram(0x0010, &PpuRenderState::disabled()),
+        0xab
+    );
 }
 
 #[test]
@@ -267,7 +276,7 @@ fn create_cartridge_mapper5_accepts_1mb_prg_and_chr() {
     let cartridge = create_cartridge_with_mmc3_irq_override(&file, Mmc3IrqOverride::Auto);
 
     assert_eq!(cartridge.read(0x8000), 0);
-    assert_eq!(cartridge.read_vram(0x1000), 0);
+    assert_eq!(cartridge.read_vram(0x1000, &PpuRenderState::disabled()), 0);
 }
 
 #[test]
@@ -491,6 +500,7 @@ const NO_CAPS: CartridgeCaps = CartridgeCaps {
     irq_pending: false,
     tick_audio: false,
     notify_prg_read: false,
+    ppu_read: false,
 };
 const SCANLINE_AND_IRQ: CartridgeCaps = CartridgeCaps {
     on_ppu_tick: true,
@@ -498,6 +508,7 @@ const SCANLINE_AND_IRQ: CartridgeCaps = CartridgeCaps {
     irq_pending: true,
     tick_audio: false,
     notify_prg_read: false,
+    ppu_read: false,
 };
 const ALL_CAPS: CartridgeCaps = CartridgeCaps {
     on_ppu_tick: true,
@@ -505,15 +516,17 @@ const ALL_CAPS: CartridgeCaps = CartridgeCaps {
     irq_pending: true,
     tick_audio: false,
     notify_prg_read: false,
+    ppu_read: false,
 };
-/// MMC5 (ticket #83): PPU hooks arrive in later tickets; audio + PCM
-/// stream + PCM IRQ are live now.
+/// MMC5 (tickets #77/#78/#83): full PRG + CHR banking live; audio + PCM
+/// stream + PCM IRQ live; scanline IRQ/split/ExRAM arrive later.
 const MMC5_AUDIO_CAPS: CartridgeCaps = CartridgeCaps {
     on_ppu_tick: false,
     notify_vram_address: false,
     irq_pending: true,
     tick_audio: true,
     notify_prg_read: true,
+    ppu_read: true,
 };
 
 /// The declaration table: what each board tells the cartridge it implements.
@@ -550,9 +563,18 @@ fn test_recording_logs_cartridge_vram_reads_in_order() {
     cartridge.write_vram(0x0010, 0xab);
     cartridge.write_vram(0x0100, 0xcd);
 
-    assert_eq!(0xab, cartridge.read_vram(0x0010));
-    assert_eq!(0xcd, cartridge.read_vram(0x0100));
-    assert_eq!(0xab, cartridge.read_vram(0x0010));
+    assert_eq!(
+        0xab,
+        cartridge.read_vram(0x0010, &PpuRenderState::disabled())
+    );
+    assert_eq!(
+        0xcd,
+        cartridge.read_vram(0x0100, &PpuRenderState::disabled())
+    );
+    assert_eq!(
+        0xab,
+        cartridge.read_vram(0x0010, &PpuRenderState::disabled())
+    );
 
     assert_eq!(3, recorder.vram_reads.count());
     assert_eq!(
@@ -564,4 +586,89 @@ fn test_recording_logs_cartridge_vram_reads_in_order() {
     recorder.vram_reads.clear();
     assert_eq!(0, recorder.vram_reads.count());
     assert!(recorder.vram_reads.addresses().is_empty());
+}
+
+/// Test chip for the mapper-side PPU-read seam (ticket #75): its hook
+/// answers `hook_byte` for every address and records the last render state
+/// it observed, telling "hook consulted" apart from "hook bypassed".
+struct PpuHookMapper {
+    caps: CartridgeCaps,
+    hook_byte: Option<u8>,
+    seen: std::rc::Rc<std::cell::Cell<Option<PpuRenderState>>>,
+}
+
+impl Mapper for PpuHookMapper {
+    fn cpu_write(&mut self, _: u16, _: u8, _: SystemClock, _: &mut CartridgeMemory) {}
+
+    fn ppu_read(&self, _addr: u16, render: &PpuRenderState) -> Option<u8> {
+        self.seen.set(Some(*render));
+        self.hook_byte
+    }
+
+    fn caps(&self) -> CartridgeCaps {
+        self.caps
+    }
+}
+
+fn hook_cartridge(
+    ppu_read: bool,
+    hook_byte: Option<u8>,
+) -> (
+    Cartridge,
+    std::rc::Rc<std::cell::Cell<Option<PpuRenderState>>>,
+) {
+    let mapper = PpuHookMapper {
+        caps: CartridgeCaps {
+            ppu_read,
+            ..CartridgeCaps::default()
+        },
+        hook_byte,
+        seen: Default::default(),
+    };
+    let seen = mapper.seen.clone();
+    let mut cartridge = Cartridge::new(Box::new(mapper), CartridgeMemory::test(&[], &[]));
+    cartridge.write_vram(0x0010, 0x5a);
+    (cartridge, seen)
+}
+
+/// Gated by `CartridgeCaps::ppu_read`: a chip whose hook would answer is
+/// never consulted when the flag is off, so the window contents win.
+#[test]
+fn ppu_read_hook_bypassed_when_flag_off() {
+    let (cartridge, seen) = hook_cartridge(false, Some(0xff));
+    assert!(!cartridge.wants_ppu_read());
+    assert_eq!(
+        0x5a,
+        cartridge.read_vram(0x0010, &PpuRenderState::disabled())
+    );
+    assert_eq!(None, seen.get(), "flag off: the hook is never called");
+}
+
+/// Flag on and the hook answers: the override wins, and the PPU-built
+/// render state (rendering, sprite size, fetch phase) reaches the hook.
+#[test]
+fn ppu_read_hook_overrides_when_flag_on() {
+    let (cartridge, seen) = hook_cartridge(true, Some(0xff));
+    let render = PpuRenderState {
+        rendering_enabled: true,
+        sprite_8x16: true,
+        fetch_phase: 3,
+        fetch: PpuFetchKind::Cpu,
+    };
+    assert_eq!(0xff, cartridge.read_vram(0x0010, &render));
+    assert_eq!(Some(render), seen.get());
+}
+
+/// Flag on but the hook declines (`None`): falls through to the window.
+#[test]
+fn ppu_read_hook_fallthrough_when_flag_on() {
+    let (cartridge, seen) = hook_cartridge(true, None);
+    let render = PpuRenderState {
+        rendering_enabled: true,
+        sprite_8x16: false,
+        fetch_phase: 5,
+        fetch: PpuFetchKind::Cpu,
+    };
+    assert_eq!(0x5a, cartridge.read_vram(0x0010, &render));
+    assert_eq!(Some(render), seen.get(), "consulted before the fallthrough");
 }

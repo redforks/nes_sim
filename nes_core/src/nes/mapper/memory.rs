@@ -56,6 +56,17 @@ fn bank_count(len_bytes: usize) -> usize {
 pub struct CartridgeMemory {
     pool: Box<[Bank]>,
     prg_ram: Box<[Bank; PRG_RAM_BANK_COUNT]>,
+    /// MMC5 WRAM extension: first pool bank of the WRAM area appended after
+    /// PRG-ROM by [`Self::add_wram_banks`]. Zero-sized for every other board.
+    wram_base: usize,
+    /// MMC5 WRAM size in 1 KB banks. Zero for every board but MMC5-with-WRAM;
+    /// [`Self::read_prg_ram`]/[`Self::write_prg_ram`] only consult the WRAM
+    /// area when this is nonzero, so other mappers keep the fixed 8 KB bank
+    /// array with no behavior change.
+    wram_bank_count: usize,
+    /// `$6000-$7FFF` bank offset (in 1 KB banks) into the WRAM area, selected
+    /// by MMC5 `$5113`. Only consulted when `wram_bank_count` is nonzero.
+    wram_6000_base: usize,
     chr_base: usize,
     prg_rom_base: usize,
     chr_bank_count: usize,
@@ -99,6 +110,9 @@ impl CartridgeMemory {
             prg_rom_base,
             chr_bank_count,
             prg_bank_count,
+            wram_base: 0,
+            wram_bank_count: 0,
+            wram_6000_base: 0,
             chr_is_ram,
             prg_ram_enabled: true,
             mirroring,
@@ -147,21 +161,104 @@ impl CartridgeMemory {
     }
 
     /// PRG-RAM access for `$6000-$7FFF`: direct bank hit, no window lookup.
+    ///
+    /// Boards with MMC5 WRAM (see [`Self::add_wram_banks`]) instead read the
+    /// 8 KB WRAM bank selected by `$5113` (via [`Self::set_wram_6000_bank`]).
     pub fn read_prg_ram(&self, address: u16) -> u8 {
         let bank =
             ((address.wrapping_sub(0x6000) & 0x1fff) >> 10) as usize & (PRG_RAM_BANK_COUNT - 1);
+        if self.wram_bank_count > 0 {
+            // SAFETY: `wram_6000_base + bank` is reduced modulo the nonzero
+            // `wram_bank_count`, so the pool index stays inside the WRAM area
+            // appended by `add_wram_banks`.
+            let wram_bank = (self.wram_6000_base + bank) % self.wram_bank_count;
+            return unsafe {
+                self.pool
+                    .get_unchecked(self.wram_base + wram_bank)
+                    .read(address)
+            };
+        }
         // SAFETY: `prg_ram` has exactly PRG_RAM_BANK_COUNT banks and the masked
         // index is always in range.
         unsafe { self.prg_ram.get_unchecked(bank).read(address) }
     }
 
     /// PRG-RAM writes for `$6000-$7FFF`: direct bank hit, no window lookup.
+    /// Boards with MMC5 WRAM write the `$5113`-selected WRAM bank instead.
     pub fn write_prg_ram(&mut self, address: u16, value: u8) {
         let bank =
             ((address.wrapping_sub(0x6000) & 0x1fff) >> 10) as usize & (PRG_RAM_BANK_COUNT - 1);
+        if self.wram_bank_count > 0 {
+            // SAFETY: as in `read_prg_ram`.
+            let wram_bank = (self.wram_6000_base + bank) % self.wram_bank_count;
+            return unsafe {
+                self.pool
+                    .get_unchecked_mut(self.wram_base + wram_bank)
+                    .write(address, value);
+            };
+        }
         // SAFETY: as in `read_prg_ram`.
         unsafe {
             self.prg_ram.get_unchecked_mut(bank).write(address, value);
+        }
+    }
+
+    /// Appends MMC5 WRAM to the pool (called once by `MMC5::new`):
+    /// `size_bytes` rounds up to whole 1 KB banks. Boards without MMC5 WRAM
+    /// never call this, so every other mapper keeps its existing layout.
+    pub fn add_wram_banks(&mut self, size_bytes: usize) {
+        let banks = size_bytes.div_ceil(BANK_SIZE);
+        if banks == 0 {
+            return;
+        }
+        self.wram_base = self.pool.len();
+        self.wram_bank_count = banks;
+        let pool = std::mem::replace(&mut self.pool, Box::new([]));
+        let mut pool = pool.into_vec();
+        pool.extend((0..banks).map(|_| Bank::empty()));
+        self.pool = pool.into_boxed_slice();
+    }
+
+    /// Points the `$6000-$7FFF` window at an 8 KB WRAM bank (MMC5 `$5113`).
+    /// Bit 7 of the register is the caller's to mask: `$5113` always selects
+    /// RAM. No-op without WRAM (ELROM): `$6000` stays disabled via
+    /// [`Self::set_prg_ram_enabled`].
+    pub fn set_wram_6000_bank(&mut self, bank_8k: u16) {
+        if self.wram_bank_count == 0 {
+            return;
+        }
+        self.wram_6000_base = (bank_8k as usize * 8) % self.wram_bank_count;
+    }
+
+    /// Points an 8 KB `$8000`-window slot (0 at `$8000` .. 3 at `$E000`) at an
+    /// 8 KB WRAM bank: the MMC5 ROM/RAM-select bit cleared on `$5114-$5116`.
+    /// No-op without WRAM: the window keeps its previous mapping.
+    pub fn map_prg_wram_8k(&mut self, slot: u16, bank_8k: u16) {
+        if self.wram_bank_count == 0 {
+            return;
+        }
+        self.map_wram_run(slot as usize * 8, bank_8k as usize * 8, 8);
+    }
+
+    /// Data write through the `$8000-$FFFF` bank window: only affects windows
+    /// currently mapped at MMC5 WRAM (Bandit Kings writes back through
+    /// `$8000+`). ROM-mapped windows ignore the write.
+    pub fn write_prg(&mut self, address: u16, value: u8) {
+        let slot = (address.wrapping_sub(0x8000) >> 10) as usize & (PRG_WINDOW_SLOTS - 1);
+        let bank = self.prg_window[slot] as usize;
+        if bank < self.wram_base || bank >= self.wram_base + self.wram_bank_count {
+            return;
+        }
+        // SAFETY: bounds-checked against the WRAM area just above.
+        unsafe {
+            self.pool.get_unchecked_mut(bank).write(address, value);
+        }
+    }
+
+    fn map_wram_run(&mut self, first_slot: usize, start_bank: usize, len: usize) {
+        for i in 0..len {
+            let bank = (start_bank + i) % self.wram_bank_count;
+            self.prg_window[first_slot + i] = (self.wram_base + bank) as u16;
         }
     }
 
@@ -177,6 +274,17 @@ impl CartridgeMemory {
         // numbers 0..4 or `chr_base` plus a bank taken modulo
         // `chr_bank_count` — every entry is inside the pool.
         unsafe { self.pool.get_unchecked(bank).read(address) }
+    }
+
+    /// CHR bank-redirect read (ticket #78): serves pool bank `bank_1k`
+    /// (modulo the CHR bank count, mirroring `map_chr_run`) at `address`.
+    /// The low 10 bits select the byte, so this shares pool banks with the
+    /// window reads/writes — CHR-RAM writes via windows stay visible here.
+    pub fn read_chr_bank(&self, bank_1k: u16, address: u16) -> u8 {
+        let bank = bank_1k as usize % self.chr_bank_count;
+        // SAFETY: as in `read_vram` — the modulo keeps the pool index inside
+        // the CHR area.
+        unsafe { self.pool.get_unchecked(self.chr_base + bank).read(address) }
     }
 
     /// Pattern-table writes are dropped when the banks hold CHR ROM; the
@@ -298,5 +406,10 @@ impl CartridgeMemory {
 
     pub fn prg_bank_count_32k(&self) -> usize {
         (self.prg_len_bytes / 0x8000).max(1)
+    }
+
+    /// MMC5 WRAM size in 8 KB banks (zero for every board without MMC5 WRAM).
+    pub fn wram_bank_count_8k(&self) -> usize {
+        self.wram_bank_count / 8
     }
 }

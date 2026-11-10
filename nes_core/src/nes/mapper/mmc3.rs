@@ -274,6 +274,7 @@ impl Mapper for MMC3 {
             on_ppu_tick: true,
             notify_vram_address: true,
             irq_pending: true,
+            ppu_read: false,
             ..Default::default()
         }
     }
