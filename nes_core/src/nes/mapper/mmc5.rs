@@ -20,14 +20,26 @@
 //! covers `$E000-$FFFF` and the CPU vectors are visible with no register
 //! setup (map #70).
 //!
-//! ExRAM, nametables, IRQ, split, multiplier and audio registers are
-//! accepted and ignored here; later tickets implement them. The `ppu_read`
-//! byte-override hook stays at its default (`None`): this chip serves CHR
-//! through the bank redirect only.
+//! ExRAM, nametables, split, multiplier and audio registers are accepted
+//! and ignored here; later tickets implement them. Ticket #81 implements
+//! the scanline IRQ (#72 resolutions): the counter lives in this chip,
+//! driven from the [`Mapper::ppu_read`] fetch-stream feed plus the
+//! [`Mapper::on_ppu_tick`] per-dot heartbeat, with the PPU-passed render
+//! state as the only gate (no PPU-register reads from the mapper). CHR
+//! continues through the [`Mapper::ppu_chr_bank`] redirect; the `ppu_read`
+//! byte override stays `None` (fall through) and only feeds the detector.
 
 use super::{CartridgeCaps, Mapper, PpuFetchKind, PpuRenderState, memory::CartridgeMemory};
 use crate::SystemClock;
 use crate::ines::{FileVersion, Header};
+use std::cell::Cell;
+/// Ticks into a scanline at which the scanline-start is detected: the fourth
+/// [`Mapper::on_ppu_tick`] carrying the new scanline number. The first three
+/// ticks processed the previous line's last dot and this line's dots 0-1
+/// (including the dot-0 render fetch), so the fourth lands as the PPU enters
+/// dot 3 — ~PPU cycle 4, the hardware attribute-fetch detection point (spec
+/// #74 decision 17, #72 resolution 1).
+const DETECT_DOTS_IN_LINE: u16 = 4;
 
 /// 8 KB PRG window size in bytes.
 const PRG_8K: usize = 0x2000;
@@ -93,6 +105,39 @@ pub struct MMC5 {
     chr_high: u8,
     /// Which CHR range was written last; serves `$2007` reads in 8x16 mode.
     last_chr_set: ChrSet,
+    /// `$5203`: scanline compare target. `$00` is the special case that
+    /// never matches (#72 resolution 2): the compare below requires a
+    /// nonzero target, so a cleared target cannot produce pending.
+    irq_target: Cell<u8>,
+    /// `$5204` write bit 7: IRQ enable. Gates only the CPU IRQ line, never
+    /// the sticky pending flag — disabling drops an asserted line but keeps
+    /// pending, and re-enabling with pending set asserts at once (wiki
+    /// "any time that scanline IRQ becomes disabled" semantics).
+    irq_enabled: Cell<bool>,
+    /// Sticky `$5204` read bit 7: set by the counter compare regardless of
+    /// enable, cleared by a `$5204` read (acknowledge). Writing `$5203`
+    /// never acknowledges, so an ISR can re-arm a larger target and stack a
+    /// second split in the same frame (#72 resolution 2).
+    irq_pending: Cell<bool>,
+    /// Live `$5204` read bit 6: whether the PPU is actively rendering
+    /// visible scanlines. Set on the first detected scanline of a frame,
+    /// cleared when a scanline boundary passes with no render-enabled reads
+    /// (vblank lines, or the `$2001` mask went off).
+    irq_in_frame: Cell<bool>,
+    /// Internal 8-bit scanline counter: reset to 0 on the first detected
+    /// scanline of a frame, incremented per detected scanline after that.
+    /// Compared against the `$5203` target after each increment.
+    irq_counter: Cell<u8>,
+    /// Last scanline number seen by [`Mapper::on_ppu_tick`]; `u16::MAX`
+    /// initially so the first tick counts as a boundary.
+    last_tick_scanline: Cell<u16>,
+    /// `on_ppu_tick` calls seen carrying the current scanline number.
+    dots_in_line: Cell<u16>,
+    /// A render-enabled [`Mapper::ppu_read`] arrived since the previous
+    /// scanline boundary: the line is genuinely rendering (dot-0 fills read
+    /// even with the mask off, so the [`PpuRenderState`] gate — not the bare
+    /// fact of a read — is what sets this).
+    render_seen: Cell<bool>,
 }
 
 impl MMC5 {
@@ -121,6 +166,14 @@ impl MMC5 {
             chr_bg: [0; 4],
             chr_high: 0,
             last_chr_set: ChrSet::Sprite,
+            irq_target: Cell::new(0),
+            irq_enabled: Cell::new(false),
+            irq_pending: Cell::new(false),
+            irq_in_frame: Cell::new(false),
+            irq_counter: Cell::new(0),
+            last_tick_scanline: Cell::new(u16::MAX),
+            dots_in_line: Cell::new(0),
+            render_seen: Cell::new(false),
         };
         if wram_bank_count_8k == 0 {
             // ELROM (0K): `$6000-$7FFF` reads as open bus through the
@@ -371,10 +424,20 @@ impl Mapper for MMC5 {
             0x8000..=0xffff if self.unlocked() => {
                 memory.write_prg(address, value);
             }
+            // `$5203`: scanline compare target. Takes effect for the next
+            // detection compare; never acknowledges a pending IRQ, so an
+            // ISR can write a larger target and stack a second split in the
+            // same frame (#72 resolution 2, ticket #81).
+            0x5203 => self.irq_target.set(value),
+            // `$5204` write: bit 7 is the IRQ enable flag. Only the line is
+            // gated — pending, target, counter and in-frame are untouched
+            // either way, so disabling then re-enabling re-asserts at once
+            // when pending is set.
+            0x5204 => self.irq_enabled.set(value & 0x80 != 0),
             // Every other MMC5 register (`$5104` ExRAM mode, `$5105`
-            // nametables, `$5200-$5206` split/IRQ/multiplier, `$5010/$5015`
-            // audio, `$5C00-$5FFF` ExRAM) is accepted and ignored; later
-            // tickets implement them.
+            // nametables, `$5200-$5202` split, `$5205-$5206` multiplier,
+            // `$5010/$5015` audio, `$5C00-$5FFF` ExRAM) is accepted and
+            // ignored; later tickets implement them.
             _ => {}
         }
     }
@@ -404,10 +467,115 @@ impl Mapper for MMC5 {
         Some(bank)
     }
 
+    /// Fetch-stream feed for the scanline-IRQ detector (ticket #81): a
+    /// render-enabled read proves the PPU fetched this dot, latching the
+    /// current scanline as genuinely rendering and holding off the
+    /// end-of-frame exit. Reads with the mask off (the PPU's unconditional
+    /// dot-0 fill still reaches the cartridge) are invisible here, exactly
+    /// like the silent PPU they model. Always falls through (`None`): CHR
+    /// travels through [`Mapper::ppu_chr_bank`], ExRAM/split overrides
+    /// arrive in later tickets (#79/#82).
+    fn ppu_read(&self, _addr: u16, render: &PpuRenderState) -> Option<u8> {
+        if render.rendering_enabled {
+            self.render_seen.set(true);
+        }
+        None
+    }
+
+    /// Per-dot heartbeat for the scanline counter (ticket #81): detects
+    /// scanline starts at ~PPU cycle 4 and retires the in-frame flag at
+    /// frame end.
+    ///
+    /// Model note — why not the hardware's literal 3-identical-read
+    /// detector: this PPU renders per-pixel through per-tile fills (four
+    /// reads per tile, no dummy prefetch fetches), so the hardware's dummy-
+    /// fetch triple never appears in the stream the hook sees. The mapper
+    /// instead observes the same scanline starts at the same raster
+    /// position through this heartbeat: the dot-0 render fetch always
+    /// precedes the fourth tick of a rendered visible scanline, so
+    /// detecting there lands on the same ~cycle 4 the hardware's
+    /// attribute-fetch detection reports. Likewise the end-of-frame exit is
+    /// line-granular (a boundary crossed with no render-enabled reads)
+    /// rather than the hardware's 3-M2-cycle /RD silence, because this PPU
+    /// skips fetches for disabled layers mid-line while still issuing its
+    /// dot-0 fill with the mask off — per-dot silence does not imply
+    /// end-of-frame here. Observable outcomes match: no counting while
+    /// disabled, counter reset on re-enable, in-frame cleared across
+    /// vblank.
+    ///
+    /// Not implemented (no seam): the NMI-vector (`$FFFA/B`) acknowledge +
+    /// clear and the `$2001`-write clear — both need hooks this mapper does
+    /// not have. Games acknowledge through the `$5204` read in the ISR, so
+    /// the missing paths only affect un-acked pending across NMI.
+    fn on_ppu_tick(&mut self, scanline: u16) {
+        if scanline != self.last_tick_scanline.get() {
+            self.last_tick_scanline.set(scanline);
+            self.dots_in_line.set(1);
+            // A boundary crossed with no render-enabled reads since the
+            // previous boundary: the PPU stopped rendering (vblank lines,
+            // or the mask went off) — retire in-frame.
+            if !self.render_seen.replace(false) {
+                self.irq_in_frame.set(false);
+            }
+        } else {
+            self.dots_in_line.set(self.dots_in_line.get() + 1);
+        }
+        // Scanline-start detection: a rendered visible scanline at ~cycle 4.
+        if scanline < 240
+            && self.dots_in_line.get() == DETECT_DOTS_IN_LINE
+            && self.render_seen.get()
+        {
+            if !self.irq_in_frame.get() {
+                self.irq_in_frame.set(true);
+                self.irq_counter.set(0);
+            } else {
+                let counter = self.irq_counter.get().wrapping_add(1);
+                self.irq_counter.set(counter);
+                let target = self.irq_target.get();
+                if target != 0 && counter == target {
+                    self.irq_pending.set(true);
+                }
+            }
+        }
+    }
+
+    /// The CPU IRQ line: asserted only when the sticky pending flag is set
+    /// *and* the `$5204` enable flag is set (pending sets regardless of
+    /// enable, per hardware).
+    fn irq_pending(&self) -> bool {
+        self.irq_pending.get() && self.irq_enabled.get()
+    }
+
+    /// `$5204` read: bit 7 is the sticky pending flag (cleared as the read
+    /// acknowledges the IRQ), bit 6 is the live in-frame flag. Low bits are
+    /// zero here; the caller (`NesMcu`) fills them from the open-bus latch.
+    fn read_expansion(&self, address: u16) -> Option<u8> {
+        match address {
+            0x5204 => {
+                let pending = self.irq_pending.replace(false);
+                Some(u8::from(pending) << 7 | u8::from(self.irq_in_frame.get()) << 6)
+            }
+            _ => None,
+        }
+    }
+
+    /// `$5204` peek: same status bits, never acknowledges.
+    fn peek_expansion(&self, address: u16) -> Option<u8> {
+        match address {
+            0x5204 => {
+                Some(u8::from(self.irq_pending.get()) << 7 | u8::from(self.irq_in_frame.get()) << 6)
+            }
+            _ => None,
+        }
+    }
+
     fn caps(&self) -> CartridgeCaps {
         CartridgeCaps {
+            on_ppu_tick: true,
+            notify_vram_address: false,
+            irq_pending: true,
             ppu_read: true,
-            ..CartridgeCaps::default()
+            read_expansion: true,
         }
     }
 }
@@ -1198,5 +1366,284 @@ mod tests {
                 "cpu slot {slot}"
             );
         }
+    }
+
+    // --- Scanline IRQ (ticket #81, #72 resolutions) ---
+
+    fn irq_render_on() -> PpuRenderState {
+        PpuRenderState {
+            rendering_enabled: true,
+            sprite_8x16: false,
+            fetch_phase: 0,
+            fetch: PpuFetchKind::Background,
+        }
+    }
+
+    fn enable_irq(mapper: &mut MMC5, memory: &mut CartridgeMemory, target: u8) {
+        mapper.cpu_write(0x5203, target, SystemClock::default(), memory);
+        mapper.cpu_write(0x5204, 0x80, SystemClock::default(), memory);
+    }
+
+    /// Drive one fully-rendered visible scanline through the detector: the
+    /// line-change tick, the dot-0 render fetch that latches the line as
+    /// rendered, then ticks through the detection dot.
+    fn run_rendered_scanline(mapper: &mut MMC5, line: u16) {
+        mapper.on_ppu_tick(line);
+        mapper.ppu_read(0x2000, &irq_render_on());
+        for _ in 0..3 {
+            mapper.on_ppu_tick(line);
+        }
+    }
+
+    /// Drive one mask-off scanline: only the PPU's unconditional dot-0
+    /// fill reaches the cartridge, with rendering disabled, so the detector
+    /// must ignore it (silent PPU).
+    fn run_dark_scanline(mapper: &mut MMC5, line: u16) {
+        mapper.on_ppu_tick(line);
+        mapper.ppu_read(0x2000, &PpuRenderState::disabled());
+        for _ in 0..3 {
+            mapper.on_ppu_tick(line);
+        }
+    }
+
+    /// Ticks 1-3 of a rendered target scanline: the line-change tick plus
+    /// the dot-0 fetch and two more ticks, stopping just before detection.
+    fn run_scanline_to_before_detect(mapper: &mut MMC5, line: u16) {
+        mapper.on_ppu_tick(line);
+        mapper.ppu_read(0x2000, &irq_render_on());
+        mapper.on_ppu_tick(line);
+        mapper.on_ppu_tick(line);
+    }
+
+    fn status(mapper: &MMC5) -> u8 {
+        mapper.read_expansion(0x5204).expect("$5204 is handled")
+    }
+
+    // IRQ asserts at ~PPU cycle 4 of the target scanline: pending is still
+    // clear after the first three ticks of the target line and set after
+    // the fourth (spec #74 user story 17, #72 resolution 1).
+    #[test]
+    fn irq_asserts_at_fourth_tick_of_target_scanline() {
+        let (mut mapper, mut memory) = board_8k(2, [0; 6]);
+        enable_irq(&mut mapper, &mut memory, 5);
+
+        for line in 0..5 {
+            run_rendered_scanline(&mut mapper, line);
+            assert!(!mapper.irq_pending(), "no IRQ through line {line}");
+        }
+        run_scanline_to_before_detect(&mut mapper, 5);
+        assert!(!mapper.irq_pending(), "no IRQ before the detection tick");
+        mapper.on_ppu_tick(5);
+        assert!(mapper.irq_pending(), "IRQ asserts on the fourth tick");
+        assert_ne!(0, status(&mapper) & 0x80, "pending flag reads set");
+    }
+
+    // `$5203 = 0` never matches, even when the counter passes through 0
+    // at the top of the frame (#72 resolution 2).
+    #[test]
+    fn target_zero_never_matches() {
+        let (mut mapper, mut memory) = board_8k(2, [0; 6]);
+        enable_irq(&mut mapper, &mut memory, 0);
+
+        for line in 0..240 {
+            run_rendered_scanline(&mut mapper, line);
+            assert!(!mapper.irq_pending(), "no IRQ on line {line}");
+        }
+        assert_eq!(0, status(&mapper) & 0x80, "pending never sets");
+    }
+
+    // Writing `$5203` never acknowledges: an ISR that reads `$5204` then
+    // writes a larger target stacks a second split later in the same frame
+    // (#72 resolution 2). Without the ack read, pending survives the write.
+    #[test]
+    fn rearm_with_larger_target_stacks_second_irq() {
+        let (mut mapper, mut memory) = board_8k(2, [0; 6]);
+        enable_irq(&mut mapper, &mut memory, 5);
+
+        for line in 0..=5 {
+            run_rendered_scanline(&mut mapper, line);
+        }
+        assert!(mapper.irq_pending(), "first IRQ fires at line 5");
+
+        mapper.cpu_write(0x5203, 10, SystemClock::default(), &mut memory);
+        assert_ne!(
+            0,
+            status(&mapper) & 0x80,
+            "$5203 write does not acknowledge"
+        );
+        // The status read above acknowledged; re-arm for the second split.
+        mapper.cpu_write(0x5203, 10, SystemClock::default(), &mut memory);
+        for line in 6..=10 {
+            run_rendered_scanline(&mut mapper, line);
+        }
+        assert!(mapper.irq_pending(), "second IRQ fires at line 10");
+    }
+
+    // `$5204` read bit 7 is pending cleared-on-read, bit 6 is the live
+    // in-frame flag: set while the frame renders, clear after rendering
+    // stops (#72 resolution 3).
+    #[test]
+    fn status_read_clears_pending_keeps_in_frame() {
+        let (mut mapper, mut memory) = board_8k(2, [0; 6]);
+        enable_irq(&mut mapper, &mut memory, 2);
+
+        for line in 0..=2 {
+            run_rendered_scanline(&mut mapper, line);
+        }
+        assert!(mapper.irq_pending());
+        assert_eq!(0xc0, status(&mapper), "pending + in-frame read set");
+        assert_eq!(0x40, status(&mapper), "pending cleared, in-frame live");
+        assert!(!mapper.irq_pending(), "IRQ line drops on acknowledge");
+
+        // A scanline boundary with no rendered reads retires in-frame.
+        run_dark_scanline(&mut mapper, 3);
+        run_dark_scanline(&mut mapper, 4);
+        assert_eq!(0, status(&mapper) & 0x40, "in-frame clears off-frame");
+    }
+
+    // Counting is gated by the PPU-passed render state: mask-off scanlines
+    // never detect, never set in-frame, and never count (#72 resolution 4).
+    #[test]
+    fn mask_off_scanlines_never_count() {
+        let (mut mapper, mut memory) = board_8k(2, [0; 6]);
+        enable_irq(&mut mapper, &mut memory, 5);
+
+        for line in 0..240 {
+            run_dark_scanline(&mut mapper, line);
+            assert!(!mapper.irq_pending(), "no IRQ on dark line {line}");
+        }
+        assert_eq!(0, status(&mapper), "neither flag sets while disabled");
+    }
+
+    // A fully dark line retires in-frame (the line-granular form of the
+    // hardware /RD-idle exit), so the next rendered line restarts the
+    // counter at 0 instead of continuing it: with the target at 1 and line
+    // 1 dark, the IRQ lands on line 3, not line 2.
+    #[test]
+    fn dark_line_restarts_counter() {
+        let (mut mapper, mut memory) = board_8k(2, [0; 6]);
+        enable_irq(&mut mapper, &mut memory, 1);
+
+        run_rendered_scanline(&mut mapper, 0);
+        assert_eq!(0x40, status(&mapper), "frame starts, counter at 0");
+        run_dark_scanline(&mut mapper, 1);
+        assert!(!mapper.irq_pending(), "dark line detects nothing");
+        run_rendered_scanline(&mut mapper, 2);
+        assert!(!mapper.irq_pending(), "counter restarted, not continued");
+        run_rendered_scanline(&mut mapper, 3);
+        assert!(mapper.irq_pending(), "IRQ lands one live line later");
+    }
+
+    // The counter resets every frame: vblank retires in-frame, so the next
+    // frame's first line re-arms from zero and the same target fires again.
+    #[test]
+    fn counter_resets_each_frame() {
+        let (mut mapper, mut memory) = board_8k(2, [0; 6]);
+        enable_irq(&mut mapper, &mut memory, 5);
+
+        for line in 0..=5 {
+            run_rendered_scanline(&mut mapper, line);
+        }
+        assert!(mapper.irq_pending(), "frame 1 fires at line 5");
+        assert_ne!(0, status(&mapper) & 0x80, "ISR observes pending");
+        assert_eq!(0, status(&mapper) & 0x80, "ISR acknowledges");
+
+        for line in 6..240 {
+            run_rendered_scanline(&mut mapper, line);
+        }
+        for line in 240..262 {
+            mapper.on_ppu_tick(line);
+        }
+        assert_eq!(0, status(&mapper) & 0x40, "vblank retires in-frame");
+
+        for line in 0..=5 {
+            run_rendered_scanline(&mut mapper, line);
+        }
+        assert!(mapper.irq_pending(), "frame 2 fires at line 5 again");
+    }
+
+    // The pending flag sets regardless of enable; enable gates only the
+    // CPU line. Disabling drops the line but keeps pending, and
+    // re-enabling with pending set asserts immediately.
+    #[test]
+    fn irq_line_requires_enable_but_pending_sets_regardless() {
+        let (mut mapper, mut memory) = board_8k(2, [0; 6]);
+        mapper.cpu_write(0x5203, 2, SystemClock::default(), &mut memory);
+
+        for line in 0..=2 {
+            run_rendered_scanline(&mut mapper, line);
+        }
+        assert!(!mapper.irq_pending(), "line stays low while disabled");
+        assert_ne!(0, status(&mapper) & 0x80, "pending still sets");
+        assert_eq!(0, status(&mapper) & 0x80, "status read acknowledges");
+    }
+
+    // Disabling with pending set drops the line but keeps the flag, and
+    // re-enabling asserts immediately.
+    #[test]
+    fn disable_keeps_pending_reenable_asserts_at_once() {
+        let (mut mapper, mut memory) = board_8k(2, [0; 6]);
+        enable_irq(&mut mapper, &mut memory, 2);
+
+        for line in 0..=2 {
+            run_rendered_scanline(&mut mapper, line);
+        }
+        assert!(mapper.irq_pending());
+        mapper.cpu_write(0x5204, 0x00, SystemClock::default(), &mut memory);
+        assert!(!mapper.irq_pending(), "line drops while disabled");
+        assert_ne!(
+            0,
+            mapper.peek_expansion(0x5204).expect("$5204 peeks") & 0x80,
+            "pending survives disable"
+        );
+        mapper.cpu_write(0x5204, 0x80, SystemClock::default(), &mut memory);
+        assert!(mapper.irq_pending(), "re-enable asserts at once");
+    }
+
+    // The debugger peek reports the same status bits but never
+    // acknowledges: peeking twice keeps pending set, reading clears it.
+    #[test]
+    fn peek_reports_status_without_acknowledging() {
+        let (mut mapper, mut memory) = board_8k(2, [0; 6]);
+        enable_irq(&mut mapper, &mut memory, 1);
+
+        run_rendered_scanline(&mut mapper, 0);
+        run_rendered_scanline(&mut mapper, 1);
+        assert!(mapper.irq_pending());
+        let peek = || mapper.peek_expansion(0x5204).expect("$5204 peeks");
+        assert_eq!(0xc0, peek(), "peek sees pending + in-frame");
+        assert_eq!(0xc0, peek(), "peek does not acknowledge");
+        assert!(mapper.irq_pending(), "line still asserted after peeks");
+        assert_eq!(0xc0, status(&mapper), "read sees the same bits");
+        assert_eq!(0x40, peek(), "read acknowledged, in-frame live");
+    }
+
+    // Unhandled expansion reads fall through: `$5203` is write-only
+    // and every other register belongs to a later ticket.
+    #[test]
+    fn unhandled_expansion_reads_fall_through() {
+        let (mapper, _) = board_8k(2, [0; 6]);
+        assert_eq!(None, mapper.read_expansion(0x5203));
+        assert_eq!(None, mapper.read_expansion(0x5200));
+        assert_eq!(None, mapper.peek_expansion(0x5203));
+        assert_eq!(None, mapper.peek_expansion(0x5c00));
+    }
+
+    // The chip declares every hook the IRQ uses alongside the CHR
+    // redirect, so the cartridge seam actually forwards ticks, fetches
+    // and status reads to it.
+    #[test]
+    fn caps_declare_all_irq_hooks() {
+        let (mapper, _) = board_8k(2, [0; 6]);
+        assert_eq!(
+            CartridgeCaps {
+                on_ppu_tick: true,
+                notify_vram_address: false,
+                irq_pending: true,
+                ppu_read: true,
+                read_expansion: true,
+            },
+            mapper.caps()
+        );
     }
 }
