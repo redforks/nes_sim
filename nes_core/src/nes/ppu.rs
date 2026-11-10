@@ -10,7 +10,7 @@ mod sprite;
 
 use crate::{
     nes::{
-        mapper::{Cartridge, PpuRenderState},
+        mapper::{Cartridge, PpuFetchKind, PpuRenderState},
         ppu::{palette::ColorTheme, sprite::SpriteManager},
     },
     render::Render,
@@ -407,12 +407,15 @@ impl<R: Render> Ppu<R> {
     /// Render-state snapshot for the mapper PPU-read seam (ticket #75):
     /// rendering from the PPUMASK enable bits, sprite size from PPUCTRL
     /// `$2000`, and the fetch phase as `dot % 8`. The mapper must not read
-    /// these registers itself — the PPU owns the render gate.
+    /// these registers itself — the PPU owns the render gate. The fetch kind
+    /// defaults to [`PpuFetchKind::Cpu`]: render-path call sites re-tag it
+    /// (background in `fetch_tile_data`, sprite in `ensure_rows`).
     fn ppu_render_state(&self) -> PpuRenderState {
         PpuRenderState {
             rendering_enabled: self.rendering_enabled(),
             sprite_8x16: self.registers.ctrl.sprite_size_16(),
             fetch_phase: (self.timing.dot % 8) as u8,
+            fetch: PpuFetchKind::Cpu,
         }
     }
 
@@ -1226,17 +1229,24 @@ fn fetch_tile_data(
 
     let nt_base = 0x2000 + nt_idx as u16 * 0x0400;
     let nt_addr = nt_base + nt_y as u16 * 32 + nt_x as u16;
-    let nt_byte = cartridge.read_vram(nt_addr, render);
+    // Ticket #78: background fetches carry the Background kind so MMC5 picks
+    // the background CHR bank set in 8x16 mode (nametable addresses are
+    // unaffected — the bank hook declines `$2000+`).
+    let bg_render = PpuRenderState {
+        fetch: PpuFetchKind::Background,
+        ..*render
+    };
+    let nt_byte = cartridge.read_vram(nt_addr, &bg_render);
     let attr_addr = nt_base + 0x03c0 + (nt_y as u16 >> 2) * 8 + (nt_x as u16 >> 2);
-    let attr_byte = cartridge.read_vram(attr_addr, render);
+    let attr_byte = cartridge.read_vram(attr_addr, &bg_render);
 
     let shift = (((nt_y >> 1) & 0x01) << 2) | (((nt_x >> 1) & 0x01) << 1);
 
     let tile_position = background.ctrl.background_tile_position(nt_byte);
     let tile_fine_y = (world_y & 7) as u8;
     let low_addr = tile_position.resolve_pixel_addr(tile_fine_y);
-    let bitplane_low = cartridge.read_vram(low_addr.0, render);
-    let bitplane_high = cartridge.read_vram(low_addr.second_plane_addr(), render);
+    let bitplane_low = cartridge.read_vram(low_addr.0, &bg_render);
+    let bitplane_high = cartridge.read_vram(low_addr.second_plane_addr(), &bg_render);
     let palette_idx = (attr_byte >> shift) & 0x03;
 
     (

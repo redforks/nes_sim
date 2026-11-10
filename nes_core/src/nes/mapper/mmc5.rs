@@ -1,5 +1,5 @@
-//! MMC5 (ExROM, mapper 5): full PRG subsystem (ticket #77) plus ExRAM
-//! operating modes with per-quadrant nametables (ticket #79).
+//! MMC5 (ExROM, mapper 5): full PRG subsystem (ticket #77), CHR
+//! banking (ticket #78) plus ExRAM operating modes (ticket #79).
 //!
 //! All four PRG banking modes (`$5100` modes 0-3) with per-size ignore bits
 //! and ROM/RAM select (`$5113-$5117`), header-sized WRAM up to 128K mapped at
@@ -8,6 +8,14 @@
 //! `$5102=$02,$5103=$01` write-protect sequence gating both register and
 //! PRG-RAM data writes.
 //!
+//! CHR banking covers all granularities (`$5101` modes 0-3: 8K/4K/2K/1K),
+//! upper address bits (`$5130`), and both 8x8 and 8x16 sprite/background
+//! table sets (`$5120-$5127` sprite, `$5128-$512B` background) with
+//! last-written-set semantics for CPU `$2007` reads (wiki §3.5). The
+//! redirect travels through the [`Mapper::ppu_chr_bank`] hook; the 1K
+//! windows mirror the sprite set (re-synced on sprite writes and `$5101`)
+//! as the write-routing fallback.
+//!
 //! Power-on state is PRG mode 3 with `$5117 = $FF`, so the last ROM bank
 //! covers `$E000-$FFFF` and the CPU vectors are visible with no register
 //! setup (map #70).
@@ -15,14 +23,15 @@
 //! ExRAM (`$5104-$5107`, `$5C00-$5FFF`): all four modes with render-gated
 //! CPU writes, per-quadrant nametable selection (`$5105`, diagonal layouts),
 //! fill tile/palette (`$5106/$5107`), and extended attributes with per-tile
-//! palette (the 4 KB bank bits are exposed for the later CHR ticket, which
-//! owns the pattern-table override). The PPU-read hook serves nametable
-//! fetches; pattern fetches (`$0000-$1FFF`) always fall through.
+//! palette (the 4 KB bank bits are exposed via [`MMC5::ext_attr_bank`] for
+//! the pattern-table override, which ignores the CHR sets in ExAttr mode).
+//! The `ppu_read` byte-override hook serves the nametable plane (`$2000+`);
+//! pattern fetches (`$0000-$1FFF`) fall through to the CHR bank redirect.
 //!
-//! CHR banking, IRQ, split, multiplier and audio registers are accepted and
+//! IRQ, split, multiplier and audio registers are accepted and
 //! ignored here; later tickets implement them.
 
-use super::{CartridgeCaps, Mapper, PpuRenderState, memory::CartridgeMemory};
+use super::{CartridgeCaps, Mapper, PpuFetchKind, PpuRenderState, memory::CartridgeMemory};
 use crate::SystemClock;
 use crate::ines::{FileVersion, Header};
 use core::cell::Cell;
@@ -43,6 +52,11 @@ const PROTECT1_UNLOCK: u8 = 0x02;
 const PROTECT2_UNLOCK: u8 = 0x01;
 /// Largest WRAM board: 128K single SRAM (wiki "PRG RAM capacity").
 const MAX_WRAM_BYTES: usize = 128 * 1024;
+/// CHR banking modes from `$5101` bits 1-0 (wiki §3.5 "CHR Bankswitching").
+const CHR_MODE_8K: u8 = 0;
+const CHR_MODE_4K: u8 = 1;
+const CHR_MODE_2K: u8 = 2;
+const CHR_MODE_1K: u8 = 3;
 /// ExRAM size in bytes: 1 KB at `$5C00-$5FFF` (wiki `$5104`).
 const EXRAM_SIZE: usize = 0x400;
 /// Nametable offset where the attribute table starts (wiki `$5105`).
@@ -55,6 +69,16 @@ const EXRAM_MODE_READ_ONLY: u8 = 3;
 /// Expands one 2-bit palette index to a full attribute byte (one field per
 /// 2x2-tile quadrant): tetanes `ATTR_MIRROR`, FCEUX `$5107` fill expansion.
 const ATTR_MIRROR: [u8; 4] = [0x00, 0x55, 0xaa, 0xff];
+
+/// Which CHR register range was written last (ticket #78): in 8x16 mode the
+/// last-written set serves CPU `$2007` reads (wiki §3.5). Power-on is Sprite,
+/// matching the 8x8 behavior where `$2007` always reads the sprite set.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+enum ChrSet {
+    #[default]
+    Sprite,
+    Bg,
+}
 
 /// MMC5 (ExROM, mapper 5): full PRG banking.
 ///
@@ -77,6 +101,17 @@ pub struct MMC5 {
     /// Bit `i` set when the `i`-th 8 KB WRAM bank is battery-backed (16 bits
     /// cover the 128K maximum).
     battery_mask: u16,
+    /// CHR banking mode from `$5101` bits 1-0: 0=8K, 1=4K, 2=2K, 3=1K.
+    chr_mode: u8,
+    /// Raw values written to `$5120-$5127` (sprite set, ticket #78).
+    chr_spr: [u16; 8],
+    /// Raw values written to `$5128-$512B` (background set, ticket #78).
+    chr_bg: [u16; 4],
+    /// Upper CHR bits from `$5130` bits 1-0, prepended to *subsequent* CHR
+    /// register writes to reach 1MB in 1K/2K modes (wiki §3.5).
+    chr_high: u8,
+    /// Which CHR range was written last; serves `$2007` reads in 8x16 mode.
+    last_chr_set: ChrSet,
     /// ExRAM mode from `$5104` bits 1-0 (ticket #79): 0 = nametable,
     /// 1 = extended attribute, 2 = general RAM, 3 = read-only.
     exram_mode: u8,
@@ -123,6 +158,11 @@ impl MMC5 {
             prg_bank_count_8k: memory.prg_bank_count_8k(),
             wram_bank_count_8k,
             battery_mask,
+            chr_mode: CHR_MODE_8K,
+            chr_spr: [0; 8],
+            chr_bg: [0; 4],
+            chr_high: 0,
+            last_chr_set: ChrSet::Sprite,
             exram_mode: 0,
             nt_select: 0x00,
             fill_tile: 0xff,
@@ -138,6 +178,7 @@ impl MMC5 {
             memory.set_prg_ram_enabled(false);
         }
         mapper.sync_prg_banks(memory);
+        mapper.sync_chr_windows(memory);
         mapper
     }
 
@@ -168,6 +209,7 @@ impl MMC5 {
     ///
     /// The pattern-table override itself arrives with CHR banking (later
     /// ticket); this pins the per-tile bank selection for it.
+    #[allow(dead_code)]
     pub(crate) fn ext_attr_bank(&self, nametable_offset: u16) -> u8 {
         self.exram[(nametable_offset & 0x03ff) as usize] & 0x3f
     }
@@ -219,6 +261,68 @@ impl MMC5 {
             } else {
                 self.map_rom_8k(memory, slot + half, bank);
             }
+        }
+    }
+
+    /// Expands a raw CHR register value to one 1K bank number: the full
+    /// bank number in current-mode units is `(chr_high << 8) | raw`, then
+    /// `* size_in_1k + sub` (wiki §3.5; high bits are the top bits of the
+    /// full 10-bit bank number). The cartridge pool modulo caps the 1MB max.
+    fn chr_expand(&self, raw: u16, sub: u16) -> u16 {
+        let size_1k = match self.chr_mode {
+            CHR_MODE_8K => 8,
+            CHR_MODE_4K => 4,
+            CHR_MODE_2K => 2,
+            _ => 1,
+        };
+        let full = ((self.chr_high as u16) << 8) | (raw & 0x3ff);
+        full * size_1k + sub
+    }
+
+    /// Effective 1K bank of the sprite set (`$5120-$5127`) for pattern-table
+    /// slot 0-7 (wiki §3.5 register→range table).
+    fn spr_bank_1k(&self, slot: u16) -> u16 {
+        match self.chr_mode {
+            CHR_MODE_1K => self.chr_expand(self.chr_spr[slot as usize], 0),
+            CHR_MODE_2K => {
+                let reg = (slot / 2) * 2 + 1;
+                self.chr_expand(self.chr_spr[reg as usize], slot % 2)
+            }
+            CHR_MODE_4K => {
+                let reg = if slot < 4 { 3 } else { 7 };
+                self.chr_expand(self.chr_spr[reg], slot % 4)
+            }
+            _ => self.chr_expand(self.chr_spr[7], slot),
+        }
+    }
+
+    /// Effective 1K bank of the background set (`$5128-$512B`) for slot 0-7:
+    /// each BG register covers two 1K slots (wiki §3.5).
+    fn bg_bank_1k(&self, slot: u16) -> u16 {
+        match self.chr_mode {
+            CHR_MODE_1K => self.chr_expand(self.chr_bg[(slot % 4) as usize], 0),
+            CHR_MODE_2K => {
+                let reg = if slot % 4 < 2 { 1 } else { 3 };
+                self.chr_expand(self.chr_bg[reg], slot % 2)
+            }
+            CHR_MODE_4K => self.chr_expand(self.chr_bg[3], slot % 4),
+            _ => self.chr_expand(self.chr_bg[3], slot),
+        }
+    }
+
+    /// Reprograms all eight 1K windows to the last-written set's effective
+    /// mapping: the `$2007`/fallback plane (ticket #78). Background writes
+    /// deliberately skip this (wiki: BG regs are ignored in 8x8, so windows
+    /// always follow the sprite set until a sprite write), while render-time
+    /// reads go through [`Mapper::ppu_chr_bank`] and see the right set in
+    /// both modes.
+    fn sync_chr_windows(&self, memory: &mut CartridgeMemory) {
+        for slot in 0..8u16 {
+            let bank = match self.last_chr_set {
+                ChrSet::Sprite => self.spr_bank_1k(slot),
+                ChrSet::Bg => self.bg_bank_1k(slot),
+            };
+            memory.map_chr_1k(slot, bank);
         }
     }
 
@@ -363,6 +467,26 @@ impl Mapper for MMC5 {
             }
             0x5102 => self.protect1 = value & 0x03,
             0x5103 => self.protect2 = value & 0x03,
+            // Ticket #78: CHR mode needs no unlock (unlike the PRG
+            // registers): games set banks freely, and the boot ROMs write
+            // these before any unlock sequence.
+            0x5101 => {
+                self.chr_mode = value & 0x03;
+                self.sync_chr_windows(memory);
+            }
+            0x5120..=0x5127 => {
+                self.chr_spr[(address - 0x5120) as usize] = value as u16;
+                self.last_chr_set = ChrSet::Sprite;
+                self.sync_chr_windows(memory);
+            }
+            0x5128..=0x512b => {
+                self.chr_bg[(address - 0x5128) as usize] = value as u16;
+                self.last_chr_set = ChrSet::Bg;
+            }
+            // Upper CHR bits apply to *subsequent* CHR writes only (wiki
+            // §3.5): store without reprogramming; the next CHR write picks
+            // them up. In ExAttr mode these act as global MSBs (ticket #79).
+            0x5130 => self.chr_high = value & 0x03,
             0x5113..=0x5117 => {
                 if self.unlocked() {
                     self.prg_banks[(address - 0x5113) as usize] = value;
@@ -388,19 +512,41 @@ impl Mapper for MMC5 {
             0x5105 => self.nt_select = value,
             0x5106 => self.fill_tile = value,
             0x5107 => self.fill_attr = value & 0x03,
-            // ExRAM data with mode + render gating (ticket #79): blocked
-            // writes are ignored, so the cell keeps its previous value.
-            0x5c00..=0x5fff => {
-                if self.exram_write_allowed() {
-                    self.exram[(address & 0x03ff) as usize] = value;
-                }
+            // ExRAM data with mode + render gating (ticket #79): a blocked
+            // write falls through without touching the cell.
+            0x5c00..=0x5fff if self.exram_write_allowed() => {
+                self.exram[(address & 0x03ff) as usize] = value;
             }
-            // Every other MMC5 register (`$5101` CHR mode, `$5120-$512B`
-            // CHR banks, `$5130` CHR high, `$5200-$5206` split/IRQ/multiplier,
+            // Every other MMC5 register (`$5200-$5206` split/IRQ/multiplier,
             // `$5010/$5015` audio) is accepted and ignored; later tickets
             // implement them.
             _ => {}
         }
+    }
+
+    /// Ticket #78 CHR bank redirect, gated by the shared `ppu_read` flag:
+    /// `$0000-$1FFF` maps to the sprite set in 8x8 mode; in 8x16 mode
+    /// background fetches use the background set, sprite fetches the sprite
+    /// set, and CPU `$2007` reads use whichever set was written last
+    /// (wiki §3.5). `$2000+` declines: the nametable plane belongs to #79.
+    fn ppu_chr_bank(&self, addr: u16, render: &PpuRenderState) -> Option<u16> {
+        if addr >= 0x2000 {
+            return None;
+        }
+        let slot = (addr >> 10) & 7;
+        let bank = if !render.sprite_8x16 {
+            self.spr_bank_1k(slot)
+        } else {
+            match render.fetch {
+                PpuFetchKind::Background => self.bg_bank_1k(slot),
+                PpuFetchKind::Sprite => self.spr_bank_1k(slot),
+                PpuFetchKind::Cpu => match self.last_chr_set {
+                    ChrSet::Sprite => self.spr_bank_1k(slot),
+                    ChrSet::Bg => self.bg_bank_1k(slot),
+                },
+            }
+        };
+        Some(bank)
     }
 }
 
@@ -500,7 +646,8 @@ mod tests {
 
     // The boot code of the local MMC5 test ROMs writes CHR, nametable, IRQ
     // and audio registers (`$5101/$5104/$5105/$5127/$5200/$5204/$5015`):
-    // the skeleton accepts and ignores them, leaving PRG mapping intact.
+    // CHR writes take effect in the CHR unit (ticket #78) while the rest are
+    // accepted and ignored, leaving PRG mapping intact either way.
     #[test]
     fn other_mmc5_registers_leave_prg_mapping_intact() {
         let (mut mapper, mut memory) = board_8k(4, [0; 6]);
@@ -1084,5 +1231,350 @@ mod tests {
         write_reg(&mut mapper, &mut memory, 0x5104, 0x00);
         assert_eq!(nt_read(&mapper, 0x3005), Some(0x9d));
         assert_eq!(nt_read(&mapper, 0x3bc0), Some(0x00));
+    }
+
+    // ---- Ticket #78 CHR banking ----
+
+    const CHR_1K: usize = 0x400;
+
+    /// CHR board: `banks_1k` 1K banks with bank `i` filled with byte `i`, so
+    /// the last byte of each bank — what the matrix ROM's `ReadData` samples
+    /// via `$2006`/`$2007` (`$03FF..$1FFF`) — reads back as the bank index.
+    fn chr_board(banks_1k: usize) -> (MMC5, CartridgeMemory) {
+        let mut chr = vec![0u8; CHR_1K * banks_1k];
+        for (i, chunk) in chr.chunks_mut(CHR_1K).enumerate() {
+            chunk.fill(i as u8);
+        }
+        let prg = vec![0u8; 2 * PRG_8K];
+        let mut memory = CartridgeMemory::from_rom(&prg, &chr, None, Mirroring::Horizontal);
+        let mapper = MMC5::new(&mut memory, 8 * 1024, 0);
+        (mapper, memory)
+    }
+
+    fn chr_write(mapper: &mut MMC5, memory: &mut CartridgeMemory, addr: u16, value: u8) {
+        mapper.cpu_write(addr, value, SystemClock::default(), memory);
+    }
+
+    /// PPU-built render state for one fetch kind (ticket #78): the CPU
+    /// `$2007` path builds [`PpuFetchKind::Cpu`], background fetches
+    /// [`PpuFetchKind::Background`], sprite fetches [`PpuFetchKind::Sprite`].
+    fn chr_render(fetch: PpuFetchKind, sprite_8x16: bool) -> PpuRenderState {
+        PpuRenderState {
+            rendering_enabled: true,
+            sprite_8x16,
+            fetch_phase: 0,
+            fetch,
+        }
+    }
+
+    fn bank_of(mapper: &MMC5, slot: u16, fetch: PpuFetchKind, tall: bool) -> Option<u16> {
+        mapper.ppu_chr_bank(slot * 0x400, &chr_render(fetch, tall))
+    }
+
+    // 1K mode: each `$5120-$5127` register maps its own 1K slot, and the
+    // windows follow the last-written (sprite) set.
+    #[test]
+    fn chr_1k_mode_each_sprite_reg_maps_one_slot() {
+        let (mut mapper, mut memory) = chr_board(8);
+        chr_write(&mut mapper, &mut memory, 0x5101, 3);
+        for slot in 0..8u16 {
+            chr_write(&mut mapper, &mut memory, 0x5120 + slot, slot as u8);
+        }
+
+        for slot in 0..8u16 {
+            assert_eq!(
+                bank_of(&mapper, slot, PpuFetchKind::Sprite, true),
+                Some(slot)
+            );
+            assert_eq!(
+                memory.read_vram(slot * 0x400),
+                slot as u8,
+                "window slot {slot} follows the sprite set"
+            );
+        }
+    }
+
+    // 1K mode: each `$5128-$512B` register covers two 1K slots (wiki §3.5).
+    #[test]
+    fn chr_1k_bg_regs_cover_two_slots_each() {
+        let (mut mapper, mut memory) = chr_board(8);
+        chr_write(&mut mapper, &mut memory, 0x5101, 3);
+        for slot in 0..8u16 {
+            chr_write(&mut mapper, &mut memory, 0x5120 + slot, 7);
+        }
+        for reg in 0..4u16 {
+            chr_write(&mut mapper, &mut memory, 0x5128 + reg, reg as u8);
+        }
+
+        // `$5128` covers slots 0 and 4, `$5129` slots 1 and 5, and so on.
+        for slot in 0..8u16 {
+            assert_eq!(
+                bank_of(&mapper, slot, PpuFetchKind::Background, true),
+                Some(slot % 4),
+                "bg slot {slot}"
+            );
+        }
+        // Sprite fetches still see the sprite set on the same addresses.
+        for slot in 0..8u16 {
+            assert_eq!(bank_of(&mapper, slot, PpuFetchKind::Sprite, true), Some(7));
+        }
+    }
+
+    // 2K mode: only the odd sprite registers (`$5121/$5123/$5125/$5127`)
+    // map, each covering two 1K slots; BG uses `$5129`/`$512B` the same way.
+    #[test]
+    fn chr_2k_mode_uses_odd_regs_for_two_slots_each() {
+        let (mut mapper, mut memory) = chr_board(8);
+        chr_write(&mut mapper, &mut memory, 0x5101, 2);
+        // Even registers are ignored: `$5120` must not move slots 0-1.
+        chr_write(&mut mapper, &mut memory, 0x5120, 7);
+        chr_write(&mut mapper, &mut memory, 0x5121, 2);
+        chr_write(&mut mapper, &mut memory, 0x5123, 0);
+        chr_write(&mut mapper, &mut memory, 0x5125, 1);
+        chr_write(&mut mapper, &mut memory, 0x5127, 3);
+
+        for (slot, want) in [
+            (0, 4),
+            (1, 5),
+            (2, 0),
+            (3, 1),
+            (4, 2),
+            (5, 3),
+            (6, 6),
+            (7, 7),
+        ] {
+            assert_eq!(
+                bank_of(&mapper, slot, PpuFetchKind::Sprite, true),
+                Some(want),
+                "sprite slot {slot}"
+            );
+        }
+
+        chr_write(&mut mapper, &mut memory, 0x5129, 1);
+        chr_write(&mut mapper, &mut memory, 0x512b, 0);
+        // `$5129` covers slots {0,1,4,5}, `$512B` covers {2,3,6,7}.
+        for (slot, want) in [
+            (0, 2),
+            (1, 3),
+            (2, 0),
+            (3, 1),
+            (4, 2),
+            (5, 3),
+            (6, 0),
+            (7, 1),
+        ] {
+            assert_eq!(
+                bank_of(&mapper, slot, PpuFetchKind::Background, true),
+                Some(want),
+                "bg slot {slot}"
+            );
+        }
+    }
+
+    // 4K mode: `$5123` maps `$0000-$0FFF`, `$5127` maps `$1000-$1FFF`;
+    // BG uses `$512B` for both halves.
+    #[test]
+    fn chr_4k_mode_two_regs_cover_halves() {
+        let (mut mapper, mut memory) = chr_board(16);
+        chr_write(&mut mapper, &mut memory, 0x5101, 1);
+        chr_write(&mut mapper, &mut memory, 0x5123, 1);
+        chr_write(&mut mapper, &mut memory, 0x5127, 0);
+
+        for slot in 0..8u16 {
+            let want = if slot < 4 { 4 + slot } else { slot - 4 };
+            assert_eq!(
+                bank_of(&mapper, slot, PpuFetchKind::Sprite, true),
+                Some(want)
+            );
+        }
+
+        chr_write(&mut mapper, &mut memory, 0x512b, 2);
+        for slot in 0..8u16 {
+            assert_eq!(
+                bank_of(&mapper, slot, PpuFetchKind::Background, true),
+                Some(8 + slot % 4)
+            );
+        }
+    }
+
+    // 8K mode: `$5127` alone maps the whole `$0000-$1FFF` (BG: `$512B`).
+    #[test]
+    fn chr_8k_mode_single_reg_maps_all_slots() {
+        let (mut mapper, mut memory) = chr_board(16);
+        chr_write(&mut mapper, &mut memory, 0x5101, 0);
+        chr_write(&mut mapper, &mut memory, 0x5127, 1);
+
+        for slot in 0..8u16 {
+            assert_eq!(
+                bank_of(&mapper, slot, PpuFetchKind::Sprite, true),
+                Some(8 + slot)
+            );
+        }
+
+        chr_write(&mut mapper, &mut memory, 0x512b, 0);
+        for slot in 0..8u16 {
+            assert_eq!(
+                bank_of(&mapper, slot, PpuFetchKind::Background, true),
+                Some(slot)
+            );
+        }
+    }
+
+    // `$5130` upper bits prepend to *subsequent* CHR writes only (wiki §3.5):
+    // writing it never reprograms the current mapping.
+    #[test]
+    fn chr_high_bits_shift_subsequent_writes_only() {
+        let (mut mapper, mut memory) = chr_board(8);
+        chr_write(&mut mapper, &mut memory, 0x5101, 3);
+        chr_write(&mut mapper, &mut memory, 0x5120, 5);
+        chr_write(&mut mapper, &mut memory, 0x5121, 6);
+        assert_eq!(bank_of(&mapper, 0, PpuFetchKind::Sprite, true), Some(5));
+
+        chr_write(&mut mapper, &mut memory, 0x5130, 1);
+        // The hook is a pure function of the stored regs (design 7), so the
+        // high bits shift reads immediately — like hardware, where the bank
+        // decode is combinational. The windows intentionally lag: they only
+        // reprogram on CHR writes (the write-routing fallback).
+        assert_eq!(bank_of(&mapper, 0, PpuFetchKind::Sprite, true), Some(0x105));
+        assert_eq!(bank_of(&mapper, 1, PpuFetchKind::Sprite, true), Some(0x106));
+        assert_eq!(memory.read_vram(0x0000), 5);
+
+        // The next CHR write picks the high bits up: `(1 << 8) | 5`.
+        chr_write(&mut mapper, &mut memory, 0x5120, 5);
+        assert_eq!(bank_of(&mapper, 0, PpuFetchKind::Sprite, true), Some(0x105));
+        // The pool modulo wraps the 1MB bank onto the 8-bank test board.
+        assert_eq!(memory.read_vram(0x0000), 5);
+    }
+
+    // 8x8 sprites: `$5128-$512B` are completely ignored (wiki §3.5) — every
+    // fetch kind and the windows see the sprite set.
+    #[test]
+    fn chr_8x8_ignores_bg_regs_everywhere() {
+        let (mut mapper, mut memory) = chr_board(8);
+        chr_write(&mut mapper, &mut memory, 0x5101, 3);
+        for slot in 0..8u16 {
+            chr_write(&mut mapper, &mut memory, 0x5120 + slot, slot as u8);
+        }
+        for reg in 0..4u16 {
+            chr_write(&mut mapper, &mut memory, 0x5128 + reg, 7 - reg as u8);
+        }
+
+        for slot in 0..8u16 {
+            for fetch in [
+                PpuFetchKind::Background,
+                PpuFetchKind::Sprite,
+                PpuFetchKind::Cpu,
+            ] {
+                assert_eq!(
+                    bank_of(&mapper, slot, fetch, false),
+                    Some(slot),
+                    "8x8 slot {slot} fetch {fetch:?} reads the sprite set"
+                );
+            }
+            assert_eq!(
+                memory.read_vram(slot * 0x400),
+                slot as u8,
+                "8x8 window slot {slot} unchanged by BG writes"
+            );
+        }
+    }
+
+    // 8x16 `$2007` reads use the last-written set: after a sprite write
+    // then a background write the CPU sees the background mapping, and a
+    // fresh sprite write flips it back.
+    #[test]
+    fn chr_last_written_set_serves_cpu_reads_in_8x16() {
+        let (mut mapper, mut memory) = chr_board(8);
+        chr_write(&mut mapper, &mut memory, 0x5101, 3);
+        for slot in 0..8u16 {
+            chr_write(&mut mapper, &mut memory, 0x5120 + slot, slot as u8);
+        }
+        // Last set is sprite: CPU reads see the sprite mapping.
+        for slot in 0..8u16 {
+            assert_eq!(bank_of(&mapper, slot, PpuFetchKind::Cpu, true), Some(slot));
+        }
+
+        for reg in 0..4u16 {
+            chr_write(&mut mapper, &mut memory, 0x5128 + reg, 7);
+        }
+        for slot in 0..8u16 {
+            assert_eq!(
+                bank_of(&mapper, slot, PpuFetchKind::Cpu, true),
+                Some(7),
+                "CPU slot {slot} follows the background set after a BG write"
+            );
+        }
+        // Render fetches are unaffected by the last-written latch.
+        assert_eq!(bank_of(&mapper, 2, PpuFetchKind::Sprite, true), Some(2));
+        assert_eq!(bank_of(&mapper, 2, PpuFetchKind::Background, true), Some(7));
+
+        chr_write(&mut mapper, &mut memory, 0x5122, 4);
+        assert_eq!(bank_of(&mapper, 2, PpuFetchKind::Cpu, true), Some(4));
+        assert_eq!(bank_of(&mapper, 5, PpuFetchKind::Cpu, true), Some(5));
+    }
+
+    // Nametable addresses never take the CHR redirect (ExRAM tickets own
+    // the `$2000+` plane).
+    #[test]
+    fn chr_hook_declines_nametable_plane() {
+        let (mapper, _) = chr_board(8);
+        for addr in [0x2000, 0x2400, 0x3eff] {
+            assert_eq!(
+                mapper.ppu_chr_bank(addr, &chr_render(PpuFetchKind::Background, true)),
+                None
+            );
+        }
+    }
+
+    // Cartridge-level (ticket #78 acceptance): programmed through
+    // `cpu_write`, `read_vram` serves the pool byte from the bank each fetch
+    // kind selects — the same `$03FF..$1FFF`-style sampling the matrix ROM's
+    // `ReadData` performs through `$2007` (which builds the Cpu render).
+    #[test]
+    fn chr_cartridge_read_vram_routes_each_fetch_kind() {
+        let (mut mapper, mut memory) = chr_board(8);
+        chr_write(&mut mapper, &mut memory, 0x5101, 3);
+        for slot in 0..8u16 {
+            chr_write(&mut mapper, &mut memory, 0x5120 + slot, slot as u8);
+        }
+        // Background set: `$5128-$512B` = 4,5,6,7 → slots read 4,5,6,7,4,5,6,7.
+        for reg in 0..4u16 {
+            chr_write(&mut mapper, &mut memory, 0x5128 + reg, 4 + reg as u8);
+        }
+        let cart = crate::nes::mapper::Cartridge::new(Box::new(mapper), memory);
+
+        // Sprite fetches read the sprite banks (fill byte == bank index).
+        for slot in 0..8u16 {
+            assert_eq!(
+                cart.read_vram(
+                    slot * 0x400 + 0x3ff,
+                    &chr_render(PpuFetchKind::Sprite, true)
+                ),
+                slot as u8,
+                "sprite slot {slot}"
+            );
+        }
+        // Background fetches read the background banks on the same addresses.
+        for (slot, want) in [4u8, 5, 6, 7, 4, 5, 6, 7].iter().enumerate() {
+            assert_eq!(
+                cart.read_vram(
+                    slot as u16 * 0x400 + 0x3ff,
+                    &chr_render(PpuFetchKind::Background, true)
+                ),
+                *want,
+                "background slot {slot}"
+            );
+        }
+        // CPU reads (the `$2007` path) see the last-written (background) set.
+        for (slot, want) in [4u8, 5, 6, 7, 4, 5, 6, 7].iter().enumerate() {
+            assert_eq!(
+                cart.read_vram(
+                    slot as u16 * 0x400 + 0x3ff,
+                    &chr_render(PpuFetchKind::Cpu, true)
+                ),
+                *want,
+                "cpu slot {slot}"
+            );
+        }
     }
 }
