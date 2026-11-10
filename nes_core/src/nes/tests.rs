@@ -2,14 +2,19 @@ use super::*;
 use crate::SystemClock;
 use crate::bus::Bus;
 use crate::dma_bus::{DmaBus, OamDmaMcu};
+use crate::ines::INesFile;
 use crate::nes::apu::Apu;
 use crate::nes::controller::Button;
 use crate::nes::mapper::Cartridge;
+use crate::nes::mapper::{Mmc3IrqOverride, create_cartridge_with_mmc3_irq_override};
 use crate::render::ImageRender;
 use crate::test_utils::{McuCall, RecordingMcu};
 
 fn test_mcu() -> NesMcu<ImageRender<1>, ()> {
-    let cartridge = Cartridge::test();
+    test_mcu_with(Cartridge::test())
+}
+
+fn test_mcu_with(cartridge: Cartridge) -> NesMcu<ImageRender<1>, ()> {
     NesMcu {
         lower_ram: LowerRam::new(),
         ppu: Ppu::new(ImageRender::<1>::default_dimension()),
@@ -948,4 +953,27 @@ fn oam_dma_from_zero_and_stack_pages_write_the_same_oam_bytes() {
     assert_eq!(plain.len(), 256);
     assert_eq!(oam_after_dma_from(0x00), plain);
     assert_eq!(oam_after_dma_from(0x01), plain);
+}
+
+#[test]
+fn expansion_writes_reach_the_mapper_chip() {
+    // Mapper-5 ROM, 32 KB PRG with the bank index as the first byte of each
+    // 8 KB bank: `$5115` must repoint the `$A000` window through `NesMcu`,
+    // proving the `$5000-$5FFF` cartridge-expansion path forwards to the chip.
+    let mut rom = vec![
+        0x4e, 0x45, 0x53, 0x1a, 2, 1, 0x50, 0x00, 0, 0, 0, 0, 0, 0, 0, 0,
+    ];
+    let mut prg = vec![0u8; 32 * 1024];
+    for (i, chunk) in prg.chunks_mut(8 * 1024).enumerate() {
+        chunk[0] = i as u8;
+    }
+    rom.extend_from_slice(&prg);
+    rom.extend_from_slice(&[0; 8 * 1024]);
+    let file = INesFile::new(rom).unwrap();
+    let cartridge = create_cartridge_with_mmc3_irq_override(&file, Mmc3IrqOverride::Auto);
+    let mut mcu = test_mcu_with(cartridge);
+
+    assert_eq!(mcu.read(0xa000), 0);
+    mcu.write(0x5115, 0x80 | 2, SystemClock::default());
+    assert_eq!(mcu.read(0xa000), 2);
 }

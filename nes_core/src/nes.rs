@@ -327,6 +327,9 @@ impl<R: Render, D: AudioDriver> Mcu for NesMcu<R, D> {
                     self.cartridge.write_prg_ram(address, value, clock);
                 }
             }
+            // Cartridge expansion area (MMC5 registers): forwards to the
+            // mapper chip; chips without expansion registers ignore it.
+            0x5000..=0x5fff => self.cartridge.write_expansion(address, value, clock),
             0x8000..=0xffff => self.cartridge.write(address, value, clock),
             _ => {}
         }

@@ -13,7 +13,7 @@ The board model: the memory the cartridge carries (PRG ROM, PRG RAM, CHR, nameta
 _Avoid_: Cartridge trait, mapper-as-cartridge
 
 **Mapper**:
-The bank-switching chip on a cartridge board (NROM, UxROM, AxROM, CNROM, MMC1, MMC3, VRC4, Nina-001, BxROM, J87). Reacts to CPU register writes and PPU clock events by pointing slots at banks; it carries no cartridge memory and performs no data read of its own.
+The bank-switching chip on a cartridge board (NROM, UxROM, AxROM, CNROM, MMC1, MMC3, MMC5, VRC4, Nina-001, BxROM, J87). Reacts to CPU register writes and PPU clock events by pointing slots at banks; it carries no cartridge memory and performs no data read of its own.
 _Avoid_: Board, cartridge, CHR ROM
 
 **Bank**:

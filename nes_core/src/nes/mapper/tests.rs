@@ -245,6 +245,32 @@ fn create_cartridge_mapper4_with_chr_ram() {
 }
 
 #[test]
+fn create_cartridge_mapper5_constructs_with_power_on_vectors() {
+    let mut rom = create_test_nes(5, 2, 1);
+    // Reset vector $1234 at the end of the last 8 KB bank.
+    let prg_end = 16 + 2 * 16 * 1024;
+    rom[prg_end - 4..prg_end].copy_from_slice(&[0x34, 0x12, 0x78, 0x56]);
+    let file = INesFile::new(rom).unwrap();
+    let cartridge = create_cartridge_with_mmc3_irq_override(&file, Mmc3IrqOverride::Auto);
+
+    assert_eq!(cartridge.read(0xfffc), 0x34);
+    assert_eq!(cartridge.read(0xfffd), 0x12);
+    // Power-on mode 3: first 8 KB window shows bank 0.
+    assert_eq!(cartridge.read(0x8000), 0);
+}
+
+#[test]
+fn create_cartridge_mapper5_accepts_1mb_prg_and_chr() {
+    // 64 x 16 KB = 1 MB PRG, 128 x 8 KB = 1 MB CHR.
+    let rom = create_test_nes(5, 64, 128);
+    let file = INesFile::new(rom).unwrap();
+    let cartridge = create_cartridge_with_mmc3_irq_override(&file, Mmc3IrqOverride::Auto);
+
+    assert_eq!(cartridge.read(0x8000), 0);
+    assert_eq!(cartridge.read_vram(0x1000), 0);
+}
+
+#[test]
 #[should_panic(expected = "Unsupported cartridge mapper no")]
 fn create_cartridge_unsupported_mapper() {
     let rom = create_test_nes(99, 1, 1);
