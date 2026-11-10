@@ -10,7 +10,7 @@ mod sprite;
 
 use crate::{
     nes::{
-        mapper::Cartridge,
+        mapper::{Cartridge, PpuRenderState},
         ppu::{palette::ColorTheme, sprite::SpriteManager},
     },
     render::Render,
@@ -404,6 +404,18 @@ impl<R: Render> Ppu<R> {
         self.registers.mask.background_enabled() || self.registers.mask.sprite_enabled()
     }
 
+    /// Render-state snapshot for the mapper PPU-read seam (ticket #75):
+    /// rendering from the PPUMASK enable bits, sprite size from PPUCTRL
+    /// `$2000`, and the fetch phase as `dot % 8`. The mapper must not read
+    /// these registers itself — the PPU owns the render gate.
+    fn ppu_render_state(&self) -> PpuRenderState {
+        PpuRenderState {
+            rendering_enabled: self.rendering_enabled(),
+            sprite_8x16: self.registers.ctrl.sprite_size_16(),
+            fetch_phase: (self.timing.dot % 8) as u8,
+        }
+    }
+
     pub fn in_vblank(&self) -> bool {
         self.registers.status.v_blank()
     }
@@ -493,7 +505,8 @@ impl<R: Render> Ppu<R> {
                 // compute background anchor at start of visible scanline
                 self.background_anchor = Some(BackgroundActivation::snapshot(self, 0));
                 self.pending_background_activation = None;
-                self.fill_tile_cache(0, cartridge);
+                let render = self.ppu_render_state();
+                self.fill_tile_cache(0, cartridge, &render);
             }
         }
         if self.sprite.status_dirty() {
@@ -956,7 +969,7 @@ impl<R: Render> Ppu<R> {
     pub fn read_vram(&self, address: u16, cartridge: &Cartridge) -> u8 {
         let addr = normalize_vram_addr(address);
         if addr < 0x3f00 {
-            cartridge.read_vram(addr)
+            cartridge.read_vram(addr, &self.ppu_render_state())
         } else {
             self.palette.read(addr)
         }
@@ -977,7 +990,12 @@ impl<R: Render> Ppu<R> {
         }
     }
 
-    fn get_background_pixel(&mut self, screen_x: u8, cartridge: &Cartridge) -> (u8, u8) {
+    fn get_background_pixel(
+        &mut self,
+        screen_x: u8,
+        cartridge: &Cartridge,
+        render: &PpuRenderState,
+    ) -> (u8, u8) {
         self.apply_pending_background_activation(screen_x);
 
         if !self.registers.mask.background_left_enabled() && screen_x < 8 {
@@ -986,19 +1004,19 @@ impl<R: Render> Ppu<R> {
 
         // Refill cache when empty or exhausted
         if self.tile_cache.remaining == 0 {
-            self.fill_tile_cache(screen_x, cartridge);
+            self.fill_tile_cache(screen_x, cartridge, render);
         }
 
         self.tile_cache.consume()
     }
 
-    fn fill_tile_cache(&mut self, screen_x: u8, cartridge: &Cartridge) {
+    fn fill_tile_cache(&mut self, screen_x: u8, cartridge: &Cartridge, render: &PpuRenderState) {
         let background = self
             .background_anchor
             .unwrap_or_else(|| BackgroundActivation::snapshot(self, 0));
 
         let (palette_idx, tile_fine_x, bitplane_low, bitplane_high) =
-            fetch_tile_data(&background, screen_x, cartridge);
+            fetch_tile_data(&background, screen_x, cartridge, render);
 
         self.tile_cache = TileCache {
             bitplane_low,
@@ -1128,8 +1146,9 @@ impl<R: Render> Ppu<R> {
 
     fn render_pixel(&mut self, x: u8, cartridge: &Cartridge) -> u8 {
         let screen_y = self.timing.scanline as u8;
+        let render = self.ppu_render_state();
         let (bg_palette_idx, bg_color_idx) = if self.registers.mask.background_enabled() {
-            self.get_background_pixel(x, cartridge)
+            self.get_background_pixel(x, cartridge, &render)
         } else {
             (0, 0)
         };
@@ -1138,7 +1157,7 @@ impl<R: Render> Ppu<R> {
             && (x >= 8 || self.registers.mask.sprite_left_enabled())
         {
             self.sprite
-                .find_sprite_pixel(self.registers.ctrl, cartridge, x, screen_y)
+                .find_sprite_pixel(self.registers.ctrl, cartridge, x, screen_y, &render)
         } else {
             None
         };
@@ -1183,6 +1202,7 @@ fn fetch_tile_data(
     background: &BackgroundActivation,
     screen_x: u8,
     cartridge: &Cartridge,
+    render: &PpuRenderState,
 ) -> (u8, u8, u8, u8) {
     let coarse_x = background.vram_addr & 0x001F;
     let coarse_y = (background.vram_addr >> 5) & 0x001F;
@@ -1206,17 +1226,17 @@ fn fetch_tile_data(
 
     let nt_base = 0x2000 + nt_idx as u16 * 0x0400;
     let nt_addr = nt_base + nt_y as u16 * 32 + nt_x as u16;
-    let nt_byte = cartridge.read_vram(nt_addr);
+    let nt_byte = cartridge.read_vram(nt_addr, render);
     let attr_addr = nt_base + 0x03c0 + (nt_y as u16 >> 2) * 8 + (nt_x as u16 >> 2);
-    let attr_byte = cartridge.read_vram(attr_addr);
+    let attr_byte = cartridge.read_vram(attr_addr, render);
 
     let shift = (((nt_y >> 1) & 0x01) << 2) | (((nt_x >> 1) & 0x01) << 1);
 
     let tile_position = background.ctrl.background_tile_position(nt_byte);
     let tile_fine_y = (world_y & 7) as u8;
     let low_addr = tile_position.resolve_pixel_addr(tile_fine_y);
-    let bitplane_low = cartridge.read_vram(low_addr.0);
-    let bitplane_high = cartridge.read_vram(low_addr.second_plane_addr());
+    let bitplane_low = cartridge.read_vram(low_addr.0, render);
+    let bitplane_high = cartridge.read_vram(low_addr.second_plane_addr(), render);
     let palette_idx = (attr_byte >> shift) & 0x03;
 
     (
