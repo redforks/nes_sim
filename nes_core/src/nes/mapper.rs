@@ -253,6 +253,14 @@ pub trait Mapper {
         cycle: SystemClock,
         memory: &mut CartridgeMemory,
     );
+    /// Optional cartridge-expansion read for `$5000-$5FFF` (MMC5 multiplier
+    /// product at `$5205`/`$5206`, IRQ status at `$5204`). The default is
+    /// `None` (open bus), so boards without expansion reads behave exactly
+    /// as before. Cold path — CPU reads only — so unlike the per-dot PPU
+    /// hooks this needs no capability gate.
+    fn read_expansion(&self, _address: u16) -> Option<u8> {
+        None
+    }
     /// Overrides the PRG-RAM window read when the board answers the address
     /// itself (VRC2 has no PRG-RAM). Only consulted for `$6000-$7FFF`, so
     /// CPU instruction fetches never pay for it.
@@ -357,6 +365,18 @@ impl Cartridge {
         );
         let Self { memory, mapper, .. } = self;
         mapper.cpu_write(address, value, cycle, memory);
+    }
+
+    /// CPU read from `$5000-$5FFF`: the cartridge expansion area (MMC5
+    /// multiplier product at `$5205`/`$5206`, IRQ status at `$5204`). The
+    /// mapper chip answers when it implements [`Mapper::read_expansion`];
+    /// `None` means open bus, decided by the CPU-bus owner.
+    pub fn read_expansion(&self, address: u16) -> Option<u8> {
+        debug_assert!(
+            (0x5000..=0x5fff).contains(&address),
+            "Cartridge::read_expansion address {address:#06x} outside $5000-$5FFF"
+        );
+        self.mapper.read_expansion(address)
     }
 
     /// CPU writes to `$5000-$5FFF`: the cartridge expansion area (MMC5

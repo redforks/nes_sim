@@ -506,6 +506,14 @@ const SCANLINE_AND_IRQ: CartridgeCaps = CartridgeCaps {
     irq_pending: true,
     ppu_read: false,
 };
+/// MMC5 (ticket #82): split fetch counting via the PPU-read seam; the
+/// scanline/in-frame counters and IRQ line belong to #81.
+const SPLIT_PPU_READ: CartridgeCaps = CartridgeCaps {
+    on_ppu_tick: false,
+    notify_vram_address: false,
+    irq_pending: false,
+    ppu_read: true,
+};
 const ALL_CAPS: CartridgeCaps = CartridgeCaps {
     on_ppu_tick: true,
     notify_vram_address: true,
@@ -522,6 +530,7 @@ const ALL_CAPS: CartridgeCaps = CartridgeCaps {
 #[test_case(2, NO_CAPS ; "UxROM")]
 #[test_case(3, NO_CAPS ; "CNROM")]
 #[test_case(4, ALL_CAPS ; "MMC3")]
+#[test_case(5, SPLIT_PPU_READ ; "MMC5")]
 #[test_case(7, NO_CAPS ; "AxROM")]
 #[test_case(34, NO_CAPS ; "BNROM, 8 KB CHR")]
 #[test_case(87, NO_CAPS ; "J87")]

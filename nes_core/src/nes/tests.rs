@@ -977,3 +977,41 @@ fn expansion_writes_reach_the_mapper_chip() {
     mcu.write(0x5115, 0x80 | 2, SystemClock::default());
     assert_eq!(mcu.read(0xa000), 2);
 }
+
+#[test]
+fn expansion_reads_return_the_mmc5_multiplier_product() {
+    // Same mapper-5 board shape as `expansion_writes_reach_the_mapper_chip`:
+    // `$5205`/`$5206` writes multiply instantly, CPU reads get the low/high
+    // product bytes through the `$5000-$5FFF` expansion path (ticket #82).
+    let mut rom = vec![
+        0x4e, 0x45, 0x53, 0x1a, 2, 1, 0x50, 0x00, 0, 0, 0, 0, 0, 0, 0, 0,
+    ];
+    let mut prg = vec![0u8; 32 * 1024];
+    for (i, chunk) in prg.chunks_mut(8 * 1024).enumerate() {
+        chunk[0] = i as u8;
+    }
+    rom.extend_from_slice(&prg);
+    rom.extend_from_slice(&[0; 8 * 1024]);
+    let file = INesFile::new(rom).unwrap();
+    let cartridge = create_cartridge_with_mmc3_irq_override(&file, Mmc3IrqOverride::Auto);
+    let mut mcu = test_mcu_with(cartridge);
+
+    // Power-on product: `$FF * $FF = $FE01`.
+    assert_eq!(mcu.read(0x5205), 0x01);
+    assert_eq!(mcu.read(0x5206), 0xfe);
+
+    mcu.write(0x5205, 0x12, SystemClock::default());
+    mcu.write(0x5206, 0x34, SystemClock::default());
+    assert_eq!(mcu.read(0x5205), 0xa8);
+    assert_eq!(mcu.read(0x5206), 0x03);
+    assert_eq!(mcu.peek(0x5205), 0xa8);
+    assert_eq!(mcu.peek(0x5206), 0x03);
+
+    // Split registers read back last-written through the same path.
+    mcu.write(0x5200, 0xc5, SystemClock::default());
+    assert_eq!(mcu.read(0x5200), 0xc5);
+
+    // Unclaimed expansion addresses stay open bus (`$5204` belongs to #81).
+    mcu.write(0x5201, 0x37, SystemClock::default());
+    assert_eq!(mcu.read(0x5204), mcu.open_bus);
+}

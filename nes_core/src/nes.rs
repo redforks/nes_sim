@@ -277,6 +277,12 @@ impl<R: Render, D: AudioDriver> Mcu for NesMcu<R, D> {
                 return self.latch_read(value, true);
             }
             0x4015 => self.apu.read(address),
+            // Cartridge expansion area (MMC5 multiplier product): the chip
+            // answers or the read is open bus.
+            0x5000..=0x5fff => self
+                .cartridge
+                .read_expansion(address)
+                .unwrap_or(self.open_bus),
             // Write-only APU/IO registers and unused test registers: open bus
             _ => self.open_bus,
         };
@@ -290,6 +296,10 @@ impl<R: Render, D: AudioDriver> Mcu for NesMcu<R, D> {
             0x4015 => self.apu.peek(address),
             0x4016 => self.controller.peek(address),
             0x4017 => self.controller.peek(address) | self.zapper_bits(),
+            0x5000..=0x5fff => self
+                .cartridge
+                .read_expansion(address)
+                .unwrap_or(self.open_bus),
             0x6000..=0x7fff => {
                 if !self.cartridge.prg_ram_enabled() {
                     self.open_bus
