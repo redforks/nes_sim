@@ -44,11 +44,19 @@
 //! (unit-tested). Only CL mode is implemented; the smooth-split pin mode
 //! is excluded per the spec's Out of Scope list. Scanline/in-frame
 //! counting stays with #81, which resets the fetch counter at each
-//! detected scanline. Audio registers are accepted and ignored.
+//! detected scanline.
+//!
+//! Expansion audio (ticket #83): `$5000-$5015` pulses + PCM with the
+//! `$5010` mode/IRQ status, `$5015` length status, per-CPU-cycle tick and
+//! `$8000-$BFFF` stream-read PCM feed.
 
-use super::{CartridgeCaps, Mapper, PpuFetchKind, PpuRenderState, memory::CartridgeMemory};
+use super::{
+    CartridgeCaps, Mapper, PpuFetchKind, PpuRenderState, memory::CartridgeMemory,
+    mmc5_audio::Mmc5Audio,
+};
 use crate::SystemClock;
 use crate::ines::{FileVersion, Header};
+use crate::nes::apu::ExpansionMix;
 use core::cell::Cell;
 /// Ticks into a scanline at which the scanline-start is detected: the fourth
 /// [`Mapper::on_ppu_tick`] carrying the new scanline number. The first three
@@ -119,6 +127,8 @@ pub struct MMC5 {
     protect1: u8,
     protect2: u8,
     prg_bank_count_8k: usize,
+    /// Dedicated audio unit fed by `$5000-$5015` writes (ticket #83).
+    audio: Mmc5Audio,
     wram_bank_count_8k: usize,
     /// Bit `i` set when the `i`-th 8 KB WRAM bank is battery-backed (16 bits
     /// cover the 128K maximum).
@@ -244,6 +254,7 @@ impl MMC5 {
             chr_bg: [0; 4],
             chr_high: 0,
             last_chr_set: ChrSet::Sprite,
+            audio: Mmc5Audio::new(),
             exram_mode: 0,
             nt_select: 0x00,
             fill_tile: 0xff,
@@ -627,6 +638,9 @@ impl Mapper for MMC5 {
         memory: &mut CartridgeMemory,
     ) {
         match address {
+            // Ticket #83: the dedicated audio unit owns `$5000-$5015`
+            // (pulse `$5000-$5007`, PCM `$5010/$5011`, enables `$5015`).
+            0x5000..=0x5015 => self.audio.write(address, value),
             0x5100 => {
                 if self.unlocked() {
                     self.prg_mode = value & 0x03;
@@ -709,10 +723,68 @@ impl Mapper for MMC5 {
                 self.mult_b = value;
                 self.mult_result = u16::from(self.mult_a) * u16::from(self.mult_b);
             }
-            // Every other MMC5 register (`$5010/$5015` audio) is accepted
-            // and ignored; later tickets implement sound.
+            // Every other MMC5 register is accepted and ignored.
             _ => {}
         }
+    }
+
+    /// Expansion reads (tickets #81/#82/#83): `$5010` (PCM mode/IRQ,
+    /// acknowledges the trip) and `$5015` (pulse length status) from the
+    /// audio unit; `$5204` (scanline status, acknowledges pending),
+    /// `$5200-$5202` split registers and `$5205/$5206` multiplier.
+    /// `None` (open bus) everywhere else.
+    fn read_expansion(&mut self, address: u16) -> Option<u8> {
+        if let Some(value) = self.audio.read(address) {
+            return Some(value);
+        }
+        match address {
+            0x5204 => {
+                let pending = self.irq_pending.replace(false);
+                Some(u8::from(pending) << 7 | u8::from(self.irq_in_frame.get()) << 6)
+            }
+            0x5200 => Some(self.split_mode),
+            0x5201 => Some(self.split_scroll),
+            0x5202 => Some(self.split_bank),
+            0x5205 => Some((self.mult_result & 0xff) as u8),
+            0x5206 => Some((self.mult_result >> 8) as u8),
+            _ => None,
+        }
+    }
+
+    /// Side-effect-free expansion peek (debugger): same answers, never
+    /// acknowledges (neither the `$5010` PCM trip nor `$5204` pending).
+    fn peek_expansion(&self, address: u16) -> Option<u8> {
+        if let Some(value) = self.audio.peek(address) {
+            return Some(value);
+        }
+        match address {
+            0x5204 => {
+                Some(u8::from(self.irq_pending.get()) << 7 | u8::from(self.irq_in_frame.get()) << 6)
+            }
+            0x5200 => Some(self.split_mode),
+            0x5201 => Some(self.split_scroll),
+            0x5202 => Some(self.split_bank),
+            0x5205 => Some((self.mult_result & 0xff) as u8),
+            0x5206 => Some((self.mult_result >> 8) as u8),
+            _ => None,
+        }
+    }
+
+    /// PCM stream read mode: `$8000-$BFFF` reads in read mode feed the DAC.
+    fn notify_prg_read(&mut self, address: u16, value: u8) {
+        self.audio.notify_prg_read(address, value);
+    }
+
+    /// Advance expansion audio one CPU cycle for the APU mixer.
+    fn tick_audio(&mut self) -> ExpansionMix {
+        self.audio.tick();
+        self.audio.expansion_mix()
+    }
+
+    /// CPU IRQ line: asserted when the scanline unit is pending and enabled
+    /// (ticket #81) or the PCM unit tripped and enabled (ticket #83).
+    fn irq_pending(&self) -> bool {
+        (self.irq_pending.get() && self.irq_enabled.get()) || self.audio.irq_pending()
     }
 
     /// Ticket #78 CHR bank redirect, gated by the shared `ppu_read` flag:
@@ -813,60 +885,14 @@ impl Mapper for MMC5 {
         }
     }
 
-    /// The CPU IRQ line: asserted only when the sticky pending flag is set
-    /// *and* the `$5204` enable flag is set (pending sets regardless of
-    /// enable, per hardware).
-    fn irq_pending(&self) -> bool {
-        self.irq_pending.get() && self.irq_enabled.get()
-    }
-
-    /// `$5204` read: bit 7 is the sticky pending flag (cleared as the read
-    /// acknowledges the IRQ), bit 6 is the live in-frame flag. Low bits are
-    /// zero here; the caller (`NesMcu`) fills them from the open-bus latch.
-    /// `$5204` read: bit 7 is the sticky pending flag (cleared as the read
-    /// acknowledges the IRQ), bit 6 is the live in-frame flag. Low bits are
-    /// zero here; the caller (`NesMcu`) fills them from the open-bus latch.
-    ///
-    /// Ticket #82: split registers (`$5200-$5202`) read back last-written
-    /// (tetanes `m005_exrom.rs` parity) and the multiplier product reads
-    /// `$5205` low / `$5206` high (wiki 3.6.6).
-    fn read_expansion(&self, address: u16) -> Option<u8> {
-        match address {
-            0x5204 => {
-                let pending = self.irq_pending.replace(false);
-                Some(u8::from(pending) << 7 | u8::from(self.irq_in_frame.get()) << 6)
-            }
-            0x5200 => Some(self.split_mode),
-            0x5201 => Some(self.split_scroll),
-            0x5202 => Some(self.split_bank),
-            0x5205 => Some((self.mult_result & 0xff) as u8),
-            0x5206 => Some((self.mult_result >> 8) as u8),
-            _ => None,
-        }
-    }
-
-    /// `$5204` peek: same status bits, never acknowledges. The #82
-    /// registers are side-effect-free, so they peek identically to reads.
-    fn peek_expansion(&self, address: u16) -> Option<u8> {
-        match address {
-            0x5204 => {
-                Some(u8::from(self.irq_pending.get()) << 7 | u8::from(self.irq_in_frame.get()) << 6)
-            }
-            0x5200 => Some(self.split_mode),
-            0x5201 => Some(self.split_scroll),
-            0x5202 => Some(self.split_bank),
-            0x5205 => Some((self.mult_result & 0xff) as u8),
-            0x5206 => Some((self.mult_result >> 8) as u8),
-            _ => None,
-        }
-    }
-
     fn caps(&self) -> CartridgeCaps {
         CartridgeCaps {
             on_ppu_tick: true,
             notify_vram_address: false,
             irq_pending: true,
             ppu_read: true,
+            tick_audio: true,
+            notify_prg_read: true,
             read_expansion: true,
         }
     }
@@ -996,6 +1022,78 @@ mod tests {
             ],
             before
         );
+    }
+
+    // Ticket #83: `$5000-$5015` writes drive the dedicated audio unit —
+    // both pulses sound, PCM streams with its IRQ, and the mapper
+    // advertises exactly the audio hooks.
+    #[test]
+    fn audio_registers_drive_pulses_and_pcm() {
+        let (mut mapper, mut memory) = board_8k(4, [0; 6]);
+
+        // Pulse 1: constant volume 15, 50 % duty, shortest timer.
+        mapper.cpu_write(0x5015, 0x03, SystemClock::default(), &mut memory);
+        mapper.cpu_write(0x5000, 0xbf, SystemClock::default(), &mut memory);
+        mapper.cpu_write(0x5002, 0x00, SystemClock::default(), &mut memory);
+        mapper.cpu_write(0x5003, 0x08, SystemClock::default(), &mut memory);
+        // Pulse 2 identically through `$5004-$5007`.
+        mapper.cpu_write(0x5004, 0xbf, SystemClock::default(), &mut memory);
+        mapper.cpu_write(0x5006, 0x00, SystemClock::default(), &mut memory);
+        mapper.cpu_write(0x5007, 0x08, SystemClock::default(), &mut memory);
+        assert_eq!(mapper.read_expansion(0x5015), Some(0x03));
+
+        // The free-running timer needs ~2*65536 ticks for its first wrap:
+        // run both pulses onto a high step (identical periods, lockstep).
+        let mut mix = mapper.tick_audio();
+        let mut waited = 0;
+        while mix.pulse1 != 15 || mix.pulse2 != 15 {
+            mix = mapper.tick_audio();
+            waited += 1;
+            assert!(waited < 400_000, "pulses never sounded");
+        }
+        assert_eq!(mix.pcm, 0);
+
+        // PCM DAC write lands in the mix.
+        mapper.cpu_write(0x5010, 0x00, SystemClock::default(), &mut memory);
+        mapper.cpu_write(0x5011, 0x40, SystemClock::default(), &mut memory);
+        assert_eq!(mapper.tick_audio().pcm, 0x40);
+        assert!(!mapper.irq_pending());
+
+        // `$00` DAC write trips the PCM IRQ once enabled.
+        mapper.cpu_write(0x5010, 0x80, SystemClock::default(), &mut memory);
+        mapper.cpu_write(0x5011, 0x00, SystemClock::default(), &mut memory);
+        assert!(mapper.irq_pending());
+        assert_eq!(mapper.read_expansion(0x5010), Some(0x80));
+        assert!(!mapper.irq_pending());
+    }
+
+    #[test]
+    fn audio_stream_mode_feeds_dac_from_prg_reads() {
+        let (mut mapper, mut memory) = board_8k(4, [0; 6]);
+        mapper.cpu_write(0x5010, 0x81, SystemClock::default(), &mut memory);
+
+        mapper.notify_prg_read(0x8000, 0x5a);
+        assert_eq!(mapper.tick_audio().pcm, 0x5a);
+        mapper.notify_prg_read(0xc000, 0x00);
+        assert!(!mapper.irq_pending());
+        mapper.notify_prg_read(0x9fff, 0x00);
+        assert!(mapper.irq_pending());
+    }
+
+    #[test]
+    fn audio_caps_advertise_tick_stream_and_irq() {
+        let mut memory =
+            CartridgeMemory::from_rom(&vec![0u8; PRG_8K * 2], &[], None, Mirroring::Horizontal);
+        let caps = MMC5::new(&mut memory, 8 * 1024, 0).caps();
+        assert!(caps.tick_audio);
+        assert!(caps.notify_prg_read);
+        assert!(caps.irq_pending);
+        assert!(caps.ppu_read);
+        // Union with tickets #79/#81/#82: the scanline tick and the
+        // expansion status reads are live alongside audio.
+        assert!(caps.on_ppu_tick);
+        assert!(caps.read_expansion);
+        assert!(!caps.notify_vram_address);
     }
 
     #[test]
@@ -1947,7 +2045,7 @@ mod tests {
         mapper.on_ppu_tick(line);
     }
 
-    fn status(mapper: &MMC5) -> u8 {
+    fn status(mapper: &mut MMC5) -> u8 {
         mapper.read_expansion(0x5204).expect("$5204 is handled")
     }
 
@@ -1967,7 +2065,7 @@ mod tests {
         assert!(!mapper.irq_pending(), "no IRQ before the detection tick");
         mapper.on_ppu_tick(5);
         assert!(mapper.irq_pending(), "IRQ asserts on the fourth tick");
-        assert_ne!(0, status(&mapper) & 0x80, "pending flag reads set");
+        assert_ne!(0, status(&mut mapper) & 0x80, "pending flag reads set");
     }
 
     // `$5203 = 0` never matches, even when the counter passes through 0
@@ -1981,7 +2079,7 @@ mod tests {
             run_rendered_scanline(&mut mapper, line);
             assert!(!mapper.irq_pending(), "no IRQ on line {line}");
         }
-        assert_eq!(0, status(&mapper) & 0x80, "pending never sets");
+        assert_eq!(0, status(&mut mapper) & 0x80, "pending never sets");
     }
 
     // Writing `$5203` never acknowledges: an ISR that reads `$5204` then
@@ -2000,7 +2098,7 @@ mod tests {
         mapper.cpu_write(0x5203, 10, SystemClock::default(), &mut memory);
         assert_ne!(
             0,
-            status(&mapper) & 0x80,
+            status(&mut mapper) & 0x80,
             "$5203 write does not acknowledge"
         );
         // The status read above acknowledged; re-arm for the second split.
@@ -2023,14 +2121,14 @@ mod tests {
             run_rendered_scanline(&mut mapper, line);
         }
         assert!(mapper.irq_pending());
-        assert_eq!(0xc0, status(&mapper), "pending + in-frame read set");
-        assert_eq!(0x40, status(&mapper), "pending cleared, in-frame live");
+        assert_eq!(0xc0, status(&mut mapper), "pending + in-frame read set");
+        assert_eq!(0x40, status(&mut mapper), "pending cleared, in-frame live");
         assert!(!mapper.irq_pending(), "IRQ line drops on acknowledge");
 
         // A scanline boundary with no rendered reads retires in-frame.
         run_dark_scanline(&mut mapper, 3);
         run_dark_scanline(&mut mapper, 4);
-        assert_eq!(0, status(&mapper) & 0x40, "in-frame clears off-frame");
+        assert_eq!(0, status(&mut mapper) & 0x40, "in-frame clears off-frame");
     }
 
     // Counting is gated by the PPU-passed render state: mask-off scanlines
@@ -2044,7 +2142,7 @@ mod tests {
             run_dark_scanline(&mut mapper, line);
             assert!(!mapper.irq_pending(), "no IRQ on dark line {line}");
         }
-        assert_eq!(0, status(&mapper), "neither flag sets while disabled");
+        assert_eq!(0, status(&mut mapper), "neither flag sets while disabled");
     }
 
     // A fully dark line retires in-frame (the line-granular form of the
@@ -2057,7 +2155,7 @@ mod tests {
         enable_irq(&mut mapper, &mut memory, 1);
 
         run_rendered_scanline(&mut mapper, 0);
-        assert_eq!(0x40, status(&mapper), "frame starts, counter at 0");
+        assert_eq!(0x40, status(&mut mapper), "frame starts, counter at 0");
         run_dark_scanline(&mut mapper, 1);
         assert!(!mapper.irq_pending(), "dark line detects nothing");
         run_rendered_scanline(&mut mapper, 2);
@@ -2077,8 +2175,8 @@ mod tests {
             run_rendered_scanline(&mut mapper, line);
         }
         assert!(mapper.irq_pending(), "frame 1 fires at line 5");
-        assert_ne!(0, status(&mapper) & 0x80, "ISR observes pending");
-        assert_eq!(0, status(&mapper) & 0x80, "ISR acknowledges");
+        assert_ne!(0, status(&mut mapper) & 0x80, "ISR observes pending");
+        assert_eq!(0, status(&mut mapper) & 0x80, "ISR acknowledges");
 
         for line in 6..240 {
             run_rendered_scanline(&mut mapper, line);
@@ -2086,7 +2184,7 @@ mod tests {
         for line in 240..262 {
             mapper.on_ppu_tick(line);
         }
-        assert_eq!(0, status(&mapper) & 0x40, "vblank retires in-frame");
+        assert_eq!(0, status(&mut mapper) & 0x40, "vblank retires in-frame");
 
         for line in 0..=5 {
             run_rendered_scanline(&mut mapper, line);
@@ -2106,8 +2204,8 @@ mod tests {
             run_rendered_scanline(&mut mapper, line);
         }
         assert!(!mapper.irq_pending(), "line stays low while disabled");
-        assert_ne!(0, status(&mapper) & 0x80, "pending still sets");
-        assert_eq!(0, status(&mapper) & 0x80, "status read acknowledges");
+        assert_ne!(0, status(&mut mapper) & 0x80, "pending still sets");
+        assert_eq!(0, status(&mut mapper) & 0x80, "status read acknowledges");
     }
 
     // Disabling with pending set drops the line but keeps the flag, and
@@ -2142,12 +2240,23 @@ mod tests {
         run_rendered_scanline(&mut mapper, 0);
         run_rendered_scanline(&mut mapper, 1);
         assert!(mapper.irq_pending());
-        let peek = || mapper.peek_expansion(0x5204).expect("$5204 peeks");
-        assert_eq!(0xc0, peek(), "peek sees pending + in-frame");
-        assert_eq!(0xc0, peek(), "peek does not acknowledge");
+        assert_eq!(
+            0xc0,
+            mapper.peek_expansion(0x5204).expect("$5204 peeks"),
+            "peek sees pending + in-frame"
+        );
+        assert_eq!(
+            0xc0,
+            mapper.peek_expansion(0x5204).expect("$5204 peeks"),
+            "peek does not acknowledge"
+        );
         assert!(mapper.irq_pending(), "line still asserted after peeks");
-        assert_eq!(0xc0, status(&mapper), "read sees the same bits");
-        assert_eq!(0x40, peek(), "read acknowledged, in-frame live");
+        assert_eq!(0xc0, status(&mut mapper), "read sees the same bits");
+        assert_eq!(
+            0x40,
+            mapper.peek_expansion(0x5204).expect("$5204 peeks"),
+            "read acknowledged, in-frame live"
+        );
     }
 
     // Unhandled expansion reads fall through: `$5203` is write-only
@@ -2156,15 +2265,15 @@ mod tests {
     // multiplier tests below).
     #[test]
     fn unhandled_expansion_reads_fall_through() {
-        let (mapper, _) = board_8k(2, [0; 6]);
+        let (mut mapper, _) = board_8k(2, [0; 6]);
         assert_eq!(None, mapper.read_expansion(0x5203));
         assert_eq!(None, mapper.peek_expansion(0x5203));
         assert_eq!(None, mapper.peek_expansion(0x5c00));
     }
 
-    // The chip declares every hook the IRQ uses alongside the CHR
-    // redirect, so the cartridge seam actually forwards ticks, fetches
-    // and status reads to it.
+    // The chip declares every hook it implements (scanline IRQ, audio,
+    // stream-read PCM, CHR redirect, status reads), so the cartridge seam
+    // actually forwards ticks, fetches and status reads to it.
     #[test]
     fn caps_declare_all_irq_hooks() {
         let (mapper, _) = board_8k(2, [0; 6]);
@@ -2173,6 +2282,8 @@ mod tests {
                 on_ppu_tick: true,
                 notify_vram_address: false,
                 irq_pending: true,
+                tick_audio: true,
+                notify_prg_read: true,
                 ppu_read: true,
                 read_expansion: true,
             },
@@ -2204,7 +2315,7 @@ mod tests {
     // `$FE01` (wiki 3.6.5 power-on values).
     #[test]
     fn split_and_multiplier_power_on_defaults() {
-        let (mapper, _) = board_8k(2, [0; 6]);
+        let (mut mapper, _) = board_8k(2, [0; 6]);
 
         assert!(!mapper.split_enabled());
         assert!(!mapper.split_right_side());

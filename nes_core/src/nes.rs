@@ -146,6 +146,11 @@ impl<R: Render, D: AudioDriver> NesMcu<R, D> {
     }
 
     pub fn tick_apu(&mut self, clock: SystemClock) {
+        // Expansion audio (MMC5 `$5000-$5015`) advances on the same CPU
+        // cycle and its levels reach the APU mixer before the tick emits:
+        // silence (zeros) for boards without expansion audio.
+        let expansion = self.cartridge.tick_audio();
+        self.apu.set_expansion_mix(expansion);
         self.apu.tick();
         while let Some(&(at, address, value)) = self.deferred_apu_writes.front() {
             if at > clock.cycles() {
@@ -252,7 +257,13 @@ impl<R: Render, D: AudioDriver> Mcu for NesMcu<R, D> {
     fn read(&mut self, address: u16) -> u8 {
         let value = match address {
             // PRG-ROM / PRG-RAM from cartridge; unmapped and disabled RAM is open bus
-            0x8000..=0xffff => self.cartridge.read(address),
+            0x8000..=0xffff => {
+                let value = self.cartridge.read(address);
+                // PCM stream read mode: a `$8000-$BFFF` read feeds the MMC5
+                // DAC (caps-gated, so other boards pay one branch).
+                self.cartridge.notify_prg_read(address, value);
+                value
+            }
             0x0000..=0x1fff => self.lower_ram.read(address),
             0x2000..=0x3fff => self.ppu.read_ppureg(address, &mut self.cartridge),
             0x6000..=0x7fff => {
@@ -277,12 +288,12 @@ impl<R: Render, D: AudioDriver> Mcu for NesMcu<R, D> {
                 return self.latch_read(value, true);
             }
             0x4015 => self.apu.read(address),
-            // Cartridge expansion area (MMC5 `$5204` status): the chip
-            // answers handled registers itself; everything else is open bus.
-            // `$5204` carries status in bits 7-6 only, so its low bits read
-            // the bus latch (same convention as the `$2002` low-bits
-            // combine); later full-byte registers (ExRAM, multiplier) latch
-            // the chip's byte directly.
+            // Cartridge expansion area (MMC5 `$5010`/`$5015` audio and
+            // `$5204` status): the chip answers handled registers itself;
+            // everything else is open bus. `$5204` carries status in bits
+            // 7-6 only, so its low bits read the bus latch (same convention
+            // as the `$2002` low-bits combine); full-byte registers (audio
+            // status, ExRAM, multiplier) latch the chip's byte directly.
             0x5000..=0x5fff => match self.cartridge.read_expansion(address) {
                 Some(value) => {
                     let value = if address == 0x5204 {
@@ -316,7 +327,7 @@ impl<R: Render, D: AudioDriver> Mcu for NesMcu<R, D> {
             }
             0x8000..=0xffff => self.cartridge.read(address),
             // Expansion-area peek: never acknowledges, so inspecting `$5204`
-            // cannot clear a pending IRQ. Same bit-7-6-only convention as
+            // or `$5010` cannot clear a pending IRQ. Same bit-7-6-only convention as
             // the read path above.
             0x5000..=0x5fff => match self.cartridge.peek_expansion(address) {
                 Some(value) => {

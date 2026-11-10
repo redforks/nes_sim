@@ -498,6 +498,8 @@ const NO_CAPS: CartridgeCaps = CartridgeCaps {
     on_ppu_tick: false,
     notify_vram_address: false,
     irq_pending: false,
+    tick_audio: false,
+    notify_prg_read: false,
     ppu_read: false,
     read_expansion: false,
 };
@@ -505,6 +507,8 @@ const SCANLINE_AND_IRQ: CartridgeCaps = CartridgeCaps {
     on_ppu_tick: true,
     notify_vram_address: false,
     irq_pending: true,
+    tick_audio: false,
+    notify_prg_read: false,
     ppu_read: false,
     read_expansion: false,
 };
@@ -512,16 +516,21 @@ const ALL_CAPS: CartridgeCaps = CartridgeCaps {
     on_ppu_tick: true,
     notify_vram_address: true,
     irq_pending: true,
+    tick_audio: false,
+    notify_prg_read: false,
     ppu_read: false,
     read_expansion: false,
 };
-/// Ticket #81: the MMC5 declares the per-dot tick, the IRQ line, the
-/// per-fetch PPU-read feed and the expansion-area status reads — but no
-/// A12 notification (that is the MMC3/VRC scanline mechanism, not MMC5's).
+/// MMC5 (tickets #77/#78/#79/#81/#82/#83): full PRG + CHR + ExRAM
+/// banking, scanline IRQ, split/multiplier and audio + PCM stream + PCM
+/// IRQ all live — but no A12 notification (that is the MMC3/VRC scanline
+/// mechanism, not MMC5's).
 const MMC5_CAPS: CartridgeCaps = CartridgeCaps {
     on_ppu_tick: true,
     notify_vram_address: false,
     irq_pending: true,
+    tick_audio: true,
+    notify_prg_read: true,
     ppu_read: true,
     read_expansion: true,
 };

@@ -275,6 +275,8 @@ impl Mapper for MMC3 {
             notify_vram_address: true,
             irq_pending: true,
             ppu_read: false,
+            tick_audio: false,
+            notify_prg_read: false,
             read_expansion: false,
         }
     }

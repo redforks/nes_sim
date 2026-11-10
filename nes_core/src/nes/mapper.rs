@@ -1,6 +1,7 @@
 use crate::SystemClock;
 use crate::ines::INesFile;
 use crate::ines::NametableArrangement;
+use crate::nes::apu::ExpansionMix;
 use axrom::AxRom;
 use bxrom::BxRom;
 use cnrom::CnRom;
@@ -29,6 +30,7 @@ mod memory;
 mod mmc1;
 mod mmc3;
 mod mmc5;
+mod mmc5_audio;
 mod nina001;
 mod nrom;
 mod uxrom;
@@ -257,6 +259,12 @@ pub struct CartridgeCaps {
     pub on_ppu_tick: bool,
     pub notify_vram_address: bool,
     pub irq_pending: bool,
+    /// The chip advances expansion audio (MMC5 `$5000-$5015`) once per CPU
+    /// cycle; gates [`Mapper::tick_audio`].
+    pub tick_audio: bool,
+    /// Every `$8000-$FFFF` read is reported to the chip (MMC5 PCM stream
+    /// read mode); gates [`Mapper::notify_prg_read`].
+    pub notify_prg_read: bool,
     /// When set, [`Cartridge::read_vram`] consults [`Mapper::ppu_chr_bank`]
     /// (CHR bank redirect, ticket #78) and then [`Mapper::ppu_read`] before
     /// the bank-window lookup. MMC5 sets this; nothing else does yet, so
@@ -286,23 +294,6 @@ pub trait Mapper {
     /// itself (VRC2 has no PRG-RAM). Only consulted for `$6000-$7FFF`, so
     /// CPU instruction fetches never pay for it.
     fn read_prg(&self, _address: u16) -> Option<u8> {
-        None
-    }
-    /// Answers a CPU read from the cartridge expansion area (`$5000-$5FFF`:
-    /// MMC5 status registers, ExRAM). Only consulted when the chip declares
-    /// [`CartridgeCaps::read_expansion`]; `None` falls through to open bus,
-    /// preserving the pre-seam behavior for every other board.
-    ///
-    /// Takes `&self` like [`Mapper::read_prg`]: ack-on-read side effects
-    /// (MMC5 `$5204` clears pending) live behind interior mutability in the
-    /// chip impl, exactly like the [`Mapper::ppu_read`] detector state.
-    fn read_expansion(&self, _address: u16) -> Option<u8> {
-        None
-    }
-    /// Side-effect-free expansion-area peek for the debugger: same answer as
-    /// [`Mapper::read_expansion`] but never acknowledges (a `$5204` peek
-    /// must not clear a pending IRQ out from under the CPU).
-    fn peek_expansion(&self, _address: u16) -> Option<u8> {
         None
     }
     /// Optional per-fetch PPU-read override, consulted by
@@ -338,6 +329,29 @@ pub trait Mapper {
     fn notify_vram_address(&mut self, _addr: u16) {}
     fn irq_pending(&self) -> bool {
         false
+    }
+    /// Advance expansion audio one CPU cycle and report current channel
+    /// levels for the APU mixer. Silence (zeros) by default: boards without
+    /// expansion audio.
+    fn tick_audio(&mut self) -> ExpansionMix {
+        ExpansionMix::default()
+    }
+    /// Observe a `$8000-$FFFF` byte `value` read at `address`. Only the
+    /// stream-read PCM board (MMC5 read mode) acts on it; ignored by
+    /// default.
+    fn notify_prg_read(&mut self, _address: u16, _value: u8) {}
+    /// Expansion-area (`$5000-$5FFF`) read. `None` reads as open bus.
+    /// May have side effects (MMC5 `$5010` acknowledges the PCM IRQ,
+    /// `$5204` acknowledges the scanline IRQ). Only consulted when the
+    /// chip declares [`CartridgeCaps::read_expansion`].
+    fn read_expansion(&mut self, _address: u16) -> Option<u8> {
+        None
+    }
+    /// Side-effect-free expansion-area read (debugger peek): never
+    /// acknowledges IRQs (neither the `$5010` PCM trip nor a `$5204`
+    /// pending scanline IRQ).
+    fn peek_expansion(&self, _address: u16) -> Option<u8> {
+        None
     }
     /// Which of the three hooks above this chip implements. [`Cartridge`]
     /// snapshots this once, so an override that is not declared here is dead
@@ -460,6 +474,58 @@ impl Cartridge {
         self.caps.notify_vram_address
     }
 
+    /// Advance expansion audio one CPU cycle, returning current channel
+    /// levels for the APU mixer (silence when the chip declares no audio,
+    /// so boards without expansion audio pay one branch and nothing more).
+    #[inline]
+    pub fn tick_audio(&mut self) -> ExpansionMix {
+        if self.caps.tick_audio {
+            self.mapper.tick_audio()
+        } else {
+            ExpansionMix::default()
+        }
+    }
+
+    /// Report a `$8000-$FFFF` read to the mapper chip (MMC5 PCM stream read
+    /// mode). Gated by capability, so instruction fetches on other boards
+    /// pay one branch and nothing more.
+    #[inline]
+    pub fn notify_prg_read(&mut self, address: u16, value: u8) {
+        if self.caps.notify_prg_read {
+            self.mapper.notify_prg_read(address, value);
+        }
+    }
+
+    /// Expansion-area (`$5000-$5FFF`) read for the MCU: `None` means the
+    /// caller substitutes open bus. Gated by [`CartridgeCaps::read_expansion`]
+    /// so non-MMC5 boards pay one branch and never enter the vtable.
+    pub fn read_expansion(&mut self, address: u16) -> Option<u8> {
+        debug_assert!(
+            (0x5000..=0x5fff).contains(&address),
+            "Cartridge::read_expansion address {address:#06x} outside $5000-$5FFF"
+        );
+        if self.caps.read_expansion {
+            self.mapper.read_expansion(address)
+        } else {
+            None
+        }
+    }
+
+    /// Side-effect-free expansion-area read (debugger peek): never
+    /// acknowledges, so the debugger can inspect `$5204`/`$5010` without
+    /// clearing a pending IRQ.
+    pub fn peek_expansion(&self, address: u16) -> Option<u8> {
+        debug_assert!(
+            (0x5000..=0x5fff).contains(&address),
+            "Cartridge::peek_expansion address {address:#06x} outside $5000-$5FFF"
+        );
+        if self.caps.read_expansion {
+            self.mapper.peek_expansion(address)
+        } else {
+            None
+        }
+    }
+
     /// The mapper's IRQ line, held low for a board that declares no IRQ
     /// hardware, so the per-CPU-cycle poll never enters the vtable.
     #[inline]
@@ -472,36 +538,6 @@ impl Cartridge {
     /// when this is set — mirroring [`Self::wants_vram_notify`].
     pub fn wants_ppu_read(&self) -> bool {
         self.caps.ppu_read
-    }
-
-    /// CPU read from the cartridge expansion area (`$5000-$5FFF`). Only the
-    /// MMC5 declares [`CartridgeCaps::read_expansion`]; every other board
-    /// answers `None` (the caller turns that into open bus), so the seam
-    /// costs non-MMC5 boards one bool check per expansion read.
-    pub fn read_expansion(&self, address: u16) -> Option<u8> {
-        debug_assert!(
-            (0x5000..=0x5fff).contains(&address),
-            "Cartridge::read_expansion address {address:#06x} outside $5000-$5FFF"
-        );
-        if self.caps.read_expansion {
-            self.mapper.read_expansion(address)
-        } else {
-            None
-        }
-    }
-
-    /// Side-effect-free expansion-area peek: never acknowledges, so the
-    /// debugger can inspect `$5204` without clearing a pending IRQ.
-    pub fn peek_expansion(&self, address: u16) -> Option<u8> {
-        debug_assert!(
-            (0x5000..=0x5fff).contains(&address),
-            "Cartridge::peek_expansion address {address:#06x} outside $5000-$5FFF"
-        );
-        if self.caps.read_expansion {
-            self.mapper.peek_expansion(address)
-        } else {
-            None
-        }
     }
 
     /// Cartridge PPU space: pattern tables in `$0000-$1FFF` (CHR ROM or CHR

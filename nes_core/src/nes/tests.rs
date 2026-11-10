@@ -955,6 +955,70 @@ fn oam_dma_from_zero_and_stack_pages_write_the_same_oam_bytes() {
     assert_eq!(oam_after_dma_from(0x01), plain);
 }
 
+// Ticket #83 end to end: `$5000-$5015` writes drive the MMC5 audio unit
+// through the real MCU path, `$5010`/`$5015` read back through it, and a
+// `$8000-$BFFF` read in stream mode feeds the PCM DAC and raises the
+// cartridge IRQ line.
+#[test]
+fn mmc5_audio_registers_and_stream_round_trip_through_mcu() {
+    // Mapper-5 ROM, 32 KB PRG with the bank index as the first byte of each
+    // 8 KB bank: bank 0 starts with `$00`, so reading `$8000` in stream
+    // mode feeds a `$00` byte (DAC unchanged, IRQ tripped).
+    let mut rom = vec![
+        0x4e, 0x45, 0x53, 0x1a, 2, 1, 0x50, 0x00, 0, 0, 0, 0, 0, 0, 0, 0,
+    ];
+    let mut prg = vec![0u8; 32 * 1024];
+    for (i, chunk) in prg.chunks_mut(8 * 1024).enumerate() {
+        chunk[0] = i as u8;
+    }
+    rom.extend_from_slice(&prg);
+    rom.extend_from_slice(&[0; 8 * 1024]);
+    let file = INesFile::new(rom).unwrap();
+    let cartridge = create_cartridge_with_mmc3_irq_override(&file, Mmc3IrqOverride::Auto);
+    let mut mcu = test_mcu_with(cartridge);
+
+    // Power-on audio state through the MCU: read mode, pulses silent.
+    assert_eq!(mcu.read(0x5010), 0x01);
+    assert_eq!(mcu.read(0x5015), 0x00);
+    assert!(!mcu.cartridge_irq_pending());
+
+    // Pulse 1: constant volume 15 on the 50 % duty, shortest timer.
+    mcu.write(0x5015, 0x01, SystemClock::default());
+    mcu.write(0x5000, 0xbf, SystemClock::default());
+    mcu.write(0x5002, 0x00, SystemClock::default());
+    mcu.write(0x5003, 0x08, SystemClock::default());
+    assert_eq!(mcu.read(0x5015), 0x01);
+
+    // PCM write mode + IRQ enable: `$00` DAC write trips the IRQ line.
+    mcu.write(0x5010, 0x80, SystemClock::default());
+    mcu.write(0x5011, 0x00, SystemClock::default());
+    assert!(mcu.cartridge_irq_pending());
+    // `$5010` read reports the trip and acknowledges it.
+    assert_eq!(mcu.read(0x5010), 0x80);
+    assert!(!mcu.cartridge_irq_pending());
+    // Peek never acknowledges.
+    mcu.write(0x5011, 0x00, SystemClock::default());
+    assert_eq!(mcu.peek(0x5010), 0x80);
+    assert!(mcu.cartridge_irq_pending());
+    assert_eq!(mcu.read(0x5010), 0x80);
+
+    // PCM stream mode: `$8000` (bank 0, first byte `$00`) feeding it
+    // trips the IRQ.
+    mcu.write(0x5010, 0x81, SystemClock::default());
+    assert_eq!(mcu.read(0x8000), 0x00);
+    assert!(mcu.cartridge_irq_pending());
+    // Reads outside `$8000-$BFFF` never feed the DAC: `$E000` (last bank,
+    // first byte `$03`, nonzero) would clear a fed trip — the pending trip
+    // surviving proves no feed happened.
+    assert_eq!(mcu.read(0xe000), 0x03);
+    assert!(mcu.cartridge_irq_pending());
+    assert_eq!(mcu.read(0x5010), 0x81);
+    assert!(!mcu.cartridge_irq_pending());
+
+    // Unclaimed expansion addresses still read as open bus.
+    assert_eq!(mcu.read(0x5001), mcu.peek(0x5001));
+}
+
 #[test]
 fn expansion_writes_reach_the_mapper_chip() {
     // Mapper-5 ROM, 32 KB PRG with the bank index as the first byte of each

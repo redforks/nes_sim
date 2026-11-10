@@ -1,10 +1,13 @@
 mod dmc;
 mod frame_sequencer;
-mod helper;
+/// Shared with the MMC5 dedicated audio unit (`mapper::mmc5_audio`): its
+/// pulse channels reuse the APU envelope/length/timer blocks so the two
+/// can never drift apart.
+pub(crate) mod helper;
 mod mixer;
 mod noise;
 mod pulse;
-mod registers;
+pub(crate) mod registers;
 mod triangle;
 
 use crate::{SystemClock, nes::dmc_dma::DmcDmaType};
@@ -17,6 +20,21 @@ use pulse::Pulse;
 use triangle::Triangle;
 
 pub use helper::AudioDriver;
+
+/// Expansion-audio channel levels mixed with the APU output on each tick.
+///
+/// Zeros when the cartridge provides no expansion audio (every non-MMC5
+/// board), so the mix stays bit-identical to the APU alone. Produced by
+/// [`crate::nes::mapper::Cartridge::tick_audio`] once per CPU cycle.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub struct ExpansionMix {
+    /// First MMC5 pulse channel output (0-15).
+    pub pulse1: u8,
+    /// Second MMC5 pulse channel output (0-15).
+    pub pulse2: u8,
+    /// MMC5 PCM DAC latch (0-255, 8-bit unlike the 7-bit APU DMC DAC).
+    pub pcm: u8,
+}
 use registers::{
     APUStatus, ControlFlags, DmcDacBits, DmcIRQLoopFreq, FrameSequencerBits, FrameSequencerMode,
     LengthTimerHigh3Bits, NoiseControlBits, NoiseLength, NoisePeriod, PulseControlBits, SweepBits,
@@ -31,6 +49,9 @@ pub struct Apu<D: AudioDriver = ()> {
     dmc: Dmc,
     driver: D,
     mixer: Mixer,
+    /// Latest expansion-audio levels, latched by `set_expansion_mix` ahead
+    /// of `tick` so the mixer sees them without changing `tick`'s shape.
+    expansion: ExpansionMix,
     frame_sequencer: FrameSequencer,
     /// Per-channel latch recording length clocks that decremented a nonzero
     /// counter (pulse1, pulse2, triangle, noise) on this very APU tick. A
@@ -57,6 +78,7 @@ impl<D: AudioDriver> Apu<D> {
             dmc: Dmc::default(),
             driver,
             mixer: Mixer::new(sample_rate),
+            expansion: ExpansionMix::default(),
             frame_sequencer: FrameSequencer::default(),
             length_race_clobber: [false; 4],
         }
@@ -234,7 +256,14 @@ impl<D: AudioDriver> Apu<D> {
         ];
     }
 
+    /// Latch expansion-audio levels for the next `tick`. Called once per
+    /// CPU cycle by the MCU ahead of `tick`; defaults to silence.
+    pub fn set_expansion_mix(&mut self, mix: ExpansionMix) {
+        self.expansion = mix;
+    }
+
     fn emit_samples(&mut self) {
+        let expansion = self.expansion;
         self.mixer.emit_samples(
             || {
                 (
@@ -245,6 +274,7 @@ impl<D: AudioDriver> Apu<D> {
                     self.dmc.output(),
                 )
             },
+            (expansion.pulse1, expansion.pulse2, expansion.pcm),
             |sample| self.driver.push_sample(sample),
         );
     }
