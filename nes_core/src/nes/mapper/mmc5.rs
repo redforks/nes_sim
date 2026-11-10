@@ -77,6 +77,10 @@ const ATTR_BASE: usize = 0x3c0;
 /// ExRAM mode `$5104 = 1`: per-tile palette plus 4 KB bank (wiki "Extended
 /// attributes", tetanes `Nametable::ExRam` + `ATTR_MIRROR`).
 const EXRAM_MODE_EXT_ATTR: u8 = 1;
+/// ExRAM mode `$5104 = 2`: general-purpose RAM, always CPU-writable and
+/// CPU-readable (wiki `$5104`, tetanes `GeneralPurposeRam`). The copper-bars
+/// ROM copies its raster routine here and executes it (ticket #80).
+const EXRAM_MODE_GENERAL_RAM: u8 = 2;
 /// ExRAM mode `$5104 = 3`: read-only, CPU writes never take effect.
 const EXRAM_MODE_READ_ONLY: u8 = 3;
 /// Expands one 2-bit palette index to a full attribute byte (one field per
@@ -680,21 +684,35 @@ impl Mapper for MMC5 {
     /// `$5204` read: bit 7 is the sticky pending flag (cleared as the read
     /// acknowledges the IRQ), bit 6 is the live in-frame flag. Low bits are
     /// zero here; the caller (`NesMcu`) fills them from the open-bus latch.
+    ///
+    /// `$5C00-$5FFF` reads (ticket #80): the ExRAM cell in general-RAM mode
+    /// only (ticket-literal: modes 0/1/3 fall through to open bus). The
+    /// caller latches the full byte directly (unlike `$5204`, no open-bus
+    /// low-bits combine). This same path serves instruction fetches — the
+    /// CPU reads opcodes through `Mcu::read` — so ExRAM-executed code works
+    /// with no separate execute hook.
     fn read_expansion(&self, address: u16) -> Option<u8> {
         match address {
             0x5204 => {
                 let pending = self.irq_pending.replace(false);
                 Some(u8::from(pending) << 7 | u8::from(self.irq_in_frame.get()) << 6)
             }
+            0x5c00..=0x5fff if self.exram_mode == EXRAM_MODE_GENERAL_RAM => {
+                Some(self.exram[(address & 0x03ff) as usize])
+            }
             _ => None,
         }
     }
 
-    /// `$5204` peek: same status bits, never acknowledges.
+    /// `$5204` peek: same status bits, never acknowledges. `$5C00-$5FFF`
+    /// peeks mirror the mode-2 read path (ticket #80).
     fn peek_expansion(&self, address: u16) -> Option<u8> {
         match address {
             0x5204 => {
                 Some(u8::from(self.irq_pending.get()) << 7 | u8::from(self.irq_in_frame.get()) << 6)
+            }
+            0x5c00..=0x5fff if self.exram_mode == EXRAM_MODE_GENERAL_RAM => {
+                Some(self.exram[(address & 0x03ff) as usize])
             }
             _ => None,
         }
@@ -1220,6 +1238,47 @@ mod tests {
         write_reg(&mut mapper, &mut memory, 0x5104, 0x00);
         assert_eq!(nt_read(&mapper, 0x2000), Some(0x01));
         assert_eq!(nt_read(&mapper, 0x23ff), Some(0x02));
+    }
+
+    // Ticket #80 acceptance: CPU reads reach ExRAM in general-RAM mode
+    // only (ticket-literal: modes 0/1/3 fall through to open bus, i.e.
+    // `None`). Reads and peeks agree; `$5204` still answers alongside.
+    #[test]
+    fn exram_cpu_reads_in_general_ram_mode_only() {
+        let (mut mapper, mut memory) = board_8k(2, [0; 6]);
+
+        // Store cells while each mode allows writes, then read them back.
+        write_reg(&mut mapper, &mut memory, 0x5104, 0x02);
+        write_reg(&mut mapper, &mut memory, 0x5c00, 0x42);
+        write_reg(&mut mapper, &mut memory, 0x5fff, 0x24);
+        assert_eq!(mapper.read_expansion(0x5c00), Some(0x42));
+        assert_eq!(mapper.read_expansion(0x5fff), Some(0x24));
+        assert_eq!(mapper.peek_expansion(0x5c00), Some(0x42));
+        assert_eq!(mapper.peek_expansion(0x5fff), Some(0x24));
+        // Unwritten cells read back as zero, and `$5204` still answers.
+        assert_eq!(mapper.read_expansion(0x5c01), Some(0x00));
+        assert!(mapper.read_expansion(0x5204).is_some());
+
+        // Modes 0/1/3: the same cells fall through to open bus (`None`)
+        // for both reads and peeks, even though mode 0 holds a stored cell.
+        write_reg(&mut mapper, &mut memory, 0x5104, 0x00);
+        write_reg(&mut mapper, &mut memory, 0x5c10, 0x77);
+        assert_eq!(mapper.read_expansion(0x5c00), None);
+        assert_eq!(mapper.read_expansion(0x5c10), None);
+        assert_eq!(mapper.peek_expansion(0x5c10), None);
+        write_reg(&mut mapper, &mut memory, 0x5104, 0x01);
+        assert_eq!(mapper.read_expansion(0x5c10), None);
+        assert_eq!(mapper.peek_expansion(0x5c10), None);
+        write_reg(&mut mapper, &mut memory, 0x5104, 0x03);
+        assert_eq!(mapper.read_expansion(0x5c10), None);
+        assert_eq!(mapper.peek_expansion(0x5c10), None);
+        // `$5204` still answers in every mode (no regression).
+        assert!(mapper.read_expansion(0x5204).is_some());
+
+        // Back in mode 2 the stored cells are intact and readable again.
+        write_reg(&mut mapper, &mut memory, 0x5104, 0x02);
+        assert_eq!(mapper.read_expansion(0x5c00), Some(0x42));
+        assert_eq!(mapper.read_expansion(0x5fff), Some(0x24));
     }
 
     // The render latch follows the last hook call (spec #74: the mapper owns
