@@ -1489,8 +1489,34 @@ fn test_render_pixel_sprite_zero_hit() {
         8,
         1,
     );
-    ppu.sprite.update_ctrl_status(&mut ppu.registers.status);
+    // No latch step: the hit raises PPUSTATUS on the dot that outputs the
+    // hit pixel (blargg ppu_sprite_hit 09-timing sub-tests 3/4).
     assert!(ppu.registers.status.sprite_zero_hit());
+}
+
+#[test]
+fn sprite_status_clears_one_dot_before_vblank() {
+    let mut ppu = create_test_ppu_with_mask(PpuMask::new());
+    let mut cart = Cartridge::test();
+
+    ppu.registers.status.set_sprite_zero_hit(true);
+    ppu.registers.status.set_sprite_overflow(true);
+    ppu.registers.status.set_v_blank(true);
+
+    // Pre-render dot 0 drops the sprite status bits ...
+    ppu.timing.scanline = 261;
+    ppu.timing.dot = 0;
+    ppu.tick(&mut cart);
+    assert!(!ppu.registers.status.sprite_zero_hit());
+    assert!(!ppu.registers.status.sprite_overflow());
+    assert!(
+        ppu.registers.status.v_blank(),
+        "vblank clears one dot after the sprite bits"
+    );
+
+    // ... and dot 1 clears vblank (blargg vbl_nmi_timing 4.vbl_clear_timing).
+    ppu.tick(&mut cart);
+    assert!(!ppu.registers.status.v_blank());
 }
 
 #[test]

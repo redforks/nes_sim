@@ -30,6 +30,11 @@ serde.workspace = true
 anyhow.workspace = true
 base64 = "0.22.1"
 md5 = "0.8.0"
+zip = { workspace = true }
+sha1 = { workspace = true }
+sha2 = { workspace = true }
+crc32fast = { workspace = true }
+serde_json = { workspace = true }
 hotpath = "0.30"
 
 [dev-dependencies]

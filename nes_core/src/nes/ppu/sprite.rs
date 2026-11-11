@@ -38,7 +38,6 @@ impl SpriteOverflowEval {
 }
 
 pub struct SpriteManager {
-    zero_hit_pending: bool,
     overflow_pending: bool,
     sprite_overflow_eval: SpriteOverflowEval,
     current_scanline_oam: ArrayVec<[Sprite; 8]>,
@@ -76,7 +75,6 @@ fn sprite_in_range(y: u8, target_scanline: u16, sprite_height: u8) -> bool {
 impl SpriteManager {
     pub fn new() -> Self {
         Self {
-            zero_hit_pending: false,
             overflow_pending: false,
             sprite_overflow_eval: SpriteOverflowEval::default(),
             current_scanline_oam: ArrayVec::new(),
@@ -91,7 +89,6 @@ impl SpriteManager {
     }
 
     pub fn reset(&mut self) {
-        self.zero_hit_pending = false;
         self.overflow_pending = false;
         self.sprite_overflow_eval = SpriteOverflowEval::default();
         self.current_scanline_oam.clear();
@@ -114,28 +111,21 @@ impl SpriteManager {
 
     /// True while a sprite status edge is waiting to be latched into
     /// PPUSTATUS. The PPU consults this before touching the status
-    /// register, so dots without sprite-0 hits or overflows pay no
-    /// per-dot status write.
+    /// register, so dots without sprite overflows pay no per-dot status
+    /// write. (The sprite-0 hit is not queued: it writes PPUSTATUS on the
+    /// dot that outputs the hit pixel, see `Ppu::render_pixel`.)
     pub(crate) fn status_dirty(&self) -> bool {
-        self.zero_hit_pending || self.overflow_pending
+        self.overflow_pending
     }
 
     /// Update sprite status to ppu status register
     pub fn update_ctrl_status(&mut self, status: &mut PpuStatus) {
-        if std::mem::take(&mut self.zero_hit_pending) {
-            status.set_sprite_zero_hit(true);
-        }
         if std::mem::take(&mut self.overflow_pending) {
             status.set_sprite_overflow(true);
         }
     }
 
-    pub fn set_zero_hit_pending(&mut self) {
-        self.zero_hit_pending = true;
-    }
-
     pub fn clear_pending(&mut self) {
-        self.zero_hit_pending = false;
         self.overflow_pending = false;
     }
 

@@ -1,3 +1,4 @@
+pub mod bk2;
 pub mod bus;
 pub(crate) mod cpu;
 pub(crate) mod dma_bus;

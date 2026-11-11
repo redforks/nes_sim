@@ -45,7 +45,7 @@ enum Action {
     Info(InfoAction),
     /// Run the NES simulator with SDL2 display
     Run(RunAction),
-    /// Play back a .fm2 movie file
+    /// Play back a .fm2/.bk2 movie file
     PlayMovie(PlayMovieAction),
 }
 

@@ -83,7 +83,7 @@ where
 
 #[derive(clap::Args)]
 pub struct PlayMovieAction {
-    fm2_file: PathBuf,
+    movie_file: PathBuf,
     #[arg(short, long)]
     output: Option<PathBuf>,
     #[arg(long)]
@@ -104,6 +104,17 @@ pub struct PlayMovieAction {
     trim_frames: u32,
     #[arg(long, default_value_t = 0)]
     trim_after: u32,
+    /// BK2 only: play savestate-anchored movies from power-on with a warning
+    /// instead of refusing them.
+    #[arg(long)]
+    play_from_power_on: bool,
+}
+
+/// True when the movie path selects the BK2 parser (by `.bk2` extension).
+fn movie_file_is_bk2(path: &std::path::Path) -> bool {
+    path.extension()
+        .and_then(|ext| ext.to_str())
+        .is_some_and(|ext| ext.eq_ignore_ascii_case("bk2"))
 }
 
 struct GamepadOverlay {
@@ -669,18 +680,28 @@ fn init_sdl_drivers(
 
 impl PlayMovieAction {
     pub fn run(&self, f: &INesFile, palette: Option<ColorTheme>) -> Result<()> {
-        let fm2_data = fs::read(&self.fm2_file)?;
-        let fm2 = movie::parse(&fm2_data).context("parse fm2 file")?;
-        let input_logs = &fm2.input_logs;
-
-        if !fm2.valid_rom_file(f)? {
-            eprintln!("Warning: rom file checksum not match");
-        }
+        let input_logs: Box<[movie::InputLog]> = if movie_file_is_bk2(&self.movie_file) {
+            let bk2_data = fs::read(&self.movie_file)?;
+            let movie = nes_core::bk2::parse(&bk2_data).context("parse bk2 file")?;
+            let warnings = nes_core::bk2::check_movie(&movie, f, self.play_from_power_on)?;
+            for warning in warnings {
+                eprintln!("{warning}");
+            }
+            eprintln!(">> Loaded BK2 movie with {} frames", movie.input_logs.len());
+            movie.input_logs
+        } else {
+            let fm2_data = fs::read(&self.movie_file)?;
+            let fm2 = movie::parse(&fm2_data).context("parse fm2 file")?;
+            if !fm2.valid_rom_file(f)? {
+                eprintln!("Warning: rom file checksum not match");
+            }
+            eprintln!(">> Loaded movie with {} frames", fm2.input_logs.len());
+            fm2.input_logs
+        };
 
         if input_logs.is_empty() {
-            anyhow::bail!("FM2 file has no input logs");
+            anyhow::bail!("Movie file has no input logs");
         }
-        eprintln!(">> Loaded movie with {} frames", input_logs.len());
 
         let (video_tx, audio_tx, cleanup) = if let Some(output_path) = &self.output {
             let temp_dir =
@@ -808,7 +829,7 @@ impl PlayMovieAction {
         let mut extra_frames_remaining = self.extra_frames;
         let mut frame_index = 0;
         let fast_forward_ranges = if self.auto_fast_forward {
-            compute_fast_forward_ranges(input_logs, self.idle_frames as usize)
+            compute_fast_forward_ranges(&input_logs, self.idle_frames as usize)
         } else {
             Vec::new()
         };
@@ -824,13 +845,12 @@ impl PlayMovieAction {
             }
 
             if let Some(input_log) = input_logs.get(frame_index) {
-                if input_log.command.soft_reset() {
-                    frame_index += 1;
+                // Soft-reset (FM2 reset flag / BK2 Reset column) and
+                // fresh-machine restart (BK2 Power column) both return the
+                // machine to its power-up contract before the frame runs.
+                if input_log.command.soft_reset() || input_log.command.hard_reset() {
+                    machine.reset();
                 }
-                assert!(
-                    !input_log.command.hard_reset(),
-                    "unsupported command: hard_reset"
-                );
                 set_controller_a_from_gamepad(&mut machine, &input_log.port0);
                 set_controller_b_from_gamepad(&mut machine, &input_log.port1);
                 machine
@@ -906,6 +926,73 @@ mod tests {
     use nes_core::render::{ImageRender, Render};
     use nes_sdl::presentation::{OverlayIcon, OverlayPlacement, plan};
     use std::rc::Rc;
+
+    #[test]
+    fn bk2_extension_selects_the_bk2_parser() {
+        use super::movie_file_is_bk2;
+        use std::path::Path;
+        assert!(movie_file_is_bk2(Path::new("movie.bk2")));
+        assert!(movie_file_is_bk2(Path::new("movie.BK2")));
+        assert!(!movie_file_is_bk2(Path::new("movie.fm2")));
+        assert!(!movie_file_is_bk2(Path::new("movie")));
+    }
+
+    #[test]
+    fn bk2_reset_power_fixture_exposes_both_console_commands() {
+        let data = include_bytes!("../../../testdata/bk2/bk2-reset-power-3f.bk2");
+        let movie = nes_core::bk2::parse(data).expect("reset/power BK2 must parse");
+        assert_eq!(movie.input_logs.len(), 3);
+        assert!(movie.input_logs[1].command.soft_reset());
+        assert!(movie.input_logs[2].command.hard_reset());
+    }
+
+    #[test]
+    fn bk2_inputs_fixture_feeds_the_shared_fast_forward_seam() {
+        // Flag parity (#103) is structural: BK2 parses to the same InputLog
+        // type, so headless/overlay/fast-forward/trimming all run unchanged.
+        let data = include_bytes!("../../../testdata/bk2/bk2-inputs-5f.bk2");
+        let movie = nes_core::bk2::parse(data).expect("inputs BK2 must parse");
+        let ranges = compute_fast_forward_ranges(&movie.input_logs, 60);
+        assert!(
+            ranges.is_empty(),
+            "inputs fixture is never idle: {ranges:?}"
+        );
+        let blank = include_bytes!("../../../testdata/bk2/bk2-blank-3f.bk2");
+        let blank = nes_core::bk2::parse(blank).unwrap();
+        assert_eq!(
+            compute_fast_forward_ranges(&blank.input_logs, 3),
+            vec![(0, 1)],
+            "all-idle BK2 fast-forwards like the FM2 equivalent"
+        );
+    }
+
+    #[test]
+    fn bk2_inputs_drive_the_shared_overlay_seam() {
+        // Overlay parity (#103): BK2-parsed inputs project player-1 icons
+        // left and player-2 icons right through the unchanged overlay path.
+        // Frame 2 of the inputs fixture is P1 Up+A with P2 Left+Start.
+        let data = include_bytes!("../../../testdata/bk2/bk2-inputs-5f.bk2");
+        let movie = nes_core::bk2::parse(data).expect("inputs BK2 must parse");
+        let mut p1 = GamepadOverlay::new();
+        let mut p2 = GamepadOverlay::new();
+        p1.set_input(&movie.input_logs[2].port0);
+        p2.set_input(&movie.input_logs[2].port1);
+        let icons = project_overlay_icons(&mut p1, &mut p2, true);
+        // P1 Up projects direction icon 5 on the left; P1 A projects icon 0
+        // beside it; P2 Left projects direction icon 3 on the right.
+        assert!(
+            icons.iter().any(|p| p.icon == 5 && p.dst.0 == 2),
+            "{icons:?}"
+        );
+        assert!(
+            icons.iter().any(|p| p.icon == 0 && p.dst.0 == 38),
+            "{icons:?}"
+        );
+        assert!(
+            icons.iter().any(|p| p.icon == 3 && p.dst.0 == 205),
+            "{icons:?}"
+        );
+    }
 
     use super::{
         FramePresenter, GamepadOverlay, NES_WIDTH, OVERLAY_LAYOUT_RIGHT, RECORD_HEIGHT,
