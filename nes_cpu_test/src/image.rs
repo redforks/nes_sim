@@ -146,6 +146,74 @@ impl Image {
                 );
             } else if file_name
                 .to_str()
+                .is_some_and(|p| p.contains("mmc5test_v2/"))
+                && f == "mmc5test.nes"
+            {
+                // MMC5 CHR-bank matrix ROM (AWJ `mmc5test`, mapper 5):
+                // NMI-driven register playground (OBJ/BG tables, 8x8/8x16,
+                // ExRAM mode, fill, 4 CHR bank-write orders). No
+                // self-reporting protocol — success is blessed snapshots of
+                // the rendered frames under png-exps/ at the tetanes
+                // `m005_exrom/tests.json` `basics` frames (10/14/18/22/26/36/42;
+                // the frame-30 fill state is covered by the `mmc5-matrix-fill`
+                // recipe instead: hold-semantics `--press` cannot toggle fill
+                // back off, and fill would hide the bank rows at 36/42).
+                // NOTE: v1 shares the basename, so route on the directory.
+                return self.create_exp_png_machine(
+                    ines,
+                    quiet,
+                    start_pc,
+                    max_instructions,
+                    vec![
+                        "mmc5-basics-f10.png".to_string(),
+                        "mmc5-basics-f14.png".to_string(),
+                        "mmc5-basics-f18.png".to_string(),
+                        "mmc5-basics-f22.png".to_string(),
+                        "mmc5-basics-f26.png".to_string(),
+                        "mmc5-basics-f36.png".to_string(),
+                    ],
+                    Duration::from_secs(10),
+                );
+            } else if file_name.to_str().is_some_and(|p| p.contains("exram/"))
+                && f == "mmc5exram.nes"
+            {
+                // MMC5 executable-ExRAM demo (Quietust, mapper 5): raster code
+                // runs FROM ExRAM with cycle-timed $2000/$2001 rewrites
+                // (copper bars). No input, no self-reporting protocol — success
+                // is blessed snapshots under png-exps/ at the tetanes
+                // `m005_exrom/tests.json` `exram` frames (10/15/45/100); the
+                // bars must visibly move between them.
+                return self.create_exp_png_machine(
+                    ines,
+                    quiet,
+                    start_pc,
+                    max_instructions,
+                    vec![
+                        "mmc5-exram-f10.png".to_string(),
+                        "mmc5-exram-f15.png".to_string(),
+                        "mmc5-exram-f45.png".to_string(),
+                        "mmc5-exram-f100.png".to_string(),
+                    ],
+                    Duration::from_secs(10),
+                );
+            } else if file_name.to_str().is_some_and(|p| p.contains("mmc5test/"))
+                && f == "mmc5test.nes"
+            {
+                // MMC5 scanline-counter test v1 (Drag, mapper 5): no source,
+                // no tetanes entry. Minimal honest gate: boots to its counter
+                // display (blessed frame 10). The `mmc5-v1` recipe additionally
+                // `cmp`s a frame-100 dump against the same PNG for stability.
+                // NOTE: checked AFTER `mmc5test_v2/` above (shared basename).
+                return self.create_exp_png_machine(
+                    ines,
+                    quiet,
+                    start_pc,
+                    max_instructions,
+                    vec!["mmc5-v1-f10.png".to_string()],
+                    Duration::from_secs(10),
+                );
+            } else if file_name
+                .to_str()
                 .is_some_and(|p| p.contains("dpcmletterbox"))
             {
                 // Damian Yerrick's DPCM Letterbox demo (NROM): visual-only,
