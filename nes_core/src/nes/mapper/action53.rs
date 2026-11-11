@@ -1,6 +1,22 @@
 use super::{Mapper, Mirroring, memory::CartridgeMemory};
 use crate::SystemClock;
 
+/// Register-file indices behind the `$5000` select / `$8000-$FFFF` value
+/// split: `$00` → CHR, `$01` → inner, `$80` → mode, `$81` → outer.
+const REG_CHR: usize = 0;
+const REG_INNER: usize = 1;
+const REG_MODE: usize = 2;
+const REG_OUTER: usize = 3;
+
+/// Combines the outer and inner selections under the size-dependent
+/// address-line decoding: the outer mask drops the address lines the outer
+/// size ignores, and the inner mask folds the index into the outer window.
+fn masked_bank(outer: u16, inner: u16, game_size: usize) -> u16 {
+    const OUTER_MASK: [u16; 4] = [0x1fe, 0x1fc, 0x1f8, 0x1f0];
+    const INNER_MASK: [u16; 4] = [0x01, 0x03, 0x07, 0x0f];
+    (outer & OUTER_MASK[game_size]) | (inner & INNER_MASK[game_size])
+}
+
 /// Action 53 (mapper 28): four configuration registers behind a
 /// select/value split — `$5000-$5FFF` writes pick the CHR / inner / mode /
 /// outer register, `$8000-$FFFF` writes store the value and recompute the
@@ -24,12 +40,8 @@ impl Action53 {
             selected: 0,
             mirroring_bit: 0,
         };
-        mapper.install(memory);
+        mapper.sync(memory);
         mapper
-    }
-
-    fn install(&self, memory: &mut CartridgeMemory) {
-        self.sync(memory);
     }
 
     /// Recomputes every window from the register file: both 16 KiB program
@@ -43,7 +55,7 @@ impl Action53 {
     /// Character window: the low two CHR-register bits pick the 8 KiB
     /// CHR-RAM bank behind the pattern tables.
     fn sync_chr(&self, memory: &mut CartridgeMemory) {
-        memory.map_chr_8k((self.regs[0] & 0x03) as u16);
+        memory.map_chr_8k((self.regs[REG_CHR] & 0x03) as u16);
     }
 
     /// Nametable slot entries: the mode-register low bits pick vertical /
@@ -51,7 +63,7 @@ impl Action53 {
     /// latch, which rides on program-area writes (D4 of the CHR / inner
     /// value, bit 0 of the mode value).
     fn sync_mirroring(&self, memory: &mut CartridgeMemory) {
-        let mut mirroring = self.regs[2] & 0x03;
+        let mut mirroring = self.regs[REG_MODE] & 0x03;
         if mirroring & 0x02 == 0 {
             mirroring = self.mirroring_bit;
         }
@@ -71,31 +83,20 @@ impl Action53 {
     /// bank always decodes against a 32 KiB outer size so every outer bit
     /// passes through.
     fn sync_prg(&self, memory: &mut CartridgeMemory) {
-        let mode = self.regs[2];
+        let mode = self.regs[REG_MODE];
         let game_size = ((mode >> 4) & 0x03) as usize;
-        const OUTER_MASK: [u16; 4] = [0x1fe, 0x1fc, 0x1f8, 0x1f0];
-        const INNER_MASK: [u16; 4] = [0x01, 0x03, 0x07, 0x0f];
-        let outer = (self.regs[3] as u16) << 1;
-        let inner = (self.regs[1] & 0x0f) as u16;
+        let outer = (self.regs[REG_OUTER] as u16) << 1;
+        let inner = (self.regs[REG_INNER] & 0x0f) as u16;
         if mode & 0x08 != 0 {
             let slot_select = ((mode >> 2) & 0x01) as u16;
             let switch_slot = slot_select ^ 0x01;
-            memory.map_prg_16k(
-                switch_slot,
-                (outer & OUTER_MASK[game_size]) | (inner & INNER_MASK[game_size]),
-            );
+            memory.map_prg_16k(switch_slot, masked_bank(outer, inner, game_size));
             memory.map_prg_16k(slot_select, (outer & 0x1fe) | slot_select);
             return;
         }
         let inner = inner << 1;
-        memory.map_prg_16k(
-            0,
-            (outer & OUTER_MASK[game_size]) | (inner & INNER_MASK[game_size]),
-        );
-        memory.map_prg_16k(
-            1,
-            (outer & OUTER_MASK[game_size]) | ((inner | 0x01) & INNER_MASK[game_size]),
-        );
+        memory.map_prg_16k(0, masked_bank(outer, inner, game_size));
+        memory.map_prg_16k(1, masked_bank(outer, inner | 0x01, game_size));
     }
 }
 
@@ -113,11 +114,14 @@ impl Mapper for Action53 {
             0x5000..=0x5fff => {
                 self.selected = (((value & 0x80) >> 6) | (value & 0x01)) as usize;
             }
+            // Served through Cartridge::write_prg_ram on the NesMcu production
+            // write path (enabled-gated there); without this arm those writes
+            // would fall into `_` and vanish.
             0x6000..=0x7fff => memory.write_prg_ram(address, value),
             0x8000..=0xffff => {
-                if self.selected <= 1 {
+                if self.selected <= REG_INNER {
                     self.mirroring_bit = (value >> 4) & 0x01;
-                } else if self.selected == 2 {
+                } else if self.selected == REG_MODE {
                     self.mirroring_bit = value & 0x01;
                 }
                 self.regs[self.selected] = value;
@@ -131,7 +135,7 @@ impl Mapper for Action53 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::nes::mapper::Mirroring;
+    use crate::nes::mapper::{Cartridge, Mirroring};
 
     const BANK_16K: usize = 0x4000;
 
@@ -523,14 +527,86 @@ mod tests {
     fn cartridge_ram_writes_survive_bank_switches() {
         let prg = four_bank_prg();
         let mut memory = CartridgeMemory::test(&prg, &[]);
-        let mut mapper = Action53::new(&mut memory);
+        let mut cartridge = Cartridge::new(Box::new(Action53::new(&mut memory)), memory);
 
-        cpu_write(&mut mapper, &mut memory, 0x6000, 0x12);
+        // Production route: NesMcu::write forwards $6000-$7FFF here when
+        // PRG-RAM is enabled, and $5000/$8000 writes switch banks.
+        cartridge.write_prg_ram(0x6000, 0x12, SystemClock::default());
 
-        select(&mut mapper, &mut memory, 0x81);
-        store(&mut mapper, &mut memory, 0x00);
+        cartridge.write_expansion(0x5000, 0x81, SystemClock::default());
+        cartridge.write(0x8000, 0x00, SystemClock::default());
 
-        assert_eq!(memory.read_prg(0x8000), 0x10);
-        assert_eq!(memory.read_prg_ram(0x6000), 0x12);
+        assert_eq!(cartridge.read(0x8000), 0x10);
+        assert_eq!(cartridge.read_prg_ram(0x6000), 0x12);
+    }
+
+    #[test]
+    fn thirty_two_k_modes_cover_remaining_sizes() {
+        // (mode register, outer register, inner register, $8000 bank, $C000 bank)
+        for (mode, outer, inner, low, high) in [
+            (0x00u8, 0x01u8, 0x01u8, 2, 3),   // mode 0, 32 KiB outer
+            (0x20u8, 0x04u8, 0x03u8, 14, 15), // mode 0, 128 KiB outer
+            (0x04u8, 0x01u8, 0x01u8, 2, 3),   // mode 1, 32 KiB outer
+            (0x24u8, 0x04u8, 0x03u8, 14, 15), // mode 1, 128 KiB outer
+            (0x34u8, 0x02u8, 0x0fu8, 14, 15), // mode 1, 256 KiB outer
+        ] {
+            let prg = sixteen_bank_prg();
+            let mut memory = CartridgeMemory::test(&prg, &[]);
+            let mut mapper = Action53::new(&mut memory);
+
+            select(&mut mapper, &mut memory, 0x80);
+            store(&mut mapper, &mut memory, mode);
+            select(&mut mapper, &mut memory, 0x81);
+            store(&mut mapper, &mut memory, outer);
+            select(&mut mapper, &mut memory, 0x01);
+            store(&mut mapper, &mut memory, inner);
+
+            assert_eq!(memory.read_prg(0x8000), low, "mode {mode:#04x} low");
+            assert_eq!(memory.read_prg(0xc000), high, "mode {mode:#04x} high");
+        }
+    }
+
+    #[test]
+    fn fixed_bottom_covers_remaining_sizes() {
+        for (mode, outer, inner, low, high) in [
+            (0x18u8, 0x01u8, 0x03u8, 2, 3), // 64 KiB outer
+            (0x38u8, 0x02u8, 0x05u8, 4, 5), // 256 KiB outer
+        ] {
+            let prg = sixteen_bank_prg();
+            let mut memory = CartridgeMemory::test(&prg, &[]);
+            let mut mapper = Action53::new(&mut memory);
+
+            select(&mut mapper, &mut memory, 0x80);
+            store(&mut mapper, &mut memory, mode);
+            select(&mut mapper, &mut memory, 0x81);
+            store(&mut mapper, &mut memory, outer);
+            select(&mut mapper, &mut memory, 0x01);
+            store(&mut mapper, &mut memory, inner);
+
+            assert_eq!(memory.read_prg(0x8000), low, "mode {mode:#04x} low");
+            assert_eq!(memory.read_prg(0xc000), high, "mode {mode:#04x} high");
+        }
+    }
+
+    #[test]
+    fn fixed_top_covers_remaining_sizes() {
+        for (mode, outer, inner, low, high) in [
+            (0x1cu8, 0x01u8, 0x02u8, 2, 3), // 64 KiB outer
+            (0x2cu8, 0x03u8, 0x05u8, 5, 7), // 128 KiB outer
+        ] {
+            let prg = sixteen_bank_prg();
+            let mut memory = CartridgeMemory::test(&prg, &[]);
+            let mut mapper = Action53::new(&mut memory);
+
+            select(&mut mapper, &mut memory, 0x80);
+            store(&mut mapper, &mut memory, mode);
+            select(&mut mapper, &mut memory, 0x81);
+            store(&mut mapper, &mut memory, outer);
+            select(&mut mapper, &mut memory, 0x01);
+            store(&mut mapper, &mut memory, inner);
+
+            assert_eq!(memory.read_prg(0x8000), low, "mode {mode:#04x} low");
+            assert_eq!(memory.read_prg(0xc000), high, "mode {mode:#04x} high");
+        }
     }
 }
