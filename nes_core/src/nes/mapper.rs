@@ -2,6 +2,7 @@ use crate::SystemClock;
 use crate::ines::INesFile;
 use crate::ines::NametableArrangement;
 use crate::nes::apu::ExpansionMix;
+use action53::Action53;
 use axrom::AxRom;
 use bxrom::BxRom;
 use cnrom::CnRom;
@@ -22,6 +23,7 @@ pub use vrc24::VrcVariant;
 /// hard-wired mirroring, 3 = MC-ACC, 4 = MMC3A.
 const MMC3A_NES20_SUBMAPPER: u8 = 4;
 const MMC3_ALTERNATE_IRQ_SIGNATURES: [&str; 2] = ["6-MMC3_alt", "6-MMC6"];
+mod action53;
 mod axrom;
 mod bxrom;
 mod cnrom;
@@ -127,6 +129,7 @@ pub fn create_cartridge_with_mmc3_irq_override(
             Box::new(MMC5::new(&mut memory, wram_size, battery_bytes))
         }
         7 => Box::new(AxRom::new(&mut memory)),
+        28 => Box::new(Action53::new(&mut memory)),
         34 => {
             // A 16 KB-or-smaller CHR image means the BNROM half of mapper 34.
             if memory.chr_len_bytes() > 0x2000 {
@@ -285,7 +288,8 @@ pub struct CartridgeCaps {
 /// memory and performs no data read: it rewrites bank-window slots, may write
 /// PRG-RAM, and reports IRQ lines. See `docs/adr/0015`.
 pub trait Mapper {
-    /// Called for every CPU write in `$5000-$FFFF`.
+    /// Called for every CPU write in `$5000-$FFFF` (expansion registers,
+    /// PRG-RAM, and program-area register writes).
     fn cpu_write(
         &mut self,
         address: u16,
@@ -441,8 +445,9 @@ impl Cartridge {
     }
 
     /// CPU writes to `$5000-$5FFF`: the cartridge expansion area (MMC5
-    /// registers live here). Forwards to the mapper chip like the other
-    /// write windows; chips without expansion registers ignore it.
+    /// registers and the Action 53 register select live here). Forwards to
+    /// the mapper chip like the other write windows; chips without expansion
+    /// registers ignore it.
     pub fn write_expansion(&mut self, address: u16, value: u8, cycle: SystemClock) {
         debug_assert!(
             (0x5000..=0x5fff).contains(&address),

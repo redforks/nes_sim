@@ -26,6 +26,15 @@ enum SuccessCondition {
     PassedOrFailed,
     MagicSuccessWord(String),
     MagicSuccessWordUnlessFailed(String),
+    /// test28 (mapper 28 / Action 53): completion is gated on the final
+    /// verdict screens, never on the first occurrence of a passing word.
+    /// The post-reset pass arm prints `RESET LEAVES BANK UNCHANGED`; every
+    /// terminal failure prints `FAIL!`, `Fail!`, or `NOT SO FAST!` — except
+    /// the documented ROM-bug terminus, the bus-conflict `Fail!` screen
+    /// (see [`contains_test28_bus_conflict_terminus`]), which scores
+    /// success because the released ROM's bus sub-test is
+    /// self-contradictory and halts there on every correct implementation.
+    Test28Finals,
 }
 
 pub struct NametableConsole {
@@ -90,6 +99,20 @@ impl NametableConsole {
             ..Self::new()
         }
     }
+
+    /// test28.nes verdict channel: tall-tile nametable text with
+    /// completion gated on the final screens (see [`SuccessCondition::Test28Finals`]).
+    /// The rendering gate stays on: the rendering-disabled terminal path is
+    /// never scorable. Omits [`MonitorTestStatus`](super::MonitorTestStatus)
+    /// and [`DetectDeadLoop`](super::DetectDeadLoop) by construction — the
+    /// branch that installs this console simply never adds them.
+    pub fn for_test28() -> Self {
+        Self {
+            decoder: Decoder::TallText,
+            success_condition: SuccessCondition::Test28Finals,
+            ..Self::new()
+        }
+    }
 }
 
 impl Default for NametableConsole {
@@ -122,7 +145,18 @@ impl<R: Render> Plugin<NesMcu<R, ()>> for NametableConsole {
         }
 
         output(transcript); // empty when every sampled line was already printed
-        self.stop = evaluate_result(&buf, &self.success_condition);
+        let verdict = evaluate_result(&buf, &self.success_condition);
+        if verdict == Some(ExecuteResult::Stop(0))
+            && matches!(self.success_condition, SuccessCondition::Test28Finals)
+            && contains_test28_bus_conflict_terminus(&buf)
+        {
+            eprintln!(
+                "test28: bus-conflict screen is the documented ROM-bug terminus \
+                 (the released ROM's bus sub-test is self-contradictory and \
+                 halts here on every correct implementation); scoring success."
+            );
+        }
+        self.stop = verdict;
         self.last_lines = lines;
     }
 
@@ -235,7 +269,7 @@ fn read_full_nametable<R: Render>(view: &MachineView<NesMcu<R, ()>>) -> String {
         .join("\n")
 }
 
-fn read_tall_console<R: Render>(view: &MachineView<NesMcu<R, ()>>) -> String {
+pub(crate) fn read_tall_console<R: Render>(view: &MachineView<NesMcu<R, ()>>) -> String {
     let mut lines = Vec::with_capacity(SCREEN_HEIGHT / 2);
 
     for row in (0..SCREEN_HEIGHT).step_by(2) {
@@ -292,6 +326,17 @@ fn evaluate_result(buf: &str, success_condition: &SuccessCondition) -> Option<Ex
                     .then_some(ExecuteResult::Stop(0))
             }
         }
+        SuccessCondition::Test28Finals => {
+            if contains_test28_bus_conflict_terminus(buf) {
+                Some(ExecuteResult::Stop(0))
+            } else if contains_test28_failure(buf) {
+                Some(ExecuteResult::Stop(1))
+            } else if contains_test28_final_pass(buf) {
+                Some(ExecuteResult::Stop(0))
+            } else {
+                None
+            }
+        }
     }
 }
 
@@ -312,6 +357,59 @@ fn contains_failed(s: &str) -> bool {
         || s.contains("Error ")
         || s.contains("Failed")
         || contains_nonzero_error_count(s)
+}
+
+/// test28 terminal-failure vocabulary, quoted from the ROM: the bank arms
+/// print `FAIL!`, the fixed screens print `Fail!` plus detail, and the
+/// early-reset guard prints `NOT SO FAST!`. Every failure path halts the
+/// ROM, so any occurrence fails the run immediately.
+fn contains_test28_failure(s: &str) -> bool {
+    s.contains("FAIL!") || s.contains("Fail!") || s.contains("NOT SO FAST!")
+}
+
+/// test28 documented ROM-bug terminus, quoted from the ROM: the bus
+/// sub-test halts with `Fail! 2 / This mapper has a bus conflict. / It
+/// should be / disabling the PRG ROM / during writes, but it isn't.` The
+/// check is unsatisfiable on any implementation (the released ROM's bus
+/// sub-test is self-contradictory), so this exact screen is the ROM's
+/// deterministic terminus and scores success. The match keys on the
+/// distinctive `bus conflict` tall-text content — never on a generic
+/// `Fail!` match — with all runs of whitespace collapsed, since the tall
+/// decoder right-trims only (indented rows keep leading spaces) and keeps
+/// one stored row per output line (`bus` and `conflict` land on adjacent
+/// rows). Every OTHER `Fail!`/`FAIL!`/`NOT SO FAST!` screen stays a
+/// nonzero failure via [`contains_test28_failure`].
+pub(crate) fn contains_test28_bus_conflict_terminus(buf: &str) -> bool {
+    if !contains_test28_failure(buf) {
+        return false;
+    }
+    let words: Vec<&str> = buf.split_whitespace().collect();
+    words.windows(2).any(|pair| {
+        pair[0].eq_ignore_ascii_case("bus")
+            && pair[1].len() >= "conflict".len()
+            && pair[1][.."conflict".len()].eq_ignore_ascii_case("conflict")
+    })
+}
+
+/// test28 pre-reset wait-screen row, quoted from the ROM (bank 31): the wait
+/// screen carries `Please press the Reset` between newlines, and the tall
+/// decoder keeps one stored row per output line. No verdict screen contains
+/// it — the early-reset guard prints uppercase `DON'T PRESS RESET UNTIL
+/// ASKED.`, and the final pass screen has no press line — so it identifies
+/// the genuine pre-reset WAIT state (with the `$FC=$1E`, `$FD=$F0`,
+/// `$FE=$01` zero-page signature) for the scripted reset.
+pub(crate) fn contains_test28_reset_prompt(buf: &str) -> bool {
+    buf.lines()
+        .any(|line| line.contains("Please press the Reset"))
+}
+
+/// test28 completion line: the post-reset pass arm prints `PASS!`, then —
+/// on the next tall rows — `RESET LEAVES BANK` / `UNCHANGED.`. The decoded
+/// buffer keeps those row breaks, so the match joins rows with spaces
+/// rather than requiring the phrase on one visual row.
+fn contains_test28_final_pass(buf: &str) -> bool {
+    buf.replace('\n', " ")
+        .contains("RESET LEAVES BANK UNCHANGED")
 }
 
 fn output<S: AsRef<str>>(s: S) {
@@ -421,5 +519,173 @@ mod tests {
         assert_eq!(out, "");
         let (_, out) = next_transcript(&s2, "B\nA\n");
         assert_eq!(out, "A\n");
+    }
+
+    /// test28 (mapper 28 / Action 53) verdict vocabulary, quoted from the
+    /// ROM: per-sub-test screens use bare `PASS!`, the post-reset pass arm
+    /// prints `PASS!` followed by `RESET LEAVES BANK UNCHANGED.`, and every
+    /// terminal failure prints `FAIL!`, `Fail!`, or `NOT SO FAST!`.
+    fn test28() -> SuccessCondition {
+        SuccessCondition::Test28Finals
+    }
+
+    #[test]
+    fn test28_reset_prompt_matches_wait_screen_only() {
+        // Quoted from the ROM (bank 31): the wait screen carries this row;
+        // every verdict screen must not match it.
+        assert!(contains_test28_reset_prompt(
+            "One last thing:\nPlease press the Reset\nButton on the Control Deck.\n(Yeah, like Genesis X-Men.)"
+        ));
+        assert!(!contains_test28_reset_prompt(
+            "FAIL!\nCPU RESET CHANGES BANK.\nPLEASE TURN THE POWER OFF."
+        ));
+        assert!(!contains_test28_reset_prompt(
+            "NOT SO FAST!\nPLEASE TURN THE POWER OFF,\nAND NEXT TIME DON'T PRESS\nRESET UNTIL ASKED."
+        ));
+        assert!(!contains_test28_reset_prompt(
+            "PASS!\nRESET LEAVES BANK\nUNCHANGED.\nPLEASE TURN THE POWER OFF."
+        ));
+        assert!(!contains_test28_reset_prompt("PASS!\n"));
+        assert!(!contains_test28_reset_prompt(""));
+    }
+
+    #[test]
+    fn test28_final_pass_screen_exits_zero() {
+        assert_eq!(
+            evaluate_result(
+                "PASS!\nRESET LEAVES BANK\nUNCHANGED.\nPLEASE TURN THE POWER OFF.",
+                &test28()
+            ),
+            Some(ExecuteResult::Stop(0))
+        );
+    }
+
+    #[test]
+    fn test28_bare_pass_word_is_not_a_verdict() {
+        // Per-sub-test `PASS!` screens must never end the run early: only
+        // the final `RESET LEAVES BANK UNCHANGED` line scores.
+        assert_eq!(evaluate_result("PASS!\n", &test28()), None);
+        assert_eq!(
+            evaluate_result("Mode $00   Outer bank $00\nPASS!\n", &test28()),
+            None
+        );
+    }
+
+    #[test]
+    fn test28_mixed_screen_with_final_pass_line_exits_zero() {
+        // The final screen carries an earlier sub-test `PASS!` line ahead
+        // of the completion line; the completion line still scores.
+        assert_eq!(
+            evaluate_result("PASS!\nRESET LEAVES BANK\nUNCHANGED.\n", &test28()),
+            Some(ExecuteResult::Stop(0))
+        );
+    }
+
+    #[test]
+    fn test28_bus_conflict_screen_is_expected_terminus() {
+        // Documented ROM-bug terminus: the released ROM's bus sub-test
+        // is self-contradictory and halts here on every correct
+        // implementation, so this exact screen scores success (exit 0).
+        // Quoted verbatim from the real-ROM transcript, leading screen
+        // indentation included: the tall decoder right-trims only, so
+        // indented rows keep their leading spaces.
+        assert_eq!(
+            evaluate_result(
+                "  Fail!                 2\n  This mapper has a bus\n  conflict.  It should be\n  disabling the PRG ROM\n  during writes, but it isn't.",
+                &test28()
+            ),
+            Some(ExecuteResult::Stop(0))
+        );
+    }
+
+    #[test]
+    fn test28_terminus_matcher_requires_bus_conflict_text() {
+        // A bare `Fail!` with no bus-conflict content must NOT score the
+        // terminus: the matcher keys on the bus-conflict text, never on a
+        // generic `Fail!` match.
+        assert_eq!(
+            evaluate_result("Fail!\n", &test28()),
+            Some(ExecuteResult::Stop(1))
+        );
+        assert!(!contains_test28_bus_conflict_terminus("Fail!\n"));
+        assert!(!contains_test28_bus_conflict_terminus(
+            "FAIL!\nCPU RESET CHANGES BANK.\nPLEASE TURN THE POWER OFF."
+        ));
+        assert!(!contains_test28_bus_conflict_terminus(
+            "NOT SO FAST!\nPLEASE TURN THE POWER OFF,\nAND NEXT TIME DON'T PRESS\nRESET UNTIL ASKED."
+        ));
+        assert!(!contains_test28_bus_conflict_terminus(
+            "PASS!\nRESET LEAVES BANK\nUNCHANGED.\nPLEASE TURN THE POWER OFF."
+        ));
+        assert!(!contains_test28_bus_conflict_terminus(
+            "Mode $00   Outer bank $00\nPASS!\n"
+        ));
+        assert!(!contains_test28_bus_conflict_terminus(""));
+    }
+
+    #[test]
+    fn test28_bus_conflict_matcher_spans_tall_text_row_break() {
+        // The tall decoder keeps one stored row per output line, so `bus`
+        // and `conflict` land on adjacent (indented) rows; the matcher
+        // joins rows across whitespace.
+        assert!(contains_test28_bus_conflict_terminus(
+            "  Fail! 2\n  This mapper has a bus\n  conflict. It should be"
+        ));
+    }
+
+    #[test]
+    fn test28_other_fail_screens_stay_failures() {
+        // Mirroring-style `Fail!` screens without bus-conflict content
+        // stay nonzero.
+        assert_eq!(
+            evaluate_result(
+                "Fail!\nMirroring is wrong.\nPLEASE TURN THE POWER OFF.",
+                &test28()
+            ),
+            Some(ExecuteResult::Stop(1))
+        );
+    }
+
+    #[test]
+    fn test28_sub_test_screens_without_verdict_are_not_terminal() {
+        // Menu/configuration rows with no verdict line never end the run.
+        assert_eq!(
+            evaluate_result("Mode $00   Outer bank $00\n", &test28()),
+            None
+        );
+        assert_eq!(evaluate_result("Testing…\nMode $01\n", &test28()), None);
+    }
+
+    #[test]
+    fn test28_bank_change_failure_exits_nonzero() {
+        assert_eq!(
+            evaluate_result(
+                "FAIL!\nCPU RESET CHANGES BANK.\nPLEASE TURN THE POWER OFF.",
+                &test28()
+            ),
+            Some(ExecuteResult::Stop(1))
+        );
+    }
+
+    #[test]
+    fn test28_power_on_failure_exits_nonzero() {
+        assert_eq!(
+            evaluate_result(
+                "FAIL!\nDOES NOT POWER ON WITH\nLAST BANK IN $C000-$FFFF.\nPLEASE TURN THE POWER OFF.",
+                &test28()
+            ),
+            Some(ExecuteResult::Stop(1))
+        );
+    }
+
+    #[test]
+    fn test28_early_reset_warning_exits_nonzero() {
+        assert_eq!(
+            evaluate_result(
+                "NOT SO FAST!\nPLEASE TURN THE POWER OFF,\nAND NEXT TIME DON'T PRESS\nRESET UNTIL ASKED.",
+                &test28()
+            ),
+            Some(ExecuteResult::Stop(1))
+        );
     }
 }

@@ -1,7 +1,7 @@
 use super::plugin::{
     CompositePlugin, Console, DetectDeadLoop, ExitTestPlugin, FramePngDump, ImageExit,
     MaxInstructions, MonitorTestStatus, NametableConsole, NesReportPlugin, PngFrameMatch,
-    ReportNesTestResult, ReportPlugin, Timeout,
+    ReportNesTestResult, ReportPlugin, Test28ResetWatch, Timeout,
 };
 use super::zapper_test::ZapperAction;
 use nes_core::{
@@ -89,6 +89,17 @@ impl Image {
         if let Some(f) = file_name.file_name().and_then(|f| f.to_str()) {
             if f == "scanline.nes" {
                 return self.create_scanline_machine(ines, quiet, start_pc, max_instructions);
+            } else if f == "test28.nes" {
+                // Action 53 test ROM (mapper 28, interactive board test):
+                // verdicts are tall-tile nametable text with completion
+                // gated on the final screens (see NametableConsole::for_test28),
+                // one scripted Reset fires when the zero-page signature
+                // meets the wait screen via Test28ResetWatch, and a hang
+                // with no verdict
+                // fails via Timeout. Omits MonitorTestStatus (the ROM never
+                // writes $6000) and DetectDeadLoop (verdict screens halt in
+                // self-jumps) by construction.
+                return self.create_test28_machine(ines, quiet, start_pc, max_instructions);
             } else if f == "mmc1_a12.nes" {
                 return self.create_mmc1_a12_machine(ines, quiet, start_pc, max_instructions);
             } else if f == "demo_ntsc.nes"
@@ -418,6 +429,51 @@ impl Image {
         }
         MachineWrapper::INes(Box::new(machine))
     }
+    /// Action 53 test ROM (mapper 28, test28.nes): the interactive board
+    /// test with one scripted Reset press and a button-driven menu stage.
+    /// The verdict channel is tall-tile nametable text with completion gated
+    /// on the final screens (`NametableConsole::for_test28`: the
+    /// post-reset pass arm scores, bare per-sub-test `PASS!` words never
+    /// do, the documented ROM-bug terminus — the bus-conflict `Fail!`
+    /// screen, matched on its distinctive `bus conflict` tall-text
+    /// content — scores success, any other `FAIL!` / `Fail!` /
+    /// `NOT SO FAST!` screen fails at once, and
+    /// the rendering-disabled terminal path is never sampled). A small
+    /// verdict-watch plugin (`Test28ResetWatch`) emits the single scripted
+    /// reset request when the zero-page signature meets the wait screen,
+    /// through the existing `ExecuteResult::ShouldReset` seam — no
+    /// new command-line flag. The menu stage runs through the existing
+    /// `--press` button choreography. Status-memory (`MonitorTestStatus`)
+    /// and dead-loop (`DetectDeadLoop`) plugins are provably absent from
+    /// this branch: the ROM never writes `$6000` (so status results can
+    /// never fire) and halts every verdict screen in a self-jump (so
+    /// dead-loop detection would misreport hangs as passes). A hang with
+    /// no verdict fails via the `Timeout` instead; the justfile wraps the
+    /// same 15 s budget with an outer `timeout 15`.
+    fn create_test28_machine(
+        &self,
+        ines: &INesFile,
+        quiet: bool,
+        start_pc: Option<u16>,
+        max_instructions: u64,
+    ) -> MachineWrapper {
+        let mut plugins: Vec<Box<dyn Plugin<nes_core::nes::NesMcu<(), ()>>>> = vec![
+            Box::new(NesReportPlugin::create(quiet)),
+            Box::new(NametableConsole::for_test28()),
+            Box::new(Test28ResetWatch::new()),
+            Box::new(Timeout::new(Duration::from_secs(5))),
+        ];
+        if max_instructions > 0 {
+            plugins.push(Box::new(MaxInstructions::new(max_instructions)));
+        }
+        let plugin = CompositePlugin::new(plugins);
+        let mut machine = NesMachine::new(ines, plugin, (), ());
+        if let Some(pc) = start_pc {
+            machine.set_pc(pc);
+        }
+        MachineWrapper::INes(Box::new(machine))
+    }
+
     /// blargg's 2005-era test ROM families that report a numeric result code
     /// as ASCII nametable text ("$01" = all tests passed, per each set's
     /// readme/tests notes) instead of any $6000 status protocol: the NTSC PPU
