@@ -10,6 +10,7 @@ mod monitor_test_status;
 mod nametable_console;
 pub(crate) mod png_frame_match;
 mod report;
+mod test28_reset;
 mod timeout;
 
 pub use console::*;
@@ -21,6 +22,7 @@ pub use monitor_test_status::*;
 pub use nametable_console::*;
 pub use png_frame_match::*;
 pub use report::*;
+pub use test28_reset::*;
 pub use timeout::*;
 
 pub struct CompositePlugin<M: Mcu>(Vec<Box<dyn Plugin<M>>>);
