@@ -708,18 +708,20 @@ big_chr_ram: build_nes_cpu_test
 # 36/42 (fill covers the nametable) — so fill is blessed via a second run and
 # `cmp`ed (deterministic dump), not harness-asserted. v1 stability likewise:
 # harness asserts the boot frame, `cmp` asserts frame 100 is identical.
+mmc5-press := "--press a@11 --press b@15 --press start@19 --press select@23"
+
 mmc5-matrix: build_nes_cpu_test
-    timeout 60 {{ nes_cpu_test }} --quiet --press a@11 --press b@15 --press start@19 --press select@23 --press left@33 --press right@37 --press right@39 -f ../nes-test-roms/mmc5test_v2/mmc5test.nes
+    timeout 60 {{ nes_cpu_test }} --quiet {{ mmc5-press }} --press left@33 --press right@37 --press right@39 -f ../nes-test-roms/mmc5test_v2/mmc5test.nes
 
 mmc5-matrix-fill: build_nes_cpu_test
-    timeout 60 {{ nes_cpu_test }} --quiet --press a@11 --press b@15 --press start@19 --press select@23 --press up@27 --press left@33 --press right@37 --press right@39 --dump-frame 30 --dump-out /tmp/mmc5-basics-f30.png -f ../nes-test-roms/mmc5test_v2/mmc5test.nes
+    timeout 60 {{ nes_cpu_test }} --quiet {{ mmc5-press }} --press up@27 --press left@33 --press right@37 --press right@39 --dump-frame 30 --dump-out /tmp/mmc5-basics-f30.png -f ../nes-test-roms/mmc5test_v2/mmc5test.nes
     cmp /tmp/mmc5-basics-f30.png nes_cpu_test/src/png-exps/mmc5-basics-f30.png
 
 # bank_right order (#1) is unreachable with hold semantics (the second Right
 # tap is lost while held), so a right-only run covers it: blessed frame 42
 # shows BankOrderData row 1, asserted by `cmp` like fill.
 mmc5-matrix-right: build_nes_cpu_test
-    timeout 60 {{ nes_cpu_test }} --quiet --press a@11 --press b@15 --press start@19 --press select@23 --press right@37 --dump-frame 42 --dump-out /tmp/mmc5-basics-f42.png -f ../nes-test-roms/mmc5test_v2/mmc5test.nes
+    timeout 60 {{ nes_cpu_test }} --quiet {{ mmc5-press }} --press right@37 --dump-frame 42 --dump-out /tmp/mmc5-basics-f42.png -f ../nes-test-roms/mmc5test_v2/mmc5test.nes
     cmp /tmp/mmc5-basics-f42.png nes_cpu_test/src/png-exps/mmc5-basics-f42.png
 
 mmc5-exram: build_nes_cpu_test

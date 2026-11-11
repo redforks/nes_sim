@@ -133,7 +133,7 @@ pub struct MMC5 {
     prg_bank_count_8k: usize,
     /// Dedicated audio unit fed by `$5000-$5015` writes (ticket #83).
     audio: Mmc5Audio,
-    wram_bank_count_8k: usize,
+    wram_8k_run_count: usize,
     /// Bit `i` set when the `i`-th 8 KB WRAM bank is battery-backed (16 bits
     /// cover the 128K maximum).
     battery_mask: u16,
@@ -235,11 +235,11 @@ pub struct MMC5 {
 impl MMC5 {
     pub fn new(memory: &mut CartridgeMemory, wram_size_bytes: usize, battery_bytes: usize) -> Self {
         memory.add_wram_banks(wram_size_bytes.min(MAX_WRAM_BYTES));
-        let wram_bank_count_8k = memory.wram_bank_count_8k();
-        // Battery covers whole 8 KB banks from bank 0 up; the ETROM
+        let wram_8k_run_count = memory.wram_8k_run_count();
+        // Battery covers whole 8 KB runs from run 0 up; the ETROM
         // first-bank-only rule arrives here as `battery_bytes = 8K` on a
         // 16K board (see `wram_config`).
-        let battery_banks = (battery_bytes / PRG_8K).min(wram_bank_count_8k).min(16);
+        let battery_banks = (battery_bytes / PRG_8K).min(wram_8k_run_count).min(16);
         let battery_mask = if battery_banks >= 16 {
             0xffff
         } else {
@@ -251,7 +251,7 @@ impl MMC5 {
             protect1: 0,
             protect2: 0,
             prg_bank_count_8k: memory.prg_bank_count_8k(),
-            wram_bank_count_8k,
+            wram_8k_run_count,
             battery_mask,
             chr_mode: CHR_MODE_8K,
             chr_spr: [0; 8],
@@ -283,7 +283,7 @@ impl MMC5 {
             split_fetch: Cell::new(0),
             split_active: Cell::new(false),
         };
-        if wram_bank_count_8k == 0 {
+        if wram_8k_run_count == 0 {
             // ELROM (0K): `$6000-$7FFF` reads as open bus through the
             // `NesMcu` disabled-RAM path; RAM-selected `$8000+` windows keep
             // their mapping (see `map_select_8k`).
@@ -348,11 +348,11 @@ impl MMC5 {
     /// WRAM-less board keeps the window's previous mapping.
     fn map_select_8k(&self, memory: &mut CartridgeMemory, slot: u16, value: u8) {
         if value & ROM_SELECT_MASK == 0 {
-            if self.wram_bank_count_8k == 0 {
+            if self.wram_8k_run_count == 0 {
                 return;
             }
-            let bank = (value & BANK_MASK) as usize % self.wram_bank_count_8k;
-            memory.map_prg_wram_8k(slot, bank as u16);
+            let run = (value & BANK_MASK) as usize % self.wram_8k_run_count;
+            memory.map_prg_wram_run(slot, run as u16);
         } else {
             self.map_rom_8k(memory, slot, (value & BANK_MASK) as usize);
         }
@@ -362,14 +362,14 @@ impl MMC5 {
     /// bit 0 is ignored and CPU A13 picks the half (wiki ignore-bits).
     fn map_select_16k(&self, memory: &mut CartridgeMemory, slot: u16, value: u8, rom_only: bool) {
         let ram = !rom_only && value & ROM_SELECT_MASK == 0;
-        if ram && self.wram_bank_count_8k == 0 {
+        if ram && self.wram_8k_run_count == 0 {
             return;
         }
         let base = (value & BANK_MASK & 0x7e) as usize;
         for half in 0..2u16 {
             let bank = base + half as usize;
             if ram {
-                memory.map_prg_wram_8k(slot + half, (bank % self.wram_bank_count_8k) as u16);
+                memory.map_prg_wram_run(slot + half, (bank % self.wram_8k_run_count) as u16);
             } else {
                 self.map_rom_8k(memory, slot + half, bank);
             }
@@ -487,6 +487,12 @@ impl MMC5 {
     /// always follow the sprite set until a sprite write), while render-time
     /// reads go through [`Mapper::ppu_chr_bank`] and see the right set in
     /// both modes.
+    ///
+    /// The windows exist to route CHR-RAM *data writes* (`write_vram`):
+    /// reads never reach them while the `ppu_read` capability is set. The
+    /// two agree except transiently after `$5130` — the hook decodes the
+    /// stored regs (like hardware combinational decode) while the windows
+    /// reprogram on the next CHR write (the write-routing fallback).
     fn sync_chr_windows(&self, memory: &mut CartridgeMemory) {
         for slot in 0..8u16 {
             let bank = match self.last_chr_set {
@@ -500,7 +506,7 @@ impl MMC5 {
     /// Modes (wiki "Banks"): `$5113` always selects RAM at `$6000` (bit 7
     /// ignored); `$5117` always selects ROM (bit 7 ignored).
     fn sync_prg_banks(&mut self, memory: &mut CartridgeMemory) {
-        memory.set_wram_6000_bank((self.prg_banks[0] & BANK_MASK) as u16);
+        memory.set_wram_6000_run((self.prg_banks[0] & BANK_MASK) as u16);
         match self.prg_mode {
             // Mode 0: 32 KB ROM at `$8000-$FFFF` from `$5117`, bits 1-0 ignored.
             0 => {
@@ -603,6 +609,39 @@ impl Mapper for MMC5 {
             return None;
         }
         let off = (addr & 0x03ff) as usize;
+        // Ticket #82 follow-up (review): the CL-mode split nametable.
+        // While the region latch is set, tile/attribute fetches read the
+        // ExRAM nametable at the scrolled row, so `$5201` moves the split
+        // content (the `$5202` pattern redirect in `ppu_chr_bank` was already
+        // live; the scroll register was write-only state until now).
+        // Forced regardless of `$5104`: in split mode the MMC5 substitutes
+        // ExRAM for CIRAM (wiki 3.6). Columns restart at the split
+        // boundary on both sides and wrap at 32 like nametable addressing;
+        // rows 30-31 alias the ExRAM attribute bytes as tiles, exactly as
+        // in extended-attribute mode. The right-side column restart is
+        // modelled per the left-side hardware behavior — no local ROM
+        // exercises it. CPU `$2007` reads never take the redirect: they
+        // carry `Cpu` while the latch only advances on render fetches.
+        if render.rendering_enabled
+            && !matches!(render.fetch, PpuFetchKind::Cpu)
+            && self.split_active.get()
+        {
+            let row = Self::split_tile_row(self.irq_counter.get().into(), self.split_scroll);
+            let n = self.split_fetch.get();
+            let base = if self.split_right_side() {
+                self.split_threshold()
+            } else {
+                0
+            };
+            let col = n.wrapping_sub(1).wrapping_sub(base) & 31;
+            let row = row as usize;
+            let col = col as usize;
+            return Some(if off >= ATTR_BASE {
+                self.exram[ATTR_BASE + (row / 4) * 8 + col / 4]
+            } else {
+                self.exram[row * 32 + col]
+            });
+        }
         if self.exram_mode == EXRAM_MODE_EXT_ATTR {
             if off >= ATTR_BASE {
                 // One palette per tile from the latched fetch, expanded to
@@ -2538,8 +2577,10 @@ mod tests {
     }
 
     // The PPU-read hook counts NT tile fetches while rendering with split
-    // enabled, tracks the region, and always falls through (`None`):
-    // nametable bytes belong to ExRAM (#79).
+    // enabled and tracks the region: in-region tile fetches serve the
+    // split ExRAM nametable (review follow-up: row 0 col 0/1 read back the
+    // zeroed ExRAM), while fetches outside the region fall through (`None`:
+    // nametable bytes belong to ExRAM (#79) only when selected).
     #[test]
     fn ppu_read_counts_nt_fetches_and_tracks_region() {
         let (mut mapper, mut memory) = board_8k(2, [0; 6]);
@@ -2552,8 +2593,8 @@ mod tests {
         assert!(!mapper.split_active.get());
 
         // `$3000-$3EFF` mirrors count the same as `$2000-$2FFF`.
-        assert_eq!(nt_fetch(&mapper, 0x2000), None);
-        assert_eq!(nt_fetch(&mapper, 0x3001), None);
+        assert_eq!(nt_fetch(&mapper, 0x2000), Some(0x00));
+        assert_eq!(nt_fetch(&mapper, 0x3001), Some(0x00));
         assert_eq!(mapper.split_fetch.get(), 2);
         assert!(mapper.split_active.get(), "left T=2: fetch 2 in region");
 
@@ -2668,5 +2709,71 @@ mod tests {
         cart2.read_vram(0x2000, &bg);
         cart2.read_vram(0x2001, &bg);
         assert_eq!(cart2.read_vram(0x0400, &cpu), 0x01);
+    }
+
+    /// Fill all 1 KB of ExRAM with the row number (`i / 32`): tile row r
+    /// reads back `r`, and the attribute area (`0x3C0+`) reads back 30/31
+    /// (the alias rows). Needs general-RAM mode for the CPU writes.
+    fn fill_exram_rows(mapper: &mut MMC5, memory: &mut CartridgeMemory) {
+        write_reg(mapper, memory, 0x5104, 0x02);
+        for i in 0..1024u16 {
+            mapper.cpu_write(0x5c00 + i, (i / 32) as u8, SystemClock::default(), memory);
+        }
+    }
+
+    // Split nametable redirect (review follow-up to #82): while the split
+    // region is active, NT tile/attribute fetches read the ExRAM nametable
+    // at the scrolled row — `$5201` actually moves the split content, and
+    // the fifth fetch of a left-T=4 line falls back to the normal path.
+    #[test]
+    fn split_region_reads_scrolled_exram_row() {
+        let (mut mapper, mut memory) = board_8k(2, [0; 6]);
+        fill_exram_rows(&mut mapper, &mut memory);
+        // Left split, threshold 4, scroll 8: fetches 1-4 are the region.
+        write_split(&mut mapper, &mut memory, 0x80 | 4, 8, 0);
+        // Drive scanlines 0..=16: the internal counter reaches 16, so the
+        // split row is (16 + 8) / 8 = 3.
+        for line in 0..=16 {
+            run_rendered_scanline(&mut mapper, line);
+        }
+        for (i, addr) in (0x2000..0x2004).enumerate() {
+            assert_eq!(nt_fetch(&mapper, addr), Some(3), "region col {i}");
+        }
+        assert_eq!(
+            nt_fetch(&mapper, 0x2004),
+            None,
+            "fetch 5 leaves left-T=4 region"
+        );
+        // The attribute fetch in the region serves the ExRAM attribute
+        // area under the same scrolled row: (3 / 4) * 8 + 3 / 4 = 0, and
+        // the fill wrote `0x3C0 / 32 = 30` there.
+        mapper.reset_split_fetch();
+        for addr in 0x2000..0x2004 {
+            nt_fetch(&mapper, addr);
+        }
+        assert_eq!(nt_fetch(&mapper, 0x23c0), Some(30));
+        // Scroll 16 moves the same scanline to row (16 + 16) / 8 = 4.
+        write_reg(&mut mapper, &mut memory, 0x5201, 16);
+        mapper.reset_split_fetch();
+        assert_eq!(nt_fetch(&mapper, 0x2000), Some(4));
+    }
+
+    // Right-side split columns restart at the threshold: fetches past T
+    // read ExRAM columns 0, 1, ... of the scrolled row, and CPU `$2007`
+    // reads never take the redirect even with the region latch set.
+    #[test]
+    fn split_region_right_side_columns_restart_at_threshold() {
+        let (mut mapper, mut memory) = board_8k(2, [0; 6]);
+        fill_exram_rows(&mut mapper, &mut memory);
+        // Right split, threshold 2, scroll 0: the counter stays 0, so the
+        // split row is 0 and ExRAM row 0 reads back 0.
+        write_split(&mut mapper, &mut memory, 0x80 | 0x40 | 2, 0, 0);
+        assert_eq!(nt_fetch(&mapper, 0x2000), None);
+        assert_eq!(nt_fetch(&mapper, 0x2001), None);
+        assert_eq!(nt_fetch(&mapper, 0x2002), Some(0), "region col 0");
+        assert_eq!(nt_fetch(&mapper, 0x2003), Some(0), "region col 1");
+        // Region latch is set, but the CPU path falls through.
+        let cpu = chr_render(PpuFetchKind::Cpu, false);
+        assert_eq!(mapper.ppu_read(0x2000, &cpu), None);
     }
 }

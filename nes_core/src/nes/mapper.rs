@@ -216,9 +216,12 @@ pub enum PpuFetchKind {
     Background,
     /// Sprite pattern fetch (`SpriteManager::ensure_rows`).
     Sprite,
-    /// CPU `$2007` path (`Ppu::read_vram`), idle state, and tests: carries
-    /// the last-written-set semantics, so `$2007` sees the most recently
-    /// written CHR register range in 8x16 mode.
+    /// CPU `$2007` path (`Ppu::read_vram`), idle state, and tests. One
+    /// variant covers all three deliberately: every non-render fetch
+    /// shares the last-written-set semantics (so `$2007` sees the most
+    /// recently written CHR register range in 8x16 mode), and none of
+    /// them may advance the render-owned stream counters (split fetch,
+    /// IRQ in-frame) that the `Background`/`Sprite` kinds feed.
     #[default]
     Cpu,
 }
