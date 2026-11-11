@@ -29,6 +29,11 @@ bytemuck = { version = "1.25", features = ["derive"] }
 # Parsing and serialization
 winnow = { version = "1", features = ["alloc"] }
 strum_macros = "0.26"
+serde_json = "1"
+zip = "2"
+sha1 = "0.10"
+sha2 = "0.10"
+crc32fast = "1"
 
 # Logging
 env_logger = { version = "0.11" }
