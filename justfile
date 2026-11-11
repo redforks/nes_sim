@@ -700,8 +700,41 @@ passed_input_tests: zapper_flip zapper_light zapper_stream zapper_trigger
 big_chr_ram: build_nes_cpu_test
     timeout 15 {{ nes_cpu_test }} --quiet --press start@11 -f test-roms/mapper/m004_txrom/big_chr_ram.nes
 
+# MMC5 acceptance (spec #74, ticket #84): all three local MMC5 ROMs, blessed
+# native PNGs under nes_cpu_test/src/png-exps/ (PngFrameMatch, any-vblank).
+# Matrix choreography (frames/buttons) is tetanes m005_exrom `basics` tests.json;
+# `--press` holds from that frame (never releases), matching tetanes semantics.
+# The frame-30 fill state needs Up held, which would hide the bank rows at
+# 36/42 (fill covers the nametable) — so fill is blessed via a second run and
+# `cmp`ed (deterministic dump), not harness-asserted. v1 stability likewise:
+# harness asserts the boot frame, `cmp` asserts frame 100 is identical.
+mmc5-matrix: build_nes_cpu_test
+    timeout 60 {{ nes_cpu_test }} --quiet --press a@11 --press b@15 --press start@19 --press select@23 --press left@33 --press right@37 --press right@39 -f ../nes-test-roms/mmc5test_v2/mmc5test.nes
+
+mmc5-matrix-fill: build_nes_cpu_test
+    timeout 60 {{ nes_cpu_test }} --quiet --press a@11 --press b@15 --press start@19 --press select@23 --press up@27 --press left@33 --press right@37 --press right@39 --dump-frame 30 --dump-out /tmp/mmc5-basics-f30.png -f ../nes-test-roms/mmc5test_v2/mmc5test.nes
+    cmp /tmp/mmc5-basics-f30.png nes_cpu_test/src/png-exps/mmc5-basics-f30.png
+
+# bank_right order (#1) is unreachable with hold semantics (the second Right
+# tap is lost while held), so a right-only run covers it: blessed frame 42
+# shows BankOrderData row 1, asserted by `cmp` like fill.
+mmc5-matrix-right: build_nes_cpu_test
+    timeout 60 {{ nes_cpu_test }} --quiet --press a@11 --press b@15 --press start@19 --press select@23 --press right@37 --dump-frame 42 --dump-out /tmp/mmc5-basics-f42.png -f ../nes-test-roms/mmc5test_v2/mmc5test.nes
+    cmp /tmp/mmc5-basics-f42.png nes_cpu_test/src/png-exps/mmc5-basics-f42.png
+
+mmc5-exram: build_nes_cpu_test
+    timeout 60 {{ nes_cpu_test }} --quiet -f ../nes-test-roms/exram/mmc5exram.nes
+
+mmc5-v1: build_nes_cpu_test
+    timeout 60 {{ nes_cpu_test }} --quiet -f ../nes-test-roms/mmc5test/mmc5test.nes
+    timeout 60 {{ nes_cpu_test }} --quiet --dump-frame 100 --dump-out /tmp/mmc5-v1-f100.png -f ../nes-test-roms/mmc5test/mmc5test.nes
+    cmp /tmp/mmc5-v1-f100.png nes_cpu_test/src/png-exps/mmc5-v1-f10.png
+
 [parallel]
-passed_mapper: mmc3 bntest mmc1-a12 vrc2-and-4-roms big_chr_ram
+mmc5: mmc5-matrix mmc5-matrix-fill mmc5-matrix-right mmc5-exram mmc5-v1
+
+[parallel]
+passed_mapper: mmc3 bntest mmc1-a12 vrc2-and-4-roms big_chr_ram mmc5
 
 [parallel]
 passed_cpu_tests: cpu-test instr_misc instr_test-v5 instr_test-v3 instr_timing cpu_dummy_reads cpu_dummy_writes cpu_exec_space cpu_reset nestest branch_timing_tests nes_instr_test cpu_timing_test6 cpu_interrupts_v2 imported_cpu_misc blargg_nes_cpu_test5
