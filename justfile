@@ -700,6 +700,18 @@ passed_input_tests: zapper_flip zapper_light zapper_stream zapper_trigger
 big_chr_ram: build_nes_cpu_test
     timeout 15 {{ nes_cpu_test }} --quiet --press start@11 -f test-roms/mapper/m004_txrom/big_chr_ram.nes
 
+# Action 53 board test (mapper 28, test28.nes, interactive procedure): the
+# harness branch decodes tall-tile nametable-text verdicts gated on the
+# final screens, fires one scripted Reset on the pre-reset zero-page
+# signature (no new flag), and fails hangs via timeout; status-memory and
+# dead-loop plugins are absent from the branch by construction. The menu
+# stage runs through the existing --press choreography (Start steps the
+# outer bank, A steps the mode, walking the configuration matrix; every
+# configuration prints its own verdict and any failure stops the run).
+# Deliberately NOT in passed_mapper yet — gate membership lands in #93.
+test28: build_nes_cpu_test
+    timeout 15 {{ nes_cpu_test }} --quiet --press start@400 --press a@600 -f ../nes-test-roms/other/test28.nes
+
 [parallel]
 passed_mapper: mmc3 bntest mmc1-a12 vrc2-and-4-roms big_chr_ram
 
