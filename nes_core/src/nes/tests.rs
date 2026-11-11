@@ -949,3 +949,38 @@ fn oam_dma_from_zero_and_stack_pages_write_the_same_oam_bytes() {
     assert_eq!(oam_after_dma_from(0x00), plain);
     assert_eq!(oam_after_dma_from(0x01), plain);
 }
+
+/// Expansion-area writes reach the cartridge board: selecting the Action 53
+/// outer register through `$5000` makes the following program-area write
+/// switch the program window, observably through plain CPU reads.
+#[test]
+fn expansion_writes_reach_mapper_register_select() {
+    use crate::ines::INesFile;
+    use crate::nes::mapper::{Mmc3IrqOverride, create_cartridge_with_mmc3_irq_override};
+
+    // Mapper 28, eight 16 KiB PRG banks, CHR RAM; marker per bank start.
+    let mut rom = vec![
+        0x4e, 0x45, 0x53, 0x1a, // NES signature
+        8, 0, // 8 x 16 KiB PRG, no CHR ROM
+        0xc0, 0x10, // mapper 28
+        0, 0, 0, 0, 0, 0, 0, 0, // padding
+    ];
+    rom.extend(std::iter::repeat_n(0, 8 * 0x4000));
+    for (i, marker) in [0x10u8, 0x20, 0x30, 0x40, 0x50, 0x60, 0x70, 0x80]
+        .iter()
+        .enumerate()
+    {
+        rom[16 + i * 0x4000] = *marker;
+    }
+    let file = INesFile::new(rom).unwrap();
+    let cartridge = create_cartridge_with_mmc3_irq_override(&file, Mmc3IrqOverride::Auto);
+
+    let mut mcu = test_mcu();
+    mcu.cartridge = cartridge;
+
+    mcu.write(0x5000, 0x81, SystemClock::default());
+    mcu.write(0x8000, 0x00, SystemClock::default());
+
+    assert_eq!(mcu.read(0x8000), 0x10);
+    assert_eq!(mcu.read(0xc000), 0x20);
+}

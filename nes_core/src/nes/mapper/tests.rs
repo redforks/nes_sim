@@ -485,6 +485,7 @@ const ALL_CAPS: CartridgeCaps = CartridgeCaps {
 #[test_case(3, NO_CAPS ; "CNROM")]
 #[test_case(4, ALL_CAPS ; "MMC3")]
 #[test_case(7, NO_CAPS ; "AxROM")]
+#[test_case(28, NO_CAPS ; "Action53")]
 #[test_case(34, NO_CAPS ; "BNROM, 8 KB CHR")]
 #[test_case(87, NO_CAPS ; "J87")]
 #[test_case(21, SCANLINE_AND_IRQ ; "VRC4a")]

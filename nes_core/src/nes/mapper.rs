@@ -1,6 +1,7 @@
 use crate::SystemClock;
 use crate::ines::INesFile;
 use crate::ines::NametableArrangement;
+use action53::Action53;
 use axrom::AxRom;
 use bxrom::BxRom;
 use cnrom::CnRom;
@@ -20,6 +21,7 @@ pub use vrc24::VrcVariant;
 /// hard-wired mirroring, 3 = MC-ACC, 4 = MMC3A.
 const MMC3A_NES20_SUBMAPPER: u8 = 4;
 const MMC3_ALTERNATE_IRQ_SIGNATURES: [&str; 2] = ["6-MMC3_alt", "6-MMC6"];
+mod action53;
 mod axrom;
 mod bxrom;
 mod cnrom;
@@ -119,6 +121,7 @@ pub fn create_cartridge_with_mmc3_irq_override(
             ))
         }
         7 => Box::new(AxRom::new(&mut memory)),
+        28 => Box::new(Action53::new(&mut memory)),
         34 => {
             // A 16 KB-or-smaller CHR image means the BNROM half of mapper 34.
             if memory.chr_len_bytes() > 0x2000 {
@@ -213,7 +216,8 @@ pub struct CartridgeCaps {
 /// memory and performs no data read: it rewrites bank-window slots, may write
 /// PRG-RAM, and reports IRQ lines. See `docs/adr/0015`.
 pub trait Mapper {
-    /// Called for every CPU write in `$6000-$FFFF`.
+    /// Called for every CPU write in `$5000-$FFFF` (expansion registers,
+    /// PRG-RAM, and program-area register writes).
     fn cpu_write(
         &mut self,
         address: u16,
@@ -311,6 +315,18 @@ impl Cartridge {
         debug_assert!(
             (0x6000..=0x7fff).contains(&address),
             "Cartridge::write_prg_ram address {address:#06x} outside $6000-$7FFF"
+        );
+        let Self { memory, mapper, .. } = self;
+        mapper.cpu_write(address, value, cycle, memory);
+    }
+
+    /// Expansion-area write for `$5000-$5FFF` via the mapper's CPU-write
+    /// path, so boards with expansion registers (Action 53 register select)
+    /// observe them exactly like program-area writes.
+    pub fn write_expansion(&mut self, address: u16, value: u8, cycle: SystemClock) {
+        debug_assert!(
+            (0x5000..=0x5fff).contains(&address),
+            "Cartridge::write_expansion address {address:#06x} outside $5000-$5FFF"
         );
         let Self { memory, mapper, .. } = self;
         mapper.cpu_write(address, value, cycle, memory);
