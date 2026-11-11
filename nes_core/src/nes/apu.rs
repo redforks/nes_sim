@@ -263,7 +263,6 @@ impl<D: AudioDriver> Apu<D> {
     }
 
     fn emit_samples(&mut self) {
-        let expansion = self.expansion;
         self.mixer.emit_samples(
             || {
                 (
@@ -274,7 +273,7 @@ impl<D: AudioDriver> Apu<D> {
                     self.dmc.output(),
                 )
             },
-            (expansion.pulse1, expansion.pulse2, expansion.pcm),
+            self.expansion,
             |sample| self.driver.push_sample(sample),
         );
     }

@@ -219,25 +219,26 @@ impl CartridgeMemory {
         self.pool = pool.into_boxed_slice();
     }
 
-    /// Points the `$6000-$7FFF` window at an 8 KB WRAM bank (MMC5 `$5113`).
-    /// Bit 7 of the register is the caller's to mask: `$5113` always selects
-    /// RAM. No-op without WRAM (ELROM): `$6000` stays disabled via
+    /// Points the `$6000-$7FFF` window at an 8 KB WRAM run — a run of 8
+    /// consecutive 1 KB banks (GLOSSARY Bank; MMC5 `$5113`). Bit 7 of the
+    /// register is the caller's to mask: `$5113` always selects RAM.
+    /// No-op without WRAM (ELROM): `$6000` stays disabled via
     /// [`Self::set_prg_ram_enabled`].
-    pub fn set_wram_6000_bank(&mut self, bank_8k: u16) {
+    pub fn set_wram_6000_run(&mut self, run_8k: u16) {
         if self.wram_bank_count == 0 {
             return;
         }
-        self.wram_6000_base = (bank_8k as usize * 8) % self.wram_bank_count;
+        self.wram_6000_base = (run_8k as usize * 8) % self.wram_bank_count;
     }
 
     /// Points an 8 KB `$8000`-window slot (0 at `$8000` .. 3 at `$E000`) at an
-    /// 8 KB WRAM bank: the MMC5 ROM/RAM-select bit cleared on `$5114-$5116`.
+    /// 8 KB WRAM run: the MMC5 ROM/RAM-select bit cleared on `$5114-$5116`.
     /// No-op without WRAM: the window keeps its previous mapping.
-    pub fn map_prg_wram_8k(&mut self, slot: u16, bank_8k: u16) {
+    pub fn map_prg_wram_run(&mut self, slot: u16, run_8k: u16) {
         if self.wram_bank_count == 0 {
             return;
         }
-        self.map_wram_run(slot as usize * 8, bank_8k as usize * 8, 8);
+        self.map_wram_run(slot as usize * 8, run_8k as usize * 8, 8);
     }
 
     /// Data write through the `$8000-$FFFF` bank window: only affects windows
@@ -408,8 +409,9 @@ impl CartridgeMemory {
         (self.prg_len_bytes / 0x8000).max(1)
     }
 
-    /// MMC5 WRAM size in 8 KB banks (zero for every board without MMC5 WRAM).
-    pub fn wram_bank_count_8k(&self) -> usize {
+    /// MMC5 WRAM size in 8 KB runs (a run is 8 consecutive 1 KB banks;
+    /// zero for every board without MMC5 WRAM).
+    pub fn wram_8k_run_count(&self) -> usize {
         self.wram_bank_count / 8
     }
 }

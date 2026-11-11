@@ -290,14 +290,12 @@ impl<R: Render, D: AudioDriver> Mcu for NesMcu<R, D> {
             0x4015 => self.apu.read(address),
             // Cartridge expansion area (MMC5 `$5010`/`$5015` audio and
             // `$5204` status): the chip answers handled registers itself;
-            // everything else is open bus. `$5204` carries status in bits
-            // 7-6 only, so its low bits read the bus latch (same convention
-            // as the `$2002` low-bits combine); full-byte registers (audio
+            // everything else is open bus. Full-byte registers (audio
             // status, ExRAM, multiplier) latch the chip's byte directly.
             0x5000..=0x5fff => match self.cartridge.read_expansion(address) {
                 Some(value) => {
                     let value = if address == 0x5204 {
-                        (value & 0xC0) | (self.open_bus & 0x3F)
+                        expansion_status_5204(value, self.open_bus)
                     } else {
                         value
                     };
@@ -327,12 +325,11 @@ impl<R: Render, D: AudioDriver> Mcu for NesMcu<R, D> {
             }
             0x8000..=0xffff => self.cartridge.read(address),
             // Expansion-area peek: never acknowledges, so inspecting `$5204`
-            // or `$5010` cannot clear a pending IRQ. Same bit-7-6-only convention as
-            // the read path above.
+            // or `$5010` cannot clear a pending IRQ.
             0x5000..=0x5fff => match self.cartridge.peek_expansion(address) {
                 Some(value) => {
                     if address == 0x5204 {
-                        (value & 0xC0) | (self.open_bus & 0x3F)
+                        expansion_status_5204(value, self.open_bus)
                     } else {
                         value
                     }
@@ -395,6 +392,13 @@ impl<R: Render, D: AudioDriver> Mcu for NesMcu<R, D> {
         self.latch_write(value);
         self.lower_ram.write_stack_page(address, value, clock);
     }
+}
+
+/// `$5204` carries status in bits 7-6 only; its low bits read the bus latch
+/// (same convention as the `$2002` low-bits combine). Shared by the `Mcu`
+/// read and peek paths above: peeking never acknowledges.
+fn expansion_status_5204(value: u8, open_bus: u8) -> u8 {
+    (value & 0xC0) | (open_bus & 0x3F)
 }
 
 #[cfg(test)]
