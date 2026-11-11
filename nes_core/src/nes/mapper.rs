@@ -1,12 +1,14 @@
 use crate::SystemClock;
 use crate::ines::INesFile;
 use crate::ines::NametableArrangement;
+use crate::nes::apu::ExpansionMix;
 use axrom::AxRom;
 use bxrom::BxRom;
 use cnrom::CnRom;
 use memory::CartridgeMemory;
 use mmc1::MMC1;
 use mmc3::MMC3;
+use mmc5::{MMC5, wram_config};
 use nina001::Nina001;
 use nrom::NRom;
 use uxrom::UxRom;
@@ -27,6 +29,8 @@ mod j87;
 mod memory;
 mod mmc1;
 mod mmc3;
+mod mmc5;
+mod mmc5_audio;
 mod nina001;
 mod nrom;
 mod uxrom;
@@ -118,6 +122,10 @@ pub fn create_cartridge_with_mmc3_irq_override(
                 alternate_irq_revision,
             ))
         }
+        5 => {
+            let (wram_size, battery_bytes) = wram_config(f.header(), f.file_version());
+            Box::new(MMC5::new(&mut memory, wram_size, battery_bytes))
+        }
         7 => Box::new(AxRom::new(&mut memory)),
         34 => {
             // A 16 KB-or-smaller CHR image means the BNROM half of mapper 34.
@@ -198,22 +206,86 @@ fn rom_contains_signature_bytes(rom: &[u8], signature: &str) -> bool {
         .any(|window| window == signature.as_bytes())
 }
 
+/// Which kind of PPU access a cartridge VRAM read serves (ticket #78).
+/// The PPU renders per-pixel, so the MMC5 hardware fetch-counting does not
+/// map: the PPU tags each read at the call site instead. MMC5 uses this to
+/// pick the sprite vs background CHR bank set in 8x16 mode (wiki §3.5).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum PpuFetchKind {
+    /// Background pattern fetch (`fetch_tile_data`).
+    Background,
+    /// Sprite pattern fetch (`SpriteManager::ensure_rows`).
+    Sprite,
+    /// CPU `$2007` path (`Ppu::read_vram`), idle state, and tests. One
+    /// variant covers all three deliberately: every non-render fetch
+    /// shares the last-written-set semantics (so `$2007` sees the most
+    /// recently written CHR register range in 8x16 mode), and none of
+    /// them may advance the render-owned stream counters (split fetch,
+    /// IRQ in-frame) that the `Background`/`Sprite` kinds feed.
+    #[default]
+    Cpu,
+}
+
+/// Render state snapshot the PPU hands to [`Mapper::ppu_read`] on every
+/// cartridge VRAM fetch (ticket #75 seam). The mapper must not read PPU
+/// registers itself: the PPU owns the render gate and passes down exactly
+/// what the hook may depend on.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct PpuRenderState {
+    /// True when background or sprites are enabled (PPUMASK `$2001`).
+    pub rendering_enabled: bool,
+    /// True when PPUCTRL `$2000` selects 8x16 sprites.
+    pub sprite_8x16: bool,
+    /// Fetch phase within the 8-dot tile (`ppu dot % 8`). Informational:
+    /// this PPU renders per-pixel, not per-dot shifter, so the phase only
+    /// documents *when* in the tile fetch the read happens.
+    pub fetch_phase: u8,
+    /// What kind of access this read serves (background/sprite pattern
+    /// fetch vs CPU `$2007`). See [`PpuFetchKind`].
+    pub fetch: PpuFetchKind,
+}
+
+impl PpuRenderState {
+    /// Render state for non-render reads (CPU `$2007` path, tests):
+    /// rendering off, 8x8 sprites, phase 0.
+    pub fn disabled() -> Self {
+        Self::default()
+    }
+}
+
 /// Which PPU-side hooks a mapper chip implements, snapshotted by [`Cartridge`]
 /// once at construction. Each flag mirrors one [`Mapper`] method: overriding
-/// `on_ppu_tick`/`notify_vram_address`/`irq_pending` without setting the
-/// matching flag here means the override is never called.
+/// `on_ppu_tick`/`notify_vram_address`/`irq_pending`/`ppu_read` without
+/// setting the matching flag here means the override is never called.
 #[derive(Debug, Eq, PartialEq, Clone, Copy, Default)]
 pub struct CartridgeCaps {
     pub on_ppu_tick: bool,
     pub notify_vram_address: bool,
     pub irq_pending: bool,
+    /// The chip advances expansion audio (MMC5 `$5000-$5015`) once per CPU
+    /// cycle; gates [`Mapper::tick_audio`].
+    pub tick_audio: bool,
+    /// Every `$8000-$FFFF` read is reported to the chip (MMC5 PCM stream
+    /// read mode); gates [`Mapper::notify_prg_read`].
+    pub notify_prg_read: bool,
+    /// When set, [`Cartridge::read_vram`] consults [`Mapper::ppu_chr_bank`]
+    /// (CHR bank redirect, ticket #78) and then [`Mapper::ppu_read`] before
+    /// the bank-window lookup. MMC5 sets this; nothing else does yet, so
+    /// other boards behave exactly as before.
+    pub ppu_read: bool,
+    /// When set, CPU reads from `$5000-$5FFF` consult
+    /// [`Mapper::read_expansion`] (and debugger peeks consult
+    /// [`Mapper::peek_expansion`]). Only the MMC5 sets this, so every other
+    /// board keeps the pre-seam open-bus answer at zero per-read cost
+    /// beyond one bool check (ticket #81: `$5204` status reads).
+    pub read_expansion: bool,
 }
 
 /// The bank-switching chip on a cartridge board. A mapper owns no cartridge
 /// memory and performs no data read: it rewrites bank-window slots, may write
 /// PRG-RAM, and reports IRQ lines. See `docs/adr/0015`.
 pub trait Mapper {
-    /// Called for every CPU write in `$6000-$FFFF`.
+    /// Called for every CPU write in `$5000-$FFFF`.
     fn cpu_write(
         &mut self,
         address: u16,
@@ -227,10 +299,62 @@ pub trait Mapper {
     fn read_prg(&self, _address: u16) -> Option<u8> {
         None
     }
+    /// Optional per-fetch PPU-read override, consulted by
+    /// [`Cartridge::read_vram`] before the bank-window lookup and only when
+    /// the chip declares [`CartridgeCaps::ppu_read`]. Returning `None` falls
+    /// through to the 1 KB window. The default is `None`, so boards without
+    /// the flag pay one bool check and behave exactly as before.
+    ///
+    /// Takes `&self`: board state the hook needs (e.g. the MMC5 ExAttr
+    /// latch) lives behind interior mutability in the chip impl.
+    fn ppu_read(&self, _addr: u16, _render: &PpuRenderState) -> Option<u8> {
+        None
+    }
+    /// Optional CHR bank-redirect channel (ticket #78): consulted by
+    /// [`Cartridge::read_vram`] for `$0000-$1FFF` before [`Mapper::ppu_read`]
+    /// and only when the chip declares [`CartridgeCaps::ppu_read`] (the same
+    /// flag gates both hooks, so no caps churn).
+    ///
+    /// Returns the 1K CHR bank number the address reads from; the cartridge
+    /// applies its pool modulo and serves the byte itself. Returning `None`
+    /// falls through to `ppu_read`/the bank window. Addresses at/above
+    /// `$2000` must return `None`: the nametable plane belongs to the ExRAM
+    /// tickets (#79/#82).
+    ///
+    /// This exists because `ppu_read` cannot serve CHR data: the mapper owns
+    /// no memory (ADR-0015) and `&self` cannot reach the pool, so CHR banking
+    /// redirects the bank while `ppu_read` stays the hook for mapper-owned
+    /// bytes (ExRAM/fill).
+    fn ppu_chr_bank(&self, _addr: u16, _render: &PpuRenderState) -> Option<u16> {
+        None
+    }
     fn on_ppu_tick(&mut self, _scanline: u16) {}
     fn notify_vram_address(&mut self, _addr: u16) {}
     fn irq_pending(&self) -> bool {
         false
+    }
+    /// Advance expansion audio one CPU cycle and report current channel
+    /// levels for the APU mixer. Silence (zeros) by default: boards without
+    /// expansion audio.
+    fn tick_audio(&mut self) -> ExpansionMix {
+        ExpansionMix::default()
+    }
+    /// Observe a `$8000-$FFFF` byte `value` read at `address`. Only the
+    /// stream-read PCM board (MMC5 read mode) acts on it; ignored by
+    /// default.
+    fn notify_prg_read(&mut self, _address: u16, _value: u8) {}
+    /// Expansion-area (`$5000-$5FFF`) read. `None` reads as open bus.
+    /// May have side effects (MMC5 `$5010` acknowledges the PCM IRQ,
+    /// `$5204` acknowledges the scanline IRQ). Only consulted when the
+    /// chip declares [`CartridgeCaps::read_expansion`].
+    fn read_expansion(&mut self, _address: u16) -> Option<u8> {
+        None
+    }
+    /// Side-effect-free expansion-area read (debugger peek): never
+    /// acknowledges IRQs (neither the `$5010` PCM trip nor a `$5204`
+    /// pending scanline IRQ).
+    fn peek_expansion(&self, _address: u16) -> Option<u8> {
+        None
     }
     /// Which of the three hooks above this chip implements. [`Cartridge`]
     /// snapshots this once, so an override that is not declared here is dead
@@ -316,6 +440,18 @@ impl Cartridge {
         mapper.cpu_write(address, value, cycle, memory);
     }
 
+    /// CPU writes to `$5000-$5FFF`: the cartridge expansion area (MMC5
+    /// registers live here). Forwards to the mapper chip like the other
+    /// write windows; chips without expansion registers ignore it.
+    pub fn write_expansion(&mut self, address: u16, value: u8, cycle: SystemClock) {
+        debug_assert!(
+            (0x5000..=0x5fff).contains(&address),
+            "Cartridge::write_expansion address {address:#06x} outside $5000-$5FFF"
+        );
+        let Self { memory, mapper, .. } = self;
+        mapper.cpu_write(address, value, cycle, memory);
+    }
+
     /// Forwarded only when the mapper declares [`CartridgeCaps::on_ppu_tick`].
     #[inline]
     pub fn on_ppu_tick(&mut self, scanline: u16) {
@@ -341,6 +477,58 @@ impl Cartridge {
         self.caps.notify_vram_address
     }
 
+    /// Advance expansion audio one CPU cycle, returning current channel
+    /// levels for the APU mixer (silence when the chip declares no audio,
+    /// so boards without expansion audio pay one branch and nothing more).
+    #[inline]
+    pub fn tick_audio(&mut self) -> ExpansionMix {
+        if self.caps.tick_audio {
+            self.mapper.tick_audio()
+        } else {
+            ExpansionMix::default()
+        }
+    }
+
+    /// Report a `$8000-$FFFF` read to the mapper chip (MMC5 PCM stream read
+    /// mode). Gated by capability, so instruction fetches on other boards
+    /// pay one branch and nothing more.
+    #[inline]
+    pub fn notify_prg_read(&mut self, address: u16, value: u8) {
+        if self.caps.notify_prg_read {
+            self.mapper.notify_prg_read(address, value);
+        }
+    }
+
+    /// Expansion-area (`$5000-$5FFF`) read for the MCU: `None` means the
+    /// caller substitutes open bus. Gated by [`CartridgeCaps::read_expansion`]
+    /// so non-MMC5 boards pay one branch and never enter the vtable.
+    pub fn read_expansion(&mut self, address: u16) -> Option<u8> {
+        debug_assert!(
+            (0x5000..=0x5fff).contains(&address),
+            "Cartridge::read_expansion address {address:#06x} outside $5000-$5FFF"
+        );
+        if self.caps.read_expansion {
+            self.mapper.read_expansion(address)
+        } else {
+            None
+        }
+    }
+
+    /// Side-effect-free expansion-area read (debugger peek): never
+    /// acknowledges, so the debugger can inspect `$5204`/`$5010` without
+    /// clearing a pending IRQ.
+    pub fn peek_expansion(&self, address: u16) -> Option<u8> {
+        debug_assert!(
+            (0x5000..=0x5fff).contains(&address),
+            "Cartridge::peek_expansion address {address:#06x} outside $5000-$5FFF"
+        );
+        if self.caps.read_expansion {
+            self.mapper.peek_expansion(address)
+        } else {
+            None
+        }
+    }
+
     /// The mapper's IRQ line, held low for a board that declares no IRQ
     /// hardware, so the per-CPU-cycle poll never enters the vtable.
     #[inline]
@@ -348,12 +536,36 @@ impl Cartridge {
         self.caps.irq_pending && self.mapper.irq_pending()
     }
 
+    /// True when the mapper chip implements `ppu_read` (MMC5 per-fetch
+    /// overrides). Only render-path callers pay the vtable cost, and only
+    /// when this is set — mirroring [`Self::wants_vram_notify`].
+    pub fn wants_ppu_read(&self) -> bool {
+        self.caps.ppu_read
+    }
+
     /// Cartridge PPU space: pattern tables in `$0000-$1FFF` (CHR ROM or CHR
     /// RAM), nametables in `$2000-$2EFF`.
-    pub fn read_vram(&self, address: u16) -> u8 {
+    ///
+    /// The mapper-side PPU-read seam (tickets #75/#78): when the chip declares
+    /// [`CartridgeCaps::ppu_read`], [`Mapper::ppu_chr_bank`] gets first refusal
+    /// for `$0000-$1FFF` (bank redirect into the CHR pool), then
+    /// [`Mapper::ppu_read`] gets first refusal with the PPU-built
+    /// [`PpuRenderState`]; `None` at each step falls through to the 1 KB
+    /// bank-window lookup below. `$2000+` consults `ppu_read` only.
+    pub fn read_vram(&self, address: u16, render: &PpuRenderState) -> u8 {
         #[cfg(test)]
         if let Some(log) = &self.vram_read_log {
             log.record(address);
+        }
+        if self.caps.ppu_read {
+            if address < 0x2000
+                && let Some(bank) = self.mapper.ppu_chr_bank(address, render)
+            {
+                return self.memory.read_chr_bank(bank, address);
+            }
+            if let Some(byte) = self.mapper.ppu_read(address, render) {
+                return byte;
+            }
         }
         self.memory.read_vram(address)
     }

@@ -2,14 +2,19 @@ use super::*;
 use crate::SystemClock;
 use crate::bus::Bus;
 use crate::dma_bus::{DmaBus, OamDmaMcu};
+use crate::ines::INesFile;
 use crate::nes::apu::Apu;
 use crate::nes::controller::Button;
 use crate::nes::mapper::Cartridge;
+use crate::nes::mapper::{Mmc3IrqOverride, create_cartridge_with_mmc3_irq_override};
 use crate::render::ImageRender;
 use crate::test_utils::{McuCall, RecordingMcu};
 
 fn test_mcu() -> NesMcu<ImageRender<1>, ()> {
-    let cartridge = Cartridge::test();
+    test_mcu_with(Cartridge::test())
+}
+
+fn test_mcu_with(cartridge: Cartridge) -> NesMcu<ImageRender<1>, ()> {
     NesMcu {
         lower_ram: LowerRam::new(),
         ppu: Ppu::new(ImageRender::<1>::default_dimension()),
@@ -948,4 +953,131 @@ fn oam_dma_from_zero_and_stack_pages_write_the_same_oam_bytes() {
     assert_eq!(plain.len(), 256);
     assert_eq!(oam_after_dma_from(0x00), plain);
     assert_eq!(oam_after_dma_from(0x01), plain);
+}
+
+// Ticket #83 end to end: `$5000-$5015` writes drive the MMC5 audio unit
+// through the real MCU path, `$5010`/`$5015` read back through it, and a
+// `$8000-$BFFF` read in stream mode feeds the PCM DAC and raises the
+// cartridge IRQ line.
+#[test]
+fn mmc5_audio_registers_and_stream_round_trip_through_mcu() {
+    // Mapper-5 ROM, 32 KB PRG with the bank index as the first byte of each
+    // 8 KB bank: bank 0 starts with `$00`, so reading `$8000` in stream
+    // mode feeds a `$00` byte (DAC unchanged, IRQ tripped).
+    let mut rom = vec![
+        0x4e, 0x45, 0x53, 0x1a, 2, 1, 0x50, 0x00, 0, 0, 0, 0, 0, 0, 0, 0,
+    ];
+    let mut prg = vec![0u8; 32 * 1024];
+    for (i, chunk) in prg.chunks_mut(8 * 1024).enumerate() {
+        chunk[0] = i as u8;
+    }
+    rom.extend_from_slice(&prg);
+    rom.extend_from_slice(&[0; 8 * 1024]);
+    let file = INesFile::new(rom).unwrap();
+    let cartridge = create_cartridge_with_mmc3_irq_override(&file, Mmc3IrqOverride::Auto);
+    let mut mcu = test_mcu_with(cartridge);
+
+    // Power-on audio state through the MCU: read mode, pulses silent.
+    assert_eq!(mcu.read(0x5010), 0x01);
+    assert_eq!(mcu.read(0x5015), 0x00);
+    assert!(!mcu.cartridge_irq_pending());
+
+    // Pulse 1: constant volume 15 on the 50 % duty, shortest timer.
+    mcu.write(0x5015, 0x01, SystemClock::default());
+    mcu.write(0x5000, 0xbf, SystemClock::default());
+    mcu.write(0x5002, 0x00, SystemClock::default());
+    mcu.write(0x5003, 0x08, SystemClock::default());
+    assert_eq!(mcu.read(0x5015), 0x01);
+
+    // PCM write mode + IRQ enable: `$00` DAC write trips the IRQ line.
+    mcu.write(0x5010, 0x80, SystemClock::default());
+    mcu.write(0x5011, 0x00, SystemClock::default());
+    assert!(mcu.cartridge_irq_pending());
+    // `$5010` read reports the trip and acknowledges it.
+    assert_eq!(mcu.read(0x5010), 0x80);
+    assert!(!mcu.cartridge_irq_pending());
+    // Peek never acknowledges.
+    mcu.write(0x5011, 0x00, SystemClock::default());
+    assert_eq!(mcu.peek(0x5010), 0x80);
+    assert!(mcu.cartridge_irq_pending());
+    assert_eq!(mcu.read(0x5010), 0x80);
+
+    // PCM stream mode: `$8000` (bank 0, first byte `$00`) feeding it
+    // trips the IRQ.
+    mcu.write(0x5010, 0x81, SystemClock::default());
+    assert_eq!(mcu.read(0x8000), 0x00);
+    assert!(mcu.cartridge_irq_pending());
+    // Reads outside `$8000-$BFFF` never feed the DAC: `$E000` (last bank,
+    // first byte `$03`, nonzero) would clear a fed trip — the pending trip
+    // surviving proves no feed happened.
+    assert_eq!(mcu.read(0xe000), 0x03);
+    assert!(mcu.cartridge_irq_pending());
+    assert_eq!(mcu.read(0x5010), 0x81);
+    assert!(!mcu.cartridge_irq_pending());
+
+    // Unclaimed expansion addresses still read as open bus.
+    assert_eq!(mcu.read(0x5001), mcu.peek(0x5001));
+}
+
+#[test]
+fn expansion_writes_reach_the_mapper_chip() {
+    // Mapper-5 ROM, 32 KB PRG with the bank index as the first byte of each
+    // 8 KB bank: `$5115` must repoint the `$A000` window through `NesMcu`,
+    // proving the `$5000-$5FFF` cartridge-expansion path forwards to the chip.
+    let mut rom = vec![
+        0x4e, 0x45, 0x53, 0x1a, 2, 1, 0x50, 0x00, 0, 0, 0, 0, 0, 0, 0, 0,
+    ];
+    let mut prg = vec![0u8; 32 * 1024];
+    for (i, chunk) in prg.chunks_mut(8 * 1024).enumerate() {
+        chunk[0] = i as u8;
+    }
+    rom.extend_from_slice(&prg);
+    rom.extend_from_slice(&[0; 8 * 1024]);
+    let file = INesFile::new(rom).unwrap();
+    let cartridge = create_cartridge_with_mmc3_irq_override(&file, Mmc3IrqOverride::Auto);
+    let mut mcu = test_mcu_with(cartridge);
+
+    assert_eq!(mcu.read(0xa000), 0);
+    // Ticket #77: PRG bank registers take effect only after the exact
+    // `$5102=$02,$5103=$01` unlock sequence.
+    mcu.write(0x5102, 0x02, SystemClock::default());
+    mcu.write(0x5103, 0x01, SystemClock::default());
+    mcu.write(0x5115, 0x80 | 2, SystemClock::default());
+    assert_eq!(mcu.read(0xa000), 2);
+}
+
+#[test]
+fn expansion_reads_return_the_mmc5_multiplier_product() {
+    // Same mapper-5 board shape as `expansion_writes_reach_the_mapper_chip`:
+    // `$5205`/`$5206` writes multiply instantly, CPU reads get the low/high
+    // product bytes through the `$5000-$5FFF` expansion path (ticket #82).
+    let mut rom = vec![
+        0x4e, 0x45, 0x53, 0x1a, 2, 1, 0x50, 0x00, 0, 0, 0, 0, 0, 0, 0, 0,
+    ];
+    let mut prg = vec![0u8; 32 * 1024];
+    for (i, chunk) in prg.chunks_mut(8 * 1024).enumerate() {
+        chunk[0] = i as u8;
+    }
+    rom.extend_from_slice(&prg);
+    rom.extend_from_slice(&[0; 8 * 1024]);
+    let file = INesFile::new(rom).unwrap();
+    let cartridge = create_cartridge_with_mmc3_irq_override(&file, Mmc3IrqOverride::Auto);
+    let mut mcu = test_mcu_with(cartridge);
+
+    // Power-on product: `$FF * $FF = $FE01`.
+    assert_eq!(mcu.read(0x5205), 0x01);
+    assert_eq!(mcu.read(0x5206), 0xfe);
+
+    mcu.write(0x5205, 0x12, SystemClock::default());
+    mcu.write(0x5206, 0x34, SystemClock::default());
+    assert_eq!(mcu.read(0x5205), 0xa8);
+    assert_eq!(mcu.read(0x5206), 0x03);
+    assert_eq!(mcu.peek(0x5205), 0xa8);
+    assert_eq!(mcu.peek(0x5206), 0x03);
+
+    // Split registers read back last-written through the same path; peeks
+    // never acknowledge (`$5204` status/ack semantics belong to #81).
+    mcu.write(0x5200, 0xc5, SystemClock::default());
+    assert_eq!(mcu.read(0x5200), 0xc5);
+    assert_eq!(mcu.peek(0x5200), 0xc5);
 }
