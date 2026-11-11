@@ -148,7 +148,16 @@ impl Timing {
         self.scanline == 241 && self.dot == 1
     }
 
-    /// Return true if just leave vblank timing, scanline 261, dot 1, should clear vblank flag
+    /// Return true if just leave vblank timing, scanline 261, dot 1, should
+    /// clear the vblank flag.
+    ///
+    /// An edge written during the tick that processes dot `d` is observable
+    /// to `$2002` reads whose timing already shows `d + 1`, so this keeps the
+    /// flag readable through the read at dot 1 and clears it for the read at
+    /// dot 2. Blargg's vbl_nmi_timing 4.vbl_clear_timing pins that boundary:
+    /// clearing on the dot-0 tick is a "Cleared 1 PPU clock too early"
+    /// failure. The sprite status bits drop one dot earlier; see the dot-0
+    /// block in [`Ppu::tick`].
     fn leave_vblank(&self) -> bool {
         self.scanline == 261 && self.dot == 1
     }
@@ -470,6 +479,15 @@ impl<R: Render> Ppu<R> {
         self.rendering_enabled() && self.timing.in_ppu_active_line()
     }
 
+    /// Clear the sprite status bits for a new frame: the pre-render line's
+    /// dot-0 tick drops sprite-0 hit and sprite overflow. Called from
+    /// [`Ppu::tick`]; vblank follows one dot later on `Timing::leave_vblank`.
+    fn clear_sprite_status(&mut self) {
+        self.registers.status.set_sprite_zero_hit(false);
+        self.registers.status.set_sprite_overflow(false);
+        self.sprite.clear_pending();
+    }
+
     #[hotpath::measure(impl_type = "Ppu")]
     pub fn tick(&mut self, cartridge: &mut Cartridge) {
         crate::hotpath_cpu::hotpath_cpu_alias!(
@@ -504,6 +522,16 @@ impl<R: Render> Ppu<R> {
             // visible scanlines 0-239, so scanline 0's swap brings in the
             // empty buffer: no freshly evaluated sprites on line 0.
             self.sprite.swap_secondary_oam();
+            // The sprite status bits are cleared one PPU dot before the
+            // rest of PPUSTATUS (vblank and the `$2006` toggle, cleared at
+            // dot 1 by `leave_vblank`). Blargg's ppu_sprite_hit 09-timing
+            // pins the sprite-0 hit clear boundary to the read at 6819
+            // clocks into the frame with sub-test 9 leaving 6818 still set,
+            // which is this dot-0 tick under the read-a-dot-late numbering
+            // described on `leave_vblank`.
+            if scanline == 261 {
+                self.clear_sprite_status();
+            }
             if self.timing.in_visible_scanline() {
                 // compute background anchor at start of visible scanline
                 self.background_anchor = Some(BackgroundActivation::snapshot(self, 0));
@@ -1168,6 +1196,12 @@ impl<R: Render> Ppu<R> {
         // All pure reads, so the cheapest discriminators go first: a
         // transparent background pixel or the rightmost column can never
         // set the hit, and the row-cache lookup is skipped for them.
+        //
+        // The flag is written on the dot that outputs the hit pixel, not
+        // queued: a $2002 read on the following dot must already observe it
+        // (blargg's ppu_sprite_hit 09-timing pins the boundary to one PPU
+        // clock). Queuing it for the next dot's latch made the hit one dot
+        // late, which is exactly what sub-test 4 caught.
         if bg_color_idx != 0
             && x != 255
             && self.registers.mask.background_enabled()
@@ -1178,7 +1212,7 @@ impl<R: Render> Ppu<R> {
             && !self.registers.status.sprite_zero_hit()
             && self.sprite.sprite_zero_pixel_opaque(x, screen_y)
         {
-            self.sprite.set_zero_hit_pending();
+            self.registers.status.set_sprite_zero_hit(true);
         }
 
         match sprite_pixel {

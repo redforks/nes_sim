@@ -614,8 +614,30 @@ spr_hit_extra_7: build_nes_cpu_test
 spr_hit_extra_8: build_nes_cpu_test
     {{ nes_cpu_test }} --quiet -f test-roms/ppu/spr_hit_screen_bottom.nes
 
+# blargg's newer ppu_sprite_hit revision (slack.net/~ant/nes-tests/ppu_sprite_hit.zip,
+# recovered via web.archive.org). Eight of its rom_singles are already hosted
+# byte-identically under spr_hit_extra_1..8 (tetanes import), so only tests 09
+# and 10 are added here; both write the usual blargg status word, so the
+# generic Console + MonitorTestStatus path scores them.
+#
+# 09-timing: pins the sprite-0 hit to a single PPU dot, so it fixes the hit
+# flag on the dot that outputs the hit pixel instead of one dot later
+# (sub-tests 3/4) and clears it one dot before VBL (sub-tests 9/10).
+# SHA-1 6414d819976ca7c4b31717f09dde71c7dce0e258
+spr_hit_extra_9: build_nes_cpu_test
+    {{ nes_cpu_test }} --quiet -f test-roms/ppu/ppu_sprite_hit/09-timing.nes
+
+# Hit order: hit time follows screen position, never which sprite pixel is hit
+# (upper/lower left/right corners, plus pixels under left clip / at X=255 / off
+# the right edge). Green.
+# SHA-1 08a7c910cacc233282b2ace395416623b5ff51aa
+spr_hit_extra_10: build_nes_cpu_test
+    {{ nes_cpu_test }} --quiet -f test-roms/ppu/ppu_sprite_hit/10-timing_order.nes
+
+# Sprite 0 hit singles: tetanes-imported 1..8 plus the newer revision's
+# 09-timing and 10-timing_order. All green.
 [parallel]
-spr_hit_extra: spr_hit_extra_1 spr_hit_extra_2 spr_hit_extra_3 spr_hit_extra_4 spr_hit_extra_5 spr_hit_extra_6 spr_hit_extra_7 spr_hit_extra_8
+spr_hit_extra: spr_hit_extra_1 spr_hit_extra_2 spr_hit_extra_3 spr_hit_extra_4 spr_hit_extra_5 spr_hit_extra_6 spr_hit_extra_7 spr_hit_extra_8 spr_hit_extra_9 spr_hit_extra_10
 
 ppu_240pee: build_nes_cpu_test
     {{ nes_cpu_test }} --quiet -f test-roms/ppu/_240pee.nes
