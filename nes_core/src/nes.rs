@@ -322,6 +322,7 @@ impl<R: Render, D: AudioDriver> Mcu for NesMcu<R, D> {
                 }
                 _ => self.apu.write(address, value, clock),
             },
+            0x5000..=0x5fff => self.cartridge.write_expansion(address, value, clock),
             0x6000..=0x7fff => {
                 if self.cartridge.prg_ram_enabled() {
                     self.cartridge.write_prg_ram(address, value, clock);
