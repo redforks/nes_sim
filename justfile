@@ -708,7 +708,9 @@ big_chr_ram: build_nes_cpu_test
 # stage runs through the existing --press choreography (Start steps the
 # outer bank, A steps the mode, walking the configuration matrix; every
 # configuration prints its own verdict and any failure stops the run).
-# Deliberately NOT in passed_mapper yet — gate membership lands in #93.
+# Deliberately NOT in passed_mapper (ticket #93): known-failing recipe — the
+# released ROM's bus sub-test halts with Fail before reset/menu on any correct
+# implementation, so it must not join the gate group.
 test28: build_nes_cpu_test
     timeout 15 {{ nes_cpu_test }} --quiet --press start@400 --press a@600 -f ../nes-test-roms/other/test28.nes
 
