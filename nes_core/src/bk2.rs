@@ -84,6 +84,9 @@ impl Bk2Header {
 pub enum AnchoredKind {
     CoreState,
     SaveRam,
+    /// The file claims a savestate start but carries no anchor lump; frame 1
+    /// still is not power-on, so it refuses the same way.
+    ClaimedFlag,
 }
 
 impl AnchoredKind {
@@ -91,6 +94,7 @@ impl AnchoredKind {
         match self {
             AnchoredKind::CoreState => "CoreState",
             AnchoredKind::SaveRam => "SaveRAM",
+            AnchoredKind::ClaimedFlag => "claimed savestate",
         }
     }
 }
@@ -107,9 +111,9 @@ pub enum Bk2Refusal {
     )]
     Controls { detail: String },
     #[error(
-        "BK2 movie is savestate-anchored ({kind} lump present): frame 1 is not power-on; refusing (retry with --play-from-power-on to play from power-on anyway)"
+        "BK2 movie is savestate-anchored ({kind} lump present): frame 1 is not power-on; refusing (retry with --play-from-power-on to play from power-on anyway)", kind = .kind.lump_hint()
     )]
-    Anchored { kind: &'static str },
+    Anchored { kind: AnchoredKind },
 }
 
 /// Ways [`parse`] can fail. Anchor / platform / region problems are NOT parse
@@ -373,6 +377,15 @@ fn cell_on(cell: u8) -> bool {
     cell != b'.' && cell != b' '
 }
 
+/// Read one boolean cell from a group segment, advancing the cursor.
+fn take_cell(segment: &[u8], pos: &mut usize, what: &str) -> Result<u8, String> {
+    let cell = *segment
+        .get(*pos)
+        .ok_or_else(|| format!("segment too short for {what}"))?;
+    *pos += 1;
+    Ok(cell)
+}
+
 fn parse_frame_line(line: &str, groups: &[Vec<LogColumn>]) -> Result<InputLog, String> {
     let bytes = line.as_bytes();
     // Segments between `|`s; segment 0 is before the first pipe.
@@ -396,31 +409,19 @@ fn parse_frame_line(line: &str, groups: &[Vec<LogColumn>]) -> Result<InputLog, S
         for column in columns {
             match column.kind {
                 ColumnKind::Power => {
-                    let cell = *segment
-                        .get(pos)
-                        .ok_or_else(|| "console segment too short for Power column".to_owned())?;
-                    if cell_on(cell) {
+                    if cell_on(take_cell(segment, &mut pos, "Power column")?) {
                         command = command.with_hard_reset(true);
                     }
-                    pos += 1;
                 }
                 ColumnKind::Reset => {
-                    let cell = *segment
-                        .get(pos)
-                        .ok_or_else(|| "console segment too short for Reset column".to_owned())?;
-                    if cell_on(cell) {
+                    if cell_on(take_cell(segment, &mut pos, "Reset column")?) {
                         command = command.with_soft_reset(true);
                     }
-                    pos += 1;
                 }
                 ColumnKind::PadButton { pad, button } => {
-                    let cell = *segment
-                        .get(pos)
-                        .ok_or_else(|| "pad segment too short for button column".to_owned())?;
-                    if cell_on(cell) {
+                    if cell_on(take_cell(segment, &mut pos, "button column")?) {
                         pads[pad] = set_button(pads[pad], button, true);
                     }
-                    pos += 1;
                 }
                 ColumnKind::Axis => {
                     if segment.len() < pos + 6 {
@@ -524,9 +525,7 @@ pub fn check_movie(
                 kind.lump_hint()
             ));
         } else {
-            return Err(Bk2Refusal::Anchored {
-                kind: kind.lump_hint(),
-            });
+            return Err(Bk2Refusal::Anchored { kind });
         }
     } else if starts_from_savestate_flag(movie) {
         // The file claims a savestate start but carries no anchor lump: frame
@@ -538,14 +537,17 @@ pub fn check_movie(
             );
         } else {
             return Err(Bk2Refusal::Anchored {
-                kind: "claimed savestate",
+                kind: AnchoredKind::ClaimedFlag,
             });
         }
     }
 
-    // Warn-level checks: digest, board, core, unhonoured sync settings.
-    warnings.extend(check_digest(movie, rom));
-    warnings.extend(check_board_and_core(movie));
+    // Warn-level checks: digest, board, core, unhonoured sync settings. A
+    // matching digest implies the board via the same detection path, so
+    // BoardName only warns when the digest cannot confirm it.
+    let (digest_warnings, digest_matched) = check_digest(movie, rom);
+    warnings.extend(digest_warnings);
+    warnings.extend(check_board_and_core(movie, digest_matched));
     warnings.extend(check_sync_settings(movie));
 
     Ok(warnings)
@@ -683,10 +685,10 @@ fn hex_bytes(text: &str) -> Option<Vec<u8>> {
     }
 }
 
-fn check_digest(movie: &Bk2Movie, rom: &INesFile) -> Vec<String> {
+fn check_digest(movie: &Bk2Movie, rom: &INesFile) -> (Vec<String>, bool) {
     let candidates = movie.header.digest_candidates();
     if candidates.is_empty() {
-        return Vec::new();
+        return (Vec::new(), false);
     }
     let (crc, md5, sha1, sha256) = rom_hashes(rom);
     for candidate in &candidates {
@@ -701,18 +703,22 @@ fn check_digest(movie: &Bk2Movie, rom: &INesFile) -> Vec<String> {
             _ => false,
         };
         if matched {
-            return Vec::new();
+            return (Vec::new(), true);
         }
     }
-    vec![format!(
-        "Warning: BK2 ROM digest does not match the loaded ROM ({}); playing anyway",
-        candidates.join(", ")
-    )]
+    (
+        vec![format!(
+            "Warning: BK2 ROM digest does not match the loaded ROM ({}); playing anyway",
+            candidates.join(", ")
+        )],
+        false,
+    )
 }
 
-fn check_board_and_core(movie: &Bk2Movie) -> Vec<String> {
+fn check_board_and_core(movie: &Bk2Movie, digest_matched: bool) -> Vec<String> {
     let mut warnings = Vec::new();
-    if let Some(board) = movie.header.board_name()
+    if !digest_matched
+        && let Some(board) = movie.header.board_name()
         && !board.trim().is_empty()
     {
         warnings.push(format!(

@@ -29,6 +29,15 @@ fn test_rom() -> INesFile {
 
 /// Build a minimal in-memory BK2: Header.txt + Input Log.txt plus extra lumps.
 fn build_bk2(header: &[&str], frames: &[&str], extra: &[(&str, &str)]) -> Vec<u8> {
+    build_bk2_with_log_key(header, LOG_KEY, frames, extra)
+}
+
+fn build_bk2_with_log_key(
+    header: &[&str],
+    log_key: &str,
+    frames: &[&str],
+    extra: &[(&str, &str)],
+) -> Vec<u8> {
     let mut out = Cursor::new(Vec::new());
     let mut zip = zip::ZipWriter::new(&mut out);
     let options = zip::write::SimpleFileOptions::default();
@@ -38,7 +47,7 @@ fn build_bk2(header: &[&str], frames: &[&str], extra: &[(&str, &str)]) -> Vec<u8
     }
     zip.start_file("Input Log.txt", options).unwrap();
     writeln!(zip, "[Input]").unwrap();
-    writeln!(zip, "{LOG_KEY}").unwrap();
+    writeln!(zip, "{log_key}").unwrap();
     for frame in frames {
         writeln!(zip, "{frame}").unwrap();
     }
@@ -138,20 +147,8 @@ fn non_mnemonic_on_chars_count_as_pressed_and_unknown_columns_skip() {
     // `X`/`Y` are not BizHawk mnemonics but must count as pressed; `P1 Turbo`
     // is unknown and skipped; group 3 (`P3`) is ignored wholesale.
     let log_key = "LogKey:#Power|Reset|#P1 Up|P1 Turbo|P1 A|#P2 B|#P3 A|";
-    let mut out = Cursor::new(Vec::new());
-    let mut zip = zip::ZipWriter::new(&mut out);
-    let options = zip::write::SimpleFileOptions::default();
-    zip.start_file("Header.txt", options).unwrap();
-    for line in base_header() {
-        writeln!(zip, "{line}").unwrap();
-    }
-    zip.start_file("Input Log.txt", options).unwrap();
-    writeln!(zip, "[Input]").unwrap();
-    writeln!(zip, "{log_key}").unwrap();
-    writeln!(zip, "|X.|Y.Y|X|Y|").unwrap();
-    writeln!(zip, "[/Input]").unwrap();
-    zip.finish().unwrap();
-    let movie = parse(&out.into_inner()).expect("custom log must parse");
+    let bytes = build_bk2_with_log_key(&base_header(), log_key, &["|X.|Y.Y|X|Y|"], &[]);
+    let movie = parse(&bytes).expect("custom log must parse");
     assert_eq!(movie.input_logs.len(), 1);
     let log = &movie.input_logs[0];
     assert!(log.command.hard_reset());
@@ -166,20 +163,8 @@ fn axis_columns_consume_six_chars_without_misaligning_buttons() {
     // A console `Reset Cycle` axis slot (5 digits + comma) must not shift the
     // Reset column that follows it.
     let log_key = "LogKey:#Power|Reset Cycle|Reset|#P1 A|";
-    let mut out = Cursor::new(Vec::new());
-    let mut zip = zip::ZipWriter::new(&mut out);
-    let options = zip::write::SimpleFileOptions::default();
-    zip.start_file("Header.txt", options).unwrap();
-    for line in base_header() {
-        writeln!(zip, "{line}").unwrap();
-    }
-    zip.start_file("Input Log.txt", options).unwrap();
-    writeln!(zip, "[Input]").unwrap();
-    writeln!(zip, "{log_key}").unwrap();
-    writeln!(zip, "|.    0,r|Y|").unwrap();
-    writeln!(zip, "[/Input]").unwrap();
-    zip.finish().unwrap();
-    let movie = parse(&out.into_inner()).expect("axis log must parse");
+    let bytes = build_bk2_with_log_key(&base_header(), log_key, &["|.    0,r|Y|"], &[]);
+    let movie = parse(&bytes).expect("axis log must parse");
     assert_eq!(movie.input_logs.len(), 1);
     assert!(movie.input_logs[0].command.soft_reset());
     assert!(movie.input_logs[0].port0.a());
@@ -193,9 +178,14 @@ fn blank_movie_is_trusted_silently() {
 }
 
 #[test]
-fn inputs_fixture_warns_digest_and_board_but_plays() {
-    let movie = parse(INPUTS_BK2).unwrap();
-    let warnings = check_movie(&movie, &test_rom(), false).expect("inputs must play");
+fn digest_mismatch_and_board_drift_warn_but_play() {
+    // Warn paths are pinned with synthetic headers, never with the fixtures'
+    // illustrative ROM identity fields.
+    let mut header = base_header();
+    header.push("SHA1 DEADBEEF");
+    header.push("BoardName NROM");
+    let movie = parse(&build_bk2(&header, &blank_frames3(), &[])).unwrap();
+    let warnings = check_movie(&movie, &test_rom(), false).expect("drift must play");
     assert!(
         warnings.iter().any(|w| w.contains("digest")),
         "expected a digest warning, got {warnings:?}"
@@ -203,6 +193,39 @@ fn inputs_fixture_warns_digest_and_board_but_plays() {
     assert!(
         warnings.iter().any(|w| w.contains("BoardName")),
         "expected a BoardName warning, got {warnings:?}"
+    );
+}
+
+#[test]
+fn matching_digest_suppresses_the_board_warning() {
+    // A matching digest implies the board via the same detection path, so
+    // BoardName stays silent; Core still warns on drift.
+    use sha1::Digest as _;
+    let mut image = Vec::new();
+    image.extend_from_slice(b"NES\x1a");
+    image.push(1);
+    image.push(1);
+    image.extend_from_slice(&[0u8; 10]);
+    image.extend_from_slice(&[0u8; 16 * 1024]);
+    image.extend_from_slice(&[0u8; 8 * 1024]);
+    let rom = INesFile::new(image).unwrap();
+    let mut hasher = sha1::Sha1::new();
+    hasher.update(rom.read_prg_rom());
+    hasher.update(rom.read_chr_rom());
+    let digest = format!("{:x}", hasher.finalize());
+    let mut header = base_header();
+    let header_line = format!("SHA1 {digest}");
+    // `header` holds `&str`s; leak the owned line for the test's lifetime.
+    let header_line: &'static str = Box::leak(header_line.into_boxed_str());
+    header.push(header_line);
+    header.push("BoardName NROM");
+    let movie = parse(&build_bk2(&header, &blank_frames3(), &[])).unwrap();
+    let warnings = check_movie(&movie, &rom, false).expect("exact ROM must play");
+    assert!(
+        warnings
+            .iter()
+            .all(|w| !w.contains("digest") && !w.contains("BoardName")),
+        "unexpected warnings: {warnings:?}"
     );
 }
 
@@ -296,7 +319,9 @@ fn anchored_synthetic_hits_the_named_refusal() {
     assert_eq!(movie.anchored, Some(AnchoredKind::CoreState));
     assert_eq!(
         check_movie(&movie, &test_rom(), false),
-        Err(Bk2Refusal::Anchored { kind: "CoreState" })
+        Err(Bk2Refusal::Anchored {
+            kind: AnchoredKind::CoreState
+        })
     );
 }
 

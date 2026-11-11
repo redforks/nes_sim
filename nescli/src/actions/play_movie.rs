@@ -927,19 +927,6 @@ mod tests {
     use nes_sdl::presentation::{OverlayIcon, OverlayPlacement, plan};
     use std::rc::Rc;
 
-    /// Minimal valid NROM ROM (1x16K PRG + 8K CHR, all zero) for BK2 policy
-    /// tests. Its hashes never match fixture digests — the warn path.
-    fn test_rom() -> nes_core::ines::INesFile {
-        let mut image = Vec::new();
-        image.extend_from_slice(b"NES\x1a");
-        image.push(1);
-        image.push(1);
-        image.extend_from_slice(&[0u8; 10]);
-        image.extend_from_slice(&[0u8; 16 * 1024]);
-        image.extend_from_slice(&[0u8; 8 * 1024]);
-        nes_core::ines::INesFile::new(image).expect("synthetic test ROM must parse")
-    }
-
     #[test]
     fn bk2_extension_selects_the_bk2_parser() {
         use super::movie_file_is_bk2;
@@ -948,16 +935,6 @@ mod tests {
         assert!(movie_file_is_bk2(Path::new("movie.BK2")));
         assert!(!movie_file_is_bk2(Path::new("movie.fm2")));
         assert!(!movie_file_is_bk2(Path::new("movie")));
-    }
-
-    #[test]
-    fn bk2_blank_fixture_plays_trusted_silently() {
-        let data = include_bytes!("../../../testdata/bk2/bk2-blank-3f.bk2");
-        let movie = nes_core::bk2::parse(data).expect("blank BK2 must parse");
-        assert_eq!(movie.input_logs.len(), 3);
-        let warnings =
-            nes_core::bk2::check_movie(&movie, &test_rom(), false).expect("blank must play");
-        assert!(warnings.is_empty(), "unexpected warnings: {warnings:?}");
     }
 
     #[test]
@@ -990,18 +967,31 @@ mod tests {
     }
 
     #[test]
-    fn bk2_anchored_refusal_names_the_cause() {
-        let data = include_bytes!("../../../testdata/bk2/bk2-blank-3f.bk2");
-        let movie = nes_core::bk2::parse(data).unwrap();
-        // Blank has no anchor; force the anchored path through the override
-        // wording by checking a savestate-claimed header instead.
-        let err = format!(
-            "{}",
-            nes_core::bk2::Bk2Refusal::Anchored { kind: "CoreState" }
+    fn bk2_inputs_drive_the_shared_overlay_seam() {
+        // Overlay parity (#103): BK2-parsed inputs project player-1 icons
+        // left and player-2 icons right through the unchanged overlay path.
+        // Frame 2 of the inputs fixture is P1 Up+A with P2 Left+Start.
+        let data = include_bytes!("../../../testdata/bk2/bk2-inputs-5f.bk2");
+        let movie = nes_core::bk2::parse(data).expect("inputs BK2 must parse");
+        let mut p1 = GamepadOverlay::new();
+        let mut p2 = GamepadOverlay::new();
+        p1.set_input(&movie.input_logs[2].port0);
+        p2.set_input(&movie.input_logs[2].port1);
+        let icons = project_overlay_icons(&mut p1, &mut p2, true);
+        // P1 Up projects direction icon 5 on the left; P1 A projects icon 0
+        // beside it; P2 Left projects direction icon 3 on the right.
+        assert!(
+            icons.iter().any(|p| p.icon == 5 && p.dst.0 == 2),
+            "{icons:?}"
         );
-        assert!(err.contains("savestate-anchored"), "{err}");
-        assert!(err.contains("--play-from-power-on"), "{err}");
-        let _ = movie;
+        assert!(
+            icons.iter().any(|p| p.icon == 0 && p.dst.0 == 38),
+            "{icons:?}"
+        );
+        assert!(
+            icons.iter().any(|p| p.icon == 3 && p.dst.0 == 205),
+            "{icons:?}"
+        );
     }
 
     use super::{
