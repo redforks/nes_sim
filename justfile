@@ -708,14 +708,18 @@ big_chr_ram: build_nes_cpu_test
 # stage runs through the existing --press choreography (Start steps the
 # outer bank, A steps the mode, walking the configuration matrix; every
 # configuration prints its own verdict and any failure stops the run).
-# Deliberately NOT in passed_mapper (ticket #93): known-failing recipe — the
-# released ROM's bus sub-test halts with Fail before reset/menu on any correct
-# implementation, so it must not join the gate group.
+# Pinned expected terminus: the released ROM's bus sub-test is
+# self-contradictory (it demands PRG-ROM disablement during writes that no
+# correct implementation performs), so the run deterministically halts at the
+# bus-conflict `Fail!` screen before reset/menu. The harness scores exactly
+# that screen — matched on its distinctive `bus conflict` tall-text content,
+# never on a generic `Fail!` — as success (exit 0); any other failure screen
+# stays nonzero. Gate member (spec story 27).
 test28: build_nes_cpu_test
     timeout 15 {{ nes_cpu_test }} --quiet --press start@400 --press a@600 -f ../nes-test-roms/other/test28.nes
 
 [parallel]
-passed_mapper: mmc3 bntest mmc1-a12 vrc2-and-4-roms big_chr_ram
+passed_mapper: mmc3 bntest mmc1-a12 vrc2-and-4-roms big_chr_ram test28
 
 [parallel]
 passed_cpu_tests: cpu-test instr_misc instr_test-v5 instr_test-v3 instr_timing cpu_dummy_reads cpu_dummy_writes cpu_exec_space cpu_reset nestest branch_timing_tests nes_instr_test cpu_timing_test6 cpu_interrupts_v2 imported_cpu_misc blargg_nes_cpu_test5

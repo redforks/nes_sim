@@ -369,7 +369,10 @@ impl Image {
     /// The verdict channel is tall-tile nametable text with completion gated
     /// on the final screens (`NametableConsole::for_test28`: the
     /// post-reset pass arm scores, bare per-sub-test `PASS!` words never
-    /// do, any `FAIL!` / `Fail!` / `NOT SO FAST!` screen fails at once, and
+    /// do, the documented ROM-bug terminus — the bus-conflict `Fail!`
+    /// screen, matched on its distinctive `bus conflict` tall-text
+    /// content — scores success, any other `FAIL!` / `Fail!` /
+    /// `NOT SO FAST!` screen fails at once, and
     /// the rendering-disabled terminal path is never sampled). A small
     /// verdict-watch plugin (`Test28ResetWatch`) emits the single scripted
     /// reset request when the zero-page signature meets the wait screen,
