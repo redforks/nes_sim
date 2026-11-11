@@ -93,8 +93,9 @@ impl Image {
                 // Action 53 test ROM (mapper 28, interactive board test):
                 // verdicts are tall-tile nametable text with completion
                 // gated on the final screens (see NametableConsole::for_test28),
-                // one scripted Reset fires on the pre-reset zero-page
-                // signature via Test28ResetWatch, and a hang with no verdict
+                // one scripted Reset fires when the zero-page signature
+                // meets the wait screen via Test28ResetWatch, and a hang
+                // with no verdict
                 // fails via Timeout. Omits MonitorTestStatus (the ROM never
                 // writes $6000) and DetectDeadLoop (verdict screens halt in
                 // self-jumps) by construction.
@@ -371,8 +372,8 @@ impl Image {
     /// do, any `FAIL!` / `Fail!` / `NOT SO FAST!` screen fails at once, and
     /// the rendering-disabled terminal path is never sampled). A small
     /// verdict-watch plugin (`Test28ResetWatch`) emits the single scripted
-    /// reset request when the pre-reset zero-page signature state is
-    /// observed, through the existing `ExecuteResult::ShouldReset` seam — no
+    /// reset request when the zero-page signature meets the wait screen,
+    /// through the existing `ExecuteResult::ShouldReset` seam — no
     /// new command-line flag. The menu stage runs through the existing
     /// `--press` button choreography. Status-memory (`MonitorTestStatus`)
     /// and dead-loop (`DetectDeadLoop`) plugins are provably absent from

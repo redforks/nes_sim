@@ -254,7 +254,7 @@ fn read_full_nametable<R: Render>(view: &MachineView<NesMcu<R, ()>>) -> String {
         .join("\n")
 }
 
-fn read_tall_console<R: Render>(view: &MachineView<NesMcu<R, ()>>) -> String {
+pub(crate) fn read_tall_console<R: Render>(view: &MachineView<NesMcu<R, ()>>) -> String {
     let mut lines = Vec::with_capacity(SCREEN_HEIGHT / 2);
 
     for row in (0..SCREEN_HEIGHT).step_by(2) {
@@ -348,6 +348,18 @@ fn contains_failed(s: &str) -> bool {
 /// ROM, so any occurrence fails the run immediately.
 fn contains_test28_failure(s: &str) -> bool {
     s.contains("FAIL!") || s.contains("Fail!") || s.contains("NOT SO FAST!")
+}
+
+/// test28 pre-reset wait-screen row, quoted from the ROM (bank 31): the wait
+/// screen carries `Please press the Reset` between newlines, and the tall
+/// decoder keeps one stored row per output line. No verdict screen contains
+/// it — the early-reset guard prints uppercase `DON'T PRESS RESET UNTIL
+/// ASKED.`, and the final pass screen has no press line — so it identifies
+/// the genuine pre-reset WAIT state (with the `$FC=$1E`, `$FD=$F0`,
+/// `$FE=$01` zero-page signature) for the scripted reset.
+pub(crate) fn contains_test28_reset_prompt(buf: &str) -> bool {
+    buf.lines()
+        .any(|line| line.contains("Please press the Reset"))
 }
 
 /// test28 completion line: the post-reset pass arm prints `PASS!`, then —
@@ -474,6 +486,26 @@ mod tests {
     /// terminal failure prints `FAIL!`, `Fail!`, or `NOT SO FAST!`.
     fn test28() -> SuccessCondition {
         SuccessCondition::Test28Finals
+    }
+
+    #[test]
+    fn test28_reset_prompt_matches_wait_screen_only() {
+        // Quoted from the ROM (bank 31): the wait screen carries this row;
+        // every verdict screen must not match it.
+        assert!(contains_test28_reset_prompt(
+            "One last thing:\nPlease press the Reset\nButton on the Control Deck.\n(Yeah, like Genesis X-Men.)"
+        ));
+        assert!(!contains_test28_reset_prompt(
+            "FAIL!\nCPU RESET CHANGES BANK.\nPLEASE TURN THE POWER OFF."
+        ));
+        assert!(!contains_test28_reset_prompt(
+            "NOT SO FAST!\nPLEASE TURN THE POWER OFF,\nAND NEXT TIME DON'T PRESS\nRESET UNTIL ASKED."
+        ));
+        assert!(!contains_test28_reset_prompt(
+            "PASS!\nRESET LEAVES BANK\nUNCHANGED.\nPLEASE TURN THE POWER OFF."
+        ));
+        assert!(!contains_test28_reset_prompt("PASS!\n"));
+        assert!(!contains_test28_reset_prompt(""));
     }
 
     #[test]

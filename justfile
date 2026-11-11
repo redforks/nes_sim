@@ -702,8 +702,8 @@ big_chr_ram: build_nes_cpu_test
 
 # Action 53 board test (mapper 28, test28.nes, interactive procedure): the
 # harness branch decodes tall-tile nametable-text verdicts gated on the
-# final screens, fires one scripted Reset on the pre-reset zero-page
-# signature (no new flag), and fails hangs via timeout; status-memory and
+# final screens, fires one scripted Reset when the zero-page signature meets
+# the wait screen (no new flag), and fails hangs via timeout; status-memory and
 # dead-loop plugins are absent from the branch by construction. The menu
 # stage runs through the existing --press choreography (Start steps the
 # outer bank, A steps the mode, walking the configuration matrix; every
