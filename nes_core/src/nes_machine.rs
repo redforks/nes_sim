@@ -1,5 +1,5 @@
 use crate::{
-    Cpu, EmptyPlugin, ExecuteResult, Plugin,
+    Cpu, EmptyPlugin, ExecuteResult, Plugin, SystemClock,
     bus::Bus,
     dma_bus::{BusOwner, DmaBus},
     ines::INesFile,
@@ -14,6 +14,12 @@ pub struct NesMachine<P, R: Render, D: crate::nes::apu::AudioDriver> {
     bus: Bus<NesMcu<R, D>>,
     /// DMA arbitration on the bus — renamed from the former `Bus` (ADR-0009).
     dma_bus: DmaBus,
+    /// The loaded ROM, kept so [`Self::hard_reset`] can rebuild the
+    /// cartridge (mapper state never survives a power cycle on hardware)
+    /// without the caller re-supplying it.
+    file: INesFile,
+    /// MMC3 IRQ-revision override from construction, re-applied on hard reset.
+    irq_override: Mmc3IrqOverride,
 }
 
 impl<P, R, D> NesMachine<P, R, D>
@@ -44,6 +50,8 @@ where
             p: plugin,
             bus: Bus::new(mcu),
             dma_bus: DmaBus::new(),
+            file: file.clone(),
+            irq_override,
         }
     }
 
@@ -148,7 +156,9 @@ where
     /// requests, so anything beyond this bound means a stuck bus.
     const RESET_DRAIN_LIMIT_DOTS: u32 = 4000;
 
-    /// Reset the machine to its power-up contract.
+    /// Soft reset (front-panel RESET button): execution restarts at the
+    /// reset vector while state persists — RAM, the cartridge, controllers,
+    /// PPU timing, and the bus clock all survive.
     ///
     /// Drain first: any DMA work already accepted by the bus completes
     /// while PPU/APU keep interleaving, before the device resets apply.
@@ -158,7 +168,7 @@ where
     /// check precedes each `tick` so the CPU cannot re-arm DMA once the
     /// bus is quiet. Fresh DMC fetch requests are suppressed during the
     /// drain so a playing sample channel cannot extend it indefinitely.
-    pub fn reset(&mut self) {
+    pub fn soft_reset(&mut self) {
         let mut drained = 0_u32;
         while self.dma_bus.is_busy(self.bus.mcu()) && drained < Self::RESET_DRAIN_LIMIT_DOTS {
             // Kill freshly generated DMC fetch requests before each step so
@@ -175,6 +185,21 @@ where
         self.bus.mcu_mut().reset();
         self.dma_bus.reset();
         self.cpu.reset();
+    }
+
+    /// Hard reset (power cycle): the full power-up contract — RAM cleared,
+    /// cartridge rebuilt from the loaded ROM, CPU/PPU/APU back to power-up
+    /// state, and the bus clock and frame count restarted at zero.
+    ///
+    /// Unlike [`Self::soft_reset`] this aborts DMA instead of draining it:
+    /// power loss does not wait for in-flight transfers. Held controller
+    /// buttons stay held — they are physical, not machine state.
+    pub fn hard_reset(&mut self) {
+        self.dma_bus.reset();
+        self.bus.set_clock(SystemClock::default());
+        let (file, irq_override) = (self.file.clone(), self.irq_override);
+        self.bus.mcu_mut().reset_hard(&file, irq_override);
+        self.cpu.reset_hard();
     }
 
     fn flush_audio(&mut self) {
@@ -339,6 +364,170 @@ mod tests {
     }
 
     #[test]
+    fn soft_reset_preserves_ram_hard_reset_clears_it() {
+        use crate::mcu::Mcu;
+
+        let file = test_nes_file();
+        let mut machine = NesMachine::new(&file, EmptyPlugin::new(), (), ());
+        machine
+            .mcu_mut()
+            .write(0x0042, 0xAB, SystemClock::default());
+
+        machine.soft_reset();
+        assert_eq!(
+            machine.mcu().peek(0x0042),
+            0xAB,
+            "soft reset (RESET button) must preserve RAM"
+        );
+
+        machine.hard_reset();
+        assert_eq!(
+            machine.mcu().peek(0x0042),
+            0x00,
+            "hard reset (power cycle) must clear RAM"
+        );
+    }
+
+    /// UxROM with distinct 16 KB banks: bank 0 filled `0x11`, bank 1 filled
+    /// `0x22`, so the switchable `$8000` window reports which bank is mapped.
+    fn uxrom_nes_file() -> INesFile {
+        let mut rom = Vec::new();
+        // Mapper 2 (UxROM), 2x16 KB PRG, 1x8 KB CHR.
+        rom.extend_from_slice(&[0x4e, 0x45, 0x53, 0x1a, 2, 1, 0x20, 0x00]);
+        rom.extend_from_slice(&[0; 8]);
+
+        let mut prg = vec![0x11_u8; 16 * 1024];
+        prg.extend(std::iter::repeat_n(0x22_u8, 16 * 1024));
+        // Reset vector $8000 (plus NMI/IRQ) at the end of the fixed bank.
+        prg[0x7FFA..=0x7FFF].copy_from_slice(&[0x00, 0x80, 0x00, 0x80, 0x00, 0x80]);
+        rom.extend_from_slice(&prg);
+        rom.extend(std::iter::repeat_n(0, 8 * 1024));
+        INesFile::new(rom).unwrap()
+    }
+
+    #[test]
+    fn soft_reset_preserves_mapper_bank_hard_reset_rebuilds_it() {
+        use crate::mcu::Mcu;
+
+        let file = uxrom_nes_file();
+        let mut machine = NesMachine::new(&file, EmptyPlugin::new(), (), ());
+        assert_eq!(machine.mcu().peek(0x8000), 0x11);
+
+        // Map bank 1 into the switchable window.
+        machine.mcu_mut().write(0x8000, 1, SystemClock::default());
+        assert_eq!(machine.mcu().peek(0x8000), 0x22);
+
+        machine.soft_reset();
+        assert_eq!(
+            machine.mcu().peek(0x8000),
+            0x22,
+            "soft reset must not touch mapper state"
+        );
+
+        machine.hard_reset();
+        assert_eq!(
+            machine.mcu().peek(0x8000),
+            0x11,
+            "hard reset rebuilds the cartridge from the ROM"
+        );
+    }
+
+    /// PRG: `LDA #$42; LDX #$43; LDY #$44; JMP $8000` — dirties the
+    /// register file, then loops.
+    fn reg_loop_nes_file() -> INesFile {
+        let mut rom = Vec::new();
+        rom.extend_from_slice(&[0x4e, 0x45, 0x53, 0x1a, 1, 1, 0x00, 0x00]);
+        rom.extend_from_slice(&[0; 8]);
+
+        let mut prg = vec![0_u8; 16 * 1024];
+        let program: [u8; 9] = [0xA9, 0x42, 0xA2, 0x43, 0xA0, 0x44, 0x4C, 0x00, 0x80];
+        prg[..program.len()].copy_from_slice(&program);
+        // Reset vector $8000 (NROM-128 mirrors its single page at $C000 too).
+        prg[0x3FFA..=0x3FFF].copy_from_slice(&[0x00, 0x80, 0x00, 0x80, 0x00, 0x80]);
+        rom.extend_from_slice(&prg);
+        rom.extend(std::iter::repeat_n(0, 8 * 1024));
+        INesFile::new(rom).unwrap()
+    }
+
+    #[test]
+    fn soft_reset_preserves_registers_hard_reset_restores_power_up() {
+        let file = reg_loop_nes_file();
+        let mut machine = NesMachine::new(&file, EmptyPlugin::new(), (), ());
+        for _ in 0..1000 {
+            machine.tick();
+        }
+        assert_eq!(machine.cpu().a(), 0x42);
+        assert_eq!(machine.cpu().x(), 0x43);
+        assert_eq!(machine.cpu().y(), 0x44);
+        assert_eq!(machine.cpu().sp(), 0xFD);
+
+        machine.soft_reset();
+        assert_eq!(machine.cpu().a(), 0x42, "soft reset preserves A");
+        assert_eq!(machine.cpu().x(), 0x43, "soft reset preserves X");
+        assert_eq!(machine.cpu().y(), 0x44, "soft reset preserves Y");
+        assert_eq!(
+            machine.cpu().sp(),
+            0xFA,
+            "soft reset drops SP by three (discarded push)"
+        );
+
+        machine.hard_reset();
+        assert_eq!(machine.cpu().a(), 0x00, "hard reset clears A");
+        assert_eq!(machine.cpu().x(), 0x00, "hard reset clears X");
+        assert_eq!(machine.cpu().y(), 0x00, "hard reset clears Y");
+        assert_eq!(machine.cpu().sp(), 0xFD, "hard reset restores power-up SP");
+        assert_eq!(
+            machine.cpu().status(),
+            0x24,
+            "hard reset restores power-up status (I + unused)"
+        );
+    }
+
+    #[test]
+    fn soft_reset_preserves_clock_hard_reset_restarts_it() {
+        let file = test_nes_file();
+        let mut machine = NesMachine::new(&file, EmptyPlugin::new(), (), ());
+        assert_eq!(machine.process_frame(), ExecuteResult::Continue);
+        assert_eq!(machine.frame_no(), 1);
+        let cycles = machine.system_cycles();
+        assert!(cycles > 0);
+
+        machine.soft_reset();
+        assert_eq!(machine.frame_no(), 1, "soft reset keeps the PPU running");
+        assert_eq!(
+            machine.system_cycles(),
+            cycles,
+            "soft reset keeps the bus clock running"
+        );
+
+        machine.hard_reset();
+        assert_eq!(machine.frame_no(), 0, "hard reset restarts frame count");
+        assert_eq!(
+            machine.system_cycles(),
+            0,
+            "hard reset restarts the bus clock"
+        );
+        // The rebuilt machine still runs: frames complete normally.
+        assert_eq!(machine.process_frame(), ExecuteResult::Continue);
+        assert_eq!(machine.frame_no(), 1);
+    }
+
+    #[test]
+    fn hard_reset_preserves_held_buttons_but_rewinds_shift() {
+        use crate::mcu::Mcu;
+
+        let file = test_nes_file();
+        let mut machine = NesMachine::new(&file, EmptyPlugin::new(), (), ());
+        machine.press_controller_a(Button::A);
+
+        machine.hard_reset();
+
+        // The pad is physical: the held button still reports pressed on the
+        // first shift-register read, with no strobe written since power-up.
+        assert_eq!(machine.mcu().peek(0x4016) & 0x01, 0x01);
+    }
+
+    #[test]
     fn reset_drains_in_flight_oam_dma_before_applying() {
         let file = dma_loop_nes_file();
         let mut machine = NesMachine::new(&file, EmptyPlugin::new(), (), ());
@@ -357,7 +546,7 @@ mod tests {
 
         // Resetting mid-DMA must quiesce the bus first, bounded by the
         // internal drain limit (no hang), then apply cleanly.
-        machine.reset();
+        machine.soft_reset();
 
         assert!(!machine.dma_bus.is_busy(machine.bus.mcu()));
 

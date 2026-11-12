@@ -800,12 +800,12 @@ impl MachineWrapper {
         }
     }
 
-    pub fn reset(&mut self) {
+    pub fn soft_reset(&mut self) {
         match self {
             MachineWrapper::Bin(m) => m.reset(),
-            MachineWrapper::INes(m) => m.reset(),
-            MachineWrapper::Rendered(m) => m.reset(),
-            MachineWrapper::AudioDump(m) => m.reset(),
+            MachineWrapper::INes(m) => m.soft_reset(),
+            MachineWrapper::Rendered(m) => m.soft_reset(),
+            MachineWrapper::AudioDump(m) => m.soft_reset(),
         }
     }
 

@@ -10,6 +10,12 @@ impl LowerRam {
     pub fn new() -> LowerRam {
         LowerRam { ram: [0; 0xf00] }
     }
+
+    /// Hard reset (power cycle): RAM returns to its power-up contents.
+    /// Soft reset leaves RAM untouched, so this is hard-only.
+    pub fn reset_hard(&mut self) {
+        self.ram = [0; 0xf00];
+    }
 }
 
 impl Mcu for LowerRam {

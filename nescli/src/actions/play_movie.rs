@@ -845,11 +845,13 @@ impl PlayMovieAction {
             }
 
             if let Some(input_log) = input_logs.get(frame_index) {
-                // Soft-reset (FM2 reset flag / BK2 Reset column) and
-                // fresh-machine restart (BK2 Power column) both return the
-                // machine to its power-up contract before the frame runs.
-                if input_log.command.soft_reset() || input_log.command.hard_reset() {
-                    machine.reset();
+                // BK2 Power is a power cycle (RAM cleared, cartridge
+                // rebuilt); the BK2 Reset column and the FM2 reset flag are
+                // the front-panel RESET button (state persists).
+                if input_log.command.hard_reset() {
+                    machine.hard_reset();
+                } else if input_log.command.soft_reset() {
+                    machine.soft_reset();
                 }
                 set_controller_a_from_gamepad(&mut machine, &input_log.port0);
                 set_controller_b_from_gamepad(&mut machine, &input_log.port1);
@@ -874,7 +876,7 @@ impl PlayMovieAction {
                 nes_core::ExecuteResult::Continue => {}
                 nes_core::ExecuteResult::ShouldReset => {
                     eprintln!("CPU reset requested");
-                    machine.reset();
+                    machine.soft_reset();
                 }
                 nes_core::ExecuteResult::Stop(code) => {
                     eprintln!("Execution stopped with code {}", code);

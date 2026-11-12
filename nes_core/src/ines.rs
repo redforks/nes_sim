@@ -12,7 +12,7 @@ pub enum NametableArrangement {
     Horizontal,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Header {
     /// Each page is 16k
     pub n_prg_pages: u8,
@@ -41,7 +41,7 @@ pub struct Header {
     pub default_expansion_device: Option<u8>,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct INesFile {
     file_version: FileVersion,
     header: Header,

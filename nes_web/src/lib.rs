@@ -46,8 +46,19 @@ impl Machine {
         self.inner.flush_audio();
     }
 
+    /// Front-panel RESET button: execution restarts, state persists.
     pub fn reset(&mut self) {
-        self.inner.reset();
+        self.inner.soft_reset();
+    }
+
+    /// Power cycle: RAM cleared, cartridge rebuilt, clock restarted.
+    pub fn hard_reset(&mut self) {
+        self.inner.hard_reset();
+    }
+
+    /// Explicit RESET-button reset (same as [`Self::reset`]).
+    pub fn soft_reset(&mut self) {
+        self.inner.soft_reset();
     }
 
     pub fn key_down(&mut self, key: &str) {

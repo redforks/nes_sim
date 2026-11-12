@@ -84,6 +84,9 @@ impl<D: AudioDriver> Apu<D> {
         }
     }
 
+    /// Soft reset (front-panel RESET button): channels fall silent while
+    /// the frame-counter mode survives — the behavior blargg's test ROMs
+    /// pin. RAM-less channel state (period, envelope) is preserved with it.
     pub fn reset(&mut self) {
         // https://www.nesdev.org/wiki/CPU_power_up_state
         //
@@ -106,6 +109,23 @@ impl<D: AudioDriver> Apu<D> {
         // The test ROMs rely on reset preserving the previous frame counter mode
         // and IRQ inhibit bit rather than synthesizing a new value here.
         self.frame_sequencer.reset();
+    }
+
+    /// Hard reset (power cycle): every channel returns to its power-up
+    /// state — the same contents [`Self::new`] builds — instead of the
+    /// soft-reset silence-and-preserve. The audio driver is host
+    /// configuration, so it (and its sample rate) is preserved.
+    pub fn reset_hard(&mut self) {
+        // https://www.nesdev.org/wiki/APU_power_up_state
+        self.pulse1 = Pulse::new(false);
+        self.pulse2 = Pulse::new(true);
+        self.triangle = Triangle::default();
+        self.noise = Noise::default();
+        self.dmc = Dmc::default();
+        self.mixer = Mixer::new(self.driver.sample_rate().max(1));
+        self.expansion = ExpansionMix::default();
+        self.frame_sequencer = FrameSequencer::default();
+        self.length_race_clobber = [false; 4];
     }
 
     #[hotpath::measure(impl_type = "Apu")]

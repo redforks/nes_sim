@@ -14,7 +14,7 @@
 //! contains — the early-reset guard prints uppercase `DON'T PRESS RESET
 //! UNTIL ASKED.`, and the final pass screen has no press line.
 //!
-//! Single-shot: `MachineWrapper::reset` preserves RAM and VRAM, so both
+//! Single-shot: `MachineWrapper::soft_reset` preserves RAM and VRAM, so both
 //! halves of the WAIT state are still present afterwards — the latch, not
 //! the state's absence, prevents a second request.
 //!
@@ -249,7 +249,7 @@ mod tests {
 
         // The reset preserves RAM and VRAM, so the WAIT state is still
         // present: the latch (not the state's absence) holds it to one.
-        machine.reset();
+        machine.soft_reset();
         assert_eq!(machine.mcu().peek(0xFC), 0x1E);
         assert_eq!(machine.mcu().peek(0xFD), 0xF0);
         assert_eq!(machine.mcu().peek(0xFE), 0x01);

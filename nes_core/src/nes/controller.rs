@@ -29,6 +29,15 @@ impl AController {
         self.locked_bits = self.bits;
     }
 
+    /// Hard reset (power cycle): the strobe line drops and the shift
+    /// register rewinds. Physically held buttons stay held, so `bits`
+    /// is preserved — only the sampled/shifted state returns to power-up.
+    pub fn reset_hard(&mut self) {
+        self.strobe = false;
+        self.bit_position = 0;
+        self.locked_bits = self.bits;
+    }
+
     fn peek(&self) -> u8 {
         let pressed = if self.strobe {
             self.bits & Button::A as u8 != 0
@@ -121,6 +130,12 @@ impl Zapper {
         self.y = y;
     }
 
+    /// Hard reset (power cycle): aborts an in-flight trigger hold. The
+    /// aim point and connection are physical, so they are preserved.
+    pub fn reset_hard(&mut self) {
+        self.trigger_cycles = 0;
+    }
+
     /// Pull the trigger. A no-op while a previous hold is still in flight:
     /// hardware releases on a fixed timer, not when the button comes up.
     pub fn trigger(&mut self) {
@@ -199,6 +214,14 @@ impl Controller {
             b: AController::new(),
             zapper: Zapper::new(),
         }
+    }
+
+    /// Hard reset (power cycle): both pads and the Zapper return to
+    /// power-up shift state. Soft reset leaves controllers untouched.
+    pub fn reset_hard(&mut self) {
+        self.a.reset_hard();
+        self.b.reset_hard();
+        self.zapper.reset_hard();
     }
 }
 

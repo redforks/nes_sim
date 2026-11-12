@@ -103,9 +103,11 @@ impl<R: Render, D: AudioDriver> NesMcu<R, D> {
         }
     }
 
-    /// Reset all bus devices to their power-up contract. The DMA bus is now
-    /// owned by `DmaBus` and reset separately; by the time this
-    /// runs, DMA work must already be quiesced (see [`crate::NesMachine::reset`]),
+    /// Soft reset (front-panel RESET button): PPU registers re-latch and
+    /// the APU falls silent while RAM, the cartridge, controllers, and the
+    /// open-bus latch survive — execution restarts, state persists. The
+    /// DMA bus is owned by `DmaBus` and reset separately; by the time this
+    /// runs, DMA work must already be quiesced (see [`crate::NesMachine::soft_reset`]),
     /// so OAM pending should be idle here. The bus owns the active OAM state.
     ///
     /// Deferred APU writes are discarded, not re-anchored: each write
@@ -116,6 +118,27 @@ impl<R: Render, D: AudioDriver> NesMcu<R, D> {
         self.deferred_apu_writes.clear();
         self.ppu.reset();
         self.apu.reset();
+    }
+
+    /// Hard reset (power cycle): the full power-up contract. The cartridge
+    /// is rebuilt from the ROM (mapper state never survives a power cycle
+    /// on hardware), RAM/PPU/APU return to power-up contents, and the bus
+    /// latch clears. Held controller buttons stay held — they are physical.
+    ///
+    /// Unlike soft reset this aborts DMA instead of draining it: power loss
+    /// does not wait for in-flight transfers, so the caller resets the
+    /// `DmaBus` without ticking. OAM pending is cleared, not asserted on.
+    pub fn reset_hard(&mut self, file: &INesFile, irq_override: Mmc3IrqOverride) {
+        self.cartridge = mapper::create_cartridge_with_mmc3_irq_override(file, irq_override);
+        self.lower_ram.reset_hard();
+        self.ppu.reset_hard();
+        self.apu.reset_hard();
+        self.controller.reset_hard();
+        self.oam_dma_pending = None;
+        self.deferred_apu_writes.clear();
+        self.open_bus = 0;
+        self.joypad1_oe = false;
+        self.joypad2_oe = false;
     }
 
     /// True while an OAM DMA request is still queued in the producer.

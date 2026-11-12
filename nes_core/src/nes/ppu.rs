@@ -318,6 +318,9 @@ impl<R: Render> Ppu<R> {
         self.color_theme = theme;
     }
 
+    /// Soft reset (front-panel RESET button): the PPU keeps running
+    /// mid-frame — scanline, dot, and frame count survive — while the
+    /// registers re-latch. OAM, palette, and VRAM survive with it.
     pub fn reset(&mut self) {
         // https://www.nesdev.org/wiki/PPU_power_up_state
         self.registers.reset();
@@ -339,6 +342,34 @@ impl<R: Render> Ppu<R> {
         self.color_splits.clear();
         self.buffered_pixel_from = self.next_beam_index();
         self.buffered_pixel_count = 0;
+    }
+
+    /// Hard reset (power cycle): the full power-up contract — timing
+    /// restarts at pre-render scanline 261 with frame count zero, OAM,
+    /// palette, and the frame buffer return to their power-up contents.
+    /// The renderer and color theme are host configuration, so they are
+    /// preserved, not rebuilt.
+    pub fn reset_hard(&mut self) {
+        // https://www.nesdev.org/wiki/PPU_power_up_state
+        self.registers.reset();
+        self.palette = Palette::default();
+        self.oam = Oam::default();
+        self.oam_addr = 0;
+        self.timing = Timing::new();
+        self.background_anchor = None;
+        self.pending_background_activation = None;
+        self.tile_cache = TileCache::default();
+        self.sprite.reset();
+        self.registers.write_scroll(0);
+        self.suppress_vblank_pending = false;
+        self.ren_latched_at_338 = false;
+        self.cycle = 0;
+        self.ppudata_last_read = None;
+        self.palette_index_buffer.fill(0);
+        self.color_splits.clear();
+        self.buffered_pixel_from = 0;
+        self.buffered_pixel_count = 0;
+        self.vblank_entered = false;
     }
 
     pub fn timing(&self) -> &Timing {

@@ -89,7 +89,7 @@ impl RunAction {
                     } => {
                         // Reset the simulator
                         eprintln!(">> Resetting simulator");
-                        machine.reset();
+                        machine.soft_reset();
                     }
                     Event::KeyDown {
                         keycode: Some(Keycode::F4),
@@ -127,7 +127,7 @@ impl RunAction {
                 nes_core::ExecuteResult::Continue => {}
                 nes_core::ExecuteResult::ShouldReset => {
                     eprintln!("CPU reset requested");
-                    machine.reset();
+                    machine.soft_reset();
                 }
                 nes_core::ExecuteResult::Stop(code) => {
                     eprintln!("Execution stopped with code {}", code);

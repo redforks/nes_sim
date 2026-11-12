@@ -677,6 +677,9 @@ impl Cpu {
     fn stack_pop_addr(&self) -> u16 {
         0x100 | self.sp.wrapping_add(1) as u16
     }
+    /// Soft reset (front-panel RESET button): registers survive, the stack
+    /// pointer drops three (the pushed PC + status the reset sequence
+    /// discards), and execution restarts at the reset vector.
     pub fn reset(&mut self) {
         self.set_flag(Flag::InterruptDisabled, true);
         self.set_flag(Flag::NotUsed, true);
@@ -691,6 +694,18 @@ impl Cpu {
 
         self.push_microcodes(&InterruptSequences::RESET);
         self.arm_interrupt_window(&InterruptSequences::RESET_WINDOW, None);
+    }
+
+    /// Hard reset (power cycle): the register file returns to its power-up
+    /// contract — `A = X = Y = 0`, `SP = $FD`, `P = $24` (matching
+    /// [`Self::new`]) — instead of the soft-reset decrement-and-preserve.
+    pub fn reset_hard(&mut self) {
+        self.a = 0;
+        self.x = 0;
+        self.y = 0;
+        self.sp = 0;
+        self.status = 0;
+        self.reset();
     }
 
     pub(crate) fn set_irq(&mut self, enabled: bool) {

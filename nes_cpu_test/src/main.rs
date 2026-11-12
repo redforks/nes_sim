@@ -200,7 +200,7 @@ fn exec(
             ExecuteResult::Continue => {}
             ExecuteResult::ShouldReset => {
                 eprintln!("{}", Color::Red.paint("RESET"));
-                m.reset();
+                m.soft_reset();
             }
             ExecuteResult::Stop(result) => std::process::exit(result as i32),
             ExecuteResult::Halt => std::process::exit(128),
@@ -222,7 +222,7 @@ fn run_capture(m: &mut MachineWrapper, frames: usize, presses: &mut [PressAction
             ExecuteResult::Continue => {}
             ExecuteResult::ShouldReset => {
                 eprintln!("{}", Color::Red.paint("RESET"));
-                m.reset();
+                m.soft_reset();
             }
             ExecuteResult::Stop(result) => return result as i32,
             ExecuteResult::Halt => return 128,
