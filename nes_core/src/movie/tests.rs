@@ -1,47 +1,4 @@
 use super::*;
-use serde::Deserialize;
-
-#[test]
-fn test_deserializer() {
-    #[derive(Deserialize, Debug, PartialEq)]
-    enum EnumType {
-        OptionA,
-        OptionB,
-    }
-
-    #[derive(Deserialize, Debug, PartialEq)]
-    #[serde(rename_all = "camelCase")]
-    struct Foo {
-        bool_true: bool,
-        bool_false: bool,
-        i32_field: i32,
-        str_field: String,
-        option_bool: Option<bool>,
-        option_bool_true: Option<bool>,
-        enum_field: EnumType,
-    }
-    let buf = r#"boolTrue 1
-boolFalse 0
-i32Field 12
-strField foo bar
-optionBoolTrue 1
-enumField OptionB
-"#;
-
-    let foo: Foo = from_str(buf).unwrap();
-    assert_eq!(
-        foo,
-        Foo {
-            bool_true: true,
-            bool_false: false,
-            i32_field: 12,
-            str_field: "foo bar".to_owned(),
-            option_bool: None,
-            option_bool_true: Some(true),
-            enum_field: EnumType::OptionB,
-        }
-    )
-}
 
 #[test]
 fn command_parser() {
@@ -122,8 +79,8 @@ comment author  HappyLee
             binary: None,
             length: None,
             rom_filename: "Super Mario Bros. (1985)(Nintendo)(J)".to_owned(),
-            comment: "author  HappyLee".to_owned(),
-            subtitle: "".to_owned(),
+            comment: vec!["author  HappyLee".to_owned()],
+            subtitle: vec![],
             guid: "2EDB1A82-6AE2-A0DA-167A-B6ABC24A3EED".to_owned(),
             rom_checksum: "base64:VYmON/RqC5V5eZa+cou4Og==".to_owned(),
             save_state: None,
@@ -150,5 +107,92 @@ comment author  HappyLee
                 GamepadInput::new(),
             )
         ][..]
+    );
+}
+
+/// A real movie from tasvideos.org repeats both `comment` and `subtitle`, which
+/// the fm2 conventions allow. See `adelikat2-contrapacifist.fm2`.
+const MULTI_COMMENT_BUF: &[u8] = br#"version 3
+emuVersion 21010
+rerecordCount 15434
+palFlag 0
+romFilename Contra (J)
+romChecksum base64:0wbFTM/fXLT47FiPGbPjPQ==
+guid 6031304D-F4AB-7C91-F0E2-FB6ADDF548A7
+fourscore 0
+port0 1
+port1 1
+port2 0
+comment author  adelikat
+comment Version v3
+comment Category pacifist
+subtitle 1 Contra JPN "pacifist" in 9:41.36 played by adelikat
+subtitle 340 Rerecord count: 15434
+|1|........|........||
+|0|........|........||
+"#;
+
+#[test]
+fn parse_file_multiple_comments_and_subtitles() {
+    let f = parse(MULTI_COMMENT_BUF).unwrap();
+    assert_eq!(
+        f.header.comment,
+        ["author  adelikat", "Version v3", "Category pacifist"]
+    );
+    assert_eq!(
+        f.header.subtitle,
+        [
+            "1 Contra JPN \"pacifist\" in 9:41.36 played by adelikat",
+            "340 Rerecord count: 15434",
+        ]
+    );
+    assert_eq!(f.header.port0, InputDevice::Gamepad);
+}
+
+#[test]
+fn parse_file_rejects_duplicate_non_repeatable_field() {
+    let mut buf = MULTI_COMMENT_BUF.to_vec();
+    // A second `romFilename` on line 5 would otherwise silently shadow the first.
+    buf.splice(0..0, *b"version 3\n");
+    let err = parse(&buf).unwrap_err();
+    assert!(
+        matches!(
+            err,
+            ParseFm2FileError::DuplicateField { ref key, line: 2 } if key == "version"
+        ),
+        "{err:?}"
+    );
+}
+
+#[test]
+fn parse_file_ignores_unknown_fields() {
+    let mut buf = MULTI_COMMENT_BUF.to_vec();
+    buf.splice(0..0, *b"someFutureKey 42\n");
+    assert_eq!(parse(&buf).unwrap().header.comment.len(), 3);
+}
+
+#[test]
+fn parse_file_reports_malformed_header_line() {
+    let mut buf = MULTI_COMMENT_BUF.to_vec();
+    buf.splice(0..0, *b"noValueHere\n");
+    let err = parse(&buf).unwrap_err();
+    assert!(
+        matches!(err, ParseFm2FileError::MalformedHeaderLine { line: 1 }),
+        "{err:?}"
+    );
+}
+
+#[test]
+fn parse_file_reports_invalid_value_with_line() {
+    let mut buf = MULTI_COMMENT_BUF.to_vec();
+    buf.splice(0..0, *b"NewPPU maybe\n");
+    let err = parse(&buf).unwrap_err();
+    assert!(
+        matches!(
+            err,
+            ParseFm2FileError::InvalidFieldValue { key: "NewPPU", value: ref v, line: 1 }
+                if v == "maybe"
+        ),
+        "{err:?}"
     );
 }

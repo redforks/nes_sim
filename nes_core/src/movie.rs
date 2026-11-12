@@ -1,17 +1,13 @@
 //! https://fceux.com/web/FM2.html
 
-use std::{fmt::Display, str::from_utf8};
+use std::{collections::HashSet, str::from_utf8};
 
 use anyhow::Context;
 use bitfield_struct::bitfield;
-use serde::{
-    Deserialize, Deserializer,
-    de::{IntoDeserializer as _, MapAccess},
-};
 use winnow::{
-    ascii::{alphanumeric1, dec_int, dec_uint, line_ending, space1, till_line_ending},
+    ascii::dec_uint,
     combinator::{alt, opt, repeat, seq, terminated},
-    error::{ContextError, InputError, ParserError},
+    error::{ContextError, ParserError},
     prelude::*,
     stream::{AsBStr, AsChar, Compare, Stream, StreamIsPartial},
     token::{any, literal},
@@ -19,26 +15,21 @@ use winnow::{
 
 use crate::ines::INesFile;
 
-#[derive(Deserialize, Clone, Copy, Debug, PartialEq, Eq, Default)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
 pub enum InputDevice {
     #[default]
-    #[serde(rename = "0")]
     None,
-    #[serde(rename = "1")]
     Gamepad,
-    #[serde(rename = "2")]
     Zapper,
 }
 
-#[derive(Deserialize, Clone, Copy, Debug, PartialEq, Eq, Default)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
 pub enum ExpPortDevice {
     #[default]
-    #[serde(rename = "0")]
     None,
 }
 
-#[derive(Deserialize, Debug, PartialEq, Eq, Default)]
-#[serde(rename_all = "camelCase")]
+#[derive(Debug, PartialEq, Eq, Default)]
 pub struct Fm2Header {
     /// the version of the movie file format; for now it is always 3
     pub version: i32,
@@ -49,10 +40,8 @@ pub struct Fm2Header {
     /// true if the movie uses PAL timing
     pub pal_flag: Option<bool>,
     /// true if the movie uses New PPU
-    #[serde(rename = "NewPPU")]
     pub new_ppu: Option<bool>,
     /// true if the movie was recorded on a Famicom Disk System (FDS) game
-    #[serde(rename = "FDS")]
     pub fds: Option<bool>,
     /// true if a fourscore was used. If fourscore is not used, then port0 and port1 are required
     pub fourscore: bool,
@@ -80,8 +69,9 @@ pub struct Fm2Header {
     ///     by convention, the author of the movie should be stored in comment(s) with a subject of: author
     ///     example:
     ///         comment author adelikat
-    #[serde(default)]
-    pub comment: String,
+    ///
+    /// The key may repeat; values keep their file order.
+    pub comment: Vec<String>,
     /// a message that will be displayed on screen when movie is played back
     /// (unless Subtitles are turned off, see Movie options)
     ///     by convention, subtitles begin with the word "subtitle"
@@ -90,8 +80,9 @@ pub struct Fm2Header {
     ///     example:
     ///      subtitle 1000 Level Two
     ///      At frame 1000 the words "Level Two" will be displayed on the screen
-    #[serde(default)]
-    pub subtitle: String,
+    ///
+    /// The key may repeat; values keep their file order.
+    pub subtitle: Vec<String>,
     /// a unique identifier for a movie, generated when the
     /// movie is created, which is used when loading a savestate to make sure it
     /// belongs to the current movie.
@@ -307,7 +298,7 @@ pub fn parse(buf: &[u8]) -> Result<Fm2File, ParseFm2FileError> {
         .position(|v| *v == b'|')
         .ok_or(ParseFm2FileError::MissingInputLog)?;
     let header_part = from_utf8(&buf[0..pos]).map_err(|_| ParseFm2FileError::ExpectAsciiFormat)?;
-    let header: Fm2Header = from_str(header_part)?;
+    let header = parse_header(header_part)?;
     assert!(
         header.binary.is_none_or(|v| !v),
         "binary fm2 format not supported"
@@ -335,24 +326,20 @@ pub enum ParseFm2FileError {
     ExpectAsciiFormat,
     #[error("Missing input logs")]
     MissingInputLog,
-    #[error("Buf not consumed")]
-    TrailingCharacters,
+    #[error("Malformed header line {line}: expected `key value`")]
+    MalformedHeaderLine { line: usize },
+    #[error("Duplicate field `{key}` at line {line}")]
+    DuplicateField { key: String, line: usize },
+    #[error("Missing required field `{key}`")]
+    MissingField { key: &'static str },
+    #[error("Invalid value `{value}` for field `{key}` at line {line}")]
+    InvalidFieldValue {
+        key: &'static str,
+        value: String,
+        line: usize,
+    },
     #[error(transparent)]
     Other(#[from] anyhow::Error),
-    #[error("Unknown error: {0}")]
-    Unknown(String),
-}
-
-impl ParseFm2FileError {
-    fn from_winnow_error(e: ContextError) -> Self {
-        e.into()
-    }
-}
-
-impl<I: Clone + Display> From<InputError<I>> for ParseFm2FileError {
-    fn from(value: InputError<I>) -> Self {
-        anyhow::anyhow!(value.to_string()).into()
-    }
 }
 
 impl From<ContextError> for ParseFm2FileError {
@@ -361,340 +348,159 @@ impl From<ContextError> for ParseFm2FileError {
     }
 }
 
-impl serde::de::Error for ParseFm2FileError {
-    fn custom<T>(msg: T) -> Self
-    where
-        T: std::fmt::Display,
-    {
-        Self::Unknown(msg.to_string())
-    }
+/// The fm2 header is one `key value` pair per line, separated by spaces.
+///
+/// `comment` and `subtitle` may repeat; every other key must appear at most
+/// once. Repeated keys keep their file order because the fm2 conventions give
+/// that order meaning (`subtitle <frame> <text>`, and successive comments with
+/// the same subject form a multi-line comment).
+struct HeaderFields<'a> {
+    /// `(key, value, 1-based line number)` in file order.
+    fields: Vec<(&'a str, &'a str, usize)>,
 }
 
-struct SpaceSeparated<'a, 'de: 'a> {
-    de: &'a mut SpacedKeyValueDeserialize<'de>,
-}
+/// Keys that the fm2 format allows to repeat.
+const REPEATABLE_KEYS: [&str; 2] = ["comment", "subtitle"];
 
-impl<'a, 'de: 'a> SpaceSeparated<'a, 'de> {
-    fn new(de: &'a mut SpacedKeyValueDeserialize<'de>) -> Self {
-        Self { de }
-    }
-}
-
-impl<'a, 'de: 'a> MapAccess<'de> for SpaceSeparated<'a, 'de> {
-    type Error = ParseFm2FileError;
-
-    fn next_key_seed<K>(&mut self, seed: K) -> Result<Option<K::Value>, Self::Error>
-    where
-        K: serde::de::DeserializeSeed<'de>,
-    {
-        if self.de.is_empty() {
-            return Ok(None);
+impl<'a> HeaderFields<'a> {
+    fn parse(header: &'a str) -> Result<Self, ParseFm2FileError> {
+        let mut fields = Vec::new();
+        let mut seen = HashSet::new();
+        for (index, raw) in header.lines().enumerate() {
+            let line = index + 1;
+            let raw = raw.trim_end();
+            if raw.is_empty() {
+                continue;
+            }
+            let Some((key, value)) = raw.split_once([' ', '\t']) else {
+                return Err(ParseFm2FileError::MalformedHeaderLine { line });
+            };
+            let value = value.trim_start();
+            if !REPEATABLE_KEYS.contains(&key) && !seen.insert(key) {
+                return Err(ParseFm2FileError::DuplicateField {
+                    key: key.to_owned(),
+                    line,
+                });
+            }
+            fields.push((key, value, line));
         }
-
-        seed.deserialize(&mut *self.de).map(Some)
+        Ok(Self { fields })
     }
 
-    fn next_value_seed<V>(&mut self, seed: V) -> Result<V::Value, Self::Error>
-    where
-        V: serde::de::DeserializeSeed<'de>,
-    {
-        self.de.take_kv_sep_space()?;
-        let r = seed.deserialize(&mut *self.de)?;
-        self.de.take_endline()?;
-        Ok(r)
-    }
-}
-/// A custom serde deserializer to parse fm2 file header
-struct SpacedKeyValueDeserialize<'de> {
-    buf: &'de str,
-}
-
-impl<'de> SpacedKeyValueDeserialize<'de> {
-    fn from_buf(buf: &'de str) -> Self {
-        Self { buf }
+    /// The value of the first `key` occurrence and its 1-based line number.
+    fn find(&self, key: &str) -> Option<(&'a str, usize)> {
+        self.fields
+            .iter()
+            .find(|(k, _, _)| *k == key)
+            .map(|(_, value, line)| (*value, *line))
     }
 
-    fn is_empty(&self) -> bool {
-        self.buf.is_empty()
+    /// Every value of a repeatable `key`, in file order.
+    fn all(&self, key: &str) -> Vec<String> {
+        self.fields
+            .iter()
+            .filter(|(k, _, _)| *k == key)
+            .map(|(_, value, _)| (*value).to_owned())
+            .collect()
     }
 
-    fn take_kv_sep_space(&mut self) -> Result<(), ParseFm2FileError> {
-        space1
-            .value(())
-            .parse_next(&mut self.buf)
-            .map_err(ParseFm2FileError::from_winnow_error)
+    fn required<T: Fm2Value>(&self, key: &'static str) -> Result<T, ParseFm2FileError> {
+        let (value, line) = self
+            .find(key)
+            .ok_or(ParseFm2FileError::MissingField { key })?;
+        T::parse_fm2(key, value, line)
     }
 
-    fn take_endline(&mut self) -> Result<(), ParseFm2FileError> {
-        line_ending
-            .value(())
-            .parse_next(&mut self.buf)
-            .map_err(ParseFm2FileError::from_winnow_error)
+    fn optional<T: Fm2Value>(&self, key: &'static str) -> Result<Option<T>, ParseFm2FileError> {
+        self.find(key)
+            .map(|(value, line)| T::parse_fm2(key, value, line))
+            .transpose()
     }
 }
 
-fn from_str<'a, T>(buf: &'a str) -> Result<T, ParseFm2FileError>
-where
-    T: Deserialize<'a>,
-{
-    let mut deserializer = SpacedKeyValueDeserialize::from_buf(buf);
-    let t = T::deserialize(&mut deserializer)?;
-    if deserializer.buf.is_empty() {
-        Ok(t)
-    } else {
-        Err(ParseFm2FileError::TrailingCharacters)
+/// A header value type that knows how fm2 writes it.
+trait Fm2Value: Sized {
+    fn parse_fm2(key: &'static str, value: &str, line: usize) -> Result<Self, ParseFm2FileError>;
+}
+
+impl ParseFm2FileError {
+    fn invalid_field(key: &'static str, value: &str, line: usize) -> Self {
+        Self::InvalidFieldValue {
+            key,
+            value: value.to_owned(),
+            line,
+        }
     }
 }
 
-impl<'de> Deserializer<'de> for &mut SpacedKeyValueDeserialize<'de> {
-    type Error = ParseFm2FileError;
-
-    fn deserialize_any<V>(self, _visitor: V) -> Result<V::Value, Self::Error>
-    where
-        V: serde::de::Visitor<'de>,
-    {
-        todo!()
+impl Fm2Value for String {
+    fn parse_fm2(_key: &'static str, value: &str, _line: usize) -> Result<Self, ParseFm2FileError> {
+        Ok(value.to_owned())
     }
+}
 
-    fn deserialize_bool<V>(self, visitor: V) -> Result<V::Value, Self::Error>
-    where
-        V: serde::de::Visitor<'de>,
-    {
-        visitor.visit_bool(
-            alt(('0'.value(false), '1'.value(true)))
-                .parse_next(&mut self.buf)
-                .map_err(ParseFm2FileError::from_winnow_error)?,
-        )
+impl Fm2Value for i32 {
+    fn parse_fm2(key: &'static str, value: &str, line: usize) -> Result<Self, ParseFm2FileError> {
+        value
+            .parse()
+            .map_err(|_| ParseFm2FileError::invalid_field(key, value, line))
     }
+}
 
-    fn deserialize_i8<V>(self, _visitor: V) -> Result<V::Value, Self::Error>
-    where
-        V: serde::de::Visitor<'de>,
-    {
-        todo!()
+impl Fm2Value for bool {
+    fn parse_fm2(key: &'static str, value: &str, line: usize) -> Result<Self, ParseFm2FileError> {
+        match value {
+            "0" => Ok(false),
+            "1" => Ok(true),
+            _ => Err(ParseFm2FileError::invalid_field(key, value, line)),
+        }
     }
+}
 
-    fn deserialize_i16<V>(self, _visitor: V) -> Result<V::Value, Self::Error>
-    where
-        V: serde::de::Visitor<'de>,
-    {
-        todo!()
+impl Fm2Value for InputDevice {
+    fn parse_fm2(key: &'static str, value: &str, line: usize) -> Result<Self, ParseFm2FileError> {
+        match value {
+            "0" => Ok(Self::None),
+            "1" => Ok(Self::Gamepad),
+            "2" => Ok(Self::Zapper),
+            _ => Err(ParseFm2FileError::invalid_field(key, value, line)),
+        }
     }
+}
 
-    fn deserialize_i32<V>(self, visitor: V) -> Result<V::Value, Self::Error>
-    where
-        V: serde::de::Visitor<'de>,
-    {
-        visitor.visit_i32(
-            dec_int::<_, _, ContextError>
-                .parse_next(&mut self.buf)
-                .map_err(ParseFm2FileError::from)?,
-        )
+impl Fm2Value for ExpPortDevice {
+    fn parse_fm2(key: &'static str, value: &str, line: usize) -> Result<Self, ParseFm2FileError> {
+        match value {
+            "0" => Ok(Self::None),
+            _ => Err(ParseFm2FileError::invalid_field(key, value, line)),
+        }
     }
+}
 
-    fn deserialize_i64<V>(self, _visitor: V) -> Result<V::Value, Self::Error>
-    where
-        V: serde::de::Visitor<'de>,
-    {
-        todo!()
-    }
-
-    fn deserialize_u8<V>(self, _visitor: V) -> Result<V::Value, Self::Error>
-    where
-        V: serde::de::Visitor<'de>,
-    {
-        todo!()
-    }
-
-    fn deserialize_u16<V>(self, _visitor: V) -> Result<V::Value, Self::Error>
-    where
-        V: serde::de::Visitor<'de>,
-    {
-        todo!()
-    }
-
-    fn deserialize_u32<V>(self, _visitor: V) -> Result<V::Value, Self::Error>
-    where
-        V: serde::de::Visitor<'de>,
-    {
-        todo!()
-    }
-
-    fn deserialize_u64<V>(self, _visitor: V) -> Result<V::Value, Self::Error>
-    where
-        V: serde::de::Visitor<'de>,
-    {
-        todo!()
-    }
-
-    fn deserialize_f32<V>(self, _visitor: V) -> Result<V::Value, Self::Error>
-    where
-        V: serde::de::Visitor<'de>,
-    {
-        todo!()
-    }
-
-    fn deserialize_f64<V>(self, _visitor: V) -> Result<V::Value, Self::Error>
-    where
-        V: serde::de::Visitor<'de>,
-    {
-        todo!()
-    }
-
-    fn deserialize_char<V>(self, _visitor: V) -> Result<V::Value, Self::Error>
-    where
-        V: serde::de::Visitor<'de>,
-    {
-        todo!()
-    }
-
-    fn deserialize_str<V>(self, visitor: V) -> Result<V::Value, Self::Error>
-    where
-        V: serde::de::Visitor<'de>,
-    {
-        visitor.visit_str(
-            till_line_ending
-                .parse_next(&mut self.buf)
-                .map_err(ParseFm2FileError::from_winnow_error)?,
-        )
-    }
-
-    fn deserialize_string<V>(self, visitor: V) -> Result<V::Value, Self::Error>
-    where
-        V: serde::de::Visitor<'de>,
-    {
-        self.deserialize_str(visitor)
-    }
-
-    fn deserialize_bytes<V>(self, _visitor: V) -> Result<V::Value, Self::Error>
-    where
-        V: serde::de::Visitor<'de>,
-    {
-        todo!()
-    }
-
-    fn deserialize_byte_buf<V>(self, _visitor: V) -> Result<V::Value, Self::Error>
-    where
-        V: serde::de::Visitor<'de>,
-    {
-        todo!()
-    }
-
-    fn deserialize_option<V>(self, visitor: V) -> Result<V::Value, Self::Error>
-    where
-        V: serde::de::Visitor<'de>,
-    {
-        visitor.visit_some(self)
-    }
-
-    fn deserialize_unit<V>(self, _visitor: V) -> Result<V::Value, Self::Error>
-    where
-        V: serde::de::Visitor<'de>,
-    {
-        todo!()
-    }
-
-    fn deserialize_unit_struct<V>(
-        self,
-        _name: &'static str,
-        _visitor: V,
-    ) -> Result<V::Value, Self::Error>
-    where
-        V: serde::de::Visitor<'de>,
-    {
-        todo!()
-    }
-
-    fn deserialize_newtype_struct<V>(
-        self,
-        _name: &'static str,
-        _visitor: V,
-    ) -> Result<V::Value, Self::Error>
-    where
-        V: serde::de::Visitor<'de>,
-    {
-        todo!()
-    }
-
-    fn deserialize_seq<V>(self, _visitor: V) -> Result<V::Value, Self::Error>
-    where
-        V: serde::de::Visitor<'de>,
-    {
-        todo!()
-    }
-
-    fn deserialize_tuple<V>(self, _len: usize, _visitor: V) -> Result<V::Value, Self::Error>
-    where
-        V: serde::de::Visitor<'de>,
-    {
-        todo!()
-    }
-
-    fn deserialize_tuple_struct<V>(
-        self,
-        _name: &'static str,
-        _len: usize,
-        _visitor: V,
-    ) -> Result<V::Value, Self::Error>
-    where
-        V: serde::de::Visitor<'de>,
-    {
-        todo!()
-    }
-
-    fn deserialize_map<V>(self, visitor: V) -> Result<V::Value, Self::Error>
-    where
-        V: serde::de::Visitor<'de>,
-    {
-        visitor.visit_map(SpaceSeparated::new(self))
-    }
-
-    fn deserialize_struct<V>(
-        self,
-        _name: &'static str,
-        _fields: &'static [&'static str],
-        visitor: V,
-    ) -> Result<V::Value, Self::Error>
-    where
-        V: serde::de::Visitor<'de>,
-    {
-        self.deserialize_map(visitor)
-    }
-
-    fn deserialize_enum<V>(
-        self,
-        _name: &'static str,
-        _variants: &'static [&'static str],
-        visitor: V,
-    ) -> Result<V::Value, Self::Error>
-    where
-        V: serde::de::Visitor<'de>,
-    {
-        visitor.visit_enum(
-            alphanumeric1
-                .parse_next(&mut self.buf)
-                .map_err(ParseFm2FileError::from_winnow_error)?
-                .to_owned()
-                .into_deserializer(),
-        )
-    }
-
-    fn deserialize_identifier<V>(self, visitor: V) -> Result<V::Value, Self::Error>
-    where
-        V: serde::de::Visitor<'de>,
-    {
-        let s = alphanumeric1
-            .parse_next(&mut self.buf)
-            .map_err(ParseFm2FileError::from_winnow_error)?;
-        visitor.visit_str(s)
-    }
-
-    fn deserialize_ignored_any<V>(self, _visitor: V) -> Result<V::Value, Self::Error>
-    where
-        V: serde::de::Visitor<'de>,
-    {
-        todo!()
-    }
+/// Parse the header of an fm2 file, i.e. the part before the first input log.
+fn parse_header(header: &str) -> Result<Fm2Header, ParseFm2FileError> {
+    let fields = HeaderFields::parse(header)?;
+    Ok(Fm2Header {
+        version: fields.required("version")?,
+        emu_version: fields.required("emuVersion")?,
+        rerecord_count: fields.optional("rerecordCount")?,
+        pal_flag: fields.optional("palFlag")?,
+        new_ppu: fields.optional("NewPPU")?,
+        fds: fields.optional("FDS")?,
+        fourscore: fields.required("fourscore")?,
+        microphone: fields.optional("microphone")?,
+        port0: fields.required("port0")?,
+        port1: fields.required("port1")?,
+        port2: fields.required("port2")?,
+        binary: fields.optional("binary")?,
+        length: fields.optional("length")?,
+        rom_filename: fields.required("romFilename")?,
+        comment: fields.all("comment"),
+        subtitle: fields.all("subtitle"),
+        guid: fields.required("guid")?,
+        rom_checksum: fields.required("romChecksum")?,
+        save_state: fields.optional("saveState")?,
+    })
 }
 
 #[cfg(test)]
