@@ -1,6 +1,3 @@
-use crate::SystemClock;
-use crate::mcu::Mcu;
-
 /// nes Controller struct that represent a controller of nes.
 pub struct AController {
     strobe: bool,
@@ -11,6 +8,11 @@ pub struct AController {
     locked_bits: u8,
     /// the position of the bit that is currently being read
     bit_position: u8,
+    /// Joypad /OE line for this pad: true while /OE stays asserted
+    /// across contiguous reads of its register on NES-001 hardware,
+    /// clocking the shift register once per contiguous set rather than
+    /// once per read.
+    pub(crate) oe: bool,
 }
 
 #[allow(clippy::new_without_default)]
@@ -21,6 +23,7 @@ impl AController {
             bits: 0,
             locked_bits: 0,
             bit_position: 0,
+            oe: false,
         }
     }
 
@@ -36,6 +39,7 @@ impl AController {
         self.strobe = false;
         self.bit_position = 0;
         self.locked_bits = self.bits;
+        self.oe = false;
     }
 
     fn peek(&self) -> u8 {
@@ -50,14 +54,11 @@ impl AController {
         if pressed { 0x41 } else { 0x40 }
     }
 
-    fn read(&mut self) -> u8 {
-        self.read_strobed(true)
-    }
-
-    /// Read the shift register. `clock` is false when /OE stayed asserted
-    /// from a contiguous preceding read of the same register: the controller
-    /// sees one shift per contiguous set of reads, not one per CPU cycle.
-    pub(crate) fn read_strobed(&mut self, clock: bool) -> u8 {
+    /// Read the shift register. `oe` is false on the first read of a
+    /// contiguous set: the controller sees one shift per contiguous set
+    /// of reads, not one per CPU cycle.
+    pub(crate) fn read_strobed(&mut self) -> u8 {
+        let clock = !self.oe;
         let pressed = if self.strobe {
             self.bits & Button::A as u8 != 0
         } else if self.bit_position < 8 {
@@ -225,16 +226,8 @@ impl Controller {
     }
 }
 
-impl Mcu for Controller {
-    fn read(&mut self, address: u16) -> u8 {
-        match address {
-            0x4016 => self.a.read(),
-            0x4017 => self.b.read(),
-            _ => 0,
-        }
-    }
-
-    fn peek(&self, address: u16) -> u8 {
+impl Controller {
+    pub(crate) fn peek(&self, address: u16) -> u8 {
         match address {
             0x4016 => self.a.peek(),
             0x4017 => self.b.peek(),
@@ -242,22 +235,18 @@ impl Mcu for Controller {
         }
     }
 
-    fn write(&mut self, address: u16, value: u8, _clock: SystemClock) {
-        if address == 0x4016 {
-            let new_strobe = value & 1 != 0;
-            // Only a high-to-low transition freezes button state and
-            // rewinds the poll; writes that keep strobe low are no-ops.
-            if self.a.strobe && !new_strobe {
-                self.a.reset_for_read();
-                self.b.reset_for_read();
-            }
-            self.a.strobe = new_strobe;
-            self.b.strobe = new_strobe;
+    pub(crate) fn write(&mut self, value: u8) {
+        let new_strobe = value & 1 != 0;
+        // Only a high-to-low transition freezes button state and
+        // rewinds the poll; writes that keep strobe low are no-ops.
+        if self.a.strobe && !new_strobe {
+            self.a.reset_for_read();
+            self.b.reset_for_read();
         }
+        self.a.strobe = new_strobe;
+        self.b.strobe = new_strobe;
     }
 }
-
-// hard-coded addresses where needed.
 
 #[cfg(test)]
 mod tests;

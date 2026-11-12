@@ -24,8 +24,6 @@ fn test_mcu_with(cartridge: Cartridge) -> NesMcu<ImageRender<1>, ()> {
         oam_dma_pending: None,
         deferred_apu_writes: ArrayDeque::new(),
         open_bus: 0,
-        joypad1_oe: false,
-        joypad2_oe: false,
     }
 }
 

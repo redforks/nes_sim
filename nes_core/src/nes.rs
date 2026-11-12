@@ -27,11 +27,6 @@ pub struct NesMcu<R: Render, D: AudioDriver> {
     /// CPU data bus open bus value: the last value read by the CPU.
     /// Reading write-only or unmapped addresses returns this value.
     open_bus: u8,
-    /// Joypad /OE lines stay asserted across contiguous reads of the same
-    /// register on NES-001 hardware, clocking the shift register once per
-    /// contiguous set rather than once per read.
-    joypad1_oe: bool,
-    joypad2_oe: bool,
     /// Length-counter register writes ($4000/$4003/…) queued to land one CPU
     /// cycle after their store instruction: on hardware the 6502 write
     /// completes on the following phi2 edge, so a scheduled length clock
@@ -54,8 +49,8 @@ impl<R: Render, D: AudioDriver> NesMcu<R, D> {
     fn latch_read(&mut self, value: u8, read_controller: bool) -> u8 {
         self.open_bus = value;
         if !read_controller {
-            self.joypad1_oe = false;
-            self.joypad2_oe = false;
+            self.controller.a.oe = false;
+            self.controller.b.oe = false;
         }
         value
     }
@@ -69,8 +64,8 @@ impl<R: Render, D: AudioDriver> NesMcu<R, D> {
     /// cannot drift in either effect or order.
     fn latch_write(&mut self, value: u8) {
         self.open_bus = value;
-        self.joypad1_oe = false;
-        self.joypad2_oe = false;
+        self.controller.a.oe = false;
+        self.controller.b.oe = false;
     }
     pub fn new(file: &INesFile, renderer: R, audio_driver: D) -> Self {
         Self::new_with_mmc3_irq_override(file, renderer, audio_driver, Mmc3IrqOverride::Auto)
@@ -97,8 +92,6 @@ impl<R: Render, D: AudioDriver> NesMcu<R, D> {
             apu: Apu::new(audio_driver),
             oam_dma_pending: None,
             open_bus: 0,
-            joypad1_oe: false,
-            joypad2_oe: false,
             deferred_apu_writes: ArrayDeque::new(),
         }
     }
@@ -137,8 +130,6 @@ impl<R: Render, D: AudioDriver> NesMcu<R, D> {
         self.oam_dma_pending = None;
         self.deferred_apu_writes.clear();
         self.open_bus = 0;
-        self.joypad1_oe = false;
-        self.joypad2_oe = false;
     }
 
     /// True while an OAM DMA request is still queued in the producer.
@@ -297,17 +288,15 @@ impl<R: Render, D: AudioDriver> Mcu for NesMcu<R, D> {
                 }
             }
             0x4016 => {
-                let prev_joypad1_oe = self.joypad1_oe;
-                self.joypad1_oe = true;
-                self.joypad2_oe = false;
-                let value = self.controller.a.read_strobed(!prev_joypad1_oe);
+                let value = self.controller.a.read_strobed();
+                self.controller.a.oe = true;
+                self.controller.b.oe = false;
                 return self.latch_read(value, true);
             }
             0x4017 => {
-                let prev_joypad2_oe = self.joypad2_oe;
-                self.joypad1_oe = false;
-                self.joypad2_oe = true;
-                let value = self.controller.b.read_strobed(!prev_joypad2_oe) | self.zapper_bits();
+                let value = self.controller.b.read_strobed() | self.zapper_bits();
+                self.controller.a.oe = false;
+                self.controller.b.oe = true;
                 return self.latch_read(value, true);
             }
             0x4015 => self.apu.read(address),
@@ -370,7 +359,7 @@ impl<R: Render, D: AudioDriver> Mcu for NesMcu<R, D> {
             0x2000..=0x3fff => self.ppu.write_ppureg(address, value, &mut self.cartridge),
             0x4000..=0x401f => match address {
                 0x4014 => self.ppu_dma(value),
-                0x4016 => self.controller.write(address, value, clock),
+                0x4016 => self.controller.write(value),
                 0x4000 | 0x4003 | 0x4004 | 0x4007 | 0x400B | 0x400F | 0x4013 => {
                     // Production bound is 1 (tick_apu drains on the same
                     // dots cpu.tick runs, one write per cycle max); the

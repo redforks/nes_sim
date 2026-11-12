@@ -261,7 +261,7 @@ _Avoid_: write filter, consecutive writes (without qualifier)
 _Avoid_: Ppu as Mcu, cartridge in Ppu, open bus (without qualifier)
 
 **Fast Path Contract**:
-The `Mcu` fast-path methods (`read_zero_page`, `read_stack_page`, `write_zero_page`, `write_stack_page`) may skip the address-range dispatch of `read`/`write`, never an observable side effect; the fast writes forward the same `clock` dot as the generic write. A fast read latches the CPU open bus (`open_bus`) with the value read; a fast write latches it and deasserts both joypad `/OE` lines (`joypad1_oe`, `joypad2_oe`), in that order and at the same point in the sequence as a generic write. The bus wrapper (`NesMcu`) owns these effects and applies the identical ones on both routes, so the generic and fast paths cannot drift; the memory device (`LowerRam`) answers with pure array indexing and owns no bus state. The CPU's zero-page RMW read stamps `last_read_addr` like every other read.
+The `Mcu` fast-path methods (`read_zero_page`, `read_stack_page`, `write_zero_page`, `write_stack_page`) may skip the address-range dispatch of `read`/`write`, never an observable side effect; the fast writes forward the same `clock` dot as the generic write. A fast read latches the CPU open bus (`open_bus`) with the value read; a fast write latches it and deasserts both joypad `/OE` lines (`controller.a.oe`, `controller.b.oe`), in that order and at the same point in the sequence as a generic write. The bus wrapper (`NesMcu`) applies these effects and the identical ones on both routes, so the generic and fast paths cannot drift; the memory device (`LowerRam`) answers with pure array indexing and owns no bus state. The CPU's zero-page RMW read stamps `last_read_addr` like every other read.
 _Avoid_: cheap read, direct RAM access, bypassing the bus
 
 ## Language — Controller Reading
@@ -277,6 +277,10 @@ _Avoid_: latch (overloaded), locked copy
 **Bit position**:
 Index of the next serial stage the poll reads from the frozen register. Advanced once per `$4016`/`$4017` read; reset only by a strobe falling edge.
 _Avoid_: read offset
+
+**/OE**:
+Per-pad output-enable flag (`AController.oe`) for `$4016`/`$4017`: true while contiguous reads of the same register keep the line asserted, so the shift register clocks once per contiguous set rather than once per read. Reading the other port or any other bus access deasserts it.
+_Avoid_: joypad1_oe/joypad2_oe (old bus-side names)
 
 ## Language — Zapper
 
