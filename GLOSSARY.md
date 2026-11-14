@@ -56,6 +56,26 @@ _Avoid_: background latch, scroll anchor
 Four-byte cached render state for the current background tile, stored as a field on `Ppu`. Holds the nametable byte (tile index), attribute byte (2-bit palette select), and both bitplane rows (low, high) at the current fine_y. Filled once per tile from cartridge VRAM reads — matching the real PPU's tile-fetch cadence — then consumed for up to 8 horizontal pixels before unconditional refill. The first batch is shorter by `fine_x` to handle sub-tile scroll offsets. Invalidated at dot 0 and on `$2000`/`$2006` register writes.
 _Avoid_: tile cache (lowercase c), pattern cache
 
+## Language — PPU Frame Phases
+
+Core domain for the four scanline bands of one NTSC frame (nesdev `PPU_rendering` line-by-line timing).
+
+**PreRender**:
+Scanline 261 (aka -1), the dummy line that fills the shift registers for the first two tiles of scanline 0. Vertical scroll reload runs here when rendering is enabled; sprite evaluation never runs here.
+_Avoid_: prepare line, pre-frame, Cold-start (construction-only, not this line every frame)
+
+**Visible**:
+Scanlines 0–239, the picture region where background and sprite pixels are rendered.
+_Avoid_: visible dots (1–256), visible area (dots 65–256 subset)
+
+**PostRender**:
+Scanline 240, the idle line after the picture and before the VBL flag sets. No memory accesses and no flag changes.
+_Avoid_: post-frame, blanking line
+
+**VerticalBlank**:
+Scanlines 241–260, the blanking interval where the PPU makes no memory accesses so the program can freely access PPU memory. The VBL flag sets at tick 1 of scanline 241.
+_Avoid_: vblank flag, post-render
+
 ## Language — System Timing
 
 **Cold-start**:

@@ -82,6 +82,24 @@ impl BackgroundActivation {
     }
 }
 
+/// Scanline band of one NTSC frame (nesdev `PPU_rendering` line-by-line
+/// timing). `Ppu::tick` dispatches on this; it is derived from
+/// `Timing::scanline`, never stored (ADR-0019).
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub(crate) enum RenderingStatus {
+    /// Scanline 261 (aka -1): fills shift registers for scanline 0.
+    PreRender,
+    /// Scanlines 0–239: picture region.
+    Visible,
+    /// Scanline 240: idle line before VBL sets.
+    PostRender,
+    /// Scanline 241: vblank entry; the VBL flag sets at dot 1 and the
+    /// buffered frame flushes.
+    EnterVerticalBlank,
+    /// Scanlines 242–260: remaining blanking interval, no memory accesses.
+    RemainVerticalBlank,
+}
+
 #[derive(Copy, Clone, Default)]
 pub struct Timing {
     scanline: u16,
@@ -105,24 +123,17 @@ impl Timing {
     }
 
     fn next_visible_x(&self) -> Option<u8> {
-        self.is_visible().then(|| (self.dot - 1) as u8)
+        (self.in_visible_scanline() && self.is_visible_dots()).then(|| (self.dot - 1) as u8)
     }
 
-    /// Return true if scanline and dot is in visible area
-    const fn is_visible(&self) -> bool {
-        self.in_visible_scanline() && self.dot >= 1 && self.dot <= 256
+    const fn is_visible_dots(&self) -> bool {
+        self.dot >= 1 && self.dot <= 256
     }
 
     /// Return true if dot is in sprite-evaluation dots (65-256), after the
     /// secondary-OAM clear phase
     const fn in_sprite_eval_dots(&self) -> bool {
         self.dot >= 65 && self.dot <= 256
-    }
-
-    /// Return true if scanline and dot is in the sprite-evaluation area
-    /// (dots 65-256 of visible scanlines)
-    const fn in_sprite_eval_area(&self) -> bool {
-        self.in_visible_scanline() && self.in_sprite_eval_dots()
     }
 
     fn advance(&mut self, ren_latched_at_338: bool) {
@@ -143,25 +154,6 @@ impl Timing {
         }
     }
 
-    /// Return true if just enter vblank timing, scanline 241, dot 1, should set vblank flag
-    fn enter_vblank(&self) -> bool {
-        self.scanline == 241 && self.dot == 1
-    }
-
-    /// Return true if just leave vblank timing, scanline 261, dot 1, should
-    /// clear the vblank flag.
-    ///
-    /// An edge written during the tick that processes dot `d` is observable
-    /// to `$2002` reads whose timing already shows `d + 1`, so this keeps the
-    /// flag readable through the read at dot 1 and clears it for the read at
-    /// dot 2. Blargg's vbl_nmi_timing 4.vbl_clear_timing pins that boundary:
-    /// clearing on the dot-0 tick is a "Cleared 1 PPU clock too early"
-    /// failure. The sprite status bits drop one dot earlier; see the dot-0
-    /// block in [`Ppu::tick`].
-    fn leave_vblank(&self) -> bool {
-        self.scanline == 261 && self.dot == 1
-    }
-
     pub fn frame_no(&self) -> usize {
         self.frame_no
     }
@@ -174,20 +166,30 @@ impl Timing {
         self.dot
     }
 
-    const fn in_visible_scanline(&self) -> bool {
-        self.scanline < 240
+    /// Scanline band for state dispatch (ADR-0019): derived from
+    /// `scanline` alone (261 / <240 / ==240 / 241 / 242–260).
+    const fn status(&self) -> RenderingStatus {
+        match self.scanline {
+            261 => RenderingStatus::PreRender,
+            0..=239 => RenderingStatus::Visible,
+            240 => RenderingStatus::PostRender,
+            241 => RenderingStatus::EnterVerticalBlank,
+            _ => RenderingStatus::RemainVerticalBlank,
+        }
     }
 
-    /// Return true if scanline is 261, in this scanline ppu preparing for the next frame
-    fn is_prepare_line(&self) -> bool {
-        self.scanline == 261
+    const fn in_visible_scanline(&self) -> bool {
+        matches!(self.status(), RenderingStatus::Visible)
     }
 
     /// Return true if ppu should active for current scanline.
     /// Note, if ppu rendering is disabled (both front and background), ppu is also disactivated
     fn in_ppu_active_line(&self) -> bool {
         // although line 261 is not visible, but ppu need to prepare for next frame first line
-        self.in_visible_scanline() || self.is_prepare_line()
+        matches!(
+            self.status(),
+            RenderingStatus::Visible | RenderingStatus::PreRender
+        )
     }
 }
 
@@ -512,31 +514,101 @@ impl<R: Render> Ppu<R> {
 
     /// Clear the sprite status bits for a new frame: the pre-render line's
     /// dot-0 tick drops sprite-0 hit and sprite overflow. Called from
-    /// [`Ppu::tick`]; vblank follows one dot later on `Timing::leave_vblank`.
+    /// [`Ppu::tick`]; the rest of PPUSTATUS follows one dot later at the
+    /// pre-render dot-1 clear in `tick_pre_render`.
     fn clear_sprite_status(&mut self) {
         self.registers.status.set_sprite_zero_hit(false);
         self.registers.status.set_sprite_overflow(false);
         self.sprite.clear_pending();
     }
 
-    #[hotpath::measure(impl_type = "Ppu")]
-    pub fn tick(&mut self, cartridge: &mut Cartridge) {
-        crate::hotpath_cpu::hotpath_cpu_alias!(
-            Self,
-            concat!(module_path!(), "::Ppu::tick"),
-            "tick"
-        );
-        self.cycle += 1;
-
+    /// Fetch half shared by the two active lines (ADR-0019): horizontal
+    /// scroll reload (dot 257, including the OAMADDR-to-0 side effect) plus
+    /// the filtered A12 notifications that clock MMC3 scanline IRQs. Runs
+    /// on visible scanlines and the pre-render line when rendering is
+    /// enabled — the `in_ppu_active_line()` half of the old `tick()` body,
+    /// moved verbatim.
+    fn tick_fetch_notify(&mut self, cartridge: &mut Cartridge) {
+        // MMC3 scanline IRQs are driven by filtered PPU A12 rises.
+        //
+        // On the real NES the PPU address bus toggles A12 on each tile
+        // fetch.  The MMC3 filters the rapid bouncing and effectively
+        // clocks its IRQ counter once per scanline at the point where A12
+        // rises from a sustained low period:
+        //
+        //   * When BG uses $0xxx and sprites use $1xxx: the rise occurs at
+        //     the first sprite pattern fetch (~dot 260).
+        //   * When BG uses $1xxx and sprites use $0xxx: the rise occurs at
+        //     the first BG pattern fetch (~dot 4), with a second rise at
+        //     the BG-prefetch after sprite fetches (~dot 324).
+        //
+        // We model this by emitting only pattern-table addresses (skipping
+        // the nametable/attribute-table fetches that cause the filtered
+        // bouncing).  BG pattern addresses are emitted on odd dots and
+        // sprite pattern addresses on even dots, matching the real PPU's
+        // memory-access phasing.
+        //
+        // Manual $2006/$2007 writes still reach the mapper directly.
         let dot = self.timing.dot;
-        let scanline = self.timing.scanline;
-        let rendering = self.rendering_enabled();
-
-        if scanline == 261 && dot == 338 {
-            self.ren_latched_at_338 = rendering;
+        // Horizontal bits reload from temp at dot 257
+        // (visible scanlines and pre-render scanline)
+        if dot == 257 {
+            // During sprite tile loading (dots 257-320 of visible scanlines and
+            // the pre-render line) hardware drives OAMADDR to 0; software
+            // polling $2003 mid-frame observes that.
+            self.oam_addr = 0;
+            self.reload_horizontal_from_temp();
         }
-        if dot == 0 {
-            if scanline == 0 {
+
+        if cartridge.wants_vram_notify() && (dot & 1) == 1 {
+            match dot {
+                3..=256 | 323..=336 => {
+                    // Notifications are shifted +2 dots (base 3/323 instead of 1/321)
+                    // so that the first BG pattern appears at dot 7 rather than dot 5.
+                    // Together with the sprite base (first pattern at dot 263), this
+                    // gives the real hardware's 256-dot gap between mode $10 and $08.
+                    let base_dot = if dot <= 256 { 3 } else { 323 };
+                    // `/ 2 % 4` on an odd dot with a constant base: the
+                    // shift-and-mask is the same value without the divide.
+                    let fetch_type = (((dot - base_dot) >> 1) & 3) as usize;
+                    if fetch_type >= 2 {
+                        cartridge.notify_vram_address(
+                            if self.registers.ctrl.background_pattern_table() {
+                                0x1000
+                            } else {
+                                0x0000
+                            },
+                        );
+                    }
+                }
+                259..=320 => {
+                    // Sprite tile fetch: only pattern-table accesses (fetch types 2-3).
+                    // Emitted on odd dots to align the MMC3 counter clock with the
+                    // observed ~dot-260 hardware timing.
+                    let fetch_type = (((dot - 259) >> 1) & 3) as usize;
+                    if fetch_type >= 2 {
+                        cartridge.notify_vram_address(
+                            if self.registers.ctrl.sprite_size_16()
+                                || self.registers.ctrl.sprite_pattern_table()
+                            {
+                                0x1000
+                            } else {
+                                0x0000
+                            },
+                        );
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+
+    /// Visible scanlines (0-239, ADR-0019): background anchor at dot 0,
+    /// shared fetches, sprite-overflow evaluation, fine-Y increment, and
+    /// pixel output. Moved verbatim out of `tick()`.
+    fn tick_visible(&mut self, rendering: bool, cartridge: &mut Cartridge) {
+        if self.timing.dot == 0 {
+            if self.timing.scanline == 0 {
                 // New frame: discard splits recorded after the previous
                 // flush (vblank/pre-render writes). The live mask already
                 // carries those color changes into this frame, and any
@@ -548,116 +620,28 @@ impl<R: Render> Ppu<R> {
                 self.buffered_pixel_from = self.next_beam_index();
                 self.buffered_pixel_count = 0;
             }
-            // The secondary-OAM swap runs on every line, including the
-            // pre-render line (261). Sprite evaluation itself only runs on
-            // visible scanlines 0-239, so scanline 0's swap brings in the
-            // empty buffer: no freshly evaluated sprites on line 0.
-            self.sprite.swap_secondary_oam();
-            // The sprite status bits are cleared one PPU dot before the
-            // rest of PPUSTATUS (vblank and the `$2006` toggle, cleared at
-            // dot 1 by `leave_vblank`). Blargg's ppu_sprite_hit 09-timing
-            // pins the sprite-0 hit clear boundary to the read at 6819
-            // clocks into the frame with sub-test 9 leaving 6818 still set,
-            // which is this dot-0 tick under the read-a-dot-late numbering
-            // described on `leave_vblank`.
-            if scanline == 261 {
-                self.clear_sprite_status();
-            }
-            if self.timing.in_visible_scanline() {
-                // compute background anchor at start of visible scanline
-                self.background_anchor = Some(BackgroundActivation::snapshot(self, 0));
-                self.pending_background_activation = None;
-                let render = self.ppu_render_state();
-                self.fill_tile_cache(0, cartridge, &render);
-            }
-        }
-        if self.sprite.status_dirty() {
-            self.sprite.update_ctrl_status(&mut self.registers.status);
+            // compute background anchor at start of visible scanline
+            self.background_anchor = Some(BackgroundActivation::snapshot(self, 0));
+            self.pending_background_activation = None;
+            let render = self.ppu_render_state();
+            self.fill_tile_cache(0, cartridge, &render);
         }
 
         if rendering {
-            // MMC3 scanline IRQs are driven by filtered PPU A12 rises.
-            //
-            // On the real NES the PPU address bus toggles A12 on each tile
-            // fetch.  The MMC3 filters the rapid bouncing and effectively
-            // clocks its IRQ counter once per scanline at the point where A12
-            // rises from a sustained low period:
-            //
-            //   * When BG uses $0xxx and sprites use $1xxx: the rise occurs at
-            //     the first sprite pattern fetch (~dot 260).
-            //   * When BG uses $1xxx and sprites use $0xxx: the rise occurs at
-            //     the first BG pattern fetch (~dot 4), with a second rise at
-            //     the BG-prefetch after sprite fetches (~dot 324).
-            //
-            // We model this by emitting only pattern-table addresses (skipping
-            // the nametable/attribute-table fetches that cause the filtered
-            // bouncing).  BG pattern addresses are emitted on odd dots and
-            // sprite pattern addresses on even dots, matching the real PPU's
-            // memory-access phasing.
-            //
-            // Manual $2006/$2007 writes still reach the mapper directly.
-            if self.timing.in_ppu_active_line() {
-                // Horizontal bits reload from temp at dot 257
-                // (visible scanlines and pre-render scanline)
-                if dot == 257 {
-                    // During sprite tile loading (dots 257-320 of visible scanlines and
-                    // the pre-render line) hardware drives OAMADDR to 0; software
-                    // polling $2003 mid-frame observes that.
-                    self.oam_addr = 0;
-                    self.reload_horizontal_from_temp();
-                }
+            self.tick_fetch_notify(cartridge);
 
-                if cartridge.wants_vram_notify() && (dot & 1) == 1 {
-                    match dot {
-                        3..=256 | 323..=336 => {
-                            // Notifications are shifted +2 dots (base 3/323 instead of 1/321)
-                            // so that the first BG pattern appears at dot 7 rather than dot 5.
-                            // Together with the sprite base (first pattern at dot 263), this
-                            // gives the real hardware's 256-dot gap between mode $10 and $08.
-                            let base_dot = if dot <= 256 { 3 } else { 323 };
-                            // `/ 2 % 4` on an odd dot with a constant base: the
-                            // shift-and-mask is the same value without the divide.
-                            let fetch_type = (((dot - base_dot) >> 1) & 3) as usize;
-                            if fetch_type >= 2 {
-                                cartridge.notify_vram_address(
-                                    if self.registers.ctrl.background_pattern_table() {
-                                        0x1000
-                                    } else {
-                                        0x0000
-                                    },
-                                );
-                            }
-                        }
-                        259..=320 => {
-                            // Sprite tile fetch: only pattern-table accesses (fetch types 2-3).
-                            // Emitted on odd dots to align the MMC3 counter clock with the
-                            // observed ~dot-260 hardware timing.
-                            let fetch_type = (((dot - 259) >> 1) & 3) as usize;
-                            if fetch_type >= 2 {
-                                cartridge.notify_vram_address(
-                                    if self.registers.ctrl.sprite_size_16()
-                                        || self.registers.ctrl.sprite_pattern_table()
-                                    {
-                                        0x1000
-                                    } else {
-                                        0x0000
-                                    },
-                                );
-                            }
-                        }
-                        _ => {}
-                    }
-                }
-            }
-
-            if self.timing.in_sprite_eval_area() {
+            if self.timing.in_sprite_eval_dots() {
+                let dot = self.timing.dot;
                 if dot == 65 {
                     self.sprite.begin_sprite_overflow_eval(self.oam_addr);
                 }
 
                 if (dot & 1) == 1 {
-                    self.sprite
-                        .step_sprite_overflow_eval(scanline, self.registers.ctrl, &self.oam);
+                    self.sprite.step_sprite_overflow_eval(
+                        self.timing.scanline,
+                        self.registers.ctrl,
+                        &self.oam,
+                    );
                 }
 
                 // --- vram_addr management (rendering-enabled only) ---
@@ -667,11 +651,6 @@ impl<R: Render> Ppu<R> {
                     self.increment_vram_y();
                 }
             }
-
-            // Vertical bits reload from temp at dots 280-304 of pre-render scanline
-            if self.timing.is_prepare_line() && dot == 304 {
-                self.reload_vertical_from_temp();
-            }
         }
 
         // Visible pixels are output on dots 1-256; dot 0 is the idle fetch
@@ -679,18 +658,18 @@ impl<R: Render> Ppu<R> {
         // geometry (TileCache background fetch, sprite evaluation, sprite-0
         // hit) into a palette index only and stores it in the flat buffer
         // at the beam position — no RGB work here. Color (grayscale and
-        // emphasis) is applied once, at the flush in `enter_vblank` below.
+        // emphasis) is applied once, at the flush in `tick_vertical_blank` below.
         // Mid-frame `$2001` color changes are recorded as split points
         // in `write_ppureg` and applied per segment by the flush below;
         // enable bits, by contrast, take effect here immediately.
-        if self.timing.is_visible() {
-            let x = (dot - 1) as u8;
+        if self.timing.is_visible_dots() {
+            let x = (self.timing.dot - 1) as u8;
             let pixel_idx = if rendering {
                 self.render_pixel(x, cartridge)
             } else {
                 self.palette.disabled_color_index(self.registers.vram_addr)
             };
-            let index = scanline as usize * VISIBLE_WIDTH + x as usize;
+            let index = self.timing.scanline as usize * VISIBLE_WIDTH + x as usize;
             self.palette_index_buffer[index] = pixel_idx;
             // Monotonic per frame (ticket #67): a backward timing jump
             // must never lower the cursor, or already-buffered beam
@@ -699,8 +678,50 @@ impl<R: Render> Ppu<R> {
             // start / reset above.
             self.buffered_pixel_count = self.buffered_pixel_count.max(index + 1);
         }
+    }
 
-        if self.timing.enter_vblank() {
+    /// Pre-render scanline (261, ADR-0019): sprite-status clear at dot 0,
+    /// shared fetches, vertical scroll reload at dot 304, and the vblank
+    /// flag clear at dot 1. Moved verbatim out of `tick()`.
+    fn tick_pre_render(&mut self, rendering: bool, cartridge: &mut Cartridge) {
+        let dot = self.timing.dot;
+        if dot == 0 {
+            // The sprite status bits are cleared one PPU dot before the
+            // rest of PPUSTATUS (vblank and the `$2006` toggle, cleared at
+            // dot 1 below). Blargg's ppu_sprite_hit 09-timing
+            // pins the sprite-0 hit clear boundary to the read at 6819
+            // clocks into the frame with sub-test 9 leaving 6818 still set,
+            // which is this dot-0 tick under the read-a-dot-late numbering
+            // described on the dot-1 clear below.
+            self.clear_sprite_status();
+        }
+
+        if rendering {
+            self.tick_fetch_notify(cartridge);
+
+            // Vertical bits reload from temp at dots 280-304 of pre-render scanline
+            if dot == 304 {
+                self.reload_vertical_from_temp();
+            }
+        }
+
+        // Dot 1 drops the rest of PPUSTATUS (vblank and the `$2006`
+        // toggle). An edge written during the tick that processes dot `d`
+        // is observable to `$2002` reads whose timing already shows `d + 1`,
+        // so this keeps the flag readable through the read at dot 1 and
+        // clears it for the read at dot 2. Blargg's vbl_nmi_timing
+        // 4.vbl_clear_timing pins that boundary: clearing on the dot-0 tick
+        // is a "Cleared 1 PPU clock too early" failure.
+        if self.timing.dot == 1 {
+            self.registers.status = PpuStatus::EMPTY;
+            self.sprite.clear_pending();
+        }
+    }
+
+    /// Vertical-blanking entry line (241, ADR-0019): the VBL set dot
+    /// flushes the buffered frame. Moved verbatim out of `tick()`.
+    fn tick_vertical_blank(&mut self) {
+        if self.timing.dot == 1 {
             // Flush the whole frame's buffered palette indices through the
             // Render seam (raster order) before `finish()`, exactly once
             // per frame, at the VBL set dot.
@@ -711,10 +732,47 @@ impl<R: Render> Ppu<R> {
                 self.registers.status.set_v_blank(true);
             }
         }
+    }
 
-        if self.timing.leave_vblank() {
-            self.registers.status = PpuStatus::EMPTY;
-            self.sprite.clear_pending();
+    #[hotpath::measure(impl_type = "Ppu")]
+    pub fn tick(&mut self, cartridge: &mut Cartridge) {
+        crate::hotpath_cpu::hotpath_cpu_alias!(
+            Self,
+            concat!(module_path!(), "::Ppu::tick"),
+            "tick"
+        );
+        self.cycle += 1;
+
+        if self.timing.scanline == 261 && self.timing.dot == 338 {
+            self.ren_latched_at_338 = self.rendering_enabled();
+        }
+        if self.timing.dot == 0 {
+            // The secondary-OAM swap runs on every line, including the
+            // pre-render line (261). Sprite evaluation itself only runs on
+            // visible scanlines 0-239, so scanline 0's swap brings in the
+            // empty buffer: no freshly evaluated sprites on line 0.
+            self.sprite.swap_secondary_oam();
+            // State-specific dot-0 work (frame-start reset, sprite-status
+            // clear, background anchor) lives in the state helpers below.
+        }
+        if self.sprite.status_dirty() {
+            self.sprite.update_ctrl_status(&mut self.registers.status);
+        }
+
+        // State dispatch (ADR-0019): the scanline-band helpers own all
+        // rendering, pixel, and flag work; the dot-0 swap and status pump
+        // above stay shared across all five states.
+        match self.timing.status() {
+            RenderingStatus::Visible => self.tick_visible(self.rendering_enabled(), cartridge),
+            RenderingStatus::PreRender => self.tick_pre_render(self.rendering_enabled(), cartridge),
+            // Scanline 240: idle; the shared dot-0 swap and status pump
+            // in `tick()` still run, but this line has no fetch, pixel,
+            // or flag work.
+            RenderingStatus::PostRender => {}
+            RenderingStatus::EnterVerticalBlank => self.tick_vertical_blank(),
+            // Scanlines 242–260: fully idle; the frame flush already ran
+            // on the entry line.
+            RenderingStatus::RemainVerticalBlank => {}
         }
 
         self.timing.advance(self.ren_latched_at_338);

@@ -2059,14 +2059,14 @@ fn timing_advance_state(
 #[test_case(240, 1, false; "scanline 240 dot 1 is not visible")]
 #[test_case(261, 1, false; "pre-render scanline is not visible")]
 #[test_case(239, 340, false; "hblank dot is not visible")]
-fn timing_is_visible(scanline: u16, dot: u16, expected: bool) {
+fn timing_next_visible_x(scanline: u16, dot: u16, expected: bool) {
     let t = Timing {
         scanline,
         dot,
         odd_frame: false,
         frame_no: 0,
     };
-    assert_eq!(t.is_visible(), expected);
+    assert_eq!(t.next_visible_x().is_some(), expected);
 }
 
 #[test_case(64, false; "dot 64 is before sprite-eval dots")]
@@ -2081,57 +2081,6 @@ fn timing_in_sprite_eval_dots(dot: u16, expected: bool) {
         frame_no: 0,
     };
     assert_eq!(t.in_sprite_eval_dots(), expected);
-}
-
-#[test_case(0, 64, false; "dot 64 is before sprite evaluation")]
-#[test_case(0, 65, true; "dot 65 starts sprite-eval area")]
-#[test_case(0, 256, true; "dot 256 is in sprite-eval area")]
-#[test_case(0, 257, false; "dot 257 is outside sprite-eval area")]
-#[test_case(239, 128, true; "scanline 239 dot 128 is in sprite-eval area")]
-#[test_case(240, 128, false; "scanline 240 is not visible")]
-#[test_case(261, 128, false; "pre-render scanline is not visible")]
-fn timing_in_sprite_eval_area(scanline: u16, dot: u16, expected: bool) {
-    let t = Timing {
-        scanline,
-        dot,
-        odd_frame: false,
-        frame_no: 0,
-    };
-    assert_eq!(t.in_sprite_eval_area(), expected);
-}
-
-#[test_case(241, 1, true; "scanline 241 dot 1 enters vblank")]
-#[test_case(241, 0, false; "one dot before vblank")]
-#[test_case(241, 2, false; "one dot after vblank")]
-#[test_case(240, 1, false; "one scanline before vblank")]
-#[test_case(242, 1, false; "one scanline after vblank")]
-#[test_case(0, 0, false; "arbitrary timing not vblank")]
-#[test_case(261, 1, false; "pre-render scanline not vblank")]
-fn timing_enter_vblank(scanline: u16, dot: u16, expected: bool) {
-    let t = Timing {
-        scanline,
-        dot,
-        odd_frame: false,
-        frame_no: 0,
-    };
-    assert_eq!(t.enter_vblank(), expected);
-}
-
-#[test_case(261, 1, true; "scanline 261 dot 1 leaves vblank")]
-#[test_case(261, 0, false; "one dot before leave vblank")]
-#[test_case(261, 2, false; "one dot after leave vblank")]
-#[test_case(260, 1, false; "one scanline before leave vblank")]
-#[test_case(0, 1, false; "frame start not leave vblank")]
-#[test_case(0, 0, false; "arbitrary timing not leave vblank")]
-#[test_case(241, 1, false; "vblank set not leave vblank")]
-fn timing_leave_vblank(scanline: u16, dot: u16, expected: bool) {
-    let t = Timing {
-        scanline,
-        dot,
-        odd_frame: false,
-        frame_no: 0,
-    };
-    assert_eq!(t.leave_vblank(), expected);
 }
 
 // --- Batch palette-index flush (ticket #62) ---------------------------------
