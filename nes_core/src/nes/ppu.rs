@@ -673,7 +673,7 @@ impl<R: Render> Ppu<R> {
             } else {
                 self.palette.disabled_color_index(self.registers.vram_addr)
             };
-            let index = self.timing.scanline as u16 * VISIBLE_WIDTH + x as u16;
+            let index = self.timing.scanline * VISIBLE_WIDTH + x as u16;
             self.palette_index_buffer[index as usize] = pixel_idx;
             // Monotonic per frame (ticket #67): a backward timing jump
             // must never lower the cursor, or already-buffered beam
@@ -753,9 +753,7 @@ impl<R: Render> Ppu<R> {
         );
         self.cycle += 1;
 
-        if self.sprite.status_dirty() {
-            self.sprite.update_ctrl_status(&mut self.registers.status);
-        }
+        self.sprite.update_ctrl_status(&mut self.registers.status);
 
         // State dispatch (ADR-0019): the scanline-band helpers own all
         // rendering, pixel, and flag work; the dot-0 swap and status pump
@@ -927,7 +925,7 @@ impl<R: Render> Ppu<R> {
         if x >= VISIBLE_WIDTH || y >= VISIBLE_HEIGHT {
             return 0;
         }
-        let index = y as u16 * VISIBLE_WIDTH + x as u16;
+        let index = y * VISIBLE_WIDTH + x;
         if !(self.buffered_pixel_from..self.buffered_pixel_count).contains(&index) {
             return 0;
         }
@@ -1051,7 +1049,7 @@ impl<R: Render> Ppu<R> {
                             _ => 0,
                         }
                     };
-                    let index = next.saturating_sub(pending) as u16;
+                    let index = next.saturating_sub(pending);
                     self.color_splits.push(ColorSplit { index, prior });
                 }
             }
