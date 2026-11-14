@@ -244,7 +244,7 @@ pub struct Ppu<R: Render = ()> {
     /// split position rather than pipeline slots (see #63). Palette RAM is
     /// still read live at per-dot resolve time, so a palette write takes
     /// effect from its beam position without flushing geometry.
-    palette_index_buffer: Box<[u8]>,
+    palette_index_buffer: Box<[u8; VISIBLE_WIDTH * VISIBLE_HEIGHT]>,
     /// Mid-frame `$2001` color changes for the frame being buffered
     /// (ticket #63), in beam order. Consumed and cleared by
     /// [`Self::flush_palette_index_buffer`]; splits recorded after the
@@ -310,7 +310,7 @@ impl<R: Render> Ppu<R> {
             ren_latched_at_338: false,
             cycle: 0,
             ppudata_last_read: None,
-            palette_index_buffer: vec![0; VISIBLE_WIDTH * VISIBLE_HEIGHT].into_boxed_slice(),
+            palette_index_buffer: Box::new([0; VISIBLE_WIDTH * VISIBLE_HEIGHT]),
             color_splits: Vec::new(),
             buffered_pixel_count: 0,
             buffered_pixel_from: 0,
