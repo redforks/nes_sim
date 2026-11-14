@@ -597,16 +597,13 @@ impl<R: Render> Ppu<R> {
             //
             // Manual $2006/$2007 writes still reach the mapper directly.
             if self.timing.in_ppu_active_line() {
-                // During sprite tile loading (dots 257-320 of visible scanlines and
-                // the pre-render line) hardware drives OAMADDR to 0; software
-                // polling $2003 mid-frame observes that.
-                if (257..=320).contains(&dot) {
-                    self.oam_addr = 0;
-                }
-
                 // Horizontal bits reload from temp at dot 257
                 // (visible scanlines and pre-render scanline)
                 if dot == 257 {
+                    // During sprite tile loading (dots 257-320 of visible scanlines and
+                    // the pre-render line) hardware drives OAMADDR to 0; software
+                    // polling $2003 mid-frame observes that.
+                    self.oam_addr = 0;
                     self.reload_horizontal_from_temp();
                 }
 
@@ -672,7 +669,7 @@ impl<R: Render> Ppu<R> {
             }
 
             // Vertical bits reload from temp at dots 280-304 of pre-render scanline
-            if self.timing.is_prepare_line() && (280..=304).contains(&dot) {
+            if self.timing.is_prepare_line() && dot == 304 {
                 self.reload_vertical_from_temp();
             }
         }
