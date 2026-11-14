@@ -8,7 +8,6 @@ members = ["nes_core", "nes_cpu_test", "nes_web", "nescli", "nes_sdl"]
 log = { version = "0.4", features = ["release_max_level_info"] }
 thiserror = "2"
 anyhow = "1"
-serde = { version = "1.0.228", features = ["derive"] }
 bitfield-struct = "0.13"
 
 # CLI and argument parsing
@@ -19,8 +18,6 @@ is-terminal = "0.4"
 # Image handling
 image = { version = "0.25", default-features = false, features = ["png"] }
 
-# Iterator utilities
-itertools = "0.14"
 arraydeque = "0.5"
 
 # Safe transmute / zero-copy
@@ -78,7 +75,7 @@ debug = 1
 inherits = "release"
 debug = 0
 lto = "fat"
-trim = true
+strip = true
 
 # Profiling profile: inherits release with full debug symbols and no stripping.
 # Used by `just profile` (perf + flamegraph) for accurate call graphs.

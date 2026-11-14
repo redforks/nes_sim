@@ -2520,7 +2520,7 @@ mod tests {
         assert_eq!(MMC5::split_tile_row(0, 240), 30);
         // Past 255 rolls over to the top of the nametable.
         assert_eq!(MMC5::split_tile_row(17, 239), 0);
-        assert_eq!(MMC5::split_tile_row(100, 100), ((200 / 8) % 32) as u8);
+        assert_eq!(MMC5::split_tile_row(100, 100), (200 / 8) as u8);
     }
 
     // Multiplier spec vectors (wiki 3.6.6): instant recompute on every
@@ -2528,7 +2528,7 @@ mod tests {
     #[test]
     fn multiplier_vectors() {
         let (mut mapper, mut memory) = board_8k(2, [0; 6]);
-        let mut product = |mapper: &mut MMC5, memory: &mut CartridgeMemory, a: u8, b: u8| {
+        let product = |mapper: &mut MMC5, memory: &mut CartridgeMemory, a: u8, b: u8| {
             mapper.cpu_write(0x5205, a, SystemClock::default(), memory);
             mapper.cpu_write(0x5206, b, SystemClock::default(), memory);
             (mapper.read_expansion(0x5205), mapper.read_expansion(0x5206))

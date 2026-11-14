@@ -131,9 +131,9 @@ mod tests {
         let mut p = DetectDeadLoop::<1, 0>::new();
 
         cpu.set_pc(0x8000);
-        let view = build_view(&mut cpu, &mut bus);
+        let view = build_view(&mut cpu, &bus);
         p.end(&view);
-        let view = build_view(&mut cpu, &mut bus);
+        let view = build_view(&mut cpu, &bus);
         p.end(&view);
 
         assert!(p.should_exit);
@@ -151,9 +151,9 @@ mod tests {
         let mut p = DetectDeadLoop::<1, 0>::new();
 
         cpu.set_pc(0x8000);
-        let view = build_view(&mut cpu, &mut bus);
+        let view = build_view(&mut cpu, &bus);
         p.end(&view);
-        let view = build_view(&mut cpu, &mut bus);
+        let view = build_view(&mut cpu, &bus);
         p.end(&view);
 
         assert!(p.should_exit);

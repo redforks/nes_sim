@@ -110,9 +110,9 @@ pub(crate) unsafe fn convert_ssse3(indices: &[u8], lut: &FinalColorLut, out: &mu
         let mask_low = _mm_set1_epi8(0x0F);
         let mask_high = _mm_set1_epi8(0x03);
         let zero = _mm_setzero_si128();
-        let mut chunks = indices.chunks_exact(16);
-        let mut out_chunks = out.chunks_exact_mut(16);
-        for (chunk, dst) in (&mut chunks).zip(&mut out_chunks) {
+        let (chunks, rem) = indices.as_chunks::<16>();
+        let (out_chunks, rem_out) = out.as_chunks_mut::<16>();
+        for (chunk, dst) in chunks.iter().zip(out_chunks.iter_mut()) {
             // SAFETY: chunk is exactly 16 bytes / dst exactly 16 words;
             // the load/store pointers below are in-bounds for both.
             let idx = _mm_and_si128(_mm_loadu_si128(chunk.as_ptr() as *const __m128i), mask6);
@@ -150,8 +150,6 @@ pub(crate) unsafe fn convert_ssse3(indices: &[u8], lut: &FinalColorLut, out: &mu
                 dst[i] = Pixel::new(rgb[0][i], rgb[1][i], rgb[2][i]).to_u32();
             }
         }
-        let rem = chunks.remainder();
-        let rem_out = out_chunks.into_remainder();
         convert_scalar(rem, lut, rem_out);
     }
 }

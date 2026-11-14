@@ -14,5 +14,4 @@ hotpath-callgrind = ["hotpath", "hotpath/hotpath-callgrind"]
 [dependencies]
 sdl2 = { version = "0.38", features = ["unsafe_textures"] }
 nes_core = { workspace = true }
-image = { workspace = true }
 hotpath = "0.30"

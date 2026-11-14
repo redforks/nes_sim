@@ -232,9 +232,9 @@ impl Registers {
     pub fn refresh_bus_latch(&mut self, value: u8, cycle: u64) {
         self.apply_bus_decay(cycle);
         self.bus_latch = value;
-        for bit in 0..8 {
-            let mask = 1 << bit;
-            self.bus_latch_decay_deadlines[bit] = if (value & mask) != 0 {
+        for (bit, deadline) in self.bus_latch_decay_deadlines.iter_mut().enumerate() {
+            let mask = 1u8 << bit;
+            *deadline = if (value & mask) != 0 {
                 cycle.wrapping_add(PPU_OPEN_BUS_DECAY_TICKS)
             } else {
                 0

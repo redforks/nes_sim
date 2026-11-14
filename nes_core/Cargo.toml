@@ -17,7 +17,6 @@ hotpath-callgrind = ["hotpath", "hotpath/hotpath-callgrind"]
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-itertools = { workspace = true }
 arraydeque = { workspace = true }
 log = { workspace = true }
 winnow = { workspace = true }
@@ -26,7 +25,6 @@ thiserror = { workspace = true }
 tinyvec = { version = "1.11.0", features = ["latest_stable_rust"] }
 bitfield-struct.workspace = true
 bytemuck.workspace = true
-serde.workspace = true
 anyhow.workspace = true
 base64 = "0.22.1"
 md5 = "0.8.0"

@@ -147,7 +147,7 @@ fn test_irq_detector() {
 /// (`t % 3 == 2`, sampling the line as of dot `t - 2`) return whether an
 /// edge was recognised there (consuming it, as the interrupt dispatch would).
 fn dot(v: &mut NmiDetector, t: u64, high: bool) -> bool {
-    v.update_nmi_input(high, t, t % 3 == 0);
+    v.update_nmi_input(high, t, t.is_multiple_of(3));
     if t % 3 == 2 && v.detect_nmi() {
         v.mark_consumed();
         true
