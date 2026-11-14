@@ -849,8 +849,10 @@ impl PlayMovieAction {
                 // rebuilt); the BK2 Reset column and the FM2 reset flag are
                 // the front-panel RESET button (state persists).
                 if input_log.command.hard_reset() {
+                    frame_index += 1;
                     machine.hard_reset();
                 } else if input_log.command.soft_reset() {
+                    frame_index += 1;
                     machine.soft_reset();
                 }
                 set_controller_a_from_gamepad(&mut machine, &input_log.port0);
