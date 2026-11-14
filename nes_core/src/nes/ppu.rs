@@ -136,16 +136,18 @@ impl Timing {
         self.dot >= 65 && self.dot <= 256
     }
 
-    fn advance(&mut self, ren_latched_at_338: bool) {
+    fn advance(&mut self, status: RenderingStatus, ren_latched_at_338: bool) {
         match self.dot {
             ..339 => self.dot += 1,
-            339 if self.scanline != 261 || (!self.odd_frame || !ren_latched_at_338) => {
+            339 if status != RenderingStatus::PreRender
+                || (!self.odd_frame || !ren_latched_at_338) =>
+            {
                 self.dot += 1
             }
             _ => {
                 self.dot = 0;
                 self.scanline += 1;
-                if self.scanline >= 262 {
+                if status == RenderingStatus::PreRender {
                     self.scanline = 0;
                     self.odd_frame = !self.odd_frame;
                     self.frame_no += 1;
@@ -684,37 +686,42 @@ impl<R: Render> Ppu<R> {
     /// shared fetches, vertical scroll reload at dot 304, and the vblank
     /// flag clear at dot 1. Moved verbatim out of `tick()`.
     fn tick_pre_render(&mut self, rendering: bool, cartridge: &mut Cartridge) {
-        let dot = self.timing.dot;
-        if dot == 0 {
-            // The sprite status bits are cleared one PPU dot before the
-            // rest of PPUSTATUS (vblank and the `$2006` toggle, cleared at
-            // dot 1 below). Blargg's ppu_sprite_hit 09-timing
-            // pins the sprite-0 hit clear boundary to the read at 6819
-            // clocks into the frame with sub-test 9 leaving 6818 still set,
-            // which is this dot-0 tick under the read-a-dot-late numbering
-            // described on the dot-1 clear below.
-            self.clear_sprite_status();
+        match self.timing.dot {
+            0 => {
+                // The sprite status bits are cleared one PPU dot before the
+                // rest of PPUSTATUS (vblank and the `$2006` toggle, cleared at
+                // dot 1 below). Blargg's ppu_sprite_hit 09-timing
+                // pins the sprite-0 hit clear boundary to the read at 6819
+                // clocks into the frame with sub-test 9 leaving 6818 still set,
+                // which is this dot-0 tick under the read-a-dot-late numbering
+                // described on the dot-1 clear below.
+                self.clear_sprite_status();
+            }
+            1 => {
+                // Dot 1 drops the rest of PPUSTATUS (vblank and the `$2006`
+                // toggle). An edge written during the tick that processes dot `d`
+                // is observable to `$2002` reads whose timing already shows `d + 1`,
+                // so this keeps the flag readable through the read at dot 1 and
+                // clears it for the read at dot 2. Blargg's vbl_nmi_timing
+                // 4.vbl_clear_timing pins that boundary: clearing on the dot-0 tick
+                // is a "Cleared 1 PPU clock too early" failure.
+                self.registers.status = PpuStatus::EMPTY;
+                self.sprite.clear_pending();
+            }
+            304 => {
+                // Vertical bits reload from temp at dots 280-304 of pre-render scanline
+                if rendering {
+                    self.reload_vertical_from_temp();
+                }
+            }
+            338 => {
+                self.ren_latched_at_338 = rendering;
+            }
+            _ => {}
         }
 
         if rendering {
             self.tick_fetch_notify(cartridge);
-
-            // Vertical bits reload from temp at dots 280-304 of pre-render scanline
-            if dot == 304 {
-                self.reload_vertical_from_temp();
-            }
-        }
-
-        // Dot 1 drops the rest of PPUSTATUS (vblank and the `$2006`
-        // toggle). An edge written during the tick that processes dot `d`
-        // is observable to `$2002` reads whose timing already shows `d + 1`,
-        // so this keeps the flag readable through the read at dot 1 and
-        // clears it for the read at dot 2. Blargg's vbl_nmi_timing
-        // 4.vbl_clear_timing pins that boundary: clearing on the dot-0 tick
-        // is a "Cleared 1 PPU clock too early" failure.
-        if self.timing.dot == 1 {
-            self.registers.status = PpuStatus::EMPTY;
-            self.sprite.clear_pending();
         }
     }
 
@@ -743,9 +750,6 @@ impl<R: Render> Ppu<R> {
         );
         self.cycle += 1;
 
-        if self.timing.scanline == 261 && self.timing.dot == 338 {
-            self.ren_latched_at_338 = self.rendering_enabled();
-        }
         if self.timing.dot == 0 {
             // The secondary-OAM swap runs on every line, including the
             // pre-render line (261). Sprite evaluation itself only runs on
@@ -763,19 +767,38 @@ impl<R: Render> Ppu<R> {
         // rendering, pixel, and flag work; the dot-0 swap and status pump
         // above stay shared across all five states.
         match self.timing.status() {
-            RenderingStatus::Visible => self.tick_visible(self.rendering_enabled(), cartridge),
-            RenderingStatus::PreRender => self.tick_pre_render(self.rendering_enabled(), cartridge),
+            RenderingStatus::Visible => {
+                self.tick_visible(self.rendering_enabled(), cartridge);
+                self.timing
+                    .advance(RenderingStatus::Visible, self.ren_latched_at_338);
+            }
+            RenderingStatus::PreRender => {
+                self.tick_pre_render(self.rendering_enabled(), cartridge);
+                self.timing
+                    .advance(RenderingStatus::PreRender, self.ren_latched_at_338);
+            }
             // Scanline 240: idle; the shared dot-0 swap and status pump
             // in `tick()` still run, but this line has no fetch, pixel,
             // or flag work.
-            RenderingStatus::PostRender => {}
-            RenderingStatus::EnterVerticalBlank => self.tick_vertical_blank(),
+            RenderingStatus::PostRender => {
+                self.timing
+                    .advance(RenderingStatus::PostRender, self.ren_latched_at_338);
+            }
+            RenderingStatus::EnterVerticalBlank => {
+                self.tick_vertical_blank();
+                self.timing
+                    .advance(RenderingStatus::EnterVerticalBlank, self.ren_latched_at_338);
+            }
             // Scanlines 242–260: fully idle; the frame flush already ran
             // on the entry line.
-            RenderingStatus::RemainVerticalBlank => {}
+            RenderingStatus::RemainVerticalBlank => {
+                self.timing.advance(
+                    RenderingStatus::RemainVerticalBlank,
+                    self.ren_latched_at_338,
+                );
+            }
         }
 
-        self.timing.advance(self.ren_latched_at_338);
         cartridge.on_ppu_tick(self.timing.scanline);
     }
 
@@ -831,6 +854,7 @@ impl<R: Render> Ppu<R> {
     /// framebuffer an incomplete frame (e.g. after a mid-frame reset)
     /// would have produced per-dot.
     ///
+    #[inline(never)]
     fn flush_palette_index_buffer(&mut self) {
         let live = ColorConfig::from_mask(self.registers.mask);
         let frame_len = self.palette_index_buffer.len();

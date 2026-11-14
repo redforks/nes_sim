@@ -2047,7 +2047,7 @@ fn timing_advance_state(
         frame_no: 0,
     };
 
-    t.advance(rendering_enabled);
+    t.advance(t.status(), rendering_enabled);
     (t.scanline, t.dot, t.odd_frame, t.frame_no)
 }
 
