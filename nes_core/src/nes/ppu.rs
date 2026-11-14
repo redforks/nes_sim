@@ -610,6 +610,7 @@ impl<R: Render> Ppu<R> {
     /// pixel output. Moved verbatim out of `tick()`.
     fn tick_visible(&mut self, rendering: bool, cartridge: &mut Cartridge) {
         if self.timing.dot == 0 {
+            self.sprite.swap_secondary_oam();
             if self.timing.scanline == 0 {
                 // New frame: discard splits recorded after the previous
                 // flush (vblank/pre-render writes). The live mask already
@@ -688,6 +689,7 @@ impl<R: Render> Ppu<R> {
     fn tick_pre_render(&mut self, rendering: bool, cartridge: &mut Cartridge) {
         match self.timing.dot {
             0 => {
+                self.sprite.swap_secondary_oam();
                 // The sprite status bits are cleared one PPU dot before the
                 // rest of PPUSTATUS (vblank and the `$2006` toggle, cleared at
                 // dot 1 below). Blargg's ppu_sprite_hit 09-timing
@@ -750,15 +752,6 @@ impl<R: Render> Ppu<R> {
         );
         self.cycle += 1;
 
-        if self.timing.dot == 0 {
-            // The secondary-OAM swap runs on every line, including the
-            // pre-render line (261). Sprite evaluation itself only runs on
-            // visible scanlines 0-239, so scanline 0's swap brings in the
-            // empty buffer: no freshly evaluated sprites on line 0.
-            self.sprite.swap_secondary_oam();
-            // State-specific dot-0 work (frame-start reset, sprite-status
-            // clear, background anchor) lives in the state helpers below.
-        }
         if self.sprite.status_dirty() {
             self.sprite.update_ctrl_status(&mut self.registers.status);
         }
