@@ -854,31 +854,22 @@ impl<R: Render> Ppu<R> {
     ///
     #[inline(never)]
     fn flush_palette_index_buffer(&mut self) {
-        let live = ColorConfig::from_mask(self.registers.mask);
         let frame_len = self.palette_index_buffer.len() as u16;
         let valid_start = self.buffered_pixel_from.min(frame_len);
         let valid_end = self.buffered_pixel_count.clamp(valid_start, frame_len);
-        // Black here is the zeroed framebuffer pixel `[0, 0, 0, 0]`
-        // (not an opaque palette color): that is what a position the
-        // beam never reached held in the pre-change per-dot framebuffer.
-        for index in 0..valid_start {
-            self.emit_pixel(index, Pixel::from_u32(0));
-        }
-        let split_count = self.color_splits.len();
         let mut start = 0u16;
-        for segment in 0..=split_count {
-            let (end, config) = if segment < split_count {
+        for segment in 0..=self.color_splits.len() {
+            let (end, config) = if segment < self.color_splits.len() {
                 let split = self.color_splits[segment];
                 (split.index.min(frame_len), split.prior)
             } else {
-                (frame_len, live)
+                (frame_len, ColorConfig::from_mask(self.registers.mask))
             };
-            let seg_start = start;
             // Every flush segment goes through the per-segment 64-entry
             // LUT + batched gather (scalar or SSSE3, identical output).
             // Ticket #67 removed the small-segment bypass: one path, no
             // extra branch, and `perf` shows the flush is not the Hot Path.
-            let mut index = seg_start.max(valid_start);
+            let mut index = start.max(valid_start);
             let seg_end = end.min(valid_end);
             if index < seg_end {
                 let lut = batch_convert::build_final_color_lut(&self.color_theme, config);
@@ -900,9 +891,6 @@ impl<R: Render> Ppu<R> {
             // Monotonic start: duplicate or out-of-order split indices
             // close empty segments without re-emitting earlier pixels.
             start = start.max(end);
-        }
-        for index in valid_end..frame_len {
-            self.emit_pixel(index, Pixel::from_u32(0));
         }
         self.color_splits.clear();
     }
