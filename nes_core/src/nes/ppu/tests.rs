@@ -2069,35 +2069,35 @@ fn timing_is_visible(scanline: u16, dot: u16, expected: bool) {
     assert_eq!(t.is_visible(), expected);
 }
 
-#[test_case(64, false; "dot 64 is before visible dots")]
-#[test_case(65, true; "dot 65 starts visible dots")]
-#[test_case(256, true; "dot 256 is last visible dot")]
-#[test_case(257, false; "dot 257 is outside visible dots")]
-fn timing_in_visible_dots(dot: u16, expected: bool) {
+#[test_case(64, false; "dot 64 is before sprite-eval dots")]
+#[test_case(65, true; "dot 65 starts sprite-eval dots")]
+#[test_case(256, true; "dot 256 is last sprite-eval dot")]
+#[test_case(257, false; "dot 257 is outside sprite-eval dots")]
+fn timing_in_sprite_eval_dots(dot: u16, expected: bool) {
     let t = Timing {
         scanline: 0,
         dot,
         odd_frame: false,
         frame_no: 0,
     };
-    assert_eq!(t.in_visible_dots(), expected);
+    assert_eq!(t.in_sprite_eval_dots(), expected);
 }
 
 #[test_case(0, 64, false; "dot 64 is before sprite evaluation")]
-#[test_case(0, 65, true; "dot 65 starts visible area")]
-#[test_case(0, 256, true; "dot 256 is in visible area")]
-#[test_case(0, 257, false; "dot 257 is outside visible area")]
-#[test_case(239, 128, true; "scanline 239 dot 128 is in visible area")]
+#[test_case(0, 65, true; "dot 65 starts sprite-eval area")]
+#[test_case(0, 256, true; "dot 256 is in sprite-eval area")]
+#[test_case(0, 257, false; "dot 257 is outside sprite-eval area")]
+#[test_case(239, 128, true; "scanline 239 dot 128 is in sprite-eval area")]
 #[test_case(240, 128, false; "scanline 240 is not visible")]
 #[test_case(261, 128, false; "pre-render scanline is not visible")]
-fn timing_in_visible_area(scanline: u16, dot: u16, expected: bool) {
+fn timing_in_sprite_eval_area(scanline: u16, dot: u16, expected: bool) {
     let t = Timing {
         scanline,
         dot,
         odd_frame: false,
         frame_no: 0,
     };
-    assert_eq!(t.in_visible_area(), expected);
+    assert_eq!(t.in_sprite_eval_area(), expected);
 }
 
 #[test_case(241, 1, true; "scanline 241 dot 1 enters vblank")]

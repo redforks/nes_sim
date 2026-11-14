@@ -113,16 +113,16 @@ impl Timing {
         self.in_visible_scanline() && self.dot >= 1 && self.dot <= 256
     }
 
-    /// Return true if dot is in visible dots (65-256), after the
+    /// Return true if dot is in sprite-evaluation dots (65-256), after the
     /// secondary-OAM clear phase
-    const fn in_visible_dots(&self) -> bool {
+    const fn in_sprite_eval_dots(&self) -> bool {
         self.dot >= 65 && self.dot <= 256
     }
 
-    /// Return true if scanline and dot is in visible area after sprite
-    /// evaluation (dots 65-256 of visible scanlines)
-    const fn in_visible_area(&self) -> bool {
-        self.in_visible_scanline() && self.in_visible_dots()
+    /// Return true if scanline and dot is in the sprite-evaluation area
+    /// (dots 65-256 of visible scanlines)
+    const fn in_sprite_eval_area(&self) -> bool {
+        self.in_visible_scanline() && self.in_sprite_eval_dots()
     }
 
     fn advance(&mut self, ren_latched_at_338: bool) {
@@ -650,7 +650,7 @@ impl<R: Render> Ppu<R> {
                 }
             }
 
-            if self.timing.in_visible_area() {
+            if self.timing.in_sprite_eval_area() {
                 if dot == 65 {
                     self.sprite.begin_sprite_overflow_eval(self.oam_addr);
                 }
@@ -1161,7 +1161,7 @@ impl<R: Render> Ppu<R> {
             if (1..=64).contains(&dot) {
                 return 0xFF;
             }
-            if self.timing.in_visible_dots() {
+            if self.timing.in_sprite_eval_dots() {
                 return self.sprite.copy_buffer();
             }
             if (257..=320).contains(&dot) {
