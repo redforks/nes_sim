@@ -608,7 +608,8 @@ impl<R: Render> Ppu<R> {
     /// Visible scanlines (0-239, ADR-0019): background anchor at dot 0,
     /// shared fetches, sprite-overflow evaluation, fine-Y increment, and
     /// pixel output. Moved verbatim out of `tick()`.
-    fn tick_visible(&mut self, rendering: bool, cartridge: &mut Cartridge) {
+    fn tick_visible(&mut self, cartridge: &mut Cartridge) {
+        let rendering = self.rendering_enabled();
         if self.timing.dot == 0 {
             self.sprite.swap_secondary_oam();
             if self.timing.scanline == 0 {
@@ -686,7 +687,7 @@ impl<R: Render> Ppu<R> {
     /// Pre-render scanline (261, ADR-0019): sprite-status clear at dot 0,
     /// shared fetches, vertical scroll reload at dot 304, and the vblank
     /// flag clear at dot 1. Moved verbatim out of `tick()`.
-    fn tick_pre_render(&mut self, rendering: bool, cartridge: &mut Cartridge) {
+    fn tick_pre_render(&mut self, cartridge: &mut Cartridge) {
         match self.timing.dot {
             0 => {
                 self.sprite.swap_secondary_oam();
@@ -712,17 +713,17 @@ impl<R: Render> Ppu<R> {
             }
             304 => {
                 // Vertical bits reload from temp at dots 280-304 of pre-render scanline
-                if rendering {
+                if self.rendering_enabled() {
                     self.reload_vertical_from_temp();
                 }
             }
             338 => {
-                self.ren_latched_at_338 = rendering;
+                self.ren_latched_at_338 = self.rendering_enabled();
             }
             _ => {}
         }
 
-        if rendering {
+        if self.rendering_enabled() {
             self.tick_fetch_notify(cartridge);
         }
     }
@@ -761,12 +762,12 @@ impl<R: Render> Ppu<R> {
         // above stay shared across all five states.
         match self.timing.status() {
             RenderingStatus::Visible => {
-                self.tick_visible(self.rendering_enabled(), cartridge);
+                self.tick_visible(cartridge);
                 self.timing
                     .advance(RenderingStatus::Visible, self.ren_latched_at_338);
             }
             RenderingStatus::PreRender => {
-                self.tick_pre_render(self.rendering_enabled(), cartridge);
+                self.tick_pre_render(cartridge);
                 self.timing
                     .advance(RenderingStatus::PreRender, self.ren_latched_at_338);
             }
