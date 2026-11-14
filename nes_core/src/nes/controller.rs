@@ -152,7 +152,7 @@ impl Zapper {
 
     /// Port-2 bits at the given beam position. `brightness(x, y)` reports
     /// the R+G+B luminance of the rendered pixel there.
-    pub fn read(&self, scanline: u16, dot: u16, brightness: impl Fn(u32, u32) -> u32) -> u8 {
+    pub fn read(&self, scanline: u16, dot: u16, brightness: impl Fn(u16, u16) -> u32) -> u8 {
         if !self.connected {
             return 0x00;
         }
@@ -160,7 +160,7 @@ impl Zapper {
         trigger_bit | self.light_sense(scanline, dot, brightness)
     }
 
-    fn light_sense(&self, scanline: u16, dot: u16, brightness: impl Fn(u32, u32) -> u32) -> u8 {
+    fn light_sense(&self, scanline: u16, dot: u16, brightness: impl Fn(u16, u16) -> u32) -> u8 {
         let min_y = self.y.saturating_sub(self.radius);
         let max_y = (self.y + self.radius).min(SCREEN_HEIGHT - 1);
         let min_x = self.x.saturating_sub(self.radius);
@@ -177,7 +177,7 @@ impl Zapper {
                 if scanline == y && dot <= x {
                     continue;
                 }
-                if brightness(u32::from(x), u32::from(y)) >= 85 {
+                if brightness(x, y) >= 85 {
                     return 0x00; // light detected
                 }
             }

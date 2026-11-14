@@ -23,8 +23,8 @@ use registers::{ColorConfig, PpuCtrl, PpuMask, PpuStatus, Registers};
 
 /// Visible frame dimensions: the flat palette-index buffer holds exactly
 /// one entry per visible beam position (`y * 256 + x`).
-const VISIBLE_WIDTH: usize = 256;
-const VISIBLE_HEIGHT: usize = 240;
+const VISIBLE_WIDTH: u16 = 256;
+const VISIBLE_HEIGHT: u16 = 240;
 
 // PPU Timing Constants
 const PPU_OPEN_BUS_DECAY_TICKS: u64 = 3_221_591 * crate::SYSTEM_CYCLES_PER_PPU_CYCLE;
@@ -59,7 +59,7 @@ impl TileCache {
 /// `prior`, or the live mask at flush time for the final segment.
 #[derive(Copy, Clone)]
 struct ColorSplit {
-    index: usize,
+    index: u16,
     prior: ColorConfig,
 }
 
@@ -244,7 +244,7 @@ pub struct Ppu<R: Render = ()> {
     /// split position rather than pipeline slots (see #63). Palette RAM is
     /// still read live at per-dot resolve time, so a palette write takes
     /// effect from its beam position without flushing geometry.
-    palette_index_buffer: Box<[u8; VISIBLE_WIDTH * VISIBLE_HEIGHT]>,
+    palette_index_buffer: Box<[u8; VISIBLE_WIDTH as usize * VISIBLE_HEIGHT as usize]>,
     /// Mid-frame `$2001` color changes for the frame being buffered
     /// (ticket #63), in beam order. Consumed and cleared by
     /// [`Self::flush_palette_index_buffer`]; splits recorded after the
@@ -258,13 +258,13 @@ pub struct Ppu<R: Render = ()> {
     /// and have not been scanned yet. [`Self::pixel_brightness`] answers
     /// black for the latter — matching the materialized framebuffer,
     /// which is also black until the beam passes.
-    buffered_pixel_count: usize,
+    buffered_pixel_count: u16,
     /// First beam position holding this frame's index (ticket #67).
     /// Normally 0; a mid-frame reset moves it to the next beam position,
     /// so positions scanned before the reset flush and report black
     /// instead of their stale pre-reset indices. The valid range is
     /// `buffered_pixel_from..buffered_pixel_count`.
-    buffered_pixel_from: usize,
+    buffered_pixel_from: u16,
     /// Set when the PPU timing enters vblank (scanline 241, dot 1).
     /// This is a pure timing event, independent of the $2002 VBL flag
     /// (which `$2002` reads clear and the dot-0 race can suppress).
@@ -310,7 +310,7 @@ impl<R: Render> Ppu<R> {
             ren_latched_at_338: false,
             cycle: 0,
             ppudata_last_read: None,
-            palette_index_buffer: Box::new([0; VISIBLE_WIDTH * VISIBLE_HEIGHT]),
+            palette_index_buffer: Box::new([0; VISIBLE_WIDTH as usize * VISIBLE_HEIGHT as usize]),
             color_splits: Vec::new(),
             buffered_pixel_count: 0,
             buffered_pixel_from: 0,
@@ -671,8 +671,8 @@ impl<R: Render> Ppu<R> {
             } else {
                 self.palette.disabled_color_index(self.registers.vram_addr)
             };
-            let index = self.timing.scanline as usize * VISIBLE_WIDTH + x as usize;
-            self.palette_index_buffer[index] = pixel_idx;
+            let index = self.timing.scanline as u16 * VISIBLE_WIDTH + x as u16;
+            self.palette_index_buffer[index as usize] = pixel_idx;
             // Monotonic per frame (ticket #67): a backward timing jump
             // must never lower the cursor, or already-buffered beam
             // positions would wrongly report black ("indices below the
@@ -821,17 +821,15 @@ impl<R: Render> Ppu<R> {
     /// the end of the frame: a `$2001` write there cannot colour any
     /// pixel of the frame being flushed, and the next frame starts with
     /// a fresh split list (cleared at scanline 0 dot 0).
-    fn next_beam_index(&self) -> usize {
-        const FRAME_PIXELS: usize = VISIBLE_WIDTH * VISIBLE_HEIGHT;
+    fn next_beam_index(&self) -> u16 {
+        const FRAME_PIXELS: u16 = VISIBLE_WIDTH * VISIBLE_HEIGHT;
         if self.timing.scanline >= 240 {
             return FRAME_PIXELS;
         }
         match self.timing.dot {
-            0 => self.timing.scanline as usize * VISIBLE_WIDTH,
-            1..=256 => {
-                self.timing.scanline as usize * VISIBLE_WIDTH + (self.timing.dot - 1) as usize
-            }
-            _ => ((self.timing.scanline as usize + 1) * VISIBLE_WIDTH).min(FRAME_PIXELS),
+            0 => self.timing.scanline * VISIBLE_WIDTH,
+            1..=256 => self.timing.scanline * VISIBLE_WIDTH + (self.timing.dot - 1),
+            _ => ((self.timing.scanline + 1) * VISIBLE_WIDTH).min(FRAME_PIXELS),
         }
     }
 
@@ -857,7 +855,7 @@ impl<R: Render> Ppu<R> {
     #[inline(never)]
     fn flush_palette_index_buffer(&mut self) {
         let live = ColorConfig::from_mask(self.registers.mask);
-        let frame_len = self.palette_index_buffer.len();
+        let frame_len = self.palette_index_buffer.len() as u16;
         let valid_start = self.buffered_pixel_from.min(frame_len);
         let valid_end = self.buffered_pixel_count.clamp(valid_start, frame_len);
         // Black here is the zeroed framebuffer pixel `[0, 0, 0, 0]`
@@ -867,7 +865,7 @@ impl<R: Render> Ppu<R> {
             self.emit_pixel(index, Pixel::from_u32(0));
         }
         let split_count = self.color_splits.len();
-        let mut start = 0usize;
+        let mut start = 0u16;
         for segment in 0..=split_count {
             let (end, config) = if segment < split_count {
                 let split = self.color_splits[segment];
@@ -886,14 +884,15 @@ impl<R: Render> Ppu<R> {
                 let lut = batch_convert::build_final_color_lut(&self.color_theme, config);
                 let mut chunk = [0u32; 16];
                 while index < seg_end {
-                    let chunk_len = (seg_end - index).min(chunk.len());
+                    let chunk_len = (seg_end - index).min(chunk.len() as u16);
                     batch_convert::convert(
-                        &self.palette_index_buffer[index..index + chunk_len],
+                        &self.palette_index_buffer
+                            [(index as usize)..((index + chunk_len) as usize)],
                         &lut,
-                        &mut chunk[..chunk_len],
+                        &mut chunk[..(chunk_len as usize)],
                     );
-                    for (offset, &word) in chunk[..chunk_len].iter().enumerate() {
-                        self.emit_pixel(index + offset, Pixel::from_u32(word));
+                    for (offset, &word) in chunk[..(chunk_len as usize)].iter().enumerate() {
+                        self.emit_pixel(index + offset as u16, Pixel::from_u32(word));
                     }
                     index += chunk_len;
                 }
@@ -912,7 +911,7 @@ impl<R: Render> Ppu<R> {
     /// Render seam. Single per-pixel emit shared by the LUT path, the
     /// black-fill for unscanned positions, and the segment loop direct
     /// callers (ticket #67).
-    fn emit_pixel(&mut self, index: usize, pixel: Pixel) {
+    fn emit_pixel(&mut self, index: u16, pixel: Pixel) {
         let x = (index % VISIBLE_WIDTH) as u32;
         let y = (index / VISIBLE_WIDTH) as u32;
         self.renderer.set_pixel(x, y, pixel.0);
@@ -942,16 +941,16 @@ impl<R: Render> Ppu<R> {
     /// not yet written this frame report black, matching the
     /// framebuffer's behaviour until the flush. Out-of-bounds
     /// coordinates also report black (same as `Render::pixel_brightness`).
-    pub fn pixel_brightness(&self, x: u32, y: u32) -> u32 {
-        if x >= VISIBLE_WIDTH as u32 || y >= VISIBLE_HEIGHT as u32 {
+    pub fn pixel_brightness(&self, x: u16, y: u16) -> u32 {
+        if x >= VISIBLE_WIDTH || y >= VISIBLE_HEIGHT {
             return 0;
         }
-        let index = y as usize * VISIBLE_WIDTH + x as usize;
+        let index = y as u16 * VISIBLE_WIDTH + x as u16;
         if !(self.buffered_pixel_from..self.buffered_pixel_count).contains(&index) {
             return 0;
         }
         let pixel = self.resolve_pixel(
-            self.palette_index_buffer[index],
+            self.palette_index_buffer[index as usize],
             ColorConfig::from_mask(self.registers.mask),
         );
         let (r, g, b) = pixel.to_rgb();
@@ -1070,7 +1069,7 @@ impl<R: Render> Ppu<R> {
                             _ => 0,
                         }
                     };
-                    let index = next.saturating_sub(pending);
+                    let index = next.saturating_sub(pending) as u16;
                     self.color_splits.push(ColorSplit { index, prior });
                 }
             }
