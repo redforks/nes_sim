@@ -107,7 +107,7 @@ impl Pulse {
             divider_2: Divider::new(1),
             length: LengthControl::default(),
             envelope: Envelope::default(),
-            sweep: Sweep::new(is_second_pulse_channel, 0.into()),
+            sweep: Sweep::new(is_second_pulse_channel, SweepBits::from_bytes([0])),
             sequencer: Sequencer::new(&PULSE_DUTY_TABLE[0]),
         }
     }
@@ -117,7 +117,7 @@ impl Pulse {
     }
 
     pub fn write_control(&mut self, value: PulseControlBits) {
-        self.envelope.config(value.into());
+        self.envelope.config(value.into_bytes()[0]);
         self.length.set_halt(value);
         self.sequencer
             .replace_items(&PULSE_DUTY_TABLE[value.duty() as usize]);

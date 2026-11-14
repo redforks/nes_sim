@@ -952,7 +952,7 @@ impl<R: Render> Ppu<R> {
         match reg {
             0x2002 => {
                 let status = self.read_status();
-                let status_bits = status.into_bits();
+                let status_bits = status.into_bytes()[0];
                 let result = (status_bits & 0xE0) | (self.current_bus_latch() & 0x1F);
                 self.refresh_bus_latch_bits(0xE0, status_bits);
                 result
@@ -1000,7 +1000,7 @@ impl<R: Render> Ppu<R> {
 
         let reg = normalize_ppu_addr(address);
         match reg {
-            0x2002 => self.registers.status.into_bits(),
+            0x2002 => self.registers.status.into_bytes()[0],
             0x2004 => self.read_oam_data(),
             0x2007 => self.read_vram(self.registers.vram_addr, cartridge),
             _ => 0,
@@ -1013,7 +1013,7 @@ impl<R: Render> Ppu<R> {
         match reg {
             // PPUCTRL
             0x2000 => {
-                let ctrl = PpuCtrl::from_bits(value);
+                let ctrl = PpuCtrl::from_bytes([value]);
                 self.set_control_flags(ctrl);
                 // Clearing the NMI enable drops the /NMI line from the
                 // next dot's `nmi_line` sample.
@@ -1021,7 +1021,7 @@ impl<R: Render> Ppu<R> {
             }
             0x2001 => {
                 let prior = ColorConfig::from_mask(self.registers.mask);
-                let mask = PpuMask::from_bits(value);
+                let mask = PpuMask::from_bytes([value]);
                 self.registers.mask = mask;
                 // Only the color bits are deferred: a write that changes
                 // grayscale/emphasis becomes a split point carrying the

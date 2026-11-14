@@ -1,12 +1,12 @@
-use bitfield_struct::bitfield;
+use modular_bitfield::prelude::*;
 
 use super::oam::{PatternBank, TilePosition};
 use super::{PPU_OPEN_BUS_DECAY_TICKS, Pixel};
 
-#[bitfield(u8)]
+#[bitfield]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct PpuCtrl {
-    #[bits(2)]
-    pub name_table_select: u8,
+    pub name_table_select: B2,
     pub increment_mode: bool,
     pub sprite_pattern_table: bool,
     pub background_pattern_table: bool,
@@ -29,12 +29,13 @@ impl PpuCtrl {
         TilePosition::Size8(bank, tile_idx)
     }
 
-    pub const fn sprite_height(self) -> u8 {
+    pub fn sprite_height(self) -> u8 {
         if self.sprite_size_16() { 16 } else { 8 }
     }
 }
 
-#[bitfield(u8)]
+#[bitfield]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct PpuMask {
     pub grayscale: bool,
     pub background_left_enabled: bool,
@@ -127,10 +128,11 @@ impl PpuMask {
     }
 }
 
-#[bitfield(u8)]
+#[bitfield]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct PpuStatus {
-    #[bits(5)]
-    pub __: u8,
+    #[skip]
+    pub __: B5,
     pub sprite_overflow: bool,
     pub sprite_zero_hit: bool,
     pub v_blank: bool,

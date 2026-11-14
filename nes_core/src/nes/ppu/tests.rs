@@ -10,7 +10,7 @@ fn new_test_ppu_and_pattern() -> (Ppu, [u8; 8192]) {
 
 #[test]
 fn repr_ppu_status() {
-    let status: PpuStatus = 0b1010_0000.into();
+    let status: PpuStatus = PpuStatus::from_bytes([0b1010_0000]);
     assert!(status.v_blank());
     assert!(!status.sprite_zero_hit());
     assert!(status.sprite_overflow());
@@ -66,7 +66,7 @@ fn peek_write_only_registers_return_zero() {
 
     // Leave a bus latch behind so a latch-returning peek would be visible.
     ppu.write_ppureg(0x2002, 0xFF, &mut cart);
-    ppu.registers.ctrl = PpuCtrl::from_bits(0xFF);
+    ppu.registers.ctrl = PpuCtrl::from_bytes([0xFF]);
 
     for address in [0x2000u16, 0x2001, 0x2003, 0x2005, 0x2006] {
         assert_eq!(ppu.peek(address, &cart), 0, "{address:#06x}");
@@ -87,7 +87,7 @@ fn peek_vram_does_not_increment_or_touch_read_buffer() {
 
     ppu.write_ppureg(0x2006, 0x00, &mut cart);
     ppu.write_ppureg(0x2006, 0x10, &mut cart);
-    ppu.registers.ctrl = PpuCtrl::from_bits(0x04); // increment by 32
+    ppu.registers.ctrl = PpuCtrl::from_bytes([0x04]); // increment by 32
 
     assert_eq!(ppu.peek(0x2007, &cart), 0x5A);
     assert_eq!(ppu.peek(0x2007, &cart), 0x5A);

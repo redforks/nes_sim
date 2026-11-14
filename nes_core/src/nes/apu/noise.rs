@@ -54,7 +54,7 @@ impl Noise {
     }
 
     pub fn write_envelope(&mut self, value: NoiseControlBits) {
-        self.envelope.config(value.into());
+        self.envelope.config(value.into_bytes()[0]);
         self.length.set_halt(value);
     }
 

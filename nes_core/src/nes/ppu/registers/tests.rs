@@ -26,6 +26,6 @@ fn test_background_tile_position(
 fn test_apply_effects(mask_bits: u8, r: u8, g: u8, b: u8) {
     const INPUT: Pixel = Pixel::new(180, 120, 60);
 
-    let mask = PpuMask::from(mask_bits);
+    let mask = PpuMask::from_bytes([mask_bits]);
     assert_eq!(mask.apply_effects(INPUT), Pixel::new(r, g, b));
 }

@@ -33,26 +33,26 @@ fn oam_as_bytes_mut_modifies_sprites() {
 #[test]
 fn attribute_palette_bits() {
     let attr = Attribute::new().with_palette(3);
-    assert_eq!(attr.into_bits() & 0x03, 3);
+    assert_eq!(attr.into_bytes()[0] & 0x03, 3);
     assert_eq!(attr.palette(), 3);
 }
 
 #[test]
 fn attribute_behind_background_bit() {
     let attr = Attribute::new().with_behind_background(true);
-    assert_eq!(attr.into_bits() & 0x20, 0x20);
+    assert_eq!(attr.into_bytes()[0] & 0x20, 0x20);
 }
 
 #[test]
 fn attribute_flip_horizontally_bit() {
     let attr = Attribute::new().with_flip_horizontally(true);
-    assert_eq!(attr.into_bits() & 0x40, 0x40);
+    assert_eq!(attr.into_bytes()[0] & 0x40, 0x40);
 }
 
 #[test]
 fn attribute_flip_vertically_bit() {
     let attr = Attribute::new().with_flip_vertically(true);
-    assert_eq!(attr.into_bits() & 0x80, 0x80);
+    assert_eq!(attr.into_bytes()[0] & 0x80, 0x80);
 }
 
 #[test]
@@ -62,7 +62,7 @@ fn attribute_bit_positions_combined() {
         .with_behind_background(true)
         .with_flip_horizontally(false)
         .with_flip_vertically(true);
-    assert_eq!(attr.into_bits(), 0xA2);
+    assert_eq!(attr.into_bytes()[0], 0xA2);
 }
 
 #[test]
@@ -108,7 +108,7 @@ fn test_8x8_tile_position(
     let sprite = Sprite {
         y: 0,
         tile_idx: 5,
-        attributes: 0.into(),
+        attributes: Attribute::from_bytes([0]),
         x: 0,
     };
     let ctrl = PpuCtrl::new()
@@ -126,7 +126,7 @@ fn test_8x16_tile_position(tile_idx: u8, expected_bank: PatternBank, expected_ti
     let sprite = Sprite {
         y: 0,
         tile_idx,
-        attributes: 0.into(),
+        attributes: Attribute::from_bytes([0]),
         x: 0,
     };
     let ctrl = PpuCtrl::new().with_sprite_size_16(true);

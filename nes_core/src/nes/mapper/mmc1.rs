@@ -1,22 +1,20 @@
 use super::{Mapper, memory::CartridgeMemory};
 use crate::SystemClock;
 use crate::nes::mapper::Mirroring;
-use bitfield_struct::bitfield;
+use modular_bitfield::prelude::*;
 
 #[cfg(test)]
 const PRG_ROM_BANK_SIZE: usize = 0x4000;
 const INITIAL_SHIFT_REGISTER: u8 = 0x10;
 
-#[bitfield(u8)]
+#[bitfield]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
 struct ControlFlags {
-    // bitfield_struct field order is LSB-first.
-    #[bits(2)]
-    pub mirroring: u8,
-    #[bits(2)]
-    pub prg_mode: u8,
+    pub mirroring: B2,
+    pub prg_mode: B2,
     pub chr_in_4k: bool,
-    #[bits(3)]
-    _not_used: u8,
+    #[skip]
+    _not_used: B3,
 }
 
 impl From<ControlFlags> for Mirroring {
@@ -191,7 +189,7 @@ impl MMC1 {
     fn write_load_register(&mut self, address: u16, value: u8, memory: &mut CartridgeMemory) {
         if value & 0x80 != 0 {
             self.shift_register = INITIAL_SHIFT_REGISTER;
-            self.control = ControlFlags::from_bits(self.control.into_bits() | 0x0c);
+            self.control = ControlFlags::from_bytes([self.control.into_bytes()[0] | 0x0c]);
             self.apply_control(memory);
             self.sync_prg(memory);
             return;
@@ -205,7 +203,7 @@ impl MMC1 {
             let register_value = self.shift_register & 0x1f;
             match address {
                 0x8000..=0x9fff => {
-                    self.control = ControlFlags::from_bits(register_value);
+                    self.control = ControlFlags::from_bytes([register_value]);
                     self.apply_control(memory);
                     self.sync_prg(memory);
                 }
@@ -361,7 +359,7 @@ mod tests {
     fn control_ppu_mirroring() {
         let (mut mmc1, mut memory) = create(|_| {});
         let control = ControlFlags::new().with_mirroring(0);
-        write_serial(&mut mmc1, &mut memory, 0x8000, control.into_bits());
+        write_serial(&mut mmc1, &mut memory, 0x8000, control.into_bytes()[0]);
         assert_eq!(Mirroring::from(mmc1.control), Mirroring::LowerBank);
         assert_eq!(memory.mirroring(), Mirroring::LowerBank);
         // Single-screen lower bank: all four nametable slots alias.
@@ -375,7 +373,7 @@ mod tests {
     fn vertical_mirroring_pairs_nametables() {
         let (mut mmc1, mut memory) = create(|_| {});
         let control = ControlFlags::new().with_mirroring(0b10);
-        write_serial(&mut mmc1, &mut memory, 0x8000, control.into_bits());
+        write_serial(&mut mmc1, &mut memory, 0x8000, control.into_bytes()[0]);
         assert_eq!(memory.mirroring(), Mirroring::Vertical);
         memory.write_vram(0x2000, 0x11);
         assert_eq!(memory.read_vram(0x2800), 0x11);
@@ -419,7 +417,7 @@ mod tests {
             &mut mmc1,
             &mut memory,
             0x8000,
-            ControlFlags::new().with_prg_mode(0).into_bits(),
+            ControlFlags::new().with_prg_mode(0).into_bytes()[0],
         );
         assert_eq!(memory.read_prg(0x8000), 3);
         assert_eq!(memory.read_prg(0xc000), 4);
@@ -428,7 +426,7 @@ mod tests {
             &mut mmc1,
             &mut memory,
             0x8000,
-            ControlFlags::new().with_prg_mode(2).into_bits(),
+            ControlFlags::new().with_prg_mode(2).into_bytes()[0],
         );
         assert_eq!(memory.read_prg(0x8000), 1);
         assert_eq!(memory.read_prg(0xc000), 3);
@@ -437,7 +435,7 @@ mod tests {
             &mut mmc1,
             &mut memory,
             0x8000,
-            ControlFlags::new().with_prg_mode(3).into_bits(),
+            ControlFlags::new().with_prg_mode(3).into_bytes()[0],
         );
         assert_eq!(memory.read_prg(0x8000), 3);
         assert_eq!(memory.read_prg(0xc000), 5);

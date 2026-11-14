@@ -23,7 +23,7 @@ winnow = { workspace = true }
 strum_macros = { workspace = true }
 thiserror = { workspace = true }
 tinyvec = { version = "1.11.0", features = ["latest_stable_rust"] }
-bitfield-struct.workspace = true
+modular-bitfield.workspace = true
 bytemuck.workspace = true
 anyhow.workspace = true
 base64 = "0.22.1"

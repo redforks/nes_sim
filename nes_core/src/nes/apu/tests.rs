@@ -50,8 +50,8 @@ fn test_duty_cycle_to_from_u8() {
     duty.set_constant_volume(true);
     duty.set_volume(0b0101);
 
-    let byte: u8 = duty.into();
-    let duty2: PulseControlBits = byte.into();
+    let byte: u8 = duty.into_bytes()[0];
+    let duty2: PulseControlBits = PulseControlBits::from_bytes([byte]);
 
     assert_eq!(duty2.duty(), 0b10);
     assert!(!duty2.loop_and_is_halt());
@@ -75,8 +75,8 @@ fn test_linear_counter_control_to_from_u8() {
     lcc.set_loop_and_is_halt(false);
     lcc.set_counter(0x7F);
 
-    let byte: u8 = lcc.into();
-    let lcc2: TriangleControlBits = byte.into();
+    let byte: u8 = lcc.into_bytes()[0];
+    let lcc2: TriangleControlBits = TriangleControlBits::from_bytes([byte]);
 
     assert!(!lcc2.loop_and_is_halt());
     assert_eq!(lcc2.counter(), 0x7F);
@@ -90,8 +90,8 @@ fn test_duty_cycle_various_values() {
             d.set_duty(duty);
             d.set_volume(volume);
 
-            let byte: u8 = d.into();
-            let d2: PulseControlBits = byte.into();
+            let byte: u8 = d.into_bytes()[0];
+            let d2: PulseControlBits = PulseControlBits::from_bytes([byte]);
 
             assert_eq!(d2.duty(), duty);
             assert_eq!(d2.volume(), volume);
@@ -118,8 +118,8 @@ fn test_noise_envelop_to_from_u8() {
     envelop.set_constant_volume(true);
     envelop.set_volume(0b0101);
 
-    let byte: u8 = envelop.into();
-    let envelop2: NoiseControlBits = byte.into();
+    let byte: u8 = envelop.into_bytes()[0];
+    let envelop2: NoiseControlBits = NoiseControlBits::from_bytes([byte]);
 
     assert!(!envelop2.loop_and_is_halt());
     assert!(envelop2.constant_volume());
@@ -142,8 +142,8 @@ fn test_noise_period_to_from_u8() {
     period.set_is_halt(false);
     period.set_period(0b0101);
 
-    let byte: u8 = period.into();
-    let period2: NoisePeriod = byte.into();
+    let byte: u8 = period.into_bytes()[0];
+    let period2: NoisePeriod = NoisePeriod::from_bytes([byte]);
 
     assert!(!period2.is_halt());
     assert_eq!(period2.period(), 0b0101);
@@ -162,8 +162,8 @@ fn test_noise_length_to_from_u8() {
     let mut length = NoiseLength::new();
     length.set_length_idx(0b01010);
 
-    let byte: u8 = length.into();
-    let length2: NoiseLength = byte.into();
+    let byte: u8 = length.into_bytes()[0];
+    let length2: NoiseLength = NoiseLength::from_bytes([byte]);
 
     assert_eq!(length2.length_idx(), 0b01010);
 }
@@ -187,8 +187,8 @@ fn test_dmc_irq_loop_freq_to_from_u8() {
     freq.set_loop_flag(true);
     freq.set_freq(0b0101);
 
-    let byte: u8 = freq.into();
-    let freq2: DmcIRQLoopFreq = byte.into();
+    let byte: u8 = freq.into_bytes()[0];
+    let freq2: DmcIRQLoopFreq = DmcIRQLoopFreq::from_bytes([byte]);
 
     assert!(!freq2.irq_enabled());
     assert!(freq2.loop_flag());
@@ -220,8 +220,8 @@ fn test_control_flags_to_from_u8() {
     flags.set_pulse1_enabled(true);
     flags.set_pulse2_enabled(false);
 
-    let byte: u8 = flags.into();
-    let flags2: ControlFlags = byte.into();
+    let byte: u8 = flags.into_bytes()[0];
+    let flags2: ControlFlags = ControlFlags::from_bytes([byte]);
 
     assert!(!flags2.dmc_enabled());
     assert!(flags2.noise_enabled());
@@ -261,8 +261,8 @@ fn test_apu_status_to_from_u8() {
     status.set_pulse1_enabled(true);
     status.set_pulse2_enabled(false);
 
-    let byte: u8 = status.into();
-    let status2: APUStatus = byte.into();
+    let byte: u8 = status.into_bytes()[0];
+    let status2: APUStatus = APUStatus::from_bytes([byte]);
 
     assert!(!status2.dmc_interrupt());
     assert!(status2.frame_interrupt());
@@ -289,8 +289,8 @@ fn test_frame_counter_to_from_u8() {
     counter.set_mode(FrameSequencerMode::FourStep);
     counter.set_disable_interrupt(true);
 
-    let byte: u8 = counter.into();
-    let counter2: FrameSequencerBits = byte.into();
+    let byte: u8 = counter.into_bytes()[0];
+    let counter2: FrameSequencerBits = FrameSequencerBits::from_bytes([byte]);
 
     assert_eq!(counter2.mode(), FrameSequencerMode::FourStep);
     assert!(counter2.disable_interrupt());
@@ -424,10 +424,10 @@ fn noise_shift_rate_matches_documented_intervals() {
         // $4015 noise enable; the length load below is ignored while disabled.
         noise.set_enabled(true);
         // --lc vvvv: length halt, constant-volume mode, volume 15.
-        noise.write_envelope(0x3F.into());
+        noise.write_envelope(NoiseControlBits::from_bytes([0x3F]));
         // lllll___ = 31: nonzero length counter keeps the output gate open.
-        noise.write_length(0xF8.into(), false);
-        noise.write_period(index.into());
+        noise.write_length(NoiseLength::from_bytes([0xF8]), false);
+        noise.write_period(NoisePeriod::from_bytes([index]));
 
         let total_ticks = 3 * interval as usize + 8;
         let mut lfsr: u16 = 1;

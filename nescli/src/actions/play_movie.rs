@@ -1006,25 +1006,25 @@ mod tests {
 
     fn idle() -> InputLog {
         InputLog::new(
-            Command::from(0),
-            GamepadInput::from(0),
-            GamepadInput::from(0),
+            Command::from_bytes([0]),
+            GamepadInput::from_bytes([0]),
+            GamepadInput::from_bytes([0]),
         )
     }
 
     fn active_port0() -> InputLog {
         InputLog::new(
-            Command::from(0),
-            GamepadInput::from(1),
-            GamepadInput::from(0),
+            Command::from_bytes([0]),
+            GamepadInput::from_bytes([1]),
+            GamepadInput::from_bytes([0]),
         )
     }
 
     fn active_port1() -> InputLog {
         InputLog::new(
-            Command::from(0),
-            GamepadInput::from(0),
-            GamepadInput::from(1),
+            Command::from_bytes([0]),
+            GamepadInput::from_bytes([0]),
+            GamepadInput::from_bytes([1]),
         )
     }
 
@@ -1137,9 +1137,9 @@ mod tests {
     fn port0_active_counts_as_non_idle() {
         let mut logs: Vec<_> = (0..60).map(|_| idle()).collect();
         logs.push(InputLog::new(
-            Command::from(0),
-            GamepadInput::from(0b00001000),
-            GamepadInput::from(0),
+            Command::from_bytes([0]),
+            GamepadInput::from_bytes([0b00001000]),
+            GamepadInput::from_bytes([0]),
         ));
         assert_eq!(
             compute_fast_forward_ranges(&logs, IDLE_FRAMES),
@@ -1151,9 +1151,9 @@ mod tests {
     fn port1_active_counts_as_non_idle() {
         let mut logs: Vec<_> = (0..60).map(|_| idle()).collect();
         logs.push(InputLog::new(
-            Command::from(0),
-            GamepadInput::from(0),
-            GamepadInput::from(0b00000010),
+            Command::from_bytes([0]),
+            GamepadInput::from_bytes([0]),
+            GamepadInput::from_bytes([0b00000010]),
         ));
         assert_eq!(
             compute_fast_forward_ranges(&logs, IDLE_FRAMES),
@@ -1165,9 +1165,9 @@ mod tests {
     fn both_ports_must_be_empty() {
         let mut logs: Vec<_> = (0..60).map(|_| idle()).collect();
         logs.push(InputLog::new(
-            Command::from(0),
-            GamepadInput::from(0),
-            GamepadInput::from(0b00000001),
+            Command::from_bytes([0]),
+            GamepadInput::from_bytes([0]),
+            GamepadInput::from_bytes([0b00000001]),
         ));
         assert_eq!(
             compute_fast_forward_ranges(&logs, IDLE_FRAMES),
@@ -1192,7 +1192,7 @@ mod tests {
     const PAD_RIGHT: u8 = 1 << 7;
 
     fn pad(bits: u8) -> GamepadInput {
-        GamepadInput::from(bits)
+        GamepadInput::from_bytes([bits])
     }
 
     /// The sprite sheet's fixed icon ids: 0 = A, 1 = B, 2..=16 = the fifteen

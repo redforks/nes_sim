@@ -8,7 +8,7 @@ members = ["nes_core", "nes_cpu_test", "nes_web", "nescli", "nes_sdl"]
 log = { version = "0.4", features = ["release_max_level_info"] }
 thiserror = "2"
 anyhow = "1"
-bitfield-struct = "0.13"
+modular-bitfield = "0.13"
 
 # CLI and argument parsing
 clap = { version = "4", features = ["derive"] }

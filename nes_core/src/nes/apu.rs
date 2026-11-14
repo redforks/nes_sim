@@ -200,41 +200,55 @@ impl<D: AudioDriver> Apu<D> {
     /// reset delay keys off the CPU-cycle parity of the write.
     pub fn write(&mut self, address: u16, value: u8, clock: SystemClock) {
         match address {
-            0x4000 => self.pulse1.write_control(value.into()),
-            0x4001 => self.pulse1.write_sweep(value.into()),
+            0x4000 => self
+                .pulse1
+                .write_control(PulseControlBits::from_bytes([value])),
+            0x4001 => self.pulse1.write_sweep(SweepBits::from_bytes([value])),
             0x4002 => self.pulse1.write_timer_low(value),
             0x4003 => {
                 let suppress = self.length_race_clobber[0];
-                self.pulse1.write_timer_high(value.into(), suppress);
+                self.pulse1
+                    .write_timer_high(LengthTimerHigh3Bits::from_bytes([value]), suppress);
             }
-            0x4004 => self.pulse2.write_control(value.into()),
-            0x4005 => self.pulse2.write_sweep(value.into()),
+            0x4004 => self
+                .pulse2
+                .write_control(PulseControlBits::from_bytes([value])),
+            0x4005 => self.pulse2.write_sweep(SweepBits::from_bytes([value])),
             0x4006 => self.pulse2.write_timer_low(value),
             0x4007 => {
                 let suppress = self.length_race_clobber[1];
-                self.pulse2.write_timer_high(value.into(), suppress);
+                self.pulse2
+                    .write_timer_high(LengthTimerHigh3Bits::from_bytes([value]), suppress);
             }
-            0x4008 => self.triangle.write_control(value.into()),
+            0x4008 => self
+                .triangle
+                .write_control(TriangleControlBits::from_bytes([value])),
             0x400A => self.triangle.write_timer_low(value),
             0x400B => {
                 let suppress = self.length_race_clobber[2];
-                self.triangle.write_timer_high(value.into(), suppress);
+                self.triangle
+                    .write_timer_high(LengthTimerHigh3Bits::from_bytes([value]), suppress);
             }
-            0x400C => self.noise.write_envelope(value.into()),
-            0x400E => self.noise.write_period(value.into()),
+            0x400C => self
+                .noise
+                .write_envelope(NoiseControlBits::from_bytes([value])),
+            0x400E => self.noise.write_period(NoisePeriod::from_bytes([value])),
             0x400F => {
                 let suppress = self.length_race_clobber[3];
-                self.noise.write_length(value.into(), suppress);
+                self.noise
+                    .write_length(NoiseLength::from_bytes([value]), suppress);
             }
-            0x4010 => self.dmc.write_dmc_irq_loop_freq(value.into()),
-            0x4011 => self.dmc.write_dac(value.into()),
+            0x4010 => self
+                .dmc
+                .write_dmc_irq_loop_freq(DmcIRQLoopFreq::from_bytes([value])),
+            0x4011 => self.dmc.write_dac(DmcDacBits::from_bytes([value])),
             0x4012 => self.dmc.write_sample_address(value),
             0x4013 => self.dmc.write_sample_length(value),
-            0x4015 => self.set_control_flags(value.into()),
+            0x4015 => self.set_control_flags(ControlFlags::from_bytes([value])),
             0x4017 => {
                 let cpu_odd = (clock.cycles() / 3) % 2 == 1;
                 self.frame_sequencer
-                    .write_control_bits(value.into(), cpu_odd)
+                    .write_control_bits(FrameSequencerBits::from_bytes([value]), cpu_odd)
             }
             _ => {}
         }
@@ -249,7 +263,7 @@ impl<D: AudioDriver> Apu<D> {
         status.set_dmc_enabled(self.dmc.status_bit());
         status.set_frame_interrupt(self.frame_sequencer.interrupt_flag());
         status.set_dmc_interrupt(self.dmc.interrupt_flag());
-        status.into_bits()
+        status.into_bytes()[0]
     }
 
     fn set_control_flags(&mut self, flags: ControlFlags) {

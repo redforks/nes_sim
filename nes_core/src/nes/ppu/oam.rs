@@ -1,5 +1,5 @@
 use crate::nes::ppu::registers::PpuCtrl;
-use bitfield_struct::bitfield;
+use modular_bitfield::prelude::*;
 
 #[derive(Debug, Copy, Clone, Default, PartialEq, Eq, bytemuck::Pod, bytemuck::Zeroable)]
 #[repr(C)]
@@ -31,17 +31,19 @@ impl Sprite {
 }
 
 /// Sprite attribute
-#[bitfield(u8)]
-#[derive(PartialEq, Eq, bytemuck::Pod, bytemuck::Zeroable)]
+#[bitfield]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct Attribute {
-    #[bits(2)]
-    pub palette: u8,
-    #[bits(3)]
-    __: u8,
+    pub palette: B2,
+    #[skip]
+    __: B3,
     pub behind_background: bool,
     pub flip_horizontally: bool,
     pub flip_vertically: bool,
 }
+
+unsafe impl bytemuck::Zeroable for Attribute {}
+unsafe impl bytemuck::Pod for Attribute {}
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
 pub enum PatternBank {

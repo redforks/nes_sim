@@ -1,7 +1,6 @@
 use crate::nes::apu::registers::{
     LengthTimerHigh3Bits, NoiseControlBits, NoiseLength, PulseControlBits, TriangleControlBits,
 };
-use bitfield_struct::bitfield;
 
 /// Abstract register that can be used to read length halt bit for noise and pulse channels.
 pub trait GetLengthHalt {
@@ -100,15 +99,25 @@ impl LengthControl {
     }
 }
 
-#[bitfield(u8)]
-struct EnvelopeBits {
-    #[bits(4)]
-    period: u8,
-    disabled: bool,
-    enable_loop: bool,
-    #[bits(2)]
-    __: u8,
+/// Register view for [`Envelope::config`]. Wrapped in a module so the
+/// `#[allow(dead_code)]` silences the generated `new()` constructor
+/// (construction goes through `from_bytes`): a struct-level allow does not
+/// propagate into modular-bitfield's generated `impl` (upstream issue #56).
+#[allow(dead_code)]
+mod envelope_bits {
+    use modular_bitfield::prelude::*;
+
+    #[bitfield]
+    #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+    pub(super) struct EnvelopeBits {
+        pub(super) period: B4,
+        pub(super) disabled: bool,
+        pub(super) enable_loop: bool,
+        #[skip]
+        __: B2,
+    }
 }
+use envelope_bits::EnvelopeBits;
 
 #[derive(Debug)]
 pub struct Envelope {
@@ -137,7 +146,7 @@ impl Envelope {
     }
 
     pub fn config(&mut self, bits: u8) {
-        let bits = EnvelopeBits::from_bits(bits);
+        let bits = EnvelopeBits::from_bytes([bits]);
         self.divider.set_period(bits.period());
         self.enable_loop = bits.enable_loop();
         self.disabled = bits.disabled();

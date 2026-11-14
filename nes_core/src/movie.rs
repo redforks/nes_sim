@@ -3,7 +3,7 @@
 use std::{collections::HashSet, str::from_utf8};
 
 use anyhow::Context;
-use bitfield_struct::bitfield;
+use modular_bitfield::prelude::*;
 use winnow::{
     ascii::dec_uint,
     combinator::{alt, opt, repeat, seq, terminated},
@@ -96,20 +96,20 @@ pub struct Fm2Header {
     pub save_state: Option<String>,
 }
 
-#[bitfield(u8)]
-#[derive(PartialEq)]
+#[bitfield]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct Command {
     pub soft_reset: bool,
     pub hard_reset: bool,
     pub fds_disk_insert: bool,
     pub fds_disk_select: bool,
     pub vs_insert_coin: bool,
-    #[bits(3)]
-    __: u8,
+    #[skip]
+    __: B3,
 }
 
-#[bitfield(u8)]
-#[derive(PartialEq)]
+#[bitfield]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct GamepadInput {
     pub a: bool,
     pub b: bool,
@@ -124,7 +124,7 @@ pub struct GamepadInput {
 impl GamepadInput {
     /// Returns true if all buttons are not pressed
     pub fn is_empty(self) -> bool {
-        u8::from(self) == 0
+        self.into_bytes()[0] == 0
     }
 }
 
@@ -219,7 +219,7 @@ where
     Input::Token: AsChar + Clone,
     E: ParserError<Input>,
 {
-    dec_uint::<Input, u8, E>.output_into::<Command>()
+    dec_uint::<Input, u8, E>.map(|v| Command::from_bytes([v]))
 }
 
 fn new_gamepad_input_parser<Input, E>() -> impl Parser<Input, GamepadInput, E>
@@ -248,7 +248,7 @@ where
         }
 
         fn into_value(self) -> GamepadInput {
-            self.val.into()
+            GamepadInput::from_bytes([self.val])
         }
     }
 

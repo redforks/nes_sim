@@ -66,7 +66,7 @@ impl Mmc5Pulse {
 
     /// `$5000/$5004`: duty, length-halt/loop, envelope mode/volume.
     pub fn write_control(&mut self, value: u8) {
-        let bits = PulseControlBits::from(value);
+        let bits = PulseControlBits::from_bytes([value]);
         self.envelope.config(value);
         self.length.set_halt(bits);
         self.sequencer
@@ -81,7 +81,7 @@ impl Mmc5Pulse {
     /// `$5003/$5007`: timer high 3 bits + length load; restarts the
     /// envelope and the duty phase like the APU counterpart.
     pub fn write_timer_high(&mut self, value: u8) {
-        let bits = LengthTimerHigh3Bits::from(value);
+        let bits = LengthTimerHigh3Bits::from_bytes([value]);
         self.timer.set_period_high(bits.high3());
         self.length.load(bits);
         self.envelope.request_reset();
