@@ -231,7 +231,6 @@ pub struct HijackSite {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct InterruptWindow {
     pub sequence_cycles: u8,
-    pub suppress_final_poll: bool,
     pub hijack_sites: &'static [HijackSite],
 }
 
@@ -303,12 +302,10 @@ impl InterruptSequences {
     ///   `NmiDetector` sampling).
     pub const NMI_WINDOW: InterruptWindow = InterruptWindow {
         sequence_cycles: 7,
-        suppress_final_poll: true,
         hijack_sites: &[],
     };
     pub const IRQ_WINDOW: InterruptWindow = InterruptWindow {
         sequence_cycles: 7,
-        suppress_final_poll: true,
         hijack_sites: &[
             HijackSite {
                 op_index: 4,
@@ -322,7 +319,6 @@ impl InterruptSequences {
     };
     pub const BRK_WINDOW: InterruptWindow = InterruptWindow {
         sequence_cycles: 6,
-        suppress_final_poll: true,
         hijack_sites: &[
             HijackSite {
                 op_index: 3,
@@ -336,7 +332,6 @@ impl InterruptSequences {
     };
     pub const RESET_WINDOW: InterruptWindow = InterruptWindow {
         sequence_cycles: 8,
-        suppress_final_poll: true,
         hijack_sites: &[],
     };
 
@@ -1981,8 +1976,7 @@ mod tests {
     fn per_opcode_poll_cycle_matches_golden() {
         let table = build_opcode_table();
         for (op, &expected) in GOLDEN_POLL_CYCLE.iter().enumerate() {
-            let suppressed = InterruptSequences::window_for_opcode(op as u8)
-                .is_some_and(|w| w.suppress_final_poll);
+            let suppressed = InterruptSequences::window_for_opcode(op as u8).is_some();
             let actual = if suppressed {
                 0
             } else {
@@ -2028,7 +2022,6 @@ mod tests {
     fn interrupt_windows_match_golden() {
         let brk = InterruptSequences::BRK_WINDOW;
         assert_eq!(brk.sequence_cycles, 6);
-        assert!(brk.suppress_final_poll);
         assert_eq!(
             brk.hijack_sites,
             &[
@@ -2045,7 +2038,6 @@ mod tests {
 
         let irq = InterruptSequences::IRQ_WINDOW;
         assert_eq!(irq.sequence_cycles, 7);
-        assert!(irq.suppress_final_poll);
         assert_eq!(
             irq.hijack_sites,
             &[
@@ -2066,7 +2058,6 @@ mod tests {
             &InterruptSequences::NMI_WINDOW,
             &InterruptSequences::RESET_WINDOW,
         ] {
-            assert!(window.suppress_final_poll);
             assert_eq!(window.hijack_sites, &[]);
         }
     }
@@ -2101,7 +2092,6 @@ mod tests {
                     assert!(matches!(op, Microcode::LoadIrqPcL));
                 }
             }
-            assert!(window.suppress_final_poll);
             // Structural invariant: every suppressing sequence ends with a
             // vector-fetch op. (Runtime suppression now reads the armed
             // window, not op identity.)

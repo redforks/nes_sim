@@ -760,14 +760,11 @@ impl Cpu {
         let last_status = self.status;
         code.exec(self, bus);
         let instruction_complete = self.microcode_queue.is_empty();
-        // Suppression is declared: the armed window's `suppress_final_poll`
+        // Suppression applies while an interrupt window is armed:
         // owns the final-cycle poll. The queue drains exactly on the final
         // op of the armed sequence (or a hijack continuation's tail), so
         // an armed window over an empty queue is that cycle.
-        let is_last_op = instruction_complete
-            && !self
-                .active_interrupt_window
-                .is_some_and(|active| active.window.suppress_final_poll);
+        let is_last_op = instruction_complete && self.active_interrupt_window.is_none();
         if instruction_complete {
             self.active_interrupt_window = None;
         }
