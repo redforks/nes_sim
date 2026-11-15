@@ -1265,10 +1265,8 @@ impl<R: Render> Ppu<R> {
     }
 
     fn render_pixel(&mut self, x: u8, cartridge: &Cartridge) -> u8 {
-        let screen_y = self.timing.scanline as u8;
-        let render = self.ppu_render_state();
         let (bg_palette_idx, bg_color_idx) = if self.registers.mask.background_enabled() {
-            self.get_background_pixel(x, cartridge, render)
+            self.get_background_pixel(x, cartridge, self.ppu_render_state())
         } else {
             (0, 0)
         };
@@ -1276,8 +1274,13 @@ impl<R: Render> Ppu<R> {
         let sprite_pixel = if self.registers.mask.sprite_enabled()
             && (x >= 8 || self.registers.mask.sprite_left_enabled())
         {
-            self.sprite
-                .find_sprite_pixel(self.registers.ctrl, cartridge, x, screen_y, render)
+            self.sprite.find_sprite_pixel(
+                self.registers.ctrl,
+                cartridge,
+                x,
+                self.timing.scanline as u8,
+                self.ppu_render_state(),
+            )
         } else {
             None
         };
@@ -1291,15 +1294,17 @@ impl<R: Render> Ppu<R> {
         // (blargg's ppu_sprite_hit 09-timing pins the boundary to one PPU
         // clock). Queuing it for the next dot's latch made the hit one dot
         // late, which is exactly what sub-test 4 caught.
-        if bg_color_idx != 0
+        if !self.registers.status.sprite_zero_hit()
+            && bg_color_idx != 0
             && x != 255
             && self.registers.mask.background_enabled()
             && self.registers.mask.sprite_enabled()
             && (x >= 8
                 || (self.registers.mask.background_left_enabled()
                     && self.registers.mask.sprite_left_enabled()))
-            && !self.registers.status.sprite_zero_hit()
-            && self.sprite.sprite_zero_pixel_opaque(x, screen_y)
+            && self
+                .sprite
+                .sprite_zero_pixel_opaque(x, self.timing.scanline as u8)
         {
             self.registers.status.set_sprite_zero_hit(true);
         }
@@ -1328,8 +1333,13 @@ fn fetch_tile_data(
     background: &BackgroundActivation,
     screen_x: u8,
     cartridge: &Cartridge,
-    render: PpuRenderState,
+    mut render: PpuRenderState,
 ) -> (u8, u8, u8, u8) {
+    // Ticket #78: background fetches carry the Background kind so MMC5 picks
+    // the background CHR bank set in 8x16 mode (nametable addresses are
+    // unaffected — the bank hook declines `$2000+`).
+    render.fetch = PpuFetchKind::Background;
+
     let coarse_x = background.vram_addr & 0x001F;
     let coarse_y = (background.vram_addr >> 5) & 0x001F;
     let fine_y = (background.vram_addr >> 12) & 0x0007;
@@ -1352,25 +1362,18 @@ fn fetch_tile_data(
 
     let nt_base = 0x2000 + nt_idx as u16 * 0x0400;
     let nt_addr = nt_base + nt_y as u16 * 32 + nt_x as u16;
-    // Ticket #78: background fetches carry the Background kind so MMC5 picks
-    // the background CHR bank set in 8x16 mode (nametable addresses are
-    // unaffected — the bank hook declines `$2000+`).
-    let bg_render = PpuRenderState {
-        fetch: PpuFetchKind::Background,
-        ..render
-    };
-    let nt_byte = cartridge.read_vram(nt_addr, bg_render);
+    let nt_byte = cartridge.read_vram(nt_addr, render);
     let attr_addr = nt_base + 0x03c0 + (nt_y as u16 >> 2) * 8 + (nt_x as u16 >> 2);
-    let attr_byte = cartridge.read_vram(attr_addr, bg_render);
+    let attr_byte = cartridge.read_vram(attr_addr, render);
 
     let shift = (((nt_y >> 1) & 0x01) << 2) | (((nt_x >> 1) & 0x01) << 1);
+    let palette_idx = (attr_byte >> shift) & 0x03;
 
     let tile_position = background.ctrl.background_tile_position(nt_byte);
     let tile_fine_y = (world_y & 7) as u8;
     let low_addr = tile_position.resolve_pixel_addr(tile_fine_y);
-    let bitplane_low = cartridge.read_vram(low_addr.0, bg_render);
-    let bitplane_high = cartridge.read_vram(low_addr.second_plane_addr(), bg_render);
-    let palette_idx = (attr_byte >> shift) & 0x03;
+    let bitplane_low = cartridge.read_vram(low_addr.0, render);
+    let bitplane_high = cartridge.read_vram(low_addr.second_plane_addr(), render);
 
     (
         palette_idx,

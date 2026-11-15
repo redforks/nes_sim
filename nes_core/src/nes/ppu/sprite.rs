@@ -1,4 +1,4 @@
-use super::oam::{Oam, Sprite};
+use super::oam::{Attribute, Oam, Sprite};
 use crate::nes::mapper::{Cartridge, PpuFetchKind, PpuRenderState};
 use crate::nes::ppu::registers::{PpuCtrl, PpuStatus};
 use tinyvec::ArrayVec;
@@ -296,9 +296,7 @@ impl SpriteManager {
 
             self.rows.push(SpriteRow {
                 x: sprite.x,
-                palette: sprite.attributes.palette(),
-                behind_bg: sprite.attributes.behind_background(),
-                flip_horizontally: sprite.attributes.flip_horizontally(),
+                attributes: sprite.attributes,
                 low,
                 high,
             });
@@ -343,9 +341,7 @@ impl SpriteManager {
 #[derive(Copy, Clone, Default)]
 struct SpriteRow {
     x: u8,
-    palette: u8,
-    behind_bg: bool,
-    flip_horizontally: bool,
+    attributes: Attribute,
     low: u8,
     high: u8,
 }
@@ -357,7 +353,7 @@ impl SpriteRow {
             return None;
         }
 
-        let src_x = if self.flip_horizontally {
+        let src_x = if self.attributes.flip_horizontally() {
             (7 - rel_x) as u8
         } else {
             rel_x as u8
@@ -369,9 +365,9 @@ impl SpriteRow {
         }
 
         Some(SpritePixel {
-            palette_idx: self.palette,
+            palette_idx: self.attributes.palette(),
             color_idx,
-            behind_bg: self.behind_bg,
+            behind_bg: self.attributes.behind_background(),
         })
     }
 }
