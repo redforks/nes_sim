@@ -1174,6 +1174,7 @@ impl Cpu {
         let active = self.active_interrupt_window.as_ref()?;
         let started = active.started_at?;
         let index = (clock.cycles() - started.cycles()) / 3;
+        #[cfg(debug_assertions)]
         debug_assert!(
             index < u64::from(active.window.sequence_cycles),
             "sequence index past the declared window"

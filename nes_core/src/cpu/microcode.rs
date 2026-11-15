@@ -230,6 +230,7 @@ pub struct HijackSite {
 /// start (the cycle executing micro-op 0).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct InterruptWindow {
+    #[cfg(any(debug_assertions, test))]
     pub sequence_cycles: u8,
     pub hijack_sites: &'static [HijackSite],
 }
@@ -301,10 +302,12 @@ impl InterruptSequences {
     ///   `site_tick − 5` (2-dot sample lag plus one full cycle, see
     ///   `NmiDetector` sampling).
     pub const NMI_WINDOW: InterruptWindow = InterruptWindow {
+        #[cfg(any(debug_assertions, test))]
         sequence_cycles: 7,
         hijack_sites: &[],
     };
     pub const IRQ_WINDOW: InterruptWindow = InterruptWindow {
+        #[cfg(any(debug_assertions, test))]
         sequence_cycles: 7,
         hijack_sites: &[
             HijackSite {
@@ -318,6 +321,7 @@ impl InterruptSequences {
         ],
     };
     pub const BRK_WINDOW: InterruptWindow = InterruptWindow {
+        #[cfg(any(debug_assertions, test))]
         sequence_cycles: 6,
         hijack_sites: &[
             HijackSite {
@@ -331,6 +335,7 @@ impl InterruptSequences {
         ],
     };
     pub const RESET_WINDOW: InterruptWindow = InterruptWindow {
+        #[cfg(any(debug_assertions, test))]
         sequence_cycles: 8,
         hijack_sites: &[],
     };
