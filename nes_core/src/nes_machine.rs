@@ -3,7 +3,6 @@ use crate::{
     bus::Bus,
     dma_bus::{BusOwner, DmaBus},
     ines::INesFile,
-    interrupt::InterruptLines,
     nes::{Mmc3IrqOverride, NesMcu, controller::Button, ppu::palette::ColorTheme},
     render::Render,
 };
@@ -115,7 +114,11 @@ where
     }
 
     fn tick_dot_2(&mut self) -> ExecuteResult {
+        let clock = self.bus.clock();
         self.bus.mcu_mut().tick_ppu();
+        let nmi = self.bus.mcu_mut().ppu_mut().nmi_line();
+        self.cpu.update_nmi_line(nmi, clock, false);
+
         self.bus.mcu_mut().tick_zapper();
 
         // No reset-drain freeze gate is needed on this path. The only
@@ -135,19 +138,16 @@ where
         // APU IRQ is read BEFORE `tick_apu` — a transition the step
         // raises or clears becomes CPU-visible on the NEXT dot (one-dot
         // skew, pinned by blargg's `cpu_interrupts_v2` 3-nmi_and_irq).
-        // The level is OR-ed before building the single `InterruptLines` bundle.
+        // The level is OR-ed for the CPU IRQ line.
         let irq_level = self.bus.mcu().apu_irq_pending() || self.bus.mcu().cartridge_irq_pending();
+        self.cpu.set_irq(irq_level);
 
-        let clock = self.bus.clock();
         self.bus.mcu_mut().tick_apu(clock);
         let owner = self.dma_bus.tick(&mut self.cpu, &mut self.bus);
         if !matches!(owner, BusOwner::Idle) {
             return ExecuteResult::Continue;
         }
 
-        let nmi = self.bus.mcu_mut().ppu_mut().nmi_line();
-        let lines = InterruptLines { nmi, irq_level };
-        self.cpu.update_interrupt_lines(lines, clock, false);
         self.cpu.tick(&mut self.bus, &mut self.p)
     }
 

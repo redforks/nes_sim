@@ -221,10 +221,4 @@ impl DmaBus {
     ) -> BusOwner {
         Self::oam_tick_inner(bus, &mut self.oam, dmc_drove)
     }
-
-    /// `DmaBus::oam_tick()` returning `BusOwner` (test seam).
-    #[cfg(test)]
-    pub(crate) fn oam_tick<M: OamDmaMcu>(&mut self, bus: &mut Bus<M>, dmc_drove: bool) -> BusOwner {
-        Self::oam_tick_inner(bus, &mut self.oam, dmc_drove)
-    }
 }

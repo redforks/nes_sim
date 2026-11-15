@@ -712,23 +712,6 @@ impl Cpu {
         self.irq_detector.update_irq_input(enabled);
     }
 
-    /// Single published interrupt entry — updates both IRQ level and NMI
-    /// line atomically.
-    ///
-    /// `lines.irq_level` is already time-corrected (APU +1, cartridge
-    /// latch quantized).
-    /// `clock` is the current dot; `sample` marks the first dot of a CPU
-    /// cycle, the /NMI sampling phase.
-    pub fn update_interrupt_lines(
-        &mut self,
-        lines: crate::interrupt::InterruptLines,
-        clock: SystemClock,
-        sample: bool,
-    ) {
-        self.set_irq(lines.irq_level);
-        self.update_nmi_line(lines.nmi, clock, sample);
-    }
-
     pub fn is_halted(&self) -> bool {
         self.halt
     }

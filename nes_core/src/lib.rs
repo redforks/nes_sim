@@ -4,7 +4,7 @@ pub(crate) mod cpu;
 pub(crate) mod dma_bus;
 pub(crate) mod hotpath_cpu;
 pub mod ines;
-pub mod interrupt;
+
 pub mod machine;
 pub mod mcu;
 pub mod movie;
