@@ -127,34 +127,29 @@ impl DmaBus {
         // DMC tick first — it may freeze the CPU and it decides `dmc_drove`
         // (true only on the read cycle that actually transfers a byte).
         let dmc_drove = self.dmc.tick(cpu, bus);
-        let oam_active = Self::oam_tick(bus, &mut self.oam, dmc_drove);
-
-        // Owner reflects OAM activity only; standalone DMC is signalled via
-        // `cpu.frozen` (ADR-0009 §2 "Halt unification left explicit").
-        // DMC-wins is visible as `Dmc` when OAM is active and DMC drove.
-        if oam_active {
-            if dmc_drove {
-                return BusOwner::Dmc;
-            } else {
-                return BusOwner::Oam;
-            }
-        }
-        BusOwner::Idle
+        Self::oam_tick_inner(bus, &mut self.oam, dmc_drove)
     }
 
     /// Shared OAM state machine — single source of truth for both the
     /// production `tick` (via `Cpu`) and the hand-fed-bool test seam.
-    fn oam_tick<M: OamDmaMcu>(
+    fn oam_tick_inner<M: OamDmaMcu>(
         bus: &mut Bus<M>,
         oam: &mut Option<OamActive>,
         dmc_drove: bool,
-    ) -> bool {
-        if let Some(mut dma) = oam.take() {
+    ) -> BusOwner {
+        fn non_idle_bus_owner(dmc_drove: bool) -> BusOwner {
+            if dmc_drove {
+                BusOwner::Dmc
+            } else {
+                BusOwner::Oam
+            }
+        }
+
+        if let Some(dma) = oam.as_mut() {
             if dma.needs_pause_align {
                 // OAM alignment cycle after a DMC DMA collision: no transfer.
                 dma.needs_pause_align = false;
-            } else if dmc_drove && !dma.needs_startup_align && dma.transfer_cycle.is_multiple_of(2)
-            {
+            } else if dmc_drove && !dma.needs_startup_align && dma.transfer_cycle % 2 == 0 {
                 // DMC DMA wins the bus: the OAM read is aborted and must be
                 // redone after an alignment cycle. Skipping this cycle and one
                 // alignment cycle preserves the get/put phase.
@@ -162,10 +157,9 @@ impl DmaBus {
             } else if dma.needs_startup_align {
                 dma.needs_startup_align = false;
             } else {
-                let byte_index = dma.transfer_cycle / 2;
                 let mcu = bus.mcu_mut();
-                if dma.transfer_cycle.is_multiple_of(2) {
-                    let offset = byte_index as u8;
+                if dma.transfer_cycle % 2 == 0 {
+                    let offset = (dma.transfer_cycle / 2) as u8;
                     dma.latch = match dma.page {
                         0 => mcu.read_zero_page(offset),
                         1 => mcu.read_stack_page(offset),
@@ -175,15 +169,12 @@ impl DmaBus {
                     mcu.write_oam_data(dma.latch);
                 }
                 dma.transfer_cycle += 1;
+                if dma.transfer_cycle == 512 {
+                    *oam = None;
+                }
             }
 
-            if !dma.needs_startup_align && dma.transfer_cycle == 512 {
-                // Transfer complete — drop, but this final cycle still counted as OAM holding.
-                return true;
-            }
-
-            *oam = Some(dma);
-            return true;
+            return non_idle_bus_owner(dmc_drove);
         }
 
         if let Some(page) = bus.mcu_mut().take_oam_dma_pending() {
@@ -191,18 +182,17 @@ impl DmaBus {
             // $4014 write cycle; that tick is the DMA halt cycle. If it is a
             // get cycle the write happened on a put cycle and one alignment
             // cycle is needed before the first read; otherwise none.
-            let needs_startup_align = bus.clock().is_apu_get_clock();
             *oam = Some(OamActive {
                 page,
-                needs_startup_align,
+                needs_startup_align: bus.clock().is_apu_get_clock(),
                 transfer_cycle: 0,
                 latch: 0,
                 needs_pause_align: false,
             });
-            return true;
+            return non_idle_bus_owner(dmc_drove);
         }
 
-        false
+        BusOwner::Idle
     }
 
     // -------------------------------------------------------------------------
@@ -228,7 +218,13 @@ impl DmaBus {
         &mut self,
         bus: &mut Bus<M>,
         dmc_drove: bool,
-    ) -> bool {
-        Self::oam_tick(bus, &mut self.oam, dmc_drove)
+    ) -> BusOwner {
+        Self::oam_tick_inner(bus, &mut self.oam, dmc_drove)
+    }
+
+    /// `DmaBus::oam_tick()` returning `BusOwner` (test seam).
+    #[cfg(test)]
+    pub(crate) fn oam_tick<M: OamDmaMcu>(&mut self, bus: &mut Bus<M>, dmc_drove: bool) -> BusOwner {
+        Self::oam_tick_inner(bus, &mut self.oam, dmc_drove)
     }
 }

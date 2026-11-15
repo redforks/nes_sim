@@ -1,7 +1,7 @@
 use super::*;
 use crate::SystemClock;
 use crate::bus::Bus;
-use crate::dma_bus::{DmaBus, OamDmaMcu};
+use crate::dma_bus::{BusOwner, DmaBus, OamDmaMcu};
 use crate::ines::INesFile;
 use crate::nes::apu::Apu;
 use crate::nes::controller::Button;
@@ -328,7 +328,7 @@ fn oam_dma_completion_spans_follow_doc_diagrams() {
                 continue;
             }
             bus.set_clock(clock);
-            if dma_bus.tick_oam_for_test(&mut bus, false) {
+            if !matches!(dma_bus.tick_oam_for_test(&mut bus, false), BusOwner::Idle) {
                 saw_active = true;
                 last_active = t;
             } else if saw_active {
@@ -526,7 +526,7 @@ fn drive_oam_dma<M: OamDmaMcu>(bus: &mut Bus<M>, dma_bus: &mut DmaBus) -> Option
             continue;
         }
         bus.set_clock(t);
-        if dma_bus.tick_oam_for_test(bus, false) {
+        if !matches!(dma_bus.tick_oam_for_test(bus, false), BusOwner::Idle) {
             ran = true;
             apu_clocks += 1;
         } else if ran {
