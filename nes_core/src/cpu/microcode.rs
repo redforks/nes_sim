@@ -213,11 +213,6 @@ const fn indirect_indexed_store_a() -> ArrayVec<[Microcode; 7]> {
 /// - `NewestVisible` — the vector-fetch site decides on the newest
 ///   unconsumed assertion, latched or not: an assertion counts iff its
 ///   newest unconsumed edge had risen by the site's deadline.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum HijackEligibility {
-    LatchedOnly,
-    NewestVisible,
-}
 
 /// One NMI-hijack site declared by an [`InterruptWindow`]: the micro-op
 /// index that performs the check and the Hijack deadline — an /NMI rise at
@@ -226,7 +221,6 @@ pub enum HijackEligibility {
 pub struct HijackSite {
     pub op_index: u8,
     pub deadline_dots: u8,
-    pub eligibility: HijackEligibility,
 }
 
 /// The interrupt recognition window of one interrupt sequence, declared
@@ -319,12 +313,10 @@ impl InterruptSequences {
             HijackSite {
                 op_index: 4,
                 deadline_dots: 7,
-                eligibility: HijackEligibility::LatchedOnly,
             },
             HijackSite {
                 op_index: 5,
                 deadline_dots: 10,
-                eligibility: HijackEligibility::NewestVisible,
             },
         ],
     };
@@ -335,12 +327,10 @@ impl InterruptSequences {
             HijackSite {
                 op_index: 3,
                 deadline_dots: 4,
-                eligibility: HijackEligibility::LatchedOnly,
             },
             HijackSite {
                 op_index: 4,
                 deadline_dots: 5,
-                eligibility: HijackEligibility::NewestVisible,
             },
         ],
     };
@@ -2045,12 +2035,10 @@ mod tests {
                 HijackSite {
                     op_index: 3,
                     deadline_dots: 4,
-                    eligibility: HijackEligibility::LatchedOnly,
                 },
                 HijackSite {
                     op_index: 4,
                     deadline_dots: 5,
-                    eligibility: HijackEligibility::NewestVisible,
                 },
             ]
         );
@@ -2064,12 +2052,10 @@ mod tests {
                 HijackSite {
                     op_index: 4,
                     deadline_dots: 7,
-                    eligibility: HijackEligibility::LatchedOnly,
                 },
                 HijackSite {
                     op_index: 5,
                     deadline_dots: 10,
-                    eligibility: HijackEligibility::NewestVisible,
                 },
             ]
         );
@@ -2101,22 +2087,18 @@ mod tests {
             assert_eq!(usize::from(window.sequence_cycles), ops.len());
             for site in window.hijack_sites {
                 let op = &ops[site.op_index as usize];
-                match site.eligibility {
-                    HijackEligibility::LatchedOnly => {
-                        assert!(matches!(op, Microcode::PushStatus { .. }));
-                        // Latched-only cutoff = site tick − 5: a rise is
-                        // latched strictly before the take tick iff it
-                        // rose by then (2-dot sample lag plus the one full
-                        // cycle between the last sampler tick and the
-                        // take), see `NmiDetector` sampling.
-                        assert_eq!(
-                            u64::from(site.deadline_dots),
-                            3 * u64::from(site.op_index) - 5
-                        );
-                    }
-                    HijackEligibility::NewestVisible => {
-                        assert!(matches!(op, Microcode::LoadIrqPcL));
-                    }
+                if matches!(op, Microcode::PushStatus { .. }) {
+                    // Latched-only cutoff = site tick − 5: a rise is
+                    // latched strictly before the take tick iff it
+                    // rose by then (2-dot sample lag plus the one full
+                    // cycle between the last sampler tick and the
+                    // take), see `NmiDetector` sampling.
+                    assert_eq!(
+                        u64::from(site.deadline_dots),
+                        3 * u64::from(site.op_index) - 5
+                    );
+                } else {
+                    assert!(matches!(op, Microcode::LoadIrqPcL));
                 }
             }
             assert!(window.suppress_final_poll);
