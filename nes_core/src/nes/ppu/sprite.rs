@@ -110,6 +110,7 @@ impl SpriteManager {
     }
 
     /// Update sprite status to ppu status register
+    #[inline]
     pub fn update_ctrl_status(&mut self, status: &mut PpuStatus) {
         if std::mem::take(&mut self.overflow_pending) {
             status.set_sprite_overflow(true);
@@ -272,7 +273,7 @@ impl SpriteManager {
         ctrl: PpuCtrl,
         cartridge: &Cartridge,
         screen_y: u8,
-        render: &PpuRenderState,
+        render: PpuRenderState,
     ) {
         if self.rows_scanline == Some(screen_y) {
             return;
@@ -291,10 +292,10 @@ impl SpriteManager {
             // the sprite CHR bank set in 8x16 mode.
             let spr_render = PpuRenderState {
                 fetch: PpuFetchKind::Sprite,
-                ..*render
+                ..render
             };
-            let low = cartridge.read_vram(addr.0, &spr_render);
-            let high = cartridge.read_vram(addr.second_plane_addr(), &spr_render);
+            let low = cartridge.read_vram(addr.0, spr_render);
+            let high = cartridge.read_vram(addr.second_plane_addr(), spr_render);
 
             self.rows.push(SpriteRow {
                 x: sprite.x,
@@ -319,7 +320,7 @@ impl SpriteManager {
         cartridge: &Cartridge,
         screen_x: u8,
         screen_y: u8,
-        render: &PpuRenderState,
+        render: PpuRenderState,
     ) -> Option<SpritePixel> {
         self.ensure_rows(ctrl, cartridge, screen_y, render);
         self.rows.iter().find_map(|row| row.pixel(screen_x))

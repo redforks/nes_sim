@@ -162,7 +162,7 @@ fn create_cartridge_mapper0() {
 
     let val = cartridge.read_prg_ram(0x6000);
     assert_eq!(val, 0);
-    assert_eq!(cartridge.read_vram(0, &PpuRenderState::disabled()), 0);
+    assert_eq!(cartridge.read_vram(0, PpuRenderState::disabled()), 0);
 }
 
 #[test]
@@ -173,7 +173,7 @@ fn create_cartridge_mapper1() {
 
     let val = cartridge.read(0x8000);
     assert_eq!(val, 0);
-    assert_eq!(cartridge.read_vram(0, &PpuRenderState::disabled()), 0);
+    assert_eq!(cartridge.read_vram(0, PpuRenderState::disabled()), 0);
 }
 
 #[test]
@@ -184,7 +184,7 @@ fn create_cartridge_mapper2() {
 
     let val = cartridge.read(0x8000);
     assert_eq!(val, 0);
-    assert_eq!(cartridge.read_vram(0, &PpuRenderState::disabled()), 0);
+    assert_eq!(cartridge.read_vram(0, PpuRenderState::disabled()), 0);
 }
 
 #[test]
@@ -195,7 +195,7 @@ fn create_cartridge_mapper3() {
 
     let val = cartridge.read(0x8000);
     assert_eq!(val, 0);
-    assert_eq!(cartridge.read_vram(0, &PpuRenderState::disabled()), 0);
+    assert_eq!(cartridge.read_vram(0, PpuRenderState::disabled()), 0);
 }
 
 #[test]
@@ -206,7 +206,7 @@ fn create_cartridge_mapper4() {
 
     let val = cartridge.read(0x8000);
     assert_eq!(val, 0);
-    assert_eq!(cartridge.read_vram(0, &PpuRenderState::disabled()), 0);
+    assert_eq!(cartridge.read_vram(0, PpuRenderState::disabled()), 0);
 }
 
 #[test]
@@ -216,10 +216,10 @@ fn create_cartridge_mapper7() {
     let mut cartridge = create_cartridge_with_mmc3_irq_override(&file, Mmc3IrqOverride::Auto);
 
     assert_eq!(cartridge.read(0x8000), 0);
-    assert_eq!(cartridge.read_vram(0x0010, &PpuRenderState::disabled()), 0);
+    assert_eq!(cartridge.read_vram(0x0010, PpuRenderState::disabled()), 0);
     cartridge.write_vram(0x0010, 0xab);
     assert_eq!(
-        cartridge.read_vram(0x0010, &PpuRenderState::disabled()),
+        cartridge.read_vram(0x0010, PpuRenderState::disabled()),
         0xab
     );
 }
@@ -231,10 +231,10 @@ fn create_cartridge_mapper34_bnrom() {
     let mut cartridge = create_cartridge_with_mmc3_irq_override(&file, Mmc3IrqOverride::Auto);
 
     assert_eq!(cartridge.read(0x8000), 0);
-    assert_eq!(cartridge.read_vram(0x0010, &PpuRenderState::disabled()), 0);
+    assert_eq!(cartridge.read_vram(0x0010, PpuRenderState::disabled()), 0);
     cartridge.write_vram(0x0010, 0xab);
     assert_eq!(
-        cartridge.read_vram(0x0010, &PpuRenderState::disabled()),
+        cartridge.read_vram(0x0010, PpuRenderState::disabled()),
         0xab
     );
 }
@@ -245,10 +245,10 @@ fn create_cartridge_mapper4_with_chr_ram() {
     let file = INesFile::new(rom).unwrap();
     let mut cartridge = create_cartridge_with_mmc3_irq_override(&file, Mmc3IrqOverride::Auto);
 
-    assert_eq!(cartridge.read_vram(0x0010, &PpuRenderState::disabled()), 0);
+    assert_eq!(cartridge.read_vram(0x0010, PpuRenderState::disabled()), 0);
     cartridge.write_vram(0x0010, 0xab);
     assert_eq!(
-        cartridge.read_vram(0x0010, &PpuRenderState::disabled()),
+        cartridge.read_vram(0x0010, PpuRenderState::disabled()),
         0xab
     );
 }
@@ -276,7 +276,7 @@ fn create_cartridge_mapper5_accepts_1mb_prg_and_chr() {
     let cartridge = create_cartridge_with_mmc3_irq_override(&file, Mmc3IrqOverride::Auto);
 
     assert_eq!(cartridge.read(0x8000), 0);
-    assert_eq!(cartridge.read_vram(0x1000, &PpuRenderState::disabled()), 0);
+    assert_eq!(cartridge.read_vram(0x1000, PpuRenderState::disabled()), 0);
 }
 
 #[test]
@@ -572,15 +572,15 @@ fn test_recording_logs_cartridge_vram_reads_in_order() {
 
     assert_eq!(
         0xab,
-        cartridge.read_vram(0x0010, &PpuRenderState::disabled())
+        cartridge.read_vram(0x0010, PpuRenderState::disabled())
     );
     assert_eq!(
         0xcd,
-        cartridge.read_vram(0x0100, &PpuRenderState::disabled())
+        cartridge.read_vram(0x0100, PpuRenderState::disabled())
     );
     assert_eq!(
         0xab,
-        cartridge.read_vram(0x0010, &PpuRenderState::disabled())
+        cartridge.read_vram(0x0010, PpuRenderState::disabled())
     );
 
     assert_eq!(3, recorder.vram_reads.count());
@@ -607,8 +607,8 @@ struct PpuHookMapper {
 impl Mapper for PpuHookMapper {
     fn cpu_write(&mut self, _: u16, _: u8, _: SystemClock, _: &mut CartridgeMemory) {}
 
-    fn ppu_read(&self, _addr: u16, render: &PpuRenderState) -> Option<u8> {
-        self.seen.set(Some(*render));
+    fn ppu_read(&self, _addr: u16, render: PpuRenderState) -> Option<u8> {
+        self.seen.set(Some(render));
         self.hook_byte
     }
 
@@ -646,7 +646,7 @@ fn ppu_read_hook_bypassed_when_flag_off() {
     assert!(!cartridge.wants_ppu_read());
     assert_eq!(
         0x5a,
-        cartridge.read_vram(0x0010, &PpuRenderState::disabled())
+        cartridge.read_vram(0x0010, PpuRenderState::disabled())
     );
     assert_eq!(None, seen.get(), "flag off: the hook is never called");
 }
@@ -662,7 +662,7 @@ fn ppu_read_hook_overrides_when_flag_on() {
         fetch_phase: 3,
         fetch: PpuFetchKind::Cpu,
     };
-    assert_eq!(0xff, cartridge.read_vram(0x0010, &render));
+    assert_eq!(0xff, cartridge.read_vram(0x0010, render));
     assert_eq!(Some(render), seen.get());
 }
 
@@ -676,6 +676,6 @@ fn ppu_read_hook_fallthrough_when_flag_on() {
         fetch_phase: 5,
         fetch: PpuFetchKind::Cpu,
     };
-    assert_eq!(0x5a, cartridge.read_vram(0x0010, &render));
+    assert_eq!(0x5a, cartridge.read_vram(0x0010, render));
     assert_eq!(Some(render), seen.get(), "consulted before the fallthrough");
 }

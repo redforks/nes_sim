@@ -628,7 +628,7 @@ impl<R: Render> Ppu<R> {
             self.background_anchor = Some(BackgroundActivation::snapshot(self, 0));
             self.pending_background_activation = None;
             let render = self.ppu_render_state();
-            self.fill_tile_cache(0, cartridge, &render);
+            self.fill_tile_cache(0, cartridge, render);
         }
 
         if rendering {
@@ -1089,7 +1089,7 @@ impl<R: Render> Ppu<R> {
     pub fn read_vram(&self, address: u16, cartridge: &Cartridge) -> u8 {
         let addr = normalize_vram_addr(address);
         if addr < 0x3f00 {
-            cartridge.read_vram(addr, &self.ppu_render_state())
+            cartridge.read_vram(addr, self.ppu_render_state())
         } else {
             self.palette.read(addr)
         }
@@ -1114,7 +1114,7 @@ impl<R: Render> Ppu<R> {
         &mut self,
         screen_x: u8,
         cartridge: &Cartridge,
-        render: &PpuRenderState,
+        render: PpuRenderState,
     ) -> (u8, u8) {
         self.apply_pending_background_activation(screen_x);
 
@@ -1130,7 +1130,7 @@ impl<R: Render> Ppu<R> {
         self.tile_cache.consume()
     }
 
-    fn fill_tile_cache(&mut self, screen_x: u8, cartridge: &Cartridge, render: &PpuRenderState) {
+    fn fill_tile_cache(&mut self, screen_x: u8, cartridge: &Cartridge, render: PpuRenderState) {
         let background = self
             .background_anchor
             .unwrap_or_else(|| BackgroundActivation::snapshot(self, 0));
@@ -1268,7 +1268,7 @@ impl<R: Render> Ppu<R> {
         let screen_y = self.timing.scanline as u8;
         let render = self.ppu_render_state();
         let (bg_palette_idx, bg_color_idx) = if self.registers.mask.background_enabled() {
-            self.get_background_pixel(x, cartridge, &render)
+            self.get_background_pixel(x, cartridge, render)
         } else {
             (0, 0)
         };
@@ -1277,7 +1277,7 @@ impl<R: Render> Ppu<R> {
             && (x >= 8 || self.registers.mask.sprite_left_enabled())
         {
             self.sprite
-                .find_sprite_pixel(self.registers.ctrl, cartridge, x, screen_y, &render)
+                .find_sprite_pixel(self.registers.ctrl, cartridge, x, screen_y, render)
         } else {
             None
         };
@@ -1328,7 +1328,7 @@ fn fetch_tile_data(
     background: &BackgroundActivation,
     screen_x: u8,
     cartridge: &Cartridge,
-    render: &PpuRenderState,
+    render: PpuRenderState,
 ) -> (u8, u8, u8, u8) {
     let coarse_x = background.vram_addr & 0x001F;
     let coarse_y = (background.vram_addr >> 5) & 0x001F;
@@ -1357,19 +1357,19 @@ fn fetch_tile_data(
     // unaffected — the bank hook declines `$2000+`).
     let bg_render = PpuRenderState {
         fetch: PpuFetchKind::Background,
-        ..*render
+        ..render
     };
-    let nt_byte = cartridge.read_vram(nt_addr, &bg_render);
+    let nt_byte = cartridge.read_vram(nt_addr, bg_render);
     let attr_addr = nt_base + 0x03c0 + (nt_y as u16 >> 2) * 8 + (nt_x as u16 >> 2);
-    let attr_byte = cartridge.read_vram(attr_addr, &bg_render);
+    let attr_byte = cartridge.read_vram(attr_addr, bg_render);
 
     let shift = (((nt_y >> 1) & 0x01) << 2) | (((nt_x >> 1) & 0x01) << 1);
 
     let tile_position = background.ctrl.background_tile_position(nt_byte);
     let tile_fine_y = (world_y & 7) as u8;
     let low_addr = tile_position.resolve_pixel_addr(tile_fine_y);
-    let bitplane_low = cartridge.read_vram(low_addr.0, &bg_render);
-    let bitplane_high = cartridge.read_vram(low_addr.second_plane_addr(), &bg_render);
+    let bitplane_low = cartridge.read_vram(low_addr.0, bg_render);
+    let bitplane_high = cartridge.read_vram(low_addr.second_plane_addr(), bg_render);
     let palette_idx = (attr_byte >> shift) & 0x03;
 
     (

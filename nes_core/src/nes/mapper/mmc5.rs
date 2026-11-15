@@ -578,7 +578,7 @@ impl Mapper for MMC5 {
     ///
     /// Takes `&self`: the render latch and the ExAttr tile latch live behind
     /// [`Cell`]s, and the board memory stays cartridge-owned (ADR-0015).
-    fn ppu_read(&self, addr: u16, render: &PpuRenderState) -> Option<u8> {
+    fn ppu_read(&self, addr: u16, render: PpuRenderState) -> Option<u8> {
         // The mapper owns the render gate (spec #74): every hook call
         // refreshes the latch the `$5C00-$5FFF` write gate reads, and a
         // render-enabled read marks the scanline genuinely rendering.
@@ -853,7 +853,7 @@ impl Mapper for MMC5 {
     /// CPU `$2007` reads never take the split bank: they carry
     /// [`PpuFetchKind::Cpu`], while the region latch only advances on
     /// render-enabled nametable fetches.
-    fn ppu_chr_bank(&self, addr: u16, render: &PpuRenderState) -> Option<u16> {
+    fn ppu_chr_bank(&self, addr: u16, render: PpuRenderState) -> Option<u16> {
         if addr >= 0x2000 {
             return None;
         }
@@ -1476,7 +1476,7 @@ mod tests {
     }
 
     fn nt_read(mapper: &MMC5, addr: u16) -> Option<u8> {
-        mapper.ppu_read(addr, &PpuRenderState::disabled())
+        mapper.ppu_read(addr, PpuRenderState::disabled())
     }
 
     fn write_reg(mapper: &mut MMC5, memory: &mut CartridgeMemory, addr: u16, value: u8) {
@@ -1498,20 +1498,20 @@ mod tests {
         assert_eq!(nt_read(&mapper, 0x2042), Some(0xaa));
 
         // Latched rendering blocks mode-0 writes (the cell keeps its value).
-        mapper.ppu_read(0x1000, &render_on());
+        mapper.ppu_read(0x1000, render_on());
         write_reg(&mut mapper, &mut memory, 0x5c42, 0x11);
         assert_eq!(nt_read(&mapper, 0x2042), Some(0xaa));
 
         // Mode 1 (extended attribute): same gate, observed the same way.
         write_reg(&mut mapper, &mut memory, 0x5104, 0x01);
-        mapper.ppu_read(0x1000, &render_on());
+        mapper.ppu_read(0x1000, render_on());
         write_reg(&mut mapper, &mut memory, 0x5c42, 0x11);
         write_reg(&mut mapper, &mut memory, 0x5104, 0x00);
         assert_eq!(nt_read(&mapper, 0x2042), Some(0xaa));
 
         // Mode 2 (general RAM): always writable, even while rendering.
         write_reg(&mut mapper, &mut memory, 0x5104, 0x02);
-        mapper.ppu_read(0x1000, &render_on());
+        mapper.ppu_read(0x1000, render_on());
         write_reg(&mut mapper, &mut memory, 0x5c42, 0x11);
         write_reg(&mut mapper, &mut memory, 0x5104, 0x00);
         assert_eq!(nt_read(&mapper, 0x2042), Some(0x11));
@@ -1520,7 +1520,7 @@ mod tests {
         // latched idle or rendering.
         write_reg(&mut mapper, &mut memory, 0x5104, 0xff);
         write_reg(&mut mapper, &mut memory, 0x5c42, 0x77);
-        mapper.ppu_read(0x1000, &render_on());
+        mapper.ppu_read(0x1000, render_on());
         write_reg(&mut mapper, &mut memory, 0x5c42, 0x77);
         write_reg(&mut mapper, &mut memory, 0x5104, 0x00);
         assert_eq!(nt_read(&mapper, 0x2042), Some(0x11));
@@ -1587,7 +1587,7 @@ mod tests {
         assert_eq!(nt_read(&mapper, 0x2000), Some(0x11));
         // The verify read above latched idle; latch rendering and the next
         // write is blocked (old value survives).
-        mapper.ppu_read(0x1000, &render_on());
+        mapper.ppu_read(0x1000, render_on());
         write_reg(&mut mapper, &mut memory, 0x5c00, 0x22);
         assert_eq!(nt_read(&mapper, 0x2000), Some(0x11));
         // That read latched idle again, so writes flow until the next
@@ -1738,7 +1738,7 @@ mod tests {
 
         assert_eq!(nt_read(&mapper, 0x1000), None);
         assert_eq!(nt_read(&mapper, 0x1fff), None);
-        assert_eq!(mapper.ppu_read(0x3f00, &PpuRenderState::disabled()), None);
+        assert_eq!(mapper.ppu_read(0x3f00, PpuRenderState::disabled()), None);
         // Alias `$3005` reads the `$2005` cell (mode 0, ExRAM quadrant).
         write_reg(&mut mapper, &mut memory, 0x5104, 0x02);
         write_reg(&mut mapper, &mut memory, 0x5c05, 0x9d);
@@ -1782,7 +1782,7 @@ mod tests {
     }
 
     fn bank_of(mapper: &MMC5, slot: u16, fetch: PpuFetchKind, tall: bool) -> Option<u16> {
-        mapper.ppu_chr_bank(slot * 0x400, &chr_render(fetch, tall))
+        mapper.ppu_chr_bank(slot * 0x400, chr_render(fetch, tall))
     }
 
     // 1K mode: each `$5120-$5127` register maps its own 1K slot, and the
@@ -2034,7 +2034,7 @@ mod tests {
         let (mapper, _) = chr_board(8);
         for addr in [0x2000, 0x2400, 0x3eff] {
             assert_eq!(
-                mapper.ppu_chr_bank(addr, &chr_render(PpuFetchKind::Background, true)),
+                mapper.ppu_chr_bank(addr, chr_render(PpuFetchKind::Background, true)),
                 None
             );
         }
@@ -2060,10 +2060,7 @@ mod tests {
         // Sprite fetches read the sprite banks (fill byte == bank index).
         for slot in 0..8u16 {
             assert_eq!(
-                cart.read_vram(
-                    slot * 0x400 + 0x3ff,
-                    &chr_render(PpuFetchKind::Sprite, true)
-                ),
+                cart.read_vram(slot * 0x400 + 0x3ff, chr_render(PpuFetchKind::Sprite, true)),
                 slot as u8,
                 "sprite slot {slot}"
             );
@@ -2073,7 +2070,7 @@ mod tests {
             assert_eq!(
                 cart.read_vram(
                     slot as u16 * 0x400 + 0x3ff,
-                    &chr_render(PpuFetchKind::Background, true)
+                    chr_render(PpuFetchKind::Background, true)
                 ),
                 *want,
                 "background slot {slot}"
@@ -2084,7 +2081,7 @@ mod tests {
             assert_eq!(
                 cart.read_vram(
                     slot as u16 * 0x400 + 0x3ff,
-                    &chr_render(PpuFetchKind::Cpu, true)
+                    chr_render(PpuFetchKind::Cpu, true)
                 ),
                 *want,
                 "cpu slot {slot}"
@@ -2113,7 +2110,7 @@ mod tests {
     /// rendered, then ticks through the detection dot.
     fn run_rendered_scanline(mapper: &mut MMC5, line: u16) {
         mapper.on_ppu_tick(line);
-        mapper.ppu_read(0x2000, &irq_render_on());
+        mapper.ppu_read(0x2000, irq_render_on());
         for _ in 0..3 {
             mapper.on_ppu_tick(line);
         }
@@ -2124,7 +2121,7 @@ mod tests {
     /// must ignore it (silent PPU).
     fn run_dark_scanline(mapper: &mut MMC5, line: u16) {
         mapper.on_ppu_tick(line);
-        mapper.ppu_read(0x2000, &PpuRenderState::disabled());
+        mapper.ppu_read(0x2000, PpuRenderState::disabled());
         for _ in 0..3 {
             mapper.on_ppu_tick(line);
         }
@@ -2134,7 +2131,7 @@ mod tests {
     /// the dot-0 fetch and two more ticks, stopping just before detection.
     fn run_scanline_to_before_detect(mapper: &mut MMC5, line: u16) {
         mapper.on_ppu_tick(line);
-        mapper.ppu_read(0x2000, &irq_render_on());
+        mapper.ppu_read(0x2000, irq_render_on());
         mapper.on_ppu_tick(line);
         mapper.on_ppu_tick(line);
     }
@@ -2401,7 +2398,7 @@ mod tests {
 
     /// NT-tile fetch through the hook under the background render state.
     fn nt_fetch(mapper: &MMC5, addr: u16) -> Option<u8> {
-        mapper.ppu_read(addr, &chr_render(PpuFetchKind::Background, false))
+        mapper.ppu_read(addr, chr_render(PpuFetchKind::Background, false))
     }
 
     // Power-on: split off (`$5200 = $00`: disabled, left, threshold 0),
@@ -2623,7 +2620,7 @@ mod tests {
         let (mut mapper, mut memory) = board_8k(2, [0; 6]);
         write_split(&mut mapper, &mut memory, 0x80 | 2, 0, 0);
 
-        mapper.ppu_read(0x2000, &PpuRenderState::disabled());
+        mapper.ppu_read(0x2000, PpuRenderState::disabled());
         assert_eq!(mapper.split_fetch.get(), 0);
 
         // Disabled split never counts, even with rendering on.
@@ -2667,11 +2664,11 @@ mod tests {
         let bg = chr_render(PpuFetchKind::Background, false);
 
         // Two NT fetches enter the region...
-        assert_eq!(cart.read_vram(0x2000, &bg), 0x00);
-        assert_eq!(cart.read_vram(0x2001, &bg), 0x00);
+        assert_eq!(cart.read_vram(0x2000, bg), 0x00);
+        assert_eq!(cart.read_vram(0x2001, bg), 0x00);
         // ...so the next pattern fetch serves the split bank.
-        assert_eq!(cart.read_vram(0x0400, &bg), 0x05);
-        assert_eq!(cart.read_vram(0x1400, &bg), 0x05);
+        assert_eq!(cart.read_vram(0x0400, bg), 0x05);
+        assert_eq!(cart.read_vram(0x1400, bg), 0x05);
     }
 
     // The third NT fetch leaves a left-T=2 region: patterns fall back to
@@ -2690,12 +2687,12 @@ mod tests {
         let cpu = chr_render(PpuFetchKind::Cpu, false);
 
         for addr in 0x2000..=0x2002 {
-            cart.read_vram(addr, &bg);
+            cart.read_vram(addr, bg);
         }
         // Fetch 3 left the region: slot 1 reads the sprite set bank 1.
-        assert_eq!(cart.read_vram(0x0400, &bg), 0x01);
+        assert_eq!(cart.read_vram(0x0400, bg), 0x01);
         // One more NT fetch re-enters nothing (fetch 4, still normal)...
-        cart.read_vram(0x2003, &bg);
+        cart.read_vram(0x2003, bg);
         // ...but the split bank still serves render fetches only: the CPU
         // path reads the programmed set. Re-enter via reset: two fresh NT
         // fetches set the latch, then a CPU read declines the redirect.
@@ -2706,9 +2703,9 @@ mod tests {
         }
         write_split(&mut mapper2, &mut memory2, 0x80 | 2, 0, 1);
         let cart2 = crate::nes::mapper::Cartridge::new(Box::new(mapper2), memory2);
-        cart2.read_vram(0x2000, &bg);
-        cart2.read_vram(0x2001, &bg);
-        assert_eq!(cart2.read_vram(0x0400, &cpu), 0x01);
+        cart2.read_vram(0x2000, bg);
+        cart2.read_vram(0x2001, bg);
+        assert_eq!(cart2.read_vram(0x0400, cpu), 0x01);
     }
 
     /// Fill all 1 KB of ExRAM with the row number (`i / 32`): tile row r
@@ -2774,6 +2771,6 @@ mod tests {
         assert_eq!(nt_fetch(&mapper, 0x2003), Some(0), "region col 1");
         // Region latch is set, but the CPU path falls through.
         let cpu = chr_render(PpuFetchKind::Cpu, false);
-        assert_eq!(mapper.ppu_read(0x2000, &cpu), None);
+        assert_eq!(mapper.ppu_read(0x2000, cpu), None);
     }
 }

@@ -311,7 +311,7 @@ pub trait Mapper {
     ///
     /// Takes `&self`: board state the hook needs (e.g. the MMC5 ExAttr
     /// latch) lives behind interior mutability in the chip impl.
-    fn ppu_read(&self, _addr: u16, _render: &PpuRenderState) -> Option<u8> {
+    fn ppu_read(&self, _addr: u16, _render: PpuRenderState) -> Option<u8> {
         None
     }
     /// Optional CHR bank-redirect channel (ticket #78): consulted by
@@ -329,7 +329,7 @@ pub trait Mapper {
     /// no memory (ADR-0015) and `&self` cannot reach the pool, so CHR banking
     /// redirects the bank while `ppu_read` stays the hook for mapper-owned
     /// bytes (ExRAM/fill).
-    fn ppu_chr_bank(&self, _addr: u16, _render: &PpuRenderState) -> Option<u16> {
+    fn ppu_chr_bank(&self, _addr: u16, _render: PpuRenderState) -> Option<u16> {
         None
     }
     fn on_ppu_tick(&mut self, _scanline: u16) {}
@@ -557,7 +557,7 @@ impl Cartridge {
     /// [`Mapper::ppu_read`] gets first refusal with the PPU-built
     /// [`PpuRenderState`]; `None` at each step falls through to the 1 KB
     /// bank-window lookup below. `$2000+` consults `ppu_read` only.
-    pub fn read_vram(&self, address: u16, render: &PpuRenderState) -> u8 {
+    pub fn read_vram(&self, address: u16, render: PpuRenderState) -> u8 {
         #[cfg(test)]
         if let Some(log) = &self.vram_read_log {
             log.record(address);
