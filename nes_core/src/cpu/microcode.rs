@@ -225,7 +225,7 @@ pub enum HijackEligibility {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct HijackSite {
     pub op_index: u8,
-    pub deadline_dots: u64,
+    pub deadline_dots: u8,
     pub eligibility: HijackEligibility,
 }
 
@@ -2109,7 +2109,10 @@ mod tests {
                         // rose by then (2-dot sample lag plus the one full
                         // cycle between the last sampler tick and the
                         // take), see `NmiDetector` sampling.
-                        assert_eq!(site.deadline_dots, 3 * u64::from(site.op_index) - 5);
+                        assert_eq!(
+                            u64::from(site.deadline_dots),
+                            3 * u64::from(site.op_index) - 5
+                        );
                     }
                     HijackEligibility::NewestVisible => {
                         assert!(matches!(op, Microcode::LoadIrqPcL));

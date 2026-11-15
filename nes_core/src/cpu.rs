@@ -1192,7 +1192,7 @@ impl Cpu {
             .iter()
             .find(|s| u64::from(s.op_index) == index)?;
         debug_assert_eq!(site.eligibility, expected, "window and op disagree");
-        Some((site, started.cycles() + site.deadline_dots))
+        Some((site, started.cycles() + u64::from(site.deadline_dots)))
     }
 
     /// Switch an in-flight BRK/IRQ vector fetch to the NMI vector: stamp
