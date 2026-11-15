@@ -2,8 +2,8 @@ use crate::view::MachineView;
 use crate::{SystemClock, bus::Bus, mcu::Mcu};
 use arraydeque::ArrayDeque;
 use microcode::{
-    AOrMemory, CrossPageBehavior, HijackSite, IncDecTarget, InterruptSequences, InterruptWindow,
-    Microcode, OpAfterAddressing,
+    AOrMemory, CrossPageBehavior, IncDecTarget, InterruptSequences, InterruptWindow, Microcode,
+    OpAfterAddressing,
 };
 
 pub(crate) mod microcode;
@@ -1103,7 +1103,7 @@ impl Cpu {
 
     fn push_status<M: Mcu>(&mut self, bus: &mut Bus<M>, break_flag: bool) {
         let clock = bus.clock();
-        if let Some((_, cutoff)) = self.declared_hijack_site(clock)
+        if let Some(cutoff) = self.declared_hijack_site(clock)
             && self.nmi_detecteor.consume_latched_edge(cutoff)
         {
             self.switch_to_nmi_vector(&[Microcode::LoadNmiPcL, Microcode::LoadNmiPcH]);
@@ -1173,7 +1173,7 @@ impl Cpu {
     /// The declared hijack site for the micro-op executing this cycle, if
     /// the armed window schedules one at this sequence index, with its
     /// cutoff in dots.
-    fn declared_hijack_site(&self, clock: SystemClock) -> Option<(&'static HijackSite, u64)> {
+    fn declared_hijack_site(&self, clock: SystemClock) -> Option<u64> {
         let active = self.active_interrupt_window.as_ref()?;
         let started = active.started_at?;
         let index = (clock.cycles() - started.cycles()) / 3;
@@ -1186,7 +1186,7 @@ impl Cpu {
             .hijack_sites
             .iter()
             .find(|s| u64::from(s.op_index) == index)?;
-        Some((site, started.cycles() + u64::from(site.deadline_dots)))
+        Some(started.cycles() + u64::from(site.deadline_dots))
     }
 
     /// Switch an in-flight BRK/IRQ vector fetch to the NMI vector: stamp
@@ -1262,7 +1262,7 @@ impl Cpu {
 
     fn load_irq_pcl<M: Mcu>(&mut self, bus: &mut Bus<M>) {
         let clock = bus.clock();
-        if let Some((_, cutoff)) = self.declared_hijack_site(clock)
+        if let Some(cutoff) = self.declared_hijack_site(clock)
             && self.nmi_detecteor.consume_hijack_edge(cutoff)
         {
             self.switch_to_nmi_vector(&[Microcode::LoadNmiPcH]);
