@@ -273,29 +273,26 @@ impl SpriteManager {
         ctrl: PpuCtrl,
         cartridge: &Cartridge,
         screen_y: u8,
-        render: PpuRenderState,
+        mut render: PpuRenderState,
     ) {
         if self.rows_scanline == Some(screen_y) {
             return;
         }
 
+        // Ticket #78: sprite fetches carry the Sprite kind so MMC5 picks
+        // the sprite CHR bank set in 8x16 mode.
+        render.fetch = PpuFetchKind::Sprite;
+        self.rows_scanline = Some(screen_y);
         self.rows.clear();
         self.zero_row_idx = None;
         let sprite_height = ctrl.sprite_height();
 
-        for i in 0..self.current_scanline_oam.len() {
-            let sprite = self.current_scanline_oam[i];
+        for (i, sprite) in self.current_scanline_oam.iter().copied().enumerate() {
             let src_y = sprite_src_y(&sprite, sprite_height, screen_y);
             let tile_position = sprite.tile_position(ctrl);
             let addr = tile_position.resolve_pixel_addr(src_y);
-            // Ticket #78: sprite fetches carry the Sprite kind so MMC5 picks
-            // the sprite CHR bank set in 8x16 mode.
-            let spr_render = PpuRenderState {
-                fetch: PpuFetchKind::Sprite,
-                ..render
-            };
-            let low = cartridge.read_vram(addr.0, spr_render);
-            let high = cartridge.read_vram(addr.second_plane_addr(), spr_render);
+            let low = cartridge.read_vram(addr.0, render);
+            let high = cartridge.read_vram(addr.second_plane_addr(), render);
 
             self.rows.push(SpriteRow {
                 x: sprite.x,
@@ -310,8 +307,6 @@ impl SpriteManager {
                 self.zero_row_idx = Some(i);
             }
         }
-
-        self.rows_scanline = Some(screen_y);
     }
 
     pub fn find_sprite_pixel(
