@@ -255,15 +255,17 @@ fn nmi_pulse_dispatch_latency_runs_from_rising_edge() {
     let mut latched_at = None;
     for t in 0..=24u64 {
         // a dispatched interrupt is consumed by the next machine tick
-        match cpu.interrupt_detected.take() {
-            Some(InterruptType::Nmi) => dispatched = true,
-            other => debug_assert_eq!(other, None),
+        let detected = cpu.interrupt_detected;
+        cpu.interrupt_detected = InterruptType::None;
+        match detected {
+            InterruptType::Nmi => dispatched = true,
+            other => debug_assert_eq!(other, InterruptType::None),
         }
         cpu.update_nmi_line((10..15).contains(&t), SystemClock(t), t % 3 == 0);
         if t % 3 == 2 {
             let status = cpu.status();
             cpu.detect_interrupt(SystemClock(t), true, status, Microcode::Nop);
-            if cpu.interrupt_detected.is_some() {
+            if cpu.interrupt_detected != InterruptType::None {
                 latched_at = Some(t);
             }
         }
@@ -4446,7 +4448,8 @@ fn interrupt_handler_entry_21_dots_after_boundary() {
             }
             // The CPU dispatches on the first cycle after an instruction
             // boundary whose end-of-cycle interrupt poll detected one.
-            let dispatching = cpu.microcodes_empty() && cpu.interrupt_detected.is_some();
+            let dispatching =
+                cpu.microcodes_empty() && cpu.interrupt_detected != InterruptType::None;
             cpu.tick(&mut plugin, clock);
             let instruction_done = cpu.microcodes_empty();
             if dispatching {

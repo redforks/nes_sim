@@ -618,7 +618,7 @@ fn walk_nmi() -> Walk {
     for _ in 0..64 {
         cpu.update_nmi_line(true, clock, clock.cycles() % 3 == 0);
         if clock.is_cpu_clock() {
-            if cpu.microcodes_empty() && cpu.interrupt_detected.is_some() {
+            if cpu.microcodes_empty() && cpu.interrupt_detected != InterruptType::None {
                 cpu.mcu().clear_calls();
                 cpu.tick(&mut plugin, clock);
                 dispatched = true;
@@ -649,7 +649,7 @@ fn walk_irq() -> Walk {
     let mut dispatched = false;
     for _ in 0..64 {
         if clock.is_cpu_clock() {
-            if cpu.microcodes_empty() && cpu.interrupt_detected.is_some() {
+            if cpu.microcodes_empty() && cpu.interrupt_detected != InterruptType::None {
                 cpu.mcu().clear_calls();
                 cpu.tick(&mut plugin, clock);
                 dispatched = true;

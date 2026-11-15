@@ -181,6 +181,7 @@ impl NmiDetector {
 
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
 enum InterruptType {
+    None,
     Nmi,
     Irq,
 }
@@ -298,7 +299,7 @@ pub struct Cpu {
 
     active_interrupt_window: Option<ActiveInterruptWindow>,
     nmi_detecteor: NmiDetector,
-    interrupt_detected: Option<InterruptType>,
+    interrupt_detected: InterruptType,
     irq_detector: IrqDetector,
     request_detect_interrupt: Option<bool>,
 
@@ -318,7 +319,7 @@ impl Cpu {
             sp: 0,
             status: 0,
             active_interrupt_window: None,
-            interrupt_detected: None,
+            interrupt_detected: InterruptType::None,
             nmi_detecteor: Default::default(),
             irq_detector: Default::default(),
             request_detect_interrupt: None,
@@ -684,7 +685,7 @@ impl Cpu {
         self.set_flag(Flag::InterruptDisabled, true);
         self.set_flag(Flag::NotUsed, true);
         self.microcode_queue.clear();
-        self.interrupt_detected = None;
+        self.interrupt_detected = InterruptType::None;
         self.halt = false;
         self.sp = self.sp.wrapping_sub(3);
         self.nmi_detecteor = Default::default();
@@ -746,14 +747,12 @@ impl Cpu {
             None => {
                 let view = MachineView::new(self.snapshot(), bus.mcu(), bus.clock());
                 plugin.start(&view);
-                match self.interrupt_detected.take() {
-                    Some(InterruptType::Nmi) => {
-                        self.push_enter_interrupt_microcodes(true, bus.clock())
-                    }
-                    Some(InterruptType::Irq) => {
-                        self.push_enter_interrupt_microcodes(false, bus.clock())
-                    }
-                    None => Microcode::FetchAndDecode,
+                let detected = self.interrupt_detected;
+                self.interrupt_detected = InterruptType::None;
+                match detected {
+                    InterruptType::Nmi => self.push_enter_interrupt_microcodes(true, bus.clock()),
+                    InterruptType::Irq => self.push_enter_interrupt_microcodes(false, bus.clock()),
+                    InterruptType::None => Microcode::FetchAndDecode,
                 }
             }
         };
@@ -787,11 +786,11 @@ impl Cpu {
         let pending_since = self.nmi_detecteor.pending_asserted_since;
         if pending_since != 0 && (clock.0 - pending_since) > 1 {
             self.nmi_detecteor.mark_consumed();
-            self.interrupt_detected = Some(InterruptType::Nmi);
+            self.interrupt_detected = InterruptType::Nmi;
         } else if irq_pending {
-            self.interrupt_detected = Some(InterruptType::Irq);
+            self.interrupt_detected = InterruptType::Irq;
         } else {
-            debug_assert!(self.interrupt_detected.is_none());
+            debug_assert_eq!(self.interrupt_detected, InterruptType::None);
         }
     }
 
