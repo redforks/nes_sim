@@ -405,7 +405,8 @@ fn render_pixel<R: Render>(ppu: &mut Ppu<R>, pattern: &[u8], x: u8, y: u8) -> u8
         populate_sprite_secondary_oam(ppu, y as u16);
     }
     ppu.timing.scanline = y as u16;
-    ppu.render_pixel(x, &cart)
+    ppu.timing.dot = x as u16 + 1;
+    ppu.render_pixel(&cart)
 }
 
 fn run_scanline<R: Render>(ppu: &mut Ppu<R>, pattern: &[u8], scanline: u16) {
@@ -478,7 +479,8 @@ where
         populate_sprite_secondary_oam(ppu, y as u16);
     }
     ppu.timing.scanline = y as u16;
-    ppu.render_pixel(x, &cart)
+    ppu.timing.dot = x as u16 + 1;
+    ppu.render_pixel(&cart)
 }
 
 #[test]
@@ -521,7 +523,8 @@ fn ppu_background_fetch_logs_cartridge_vram_reads_in_order() {
     recorder.vram_reads.clear();
 
     ppu.timing.scanline = 0;
-    ppu.render_pixel(0, &cart);
+    ppu.timing.dot = 1;
+    ppu.render_pixel(&cart);
 
     assert_eq!(
         vec![0x2000, 0x23c0, 0x0000, 0x0008],
@@ -1307,13 +1310,15 @@ fn ctrl_write_invalidates_sprite_row_cache() {
     ppu.timing.scanline = 1;
 
     // First pixel fills the row cache from sprite pattern table 0.
-    assert_eq!(0x2a, ppu.render_pixel(0, &cart));
+    ppu.timing.dot = 1;
+    assert_eq!(0x2a, ppu.render_pixel(&cart));
     // A $2000 write must drop the cache so the same scanline reads the new
     // sprite pattern table.
     ppu.write_ppureg(0x2000, 0x08, &mut cart);
+    ppu.timing.dot = 2;
     assert_eq!(
         0x2b,
-        ppu.render_pixel(1, &cart),
+        ppu.render_pixel(&cart),
         "a $2000 write must invalidate the cached Sprite row"
     );
 }
@@ -1335,16 +1340,18 @@ fn ppudata_pattern_write_invalidates_sprite_row_cache() {
     populate_sprite_secondary_oam(&mut ppu, 1);
     ppu.timing.scanline = 1;
 
-    assert_eq!(0x2a, ppu.render_pixel(0, &cart));
+    ppu.timing.dot = 1;
+    assert_eq!(0x2a, ppu.render_pixel(&cart));
     // Rewrite tile 1 row 0 through PPUDATA: both planes all ones => color 3.
     for (addr, value) in [(0x0010u16, 0xffu8), (0x0018, 0xff)] {
         ppu.write_ppureg(0x2006, (addr >> 8) as u8, &mut cart);
         ppu.write_ppureg(0x2006, addr as u8, &mut cart);
         ppu.write_ppureg(0x2007, value, &mut cart);
     }
+    ppu.timing.dot = 2;
     assert_eq!(
         0x2c,
-        ppu.render_pixel(1, &cart),
+        ppu.render_pixel(&cart),
         "a PPUDATA pattern write must invalidate the cached Sprite row"
     );
 }

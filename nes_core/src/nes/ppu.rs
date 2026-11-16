@@ -668,11 +668,7 @@ impl<R: Render> Ppu<R> {
         // enable bits, by contrast, take effect here immediately.
         if self.timing.is_visible_dots() {
             let x = (self.timing.dot - 1) as u8;
-            let pixel_idx = if rendering {
-                self.render_pixel(x, cartridge)
-            } else {
-                self.palette.disabled_color_index(self.registers.vram_addr)
-            };
+            let pixel_idx = self.render_pixel(cartridge);
             let index = self.timing.scanline * VISIBLE_WIDTH + x as u16;
             self.palette_index_buffer[index as usize] = pixel_idx;
             // Monotonic per frame (ticket #67): a backward timing jump
@@ -1264,7 +1260,12 @@ impl<R: Render> Ppu<R> {
         r
     }
 
-    fn render_pixel(&mut self, x: u8, cartridge: &Cartridge) -> u8 {
+    fn render_pixel(&mut self, cartridge: &Cartridge) -> u8 {
+        if !self.rendering_enabled() {
+            return self.palette.disabled_color_index(self.registers.vram_addr);
+        }
+
+        let x = (self.timing.dot - 1) as u8;
         let (bg_palette_idx, bg_color_idx) = if self.registers.mask.background_enabled() {
             self.get_background_pixel(x, cartridge, self.ppu_render_state())
         } else {
