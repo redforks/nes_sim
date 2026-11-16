@@ -81,20 +81,20 @@ impl AudioDriver for SdlAudioDriver {
     }
 }
 
-pub struct SdlRender<const N: usize = 1> {
-    image: ImageRender<N>,
+pub struct SdlRender {
+    image: ImageRender,
     canvas: Canvas<Window>,
     presenter: FramePresenter,
 }
 
-impl<const N: usize> std::fmt::Debug for SdlRender<N> {
+impl std::fmt::Debug for SdlRender {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("SdlRender").finish_non_exhaustive()
     }
 }
 
-impl<const N: usize> SdlRender<N> {
-    pub fn with_image(image: ImageRender<N>, canvas: Canvas<Window>) -> Self {
+impl SdlRender {
+    pub fn with_image(image: ImageRender, canvas: Canvas<Window>) -> Self {
         Self {
             image,
             canvas,
@@ -103,7 +103,7 @@ impl<const N: usize> SdlRender<N> {
     }
 }
 
-impl<const N: usize> Render for SdlRender<N> {
+impl Render for SdlRender {
     fn set_pixel(&mut self, index: u16, color: [u8; 4]) {
         self.image.set_pixel(index, color);
     }

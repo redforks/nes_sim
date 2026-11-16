@@ -6,11 +6,11 @@ calls.
 
 ## Module Map
 
-- `src/lib.rs` - crate surface: `SdlRender<N>` (the `Render` backend used by
+- `src/lib.rs` - crate surface: `SdlRender` (the `Render` backend used by
   `run`), `SdlAudioDriver`, `map_keycode_to_button`, the audio constants, and
   the `sdl2` re-export. It re-exports `FramePresenter` and `present_frame`.
 - `src/presentation.rs` - SDL-free planning. `plan()` builds a
-  `FramePresentation` from an `ImageRender<N>`, `OverlayPlacement`s and the
+  `FramePresentation` from an `ImageRender`, `OverlayPlacement`s and the
   destination size. `FramePresentation`, `OverlayPlacement` and `OverlayIcon`
   are the data types. No window is needed, so this is unit-tested directly.
 - `src/presenter.rs` - `FramePresenter`, the only SDL draw code, plus the
@@ -20,7 +20,7 @@ calls.
 
 The seam is plan then draw:
 
-1. A caller builds an `ImageRender<N>` and a list of `OverlayPlacement`s in
+1. A caller builds an `ImageRender` and a list of `OverlayPlacement`s in
    logical 1x 256x240 coordinates, then calls
    `present_frame(canvas, presenter, frame, overlays)`.
 2. `present_frame` queries the renderer output size, calls `plan()` to get a

@@ -10,14 +10,14 @@ use crate::nes::mapper::{Mmc3IrqOverride, create_cartridge_with_mmc3_irq_overrid
 use crate::render::ImageRender;
 use crate::test_utils::{McuCall, RecordingMcu};
 
-fn test_mcu() -> NesMcu<ImageRender<1>, ()> {
+fn test_mcu() -> NesMcu<ImageRender, ()> {
     test_mcu_with(Cartridge::test())
 }
 
-fn test_mcu_with(cartridge: Cartridge) -> NesMcu<ImageRender<1>, ()> {
+fn test_mcu_with(cartridge: Cartridge) -> NesMcu<ImageRender, ()> {
     NesMcu {
         lower_ram: LowerRam::new(),
-        ppu: Ppu::new(ImageRender::<1>::default_dimension()),
+        ppu: Ppu::new(ImageRender::default_dimension()),
         cartridge,
         controller: Controller::new(),
         apu: Apu::new(()),

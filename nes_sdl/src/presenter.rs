@@ -134,10 +134,10 @@ impl FramePresenter {
 /// and playback's `RecordRender` both use this so the plan/present seam has a
 /// single call site.
 #[hotpath::measure]
-pub fn present_frame<const N: usize>(
+pub fn present_frame(
     canvas: &mut Canvas<Window>,
     presenter: &mut FramePresenter,
-    frame: &ImageRender<N>,
+    frame: &ImageRender,
     overlays: &[OverlayPlacement],
 ) {
     let dst_size = canvas

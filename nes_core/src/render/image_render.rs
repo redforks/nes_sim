@@ -1,55 +1,48 @@
 //! Framebuffer-backed `Render` without the `image` crate.
 //!
-//! `ImageRender<N>` owns a heap-allocated `Box<[[u8; 4]]>` of
-//! `256*240*N*N` pixels row-major at `256*N × 240*N` output pixels.
-//! `N` is the Zoom Factor (default `1`): each logical PPU
-//! `set_pixel(x,y)` (`x<256,y<240`) replicates to an `N×N` block. The
-//! buffer stores raw RGBA bytes and exposes zero-copy `as_bytes`/`as_pixels`
-//! without pulling `image`. The boxed slice has the same heap footprint
-//! as `Box<[[u8;4]; 256*240*N*N]>` but stays on stable Rust (avoids
-//! `generic_const_exprs`).
+//! `ImageRender` owns a fixed-size array of `256*240` RGBA pixels
+//! (row-major, `256 × 240`). The buffer stores raw RGBA bytes and exposes
+//! zero-copy `as_bytes`/`as_pixels` without pulling `image`.
 
 use crate::render::Render;
 
 pub const NES_WIDTH: usize = 256;
 pub const NES_HEIGHT: usize = 240;
 
-/// Heap-allocated RGBA framebuffer for the PPU.
+/// RGBA framebuffer for the PPU.
 ///
-/// `N` is the Zoom Factor (`N > 0`, default `1`). Logical canvas is
-/// `256×240`; output canvas is `256*N × 240*N` pixels. Does not implement
-/// `Clone` — copies are `O(W*H*N²)` multi-MiB.
-pub struct ImageRender<const N: usize = 1> {
-    image: Box<[[u8; 4]]>,
+/// Logical canvas is `256×240`. Does not implement `Clone` — copies are
+/// `O(W*H)` multi-hundred-KiB.
+pub struct ImageRender {
+    image: [[u8; 4]; NES_WIDTH * NES_HEIGHT],
 }
 
-impl<const N: usize> std::fmt::Debug for ImageRender<N> {
+impl std::fmt::Debug for ImageRender {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("ImageRender")
             .field("width", &Self::width())
             .field("height", &Self::height())
-            .field("zoom", &N)
             .finish_non_exhaustive()
     }
 }
 
-impl<const N: usize> Default for ImageRender<N> {
+impl Default for ImageRender {
     fn default() -> Self {
         Self::new()
     }
 }
 
-impl<const N: usize> ImageRender<N> {
-    /// Output width in pixels (`256 * N`).
+impl ImageRender {
+    /// Output width in pixels (`256`).
     #[inline]
     pub const fn width() -> u32 {
-        (NES_WIDTH * N) as u32
+        NES_WIDTH as u32
     }
 
-    /// Output height in pixels (`240 * N`).
+    /// Output height in pixels (`240`).
     #[inline]
     pub const fn height() -> u32 {
-        (NES_HEIGHT * N) as u32
+        NES_HEIGHT as u32
     }
 
     /// Output dimensions.
@@ -60,10 +53,9 @@ impl<const N: usize> ImageRender<N> {
 
     /// Create a zeroed (black-transparent) framebuffer.
     pub fn new() -> Self {
-        assert!(N > 0, "Zoom Factor N must be non-zero");
-        let len = NES_WIDTH * NES_HEIGHT * N * N;
-        let image = vec![[0; 4]; len].into_boxed_slice();
-        Self { image }
+        Self {
+            image: [[0; 4]; NES_WIDTH * NES_HEIGHT],
+        }
     }
 
     /// Alias for `new()` — kept for call-site compatibility (`default_dimension`
@@ -117,34 +109,11 @@ impl<const N: usize> ImageRender<N> {
     }
 }
 
-impl<const N: usize> Render for ImageRender<N> {
+impl Render for ImageRender {
     #[inline]
     fn set_pixel(&mut self, index: u16, color: [u8; 4]) {
-        assert!(N > 0, "Zoom Factor N must be non-zero");
-        let logical = index as usize;
-        // Silent-ignore out-of-logical-bounds; caller guarantees index < 256*240.
-        if logical >= NES_WIDTH * NES_HEIGHT {
-            return;
-        }
-        let x = logical % NES_WIDTH;
-        let y = logical / NES_WIDTH;
-        if N == 1 {
-            let idx = y * NES_WIDTH + x;
-            unsafe {
-                *self.image.get_unchecked_mut(idx) = color;
-            }
-        } else {
-            let base_x = x * N;
-            let base_y = y * N;
-            let stride = NES_WIDTH * N;
-            for dy in 0..N {
-                let row = (base_y + dy) * stride + base_x;
-                for dx in 0..N {
-                    unsafe {
-                        *self.image.get_unchecked_mut(row + dx) = color;
-                    }
-                }
-            }
+        unsafe {
+            *self.image.get_unchecked_mut(index as usize) = color;
         }
     }
 }
@@ -155,7 +124,7 @@ mod tests {
 
     #[test]
     fn test_image_render_set_pixel() {
-        let mut renderer = ImageRender::<1>::new();
+        let mut renderer = ImageRender::new();
 
         renderer.set_pixel(0, [255, 0, 0, 255]);
         renderer.set_pixel(5 * 256 + 5, [0, 255, 0, 255]);
@@ -169,33 +138,9 @@ mod tests {
 
     #[test]
     fn test_image_render_borrow() {
-        let renderer = ImageRender::<1>::default_dimension();
-        assert_eq!(ImageRender::<1>::dimensions(), (256, 240));
+        let renderer = ImageRender::default_dimension();
+        assert_eq!(ImageRender::dimensions(), (256, 240));
         assert_eq!(renderer.as_bytes().len(), 256 * 240 * 4);
         assert_eq!(renderer.as_pixels().len(), 256 * 240);
-    }
-
-    #[test]
-    fn test_zoom_replication() {
-        let mut r = ImageRender::<2>::new();
-        r.set_pixel(0, [1, 2, 3, 255]);
-        assert_eq!(r.get_pixel(0, 0), [1, 2, 3, 255]);
-        assert_eq!(r.get_pixel(1, 0), [1, 2, 3, 255]);
-        assert_eq!(r.get_pixel(0, 1), [1, 2, 3, 255]);
-        assert_eq!(r.get_pixel(1, 1), [1, 2, 3, 255]);
-        assert_eq!(r.get_pixel(2, 0), [0, 0, 0, 0]);
-        assert_eq!(ImageRender::<2>::dimensions(), (512, 480));
-    }
-
-    #[test]
-    fn test_zoom_4_replication() {
-        let mut r = ImageRender::<4>::new();
-        r.set_pixel(1 * 256 + 1, [9, 9, 9, 255]);
-        for dy in 0..4 {
-            for dx in 0..4 {
-                assert_eq!(r.get_pixel(4 + dx, 4 + dy), [9, 9, 9, 255]);
-            }
-        }
-        assert_eq!(ImageRender::<4>::dimensions(), (1024, 960));
     }
 }

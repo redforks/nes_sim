@@ -69,7 +69,7 @@ where
     }
 }
 
-impl<'a, const N: usize, D> MachineView<'a, crate::nes::NesMcu<crate::render::ImageRender<N>, D>>
+impl<'a, D> MachineView<'a, crate::nes::NesMcu<crate::render::ImageRender, D>>
 where
     D: crate::nes::apu::AudioDriver,
 {
@@ -84,12 +84,12 @@ where
 
     /// Output width (`256*N`).
     pub fn image_width(&self) -> u32 {
-        crate::render::ImageRender::<N>::width()
+        crate::render::ImageRender::width()
     }
 
     /// Output height (`240*N`).
     pub fn image_height(&self) -> u32 {
-        crate::render::ImageRender::<N>::height()
+        crate::render::ImageRender::height()
     }
 
     /// Compatibility alias — returns typed pixels (was `&RgbaImage`).

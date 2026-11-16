@@ -28,10 +28,10 @@ impl FramePngDump {
     }
 }
 
-impl<A: AudioDriver> Plugin<NesMcu<ImageRender<1>, A>> for FramePngDump {
-    fn start(&mut self, _view: &MachineView<NesMcu<ImageRender<1>, A>>) {}
+impl<A: AudioDriver> Plugin<NesMcu<ImageRender, A>> for FramePngDump {
+    fn start(&mut self, _view: &MachineView<NesMcu<ImageRender, A>>) {}
 
-    fn end(&mut self, view: &MachineView<NesMcu<ImageRender<1>, A>>) {
+    fn end(&mut self, view: &MachineView<NesMcu<ImageRender, A>>) {
         if self.dumped || !view.ppu_in_vblank() {
             return;
         }

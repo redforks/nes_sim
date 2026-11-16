@@ -300,7 +300,7 @@ const RECORD_HEIGHT: usize = 960;
 
 /// Expand a logical 1x playback frame into the 1024x960 RGBA recording
 /// scratch frame, replicating each logical pixel into a 4x4 block. This is
-/// exactly the replication `ImageRender<4>::set_pixel` performs, so a
+/// exactly the replication `ImageRender::set_pixel` performs, so a
 /// recording built from the 1x frame is byte-identical to one built from a
 /// 4x frame.
 fn upscale_into(src: &[u8], dst: &mut [u8]) {
@@ -386,7 +386,7 @@ fn blit_icon(
 }
 
 struct RecordRender {
-    buffer: ImageRender<1>,
+    buffer: ImageRender,
     /// 1024x960 recording frame: raw RGBA pixels in the format fed to ffmpeg
     /// (`RECORD_WIDTH * RECORD_HEIGHT * 4` bytes). The allocation is reused
     /// across frames; each frame actually sent is cloned into a fresh buffer
@@ -623,7 +623,7 @@ fn init_sdl_drivers(
     presenter.set_overlay_icons(icons.clone());
 
     let render = RecordRender {
-        buffer: ImageRender::<1>::new(),
+        buffer: ImageRender::new(),
         record_scratch: vec![0u8; RECORD_WIDTH * RECORD_HEIGHT * 4],
         canvas,
         presenter,
@@ -1356,75 +1356,6 @@ mod tests {
 
     // --- recording frame construction --------------------------------------
 
-    /// One logical 1x frame and the equivalent 4x frame, with a distinct
-    /// colour per pixel so a mis-mapped block is caught.
-    fn one_x_and_four_x_frames() -> (ImageRender<1>, ImageRender<4>) {
-        let mut one = ImageRender::<1>::new();
-        let mut four = ImageRender::<4>::new();
-        for y in 0..240u32 {
-            for x in 0..256u32 {
-                let color = [
-                    (x as u8).wrapping_mul(3),
-                    (y as u8).wrapping_mul(5),
-                    (x as u8) ^ (y as u8),
-                    255,
-                ];
-                one.set_pixel((y * 256 + x) as u16, color);
-                four.set_pixel((y * 256 + x) as u16, color);
-            }
-        }
-        (one, four)
-    }
-
-    #[test]
-    fn upscaling_a_one_x_frame_reproduces_the_four_x_frame() {
-        let (one, four) = one_x_and_four_x_frames();
-        let mut scratch = vec![0u8; 1024 * 960 * 4];
-        upscale_into(one.as_bytes(), &mut scratch);
-        assert_eq!(scratch.as_slice(), four.as_bytes());
-    }
-
-    #[test]
-    fn compositing_over_the_upscaled_frame_matches_the_four_x_frame() {
-        let (one, four) = one_x_and_four_x_frames();
-        let icons = vec![OverlayIcon {
-            bytes: {
-                let mut b = vec![0u8; 4 * 4 * 4];
-                for (i, px) in b.chunks_mut(4).enumerate() {
-                    px.copy_from_slice(&[200, 100u8.wrapping_add(i as u8), 50, 200]);
-                }
-                b
-            },
-            width: 4,
-            height: 4,
-        }];
-        let placements = [OverlayPlacement {
-            icon: 0,
-            dst: (2, 3, 16, 16),
-        }];
-
-        let mut scratch = vec![0u8; 1024 * 960 * 4];
-        upscale_into(one.as_bytes(), &mut scratch);
-        composite_overlay_icons(&mut scratch, &placements, &icons);
-
-        let mut four_bytes = four.as_bytes().to_vec();
-        let plain = four_bytes.clone();
-        composite_overlay_icons(&mut four_bytes, &placements, &icons);
-        assert_ne!(four_bytes, plain, "the composite must change the frame");
-        assert_eq!(scratch, four_bytes);
-    }
-
-    // --- SDL overlay blend parity with the legacy integer blend -----------
-
-    /// Renders a frame plus overlay icons through FramePresenter on a
-    /// software renderer, reads the window back, and compares it with the
-    /// legacy host-side composite (composite_overlay_icons). Zero delta is
-    /// required outside the icon rectangles; anti-aliased icon edges are
-    /// allowed at most 1 LSB per channel because SDL's BlendMode::Blend
-    /// rounds while the legacy blend truncates.
-    ///
-    /// Self-skips when SDL cannot initialise a window and software renderer,
-    /// so it is safe on a headless CI host.
     #[test]
     fn sdl_overlay_blend_matches_legacy_integer_blend() {
         use nes_sdl::sdl2::pixels::PixelFormatEnum;
@@ -1454,7 +1385,7 @@ mod tests {
 
         // A frame with a distinct colour per logical pixel, so any blend or
         // upscale mistake changes the comparison.
-        let mut frame = ImageRender::<1>::new();
+        let mut frame = ImageRender::new();
         for y in 0..240u32 {
             for x in 0..256u32 {
                 frame.set_pixel(

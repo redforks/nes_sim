@@ -540,7 +540,7 @@ impl Image {
         start_pc: Option<u16>,
         max_instructions: u64,
     ) -> MachineWrapper {
-        let mut plugins: Vec<Box<dyn Plugin<nes_core::nes::NesMcu<ImageRender<1>, ()>>>> = vec![
+        let mut plugins: Vec<Box<dyn Plugin<nes_core::nes::NesMcu<ImageRender, ()>>>> = vec![
             Box::new(NesReportPlugin::create(quiet)),
             Box::new(
                 NametableConsole::with_magic_success_word_unless_failed("All tests complete")
@@ -553,7 +553,7 @@ impl Image {
             plugins.push(Box::new(MaxInstructions::new(max_instructions)));
         }
         let plugin = CompositePlugin::new(plugins);
-        let mut machine = NesMachine::new(ines, plugin, ImageRender::<1>::default_dimension(), ());
+        let mut machine = NesMachine::new(ines, plugin, ImageRender::default_dimension(), ());
         if let Some(pc) = start_pc {
             machine.set_pc(pc);
         }
@@ -602,7 +602,7 @@ impl Image {
                     .join(f)
             })
             .collect();
-        let mut plugins: Vec<Box<dyn Plugin<nes_core::nes::NesMcu<ImageRender<1>, ()>>>> = vec![
+        let mut plugins: Vec<Box<dyn Plugin<nes_core::nes::NesMcu<ImageRender, ()>>>> = vec![
             Box::new(NesReportPlugin::create(quiet)),
             Box::new(PngFrameMatch::new(expected_pngs).expect("failed to load expected PNG")),
             Box::new(Timeout::new(timeout)),
@@ -611,7 +611,7 @@ impl Image {
             plugins.push(Box::new(MaxInstructions::new(max_instructions)));
         }
         let plugin = CompositePlugin::new(plugins);
-        let mut machine = NesMachine::new(ines, plugin, ImageRender::<1>::default_dimension(), ());
+        let mut machine = NesMachine::new(ines, plugin, ImageRender::default_dimension(), ());
         if let Some(pc) = start_pc {
             machine.set_pc(pc);
         }
@@ -628,7 +628,7 @@ impl Image {
         start_pc: Option<u16>,
         max_instructions: u64,
     ) -> MachineWrapper {
-        let mut plugins: Vec<Box<dyn Plugin<nes_core::nes::NesMcu<ImageRender<1>, ()>>>> = vec![
+        let mut plugins: Vec<Box<dyn Plugin<nes_core::nes::NesMcu<ImageRender, ()>>>> = vec![
             Box::new(NesReportPlugin::create(quiet)),
             Box::new(Timeout::new(Duration::from_secs(5))),
         ];
@@ -636,7 +636,7 @@ impl Image {
             plugins.push(Box::new(MaxInstructions::new(max_instructions)));
         }
         let plugin = CompositePlugin::new(plugins);
-        let mut machine = NesMachine::new(ines, plugin, ImageRender::<1>::default_dimension(), ());
+        let mut machine = NesMachine::new(ines, plugin, ImageRender::default_dimension(), ());
         if let Some(pc) = start_pc {
             machine.set_pc(pc);
         }
@@ -656,7 +656,7 @@ impl Image {
         let Image::INes { nes_file, .. } = self else {
             panic!("--dump-frame requires an iNES ROM (needs the PPU renderer)");
         };
-        let mut plugins: Vec<Box<dyn Plugin<nes_core::nes::NesMcu<ImageRender<1>, ()>>>> = vec![
+        let mut plugins: Vec<Box<dyn Plugin<nes_core::nes::NesMcu<ImageRender, ()>>>> = vec![
             Box::new(NesReportPlugin::create(quiet)),
             Box::new(FramePngDump::new(target_frame, out_path)),
             Box::new(Timeout::new(Duration::from_secs(15))),
@@ -665,8 +665,7 @@ impl Image {
             plugins.push(Box::new(MaxInstructions::new(max_instructions)));
         }
         let plugin = CompositePlugin::new(plugins);
-        let mut machine =
-            NesMachine::new(nes_file, plugin, ImageRender::<1>::default_dimension(), ());
+        let mut machine = NesMachine::new(nes_file, plugin, ImageRender::default_dimension(), ());
         if let Some(pc) = start_pc {
             machine.set_pc(pc);
         }
@@ -745,7 +744,7 @@ impl Image {
         max_instructions: u64,
     ) -> MachineWrapper {
         let expected_png = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("src/scanline-exp.png");
-        let mut plugins: Vec<Box<dyn Plugin<nes_core::nes::NesMcu<ImageRender<1>, ()>>>> = vec![
+        let mut plugins: Vec<Box<dyn Plugin<nes_core::nes::NesMcu<ImageRender, ()>>>> = vec![
             Box::new(NesReportPlugin::create(quiet)),
             Box::new(NametableConsole::default()),
             Box::new(
@@ -757,7 +756,7 @@ impl Image {
             plugins.push(Box::new(MaxInstructions::new(max_instructions)));
         }
         let plugin = CompositePlugin::new(plugins);
-        let mut machine = NesMachine::new(ines, plugin, ImageRender::<1>::default_dimension(), ());
+        let mut machine = NesMachine::new(ines, plugin, ImageRender::default_dimension(), ());
         if let Some(pc) = start_pc {
             machine.set_pc(pc);
         }
@@ -777,8 +776,8 @@ mod machine_types {
     pub type INesPlugin = CompositePlugin<nes_core::nes::NesMcu<(), ()>>;
     pub type INesMachine = NesMachine<INesPlugin, (), ()>;
 
-    pub type ImageRenderPlugin = CompositePlugin<nes_core::nes::NesMcu<ImageRender<1>, ()>>;
-    pub type RenderedMachine = NesMachine<ImageRenderPlugin, ImageRender<1>, ()>;
+    pub type ImageRenderPlugin = CompositePlugin<nes_core::nes::NesMcu<ImageRender, ()>>;
+    pub type RenderedMachine = NesMachine<ImageRenderPlugin, ImageRender, ()>;
     pub type AudioDumpPlugin = CompositePlugin<nes_core::nes::NesMcu<(), WavRecorder>>;
     pub type AudioDumpMachine = NesMachine<AudioDumpPlugin, (), WavRecorder>;
 }

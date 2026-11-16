@@ -424,8 +424,8 @@ fn run_scanline<R: Render>(ppu: &mut Ppu<R>, pattern: &[u8], scanline: u16) {
 
 /// Like create_test_ppu_with_mask, but with a readable 1x framebuffer so a
 /// test can assert the pixels a ticked scanline committed.
-fn create_test_ppu_render(mask: PpuMask) -> Ppu<ImageRender<1>> {
-    let mut ppu = Ppu::new(ImageRender::<1>::default_dimension());
+fn create_test_ppu_render(mask: PpuMask) -> Ppu<ImageRender> {
+    let mut ppu = Ppu::new(ImageRender::default_dimension());
     ppu.registers.mask = mask;
     for i in 0..64 {
         ppu.oam.set_byte(i * 4, 0x20);
@@ -546,7 +546,7 @@ fn test_render_pixel_both_disabled() {
 
 #[test]
 fn test_tick_renders_palette_color_when_rendering_disabled_and_vram_points_to_palette() {
-    let mut ppu = Ppu::new(ImageRender::<1>::default_dimension());
+    let mut ppu = Ppu::new(ImageRender::default_dimension());
     let mut cart = Cartridge::test();
     ppu.registers.vram_addr = 0x3f10;
     ppu.timing.scanline = 0;
@@ -564,7 +564,7 @@ fn test_tick_renders_palette_color_when_rendering_disabled_and_vram_points_to_pa
 
 #[test]
 fn test_tick_renders_background_color_when_rendering_disabled_and_vram_not_palette() {
-    let mut ppu = Ppu::new(ImageRender::<1>::default_dimension());
+    let mut ppu = Ppu::new(ImageRender::default_dimension());
     let mut cart = Cartridge::test();
     ppu.palette.write(0x3f00, 0x16);
     ppu.registers.vram_addr = 0x2000;
@@ -584,7 +584,7 @@ fn test_tick_renders_background_color_when_rendering_disabled_and_vram_not_palet
 fn test_tick_grayscale_masks_palette_index_before_lookup(entry: u8, expected: u8) {
     // Hardware grayscale ANDs the 6-bit palette entry with $30 before the
     // color lookup; it is not a luminance filter on the output RGB. Entry
-    let mut ppu = Ppu::new(ImageRender::<1>::default_dimension());
+    let mut ppu = Ppu::new(ImageRender::default_dimension());
     let mut cart = Cartridge::test();
     ppu.palette.write(0x3f00, entry);
     ppu.registers.vram_addr = 0x2000;
@@ -2319,7 +2319,7 @@ fn flush_applies_prior_color_below_midframe_emphasis_split() {
 /// segment bookkeeping to the flush.
 #[test]
 fn palette_write_mid_frame_takes_effect_from_beam_position() {
-    let mut ppu = Ppu::new(ImageRender::<1>::default_dimension());
+    let mut ppu = Ppu::new(ImageRender::default_dimension());
     let mut cart = Cartridge::test();
     // Rendering disabled: every visible dot resolves to the backdrop
     // entry at $3F00 (vram_addr below $3F00).
@@ -2365,7 +2365,7 @@ fn palette_write_mid_frame_takes_effect_from_beam_position() {
 /// only through the PPU's brightness seam before any flush.
 #[test]
 fn live_pixel_brightness_resolves_buffered_index_mid_frame() {
-    let mut ppu = Ppu::new(ImageRender::<1>::default_dimension());
+    let mut ppu = Ppu::new(ImageRender::default_dimension());
     let mut cart = Cartridge::test();
     // Rendering disabled: backdrop entry $3F00 = $30 (white, per
     // default.pal: (255, 254, 255), luminance 764).
@@ -2422,7 +2422,7 @@ fn live_pixel_brightness_resolves_buffered_index_mid_frame() {
 /// on resolves to its $3x row $30 (white, default.pal (255, 254, 255)).
 #[test]
 fn live_pixel_brightness_applies_current_grayscale() {
-    let mut ppu = Ppu::new(ImageRender::<1>::default_dimension());
+    let mut ppu = Ppu::new(ImageRender::default_dimension());
     let mut cart = Cartridge::test();
     ppu.palette.write(0x3f00, 0x3f);
     ppu.registers.vram_addr = 0x2000;
@@ -2456,7 +2456,7 @@ fn live_pixel_brightness_applies_current_grayscale() {
 /// on, tiles 0..=31 solid with color indices 1,2,3 cycling, and the same
 /// tile row in nametables 0 and 1, so a one-tile scroll shift is visible
 /// as a color change at x = 0. Palette entries $10/$20/$30.
-fn setup_scroll_tiles(ppu: &mut Ppu<ImageRender<1>>, cart: &mut Cartridge) {
+fn setup_scroll_tiles(ppu: &mut Ppu<ImageRender>, cart: &mut Cartridge) {
     ppu.registers.mask = PpuMask::new()
         .with_background_enabled(true)
         .with_background_left_enabled(true);
@@ -2481,7 +2481,7 @@ fn setup_scroll_tiles(ppu: &mut Ppu<ImageRender<1>>, cart: &mut Cartridge) {
 /// flushed frame shows the sprite color at the hit pixel.
 #[test]
 fn sprite_zero_hit_and_overflow_unchanged_with_deferred_color() {
-    let mut ppu = Ppu::new(ImageRender::<1>::default_dimension());
+    let mut ppu = Ppu::new(ImageRender::default_dimension());
     ppu.registers.mask = PpuMask::new()
         .with_background_enabled(true)
         .with_sprite_enabled(true)
@@ -2544,7 +2544,7 @@ fn sprite_zero_hit_and_overflow_unchanged_with_deferred_color() {
 /// one tile further right.
 #[test]
 fn scroll_write_mid_line_takes_effect_at_dot_257() {
-    let mut ppu = Ppu::new(ImageRender::<1>::default_dimension());
+    let mut ppu = Ppu::new(ImageRender::default_dimension());
     let mut cart = Cartridge::test();
     setup_scroll_tiles(&mut ppu, &mut cart);
 
@@ -2581,7 +2581,7 @@ fn scroll_write_mid_line_takes_effect_at_dot_257() {
 /// the next line starts at the new temporary address (coarse X = 7).
 #[test]
 fn ppuaddr_write_mid_line_full_reload_at_dot_257() {
-    let mut ppu = Ppu::new(ImageRender::<1>::default_dimension());
+    let mut ppu = Ppu::new(ImageRender::default_dimension());
     let mut cart = Cartridge::test();
     setup_scroll_tiles(&mut ppu, &mut cart);
 
@@ -2619,7 +2619,7 @@ fn ppuaddr_write_mid_line_full_reload_at_dot_257() {
 /// the lookup even with every enable bit off.
 #[test]
 fn flush_applies_grayscale_with_rendering_disabled() {
-    let mut ppu = Ppu::new(ImageRender::<1>::default_dimension());
+    let mut ppu = Ppu::new(ImageRender::default_dimension());
     let mut cart = Cartridge::test();
     ppu.palette.write(0x3f00, 0x3f);
     ppu.registers.vram_addr = 0x2000;
@@ -2658,7 +2658,7 @@ fn flush_applies_grayscale_with_rendering_disabled() {
 /// applies to the backdrop color at flush time with all enable bits off.
 #[test]
 fn flush_applies_emphasis_with_rendering_disabled() {
-    let mut ppu = Ppu::new(ImageRender::<1>::default_dimension());
+    let mut ppu = Ppu::new(ImageRender::default_dimension());
     let mut cart = Cartridge::test();
     ppu.palette.write(0x3f00, 0x2c);
     ppu.registers.vram_addr = 0x2000;

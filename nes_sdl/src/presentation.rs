@@ -56,8 +56,8 @@ pub struct FramePresentation<'a> {
 /// no pixel replication happens here. Overlay placements are given in logical
 /// 1x 256x240 coordinates and are scaled by the destination size, independent
 /// of the frame's Zoom Factor `N`.
-pub fn plan<'a, const N: usize>(
-    frame: &'a ImageRender<N>,
+pub fn plan<'a>(
+    frame: &'a ImageRender,
     overlays: &[OverlayPlacement],
     dst_size: (u32, u32),
 ) -> FramePresentation<'a> {
@@ -77,8 +77,8 @@ pub fn plan<'a, const N: usize>(
         .collect();
     FramePresentation {
         bytes: frame.as_bytes(),
-        width: ImageRender::<N>::width(),
-        height: ImageRender::<N>::height(),
+        width: ImageRender::width(),
+        height: ImageRender::height(),
         dst: (0, 0, dst_size.0, dst_size.1),
         overlays: scaled_overlays,
     }
@@ -91,7 +91,7 @@ mod tests {
 
     #[test]
     fn one_x_frame_bytes_and_dimensions() {
-        let mut frame = ImageRender::<1>::new();
+        let mut frame = ImageRender::new();
         frame.set_pixel(0, [1, 2, 3, 255]);
         let p = plan(&frame, &[], (512, 480));
         assert_eq!(p.width, 256);
@@ -101,17 +101,8 @@ mod tests {
     }
 
     #[test]
-    fn four_x_frame_bytes_and_dimensions() {
-        let frame = ImageRender::<4>::new();
-        let p = plan(&frame, &[], (1024, 960));
-        assert_eq!(p.width, 1024);
-        assert_eq!(p.height, 960);
-        assert_eq!(p.bytes.len(), 1024 * 960 * 4);
-    }
-
-    #[test]
     fn presentation_bytes_are_the_frame_bytes() {
-        let mut frame = ImageRender::<4>::new();
+        let mut frame = ImageRender::new();
         frame.set_pixel(2 + 3 * 256, [9, 8, 7, 255]);
         let p = plan(&frame, &[], (1024, 960));
         assert_eq!(p.bytes, frame.as_bytes());
@@ -119,21 +110,21 @@ mod tests {
 
     #[test]
     fn destination_rect_is_the_whole_window() {
-        let frame = ImageRender::<1>::new();
+        let frame = ImageRender::new();
         let p = plan(&frame, &[], (1024, 960));
         assert_eq!(p.dst, (0, 0, 1024, 960));
     }
 
     #[test]
     fn no_overlays_makes_an_empty_list() {
-        let frame = ImageRender::<1>::new();
+        let frame = ImageRender::new();
         let p = plan(&frame, &[], (512, 480));
         assert!(p.overlays.is_empty());
     }
 
     #[test]
     fn overlays_scale_from_logical_to_destination() {
-        let frame = ImageRender::<1>::new();
+        let frame = ImageRender::new();
         let overlays = [
             OverlayPlacement {
                 icon: 3,
@@ -173,22 +164,8 @@ mod tests {
     }
 
     #[test]
-    fn overlay_scale_depends_on_destination_not_zoom_factor() {
-        let one = ImageRender::<1>::new();
-        let four = ImageRender::<4>::new();
-        let overlays = [OverlayPlacement {
-            icon: 2,
-            dst: (205, 222, 16, 16),
-        }];
-        let a = plan(&one, &overlays, (1024, 960));
-        let b = plan(&four, &overlays, (1024, 960));
-        assert_eq!(a.overlays, b.overlays);
-        assert_eq!(a.overlays[0].dst, (820, 888, 64, 64));
-    }
-
-    #[test]
     fn overlays_scale_at_two_x_window() {
-        let frame = ImageRender::<1>::new();
+        let frame = ImageRender::new();
         let overlays = [OverlayPlacement {
             icon: 5,
             dst: (205, 222, 16, 16),
@@ -199,7 +176,7 @@ mod tests {
 
     #[test]
     fn overlays_keep_draw_order() {
-        let frame = ImageRender::<1>::new();
+        let frame = ImageRender::new();
         let overlays = [
             OverlayPlacement {
                 icon: 7,
