@@ -72,7 +72,7 @@ pub(crate) fn build_final_color_lut(theme: &ColorTheme, config: ColorConfig) -> 
 /// `& 0x3F`), so indices above 63 (e.g. a raw palette-RAM byte from
 /// the disabled backdrop path) resolve exactly as the per-pixel path.
 pub(crate) fn convert_scalar(indices: &[u8], lut: &FinalColorLut, out: &mut [u32]) {
-    assert_eq!(indices.len(), out.len(), "indices/out length mismatch");
+    debug_assert_eq!(indices.len(), out.len(), "indices/out length mismatch");
     for (dst, &index) in out.iter_mut().zip(indices) {
         *dst = lut.words[(index & 0x3F) as usize];
     }
@@ -87,7 +87,6 @@ pub(crate) fn convert_scalar(indices: &[u8], lut: &FinalColorLut, out: &mut [u32
 /// The flag is read once per process: `convert` runs thousands of times
 /// per frame, and an env lookup per call would itself cost instructions.
 pub(crate) fn convert(indices: &[u8], lut: &FinalColorLut, out: &mut [u32]) {
-    assert_eq!(indices.len(), out.len(), "indices/out length mismatch");
     #[cfg(target_arch = "x86_64")]
     {
         static NO_SSSE3: std::sync::OnceLock<bool> = std::sync::OnceLock::new();

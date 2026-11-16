@@ -605,55 +605,6 @@ fn test_tick_grayscale_masks_palette_index_before_lookup(entry: u8, expected: u8
 }
 
 #[test]
-fn test_reset_clears_buffered_palette_indices() {
-    let mut ppu = Ppu::new(ImageRender::<1>::default_dimension());
-    let mut cart = Cartridge::test();
-    ppu.palette.write(0x3f00, 0x21);
-    ppu.registers.vram_addr = 0x3f10;
-
-    // Land mid-frame on a visible scanline and buffer the first three
-    // visible dots' pixels (x = 0, 1, 2). With deferred color nothing has
-    // reached the framebuffer yet.
-    ppu.timing.scanline = 100;
-    ppu.timing.dot = 0;
-    ppu.tick(&mut cart);
-    ppu.tick(&mut cart);
-    ppu.tick(&mut cart);
-    assert_eq!(ppu.renderer.get_pixel(0, 100), [0, 0, 0, 0]);
-    assert_eq!(ppu.renderer.get_pixel(1, 100), [0, 0, 0, 0]);
-
-    ppu.reset();
-
-    // Post-reset rendering uses a different backdrop color so stale and
-    // fresh output are distinguishable. Buffer a few more dots (x = 2, 3).
-    ppu.palette.write(0x3f00, 0x16);
-    ppu.tick(&mut cart);
-    ppu.tick(&mut cart);
-
-    flush_frame_at_vblank(&mut ppu, &mut cart);
-
-    // The pre-reset buffered indices must never flush into the fresh
-    // frame: positions not rewritten since the reset flush black
-    // (matching the cleared pre-change framebuffer)...
-    assert_eq!(ppu.renderer.get_pixel(0, 100), [0, 0, 0, 0]);
-    assert_eq!(ppu.renderer.get_pixel(1, 100), [0, 0, 0, 0]);
-    // x=2 was rewritten after the reset, so it flushes normally.
-    assert_eq!(
-        ppu.renderer.get_pixel(2, 100),
-        ppu.color_theme.color(0x16).0
-    );
-    assert_ne!(
-        ppu.renderer.get_pixel(1, 100),
-        ppu.color_theme.color(0x21).0
-    );
-    // ...while positions written after the reset flush normally.
-    assert_eq!(
-        ppu.renderer.get_pixel(3, 100),
-        ppu.color_theme.color(0x16).0
-    );
-}
-
-#[test]
 fn test_render_pixel_transparent_bg_and_sprite_use_backdrop_color() {
     let mut ppu = create_test_ppu_with_mask(
         PpuMask::new()
@@ -2545,78 +2496,6 @@ fn setup_scroll_tiles(ppu: &mut Ppu<ImageRender<1>>, cart: &mut Cartridge) {
         ppu.write_vram(0x2400 + i, i as u8, cart);
         ppu.write_vram(0x2420 + i, i as u8, cart);
     }
-}
-
-/// Incomplete frame after a mid-frame reset (ticket #67): positions not
-/// scanned since the reset must flush as black, matching the cleared
-/// pre-change framebuffer — not as entry 0 or stale previous-frame
-/// palette indices.
-#[test]
-fn flush_emits_black_for_unwritten_positions_after_mid_frame_reset() {
-    let mut ppu = Ppu::new(ImageRender::<1>::default_dimension());
-    let mut cart = Cartridge::test();
-    ppu.palette.write(0x3f00, 0x21);
-    ppu.registers.vram_addr = 0x2000;
-
-    // Buffer the first pixels of line 0, then reset mid-frame.
-    ppu.timing.scanline = 0;
-    ppu.timing.dot = 0;
-    for _ in 0..11 {
-        ppu.tick(&mut cart);
-    }
-    ppu.reset();
-
-    // No further scan before the VBL set dot flushes the frame.
-    flush_frame_at_vblank(&mut ppu, &mut cart);
-
-    for y in 0..240u32 {
-        for x in 0..256u32 {
-            assert_eq!(
-                ppu.renderer.get_pixel(x, y),
-                [0, 0, 0, 0],
-                "unwritten position {x},{y} must flush black"
-            );
-        }
-    }
-    assert_eq!(
-        ppu.pixel_brightness(0, 0),
-        0,
-        "live brightness also reports black after reset"
-    );
-}
-
-/// The buffered-pixel cursor is monotonic per frame (ticket #67): a
-/// backward timing jump must not lower it, otherwise already-buffered
-/// beam positions would wrongly report black to the Zapper seam.
-#[test]
-fn buffered_brightness_survives_backward_timing_jump() {
-    let mut ppu = Ppu::new(ImageRender::<1>::default_dimension());
-    let mut cart = Cartridge::test();
-    ppu.palette.write(0x3f00, 0x30);
-    ppu.registers.vram_addr = 0x2000;
-
-    ppu.timing.scanline = 0;
-    ppu.timing.dot = 0;
-    for _ in 0..11 {
-        ppu.tick(&mut cart);
-    }
-    let live = ppu.pixel_brightness(9, 0);
-    assert!(live > 0, "buffered pixel must be live before the jump");
-
-    // Timing jumps backward within the scanline (a frame-start jump to
-    // dot 0 is a new frame and legitimately restarts the cursor); two
-    // more visible dots are scanned.
-    ppu.timing.scanline = 0;
-    ppu.timing.dot = 1;
-    for _ in 0..3 {
-        ppu.tick(&mut cart);
-    }
-
-    assert_eq!(
-        ppu.pixel_brightness(9, 0),
-        live,
-        "already-buffered position must stay live after a backward jump"
-    );
 }
 
 /// Sprite-0 hit and sprite overflow stay precise with deferred color

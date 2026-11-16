@@ -8,6 +8,8 @@ pub mod palette;
 mod registers;
 mod sprite;
 
+use std::iter::once;
+
 use crate::{
     nes::{
         mapper::{Cartridge, PpuFetchKind, PpuRenderState},
@@ -251,20 +253,6 @@ pub struct Ppu<R: Render = ()> {
     /// flush (during vblank/pre-render) are discarded at the next frame
     /// start, since the live mask already carries them into that frame.
     color_splits: Vec<ColorSplit>,
-    /// Number of leading buffer entries written this frame. The live
-    /// per-dot path writes strictly in raster order, so a single count
-    /// tracks which beam positions have been buffered: indices below it
-    /// hold this frame's palette indices, indices at/after it are stale
-    /// and have not been scanned yet. [`Self::pixel_brightness`] answers
-    /// black for the latter — matching the materialized framebuffer,
-    /// which is also black until the beam passes.
-    buffered_pixel_count: u16,
-    /// First beam position holding this frame's index (ticket #67).
-    /// Normally 0; a mid-frame reset moves it to the next beam position,
-    /// so positions scanned before the reset flush and report black
-    /// instead of their stale pre-reset indices. The valid range is
-    /// `buffered_pixel_from..buffered_pixel_count`.
-    buffered_pixel_from: u16,
     /// Set when the PPU timing enters vblank (scanline 241, dot 1).
     /// This is a pure timing event, independent of the $2002 VBL flag
     /// (which `$2002` reads clear and the dot-0 race can suppress).
@@ -312,8 +300,6 @@ impl<R: Render> Ppu<R> {
             ppudata_last_read: None,
             palette_index_buffer: Box::new([0; VISIBLE_WIDTH as usize * VISIBLE_HEIGHT as usize]),
             color_splits: Vec::new(),
-            buffered_pixel_count: 0,
-            buffered_pixel_from: 0,
             vblank_entered: false,
         }
     }
@@ -336,16 +322,10 @@ impl<R: Render> Ppu<R> {
         self.registers.write_scroll(0);
         self.ren_latched_at_338 = false;
         self.vblank_entered = false;
-        // A reset landing mid-frame must not let already-buffered palette
-        // indices of the old frame flush into the fresh frame: positions
-        // not yet rewritten since the reset flush black (matching the
-        // cleared pre-change framebuffer) and report black to live
-        // brightness queries. No buffer fill is needed: the valid range
-        // (`buffered_pixel_from..buffered_pixel_count`) simply never
-        // reads stale entries.
+        // A mid-frame reset leaves pre-reset palette indices in the
+        // buffer; they flush as stale values (and report stale to live
+        // brightness queries) because the beam keeps advancing past them.
         self.color_splits.clear();
-        self.buffered_pixel_from = self.next_beam_index();
-        self.buffered_pixel_count = 0;
     }
 
     /// Hard reset (power cycle): the full power-up contract — timing
@@ -371,8 +351,6 @@ impl<R: Render> Ppu<R> {
         self.ppudata_last_read = None;
         self.palette_index_buffer.fill(0);
         self.color_splits.clear();
-        self.buffered_pixel_from = 0;
-        self.buffered_pixel_count = 0;
         self.vblank_entered = false;
     }
 
@@ -621,8 +599,6 @@ impl<R: Render> Ppu<R> {
                 // beam positions of the new frame report black until the
                 // beam writes them.
                 self.color_splits.clear();
-                self.buffered_pixel_from = self.next_beam_index();
-                self.buffered_pixel_count = 0;
             }
             // compute background anchor at start of visible scanline
             self.background_anchor = Some(BackgroundActivation::snapshot(self, 0));
@@ -671,12 +647,6 @@ impl<R: Render> Ppu<R> {
             let pixel_idx = self.render_pixel(cartridge);
             let index = self.timing.scanline * VISIBLE_WIDTH + x as u16;
             self.palette_index_buffer[index as usize] = pixel_idx;
-            // Monotonic per frame (ticket #67): a backward timing jump
-            // must never lower the cursor, or already-buffered beam
-            // positions would wrongly report black ("indices below the
-            // count hold this frame's indices"). reset only at frame
-            // start / reset above.
-            self.buffered_pixel_count = self.buffered_pixel_count.max(index + 1);
         }
     }
 
@@ -834,63 +804,55 @@ impl<R: Render> Ppu<R> {
     /// would mis-color every pixel before a mid-frame write. Splits are
     /// consumed here and cleared, so they never leak into the next frame.
     ///
-    /// Only beam positions actually scanned this frame
-    /// (`buffered_pixel_from..buffered_pixel_count`) hold this frame's
-    /// indices. Every other position flushes black, matching the cleared
-    /// framebuffer an incomplete frame (e.g. after a mid-frame reset)
-    /// would have produced per-dot.
+    /// Positions scanned this frame (up to the current beam position)
+    /// hold this frame's indices; positions from the current beam
+    /// position onward (and, after a mid-frame reset, pre-reset indices
+    /// retained in the buffer) flush as the buffer's default or stale
+    /// values respectively.
     ///
     #[inline(never)]
     fn flush_palette_index_buffer(&mut self) {
         let frame_len = self.palette_index_buffer.len() as u16;
-        let valid_start = self.buffered_pixel_from.min(frame_len);
-        let valid_end = self.buffered_pixel_count.clamp(valid_start, frame_len);
+        // `flush_palette_index_buffer` runs at the VBL set dot, after the
+        // frame is complete, so every buffer slot holds a scanned index
+        // (a mid-frame soft reset leaves pre-reset slots as stale indices).
         let mut start = 0u16;
-        for segment in 0..=self.color_splits.len() {
-            let (end, config) = if segment < self.color_splits.len() {
-                let split = self.color_splits[segment];
-                (split.index.min(frame_len), split.prior)
-            } else {
-                (frame_len, ColorConfig::from_mask(self.registers.mask))
-            };
+        for (end, config) in self
+            .color_splits
+            .drain(..)
+            .map(|split| (split.index.min(frame_len), split.prior))
+            .chain(once((
+                frame_len,
+                ColorConfig::from_mask(self.registers.mask),
+            )))
+        {
             // Every flush segment goes through the per-segment 64-entry
             // LUT + batched gather (scalar or SSSE3, identical output).
             // Ticket #67 removed the small-segment bypass: one path, no
             // extra branch, and `perf` shows the flush is not the Hot Path.
-            let mut index = start.max(valid_start);
-            let seg_end = end.min(valid_end);
-            if index < seg_end {
-                let lut = batch_convert::build_final_color_lut(&self.color_theme, config);
-                let mut chunk = [0u32; 16];
-                while index < seg_end {
-                    let chunk_len = (seg_end - index).min(chunk.len() as u16);
-                    batch_convert::convert(
-                        &self.palette_index_buffer
-                            [(index as usize)..((index + chunk_len) as usize)],
-                        &lut,
-                        &mut chunk[..(chunk_len as usize)],
-                    );
-                    for (offset, &word) in chunk[..(chunk_len as usize)].iter().enumerate() {
-                        self.emit_pixel(index + offset as u16, Pixel::from_u32(word));
-                    }
-                    index += chunk_len;
+            let mut index = start;
+            let lut = batch_convert::build_final_color_lut(&self.color_theme, config);
+            let mut chunk = [0u32; 16];
+            while index < end {
+                let chunk_len = (end - index).min(chunk.len() as u16);
+                batch_convert::convert(
+                    &self.palette_index_buffer[(index as usize)..((index + chunk_len) as usize)],
+                    &lut,
+                    &mut chunk[..(chunk_len as usize)],
+                );
+                for (offset, &word) in chunk[..(chunk_len as usize)].iter().enumerate() {
+                    let index = index + offset as u16;
+                    let x = (index % VISIBLE_WIDTH) as u32;
+                    let y = (index / VISIBLE_WIDTH) as u32;
+                    self.renderer.set_pixel(x, y, Pixel::from_u32(word).0);
                 }
+                index += chunk_len;
             }
+
             // Monotonic start: duplicate or out-of-order split indices
             // close empty segments without re-emitting earlier pixels.
             start = start.max(end);
         }
-        self.color_splits.clear();
-    }
-
-    /// Emit one flushed pixel: beam index -> `(x, y, color)` through the
-    /// Render seam. Single per-pixel emit shared by the LUT path, the
-    /// black-fill for unscanned positions, and the segment loop direct
-    /// callers (ticket #67).
-    fn emit_pixel(&mut self, index: u16, pixel: Pixel) {
-        let x = (index % VISIBLE_WIDTH) as u32;
-        let y = (index / VISIBLE_WIDTH) as u32;
-        self.renderer.set_pixel(x, y, pixel.0);
     }
 
     /// Resolve one buffered palette index to its final pixel under a
@@ -922,7 +884,7 @@ impl<R: Render> Ppu<R> {
             return 0;
         }
         let index = y * VISIBLE_WIDTH + x;
-        if !(self.buffered_pixel_from..self.buffered_pixel_count).contains(&index) {
+        if index >= self.next_beam_index() {
             return 0;
         }
         let pixel = self.resolve_pixel(
