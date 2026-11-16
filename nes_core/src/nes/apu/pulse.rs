@@ -118,7 +118,7 @@ impl Pulse {
 
     pub fn write_control(&mut self, value: PulseControlBits) {
         self.envelope.config(value.into_bytes()[0]);
-        self.length.set_halt(value);
+        self.length.set_halt(value.loop_and_is_halt());
         self.sequencer
             .replace_items(&PULSE_DUTY_TABLE[value.duty() as usize]);
     }
@@ -134,7 +134,7 @@ impl Pulse {
     pub fn write_timer_high(&mut self, load: LengthTimerHigh3Bits, suppress_length: bool) {
         self.timer.set_period_high(load.high3());
         if !suppress_length {
-            self.length.load(load);
+            self.length.load(load.length_idx());
         }
         self.envelope.request_reset();
         // When the fourth register is written to, the sequencer is restarted.

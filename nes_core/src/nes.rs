@@ -42,30 +42,17 @@ pub struct NesMcu<R: Render, D: AudioDriver> {
 }
 
 impl<R: Render, D: AudioDriver> NesMcu<R, D> {
-    /// Latch the CPU open bus with the value a read returned.
-    ///
-    /// Every read — generic dispatch or fast path — goes through here, so
-    /// the two routes cannot drift (see GLOSSARY "Fast Path Contract").
-    fn latch_read(&mut self, value: u8, read_controller: bool) -> u8 {
+    /// Single open-bus latch routine shared by the read, peek, and write
+    /// paths: update the open-bus latch (and deassert both joypad /OE lines
+    /// unless a controller read keeps them asserted). `pub(crate)` so the
+    /// seam stays narrow (ADR-0010).
+    pub(crate) fn latch(&mut self, value: u8, read_controller: bool) -> u8 {
         self.open_bus = value;
         if !read_controller {
             self.controller.a.oe = false;
             self.controller.b.oe = false;
         }
         value
-    }
-
-    /// Apply the observable side effects of a CPU write: latch the open bus
-    /// and deassert both joypad /OE lines, so a store breaks contiguous-read
-    /// detection regardless of which route performed it.
-    ///
-    /// Called first thing by both the generic `write` and the two fast-path
-    /// write overrides — the same point in the sequence — so the routes
-    /// cannot drift in either effect or order.
-    fn latch_write(&mut self, value: u8) {
-        self.open_bus = value;
-        self.controller.a.oe = false;
-        self.controller.b.oe = false;
     }
     pub fn new(file: &INesFile, renderer: R, audio_driver: D) -> Self {
         Self::new_with_mmc3_irq_override(file, renderer, audio_driver, Mmc3IrqOverride::Auto)
@@ -291,13 +278,13 @@ impl<R: Render, D: AudioDriver> Mcu for NesMcu<R, D> {
                 let value = self.controller.a.read_strobed();
                 self.controller.a.oe = true;
                 self.controller.b.oe = false;
-                return self.latch_read(value, true);
+                return self.latch(value, true);
             }
             0x4017 => {
                 let value = self.controller.b.read_strobed() | self.zapper_bits();
                 self.controller.a.oe = false;
                 self.controller.b.oe = true;
-                return self.latch_read(value, true);
+                return self.latch(value, true);
             }
             0x4015 => self.apu.read(address),
             // Cartridge expansion area (MMC5 `$5010`/`$5015` audio and
@@ -311,14 +298,14 @@ impl<R: Render, D: AudioDriver> Mcu for NesMcu<R, D> {
                     } else {
                         value
                     };
-                    self.latch_read(value, false)
+                    self.latch(value, false)
                 }
-                None => self.latch_read(self.open_bus, false),
+                None => self.latch(self.open_bus, false),
             },
             // Write-only APU/IO registers and unused test registers: open bus
             _ => self.open_bus,
         };
-        self.latch_read(value, false)
+        self.latch(value, false)
     }
 
     fn peek(&self, address: u16) -> u8 {
@@ -353,7 +340,7 @@ impl<R: Render, D: AudioDriver> Mcu for NesMcu<R, D> {
     }
 
     fn write(&mut self, address: u16, value: u8, clock: SystemClock) {
-        self.latch_write(value);
+        self.latch(value, false);
         match address {
             0x0000..=0x1fff => self.lower_ram.write(address, value, clock),
             0x2000..=0x3fff => self.ppu.write_ppureg(address, value, &mut self.cartridge),
@@ -388,21 +375,21 @@ impl<R: Render, D: AudioDriver> Mcu for NesMcu<R, D> {
 
     fn read_zero_page(&mut self, address: u8) -> u8 {
         let value = self.lower_ram.read_zero_page(address);
-        self.latch_read(value, false)
+        self.latch(value, false)
     }
 
     fn read_stack_page(&mut self, address: u8) -> u8 {
         let value = self.lower_ram.read_stack_page(address);
-        self.latch_read(value, false)
+        self.latch(value, false)
     }
 
     fn write_zero_page(&mut self, address: u8, value: u8, clock: SystemClock) {
-        self.latch_write(value);
+        self.latch(value, false);
         self.lower_ram.write_zero_page(address, value, clock);
     }
 
     fn write_stack_page(&mut self, address: u8, value: u8, clock: SystemClock) {
-        self.latch_write(value);
+        self.latch(value, false);
         self.lower_ram.write_stack_page(address, value, clock);
     }
 }

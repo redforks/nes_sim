@@ -1,47 +1,3 @@
-use crate::nes::apu::registers::{
-    LengthTimerHigh3Bits, NoiseControlBits, NoiseLength, PulseControlBits, TriangleControlBits,
-};
-
-/// Abstract register that can be used to read length halt bit for noise and pulse channels.
-pub trait GetLengthHalt {
-    fn length_halt(&self) -> bool;
-}
-
-impl GetLengthHalt for PulseControlBits {
-    fn length_halt(&self) -> bool {
-        self.loop_and_is_halt()
-    }
-}
-
-impl GetLengthHalt for TriangleControlBits {
-    fn length_halt(&self) -> bool {
-        self.loop_and_is_halt()
-    }
-}
-
-impl GetLengthHalt for NoiseControlBits {
-    fn length_halt(&self) -> bool {
-        self.loop_and_is_halt()
-    }
-}
-
-/// Abstract register that can be used to read length index for noise and pulse channels.
-pub trait GetLengthIndex {
-    fn length_idx(&self) -> u8;
-}
-
-impl GetLengthIndex for LengthTimerHigh3Bits {
-    fn length_idx(&self) -> u8 {
-        self.length_idx()
-    }
-}
-
-impl GetLengthIndex for NoiseLength {
-    fn length_idx(&self) -> u8 {
-        self.length_idx()
-    }
-}
-
 #[rustfmt::skip]
 const LENGTH_TABLE: [u8; 32] = [
     0x0a, 0xfe, 0x14, 0x02, 0x28, 0x04, 0x50, 0x06, 0xa0, 0x08, 0x3c, 0x0a, 0x0e, 0x0c, 0x1a, 0x0e,
@@ -56,8 +12,8 @@ pub struct LengthControl {
 }
 
 impl LengthControl {
-    pub fn set_halt(&mut self, bits: impl GetLengthHalt) {
-        self.is_halt = bits.length_halt();
+    pub fn set_halt(&mut self, is_halt: bool) {
+        self.is_halt = is_halt;
     }
 
     pub fn is_halt(&self) -> bool {
@@ -81,9 +37,9 @@ impl LengthControl {
     }
 
     /// Load counter from length timer high 5 bits. Length timer high also reloads the counter.
-    pub fn load(&mut self, bits: impl GetLengthIndex) {
+    pub fn load(&mut self, length_idx: u8) {
         if self.enabled {
-            self.counter = LENGTH_TABLE[bits.length_idx() as usize];
+            self.counter = LENGTH_TABLE[length_idx as usize];
         }
     }
 
