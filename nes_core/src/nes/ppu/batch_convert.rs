@@ -34,6 +34,7 @@
 //! numbers, only byte-identical output.
 
 use super::palette::ColorTheme;
+#[cfg(target_arch = "x86_64")]
 use super::palette::Pixel;
 use super::registers::ColorConfig;
 
@@ -46,7 +47,7 @@ pub(crate) struct FinalColorLut {
     pub words: [u32; 64],
     // Only consumed by the x86_64 SSSE3 gather; on other targets
     // (incl. wasm32) the scalar gather uses `words` alone.
-    #[allow(dead_code)]
+    #[cfg(target_arch = "x86_64")]
     planes: [[u8; 64]; 3],
 }
 
@@ -56,15 +57,24 @@ pub(crate) struct FinalColorLut {
 /// for `idx in 0..64`.
 pub(crate) fn build_final_color_lut(theme: &ColorTheme, config: ColorConfig) -> FinalColorLut {
     let mut words = [0u32; 64];
+    #[cfg(target_arch = "x86_64")]
     let mut planes = [[0u8; 64]; 3];
     for (idx, word) in words.iter_mut().enumerate() {
         let pixel = config.apply_effects(theme.color(config.grayscale_index(idx as u8)));
         *word = pixel.to_u32();
+        #[cfg(target_arch = "x86_64")]
         for channel in 0..3 {
             planes[channel][idx] = pixel.0[channel];
         }
     }
-    FinalColorLut { words, planes }
+    #[cfg(target_arch = "x86_64")]
+    {
+        FinalColorLut { words, planes }
+    }
+    #[cfg(not(target_arch = "x86_64"))]
+    {
+        FinalColorLut { words }
+    }
 }
 
 /// Scalar Tier-0 gather: `out[i] = lut[indices[i] & 0x3F]`.
