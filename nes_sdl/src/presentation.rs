@@ -92,7 +92,7 @@ mod tests {
     #[test]
     fn one_x_frame_bytes_and_dimensions() {
         let mut frame = ImageRender::<1>::new();
-        frame.set_pixel(0, 0, [1, 2, 3, 255]);
+        frame.set_pixel(0, [1, 2, 3, 255]);
         let p = plan(&frame, &[], (512, 480));
         assert_eq!(p.width, 256);
         assert_eq!(p.height, 240);
@@ -112,7 +112,7 @@ mod tests {
     #[test]
     fn presentation_bytes_are_the_frame_bytes() {
         let mut frame = ImageRender::<4>::new();
-        frame.set_pixel(2, 3, [9, 8, 7, 255]);
+        frame.set_pixel(2 + 3 * 256, [9, 8, 7, 255]);
         let p = plan(&frame, &[], (1024, 960));
         assert_eq!(p.bytes, frame.as_bytes());
     }

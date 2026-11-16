@@ -119,23 +119,30 @@ impl<const N: usize> ImageRender<N> {
 
 impl<const N: usize> Render for ImageRender<N> {
     #[inline]
-    fn set_pixel(&mut self, x: u32, y: u32, color: [u8; 4]) {
+    fn set_pixel(&mut self, index: u16, color: [u8; 4]) {
         assert!(N > 0, "Zoom Factor N must be non-zero");
-        // Silent-ignore out-of-logical-bounds; caller guarantees x<256,y<240.
-        if x >= NES_WIDTH as u32 || y >= NES_HEIGHT as u32 {
+        let logical = index as usize;
+        // Silent-ignore out-of-logical-bounds; caller guarantees index < 256*240.
+        if logical >= NES_WIDTH * NES_HEIGHT {
             return;
         }
+        let x = logical % NES_WIDTH;
+        let y = logical / NES_WIDTH;
         if N == 1 {
-            let idx = y as usize * NES_WIDTH + x as usize;
-            self.image[idx] = color;
+            let idx = y * NES_WIDTH + x;
+            unsafe {
+                *self.image.get_unchecked_mut(idx) = color;
+            }
         } else {
-            let base_x = x as usize * N;
-            let base_y = y as usize * N;
+            let base_x = x * N;
+            let base_y = y * N;
             let stride = NES_WIDTH * N;
             for dy in 0..N {
                 let row = (base_y + dy) * stride + base_x;
                 for dx in 0..N {
-                    self.image[row + dx] = color;
+                    unsafe {
+                        *self.image.get_unchecked_mut(row + dx) = color;
+                    }
                 }
             }
         }
@@ -161,9 +168,9 @@ mod tests {
     fn test_image_render_set_pixel() {
         let mut renderer = ImageRender::<1>::new();
 
-        renderer.set_pixel(0, 0, [255, 0, 0, 255]);
-        renderer.set_pixel(5, 5, [0, 255, 0, 255]);
-        renderer.set_pixel(10, 10, [0, 0, 255, 255]);
+        renderer.set_pixel(0, [255, 0, 0, 255]);
+        renderer.set_pixel(5 * 256 + 5, [0, 255, 0, 255]);
+        renderer.set_pixel(10 * 256 + 10, [0, 0, 255, 255]);
 
         assert_eq!(renderer.get_pixel(0, 0), [255, 0, 0, 255]);
         assert_eq!(renderer.get_pixel(5, 5), [0, 255, 0, 255]);
@@ -182,7 +189,7 @@ mod tests {
     #[test]
     fn test_zoom_replication() {
         let mut r = ImageRender::<2>::new();
-        r.set_pixel(0, 0, [1, 2, 3, 255]);
+        r.set_pixel(0, [1, 2, 3, 255]);
         assert_eq!(r.get_pixel(0, 0), [1, 2, 3, 255]);
         assert_eq!(r.get_pixel(1, 0), [1, 2, 3, 255]);
         assert_eq!(r.get_pixel(0, 1), [1, 2, 3, 255]);
@@ -194,7 +201,7 @@ mod tests {
     #[test]
     fn test_zoom_4_replication() {
         let mut r = ImageRender::<4>::new();
-        r.set_pixel(1, 1, [9, 9, 9, 255]);
+        r.set_pixel(1 * 256 + 1, [9, 9, 9, 255]);
         for dy in 0..4 {
             for dx in 0..4 {
                 assert_eq!(r.get_pixel(4 + dx, 4 + dy), [9, 9, 9, 255]);

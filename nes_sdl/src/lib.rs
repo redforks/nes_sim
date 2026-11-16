@@ -104,8 +104,8 @@ impl<const N: usize> SdlRender<N> {
 }
 
 impl<const N: usize> Render for SdlRender<N> {
-    fn set_pixel(&mut self, x: u32, y: u32, color: [u8; 4]) {
-        self.image.set_pixel(x, y, color);
+    fn set_pixel(&mut self, index: u16, color: [u8; 4]) {
+        self.image.set_pixel(index, color);
     }
 
     fn finish(&mut self) {

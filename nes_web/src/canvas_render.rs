@@ -42,13 +42,14 @@ impl CanvasRender {
 }
 
 impl Render for CanvasRender {
-    fn set_pixel(&mut self, x: u32, y: u32, color: [u8; 4]) {
-        if x >= self.width || y >= self.height {
+    fn set_pixel(&mut self, index: u16, color: [u8; 4]) {
+        let idx = index as usize;
+        if idx >= (self.width * self.height) as usize {
             return;
         }
 
-        let idx = ((y * self.width + x) * 4) as usize;
-        self.buffer[idx..idx + 4].copy_from_slice(&color);
+        let byte_idx = idx * 4;
+        self.buffer[byte_idx..byte_idx + 4].copy_from_slice(&color);
     }
 
     fn finish(&mut self) {

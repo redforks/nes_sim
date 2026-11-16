@@ -435,8 +435,8 @@ impl RecordRender {
 }
 
 impl Render for RecordRender {
-    fn set_pixel(&mut self, x: u32, y: u32, color: [u8; 4]) {
-        self.buffer.set_pixel(x, y, color);
+    fn set_pixel(&mut self, index: u16, color: [u8; 4]) {
+        self.buffer.set_pixel(index, color);
     }
 
     fn finish(&mut self) {
@@ -1399,8 +1399,8 @@ mod tests {
                     (x as u8) ^ (y as u8),
                     255,
                 ];
-                one.set_pixel(x, y, color);
-                four.set_pixel(x, y, color);
+                one.set_pixel((y * 256 + x) as u16, color);
+                four.set_pixel((y * 256 + x) as u16, color);
             }
         }
         (one, four)
@@ -1488,8 +1488,7 @@ mod tests {
         for y in 0..240u32 {
             for x in 0..256u32 {
                 frame.set_pixel(
-                    x,
-                    y,
+                    (y * 256 + x) as u16,
                     [
                         (x.wrapping_mul(3)) as u8,
                         (y.wrapping_mul(5)) as u8,

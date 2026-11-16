@@ -18,7 +18,7 @@ use std::fmt::Debug;
 ///
 /// # Required Methods
 ///
-/// - `set_pixel(x, y, color)` - Set a single pixel to the given RGBA color
+/// - `set_pixel(index, color)` - Set a single pixel to the given RGBA color
 ///
 /// # Optional Methods
 ///
@@ -27,14 +27,14 @@ pub trait Render: Debug {
     /// Set a single pixel to the given color
     ///
     /// # Parameters
-    /// - `x`: X coordinate (0 = left)
-    /// - `y`: Y coordinate (0 = top)
+    /// - `index`: Linear pixel index in row-major order (0 = top-left),
+    ///   where `x = index % 256` and `y = index / 256` for the NES frame.
     /// - `color`: RGBA color as [R, G, B, A] where each value is 0-255
     ///
     /// # Behavior
-    /// Implementations may choose to ignore out-of-bounds coordinates
+    /// Implementations may choose to ignore out-of-bounds indices
     /// rather than panic, for performance reasons.
-    fn set_pixel(&mut self, x: u32, y: u32, color: [u8; 4]);
+    fn set_pixel(&mut self, index: u16, color: [u8; 4]);
 
     /// Called after rendering a complete frame
     ///
@@ -56,5 +56,5 @@ pub trait Render: Debug {
 }
 
 impl Render for () {
-    fn set_pixel(&mut self, _x: u32, _y: u32, _color: [u8; 4]) {}
+    fn set_pixel(&mut self, _index: u16, _color: [u8; 4]) {}
 }

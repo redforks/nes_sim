@@ -2052,13 +2052,13 @@ fn timing_in_sprite_eval_dots(dot: u16, expected: bool) {
 /// without reaching into PPU internals.
 #[derive(Debug, Default)]
 struct RecordingRender {
-    pixels: Vec<(u32, u32, [u8; 4])>,
+    pixels: Vec<(u16, [u8; 4])>,
     finishes: usize,
 }
 
 impl Render for RecordingRender {
-    fn set_pixel(&mut self, x: u32, y: u32, color: [u8; 4]) {
-        self.pixels.push((x, y, color));
+    fn set_pixel(&mut self, index: u16, color: [u8; 4]) {
+        self.pixels.push((index, color));
     }
 
     fn finish(&mut self) {
@@ -2103,12 +2103,8 @@ fn flush_emits_full_frame_once_at_vblank_in_raster_order() {
     let expected_color = ppu.color_theme.color(0x21).0;
     assert_eq!(ppu.renderer.finishes, 1, "exactly one finish per frame");
     assert_eq!(ppu.renderer.pixels.len(), 256 * 240);
-    for (i, &(x, y, color)) in ppu.renderer.pixels.iter().enumerate() {
-        assert_eq!(
-            (x, y),
-            ((i % 256) as u32, (i / 256) as u32),
-            "raster order at {i}"
-        );
+    for (i, &(index, color)) in ppu.renderer.pixels.iter().enumerate() {
+        assert_eq!(index, i as u16, "raster order at {i}");
         assert_eq!(color, expected_color, "backdrop color at {i}");
     }
 
@@ -2118,12 +2114,8 @@ fn flush_emits_full_frame_once_at_vblank_in_raster_order() {
     tick_until_vblank(&mut ppu, &mut cart);
     assert_eq!(ppu.renderer.finishes, 1);
     assert_eq!(ppu.renderer.pixels.len(), 256 * 240);
-    for (i, &(x, y, color)) in ppu.renderer.pixels.iter().enumerate() {
-        assert_eq!(
-            (x, y),
-            ((i % 256) as u32, (i / 256) as u32),
-            "raster order at {i}"
-        );
+    for (i, &(index, color)) in ppu.renderer.pixels.iter().enumerate() {
+        assert_eq!(index, i as u16, "raster order at {i}");
         assert_eq!(color, expected_color, "backdrop color at {i}");
     }
 }
@@ -2159,12 +2151,10 @@ fn flush_emits_static_background_frame_in_raster_order() {
     let entry_for = |x: u32| -> u8 { [0x10, 0x20, 0x30][((x / 8) % 3) as usize] };
     assert_eq!(ppu.renderer.finishes, 1);
     assert_eq!(ppu.renderer.pixels.len(), 256 * 240);
-    for (i, &(x, y, color)) in ppu.renderer.pixels.iter().enumerate() {
-        assert_eq!(
-            (x, y),
-            ((i % 256) as u32, (i / 256) as u32),
-            "raster order at {i}"
-        );
+    for (i, &(index, color)) in ppu.renderer.pixels.iter().enumerate() {
+        let x = (index % 256) as u32;
+        let y = (index / 256) as u32;
+        assert_eq!(index, i as u16, "raster order at {i}");
         // Rows 0..8 vary by column (nametable row 0); every later row uses
         // nametable tile 0 (color index 1 -> entry $10) since the rest of
         // VRAM is zero.
@@ -2211,12 +2201,8 @@ fn flush_applies_prior_color_below_midframe_grayscale_split() {
     assert_ne!(color, grayscale, "segments must be distinguishable");
     assert_eq!(ppu.renderer.finishes, 1, "exactly one finish per frame");
     assert_eq!(ppu.renderer.pixels.len(), 256 * 240);
-    for (i, &(x, y, color)) in ppu.renderer.pixels.iter().enumerate() {
-        assert_eq!(
-            (x, y),
-            ((i % 256) as u32, (i / 256) as u32),
-            "raster order at {i}"
-        );
+    for (i, &(index, color)) in ppu.renderer.pixels.iter().enumerate() {
+        assert_eq!(index, i as u16, "raster order at {i}");
         let want = if i < 98 { color } else { grayscale };
         assert_eq!(color, want, "color at pixel index {i}");
     }
@@ -2265,12 +2251,8 @@ fn flush_applies_each_segment_for_multiple_midframe_grayscale_toggles() {
     assert_ne!(color, grayscale, "segments must be distinguishable");
     assert_eq!(ppu.renderer.finishes, 1, "exactly one finish per frame");
     assert_eq!(ppu.renderer.pixels.len(), 256 * 240);
-    for (i, &(x, y, color)) in ppu.renderer.pixels.iter().enumerate() {
-        assert_eq!(
-            (x, y),
-            ((i % 256) as u32, (i / 256) as u32),
-            "raster order at {i}"
-        );
+    for (i, &(index, color)) in ppu.renderer.pixels.iter().enumerate() {
+        assert_eq!(index, i as u16, "raster order at {i}");
         let want = if !(98..120 * 256).contains(&i) {
             color
         } else {
@@ -2319,12 +2301,8 @@ fn flush_applies_prior_color_below_midframe_emphasis_split() {
     assert_ne!(color, emphasised, "segments must be distinguishable");
     assert_eq!(ppu.renderer.finishes, 1, "exactly one finish per frame");
     assert_eq!(ppu.renderer.pixels.len(), 256 * 240);
-    for (i, &(x, y, color)) in ppu.renderer.pixels.iter().enumerate() {
-        assert_eq!(
-            (x, y),
-            ((i % 256) as u32, (i / 256) as u32),
-            "raster order at {i}"
-        );
+    for (i, &(index, color)) in ppu.renderer.pixels.iter().enumerate() {
+        assert_eq!(index, i as u16, "raster order at {i}");
         let want = if i < 98 { color } else { emphasised };
         assert_eq!(color, want, "color at pixel index {i}");
     }

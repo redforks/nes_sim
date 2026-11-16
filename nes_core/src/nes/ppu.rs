@@ -842,9 +842,7 @@ impl<R: Render> Ppu<R> {
                 );
                 for (offset, &word) in chunk[..(chunk_len as usize)].iter().enumerate() {
                     let index = index + offset as u16;
-                    let x = (index % VISIBLE_WIDTH) as u32;
-                    let y = (index / VISIBLE_WIDTH) as u32;
-                    self.renderer.set_pixel(x, y, Pixel::from_u32(word).0);
+                    self.renderer.set_pixel(index, Pixel::from_u32(word).0);
                 }
                 index += chunk_len;
             }
