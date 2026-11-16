@@ -70,34 +70,10 @@ impl ImageRender {
         bytemuck::cast_slice(&self.image)
     }
 
-    /// Mutable raw bytes.
-    #[inline]
-    pub fn as_bytes_mut(&mut self) -> &mut [u8] {
-        bytemuck::cast_slice_mut(&mut self.image)
-    }
-
     /// Typed pixel view (`W*H` entries of `[R,G,B,A]`).
     #[inline]
     pub fn as_pixels(&self) -> &[[u8; 4]] {
         &self.image
-    }
-
-    /// Mutable typed pixels.
-    #[inline]
-    pub fn as_pixels_mut(&mut self) -> &mut [[u8; 4]] {
-        &mut self.image
-    }
-
-    /// Compatibility alias — returns typed pixels (was `&RgbaImage`).
-    #[inline]
-    pub fn borrow_image(&self) -> &[[u8; 4]] {
-        self.as_pixels()
-    }
-
-    /// Mutable compatibility alias.
-    #[inline]
-    pub fn borrow_image_mut(&mut self) -> &mut [[u8; 4]] {
-        self.as_pixels_mut()
     }
 
     /// Read a single output pixel (for tests). Caller must guarantee bounds.
