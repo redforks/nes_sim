@@ -13,41 +13,8 @@ const TEST_SIGNATURE: [u8; 3] = [0xDE, 0xB0, 0x61];
 const TEST_RESULT_ADDR: u16 = 0x6000;
 const TEST_SIGNATURE_ADDR: u16 = 0x6001;
 
-/// if quiet, do not call inner Plugin,
-struct QuietPlugin<P> {
-    quiet: bool,
-    inner: P,
-}
-
-impl<P> QuietPlugin<P> {
-    pub fn new(quiet: bool, inner: P) -> Self {
-        Self { quiet, inner }
-    }
-}
-
-impl<M: Mcu, P: Plugin<M>> Plugin<M> for QuietPlugin<P> {
-    fn start(&mut self, view: &MachineView<M>) {
-        if !self.quiet {
-            self.inner.start(view);
-        }
-    }
-
-    fn end(&mut self, view: &MachineView<M>) {
-        if !self.quiet {
-            self.inner.end(view);
-        }
-    }
-
-    fn should_stop(&self) -> ExecuteResult {
-        if self.quiet {
-            ExecuteResult::Continue
-        } else {
-            self.inner.should_stop()
-        }
-    }
-}
-
 pub struct ReportPlugin {
+    quiet: bool,
     start_cycles: u64,
     a: u8,
     x: u8,
@@ -58,8 +25,9 @@ pub struct ReportPlugin {
 }
 
 impl ReportPlugin {
-    fn inner_new() -> Self {
+    pub fn new(quiet: bool) -> Self {
         Self {
+            quiet,
             start_cycles: 0,
             a: 0,
             x: 0,
@@ -71,7 +39,7 @@ impl ReportPlugin {
     }
 
     pub fn create<M: Mcu>(quiet: bool) -> impl Plugin<M> {
-        QuietPlugin::new(quiet, ReportPlugin::inner_new())
+        ReportPlugin::new(quiet)
     }
 
     fn output<M: Mcu>(&mut self, view: &MachineView<M>, ppu: &str) {
@@ -91,6 +59,9 @@ impl ReportPlugin {
 
 impl<M: Mcu> Plugin<M> for ReportPlugin {
     fn start(&mut self, view: &MachineView<M>) {
+        if self.quiet {
+            return;
+        }
         self.start_cycles = view.clock().cycles();
         self.a = view.cpu.a;
         self.x = view.cpu.x;
@@ -101,6 +72,9 @@ impl<M: Mcu> Plugin<M> for ReportPlugin {
     }
 
     fn end(&mut self, view: &MachineView<M>) {
+        if self.quiet {
+            return;
+        }
         self.output(view, "")
     }
 }
@@ -250,24 +224,27 @@ pub struct NesReportPlugin<R, A> {
 
 impl<R: Render, A: AudioDriver> NesReportPlugin<R, A> {
     pub fn create(quiet: bool) -> impl Plugin<NesMcu<R, A>> {
-        QuietPlugin::new(
-            quiet,
-            NesReportPlugin {
-                inner: ReportPlugin::inner_new(),
-                timing: Timing::default(),
-                _phantom: std::marker::PhantomData,
-            },
-        )
+        NesReportPlugin {
+            inner: ReportPlugin::new(quiet),
+            timing: Timing::default(),
+            _phantom: std::marker::PhantomData,
+        }
     }
 }
 
 impl<R: Render, A: AudioDriver> Plugin<NesMcu<R, A>> for NesReportPlugin<R, A> {
     fn start(&mut self, view: &MachineView<NesMcu<R, A>>) {
+        if self.inner.quiet {
+            return;
+        }
         self.inner.start(view);
         self.timing = *view.ppu_timing();
     }
 
     fn end(&mut self, view: &MachineView<NesMcu<R, A>>) {
+        if self.inner.quiet {
+            return;
+        }
         let ppu = format!("PPU:{:3},{:3} ", self.timing.scanline(), self.timing.dot());
         self.inner.output(view, &ppu);
     }
