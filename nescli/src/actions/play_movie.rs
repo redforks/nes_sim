@@ -401,9 +401,7 @@ struct RecordRender {
     p1: GamepadOverlay,
     p2: GamepadOverlay,
     ff_skip: bool,
-    ff_counter: u32,
-    trim_frames: u32,
-    trim_counter: u32,
+    send_policy: crate::recording_send::RecordingSendPolicy,
 }
 
 impl std::fmt::Debug for RecordRender {
@@ -415,9 +413,6 @@ impl std::fmt::Debug for RecordRender {
 impl RecordRender {
     fn set_fast_forward(&mut self, enabled: bool) {
         self.ff_skip = enabled;
-        if !enabled {
-            self.ff_counter = 0;
-        }
     }
 
     fn set_dual_player(&mut self, dual: bool) {
@@ -443,16 +438,7 @@ impl Render for RecordRender {
         // Decide whether this frame reaches the recording before building any
         // recording frame, so a trimmed or fast-forwarded frame is never
         // upscaled. The window still presents every frame.
-        let send_video = if self.trim_counter < self.trim_frames {
-            self.trim_counter += 1;
-            false
-        } else if self.ff_skip {
-            let send = self.ff_counter.is_multiple_of(4);
-            self.ff_counter += 1;
-            send
-        } else {
-            true
-        };
+        let send_video = self.send_policy.should_send(self.ff_skip);
 
         // Advance the hold counters and derive the icon placements once per
         // frame. The window draws them as textures; recording composites them
@@ -484,9 +470,7 @@ struct RecordAudioDriver {
     audio_tx: Option<mpsc::Sender<Vec<u8>>>,
     sample_buf: Vec<f32>,
     ff_skip: Rc<Cell<bool>>,
-    ff_counter: u32,
-    trim_frames: u32,
-    trim_counter: u32,
+    send_policy: crate::recording_send::RecordingSendPolicy,
 }
 
 impl AudioDriver for RecordAudioDriver {
@@ -503,17 +487,7 @@ impl AudioDriver for RecordAudioDriver {
 
     fn flush(&mut self) {
         self.inner.flush();
-        let send_audio = if self.trim_counter < self.trim_frames {
-            self.trim_counter += 1;
-            false
-        } else if self.ff_skip.get() {
-            let send = self.ff_counter.is_multiple_of(4);
-            self.ff_counter += 1;
-            send
-        } else {
-            self.ff_counter = 0;
-            true
-        };
+        let send_audio = self.send_policy.should_send(self.ff_skip.get());
         if let Some(ref tx) = self.audio_tx {
             if !self.sample_buf.is_empty() && send_audio {
                 let bytes: Vec<u8> = self
@@ -660,9 +634,7 @@ fn init_sdl_drivers(
         p1: GamepadOverlay::new(),
         p2: GamepadOverlay::new(),
         ff_skip: false,
-        ff_counter: 0,
-        trim_frames,
-        trim_counter: 0,
+        send_policy: crate::recording_send::RecordingSendPolicy::new(trim_frames),
     };
 
     let audio_driver = RecordAudioDriver {
@@ -670,9 +642,7 @@ fn init_sdl_drivers(
         audio_tx,
         sample_buf: Vec::new(),
         ff_skip,
-        ff_counter: 0,
-        trim_frames,
-        trim_counter: 0,
+        send_policy: crate::recording_send::RecordingSendPolicy::new(trim_frames),
     };
 
     Ok((render, audio_driver))
