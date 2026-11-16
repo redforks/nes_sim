@@ -68,7 +68,7 @@ impl Mmc5Pulse {
     pub fn write_control(&mut self, value: u8) {
         let bits = PulseControlBits::from_bytes([value]);
         self.envelope.config(value);
-        self.length.set_halt(bits);
+        self.length.set_halt(bits.loop_and_is_halt());
         self.sequencer
             .replace_items(&PULSE_DUTY_TABLE[bits.duty() as usize]);
     }
@@ -83,7 +83,7 @@ impl Mmc5Pulse {
     pub fn write_timer_high(&mut self, value: u8) {
         let bits = LengthTimerHigh3Bits::from_bytes([value]);
         self.timer.set_period_high(bits.high3());
-        self.length.load(bits);
+        self.length.load(bits.length_idx());
         self.envelope.request_reset();
         self.sequencer.reset();
     }

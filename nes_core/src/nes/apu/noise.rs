@@ -55,7 +55,7 @@ impl Noise {
 
     pub fn write_envelope(&mut self, value: NoiseControlBits) {
         self.envelope.config(value.into_bytes()[0]);
-        self.length.set_halt(value);
+        self.length.set_halt(value.loop_and_is_halt());
     }
 
     pub fn write_period(&mut self, value: NoisePeriod) {
@@ -71,7 +71,7 @@ impl Noise {
 
     pub fn write_length(&mut self, value: NoiseLength, suppress_length: bool) {
         if !suppress_length {
-            self.length.load(value);
+            self.length.load(value.length_idx());
         }
         self.envelope.request_reset();
     }

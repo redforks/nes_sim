@@ -58,7 +58,7 @@ impl Triangle {
     }
 
     pub fn write_control(&mut self, value: TriangleControlBits) {
-        self.length.set_halt(value);
+        self.length.set_halt(value.loop_and_is_halt());
         self.linear.reload_value = value.counter();
     }
 
@@ -77,7 +77,7 @@ impl Triangle {
     pub fn write_timer_high(&mut self, load: LengthTimerHigh3Bits, suppress_length: bool) {
         self.timer.set_period_high(load.high3());
         if !suppress_length {
-            self.length.load(load);
+            self.length.load(load.length_idx());
         }
 
         // When register $400B is written to, the halt flag is set.
