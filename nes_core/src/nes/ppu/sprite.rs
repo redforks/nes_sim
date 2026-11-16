@@ -143,7 +143,7 @@ impl SpriteManager {
 
     pub fn step_sprite_overflow_eval(&mut self, scanline: u16, ctrl: PpuCtrl, oam: &Oam) {
         fn target_scanline(scanline: u16) -> u16 {
-            (scanline + 1) % 262
+            scanline + 1
         }
 
         match self.sprite_overflow_eval.mode {

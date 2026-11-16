@@ -587,7 +587,6 @@ impl<R: Render> Ppu<R> {
     /// shared fetches, sprite-overflow evaluation, fine-Y increment, and
     /// pixel output. Moved verbatim out of `tick()`.
     fn tick_visible(&mut self, cartridge: &mut Cartridge) {
-        let rendering = self.rendering_enabled();
         if self.timing.dot == 0 {
             self.sprite.swap_secondary_oam();
             if self.timing.scanline == 0 {
@@ -603,32 +602,36 @@ impl<R: Render> Ppu<R> {
             // compute background anchor at start of visible scanline
             self.background_anchor = Some(BackgroundActivation::snapshot(self, 0));
             self.pending_background_activation = None;
-            let render = self.ppu_render_state();
-            self.fill_tile_cache(0, cartridge, render);
+            self.fill_tile_cache(0, cartridge, self.ppu_render_state());
         }
 
-        if rendering {
+        if self.rendering_enabled() {
             self.tick_fetch_notify(cartridge);
 
             if self.timing.in_sprite_eval_dots() {
-                let dot = self.timing.dot;
-                if dot == 65 {
-                    self.sprite.begin_sprite_overflow_eval(self.oam_addr);
-                }
-
-                if (dot & 1) == 1 {
-                    self.sprite.step_sprite_overflow_eval(
-                        self.timing.scanline,
-                        self.registers.ctrl,
-                        &self.oam,
-                    );
-                }
-
-                // --- vram_addr management (rendering-enabled only) ---
-                // These model the real NES PPU's internal v-register updates:
-                // Fine Y increment at dot 256 of each visible scanline
-                if dot == 256 {
-                    self.increment_vram_y();
+                match self.timing.dot {
+                    65 => {
+                        self.sprite.begin_sprite_overflow_eval(self.oam_addr);
+                        self.sprite.step_sprite_overflow_eval(
+                            self.timing.scanline,
+                            self.registers.ctrl,
+                            &self.oam,
+                        );
+                    }
+                    _ if (self.timing.dot & 1) == 1 => {
+                        self.sprite.step_sprite_overflow_eval(
+                            self.timing.scanline,
+                            self.registers.ctrl,
+                            &self.oam,
+                        );
+                    }
+                    256 => {
+                        // --- vram_addr management (rendering-enabled only) ---
+                        // These model the real NES PPU's internal v-register updates:
+                        // Fine Y increment at dot 256 of each visible scanline
+                        self.increment_vram_y();
+                    }
+                    _ => {}
                 }
             }
         }
@@ -646,7 +649,9 @@ impl<R: Render> Ppu<R> {
             let x = (self.timing.dot - 1) as u8;
             let pixel_idx = self.render_pixel(cartridge);
             let index = self.timing.scanline * VISIBLE_WIDTH + x as u16;
-            self.palette_index_buffer[index as usize] = pixel_idx;
+            unsafe {
+                *self.palette_index_buffer.get_unchecked_mut(index as usize) = pixel_idx;
+            }
         }
     }
 
