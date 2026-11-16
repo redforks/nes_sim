@@ -13,3 +13,8 @@ nesdev-wiki
 @.pi/delegate/
 .pi/delegate/
 .pi/fabric/
+
+# Scratch planning artifacts
+.scratch/
+@.scratch/
+
