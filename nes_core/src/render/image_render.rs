@@ -147,17 +147,6 @@ impl<const N: usize> Render for ImageRender<N> {
             }
         }
     }
-
-    #[inline]
-    fn pixel_brightness(&self, x: u32, y: u32) -> u32 {
-        if x >= Self::width() || y >= Self::height() {
-            return 0;
-        }
-        let w = NES_WIDTH * N;
-        let idx = y as usize * w + x as usize;
-        let [r, g, b, _] = self.image[idx];
-        u32::from(r) + u32::from(g) + u32::from(b)
-    }
 }
 
 #[cfg(test)]

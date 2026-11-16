@@ -328,7 +328,7 @@ _Avoid_: RgbaImage, image buffer (ambiguous), raw bytes (when meaning typed pixe
 Const generic `N` on `ImageRender<N>`, default `1`. Logical scale where one NES logical pixel (256×240) replicates to an `N×N` block of output pixels. Backing size is `256*240*N*N` entries; `width() = 256*N`, `height() = 240*N`.
 _Avoid_: zoom ratio (use Zoom Factor), scale factor (overloaded), N (bare)
 **ImageRender<N>**:
-`Render` implementation owning the Framebuffer. `set_pixel(x, y, color)` is called at NES logical coordinates `x < 256, y < 240` and writes an `N×N` block at `(x*N .. x*N+N, y*N .. y*N+N)`. Out-of-bounds logical coordinates are silently ignored; callers guarantee in-range. Exposes `as_bytes()`, `width()/height()`, and `pixel_brightness(x,y)` without depending on the `image` crate. Does not implement `Clone` — framebuffer copies are multi-MiB.
+`Render` implementation owning the Framebuffer. `set_pixel(x, y, color)` is called at NES logical coordinates `x < 256, y < 240` and writes an `N×N` block at `(x*N .. x*N+N, y*N .. y*N+N)`. Out-of-bounds logical coordinates are silently ignored; callers guarantee in-range. Exposes `as_bytes()` and `width()/height()` without depending on the `image` crate. Does not implement `Clone` — framebuffer copies are multi-MiB.
 _Avoid_: ImageRender (without `N`), RgbaImage wrapper, cloning the framebuffer
 
 **Presentation Plan**:

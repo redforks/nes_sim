@@ -876,7 +876,7 @@ impl<R: Render> Ppu<R> {
     /// before the flush materializes the framebuffer. Beam positions
     /// not yet written this frame report black, matching the
     /// framebuffer's behaviour until the flush. Out-of-bounds
-    /// coordinates also report black (same as `Render::pixel_brightness`).
+    /// coordinates also report black.
     pub fn pixel_brightness(&self, x: u16, y: u16) -> u32 {
         if x >= VISIBLE_WIDTH || y >= VISIBLE_HEIGHT {
             return 0;
