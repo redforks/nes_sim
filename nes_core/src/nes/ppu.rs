@@ -737,11 +737,6 @@ impl<R: Render> Ppu<R> {
                 self.timing
                     .advance(RenderingStatus::Visible, self.ren_latched_at_338);
             }
-            RenderingStatus::PreRender => {
-                self.tick_pre_render(cartridge);
-                self.timing
-                    .advance(RenderingStatus::PreRender, self.ren_latched_at_338);
-            }
             // Scanline 240: idle; the shared dot-0 swap and status pump
             // in `tick()` still run, but this line has no fetch, pixel,
             // or flag work.
@@ -753,6 +748,11 @@ impl<R: Render> Ppu<R> {
                 self.tick_vertical_blank();
                 self.timing
                     .advance(RenderingStatus::EnterVerticalBlank, self.ren_latched_at_338);
+            }
+            RenderingStatus::PreRender => {
+                self.tick_pre_render(cartridge);
+                self.timing
+                    .advance(RenderingStatus::PreRender, self.ren_latched_at_338);
             }
             // Scanlines 242–260: fully idle; the frame flush already ran
             // on the entry line.
