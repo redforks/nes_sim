@@ -826,11 +826,16 @@ impl Cpu {
         };
         let irq_pending = self.irq_detector.detect_irq(disabled);
 
-        let request = std::mem::take(&mut self.request_detect_interrupt);
+        let need_detect = if let Some(v) = self.request_detect_interrupt {
+            self.request_detect_interrupt = None;
+            v
+        } else {
+            is_last_op
+        };
         // The standard poll fires on the instruction's final cycle —
         // suppressed on the final cycle of an interrupt sequence, whose
         // recognition belongs to its declared hijack sites.
-        if request.unwrap_or(is_last_op) {
+        if need_detect {
             self.do_detect_interrupt(clock, irq_pending)
         }
     }

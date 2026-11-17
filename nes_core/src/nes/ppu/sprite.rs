@@ -112,7 +112,8 @@ impl SpriteManager {
     /// Update sprite status to ppu status register
     #[inline]
     pub fn update_ctrl_status(&mut self, status: &mut PpuStatus) {
-        if std::mem::take(&mut self.overflow_pending) {
+        if self.overflow_pending {
+            self.overflow_pending = false;
             status.set_sprite_overflow(true);
         }
     }

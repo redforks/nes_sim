@@ -174,10 +174,10 @@ impl Timing {
     /// `scanline` alone (261 / <240 / ==240 / 241 / 242–260).
     const fn status(&self) -> RenderingStatus {
         match self.scanline {
-            261 => RenderingStatus::PreRender,
             0..=239 => RenderingStatus::Visible,
             240 => RenderingStatus::PostRender,
             241 => RenderingStatus::EnterVerticalBlank,
+            261 => RenderingStatus::PreRender,
             _ => RenderingStatus::RemainVerticalBlank,
         }
     }
@@ -709,8 +709,10 @@ impl<R: Render> Ppu<R> {
             self.flush_palette_index_buffer();
             self.vblank_entered = true;
             self.renderer.finish();
-            if !std::mem::take(&mut self.suppress_vblank_pending) {
+            if !self.suppress_vblank_pending {
                 self.registers.status.set_v_blank(true);
+            } else {
+                self.suppress_vblank_pending = false;
             }
         }
     }
