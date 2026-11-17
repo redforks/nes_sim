@@ -162,6 +162,7 @@ impl Dmc {
         self.dma_reader.enabled()
     }
 
+    #[inline(always)]
     pub fn tick_timer(&mut self) {
         if self.timer.tick() {
             self.output.tick();

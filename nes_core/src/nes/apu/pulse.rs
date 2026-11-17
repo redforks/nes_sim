@@ -64,6 +64,7 @@ impl Sweep {
         self.enabled = bits.enabled();
     }
 
+    #[inline(always)]
     fn tick(&mut self, period: &mut u16) {
         if self.reload {
             self.divider.reset();
@@ -141,16 +142,19 @@ impl Pulse {
         self.sequencer.reset();
     }
 
+    #[inline(always)]
     pub fn tick_timer(&mut self) {
         if self.timer.tick() && self.divider_2.tick() {
             self.sequencer.tick();
         }
     }
 
+    #[inline(always)]
     pub fn tick_envelope(&mut self) {
         self.envelope.tick();
     }
 
+    #[inline(always)]
     pub fn tick_length_and_sweep(&mut self) -> bool {
         let decremented = self.length.tick();
         self.sweep.tick(self.timer.period_mut());

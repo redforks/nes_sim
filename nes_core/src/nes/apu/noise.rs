@@ -76,12 +76,14 @@ impl Noise {
         self.envelope.request_reset();
     }
 
+    #[inline(always)]
     pub fn tick_timer(&mut self) {
         if self.timer.tick() {
             self.shifter.tick();
         }
     }
 
+    #[inline(always)]
     pub fn tick_envelope(&mut self) {
         self.envelope.tick();
     }
