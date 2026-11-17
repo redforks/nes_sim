@@ -1,5 +1,4 @@
 use super::{FrameSequencerBits, FrameSequencerMode};
-use crate::nes::apu::Sequencer;
 
 // Step events per https://www.nesdev.org/wiki/APU_Frame_Counter (NTSC), in
 // CPU cycles after the timer reset. The divider advances once per APU clock
@@ -70,7 +69,6 @@ pub(super) struct FrameSequencer {
     /// Frame-counter divider, in CPU cycles. Advanced once per APU clock by
     /// [`Self::tick_timer`].
     cpu_cycles: u32,
-    sequences: Sequencer<FrameSequenceState>,
     frame_interrupt_inhibit: bool,
     /// A buffered `$4017` write and the CPU cycles left before it lands.
     pending_mode: Option<(FrameSequencerBits, u8)>,
@@ -86,7 +84,6 @@ impl Default for FrameSequencer {
             block: 0,
             cpu_cycles: 0,
             output_latch: Default::default(),
-            sequences: Sequencer::new(&FOUR_STEP_TRIGGERS),
             frame_interrupt_inhibit: false,
             pending_mode: None,
             mode: FrameSequencerMode::FourStep,
@@ -117,20 +114,25 @@ impl FrameSequencer {
     /// Advance the frame-counter divider by one CPU cycle. Called once per
     /// APU clock ([`crate::SystemClock::is_apu_clock`]); the thresholds below
     /// are CPU-cycle counts.
+    #[inline(always)]
     pub fn tick_timer(&mut self) {
         self.cpu_cycles += 1;
         match self.mode {
             FrameSequencerMode::FourStep => match self.cpu_cycles {
-                7457 | 14913 | 22371 => {
-                    let state = self.sequences.tick();
-                    self.apply_step(state);
+                7457 => {
+                    self.apply_step(FOUR_STEP_TRIGGERS[0]);
+                }
+                14913 => {
+                    self.apply_step(FOUR_STEP_TRIGGERS[1]);
+                }
+                22371 => {
+                    self.apply_step(FOUR_STEP_TRIGGERS[2]);
                 }
                 // Steps 3 and 5 of the four-step sequence only raise the IRQ
                 // flag; step 5 clears it again when interrupts are inhibited.
                 29828 => self.set_interrupt(),
                 29829 => {
-                    let state = self.sequences.tick();
-                    self.apply_step(state);
+                    self.apply_step(FOUR_STEP_TRIGGERS[3]);
                 }
                 // Period wrap: last IRQ set of the period lands on the reset.
                 29830 => {
@@ -143,9 +145,20 @@ impl FrameSequencer {
                 _ => {}
             },
             FrameSequencerMode::FiveStep => match self.cpu_cycles {
-                7457 | 14913 | 22371 | 29829 | 37281 => {
-                    let state = self.sequences.tick();
-                    self.apply_step(state);
+                7457 => {
+                    self.apply_step(FIVE_STEP_TRIGGERS[0]);
+                }
+                14913 => {
+                    self.apply_step(FIVE_STEP_TRIGGERS[1]);
+                }
+                22371 => {
+                    self.apply_step(FIVE_STEP_TRIGGERS[2]);
+                }
+                29829 => {
+                    self.apply_step(FIVE_STEP_TRIGGERS[3]);
+                }
+                37281 => {
+                    self.apply_step(FIVE_STEP_TRIGGERS[4]);
                 }
                 37282 => {
                     self.cpu_cycles = 0;
@@ -173,6 +186,7 @@ impl FrameSequencer {
     /// ($80/$C0) landing also clocks a half frame together with the reset,
     /// unless a unit-clocking step was latched on this CPU cycle or the
     /// previous one (that step already clocked the units).
+    #[inline(always)]
     pub fn tick(&mut self) {
         if let Some((counter, delay)) = self.pending_mode {
             if delay > 0 {
@@ -180,10 +194,6 @@ impl FrameSequencer {
             } else {
                 self.pending_mode = None;
                 self.cpu_cycles = 0;
-                self.sequences.reset_items(match counter.mode() {
-                    FrameSequencerMode::FourStep => &FOUR_STEP_TRIGGERS,
-                    FrameSequencerMode::FiveStep => &FIVE_STEP_TRIGGERS,
-                });
                 self.mode = counter.mode();
                 if counter.mode() == FrameSequencerMode::FiveStep && self.block == 0 {
                     // OR-merged: a same-dot IRQ pulse keeps its flag.
