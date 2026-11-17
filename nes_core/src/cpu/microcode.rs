@@ -1474,18 +1474,22 @@ pub enum PushTarget {
     Pch,
 }
 
+pub(super) fn fetch_and_decode<M: Mcu>(cpu: &mut Cpu, bus: &mut Bus<M>) {
+    const OPCODE_TABLE: [ArrayVec<[Microcode; 7]>; 256] = build_opcode_table();
+
+    let opcode = cpu.inc_read_byte(bus);
+    cpu.push_microcodes(&OPCODE_TABLE[opcode as usize]);
+    if let Some(window) = InterruptSequences::window_for_opcode(opcode) {
+        cpu.arm_interrupt_window(window, None);
+    }
+}
+
 impl Microcode {
     /// perform second phase of this Microcode
     pub fn exec<M: Mcu>(self, cpu: &mut Cpu, bus: &mut Bus<M>) {
         match self {
             Self::FetchAndDecode => {
-                const OPCODE_TABLE: [ArrayVec<[Microcode; 7]>; 256] = build_opcode_table();
-
-                let opcode = cpu.inc_read_byte(bus);
-                cpu.push_microcodes(&OPCODE_TABLE[opcode as usize]);
-                if let Some(window) = InterruptSequences::window_for_opcode(opcode) {
-                    cpu.arm_interrupt_window(window, None);
-                }
+                fetch_and_decode(cpu, bus);
             }
             Self::FetchOnly => cpu.read_pc_byte(bus),
             Self::LoadR(ValueSource::Immediate, r) => load_r::<Immediate, _>(cpu, bus, r),

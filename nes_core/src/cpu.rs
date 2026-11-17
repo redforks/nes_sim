@@ -1,3 +1,4 @@
+use crate::microcode::fetch_and_decode;
 use crate::view::MachineView;
 use crate::{SystemClock, bus::Bus, mcu::Mcu};
 use arraydeque::ArrayDeque;
@@ -743,22 +744,32 @@ impl Cpu {
             active.started_at = Some(bus.clock());
         }
         let code = match self.pop_microcode() {
-            Some(v) => v,
+            Some(v) => Some(v),
             None => {
                 let view = MachineView::new(self.snapshot(), bus.mcu(), bus.clock());
                 plugin.start(&view);
                 let detected = self.interrupt_detected;
                 self.interrupt_detected = InterruptType::None;
                 match detected {
-                    InterruptType::Nmi => self.push_enter_interrupt_microcodes(true, bus.clock()),
-                    InterruptType::Irq => self.push_enter_interrupt_microcodes(false, bus.clock()),
-                    InterruptType::None => Microcode::FetchAndDecode,
+                    InterruptType::Nmi => {
+                        Some(self.push_enter_interrupt_microcodes(true, bus.clock()))
+                    }
+                    InterruptType::Irq => {
+                        Some(self.push_enter_interrupt_microcodes(false, bus.clock()))
+                    }
+                    InterruptType::None => None,
                 }
             }
         };
 
         let last_status = self.status;
-        code.exec(self, bus);
+        let code = if let Some(code) = code {
+            code.exec(self, bus);
+            code
+        } else {
+            fetch_and_decode(self, bus);
+            Microcode::FetchAndDecode
+        };
         let instruction_complete = self.microcode_queue.is_empty();
         // Suppression applies while an interrupt window is armed:
         // owns the final-cycle poll. The queue drains exactly on the final
