@@ -748,13 +748,13 @@ impl Cpu {
             None => {
                 let view = MachineView::new(self.snapshot(), bus.mcu(), bus.clock());
                 plugin.start(&view);
-                let detected = self.interrupt_detected;
-                self.interrupt_detected = InterruptType::None;
-                match detected {
+                match self.interrupt_detected {
                     InterruptType::Nmi => {
+                        self.interrupt_detected = InterruptType::None;
                         Some(self.push_enter_interrupt_microcodes(true, bus.clock()))
                     }
                     InterruptType::Irq => {
+                        self.interrupt_detected = InterruptType::None;
                         Some(self.push_enter_interrupt_microcodes(false, bus.clock()))
                     }
                     InterruptType::None => None,
