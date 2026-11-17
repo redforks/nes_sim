@@ -66,7 +66,7 @@ fn test_length_counter_status_comes_from_apu_controller() {
     mcu.write(0x4003, 0xF8, SystemClock::default());
     // Length-register writes land one CPU cycle late; step APU clocks
     // (dot % 3 == 2) so the queued store lands before the status read.
-    for cpu_cycle in 0..2u64 {
+    for cpu_cycle in 0..3u64 {
         mcu.tick_apu(SystemClock(cpu_cycle * 3 + 2));
     }
 

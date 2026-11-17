@@ -156,10 +156,9 @@ impl<R: Render, D: AudioDriver> NesMcu<R, D> {
             self.apu.set_expansion_mix(expansion);
         }
         self.apu.tick();
-        while let Some(&(at, address, value)) = self.deferred_apu_writes.front() {
-            if at > clock.cycles() {
-                break;
-            }
+        if let Some(&(at, address, value)) = self.deferred_apu_writes.front()
+            && at <= clock.cycles()
+        {
             self.deferred_apu_writes.pop_front();
             self.apu.write(address, value, clock);
         }
