@@ -22,6 +22,7 @@ impl Mixer {
     /// Mix one APU tick, adding `expansion` (MMC5 pulse1/pulse2/PCM) levels.
     /// All-zero expansion — every non-MMC5 board — is bit-identical to the
     /// APU-alone mix (`x + 0.0 == x`, and the zero-sum branch is unchanged).
+    #[inline]
     pub fn emit_samples(
         &mut self,
         get_channel_samples: impl Fn() -> (u8, u8, u8, u8, u8, ExpansionMix),

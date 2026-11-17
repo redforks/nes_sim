@@ -138,7 +138,8 @@ impl<D: AudioDriver> Apu<D> {
         self.noise.tick_timer();
         self.dmc.tick_timer();
 
-        if let Some(frame_sequencer) = self.frame_sequencer.output_latch.take() {
+        if let Some(frame_sequencer) = self.frame_sequencer.output_latch {
+            self.frame_sequencer.output_latch = None;
             if frame_sequencer.irq {
                 self.frame_sequencer.set_interrupt();
             }
@@ -290,6 +291,7 @@ impl<D: AudioDriver> Apu<D> {
         self.expansion = mix;
     }
 
+    #[inline]
     fn emit_samples(&mut self) {
         self.mixer.emit_samples(
             || {
