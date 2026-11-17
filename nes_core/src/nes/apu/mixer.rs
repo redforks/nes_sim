@@ -32,7 +32,7 @@ impl Mixer {
             self.sample_accumulator -= CPU_CLOCK_HZ;
             let (p1, p2, t, n, d, expansion) = get_channel_samples();
             let sample = self.mix_sample(
-                p1 + p2 + expansion.pulse1 + expansion.pulse2,
+                p1 as u16 + p2 as u16 + expansion.pulse1 as u16 + expansion.pulse2 as u16,
                 t,
                 n,
                 d,
@@ -44,7 +44,7 @@ impl Mixer {
 
     fn mix_sample(
         &mut self,
-        pulse: u8,
+        pulse: u16,
         triangle: u8,
         noise: u8,
         dmc: u8,
@@ -58,7 +58,7 @@ impl Mixer {
     }
 }
 
-fn mix(pulse: u8, triangle: u8, noise: u8, dmc: u8, expansion_pcm: u8) -> f32 {
+fn mix(pulse: u16, triangle: u8, noise: u8, dmc: u8, expansion_pcm: u8) -> f32 {
     // MMC5 pulse channels join the APU pulses under the same nonlinear
     // curve (one shared analog node on hardware); the 8-bit MMC5 PCM DAC
     // joins the TND side with the DMC weight, so full scale is twice as
