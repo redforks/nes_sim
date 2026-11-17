@@ -146,12 +146,15 @@ impl<R: Render, D: AudioDriver> NesMcu<R, D> {
         self.ppu.tick(&mut self.cartridge);
     }
 
+    #[hotpath::measure(impl_type = "NesMcu")]
     pub fn tick_apu(&mut self, clock: SystemClock) {
         // Expansion audio (MMC5 `$5000-$5015`) advances on the same CPU
         // cycle and its levels reach the APU mixer before the tick emits:
         // silence (zeros) for boards without expansion audio.
-        let expansion = self.cartridge.tick_audio();
-        self.apu.set_expansion_mix(expansion);
+        if self.cartridge.want_tick_audio() {
+            let expansion = self.cartridge.tick_audio();
+            self.apu.set_expansion_mix(expansion);
+        }
         self.apu.tick();
         while let Some(&(at, address, value)) = self.deferred_apu_writes.front() {
             if at > clock.cycles() {

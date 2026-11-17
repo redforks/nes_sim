@@ -482,16 +482,15 @@ impl Cartridge {
         self.caps.notify_vram_address
     }
 
+    pub fn want_tick_audio(&self) -> bool {
+        self.caps.tick_audio
+    }
+
     /// Advance expansion audio one CPU cycle, returning current channel
     /// levels for the APU mixer (silence when the chip declares no audio,
     /// so boards without expansion audio pay one branch and nothing more).
-    #[inline]
     pub fn tick_audio(&mut self) -> ExpansionMix {
-        if self.caps.tick_audio {
-            self.mapper.tick_audio()
-        } else {
-            ExpansionMix::default()
-        }
+        self.mapper.tick_audio()
     }
 
     /// Report a `$8000-$FFFF` read to the mapper chip (MMC5 PCM stream read

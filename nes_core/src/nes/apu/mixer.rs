@@ -24,29 +24,33 @@ impl Mixer {
     /// APU-alone mix (`x + 0.0 == x`, and the zero-sum branch is unchanged).
     pub fn emit_samples(
         &mut self,
-        get_channel_samples: impl Fn() -> (u8, u8, u8, u8, u8),
-        expansion: ExpansionMix,
+        get_channel_samples: impl Fn() -> (u8, u8, u8, u8, u8, ExpansionMix),
         mut receive_output: impl FnMut(f32),
     ) {
         self.sample_accumulator = self.sample_accumulator.wrapping_add(self.sample_rate);
         while self.sample_accumulator >= CPU_CLOCK_HZ {
             self.sample_accumulator -= CPU_CLOCK_HZ;
-            let (p1, p2, t, n, d) = get_channel_samples();
-            let sample = self.mix_sample(p1, p2, t, n, d, expansion);
+            let (p1, p2, t, n, d, expansion) = get_channel_samples();
+            let sample = self.mix_sample(
+                p1 + p2 + expansion.pulse1 + expansion.pulse2,
+                t,
+                n,
+                d,
+                expansion.pcm,
+            );
             receive_output(sample);
         }
     }
 
     fn mix_sample(
         &mut self,
-        pulse_1: u8,
-        pulse_2: u8,
+        pulse: u8,
         triangle: u8,
         noise: u8,
         dmc: u8,
-        expansion: ExpansionMix,
+        expansion_pcm: u8,
     ) -> f32 {
-        let input = mix(pulse_1, pulse_2, triangle, noise, dmc, expansion);
+        let input = mix(pulse, triangle, noise, dmc, expansion_pcm);
         let output = input - self.dc_last_input + (0.995 * self.dc_last_output);
         self.dc_last_input = input;
         self.dc_last_output = output;
@@ -54,13 +58,12 @@ impl Mixer {
     }
 }
 
-fn mix(pulse_1: u8, pulse_2: u8, triangle: u8, noise: u8, dmc: u8, expansion: ExpansionMix) -> f32 {
+fn mix(pulse: u8, triangle: u8, noise: u8, dmc: u8, expansion_pcm: u8) -> f32 {
     // MMC5 pulse channels join the APU pulses under the same nonlinear
     // curve (one shared analog node on hardware); the 8-bit MMC5 PCM DAC
     // joins the TND side with the DMC weight, so full scale is twice as
     // loud as the 7-bit APU DMC (NESdev MMC5 audio page).
-    let pulse_sum =
-        pulse_1 as f32 + pulse_2 as f32 + expansion.pulse1 as f32 + expansion.pulse2 as f32;
+    let pulse_sum = pulse as f32;
     let triangle = triangle as f32;
     let noise = noise as f32;
     let dmc = dmc as f32;
@@ -72,7 +75,7 @@ fn mix(pulse_1: u8, pulse_2: u8, triangle: u8, noise: u8, dmc: u8, expansion: Ex
     };
 
     let tnd_input =
-        triangle / 8227.0 + noise / 12241.0 + dmc / 22638.0 + expansion.pcm as f32 / 22638.0;
+        triangle / 8227.0 + noise / 12241.0 + dmc / 22638.0 + expansion_pcm as f32 / 22638.0;
     let tnd_mix = if tnd_input == 0.0 {
         0.0
     } else {

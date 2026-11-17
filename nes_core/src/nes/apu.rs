@@ -128,13 +128,7 @@ impl<D: AudioDriver> Apu<D> {
         self.length_race_clobber = [false; 4];
     }
 
-    #[hotpath::measure(impl_type = "Apu")]
     pub fn tick(&mut self) {
-        crate::hotpath_cpu::hotpath_cpu_alias!(
-            Self,
-            concat!(module_path!(), "::Apu::tick"),
-            "tick"
-        );
         self.length_race_clobber = [false; 4];
         self.frame_sequencer.tick_timer();
         self.frame_sequencer.tick();
@@ -305,9 +299,9 @@ impl<D: AudioDriver> Apu<D> {
                     self.triangle.output(),
                     self.noise.output(),
                     self.dmc.output(),
+                    self.expansion,
                 )
             },
-            self.expansion,
             |sample| self.driver.push_sample(sample),
         );
     }
