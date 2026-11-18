@@ -1,4 +1,4 @@
-use crate::actions::{InfoAction, PlayMovieAction, RunAction};
+use crate::actions::{InfoAction, RunAction};
 use clap::Parser;
 use nes_core::{ines::INesFile, nes::ppu::palette::ColorTheme};
 use std::fs::File;
@@ -47,8 +47,6 @@ enum Action {
     Info(InfoAction),
     /// Run the NES simulator with SDL2 display
     Run(RunAction),
-    /// Play back a .fm2/.bk2 movie file
-    PlayMovie(PlayMovieAction),
 }
 
 impl Action {
@@ -56,7 +54,6 @@ impl Action {
         match self {
             Action::Info(action) => action.run(&nes_file),
             Action::Run(action) => action.run(&nes_file, palette),
-            Action::PlayMovie(action) => action.run(&nes_file, palette),
         }
     }
 }
