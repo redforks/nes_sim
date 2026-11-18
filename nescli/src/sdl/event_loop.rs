@@ -35,6 +35,37 @@ pub enum InputSource {
     Movie { logs: Box<[InputLog]>, index: usize },
 }
 
+impl InputSource {
+    /// True for movie playback; interactive input is live keyboard.
+    pub fn is_movie(&self) -> bool {
+        matches!(self, InputSource::Movie { .. })
+    }
+
+    /// The current movie frame's reset flags and port inputs, or `None` for
+    /// interactive mode and past-the-end playback. Returned by value so the
+    /// reset path can advance the index without aliasing the logs.
+    pub fn current_frame(&self) -> Option<(bool, bool, GamepadInput, GamepadInput)> {
+        match self {
+            InputSource::Interactive => None,
+            InputSource::Movie { logs, index } => logs.get(*index).map(|log| {
+                (
+                    log.command.hard_reset(),
+                    log.command.soft_reset(),
+                    log.port0,
+                    log.port1,
+                )
+            }),
+        }
+    }
+
+    /// Advance past the consumed movie frame; a no-op for interactive mode.
+    pub fn advance(&mut self) {
+        if let InputSource::Movie { index, .. } = self {
+            *index += 1;
+        }
+    }
+}
+
 /// Mode-gated pacing and end-of-movie knobs. Interactive uses
 /// [`LoopOptions::interactive`] (windowed, always throttled, no countdown);
 /// playback fills every field from its action flags.
@@ -77,8 +108,11 @@ pub fn should_throttle(source: &InputSource, opts: &LoopOptions) -> bool {
         || (!opts.headless && !opts.no_throttle && !opts.has_output)
 }
 
-fn set_controller_a_from_gamepad<P, R, D>(machine: &mut NesMachine<P, R, D>, input: &GamepadInput)
-where
+fn set_controller_from_gamepad<P, R, D>(
+    machine: &mut NesMachine<P, R, D>,
+    input: &GamepadInput,
+    port_b: bool,
+) where
     P: Plugin<NesMcu<R, D>>,
     R: Render,
     D: AudioDriver,
@@ -98,11 +132,26 @@ where
             if button == Button::Start {
                 eprintln!("press {:?}", button);
             }
-            machine.press_controller_a(button);
+            if port_b {
+                machine.press_controller_b(button);
+            } else {
+                machine.press_controller_a(button);
+            }
+        } else if port_b {
+            machine.release_controller_b(button);
         } else {
             machine.release_controller_a(button);
         }
     }
+}
+
+fn set_controller_a_from_gamepad<P, R, D>(machine: &mut NesMachine<P, R, D>, input: &GamepadInput)
+where
+    P: Plugin<NesMcu<R, D>>,
+    R: Render,
+    D: AudioDriver,
+{
+    set_controller_from_gamepad(machine, input, false);
 }
 
 fn set_controller_b_from_gamepad<P, R, D>(machine: &mut NesMachine<P, R, D>, input: &GamepadInput)
@@ -111,26 +160,7 @@ where
     R: Render,
     D: AudioDriver,
 {
-    use nes_core::nes::controller::Button;
-    for (button, pressed) in [
-        (Button::A, input.a()),
-        (Button::B, input.b()),
-        (Button::Select, input.select()),
-        (Button::Start, input.start()),
-        (Button::Up, input.up()),
-        (Button::Down, input.down()),
-        (Button::Left, input.left()),
-        (Button::Right, input.right()),
-    ] {
-        if pressed {
-            if button == Button::Start {
-                eprintln!("press {:?}", button);
-            }
-            machine.press_controller_b(button);
-        } else {
-            machine.release_controller_b(button);
-        }
-    }
+    set_controller_from_gamepad(machine, input, true);
 }
 
 /// Drive `machine` until an exit event, `Stop`/`Halt`, the `trim_after` limit
@@ -156,90 +186,75 @@ pub fn run_event_loop<P, D>(
         // keeps today's keys; playback only honors the OS Quit event.
         if let Some(pump) = event_pump.as_deref_mut() {
             for event in pump.poll_iter() {
-                match source {
-                    InputSource::Interactive => match event {
-                        Event::Quit { .. }
-                        | Event::KeyDown {
-                            keycode: Some(Keycode::Escape),
-                            repeat: false,
-                            ..
-                        } => {
-                            break 'running;
-                        }
-                        Event::KeyDown {
-                            keycode: Some(Keycode::F2),
-                            repeat: false,
-                            ..
-                        } => {
-                            // Reset the simulator
-                            eprintln!(">> Resetting simulator");
-                            machine.soft_reset();
-                        }
-                        Event::KeyDown {
-                            keycode: Some(Keycode::F4),
-                            repeat: false,
-                            ..
-                        } => {
-                            // Quit the application
-                            eprintln!(">> Quitting application");
-                            break 'running;
-                        }
-                        Event::KeyDown {
-                            keycode: Some(keycode),
-                            repeat: false,
-                            ..
-                        } => {
-                            if let Some(button) = map_keycode_to_button(keycode) {
-                                machine.press_controller_a(button);
-                            }
-                        }
-                        Event::KeyUp {
-                            keycode: Some(keycode),
-                            repeat: false,
-                            ..
-                        } => {
-                            if let Some(button) = map_keycode_to_button(keycode) {
-                                machine.release_controller_a(button);
-                            }
-                        }
-                        _ => {}
-                    },
-                    InputSource::Movie { .. } => {
-                        if let Event::Quit { .. } = event {
-                            break 'running;
+                if source.is_movie() {
+                    if let Event::Quit { .. } = event {
+                        break 'running;
+                    }
+                    continue;
+                }
+                match event {
+                    Event::Quit { .. }
+                    | Event::KeyDown {
+                        keycode: Some(Keycode::Escape),
+                        repeat: false,
+                        ..
+                    } => {
+                        break 'running;
+                    }
+                    Event::KeyDown {
+                        keycode: Some(Keycode::F2),
+                        repeat: false,
+                        ..
+                    } => {
+                        // Reset the simulator
+                        eprintln!(">> Resetting simulator");
+                        machine.soft_reset();
+                    }
+                    Event::KeyDown {
+                        keycode: Some(Keycode::F4),
+                        repeat: false,
+                        ..
+                    } => {
+                        // Quit the application
+                        eprintln!(">> Quitting application");
+                        break 'running;
+                    }
+                    Event::KeyDown {
+                        keycode: Some(keycode),
+                        repeat: false,
+                        ..
+                    } => {
+                        if let Some(button) = map_keycode_to_button(keycode) {
+                            machine.press_controller_a(button);
                         }
                     }
+                    Event::KeyUp {
+                        keycode: Some(keycode),
+                        repeat: false,
+                        ..
+                    } => {
+                        if let Some(button) = map_keycode_to_button(keycode) {
+                            machine.release_controller_a(button);
+                        }
+                    }
+                    _ => {}
                 }
             }
         }
 
         // Snapshot the current movie frame into owned copies so the reset
         // path below can advance the shared index without aliasing the logs.
-        let movie_frame: Option<(bool, bool, GamepadInput, GamepadInput)> = match source {
-            InputSource::Interactive => None,
-            InputSource::Movie { logs, index } => logs.get(*index).map(|log| {
-                (
-                    log.command.hard_reset(),
-                    log.command.soft_reset(),
-                    log.port0,
-                    log.port1,
-                )
-            }),
-        };
+        let movie_frame: Option<(bool, bool, GamepadInput, GamepadInput)> = source.current_frame();
         if let Some((hard_reset, soft_reset, port0, port1)) = movie_frame {
             // Movie-driven reset wins over any other reset source; the two
             // sources are mutually exclusive per mode. A reset frame advances
             // the index once here and once at the end of the loop, verbatim
             // from the playback loop this unifies.
             if hard_reset {
-                if let InputSource::Movie { index, .. } = source {
-                    *index += 1;
-                }
+                source.advance();
                 machine.hard_reset();
             } else if soft_reset {
-                if let InputSource::Movie { index, .. } = source {
-                    *index += 1;
-                }
+                source.advance();
                 machine.soft_reset();
             }
             set_controller_a_from_gamepad(machine, &port0);
@@ -313,9 +328,7 @@ pub fn run_event_loop<P, D>(
         }
 
         // Advance past the consumed movie frame.
-        if let InputSource::Movie { index, .. } = source {
-            *index += 1;
-        }
+        source.advance();
     }
 }
 

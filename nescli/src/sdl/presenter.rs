@@ -277,10 +277,11 @@ mod tests {
         );
     }
 
-    /// `run` keeps SDL's default texture scale mode; the spec only needs
-    /// nearest for playback. SDL documents Nearest as the default and this
-    /// pins it: if a future SDL changed the default to linear, forcing
-    /// nearest would start changing the `run` 2x picture.
+    /// Both modes force nearest on the frame texture: the frame is an
+    /// exact integer multiple of the logical 256x240 picture, so nearest
+    /// sampling reproduces it exactly. This pins it: if a future SDL
+    /// changed the default to linear, omitting this would start changing
+    /// the 2x picture.
     #[test]
     fn sdl_default_texture_scale_mode_is_nearest() {
         use crate::sdl::sdl2::pixels::PixelFormatEnum;

@@ -472,4 +472,233 @@ mod tests {
         render.finish();
         assert!(rx.try_recv().is_ok(), "post-trim frame must send");
     }
+    #[test]
+    fn bk2_inputs_drive_the_shared_overlay_seam() {
+        // Overlay parity (#103): BK2-parsed inputs project player-1 icons
+        // left and player-2 icons right through the unchanged overlay path.
+        // Frame 2 of the inputs fixture is P1 Up+A with P2 Left+Start.
+        let data = include_bytes!("../../../testdata/bk2/bk2-inputs-5f.bk2");
+        let movie = nes_core::bk2::parse(data).expect("inputs BK2 must parse");
+        let mut p1 = GamepadOverlay::new();
+        let mut p2 = GamepadOverlay::new();
+        p1.set_input(&movie.input_logs[2].port0);
+        p2.set_input(&movie.input_logs[2].port1);
+        let icons = project_overlay_icons(&mut p1, &mut p2, true);
+        // P1 Up projects direction icon 5 on the left; P1 A projects icon 0
+        // beside it; P2 Left projects direction icon 3 on the right.
+        assert!(
+            icons.iter().any(|p| p.icon == 5 && p.dst.0 == 2),
+            "{icons:?}"
+        );
+        assert!(
+            icons.iter().any(|p| p.icon == 0 && p.dst.0 == 38),
+            "{icons:?}"
+        );
+        assert!(
+            icons.iter().any(|p| p.icon == 3 && p.dst.0 == 205),
+            "{icons:?}"
+        );
+    }
+
+    // --- gamepad overlay placement projection ------------------------------
+
+    const PAD_A: u8 = 1 << 0;
+    const PAD_B: u8 = 1 << 1;
+    const PAD_UP: u8 = 1 << 4;
+    const PAD_DOWN: u8 = 1 << 5;
+    const PAD_LEFT: u8 = 1 << 6;
+    const PAD_RIGHT: u8 = 1 << 7;
+
+    fn pad(bits: u8) -> GamepadInput {
+        GamepadInput::from_bytes([bits])
+    }
+
+    /// The sprite sheet's fixed icon ids: 0 = A, 1 = B, 2..=16 = the fifteen
+    /// held-direction combinations. This is artwork, not a restatement of the
+    /// implementation.
+    const DIRECTION_ICON_TABLE: [(bool, bool, bool, bool, Option<usize>); 16] = [
+        (false, false, false, false, None),
+        (false, false, false, true, Some(4)),
+        (false, false, true, false, Some(3)),
+        (false, false, true, true, Some(6)),
+        (false, true, false, false, Some(2)),
+        (false, true, false, true, Some(9)),
+        (false, true, true, false, Some(7)),
+        (false, true, true, true, Some(12)),
+        (true, false, false, false, Some(5)),
+        (true, false, false, true, Some(10)),
+        (true, false, true, false, Some(8)),
+        (true, false, true, true, Some(14)),
+        (true, true, false, false, Some(11)),
+        (true, true, false, true, Some(15)),
+        (true, true, true, false, Some(13)),
+        (true, true, true, true, Some(16)),
+    ];
+
+    #[test]
+    fn direction_icon_table_covers_all_sixteen_combinations_plus_none() {
+        for (up, down, left, right, expected) in DIRECTION_ICON_TABLE {
+            assert_eq!(
+                GamepadOverlay::direction_icon_index(up, down, left, right),
+                expected,
+                "up={up} down={down} left={left} right={right}"
+            );
+        }
+    }
+
+    #[test]
+    fn no_held_button_projects_nothing() {
+        let mut p = GamepadOverlay::new();
+        p.set_input(&pad(0));
+        assert!(p.project(OVERLAY_LAYOUT_RIGHT).is_empty());
+    }
+
+    #[test]
+    fn every_direction_combination_projects_its_table_icon() {
+        for (up, down, left, right, expected) in DIRECTION_ICON_TABLE {
+            let Some(expected) = expected else {
+                continue;
+            };
+            let mut bits = 0u8;
+            if up {
+                bits |= PAD_UP;
+            }
+            if down {
+                bits |= PAD_DOWN;
+            }
+            if left {
+                bits |= PAD_LEFT;
+            }
+            if right {
+                bits |= PAD_RIGHT;
+            }
+            let mut p = GamepadOverlay::new();
+            p.set_input(&pad(bits));
+            assert_eq!(
+                p.project(OVERLAY_LAYOUT_RIGHT),
+                vec![OverlayPlacement {
+                    icon: expected,
+                    dst: (205, 222, 16, 16),
+                }],
+                "up={up} down={down} left={left} right={right}"
+            );
+        }
+    }
+
+    #[test]
+    fn direction_icon_holds_for_eighteen_frames_then_disappears() {
+        let mut p = GamepadOverlay::new();
+        p.set_input(&pad(PAD_UP));
+        for frame in 0..18 {
+            let icons = p.project(OVERLAY_LAYOUT_RIGHT);
+            assert_eq!(icons.len(), 1, "icon still shown on frame {frame}");
+            assert_eq!(icons[0].icon, 5);
+        }
+        assert!(
+            p.project(OVERLAY_LAYOUT_RIGHT).is_empty(),
+            "icon disappears on the 19th frame"
+        );
+    }
+
+    #[test]
+    fn a_and_b_icons_project_onto_their_slots() {
+        let mut p = GamepadOverlay::new();
+        p.set_input(&pad(PAD_A | PAD_B));
+        assert_eq!(
+            p.project(OVERLAY_LAYOUT_RIGHT),
+            vec![
+                OverlayPlacement {
+                    icon: 0,
+                    dst: (238, 222, 16, 16),
+                },
+                OverlayPlacement {
+                    icon: 1,
+                    dst: (222, 222, 16, 16),
+                },
+            ]
+        );
+    }
+
+    #[test]
+    fn a_alone_projects_the_a_icon_only() {
+        let mut p = GamepadOverlay::new();
+        p.set_input(&pad(PAD_A));
+        assert_eq!(
+            p.project(OVERLAY_LAYOUT_RIGHT),
+            vec![OverlayPlacement {
+                icon: 0,
+                dst: (238, 222, 16, 16),
+            }]
+        );
+    }
+
+    #[test]
+    fn b_alone_projects_the_b_icon_only() {
+        let mut p = GamepadOverlay::new();
+        p.set_input(&pad(PAD_B));
+        assert_eq!(
+            p.project(OVERLAY_LAYOUT_RIGHT),
+            vec![OverlayPlacement {
+                icon: 1,
+                dst: (222, 222, 16, 16),
+            }]
+        );
+    }
+
+    #[test]
+    fn ab_icons_hold_for_eighteen_frames_then_disappear() {
+        let mut p = GamepadOverlay::new();
+        p.set_input(&pad(PAD_A));
+        for frame in 0..18 {
+            assert_eq!(
+                p.project(OVERLAY_LAYOUT_RIGHT).len(),
+                1,
+                "icon still shown on frame {frame}"
+            );
+        }
+        assert!(p.project(OVERLAY_LAYOUT_RIGHT).is_empty());
+    }
+
+    #[test]
+    fn single_player_projects_into_the_right_hand_layout() {
+        let mut p1 = GamepadOverlay::new();
+        p1.set_input(&pad(PAD_A));
+        let icons = project_overlay_icons(&mut p1, &mut GamepadOverlay::new(), false);
+        assert_eq!(
+            icons,
+            vec![OverlayPlacement {
+                icon: 0,
+                dst: (238, 222, 16, 16),
+            }]
+        );
+    }
+
+    #[test]
+    fn dual_player_projects_player_one_left_and_player_two_right() {
+        let mut p1 = GamepadOverlay::new();
+        p1.set_input(&pad(PAD_A));
+        let mut p2 = GamepadOverlay::new();
+        p2.set_input(&pad(PAD_B));
+        let icons = project_overlay_icons(&mut p1, &mut p2, true);
+        assert_eq!(
+            icons,
+            vec![
+                OverlayPlacement {
+                    icon: 0,
+                    dst: (38, 222, 16, 16),
+                },
+                OverlayPlacement {
+                    icon: 1,
+                    dst: (222, 222, 16, 16),
+                },
+            ]
+        );
+    }
+
+    #[test]
+    fn dual_player_with_no_input_projects_nothing() {
+        let mut p1 = GamepadOverlay::new();
+        let mut p2 = GamepadOverlay::new();
+        assert!(project_overlay_icons(&mut p1, &mut p2, true).is_empty());
+    }
 }
