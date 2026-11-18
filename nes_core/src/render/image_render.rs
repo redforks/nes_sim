@@ -14,7 +14,7 @@ pub const NES_HEIGHT: usize = 240;
 /// Logical canvas is `256×240`. Does not implement `Clone` — copies are
 /// `O(W*H)` multi-hundred-KiB.
 pub struct ImageRender {
-    image: [[u8; 4]; NES_WIDTH * NES_HEIGHT],
+    image: Box<[[u8; 4]; NES_WIDTH * NES_HEIGHT]>,
 }
 
 impl std::fmt::Debug for ImageRender {
@@ -54,7 +54,7 @@ impl ImageRender {
     /// Create a zeroed (black-transparent) framebuffer.
     pub fn new() -> Self {
         Self {
-            image: [[0; 4]; NES_WIDTH * NES_HEIGHT],
+            image: Box::new([[0; 4]; NES_WIDTH * NES_HEIGHT]),
         }
     }
 
@@ -67,13 +67,13 @@ impl ImageRender {
     /// Raw byte view (`W*H*4` bytes, row-major RGBA) for SDL `texture.update`.
     #[inline]
     pub fn as_bytes(&self) -> &[u8] {
-        bytemuck::cast_slice(&self.image)
+        bytemuck::cast_slice(&*self.image)
     }
 
     /// Typed pixel view (`W*H` entries of `[R,G,B,A]`).
     #[inline]
     pub fn as_pixels(&self) -> &[[u8; 4]] {
-        &self.image
+        &*self.image
     }
 
     /// Read a single output pixel (for tests). Caller must guarantee bounds.

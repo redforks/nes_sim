@@ -3,18 +3,20 @@ use crate::mcu::Mcu;
 
 /// Lower nes RAM (0x0000-0x07FF) and remap to 0x0800-0x1FFF
 pub struct LowerRam {
-    ram: [u8; 0xf00],
+    ram: Box<[u8; 0xf00]>,
 }
 
 impl LowerRam {
     pub fn new() -> LowerRam {
-        LowerRam { ram: [0; 0xf00] }
+        LowerRam {
+            ram: Box::new([0; 0xf00]),
+        }
     }
 
     /// Hard reset (power cycle): RAM returns to its power-up contents.
     /// Soft reset leaves RAM untouched, so this is hard-only.
     pub fn reset_hard(&mut self) {
-        self.ram = [0; 0xf00];
+        self.ram.fill(0);
     }
 }
 

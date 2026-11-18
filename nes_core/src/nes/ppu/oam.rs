@@ -98,13 +98,13 @@ impl TileVRamAddr {
 }
 
 pub struct Oam {
-    pub sprites: [Sprite; 64],
+    pub sprites: Box<[Sprite; 64]>,
 }
 
 impl Default for Oam {
     fn default() -> Self {
         Oam {
-            sprites: [bytemuck::Zeroable::zeroed(); 64],
+            sprites: Box::new([bytemuck::Zeroable::zeroed(); 64]),
         }
     }
 }
@@ -119,11 +119,11 @@ impl Oam {
     }
 
     pub fn as_bytes(&self) -> &[u8; 256] {
-        bytemuck::cast_ref(&self.sprites)
+        bytemuck::cast_ref(&*self.sprites)
     }
 
     fn as_bytes_mut(&mut self) -> &mut [u8; 256] {
-        bytemuck::cast_mut(&mut self.sprites)
+        bytemuck::cast_mut(&mut *self.sprites)
     }
 }
 

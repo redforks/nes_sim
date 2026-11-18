@@ -24,7 +24,7 @@ impl Pixel {
 /// Memory layout of .pal file, contains 64 pixels, each pixes has three bytes (r, g, b)
 pub type PalBuf = [u8; 192];
 
-pub struct ColorTheme([Pixel; 64]);
+pub struct ColorTheme(Box<[Pixel; 64]>);
 
 impl Default for ColorTheme {
     fn default() -> Self {
@@ -38,7 +38,7 @@ impl ColorTheme {
         for (i, chunk) in buf.as_chunks::<3>().0.iter().enumerate() {
             pixels[i] = Pixel::new(chunk[0], chunk[1], chunk[2]);
         }
-        Self(pixels)
+        Self(Box::new(pixels))
     }
 
     pub fn color(&self, index: u8) -> Pixel {

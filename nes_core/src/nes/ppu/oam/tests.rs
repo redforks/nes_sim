@@ -2,8 +2,9 @@ use super::*;
 use test_case::test_case;
 
 #[test]
-fn oam_size_is_256_bytes() {
-    assert_eq!(size_of::<Oam>(), 256);
+fn oam_heap_buffer_is_256_bytes() {
+    assert_eq!(size_of::<[Sprite; 64]>(), 256);
+    assert_eq!(size_of::<Oam>(), size_of::<Box<[Sprite; 64]>>());
 }
 
 #[test]
