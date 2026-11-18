@@ -1,6 +1,6 @@
 use crate::sdl::{
-    AUDIO_CHUNK_SAMPLES, AUDIO_SAMPLE_RATE, SdlAudioDriver, SdlRender, map_keycode_to_button,
-    sdl2::{Sdl, audio::AudioSpecDesired, event::Event, keyboard::Keycode},
+    INTERACTIVE_WINDOW, SdlRender, create_sdl_drivers, map_keycode_to_button,
+    sdl2::{event::Event, keyboard::Keycode},
 };
 use anyhow::Result;
 use nes_core::{
@@ -12,36 +12,12 @@ use nes_core::{
 };
 use std::time::{Duration, Instant};
 
-pub(crate) fn create_sdl_drivers(sdl_context: &Sdl) -> Result<(impl Render, impl AudioDriver)> {
-    let video_subsystem = sdl_context.video().map_err(|e| anyhow::anyhow!(e))?;
-    let audio_subsystem = sdl_context.audio().map_err(|e| anyhow::anyhow!(e))?;
-    let audio_spec = AudioSpecDesired {
-        freq: Some(AUDIO_SAMPLE_RATE),
-        channels: Some(1),
-        samples: Some(AUDIO_CHUNK_SAMPLES as u16),
-    };
-    let audio_queue = audio_subsystem
-        .open_queue::<f32, _>(None, &audio_spec)
-        .map_err(|e| anyhow::anyhow!(e))?;
-    audio_queue.resume();
-    let audio_driver = SdlAudioDriver::new(audio_queue, AUDIO_SAMPLE_RATE as u32);
-
-    // Create window (2x scale for better visibility: 256x240 -> 512x480)
-    let window = video_subsystem
-        .window(
-            "NES Simulator - Arrows move, Z/X A/B, Space Select, Enter Start",
-            512,
-            480,
-        )
-        .position_centered()
-        .build()
-        .map_err(|e| anyhow::anyhow!(e))?;
-
-    // Create canvas/renderer
-    let canvas = window
-        .into_canvas()
-        .build()
-        .map_err(|e| anyhow::anyhow!(e))?;
+fn create_interactive_drivers(
+    sdl_context: &crate::sdl::sdl2::Sdl,
+) -> Result<(impl Render, impl AudioDriver)> {
+    let (canvas, audio_driver) = create_sdl_drivers(sdl_context, &INTERACTIVE_WINDOW, false)?;
+    // Interactive mode is always windowed, so the factory always returns a canvas.
+    let canvas = canvas.expect("windowed SDL setup must return a canvas");
 
     // Create shared image buffer so we can save screenshots from the event loop
     let image_render = ImageRender::default_dimension();
@@ -56,7 +32,7 @@ impl RunAction {
     pub fn run(&self, f: &INesFile, palette: Option<ColorTheme>) -> Result<()> {
         // Initialize SDL2
         let sdl_context = crate::sdl::sdl2::init().map_err(|e| anyhow::anyhow!(e))?;
-        let (render, audio_driver) = create_sdl_drivers(&sdl_context)?;
+        let (render, audio_driver) = create_interactive_drivers(&sdl_context)?;
 
         // Create NES machine with SDL-backed renderer
         let mut machine = NesMachine::new(f, EmptyPlugin::new(), render, audio_driver);
