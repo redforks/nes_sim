@@ -1,81 +1,16 @@
 use crate::sdl::{
-    PLAYBACK_WINDOW, SdlAudioDriver, create_sdl_drivers,
-    render::NesRender,
-    sdl2::{Sdl, event::Event},
+    FastForwardState, InputSource, LoopOptions, PLAYBACK_WINDOW, SdlAudioDriver,
+    create_sdl_drivers, render::NesRender, run_event_loop, sdl2::Sdl,
 };
 use anyhow::{Context as _, Result};
 use nes_core::{
     EmptyPlugin,
     ines::INesFile,
-    movie::{self, GamepadInput},
-    nes::{NesMcu, apu::AudioDriver, controller::Button, ppu::palette::ColorTheme},
+    movie::{self},
+    nes::{apu::AudioDriver, ppu::palette::ColorTheme},
     nes_machine::NesMachine,
-    render::Render,
 };
-use std::{
-    cell::Cell,
-    fs,
-    io::Write,
-    path::PathBuf,
-    rc::Rc,
-    sync::mpsc,
-    thread,
-    time::{Duration, Instant},
-};
-
-fn set_controller_a_from_gamepad<P, R, D>(machine: &mut NesMachine<P, R, D>, input: &GamepadInput)
-where
-    P: nes_core::Plugin<NesMcu<R, D>>,
-    R: Render,
-    D: AudioDriver,
-{
-    for (button, pressed) in [
-        (Button::A, input.a()),
-        (Button::B, input.b()),
-        (Button::Select, input.select()),
-        (Button::Start, input.start()),
-        (Button::Up, input.up()),
-        (Button::Down, input.down()),
-        (Button::Left, input.left()),
-        (Button::Right, input.right()),
-    ] {
-        if pressed {
-            if button == Button::Start {
-                eprintln!("press {:?}", button);
-            }
-            machine.press_controller_a(button);
-        } else {
-            machine.release_controller_a(button);
-        }
-    }
-}
-
-fn set_controller_b_from_gamepad<P, R, D>(machine: &mut NesMachine<P, R, D>, input: &GamepadInput)
-where
-    P: nes_core::Plugin<NesMcu<R, D>>,
-    R: Render,
-    D: AudioDriver,
-{
-    for (button, pressed) in [
-        (Button::A, input.a()),
-        (Button::B, input.b()),
-        (Button::Select, input.select()),
-        (Button::Start, input.start()),
-        (Button::Up, input.up()),
-        (Button::Down, input.down()),
-        (Button::Left, input.left()),
-        (Button::Right, input.right()),
-    ] {
-        if pressed {
-            if button == Button::Start {
-                eprintln!("press {:?}", button);
-            }
-            machine.press_controller_b(button);
-        } else {
-            machine.release_controller_b(button);
-        }
-    }
-}
+use std::{cell::Cell, fs, io::Write, path::PathBuf, rc::Rc, sync::mpsc, thread};
 
 #[derive(clap::Args)]
 pub struct PlayMovieAction {
@@ -369,96 +304,40 @@ impl PlayMovieAction {
         } else {
             None
         };
-        let target_frame_duration = Duration::new(0, 1_000_000_000u32 / 60);
-        let mut extra_frames_remaining = self.extra_frames;
-        let mut frame_index = 0;
         let fast_forward_ranges = if self.auto_fast_forward {
             compute_fast_forward_ranges(&input_logs, self.idle_frames as usize)
         } else {
             Vec::new()
         };
 
-        'running: loop {
-            let frame_start = Instant::now();
-            if let Some(ref mut pump) = event_pump {
-                for event in pump.poll_iter() {
-                    if let Event::Quit { .. } = event {
-                        break 'running;
-                    }
-                }
-            }
-
-            if let Some(input_log) = input_logs.get(frame_index) {
-                // BK2 Power is a power cycle (RAM cleared, cartridge
-                // rebuilt); the BK2 Reset column and the FM2 reset flag are
-                // the front-panel RESET button (state persists).
-                if input_log.command.hard_reset() {
-                    frame_index += 1;
-                    machine.hard_reset();
-                } else if input_log.command.soft_reset() {
-                    frame_index += 1;
-                    machine.soft_reset();
-                }
-                set_controller_a_from_gamepad(&mut machine, &input_log.port0);
-                set_controller_b_from_gamepad(&mut machine, &input_log.port1);
-                machine
-                    .render_mut()
-                    .set_input(&input_log.port0, &input_log.port1);
-            }
-
-            if self.auto_fast_forward {
-                let is_idle = if frame_index >= input_logs.len() {
-                    true
-                } else {
-                    fast_forward_ranges
-                        .iter()
-                        .any(|&(start, end)| frame_index >= start && frame_index < end)
-                };
-                ff_skip.set(is_idle);
-                machine.render_mut().set_fast_forward(is_idle);
-            }
-
-            match machine.process_frame() {
-                nes_core::ExecuteResult::Continue => {}
-                nes_core::ExecuteResult::ShouldReset => {
-                    eprintln!("CPU reset requested");
-                    machine.soft_reset();
-                }
-                nes_core::ExecuteResult::Stop(code) => {
-                    eprintln!("Execution stopped with code {}", code);
-                    break 'running;
-                }
-                nes_core::ExecuteResult::Halt => {
-                    eprintln!("CPU halt, possible because of an invalid instruction");
-                    break 'running;
-                }
-            }
-
-            if self.trim_after > 0 && machine.frame_no() >= self.trim_after as usize {
-                eprintln!(">> Trim after {} frames", self.trim_after);
-                break 'running;
-            }
-
-            if frame_index >= input_logs.len() {
-                if extra_frames_remaining == 0 {
-                    eprintln!(
-                        ">> End of movie reached (after {} extra frames)",
-                        self.extra_frames
-                    );
-                    break 'running;
-                }
-                extra_frames_remaining -= 1;
-            }
-
-            if !self.headless && !self.no_throttle && self.output.is_none() {
-                let elapsed = frame_start.elapsed();
-                if elapsed < target_frame_duration {
-                    std::thread::sleep(target_frame_duration - elapsed);
-                }
-            }
-
-            frame_index += 1;
-        }
+        // One loop body serves both modes: the movie input source feeds the
+        // recorded logs with today's reset precedence (BK2 Power is a power
+        // cycle; the BK2 Reset column and the FM2 reset flag are the
+        // front-panel RESET button), gated throttle and verbatim
+        // end-of-movie countdown.
+        let mut source = InputSource::Movie {
+            logs: input_logs,
+            index: 0,
+        };
+        let opts = LoopOptions {
+            headless: self.headless,
+            no_throttle: self.no_throttle,
+            has_output: self.output.is_some(),
+            auto_fast_forward: self.auto_fast_forward,
+            trim_after: self.trim_after,
+            extra_frames: self.extra_frames,
+        };
+        let fast_forward = FastForwardState {
+            ranges: fast_forward_ranges,
+            skip: ff_skip.clone(),
+        };
+        run_event_loop(
+            &mut machine,
+            event_pump.as_mut(),
+            &mut source,
+            &opts,
+            Some(&fast_forward),
+        );
 
         // Drop machine first to close channel senders, which lets pipe-writing
         // threads exit and close FIFOs so ffmpeg sees EOF and finishes.

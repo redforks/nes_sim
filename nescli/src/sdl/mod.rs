@@ -1,9 +1,11 @@
 pub mod drivers;
+pub mod event_loop;
 pub mod presentation;
 pub mod presenter;
 pub mod render;
 
 pub use drivers::{INTERACTIVE_WINDOW, PLAYBACK_WINDOW, create_sdl_drivers};
+pub(crate) use event_loop::{FastForwardState, InputSource, LoopOptions, run_event_loop};
 pub(crate) use render::NesRender;
 
 use nes_core::nes::apu::AudioDriver;
