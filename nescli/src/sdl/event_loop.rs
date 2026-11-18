@@ -93,7 +93,7 @@ impl LoopOptions {
     }
 }
 
-/// Fast-forward state shared with the recording audio driver: the precomputed
+/// Fast-forward state shared with the unified audio driver: the precomputed
 /// idle ranges plus the skip flag the audio wrapper reads per flush.
 pub struct FastForwardState {
     pub ranges: Vec<(usize, usize)>,

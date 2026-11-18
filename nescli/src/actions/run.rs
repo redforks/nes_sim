@@ -1,29 +1,16 @@
 use crate::sdl::{
-    FastForwardState, INTERACTIVE_WINDOW, InputSource, LoopOptions, NesRender, PLAYBACK_WINDOW,
-    SdlAudioDriver, create_sdl_drivers, run_event_loop, sdl2::Sdl,
+    FastForwardState, INTERACTIVE_WINDOW, InputSource, LoopOptions, NesAudioDriver, NesRender,
+    PLAYBACK_WINDOW, WindowSpec, create_sdl_drivers, run_event_loop, sdl2::Sdl,
 };
 use anyhow::{Context as _, Result};
 use nes_core::{
     EmptyPlugin,
     ines::INesFile,
     movie::{self},
-    nes::{apu::AudioDriver, ppu::palette::ColorTheme},
+    nes::ppu::palette::ColorTheme,
     nes_machine::NesMachine,
 };
 use std::{cell::Cell, fs, io::Write, path::PathBuf, rc::Rc, sync::mpsc, thread};
-
-fn create_interactive_drivers(
-    sdl_context: &crate::sdl::sdl2::Sdl,
-) -> Result<(NesRender, SdlAudioDriver)> {
-    let (canvas, audio_driver) = create_sdl_drivers(sdl_context, &INTERACTIVE_WINDOW, false)?;
-    // Interactive mode is always windowed, so the factory always returns a canvas.
-    let canvas = canvas.expect("windowed SDL setup must return a canvas");
-
-    // One render type serves both modes: with no recording sender and the
-    // overlay disabled, `NesRender` presents exactly what `SdlRender` presented.
-    let render = NesRender::new(Some(canvas), None, 0);
-    Ok((render, audio_driver))
-}
 
 #[derive(clap::Args)]
 pub struct RunAction {
@@ -60,43 +47,6 @@ fn movie_file_is_bk2(path: &std::path::Path) -> bool {
     path.extension()
         .and_then(|ext| ext.to_str())
         .is_some_and(|ext| ext.eq_ignore_ascii_case("bk2"))
-}
-
-struct RecordAudioDriver {
-    inner: SdlAudioDriver,
-    audio_tx: Option<mpsc::Sender<Vec<u8>>>,
-    sample_buf: Vec<f32>,
-    ff_skip: Rc<Cell<bool>>,
-    send_policy: crate::recording_send::RecordingSendPolicy,
-}
-
-impl AudioDriver for RecordAudioDriver {
-    fn sample_rate(&self) -> u32 {
-        self.inner.sample_rate()
-    }
-
-    fn push_sample(&mut self, sample: f32) {
-        self.inner.push_sample(sample);
-        if self.audio_tx.is_some() {
-            self.sample_buf.push(sample);
-        }
-    }
-
-    fn flush(&mut self) {
-        self.inner.flush();
-        let send_audio = self.send_policy.should_send(self.ff_skip.get());
-        if let Some(ref tx) = self.audio_tx {
-            if !self.sample_buf.is_empty() && send_audio {
-                let bytes: Vec<u8> = self
-                    .sample_buf
-                    .iter()
-                    .flat_map(|s| s.to_le_bytes())
-                    .collect();
-                let _ = tx.send(bytes);
-            }
-            self.sample_buf.clear();
-        }
-    }
 }
 
 struct FfmpegCleanup {
@@ -147,25 +97,30 @@ fn compute_fast_forward_ranges(
     ranges
 }
 
+/// Build the unified SDL drivers for either mode: interactive passes the
+/// interactive window, `headless = false`, no channels and `trim_frames = 0`;
+/// movie playback passes its own window/flags/channels. With no recording
+/// senders and the overlay disabled, `NesRender` presents exactly what the old
+/// interactive renderer presented.
 fn init_sdl_drivers(
     sdl_context: &Sdl,
+    window: &WindowSpec,
     headless: bool,
     video_tx: Option<mpsc::Sender<Vec<u8>>>,
     audio_tx: Option<mpsc::Sender<Vec<u8>>>,
     ff_skip: Rc<Cell<bool>>,
     trim_frames: u32,
-) -> Result<(NesRender, RecordAudioDriver)> {
-    let (canvas, sdl_audio) = create_sdl_drivers(sdl_context, &PLAYBACK_WINDOW, headless)?;
+) -> Result<(NesRender, NesAudioDriver)> {
+    let (canvas, audio_driver) = create_sdl_drivers(
+        sdl_context,
+        window,
+        headless,
+        audio_tx,
+        ff_skip,
+        trim_frames,
+    )?;
 
     let render = NesRender::new(canvas, video_tx, trim_frames);
-
-    let audio_driver = RecordAudioDriver {
-        inner: sdl_audio,
-        audio_tx,
-        sample_buf: Vec::new(),
-        ff_skip,
-        send_policy: crate::recording_send::RecordingSendPolicy::new(trim_frames),
-    };
 
     Ok((render, audio_driver))
 }
@@ -181,7 +136,17 @@ impl RunAction {
     fn run_interactive(&self, f: &INesFile, palette: Option<ColorTheme>) -> Result<()> {
         // Initialize SDL2
         let sdl_context = crate::sdl::sdl2::init().map_err(|e| anyhow::anyhow!(e))?;
-        let (render, audio_driver) = create_interactive_drivers(&sdl_context)?;
+        // Interactive mode never records, so the unified driver setup gets
+        // no channels, a dummy never-set skip flag and zero trim frames.
+        let (render, audio_driver) = init_sdl_drivers(
+            &sdl_context,
+            &INTERACTIVE_WINDOW,
+            false,
+            None,
+            None,
+            Rc::new(Cell::new(false)),
+            0,
+        )?;
 
         // Create NES machine with SDL-backed renderer
         let mut machine = NesMachine::new(f, EmptyPlugin::new(), render, audio_driver);
@@ -333,6 +298,7 @@ impl RunAction {
         let sdl_context = crate::sdl::sdl2::init().map_err(|e| anyhow::anyhow!(e))?;
         let (render, audio_driver) = init_sdl_drivers(
             &sdl_context,
+            &PLAYBACK_WINDOW,
             self.headless,
             video_tx,
             audio_tx,

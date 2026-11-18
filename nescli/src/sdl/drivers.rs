@@ -6,14 +6,15 @@
 //! construction and one window/canvas branch; only the [`WindowSpec`] (title
 //! and size) and the `headless` flag differ.
 //!
-//! The movie recording wrappers (`NesRender`'s video transmitter with its
-//! fast-forward flag and trim policy, plus `RecordAudioDriver`) stay with the
-//! movie-playback path of `run --movie`: they feed the render/audio wrappers, not SDL resource
-//! creation. The unified render type itself lives in `super::render` (#122).
+//! Recording is handled by the unified types themselves (`NesRender`'s video
+//! transmitter and `NesAudioDriver`'s audio transmitter, each with its
+//! fast-forward flag and trim policy). The unified render type lives in
+//! `super::render` (#122); the unified audio type lives in `super`.
 
-use super::{AUDIO_CHUNK_SAMPLES, AUDIO_SAMPLE_RATE, SdlAudioDriver};
+use super::{AUDIO_CHUNK_SAMPLES, AUDIO_SAMPLE_RATE, NesAudioDriver};
 use anyhow::Result;
 use sdl2::{Sdl, audio::AudioSpecDesired, render::Canvas, video::Window};
+use std::{cell::Cell, rc::Rc, sync::mpsc};
 
 /// Window title and size for one SDL consumer.
 pub struct WindowSpec {
@@ -38,14 +39,19 @@ pub const PLAYBACK_WINDOW: WindowSpec = WindowSpec {
 
 /// Open the shared SDL audio queue and, unless `headless`, the window canvas.
 ///
-/// Returns the canvas (`None` when headless) plus the live audio driver.
+/// Returns the canvas (`None` when headless) plus the unified audio driver.
 /// Titles, sizes and the headless-`None` canvas behavior are preserved verbatim
-/// from the two merged constructors.
+/// from the two merged constructors. Pass `audio_tx = None` and
+/// `trim_frames = 0` for interactive mode; movie playback passes its channel
+/// and trim count. The `ff_skip` flag is shared with `FastForwardState`.
 pub fn create_sdl_drivers(
     sdl_context: &Sdl,
     window: &WindowSpec,
     headless: bool,
-) -> Result<(Option<Canvas<Window>>, SdlAudioDriver)> {
+    audio_tx: Option<mpsc::Sender<Vec<u8>>>,
+    ff_skip: Rc<Cell<bool>>,
+    trim_frames: u32,
+) -> Result<(Option<Canvas<Window>>, NesAudioDriver)> {
     let audio_subsystem = sdl_context.audio().map_err(|e| anyhow::anyhow!(e))?;
     let audio_spec = AudioSpecDesired {
         freq: Some(AUDIO_SAMPLE_RATE),
@@ -56,7 +62,13 @@ pub fn create_sdl_drivers(
         .open_queue::<f32, _>(None, &audio_spec)
         .map_err(|e| anyhow::anyhow!(e))?;
     audio_queue.resume();
-    let audio_driver = SdlAudioDriver::new(audio_queue, AUDIO_SAMPLE_RATE as u32);
+    let audio_driver = NesAudioDriver::new(
+        audio_queue,
+        AUDIO_SAMPLE_RATE as u32,
+        audio_tx,
+        ff_skip,
+        trim_frames,
+    );
 
     let canvas = if !headless {
         let video_subsystem = sdl_context.video().map_err(|e| anyhow::anyhow!(e))?;
