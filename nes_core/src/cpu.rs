@@ -1214,8 +1214,6 @@ impl Cpu {
             && self.nmi_detecteor.consume_latched_edge(cutoff)
         {
             self.switch_to_nmi_vector(&[Microcode::LoadNmiPcL, Microcode::LoadNmiPcH]);
-            self.push_status(bus, break_flag);
-            return;
         }
 
         self.push_stack(
