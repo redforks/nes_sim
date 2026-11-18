@@ -31,6 +31,29 @@ pub(crate) enum Register {
     Y,
 }
 
+/// Why [`Cpu::tick`] refuses to execute: a DMA freeze, a HLT halt, or both.
+///
+/// Held on [`Cpu`] as `Option<FrozenReason>` so the hot path pays a single
+/// `None` check instead of testing two independent bools; `None` is the
+/// normal, executing state. A freeze wins over a halt (the frozen dot
+/// returns to the halt check once the DMA read cycle completes).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct FrozenReason {
+    frozen: bool,
+    halt: bool,
+}
+
+impl FrozenReason {
+    /// `None` when neither flag is set — the normal, executing state.
+    const fn new(frozen: bool, halt: bool) -> Option<FrozenReason> {
+        if frozen | halt {
+            Some(FrozenReason { frozen, halt })
+        } else {
+            None
+        }
+    }
+}
+
 #[derive(Default, Debug)]
 struct IrqDetector {
     irq_input: bool,
@@ -304,8 +327,8 @@ pub struct Cpu {
     irq_detector: IrqDetector,
     request_detect_interrupt: Option<bool>,
 
-    pub(crate) frozen: bool,
-    halt: bool,
+    /// `None` = normal; `Some` = frozen and/or halted (see [`FrozenReason`]).
+    frozen_reason: Option<FrozenReason>,
 
     microcode_queue: ArrayDeque<Microcode, 8>,
 }
@@ -328,8 +351,7 @@ impl Cpu {
             db: 0,
             alu: 0,
             microcode_queue: ArrayDeque::new(),
-            halt: false,
-            frozen: false,
+            frozen_reason: None,
         };
         r.reset();
         r
@@ -375,7 +397,7 @@ impl Cpu {
             sp: self.sp,
             status: self.status,
             pc: self.pc.get(),
-            halt: self.halt,
+            halt: self.is_halted(),
         }
     }
 
@@ -441,9 +463,9 @@ impl Cpu {
     /// true when the halt landed and the CPU is frozen; a pending write
     /// cycle must never be frozen, so freezing is refused then.
     pub(crate) fn try_freeze(&mut self) -> bool {
-        debug_assert!(!self.frozen);
+        debug_assert!(!self.is_frozen());
         if self.can_pause() {
-            self.frozen = true;
+            self.set_frozen(true);
             true
         } else {
             false
@@ -453,8 +475,25 @@ impl Cpu {
     /// Unfreeze counterpart of [`Cpu::try_freeze`], called when the DMA
     /// read cycle completes.
     pub(crate) fn unfreeze(&mut self) {
-        debug_assert!(self.frozen);
-        self.frozen = false;
+        debug_assert!(self.is_frozen());
+        self.set_frozen(false);
+    }
+
+    /// True while a DMA freeze holds [`Cpu::tick`] back (halt alone does not count).
+    pub(crate) fn is_frozen(&self) -> bool {
+        self.frozen_reason.is_some_and(|r| r.frozen)
+    }
+
+    /// Flip the freeze bit, preserving the halt bit.
+    fn set_frozen(&mut self, frozen: bool) {
+        let halt = self.frozen_reason.is_some_and(|r| r.halt);
+        self.frozen_reason = FrozenReason::new(frozen, halt);
+    }
+
+    /// Flip the halt bit, preserving the freeze bit.
+    fn set_halted(&mut self, halt: bool) {
+        let frozen = self.frozen_reason.is_some_and(|r| r.frozen);
+        self.frozen_reason = FrozenReason::new(frozen, halt);
     }
 
     /// Test-only staging for DMA-seam unit tests (`dmc_dma/tests.rs`):
@@ -463,7 +502,7 @@ impl Cpu {
     /// freeze outcome, is exact.
     #[cfg(test)]
     pub(crate) fn stage_pending_cycle_for_test(&mut self, mc: Microcode, latch: Option<u16>) {
-        self.frozen = false;
+        self.set_frozen(false);
         self.microcode_queue.clear();
         self.push_microcode(mc);
         if let Some(addr) = latch {
@@ -687,12 +726,11 @@ impl Cpu {
         self.set_flag(Flag::NotUsed, true);
         self.microcode_queue.clear();
         self.interrupt_detected = InterruptType::None;
-        self.halt = false;
+        self.frozen_reason = None;
         self.sp = self.sp.wrapping_sub(3);
         self.nmi_detecteor = Default::default();
         self.irq_detector = Default::default();
         self.request_detect_interrupt = None;
-        self.frozen = false;
 
         self.push_microcodes(&InterruptSequences::RESET);
         self.arm_interrupt_window(&InterruptSequences::RESET_WINDOW, None);
@@ -715,7 +753,7 @@ impl Cpu {
     }
 
     pub fn is_halted(&self) -> bool {
-        self.halt
+        self.frozen_reason.is_some_and(|r| r.halt)
     }
 
     /// Return true if just execute current instruction
@@ -730,12 +768,13 @@ impl Cpu {
             concat!(module_path!(), "::Cpu::tick"),
             "tick"
         );
-        if self.frozen {
-            return ExecuteResult::Continue;
-        }
-
-        if self.is_halted() {
-            return ExecuteResult::Halt;
+        // One check instead of two: `None` (normal) is the common case.
+        if let Some(reason) = self.frozen_reason {
+            return if reason.frozen {
+                ExecuteResult::Continue
+            } else {
+                ExecuteResult::Halt
+            };
         }
 
         if let Some(active) = self.active_interrupt_window.as_mut()
@@ -916,7 +955,7 @@ impl Cpu {
     }
 
     fn halt(&mut self) {
-        self.halt = true;
+        self.set_halted(true);
     }
 
     fn pch(&self) -> u8 {

@@ -22,7 +22,7 @@ use crate::{
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BusOwner {
     /// CPU owns the bus this dot (no OAM DMA held it). DMC DMA alone is
-    /// signalled via `cpu.frozen`, not via this enum — see ADR-0009 §2
+    /// signalled via `cpu.frozen_reason`, not via this enum — see ADR-0009 §2
     /// "Halt unification left explicit".
     Idle,
     /// OAM DMA held the bus this dot (halt, alignment, or transfer) without

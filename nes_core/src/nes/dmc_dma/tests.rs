@@ -434,7 +434,10 @@ impl TestStruct {
     /// tick must leave the CPU running again.
     fn unfreeze_tick(&mut self) {
         self.tick_and_assert(State::Inactive, false);
-        assert!(!self.cpu.frozen, "CPU must resume after the DMA read cycle");
+        assert!(
+            !self.cpu.is_frozen(),
+            "CPU must resume after the DMA read cycle"
+        );
     }
 
     fn expect_take_dmc_dma_request(&mut self, req: Option<(DmcDmaType, u16)>) {
