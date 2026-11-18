@@ -24,4 +24,5 @@ log.workspace =true
 image = { workspace = true, features = ["png"] }
 nes_core = { workspace = true }
 sdl2 = { version = "0.38", features = ["unsafe_textures"] }
+spin_sleep.workspace = true
 hotpath = "0.30"

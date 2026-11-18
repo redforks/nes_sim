@@ -179,6 +179,10 @@ pub fn run_event_loop<P, D>(
 {
     let target_frame_duration = Duration::new(0, 1_000_000_000u32 / 60);
     let mut extra_frames_remaining = opts.extra_frames;
+    // `spin_sleep` sleeps the bulk of the remaining budget with the OS
+    // sleeper and spins the tail, landing the frame boundary more
+    // precisely than `std::thread::sleep` alone.
+    let sleeper = spin_sleep::SpinSleeper::default();
 
     'running: loop {
         let frame_start = Instant::now();
@@ -321,10 +325,7 @@ pub fn run_event_loop<P, D>(
 
         // One throttle, gated by mode.
         if should_throttle(source, opts) {
-            let elapsed = frame_start.elapsed();
-            if elapsed < target_frame_duration {
-                std::thread::sleep(target_frame_duration - elapsed);
-            }
+            sleeper.sleep_until(frame_start + target_frame_duration);
         }
 
         // Advance past the consumed movie frame.
