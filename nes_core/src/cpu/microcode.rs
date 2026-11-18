@@ -1270,990 +1270,298 @@ pub(super) fn fetch_and_decode<M: Mcu>(cpu: &mut Cpu, bus: &mut Bus<M>) {
 }
 
 impl Microcode {
-    /// Number of `Microcode` variants. Must equal the last discriminant + 1;
-    /// the dispatch table has exactly one entry per variant so `exec`
-    /// can index it by `self as u8`.
-    pub(crate) const COUNT: usize = 175;
-
-    /// Function-pointer dispatch table in discriminant order.
-    /// `const fn` so each `M: Mcu` monomorphization gets its own table;
-    /// the optimizer folds the array build into an indirect jump.
-    const fn dispatch_table<M: Mcu>() -> [fn(&mut Cpu, &mut Bus<M>); Self::COUNT] {
-        [
-            Microcode::exec_fetch_and_decode::<M>,
-            Microcode::exec_fetch_only::<M>,
-            Microcode::exec_load_a_immediate::<M>,
-            Microcode::exec_load_x_immediate::<M>,
-            Microcode::exec_load_y_immediate::<M>,
-            Microcode::exec_load_a_zero_page::<M>,
-            Microcode::exec_load_x_zero_page::<M>,
-            Microcode::exec_load_y_zero_page::<M>,
-            Microcode::exec_load_a_mem::<M>,
-            Microcode::exec_load_x_mem::<M>,
-            Microcode::exec_load_y_mem::<M>,
-            Microcode::exec_store_a_zero_page::<M>,
-            Microcode::exec_store_x_zero_page::<M>,
-            Microcode::exec_store_y_zero_page::<M>,
-            Microcode::exec_store_a_mem::<M>,
-            Microcode::exec_store_x_mem::<M>,
-            Microcode::exec_store_y_mem::<M>,
-            Microcode::exec_store_alu_zero_page::<M>,
-            Microcode::exec_store_alu_mem::<M>,
-            Microcode::exec_zero_page::<M>,
-            Microcode::exec_zero_page_indexed_x::<M>,
-            Microcode::exec_zero_page_indexed_y::<M>,
-            Microcode::exec_absolute_l::<M>,
-            Microcode::exec_absolute_h::<M>,
-            Microcode::exec_indexed_x_and::<M>,
-            Microcode::exec_indexed_y_and::<M>,
-            Microcode::exec_indexed_x_load_a::<M>,
-            Microcode::exec_indexed_y_load_a::<M>,
-            Microcode::exec_indexed_y_load_x::<M>,
-            Microcode::exec_indexed_x_load_y::<M>,
-            Microcode::exec_indexed_x_ora::<M>,
-            Microcode::exec_indexed_y_ora::<M>,
-            Microcode::exec_indexed_x_eor::<M>,
-            Microcode::exec_indexed_y_eor::<M>,
-            Microcode::exec_indexed_y_lax::<M>,
-            Microcode::exec_indexed_y_las::<M>,
-            Microcode::exec_indexed_x_sbc::<M>,
-            Microcode::exec_indexed_y_sbc::<M>,
-            Microcode::exec_indexed_x_adc::<M>,
-            Microcode::exec_indexed_y_adc::<M>,
-            Microcode::exec_indexed_x_cmp::<M>,
-            Microcode::exec_indexed_y_cmp::<M>,
-            Microcode::exec_indexed_x_nop::<M>,
-            Microcode::exec_indexed_x_load_alu_always::<M>,
-            Microcode::exec_indexed_y_load_alu_always::<M>,
-            Microcode::exec_indexed_x_store_a_always::<M>,
-            Microcode::exec_indexed_y_store_a_always::<M>,
-            Microcode::exec_indexed_y_shx_always::<M>,
-            Microcode::exec_indexed_x_shy_always::<M>,
-            Microcode::exec_indexed_y_sha_always::<M>,
-            Microcode::exec_indexed_y_tas_always::<M>,
-            Microcode::exec_nop::<M>,
-            Microcode::exec_dummy_read_at::<M>,
-            Microcode::exec_dummy_stack_read::<M>,
-            Microcode::exec_skip_detect_interrupt::<M>,
-            Microcode::exec_indexed_l_zero_page::<M>,
-            Microcode::exec_indexed_l_mem::<M>,
-            Microcode::exec_indexed_h_zero_page::<M>,
-            Microcode::exec_skip_immediate::<M>,
-            Microcode::exec_load_into_alu_zero_page::<M>,
-            Microcode::exec_load_into_alu_mem::<M>,
-            Microcode::exec_shx::<M>,
-            Microcode::exec_shy::<M>,
-            Microcode::exec_sha::<M>,
-            Microcode::exec_tas::<M>,
-            Microcode::exec_immediate_adc::<M>,
-            Microcode::exec_immediate_and::<M>,
-            Microcode::exec_immediate_sbc::<M>,
-            Microcode::exec_immediate_cmp::<M>,
-            Microcode::exec_immediate_cpx::<M>,
-            Microcode::exec_immediate_cpy::<M>,
-            Microcode::exec_immediate_ora::<M>,
-            Microcode::exec_immediate_eor::<M>,
-            Microcode::exec_adc_zero_page::<M>,
-            Microcode::exec_adc_mem::<M>,
-            Microcode::exec_sbc_zero_page::<M>,
-            Microcode::exec_sbc_mem::<M>,
-            Microcode::exec_cmp_zero_page::<M>,
-            Microcode::exec_cmp_mem::<M>,
-            Microcode::exec_cpx_zero_page::<M>,
-            Microcode::exec_cpx_mem::<M>,
-            Microcode::exec_cpy_zero_page::<M>,
-            Microcode::exec_cpy_mem::<M>,
-            Microcode::exec_ora_zero_page::<M>,
-            Microcode::exec_ora_mem::<M>,
-            Microcode::exec_eor_zero_page::<M>,
-            Microcode::exec_eor_mem::<M>,
-            Microcode::exec_and_zero_page::<M>,
-            Microcode::exec_and_mem::<M>,
-            Microcode::exec_ane_immediate::<M>,
-            Microcode::exec_lax_immediate::<M>,
-            Microcode::exec_las::<M>,
-            Microcode::exec_bit_zero_page::<M>,
-            Microcode::exec_bit_mem::<M>,
-            Microcode::exec_asl_accumulator::<M>,
-            Microcode::exec_asl_zero_page::<M>,
-            Microcode::exec_asl_mem::<M>,
-            Microcode::exec_lsr_accumulator::<M>,
-            Microcode::exec_lsr_zero_page::<M>,
-            Microcode::exec_lsr_mem::<M>,
-            Microcode::exec_rol_accumulator::<M>,
-            Microcode::exec_rol_zero_page::<M>,
-            Microcode::exec_rol_mem::<M>,
-            Microcode::exec_ror_accumulator::<M>,
-            Microcode::exec_ror_zero_page::<M>,
-            Microcode::exec_ror_mem::<M>,
-            Microcode::exec_alr_immediate::<M>,
-            Microcode::exec_anc_immediate::<M>,
-            Microcode::exec_arr_immediate::<M>,
-            Microcode::exec_axs_immediate::<M>,
-            Microcode::exec_lax_zero_page::<M>,
-            Microcode::exec_lax_mem::<M>,
-            Microcode::exec_sax_zero_page::<M>,
-            Microcode::exec_sax_mem::<M>,
-            Microcode::exec_rla_zero_page::<M>,
-            Microcode::exec_rla_mem::<M>,
-            Microcode::exec_dcp_zero_page::<M>,
-            Microcode::exec_dcp_mem::<M>,
-            Microcode::exec_isc_zero_page::<M>,
-            Microcode::exec_isc_mem::<M>,
-            Microcode::exec_rra_zero_page::<M>,
-            Microcode::exec_rra_mem::<M>,
-            Microcode::exec_slo_zero_page::<M>,
-            Microcode::exec_slo_mem::<M>,
-            Microcode::exec_sre_zero_page::<M>,
-            Microcode::exec_sre_mem::<M>,
-            Microcode::exec_indexed_h_and_jump::<M>,
-            Microcode::exec_set_carry::<M>,
-            Microcode::exec_set_decimal::<M>,
-            Microcode::exec_set_interrupt_disabled::<M>,
-            Microcode::exec_clear_carry::<M>,
-            Microcode::exec_clear_decimal::<M>,
-            Microcode::exec_clear_interrupt_disabled::<M>,
-            Microcode::exec_clear_overflow::<M>,
-            Microcode::exec_transfer_ato_x::<M>,
-            Microcode::exec_transfer_xto_a::<M>,
-            Microcode::exec_transfer_ato_y::<M>,
-            Microcode::exec_transfer_yto_a::<M>,
-            Microcode::exec_transfer_s_pto_x::<M>,
-            Microcode::exec_transfer_xto_s_p::<M>,
-            Microcode::exec_inc_x::<M>,
-            Microcode::exec_inc_y::<M>,
-            Microcode::exec_dec_x::<M>,
-            Microcode::exec_dec_y::<M>,
-            Microcode::exec_inc_alu_zero_page::<M>,
-            Microcode::exec_inc_alu_mem::<M>,
-            Microcode::exec_dec_alu_zero_page::<M>,
-            Microcode::exec_dec_alu_mem::<M>,
-            Microcode::exec_branch_carry_clear::<M>,
-            Microcode::exec_branch_carry_set::<M>,
-            Microcode::exec_branch_zero_set::<M>,
-            Microcode::exec_branch_zero_clear::<M>,
-            Microcode::exec_branch_negative_set::<M>,
-            Microcode::exec_branch_negative_clear::<M>,
-            Microcode::exec_branch_overflow_set::<M>,
-            Microcode::exec_branch_overflow_clear::<M>,
-            Microcode::exec_push_status_break_set::<M>,
-            Microcode::exec_push_status_break_clear::<M>,
-            Microcode::exec_plp::<M>,
-            Microcode::exec_pop_pc_l::<M>,
-            Microcode::exec_pop_pc_h::<M>,
-            Microcode::exec_inc_pc::<M>,
-            Microcode::exec_push_a::<M>,
-            Microcode::exec_push_pcl::<M>,
-            Microcode::exec_push_pch::<M>,
-            Microcode::exec_pop_stack::<M>,
-            Microcode::exec_update_a_from_alu::<M>,
-            Microcode::exec_kill::<M>,
-            Microcode::exec_load_reset_pc_l::<M>,
-            Microcode::exec_load_reset_pc_h::<M>,
-            Microcode::exec_load_nmi_pc_l::<M>,
-            Microcode::exec_load_nmi_pc_h::<M>,
-            Microcode::exec_load_pc_absolute_h::<M>,
-            Microcode::exec_load_irq_pc_l::<M>,
-            Microcode::exec_load_irq_pc_h::<M>,
-        ]
-    }
-
-    /// Execute this micro-op by dispatching through the function-pointer
-    /// table (`dispatch_table`, indexed by the `repr(u8)` discriminant).
-    /// Each table entry is the per-variant handler below; behavior is a
-    /// pure move of the old `match` arms, so `bus_cycle` classification
-    /// (ADR-0013) is unchanged.
+    /// perform second phase of this Microcode
     pub fn exec<M: Mcu>(self, cpu: &mut Cpu, bus: &mut Bus<M>) {
-        debug_assert!((self as u8 as usize) < Self::COUNT);
-        Self::dispatch_table::<M>()[self as u8 as usize](cpu, bus)
-    }
-
-    fn exec_fetch_and_decode<M: Mcu>(cpu: &mut Cpu, bus: &mut Bus<M>) {
-        {
-            fetch_and_decode(cpu, bus);
+        match self {
+            Self::FetchAndDecode => {
+                fetch_and_decode(cpu, bus);
+            }
+            Self::FetchOnly => cpu.read_pc_byte(bus),
+            Self::LoadAImmediate => load_r::<Immediate, _>(cpu, bus, Register::A),
+            Self::LoadXImmediate => load_r::<Immediate, _>(cpu, bus, Register::X),
+            Self::LoadYImmediate => load_r::<Immediate, _>(cpu, bus, Register::Y),
+            Self::LoadAZeroPage => load_r::<ZeroPage, _>(cpu, bus, Register::A),
+            Self::LoadXZeroPage => load_r::<ZeroPage, _>(cpu, bus, Register::X),
+            Self::LoadYZeroPage => load_r::<ZeroPage, _>(cpu, bus, Register::Y),
+            Self::LoadAMem => load_r::<Mem, _>(cpu, bus, Register::A),
+            Self::LoadXMem => load_r::<Mem, _>(cpu, bus, Register::X),
+            Self::LoadYMem => load_r::<Mem, _>(cpu, bus, Register::Y),
+            Self::StoreAZeroPage => ZeroPage::write(cpu, bus, cpu.a),
+            Self::StoreXZeroPage => ZeroPage::write(cpu, bus, cpu.x),
+            Self::StoreYZeroPage => ZeroPage::write(cpu, bus, cpu.y),
+            Self::StoreAMem => Mem::write(cpu, bus, cpu.a),
+            Self::StoreXMem => Mem::write(cpu, bus, cpu.x),
+            Self::StoreYMem => Mem::write(cpu, bus, cpu.y),
+            Self::ZeroPage => {
+                let addr = cpu.inc_read_byte(bus);
+                cpu.ab.set(addr as u16);
+            }
+            Self::ZeroPageIndexedX => cpu.zero_page_indexed(bus, cpu.x),
+            Self::ZeroPageIndexedY => cpu.zero_page_indexed(bus, cpu.y),
+            Self::AbsoluteL => {
+                let low = cpu.inc_read_byte(bus);
+                cpu.set_abl(low);
+            }
+            Self::AbsoluteH => {
+                let high = cpu.inc_read_byte(bus);
+                cpu.set_abh(high);
+            }
+            Self::AdcZeroPage => cpu.adc::<ZeroPage, _>(bus),
+            Self::AdcMem => cpu.adc::<Mem, _>(bus),
+            Self::SbcZeroPage => cpu.sbc::<ZeroPage, _>(bus),
+            Self::SbcMem => cpu.sbc::<Mem, _>(bus),
+            Self::CmpZeroPage => cpu.cmp::<ZeroPage, _>(bus),
+            Self::CmpMem => cpu.cmp::<Mem, _>(bus),
+            Self::CpxZeroPage => cpu.cpx::<ZeroPage, _>(bus),
+            Self::CpxMem => cpu.cpx::<Mem, _>(bus),
+            Self::CpyZeroPage => cpu.cpy::<ZeroPage, _>(bus),
+            Self::CpyMem => cpu.cpy::<Mem, _>(bus),
+            Self::OraZeroPage => cpu.ora::<ZeroPage, _>(bus),
+            Self::OraMem => cpu.ora::<Mem, _>(bus),
+            Self::EorZeroPage => cpu.eor::<ZeroPage, _>(bus),
+            Self::EorMem => cpu.eor::<Mem, _>(bus),
+            Self::AndZeroPage => cpu.and::<ZeroPage, _>(bus),
+            Self::AndMem => cpu.and::<Mem, _>(bus),
+            Self::Shx => cpu.shx(bus),
+            Self::Shy => cpu.shy(bus),
+            Self::Sha => cpu.sha(bus),
+            Self::Tas => cpu.tas(bus),
+            Self::IndexedXAnd => Self::indexed_first_clock(cpu, bus, cpu.x, Microcode::AndMem),
+            Self::IndexedYAnd => Self::indexed_first_clock(cpu, bus, cpu.y, Microcode::AndMem),
+            Self::IndexedXLoadA => Self::indexed_first_clock(cpu, bus, cpu.x, Microcode::LoadAMem),
+            Self::IndexedYLoadA => Self::indexed_first_clock(cpu, bus, cpu.y, Microcode::LoadAMem),
+            Self::IndexedYLoadX => Self::indexed_first_clock(cpu, bus, cpu.y, Microcode::LoadXMem),
+            Self::IndexedXLoadY => Self::indexed_first_clock(cpu, bus, cpu.x, Microcode::LoadYMem),
+            Self::IndexedXOra => Self::indexed_first_clock(cpu, bus, cpu.x, Microcode::OraMem),
+            Self::IndexedYOra => Self::indexed_first_clock(cpu, bus, cpu.y, Microcode::OraMem),
+            Self::IndexedXEor => Self::indexed_first_clock(cpu, bus, cpu.x, Microcode::EorMem),
+            Self::IndexedYEor => Self::indexed_first_clock(cpu, bus, cpu.y, Microcode::EorMem),
+            Self::IndexedYLax => Self::indexed_first_clock(cpu, bus, cpu.y, Microcode::LaxMem),
+            Self::IndexedYLas => Self::indexed_first_clock(cpu, bus, cpu.y, Microcode::Las),
+            Self::IndexedXSbc => Self::indexed_first_clock(cpu, bus, cpu.x, Microcode::SbcMem),
+            Self::IndexedYSbc => Self::indexed_first_clock(cpu, bus, cpu.y, Microcode::SbcMem),
+            Self::IndexedXAdc => Self::indexed_first_clock(cpu, bus, cpu.x, Microcode::AdcMem),
+            Self::IndexedYAdc => Self::indexed_first_clock(cpu, bus, cpu.y, Microcode::AdcMem),
+            Self::IndexedXCmp => Self::indexed_first_clock(cpu, bus, cpu.x, Microcode::CmpMem),
+            Self::IndexedYCmp => Self::indexed_first_clock(cpu, bus, cpu.y, Microcode::CmpMem),
+            Self::IndexedXNop => {
+                Self::indexed_first_clock(cpu, bus, cpu.x, Microcode::LoadIntoAluMem)
+            }
+            Self::IndexedXLoadAluAlways => Self::indexed_always(cpu, bus, cpu.x),
+            Self::IndexedYLoadAluAlways => Self::indexed_always(cpu, bus, cpu.y),
+            Self::IndexedXStoreAAlways => Self::indexed_always(cpu, bus, cpu.x),
+            Self::IndexedYStoreAAlways => Self::indexed_always(cpu, bus, cpu.y),
+            Self::IndexedYShxAlways => Self::indexed_always(cpu, bus, cpu.y),
+            Self::IndexedXShyAlways => Self::indexed_always(cpu, bus, cpu.x),
+            Self::IndexedYShaAlways => Self::indexed_always(cpu, bus, cpu.y),
+            Self::IndexedYTasAlways => Self::indexed_always(cpu, bus, cpu.y),
+            Self::BitZeroPage => cpu.bit::<ZeroPage, _>(bus),
+            Self::BitMem => cpu.bit::<Mem, _>(bus),
+            Self::StoreAluZeroPage => Self::write_alu(cpu, bus, ValueSource::ZeroPage),
+            Self::StoreAluMem => Self::write_alu(cpu, bus, ValueSource::Mem),
+            Self::SkipImmediate => {
+                cpu.inc_read_byte(bus);
+            }
+            Self::IndexedLZeroPage => cpu.indexed_l::<ZeroPage, _>(bus),
+            Self::IndexedLMem => cpu.indexed_l::<Mem, _>(bus),
+            Self::IndexedHZeroPage => cpu.indexed_h::<ZeroPage, _>(bus),
+            Self::Nop => cpu.read_pc_byte(bus),
+            Self::DummyReadAt => {
+                cpu.read_byte(bus, cpu.dummy_read_addr);
+            }
+            Self::DummyStackRead => {
+                let _ = bus.mcu_mut().read_stack_page(cpu.sp);
+            }
+            Self::AslAccumulator => Self::shift_rotate_accumulator(cpu, ShiftRotateOp::Asl),
+            Self::AslZeroPage => {
+                Self::shift_rotate_mem(cpu, bus, ShiftRotateOp::Asl, ValueSource::ZeroPage)
+            }
+            Self::AslMem => Self::shift_rotate_mem(cpu, bus, ShiftRotateOp::Asl, ValueSource::Mem),
+            Self::LsrAccumulator => Self::shift_rotate_accumulator(cpu, ShiftRotateOp::Lsr),
+            Self::LsrZeroPage => {
+                Self::shift_rotate_mem(cpu, bus, ShiftRotateOp::Lsr, ValueSource::ZeroPage)
+            }
+            Self::LsrMem => Self::shift_rotate_mem(cpu, bus, ShiftRotateOp::Lsr, ValueSource::Mem),
+            Self::RolAccumulator => Self::shift_rotate_accumulator(cpu, ShiftRotateOp::Rol),
+            Self::RolZeroPage => {
+                Self::shift_rotate_mem(cpu, bus, ShiftRotateOp::Rol, ValueSource::ZeroPage)
+            }
+            Self::RolMem => Self::shift_rotate_mem(cpu, bus, ShiftRotateOp::Rol, ValueSource::Mem),
+            Self::RorAccumulator => Self::shift_rotate_accumulator(cpu, ShiftRotateOp::Ror),
+            Self::RorZeroPage => {
+                Self::shift_rotate_mem(cpu, bus, ShiftRotateOp::Ror, ValueSource::ZeroPage)
+            }
+            Self::RorMem => Self::shift_rotate_mem(cpu, bus, ShiftRotateOp::Ror, ValueSource::Mem),
+            Self::AlrImmediate => {
+                cpu.alu = cpu.inc_read_byte(bus);
+                cpu.alr();
+            }
+            Self::AncImmediate => {
+                cpu.alu = cpu.inc_read_byte(bus);
+                cpu.anc();
+            }
+            Self::ArrImmediate => {
+                cpu.alu = cpu.inc_read_byte(bus);
+                cpu.arr();
+            }
+            Self::AxsImmediate => {
+                cpu.alu = cpu.inc_read_byte(bus);
+                cpu.axs();
+            }
+            Self::AneImmediate => {
+                let t = cpu.inc_read_byte(bus);
+                cpu.set_register(Register::A, cpu.x & t);
+            }
+            Self::LaxImmediate => {
+                let t = cpu.inc_read_byte(bus);
+                cpu.a = t;
+                cpu.x = t;
+                cpu.update_zero_negative_flags(t);
+            }
+            Self::Las => {
+                cpu.load_alu::<Mem, _>(bus);
+                let v = cpu.alu & cpu.sp;
+                cpu.a = v;
+                cpu.x = v;
+                cpu.sp = v;
+                cpu.update_zero_negative_flags(v);
+            }
+            Self::LaxZeroPage => cpu.lax::<ZeroPage, _>(bus),
+            Self::LaxMem => cpu.lax::<Mem, _>(bus),
+            Self::SaxZeroPage => cpu.sax(bus, ValueSource::ZeroPage),
+            Self::SaxMem => cpu.sax(bus, ValueSource::Mem),
+            Self::RlaZeroPage => cpu.rla(bus, ValueSource::ZeroPage),
+            Self::RlaMem => cpu.rla(bus, ValueSource::Mem),
+            Self::DcpZeroPage => cpu.dcp(bus, ValueSource::ZeroPage),
+            Self::DcpMem => cpu.dcp(bus, ValueSource::Mem),
+            Self::IscZeroPage => cpu.isc(bus, ValueSource::ZeroPage),
+            Self::IscMem => cpu.isc(bus, ValueSource::Mem),
+            Self::RraZeroPage => cpu.rra(bus, ValueSource::ZeroPage),
+            Self::RraMem => cpu.rra(bus, ValueSource::Mem),
+            Self::SloZeroPage => cpu.slo(bus, ValueSource::ZeroPage),
+            Self::SloMem => cpu.slo(bus, ValueSource::Mem),
+            Self::SreZeroPage => cpu.sre(bus, ValueSource::ZeroPage),
+            Self::SreMem => cpu.sre(bus, ValueSource::Mem),
+            Self::IndexedHAndJump => {
+                cpu.indexed_h::<Mem, _>(bus);
+                cpu.set_pc_to_ab()
+            }
+            Self::SetCarry => {
+                cpu.set_flag(Flag::Carry, true);
+            }
+            Self::SetDecimal => {
+                cpu.set_flag(Flag::Decimal, true);
+            }
+            Self::SetInterruptDisabled => {
+                cpu.set_flag(Flag::InterruptDisabled, true);
+            }
+            Self::ClearCarry => {
+                cpu.set_flag(Flag::Carry, false);
+            }
+            Self::ClearDecimal => {
+                cpu.set_flag(Flag::Decimal, false);
+            }
+            Self::ClearInterruptDisabled => {
+                cpu.set_flag(Flag::InterruptDisabled, false);
+            }
+            Self::ClearOverflow => {
+                cpu.set_flag(Flag::Overflow, false);
+            }
+            Self::TransferAtoX => Self::transfer(cpu, TransferDirection::AtoX),
+            Self::TransferXtoA => Self::transfer(cpu, TransferDirection::XtoA),
+            Self::TransferAtoY => Self::transfer(cpu, TransferDirection::AtoY),
+            Self::TransferYtoA => Self::transfer(cpu, TransferDirection::YtoA),
+            Self::TransferSPtoX => Self::transfer(cpu, TransferDirection::SPtoX),
+            Self::TransferXtoSP => Self::transfer(cpu, TransferDirection::XtoSP),
+            Self::IncX => Self::inc_dec_register(cpu, Register::X, cpu.x.wrapping_add(1)),
+            Self::IncY => Self::inc_dec_register(cpu, Register::Y, cpu.y.wrapping_add(1)),
+            Self::DecX => Self::inc_dec_register(cpu, Register::X, cpu.x.wrapping_sub(1)),
+            Self::DecY => Self::inc_dec_register(cpu, Register::Y, cpu.y.wrapping_sub(1)),
+            Self::IncAluZeroPage => {
+                cpu.alu = cpu.alu.wrapping_add(1);
+                Self::write_alu(cpu, bus, ValueSource::ZeroPage);
+                cpu.update_zero_negative_flags(cpu.alu);
+            }
+            Self::IncAluMem => {
+                cpu.alu = cpu.alu.wrapping_add(1);
+                Self::write_alu(cpu, bus, ValueSource::Mem);
+                cpu.update_zero_negative_flags(cpu.alu);
+            }
+            Self::DecAluZeroPage => {
+                cpu.alu = cpu.alu.wrapping_sub(1);
+                Self::write_alu(cpu, bus, ValueSource::ZeroPage);
+                cpu.update_zero_negative_flags(cpu.alu);
+            }
+            Self::DecAluMem => {
+                cpu.alu = cpu.alu.wrapping_sub(1);
+                Self::write_alu(cpu, bus, ValueSource::Mem);
+                cpu.update_zero_negative_flags(cpu.alu);
+            }
+            Self::BranchCarryClear => {
+                Self::branch_relative(cpu, bus, BranchTest::IfCarryClear.test(cpu))
+            }
+            Self::BranchCarrySet => {
+                Self::branch_relative(cpu, bus, BranchTest::IfCarrySet.test(cpu))
+            }
+            Self::BranchZeroSet => Self::branch_relative(cpu, bus, BranchTest::IfZeroSet.test(cpu)),
+            Self::BranchZeroClear => {
+                Self::branch_relative(cpu, bus, BranchTest::IfZeroClear.test(cpu))
+            }
+            Self::BranchNegativeSet => {
+                Self::branch_relative(cpu, bus, BranchTest::IfNegativeSet.test(cpu))
+            }
+            Self::BranchNegativeClear => {
+                Self::branch_relative(cpu, bus, BranchTest::IfNegativeClear.test(cpu))
+            }
+            Self::BranchOverflowSet => {
+                Self::branch_relative(cpu, bus, BranchTest::IfOverflowSet.test(cpu))
+            }
+            Self::BranchOverflowClear => {
+                Self::branch_relative(cpu, bus, BranchTest::IfOverflowClear.test(cpu))
+            }
+            Self::Kill => cpu.halt(),
+            Self::LoadIrqPcH => cpu.load_irq_pch(bus),
+            Self::LoadNmiPcL => cpu.load_nmi_pcl(bus),
+            Self::LoadNmiPcH => cpu.load_nmi_pch(bus),
+            Self::LoadIrqPcL => cpu.load_irq_pcl(bus),
+            Self::PushStatusBreakSet => cpu.push_status(bus, true),
+            Self::PushStatusBreakClear => cpu.push_status(bus, false),
+            Self::Plp => cpu.plp(bus),
+            Self::PopPcL => {
+                let low = cpu.pop_stack(bus);
+                cpu.pc.set_low(low);
+            }
+            Self::PopPcH => {
+                let high = cpu.pop_stack(bus);
+                cpu.pc.set_high(high);
+            }
+            Self::IncPc => cpu.pc += 1,
+            Self::PushA => cpu.push_stack(bus, cpu.a),
+            Self::PushPcl => cpu.push_stack(bus, cpu.pc.low()),
+            Self::PushPch => cpu.push_stack(bus, cpu.pc.high()),
+            Self::PopStack => cpu.alu = cpu.pop_stack(bus),
+            Self::UpdateAFromAlu => cpu.set_register(Register::A, cpu.alu),
+            Self::LoadResetPcL => cpu.load_vector_low(bus, 0xFFFC, false),
+            Self::LoadResetPcH => cpu.load_vector_high(bus, 0xFFFD),
+            Self::LoadPcAbsoluteH => load_pc_absolute_h(cpu, bus),
+            Self::LoadIntoAluZeroPage => {
+                cpu.load_alu::<ZeroPage, _>(bus);
+            }
+            Self::LoadIntoAluMem => {
+                cpu.load_alu::<Mem, _>(bus);
+            }
+            Self::ImmediateAdc => Self::immediate_with_op(cpu, bus, ImmediateOp::Adc),
+            Self::ImmediateAnd => Self::immediate_with_op(cpu, bus, ImmediateOp::And),
+            Self::ImmediateSbc => Self::immediate_with_op(cpu, bus, ImmediateOp::Sbc),
+            Self::ImmediateCmp => Self::immediate_with_op(cpu, bus, ImmediateOp::Cmp),
+            Self::ImmediateCpx => Self::immediate_with_op(cpu, bus, ImmediateOp::Cpx),
+            Self::ImmediateCpy => Self::immediate_with_op(cpu, bus, ImmediateOp::Cpy),
+            Self::ImmediateOra => Self::immediate_with_op(cpu, bus, ImmediateOp::Ora),
+            Self::ImmediateEor => Self::immediate_with_op(cpu, bus, ImmediateOp::Eor),
+            Self::SkipDetectInterrupt => cpu.request_detect_interrupt = Some(false),
         }
     }
 
-    fn exec_fetch_only<M: Mcu>(cpu: &mut Cpu, bus: &mut Bus<M>) {
-        cpu.read_pc_byte(bus);
-    }
-
-    fn exec_load_a_immediate<M: Mcu>(cpu: &mut Cpu, bus: &mut Bus<M>) {
-        load_r::<Immediate, _>(cpu, bus, Register::A);
-    }
-
-    fn exec_load_x_immediate<M: Mcu>(cpu: &mut Cpu, bus: &mut Bus<M>) {
-        load_r::<Immediate, _>(cpu, bus, Register::X);
-    }
-
-    fn exec_load_y_immediate<M: Mcu>(cpu: &mut Cpu, bus: &mut Bus<M>) {
-        load_r::<Immediate, _>(cpu, bus, Register::Y);
-    }
-
-    fn exec_load_a_zero_page<M: Mcu>(cpu: &mut Cpu, bus: &mut Bus<M>) {
-        load_r::<ZeroPage, _>(cpu, bus, Register::A);
-    }
-
-    fn exec_load_x_zero_page<M: Mcu>(cpu: &mut Cpu, bus: &mut Bus<M>) {
-        load_r::<ZeroPage, _>(cpu, bus, Register::X);
-    }
-
-    fn exec_load_y_zero_page<M: Mcu>(cpu: &mut Cpu, bus: &mut Bus<M>) {
-        load_r::<ZeroPage, _>(cpu, bus, Register::Y);
-    }
-
-    fn exec_load_a_mem<M: Mcu>(cpu: &mut Cpu, bus: &mut Bus<M>) {
-        load_r::<Mem, _>(cpu, bus, Register::A);
-    }
-
-    fn exec_load_x_mem<M: Mcu>(cpu: &mut Cpu, bus: &mut Bus<M>) {
-        load_r::<Mem, _>(cpu, bus, Register::X);
-    }
-
-    fn exec_load_y_mem<M: Mcu>(cpu: &mut Cpu, bus: &mut Bus<M>) {
-        load_r::<Mem, _>(cpu, bus, Register::Y);
-    }
-
-    fn exec_store_a_zero_page<M: Mcu>(cpu: &mut Cpu, bus: &mut Bus<M>) {
-        ZeroPage::write(cpu, bus, cpu.a);
-    }
-
-    fn exec_store_x_zero_page<M: Mcu>(cpu: &mut Cpu, bus: &mut Bus<M>) {
-        ZeroPage::write(cpu, bus, cpu.x);
-    }
-
-    fn exec_store_y_zero_page<M: Mcu>(cpu: &mut Cpu, bus: &mut Bus<M>) {
-        ZeroPage::write(cpu, bus, cpu.y);
-    }
-
-    fn exec_store_a_mem<M: Mcu>(cpu: &mut Cpu, bus: &mut Bus<M>) {
-        Mem::write(cpu, bus, cpu.a);
-    }
-
-    fn exec_store_x_mem<M: Mcu>(cpu: &mut Cpu, bus: &mut Bus<M>) {
-        Mem::write(cpu, bus, cpu.x);
-    }
-
-    fn exec_store_y_mem<M: Mcu>(cpu: &mut Cpu, bus: &mut Bus<M>) {
-        Mem::write(cpu, bus, cpu.y);
-    }
-
-    fn exec_store_alu_zero_page<M: Mcu>(cpu: &mut Cpu, bus: &mut Bus<M>) {
-        Microcode::write_alu(cpu, bus, ValueSource::ZeroPage);
-    }
-
-    fn exec_store_alu_mem<M: Mcu>(cpu: &mut Cpu, bus: &mut Bus<M>) {
-        Microcode::write_alu(cpu, bus, ValueSource::Mem);
-    }
-
-    fn exec_zero_page<M: Mcu>(cpu: &mut Cpu, bus: &mut Bus<M>) {
-        {
-            let addr = cpu.inc_read_byte(bus);
-            cpu.ab.set(addr as u16);
-        }
-    }
-
-    fn exec_zero_page_indexed_x<M: Mcu>(cpu: &mut Cpu, bus: &mut Bus<M>) {
-        cpu.zero_page_indexed(bus, cpu.x);
-    }
-
-    fn exec_zero_page_indexed_y<M: Mcu>(cpu: &mut Cpu, bus: &mut Bus<M>) {
-        cpu.zero_page_indexed(bus, cpu.y);
-    }
-
-    fn exec_absolute_l<M: Mcu>(cpu: &mut Cpu, bus: &mut Bus<M>) {
-        {
-            let low = cpu.inc_read_byte(bus);
-            cpu.set_abl(low);
-        }
-    }
-
-    fn exec_absolute_h<M: Mcu>(cpu: &mut Cpu, bus: &mut Bus<M>) {
-        {
-            let high = cpu.inc_read_byte(bus);
-            cpu.set_abh(high);
-        }
-    }
-
-    fn exec_indexed_x_and<M: Mcu>(cpu: &mut Cpu, bus: &mut Bus<M>) {
-        Microcode::indexed_first_clock(cpu, bus, cpu.x, Microcode::AndMem);
-    }
-
-    fn exec_indexed_y_and<M: Mcu>(cpu: &mut Cpu, bus: &mut Bus<M>) {
-        Microcode::indexed_first_clock(cpu, bus, cpu.y, Microcode::AndMem);
-    }
-
-    fn exec_indexed_x_load_a<M: Mcu>(cpu: &mut Cpu, bus: &mut Bus<M>) {
-        Microcode::indexed_first_clock(cpu, bus, cpu.x, Microcode::LoadAMem);
-    }
-
-    fn exec_indexed_y_load_a<M: Mcu>(cpu: &mut Cpu, bus: &mut Bus<M>) {
-        Microcode::indexed_first_clock(cpu, bus, cpu.y, Microcode::LoadAMem);
-    }
-
-    fn exec_indexed_y_load_x<M: Mcu>(cpu: &mut Cpu, bus: &mut Bus<M>) {
-        Microcode::indexed_first_clock(cpu, bus, cpu.y, Microcode::LoadXMem);
-    }
-
-    fn exec_indexed_x_load_y<M: Mcu>(cpu: &mut Cpu, bus: &mut Bus<M>) {
-        Microcode::indexed_first_clock(cpu, bus, cpu.x, Microcode::LoadYMem);
-    }
-
-    fn exec_indexed_x_ora<M: Mcu>(cpu: &mut Cpu, bus: &mut Bus<M>) {
-        Microcode::indexed_first_clock(cpu, bus, cpu.x, Microcode::OraMem);
-    }
-
-    fn exec_indexed_y_ora<M: Mcu>(cpu: &mut Cpu, bus: &mut Bus<M>) {
-        Microcode::indexed_first_clock(cpu, bus, cpu.y, Microcode::OraMem);
-    }
-
-    fn exec_indexed_x_eor<M: Mcu>(cpu: &mut Cpu, bus: &mut Bus<M>) {
-        Microcode::indexed_first_clock(cpu, bus, cpu.x, Microcode::EorMem);
-    }
-
-    fn exec_indexed_y_eor<M: Mcu>(cpu: &mut Cpu, bus: &mut Bus<M>) {
-        Microcode::indexed_first_clock(cpu, bus, cpu.y, Microcode::EorMem);
-    }
-
-    fn exec_indexed_y_lax<M: Mcu>(cpu: &mut Cpu, bus: &mut Bus<M>) {
-        Microcode::indexed_first_clock(cpu, bus, cpu.y, Microcode::LaxMem);
-    }
-
-    fn exec_indexed_y_las<M: Mcu>(cpu: &mut Cpu, bus: &mut Bus<M>) {
-        Microcode::indexed_first_clock(cpu, bus, cpu.y, Microcode::Las);
-    }
-
-    fn exec_indexed_x_sbc<M: Mcu>(cpu: &mut Cpu, bus: &mut Bus<M>) {
-        Microcode::indexed_first_clock(cpu, bus, cpu.x, Microcode::SbcMem);
-    }
-
-    fn exec_indexed_y_sbc<M: Mcu>(cpu: &mut Cpu, bus: &mut Bus<M>) {
-        Microcode::indexed_first_clock(cpu, bus, cpu.y, Microcode::SbcMem);
-    }
-
-    fn exec_indexed_x_adc<M: Mcu>(cpu: &mut Cpu, bus: &mut Bus<M>) {
-        Microcode::indexed_first_clock(cpu, bus, cpu.x, Microcode::AdcMem);
-    }
-
-    fn exec_indexed_y_adc<M: Mcu>(cpu: &mut Cpu, bus: &mut Bus<M>) {
-        Microcode::indexed_first_clock(cpu, bus, cpu.y, Microcode::AdcMem);
-    }
-
-    fn exec_indexed_x_cmp<M: Mcu>(cpu: &mut Cpu, bus: &mut Bus<M>) {
-        Microcode::indexed_first_clock(cpu, bus, cpu.x, Microcode::CmpMem);
-    }
-
-    fn exec_indexed_y_cmp<M: Mcu>(cpu: &mut Cpu, bus: &mut Bus<M>) {
-        Microcode::indexed_first_clock(cpu, bus, cpu.y, Microcode::CmpMem);
-    }
-
-    fn exec_indexed_x_nop<M: Mcu>(cpu: &mut Cpu, bus: &mut Bus<M>) {
-        Microcode::indexed_first_clock(cpu, bus, cpu.x, Microcode::LoadIntoAluMem)
-    }
-
-    fn exec_indexed_x_load_alu_always<M: Mcu>(cpu: &mut Cpu, bus: &mut Bus<M>) {
-        Microcode::indexed_always(cpu, bus, cpu.x);
-    }
-
-    fn exec_indexed_y_load_alu_always<M: Mcu>(cpu: &mut Cpu, bus: &mut Bus<M>) {
-        Microcode::indexed_always(cpu, bus, cpu.y);
-    }
-
-    fn exec_indexed_x_store_a_always<M: Mcu>(cpu: &mut Cpu, bus: &mut Bus<M>) {
-        Microcode::indexed_always(cpu, bus, cpu.x);
-    }
-
-    fn exec_indexed_y_store_a_always<M: Mcu>(cpu: &mut Cpu, bus: &mut Bus<M>) {
-        Microcode::indexed_always(cpu, bus, cpu.y);
-    }
-
-    fn exec_indexed_y_shx_always<M: Mcu>(cpu: &mut Cpu, bus: &mut Bus<M>) {
-        Microcode::indexed_always(cpu, bus, cpu.y);
-    }
-
-    fn exec_indexed_x_shy_always<M: Mcu>(cpu: &mut Cpu, bus: &mut Bus<M>) {
-        Microcode::indexed_always(cpu, bus, cpu.x);
-    }
-
-    fn exec_indexed_y_sha_always<M: Mcu>(cpu: &mut Cpu, bus: &mut Bus<M>) {
-        Microcode::indexed_always(cpu, bus, cpu.y);
-    }
-
-    fn exec_indexed_y_tas_always<M: Mcu>(cpu: &mut Cpu, bus: &mut Bus<M>) {
-        Microcode::indexed_always(cpu, bus, cpu.y);
-    }
-
-    fn exec_nop<M: Mcu>(cpu: &mut Cpu, bus: &mut Bus<M>) {
-        cpu.read_pc_byte(bus);
-    }
-
-    fn exec_dummy_read_at<M: Mcu>(cpu: &mut Cpu, bus: &mut Bus<M>) {
-        {
-            cpu.read_byte(bus, cpu.dummy_read_addr);
-        }
-    }
-
-    fn exec_dummy_stack_read<M: Mcu>(cpu: &mut Cpu, bus: &mut Bus<M>) {
-        {
-            let _ = bus.mcu_mut().read_stack_page(cpu.sp);
-        }
-    }
-
-    fn exec_skip_detect_interrupt<M: Mcu>(cpu: &mut Cpu, _bus: &mut Bus<M>) {
-        cpu.request_detect_interrupt = Some(false);
-    }
-
-    fn exec_indexed_l_zero_page<M: Mcu>(cpu: &mut Cpu, bus: &mut Bus<M>) {
-        cpu.indexed_l::<ZeroPage, _>(bus);
-    }
-
-    fn exec_indexed_l_mem<M: Mcu>(cpu: &mut Cpu, bus: &mut Bus<M>) {
-        cpu.indexed_l::<Mem, _>(bus);
-    }
-
-    fn exec_indexed_h_zero_page<M: Mcu>(cpu: &mut Cpu, bus: &mut Bus<M>) {
-        cpu.indexed_h::<ZeroPage, _>(bus);
-    }
-
-    fn exec_skip_immediate<M: Mcu>(cpu: &mut Cpu, bus: &mut Bus<M>) {
-        {
-            cpu.inc_read_byte(bus);
-        }
-    }
-
-    fn exec_load_into_alu_zero_page<M: Mcu>(cpu: &mut Cpu, bus: &mut Bus<M>) {
-        {
-            cpu.load_alu::<ZeroPage, _>(bus);
-        }
-    }
-
-    fn exec_load_into_alu_mem<M: Mcu>(cpu: &mut Cpu, bus: &mut Bus<M>) {
-        {
-            cpu.load_alu::<Mem, _>(bus);
-        }
-    }
-
-    fn exec_shx<M: Mcu>(cpu: &mut Cpu, bus: &mut Bus<M>) {
-        cpu.shx(bus);
-    }
-
-    fn exec_shy<M: Mcu>(cpu: &mut Cpu, bus: &mut Bus<M>) {
-        cpu.shy(bus);
-    }
-
-    fn exec_sha<M: Mcu>(cpu: &mut Cpu, bus: &mut Bus<M>) {
-        cpu.sha(bus);
-    }
-
-    fn exec_tas<M: Mcu>(cpu: &mut Cpu, bus: &mut Bus<M>) {
-        cpu.tas(bus);
-    }
-
-    fn exec_immediate_adc<M: Mcu>(cpu: &mut Cpu, bus: &mut Bus<M>) {
-        Microcode::immediate_with_op(cpu, bus, ImmediateOp::Adc);
-    }
-
-    fn exec_immediate_and<M: Mcu>(cpu: &mut Cpu, bus: &mut Bus<M>) {
-        Microcode::immediate_with_op(cpu, bus, ImmediateOp::And);
-    }
-
-    fn exec_immediate_sbc<M: Mcu>(cpu: &mut Cpu, bus: &mut Bus<M>) {
-        Microcode::immediate_with_op(cpu, bus, ImmediateOp::Sbc);
-    }
-
-    fn exec_immediate_cmp<M: Mcu>(cpu: &mut Cpu, bus: &mut Bus<M>) {
-        Microcode::immediate_with_op(cpu, bus, ImmediateOp::Cmp);
-    }
-
-    fn exec_immediate_cpx<M: Mcu>(cpu: &mut Cpu, bus: &mut Bus<M>) {
-        Microcode::immediate_with_op(cpu, bus, ImmediateOp::Cpx);
-    }
-
-    fn exec_immediate_cpy<M: Mcu>(cpu: &mut Cpu, bus: &mut Bus<M>) {
-        Microcode::immediate_with_op(cpu, bus, ImmediateOp::Cpy);
-    }
-
-    fn exec_immediate_ora<M: Mcu>(cpu: &mut Cpu, bus: &mut Bus<M>) {
-        Microcode::immediate_with_op(cpu, bus, ImmediateOp::Ora);
-    }
-
-    fn exec_immediate_eor<M: Mcu>(cpu: &mut Cpu, bus: &mut Bus<M>) {
-        Microcode::immediate_with_op(cpu, bus, ImmediateOp::Eor);
-    }
-
-    fn exec_adc_zero_page<M: Mcu>(cpu: &mut Cpu, bus: &mut Bus<M>) {
-        cpu.adc::<ZeroPage, _>(bus);
-    }
-
-    fn exec_adc_mem<M: Mcu>(cpu: &mut Cpu, bus: &mut Bus<M>) {
-        cpu.adc::<Mem, _>(bus);
-    }
-
-    fn exec_sbc_zero_page<M: Mcu>(cpu: &mut Cpu, bus: &mut Bus<M>) {
-        cpu.sbc::<ZeroPage, _>(bus);
-    }
-
-    fn exec_sbc_mem<M: Mcu>(cpu: &mut Cpu, bus: &mut Bus<M>) {
-        cpu.sbc::<Mem, _>(bus);
-    }
-
-    fn exec_cmp_zero_page<M: Mcu>(cpu: &mut Cpu, bus: &mut Bus<M>) {
-        cpu.cmp::<ZeroPage, _>(bus);
-    }
-
-    fn exec_cmp_mem<M: Mcu>(cpu: &mut Cpu, bus: &mut Bus<M>) {
-        cpu.cmp::<Mem, _>(bus);
-    }
-
-    fn exec_cpx_zero_page<M: Mcu>(cpu: &mut Cpu, bus: &mut Bus<M>) {
-        cpu.cpx::<ZeroPage, _>(bus);
-    }
-
-    fn exec_cpx_mem<M: Mcu>(cpu: &mut Cpu, bus: &mut Bus<M>) {
-        cpu.cpx::<Mem, _>(bus);
-    }
-
-    fn exec_cpy_zero_page<M: Mcu>(cpu: &mut Cpu, bus: &mut Bus<M>) {
-        cpu.cpy::<ZeroPage, _>(bus);
-    }
-
-    fn exec_cpy_mem<M: Mcu>(cpu: &mut Cpu, bus: &mut Bus<M>) {
-        cpu.cpy::<Mem, _>(bus);
-    }
-
-    fn exec_ora_zero_page<M: Mcu>(cpu: &mut Cpu, bus: &mut Bus<M>) {
-        cpu.ora::<ZeroPage, _>(bus);
-    }
-
-    fn exec_ora_mem<M: Mcu>(cpu: &mut Cpu, bus: &mut Bus<M>) {
-        cpu.ora::<Mem, _>(bus);
-    }
-
-    fn exec_eor_zero_page<M: Mcu>(cpu: &mut Cpu, bus: &mut Bus<M>) {
-        cpu.eor::<ZeroPage, _>(bus);
-    }
-
-    fn exec_eor_mem<M: Mcu>(cpu: &mut Cpu, bus: &mut Bus<M>) {
-        cpu.eor::<Mem, _>(bus);
-    }
-
-    fn exec_and_zero_page<M: Mcu>(cpu: &mut Cpu, bus: &mut Bus<M>) {
-        cpu.and::<ZeroPage, _>(bus);
-    }
-
-    fn exec_and_mem<M: Mcu>(cpu: &mut Cpu, bus: &mut Bus<M>) {
-        cpu.and::<Mem, _>(bus);
-    }
-
-    fn exec_ane_immediate<M: Mcu>(cpu: &mut Cpu, bus: &mut Bus<M>) {
-        {
-            let t = cpu.inc_read_byte(bus);
-            cpu.set_register(Register::A, cpu.x & t);
-        }
-    }
-
-    fn exec_lax_immediate<M: Mcu>(cpu: &mut Cpu, bus: &mut Bus<M>) {
-        {
-            let t = cpu.inc_read_byte(bus);
-            cpu.a = t;
-            cpu.x = t;
-            cpu.update_zero_negative_flags(t);
-        }
-    }
-
-    fn exec_las<M: Mcu>(cpu: &mut Cpu, bus: &mut Bus<M>) {
-        {
-            cpu.load_alu::<Mem, _>(bus);
-            let v = cpu.alu & cpu.sp;
-            cpu.a = v;
-            cpu.x = v;
-            cpu.sp = v;
-            cpu.update_zero_negative_flags(v);
-        }
-    }
-
-    fn exec_bit_zero_page<M: Mcu>(cpu: &mut Cpu, bus: &mut Bus<M>) {
-        cpu.bit::<ZeroPage, _>(bus);
-    }
-
-    fn exec_bit_mem<M: Mcu>(cpu: &mut Cpu, bus: &mut Bus<M>) {
-        cpu.bit::<Mem, _>(bus);
-    }
-
-    fn exec_asl_accumulator<M: Mcu>(cpu: &mut Cpu, _bus: &mut Bus<M>) {
-        Microcode::shift_rotate_accumulator(cpu, ShiftRotateOp::Asl);
-    }
-
-    fn exec_asl_zero_page<M: Mcu>(cpu: &mut Cpu, bus: &mut Bus<M>) {
-        Microcode::shift_rotate_mem(cpu, bus, ShiftRotateOp::Asl, ValueSource::ZeroPage)
-    }
-
-    fn exec_asl_mem<M: Mcu>(cpu: &mut Cpu, bus: &mut Bus<M>) {
-        Microcode::shift_rotate_mem(cpu, bus, ShiftRotateOp::Asl, ValueSource::Mem);
-    }
-
-    fn exec_lsr_accumulator<M: Mcu>(cpu: &mut Cpu, _bus: &mut Bus<M>) {
-        Microcode::shift_rotate_accumulator(cpu, ShiftRotateOp::Lsr);
-    }
-
-    fn exec_lsr_zero_page<M: Mcu>(cpu: &mut Cpu, bus: &mut Bus<M>) {
-        Microcode::shift_rotate_mem(cpu, bus, ShiftRotateOp::Lsr, ValueSource::ZeroPage)
-    }
-
-    fn exec_lsr_mem<M: Mcu>(cpu: &mut Cpu, bus: &mut Bus<M>) {
-        Microcode::shift_rotate_mem(cpu, bus, ShiftRotateOp::Lsr, ValueSource::Mem);
-    }
-
-    fn exec_rol_accumulator<M: Mcu>(cpu: &mut Cpu, _bus: &mut Bus<M>) {
-        Microcode::shift_rotate_accumulator(cpu, ShiftRotateOp::Rol);
-    }
-
-    fn exec_rol_zero_page<M: Mcu>(cpu: &mut Cpu, bus: &mut Bus<M>) {
-        Microcode::shift_rotate_mem(cpu, bus, ShiftRotateOp::Rol, ValueSource::ZeroPage)
-    }
-
-    fn exec_rol_mem<M: Mcu>(cpu: &mut Cpu, bus: &mut Bus<M>) {
-        Microcode::shift_rotate_mem(cpu, bus, ShiftRotateOp::Rol, ValueSource::Mem);
-    }
-
-    fn exec_ror_accumulator<M: Mcu>(cpu: &mut Cpu, _bus: &mut Bus<M>) {
-        Microcode::shift_rotate_accumulator(cpu, ShiftRotateOp::Ror);
-    }
-
-    fn exec_ror_zero_page<M: Mcu>(cpu: &mut Cpu, bus: &mut Bus<M>) {
-        Microcode::shift_rotate_mem(cpu, bus, ShiftRotateOp::Ror, ValueSource::ZeroPage)
-    }
-
-    fn exec_ror_mem<M: Mcu>(cpu: &mut Cpu, bus: &mut Bus<M>) {
-        Microcode::shift_rotate_mem(cpu, bus, ShiftRotateOp::Ror, ValueSource::Mem);
-    }
-
-    fn exec_alr_immediate<M: Mcu>(cpu: &mut Cpu, bus: &mut Bus<M>) {
-        {
-            cpu.alu = cpu.inc_read_byte(bus);
-            cpu.alr();
-        }
-    }
-
-    fn exec_anc_immediate<M: Mcu>(cpu: &mut Cpu, bus: &mut Bus<M>) {
-        {
-            cpu.alu = cpu.inc_read_byte(bus);
-            cpu.anc();
-        }
-    }
-
-    fn exec_arr_immediate<M: Mcu>(cpu: &mut Cpu, bus: &mut Bus<M>) {
-        {
-            cpu.alu = cpu.inc_read_byte(bus);
-            cpu.arr();
-        }
-    }
-
-    fn exec_axs_immediate<M: Mcu>(cpu: &mut Cpu, bus: &mut Bus<M>) {
-        {
-            cpu.alu = cpu.inc_read_byte(bus);
-            cpu.axs();
-        }
-    }
-
-    fn exec_lax_zero_page<M: Mcu>(cpu: &mut Cpu, bus: &mut Bus<M>) {
-        cpu.lax::<ZeroPage, _>(bus);
-    }
-
-    fn exec_lax_mem<M: Mcu>(cpu: &mut Cpu, bus: &mut Bus<M>) {
-        cpu.lax::<Mem, _>(bus);
-    }
-
-    fn exec_sax_zero_page<M: Mcu>(cpu: &mut Cpu, bus: &mut Bus<M>) {
-        cpu.sax(bus, ValueSource::ZeroPage);
-    }
-
-    fn exec_sax_mem<M: Mcu>(cpu: &mut Cpu, bus: &mut Bus<M>) {
-        cpu.sax(bus, ValueSource::Mem);
-    }
-
-    fn exec_rla_zero_page<M: Mcu>(cpu: &mut Cpu, bus: &mut Bus<M>) {
-        cpu.rla(bus, ValueSource::ZeroPage);
-    }
-
-    fn exec_rla_mem<M: Mcu>(cpu: &mut Cpu, bus: &mut Bus<M>) {
-        cpu.rla(bus, ValueSource::Mem);
-    }
-
-    fn exec_dcp_zero_page<M: Mcu>(cpu: &mut Cpu, bus: &mut Bus<M>) {
-        cpu.dcp(bus, ValueSource::ZeroPage);
-    }
-
-    fn exec_dcp_mem<M: Mcu>(cpu: &mut Cpu, bus: &mut Bus<M>) {
-        cpu.dcp(bus, ValueSource::Mem);
-    }
-
-    fn exec_isc_zero_page<M: Mcu>(cpu: &mut Cpu, bus: &mut Bus<M>) {
-        cpu.isc(bus, ValueSource::ZeroPage);
-    }
-
-    fn exec_isc_mem<M: Mcu>(cpu: &mut Cpu, bus: &mut Bus<M>) {
-        cpu.isc(bus, ValueSource::Mem);
-    }
-
-    fn exec_rra_zero_page<M: Mcu>(cpu: &mut Cpu, bus: &mut Bus<M>) {
-        cpu.rra(bus, ValueSource::ZeroPage);
-    }
-
-    fn exec_rra_mem<M: Mcu>(cpu: &mut Cpu, bus: &mut Bus<M>) {
-        cpu.rra(bus, ValueSource::Mem);
-    }
-
-    fn exec_slo_zero_page<M: Mcu>(cpu: &mut Cpu, bus: &mut Bus<M>) {
-        cpu.slo(bus, ValueSource::ZeroPage);
-    }
-
-    fn exec_slo_mem<M: Mcu>(cpu: &mut Cpu, bus: &mut Bus<M>) {
-        cpu.slo(bus, ValueSource::Mem);
-    }
-
-    fn exec_sre_zero_page<M: Mcu>(cpu: &mut Cpu, bus: &mut Bus<M>) {
-        cpu.sre(bus, ValueSource::ZeroPage);
-    }
-
-    fn exec_sre_mem<M: Mcu>(cpu: &mut Cpu, bus: &mut Bus<M>) {
-        cpu.sre(bus, ValueSource::Mem);
-    }
-
-    fn exec_indexed_h_and_jump<M: Mcu>(cpu: &mut Cpu, bus: &mut Bus<M>) {
-        {
-            cpu.indexed_h::<Mem, _>(bus);
-            cpu.set_pc_to_ab()
-        }
-    }
-
-    fn exec_set_carry<M: Mcu>(cpu: &mut Cpu, _bus: &mut Bus<M>) {
-        {
-            cpu.set_flag(Flag::Carry, true);
-        }
-    }
-
-    fn exec_set_decimal<M: Mcu>(cpu: &mut Cpu, _bus: &mut Bus<M>) {
-        {
-            cpu.set_flag(Flag::Decimal, true);
-        }
-    }
-
-    fn exec_set_interrupt_disabled<M: Mcu>(cpu: &mut Cpu, _bus: &mut Bus<M>) {
-        {
-            cpu.set_flag(Flag::InterruptDisabled, true);
-        }
-    }
-
-    fn exec_clear_carry<M: Mcu>(cpu: &mut Cpu, _bus: &mut Bus<M>) {
-        {
-            cpu.set_flag(Flag::Carry, false);
-        }
-    }
-
-    fn exec_clear_decimal<M: Mcu>(cpu: &mut Cpu, _bus: &mut Bus<M>) {
-        {
-            cpu.set_flag(Flag::Decimal, false);
-        }
-    }
-
-    fn exec_clear_interrupt_disabled<M: Mcu>(cpu: &mut Cpu, _bus: &mut Bus<M>) {
-        {
-            cpu.set_flag(Flag::InterruptDisabled, false);
-        }
-    }
-
-    fn exec_clear_overflow<M: Mcu>(cpu: &mut Cpu, _bus: &mut Bus<M>) {
-        {
-            cpu.set_flag(Flag::Overflow, false);
-        }
-    }
-
-    fn exec_transfer_ato_x<M: Mcu>(cpu: &mut Cpu, _bus: &mut Bus<M>) {
-        Microcode::transfer(cpu, TransferDirection::AtoX);
-    }
-
-    fn exec_transfer_xto_a<M: Mcu>(cpu: &mut Cpu, _bus: &mut Bus<M>) {
-        Microcode::transfer(cpu, TransferDirection::XtoA);
-    }
-
-    fn exec_transfer_ato_y<M: Mcu>(cpu: &mut Cpu, _bus: &mut Bus<M>) {
-        Microcode::transfer(cpu, TransferDirection::AtoY);
-    }
-
-    fn exec_transfer_yto_a<M: Mcu>(cpu: &mut Cpu, _bus: &mut Bus<M>) {
-        Microcode::transfer(cpu, TransferDirection::YtoA);
-    }
-
-    fn exec_transfer_s_pto_x<M: Mcu>(cpu: &mut Cpu, _bus: &mut Bus<M>) {
-        Microcode::transfer(cpu, TransferDirection::SPtoX);
-    }
-
-    fn exec_transfer_xto_s_p<M: Mcu>(cpu: &mut Cpu, _bus: &mut Bus<M>) {
-        Microcode::transfer(cpu, TransferDirection::XtoSP);
-    }
-
-    fn exec_inc_x<M: Mcu>(cpu: &mut Cpu, _bus: &mut Bus<M>) {
-        Microcode::inc_dec_register(cpu, Register::X, cpu.x.wrapping_add(1));
-    }
-
-    fn exec_inc_y<M: Mcu>(cpu: &mut Cpu, _bus: &mut Bus<M>) {
-        Microcode::inc_dec_register(cpu, Register::Y, cpu.y.wrapping_add(1));
-    }
-
-    fn exec_dec_x<M: Mcu>(cpu: &mut Cpu, _bus: &mut Bus<M>) {
-        Microcode::inc_dec_register(cpu, Register::X, cpu.x.wrapping_sub(1));
-    }
-
-    fn exec_dec_y<M: Mcu>(cpu: &mut Cpu, _bus: &mut Bus<M>) {
-        Microcode::inc_dec_register(cpu, Register::Y, cpu.y.wrapping_sub(1));
-    }
-
-    fn exec_inc_alu_zero_page<M: Mcu>(cpu: &mut Cpu, bus: &mut Bus<M>) {
-        {
-            cpu.alu = cpu.alu.wrapping_add(1);
-            Microcode::write_alu(cpu, bus, ValueSource::ZeroPage);
-            cpu.update_zero_negative_flags(cpu.alu);
-        }
-    }
-
-    fn exec_inc_alu_mem<M: Mcu>(cpu: &mut Cpu, bus: &mut Bus<M>) {
-        {
-            cpu.alu = cpu.alu.wrapping_add(1);
-            Microcode::write_alu(cpu, bus, ValueSource::Mem);
-            cpu.update_zero_negative_flags(cpu.alu);
-        }
-    }
-
-    fn exec_dec_alu_zero_page<M: Mcu>(cpu: &mut Cpu, bus: &mut Bus<M>) {
-        {
-            cpu.alu = cpu.alu.wrapping_sub(1);
-            Microcode::write_alu(cpu, bus, ValueSource::ZeroPage);
-            cpu.update_zero_negative_flags(cpu.alu);
-        }
-    }
-
-    fn exec_dec_alu_mem<M: Mcu>(cpu: &mut Cpu, bus: &mut Bus<M>) {
-        {
-            cpu.alu = cpu.alu.wrapping_sub(1);
-            Microcode::write_alu(cpu, bus, ValueSource::Mem);
-            cpu.update_zero_negative_flags(cpu.alu);
-        }
-    }
-
-    fn exec_branch_carry_clear<M: Mcu>(cpu: &mut Cpu, bus: &mut Bus<M>) {
-        Microcode::branch_relative(cpu, bus, BranchTest::IfCarryClear.test(cpu))
-    }
-
-    fn exec_branch_carry_set<M: Mcu>(cpu: &mut Cpu, bus: &mut Bus<M>) {
-        Microcode::branch_relative(cpu, bus, BranchTest::IfCarrySet.test(cpu))
-    }
-
-    fn exec_branch_zero_set<M: Mcu>(cpu: &mut Cpu, bus: &mut Bus<M>) {
-        Microcode::branch_relative(cpu, bus, BranchTest::IfZeroSet.test(cpu));
-    }
-
-    fn exec_branch_zero_clear<M: Mcu>(cpu: &mut Cpu, bus: &mut Bus<M>) {
-        Microcode::branch_relative(cpu, bus, BranchTest::IfZeroClear.test(cpu))
-    }
-
-    fn exec_branch_negative_set<M: Mcu>(cpu: &mut Cpu, bus: &mut Bus<M>) {
-        Microcode::branch_relative(cpu, bus, BranchTest::IfNegativeSet.test(cpu))
-    }
-
-    fn exec_branch_negative_clear<M: Mcu>(cpu: &mut Cpu, bus: &mut Bus<M>) {
-        Microcode::branch_relative(cpu, bus, BranchTest::IfNegativeClear.test(cpu))
-    }
-
-    fn exec_branch_overflow_set<M: Mcu>(cpu: &mut Cpu, bus: &mut Bus<M>) {
-        Microcode::branch_relative(cpu, bus, BranchTest::IfOverflowSet.test(cpu))
-    }
-
-    fn exec_branch_overflow_clear<M: Mcu>(cpu: &mut Cpu, bus: &mut Bus<M>) {
-        Microcode::branch_relative(cpu, bus, BranchTest::IfOverflowClear.test(cpu))
-    }
-
-    fn exec_push_status_break_set<M: Mcu>(cpu: &mut Cpu, bus: &mut Bus<M>) {
-        cpu.push_status(bus, true);
-    }
-
-    fn exec_push_status_break_clear<M: Mcu>(cpu: &mut Cpu, bus: &mut Bus<M>) {
-        cpu.push_status(bus, false);
-    }
-
-    fn exec_plp<M: Mcu>(cpu: &mut Cpu, bus: &mut Bus<M>) {
-        cpu.plp(bus);
-    }
-
-    fn exec_pop_pc_l<M: Mcu>(cpu: &mut Cpu, bus: &mut Bus<M>) {
-        {
-            let low = cpu.pop_stack(bus);
-            cpu.pc.set_low(low);
-        }
-    }
-
-    fn exec_pop_pc_h<M: Mcu>(cpu: &mut Cpu, bus: &mut Bus<M>) {
-        {
-            let high = cpu.pop_stack(bus);
-            cpu.pc.set_high(high);
-        }
-    }
-
-    fn exec_inc_pc<M: Mcu>(cpu: &mut Cpu, _bus: &mut Bus<M>) {
-        cpu.pc += 1;
-    }
-
-    fn exec_push_a<M: Mcu>(cpu: &mut Cpu, bus: &mut Bus<M>) {
-        cpu.push_stack(bus, cpu.a);
-    }
-
-    fn exec_push_pcl<M: Mcu>(cpu: &mut Cpu, bus: &mut Bus<M>) {
-        cpu.push_stack(bus, cpu.pc.low());
-    }
-
-    fn exec_push_pch<M: Mcu>(cpu: &mut Cpu, bus: &mut Bus<M>) {
-        cpu.push_stack(bus, cpu.pc.high());
-    }
-
-    fn exec_pop_stack<M: Mcu>(cpu: &mut Cpu, bus: &mut Bus<M>) {
-        cpu.alu = cpu.pop_stack(bus);
-    }
-
-    fn exec_update_a_from_alu<M: Mcu>(cpu: &mut Cpu, _bus: &mut Bus<M>) {
-        cpu.set_register(Register::A, cpu.alu);
-    }
-
-    fn exec_kill<M: Mcu>(cpu: &mut Cpu, _bus: &mut Bus<M>) {
-        cpu.halt();
-    }
-
-    fn exec_load_reset_pc_l<M: Mcu>(cpu: &mut Cpu, bus: &mut Bus<M>) {
-        cpu.load_vector_low(bus, 0xFFFC, false);
-    }
-
-    fn exec_load_reset_pc_h<M: Mcu>(cpu: &mut Cpu, bus: &mut Bus<M>) {
-        cpu.load_vector_high(bus, 0xFFFD);
-    }
-
-    fn exec_load_nmi_pc_l<M: Mcu>(cpu: &mut Cpu, bus: &mut Bus<M>) {
-        cpu.load_nmi_pcl(bus);
-    }
-
-    fn exec_load_nmi_pc_h<M: Mcu>(cpu: &mut Cpu, bus: &mut Bus<M>) {
-        cpu.load_nmi_pch(bus);
-    }
-
-    fn exec_load_pc_absolute_h<M: Mcu>(cpu: &mut Cpu, bus: &mut Bus<M>) {
-        load_pc_absolute_h(cpu, bus);
-    }
-
-    fn exec_load_irq_pc_l<M: Mcu>(cpu: &mut Cpu, bus: &mut Bus<M>) {
-        cpu.load_irq_pcl(bus);
-    }
-
-    fn exec_load_irq_pc_h<M: Mcu>(cpu: &mut Cpu, bus: &mut Bus<M>) {
-        cpu.load_irq_pch(bus);
-    }
     fn branch_relative<M: Mcu>(cpu: &mut Cpu, bus: &mut Bus<M>, branch_test_result: bool) {
         let offset = cpu.inc_read_byte(bus);
         cpu.request_detect_interrupt = Some(true);
@@ -2384,14 +1692,6 @@ fn load_pc_absolute_h<M: Mcu>(cpu: &mut Cpu, bus: &mut Bus<M>) {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn dispatch_table_covers_every_variant() {
-        // Discriminants are dense from 0: the table must hold exactly one
-        // handler per variant so `exec` can index it by `self as u8`.
-        assert_eq!(Microcode::COUNT, 175);
-        assert_eq!(Microcode::LoadIrqPcH as u8 as usize + 1, Microcode::COUNT);
-    }
 
     /// Golden captured 2026-08-28 from the blargg-green pre-refactor table
     /// (ADR-0006): for each opcode, the CPU cycle — counting the fetch as
