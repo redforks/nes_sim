@@ -5,7 +5,7 @@
 //! texture can be created on first use and reused for the lifetime of the
 //! canvas instead of being recreated every frame. No `unsafe` code is needed.
 
-use crate::presentation::{FramePresentation, OverlayIcon, OverlayPlacement, plan};
+use crate::sdl::presentation::{FramePresentation, OverlayIcon, OverlayPlacement, plan};
 use nes_core::render::ImageRender;
 use sdl2::pixels::PixelFormatEnum;
 use sdl2::rect::Rect;

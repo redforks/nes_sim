@@ -1,3 +1,7 @@
+use crate::sdl::{
+    AUDIO_CHUNK_SAMPLES, AUDIO_SAMPLE_RATE, SdlAudioDriver, SdlRender, map_keycode_to_button,
+    sdl2::{Sdl, audio::AudioSpecDesired, event::Event, keyboard::Keycode},
+};
 use anyhow::Result;
 use nes_core::{
     EmptyPlugin,
@@ -5,10 +9,6 @@ use nes_core::{
     nes::{apu::AudioDriver, ppu::palette::ColorTheme},
     nes_machine::NesMachine,
     render::{ImageRender, Render},
-};
-use nes_sdl::{
-    self, AUDIO_CHUNK_SAMPLES, AUDIO_SAMPLE_RATE, SdlAudioDriver, SdlRender, map_keycode_to_button,
-    sdl2::{Sdl, audio::AudioSpecDesired, event::Event, keyboard::Keycode},
 };
 use std::time::{Duration, Instant};
 
@@ -55,7 +55,7 @@ pub struct RunAction;
 impl RunAction {
     pub fn run(&self, f: &INesFile, palette: Option<ColorTheme>) -> Result<()> {
         // Initialize SDL2
-        let sdl_context = nes_sdl::sdl2::init().map_err(|e| anyhow::anyhow!(e))?;
+        let sdl_context = crate::sdl::sdl2::init().map_err(|e| anyhow::anyhow!(e))?;
         let (render, audio_driver) = create_sdl_drivers(&sdl_context)?;
 
         // Create NES machine with SDL-backed renderer

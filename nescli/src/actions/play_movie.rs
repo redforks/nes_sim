@@ -1,3 +1,8 @@
+use crate::sdl::{
+    AUDIO_CHUNK_SAMPLES, AUDIO_SAMPLE_RATE, FramePresenter, SdlAudioDriver, present_frame,
+    presentation::{OverlayIcon, OverlayPlacement},
+    sdl2::{Sdl, audio::AudioSpecDesired, event::Event, render::Canvas, video::Window},
+};
 use anyhow::{Context as _, Result};
 use image::{imageops, load_from_memory};
 use nes_core::{
@@ -10,11 +15,6 @@ use nes_core::{
         ImageRender, Render,
         image_render::{NES_HEIGHT, NES_WIDTH},
     },
-};
-use nes_sdl::{
-    self, AUDIO_CHUNK_SAMPLES, AUDIO_SAMPLE_RATE, FramePresenter, SdlAudioDriver, present_frame,
-    presentation::{OverlayIcon, OverlayPlacement},
-    sdl2::{Sdl, audio::AudioSpecDesired, event::Event, render::Canvas, video::Window},
 };
 use std::{
     cell::Cell,
@@ -770,7 +770,7 @@ impl PlayMovieAction {
 
         let ff_skip = Rc::new(Cell::new(false));
 
-        let sdl_context = nes_sdl::sdl2::init().map_err(|e| anyhow::anyhow!(e))?;
+        let sdl_context = crate::sdl::sdl2::init().map_err(|e| anyhow::anyhow!(e))?;
         let (render, audio_driver) = init_sdl_drivers(
             &sdl_context,
             self.headless,
@@ -896,9 +896,9 @@ impl PlayMovieAction {
 
 #[cfg(test)]
 mod tests {
+    use crate::sdl::presentation::{OverlayIcon, OverlayPlacement, plan};
     use nes_core::movie::{Command, GamepadInput, InputLog};
     use nes_core::render::{ImageRender, Render};
-    use nes_sdl::presentation::{OverlayIcon, OverlayPlacement, plan};
     use std::rc::Rc;
 
     #[test]
@@ -1358,10 +1358,10 @@ mod tests {
 
     #[test]
     fn sdl_overlay_blend_matches_legacy_integer_blend() {
-        use nes_sdl::sdl2::pixels::PixelFormatEnum;
+        use crate::sdl::sdl2::pixels::PixelFormatEnum;
 
         let _sdl_guard = SDL_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-        let Ok(sdl) = nes_sdl::sdl2::init() else {
+        let Ok(sdl) = crate::sdl::sdl2::init() else {
             eprintln!("skip: SDL init failed");
             return;
         };
@@ -1477,11 +1477,11 @@ mod tests {
     /// nearest would start changing the `run` 2x picture.
     #[test]
     fn sdl_default_texture_scale_mode_is_nearest() {
-        use nes_sdl::sdl2::pixels::PixelFormatEnum;
-        use nes_sdl::sdl2::render::ScaleMode;
+        use crate::sdl::sdl2::pixels::PixelFormatEnum;
+        use crate::sdl::sdl2::render::ScaleMode;
 
         let _sdl_guard = SDL_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-        let Ok(sdl) = nes_sdl::sdl2::init() else {
+        let Ok(sdl) = crate::sdl::sdl2::init() else {
             eprintln!("skip: SDL init failed");
             return;
         };
