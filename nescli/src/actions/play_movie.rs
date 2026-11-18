@@ -1,7 +1,7 @@
 use crate::sdl::{
-    AUDIO_CHUNK_SAMPLES, AUDIO_SAMPLE_RATE, FramePresenter, SdlAudioDriver, present_frame,
+    FramePresenter, PLAYBACK_WINDOW, SdlAudioDriver, create_sdl_drivers, present_frame,
     presentation::{OverlayIcon, OverlayPlacement},
-    sdl2::{Sdl, audio::AudioSpecDesired, event::Event, render::Canvas, video::Window},
+    sdl2::{Sdl, event::Event, render::Canvas, video::Window},
 };
 use anyhow::{Context as _, Result};
 use image::{imageops, load_from_memory};
@@ -586,35 +586,7 @@ fn init_sdl_drivers(
     ff_skip: Rc<Cell<bool>>,
     trim_frames: u32,
 ) -> Result<(RecordRender, RecordAudioDriver)> {
-    let audio_subsystem = sdl_context.audio().map_err(|e| anyhow::anyhow!(e))?;
-
-    let audio_spec = AudioSpecDesired {
-        freq: Some(AUDIO_SAMPLE_RATE),
-        channels: Some(1),
-        samples: Some(AUDIO_CHUNK_SAMPLES as u16),
-    };
-    let audio_queue = audio_subsystem
-        .open_queue::<f32, _>(None, &audio_spec)
-        .map_err(|e| anyhow::anyhow!(e))?;
-    audio_queue.resume();
-    let sdl_audio = SdlAudioDriver::new(audio_queue, AUDIO_SAMPLE_RATE as u32);
-
-    let canvas = if !headless {
-        let video_subsystem = sdl_context.video().map_err(|e| anyhow::anyhow!(e))?;
-        let window = video_subsystem
-            .window("NES Simulator - Movie Playback", 1024, 960)
-            .position_centered()
-            .build()
-            .map_err(|e| anyhow::anyhow!(e))?;
-        Some(
-            window
-                .into_canvas()
-                .build()
-                .map_err(|e| anyhow::anyhow!(e))?,
-        )
-    } else {
-        None
-    };
+    let (canvas, sdl_audio) = create_sdl_drivers(sdl_context, &PLAYBACK_WINDOW, headless)?;
 
     // One shared icon table: the presenter draws its texture sources while
     // the recording composite reads the same pixels, so no clone is needed.

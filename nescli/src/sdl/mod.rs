@@ -1,6 +1,8 @@
+pub mod drivers;
 pub mod presentation;
 pub mod presenter;
 
+pub use drivers::{INTERACTIVE_WINDOW, PLAYBACK_WINDOW, create_sdl_drivers};
 pub use presenter::{FramePresenter, present_frame};
 
 use nes_core::nes::apu::AudioDriver;
