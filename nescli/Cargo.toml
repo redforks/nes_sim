@@ -6,15 +6,15 @@ edition = "2024"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [features]
-hotpath = ["hotpath/hotpath", "nes_core/hotpath", "nes_sdl/hotpath"]
+hotpath = ["hotpath/hotpath", "nes_core/hotpath"]
 # Sampling-based CPU profiling (samply): per-function CPU sample attribution.
 # Needs samply + hotpath-samply in PATH and kernel perf permissions; see
 # `just profile-cpu`.
-hotpath-cpu = ["hotpath/hotpath-cpu", "nes_core/hotpath-cpu", "nes_sdl/hotpath-cpu"]
+hotpath-cpu = ["hotpath/hotpath-cpu", "nes_core/hotpath-cpu"]
 # Counting instrumentation (valgrind icount): the same binary reports timing
 # natively and Callgrind instruction counts under valgrind --tool=callgrind;
 # see `just hotpath` and https://hotpath.rs/callgrind.
-hotpath-callgrind = ["hotpath", "hotpath/hotpath-callgrind", "nes_core/hotpath-callgrind", "nes_sdl/hotpath-callgrind"]
+hotpath-callgrind = ["hotpath", "hotpath/hotpath-callgrind", "nes_core/hotpath-callgrind"]
 
 [dependencies]
 anyhow = { workspace = true }
@@ -23,5 +23,5 @@ env_logger.workspace =true
 log.workspace =true
 image = { workspace = true, features = ["png"] }
 nes_core = { workspace = true }
-nes_sdl = { path = "../nes_sdl" }
+sdl2 = { version = "0.38", features = ["unsafe_textures"] }
 hotpath = "0.30"

@@ -348,11 +348,11 @@ Cargo build profile `[profile.profiling]` inheriting `release` with full debug s
 _Avoid_: release with debug, bench profile
 
 **Headless Execution**:
-Movie playback with no host window (`--headless`), still rendering to `RecordRender` on a DummyWindow. Playback renders a logical 1x frame since spec #38, so `set_pixel` and the frame upload stay below the 1% Self cut-off (the spec measured `set_pixel` ~2.3% while the display path replicated every pixel 4x4). Distinct from a future `NullRender` zero-render mode.
+Movie playback with no host window (`run --movie --headless`), still rendering through `NesRender` with no canvas. Playback renders a logical 1x frame since spec #38, so `set_pixel` and the frame upload stay below the 1% Self cut-off (the spec measured `set_pixel` ~2.3% while the display path replicated every pixel 4x4). Distinct from a future `NullRender` zero-render mode.
 _Avoid_: no-render, offscreen
 
 **No-throttle**:
-Disabling the 60Hz sleep in `PlayMovieAction` (`--no-throttle` skips `target_frame_duration` sleep). Required for throughput measurement; with it, wall time is sleep-bound, not emulation-bound.
+Disabling the 60Hz sleep in `RunAction` movie playback (`run --movie --no-throttle` skips `target_frame_duration` sleep). Required for throughput measurement; with it, wall time is sleep-bound, not emulation-bound.
 _Avoid_: unlimited fps, uncapped
 
 **Frame Budget**:

@@ -37,7 +37,7 @@ present only in (c)).
 - Movie: `../happylee-supermariobros,warped.fm2` (17,868 frames)
 - Window: `--trim-after 3000` (first 3,000 frames)
 - Command:
-  `nescli "<rom>" play-movie "<movie>" --no-throttle --headless --trim-after 3000`
+  `nescli "<rom>" run --movie "<movie>" --no-throttle --headless --trim-after 3000`
 - Build: `cargo build -p nescli --release` (workspace `profile.release`,
   `debug = 1`; `.cargo/config.toml` `target-cpu=znver5`, mold linker)
 - Machine: AMD Ryzen 7 9700X (SSSE3/AVX2/AVX-512 present, so the SSSE3
@@ -125,7 +125,7 @@ tier as a wash, not a win.**
 CARGO_TARGET_DIR=/tmp/bench66/<state>-target \
   cargo build -p nescli --release
 /tmp/bench66/<state>-target/release/nescli \
-  "../Super Mario Bros. (Japan, USA).nes" play-movie \
+  "../Super Mario Bros. (Japan, USA).nes" run --movie \
   "../happylee-supermariobros,warped.fm2" \
   --no-throttle --headless --trim-after 3000   # wall time
 perf stat -e instructions:u -- <same command>  # instructions/frame
