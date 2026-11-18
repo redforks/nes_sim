@@ -1,6 +1,6 @@
 /// Owns the trim/fast-forward send decision for movie recording.
 ///
-/// Both `RecordRender` and `RecordAudioDriver` consult this module instead of
+/// Both `NesRender` and `RecordAudioDriver` consult this module instead of
 /// inlining their own counters, so trim and fast-forward rules live in one
 /// place and video/audio cannot drift on the reset rule.
 #[derive(Debug, Clone, Copy)]

@@ -1,5 +1,5 @@
 use crate::sdl::{
-    INTERACTIVE_WINDOW, SdlRender, create_sdl_drivers, map_keycode_to_button,
+    INTERACTIVE_WINDOW, NesRender, create_sdl_drivers, map_keycode_to_button,
     sdl2::{event::Event, keyboard::Keycode},
 };
 use anyhow::Result;
@@ -8,7 +8,7 @@ use nes_core::{
     ines::INesFile,
     nes::{apu::AudioDriver, ppu::palette::ColorTheme},
     nes_machine::NesMachine,
-    render::{ImageRender, Render},
+    render::Render,
 };
 use std::time::{Duration, Instant};
 
@@ -19,10 +19,10 @@ fn create_interactive_drivers(
     // Interactive mode is always windowed, so the factory always returns a canvas.
     let canvas = canvas.expect("windowed SDL setup must return a canvas");
 
-    // Create shared image buffer so we can save screenshots from the event loop
-    let image_render = ImageRender::default_dimension();
-    let sdl_render = SdlRender::with_image(image_render, canvas);
-    Ok((sdl_render, audio_driver))
+    // One render type serves both modes: with no recording sender and the
+    // overlay disabled, `NesRender` presents exactly what `SdlRender` presented.
+    let render = NesRender::new(Some(canvas), None, 0);
+    Ok((render, audio_driver))
 }
 
 #[derive(clap::Args)]

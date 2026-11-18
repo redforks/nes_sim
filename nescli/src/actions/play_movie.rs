@@ -1,20 +1,16 @@
 use crate::sdl::{
-    FramePresenter, PLAYBACK_WINDOW, SdlAudioDriver, create_sdl_drivers, present_frame,
-    presentation::{OverlayIcon, OverlayPlacement},
-    sdl2::{Sdl, event::Event, render::Canvas, video::Window},
+    PLAYBACK_WINDOW, SdlAudioDriver, create_sdl_drivers,
+    render::NesRender,
+    sdl2::{Sdl, event::Event},
 };
 use anyhow::{Context as _, Result};
-use image::{imageops, load_from_memory};
 use nes_core::{
     EmptyPlugin,
     ines::INesFile,
     movie::{self, GamepadInput},
     nes::{NesMcu, apu::AudioDriver, controller::Button, ppu::palette::ColorTheme},
     nes_machine::NesMachine,
-    render::{
-        ImageRender, Render,
-        image_render::{NES_HEIGHT, NES_WIDTH},
-    },
+    render::Render,
 };
 use std::{
     cell::Cell,
@@ -117,354 +113,6 @@ fn movie_file_is_bk2(path: &std::path::Path) -> bool {
         .is_some_and(|ext| ext.eq_ignore_ascii_case("bk2"))
 }
 
-struct GamepadOverlay {
-    a: bool,
-    b: bool,
-    up: bool,
-    down: bool,
-    left: bool,
-    right: bool,
-    disp_a: bool,
-    disp_b: bool,
-    disp_up: bool,
-    disp_down: bool,
-    disp_left: bool,
-    disp_right: bool,
-    hold_dir: u8,
-    hold_ab: u8,
-}
-
-impl GamepadOverlay {
-    fn new() -> Self {
-        Self {
-            a: false,
-            b: false,
-            up: false,
-            down: false,
-            left: false,
-            right: false,
-            disp_a: false,
-            disp_b: false,
-            disp_up: false,
-            disp_down: false,
-            disp_left: false,
-            disp_right: false,
-            hold_dir: 0,
-            hold_ab: 0,
-        }
-    }
-
-    fn set_input(&mut self, input: &GamepadInput) {
-        self.a = input.a();
-        self.b = input.b();
-        self.up = input.up();
-        self.down = input.down();
-        self.left = input.left();
-        self.right = input.right();
-
-        let any_dir = self.up || self.down || self.left || self.right;
-        if any_dir {
-            self.disp_up = self.up;
-            self.disp_down = self.down;
-            self.disp_left = self.left;
-            self.disp_right = self.right;
-            self.hold_dir = 18;
-        }
-
-        let any_ab = self.a || self.b;
-        if any_ab {
-            self.disp_a = self.a;
-            self.disp_b = self.b;
-            self.hold_ab = 18;
-        }
-    }
-
-    /// Advance the hold counters and project the icons to show this frame, in
-    /// logical 1x 256x240 coordinates. Pure: it touches no pixels and needs no
-    /// display, so the hold countdown and the icon table are unit-testable.
-    fn project(&mut self, layout: OverlayIconLayout) -> Vec<OverlayPlacement> {
-        let draw_dir = self.hold_dir > 0;
-        let draw_ab = self.hold_ab > 0;
-        if draw_dir {
-            self.hold_dir -= 1;
-        }
-        if draw_ab {
-            self.hold_ab -= 1;
-        }
-        let mut icons = Vec::with_capacity(3);
-        if !draw_dir && !draw_ab {
-            return icons;
-        }
-        let slot = |x: i32| (x, layout.y, OVERLAY_ICON_SIZE, OVERLAY_ICON_SIZE);
-        if let Some(direction_idx) = Self::direction_icon_index(
-            draw_dir && self.disp_up,
-            draw_dir && self.disp_down,
-            draw_dir && self.disp_left,
-            draw_dir && self.disp_right,
-        ) {
-            icons.push(OverlayPlacement {
-                icon: direction_idx,
-                dst: slot(layout.dir_x),
-            });
-        }
-        if draw_ab && self.disp_a {
-            icons.push(OverlayPlacement {
-                icon: 0,
-                dst: slot(layout.ab_x),
-            });
-        }
-        if draw_ab && self.disp_b {
-            icons.push(OverlayPlacement {
-                icon: 1,
-                dst: slot(layout.b_x),
-            });
-        }
-        icons
-    }
-
-    fn direction_icon_index(up: bool, down: bool, left: bool, right: bool) -> Option<usize> {
-        match (up, down, left, right) {
-            (false, false, false, false) => None,
-            (false, false, false, true) => Some(4),
-            (false, false, true, false) => Some(3),
-            (false, false, true, true) => Some(6),
-            (false, true, false, false) => Some(2),
-            (false, true, false, true) => Some(9),
-            (false, true, true, false) => Some(7),
-            (false, true, true, true) => Some(12),
-            (true, false, false, false) => Some(5),
-            (true, false, false, true) => Some(10),
-            (true, false, true, false) => Some(8),
-            (true, false, true, true) => Some(14),
-            (true, true, false, false) => Some(11),
-            (true, true, false, true) => Some(15),
-            (true, true, true, false) => Some(13),
-            (true, true, true, true) => Some(16),
-        }
-    }
-}
-
-/// Logical 1x 256x240 x-positions of one player's three overlay icon slots.
-#[derive(Debug, Clone, Copy)]
-struct OverlayIconLayout {
-    dir_x: i32,
-    ab_x: i32,
-    b_x: i32,
-    y: i32,
-}
-
-/// Dual-player layout: player 1's icons on the left.
-const OVERLAY_LAYOUT_LEFT: OverlayIconLayout = OverlayIconLayout {
-    dir_x: 2,
-    ab_x: 38,
-    b_x: 20,
-    y: 222,
-};
-
-/// Single-player layout, also player 2's side of the dual-player layout.
-const OVERLAY_LAYOUT_RIGHT: OverlayIconLayout = OverlayIconLayout {
-    dir_x: 205,
-    ab_x: 238,
-    b_x: 222,
-    y: 222,
-};
-
-/// Sprite-sheet crop size in pixels: one square icon per artwork cell.
-const OVERLAY_SHEET_ICON_SIZE: u32 = 64;
-
-/// Overlay icon size in logical 1x pixels: a sprite-sheet crop divided by the
-/// playback Zoom Factor of 4.
-const OVERLAY_ICON_SIZE: u32 = OVERLAY_SHEET_ICON_SIZE / 4;
-
-/// Which overlay icons to show this frame and where, in logical 1x
-/// coordinates. Advances both players' hold counters exactly once per frame.
-fn project_overlay_icons(
-    p1: &mut GamepadOverlay,
-    p2: &mut GamepadOverlay,
-    dual_player: bool,
-) -> Vec<OverlayPlacement> {
-    let mut icons = Vec::new();
-    if dual_player {
-        icons.extend(p1.project(OVERLAY_LAYOUT_LEFT));
-        icons.extend(p2.project(OVERLAY_LAYOUT_RIGHT));
-    } else {
-        icons.extend(p1.project(OVERLAY_LAYOUT_RIGHT));
-    }
-    icons
-}
-
-/// Recording frame size in pixels: the playback window, an exact 4x upscale
-/// of the logical 1x frame.
-const RECORD_WIDTH: usize = 1024;
-const RECORD_HEIGHT: usize = 960;
-
-/// Expand a logical 1x playback frame into the 1024x960 RGBA recording
-/// scratch frame, replicating each logical pixel into a 4x4 block. This is
-/// exactly the replication `ImageRender::set_pixel` performs, so a
-/// recording built from the 1x frame is byte-identical to one built from a
-/// 4x frame.
-fn upscale_into(src: &[u8], dst: &mut [u8]) {
-    debug_assert_eq!(src.len(), NES_WIDTH * NES_HEIGHT * 4);
-    debug_assert_eq!(dst.len(), RECORD_WIDTH * RECORD_HEIGHT * 4);
-    let src_stride = NES_WIDTH * 4;
-    let dst_stride = RECORD_WIDTH * 4;
-    for y in 0..NES_HEIGHT {
-        for x in 0..NES_WIDTH {
-            let pixel = &src[y * src_stride + x * 4..][..4];
-            for dy in 0..4 {
-                let row = (y * 4 + dy) * dst_stride;
-                for dx in 0..4 {
-                    dst[row + (x * 4 + dx) * 4..][..4].copy_from_slice(pixel);
-                }
-            }
-        }
-    }
-}
-
-/// Composite overlay icons into a recording frame (RGBA bytes). The recording
-/// artefact keeps today's shape: the 4x 1024x960 frame with the overlay baked
-/// in, straight-alpha blended by the host.
-fn composite_overlay_icons(
-    bytes: &mut [u8],
-    placements: &[OverlayPlacement],
-    icons: &[OverlayIcon],
-) {
-    let stride = RECORD_WIDTH as i64;
-    let height = RECORD_HEIGHT as i64;
-    let scale = stride / NES_WIDTH as i64;
-    for placement in placements {
-        let Some(icon) = icons.get(placement.icon) else {
-            continue;
-        };
-        blit_icon(
-            bytes,
-            stride,
-            height,
-            icon,
-            placement.dst.0 as i64 * scale,
-            placement.dst.1 as i64 * scale,
-        );
-    }
-}
-
-/// Blit one RGBA icon over an RGBA frame with straight-alpha blending.
-fn blit_icon(
-    bytes: &mut [u8],
-    stride: i64,
-    height: i64,
-    icon: &OverlayIcon,
-    dst_x: i64,
-    dst_y: i64,
-) {
-    let iw = icon.width as i64;
-    let ih = icon.height as i64;
-    for iy in 0..ih {
-        for ix in 0..iw {
-            let dx = dst_x + ix;
-            let dy = dst_y + iy;
-            if dx < 0 || dy < 0 || dx >= stride || dy >= height {
-                continue;
-            }
-            let src = &icon.bytes[((iy * iw + ix) * 4) as usize..][..4];
-            if src[3] == 0 {
-                continue;
-            }
-            let dst = &mut bytes[(dy * stride + dx) as usize * 4..][..4];
-            if src[3] == 255 {
-                dst.copy_from_slice(src);
-            } else {
-                // alpha blend src over dst (straight alpha, non-premul)
-                let a = src[3] as u32;
-                let inv = 255 - a;
-                for c in 0..3 {
-                    dst[c] = ((src[c] as u32 * a + dst[c] as u32 * inv) / 255) as u8;
-                }
-                dst[3] = 255;
-            }
-        }
-    }
-}
-
-struct RecordRender {
-    buffer: ImageRender,
-    /// 1024x960 recording frame: raw RGBA pixels in the format fed to ffmpeg
-    /// (`RECORD_WIDTH * RECORD_HEIGHT * 4` bytes). The allocation is reused
-    /// across frames; each frame actually sent is cloned into a fresh buffer
-    /// for the encoder thread.
-    record_scratch: Vec<u8>,
-    canvas: Option<Canvas<Window>>,
-    presenter: FramePresenter,
-    video_tx: Option<mpsc::Sender<Vec<u8>>>,
-    icons: Rc<[OverlayIcon]>,
-    dual_player: bool,
-    enabled: bool,
-    p1: GamepadOverlay,
-    p2: GamepadOverlay,
-    ff_skip: bool,
-    send_policy: crate::recording_send::RecordingSendPolicy,
-}
-
-impl std::fmt::Debug for RecordRender {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("RecordRender").finish_non_exhaustive()
-    }
-}
-
-impl RecordRender {
-    fn set_fast_forward(&mut self, enabled: bool) {
-        self.ff_skip = enabled;
-    }
-
-    fn set_dual_player(&mut self, dual: bool) {
-        self.dual_player = dual;
-    }
-
-    fn set_overlay_enabled(&mut self, enabled: bool) {
-        self.enabled = enabled;
-    }
-
-    fn set_input(&mut self, port0: &GamepadInput, port1: &GamepadInput) {
-        self.p1.set_input(port0);
-        self.p2.set_input(port1);
-    }
-}
-
-impl Render for RecordRender {
-    fn set_pixel(&mut self, index: u16, color: [u8; 4]) {
-        self.buffer.set_pixel(index, color);
-    }
-
-    fn finish(&mut self) {
-        // Decide whether this frame reaches the recording before building any
-        // recording frame, so a trimmed or fast-forwarded frame is never
-        // upscaled. The window still presents every frame.
-        let send_video = self.send_policy.should_send(self.ff_skip);
-
-        // Advance the hold counters and derive the icon placements once per
-        // frame. The window draws them as textures; recording composites them
-        // into its own 4x scratch frame so the display frame stays clean.
-        let overlays = if self.enabled {
-            project_overlay_icons(&mut self.p1, &mut self.p2, self.dual_player)
-        } else {
-            Vec::new()
-        };
-
-        if let Some(ref mut canvas) = self.canvas {
-            present_frame(canvas, &mut self.presenter, &self.buffer, &overlays);
-        }
-
-        if let Some(ref tx) = self.video_tx
-            && send_video
-        {
-            upscale_into(self.buffer.as_bytes(), &mut self.record_scratch);
-            if self.enabled {
-                composite_overlay_icons(&mut self.record_scratch, &overlays, &self.icons);
-            }
-            let _ = tx.send(self.record_scratch.clone());
-        }
-    }
-}
-
 struct RecordAudioDriver {
     inner: SdlAudioDriver,
     audio_tx: Option<mpsc::Sender<Vec<u8>>>,
@@ -551,33 +199,6 @@ fn compute_fast_forward_ranges(
     ranges
 }
 
-/// Decode the gamepad sprite sheet into the fixed overlay icon table (17
-/// square crops: 0 = A, 1 = B, 2..=16 = the held-direction combinations).
-fn load_overlay_icons() -> Vec<OverlayIcon> {
-    let sprite_sheet = load_from_memory(include_bytes!("../../design/gamepad_sprite.png"))
-        .expect("failed to decode gamepad sprite")
-        .into_rgba8();
-    assert_eq!(sprite_sheet.width(), 17 * OVERLAY_SHEET_ICON_SIZE);
-    assert_eq!(sprite_sheet.height(), OVERLAY_SHEET_ICON_SIZE);
-    (0..17)
-        .map(|i| {
-            let icon = imageops::crop_imm(
-                &sprite_sheet,
-                i * OVERLAY_SHEET_ICON_SIZE,
-                0,
-                OVERLAY_SHEET_ICON_SIZE,
-                OVERLAY_SHEET_ICON_SIZE,
-            )
-            .to_image();
-            OverlayIcon {
-                bytes: icon.into_raw(),
-                width: OVERLAY_SHEET_ICON_SIZE,
-                height: OVERLAY_SHEET_ICON_SIZE,
-            }
-        })
-        .collect()
-}
-
 fn init_sdl_drivers(
     sdl_context: &Sdl,
     headless: bool,
@@ -585,29 +206,10 @@ fn init_sdl_drivers(
     audio_tx: Option<mpsc::Sender<Vec<u8>>>,
     ff_skip: Rc<Cell<bool>>,
     trim_frames: u32,
-) -> Result<(RecordRender, RecordAudioDriver)> {
+) -> Result<(NesRender, RecordAudioDriver)> {
     let (canvas, sdl_audio) = create_sdl_drivers(sdl_context, &PLAYBACK_WINDOW, headless)?;
 
-    // One shared icon table: the presenter draws its texture sources while
-    // the recording composite reads the same pixels, so no clone is needed.
-    let icons: Rc<[OverlayIcon]> = Rc::from(load_overlay_icons());
-    let mut presenter = FramePresenter::new();
-    presenter.set_overlay_icons(icons.clone());
-
-    let render = RecordRender {
-        buffer: ImageRender::new(),
-        record_scratch: vec![0u8; RECORD_WIDTH * RECORD_HEIGHT * 4],
-        canvas,
-        presenter,
-        video_tx,
-        icons,
-        dual_player: false,
-        enabled: false,
-        p1: GamepadOverlay::new(),
-        p2: GamepadOverlay::new(),
-        ff_skip: false,
-        send_policy: crate::recording_send::RecordingSendPolicy::new(trim_frames),
-    };
+    let render = NesRender::new(canvas, video_tx, trim_frames);
 
     let audio_driver = RecordAudioDriver {
         inner: sdl_audio,
@@ -940,11 +542,13 @@ mod tests {
         );
     }
 
-    use super::{
-        FramePresenter, GamepadOverlay, NES_WIDTH, OVERLAY_LAYOUT_RIGHT, RECORD_HEIGHT,
-        RECORD_WIDTH, composite_overlay_icons, compute_fast_forward_ranges, load_overlay_icons,
-        project_overlay_icons, upscale_into,
+    use super::compute_fast_forward_ranges;
+    use crate::sdl::presenter::FramePresenter;
+    use crate::sdl::render::{
+        GamepadOverlay, OVERLAY_LAYOUT_RIGHT, RECORD_HEIGHT, RECORD_WIDTH, composite_overlay_icons,
+        load_overlay_icons, project_overlay_icons, upscale_into,
     };
+    use nes_core::render::image_render::NES_WIDTH;
 
     fn idle() -> InputLog {
         InputLog::new(
