@@ -1,15 +1,14 @@
 //! Unified SDL driver factory (ticket #121).
 //!
-//! Merges the SDL halves of `actions::run::create_sdl_drivers`
-//! (windowed/interactive-only) and
-//! `actions::play_movie::init_sdl_drivers` (windowed/headless x movie) into a
-//! single factory. Both callers share one `AudioSpecDesired`
+//! Merges the SDL halves of the interactive `run` driver setup
+//! (windowed/interactive-only) and the pre-merge movie-playback driver setup
+//! (windowed/headless x movie) into a single factory. Both callers share one `AudioSpecDesired`
 //! construction and one window/canvas branch; only the [`WindowSpec`] (title
 //! and size) and the `headless` flag differ.
 //!
 //! The movie recording wrappers (`NesRender`'s video transmitter with its
 //! fast-forward flag and trim policy, plus `RecordAudioDriver`) stay with the
-//! play-movie action: they feed the render/audio wrappers, not SDL resource
+//! movie-playback path of `run --movie`: they feed the render/audio wrappers, not SDL resource
 //! creation. The unified render type itself lives in `super::render` (#122).
 
 use super::{AUDIO_CHUNK_SAMPLES, AUDIO_SAMPLE_RATE, SdlAudioDriver};
