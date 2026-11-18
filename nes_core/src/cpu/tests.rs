@@ -1,4 +1,7 @@
-use super::microcode::{build_opcode_table, opcode};
+use super::microcode::{
+    BranchTest, CrossPageBehavior, ImmediateOp, OpAfterAddressing, PushTarget, TransferDirection,
+    build_opcode_table, opcode,
+};
 use super::*;
 use crate::test_utils::MockMcu;
 
@@ -3973,11 +3976,11 @@ fn cpu_with_memory(program_start: u16, bytes: &[(u16, u8)]) -> Harness<TestMcu> 
 fn branch_relative_taken_and_not_taken_behaves() {
     let mut cpu = cpu_with_memory(0x8000, &[(0x8000, 0x02), (0x8001, 0xFE)]);
 
-    cpu.exec(Microcode::BranchZeroClear);
+    cpu.exec(Microcode::BranchRelative(BranchTest::IfZeroClear));
     assert_eq!(cpu.pc(), 0x8003);
 
     cpu.set_flag(Flag::Zero, true);
-    cpu.exec(Microcode::BranchZeroClear);
+    cpu.exec(Microcode::BranchRelative(BranchTest::IfZeroClear));
     assert_eq!(cpu.pc(), 0x8004);
 }
 
@@ -3985,13 +3988,13 @@ fn branch_relative_taken_and_not_taken_behaves() {
 fn load_immediate_x_and_y_read_operand_and_update_flags() {
     let mut cpu = cpu_with_memory(0x8000, &[(0x8000, 0x80), (0x8001, 0x00)]);
 
-    cpu.exec(Microcode::LoadXImmediate);
+    cpu.exec(Microcode::LoadR(ValueSource::Immediate, Register::X));
     assert_eq!(cpu.x(), 0x80);
     assert_eq!(cpu.pc(), 0x8001);
     assert!(cpu.flag(Flag::Negative));
     assert!(!cpu.flag(Flag::Zero));
 
-    cpu.exec(Microcode::LoadYImmediate);
+    cpu.exec(Microcode::LoadR(ValueSource::Immediate, Register::Y));
     assert_eq!(cpu.y(), 0x00);
     assert_eq!(cpu.pc(), 0x8002);
     assert!(cpu.flag(Flag::Zero));
@@ -4006,11 +4009,11 @@ fn store_microcodes_write_registers_to_memory() {
     cpu.set_x(0x22);
     cpu.set_y(0x33);
 
-    cpu.exec(Microcode::StoreAMem);
+    cpu.exec(Microcode::StoreR(ValueSource::Mem, Register::A));
     cpu.ab.set(0x1235);
-    cpu.exec(Microcode::StoreXMem);
+    cpu.exec(Microcode::StoreR(ValueSource::Mem, Register::X));
     cpu.ab.set(0x1236);
-    cpu.exec(Microcode::StoreYMem);
+    cpu.exec(Microcode::StoreR(ValueSource::Mem, Register::Y));
 
     assert_eq!(cpu.mcu().mem[0x1234], 0x11);
     assert_eq!(cpu.mcu().mem[0x1235], 0x22);
@@ -4026,15 +4029,15 @@ fn store_and_load_microcodes_use_alu_and_memory() {
     let mut cpu = cpu_with_memory(0x0000, &[(0x0042, 0x44), (0x0055, 0x55)]);
 
     cpu.ab.set(0x0042);
-    cpu.exec(Microcode::LoadIntoAluMem);
+    cpu.exec(Microcode::LoadIntoAlu(ValueSource::Mem));
     assert_eq!(cpu.alu, 0x44);
 
-    cpu.exec(Microcode::LoadAMem);
+    cpu.exec(Microcode::LoadR(ValueSource::Mem, Register::A));
     assert_eq!(cpu.a(), 0x44);
 
     cpu.ab.set(0x0055);
     cpu.set_a(0xAA);
-    cpu.exec(Microcode::StoreAMem);
+    cpu.exec(Microcode::StoreR(ValueSource::Mem, Register::A));
     assert_eq!(cpu.mcu().mem[0x0055], 0xAA);
 }
 
@@ -4043,14 +4046,14 @@ fn ora_and_eor_microcodes_update_accumulator_and_flags() {
     let mut cpu = cpu_with_memory(0x8000, &[(0x8000, 0b0000_1111), (0x0042, 0b1111_0000)]);
     cpu.set_a(0b0101_0000);
 
-    cpu.exec(Microcode::ImmediateOra);
+    cpu.exec(Microcode::ImmediateWithOp(ImmediateOp::Ora));
     assert_eq!(cpu.a(), 0b0101_1111);
     assert!(!cpu.flag(Flag::Zero));
     assert!(!cpu.flag(Flag::Negative));
 
     cpu.ab.set(0x0042);
     cpu.alu = 0b1111_0000;
-    cpu.exec(Microcode::EorMem);
+    cpu.exec(Microcode::Eor(ValueSource::Mem));
     assert_eq!(cpu.a(), 0b1010_1111);
     assert!(!cpu.flag(Flag::Zero));
     assert!(cpu.flag(Flag::Negative));
@@ -4071,26 +4074,26 @@ fn compare_and_bit_microcodes_update_flags() {
     cpu.set_x(0x11);
     cpu.set_y(0x10);
 
-    cpu.exec(Microcode::ImmediateCmp);
+    cpu.exec(Microcode::ImmediateWithOp(ImmediateOp::Cmp));
     assert!(cpu.flag(Flag::Carry));
     assert!(!cpu.flag(Flag::Zero));
     assert!(!cpu.flag(Flag::Negative));
 
     cpu.set_a(0x41);
     cpu.ab.set(0x0001);
-    cpu.exec(Microcode::LoadIntoAluMem);
-    cpu.exec(Microcode::BitMem);
+    cpu.exec(Microcode::LoadIntoAlu(ValueSource::Mem));
+    cpu.exec(Microcode::Bit(ValueSource::Mem));
     assert!(cpu.flag(Flag::Overflow));
     assert!(!cpu.flag(Flag::Negative));
     assert!(!cpu.flag(Flag::Zero));
 
     cpu.ab.set(0x0011);
-    cpu.exec(Microcode::CpxMem);
+    cpu.exec(Microcode::Cpx(ValueSource::Mem));
     assert!(cpu.flag(Flag::Carry));
     assert!(cpu.flag(Flag::Zero));
 
     cpu.ab.set(0x000F);
-    cpu.exec(Microcode::CpyMem);
+    cpu.exec(Microcode::Cpy(ValueSource::Mem));
     assert!(cpu.flag(Flag::Carry));
     assert!(!cpu.flag(Flag::Zero));
 }
@@ -4103,25 +4106,25 @@ fn transfer_microcodes_copy_registers_and_update_flags() {
     cpu.set_y(0x7F);
     cpu.set_sp(0x42);
 
-    cpu.exec(Microcode::TransferAtoX);
+    cpu.exec(Microcode::Transfer(TransferDirection::AtoX));
     assert_eq!(cpu.x(), 0x80);
     assert!(cpu.flag(Flag::Negative));
 
-    cpu.exec(Microcode::TransferXtoA);
+    cpu.exec(Microcode::Transfer(TransferDirection::XtoA));
     assert_eq!(cpu.a(), 0x80);
 
-    cpu.exec(Microcode::TransferAtoY);
+    cpu.exec(Microcode::Transfer(TransferDirection::AtoY));
     assert_eq!(cpu.y(), 0x80);
 
-    cpu.exec(Microcode::TransferYtoA);
+    cpu.exec(Microcode::Transfer(TransferDirection::YtoA));
     assert_eq!(cpu.a(), 0x80);
 
-    cpu.exec(Microcode::TransferSPtoX);
+    cpu.exec(Microcode::Transfer(TransferDirection::SPtoX));
     assert_eq!(cpu.x(), 0x42);
     assert!(!cpu.flag(Flag::Zero));
 
     cpu.set_x(0x55);
-    cpu.exec(Microcode::TransferXtoSP);
+    cpu.exec(Microcode::Transfer(TransferDirection::XtoSP));
     assert_eq!(cpu.sp(), 0x55);
 }
 
@@ -4132,7 +4135,7 @@ fn stack_and_misc_microcodes_manipulate_state() {
     cpu.set_sp(0xFF);
     cpu.set_status(Flag::Carry as u8);
 
-    cpu.exec(Microcode::PushA);
+    cpu.exec(Microcode::PushStack(PushTarget::A));
     assert_eq!(cpu.sp(), 0xFE);
     assert_eq!(cpu.mcu().mem[0x01FF], 0xAB);
 
@@ -4142,7 +4145,7 @@ fn stack_and_misc_microcodes_manipulate_state() {
     cpu.exec(Microcode::UpdateAFromAlu);
     assert_eq!(cpu.a(), 0xAB);
 
-    cpu.exec(Microcode::PushStatusBreakSet);
+    cpu.exec(Microcode::PushStatus { break_flag: true });
     assert_eq!(
         cpu.mcu().mem[0x01FF] & (Flag::Break as u8),
         Flag::Break as u8
@@ -4164,26 +4167,26 @@ fn stack_and_misc_microcodes_manipulate_state() {
     cpu.ab.set(0x1234);
     cpu.mcu_mut().mem[0x1234] = 0x34;
     cpu.mcu_mut().mem[0x1235] = 0x12;
-    cpu.exec(Microcode::IndexedLMem);
+    cpu.exec(Microcode::IndexedL(ValueSource::Mem));
     cpu.exec(Microcode::IndexedHAndJump);
     assert_eq!(cpu.pc(), 0x1234);
 
     cpu.set_status(Flag::Carry as u8);
-    cpu.exec(Microcode::ClearCarry);
+    cpu.exec(Microcode::ClearFlag(Flag::Carry));
     assert!(!cpu.flag(Flag::Carry));
-    cpu.exec(Microcode::SetCarry);
+    cpu.exec(Microcode::SetFlag(Flag::Carry));
     assert!(cpu.flag(Flag::Carry));
     cpu.set_status(Flag::Decimal as u8);
-    cpu.exec(Microcode::ClearDecimal);
+    cpu.exec(Microcode::ClearFlag(Flag::Decimal));
     assert!(!cpu.flag(Flag::Decimal));
-    cpu.exec(Microcode::SetDecimal);
+    cpu.exec(Microcode::SetFlag(Flag::Decimal));
     assert!(cpu.flag(Flag::Decimal));
-    cpu.exec(Microcode::ClearInterruptDisabled);
+    cpu.exec(Microcode::ClearFlag(Flag::InterruptDisabled));
     assert!(!cpu.flag(Flag::InterruptDisabled));
-    cpu.exec(Microcode::SetInterruptDisabled);
+    cpu.exec(Microcode::SetFlag(Flag::InterruptDisabled));
     assert!(cpu.flag(Flag::InterruptDisabled));
     cpu.set_status(Flag::Overflow as u8);
-    cpu.exec(Microcode::ClearOverflow);
+    cpu.exec(Microcode::ClearFlag(Flag::Overflow));
     assert!(!cpu.flag(Flag::Overflow));
 }
 
@@ -4192,7 +4195,7 @@ fn load_immediate_a_reads_operand_and_updates_flags() {
     let mut cpu = cpu_with_memory(0x8000, &[(0x8000, 0x00)]);
     cpu.set_status(Flag::Negative as u8);
 
-    cpu.exec(Microcode::LoadAImmediate);
+    cpu.exec(Microcode::LoadR(ValueSource::Immediate, Register::A));
 
     assert_eq!(cpu.a(), 0x00);
     assert_eq!(cpu.pc(), 0x8001);
@@ -4205,7 +4208,7 @@ fn adc_immediate_uses_carry_and_updates_flags() {
     let mut cpu = cpu_with_memory(0x8000, &[(0x8000, 0x30)]);
     cpu.set_a(0x50);
 
-    cpu.exec(Microcode::ImmediateAdc);
+    cpu.exec(Microcode::ImmediateWithOp(ImmediateOp::Adc));
 
     assert_eq!(cpu.a(), 0x80);
     assert_eq!(cpu.pc(), 0x8001);
@@ -4221,7 +4224,7 @@ fn sbc_immediate_and_memory_microcodes_update_accumulator_and_flags() {
     cpu.set_a(0x20);
     cpu.set_flag(Flag::Carry, true);
 
-    cpu.exec(Microcode::ImmediateSbc);
+    cpu.exec(Microcode::ImmediateWithOp(ImmediateOp::Sbc));
     assert_eq!(cpu.a(), 0x10);
     assert_eq!(cpu.pc(), 0x8001);
     assert!(cpu.flag(Flag::Carry));
@@ -4229,7 +4232,7 @@ fn sbc_immediate_and_memory_microcodes_update_accumulator_and_flags() {
 
     cpu.ab.set(0x0042);
     cpu.alu = 0x01;
-    cpu.exec(Microcode::SbcMem);
+    cpu.exec(Microcode::Sbc(ValueSource::Mem));
     assert_eq!(cpu.a(), 0x0F);
     assert!(cpu.flag(Flag::Carry));
     assert!(!cpu.flag(Flag::Zero));
@@ -4241,7 +4244,7 @@ fn and_immediate_and_memory_microcodes_update_accumulator_and_flags() {
     let mut cpu = cpu_with_memory(0x8000, &[(0x8000, 0b1100_1100), (0x0042, 0b1010_1010)]);
     cpu.set_a(0b1111_0000);
 
-    cpu.exec(Microcode::ImmediateAnd);
+    cpu.exec(Microcode::ImmediateWithOp(ImmediateOp::And));
     assert_eq!(cpu.a(), 0b1100_0000);
     assert_eq!(cpu.pc(), 0x8001);
     assert!(!cpu.flag(Flag::Zero));
@@ -4262,7 +4265,7 @@ fn bit_updates_flags_from_alu_and_accumulator() {
     cpu.set_a(0b0011_0000);
     cpu.set_status(Flag::Zero as u8);
 
-    cpu.exec(Microcode::BitMem);
+    cpu.exec(Microcode::Bit(ValueSource::Mem));
 
     assert!(cpu.flag(Flag::Negative));
     assert!(cpu.flag(Flag::Overflow));
@@ -4270,7 +4273,7 @@ fn bit_updates_flags_from_alu_and_accumulator() {
 
     let mut cpu = cpu_with_memory(0x0000, &[(0, 0b0100_0000)]);
     cpu.set_a(0b1111_0000);
-    cpu.exec(Microcode::BitMem);
+    cpu.exec(Microcode::Bit(ValueSource::Mem));
     assert!(!cpu.flag(Flag::Negative));
     assert!(cpu.flag(Flag::Overflow));
     assert!(!cpu.flag(Flag::Zero));
@@ -4512,16 +4515,16 @@ fn dma_halt_bus_addr_projects_the_pending_bus_cycle() {
     let mut cpu = classification_cpu();
 
     // Read through the latch: the halt cycle repeats the latch address.
-    pending(&mut cpu, Microcode::LoadIntoAluMem);
+    pending(&mut cpu, Microcode::LoadIntoAlu(ValueSource::Mem));
     assert_eq!(cpu.dma_halt_bus_addr(), Some(STUB_AB));
     assert!(cpu.can_pause());
 
     // Write cycle: never freezable — DMC DMA must not swallow writes.
-    pending(&mut cpu, Microcode::StoreAluMem);
+    pending(&mut cpu, Microcode::StoreAlu(ValueSource::Mem));
     assert!(!cpu.can_pause());
 
     // Internal cycle: no address of its own; repeat the last read.
-    pending(&mut cpu, Microcode::SetInterruptDisabled);
+    pending(&mut cpu, Microcode::SetFlag(Flag::InterruptDisabled));
     assert_eq!(cpu.dma_halt_bus_addr(), None);
     assert!(cpu.can_pause());
 }
@@ -4529,7 +4532,7 @@ fn dma_halt_bus_addr_projects_the_pending_bus_cycle() {
 #[test]
 fn indexed_h_halt_repeat_uses_the_no_carry_low_increment() {
     let mut cpu = classification_cpu();
-    pending(&mut cpu, Microcode::IndexedHZeroPage);
+    pending(&mut cpu, Microcode::IndexedH(ValueSource::Mem));
     assert_eq!(cpu.dma_halt_bus_addr(), Some(STUB_AB_LOW_INCREMENTED));
 }
 
@@ -4594,20 +4597,38 @@ fn indexed_with_op_reads_the_op_or_dummy_address() {
     let mut cpu = classification_cpu();
 
     // Non-crossing read op: the cycle reads the operand at the indexed address.
-    pending(&mut cpu, Microcode::IndexedXLoadA);
+    pending(
+        &mut cpu,
+        Microcode::IndexedXWithOp {
+            op: OpAfterAddressing::LoadIntoA,
+            first_clock: CrossPageBehavior::FirstClock,
+        },
+    );
     assert_eq!(cpu.dma_halt_bus_addr(), Some(STUB_AB));
 
     // Crossing read op: the cycle is the dummy read at (old high | new low).
     cpu.ab.set(0x12FF);
     cpu.set_x(1);
-    pending(&mut cpu, Microcode::IndexedXLoadA);
+    pending(
+        &mut cpu,
+        Microcode::IndexedXWithOp {
+            op: OpAfterAddressing::LoadIntoA,
+            first_clock: CrossPageBehavior::FirstClock,
+        },
+    );
     assert_eq!(cpu.dma_halt_bus_addr(), Some(0x1200));
 
     // Store ops always run the dummy-read cycle first (FirstClockAlways),
     // at (old high | new low) even without a page cross.
     cpu.ab.set(STUB_AB);
     cpu.set_y(2);
-    pending(&mut cpu, Microcode::IndexedYStoreAAlways);
+    pending(
+        &mut cpu,
+        Microcode::IndexedYWithOp {
+            op: OpAfterAddressing::StoreA,
+            first_clock: CrossPageBehavior::FirstClockAlways,
+        },
+    );
     assert_eq!(
         cpu.dma_halt_bus_addr(),
         Some((STUB_AB & 0xFF00) | ((STUB_AB + 2) & 0xFF))
