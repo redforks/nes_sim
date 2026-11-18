@@ -1,2 +1,7 @@
 [build]
 target-dir = "/tmp/nes-sim-target"
+
+[target.x86_64-unknown-linux-gnu]
+linker = "clang"
+# x86-64-v2 is popular and actually faster than v3 and v4
+rustflags = ["-C", "target-cpu=x86-64-v2", "-C", "link-arg=-fuse-ld=mold"]
