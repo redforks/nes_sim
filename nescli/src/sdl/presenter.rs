@@ -130,9 +130,8 @@ impl FramePresenter {
 }
 
 /// The shared display sequence: query the renderer output size, build the pure
-/// presentation plan, and present it through the reused texture. `SdlRender`
-/// and playback's `RecordRender` both use this so the plan/present seam has a
-/// single call site.
+/// presentation plan, and present it through the reused texture. `NesRender`
+/// uses this for both modes so the plan/present seam has a single call site.
 #[hotpath::measure]
 pub fn present_frame(
     canvas: &mut Canvas<Window>,

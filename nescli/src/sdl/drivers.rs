@@ -7,10 +7,10 @@
 //! construction and one window/canvas branch; only the [`WindowSpec`] (title
 //! and size) and the `headless` flag differ.
 //!
-//! The movie recording wrappers (`RecordRender`/`RecordAudioDriver` with their
-//! video/audio transmitters, fast-forward flag and trim policy) stay with the
+//! The movie recording wrappers (`NesRender`'s video transmitter with its
+//! fast-forward flag and trim policy, plus `RecordAudioDriver`) stay with the
 //! play-movie action: they feed the render/audio wrappers, not SDL resource
-//! creation, and their full unification awaits the `NesRender` work (#122).
+//! creation. The unified render type itself lives in `super::render` (#122).
 
 use super::{AUDIO_CHUNK_SAMPLES, AUDIO_SAMPLE_RATE, SdlAudioDriver};
 use anyhow::Result;

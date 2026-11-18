@@ -1,17 +1,15 @@
 pub mod drivers;
 pub mod presentation;
 pub mod presenter;
+pub mod render;
 
 pub use drivers::{INTERACTIVE_WINDOW, PLAYBACK_WINDOW, create_sdl_drivers};
-pub use presenter::{FramePresenter, present_frame};
+pub(crate) use render::NesRender;
 
 use nes_core::nes::apu::AudioDriver;
 use nes_core::nes::controller::Button;
-use nes_core::render::{ImageRender, Render};
 use sdl2::audio::AudioQueue;
 use sdl2::keyboard::Keycode;
-use sdl2::render::Canvas;
-use sdl2::video::Window;
 
 /// Re-export sdl2 so downstream crates can use its types without a direct dependency.
 pub use sdl2;
@@ -80,37 +78,5 @@ impl AudioDriver for SdlAudioDriver {
 
     fn flush(&mut self) {
         self.try_flush();
-    }
-}
-
-pub struct SdlRender {
-    image: ImageRender,
-    canvas: Canvas<Window>,
-    presenter: FramePresenter,
-}
-
-impl std::fmt::Debug for SdlRender {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("SdlRender").finish_non_exhaustive()
-    }
-}
-
-impl SdlRender {
-    pub fn with_image(image: ImageRender, canvas: Canvas<Window>) -> Self {
-        Self {
-            image,
-            canvas,
-            presenter: FramePresenter::new(),
-        }
-    }
-}
-
-impl Render for SdlRender {
-    fn set_pixel(&mut self, index: u16, color: [u8; 4]) {
-        self.image.set_pixel(index, color);
-    }
-
-    fn finish(&mut self) {
-        present_frame(&mut self.canvas, &mut self.presenter, &self.image, &[]);
     }
 }
