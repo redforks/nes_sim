@@ -2,10 +2,7 @@ use crate::microcode::fetch_and_decode;
 use crate::view::MachineView;
 use crate::{SystemClock, bus::Bus, mcu::Mcu};
 use arraydeque::ArrayDeque;
-use microcode::{
-    AOrMemory, CrossPageBehavior, IncDecTarget, InterruptSequences, InterruptWindow, Microcode,
-    OpAfterAddressing,
-};
+use microcode::{InterruptSequences, InterruptWindow, Microcode};
 
 pub(crate) mod microcode;
 mod reg16;
@@ -212,7 +209,6 @@ enum InterruptType {
 
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
 pub(crate) enum ValueSource {
-    Immediate,
     /// Read mem from zero page
     ZeroPage,
     /// Read mem for other cases
@@ -330,6 +326,12 @@ pub struct Cpu {
     /// `None` = normal; `Some` = frozen and/or halted (see [`FrozenReason`]).
     frozen_reason: Option<FrozenReason>,
 
+    /// Address for the branch page-cross fixup dummy read (`Microcode::DummyReadAt`).
+    /// Stored here (rather than as an enum payload) so `Microcode` stays a
+    /// fieldless `#[repr(u8)]` enum with a jump-table `match` in `exec()`.
+    /// Written when the branch fixup cycle is queued, read when it executes.
+    dummy_read_addr: u16,
+
     microcode_queue: ArrayDeque<Microcode, 8>,
 }
 
@@ -350,6 +352,7 @@ impl Cpu {
             ab: Register16::default(),
             db: 0,
             alu: 0,
+            dummy_read_addr: 0,
             microcode_queue: ArrayDeque::new(),
             frozen_reason: None,
         };
@@ -558,47 +561,82 @@ impl Cpu {
             | Microcode::AbsoluteH
             | Microcode::ZeroPage
             | Microcode::SkipImmediate
-            | Microcode::BranchRelative(_)
-            | Microcode::ImmediateWithOp(_)
+            | Microcode::BranchCarryClear
+            | Microcode::BranchCarrySet
+            | Microcode::BranchZeroSet
+            | Microcode::BranchZeroClear
+            | Microcode::BranchNegativeSet
+            | Microcode::BranchNegativeClear
+            | Microcode::BranchOverflowSet
+            | Microcode::BranchOverflowClear
+            | Microcode::ImmediateAdc
+            | Microcode::ImmediateAnd
+            | Microcode::ImmediateSbc
+            | Microcode::ImmediateCmp
+            | Microcode::ImmediateCpx
+            | Microcode::ImmediateCpy
+            | Microcode::ImmediateOra
+            | Microcode::ImmediateEor
             | Microcode::AlrImmediate
             | Microcode::AncImmediate
             | Microcode::ArrImmediate
             | Microcode::AxsImmediate
             | Microcode::AneImmediate
             | Microcode::LaxImmediate
+            | Microcode::LoadAImmediate
+            | Microcode::LoadXImmediate
+            | Microcode::LoadYImmediate
             | Microcode::LoadPcAbsoluteH
             | Microcode::Nop => BusCycle::Read(ReadAddress::ProgramCounter),
-            // Immediate-mode operand fetch.
-            Microcode::LoadR(ValueSource::Immediate, _) => {
-                BusCycle::Read(ReadAddress::ProgramCounter)
-            }
             // Hardware adds the index while re-reading the base address on
             // the bus; exec performs that dummy read (zero page is RAM only,
             // so it is side-effect-free).
             Microcode::ZeroPageIndexedX | Microcode::ZeroPageIndexedY => {
                 BusCycle::Read(ReadAddress::Latch(self.ab.get()))
             }
-            // Taken-branch page-cross fixup: the address was computed when
-            // the cycle was queued.
-            Microcode::DummyReadAt(addr) => BusCycle::Read(ReadAddress::Latch(addr)),
+            // Taken-branch page-cross fixup: the address was stored on the
+            // CPU when the cycle was queued.
+            Microcode::DummyReadAt => BusCycle::Read(ReadAddress::Latch(self.dummy_read_addr)),
             // RTS/RTI/PLP pre-increment cycle: hardware reads $0100 | SP
             // and increments SP without pulling a value.
             Microcode::DummyStackRead => BusCycle::Read(ReadAddress::Stack(0x100 | self.sp as u16)),
             // (ind) high byte: low-byte increment without page carry.
-            Microcode::IndexedH(_) | Microcode::IndexedHAndJump => {
+            Microcode::IndexedHZeroPage | Microcode::IndexedHAndJump => {
                 let ab = self.ab.get();
                 let low = (ab as u8).wrapping_add(1) as u16;
                 BusCycle::Read(ReadAddress::Latch((ab & 0xFF00) | low))
             }
-            Microcode::IndexedXWithOp { op, first_clock } => {
-                self.indexed_with_op_cycle(op, first_clock, self.x)
-            }
-            Microcode::IndexedYWithOp { op, first_clock } => {
-                self.indexed_with_op_cycle(op, first_clock, self.y)
-            }
-            // Interrupt vector fetches. LoadIrqPcL's hijack site (ADR-0006)
-            // may redirect the read to the NMI vector inside exec; the
-            // declared default cycle is the IRQ vector.
+            // Indexed read path: operand read when no page is crossed,
+            // otherwise the dummy read at (old high | new low).
+            Microcode::IndexedXAnd
+            | Microcode::IndexedXLoadA
+            | Microcode::IndexedXLoadY
+            | Microcode::IndexedXOra
+            | Microcode::IndexedXEor
+            | Microcode::IndexedXSbc
+            | Microcode::IndexedXAdc
+            | Microcode::IndexedXCmp
+            | Microcode::IndexedXNop => self.indexed_first_clock_cycle(self.x),
+            Microcode::IndexedYAnd
+            | Microcode::IndexedYLoadA
+            | Microcode::IndexedYLoadX
+            | Microcode::IndexedYOra
+            | Microcode::IndexedYEor
+            | Microcode::IndexedYLax
+            | Microcode::IndexedYLas
+            | Microcode::IndexedYSbc
+            | Microcode::IndexedYAdc
+            | Microcode::IndexedYCmp => self.indexed_first_clock_cycle(self.y),
+            // Indexed store / RMW first cycle: always the dummy read.
+            Microcode::IndexedXLoadAluAlways => self.indexed_always_cycle(self.x),
+            Microcode::IndexedYLoadAluAlways => self.indexed_always_cycle(self.y),
+            Microcode::IndexedXStoreAAlways => self.indexed_always_cycle(self.x),
+            Microcode::IndexedYStoreAAlways => self.indexed_always_cycle(self.y),
+            Microcode::IndexedYShxAlways => self.indexed_always_cycle(self.y),
+            Microcode::IndexedXShyAlways => self.indexed_always_cycle(self.x),
+            Microcode::IndexedYShaAlways => self.indexed_always_cycle(self.y),
+            Microcode::IndexedYTasAlways => self.indexed_always_cycle(self.y),
+            // Interrupt vector fetches.
             Microcode::LoadNmiPcL => BusCycle::Read(ReadAddress::Fixed(0xFFFA)),
             Microcode::LoadNmiPcH => BusCycle::Read(ReadAddress::Fixed(0xFFFB)),
             Microcode::LoadResetPcL => BusCycle::Read(ReadAddress::Fixed(0xFFFC)),
@@ -609,72 +647,104 @@ impl Cpu {
             Microcode::Plp | Microcode::PopPcL | Microcode::PopPcH | Microcode::PopStack => {
                 BusCycle::Read(ReadAddress::Stack(self.stack_pop_addr()))
             }
-            // Reads through the address latch. Standalone `Las` is queued
-            // only as the page-crossed LAS abs,y refetch cycle: hardware
-            // drives the operand read at the (already index-adjusted) latch
-            // there, and exec performs it via `load_alu`.
-            Microcode::LoadR(ValueSource::ZeroPage, _)
-            | Microcode::LoadR(ValueSource::Mem, _)
-            | Microcode::LoadIntoAlu(_)
-            | Microcode::IndexedL(_)
-            | Microcode::Lax(_)
-            | Microcode::Las => BusCycle::Read(ReadAddress::Latch(self.ab.get())),
-            // ALU operand reads; the immediate payload (never built into
-            // sequences) classifies as its mode's fetch.
-            Microcode::Adc(src)
-            | Microcode::Sbc(src)
-            | Microcode::Cmp(src)
-            | Microcode::Cpx(src)
-            | Microcode::Cpy(src)
-            | Microcode::Ora(src)
-            | Microcode::Eor(src)
-            | Microcode::And(src)
-            | Microcode::Bit(src) => match src {
-                ValueSource::Immediate => BusCycle::Read(ReadAddress::ProgramCounter),
-                ValueSource::ZeroPage | ValueSource::Mem => {
-                    BusCycle::Read(ReadAddress::Latch(self.ab.get()))
-                }
-            },
-            // Write cycles: stores, stack pushes, and the RMW tail
-            // (first write of the old value, second of the new).
-            Microcode::StoreR(..)
-            | Microcode::StoreAlu(..)
+            // Reads through the address latch.
+            Microcode::LoadAZeroPage
+            | Microcode::LoadXZeroPage
+            | Microcode::LoadYZeroPage
+            | Microcode::LoadAMem
+            | Microcode::LoadXMem
+            | Microcode::LoadYMem
+            | Microcode::LoadIntoAluZeroPage
+            | Microcode::LoadIntoAluMem
+            | Microcode::IndexedLZeroPage
+            | Microcode::IndexedLMem
+            | Microcode::LaxZeroPage
+            | Microcode::LaxMem
+            | Microcode::Las
+            | Microcode::AdcZeroPage
+            | Microcode::AdcMem
+            | Microcode::SbcZeroPage
+            | Microcode::SbcMem
+            | Microcode::CmpZeroPage
+            | Microcode::CmpMem
+            | Microcode::CpxZeroPage
+            | Microcode::CpxMem
+            | Microcode::CpyZeroPage
+            | Microcode::CpyMem
+            | Microcode::OraZeroPage
+            | Microcode::OraMem
+            | Microcode::EorZeroPage
+            | Microcode::EorMem
+            | Microcode::AndZeroPage
+            | Microcode::AndMem
+            | Microcode::BitZeroPage
+            | Microcode::BitMem => BusCycle::Read(ReadAddress::Latch(self.ab.get())),
+            // Write cycles: stores, stack pushes, and the RMW tail.
+            Microcode::StoreAZeroPage
+            | Microcode::StoreXZeroPage
+            | Microcode::StoreYZeroPage
+            | Microcode::StoreAMem
+            | Microcode::StoreXMem
+            | Microcode::StoreYMem
+            | Microcode::StoreAluZeroPage
+            | Microcode::StoreAluMem
             | Microcode::Shx
             | Microcode::Shy
             | Microcode::Sha
             | Microcode::Tas
-            | Microcode::Sax(_)
-            | Microcode::Rla(_)
-            | Microcode::Dcp(_)
-            | Microcode::Isc(_)
-            | Microcode::Rra(_)
-            | Microcode::Slo(_)
-            | Microcode::Sre(_)
-            | Microcode::PushStatus { .. }
-            | Microcode::PushStack(_)
-            | Microcode::Asl(AOrMemory::Memory, _)
-            | Microcode::Lsr(AOrMemory::Memory, _)
-            | Microcode::Rol(AOrMemory::Memory, _)
-            | Microcode::Ror(AOrMemory::Memory, _)
-            | Microcode::IncDec(IncDecTarget::IncrementAlu | IncDecTarget::DecrementAlu, _) => {
-                BusCycle::Write
-            }
-            // Purely internal cycles: flags, transfers, register INC/DEC,
-            // the ALU shift/rotate step, JAM.
-            Microcode::Asl(AOrMemory::Accumulator, _)
-            | Microcode::Lsr(AOrMemory::Accumulator, _)
-            | Microcode::Rol(AOrMemory::Accumulator, _)
-            | Microcode::Ror(AOrMemory::Accumulator, _)
-            | Microcode::IncDec(
-                IncDecTarget::IncrementX
-                | IncDecTarget::IncrementY
-                | IncDecTarget::DecrementX
-                | IncDecTarget::DecrementY,
-                _,
-            )
-            | Microcode::SetFlag(_)
-            | Microcode::ClearFlag(_)
-            | Microcode::Transfer(_)
+            | Microcode::SaxZeroPage
+            | Microcode::SaxMem
+            | Microcode::RlaZeroPage
+            | Microcode::RlaMem
+            | Microcode::DcpZeroPage
+            | Microcode::DcpMem
+            | Microcode::IscZeroPage
+            | Microcode::IscMem
+            | Microcode::RraZeroPage
+            | Microcode::RraMem
+            | Microcode::SloZeroPage
+            | Microcode::SloMem
+            | Microcode::SreZeroPage
+            | Microcode::SreMem
+            | Microcode::PushStatusBreakSet
+            | Microcode::PushStatusBreakClear
+            | Microcode::PushA
+            | Microcode::PushPcl
+            | Microcode::PushPch
+            | Microcode::AslZeroPage
+            | Microcode::AslMem
+            | Microcode::LsrZeroPage
+            | Microcode::LsrMem
+            | Microcode::RolZeroPage
+            | Microcode::RolMem
+            | Microcode::RorZeroPage
+            | Microcode::RorMem
+            | Microcode::IncAluZeroPage
+            | Microcode::IncAluMem
+            | Microcode::DecAluZeroPage
+            | Microcode::DecAluMem => BusCycle::Write,
+            // Purely internal cycles.
+            Microcode::AslAccumulator
+            | Microcode::LsrAccumulator
+            | Microcode::RolAccumulator
+            | Microcode::RorAccumulator
+            | Microcode::IncX
+            | Microcode::IncY
+            | Microcode::DecX
+            | Microcode::DecY
+            | Microcode::SetCarry
+            | Microcode::SetDecimal
+            | Microcode::SetInterruptDisabled
+            | Microcode::ClearCarry
+            | Microcode::ClearDecimal
+            | Microcode::ClearInterruptDisabled
+            | Microcode::ClearOverflow
+            | Microcode::TransferAtoX
+            | Microcode::TransferXtoA
+            | Microcode::TransferAtoY
+            | Microcode::TransferYtoA
+            | Microcode::TransferSPtoX
+            | Microcode::TransferXtoSP
             | Microcode::IncPc
             | Microcode::UpdateAFromAlu
             | Microcode::SkipDetectInterrupt
@@ -682,36 +752,24 @@ impl Cpu {
         }
     }
 
-    /// The indexed-with-op cycle: a read op with `FirstClock` reads the
-    /// operand at the indexed address when no page is crossed; otherwise
-    /// (crossing, or `FirstClockAlways` — every store) it is the dummy read
-    /// at (old high | new low), the 6502's page-fault emulation.
-    fn indexed_with_op_cycle(
-        &self,
-        op: OpAfterAddressing,
-        first_clock: CrossPageBehavior,
-        idx: u8,
-    ) -> BusCycle {
+    /// The indexed first-clock cycle: a read at the indexed address when no
+    /// page is crossed, otherwise the dummy read at (old high | new low).
+    fn indexed_first_clock_cycle(&self, idx: u8) -> BusCycle {
         let ab = self.ab.get();
         let new_ab = ab.wrapping_add(idx as u16);
-        let dummy = (ab & 0xFF00) | (new_ab & 0xFF);
-        let crossed = new_ab & 0xFF00 != ab & 0xFF00;
-        if crossed || matches!(first_clock, CrossPageBehavior::FirstClockAlways) {
-            BusCycle::Read(ReadAddress::Latch(dummy))
-            // Store-class ops — keep in sync with the Microcode write arm
-            // above (StoreR/Shx/Shy/Sha/Tas classify as Write there).
-        } else if matches!(
-            op,
-            OpAfterAddressing::StoreA
-                | OpAfterAddressing::Shx
-                | OpAfterAddressing::Shy
-                | OpAfterAddressing::Sha
-                | OpAfterAddressing::Tas
-        ) {
-            BusCycle::Write
+        if new_ab & 0xFF00 != ab & 0xFF00 {
+            BusCycle::Read(ReadAddress::Latch((ab & 0xFF00) | (new_ab & 0xFF)))
         } else {
             BusCycle::Read(ReadAddress::Latch(new_ab))
         }
+    }
+
+    /// The indexed always-first-clock cycle (stores and RMW prologues):
+    /// always the dummy read at (old high | new low).
+    fn indexed_always_cycle(&self, idx: u8) -> BusCycle {
+        let ab = self.ab.get();
+        let dummy = (ab & 0xFF00) | (ab.wrapping_add(idx as u16) & 0xFF);
+        BusCycle::Read(ReadAddress::Latch(dummy))
     }
 
     /// Stack address a pop cycle reads: $0100 | (SP + 1).
@@ -854,9 +912,7 @@ impl Cpu {
         // their final cycle (blargg cpu_interrupts_v2 1-cli_latency).
         let writes_interrupt_disable = matches!(
             last_op,
-            Microcode::ClearFlag(Flag::InterruptDisabled)
-                | Microcode::SetFlag(Flag::InterruptDisabled)
-                | Microcode::Plp
+            Microcode::ClearInterruptDisabled | Microcode::SetInterruptDisabled | Microcode::Plp
         );
         let disabled = if writes_interrupt_disable {
             (last_status & Flag::InterruptDisabled as u8) != 0
@@ -929,7 +985,6 @@ impl Cpu {
         match src {
             ValueSource::ZeroPage => <ZeroPage as ValueTargetTrait>::write(self, bus, value),
             ValueSource::Mem => self.write_byte(bus, value),
-            ValueSource::Immediate => unreachable!("an immediate has no write target"),
         }
     }
 

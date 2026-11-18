@@ -1,6 +1,6 @@
 use super::*;
 use crate::bus::Bus;
-use crate::cpu::{Flag, ValueSource, microcode::Microcode};
+use crate::cpu::microcode::Microcode;
 use crate::mcu::Mcu; // cpu freeze staging (ADR-0015)
 
 /// The DMC DMA seam only ever drives the bus's memory through the
@@ -399,21 +399,21 @@ impl TestStruct {
     /// and repeats `addr` on the bus until unfrozen.
     fn stage_read_cycle(&mut self, addr: u16) {
         self.cpu
-            .stage_pending_cycle_for_test(Microcode::LoadIntoAlu(ValueSource::Mem), Some(addr));
+            .stage_pending_cycle_for_test(Microcode::LoadIntoAluMem, Some(addr));
     }
 
     /// Stage a pending write cycle: the freeze is refused (writes must
     /// never be swallowed).
     fn stage_write_cycle(&mut self, addr: u16) {
         self.cpu
-            .stage_pending_cycle_for_test(Microcode::StoreAlu(ValueSource::Mem), Some(addr));
+            .stage_pending_cycle_for_test(Microcode::StoreAluMem, Some(addr));
     }
 
     /// Stage a purely internal pending cycle whose next fetch address is
     /// `pc`: the halt cycle repeats that fallback address on the bus.
     fn stage_internal_cycle(&mut self, pc: u16) {
         self.cpu
-            .stage_pending_cycle_for_test(Microcode::SetFlag(Flag::InterruptDisabled), None);
+            .stage_pending_cycle_for_test(Microcode::SetInterruptDisabled, None);
         self.cpu.set_next_fetch_pc_for_test(pc);
     }
 
