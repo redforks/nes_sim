@@ -156,9 +156,17 @@ pub struct Registers {
     // PPUDATA read buffer
     pub ppudata_buffer: u8,
 
-    // PPU open bus / data latch
+    // PPU open bus / data latch. The latch holds the last value driven
+    // onto the PPU data bus; each 1-bit decays to 0 after
+    // `PPU_OPEN_BUS_DECAY_TICKS` without a refresh (~0.6 s, ~36 frames).
+    // Deadlines stay per-bit: partial refreshes (`refresh_bus_latch_bits`,
+    // masks $E0/$3F) must NOT re-arm untouched bits (ppu_open_bus tests 7
+    // and 9). `bus_latch_earliest_decay` caches the minimum live deadline
+    // (`u64::MAX` when no 1-bits are pending) so the read fast path is a
+    // single compare -- the 8-bit scan only runs once decay is actually due.
     pub bus_latch: u8,
     pub bus_latch_decay_deadlines: [u64; 8],
+    pub bus_latch_earliest_decay: u64,
 }
 
 impl Registers {
@@ -174,6 +182,7 @@ impl Registers {
             ppudata_buffer: 0,
             bus_latch: 0,
             bus_latch_decay_deadlines: [0; 8],
+            bus_latch_earliest_decay: u64::MAX,
         }
     }
 
@@ -215,51 +224,74 @@ impl Registers {
         }
     }
 
+    #[inline]
     pub fn current_bus_latch(&mut self, cycle: u64) -> u8 {
         self.apply_bus_decay(cycle);
         self.bus_latch
     }
 
+    #[inline]
     fn apply_bus_decay(&mut self, now: u64) {
-        for bit in 0..8 {
-            let mask = 1 << bit;
-            let deadline = self.bus_latch_decay_deadlines[bit];
-            if (self.bus_latch & mask) != 0 && deadline != 0 && now >= deadline {
-                self.bus_latch &= !mask;
-                self.bus_latch_decay_deadlines[bit] = 0;
+        // Fast path: nothing expires before the earliest live deadline, so
+        // the common case (decay ~0.6 s away, or no 1-bits pending) is a
+        // single compare with no loop. The 8-bit scan only runs once decay
+        // is actually due.
+        if now < self.bus_latch_earliest_decay {
+            return;
+        }
+        let mut earliest = u64::MAX;
+        for (bit, deadline) in self.bus_latch_decay_deadlines.iter_mut().enumerate() {
+            if *deadline != 0 && now >= *deadline {
+                self.bus_latch &= !(1 << bit);
+                *deadline = 0;
+            }
+            if *deadline != 0 && *deadline < earliest {
+                earliest = *deadline;
             }
         }
+        self.bus_latch_earliest_decay = earliest;
     }
 
-    pub fn refresh_bus_latch(&mut self, value: u8, cycle: u64) {
-        self.apply_bus_decay(cycle);
-        self.bus_latch = value;
-        for (bit, deadline) in self.bus_latch_decay_deadlines.iter_mut().enumerate() {
-            let mask = 1u8 << bit;
-            *deadline = if (value & mask) != 0 {
-                cycle.wrapping_add(PPU_OPEN_BUS_DECAY_TICKS)
-            } else {
-                0
-            };
+    #[inline]
+    fn recompute_earliest_decay(&mut self) {
+        let mut earliest = u64::MAX;
+        for &deadline in &self.bus_latch_decay_deadlines {
+            if deadline != 0 && deadline < earliest {
+                earliest = deadline;
+            }
         }
+        self.bus_latch_earliest_decay = earliest;
     }
 
+    #[inline]
+    pub fn refresh_bus_latch(&mut self, value: u8, cycle: u64) {
+        // No pre-decay: the old latch is overwritten unconditionally, so
+        // decaying it first would be dead work. All set-bit deadlines are
+        // identical, so the earliest is known without a scan.
+        self.bus_latch = value;
+        let deadline = cycle.wrapping_add(PPU_OPEN_BUS_DECAY_TICKS);
+        for (bit, slot) in self.bus_latch_decay_deadlines.iter_mut().enumerate() {
+            *slot = if (value >> bit) & 1 != 0 { deadline } else { 0 };
+        }
+        self.bus_latch_earliest_decay = if value != 0 { deadline } else { u64::MAX };
+    }
+
+    #[inline]
     pub fn refresh_bus_latch_bits(&mut self, mask: u8, value: u8, cycle: u64) {
         self.apply_bus_decay(cycle);
-        for bit in 0..8 {
-            let bit_mask = 1 << bit;
-            if (mask & bit_mask) == 0 {
-                continue;
-            }
-
-            if (value & bit_mask) != 0 {
-                self.bus_latch |= bit_mask;
-                self.bus_latch_decay_deadlines[bit] = cycle.wrapping_add(PPU_OPEN_BUS_DECAY_TICKS);
-            } else {
-                self.bus_latch &= !bit_mask;
-                self.bus_latch_decay_deadlines[bit] = 0;
-            }
+        self.bus_latch = (self.bus_latch & !mask) | (value & mask);
+        // Per-bit semantics: only masked bits get new deadlines; untouched
+        // bits keep theirs (ppu_open_bus tests 7 and 9). Iterating the mask
+        // touches at most popcount(mask) entries ($E0 -> 3, $3F -> 6).
+        let deadline = cycle.wrapping_add(PPU_OPEN_BUS_DECAY_TICKS);
+        let mut pending = mask;
+        while pending != 0 {
+            let bit = pending.trailing_zeros() as usize;
+            self.bus_latch_decay_deadlines[bit] =
+                if (value >> bit) & 1 != 0 { deadline } else { 0 };
+            pending &= pending - 1;
         }
+        self.recompute_earliest_decay();
     }
 }
 
