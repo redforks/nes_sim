@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["nes_core", "nes_cpu_test", "nes_web", "nescli", "nes_sdl"]
+members = ["nes_core", "nes_cpu_test", "nes_web", "nescli"]
 
 # Workspace dependencies - ALL dependencies managed here
 [workspace.dependencies]

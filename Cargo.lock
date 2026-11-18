@@ -750,15 +750,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "nes_sdl"
-version = "0.1.0"
-dependencies = [
- "hotpath",
- "nes_core",
- "sdl2",
-]
-
-[[package]]
 name = "nes_web"
 version = "0.1.0"
 dependencies = [
@@ -782,7 +773,7 @@ dependencies = [
  "image",
  "log",
  "nes_core",
- "nes_sdl",
+ "sdl2",
 ]
 
 [[package]]

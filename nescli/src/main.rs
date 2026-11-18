@@ -7,6 +7,7 @@ use std::path::PathBuf;
 
 mod actions;
 mod recording_send;
+mod sdl;
 
 /// NES emulator cli tools
 #[derive(clap::Parser)]
