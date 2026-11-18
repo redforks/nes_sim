@@ -824,6 +824,7 @@ impl<R: Render> Ppu<R> {
         // frame is complete, so every buffer slot holds a scanned index
         // (a mid-frame soft reset leaves pre-reset slots as stale indices).
         let mut start = 0u16;
+        let mut pixel_idx = 0;
         for (end, config) in self
             .color_splits
             .drain(..)
@@ -847,9 +848,9 @@ impl<R: Render> Ppu<R> {
                     &lut,
                     &mut chunk[..(chunk_len as usize)],
                 );
-                for (offset, &word) in chunk[..(chunk_len as usize)].iter().enumerate() {
-                    let index = index + offset as u16;
-                    self.renderer.set_pixel(index, Pixel::from_u32(word).0);
+                for &word in chunk[..(chunk_len as usize)].iter() {
+                    self.renderer.set_pixel(pixel_idx, Pixel::from_u32(word).0);
+                    pixel_idx += 1;
                 }
                 index += chunk_len;
             }
