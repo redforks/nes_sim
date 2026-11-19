@@ -1,3 +1,5 @@
+use core::num::NonZeroU8;
+
 use crate::microcode::fetch_and_decode;
 use crate::view::MachineView;
 use crate::{SystemClock, bus::Bus, mcu::Mcu};
@@ -11,6 +13,8 @@ pub(crate) mod microcode;
 mod reg16;
 #[cfg(test)]
 mod spin_tests;
+#[cfg(test)]
+mod status_spin_tests;
 
 use self::reg16::Register16;
 
@@ -19,6 +23,13 @@ const BRANCH_OPCODES: [u8; 8] = [0x10, 0x30, 0x50, 0x70, 0x90, 0xB0, 0xD0, 0xF0]
 
 fn is_bare_self_jump_opcode(opcode: u8) -> bool {
     opcode == JMP_ABSOLUTE || BRANCH_OPCODES.contains(&opcode)
+}
+
+/// True for `$2002` and all its mirrors through `$3FFF`, matching the
+/// `normalize_ppu_addr` seam used by `Ppu::read_ppureg`. Only these reads
+/// have destructive side effects that a frozen loop must replay.
+fn is_ppu_status_addr(addr: u16) -> bool {
+    (0x2000..=0x3FFF).contains(&addr) && (addr & 0x2007) == 0x2002
 }
 /// Snapshot of CPU registers — the read-model exposed to plugins/tools.
 /// Replaces direct `cpu.a/x/y/sp/status/pc` field access (ADR-0010).
@@ -41,13 +52,18 @@ pub(crate) enum Register {
 }
 
 /// The shape of a declared spin: an optional polled address (`None` for a
-/// bare JMP/branch-to-self) and the loop-top PC to resume from. Kept as its
-/// own type so later tickets can extend the wake rule without changing the
-/// single `Option<FrozenReason>` hot-path check.
+/// bare JMP/branch-to-self) and the loop-top PC to resume from. For a
+/// destructive poll (`status_side_effects`), the last observed read dot
+/// and its interval give the exact cadence of the reads the freeze skips.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct SpinState {
     polled: Option<u16>,
     loop_top: u16,
+    status_side_effects: bool,
+    /// Master-clock dot of the last real poll read before declaration.
+    read_phase: u64,
+    /// Dot interval between consecutive real poll reads; `0` if unknown.
+    loop_period: u8,
 }
 
 /// Why [`Cpu::tick`] refuses to execute: a DMA freeze, a spin-wait freeze,
@@ -67,6 +83,11 @@ struct PollCandidate {
     addr: u16,
     /// Number of back-edges seen returning to this read.
     back_edges: u8,
+    /// Master-clock dot of the most recent poll read and the interval to
+    /// its predecessor. The read cadence, not the branch cadence, is the
+    /// cadence of the destructive side effects we must replay.
+    last_read_dot: u64,
+    read_period: u8,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -306,7 +327,7 @@ impl ValueSourceTrait for ZeroPage {
     fn value<M: Mcu>(cpu: &mut Cpu, bus: &mut Bus<M>) -> u8 {
         let addr = cpu.ab.low() as u16;
         let value = bus.mcu_mut().read_zero_page(cpu.ab.low());
-        cpu.note_poll_read(addr);
+        cpu.note_poll_read(addr, bus.clock());
         value
     }
 }
@@ -315,7 +336,7 @@ impl ValueSourceTrait for Mem {
     fn value<M: Mcu>(cpu: &mut Cpu, bus: &mut Bus<M>) -> u8 {
         let addr = cpu.ab.get();
         let value = bus.mcu_mut().read(addr);
-        cpu.note_poll_read(addr);
+        cpu.note_poll_read(addr, bus.clock());
         value
     }
 }
@@ -566,15 +587,61 @@ impl Cpu {
         }
     }
 
-    /// Wake a spin on a dispatchable interrupt. Clears only the spin source;
-    /// a concurrent DMA freeze or a halt remains in force.
-    fn wake_spin(&mut self, clock: SystemClock) {
+    /// Present the destructive `$2002` read effects of the loop iterations
+    /// the freeze skipped. The cadence is the observed interval between
+    /// real polls, so a seven-dot `BIT $2002 / BPL` loop replays once every
+    /// seven dots — not once per dot. `Mcu` owns the device-specific effects via a
+    /// defaulted method (only `NesMcu` overrides it), keeping the single CPU
+    /// freeze seam and leaving DMA channels and the bus untouched.
+    fn replay_status_side_effects<M: Mcu>(&mut self, spin: SpinState, bus: &mut Bus<M>) {
+        let (Some(addr), true) = (spin.polled, spin.status_side_effects) else {
+            return;
+        };
+        let Some(period) = NonZeroU8::new(spin.loop_period) else {
+            return;
+        };
+        // Replay at the dots where the skipped reads would have landed:
+        // one period after the last real read, then every period. The
+        // phase is pinned by observation, not by global clock alignment.
+        // VBL is the value this loop waits for. While it is set, a real
+        // poll read would observe it and leave the loop, so hand control
+        // back to the CPU immediately and let the queued read run rather
+        // than clearing it here. The peek is side-effect free.
+        if bus.mcu().status_register_has_vbl() {
+            self.resume_spin();
+            return;
+        }
+        let elapsed = bus.clock().0.saturating_sub(spin.read_phase);
+        if elapsed == 0 || elapsed % u64::from(period.get()) != 0 {
+            return;
+        }
+        bus.mcu_mut().replay_status_read_side_effects(addr);
+    }
+
+    /// Leave a spin at its loop top. Clears only the spin source; a
+    /// concurrent DMA freeze or a halt remains in force.
+    fn resume_spin(&mut self) {
         let Some(reason) = self.frozen_reason else {
             return;
         };
         let Some(spin) = reason.spin else {
             return;
         };
+        self.frozen_reason = FrozenReason::new(reason.dma, None, reason.halt);
+        self.pc.set(spin.loop_top);
+        self.self_loop_candidate = None;
+        self.poll_candidate = None;
+    }
+
+    /// Wake a spin on a dispatchable interrupt. Clears only the spin source;
+    /// a concurrent DMA freeze or a halt remains in force.
+    fn wake_spin(&mut self, clock: SystemClock) {
+        let Some(reason) = self.frozen_reason else {
+            return;
+        };
+        if reason.spin.is_none() {
+            return;
+        }
         let irq_pending = self
             .irq_detector
             .detect_irq(self.flag(Flag::InterruptDisabled));
@@ -592,10 +659,7 @@ impl Cpu {
         } else {
             self.interrupt_detected = InterruptType::Irq;
         }
-        self.frozen_reason = FrozenReason::new(reason.dma, None, reason.halt);
-        self.pc.set(spin.loop_top);
-        self.self_loop_candidate = None;
-        self.poll_candidate = None;
+        self.resume_spin();
     }
 
     /// Wake a spin on a CPU write to its exact polled address. Called from
@@ -616,6 +680,8 @@ impl Cpu {
                 pc: spin.loop_top,
                 addr,
                 back_edges: 1,
+                last_read_dot: 0,
+                read_period: 0,
             };
             let dma = reason.dma;
             let halt = reason.halt;
@@ -629,16 +695,29 @@ impl Cpu {
     /// opcode is at `self.instruction_pc`. Only a read at that instruction's
     /// operand address can start (or repeat) a poll candidate; PC/stack and
     /// DMA-halt reads are excluded by the call sites.
-    fn note_poll_read(&mut self, addr: u16) {
+    fn note_poll_read(&mut self, addr: u16, dot: SystemClock) {
         let pc = self.instruction_pc;
-        let back_edges = self
+        let previous = self
             .poll_candidate
-            .filter(|candidate| candidate.pc == pc && candidate.addr == addr)
-            .map_or(0, |candidate| candidate.back_edges);
+            .filter(|candidate| candidate.pc == pc && candidate.addr == addr);
+        let back_edges = previous.map_or(0, |candidate| candidate.back_edges);
+        let (last_read_dot, read_period) = previous.map_or((dot.0, 0), |candidate| {
+            let gap = dot.0.saturating_sub(candidate.last_read_dot);
+            (
+                dot.0,
+                if (1..=u8::MAX as u64).contains(&gap) {
+                    gap as u8
+                } else {
+                    candidate.read_period
+                },
+            )
+        });
         self.poll_candidate = Some(PollCandidate {
             pc,
             addr,
             back_edges,
+            last_read_dot,
+            read_period,
         });
     }
 
@@ -659,6 +738,9 @@ impl Cpu {
             if self.try_freeze_spin(SpinState {
                 polled: Some(candidate.addr),
                 loop_top: candidate.pc,
+                status_side_effects: is_ppu_status_addr(candidate.addr),
+                read_phase: candidate.last_read_dot,
+                loop_period: candidate.read_period,
             }) {
                 self.poll_candidate = None;
             }
@@ -962,10 +1044,15 @@ impl Cpu {
                 // frozen CPU reads already-maintained detector state. Sample
                 // /NMI edges here because the normal post-exec poll is
                 // skipped while frozen.
-                if reason.spin.is_some() {
+                if let Some(spin) = reason.spin {
+                    self.replay_status_side_effects(spin, bus);
                     self.wake_spin(bus.clock());
                 }
-                return ExecuteResult::Continue;
+                // A frozen loop executes no instruction, but the harness
+                // still needs its stop/verdict checks sampled (user story
+                // 10). This only reads plugin state; CPU and device state
+                // are untouched by the freeze itself.
+                return plugin.should_stop();
             } else {
                 return ExecuteResult::Halt;
             }
@@ -1401,6 +1488,9 @@ impl Cpu {
                 if self.try_freeze_spin(SpinState {
                     polled: None,
                     loop_top: opcode_pc,
+                    status_side_effects: false,
+                    read_phase: 0,
+                    loop_period: 0,
                 }) {
                     self.self_loop_candidate = None;
                 }

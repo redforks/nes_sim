@@ -391,6 +391,20 @@ impl Mcu for NesMcu {
         self.latch(value, false);
         self.lower_ram.write_stack_page(address, value, clock);
     }
+
+    fn status_register_has_vbl(&self) -> bool {
+        self.ppu.in_vblank()
+    }
+
+    /// Replay a skipped `$2002` read's side effects for a frozen status
+    /// spin (ticket #135). Mirrors normalize to $2002 in `Ppu::read_ppureg`;
+    /// only the status register is destructive, so no bus latch or data is
+    /// touched here — the resumed poll read does that when the spin wakes.
+    fn replay_status_read_side_effects(&mut self, address: u16) {
+        if (0x2000..=0x3fff).contains(&address) && (address & 0x2007) == 0x2002 {
+            self.ppu.replay_status_side_effects();
+        }
+    }
 }
 
 /// `$5204` carries status in bits 7-6 only; its low bits read the bus latch
