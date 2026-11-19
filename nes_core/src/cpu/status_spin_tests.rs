@@ -409,6 +409,32 @@ fn resumed_status_poll_drops_nmi_line_after_cleared_vbl() {
     );
 }
 
+#[test]
+fn dma_halt_suspends_status_replay_until_the_transfer_ends() {
+    let mut cpu = status_poll_program(0x2002, false);
+    let mut plugin = EmptyPlugin::new();
+    let dot = run_to_frozen(&mut cpu, &mut plugin);
+    assert!(cpu.try_freeze(), "DMC halt must compose with the spin");
+    cpu.mcu_mut().replays = 0;
+
+    for d in dot..dot + 25 {
+        cpu.dot(&mut plugin, d, 100, 100);
+    }
+    assert_eq!(
+        cpu.mcu().replays,
+        0,
+        "a DMC transfer owns the bus; skipped status reads must not replay"
+    );
+    cpu.unfreeze();
+    for d in dot + 25..dot + 50 {
+        cpu.dot(&mut plugin, d, 100, 100);
+    }
+    assert!(
+        cpu.mcu().replays > 0,
+        "status replay must resume after the DMA read completes"
+    );
+}
+
 struct StopPlugin;
 
 impl Plugin<StatusMcu> for StopPlugin {
