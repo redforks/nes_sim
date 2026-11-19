@@ -22,29 +22,6 @@ pub const AUDIO_SAMPLE_RATE: i32 = nes_core::nes::apu::Apu::SAMPLE_RATE as i32;
 pub use nes_core::audio_chunk::AUDIO_CHUNK_SAMPLES;
 const AUDIO_MAX_QUEUED_BYTES: u32 = (AUDIO_SAMPLE_RATE as u32) * 4 / 2;
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    /// SDL chunks at the shared desktop cadence: the chunk size the queue
-    /// threshold derives from is the 1024-sample playback cadence, so a
-    /// change here must be a deliberate cross-sink decision. The rate
-    /// itself stays at the `Apu::SAMPLE_RATE` associated path (#142).
-    #[test]
-    fn sdl_chunks_at_the_shared_desktop_cadence() {
-        assert_eq!(AUDIO_CHUNK_SAMPLES, 1024);
-        assert_eq!(
-            AUDIO_SAMPLE_RATE,
-            nes_core::nes::apu::Apu::SAMPLE_RATE as i32
-        );
-        assert_eq!(
-            AUDIO_MAX_QUEUED_BYTES,
-            (AUDIO_SAMPLE_RATE as u32) * 4 / 2,
-            "queue-pressure threshold stays a half-second of mono f32 audio"
-        );
-    }
-}
-
 pub fn map_keycode_to_button(keycode: Keycode) -> Option<Button> {
     match keycode {
         Keycode::Z | Keycode::M => Some(Button::A),
@@ -67,7 +44,6 @@ pub fn map_keycode_to_button(keycode: Keycode) -> Option<Button> {
 pub struct NesAudioDriver {
     queue: AudioQueue<f32>,
     chunker: ChunkedAudioPush,
-    sample_rate: u32,
     audio_tx: Option<mpsc::Sender<Vec<u8>>>,
     sample_buf: Vec<f32>,
     ff_skip: Rc<Cell<bool>>,
@@ -77,7 +53,6 @@ pub struct NesAudioDriver {
 impl NesAudioDriver {
     pub fn new(
         queue: AudioQueue<f32>,
-        sample_rate: u32,
         audio_tx: Option<mpsc::Sender<Vec<u8>>>,
         ff_skip: Rc<Cell<bool>>,
         trim_frames: u32,
@@ -85,7 +60,6 @@ impl NesAudioDriver {
         Self {
             queue,
             chunker: ChunkedAudioPush::new(),
-            sample_rate,
             audio_tx,
             sample_buf: Vec::new(),
             ff_skip,
@@ -130,5 +104,28 @@ impl NesAudioDriver {
             }
             self.sample_buf.clear();
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// SDL chunks at the shared desktop cadence: the chunk size the queue
+    /// threshold derives from is the 1024-sample playback cadence, so a
+    /// change here must be a deliberate cross-sink decision. The rate
+    /// itself stays at the `Apu::SAMPLE_RATE` associated path (#142).
+    #[test]
+    fn sdl_chunks_at_the_shared_desktop_cadence() {
+        assert_eq!(AUDIO_CHUNK_SAMPLES, 1024);
+        assert_eq!(
+            AUDIO_SAMPLE_RATE,
+            nes_core::nes::apu::Apu::SAMPLE_RATE as i32
+        );
+        assert_eq!(
+            AUDIO_MAX_QUEUED_BYTES,
+            (AUDIO_SAMPLE_RATE as u32) * 4 / 2,
+            "queue-pressure threshold stays a half-second of mono f32 audio"
+        );
     }
 }

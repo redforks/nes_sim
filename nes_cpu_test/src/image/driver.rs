@@ -1,6 +1,6 @@
 use std::fs::File;
 use std::io::Write;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::sync::{Arc, Mutex};
 
 use nes_core::audio_chunk::ChunkedAudioPush;
@@ -91,17 +91,6 @@ fn pcm16(sample: f32) -> i16 {
 }
 
 impl WavRecorder {
-    pub fn sample_rate(&self) -> u32 {
-        SAMPLE_RATE
-    }
-
-    pub fn push_sample(&mut self, sample: f32) {
-        self.buffer
-            .lock()
-            .expect("WavRecorder buffer poisoned")
-            .push(&[sample]);
-    }
-
     pub fn push_samples(&mut self, samples: &[f32]) {
         self.buffer
             .lock()
@@ -113,6 +102,8 @@ impl WavRecorder {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::path::PathBuf;
+
     use nes_core::audio_chunk::AUDIO_CHUNK_SAMPLES;
 
     fn samples(n: usize) -> Vec<f32> {
@@ -126,8 +117,10 @@ mod tests {
         let data_len = u32::from_le_bytes(bytes[40..44].try_into().unwrap()) as usize;
         assert_eq!(data_len, bytes.len() - 44);
         bytes[44..]
-            .chunks_exact(2)
-            .map(|pair| i16::from_le_bytes([pair[0], pair[1]]))
+            .as_chunks::<2>()
+            .0
+            .iter()
+            .map(|pair| i16::from_le_bytes(*pair))
             .collect()
     }
 
@@ -172,7 +165,7 @@ mod tests {
         recorder.push_samples(&[]);
         recorder.push_samples(&input[AUDIO_CHUNK_SAMPLES - 100..]);
         recorder.push_samples(&[]);
-        recorder.push_sample(0.25);
+        recorder.push_samples(&[0.25]);
         let path = temp_path("remainder");
         let written = recorder.write_wav(&path).unwrap();
         assert_eq!(written, input.len() + 1);

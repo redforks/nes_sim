@@ -279,9 +279,7 @@ mod tests {
         use crate::image::WavRecorder;
 
         let mut recorder = WavRecorder::new();
-        for sample in [-1.0f32, 0.0, 0.5, 1.5] {
-            recorder.push_sample(sample);
-        }
+        recorder.push_samples(&[-1.0f32, 0.0, 0.5, 1.5]);
         let dir = std::env::temp_dir().join(format!("nes_cpu_test-wav-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         let path = dir.join("out.wav");

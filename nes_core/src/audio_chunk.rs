@@ -34,7 +34,7 @@ impl ChunkedAudioPush {
     pub fn push(&mut self, samples: &[f32], mut emit: impl FnMut(&[f32])) {
         self.staging.extend_from_slice(samples);
         let full = self.staging.len() / AUDIO_CHUNK_SAMPLES * AUDIO_CHUNK_SAMPLES;
-        for chunk in self.staging[..full].chunks_exact(AUDIO_CHUNK_SAMPLES) {
+        for chunk in self.staging[..full].as_chunks::<AUDIO_CHUNK_SAMPLES>().0 {
             emit(chunk);
         }
         self.staging.drain(..full);

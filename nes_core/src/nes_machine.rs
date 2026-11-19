@@ -732,8 +732,10 @@ mod tests {
                 .mcu()
                 .ppu()
                 .frame_bytes()
-                .chunks_exact(4)
-                .all(|px| px == [0, 0, 0, 255]),
+                .as_chunks::<4>()
+                .0
+                .iter()
+                .all(|px| *px == [0, 0, 0, 255]),
             "hard reset must fill the framebuffer with opaque black"
         );
     }
@@ -747,7 +749,7 @@ mod tests {
 
         fn solid(r: u8, g: u8, b: u8) -> ColorTheme {
             let mut buf = [0_u8; 192];
-            for chunk in buf.chunks_exact_mut(3) {
+            for chunk in buf.as_chunks_mut::<3>().0 {
                 chunk.copy_from_slice(&[r, g, b]);
             }
             ColorTheme::load_from_pal_buf(&buf)
