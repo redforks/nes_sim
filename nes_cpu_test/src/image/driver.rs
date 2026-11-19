@@ -24,6 +24,22 @@ struct RecorderBuffer {
     committed: Vec<f32>,
 }
 
+impl RecorderBuffer {
+    /// Push through the shared chunker, committing each full chunk in order.
+    fn push(&mut self, samples: &[f32]) {
+        let committed = &mut self.committed;
+        self.chunker
+            .push(samples, |chunk| committed.extend_from_slice(chunk));
+    }
+
+    /// Commit the staged partial tail, if any.
+    fn flush(&mut self) {
+        let committed = &mut self.committed;
+        self.chunker
+            .flush(|chunk| committed.extend_from_slice(chunk));
+    }
+}
+
 impl WavRecorder {
     pub fn new() -> Self {
         Self {
@@ -36,9 +52,8 @@ impl WavRecorder {
     pub fn write_wav(&self, path: &Path) -> std::io::Result<usize> {
         let samples = {
             let mut buffer = self.buffer.lock().expect("WavRecorder buffer poisoned");
-            let RecorderBuffer { chunker, committed } = &mut *buffer;
-            chunker.flush(|chunk| committed.extend_from_slice(chunk));
-            committed.clone()
+            buffer.flush();
+            buffer.committed.clone()
         };
         let data_len = (samples.len() * 2) as u32;
         let mut out = Vec::with_capacity(44 + samples.len() * 2);
@@ -81,15 +96,17 @@ impl WavRecorder {
     }
 
     pub fn push_sample(&mut self, sample: f32) {
-        let mut buffer = self.buffer.lock().expect("WavRecorder buffer poisoned");
-        let RecorderBuffer { chunker, committed } = &mut *buffer;
-        chunker.push(&[sample], |chunk| committed.extend_from_slice(chunk));
+        self.buffer
+            .lock()
+            .expect("WavRecorder buffer poisoned")
+            .push(&[sample]);
     }
 
     pub fn push_samples(&mut self, samples: &[f32]) {
-        let mut buffer = self.buffer.lock().expect("WavRecorder buffer poisoned");
-        let RecorderBuffer { chunker, committed } = &mut *buffer;
-        chunker.push(samples, |chunk| committed.extend_from_slice(chunk));
+        self.buffer
+            .lock()
+            .expect("WavRecorder buffer poisoned")
+            .push(samples);
     }
 }
 

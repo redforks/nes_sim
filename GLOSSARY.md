@@ -326,7 +326,7 @@ _Avoid_: RgbaImage, image buffer (ambiguous), raw bytes (when meaning typed pixe
 
 **FrameOutput**:
 Borrowed per-frame read `FrameOutput<'a> { status, frame: &'a [u8], audio: &'a [f32] }` returned by `NesMachine::process_frame`. `frame` is the framebuffer bytes (`256*240*4`); `audio` is that frame's mixed mono samples; `audio_bytes()` is the zero-copy little-endian `f32` byte view of `audio` for encoders. Per-frame consumers read here and never re-borrow the machine; the machine-level `audio_samples()` remains only for tick-stepped capture (see Drain cadence).
-_Avoid_: re-borrowing the machine per frame, `ImageRender<N>`, `Render` trait
+_Avoid_: re-borrowing the machine per frame, `ImageRender<N>` (retired), `Render` trait (retired)
 
 **Drain cadence**:
 Per-frame drain is canonical: `process_frame()` clears the APU buffer at the start of each call, so every call yields exactly one frame's samples and SDL/web sinks drain the returned `FrameOutput` the same frame. Tick-stepped capture (`--dump-audio`) is the deliberate exception: per-dot `tick()` stepping never clears, so the buffer accumulates the whole run for one end-of-run export. Stepping that loop via `process_frame()` without a per-frame drain truncates the dump to the last frame.
