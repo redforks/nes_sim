@@ -335,6 +335,48 @@ fn device_register_poll_read_cadence_matches_spin_disabled_control() {
     }
 }
 
+/// A loop that writes its polled address every iteration never declares a
+/// spin: the write disqualifies the candidate. This is the `oam_stress`
+/// `LDA $2004 / STA $2004 / BNE` shape on plain RAM — an absolute store must
+/// travel the same write-watch funnel as every other CPU write.
+fn read_write_program() -> Harness {
+    const TOP: u16 = 0x0400;
+    let mut mcu = TestMcu::default();
+    let program = [
+        0xAD, 0x10, 0x00, // $0400 LDA $0010
+        0x8D, 0x10, 0x00, // $0403 STA $0010
+        0xD0, 0xF8, // $0406 BNE $0400
+    ];
+    for (i, byte) in program.iter().enumerate() {
+        mcu.mem[TOP as usize + i] = *byte;
+    }
+    mcu.mem[0x10] = 1; // keeps BNE taken, like OAMDATA echoing the value
+    mcu.mem[0xFFFC] = TOP as u8;
+    mcu.mem[0xFFFD] = (TOP >> 8) as u8;
+    let mut cpu = create_cpu(mcu);
+    cpu.set_pc(TOP);
+    cpu
+}
+
+#[test]
+fn absolute_store_in_loop_disqualifies_the_poll_candidate() {
+    let mut cpu = read_write_program();
+    let mut plugin = EmptyPlugin::new();
+    // Well past the two back-edges that would declare a read-only poll.
+    for dot in 3..3 + 120 {
+        cpu.dot(&mut plugin, dot, false);
+        assert!(
+            !cpu.is_frozen(),
+            "a write-in-loop must never declare a spin (frozen at dot {dot})"
+        );
+    }
+    let stores = cpu.mcu().writes.iter().filter(|&&(a, _)| a == 0x10).count();
+    assert!(
+        stores >= 5,
+        "the loop must keep executing its store, saw {stores} writes to $10"
+    );
+}
+
 #[test]
 fn zapper_register_poll_is_not_declared_as_a_spin() {
     let mut cpu = device_poll_program(0x4017);

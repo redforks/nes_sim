@@ -358,6 +358,12 @@ impl ValueTargetTrait for ZeroPage {
 
 impl ValueTargetTrait for Mem {
     fn write<M: Mcu>(cpu: &mut Cpu, bus: &mut Bus<M>, value: u8) {
+        // Every CPU store travels the write-watch funnel (as `ZeroPage`,
+        // `write_mem`, and `push_stack` already do): a store inside the
+        // candidate window disqualifies a poll loop, and a store to a frozen
+        // polled address wakes it. Skipping this (as here before) let
+        // absolute stores like `STA $2004` declare write-in-loop spins.
+        cpu.watch_cpu_write(cpu.ab.get());
         let clock = bus.clock();
         bus.mcu_mut().write(cpu.ab.get(), value, clock);
     }
