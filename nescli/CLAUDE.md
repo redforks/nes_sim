@@ -43,7 +43,7 @@ cargo run -p nescli --release -- run <file.nes>
 ```
 
 Opens an SDL2 window with:
-- 2x scaled display (512×480)
+- Scaled display of the logical 1x 256x240 frame (interactive `run` window is 2x, 512x480, via one SDL nearest-neighbour scale-copy; movie playback uses a 4x 1024x960 window)
 - 60 FPS frame rate limiting
 - Keyboard input for controller
 - Audio output
@@ -63,10 +63,17 @@ Opens an SDL2 window with:
 
 ## Audio
 
-The SDL2 runner implements the `AudioDriver` trait:
-- 44.1 kHz sample rate
-- 16-bit audio output
-- Proper APU channel mixing
+The SDL2 runner is a per-frame sink: each frame it runs `process_frame()`, presents `output.frame`, and pushes `output.audio` through chunked queueing (`AUDIO_CHUNK_SAMPLES = 1024`, drops on queue pressure) plus `flush_frame()`. Recording additionally forwards the frame's samples to the encoder channel:
+
+```rust
+let output = machine.process_frame();
+render.present_frame_bytes(output.frame);
+audio.push_samples(output.audio);
+audio.flush_frame();
+```
+
+- Sample rate is `Apu::SAMPLE_RATE` (44.1 kHz mono `f32`, host resamples if needed)
+- Mixing happens in the core APU; the SDL side only transports frames of samples
 - Audio buffering to prevent underruns
 
 ## Dependencies
