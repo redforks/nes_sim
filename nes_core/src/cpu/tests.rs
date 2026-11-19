@@ -5117,12 +5117,12 @@ fn bus_cycle_invariants() {
 // ---- Spin freeze: bare self-loops (ticket #133) --------------------------
 //
 // These tests observe only public behavior: MCU bus traffic, register
-// snapshots/PC, and ExecuteResult. No freeze bit is read.
+// snapshots/PC, and ExecuteResult. No freeze source is inspected.
 
 /// Advance one CPU cycle (three system dots). The machine publishes NMI
 /// samples on dot 0 of each CPU cycle; every spin test uses this helper so
 /// the interrupt detector sees the same phase it sees in production.
-fn spin_tick(cpu: &mut Harness<TestMcu>, plugin: &mut EmptyPlugin<TestMcu>, cycle: u64) {
+fn tick_full_cpu_cycle(cpu: &mut Harness<TestMcu>, plugin: &mut EmptyPlugin<TestMcu>, cycle: u64) {
     for dot in 0..3 {
         let clock = SystemClock(cycle * 3 + dot);
         cpu.update_nmi_line(false, clock, dot == 0);
@@ -5147,7 +5147,7 @@ fn repeated_jmp_to_self_stops_driving_the_bus() {
     // Two full executions of the loop, then many dots with no bus traffic.
     let mut t = 1u64;
     for _ in 0..6 {
-        spin_tick(&mut cpu, &mut plugin, t);
+        tick_full_cpu_cycle(&mut cpu, &mut plugin, t);
         t += 1;
     }
     let reads_after_two_loops = cpu.mcu().reads.len();
@@ -5157,7 +5157,7 @@ fn repeated_jmp_to_self_stops_driving_the_bus() {
     );
     cpu.mcu_mut().reads.clear();
     for _ in 0..20 {
-        spin_tick(&mut cpu, &mut plugin, t);
+        tick_full_cpu_cycle(&mut cpu, &mut plugin, t);
         t += 1;
     }
     assert!(
@@ -5185,12 +5185,12 @@ fn repeated_taken_branch_to_self_stops_driving_the_bus() {
     let mut t = 1u64;
     // Each BNE takes two CPU cycles: opcode fetch, then the branch offset read.
     for _ in 0..4 {
-        spin_tick(&mut cpu, &mut plugin, t);
+        tick_full_cpu_cycle(&mut cpu, &mut plugin, t);
         t += 1;
     }
     cpu.mcu_mut().reads.clear();
     for _ in 0..20 {
-        spin_tick(&mut cpu, &mut plugin, t);
+        tick_full_cpu_cycle(&mut cpu, &mut plugin, t);
         t += 1;
     }
     assert!(
@@ -5201,9 +5201,14 @@ fn repeated_taken_branch_to_self_stops_driving_the_bus() {
     assert_eq!(cpu.pc(), LOOP, "frozen branch must sit at its loop top");
 }
 
-fn spin_dot(cpu: &mut Harness<TestMcu>, plugin: &mut EmptyPlugin<TestMcu>, dot: u64, nmi: bool) {
+fn tick_single_dot(
+    cpu: &mut Harness<TestMcu>,
+    plugin: &mut EmptyPlugin<TestMcu>,
+    dot: u64,
+    nmi: bool,
+) {
     let clock = SystemClock(dot);
-    cpu.update_nmi_line(nmi, clock, dot % 3 == 0);
+    cpu.update_nmi_line(nmi, clock, dot.is_multiple_of(3));
     cpu.tick(plugin, clock);
 }
 
@@ -5227,7 +5232,7 @@ fn frozen_jmp_spin_wakes_on_nmi_and_resumes_at_loop_top() {
 
     let mut plugin = EmptyPlugin::new();
     for cycle in 1..=6 {
-        spin_tick(&mut cpu, &mut plugin, cycle);
+        tick_full_cpu_cycle(&mut cpu, &mut plugin, cycle);
     }
     let frozen = cpu.snapshot();
     cpu.mcu_mut().reads.clear();
@@ -5235,16 +5240,16 @@ fn frozen_jmp_spin_wakes_on_nmi_and_resumes_at_loop_top() {
     // An NMI sampled while frozen does not wake until the detector's two-dot
     // recognition delay has elapsed.
     let rise = 24u64; // first PPU dot of CPU cycle 8, sampled at 24
-    spin_dot(&mut cpu, &mut plugin, rise - 3, false);
-    spin_dot(&mut cpu, &mut plugin, rise - 2, false);
-    spin_dot(&mut cpu, &mut plugin, rise - 1, false);
-    spin_dot(&mut cpu, &mut plugin, rise, true);
-    spin_dot(&mut cpu, &mut plugin, rise + 1, true);
+    tick_single_dot(&mut cpu, &mut plugin, rise - 3, false);
+    tick_single_dot(&mut cpu, &mut plugin, rise - 2, false);
+    tick_single_dot(&mut cpu, &mut plugin, rise - 1, false);
+    tick_single_dot(&mut cpu, &mut plugin, rise, true);
+    tick_single_dot(&mut cpu, &mut plugin, rise + 1, true);
     assert!(
         cpu.mcu().reads.is_empty(),
         "NMI must not wake the spin before its two-dot recognition delay"
     );
-    spin_dot(&mut cpu, &mut plugin, rise + 2, true);
+    tick_single_dot(&mut cpu, &mut plugin, rise + 2, true);
     // The wake dot only clears the freeze source; dispatch begins on the
     // next dot with an internal dead read, then the vector low byte.
     let woken = cpu.snapshot();
@@ -5254,7 +5259,7 @@ fn frozen_jmp_spin_wakes_on_nmi_and_resumes_at_loop_top() {
         "wake itself performs no bus read"
     );
     for dot in rise + 3..=rise + 8 {
-        spin_dot(&mut cpu, &mut plugin, dot, true);
+        tick_single_dot(&mut cpu, &mut plugin, dot, true);
     }
     assert_eq!(
         &cpu.mcu().reads[..2],
@@ -5286,7 +5291,7 @@ fn frozen_branch_spin_wakes_on_irq_and_resumes_at_loop_top() {
 
     let mut plugin = EmptyPlugin::new();
     for cycle in 1..=6 {
-        spin_tick(&mut cpu, &mut plugin, cycle);
+        tick_full_cpu_cycle(&mut cpu, &mut plugin, cycle);
     }
     let frozen = cpu.snapshot();
     cpu.mcu_mut().reads.clear();
@@ -5294,11 +5299,11 @@ fn frozen_branch_spin_wakes_on_irq_and_resumes_at_loop_top() {
     // IRQ is level-sensitive: no recognition delay once the line is high.
     cpu.set_irq(true);
     let dot = 20u64;
-    spin_dot(&mut cpu, &mut plugin, dot, false);
+    tick_single_dot(&mut cpu, &mut plugin, dot, false);
     assert!(cpu.mcu().reads.is_empty());
     assert_eq!(cpu.snapshot(), frozen);
     for d in dot + 1..=dot + 7 {
-        spin_dot(&mut cpu, &mut plugin, d, false);
+        tick_single_dot(&mut cpu, &mut plugin, d, false);
     }
     assert_eq!(
         &cpu.mcu().reads[..2],
@@ -5324,10 +5329,10 @@ fn kil_after_spin_freeze_stays_halt_only_until_reset() {
     cpu.set_pc(LOOP);
     let mut plugin = EmptyPlugin::new();
     for cycle in 1..=6 {
-        spin_tick(&mut cpu, &mut plugin, cycle);
+        tick_full_cpu_cycle(&mut cpu, &mut plugin, cycle);
     }
     cpu.mcu_mut().reads.clear();
-    spin_tick(&mut cpu, &mut plugin, 10);
+    tick_full_cpu_cycle(&mut cpu, &mut plugin, 10);
     assert!(
         cpu.mcu().reads.is_empty(),
         "spin must stay frozen before reset"
@@ -5339,12 +5344,12 @@ fn kil_after_spin_freeze_stays_halt_only_until_reset() {
     cpu.set_pc(LOOP);
     cpu.mcu_mut().mem[LOOP as usize] = 0x02; // KIL
     for cycle in 1..3 {
-        spin_tick(&mut cpu, &mut plugin, cycle);
+        tick_full_cpu_cycle(&mut cpu, &mut plugin, cycle);
     }
     assert!(cpu.is_halted());
     for cycle in 3..8 {
         let dot = cycle * 3;
-        cpu.update_nmi_line(false, SystemClock(dot), dot % 3 == 0);
+        cpu.update_nmi_line(false, SystemClock(dot), dot.is_multiple_of(3));
         assert_eq!(
             cpu.tick(&mut plugin, SystemClock(dot)),
             ExecuteResult::Halt,

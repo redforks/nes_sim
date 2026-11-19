@@ -2,7 +2,7 @@
 //!
 //! Every assertion observes behavior at the CPU/MCU seam: PPU status
 //! through bus reads, `nmi_line`, NMI dispatch, and the PPU write toggle.
-//! No freeze flag is read.
+//! No freeze source is inspected.
 
 use super::*;
 
@@ -73,6 +73,14 @@ impl StatusMcu {
 impl Mcu for StatusMcu {
     fn status_register_has_vbl(&self) -> bool {
         self.status & 0x80 != 0
+    }
+
+    fn has_destructive_status_read(&self, address: u16) -> bool {
+        Self::is_status_addr(address)
+    }
+
+    fn is_device_register(&self, address: u16) -> bool {
+        (0x4015..=0x4017).contains(&address)
     }
 
     fn replay_status_read_side_effects(&mut self, address: u16) {
@@ -168,7 +176,7 @@ impl Harness {
         self.mcu_mut().tick_ppu();
         let nmi = self.mcu().nmi_line();
         self.cpu
-            .update_nmi_line(nmi, SystemClock(clock), clock % 3 == 0);
+            .update_nmi_line(nmi, SystemClock(clock), clock.is_multiple_of(3));
         self.bus.set_clock(SystemClock(clock));
         self.cpu.tick(&mut self.bus, plugin)
     }
@@ -229,14 +237,13 @@ fn frozen_status_poll_wakes_when_a_skipped_read_would_observe_vbl() {
     // the real read and exits the loop.
     let mut cpu = status_poll_program(0x2002, false);
     let mut plugin = EmptyPlugin::new();
-    let mut dot = run_to_frozen(&mut cpu, &mut plugin);
+    let dot = run_to_frozen(&mut cpu, &mut plugin);
     cpu.mcu_mut().status = 0x80;
     cpu.mcu_mut().ppu_reads.clear();
 
     let mut observed = false;
-    for _ in 0..30 {
+    for dot in dot..dot + 30 {
         cpu.dot(&mut plugin, dot, 100, 100);
-        dot += 1;
         if !cpu.mcu().ppu_reads.is_empty() {
             observed = true;
             break;
@@ -257,7 +264,7 @@ fn frozen_status_poll_wakes_when_a_skipped_read_would_observe_vbl() {
 fn frozen_status_poll_clears_vbl_without_new_bus_reads() {
     let mut cpu = status_poll_program(0x2002, false);
     let mut plugin = EmptyPlugin::new();
-    let mut dot = run_to_frozen(&mut cpu, &mut plugin);
+    let dot = run_to_frozen(&mut cpu, &mut plugin);
     // Set the write toggle without VBL: a frozen $2002 loop stays frozen
     // only while its awaited status bit is clear. Replays must clear the
     // toggle at loop cadence.
@@ -266,9 +273,8 @@ fn frozen_status_poll_clears_vbl_without_new_bus_reads() {
     cpu.mcu_mut().other_reads.clear();
     cpu.mcu_mut().replays = 0;
 
-    for _ in 0..25 {
+    for dot in dot..dot + 25 {
         cpu.dot(&mut plugin, dot, 100, 100);
-        dot += 1;
     }
     assert_eq!(
         cpu.mcu().ppu_reads.len(),
@@ -298,15 +304,14 @@ fn frozen_status_poll_clears_vbl_without_new_bus_reads() {
 fn frozen_mirrored_status_poll_replays_side_effects() {
     let mut cpu = status_poll_program(0x2FFA, false);
     let mut plugin = EmptyPlugin::new();
-    let mut dot = run_to_frozen(&mut cpu, &mut plugin);
+    let dot = run_to_frozen(&mut cpu, &mut plugin);
     cpu.mcu_mut().write_toggle = true;
     cpu.mcu_mut().ppu_reads.clear();
     cpu.mcu_mut().other_reads.clear();
     cpu.mcu_mut().replays = 0;
 
-    for _ in 0..25 {
+    for dot in dot..dot + 25 {
         cpu.dot(&mut plugin, dot, 100, 100);
-        dot += 1;
     }
     assert!(
         cpu.mcu().replays >= 2,
@@ -330,13 +335,12 @@ fn frozen_mirrored_status_poll_replays_side_effects() {
 fn frozen_ram_poll_does_not_replay_status_side_effects() {
     let mut cpu = status_poll_program(0x0010, false);
     let mut plugin = EmptyPlugin::new();
-    let mut dot = run_to_frozen(&mut cpu, &mut plugin);
+    let dot = run_to_frozen(&mut cpu, &mut plugin);
     cpu.mcu_mut().write_toggle = true;
     cpu.mcu_mut().replays = 0;
 
-    for _ in 0..25 {
+    for dot in dot..dot + 25 {
         cpu.dot(&mut plugin, dot, 100, 100);
-        dot += 1;
     }
     assert_eq!(cpu.mcu().replays, 0, "only $2002 polls replay side effects");
     assert!(
@@ -349,12 +353,11 @@ fn frozen_ram_poll_does_not_replay_status_side_effects() {
 fn frozen_status_poll_suppresses_vbl_on_race_dot() {
     let mut cpu = status_poll_program(0x2002, false);
     let mut plugin = EmptyPlugin::new();
-    let mut dot = run_to_frozen(&mut cpu, &mut plugin);
+    let dot = run_to_frozen(&mut cpu, &mut plugin);
     // Skipped reads on the race dot must arm the same suppression a real
     // read there would.
-    for _ in 0..20 {
+    for dot in dot..dot + 20 {
         cpu.dot(&mut plugin, dot, 241, 1);
-        dot += 1;
     }
     assert!(
         cpu.mcu().suppressed,
@@ -372,38 +375,41 @@ fn frozen_status_poll_suppresses_vbl_on_race_dot() {
 #[test]
 fn resumed_status_poll_drops_nmi_line_after_cleared_vbl() {
     let mut cpu = status_poll_program(0x2002, true);
+    // An NMI edge may wake the frozen poll before its next scheduled read
+    // dot. The handler returns, then the queued poll read observes VBL and
+    // clears it, dropping the line.
+    cpu.mcu_mut().mem[0x0600] = 0x40; // NMI handler: RTI
     let mut plugin = EmptyPlugin::new();
-    let mut dot = run_to_frozen(&mut cpu, &mut plugin);
+    let dot = run_to_frozen(&mut cpu, &mut plugin);
     cpu.mcu_mut().status = 0x80;
+    cpu.mcu_mut().ppu_reads.clear();
     assert!(cpu.mcu().nmi_line(), "VBL with NMI enabled drives /NMI low");
 
-    let mut saw_real_read = false;
-    for _ in 0..30 {
-        cpu.dot(&mut plugin, dot, 100, 100);
-        dot += 1;
-        if !cpu.mcu().ppu_reads.is_empty() {
-            saw_real_read = true;
-            break;
-        }
-    }
-    assert!(
-        saw_real_read,
-        "the status poll must resume when VBL appears"
-    );
-    // The poll resumes on the VBL edge, but the CPU keeps its frozen-state
-    // instruction pointer until the next cycle. Run that queued read.
+    let mut resumed_status_read = false;
     let mut line_dropped = false;
-    for _ in 0..12 {
+    for dot in dot..dot + 200 {
         cpu.dot(&mut plugin, dot, 100, 100);
-        dot += 1;
-        if !cpu.mcu().nmi_line() {
+        if !cpu.mcu().ppu_reads.is_empty() {
+            resumed_status_read = true;
+        }
+        if resumed_status_read && !cpu.mcu().nmi_line() {
             line_dropped = true;
             break;
         }
     }
     assert!(
+        resumed_status_read,
+        "the poll must eventually re-execute its read after the NMI wake: reads={:?}",
+        cpu.mcu().ppu_reads
+    );
+    assert_eq!(
+        cpu.mcu().status & 0x80,
+        0,
+        "the resumed read must clear VBL"
+    );
+    assert!(
         line_dropped,
-        "the resumed read must clear VBL and drop /NMI: status={:#x} reads={:?}",
+        "the resumed read must drop /NMI: status={:#x} reads={:?}",
         cpu.mcu().status,
         cpu.mcu().ppu_reads
     );

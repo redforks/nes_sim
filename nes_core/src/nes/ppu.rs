@@ -264,9 +264,15 @@ pub struct Ppu {
 }
 
 /// PPU registers are mirrored every 8 bytes in range $2000-$3FFF;
-/// this function normalized $2000, $2008, .. $3ff8 to $2000
-fn normalize_ppu_addr(addr: u16) -> u16 {
+/// this function normalizes $2000, $2008, .. $3FF8 to $2000.
+pub(crate) fn normalize_ppu_addr(addr: u16) -> u16 {
     addr & 0x2007
+}
+
+/// True for `$2002` and all its mirrors. Shared by the PPU register
+/// decoder and the MCU's spin-wait classification query.
+pub(crate) fn is_ppu_status_addr(addr: u16) -> bool {
+    normalize_ppu_addr(addr) == 0x2002
 }
 
 /// Wrap a PPU address into the 16 KiB bus space.
