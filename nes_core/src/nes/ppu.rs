@@ -1231,6 +1231,17 @@ impl Ppu {
         self.sprite.invalidate_rows();
     }
 
+    /// Apply the destructive side effects of a `$2002` status read.
+    ///
+    /// Used both by [`Self::read_ppureg`] and by a frozen CPU spin that
+    /// skipped the loop-top poll (ticket #135). It never drives the bus
+    /// or returns a value: the resumed poll read supplies those itself.
+    /// The suppression case mirrors a real read at hardware scanline 241
+    /// dot 0, which prevents VBL from ever setting that frame.
+    pub(crate) fn replay_status_side_effects(&mut self) {
+        self.read_status();
+    }
+
     /// Read status register (for testing) - behaves like reading from 0x2002
     /// Returns the current status and clears the v_blank flag
     fn read_status(&mut self) -> PpuStatus {

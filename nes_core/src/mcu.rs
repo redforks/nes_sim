@@ -44,6 +44,22 @@ pub trait Mcu {
     fn write_stack_page(&mut self, address: u8, value: u8, clock: SystemClock) {
         self.write(0x100 + address as u16, value, clock)
     }
+
+    /// Read-only observation of the VBL bit a skipped `$2002` read would
+    /// return. Default `false`: only the NES memory map has a PPU status
+    /// register. This is a flag query, not a bus read; the CPU uses it to
+    /// resume a $2002 wait loop at the dot where its next real read would
+    /// observe VBL (ticket #135).
+    fn status_register_has_vbl(&self) -> bool {
+        false
+    }
+
+    /// Replay the destructive side effects of a `$2002` read that a frozen
+    /// CPU spin skipped. The default is a no-op: only the NES memory map
+    /// has a PPU status register. Implementations must not drive the CPU
+    /// bus, return a value, or change any other device state. The CPU calls
+    /// this on its own at the spin's back-edge cadence (ticket #135).
+    fn replay_status_read_side_effects(&mut self, _address: u16) {}
 }
 
 #[cfg(test)]
