@@ -49,6 +49,11 @@ pub struct Apu {
     /// Mixed output samples for the current frame (`f32` mono, 44.1 kHz).
     /// Filled by `tick`, cleared at each `process_frame` start, served
     /// zero-copy via `audio_samples` / `audio_bytes`.
+    ///
+    /// Retired (intentional, ticket #144): the pre-owned-buffer `AudioDriver`
+    /// per-sample `push_sample`/`flush` callbacks into host drivers. Sinks
+    /// now borrow each frame's buffer instead; see the drain contract on
+    /// [`crate::NesMachine::process_frame`].
     audio_buffer: Vec<f32>,
     /// Latest expansion-audio levels, latched by `set_expansion_mix` ahead
     /// of `tick` so the mixer sees them without changing `tick`'s shape.
