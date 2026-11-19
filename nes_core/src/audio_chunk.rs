@@ -32,13 +32,12 @@ impl ChunkedAudioPush {
     /// Append `samples`, calling `emit` once per full chunk, in order.
     /// A trailing partial chunk stays staged.
     pub fn push(&mut self, samples: &[f32], mut emit: impl FnMut(&[f32])) {
-        for &sample in samples {
-            self.staging.push(sample);
-            if self.staging.len() >= AUDIO_CHUNK_SAMPLES {
-                emit(&self.staging);
-                self.staging.clear();
-            }
+        self.staging.extend_from_slice(samples);
+        let full = self.staging.len() / AUDIO_CHUNK_SAMPLES * AUDIO_CHUNK_SAMPLES;
+        for chunk in self.staging[..full].chunks_exact(AUDIO_CHUNK_SAMPLES) {
+            emit(chunk);
         }
+        self.staging.drain(..full);
     }
 
     /// Release the staged partial tail, if any. No-op when empty, so an
