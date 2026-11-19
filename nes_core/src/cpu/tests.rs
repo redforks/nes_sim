@@ -5122,7 +5122,7 @@ fn bus_cycle_invariants() {
 /// Advance one CPU cycle (three system dots). The machine publishes NMI
 /// samples on dot 0 of each CPU cycle; every spin test uses this helper so
 /// the interrupt detector sees the same phase it sees in production.
-fn tick_full_cpu_cycle(cpu: &mut Harness<TestMcu>, plugin: &mut EmptyPlugin<TestMcu>, cycle: u64) {
+fn tick_full_cpu_cycle<P: Plugin<TestMcu>>(cpu: &mut Harness<TestMcu>, plugin: &mut P, cycle: u64) {
     for dot in 0..3 {
         let clock = SystemClock(cycle * 3 + dot);
         cpu.update_nmi_line(false, clock, dot == 0);
@@ -5199,6 +5199,151 @@ fn repeated_taken_branch_to_self_stops_driving_the_bus() {
         cpu.mcu().reads
     );
     assert_eq!(cpu.pc(), LOOP, "frozen branch must sit at its loop top");
+}
+
+/// Minimal stand-in for the harness `MonitorTestStatus` reset handshake:
+/// `end` arms the timer when the sentinel reads `$81` and matures it once
+/// the end-observed clock has advanced past the wait; only then does
+/// `should_stop` request the reset. A frozen loop that stops reporting
+/// `end` hangs this handshake forever — the `cpu_reset` failure mode.
+struct ResetHandshakePlugin {
+    ends: u64,
+    last_clock: u64,
+    armed_at: Option<u64>,
+    reset_requested: bool,
+}
+
+impl ResetHandshakePlugin {
+    const SENTINEL: u16 = 0x0010;
+    const WAIT_DOTS: u64 = 30;
+
+    fn new() -> Self {
+        ResetHandshakePlugin {
+            ends: 0,
+            last_clock: 0,
+            armed_at: None,
+            reset_requested: false,
+        }
+    }
+}
+
+impl Plugin<TestMcu> for ResetHandshakePlugin {
+    fn start(&mut self, _view: &MachineView<TestMcu>) {}
+
+    fn end(&mut self, view: &MachineView<TestMcu>) {
+        self.ends += 1;
+        self.last_clock = view.clock().0;
+        if self.armed_at.is_none() && view.peek(Self::SENTINEL) == 0x81 {
+            self.armed_at = Some(self.last_clock);
+        }
+        if let Some(armed) = self.armed_at
+            && self.last_clock >= armed + Self::WAIT_DOTS
+        {
+            self.reset_requested = true;
+        }
+    }
+
+    fn should_stop(&self) -> ExecuteResult {
+        if self.reset_requested {
+            ExecuteResult::ShouldReset
+        } else {
+            ExecuteResult::Continue
+        }
+    }
+}
+
+/// Drive whole CPU cycles like `tick_full_cpu_cycle` but report the last
+/// tick's `ExecuteResult` so handshake tests can observe a reset request.
+fn tick_cycle_for_result(
+    cpu: &mut Harness<TestMcu>,
+    plugin: &mut ResetHandshakePlugin,
+    cycle: u64,
+) -> ExecuteResult {
+    let mut outcome = ExecuteResult::Continue;
+    for dot in 0..3 {
+        let clock = SystemClock(cycle * 3 + dot);
+        cpu.update_nmi_line(false, clock, dot == 0);
+        outcome = cpu.tick(plugin, clock);
+    }
+    outcome
+}
+
+#[test]
+fn frozen_wait_loop_still_delivers_the_harness_reset_handshake() {
+    const LOOP: u16 = 0x0400;
+    let mut mcu = TestMcu::default();
+    mcu.mem[LOOP as usize] = 0x4C; // JMP $0400: the `wait_reset` shape
+    mcu.mem[LOOP as usize + 1] = 0x00;
+    mcu.mem[LOOP as usize + 2] = 0x04;
+    // The reset request is already posted before the wait, as
+    // `prompt_to_reset` posts `$6000 = $81` before `jmp wait_reset`.
+    mcu.mem[ResetHandshakePlugin::SENTINEL as usize] = 0x81;
+    mcu.mem[0xFFFC] = LOOP as u8;
+    mcu.mem[0xFFFD] = (LOOP >> 8) as u8;
+    let mut cpu = create_cpu_with_mcu(mcu);
+    cpu.set_pc(LOOP);
+
+    let mut plugin = ResetHandshakePlugin::new();
+    let mut outcome = ExecuteResult::Continue;
+    for cycle in 1..=40 {
+        outcome = tick_cycle_for_result(&mut cpu, &mut plugin, cycle);
+        if outcome != ExecuteResult::Continue {
+            break;
+        }
+    }
+    assert_eq!(
+        outcome,
+        ExecuteResult::ShouldReset,
+        "a frozen wait loop must keep maturing the harness reset timer, ends seen: {}",
+        plugin.ends
+    );
+}
+
+#[test]
+fn frozen_bare_loop_samples_end_at_the_loop_cadence() {
+    const LOOP: u16 = 0x0400;
+    let mut mcu = TestMcu::default();
+    mcu.mem[LOOP as usize] = 0x4C; // JMP $0400
+    mcu.mem[LOOP as usize + 1] = 0x00;
+    mcu.mem[LOOP as usize + 2] = 0x04;
+    mcu.mem[0xFFFC] = LOOP as u8;
+    mcu.mem[0xFFFD] = (LOOP >> 8) as u8;
+    let mut cpu = create_cpu_with_mcu(mcu);
+    cpu.set_pc(LOOP);
+
+    // Freeze first with a silent plugin: two JMP executions, six ticks.
+    let mut silent = EmptyPlugin::new();
+    let mut t = 1u64;
+    for _ in 0..6 {
+        tick_full_cpu_cycle(&mut cpu, &mut silent, t);
+        t += 1;
+    }
+    cpu.mcu_mut().reads.clear();
+
+    // Thirty frozen iterations (ninety ticks) must report one boundary per
+    // three-tick iteration — the rate executing the loop would report — so
+    // instruction-counting harnesses cannot trip earlier than unfrozen.
+    let mut plugin = ResetHandshakePlugin::new();
+    for _ in 0..30 {
+        tick_full_cpu_cycle(&mut cpu, &mut plugin, t);
+        t += 1;
+    }
+    assert!(
+        (29..=31).contains(&plugin.ends),
+        "frozen JMP loop must sample end once per 3-tick iteration, saw {} ends",
+        plugin.ends
+    );
+    assert_eq!(
+        plugin.last_clock,
+        (t - 1) * 3 + 2,
+        "sampled ends must observe the advancing clock"
+    );
+    assert!(
+        cpu.mcu().reads.is_empty(),
+        "sampling end must drive no bus reads, saw {:?}",
+        cpu.mcu().reads
+    );
+    assert_eq!(cpu.pc(), LOOP, "frozen loop must sit at its loop top");
 }
 
 fn tick_single_dot(

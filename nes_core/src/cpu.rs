@@ -60,6 +60,15 @@ struct SpinState {
     loop_period: u8,
 }
 
+/// Bare self-loop watch: the opcode address of the arming jump and the
+/// master-clock dot it executed on. The gap between the arming dot and the
+/// declaring dot is the loop's iteration length in dots.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct SelfLoopWatch {
+    pc: u16,
+    edge_dot: u64,
+}
+
 /// Why [`Cpu::tick`] refuses to execute: a DMA freeze, a spin-wait freeze,
 /// a HLT halt, or a composition of these.
 ///
@@ -390,7 +399,9 @@ pub struct Cpu {
 
     /// Bare self-loop watch: an instruction that jumps back to its own first
     /// byte arms it; executing that same loop a second time declares a spin.
-    self_loop_candidate: Option<u16>,
+    /// The arming dot measures the iteration length so frozen dots can
+    /// sample plugin `end` at the loop's own cadence.
+    self_loop_candidate: Option<SelfLoopWatch>,
     /// Opcode address and byte of the currently decoding instruction. The
     /// back-edge hooks use these to restrict the watch to real JMP/branch
     /// self-loops rather than any repeated PC pattern.
@@ -638,6 +649,40 @@ impl Cpu {
         bus.mcu_mut().replay_status_read_side_effects(addr);
     }
 
+    /// Sample plugin `end` once per frozen loop iteration so harness timers
+    /// and verdicts that mature in `end` (the MonitorTestStatus reset
+    /// handshake, console verdict scans) keep advancing while the loop is
+    /// frozen. The cadence is the loop's own measured iteration length, so a
+    /// frozen loop never reports boundaries faster than executing it would;
+    /// instruction-counting harnesses cannot trip earlier than unfrozen.
+    /// Skipped while DMA is in flight (production reports no boundaries for
+    /// DMA-stolen cycles) and once a wake above has released the spin. CPU
+    /// and device state are untouched; `end` observes through `peek`.
+    fn sample_spin_iteration_end<P: Plugin<M>, M: Mcu>(
+        &mut self,
+        spin: SpinState,
+        bus: &mut Bus<M>,
+        plugin: &mut P,
+    ) {
+        if self.frozen_reason.is_some_and(|r| r.spin.is_none()) {
+            return;
+        }
+        if self.frozen_reason.is_some_and(|r| r.dma) {
+            return;
+        }
+        let elapsed = bus.clock().0.saturating_sub(spin.read_phase);
+        if elapsed < u64::from(spin.loop_period) {
+            return;
+        }
+        let view = MachineView::new(self.snapshot(), bus.mcu(), bus.clock());
+        plugin.end(&view);
+        if let Some(reason) = self.frozen_reason.as_mut()
+            && let Some(stored) = reason.spin.as_mut()
+        {
+            stored.read_phase = bus.clock().0;
+        }
+    }
+
     /// Leave a spin at its loop top. Clears only the spin source; a
     /// concurrent DMA freeze or a halt remains in force.
     fn resume_spin(&mut self) {
@@ -740,14 +785,11 @@ impl Cpu {
         let back_edges = previous.map_or(0, |candidate| candidate.back_edges);
         let (last_read_dot, read_period) = previous.map_or((dot.0, 0), |candidate| {
             let gap = dot.0.saturating_sub(candidate.last_read_dot);
-            (
-                dot.0,
-                if (1..=u8::MAX as u64).contains(&gap) {
-                    gap as u8
-                } else {
-                    candidate.read_period
-                },
-            )
+            // Reads on consecutive ticks are dots apart, so the gap is
+            // always nonzero in practice; saturate a huge gap instead of
+            // keeping a stale period, so the frozen end cadence below stays
+            // well-defined.
+            (dot.0, gap.clamp(1, u64::from(u8::MAX)) as u8)
         });
         self.poll_candidate = Some(PollCandidate {
             pc,
@@ -1102,6 +1144,7 @@ impl Cpu {
                     self.replay_status_side_effects(spin, bus);
                     self.watch_pending_cpu_write();
                     self.wake_spin(bus);
+                    self.sample_spin_iteration_end(spin, bus, plugin);
                 }
                 // A frozen loop executes no instruction, but the harness
                 // still needs its stop/verdict checks sampled (user story
@@ -1544,20 +1587,33 @@ impl Cpu {
     /// Watch the final cycle of a bare self-jump: when the computed target
     /// equals the instruction's own opcode address, arm on first execution
     /// and declare a spin on its repeat. An unrelated jump clears the watch.
-    fn note_bare_self_jump(&mut self, target: u16, opcode_pc: u16) {
+    fn note_bare_self_jump(&mut self, target: u16, opcode_pc: u16, dot: u64) {
         if is_bare_self_jump_opcode(self.instruction_opcode) && target == opcode_pc {
-            if self.self_loop_candidate == Some(opcode_pc) {
+            if let Some(watch) = self.self_loop_candidate
+                && watch.pc == opcode_pc
+            {
+                // Two back-to-back executions are ticks apart, so the gap is
+                // always nonzero in practice; saturate a huge gap instead of
+                // keeping a stale zero period. A vetoed declaration keeps the
+                // old watch, so the next attempt measures a double-length
+                // gap and errs toward slower end sampling — the safe side.
+                let period = dot
+                    .saturating_sub(watch.edge_dot)
+                    .clamp(1, u64::from(u8::MAX)) as u8;
                 if self.try_freeze_spin(SpinState {
                     polled: None,
                     loop_top: opcode_pc,
                     status_side_effects: false,
-                    read_phase: 0,
-                    loop_period: 0,
+                    read_phase: dot,
+                    loop_period: period,
                 }) {
                     self.self_loop_candidate = None;
                 }
             } else {
-                self.self_loop_candidate = Some(opcode_pc);
+                self.self_loop_candidate = Some(SelfLoopWatch {
+                    pc: opcode_pc,
+                    edge_dot: dot,
+                });
             }
         } else {
             self.self_loop_candidate = None;
