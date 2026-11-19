@@ -623,16 +623,16 @@ impl Cpu {
         // Replay at the dots where the skipped reads would have landed:
         // one period after the last real read, then every period. The
         // phase is pinned by observation, not by global clock alignment.
-        let elapsed = bus.clock().0.saturating_sub(spin.read_phase);
-        if elapsed == 0 || !elapsed.is_multiple_of(u64::from(period.get())) {
-            return;
-        }
-        // VBL is the value this loop waits for. On a scheduled read dot a
-        // real poll would observe it and leave the loop, so hand control
-        // back rather than clearing it here. An interrupt edge wins: it
-        // owns the resume and consumes its own latch. The peek is free.
+        // VBL is the value this loop waits for. While it is set, a real
+        // poll read would observe it and leave the loop, so hand control
+        // back to the CPU immediately and let the queued read run rather
+        // than clearing it here. The peek is side-effect free.
         if bus.mcu().status_register_has_vbl() {
             self.resume_spin();
+            return;
+        }
+        let elapsed = bus.clock().0.saturating_sub(spin.read_phase);
+        if elapsed == 0 || !elapsed.is_multiple_of(u64::from(period.get())) {
             return;
         }
         bus.mcu_mut().replay_status_read_side_effects(addr);

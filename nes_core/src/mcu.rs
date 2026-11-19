@@ -48,9 +48,9 @@ pub trait Mcu {
     /// Read-only observation of the VBL bit a skipped `$2002` read would
     /// return. Default `false`: only the NES memory map has a PPU status
     /// register. This is a flag query, not a bus read; the CPU uses it to
-    /// resume a $2002 wait loop at the dot where its next real read would
-    /// observe VBL (ticket #135). The cadence check lives in the CPU, so
-    /// the resume happens only on a scheduled poll read.
+    /// resume a $2002 wait loop as soon as its next real read would observe
+    /// VBL (ticket #135). The replay cadence is applied to side effects
+    /// after this check; the peek itself never clears the flag.
     fn status_register_has_vbl(&self) -> bool {
         false
     }
