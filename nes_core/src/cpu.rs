@@ -667,8 +667,7 @@ impl Cpu {
             .irq_detector
             .detect_irq(self.flag(Flag::InterruptDisabled));
         self.nmi_detecteor.detect_nmi();
-        let nmi_ready = self.nmi_detecteor.pending_asserted_since != 0
-            && (clock.0 - self.nmi_detecteor.pending_asserted_since) > 1;
+        let nmi_ready = self.nmi_ready(clock);
         if !nmi_ready && !irq_pending {
             return;
         }
@@ -1166,9 +1165,16 @@ impl Cpu {
         }
     }
 
-    fn do_detect_interrupt(&mut self, clock: SystemClock, irq_pending: bool) {
+    /// Shared readiness test for a latched /NMI edge. Both the normal
+    /// instruction-end poll and the frozen-spin wake use the same lagged
+    /// sample rule (ADR-0006).
+    fn nmi_ready(&self, clock: SystemClock) -> bool {
         let pending_since = self.nmi_detecteor.pending_asserted_since;
-        if pending_since != 0 && (clock.0 - pending_since) > 1 {
+        pending_since != 0 && (clock.0 - pending_since) > 1
+    }
+
+    fn do_detect_interrupt(&mut self, clock: SystemClock, irq_pending: bool) {
+        if self.nmi_ready(clock) {
             self.nmi_detecteor.mark_consumed();
             self.interrupt_detected = InterruptType::Nmi;
         } else if irq_pending {

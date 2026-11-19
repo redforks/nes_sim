@@ -403,7 +403,7 @@ mod tests {
     /// loop top and the unfrozen loop keeps executing, so they differ by
     /// construction. A, X, S, status, halt, interrupt lines and frame bytes
     /// are included and must match at each frame boundary.
-    fn wait_trace(machine: &mut NesMachine<EmptyPlugin<NesMcu>>) -> (u64, Vec<bool>) {
+    fn wait_vbl_dot_signature(machine: &mut NesMachine<EmptyPlugin<NesMcu>>) -> (u64, Vec<bool>) {
         let mut hasher = DefaultHasher::new();
         let mut spins = Vec::new();
         for _ in 0..3 {
@@ -440,8 +440,8 @@ mod tests {
         frozen.set_pc(0x8000);
         unfrozen.set_pc(0x8000);
 
-        let (frozen_hash, frozen_spins) = wait_trace(&mut frozen);
-        let (unfrozen_hash, unfrozen_spins) = wait_trace(&mut unfrozen);
+        let (frozen_hash, frozen_spins) = wait_vbl_dot_signature(&mut frozen);
+        let (unfrozen_hash, unfrozen_spins) = wait_vbl_dot_signature(&mut unfrozen);
         assert!(
             frozen_spins.iter().any(|&s| s),
             "the frozen run must actually declare a spin"
@@ -469,8 +469,8 @@ mod tests {
         frozen.mcu_mut().write(0x0010, 1, SystemClock::default());
         unfrozen.mcu_mut().write(0x0010, 1, SystemClock::default());
 
-        let (frozen_hash, frozen_spins) = wait_trace(&mut frozen);
-        let (unfrozen_hash, unfrozen_spins) = wait_trace(&mut unfrozen);
+        let (frozen_hash, frozen_spins) = wait_vbl_dot_signature(&mut frozen);
+        let (unfrozen_hash, unfrozen_spins) = wait_vbl_dot_signature(&mut unfrozen);
         assert!(
             frozen_spins.iter().any(|&s| s),
             "the frozen run must declare the RAM poll spin"
