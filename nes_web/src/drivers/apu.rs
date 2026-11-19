@@ -1,7 +1,6 @@
 use js_sys::Float32Array;
+use nes_core::audio_chunk::ChunkedAudioPush;
 use wasm_bindgen::prelude::*;
-
-const CHUNK_SIZE: usize = 256;
 
 #[wasm_bindgen(inline_js = r#"
 const PROCESSOR_NAME = "nes-audio-processor";
@@ -183,7 +182,7 @@ extern "C" {
 
 pub struct WebAudioDriver {
     handle: AudioWorkletDriverHandle,
-    buffer: Vec<f32>,
+    chunker: ChunkedAudioPush,
     sample_rate: u32,
 }
 
@@ -193,34 +192,52 @@ impl WebAudioDriver {
         let sample_rate = handle.sample_rate().round().max(1.0) as u32;
         Ok(Self {
             handle,
-            buffer: Vec::with_capacity(CHUNK_SIZE),
+            chunker: ChunkedAudioPush::new(),
             sample_rate,
         })
-    }
-
-    fn send_buffer(&mut self) {
-        if self.buffer.is_empty() {
-            return;
-        }
-
-        let chunk = Float32Array::from(self.buffer.as_slice());
-        self.handle.push_chunk(&chunk);
-        self.buffer.clear();
     }
 }
 
 impl WebAudioDriver {
+    /// Push through the shared chunker: browser audio matches the desktop
+    /// cadence (`AUDIO_CHUNK_SAMPLES`), one worklet post per chunk.
     pub fn push_samples(&mut self, samples: &[f32]) {
-        for &sample in samples {
-            self.buffer.push(sample);
-            if self.buffer.len() >= CHUNK_SIZE {
-                self.send_buffer();
-            }
-        }
+        let Self {
+            chunker, handle, ..
+        } = self;
+        chunker.push(samples, |chunk| {
+            handle.push_chunk(&Float32Array::from(chunk));
+        });
     }
 
     pub fn flush_frame(&mut self) {
-        self.send_buffer();
-        self.handle.flush();
+        let Self {
+            chunker, handle, ..
+        } = self;
+        chunker.flush(|chunk| {
+            handle.push_chunk(&Float32Array::from(chunk));
+        });
+        handle.flush();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use nes_core::audio_chunk::AUDIO_CHUNK_SAMPLES;
+
+    /// Parity pin: the web sink chunks at the desktop cadence through the
+    /// shared routine. One frame-sized push emits one chunk (the old
+    /// 256-sample cadence would have emitted four).
+    #[test]
+    fn web_chunks_at_the_shared_desktop_cadence() {
+        assert_eq!(AUDIO_CHUNK_SAMPLES, 1024);
+        let frame: Vec<f32> = (0..AUDIO_CHUNK_SAMPLES).map(|i| i as f32).collect();
+        let mut chunker = ChunkedAudioPush::new();
+        let mut emitted = Vec::new();
+        chunker.push(&frame, |chunk| emitted.push(chunk.to_vec()));
+        chunker.flush(|chunk| emitted.push(chunk.to_vec()));
+        assert_eq!(emitted.len(), 1);
+        assert_eq!(emitted[0], frame);
     }
 }

@@ -425,12 +425,13 @@ pub(crate) fn load_overlay_icons() -> Vec<OverlayIcon> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::sdl::presentation::blank_frame;
 
     /// Interactive shape: no canvas, no recording sender. `finish` must
     /// present nothing and send nothing without panicking.
     #[test]
     fn inactive_render_finish_is_a_noop() {
-        let frame = vec![0u8; NES_WIDTH * NES_HEIGHT * 4];
+        let frame = blank_frame();
         let mut render = NesRender::new(None, None, 0);
         render.present_frame_bytes(&frame);
     }
@@ -441,7 +442,7 @@ mod tests {
     fn active_sender_receives_the_plain_upscale() {
         let (tx, rx) = mpsc::channel();
         let mut render = NesRender::new(None, Some(tx), 0);
-        let mut frame = vec![0u8; NES_WIDTH * NES_HEIGHT * 4];
+        let mut frame = blank_frame();
         frame[0..4].copy_from_slice(&[10, 20, 30, 255]);
         render.present_frame_bytes(&frame);
         let sent = rx.try_recv().expect("active sender must receive one frame");
@@ -457,7 +458,7 @@ mod tests {
     fn trim_frames_skip_the_first_frames() {
         let (tx, rx) = mpsc::channel();
         let mut render = NesRender::new(None, Some(tx), 2);
-        let frame = vec![0u8; NES_WIDTH * NES_HEIGHT * 4];
+        let frame = blank_frame();
         render.present_frame_bytes(&frame);
         render.present_frame_bytes(&frame);
         assert!(rx.try_recv().is_err(), "trimmed frames must not send");
