@@ -11,6 +11,13 @@ pub(crate) mod microcode;
 mod reg16;
 
 use self::reg16::Register16;
+
+const JMP_ABSOLUTE: u8 = 0x4C;
+const BRANCH_OPCODES: [u8; 8] = [0x10, 0x30, 0x50, 0x70, 0x90, 0xB0, 0xD0, 0xF0];
+
+fn is_bare_self_jump_opcode(opcode: u8) -> bool {
+    opcode == JMP_ABSOLUTE || BRANCH_OPCODES.contains(&opcode)
+}
 /// Snapshot of CPU registers — the read-model exposed to plugins/tools.
 /// Replaces direct `cpu.a/x/y/sp/status/pc` field access (ADR-0010).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -31,26 +38,43 @@ pub(crate) enum Register {
     Y,
 }
 
-/// Why [`Cpu::tick`] refuses to execute: a DMA freeze, a HLT halt, or both.
+/// The shape of a declared spin: an optional polled address (`None` for a
+/// bare JMP/branch-to-self) and the loop-top PC to resume from. Kept as its
+/// own type so later tickets can extend the wake rule without changing the
+/// single `Option<FrozenReason>` hot-path check.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct SpinState {
+    polled: Option<u16>,
+    loop_top: u16,
+}
+
+/// Why [`Cpu::tick`] refuses to execute: a DMA freeze, a spin-wait freeze,
+/// a HLT halt, or a composition of these.
 ///
 /// Held on [`Cpu`] as `Option<FrozenReason>` so the hot path pays a single
-/// `None` check instead of testing two independent bools; `None` is the
-/// normal, executing state. A freeze wins over a halt (the frozen dot
-/// returns to the halt check once the DMA read cycle completes).
+/// `None` check; `None` is the normal, executing state. The two freeze
+/// sources are independent: DMC DMA releases only `dma`, and an interrupt
+/// wake releases only `spin`. A freeze wins over a halt, so a frozen dot
+/// executes no microcode and the halt check resumes when every freeze source
+/// clears.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct FrozenReason {
-    frozen: bool,
+    dma: bool,
+    spin: Option<SpinState>,
     halt: bool,
 }
 
 impl FrozenReason {
-    /// `None` when neither flag is set — the normal, executing state.
-    const fn new(frozen: bool, halt: bool) -> Option<FrozenReason> {
-        if frozen | halt {
-            Some(FrozenReason { frozen, halt })
+    fn new(dma: bool, spin: Option<SpinState>, halt: bool) -> Option<Self> {
+        if dma || spin.is_some() || halt {
+            Some(Self { dma, spin, halt })
         } else {
             None
         }
+    }
+
+    fn frozen(&self) -> bool {
+        self.dma || self.spin.is_some()
     }
 }
 
@@ -330,6 +354,17 @@ pub struct Cpu {
     /// `None` = normal; `Some` = frozen and/or halted (see [`FrozenReason`]).
     frozen_reason: Option<FrozenReason>,
 
+    /// Bare self-loop watch: an instruction that jumps back to its own first
+    /// byte arms it; executing that same loop a second time declares a spin.
+    /// `None` when no candidate is armed. Later tickets generalize this to
+    /// poll addresses and write disqualification.
+    self_loop_candidate: Option<u16>,
+    /// Opcode address and byte of the currently decoding instruction. The
+    /// back-edge hooks use these to restrict the watch to real JMP/branch
+    /// self-loops rather than any repeated PC pattern.
+    instruction_pc: u16,
+    instruction_opcode: u8,
+
     microcode_queue: ArrayDeque<Microcode, 8>,
 }
 
@@ -352,6 +387,9 @@ impl Cpu {
             alu: 0,
             microcode_queue: ArrayDeque::new(),
             frozen_reason: None,
+            self_loop_candidate: None,
+            instruction_pc: 0,
+            instruction_opcode: 0,
         };
         r.reset();
         r
@@ -465,7 +503,7 @@ impl Cpu {
     pub(crate) fn try_freeze(&mut self) -> bool {
         debug_assert!(!self.is_frozen());
         if self.can_pause() {
-            self.set_frozen(true);
+            self.set_dma_frozen(true);
             true
         } else {
             false
@@ -473,27 +511,73 @@ impl Cpu {
     }
 
     /// Unfreeze counterpart of [`Cpu::try_freeze`], called when the DMA
-    /// read cycle completes.
+    /// read cycle completes. Releases only the DMA source: a spin freeze and
+    /// the halt bit survive, so DMA can never silently wake a spin.
     pub(crate) fn unfreeze(&mut self) {
         debug_assert!(self.is_frozen());
-        self.set_frozen(false);
+        self.set_dma_frozen(false);
     }
 
-    /// True while a DMA freeze holds [`Cpu::tick`] back (halt alone does not count).
+    /// True while any freeze source holds [`Cpu::tick`] back (halt alone does not count).
     pub(crate) fn is_frozen(&self) -> bool {
-        self.frozen_reason.is_some_and(|r| r.frozen)
+        self.frozen_reason.is_some_and(|r| r.frozen())
     }
 
-    /// Flip the freeze bit, preserving the halt bit.
-    fn set_frozen(&mut self, frozen: bool) {
+    fn set_dma_frozen(&mut self, dma: bool) {
         let halt = self.frozen_reason.is_some_and(|r| r.halt);
-        self.frozen_reason = FrozenReason::new(frozen, halt);
+        let spin = self.frozen_reason.and_then(|r| r.spin);
+        self.frozen_reason = FrozenReason::new(dma, spin, halt);
     }
 
-    /// Flip the halt bit, preserving the freeze bit.
+    /// Declare a spin freeze. A pending write disqualifies declaration, the
+    /// same gate that protects DMA halts: never swallow a write.
+    fn try_freeze_spin(&mut self, spin: SpinState) -> bool {
+        if self.can_pause() {
+            let dma = self.frozen_reason.is_some_and(|r| r.dma);
+            let halt = self.frozen_reason.is_some_and(|r| r.halt);
+            self.frozen_reason = FrozenReason::new(dma, Some(spin), halt);
+            true
+        } else {
+            false
+        }
+    }
+
+    /// Wake a spin on a dispatchable interrupt. Clears only the spin source;
+    /// a concurrent DMA freeze or a halt remains in force.
+    fn wake_spin(&mut self, clock: SystemClock) {
+        let Some(reason) = self.frozen_reason else {
+            return;
+        };
+        let Some(spin) = reason.spin else {
+            return;
+        };
+        let irq_pending = self
+            .irq_detector
+            .detect_irq(self.flag(Flag::InterruptDisabled));
+        self.nmi_detecteor.detect_nmi();
+        let nmi_ready = self.nmi_detecteor.pending_asserted_since != 0
+            && (clock.0 - self.nmi_detecteor.pending_asserted_since) > 1;
+        if !nmi_ready && !irq_pending {
+            return;
+        }
+        // Consume the edge now so the normal poll after resume does not fire
+        // the same assertion a second time. The dispatch happens next dot.
+        if nmi_ready {
+            self.nmi_detecteor.mark_consumed();
+            self.interrupt_detected = InterruptType::Nmi;
+        } else {
+            self.interrupt_detected = InterruptType::Irq;
+        }
+        self.frozen_reason = FrozenReason::new(reason.dma, None, reason.halt);
+        self.pc.set(spin.loop_top);
+        self.self_loop_candidate = None;
+    }
+
+    /// Flip the halt bit, preserving both freeze sources.
     fn set_halted(&mut self, halt: bool) {
-        let frozen = self.frozen_reason.is_some_and(|r| r.frozen);
-        self.frozen_reason = FrozenReason::new(frozen, halt);
+        let dma = self.frozen_reason.is_some_and(|r| r.dma);
+        let spin = self.frozen_reason.and_then(|r| r.spin);
+        self.frozen_reason = FrozenReason::new(dma, spin, halt);
     }
 
     /// Test-only staging for DMA-seam unit tests (`dmc_dma/tests.rs`):
@@ -502,7 +586,10 @@ impl Cpu {
     /// freeze outcome, is exact.
     #[cfg(test)]
     pub(crate) fn stage_pending_cycle_for_test(&mut self, mc: Microcode, latch: Option<u16>) {
-        self.set_frozen(false);
+        self.set_dma_frozen(false);
+        self.frozen_reason = self
+            .frozen_reason
+            .and_then(|r| FrozenReason::new(false, r.spin, r.halt));
         self.microcode_queue.clear();
         self.push_microcode(mc);
         if let Some(addr) = latch {
@@ -758,6 +845,7 @@ impl Cpu {
 
     /// Return true if just execute current instruction
     #[hotpath::measure(impl_type = "Cpu")]
+    #[cfg_attr(test, allow(dead_code))]
     pub fn tick<P: Plugin<M>, M: Mcu>(
         &mut self,
         bus: &mut Bus<M>,
@@ -770,11 +858,18 @@ impl Cpu {
         );
         // One check instead of two: `None` (normal) is the common case.
         if let Some(reason) = self.frozen_reason {
-            return if reason.frozen {
-                ExecuteResult::Continue
+            if reason.frozen() {
+                // The machine publishes the interrupt lines every dot, so a
+                // frozen CPU reads already-maintained detector state. Sample
+                // /NMI edges here because the normal post-exec poll is
+                // skipped while frozen.
+                if reason.spin.is_some() {
+                    self.wake_spin(bus.clock());
+                }
+                return ExecuteResult::Continue;
             } else {
-                ExecuteResult::Halt
-            };
+                return ExecuteResult::Halt;
+            }
         }
 
         if let Some(active) = self.active_interrupt_window.as_mut()
@@ -1186,8 +1281,51 @@ impl Cpu {
         self.ab.set(self.abl().wrapping_add(index) as u16);
     }
 
+    fn note_instruction_opcode(&mut self, pc: u16, opcode: u8) {
+        self.instruction_pc = pc;
+        self.instruction_opcode = opcode;
+        // A fresh instruction that is not a bare self-jump cancels any
+        // pending self-loop candidate.
+        if !is_bare_self_jump_opcode(opcode) {
+            self.self_loop_candidate = None;
+        }
+    }
+
+    /// Watch the final cycle of a bare self-jump: when the computed target
+    /// equals the instruction's own opcode address, arm on first execution
+    /// and declare a spin on its repeat. An unrelated jump clears the watch.
+    fn note_bare_self_jump(&mut self, target: u16, opcode_pc: u16) {
+        if is_bare_self_jump_opcode(self.instruction_opcode) && target == opcode_pc {
+            if self.self_loop_candidate == Some(opcode_pc) {
+                if self.try_freeze_spin(SpinState {
+                    polled: None,
+                    loop_top: opcode_pc,
+                }) {
+                    self.self_loop_candidate = None;
+                }
+            } else {
+                self.self_loop_candidate = Some(opcode_pc);
+            }
+        } else {
+            self.self_loop_candidate = None;
+        }
+    }
+
+    fn instruction_pc(&self) -> u16 {
+        self.instruction_pc
+    }
+
+    /// Branch target watch: only a taken branch whose computed destination
+    /// equals its own opcode PC qualifies. A non-self branch clears the
+    /// candidate, so countdown loops cannot be mistaken for spins.
+    fn note_bare_self_jump_if_target(&mut self, target: u16, opcode_pc: u16) {
+        self.note_bare_self_jump(target, opcode_pc);
+    }
+
+    /// JMP indirect's final cycle: indirect jumps are not bare self-loops.
     fn set_pc_to_ab(&mut self) {
         self.pc.set(self.ab.get());
+        self.self_loop_candidate = None;
     }
 
     fn and<S: ValueSourceTrait, M: Mcu>(&mut self, bus: &mut Bus<M>) {
