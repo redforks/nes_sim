@@ -9,6 +9,8 @@ use microcode::{
 
 pub(crate) mod microcode;
 mod reg16;
+#[cfg(test)]
+mod spin_tests;
 
 use self::reg16::Register16;
 
@@ -57,6 +59,16 @@ struct SpinState {
 /// wake releases only `spin`. A freeze wins over a halt, so a frozen dot
 /// executes no microcode and the halt check resumes when every freeze source
 /// clears.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct PollCandidate {
+    /// PC of the loop-top read instruction (its opcode byte).
+    pc: u16,
+    /// Address the loop-top instruction reads.
+    addr: u16,
+    /// Number of back-edges seen returning to this read.
+    back_edges: u8,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct FrozenReason {
     dma: bool,
@@ -292,13 +304,19 @@ impl ValueSourceTrait for Alu {
 
 impl ValueSourceTrait for ZeroPage {
     fn value<M: Mcu>(cpu: &mut Cpu, bus: &mut Bus<M>) -> u8 {
-        bus.mcu_mut().read_zero_page(cpu.ab.low())
+        let addr = cpu.ab.low() as u16;
+        let value = bus.mcu_mut().read_zero_page(cpu.ab.low());
+        cpu.note_poll_read(addr);
+        value
     }
 }
 
 impl ValueSourceTrait for Mem {
     fn value<M: Mcu>(cpu: &mut Cpu, bus: &mut Bus<M>) -> u8 {
-        bus.mcu_mut().read(cpu.ab.get())
+        let addr = cpu.ab.get();
+        let value = bus.mcu_mut().read(addr);
+        cpu.note_poll_read(addr);
+        value
     }
 }
 
@@ -308,6 +326,7 @@ trait ValueTargetTrait {
 
 impl ValueTargetTrait for ZeroPage {
     fn write<M: Mcu>(cpu: &mut Cpu, bus: &mut Bus<M>, value: u8) {
+        cpu.watch_cpu_write(cpu.ab.low() as u16);
         let clock = bus.clock();
         bus.mcu_mut().write_zero_page(cpu.ab.low(), value, clock);
     }
@@ -356,14 +375,18 @@ pub struct Cpu {
 
     /// Bare self-loop watch: an instruction that jumps back to its own first
     /// byte arms it; executing that same loop a second time declares a spin.
-    /// `None` when no candidate is armed. Later tickets generalize this to
-    /// poll addresses and write disqualification.
     self_loop_candidate: Option<u16>,
     /// Opcode address and byte of the currently decoding instruction. The
     /// back-edge hooks use these to restrict the watch to real JMP/branch
     /// self-loops rather than any repeated PC pattern.
     instruction_pc: u16,
     instruction_opcode: u8,
+    /// Polled-address loop watch (ticket #134). Data reads of the same
+    /// address at the same PC count iterations; a taken branch back to that
+    /// read is a back-edge. The second back-edge, after three reads at the
+    /// same address, declares the spin. Any CPU write in the window
+    /// disqualifies the candidate.
+    poll_candidate: Option<PollCandidate>,
 
     microcode_queue: ArrayDeque<Microcode, 8>,
 }
@@ -390,6 +413,7 @@ impl Cpu {
             self_loop_candidate: None,
             instruction_pc: 0,
             instruction_opcode: 0,
+            poll_candidate: None,
         };
         r.reset();
         r
@@ -571,6 +595,79 @@ impl Cpu {
         self.frozen_reason = FrozenReason::new(reason.dma, None, reason.halt);
         self.pc.set(spin.loop_top);
         self.self_loop_candidate = None;
+        self.poll_candidate = None;
+    }
+
+    /// Wake a spin on a CPU write to its exact polled address. Called from
+    /// the CPU write funnel, so DMA/APU writes cannot wake a spin. The
+    /// queued poll-read microcode is preserved and re-executes at loop top.
+    fn watch_cpu_write(&mut self, addr: u16) {
+        // Any CPU write in the candidate window disqualifies the loop. The
+        // polled address is matched exactly for wake; no other address is
+        // allowed to release the freeze.
+        self.poll_candidate = None;
+        if let Some(reason) = self.frozen_reason
+            && let Some(spin) = reason.spin
+            && spin.polled == Some(addr)
+        {
+            // A DMA halt keeps precedence: wake is deferred until the DMA
+            // read completes and releases only its own freeze source.
+            let poll_candidate = PollCandidate {
+                pc: spin.loop_top,
+                addr,
+                back_edges: 1,
+            };
+            let dma = reason.dma;
+            let halt = reason.halt;
+            self.frozen_reason = FrozenReason::new(dma, None, halt);
+            self.pc.set(spin.loop_top);
+            self.poll_candidate = (!dma).then_some(poll_candidate);
+        }
+    }
+
+    /// Record a data read at `addr` performed by the instruction whose
+    /// opcode is at `self.instruction_pc`. Only a read at that instruction's
+    /// operand address can start (or repeat) a poll candidate; PC/stack and
+    /// DMA-halt reads are excluded by the call sites.
+    fn note_poll_read(&mut self, addr: u16) {
+        let pc = self.instruction_pc;
+        let back_edges = self
+            .poll_candidate
+            .filter(|candidate| candidate.pc == pc && candidate.addr == addr)
+            .map_or(0, |candidate| candidate.back_edges);
+        self.poll_candidate = Some(PollCandidate {
+            pc,
+            addr,
+            back_edges,
+        });
+    }
+
+    /// A taken conditional branch back to the loop top: arm the first
+    /// back-edge, declare the spin on the second. Only the poll read's
+    /// address counts, and any intervening write has already disqualified
+    /// the candidate by clearing it. A taken branch to any other address
+    /// also clears the candidate.
+    fn note_poll_back_edge(&mut self, target: u16) {
+        let Some(candidate) = self.poll_candidate else {
+            return;
+        };
+        if target != candidate.pc {
+            self.poll_candidate = None;
+            return;
+        }
+        if candidate.back_edges >= 1 {
+            if self.try_freeze_spin(SpinState {
+                polled: Some(candidate.addr),
+                loop_top: candidate.pc,
+            }) {
+                self.poll_candidate = None;
+            }
+        } else {
+            self.poll_candidate = Some(PollCandidate {
+                back_edges: candidate.back_edges + 1,
+                ..candidate
+            });
+        }
     }
 
     /// Flip the halt bit, preserving both freeze sources.
@@ -818,6 +915,8 @@ impl Cpu {
         self.nmi_detecteor = Default::default();
         self.irq_detector = Default::default();
         self.request_detect_interrupt = None;
+        self.poll_candidate = None;
+        self.self_loop_candidate = None;
 
         self.push_microcodes(&InterruptSequences::RESET);
         self.arm_interrupt_window(&InterruptSequences::RESET_WINDOW, None);
@@ -1029,11 +1128,13 @@ impl Cpu {
     }
 
     fn write_mem<M: Mcu>(&mut self, bus: &mut Bus<M>, addr: u16, value: u8) {
+        self.watch_cpu_write(addr);
         let clock = bus.clock();
         bus.mcu_mut().write(addr, value, clock);
     }
 
     fn push_stack<M: Mcu>(&mut self, bus: &mut Bus<M>, value: u8) {
+        self.watch_cpu_write(0x100 | self.sp as u16);
         let clock = bus.clock();
         bus.mcu_mut().write_stack_page(self.sp, value, clock);
         self.sp = self.sp.wrapping_sub(1);
