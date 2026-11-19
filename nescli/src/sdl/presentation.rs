@@ -83,13 +83,30 @@ pub fn plan<'a>(
     }
 }
 
+/// Shared blank-frame fixture for the presentation tests: one
+/// transparent-black 256x240 RGBA frame, so dimension changes touch one
+/// line. (Distinct from the PPU power-up `[0, 0, 0, 255]` fill.)
+#[cfg(test)]
+pub(crate) fn blank_frame() -> Vec<u8> {
+    vec![0u8; NES_WIDTH * NES_HEIGHT * 4]
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
+    /// The shared fixture: one transparent-black frame, so dimension
+    /// changes touch one line.
+    #[test]
+    fn blank_frame_is_a_transparent_black_frame() {
+        let frame = blank_frame();
+        assert_eq!(frame.len(), NES_WIDTH * NES_HEIGHT * 4);
+        assert!(frame.iter().all(|&b| b == 0));
+    }
+
     #[test]
     fn one_x_frame_bytes_and_dimensions() {
-        let mut frame = vec![0u8; NES_WIDTH * NES_HEIGHT * 4];
+        let mut frame = blank_frame();
         frame[0..4].copy_from_slice(&[1, 2, 3, 255]);
         let p = plan(&frame, &[], (512, 480));
         assert_eq!(p.width, 256);
@@ -100,7 +117,7 @@ mod tests {
 
     #[test]
     fn presentation_bytes_are_the_frame_bytes() {
-        let mut frame = vec![0u8; NES_WIDTH * NES_HEIGHT * 4];
+        let mut frame = blank_frame();
         let idx = (2 + 3 * 256) * 4;
         frame[idx..idx + 4].copy_from_slice(&[9, 8, 7, 255]);
         let p = plan(&frame, &[], (1024, 960));
@@ -109,21 +126,21 @@ mod tests {
 
     #[test]
     fn destination_rect_is_the_whole_window() {
-        let frame = vec![0u8; NES_WIDTH * NES_HEIGHT * 4];
+        let frame = blank_frame();
         let p = plan(&frame, &[], (1024, 960));
         assert_eq!(p.dst, (0, 0, 1024, 960));
     }
 
     #[test]
     fn no_overlays_makes_an_empty_list() {
-        let frame = vec![0u8; NES_WIDTH * NES_HEIGHT * 4];
+        let frame = blank_frame();
         let p = plan(&frame, &[], (512, 480));
         assert!(p.overlays.is_empty());
     }
 
     #[test]
     fn overlays_scale_from_logical_to_destination() {
-        let frame = vec![0u8; NES_WIDTH * NES_HEIGHT * 4];
+        let frame = blank_frame();
         let overlays = [
             OverlayPlacement {
                 icon: 3,
@@ -164,7 +181,7 @@ mod tests {
 
     #[test]
     fn overlays_scale_at_two_x_window() {
-        let frame = vec![0u8; NES_WIDTH * NES_HEIGHT * 4];
+        let frame = blank_frame();
         let overlays = [OverlayPlacement {
             icon: 5,
             dst: (205, 222, 16, 16),
@@ -175,7 +192,7 @@ mod tests {
 
     #[test]
     fn overlays_keep_draw_order() {
-        let frame = vec![0u8; NES_WIDTH * NES_HEIGHT * 4];
+        let frame = blank_frame();
         let overlays = [
             OverlayPlacement {
                 icon: 7,

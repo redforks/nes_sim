@@ -1,5 +1,7 @@
 pub mod bk2;
 pub mod bus;
+// Shared chunked audio-push routine for the SDL, web, and capture sinks.
+pub mod audio_chunk;
 pub(crate) mod cpu;
 pub(crate) mod dma_bus;
 pub(crate) mod hotpath_cpu;
