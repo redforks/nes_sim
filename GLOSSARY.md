@@ -101,7 +101,7 @@ _Avoid_: drain, flush queue, run until empty (use the canonical name)
 **Frame**:
 
 **Reset quiescence**:
-The bus-drain contract of `NesMachine::reset()`. While draining, in-flight OAM DMA holds the bus and DMC DMA freezes the CPU, so the CPU gets no cycles; PPU/APU keep interleaving and any DMA work already accepted by the bus completes before the device resets apply, and any pre-freeze CPU microcodes are discarded by those resets. Fresh DMC fetch requests are suppressed during the drain so a playing sample channel cannot extend it. The `DmaBus` owns DMA quiescence (`DmaBus::is_busy(&mcu)` / `DmaBus::suppress_new_dmc_requests(&mut mcu)` / `DmaBus::reset()`); `NesMcu::reset(clock)` re-anchors only time-relative PPU/APU state and `Cpu::reset` clears CPU state — time keeps running on the master `SystemClock`.
+The bus-drain contract of `NesMachine::soft_reset()`. While draining, in-flight OAM DMA holds the bus and DMC DMA freezes the CPU, so the CPU gets no cycles; PPU/APU keep interleaving and any DMA work already accepted by the bus completes before the device resets apply, and any pre-freeze CPU microcodes are discarded by those resets. Fresh DMC fetch requests are suppressed during the drain so a playing sample channel cannot extend it. The `DmaBus` owns DMA quiescence (`DmaBus::is_busy(&mcu)` / `DmaBus::suppress_new_dmc_requests(&mut mcu)` / `DmaBus::reset()`); `NesMcu::reset(clock)` re-anchors only time-relative PPU/APU state and `Cpu::reset` clears CPU state — time keeps running on the master `SystemClock`.
 _Avoid_: hard abort, mid-DMA teardown, stale DMA
 
 **Per-dot contract**:
@@ -113,7 +113,7 @@ Owned copy `CpuSnapshot {a, x, y, sp, status, pc, halt}` returned by `Cpu::snaps
 _Avoid_: direct `cpu.a` field access
 
 **MachineView**:
-Read-model snapshot `MachineView<'a, M: Mcu> {cpu: CpuSnapshot, mcu: &M, clock}` exposed to `Plugin::start(&MachineView)` / `end` (ADR-0018: the plugin seam reads the dot via `view.clock()`, no trailing `SystemClock`). For `NesMcu` it exposes `ppu_in_vblank()`, `ppu_rendering_enabled()`, `ppu_frame_no()`, `read_vram()`, `borrow_image()` without exposing `&Cpu` or `&Mcu` walks. Built as `MachineView::new(cpu.snapshot(), bus.mcu(), clock)` — inside `Cpu::tick` for the per-dot view; external tools (e.g. plugin unit tests) build it over a `(Cpu, Bus)` pair the same way.
+Read-model snapshot `MachineView<'a, M: Mcu> {cpu: CpuSnapshot, mcu: &M, clock}` exposed to `Plugin::start(&MachineView)` / `end` (ADR-0018: the plugin seam reads the dot via `view.clock()`, no trailing `SystemClock`). For `NesMcu` it exposes `ppu_in_vblank()`, `ppu_rendering_enabled()`, `ppu_frame_no()`, `read_vram()`, `borrow_image_bytes()` / `borrow_pixels()` (plus the `borrow_image()` compat alias) without exposing `&Cpu` or `&Mcu` walks. Built as `MachineView::new(cpu.snapshot(), bus.mcu(), clock)` — inside `Cpu::tick` for the per-dot view; external tools (e.g. plugin unit tests) build it over a `(Cpu, Bus)` pair the same way.
 _Avoid_: `&Cpu` in Plugin, `cpu.mcu().ppu()`, `mcu().peek` outside view
 
 **Instruction boundary**:
@@ -318,22 +318,27 @@ _Avoid_: trigger timeout, debounce
 
 ## Language — Framebuffer Rendering
 
-Core domain for PPU pixel output and host-side presentation. Replaces the former `image::RgbaImage` backing.
+Core domain for PPU pixel output and host-side presentation. The PPU owns its buffers; there is no `Render`/`ImageRender` trait layer and no zoom-factor generic.
 
 **Framebuffer**:
-Heap-allocated RGBA pixel store `Box<[[u8; 4]; 256 * 240 * N * N]>` owned by `ImageRender<N>`, row-major at `256*N` by `240*N` output pixels, one `[u8; 4]` per pixel.
+Owned RGBA pixel store `Box<[[u8; 4]; 256 * 240]>` on the PPU, row-major at 256 by 240 output pixels, one `[u8; 4]` per pixel. Written once per frame by the VBL-set-dot flush in raster order; served zero-copy via `frame_bytes()` (byte view) and `frame_pixels()` (typed pixels).
 _Avoid_: RgbaImage, image buffer (ambiguous), raw bytes (when meaning typed pixels)
 
-**Zoom Factor (N)**:
-Const generic `N` on `ImageRender<N>`, default `1`. Logical scale where one NES logical pixel (256×240) replicates to an `N×N` block of output pixels. Backing size is `256*240*N*N` entries; `width() = 256*N`, `height() = 240*N`.
-_Avoid_: zoom ratio (use Zoom Factor), scale factor (overloaded), N (bare)
-**ImageRender<N>**:
-`Render` implementation owning the Framebuffer. `set_pixel(x, y, color)` is called at NES logical coordinates `x < 256, y < 240` and writes an `N×N` block at `(x*N .. x*N+N, y*N .. y*N+N)`. Out-of-bounds logical coordinates are silently ignored; callers guarantee in-range. Exposes `as_bytes()` and `width()/height()` without depending on the `image` crate. Does not implement `Clone` — framebuffer copies are multi-MiB.
-_Avoid_: ImageRender (without `N`), RgbaImage wrapper, cloning the framebuffer
+**FrameOutput**:
+Borrowed per-frame read `FrameOutput<'a> { status, frame: &'a [u8], audio: &'a [f32] }` returned by `NesMachine::process_frame`. `frame` is the framebuffer bytes (`256*240*4`); `audio` is that frame's mixed mono samples; `audio_bytes()` is the zero-copy little-endian `f32` byte view of `audio` for encoders. Per-frame consumers read here and never re-borrow the machine; the machine-level `audio_samples()` remains only for tick-stepped capture (see Drain cadence).
+_Avoid_: re-borrowing the machine per frame, `ImageRender<N>`, `Render` trait
+
+**Drain cadence**:
+Per-frame drain is canonical: `process_frame()` clears the APU buffer at the start of each call, so every call yields exactly one frame's samples and SDL/web sinks drain the returned `FrameOutput` the same frame. Tick-stepped capture (`--dump-audio`) is the deliberate exception: per-dot `tick()` stepping never clears, so the buffer accumulates the whole run for one end-of-run export. Stepping that loop via `process_frame()` without a per-frame drain truncates the dump to the last frame.
+_Avoid_: end-of-run drain after per-frame stepping, per-sample `push_sample`/`flush` callbacks (retired)
+
+**Reset picture**:
+Soft reset (front-panel RESET) preserves the visible screen: the PPU keeps running mid-frame and the owned framebuffer is untouched. Hard reset (power cycle) returns the framebuffer to its power-up contents, opaque black `[0, 0, 0, 255]`, while the host color theme is preserved.
+_Avoid_: blank-vs-preserved as accident, theme reset on power cycle
 
 **Presentation Plan**:
-The pure, SDL-free description of what one frame puts on screen: `FramePresentation { bytes, width, height, dst, overlays }`, built by `plan<N>(frame, overlays, dst_size)` in `nes_sdl::presentation`. It carries the frame's RGBA bytes and dimensions (Zoom Factor applied), the destination rect (the whole window), and the overlay placements scaled from logical 1x 256x240 coordinates into destination pixels. Generic over the Framebuffer Zoom Factor `N`; consumed by the SDL adapter `FramePresenter`. Playback passes an `ImageRender<1>` frame, so SDL scales the logical picture to the window with one nearest copy; the `--output` recording path instead upscales the frame host-side into its own 1024x960 scratch frame.
-_Avoid_: render plan, draw plan, frame plan
+The pure, SDL-free description of what one frame puts on screen: `FramePresentation { bytes, width, height, dst, overlays }`, built by `plan(frame_bytes, overlays, dst_size)` in `nescli::sdl::presentation`. It carries the logical 1x frame's RGBA bytes and dimensions, the destination rect (the whole window), and the overlay placements scaled from logical 1x 256x240 coordinates into destination pixels; consumed by the SDL adapter `FramePresenter`. Playback passes the 1x frame bytes, so SDL scales the logical picture to the window with one nearest copy; the `--output` recording path instead upscales the frame host-side into its own 1024x960 scratch frame.
+_Avoid_: render plan, draw plan, frame plan, zoom-factor generic
 
 **Reused Frame Texture**:
 The single sdl2 streaming texture owned by `FramePresenter`, created on first present and reused for every frame (recreated only when the frame dimensions change). Upload is one `Texture::update`; drawing is one scaled `Canvas::copy` to the plan's destination rect. Expressible without `unsafe` because sdl2's `unsafe_textures` feature makes a `Texture` owned by the `Canvas` and free of a borrow.

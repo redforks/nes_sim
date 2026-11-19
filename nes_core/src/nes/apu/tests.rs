@@ -1,6 +1,15 @@
 use super::*;
 
 #[test]
+fn sample_rate_is_fixed_at_associated_path() {
+    // The output rate is a fixed associated const (usable in const
+    // position: no setter can exist). Value pinned: 44.1 kHz mono.
+    const RATE: u32 = Apu::SAMPLE_RATE;
+    assert_eq!(RATE, 44_100);
+    assert_eq!(Apu::SAMPLE_RATE, 44_100);
+}
+
+#[test]
 fn dmc_counts_dac_register_writes() {
     let mut apu = Apu::new();
     assert_eq!(apu.dmc_dac_writes(), 0);

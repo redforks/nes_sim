@@ -9,11 +9,24 @@ use crate::{
 /// Borrowed output of one emulated frame.
 ///
 /// `frame` is the PPU RGBA bytes (`256*240*4`, row-major) and `audio` is
-/// the mixed mono samples (`f32`, 44.1 kHz) for the frame.
+/// the mixed mono samples (`f32`, [`crate::nes::apu::Apu::SAMPLE_RATE`])
+/// for the frame. This struct is the per-frame read: consumers that step
+/// with [`NesMachine::process_frame`] take pixels and samples from here
+/// and never re-borrow the machine. [`Self::audio_bytes`] is the
+/// little-endian `f32` byte view of `audio` for encoders.
 pub struct FrameOutput<'a> {
     pub status: ExecuteResult,
     pub frame: &'a [u8],
     pub audio: &'a [f32],
+}
+
+impl<'a> FrameOutput<'a> {
+    /// Byte view of [`Self::audio`] (little-endian `f32` bytes).
+    /// Zero-copy: the same frame buffer, so it always matches the
+    /// sample slice in length (`4x`) and content.
+    pub fn audio_bytes(&self) -> &[u8] {
+        bytemuck::cast_slice(self.audio)
+    }
 }
 
 pub struct NesMachine<P> {
@@ -79,6 +92,17 @@ where
     ///
     /// Returns the frame status plus borrows of the owned PPU framebuffer
     /// and APU audio buffer for the completed frame.
+    ///
+    /// Drain contract (per-frame drain is canonical): the APU buffer is
+    /// cleared at the start of each call, so every call yields exactly one
+    /// frame's samples and sinks drain the returned [`FrameOutput`] the
+    /// same frame — SDL (`nescli` event loop) and web (`nes_web::Machine`)
+    /// both `push_samples(output.audio)` + `flush_frame()` per frame.
+    /// Tick-stepped capture (`nes_cpu_test --dump-audio`) is the deliberate
+    /// exception: it never calls this, so the buffer accumulates the whole
+    /// run for one end-of-run export. Stepping that loop via this without
+    /// a per-frame drain truncates the dump to the last frame (pinned by
+    /// `audio_dump_length_matches_under_both_stepping_styles`).
     pub fn process_frame(&mut self) -> FrameOutput<'_> {
         self.bus.mcu_mut().clear_audio_buffer();
         let mut status = ExecuteResult::Continue;
@@ -222,16 +246,17 @@ where
         self.cpu.reset_hard();
     }
 
-    pub fn frame_bytes(&self) -> &[u8] {
-        self.bus.mcu().ppu().frame_bytes()
-    }
-
+    /// Mixed samples buffered so far (`f32` mono, [`crate::nes::apu::Apu::SAMPLE_RATE`]).
+    ///
+    /// Kept for tick-stepped capture (e.g. `--dump-audio`): that loop
+    /// accumulates the live buffer across many frames without a per-frame
+    /// [`FrameOutput`], then exports it once at the end. Per-frame
+    /// consumers stepping with [`Self::process_frame`] must read
+    /// [`FrameOutput::audio`] / [`FrameOutput::audio_bytes`] instead —
+    /// reading this after per-frame stepping sees the last frame only
+    /// (pinned by `end_of_run_drain_after_per_frame_stepping_sees_last_frame_only`).
     pub fn audio_samples(&self) -> &[f32] {
         self.bus.mcu().apu().audio_samples()
-    }
-
-    pub fn audio_bytes(&self) -> &[u8] {
-        self.bus.mcu().apu().audio_bytes()
     }
 
     pub fn press_controller_a(&mut self, button: Button) {
@@ -332,6 +357,104 @@ mod tests {
         rom.extend(std::iter::repeat_n(0, 8 * 1024));
 
         INesFile::new(rom).unwrap()
+    }
+
+    #[test]
+    fn process_frame_output_carries_audio_byte_view() {
+        use crate::nes::ppu::{NES_HEIGHT, NES_WIDTH};
+
+        let file = test_nes_file();
+        let mut machine = NesMachine::new(&file, EmptyPlugin::new());
+        let output = machine.process_frame();
+
+        // Per-frame read: frame bytes plus both audio views of one frame.
+        assert_eq!(output.frame.len(), NES_WIDTH * NES_HEIGHT * 4);
+        assert_eq!(output.audio_bytes().len(), output.audio.len() * 4);
+        let expected: &[u8] = bytemuck::cast_slice(output.audio);
+        assert_eq!(
+            output.audio_bytes(),
+            expected,
+            "byte view must match the sample slice exactly"
+        );
+    }
+
+    /// Tick until `frames` vblank entries have fired, mirroring
+    /// `nes_cpu_test --dump-audio`'s capture loop: per-dot stepping never
+    /// calls `process_frame`, so the APU buffer accumulates the whole run
+    /// and a single end-of-run drain sees every frame.
+    fn tick_frames(machine: &mut NesMachine<EmptyPlugin<NesMcu>>, frames: usize) {
+        let mut seen = 0;
+        while seen < frames {
+            machine.tick();
+            if machine.mcu_mut().ppu_mut().take_vblank_entered() {
+                seen += 1;
+            }
+        }
+    }
+
+    /// Multi-frame dump length is identical under tick-stepping (single
+    /// end-of-run drain, the `--dump-audio` cadence) and under
+    /// `process_frame` stepping (per-frame drain of each `FrameOutput`).
+    ///
+    /// Regression guard for the drain trap (§8): if the capture loop ever
+    /// steps via `process_frame` — whose start-of-frame clear drops every
+    /// prior frame — while keeping its single end-of-run drain, the dump
+    /// truncates to the last frame and this test fails on the length.
+    #[test]
+    fn audio_dump_length_matches_under_both_stepping_styles() {
+        const FRAMES: usize = 3;
+        let file = test_nes_file();
+
+        let mut ticked = NesMachine::new(&file, EmptyPlugin::new());
+        tick_frames(&mut ticked, FRAMES);
+        let ticked_total = ticked.audio_samples().len();
+        assert!(
+            ticked_total > 0,
+            "capture must accumulate samples over {FRAMES} frames"
+        );
+
+        let mut framed = NesMachine::new(&file, EmptyPlugin::new());
+        let mut framed_total = 0;
+        for _ in 0..FRAMES {
+            let output = framed.process_frame();
+            framed_total += output.audio.len();
+        }
+
+        assert_eq!(
+            ticked_total, framed_total,
+            "tick-stepped end-of-run drain must see the same samples as \
+             per-frame drains ({FRAMES} frames)"
+        );
+    }
+
+    /// `process_frame` clears the APU buffer at the start of each frame,
+    /// so an end-of-run read after per-frame stepping sees only the last
+    /// frame. This pins the clearing half of the drain contract: removing
+    /// the clear (or adding one to the tick path) breaks this test.
+    #[test]
+    fn end_of_run_drain_after_per_frame_stepping_sees_last_frame_only() {
+        const FRAMES: usize = 3;
+        let file = test_nes_file();
+
+        let mut machine = NesMachine::new(&file, EmptyPlugin::new());
+        let mut last_len = 0;
+        for _ in 0..FRAMES {
+            let output = machine.process_frame();
+            last_len = output.audio.len();
+        }
+        assert!(last_len > 0, "each frame must mix samples");
+        assert_eq!(
+            machine.audio_samples().len(),
+            last_len,
+            "buffer after per-frame stepping holds the last frame only"
+        );
+
+        let mut whole = NesMachine::new(&file, EmptyPlugin::new());
+        tick_frames(&mut whole, FRAMES);
+        assert!(
+            machine.audio_samples().len() < whole.audio_samples().len(),
+            "end-of-run drain after per-frame stepping truncates the run"
+        );
     }
 
     #[test]
@@ -558,5 +681,99 @@ mod tests {
 
         // The post-reset machine still runs: frames complete normally.
         assert_eq!(machine.process_frame().status, ExecuteResult::Continue);
+    }
+
+    /// Soft reset (front-panel RESET button) preserves the visible screen:
+    /// the PPU keeps running mid-frame and the owned framebuffer is
+    /// untouched, so post-reset pixels equal pre-reset pixels.
+    #[test]
+    fn soft_reset_preserves_framebuffer_bytes() {
+        use crate::nes::ppu::{NES_HEIGHT, NES_WIDTH};
+
+        let file = test_nes_file();
+        let mut machine = NesMachine::new(&file, EmptyPlugin::new());
+        machine.process_frame();
+        let before = machine.mcu().ppu().frame_bytes().to_vec();
+        assert_eq!(before.len(), NES_WIDTH * NES_HEIGHT * 4);
+        assert!(
+            before.iter().any(|&b| b != 0),
+            "test ROM must render a flushed (opaque) frame so the test is sensitive"
+        );
+
+        machine.soft_reset();
+
+        assert_eq!(
+            machine.mcu().ppu().frame_bytes(),
+            &before[..],
+            "soft reset must preserve the framebuffer"
+        );
+    }
+
+    /// Hard reset (power cycle) returns the framebuffer to its power-up
+    /// contents: opaque black. The frame is rendered under an all-white
+    /// theme first so the fill is distinguishable from rendered output.
+    #[test]
+    fn hard_reset_clears_framebuffer_to_opaque_black() {
+        use crate::nes::ppu::palette::ColorTheme;
+
+        let file = test_nes_file();
+        let mut machine = NesMachine::new(&file, EmptyPlugin::new());
+        machine.set_color_theme(ColorTheme::load_from_pal_buf(&[0xFF; 192]));
+        machine.process_frame();
+        assert!(
+            machine.mcu().ppu().frame_bytes().iter().any(|&b| b != 0),
+            "test ROM must render a flushed frame so the test is sensitive"
+        );
+
+        machine.hard_reset();
+
+        assert!(
+            machine
+                .mcu()
+                .ppu()
+                .frame_bytes()
+                .chunks_exact(4)
+                .all(|px| px == [0, 0, 0, 255]),
+            "hard reset must fill the framebuffer with opaque black"
+        );
+    }
+
+    /// Hard reset preserves the host color theme: the first frame rendered
+    /// after a power cycle matches the pre-reset frame under the same
+    /// theme. The blue-theme control proves the comparison is sensitive.
+    #[test]
+    fn hard_reset_preserves_color_theme() {
+        use crate::nes::ppu::palette::ColorTheme;
+
+        fn solid(r: u8, g: u8, b: u8) -> ColorTheme {
+            let mut buf = [0_u8; 192];
+            for chunk in buf.chunks_exact_mut(3) {
+                chunk.copy_from_slice(&[r, g, b]);
+            }
+            ColorTheme::load_from_pal_buf(&buf)
+        }
+
+        let file = test_nes_file();
+        let mut machine = NesMachine::new(&file, EmptyPlugin::new());
+        machine.set_color_theme(solid(0xFF, 0x00, 0x00));
+        machine.process_frame();
+        let before = machine.mcu().ppu().frame_bytes().to_vec();
+
+        machine.hard_reset();
+        machine.process_frame();
+        assert_eq!(
+            machine.mcu().ppu().frame_bytes(),
+            &before[..],
+            "hard reset must preserve the color theme"
+        );
+
+        let mut other = NesMachine::new(&file, EmptyPlugin::new());
+        other.set_color_theme(solid(0x00, 0x00, 0xFF));
+        other.process_frame();
+        assert_ne!(
+            other.mcu().ppu().frame_bytes(),
+            &before[..],
+            "theme control: a different theme must render different pixels"
+        );
     }
 }

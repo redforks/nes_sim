@@ -63,9 +63,7 @@ impl<'a> MachineView<'a, crate::nes::NesMcu> {
     pub fn ppu_timing(&self) -> &crate::nes::ppu::Timing {
         self.mcu.ppu().timing()
     }
-}
 
-impl<'a> MachineView<'a, crate::nes::NesMcu> {
     pub fn borrow_image_bytes(&self) -> &[u8] {
         self.mcu.ppu().frame_bytes()
     }

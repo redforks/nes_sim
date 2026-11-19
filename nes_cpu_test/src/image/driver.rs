@@ -1,6 +1,6 @@
 use std::fs::File;
 use std::io::Write;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
 use nes_core::audio_chunk::ChunkedAudioPush;
@@ -69,7 +69,7 @@ impl Default for WavRecorder {
     }
 }
 
-const SAMPLE_RATE: u32 = 44_100;
+const SAMPLE_RATE: u32 = nes_core::nes::apu::Apu::SAMPLE_RATE;
 
 fn pcm16(sample: f32) -> i16 {
     (sample.clamp(-1.0, 1.0) * 32767.0).round() as i16
