@@ -16,7 +16,7 @@ use std::{cell::Cell, rc::Rc, sync::mpsc};
 /// Re-export sdl2 so downstream crates can use its types without a direct dependency.
 pub use sdl2;
 
-pub const AUDIO_SAMPLE_RATE: i32 = 44_100;
+pub const AUDIO_SAMPLE_RATE: i32 = nes_core::nes::apu::Apu::SAMPLE_RATE as i32;
 pub const AUDIO_CHUNK_SAMPLES: usize = 1024;
 const AUDIO_MAX_QUEUED_BYTES: u32 = (AUDIO_SAMPLE_RATE as u32) * 4 / 2;
 
