@@ -190,6 +190,103 @@ fn cpu_write_to_polled_address_wakes_without_interrupt() {
     assert_eq!(cpu.pc(), 0x0400);
 }
 
+/// A loop that polls a device register must keep performing the real read:
+/// freezing it would swallow controller shifts or APU status acknowledgements.
+fn device_poll_program(addr: u16) -> Harness {
+    const TOP: u16 = 0x0400;
+    let mut mcu = TestMcu::default();
+    let program = [
+        0xAD,
+        addr as u8,
+        (addr >> 8) as u8, // $0400 LDA $addr
+        0xD0,
+        0xFB, // $0403 BNE $0400
+    ];
+    for (i, byte) in program.iter().enumerate() {
+        mcu.mem[TOP as usize + i] = *byte;
+    }
+    mcu.mem[addr as usize] = 1;
+    mcu.mem[0xFFFA] = 0x00;
+    mcu.mem[0xFFFB] = 0x06;
+    mcu.mem[0xFFFC] = TOP as u8;
+    mcu.mem[0xFFFD] = (TOP >> 8) as u8;
+    let mut cpu = create_cpu(mcu);
+    cpu.set_pc(TOP);
+    cpu
+}
+
+#[test]
+fn dma_halt_composes_with_declared_spin_without_clearing_it() {
+    let mut cpu = poll_program();
+    let mut plugin = EmptyPlugin::new();
+    let dot = run_to_poll_reads(&mut cpu, &mut plugin, 2);
+    cpu.run_dots(&mut plugin, dot, 10);
+    assert!(cpu.is_frozen(), "precondition: spin must be declared");
+
+    // A DMC halt lands while the spin is frozen. It must compose, not panic
+    // or replace the spin source.
+    assert!(cpu.try_freeze(), "DMA must still be able to halt the CPU");
+    assert!(cpu.is_frozen());
+    assert!(
+        cpu.dma_halt_bus_addr().is_none(),
+        "a declared spin sits on the branch's internal fixup cycle; DMA repeats the next fetch address"
+    );
+
+    // The DMA read completes and releases only its own source.
+    cpu.unfreeze();
+    assert!(cpu.is_frozen(), "DMA unfreeze must not wake the spin");
+    cpu.mcu_mut().reads.clear();
+    cpu.run_dots(&mut plugin, dot + 10, 12);
+    assert!(
+        !cpu.mcu().reads.contains(&0x10),
+        "the spin must keep its poll dormant after DMA completes, saw {:?}",
+        cpu.mcu().reads
+    );
+}
+
+#[test]
+fn zapper_register_poll_is_not_declared_as_a_spin() {
+    let mut cpu = device_poll_program(0x4017);
+    let mut plugin = EmptyPlugin::new();
+    let mut dot = 3u64;
+    while cpu.mcu().reads.iter().filter(|&&a| a == 0x4017).count() < 2 {
+        cpu.dot(&mut plugin, dot, false);
+        dot += 1;
+        assert!(dot < 1000, "zapper poll never happened");
+    }
+    cpu.mcu_mut().reads.clear();
+    cpu.run_dots(&mut plugin, dot, 60);
+
+    let polls = cpu.mcu().reads.iter().filter(|&&a| a == 0x4017).count();
+    assert!(
+        polls >= 3,
+        "a $4017 device poll must keep reading the register, saw {polls} reads"
+    );
+}
+
+#[test]
+fn dmc_status_poll_is_not_declared_as_a_spin() {
+    // The DMC status poll in `sprdma_and_dmc_dma.nes` can only wake from a
+    // DMA/APU write, which never wakes a spin by decision. It must therefore
+    // execute for real rather than be declared a spin.
+    let mut cpu = device_poll_program(0x4015);
+    let mut plugin = EmptyPlugin::new();
+    let mut dot = 3u64;
+    while cpu.mcu().reads.iter().filter(|&&a| a == 0x4015).count() < 2 {
+        cpu.dot(&mut plugin, dot, false);
+        dot += 1;
+        assert!(dot < 1000, "DMC status poll never happened");
+    }
+    cpu.mcu_mut().reads.clear();
+    cpu.run_dots(&mut plugin, dot, 60);
+
+    let polls = cpu.mcu().reads.iter().filter(|&&a| a == 0x4015).count();
+    assert!(
+        polls >= 3,
+        "a $4015 device poll must keep reading the register, saw {polls} reads"
+    );
+}
+
 #[test]
 fn register_countdown_loop_never_declares() {
     const TOP: u16 = 0x0400;

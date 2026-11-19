@@ -31,6 +31,15 @@ fn is_bare_self_jump_opcode(opcode: u8) -> bool {
 fn is_ppu_status_addr(addr: u16) -> bool {
     (0x2000..=0x3FFF).contains(&addr) && (addr & 0x2007) == 0x2002
 }
+
+/// The readable APU/IO registers. A read here is an action on a device (a
+/// controller shift, an APU interrupt acknowledge, a zapper sample), not a
+/// pure memory observation. A spin freeze would swallow those reads, and
+/// DMC/APU writes to them never wake a spin by decision, so loops polling
+/// these registers keep executing for real.
+fn is_device_register_addr(addr: u16) -> bool {
+    (0x4015..=0x4017).contains(&addr)
+}
 /// Snapshot of CPU registers — the read-model exposed to plugins/tools.
 /// Replaces direct `cpu.a/x/y/sp/status/pc` field access (ADR-0010).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -409,6 +418,10 @@ pub struct Cpu {
     /// disqualifies the candidate.
     poll_candidate: Option<PollCandidate>,
 
+    /// Test-only spin declaration disable, used to pin frame equivalence.
+    #[cfg(test)]
+    spin_declaration_disabled: bool,
+
     microcode_queue: ArrayDeque<Microcode, 8>,
 }
 
@@ -435,6 +448,8 @@ impl Cpu {
             instruction_pc: 0,
             instruction_opcode: 0,
             poll_candidate: None,
+            #[cfg(test)]
+            spin_declaration_disabled: false,
         };
         r.reset();
         r
@@ -546,7 +561,10 @@ impl Cpu {
     /// true when the halt landed and the CPU is frozen; a pending write
     /// cycle must never be frozen, so freezing is refused then.
     pub(crate) fn try_freeze(&mut self) -> bool {
-        debug_assert!(!self.is_frozen());
+        // A declared spin is already frozen, but DMC must still be able to
+        // claim its own freeze source: DMA wins over spin. Both sources are
+        // tracked independently, so composing them does not clear either.
+        debug_assert!(!self.frozen_reason.is_some_and(|r| r.dma || r.halt));
         if self.can_pause() {
             self.set_dma_frozen(true);
             true
@@ -577,7 +595,14 @@ impl Cpu {
     /// Declare a spin freeze. A pending write disqualifies declaration, the
     /// same gate that protects DMA halts: never swallow a write.
     fn try_freeze_spin(&mut self, spin: SpinState) -> bool {
-        if self.can_pause() {
+        #[cfg(test)]
+        if self.spin_declaration_disabled {
+            return false;
+        }
+        // DMA wins: a pending or in-flight transfer suppresses spin entry.
+        // The DMC halt retries on the next eligible dot after its read, so
+        // the loop can declare itself again once the bus is free.
+        if self.can_pause() && !self.frozen_reason.is_some_and(|r| r.dma) {
             let dma = self.frozen_reason.is_some_and(|r| r.dma);
             let halt = self.frozen_reason.is_some_and(|r| r.halt);
             self.frozen_reason = FrozenReason::new(dma, Some(spin), halt);
@@ -593,10 +618,20 @@ impl Cpu {
     /// seven dots — not once per dot. `Mcu` owns the device-specific effects via a
     /// defaulted method (only `NesMcu` overrides it), keeping the single CPU
     /// freeze seam and leaving DMA channels and the bus untouched.
-    fn replay_status_side_effects<M: Mcu>(&mut self, spin: SpinState, bus: &mut Bus<M>) {
+    fn replay_status_side_effects<M: Mcu>(&mut self, mut spin: SpinState, bus: &mut Bus<M>) {
         let (Some(addr), true) = (spin.polled, spin.status_side_effects) else {
             return;
         };
+        if self.frozen_reason.is_some_and(|r| r.dma) {
+            // DMA owns the bus for its transfer. A skipped status read must
+            // not touch PPU state now; re-anchor the loop cadence so the
+            // resumed spin does not replay the halted dots in a burst.
+            spin.read_phase = bus.clock().0;
+            if let Some(reason) = self.frozen_reason.as_mut() {
+                reason.spin = Some(spin);
+            }
+            return;
+        }
         let Some(period) = NonZeroU8::new(spin.loop_period) else {
             return;
         };
@@ -730,6 +765,10 @@ impl Cpu {
         let Some(candidate) = self.poll_candidate else {
             return;
         };
+        if is_device_register_addr(candidate.addr) {
+            self.poll_candidate = None;
+            return;
+        }
         if target != candidate.pc {
             self.poll_candidate = None;
             return;
@@ -1018,6 +1057,19 @@ impl Cpu {
 
     pub(crate) fn set_irq(&mut self, enabled: bool) {
         self.irq_detector.update_irq_input(enabled);
+    }
+
+    /// Test-only control for frozen-vs-unfrozen frame equivalence: when set,
+    /// loops keep executing instead of declaring a spin. No production path
+    /// can set this flag.
+    #[cfg(test)]
+    pub(crate) fn set_spin_declaration_disabled_for_test(&mut self, disabled: bool) {
+        self.spin_declaration_disabled = disabled;
+    }
+
+    #[cfg(test)]
+    pub(crate) fn is_spin_frozen_for_test(&self) -> bool {
+        self.frozen_reason.is_some_and(|r| r.spin.is_some())
     }
 
     pub fn is_halted(&self) -> bool {

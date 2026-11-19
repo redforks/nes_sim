@@ -183,6 +183,34 @@ _Avoid_: delayed irq, apu lag, one-cycle delay
 The CPU-cycle quantization of mapper IRQ by sampling `cartridge_irq_pending()` only on the CPU dot (post-PPU, dot 2) in `NesMachine::tick_dot_2`. MMC3/VRC counters are PPU-dot-clocked, so a mid-cycle trip becomes CPU-visible at the next CPU boundary; tests pin the CPU-cycle quantization.
 _Avoid_: cartridge bool, irq buffer, latched irq (ambiguous)
 
+## Language — Spin-Wait Freeze
+
+A wait loop is a program loop that repeatedly reads the same state until an external event changes it. A frozen wait keeps the emulated CPU still while the surrounding machine continues, provided the wait has no side effects between polls.
+
+**Spin-wait**:
+A program loop that waits for an external condition by repeatedly checking the same address or jumping to itself. Its observable behavior is the state at loop exit, not the number of checks performed inside it.
+_Avoid_: busy loop, polling loop, idle loop
+
+**Freeze**:
+A CPU state in which no instruction executes while the rest of the machine keeps running. A freeze may hold several independent reasons at once; it ends when every reason has been released, and a DMA transfer wins over a wait loop for the bus.
+_Avoid_: stall, pause, suspension
+
+**FrozenReason**:
+The reason a CPU freeze is in force: a DMA transfer, a declared spin-wait, a HLT instruction, or a combination of these. Each reason is released by its own event, so releasing one never silently releases another.
+_Avoid_: freeze flag, halt reason, pause cause
+
+**Spin declaration**:
+The CPU's recognition of a spin-wait after repeated back edges to the same loop top. A declared loop must not perform device actions in its polled read, and a pending or in-flight DMA suppresses declaration.
+_Avoid_: spin detection, loop recognition
+
+**Spin wake**:
+The event that releases a declared spin-wait so its next real read can observe the awaited condition: an interrupt dispatch or a CPU write to the polled address. DMA and APU writes never wake a spin; the device continues to act on its own reads.
+_Avoid_: unpause, resume trigger, spin release
+
+**Status replay**:
+The presentation of a skipped status-register read's device-side effects at the cadence of the frozen spin-wait. The CPU replays only side effects, never bus reads, and suspends replay while DMA owns the bus.
+_Avoid_: status refresh, fake read, synthetic poll
+
 ## Language — CPU Bus Cycles
 **Bus cycle classification**:
 The single source of truth for what a pending Microcode cycle drives on the bus — driven by `Microcode::exec` itself (ADR-0013, revises ADR-0007). Each `exec` drives its access (PC dummy fetch for `Nop`, `read_zero_page` for `ZeroPage` dummy, `DummyReadAt` for branch fixup, `DummyStackRead` for RTS/RTI/PLP, etc.) and `bus_cycle` is derived from that execution, not a parallel classifier. The exhaustive match over `Microcode` (including `DummyReadAt(u16)`, `DummyStackRead`) classifies each driven access as `Read(ReadAddress::Latch(addr))`, `Read(Stack(...))`, `Write`, or `Internal`; DMC DMA halt decisions consume it and nothing else.

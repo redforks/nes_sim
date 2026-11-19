@@ -323,6 +323,10 @@ where
 
 #[cfg(test)]
 mod tests {
+    use std::hash::{DefaultHasher, Hash, Hasher};
+
+    use crate::mcu::Mcu;
+
     use crate::EmptyPlugin;
 
     use super::*;
@@ -357,6 +361,66 @@ mod tests {
         rom.extend(std::iter::repeat_n(0, 8 * 1024));
 
         INesFile::new(rom).unwrap()
+    }
+
+    /// Advance three frames with dot stepping and collect frame bytes plus a
+    /// compact control trace. PC and Y are omitted: a freeze pins PC at its
+    /// loop top, and the unfrozen status loop advances Y on each iteration.
+    /// Run one machine for three frames and hash the observed state into
+    /// one comparable value: framebuffer bytes, frame-boundary registers,
+    /// and interrupt lines. PC and Y are intentionally omitted because the
+    /// frozen loop pins PC at its top and the unfrozen loop advances Y.
+    fn wait_trace(machine: &mut NesMachine<EmptyPlugin<NesMcu>>) -> (u64, Vec<bool>) {
+        let mut hasher = DefaultHasher::new();
+        let mut spins = Vec::new();
+        for _ in 0..3 {
+            loop {
+                assert_ne!(machine.tick(), ExecuteResult::Halt);
+                spins.push(machine.cpu().is_spin_frozen_for_test());
+                if machine.mcu_mut().ppu_mut().take_vblank_entered() {
+                    break;
+                }
+            }
+            let s = machine.cpu().snapshot();
+            [s.a, s.x, s.sp, s.status, u8::from(s.halt)].hash(&mut hasher);
+            [
+                u8::from(machine.mcu().peek(0x2002) & 0x80 != 0),
+                u8::from(machine.mcu().ppu().nmi_line()),
+                u8::from(machine.mcu().apu_irq_pending()),
+                u8::from(machine.mcu().cartridge_irq_pending()),
+            ]
+            .hash(&mut hasher);
+            machine.mcu().ppu().frame_bytes().hash(&mut hasher);
+        }
+        (hasher.finish(), spins)
+    }
+
+    /// A bare self-loop wait must produce the same framebytes and visible
+    /// CPU/interrupt state with its spin declaration enabled and disabled.
+    /// The control is test-only; dot stepping keeps the comparison honest.
+    #[test]
+    fn frozen_and_unfrozen_self_loop_frames_match() {
+        let file = test_nes_file();
+        let mut frozen = NesMachine::new(&file, EmptyPlugin::new());
+        let mut unfrozen = NesMachine::new(&file, EmptyPlugin::new());
+        unfrozen.cpu.set_spin_declaration_disabled_for_test(true);
+        frozen.set_pc(0x8000);
+        unfrozen.set_pc(0x8000);
+
+        let (frozen_hash, frozen_spins) = wait_trace(&mut frozen);
+        let (unfrozen_hash, unfrozen_spins) = wait_trace(&mut unfrozen);
+        assert!(
+            frozen_spins.iter().any(|&s| s),
+            "the frozen run must actually declare a spin"
+        );
+        assert!(
+            !unfrozen_spins.iter().any(|&s| s),
+            "the control must disable spin declaration"
+        );
+        assert_eq!(
+            frozen_hash, unfrozen_hash,
+            "framebuffer/register/interrupt trace diverged"
+        );
     }
 
     #[test]
