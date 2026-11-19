@@ -44,6 +44,13 @@ impl<'a, M: Mcu> MachineView<'a, M> {
 
 // NesMcu-specific extensions — only available when `M = NesMcu`.
 // Placed here rather than in `nes.rs` to keep the view seam in one module.
+//
+// Per-dot plugin reads: these accessors exist for `Plugin` hooks (called
+// from `Cpu::tick` with no `FrameOutput` in scope), which observe the live
+// machine mid-frame. Per-frame consumers stepping with
+// [`crate::NesMachine::process_frame`] must read `FrameOutput::frame`
+// instead and never re-borrow the machine — see the drain contract on
+// [`crate::NesMachine::process_frame`].
 impl<'a> MachineView<'a, crate::nes::NesMcu> {
     pub fn ppu_in_vblank(&self) -> bool {
         self.mcu.ppu().in_vblank()
@@ -63,14 +70,16 @@ impl<'a> MachineView<'a, crate::nes::NesMcu> {
     pub fn ppu_timing(&self) -> &crate::nes::ppu::Timing {
         self.mcu.ppu().timing()
     }
-}
 
-impl<'a> MachineView<'a, crate::nes::NesMcu> {
+    /// Live framebuffer bytes for per-dot plugin reads (see above);
+    /// per-frame consumers use `FrameOutput::frame` instead.
     pub fn borrow_image_bytes(&self) -> &[u8] {
         self.mcu.ppu().frame_bytes()
     }
 
-    /// Typed RGBA pixels (`width*height` entries of `[R,G,B,A]`).
+    /// Typed RGBA pixels (`width*height` entries of `[R,G,B,A]`) for
+    /// per-dot plugin reads (see above); per-frame consumers use
+    /// `FrameOutput::frame` instead.
     pub fn borrow_pixels(&self) -> &[[u8; 4]] {
         self.mcu.ppu().frame_pixels()
     }
@@ -85,7 +94,10 @@ impl<'a> MachineView<'a, crate::nes::NesMcu> {
         crate::nes::ppu::NES_HEIGHT as u32
     }
 
-    /// Compatibility alias — returns typed pixels (was `&RgbaImage`).
+    /// Compatibility alias for [`Self::borrow_pixels`], retained because
+    /// `nes_cpu_test`'s `png_frame_match` comparison and the GLOSSARY's
+    /// `MachineView` entry cite this name. New code should prefer
+    /// `borrow_pixels()`.
     pub fn borrow_image(&self) -> &[[u8; 4]] {
         self.borrow_pixels()
     }

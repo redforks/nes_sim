@@ -207,13 +207,14 @@ const fn indirect_indexed_store_a() -> ArrayVec<[Microcode; 7]> {
 
 /// Eligibility rule of a hijack site. The two sites' hardware semantics
 /// differ observably (blargg cpu_interrupts_v2):
-/// - `LatchedOnly` — the `PushStatus` site consumes the sampler-latched
-///   pending edge; newer un-latched rises on the line do not participate
-///   and stay eligible for the later vector-decision site.
-/// - `NewestVisible` — the vector-fetch site decides on the newest
-///   unconsumed assertion, latched or not: an assertion counts iff its
-///   newest unconsumed edge had risen by the site's deadline.
-
+///
+///   - `LatchedOnly` — the `PushStatus` site consumes the sampler-latched
+///     pending edge; newer un-latched rises on the line do not participate
+///     and stay eligible for the later vector-decision site.
+///   - `NewestVisible` — the vector-fetch site decides on the newest
+///     unconsumed assertion, latched or not: an assertion counts iff its
+///     newest unconsumed edge had risen by the site's deadline.
+///
 /// One NMI-hijack site declared by an [`InterruptWindow`]: the micro-op
 /// index that performs the check and the Hijack deadline — an /NMI rise at
 /// or before `sequence_start + deadline_dots` is eligible there.

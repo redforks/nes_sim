@@ -216,6 +216,13 @@ fn exec(
 /// ROM's own termination, if any, ends the capture early and its status
 /// becomes the exit code), applying --press actions along the way. The caller
 /// exports the APU buffer afterwards.
+///
+/// Cadence (drain contract, ticket #144): per-dot `tick` stepping, never
+/// `process_frame` — the APU buffer accumulates the whole run for the
+/// caller's single end-of-run `push_samples(machine.audio_samples())`.
+/// Stepping via `process_frame` here without a per-frame drain would clear
+/// prior frames and truncate the WAV to the last frame (regression test:
+/// `nes_core::nes_machine`'s `audio_dump_length_matches_under_both_stepping_styles`).
 fn run_capture(m: &mut MachineWrapper, frames: usize, presses: &mut [PressAction]) -> i32 {
     loop {
         match m.tick() {
@@ -272,9 +279,7 @@ mod tests {
         use crate::image::WavRecorder;
 
         let mut recorder = WavRecorder::new();
-        for sample in [-1.0f32, 0.0, 0.5, 1.5] {
-            recorder.push_sample(sample);
-        }
+        recorder.push_samples(&[-1.0f32, 0.0, 0.5, 1.5]);
         let dir = std::env::temp_dir().join(format!("nes_cpu_test-wav-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         let path = dir.join("out.wav");

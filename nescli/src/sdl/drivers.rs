@@ -62,13 +62,7 @@ pub fn create_sdl_drivers(
         .open_queue::<f32, _>(None, &audio_spec)
         .map_err(|e| anyhow::anyhow!(e))?;
     audio_queue.resume();
-    let audio_driver = NesAudioDriver::new(
-        audio_queue,
-        AUDIO_SAMPLE_RATE as u32,
-        audio_tx,
-        ff_skip,
-        trim_frames,
-    );
+    let audio_driver = NesAudioDriver::new(audio_queue, audio_tx, ff_skip, trim_frames);
 
     let canvas = if !headless {
         let video_subsystem = sdl_context.video().map_err(|e| anyhow::anyhow!(e))?;

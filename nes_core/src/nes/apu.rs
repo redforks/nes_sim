@@ -49,6 +49,11 @@ pub struct Apu {
     /// Mixed output samples for the current frame (`f32` mono, 44.1 kHz).
     /// Filled by `tick`, cleared at each `process_frame` start, served
     /// zero-copy via `audio_samples` / `audio_bytes`.
+    ///
+    /// Retired (intentional, ticket #144): the pre-owned-buffer `AudioDriver`
+    /// per-sample `push_sample`/`flush` callbacks into host drivers. Sinks
+    /// now borrow each frame's buffer instead; see the drain contract on
+    /// [`crate::NesMachine::process_frame`].
     audio_buffer: Vec<f32>,
     /// Latest expansion-audio levels, latched by `set_expansion_mix` ahead
     /// of `tick` so the mixer sees them without changing `tick`'s shape.
@@ -62,10 +67,6 @@ pub struct Apu {
     length_race_clobber: [bool; 4],
 }
 
-/// Fixed output sample rate (Hz). The core owns the audio buffer;
-/// hosts resample if needed.
-pub const SAMPLE_RATE: u32 = 44_100;
-
 impl Default for Apu {
     fn default() -> Self {
         Self::new()
@@ -73,6 +74,11 @@ impl Default for Apu {
 }
 
 impl Apu {
+    /// Fixed output sample rate (Hz). The core owns the audio buffer;
+    /// hosts resample if needed. A plain const: there is no setter and
+    /// the value never changes.
+    pub const SAMPLE_RATE: u32 = 44_100;
+
     pub fn new() -> Self {
         Self {
             pulse1: Pulse::new(false),
@@ -80,7 +86,7 @@ impl Apu {
             triangle: Triangle::default(),
             noise: Noise::default(),
             dmc: Dmc::default(),
-            mixer: Mixer::new(SAMPLE_RATE),
+            mixer: Mixer::new(Self::SAMPLE_RATE),
             audio_buffer: Vec::new(),
             expansion: ExpansionMix::default(),
             frame_sequencer: FrameSequencer::default(),
@@ -125,7 +131,7 @@ impl Apu {
         self.triangle = Triangle::default();
         self.noise = Noise::default();
         self.dmc = Dmc::default();
-        self.mixer = Mixer::new(SAMPLE_RATE);
+        self.mixer = Mixer::new(Self::SAMPLE_RATE);
         self.audio_buffer.clear();
         self.expansion = ExpansionMix::default();
         self.frame_sequencer = FrameSequencer::default();
