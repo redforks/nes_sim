@@ -612,7 +612,7 @@ impl Cpu {
             return;
         }
         let elapsed = bus.clock().0.saturating_sub(spin.read_phase);
-        if elapsed == 0 || elapsed % u64::from(period.get()) != 0 {
+        if elapsed == 0 || !elapsed.is_multiple_of(u64::from(period.get())) {
             return;
         }
         bus.mcu_mut().replay_status_read_side_effects(addr);
