@@ -63,6 +63,10 @@ impl Machine {
         self.inner.soft_reset();
     }
 
+    /// NOTE (ticket #144): the pre-owned-buffer `press_button` /
+    /// `release_button` names were intentionally renamed to
+    /// `press_controller_a` / `release_controller_a` to match the
+    /// [`NesMachine`] API — a compile fix, not a behavior change.
     pub fn key_down(&mut self, key: &str) {
         if let Some(button) = map_key_to_button(key) {
             self.inner.press_controller_a(button);
