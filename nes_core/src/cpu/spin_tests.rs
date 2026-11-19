@@ -1,7 +1,7 @@
 //! Polled-address spin freeze tests (ticket #134).
 //!
 //! Every assertion observes behavior at the CPU/MCU seam: bus traffic,
-//! register snapshots, and interrupt dispatch. No freeze flag is read.
+//! register snapshots, and interrupt dispatch. No freeze source is inspected.
 
 use super::*;
 
@@ -22,6 +22,10 @@ impl Default for TestMcu {
 }
 
 impl Mcu for TestMcu {
+    fn is_device_register(&self, address: u16) -> bool {
+        (0x4015..=0x4017).contains(&address)
+    }
+
     fn read(&mut self, address: u16) -> u8 {
         self.reads.push(address);
         self.mem[address as usize]
@@ -82,7 +86,7 @@ impl Harness {
     /// `NesMachine::tick_dot` does in production.
     fn dot(&mut self, plugin: &mut EmptyPlugin<TestMcu>, clock: u64, nmi: bool) {
         self.cpu
-            .update_nmi_line(nmi, SystemClock(clock), clock % 3 == 0);
+            .update_nmi_line(nmi, SystemClock(clock), clock.is_multiple_of(3));
         self.bus.set_clock(SystemClock(clock));
         self.cpu.tick(&mut self.bus, plugin);
     }
@@ -92,6 +96,23 @@ impl Harness {
             self.dot(plugin, clock, false);
         }
     }
+}
+
+fn device_poll_trace(addr: u16, disable_spin: bool, dots: u64) -> Vec<u16> {
+    let mut cpu = device_poll_program(addr);
+    if disable_spin {
+        cpu.set_spin_declaration_disabled_for_test(true);
+    }
+    let mut plugin = EmptyPlugin::new();
+    for dot in 3..3 + dots {
+        cpu.dot(&mut plugin, dot, false);
+    }
+    cpu.mcu()
+        .reads
+        .iter()
+        .copied()
+        .filter(|a| *a == addr)
+        .collect()
 }
 
 fn poll_program() -> Harness {
@@ -137,7 +158,7 @@ fn ram_flag_poll_freezes_after_second_back_edge() {
 
     cpu.run_dots(&mut plugin, next_dot, 60);
     assert!(
-        !cpu.mcu().reads.iter().any(|a| *a == 0x10),
+        !cpu.mcu().reads.contains(&0x10),
         "the declared poll must not re-execute its read, saw {:?}",
         cpu.mcu().reads
     );
@@ -190,8 +211,11 @@ fn cpu_write_to_polled_address_wakes_without_interrupt() {
     assert_eq!(cpu.pc(), 0x0400);
 }
 
-/// A loop that polls a device register must keep performing the real read:
-/// freezing it would swallow controller shifts or APU status acknowledgements.
+/// A loop that polls a device register is deliberately not declared a spin:
+/// its read is the device action (a controller shift, an APU interrupt
+/// acknowledge, a zapper sample) and device-sourced writes never wake a
+/// spin. Keeping it executing preserves the read count and order; freezing
+/// it would swallow or have to replay a device action.
 fn device_poll_program(addr: u16) -> Harness {
     const TOP: u16 = 0x0400;
     let mut mcu = TestMcu::default();
@@ -213,6 +237,57 @@ fn device_poll_program(addr: u16) -> Harness {
     let mut cpu = create_cpu(mcu);
     cpu.set_pc(TOP);
     cpu
+}
+
+#[test]
+fn direct_write_wake_needs_two_fresh_back_edges_before_refreeze() {
+    let mut cpu = poll_program();
+    let mut plugin = EmptyPlugin::new();
+    let dot = run_to_poll_reads(&mut cpu, &mut plugin, 2);
+    cpu.run_dots(&mut plugin, dot, 15);
+    assert!(cpu.is_frozen(), "precondition: spin must be declared");
+    cpu.mcu_mut().reads.clear();
+
+    cpu.write_mem(0x10, 2);
+    cpu.run_dots(&mut plugin, dot + 15, 40);
+
+    let polls = cpu.mcu().reads.iter().filter(|&&addr| addr == 0x10).count();
+    assert_eq!(
+        polls, 2,
+        "a woken spin must see two fresh back-edges before re-freezing, saw {polls} polls"
+    );
+    assert_eq!(cpu.a(), 2, "the re-executed poll must read the new value");
+}
+
+#[test]
+fn pending_cpu_write_to_polled_address_releases_frozen_spin() {
+    let mut cpu = poll_program();
+    let mut plugin = EmptyPlugin::new();
+    let dot = run_to_poll_reads(&mut cpu, &mut plugin, 2);
+    cpu.run_dots(&mut plugin, dot, 15);
+    assert!(cpu.is_frozen(), "precondition: spin must be declared");
+
+    // The queued store is a CPU write to the exact polled address. Frozen
+    // ticks must let it execute for real instead of swallowing it.
+    cpu.set_a(7);
+    cpu.stage_pending_cycle_for_test(Microcode::StoreR(ValueSource::Mem, Register::A), Some(0x10));
+    // The frozen dot detects the pending store and releases the spin; the
+    // store itself executes on the next dot.
+    cpu.dot(&mut plugin, dot + 15, false);
+    assert!(!cpu.is_frozen(), "the matching store must release the spin");
+    cpu.dot(&mut plugin, dot + 16, false);
+
+    assert!(
+        cpu.mcu().writes.contains(&(0x10, 7)),
+        "the pending CPU store must reach the MCU, saw {:?}",
+        cpu.mcu().writes
+    );
+    cpu.run_dots(&mut plugin, dot + 17, 40);
+    assert!(
+        cpu.mcu().reads.contains(&0x10),
+        "the poll must resume after the write, saw {:?}",
+        cpu.mcu().reads
+    );
 }
 
 #[test]
@@ -242,6 +317,22 @@ fn dma_halt_composes_with_declared_spin_without_clearing_it() {
         "the spin must keep its poll dormant after DMA completes, saw {:?}",
         cpu.mcu().reads
     );
+}
+
+#[test]
+fn device_register_poll_read_cadence_matches_spin_disabled_control() {
+    for addr in [0x4015, 0x4016, 0x4017] {
+        let control = device_poll_trace(addr, true, 200);
+        let normal = device_poll_trace(addr, false, 200);
+        assert_eq!(
+            normal, control,
+            "a {addr:#06x} poll must not swallow or duplicate device reads"
+        );
+        assert!(
+            normal.len() >= 2,
+            "the {addr:#06x} trace must include real repeated polls"
+        );
+    }
 }
 
 #[test]
@@ -394,7 +485,7 @@ fn frozen_vs_unfrozen_register_and_interrupt_trace_matches() {
         control.dot(&mut p2, clock, false);
     }
     assert!(
-        !frozen.mcu().reads.iter().any(|a| *a == 0x10),
+        !frozen.mcu().reads.contains(&0x10),
         "control precondition: frozen run must have stopped polling"
     );
     // Both runs observe the same NMI edge. NMI dispatch is not inhibited
@@ -424,7 +515,7 @@ fn dma_apu_side_writes_do_not_wake_the_spin() {
     cpu.mcu_mut().write(0x10, 0, SystemClock(dot + 15));
     cpu.run_dots(&mut plugin, dot + 15, 20);
     assert!(
-        !cpu.mcu().reads.iter().any(|a| *a == 0x10),
+        !cpu.mcu().reads.contains(&0x10),
         "a DMA/APU write must not wake the spin, saw {:?}",
         cpu.mcu().reads
     );
@@ -482,7 +573,7 @@ fn two_distinct_poll_addresses_do_not_alias() {
     cpu.write_mem(0x11, 0);
     cpu.run_dots(&mut plugin, dot + 15, 20);
     assert!(
-        !cpu.mcu().reads.iter().any(|a| *a == 0x10),
+        !cpu.mcu().reads.contains(&0x10),
         "a write to another address must not wake the spin, saw {:?}",
         cpu.mcu().reads
     );

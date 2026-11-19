@@ -117,7 +117,7 @@ Read-model snapshot `MachineView<'a, M: Mcu> {cpu: CpuSnapshot, mcu: &M, clock}`
 _Avoid_: `&Cpu` in Plugin, `cpu.mcu().ppu()`, `mcu().peek` outside view
 
 **Instruction boundary**:
-The microcode queue drained, observed via `Cpu::microcodes_empty()`. `Cpu::tick` returns only `ExecuteResult` (`plugin.should_stop()` at a boundary, `Continue` mid-instruction, `Halt` when halted); callers that need the boundary read `microcodes_empty()` after the tick.
+The microcode queue drained, observed via `Cpu::microcodes_empty()`. `Cpu::tick` returns only `ExecuteResult` (`plugin.should_stop()` at a boundary, `Continue` mid-instruction, `Halt` when halted); callers that need the boundary read `microcodes_empty()` after the tick. Exception: a frozen dot returns `plugin.should_stop()` without executing an instruction or calling plugin `start`/`end`; that is a harness timeout/verdict sample, not a boundary.
 _Avoid_: `TickOutcome`, `(ExecuteResult, bool)` tuple, `instruction_done` unnamed bool
 
 

@@ -49,8 +49,30 @@ pub trait Mcu {
     /// return. Default `false`: only the NES memory map has a PPU status
     /// register. This is a flag query, not a bus read; the CPU uses it to
     /// resume a $2002 wait loop at the dot where its next real read would
-    /// observe VBL (ticket #135).
+    /// observe VBL (ticket #135). The cadence check lives in the CPU, so
+    /// the resume happens only on a scheduled poll read.
     fn status_register_has_vbl(&self) -> bool {
+        false
+    }
+
+    /// Classification query: whether an address names a status register
+    /// whose read has destructive device-side effects. Default `false`.
+    /// The CPU uses this to decide whether a frozen poll must replay those
+    /// effects; no bus read or device mutation happens in this query.
+    /// It is a naming query like `status_register_has_vbl`, not a new
+    /// bus/DMA channel state seam (ADR-0018): the CPU still owns the one
+    /// freeze/wake path. Ticket #135 needed the replay hook; this hook only
+    /// decides which polls use it.
+    fn has_destructive_status_read(&self, _address: u16) -> bool {
+        false
+    }
+
+    /// Classification query: whether a readable address names a device
+    /// register whose read is itself an action (a controller shift, an APU
+    /// interrupt acknowledge, a zapper sample). Default `false`. Such a
+    /// poll keeps executing for real: freezing it would swallow the read,
+    /// and device-sourced writes never wake a spin by decision.
+    fn is_device_register(&self, _address: u16) -> bool {
         false
     }
 

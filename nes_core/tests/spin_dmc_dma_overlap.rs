@@ -37,15 +37,15 @@ fn dmc_dma_completes_while_a_ram_spin_is_declared() {
     let mut machine = NesMachine::new(&file, EmptyPlugin::new());
     machine.mcu_mut().write(0x0010, 1, SystemClock::default());
 
-    let mut spin_seen = false;
+    let mut reached_wait_pc = false;
     for _ in 0..100_000 {
         machine.tick();
-        if !spin_seen && machine.cpu().pc() == 0x8014 {
-            spin_seen = true;
+        if !reached_wait_pc && machine.cpu().pc() == 0x8014 {
+            reached_wait_pc = true;
         }
     }
 
-    assert!(spin_seen, "the program must reach its RAM flag spin");
+    assert!(reached_wait_pc, "the program must reach its RAM flag spin");
     assert_eq!(
         machine.mcu().peek(0x4015) & 0x10,
         0,

@@ -1798,8 +1798,8 @@ impl Microcode {
         if branch_test_result {
             let branch_top = cpu.instruction_pc();
             let target = cpu.pc().wrapping_add((offset as i8) as u16);
-            cpu.note_poll_back_edge(target);
-            cpu.note_bare_self_jump_if_target(target, branch_top);
+            cpu.note_poll_back_edge(target, bus);
+            cpu.note_bare_self_jump(target, branch_top);
             let old_pch = cpu.pch();
             cpu.pc.wrapping_add((offset as i8) as u16);
             if old_pch != cpu.pch() {

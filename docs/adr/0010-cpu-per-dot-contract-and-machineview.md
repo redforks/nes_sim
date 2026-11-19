@@ -94,7 +94,7 @@ Migration:
 
 ### 4. TickOutcome
 
-Replaces `-> (ExecuteResult, bool)` (`cpu.rs:660`). `instruction_complete` is `microcode_queue.is_empty()` after the tick — the instruction boundary. Callers `while !cpu.tick(...).1` become `while !cpu.tick(...).instruction_complete`; `match .0` becomes `.control`. `Halt` stays inside `ExecuteResult`, not folded.
+Replaces `-> (ExecuteResult, bool)` (`cpu.rs:660`). `instruction_complete` is `microcode_queue.is_empty()` after the tick — the instruction boundary. Callers `while !cpu.tick(...).1` become `while !cpu.tick(...).instruction_complete`; `match .0` becomes `.control`. `Halt` stays inside `ExecuteResult`, not folded. A frozen dot is not a boundary: `Cpu::tick` returns `plugin.should_stop()` so the harness can keep sampling its timeout/verdict (user story 10), while no instruction executes and plugin `start`/`end` are not called.
 
 ### 5. CONTEXT sweep (same pass)
 

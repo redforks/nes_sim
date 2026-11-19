@@ -363,13 +363,46 @@ mod tests {
         INesFile::new(rom).unwrap()
     }
 
+    /// PRG-ROM with `LDA $0010 / BNE top` at $8000 and an RTI NMI handler.
+    /// The RAM flag starts asserted, so the loop waits for the NMI handler
+    /// to clear it: frozen and unfrozen runs can be compared at frame
+    /// boundaries.
+    fn ram_flag_wait_nes_file() -> INesFile {
+        let mut rom = b"NES\x1a".to_vec();
+        rom.extend_from_slice(&[1, 1, 0, 0]);
+        rom.extend_from_slice(&[0; 8]);
+
+        let mut prg = vec![0u8; 16 * 1024];
+        let program = [
+            0xAD, 0x10, 0x00, // $8000 LDA $0010
+            0xD0, 0xFB, // $8003 BNE $8000
+            0x4C, 0x08, 0x80, // $8005 JMP $8008 (park)
+        ];
+        prg[..program.len()].copy_from_slice(&program);
+        prg[0x08] = 0x4C;
+        prg[0x09] = 0x08;
+        prg[0x0A] = 0x80;
+        // NMI handler: LDA #$00 / STA $0010 / RTI — it clears the flag
+        // the loop polls, so the wait exits through the handler.
+        prg[0x600] = 0xA9;
+        prg[0x601] = 0x00;
+        prg[0x602] = 0x8D;
+        prg[0x603] = 0x10;
+        prg[0x604] = 0x00;
+        prg[0x605] = 0x40;
+        let reset = prg.len() - 4;
+        prg[reset..reset + 2].copy_from_slice(&0x8000u16.to_le_bytes());
+        prg[reset + 2..reset + 4].copy_from_slice(&0x8000u16.to_le_bytes());
+        rom.extend_from_slice(&prg);
+        rom.extend_from_slice(&[0u8; 8 * 1024]);
+        INesFile::new(rom).unwrap()
+    }
+
     /// Advance three frames with dot stepping and collect frame bytes plus a
-    /// compact control trace. PC and Y are omitted: a freeze pins PC at its
-    /// loop top, and the unfrozen status loop advances Y on each iteration.
-    /// Run one machine for three frames and hash the observed state into
-    /// one comparable value: framebuffer bytes, frame-boundary registers,
-    /// and interrupt lines. PC and Y are intentionally omitted because the
-    /// frozen loop pins PC at its top and the unfrozen loop advances Y.
+    /// compact control trace. PC and Y are excluded: a spin pins PC at its
+    /// loop top and the unfrozen loop keeps executing, so they differ by
+    /// construction. A, X, S, status, halt, interrupt lines and frame bytes
+    /// are included and must match at each frame boundary.
     fn wait_trace(machine: &mut NesMachine<EmptyPlugin<NesMcu>>) -> (u64, Vec<bool>) {
         let mut hasher = DefaultHasher::new();
         let mut spins = Vec::new();
@@ -420,6 +453,35 @@ mod tests {
         assert_eq!(
             frozen_hash, unfrozen_hash,
             "framebuffer/register/interrupt trace diverged"
+        );
+    }
+
+    /// A RAM flag wait that exits through its NMI handler must also be
+    /// frame-equivalent: freezing the poll must not change the visible
+    /// framebuffer, register, or interrupt state compared with dot-stepping
+    /// the same program with spin declaration disabled.
+    #[test]
+    fn frozen_and_unfrozen_nmi_flag_wait_frames_match() {
+        let file = ram_flag_wait_nes_file();
+        let mut frozen = NesMachine::new(&file, EmptyPlugin::new());
+        let mut unfrozen = NesMachine::new(&file, EmptyPlugin::new());
+        unfrozen.cpu.set_spin_declaration_disabled_for_test(true);
+        frozen.mcu_mut().write(0x0010, 1, SystemClock::default());
+        unfrozen.mcu_mut().write(0x0010, 1, SystemClock::default());
+
+        let (frozen_hash, frozen_spins) = wait_trace(&mut frozen);
+        let (unfrozen_hash, unfrozen_spins) = wait_trace(&mut unfrozen);
+        assert!(
+            frozen_spins.iter().any(|&s| s),
+            "the frozen run must declare the RAM poll spin"
+        );
+        assert!(
+            !unfrozen_spins.iter().any(|&s| s),
+            "the control must disable spin declaration"
+        );
+        assert_eq!(
+            frozen_hash, unfrozen_hash,
+            "NMI-flag wait framebuffer/register/interrupt trace diverged"
         );
     }
 

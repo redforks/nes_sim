@@ -25,21 +25,6 @@ fn is_bare_self_jump_opcode(opcode: u8) -> bool {
     opcode == JMP_ABSOLUTE || BRANCH_OPCODES.contains(&opcode)
 }
 
-/// True for `$2002` and all its mirrors through `$3FFF`, matching the
-/// `normalize_ppu_addr` seam used by `Ppu::read_ppureg`. Only these reads
-/// have destructive side effects that a frozen loop must replay.
-fn is_ppu_status_addr(addr: u16) -> bool {
-    (0x2000..=0x3FFF).contains(&addr) && (addr & 0x2007) == 0x2002
-}
-
-/// The readable APU/IO registers. A read here is an action on a device (a
-/// controller shift, an APU interrupt acknowledge, a zapper sample), not a
-/// pure memory observation. A spin freeze would swallow those reads, and
-/// DMC/APU writes to them never wake a spin by decision, so loops polling
-/// these registers keep executing for real.
-fn is_device_register_addr(addr: u16) -> bool {
-    (0x4015..=0x4017).contains(&addr)
-}
 /// Snapshot of CPU registers — the read-model exposed to plugins/tools.
 /// Replaces direct `cpu.a/x/y/sp/status/pc` field access (ADR-0010).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -638,16 +623,16 @@ impl Cpu {
         // Replay at the dots where the skipped reads would have landed:
         // one period after the last real read, then every period. The
         // phase is pinned by observation, not by global clock alignment.
-        // VBL is the value this loop waits for. While it is set, a real
-        // poll read would observe it and leave the loop, so hand control
-        // back to the CPU immediately and let the queued read run rather
-        // than clearing it here. The peek is side-effect free.
-        if bus.mcu().status_register_has_vbl() {
-            self.resume_spin();
-            return;
-        }
         let elapsed = bus.clock().0.saturating_sub(spin.read_phase);
         if elapsed == 0 || !elapsed.is_multiple_of(u64::from(period.get())) {
+            return;
+        }
+        // VBL is the value this loop waits for. On a scheduled read dot a
+        // real poll would observe it and leave the loop, so hand control
+        // back rather than clearing it here. An interrupt edge wins: it
+        // owns the resume and consumes its own latch. The peek is free.
+        if bus.mcu().status_register_has_vbl() {
+            self.resume_spin();
             return;
         }
         bus.mcu_mut().replay_status_read_side_effects(addr);
@@ -670,13 +655,14 @@ impl Cpu {
 
     /// Wake a spin on a dispatchable interrupt. Clears only the spin source;
     /// a concurrent DMA freeze or a halt remains in force.
-    fn wake_spin(&mut self, clock: SystemClock) {
+    fn wake_spin<M: Mcu>(&mut self, bus: &Bus<M>) {
         let Some(reason) = self.frozen_reason else {
             return;
         };
         if reason.spin.is_none() {
             return;
         }
+        let clock = bus.clock();
         let irq_pending = self
             .irq_detector
             .detect_irq(self.flag(Flag::InterruptDisabled));
@@ -697,6 +683,23 @@ impl Cpu {
         self.resume_spin();
     }
 
+    /// Release a spin whose next queued CPU cycle is a write to its exact
+    /// polled address. Frozen `tick` returns before microcode, so the
+    /// normal write funnel (`watch_cpu_write`) cannot observe a program
+    /// store while the CPU is frozen. This check classifies only the
+    /// queue-front cycle projected by `pending_bus_cycle`; DMA/APU writes
+    /// do not enter the CPU queue and cannot wake a spin. The queue is
+    /// untouched, so the write executes for real on the next dot and the
+    /// fresh candidate needs two back-edges before re-declaration.
+    fn watch_pending_cpu_write(&mut self) {
+        let BusCycle::Write = self.pending_bus_cycle() else {
+            return;
+        };
+        // A write cycle drives the current address latch; there is no
+        // separate address projection in `BusCycle::Write`.
+        self.watch_cpu_write(self.ab.get());
+    }
+
     /// Wake a spin on a CPU write to its exact polled address. Called from
     /// the CPU write funnel, so DMA/APU writes cannot wake a spin. The
     /// queued poll-read microcode is preserved and re-executes at loop top.
@@ -714,7 +717,7 @@ impl Cpu {
             let poll_candidate = PollCandidate {
                 pc: spin.loop_top,
                 addr,
-                back_edges: 1,
+                back_edges: 0,
                 last_read_dot: 0,
                 read_period: 0,
             };
@@ -761,11 +764,11 @@ impl Cpu {
     /// address counts, and any intervening write has already disqualified
     /// the candidate by clearing it. A taken branch to any other address
     /// also clears the candidate.
-    fn note_poll_back_edge(&mut self, target: u16) {
+    fn note_poll_back_edge<M: Mcu>(&mut self, target: u16, bus: &Bus<M>) {
         let Some(candidate) = self.poll_candidate else {
             return;
         };
-        if is_device_register_addr(candidate.addr) {
+        if bus.mcu().is_device_register(candidate.addr) {
             self.poll_candidate = None;
             return;
         }
@@ -777,7 +780,7 @@ impl Cpu {
             if self.try_freeze_spin(SpinState {
                 polled: Some(candidate.addr),
                 loop_top: candidate.pc,
-                status_side_effects: is_ppu_status_addr(candidate.addr),
+                status_side_effects: bus.mcu().has_destructive_status_read(candidate.addr),
                 read_phase: candidate.last_read_dot,
                 loop_period: candidate.read_period,
             }) {
@@ -1098,7 +1101,8 @@ impl Cpu {
                 // skipped while frozen.
                 if let Some(spin) = reason.spin {
                     self.replay_status_side_effects(spin, bus);
-                    self.wake_spin(bus.clock());
+                    self.watch_pending_cpu_write();
+                    self.wake_spin(bus);
                 }
                 // A frozen loop executes no instruction, but the harness
                 // still needs its stop/verdict checks sampled (user story
@@ -1556,13 +1560,6 @@ impl Cpu {
 
     fn instruction_pc(&self) -> u16 {
         self.instruction_pc
-    }
-
-    /// Branch target watch: only a taken branch whose computed destination
-    /// equals its own opcode PC qualifies. A non-self branch clears the
-    /// candidate, so countdown loops cannot be mistaken for spins.
-    fn note_bare_self_jump_if_target(&mut self, target: u16, opcode_pc: u16) {
-        self.note_bare_self_jump(target, opcode_pc);
     }
 
     /// JMP indirect's final cycle: indirect jumps are not bare self-loops.
