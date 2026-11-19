@@ -19,8 +19,6 @@ use noise::Noise;
 use pulse::Pulse;
 use triangle::Triangle;
 
-pub use helper::AudioDriver;
-
 /// Expansion-audio channel levels mixed with the APU output on each tick.
 ///
 /// Zeros when the cartridge provides no expansion audio (every non-MMC5
@@ -41,14 +39,17 @@ use registers::{
     TriangleControlBits,
 };
 
-pub struct Apu<D: AudioDriver = ()> {
+pub struct Apu {
     pulse1: Pulse,
     pulse2: Pulse,
     triangle: Triangle,
     noise: Noise,
     dmc: Dmc,
-    driver: D,
     mixer: Mixer,
+    /// Mixed output samples for the current frame (`f32` mono, 44.1 kHz).
+    /// Filled by `tick`, cleared at each `process_frame` start, served
+    /// zero-copy via `audio_samples` / `audio_bytes`.
+    audio_buffer: Vec<f32>,
     /// Latest expansion-audio levels, latched by `set_expansion_mix` ahead
     /// of `tick` so the mixer sees them without changing `tick`'s shape.
     expansion: ExpansionMix,
@@ -61,23 +62,26 @@ pub struct Apu<D: AudioDriver = ()> {
     length_race_clobber: [bool; 4],
 }
 
-impl Default for Apu<()> {
+/// Fixed output sample rate (Hz). The core owns the audio buffer;
+/// hosts resample if needed.
+pub const SAMPLE_RATE: u32 = 44_100;
+
+impl Default for Apu {
     fn default() -> Self {
-        Self::new(())
+        Self::new()
     }
 }
 
-impl<D: AudioDriver> Apu<D> {
-    pub fn new(driver: D) -> Self {
-        let sample_rate = driver.sample_rate().max(1);
+impl Apu {
+    pub fn new() -> Self {
         Self {
             pulse1: Pulse::new(false),
             pulse2: Pulse::new(true),
             triangle: Triangle::default(),
             noise: Noise::default(),
             dmc: Dmc::default(),
-            driver,
-            mixer: Mixer::new(sample_rate),
+            mixer: Mixer::new(SAMPLE_RATE),
+            audio_buffer: Vec::new(),
             expansion: ExpansionMix::default(),
             frame_sequencer: FrameSequencer::default(),
             length_race_clobber: [false; 4],
@@ -113,8 +117,7 @@ impl<D: AudioDriver> Apu<D> {
 
     /// Hard reset (power cycle): every channel returns to its power-up
     /// state — the same contents [`Self::new`] builds — instead of the
-    /// soft-reset silence-and-preserve. The audio driver is host
-    /// configuration, so it (and its sample rate) is preserved.
+    /// soft-reset silence-and-preserve. The buffered samples are dropped.
     pub fn reset_hard(&mut self) {
         // https://www.nesdev.org/wiki/APU_power_up_state
         self.pulse1 = Pulse::new(false);
@@ -122,7 +125,8 @@ impl<D: AudioDriver> Apu<D> {
         self.triangle = Triangle::default();
         self.noise = Noise::default();
         self.dmc = Dmc::default();
-        self.mixer = Mixer::new(self.driver.sample_rate().max(1));
+        self.mixer = Mixer::new(SAMPLE_RATE);
+        self.audio_buffer.clear();
         self.expansion = ExpansionMix::default();
         self.frame_sequencer = FrameSequencer::default();
         self.length_race_clobber = [false; 4];
@@ -172,8 +176,19 @@ impl<D: AudioDriver> Apu<D> {
         self.dmc.supply_dma_byte(byte);
     }
 
-    pub fn flush(&mut self) {
-        self.driver.flush();
+    /// Mixed samples for the current frame (`f32` mono, 44.1 kHz).
+    pub fn audio_samples(&self) -> &[f32] {
+        &self.audio_buffer
+    }
+
+    /// Byte view of [`Self::audio_samples`] (little-endian `f32` bytes).
+    pub fn audio_bytes(&self) -> &[u8] {
+        bytemuck::cast_slice(&self.audio_buffer)
+    }
+
+    /// Drop buffered samples at the start of the next frame.
+    pub fn clear_audio_buffer(&mut self) {
+        self.audio_buffer.clear();
     }
 
     pub fn read(&mut self, address: u16) -> u8 {
@@ -304,7 +319,7 @@ impl<D: AudioDriver> Apu<D> {
                     self.expansion,
                 )
             },
-            |sample| self.driver.push_sample(sample),
+            |sample| self.audio_buffer.push(sample),
         );
     }
 }

@@ -89,11 +89,11 @@ fn main() {
     };
 
     if let Some(wav_out) = dump_audio {
-        let recorder = image::WavRecorder::new();
-        let mut machine =
-            image.create_audio_dump_machine(recorder.clone(), quiet, start_pc, max_instructions);
+        let mut recorder = image::WavRecorder::new();
+        let mut machine = image.create_audio_dump_machine(quiet, start_pc, max_instructions);
         let mut presses = presses;
         let code = run_capture(&mut machine, frames, &mut presses);
+        recorder.push_samples(machine.audio_samples());
         match recorder.write_wav(&wav_out) {
             Ok(samples) => eprintln!(
                 "captured {} samples ({:.2} s) to {}",
@@ -270,7 +270,6 @@ mod tests {
     #[test]
     fn wav_recorder_writes_mono_pcm16_header_and_samples() {
         use crate::image::WavRecorder;
-        use nes_core::nes::apu::AudioDriver;
 
         let mut recorder = WavRecorder::new();
         for sample in [-1.0f32, 0.0, 0.5, 1.5] {

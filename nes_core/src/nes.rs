@@ -2,12 +2,11 @@ use crate::SystemClock;
 use crate::ines::INesFile;
 use crate::mcu::Mcu;
 use crate::nes::{
-    apu::{Apu, AudioDriver},
+    apu::Apu,
     controller::{Button, Controller, Zapper},
     lower_ram::LowerRam,
     ppu::{Ppu, Timing},
 };
-use crate::render::Render;
 use arraydeque::ArrayDeque;
 pub mod apu;
 pub mod controller;
@@ -17,12 +16,12 @@ mod mapper;
 pub use mapper::Mmc3IrqOverride;
 pub mod ppu;
 
-pub struct NesMcu<R: Render, D: AudioDriver> {
+pub struct NesMcu {
     lower_ram: LowerRam,
-    ppu: Ppu<R>,
+    ppu: Ppu,
     cartridge: mapper::Cartridge,
     controller: Controller,
-    apu: Apu<D>,
+    apu: Apu,
     oam_dma_pending: Option<u8>,
     /// CPU data bus open bus value: the last value read by the CPU.
     /// Reading write-only or unmapped addresses returns this value.
@@ -41,7 +40,7 @@ pub struct NesMcu<R: Render, D: AudioDriver> {
     deferred_apu_writes: ArrayDeque<(u64, u16, u8), 2>,
 }
 
-impl<R: Render, D: AudioDriver> NesMcu<R, D> {
+impl NesMcu {
     /// Single open-bus latch routine shared by the read, peek, and write
     /// paths: update the open-bus latch (and deassert both joypad /OE lines
     /// unless a controller read keeps them asserted). `pub(crate)` so the
@@ -54,8 +53,8 @@ impl<R: Render, D: AudioDriver> NesMcu<R, D> {
         }
         value
     }
-    pub fn new(file: &INesFile, renderer: R, audio_driver: D) -> Self {
-        Self::new_with_mmc3_irq_override(file, renderer, audio_driver, Mmc3IrqOverride::Auto)
+    pub fn new(file: &INesFile) -> Self {
+        Self::new_with_mmc3_irq_override(file, Mmc3IrqOverride::Auto)
     }
 
     /// [`Self::new`] with an explicit MMC3 IRQ-revision override — the
@@ -64,19 +63,17 @@ impl<R: Render, D: AudioDriver> NesMcu<R, D> {
     /// auto-detection.
     pub(crate) fn new_with_mmc3_irq_override(
         file: &INesFile,
-        renderer: R,
-        audio_driver: D,
         irq_override: Mmc3IrqOverride,
     ) -> Self {
         let cartridge = mapper::create_cartridge_with_mmc3_irq_override(file, irq_override);
-        let ppu = Ppu::new(renderer);
+        let ppu = Ppu::new();
 
         Self {
             lower_ram: LowerRam::new(),
             ppu,
             cartridge,
             controller: Controller::new(),
-            apu: Apu::new(audio_driver),
+            apu: Apu::new(),
             oam_dma_pending: None,
             open_bus: 0,
             deferred_apu_writes: ArrayDeque::new(),
@@ -172,8 +169,8 @@ impl<R: Render, D: AudioDriver> NesMcu<R, D> {
         self.cartridge.irq_pending()
     }
 
-    pub fn flush_audio(&mut self) {
-        self.apu.flush();
+    pub fn clear_audio_buffer(&mut self) {
+        self.apu.clear_audio_buffer();
     }
 
     pub fn press_controller_a(&mut self, button: Button) {
@@ -235,19 +232,19 @@ impl<R: Render, D: AudioDriver> NesMcu<R, D> {
         self.ppu.timing()
     }
 
-    pub fn ppu(&self) -> &Ppu<R> {
+    pub fn ppu(&self) -> &Ppu {
         &self.ppu
     }
 
-    pub fn ppu_mut(&mut self) -> &mut Ppu<R> {
+    pub fn ppu_mut(&mut self) -> &mut Ppu {
         &mut self.ppu
     }
 
-    pub fn apu(&self) -> &Apu<D> {
+    pub fn apu(&self) -> &Apu {
         &self.apu
     }
 
-    pub fn apu_mut(&mut self) -> &mut Apu<D> {
+    pub fn apu_mut(&mut self) -> &mut Apu {
         &mut self.apu
     }
 
@@ -256,7 +253,7 @@ impl<R: Render, D: AudioDriver> NesMcu<R, D> {
     }
 }
 
-impl<R: Render, D: AudioDriver> Mcu for NesMcu<R, D> {
+impl Mcu for NesMcu {
     fn read(&mut self, address: u16) -> u8 {
         let value = match address {
             // PRG-ROM / PRG-RAM from cartridge; unmapped and disabled RAM is open bus

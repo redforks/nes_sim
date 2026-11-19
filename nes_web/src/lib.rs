@@ -18,11 +18,9 @@ use drivers::apu::WebAudioDriver;
 
 #[wasm_bindgen]
 pub struct Machine {
-    inner: NesMachine<
-        nes_core::EmptyPlugin<nes_core::nes::NesMcu<CanvasRender, WebAudioDriver>>,
-        CanvasRender,
-        WebAudioDriver,
-    >,
+    inner: NesMachine<nes_core::EmptyPlugin<nes_core::nes::NesMcu>>,
+    render: CanvasRender,
+    audio: WebAudioDriver,
 }
 
 #[wasm_bindgen]
@@ -31,19 +29,23 @@ pub fn new_machine(canvas_id: &str, ines: Vec<u8>) -> Result<Machine, JsValue> {
     let ines = INesFile::new(ines).unwrap();
 
     let ctx = get_canvas_context(canvas_id);
-    let canvas_render = CanvasRender::new(ctx, 256, 240);
-    let audio_driver = WebAudioDriver::new()?;
+    let render = CanvasRender::new(ctx, 256, 240);
+    let audio = WebAudioDriver::new()?;
 
     Ok(Machine {
-        inner: NesMachine::new(&ines, EmptyPlugin::new(), canvas_render, audio_driver),
+        inner: NesMachine::new(&ines, EmptyPlugin::new()),
+        render,
+        audio,
     })
 }
 
 #[wasm_bindgen]
 impl Machine {
     pub fn process_frame(&mut self) {
-        self.inner.process_frame();
-        self.inner.flush_audio();
+        let output = self.inner.process_frame();
+        self.render.present_frame_bytes(output.frame);
+        self.audio.push_samples(output.audio);
+        self.audio.flush_frame();
     }
 
     /// Front-panel RESET button: execution restarts, state persists.
@@ -63,13 +65,13 @@ impl Machine {
 
     pub fn key_down(&mut self, key: &str) {
         if let Some(button) = map_key_to_button(key) {
-            self.inner.press_button(button);
+            self.inner.press_controller_a(button);
         }
     }
 
     pub fn key_up(&mut self, key: &str) {
         if let Some(button) = map_key_to_button(key) {
-            self.inner.release_button(button);
+            self.inner.release_controller_a(button);
         }
     }
 }

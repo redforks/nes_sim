@@ -1,10 +1,6 @@
 use crate::bus::Bus;
 use crate::mcu::Mcu;
-use crate::{
-    Cpu, SystemClock,
-    nes::{NesMcu, apu::AudioDriver},
-    render::Render,
-};
+use crate::{Cpu, SystemClock, nes::NesMcu};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DmcDmaType {
@@ -36,7 +32,7 @@ pub(crate) trait DmcDmaMem {
     fn supply_dmc_byte(&mut self, byte: u8);
 }
 
-impl<R: Render, D: AudioDriver> DmcDmaMem for NesMcu<R, D> {
+impl DmcDmaMem for NesMcu {
     fn read_mem(&mut self, addr: u16) -> u8 {
         self.read(addr)
     }

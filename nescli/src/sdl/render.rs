@@ -12,10 +12,7 @@ use super::presentation::{OverlayIcon, OverlayPlacement};
 use super::presenter::{FramePresenter, present_frame};
 use image::{imageops, load_from_memory};
 use nes_core::movie::GamepadInput;
-use nes_core::render::{
-    ImageRender, Render,
-    image_render::{NES_HEIGHT, NES_WIDTH},
-};
+use nes_core::nes::ppu::{NES_HEIGHT, NES_WIDTH};
 use sdl2::{render::Canvas, video::Window};
 use std::{rc::Rc, sync::mpsc};
 
@@ -293,7 +290,6 @@ fn blit_icon(
 }
 
 pub(crate) struct NesRender {
-    buffer: ImageRender,
     /// 1024x960 recording frame: raw RGBA pixels in the format fed to ffmpeg
     /// (`RECORD_WIDTH * RECORD_HEIGHT * 4` bytes). The allocation is reused
     /// across frames; each frame actually sent is cloned into a fresh buffer
@@ -335,7 +331,6 @@ impl NesRender {
         let mut presenter = FramePresenter::new();
         presenter.set_overlay_icons(icons.clone());
         Self {
-            buffer: ImageRender::new(),
             record_scratch: vec![0u8; RECORD_WIDTH * RECORD_HEIGHT * 4],
             canvas,
             presenter,
@@ -368,12 +363,8 @@ impl NesRender {
     }
 }
 
-impl Render for NesRender {
-    fn set_pixel(&mut self, index: u16, color: [u8; 4]) {
-        self.buffer.set_pixel(index, color);
-    }
-
-    fn finish(&mut self) {
+impl NesRender {
+    pub(crate) fn present_frame_bytes(&mut self, frame_bytes: &[u8]) {
         // Decide whether this frame reaches the recording before building any
         // recording frame, so a trimmed or fast-forwarded frame is never
         // upscaled. The window still presents every frame.
@@ -389,13 +380,13 @@ impl Render for NesRender {
         };
 
         if let Some(ref mut canvas) = self.canvas {
-            present_frame(canvas, &mut self.presenter, &self.buffer, &overlays);
+            present_frame(canvas, &mut self.presenter, frame_bytes, &overlays);
         }
 
         if let Some(ref tx) = self.video_tx
             && send_video
         {
-            upscale_into(self.buffer.as_bytes(), &mut self.record_scratch);
+            upscale_into(frame_bytes, &mut self.record_scratch);
             if self.enabled {
                 composite_overlay_icons(&mut self.record_scratch, &overlays, &self.icons);
             }
@@ -434,15 +425,14 @@ pub(crate) fn load_overlay_icons() -> Vec<OverlayIcon> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use nes_core::render::Render;
 
     /// Interactive shape: no canvas, no recording sender. `finish` must
     /// present nothing and send nothing without panicking.
     #[test]
     fn inactive_render_finish_is_a_noop() {
+        let frame = vec![0u8; NES_WIDTH * NES_HEIGHT * 4];
         let mut render = NesRender::new(None, None, 0);
-        render.set_pixel(0, [255, 0, 0, 255]);
-        render.finish();
+        render.present_frame_bytes(&frame);
     }
 
     /// With a recording sender, one finished frame arrives as the plain 4x
@@ -451,12 +441,13 @@ mod tests {
     fn active_sender_receives_the_plain_upscale() {
         let (tx, rx) = mpsc::channel();
         let mut render = NesRender::new(None, Some(tx), 0);
-        render.set_pixel(0, [10, 20, 30, 255]);
-        render.finish();
+        let mut frame = vec![0u8; NES_WIDTH * NES_HEIGHT * 4];
+        frame[0..4].copy_from_slice(&[10, 20, 30, 255]);
+        render.present_frame_bytes(&frame);
         let sent = rx.try_recv().expect("active sender must receive one frame");
         assert_eq!(sent.len(), RECORD_WIDTH * RECORD_HEIGHT * 4);
         let mut expected = vec![0u8; RECORD_WIDTH * RECORD_HEIGHT * 4];
-        upscale_into(render.buffer.as_bytes(), &mut expected);
+        upscale_into(&frame, &mut expected);
         assert_eq!(sent, expected);
     }
 
@@ -466,10 +457,11 @@ mod tests {
     fn trim_frames_skip_the_first_frames() {
         let (tx, rx) = mpsc::channel();
         let mut render = NesRender::new(None, Some(tx), 2);
-        render.finish();
-        render.finish();
+        let frame = vec![0u8; NES_WIDTH * NES_HEIGHT * 4];
+        render.present_frame_bytes(&frame);
+        render.present_frame_bytes(&frame);
         assert!(rx.try_recv().is_err(), "trimmed frames must not send");
-        render.finish();
+        render.present_frame_bytes(&frame);
         assert!(rx.try_recv().is_ok(), "post-trim frame must send");
     }
     #[test]

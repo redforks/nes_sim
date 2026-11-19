@@ -6,7 +6,7 @@ use super::plugin::{
 use super::zapper_test::ZapperAction;
 use nes_core::{
     Plugin, ines::INesFile, machine::Machine, mcu::RamMcu, nes::Mmc3IrqOverride,
-    nes_machine::NesMachine, render::ImageRender,
+    nes_machine::NesMachine,
 };
 use std::{
     io::Read,
@@ -296,7 +296,7 @@ impl Image {
         }
 
         // Build the composite plugin step by step to handle type coercion
-        let mut plugins: Vec<Box<dyn Plugin<nes_core::nes::NesMcu<(), ()>>>> = vec![
+        let mut plugins: Vec<Box<dyn Plugin<nes_core::nes::NesMcu>>> = vec![
             Box::new(NesReportPlugin::create(quiet)),
             Box::new(DetectDeadLoop::<1>::new()),
             Box::new(DetectDeadLoop::<2>::new()),
@@ -407,15 +407,9 @@ impl Image {
             // Harness hook for blargg's 5.MMC3_rev_A.nes: the ROM is plain
             // iNES (no NES 2.0 submapper 004:4 header), so the test runner
             // selects revision-A (Alternate) IRQ semantics explicitly.
-            NesMachine::new_with_mmc3_irq_override(
-                ines,
-                plugin,
-                (),
-                (),
-                Mmc3IrqOverride::ForceAlternate,
-            )
+            NesMachine::new_with_mmc3_irq_override(ines, plugin, Mmc3IrqOverride::ForceAlternate)
         } else {
-            NesMachine::new(ines, plugin, (), ())
+            NesMachine::new(ines, plugin)
         };
         if let Some(pc) = start_pc {
             machine.set_pc(pc);
@@ -457,7 +451,7 @@ impl Image {
         start_pc: Option<u16>,
         max_instructions: u64,
     ) -> MachineWrapper {
-        let mut plugins: Vec<Box<dyn Plugin<nes_core::nes::NesMcu<(), ()>>>> = vec![
+        let mut plugins: Vec<Box<dyn Plugin<nes_core::nes::NesMcu>>> = vec![
             Box::new(NesReportPlugin::create(quiet)),
             Box::new(NametableConsole::for_test28()),
             Box::new(Test28ResetWatch::new()),
@@ -467,7 +461,7 @@ impl Image {
             plugins.push(Box::new(MaxInstructions::new(max_instructions)));
         }
         let plugin = CompositePlugin::new(plugins);
-        let mut machine = NesMachine::new(ines, plugin, (), ());
+        let mut machine = NesMachine::new(ines, plugin);
         if let Some(pc) = start_pc {
             machine.set_pc(pc);
         }
@@ -494,7 +488,7 @@ impl Image {
         max_instructions: u64,
         timeout: Duration,
     ) -> MachineWrapper {
-        let mut plugins: Vec<Box<dyn Plugin<nes_core::nes::NesMcu<(), ()>>>> = vec![
+        let mut plugins: Vec<Box<dyn Plugin<nes_core::nes::NesMcu>>> = vec![
             Box::new(NesReportPlugin::create(quiet)),
             Box::new(NametableConsole::with_magic_success_word("$01")),
             Box::new(Timeout::new(timeout)),
@@ -503,7 +497,7 @@ impl Image {
             plugins.push(Box::new(MaxInstructions::new(max_instructions)));
         }
         let plugin = CompositePlugin::new(plugins);
-        let mut machine = NesMachine::new(ines, plugin, (), ());
+        let mut machine = NesMachine::new(ines, plugin);
         if let Some(pc) = start_pc {
             machine.set_pc(pc);
         }
@@ -529,7 +523,7 @@ impl Image {
     /// sub-tests complete, so the fixed 960-tile window at 0x2000 goes stale
     /// mid-run and the verdict must be scanned across the whole nametable
     /// address space (`with_full_nametable_scan`). The machines run on
-    /// ImageRender like the scanline machine, where this family's end-to-end
+    /// Like the scanline machine, where this family's end-to-end
     /// completion is verified. Timeout turns a hang (word never printed) into
     /// a structured failure; the justfile wraps the same 15 s budget with an
     /// outer `timeout 15`.
@@ -540,7 +534,7 @@ impl Image {
         start_pc: Option<u16>,
         max_instructions: u64,
     ) -> MachineWrapper {
-        let mut plugins: Vec<Box<dyn Plugin<nes_core::nes::NesMcu<ImageRender, ()>>>> = vec![
+        let mut plugins: Vec<Box<dyn Plugin<nes_core::nes::NesMcu>>> = vec![
             Box::new(NesReportPlugin::create(quiet)),
             Box::new(
                 NametableConsole::with_magic_success_word_unless_failed("All tests complete")
@@ -553,7 +547,7 @@ impl Image {
             plugins.push(Box::new(MaxInstructions::new(max_instructions)));
         }
         let plugin = CompositePlugin::new(plugins);
-        let mut machine = NesMachine::new(ines, plugin, ImageRender::default_dimension(), ());
+        let mut machine = NesMachine::new(ines, plugin);
         if let Some(pc) = start_pc {
             machine.set_pc(pc);
         }
@@ -602,7 +596,7 @@ impl Image {
                     .join(f)
             })
             .collect();
-        let mut plugins: Vec<Box<dyn Plugin<nes_core::nes::NesMcu<ImageRender, ()>>>> = vec![
+        let mut plugins: Vec<Box<dyn Plugin<nes_core::nes::NesMcu>>> = vec![
             Box::new(NesReportPlugin::create(quiet)),
             Box::new(PngFrameMatch::new(expected_pngs).expect("failed to load expected PNG")),
             Box::new(Timeout::new(timeout)),
@@ -611,7 +605,7 @@ impl Image {
             plugins.push(Box::new(MaxInstructions::new(max_instructions)));
         }
         let plugin = CompositePlugin::new(plugins);
-        let mut machine = NesMachine::new(ines, plugin, ImageRender::default_dimension(), ());
+        let mut machine = NesMachine::new(ines, plugin);
         if let Some(pc) = start_pc {
             machine.set_pc(pc);
         }
@@ -628,7 +622,7 @@ impl Image {
         start_pc: Option<u16>,
         max_instructions: u64,
     ) -> MachineWrapper {
-        let mut plugins: Vec<Box<dyn Plugin<nes_core::nes::NesMcu<ImageRender, ()>>>> = vec![
+        let mut plugins: Vec<Box<dyn Plugin<nes_core::nes::NesMcu>>> = vec![
             Box::new(NesReportPlugin::create(quiet)),
             Box::new(Timeout::new(Duration::from_secs(5))),
         ];
@@ -636,7 +630,7 @@ impl Image {
             plugins.push(Box::new(MaxInstructions::new(max_instructions)));
         }
         let plugin = CompositePlugin::new(plugins);
-        let mut machine = NesMachine::new(ines, plugin, ImageRender::default_dimension(), ());
+        let mut machine = NesMachine::new(ines, plugin);
         if let Some(pc) = start_pc {
             machine.set_pc(pc);
         }
@@ -656,7 +650,7 @@ impl Image {
         let Image::INes { nes_file, .. } = self else {
             panic!("--dump-frame requires an iNES ROM (needs the PPU renderer)");
         };
-        let mut plugins: Vec<Box<dyn Plugin<nes_core::nes::NesMcu<ImageRender, ()>>>> = vec![
+        let mut plugins: Vec<Box<dyn Plugin<nes_core::nes::NesMcu>>> = vec![
             Box::new(NesReportPlugin::create(quiet)),
             Box::new(FramePngDump::new(target_frame, out_path)),
             Box::new(Timeout::new(Duration::from_secs(15))),
@@ -665,7 +659,7 @@ impl Image {
             plugins.push(Box::new(MaxInstructions::new(max_instructions)));
         }
         let plugin = CompositePlugin::new(plugins);
-        let mut machine = NesMachine::new(nes_file, plugin, ImageRender::default_dimension(), ());
+        let mut machine = NesMachine::new(nes_file, plugin);
         if let Some(pc) = start_pc {
             machine.set_pc(pc);
         }
@@ -678,7 +672,6 @@ impl Image {
     /// samples as WAV.
     pub fn create_audio_dump_machine(
         &self,
-        recorder: WavRecorder,
         quiet: bool,
         start_pc: Option<u16>,
         max_instructions: u64,
@@ -686,13 +679,13 @@ impl Image {
         let Image::INes { nes_file, .. } = self else {
             panic!("--dump-audio requires an iNES ROM (needs the NES APU)");
         };
-        let mut plugins: Vec<Box<dyn Plugin<nes_core::nes::NesMcu<(), WavRecorder>>>> =
+        let mut plugins: Vec<Box<dyn Plugin<nes_core::nes::NesMcu>>> =
             vec![Box::new(NesReportPlugin::create(quiet))];
         if max_instructions > 0 {
             plugins.push(Box::new(MaxInstructions::new(max_instructions)));
         }
         let plugin = CompositePlugin::new(plugins);
-        let mut machine = NesMachine::new(nes_file, plugin, (), recorder);
+        let mut machine = NesMachine::new(nes_file, plugin);
         if let Some(pc) = start_pc {
             machine.set_pc(pc);
         }
@@ -744,7 +737,7 @@ impl Image {
         max_instructions: u64,
     ) -> MachineWrapper {
         let expected_png = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("src/scanline-exp.png");
-        let mut plugins: Vec<Box<dyn Plugin<nes_core::nes::NesMcu<ImageRender, ()>>>> = vec![
+        let mut plugins: Vec<Box<dyn Plugin<nes_core::nes::NesMcu>>> = vec![
             Box::new(NesReportPlugin::create(quiet)),
             Box::new(NametableConsole::default()),
             Box::new(
@@ -756,7 +749,7 @@ impl Image {
             plugins.push(Box::new(MaxInstructions::new(max_instructions)));
         }
         let plugin = CompositePlugin::new(plugins);
-        let mut machine = NesMachine::new(ines, plugin, ImageRender::default_dimension(), ());
+        let mut machine = NesMachine::new(ines, plugin);
         if let Some(pc) = start_pc {
             machine.set_pc(pc);
         }
@@ -773,13 +766,13 @@ mod machine_types {
     pub type BinPlugin = CompositePlugin<BinMcu>;
     pub type BinMachine = Machine<BinPlugin, BinMcu>;
 
-    pub type INesPlugin = CompositePlugin<nes_core::nes::NesMcu<(), ()>>;
-    pub type INesMachine = NesMachine<INesPlugin, (), ()>;
+    pub type INesPlugin = CompositePlugin<nes_core::nes::NesMcu>;
+    pub type INesMachine = NesMachine<INesPlugin>;
 
-    pub type ImageRenderPlugin = CompositePlugin<nes_core::nes::NesMcu<ImageRender, ()>>;
-    pub type RenderedMachine = NesMachine<ImageRenderPlugin, ImageRender, ()>;
-    pub type AudioDumpPlugin = CompositePlugin<nes_core::nes::NesMcu<(), WavRecorder>>;
-    pub type AudioDumpMachine = NesMachine<AudioDumpPlugin, (), WavRecorder>;
+    pub type ImageRenderPlugin = CompositePlugin<nes_core::nes::NesMcu>;
+    pub type RenderedMachine = NesMachine<ImageRenderPlugin>;
+    pub type AudioDumpPlugin = CompositePlugin<nes_core::nes::NesMcu>;
+    pub type AudioDumpMachine = NesMachine<AudioDumpPlugin>;
 }
 
 pub enum MachineWrapper {
@@ -828,10 +821,20 @@ impl MachineWrapper {
         }
     }
 
+    /// The mixed APU samples buffered so far (44.1 kHz mono `f32`).
+    pub fn audio_samples(&self) -> &[f32] {
+        match self {
+            MachineWrapper::Bin(..) => &[],
+            MachineWrapper::INes(m) => m.audio_samples(),
+            MachineWrapper::Rendered(m) => m.audio_samples(),
+            MachineWrapper::AudioDump(m) => m.audio_samples(),
+        }
+    }
+
     /// The rendered framebuffer, for frame-snapshot comparison.
     pub fn renderer_image(&self) -> &[[u8; 4]] {
         match self {
-            MachineWrapper::Rendered(m) => m.mcu().ppu().renderer().as_pixels(),
+            MachineWrapper::Rendered(m) => m.mcu().ppu().frame_pixels(),
             _ => panic!("renderer_image requires a rendered iNES machine"),
         }
     }

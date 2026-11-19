@@ -1,5 +1,4 @@
 use js_sys::Float32Array;
-use nes_core::nes::apu::AudioDriver;
 use wasm_bindgen::prelude::*;
 
 const CHUNK_SIZE: usize = 256;
@@ -210,19 +209,17 @@ impl WebAudioDriver {
     }
 }
 
-impl AudioDriver for WebAudioDriver {
-    fn sample_rate(&self) -> u32 {
-        self.sample_rate
-    }
-
-    fn push_sample(&mut self, sample: f32) {
-        self.buffer.push(sample);
-        if self.buffer.len() >= CHUNK_SIZE {
-            self.send_buffer();
+impl WebAudioDriver {
+    pub fn push_samples(&mut self, samples: &[f32]) {
+        for &sample in samples {
+            self.buffer.push(sample);
+            if self.buffer.len() >= CHUNK_SIZE {
+                self.send_buffer();
+            }
         }
     }
 
-    fn flush(&mut self) {
+    pub fn flush_frame(&mut self) {
         self.send_buffer();
         self.handle.flush();
     }

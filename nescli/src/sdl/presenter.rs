@@ -6,7 +6,6 @@
 //! canvas instead of being recreated every frame. No `unsafe` code is needed.
 
 use crate::sdl::presentation::{FramePresentation, OverlayIcon, OverlayPlacement, plan};
-use nes_core::render::ImageRender;
 use sdl2::pixels::PixelFormatEnum;
 use sdl2::rect::Rect;
 use sdl2::render::{BlendMode, Canvas, ScaleMode, Texture};
@@ -136,13 +135,13 @@ impl FramePresenter {
 pub fn present_frame(
     canvas: &mut Canvas<Window>,
     presenter: &mut FramePresenter,
-    frame: &ImageRender,
+    frame_bytes: &[u8],
     overlays: &[OverlayPlacement],
 ) {
     let dst_size = canvas
         .output_size()
         .expect("failed to query SDL renderer output size");
-    let presentation = plan(frame, overlays, dst_size);
+    let presentation = plan(frame_bytes, overlays, dst_size);
     presenter.present(canvas, &presentation);
 }
 
@@ -153,8 +152,7 @@ mod tests {
     use crate::sdl::render::{
         RECORD_HEIGHT, RECORD_WIDTH, composite_overlay_icons, load_overlay_icons, upscale_into,
     };
-    use nes_core::render::image_render::NES_WIDTH;
-    use nes_core::render::{ImageRender, Render};
+    use nes_core::nes::ppu::{NES_HEIGHT, NES_WIDTH};
     use std::rc::Rc;
 
     /// Serializes the SDL tests. The sdl2 crate allows `init` on only one
@@ -191,18 +189,16 @@ mod tests {
 
         // A frame with a distinct colour per logical pixel, so any blend or
         // upscale mistake changes the comparison.
-        let mut frame = ImageRender::new();
+        let mut frame = vec![0u8; NES_WIDTH * NES_HEIGHT * 4];
         for y in 0..240u32 {
             for x in 0..256u32 {
-                frame.set_pixel(
-                    (y * 256 + x) as u16,
-                    [
-                        (x.wrapping_mul(3)) as u8,
-                        (y.wrapping_mul(5)) as u8,
-                        (x ^ y) as u8,
-                        255,
-                    ],
-                );
+                let idx = ((y * 256 + x) * 4) as usize;
+                frame[idx..idx + 4].copy_from_slice(&[
+                    (x.wrapping_mul(3)) as u8,
+                    (y.wrapping_mul(5)) as u8,
+                    (x ^ y) as u8,
+                    255,
+                ]);
             }
         }
 
@@ -235,10 +231,10 @@ mod tests {
 
         // Legacy path: the same 4x upscale plus the host integer blend.
         let mut expected = vec![0u8; RECORD_WIDTH * RECORD_HEIGHT * 4];
-        upscale_into(frame.as_bytes(), &mut expected);
+        upscale_into(&frame, &mut expected);
         composite_overlay_icons(&mut expected, &placements, &icons);
         let mut plain = vec![0u8; RECORD_WIDTH * RECORD_HEIGHT * 4];
-        upscale_into(frame.as_bytes(), &mut plain);
+        upscale_into(&frame, &mut plain);
         assert_ne!(plain, expected, "the icon composite must change the frame");
 
         let scale = (RECORD_WIDTH / NES_WIDTH) as u32;

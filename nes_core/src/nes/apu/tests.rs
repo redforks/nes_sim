@@ -2,7 +2,7 @@ use super::*;
 
 #[test]
 fn dmc_counts_dac_register_writes() {
-    let mut apu = Apu::new(());
+    let mut apu = Apu::new();
     assert_eq!(apu.dmc_dac_writes(), 0);
 
     apu.write(0x4011, 0x40, SystemClock(2));
@@ -299,26 +299,26 @@ fn test_frame_counter_to_from_u8() {
 // Test APU control logic
 #[test]
 fn test_apu_controller_read_status() {
-    let mut channel = Apu::new(());
+    let mut channel = Apu::new();
     let val = channel.read(0x4015);
     assert_eq!(val, 0); // Default APUStatus
 }
 
 #[test]
 fn test_apu_controller_write_control_flags() {
-    let mut channel = Apu::new(());
+    let mut channel = Apu::new();
     channel.write(0x4015, 0x1F, SystemClock(2)); // Should call set_control_flags
 }
 
 #[test]
 fn test_apu_controller_write_frame_counter() {
-    let mut channel = Apu::new(());
+    let mut channel = Apu::new();
     channel.write(0x4017, 0xC0, SystemClock(2)); // Should call set_frame_counter
 }
 
 #[test]
 fn test_apu_controller_driver_control_flags_status() {
-    let mut driver = Apu::new(());
+    let mut driver = Apu::new();
 
     // First enable the channel, then load the length counter
     driver.write(0x4015, 0x01, SystemClock(2));
@@ -765,7 +765,7 @@ fn blargg_forum_test_1_length_counter_survives_the_write_dance() {
     // 29829), so $4015 bit 0 must still read 1 — and the frame IRQ the
     // 29828-29830 steps raised must show up on bit 6 before the halt clears it.
     struct ApuDriver {
-        apu: Apu<()>,
+        apu: Apu,
         tick: u64,
     }
 
@@ -793,7 +793,7 @@ fn blargg_forum_test_1_length_counter_survives_the_write_dance() {
     }
 
     let mut driver = ApuDriver {
-        apu: Apu::new(()),
+        apu: Apu::new(),
         tick: 0,
     };
     driver.write_on_cpu_clock(0x4015, 0x01); // enable pulse1

@@ -7,20 +7,19 @@ use crate::nes::apu::Apu;
 use crate::nes::controller::Button;
 use crate::nes::mapper::Cartridge;
 use crate::nes::mapper::{Mmc3IrqOverride, create_cartridge_with_mmc3_irq_override};
-use crate::render::ImageRender;
 use crate::test_utils::{McuCall, RecordingMcu};
 
-fn test_mcu() -> NesMcu<ImageRender, ()> {
+fn test_mcu() -> NesMcu {
     test_mcu_with(Cartridge::test())
 }
 
-fn test_mcu_with(cartridge: Cartridge) -> NesMcu<ImageRender, ()> {
+fn test_mcu_with(cartridge: Cartridge) -> NesMcu {
     NesMcu {
         lower_ram: LowerRam::new(),
-        ppu: Ppu::new(ImageRender::default_dimension()),
+        ppu: Ppu::new(),
         cartridge,
         controller: Controller::new(),
-        apu: Apu::new(()),
+        apu: Apu::new(),
         oam_dma_pending: None,
         deferred_apu_writes: ArrayDeque::new(),
         open_bus: 0,
@@ -806,7 +805,7 @@ fn zapper_light_detected_mid_frame_before_drain() {
 
     // Still mid-frame: nothing has drained into the framebuffer yet.
     assert_eq!(
-        mcu.ppu().renderer().get_pixel(50, 10),
+        mcu.ppu().get_pixel(50, 10),
         [0, 0, 0, 0],
         "no drain before vblank: framebuffer still black at the aim"
     );

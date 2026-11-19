@@ -5,7 +5,7 @@ use crate::mcu::Mcu;
 /// Read-model snapshot exposed to plugins/tools — the per-dot view (ADR-0010).
 /// Replaces direct `&Cpu<M>` + `cpu.mcu().ppu()` walks. Holds an owned
 /// CPU snapshot plus a shared borrow of the address space for `peek`/`read_vram` etc.
-/// `M` is the underlying `Mcu` (e.g. `MockMcu` or `NesMcu<R,D>`).
+/// `M` is the underlying `Mcu` (e.g. `MockMcu` or `NesMcu`).
 pub struct MachineView<'a, M: Mcu> {
     pub cpu: CpuSnapshot,
     mcu: &'a M,
@@ -42,13 +42,9 @@ impl<'a, M: Mcu> MachineView<'a, M> {
     }
 }
 
-// NesMcu-specific extensions — only available when `M = NesMcu<R,D>`.
+// NesMcu-specific extensions — only available when `M = NesMcu`.
 // Placed here rather than in `nes.rs` to keep the view seam in one module.
-impl<'a, R, D> MachineView<'a, crate::nes::NesMcu<R, D>>
-where
-    R: crate::render::Render,
-    D: crate::nes::apu::AudioDriver,
-{
+impl<'a> MachineView<'a, crate::nes::NesMcu> {
     pub fn ppu_in_vblank(&self) -> bool {
         self.mcu.ppu().in_vblank()
     }
@@ -69,27 +65,24 @@ where
     }
 }
 
-impl<'a, D> MachineView<'a, crate::nes::NesMcu<crate::render::ImageRender, D>>
-where
-    D: crate::nes::apu::AudioDriver,
-{
+impl<'a> MachineView<'a, crate::nes::NesMcu> {
     pub fn borrow_image_bytes(&self) -> &[u8] {
-        self.mcu.ppu().renderer().as_bytes()
+        self.mcu.ppu().frame_bytes()
     }
 
     /// Typed RGBA pixels (`width*height` entries of `[R,G,B,A]`).
     pub fn borrow_pixels(&self) -> &[[u8; 4]] {
-        self.mcu.ppu().renderer().as_pixels()
+        self.mcu.ppu().frame_pixels()
     }
 
-    /// Output width (`256*N`).
+    /// Output width (256).
     pub fn image_width(&self) -> u32 {
-        crate::render::ImageRender::width()
+        crate::nes::ppu::NES_WIDTH as u32
     }
 
-    /// Output height (`240*N`).
+    /// Output height (240).
     pub fn image_height(&self) -> u32 {
-        crate::render::ImageRender::height()
+        crate::nes::ppu::NES_HEIGHT as u32
     }
 
     /// Compatibility alias — returns typed pixels (was `&RgbaImage`).

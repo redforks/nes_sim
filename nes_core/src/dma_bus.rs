@@ -11,12 +11,7 @@
 
 use crate::bus::Bus;
 use crate::nes::dmc_dma::DmcDma;
-use crate::{
-    Cpu,
-    mcu::Mcu,
-    nes::{NesMcu, apu::AudioDriver},
-    render::Render,
-};
+use crate::{Cpu, mcu::Mcu, nes::NesMcu};
 
 /// Per-dot holder of the bus returned by [`DmaBus::tick`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -53,7 +48,7 @@ pub(crate) trait OamDmaMcu: Mcu {
     fn write_oam_data(&mut self, value: u8);
 }
 
-impl<R: Render, D: AudioDriver> OamDmaMcu for NesMcu<R, D> {
+impl OamDmaMcu for NesMcu {
     fn take_oam_dma_pending(&mut self) -> Option<u8> {
         NesMcu::take_oam_dma_pending(self)
     }
@@ -91,13 +86,13 @@ impl DmaBus {
     /// Includes the OAM request queue still queued in the producer (`NesMcu`
     /// `oam_dma_pending`) that has not yet been drained on the next APU tick.
     /// Callers do not query `dmc_dma` or `mcu.oam_dma_active()` separately.
-    pub fn is_busy<R: Render, D: AudioDriver>(&self, mcu: &NesMcu<R, D>) -> bool {
+    pub fn is_busy(&self, mcu: &NesMcu) -> bool {
         self.dmc.is_busy() || self.oam.is_some() || mcu.has_oam_dma_pending()
     }
 
     /// Single suppression path for reset drain: discard freshly generated DMC
     /// fetch requests so the drain terminates even with DMC still playing.
-    pub fn suppress_new_dmc_requests<R: Render, D: AudioDriver>(&mut self, mcu: &mut NesMcu<R, D>) {
+    pub fn suppress_new_dmc_requests(&mut self, mcu: &mut NesMcu) {
         // `NesMcu::suppress_new_dmc_dma_requests` drains `Apu::take_dmc_dma_request`
         // in a loop. Keep the loop here so Bus is the single suppression seam.
         mcu.suppress_new_dmc_dma_requests();
@@ -119,11 +114,7 @@ impl DmaBus {
     /// master clock (ADR-0018). Internally `let dmc_drove = dmc.tick(cpu,bus);`
     /// then `oam_tick(bus, dmc_drove)` — the bool never leaves this method,
     /// and the `NesMcu` predicate becomes a private branch.
-    pub fn tick<R: Render, D: AudioDriver>(
-        &mut self,
-        cpu: &mut Cpu,
-        bus: &mut Bus<NesMcu<R, D>>,
-    ) -> BusOwner {
+    pub fn tick(&mut self, cpu: &mut Cpu, bus: &mut Bus<NesMcu>) -> BusOwner {
         // DMC tick first — it may freeze the CPU and it decides `dmc_drove`
         // (true only on the read cycle that actually transfers a byte).
         let dmc_drove = self.dmc.tick(cpu, bus);

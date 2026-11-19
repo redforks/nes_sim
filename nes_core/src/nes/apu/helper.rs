@@ -237,33 +237,3 @@ impl<I: Copy> Sequencer<I> {
         unsafe { *self.items.get_unchecked(self.cur_idx) }
     }
 }
-
-pub trait AudioDriver {
-    fn sample_rate(&self) -> u32;
-
-    fn push_sample(&mut self, sample: f32);
-
-    fn flush(&mut self) {}
-}
-
-impl<T: AudioDriver + ?Sized> AudioDriver for Box<T> {
-    fn sample_rate(&self) -> u32 {
-        (**self).sample_rate()
-    }
-
-    fn push_sample(&mut self, sample: f32) {
-        (**self).push_sample(sample)
-    }
-
-    fn flush(&mut self) {
-        (**self).flush()
-    }
-}
-
-impl AudioDriver for () {
-    fn sample_rate(&self) -> u32 {
-        44_100
-    }
-
-    fn push_sample(&mut self, _sample: f32) {}
-}

@@ -22,11 +22,11 @@ fn sprdma_and_dmc_dma_rom_terminates() {
     };
 
     let ines = INesFile::new(rom).expect("valid iNES file");
-    let mut machine = NesMachine::new(&ines, EmptyPlugin::new(), (), ());
+    let mut machine = NesMachine::new(&ines, EmptyPlugin::new());
 
     // Blargg test ROM interface: `$6000-$6003` must hold the signature
     // `DE B0 61`; `$6000` is `$80` while running and the verdict afterwards.
-    let status = |machine: &NesMachine<EmptyPlugin<NesMcu<(), ()>>, (), ()>| {
+    let status = |machine: &NesMachine<EmptyPlugin<NesMcu>>| {
         let mcu = machine.mcu();
         if mcu.peek(0x6001) != 0xDE || mcu.peek(0x6002) != 0xB0 || mcu.peek(0x6003) != 0x61 {
             None

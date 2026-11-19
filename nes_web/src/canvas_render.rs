@@ -1,4 +1,3 @@
-use nes_core::render::Render;
 use std::fmt;
 use wasm_bindgen::Clamped;
 use web_sys::{CanvasRenderingContext2d, ImageData};
@@ -41,18 +40,11 @@ impl CanvasRender {
     }
 }
 
-impl Render for CanvasRender {
-    fn set_pixel(&mut self, index: u16, color: [u8; 4]) {
-        let idx = index as usize;
-        if idx >= (self.width * self.height) as usize {
-            return;
-        }
-
-        let byte_idx = idx * 4;
-        self.buffer[byte_idx..byte_idx + 4].copy_from_slice(&color);
-    }
-
-    fn finish(&mut self) {
+impl CanvasRender {
+    pub fn present_frame_bytes(&mut self, frame_bytes: &[u8]) {
+        let len = (self.width * self.height * 4) as usize;
+        let n = len.min(frame_bytes.len()).min(self.buffer.len());
+        self.buffer[..n].copy_from_slice(&frame_bytes[..n]);
         self.flush();
     }
 }

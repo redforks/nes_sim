@@ -8,7 +8,6 @@ pub use drivers::{INTERACTIVE_WINDOW, PLAYBACK_WINDOW, WindowSpec, create_sdl_dr
 pub(crate) use event_loop::{FastForwardState, InputSource, LoopOptions, run_event_loop};
 pub(crate) use render::NesRender;
 
-use nes_core::nes::apu::AudioDriver;
 use nes_core::nes::controller::Button;
 use sdl2::audio::AudioQueue;
 use sdl2::keyboard::Keycode;
@@ -86,22 +85,20 @@ impl NesAudioDriver {
     }
 }
 
-impl AudioDriver for NesAudioDriver {
-    fn sample_rate(&self) -> u32 {
-        self.sample_rate
-    }
-
-    fn push_sample(&mut self, sample: f32) {
-        self.buffer.push(sample);
-        if self.buffer.len() >= AUDIO_CHUNK_SAMPLES {
-            self.try_flush();
-        }
-        if self.audio_tx.is_some() {
-            self.sample_buf.push(sample);
+impl NesAudioDriver {
+    pub fn push_samples(&mut self, samples: &[f32]) {
+        for &sample in samples {
+            self.buffer.push(sample);
+            if self.buffer.len() >= AUDIO_CHUNK_SAMPLES {
+                self.try_flush();
+            }
+            if self.audio_tx.is_some() {
+                self.sample_buf.push(sample);
+            }
         }
     }
 
-    fn flush(&mut self) {
+    pub fn flush_frame(&mut self) {
         self.try_flush();
         let send_audio = self.send_policy.should_send(self.ff_skip.get());
         if let Some(ref tx) = self.audio_tx {

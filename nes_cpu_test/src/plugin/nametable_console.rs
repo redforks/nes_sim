@@ -1,7 +1,6 @@
 use ansi_term::Color;
 use is_terminal::IsTerminal;
 use nes_core::nes::NesMcu;
-use nes_core::render::Render;
 use nes_core::view::MachineView;
 use nes_core::{ExecuteResult, Plugin};
 use std::collections::HashMap;
@@ -121,10 +120,10 @@ impl Default for NametableConsole {
     }
 }
 
-impl<R: Render> Plugin<NesMcu<R, ()>> for NametableConsole {
-    fn start(&mut self, _: &MachineView<NesMcu<R, ()>>) {}
+impl Plugin<NesMcu> for NametableConsole {
+    fn start(&mut self, _: &MachineView<NesMcu>) {}
 
-    fn end(&mut self, view: &MachineView<NesMcu<R, ()>>) {
+    fn end(&mut self, view: &MachineView<NesMcu>) {
         if !view.ppu_in_vblank()
             || (!self.sample_without_rendering && !view.ppu_rendering_enabled())
         {
@@ -203,8 +202,8 @@ fn next_transcript(last: &[String], buf: &str) -> (Vec<String>, String) {
     (lines, transcript)
 }
 
-fn read_console<R: Render>(
-    view: &MachineView<NesMcu<R, ()>>,
+fn read_console(
+    view: &MachineView<NesMcu>,
     decoder: &Decoder,
     full_nametable_scan: bool,
 ) -> String {
@@ -214,10 +213,7 @@ fn read_console<R: Render>(
     }
 }
 
-fn read_plain_console<R: Render>(
-    view: &MachineView<NesMcu<R, ()>>,
-    full_nametable_scan: bool,
-) -> String {
+fn read_plain_console(view: &MachineView<NesMcu>, full_nametable_scan: bool) -> String {
     if full_nametable_scan {
         return read_full_nametable(view);
     }
@@ -258,7 +254,7 @@ fn read_plain_console<R: Render>(
 /// the physical 2 KiB twice) and joins every run of non-zero tiles with
 /// newlines. Verdict matching is substring-based, so where the ROM's console
 /// scroll placed each line doesn't matter.
-fn read_full_nametable<R: Render>(view: &MachineView<NesMcu<R, ()>>) -> String {
+fn read_full_nametable(view: &MachineView<NesMcu>) -> String {
     let mut all = Vec::with_capacity(0x1000);
     for offset in 0..0x1000u16 {
         all.push(view.read_vram(NAMETABLE_START + offset));
@@ -269,7 +265,7 @@ fn read_full_nametable<R: Render>(view: &MachineView<NesMcu<R, ()>>) -> String {
         .join("\n")
 }
 
-pub(crate) fn read_tall_console<R: Render>(view: &MachineView<NesMcu<R, ()>>) -> String {
+pub(crate) fn read_tall_console(view: &MachineView<NesMcu>) -> String {
     let mut lines = Vec::with_capacity(SCREEN_HEIGHT / 2);
 
     for row in (0..SCREEN_HEIGHT).step_by(2) {
@@ -288,7 +284,7 @@ pub(crate) fn read_tall_console<R: Render>(view: &MachineView<NesMcu<R, ()>>) ->
     lines.join("\n")
 }
 
-fn read_nametable_char<R: Render>(view: &MachineView<NesMcu<R, ()>>, row: usize, col: usize) -> u8 {
+fn read_nametable_char(view: &MachineView<NesMcu>, row: usize, col: usize) -> u8 {
     view.read_vram(NAMETABLE_START + (row * SCREEN_WIDTH + col) as u16)
 }
 

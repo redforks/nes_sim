@@ -26,7 +26,6 @@
 
 use nes_core::mcu::Mcu;
 use nes_core::nes::NesMcu;
-use nes_core::render::Render;
 use nes_core::view::MachineView;
 use nes_core::{ExecuteResult, Plugin};
 
@@ -78,7 +77,7 @@ impl Test28ResetWatch {
         view.peek(0xFC) == 0x1E && view.peek(0xFD) == 0xF0 && view.peek(0xFE) == 0x01
     }
 
-    fn wait_screen_visible<R: Render>(view: &MachineView<NesMcu<R, ()>>) -> bool {
+    fn wait_screen_visible(view: &MachineView<NesMcu>) -> bool {
         super::nametable_console::contains_test28_reset_prompt(
             &super::nametable_console::read_tall_console(view),
         )
@@ -91,10 +90,10 @@ impl Default for Test28ResetWatch {
     }
 }
 
-impl<R: Render> Plugin<NesMcu<R, ()>> for Test28ResetWatch {
-    fn start(&mut self, _: &MachineView<NesMcu<R, ()>>) {}
+impl Plugin<NesMcu> for Test28ResetWatch {
+    fn start(&mut self, _: &MachineView<NesMcu>) {}
 
-    fn end(&mut self, view: &MachineView<NesMcu<R, ()>>) {
+    fn end(&mut self, view: &MachineView<NesMcu>) {
         // The reset preserves RAM and VRAM, so the WAIT state is still
         // present after it lands: the latch (not the state's absence) is
         // what keeps the request single-shot.
@@ -127,7 +126,7 @@ mod tests {
     /// Minimal NROM machine: the watch only needs zero-page `peek` and
     /// nametable VRAM, both mapper-independent, so the wiring tests don't
     /// need a mapper-28 build.
-    fn watch_machine() -> NesMachine<Test28ResetWatch, (), ()> {
+    fn watch_machine() -> NesMachine<Test28ResetWatch> {
         let mut image = vec![
             b'N', b'E', b'S', 0x1A, 0x01, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
             0x00, 0x00,
@@ -139,23 +138,20 @@ mod tests {
         image[base + 0x3FFC] = 0x00;
         image[base + 0x3FFD] = 0x80;
         let file = INesFile::new(image).expect("fixture iNES");
-        NesMachine::new(&file, Test28ResetWatch::new(), (), ())
+        NesMachine::new(&file, Test28ResetWatch::new())
     }
 
-    fn poll(
-        watch: &mut Test28ResetWatch,
-        machine: &NesMachine<Test28ResetWatch, (), ()>,
-    ) -> ExecuteResult {
+    fn poll(watch: &mut Test28ResetWatch, machine: &NesMachine<Test28ResetWatch>) -> ExecuteResult {
         let view = MachineView::new(
             machine.cpu().snapshot(),
             machine.mcu(),
             SystemClock::default(),
         );
         watch.end(&view);
-        <Test28ResetWatch as Plugin<NesMcu<(), ()>>>::should_stop(watch)
+        <Test28ResetWatch as Plugin<NesMcu>>::should_stop(watch)
     }
 
-    fn poke_signature(machine: &mut NesMachine<Test28ResetWatch, (), ()>) {
+    fn poke_signature(machine: &mut NesMachine<Test28ResetWatch>) {
         let mcu = machine.mcu_mut();
         mcu.write(0xFC, 0x1E, SystemClock::default());
         mcu.write(0xFD, 0xF0, SystemClock::default());
@@ -165,11 +161,7 @@ mod tests {
     /// Writes one tall-text row pair: top tiles `c*2` on `row_pair*2`,
     /// bottom tiles `c*2+1` on `row_pair*2+1`, the tall encoding
     /// `decode_tall_char` inverts.
-    fn write_tall_text(
-        machine: &mut NesMachine<Test28ResetWatch, (), ()>,
-        row_pair: usize,
-        text: &str,
-    ) {
+    fn write_tall_text(machine: &mut NesMachine<Test28ResetWatch>, row_pair: usize, text: &str) {
         let mcu = machine.mcu_mut();
         for pass in [0u16, 1u16] {
             mcu.read(0x2002); // reset the $2006 latch

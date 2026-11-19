@@ -8,8 +8,7 @@
 //! (`FramePresenter`) owns the reused frame texture and performs the upload and
 //! the scaled copy.
 
-use nes_core::render::ImageRender;
-use nes_core::render::image_render::{NES_HEIGHT, NES_WIDTH};
+use nes_core::nes::ppu::{NES_HEIGHT, NES_WIDTH};
 
 /// A destination rectangle `(x, y, width, height)` in destination pixels.
 pub type DstRect = (i32, i32, u32, u32);
@@ -57,8 +56,8 @@ pub struct FramePresentation<'a> {
 /// 1x 256x240 coordinates and are scaled by the destination size, independent
 /// of the frame's Zoom Factor `N`.
 pub fn plan<'a>(
-    frame: &'a ImageRender,
-    overlays: &[OverlayPlacement],
+    frame_bytes: &'a [u8],
+    overlays: &'a [OverlayPlacement],
     dst_size: (u32, u32),
 ) -> FramePresentation<'a> {
     let scale_x = dst_size.0 as f64 / NES_WIDTH as f64;
@@ -76,9 +75,9 @@ pub fn plan<'a>(
         })
         .collect();
     FramePresentation {
-        bytes: frame.as_bytes(),
-        width: ImageRender::width(),
-        height: ImageRender::height(),
+        bytes: frame_bytes,
+        width: NES_WIDTH as u32,
+        height: NES_HEIGHT as u32,
         dst: (0, 0, dst_size.0, dst_size.1),
         overlays: scaled_overlays,
     }
@@ -87,12 +86,11 @@ pub fn plan<'a>(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use nes_core::render::Render;
 
     #[test]
     fn one_x_frame_bytes_and_dimensions() {
-        let mut frame = ImageRender::new();
-        frame.set_pixel(0, [1, 2, 3, 255]);
+        let mut frame = vec![0u8; NES_WIDTH * NES_HEIGHT * 4];
+        frame[0..4].copy_from_slice(&[1, 2, 3, 255]);
         let p = plan(&frame, &[], (512, 480));
         assert_eq!(p.width, 256);
         assert_eq!(p.height, 240);
@@ -102,29 +100,30 @@ mod tests {
 
     #[test]
     fn presentation_bytes_are_the_frame_bytes() {
-        let mut frame = ImageRender::new();
-        frame.set_pixel(2 + 3 * 256, [9, 8, 7, 255]);
+        let mut frame = vec![0u8; NES_WIDTH * NES_HEIGHT * 4];
+        let idx = (2 + 3 * 256) * 4;
+        frame[idx..idx + 4].copy_from_slice(&[9, 8, 7, 255]);
         let p = plan(&frame, &[], (1024, 960));
-        assert_eq!(p.bytes, frame.as_bytes());
+        assert_eq!(p.bytes, frame.as_slice());
     }
 
     #[test]
     fn destination_rect_is_the_whole_window() {
-        let frame = ImageRender::new();
+        let frame = vec![0u8; NES_WIDTH * NES_HEIGHT * 4];
         let p = plan(&frame, &[], (1024, 960));
         assert_eq!(p.dst, (0, 0, 1024, 960));
     }
 
     #[test]
     fn no_overlays_makes_an_empty_list() {
-        let frame = ImageRender::new();
+        let frame = vec![0u8; NES_WIDTH * NES_HEIGHT * 4];
         let p = plan(&frame, &[], (512, 480));
         assert!(p.overlays.is_empty());
     }
 
     #[test]
     fn overlays_scale_from_logical_to_destination() {
-        let frame = ImageRender::new();
+        let frame = vec![0u8; NES_WIDTH * NES_HEIGHT * 4];
         let overlays = [
             OverlayPlacement {
                 icon: 3,
@@ -165,7 +164,7 @@ mod tests {
 
     #[test]
     fn overlays_scale_at_two_x_window() {
-        let frame = ImageRender::new();
+        let frame = vec![0u8; NES_WIDTH * NES_HEIGHT * 4];
         let overlays = [OverlayPlacement {
             icon: 5,
             dst: (205, 222, 16, 16),
@@ -176,7 +175,7 @@ mod tests {
 
     #[test]
     fn overlays_keep_draw_order() {
-        let frame = ImageRender::new();
+        let frame = vec![0u8; NES_WIDTH * NES_HEIGHT * 4];
         let overlays = [
             OverlayPlacement {
                 icon: 7,

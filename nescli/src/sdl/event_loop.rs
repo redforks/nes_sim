@@ -14,13 +14,12 @@
 //! `trim_after` early exit and the auto-fast-forward idle handling (which
 //! also covers past-the-end frames).
 
-use super::{map_keycode_to_button, render::NesRender};
+use super::{NesAudioDriver, map_keycode_to_button, render::NesRender};
 use nes_core::{
     Plugin,
     movie::{GamepadInput, InputLog},
-    nes::{NesMcu, apu::AudioDriver},
+    nes::NesMcu,
     nes_machine::NesMachine,
-    render::Render,
 };
 use sdl2::{EventPump, event::Event, keyboard::Keycode};
 use std::{
@@ -108,14 +107,9 @@ pub fn should_throttle(source: &InputSource, opts: &LoopOptions) -> bool {
         || (!opts.headless && !opts.no_throttle && !opts.has_output)
 }
 
-fn set_controller_from_gamepad<P, R, D>(
-    machine: &mut NesMachine<P, R, D>,
-    input: &GamepadInput,
-    port_b: bool,
-) where
-    P: Plugin<NesMcu<R, D>>,
-    R: Render,
-    D: AudioDriver,
+fn set_controller_from_gamepad<P>(machine: &mut NesMachine<P>, input: &GamepadInput, port_b: bool)
+where
+    P: Plugin<NesMcu>,
 {
     use nes_core::nes::controller::Button;
     for (button, pressed) in [
@@ -145,20 +139,16 @@ fn set_controller_from_gamepad<P, R, D>(
     }
 }
 
-fn set_controller_a_from_gamepad<P, R, D>(machine: &mut NesMachine<P, R, D>, input: &GamepadInput)
+fn set_controller_a_from_gamepad<P>(machine: &mut NesMachine<P>, input: &GamepadInput)
 where
-    P: Plugin<NesMcu<R, D>>,
-    R: Render,
-    D: AudioDriver,
+    P: Plugin<NesMcu>,
 {
     set_controller_from_gamepad(machine, input, false);
 }
 
-fn set_controller_b_from_gamepad<P, R, D>(machine: &mut NesMachine<P, R, D>, input: &GamepadInput)
+fn set_controller_b_from_gamepad<P>(machine: &mut NesMachine<P>, input: &GamepadInput)
 where
-    P: Plugin<NesMcu<R, D>>,
-    R: Render,
-    D: AudioDriver,
+    P: Plugin<NesMcu>,
 {
     set_controller_from_gamepad(machine, input, true);
 }
@@ -167,15 +157,16 @@ where
 /// or the end-of-movie countdown runs out. `event_pump` is `None` for
 /// headless playback; `fast_forward` is `Some` for playback (idle ranges may
 /// still be empty when `--auto-fast-forward` is off).
-pub fn run_event_loop<P, D>(
-    machine: &mut NesMachine<P, NesRender, D>,
+pub fn run_event_loop<P>(
+    machine: &mut NesMachine<P>,
+    render: &mut NesRender,
+    audio: &mut NesAudioDriver,
     mut event_pump: Option<&mut EventPump>,
     source: &mut InputSource,
     opts: &LoopOptions,
     fast_forward: Option<&FastForwardState>,
 ) where
-    P: Plugin<NesMcu<NesRender, D>>,
-    D: AudioDriver,
+    P: Plugin<NesMcu>,
 {
     let target_frame_duration = Duration::new(0, 1_000_000_000u32 / 60);
     let mut extra_frames_remaining = opts.extra_frames;
@@ -263,7 +254,7 @@ pub fn run_event_loop<P, D>(
             }
             set_controller_a_from_gamepad(machine, &port0);
             set_controller_b_from_gamepad(machine, &port1);
-            machine.render_mut().set_input(&port0, &port1);
+            render.set_input(&port0, &port1);
         }
 
         // Auto fast-forward: idle stretches (plus past-the-end frames) set
@@ -283,11 +274,16 @@ pub fn run_event_loop<P, D>(
             if let Some(ff) = fast_forward {
                 ff.skip.set(is_idle);
             }
-            machine.render_mut().set_fast_forward(is_idle);
+            render.set_fast_forward(is_idle);
         }
 
-        // One ExecuteResult match for both modes.
-        match machine.process_frame() {
+        // One frame: present owned PPU framebuffer, queue owned APU audio,
+        // then match the frame status for both modes.
+        let output = machine.process_frame();
+        render.present_frame_bytes(output.frame);
+        audio.push_samples(output.audio);
+        audio.flush_frame();
+        match output.status {
             nes_core::ExecuteResult::Continue => {}
             nes_core::ExecuteResult::ShouldReset => {
                 eprintln!("CPU reset requested");

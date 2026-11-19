@@ -2,7 +2,6 @@ use ansi_term::Color;
 use is_terminal::IsTerminal;
 use nes_core::Plugin;
 use nes_core::nes::NesMcu;
-use nes_core::render::Render;
 use nes_core::view::MachineView;
 use std::cell::RefCell;
 use std::fmt::Write as _;
@@ -16,7 +15,7 @@ struct NewFrameDetector {
 }
 
 impl NewFrameDetector {
-    fn is_new_frame<R: Render>(&mut self, view: &MachineView<NesMcu<R, ()>>) -> bool {
+    fn is_new_frame(&mut self, view: &MachineView<NesMcu>) -> bool {
         let frame_no = view.ppu_frame_no();
         if frame_no != self.last_frame_no {
             self.last_frame_no = frame_no;
@@ -53,10 +52,10 @@ impl Console {
     }
 }
 
-impl<R: Render> Plugin<NesMcu<R, ()>> for Console {
-    fn start(&mut self, _: &MachineView<NesMcu<R, ()>>) {}
+impl Plugin<NesMcu> for Console {
+    fn start(&mut self, _: &MachineView<NesMcu>) {}
 
-    fn end(&mut self, view: &MachineView<NesMcu<R, ()>>) {
+    fn end(&mut self, view: &MachineView<NesMcu>) {
         if self.new_frame_detector.is_new_frame(view) {
             if view.peek(0x6001) != 0xDE || view.peek(0x6002) != 0xB0 || view.peek(0x6003) != 0x61 {
                 return;

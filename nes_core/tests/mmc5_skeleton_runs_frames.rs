@@ -54,11 +54,11 @@ fn mmc5_roms_run_frames_without_panic() {
             "{name}: expected mapper 5, got {}",
             ines.header().mapper_no
         );
-        let mut machine = NesMachine::new(&ines, EmptyPlugin::new(), (), ());
+        let mut machine = NesMachine::new(&ines, EmptyPlugin::new());
 
         for frame in 0..FRAMES {
             assert_eq!(
-                machine.process_frame(),
+                machine.process_frame().status,
                 ExecuteResult::Continue,
                 "{name}: frame {frame} did not complete"
             );

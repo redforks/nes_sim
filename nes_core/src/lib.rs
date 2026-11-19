@@ -10,7 +10,6 @@ pub mod mcu;
 pub mod movie;
 pub mod nes;
 pub mod nes_machine;
-pub mod render;
 pub mod view;
 // Test utilities (private, for tests only)
 #[cfg(test)]

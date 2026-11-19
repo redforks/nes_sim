@@ -3,7 +3,6 @@ use crate::SystemClock;
 use crate::ines::INesFile;
 use crate::mcu::Mcu;
 use crate::nes::NesMcu;
-use crate::render::ImageRender;
 use test_case::test_case;
 
 /// Creates a minimal valid iNES ROM for testing
@@ -128,7 +127,7 @@ fn read_below_prg_window_asserts() {
 fn mmc1_disabled_prg_ram_reads_open_bus_at_bus_level() {
     let rom = create_test_nes(1, 2, 1);
     let file = INesFile::new(rom).unwrap();
-    let mut mcu = NesMcu::new(&file, ImageRender::default_dimension(), ());
+    let mut mcu = NesMcu::new(&file);
 
     mcu.write(0x6000, 0x12, SystemClock::default());
     assert_eq!(mcu.read(0x6000), 0x12);

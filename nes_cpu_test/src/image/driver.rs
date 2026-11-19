@@ -3,16 +3,11 @@ use std::io::Write;
 use std::path::Path;
 use std::sync::{Arc, Mutex};
 
-use nes_core::nes::apu::AudioDriver;
-
-/// [`AudioDriver`] that buffers every mixed APU sample so a run can be
-/// exported as a listenable WAV artifact (`--dump-audio`).
+/// Buffers mixed APU samples so a run can be exported as a listenable WAV
+/// artifact (`--dump-audio`).
 ///
-/// Clones share one buffer: a clone lives inside the machine's APU while the
-/// original stays with the CLI to write the file once the run stops.
-///
-/// Declares the same 44.1 kHz rate as the no-op `()` driver so capture runs
-/// resample identically to plain test runs.
+/// The APU owns its per-frame sample buffer; the CLI drains it after the run
+/// into this recorder and writes the file once the run stops.
 #[derive(Clone)]
 pub struct WavRecorder {
     buffer: Arc<Mutex<Vec<f32>>>,
@@ -68,15 +63,22 @@ fn pcm16(sample: f32) -> i16 {
     (sample.clamp(-1.0, 1.0) * 32767.0).round() as i16
 }
 
-impl AudioDriver for WavRecorder {
-    fn sample_rate(&self) -> u32 {
+impl WavRecorder {
+    pub fn sample_rate(&self) -> u32 {
         SAMPLE_RATE
     }
 
-    fn push_sample(&mut self, sample: f32) {
+    pub fn push_sample(&mut self, sample: f32) {
         self.buffer
             .lock()
             .expect("WavRecorder buffer poisoned")
             .push(sample);
+    }
+
+    pub fn push_samples(&mut self, samples: &[f32]) {
+        self.buffer
+            .lock()
+            .expect("WavRecorder buffer poisoned")
+            .extend_from_slice(samples);
     }
 }

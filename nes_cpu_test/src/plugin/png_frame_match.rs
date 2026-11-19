@@ -2,8 +2,6 @@
 
 use image::{Rgba, RgbaImage};
 use nes_core::nes::NesMcu;
-use nes_core::nes::apu::AudioDriver;
-use nes_core::render::ImageRender;
 use nes_core::view::MachineView;
 use nes_core::{ExecuteResult, Plugin};
 use std::path::Path;
@@ -71,10 +69,10 @@ fn pixel_within_threshold(actual: Rgba<u8>, expected: Rgba<u8>) -> bool {
         .sum();
     diff <= 50
 }
-impl<A: AudioDriver> Plugin<NesMcu<ImageRender, A>> for PngFrameMatch {
-    fn start(&mut self, _view: &MachineView<NesMcu<ImageRender, A>>) {}
+impl Plugin<NesMcu> for PngFrameMatch {
+    fn start(&mut self, _view: &MachineView<NesMcu>) {}
 
-    fn end(&mut self, view: &MachineView<NesMcu<ImageRender, A>>) {
+    fn end(&mut self, view: &MachineView<NesMcu>) {
         if self.is_complete() {
             return;
         }

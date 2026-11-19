@@ -4,13 +4,23 @@ use crate::{
     dma_bus::{BusOwner, DmaBus},
     ines::INesFile,
     nes::{Mmc3IrqOverride, NesMcu, controller::Button, ppu::palette::ColorTheme},
-    render::Render,
 };
-pub struct NesMachine<P, R: Render, D: crate::nes::apu::AudioDriver> {
+
+/// Borrowed output of one emulated frame.
+///
+/// `frame` is the PPU RGBA bytes (`256*240*4`, row-major) and `audio` is
+/// the mixed mono samples (`f32`, 44.1 kHz) for the frame.
+pub struct FrameOutput<'a> {
+    pub status: ExecuteResult,
+    pub frame: &'a [u8],
+    pub audio: &'a [f32],
+}
+
+pub struct NesMachine<P> {
     cpu: Cpu,
     p: P,
     /// The CPU's external bus; owns the memory map `NesMcu` (ADR-0015).
-    bus: Bus<NesMcu<R, D>>,
+    bus: Bus<NesMcu>,
     /// DMA arbitration on the bus — renamed from the former `Bus` (ADR-0009).
     dma_bus: DmaBus,
     /// The loaded ROM, kept so [`Self::hard_reset`] can rebuild the
@@ -21,14 +31,12 @@ pub struct NesMachine<P, R: Render, D: crate::nes::apu::AudioDriver> {
     irq_override: Mmc3IrqOverride,
 }
 
-impl<P, R, D> NesMachine<P, R, D>
+impl<P> NesMachine<P>
 where
-    P: Plugin<NesMcu<R, D>>,
-    R: Render,
-    D: crate::nes::apu::AudioDriver,
+    P: Plugin<NesMcu>,
 {
-    pub fn new(file: &INesFile, plugin: P, render: R, audio_driver: D) -> Self {
-        Self::new_with_mmc3_irq_override(file, plugin, render, audio_driver, Mmc3IrqOverride::Auto)
+    pub fn new(file: &INesFile, plugin: P) -> Self {
+        Self::new_with_mmc3_irq_override(file, plugin, Mmc3IrqOverride::Auto)
     }
 
     /// [`Self::new`] with an explicit MMC3 IRQ-revision override — the
@@ -39,11 +47,9 @@ where
     pub fn new_with_mmc3_irq_override(
         file: &INesFile,
         plugin: P,
-        render: R,
-        audio_driver: D,
         irq_override: Mmc3IrqOverride,
     ) -> Self {
-        let mcu = NesMcu::new_with_mmc3_irq_override(file, render, audio_driver, irq_override);
+        let mcu = NesMcu::new_with_mmc3_irq_override(file, irq_override);
         Self {
             cpu: Cpu::new(),
             p: plugin,
@@ -70,16 +76,36 @@ where
     /// flag) cannot interfere with frame stepping. PPU timing always
     /// advances in `tick`, so the event fires within one frame (~89k dots)
     /// and no tick-count guard is needed.
-    pub fn process_frame(&mut self) -> ExecuteResult {
+    ///
+    /// Returns the frame status plus borrows of the owned PPU framebuffer
+    /// and APU audio buffer for the completed frame.
+    pub fn process_frame(&mut self) -> FrameOutput<'_> {
+        self.bus.mcu_mut().clear_audio_buffer();
+        let mut status = ExecuteResult::Continue;
         loop {
-            self.tick();
+            let control = self.tick();
+            if !matches!(control, ExecuteResult::Continue) {
+                status = control;
+                break;
+            }
             if self.bus.mcu_mut().ppu_mut().take_vblank_entered() {
                 break;
             }
         }
 
-        self.flush_audio();
-        ExecuteResult::Continue
+        let mcu = self.bus.mcu();
+        // Reborrow as shared: both slices derive from `&self`.
+        let frame: &[u8] = mcu.ppu().frame_bytes();
+        let audio: &[f32] = mcu.apu().audio_samples();
+        // Extend the borrows to the `&mut self` lifetime: `frame`/`audio`
+        // point into `self` and outlive this call.
+        let frame: &[u8] = unsafe { &*(frame as *const [u8]) };
+        let audio: &[f32] = unsafe { &*(audio as *const [f32]) };
+        FrameOutput {
+            status,
+            frame,
+            audio,
+        }
     }
 
     /// Execute one master clock tick. Returns the `ExecuteResult`.
@@ -196,8 +222,16 @@ where
         self.cpu.reset_hard();
     }
 
-    fn flush_audio(&mut self) {
-        self.bus.mcu_mut().flush_audio();
+    pub fn frame_bytes(&self) -> &[u8] {
+        self.bus.mcu().ppu().frame_bytes()
+    }
+
+    pub fn audio_samples(&self) -> &[f32] {
+        self.bus.mcu().apu().audio_samples()
+    }
+
+    pub fn audio_bytes(&self) -> &[u8] {
+        self.bus.mcu().apu().audio_bytes()
     }
 
     pub fn press_controller_a(&mut self, button: Button) {
@@ -228,10 +262,6 @@ where
         self.bus.mcu_mut().trigger_zapper();
     }
 
-    pub fn render_mut(&mut self) -> &mut R {
-        self.bus.mcu_mut().ppu_mut().renderer_mut()
-    }
-
     pub fn set_color_theme(&mut self, theme: ColorTheme) {
         self.bus.mcu_mut().ppu_mut().set_color_theme(theme);
     }
@@ -252,11 +282,11 @@ where
         &self.cpu
     }
 
-    pub fn mcu(&self) -> &NesMcu<R, D> {
+    pub fn mcu(&self) -> &NesMcu {
         self.bus.mcu()
     }
 
-    pub fn mcu_mut(&mut self) -> &mut NesMcu<R, D> {
+    pub fn mcu_mut(&mut self) -> &mut NesMcu {
         self.bus.mcu_mut()
     }
 
@@ -307,18 +337,18 @@ mod tests {
     #[test]
     fn test_process_frame_waits_for_vblank() {
         let file = test_nes_file();
-        let mut machine = NesMachine::new(&file, EmptyPlugin::new(), (), ());
+        let mut machine = NesMachine::new(&file, EmptyPlugin::new());
 
         // process_frame should return as soon as the PPU reaches VBlank
         // (scanline 241, dot 1 = after 241*341 + 1 = 82,262 PPU dots = ~27,421 CPU cycles).
         // The call must complete within one frame (~89k dots).
-        let result = machine.process_frame();
+        let result = machine.process_frame().status;
         assert_eq!(result, ExecuteResult::Continue);
 
         // After one frame the PPU should be at or past scanline 241.
         // We verify by running a second frame — it should also complete without hitting
         // the safety limit, proving VBlank fires consistently every frame.
-        let result = machine.process_frame();
+        let result = machine.process_frame().status;
         assert_eq!(result, ExecuteResult::Continue);
     }
 
@@ -344,7 +374,7 @@ mod tests {
         use crate::mcu::Mcu;
 
         let file = test_nes_file();
-        let mut machine = NesMachine::new(&file, EmptyPlugin::new(), (), ());
+        let mut machine = NesMachine::new(&file, EmptyPlugin::new());
         machine
             .mcu_mut()
             .write(0x0042, 0xAB, SystemClock::default());
@@ -386,7 +416,7 @@ mod tests {
         use crate::mcu::Mcu;
 
         let file = uxrom_nes_file();
-        let mut machine = NesMachine::new(&file, EmptyPlugin::new(), (), ());
+        let mut machine = NesMachine::new(&file, EmptyPlugin::new());
         assert_eq!(machine.mcu().peek(0x8000), 0x11);
 
         // Map bank 1 into the switchable window.
@@ -428,7 +458,7 @@ mod tests {
     #[test]
     fn soft_reset_preserves_registers_hard_reset_restores_power_up() {
         let file = reg_loop_nes_file();
-        let mut machine = NesMachine::new(&file, EmptyPlugin::new(), (), ());
+        let mut machine = NesMachine::new(&file, EmptyPlugin::new());
         for _ in 0..1000 {
             machine.tick();
         }
@@ -462,8 +492,8 @@ mod tests {
     #[test]
     fn soft_reset_preserves_clock_hard_reset_restarts_it() {
         let file = test_nes_file();
-        let mut machine = NesMachine::new(&file, EmptyPlugin::new(), (), ());
-        assert_eq!(machine.process_frame(), ExecuteResult::Continue);
+        let mut machine = NesMachine::new(&file, EmptyPlugin::new());
+        assert_eq!(machine.process_frame().status, ExecuteResult::Continue);
         assert_eq!(machine.frame_no(), 1);
         let cycles = machine.system_cycles();
         assert!(cycles > 0);
@@ -484,7 +514,7 @@ mod tests {
             "hard reset restarts the bus clock"
         );
         // The rebuilt machine still runs: frames complete normally.
-        assert_eq!(machine.process_frame(), ExecuteResult::Continue);
+        assert_eq!(machine.process_frame().status, ExecuteResult::Continue);
         assert_eq!(machine.frame_no(), 1);
     }
 
@@ -493,7 +523,7 @@ mod tests {
         use crate::mcu::Mcu;
 
         let file = test_nes_file();
-        let mut machine = NesMachine::new(&file, EmptyPlugin::new(), (), ());
+        let mut machine = NesMachine::new(&file, EmptyPlugin::new());
         machine.press_controller_a(Button::A);
 
         machine.hard_reset();
@@ -506,7 +536,7 @@ mod tests {
     #[test]
     fn reset_drains_in_flight_oam_dma_before_applying() {
         let file = dma_loop_nes_file();
-        let mut machine = NesMachine::new(&file, EmptyPlugin::new(), (), ());
+        let mut machine = NesMachine::new(&file, EmptyPlugin::new());
 
         // Warm up until the loop's first $4014 write has armed a DMA.
         for _ in 0..10_000 {
@@ -527,6 +557,6 @@ mod tests {
         assert!(!machine.dma_bus.is_busy(machine.bus.mcu()));
 
         // The post-reset machine still runs: frames complete normally.
-        assert_eq!(machine.process_frame(), ExecuteResult::Continue);
+        assert_eq!(machine.process_frame().status, ExecuteResult::Continue);
     }
 }

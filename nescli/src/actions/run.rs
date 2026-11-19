@@ -148,8 +148,10 @@ impl RunAction {
             0,
         )?;
 
-        // Create NES machine with SDL-backed renderer
-        let mut machine = NesMachine::new(f, EmptyPlugin::new(), render, audio_driver);
+        // Create NES machine; SDL render/audio live beside it and consume
+        // the owned framebuffer/audio buffers each frame.
+        let mut machine = NesMachine::new(f, EmptyPlugin::new());
+        let (mut render, mut audio_driver) = (render, audio_driver);
         if let Some(theme) = palette {
             machine.set_color_theme(theme);
         }
@@ -164,6 +166,8 @@ impl RunAction {
         let opts = LoopOptions::interactive();
         run_event_loop(
             &mut machine,
+            &mut render,
+            &mut audio_driver,
             Some(&mut event_pump),
             &mut source,
             &opts,
@@ -306,15 +310,14 @@ impl RunAction {
             self.trim_frames,
         )?;
 
-        let mut machine = NesMachine::new(f, EmptyPlugin::new(), render, audio_driver);
+        let mut machine = NesMachine::new(f, EmptyPlugin::new());
+        let (mut render, mut audio_driver) = (render, audio_driver);
         if let Some(theme) = palette {
             machine.set_color_theme(theme);
         }
         let dual_player = input_logs.iter().any(|log| !log.port1.is_empty());
-        machine.render_mut().set_dual_player(dual_player);
-        machine
-            .render_mut()
-            .set_overlay_enabled(self.gamepad_overlay);
+        render.set_dual_player(dual_player);
+        render.set_overlay_enabled(self.gamepad_overlay);
 
         let mut event_pump = if !self.headless {
             Some(sdl_context.event_pump().map_err(|e| anyhow::anyhow!(e))?)
@@ -350,6 +353,8 @@ impl RunAction {
         };
         run_event_loop(
             &mut machine,
+            &mut render,
+            &mut audio_driver,
             event_pump.as_mut(),
             &mut source,
             &opts,

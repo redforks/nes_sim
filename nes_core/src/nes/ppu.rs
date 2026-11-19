@@ -10,12 +10,9 @@ mod sprite;
 
 use std::iter::once;
 
-use crate::{
-    nes::{
-        mapper::{Cartridge, PpuFetchKind, PpuRenderState},
-        ppu::{palette::ColorTheme, sprite::SpriteManager},
-    },
-    render::Render,
+use crate::nes::{
+    mapper::{Cartridge, PpuFetchKind, PpuRenderState},
+    ppu::{palette::ColorTheme, sprite::SpriteManager},
 };
 use oam::Oam;
 use palette::{Palette, Pixel};
@@ -25,8 +22,10 @@ use registers::{ColorConfig, PpuCtrl, PpuMask, PpuStatus, Registers};
 
 /// Visible frame dimensions: the flat palette-index buffer holds exactly
 /// one entry per visible beam position (`y * 256 + x`).
-const VISIBLE_WIDTH: u16 = 256;
-const VISIBLE_HEIGHT: u16 = 240;
+pub const NES_WIDTH: usize = 256;
+pub const NES_HEIGHT: usize = 240;
+const VISIBLE_WIDTH: u16 = NES_WIDTH as u16;
+const VISIBLE_HEIGHT: u16 = NES_HEIGHT as u16;
 
 // PPU Timing Constants
 const PPU_OPEN_BUS_DECAY_TICKS: u64 = 3_221_591 * crate::SYSTEM_CYCLES_PER_PPU_CYCLE;
@@ -74,7 +73,7 @@ struct BackgroundActivation {
 }
 
 impl BackgroundActivation {
-    fn snapshot(ppu: &Ppu<impl Render>, screen_x: u8) -> Self {
+    fn snapshot(ppu: &Ppu, screen_x: u8) -> Self {
         Self {
             screen_x,
             vram_addr: ppu.registers.vram_addr,
@@ -197,13 +196,16 @@ impl Timing {
     }
 }
 
-pub struct Ppu<R: Render = ()> {
+pub struct Ppu {
     registers: Registers,
     palette: Palette,
     oam: Oam,
     oam_addr: u8,
     color_theme: ColorTheme,
-    renderer: R,
+    /// Owned RGBA framebuffer (`256*240` pixels, row-major). Written once
+    /// per frame by `flush_palette_index_buffer`; served zero-copy via
+    /// `frame_bytes` / `frame_pixels`.
+    framebuffer: Box<[[u8; 4]; NES_WIDTH * NES_HEIGHT]>,
 
     timing: Timing,
 
@@ -280,15 +282,15 @@ fn normalize_vram_addr(address: u16) -> u16 {
     address & 0x3FFF
 }
 
-impl<R: Render> Ppu<R> {
-    pub fn new(renderer: R) -> Self {
+impl Ppu {
+    pub fn new() -> Self {
         Ppu {
             registers: Registers::new(),
             palette: Palette::default(),
             oam: Oam::default(),
             oam_addr: 0,
             color_theme: ColorTheme::default(),
-            renderer,
+            framebuffer: Box::new([[0; 4]; NES_WIDTH * NES_HEIGHT]),
             timing: Timing::new(),
             background_anchor: None,
             pending_background_activation: None,
@@ -331,8 +333,7 @@ impl<R: Render> Ppu<R> {
     /// Hard reset (power cycle): the full power-up contract — timing
     /// restarts at pre-render scanline 261 with frame count zero, OAM,
     /// palette, and the frame buffer return to their power-up contents.
-    /// The renderer and color theme are host configuration, so they are
-    /// preserved, not rebuilt.
+    /// The color theme is host configuration, so it is preserved.
     pub fn reset_hard(&mut self) {
         // https://www.nesdev.org/wiki/PPU_power_up_state
         self.registers.reset();
@@ -350,6 +351,7 @@ impl<R: Render> Ppu<R> {
         self.cycle = 0;
         self.ppudata_last_read = None;
         self.palette_index_buffer.fill(0);
+        self.framebuffer.fill([0, 0, 0, 255]);
         self.color_splits.clear();
         self.vblank_entered = false;
     }
@@ -358,12 +360,35 @@ impl<R: Render> Ppu<R> {
         &self.timing
     }
 
-    pub fn renderer(&self) -> &R {
-        &self.renderer
+    /// Output width in pixels (`256`).
+    #[inline]
+    pub const fn width() -> u32 {
+        NES_WIDTH as u32
     }
 
-    pub fn renderer_mut(&mut self) -> &mut R {
-        &mut self.renderer
+    /// Output height in pixels (`240`).
+    #[inline]
+    pub const fn height() -> u32 {
+        NES_HEIGHT as u32
+    }
+
+    /// Raw byte view (`W*H*4` bytes, row-major RGBA) for SDL `texture.update`.
+    #[inline]
+    pub fn frame_bytes(&self) -> &[u8] {
+        bytemuck::cast_slice(&*self.framebuffer)
+    }
+
+    /// Typed pixel view (`W*H` entries of `[R,G,B,A]`).
+    #[inline]
+    pub fn frame_pixels(&self) -> &[[u8; 4]] {
+        &*self.framebuffer
+    }
+
+    /// Read a single output pixel (for tests). Caller must guarantee bounds.
+    #[inline]
+    pub fn get_pixel(&self, x: u32, y: u32) -> [u8; 4] {
+        let idx = y as usize * NES_WIDTH + x as usize;
+        self.framebuffer[idx]
     }
 
     fn schedule_background_activation_if_visible(&mut self) {
@@ -703,12 +728,11 @@ impl<R: Render> Ppu<R> {
     /// flushes the buffered frame. Moved verbatim out of `tick()`.
     fn tick_vertical_blank(&mut self) {
         if self.timing.dot == 1 {
-            // Flush the whole frame's buffered palette indices through the
-            // Render seam (raster order) before `finish()`, exactly once
-            // per frame, at the VBL set dot.
+            // Flush the whole frame's buffered palette indices into the
+            // owned framebuffer (raster order), exactly once per frame,
+            // at the VBL set dot.
             self.flush_palette_index_buffer();
             self.vblank_entered = true;
-            self.renderer.finish();
             if !self.suppress_vblank_pending {
                 self.registers.status.set_v_blank(true);
             } else {
@@ -849,7 +873,7 @@ impl<R: Render> Ppu<R> {
                     &mut chunk[..(chunk_len as usize)],
                 );
                 for &word in chunk[..(chunk_len as usize)].iter() {
-                    self.renderer.set_pixel(pixel_idx, Pixel::from_u32(word).0);
+                    self.framebuffer[pixel_idx as usize] = Pixel::from_u32(word).0;
                     pixel_idx += 1;
                 }
                 index += chunk_len;
@@ -1286,6 +1310,12 @@ impl<R: Render> Ppu<R> {
                 .palette
                 .get_background_color_index(bg_palette_idx, bg_color_idx),
         }
+    }
+}
+
+impl Default for Ppu {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
