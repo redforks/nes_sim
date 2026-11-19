@@ -62,10 +62,6 @@ pub struct Apu {
     length_race_clobber: [bool; 4],
 }
 
-/// Fixed output sample rate (Hz). The core owns the audio buffer;
-/// hosts resample if needed.
-pub const SAMPLE_RATE: u32 = 44_100;
-
 impl Default for Apu {
     fn default() -> Self {
         Self::new()
@@ -73,6 +69,11 @@ impl Default for Apu {
 }
 
 impl Apu {
+    /// Fixed output sample rate (Hz). The core owns the audio buffer;
+    /// hosts resample if needed. A plain const: there is no setter and
+    /// the value never changes.
+    pub const SAMPLE_RATE: u32 = 44_100;
+
     pub fn new() -> Self {
         Self {
             pulse1: Pulse::new(false),
@@ -80,7 +81,7 @@ impl Apu {
             triangle: Triangle::default(),
             noise: Noise::default(),
             dmc: Dmc::default(),
-            mixer: Mixer::new(SAMPLE_RATE),
+            mixer: Mixer::new(Self::SAMPLE_RATE),
             audio_buffer: Vec::new(),
             expansion: ExpansionMix::default(),
             frame_sequencer: FrameSequencer::default(),
@@ -125,7 +126,7 @@ impl Apu {
         self.triangle = Triangle::default();
         self.noise = Noise::default();
         self.dmc = Dmc::default();
-        self.mixer = Mixer::new(SAMPLE_RATE);
+        self.mixer = Mixer::new(Self::SAMPLE_RATE);
         self.audio_buffer.clear();
         self.expansion = ExpansionMix::default();
         self.frame_sequencer = FrameSequencer::default();

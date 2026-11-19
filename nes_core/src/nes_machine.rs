@@ -9,11 +9,24 @@ use crate::{
 /// Borrowed output of one emulated frame.
 ///
 /// `frame` is the PPU RGBA bytes (`256*240*4`, row-major) and `audio` is
-/// the mixed mono samples (`f32`, 44.1 kHz) for the frame.
+/// the mixed mono samples (`f32`, [`crate::nes::apu::Apu::SAMPLE_RATE`])
+/// for the frame. This struct is the per-frame read: consumers that step
+/// with [`NesMachine::process_frame`] take pixels and samples from here
+/// and never re-borrow the machine. [`Self::audio_bytes`] is the
+/// little-endian `f32` byte view of `audio` for encoders.
 pub struct FrameOutput<'a> {
     pub status: ExecuteResult,
     pub frame: &'a [u8],
     pub audio: &'a [f32],
+}
+
+impl<'a> FrameOutput<'a> {
+    /// Byte view of [`Self::audio`] (little-endian `f32` bytes).
+    /// Zero-copy: the same frame buffer, so it always matches the
+    /// sample slice in length (`4x`) and content.
+    pub fn audio_bytes(&self) -> &[u8] {
+        bytemuck::cast_slice(self.audio)
+    }
 }
 
 pub struct NesMachine<P> {
@@ -222,16 +235,15 @@ where
         self.cpu.reset_hard();
     }
 
-    pub fn frame_bytes(&self) -> &[u8] {
-        self.bus.mcu().ppu().frame_bytes()
-    }
-
+    /// Mixed samples buffered so far (`f32` mono, [`crate::nes::apu::Apu::SAMPLE_RATE`]).
+    ///
+    /// Kept for tick-stepped capture (e.g. `--dump-audio`): that loop
+    /// accumulates the live buffer across many frames without a per-frame
+    /// [`FrameOutput`], then exports it once at the end. Per-frame
+    /// consumers stepping with [`Self::process_frame`] must read
+    /// [`FrameOutput::audio`] / [`FrameOutput::audio_bytes`] instead.
     pub fn audio_samples(&self) -> &[f32] {
         self.bus.mcu().apu().audio_samples()
-    }
-
-    pub fn audio_bytes(&self) -> &[u8] {
-        self.bus.mcu().apu().audio_bytes()
     }
 
     pub fn press_controller_a(&mut self, button: Button) {
@@ -332,6 +344,25 @@ mod tests {
         rom.extend(std::iter::repeat_n(0, 8 * 1024));
 
         INesFile::new(rom).unwrap()
+    }
+
+    #[test]
+    fn process_frame_output_carries_audio_byte_view() {
+        use crate::nes::ppu::{NES_HEIGHT, NES_WIDTH};
+
+        let file = test_nes_file();
+        let mut machine = NesMachine::new(&file, EmptyPlugin::new());
+        let output = machine.process_frame();
+
+        // Per-frame read: frame bytes plus both audio views of one frame.
+        assert_eq!(output.frame.len(), NES_WIDTH * NES_HEIGHT * 4);
+        assert_eq!(output.audio_bytes().len(), output.audio.len() * 4);
+        let expected: &[u8] = bytemuck::cast_slice(output.audio);
+        assert_eq!(
+            output.audio_bytes(),
+            expected,
+            "byte view must match the sample slice exactly"
+        );
     }
 
     #[test]
