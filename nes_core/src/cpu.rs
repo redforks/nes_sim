@@ -100,13 +100,14 @@ impl EndRecordBuffer {
 
 /// The shape of a declared spin: an optional polled address (`None` for a
 /// bare JMP/branch-to-self) and the loop-top PC to resume from. For a
-/// destructive poll (`status_side_effects`), the last observed read dot
-/// and its interval give the exact cadence of the reads the freeze skips.
+/// poll with destructive or device-side read effects (`replay_read_effects`),
+/// the last observed read dot and its interval give the exact cadence of
+/// the effects the freeze replays.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct SpinState {
     polled: Option<u16>,
     loop_top: u16,
-    status_side_effects: bool,
+    replay_read_effects: bool,
     /// Master-clock dot of the last real poll read before declaration.
     read_phase: u64,
     /// Dot interval between consecutive real poll reads; `0` if unknown.
@@ -764,19 +765,20 @@ impl Cpu {
         self.replace_reason(reason, reason.dma, spin, reason.halt);
     }
 
-    /// Present the destructive `$2002` read effects of the loop iterations
-    /// the freeze skipped. The cadence is the observed interval between
-    /// real polls, so a seven-dot `BIT $2002 / BPL` loop replays once every
-    /// seven dots — not once per dot. `Mcu` owns the device-specific effects via a
-    /// defaulted method (only `NesMcu` overrides it), keeping the single CPU
-    /// freeze seam and leaving DMA channels and the bus untouched.
+    /// Present the device-side effects of the loop iterations the freeze
+    /// skipped: `$2002` flag clears and the `$4015`-`$4017` device actions.
+    /// The cadence is the observed interval between real polls, so a
+    /// seven-dot loop replays once every seven dots — not once per dot.
+    /// `Mcu` owns the device-specific effects via a defaulted method, keeping
+    /// the single CPU freeze seam and leaving DMA channels and the bus
+    /// untouched.
     fn replay_status_side_effects<M: Mcu>(&mut self, mut spin: SpinState, bus: &mut Bus<M>) {
-        let (Some(addr), true) = (spin.polled, spin.status_side_effects) else {
+        let (Some(addr), true) = (spin.polled, spin.replay_read_effects) else {
             return;
         };
         if self.frozen_reason.is_some_and(|r| r.dma) {
             // DMA owns the bus for its transfer. A skipped status read must
-            // not touch PPU state now; re-anchor the loop cadence so the
+            // not touch device state now; re-anchor the loop cadence so the
             // resumed spin does not replay the halted dots in a burst.
             spin.read_phase = bus.clock().0;
             if let Some(reason) = self.frozen_reason.as_mut() {
@@ -791,6 +793,15 @@ impl Cpu {
         // iterations between the VBL edge and the exit read perform no
         // clear, so neither may the frozen ones.
         if spin.vbl_resume_at.is_some() {
+            return;
+        }
+        // A device value can change without a CPU write (an IRQ bit
+        // arriving, a controller strobe). If the next real read would take
+        // the exit branch, wake instead of replaying device actions for
+        // counterfactual iterations: the resumed read consumes the real
+        // value, and a replayed flag clear must not decide the exit.
+        if bus.mcu().is_device_register(addr) && self.device_poll_exit_visible(spin, bus) {
+            self.resume_spin();
             return;
         }
         // Replay at the dots where the skipped reads would have landed:
@@ -972,7 +983,7 @@ impl Cpu {
     /// loop-top fetch. `None` when the loop is not a single-read status
     /// poll with a complete record — those keep the legacy immediate resume.
     fn vbl_resume_delay(&self, spin: &SpinState) -> Option<u64> {
-        if !spin.status_side_effects
+        if !spin.replay_read_effects
             || !spin.ends_exact
             || spin.period_ticks == 0
             || spin.ends.len == 0
@@ -1076,6 +1087,56 @@ impl Cpu {
         } else {
             (negative, m & 0x40 != 0, self.a & m == 0)
         }
+    }
+
+    /// Whether a frozen device poll's next real read would take an exit
+    /// branch instead of looping: project the read value through the poll's
+    /// flag-setting instruction(s) and the back-edge branch. `$4015` waits
+    /// commonly mask the status with `AND #$01` before `BEQ`, which the
+    /// generic status-poll shape does not cover. Only the loop shapes
+    /// supported here get early wake; others keep replaying until a wake
+    /// event. Peek is side-effect free; the resumed read supplies the value.
+    fn device_poll_exit_visible<M: Mcu>(&self, spin: SpinState, bus: &Bus<M>) -> bool {
+        let Some(addr) = spin.polled else {
+            return false;
+        };
+        let Some(branch_pc) = spin.branch_pc else {
+            return false;
+        };
+        let read_op = bus.mcu().peek(spin.loop_top);
+        let read_len = match read_op {
+            0x25 | 0x2D => 2 + u16::from(read_op == 0x2D), // AND zp/abs
+            0xA5 | 0xAD => 2 + u16::from(read_op == 0xAD), // LDA zp/abs
+            0x24 | 0x2C => 2 + u16::from(read_op == 0x2C), // BIT zp/abs
+            _ => return false,
+        };
+        let after_read = spin.loop_top.wrapping_add(read_len);
+        let mask = if branch_pc == after_read.wrapping_add(2) && bus.mcu().peek(after_read) == 0x29
+        {
+            Some(bus.mcu().peek(after_read.wrapping_add(1)))
+        } else if branch_pc == after_read {
+            None
+        } else {
+            return false;
+        };
+        let Some(branch_test) = microcode::branch_test_for_opcode(bus.mcu().peek(branch_pc)) else {
+            return false;
+        };
+
+        let m = bus.mcu().peek(addr);
+        let (negative, overflow, zero) = self.poll_read_flags(read_op, m);
+        let (negative, overflow, zero) = match mask {
+            Some(mask) => {
+                let value = (if matches!(read_op, 0xA5 | 0xAD) {
+                    m
+                } else {
+                    self.a & m
+                }) & mask;
+                (value & 0x80 != 0, overflow, value == 0)
+            }
+            None => (negative, overflow, zero),
+        };
+        !branch_test.test_flags(negative, overflow, self.flag(Flag::Carry), zero)
     }
 
     /// Whether a frozen status poll's exit is visible to its next real
@@ -1296,7 +1357,7 @@ impl Cpu {
         &self,
         polled: Option<u16>,
         loop_top: u16,
-        status_side_effects: bool,
+        replay_read_effects: bool,
         read_phase: u64,
         loop_period: u8,
         grid_base: u64,
@@ -1332,7 +1393,7 @@ impl Cpu {
         SpinState {
             polled,
             loop_top,
-            status_side_effects,
+            replay_read_effects,
             read_phase,
             loop_period,
             grid_base,
@@ -1363,9 +1424,7 @@ impl Cpu {
         let Some(candidate) = self.poll_candidate else {
             return;
         };
-        if bus.mcu().is_device_register(candidate.addr)
-            || bus.mcu().is_action_data_port(candidate.addr)
-        {
+        if bus.mcu().is_action_data_port(candidate.addr) {
             self.poll_candidate = None;
             return;
         }
@@ -1380,7 +1439,8 @@ impl Cpu {
             let mut spin = self.capture_spin_state(
                 Some(candidate.addr),
                 candidate.pc,
-                bus.mcu().has_destructive_status_read(candidate.addr),
+                bus.mcu().has_destructive_status_read(candidate.addr)
+                    || bus.mcu().is_device_register(candidate.addr),
                 candidate.last_read_dot,
                 candidate.read_period,
                 candidate.edge_tick,

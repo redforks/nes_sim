@@ -77,6 +77,23 @@ pub fn ppudata_poll_image() -> Vec<u8> {
     nrom_image(prg)
 }
 
+/// `LDA #$01 / STA $4016` holds the controller strobe, then
+/// `loop: LDA $4016 / BNE loop` polls the pressed A bit forever. The frozen
+/// and control runs both keep A at the constant strobe value, so frame
+/// equivalence pins the device read effects instead of loop-top progress.
+/// Both vectors point at $8000.
+pub fn controller_poll_image() -> Vec<u8> {
+    let mut prg = vec![0u8; PRG_LEN];
+    prg[..10].copy_from_slice(&[
+        0xA9, 0x01, // $8000 LDA #$01
+        0x8D, 0x16, 0x40, // $8002 STA $4016 (strobe on)
+        0xAD, 0x16, 0x40, // $8005 LDA $4016 (loop top)
+        0xD0, 0xFB, // $8008 BNE $8005
+    ]);
+    prg[PRG_LEN - 4..].copy_from_slice(&[0x00, 0x80, 0x00, 0x80]);
+    nrom_image(prg)
+}
+
 /// DMC setup followed by a `LDA $0010 / BNE` RAM flag spin at $8014.
 /// The filler is the DMC sample byte; both vectors point at $8000.
 pub fn dmc_ram_spin_image() -> Vec<u8> {
@@ -148,6 +165,17 @@ mod tests {
         let image = ppudata_poll_image();
         let prg = &image[16..16 + PRG_LEN];
         assert_eq!(&prg[..7], &[0xA9, 0xFF, 0xAD, 0x07, 0x20, 0x10, 0xFB]);
+        assert_eq!(&prg[PRG_LEN - 4..], &[0x00, 0x80, 0x00, 0x80]);
+    }
+
+    #[test]
+    fn controller_poll_image_keeps_the_strobe_and_loop() {
+        let image = controller_poll_image();
+        let prg = &image[16..16 + PRG_LEN];
+        assert_eq!(
+            &prg[..10],
+            &[0xA9, 0x01, 0x8D, 0x16, 0x40, 0xAD, 0x16, 0x40, 0xD0, 0xFB]
+        );
         assert_eq!(&prg[PRG_LEN - 4..], &[0x00, 0x80, 0x00, 0x80]);
     }
 
