@@ -1,0 +1,34 @@
+#!/usr/bin/env python3
+# Fake ffmpeg: instead of encoding, hash each raw RGBA video frame and the whole f32 audio stream.
+import sys, os, hashlib, threading
+args = sys.argv[1:]
+inputs = [args[i+1] for i in range(len(args)-1) if args[i] == '-i']
+vid_path, aud_path = inputs[0], inputs[1]
+out = os.environ['FP_OUT']
+FRAME = 1024 * 960 * 4
+def video():
+    with open(vid_path, 'rb', buffering=0) as f, open(out + '.frames', 'w') as o:
+        idx = 0
+        while True:
+            buf = bytearray()
+            while len(buf) < FRAME:
+                chunk = f.read(FRAME - len(buf))
+                if not chunk:
+                    break
+                buf += chunk
+            if len(buf) == 0:
+                break
+            o.write('%d %d %s\n' % (idx, len(buf), hashlib.md5(bytes(buf)).hexdigest())); o.flush()
+            idx += 1
+        o.write('TOTAL %d\n' % idx)
+def audio():
+    h = hashlib.md5(); n = 0
+    with open(aud_path, 'rb', buffering=0) as f:
+        while True:
+            c = f.read(65536)
+            if not c: break
+            h.update(c); n += len(c)
+    with open(out + '.audio', 'w') as o:
+        o.write('%d %s\n' % (n, h.hexdigest()))
+t1 = threading.Thread(target=video); t2 = threading.Thread(target=audio)
+t1.start(); t2.start(); t1.join(); t2.join()
