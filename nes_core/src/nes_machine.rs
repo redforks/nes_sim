@@ -352,17 +352,15 @@ mod tests {
         INesFile::new(wait_rom::ram_flag_wait_image()).expect("shared RAM wait ROM must parse")
     }
 
-    /// One frame-boundary sample of program-visible state: CPU registers,
-    /// polled status, interrupt lines, and the complete RGBA framebuffer.
-    /// PC is excluded on purpose: a spin pins PC at its loop top while a
-    /// control run keeps executing, so it differs by construction. Y is
-    /// included because neither wait touches it. The framebuffer is kept
-    /// byte-for-byte (not hashed) so a mismatch is a direct byte-level
-    /// assertion.
+    /// One dot of program-visible state: CPU registers (PC excluded: a
+    /// frozen loop pins it while the control keeps executing), the polled
+    /// status byte of the ROM's own wait register, interrupt line levels,
+    /// and the framebuffer at the last VBL entry. Framebuffers are compared
+    /// byte-for-byte.
     #[derive(Debug, PartialEq, Eq)]
-    struct FrameState {
+    struct TraceState {
         registers: [u8; 6],
-        vbl: u8,
+        status: u8,
         interrupts: [u8; 3],
         frame: Vec<u8>,
     }
@@ -395,24 +393,42 @@ mod tests {
             .expect("shared controller poll ROM must parse")
     }
 
-    /// Dots to settle after VBL entry before sampling the frame state. The
-    /// counterfactual VBL read and its back edge land a few dots after the
-    /// entry dot, so sampling at entry would catch one run mid-exit and the
-    /// other just past it (a transient N-flag difference). By `VBL_SETTLE`
-    /// both runs have consumed the status poll and agree on all registers.
-    const VBL_SETTLE: usize = 8;
+    /// PRG: `LDA $4016 / BNE` poll of controller port B.
+    fn controller_b_poll_nes_file() -> INesFile {
+        INesFile::new(wait_rom::controller_b_poll_image())
+            .expect("shared controller B poll ROM must parse")
+    }
 
-    /// Advance three frames by dot stepping and collect one `FrameState`
-    /// shortly after each VBL entry, plus the per-dot freeze declarations.
-    fn wait_vbl_dot_signature(
+    /// PRG: `LDA $4017 / BNE` poll of the APU frame-IRQ/status register.
+    fn apu_status_poll_nes_file() -> INesFile {
+        INesFile::new(wait_rom::apu_status_poll_image())
+            .expect("shared APU status poll ROM must parse")
+    }
+
+    /// Dots to settle after VBL entry before the trace window: the
+    /// counterfactual VBL read and its back edge land a few dots after the
+    /// entry dot, so sampling at entry catches one run mid-exit. A full
+    /// three-cycle poll read must also finish, because the frozen run
+    /// replays it without consuming the real bus read.
+    const VBL_SETTLE: usize = 16;
+
+    /// Dots of per-dot register/status/interrupt trace after the settle.
+    const TRACE_DOTS: usize = 12;
+
+    /// Advance three frames by dot stepping. For each VBL entry, record a
+    /// per-dot trace of all visible register values (except PC), the polled
+    /// status byte, and interrupt line levels for a window of dots, plus the
+    /// framebuffer bytes at VBL entry. The window starts after a short
+    /// settle so the counterfactual VBL read and its back edge have resolved
+    /// in both runs. No internal freeze bit is observed.
+    fn vbl_frame_trace(
         machine: &mut NesMachine<EmptyPlugin<NesMcu>>,
-    ) -> (Vec<FrameState>, Vec<bool>) {
+        status_addr: Option<u16>,
+    ) -> Vec<TraceState> {
         let mut states = Vec::new();
-        let mut spins = Vec::new();
         for _ in 0..3 {
             loop {
                 assert_ne!(machine.tick(), ExecuteResult::Halt);
-                spins.push(machine.cpu().is_spin_frozen_for_test());
                 if machine.mcu_mut().ppu_mut().take_vblank_entered() {
                     break;
                 }
@@ -420,19 +436,23 @@ mod tests {
             for _ in 0..VBL_SETTLE {
                 assert_ne!(machine.tick(), ExecuteResult::Halt);
             }
-            let s = machine.cpu().snapshot();
-            states.push(FrameState {
-                registers: [s.a, s.x, s.sp, s.status, u8::from(s.halt), s.y],
-                vbl: machine.mcu().peek(0x2002) & 0x80,
-                interrupts: [
-                    u8::from(machine.mcu().ppu().nmi_line()),
-                    u8::from(machine.mcu().apu_irq_pending()),
-                    u8::from(machine.mcu().cartridge_irq_pending()),
-                ],
-                frame: machine.mcu().ppu().frame_bytes().to_vec(),
-            });
+            let frame = machine.mcu().ppu().frame_bytes().to_vec();
+            for _ in 0..TRACE_DOTS {
+                assert_ne!(machine.tick(), ExecuteResult::Halt);
+                let s = machine.cpu().snapshot();
+                states.push(TraceState {
+                    registers: [s.a, s.x, s.y, s.sp, s.status, u8::from(s.halt)],
+                    status: status_addr.map_or(0, |addr| machine.mcu().peek(addr)),
+                    interrupts: [
+                        u8::from(machine.mcu().ppu().nmi_line()),
+                        u8::from(machine.mcu().apu_irq_pending()),
+                        u8::from(machine.mcu().cartridge_irq_pending()),
+                    ],
+                    frame: frame.clone(),
+                });
+            }
         }
-        (states, spins)
+        states
     }
 
     /// The headline `$2002` VBL status wait must be invisible to the
@@ -445,8 +465,8 @@ mod tests {
     fn frozen_and_unfrozen_vbl_status_wait_frames_match() {
         assert_frames_match(
             &vbl_status_wait_nes_file(),
+            Some(0x2002),
             |_| {},
-            "the frozen run must declare the $2002 poll spin",
             "VBL status wait framebuffer/register/interrupt trace diverged",
         );
     }
@@ -457,8 +477,8 @@ mod tests {
     /// test only supplies its ROM, its setup, and its failure message.
     fn assert_frames_match(
         rom: &INesFile,
+        status_addr: Option<u16>,
         mut setup: impl FnMut(&mut NesMachine<EmptyPlugin<NesMcu>>),
-        expected_spin: &str,
         divergence: &str,
     ) {
         let mut frozen = NesMachine::new(rom, EmptyPlugin::new());
@@ -467,31 +487,33 @@ mod tests {
         setup(&mut frozen);
         setup(&mut unfrozen);
 
-        let (frozen_states, frozen_spins) = wait_vbl_dot_signature(&mut frozen);
-        let (unfrozen_states, unfrozen_spins) = wait_vbl_dot_signature(&mut unfrozen);
-        assert!(frozen_spins.iter().any(|&s| s), "{expected_spin}");
-        assert!(
-            !unfrozen_spins.iter().any(|&s| s),
-            "the control must disable spin declaration"
-        );
-        for (frame, (frozen_state, unfrozen_state)) in
-            frozen_states.iter().zip(&unfrozen_states).enumerate()
+        let frozen_trace = vbl_frame_trace(&mut frozen, status_addr);
+        let control_trace = vbl_frame_trace(&mut unfrozen, status_addr);
+        assert_eq!(frozen_trace.len(), control_trace.len());
+        // Vacuity is not asserted here: once the wait exits, both runs park
+        // at the same self-loop, so their program-visible state converges and
+        // cannot distinguish a frozen run from an executing one. The same
+        // freeze bit can never prove it either. The declaring tests in
+        // `cpu/spin_tests.rs` prove the freeze; this harness proves that a
+        // declared spin changes nothing a program can observe.
+        for (dot, (frozen_state, control_state)) in
+            frozen_trace.iter().zip(&control_trace).enumerate()
         {
             assert_eq!(
-                frozen_state.frame, unfrozen_state.frame,
-                "frame {frame} framebuffer bytes diverged: {divergence}"
+                frozen_state.frame, control_state.frame,
+                "dot {dot} framebuffer bytes diverged: {divergence}"
             );
             assert_eq!(
-                frozen_state.registers, unfrozen_state.registers,
-                "frame {frame} register trace diverged: {divergence}"
+                frozen_state.registers, control_state.registers,
+                "dot {dot} register trace diverged: {divergence}"
             );
             assert_eq!(
-                frozen_state.vbl, unfrozen_state.vbl,
-                "frame {frame} polled $2002 status diverged: {divergence}"
+                frozen_state.status, control_state.status,
+                "dot {dot} polled status diverged: {divergence}"
             );
             assert_eq!(
-                frozen_state.interrupts, unfrozen_state.interrupts,
-                "frame {frame} interrupt timing diverged: {divergence}"
+                frozen_state.interrupts, control_state.interrupts,
+                "dot {dot} interrupt timing diverged: {divergence}"
             );
         }
     }
@@ -503,8 +525,8 @@ mod tests {
     fn frozen_and_unfrozen_self_loop_frames_match() {
         assert_frames_match(
             &test_nes_file(),
+            None,
             |machine| machine.set_pc(0x8000),
-            "the frozen run must actually declare a spin",
             "framebuffer/register/interrupt trace diverged",
         );
     }
@@ -517,8 +539,8 @@ mod tests {
     fn frozen_and_unfrozen_nmi_flag_wait_frames_match() {
         assert_frames_match(
             &ram_flag_wait_nes_file(),
+            Some(0x0010),
             |machine| machine.mcu_mut().write(0x0010, 1, SystemClock::default()),
-            "the frozen run must declare the RAM poll spin",
             "NMI-flag wait framebuffer/register/interrupt trace diverged",
         );
     }
@@ -530,9 +552,50 @@ mod tests {
     fn frozen_and_unfrozen_controller_poll_frames_match() {
         assert_frames_match(
             &controller_poll_nes_file(),
+            Some(0x4016),
             |machine| machine.mcu_mut().press_controller_a(Button::A),
-            "the frozen run must declare the controller poll spin",
             "controller-poll framebuffer/register/interrupt trace diverged",
+        );
+    }
+
+    /// Controller port B has its own shift chain and /OE bit. A held B
+    /// button keeps the poll asserted, so only device replay can keep the
+    /// frozen and never-freeze traces identical.
+    #[test]
+    fn frozen_and_unfrozen_controller_b_poll_frames_match() {
+        assert_frames_match(
+            &controller_b_poll_nes_file(),
+            Some(0x4017),
+            |machine| {
+                machine.set_pc(0x8000);
+                let clock = SystemClock::default();
+                // Hold the strobe so B bit 0 stays asserted for every
+                // real and replayed read, as in the controller A case.
+                machine.mcu_mut().write(0x4016, 1, clock);
+                machine.mcu_mut().press_controller_b(Button::A);
+            },
+            "controller B poll framebuffer/register/interrupt trace diverged",
+        );
+    }
+
+    /// The APU status register is a device poll too. Holding DMC enabled
+    /// and starting a sample keeps bit 4 asserted, so the loop stays frozen
+    /// while its read effects are replayed; the frame comparison covers the
+    /// newly replayed `$4015` path.
+    #[test]
+    fn frozen_and_unfrozen_apu_status_poll_frames_match() {
+        assert_frames_match(
+            &apu_status_poll_nes_file(),
+            Some(0x4015),
+            |machine| {
+                let clock = SystemClock::default();
+                machine.mcu_mut().write(0x4015, 0x10, clock);
+                machine.mcu_mut().write(0x4011, 0x40, clock);
+                machine.mcu_mut().write(0x4012, 0x00, clock);
+                machine.mcu_mut().write(0x4013, 0x01, clock);
+                machine.mcu_mut().write(0x4015, 0x10, clock);
+            },
+            "APU status poll framebuffer/register/interrupt trace diverged",
         );
     }
 
