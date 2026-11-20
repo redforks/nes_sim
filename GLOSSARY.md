@@ -207,7 +207,7 @@ The CPU's recognition of a spin-wait after repeated back edges to the same loop 
 _Avoid_: spin detection, loop recognition
 
 **Spin wake**:
-The event that releases a declared spin-wait so its next real read can observe the awaited condition: an interrupt dispatch or a CPU write to the polled address. DMA and APU writes never wake a spin; the device continues to act on its own reads.
+The event that releases a declared spin-wait so its next real read can observe the awaited condition: an interrupt dispatch, a CPU write to the polled address, or the next real read itself observing the awaited value (the synthesized VBL exit, or a device status that changed without a CPU write). DMA and APU writes never wake a spin; the device continues to act on its own reads.
 _Avoid_: unpause, resume trigger, spin release
 
 **Wake from line levels**:
@@ -215,7 +215,7 @@ The frozen spin wake discipline: the machine publishes the /NMI line level and t
 _Avoid_: frozen edge detector, CPU-latched wake, frozen interrupt detector
 
 **Device-poll freeze discipline**:
-The freeze discipline for polls of `$4015` (APU status), `$4016`/`$4017` (controller ports): the loop declares on the same rule as any other poll, and each frozen iteration presents that read's device-side effects (APU interrupt-flag clear, controller shift-register advance) at the loop's own cadence, bit-exact with an executing loop. No polled value reaches the program during a freeze; only the real loop-top read after wake consumes it. A pending or in-flight DMA keeps the bus, and read effects that are not side-effect-only (PPUDATA's refill and v-increment) or not a poll (KIL's halt) stay excluded from declaration.
+The freeze discipline for polls of `$4015` (APU status), `$4016`/`$4017` (controller ports): the loop declares on the same rule as any other poll, and each frozen iteration presents that read's device-side effects (APU interrupt-flag clear, controller shift-register advance) at the loop's own cadence, bit-exact with an executing loop. No polled value reaches the program during a freeze; only the real loop-top read after wake consumes it. A wake is also due when that next real read would already take the exit branch — the wait's condition became visible without a CPU write — so the loop resumes on that read instead of replaying device actions for iterations that cannot happen. A pending or in-flight DMA keeps the bus, and read effects that are not side-effect-only (PPUDATA's refill and v-increment) or not a poll (KIL's halt) stay excluded from declaration.
 _Avoid_: repeated bus read, synthetic poll value, halt-repeat read of a device poll
 
 **Status replay**:
