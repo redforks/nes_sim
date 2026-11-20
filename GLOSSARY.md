@@ -120,6 +120,9 @@ _Avoid_: `&Cpu` in Plugin, `cpu.mcu().ppu()`, `mcu().peek` outside view
 The microcode queue drained, observed via `Cpu::microcodes_empty()`. `Cpu::tick` returns only `ExecuteResult` (`plugin.should_stop()` at a boundary, `Continue` mid-instruction, `Halt` when halted); callers that need the boundary read `microcodes_empty()` after the tick. Exception: a frozen dot returns `plugin.should_stop()` without executing an instruction or calling plugin `start`; that is a harness timeout/verdict sample, not a boundary. Plugin `end` is additionally sampled once per frozen loop iteration at the loop's own measured cadence (harness timers that mature in `end`, e.g. the reset handshake, keep advancing); same non-boundary status, `peek`-only observation.
 _Avoid_: `TickOutcome`, `(ExecuteResult, bool)` tuple, `instruction_done` unnamed bool
 
+**Frozen-dot harness contract**:
+The observable behavior of a frozen dot for a test harness: it evaluates the plugin stop check every dot and samples plugin `end` once per frozen loop iteration at the loop's own measured cadence, with `peek`-only reads of machine state. These are harness observations on a non-boundary dot, not emulated CPU work; the verdict logic itself is unchanged. The samples keep reset-handshake timers and verdict-hang handling alive without letting instruction-counting harnesses trip earlier than an executing loop.
+_Avoid_: frozen instruction boundary, synthetic plugin end, freeze verdict rewrite
 
 ## Language — Mapper IRQ
 
@@ -200,20 +203,32 @@ The reason a CPU freeze is in force: a DMA transfer, a declared spin-wait, a HLT
 _Avoid_: freeze flag, halt reason, pause cause
 
 **Spin declaration**:
-The CPU's recognition of a spin-wait after repeated back edges to the same loop top. A declared loop must not perform device actions in its polled read, and a pending or in-flight DMA suppresses declaration.
+The CPU's recognition of a spin-wait after repeated back edges to the same loop top. A declared loop must not perform device actions in its polled read beyond status effects or replayable device effects, and a pending or in-flight DMA suppresses declaration.
 _Avoid_: spin detection, loop recognition
 
 **Spin wake**:
 The event that releases a declared spin-wait so its next real read can observe the awaited condition: an interrupt dispatch or a CPU write to the polled address. DMA and APU writes never wake a spin; the device continues to act on its own reads.
 _Avoid_: unpause, resume trigger, spin release
 
+**Wake from line levels**:
+The frozen spin wake discipline: the machine publishes the /NMI line level and the combined IRQ level each dot, and the frozen path reads those published levels without calling the CPU's edge-latching interrupt detectors. Wake timing stays on the counterfactual grid so the loop-top read resumes on the same dot as an executing loop; the frozen dot mutates no other CPU state.
+_Avoid_: frozen edge detector, CPU-latched wake, frozen interrupt detector
+
+**Device-poll freeze discipline**:
+The freeze discipline for polls of `$4015` (APU status), `$4016`/`$4017` (controller ports): the loop declares on the same rule as any other poll, and each frozen iteration presents that read's device-side effects (APU interrupt-flag clear, controller shift-register advance) at the loop's own cadence, bit-exact with an executing loop. No polled value reaches the program during a freeze; only the real loop-top read after wake consumes it. A pending or in-flight DMA keeps the bus, and read effects that are not side-effect-only (PPUDATA's refill and v-increment) or not a poll (KIL's halt) stay excluded from declaration.
+_Avoid_: repeated bus read, synthetic poll value, halt-repeat read of a device poll
+
 **Status replay**:
 The presentation of a skipped status-register read's device-side effects at the cadence of the frozen spin-wait. The CPU replays only side effects, never bus reads, and suspends replay while DMA owns the bus.
 _Avoid_: status refresh, fake read, synthetic poll
 
 **Synthesized VBL exit**:
-The exit of a status-poll wait (a `BIT` on `$2002` followed by its back-edge branch) once the VBL flag is set. The CPU performs the counterfactual poll read itself at the tick the executing loop would read on, sets N/V/Z as `BIT` would, and leaves through the back-edge at the exact tick. Re-executing from the loop top instead would shift later reads off the counterfactual grid and change VBL suppression. Loops the synthesis does not cover (other opcodes, incomplete records) re-execute from the loop top.
-_Avoid_: fake exit, shortcut, skipped read
+The canonical resume of a status-poll wait (a `BIT` on `$2002` followed by its back-edge branch) once the VBL flag is set. The CPU performs the counterfactual poll read itself at the tick the executing loop would read on, sets N/V/Z as `BIT` would, and leaves through the back-edge at the exact tick. Re-executing from the loop top instead would shift later reads off the counterfactual grid and change VBL suppression. Loop-top re-execution is the fallback for every shape the synthesis does not cover (other opcodes, incomplete records), not the canonical exit.
+_Avoid_: fake exit, shortcut, skipped read, loop-top-only resume
+
+**Counterfactual grid**:
+The tick alignment the declared loop would have had if it kept executing: observed read and back-edge offsets, a loop period, and a wake remainder grid. Frozen wake, status/device-effect replay, and the synthesized exit all act on this grid so framebuffer bytes, register traces, and interrupt timing stay identical to an unfrozen loop.
+_Avoid_: estimated freeze timing, real-time wake, wall-clock loop period
 
 ## Language — CPU Bus Cycles
 **Bus cycle classification**:
