@@ -352,6 +352,42 @@ impl InterruptSequences {
     }
 }
 
+/// The shared decoded opcode table. Classification, synthesis helpers, and
+/// fetch all query this one table instead of keeping parallel opcode lists.
+static OPCODE_TABLE: [ArrayVec<[Microcode; 7]>; 256] = build_opcode_table();
+
+/// The microcode of an opcode's first cycle.
+fn first_microcode(opcode: u8) -> Option<&'static Microcode> {
+    OPCODE_TABLE[opcode as usize].first()
+}
+
+/// True when the opcode opens with the branch-relative mechanism, derived
+/// from the microcode opcode table rather than a re-encoded opcode list.
+pub(crate) fn is_branch_opcode(opcode: u8) -> bool {
+    matches!(first_microcode(opcode), Some(Microcode::BranchRelative(_)))
+}
+
+/// Branch predicate owned by the opcode's microcode, used by the spin path
+/// to decide a synthesized exit without re-encoding the truth table.
+pub(crate) fn branch_test_for_opcode(opcode: u8) -> Option<BranchTest> {
+    match first_microcode(opcode) {
+        Some(Microcode::BranchRelative(test)) => Some(*test),
+        _ => None,
+    }
+}
+
+/// True when the opcode is a direct jump whose target can be its own opcode
+/// address (a bare self-loop candidate). This is the microcode signature of
+/// the direct JMP: an absolute-address low byte followed by a PC load.
+/// JMP indirect is excluded: its final microcode resolves the target through
+/// memory, never a self-jump.
+pub(crate) fn is_direct_jump_opcode(opcode: u8) -> bool {
+    matches!(
+        OPCODE_TABLE[opcode as usize].as_slice(),
+        [Microcode::AbsoluteL, Microcode::LoadPcAbsoluteH]
+    )
+}
+
 pub(crate) const fn build_opcode_table() -> [ArrayVec<[Microcode; 7]>; 256] {
     use super::Flag::*;
     use AOrMemory::*;
@@ -1127,15 +1163,33 @@ pub enum BranchTest {
 
 impl BranchTest {
     fn test(self, cpu: &Cpu) -> bool {
+        self.test_flags(
+            cpu.flag(Flag::Negative),
+            cpu.flag(Flag::Overflow),
+            cpu.flag(Flag::Carry),
+            cpu.flag(Flag::Zero),
+        )
+    }
+
+    /// Outcome from the flags a synthesized poll read just produced. The
+    /// single owner of the branch truth table: both normal execution and
+    /// the spin path evaluate the same microcode-owned predicate.
+    pub(crate) fn test_flags(
+        self,
+        negative: bool,
+        overflow: bool,
+        carry: bool,
+        zero: bool,
+    ) -> bool {
         match self {
-            BranchTest::IfCarryClear => !cpu.flag(Flag::Carry),
-            BranchTest::IfCarrySet => cpu.flag(Flag::Carry),
-            BranchTest::IfZeroSet => cpu.flag(Flag::Zero),
-            BranchTest::IfZeroClear => !cpu.flag(Flag::Zero),
-            BranchTest::IfNegativeSet => cpu.flag(Flag::Negative),
-            BranchTest::IfNegativeClear => !cpu.flag(Flag::Negative),
-            BranchTest::IfOverflowSet => cpu.flag(Flag::Overflow),
-            BranchTest::IfOverflowClear => !cpu.flag(Flag::Overflow),
+            BranchTest::IfCarryClear => !carry,
+            BranchTest::IfCarrySet => carry,
+            BranchTest::IfZeroSet => zero,
+            BranchTest::IfZeroClear => !zero,
+            BranchTest::IfNegativeSet => negative,
+            BranchTest::IfNegativeClear => !negative,
+            BranchTest::IfOverflowSet => overflow,
+            BranchTest::IfOverflowClear => !overflow,
         }
     }
 }
@@ -1476,8 +1530,6 @@ pub enum PushTarget {
 }
 
 pub(super) fn fetch_and_decode<M: Mcu>(cpu: &mut Cpu, bus: &mut Bus<M>) {
-    const OPCODE_TABLE: [ArrayVec<[Microcode; 7]>; 256] = build_opcode_table();
-
     let opcode_pc = cpu.pc();
     let opcode = cpu.inc_read_byte(bus);
     cpu.note_instruction_opcode(opcode_pc, opcode);
@@ -1712,30 +1764,7 @@ impl Microcode {
                 Self::inc_dec(cpu, bus, IncDecTarget::DecrementAlu, ValueSource::Mem)
             }
 
-            Self::BranchRelative(BranchTest::IfCarryClear) => {
-                Self::branch_relative(cpu, bus, BranchTest::IfCarryClear.test(cpu))
-            }
-            Self::BranchRelative(BranchTest::IfCarrySet) => {
-                Self::branch_relative(cpu, bus, BranchTest::IfCarrySet.test(cpu))
-            }
-            Self::BranchRelative(BranchTest::IfZeroSet) => {
-                Self::branch_relative(cpu, bus, BranchTest::IfZeroSet.test(cpu))
-            }
-            Self::BranchRelative(BranchTest::IfZeroClear) => {
-                Self::branch_relative(cpu, bus, BranchTest::IfZeroClear.test(cpu))
-            }
-            Self::BranchRelative(BranchTest::IfNegativeSet) => {
-                Self::branch_relative(cpu, bus, BranchTest::IfNegativeSet.test(cpu))
-            }
-            Self::BranchRelative(BranchTest::IfNegativeClear) => {
-                Self::branch_relative(cpu, bus, BranchTest::IfNegativeClear.test(cpu))
-            }
-            Self::BranchRelative(BranchTest::IfOverflowSet) => {
-                Self::branch_relative(cpu, bus, BranchTest::IfOverflowSet.test(cpu))
-            }
-            Self::BranchRelative(BranchTest::IfOverflowClear) => {
-                Self::branch_relative(cpu, bus, BranchTest::IfOverflowClear.test(cpu))
-            }
+            Self::BranchRelative(test) => Self::branch_relative(cpu, bus, test.test(cpu)),
 
             Self::Kill => cpu.halt(),
 
@@ -2008,25 +2037,73 @@ mod tests {
         // The taken-branch poll shift — poll on the branch's second cycle;
         // final poll suppressed without a page cross — stays a runtime
         // mechanism (ADR-0006) whose observable timing is pinned by
-        // `just branch_timing_tests`. This walk pins which opcodes carry
-        // the mechanism; the golden's 2 for branches is the shared
-        // final-cycle rule (fetch + branch cycle), not the shift itself.
-        const BRANCHES: [u8; 8] = [0x10, 0x30, 0x50, 0x70, 0x90, 0xB0, 0xD0, 0xF0];
-        let table = build_opcode_table();
-        for op in BRANCHES {
-            assert!(
-                matches!(table[op as usize][0], Microcode::BranchRelative(_)),
-                "{op:#04x} must open with the branch micro-op"
-            );
-            assert_eq!(GOLDEN_POLL_CYCLE[op as usize], 2, "{op:#04x}");
+        // `just branch_timing_tests`. The opcode classification now lives
+        // in the microcode table itself; this pins the golden poll cycles
+        // and that every classified branch has a microcode-owned predicate.
+        for op in 0..=u8::MAX {
+            if is_branch_opcode(op) {
+                assert_eq!(GOLDEN_POLL_CYCLE[op as usize], 2, "{op:#04x}");
+                assert!(
+                    branch_test_for_opcode(op).is_some(),
+                    "{op:#04x} branch must carry a microcode predicate"
+                );
+            }
         }
-        for (op, seq) in table.iter().enumerate() {
-            let is_branch = matches!(seq[0], Microcode::BranchRelative(_));
+    }
+
+    /// The bare-self-jump classifier reads the opcode table, not a parallel
+    /// opcode list: every branch micro-op is a self-loop candidate, the
+    /// direct JMP signature qualifies, and JMP indirect (memory-resolved
+    /// target) does not.
+    #[test]
+    fn self_loop_classification_comes_from_microcode() {
+        let mut branch_count = 0;
+        for op in 0..=u8::MAX {
             assert_eq!(
-                is_branch,
-                BRANCHES.contains(&(op as u8)),
-                "{op:#04x} branch-mechanism membership drifted"
+                is_branch_opcode(op),
+                branch_test_for_opcode(op).is_some(),
+                "{op:#04x} branch classification drifted"
             );
+            if is_branch_opcode(op) {
+                branch_count += 1;
+            }
+        }
+        assert_eq!(branch_count, 8);
+        assert!(is_direct_jump_opcode(opcode::JMP_ABSOLUTE));
+        assert!(!is_direct_jump_opcode(opcode::JMP_INDIRECT));
+    }
+
+    /// The spin path and microcode execution call the same predicate with
+    /// different flag sources; pin the truth table at its one owner.
+    #[test]
+    fn branch_truth_table_has_one_owner() {
+        let cases = [
+            (BranchTest::IfCarryClear, false, false, false, false, true),
+            (BranchTest::IfCarryClear, false, false, true, false, false),
+            (BranchTest::IfCarrySet, false, false, true, false, true),
+            (BranchTest::IfZeroSet, false, false, false, true, true),
+            (BranchTest::IfZeroClear, false, false, false, false, true),
+            (BranchTest::IfNegativeSet, true, false, false, false, true),
+            (
+                BranchTest::IfNegativeClear,
+                false,
+                false,
+                false,
+                false,
+                true,
+            ),
+            (BranchTest::IfOverflowSet, false, true, false, false, true),
+            (
+                BranchTest::IfOverflowClear,
+                false,
+                false,
+                false,
+                false,
+                true,
+            ),
+        ];
+        for (test, n, v, c, z, expected) in cases {
+            assert_eq!(test.test_flags(n, v, c, z), expected, "{test:?}");
         }
     }
 
