@@ -94,7 +94,7 @@ Migration:
 
 ### 4. TickOutcome
 
-Replaces `-> (ExecuteResult, bool)` (`cpu.rs:660`). `instruction_complete` is `microcode_queue.is_empty()` after the tick — the instruction boundary. Callers `while !cpu.tick(...).1` become `while !cpu.tick(...).instruction_complete`; `match .0` becomes `.control`. `Halt` stays inside `ExecuteResult`, not folded.
+Replaces `-> (ExecuteResult, bool)` (`cpu.rs:660`). `instruction_complete` is `microcode_queue.is_empty()` after the tick — the instruction boundary. Callers `while !cpu.tick(...).1` become `while !cpu.tick(...).instruction_complete`; `match .0` becomes `.control`. `Halt` stays inside `ExecuteResult`, not folded. A frozen dot is not a boundary: `Cpu::tick` returns `plugin.should_stop()` every dot so the harness can keep sampling its timeout/verdict (user story 10), while no instruction executes and plugin `start` is not called. Plugin `end` is sampled once per frozen loop iteration at the loop's own measured cadence (the `cpu_reset` handshake: `MonitorTestStatus` matures its 100ms reset timer in `end`, and a frozen `wait_reset` self-loop would hang it forever if `end` stopped). The cadence never exceeds the executing loop's boundary rate, it is skipped while DMA is in flight, and `end` observes through `peek` only — CPU and device state are untouched.
 
 ### 5. CONTEXT sweep (same pass)
 

@@ -1478,7 +1478,9 @@ pub enum PushTarget {
 pub(super) fn fetch_and_decode<M: Mcu>(cpu: &mut Cpu, bus: &mut Bus<M>) {
     const OPCODE_TABLE: [ArrayVec<[Microcode; 7]>; 256] = build_opcode_table();
 
+    let opcode_pc = cpu.pc();
     let opcode = cpu.inc_read_byte(bus);
+    cpu.note_instruction_opcode(opcode_pc, opcode);
     cpu.push_microcodes(&OPCODE_TABLE[opcode as usize]);
     if let Some(window) = InterruptSequences::window_for_opcode(opcode) {
         cpu.arm_interrupt_window(window, None);
@@ -1794,6 +1796,10 @@ impl Microcode {
         let offset = cpu.inc_read_byte(bus);
         cpu.request_detect_interrupt = Some(true);
         if branch_test_result {
+            let branch_top = cpu.instruction_pc();
+            let target = cpu.pc().wrapping_add((offset as i8) as u16);
+            cpu.note_poll_back_edge(target, bus);
+            cpu.note_bare_self_jump(target, branch_top, bus.clock().0);
             let old_pch = cpu.pch();
             cpu.pc.wrapping_add((offset as i8) as u16);
             if old_pch != cpu.pch() {
@@ -1959,6 +1965,7 @@ fn load_pc_absolute_h<M: Mcu>(cpu: &mut Cpu, bus: &mut Bus<M>) {
     let high = cpu.inc_read_byte(bus);
     cpu.pc.set_high(high);
     cpu.pc.set_low(cpu.ab.low());
+    cpu.note_bare_self_jump(cpu.pc(), cpu.instruction_pc(), bus.clock().0);
 }
 
 #[cfg(test)]

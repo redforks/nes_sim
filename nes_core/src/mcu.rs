@@ -44,6 +44,44 @@ pub trait Mcu {
     fn write_stack_page(&mut self, address: u8, value: u8, clock: SystemClock) {
         self.write(0x100 + address as u16, value, clock)
     }
+
+    /// Read-only observation of the VBL bit a skipped `$2002` read would
+    /// return. Default `false`: only the NES memory map has a PPU status
+    /// register. This is a flag query, not a bus read; the CPU uses it to
+    /// resume a $2002 wait loop as soon as its next real read would observe
+    /// VBL (ticket #135). The replay cadence is applied to side effects
+    /// after this check; the peek itself never clears the flag.
+    fn status_register_has_vbl(&self) -> bool {
+        false
+    }
+
+    /// Classification query: whether an address names a status register
+    /// whose read has destructive device-side effects. Default `false`.
+    /// The CPU uses this to decide whether a frozen poll must replay those
+    /// effects; no bus read or device mutation happens in this query.
+    /// It is a naming query like `status_register_has_vbl`, not a new
+    /// bus/DMA channel state seam (ADR-0018): the CPU still owns the one
+    /// freeze/wake path. Ticket #135 needed the replay hook; this hook only
+    /// decides which polls use it.
+    fn has_destructive_status_read(&self, _address: u16) -> bool {
+        false
+    }
+
+    /// Classification query: whether a readable address names a device
+    /// register whose read is itself an action (a controller shift, an APU
+    /// interrupt acknowledge, a zapper sample). Default `false`. Such a
+    /// poll keeps executing for real: freezing it would swallow the read,
+    /// and device-sourced writes never wake a spin by decision.
+    fn is_device_register(&self, _address: u16) -> bool {
+        false
+    }
+
+    /// Replay the destructive side effects of a `$2002` read that a frozen
+    /// CPU spin skipped. The default is a no-op: only the NES memory map
+    /// has a PPU status register. Implementations must not drive the CPU
+    /// bus, return a value, or change any other device state. The CPU calls
+    /// this on its own at the spin's back-edge cadence (ticket #135).
+    fn replay_status_read_side_effects(&mut self, _address: u16) {}
 }
 
 #[cfg(test)]
