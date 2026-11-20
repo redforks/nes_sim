@@ -1737,9 +1737,13 @@ impl Cpu {
         self.spin_declaration_disabled = disabled;
     }
 
+    /// Test-only observation of a declared spin: the loop-top address the
+    /// frozen CPU is pinned to. Tests assert this exact address rather than
+    /// the internal freeze bit, so the assertion states where the program is
+    /// held, not how the CPU is frozen.
     #[cfg(test)]
-    pub(crate) fn is_spin_frozen_for_test(&self) -> bool {
-        self.frozen_reason.is_some_and(|r| r.spin.is_some())
+    pub(crate) fn spin_loop_top_for_test(&self) -> Option<u16> {
+        self.frozen_reason.and_then(|r| r.spin.map(|s| s.loop_top))
     }
 
     pub fn is_halted(&self) -> bool {
