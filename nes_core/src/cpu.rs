@@ -6,7 +6,7 @@ use crate::{SystemClock, bus::Bus, mcu::Mcu};
 use arraydeque::ArrayDeque;
 use microcode::{
     AOrMemory, CrossPageBehavior, IncDecTarget, InterruptSequences, InterruptWindow, Microcode,
-    OpAfterAddressing,
+    OpAfterAddressing, is_branch_opcode, is_direct_jump_opcode,
 };
 
 pub(crate) mod microcode;
@@ -18,11 +18,8 @@ mod status_spin_tests;
 
 use self::reg16::Register16;
 
-const JMP_ABSOLUTE: u8 = 0x4C;
-const BRANCH_OPCODES: [u8; 8] = [0x10, 0x30, 0x50, 0x70, 0x90, 0xB0, 0xD0, 0xF0];
-
 fn is_bare_self_jump_opcode(opcode: u8) -> bool {
-    opcode == JMP_ABSOLUTE || BRANCH_OPCODES.contains(&opcode)
+    is_direct_jump_opcode(opcode) || is_branch_opcode(opcode)
 }
 
 /// Opcodes that write X, Y, or the stack pointer (transfers, inc/dec of
@@ -61,33 +58,71 @@ pub(crate) enum Register {
     Y,
 }
 
+/// One instruction-end poll tick recorded for the wake-remainder grid.
+/// `tick` is a candidate-window counter value; `pc` is the next instruction
+/// boundary after that poll, and `needs_fixup` marks a branch-tick poll whose
+/// queued fixup cycle the wake delay absorbs.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+struct EndRecord {
+    tick: u64,
+    pc: u16,
+    needs_fixup: bool,
+}
+
+/// Bounded tick-ordered buffer of end records shared by the candidate window
+/// and the declared spin. Both paths hold the same record shape; the spin
+/// relativizes `tick` to its grid base when it captures the candidate buffer.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+struct EndRecordBuffer {
+    records: [EndRecord; 8],
+    len: u8,
+    overflow: bool,
+}
+
+impl EndRecordBuffer {
+    fn push(&mut self, tick: u64, pc: u16, needs_fixup: bool) {
+        if let Some(slot) = self.records.get_mut(self.len as usize) {
+            *slot = EndRecord {
+                tick,
+                pc,
+                needs_fixup,
+            };
+            self.len += 1;
+        } else {
+            self.overflow = true;
+        }
+    }
+
+    fn clear(&mut self) {
+        *self = Self::default();
+    }
+}
+
 /// The shape of a declared spin: an optional polled address (`None` for a
 /// bare JMP/branch-to-self) and the loop-top PC to resume from. For a
-/// destructive poll (`status_side_effects`), the last observed read dot
-/// and its interval give the exact cadence of the reads the freeze skips.
+/// poll with destructive or device-side read effects (`replay_read_effects`),
+/// the last observed read dot and its interval give the exact cadence of
+/// the effects the freeze replays.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct SpinState {
     polled: Option<u16>,
     loop_top: u16,
-    status_side_effects: bool,
+    replay_read_effects: bool,
     /// Master-clock dot of the last real poll read before declaration.
     read_phase: u64,
     /// Dot interval between consecutive real poll reads; `0` if unknown.
     loop_period: u8,
     /// Wake-remainder grid: the [`Cpu::wake_tick_counter`] value at the
-    /// declaring back-edge, the iteration length in counter ticks, and the
-    /// in-iteration poll-tick offsets (ascending). An NMI/IRQ wake
-    /// dispatches at the first recorded poll at or after the latch phase,
-    /// exactly when the executing loop would have dispatched; `end_fixup`
-    /// bit `i` marks a branch-tick poll whose fixup cycle the delay
-    /// absorbs. `ends_exact` is false when the record is incomplete
-    /// (overflow, saturation, or no polls observed); inexact loops keep
-    /// the legacy immediate dispatch.
+    /// declaring back-edge and the iteration length in counter ticks. An
+    /// NMI/IRQ wake dispatches at the first recorded poll at or after the
+    /// latch phase, exactly when the executing loop would have dispatched.
+    /// `ends_exact` is false when the record is incomplete (overflow,
+    /// saturation, or no polls observed); inexact loops keep the legacy
+    /// immediate dispatch. `ends` shares the candidate's record type, with
+    /// ticks relativized to `grid_base`.
     grid_base: u64,
     period_ticks: u8,
-    end_offsets: [u8; 8],
-    end_count: u8,
-    end_fixup: u8,
+    ends: EndRecordBuffer,
     ends_exact: bool,
     /// Pending exact-remainder wake: dispatch once `wake_tick_counter`
     /// reaches this tick. `None` while spinning undisturbed.
@@ -100,10 +135,6 @@ struct SpinState {
     /// PC of the back-edge branch instruction. A synthesized VBL exit
     /// jumps straight to it instead of re-executing the poll read.
     branch_pc: Option<u16>,
-    /// Next-instruction pc at each recorded end, parallel to
-    /// `end_offsets`. A dispatch at an end resumes there, so the pushed
-    /// return address matches the executing loop's.
-    end_pcs: [u16; 8],
     /// Resume pc of a pending exact-remainder wake, chosen with its end.
     wake_resume_pc: Option<u16>,
 }
@@ -119,15 +150,9 @@ struct SelfLoopWatch {
     edge_tick: u64,
 }
 
-/// Why [`Cpu::tick`] refuses to execute: a DMA freeze, a spin-wait freeze,
-/// a HLT halt, or a composition of these.
-///
-/// Held on [`Cpu`] as `Option<FrozenReason>` so the hot path pays a single
-/// `None` check; `None` is the normal, executing state. The two freeze
-/// sources are independent: DMC DMA releases only `dma`, and an interrupt
-/// wake releases only `spin`. A freeze wins over a halt, so a frozen dot
-/// executes no microcode and the halt check resumes when every freeze source
-/// clears.
+/// A possible spin-wait under observation: the loop-top read at `pc` and
+/// `addr`, its back-edge branch once seen, and the cadence measurements used
+/// to declare and time a frozen spin.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct PollCandidate {
     /// PC of the loop-top read instruction (its opcode byte).
@@ -149,6 +174,15 @@ struct PollCandidate {
     edge_tick: u64,
 }
 
+/// Why [`Cpu::tick`] refuses to execute: a DMA transfer, a declared spin-wait,
+/// a HLT halt, or a combination of these.
+///
+/// Held on [`Cpu`] as `Option<FrozenReason>` so the hot path pays a single
+/// `None` check; `None` is the normal, executing state. The two freeze
+/// sources are independent: DMC DMA releases only `dma`, and an interrupt
+/// wake releases only `spin`. A freeze wins over a halt, so a frozen dot
+/// executes no microcode and the halt check resumes when every freeze source
+/// clears.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct FrozenReason {
     dma: bool,
@@ -225,8 +259,9 @@ impl NmiDetector {
     /// `v` is the line level at system cycle `cycles`; `sample` marks the
     /// first dot of a CPU cycle — the /NMI sampling phase, owned by the
     /// caller so this per-dot path computes no modulo.
-    fn update_nmi_input(&mut self, v: bool, cycles: u64, sample: bool) {
-        // The line is high exactly while a current assertion is stamped.
+    /// Publish the machine-maintained line level. `lagged_sample` advances
+    /// on sample dots; no edge-latching state changes here (ADR-0019).
+    fn update_nmi_line(&mut self, v: bool, cycles: u64, sample: bool) {
         if (self.asserted_since != 0) != v {
             self.asserted_since = if v { cycles } else { 0 };
         }
@@ -235,23 +270,24 @@ impl NmiDetector {
         }
     }
 
-    fn detect_nmi(&mut self) -> bool {
-        // Sample even while a previous edge is still pending: freezing the
-        // sampler would hide newer edges (and leave a stale last sample
-        // behind once the pending edge is taken).
+    /// Latch a rising edge from the published lagged sample. This is the
+    /// CPU edge detector, called only on normal executing dots or at a
+    /// frozen wake dispatch.
+    fn sample_published_nmi_line(&mut self) -> bool {
         let sampled = self.lagged_sample;
         let rising_edge = self.last_lagged_sample == 0 && sampled != 0;
         self.last_lagged_sample = sampled;
         if rising_edge {
             let stamp = sampled;
-            // Skip edges whose assertion was already consumed while high
-            // (see `mark_consumed`): stamps are monotonic, so only a
-            // genuinely newer assertion may latch.
             if !self.edge_consumed(stamp) {
                 self.pending_asserted_since = stamp;
             }
         }
         self.pending_asserted_since != 0
+    }
+
+    fn detect_nmi(&mut self) -> bool {
+        self.sample_published_nmi_line()
     }
 
     /// Newest assertion stamp visible to the consume paths: the pending
@@ -456,6 +492,10 @@ pub struct Cpu {
     irq_detector: IrqDetector,
     request_detect_interrupt: Option<bool>,
 
+    /// Machine-published combined IRQ level, refreshed every dot. Wake
+    /// reads this level instead of calling the CPU's edge detector.
+    published_irq_level: bool,
+
     /// `None` = normal; `Some` = frozen and/or halted (see [`FrozenReason`]).
     frozen_reason: Option<FrozenReason>,
 
@@ -480,19 +520,13 @@ pub struct Cpu {
     /// non-DMA frozen ticks. Paused under DMA and while halted (the
     /// counterfactual stalls too). Anchors dispatch-phase-exact wakes.
     wake_tick_counter: u64,
-    /// Instruction-end ticks of the candidate window, absolute counter
-    /// values in tick order; relativized to the grid base at declaration.
-    /// Cleared at every arming/first-back-edge; a declaration consumes the
-    /// ends strictly inside its own window.
-    cand_end_buf: [u64; 8],
-    cand_end_len: u8,
-    cand_end_overflow: bool,
-    /// Bit `i` set when `cand_end_buf[i]` is a branch-tick poll (queue
-    /// still holds its fixup cycle); its wake delay accounts for it.
-    cand_end_fixup_mask: u8,
-    /// Next-instruction pc recorded with each candidate end, parallel to
-    /// `cand_end_buf`.
-    cand_end_pc: [u16; 8],
+    /// Candidate-window ends, in tick order. One record holds the absolute
+    /// counter tick, the next-instruction pc (resolved at the following
+    /// executing tick for completed instructions), and whether the poll
+    /// still owes a branch fixup cycle. Relativized to the grid base at
+    /// declaration, it feeds both the candidate window and the frozen
+    /// `SpinState` through the same buffer type.
+    cand_ends: EndRecordBuffer,
     /// Slot of a recorded instruction-complete end whose boundary pc is
     /// resolved at the next executing tick's entry (the fetch that
     /// advances `pc` runs on that tick, not on the completion tick).
@@ -519,6 +553,7 @@ impl Cpu {
             nmi_detecteor: Default::default(),
             irq_detector: Default::default(),
             request_detect_interrupt: None,
+            published_irq_level: false,
             ab: Register16::default(),
             db: 0,
             alu: 0,
@@ -529,11 +564,7 @@ impl Cpu {
             instruction_opcode: 0,
             poll_candidate: None,
             wake_tick_counter: 0,
-            cand_end_buf: [0; 8],
-            cand_end_len: 0,
-            cand_end_overflow: false,
-            cand_end_fixup_mask: 0,
-            cand_end_pc: [0; 8],
+            cand_ends: EndRecordBuffer::default(),
             pending_end_slot: None,
             #[cfg(test)]
             spin_declaration_disabled: false,
@@ -674,9 +705,12 @@ impl Cpu {
     }
 
     fn set_dma_frozen(&mut self, dma: bool) {
-        let halt = self.frozen_reason.is_some_and(|r| r.halt);
         let spin = self.frozen_reason.and_then(|r| r.spin);
-        self.frozen_reason = FrozenReason::new(dma, spin, halt);
+        if let Some(reason) = self.frozen_reason {
+            self.replace_reason(reason, dma, spin, reason.halt);
+        } else {
+            self.frozen_reason = FrozenReason::new(dma, spin, false);
+        }
     }
 
     /// Declare a spin freeze. A pending write disqualifies declaration, the
@@ -690,28 +724,55 @@ impl Cpu {
         // The DMC halt retries on the next eligible dot after its read, so
         // the loop can declare itself again once the bus is free.
         if self.can_pause() && !self.frozen_reason.is_some_and(|r| r.dma) {
-            let dma = self.frozen_reason.is_some_and(|r| r.dma);
-            let halt = self.frozen_reason.is_some_and(|r| r.halt);
-            self.frozen_reason = FrozenReason::new(dma, Some(spin), halt);
+            if let Some(reason) = self.frozen_reason {
+                self.replace_reason(reason, reason.dma, Some(spin), reason.halt);
+            } else {
+                self.frozen_reason = FrozenReason::new(false, Some(spin), false);
+            }
             true
         } else {
             false
         }
     }
 
-    /// Present the destructive `$2002` read effects of the loop iterations
-    /// the freeze skipped. The cadence is the observed interval between
-    /// real polls, so a seven-dot `BIT $2002 / BPL` loop replays once every
-    /// seven dots — not once per dot. `Mcu` owns the device-specific effects via a
-    /// defaulted method (only `NesMcu` overrides it), keeping the single CPU
-    /// freeze seam and leaving DMA channels and the bus untouched.
+    /// Rebuild a stored freeze reason after changing one of its sources.
+    /// The one idiom for every whole-reason update, including the repeated
+    /// `FrozenReason::new(reason.dma, new_spin, reason.halt)` retry shape:
+    /// callers pass the reason they read, and `None` drops the freeze when
+    /// no source remains.
+    fn replace_reason(
+        &mut self,
+        reason: FrozenReason,
+        dma: bool,
+        spin: Option<SpinState>,
+        halt: bool,
+    ) {
+        debug_assert_eq!(self.frozen_reason, Some(reason));
+        self.frozen_reason = FrozenReason::new(dma, spin, halt);
+    }
+
+    /// Update only the spin source of a stored freeze reason, preserving DMA
+    /// and halt. The one mutation idiom for every spin-state update: `None`
+    /// releases the spin and lets the CPU tick again unless another source
+    /// still holds it.
+    fn update_spin(&mut self, reason: FrozenReason, spin: Option<SpinState>) {
+        self.replace_reason(reason, reason.dma, spin, reason.halt);
+    }
+
+    /// Present the device-side effects of the loop iterations the freeze
+    /// skipped: `$2002` flag clears and the `$4015`-`$4017` device actions.
+    /// The cadence is the observed interval between real polls, so a
+    /// seven-dot loop replays once every seven dots — not once per dot.
+    /// `Mcu` owns the device-specific effects via a defaulted method, keeping
+    /// the single CPU freeze seam and leaving DMA channels and the bus
+    /// untouched.
     fn replay_status_side_effects<M: Mcu>(&mut self, mut spin: SpinState, bus: &mut Bus<M>) {
-        let (Some(addr), true) = (spin.polled, spin.status_side_effects) else {
+        let (Some(addr), true) = (spin.polled, spin.replay_read_effects) else {
             return;
         };
         if self.frozen_reason.is_some_and(|r| r.dma) {
             // DMA owns the bus for its transfer. A skipped status read must
-            // not touch PPU state now; re-anchor the loop cadence so the
+            // not touch device state now; re-anchor the loop cadence so the
             // resumed spin does not replay the halted dots in a burst.
             spin.read_phase = bus.clock().0;
             if let Some(reason) = self.frozen_reason.as_mut() {
@@ -726,6 +787,15 @@ impl Cpu {
         // iterations between the VBL edge and the exit read perform no
         // clear, so neither may the frozen ones.
         if spin.vbl_resume_at.is_some() {
+            return;
+        }
+        // A device value can change without a CPU write (an IRQ bit
+        // arriving, a controller strobe). If the next real read would take
+        // the exit branch, wake instead of replaying device actions for
+        // counterfactual iterations: the resumed read consumes the real
+        // value, and a replayed flag clear must not decide the exit.
+        if bus.mcu().is_device_register(addr) && self.device_poll_exit_visible(spin, bus) {
+            self.resume_spin();
             return;
         }
         // Replay at the dots where the skipped reads would have landed:
@@ -817,7 +887,7 @@ impl Cpu {
         }
         debug_assert!(self.microcode_queue.len() <= 1);
         self.microcode_queue.clear();
-        self.frozen_reason = FrozenReason::new(reason.dma, None, reason.halt);
+        self.update_spin(reason, None);
         self.pc.set(pc);
         self.self_loop_candidate = None;
         self.poll_candidate = None;
@@ -826,13 +896,12 @@ impl Cpu {
     /// One frozen tick: replay destructively-read status side effects,
     /// watch for a CPU write to the polled address, wake on a dispatchable
     /// interrupt, and sample the harness end at the loop cadence. The
-    /// machine publishes the interrupt lines every dot, so a frozen CPU
-    /// reads already-maintained detector state. Sample /NMI edges here
-    /// because the normal post-exec poll is skipped while frozen.
-    /// A frozen loop executes no instruction, but the harness still needs
-    /// its stop/verdict checks sampled (user story 10). This only reads
-    /// plugin state; CPU and device state are untouched by the freeze
-    /// itself.
+    /// machine publishes the line levels every dot, so a frozen CPU reads
+    /// the machine-maintained edge latch and the published IRQ level;
+    /// it never calls an edge-latching detector. A frozen loop executes no
+    /// instruction. Wake dispatch is the only CPU state a frozen dot
+    /// changes. The harness still needs its stop/verdict checks sampled
+    /// (user story 10); sampling reads plugin state only.
     fn tick_frozen<P: Plugin<M>, M: Mcu>(
         &mut self,
         reason: FrozenReason,
@@ -862,7 +931,7 @@ impl Cpu {
     /// `None` when the record is incomplete — those loops keep the legacy
     /// immediate dispatch.
     fn wake_remainder_ticks(&self, spin: &SpinState) -> Option<(u64, u16)> {
-        if !spin.ends_exact || spin.period_ticks == 0 || spin.end_count == 0 {
+        if !spin.ends_exact || spin.period_ticks == 0 || spin.ends.len == 0 {
             return None;
         }
         let period = u64::from(spin.period_ticks);
@@ -871,20 +940,16 @@ impl Cpu {
         // recorded poll the next iteration's first poll applies. Offsets
         // ascend in tick order. The resume pc is the next instruction the
         // executing loop would fetch after that poll.
-        for (i, &offset) in spin.end_offsets[..spin.end_count as usize]
-            .iter()
-            .enumerate()
-        {
-            let offset = u64::from(offset);
+        for end in &spin.ends.records[..spin.ends.len as usize] {
+            let offset = end.tick;
             if offset >= phase {
-                let fixup = u64::from((spin.end_fixup >> i) & 1);
-                return Some((offset - phase + fixup, spin.end_pcs[i]));
+                return Some((offset - phase + u64::from(end.needs_fixup), end.pc));
             }
         }
-        let fixup = u64::from(spin.end_fixup & 1);
+        let first = &spin.ends.records[0];
         Some((
-            u64::from(spin.end_offsets[0]) + period - phase + fixup,
-            spin.end_pcs[0],
+            first.tick + period - phase + u64::from(first.needs_fixup),
+            first.pc,
         ))
     }
 
@@ -912,31 +977,28 @@ impl Cpu {
     /// loop-top fetch. `None` when the loop is not a single-read status
     /// poll with a complete record — those keep the legacy immediate resume.
     fn vbl_resume_delay(&self, spin: &SpinState) -> Option<u64> {
-        if !spin.status_side_effects
+        if !spin.replay_read_effects
             || !spin.ends_exact
             || spin.period_ticks == 0
-            || spin.end_count == 0
+            || spin.ends.len == 0
         {
             return None;
         }
         let mut read_offset = None;
-        for (i, &offset) in spin.end_offsets[..spin.end_count as usize]
-            .iter()
-            .enumerate()
-        {
-            if spin.end_fixup & (1 << i) == 0 {
+        for end in &spin.ends.records[..spin.ends.len as usize] {
+            if !end.needs_fixup {
                 if read_offset.is_some() {
                     return None;
                 }
-                read_offset = Some(u64::from(offset));
+                read_offset = Some(end.tick);
             }
         }
         let read_offset = read_offset?;
         let period = u64::from(spin.period_ticks);
         let phase = (self.wake_tick_counter - spin.grid_base) % period;
-        // Offsets[0] is always the back-edge tick itself: the exit tick
+        // The first end is always the back-edge tick itself: the exit tick
         // the synthesized resume fires on.
-        let back_edge = u64::from(spin.end_offsets[0]) % period;
+        let back_edge = spin.ends.records[0].tick % period;
         let read = read_offset % period;
         // Next counterfactual read at or after the current tick (a read
         // on the latch tick already sees the flag), then the fixed
@@ -973,9 +1035,11 @@ impl Cpu {
         }
     }
 
-    /// Branch outcome for a synthesized VBL exit: the back-edge opcode
-    /// plus whether it takes under the BIT-set flags. `None` for a
-    /// non-branch opcode (defensive; the declarer only counts branches).
+    /// Branch outcome for a synthesized VBL exit: read the back-edge's
+    /// microcode-owned [`BranchTest`] from the opcode table and evaluate it
+    /// against the flags the counterfactual poll read just produced.
+    /// `None` for a non-branch opcode (defensive; the declarer only counts
+    /// branches). No truth table lives in the spin path.
     fn synth_branch_taken(
         opcode: u8,
         negative: bool,
@@ -983,17 +1047,8 @@ impl Cpu {
         carry: bool,
         zero: bool,
     ) -> Option<bool> {
-        match opcode {
-            0x10 => Some(!negative), // BPL
-            0x30 => Some(negative),  // BMI
-            0x50 => Some(!overflow), // BVC
-            0x70 => Some(overflow),  // BVS
-            0x90 => Some(!carry),    // BCC
-            0xB0 => Some(carry),     // BCS
-            0xD0 => Some(!zero),     // BNE
-            0xF0 => Some(zero),      // BEQ
-            _ => None,
-        }
+        microcode::branch_test_for_opcode(opcode)
+            .map(|test| test.test_flags(negative, overflow, carry, zero))
     }
 
     /// The status-poll shape a spin can exit through: the poll read is a
@@ -1026,6 +1081,56 @@ impl Cpu {
         } else {
             (negative, m & 0x40 != 0, self.a & m == 0)
         }
+    }
+
+    /// Whether a frozen device poll's next real read would take an exit
+    /// branch instead of looping: project the read value through the poll's
+    /// flag-setting instruction(s) and the back-edge branch. `$4015` waits
+    /// commonly mask the status with `AND #$01` before `BEQ`, which the
+    /// generic status-poll shape does not cover. Only the loop shapes
+    /// supported here get early wake; others keep replaying until a wake
+    /// event. Peek is side-effect free; the resumed read supplies the value.
+    fn device_poll_exit_visible<M: Mcu>(&self, spin: SpinState, bus: &Bus<M>) -> bool {
+        let Some(addr) = spin.polled else {
+            return false;
+        };
+        let Some(branch_pc) = spin.branch_pc else {
+            return false;
+        };
+        let read_op = bus.mcu().peek(spin.loop_top);
+        let read_len = match read_op {
+            0x25 | 0x2D => 2 + u16::from(read_op == 0x2D), // AND zp/abs
+            0xA5 | 0xAD => 2 + u16::from(read_op == 0xAD), // LDA zp/abs
+            0x24 | 0x2C => 2 + u16::from(read_op == 0x2C), // BIT zp/abs
+            _ => return false,
+        };
+        let after_read = spin.loop_top.wrapping_add(read_len);
+        let mask = if branch_pc == after_read.wrapping_add(2) && bus.mcu().peek(after_read) == 0x29
+        {
+            Some(bus.mcu().peek(after_read.wrapping_add(1)))
+        } else if branch_pc == after_read {
+            None
+        } else {
+            return false;
+        };
+        let Some(branch_test) = microcode::branch_test_for_opcode(bus.mcu().peek(branch_pc)) else {
+            return false;
+        };
+
+        let m = bus.mcu().peek(addr);
+        let (negative, overflow, zero) = self.poll_read_flags(read_op, m);
+        let (negative, overflow, zero) = match mask {
+            Some(mask) => {
+                let value = (if matches!(read_op, 0xA5 | 0xAD) {
+                    m
+                } else {
+                    self.a & m
+                }) & mask;
+                (value & 0x80 != 0, overflow, value == 0)
+            }
+            None => (negative, overflow, zero),
+        };
+        !branch_test.test_flags(negative, overflow, self.flag(Flag::Carry), zero)
     }
 
     /// Whether a frozen status poll's exit is visible to its next real
@@ -1090,7 +1195,7 @@ impl Cpu {
         };
         debug_assert!(self.microcode_queue.len() <= 1);
         self.microcode_queue.clear();
-        self.frozen_reason = FrozenReason::new(reason.dma, None, reason.halt);
+        self.update_spin(reason, None);
         self.self_loop_candidate = None;
         self.poll_candidate = None;
         true
@@ -1110,10 +1215,7 @@ impl Cpu {
             return;
         };
         let clock = bus.clock();
-        let irq_pending = self
-            .irq_detector
-            .detect_irq(self.flag(Flag::InterruptDisabled));
-        self.nmi_detecteor.detect_nmi();
+        let irq_pending = self.published_irq_level && !self.flag(Flag::InterruptDisabled);
         // A pending exact-remainder wake dispatches when its tick arrives;
         // re-evaluate the kind then so a deasserted IRQ cancels instead of
         // dispatching stale. Paused under DMA like the counter.
@@ -1122,7 +1224,7 @@ impl Cpu {
                 return;
             }
             let resume = spin.wake_resume_pc.unwrap_or(spin.loop_top);
-            if self.nmi_ready(clock) {
+            if self.nmi_detecteor.sample_published_nmi_line() && self.nmi_ready(clock) {
                 self.dispatch_woken_spin(true, resume);
             } else if irq_pending {
                 self.dispatch_woken_spin(false, resume);
@@ -1135,7 +1237,7 @@ impl Cpu {
             }
             return;
         }
-        let nmi_ready = self.nmi_ready(clock);
+        let nmi_ready = self.nmi_detecteor.sample_published_nmi_line() && self.nmi_ready(clock);
         if !nmi_ready && !irq_pending {
             return;
         }
@@ -1204,11 +1306,10 @@ impl Cpu {
                 read_period: 0,
                 edge_tick: 0,
             };
-            let dma = reason.dma;
-            let halt = reason.halt;
-            self.frozen_reason = FrozenReason::new(dma, None, halt);
+            let dma_held = reason.dma;
+            self.update_spin(reason, None);
             self.pc.set(spin.loop_top);
-            self.poll_candidate = (!dma).then_some(poll_candidate);
+            self.poll_candidate = (!dma_held).then_some(poll_candidate);
         }
     }
 
@@ -1250,70 +1351,61 @@ impl Cpu {
         &self,
         polled: Option<u16>,
         loop_top: u16,
-        status_side_effects: bool,
+        replay_read_effects: bool,
         read_phase: u64,
         loop_period: u8,
         grid_base: u64,
     ) -> SpinState {
         let period_real = self.wake_tick_counter.saturating_sub(grid_base);
-        let mut end_offsets = [0u8; 8];
-        let mut end_fixup = 0u8;
-        let mut end_pcs = [0u16; 8];
-        let mut end_count = 0u8;
+        let mut ends = EndRecordBuffer::default();
         // Polls in the window from the first back-edge on: that tick polls
         // too (its branch arms the detect gate) and records offset 0 with
         // its fixup bit set. The declaring tick holds the branch fixup
         // without polling, so it is never one. The buffer records in tick
         // order, so offsets ascend.
-        for (i, &end) in self.cand_end_buf[..self.cand_end_len as usize]
+        for (i, &end) in self.cand_ends.records[..self.cand_ends.len as usize]
             .iter()
             .enumerate()
         {
-            if end >= grid_base && end <= grid_base + period_real && end_count < 8 {
-                end_offsets[end_count as usize] = (end - grid_base).min(u64::from(u8::MAX)) as u8;
+            if end.tick >= grid_base && end.tick <= grid_base + period_real {
                 // A still-pending end resolves to the current pc, the
                 // boundary the next fetch uses if nothing has run since.
-                end_pcs[end_count as usize] = if self.pending_end_slot == Some(i as u8) {
+                let pc = if self.pending_end_slot == Some(i as u8) {
                     self.pc.get()
                 } else {
-                    self.cand_end_pc[i]
+                    end.pc
                 };
-                if self.cand_end_fixup_mask & (1 << i) != 0 {
-                    end_fixup |= 1 << end_count;
-                }
-                end_count += 1;
+                ends.push(
+                    (end.tick - grid_base).min(u64::from(u8::MAX)),
+                    pc,
+                    end.needs_fixup,
+                );
             }
         }
         let ends_exact =
-            !self.cand_end_overflow && end_count > 0 && period_real <= u64::from(u8::MAX);
+            !self.cand_ends.overflow && ends.len > 0 && period_real <= u64::from(u8::MAX);
         SpinState {
             polled,
             loop_top,
-            status_side_effects,
+            replay_read_effects,
             read_phase,
             loop_period,
             grid_base,
             period_ticks: period_real.clamp(1, u64::from(u8::MAX)) as u8,
-            end_offsets,
-            end_count,
-            end_fixup,
+            ends,
             ends_exact,
             wake_dispatch_at: None,
             vbl_resume_at: None,
             branch_pc: None,
-            end_pcs,
             wake_resume_pc: None,
         }
     }
 
-    /// Clear the candidate end-offset buffer at a grid anchor (arming or
+    /// Clear the candidate end-record buffer at a grid anchor (arming or
     /// first back-edge); the declaring window consumes the ends recorded
     /// after its own anchor.
-    fn reset_cand_end_buf(&mut self) {
-        self.cand_end_buf = [0; 8];
-        self.cand_end_len = 0;
-        self.cand_end_overflow = false;
-        self.cand_end_fixup_mask = 0;
+    fn reset_cand_ends(&mut self) {
+        self.cand_ends.clear();
         self.pending_end_slot = None;
     }
 
@@ -1326,7 +1418,7 @@ impl Cpu {
         let Some(candidate) = self.poll_candidate else {
             return;
         };
-        if bus.mcu().is_device_register(candidate.addr) {
+        if bus.mcu().is_action_data_port(candidate.addr) {
             self.poll_candidate = None;
             return;
         }
@@ -1341,7 +1433,8 @@ impl Cpu {
             let mut spin = self.capture_spin_state(
                 Some(candidate.addr),
                 candidate.pc,
-                bus.mcu().has_destructive_status_read(candidate.addr),
+                bus.mcu().has_destructive_status_read(candidate.addr)
+                    || bus.mcu().is_device_register(candidate.addr),
                 candidate.last_read_dot,
                 candidate.read_period,
                 candidate.edge_tick,
@@ -1353,7 +1446,7 @@ impl Cpu {
         } else {
             // First back-edge: anchor the wake-remainder grid and start
             // recording the in-iteration instruction ends.
-            self.reset_cand_end_buf();
+            self.reset_cand_ends();
             self.poll_candidate = Some(PollCandidate {
                 back_edges: candidate.back_edges + 1,
                 edge_tick: self.wake_tick_counter,
@@ -1365,9 +1458,12 @@ impl Cpu {
 
     /// Flip the halt bit, preserving both freeze sources.
     fn set_halted(&mut self, halt: bool) {
-        let dma = self.frozen_reason.is_some_and(|r| r.dma);
         let spin = self.frozen_reason.and_then(|r| r.spin);
-        self.frozen_reason = FrozenReason::new(dma, spin, halt);
+        if let Some(reason) = self.frozen_reason {
+            self.replace_reason(reason, reason.dma, spin, halt);
+        } else {
+            self.frozen_reason = FrozenReason::new(false, spin, halt);
+        }
     }
 
     /// Test-only staging for DMA-seam unit tests (`dmc_dma/tests.rs`):
@@ -1377,9 +1473,9 @@ impl Cpu {
     #[cfg(test)]
     pub(crate) fn stage_pending_cycle_for_test(&mut self, mc: Microcode, latch: Option<u16>) {
         self.set_dma_frozen(false);
-        self.frozen_reason = self
-            .frozen_reason
-            .and_then(|r| FrozenReason::new(false, r.spin, r.halt));
+        if let Some(reason) = self.frozen_reason {
+            self.replace_reason(reason, false, reason.spin, reason.halt);
+        }
         self.microcode_queue.clear();
         self.push_microcode(mc);
         if let Some(addr) = latch {
@@ -1607,6 +1703,7 @@ impl Cpu {
         self.sp = self.sp.wrapping_sub(3);
         self.nmi_detecteor = Default::default();
         self.irq_detector = Default::default();
+        self.published_irq_level = false;
         self.request_detect_interrupt = None;
         self.poll_candidate = None;
         self.self_loop_candidate = None;
@@ -1628,6 +1725,7 @@ impl Cpu {
     }
 
     pub(crate) fn set_irq(&mut self, enabled: bool) {
+        self.published_irq_level = enabled;
         self.irq_detector.update_irq_input(enabled);
     }
 
@@ -1639,9 +1737,13 @@ impl Cpu {
         self.spin_declaration_disabled = disabled;
     }
 
+    /// Test-only observation of a declared spin: the loop-top address the
+    /// frozen CPU is pinned to. Tests assert this exact address rather than
+    /// the internal freeze bit, so the assertion states where the program is
+    /// held, not how the CPU is frozen.
     #[cfg(test)]
-    pub(crate) fn is_spin_frozen_for_test(&self) -> bool {
-        self.frozen_reason.is_some_and(|r| r.spin.is_some())
+    pub(crate) fn spin_loop_top_for_test(&self) -> Option<u16> {
+        self.frozen_reason.and_then(|r| r.spin.map(|s| s.loop_top))
     }
 
     pub fn is_halted(&self) -> bool {
@@ -1681,7 +1783,7 @@ impl Cpu {
         let grid_armed_at_entry =
             self.poll_candidate.is_some() || self.self_loop_candidate.is_some();
         if let Some(slot) = self.pending_end_slot.take() {
-            self.cand_end_pc[slot as usize] = self.pc.get();
+            self.cand_ends.records[slot as usize].pc = self.pc.get();
         }
         let code = match self.pop_microcode() {
             Some(v) => Some(v),
@@ -1730,21 +1832,12 @@ impl Cpu {
                 .is_some_and(|candidate| candidate.back_edges >= 1)
                 || self.self_loop_candidate.is_some())
         {
-            if self.cand_end_len < 8 {
-                self.cand_end_buf[self.cand_end_len as usize] = self.wake_tick_counter;
-                self.cand_end_pc[self.cand_end_len as usize] = self.pc.get();
-                // A pending queue means this poll tick still owes its
-                // fixup cycle (branch-tick polls); the wake delay accounts
-                // for it so entry lands exactly.
-                if instruction_complete {
-                    self.cand_end_fixup_mask &= !(1 << self.cand_end_len);
-                    self.pending_end_slot = Some(self.cand_end_len);
-                } else {
-                    self.cand_end_fixup_mask |= 1 << self.cand_end_len;
-                }
-                self.cand_end_len += 1;
-            } else {
-                self.cand_end_overflow = true;
+            // A pending queue means this poll tick still owes its fixup
+            // cycle (branch-tick polls); the wake delay accounts for it.
+            self.cand_ends
+                .push(self.wake_tick_counter, self.pc.get(), !instruction_complete);
+            if instruction_complete {
+                self.pending_end_slot = Some(self.cand_ends.len - 1);
             }
         }
         // Grid clock, counted at tick end: the declaration tick counts even
@@ -2178,7 +2271,7 @@ impl Cpu {
             } else {
                 // Arming back-edge: anchor the wake-remainder grid and
                 // start recording the in-iteration instruction ends.
-                self.reset_cand_end_buf();
+                self.reset_cand_ends();
                 self.self_loop_candidate = Some(SelfLoopWatch {
                     pc: opcode_pc,
                     edge_dot: dot,
@@ -2297,7 +2390,7 @@ impl Cpu {
     /// Update cpu nmi signal line, may trigger nmi
     pub(crate) fn update_nmi_line(&mut self, nmi: bool, clock: SystemClock, sample: bool) {
         self.nmi_detecteor
-            .update_nmi_input(nmi, clock.cycles(), sample);
+            .update_nmi_line(nmi, clock.cycles(), sample);
     }
 
     fn load_vector_low<M: Mcu>(&mut self, bus: &mut Bus<M>, address: u16, disable_interrupt: bool) {

@@ -401,19 +401,37 @@ impl Mcu for NesMcu {
     }
 
     /// DMC status acknowledges an APU interrupt, and controller-port reads
-    /// shift a device; freezing such a poll would swallow the device read
-    /// (and device-sourced writes never wake a spin by decision).
+    /// shift a device. These polls may freeze: the device action is replayed
+    /// at the loop cadence (device-sourced writes never wake a spin).
     fn is_device_register(&self, address: u16) -> bool {
         (0x4015..=0x4017).contains(&address)
     }
 
-    /// Replay a skipped `$2002` read's side effects for a frozen status
-    /// spin (ticket #135). Mirrors normalize to $2002 in `Ppu::read_ppureg`;
-    /// only the status register is destructive, so no bus latch or data is
-    /// touched here — the resumed poll read does that when the spin wakes.
+    fn is_action_data_port(&self, address: u16) -> bool {
+        ppu::is_ppu_data_addr(address)
+    }
+
+    /// Replay a skipped read's device-side effects for a frozen spin
+    /// (tickets #135, #150). No bus latch or data is touched here — the
+    /// resumed real read returns the value when the spin wakes.
     fn replay_status_read_side_effects(&mut self, address: u16) {
         if ppu::is_ppu_status_addr(address) {
             self.ppu.replay_status_side_effects();
+        } else {
+            match address {
+                0x4015 => self.apu.replay_read_side_effects(address),
+                0x4016 => {
+                    self.controller.a.read_strobed();
+                    self.controller.a.oe = true;
+                    self.controller.b.oe = false;
+                }
+                0x4017 => {
+                    self.controller.b.read_strobed();
+                    self.controller.a.oe = false;
+                    self.controller.b.oe = true;
+                }
+                _ => {}
+            }
         }
     }
 }

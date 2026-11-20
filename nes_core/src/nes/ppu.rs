@@ -275,6 +275,13 @@ pub(crate) fn is_ppu_status_addr(addr: u16) -> bool {
     normalize_ppu_addr(addr) == 0x2002
 }
 
+/// True for `$2007` and all its mirrors. A PPUDATA read refills the read
+/// buffer and advances v, so the MCU reports it as an action read: a spin
+/// freeze must never swallow it.
+pub(crate) fn is_ppu_data_addr(addr: u16) -> bool {
+    normalize_ppu_addr(addr) == 0x2007
+}
+
 /// Wrap a PPU address into the 16 KiB bus space.
 ///
 /// `vram_addr` is 15 bits, so the `$4000` wrap decides palette vs cartridge:
