@@ -148,7 +148,7 @@ fn test_irq_detector() {
 /// (`t % 3 == 2`, sampling the line as of dot `t - 2`) return whether an
 /// edge was recognised there (consuming it, as the interrupt dispatch would).
 fn dot(v: &mut NmiDetector, t: u64, high: bool) -> bool {
-    v.update_nmi_input(high, t, t.is_multiple_of(3));
+    v.update_nmi_line(high, t, t.is_multiple_of(3));
     if t % 3 == 2 && v.detect_nmi() {
         v.mark_consumed();
         true
@@ -215,25 +215,62 @@ fn nmi_pulse_visibility_depends_on_cpu_sample_phase() {
 }
 
 #[test]
-fn machine_published_nmi_line_latches_edge_without_detector_call() {
-    // The frozen wake must not call `detect_nmi`, so the machine's per-dot
-    // line publication (`update_nmi_input`) has to latch the edge itself.
-    // Only sample dots (clock % 3 == 0) are line samples; the same pulse
-    // phase window as `test_nmi_detector` must fire at the same dot.
-    let mut v = NmiDetector::default();
-    let fires: Vec<u64> = (0..=20)
-        .filter(|&t| {
-            v.update_nmi_input((10..16).contains(&t), t, t.is_multiple_of(3));
-            if t % 3 == 2 && v.pending_asserted_since != 0 {
-                v.mark_consumed();
-                true
-            } else {
-                false
+fn machine_published_nmi_line_wakes_a_frozen_poll_on_the_normal_edge_dot() {
+    // External view only: publish an NMI pulse to a declared device poll,
+    // then compare the vector-fetch dot with a never-freeze control given
+    // the identical line pattern. The published level must be enough for
+    // the frozen wake to dispatch at the same dot as normal detection.
+    const LOOP: u16 = 0x0400;
+    const HANDLER: u16 = 0x0600;
+
+    fn build(disable_spin: bool) -> Harness<TestMcu> {
+        let mut mcu = TestMcu::default();
+        mcu.mem[LOOP as usize] = 0xAD; // LDA $4015 (device poll)
+        mcu.mem[LOOP as usize + 1] = 0x15;
+        mcu.mem[LOOP as usize + 2] = 0x40;
+        mcu.mem[LOOP as usize + 3] = 0xD0; // BNE $0400
+        mcu.mem[LOOP as usize + 4] = 0xFB;
+        mcu.mem[0x4015] = 1; // Z clear, so the back-edge is taken
+        mcu.mem[0xFFFA] = HANDLER as u8;
+        mcu.mem[0xFFFB] = (HANDLER >> 8) as u8;
+        mcu.mem[0xFFFC] = LOOP as u8;
+        mcu.mem[0xFFFD] = (LOOP >> 8) as u8;
+        let mut cpu = create_cpu_with_mcu(mcu);
+        cpu.set_pc(LOOP);
+        cpu.set_status(0x24); // NMI dispatchable, IRQ masked
+        if disable_spin {
+            cpu.set_spin_declaration_disabled_for_test(true);
+        }
+        cpu
+    }
+
+    fn vector_fetch_dot(cpu: &mut Harness<TestMcu>, disable_spin: bool) -> u64 {
+        let mut plugin = EmptyPlugin::new();
+        for dot in 1..=30u64 {
+            tick_single_dot(cpu, &mut plugin, dot, false);
+        }
+        assert!(
+            cpu.mcu().device_replays[0] > 0 || disable_spin,
+            "precondition: the frozen run must declare the device-poll spin"
+        );
+        cpu.mcu_mut().reads.clear();
+        for dot in 31..=90u64 {
+            tick_single_dot(cpu, &mut plugin, dot, (34..40).contains(&dot));
+            if cpu.mcu().reads.contains(&0xFFFA) {
+                return dot;
             }
-        })
-        .collect();
-    assert_eq!(fires, vec![14]);
-    assert_eq!(v.pending_asserted_since, 0);
+        }
+        panic!("NMI never dispatched (control={disable_spin})");
+    }
+
+    let mut frozen = build(false);
+    let frozen_dot = vector_fetch_dot(&mut frozen, false);
+    let mut control = build(true);
+    let control_dot = vector_fetch_dot(&mut control, true);
+    assert_eq!(
+        frozen_dot, control_dot,
+        "frozen wake must consume the published NMI line at the normal edge dot"
+    );
 }
 
 #[test]
@@ -242,7 +279,7 @@ fn nmi_pending_survives_until_taken() {
 
     // an edge latches mid-assertion…
     for t in 0..=14u64 {
-        v.update_nmi_input((10..40).contains(&t), t, t % 3 == 0);
+        v.update_nmi_line((10..40).contains(&t), t, t % 3 == 0);
         if t % 3 == 2 {
             v.detect_nmi();
         }
@@ -251,7 +288,10 @@ fn nmi_pending_survives_until_taken() {
 
     // …stays pending across the fall and low samples…
     for t in 40..=43u64 {
-        v.update_nmi_input(false, t, t % 3 == 0);
+        v.update_nmi_line(false, t, t % 3 == 0);
+        if t % 3 == 2 {
+            v.detect_nmi();
+        }
     }
     assert!(v.detect_nmi());
     assert!(v.pending_asserted_since != 0);
@@ -259,7 +299,7 @@ fn nmi_pending_survives_until_taken() {
 
     // …and once taken, the low line raises nothing further
     for t in 44..=47u64 {
-        v.update_nmi_input(false, t, t % 3 == 0);
+        v.update_nmi_line(false, t, t % 3 == 0);
     }
     assert!(!v.detect_nmi());
     assert!(v.pending_asserted_since == 0);

@@ -259,41 +259,35 @@ impl NmiDetector {
     /// `v` is the line level at system cycle `cycles`; `sample` marks the
     /// first dot of a CPU cycle — the /NMI sampling phase, owned by the
     /// caller so this per-dot path computes no modulo.
-    fn update_nmi_input(&mut self, v: bool, cycles: u64, sample: bool) {
-        // The line is high exactly while a current assertion is stamped.
+    /// Publish the machine-maintained line level. `lagged_sample` advances
+    /// on sample dots; no edge-latching state changes here (ADR-0019).
+    fn update_nmi_line(&mut self, v: bool, cycles: u64, sample: bool) {
         if (self.asserted_since != 0) != v {
             self.asserted_since = if v { cycles } else { 0 };
         }
         if sample {
             self.lagged_sample = self.asserted_since;
-            // Publish the edge latch on each first-dot sample so frozen
-            // dots (which never reach `detect_nmi`) still see the latch.
-            let sampled = self.lagged_sample;
-            let rising = self.last_lagged_sample == 0 && sampled != 0;
-            self.last_lagged_sample = sampled;
-            if rising && !self.edge_consumed(sampled) {
-                self.pending_asserted_since = sampled;
-            }
         }
     }
 
-    fn detect_nmi(&mut self) -> bool {
-        // Sample even while a previous edge is still pending: freezing the
-        // sampler would hide newer edges (and leave a stale last sample
-        // behind once the pending edge is taken).
+    /// Latch a rising edge from the published lagged sample. This is the
+    /// CPU edge detector, called only on normal executing dots or at a
+    /// frozen wake dispatch.
+    fn sample_published_nmi_line(&mut self) -> bool {
         let sampled = self.lagged_sample;
         let rising_edge = self.last_lagged_sample == 0 && sampled != 0;
         self.last_lagged_sample = sampled;
         if rising_edge {
             let stamp = sampled;
-            // Skip edges whose assertion was already consumed while high
-            // (see `mark_consumed`): stamps are monotonic, so only a
-            // genuinely newer assertion may latch.
             if !self.edge_consumed(stamp) {
                 self.pending_asserted_since = stamp;
             }
         }
         self.pending_asserted_since != 0
+    }
+
+    fn detect_nmi(&mut self) -> bool {
+        self.sample_published_nmi_line()
     }
 
     /// Newest assertion stamp visible to the consume paths: the pending
@@ -1230,7 +1224,7 @@ impl Cpu {
                 return;
             }
             let resume = spin.wake_resume_pc.unwrap_or(spin.loop_top);
-            if self.nmi_ready(clock) {
+            if self.nmi_detecteor.sample_published_nmi_line() && self.nmi_ready(clock) {
                 self.dispatch_woken_spin(true, resume);
             } else if irq_pending {
                 self.dispatch_woken_spin(false, resume);
@@ -1243,7 +1237,7 @@ impl Cpu {
             }
             return;
         }
-        let nmi_ready = self.nmi_ready(clock);
+        let nmi_ready = self.nmi_detecteor.sample_published_nmi_line() && self.nmi_ready(clock);
         if !nmi_ready && !irq_pending {
             return;
         }
@@ -2392,7 +2386,7 @@ impl Cpu {
     /// Update cpu nmi signal line, may trigger nmi
     pub(crate) fn update_nmi_line(&mut self, nmi: bool, clock: SystemClock, sample: bool) {
         self.nmi_detecteor
-            .update_nmi_input(nmi, clock.cycles(), sample);
+            .update_nmi_line(nmi, clock.cycles(), sample);
     }
 
     fn load_vector_low<M: Mcu>(&mut self, bus: &mut Bus<M>, address: u16, disable_interrupt: bool) {
