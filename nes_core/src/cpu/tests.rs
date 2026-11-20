@@ -215,6 +215,28 @@ fn nmi_pulse_visibility_depends_on_cpu_sample_phase() {
 }
 
 #[test]
+fn machine_published_nmi_line_latches_edge_without_detector_call() {
+    // The frozen wake must not call `detect_nmi`, so the machine's per-dot
+    // line publication (`update_nmi_input`) has to latch the edge itself.
+    // Only sample dots (clock % 3 == 0) are line samples; the same pulse
+    // phase window as `test_nmi_detector` must fire at the same dot.
+    let mut v = NmiDetector::default();
+    let fires: Vec<u64> = (0..=20)
+        .filter(|&t| {
+            v.update_nmi_input((10..16).contains(&t), t, t.is_multiple_of(3));
+            if t % 3 == 2 && v.pending_asserted_since != 0 {
+                v.mark_consumed();
+                true
+            } else {
+                false
+            }
+        })
+        .collect();
+    assert_eq!(fires, vec![14]);
+    assert_eq!(v.pending_asserted_since, 0);
+}
+
+#[test]
 fn nmi_pending_survives_until_taken() {
     let mut v = NmiDetector::default();
 
@@ -5474,6 +5496,51 @@ fn kil_after_spin_freeze_stays_halt_only_until_reset() {
     cpu.reset();
     cpu.run_to_instruction_boundary(&mut plugin);
     assert!(!cpu.is_halted());
+    assert_eq!(cpu.pc(), LOOP);
+}
+
+#[test]
+fn kil_stays_halt_only_without_declaring_a_spin() {
+    const LOOP: u16 = 0x0530;
+    let mut mcu = TestMcu::default();
+    mcu.mem[LOOP as usize] = 0x02; // KIL
+    mcu.mem[0xFFFC] = LOOP as u8;
+    mcu.mem[0xFFFD] = (LOOP >> 8) as u8;
+    let mut cpu = create_cpu_with_mcu(mcu);
+    cpu.set_pc(LOOP);
+
+    let mut plugin = EmptyPlugin::new();
+    for cycle in 1..3 {
+        tick_full_cpu_cycle(&mut cpu, &mut plugin, cycle);
+    }
+    assert!(cpu.is_halted(), "KIL is a halt, not a declared spin");
+    assert!(
+        !cpu.is_spin_frozen_for_test(),
+        "KIL must stay a plain halt with no spin declaration"
+    );
+    cpu.mcu_mut().reads.clear();
+    for cycle in 3..8 {
+        let dot = cycle * 3;
+        cpu.update_nmi_line(false, SystemClock(dot), dot.is_multiple_of(3));
+        assert_eq!(
+            cpu.tick(&mut plugin, SystemClock(dot)),
+            ExecuteResult::Halt,
+            "halt-only CPU keeps returning Halt on every dot"
+        );
+        assert!(
+            !cpu.is_spin_frozen_for_test(),
+            "KIL must not acquire a spin on any halt dot"
+        );
+    }
+    assert!(
+        cpu.mcu().reads.is_empty(),
+        "halt-only CPU must not drive bus reads, saw {:?}",
+        cpu.mcu().reads
+    );
+
+    cpu.reset();
+    cpu.run_to_instruction_boundary(&mut plugin);
+    assert!(!cpu.is_halted(), "only reset recovers from KIL");
     assert_eq!(cpu.pc(), LOOP);
 }
 

@@ -323,6 +323,9 @@ where
 
 #[cfg(test)]
 mod tests {
+    use std::cell::RefCell;
+    use std::rc::Rc;
+
     use crate::mcu::Mcu;
 
     use crate::EmptyPlugin;
@@ -362,6 +365,27 @@ mod tests {
         vbl: u8,
         interrupts: [u8; 3],
         frame: Vec<u8>,
+    }
+
+    /// Collect A at the end of each `LDA $2007`, i.e. when PC is the BPL
+    /// at $8005. The recorder is a plugin seam: no in-loop store, so an
+    /// excluded poll is the only reason new values keep appearing.
+    struct ARecorder(Rc<RefCell<Vec<u8>>>);
+
+    impl Plugin<NesMcu> for ARecorder {
+        fn start(&mut self, _: &crate::view::MachineView<'_, NesMcu>) {}
+
+        fn end(&mut self, view: &crate::view::MachineView<'_, NesMcu>) {
+            if view.cpu.pc == 0x8005 {
+                self.0.borrow_mut().push(view.cpu.a);
+            }
+        }
+    }
+
+    /// PRG: `LDA #$FF; loop: LDA $2007; BPL loop`. The loop only reads
+    /// PPUDATA; every read advances v and refills the read buffer.
+    fn ppudata_poll_nes_file() -> INesFile {
+        INesFile::new(wait_rom::ppudata_poll_image()).expect("shared PPUDATA wait ROM must parse")
     }
 
     /// Dots to settle after VBL entry before sampling the frame state. The
@@ -490,6 +514,41 @@ mod tests {
             "the frozen run must declare the RAM poll spin",
             "NMI-flag wait framebuffer/register/interrupt trace diverged",
         );
+    }
+
+    /// A `$2007` poll is not a declaration candidate: its reads must keep
+    /// refilling the buffer and advancing v. Seeding $2000-$2003 with
+    /// 11/22/33/44 and rewinding v to $2000 makes those effects visible as
+    /// the A sequence 00/11/22/33 at each loop-top read.
+    #[test]
+    fn ppudata_poll_never_declares_a_spin_and_keeps_reading() {
+        let file = ppudata_poll_nes_file();
+        let results = Rc::new(RefCell::new(Vec::new()));
+        let mut machine = NesMachine::new(&file, ARecorder(results.clone()));
+        for (addr, value) in [
+            (0x2006, 0x20),
+            (0x2006, 0x00),
+            (0x2007, 0x11),
+            (0x2007, 0x22),
+            (0x2007, 0x33),
+            (0x2007, 0x44),
+            (0x2006, 0x20),
+            (0x2006, 0x00),
+        ] {
+            machine.mcu_mut().write(addr, value, SystemClock::default());
+        }
+
+        let mut dot = 0u64;
+        while results.borrow().len() < 4 {
+            assert_ne!(machine.tick(), ExecuteResult::Halt);
+            dot += 1;
+            assert!(dot < 5000, "PPUDATA poll did not produce four reads");
+        }
+        // The first result is the old buffer; each later one is the byte
+        // read from v on the preceding poll. A frozen poll would stop after
+        // its second iteration, so this sequence also proves no declaration
+        // without asserting the internal freeze bit.
+        assert_eq!(results.borrow().as_slice(), &[0x00, 0x11, 0x22, 0x33]);
     }
 
     #[test]
