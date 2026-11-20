@@ -205,15 +205,6 @@ impl Apu {
         value
     }
 
-    /// Present only the device-side effect of a skipped `$4015` read
-    /// (the frame IRQ acknowledge) without returning a status byte. The CPU
-    /// consumes the real register value on the real read after a spin wakes.
-    pub(crate) fn replay_read_side_effects(&mut self, address: u16) {
-        if address == 0x4015 {
-            self.frame_sequencer.clear_interrupt();
-        }
-    }
-
     pub fn peek(&self, address: u16) -> u8 {
         match address {
             0x4015 => self.status_byte(),
