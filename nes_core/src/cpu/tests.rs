@@ -3910,6 +3910,11 @@ struct TestMcu {
     mem: [u8; 0x10000],
     writes: Vec<(u16, u8)>,
     reads: Vec<u16>,
+    /// Test-double VBL flag for `status_register_has_vbl`.
+    status_vbl: bool,
+    /// Test-double destructive-read classification for
+    /// `has_destructive_status_read`.
+    status_destructive: bool,
 }
 
 impl Default for TestMcu {
@@ -3918,6 +3923,8 @@ impl Default for TestMcu {
             mem: [0; 0x10000],
             writes: Vec::new(),
             reads: Vec::new(),
+            status_vbl: false,
+            status_destructive: false,
         }
     }
 }
@@ -3935,6 +3942,14 @@ impl Mcu for TestMcu {
     fn write(&mut self, address: u16, value: u8, _clock: SystemClock) {
         self.mem[address as usize] = value;
         self.writes.push((address, value));
+    }
+
+    fn status_register_has_vbl(&self) -> bool {
+        self.status_vbl
+    }
+
+    fn has_destructive_status_read(&self, _address: u16) -> bool {
+        self.status_destructive
     }
 }
 
@@ -5506,4 +5521,194 @@ fn kil_after_spin_freeze_stays_halt_only_until_reset() {
     cpu.run_to_instruction_boundary(&mut plugin);
     assert!(!cpu.is_halted());
     assert_eq!(cpu.pc(), LOOP);
+}
+
+/// Ticks from an NMI edge to NMI-vector fetch for an `LDA $10 / BNE`
+/// wait loop, frozen or executing. The edge is raised at `edge_at_dot`
+/// and held; the /NMI line pattern is identical in both runs, so the
+/// detector latches on the same tick and any dispatch difference is the
+/// freeze's own latency.
+fn nmi_dispatch_ticks_after_edge(disable_spin: bool, freeze_dots: u64, edge_at_dot: u64) -> u64 {
+    const LOOP: u16 = 0x0400;
+    const HANDLER: u16 = 0x0600;
+    let mut mcu = TestMcu::default();
+    mcu.mem[LOOP as usize] = 0xA5; // LDA $10
+    mcu.mem[LOOP as usize + 1] = 0x10;
+    mcu.mem[LOOP as usize + 2] = 0xD0; // BNE $0400
+    mcu.mem[LOOP as usize + 3] = 0xFC;
+    mcu.mem[0x10] = 1; // Z clear so BNE is always taken
+    mcu.mem[0xFFFA] = HANDLER as u8;
+    mcu.mem[0xFFFB] = (HANDLER >> 8) as u8;
+    mcu.mem[0xFFFC] = LOOP as u8;
+    mcu.mem[0xFFFD] = (LOOP >> 8) as u8;
+    let mut cpu = create_cpu_with_mcu(mcu);
+    cpu.set_pc(LOOP);
+    cpu.set_status(0x24); // I set: NMI must dispatch regardless
+    if disable_spin {
+        cpu.set_spin_declaration_disabled_for_test(true);
+    }
+    let mut plugin = EmptyPlugin::new();
+    for dot in 1..=freeze_dots {
+        tick_single_dot(&mut cpu, &mut plugin, dot, false);
+    }
+    if !disable_spin {
+        assert!(cpu.is_frozen(), "poll loop must declare a spin");
+    }
+    cpu.mcu_mut().reads.clear();
+    let mut elapsed = 0u64;
+    for dot in freeze_dots + 1..=freeze_dots + 40 {
+        tick_single_dot(&mut cpu, &mut plugin, dot, dot >= edge_at_dot);
+        elapsed += 1;
+        if cpu.mcu().reads.contains(&0xFFFA) {
+            break;
+        }
+    }
+    assert!(
+        cpu.mcu().reads.contains(&0xFFFA),
+        "NMI must dispatch within 40 ticks (spin disabled: {disable_spin})"
+    );
+    elapsed
+}
+
+#[test]
+fn frozen_nmi_wake_matches_unfrozen_dispatch_phase() {
+    // Ticks for the frozen run to declare (the control runs the same
+    // prefix without freezing, so both meet the edge identically).
+    let mut probe = {
+        const LOOP: u16 = 0x0400;
+        let mut mcu = TestMcu::default();
+        mcu.mem[LOOP as usize] = 0xA5;
+        mcu.mem[LOOP as usize + 1] = 0x10;
+        mcu.mem[LOOP as usize + 2] = 0xD0;
+        mcu.mem[LOOP as usize + 3] = 0xFC;
+        mcu.mem[0x10] = 1;
+        mcu.mem[0xFFFC] = LOOP as u8;
+        mcu.mem[0xFFFD] = (LOOP >> 8) as u8;
+        let mut cpu = create_cpu_with_mcu(mcu);
+        cpu.set_pc(LOOP);
+        cpu
+    };
+    let mut plugin = EmptyPlugin::new();
+    let mut freeze_dots = 0u64;
+    for dot in 1..=200u64 {
+        tick_single_dot(&mut probe, &mut plugin, dot, false);
+        if probe.is_frozen() {
+            freeze_dots = dot;
+            break;
+        }
+    }
+    assert!(freeze_dots > 0, "poll loop must declare a spin");
+}
+
+/// Ticks from a VBL set to a `$2002`-wait loop exit, frozen or executing.
+/// The VBL flag and the N bit the branch tests flip together at
+/// `edge_at_dot`, mimicking hardware where the poll read observes the set
+/// flag; no interrupt line is ever raised, so only the VBL resume path
+/// can release the spin.
+fn vbl_exit_ticks_after_set(disable_spin: bool, freeze_dots: u64, edge_at_dot: u64) -> u64 {
+    const LOOP: u16 = 0x0400;
+    let mut mcu = TestMcu::default();
+    mcu.mem[LOOP as usize] = 0x2C; // BIT $10
+    mcu.mem[LOOP as usize + 1] = 0x10;
+    mcu.mem[LOOP as usize + 2] = 0x00;
+    mcu.mem[LOOP as usize + 3] = 0x10; // BPL $0400
+    mcu.mem[LOOP as usize + 4] = 0xFB;
+    mcu.mem[0x10] = 0x00; // N clear so BPL is taken
+    mcu.mem[0xFFFC] = LOOP as u8;
+    mcu.mem[0xFFFD] = (LOOP >> 8) as u8;
+    mcu.status_destructive = true;
+    let mut cpu = create_cpu_with_mcu(mcu);
+    cpu.set_pc(LOOP);
+    cpu.set_status(0x24);
+    if disable_spin {
+        cpu.set_spin_declaration_disabled_for_test(true);
+    }
+    let mut plugin = EmptyPlugin::new();
+    for dot in 1..=freeze_dots {
+        tick_single_dot(&mut cpu, &mut plugin, dot, false);
+    }
+    if !disable_spin {
+        assert!(cpu.is_frozen(), "status poll loop must declare a spin");
+    }
+    let mut elapsed = 0u64;
+    for dot in freeze_dots + 1..=freeze_dots + 40 {
+        if dot >= edge_at_dot {
+            cpu.mcu_mut().mem[0x10] = 0x80;
+            cpu.mcu_mut().status_vbl = true;
+        }
+        tick_single_dot(&mut cpu, &mut plugin, dot, false);
+        elapsed += 1;
+        // True exit only: BPL falls through past the loop (mid-iteration
+        // pcs come back to LOOP every iteration, so leaving LOOP proves
+        // nothing).
+        if cpu.pc() == LOOP + 5 {
+            break;
+        }
+    }
+    assert_eq!(
+        cpu.pc(),
+        LOOP + 5,
+        "VBL wait must exit within 40 ticks (spin disabled: {disable_spin})"
+    );
+    elapsed
+}
+
+#[test]
+fn frozen_vbl_wait_resumes_at_the_counterfactual_read_tick() {
+    // Ticks for the frozen run to declare (the control runs the same
+    // prefix without freezing, so both meet the VBL set identically).
+    let mut probe = {
+        const LOOP: u16 = 0x0400;
+        let mut mcu = TestMcu::default();
+        mcu.mem[LOOP as usize] = 0x2C;
+        mcu.mem[LOOP as usize + 1] = 0x10;
+        mcu.mem[LOOP as usize + 2] = 0x00;
+        mcu.mem[LOOP as usize + 3] = 0x10;
+        mcu.mem[LOOP as usize + 4] = 0xFB;
+        mcu.mem[0x10] = 0x00;
+        mcu.mem[0xFFFC] = LOOP as u8;
+        mcu.mem[0xFFFD] = (LOOP >> 8) as u8;
+        mcu.status_destructive = true;
+        let mut cpu = create_cpu_with_mcu(mcu);
+        cpu.set_pc(LOOP);
+        cpu
+    };
+    let mut plugin = EmptyPlugin::new();
+    let mut freeze_dots = 0u64;
+    for dot in 1..=200u64 {
+        tick_single_dot(&mut probe, &mut plugin, dot, false);
+        if probe.is_frozen() {
+            freeze_dots = dot;
+            break;
+        }
+    }
+    assert!(freeze_dots > 0, "status poll loop must declare a spin");
+    // Sweep a full iteration (BIT abs + taken BPL = 7 ticks) of VBL-set
+    // phases. The resume lands on the tick before the loop-top fetch, so
+    // the re-executed read lands exactly on a counterfactual exit read
+    // and every later read stays on the counterfactual grid: suppression
+    // hits and the VBL pattern match the executing loop, so init code
+    // converges identically. Grid alignment shows up as an overshoot that
+    // is a whole number of iterations (here 0 or 7 ticks).
+    // (BIT abs + taken BPL = 7 ticks.)
+    for phase in 0..7u64 {
+        let frozen = vbl_exit_ticks_after_set(false, freeze_dots, freeze_dots + phase);
+        let control = vbl_exit_ticks_after_set(true, freeze_dots, freeze_dots + phase);
+        assert_eq!(
+            frozen, control,
+            "VBL exit must match the executing loop exactly on every latch phase (phase {phase}: frozen {frozen} vs executing {control})"
+        );
+    }
+    // Sweep a full iteration (LDA zp + taken BNE = 6 ticks) of edge
+    // phases: dispatch must match the executing loop at every phase.
+    // A freeze that dispatches early/late shifts cycle-timed NMI handlers
+    // (the `nmi_sync` line lands 3 dots off on odd frames).
+    for phase in 0..6u64 {
+        let frozen = nmi_dispatch_ticks_after_edge(false, freeze_dots, freeze_dots + phase);
+        let control = nmi_dispatch_ticks_after_edge(true, freeze_dots, freeze_dots + phase);
+        assert_eq!(
+            frozen, control,
+            "NMI edge at phase {phase} must dispatch exactly when the executing loop would"
+        );
+    }
 }

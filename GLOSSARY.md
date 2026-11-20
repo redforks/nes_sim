@@ -211,6 +211,10 @@ _Avoid_: unpause, resume trigger, spin release
 The presentation of a skipped status-register read's device-side effects at the cadence of the frozen spin-wait. The CPU replays only side effects, never bus reads, and suspends replay while DMA owns the bus.
 _Avoid_: status refresh, fake read, synthetic poll
 
+**Synthesized VBL exit**:
+The exit of a status-poll wait (a `BIT` on `$2002` followed by its back-edge branch) once the VBL flag is set. The CPU performs the counterfactual poll read itself at the tick the executing loop would read on, sets N/V/Z as `BIT` would, and leaves through the back-edge at the exact tick. Re-executing from the loop top instead would shift later reads off the counterfactual grid and change VBL suppression. Loops the synthesis does not cover (other opcodes, incomplete records) re-execute from the loop top.
+_Avoid_: fake exit, shortcut, skipped read
+
 ## Language — CPU Bus Cycles
 **Bus cycle classification**:
 The single source of truth for what a pending Microcode cycle drives on the bus — driven by `Microcode::exec` itself (ADR-0013, revises ADR-0007). Each `exec` drives its access (PC dummy fetch for `Nop`, `read_zero_page` for `ZeroPage` dummy, `DummyReadAt` for branch fixup, `DummyStackRead` for RTS/RTI/PLP, etc.) and `bus_cycle` is derived from that execution, not a parallel classifier. The exhaustive match over `Microcode` (including `DummyReadAt(u16)`, `DummyStackRead`) classifies each driven access as `Read(ReadAddress::Latch(addr))`, `Read(Stack(...))`, `Write`, or `Internal`; DMC DMA halt decisions consume it and nothing else.
