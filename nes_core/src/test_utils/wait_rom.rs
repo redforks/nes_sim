@@ -44,6 +44,25 @@ pub fn ram_flag_wait_image() -> Vec<u8> {
     nrom_image(prg)
 }
 
+/// `BIT $2002 / BPL $800A` VBL status wait. NMI is left disabled so the
+/// only exit is a poll read observing VBL; the write to $3F01 mirrors
+/// $2001 (PPUMASK) and enables background rendering, so the framebuffer
+/// has signal. All vectors point at the wait, and unused bytes are zero.
+pub fn vbl_status_wait_image() -> Vec<u8> {
+    let mut prg = vec![0u8; PRG_LEN];
+    prg[..18].copy_from_slice(&[
+        0xA9, 0x00, // $8000 LDA #$00
+        0x8D, 0x00, 0x20, // $8002 STA $2000 (disable NMI)
+        0xA9, 0x2C, // $8005 LDA #$2C
+        0x8D, 0x01, 0x3F, // $8007 STA $3F01 (mirror of $2001: enable bg)
+        0x2C, 0x02, 0x20, // $800A BIT $2002
+        0x10, 0xFB, // $800D BPL $800A
+        0x4C, 0x10, 0x80, // $800F JMP $8010 (park)
+    ]);
+    prg[PRG_LEN - 4..].copy_from_slice(&[0x0A, 0x80, 0x0A, 0x80]);
+    nrom_image(prg)
+}
+
 /// `LDA #$FF / loop: LDA $2007 / BPL loop`: a pure PPUDATA poll whose
 /// reads refill the read buffer and increment v. All seeded values have
 /// bit 7 clear, so BPL keeps looping. Both vectors point at $8000.
@@ -107,6 +126,21 @@ mod tests {
         );
         assert_eq!(&prg[0x600..0x606], &[0xA9, 0x00, 0x8D, 0x10, 0x00, 0x40]);
         assert_eq!(&prg[PRG_LEN - 4..], &[0x00, 0x80, 0x00, 0x80]);
+    }
+
+    #[test]
+    fn vbl_status_wait_image_keeps_the_poll_setup_and_vectors() {
+        let image = vbl_status_wait_image();
+        let prg = &image[16..16 + PRG_LEN];
+        assert_eq!(
+            &prg[..18],
+            &[
+                0xA9, 0x00, 0x8D, 0x00, 0x20, 0xA9, 0x2C, 0x8D, 0x01, 0x3F, 0x2C, 0x02, 0x20, 0x10,
+                0xFB, 0x4C, 0x10, 0x80,
+            ]
+        );
+        assert_eq!(&prg[PRG_LEN - 4..], &[0x0A, 0x80, 0x0A, 0x80]);
+        assert_eq!(image.len(), 16 + PRG_LEN + CHR_LEN);
     }
 
     #[test]

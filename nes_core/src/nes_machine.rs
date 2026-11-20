@@ -324,7 +324,6 @@ where
 #[cfg(test)]
 mod tests {
     use std::cell::RefCell;
-    use std::hash::{DefaultHasher, Hash, Hasher};
     use std::rc::Rc;
 
     use crate::mcu::Mcu;
@@ -339,12 +338,33 @@ mod tests {
         INesFile::new(wait_rom::bare_spin_image()).expect("shared bare spin ROM must parse")
     }
 
+    /// PRG-ROM with `BIT $2002 / BPL top` and NMI disabled, so the only
+    /// exit is a real status poll observing VBL.
+    fn vbl_status_wait_nes_file() -> INesFile {
+        INesFile::new(wait_rom::vbl_status_wait_image()).expect("shared VBL wait ROM must parse")
+    }
+
     /// PRG-ROM with `LDA $0010 / BNE top` at $8000 and an RTI NMI handler.
     /// The RAM flag starts asserted, so the loop waits for the NMI handler
     /// to clear it: frozen and unfrozen runs can be compared at frame
     /// boundaries.
     fn ram_flag_wait_nes_file() -> INesFile {
         INesFile::new(wait_rom::ram_flag_wait_image()).expect("shared RAM wait ROM must parse")
+    }
+
+    /// One frame-boundary sample of program-visible state: CPU registers,
+    /// polled status, interrupt lines, and the complete RGBA framebuffer.
+    /// PC is excluded on purpose: a spin pins PC at its loop top while a
+    /// control run keeps executing, so it differs by construction. Y is
+    /// included because neither wait touches it. The framebuffer is kept
+    /// byte-for-byte (not hashed) so a mismatch is a direct byte-level
+    /// assertion.
+    #[derive(Debug, PartialEq, Eq)]
+    struct FrameState {
+        registers: [u8; 6],
+        vbl: u8,
+        interrupts: [u8; 3],
+        frame: Vec<u8>,
     }
 
     /// Collect A at the end of each `LDA $2007`, i.e. when PC is the BPL
@@ -368,13 +388,19 @@ mod tests {
         INesFile::new(wait_rom::ppudata_poll_image()).expect("shared PPUDATA wait ROM must parse")
     }
 
-    /// Advance three frames with dot stepping and collect frame bytes plus a
-    /// compact control trace. PC and Y are excluded: a spin pins PC at its
-    /// loop top and the unfrozen loop keeps executing, so they differ by
-    /// construction. A, X, S, status, halt, interrupt lines and frame bytes
-    /// are included and must match at each frame boundary.
-    fn wait_vbl_dot_signature(machine: &mut NesMachine<EmptyPlugin<NesMcu>>) -> (u64, Vec<bool>) {
-        let mut hasher = DefaultHasher::new();
+    /// Dots to settle after VBL entry before sampling the frame state. The
+    /// counterfactual VBL read and its back edge land a few dots after the
+    /// entry dot, so sampling at entry would catch one run mid-exit and the
+    /// other just past it (a transient N-flag difference). By `VBL_SETTLE`
+    /// both runs have consumed the status poll and agree on all registers.
+    const VBL_SETTLE: usize = 8;
+
+    /// Advance three frames by dot stepping and collect one `FrameState`
+    /// shortly after each VBL entry, plus the per-dot freeze declarations.
+    fn wait_vbl_dot_signature(
+        machine: &mut NesMachine<EmptyPlugin<NesMcu>>,
+    ) -> (Vec<FrameState>, Vec<bool>) {
+        let mut states = Vec::new();
         let mut spins = Vec::new();
         for _ in 0..3 {
             loop {
@@ -384,18 +410,38 @@ mod tests {
                     break;
                 }
             }
+            for _ in 0..VBL_SETTLE {
+                assert_ne!(machine.tick(), ExecuteResult::Halt);
+            }
             let s = machine.cpu().snapshot();
-            [s.a, s.x, s.sp, s.status, u8::from(s.halt)].hash(&mut hasher);
-            [
-                u8::from(machine.mcu().peek(0x2002) & 0x80 != 0),
-                u8::from(machine.mcu().ppu().nmi_line()),
-                u8::from(machine.mcu().apu_irq_pending()),
-                u8::from(machine.mcu().cartridge_irq_pending()),
-            ]
-            .hash(&mut hasher);
-            machine.mcu().ppu().frame_bytes().hash(&mut hasher);
+            states.push(FrameState {
+                registers: [s.a, s.x, s.sp, s.status, u8::from(s.halt), s.y],
+                vbl: machine.mcu().peek(0x2002) & 0x80,
+                interrupts: [
+                    u8::from(machine.mcu().ppu().nmi_line()),
+                    u8::from(machine.mcu().apu_irq_pending()),
+                    u8::from(machine.mcu().cartridge_irq_pending()),
+                ],
+                frame: machine.mcu().ppu().frame_bytes().to_vec(),
+            });
         }
-        (hasher.finish(), spins)
+        (states, spins)
+    }
+
+    /// The headline `$2002` VBL status wait must be invisible to the
+    /// program: three frames of frozen and never-freeze control execution
+    /// agree byte-for-byte on the framebuffer, and identically on the
+    /// register/polled-status trace and interrupt timing. NMI is disabled
+    /// in the shared ROM, so the only exit is the counterfactual poll that
+    /// observes VBL (the Synthesized VBL exit).
+    #[test]
+    fn frozen_and_unfrozen_vbl_status_wait_frames_match() {
+        assert_frames_match(
+            &vbl_status_wait_nes_file(),
+            |_| {},
+            "the frozen run must declare the $2002 poll spin",
+            "VBL status wait framebuffer/register/interrupt trace diverged",
+        );
     }
 
     /// Build two machines from one ROM, disable spin declaration on the
@@ -414,14 +460,33 @@ mod tests {
         setup(&mut frozen);
         setup(&mut unfrozen);
 
-        let (frozen_hash, frozen_spins) = wait_vbl_dot_signature(&mut frozen);
-        let (unfrozen_hash, unfrozen_spins) = wait_vbl_dot_signature(&mut unfrozen);
+        let (frozen_states, frozen_spins) = wait_vbl_dot_signature(&mut frozen);
+        let (unfrozen_states, unfrozen_spins) = wait_vbl_dot_signature(&mut unfrozen);
         assert!(frozen_spins.iter().any(|&s| s), "{expected_spin}");
         assert!(
             !unfrozen_spins.iter().any(|&s| s),
             "the control must disable spin declaration"
         );
-        assert_eq!(frozen_hash, unfrozen_hash, "{divergence}");
+        for (frame, (frozen_state, unfrozen_state)) in
+            frozen_states.iter().zip(&unfrozen_states).enumerate()
+        {
+            assert_eq!(
+                frozen_state.frame, unfrozen_state.frame,
+                "frame {frame} framebuffer bytes diverged: {divergence}"
+            );
+            assert_eq!(
+                frozen_state.registers, unfrozen_state.registers,
+                "frame {frame} register trace diverged: {divergence}"
+            );
+            assert_eq!(
+                frozen_state.vbl, unfrozen_state.vbl,
+                "frame {frame} polled $2002 status diverged: {divergence}"
+            );
+            assert_eq!(
+                frozen_state.interrupts, unfrozen_state.interrupts,
+                "frame {frame} interrupt timing diverged: {divergence}"
+            );
+        }
     }
 
     /// A bare self-loop wait must produce the same framebytes and visible

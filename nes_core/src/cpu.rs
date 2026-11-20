@@ -1042,10 +1042,8 @@ impl Cpu {
         carry: bool,
         zero: bool,
     ) -> Option<bool> {
-        match microcode::branch_test_for_opcode(opcode) {
-            Some(test) => Some(test.test_flags(negative, overflow, carry, zero)),
-            None => None,
-        }
+        microcode::branch_test_for_opcode(opcode)
+            .map(|test| test.test_flags(negative, overflow, carry, zero))
     }
 
     /// The status-poll shape a spin can exit through: the poll read is a
