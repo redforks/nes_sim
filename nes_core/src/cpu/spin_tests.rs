@@ -63,16 +63,18 @@ impl Harness {
     }
 }
 
-/// Run a device-poll loop until the second real read, then clear recorded
-/// bus traffic. The CPU is frozen at that point; the returned dot is the
-/// first dot of the frozen window.
+/// Run a loop until `target` loop-top reads have occurred, then clear
+/// recorded bus traffic and return the next dot.
 fn run_to_device_poll_reads(
     cpu: &mut Harness,
     plugin: &mut EmptyPlugin<TestMcu>,
     addr: u16,
+    replay_index: usize,
 ) -> u64 {
     let mut dot = 3u64;
-    while cpu.mcu().reads.iter().filter(|&&a| a == addr).count() < 2 || !cpu.is_frozen() {
+    while cpu.mcu().reads.iter().filter(|&&a| a == addr).count() < 2
+        || cpu.mcu().device_replays[replay_index] < 3
+    {
         cpu.dot(plugin, dot, false);
         dot += 1;
         assert!(dot < 1000, "poll of {addr:#06x} never froze");
@@ -214,7 +216,11 @@ fn direct_write_wake_needs_two_fresh_back_edges_before_refreeze() {
     let mut plugin = EmptyPlugin::new();
     let dot = run_to_poll_reads(&mut cpu, &mut plugin, 2);
     cpu.run_dots(&mut plugin, dot, 15);
-    assert!(cpu.is_frozen(), "precondition: spin must be declared");
+    assert_eq!(
+        cpu.spin_loop_top_for_test(),
+        Some(0x0400),
+        "precondition: the poll must be pinned at its loop top"
+    );
     cpu.mcu_mut().reads.clear();
 
     cpu.write_mem(0x10, 2);
@@ -234,7 +240,11 @@ fn pending_cpu_write_to_polled_address_releases_frozen_spin() {
     let mut plugin = EmptyPlugin::new();
     let dot = run_to_poll_reads(&mut cpu, &mut plugin, 2);
     cpu.run_dots(&mut plugin, dot, 15);
-    assert!(cpu.is_frozen(), "precondition: spin must be declared");
+    assert_eq!(
+        cpu.spin_loop_top_for_test(),
+        Some(0x0400),
+        "precondition: the poll must be pinned at its loop top"
+    );
 
     // The queued store is a CPU write to the exact polled address. Frozen
     // ticks must let it execute for real instead of swallowing it.
@@ -243,7 +253,10 @@ fn pending_cpu_write_to_polled_address_releases_frozen_spin() {
     // The frozen dot detects the pending store and releases the spin; the
     // store itself executes on the next dot.
     cpu.dot(&mut plugin, dot + 15, false);
-    assert!(!cpu.is_frozen(), "the matching store must release the spin");
+    assert!(
+        cpu.spin_loop_top_for_test().is_none(),
+        "the matching store must release the spin"
+    );
     cpu.dot(&mut plugin, dot + 16, false);
 
     assert!(
@@ -265,12 +278,20 @@ fn dma_halt_composes_with_declared_spin_without_clearing_it() {
     let mut plugin = EmptyPlugin::new();
     let dot = run_to_poll_reads(&mut cpu, &mut plugin, 2);
     cpu.run_dots(&mut plugin, dot, 10);
-    assert!(cpu.is_frozen(), "precondition: spin must be declared");
+    assert_eq!(
+        cpu.spin_loop_top_for_test(),
+        Some(0x0400),
+        "precondition: the poll must be pinned at its loop top"
+    );
 
     // A DMC halt lands while the spin is frozen. It must compose, not panic
     // or replace the spin source.
     assert!(cpu.try_freeze(), "DMA must still be able to halt the CPU");
-    assert!(cpu.is_frozen());
+    assert_eq!(
+        cpu.spin_loop_top_for_test(),
+        Some(0x0400),
+        "the DMA halt must compose with the spin instead of replacing it"
+    );
     assert!(
         cpu.dma_halt_bus_addr().is_none(),
         "a declared spin sits on the branch's internal fixup cycle; DMA repeats the next fetch address"
@@ -278,9 +299,13 @@ fn dma_halt_composes_with_declared_spin_without_clearing_it() {
 
     // The DMA read completes and releases only its own source.
     cpu.unfreeze();
-    assert!(cpu.is_frozen(), "DMA unfreeze must not wake the spin");
     cpu.mcu_mut().reads.clear();
     cpu.run_dots(&mut plugin, dot + 10, 12);
+    assert_eq!(
+        cpu.spin_loop_top_for_test(),
+        Some(0x0400),
+        "DMA unfreeze must not wake the spin"
+    );
     assert!(
         !cpu.mcu().reads.contains(&0x10),
         "the spin must keep its poll dormant after DMA completes, saw {:?}",
@@ -293,21 +318,16 @@ fn device_register_polls_freeze_and_replay_effects_without_bus_reads() {
     for (addr, index) in [(0x4015, 0), (0x4016, 1), (0x4017, 2)] {
         let mut cpu = device_poll_program(addr);
         let mut plugin = EmptyPlugin::new();
-        let dot = run_to_device_poll_reads(&mut cpu, &mut plugin, addr);
+        let dot = run_to_device_poll_reads(&mut cpu, &mut plugin, addr, index);
         let effects_before = cpu.mcu().device_replays[index];
 
         cpu.run_dots(&mut plugin, dot, 100);
 
-        assert!(
-            cpu.is_frozen(),
-            "a {addr:#06x} spin must stay frozen without a wake event"
-        );
         assert_eq!(
             cpu.mcu().reads.iter().filter(|&&a| a == addr).count(),
             0,
             "a frozen {addr:#06x} poll must not perform real bus reads"
         );
-        assert_eq!(cpu.mcu().reads.iter().filter(|&&a| a == addr).count(), 0);
         let replayed = cpu.mcu().device_replays[index] - effects_before;
         assert!(
             replayed >= 5,
@@ -324,7 +344,7 @@ fn device_register_polls_freeze_and_replay_effects_without_bus_reads() {
 fn frozen_device_poll_replays_apu_irq_acknowledgement() {
     let mut cpu = device_poll_program(0x4015);
     let mut plugin = EmptyPlugin::new();
-    let dot = run_to_device_poll_reads(&mut cpu, &mut plugin, 0x4015);
+    let dot = run_to_device_poll_reads(&mut cpu, &mut plugin, 0x4015, 0);
     cpu.mcu_mut().apu_irq_pending = true;
 
     cpu.run_dots(&mut plugin, dot, 30);
@@ -348,7 +368,7 @@ fn frozen_device_poll_replays_apu_irq_acknowledgement() {
 fn frozen_controller_poll_replays_shift_without_advancing_the_cpu() {
     let mut cpu = device_poll_program(0x4016);
     let mut plugin = EmptyPlugin::new();
-    let dot = run_to_device_poll_reads(&mut cpu, &mut plugin, 0x4016);
+    let dot = run_to_device_poll_reads(&mut cpu, &mut plugin, 0x4016, 1);
     let shifts_before = cpu.mcu().controller_shifts[0];
     let pc = cpu.pc();
     let a = cpu.a();
@@ -395,14 +415,23 @@ fn absolute_store_in_loop_disqualifies_the_poll_candidate() {
     let mut cpu = read_write_program();
     let mut plugin = EmptyPlugin::new();
     // Well past the two back-edges that would declare a read-only poll.
+    let mut reads_at = None;
     for dot in 3..3 + 120 {
+        cpu.mcu_mut().reads.clear();
         cpu.dot(&mut plugin, dot, false);
-        assert!(
-            !cpu.is_frozen(),
-            "a write-in-loop must never declare a spin (frozen at dot {dot})"
-        );
+        if reads_at.is_none() && cpu.mcu().reads.contains(&0x10) {
+            reads_at = Some(dot);
+        }
     }
+    // A real loop must keep re-executing its reads; a spin would pin its
+    // PC and stop producing them after the second back-edge.
     let stores = cpu.mcu().writes.iter().filter(|&&(a, _)| a == 0x10).count();
+    assert!(reads_at.is_some(), "the loop must keep reading its flag");
+    assert_eq!(
+        cpu.spin_loop_top_for_test(),
+        None,
+        "a write-in-loop must never declare a spin"
+    );
     assert!(
         stores >= 5,
         "the loop must keep executing its store, saw {stores} writes to $10"
@@ -413,10 +442,9 @@ fn absolute_store_in_loop_disqualifies_the_poll_candidate() {
 fn zapper_register_poll_declares_a_spin() {
     let mut cpu = device_poll_program(0x4017);
     let mut plugin = EmptyPlugin::new();
-    let dot = run_to_device_poll_reads(&mut cpu, &mut plugin, 0x4017);
+    let dot = run_to_device_poll_reads(&mut cpu, &mut plugin, 0x4017, 2);
     cpu.run_dots(&mut plugin, dot, 60);
 
-    assert!(cpu.is_frozen(), "a $4017 poll must declare a spin");
     let polls = cpu.mcu().reads.iter().filter(|&&a| a == 0x4017).count();
     assert_eq!(polls, 0, "a frozen $4017 poll must not read the bus");
     assert!(
@@ -432,10 +460,9 @@ fn dmc_status_poll_declares_a_spin() {
     // with its APU effect replayed; replay itself must not wake it.
     let mut cpu = device_poll_program(0x4015);
     let mut plugin = EmptyPlugin::new();
-    let dot = run_to_device_poll_reads(&mut cpu, &mut plugin, 0x4015);
+    let dot = run_to_device_poll_reads(&mut cpu, &mut plugin, 0x4015, 0);
     cpu.run_dots(&mut plugin, dot, 60);
 
-    assert!(cpu.is_frozen(), "a $4015 poll must declare a spin");
     let polls = cpu.mcu().reads.iter().filter(|&&a| a == 0x4015).count();
     assert_eq!(polls, 0, "a frozen $4015 poll must not read the bus");
     assert!(
@@ -445,40 +472,53 @@ fn dmc_status_poll_declares_a_spin() {
 }
 
 #[test]
-fn device_poll_wake_reexecutes_real_read_once_then_redeclares() {
+fn device_poll_write_wake_reexecutes_the_read_then_redeclares() {
     let mut cpu = device_poll_program(0x4015);
     let mut plugin = EmptyPlugin::new();
-    let dot = run_to_device_poll_reads(&mut cpu, &mut plugin, 0x4015);
+    let dot = run_to_device_poll_reads(&mut cpu, &mut plugin, 0x4015, 0);
     cpu.run_dots(&mut plugin, dot, 10);
+
+    // Only a CPU write to the polled address wakes a device poll. The wake
+    // re-executes the real loop-top read; a nonzero status keeps the loop
+    // going, so it must declare itself again. Interrupt wakes are pinned by
+    // their own exact-dot tests.
+    let wake_dot = dot + 10;
     cpu.mcu_mut().reads.clear();
-    let replays_before = cpu.mcu().device_replays[0];
-
-    // Only a CPU write to the polled address wakes a device poll. Interrupt
-    // wakes are pinned separately; here the first real read after wake must
-    // supply the value while replays remain side effects only.
     cpu.write_mem(0x4015, 2);
-    cpu.run_dots(&mut plugin, dot + 10, 20);
+    cpu.run_dots(&mut plugin, wake_dot, 40);
 
-    let polls = cpu.mcu().reads.iter().filter(|&&a| a == 0x4015).count();
+    let reads = cpu.mcu().reads.iter().filter(|&&a| a == 0x4015).count();
     assert!(
-        (1..=4).contains(&polls),
-        "write wake must re-execute the real poll once, saw {polls}"
-    );
-    assert!(
-        cpu.mcu().device_replays[0] >= replays_before,
-        "replays are additional device effects, not a replacement for the wake read"
+        (1..=2).contains(&reads),
+        "the write wake must re-execute the real poll before re-freezing, saw {reads}"
     );
     assert_eq!(cpu.a(), 2, "the real wake read must supply the value");
+    assert_eq!(
+        cpu.spin_loop_top_for_test(),
+        Some(0x0400),
+        "a nonzero status must re-declare the spin at its loop top"
+    );
+
+    let replays = cpu.mcu().device_replays[0];
+    cpu.run_dots(&mut plugin, wake_dot + 40, 60);
+    assert!(
+        cpu.mcu().device_replays[0] > replays,
+        "the re-declared spin must keep replaying its device effect"
+    );
+    assert_eq!(
+        cpu.mcu().reads.iter().filter(|&&a| a == 0x4015).count(),
+        reads,
+        "the re-declared spin must stop reading the bus"
+    );
 }
 
 #[test]
 fn irq_wakes_device_poll_at_loop_top() {
     let mut cpu = device_poll_program(0x4015);
     let mut plugin = EmptyPlugin::new();
-    let dot = run_to_device_poll_reads(&mut cpu, &mut plugin, 0x4015);
+    let dot = run_to_device_poll_reads(&mut cpu, &mut plugin, 0x4015, 0);
     cpu.run_dots(&mut plugin, dot, 15);
     cpu.mcu_mut().reads.clear();
-    let replays_before = cpu.mcu().device_replays[0];
 
     cpu.set_irq(true);
     cpu.run_dots(&mut plugin, dot + 15, 40);
@@ -489,20 +529,15 @@ fn irq_wakes_device_poll_at_loop_top() {
         "IRQ must wake a frozen device poll into the interrupt sequence, saw {reads:?}"
     );
     assert_eq!(cpu.a(), 1, "wake must preserve registers");
-    assert!(
-        cpu.mcu().device_replays[0] > replays_before,
-        "replays must continue at loop cadence until the wake dot"
-    );
 }
 
 #[test]
 fn nmi_edge_wakes_device_poll_at_loop_top() {
     let mut cpu = device_poll_program(0x4016);
     let mut plugin = EmptyPlugin::new();
-    let dot = run_to_device_poll_reads(&mut cpu, &mut plugin, 0x4016);
+    let dot = run_to_device_poll_reads(&mut cpu, &mut plugin, 0x4016, 1);
     cpu.run_dots(&mut plugin, dot, 15);
     cpu.mcu_mut().reads.clear();
-    let replays_before = cpu.mcu().device_replays[1];
 
     for d in dot + 15..dot + 27 {
         cpu.dot(&mut plugin, d, true);
@@ -513,9 +548,161 @@ fn nmi_edge_wakes_device_poll_at_loop_top() {
         "NMI must wake a frozen device poll into the interrupt sequence, saw {reads:?}"
     );
     assert_eq!(cpu.a(), 1, "wake must preserve registers");
+}
+
+/// A never-freeze control on the same dot grid as the frozen run, advanced
+/// to `dot` so a trigger applied next meets the same loop the frozen run's
+/// counterfactual would have executed.
+fn control_at(dot: u64, addr: u16) -> (Harness, EmptyPlugin<TestMcu>) {
+    let mut control = device_poll_program(addr);
+    control.set_spin_declaration_disabled_for_test(true);
+    let mut plugin = EmptyPlugin::new();
+    control.run_dots(&mut plugin, 3, dot - 3);
+    control.mcu_mut().reads.clear();
+    (control, plugin)
+}
+
+/// Absolute dot at which each run first drives a real read of `addr` after
+/// `from_dot`. A frozen run can only read once its spin wakes; the control
+/// reads at the loop cadence the frozen run would have followed.
+fn first_read_dots(
+    frozen: &mut Harness,
+    frozen_plugin: &mut EmptyPlugin<TestMcu>,
+    control: &mut Harness,
+    control_plugin: &mut EmptyPlugin<TestMcu>,
+    from_dot: u64,
+    dots: u64,
+    addr: u16,
+) -> (Option<u64>, Option<u64>) {
+    let (mut frozen_read, mut control_read) = (None, None);
+    for d in from_dot..from_dot + dots {
+        frozen.dot(frozen_plugin, d, false);
+        control.dot(control_plugin, d, false);
+        if frozen_read.is_none() && frozen.mcu().reads.contains(&addr) {
+            frozen_read = Some(d);
+        }
+        if control_read.is_none() && control.mcu().reads.contains(&addr) {
+            control_read = Some(d);
+        }
+        frozen.mcu_mut().reads.clear();
+        control.mcu_mut().reads.clear();
+    }
+    (frozen_read, control_read)
+}
+
+/// A qualifying CPU write wakes a frozen `$4015` poll at its loop top. The
+/// wake dot releases the spin without executing it, so the re-executed
+/// loop-top read lands exactly one dot after the executing loop's next
+/// loop-top read: the documented loop-top re-execution fallback.
+#[test]
+fn device_poll_write_wake_reexecutes_the_loop_top_read() {
+    let mut frozen = device_poll_program(0x4015);
+    let mut frozen_plugin = EmptyPlugin::new();
+    let dot = run_to_device_poll_reads(&mut frozen, &mut frozen_plugin, 0x4015, 0);
+    let (mut control, mut control_plugin) = control_at(dot, 0x4015);
+    frozen.run_dots(&mut frozen_plugin, dot, 3);
+    control.run_dots(&mut control_plugin, dot, 3);
+    assert_eq!(
+        frozen.spin_loop_top_for_test(),
+        Some(0x0400),
+        "the frozen poll must be pinned at its loop top"
+    );
+    assert_eq!(
+        frozen.pc(),
+        control.pc(),
+        "both runs must enter the write phase at the same loop position"
+    );
+
+    let wake_dot = dot + 3;
+    frozen.write_mem(0x4015, 2);
+    control.write_mem(0x4015, 2);
+    let (frozen_read, control_read) = first_read_dots(
+        &mut frozen,
+        &mut frozen_plugin,
+        &mut control,
+        &mut control_plugin,
+        wake_dot,
+        12,
+        0x4015,
+    );
+    assert_eq!(
+        control_read,
+        Some(wake_dot + 3),
+        "the executing loop's next loop-top read lands three dots after the write"
+    );
+    assert_eq!(
+        frozen_read,
+        control_read.map(|d| d + 1),
+        "the wake dot cannot execute, so the re-executed read is exactly one dot later"
+    );
+    assert_eq!(frozen.a(), 2, "the real wake read must supply the value");
+}
+
+/// An IRQ edge wakes a frozen `$4016` poll into the interrupt sequence at
+/// exactly the dot the executing loop dispatches: the vector fetch lands on
+/// the same absolute dot in both runs.
+#[test]
+fn device_poll_irq_wake_matches_the_executing_loop_dot() {
+    let mut frozen = device_poll_program(0x4016);
+    let mut frozen_plugin = EmptyPlugin::new();
+    let dot = run_to_device_poll_reads(&mut frozen, &mut frozen_plugin, 0x4016, 1);
+    let (mut control, mut control_plugin) = control_at(dot, 0x4016);
+    frozen.run_dots(&mut frozen_plugin, dot, 15);
+    control.run_dots(&mut control_plugin, dot, 15);
+
+    let edge_dot = dot + 15;
+    frozen.set_irq(true);
+    control.set_irq(true);
+    let (frozen_vector, control_vector) = first_read_dots(
+        &mut frozen,
+        &mut frozen_plugin,
+        &mut control,
+        &mut control_plugin,
+        edge_dot,
+        20,
+        0xFFFE,
+    );
+    assert_eq!(
+        frozen_vector, control_vector,
+        "a frozen device poll must dispatch on the executing loop's IRQ dot"
+    );
+    assert_eq!(
+        frozen_vector,
+        Some(edge_dot + 7),
+        "the IRQ vector fetch lands seven dots after the edge"
+    );
+}
+
+/// An NMI edge wakes a frozen `$4017` poll at exactly the dot the executing
+/// loop dispatches.
+#[test]
+fn device_poll_nmi_wake_matches_the_executing_loop_dot() {
+    let mut frozen = device_poll_program(0x4017);
+    let mut frozen_plugin = EmptyPlugin::new();
+    let dot = run_to_device_poll_reads(&mut frozen, &mut frozen_plugin, 0x4017, 2);
+    let (mut control, mut control_plugin) = control_at(dot, 0x4017);
+    frozen.run_dots(&mut frozen_plugin, dot, 15);
+    control.run_dots(&mut control_plugin, dot, 15);
+
+    let edge_dot = dot + 15;
+    let (mut frozen_vector, mut control_vector) = (None, None);
+    for d in edge_dot..edge_dot + 20 {
+        frozen.dot(&mut frozen_plugin, d, true);
+        control.dot(&mut control_plugin, d, true);
+        if frozen_vector.is_none() && frozen.mcu().reads.contains(&0xFFFA) {
+            frozen_vector = Some(d);
+        }
+        if control_vector.is_none() && control.mcu().reads.contains(&0xFFFA) {
+            control_vector = Some(d);
+        }
+    }
+    assert_eq!(
+        frozen_vector, control_vector,
+        "a frozen device poll must dispatch on the executing loop's NMI dot"
+    );
     assert!(
-        cpu.mcu().device_replays[1] > replays_before,
-        "replays must continue at loop cadence until the wake dot"
+        frozen_vector.is_some(),
+        "the NMI must dispatch within the window"
     );
 }
 

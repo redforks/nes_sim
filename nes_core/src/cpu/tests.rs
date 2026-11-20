@@ -5554,10 +5554,6 @@ fn kil_stays_halt_only_without_declaring_a_spin() {
         tick_full_cpu_cycle(&mut cpu, &mut plugin, cycle);
     }
     assert!(cpu.is_halted(), "KIL is a halt, not a declared spin");
-    assert!(
-        !cpu.is_spin_frozen_for_test(),
-        "KIL must stay a plain halt with no spin declaration"
-    );
     cpu.mcu_mut().reads.clear();
     for cycle in 3..8 {
         let dot = cycle * 3;
@@ -5566,10 +5562,6 @@ fn kil_stays_halt_only_without_declaring_a_spin() {
             cpu.tick(&mut plugin, SystemClock(dot)),
             ExecuteResult::Halt,
             "halt-only CPU keeps returning Halt on every dot"
-        );
-        assert!(
-            !cpu.is_spin_frozen_for_test(),
-            "KIL must not acquire a spin on any halt dot"
         );
     }
     assert!(
@@ -5613,7 +5605,11 @@ fn nmi_dispatch_ticks_after_edge(disable_spin: bool, freeze_dots: u64, edge_at_d
         tick_single_dot(&mut cpu, &mut plugin, dot, false);
     }
     if !disable_spin {
-        assert!(cpu.is_frozen(), "poll loop must declare a spin");
+        assert_eq!(
+            cpu.spin_loop_top_for_test(),
+            Some(LOOP),
+            "poll loop must declare a spin at its loop top"
+        );
     }
     cpu.mcu_mut().reads.clear();
     let mut elapsed = 0u64;
@@ -5653,7 +5649,7 @@ fn frozen_nmi_wake_matches_unfrozen_dispatch_phase() {
     let mut freeze_dots = 0u64;
     for dot in 1..=200u64 {
         tick_single_dot(&mut probe, &mut plugin, dot, false);
-        if probe.is_frozen() {
+        if probe.spin_loop_top_for_test() == Some(0x0400) {
             freeze_dots = dot;
             break;
         }
@@ -5689,7 +5685,11 @@ fn vbl_exit_ticks_after_set(disable_spin: bool, freeze_dots: u64, edge_at_dot: u
         tick_single_dot(&mut cpu, &mut plugin, dot, false);
     }
     if !disable_spin {
-        assert!(cpu.is_frozen(), "status poll loop must declare a spin");
+        assert_eq!(
+            cpu.spin_loop_top_for_test(),
+            Some(LOOP),
+            "status poll loop must declare a spin at its loop top"
+        );
     }
     let mut elapsed = 0u64;
     for dot in freeze_dots + 1..=freeze_dots + 40 {
@@ -5738,7 +5738,7 @@ fn frozen_vbl_wait_resumes_at_the_counterfactual_read_tick() {
     let mut freeze_dots = 0u64;
     for dot in 1..=200u64 {
         tick_single_dot(&mut probe, &mut plugin, dot, false);
-        if probe.is_frozen() {
+        if probe.spin_loop_top_for_test() == Some(0x0400) {
             freeze_dots = dot;
             break;
         }

@@ -244,18 +244,54 @@ mod tests {
     use super::*;
 
     #[test]
-    fn plain_memory_has_no_status_or_device_read_effects() {
-        let mcu = WaitMcu::new();
-        assert!(mcu.is_device_register(0x4015));
-        assert!(mcu.is_device_register(0x4017));
-        assert!(!mcu.is_device_register(0x4014));
-        assert!(!mcu.has_destructive_status_read(0x0010));
-        assert!(!mcu.status_register_has_vbl());
+    fn device_reads_apply_their_effects_while_plain_reads_do_not() {
+        let mut mcu = WaitMcu::new();
+        mcu.mem[0x10] = 0x7F;
+        assert_eq!(mcu.read(0x10), 0x7F);
+        assert_eq!(mcu.controller_shifts, [0; 2]);
+        assert!(!mcu.apu_irq_pending);
+        assert_eq!(mcu.replays, 0);
+
+        mcu.mem[0x4015] = 1;
+        mcu.apu_irq_pending = true;
+        assert_eq!(mcu.read(0x4015), 1);
+        assert!(!mcu.apu_irq_pending, "a real $4015 read clears frame IRQ");
+        mcu.mem[0x4016] = 1;
+        assert_eq!(mcu.read(0x4016), 1);
+        assert_eq!(mcu.controller_shifts[0], 1);
+        mcu.mem[0x4017] = 0;
+        assert_eq!(mcu.read(0x4017), 0);
+        assert_eq!(mcu.controller_shifts[1], 1);
+        assert_eq!(mcu.replays, 0, "real reads must not count as replays");
+    }
+
+    #[test]
+    fn replayed_device_effects_do_not_perform_a_bus_read() {
+        let mut mcu = WaitMcu::new();
+        mcu.apu_irq_pending = true;
+        let reads_before = mcu.reads.len();
+        mcu.replay_status_read_side_effects(0x4015);
+        assert!(
+            !mcu.apu_irq_pending,
+            "a replayed $4015 read clears frame IRQ"
+        );
+        mcu.replay_status_read_side_effects(0x4016);
+        assert_eq!(mcu.controller_shifts[0], 1);
+        assert_eq!(
+            mcu.reads.len(),
+            reads_before,
+            "a replay must not read the bus"
+        );
+        assert_eq!(mcu.device_replays, [1, 1, 0]);
     }
 
     #[test]
     fn vbl_status_reads_clear_the_flag_and_toggle() {
         let mut mcu = WaitMcu::new().with_vbl_status();
+        mcu.status = 0x80;
+        mcu.write_toggle = true;
+        mcu.replay_status_read_side_effects(0x2002);
+        assert!(!mcu.write_toggle, "replay must reset the address latch");
         mcu.status = 0x80;
         mcu.write_toggle = true;
         assert!(mcu.status_register_has_vbl());
@@ -264,8 +300,14 @@ mod tests {
         assert_eq!(mcu.other_reads, Vec::<u16>::new());
         assert!(!mcu.write_toggle);
         assert_eq!(mcu.status, 0);
+        let reads_before = mcu.reads.len();
         mcu.replay_status_read_side_effects(0x2002);
-        assert_eq!(mcu.replays, 1);
+        assert_eq!(mcu.status & 0x80, 0, "replay must clear VBL");
+        assert_eq!(
+            mcu.reads.len(),
+            reads_before,
+            "replay must not read the bus"
+        );
     }
 
     #[test]
