@@ -407,6 +407,10 @@ impl Mcu for NesMcu {
         (0x4015..=0x4017).contains(&address)
     }
 
+    fn is_action_data_port(&self, address: u16) -> bool {
+        ppu::is_ppu_data_addr(address)
+    }
+
     /// Replay a skipped `$2002` read's side effects for a frozen status
     /// spin (ticket #135). Mirrors normalize to $2002 in `Ppu::read_ppureg`;
     /// only the status register is destructive, so no bus latch or data is

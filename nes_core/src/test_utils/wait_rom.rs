@@ -44,6 +44,20 @@ pub fn ram_flag_wait_image() -> Vec<u8> {
     nrom_image(prg)
 }
 
+/// `LDA #$FF / loop: LDA $2007 / BPL loop`: a pure PPUDATA poll whose
+/// reads refill the read buffer and increment v. All seeded values have
+/// bit 7 clear, so BPL keeps looping. Both vectors point at $8000.
+pub fn ppudata_poll_image() -> Vec<u8> {
+    let mut prg = vec![0u8; PRG_LEN];
+    prg[..7].copy_from_slice(&[
+        0xA9, 0xFF, // $8000 LDA #$FF
+        0xAD, 0x07, 0x20, // $8002 LDA $2007 (loop top)
+        0x10, 0xFB, // $8005 BPL $8002
+    ]);
+    prg[PRG_LEN - 4..].copy_from_slice(&[0x00, 0x80, 0x00, 0x80]);
+    nrom_image(prg)
+}
+
 /// DMC setup followed by a `LDA $0010 / BNE` RAM flag spin at $8014.
 /// The filler is the DMC sample byte; both vectors point at $8000.
 pub fn dmc_ram_spin_image() -> Vec<u8> {
@@ -92,6 +106,14 @@ mod tests {
             ]
         );
         assert_eq!(&prg[0x600..0x606], &[0xA9, 0x00, 0x8D, 0x10, 0x00, 0x40]);
+        assert_eq!(&prg[PRG_LEN - 4..], &[0x00, 0x80, 0x00, 0x80]);
+    }
+
+    #[test]
+    fn ppudata_poll_image_keeps_the_loop_and_vectors() {
+        let image = ppudata_poll_image();
+        let prg = &image[16..16 + PRG_LEN];
+        assert_eq!(&prg[..7], &[0xA9, 0xFF, 0xAD, 0x07, 0x20, 0x10, 0xFB]);
         assert_eq!(&prg[PRG_LEN - 4..], &[0x00, 0x80, 0x00, 0x80]);
     }
 

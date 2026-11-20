@@ -1356,7 +1356,9 @@ impl Cpu {
         let Some(candidate) = self.poll_candidate else {
             return;
         };
-        if bus.mcu().is_device_register(candidate.addr) {
+        if bus.mcu().is_device_register(candidate.addr)
+            || bus.mcu().is_action_data_port(candidate.addr)
+        {
             self.poll_candidate = None;
             return;
         }
