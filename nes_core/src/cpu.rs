@@ -265,6 +265,14 @@ impl NmiDetector {
         }
         if sample {
             self.lagged_sample = self.asserted_since;
+            // Publish the edge latch on each first-dot sample so frozen
+            // dots (which never reach `detect_nmi`) still see the latch.
+            let sampled = self.lagged_sample;
+            let rising = self.last_lagged_sample == 0 && sampled != 0;
+            self.last_lagged_sample = sampled;
+            if rising && !self.edge_consumed(sampled) {
+                self.pending_asserted_since = sampled;
+            }
         }
     }
 
@@ -489,6 +497,10 @@ pub struct Cpu {
     irq_detector: IrqDetector,
     request_detect_interrupt: Option<bool>,
 
+    /// Machine-published combined IRQ level, refreshed every dot. Wake
+    /// reads this level instead of calling the CPU's edge detector.
+    published_irq_level: bool,
+
     /// `None` = normal; `Some` = frozen and/or halted (see [`FrozenReason`]).
     frozen_reason: Option<FrozenReason>,
 
@@ -546,6 +558,7 @@ impl Cpu {
             nmi_detecteor: Default::default(),
             irq_detector: Default::default(),
             request_detect_interrupt: None,
+            published_irq_level: false,
             ab: Register16::default(),
             db: 0,
             alu: 0,
@@ -878,13 +891,12 @@ impl Cpu {
     /// One frozen tick: replay destructively-read status side effects,
     /// watch for a CPU write to the polled address, wake on a dispatchable
     /// interrupt, and sample the harness end at the loop cadence. The
-    /// machine publishes the interrupt lines every dot, so a frozen CPU
-    /// reads already-maintained detector state. Sample /NMI edges here
-    /// because the normal post-exec poll is skipped while frozen.
-    /// A frozen loop executes no instruction, but the harness still needs
-    /// its stop/verdict checks sampled (user story 10). This only reads
-    /// plugin state; CPU and device state are untouched by the freeze
-    /// itself.
+    /// machine publishes the line levels every dot, so a frozen CPU reads
+    /// the machine-maintained edge latch and the published IRQ level;
+    /// it never calls an edge-latching detector. A frozen loop executes no
+    /// instruction. Wake dispatch is the only CPU state a frozen dot
+    /// changes. The harness still needs its stop/verdict checks sampled
+    /// (user story 10); sampling reads plugin state only.
     fn tick_frozen<P: Plugin<M>, M: Mcu>(
         &mut self,
         reason: FrozenReason,
@@ -1150,10 +1162,7 @@ impl Cpu {
             return;
         };
         let clock = bus.clock();
-        let irq_pending = self
-            .irq_detector
-            .detect_irq(self.flag(Flag::InterruptDisabled));
-        self.nmi_detecteor.detect_nmi();
+        let irq_pending = self.published_irq_level && !self.flag(Flag::InterruptDisabled);
         // A pending exact-remainder wake dispatches when its tick arrives;
         // re-evaluate the kind then so a deasserted IRQ cancels instead of
         // dispatching stale. Paused under DMA like the counter.
@@ -1640,6 +1649,7 @@ impl Cpu {
         self.sp = self.sp.wrapping_sub(3);
         self.nmi_detecteor = Default::default();
         self.irq_detector = Default::default();
+        self.published_irq_level = false;
         self.request_detect_interrupt = None;
         self.poll_candidate = None;
         self.self_loop_candidate = None;
@@ -1661,6 +1671,7 @@ impl Cpu {
     }
 
     pub(crate) fn set_irq(&mut self, enabled: bool) {
+        self.published_irq_level = enabled;
         self.irq_detector.update_irq_input(enabled);
     }
 
