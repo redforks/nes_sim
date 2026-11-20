@@ -76,6 +76,16 @@ pub trait Mcu {
         false
     }
 
+    /// Classification query: whether a readable address is a data port whose
+    /// read mutates device state rather than returning status. A PPUDATA
+    /// read refills the read buffer and advances v; no status-effect replay
+    /// can stand in for it, so a poll of such a port must never declare a
+    /// spin. This exclusion is permanent, independent of the device-register
+    /// classification. Default `false`.
+    fn is_action_data_port(&self, _address: u16) -> bool {
+        false
+    }
+
     /// Replay the destructive side effects of a `$2002` read that a frozen
     /// CPU spin skipped. The default is a no-op: only the NES memory map
     /// has a PPU status register. Implementations must not drive the CPU

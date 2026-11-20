@@ -5477,6 +5477,51 @@ fn kil_after_spin_freeze_stays_halt_only_until_reset() {
     assert_eq!(cpu.pc(), LOOP);
 }
 
+#[test]
+fn kil_stays_halt_only_without_declaring_a_spin() {
+    const LOOP: u16 = 0x0530;
+    let mut mcu = TestMcu::default();
+    mcu.mem[LOOP as usize] = 0x02; // KIL
+    mcu.mem[0xFFFC] = LOOP as u8;
+    mcu.mem[0xFFFD] = (LOOP >> 8) as u8;
+    let mut cpu = create_cpu_with_mcu(mcu);
+    cpu.set_pc(LOOP);
+
+    let mut plugin = EmptyPlugin::new();
+    for cycle in 1..3 {
+        tick_full_cpu_cycle(&mut cpu, &mut plugin, cycle);
+    }
+    assert!(cpu.is_halted(), "KIL is a halt, not a declared spin");
+    assert!(
+        !cpu.is_spin_frozen_for_test(),
+        "KIL must stay a plain halt with no spin declaration"
+    );
+    cpu.mcu_mut().reads.clear();
+    for cycle in 3..8 {
+        let dot = cycle * 3;
+        cpu.update_nmi_line(false, SystemClock(dot), dot.is_multiple_of(3));
+        assert_eq!(
+            cpu.tick(&mut plugin, SystemClock(dot)),
+            ExecuteResult::Halt,
+            "halt-only CPU keeps returning Halt on every dot"
+        );
+        assert!(
+            !cpu.is_spin_frozen_for_test(),
+            "KIL must not acquire a spin on any halt dot"
+        );
+    }
+    assert!(
+        cpu.mcu().reads.is_empty(),
+        "halt-only CPU must not drive bus reads, saw {:?}",
+        cpu.mcu().reads
+    );
+
+    cpu.reset();
+    cpu.run_to_instruction_boundary(&mut plugin);
+    assert!(!cpu.is_halted(), "only reset recovers from KIL");
+    assert_eq!(cpu.pc(), LOOP);
+}
+
 /// Ticks from an NMI edge to NMI-vector fetch for an `LDA $10 / BNE`
 /// wait loop, frozen or executing. The edge is raised at `edge_at_dot`
 /// and held; the /NMI line pattern is identical in both runs, so the
