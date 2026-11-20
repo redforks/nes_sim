@@ -4,42 +4,7 @@
 //! register snapshots, and interrupt dispatch. No freeze source is inspected.
 
 use super::*;
-
-struct TestMcu {
-    mem: [u8; 0x10000],
-    writes: Vec<(u16, u8)>,
-    reads: Vec<u16>,
-}
-
-impl Default for TestMcu {
-    fn default() -> Self {
-        Self {
-            mem: [0; 0x10000],
-            writes: Vec::new(),
-            reads: Vec::new(),
-        }
-    }
-}
-
-impl Mcu for TestMcu {
-    fn is_device_register(&self, address: u16) -> bool {
-        (0x4015..=0x4017).contains(&address)
-    }
-
-    fn read(&mut self, address: u16) -> u8 {
-        self.reads.push(address);
-        self.mem[address as usize]
-    }
-
-    fn peek(&self, address: u16) -> u8 {
-        self.mem[address as usize]
-    }
-
-    fn write(&mut self, address: u16, value: u8, _clock: SystemClock) {
-        self.mem[address as usize] = value;
-        self.writes.push((address, value));
-    }
-}
+use crate::wait_mcu::WaitMcu as TestMcu;
 
 struct Harness {
     cpu: Cpu,

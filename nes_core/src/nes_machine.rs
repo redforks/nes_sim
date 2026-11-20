@@ -330,37 +330,11 @@ mod tests {
     use crate::EmptyPlugin;
 
     use super::*;
+    use crate::wait_rom;
 
     /// Create a minimal valid iNES file for testing
     fn test_nes_file() -> INesFile {
-        let mut rom = Vec::new();
-
-        // NES signature
-        rom.extend_from_slice(&[0x4e, 0x45, 0x53, 0x1a]);
-
-        // PRG ROM pages (1 page = 16KB)
-        rom.push(1);
-
-        // CHR ROM pages (1 page = 8KB)
-        rom.push(1);
-
-        // Control byte 1: mapper 0, horizontal mirroring
-        rom.push(0x00);
-
-        // Control byte 2: mapper 0
-        rom.push(0x00);
-
-        // 8 bytes of padding
-        rom.extend_from_slice(&[0; 8]);
-
-        // PRG ROM data (16KB) - JMP $8000 infinite loop
-        rom.extend_from_slice(&[0x4C, 0x00, 0x80]); // JMP $8000
-        rom.extend(std::iter::repeat_n(0, 16 * 1024 - 3));
-
-        // CHR ROM data (8KB)
-        rom.extend(std::iter::repeat_n(0, 8 * 1024));
-
-        INesFile::new(rom).unwrap()
+        INesFile::new(wait_rom::bare_spin_image()).expect("shared bare spin ROM must parse")
     }
 
     /// PRG-ROM with `LDA $0010 / BNE top` at $8000 and an RTI NMI handler.
@@ -368,34 +342,7 @@ mod tests {
     /// to clear it: frozen and unfrozen runs can be compared at frame
     /// boundaries.
     fn ram_flag_wait_nes_file() -> INesFile {
-        let mut rom = b"NES\x1a".to_vec();
-        rom.extend_from_slice(&[1, 1, 0, 0]);
-        rom.extend_from_slice(&[0; 8]);
-
-        let mut prg = vec![0u8; 16 * 1024];
-        let program = [
-            0xAD, 0x10, 0x00, // $8000 LDA $0010
-            0xD0, 0xFB, // $8003 BNE $8000
-            0x4C, 0x08, 0x80, // $8005 JMP $8008 (park)
-        ];
-        prg[..program.len()].copy_from_slice(&program);
-        prg[0x08] = 0x4C;
-        prg[0x09] = 0x08;
-        prg[0x0A] = 0x80;
-        // NMI handler: LDA #$00 / STA $0010 / RTI — it clears the flag
-        // the loop polls, so the wait exits through the handler.
-        prg[0x600] = 0xA9;
-        prg[0x601] = 0x00;
-        prg[0x602] = 0x8D;
-        prg[0x603] = 0x10;
-        prg[0x604] = 0x00;
-        prg[0x605] = 0x40;
-        let reset = prg.len() - 4;
-        prg[reset..reset + 2].copy_from_slice(&0x8000u16.to_le_bytes());
-        prg[reset + 2..reset + 4].copy_from_slice(&0x8000u16.to_le_bytes());
-        rom.extend_from_slice(&prg);
-        rom.extend_from_slice(&[0u8; 8 * 1024]);
-        INesFile::new(rom).unwrap()
+        INesFile::new(wait_rom::ram_flag_wait_image()).expect("shared RAM wait ROM must parse")
     }
 
     /// Advance three frames with dot stepping and collect frame bytes plus a
@@ -428,31 +375,42 @@ mod tests {
         (hasher.finish(), spins)
     }
 
+    /// Build two machines from one ROM, disable spin declaration on the
+    /// control, apply the same setup to both, then compare three frames of
+    /// visible state. The harness owns the common comparison so each wait
+    /// test only supplies its ROM, its setup, and its failure message.
+    fn assert_frames_match(
+        rom: &INesFile,
+        mut setup: impl FnMut(&mut NesMachine<EmptyPlugin<NesMcu>>),
+        expected_spin: &str,
+        divergence: &str,
+    ) {
+        let mut frozen = NesMachine::new(rom, EmptyPlugin::new());
+        let mut unfrozen = NesMachine::new(rom, EmptyPlugin::new());
+        unfrozen.cpu.set_spin_declaration_disabled_for_test(true);
+        setup(&mut frozen);
+        setup(&mut unfrozen);
+
+        let (frozen_hash, frozen_spins) = wait_vbl_dot_signature(&mut frozen);
+        let (unfrozen_hash, unfrozen_spins) = wait_vbl_dot_signature(&mut unfrozen);
+        assert!(frozen_spins.iter().any(|&s| s), "{expected_spin}");
+        assert!(
+            !unfrozen_spins.iter().any(|&s| s),
+            "the control must disable spin declaration"
+        );
+        assert_eq!(frozen_hash, unfrozen_hash, "{divergence}");
+    }
+
     /// A bare self-loop wait must produce the same framebytes and visible
     /// CPU/interrupt state with its spin declaration enabled and disabled.
     /// The control is test-only; dot stepping keeps the comparison honest.
     #[test]
     fn frozen_and_unfrozen_self_loop_frames_match() {
-        let file = test_nes_file();
-        let mut frozen = NesMachine::new(&file, EmptyPlugin::new());
-        let mut unfrozen = NesMachine::new(&file, EmptyPlugin::new());
-        unfrozen.cpu.set_spin_declaration_disabled_for_test(true);
-        frozen.set_pc(0x8000);
-        unfrozen.set_pc(0x8000);
-
-        let (frozen_hash, frozen_spins) = wait_vbl_dot_signature(&mut frozen);
-        let (unfrozen_hash, unfrozen_spins) = wait_vbl_dot_signature(&mut unfrozen);
-        assert!(
-            frozen_spins.iter().any(|&s| s),
-            "the frozen run must actually declare a spin"
-        );
-        assert!(
-            !unfrozen_spins.iter().any(|&s| s),
-            "the control must disable spin declaration"
-        );
-        assert_eq!(
-            frozen_hash, unfrozen_hash,
-            "framebuffer/register/interrupt trace diverged"
+        assert_frames_match(
+            &test_nes_file(),
+            |machine| machine.set_pc(0x8000),
+            "the frozen run must actually declare a spin",
+            "framebuffer/register/interrupt trace diverged",
         );
     }
 
@@ -462,26 +420,11 @@ mod tests {
     /// the same program with spin declaration disabled.
     #[test]
     fn frozen_and_unfrozen_nmi_flag_wait_frames_match() {
-        let file = ram_flag_wait_nes_file();
-        let mut frozen = NesMachine::new(&file, EmptyPlugin::new());
-        let mut unfrozen = NesMachine::new(&file, EmptyPlugin::new());
-        unfrozen.cpu.set_spin_declaration_disabled_for_test(true);
-        frozen.mcu_mut().write(0x0010, 1, SystemClock::default());
-        unfrozen.mcu_mut().write(0x0010, 1, SystemClock::default());
-
-        let (frozen_hash, frozen_spins) = wait_vbl_dot_signature(&mut frozen);
-        let (unfrozen_hash, unfrozen_spins) = wait_vbl_dot_signature(&mut unfrozen);
-        assert!(
-            frozen_spins.iter().any(|&s| s),
-            "the frozen run must declare the RAM poll spin"
-        );
-        assert!(
-            !unfrozen_spins.iter().any(|&s| s),
-            "the control must disable spin declaration"
-        );
-        assert_eq!(
-            frozen_hash, unfrozen_hash,
-            "NMI-flag wait framebuffer/register/interrupt trace diverged"
+        assert_frames_match(
+            &ram_flag_wait_nes_file(),
+            |machine| machine.mcu_mut().write(0x0010, 1, SystemClock::default()),
+            "the frozen run must declare the RAM poll spin",
+            "NMI-flag wait framebuffer/register/interrupt trace diverged",
         );
     }
 
