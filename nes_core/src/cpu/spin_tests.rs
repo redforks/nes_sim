@@ -63,21 +63,22 @@ impl Harness {
     }
 }
 
-fn device_poll_trace(addr: u16, disable_spin: bool, dots: u64) -> Vec<u16> {
-    let mut cpu = device_poll_program(addr);
-    if disable_spin {
-        cpu.set_spin_declaration_disabled_for_test(true);
+/// Run a device-poll loop until the second real read, then clear recorded
+/// bus traffic. The CPU is frozen at that point; the returned dot is the
+/// first dot of the frozen window.
+fn run_to_device_poll_reads(
+    cpu: &mut Harness,
+    plugin: &mut EmptyPlugin<TestMcu>,
+    addr: u16,
+) -> u64 {
+    let mut dot = 3u64;
+    while cpu.mcu().reads.iter().filter(|&&a| a == addr).count() < 2 || !cpu.is_frozen() {
+        cpu.dot(plugin, dot, false);
+        dot += 1;
+        assert!(dot < 1000, "poll of {addr:#06x} never froze");
     }
-    let mut plugin = EmptyPlugin::new();
-    for dot in 3..3 + dots {
-        cpu.dot(&mut plugin, dot, false);
-    }
-    cpu.mcu()
-        .reads
-        .iter()
-        .copied()
-        .filter(|a| *a == addr)
-        .collect()
+    cpu.mcu_mut().reads.clear();
+    dot
 }
 
 fn poll_program() -> Harness {
@@ -176,11 +177,11 @@ fn cpu_write_to_polled_address_wakes_without_interrupt() {
     assert_eq!(cpu.pc(), 0x0400);
 }
 
-/// A loop that polls a device register is deliberately not declared a spin:
-/// its read is the device action (a controller shift, an APU interrupt
-/// acknowledge, a zapper sample) and device-sourced writes never wake a
-/// spin. Keeping it executing preserves the read count and order; freezing
-/// it would swallow or have to replay a device action.
+/// A loop that polls a device register declares a spin like any other
+/// poll. Its read is still an action (a controller shift, an APU interrupt
+/// acknowledge, a zapper sample), so the freeze replays that action at the
+/// observed loop cadence while the real read stays dormant. Device-sourced
+/// writes never wake such a spin by decision.
 fn device_poll_program(addr: u16) -> Harness {
     const TOP: u16 = 0x0400;
     let mut mcu = TestMcu::default();
@@ -199,8 +200,11 @@ fn device_poll_program(addr: u16) -> Harness {
     mcu.mem[0xFFFB] = 0x06;
     mcu.mem[0xFFFC] = TOP as u8;
     mcu.mem[0xFFFD] = (TOP >> 8) as u8;
+    mcu.mem[0xFFFE] = 0x00;
+    mcu.mem[0xFFFF] = 0x07;
     let mut cpu = create_cpu(mcu);
     cpu.set_pc(TOP);
+    cpu.set_status(0x20); // interrupts enabled
     cpu
 }
 
@@ -285,19 +289,82 @@ fn dma_halt_composes_with_declared_spin_without_clearing_it() {
 }
 
 #[test]
-fn device_register_poll_read_cadence_matches_spin_disabled_control() {
-    for addr in [0x4015, 0x4016, 0x4017] {
-        let control = device_poll_trace(addr, true, 200);
-        let normal = device_poll_trace(addr, false, 200);
+fn device_register_polls_freeze_and_replay_effects_without_bus_reads() {
+    for (addr, index) in [(0x4015, 0), (0x4016, 1), (0x4017, 2)] {
+        let mut cpu = device_poll_program(addr);
+        let mut plugin = EmptyPlugin::new();
+        let dot = run_to_device_poll_reads(&mut cpu, &mut plugin, addr);
+        let effects_before = cpu.mcu().device_replays[index];
+
+        cpu.run_dots(&mut plugin, dot, 100);
+
+        assert!(
+            cpu.is_frozen(),
+            "a {addr:#06x} spin must stay frozen without a wake event"
+        );
         assert_eq!(
-            normal, control,
-            "a {addr:#06x} poll must not swallow or duplicate device reads"
+            cpu.mcu().reads.iter().filter(|&&a| a == addr).count(),
+            0,
+            "a frozen {addr:#06x} poll must not perform real bus reads"
+        );
+        assert_eq!(cpu.mcu().reads.iter().filter(|&&a| a == addr).count(), 0);
+        let replayed = cpu.mcu().device_replays[index] - effects_before;
+        assert!(
+            replayed >= 5,
+            "a frozen {addr:#06x} poll must replay its device effect at loop cadence, saw {replayed}"
         );
         assert!(
-            normal.len() >= 2,
-            "the {addr:#06x} trace must include real repeated polls"
+            replayed < 100,
+            "replays must be cadence-based, not once per dot"
         );
     }
+}
+
+#[test]
+fn frozen_device_poll_replays_apu_irq_acknowledgement() {
+    let mut cpu = device_poll_program(0x4015);
+    let mut plugin = EmptyPlugin::new();
+    let dot = run_to_device_poll_reads(&mut cpu, &mut plugin, 0x4015);
+    cpu.mcu_mut().apu_irq_pending = true;
+
+    cpu.run_dots(&mut plugin, dot, 30);
+
+    assert!(
+        !cpu.mcu().apu_irq_pending,
+        "replayed $4015 reads must acknowledge the frame IRQ while frozen"
+    );
+    assert!(
+        cpu.mcu().replays >= 2,
+        "the IRQ acknowledgement must come from replayed reads, saw {} replays",
+        cpu.mcu().replays
+    );
+    assert!(
+        !cpu.mcu().reads.contains(&0x4015),
+        "the IRQ clear must not be a real bus read"
+    );
+}
+
+#[test]
+fn frozen_controller_poll_replays_shift_without_advancing_the_cpu() {
+    let mut cpu = device_poll_program(0x4016);
+    let mut plugin = EmptyPlugin::new();
+    let dot = run_to_device_poll_reads(&mut cpu, &mut plugin, 0x4016);
+    let shifts_before = cpu.mcu().controller_shifts[0];
+    let pc = cpu.pc();
+    let a = cpu.a();
+
+    cpu.run_dots(&mut plugin, dot, 30);
+
+    assert!(
+        cpu.mcu().controller_shifts[0] > shifts_before + 2,
+        "replayed $4016 reads must keep shifting the controller"
+    );
+    assert!(
+        !cpu.mcu().reads.contains(&0x4016),
+        "replays must not be visible on the CPU bus"
+    );
+    assert_eq!(cpu.pc(), pc, "replay must not advance the frozen CPU");
+    assert_eq!(cpu.a(), a, "no synthetic value may reach the program");
 }
 
 /// A loop that writes its polled address every iteration never declares a
@@ -343,45 +410,112 @@ fn absolute_store_in_loop_disqualifies_the_poll_candidate() {
 }
 
 #[test]
-fn zapper_register_poll_is_not_declared_as_a_spin() {
+fn zapper_register_poll_declares_a_spin() {
     let mut cpu = device_poll_program(0x4017);
     let mut plugin = EmptyPlugin::new();
-    let mut dot = 3u64;
-    while cpu.mcu().reads.iter().filter(|&&a| a == 0x4017).count() < 2 {
-        cpu.dot(&mut plugin, dot, false);
-        dot += 1;
-        assert!(dot < 1000, "zapper poll never happened");
-    }
-    cpu.mcu_mut().reads.clear();
+    let dot = run_to_device_poll_reads(&mut cpu, &mut plugin, 0x4017);
     cpu.run_dots(&mut plugin, dot, 60);
 
+    assert!(cpu.is_frozen(), "a $4017 poll must declare a spin");
     let polls = cpu.mcu().reads.iter().filter(|&&a| a == 0x4017).count();
+    assert_eq!(polls, 0, "a frozen $4017 poll must not read the bus");
     assert!(
-        polls >= 3,
-        "a $4017 device poll must keep reading the register, saw {polls} reads"
+        cpu.mcu().device_replays[2] >= 3,
+        "a frozen $4017 poll must replay its device action"
     );
 }
 
 #[test]
-fn dmc_status_poll_is_not_declared_as_a_spin() {
+fn dmc_status_poll_declares_a_spin() {
     // The DMC status poll in `sprdma_and_dmc_dma.nes` can only wake from a
-    // DMA/APU write, which never wakes a spin by decision. It must therefore
-    // execute for real rather than be declared a spin.
+    // DMA/APU write, which never wakes a spin by decision. It still freezes
+    // with its APU effect replayed; replay itself must not wake it.
     let mut cpu = device_poll_program(0x4015);
     let mut plugin = EmptyPlugin::new();
-    let mut dot = 3u64;
-    while cpu.mcu().reads.iter().filter(|&&a| a == 0x4015).count() < 2 {
-        cpu.dot(&mut plugin, dot, false);
-        dot += 1;
-        assert!(dot < 1000, "DMC status poll never happened");
-    }
-    cpu.mcu_mut().reads.clear();
+    let dot = run_to_device_poll_reads(&mut cpu, &mut plugin, 0x4015);
     cpu.run_dots(&mut plugin, dot, 60);
+
+    assert!(cpu.is_frozen(), "a $4015 poll must declare a spin");
+    let polls = cpu.mcu().reads.iter().filter(|&&a| a == 0x4015).count();
+    assert_eq!(polls, 0, "a frozen $4015 poll must not read the bus");
+    assert!(
+        cpu.mcu().device_replays[0] >= 3,
+        "a frozen $4015 poll must replay its device action"
+    );
+}
+
+#[test]
+fn device_poll_wake_reexecutes_real_read_once_then_redeclares() {
+    let mut cpu = device_poll_program(0x4015);
+    let mut plugin = EmptyPlugin::new();
+    let dot = run_to_device_poll_reads(&mut cpu, &mut plugin, 0x4015);
+    cpu.run_dots(&mut plugin, dot, 10);
+    cpu.mcu_mut().reads.clear();
+    let replays_before = cpu.mcu().device_replays[0];
+
+    // Only a CPU write to the polled address wakes a device poll. Interrupt
+    // wakes are pinned separately; here the first real read after wake must
+    // supply the value while replays remain side effects only.
+    cpu.write_mem(0x4015, 2);
+    cpu.run_dots(&mut plugin, dot + 10, 20);
 
     let polls = cpu.mcu().reads.iter().filter(|&&a| a == 0x4015).count();
     assert!(
-        polls >= 3,
-        "a $4015 device poll must keep reading the register, saw {polls} reads"
+        (1..=4).contains(&polls),
+        "write wake must re-execute the real poll once, saw {polls}"
+    );
+    assert!(
+        cpu.mcu().device_replays[0] >= replays_before,
+        "replays are additional device effects, not a replacement for the wake read"
+    );
+    assert_eq!(cpu.a(), 2, "the real wake read must supply the value");
+}
+
+#[test]
+fn irq_wakes_device_poll_at_loop_top() {
+    let mut cpu = device_poll_program(0x4015);
+    let mut plugin = EmptyPlugin::new();
+    let dot = run_to_device_poll_reads(&mut cpu, &mut plugin, 0x4015);
+    cpu.run_dots(&mut plugin, dot, 15);
+    cpu.mcu_mut().reads.clear();
+    let replays_before = cpu.mcu().device_replays[0];
+
+    cpu.set_irq(true);
+    cpu.run_dots(&mut plugin, dot + 15, 40);
+
+    let reads = &cpu.mcu().reads;
+    assert!(
+        reads.iter().any(|a| (0x0100..=0x01FF).contains(a)) || reads.contains(&0xFFFE),
+        "IRQ must wake a frozen device poll into the interrupt sequence, saw {reads:?}"
+    );
+    assert_eq!(cpu.a(), 1, "wake must preserve registers");
+    assert!(
+        cpu.mcu().device_replays[0] > replays_before,
+        "replays must continue at loop cadence until the wake dot"
+    );
+}
+
+#[test]
+fn nmi_edge_wakes_device_poll_at_loop_top() {
+    let mut cpu = device_poll_program(0x4016);
+    let mut plugin = EmptyPlugin::new();
+    let dot = run_to_device_poll_reads(&mut cpu, &mut plugin, 0x4016);
+    cpu.run_dots(&mut plugin, dot, 15);
+    cpu.mcu_mut().reads.clear();
+    let replays_before = cpu.mcu().device_replays[1];
+
+    for d in dot + 15..dot + 27 {
+        cpu.dot(&mut plugin, d, true);
+    }
+    let reads = &cpu.mcu().reads;
+    assert!(
+        reads.iter().any(|a| (0x0100..=0x01FF).contains(a)) || reads.contains(&0xFFFA),
+        "NMI must wake a frozen device poll into the interrupt sequence, saw {reads:?}"
+    );
+    assert_eq!(cpu.a(), 1, "wake must preserve registers");
+    assert!(
+        cpu.mcu().device_replays[1] > replays_before,
+        "replays must continue at loop cadence until the wake dot"
     );
 }
 

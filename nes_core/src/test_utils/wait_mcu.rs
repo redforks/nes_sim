@@ -31,8 +31,16 @@ pub struct WaitMcu {
     /// Non-status reads in the `$2002` configuration; proves a frozen poll
     /// no longer drives the bus.
     pub other_reads: Vec<u16>,
-    /// Replayed status-read side effects, counted apart from real reads.
+    /// Replayed read side effects, counted apart from real reads. Includes
+    /// status clears and `$4015`-`$4017` device actions.
     pub replays: usize,
+    /// Device-side effect replays by address (`$4015`-`$4017`).
+    pub device_replays: [usize; 3],
+    /// Whether the modeled APU frame IRQ is pending. Device-effect replay
+    /// clears it just as a real `$4015` read does.
+    pub apu_irq_pending: bool,
+    /// Number of shifts a real or replayed controller-port read performed.
+    pub controller_shifts: [usize; 2],
     pub status: u8,
     pub write_toggle: bool,
     pub nmi_enabled: bool,
@@ -60,6 +68,9 @@ impl WaitMcu {
             ppu_reads: Vec::new(),
             other_reads: Vec::new(),
             replays: 0,
+            device_replays: [0; 3],
+            apu_irq_pending: false,
+            controller_shifts: [0; 2],
             status: 0,
             write_toggle: false,
             nmi_enabled: false,
@@ -141,11 +152,35 @@ impl WaitMcu {
         self.ppu_reads.clear();
         self.other_reads.clear();
     }
+
+    /// Index into `device_replays` / `controller_shifts` for a device port.
+    fn device_index(address: u16) -> Option<usize> {
+        match address {
+            0x4015 => Some(0),
+            0x4016 => Some(1),
+            0x4017 => Some(2),
+            _ => None,
+        }
+    }
+
+    /// Model the device action of a real read or a frozen-loop replay.
+    /// No bus value is produced here; the real read still returns memory.
+    fn apply_device_effects(&mut self, address: u16) {
+        match address {
+            0x4015 => self.apu_irq_pending = false,
+            0x4016 => self.controller_shifts[0] += 1,
+            0x4017 => self.controller_shifts[1] += 1,
+            _ => {}
+        }
+    }
 }
 
 impl Mcu for WaitMcu {
     fn read(&mut self, address: u16) -> u8 {
         self.reads.push(address);
+        if Self::device_index(address).is_some() {
+            self.apply_device_effects(address);
+        }
         if self.status_register == StatusRegister::Vbl && self.is_status_addr(address) {
             return self.read_status(address);
         }
@@ -192,11 +227,15 @@ impl Mcu for WaitMcu {
         (0x4015..=0x4017).contains(&address)
     }
 
-    fn replay_status_read_side_effects(&mut self, _address: u16) {
+    fn replay_status_read_side_effects(&mut self, address: u16) {
         // Side effects only: no bus read is recorded, matching the MCU
         // hook's contract. Replays are counted separately from real reads.
         self.replays += 1;
         self.status_side_effects();
+        if let Some(index) = Self::device_index(address) {
+            self.device_replays[index] += 1;
+            self.apply_device_effects(address);
+        }
     }
 }
 

@@ -388,6 +388,13 @@ mod tests {
         INesFile::new(wait_rom::ppudata_poll_image()).expect("shared PPUDATA wait ROM must parse")
     }
 
+    /// PRG: controller poll loop (`LDA $4016 / BNE`), a device-register
+    /// poll that freezes while replaying its read effects.
+    fn controller_poll_nes_file() -> INesFile {
+        INesFile::new(wait_rom::controller_poll_image())
+            .expect("shared controller poll ROM must parse")
+    }
+
     /// Dots to settle after VBL entry before sampling the frame state. The
     /// counterfactual VBL read and its back edge land a few dots after the
     /// entry dot, so sampling at entry would catch one run mid-exit and the
@@ -513,6 +520,19 @@ mod tests {
             |machine| machine.mcu_mut().write(0x0010, 1, SystemClock::default()),
             "the frozen run must declare the RAM poll spin",
             "NMI-flag wait framebuffer/register/interrupt trace diverged",
+        );
+    }
+
+    /// A controller poll freezes, but its device action (the shift and its
+    /// read-driven output-enable state) must be replayed at loop cadence,
+    /// leaving framebytes, registers, and interrupt lines frame-equivalent.
+    #[test]
+    fn frozen_and_unfrozen_controller_poll_frames_match() {
+        assert_frames_match(
+            &controller_poll_nes_file(),
+            |machine| machine.mcu_mut().press_controller_a(Button::A),
+            "the frozen run must declare the controller poll spin",
+            "controller-poll framebuffer/register/interrupt trace diverged",
         );
     }
 

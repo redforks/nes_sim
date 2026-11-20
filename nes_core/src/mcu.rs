@@ -70,8 +70,9 @@ pub trait Mcu {
     /// Classification query: whether a readable address names a device
     /// register whose read is itself an action (a controller shift, an APU
     /// interrupt acknowledge, a zapper sample). Default `false`. Such a
-    /// poll keeps executing for real: freezing it would swallow the read,
-    /// and device-sourced writes never wake a spin by decision.
+    /// poll may declare a spin: its device action is replayed at the loop
+    /// cadence while frozen, and the real read after wake returns the value.
+    /// Device-sourced writes never wake a spin by decision.
     fn is_device_register(&self, _address: u16) -> bool {
         false
     }
@@ -86,11 +87,11 @@ pub trait Mcu {
         false
     }
 
-    /// Replay the destructive side effects of a `$2002` read that a frozen
-    /// CPU spin skipped. The default is a no-op: only the NES memory map
-    /// has a PPU status register. Implementations must not drive the CPU
-    /// bus, return a value, or change any other device state. The CPU calls
-    /// this on its own at the spin's back-edge cadence (ticket #135).
+    /// Replay the device-side effects of a read that a frozen CPU spin
+    /// skipped: PPU status flag clears and `$4015`-`$4017` device actions.
+    /// The default is a no-op. Implementations must not drive the CPU bus,
+    /// return a value, or change any other device state. The CPU calls this
+    /// on its own at the spin's back-edge cadence (tickets #135, #150).
     fn replay_status_read_side_effects(&mut self, _address: u16) {}
 }
 
