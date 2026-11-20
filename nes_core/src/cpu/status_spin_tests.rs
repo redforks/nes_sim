@@ -5,125 +5,7 @@
 //! No freeze source is inspected.
 
 use super::*;
-
-/// A CPU-side MCU that presents real `NesMcu`-like $2002 semantics at the
-/// `Mcu` seam: mirrors normalize to $2002, a status read clears VBL and
-/// resets the $2005/$2006 write toggle, and a read on the race dot keeps
-/// VBL from ever setting. Reads are counted so a frozen loop cannot
-/// secretly re-drive the bus while its side effects are replayed.
-struct StatusMcu {
-    mem: [u8; 0x10000],
-    status: u8,
-    write_toggle: bool,
-    nmi_enabled: bool,
-    suppressed: bool,
-    ppu_reads: Vec<u16>,
-    replays: usize,
-    other_reads: Vec<u16>,
-    writes: Vec<(u16, u8)>,
-    scanline: u16,
-    dot: u16,
-}
-
-impl StatusMcu {
-    fn new() -> Self {
-        Self {
-            mem: [0; 0x10000],
-            status: 0,
-            write_toggle: false,
-            nmi_enabled: false,
-            suppressed: false,
-            ppu_reads: Vec::new(),
-            replays: 0,
-            other_reads: Vec::new(),
-            writes: Vec::new(),
-            scanline: 100,
-            dot: 100,
-        }
-    }
-
-    fn is_status_addr(addr: u16) -> bool {
-        (0x2000..=0x3FFF).contains(&addr) && (addr & 0x2007) == 0x2002
-    }
-
-    fn status_read(&mut self, addr: u16) -> u8 {
-        self.ppu_reads.push(addr);
-        if self.scanline == 241 && self.dot == 1 {
-            self.suppressed = true;
-        }
-        let status = self.status;
-        self.status &= !0x80;
-        self.write_toggle = false;
-        status
-    }
-
-    fn nmi_line(&self) -> bool {
-        self.status & 0x80 != 0 && self.nmi_enabled
-    }
-
-    /// Model the PPU's VBL set on scanline 241 dot 1; a prior status read
-    /// on that dot suppresses the flag exactly as `Ppu` does.
-    fn tick_ppu(&mut self) {
-        if self.scanline == 241 && self.dot == 2 && !self.suppressed {
-            self.status |= 0x80;
-        }
-    }
-}
-
-impl Mcu for StatusMcu {
-    fn status_register_has_vbl(&self) -> bool {
-        self.status & 0x80 != 0
-    }
-
-    fn has_destructive_status_read(&self, address: u16) -> bool {
-        Self::is_status_addr(address)
-    }
-
-    fn is_device_register(&self, address: u16) -> bool {
-        (0x4015..=0x4017).contains(&address)
-    }
-
-    fn replay_status_read_side_effects(&mut self, address: u16) {
-        assert!(Self::is_status_addr(address));
-        // Side effects only: no bus read is recorded, matching the contract
-        // of the MCU hook. Count replays separately from real bus reads.
-        self.replays += 1;
-        if self.scanline == 241 && self.dot == 1 {
-            self.suppressed = true;
-        }
-        self.status &= !0x80;
-        self.write_toggle = false;
-    }
-
-    fn read(&mut self, address: u16) -> u8 {
-        if Self::is_status_addr(address) {
-            self.status_read(address)
-        } else {
-            self.other_reads.push(address);
-            self.mem[address as usize]
-        }
-    }
-
-    fn peek(&self, address: u16) -> u8 {
-        if Self::is_status_addr(address) {
-            self.status
-        } else {
-            self.mem[address as usize]
-        }
-    }
-
-    fn write(&mut self, address: u16, value: u8, _clock: SystemClock) {
-        self.writes.push((address, value));
-        if (0x2000..=0x3FFF).contains(&address) {
-            match address & 0x2007 {
-                0x2000 => self.nmi_enabled = value & 0x80 != 0,
-                0x2005 | 0x2006 => self.write_toggle = !self.write_toggle,
-                _ => {}
-            }
-        }
-        self.mem[address as usize] = value;
-    }
-}
+use crate::wait_mcu::WaitMcu as StatusMcu;
 
 struct Harness {
     cpu: Cpu,
@@ -188,7 +70,7 @@ impl Harness {
 /// the NMI line test. The poll is declared after two back-edges.
 fn status_poll_program(addr: u16, nmi_enabled: bool) -> Harness {
     const TOP: u16 = 0x0400;
-    let mut mcu = StatusMcu::new();
+    let mut mcu = StatusMcu::new().with_vbl_status();
     let program = [
         0x2C,
         addr as u8,

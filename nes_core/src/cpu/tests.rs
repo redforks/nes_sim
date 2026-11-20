@@ -4,6 +4,7 @@ use super::microcode::{
 };
 use super::*;
 use crate::test_utils::MockMcu;
+use crate::wait_mcu::WaitMcu as TestMcu;
 
 // NES vector addresses
 const IRQ_VECTOR: u16 = 0xFFFE;
@@ -3906,53 +3907,6 @@ fn test_compare_clears_zero_flag() {
 
 // Tests from flattened cpu2 module
 
-struct TestMcu {
-    mem: [u8; 0x10000],
-    writes: Vec<(u16, u8)>,
-    reads: Vec<u16>,
-    /// Test-double VBL flag for `status_register_has_vbl`.
-    status_vbl: bool,
-    /// Test-double destructive-read classification for
-    /// `has_destructive_status_read`.
-    status_destructive: bool,
-}
-
-impl Default for TestMcu {
-    fn default() -> Self {
-        Self {
-            mem: [0; 0x10000],
-            writes: Vec::new(),
-            reads: Vec::new(),
-            status_vbl: false,
-            status_destructive: false,
-        }
-    }
-}
-
-impl Mcu for TestMcu {
-    fn read(&mut self, address: u16) -> u8 {
-        self.reads.push(address);
-        self.mem[address as usize]
-    }
-
-    fn peek(&self, address: u16) -> u8 {
-        self.mem[address as usize]
-    }
-
-    fn write(&mut self, address: u16, value: u8, _clock: SystemClock) {
-        self.mem[address as usize] = value;
-        self.writes.push((address, value));
-    }
-
-    fn status_register_has_vbl(&self) -> bool {
-        self.status_vbl
-    }
-
-    fn has_destructive_status_read(&self, _address: u16) -> bool {
-        self.status_destructive
-    }
-}
-
 #[test]
 fn inc_read_byte_advances_pc_and_ticks() {
     let mut mcu = TestMcu::default();
@@ -5616,7 +5570,7 @@ fn vbl_exit_ticks_after_set(disable_spin: bool, freeze_dots: u64, edge_at_dot: u
     mcu.mem[0x10] = 0x00; // N clear so BPL is taken
     mcu.mem[0xFFFC] = LOOP as u8;
     mcu.mem[0xFFFD] = (LOOP >> 8) as u8;
-    mcu.status_destructive = true;
+    let mcu = mcu.with_polled_status(0x10);
     let mut cpu = create_cpu_with_mcu(mcu);
     cpu.set_pc(LOOP);
     cpu.set_status(0x24);
@@ -5668,7 +5622,7 @@ fn frozen_vbl_wait_resumes_at_the_counterfactual_read_tick() {
         mcu.mem[0x10] = 0x00;
         mcu.mem[0xFFFC] = LOOP as u8;
         mcu.mem[0xFFFD] = (LOOP >> 8) as u8;
-        mcu.status_destructive = true;
+        let mcu = mcu.with_polled_status(0x10);
         let mut cpu = create_cpu_with_mcu(mcu);
         cpu.set_pc(LOOP);
         cpu
