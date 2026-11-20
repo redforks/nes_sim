@@ -215,6 +215,28 @@ fn nmi_pulse_visibility_depends_on_cpu_sample_phase() {
 }
 
 #[test]
+fn machine_published_nmi_line_latches_edge_without_detector_call() {
+    // The frozen wake must not call `detect_nmi`, so the machine's per-dot
+    // line publication (`update_nmi_input`) has to latch the edge itself.
+    // Only sample dots (clock % 3 == 0) are line samples; the same pulse
+    // phase window as `test_nmi_detector` must fire at the same dot.
+    let mut v = NmiDetector::default();
+    let fires: Vec<u64> = (0..=20)
+        .filter(|&t| {
+            v.update_nmi_input((10..16).contains(&t), t, t.is_multiple_of(3));
+            if t % 3 == 2 && v.pending_asserted_since != 0 {
+                v.mark_consumed();
+                true
+            } else {
+                false
+            }
+        })
+        .collect();
+    assert_eq!(fires, vec![14]);
+    assert_eq!(v.pending_asserted_since, 0);
+}
+
+#[test]
 fn nmi_pending_survives_until_taken() {
     let mut v = NmiDetector::default();
 
