@@ -935,6 +935,20 @@ impl Ppu {
         self.registers.status.v_blank() & self.registers.ctrl.nmi_enable()
     }
 
+    /// Ticket #170 test probe: the open-bus latch with decay applied at
+    /// the current decay clock.
+    #[cfg(test)]
+    pub(crate) fn open_bus_latch_for_test(&mut self) -> u8 {
+        self.current_bus_latch()
+    }
+
+    /// Ticket #170 test probe: the decay clock (ticks since power-on).
+    /// A quiet-span skip must advance it by exactly the skipped ticks.
+    #[cfg(test)]
+    pub(crate) fn decay_cycle_for_test(&self) -> u64 {
+        self.cycle
+    }
+
     pub(crate) fn read_ppureg(&mut self, address: u16, cartridge: &mut Cartridge) -> u8 {
         let reg = normalize_ppu_addr(address);
         match reg {

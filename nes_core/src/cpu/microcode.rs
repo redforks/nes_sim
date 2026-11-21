@@ -1126,7 +1126,7 @@ pub enum BranchTest {
 }
 
 impl BranchTest {
-    fn test(self, cpu: &Cpu) -> bool {
+    pub(crate) fn test(self, cpu: &Cpu) -> bool {
         match self {
             BranchTest::IfCarryClear => !cpu.flag(Flag::Carry),
             BranchTest::IfCarrySet => cpu.flag(Flag::Carry),
@@ -1710,30 +1710,7 @@ impl Microcode {
                 Self::inc_dec(cpu, bus, IncDecTarget::DecrementAlu, ValueSource::Mem)
             }
 
-            Self::BranchRelative(BranchTest::IfCarryClear) => {
-                Self::branch_relative(cpu, bus, BranchTest::IfCarryClear.test(cpu))
-            }
-            Self::BranchRelative(BranchTest::IfCarrySet) => {
-                Self::branch_relative(cpu, bus, BranchTest::IfCarrySet.test(cpu))
-            }
-            Self::BranchRelative(BranchTest::IfZeroSet) => {
-                Self::branch_relative(cpu, bus, BranchTest::IfZeroSet.test(cpu))
-            }
-            Self::BranchRelative(BranchTest::IfZeroClear) => {
-                Self::branch_relative(cpu, bus, BranchTest::IfZeroClear.test(cpu))
-            }
-            Self::BranchRelative(BranchTest::IfNegativeSet) => {
-                Self::branch_relative(cpu, bus, BranchTest::IfNegativeSet.test(cpu))
-            }
-            Self::BranchRelative(BranchTest::IfNegativeClear) => {
-                Self::branch_relative(cpu, bus, BranchTest::IfNegativeClear.test(cpu))
-            }
-            Self::BranchRelative(BranchTest::IfOverflowSet) => {
-                Self::branch_relative(cpu, bus, BranchTest::IfOverflowSet.test(cpu))
-            }
-            Self::BranchRelative(BranchTest::IfOverflowClear) => {
-                Self::branch_relative(cpu, bus, BranchTest::IfOverflowClear.test(cpu))
-            }
+            Self::BranchRelative(test) => Self::branch_relative(cpu, bus, test),
 
             Self::Kill => cpu.halt(),
 
@@ -1790,17 +1767,19 @@ impl Microcode {
         }
     }
 
-    fn branch_relative<M: Mcu>(cpu: &mut Cpu, bus: &mut Bus<M>, branch_test_result: bool) {
+    fn branch_relative<M: Mcu>(cpu: &mut Cpu, bus: &mut Bus<M>, test: BranchTest) {
         let offset = cpu.inc_read_byte(bus);
         cpu.request_detect_interrupt = Some(true);
-        if branch_test_result {
+        if test.test(cpu) {
             let old_pch = cpu.pch();
             // Ticket #169 shape gate: this taken branch is the only place
             // the declarable back-edge can appear, so it is the only place
             // detection runs (spec #165 Q7 — zero cost elsewhere). The PC
             // still sits just past the fetched offset (branch_pc + 2).
             let branch_pc = cpu.pc.get().wrapping_sub(2);
-            if let Some(hit) = crate::spin_skip::backedge_shape_hit_at_bus(bus, branch_pc, offset) {
+            if let Some(hit) =
+                crate::spin_skip::backedge_shape_hit_at_bus(bus, branch_pc, offset, test)
+            {
                 cpu.spin_backedge_hit = Some(hit);
             }
             cpu.pc.wrapping_add((offset as i8) as u16);

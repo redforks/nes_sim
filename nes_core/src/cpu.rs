@@ -1,11 +1,11 @@
 use crate::microcode::fetch_and_decode;
-use crate::spin_skip::SpinBackedgeHit;
+use crate::spin_skip::{BIT_ABS, LDA_ABS, SpinBackedgeHit};
 use crate::view::MachineView;
 use crate::{SystemClock, bus::Bus, mcu::Mcu};
 use arraydeque::ArrayDeque;
 use microcode::{
-    AOrMemory, CrossPageBehavior, IncDecTarget, InterruptSequences, InterruptWindow, Microcode,
-    OpAfterAddressing,
+    AOrMemory, BranchTest, CrossPageBehavior, IncDecTarget, InterruptSequences, InterruptWindow,
+    Microcode, OpAfterAddressing,
 };
 
 pub(crate) mod microcode;
@@ -386,6 +386,33 @@ impl Cpu {
     /// survives a dot.
     pub(crate) fn take_spin_backedge_hit(&mut self) -> Option<SpinBackedgeHit> {
         self.spin_backedge_hit.take()
+    }
+
+    /// Ticket #170 quiet-span replay: apply the CPU-visible effects of
+    /// one counterfactual `$2002` poll — the register and flag writes the
+    /// real `BIT abs` / `LDA abs` microcode would perform — and answer
+    /// whether the loop's back-edge branch would be taken afterwards.
+    /// The machine owns the dot arithmetic (ADR 0018); this stays the one
+    /// narrow CPU seam the skip path needs (ADR 0010), mirroring `bit`
+    /// and `set_register(Register::A, ..)` exactly. The poll value itself
+    /// comes from the published `Mcu::read` path, so no bus semantics
+    /// are duplicated here.
+    pub(crate) fn apply_spin_poll_result(
+        &mut self,
+        poll_opcode: u8,
+        value: u8,
+        branch_test: BranchTest,
+    ) -> bool {
+        match poll_opcode {
+            BIT_ABS => {
+                self.set_flag(Flag::Overflow, value & 0x40 != 0);
+                self.update_negative_flag(value);
+                self.update_zero_flag(self.a & value);
+            }
+            LDA_ABS => self.set_register(Register::A, value),
+            _ => unreachable!("declared shape fixes the poll opcode"),
+        }
+        branch_test.test(self)
     }
 
     /// Read-only accessors for the register file — the per-dot contract (ADR-0010).

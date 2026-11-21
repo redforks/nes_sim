@@ -3,8 +3,12 @@ use crate::{
     bus::Bus,
     dma_bus::{BusOwner, DmaBus},
     ines::INesFile,
+    mcu::Mcu,
     nes::{Mmc3IrqOverride, NesMcu, controller::Button, ppu::palette::ColorTheme},
-    spin_skip::{SpinBackedgeHit, SpinDeclaration},
+    spin_skip::{
+        POLL_ADDR, QuietSkip, SpinBackedgeHit, SpinDeclaration, backedge_crosses_page,
+        loop_top_faces_vbl_boundary,
+    },
 };
 
 /// Borrowed output of one emulated frame.
@@ -52,6 +56,15 @@ pub struct NesMachine<P> {
     /// back-edge. `None` until then. Ticket #170 consumes this at the
     /// declaring back-edge to start (and later end) the quiet-span skip.
     spin_declaration: Option<SpinDeclaration>,
+    /// Ticket #170: the armed quiet-span skip for the declared loop —
+    /// `Some` from the declaring back-edge (switch on, `/NMI` quiet, grid
+    /// shape sound) until a wake ends it. While armed and past its first
+    /// parked dot the CPU stays parked and poll reads are replayed on the
+    /// anchor grid; see [`Self::tick_quiet_span`].
+    spin_skip: Option<QuietSkip>,
+    /// Counterfactual polls replayed so far (ticket #170). Written only on
+    /// the skip path; observed only through the `#[cfg(test)` probe.
+    spin_skip_replays: u64,
 }
 
 impl<P> NesMachine<P>
@@ -82,6 +95,8 @@ where
             irq_override,
             spin_skip_enabled: false,
             spin_declaration: None,
+            spin_skip: None,
+            spin_skip_replays: 0,
         }
     }
 
@@ -204,6 +219,13 @@ where
             return ExecuteResult::Continue;
         }
 
+        // Ticket #170: an armed quiet span may consume this dot — the
+        // CPU stays parked and a counterfactual poll read may be applied
+        // on its grid dot. `None` means real execution must run.
+        if let Some(result) = self.tick_quiet_span(clock) {
+            return result;
+        }
+
         let control = self.cpu.tick(&mut self.bus, &mut self.p);
         // Ticket #169 shape gate: a taken back-edge this dot may have
         // latched a poll-loop shape hit. Drain it on the same dot it was
@@ -251,6 +273,7 @@ where
         self.cpu.reset();
         // The declared loop belonged to the pre-reset program.
         self.spin_declaration = None;
+        self.spin_skip = None;
     }
 
     /// Hard reset (power cycle): the full power-up contract — RAM cleared,
@@ -268,6 +291,7 @@ where
         self.cpu.reset_hard();
         // Power cycle: the declared loop of the previous power-on is gone.
         self.spin_declaration = None;
+        self.spin_skip = None;
     }
 
     /// Mixed samples buffered so far (`f32` mono, [`crate::nes::apu::Apu::SAMPLE_RATE`]).
@@ -321,6 +345,9 @@ where
     /// setup; `clock` advances by `queue.len()` dots. For full
     /// interleaving, call `run_to_instruction_boundary` instead.
     pub fn set_pc(&mut self, pc: u16) {
+        // A manual PC move leaves any armed span's loop behind: drop it
+        // before the CPU runs anywhere else.
+        self.end_quiet_span();
         let mut empty = EmptyPlugin::new();
         self.cpu
             .run_to_instruction_boundary(&mut self.bus, &mut empty);
@@ -371,6 +398,33 @@ where
         self.bus.clock().cycles()
     }
 
+    /// Ticket #170 test probe: counterfactual polls replayed so far.
+    /// Zero unless a quiet span engaged for this machine.
+    #[cfg(test)]
+    pub(crate) fn spin_skip_replayed_polls(&self) -> u64 {
+        self.spin_skip_replays
+    }
+
+    /// Ticket #170 test probe: is a quiet span armed right now?
+    #[cfg(test)]
+    pub(crate) fn spin_skip_active(&self) -> bool {
+        self.spin_skip.is_some()
+    }
+
+    /// Ticket #170 test probe: the PPU open-bus latch (a replayed
+    /// `$2002` read must refresh bits 7-5 only — bits 4-0 survive).
+    #[cfg(test)]
+    pub(crate) fn ppu_open_bus_latch_for_test(&mut self) -> u8 {
+        self.bus.mcu_mut().ppu_mut().open_bus_latch_for_test()
+    }
+
+    /// Ticket #170 test probe: the PPU decay clock — must advance by
+    /// exactly the skipped ticks.
+    #[cfg(test)]
+    pub(crate) fn ppu_decay_cycle_for_test(&self) -> u64 {
+        self.bus.mcu().ppu().decay_cycle_for_test()
+    }
+
     /// Ticket #169 — record a shape-gate hit as the machine's declared
     /// spin-wait loop. Runs only when the CPU just executed a taken
     /// back-edge matching the declarable $2002 poll-loop shape (see
@@ -410,7 +464,139 @@ where
         {
             return;
         }
-        self.spin_declaration = Some(SpinDeclaration::new(hit, clock));
+        // A different loop replaces the slot: any span armed for the
+        // old loop is stale — drop it before re-arming below.
+        self.spin_skip = None;
+        let declaration = SpinDeclaration::new(hit, clock);
+        self.spin_declaration = Some(declaration);
+        // Ticket #170: arm the quiet-span skip. The switch gates it; a
+        // page-crossing taken branch takes 4 cycles and breaks the
+        // 21-dot grid (declare, never arm — #171 owns modeling it); and
+        // an armed span must never park with `/NMI` asserted — an
+        // assertion in flight dispatches at the next real instruction
+        // boundary, and parking would defer it.
+        if self.spin_skip_enabled
+            && !backedge_crosses_page(hit.loop_pc)
+            && !self.bus.mcu().ppu().nmi_line()
+        {
+            let irq_level =
+                self.bus.mcu().apu_irq_pending() || self.bus.mcu().cartridge_irq_pending();
+            self.spin_skip = Some(QuietSkip::new(declaration, false, irq_level));
+        }
+    }
+
+    /// End the active quiet span. Every wake drops the declaration too:
+    /// the loop's next taken back-edge re-declares with a fresh anchor, so
+    /// each wait walks declare → skip → wake → re-declare (#165 Q3
+    /// anchors, #167 story 9 lifecycle).
+    fn end_quiet_span(&mut self) {
+        self.spin_skip = None;
+        self.spin_declaration = None;
+    }
+
+    /// Ticket #170 quiet-span skip (spec #167 story 9): consume one CPU
+    /// dot on behalf of the declared poll loop, or end the span.
+    ///
+    /// Returns `Some` when this dot was spent inside the skip — the CPU
+    /// stayed parked, or a counterfactual `$2002` read was applied on its
+    /// poll dot — and `None` when real execution must run this dot: the
+    /// declaring iteration's tail, a wake dot, or no armed span at all.
+    ///
+    /// The span is quiet by definition: the VBL-set dot is the first edge
+    /// it can meet, and the grid-top position rule ends the span a full
+    /// iteration before that window, so the wake dot and every dot after
+    /// it run real — the normal NMI/IRQ edge machinery owns them (ADR
+    /// 0019: no detector internals on the skip path; the watchdog below
+    /// compares published line levels only).
+    ///
+    /// Dot grid: the declaration anchors at the declaring back-edge
+    /// (operand read, anchor+0); iteration 1's loop top is anchor+6 and
+    /// each iteration is 21 dots (BIT/LDA 4 cycles + taken branch 3
+    /// cycles), with the poll read at top+9. Counterfactual polls land
+    /// exactly on the dots the real loop would have polled.
+    fn tick_quiet_span(&mut self, clock: SystemClock) -> Option<ExecuteResult> {
+        let mut skip = *self.spin_skip.as_ref()?;
+        let dot = clock.cycles();
+        if dot < skip.first_parked_dot() {
+            // The declaring iteration's taken cycle (anchor+3) still runs
+            // real; parking starts at iteration 1's loop top.
+            return None;
+        }
+        // Watchdog: the span is quiet by definition, so any /NMI or IRQ
+        // line move — or DMA activity — ends it. The wake waits for the
+        // grid top (below) so real execution resumes at an instruction
+        // boundary on the anchor grid; an overshoot wakes immediately
+        // instead of stalling on a dot that will not come.
+        if self.bus.mcu().ppu().nmi_line() != skip.span_nmi_line()
+            || (self.bus.mcu().apu_irq_pending() || self.bus.mcu().cartridge_irq_pending())
+                != skip.span_irq_level()
+            || self.dma_bus.is_busy(self.bus.mcu())
+        {
+            skip.request_abort();
+        }
+        // A grid dot passed while DMA owned the bus — only when BOTH
+        // the pending poll and the pending top are behind: the grid
+        // advances at the top, so the poll position goes stale the dot
+        // after it is applied while `next_top` still lies ahead.
+        if dot > skip.next_poll_dot() && dot > skip.next_top_dot() {
+            // The anchor grid is broken — resume real execution
+            // (#171 owns resync).
+            self.end_quiet_span();
+            return None;
+        }
+        if dot == skip.next_poll_dot() {
+            // Replay one poll on its grid dot: the full published read
+            // path (VBL clear, write-toggle reset, race logic, latch
+            // refresh) via `Mcu::read`, then the CPU-visible effects
+            // through the narrow `Cpu::apply_spin_poll_result` seam.
+            let declaration = *skip.declaration();
+            let value = self.bus.mcu_mut().read(POLL_ADDR);
+            let taken = self.cpu.apply_spin_poll_result(
+                declaration.poll_opcode,
+                value,
+                declaration.branch_test,
+            );
+            self.spin_skip_replays += 1;
+            if !taken {
+                // The poll reads the VBL flag: the read's side effects are
+                // applied, so park the CPU at the branch and end the span.
+                // The next CPU dot fetches the branch for real, which
+                // decides on the freshly set flags — no synthesized exit
+                // poll (#165 Q5).
+                self.cpu.set_pc(declaration.branch_pc);
+                self.end_quiet_span();
+            } else {
+                self.spin_skip = Some(skip);
+            }
+            return Some(ExecuteResult::Continue);
+        }
+        if dot < skip.next_top_dot() {
+            // Mid-iteration parked dot; a pending abort waits for the top.
+            self.spin_skip = Some(skip);
+            return Some(ExecuteResult::Continue);
+        }
+        if dot > skip.next_top_dot() || skip.abort_pending() {
+            // Overshoot (a grid dot consumed by DMA) or watchdog wake:
+            // the CPU is parked at the loop top — an instruction
+            // boundary — so the real fetch re-enters the loop exactly
+            // where the control does.
+            self.end_quiet_span();
+            return None;
+        }
+        // A grid loop-top dot; the PPU has already ticked this dot, so its
+        // timing shows the position of the NEXT dot. Would this
+        // iteration cover the VBL window (the (241,0) race read or the
+        // (241,1) VBL set)? If so, wake — real execution owns the race
+        // read, the VBL set, and the exit poll. Otherwise park the top
+        // and advance the grid.
+        let timing = self.bus.mcu().ppu().timing();
+        if loop_top_faces_vbl_boundary(timing.scanline(), timing.dot()) {
+            self.end_quiet_span();
+            return None;
+        }
+        skip.advance_top();
+        self.spin_skip = Some(skip);
+        Some(ExecuteResult::Continue)
     }
 }
 
