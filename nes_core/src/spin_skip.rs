@@ -37,22 +37,37 @@
 //! switch on both sides with detection active, which is exactly what
 //! proves the declaration itself is observationally invisible.
 //!
-//! Quiet-span skip (ticket #170): once a loop is declared and the
-//! switch is on, the machine replaces real poll+branch execution with
-//! the counterfactual model — each replayed `$2002` read runs the real
-//! read semantics on its poll dot (VBL clear, write-toggle reset, the
-//! dot-0 race logic, partial bus-latch refresh) through the published
-//! `Mcu::read` path, and the CPU-visible flag effects are applied via
-//! the narrow `Cpu::apply_spin_poll_result` seam. The grid is anchored
-//! at the declaration's first back-edge (#165 Q3). The span is quiet
-//! by definition — no NMI/IRQ edges, no DMA — so the skip never touches
-//! the interrupt detector internals (spec #165 Q2, ADR 0019's lesson);
-//! the watchdog below exists only to hand control back if the world
-//! stops being quiet, and the skip *always* ends before the VBL
-//! boundary window so real execution runs the dot-0 race and the VBL
-//! set dot. No synthesized exit poll: the first counterfactual poll
-//! that reads the flag set clears it in the real PPU state and hands
-//! PC to the branch, which decides for real.
+//! Quiet-span skip (tickets #170 + #171): once a loop is declared and
+//! the switch is on, the machine replaces real poll+branch execution
+//! with the counterfactual model — each replayed `$2002` read runs the
+//! real read semantics on its poll dot (VBL clear, write-toggle reset,
+//! the dot-0 race logic, partial bus-latch refresh) through the
+//! published `Mcu::read` path, and the CPU-visible flag effects are
+//! applied via the narrow `Cpu::apply_spin_poll_result` seam. The grid
+//! is anchored at the declaration's first back-edge (#165 Q3).
+//!
+//! Ticket #171 edge handling. The span is no longer scoped away from
+//! the VBL window — replays land exactly on the control's poll dots,
+//! so a poll inside the race window is a real read on its exact dot
+//! (#168's pinned read is never moved) and the VBL flag it observes
+//! ends the span at that poll. The frame boundary itself never runs
+//! parked: at each poll the span checks whether the upcoming VBL set
+//! sits inside the next parked iteration
+//! ([`next_parked_iteration_covers_vbl_set`]) and ends at that poll
+//! when it does, resuming at the branch PC so the branch, the boundary
+//! dot, and the flag-observing exit poll all run real, on the control's
+//! own cycle grid. Every other edge ends the span at dot precision: a
+//! `/NMI` line move or IRQ level move is recorded at the dot it happens
+//! (the machine watches the published lines every dot) and the span
+//! wakes at the next grid top — running the standard end-of-cycle
+//! interrupt poll first when the control's in-flight branch cycle
+//! already saw the edge — and a DMA that becomes visible ends the span
+//! at that very dot. No synthesized exit: the interrupt decision is
+//! always the real published detection machinery on real detector state
+//! (spec #165 Q2, ADR 0019's lesson — no detector internals on the skip
+//! path), and every wake resumes at an instruction boundary (loop top
+//! or branch PC) from the last completed real iteration — never a
+//! partially replayed one.
 
 use crate::SystemClock;
 use crate::bus::Bus;
@@ -207,19 +222,24 @@ const POLL_AFTER_LOOP_TOP_DOTS: u64 = 9;
 /// fetches.
 const TOP_AFTER_ANCHOR_DOTS: u64 = 6;
 
-/// Would the iteration starting at a grid loop top reach the VBL
-/// boundary window — the dot-0 race read `(241, 0)` and the VBL-set dot
-/// `(241, 1)`? `scanline`/`dot` are the PPU position of the dot AFTER
-/// the top (as the machine reads it right after that top's `tick_ppu`).
-///
-/// The rule is deliberately one dot conservative: a top whose position
-/// shows `(240, 321)` or later wakes immediately, leaving a whole real
-/// iteration before the window — real execution then owns the race
-/// read, the VBL set, and the exit poll. On the CPU read phase (the
-/// only grid tops that exist) the conservative and exact rules agree.
-pub(crate) fn loop_top_faces_vbl_boundary(scanline: u16, dot: u16) -> bool {
-    (scanline == 240 && dot >= 321) || (scanline == 241 && dot <= 2)
-}
+/// Dots before a grid top at which the control's in-flight back-edge
+/// branch read the `/NMI` sample that its operand-cycle interrupt
+/// poll uses: the branch's second cycle sits at `top - 6` and reads
+/// the sample taken two dots earlier (`top - 8`). Ticket #171's wake
+/// rule: a line rise at or before `top - 8` was already visible to
+/// that poll, so the control's dispatch begins at the top and the
+/// wake must run the standard interrupt poll there; a later rise is
+/// first seen by the *next* iteration's poll, so a plain wake (real
+/// fetch from the top) reproduces it exactly.
+const NMI_BRANCH_SAMPLE_BEFORE_TOP: u64 = 8;
+
+/// Dots before a grid top at which the control's in-flight back-edge
+/// branch operand-cycle poll read the IRQ level (`top - 6`, level
+/// semantics — read directly, no sample lag). A level rise at or
+/// before `top - 6` was seen by that poll and dispatches at the top;
+/// a later rise dispatches after the next poll, reproduced by a
+/// plain wake.
+const IRQ_BRANCH_POLL_BEFORE_TOP: u64 = 6;
 
 /// Does the declared loop's taken back-edge cross a page? A crossing
 /// branch takes 8 cycles instead of 7, breaking the fixed 21-dot grid,
@@ -230,6 +250,79 @@ pub(crate) fn loop_top_faces_vbl_boundary(scanline: u16, dot: u16) -> bool {
 /// to `loop_pc` crosses a page iff the high bytes differ.
 pub(crate) fn backedge_crosses_page(loop_pc: u16) -> bool {
     loop_pc.wrapping_add(5) & 0xFF00 != loop_pc & 0xFF00
+}
+
+/// Ticket #171: would the parked iteration *after* this poll dot cover
+/// the frame boundary — the VBL set at `(241,1)`?
+///
+/// `(scanline, dot)` is the PPU position *after* this poll dot's PPU
+/// tick (the position the boundary-aware `$2002` read logic uses on
+/// this same dot). The frame-boundary tick's CPU dot must never be
+/// spent parked mid-iteration: the boundary snapshot would compare
+/// the parked PC against the control's mid-iteration PC. After this
+/// poll, the parked CPU dots run from `poll + 3` up to the next grid
+/// poll at `poll + 21` (which replays — snapshot-exact). So the span
+/// ends at *this* poll iff the boundary tick's CPU dot lands strictly
+/// between the two, which for every frame parity reduces to the set
+/// being at most 18 dots past the poll dot (`dist ∈ [0, 17]` after the
+/// one-dot timing offset). The resume (`PC := branch_pc`) runs the
+/// branch fetch at `poll + 3`, which covers every tight phase exactly —
+/// the boundary dot becomes the branch fetch, the branch operand, or a
+/// later real cycle, cycle-for-cycle identical to the control — and
+/// the next iteration's real poll reads the fresh flag and exits the
+/// loop through the fall-through.
+///
+/// Distances 18–20 leave the boundary tick's CPU dot exactly on the
+/// next grid poll: parking one more iteration is exact — the replayed
+/// read on that dot is the control's own read (the #168 race read at
+/// distance 20 included), and the replay applies exactly the
+/// control's cycle effects, so the boundary snapshot matches.
+/// Positions at `(241,0)` and `(241,1)` are the two tightest
+/// upcoming-set phases (the poll dot sits at `(241,339)`-relative and
+/// `(241,0)`-relative clock positions; the frame parity decides which
+/// one a replay can land on) — both must END the span. Positions
+/// strictly past `(241,1)` mean the set already fired this frame;
+/// the next one is a frame away.
+pub(crate) fn next_parked_iteration_covers_vbl_set(scanline: u16, dot: u16) -> bool {
+    if scanline > 241 || (scanline == 241 && dot > 1) {
+        return false;
+    }
+    // Dots from just past this poll dot to the upcoming `(241,1)` set,
+    // as one subtraction so a poll deep in scanline 240 borrows across
+    // the line boundary instead of underflowing on `1 - dot`.
+    let dist = 241 * 341 + 1 - (scanline as i32 * 341 + dot as i32);
+    (0..=17).contains(&dist)
+}
+
+/// Ticket #171: would the *first parked iteration* of a freshly
+/// declared span cover the frame boundary — the VBL set at `(241,1)`?
+///
+/// `(scanline, dot)` is the PPU position *after* the declaring
+/// back-edge dot's PPU tick (the same offset convention as
+/// [`next_parked_iteration_covers_vbl_set`]). A span declared now
+/// parks its CPU from `anchor + 6` up to its first grid poll at
+/// `anchor + 15`; the frame-boundary tick's CPU dot landing anywhere
+/// in that pre-poll range would be spent parked mid-iteration and the
+/// boundary snapshot would diverge from the control. This matters
+/// most for the re-declare after a boundary-rule span end: the resume
+/// branch's own taken back-edge fires a few dots before the set, and
+/// without this gate the fresh span would park straight back through
+/// the boundary tick.
+///
+/// The refusal window `dist ∈ [3, 13]` is the per-frame-parity union:
+/// the boundary tick's CPU dot is `set`, `set + 1`, or `set + 2`
+/// (whichever sits on the CPU's 3-dot phase), so the exact window
+/// shifts by frame; the union over-covers a phase or two at each
+/// edge, and an over-refusal is exact — the loop simply runs one
+/// iteration for real and the next clean back-edge declares. Positions
+/// at or past `(241,1)` mean the set already fired this frame; a span
+/// parked now waits a whole frame for the next one.
+pub(crate) fn declaring_backedge_parks_through_vbl_boundary(scanline: u16, dot: u16) -> bool {
+    if scanline > 241 || (scanline == 241 && dot >= 1) {
+        return false;
+    }
+    let dist = 241 * 341 + 1 - (scanline as i32 * 341 + dot as i32);
+    (3..=13).contains(&dist)
 }
 
 /// The active quiet-span skip (ticket #170): the machine parks the CPU
@@ -257,13 +350,18 @@ pub(crate) struct QuietSkip {
     next_poll_dot: u64,
     /// NMI line level when the span started (edge watchdog snapshot).
     span_nmi_line: bool,
-    /// IRQ line level when the span started (edge watchdog snapshot).
+    /// IRQ line level when the span started (level watchdog snapshot).
     span_irq_level: bool,
-    /// An unplanned event (line transition or bus activity) requested a
-    /// wake at the next grid top. Waiting for the top keeps the poll
-    /// grid intact when no dots were consumed; a top overshoot (bus
-    /// activity) wakes on the first free CPU dot instead.
-    abort_pending: bool,
+    /// Ticket #171: the dot the `/NMI` line first left its snapshot
+    /// level, if it has. Recorded dot-exact (the machine watches the
+    /// line every dot while a span is armed) because the wake rule
+    /// turns on the two-dot sample lag of the branch-cycle poll.
+    nmi_event_dot: Option<u64>,
+    /// Ticket #171: the first CPU dot the IRQ level was observed to
+    /// leave its snapshot level, if any. CPU-dot granularity suffices:
+    /// the wake rule turns on the branch operand-cycle poll dot itself,
+    /// and the level is read live at the decision.
+    irq_event_dot: Option<u64>,
 }
 
 impl QuietSkip {
@@ -279,7 +377,8 @@ impl QuietSkip {
             next_poll_dot: first_parked_dot + POLL_AFTER_LOOP_TOP_DOTS,
             span_nmi_line: nmi_line,
             span_irq_level: irq_level,
-            abort_pending: false,
+            nmi_event_dot: None,
+            irq_event_dot: None,
         }
     }
 
@@ -315,12 +414,43 @@ impl QuietSkip {
         self.span_irq_level
     }
 
-    pub(crate) fn abort_pending(&self) -> bool {
-        self.abort_pending
+    /// Ticket #171: record the dot the `/NMI` line first left its
+    /// snapshot level. First observation wins — the wake rule keys on
+    /// the first move only.
+    pub(crate) fn record_nmi_event(&mut self, dot: u64) {
+        if self.nmi_event_dot.is_none() {
+            self.nmi_event_dot = Some(dot);
+        }
     }
 
-    pub(crate) fn request_abort(&mut self) {
-        self.abort_pending = true;
+    /// Ticket #171: record the first CPU dot the IRQ level was observed
+    /// to leave its snapshot level.
+    pub(crate) fn record_irq_event(&mut self, dot: u64) {
+        if self.irq_event_dot.is_none() {
+            self.irq_event_dot = Some(dot);
+        }
+    }
+
+    /// Ticket #171: which wake does the grid top at `next_top_dot` owe?
+    /// `None` — the world stayed quiet, park the top and advance the
+    /// grid. `Some(true)` — a line event already visible to the
+    /// control's in-flight branch-cycle poll: wake and run the standard
+    /// interrupt poll at the top first (the control's dispatch begins
+    /// at the top; the late poll delivers the same dispatch dot).
+    /// `Some(false)` — a later line event: plain wake, the real fetch
+    /// from the top reproduces the control's next-poll dispatch.
+    pub(crate) fn wake_kind_at_top(&self) -> Option<bool> {
+        if self.nmi_event_dot.is_none() && self.irq_event_dot.is_none() {
+            return None;
+        }
+        let top = self.next_top_dot;
+        let nmi_seen_by_branch = self
+            .nmi_event_dot
+            .is_some_and(|dot| dot <= top - NMI_BRANCH_SAMPLE_BEFORE_TOP);
+        let irq_seen_by_branch = self
+            .irq_event_dot
+            .is_some_and(|dot| dot <= top - IRQ_BRANCH_POLL_BEFORE_TOP);
+        Some(nmi_seen_by_branch || irq_seen_by_branch)
     }
 }
 

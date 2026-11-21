@@ -415,6 +415,32 @@ impl Cpu {
         branch_test.test(self)
     }
 
+    /// Ticket #171: the standard end-of-cycle interrupt poll, exposed for
+    /// the quiet-span path at the two dots where the parked CPU owes the
+    /// control's real detection step — a replayed poll cycle (the poll
+    /// read is the poll instruction's final cycle, whose `is_last_op`
+    /// poll the real `Cpu::tick` would have run) and a grid-top wake
+    /// that lands on an instruction boundary where the control's in-flight
+    /// branch already polled. Real detector state, real line levels,
+    /// the real `detect_interrupt` — nothing is synthesized or predicted
+    /// (ADR 0019's lesson: no detector internals on the skip path).
+    ///
+    /// `last_op` passes as a neutral `Nop`: the CLI/SEI/PLP pre-cycle
+    /// status special case is inert for poll-loop cycles, and the
+    /// parked CPU never executed one mid-span.
+    pub(crate) fn detect_interrupt_at_wake(&mut self, clock: SystemClock) {
+        self.detect_interrupt(clock, true, self.status, Microcode::Nop);
+    }
+
+    /// Ticket #171: has the standard end-of-cycle poll latched an
+    /// interrupt that real execution must dispatch at the next
+    /// instruction boundary? The quiet-span wake path pairs this with
+    /// [`Self::detect_interrupt_at_wake`] to decide whether the span's
+    /// dot-precise exit still owes a dispatch.
+    pub(crate) fn has_latched_interrupt(&self) -> bool {
+        !matches!(self.interrupt_detected, InterruptType::None)
+    }
+
     /// Read-only accessors for the register file — the per-dot contract (ADR-0010).
     /// Fields are private; writes go via internal methods or test helpers.
     pub fn a(&self) -> u8 {
