@@ -113,14 +113,8 @@ pub(crate) struct SpinBackedgeHit {
 pub(crate) struct SpinDeclaration {
     /// PC of the poll instruction at the loop top.
     pub(crate) loop_pc: u16,
-    /// Where the back-edge branch jumps to. Equal to `loop_pc` by the
-    /// accepted shape; kept explicit because #170's wake path keys on
-    /// the jump target.
-    pub(crate) back_edge_target: u16,
     /// The poll opcode ($2C or $AD).
     pub(crate) poll_opcode: u8,
-    /// The poll instruction's operand bytes (the $2002 address).
-    pub(crate) poll_operands: [u8; 2],
     /// PC of the back-edge branch instruction (`loop_pc + 3` by shape).
     pub(crate) branch_pc: u16,
     /// Absolute dot clock of the declaring back-edge — the first
@@ -137,12 +131,7 @@ impl SpinDeclaration {
     pub(crate) fn new(hit: SpinBackedgeHit, clock: SystemClock) -> Self {
         SpinDeclaration {
             loop_pc: hit.loop_pc,
-            // The branch jumps back to the read instruction, and the read
-            // instruction sits at the loop top — the accepted shape
-            // makes these the same PC (asserted by the shape matcher).
-            back_edge_target: hit.loop_pc,
             poll_opcode: hit.poll_opcode,
-            poll_operands: [POLL_ADDR as u8, (POLL_ADDR >> 8) as u8],
             branch_pc: hit.loop_pc.wrapping_add(3),
             anchor_dot: clock.cycles(),
             branch_test: hit.branch_test,
@@ -662,9 +651,7 @@ mod tests {
         };
         let decl = SpinDeclaration::new(hit, SystemClock(82190));
         assert_eq!(decl.loop_pc, 0x8020);
-        assert_eq!(decl.back_edge_target, 0x8020);
         assert_eq!(decl.poll_opcode, BIT_ABS);
-        assert_eq!(decl.poll_operands, [0x02, 0x20]);
         assert_eq!(decl.branch_pc, 0x8023);
         assert_eq!(decl.anchor_dot, 82190);
     }

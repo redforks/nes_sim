@@ -761,9 +761,7 @@ fn shape_gate_declares_bit_poll_loop_at_first_backedge() {
         machine.spin_declaration(),
         Some(SpinDeclaration {
             loop_pc: rom.loop_top,
-            back_edge_target: rom.loop_top,
             poll_opcode: 0x2C,
-            poll_operands: [0x02, 0x20],
             branch_pc: rom.loop_top + 3,
             branch_test: BranchTest::IfNegativeClear,
             anchor_dot: start + FIRST_BACKEDGE_DOTS_AFTER_READ,
