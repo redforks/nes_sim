@@ -1,5 +1,9 @@
 # Spin-wait freeze contract: synthesized VBL exit, replayed device effects, line-level wake
 
+## Status
+
+parked / superseded — spec #158 reverted the spin-wait freeze to restore pre-#132 frame output, per decision #155. This ADR is kept as a record of the freeze design; the code it describes no longer exists.
+
 Spin-wait freeze was introduced to make repeated poll loops unobservable: while a declared loop is frozen, the rest of the machine keeps advancing on the same dots and the program resumes as if the loop had executed. Review found that the original contract had drifted. Only `$2002` status polls were covered: device-register polls (`$4015` APU status, `$4016`/`$4017` controller ports) were excluded, so input/IRQ wait loops still burned dots. The frozen wake path called the CPU's own edge-latching interrupt detectors, mutating CPU state on a frozen dot. The original spec pinned loop-top re-execution as the resume, but the implementation performs the status poll read itself and exits through the back edge: re-execution shifts later reads off the counterfactual grid, changes which frames suppress VBL, and misconverges cycle-counted initialization such as `nmi_sync`. A `$2007` poll could also declare and swallow PPUDATA's read-buffer refill and v-increment. This ADR records the finalized contract; it changes no code.
 
 ## Considered options
@@ -26,4 +30,4 @@ Spin-wait freeze was introduced to make repeated poll loops unobservable: while 
 - The frozen path never invokes edge detectors; CPU interrupt state can only change through normal execution or an actual wake dispatch. Moving edge latching back into the CPU would reintroduce frozen-dot state mutation.
 - Harness plugins keep observing frozen loops at the loop's own cadence; speeding up `end` sampling or dropping the per-dot stop check would trip verdicts earlier than an executing loop. The verdict logic stays independent of freeze internals.
 - PPUDATA and KIL remain non-declarable; broadening declaration to unclassified read effects would silently swallow device actions or change halt recovery.
-- GLOSSARY.md gains the device-poll freeze discipline, wake-from-line-levels, frozen-dot harness contract, and counterfactual grid vocabulary, with avoid-terms that reject the superseded loop-top-only wording.
+- GLOSSARY.md gained the device-poll freeze discipline, wake-from-line-levels, frozen-dot harness contract, and counterfactual grid vocabulary, with avoid-terms that rejected the superseded loop-top-only wording. The freeze was then reverted (#158) and those terms were removed again (#160); this bullet records a past outcome, not current documentation.

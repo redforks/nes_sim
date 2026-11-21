@@ -391,49 +391,6 @@ impl Mcu for NesMcu {
         self.latch(value, false);
         self.lower_ram.write_stack_page(address, value, clock);
     }
-
-    fn status_register_has_vbl(&self) -> bool {
-        self.ppu.in_vblank()
-    }
-
-    fn has_destructive_status_read(&self, address: u16) -> bool {
-        ppu::is_ppu_status_addr(address)
-    }
-
-    /// DMC status acknowledges an APU interrupt, and controller-port reads
-    /// shift a device. These polls may freeze: the device action is replayed
-    /// at the loop cadence (device-sourced writes never wake a spin).
-    fn is_device_register(&self, address: u16) -> bool {
-        (0x4015..=0x4017).contains(&address)
-    }
-
-    fn is_action_data_port(&self, address: u16) -> bool {
-        ppu::is_ppu_data_addr(address)
-    }
-
-    /// Replay a skipped read's device-side effects for a frozen spin
-    /// (tickets #135, #150). No bus latch or data is touched here — the
-    /// resumed real read returns the value when the spin wakes.
-    fn replay_status_read_side_effects(&mut self, address: u16) {
-        if ppu::is_ppu_status_addr(address) {
-            self.ppu.replay_status_side_effects();
-        } else {
-            match address {
-                0x4015 => self.apu.replay_read_side_effects(address),
-                0x4016 => {
-                    self.controller.a.read_strobed();
-                    self.controller.a.oe = true;
-                    self.controller.b.oe = false;
-                }
-                0x4017 => {
-                    self.controller.b.read_strobed();
-                    self.controller.a.oe = false;
-                    self.controller.b.oe = true;
-                }
-                _ => {}
-            }
-        }
-    }
 }
 
 /// `$5204` carries status in bits 7-6 only; its low bits read the bus latch

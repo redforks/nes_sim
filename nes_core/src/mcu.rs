@@ -44,55 +44,6 @@ pub trait Mcu {
     fn write_stack_page(&mut self, address: u8, value: u8, clock: SystemClock) {
         self.write(0x100 + address as u16, value, clock)
     }
-
-    /// Read-only observation of the VBL bit a skipped `$2002` read would
-    /// return. Default `false`: only the NES memory map has a PPU status
-    /// register. This is a flag query, not a bus read; the CPU uses it to
-    /// resume a $2002 wait loop as soon as its next real read would observe
-    /// VBL (ticket #135). The replay cadence is applied to side effects
-    /// after this check; the peek itself never clears the flag.
-    fn status_register_has_vbl(&self) -> bool {
-        false
-    }
-
-    /// Classification query: whether an address names a status register
-    /// whose read has destructive device-side effects. Default `false`.
-    /// The CPU uses this to decide whether a frozen poll must replay those
-    /// effects; no bus read or device mutation happens in this query.
-    /// It is a naming query like `status_register_has_vbl`, not a new
-    /// bus/DMA channel state seam (ADR-0018): the CPU still owns the one
-    /// freeze/wake path. Ticket #135 needed the replay hook; this hook only
-    /// decides which polls use it.
-    fn has_destructive_status_read(&self, _address: u16) -> bool {
-        false
-    }
-
-    /// Classification query: whether a readable address names a device
-    /// register whose read is itself an action (a controller shift, an APU
-    /// interrupt acknowledge, a zapper sample). Default `false`. Such a
-    /// poll may declare a spin: its device action is replayed at the loop
-    /// cadence while frozen, and the real read after wake returns the value.
-    /// Device-sourced writes never wake a spin by decision.
-    fn is_device_register(&self, _address: u16) -> bool {
-        false
-    }
-
-    /// Classification query: whether a readable address is a data port whose
-    /// read mutates device state rather than returning status. A PPUDATA
-    /// read refills the read buffer and advances v; no status-effect replay
-    /// can stand in for it, so a poll of such a port must never declare a
-    /// spin. This exclusion is permanent, independent of the device-register
-    /// classification. Default `false`.
-    fn is_action_data_port(&self, _address: u16) -> bool {
-        false
-    }
-
-    /// Replay the device-side effects of a read that a frozen CPU spin
-    /// skipped: PPU status flag clears and `$4015`-`$4017` device actions.
-    /// The default is a no-op. Implementations must not drive the CPU bus,
-    /// return a value, or change any other device state. The CPU calls this
-    /// on its own at the spin's back-edge cadence (tickets #135, #150).
-    fn replay_status_read_side_effects(&mut self, _address: u16) {}
 }
 
 #[cfg(test)]

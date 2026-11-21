@@ -4,7 +4,6 @@ use super::microcode::{
 };
 use super::*;
 use crate::test_utils::MockMcu;
-use crate::wait_mcu::WaitMcu as TestMcu;
 
 // NES vector addresses
 const IRQ_VECTOR: u16 = 0xFFFE;
@@ -148,7 +147,7 @@ fn test_irq_detector() {
 /// (`t % 3 == 2`, sampling the line as of dot `t - 2`) return whether an
 /// edge was recognised there (consuming it, as the interrupt dispatch would).
 fn dot(v: &mut NmiDetector, t: u64, high: bool) -> bool {
-    v.update_nmi_line(high, t, t.is_multiple_of(3));
+    v.update_nmi_input(high, t, t.is_multiple_of(3));
     if t % 3 == 2 && v.detect_nmi() {
         v.mark_consumed();
         true
@@ -215,71 +214,12 @@ fn nmi_pulse_visibility_depends_on_cpu_sample_phase() {
 }
 
 #[test]
-fn machine_published_nmi_line_wakes_a_frozen_poll_on_the_normal_edge_dot() {
-    // External view only: publish an NMI pulse to a declared device poll,
-    // then compare the vector-fetch dot with a never-freeze control given
-    // the identical line pattern. The published level must be enough for
-    // the frozen wake to dispatch at the same dot as normal detection.
-    const LOOP: u16 = 0x0400;
-    const HANDLER: u16 = 0x0600;
-
-    fn build(disable_spin: bool) -> Harness<TestMcu> {
-        let mut mcu = TestMcu::default();
-        mcu.mem[LOOP as usize] = 0xAD; // LDA $4015 (device poll)
-        mcu.mem[LOOP as usize + 1] = 0x15;
-        mcu.mem[LOOP as usize + 2] = 0x40;
-        mcu.mem[LOOP as usize + 3] = 0xD0; // BNE $0400
-        mcu.mem[LOOP as usize + 4] = 0xFB;
-        mcu.mem[0x4015] = 1; // Z clear, so the back-edge is taken
-        mcu.mem[0xFFFA] = HANDLER as u8;
-        mcu.mem[0xFFFB] = (HANDLER >> 8) as u8;
-        mcu.mem[0xFFFC] = LOOP as u8;
-        mcu.mem[0xFFFD] = (LOOP >> 8) as u8;
-        let mut cpu = create_cpu_with_mcu(mcu);
-        cpu.set_pc(LOOP);
-        cpu.set_status(0x24); // NMI dispatchable, IRQ masked
-        if disable_spin {
-            cpu.set_spin_declaration_disabled_for_test(true);
-        }
-        cpu
-    }
-
-    fn vector_fetch_dot(cpu: &mut Harness<TestMcu>, disable_spin: bool) -> u64 {
-        let mut plugin = EmptyPlugin::new();
-        for dot in 1..=30u64 {
-            tick_single_dot(cpu, &mut plugin, dot, false);
-        }
-        assert!(
-            cpu.mcu().device_replays[0] > 0 || disable_spin,
-            "precondition: the frozen run must declare the device-poll spin"
-        );
-        cpu.mcu_mut().reads.clear();
-        for dot in 31..=90u64 {
-            tick_single_dot(cpu, &mut plugin, dot, (34..40).contains(&dot));
-            if cpu.mcu().reads.contains(&0xFFFA) {
-                return dot;
-            }
-        }
-        panic!("NMI never dispatched (control={disable_spin})");
-    }
-
-    let mut frozen = build(false);
-    let frozen_dot = vector_fetch_dot(&mut frozen, false);
-    let mut control = build(true);
-    let control_dot = vector_fetch_dot(&mut control, true);
-    assert_eq!(
-        frozen_dot, control_dot,
-        "frozen wake must consume the published NMI line at the normal edge dot"
-    );
-}
-
-#[test]
 fn nmi_pending_survives_until_taken() {
     let mut v = NmiDetector::default();
 
     // an edge latches mid-assertion…
     for t in 0..=14u64 {
-        v.update_nmi_line((10..40).contains(&t), t, t % 3 == 0);
+        v.update_nmi_input((10..40).contains(&t), t, t % 3 == 0);
         if t % 3 == 2 {
             v.detect_nmi();
         }
@@ -288,10 +228,7 @@ fn nmi_pending_survives_until_taken() {
 
     // …stays pending across the fall and low samples…
     for t in 40..=43u64 {
-        v.update_nmi_line(false, t, t % 3 == 0);
-        if t % 3 == 2 {
-            v.detect_nmi();
-        }
+        v.update_nmi_input(false, t, t % 3 == 0);
     }
     assert!(v.detect_nmi());
     assert!(v.pending_asserted_since != 0);
@@ -299,7 +236,7 @@ fn nmi_pending_survives_until_taken() {
 
     // …and once taken, the low line raises nothing further
     for t in 44..=47u64 {
-        v.update_nmi_line(false, t, t % 3 == 0);
+        v.update_nmi_input(false, t, t % 3 == 0);
     }
     assert!(!v.detect_nmi());
     assert!(v.pending_asserted_since == 0);
@@ -3969,6 +3906,38 @@ fn test_compare_clears_zero_flag() {
 
 // Tests from flattened cpu2 module
 
+struct TestMcu {
+    mem: [u8; 0x10000],
+    writes: Vec<(u16, u8)>,
+    reads: Vec<u16>,
+}
+
+impl Default for TestMcu {
+    fn default() -> Self {
+        Self {
+            mem: [0; 0x10000],
+            writes: Vec::new(),
+            reads: Vec::new(),
+        }
+    }
+}
+
+impl Mcu for TestMcu {
+    fn read(&mut self, address: u16) -> u8 {
+        self.reads.push(address);
+        self.mem[address as usize]
+    }
+
+    fn peek(&self, address: u16) -> u8 {
+        self.mem[address as usize]
+    }
+
+    fn write(&mut self, address: u16, value: u8, _clock: SystemClock) {
+        self.mem[address as usize] = value;
+        self.writes.push((address, value));
+    }
+}
+
 #[test]
 fn inc_read_byte_advances_pc_and_ticks() {
     let mut mcu = TestMcu::default();
@@ -4461,11 +4430,7 @@ fn interrupt_handler_entry_21_dots_after_boundary() {
     /// sequence's vector fetch, after which the very next cycle fetches
     /// the handler's first opcode.
     fn run(assert_line: impl Fn(&mut Harness<MockMcu>, SystemClock)) -> (u64, u64) {
-        // CLI; JMP $0403; NOP; JMP $0403. A two-instruction loop keeps the
-        // CPU running long enough to observe interrupt dispatch timing
-        // without qualifying as a bare self-loop spin.
-        let mcu =
-            MockMcu::new().with_program(MAIN, &[0x58, 0x4C, 0x03, 0x04, 0xEA, 0x4C, 0x03, 0x04]);
+        let mcu = MockMcu::new().with_program(MAIN, &[0x58, 0x4C, 0x01, 0x04]); // CLI; JMP $0401
         mcu.write_word(0xFFFA, HANDLER); // NMI vector
         mcu.write_word(0xFFFE, HANDLER); // IRQ vector
         mcu.write_word(0xFFFC, MAIN); // reset vector
@@ -5142,634 +5107,5 @@ fn bus_cycle_invariants() {
                 "opcode 0x{op:02X} has {run} consecutive writes"
             );
         }
-    }
-}
-
-// ---- Spin freeze: bare self-loops (ticket #133) --------------------------
-//
-// These tests observe only public behavior: MCU bus traffic, register
-// snapshots/PC, and ExecuteResult. No freeze source is inspected.
-
-/// Advance one CPU cycle (three system dots). The machine publishes NMI
-/// samples on dot 0 of each CPU cycle; every spin test uses this helper so
-/// the interrupt detector sees the same phase it sees in production.
-fn tick_full_cpu_cycle<P: Plugin<TestMcu>>(cpu: &mut Harness<TestMcu>, plugin: &mut P, cycle: u64) {
-    for dot in 0..3 {
-        let clock = SystemClock(cycle * 3 + dot);
-        cpu.update_nmi_line(false, clock, dot == 0);
-        cpu.tick(plugin, clock);
-    }
-}
-
-#[test]
-fn repeated_jmp_to_self_stops_driving_the_bus() {
-    const LOOP: u16 = 0x0400;
-    let mut mcu = TestMcu::default();
-    mcu.mem[LOOP as usize] = 0x4C; // JMP $0400
-    mcu.mem[LOOP as usize + 1] = 0x00;
-    mcu.mem[LOOP as usize + 2] = 0x04;
-    mcu.mem[0xFFFC] = LOOP as u8;
-    mcu.mem[0xFFFD] = (LOOP >> 8) as u8;
-    let mut cpu = create_cpu_with_mcu(mcu);
-    cpu.set_pc(LOOP);
-    cpu.mcu_mut().reads.clear();
-
-    let mut plugin = EmptyPlugin::new();
-    // Two full executions of the loop, then many dots with no bus traffic.
-    let mut t = 1u64;
-    for _ in 0..6 {
-        tick_full_cpu_cycle(&mut cpu, &mut plugin, t);
-        t += 1;
-    }
-    let reads_after_two_loops = cpu.mcu().reads.len();
-    assert!(
-        reads_after_two_loops >= 6,
-        "two JMP executions must still fetch six bytes, saw {reads_after_two_loops}"
-    );
-    cpu.mcu_mut().reads.clear();
-    for _ in 0..20 {
-        tick_full_cpu_cycle(&mut cpu, &mut plugin, t);
-        t += 1;
-    }
-    assert!(
-        cpu.mcu().reads.is_empty(),
-        "a declared self-loop must drive no bus reads while frozen, saw {:?}",
-        cpu.mcu().reads
-    );
-    assert_eq!(cpu.pc(), LOOP, "frozen loop must sit at its loop top");
-}
-
-#[test]
-fn repeated_taken_branch_to_self_stops_driving_the_bus() {
-    const LOOP: u16 = 0x0410;
-    let mut mcu = TestMcu::default();
-    mcu.mem[LOOP as usize] = 0xD0; // BNE $FE -> branch to own opcode
-    mcu.mem[LOOP as usize + 1] = 0xFE;
-    mcu.mem[0xFFFC] = LOOP as u8;
-    mcu.mem[0xFFFD] = (LOOP >> 8) as u8;
-    let mut cpu = create_cpu_with_mcu(mcu);
-    cpu.set_pc(LOOP);
-    cpu.set_status(0x24); // I and B set, Z clear so BNE is taken
-    cpu.mcu_mut().reads.clear();
-
-    let mut plugin = EmptyPlugin::new();
-    let mut t = 1u64;
-    // Each BNE takes two CPU cycles: opcode fetch, then the branch offset read.
-    for _ in 0..4 {
-        tick_full_cpu_cycle(&mut cpu, &mut plugin, t);
-        t += 1;
-    }
-    cpu.mcu_mut().reads.clear();
-    for _ in 0..20 {
-        tick_full_cpu_cycle(&mut cpu, &mut plugin, t);
-        t += 1;
-    }
-    assert!(
-        cpu.mcu().reads.is_empty(),
-        "a repeated taken self-branch must freeze with no bus reads, saw {:?}",
-        cpu.mcu().reads
-    );
-    assert_eq!(cpu.pc(), LOOP, "frozen branch must sit at its loop top");
-}
-
-/// Minimal stand-in for the harness `MonitorTestStatus` reset handshake:
-/// `end` arms the timer when the sentinel reads `$81` and matures it once
-/// the end-observed clock has advanced past the wait; only then does
-/// `should_stop` request the reset. A frozen loop that stops reporting
-/// `end` hangs this handshake forever — the `cpu_reset` failure mode.
-struct ResetHandshakePlugin {
-    ends: u64,
-    last_clock: u64,
-    armed_at: Option<u64>,
-    reset_requested: bool,
-}
-
-impl ResetHandshakePlugin {
-    const SENTINEL: u16 = 0x0010;
-    const WAIT_DOTS: u64 = 30;
-
-    fn new() -> Self {
-        ResetHandshakePlugin {
-            ends: 0,
-            last_clock: 0,
-            armed_at: None,
-            reset_requested: false,
-        }
-    }
-}
-
-impl Plugin<TestMcu> for ResetHandshakePlugin {
-    fn start(&mut self, _view: &MachineView<TestMcu>) {}
-
-    fn end(&mut self, view: &MachineView<TestMcu>) {
-        self.ends += 1;
-        self.last_clock = view.clock().0;
-        if self.armed_at.is_none() && view.peek(Self::SENTINEL) == 0x81 {
-            self.armed_at = Some(self.last_clock);
-        }
-        if let Some(armed) = self.armed_at
-            && self.last_clock >= armed + Self::WAIT_DOTS
-        {
-            self.reset_requested = true;
-        }
-    }
-
-    fn should_stop(&self) -> ExecuteResult {
-        if self.reset_requested {
-            ExecuteResult::ShouldReset
-        } else {
-            ExecuteResult::Continue
-        }
-    }
-}
-
-/// Drive whole CPU cycles like `tick_full_cpu_cycle` but report the last
-/// tick's `ExecuteResult` so handshake tests can observe a reset request.
-fn tick_cycle_for_result(
-    cpu: &mut Harness<TestMcu>,
-    plugin: &mut ResetHandshakePlugin,
-    cycle: u64,
-) -> ExecuteResult {
-    let mut outcome = ExecuteResult::Continue;
-    for dot in 0..3 {
-        let clock = SystemClock(cycle * 3 + dot);
-        cpu.update_nmi_line(false, clock, dot == 0);
-        outcome = cpu.tick(plugin, clock);
-    }
-    outcome
-}
-
-#[test]
-fn frozen_wait_loop_still_delivers_the_harness_reset_handshake() {
-    const LOOP: u16 = 0x0400;
-    let mut mcu = TestMcu::default();
-    mcu.mem[LOOP as usize] = 0x4C; // JMP $0400: the `wait_reset` shape
-    mcu.mem[LOOP as usize + 1] = 0x00;
-    mcu.mem[LOOP as usize + 2] = 0x04;
-    // The reset request is already posted before the wait, as
-    // `prompt_to_reset` posts `$6000 = $81` before `jmp wait_reset`.
-    mcu.mem[ResetHandshakePlugin::SENTINEL as usize] = 0x81;
-    mcu.mem[0xFFFC] = LOOP as u8;
-    mcu.mem[0xFFFD] = (LOOP >> 8) as u8;
-    let mut cpu = create_cpu_with_mcu(mcu);
-    cpu.set_pc(LOOP);
-
-    let mut plugin = ResetHandshakePlugin::new();
-    let mut outcome = ExecuteResult::Continue;
-    for cycle in 1..=40 {
-        outcome = tick_cycle_for_result(&mut cpu, &mut plugin, cycle);
-        if outcome != ExecuteResult::Continue {
-            break;
-        }
-    }
-    assert_eq!(
-        outcome,
-        ExecuteResult::ShouldReset,
-        "a frozen wait loop must keep maturing the harness reset timer, ends seen: {}",
-        plugin.ends
-    );
-}
-
-#[test]
-fn frozen_bare_loop_samples_end_at_the_loop_cadence() {
-    const LOOP: u16 = 0x0400;
-    let mut mcu = TestMcu::default();
-    mcu.mem[LOOP as usize] = 0x4C; // JMP $0400
-    mcu.mem[LOOP as usize + 1] = 0x00;
-    mcu.mem[LOOP as usize + 2] = 0x04;
-    mcu.mem[0xFFFC] = LOOP as u8;
-    mcu.mem[0xFFFD] = (LOOP >> 8) as u8;
-    let mut cpu = create_cpu_with_mcu(mcu);
-    cpu.set_pc(LOOP);
-
-    // Freeze first with a silent plugin: two JMP executions, six ticks.
-    let mut silent = EmptyPlugin::new();
-    let mut t = 1u64;
-    for _ in 0..6 {
-        tick_full_cpu_cycle(&mut cpu, &mut silent, t);
-        t += 1;
-    }
-    cpu.mcu_mut().reads.clear();
-
-    // Thirty frozen iterations (ninety ticks) must report one boundary per
-    // three-tick iteration — the rate executing the loop would report — so
-    // instruction-counting harnesses cannot trip earlier than unfrozen.
-    let mut plugin = ResetHandshakePlugin::new();
-    for _ in 0..30 {
-        tick_full_cpu_cycle(&mut cpu, &mut plugin, t);
-        t += 1;
-    }
-    assert!(
-        (29..=31).contains(&plugin.ends),
-        "frozen JMP loop must sample end once per 3-tick iteration, saw {} ends",
-        plugin.ends
-    );
-    assert_eq!(
-        plugin.last_clock,
-        (t - 1) * 3 + 2,
-        "sampled ends must observe the advancing clock"
-    );
-    assert!(
-        cpu.mcu().reads.is_empty(),
-        "sampling end must drive no bus reads, saw {:?}",
-        cpu.mcu().reads
-    );
-    assert_eq!(cpu.pc(), LOOP, "frozen loop must sit at its loop top");
-}
-
-fn tick_single_dot(
-    cpu: &mut Harness<TestMcu>,
-    plugin: &mut EmptyPlugin<TestMcu>,
-    dot: u64,
-    nmi: bool,
-) {
-    let clock = SystemClock(dot);
-    cpu.update_nmi_line(nmi, clock, dot.is_multiple_of(3));
-    cpu.tick(plugin, clock);
-}
-
-#[test]
-fn frozen_jmp_spin_wakes_on_nmi_and_resumes_at_loop_top() {
-    const LOOP: u16 = 0x0500;
-    const HANDLER: u16 = 0x0600;
-    let mut mcu = TestMcu::default();
-    mcu.mem[LOOP as usize] = 0x4C; // JMP $0500
-    mcu.mem[LOOP as usize + 1] = 0x00;
-    mcu.mem[LOOP as usize + 2] = 0x05;
-    mcu.mem[0xFFFA] = HANDLER as u8;
-    mcu.mem[0xFFFB] = (HANDLER >> 8) as u8;
-    let mut cpu = create_cpu_with_mcu(mcu);
-    cpu.set_pc(LOOP);
-    cpu.set_a(0x42);
-    cpu.set_x(0x11);
-    cpu.set_y(0x22);
-    cpu.set_sp(0xAA);
-    cpu.set_status(0x24);
-
-    let mut plugin = EmptyPlugin::new();
-    for cycle in 1..=6 {
-        tick_full_cpu_cycle(&mut cpu, &mut plugin, cycle);
-    }
-    let frozen = cpu.snapshot();
-    cpu.mcu_mut().reads.clear();
-
-    // An NMI sampled while frozen does not wake until the detector's two-dot
-    // recognition delay has elapsed.
-    let rise = 24u64; // first PPU dot of CPU cycle 8, sampled at 24
-    tick_single_dot(&mut cpu, &mut plugin, rise - 3, false);
-    tick_single_dot(&mut cpu, &mut plugin, rise - 2, false);
-    tick_single_dot(&mut cpu, &mut plugin, rise - 1, false);
-    tick_single_dot(&mut cpu, &mut plugin, rise, true);
-    tick_single_dot(&mut cpu, &mut plugin, rise + 1, true);
-    assert!(
-        cpu.mcu().reads.is_empty(),
-        "NMI must not wake the spin before its two-dot recognition delay"
-    );
-    tick_single_dot(&mut cpu, &mut plugin, rise + 2, true);
-    // The wake dot only clears the freeze source; dispatch begins on the
-    // next dot with an internal dead read, then the vector low byte.
-    let woken = cpu.snapshot();
-    assert_eq!(woken, frozen, "wake must restore registers and loop-top PC");
-    assert!(
-        cpu.mcu().reads.is_empty(),
-        "wake itself performs no bus read"
-    );
-    for dot in rise + 3..=rise + 8 {
-        tick_single_dot(&mut cpu, &mut plugin, dot, true);
-    }
-    assert_eq!(
-        &cpu.mcu().reads[..2],
-        &[0x0500, 0x0500],
-        "woken spin must resume with the NMI sequence's two dead reads"
-    );
-    assert!(
-        cpu.mcu().reads.contains(&0xFFFA),
-        "woken spin must fetch the NMI vector from the loop-top resume"
-    );
-}
-
-#[test]
-fn frozen_branch_spin_wakes_on_irq_and_resumes_at_loop_top() {
-    const LOOP: u16 = 0x0510;
-    const HANDLER: u16 = 0x0700;
-    let mut mcu = TestMcu::default();
-    mcu.mem[LOOP as usize] = 0xD0; // BNE $FE
-    mcu.mem[LOOP as usize + 1] = 0xFE;
-    mcu.mem[0xFFFE] = HANDLER as u8;
-    mcu.mem[0xFFFF] = (HANDLER >> 8) as u8;
-    let mut cpu = create_cpu_with_mcu(mcu);
-    cpu.set_pc(LOOP);
-    cpu.set_a(0x42);
-    cpu.set_x(0x11);
-    cpu.set_y(0x22);
-    cpu.set_sp(0xAA);
-    cpu.set_status(0x20); // I clear; B clear, Z clear so BNE is taken
-
-    let mut plugin = EmptyPlugin::new();
-    for cycle in 1..=6 {
-        tick_full_cpu_cycle(&mut cpu, &mut plugin, cycle);
-    }
-    let frozen = cpu.snapshot();
-    cpu.mcu_mut().reads.clear();
-
-    // IRQ is level-sensitive: no recognition delay once the line is high.
-    cpu.set_irq(true);
-    let dot = 20u64;
-    tick_single_dot(&mut cpu, &mut plugin, dot, false);
-    assert!(cpu.mcu().reads.is_empty());
-    assert_eq!(cpu.snapshot(), frozen);
-    for d in dot + 1..=dot + 7 {
-        tick_single_dot(&mut cpu, &mut plugin, d, false);
-    }
-    assert_eq!(
-        &cpu.mcu().reads[..2],
-        &[0x0510, 0x0510],
-        "woken spin must resume with the IRQ sequence's two dead reads"
-    );
-    assert!(
-        cpu.mcu().reads.contains(&0xFFFE),
-        "woken spin must fetch the IRQ vector from the loop-top resume"
-    );
-}
-
-#[test]
-fn kil_after_spin_freeze_stays_halt_only_until_reset() {
-    const LOOP: u16 = 0x0530;
-    let mut mcu = TestMcu::default();
-    mcu.mem[LOOP as usize] = 0x4C; // JMP $0530
-    mcu.mem[LOOP as usize + 1] = 0x30;
-    mcu.mem[LOOP as usize + 2] = 0x05;
-    mcu.mem[0xFFFC] = LOOP as u8;
-    mcu.mem[0xFFFD] = (LOOP >> 8) as u8;
-    let mut cpu = create_cpu_with_mcu(mcu);
-    cpu.set_pc(LOOP);
-    let mut plugin = EmptyPlugin::new();
-    for cycle in 1..=6 {
-        tick_full_cpu_cycle(&mut cpu, &mut plugin, cycle);
-    }
-    cpu.mcu_mut().reads.clear();
-    tick_full_cpu_cycle(&mut cpu, &mut plugin, 10);
-    assert!(
-        cpu.mcu().reads.is_empty(),
-        "spin must stay frozen before reset"
-    );
-
-    // Reset clears the spin; KIL remains halt-only and keeps returning Halt.
-    cpu.reset();
-    cpu.run_to_instruction_boundary(&mut plugin);
-    cpu.set_pc(LOOP);
-    cpu.mcu_mut().mem[LOOP as usize] = 0x02; // KIL
-    for cycle in 1..3 {
-        tick_full_cpu_cycle(&mut cpu, &mut plugin, cycle);
-    }
-    assert!(cpu.is_halted());
-    for cycle in 3..8 {
-        let dot = cycle * 3;
-        cpu.update_nmi_line(false, SystemClock(dot), dot.is_multiple_of(3));
-        assert_eq!(
-            cpu.tick(&mut plugin, SystemClock(dot)),
-            ExecuteResult::Halt,
-            "halt-only CPU keeps returning Halt on every dot"
-        );
-    }
-
-    cpu.reset();
-    cpu.run_to_instruction_boundary(&mut plugin);
-    assert!(!cpu.is_halted());
-    assert_eq!(cpu.pc(), LOOP);
-}
-
-#[test]
-fn kil_stays_halt_only_without_declaring_a_spin() {
-    const LOOP: u16 = 0x0530;
-    let mut mcu = TestMcu::default();
-    mcu.mem[LOOP as usize] = 0x02; // KIL
-    mcu.mem[0xFFFC] = LOOP as u8;
-    mcu.mem[0xFFFD] = (LOOP >> 8) as u8;
-    let mut cpu = create_cpu_with_mcu(mcu);
-    cpu.set_pc(LOOP);
-
-    let mut plugin = EmptyPlugin::new();
-    for cycle in 1..3 {
-        tick_full_cpu_cycle(&mut cpu, &mut plugin, cycle);
-    }
-    assert!(cpu.is_halted(), "KIL is a halt, not a declared spin");
-    cpu.mcu_mut().reads.clear();
-    for cycle in 3..8 {
-        let dot = cycle * 3;
-        cpu.update_nmi_line(false, SystemClock(dot), dot.is_multiple_of(3));
-        assert_eq!(
-            cpu.tick(&mut plugin, SystemClock(dot)),
-            ExecuteResult::Halt,
-            "halt-only CPU keeps returning Halt on every dot"
-        );
-    }
-    assert!(
-        cpu.mcu().reads.is_empty(),
-        "halt-only CPU must not drive bus reads, saw {:?}",
-        cpu.mcu().reads
-    );
-
-    cpu.reset();
-    cpu.run_to_instruction_boundary(&mut plugin);
-    assert!(!cpu.is_halted(), "only reset recovers from KIL");
-    assert_eq!(cpu.pc(), LOOP);
-}
-
-/// Ticks from an NMI edge to NMI-vector fetch for an `LDA $10 / BNE`
-/// wait loop, frozen or executing. The edge is raised at `edge_at_dot`
-/// and held; the /NMI line pattern is identical in both runs, so the
-/// detector latches on the same tick and any dispatch difference is the
-/// freeze's own latency.
-fn nmi_dispatch_ticks_after_edge(disable_spin: bool, freeze_dots: u64, edge_at_dot: u64) -> u64 {
-    const LOOP: u16 = 0x0400;
-    const HANDLER: u16 = 0x0600;
-    let mut mcu = TestMcu::default();
-    mcu.mem[LOOP as usize] = 0xA5; // LDA $10
-    mcu.mem[LOOP as usize + 1] = 0x10;
-    mcu.mem[LOOP as usize + 2] = 0xD0; // BNE $0400
-    mcu.mem[LOOP as usize + 3] = 0xFC;
-    mcu.mem[0x10] = 1; // Z clear so BNE is always taken
-    mcu.mem[0xFFFA] = HANDLER as u8;
-    mcu.mem[0xFFFB] = (HANDLER >> 8) as u8;
-    mcu.mem[0xFFFC] = LOOP as u8;
-    mcu.mem[0xFFFD] = (LOOP >> 8) as u8;
-    let mut cpu = create_cpu_with_mcu(mcu);
-    cpu.set_pc(LOOP);
-    cpu.set_status(0x24); // I set: NMI must dispatch regardless
-    if disable_spin {
-        cpu.set_spin_declaration_disabled_for_test(true);
-    }
-    let mut plugin = EmptyPlugin::new();
-    for dot in 1..=freeze_dots {
-        tick_single_dot(&mut cpu, &mut plugin, dot, false);
-    }
-    if !disable_spin {
-        assert_eq!(
-            cpu.spin_loop_top_for_test(),
-            Some(LOOP),
-            "poll loop must declare a spin at its loop top"
-        );
-    }
-    cpu.mcu_mut().reads.clear();
-    let mut elapsed = 0u64;
-    for dot in freeze_dots + 1..=freeze_dots + 40 {
-        tick_single_dot(&mut cpu, &mut plugin, dot, dot >= edge_at_dot);
-        elapsed += 1;
-        if cpu.mcu().reads.contains(&0xFFFA) {
-            break;
-        }
-    }
-    assert!(
-        cpu.mcu().reads.contains(&0xFFFA),
-        "NMI must dispatch within 40 ticks (spin disabled: {disable_spin})"
-    );
-    elapsed
-}
-
-#[test]
-fn frozen_nmi_wake_matches_unfrozen_dispatch_phase() {
-    // Ticks for the frozen run to declare (the control runs the same
-    // prefix without freezing, so both meet the edge identically).
-    let mut probe = {
-        const LOOP: u16 = 0x0400;
-        let mut mcu = TestMcu::default();
-        mcu.mem[LOOP as usize] = 0xA5;
-        mcu.mem[LOOP as usize + 1] = 0x10;
-        mcu.mem[LOOP as usize + 2] = 0xD0;
-        mcu.mem[LOOP as usize + 3] = 0xFC;
-        mcu.mem[0x10] = 1;
-        mcu.mem[0xFFFC] = LOOP as u8;
-        mcu.mem[0xFFFD] = (LOOP >> 8) as u8;
-        let mut cpu = create_cpu_with_mcu(mcu);
-        cpu.set_pc(LOOP);
-        cpu
-    };
-    let mut plugin = EmptyPlugin::new();
-    let mut freeze_dots = 0u64;
-    for dot in 1..=200u64 {
-        tick_single_dot(&mut probe, &mut plugin, dot, false);
-        if probe.spin_loop_top_for_test() == Some(0x0400) {
-            freeze_dots = dot;
-            break;
-        }
-    }
-    assert!(freeze_dots > 0, "poll loop must declare a spin");
-}
-
-/// Ticks from a VBL set to a `$2002`-wait loop exit, frozen or executing.
-/// The VBL flag and the N bit the branch tests flip together at
-/// `edge_at_dot`, mimicking hardware where the poll read observes the set
-/// flag; no interrupt line is ever raised, so only the VBL resume path
-/// can release the spin.
-fn vbl_exit_ticks_after_set(disable_spin: bool, freeze_dots: u64, edge_at_dot: u64) -> u64 {
-    const LOOP: u16 = 0x0400;
-    let mut mcu = TestMcu::default();
-    mcu.mem[LOOP as usize] = 0x2C; // BIT $10
-    mcu.mem[LOOP as usize + 1] = 0x10;
-    mcu.mem[LOOP as usize + 2] = 0x00;
-    mcu.mem[LOOP as usize + 3] = 0x10; // BPL $0400
-    mcu.mem[LOOP as usize + 4] = 0xFB;
-    mcu.mem[0x10] = 0x00; // N clear so BPL is taken
-    mcu.mem[0xFFFC] = LOOP as u8;
-    mcu.mem[0xFFFD] = (LOOP >> 8) as u8;
-    let mcu = mcu.with_polled_status(0x10);
-    let mut cpu = create_cpu_with_mcu(mcu);
-    cpu.set_pc(LOOP);
-    cpu.set_status(0x24);
-    if disable_spin {
-        cpu.set_spin_declaration_disabled_for_test(true);
-    }
-    let mut plugin = EmptyPlugin::new();
-    for dot in 1..=freeze_dots {
-        tick_single_dot(&mut cpu, &mut plugin, dot, false);
-    }
-    if !disable_spin {
-        assert_eq!(
-            cpu.spin_loop_top_for_test(),
-            Some(LOOP),
-            "status poll loop must declare a spin at its loop top"
-        );
-    }
-    let mut elapsed = 0u64;
-    for dot in freeze_dots + 1..=freeze_dots + 40 {
-        if dot >= edge_at_dot {
-            cpu.mcu_mut().mem[0x10] = 0x80;
-            cpu.mcu_mut().status_vbl = true;
-        }
-        tick_single_dot(&mut cpu, &mut plugin, dot, false);
-        elapsed += 1;
-        // True exit only: BPL falls through past the loop (mid-iteration
-        // pcs come back to LOOP every iteration, so leaving LOOP proves
-        // nothing).
-        if cpu.pc() == LOOP + 5 {
-            break;
-        }
-    }
-    assert_eq!(
-        cpu.pc(),
-        LOOP + 5,
-        "VBL wait must exit within 40 ticks (spin disabled: {disable_spin})"
-    );
-    elapsed
-}
-
-#[test]
-fn frozen_vbl_wait_resumes_at_the_counterfactual_read_tick() {
-    // Ticks for the frozen run to declare (the control runs the same
-    // prefix without freezing, so both meet the VBL set identically).
-    let mut probe = {
-        const LOOP: u16 = 0x0400;
-        let mut mcu = TestMcu::default();
-        mcu.mem[LOOP as usize] = 0x2C;
-        mcu.mem[LOOP as usize + 1] = 0x10;
-        mcu.mem[LOOP as usize + 2] = 0x00;
-        mcu.mem[LOOP as usize + 3] = 0x10;
-        mcu.mem[LOOP as usize + 4] = 0xFB;
-        mcu.mem[0x10] = 0x00;
-        mcu.mem[0xFFFC] = LOOP as u8;
-        mcu.mem[0xFFFD] = (LOOP >> 8) as u8;
-        let mcu = mcu.with_polled_status(0x10);
-        let mut cpu = create_cpu_with_mcu(mcu);
-        cpu.set_pc(LOOP);
-        cpu
-    };
-    let mut plugin = EmptyPlugin::new();
-    let mut freeze_dots = 0u64;
-    for dot in 1..=200u64 {
-        tick_single_dot(&mut probe, &mut plugin, dot, false);
-        if probe.spin_loop_top_for_test() == Some(0x0400) {
-            freeze_dots = dot;
-            break;
-        }
-    }
-    assert!(freeze_dots > 0, "status poll loop must declare a spin");
-    // Sweep a full iteration (BIT abs + taken BPL = 7 ticks) of VBL-set
-    // phases. The resume lands on the tick before the loop-top fetch, so
-    // the re-executed read lands exactly on a counterfactual exit read
-    // and every later read stays on the counterfactual grid: suppression
-    // hits and the VBL pattern match the executing loop, so init code
-    // converges identically. Grid alignment shows up as an overshoot that
-    // is a whole number of iterations (here 0 or 7 ticks).
-    // (BIT abs + taken BPL = 7 ticks.)
-    for phase in 0..7u64 {
-        let frozen = vbl_exit_ticks_after_set(false, freeze_dots, freeze_dots + phase);
-        let control = vbl_exit_ticks_after_set(true, freeze_dots, freeze_dots + phase);
-        assert_eq!(
-            frozen, control,
-            "VBL exit must match the executing loop exactly on every latch phase (phase {phase}: frozen {frozen} vs executing {control})"
-        );
-    }
-    // Sweep a full iteration (LDA zp + taken BNE = 6 ticks) of edge
-    // phases: dispatch must match the executing loop at every phase.
-    // A freeze that dispatches early/late shifts cycle-timed NMI handlers
-    // (the `nmi_sync` line lands 3 dots off on odd frames).
-    for phase in 0..6u64 {
-        let frozen = nmi_dispatch_ticks_after_edge(false, freeze_dots, freeze_dots + phase);
-        let control = nmi_dispatch_ticks_after_edge(true, freeze_dots, freeze_dots + phase);
-        assert_eq!(
-            frozen, control,
-            "NMI edge at phase {phase} must dispatch exactly when the executing loop would"
-        );
     }
 }

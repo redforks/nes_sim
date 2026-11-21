@@ -264,22 +264,9 @@ pub struct Ppu {
 }
 
 /// PPU registers are mirrored every 8 bytes in range $2000-$3FFF;
-/// this function normalizes $2000, $2008, .. $3FF8 to $2000.
-pub(crate) fn normalize_ppu_addr(addr: u16) -> u16 {
+/// this function normalized $2000, $2008, .. $3ff8 to $2000
+fn normalize_ppu_addr(addr: u16) -> u16 {
     addr & 0x2007
-}
-
-/// True for `$2002` and all its mirrors. Shared by the PPU register
-/// decoder and the MCU's spin-wait classification query.
-pub(crate) fn is_ppu_status_addr(addr: u16) -> bool {
-    normalize_ppu_addr(addr) == 0x2002
-}
-
-/// True for `$2007` and all its mirrors. A PPUDATA read refills the read
-/// buffer and advances v, so the MCU reports it as an action read: a spin
-/// freeze must never swallow it.
-pub(crate) fn is_ppu_data_addr(addr: u16) -> bool {
-    normalize_ppu_addr(addr) == 0x2007
 }
 
 /// Wrap a PPU address into the 16 KiB bus space.
@@ -1242,17 +1229,6 @@ impl Ppu {
         // The sprite pattern table / sprite size selection lives in ctrl, so
         // the cached Sprite rows no longer match.
         self.sprite.invalidate_rows();
-    }
-
-    /// Apply the destructive side effects of a `$2002` status read.
-    ///
-    /// Used both by [`Self::read_ppureg`] and by a frozen CPU spin that
-    /// skipped the loop-top poll (ticket #135). It never drives the bus
-    /// or returns a value: the resumed poll read supplies those itself.
-    /// The suppression case mirrors a real read at hardware scanline 241
-    /// dot 0, which prevents VBL from ever setting that frame.
-    pub(crate) fn replay_status_side_effects(&mut self) {
-        self.read_status();
     }
 
     /// Read status register (for testing) - behaves like reading from 0x2002
