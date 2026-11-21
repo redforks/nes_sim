@@ -2,7 +2,7 @@
 
 ## Status
 
-parked / superseded — spec #158 reverted the spin-wait freeze to restore pre-#132 frame output, per decision #155. This ADR is kept as a record of the freeze design; the code it describes no longer exists.
+superseded by ADR 0020 (`0020-2002-spin-wait-skip.md`) — the re-landed `$2002` spin-wait skip (spec #167, contract per #165) implements the quiet-span model, not the freeze: no synthesized exit, no detector calls, replays through the published read path on the declaration anchor grid. Spec #158 reverted the freeze this ADR records (decision #155) to restore pre-#132 frame output. This ADR is kept as a record of the freeze design; the code it describes no longer exists.
 
 Spin-wait freeze was introduced to make repeated poll loops unobservable: while a declared loop is frozen, the rest of the machine keeps advancing on the same dots and the program resumes as if the loop had executed. Review found that the original contract had drifted. Only `$2002` status polls were covered: device-register polls (`$4015` APU status, `$4016`/`$4017` controller ports) were excluded, so input/IRQ wait loops still burned dots. The frozen wake path called the CPU's own edge-latching interrupt detectors, mutating CPU state on a frozen dot. The original spec pinned loop-top re-execution as the resume, but the implementation performs the status poll read itself and exits through the back edge: re-execution shifts later reads off the counterfactual grid, changes which frames suppress VBL, and misconverges cycle-counted initialization such as `nmi_sync`. A `$2007` poll could also declare and swallow PPUDATA's read-buffer refill and v-increment. This ADR records the finalized contract; it changes no code.
 
