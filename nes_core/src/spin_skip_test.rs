@@ -449,3 +449,38 @@ fn differential_sweep_scanline_241_to_vbl_exit() {
 fn differential_sweep_scanline_242_to_frame_wrap() {
     sweep_chunk(171..229);
 }
+#[test]
+fn nmi_observation_pins_dispatch_dot_and_responds_to_start_phase() {
+    // The loop enables NMI itself on the first VBL fall-through, so the
+    // frame-2 VBL event (with NMI enabled since frame 1) latches an NMI:
+    // the handler fetch (`RTI` at NMI_HANDLER) must appear in the frame-3
+    // boundary's window at a deterministic dot.
+    let start = frame_dot(1, 240, 0);
+    let run = run_observed(&poll_loop_rom(start), false, 3);
+    assert_eq!(run.boundaries.len(), 3);
+    let f2_event = frame_dot(2, 241, 1);
+    // Frame 1 and 2 windows are NMI-free: the line first rises at f2_event.
+    assert!(run.boundaries[0].nmi_dots.is_empty());
+    assert!(run.boundaries[1].nmi_dots.is_empty());
+    // One dispatch in the frame-3 window, after the frame-2 event.
+    assert_eq!(run.boundaries[2].nmi_dots, vec![f2_event + 28]);
+}
+
+#[test]
+fn nmi_observation_pins_the_vbl_race_start_dispatch_dot() {
+    // The start whose first poll read lands exactly on the VBL set dot: the
+    // read observes the freshly set flag (fall-through runs immediately --
+    // the read cadence gains the one-time STA+JMP detour), NMI is enabled
+    // within frame 1, and the frame-2 VBL event dispatches at a pinned dot.
+    let start = frame_dot(1, 241, 1);
+    let run = run_observed(&poll_loop_rom(start), false, 3);
+    assert_eq!(run.boundaries.len(), 3);
+    assert_eq!(run.poll_read_clocks.first(), Some(&start));
+    // The +39-dot cadence gap after the first read marks the one-time
+    // fall-through detour (STA $2000 + JMP loop = 13 cycles).
+    assert_eq!(run.poll_read_clocks[1] - run.poll_read_clocks[0], 39);
+    let f2_event = frame_dot(2, 241, 1);
+    assert!(run.boundaries[0].nmi_dots.is_empty());
+    assert!(run.boundaries[1].nmi_dots.is_empty());
+    assert_eq!(run.boundaries[2].nmi_dots, vec![f2_event + 34]);
+}
