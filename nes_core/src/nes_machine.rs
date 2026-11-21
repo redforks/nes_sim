@@ -4,6 +4,7 @@ use crate::{
     dma_bus::{BusOwner, DmaBus},
     ines::INesFile,
     nes::{Mmc3IrqOverride, NesMcu, controller::Button, ppu::palette::ColorTheme},
+    spin_skip::{SpinBackedgeHit, SpinDeclaration},
 };
 
 /// Borrowed output of one emulated frame.
@@ -47,6 +48,10 @@ pub struct NesMachine<P> {
     /// poll loop across the VBL flag set. No skip exists yet, so until
     /// tickets #169-#171 land this flag changes nothing.
     spin_skip_enabled: bool,
+    /// Ticket #169: the declared poll loop, once the shape gate accepts a
+    /// back-edge. `None` until then. Ticket #170 consumes this at the
+    /// declaring back-edge to start (and later end) the quiet-span skip.
+    spin_declaration: Option<SpinDeclaration>,
 }
 
 impl<P> NesMachine<P>
@@ -76,6 +81,7 @@ where
             file: file.clone(),
             irq_override,
             spin_skip_enabled: false,
+            spin_declaration: None,
         }
     }
 
@@ -198,7 +204,15 @@ where
             return ExecuteResult::Continue;
         }
 
-        self.cpu.tick(&mut self.bus, &mut self.p)
+        let control = self.cpu.tick(&mut self.bus, &mut self.p);
+        // Ticket #169 shape gate: a taken back-edge this dot may have
+        // latched a poll-loop shape hit. Drain it on the same dot it was
+        // latched on — the CPU surface stays one transient field (ADR
+        // 0010), and the clock is the declaring dot itself (ADR 0018).
+        if let Some(hit) = self.cpu.take_spin_backedge_hit() {
+            self.declare_spin_loop(hit, clock);
+        }
+        control
     }
 
     /// Maximum dots spent draining in-flight DMA on a machine reset. One
@@ -235,6 +249,8 @@ where
         self.bus.mcu_mut().reset();
         self.dma_bus.reset();
         self.cpu.reset();
+        // The declared loop belonged to the pre-reset program.
+        self.spin_declaration = None;
     }
 
     /// Hard reset (power cycle): the full power-up contract — RAM cleared,
@@ -250,6 +266,8 @@ where
         let (file, irq_override) = (self.file.clone(), self.irq_override);
         self.bus.mcu_mut().reset_hard(&file, irq_override);
         self.cpu.reset_hard();
+        // Power cycle: the declared loop of the previous power-on is gone.
+        self.spin_declaration = None;
     }
 
     /// Mixed samples buffered so far (`f32` mono, [`crate::nes::apu::Apu::SAMPLE_RATE`]).
@@ -340,9 +358,59 @@ where
         self.spin_skip_enabled
     }
 
+    /// Ticket #169 test seam: the declared spin-wait loop, if the shape
+    /// gate has declared one yet. `None` until the CPU executes a
+    /// declarable back-edge outside any DMA window.
+    #[cfg(test)]
+    pub(crate) fn spin_declaration(&self) -> Option<SpinDeclaration> {
+        self.spin_declaration
+    }
+
     #[cfg(test)]
     pub(crate) fn system_cycles(&self) -> u64 {
         self.bus.clock().cycles()
+    }
+
+    /// Ticket #169 — record a shape-gate hit as the machine's declared
+    /// spin-wait loop. Runs only when the CPU just executed a taken
+    /// back-edge matching the declarable $2002 poll-loop shape (see
+    /// [`crate::spin_skip`]), so the cost outside that shape is zero
+    /// (#165 Q7).
+    ///
+    /// Gate rules (spec #167 story 8 / #165 Q8): a declaration is
+    /// refused while any DMA is in flight or pending — the declaring
+    /// back-edge then simply goes undeclared, and the loop's next
+    /// back-edge re-tries.
+    ///
+    /// Anchor (spec #165 Q3): a declaration captures the dot of the
+    /// declaring back-edge — the FIRST back-edge of that loop. Ticket
+    /// #170 consumes this slot to start its quiet-span skip aligned on
+    /// the anchor, and will own the re-arm lifecycle (declare → skip →
+    /// wake → re-declare per loop instance).
+    ///
+    /// This runs regardless of [`Self::set_spin_skip_enabled`]: the
+    /// switch gates only ticket #170's skip consumption, not detection
+    /// or declaration. The #168 differential sweep runs both switch
+    /// sides with detection active, proving the declaration itself is
+    /// observationally invisible.
+    fn declare_spin_loop(&mut self, hit: SpinBackedgeHit, clock: SystemClock) {
+        // #165 Q8: never declare (nor keep) a loop while DMA owns the
+        // bus — the declaration's anchor grid is only meaningful when
+        // the CPU alone drives the loop. The refused back-edge is not
+        // an anchor: a later clean back-edge of the same loop declares.
+        if self.dma_bus.is_busy(self.bus.mcu()) {
+            return;
+        }
+        // Keep-first (#165 Q3): every back-edge of an already-declared
+        // loop belongs to that loop's first-back-edge grid. Only a
+        // DIFFERENT loop replaces the slot — ticket #170 will own the
+        // re-arm lifecycle (skip wake → re-declare) per loop instance.
+        if let Some(decl) = self.spin_declaration
+            && decl.loop_pc == hit.loop_pc
+        {
+            return;
+        }
+        self.spin_declaration = Some(SpinDeclaration::new(hit, clock));
     }
 }
 

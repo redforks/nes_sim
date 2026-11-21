@@ -31,11 +31,13 @@
 use std::cell::RefCell;
 use std::rc::Rc;
 
-use crate::cpu::{CpuSnapshot, ExecuteResult, Plugin};
+use crate::cpu::{CpuSnapshot, EmptyPlugin, ExecuteResult, Plugin};
 use crate::ines::INesFile;
+use crate::mcu::Mcu;
 use crate::nes::NesMcu;
 use crate::nes_machine::NesMachine;
-use crate::view::MachineView;
+use crate::spin_skip::SpinDeclaration;
+use crate::{SystemClock, view::MachineView};
 
 /// NMI vector target: a bare `RTI` handler (entry logs an NMI dispatch).
 pub(crate) const NMI_HANDLER: u16 = 0x8010;
@@ -89,6 +91,32 @@ pub(crate) struct PollLoopRom {
 /// `FIRST_POLL_READ_CLOCK_ZERO_TAIL + 3 * tail_cycles` dots after
 /// power-on. Returns the image bytes and the loop-top address.
 fn poll_rom_bytes(tail_cycles: u64) -> (Vec<u8>, u16) {
+    poll_rom_bytes_with_loop(
+        tail_cycles,
+        &[
+            0x2C, 0x02, 0x20, // BIT $2002  (4)
+            0x10, 0xFB, // BPL loop   (3 taken / 2 not)
+            0x8D, 0x00, 0x20, // STA $2000  (4) NMI enable
+        ],
+    )
+}
+
+/// [`poll_rom_bytes`] with a custom loop body: `loop_body` is placed at
+/// the computed loop top (its first instruction must be a 4-cycle read
+/// so the requested read clock stays exact) and the builder appends the
+/// `JMP loop` re-entry behind it.
+/// [`poll_rom_bytes`] with one custom loop body (see
+/// [`poll_rom_bytes_with_loops`]).
+fn poll_rom_bytes_with_loop(tail_cycles: u64, loop_body: &[u8]) -> (Vec<u8>, u16) {
+    let (image, tops) = poll_rom_bytes_with_loops(tail_cycles, &[loop_body]);
+    (image, tops[0])
+}
+
+/// [`poll_rom_bytes`] with any number of loop bodies: the first is the
+/// power-on loop (the delay tail falls into it); every loop gets a
+/// trailing `JMP loop` re-entry, and the next loop is placed right
+/// behind it — `machine.set_pc` can spin any of them directly.
+fn poll_rom_bytes_with_loops(tail_cycles: u64, loop_bodies: &[&[u8]]) -> (Vec<u8>, Vec<u16>) {
     const PRG_LEN: usize = 16 * 1024;
     const CHR_LEN: usize = 8 * 1024;
 
@@ -139,26 +167,31 @@ fn poll_rom_bytes(tail_cycles: u64) -> (Vec<u8>, u16) {
         pc += 1;
     }
 
-    // The poll loop. `BIT $2002` / `BPL loop` is the canonical VBL
-    // wait. Enabling NMI in setup would let the frame-1 VBL dispatch
-    // an NMI that interrupts the delay tail and shifts the first read,
-    // so the loop enables NMI itself: the first VBL fall-through does
-    // `STA $2000` (A = $80 from setup), which arms NMI observation for
-    // every later frame, and the trailing `JMP loop` re-arms the wait.
-    // The bare-`RTI` handler preserves A, so the enable write keeps
-    // firing on every fall-through — same value, no side effect.
-    let loop_top = pc;
-    put(loop_top, &[0x2C, 0x02, 0x20]); // BIT $2002  (4)
-    put(loop_top + 3, &[0x10, 0xFB]); // BPL loop   (3 taken / 2 not)
-    put(loop_top + 5, &[0x8D, 0x00, 0x20]); // STA $2000  (4) NMI enable
-    put(
-        loop_top + 8,
-        &[0x4C, loop_top as u8, (loop_top >> 8) as u8], // JMP loop (3)
-    );
-    assert!(
-        loop_top + 11 <= 0xBFFA,
-        "delay tail overflows the PRG page before the vectors"
-    );
+    // The poll loops. Each body's first instruction is the 4-cycle read
+    // so the requested read clock stays exact; whatever follows
+    // (typically the back-edge branch and a fall-through) is the
+    // caller's; the trailing `JMP loop` re-entry is appended here, and
+    // the next loop sits right behind it. Enabling NMI in setup would
+    // let the frame-1 VBL dispatch an NMI that interrupts the delay
+    // tail and shifts the first read, so the canonical loop enables
+    // NMI itself on the first VBL fall-through.
+    let mut pc = pc;
+    let mut tops = Vec::new();
+    for loop_body in loop_bodies {
+        let loop_top = pc;
+        put(loop_top, loop_body);
+        let reentry = loop_top + loop_body.len() as u16;
+        put(
+            reentry,
+            &[0x4C, loop_top as u8, (loop_top >> 8) as u8], // JMP loop (3)
+        );
+        assert!(
+            reentry + 3 <= 0xBFFA,
+            "delay tail overflows the PRG page before the vectors"
+        );
+        pc = reentry + 3;
+        tops.push(loop_top);
+    }
 
     // iNES header: NROM-128, one PRG page, one CHR page, horizontal
     // mirroring; CHR content is irrelevant (rendering is never enabled).
@@ -168,7 +201,61 @@ fn poll_rom_bytes(tail_cycles: u64) -> (Vec<u8>, u16) {
     image.extend_from_slice(&[0; 8]);
     image.extend_from_slice(&prg);
     image.extend_from_slice(&vec![0; CHR_LEN]);
-    (image, loop_top)
+    (image, tops)
+}
+
+/// Build a poll-loop ROM with a custom loop body whose first read
+/// lands at `first_poll_read_clock` — same phase rules as
+/// [`poll_loop_rom`]. The body's first instruction must be a 4-cycle
+/// read so the placement stays exact.
+fn poll_loop_variant(first_poll_read_clock: u64, loop_body: &[u8]) -> PollLoopRom {
+    assert!(
+        first_poll_read_clock >= FIRST_POLL_READ_CLOCK_ZERO_TAIL,
+        "start dot {first_poll_read_clock} precedes the zero-tail first read"
+    );
+    let spread = first_poll_read_clock - FIRST_POLL_READ_CLOCK_ZERO_TAIL;
+    assert!(
+        spread.is_multiple_of(3),
+        "start dot must sit on the CPU read phase (2 mod 3)"
+    );
+    let (image, loop_top) = poll_rom_bytes_with_loop(spread / 3, loop_body);
+    let file = INesFile::new(image).expect("synthetic poll ROM must parse");
+    PollLoopRom { file, loop_top }
+}
+
+/// Spin a poll-loop ROM for `dots` past power-on and prove the loop
+/// really is executing (poll starts observed at the loop top), then
+/// hand the machine back for declaration assertions.
+fn spun_machine(
+    rom: &PollLoopRom,
+    dots: u64,
+) -> (NesMachine<PollObserverPlugin>, Rc<RefCell<ObserverLog>>) {
+    let log = Rc::new(RefCell::new(ObserverLog::default()));
+    let plugin = PollObserverPlugin {
+        log: Rc::clone(&log),
+        loop_top: rom.loop_top,
+    };
+    let mut machine = NesMachine::new(&rom.file, plugin);
+    run_to_clock(&mut machine, dots);
+    (machine, log)
+}
+
+/// Assert that `rom` spins as a poll loop for `dots` dots but never
+/// declares — the observer proves the loop is live (a dead loop would
+/// trivially never declare), so the refusal is a real shape-gate
+/// decision and not a silent stall.
+fn assert_never_declares(rom: &PollLoopRom, dots: u64) {
+    let (machine, log) = spun_machine(rom, dots);
+    let spins = log.borrow().poll_starts.len();
+    assert!(
+        spins >= 5,
+        "loop must actually spin (only {spins} poll starts)"
+    );
+    assert_eq!(
+        machine.spin_declaration(),
+        None,
+        "a refused loop shape must never declare"
+    );
 }
 
 /// Build a poll-loop ROM whose first `$2002` read lands exactly at
@@ -428,6 +515,279 @@ fn sweep_chunk(range: std::ops::Range<usize>) {
     for &t in &sweep_targets()[range] {
         assert_differential_matches(t);
     }
+}
+
+// Ticket #169 — shape-gate declaration tests. These are the LOW-LEVEL
+// tier of the spec's testing decisions: they observe the machine's
+// internal declaration slot through the #[cfg(test)] seam, because the
+// declaration itself has no public behavior yet (no skipping — real
+// execution is unchanged). The PUBLIC tier is the differential sweep
+// above: both its switch sides run with detection+declaration active,
+// proving the declaration is observationally invisible.
+
+/// Step `machine` (one [`NesMachine::tick`] = 3 dots) until the bus
+/// clock reaches `until` (absolute dot clock). Panics if the machine
+/// stops: the synthetic poll-loop ROMs run forever.
+fn run_to_clock<P: Plugin<NesMcu>>(machine: &mut NesMachine<P>, until: u64) {
+    while machine.system_cycles() < until {
+        assert!(
+            matches!(machine.tick(), ExecuteResult::Continue),
+            "machine stopped before clock {until}"
+        );
+    }
+}
+
+/// The declaring back-edge dot for a loop whose first $2002 read
+/// lands at `read_dot`: the branch microcode (operand fetch + PC
+/// redirect) runs 2 CPU cycles after the read microcode — the taken
+/// 3rd cycle that follows is a separate interrupt-detect microcode.
+const FIRST_BACKEDGE_DOTS_AFTER_READ: u64 = 6;
+
+#[test]
+fn shape_gate_declares_bit_poll_loop_at_first_backedge() {
+    let start = frame_dot(1, 240, 0);
+    let rom = poll_loop_rom(start);
+    let mut machine = NesMachine::new(&rom.file, EmptyPlugin::new());
+    run_to_clock(&mut machine, start + 10);
+    assert_eq!(
+        machine.spin_declaration(),
+        Some(SpinDeclaration {
+            loop_pc: rom.loop_top,
+            back_edge_target: rom.loop_top,
+            poll_opcode: 0x2C,
+            poll_operands: [0x02, 0x20],
+            branch_pc: rom.loop_top + 3,
+            anchor_dot: start + FIRST_BACKEDGE_DOTS_AFTER_READ,
+        })
+    );
+}
+
+#[test]
+fn shape_gate_anchor_keeps_first_backedge_across_reentries() {
+    // #165 Q3: the declaration anchors at the FIRST back-edge of the
+    // declared loop. The loop falls through at VBL, re-enters via its
+    // JMP, and spins again every frame — all later back-edges belong to
+    // the same declared loop and must not re-anchor.
+    let start = frame_dot(1, 240, 0);
+    let rom = poll_loop_rom(start);
+    let mut machine = NesMachine::new(&rom.file, EmptyPlugin::new());
+    // Two full frames of spinning: past the first fall-through + JMP
+    // re-entry, and past the frame-2 VBL re-entry.
+    run_to_clock(&mut machine, start + 2 * FRAME_LEN_DOTS);
+    let decl = machine
+        .spin_declaration()
+        .expect("loop must stay declared across re-entries");
+    assert_eq!(decl.loop_pc, rom.loop_top);
+    assert_eq!(
+        decl.anchor_dot,
+        start + FIRST_BACKEDGE_DOTS_AFTER_READ,
+        "anchor must stay at the first back-edge of the declared loop"
+    );
+}
+
+#[test]
+fn shape_gate_refuses_backedge_that_lands_in_dmc_dma_window() {
+    let start = frame_dot(1, 240, 0);
+    let backedge = start + FIRST_BACKEDGE_DOTS_AFTER_READ;
+    let rom = poll_loop_rom(start);
+
+    // Control: with no DMA pending the first back-edge declares at its dot.
+    let mut control = NesMachine::new(&rom.file, EmptyPlugin::new());
+    run_to_clock(&mut control, backedge + 1);
+    assert_eq!(
+        control.spin_declaration().map(|d| d.anchor_dot),
+        Some(backedge)
+    );
+
+    // Arm a DMC load DMA so its busy window covers the first back-edge:
+    // the $4015 write is not deferred, the request is taken by the dma
+    // tick ON the back-edge dot (DelayForLoad), and the CPU still
+    // executes that dot — DMC halts the CPU only after the halt grant,
+    // so the shape gate must refuse to declare under it (#165 Q8).
+    let mut machine = NesMachine::new(&rom.file, EmptyPlugin::new());
+    run_to_clock(&mut machine, backedge - 2);
+    machine
+        .mcu_mut()
+        .write(0x4015, 0x1F, SystemClock::from_cycles(backedge - 2));
+    // This tick executes the first back-edge inside the DMC busy window.
+    assert!(matches!(machine.tick(), ExecuteResult::Continue));
+    assert_eq!(
+        machine.spin_declaration(),
+        None,
+        "a back-edge inside a DMC busy window must not declare"
+    );
+
+    // The loop keeps spinning past the short DMC stall; its next clean
+    // back-edge declares, anchored past the refused one and on the same
+    // CPU dot phase as the refused back-edge.
+    run_to_clock(&mut machine, backedge + 90);
+    let decl = machine
+        .spin_declaration()
+        .expect("the next clean back-edge must declare");
+    assert!(
+        decl.anchor_dot > backedge && decl.anchor_dot <= backedge + 90,
+        "anchor {anchor} must sit between the refused back-edge and the next clean one",
+        anchor = decl.anchor_dot
+    );
+    assert_eq!(decl.anchor_dot % 3, backedge % 3);
+}
+
+#[test]
+fn shape_gate_declares_only_after_an_oam_dma_window_passes() {
+    let start = frame_dot(1, 240, 0);
+    let backedge = start + FIRST_BACKEDGE_DOTS_AFTER_READ;
+    let rom = poll_loop_rom(start);
+
+    // OAM DMA armed two dots before the tick that would execute the
+    // first back-edge: the dma tick consumes the pending request first,
+    // so the CPU is skipped for ~513 cycles and no back-edge (hence no
+    // declaration) can land inside the window.
+    let mut machine = NesMachine::new(&rom.file, EmptyPlugin::new());
+    run_to_clock(&mut machine, backedge - 2);
+    machine
+        .mcu_mut()
+        .write(0x4014, 0x02, SystemClock::from_cycles(backedge - 2));
+    run_to_clock(&mut machine, backedge + 1000);
+    assert_eq!(
+        machine.spin_declaration(),
+        None,
+        "no back-edge may execute inside the OAM DMA window"
+    );
+    // Past the window the loop resumes; its first clean back-edge declares.
+    run_to_clock(&mut machine, backedge + 1650);
+    let decl = machine
+        .spin_declaration()
+        .expect("declaration must land after the OAM DMA");
+    assert!(
+        decl.anchor_dot > backedge + 1500,
+        "anchor {anchor} must sit past the ~1539-dot window",
+        anchor = decl.anchor_dot
+    );
+    assert_eq!(decl.loop_pc, rom.loop_top);
+}
+
+#[test]
+fn shape_gate_declares_lda_poll_loop() {
+    // LDA abs $2002 + BEQ: the read leaves A = $00 while VBL is clear
+    // (Z set, branch taken). The other canonical opcode (#165 Q1)
+    // must declare just like the BIT form.
+    let start = frame_dot(1, 240, 0);
+    let rom = poll_loop_variant(
+        start,
+        &[
+            0xAD, 0x02, 0x20, // LDA $2002  (4)
+            0xF0, 0xFB, // BEQ loop   (3 taken)
+            0x8D, 0x00, 0x20, // STA $2000  (4) NMI enable
+        ],
+    );
+    let mut machine = NesMachine::new(&rom.file, EmptyPlugin::new());
+    run_to_clock(&mut machine, start + 10);
+    let decl = machine
+        .spin_declaration()
+        .expect("LDA $2002 + BEQ must declare");
+    assert_eq!(decl.poll_opcode, 0xAD);
+    assert_eq!(decl.loop_pc, rom.loop_top);
+    assert_eq!(decl.anchor_dot, start + FIRST_BACKEDGE_DOTS_AFTER_READ);
+}
+
+#[test]
+fn shape_gate_refuses_lda_abs_indexed_loop() {
+    // LDA $2002,X (X = 0 at power-on) reads the same register, but the
+    // declarable shape (#165 Q1) is abs addressing only.
+    let start = frame_dot(1, 240, 0);
+    let rom = poll_loop_variant(
+        start,
+        &[
+            0xBD, 0x02, 0x20, // LDA $2002,X (4, X=0)
+            0xF0, 0xFB, // BEQ loop
+            0x8D, 0x00, 0x20,
+        ],
+    );
+    assert_never_declares(&rom, start + 200);
+}
+
+#[test]
+fn shape_gate_refuses_non_2002_poll_loop() {
+    // BIT $2001 + BPL spins on a write-only PPU register read (open
+    // bus, N = 0), but only $2002 is a declarable poll target.
+    let start = frame_dot(1, 240, 0);
+    let rom = poll_loop_variant(
+        start,
+        &[
+            0x2C, 0x01, 0x20, // BIT $2001  (4)
+            0x10, 0xFB, // BPL loop
+            0x8D, 0x00, 0x20,
+        ],
+    );
+    assert_never_declares(&rom, start + 200);
+}
+
+#[test]
+fn shape_gate_refuses_read_not_adjacent_to_backedge() {
+    // A NOP between the read and the branch: the branch still targets
+    // the loop top, but the read no longer directly precedes it and
+    // the offset is $FA, not $FB.
+    let start = frame_dot(1, 240, 0);
+    let rom = poll_loop_variant(
+        start,
+        &[
+            0x2C, 0x02, 0x20, // BIT $2002  (4)
+            0xEA, // NOP        (2)
+            0x10, 0xFA, // BPL loop
+            0x8D, 0x00, 0x20,
+        ],
+    );
+    assert_never_declares(&rom, start + 200);
+}
+
+#[test]
+fn shape_gate_refuses_forward_branch_jmp_backedge() {
+    // The only back-edge here is the JMP's; the conditional branch is
+    // forward (offset 0), so no BCC..BVS back-edge exists at all.
+    let start = frame_dot(1, 240, 0);
+    let rom = poll_loop_variant(
+        start,
+        &[
+            0x2C, 0x02, 0x20, // BIT $2002  (4)
+            0x10, 0x00, // BPL +0      (3 taken, N=0)
+            0x8D, 0x00, 0x20, // STA $2000  (4)
+        ],
+    );
+    assert_never_declares(&rom, start + 200);
+}
+
+#[test]
+fn shape_gate_replaces_declaration_for_a_different_loop() {
+    // Two distinct poll loops in one ROM. Keep-first holds per loop
+    // (pinned above); a DIFFERENT loop's back-edge replaces the slot
+    // so the machine always describes the loop it is actually in.
+    let start = frame_dot(1, 240, 0);
+    let spread = start - FIRST_POLL_READ_CLOCK_ZERO_TAIL;
+    let (image, tops) = poll_rom_bytes_with_loops(
+        spread / 3,
+        &[
+            &[0x2C, 0x02, 0x20, 0x10, 0xFB, 0x8D, 0x00, 0x20], // A: BIT/BPL
+            &[0xAD, 0x02, 0x20, 0xF0, 0xFB, 0x8D, 0x00, 0x20], // B: LDA/BEQ
+        ],
+    );
+    let file = INesFile::new(image).expect("synthetic poll ROM must parse");
+    let (a_top, b_top) = (tops[0], tops[1]);
+    let mut machine = NesMachine::new(&file, EmptyPlugin::new());
+    run_to_clock(&mut machine, start + 10);
+    assert_eq!(
+        machine.spin_declaration().map(|d| d.loop_pc),
+        Some(a_top),
+        "the power-on loop A declares first"
+    );
+    // Jump into loop B (set_pc drains to an instruction boundary first)
+    // and spin it; B's back-edge must replace A's declaration.
+    machine.set_pc(b_top);
+    run_to_clock(&mut machine, start + 100);
+    let decl = machine
+        .spin_declaration()
+        .expect("loop B must declare after the jump");
+    assert_eq!(decl.loop_pc, b_top);
+    assert_eq!(decl.poll_opcode, 0xAD);
 }
 
 #[test]

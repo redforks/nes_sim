@@ -1795,6 +1795,14 @@ impl Microcode {
         cpu.request_detect_interrupt = Some(true);
         if branch_test_result {
             let old_pch = cpu.pch();
+            // Ticket #169 shape gate: this taken branch is the only place
+            // the declarable back-edge can appear, so it is the only place
+            // detection runs (spec #165 Q7 — zero cost elsewhere). The PC
+            // still sits just past the fetched offset (branch_pc + 2).
+            let branch_pc = cpu.pc.get().wrapping_sub(2);
+            if let Some(hit) = crate::spin_skip::backedge_shape_hit_at_bus(bus, branch_pc, offset) {
+                cpu.spin_backedge_hit = Some(hit);
+            }
             cpu.pc.wrapping_add((offset as i8) as u16);
             if old_pch != cpu.pch() {
                 // Taken with page cross: cycle 3 re-reads PC (already final

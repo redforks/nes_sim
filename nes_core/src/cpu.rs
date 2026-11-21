@@ -1,4 +1,5 @@
 use crate::microcode::fetch_and_decode;
+use crate::spin_skip::SpinBackedgeHit;
 use crate::view::MachineView;
 use crate::{SystemClock, bus::Bus, mcu::Mcu};
 use arraydeque::ArrayDeque;
@@ -327,6 +328,13 @@ pub struct Cpu {
     irq_detector: IrqDetector,
     request_detect_interrupt: Option<bool>,
 
+    /// Transient same-dot event for the machine's spin-skip shape gate
+    /// (spec #167, ticket #169): set only when the branch microcode
+    /// executes a taken back-edge matching the declarable poll-loop
+    /// shape, drained by the machine in the same `tick_dot_2`. Never
+    /// survives a dot, so no other CPU path can observe it (ADR 0010).
+    spin_backedge_hit: Option<SpinBackedgeHit>,
+
     /// `None` = normal; `Some` = frozen and/or halted (see [`FrozenReason`]).
     frozen_reason: Option<FrozenReason>,
 
@@ -352,6 +360,7 @@ impl Cpu {
             alu: 0,
             microcode_queue: ArrayDeque::new(),
             frozen_reason: None,
+            spin_backedge_hit: None,
         };
         r.reset();
         r
@@ -369,6 +378,14 @@ impl Cpu {
 
     pub fn pc(&self) -> u16 {
         self.pc.get()
+    }
+
+    /// Take the shape-gate event latched by the last branch microcode, if
+    /// that branch matched the declarable $2002 poll-loop back-edge
+    /// (ticket #169). Same-dot drain by the machine; the latch never
+    /// survives a dot.
+    pub(crate) fn take_spin_backedge_hit(&mut self) -> Option<SpinBackedgeHit> {
+        self.spin_backedge_hit.take()
     }
 
     /// Read-only accessors for the register file — the per-dot contract (ADR-0010).
@@ -731,6 +748,10 @@ impl Cpu {
         self.nmi_detecteor = Default::default();
         self.irq_detector = Default::default();
         self.request_detect_interrupt = None;
+        // Defensive: the machine drains the shape-gate latch on the same
+        // dot it was latched, but a reset between latch and drain must not
+        // let a stale hit declare a loop the fresh CPU is not running.
+        self.spin_backedge_hit = None;
 
         self.push_microcodes(&InterruptSequences::RESET);
         self.arm_interrupt_window(&InterruptSequences::RESET_WINDOW, None);
