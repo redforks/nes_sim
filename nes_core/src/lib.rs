@@ -15,14 +15,6 @@ pub mod nes_machine;
 pub mod view;
 // Test utilities (private, for tests only)
 #[cfg(test)]
-#[path = "test_utils/wait_mcu.rs"]
-mod wait_mcu;
-
-#[cfg(test)]
-#[path = "test_utils/wait_rom.rs"]
-mod wait_rom;
-
-#[cfg(test)]
 mod test_utils;
 
 pub use cpu::*;
