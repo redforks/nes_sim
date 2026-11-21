@@ -277,7 +277,7 @@ _Avoid_: write filter, consecutive writes (without qualifier)
 ## Language — Bus Decoding
 
 **Decode into NesMcu (not Ppu)**:
-`Ppu` does not own the cartridge and does not implement `Mcu`. `NesMcu` owns `cartridge: Cartridge` and performs all CPU address decode: `0x0000-0x1FFF` LowerRam, `0x2000-0x3FFF` PPU regs via `Ppu::read_ppureg`/`write_ppureg` (taking `&mut Cartridge`), `0x4000-0x401F` APU/IO, `0x4020-0x4FFF` open bus, `0x5000-0x5FFF` open bus on reads with writes routed to `cartridge.write_expansion → mapper.cpu_write`, `0x6000-0x7FFF` PRG-RAM (open bus if `!prg_ram_enabled()`), `0x8000-0xFFFF` PRG-ROM via `cartridge.read`/`write(cycle)`. Undriven reads (`0x4020-0x5FFF`, disabled PRG-RAM) refresh the CPU open bus (`open_bus` latch) and the PPU latch decays via `PPU_OPEN_BUS_DECAY_TICKS`.
+`Ppu` does not own the cartridge and does not implement `Mcu`. `NesMcu` owns `cartridge: Cartridge` and performs all CPU address decode: `0x0000-0x1FFF` LowerRam, `0x2000-0x3FFF` PPU regs via `Ppu::read_ppureg`/`write_ppureg` (taking `&mut Cartridge`), `0x4000-0x401F` APU/IO, `0x4020-0x4FFF` open bus, `0x5000-0x5FFF` open bus on reads with writes routed to `cartridge.write_expansion → mapper.cpu_write`, `0x6000-0x7FFF` PRG-RAM (open bus if `!prg_ram_enabled()`), `0x8000-0xFFFF` PRG-ROM via `cartridge.read`/`write(cycle)`. Undriven reads (`0x4020-0x5FFF`, disabled PRG-RAM) refresh the CPU open bus (`open_bus` latch) and the PPU latch decays via `open_bus_decay_ticks`, which gives each latch bit its own 3-30 ms deadline (bit 7 fastest; see `PPU_OPEN_BUS_DECAY_TICKS` in `nes_core/src/nes/ppu.rs`).
 _Avoid_: Ppu as Mcu, cartridge in Ppu, open bus (without qualifier)
 
 **Fast Path Contract**:

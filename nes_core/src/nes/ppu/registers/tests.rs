@@ -1,4 +1,5 @@
 use super::*;
+use crate::nes::ppu::{PPU_OPEN_BUS_DECAY_TICKS, open_bus_decay_ticks};
 use test_case::test_case;
 
 #[test_case(false, 5, PatternBank::First ; "background at first bank")]
@@ -36,17 +37,34 @@ fn partial_refresh_preserves_unmasked_bit_deadlines() {
     let mut regs = Registers::new();
     regs.refresh_bus_latch(0xFF, 0);
     regs.refresh_bus_latch_bits(0xE0, 0x80, 1000);
-    // Low bits still decay on the original deadline ...
-    assert_eq!(regs.current_bus_latch(PPU_OPEN_BUS_DECAY_TICKS), 0x80);
-    // ... while the refreshed high bit survives until its own deadline.
+    // The re-armed bit 7 still expires 3 ms after its own refresh (1000),
+    // while the low bits kept the deadlines they got at cycle 0.
     assert_eq!(
-        regs.current_bus_latch(1000 + PPU_OPEN_BUS_DECAY_TICKS - 1),
+        regs.current_bus_latch(1000 + PPU_OPEN_BUS_DECAY_TICKS - 1) & 0xE0,
         0x80
     );
     assert_eq!(
-        regs.current_bus_latch(1000 + PPU_OPEN_BUS_DECAY_TICKS),
+        regs.current_bus_latch(1000 + PPU_OPEN_BUS_DECAY_TICKS) & 0xE0,
         0x00
     );
+}
+
+#[test]
+fn bits_of_one_latch_decay_on_different_deadlines() {
+    // One latch byte, eight deadlines: bit 7 (fastest) is gone at 3 ms while
+    // bits 0-3 still hold 1s, and `$3F` reproduces lidnariq's warm-PPU
+    // `$3F` -> `$1F` -> `$0F` progression (bit 5 decays before bit 4).
+    let mut regs = Registers::new();
+    regs.refresh_bus_latch(0xFF, 0);
+    assert_eq!(regs.current_bus_latch(PPU_OPEN_BUS_DECAY_TICKS), 0x7F);
+
+    let mut regs = Registers::new();
+    regs.refresh_bus_latch(0x3F, 0);
+    assert_eq!(regs.current_bus_latch(open_bus_decay_ticks(5)), 0x1F);
+    assert_eq!(regs.current_bus_latch(open_bus_decay_ticks(4)), 0x0F);
+    // Bits 3-0 outlive one frame (89,342 dots).
+    assert_eq!(regs.current_bus_latch(89_342), 0x0F);
+    assert_eq!(regs.current_bus_latch(open_bus_decay_ticks(0)), 0x00);
 }
 
 #[test]
@@ -57,9 +75,7 @@ fn palette_style_partial_refresh_preserves_high_bits() {
     let mut regs = Registers::new();
     regs.refresh_bus_latch(0xFF, 0);
     regs.refresh_bus_latch_bits(0x3F, 0x3F, 1000);
-    assert_eq!(regs.current_bus_latch(PPU_OPEN_BUS_DECAY_TICKS), 0x3F);
-    assert_eq!(
-        regs.current_bus_latch(1000 + PPU_OPEN_BUS_DECAY_TICKS),
-        0x00
-    );
+    // Bits 6-7 keep cycle-0 deadlines (bit 6 is the slower of the two).
+    assert_eq!(regs.current_bus_latch(open_bus_decay_ticks(6)), 0x3F);
+    assert_eq!(regs.current_bus_latch(1000 + open_bus_decay_ticks(0)), 0x00);
 }

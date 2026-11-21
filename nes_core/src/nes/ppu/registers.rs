@@ -1,7 +1,7 @@
 use modular_bitfield::prelude::*;
 
 use super::oam::{PatternBank, TilePosition};
-use super::{PPU_OPEN_BUS_DECAY_TICKS, Pixel};
+use super::{Pixel, open_bus_decay_ticks};
 
 #[bitfield]
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -157,8 +157,9 @@ pub struct Registers {
     pub ppudata_buffer: u8,
 
     // PPU open bus / data latch. The latch holds the last value driven
-    // onto the PPU data bus; each 1-bit decays to 0 after
-    // `PPU_OPEN_BUS_DECAY_TICKS` without a refresh (~0.6 s, ~36 frames).
+    // onto the PPU data bus; each 1-bit decays to 0 on its own deadline,
+    // 3-30 ms after the last refresh depending on the bit (~1 frame or
+    // less; see `open_bus_decay_ticks`, bit 7 fastest).
     // Deadlines stay per-bit: partial refreshes (`refresh_bus_latch_bits`,
     // masks $E0/$3F) must NOT re-arm untouched bits (ppu_open_bus tests 7
     // and 9). `bus_latch_earliest_decay` caches the minimum live deadline
@@ -233,9 +234,9 @@ impl Registers {
     #[inline]
     fn apply_bus_decay(&mut self, now: u64) {
         // Fast path: nothing expires before the earliest live deadline, so
-        // the common case (decay ~0.6 s away, or no 1-bits pending) is a
-        // single compare with no loop. The 8-bit scan only runs once decay
-        // is actually due.
+        // the common case (decay a frame or so away, or no 1-bits pending)
+        // is a single compare with no loop. The 8-bit scan only runs once
+        // decay is actually due.
         if now < self.bus_latch_earliest_decay {
             return;
         }
@@ -266,14 +267,21 @@ impl Registers {
     #[inline]
     pub fn refresh_bus_latch(&mut self, value: u8, cycle: u64) {
         // No pre-decay: the old latch is overwritten unconditionally, so
-        // decaying it first would be dead work. All set-bit deadlines are
-        // identical, so the earliest is known without a scan.
+        // decaying it first would be dead work. Deadlines differ per bit
+        // (bit 7 lives 3 ms, bit 0 lives 30 ms), so the earliest must be
+        // tracked while the slots are stamped.
         self.bus_latch = value;
-        let deadline = cycle.wrapping_add(PPU_OPEN_BUS_DECAY_TICKS);
+        let mut earliest = u64::MAX;
         for (bit, slot) in self.bus_latch_decay_deadlines.iter_mut().enumerate() {
-            *slot = if (value >> bit) & 1 != 0 { deadline } else { 0 };
+            *slot = if (value >> bit) & 1 != 0 {
+                let deadline = cycle.wrapping_add(open_bus_decay_ticks(bit));
+                earliest = earliest.min(deadline);
+                deadline
+            } else {
+                0
+            };
         }
-        self.bus_latch_earliest_decay = if value != 0 { deadline } else { u64::MAX };
+        self.bus_latch_earliest_decay = earliest;
     }
 
     #[inline]
@@ -283,12 +291,14 @@ impl Registers {
         // Per-bit semantics: only masked bits get new deadlines; untouched
         // bits keep theirs (ppu_open_bus tests 7 and 9). Iterating the mask
         // touches at most popcount(mask) entries ($E0 -> 3, $3F -> 6).
-        let deadline = cycle.wrapping_add(PPU_OPEN_BUS_DECAY_TICKS);
         let mut pending = mask;
         while pending != 0 {
             let bit = pending.trailing_zeros() as usize;
-            self.bus_latch_decay_deadlines[bit] =
-                if (value >> bit) & 1 != 0 { deadline } else { 0 };
+            self.bus_latch_decay_deadlines[bit] = if (value >> bit) & 1 != 0 {
+                cycle.wrapping_add(open_bus_decay_ticks(bit))
+            } else {
+                0
+            };
             pending &= pending - 1;
         }
         self.recompute_earliest_decay();

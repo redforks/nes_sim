@@ -131,9 +131,69 @@ fn test_open_bus_bits_decay_to_zero() {
     let mut cart = Cartridge::test();
 
     ppu.write_ppureg(0x2002, 0xFF, &mut cart);
-    ppu.cycle = PPU_OPEN_BUS_DECAY_TICKS;
+    ppu.cycle = PPU_OPEN_BUS_DECAY_MAX_TICKS;
 
     assert_eq!(ppu.read_ppureg(0x2000, &mut cart), 0x00);
+}
+
+/// The decay window is pinned to the hardware figures: earliest bit at 3 ms,
+/// last bit at 30 ms (https://www.nesdev.org/wiki/PPU_registers; measured
+/// 4-21 ms in https://forums.nesdev.org/viewtopic.php?t=24639). A wrong
+/// magnitude (e.g. blargg's cold ~600 ms upper bound) fails here.
+#[test]
+fn open_bus_decay_window_matches_hardware() {
+    const PPU_DOT_HZ: u64 = 5_369_318;
+
+    let ms = |ticks: u64| (ticks * 1000 + PPU_DOT_HZ / 2) / PPU_DOT_HZ;
+    assert_eq!(ms(PPU_OPEN_BUS_DECAY_TICKS), 3, "fastest bit");
+    assert_eq!(ms(PPU_OPEN_BUS_DECAY_MAX_TICKS), 30, "slowest bit");
+}
+
+/// Every bit of one latch byte has its own deadline: `$3F` latched, read back
+/// through a write-only register (a `$2006` mirror, no refresh) after exactly
+/// one frame loses bits 5 and 4 but keeps bits 3-0 -- lidnariq's warm-PPU
+/// `$3F` -> `$1F` -> `$0F` observation
+/// (https://forums.nesdev.org/viewtopic.php?p=143801#p143801).
+#[test]
+fn open_bus_decay_is_per_bit_at_one_frame() {
+    let mut ppu = Ppu::new();
+    let mut cart = Cartridge::test();
+
+    ppu.write_ppureg(0x2002, 0x3F, &mut cart);
+    ppu.cycle = 341 * 262; // one NTSC frame, 89,342 dots
+
+    let value = ppu.read_ppureg(0x2006, &mut cart);
+    assert_eq!(value, 0x0F);
+}
+
+/// A `$2002` poll loop re-arms bits 7-5 only, so bits 4-0 are pure decay: they
+/// survive a sub-3 ms poll span and are gone once the slowest bit's deadline
+/// has passed.
+#[test]
+fn status_poll_loop_decays_low_bits() {
+    let mut ppu = Ppu::new();
+    let mut cart = Cartridge::test();
+    ppu.registers.status.set_v_blank(true);
+
+    ppu.write_ppureg(0x2002, 0x3F, &mut cart);
+    let mut cycle = 0;
+    // A poll span shorter than the fastest bit's deadline leaves bits 4-0.
+    while cycle < PPU_OPEN_BUS_DECAY_TICKS - 7 {
+        ppu.cycle = cycle;
+        let _ = ppu.read_ppureg(0x2002, &mut cart);
+        cycle += 7; // `bit $2002` + `bpl`
+    }
+    ppu.cycle = PPU_OPEN_BUS_DECAY_TICKS - 1;
+    assert_eq!(ppu.read_ppureg(0x2002, &mut cart) & 0x1F, 0x1F);
+
+    // Past the slowest bit's deadline they are all gone.
+    while cycle < PPU_OPEN_BUS_DECAY_MAX_TICKS {
+        ppu.cycle = cycle;
+        let _ = ppu.read_ppureg(0x2002, &mut cart);
+        cycle += 7;
+    }
+    ppu.cycle = PPU_OPEN_BUS_DECAY_MAX_TICKS;
+    assert_eq!(ppu.read_ppureg(0x2002, &mut cart) & 0x1F, 0x00);
 }
 
 #[test]
@@ -142,7 +202,7 @@ fn test_status_read_only_refreshes_high_bits() {
     let mut cart = Cartridge::test();
 
     ppu.write_ppureg(0x2002, 0xFF, &mut cart);
-    ppu.cycle = PPU_OPEN_BUS_DECAY_TICKS;
+    ppu.cycle = PPU_OPEN_BUS_DECAY_MAX_TICKS;
     ppu.registers.status.set_v_blank(true);
     let result = ppu.read_ppureg(0x2002, &mut cart);
     // Only high bit should remain; the 0xFF bus latch written to $2002 had 0x80 masked.

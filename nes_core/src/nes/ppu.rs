@@ -28,7 +28,36 @@ const VISIBLE_WIDTH: u16 = NES_WIDTH as u16;
 const VISIBLE_HEIGHT: u16 = NES_HEIGHT as u16;
 
 // PPU Timing Constants
-const PPU_OPEN_BUS_DECAY_TICKS: u64 = 3_221_591 * crate::SYSTEM_CYCLES_PER_PPU_CYCLE;
+/// PPU open-bus latch decay, in PPU dots at the NTSC dot clock
+/// (21.477272/4 = 5.369318 MHz): the fastest 1-bit (bit 7) is gone after
+/// 3 ms, the slowest (bit 0) after 30 ms. The latch is the `_io_db0`..`_io_db7`
+/// trace capacitance inside the PPU, not OAM DRAM, so its timing is unrelated
+/// to the ~1.3 ms OAM refresh figure.
+///
+/// Hardware: "At least one bit in this value decays after 3ms to 30ms, faster
+/// when the PPU is warm" (https://www.nesdev.org/wiki/PPU_registers); measured
+/// 4-21 ms across consoles, warm (https://forums.nesdev.org/viewtopic.php?t=24639).
+/// The previous value here, 3_221_591 dots (~600 ms, ~36 frames), came from
+/// blargg's `ppu_open_bus` readme ("about 600 milliseconds (some decay sooner)")
+/// which describes the cold slowest-bit upper bound, not warm behaviour.
+const PPU_OPEN_BUS_DECAY_TICKS: u64 = 16_108;
+/// Extra hold time per lower bit: bit 7 = `PPU_OPEN_BUS_DECAY_TICKS` (3 ms),
+/// bit 0 = 3 ms + 7 steps = 30 ms. Ascending hold time as the bit index falls
+/// reproduces lidnariq's `$3F` -> `$1F` -> `$0F` observation on a warm PPU
+/// (https://forums.nesdev.org/viewtopic.php?p=143801#p143801), where bit 5 goes
+/// first, then bit 4, while bits 3-0 outlive a frame.
+const PPU_OPEN_BUS_DECAY_STEP_TICKS: u64 = 20_710;
+/// Hold time of the slowest latch bit: after this no bit of the latch is left.
+#[cfg(test)]
+const PPU_OPEN_BUS_DECAY_MAX_TICKS: u64 =
+    PPU_OPEN_BUS_DECAY_TICKS + 7 * PPU_OPEN_BUS_DECAY_STEP_TICKS;
+
+/// Per-bit decay deadline offset; bit 7 decays first, bit 0 last.
+#[inline]
+const fn open_bus_decay_ticks(bit: usize) -> u64 {
+    PPU_OPEN_BUS_DECAY_TICKS + (7 - bit) as u64 * PPU_OPEN_BUS_DECAY_STEP_TICKS
+}
+
 /// Width of the back-to-back $2007 PPUDATA ignore window, in PPU dots
 /// (~2 CPU cycles): a second read landing inside it is fully ignored.
 /// Mesen2 sets `_ignoreVramRead = 6` at the read and decrements once per
