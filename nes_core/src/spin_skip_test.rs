@@ -31,10 +31,11 @@
 use std::cell::RefCell;
 use std::rc::Rc;
 
-use crate::cpu::{CpuSnapshot, ExecuteResult, Plugin};
+use crate::cpu::{CpuSnapshot, EmptyPlugin, ExecuteResult, Plugin};
 use crate::ines::INesFile;
 use crate::nes::NesMcu;
 use crate::nes_machine::NesMachine;
+use crate::spin_skip::SpinDeclaration;
 use crate::view::MachineView;
 
 /// NMI vector target: a bare `RTI` handler (entry logs an NMI dispatch).
@@ -428,6 +429,51 @@ fn sweep_chunk(range: std::ops::Range<usize>) {
     for &t in &sweep_targets()[range] {
         assert_differential_matches(t);
     }
+}
+
+// Ticket #169 — shape-gate declaration tests. These are the LOW-LEVEL
+// tier of the spec's testing decisions: they observe the machine's
+// internal declaration slot through the #[cfg(test)] seam, because the
+// declaration itself has no public behavior yet (no skipping — real
+// execution is unchanged). The PUBLIC tier is the differential sweep
+// above: both its switch sides run with detection+declaration active,
+// proving the declaration is observationally invisible.
+
+/// Step `machine` (one [`NesMachine::tick`] = 3 dots) until the bus
+/// clock reaches `until` (absolute dot clock). Panics if the machine
+/// stops: the synthetic poll-loop ROMs run forever.
+fn run_to_clock<P: Plugin<NesMcu>>(machine: &mut NesMachine<P>, until: u64) {
+    while machine.system_cycles() < until {
+        assert!(
+            matches!(machine.tick(), ExecuteResult::Continue),
+            "machine stopped before clock {until}"
+        );
+    }
+}
+
+/// The declaring back-edge dot for a loop whose first $2002 read
+/// lands at `read_dot`: the branch microcode (operand fetch + PC
+/// redirect) runs 2 CPU cycles after the read microcode — the taken
+/// 3rd cycle that follows is a separate interrupt-detect microcode.
+const FIRST_BACKEDGE_DOTS_AFTER_READ: u64 = 6;
+
+#[test]
+fn shape_gate_declares_bit_poll_loop_at_first_backedge() {
+    let start = frame_dot(1, 240, 0);
+    let rom = poll_loop_rom(start);
+    let mut machine = NesMachine::new(&rom.file, EmptyPlugin::new());
+    run_to_clock(&mut machine, start + 10);
+    assert_eq!(
+        machine.spin_declaration(),
+        Some(SpinDeclaration {
+            loop_pc: rom.loop_top,
+            back_edge_target: rom.loop_top,
+            poll_opcode: 0x2C,
+            poll_operands: [0x02, 0x20],
+            branch_pc: rom.loop_top + 3,
+            anchor_dot: start + FIRST_BACKEDGE_DOTS_AFTER_READ,
+        })
+    );
 }
 
 #[test]
