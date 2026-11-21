@@ -19,9 +19,12 @@
 //! 3. The `differential_sweep_*` tests — for every achievable start
 //!    dot from scanline 240 dot 0 through scanline 242 dot 0 plus one
 //!    at the frame wrap, run the machine twice through the
-//!    [`crate::NesMachine::set_spin_skip_enabled`] seam (skip does not
-//!    exist yet, so both sides are the skip-off control) and require
-//!    identical observations.
+//!    [`crate::NesMachine::set_spin_skip_enabled`] seam — skip-off
+//!    control vs skip-on replay — and require identical frame
+//!    boundaries. Start dots whose span would cross the VBL window
+//!    must fall back to real execution (ticket #171 extends the skip
+//!    into that window), so the sweep also pins which side each
+//!    target lands on.
 //!
 //! No emulator behaviour is changed by anything in this module, and no
 //! per-instruction bookkeeping is added to the executing path: the
@@ -29,14 +32,16 @@
 //! design (ADR-0010's `MachineView`).
 
 use std::cell::RefCell;
+use std::collections::HashSet;
 use std::rc::Rc;
 
+use crate::cpu::microcode::BranchTest;
 use crate::cpu::{CpuSnapshot, EmptyPlugin, ExecuteResult, Plugin};
 use crate::ines::INesFile;
 use crate::mcu::Mcu;
 use crate::nes::NesMcu;
 use crate::nes_machine::NesMachine;
-use crate::spin_skip::SpinDeclaration;
+use crate::spin_skip::{LOOP_PERIOD_DOTS, SpinDeclaration};
 use crate::{SystemClock, view::MachineView};
 
 /// NMI vector target: a bare `RTI` handler (entry logs an NMI dispatch).
@@ -223,6 +228,33 @@ fn poll_loop_variant(first_poll_read_clock: u64, loop_body: &[u8]) -> PollLoopRo
     PollLoopRom { file, loop_top }
 }
 
+/// iNES header length: 16 bytes precede the PRG bank in the image.
+const INES_HEADER_LEN: usize = 16;
+/// PRG mapping base of the synthetic NROM-128 image (`$8000`).
+const PRG_BASE: u16 = 0x8000;
+
+/// A poll-loop ROM whose delay tail preloads the open-bus latch: the
+/// first five tail NOPs are replaced by `LDA #$1F / STA $2004` (6
+/// cycles over 5 bytes, so the read lands 3 dots later than the
+/// builder's clock — the request compensates). Any `$2xxx` write
+/// refreshes the full latch, so bits 4-0 hold `$1F` and stay live
+/// (the decay deadline is millions of dots away): a counterfactual
+/// `$2002` read that wrongly refreshed the full latch would zero them.
+fn latch_preload_poll_loop_rom(first_read_dot: u64) -> PollLoopRom {
+    let requested = first_read_dot - 3;
+    let spread = requested - FIRST_POLL_READ_CLOCK_ZERO_TAIL;
+    assert!(
+        spread.is_multiple_of(3),
+        "start dot must sit on the CPU read phase (2 mod 3)"
+    );
+    let (mut image, loop_top) = poll_rom_bytes(spread / 3);
+    let prg_offset = (TAIL_START - PRG_BASE) as usize;
+    image[INES_HEADER_LEN + prg_offset..INES_HEADER_LEN + prg_offset + 5]
+        .copy_from_slice(&[0xA9, 0x1F, 0x8D, 0x04, 0x20]);
+    let file = INesFile::new(image).expect("synthetic latch ROM must parse");
+    PollLoopRom { file, loop_top }
+}
+
 /// Spin a poll-loop ROM for `dots` past power-on and prove the loop
 /// really is executing (poll starts observed at the loop top), then
 /// hand the machine back for declaration assertions.
@@ -230,12 +262,22 @@ fn spun_machine(
     rom: &PollLoopRom,
     dots: u64,
 ) -> (NesMachine<PollObserverPlugin>, Rc<RefCell<ObserverLog>>) {
+    spun_machine_with(rom, dots, false)
+}
+
+/// [`spun_machine`] with the quiet-span skip switch explicitly set.
+fn spun_machine_with(
+    rom: &PollLoopRom,
+    dots: u64,
+    spin_skip_enabled: bool,
+) -> (NesMachine<PollObserverPlugin>, Rc<RefCell<ObserverLog>>) {
     let log = Rc::new(RefCell::new(ObserverLog::default()));
     let plugin = PollObserverPlugin {
         log: Rc::clone(&log),
         loop_top: rom.loop_top,
     };
     let mut machine = NesMachine::new(&rom.file, plugin);
+    machine.set_spin_skip_enabled(spin_skip_enabled);
     run_to_clock(&mut machine, dots);
     (machine, log)
 }
@@ -340,6 +382,15 @@ pub(crate) struct ObservedRun {
     /// Clocks of every `$2002` read (poll-loop `BIT` instruction start +9:
     /// fetch, abs-lo, abs-hi, then the read microcode).
     pub poll_read_clocks: Vec<u64>,
+    /// Counterfactual polls replayed by the quiet-span skip (ticket
+    /// #170): zero for the skip-off control, positive once a span
+    /// engages, zero when every span fell back to real execution.
+    pub replayed_polls: u64,
+    /// Replay-counter snapshot at each frame boundary, aligned with
+    /// `boundaries`: engagement is measured per span, so a fallback in
+    /// the VBL window does not read as disengagement when a later,
+    /// quiet span re-engages (and vice versa).
+    pub replay_polls_at_boundaries: Vec<u64>,
 }
 
 /// Run `rom` tick-by-tick through the public machine API until `frames`
@@ -363,6 +414,7 @@ pub(crate) fn run_observed(
     machine.set_spin_skip_enabled(spin_skip_enabled);
 
     let mut boundaries = Vec::with_capacity(frames);
+    let mut replay_polls_at_boundaries: Vec<u64> = Vec::with_capacity(frames);
     let mut nmi_seen = 0;
     // Guard against a harness regression that never sees vblank-entered.
     let mut tick_budget = 5 * FRAME_LEN_DOTS;
@@ -388,6 +440,7 @@ pub(crate) fn run_observed(
                 cycles: machine.system_cycles(),
                 nmi_dots,
             });
+            replay_polls_at_boundaries.push(machine.spin_skip_replayed_polls());
         }
     }
 
@@ -395,6 +448,8 @@ pub(crate) fn run_observed(
     ObservedRun {
         boundaries,
         poll_read_clocks: poll_starts.iter().map(|&c| c + 9).collect(),
+        replayed_polls: machine.spin_skip_replayed_polls(),
+        replay_polls_at_boundaries,
     }
 }
 
@@ -417,9 +472,13 @@ fn sweep_targets() -> Vec<u64> {
     targets
 }
 
-/// The core differential of ticket #168, ready for tickets #169-#171:
-/// two runs through the spin-skip seam must observe identical state.
-/// Until the skip exists, both sides are the skip-off control.
+/// The core differential of ticket #170: a skip-on run must observe
+/// exactly the skip-off control's state at every frame boundary. The
+/// quiet span replays polls on the anchor grid and always ends before
+/// the VBL window; start dots whose span would cross that window fall
+/// back to real execution (ticket #171 extends the skip into the race
+/// window), so the expectation for each side comes from frame
+/// geometry, not from the skip machinery.
 fn assert_differential_matches(start_dot: u64) {
     let rom = poll_loop_rom(start_dot);
     let control = run_observed(&rom, false, 2);
@@ -428,11 +487,128 @@ fn assert_differential_matches(start_dot: u64) {
         Some(&start_dot),
         "first $2002 read must land on the requested start dot {start_dot}"
     );
-    let replay = run_observed(&rom, false, 2);
+    assert_eq!(control.replayed_polls, 0, "the control must never replay");
+    let replay = run_observed(&rom, true, 2);
+
+    // CPU state, cycle count, and NMI dispatch dots match the control
+    // at every frame boundary.
     assert_eq!(
-        control, replay,
-        "skip-off vs skip-off observations diverged at start dot {start_dot}"
+        control.boundaries, replay.boundaries,
+        "skip-on vs skip-off frame boundaries diverged at start dot {start_dot}"
     );
+
+    // The first read still lands on the requested dot — the declaring
+    // iteration always runs real — and every real poll that remains
+    // sits on the control's poll lattice: real iterations re-enter the
+    // loop exactly where the control does.
+    assert_eq!(
+        replay.poll_read_clocks.first(),
+        Some(&start_dot),
+        "skip-on first read moved off the requested start dot {start_dot}"
+    );
+    let control_polls: HashSet<u64> = control.poll_read_clocks.iter().copied().collect();
+    for &clock in &replay.poll_read_clocks {
+        assert!(
+            control_polls.contains(&clock),
+            "skip-on real poll {clock} left the control poll lattice              (start dot {start_dot})"
+        );
+    }
+
+    // Engagement, measured per span: the first span that could cover
+    // a VBL boundary must fall back (the window runs real); every
+    // other start dot must engage. The measurement boundary is the one
+    // that follows the span, so a later quiet re-engage after a
+    // fallback does not mask it (and a fallback never hides behind a
+    // re-engage). Ticket #171 relaxes the fallback expectation.
+    let first_top = first_span_top(start_dot, &control);
+    let boundary_index = if first_top <= frame_dot(1, 241, 1) {
+        0
+    } else {
+        1
+    };
+    let replays_at_span = replay
+        .replay_polls_at_boundaries
+        .get(boundary_index)
+        .copied()
+        .unwrap_or(0);
+    if first_span_falls_back(start_dot, &control) {
+        assert_eq!(
+            replays_at_span, 0,
+            "start dot {start_dot} must fall back to real execution: its              span would cover the VBL window"
+        );
+    } else {
+        assert!(
+            replays_at_span > 0,
+            "start dot {start_dot} must engage the quiet-span skip"
+        );
+    }
+}
+
+/// The loop top that follows the declaring back-edge: the branch
+/// microcode runs 6 dots after the poll read, the next top 6 dots
+/// after that.
+const TOP_AFTER_DECLARING_POLL: u64 = 12;
+
+/// The smallest VBL-boundary dot (the `(241,0)` race read or the
+/// `(241,1)` VBL set) at or after `clock`, per the frame geometry.
+fn next_vbl_boundary_dot(clock: u64) -> u64 {
+    let frame_origin = frame_dot(1, 0, 0);
+    let rel = clock - frame_origin;
+    let frame = rel / FRAME_LEN_DOTS;
+    let rem = rel % FRAME_LEN_DOTS;
+    let base = frame_origin + frame * FRAME_LEN_DOTS;
+    let vbl_line = frame_dot(1, 241, 0) - frame_origin;
+    if rem <= vbl_line {
+        base + vbl_line
+    } else if rem == vbl_line + 1 {
+        base + vbl_line + 1
+    } else {
+        base + FRAME_LEN_DOTS + vbl_line
+    }
+}
+
+/// Would the first armed span of a run starting at `start_dot` cover
+/// the VBL window? The declaring read comes from the control's
+/// observed polls (empirical, independent of the skip machinery):
+/// tops 21 dots apart mean the first pass was taken and declared;
+/// any other gap means the first read saw the flag set, fell through,
+/// and the second pass declares.
+fn first_span_top(start_dot: u64, control: &ObservedRun) -> u64 {
+    assert_eq!(control.poll_read_clocks.first(), Some(&start_dot));
+    let declaring_poll = if control.poll_read_clocks.len() > 1
+        && control.poll_read_clocks[1] == start_dot + LOOP_PERIOD_DOTS
+    {
+        start_dot
+    } else {
+        *control
+            .poll_read_clocks
+            .get(1)
+            .expect("the poll loop must re-enter within the run")
+    };
+    declaring_poll + TOP_AFTER_DECLARING_POLL
+}
+
+fn first_span_falls_back(start_dot: u64, control: &ObservedRun) -> bool {
+    let first_top = first_span_top(start_dot, control);
+    // The span's first iteration would cover the VBL boundary dot —
+    // or the loop's taken branch crosses a page boundary, making each
+    // iteration 8 cycles: the 21-dot anchor grid would be wrong, so
+    // the machinery never arms (ticket #171 owns modeling the extra
+    // dummy-read cycle). The steady spacing is read from the control
+    // run, well before any NMI dispatch can interrupt the grid.
+    let crosses_window = next_vbl_boundary_dot(first_top) < first_top + LOOP_PERIOD_DOTS;
+    let polls = &control.poll_read_clocks;
+    // The steady iteration spacing: the first gap that is an iteration
+    // grid (21 dots, or 24 for a page-crossing taken branch). Exit
+    // detours (the fall-through out of the loop) and one-off NMI
+    // dispatch gaps are skipped by the membership test.
+    let steady = polls
+        .windows(2)
+        .take(12)
+        .map(|w| w[1] - w[0])
+        .find(|gap| *gap == LOOP_PERIOD_DOTS || *gap == LOOP_PERIOD_DOTS + 3)
+        .expect("the poll loop must settle into its iteration grid");
+    crosses_window || steady != LOOP_PERIOD_DOTS
 }
 
 #[test]
@@ -557,6 +733,7 @@ fn shape_gate_declares_bit_poll_loop_at_first_backedge() {
             poll_opcode: 0x2C,
             poll_operands: [0x02, 0x20],
             branch_pc: rom.loop_top + 3,
+            branch_test: BranchTest::IfNegativeClear,
             anchor_dot: start + FIRST_BACKEDGE_DOTS_AFTER_READ,
         })
     );
@@ -809,6 +986,125 @@ fn differential_sweep_scanline_241_to_vbl_exit() {
 fn differential_sweep_scanline_242_to_frame_wrap() {
     sweep_chunk(171..229);
 }
+
+#[test]
+fn vbl_set_dot_always_runs_real() {
+    // Ticket #170: the quiet span must end a full iteration before the
+    // VBL window, so the VBL set — and the poll iteration that first
+    // observes the fresh flag — run real. Observable through the
+    // public seam: the wake iteration's poll read exists in the
+    // 21-dot window ending at the set dot (a span parked over the
+    // window would leave no real poll there), and the frame boundary
+    // still matches the control.
+    let start = frame_dot(1, 240, 0);
+    let rom = poll_loop_rom(start);
+    let control = run_observed(&rom, false, 2);
+    let replay = run_observed(&rom, true, 2);
+    assert!(replay.replayed_polls > 0, "the quiet span must engage");
+    let vbl_set = frame_dot(1, 241, 1);
+    assert!(
+        replay
+            .poll_read_clocks
+            .iter()
+            .any(|&c| (vbl_set - LOOP_PERIOD_DOTS..vbl_set).contains(&c)),
+        "no real poll read in the iteration ending at the VBL set dot:          the skip consumed the wake iteration"
+    );
+    assert_eq!(
+        control.boundaries, replay.boundaries,
+        "boundaries diverged across the VBL-set wake"
+    );
+}
+
+#[test]
+fn nmi_dispatch_pins_hold_with_the_skip_on() {
+    // The #168 NMI pins are load-bearing regression guards for the
+    // skip: the span ends before the VBL set, the wake iteration and
+    // the NMI edge run real, so the dispatch must land on the same
+    // pinned dot as the skip-off control.
+    let start = frame_dot(1, 240, 0);
+    let run = run_observed(&poll_loop_rom(start), true, 3);
+    assert_eq!(run.boundaries.len(), 3);
+    assert!(run.replayed_polls > 0, "the quiet span must engage");
+    let f2_event = frame_dot(2, 241, 1);
+    assert!(run.boundaries[0].nmi_dots.is_empty());
+    assert!(run.boundaries[1].nmi_dots.is_empty());
+    assert_eq!(run.boundaries[2].nmi_dots, vec![f2_event + 28]);
+}
+
+#[test]
+fn quiet_span_re_engages_after_each_wake() {
+    // Lifecycle (spec #167 story 9): declare → quiet skip → wake →
+    // re-declare. The two-boundary run's spans replay some polls; the
+    // third frame adds the next wait's span — a parked quiet span
+    // covers most of a frame of poll iterations, far more than the
+    // short spans around the first VBL window.
+    let start = frame_dot(1, 240, 0);
+    let rom = poll_loop_rom(start);
+    let two_frames = run_observed(&rom, true, 2);
+    let three_frames = run_observed(&rom, true, 3);
+    assert!(two_frames.replayed_polls > 0, "the first wait must engage");
+    let next_frame_replays = three_frames.replayed_polls - two_frames.replayed_polls;
+    assert!(
+        next_frame_replays > FRAME_LEN_DOTS / LOOP_PERIOD_DOTS / 2,
+        "the next wait must re-engage the skip for most of a frame          (replayed {next_frame_replays})"
+    );
+}
+
+#[test]
+fn counterfactual_poll_preserves_latch_bits_and_decay_clock() {
+    // Low-level tier (ticket #170): a replayed $2002 read refreshes
+    // latch bits 7-5 only — bits 4-0 must stay exactly what the bus
+    // holds (preloaded $1F here; a wrong full refresh would zero
+    // them) — and the decay clock (Ppu.cycle) must advance by exactly
+    // the skipped ticks. Probed mid-span (skip parked) and deep inside
+    // the next wait's span, both at identical machine clocks.
+    let start = frame_dot(1, 240, 0);
+    let rom = latch_preload_poll_loop_rom(start);
+
+    // Mid-span, inside the first wait's quiet span.
+    let mid_span = frame_dot(1, 240, 200);
+    let (mut control, _) = spun_machine(&rom, mid_span);
+    let (mut replay, _) = spun_machine_with(&rom, mid_span, true);
+    assert!(
+        replay.spin_skip_active(),
+        "mid-span probe dot must sit inside an armed quiet span"
+    );
+    assert!(replay.spin_skip_replayed_polls() > 0);
+    assert_eq!(
+        control.ppu_open_bus_latch_for_test(),
+        0x1F,
+        "latch preload must be live at the probe dot"
+    );
+    assert_eq!(
+        control.ppu_open_bus_latch_for_test(),
+        replay.ppu_open_bus_latch_for_test(),
+        "a replayed poll must keep latch bits 4-0"
+    );
+    assert_eq!(
+        control.ppu_decay_cycle_for_test(),
+        replay.ppu_decay_cycle_for_test(),
+        "the decay clock must advance through the skipped span"
+    );
+
+    // Deep inside the next wait's span, past the first frame boundary:
+    // the skip must have re-engaged and the probes must still agree.
+    let deep = frame_dot(2, 100, 0);
+    let (mut control, _) = spun_machine(&rom, deep);
+    let (mut replay, _) = spun_machine_with(&rom, deep, true);
+    assert!(
+        replay.spin_skip_active(),
+        "the span must be re-armed inside the second wait"
+    );
+    assert_eq!(
+        control.ppu_open_bus_latch_for_test(),
+        replay.ppu_open_bus_latch_for_test()
+    );
+    assert_eq!(
+        control.ppu_decay_cycle_for_test(),
+        replay.ppu_decay_cycle_for_test()
+    );
+}
+
 #[test]
 fn nmi_observation_pins_dispatch_dot_and_responds_to_start_phase() {
     // The loop enables NMI itself on the first VBL fall-through, so the
