@@ -36,9 +36,27 @@
 //! consumption, not detection: the #168 differential sweep runs the
 //! switch on both sides with detection active, which is exactly what
 //! proves the declaration itself is observationally invisible.
+//!
+//! Quiet-span skip (ticket #170): once a loop is declared and the
+//! switch is on, the machine replaces real poll+branch execution with
+//! the counterfactual model — each replayed `$2002` read runs the real
+//! read semantics on its poll dot (VBL clear, write-toggle reset, the
+//! dot-0 race logic, partial bus-latch refresh) through the published
+//! `Mcu::read` path, and the CPU-visible flag effects are applied via
+//! the narrow `Cpu::apply_spin_poll_result` seam. The grid is anchored
+//! at the declaration's first back-edge (#165 Q3). The span is quiet
+//! by definition — no NMI/IRQ edges, no DMA — so the skip never touches
+//! the interrupt detector internals (spec #165 Q2, ADR 0019's lesson);
+//! the watchdog below exists only to hand control back if the world
+//! stops being quiet, and the skip *always* ends before the VBL
+//! boundary window so real execution runs the dot-0 race and the VBL
+//! set dot. No synthesized exit poll: the first counterfactual poll
+//! that reads the flag set clears it in the real PPU state and hands
+//! PC to the branch, which decides for real.
 
 use crate::SystemClock;
 use crate::bus::Bus;
+use crate::cpu::microcode::BranchTest;
 use crate::mcu::Mcu;
 
 /// The PPU status register the declarable poll loop spins on.
@@ -68,6 +86,9 @@ pub(crate) struct SpinBackedgeHit {
     pub(crate) loop_pc: u16,
     /// The poll opcode ($2C `BIT abs` or $AD `LDA abs`).
     pub(crate) poll_opcode: u8,
+    /// The branch condition the back-edge tests — `apply_spin_poll_result`
+    /// evaluates it on the counterfactual polls to decide taken/not.
+    pub(crate) branch_test: BranchTest,
 }
 
 /// A declared spin-wait poll loop — the hand-off state ticket #170's
@@ -91,6 +112,8 @@ pub(crate) struct SpinDeclaration {
     /// back-edge of this loop (#165 Q3). #170's quiet-span grid anchors
     /// here.
     pub(crate) anchor_dot: u64,
+    /// The back-edge branch condition, latched from the hit.
+    pub(crate) branch_test: BranchTest,
 }
 
 impl SpinDeclaration {
@@ -107,6 +130,7 @@ impl SpinDeclaration {
             poll_operands: [POLL_ADDR as u8, (POLL_ADDR >> 8) as u8],
             branch_pc: hit.loop_pc.wrapping_add(3),
             anchor_dot: clock.cycles(),
+            branch_test: hit.branch_test,
         }
     }
 }
@@ -122,6 +146,7 @@ pub(crate) fn backedge_shape_hit(
     peek: impl Fn(u16) -> u8,
     branch_pc: u16,
     offset: u8,
+    branch_test: BranchTest,
 ) -> Option<SpinBackedgeHit> {
     // A taken branch with offset $FB is the only back-edge that both
     // targets the PC directly before the 3-byte read and is itself
@@ -151,6 +176,7 @@ pub(crate) fn backedge_shape_hit(
     Some(SpinBackedgeHit {
         loop_pc,
         poll_opcode,
+        branch_test,
     })
 }
 
@@ -160,8 +186,142 @@ pub(crate) fn backedge_shape_hit_at_bus<M: Mcu>(
     bus: &Bus<M>,
     branch_pc: u16,
     offset: u8,
+    branch_test: BranchTest,
 ) -> Option<SpinBackedgeHit> {
-    backedge_shape_hit(|addr| bus.mcu().peek(addr), branch_pc, offset)
+    backedge_shape_hit(|addr| bus.mcu().peek(addr), branch_pc, offset, branch_test)
+}
+
+/// One poll-loop iteration on the CPU read phase: `BIT abs` (4 cycles)
+/// plus a taken back-edge branch (3 cycles) = 7 CPU cycles = 21 dots.
+/// The declarable shape fixes this period — `#171` owns any exception.
+pub(crate) const LOOP_PERIOD_DOTS: u64 = 21;
+
+/// Dots from a grid loop top to the poll read microcode of that
+/// iteration (fetch 2 + address 2 + read 1 = 5 cycles; the read is the
+/// 4th cycle, landing on `top + 9` dots).
+const POLL_AFTER_LOOP_TOP_DOTS: u64 = 9;
+
+/// Dots from the declaring back-edge (the branch operand read, the
+/// anchor) to iteration 1's loop top: the anchor is the branch's
+/// second cycle; the taken-cycle is one cycle later, then iteration 1
+/// fetches.
+const TOP_AFTER_ANCHOR_DOTS: u64 = 6;
+
+/// Would the iteration starting at a grid loop top reach the VBL
+/// boundary window — the dot-0 race read `(241, 0)` and the VBL-set dot
+/// `(241, 1)`? `scanline`/`dot` are the PPU position of the dot AFTER
+/// the top (as the machine reads it right after that top's `tick_ppu`).
+///
+/// The rule is deliberately one dot conservative: a top whose position
+/// shows `(240, 321)` or later wakes immediately, leaving a whole real
+/// iteration before the window — real execution then owns the race
+/// read, the VBL set, and the exit poll. On the CPU read phase (the
+/// only grid tops that exist) the conservative and exact rules agree.
+pub(crate) fn loop_top_faces_vbl_boundary(scanline: u16, dot: u16) -> bool {
+    (scanline == 240 && dot >= 321) || (scanline == 241 && dot <= 2)
+}
+
+/// Does the declared loop's taken back-edge cross a page? A crossing
+/// branch takes 8 cycles instead of 7, breaking the fixed 21-dot grid,
+/// so such loops are declared but never skipped (the machine refuses
+/// to arm). `#171` may model the extra dummy-read cycle.
+///
+/// The branch's post-operand PC is `loop_pc + 5`; the taken jump back
+/// to `loop_pc` crosses a page iff the high bytes differ.
+pub(crate) fn backedge_crosses_page(loop_pc: u16) -> bool {
+    loop_pc.wrapping_add(5) & 0xFF00 != loop_pc & 0xFF00
+}
+
+/// The active quiet-span skip (ticket #170): the machine parks the CPU
+/// at the loop top (a clean instruction boundary — PC set, empty
+/// microcode queue) and replaces each poll iteration with the
+/// counterfactual model until an edge event or the VBL boundary window
+/// hands control back.
+///
+/// While parked, the machine keeps running its published per-dot
+/// machinery (PPU, NMI line, IRQ level, APU, DMA) — only the CPU's
+/// instruction stream is replaced. The grid is anchored at the
+/// declaration's first back-edge (#165 Q3).
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct QuietSkip {
+    /// Facts of the declared loop, kept by value: the machine clears the
+    /// declaration slot together with the skip.
+    declaration: SpinDeclaration,
+    /// First dot where the CPU is parked: iteration 1's loop top. The
+    /// declaring iteration (0) runs real to the end, including its
+    /// taken-cycle detection microcode.
+    first_parked_dot: u64,
+    /// Next grid loop-top dot awaiting an engage-or-wake decision.
+    next_top_dot: u64,
+    /// Next grid poll-read dot to replay counterfactually.
+    next_poll_dot: u64,
+    /// NMI line level when the span started (edge watchdog snapshot).
+    span_nmi_line: bool,
+    /// IRQ line level when the span started (edge watchdog snapshot).
+    span_irq_level: bool,
+    /// An unplanned event (line transition or bus activity) requested a
+    /// wake at the next grid top. Waiting for the top keeps the poll
+    /// grid intact when no dots were consumed; a top overshoot (bus
+    /// activity) wakes on the first free CPU dot instead.
+    abort_pending: bool,
+}
+
+impl QuietSkip {
+    /// Arm the skip for `declaration`. `nmi_line`/`irq_level` are the
+    /// machine's current line levels — the span is quiet as long as
+    /// they hold.
+    pub(crate) fn new(declaration: SpinDeclaration, nmi_line: bool, irq_level: bool) -> Self {
+        let first_parked_dot = declaration.anchor_dot + TOP_AFTER_ANCHOR_DOTS;
+        Self {
+            declaration,
+            first_parked_dot,
+            next_top_dot: first_parked_dot,
+            next_poll_dot: first_parked_dot + POLL_AFTER_LOOP_TOP_DOTS,
+            span_nmi_line: nmi_line,
+            span_irq_level: irq_level,
+            abort_pending: false,
+        }
+    }
+
+    pub(crate) fn declaration(&self) -> &SpinDeclaration {
+        &self.declaration
+    }
+
+    /// The iteration whose loop top sits at `next_top_dot` was decided
+    /// to stay counterfactual: schedule its poll and the next top
+    /// decision.
+    pub(crate) fn advance_top(&mut self) {
+        self.next_poll_dot = self.next_top_dot + POLL_AFTER_LOOP_TOP_DOTS;
+        self.next_top_dot += LOOP_PERIOD_DOTS;
+    }
+
+    pub(crate) fn first_parked_dot(&self) -> u64 {
+        self.first_parked_dot
+    }
+
+    pub(crate) fn next_top_dot(&self) -> u64 {
+        self.next_top_dot
+    }
+
+    pub(crate) fn next_poll_dot(&self) -> u64 {
+        self.next_poll_dot
+    }
+
+    pub(crate) fn span_nmi_line(&self) -> bool {
+        self.span_nmi_line
+    }
+
+    pub(crate) fn span_irq_level(&self) -> bool {
+        self.span_irq_level
+    }
+
+    pub(crate) fn abort_pending(&self) -> bool {
+        self.abort_pending
+    }
+
+    pub(crate) fn request_abort(&mut self) {
+        self.abort_pending = true;
+    }
 }
 
 #[cfg(test)]
@@ -189,13 +349,19 @@ mod tests {
         let loop_pc = 0x8020u16;
         let mut mem = mem_patched(&[]);
         canonical_bit_loop(&mut mem, loop_pc);
-        let hit = backedge_shape_hit(|a| mem[a as usize], loop_pc + 3, BACKEDGE_TO_LOOP_TOP)
-            .expect("BIT $2002 + back-edge branch must declare");
+        let hit = backedge_shape_hit(
+            |a| mem[a as usize],
+            loop_pc + 3,
+            BACKEDGE_TO_LOOP_TOP,
+            BranchTest::IfNegativeClear,
+        )
+        .expect("BIT $2002 + back-edge branch must declare");
         assert_eq!(
             hit,
             SpinBackedgeHit {
                 loop_pc,
-                poll_opcode: BIT_ABS
+                poll_opcode: BIT_ABS,
+                branch_test: BranchTest::IfNegativeClear,
             }
         );
     }
@@ -207,13 +373,19 @@ mod tests {
         mem[loop_pc as usize] = LDA_ABS;
         mem[loop_pc.wrapping_add(1) as usize] = POLL_ADDR as u8;
         mem[loop_pc.wrapping_add(2) as usize] = (POLL_ADDR >> 8) as u8;
-        let hit = backedge_shape_hit(|a| mem[a as usize], loop_pc + 3, BACKEDGE_TO_LOOP_TOP)
-            .expect("LDA $2002 + back-edge branch must declare");
+        let hit = backedge_shape_hit(
+            |a| mem[a as usize],
+            loop_pc + 3,
+            BACKEDGE_TO_LOOP_TOP,
+            BranchTest::IfNegativeClear,
+        )
+        .expect("LDA $2002 + back-edge branch must declare");
         assert_eq!(
             hit,
             SpinBackedgeHit {
                 loop_pc,
-                poll_opcode: LDA_ABS
+                poll_opcode: LDA_ABS,
+                branch_test: BranchTest::IfNegativeClear,
             }
         );
     }
@@ -226,7 +398,13 @@ mod tests {
         mem[loop_pc.wrapping_add(1) as usize] = POLL_ADDR as u8;
         mem[loop_pc.wrapping_add(2) as usize] = (POLL_ADDR >> 8) as u8;
         assert!(
-            backedge_shape_hit(|a| mem[a as usize], loop_pc + 3, BACKEDGE_TO_LOOP_TOP).is_none()
+            backedge_shape_hit(
+                |a| mem[a as usize],
+                loop_pc + 3,
+                BACKEDGE_TO_LOOP_TOP,
+                BranchTest::IfNegativeClear
+            )
+            .is_none()
         );
     }
 
@@ -240,8 +418,13 @@ mod tests {
                 (loop_pc + 2, (POLL_ADDR >> 8) as u8),
             ]);
             assert!(
-                backedge_shape_hit(|a| mem[a as usize], loop_pc + 3, BACKEDGE_TO_LOOP_TOP)
-                    .is_none(),
+                backedge_shape_hit(
+                    |a| mem[a as usize],
+                    loop_pc + 3,
+                    BACKEDGE_TO_LOOP_TOP,
+                    BranchTest::IfNegativeClear
+                )
+                .is_none(),
                 "opcode {opcode:#04x} must not declare"
             );
         }
@@ -257,8 +440,13 @@ mod tests {
             let loop_pc = 0x8020u16;
             let mem = mem_patched(&[(loop_pc, opcode), (loop_pc + 1, lo), (loop_pc + 2, hi)]);
             assert!(
-                backedge_shape_hit(|a| mem[a as usize], loop_pc + 3, BACKEDGE_TO_LOOP_TOP)
-                    .is_none(),
+                backedge_shape_hit(
+                    |a| mem[a as usize],
+                    loop_pc + 3,
+                    BACKEDGE_TO_LOOP_TOP,
+                    BranchTest::IfNegativeClear
+                )
+                .is_none(),
                 "{opcode:#04x} ${lo:02X}{hi:02X} must not declare"
             );
         }
@@ -274,7 +462,13 @@ mod tests {
             let mut mem = mem.clone();
             canonical_bit_loop(&mut mem, loop_pc);
             assert!(
-                backedge_shape_hit(|a| mem[a as usize], loop_pc + 3, offset).is_none(),
+                backedge_shape_hit(
+                    |a| mem[a as usize],
+                    loop_pc + 3,
+                    offset,
+                    BranchTest::IfNegativeClear
+                )
+                .is_none(),
                 "offset {offset:#04X} must not declare"
             );
         }
@@ -289,7 +483,13 @@ mod tests {
         // $FB offset makes that branch jump back to the read itself.
         let branch_pc = loop_pc + 3;
         for offset in 0x00u8..=0xFF {
-            let declared = backedge_shape_hit(|a| mem[a as usize], branch_pc, offset).is_some();
+            let declared = backedge_shape_hit(
+                |a| mem[a as usize],
+                branch_pc,
+                offset,
+                BranchTest::IfNegativeClear,
+            )
+            .is_some();
             assert_eq!(
                 declared,
                 offset == BACKEDGE_TO_LOOP_TOP,
@@ -306,13 +506,19 @@ mod tests {
             (0xFFFE, POLL_ADDR as u8),
             (0xFFFF, (POLL_ADDR >> 8) as u8),
         ]);
-        let hit = backedge_shape_hit(|a| mem[a as usize], 0x0000, BACKEDGE_TO_LOOP_TOP)
-            .expect("wrapped back-edge is still a back-edge");
+        let hit = backedge_shape_hit(
+            |a| mem[a as usize],
+            0x0000,
+            BACKEDGE_TO_LOOP_TOP,
+            BranchTest::IfNegativeClear,
+        )
+        .expect("wrapped back-edge is still a back-edge");
         assert_eq!(
             hit,
             SpinBackedgeHit {
                 loop_pc: 0xFFFD,
-                poll_opcode: BIT_ABS
+                poll_opcode: BIT_ABS,
+                branch_test: BranchTest::IfNegativeClear,
             }
         );
     }
@@ -322,6 +528,7 @@ mod tests {
         let hit = SpinBackedgeHit {
             loop_pc: 0x8020,
             poll_opcode: BIT_ABS,
+            branch_test: BranchTest::IfNegativeClear,
         };
         let decl = SpinDeclaration::new(hit, SystemClock(82190));
         assert_eq!(decl.loop_pc, 0x8020);
