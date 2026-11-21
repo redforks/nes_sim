@@ -191,12 +191,16 @@ where
         let nmi = self.bus.mcu_mut().ppu_mut().nmi_line();
         let clock = self.bus.clock();
         self.cpu.update_nmi_line(nmi, clock, sample);
-        // Ticket #171: while a quiet span is armed, watch the /NMI line on
-        // EVERY dot, not just CPU dots. The wake rule keys on the
-        // dot-exact rise dot (the control's branch-cycle poll reads a
-        // sample taken two dots earlier), and a rise set by this dot's
-        // `tick_ppu` is attributed to this dot — the same attribution
-        // the machine's own `update_nmi_line` call just above made.
+        self.record_nmi_line_transition(nmi, clock);
+    }
+
+    /// Ticket #171: while a quiet span is armed, watch the /NMI line on
+    /// EVERY dot, not just CPU dots. The wake rule keys on the
+    /// dot-exact rise dot (the control's branch-cycle poll reads a
+    /// sample taken two dots earlier), and a rise set by this dot's
+    /// `tick_ppu` is attributed to this dot — the same attribution
+    /// the machine's own `update_nmi_line` call just above made.
+    fn record_nmi_line_transition(&mut self, nmi: bool, clock: SystemClock) {
         if let Some(skip) = &mut self.spin_skip
             && nmi != skip.span_nmi_line()
         {
@@ -210,13 +214,9 @@ where
         let nmi = self.bus.mcu_mut().ppu_mut().nmi_line();
         self.cpu.update_nmi_line(nmi, clock, false);
         // Ticket #171: the CPU-dot half of the every-dot /NMI line watch
-        // (see `tick_dot`) — a rise set by this dot's `tick_ppu` is
-        // recorded on this dot.
-        if let Some(skip) = &mut self.spin_skip
-            && nmi != skip.span_nmi_line()
-        {
-            skip.record_nmi_event(clock.cycles());
-        }
+        // (see [`Self::record_nmi_line_transition`]) — a rise set by this
+        // dot's `tick_ppu` is recorded on this dot.
+        self.record_nmi_line_transition(nmi, clock);
 
         self.bus.mcu_mut().tick_zapper();
 
@@ -439,6 +439,7 @@ where
         self.spin_declaration
     }
 
+    #[cfg(test)]
     pub(crate) fn system_cycles(&self) -> u64 {
         self.bus.clock().cycles()
     }
@@ -672,7 +673,7 @@ where
             return Some(ExecuteResult::Continue);
         }
         if dot > skip.next_top_dot() {
-            // Oversoot (a grid dot consumed by DMA): the CPU is parked
+            // Overshoot (a grid dot consumed by DMA): the CPU is parked
             // at the loop top — an instruction boundary — so the real
             // fetch re-enters the loop exactly where the control does.
             self.end_quiet_span();
