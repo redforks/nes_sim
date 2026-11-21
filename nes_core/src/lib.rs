@@ -30,6 +30,14 @@ pub use cpu::*;
 pub struct SystemClock(u64);
 
 impl SystemClock {
+    /// Construct a clock at an absolute dot count. Production code
+    /// always advances clocks via [`Self::inc`]; this constructor exists
+    /// for callers that must address one specific absolute dot — the
+    /// spin-skip tests use it to force DMA timing at exact dots.
+    pub fn from_cycles(cycles: u64) -> SystemClock {
+        SystemClock(cycles)
+    }
+
     pub fn inc(self) -> SystemClock {
         SystemClock(self.0.wrapping_add(1))
     }

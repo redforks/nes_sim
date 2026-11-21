@@ -394,8 +394,21 @@ where
     /// sides with detection active, proving the declaration itself is
     /// observationally invisible.
     fn declare_spin_loop(&mut self, hit: SpinBackedgeHit, clock: SystemClock) {
+        // #165 Q8: never declare (nor keep) a loop while DMA owns the
+        // bus — the declaration's anchor grid is only meaningful when
+        // the CPU alone drives the loop. The refused back-edge is not
+        // an anchor: a later clean back-edge of the same loop declares.
         if self.dma_bus.is_busy(self.bus.mcu()) {
             return;
+        }
+        // Keep-first (#165 Q3): every back-edge of an already-declared
+        // loop belongs to that loop's first-back-edge grid. Only a
+        // DIFFERENT loop replaces the slot — ticket #170 will own the
+        // re-arm lifecycle (skip wake → re-declare) per loop instance.
+        if let Some(decl) = self.spin_declaration {
+            if decl.loop_pc == hit.loop_pc {
+                return;
+            }
         }
         self.spin_declaration = Some(SpinDeclaration::new(hit, clock));
     }
