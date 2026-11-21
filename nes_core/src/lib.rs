@@ -17,6 +17,12 @@ pub mod view;
 #[cfg(test)]
 mod test_utils;
 
+/// Test scaffold for the $2002 spin-wait skip (spec #167, ticket #168):
+/// synthetic poll-loop ROM builder, frame-boundary observer, and the
+/// skip-off differential sweep. Test-only; no emulator behaviour.
+#[cfg(test)]
+mod spin_skip_test;
+
 pub use cpu::*;
 
 #[derive(Debug, Default, Clone, Copy)]
