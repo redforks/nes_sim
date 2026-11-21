@@ -42,6 +42,11 @@ pub struct NesMachine<P> {
     file: INesFile,
     /// MMC3 IRQ-revision override from construction, re-applied on hard reset.
     irq_override: Mmc3IrqOverride,
+    /// Test seam for the $2002 spin-wait skip (spec #167, ticket #168):
+    /// whether this machine may fast-forward a recognized `BIT/LDA $2002`
+    /// poll loop across the VBL flag set. No skip exists yet, so until
+    /// tickets #169-#171 land this flag changes nothing.
+    spin_skip_enabled: bool,
 }
 
 impl<P> NesMachine<P>
@@ -70,6 +75,7 @@ where
             dma_bus: DmaBus::new(),
             file: file.clone(),
             irq_override,
+            spin_skip_enabled: false,
         }
     }
 
@@ -315,8 +321,27 @@ where
         self.bus.mcu_mut()
     }
 
+    /// Test seam (spec #167, ticket #168): enable or disable the $2002
+    /// spin-wait skip on this machine, so differential tests can run a
+    /// skip-on build against a skip-off control from the same binary.
+    /// Default OFF. Currently a no-op: no skip is implemented yet (the
+    /// skip itself lands with tickets #169-#171), so both settings run
+    /// identical real execution.
+    ///
+    /// This is a *machine-level* seam. The reverted freeze's CPU-level
+    /// `set_spin_declaration_disabled_for_test` hook (HISTORY.md) stays
+    /// gone; do not reintroduce CPU test hooks.
+    pub fn set_spin_skip_enabled(&mut self, enabled: bool) {
+        self.spin_skip_enabled = enabled;
+    }
+
+    /// Current [`Self::set_spin_skip_enabled`] setting.
+    pub fn spin_skip_enabled(&self) -> bool {
+        self.spin_skip_enabled
+    }
+
     #[cfg(test)]
-    fn system_cycles(&self) -> u64 {
+    pub(crate) fn system_cycles(&self) -> u64 {
         self.bus.clock().cycles()
     }
 }
@@ -777,5 +802,20 @@ mod tests {
             &before[..],
             "theme control: a different theme must render different pixels"
         );
+    }
+
+    #[test]
+    fn spin_skip_switch_defaults_off_and_round_trips() {
+        // Spec #167, ticket #168: a machine-level test seam so differential
+        // tests can run skip-on and skip-off builds from one binary.
+        // Default OFF; until tickets #169-#171 land the skip itself, both
+        // settings must run identical real execution.
+        let file = test_nes_file();
+        let mut machine = NesMachine::new(&file, EmptyPlugin::new());
+        assert!(!machine.spin_skip_enabled());
+        machine.set_spin_skip_enabled(true);
+        assert!(machine.spin_skip_enabled());
+        machine.set_spin_skip_enabled(false);
+        assert!(!machine.spin_skip_enabled());
     }
 }
