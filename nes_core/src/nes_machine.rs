@@ -405,10 +405,10 @@ where
         // loop belongs to that loop's first-back-edge grid. Only a
         // DIFFERENT loop replaces the slot — ticket #170 will own the
         // re-arm lifecycle (skip wake → re-declare) per loop instance.
-        if let Some(decl) = self.spin_declaration {
-            if decl.loop_pc == hit.loop_pc {
-                return;
-            }
+        if let Some(decl) = self.spin_declaration
+            && decl.loop_pc == hit.loop_pc
+        {
+            return;
         }
         self.spin_declaration = Some(SpinDeclaration::new(hit, clock));
     }
