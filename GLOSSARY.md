@@ -268,6 +268,20 @@ _Avoid_: vblank flag set, nmi set
 Hardware PPU_frame_timing: a `$2002` read one PPU clock before the set dot (hardware dot 0 of scanline 241, observed as `timing.dot==1` at read time because `NesMachine::tick` advances PPU before the CPU read) suppresses the upcoming set entirely — flag never rises, NMI never asserts. A read on the set dot itself races the set and clears the flag; the resulting 1-dot `/NMI` assertion at `(241,1)` is never sampled by the CPU (which samples the line two dots back, once per CPU cycle), so no NMI fires. `suppress_vblank_pending` is the one-dot pending flag set at `dot==1` read time and consumed at the next `enter_vblank`.
 _Avoid_: vblank suppression (overloaded), nmi suppression
 
+## Language — Spin-Wait Skip
+
+**Spin-wait skip**:
+The `$2002` poll-loop fast path (ADR-0020): while the CPU is parked at a clean instruction boundary, the machine replaces each `BIT $2002`/`LDA $2002` + back-edge iteration with a replayed read on its exact grid dot, until the first edge dot ends the span. Control seam: `NesMachine::set_spin_skip_enabled`, default off.
+_Avoid_: spin-wait freeze, frozen loop
+
+**Quiet span**:
+One parked interval of the spin-wait skip, from declaration to the first edge dot: the poll that observes the VBL flag, a `/NMI` or IRQ line event's wake at the grid top, the first visible DMA dot, or the frame-boundary rule. Every wake resumes real execution at an instruction boundary from the last completed real iteration.
+_Avoid_: frozen dots, freeze
+
+**Anchor grid**:
+The counterfactual poll schedule a declared loop replays on: the PPU dot clock anchored at the loop's first back-edge, tops at anchor+6+21k, polls at top+9 (7 CPU cycles = 21 dots). Replayed polls land exactly on the dots the executing loop would have polled.
+_Avoid_: wake tick counter, frozen grid
+
 ## Language — Mapper MMC1
 
 **MMC1 consecutive-cycle write filter**:
