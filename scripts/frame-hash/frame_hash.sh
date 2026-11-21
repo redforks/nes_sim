@@ -26,3 +26,5 @@ run() { # name rom movie frames
 run smb600 "$H/Super Mario Bros. (Japan, USA).nes" "$H/happylee-supermariobros,warped.fm2" 600
 run jackal1500 "$H/Jackal (USA).nes" "$H/zyr2288,aiqiyou-jackal-2p.fm2" 1500
 run vbl_basics "$R/ppu_vbl_nmi/rom_singles/01-vbl_basics.nes" $HERE/movies/idle.fm2 600
+run nmi_sync "$R/nmi_sync/demo_ntsc.nes" $HERE/movies/idle.fm2 600
+run vbl_wait "$R/ppu_vbl_nmi/rom_singles/01-vbl_basics.nes" $HERE/movies/vbl_reset.fm2 600
