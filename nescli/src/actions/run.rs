@@ -46,6 +46,29 @@ pub struct RunAction {
     /// instead of refusing them.
     #[arg(long, requires = "movie")]
     play_from_power_on: bool,
+    /// Start the interactive run from a saved state file. The file loads
+    /// before the loop through the same code as F7; a missing or corrupt
+    /// file fails before the window opens. Never changes the F5/F7 target
+    /// (`<rom-dir>/<rom-stem>.state`).
+    #[arg(long)]
+    load_state: Option<PathBuf>,
+}
+
+/// Load the `--load-state` file into `machine` before the loop, through the
+/// same shared helper as F7. On success returns the stderr line to print;
+/// on failure returns the exact #184 error text so the caller can print it
+/// and exit non-zero before the window opens. `None` is a no-op.
+pub(crate) fn apply_load_state<P>(
+    machine: &mut NesMachine<P>,
+    load_state: Option<&std::path::Path>,
+) -> Result<Option<String>, String>
+where
+    P: nes_core::Plugin<nes_core::nes::NesMcu>,
+{
+    let Some(path) = load_state else {
+        return Ok(None);
+    };
+    crate::save_state::load_machine_from_path(machine, path).map(Some)
 }
 
 /// True when the movie path selects the BK2 parser (by `.bk2` extension).
@@ -142,6 +165,23 @@ impl RunAction {
     }
 
     fn run_interactive(&self, f: &INesFile, palette: Option<ColorTheme>) -> Result<()> {
+        // Create NES machine first so `--load-state` can load before the
+        // window opens: a missing or corrupt file errors out here, before
+        // any SDL initialization, with the exact #184 text and a non-zero
+        // exit. This never changes the F5/F7 target, which stays
+        // `<rom-dir>/<rom-stem>.state` below.
+        let mut machine = NesMachine::new(f, EmptyPlugin::new());
+        if let Some(theme) = palette {
+            machine.set_color_theme(theme);
+        }
+        match apply_load_state(&mut machine, self.load_state.as_deref()) {
+            Ok(None) => {}
+            Ok(Some(message)) => eprintln!("{message}"),
+            Err(message) => {
+                eprintln!("{message}");
+                anyhow::bail!("{message}");
+            }
+        }
         // Initialize SDL2
         let sdl_context = crate::sdl::sdl2::init().map_err(|e| anyhow::anyhow!(e))?;
         // Interactive mode never records, so the unified driver setup gets
@@ -156,13 +196,9 @@ impl RunAction {
             0,
         )?;
 
-        // Create NES machine; SDL render/audio live beside it and consume
-        // the owned framebuffer/audio buffers each frame.
-        let mut machine = NesMachine::new(f, EmptyPlugin::new());
+        // SDL render/audio live beside the machine and consume the owned
+        // framebuffer/audio buffers each frame.
         let (mut render, mut audio_driver) = (render, audio_driver);
-        if let Some(theme) = palette {
-            machine.set_color_theme(theme);
-        }
 
         // Initialize event pump
         let mut event_pump = sdl_context.event_pump().map_err(|e| anyhow::anyhow!(e))?;
@@ -596,5 +632,150 @@ mod tests {
         let logs: Vec<_> = (0..30).map(|_| idle()).collect();
         assert_eq!(compute_fast_forward_ranges(&logs, 30), vec![(0, 1)]);
         assert!(compute_fast_forward_ranges(&logs, 31).is_empty());
+    }
+
+    mod load_state_cli {
+        use super::super::{RunAction, apply_load_state};
+        use clap::Parser;
+        use nes_core::{EmptyPlugin, ines::INesFile, nes::NesMcu, nes_machine::NesMachine};
+        use std::path::{Path, PathBuf};
+
+        /// Clap harness: `RunAction` is `Args`, so it is flattened into a
+        /// test parser to exercise `--load-state` parsing and help text.
+        #[derive(clap::Parser)]
+        struct TestCli {
+            #[command(flatten)]
+            run: RunAction,
+        }
+
+        /// Minimal valid NROM iNES file (mirrors the `save_state` fixture).
+        fn nrom_file() -> INesFile {
+            let mut rom = Vec::new();
+            rom.extend_from_slice(&[0x4e, 0x45, 0x53, 0x1a, 0x01, 0x01, 0x00, 0x00]);
+            rom.extend_from_slice(&[0; 8]);
+            let prg_len = 16 * 1024;
+            rom.extend_from_slice(&[0x4C, 0x00, 0x80]);
+            rom.extend(std::iter::repeat_n(0, prg_len - 3));
+            rom.extend(std::iter::repeat_n(0, 8 * 1024));
+            INesFile::new(rom).unwrap()
+        }
+
+        fn machine_for(file: &INesFile) -> NesMachine<EmptyPlugin<NesMcu>> {
+            NesMachine::new(file, EmptyPlugin::new())
+        }
+
+        fn scratch_dir(name: &str) -> PathBuf {
+            let dir =
+                std::env::temp_dir().join(format!("nescli_load_{}_{}", std::process::id(), name));
+            let _ = std::fs::remove_dir_all(&dir);
+            std::fs::create_dir_all(&dir).unwrap();
+            dir
+        }
+
+        #[test]
+        fn load_state_flag_parses_with_explicit_path_and_no_default() {
+            let cli = TestCli::try_parse_from(["test", "game.nes"]).unwrap();
+            assert!(cli.run.load_state.is_none(), "no default path");
+            let cli =
+                TestCli::try_parse_from(["test", "game.nes", "--load-state", "/saves/game.state"])
+                    .unwrap();
+            assert_eq!(cli.run.load_state, Some(PathBuf::from("/saves/game.state")));
+        }
+
+        #[test]
+        fn load_state_flag_appears_in_help() {
+            let mut help = Vec::new();
+            use clap::CommandFactory;
+            TestCli::command().write_long_help(&mut help).unwrap();
+            let help = String::from_utf8(help).unwrap();
+            assert!(
+                help.contains("--load-state"),
+                "run --help must show the flag: {help}"
+            );
+        }
+
+        #[test]
+        fn no_flag_is_a_no_op() {
+            let file = nrom_file();
+            let mut machine = machine_for(&file);
+            machine.process_frame();
+            assert_eq!(apply_load_state(&mut machine, None).unwrap(), None);
+            assert_eq!(machine.frame_no(), 1);
+        }
+
+        #[test]
+        fn loaded_run_starts_from_the_saved_frame() {
+            let file = nrom_file();
+            let mut reference = machine_for(&file);
+            for _ in 0..5 {
+                reference.process_frame();
+            }
+            let dir = scratch_dir("saved-frame");
+            let path = dir.join("game.state");
+            crate::save_state::save_machine_to_path(&reference, &path).unwrap();
+
+            let mut loaded = machine_for(&file);
+            let message = apply_load_state(&mut loaded, Some(&path))
+                .expect("valid save must load")
+                .expect("message on success");
+            assert_eq!(message, format!("loaded state from {}", path.display()));
+            assert_eq!(loaded.frame_no(), reference.frame_no());
+
+            // Continuing matches the uninterrupted run frame-for-frame.
+            for _ in 0..3 {
+                let a = reference.process_frame();
+                let b = loaded.process_frame();
+                assert_eq!(b.frame.to_vec(), a.frame.to_vec());
+                assert_eq!(b.audio.to_vec(), a.audio.to_vec());
+            }
+            let _ = std::fs::remove_dir_all(&dir);
+        }
+
+        #[test]
+        fn missing_file_returns_the_spec_text_for_pre_window_exit() {
+            let file = nrom_file();
+            let mut machine = machine_for(&file);
+            machine.process_frame();
+            let path = PathBuf::from("/nonexistent_dir_nescli_load/game.state");
+
+            let error =
+                apply_load_state(&mut machine, Some(&path)).expect_err("missing file must fail");
+            assert_eq!(error, format!("no save state at {}", path.display()));
+            // run_interactive prints this text then bails, so `run`
+            // returns Err and the process exits non-zero before SDL opens.
+            assert_eq!(machine.frame_no(), 1, "machine untouched");
+        }
+
+        #[test]
+        fn corrupt_file_returns_the_spec_text_for_pre_window_exit() {
+            let file = nrom_file();
+            let mut machine = machine_for(&file);
+            machine.process_frame();
+            let dir = scratch_dir("corrupt");
+            let path = dir.join("game.state");
+            std::fs::write(&path, "not json{{{").unwrap();
+
+            let error =
+                apply_load_state(&mut machine, Some(&path)).expect_err("corrupt file must fail");
+            assert!(
+                error.starts_with("save state is corrupt: "),
+                "unexpected error line: {error}"
+            );
+            assert_eq!(machine.frame_no(), 1, "machine untouched");
+            let _ = std::fs::remove_dir_all(&dir);
+        }
+
+        #[test]
+        fn load_state_never_changes_the_f5_f7_target() {
+            // The F5/F7 target is derived from the ROM path only; the
+            // `--load-state` path is used solely for the pre-loop load.
+            let rom = Path::new("/games/mario.nes");
+            let custom = PathBuf::from("/saves/other.state");
+            assert_eq!(
+                crate::save_state::state_path_for_rom(rom),
+                PathBuf::from("/games/mario.state")
+            );
+            assert_ne!(crate::save_state::state_path_for_rom(rom), custom);
+        }
     }
 }
