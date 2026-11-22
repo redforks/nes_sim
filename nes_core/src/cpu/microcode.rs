@@ -1481,7 +1481,7 @@ pub(super) fn fetch_and_decode<M: Mcu>(cpu: &mut Cpu, bus: &mut Bus<M>) {
     let opcode = cpu.inc_read_byte(bus);
     cpu.push_microcodes(&OPCODE_TABLE[opcode as usize]);
     if let Some(window) = InterruptSequences::window_for_opcode(opcode) {
-        cpu.arm_interrupt_window(window, None);
+        cpu.arm_interrupt_window(window, super::InterruptWindowTag::Brk, None);
     }
 }
 

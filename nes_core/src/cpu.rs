@@ -204,7 +204,7 @@ impl NmiDetector {
 }
 
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
-enum InterruptType {
+pub(crate) enum InterruptType {
     None,
     Nmi,
     Irq,
@@ -304,6 +304,7 @@ impl ValueTargetTrait for Mem {
 #[derive(Clone, Copy)]
 struct ActiveInterruptWindow {
     window: &'static InterruptWindow,
+    tag: InterruptWindowTag,
     started_at: Option<SystemClock>,
 }
 
@@ -331,6 +332,122 @@ pub struct Cpu {
     frozen_reason: Option<FrozenReason>,
 
     microcode_queue: ArrayDeque<Microcode, 8>,
+}
+
+/// Which interrupt window an armed [`ActiveInterruptWindow`] points at.
+/// Threaded through `arm_interrupt_window` at every arming site (pointer
+/// equality is unusable: the `InterruptSequences` windows are associated
+/// consts, so each `&..._WINDOW` expression is a distinct temporary).
+/// `sequence_cycles` is cfg-gated (absent in release) and fixed per
+/// window, so the tag alone restores the reference.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum InterruptWindowTag {
+    Reset,
+    Nmi,
+    Irq,
+    Brk,
+}
+
+/// Full CPU execution state for save-states (ticket #184): every field of
+/// [`Cpu`] in core types. The snapshot DTO mirrors this struct 1:1.
+#[derive(Debug, Clone)]
+pub(crate) struct CpuState {
+    pub a: u8,
+    pub x: u8,
+    pub y: u8,
+    pub pc: u16,
+    pub sp: u8,
+    pub status: u8,
+    pub ab: u16,
+    pub db: u8,
+    pub alu: u8,
+    /// Ordered pending micro-ops, front (next to execute) first.
+    pub microcode_queue: Vec<Microcode>,
+    pub active_interrupt_window: Option<(InterruptWindowTag, Option<u64>)>,
+    pub nmi_last_lagged_sample: u64,
+    pub nmi_lagged_sample: u64,
+    pub nmi_asserted_since: u64,
+    pub nmi_pending_asserted_since: u64,
+    pub nmi_consumed_through: u64,
+    pub interrupt_detected: InterruptType,
+    pub irq_input: bool,
+    pub request_detect_interrupt: Option<bool>,
+    pub frozen_reason: Option<(bool, bool)>,
+}
+
+impl Cpu {
+    /// Capture the full execution state. The window tag is threaded
+    /// through `arm_interrupt_window` at every arming site (see
+    /// [`InterruptWindowTag`); no pointer comparison is involved.
+    pub(crate) fn capture_cpu_state(&self) -> CpuState {
+        let active_interrupt_window = self
+            .active_interrupt_window
+            .as_ref()
+            .map(|w| (w.tag, w.started_at.map(|c| c.cycles())));
+        CpuState {
+            a: self.a,
+            x: self.x,
+            y: self.y,
+            pc: self.pc.get(),
+            sp: self.sp,
+            status: self.status,
+            ab: self.ab.get(),
+            db: self.db,
+            alu: self.alu,
+            microcode_queue: self.microcode_queue.iter().copied().collect(),
+            active_interrupt_window,
+            nmi_last_lagged_sample: self.nmi_detecteor.last_lagged_sample,
+            nmi_lagged_sample: self.nmi_detecteor.lagged_sample,
+            nmi_asserted_since: self.nmi_detecteor.asserted_since,
+            nmi_pending_asserted_since: self.nmi_detecteor.pending_asserted_since,
+            nmi_consumed_through: self.nmi_detecteor.consumed_through,
+            interrupt_detected: self.interrupt_detected,
+            irq_input: self.irq_detector.irq_input,
+            request_detect_interrupt: self.request_detect_interrupt,
+            frozen_reason: self.frozen_reason.map(|f| (f.frozen, f.halt)),
+        }
+    }
+
+    /// Restore a state previously produced by [`Self::capture_cpu_state`].
+    pub(crate) fn restore_cpu_state(&mut self, s: &CpuState) {
+        self.a = s.a;
+        self.x = s.x;
+        self.y = s.y;
+        self.pc.set(s.pc);
+        self.sp = s.sp;
+        self.status = s.status;
+        self.ab.set(s.ab);
+        self.db = s.db;
+        self.alu = s.alu;
+        self.microcode_queue.clear();
+        for mc in &s.microcode_queue {
+            let _ = self.microcode_queue.push_back(*mc);
+        }
+        self.active_interrupt_window = s.active_interrupt_window.map(|(tag, started_at)| {
+            let window = match tag {
+                InterruptWindowTag::Reset => &InterruptSequences::RESET_WINDOW,
+                InterruptWindowTag::Nmi => &InterruptSequences::NMI_WINDOW,
+                InterruptWindowTag::Irq => &InterruptSequences::IRQ_WINDOW,
+                InterruptWindowTag::Brk => &InterruptSequences::BRK_WINDOW,
+            };
+            ActiveInterruptWindow {
+                window,
+                tag,
+                started_at: started_at.map(SystemClock::from_cycles),
+            }
+        });
+        self.nmi_detecteor.last_lagged_sample = s.nmi_last_lagged_sample;
+        self.nmi_detecteor.lagged_sample = s.nmi_lagged_sample;
+        self.nmi_detecteor.asserted_since = s.nmi_asserted_since;
+        self.nmi_detecteor.pending_asserted_since = s.nmi_pending_asserted_since;
+        self.nmi_detecteor.consumed_through = s.nmi_consumed_through;
+        self.interrupt_detected = s.interrupt_detected;
+        self.irq_detector.irq_input = s.irq_input;
+        self.request_detect_interrupt = s.request_detect_interrupt;
+        self.frozen_reason = s
+            .frozen_reason
+            .and_then(|(frozen, halt)| FrozenReason::new(frozen, halt));
+    }
 }
 
 impl Cpu {
@@ -733,7 +850,11 @@ impl Cpu {
         self.request_detect_interrupt = None;
 
         self.push_microcodes(&InterruptSequences::RESET);
-        self.arm_interrupt_window(&InterruptSequences::RESET_WINDOW, None);
+        self.arm_interrupt_window(
+            &InterruptSequences::RESET_WINDOW,
+            InterruptWindowTag::Reset,
+            None,
+        );
     }
 
     /// Hard reset (power cycle): the register file returns to its power-up
@@ -1215,9 +1336,14 @@ impl Cpu {
     fn arm_interrupt_window(
         &mut self,
         window: &'static InterruptWindow,
+        tag: InterruptWindowTag,
         started_at: Option<SystemClock>,
     ) {
-        self.active_interrupt_window = Some(ActiveInterruptWindow { window, started_at });
+        self.active_interrupt_window = Some(ActiveInterruptWindow {
+            window,
+            tag,
+            started_at,
+        });
     }
 
     /// The declared hijack site for the micro-op executing this cycle, if
@@ -1246,7 +1372,11 @@ impl Cpu {
     /// is the NMI sequence's final cycles), and replace the remaining
     /// queue with the tail ops.
     fn switch_to_nmi_vector(&mut self, tail: &[Microcode]) {
-        self.arm_interrupt_window(&InterruptSequences::NMI_WINDOW, None);
+        self.arm_interrupt_window(
+            &InterruptSequences::NMI_WINDOW,
+            InterruptWindowTag::Nmi,
+            None,
+        );
         self.microcode_queue.clear();
         self.push_microcodes(tail);
     }
@@ -1263,7 +1393,12 @@ impl Cpu {
         };
         // The head (T1) runs on this cycle — the sequence starts now; the
         // rest drains from the queue on the following ticks.
-        self.arm_interrupt_window(window, Some(clock));
+        let tag = if nmi {
+            InterruptWindowTag::Nmi
+        } else {
+            InterruptWindowTag::Irq
+        };
+        self.arm_interrupt_window(window, tag, Some(clock));
         self.push_microcodes(&sequence[1..]);
         sequence[0]
     }

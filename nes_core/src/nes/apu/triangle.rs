@@ -52,6 +52,49 @@ impl Default for Triangle {
     }
 }
 
+/// Full [`Triangle`] channel state for save-states (ticket #184).
+#[derive(Debug, Clone)]
+pub(crate) struct TriangleState {
+    pub timer_period: u16,
+    pub timer_counter: u16,
+    pub length_counter: u8,
+    pub length_halt: bool,
+    pub length_enabled: bool,
+    pub linear_counter: u8,
+    pub linear_halt: bool,
+    pub linear_reload_value: u8,
+    pub sequencer_position: usize,
+}
+
+impl Triangle {
+    /// Capture the full channel state (the step table is fixed).
+    pub(crate) fn capture_triangle_state(&self) -> TriangleState {
+        TriangleState {
+            timer_period: self.timer.period(),
+            timer_counter: self.timer.counter(),
+            length_counter: self.length.counter_value(),
+            length_halt: self.length.is_halt(),
+            length_enabled: self.length.is_enabled(),
+            linear_counter: self.linear.counter,
+            linear_halt: self.linear.halt,
+            linear_reload_value: self.linear.reload_value,
+            sequencer_position: self.sequencer.position(),
+        }
+    }
+
+    /// Restore a state previously produced by [`Self::capture_triangle_state`].
+    pub(crate) fn restore_triangle_state(&mut self, s: &TriangleState) {
+        self.timer.restore(s.timer_period, s.timer_counter);
+        self.length
+            .restore(s.length_counter, s.length_halt, s.length_enabled);
+        self.linear.counter = s.linear_counter;
+        self.linear.halt = s.linear_halt;
+        self.linear.reload_value = s.linear_reload_value;
+        self.sequencer
+            .restore(&TRIANGLE_SEQUENCE, s.sequencer_position);
+    }
+}
+
 impl Triangle {
     pub fn set_enabled(&mut self, enabled: bool) {
         self.length.set_enabled(enabled);

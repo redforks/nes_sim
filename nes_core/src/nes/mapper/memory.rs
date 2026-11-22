@@ -475,13 +475,14 @@ impl CartridgeMemory {
                 self.pool[slot].set_bytes(bank);
             }
         }
-        if let Some(chr) = &snap.chr_ram {
-            if self.chr_is_ram && chr.len() == self.chr_bank_count * BANK_SIZE {
-                for (i, chunk) in chr.chunks_exact(BANK_SIZE).enumerate() {
-                    let mut bytes = [0u8; BANK_SIZE];
-                    bytes.copy_from_slice(chunk);
-                    self.pool[self.chr_base + i].set_bytes(&bytes);
-                }
+        if let Some(chr) = &snap.chr_ram
+            && self.chr_is_ram
+            && chr.len() == self.chr_bank_count * BANK_SIZE
+        {
+            for (i, chunk) in chr.as_chunks::<BANK_SIZE>().0.iter().enumerate() {
+                let mut bytes = [0u8; BANK_SIZE];
+                bytes.copy_from_slice(chunk);
+                self.pool[self.chr_base + i].set_bytes(&bytes);
             }
         }
         for (slot, bank) in snap.prg_ram.iter().enumerate() {
@@ -490,7 +491,7 @@ impl CartridgeMemory {
             }
         }
         if snap.wram_ext.len() == self.wram_bank_count * BANK_SIZE {
-            for (i, chunk) in snap.wram_ext.chunks_exact(BANK_SIZE).enumerate() {
+            for (i, chunk) in snap.wram_ext.as_chunks::<BANK_SIZE>().0.iter().enumerate() {
                 let mut bytes = [0u8; BANK_SIZE];
                 bytes.copy_from_slice(chunk);
                 self.pool[self.wram_base + i].set_bytes(&bytes);

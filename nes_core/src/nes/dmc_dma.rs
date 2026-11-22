@@ -91,6 +91,77 @@ impl DmcDma {
         !matches!(self.state, State::Inactive)
     }
 }
+/// Save-state mirror of [`State`]: the DMC DMA transfer phase plus the
+/// payload of the payload-carrying phases.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum DmcDmaPhase {
+    Inactive,
+    DelayForLoad(u8),
+    TryHalt {
+        first_attempt: bool,
+        halt_on_put: bool,
+    },
+    AlignOrRead,
+    Dummy,
+    Read,
+    Unfreeze,
+}
+
+/// Full [`DmcDma`] state for save-states (ticket #184).
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct DmcDmaState {
+    pub phase: DmcDmaPhase,
+    pub addr: u16,
+    pub halt_bus_addr: u16,
+}
+
+impl DmcDma {
+    /// Capture the DMA transfer state.
+    pub(crate) fn capture_dmc_dma_state(&self) -> DmcDmaState {
+        let phase = match self.state {
+            State::Inactive => DmcDmaPhase::Inactive,
+            State::DelayForLoad(n) => DmcDmaPhase::DelayForLoad(n),
+            State::TryHalt {
+                first_attempt,
+                halt_on_put,
+            } => DmcDmaPhase::TryHalt {
+                first_attempt,
+                halt_on_put,
+            },
+            State::AlignOrRead => DmcDmaPhase::AlignOrRead,
+            State::Dummy => DmcDmaPhase::Dummy,
+            State::Read => DmcDmaPhase::Read,
+            State::Unfreeze => DmcDmaPhase::Unfreeze,
+        };
+        DmcDmaState {
+            phase,
+            addr: self.addr,
+            halt_bus_addr: self.halt_bus_addr,
+        }
+    }
+
+    /// Restore a state previously produced by [`Self::capture_dmc_dma_state`].
+    pub(crate) fn restore_dmc_dma_state(&mut self, s: &DmcDmaState) {
+        self.state = match s.phase {
+            DmcDmaPhase::Inactive => State::Inactive,
+            DmcDmaPhase::DelayForLoad(n) => State::DelayForLoad(n),
+            DmcDmaPhase::TryHalt {
+                first_attempt,
+                halt_on_put,
+            } => State::TryHalt {
+                first_attempt,
+                halt_on_put,
+            },
+            DmcDmaPhase::AlignOrRead => State::AlignOrRead,
+            DmcDmaPhase::Dummy => State::Dummy,
+            DmcDmaPhase::Read => State::Read,
+            DmcDmaPhase::Unfreeze => State::Unfreeze,
+        };
+        self.addr = s.addr;
+        self.halt_bus_addr = s.halt_bus_addr;
+    }
+}
+
 impl DmcDma {
     fn read(&mut self, mem: &mut impl DmcDmaMem) {
         let byte = mem.read_mem(self.addr);
