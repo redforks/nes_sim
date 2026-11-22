@@ -1,7 +1,7 @@
 use crate::actions::{load_palette, read_ines_file};
 use crate::sdl::{
-    FastForwardState, INTERACTIVE_WINDOW, InputSource, LoopOptions, NesAudioDriver, NesRender,
-    PLAYBACK_WINDOW, WindowSpec, create_sdl_drivers, run_event_loop, sdl2::Sdl,
+    FastForwardState, INTERACTIVE_WINDOW, InputSource, LoopInputs, LoopOptions, NesAudioDriver,
+    NesRender, PLAYBACK_WINDOW, WindowSpec, create_sdl_drivers, run_event_loop, sdl2::Sdl,
 };
 use anyhow::{Context as _, Result};
 use nes_core::{
@@ -242,11 +242,13 @@ impl RunAction {
             &mut machine,
             &mut render,
             &mut audio_driver,
-            Some(&mut event_pump),
-            &mut source,
-            &opts,
-            None,
-            Some(&state_path),
+            LoopInputs {
+                event_pump: Some(&mut event_pump),
+                source: &mut source,
+                opts: &opts,
+                fast_forward: None,
+                state_path: Some(&state_path),
+            },
         );
 
         Ok(())
@@ -463,11 +465,13 @@ impl RunAction {
             &mut machine,
             &mut render,
             &mut audio_driver,
-            event_pump.as_mut(),
-            &mut source,
-            &opts,
-            Some(&fast_forward),
-            None,
+            LoopInputs {
+                event_pump: event_pump.as_mut(),
+                source: &mut source,
+                opts: &opts,
+                fast_forward: Some(&fast_forward),
+                state_path: None,
+            },
         );
 
         // Drop machine first to close channel senders, which lets pipe-writing
