@@ -36,6 +36,24 @@ impl LengthControl {
         self.counter == 0
     }
 
+    /// Raw counter value for save-state capture (ticket #190).
+    pub fn counter_value(&self) -> u8 {
+        self.counter
+    }
+
+    /// Whether the channel is enabled (length loads gate on this).
+    pub fn is_enabled(&self) -> bool {
+        self.enabled
+    }
+
+    /// Restores a captured counter/halt/enabled triple without tripping
+    /// the enable-clear side effect of [`Self::set_enabled`].
+    pub fn restore(&mut self, counter: u8, halt: bool, enabled: bool) {
+        self.counter = counter;
+        self.is_halt = halt;
+        self.enabled = enabled;
+    }
+
     /// Load counter from length timer high 5 bits. Length timer high also reloads the counter.
     pub fn load(&mut self, length_idx: u8) {
         if self.enabled {
@@ -132,6 +150,53 @@ impl Envelope {
             self.counter
         }
     }
+
+    /// Divider period (`$x000` volume/rate nibble) for save-state capture.
+    pub fn divider_period(&self) -> u8 {
+        self.divider.period()
+    }
+
+    /// Divider countdown for save-state capture (ticket #190).
+    pub fn divider_counter(&self) -> u8 {
+        self.divider.counter()
+    }
+
+    /// Decay counter for save-state capture (ticket #190).
+    pub fn counter_value(&self) -> u8 {
+        self.counter
+    }
+
+    /// Loop flag for save-state capture (ticket #190).
+    pub fn loop_enabled(&self) -> bool {
+        self.enable_loop
+    }
+
+    /// Constant-volume flag for save-state capture (ticket #190).
+    pub fn is_disabled(&self) -> bool {
+        self.disabled
+    }
+
+    /// Pending start-flag reset for save-state capture (ticket #190).
+    pub fn reset_pending(&self) -> bool {
+        self.request_reset
+    }
+
+    /// Restores a captured envelope without running a frame tick.
+    pub fn restore(
+        &mut self,
+        period: u8,
+        divider_counter: u8,
+        counter: u8,
+        enable_loop: bool,
+        disabled: bool,
+        request_reset: bool,
+    ) {
+        self.divider.restore(period, divider_counter);
+        self.counter = counter;
+        self.enable_loop = enable_loop;
+        self.disabled = disabled;
+        self.request_reset = request_reset;
+    }
 }
 
 pub(crate) trait CounterPub: PartialOrd + Copy + Sized {
@@ -191,6 +256,17 @@ impl<C: CounterPub> Divider<C> {
     pub fn period(self) -> C {
         self.period
     }
+
+    /// Countdown for save-state capture (ticket #190).
+    pub fn counter(&self) -> C {
+        self.counter
+    }
+
+    /// Restores a captured period/countdown pair verbatim.
+    pub fn restore(&mut self, period: C, counter: C) {
+        self.period = period;
+        self.counter = counter;
+    }
 }
 
 impl Divider<u16> {
@@ -235,5 +311,22 @@ impl<I: Copy> Sequencer<I> {
 
     pub fn output(&self) -> I {
         unsafe { *self.items.get_unchecked(self.cur_idx) }
+    }
+
+    /// Step position for save-state capture (ticket #190).
+    pub fn position(&self) -> usize {
+        self.cur_idx
+    }
+
+    /// Backing table for save-state capture (ticket #190): the caller
+    /// maps the pointer to a table selector it can persist.
+    pub fn items(&self) -> &'static [I] {
+        self.items
+    }
+
+    /// Restores a captured table + step position verbatim.
+    pub fn restore(&mut self, items: &'static [I], position: usize) {
+        self.items = items;
+        self.cur_idx = position.min(items.len().saturating_sub(1));
     }
 }
