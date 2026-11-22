@@ -79,19 +79,22 @@ where
 
     /// Run the machine for a single frame.
     ///
-    /// Ticks until the PPU reports entering vblank (scanline 241, dot 1),
-    /// which marks the natural end of a rendered frame: the PPU has finished
-    /// rendering all 240 visible scanlines at that point.
-    ///
-    /// The stop condition consumes the PPU's dedicated vblank-entry event
-    /// ([`crate::nes::ppu::Ppu::take_vblank_entered`]), not the `$2002` VBL
-    /// status flag, so emulated-program reads of `$2002` (which clear the
-    /// flag) cannot interfere with frame stepping. PPU timing always
-    /// advances in `tick`, so the event fires within one frame (~89k dots)
-    /// and no tick-count guard is needed.
+    /// Returns at the save point (ADR 0022): the end of the first CPU
+    /// cycle at or after scanline 261, so the boundary PPU dot is 0, 1,
+    /// or 2 (one CPU cycle is three PPU dots). The check reads the
+    /// existing `Timing` scanline accessor in two phases — phase 1 ticks
+    /// until the scanline leaves 261 (cold start begins there, as does a
+    /// restored state), phase 2 ticks until it returns to 261 — with no
+    /// new PPU flag. The vblank-entry event fired mid-frame (scanline 241)
+    /// is cleared at the boundary instead of breaking the loop: a save
+    /// taken here observes it unset. `take_vblank_entered` keeps the
+    /// VBL-entry break for tick-stepped capture (`tick_frames`).
     ///
     /// Returns the frame status plus borrows of the owned PPU framebuffer
-    /// and APU audio buffer for the completed frame.
+    /// and APU audio buffer for the completed frame. Frame bytes are
+    /// unchanged by the boundary move: the palette flush still runs at
+    /// the VBL set dot, while each call's audio covers about 20 more
+    /// scanlines than the old VBL-entry break.
     ///
     /// Drain contract (per-frame drain is canonical): the APU buffer is
     /// cleared at the start of each call, so every call yields exactly one
@@ -106,16 +109,22 @@ where
     pub fn process_frame(&mut self) -> FrameOutput<'_> {
         self.bus.mcu_mut().clear_audio_buffer();
         let mut status = ExecuteResult::Continue;
-        loop {
-            let control = self.tick();
-            if !matches!(control, ExecuteResult::Continue) {
-                status = control;
-                break;
-            }
-            if self.bus.mcu_mut().ppu_mut().take_vblank_entered() {
-                break;
-            }
+        // Phase 1: cold start (and a restored state) begins at scanline
+        // 261, so tick until the scanline leaves it.
+        while matches!(status, ExecuteResult::Continue)
+            && self.bus.mcu().ppu().timing().scanline() == 261
+        {
+            status = self.tick();
         }
+        // Phase 2: tick until the scanline returns to 261, then return.
+        // The stop lands at the end of a CPU cycle, so the dot is 0-2.
+        while matches!(status, ExecuteResult::Continue)
+            && self.bus.mcu().ppu().timing().scanline() != 261
+        {
+            status = self.tick();
+        }
+        // The VBL-entry event fired mid-frame; clear it at the boundary.
+        let _ = self.bus.mcu_mut().ppu_mut().take_vblank_entered();
 
         let mcu = self.bus.mcu();
         // Reborrow as shared: both slices derive from `&self`.
@@ -396,6 +405,11 @@ mod tests {
     /// end-of-run drain, the `--dump-audio` cadence) and under
     /// `process_frame` stepping (per-frame drain of each `FrameOutput`).
     ///
+    /// The tick-stepped loop is aligned to the same scanline-261 boundary
+    /// `process_frame` returns at (ADR 0022), so both styles cover the
+    /// identical emulated span; `tick_frames` itself keeps the VBL-entry
+    /// break and is not used here.
+    ///
     /// Regression guard for the drain trap (§8): if the capture loop ever
     /// steps via `process_frame` — whose start-of-frame clear drops every
     /// prior frame — while keeping its single end-of-run drain, the dump
@@ -406,7 +420,14 @@ mod tests {
         let file = test_nes_file();
 
         let mut ticked = NesMachine::new(&file, EmptyPlugin::new());
-        tick_frames(&mut ticked, FRAMES);
+        for _ in 0..FRAMES {
+            while ticked.mcu().ppu().timing().scanline() == 261 {
+                ticked.tick();
+            }
+            while ticked.mcu().ppu().timing().scanline() != 261 {
+                ticked.tick();
+            }
+        }
         let ticked_total = ticked.audio_samples().len();
         assert!(
             ticked_total > 0,
@@ -458,21 +479,26 @@ mod tests {
     }
 
     #[test]
-    fn test_process_frame_waits_for_vblank() {
+    fn process_frame_stops_at_scanline_261_boundary() {
         let file = test_nes_file();
         let mut machine = NesMachine::new(&file, EmptyPlugin::new());
 
-        // process_frame should return as soon as the PPU reaches VBlank
-        // (scanline 241, dot 1 = after 241*341 + 1 = 82,262 PPU dots = ~27,421 CPU cycles).
-        // The call must complete within one frame (~89k dots).
-        let result = machine.process_frame().status;
-        assert_eq!(result, ExecuteResult::Continue);
-
-        // After one frame the PPU should be at or past scanline 241.
-        // We verify by running a second frame — it should also complete without hitting
-        // the safety limit, proving VBlank fires consistently every frame.
-        let result = machine.process_frame().status;
-        assert_eq!(result, ExecuteResult::Continue);
+        // Save point (ADR 0022): each call returns at the end of the
+        // first CPU cycle at or after scanline 261 (PPU dot 0-2).
+        for _ in 0..3 {
+            let result = machine.process_frame().status;
+            assert_eq!(result, ExecuteResult::Continue);
+            assert_eq!(
+                machine.mcu().ppu().timing().scanline(),
+                261,
+                "process_frame must stop at scanline 261"
+            );
+            assert!(
+                (0..=2).contains(&machine.mcu().ppu().timing().dot()),
+                "boundary dot must be 0-2, got {}",
+                machine.mcu().ppu().timing().dot()
+            );
+        }
     }
 
     /// PRG: `LDA #$02; STA $4014; JMP $8002` — arms a fresh OAM DMA every

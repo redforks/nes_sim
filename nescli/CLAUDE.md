@@ -76,7 +76,7 @@ Opens an SDL2 window with:
 
 ## Audio
 
-The SDL2 runner is a per-frame sink: each frame it runs `process_frame()`, presents `output.frame`, and pushes `output.audio` through chunked queueing (`AUDIO_CHUNK_SAMPLES = 1024`, drops on queue pressure) plus `flush_frame()`. Recording additionally forwards the frame's samples to the encoder channel:
+The SDL2 runner is a per-frame sink: each frame it runs `process_frame()` — which returns at the save-point boundary (end of the first CPU cycle at or after scanline 261) — presents `output.frame`, and pushes `output.audio` through chunked queueing (`AUDIO_CHUNK_SAMPLES = 1024`, drops on queue pressure) plus `flush_frame()`. Recording additionally forwards the frame's samples to the encoder channel:
 
 ```rust
 let output = machine.process_frame();
