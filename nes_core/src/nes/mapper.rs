@@ -349,21 +349,15 @@ pub enum MapperState {
 
 pub trait Mapper {
     /// Captures the mapper's mutable state for a save file (ticket #186).
-    /// Default body reports [`SnapshotError::Unsupported`] until the
-    /// migration tickets (#187-#190) implement it per mapper; ticket #191
-    /// removes this default. NOTE: the ticket text writes the signature
-    /// as returning `MapperState`, but a default body returning
-    /// `SnapshotError::Unsupported` requires `Result`; the `Result`
-    /// form is implemented.
-    fn snapshot(&self) -> Result<MapperState, SnapshotError> {
-        Err(SnapshotError::Unsupported)
-    }
+    /// No default body (ticket #191, per the #184 spec decision): every
+    /// mapper implements this, so a mapper without an implementation fails
+    /// to compile. A test-only stub that has no state to capture spells
+    /// out [`SnapshotError::Unsupported`] explicitly.
+    fn snapshot(&self) -> Result<MapperState, SnapshotError>;
     /// Restores state captured by [`Self::snapshot`] into a mapper rebuilt
-    /// from the same ROM (ticket #186). Same default-body arrangement as
-    /// [`Self::snapshot`].
-    fn restore(&mut self, _state: &MapperState) -> Result<(), SnapshotError> {
-        Err(SnapshotError::Unsupported)
-    }
+    /// from the same ROM (ticket #186). No default body, same contract
+    /// as [`Self::snapshot`].
+    fn restore(&mut self, _state: &MapperState) -> Result<(), SnapshotError>;
     /// Called for every CPU write in `$5000-$FFFF` (expansion registers,
     /// PRG-RAM, and program-area register writes).
     fn cpu_write(
@@ -735,6 +729,16 @@ impl TestMapper {
 
 #[cfg(test)]
 impl Mapper for TestMapper {
+    /// Test mapper carries no chip state: spells out the refusal
+    /// explicitly (ticket #191 removed the trait default bodies).
+    fn snapshot(&self) -> Result<MapperState, SnapshotError> {
+        Err(SnapshotError::Unsupported)
+    }
+
+    fn restore(&mut self, _state: &MapperState) -> Result<(), SnapshotError> {
+        Err(SnapshotError::Unsupported)
+    }
+
     fn cpu_write(
         &mut self,
         _address: u16,
