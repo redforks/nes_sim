@@ -352,6 +352,41 @@ fn saveram_anchor_is_refused() {
 }
 
 #[test]
+fn savestate_anchor_none_for_clean_movie() {
+    let movie = parse(&build_bk2(&base_header(), &blank_frames3(), &[])).unwrap();
+    assert_eq!(movie.anchored, None);
+    assert_eq!(savestate_anchor(&movie), None);
+}
+
+#[test]
+fn savestate_anchor_some_for_lump() {
+    let movie = parse(&build_bk2(
+        &base_header(),
+        &blank_frames3(),
+        &[("CoreState.bin", "state")],
+    ))
+    .unwrap();
+    assert_eq!(savestate_anchor(&movie), Some(AnchoredKind::CoreState));
+}
+
+#[test]
+fn savestate_anchor_claimed_flag_without_lump() {
+    let mut header = base_header();
+    let flag = header
+        .iter_mut()
+        .find(|line| line.starts_with("StartsFromSavestate"))
+        .expect("base header carries the flag");
+    *flag = "StartsFromSavestate 1";
+    let movie = parse(&build_bk2(&header, &blank_frames3(), &[])).unwrap();
+    assert_eq!(movie.anchored, None, "no lump, so no lump anchor");
+    assert_eq!(
+        savestate_anchor(&movie),
+        Some(AnchoredKind::ClaimedFlag),
+        "claimed start still cannot resume from a state"
+    );
+}
+
+#[test]
 fn missing_platform_is_refused() {
     let header: Vec<&str> = base_header()
         .into_iter()

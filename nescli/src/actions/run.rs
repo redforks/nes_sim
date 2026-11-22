@@ -40,6 +40,8 @@ pub struct RunAction {
     crf: u32,
     #[arg(long, default_value_t = 0, requires = "movie")]
     trim_frames: u32,
+    /// Stop after N frames, using absolute frame numbers: loading a state
+    /// at frame 900 with `--trim-after 1000` plays 100 frames.
     #[arg(long, default_value_t = 0, requires = "movie")]
     trim_after: u32,
     /// BK2 only: play savestate-anchored movies from power-on with a warning
@@ -69,6 +71,33 @@ where
         return Ok(None);
     };
     crate::save_state::load_machine_from_path(machine, path).map(Some)
+}
+
+/// Refusal text when a savestate-anchored BK2 meets `--load-state` (#198).
+/// `Some` always refuses, including with `--play-from-power-on`: frame 1 is
+/// not power-on, so a cursor into power-on prefix entries cannot sync.
+/// `None` plays on through the normal `check_movie` path.
+pub(crate) fn anchored_load_state_error(movie: &nes_core::bk2::Bk2Movie) -> Option<String> {
+    nes_core::bk2::savestate_anchor(movie).map(|_| {
+        "savestate-anchored BK2 movie cannot be resumed with --load-state: frame 1 is not power-on"
+            .to_owned()
+    })
+}
+
+/// Cursor index for `--load-state --movie` (#198): the state's frame.
+/// Entries before the cursor are skipped, since the state already holds
+/// their effects; reset entries at or after the cursor play as today. A
+/// movie shorter than the stored frame cannot resume: `Err` carries the
+/// pre-window exit text. No movie identity is stored; the cursor is
+/// trusted, not verified.
+pub(crate) fn movie_cursor_index(movie_len: usize, state_frame: usize) -> Result<usize, String> {
+    if state_frame > movie_len {
+        Err(format!(
+            "movie is shorter than the saved state (movie has {movie_len} frames, state is at frame {state_frame}); cannot resume with --load-state"
+        ))
+    } else {
+        Ok(state_frame)
+    }
 }
 
 /// True when the movie path selects the BK2 parser (by `.bk2` extension).
@@ -228,6 +257,16 @@ impl RunAction {
         let input_logs: Box<[movie::InputLog]> = if movie_file_is_bk2(movie_path) {
             let bk2_data = fs::read(movie_path)?;
             let movie = nes_core::bk2::parse(&bk2_data).context("parse bk2 file")?;
+            // A savestate-anchored BK2 with `--load-state` is always refused
+            // (#198), even with `--play-from-power-on`: frame 1 is not
+            // power-on, so the cursor cannot sync. Before the window opens,
+            // non-zero exit.
+            if self.load_state.is_some()
+                && let Some(error) = anchored_load_state_error(&movie)
+            {
+                eprintln!("{error}");
+                anyhow::bail!("{error}");
+            }
             let warnings = nes_core::bk2::check_movie(&movie, f, self.play_from_power_on)?;
             for warning in warnings {
                 eprintln!("{warning}");
@@ -356,11 +395,34 @@ impl RunAction {
             self.trim_frames,
         )?;
 
+        // Build the machine before SDL opens so `--load-state` failures
+        // (missing/corrupt file, short movie) exit pre-window, non-zero.
         let mut machine = NesMachine::new(f, EmptyPlugin::new());
-        let (mut render, mut audio_driver) = (render, audio_driver);
         if let Some(theme) = palette {
             machine.set_color_theme(theme);
         }
+        // The movie cursor starts at the state's frame: entries before it
+        // are skipped, since the state already holds their effects. No
+        // movie cursor goes into `NesMachine` or the DTO; `index: 0`
+        // remains the no-load case.
+        let start_index = match apply_load_state(&mut machine, self.load_state.as_deref()) {
+            Ok(None) => 0,
+            Ok(Some(message)) => {
+                eprintln!("{message}");
+                match movie_cursor_index(input_logs.len(), machine.frame_no()) {
+                    Ok(index) => index,
+                    Err(error) => {
+                        eprintln!("{error}");
+                        anyhow::bail!("{error}");
+                    }
+                }
+            }
+            Err(message) => {
+                eprintln!("{message}");
+                anyhow::bail!("{message}");
+            }
+        };
+        let (mut render, mut audio_driver) = (render, audio_driver);
         let dual_player = input_logs.iter().any(|log| !log.port1.is_empty());
         render.set_dual_player(dual_player);
         render.set_overlay_enabled(self.gamepad_overlay);
@@ -383,7 +445,7 @@ impl RunAction {
         // end-of-movie countdown.
         let mut source = InputSource::Movie {
             logs: input_logs,
-            index: 0,
+            index: start_index,
         };
         let opts = LoopOptions {
             headless: self.headless,
@@ -776,6 +838,222 @@ mod tests {
                 PathBuf::from("/games/mario.state")
             );
             assert_ne!(crate::save_state::state_path_for_rom(rom), custom);
+        }
+    }
+
+    mod movie_cursor {
+        use super::super::{anchored_load_state_error, movie_cursor_index};
+        use clap::Parser;
+        use nes_core::{
+            EmptyPlugin,
+            bk2::{AnchoredKind, Bk2Header, Bk2Movie},
+            ines::INesFile,
+            movie::{Command, GamepadInput, InputLog},
+            nes::{NesMcu, controller::Button},
+            nes_machine::NesMachine,
+        };
+        use std::path::PathBuf;
+
+        /// Clap harness: `RunAction` is `Args`, so it is flattened into a
+        /// test parser to exercise flag parsing and help text.
+        #[derive(clap::Parser)]
+        struct TestCli {
+            #[command(flatten)]
+            run: super::super::RunAction,
+        }
+
+        /// Minimal valid NROM iNES file (mirrors the `save_state` fixture).
+        fn nrom_file() -> INesFile {
+            let mut rom = Vec::new();
+            rom.extend_from_slice(&[0x4e, 0x45, 0x53, 0x1a, 0x01, 0x01, 0x00, 0x00]);
+            rom.extend_from_slice(&[0; 8]);
+            let prg_len = 16 * 1024;
+            rom.extend_from_slice(&[0x4c, 0x00, 0x80]);
+            rom.extend(std::iter::repeat_n(0, prg_len - 3));
+            rom.extend(std::iter::repeat_n(0, 8 * 1024));
+            INesFile::new(rom).unwrap()
+        }
+
+        fn machine_for(file: &INesFile) -> NesMachine<EmptyPlugin<NesMcu>> {
+            NesMachine::new(file, EmptyPlugin::new())
+        }
+
+        fn scratch_dir(name: &str) -> PathBuf {
+            let dir =
+                std::env::temp_dir().join(format!("nescli_movie_{}_{}", std::process::id(), name));
+            let _ = std::fs::remove_dir_all(&dir);
+            std::fs::create_dir_all(&dir).unwrap();
+            dir
+        }
+
+        #[test]
+        fn cursor_starts_at_the_state_frame() {
+            assert_eq!(movie_cursor_index(12, 0), Ok(0), "no-load case stays 0");
+            assert_eq!(movie_cursor_index(12, 5), Ok(5));
+            assert_eq!(
+                movie_cursor_index(12, 12),
+                Ok(12),
+                "state at the exact end resumes into the extra-frames countdown"
+            );
+        }
+
+        #[test]
+        fn short_movie_errors_with_exact_text() {
+            assert_eq!(
+                movie_cursor_index(3, 5),
+                Err("movie is shorter than the saved state (movie has 3 frames, state is at frame 5); cannot resume with --load-state".to_owned())
+            );
+        }
+
+        fn unanchored_movie() -> Bk2Movie {
+            Bk2Movie {
+                header: Bk2Header::default(),
+                input_logs: Vec::new().into_boxed_slice(),
+                sync_settings: None,
+                anchored: None,
+            }
+        }
+
+        #[test]
+        fn clean_bk2_with_load_state_plays_on() {
+            assert_eq!(anchored_load_state_error(&unanchored_movie()), None);
+        }
+
+        #[test]
+        fn anchored_bk2_with_load_state_is_refused() {
+            for kind in [
+                AnchoredKind::CoreState,
+                AnchoredKind::SaveRam,
+                AnchoredKind::ClaimedFlag,
+            ] {
+                let movie = Bk2Movie {
+                    anchored: Some(kind),
+                    ..unanchored_movie()
+                };
+                assert_eq!(
+                    anchored_load_state_error(&movie),
+                    Some("savestate-anchored BK2 movie cannot be resumed with --load-state: frame 1 is not power-on".to_owned()),
+                    "{kind:?} must refuse even with --play-from-power-on"
+                );
+            }
+        }
+
+        fn log_with(a: bool, b: bool, start: bool) -> InputLog {
+            InputLog::new(
+                Command::default(),
+                GamepadInput::new().with_a(a).with_b(b).with_start(start),
+                GamepadInput::default(),
+            )
+        }
+
+        /// Mirror of the event-loop per-entry bookkeeping (reset applies with
+        /// no frame, otherwise controllers latch then one frame emulates).
+        fn emulate_log(
+            machine: &mut NesMachine<EmptyPlugin<NesMcu>>,
+            log: &InputLog,
+        ) -> Option<(Vec<u8>, Vec<f32>)> {
+            if log.command.hard_reset() {
+                machine.hard_reset();
+                return None;
+            }
+            if log.command.soft_reset() {
+                machine.soft_reset();
+                return None;
+            }
+            for (button, pressed) in [
+                (Button::A, log.port0.a()),
+                (Button::B, log.port0.b()),
+                (Button::Select, log.port0.select()),
+                (Button::Start, log.port0.start()),
+                (Button::Up, log.port0.up()),
+                (Button::Down, log.port0.down()),
+                (Button::Left, log.port0.left()),
+                (Button::Right, log.port0.right()),
+            ] {
+                if pressed {
+                    machine.press_controller_a(button);
+                } else {
+                    machine.release_controller_a(button);
+                }
+            }
+            let out = machine.process_frame();
+            Some((out.frame.to_vec(), out.audio.to_vec()))
+        }
+
+        #[test]
+        fn movie_with_load_state_matches_continuous_run_from_saved_frame() {
+            // Twelve plain input entries, no resets: the spec assumes no
+            // movie hard reset before the save, so index and frame stay in
+            // lockstep and the cursor is the state's frame.
+            let logs: Vec<InputLog> = (0..12)
+                .map(|i| log_with(i % 2 == 0, i % 3 == 0, i == 7))
+                .collect();
+            let file = nrom_file();
+
+            // Continuous reference: every entry from power-on.
+            let mut reference = machine_for(&file);
+            let mut expected = Vec::new();
+            for log in &logs {
+                if let Some(output) = emulate_log(&mut reference, log) {
+                    expected.push((reference.frame_no(), output));
+                }
+            }
+            assert_eq!(expected.len(), 12);
+            assert_eq!(reference.frame_no(), 12);
+
+            // Save after 5 frames, load fresh, resume at the cursor.
+            let mut saver = machine_for(&file);
+            for log in &logs[..5] {
+                assert!(emulate_log(&mut saver, log).is_some());
+            }
+            let dir = scratch_dir("cursor");
+            let path = dir.join("game.state");
+            crate::save_state::save_machine_to_path(&saver, &path).unwrap();
+
+            let mut loaded = machine_for(&file);
+            crate::save_state::load_machine_from_path(&mut loaded, &path).unwrap();
+            assert_eq!(loaded.frame_no(), 5);
+            let cursor = movie_cursor_index(logs.len(), loaded.frame_no()).unwrap();
+            assert_eq!(cursor, 5, "entries before the cursor are skipped");
+
+            let mut resumed = Vec::new();
+            for log in &logs[cursor..] {
+                if let Some(output) = emulate_log(&mut loaded, log) {
+                    resumed.push((loaded.frame_no(), output));
+                }
+            }
+            assert_eq!(resumed, expected[5..]);
+            let _ = std::fs::remove_dir_all(&dir);
+        }
+
+        #[test]
+        fn trim_after_help_says_absolute_frame_numbers() {
+            let mut help = Vec::new();
+            use clap::CommandFactory;
+            TestCli::command().write_long_help(&mut help).unwrap();
+            let help = String::from_utf8(help).unwrap();
+            let pos = help
+                .find("--trim-after")
+                .expect("run --help must show the flag");
+            let window = &help[pos..(pos + 400).min(help.len())];
+            assert!(
+                window.contains("absolute"),
+                "trim-after help must say it uses absolute frame numbers: {window}"
+            );
+            assert!(
+                help.contains("900") && help.contains("1000"),
+                "trim-after help must carry the load-at-900 example: {help}"
+            );
+        }
+
+        #[test]
+        fn trim_after_still_requires_movie() {
+            // `RunAction` is not `Debug`, so no `expect_err`: assert on the
+            // `Result` shape directly.
+            match TestCli::try_parse_from(["test", "game.nes", "--trim-after", "1000"]) {
+                Ok(_) => panic!("--trim-after without --movie must fail"),
+                Err(error) => assert!(error.to_string().contains("--movie"), "{error}"),
+            }
         }
     }
 }

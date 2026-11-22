@@ -553,6 +553,18 @@ pub fn check_movie(
     Ok(warnings)
 }
 
+/// The savestate anchor that makes `--load-state` resume impossible, if
+/// any: an anchor lump, or the claimed-flag case (the file says
+/// `StartsFromSavestate` but carries no lump — frame 1 still is not
+/// power-on). `Some` refuses unconditionally, even with
+/// `--play-from-power-on`, because the movie cursor assumes power-on
+/// prefix entries.
+pub fn savestate_anchor(movie: &Bk2Movie) -> Option<AnchoredKind> {
+    movie
+        .anchored
+        .or_else(|| starts_from_savestate_flag(movie).then_some(AnchoredKind::ClaimedFlag))
+}
+
 fn starts_from_savestate_flag(movie: &Bk2Movie) -> bool {
     let flag = |key: &str| {
         movie.header.get(key).is_some_and(|v| {
