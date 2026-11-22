@@ -29,7 +29,7 @@ impl SystemClock {
         SystemClock(self.0.wrapping_add(1))
     }
 
-    /// Rebuilds a clock from a saved cycle count (mapper snapshot restore).
+    /// Rebuilds a clock from a saved cycle count (mapper state restore).
     pub fn from_cycles(cycles: u64) -> SystemClock {
         SystemClock(cycles)
     }

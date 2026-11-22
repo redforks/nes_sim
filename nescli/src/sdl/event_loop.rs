@@ -5,9 +5,9 @@
 //! `ExecuteResult` match, one reset path and one mode-gated throttle.
 //!
 //! Input authority is mode-dependent: interactive keeps today's keys
-//! (Quit/Esc exit, F2 soft-resets, F4 quits, F5 saves, controller keys
-//! drive port A) while playback only honors the OS `Event::Quit` (no Esc/F2/F4, controller
-//! keys ignored). Reset precedence is movie-driven reset first
+//! (Quit/Esc exit, F2 soft-resets, F4 quits, F5 saves, F7 loads, controller
+//! keys drive port A) while playback only honors the OS `Event::Quit`
+//! (no Esc/F2/F4/F5/F7, controller keys ignored). Reset precedence is movie-driven reset first
 //! (`hard_reset` > `soft_reset`) with `ShouldReset -> soft_reset` shared by
 //! both modes; the sources are mutually exclusive per mode. One movie entry
 //! plays one frame and consumes one index, reset entries included. End of movie
@@ -190,39 +190,47 @@ where
     set_controller_from_gamepad(machine, input, true);
 }
 
-/// F5 arms a save only in interactive mode with no key repeat, so movie
-/// playback stays deterministic. (The loop already routes every key but
-/// OS Quit away from the match arms in movie mode; this is the second
-/// gate at the decision itself.)
-fn f5_arms_save(source: &InputSource, repeat: bool) -> bool {
+/// F5 (save) and F7 (load) arm only in interactive mode with no key
+/// repeat, so movie playback stays deterministic. (The loop already routes
+/// every key but OS Quit away from the match arms in movie mode; this is
+/// the second gate at the decision itself.)
+fn state_hotkey_arms_action(source: &InputSource, repeat: bool) -> bool {
     !repeat && !source.is_movie()
 }
 
-/// F7 arms a load under the same conditions as F5: interactive mode, no
-/// key repeat, so movie playback stays deterministic.
-fn f7_arms_load(source: &InputSource, repeat: bool) -> bool {
-    !repeat && !source.is_movie()
+/// Caller-owned inputs for one [`run_event_loop`] call: the event pump
+/// (`None` for headless playback), the input source, pacing knobs, the
+/// playback fast-forward state (`Some` for playback; idle ranges may still
+/// be empty when `--auto-fast-forward` is off), and the save-file path
+/// (`Some` for interactive runs, where F5 saves and F7 loads there;
+/// `None` for movie playback, where F5/F7 are ignored).
+pub struct LoopInputs<'a> {
+    pub event_pump: Option<&'a mut EventPump>,
+    pub source: &'a mut InputSource,
+    pub opts: &'a LoopOptions,
+    pub fast_forward: Option<&'a FastForwardState>,
+    pub state_path: Option<&'a std::path::Path>,
 }
 
 /// Drive `machine` until an exit event, `Stop`/`Halt`, the `trim_after` limit
-/// or the end-of-movie countdown runs out. `event_pump` is `None` for
-/// headless playback; `fast_forward` is `Some` for playback (idle ranges may
-/// still be empty when `--auto-fast-forward` is off). `state_path` is `Some`
-/// for interactive runs (F5 saves and F7 loads there); it is `None` for movie
-/// playback, where F5/F7 are ignored.
-#[allow(clippy::too_many_arguments)]
+/// or the end-of-movie countdown runs out.
 pub fn run_event_loop<P>(
     machine: &mut NesMachine<P>,
     render: &mut NesRender,
     audio: &mut NesAudioDriver,
-    mut event_pump: Option<&mut EventPump>,
-    source: &mut InputSource,
-    opts: &LoopOptions,
-    fast_forward: Option<&FastForwardState>,
-    state_path: Option<&std::path::Path>,
+    mut inputs: LoopInputs<'_>,
 ) where
     P: Plugin<NesMcu>,
 {
+    let LoopInputs {
+        event_pump,
+        source,
+        opts,
+        fast_forward,
+        state_path,
+    } = &mut inputs;
+    let (event_pump, source, opts, fast_forward, state_path) =
+        (event_pump, source, opts, fast_forward, state_path);
     let target_frame_duration = Duration::new(0, 1_000_000_000u32 / 60);
     let mut extra_frames_remaining = opts.extra_frames;
     let mut save_requested = false;
@@ -259,7 +267,7 @@ pub fn run_event_loop<P>(
                     } => {
                         // Save the simulator state; the write runs right
                         // after the next `process_frame()` returns.
-                        if f5_arms_save(source, repeat) {
+                        if state_hotkey_arms_action(source, repeat) {
                             save_requested = true;
                         }
                     }
@@ -274,7 +282,7 @@ pub fn run_event_loop<P>(
                         // leaves the machine untouched (validation runs
                         // before any mutation in nes_core) and the game
                         // keeps running.
-                        if f7_arms_load(source, repeat) {
+                        if state_hotkey_arms_action(source, repeat) {
                             if let Some(path) = state_path {
                                 let message = match load_machine_from_path(machine, path) {
                                     Ok(message) | Err(message) => message,
@@ -459,23 +467,15 @@ mod tests {
     }
 
     #[test]
-    fn f5_arms_save_only_for_interactive_without_repeat() {
-        let interactive = InputSource::Interactive;
-        assert!(f5_arms_save(&interactive, false));
-        assert!(!f5_arms_save(&interactive, true));
-        assert!(!f5_arms_save(&movie_source(), false));
-        assert!(!f5_arms_save(&movie_source(), true));
-    }
-
     #[test]
-    fn f7_arms_load_only_for_interactive_without_repeat() {
-        // Movie-mode no-op (#196): F7 never fires during playback, so a
+    fn state_hotkeys_arm_only_for_interactive_without_repeat() {
+        // Movie-mode no-op (#196): F5/F7 never fire during playback, so a
         // recorded run stays deterministic.
         let interactive = InputSource::Interactive;
-        assert!(f7_arms_load(&interactive, false));
-        assert!(!f7_arms_load(&interactive, true));
-        assert!(!f7_arms_load(&movie_source(), false));
-        assert!(!f7_arms_load(&movie_source(), true));
+        assert!(state_hotkey_arms_action(&interactive, false));
+        assert!(!state_hotkey_arms_action(&interactive, true));
+        assert!(!state_hotkey_arms_action(&movie_source(), false));
+        assert!(!state_hotkey_arms_action(&movie_source(), true));
     }
 
     #[test]

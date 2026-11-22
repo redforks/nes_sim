@@ -35,3 +35,11 @@ migrated. The file is serde_json text, with byte arrays as hex strings and
   wrote it.
 - Mirror enums and the DTO structs duplicate the core field list. The
   duplication is the price of keeping `nes_core` free of serde.
+
+## Clarification (save-state build)
+
+"Free of serde" above means core *types* carry no serde derives — only
+the DTO structs in `nes_core/src/snapshot.rs` derive
+`Serialize`/`Deserialize`. `nes_core` does depend on `serde` (with derive)
+and `serde_json`; see ADR 0023 for the DTO-in-core / file-I/O-in-nescli
+split.

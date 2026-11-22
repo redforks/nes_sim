@@ -13,7 +13,7 @@
 //! `Serialize`/`Deserialize`.
 //!
 //! Ticket #192 scope: the `cartridge` section is filled from live state
-//! via the mapper snapshot API; every other component section exists with
+//! via the mapper state API; every other component section exists with
 //! its final name but is left defaulted (ticket #193 fills them). The
 //! `ppu` section carries the live scanline/dot so load can validate the
 //! save-point boundary (scanline 261, dot 0..=2).
@@ -107,7 +107,7 @@ pub enum SaveError {
     Corrupt(String),
     /// A hex field is not valid hex.
     BadHex { path: String },
-    /// Mapper snapshot capture/restore failure (save path only: every
+    /// Mapper state capture/restore failure (save path only: every
     /// load-path mapper failure is pre-empted by the tag comparison).
     Mapper(SnapshotError),
 }
@@ -1889,8 +1889,6 @@ struct PpuSection {
     odd_frame: bool,
     frame_no: u64,
     cycle: u64,
-    vblank_entered: bool,
-    suppress_vblank_pending: bool,
     ren_latched_at_338: bool,
     ctrl: u8,
     mask: u8,
@@ -2005,14 +2003,23 @@ fn decode_background_activation(dto: &BackgroundActivationDto) -> BackgroundActi
 }
 
 fn encode_ppu(state: &PpuState) -> PpuSection {
+    // Spec #184: neither flag is stored. The save-point boundary
+    // (`NesMachine::process_frame`) clears `vblank_entered`, and
+    // `suppress_vblank_pending` must already be unset there.
+    assert!(
+        !state.vblank_entered,
+        "save point must observe vblank_entered unset"
+    );
+    assert!(
+        !state.suppress_vblank_pending,
+        "save point must observe suppress_vblank_pending unset"
+    );
     PpuSection {
         scanline: state.scanline,
         dot: state.dot,
         odd_frame: state.odd_frame,
         frame_no: state.frame_no as u64,
         cycle: state.cycle,
-        vblank_entered: state.vblank_entered,
-        suppress_vblank_pending: state.suppress_vblank_pending,
         ren_latched_at_338: state.ren_latched_at_338,
         ctrl: state.registers_ctrl,
         mask: state.registers_mask,
@@ -2123,8 +2130,10 @@ fn decode_ppu(dto: &PpuSection) -> Result<PpuState, SaveError> {
         odd_frame: dto.odd_frame,
         frame_no: dto.frame_no as usize,
         cycle: dto.cycle,
-        vblank_entered: dto.vblank_entered,
-        suppress_vblank_pending: dto.suppress_vblank_pending,
+        // Spec #184: neither flag is stored; a restored machine always
+        // starts with both unset (the boundary clears `vblank_entered`).
+        vblank_entered: false,
+        suppress_vblank_pending: false,
         ren_latched_at_338: dto.ren_latched_at_338,
         registers_ctrl: dto.ctrl,
         registers_mask: dto.mask,
@@ -2482,7 +2491,7 @@ fn from_payload<T: for<'de> Deserialize<'de>>(tag: &str, payload: Value) -> Resu
         .map_err(|error| SaveError::Corrupt(format!("cartridge {tag} state: {error}")))
 }
 
-/// Encodes a mapper snapshot: returns the saved tag plus the payload.
+/// Encodes a mapper state: returns the saved tag plus the payload.
 /// The tag is stored in `cartridge.mapper`; the payload in
 /// `cartridge.state` (no wrapper key, so the tag is stored exactly once).
 fn encode_mapper(state: &MapperState) -> (String, Value) {

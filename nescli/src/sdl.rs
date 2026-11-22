@@ -5,7 +5,9 @@ pub mod presenter;
 pub mod render;
 
 pub use drivers::{INTERACTIVE_WINDOW, PLAYBACK_WINDOW, WindowSpec, create_sdl_drivers};
-pub(crate) use event_loop::{FastForwardState, InputSource, LoopOptions, run_event_loop};
+pub(crate) use event_loop::{
+    FastForwardState, InputSource, LoopInputs, LoopOptions, run_event_loop,
+};
 pub(crate) use render::NesRender;
 
 use nes_core::audio_chunk::ChunkedAudioPush;

@@ -322,7 +322,7 @@ pub enum SnapshotError {
 impl core::fmt::Display for SnapshotError {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         match self {
-            SnapshotError::Unsupported => write!(f, "mapper snapshot not supported"),
+            SnapshotError::Unsupported => write!(f, "mapper state not supported"),
             SnapshotError::Mismatch => write!(f, "mapper state does not match mapper type"),
         }
     }
