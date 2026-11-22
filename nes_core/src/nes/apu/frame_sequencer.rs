@@ -77,6 +77,103 @@ pub(super) struct FrameSequencer {
     saved_mode: FrameSequencerMode,
 }
 
+/// Save-state mirror of [`FrameSequencerMode`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum FrameCounterModeTag {
+    FourStep,
+    FiveStep,
+}
+
+/// Save-state mirror of the in-flight `$4017` write: the raw control byte
+/// plus the CPU cycles left before it lands.
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct PendingFrameModeState {
+    pub control_byte: u8,
+    pub cycles_left: u8,
+}
+
+/// Save-state mirror of a latched [`FrameSequenceState`] step.
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct LatchedFrameStepState {
+    pub irq: bool,
+    pub length_and_sweep: bool,
+    pub envelop_and_linear: bool,
+}
+
+/// Full [`FrameSequencer`] state for save-states (ticket #184).
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct FrameCounterState {
+    pub output_latch: Option<LatchedFrameStepState>,
+    pub frame_interrupt: bool,
+    pub block: u8,
+    pub cpu_cycles: u32,
+    pub frame_interrupt_inhibit: bool,
+    pub pending_mode: Option<PendingFrameModeState>,
+    pub mode: FrameCounterModeTag,
+    pub saved_mode: FrameCounterModeTag,
+}
+
+fn mode_tag(mode: FrameSequencerMode) -> FrameCounterModeTag {
+    match mode {
+        FrameSequencerMode::FourStep => FrameCounterModeTag::FourStep,
+        FrameSequencerMode::FiveStep => FrameCounterModeTag::FiveStep,
+    }
+}
+
+fn mode_from_tag(tag: FrameCounterModeTag) -> FrameSequencerMode {
+    match tag {
+        FrameCounterModeTag::FourStep => FrameSequencerMode::FourStep,
+        FrameCounterModeTag::FiveStep => FrameSequencerMode::FiveStep,
+    }
+}
+
+impl FrameSequencer {
+    /// Capture the full frame-counter state.
+    pub(crate) fn capture_frame_counter_state(&self) -> FrameCounterState {
+        FrameCounterState {
+            output_latch: self.output_latch.map(|step| LatchedFrameStepState {
+                irq: step.irq,
+                length_and_sweep: step.length_and_sweep,
+                envelop_and_linear: step.envelop_and_linear,
+            }),
+            frame_interrupt: self.frame_interrupt,
+            block: self.block,
+            cpu_cycles: self.cpu_cycles,
+            frame_interrupt_inhibit: self.frame_interrupt_inhibit,
+            pending_mode: self
+                .pending_mode
+                .map(|(bits, cycles_left)| PendingFrameModeState {
+                    control_byte: bits.into_bytes()[0],
+                    cycles_left,
+                }),
+            mode: mode_tag(self.mode),
+            saved_mode: mode_tag(self.saved_mode),
+        }
+    }
+
+    /// Restore a state previously produced by
+    /// [`Self::capture_frame_counter_state`].
+    pub(crate) fn restore_frame_counter_state(&mut self, s: &FrameCounterState) {
+        self.output_latch = s.output_latch.map(|step| FrameSequenceState {
+            irq: step.irq,
+            length_and_sweep: step.length_and_sweep,
+            envelop_and_linear: step.envelop_and_linear,
+        });
+        self.frame_interrupt = s.frame_interrupt;
+        self.block = s.block;
+        self.cpu_cycles = s.cpu_cycles;
+        self.frame_interrupt_inhibit = s.frame_interrupt_inhibit;
+        self.pending_mode = s.pending_mode.map(|p| {
+            (
+                FrameSequencerBits::from_bytes([p.control_byte]),
+                p.cycles_left,
+            )
+        });
+        self.mode = mode_from_tag(s.mode);
+        self.saved_mode = mode_from_tag(s.saved_mode);
+    }
+}
+
 impl Default for FrameSequencer {
     fn default() -> Self {
         Self {

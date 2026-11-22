@@ -606,6 +606,16 @@ struct PpuHookMapper {
 impl Mapper for PpuHookMapper {
     fn cpu_write(&mut self, _: u16, _: u8, _: SystemClock, _: &mut CartridgeMemory) {}
 
+    /// Test seam only, no mapper state to capture: spells out the
+    /// refusal explicitly (ticket #191 removed the trait default bodies).
+    fn snapshot(&self) -> Result<MapperState, SnapshotError> {
+        Err(SnapshotError::Unsupported)
+    }
+
+    fn restore(&mut self, _state: &MapperState) -> Result<(), SnapshotError> {
+        Err(SnapshotError::Unsupported)
+    }
+
     fn ppu_read(&self, _addr: u16, render: PpuRenderState) -> Option<u8> {
         self.seen.set(Some(render));
         self.hook_byte
@@ -663,6 +673,75 @@ fn ppu_read_hook_overrides_when_flag_on() {
     };
     assert_eq!(0xff, cartridge.read_vram(0x0010, render));
     assert_eq!(Some(render), seen.get());
+}
+
+/// Ticket #191 (contract step): the snapshot API has no default bodies;
+/// all twelve mappers migrated in #187-#190 implement it. A test-only
+/// stub with no state spells out the [`SnapshotError::Unsupported`]
+/// refusal explicitly instead of inheriting a default.
+struct UnmigratedStubMapper;
+
+impl Mapper for UnmigratedStubMapper {
+    fn snapshot(&self) -> Result<MapperState, SnapshotError> {
+        Err(SnapshotError::Unsupported)
+    }
+
+    fn restore(&mut self, _state: &MapperState) -> Result<(), SnapshotError> {
+        Err(SnapshotError::Unsupported)
+    }
+
+    fn cpu_write(
+        &mut self,
+        _address: u16,
+        _value: u8,
+        _cycle: SystemClock,
+        _memory: &mut CartridgeMemory,
+    ) {
+    }
+}
+
+#[test]
+fn unmigrated_mapper_snapshot_reports_unsupported() {
+    let mapper = UnmigratedStubMapper;
+    assert_eq!(mapper.snapshot(), Err(SnapshotError::Unsupported));
+    let state = MapperState::NRom(NRomState::default());
+    let mut mapper = mapper;
+    assert_eq!(mapper.restore(&state), Err(SnapshotError::Unsupported));
+}
+
+/// Ticket #186: one `MapperState` variant per concrete mapper type (12).
+#[test]
+fn mapper_state_covers_all_twelve_mapper_types() {
+    let states = [
+        MapperState::NRom(NRomState::default()),
+        MapperState::MMC1(Mmc1State::default()),
+        MapperState::UxRom(UxRomState::default()),
+        MapperState::CnRom(CnRomState::default()),
+        MapperState::MMC3(Mmc3State::default()),
+        MapperState::MMC5(Mmc5State::default()),
+        MapperState::AxRom(AxRomState::default()),
+        MapperState::Action53(Action53State::default()),
+        MapperState::Nina001(Nina001State::default()),
+        MapperState::BxRom(BxRomState::default()),
+        MapperState::Vrc24(Vrc24State::default()),
+        MapperState::J87(J87State::default()),
+    ];
+    assert_eq!(states.len(), 12);
+}
+
+/// Ticket #186: the shared `CartridgeMemory` snapshot round-trips mutable
+/// contents (nametables, PRG-RAM) without being called anywhere yet.
+#[test]
+fn cartridge_memory_snapshot_roundtrips_mutable_contents() {
+    let mut memory = CartridgeMemory::test(&[], &[]);
+    memory.write_vram(0x2000, 0xab);
+    memory.write_prg_ram(0x6000, 0xcd);
+    let snap: super::memory::CartridgeMemorySnapshot = memory.capture_snapshot();
+    memory.write_vram(0x2000, 0x00);
+    memory.write_prg_ram(0x6000, 0x00);
+    memory.restore_snapshot(&snap);
+    assert_eq!(memory.read_vram(0x2000), 0xab);
+    assert_eq!(memory.read_prg_ram(0x6000), 0xcd);
 }
 
 /// Flag on but the hook declines (`None`): falls through to the window.

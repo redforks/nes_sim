@@ -1,4 +1,4 @@
-use super::{Mapper, memory::CartridgeMemory};
+use super::{Mapper, MapperState, SnapshotError, memory::CartridgeMemory};
 use crate::SystemClock;
 
 /// CNROM: 32 KB PRG fixed (16 KB images mirror), CHR banked in 8 KB units.
@@ -23,6 +23,15 @@ impl CnRom {
 }
 
 impl Mapper for CnRom {
+    fn snapshot(&self) -> Result<MapperState, SnapshotError> {
+        Ok(MapperState::CnRom(CnRomState))
+    }
+    fn restore(&mut self, state: &MapperState) -> Result<(), SnapshotError> {
+        match state {
+            MapperState::CnRom(_) => Ok(()),
+            _ => Err(SnapshotError::Mismatch),
+        }
+    }
     fn cpu_write(
         &mut self,
         address: u16,
@@ -40,6 +49,13 @@ impl Mapper for CnRom {
         }
     }
 }
+
+/// Saved mutable state for [`CnRom`] (ticket #187). The chip keeps no
+/// mutable state of its own: the selected CHR bank lives in the shared
+/// `CartridgeMemory` window capture (ticket #186), so the tag check
+/// carries the mapper save.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct CnRomState;
 
 #[cfg(test)]
 mod tests {
@@ -70,6 +86,59 @@ mod tests {
         assert_eq!(memory.read_prg(0xbfff), 0x22);
         assert_eq!(memory.read_prg(0xc000), 0x11);
         assert_eq!(memory.read_prg(0xffff), 0x22);
+    }
+
+    /// Ticket #187: snapshot/restore round-trip. The mapper keeps no
+    /// mutable state of its own (the CHR window lives in
+    /// `CartridgeMemory`), so the tag check plus the shared memory
+    /// capture carry the whole save.
+    #[test]
+    fn snapshot_round_trip_preserves_bus_output() {
+        let mut memory = CartridgeMemory::test(&[], &make_chr());
+        let mut mapper = CnRom::new(&mut memory);
+        mapper.cpu_write(0x8000, 0x01, SystemClock::default(), &mut memory);
+        mapper.cpu_write(0x6002, 0x55, SystemClock::default(), &mut memory);
+        memory.write_vram(0x2405, 0x6d);
+
+        let mapper_state = mapper.snapshot().expect("CnRom snapshot");
+        let mem_state = memory.capture_snapshot();
+
+        let mut memory2 = CartridgeMemory::test(&[], &make_chr());
+        let mut mapper2 = CnRom::new(&mut memory2);
+        mapper2.cpu_write(0x8000, 0x00, SystemClock::default(), &mut memory2);
+        mapper2.restore(&mapper_state).expect("CnRom restore");
+        memory2.restore_snapshot(&mem_state);
+
+        assert_eq!(memory.mirroring(), memory2.mirroring());
+        for addr in 0x6000u16..=0x7fff {
+            assert_eq!(
+                memory.read_prg_ram(addr),
+                memory2.read_prg_ram(addr),
+                "prg-ram {addr:#06x}"
+            );
+        }
+        for addr in 0x8000u16..=0xffff {
+            assert_eq!(
+                memory.read_prg(addr),
+                memory2.read_prg(addr),
+                "prg {addr:#06x}"
+            );
+        }
+        for addr in 0x0000u16..0x3000 {
+            assert_eq!(
+                memory.read_vram(addr),
+                memory2.read_vram(addr),
+                "vram {addr:#06x}"
+            );
+        }
+    }
+
+    #[test]
+    fn restore_rejects_foreign_mapper_tag() {
+        let mut memory = CartridgeMemory::test(&[], &[]);
+        let mut mapper = CnRom::new(&mut memory);
+        let foreign = MapperState::NRom(crate::nes::mapper::NRomState);
+        assert_eq!(mapper.restore(&foreign), Err(SnapshotError::Mismatch));
     }
 
     fn make_chr() -> Vec<u8> {

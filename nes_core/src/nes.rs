@@ -2,17 +2,17 @@ use crate::SystemClock;
 use crate::ines::INesFile;
 use crate::mcu::Mcu;
 use crate::nes::{
-    apu::Apu,
-    controller::{Button, Controller, Zapper},
+    apu::{Apu, ApuState},
+    controller::{Button, Controller, ControllerState, Zapper},
     lower_ram::LowerRam,
-    ppu::{Ppu, Timing},
+    ppu::{Ppu, PpuState, Timing},
 };
 use arraydeque::ArrayDeque;
 pub mod apu;
 pub mod controller;
 pub(crate) mod dmc_dma;
 mod lower_ram;
-mod mapper;
+pub(crate) mod mapper;
 pub use mapper::Mmc3IrqOverride;
 pub mod ppu;
 
@@ -38,6 +38,21 @@ pub struct NesMcu {
     /// per cycle max) and the tightest direct-API sequence queues 2, so
     /// the buffer never fills; the push site debug-asserts this.
     deferred_apu_writes: ArrayDeque<(u64, u16, u8), 2>,
+}
+
+/// Full [`NesMcu`] state for save-states (ticket #184) in core types.
+/// The cartridge is captured separately via its own snapshot API; the
+/// framebuffer-adjacent PPU outputs stay excluded (see [`PpuState`]).
+#[derive(Debug, Clone)]
+pub(crate) struct McuState {
+    pub ram: [u8; 0x800],
+    pub ppu: PpuState,
+    pub apu: ApuState,
+    pub controller: ControllerState,
+    pub oam_dma_pending: Option<u8>,
+    pub open_bus: u8,
+    /// Pending length-counter register writes, oldest first (max 2).
+    pub deferred_apu_writes: Vec<(u64, u16, u8)>,
 }
 
 impl NesMcu {
@@ -238,6 +253,46 @@ impl NesMcu {
 
     pub fn ppu_mut(&mut self) -> &mut Ppu {
         &mut self.ppu
+    }
+
+    /// Cartridge access for the save-state DTO (ticket #192): snapshot
+    /// capture on save, mapper/memory restore on load.
+    pub(crate) fn cartridge(&self) -> &mapper::Cartridge {
+        &self.cartridge
+    }
+
+    /// Cartridge access for the save-state DTO (ticket #192).
+    pub(crate) fn cartridge_mut(&mut self) -> &mut mapper::Cartridge {
+        &mut self.cartridge
+    }
+
+    /// Capture the full MCU state for save-states (ticket #184): RAM,
+    /// PPU, APU, controller sampling, and the bus latches/queues. The
+    /// cartridge is captured separately via its own snapshot API.
+    pub(crate) fn capture_mcu_state(&self) -> McuState {
+        McuState {
+            ram: self.lower_ram.snapshot_ram(),
+            ppu: self.ppu.capture_ppu_state(),
+            apu: self.apu.capture_apu_state(),
+            controller: self.controller.capture_controller_state(),
+            oam_dma_pending: self.oam_dma_pending,
+            open_bus: self.open_bus,
+            deferred_apu_writes: self.deferred_apu_writes.iter().copied().collect(),
+        }
+    }
+
+    /// Restore a state previously produced by [`Self::capture_mcu_state`].
+    pub(crate) fn restore_mcu_state(&mut self, s: &McuState) {
+        self.lower_ram.restore_ram(&s.ram);
+        self.ppu.restore_ppu_state(&s.ppu);
+        self.apu.restore_apu_state(&s.apu);
+        self.controller.restore_controller_state(&s.controller);
+        self.oam_dma_pending = s.oam_dma_pending;
+        self.open_bus = s.open_bus;
+        self.deferred_apu_writes.clear();
+        for w in &s.deferred_apu_writes {
+            let _ = self.deferred_apu_writes.push_back(*w);
+        }
     }
 
     pub fn apu(&self) -> &Apu {

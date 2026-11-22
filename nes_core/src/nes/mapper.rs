@@ -7,9 +7,12 @@ use axrom::AxRom;
 use bxrom::BxRom;
 use cnrom::CnRom;
 use memory::CartridgeMemory;
+
+pub use memory::CartridgeMemorySnapshot;
 use mmc1::MMC1;
 use mmc3::MMC3;
 use mmc5::{MMC5, wram_config};
+pub use mmc5_audio::{Mmc5AudioState, Mmc5PcmState, Mmc5PulseState};
 use nina001::Nina001;
 use nrom::NRom;
 use uxrom::UxRom;
@@ -37,6 +40,19 @@ mod nina001;
 mod nrom;
 mod uxrom;
 mod vrc24;
+
+pub use action53::Action53State;
+pub use axrom::AxRomState;
+pub use bxrom::BxRomState;
+pub use cnrom::CnRomState;
+pub use j87::J87State;
+pub use mmc1::Mmc1State;
+pub use mmc3::Mmc3State;
+pub use mmc5::Mmc5State;
+pub use nina001::Nina001State;
+pub use nrom::NRomState;
+pub use uxrom::UxRomState;
+pub use vrc24::Vrc24State;
 
 #[derive(Debug, Eq, PartialEq, Copy, Clone)]
 pub enum Mirroring {
@@ -287,7 +303,87 @@ pub struct CartridgeCaps {
 /// The bank-switching chip on a cartridge board. A mapper owns no cartridge
 /// memory and performs no data read: it rewrites bank-window slots, may write
 /// PRG-RAM, and reports IRQ lines. See `docs/adr/0015`.
+/// Failure from [`Mapper::snapshot`] / [`Mapper::restore`] (ticket #186,
+/// ADR-0021).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SnapshotError {
+    /// The mapper has no snapshot implementation yet. Produced by the
+    /// default trait bodies during the expand-contract migration window;
+    /// ticket #191 removes those defaults so an unmigrated mapper fails
+    /// to compile instead.
+    Unsupported,
+    /// The saved state is for a different mapper type than the mapper
+    /// being restored into. Each migrated mapper's `restore` produces
+    /// this; the cartridge-level load also compares mapper tags before
+    /// applying a save, so this is defense in depth.
+    Mismatch,
+}
+
+impl core::fmt::Display for SnapshotError {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match self {
+            SnapshotError::Unsupported => write!(f, "mapper state not supported"),
+            SnapshotError::Mismatch => write!(f, "mapper state does not match mapper type"),
+        }
+    }
+}
+
+impl std::error::Error for SnapshotError {}
+
+/// Saved per-mapper state (ticket #186, ADR-0021): one variant per concrete
+/// mapper type. The variant name is the mapper tag compared on load; each
+/// payload struct is defined in its mapper's file and filled in by the
+/// migration tickets (#187-#190).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MapperState {
+    NRom(NRomState),
+    MMC1(Mmc1State),
+    UxRom(UxRomState),
+    CnRom(CnRomState),
+    MMC3(Mmc3State),
+    MMC5(Mmc5State),
+    AxRom(AxRomState),
+    Action53(Action53State),
+    Nina001(Nina001State),
+    BxRom(BxRomState),
+    Vrc24(Vrc24State),
+    J87(J87State),
+}
+
+impl MapperState {
+    /// Mapper tag saved in the state file (ticket #192, ADR-0021): the
+    /// variant name. Load compares it with the rebuilt mapper's tag and
+    /// refuses on mismatch (covers header changes: `rom_sha256` covers
+    /// PRG and CHR only).
+    pub(crate) fn tag(&self) -> &'static str {
+        match self {
+            MapperState::NRom(_) => "NRom",
+            MapperState::MMC1(_) => "MMC1",
+            MapperState::UxRom(_) => "UxRom",
+            MapperState::CnRom(_) => "CnRom",
+            MapperState::MMC3(_) => "MMC3",
+            MapperState::MMC5(_) => "MMC5",
+            MapperState::AxRom(_) => "AxRom",
+            MapperState::Action53(_) => "Action53",
+            MapperState::Nina001(_) => "Nina001",
+            MapperState::BxRom(_) => "BxRom",
+            MapperState::Vrc24(_) => "Vrc24",
+            MapperState::J87(_) => "J87",
+        }
+    }
+}
+
 pub trait Mapper {
+    /// Captures the mapper's mutable state for a save file (ticket #186).
+    /// No default body (ticket #191, per the #184 spec decision): every
+    /// mapper implements this, so a mapper without an implementation fails
+    /// to compile. A test-only stub that has no state to capture spells
+    /// out [`SnapshotError::Unsupported`] explicitly.
+    fn snapshot(&self) -> Result<MapperState, SnapshotError>;
+    /// Restores state captured by [`Self::snapshot`] into a mapper rebuilt
+    /// from the same ROM (ticket #186). No default body, same contract
+    /// as [`Self::snapshot`].
+    fn restore(&mut self, _state: &MapperState) -> Result<(), SnapshotError>;
     /// Called for every CPU write in `$5000-$FFFF` (expansion registers,
     /// PRG-RAM, and program-area register writes).
     fn cpu_write(
@@ -389,6 +485,36 @@ impl Cartridge {
             #[cfg(test)]
             vram_read_log: None,
         }
+    }
+
+    /// Captures the mapper state plus the shared cartridge-memory
+    /// contents for a save file (ticket #192). The tag check on load
+    /// happens before any mutation; each mapper's `restore` also
+    /// rejects a foreign variant before touching its own state.
+    pub(crate) fn capture_snapshot(
+        &self,
+    ) -> Result<(MapperState, CartridgeMemorySnapshot), SnapshotError> {
+        Ok((self.mapper.snapshot()?, self.memory.capture_snapshot()))
+    }
+
+    /// Mapper tag of the currently installed mapper (ticket #192: the
+    /// "ROM mapper" side of the mapper-mismatch check).
+    pub(crate) fn mapper_tag(&self) -> Result<&'static str, SnapshotError> {
+        Ok(self.mapper.snapshot()?.tag())
+    }
+
+    /// Restores a save captured by [`Self::capture_snapshot`] into a
+    /// cartridge rebuilt from the same ROM (ticket #192). The mapper
+    /// restore runs first and rejects a foreign tag before mutating, so
+    /// a failed restore leaves the cartridge untouched.
+    pub(crate) fn restore_snapshot(
+        &mut self,
+        mapper: &MapperState,
+        memory: &CartridgeMemorySnapshot,
+    ) -> Result<(), SnapshotError> {
+        self.mapper.restore(mapper)?;
+        self.memory.restore_snapshot(memory);
+        Ok(())
     }
 
     /// PRG-ROM read for `$8000-$FFFF` via the mapper-banked window.
@@ -659,6 +785,16 @@ impl TestMapper {
 
 #[cfg(test)]
 impl Mapper for TestMapper {
+    /// Test mapper carries no chip state: spells out the refusal
+    /// explicitly (ticket #191 removed the trait default bodies).
+    fn snapshot(&self) -> Result<MapperState, SnapshotError> {
+        Err(SnapshotError::Unsupported)
+    }
+
+    fn restore(&mut self, _state: &MapperState) -> Result<(), SnapshotError> {
+        Err(SnapshotError::Unsupported)
+    }
+
     fn cpu_write(
         &mut self,
         _address: u16,

@@ -10,6 +10,15 @@ mod pulse;
 pub(crate) mod registers;
 mod triangle;
 
+pub(crate) use dmc::{DmcDmaRequestState, DmcState};
+pub(crate) use frame_sequencer::{
+    FrameCounterModeTag, FrameCounterState, LatchedFrameStepState, PendingFrameModeState,
+};
+pub(crate) use mixer::MixerState;
+pub(crate) use noise::NoiseState;
+pub(crate) use pulse::PulseState;
+pub(crate) use triangle::TriangleState;
+
 use crate::{SystemClock, nes::dmc_dma::DmcDmaType};
 use dmc::Dmc;
 use frame_sequencer::FrameSequencer;
@@ -70,6 +79,54 @@ pub struct Apu {
 impl Default for Apu {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+/// Full [`Apu`] execution state for save-states (ticket #184) in core
+/// types. The audio buffer is excluded (rewritten each frame); the mixer
+/// sample rate is a fixed construction constant, never saved.
+#[derive(Debug, Clone)]
+pub(crate) struct ApuState {
+    pub pulse1: PulseState,
+    pub pulse2: PulseState,
+    pub triangle: TriangleState,
+    pub noise: NoiseState,
+    pub dmc: DmcState,
+    pub frame_counter: FrameCounterState,
+    pub mixer: MixerState,
+    pub expansion: ExpansionMix,
+    pub length_race_clobber: [bool; 4],
+}
+
+impl Apu {
+    /// Capture the full APU state.
+    pub(crate) fn capture_apu_state(&self) -> ApuState {
+        ApuState {
+            pulse1: self.pulse1.capture_pulse_state(),
+            pulse2: self.pulse2.capture_pulse_state(),
+            triangle: self.triangle.capture_triangle_state(),
+            noise: self.noise.capture_noise_state(),
+            dmc: self.dmc.capture_dmc_state(),
+            frame_counter: self.frame_sequencer.capture_frame_counter_state(),
+            mixer: self.mixer.capture_mixer_state(),
+            expansion: self.expansion,
+            length_race_clobber: self.length_race_clobber,
+        }
+    }
+
+    /// Restore a state previously produced by [`Self::capture_apu_state`].
+    /// The audio buffer is left untouched (excluded from the save format).
+    pub(crate) fn restore_apu_state(&mut self, s: &ApuState) {
+        self.pulse1.restore_pulse_state(&s.pulse1);
+        self.pulse2.restore_pulse_state(&s.pulse2);
+        self.triangle.restore_triangle_state(&s.triangle);
+        self.noise.restore_noise_state(&s.noise);
+        self.dmc.restore_dmc_state(&s.dmc);
+        self.frame_sequencer
+            .restore_frame_counter_state(&s.frame_counter);
+        self.mixer.restore_mixer_state(&s.mixer);
+        self.expansion = s.expansion;
+        self.length_race_clobber = s.length_race_clobber;
     }
 }
 

@@ -32,6 +32,16 @@ impl Bank {
         Self([0; BANK_SIZE])
     }
 
+    /// Raw bank contents for the ticket #186 snapshot.
+    fn bytes(&self) -> &[u8; BANK_SIZE] {
+        &self.0
+    }
+
+    /// Restores raw bank contents from a ticket #186 snapshot.
+    fn set_bytes(&mut self, data: &[u8; BANK_SIZE]) {
+        self.0 = *data;
+    }
+
     fn fill_from(&mut self, data: &[u8]) {
         let len = data.len().min(BANK_SIZE);
         self.0[..len].copy_from_slice(&data[..len]);
@@ -414,4 +424,110 @@ impl CartridgeMemory {
     pub fn wram_8k_run_count(&self) -> usize {
         self.wram_bank_count / 8
     }
+
+    /// Captures the mutable cartridge-memory contents for a ticket #186
+    /// snapshot (ADR-0021): the four nametable banks verbatim, CHR-RAM
+    /// bytes only when CHR is RAM, the eight PRG-RAM banks, the MMC5 WRAM
+    /// extension, the PRG-RAM enable flag, mirroring, the WRAM `$6000`
+    /// base, and both bank windows as raw slot values. PRG-ROM and CHR-ROM
+    /// copies are excluded (rebuilt from the ROM on load). Not called yet;
+    /// the migration tickets wire it into each mapper's snapshot.
+    pub fn capture_snapshot(&self) -> CartridgeMemorySnapshot {
+        let mut nametables = [[0u8; BANK_SIZE]; NAMETABLE_BANK_COUNT];
+        for (slot, bank) in nametables.iter_mut().enumerate() {
+            bank.copy_from_slice(self.pool[slot].bytes());
+        }
+        let chr_ram = self.chr_is_ram.then(|| {
+            let mut out = Vec::with_capacity(self.chr_bank_count * BANK_SIZE);
+            for bank in &self.pool[self.chr_base..self.chr_base + self.chr_bank_count] {
+                out.extend_from_slice(bank.bytes());
+            }
+            out
+        });
+        let mut prg_ram = [[0u8; BANK_SIZE]; PRG_RAM_BANK_COUNT];
+        for (slot, bank) in prg_ram.iter_mut().enumerate() {
+            bank.copy_from_slice(self.prg_ram[slot].bytes());
+        }
+        let mut wram_ext = Vec::with_capacity(self.wram_bank_count * BANK_SIZE);
+        for bank in &self.pool[self.wram_base..self.wram_base + self.wram_bank_count] {
+            wram_ext.extend_from_slice(bank.bytes());
+        }
+        CartridgeMemorySnapshot {
+            nametables,
+            chr_ram,
+            prg_ram,
+            wram_ext,
+            prg_ram_enabled: self.prg_ram_enabled,
+            mirroring: self.mirroring,
+            wram_6000_base: self.wram_6000_base,
+            ppu_window: self.ppu_window,
+            prg_window: self.prg_window,
+        }
+    }
+
+    /// Restores mutable contents captured by [`Self::capture_snapshot`].
+    /// The pool layout (bank counts, WRAM size, CHR-is-RAM) comes from the
+    /// ROM rebuild, so sections whose saved length disagrees are skipped
+    /// rather than applied. Not called yet.
+    pub fn restore_snapshot(&mut self, snap: &CartridgeMemorySnapshot) {
+        for (slot, bank) in snap.nametables.iter().enumerate() {
+            if slot < NAMETABLE_BANK_COUNT && slot < self.pool.len() {
+                self.pool[slot].set_bytes(bank);
+            }
+        }
+        if let Some(chr) = &snap.chr_ram
+            && self.chr_is_ram
+            && chr.len() == self.chr_bank_count * BANK_SIZE
+        {
+            for (i, chunk) in chr.as_chunks::<BANK_SIZE>().0.iter().enumerate() {
+                let mut bytes = [0u8; BANK_SIZE];
+                bytes.copy_from_slice(chunk);
+                self.pool[self.chr_base + i].set_bytes(&bytes);
+            }
+        }
+        for (slot, bank) in snap.prg_ram.iter().enumerate() {
+            if slot < PRG_RAM_BANK_COUNT {
+                self.prg_ram[slot].set_bytes(bank);
+            }
+        }
+        if snap.wram_ext.len() == self.wram_bank_count * BANK_SIZE {
+            for (i, chunk) in snap.wram_ext.as_chunks::<BANK_SIZE>().0.iter().enumerate() {
+                let mut bytes = [0u8; BANK_SIZE];
+                bytes.copy_from_slice(chunk);
+                self.pool[self.wram_base + i].set_bytes(&bytes);
+            }
+        }
+        self.prg_ram_enabled = snap.prg_ram_enabled;
+        self.mirroring = snap.mirroring;
+        if self.wram_bank_count > 0 {
+            self.wram_6000_base = snap.wram_6000_base % self.wram_bank_count.max(1);
+        }
+        self.ppu_window = snap.ppu_window;
+        self.prg_window = snap.prg_window;
+    }
+}
+
+/// Saved mutable cartridge-memory contents (ticket #186, ADR-0021).
+/// Config (pool sizes, bank counts, CHR-is-RAM, WRAM size) is rebuilt from
+/// the ROM on load and never stored here; see `CartridgeMemorySnapshot`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CartridgeMemorySnapshot {
+    /// The four physical nametable banks verbatim.
+    pub nametables: [[u8; BANK_SIZE]; NAMETABLE_BANK_COUNT],
+    /// CHR-RAM bytes (`chr_bank_count` KB) when CHR is RAM, else `None`.
+    pub chr_ram: Option<Vec<u8>>,
+    /// The eight 1 KB PRG-RAM banks for `$6000-$7FFF`.
+    pub prg_ram: [[u8; BANK_SIZE]; PRG_RAM_BANK_COUNT],
+    /// MMC5 WRAM extension banks (`wram_bank_count` KB), empty otherwise.
+    pub wram_ext: Vec<u8>,
+    /// PRG-RAM enable flag.
+    pub prg_ram_enabled: bool,
+    /// Current nametable mirroring.
+    pub mirroring: Mirroring,
+    /// MMC5 `$6000` WRAM bank offset (in 1 KB banks).
+    pub wram_6000_base: usize,
+    /// PPU bank window as raw slot values.
+    pub ppu_window: [u16; PPU_WINDOW_SLOTS],
+    /// PRG bank window as raw slot values.
+    pub prg_window: [u16; PRG_WINDOW_SLOTS],
 }

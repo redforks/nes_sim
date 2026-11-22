@@ -182,6 +182,46 @@ impl MMC3 {
 }
 
 impl Mapper for MMC3 {
+    fn snapshot(&self) -> Result<super::MapperState, super::SnapshotError> {
+        Ok(super::MapperState::MMC3(Mmc3State {
+            bank_select: self.bank_select,
+            chr_bank_registers: self.chr_bank_registers,
+            reg_6: self.reg_6,
+            reg_7: self.reg_7,
+            prg_ram_enabled: self.prg_ram_enabled,
+            prg_ram_write_protect: self.prg_ram_write_protect,
+            irq_latch: self.irq_latch,
+            irq_counter: self.irq_counter,
+            irq_reload: self.irq_reload,
+            irq_enabled: self.irq_enabled,
+            irq_pending: self.irq_pending,
+            prev_a12: self.prev_a12,
+            a12_low_ticks: self.a12_low_ticks,
+            a12_transition_this_scanline: self.a12_transition_this_scanline,
+        }))
+    }
+
+    fn restore(&mut self, state: &super::MapperState) -> Result<(), super::SnapshotError> {
+        let super::MapperState::MMC3(saved) = state else {
+            return Err(super::SnapshotError::Unsupported);
+        };
+        self.bank_select = saved.bank_select;
+        self.chr_bank_registers = saved.chr_bank_registers;
+        self.reg_6 = saved.reg_6;
+        self.reg_7 = saved.reg_7;
+        self.prg_ram_enabled = saved.prg_ram_enabled;
+        self.prg_ram_write_protect = saved.prg_ram_write_protect;
+        self.irq_latch = saved.irq_latch;
+        self.irq_counter = saved.irq_counter;
+        self.irq_reload = saved.irq_reload;
+        self.irq_enabled = saved.irq_enabled;
+        self.irq_pending = saved.irq_pending;
+        self.prev_a12 = saved.prev_a12;
+        self.a12_low_ticks = saved.a12_low_ticks;
+        self.a12_transition_this_scanline = saved.a12_transition_this_scanline;
+        Ok(())
+    }
+
     fn cpu_write(
         &mut self,
         address: u16,
@@ -282,8 +322,35 @@ impl Mapper for MMC3 {
     }
 }
 
+/// Saved mutable state for [`MMC3`] (ticket #189). Every mutable register
+/// is captured, including the IRQ latch/counter/reload state, the pending
+/// IRQ line, and the A12 edge-filter state (`prev_a12`, `a12_low_ticks`,
+/// `a12_transition_this_scanline`). Config is rebuilt by the factory and
+/// never saved: `irq_revision`, `mirroring_locked`, `prg_bank_count`, and
+/// `chr_bank_count`. Bank windows live in `CartridgeMemory` (restored by
+/// the cartridge-level snapshot); `restore` only owns mapper registers, so
+/// callers must resync or restore the memory windows alongside it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct Mmc3State {
+    pub(crate) bank_select: u8,
+    pub(crate) chr_bank_registers: [u8; 8],
+    pub(crate) reg_6: u8,
+    pub(crate) reg_7: u8,
+    pub(crate) prg_ram_enabled: bool,
+    pub(crate) prg_ram_write_protect: bool,
+    pub(crate) irq_latch: u8,
+    pub(crate) irq_counter: u8,
+    pub(crate) irq_reload: bool,
+    pub(crate) irq_enabled: bool,
+    pub(crate) irq_pending: bool,
+    pub(crate) prev_a12: bool,
+    pub(crate) a12_low_ticks: u8,
+    pub(crate) a12_transition_this_scanline: bool,
+}
+
 #[cfg(test)]
 mod tests {
+    use super::super::{MapperState, NRomState, SnapshotError};
     use super::*;
 
     fn board(prg: &[u8], chr: &[u8], chr_ram_size: Option<usize>) -> (MMC3, CartridgeMemory) {
@@ -514,5 +581,146 @@ mod tests {
             assert!(mapper.irq_pending);
             ack_irq(&mut mapper, &mut memory);
         }
+    }
+
+    // Ticket #189 (RED): drive a mapper to a state with a pending IRQ,
+    // snapshot, restore into a fresh factory-built MMC3, resync the bank
+    // windows (the cartridge-level `CartridgeMemory` snapshot owns the raw
+    // slot values; `restore` only owns mapper registers), then continued
+    // behavior on both pairs must match step by step.
+    fn drive_to_pending_irq(mapper: &mut MMC3, memory: &mut CartridgeMemory) {
+        mapper.cpu_write(0x8000, 0x46, SystemClock::default(), memory);
+        mapper.cpu_write(0x8001, 0x03, SystemClock::default(), memory);
+        mapper.cpu_write(0x8000, 0x02, SystemClock::default(), memory);
+        mapper.cpu_write(0x8001, 0x05, SystemClock::default(), memory);
+        mapper.cpu_write(0xa000, 0x01, SystemClock::default(), memory);
+        mapper.cpu_write(0xa001, 0xc0, SystemClock::default(), memory);
+        mapper.cpu_write(0xc000, 0x04, SystemClock::default(), memory);
+        mapper.cpu_write(0xc001, 0x00, SystemClock::default(), memory);
+        mapper.cpu_write(0xe001, 0x00, SystemClock::default(), memory);
+        for _ in 0..5 {
+            mapper.clock_irq();
+        }
+        assert!(mapper.irq_pending(), "setup must leave an IRQ pending");
+    }
+
+    fn assert_pairs_equal(
+        mapper: &MMC3,
+        memory: &CartridgeMemory,
+        other: &MMC3,
+        other_memory: &CartridgeMemory,
+    ) {
+        assert_eq!(mapper.snapshot(), other.snapshot());
+        assert_eq!(mapper.irq_pending(), other.irq_pending());
+        for addr in [0x8000, 0x8001, 0xa000, 0xc000, 0xe000, 0xffff] {
+            assert_eq!(memory.read_prg(addr), other_memory.read_prg(addr));
+        }
+        for addr in [
+            0x0000, 0x0400, 0x0800, 0x0c00, 0x1000, 0x1400, 0x1800, 0x1c00,
+        ] {
+            assert_eq!(memory.read_vram(addr), other_memory.read_vram(addr));
+        }
+    }
+
+    #[test]
+    fn snapshot_roundtrip_pending_irq_matches_continued_behavior() {
+        let (mut mapper, mut memory) = make_mmc3(false);
+        drive_to_pending_irq(&mut mapper, &mut memory);
+        let snap = mapper.snapshot().expect("snapshot must succeed");
+
+        let (mut restored, mut restored_memory) = make_mmc3(false);
+        restored.restore(&snap).expect("restore must succeed");
+        // Bank windows live in `CartridgeMemory` (restored by the
+        // cartridge-level snapshot); resync here so the fresh memory
+        // matches the driven one before comparing observables.
+        restored.sync_prg_banks(&mut restored_memory);
+        restored.sync_chr_banks(&mut restored_memory);
+        restored_memory.set_prg_ram_enabled(restored.prg_ram_enabled);
+        restored.cpu_write(0xa000, 0x01, SystemClock::default(), &mut restored_memory);
+        assert_pairs_equal(&mapper, &memory, &restored, &restored_memory);
+
+        // Continued behavior, step by step: ack, re-enable, clock the IRQ
+        // down to zero again, then bank writes and A12 filter traffic.
+        for (m, mem) in [
+            (&mut mapper, &mut memory),
+            (&mut restored, &mut restored_memory),
+        ] {
+            m.cpu_write(0xe000, 0, SystemClock::default(), mem);
+            m.cpu_write(0xe001, 0, SystemClock::default(), mem);
+        }
+        for _ in 0..6 {
+            mapper.clock_irq();
+            restored.clock_irq();
+            assert_eq!(mapper.irq_pending(), restored.irq_pending());
+        }
+        assert_pairs_equal(&mapper, &memory, &restored, &restored_memory);
+
+        for (m, mem) in [
+            (&mut mapper, &mut memory),
+            (&mut restored, &mut restored_memory),
+        ] {
+            m.cpu_write(0x8000, 0x00, SystemClock::default(), mem);
+            m.cpu_write(0x8001, 0x06, SystemClock::default(), mem);
+            m.cpu_write(0x8000, 0x87, SystemClock::default(), mem);
+            m.cpu_write(0x8001, 0x07, SystemClock::default(), mem);
+            m.on_ppu_tick(261);
+            for _ in 0..MMC3_A12_LOW_FILTER_TICKS {
+                m.notify_vram_address(0x0fff);
+            }
+            m.notify_vram_address(0x1000);
+        }
+        assert_pairs_equal(&mapper, &memory, &restored, &restored_memory);
+    }
+
+    // Ticket #189 (RED): IRQ revision is factory config, never saved. Two
+    // mappers driven identically must snapshot identically, and restoring
+    // must not change the target's own revision.
+    #[test]
+    fn snapshot_excludes_irq_revision() {
+        let (mut standard, mut standard_mem) = make_mmc3(false);
+        let (mut alternate, mut alternate_mem) = make_mmc3(true);
+        drive_to_pending_irq(&mut standard, &mut standard_mem);
+        drive_to_pending_irq(&mut alternate, &mut alternate_mem);
+        let standard_snap = standard.snapshot().expect("snapshot must succeed");
+        let alternate_snap = alternate.snapshot().expect("snapshot must succeed");
+        assert_eq!(standard_snap, alternate_snap);
+
+        // Cross-restore: each mapper keeps its own factory revision.
+        standard
+            .restore(&alternate_snap)
+            .expect("restore must succeed");
+        alternate
+            .restore(&standard_snap)
+            .expect("restore must succeed");
+        for (m, mem) in [
+            (&mut standard, &mut standard_mem),
+            (&mut alternate, &mut alternate_mem),
+        ] {
+            m.cpu_write(0xc000, 1, SystemClock::default(), mem);
+            m.cpu_write(0xc001, 0, SystemClock::default(), mem);
+            ack_irq(m, mem);
+            m.clock_irq();
+            m.clock_irq();
+            assert!(m.irq_pending());
+            ack_irq(m, mem);
+            m.cpu_write(0xc000, 0, SystemClock::default(), mem);
+            m.clock_irq();
+        }
+        assert!(
+            standard.irq_pending(),
+            "standard revision re-asserts on reload after natural zero"
+        );
+        assert!(
+            !alternate.irq_pending(),
+            "alternate revision keeps its factory behavior after restore"
+        );
+    }
+
+    // Ticket #189 (RED): restoring a foreign variant is refused.
+    #[test]
+    fn restore_rejects_foreign_mapper_state() {
+        let (mut mapper, _) = make_mmc3(false);
+        let foreign = MapperState::NRom(NRomState);
+        assert_eq!(mapper.restore(&foreign), Err(SnapshotError::Unsupported));
     }
 }

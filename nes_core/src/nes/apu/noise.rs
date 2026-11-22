@@ -48,6 +48,62 @@ impl Default for Noise {
     }
 }
 
+/// Full [`Noise`] channel state for save-states (ticket #184).
+#[derive(Debug, Clone)]
+pub(crate) struct NoiseState {
+    pub timer_period: u16,
+    pub timer_counter: u16,
+    pub length_counter: u8,
+    pub length_halt: bool,
+    pub length_enabled: bool,
+    pub envelope_period: u8,
+    pub envelope_divider_counter: u8,
+    pub envelope_counter: u8,
+    pub envelope_loop: bool,
+    pub envelope_disabled: bool,
+    pub envelope_reset_pending: bool,
+    pub shifter_short_mode: bool,
+    pub shifter_val: u16,
+}
+
+impl Noise {
+    /// Capture the full channel state.
+    pub(crate) fn capture_noise_state(&self) -> NoiseState {
+        NoiseState {
+            timer_period: self.timer.period(),
+            timer_counter: self.timer.counter(),
+            length_counter: self.length.counter_value(),
+            length_halt: self.length.is_halt(),
+            length_enabled: self.length.is_enabled(),
+            envelope_period: self.envelope.divider_period(),
+            envelope_divider_counter: self.envelope.divider_counter(),
+            envelope_counter: self.envelope.counter_value(),
+            envelope_loop: self.envelope.loop_enabled(),
+            envelope_disabled: self.envelope.is_disabled(),
+            envelope_reset_pending: self.envelope.reset_pending(),
+            shifter_short_mode: self.shifter.short_mode,
+            shifter_val: self.shifter.val,
+        }
+    }
+
+    /// Restore a state previously produced by [`Self::capture_noise_state`].
+    pub(crate) fn restore_noise_state(&mut self, s: &NoiseState) {
+        self.timer.restore(s.timer_period, s.timer_counter);
+        self.length
+            .restore(s.length_counter, s.length_halt, s.length_enabled);
+        self.envelope.restore(
+            s.envelope_period,
+            s.envelope_divider_counter,
+            s.envelope_counter,
+            s.envelope_loop,
+            s.envelope_disabled,
+            s.envelope_reset_pending,
+        );
+        self.shifter.short_mode = s.shifter_short_mode;
+        self.shifter.val = s.shifter_val;
+    }
+}
+
 impl Noise {
     pub fn set_enabled(&mut self, enabled: bool) {
         self.length.set_enabled(enabled);

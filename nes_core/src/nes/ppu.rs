@@ -14,9 +14,12 @@ use crate::nes::{
     mapper::{Cartridge, PpuFetchKind, PpuRenderState},
     ppu::{palette::ColorTheme, sprite::SpriteManager},
 };
-use oam::Oam;
+pub(crate) use oam::{Attribute, Oam, Sprite};
 use palette::{Palette, Pixel};
 use registers::{ColorConfig, PpuCtrl, PpuMask, PpuStatus, Registers};
+pub(crate) use sprite::{
+    SpriteEvalModeTag, SpriteManagerState, SpriteOverflowEvalState, SpriteRowState,
+};
 
 // Pixel, palette data and COLORS are defined in the submodule `palette`.
 
@@ -63,6 +66,165 @@ const fn open_bus_decay_ticks(bit: usize) -> u64 {
 /// Mesen2 sets `_ignoreVramRead = 6` at the read and decrements once per
 /// PPU cycle, so read cycles through +5 are ignored and +6 is normal.
 const PPUDATA_IGNORE_WINDOW_DOTS: u64 = 5;
+
+/// Save-state mirror of [`TileCache`] in core types.
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct TileCacheState {
+    pub bitplane_low: u8,
+    pub bitplane_high: u8,
+    pub palette_idx: u8,
+    pub remaining: u8,
+}
+
+/// Save-state mirror of [`BackgroundActivation`]: the register snapshot a
+/// pending tile-cache fill will draw from.
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct BackgroundActivationState {
+    pub screen_x: u8,
+    pub vram_addr: u16,
+    pub fine_x: u8,
+    pub ctrl: u8,
+}
+
+/// Full [`Ppu`] execution state for save-states (ticket #184).
+///
+/// Covers timing, registers, palette/OAM RAM, sprite evaluation, and the
+/// tile/activation pipeline. Deliberately excluded (rebuilt or rewritten
+/// each frame): framebuffer, palette index buffer, color splits, color
+/// theme.
+#[derive(Debug, Clone)]
+pub(crate) struct PpuState {
+    pub scanline: u16,
+    pub dot: u16,
+    pub odd_frame: bool,
+    pub frame_no: usize,
+    pub cycle: u64,
+    pub vblank_entered: bool,
+    pub suppress_vblank_pending: bool,
+    pub ren_latched_at_338: bool,
+    pub registers_ctrl: u8,
+    pub registers_mask: u8,
+    pub registers_status: u8,
+    pub vram_addr: u16,
+    pub temp_vram_addr: u16,
+    pub fine_x: u8,
+    pub write_toggle: bool,
+    pub ppudata_buffer: u8,
+    pub bus_latch: u8,
+    pub bus_latch_decay_deadlines: [u64; 8],
+    pub bus_latch_earliest_decay: u64,
+    pub palette_data: [u8; 0x20],
+    pub oam_data: [u8; 256],
+    pub oam_addr: u8,
+    pub sprite: SpriteManagerState,
+    pub tile_cache: TileCacheState,
+    pub background_anchor: Option<BackgroundActivationState>,
+    pub pending_background_activation: Option<BackgroundActivationState>,
+    pub ppudata_last_read: Option<(u64, u8)>,
+}
+
+fn background_activation_state(a: &BackgroundActivation) -> BackgroundActivationState {
+    BackgroundActivationState {
+        screen_x: a.screen_x,
+        vram_addr: a.vram_addr,
+        fine_x: a.fine_x,
+        ctrl: a.ctrl.into_bytes()[0],
+    }
+}
+
+impl Ppu {
+    /// Capture the full execution state.
+    pub(crate) fn capture_ppu_state(&self) -> PpuState {
+        PpuState {
+            scanline: self.timing.scanline,
+            dot: self.timing.dot,
+            odd_frame: self.timing.odd_frame,
+            frame_no: self.timing.frame_no,
+            cycle: self.cycle,
+            vblank_entered: self.vblank_entered,
+            suppress_vblank_pending: self.suppress_vblank_pending,
+            ren_latched_at_338: self.ren_latched_at_338,
+            registers_ctrl: self.registers.ctrl.into_bytes()[0],
+            registers_mask: self.registers.mask.into_bytes()[0],
+            registers_status: self.registers.status.into_bytes()[0],
+            vram_addr: self.registers.vram_addr,
+            temp_vram_addr: self.registers.temp_vram_addr,
+            fine_x: self.registers.fine_x,
+            write_toggle: self.registers.write_toggle,
+            ppudata_buffer: self.registers.ppudata_buffer,
+            bus_latch: self.registers.bus_latch,
+            bus_latch_decay_deadlines: self.registers.bus_latch_decay_deadlines,
+            bus_latch_earliest_decay: self.registers.bus_latch_earliest_decay,
+            palette_data: self.palette.data,
+            oam_data: *self.oam.as_bytes(),
+            oam_addr: self.oam_addr,
+            sprite: self.sprite.capture_sprite_state(),
+            tile_cache: TileCacheState {
+                bitplane_low: self.tile_cache.bitplane_low,
+                bitplane_high: self.tile_cache.bitplane_high,
+                palette_idx: self.tile_cache.palette_idx,
+                remaining: self.tile_cache.remaining,
+            },
+            background_anchor: self
+                .background_anchor
+                .as_ref()
+                .map(background_activation_state),
+            pending_background_activation: self
+                .pending_background_activation
+                .as_ref()
+                .map(background_activation_state),
+            ppudata_last_read: self.ppudata_last_read,
+        }
+    }
+
+    /// Restore a state previously produced by [`Self::capture_ppu_state`].
+    /// The framebuffer, palette index buffer, color splits, and color theme
+    /// are intentionally left untouched (excluded from the save format).
+    pub(crate) fn restore_ppu_state(&mut self, s: &PpuState) {
+        self.timing.scanline = s.scanline;
+        self.timing.dot = s.dot;
+        self.timing.odd_frame = s.odd_frame;
+        self.timing.frame_no = s.frame_no;
+        self.cycle = s.cycle;
+        self.vblank_entered = s.vblank_entered;
+        self.suppress_vblank_pending = s.suppress_vblank_pending;
+        self.ren_latched_at_338 = s.ren_latched_at_338;
+        self.registers.ctrl = PpuCtrl::from_bytes([s.registers_ctrl]);
+        self.registers.mask = PpuMask::from_bytes([s.registers_mask]);
+        self.registers.status = PpuStatus::from_bytes([s.registers_status]);
+        self.registers.vram_addr = s.vram_addr;
+        self.registers.temp_vram_addr = s.temp_vram_addr;
+        self.registers.fine_x = s.fine_x;
+        self.registers.write_toggle = s.write_toggle;
+        self.registers.ppudata_buffer = s.ppudata_buffer;
+        self.registers.bus_latch = s.bus_latch;
+        self.registers.bus_latch_decay_deadlines = s.bus_latch_decay_deadlines;
+        self.registers.bus_latch_earliest_decay = s.bus_latch_earliest_decay;
+        self.palette.data = s.palette_data;
+        *self.oam.as_bytes_mut() = s.oam_data;
+        self.oam_addr = s.oam_addr;
+        self.sprite.restore_sprite_state(&s.sprite);
+        self.tile_cache.bitplane_low = s.tile_cache.bitplane_low;
+        self.tile_cache.bitplane_high = s.tile_cache.bitplane_high;
+        self.tile_cache.palette_idx = s.tile_cache.palette_idx;
+        self.tile_cache.remaining = s.tile_cache.remaining;
+        self.background_anchor = s.background_anchor.map(|a| BackgroundActivation {
+            screen_x: a.screen_x,
+            vram_addr: a.vram_addr,
+            fine_x: a.fine_x,
+            ctrl: PpuCtrl::from_bytes([a.ctrl]),
+        });
+        self.pending_background_activation =
+            s.pending_background_activation
+                .map(|a| BackgroundActivation {
+                    screen_x: a.screen_x,
+                    vram_addr: a.vram_addr,
+                    fine_x: a.fine_x,
+                    ctrl: PpuCtrl::from_bytes([a.ctrl]),
+                });
+        self.ppudata_last_read = s.ppudata_last_read;
+    }
+}
 
 #[derive(Copy, Clone, Default)]
 struct TileCache {
@@ -188,6 +350,15 @@ impl Timing {
 
     pub fn frame_no(&self) -> usize {
         self.frame_no
+    }
+
+    /// Restores the save-point timing (ticket #192 load path): scanline
+    /// 261, dot 0..=2, and the saved frame number. Callers validate the
+    /// scanline/dot before calling.
+    pub(crate) fn set_save_point(&mut self, scanline: u16, dot: u16, frame_no: usize) {
+        self.scanline = scanline;
+        self.dot = dot;
+        self.frame_no = frame_no;
     }
 
     pub fn scanline(&self) -> u16 {
@@ -387,6 +558,22 @@ impl Ppu {
 
     pub fn timing(&self) -> &Timing {
         &self.timing
+    }
+
+    /// Mutable timing for the save-state load path (ticket #192).
+    pub(crate) fn timing_mut(&mut self) -> &mut Timing {
+        &mut self.timing
+    }
+
+    /// Cumulative system cycle counter (ticket #192: saved as `clock`,
+    /// restored into both the bus clock and this counter).
+    pub fn cycle(&self) -> u64 {
+        self.cycle
+    }
+
+    /// Restores a saved cycle count (ticket #192 load path).
+    pub(crate) fn set_cycle(&mut self, cycle: u64) {
+        self.cycle = cycle;
     }
 
     /// Output width in pixels (`256`).

@@ -122,7 +122,7 @@ impl Oam {
         bytemuck::cast_ref(&*self.sprites)
     }
 
-    fn as_bytes_mut(&mut self) -> &mut [u8; 256] {
+    pub(crate) fn as_bytes_mut(&mut self) -> &mut [u8; 256] {
         bytemuck::cast_mut(&mut *self.sprites)
     }
 }

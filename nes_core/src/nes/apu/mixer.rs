@@ -9,6 +9,34 @@ pub struct Mixer {
     dc_last_output: f32,
 }
 
+/// Full [`Mixer`] state for save-states (ticket #184): the resample
+/// accumulator plus the DC-blocking filter memory as raw `f32` bits.
+/// `sample_rate` is a fixed construction constant, never saved.
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct MixerState {
+    pub sample_accumulator: u32,
+    pub dc_last_input_bits: u32,
+    pub dc_last_output_bits: u32,
+}
+
+impl Mixer {
+    /// Capture the mixer state.
+    pub(crate) fn capture_mixer_state(&self) -> MixerState {
+        MixerState {
+            sample_accumulator: self.sample_accumulator,
+            dc_last_input_bits: self.dc_last_input.to_bits(),
+            dc_last_output_bits: self.dc_last_output.to_bits(),
+        }
+    }
+
+    /// Restore a state previously produced by [`Self::capture_mixer_state`].
+    pub(crate) fn restore_mixer_state(&mut self, s: &MixerState) {
+        self.sample_accumulator = s.sample_accumulator;
+        self.dc_last_input = f32::from_bits(s.dc_last_input_bits);
+        self.dc_last_output = f32::from_bits(s.dc_last_output_bits);
+    }
+}
+
 impl Mixer {
     pub fn new(sample_rate: u32) -> Self {
         Self {

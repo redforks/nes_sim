@@ -10,7 +10,7 @@
 //! See ADR-0009, ADR-0017 and GLOSSARY.md "DmaBus".
 
 use crate::bus::Bus;
-use crate::nes::dmc_dma::DmcDma;
+use crate::nes::dmc_dma::{DmcDma, DmcDmaState};
 use crate::{Cpu, mcu::Mcu, nes::NesMcu};
 
 /// Per-dot holder of the bus returned by [`DmaBus::tick`].
@@ -70,6 +70,30 @@ pub struct DmaBus {
 impl Default for DmaBus {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+/// Full [`DmaBus`] execution state for save-states (ticket #184): the
+/// in-flight DMC DMA phase plus the active OAM transfer, if any.
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct DmaBusState {
+    pub dmc: DmcDmaState,
+    pub oam: Option<OamActive>,
+}
+
+impl DmaBus {
+    /// Capture the arbitration state.
+    pub(crate) fn capture_dma_bus_state(&self) -> DmaBusState {
+        DmaBusState {
+            dmc: self.dmc.capture_dmc_dma_state(),
+            oam: self.oam,
+        }
+    }
+
+    /// Restore a state previously produced by [`Self::capture_dma_bus_state`].
+    pub(crate) fn restore_dma_bus_state(&mut self, s: &DmaBusState) {
+        self.dmc.restore_dmc_dma_state(&s.dmc);
+        self.oam = s.oam;
     }
 }
 

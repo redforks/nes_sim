@@ -13,6 +13,7 @@ pub mod mesen;
 pub mod movie;
 pub mod nes;
 pub mod nes_machine;
+pub mod snapshot;
 pub mod view;
 // Test utilities (private, for tests only)
 #[cfg(test)]
@@ -26,6 +27,11 @@ pub struct SystemClock(u64);
 impl SystemClock {
     pub fn inc(self) -> SystemClock {
         SystemClock(self.0.wrapping_add(1))
+    }
+
+    /// Rebuilds a clock from a saved cycle count (mapper state restore).
+    pub fn from_cycles(cycles: u64) -> SystemClock {
+        SystemClock(cycles)
     }
 
     pub fn is_apu_clock(self) -> bool {

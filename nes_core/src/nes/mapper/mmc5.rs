@@ -51,8 +51,9 @@
 //! `$8000-$BFFF` stream-read PCM feed.
 
 use super::{
-    CartridgeCaps, Mapper, PpuFetchKind, PpuRenderState, memory::CartridgeMemory,
-    mmc5_audio::Mmc5Audio,
+    CartridgeCaps, Mapper, MapperState, PpuFetchKind, PpuRenderState, SnapshotError,
+    memory::CartridgeMemory,
+    mmc5_audio::{Mmc5Audio, Mmc5AudioState},
 };
 use crate::SystemClock;
 use crate::ines::{FileVersion, Header};
@@ -835,6 +836,98 @@ impl Mapper for MMC5 {
         self.audio.expansion_mix()
     }
 
+    /// Captures the MMC5 chip state for a save file (ticket #190): every
+    /// register, the ExRAM, and all 12 `Cell` fields read with `get()`.
+    /// None is reset. WRAM bytes live in [`CartridgeMemory`] (captured via
+    /// its own snapshot under the cartridge section); WRAM size and
+    /// battery config are factory-supplied and never saved.
+    fn snapshot(&self) -> Result<MapperState, SnapshotError> {
+        Ok(MapperState::MMC5(Mmc5State {
+            prg_mode: self.prg_mode,
+            prg_banks: self.prg_banks,
+            protect1: self.protect1,
+            protect2: self.protect2,
+            audio: self.audio.capture_state(),
+            chr_mode: self.chr_mode,
+            chr_spr: self.chr_spr,
+            chr_bg: self.chr_bg,
+            chr_high: self.chr_high,
+            last_chr_set_is_bg: matches!(self.last_chr_set, ChrSet::Bg),
+            exram_mode: self.exram_mode,
+            nt_select: self.nt_select,
+            fill_tile: self.fill_tile,
+            fill_attr: self.fill_attr,
+            exram: self.exram,
+            rendering: self.rendering.get(),
+            tile_latch: self.tile_latch.get(),
+            irq_target: self.irq_target.get(),
+            irq_enabled: self.irq_enabled.get(),
+            irq_pending: self.irq_pending.get(),
+            irq_in_frame: self.irq_in_frame.get(),
+            irq_counter: self.irq_counter.get(),
+            last_tick_scanline: self.last_tick_scanline.get(),
+            dots_in_line: self.dots_in_line.get(),
+            render_seen: self.render_seen.get(),
+            split_fetch: self.split_fetch.get(),
+            split_active: self.split_active.get(),
+            split_mode: self.split_mode,
+            split_scroll: self.split_scroll,
+            split_bank: self.split_bank,
+            mult_a: self.mult_a,
+            mult_b: self.mult_b,
+            mult_result: self.mult_result,
+        }))
+    }
+
+    /// Restores state captured by [`Self::snapshot`] into a mapper rebuilt
+    /// from the same ROM (ticket #190): every register, the ExRAM, the
+    /// audio unit, and all 12 `Cell` fields written with `set()`. Bank
+    /// windows need no re-sync: they live in [`CartridgeMemory`] and come
+    /// back through its own snapshot restore.
+    fn restore(&mut self, state: &MapperState) -> Result<(), SnapshotError> {
+        let MapperState::MMC5(state) = state else {
+            return Err(SnapshotError::Unsupported);
+        };
+        self.prg_mode = state.prg_mode;
+        self.prg_banks = state.prg_banks;
+        self.protect1 = state.protect1;
+        self.protect2 = state.protect2;
+        self.audio.restore_state(&state.audio);
+        self.chr_mode = state.chr_mode;
+        self.chr_spr = state.chr_spr;
+        self.chr_bg = state.chr_bg;
+        self.chr_high = state.chr_high;
+        self.last_chr_set = if state.last_chr_set_is_bg {
+            ChrSet::Bg
+        } else {
+            ChrSet::Sprite
+        };
+        self.exram_mode = state.exram_mode;
+        self.nt_select = state.nt_select;
+        self.fill_tile = state.fill_tile;
+        self.fill_attr = state.fill_attr;
+        self.exram = state.exram;
+        self.rendering.set(state.rendering);
+        self.tile_latch.set(state.tile_latch);
+        self.irq_target.set(state.irq_target);
+        self.irq_enabled.set(state.irq_enabled);
+        self.irq_pending.set(state.irq_pending);
+        self.irq_in_frame.set(state.irq_in_frame);
+        self.irq_counter.set(state.irq_counter);
+        self.last_tick_scanline.set(state.last_tick_scanline);
+        self.dots_in_line.set(state.dots_in_line);
+        self.render_seen.set(state.render_seen);
+        self.split_fetch.set(state.split_fetch);
+        self.split_active.set(state.split_active);
+        self.split_mode = state.split_mode;
+        self.split_scroll = state.split_scroll;
+        self.split_bank = state.split_bank;
+        self.mult_a = state.mult_a;
+        self.mult_b = state.mult_b;
+        self.mult_result = state.mult_result;
+        Ok(())
+    }
+
     /// CPU IRQ line: asserted when the scanline unit is pending and enabled
     /// (ticket #81) or the PCM unit tripped and enabled (ticket #83).
     fn irq_pending(&self) -> bool {
@@ -951,6 +1044,91 @@ impl Mapper for MMC5 {
     }
 }
 
+/// Saved mutable state for [`MMC5`] (ticket #190).
+///
+/// Every mutable chip field: PRG/CHR registers, ExRAM, split/multiplier
+/// registers, the audio unit ([`Mmc5AudioState`]), and the 12 `Cell`
+/// values as plain data. WRAM *bytes* live in [`CartridgeMemory`] (its own
+/// snapshot, same cartridge section); WRAM size, battery mask, and bank
+/// counts are factory config and never saved (`last_chr_set` persists as
+/// one bool).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Mmc5State {
+    pub prg_mode: u8,
+    pub prg_banks: [u8; 5],
+    pub protect1: u8,
+    pub protect2: u8,
+    pub audio: Mmc5AudioState,
+    pub chr_mode: u8,
+    pub chr_spr: [u16; 8],
+    pub chr_bg: [u16; 4],
+    pub chr_high: u8,
+    pub last_chr_set_is_bg: bool,
+    pub exram_mode: u8,
+    pub nt_select: u8,
+    pub fill_tile: u8,
+    pub fill_attr: u8,
+    pub exram: [u8; 1024],
+    pub rendering: bool,
+    pub tile_latch: u16,
+    pub irq_target: u8,
+    pub irq_enabled: bool,
+    pub irq_pending: bool,
+    pub irq_in_frame: bool,
+    pub irq_counter: u8,
+    pub last_tick_scanline: u16,
+    pub dots_in_line: u16,
+    pub render_seen: bool,
+    pub split_fetch: u8,
+    pub split_active: bool,
+    pub split_mode: u8,
+    pub split_scroll: u8,
+    pub split_bank: u8,
+    pub mult_a: u8,
+    pub mult_b: u8,
+    pub mult_result: u16,
+}
+
+impl Default for Mmc5State {
+    fn default() -> Self {
+        Self {
+            prg_mode: 0,
+            prg_banks: [0; 5],
+            protect1: 0,
+            protect2: 0,
+            audio: Mmc5AudioState::default(),
+            chr_mode: 0,
+            chr_spr: [0; 8],
+            chr_bg: [0; 4],
+            chr_high: 0,
+            last_chr_set_is_bg: false,
+            exram_mode: 0,
+            nt_select: 0,
+            fill_tile: 0,
+            fill_attr: 0,
+            exram: [0; 1024],
+            rendering: false,
+            tile_latch: 0,
+            irq_target: 0,
+            irq_enabled: false,
+            irq_pending: false,
+            irq_in_frame: false,
+            irq_counter: 0,
+            last_tick_scanline: 0,
+            dots_in_line: 0,
+            render_seen: false,
+            split_fetch: 0,
+            split_active: false,
+            split_mode: 0,
+            split_scroll: 0,
+            split_bank: 0,
+            mult_a: 0,
+            mult_b: 0,
+            mult_result: 0,
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -980,6 +1158,166 @@ mod tests {
     /// Default board: 8K WRAM, no battery (plain old-iNES header default).
     fn board_8k(banks_8k: usize, vectors: [u8; 6]) -> (MMC5, CartridgeMemory) {
         board(banks_8k, vectors, 8 * 1024, 0)
+    }
+
+    // Ticket #190 (RED): MMC5 snapshot/restore round-trip with audio
+    // active. Drives PRG/CHR regs, ExRAM, split/multiplier, the scanline
+    // unit (all 12 Cells live) and the audio unit, snapshots, restores
+    // into a fresh factory-built mapper, and checks continued behavior
+    // matches (expansion mix over ticks, IRQ line, expansion reads,
+    // PPU-hook answers) plus WRAM contents via the cartridge-memory
+    // snapshot. Fails until `snapshot`/`restore` are implemented.
+    #[test]
+    fn snapshot_restore_round_trip_with_audio_active() {
+        let vectors = [0x11, 0x22, 0x33, 0x44, 0x55, 0x66];
+        let (mut mapper, mut memory) = board_8k(4, vectors);
+        unlock(&mut mapper, &mut memory);
+        // PRG subsystem: mode 2 with distinct banks + WRAM bank select.
+        write_reg(&mut mapper, &mut memory, 0x5100, 0x02);
+        write_reg(&mut mapper, &mut memory, 0x5113, 0x01);
+        write_reg(&mut mapper, &mut memory, 0x5115, 0x02);
+        write_reg(&mut mapper, &mut memory, 0x5116, 0x01);
+        write_reg(&mut mapper, &mut memory, 0x5117, 0x03);
+        // CHR subsystem: 1K mode, both sets written, upper bits latched.
+        write_reg(&mut mapper, &mut memory, 0x5101, 0x03);
+        write_reg(&mut mapper, &mut memory, 0x5120, 0x12);
+        write_reg(&mut mapper, &mut memory, 0x5127, 0x34);
+        write_reg(&mut mapper, &mut memory, 0x5128, 0x56);
+        write_reg(&mut mapper, &mut memory, 0x5130, 0x02);
+        // ExRAM: extended-attribute mode, selectors, one stored cell.
+        write_reg(&mut mapper, &mut memory, 0x5104, 0x01);
+        write_reg(&mut mapper, &mut memory, 0x5105, 0xa5);
+        write_reg(&mut mapper, &mut memory, 0x5106, 0x77);
+        write_reg(&mut mapper, &mut memory, 0x5107, 0x02);
+        write_reg(&mut mapper, &mut memory, 0x5c10, 0xab);
+        // Split + multiplier.
+        write_reg(&mut mapper, &mut memory, 0x5200, 0x80 | 5);
+        write_reg(&mut mapper, &mut memory, 0x5201, 0x10);
+        write_reg(&mut mapper, &mut memory, 0x5202, 0x03);
+        write_reg(&mut mapper, &mut memory, 0x5205, 0x12);
+        write_reg(&mut mapper, &mut memory, 0x5206, 0x34);
+        // Scanline IRQ armed at target 2, enabled.
+        enable_irq(&mut mapper, &mut memory, 2);
+        // Audio active: both pulses on with distinct duty/timer/length,
+        // PCM in write mode with a nonzero DAC latch.
+        write_reg(&mut mapper, &mut memory, 0x5015, 0x03);
+        write_reg(&mut mapper, &mut memory, 0x5000, 0xbf);
+        write_reg(&mut mapper, &mut memory, 0x5002, 0x05);
+        write_reg(&mut mapper, &mut memory, 0x5003, (5 << 3) | 0x00);
+        write_reg(&mut mapper, &mut memory, 0x5004, 0x7f);
+        write_reg(&mut mapper, &mut memory, 0x5006, 0x09);
+        write_reg(&mut mapper, &mut memory, 0x5007, (9 << 3) | 0x01);
+        write_reg(&mut mapper, &mut memory, 0x5010, 0x00);
+        write_reg(&mut mapper, &mut memory, 0x5011, 0x40);
+        for _ in 0..1000 {
+            mapper.tick_audio();
+        }
+        // WRAM contents through the `$5113` window.
+        write_reg(&mut mapper, &mut memory, 0x6000, 0xde);
+        write_reg(&mut mapper, &mut memory, 0x6100, 0xad);
+        // Drive the scanline detector: lines 0-2 render fully so the
+        // counter reaches target 2 (pending set), then a partial line 3
+        // with split-region tile fetches leaves every Cell live.
+        for line in 0..3u16 {
+            run_rendered_scanline(&mut mapper, line);
+        }
+        assert!(mapper.irq_pending(), "setup: scanline IRQ pending");
+        mapper.on_ppu_tick(3);
+        mapper.ppu_read(0x2005, irq_render_on());
+        for addr in 0x2006..=0x2008u16 {
+            mapper.ppu_read(addr, irq_render_on());
+        }
+        mapper.on_ppu_tick(3);
+
+        let snap = mapper.snapshot().expect("snapshot succeeds");
+        let mem_snap = memory.capture_snapshot();
+
+        // Fresh factory-built mapper + memory: restore applies the state.
+        let (mut mapper2, mut memory2) = board_8k(4, vectors);
+        mapper2.restore(&snap).expect("restore succeeds");
+        memory2.restore_snapshot(&mem_snap);
+
+        // All 12 Cells round-trip verbatim.
+        assert_eq!(mapper2.rendering.get(), mapper.rendering.get());
+        assert_eq!(mapper2.tile_latch.get(), mapper.tile_latch.get());
+        assert_eq!(mapper2.irq_target.get(), mapper.irq_target.get());
+        assert_eq!(mapper2.irq_enabled.get(), mapper.irq_enabled.get());
+        assert_eq!(mapper2.irq_pending.get(), mapper.irq_pending.get());
+        assert_eq!(mapper2.irq_in_frame.get(), mapper.irq_in_frame.get());
+        assert_eq!(mapper2.irq_counter.get(), mapper.irq_counter.get());
+        assert_eq!(
+            mapper2.last_tick_scanline.get(),
+            mapper.last_tick_scanline.get()
+        );
+        assert_eq!(mapper2.dots_in_line.get(), mapper.dots_in_line.get());
+        assert_eq!(mapper2.render_seen.get(), mapper.render_seen.get());
+        assert_eq!(mapper2.split_fetch.get(), mapper.split_fetch.get());
+        assert_eq!(mapper2.split_active.get(), mapper.split_active.get());
+        assert!(mapper2.irq_pending(), "restored IRQ line still asserted");
+
+        // Continued behavior matches: audio mix over ticks, expansion
+        // reads (peek: no ack), PPU-hook answers, memory windows + WRAM.
+        for _ in 0..500 {
+            assert_eq!(mapper2.tick_audio(), mapper.tick_audio());
+        }
+        for addr in [0x5200u16, 0x5201, 0x5202, 0x5205, 0x5206, 0x5204, 0x5015] {
+            assert_eq!(
+                mapper2.peek_expansion(addr),
+                mapper.peek_expansion(addr),
+                "expansion peek {addr:#x}"
+            );
+        }
+        for addr in [0x2000u16, 0x2005, 0x23c5, 0x0010] {
+            assert_eq!(
+                mapper2.ppu_read(addr, irq_render_on()),
+                mapper.ppu_read(addr, irq_render_on()),
+                "ppu_read {addr:#x}"
+            );
+            assert_eq!(
+                mapper2.ppu_chr_bank(addr, irq_render_on()),
+                mapper.ppu_chr_bank(addr, irq_render_on()),
+                "ppu_chr_bank {addr:#x}"
+            );
+        }
+        for addr in [0x8000u16, 0xa123, 0xc000, 0xe000, 0xfff0] {
+            assert_eq!(memory2.read_prg(addr), memory.read_prg(addr));
+        }
+        assert_eq!(memory2.read_prg_ram(0x6000), 0xde);
+        assert_eq!(memory2.read_prg_ram(0x6100), 0xad);
+    }
+
+    // Ticket #190: WRAM size / battery config is factory-supplied, never
+    // saved: a snapshot from an 8K board restores cleanly into a 32K
+    // factory board with identical chip behavior.
+    #[test]
+    fn snapshot_restores_across_wram_configs() {
+        let vectors = [0x11, 0x22, 0x33, 0x44, 0x55, 0x66];
+        let (mut mapper, mut memory) = board_8k(4, vectors);
+        unlock(&mut mapper, &mut memory);
+        write_reg(&mut mapper, &mut memory, 0x5100, 0x01);
+        write_reg(&mut mapper, &mut memory, 0x5000, 0xbf);
+        write_reg(&mut mapper, &mut memory, 0x5015, 0x01);
+        for _ in 0..100 {
+            mapper.tick_audio();
+        }
+        let snap = mapper.snapshot().expect("snapshot succeeds");
+
+        let (mut bigger, mut bigger_mem) = board(4, vectors, 32 * 1024, 0);
+        bigger
+            .restore(&snap)
+            .expect("cross-config restore succeeds");
+        assert_eq!(bigger.tick_audio(), mapper.tick_audio());
+        assert_eq!(bigger.peek_expansion(0x5015), mapper.peek_expansion(0x5015));
+        let _ = &mut bigger_mem;
+    }
+
+    // Ticket #190: restoring a foreign variant is refused.
+    #[test]
+    fn restore_rejects_foreign_variant() {
+        let (mut mapper, mut memory) = board_8k(2, [0; 6]);
+        let _ = &mut memory;
+        let foreign = super::super::MapperState::NRom(super::super::NRomState);
+        assert!(mapper.restore(&foreign).is_err());
     }
 
     fn unlock(mapper: &mut MMC5, memory: &mut CartridgeMemory) {

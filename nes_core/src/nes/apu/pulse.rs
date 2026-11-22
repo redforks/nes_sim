@@ -101,6 +101,97 @@ pub struct Pulse {
     sequencer: Sequencer<u8>,
 }
 
+/// Full [`Pulse`] channel state for save-states (ticket #184) in core types.
+#[derive(Debug, Clone)]
+pub(crate) struct PulseState {
+    pub timer_period: u16,
+    pub timer_counter: u16,
+    pub divider2_period: u8,
+    pub divider2_counter: u8,
+    pub length_counter: u8,
+    pub length_halt: bool,
+    pub length_enabled: bool,
+    pub envelope_period: u8,
+    pub envelope_divider_counter: u8,
+    pub envelope_counter: u8,
+    pub envelope_loop: bool,
+    pub envelope_disabled: bool,
+    pub envelope_reset_pending: bool,
+    pub sweep_divider_period: u8,
+    pub sweep_divider_counter: u8,
+    pub sweep_reload: bool,
+    pub sweep_enabled: bool,
+    pub sweep_negate: bool,
+    pub sweep_is_second: bool,
+    pub sweep_shift: u8,
+    /// Index into [`PULSE_DUTY_TABLE`] (0-3).
+    pub duty: u8,
+    pub sequencer_position: usize,
+}
+
+impl Pulse {
+    /// Capture the full channel state. The duty index resolves by pointer
+    /// equality against the `PULSE_DUTY_TABLE` rows.
+    pub(crate) fn capture_pulse_state(&self) -> PulseState {
+        let duty = PULSE_DUTY_TABLE
+            .iter()
+            .position(|row| std::ptr::eq(self.sequencer.items().as_ptr(), row.as_ptr()))
+            .unwrap_or(0) as u8;
+        PulseState {
+            timer_period: self.timer.period(),
+            timer_counter: self.timer.counter(),
+            divider2_period: self.divider_2.period(),
+            divider2_counter: self.divider_2.counter(),
+            length_counter: self.length.counter_value(),
+            length_halt: self.length.is_halt(),
+            length_enabled: self.length.is_enabled(),
+            envelope_period: self.envelope.divider_period(),
+            envelope_divider_counter: self.envelope.divider_counter(),
+            envelope_counter: self.envelope.counter_value(),
+            envelope_loop: self.envelope.loop_enabled(),
+            envelope_disabled: self.envelope.is_disabled(),
+            envelope_reset_pending: self.envelope.reset_pending(),
+            sweep_divider_period: self.sweep.divider.period(),
+            sweep_divider_counter: self.sweep.divider.counter(),
+            sweep_reload: self.sweep.reload,
+            sweep_enabled: self.sweep.enabled,
+            sweep_negate: self.sweep.shifter.negate,
+            sweep_is_second: self.sweep.shifter.is_second_pulse_channel,
+            sweep_shift: self.sweep.shifter.shift_bits,
+            duty,
+            sequencer_position: self.sequencer.position(),
+        }
+    }
+
+    /// Restore a state previously produced by [`Self::capture_pulse_state`].
+    pub(crate) fn restore_pulse_state(&mut self, s: &PulseState) {
+        self.timer.restore(s.timer_period, s.timer_counter);
+        self.divider_2
+            .restore(s.divider2_period, s.divider2_counter);
+        self.length
+            .restore(s.length_counter, s.length_halt, s.length_enabled);
+        self.envelope.restore(
+            s.envelope_period,
+            s.envelope_divider_counter,
+            s.envelope_counter,
+            s.envelope_loop,
+            s.envelope_disabled,
+            s.envelope_reset_pending,
+        );
+        self.sweep
+            .divider
+            .restore(s.sweep_divider_period, s.sweep_divider_counter);
+        self.sweep.reload = s.sweep_reload;
+        self.sweep.enabled = s.sweep_enabled;
+        self.sweep.shifter.negate = s.sweep_negate;
+        self.sweep.shifter.is_second_pulse_channel = s.sweep_is_second;
+        self.sweep.shifter.shift_bits = s.sweep_shift;
+        let duty = (s.duty as usize).min(PULSE_DUTY_TABLE.len() - 1);
+        self.sequencer
+            .restore(&PULSE_DUTY_TABLE[duty], s.sequencer_position);
+    }
+}
+
 impl Pulse {
     pub fn new(is_second_pulse_channel: bool) -> Self {
         Self {

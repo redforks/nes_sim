@@ -1,4 +1,4 @@
-use super::{Mapper, memory::CartridgeMemory};
+use super::{Mapper, MapperState, SnapshotError, memory::CartridgeMemory};
 use crate::SystemClock;
 use crate::nes::mapper::Mirroring;
 use modular_bitfield::prelude::*;
@@ -229,6 +229,34 @@ impl MMC1 {
 }
 
 impl Mapper for MMC1 {
+    fn snapshot(&self) -> Result<MapperState, SnapshotError> {
+        Ok(MapperState::MMC1(Mmc1State {
+            control: self.control.into_bytes()[0],
+            chr_bank0: self.chr_bank0,
+            chr_bank1: self.chr_bank1,
+            prg_bank: self.prg_bank,
+            shift_register: self.shift_register,
+            // Nullable cycle: `None` serializes as null, never a zero sentinel.
+            last_write_cycle: self.last_write_cycle.map(SystemClock::cycles),
+        }))
+    }
+
+    fn restore(&mut self, state: &MapperState) -> Result<(), SnapshotError> {
+        let MapperState::MMC1(saved) = state else {
+            return Err(SnapshotError::Mismatch);
+        };
+        self.control = ControlFlags::from_bytes([saved.control]);
+        self.chr_bank0 = saved.chr_bank0;
+        self.chr_bank1 = saved.chr_bank1;
+        self.prg_bank = saved.prg_bank;
+        self.shift_register = saved.shift_register;
+        self.last_write_cycle = saved.last_write_cycle.map(SystemClock::from_cycles);
+        // Bank-window slots, mirroring, and the PRG-RAM flag live in
+        // `CartridgeMemory` and are restored from its own snapshot; only
+        // the registers (which steer future writes) are restored here.
+        Ok(())
+    }
+
     fn cpu_write(
         &mut self,
         address: u16,
@@ -263,6 +291,19 @@ impl Mapper for MMC1 {
             _ => {}
         }
     }
+}
+
+/// Saved mutable state for [`MMC1`] (ticket #188). Config (`prg_bank_count`,
+/// `prg_len_bytes`) is rebuilt by the factory and never stored.
+/// `last_write_cycle` is nullable: `None` serializes as null.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct Mmc1State {
+    pub control: u8,
+    pub chr_bank0: u8,
+    pub chr_bank1: u8,
+    pub prg_bank: u8,
+    pub shift_register: u8,
+    pub last_write_cycle: Option<u64>,
 }
 
 #[cfg(test)]
@@ -489,6 +530,110 @@ mod tests {
             mapper.shift_register, shift_after_first,
             "consecutive data write within 1 CPU cycle must be ignored"
         );
+    }
+
+    #[test]
+    fn snapshot_roundtrip_preserves_continued_behavior() {
+        use crate::nes::mapper::{MapperState, NRomState, SnapshotError};
+
+        fn fixture() -> (Vec<u8>, Vec<u8>) {
+            let mut prg = vec![0u8; PRG_ROM_BANK_SIZE * 8];
+            for (i, slot) in prg.chunks_mut(PRG_ROM_BANK_SIZE).enumerate() {
+                slot[0] = i as u8;
+                slot[PRG_ROM_BANK_SIZE - 1] = 0xf0 | i as u8;
+            }
+            let mut chr = vec![0u8; 0x8000];
+            for (i, slot) in chr.chunks_mut(0x1000).enumerate() {
+                slot[0] = 0x10 + i as u8;
+            }
+            (prg, chr)
+        }
+
+        fn write_serial(
+            mapper: &mut MMC1,
+            memory: &mut CartridgeMemory,
+            address: u16,
+            value: u8,
+            cycle: &mut SystemClock,
+        ) {
+            for bit in 0..5 {
+                mapper.cpu_write(address, (value >> bit) & 0x01, *cycle, memory);
+                *cycle = advance(*cycle);
+            }
+        }
+
+        fn observe(memory: &CartridgeMemory) -> (u8, u8, u8, u8, u8, u8, Mirroring, bool) {
+            (
+                memory.read_prg(0x8000),
+                memory.read_prg(0xbfff),
+                memory.read_prg(0xc000),
+                memory.read_prg(0xffff),
+                memory.read_vram(0x0000),
+                memory.read_vram(0x1000),
+                memory.mirroring(),
+                memory.prg_ram_enabled(),
+            )
+        }
+
+        let (prg, chr) = fixture();
+        let mut mem_a = CartridgeMemory::test(&prg, &chr);
+        let mut a = MMC1::new(&mut mem_a);
+        let mut cycle = advance(SystemClock::default());
+        // Non-default state: vertical + 4 KiB CHR mode, CHR banks, PRG
+        // bank, then a partial serial write left in flight.
+        write_serial(&mut a, &mut mem_a, 0x8000, 0x16, &mut cycle);
+        write_serial(&mut a, &mut mem_a, 0xa000, 0x03, &mut cycle);
+        write_serial(&mut a, &mut mem_a, 0xc000, 0x01, &mut cycle);
+        write_serial(&mut a, &mut mem_a, 0xe000, 0x02, &mut cycle);
+        for bit in 0..2 {
+            a.cpu_write(0x8000, (0x1c >> bit) & 0x01, cycle, &mut mem_a);
+            cycle = advance(cycle);
+        }
+
+        let snap = a.snapshot().expect("MMC1 snapshot");
+        assert!(matches!(snap, MapperState::MMC1(_)));
+
+        let mut mem_b = CartridgeMemory::test(&prg, &chr);
+        let mut b = MMC1::new(&mut mem_b);
+        assert_eq!(
+            b.restore(&MapperState::NRom(NRomState::default())),
+            Err(SnapshotError::Mismatch)
+        );
+        b.restore(&snap).expect("MMC1 restore");
+        assert_eq!(b.snapshot().expect("re-snapshot"), snap);
+
+        // Continued behavior matches: identical subsequent writes on
+        // identical cycles produce identical observable state.
+        let mut ca = cycle;
+        let mut cb = cycle;
+        write_serial(&mut a, &mut mem_a, 0x8000, 0x1c, &mut ca);
+        write_serial(&mut b, &mut mem_b, 0x8000, 0x1c, &mut cb);
+        write_serial(&mut a, &mut mem_a, 0xe000, 0x05, &mut ca);
+        write_serial(&mut b, &mut mem_b, 0xe000, 0x05, &mut cb);
+        assert_eq!(observe(&mem_a), observe(&mem_b));
+        assert_eq!(a.snapshot().unwrap(), b.snapshot().unwrap());
+    }
+
+    #[test]
+    fn snapshot_stores_absent_write_cycle_as_none() {
+        use crate::nes::mapper::MapperState;
+
+        let mut memory = CartridgeMemory::test(&[0; 0x8000], &[]);
+        let mapper = MMC1::new(&mut memory);
+        let snap = mapper.snapshot().expect("snapshot");
+        let MapperState::MMC1(state) = snap else {
+            panic!("expected MMC1 state");
+        };
+        // A fresh mapper has no write yet: absent, not a zero sentinel.
+        assert_eq!(state.last_write_cycle, None);
+
+        let mut memory2 = CartridgeMemory::test(&[0; 0x8000], &[]);
+        let mut fresh = MMC1::new(&mut memory2);
+        fresh.restore(&snap).expect("restore");
+        let MapperState::MMC1(restored) = fresh.snapshot().unwrap() else {
+            panic!("expected MMC1 state");
+        };
+        assert_eq!(restored.last_write_cycle, None);
     }
 
     #[test]

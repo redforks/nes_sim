@@ -72,6 +72,132 @@ fn sprite_in_range(y: u8, target_scanline: u16, sprite_height: u8) -> bool {
     sprite_y >= 0 && sprite_y < (sprite_height as i16)
 }
 
+/// Save-state mirror of [`SpriteOverflowEvalMode`]: the tag plus the
+/// `CopySprite` countdown (unused for the other modes).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum SpriteEvalModeTag {
+    Idle,
+    ScanY,
+    CopySprite(u8),
+    OverflowSearchDelay,
+    OverflowSearch,
+    Done,
+}
+
+/// Save-state mirror of [`SpriteOverflowEval`] in core types.
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct SpriteOverflowEvalState {
+    pub oam_index: u8,
+    pub byte_index: u8,
+    pub start_index: u8,
+    pub mode: SpriteEvalModeTag,
+    pub pending_sprite_bytes: [u8; 4],
+}
+
+/// Save-state mirror of one decoded [`SpriteRow`].
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct SpriteRowState {
+    pub x: u8,
+    pub attributes: u8,
+    pub low: u8,
+    pub high: u8,
+}
+
+/// Full [`SpriteManager`] execution state for save-states (ticket #184).
+#[derive(Debug, Clone)]
+pub(crate) struct SpriteManagerState {
+    pub overflow_pending: bool,
+    pub eval: SpriteOverflowEvalState,
+    pub current_scanline_oam: Vec<Sprite>,
+    pub next_scanline_oam: Vec<Sprite>,
+    pub current_zero_sprite: Option<Sprite>,
+    pub next_zero_sprite: Option<Sprite>,
+    pub rows: Vec<SpriteRowState>,
+    pub rows_scanline: Option<u8>,
+    pub zero_row_idx: Option<usize>,
+    pub oam_copybuffer: u8,
+}
+
+impl SpriteManager {
+    /// Capture the full evaluation/render state.
+    pub(crate) fn capture_sprite_state(&self) -> SpriteManagerState {
+        let mode = match self.sprite_overflow_eval.mode {
+            SpriteOverflowEvalMode::Idle => SpriteEvalModeTag::Idle,
+            SpriteOverflowEvalMode::ScanY => SpriteEvalModeTag::ScanY,
+            SpriteOverflowEvalMode::CopySprite { remaining_bytes } => {
+                SpriteEvalModeTag::CopySprite(remaining_bytes)
+            }
+            SpriteOverflowEvalMode::OverflowSearchDelay => SpriteEvalModeTag::OverflowSearchDelay,
+            SpriteOverflowEvalMode::OverflowSearch => SpriteEvalModeTag::OverflowSearch,
+            SpriteOverflowEvalMode::Done => SpriteEvalModeTag::Done,
+        };
+        SpriteManagerState {
+            overflow_pending: self.overflow_pending,
+            eval: SpriteOverflowEvalState {
+                oam_index: self.sprite_overflow_eval.oam_index,
+                byte_index: self.sprite_overflow_eval.byte_index,
+                start_index: self.sprite_overflow_eval.start_index,
+                mode,
+                pending_sprite_bytes: self.sprite_overflow_eval.pending_sprite_bytes,
+            },
+            current_scanline_oam: self.current_scanline_oam.iter().copied().collect(),
+            next_scanline_oam: self.next_scanline_oam.iter().copied().collect(),
+            current_zero_sprite: self.current_zero_sprite,
+            next_zero_sprite: self.next_zero_sprite,
+            rows: self
+                .rows
+                .iter()
+                .map(|r| SpriteRowState {
+                    x: r.x,
+                    attributes: r.attributes.into_bytes()[0],
+                    low: r.low,
+                    high: r.high,
+                })
+                .collect(),
+            rows_scanline: self.rows_scanline,
+            zero_row_idx: self.zero_row_idx,
+            oam_copybuffer: self.oam_copybuffer,
+        }
+    }
+
+    /// Restore a state previously produced by [`Self::capture_sprite_state`].
+    pub(crate) fn restore_sprite_state(&mut self, s: &SpriteManagerState) {
+        self.overflow_pending = s.overflow_pending;
+        self.sprite_overflow_eval.oam_index = s.eval.oam_index;
+        self.sprite_overflow_eval.byte_index = s.eval.byte_index;
+        self.sprite_overflow_eval.start_index = s.eval.start_index;
+        self.sprite_overflow_eval.mode = match s.eval.mode {
+            SpriteEvalModeTag::Idle => SpriteOverflowEvalMode::Idle,
+            SpriteEvalModeTag::ScanY => SpriteOverflowEvalMode::ScanY,
+            SpriteEvalModeTag::CopySprite(remaining_bytes) => {
+                SpriteOverflowEvalMode::CopySprite { remaining_bytes }
+            }
+            SpriteEvalModeTag::OverflowSearchDelay => SpriteOverflowEvalMode::OverflowSearchDelay,
+            SpriteEvalModeTag::OverflowSearch => SpriteOverflowEvalMode::OverflowSearch,
+            SpriteEvalModeTag::Done => SpriteOverflowEvalMode::Done,
+        };
+        self.sprite_overflow_eval.pending_sprite_bytes = s.eval.pending_sprite_bytes;
+        self.current_scanline_oam.clear();
+        self.current_scanline_oam
+            .extend(s.current_scanline_oam.iter().copied());
+        self.next_scanline_oam.clear();
+        self.next_scanline_oam
+            .extend(s.next_scanline_oam.iter().copied());
+        self.current_zero_sprite = s.current_zero_sprite;
+        self.next_zero_sprite = s.next_zero_sprite;
+        self.rows.clear();
+        self.rows.extend(s.rows.iter().map(|r| SpriteRow {
+            x: r.x,
+            attributes: Attribute::from_bytes([r.attributes]),
+            low: r.low,
+            high: r.high,
+        }));
+        self.rows_scanline = s.rows_scanline;
+        self.zero_row_idx = s.zero_row_idx;
+        self.oam_copybuffer = s.oam_copybuffer;
+    }
+}
+
 impl SpriteManager {
     pub fn new() -> Self {
         Self {

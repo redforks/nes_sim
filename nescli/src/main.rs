@@ -3,6 +3,7 @@ use clap::Parser;
 
 mod actions;
 mod recording_send;
+mod save_state;
 mod sdl;
 
 /// NES emulator cli tools
