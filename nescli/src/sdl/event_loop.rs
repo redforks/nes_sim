@@ -5,8 +5,8 @@
 //! `ExecuteResult` match, one reset path and one mode-gated throttle.
 //!
 //! Input authority is mode-dependent: interactive keeps today's keys
-//! (Quit/Esc exit, F2 soft-resets, F4 quits, controller keys drive port A)
-//! while playback only honors the OS `Event::Quit` (no Esc/F2/F4, controller
+//! (Quit/Esc exit, F2 soft-resets, F4 quits, F5 saves, controller keys
+//! drive port A) while playback only honors the OS `Event::Quit` (no Esc/F2/F4, controller
 //! keys ignored). Reset precedence is movie-driven reset first
 //! (`hard_reset` > `soft_reset`) with `ShouldReset -> soft_reset` shared by
 //! both modes; the sources are mutually exclusive per mode. One movie entry
@@ -16,6 +16,7 @@
 //! also covers past-the-end frames).
 
 use super::{NesAudioDriver, map_keycode_to_button, render::NesRender};
+use crate::save_state::save_machine_to_path;
 use nes_core::{
     Plugin,
     movie::{GamepadInput, InputLog},
@@ -189,10 +190,21 @@ where
     set_controller_from_gamepad(machine, input, true);
 }
 
+/// F5 arms a save only in interactive mode with no key repeat, so movie
+/// playback stays deterministic. (The loop already routes every key but
+/// OS Quit away from the match arms in movie mode; this is the second
+/// gate at the decision itself.)
+fn f5_arms_save(source: &InputSource, repeat: bool) -> bool {
+    !repeat && !source.is_movie()
+}
+
 /// Drive `machine` until an exit event, `Stop`/`Halt`, the `trim_after` limit
 /// or the end-of-movie countdown runs out. `event_pump` is `None` for
 /// headless playback; `fast_forward` is `Some` for playback (idle ranges may
-/// still be empty when `--auto-fast-forward` is off).
+/// still be empty when `--auto-fast-forward` is off). `save_path` is `Some`
+/// for interactive runs (F5 saves there); it is `None` for movie playback,
+/// where F5 is ignored.
+#[allow(clippy::too_many_arguments)]
 pub fn run_event_loop<P>(
     machine: &mut NesMachine<P>,
     render: &mut NesRender,
@@ -201,11 +213,13 @@ pub fn run_event_loop<P>(
     source: &mut InputSource,
     opts: &LoopOptions,
     fast_forward: Option<&FastForwardState>,
+    save_path: Option<&std::path::Path>,
 ) where
     P: Plugin<NesMcu>,
 {
     let target_frame_duration = Duration::new(0, 1_000_000_000u32 / 60);
     let mut extra_frames_remaining = opts.extra_frames;
+    let mut save_requested = false;
     // `spin_sleep` sleeps the bulk of the remaining budget with the OS
     // sleeper and spins the tail, landing the frame boundary more
     // precisely than `std::thread::sleep` alone.
@@ -231,6 +245,17 @@ pub fn run_event_loop<P>(
                         ..
                     } => {
                         break 'running;
+                    }
+                    Event::KeyDown {
+                        keycode: Some(Keycode::F5),
+                        repeat,
+                        ..
+                    } => {
+                        // Save the simulator state; the write runs right
+                        // after the next `process_frame()` returns.
+                        if f5_arms_save(source, repeat) {
+                            save_requested = true;
+                        }
                     }
                     Event::KeyDown {
                         keycode: Some(Keycode::F2),
@@ -314,10 +339,25 @@ pub fn run_event_loop<P>(
         // reset-only entry; trim, countdown and index advance still run.
         if !reset_only {
             let output = machine.process_frame();
+            let status = output.status;
             render.present_frame_bytes(output.frame);
             audio.push_samples(output.audio);
             audio.flush_frame();
-            match output.status {
+            // The save runs in the same iteration that emulated the
+            // frame, before any further emulation: present/push/flush
+            // never touch the machine, so the stored state is exactly
+            // the post-`process_frame()` state. It must wait until the
+            // output borrow ends (above) before reborrowing `machine`.
+            if save_requested {
+                save_requested = false;
+                if let Some(path) = save_path {
+                    let message = match save_machine_to_path(machine, path) {
+                        Ok(message) | Err(message) => message,
+                    };
+                    eprintln!("{message}");
+                }
+            }
+            match status {
                 nes_core::ExecuteResult::Continue => {}
                 nes_core::ExecuteResult::ShouldReset => {
                     eprintln!("CPU reset requested");
@@ -390,6 +430,15 @@ mod tests {
             trim_after: 0,
             extra_frames: 0,
         }
+    }
+
+    #[test]
+    fn f5_arms_save_only_for_interactive_without_repeat() {
+        let interactive = InputSource::Interactive;
+        assert!(f5_arms_save(&interactive, false));
+        assert!(!f5_arms_save(&interactive, true));
+        assert!(!f5_arms_save(&movie_source(), false));
+        assert!(!f5_arms_save(&movie_source(), true));
     }
 
     #[test]
