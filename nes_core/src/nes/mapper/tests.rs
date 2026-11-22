@@ -666,15 +666,16 @@ fn ppu_read_hook_overrides_when_flag_on() {
 }
 
 /// Ticket #186 (expand step): the snapshot API exists with `Unsupported`
-/// defaults, so no unmigrated mapper changes behavior. RED phase: this
-/// references `SnapshotError`, `MapperState`, the per-mapper state structs,
-/// and the `CartridgeMemory` capture/restore functions before they exist.
+/// defaults, so no unmigrated mapper changes behavior. Tickets #187-#190
+/// migrate mappers one batch at a time; this pins a still-default mapper
+/// (MMC1 migrates in #188) so the default body stays covered until #191
+/// removes it.
 #[test]
 fn unmigrated_mapper_snapshot_reports_unsupported() {
     let mut memory = CartridgeMemory::test(&[], &[]);
-    let mapper = NRom::new(&mut memory);
+    let mapper = MMC1::new(&mut memory);
     assert_eq!(mapper.snapshot(), Err(SnapshotError::Unsupported));
-    let state = MapperState::NRom(NRomState::default());
+    let state = MapperState::MMC1(Mmc1State);
     let mut mapper = mapper;
     assert_eq!(mapper.restore(&state), Err(SnapshotError::Unsupported));
 }
