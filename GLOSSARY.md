@@ -375,3 +375,33 @@ _Avoid_: tracing, instrumentation
 **Flamegraph**:
 Folded-stack visualization via `cargo flamegraph --profile profiling` collapsing `perf` samples into width proportional to Self overhead. Output `/tmp/flamegraph.svg`; complements `perf report` for call-graph navigation.
 _Avoid_: flame chart (different), perf report (text)
+
+## Language — Save state
+
+**Save point**:
+The frame boundary at which a save is taken: the moment `process_frame()` returns, at the end of the first CPU cycle at or after scanline 261. The PPU dot there is 0, 1, or 2. Mid-instruction CPU state at this point is part of the saved frame.
+_Avoid_: VBL-entry break, end of frame (ambiguous with scanline 241), exact dot 0
+
+**Frame boundary**:
+The end of the first CPU cycle at or after scanline 261 (PPU dot 0, 1, or 2). The frame counter advances at the 261→0 wrap, which happens inside the next `process_frame()` call, so a frame number read at the boundary is the count of completed wraps.
+_Avoid_: frame end at VBL entry
+
+**Snapshot DTO**:
+The versioned, serde-serialized mirror of emulator state that is written to a save file. Separate from core types, which carry no serde derives, and distinct from `CpuSnapshot`, which is the read-model for register inspection.
+_Avoid_: save state (ambiguous with the file), `CpuSnapshot`
+
+**Format version**:
+The number in a snapshot that identifies its layout. It bumps on any layout change or change to a saved field's meaning. A load with a different format version is refused, not migrated.
+_Avoid_: build version, emulator version
+
+**Mapper state**:
+The per-board part of a snapshot: the `MapperState` enum, with one variant per concrete mapper type holding that mapper's saved fields. Produced by `Mapper::snapshot` and applied by `Mapper::restore`.
+_Avoid_: mapper snapshot (ambiguous with the file), cartridge state (covers memory too)
+
+**Mapper tag**:
+The `MapperState` variant name that identifies the concrete mapper type. A load whose saved tag differs from the rebuilt mapper's tag is refused.
+_Avoid_: mapper ID (the iNES number, which maps to a tag but is not one)
+
+**Config**:
+Values set from the ROM header or CLI override that emulation never changes (for example VRC variant, MMC3 IRQ revision, MMC5 WRAM size). Rebuilt on load, never saved.
+_Avoid_: state (config is not saved), settings
