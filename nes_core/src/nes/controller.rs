@@ -226,6 +226,63 @@ impl Controller {
     }
 }
 
+/// Save-state mirror of one [`AController`]: the shift-register sampling
+/// state. Live held buttons (`bits`) are host-side input, excluded from
+/// the save format per the spec; the frozen `locked_bits` drive reads.
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct PadState {
+    pub strobe: bool,
+    pub locked_bits: u8,
+    pub bit_position: u8,
+    pub oe: bool,
+}
+
+/// Full [`Controller`] state for save-states (ticket #184): both pads'
+/// sampling state plus the in-flight Zapper trigger countdown. Held button
+/// bits, Zapper connection/aim/radius are host-side, excluded.
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct ControllerState {
+    pub a: PadState,
+    pub b: PadState,
+    pub zapper_trigger_cycles: u32,
+}
+
+impl Controller {
+    /// Capture the controller sampling state.
+    pub(crate) fn capture_controller_state(&self) -> ControllerState {
+        ControllerState {
+            a: PadState {
+                strobe: self.a.strobe,
+                locked_bits: self.a.locked_bits,
+                bit_position: self.a.bit_position,
+                oe: self.a.oe,
+            },
+            b: PadState {
+                strobe: self.b.strobe,
+                locked_bits: self.b.locked_bits,
+                bit_position: self.b.bit_position,
+                oe: self.b.oe,
+            },
+            zapper_trigger_cycles: self.zapper.trigger_cycles,
+        }
+    }
+
+    /// Restore a state previously produced by
+    /// [`Self::capture_controller_state`]. Held buttons and Zapper
+    /// aim/connection are left untouched (excluded from the save format).
+    pub(crate) fn restore_controller_state(&mut self, s: &ControllerState) {
+        self.a.strobe = s.a.strobe;
+        self.a.locked_bits = s.a.locked_bits;
+        self.a.bit_position = s.a.bit_position;
+        self.a.oe = s.a.oe;
+        self.b.strobe = s.b.strobe;
+        self.b.locked_bits = s.b.locked_bits;
+        self.b.bit_position = s.b.bit_position;
+        self.b.oe = s.b.oe;
+        self.zapper.trigger_cycles = s.zapper_trigger_cycles;
+    }
+}
+
 impl Controller {
     pub(crate) fn peek(&self, address: u16) -> u8 {
         match address {

@@ -27,6 +27,21 @@ impl LowerRam {
     pub fn reset_hard(&mut self) {
         power_up_pattern(&mut self.ram[..]);
     }
+
+    /// Capture the reachable system RAM window (`0x0000-0x07FF`) for
+    /// save-states (ticket #184). Every access masks with 0x7FF, so the
+    /// reachable window is exactly the first 0x800 bytes of the box;
+    /// bytes 0x800..0xF00 are never read and never saved.
+    pub(crate) fn snapshot_ram(&self) -> [u8; 0x800] {
+        let mut out = [0u8; 0x800];
+        out.copy_from_slice(&self.ram[..0x800]);
+        out
+    }
+
+    /// Restore a window previously produced by [`Self::snapshot_ram`].
+    pub(crate) fn restore_ram(&mut self, bytes: &[u8; 0x800]) {
+        self.ram[..0x800].copy_from_slice(bytes);
+    }
 }
 
 impl Mcu for LowerRam {

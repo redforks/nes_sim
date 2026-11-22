@@ -24,14 +24,34 @@
 
 use crate::{
     Plugin,
+    cpu::Flag,
+    cpu::{
+        InterruptType, InterruptWindowTag, Register, ValueSource,
+        microcode::{
+            AOrMemory, BranchTest, CrossPageBehavior, ImmediateOp, IncDecTarget, Microcode,
+            OpAfterAddressing, PushTarget, TransferDirection,
+        },
+    },
+    dma_bus::DmaBusState,
     ines::INesFile,
     nes::{
         NesMcu,
+        apu::{
+            ApuState, DmcDmaRequestState, DmcState, FrameCounterModeTag, FrameCounterState,
+            LatchedFrameStepState, MixerState, NoiseState, PendingFrameModeState, PulseState,
+            TriangleState,
+        },
+        controller::ControllerState,
+        dmc_dma::{DmcDmaPhase, DmcDmaState},
         mapper::{
             Action53State, AxRomState, BxRomState, CartridgeMemorySnapshot, CnRomState, J87State,
             MapperState, Mirroring, Mmc1State, Mmc3State, Mmc5AudioState, Mmc5PcmState,
             Mmc5PulseState, Mmc5State, NRomState, Nina001State, SnapshotError, UxRomState,
             Vrc24State,
+        },
+        ppu::{
+            Attribute, BackgroundActivationState, PpuState, Sprite, SpriteEvalModeTag,
+            SpriteManagerState, SpriteOverflowEvalState, SpriteRowState, TileCacheState,
         },
     },
     nes_machine::NesMachine,
@@ -42,7 +62,11 @@ use serde_json::Value;
 /// Save-file layout version. Bumped on any layout change or change to a
 /// field's meaning (emulation-behavior changes do not bump it). Old
 /// versions are refused, never migrated: there is exactly one constant.
-pub const SAVE_FORMAT_VERSION: u32 = 1;
+///
+/// Version 2 (ticket #193): every component section is filled from live
+/// state (version 1 left `cpu`/`bus`/`dma`/`apu`/`controller` empty and
+/// `ppu` with only the save-point dot).
+pub const SAVE_FORMAT_VERSION: u32 = 2;
 
 /// Scanline the save point sits at (ADR 0022): end of the first CPU cycle
 /// at or after scanline 261, so the boundary PPU dot is 0, 1, or 2.
@@ -132,7 +156,7 @@ fn hex_encode(bytes: &[u8]) -> String {
 }
 
 fn hex_decode(path: &str, text: &str) -> Result<Vec<u8>, SaveError> {
-    if text.len() % 2 != 0 || !text.bytes().all(|b| b.is_ascii_hexdigit()) {
+    if !text.len().is_multiple_of(2) || !text.bytes().all(|b| b.is_ascii_hexdigit()) {
         return Err(SaveError::BadHex {
             path: path.to_string(),
         });
@@ -175,41 +199,1985 @@ fn fixed_hex_array<const N: usize, const M: usize>(
 // derive-free per ADR-0020).
 // ---------------------------------------------------------------------------
 
-/// Placeholder for component sections ticket #193 fills from live state.
-/// Serializes as `{}`.
-macro_rules! todo_section {
-    ($name:ident, $doc:expr) => {
-        #[doc = $doc]
-        #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-        struct $name {}
-    };
+/// Mirror of [`InterruptWindowTag`]: which interrupt sequence owns the
+/// live window, if any. Compared by tag string; unknown names refuse.
+fn encode_interrupt_window_tag(tag: InterruptWindowTag) -> &'static str {
+    match tag {
+        InterruptWindowTag::Reset => "Reset",
+        InterruptWindowTag::Nmi => "Nmi",
+        InterruptWindowTag::Irq => "Irq",
+        InterruptWindowTag::Brk => "Brk",
+    }
 }
 
-todo_section!(
-    CpuSection,
-    "Ticket #193 fills this from live CPU state (registers, latches, microcode queue, interrupt detectors)."
-);
-todo_section!(
-    BusSection,
-    "Ticket #193 fills this from live bus state (system RAM, OAM DMA pending, open bus, deferred APU writes)."
-);
-todo_section!(
-    DmaSection,
-    "Ticket #193 fills this from live DMA state (DMC DMA, in-flight OAM DMA)."
-);
-todo_section!(
-    ApuSection,
-    "Ticket #193 fills this from live APU state (channels, frame sequencer, mixer, expansion mix, race flags)."
-);
-todo_section!(
-    ControllerSection,
-    "Ticket #193 fills this from live controller state (strobe, shift positions, Zapper trigger cycles)."
-);
+fn decode_interrupt_window_tag(name: &str) -> Result<InterruptWindowTag, SaveError> {
+    match name {
+        "Reset" => Ok(InterruptWindowTag::Reset),
+        "Nmi" => Ok(InterruptWindowTag::Nmi),
+        "Irq" => Ok(InterruptWindowTag::Irq),
+        "Brk" => Ok(InterruptWindowTag::Brk),
+        other => Err(SaveError::UnknownEnum {
+            name: "InterruptWindow".to_string(),
+            variant: other.to_string(),
+        }),
+    }
+}
+
+fn encode_interrupt_type(t: InterruptType) -> &'static str {
+    match t {
+        InterruptType::None => "None",
+        InterruptType::Nmi => "Nmi",
+        InterruptType::Irq => "Irq",
+    }
+}
+
+fn decode_interrupt_type(name: &str) -> Result<InterruptType, SaveError> {
+    match name {
+        "None" => Ok(InterruptType::None),
+        "Nmi" => Ok(InterruptType::Nmi),
+        "Irq" => Ok(InterruptType::Irq),
+        other => Err(SaveError::UnknownEnum {
+            name: "InterruptType".to_string(),
+            variant: other.to_string(),
+        }),
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Microcode mirror codec (ticket #193).
+//
+// The queue is an ordered front-first list of strings like
+// `"IndexedXWithOp(And(Mem),FirstClock)"`, `"DummyReadAt(4660)"`, or
+// `"FetchAndDecode"`. Payload enums use their variant names; unknown
+// names refuse with `UnknownEnum`, wrong arity or bad numbers are
+// `Corrupt`.
+
+/// Split `"Name"` or `"Name(p0, p1)"` into its tag and top-level
+/// payloads (nested parens stay intact). `None` on unbalanced input.
+fn split_mirror(s: &str) -> Option<(&str, Vec<String>)> {
+    let (name, rest) = match s.find('(') {
+        None => return Some((s, Vec::new())),
+        Some(i) => (&s[..i], &s[i + 1..]),
+    };
+    if !rest.ends_with(')') {
+        return None;
+    }
+    let inner = &rest[..rest.len() - 1];
+    let mut parts = Vec::new();
+    let mut depth = 0usize;
+    let mut start = 0usize;
+    for (i, c) in inner.char_indices() {
+        match c {
+            '(' => depth += 1,
+            ')' => {
+                if depth == 0 {
+                    return None;
+                }
+                depth -= 1;
+            }
+            ',' if depth == 0 => {
+                parts.push(inner[start..i].to_string());
+                start = i + 1;
+            }
+            _ => {}
+        }
+    }
+    if depth != 0 {
+        return None;
+    }
+    parts.push(inner[start..].to_string());
+    Some((name, parts))
+}
+
+fn corrupt_microcode(s: &str) -> SaveError {
+    SaveError::Corrupt(format!("microcode `{s}` is not a valid mirror string"))
+}
+
+fn unknown_microcode(name: &str, variant: &str) -> SaveError {
+    SaveError::UnknownEnum {
+        name: name.to_string(),
+        variant: variant.to_string(),
+    }
+}
+
+fn encode_value_source(v: ValueSource) -> &'static str {
+    match v {
+        ValueSource::Immediate => "Immediate",
+        ValueSource::ZeroPage => "ZeroPage",
+        ValueSource::Mem => "Mem",
+    }
+}
+
+fn decode_value_source(s: &str) -> Result<ValueSource, SaveError> {
+    match s {
+        "Immediate" => Ok(ValueSource::Immediate),
+        "ZeroPage" => Ok(ValueSource::ZeroPage),
+        "Mem" => Ok(ValueSource::Mem),
+        other => Err(unknown_microcode("ValueSource", other)),
+    }
+}
+
+fn encode_register(r: Register) -> &'static str {
+    match r {
+        Register::A => "A",
+        Register::X => "X",
+        Register::Y => "Y",
+    }
+}
+
+fn decode_register(s: &str) -> Result<Register, SaveError> {
+    match s {
+        "A" => Ok(Register::A),
+        "X" => Ok(Register::X),
+        "Y" => Ok(Register::Y),
+        other => Err(unknown_microcode("Register", other)),
+    }
+}
+
+fn encode_immediate_op(op: ImmediateOp) -> &'static str {
+    match op {
+        ImmediateOp::Adc => "Adc",
+        ImmediateOp::And => "And",
+        ImmediateOp::Sbc => "Sbc",
+        ImmediateOp::Cmp => "Cmp",
+        ImmediateOp::Cpx => "Cpx",
+        ImmediateOp::Cpy => "Cpy",
+        ImmediateOp::Ora => "Ora",
+        ImmediateOp::Eor => "Eor",
+    }
+}
+
+fn decode_immediate_op(s: &str) -> Result<ImmediateOp, SaveError> {
+    match s {
+        "Adc" => Ok(ImmediateOp::Adc),
+        "And" => Ok(ImmediateOp::And),
+        "Sbc" => Ok(ImmediateOp::Sbc),
+        "Cmp" => Ok(ImmediateOp::Cmp),
+        "Cpx" => Ok(ImmediateOp::Cpx),
+        "Cpy" => Ok(ImmediateOp::Cpy),
+        "Ora" => Ok(ImmediateOp::Ora),
+        "Eor" => Ok(ImmediateOp::Eor),
+        other => Err(unknown_microcode("ImmediateOp", other)),
+    }
+}
+
+fn encode_transfer(d: TransferDirection) -> &'static str {
+    match d {
+        TransferDirection::AtoX => "AtoX",
+        TransferDirection::XtoA => "XtoA",
+        TransferDirection::AtoY => "AtoY",
+        TransferDirection::YtoA => "YtoA",
+        TransferDirection::SPtoX => "SPtoX",
+        TransferDirection::XtoSP => "XtoSP",
+    }
+}
+
+fn decode_transfer(s: &str) -> Result<TransferDirection, SaveError> {
+    match s {
+        "AtoX" => Ok(TransferDirection::AtoX),
+        "XtoA" => Ok(TransferDirection::XtoA),
+        "AtoY" => Ok(TransferDirection::AtoY),
+        "YtoA" => Ok(TransferDirection::YtoA),
+        "SPtoX" => Ok(TransferDirection::SPtoX),
+        "XtoSP" => Ok(TransferDirection::XtoSP),
+        other => Err(unknown_microcode("TransferDirection", other)),
+    }
+}
+
+fn encode_inc_dec(t: IncDecTarget) -> &'static str {
+    match t {
+        IncDecTarget::IncrementX => "IncrementX",
+        IncDecTarget::IncrementY => "IncrementY",
+        IncDecTarget::DecrementX => "DecrementX",
+        IncDecTarget::DecrementY => "DecrementY",
+        IncDecTarget::IncrementAlu => "IncrementAlu",
+        IncDecTarget::DecrementAlu => "DecrementAlu",
+    }
+}
+
+fn decode_inc_dec(s: &str) -> Result<IncDecTarget, SaveError> {
+    match s {
+        "IncrementX" => Ok(IncDecTarget::IncrementX),
+        "IncrementY" => Ok(IncDecTarget::IncrementY),
+        "DecrementX" => Ok(IncDecTarget::DecrementX),
+        "DecrementY" => Ok(IncDecTarget::DecrementY),
+        "IncrementAlu" => Ok(IncDecTarget::IncrementAlu),
+        "DecrementAlu" => Ok(IncDecTarget::DecrementAlu),
+        other => Err(unknown_microcode("IncDecTarget", other)),
+    }
+}
+
+fn encode_a_or_memory(v: AOrMemory) -> &'static str {
+    match v {
+        AOrMemory::Accumulator => "Accumulator",
+        AOrMemory::Memory => "Memory",
+    }
+}
+
+fn decode_a_or_memory(s: &str) -> Result<AOrMemory, SaveError> {
+    match s {
+        "Accumulator" => Ok(AOrMemory::Accumulator),
+        "Memory" => Ok(AOrMemory::Memory),
+        other => Err(unknown_microcode("AOrMemory", other)),
+    }
+}
+
+fn encode_cross_page(c: CrossPageBehavior) -> &'static str {
+    match c {
+        CrossPageBehavior::FirstClock => "FirstClock",
+        CrossPageBehavior::FirstClockAlways => "FirstClockAlways",
+    }
+}
+
+fn decode_cross_page(s: &str) -> Result<CrossPageBehavior, SaveError> {
+    match s {
+        "FirstClock" => Ok(CrossPageBehavior::FirstClock),
+        "FirstClockAlways" => Ok(CrossPageBehavior::FirstClockAlways),
+        other => Err(unknown_microcode("CrossPageBehavior", other)),
+    }
+}
+
+fn encode_branch_test(t: BranchTest) -> &'static str {
+    match t {
+        BranchTest::IfCarryClear => "IfCarryClear",
+        BranchTest::IfCarrySet => "IfCarrySet",
+        BranchTest::IfZeroSet => "IfZeroSet",
+        BranchTest::IfZeroClear => "IfZeroClear",
+        BranchTest::IfNegativeSet => "IfNegativeSet",
+        BranchTest::IfNegativeClear => "IfNegativeClear",
+        BranchTest::IfOverflowSet => "IfOverflowSet",
+        BranchTest::IfOverflowClear => "IfOverflowClear",
+    }
+}
+
+fn decode_branch_test(s: &str) -> Result<BranchTest, SaveError> {
+    match s {
+        "IfCarryClear" => Ok(BranchTest::IfCarryClear),
+        "IfCarrySet" => Ok(BranchTest::IfCarrySet),
+        "IfZeroSet" => Ok(BranchTest::IfZeroSet),
+        "IfZeroClear" => Ok(BranchTest::IfZeroClear),
+        "IfNegativeSet" => Ok(BranchTest::IfNegativeSet),
+        "IfNegativeClear" => Ok(BranchTest::IfNegativeClear),
+        "IfOverflowSet" => Ok(BranchTest::IfOverflowSet),
+        "IfOverflowClear" => Ok(BranchTest::IfOverflowClear),
+        other => Err(unknown_microcode("BranchTest", other)),
+    }
+}
+
+fn encode_push_target(t: PushTarget) -> &'static str {
+    match t {
+        PushTarget::A => "A",
+        PushTarget::Pcl => "Pcl",
+        PushTarget::Pch => "Pch",
+    }
+}
+
+fn decode_push_target(s: &str) -> Result<PushTarget, SaveError> {
+    match s {
+        "A" => Ok(PushTarget::A),
+        "Pcl" => Ok(PushTarget::Pcl),
+        "Pch" => Ok(PushTarget::Pch),
+        other => Err(unknown_microcode("PushTarget", other)),
+    }
+}
+
+fn encode_flag(f: Flag) -> &'static str {
+    match f {
+        Flag::Carry => "Carry",
+        Flag::Zero => "Zero",
+        Flag::InterruptDisabled => "InterruptDisabled",
+        Flag::Decimal => "Decimal",
+        Flag::Break => "Break",
+        Flag::NotUsed => "NotUsed",
+        Flag::Overflow => "Overflow",
+        Flag::Negative => "Negative",
+    }
+}
+
+fn decode_flag(s: &str) -> Result<Flag, SaveError> {
+    match s {
+        "Carry" => Ok(Flag::Carry),
+        "Zero" => Ok(Flag::Zero),
+        "InterruptDisabled" => Ok(Flag::InterruptDisabled),
+        "Decimal" => Ok(Flag::Decimal),
+        "Break" => Ok(Flag::Break),
+        "NotUsed" => Ok(Flag::NotUsed),
+        "Overflow" => Ok(Flag::Overflow),
+        "Negative" => Ok(Flag::Negative),
+        other => Err(unknown_microcode("Flag", other)),
+    }
+}
+
+fn encode_op_after(op: OpAfterAddressing) -> String {
+    match op {
+        OpAfterAddressing::And(s) => format!("And({})", encode_value_source(s)),
+        OpAfterAddressing::LoadIntoA => "LoadIntoA".to_string(),
+        OpAfterAddressing::LoadIntoX => "LoadIntoX".to_string(),
+        OpAfterAddressing::LoadIntoY => "LoadIntoY".to_string(),
+        OpAfterAddressing::LoadIntoAlu => "LoadIntoAlu".to_string(),
+        OpAfterAddressing::StoreA => "StoreA".to_string(),
+        OpAfterAddressing::Ora => "Ora".to_string(),
+        OpAfterAddressing::Eor => "Eor".to_string(),
+        OpAfterAddressing::Lax => "Lax".to_string(),
+        OpAfterAddressing::Las => "Las".to_string(),
+        OpAfterAddressing::Sbc => "Sbc".to_string(),
+        OpAfterAddressing::Adc => "Adc".to_string(),
+        OpAfterAddressing::Cmp => "Cmp".to_string(),
+        OpAfterAddressing::Shx => "Shx".to_string(),
+        OpAfterAddressing::Shy => "Shy".to_string(),
+        OpAfterAddressing::Sha => "Sha".to_string(),
+        OpAfterAddressing::Tas => "Tas".to_string(),
+        OpAfterAddressing::Nop => "Nop".to_string(),
+    }
+}
+
+fn decode_op_after(s: &str) -> Result<OpAfterAddressing, SaveError> {
+    let (name, args) = split_mirror(s).ok_or_else(|| corrupt_microcode(s))?;
+    if name == "And" {
+        if args.len() != 1 {
+            return Err(corrupt_microcode(s));
+        }
+        return Ok(OpAfterAddressing::And(decode_value_source(&args[0])?));
+    }
+    if !args.is_empty() {
+        return Err(corrupt_microcode(s));
+    }
+    match name {
+        "LoadIntoA" => Ok(OpAfterAddressing::LoadIntoA),
+        "LoadIntoX" => Ok(OpAfterAddressing::LoadIntoX),
+        "LoadIntoY" => Ok(OpAfterAddressing::LoadIntoY),
+        "LoadIntoAlu" => Ok(OpAfterAddressing::LoadIntoAlu),
+        "StoreA" => Ok(OpAfterAddressing::StoreA),
+        "Ora" => Ok(OpAfterAddressing::Ora),
+        "Eor" => Ok(OpAfterAddressing::Eor),
+        "Lax" => Ok(OpAfterAddressing::Lax),
+        "Las" => Ok(OpAfterAddressing::Las),
+        "Sbc" => Ok(OpAfterAddressing::Sbc),
+        "Adc" => Ok(OpAfterAddressing::Adc),
+        "Cmp" => Ok(OpAfterAddressing::Cmp),
+        "Shx" => Ok(OpAfterAddressing::Shx),
+        "Shy" => Ok(OpAfterAddressing::Shy),
+        "Sha" => Ok(OpAfterAddressing::Sha),
+        "Tas" => Ok(OpAfterAddressing::Tas),
+        "Nop" => Ok(OpAfterAddressing::Nop),
+        other => Err(unknown_microcode("OpAfterAddressing", other)),
+    }
+}
+
+fn one_arg(_name: &str, args: &[String], s: &str) -> Result<String, SaveError> {
+    if args.len() != 1 {
+        return Err(corrupt_microcode(s));
+    }
+    Ok(args[0].clone())
+}
+
+fn two_args(_name: &str, args: &[String], s: &str) -> Result<(String, String), SaveError> {
+    if args.len() != 2 {
+        return Err(corrupt_microcode(s));
+    }
+    Ok((args[0].clone(), args[1].clone()))
+}
+
+fn no_args(_name: &str, args: &[String], s: &str) -> Result<(), SaveError> {
+    if !args.is_empty() {
+        return Err(corrupt_microcode(s));
+    }
+    Ok(())
+}
+
+/// Encode one microcode as its mirror string.
+fn encode_microcode(m: &Microcode) -> String {
+    match m {
+        Microcode::FetchAndDecode => "FetchAndDecode".to_string(),
+        Microcode::FetchOnly => "FetchOnly".to_string(),
+        Microcode::LoadR(v, r) => {
+            format!("LoadR({},{})", encode_value_source(*v), encode_register(*r))
+        }
+        Microcode::StoreR(v, r) => {
+            format!(
+                "StoreR({},{})",
+                encode_value_source(*v),
+                encode_register(*r)
+            )
+        }
+        Microcode::StoreAlu(v) => format!("StoreAlu({})", encode_value_source(*v)),
+        Microcode::ZeroPage => "ZeroPage".to_string(),
+        Microcode::ZeroPageIndexedX => "ZeroPageIndexedX".to_string(),
+        Microcode::ZeroPageIndexedY => "ZeroPageIndexedY".to_string(),
+        Microcode::AbsoluteL => "AbsoluteL".to_string(),
+        Microcode::AbsoluteH => "AbsoluteH".to_string(),
+        Microcode::IndexedXWithOp { op, first_clock } => format!(
+            "IndexedXWithOp({},{})",
+            encode_op_after(*op),
+            encode_cross_page(*first_clock)
+        ),
+        Microcode::IndexedYWithOp { op, first_clock } => format!(
+            "IndexedYWithOp({},{})",
+            encode_op_after(*op),
+            encode_cross_page(*first_clock)
+        ),
+        Microcode::Nop => "Nop".to_string(),
+        Microcode::DummyReadAt(addr) => format!("DummyReadAt({addr})"),
+        Microcode::DummyStackRead => "DummyStackRead".to_string(),
+        Microcode::SkipDetectInterrupt => "SkipDetectInterrupt".to_string(),
+        Microcode::IndexedL(v) => format!("IndexedL({})", encode_value_source(*v)),
+        Microcode::IndexedH(v) => format!("IndexedH({})", encode_value_source(*v)),
+        Microcode::SkipImmediate => "SkipImmediate".to_string(),
+        Microcode::LoadIntoAlu(v) => {
+            format!("LoadIntoAlu({})", encode_value_source(*v))
+        }
+        Microcode::Shx => "Shx".to_string(),
+        Microcode::Shy => "Shy".to_string(),
+        Microcode::Sha => "Sha".to_string(),
+        Microcode::Tas => "Tas".to_string(),
+        Microcode::ImmediateWithOp(op) => {
+            format!("ImmediateWithOp({})", encode_immediate_op(*op))
+        }
+        Microcode::Adc(v) => format!("Adc({})", encode_value_source(*v)),
+        Microcode::Sbc(v) => format!("Sbc({})", encode_value_source(*v)),
+        Microcode::Cmp(v) => format!("Cmp({})", encode_value_source(*v)),
+        Microcode::Cpx(v) => format!("Cpx({})", encode_value_source(*v)),
+        Microcode::Cpy(v) => format!("Cpy({})", encode_value_source(*v)),
+        Microcode::Ora(v) => format!("Ora({})", encode_value_source(*v)),
+        Microcode::Eor(v) => format!("Eor({})", encode_value_source(*v)),
+        Microcode::And(v) => format!("And({})", encode_value_source(*v)),
+        Microcode::AneImmediate => "AneImmediate".to_string(),
+        Microcode::LaxImmediate => "LaxImmediate".to_string(),
+        Microcode::Las => "Las".to_string(),
+        Microcode::Bit(v) => format!("Bit({})", encode_value_source(*v)),
+        Microcode::Asl(a, v) => format!(
+            "Asl({},{})",
+            encode_a_or_memory(*a),
+            encode_value_source(*v)
+        ),
+        Microcode::Lsr(a, v) => format!(
+            "Lsr({},{})",
+            encode_a_or_memory(*a),
+            encode_value_source(*v)
+        ),
+        Microcode::Rol(a, v) => format!(
+            "Rol({},{})",
+            encode_a_or_memory(*a),
+            encode_value_source(*v)
+        ),
+        Microcode::Ror(a, v) => format!(
+            "Ror({},{})",
+            encode_a_or_memory(*a),
+            encode_value_source(*v)
+        ),
+        Microcode::AlrImmediate => "AlrImmediate".to_string(),
+        Microcode::AncImmediate => "AncImmediate".to_string(),
+        Microcode::ArrImmediate => "ArrImmediate".to_string(),
+        Microcode::AxsImmediate => "AxsImmediate".to_string(),
+        Microcode::Lax(v) => format!("Lax({})", encode_value_source(*v)),
+        Microcode::Sax(v) => format!("Sax({})", encode_value_source(*v)),
+        Microcode::Rla(v) => format!("Rla({})", encode_value_source(*v)),
+        Microcode::Dcp(v) => format!("Dcp({})", encode_value_source(*v)),
+        Microcode::Isc(v) => format!("Isc({})", encode_value_source(*v)),
+        Microcode::Rra(v) => format!("Rra({})", encode_value_source(*v)),
+        Microcode::Slo(v) => format!("Slo({})", encode_value_source(*v)),
+        Microcode::Sre(v) => format!("Sre({})", encode_value_source(*v)),
+        Microcode::IndexedHAndJump => "IndexedHAndJump".to_string(),
+        Microcode::SetFlag(f) => format!("SetFlag({})", encode_flag(*f)),
+        Microcode::ClearFlag(f) => format!("ClearFlag({})", encode_flag(*f)),
+        Microcode::Transfer(d) => format!("Transfer({})", encode_transfer(*d)),
+        Microcode::IncDec(t, v) => {
+            format!("IncDec({},{})", encode_inc_dec(*t), encode_value_source(*v))
+        }
+        Microcode::BranchRelative(t) => {
+            format!("BranchRelative({})", encode_branch_test(*t))
+        }
+        Microcode::PushStatus { break_flag } => format!("PushStatus({break_flag})"),
+        Microcode::Plp => "Plp".to_string(),
+        Microcode::PopPcL => "PopPcL".to_string(),
+        Microcode::PopPcH => "PopPcH".to_string(),
+        Microcode::IncPc => "IncPc".to_string(),
+        Microcode::PushStack(t) => format!("PushStack({})", encode_push_target(*t)),
+        Microcode::PopStack => "PopStack".to_string(),
+        Microcode::UpdateAFromAlu => "UpdateAFromAlu".to_string(),
+        Microcode::Kill => "Kill".to_string(),
+        Microcode::LoadResetPcL => "LoadResetPcL".to_string(),
+        Microcode::LoadResetPcH => "LoadResetPcH".to_string(),
+        Microcode::LoadNmiPcL => "LoadNmiPcL".to_string(),
+        Microcode::LoadNmiPcH => "LoadNmiPcH".to_string(),
+        Microcode::LoadPcAbsoluteH => "LoadPcAbsoluteH".to_string(),
+        Microcode::LoadIrqPcL => "LoadIrqPcL".to_string(),
+        Microcode::LoadIrqPcH => "LoadIrqPcH".to_string(),
+    }
+}
+
+/// Decode one microcode mirror string. Unknown variant names refuse with
+/// `UnknownEnum`; wrong arity or bad numbers are `Corrupt`.
+fn decode_microcode(s: &str) -> Result<Microcode, SaveError> {
+    let (name, args) = split_mirror(s).ok_or_else(|| corrupt_microcode(s))?;
+    match name {
+        "FetchAndDecode" => {
+            no_args(name, &args, s)?;
+            Ok(Microcode::FetchAndDecode)
+        }
+        "FetchOnly" => {
+            no_args(name, &args, s)?;
+            Ok(Microcode::FetchOnly)
+        }
+        "LoadR" => {
+            let (v, r) = two_args(name, &args, s)?;
+            Ok(Microcode::LoadR(
+                decode_value_source(&v)?,
+                decode_register(&r)?,
+            ))
+        }
+        "StoreR" => {
+            let (v, r) = two_args(name, &args, s)?;
+            Ok(Microcode::StoreR(
+                decode_value_source(&v)?,
+                decode_register(&r)?,
+            ))
+        }
+        "StoreAlu" => Ok(Microcode::StoreAlu(decode_value_source(&one_arg(
+            name, &args, s,
+        )?)?)),
+        "ZeroPage" => {
+            no_args(name, &args, s)?;
+            Ok(Microcode::ZeroPage)
+        }
+        "ZeroPageIndexedX" => {
+            no_args(name, &args, s)?;
+            Ok(Microcode::ZeroPageIndexedX)
+        }
+        "ZeroPageIndexedY" => {
+            no_args(name, &args, s)?;
+            Ok(Microcode::ZeroPageIndexedY)
+        }
+        "AbsoluteL" => {
+            no_args(name, &args, s)?;
+            Ok(Microcode::AbsoluteL)
+        }
+        "AbsoluteH" => {
+            no_args(name, &args, s)?;
+            Ok(Microcode::AbsoluteH)
+        }
+        "IndexedXWithOp" => {
+            let (op, first) = two_args(name, &args, s)?;
+            Ok(Microcode::IndexedXWithOp {
+                op: decode_op_after(&op)?,
+                first_clock: decode_cross_page(&first)?,
+            })
+        }
+        "IndexedYWithOp" => {
+            let (op, first) = two_args(name, &args, s)?;
+            Ok(Microcode::IndexedYWithOp {
+                op: decode_op_after(&op)?,
+                first_clock: decode_cross_page(&first)?,
+            })
+        }
+        "Nop" => {
+            no_args(name, &args, s)?;
+            Ok(Microcode::Nop)
+        }
+        "DummyReadAt" => {
+            let addr = one_arg(name, &args, s)?
+                .parse::<u16>()
+                .map_err(|_| corrupt_microcode(s))?;
+            Ok(Microcode::DummyReadAt(addr))
+        }
+        "DummyStackRead" => {
+            no_args(name, &args, s)?;
+            Ok(Microcode::DummyStackRead)
+        }
+        "SkipDetectInterrupt" => {
+            no_args(name, &args, s)?;
+            Ok(Microcode::SkipDetectInterrupt)
+        }
+        "IndexedL" => Ok(Microcode::IndexedL(decode_value_source(&one_arg(
+            name, &args, s,
+        )?)?)),
+        "IndexedH" => Ok(Microcode::IndexedH(decode_value_source(&one_arg(
+            name, &args, s,
+        )?)?)),
+        "SkipImmediate" => {
+            no_args(name, &args, s)?;
+            Ok(Microcode::SkipImmediate)
+        }
+        "LoadIntoAlu" => Ok(Microcode::LoadIntoAlu(decode_value_source(&one_arg(
+            name, &args, s,
+        )?)?)),
+        "Shx" => {
+            no_args(name, &args, s)?;
+            Ok(Microcode::Shx)
+        }
+        "Shy" => {
+            no_args(name, &args, s)?;
+            Ok(Microcode::Shy)
+        }
+        "Sha" => {
+            no_args(name, &args, s)?;
+            Ok(Microcode::Sha)
+        }
+        "Tas" => {
+            no_args(name, &args, s)?;
+            Ok(Microcode::Tas)
+        }
+        "ImmediateWithOp" => Ok(Microcode::ImmediateWithOp(decode_immediate_op(&one_arg(
+            name, &args, s,
+        )?)?)),
+        "Adc" => Ok(Microcode::Adc(decode_value_source(&one_arg(
+            name, &args, s,
+        )?)?)),
+        "Sbc" => Ok(Microcode::Sbc(decode_value_source(&one_arg(
+            name, &args, s,
+        )?)?)),
+        "Cmp" => Ok(Microcode::Cmp(decode_value_source(&one_arg(
+            name, &args, s,
+        )?)?)),
+        "Cpx" => Ok(Microcode::Cpx(decode_value_source(&one_arg(
+            name, &args, s,
+        )?)?)),
+        "Cpy" => Ok(Microcode::Cpy(decode_value_source(&one_arg(
+            name, &args, s,
+        )?)?)),
+        "Ora" => Ok(Microcode::Ora(decode_value_source(&one_arg(
+            name, &args, s,
+        )?)?)),
+        "Eor" => Ok(Microcode::Eor(decode_value_source(&one_arg(
+            name, &args, s,
+        )?)?)),
+        "And" => Ok(Microcode::And(decode_value_source(&one_arg(
+            name, &args, s,
+        )?)?)),
+        "AneImmediate" => {
+            no_args(name, &args, s)?;
+            Ok(Microcode::AneImmediate)
+        }
+        "LaxImmediate" => {
+            no_args(name, &args, s)?;
+            Ok(Microcode::LaxImmediate)
+        }
+        "Las" => {
+            no_args(name, &args, s)?;
+            Ok(Microcode::Las)
+        }
+        "Bit" => Ok(Microcode::Bit(decode_value_source(&one_arg(
+            name, &args, s,
+        )?)?)),
+        "Asl" => {
+            let (a, v) = two_args(name, &args, s)?;
+            Ok(Microcode::Asl(
+                decode_a_or_memory(&a)?,
+                decode_value_source(&v)?,
+            ))
+        }
+        "Lsr" => {
+            let (a, v) = two_args(name, &args, s)?;
+            Ok(Microcode::Lsr(
+                decode_a_or_memory(&a)?,
+                decode_value_source(&v)?,
+            ))
+        }
+        "Rol" => {
+            let (a, v) = two_args(name, &args, s)?;
+            Ok(Microcode::Rol(
+                decode_a_or_memory(&a)?,
+                decode_value_source(&v)?,
+            ))
+        }
+        "Ror" => {
+            let (a, v) = two_args(name, &args, s)?;
+            Ok(Microcode::Ror(
+                decode_a_or_memory(&a)?,
+                decode_value_source(&v)?,
+            ))
+        }
+        "AlrImmediate" => {
+            no_args(name, &args, s)?;
+            Ok(Microcode::AlrImmediate)
+        }
+        "AncImmediate" => {
+            no_args(name, &args, s)?;
+            Ok(Microcode::AncImmediate)
+        }
+        "ArrImmediate" => {
+            no_args(name, &args, s)?;
+            Ok(Microcode::ArrImmediate)
+        }
+        "AxsImmediate" => {
+            no_args(name, &args, s)?;
+            Ok(Microcode::AxsImmediate)
+        }
+        "Lax" => Ok(Microcode::Lax(decode_value_source(&one_arg(
+            name, &args, s,
+        )?)?)),
+        "Sax" => Ok(Microcode::Sax(decode_value_source(&one_arg(
+            name, &args, s,
+        )?)?)),
+        "Rla" => Ok(Microcode::Rla(decode_value_source(&one_arg(
+            name, &args, s,
+        )?)?)),
+        "Dcp" => Ok(Microcode::Dcp(decode_value_source(&one_arg(
+            name, &args, s,
+        )?)?)),
+        "Isc" => Ok(Microcode::Isc(decode_value_source(&one_arg(
+            name, &args, s,
+        )?)?)),
+        "Rra" => Ok(Microcode::Rra(decode_value_source(&one_arg(
+            name, &args, s,
+        )?)?)),
+        "Slo" => Ok(Microcode::Slo(decode_value_source(&one_arg(
+            name, &args, s,
+        )?)?)),
+        "Sre" => Ok(Microcode::Sre(decode_value_source(&one_arg(
+            name, &args, s,
+        )?)?)),
+        "IndexedHAndJump" => {
+            no_args(name, &args, s)?;
+            Ok(Microcode::IndexedHAndJump)
+        }
+        "SetFlag" => Ok(Microcode::SetFlag(decode_flag(&one_arg(name, &args, s)?)?)),
+        "ClearFlag" => Ok(Microcode::ClearFlag(decode_flag(&one_arg(
+            name, &args, s,
+        )?)?)),
+        "Transfer" => Ok(Microcode::Transfer(decode_transfer(&one_arg(
+            name, &args, s,
+        )?)?)),
+        "IncDec" => {
+            let (t, v) = two_args(name, &args, s)?;
+            Ok(Microcode::IncDec(
+                decode_inc_dec(&t)?,
+                decode_value_source(&v)?,
+            ))
+        }
+        "BranchRelative" => Ok(Microcode::BranchRelative(decode_branch_test(&one_arg(
+            name, &args, s,
+        )?)?)),
+        "PushStatus" => {
+            let flag = one_arg(name, &args, s)?;
+            let break_flag = match flag.as_str() {
+                "true" => true,
+                "false" => false,
+                _ => return Err(corrupt_microcode(s)),
+            };
+            Ok(Microcode::PushStatus { break_flag })
+        }
+        "Plp" => {
+            no_args(name, &args, s)?;
+            Ok(Microcode::Plp)
+        }
+        "PopPcL" => {
+            no_args(name, &args, s)?;
+            Ok(Microcode::PopPcL)
+        }
+        "PopPcH" => {
+            no_args(name, &args, s)?;
+            Ok(Microcode::PopPcH)
+        }
+        "IncPc" => {
+            no_args(name, &args, s)?;
+            Ok(Microcode::IncPc)
+        }
+        "PushStack" => Ok(Microcode::PushStack(decode_push_target(&one_arg(
+            name, &args, s,
+        )?)?)),
+        "PopStack" => {
+            no_args(name, &args, s)?;
+            Ok(Microcode::PopStack)
+        }
+        "UpdateAFromAlu" => {
+            no_args(name, &args, s)?;
+            Ok(Microcode::UpdateAFromAlu)
+        }
+        "Kill" => {
+            no_args(name, &args, s)?;
+            Ok(Microcode::Kill)
+        }
+        "LoadResetPcL" => {
+            no_args(name, &args, s)?;
+            Ok(Microcode::LoadResetPcL)
+        }
+        "LoadResetPcH" => {
+            no_args(name, &args, s)?;
+            Ok(Microcode::LoadResetPcH)
+        }
+        "LoadNmiPcL" => {
+            no_args(name, &args, s)?;
+            Ok(Microcode::LoadNmiPcL)
+        }
+        "LoadNmiPcH" => {
+            no_args(name, &args, s)?;
+            Ok(Microcode::LoadNmiPcH)
+        }
+        "LoadPcAbsoluteH" => {
+            no_args(name, &args, s)?;
+            Ok(Microcode::LoadPcAbsoluteH)
+        }
+        "LoadIrqPcL" => {
+            no_args(name, &args, s)?;
+            Ok(Microcode::LoadIrqPcL)
+        }
+        "LoadIrqPcH" => {
+            no_args(name, &args, s)?;
+            Ok(Microcode::LoadIrqPcH)
+        }
+        other => Err(unknown_microcode("Microcode", other)),
+    }
+}
+
+// ---------------------------------------------------------------------------
+// CPU section (ticket #193): every live field from `CpuState`.
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+struct InterruptWindowDto {
+    window: String,
+    started_at: Option<u64>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+struct NmiDetectorDto {
+    last_lagged_sample: u64,
+    lagged_sample: u64,
+    asserted_since: u64,
+    pending_asserted_since: u64,
+    consumed_through: u64,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+struct FrozenReasonDto {
+    frozen: bool,
+    halt: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+struct CpuSection {
+    a: u8,
+    x: u8,
+    y: u8,
+    pc: u16,
+    sp: u8,
+    status: u8,
+    ab: u16,
+    db: u8,
+    alu: u8,
+    microcode_queue: Vec<String>,
+    active_interrupt_window: Option<InterruptWindowDto>,
+    nmi_detector: NmiDetectorDto,
+    interrupt_detected: String,
+    irq_input: bool,
+    request_detect_interrupt: Option<bool>,
+    frozen_reason: Option<FrozenReasonDto>,
+}
+
+fn encode_cpu(state: &crate::cpu::CpuState) -> CpuSection {
+    CpuSection {
+        a: state.a,
+        x: state.x,
+        y: state.y,
+        pc: state.pc,
+        sp: state.sp,
+        status: state.status,
+        ab: state.ab,
+        db: state.db,
+        alu: state.alu,
+        microcode_queue: state.microcode_queue.iter().map(encode_microcode).collect(),
+        active_interrupt_window: state.active_interrupt_window.map(|(tag, started_at)| {
+            InterruptWindowDto {
+                window: encode_interrupt_window_tag(tag).to_string(),
+                started_at,
+            }
+        }),
+        nmi_detector: NmiDetectorDto {
+            last_lagged_sample: state.nmi_last_lagged_sample,
+            lagged_sample: state.nmi_lagged_sample,
+            asserted_since: state.nmi_asserted_since,
+            pending_asserted_since: state.nmi_pending_asserted_since,
+            consumed_through: state.nmi_consumed_through,
+        },
+        interrupt_detected: encode_interrupt_type(state.interrupt_detected).to_string(),
+        irq_input: state.irq_input,
+        request_detect_interrupt: state.request_detect_interrupt,
+        frozen_reason: state
+            .frozen_reason
+            .map(|(frozen, halt)| FrozenReasonDto { frozen, halt }),
+    }
+}
+
+fn decode_cpu(dto: &CpuSection) -> Result<crate::cpu::CpuState, SaveError> {
+    let mut microcode_queue = Vec::with_capacity(dto.microcode_queue.len());
+    for entry in &dto.microcode_queue {
+        microcode_queue.push(decode_microcode(entry)?);
+    }
+    Ok(crate::cpu::CpuState {
+        a: dto.a,
+        x: dto.x,
+        y: dto.y,
+        pc: dto.pc,
+        sp: dto.sp,
+        status: dto.status,
+        ab: dto.ab,
+        db: dto.db,
+        alu: dto.alu,
+        microcode_queue,
+        active_interrupt_window: dto
+            .active_interrupt_window
+            .as_ref()
+            .map(|w| decode_interrupt_window_tag(&w.window).map(|tag| (tag, w.started_at)))
+            .transpose()?,
+        nmi_last_lagged_sample: dto.nmi_detector.last_lagged_sample,
+        nmi_lagged_sample: dto.nmi_detector.lagged_sample,
+        nmi_asserted_since: dto.nmi_detector.asserted_since,
+        nmi_pending_asserted_since: dto.nmi_detector.pending_asserted_since,
+        nmi_consumed_through: dto.nmi_detector.consumed_through,
+        interrupt_detected: decode_interrupt_type(&dto.interrupt_detected)?,
+        irq_input: dto.irq_input,
+        request_detect_interrupt: dto.request_detect_interrupt,
+        frozen_reason: dto.frozen_reason.map(|f| (f.frozen, f.halt)),
+    })
+}
+// ---------------------------------------------------------------------------
+// Bus section (ticket #193): reachable RAM as one hex string (0x800
+// bytes — the winning side of the #175/#176 conflict: every access masks
+// with 0x7FF so bytes 0x800..0xF00 are never read), the OAM DMA request
+// latch, the open-bus byte, and the deferred APU length-counter writes.
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+struct DeferredApuWriteDto {
+    apply_at: u64,
+    address: u16,
+    value: u8,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+struct BusSection {
+    ram: String,
+    oam_dma_pending: Option<u8>,
+    open_bus: u8,
+    deferred_apu_writes: Vec<DeferredApuWriteDto>,
+}
+
+fn encode_bus(state: &crate::nes::McuState) -> BusSection {
+    BusSection {
+        ram: hex_encode(&state.ram),
+        oam_dma_pending: state.oam_dma_pending,
+        open_bus: state.open_bus,
+        deferred_apu_writes: state
+            .deferred_apu_writes
+            .iter()
+            .map(|(apply_at, address, value)| DeferredApuWriteDto {
+                apply_at: *apply_at,
+                address: *address,
+                value: *value,
+            })
+            .collect(),
+    }
+}
+
+fn decode_bus(
+    dto: &BusSection,
+) -> Result<([u8; 0x800], Option<u8>, u8, Vec<(u64, u16, u8)>), SaveError> {
+    let raw = hex_decode("bus.ram", &dto.ram)?;
+    if raw.len() != 0x800 {
+        return Err(SaveError::Corrupt(format!(
+            "bus.ram holds {} bytes, expected 2048 (0x800 reachable RAM bytes)",
+            raw.len()
+        )));
+    }
+    let mut ram = [0u8; 0x800];
+    ram.copy_from_slice(&raw);
+    Ok((
+        ram,
+        dto.oam_dma_pending,
+        dto.open_bus,
+        dto.deferred_apu_writes
+            .iter()
+            .map(|w| (w.apply_at, w.address, w.value))
+            .collect(),
+    ))
+}
+// ---------------------------------------------------------------------------
+// DMA section (ticket #193): the DMC DMA transfer phase plus the active
+// OAM transfer, if any.
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+struct DmcDmaDto {
+    phase: String,
+    delay: u8,
+    first_attempt: bool,
+    halt_on_put: bool,
+    addr: u16,
+    halt_bus_addr: u16,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+struct OamActiveDto {
+    page: u8,
+    needs_startup_align: bool,
+    transfer_cycle: u16,
+    latch: u8,
+    needs_pause_align: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+struct DmaSection {
+    dmc: DmcDmaDto,
+    oam: Option<OamActiveDto>,
+}
+
+fn encode_dmc_dma_phase(phase: DmcDmaPhase) -> (&'static str, u8, bool, bool) {
+    match phase {
+        DmcDmaPhase::Inactive => ("Inactive", 0, false, false),
+        DmcDmaPhase::DelayForLoad(n) => ("DelayForLoad", n, false, false),
+        DmcDmaPhase::TryHalt {
+            first_attempt,
+            halt_on_put,
+        } => ("TryHalt", 0, first_attempt, halt_on_put),
+        DmcDmaPhase::AlignOrRead => ("AlignOrRead", 0, false, false),
+        DmcDmaPhase::Dummy => ("Dummy", 0, false, false),
+        DmcDmaPhase::Read => ("Read", 0, false, false),
+        DmcDmaPhase::Unfreeze => ("Unfreeze", 0, false, false),
+    }
+}
+
+fn decode_dmc_dma_phase(dto: &DmcDmaDto) -> Result<DmcDmaPhase, SaveError> {
+    match dto.phase.as_str() {
+        "Inactive" => Ok(DmcDmaPhase::Inactive),
+        "DelayForLoad" => Ok(DmcDmaPhase::DelayForLoad(dto.delay)),
+        "TryHalt" => Ok(DmcDmaPhase::TryHalt {
+            first_attempt: dto.first_attempt,
+            halt_on_put: dto.halt_on_put,
+        }),
+        "AlignOrRead" => Ok(DmcDmaPhase::AlignOrRead),
+        "Dummy" => Ok(DmcDmaPhase::Dummy),
+        "Read" => Ok(DmcDmaPhase::Read),
+        "Unfreeze" => Ok(DmcDmaPhase::Unfreeze),
+        other => Err(SaveError::UnknownEnum {
+            name: "DmcDmaPhase".to_string(),
+            variant: other.to_string(),
+        }),
+    }
+}
+
+fn encode_dma(state: &DmaBusState) -> DmaSection {
+    let (phase, delay, first_attempt, halt_on_put) = encode_dmc_dma_phase(state.dmc.phase);
+    DmaSection {
+        dmc: DmcDmaDto {
+            phase: phase.to_string(),
+            delay,
+            first_attempt,
+            halt_on_put,
+            addr: state.dmc.addr,
+            halt_bus_addr: state.dmc.halt_bus_addr,
+        },
+        oam: state.oam.map(|o| OamActiveDto {
+            page: o.page,
+            needs_startup_align: o.needs_startup_align,
+            transfer_cycle: o.transfer_cycle,
+            latch: o.latch,
+            needs_pause_align: o.needs_pause_align,
+        }),
+    }
+}
+
+fn decode_dma(dto: &DmaSection) -> Result<DmaBusState, SaveError> {
+    Ok(DmaBusState {
+        dmc: DmcDmaState {
+            phase: decode_dmc_dma_phase(&dto.dmc)?,
+            addr: dto.dmc.addr,
+            halt_bus_addr: dto.dmc.halt_bus_addr,
+        },
+        oam: dto.oam.map(|o| crate::dma_bus::OamActive {
+            page: o.page,
+            needs_startup_align: o.needs_startup_align,
+            transfer_cycle: o.transfer_cycle,
+            latch: o.latch,
+            needs_pause_align: o.needs_pause_align,
+        }),
+    })
+}
+// ---------------------------------------------------------------------------
+// APU section (ticket #193): all five channels, the frame counter, the
+// mixer (DC filter as f32 bits), the latched MMC5 expansion mix, and the
+// length-race clobber flags. The audio buffer is excluded (rewritten each
+// frame) and the mixer sample rate is a construction constant.
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+struct PulseDto {
+    timer_period: u16,
+    timer_counter: u16,
+    divider2_period: u8,
+    divider2_counter: u8,
+    length_counter: u8,
+    length_halt: bool,
+    length_enabled: bool,
+    envelope_period: u8,
+    envelope_divider_counter: u8,
+    envelope_counter: u8,
+    envelope_loop: bool,
+    envelope_disabled: bool,
+    envelope_reset_pending: bool,
+    sweep_divider_period: u8,
+    sweep_divider_counter: u8,
+    sweep_reload: bool,
+    sweep_enabled: bool,
+    sweep_negate: bool,
+    sweep_is_second: bool,
+    sweep_shift: u8,
+    duty: u8,
+    sequencer_position: u8,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+struct TriangleDto {
+    timer_period: u16,
+    timer_counter: u16,
+    length_counter: u8,
+    length_halt: bool,
+    length_enabled: bool,
+    linear_counter: u8,
+    linear_halt: bool,
+    linear_reload_value: u8,
+    sequencer_position: u8,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+struct NoiseDto {
+    timer_period: u16,
+    timer_counter: u16,
+    length_counter: u8,
+    length_halt: bool,
+    length_enabled: bool,
+    envelope_period: u8,
+    envelope_divider_counter: u8,
+    envelope_counter: u8,
+    envelope_loop: bool,
+    envelope_disabled: bool,
+    envelope_reset_pending: bool,
+    shifter_short_mode: bool,
+    shifter_val: u16,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+struct DmcDmaRequestDto {
+    kind: String,
+    addr: u16,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+struct DmcDto {
+    sample_address: u8,
+    sample_length: u8,
+    enable_loop: bool,
+    irq_enabled: bool,
+    current_address: u16,
+    bytes_remaining: u16,
+    request_interrupt: bool,
+    dma_pending: bool,
+    dma_request: Option<DmcDmaRequestDto>,
+    shift_register: u8,
+    remain_bits: u8,
+    silence_flag: bool,
+    output: u8,
+    sample_buffer: Option<u8>,
+    timer_period: u16,
+    timer_counter: u16,
+    dac_writes: u64,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+struct LatchedFrameStepDto {
+    irq: bool,
+    length_and_sweep: bool,
+    envelop_and_linear: bool,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+struct PendingFrameModeDto {
+    control_byte: u8,
+    cycles_left: u8,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+struct FrameCounterDto {
+    output_latch: Option<LatchedFrameStepDto>,
+    frame_interrupt: bool,
+    block: u8,
+    cpu_cycles: u32,
+    frame_interrupt_inhibit: bool,
+    pending_mode: Option<PendingFrameModeDto>,
+    mode: String,
+    saved_mode: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+struct MixerDto {
+    sample_accumulator: u32,
+    dc_last_input_bits: u32,
+    dc_last_output_bits: u32,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+struct ExpansionMixDto {
+    pulse1: u8,
+    pulse2: u8,
+    pcm: u8,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+struct ApuSection {
+    pulse1: PulseDto,
+    pulse2: PulseDto,
+    triangle: TriangleDto,
+    noise: NoiseDto,
+    dmc: DmcDto,
+    frame_counter: FrameCounterDto,
+    mixer: MixerDto,
+    expansion: ExpansionMixDto,
+    length_race_clobber: Vec<bool>,
+}
+
+fn encode_apu_pulse(state: &PulseState) -> PulseDto {
+    PulseDto {
+        timer_period: state.timer_period,
+        timer_counter: state.timer_counter,
+        divider2_period: state.divider2_period,
+        divider2_counter: state.divider2_counter,
+        length_counter: state.length_counter,
+        length_halt: state.length_halt,
+        length_enabled: state.length_enabled,
+        envelope_period: state.envelope_period,
+        envelope_divider_counter: state.envelope_divider_counter,
+        envelope_counter: state.envelope_counter,
+        envelope_loop: state.envelope_loop,
+        envelope_disabled: state.envelope_disabled,
+        envelope_reset_pending: state.envelope_reset_pending,
+        sweep_divider_period: state.sweep_divider_period,
+        sweep_divider_counter: state.sweep_divider_counter,
+        sweep_reload: state.sweep_reload,
+        sweep_enabled: state.sweep_enabled,
+        sweep_negate: state.sweep_negate,
+        sweep_is_second: state.sweep_is_second,
+        sweep_shift: state.sweep_shift,
+        duty: state.duty,
+        sequencer_position: state.sequencer_position as u8,
+    }
+}
+
+fn check_sequencer_position(name: &str, position: u8, len: usize) -> Result<usize, SaveError> {
+    let position = position as usize;
+    if position >= len {
+        return Err(SaveError::Corrupt(format!(
+            "apu.{name}.sequencer_position {position} is outside 0..{len}"
+        )));
+    }
+    Ok(position)
+}
+
+fn decode_apu_pulse(dto: &PulseDto) -> Result<PulseState, SaveError> {
+    if dto.duty > 3 {
+        return Err(SaveError::Corrupt(format!(
+            "apu pulse duty {} is outside 0..=3",
+            dto.duty
+        )));
+    }
+    Ok(PulseState {
+        timer_period: dto.timer_period,
+        timer_counter: dto.timer_counter,
+        divider2_period: dto.divider2_period,
+        divider2_counter: dto.divider2_counter,
+        length_counter: dto.length_counter,
+        length_halt: dto.length_halt,
+        length_enabled: dto.length_enabled,
+        envelope_period: dto.envelope_period,
+        envelope_divider_counter: dto.envelope_divider_counter,
+        envelope_counter: dto.envelope_counter,
+        envelope_loop: dto.envelope_loop,
+        envelope_disabled: dto.envelope_disabled,
+        envelope_reset_pending: dto.envelope_reset_pending,
+        sweep_divider_period: dto.sweep_divider_period,
+        sweep_divider_counter: dto.sweep_divider_counter,
+        sweep_reload: dto.sweep_reload,
+        sweep_enabled: dto.sweep_enabled,
+        sweep_negate: dto.sweep_negate,
+        sweep_is_second: dto.sweep_is_second,
+        sweep_shift: dto.sweep_shift,
+        duty: dto.duty,
+        sequencer_position: check_sequencer_position("pulse", dto.sequencer_position, 8)?,
+    })
+}
+
+fn encode_triangle(state: &TriangleState) -> TriangleDto {
+    TriangleDto {
+        timer_period: state.timer_period,
+        timer_counter: state.timer_counter,
+        length_counter: state.length_counter,
+        length_halt: state.length_halt,
+        length_enabled: state.length_enabled,
+        linear_counter: state.linear_counter,
+        linear_halt: state.linear_halt,
+        linear_reload_value: state.linear_reload_value,
+        sequencer_position: state.sequencer_position as u8,
+    }
+}
+
+fn decode_triangle(dto: &TriangleDto) -> Result<TriangleState, SaveError> {
+    Ok(TriangleState {
+        timer_period: dto.timer_period,
+        timer_counter: dto.timer_counter,
+        length_counter: dto.length_counter,
+        length_halt: dto.length_halt,
+        length_enabled: dto.length_enabled,
+        linear_counter: dto.linear_counter,
+        linear_halt: dto.linear_halt,
+        linear_reload_value: dto.linear_reload_value,
+        sequencer_position: check_sequencer_position("triangle", dto.sequencer_position, 32)?,
+    })
+}
+
+fn encode_noise(state: &NoiseState) -> NoiseDto {
+    NoiseDto {
+        timer_period: state.timer_period,
+        timer_counter: state.timer_counter,
+        length_counter: state.length_counter,
+        length_halt: state.length_halt,
+        length_enabled: state.length_enabled,
+        envelope_period: state.envelope_period,
+        envelope_divider_counter: state.envelope_divider_counter,
+        envelope_counter: state.envelope_counter,
+        envelope_loop: state.envelope_loop,
+        envelope_disabled: state.envelope_disabled,
+        envelope_reset_pending: state.envelope_reset_pending,
+        shifter_short_mode: state.shifter_short_mode,
+        shifter_val: state.shifter_val,
+    }
+}
+
+fn decode_noise(dto: &NoiseDto) -> Result<NoiseState, SaveError> {
+    Ok(NoiseState {
+        timer_period: dto.timer_period,
+        timer_counter: dto.timer_counter,
+        length_counter: dto.length_counter,
+        length_halt: dto.length_halt,
+        length_enabled: dto.length_enabled,
+        envelope_period: dto.envelope_period,
+        envelope_divider_counter: dto.envelope_divider_counter,
+        envelope_counter: dto.envelope_counter,
+        envelope_loop: dto.envelope_loop,
+        envelope_disabled: dto.envelope_disabled,
+        envelope_reset_pending: dto.envelope_reset_pending,
+        shifter_short_mode: dto.shifter_short_mode,
+        shifter_val: dto.shifter_val,
+    })
+}
+
+fn encode_dmc(state: &DmcState) -> DmcDto {
+    DmcDto {
+        sample_address: state.sample_address,
+        sample_length: state.sample_length,
+        enable_loop: state.enable_loop,
+        irq_enabled: state.irq_enabled,
+        current_address: state.current_address,
+        bytes_remaining: state.bytes_remaining,
+        request_interrupt: state.request_interrupt,
+        dma_pending: state.dma_pending,
+        dma_request: state.dma_request.map(|r| DmcDmaRequestDto {
+            kind: if r.is_load {
+                "Load".to_string()
+            } else {
+                "Reload".to_string()
+            },
+            addr: r.addr,
+        }),
+        shift_register: state.shift_register,
+        remain_bits: state.remain_bits,
+        silence_flag: state.silence_flag,
+        output: state.output,
+        sample_buffer: state.sample_buffer,
+        timer_period: state.timer_period,
+        timer_counter: state.timer_counter,
+        dac_writes: state.dac_writes,
+    }
+}
+
+fn decode_dmc(dto: &DmcDto) -> Result<DmcState, SaveError> {
+    let dma_request = dto
+        .dma_request
+        .as_ref()
+        .map(|r| match r.kind.as_str() {
+            "Load" => Ok(DmcDmaRequestState {
+                is_load: true,
+                addr: r.addr,
+            }),
+            "Reload" => Ok(DmcDmaRequestState {
+                is_load: false,
+                addr: r.addr,
+            }),
+            other => Err(SaveError::UnknownEnum {
+                name: "DmcDmaType".to_string(),
+                variant: other.to_string(),
+            }),
+        })
+        .transpose()?;
+    Ok(DmcState {
+        sample_address: dto.sample_address,
+        sample_length: dto.sample_length,
+        enable_loop: dto.enable_loop,
+        irq_enabled: dto.irq_enabled,
+        current_address: dto.current_address,
+        bytes_remaining: dto.bytes_remaining,
+        request_interrupt: dto.request_interrupt,
+        dma_pending: dto.dma_pending,
+        dma_request,
+        shift_register: dto.shift_register,
+        remain_bits: dto.remain_bits,
+        silence_flag: dto.silence_flag,
+        output: dto.output,
+        sample_buffer: dto.sample_buffer,
+        timer_period: dto.timer_period,
+        timer_counter: dto.timer_counter,
+        dac_writes: dto.dac_writes,
+    })
+}
+
+fn encode_frame_counter_mode(mode: FrameCounterModeTag) -> &'static str {
+    match mode {
+        FrameCounterModeTag::FourStep => "FourStep",
+        FrameCounterModeTag::FiveStep => "FiveStep",
+    }
+}
+
+fn decode_frame_counter_mode(s: &str) -> Result<FrameCounterModeTag, SaveError> {
+    match s {
+        "FourStep" => Ok(FrameCounterModeTag::FourStep),
+        "FiveStep" => Ok(FrameCounterModeTag::FiveStep),
+        other => Err(SaveError::UnknownEnum {
+            name: "FrameCounterMode".to_string(),
+            variant: other.to_string(),
+        }),
+    }
+}
+
+fn encode_apu(state: &ApuState) -> ApuSection {
+    ApuSection {
+        pulse1: encode_apu_pulse(&state.pulse1),
+        pulse2: encode_apu_pulse(&state.pulse2),
+        triangle: encode_triangle(&state.triangle),
+        noise: encode_noise(&state.noise),
+        dmc: encode_dmc(&state.dmc),
+        frame_counter: FrameCounterDto {
+            output_latch: state
+                .frame_counter
+                .output_latch
+                .map(|step| LatchedFrameStepDto {
+                    irq: step.irq,
+                    length_and_sweep: step.length_and_sweep,
+                    envelop_and_linear: step.envelop_and_linear,
+                }),
+            frame_interrupt: state.frame_counter.frame_interrupt,
+            block: state.frame_counter.block,
+            cpu_cycles: state.frame_counter.cpu_cycles,
+            frame_interrupt_inhibit: state.frame_counter.frame_interrupt_inhibit,
+            pending_mode: state
+                .frame_counter
+                .pending_mode
+                .map(|p| PendingFrameModeDto {
+                    control_byte: p.control_byte,
+                    cycles_left: p.cycles_left,
+                }),
+            mode: encode_frame_counter_mode(state.frame_counter.mode).to_string(),
+            saved_mode: encode_frame_counter_mode(state.frame_counter.saved_mode).to_string(),
+        },
+        mixer: MixerDto {
+            sample_accumulator: state.mixer.sample_accumulator,
+            dc_last_input_bits: state.mixer.dc_last_input_bits,
+            dc_last_output_bits: state.mixer.dc_last_output_bits,
+        },
+        expansion: ExpansionMixDto {
+            pulse1: state.expansion.pulse1,
+            pulse2: state.expansion.pulse2,
+            pcm: state.expansion.pcm,
+        },
+        length_race_clobber: state.length_race_clobber.to_vec(),
+    }
+}
+
+fn decode_apu(dto: &ApuSection) -> Result<ApuState, SaveError> {
+    if dto.length_race_clobber.len() != 4 {
+        return Err(SaveError::Corrupt(format!(
+            "apu.length_race_clobber holds {} entries, expected 4",
+            dto.length_race_clobber.len()
+        )));
+    }
+    let mut length_race_clobber = [false; 4];
+    length_race_clobber.copy_from_slice(&dto.length_race_clobber);
+    Ok(ApuState {
+        pulse1: decode_apu_pulse(&dto.pulse1)?,
+        pulse2: decode_apu_pulse(&dto.pulse2)?,
+        triangle: decode_triangle(&dto.triangle)?,
+        noise: decode_noise(&dto.noise)?,
+        dmc: decode_dmc(&dto.dmc)?,
+        frame_counter: FrameCounterState {
+            output_latch: dto
+                .frame_counter
+                .output_latch
+                .map(|step| LatchedFrameStepState {
+                    irq: step.irq,
+                    length_and_sweep: step.length_and_sweep,
+                    envelop_and_linear: step.envelop_and_linear,
+                }),
+            frame_interrupt: dto.frame_counter.frame_interrupt,
+            block: dto.frame_counter.block,
+            cpu_cycles: dto.frame_counter.cpu_cycles,
+            frame_interrupt_inhibit: dto.frame_counter.frame_interrupt_inhibit,
+            pending_mode: dto
+                .frame_counter
+                .pending_mode
+                .map(|p| PendingFrameModeState {
+                    control_byte: p.control_byte,
+                    cycles_left: p.cycles_left,
+                }),
+            mode: decode_frame_counter_mode(&dto.frame_counter.mode)?,
+            saved_mode: decode_frame_counter_mode(&dto.frame_counter.saved_mode)?,
+        },
+        mixer: MixerState {
+            sample_accumulator: dto.mixer.sample_accumulator,
+            dc_last_input_bits: dto.mixer.dc_last_input_bits,
+            dc_last_output_bits: dto.mixer.dc_last_output_bits,
+        },
+        expansion: crate::nes::apu::ExpansionMix {
+            pulse1: dto.expansion.pulse1,
+            pulse2: dto.expansion.pulse2,
+            pcm: dto.expansion.pcm,
+        },
+        length_race_clobber,
+    })
+}
+// ---------------------------------------------------------------------------
+// Controller section (ticket #193): shift-register sampling state for
+// both pads plus the in-flight Zapper trigger countdown. Live held
+// buttons, Zapper aim/connection, and host configuration are excluded
+// per the spec (host-side input, not emulation state).
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+struct PadDto {
+    strobe: bool,
+    locked_bits: u8,
+    bit_position: u8,
+    oe: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+struct ControllerSection {
+    a: PadDto,
+    b: PadDto,
+    zapper_trigger_cycles: u32,
+}
+
+fn encode_pad(strobe: bool, locked_bits: u8, bit_position: u8, oe: bool) -> PadDto {
+    PadDto {
+        strobe,
+        locked_bits,
+        bit_position,
+        oe,
+    }
+}
+
+fn encode_controller(state: &ControllerState) -> ControllerSection {
+    ControllerSection {
+        a: encode_pad(
+            state.a.strobe,
+            state.a.locked_bits,
+            state.a.bit_position,
+            state.a.oe,
+        ),
+        b: encode_pad(
+            state.b.strobe,
+            state.b.locked_bits,
+            state.b.bit_position,
+            state.b.oe,
+        ),
+        zapper_trigger_cycles: state.zapper_trigger_cycles,
+    }
+}
+
+fn decode_controller(dto: &ControllerSection) -> ControllerState {
+    crate::nes::controller::ControllerState {
+        a: crate::nes::controller::PadState {
+            strobe: dto.a.strobe,
+            locked_bits: dto.a.locked_bits,
+            bit_position: dto.a.bit_position,
+            oe: dto.a.oe,
+        },
+        b: crate::nes::controller::PadState {
+            strobe: dto.b.strobe,
+            locked_bits: dto.b.locked_bits,
+            bit_position: dto.b.bit_position,
+            oe: dto.b.oe,
+        },
+        zapper_trigger_cycles: dto.zapper_trigger_cycles,
+    }
+}
+
+// ---------------------------------------------------------------------------
+// PPU section (ticket #193): timing, raw register bits, latches, memory,
+// and evaluation state. The framebuffer, palette-index buffer,
+// color-split log, and theme stay excluded per the spec (rebuilt by
+// rendering). The save-point boundary (scanline 261, dot 0..=2) is
+// validated on load as before.
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+struct SpriteDto {
+    y: u8,
+    tile_idx: u8,
+    attributes: u8,
+    x: u8,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+struct SpriteRowDto {
+    x: u8,
+    attributes: u8,
+    low: u8,
+    high: u8,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+struct SpriteEvalDto {
+    oam_index: u8,
+    byte_index: u8,
+    start_index: u8,
+    mode: String,
+    mode_count: u8,
+    pending_sprite_bytes: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+struct SpriteManagerDto {
+    overflow_pending: bool,
+    eval: SpriteEvalDto,
+    current_scanline_oam: Vec<SpriteDto>,
+    next_scanline_oam: Vec<SpriteDto>,
+    current_zero_sprite: Option<SpriteDto>,
+    next_zero_sprite: Option<SpriteDto>,
+    rows: Vec<SpriteRowDto>,
+    rows_scanline: Option<u8>,
+    zero_row_idx: Option<u64>,
+    oam_copybuffer: u8,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+struct TileCacheDto {
+    bitplane_low: u8,
+    bitplane_high: u8,
+    palette_idx: u8,
+    remaining: u8,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+struct BackgroundActivationDto {
+    screen_x: u8,
+    vram_addr: u16,
+    fine_x: u8,
+    ctrl: u8,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+struct PpudataLastReadDto {
+    cycle: u64,
+    value: u8,
+}
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 struct PpuSection {
     scanline: u16,
     dot: u16,
+    odd_frame: bool,
+    frame_no: u64,
+    cycle: u64,
+    vblank_entered: bool,
+    suppress_vblank_pending: bool,
+    ren_latched_at_338: bool,
+    ctrl: u8,
+    mask: u8,
+    status: u8,
+    vram_addr: u16,
+    temp_vram_addr: u16,
+    fine_x: u8,
+    write_toggle: bool,
+    ppudata_buffer: u8,
+    bus_latch: u8,
+    bus_latch_decay_deadlines: Vec<u64>,
+    bus_latch_earliest_decay: u64,
+    palette: String,
+    oam: String,
+    oam_addr: u8,
+    sprite: SpriteManagerDto,
+    tile_cache: TileCacheDto,
+    background_anchor: Option<BackgroundActivationDto>,
+    pending_background_activation: Option<BackgroundActivationDto>,
+    ppudata_last_read: Option<PpudataLastReadDto>,
+}
+
+fn encode_sprite(sprite: &Sprite) -> SpriteDto {
+    SpriteDto {
+        y: sprite.y,
+        tile_idx: sprite.tile_idx,
+        attributes: sprite.attributes.into_bytes()[0],
+        x: sprite.x,
+    }
+}
+
+fn decode_sprite(dto: &SpriteDto) -> Sprite {
+    Sprite {
+        y: dto.y,
+        tile_idx: dto.tile_idx,
+        attributes: Attribute::from_bytes([dto.attributes]),
+        x: dto.x,
+    }
+}
+
+fn encode_sprite_eval(eval: &SpriteOverflowEvalState) -> SpriteEvalDto {
+    let (mode, mode_count) = match eval.mode {
+        SpriteEvalModeTag::Idle => ("Idle", 0),
+        SpriteEvalModeTag::ScanY => ("ScanY", 0),
+        SpriteEvalModeTag::CopySprite(n) => ("CopySprite", n),
+        SpriteEvalModeTag::OverflowSearchDelay => ("OverflowSearchDelay", 0),
+        SpriteEvalModeTag::OverflowSearch => ("OverflowSearch", 0),
+        SpriteEvalModeTag::Done => ("Done", 0),
+    };
+    SpriteEvalDto {
+        oam_index: eval.oam_index,
+        byte_index: eval.byte_index,
+        start_index: eval.start_index,
+        mode: mode.to_string(),
+        mode_count,
+        pending_sprite_bytes: hex_encode(&eval.pending_sprite_bytes),
+    }
+}
+
+fn decode_sprite_eval(dto: &SpriteEvalDto) -> Result<SpriteOverflowEvalState, SaveError> {
+    let mode = match dto.mode.as_str() {
+        "Idle" => SpriteEvalModeTag::Idle,
+        "ScanY" => SpriteEvalModeTag::ScanY,
+        "CopySprite" => SpriteEvalModeTag::CopySprite(dto.mode_count),
+        "OverflowSearchDelay" => SpriteEvalModeTag::OverflowSearchDelay,
+        "OverflowSearch" => SpriteEvalModeTag::OverflowSearch,
+        "Done" => SpriteEvalModeTag::Done,
+        other => {
+            return Err(SaveError::UnknownEnum {
+                name: "SpriteEvalMode".to_string(),
+                variant: other.to_string(),
+            });
+        }
+    };
+    let raw = hex_decode(
+        "ppu.sprite.eval.pending_sprite_bytes",
+        &dto.pending_sprite_bytes,
+    )?;
+    if raw.len() != 4 {
+        return Err(SaveError::Corrupt(format!(
+            "ppu.sprite.eval.pending_sprite_bytes holds {} bytes, expected 4",
+            raw.len()
+        )));
+    }
+    let mut pending_sprite_bytes = [0u8; 4];
+    pending_sprite_bytes.copy_from_slice(&raw);
+    Ok(SpriteOverflowEvalState {
+        oam_index: dto.oam_index,
+        byte_index: dto.byte_index,
+        start_index: dto.start_index,
+        mode,
+        pending_sprite_bytes,
+    })
+}
+
+fn encode_background_activation(a: &BackgroundActivationState) -> BackgroundActivationDto {
+    BackgroundActivationDto {
+        screen_x: a.screen_x,
+        vram_addr: a.vram_addr,
+        fine_x: a.fine_x,
+        ctrl: a.ctrl,
+    }
+}
+
+fn decode_background_activation(dto: &BackgroundActivationDto) -> BackgroundActivationState {
+    BackgroundActivationState {
+        screen_x: dto.screen_x,
+        vram_addr: dto.vram_addr,
+        fine_x: dto.fine_x,
+        ctrl: dto.ctrl,
+    }
+}
+
+fn encode_ppu(state: &PpuState) -> PpuSection {
+    PpuSection {
+        scanline: state.scanline,
+        dot: state.dot,
+        odd_frame: state.odd_frame,
+        frame_no: state.frame_no as u64,
+        cycle: state.cycle,
+        vblank_entered: state.vblank_entered,
+        suppress_vblank_pending: state.suppress_vblank_pending,
+        ren_latched_at_338: state.ren_latched_at_338,
+        ctrl: state.registers_ctrl,
+        mask: state.registers_mask,
+        status: state.registers_status,
+        vram_addr: state.vram_addr,
+        temp_vram_addr: state.temp_vram_addr,
+        fine_x: state.fine_x,
+        write_toggle: state.write_toggle,
+        ppudata_buffer: state.ppudata_buffer,
+        bus_latch: state.bus_latch,
+        bus_latch_decay_deadlines: state.bus_latch_decay_deadlines.to_vec(),
+        bus_latch_earliest_decay: state.bus_latch_earliest_decay,
+        palette: hex_encode(&state.palette_data),
+        oam: hex_encode(&state.oam_data),
+        oam_addr: state.oam_addr,
+        sprite: SpriteManagerDto {
+            overflow_pending: state.sprite.overflow_pending,
+            eval: encode_sprite_eval(&state.sprite.eval),
+            current_scanline_oam: state
+                .sprite
+                .current_scanline_oam
+                .iter()
+                .map(encode_sprite)
+                .collect(),
+            next_scanline_oam: state
+                .sprite
+                .next_scanline_oam
+                .iter()
+                .map(encode_sprite)
+                .collect(),
+            current_zero_sprite: state.sprite.current_zero_sprite.as_ref().map(encode_sprite),
+            next_zero_sprite: state.sprite.next_zero_sprite.as_ref().map(encode_sprite),
+            rows: state
+                .sprite
+                .rows
+                .iter()
+                .map(|r| SpriteRowDto {
+                    x: r.x,
+                    attributes: r.attributes,
+                    low: r.low,
+                    high: r.high,
+                })
+                .collect(),
+            rows_scanline: state.sprite.rows_scanline,
+            zero_row_idx: state.sprite.zero_row_idx.map(|i| i as u64),
+            oam_copybuffer: state.sprite.oam_copybuffer,
+        },
+        tile_cache: TileCacheDto {
+            bitplane_low: state.tile_cache.bitplane_low,
+            bitplane_high: state.tile_cache.bitplane_high,
+            palette_idx: state.tile_cache.palette_idx,
+            remaining: state.tile_cache.remaining,
+        },
+        background_anchor: state
+            .background_anchor
+            .as_ref()
+            .map(encode_background_activation),
+        pending_background_activation: state
+            .pending_background_activation
+            .as_ref()
+            .map(encode_background_activation),
+        ppudata_last_read: state
+            .ppudata_last_read
+            .map(|(cycle, value)| PpudataLastReadDto { cycle, value }),
+    }
+}
+
+fn decode_ppu(dto: &PpuSection) -> Result<PpuState, SaveError> {
+    let palette_raw = hex_decode("ppu.palette", &dto.palette)?;
+    if palette_raw.len() != 0x20 {
+        return Err(SaveError::Corrupt(format!(
+            "ppu.palette holds {} bytes, expected 32",
+            palette_raw.len()
+        )));
+    }
+    let mut palette_data = [0u8; 0x20];
+    palette_data.copy_from_slice(&palette_raw);
+    let oam_raw = hex_decode("ppu.oam", &dto.oam)?;
+    if oam_raw.len() != 256 {
+        return Err(SaveError::Corrupt(format!(
+            "ppu.oam holds {} bytes, expected 256",
+            oam_raw.len()
+        )));
+    }
+    let mut oam_data = [0u8; 256];
+    oam_data.copy_from_slice(&oam_raw);
+    if dto.bus_latch_decay_deadlines.len() != 8 {
+        return Err(SaveError::Corrupt(format!(
+            "ppu.bus_latch_decay_deadlines holds {} entries, expected 8",
+            dto.bus_latch_decay_deadlines.len()
+        )));
+    }
+    let mut bus_latch_decay_deadlines = [0u64; 8];
+    bus_latch_decay_deadlines.copy_from_slice(&dto.bus_latch_decay_deadlines);
+    let eval = decode_sprite_eval(&dto.sprite.eval)?;
+    let mut rows = Vec::with_capacity(dto.sprite.rows.len());
+    for r in &dto.sprite.rows {
+        rows.push(SpriteRowState {
+            x: r.x,
+            attributes: r.attributes,
+            low: r.low,
+            high: r.high,
+        });
+    }
+    Ok(PpuState {
+        scanline: dto.scanline,
+        dot: dto.dot,
+        odd_frame: dto.odd_frame,
+        frame_no: dto.frame_no as usize,
+        cycle: dto.cycle,
+        vblank_entered: dto.vblank_entered,
+        suppress_vblank_pending: dto.suppress_vblank_pending,
+        ren_latched_at_338: dto.ren_latched_at_338,
+        registers_ctrl: dto.ctrl,
+        registers_mask: dto.mask,
+        registers_status: dto.status,
+        vram_addr: dto.vram_addr,
+        temp_vram_addr: dto.temp_vram_addr,
+        fine_x: dto.fine_x,
+        write_toggle: dto.write_toggle,
+        ppudata_buffer: dto.ppudata_buffer,
+        bus_latch: dto.bus_latch,
+        bus_latch_decay_deadlines,
+        bus_latch_earliest_decay: dto.bus_latch_earliest_decay,
+        palette_data,
+        oam_data,
+        oam_addr: dto.oam_addr,
+        sprite: SpriteManagerState {
+            overflow_pending: dto.sprite.overflow_pending,
+            eval,
+            current_scanline_oam: dto
+                .sprite
+                .current_scanline_oam
+                .iter()
+                .map(decode_sprite)
+                .collect(),
+            next_scanline_oam: dto
+                .sprite
+                .next_scanline_oam
+                .iter()
+                .map(decode_sprite)
+                .collect(),
+            current_zero_sprite: dto.sprite.current_zero_sprite.as_ref().map(decode_sprite),
+            next_zero_sprite: dto.sprite.next_zero_sprite.as_ref().map(decode_sprite),
+            rows,
+            rows_scanline: dto.sprite.rows_scanline,
+            zero_row_idx: dto.sprite.zero_row_idx.map(|i| i as usize),
+            oam_copybuffer: dto.sprite.oam_copybuffer,
+        },
+        tile_cache: TileCacheState {
+            bitplane_low: dto.tile_cache.bitplane_low,
+            bitplane_high: dto.tile_cache.bitplane_high,
+            palette_idx: dto.tile_cache.palette_idx,
+            remaining: dto.tile_cache.remaining,
+        },
+        background_anchor: dto
+            .background_anchor
+            .as_ref()
+            .map(decode_background_activation),
+        pending_background_activation: dto
+            .pending_background_activation
+            .as_ref()
+            .map(decode_background_activation),
+        ppudata_last_read: dto.ppudata_last_read.as_ref().map(|r| (r.cycle, r.value)),
+    })
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -820,22 +2788,19 @@ where
         .cartridge()
         .capture_snapshot()
         .map_err(SaveError::Mapper)?;
-    let timing = machine.mcu().ppu().timing();
     let (mapper_tag, mapper_payload) = encode_mapper(&mapper_state);
+    let mcu_state = machine.mcu().capture_mcu_state();
     let dto = SaveDto {
         format_version: SAVE_FORMAT_VERSION,
         rom_sha256: hex_encode(&rom_sha256(machine.rom())),
         frame: machine.frame_no() as u64,
         clock: machine.clock_cycles(),
-        cpu: CpuSection {},
-        bus: BusSection {},
-        dma: DmaSection {},
-        ppu: PpuSection {
-            scanline: timing.scanline(),
-            dot: timing.dot(),
-        },
-        apu: ApuSection {},
-        controller: ControllerSection {},
+        cpu: encode_cpu(&machine.cpu().capture_cpu_state()),
+        bus: encode_bus(&mcu_state),
+        dma: encode_dma(&machine.dma_bus().capture_dma_bus_state()),
+        ppu: encode_ppu(&mcu_state.ppu),
+        apu: encode_apu(&mcu_state.apu),
+        controller: encode_controller(&mcu_state.controller),
         cartridge: CartridgeSectionDto {
             mapper: mapper_tag,
             memory: encode_memory(&memory_snapshot),
@@ -900,6 +2865,12 @@ where
     // each restore rejects a foreign variant before mutating.
     let mapper_state = decode_mapper(&dto.cartridge.mapper, dto.cartridge.state)?;
     let memory_snapshot = decode_memory(&dto.cartridge.memory)?;
+    let cpu_state = decode_cpu(&dto.cpu)?;
+    let (ram, oam_dma_pending, open_bus, deferred_apu_writes) = decode_bus(&dto.bus)?;
+    let dma_state = decode_dma(&dto.dma)?;
+    let ppu_state = decode_ppu(&dto.ppu)?;
+    let apu_state = decode_apu(&dto.apu)?;
+    let controller_state = decode_controller(&dto.controller);
 
     if dto.ppu.scanline != SAVE_SCANLINE {
         return Err(SaveError::Corrupt(format!(
@@ -919,6 +2890,17 @@ where
         .cartridge_mut()
         .restore_snapshot(&mapper_state, &memory_snapshot)
         .map_err(SaveError::Mapper)?;
+    machine.cpu_mut().restore_cpu_state(&cpu_state);
+    machine.dma_bus_mut().restore_dma_bus_state(&dma_state);
+    machine.mcu_mut().restore_mcu_state(&crate::nes::McuState {
+        ram,
+        ppu: ppu_state,
+        apu: apu_state,
+        controller: controller_state,
+        oam_dma_pending,
+        open_bus,
+        deferred_apu_writes,
+    });
     machine.mcu_mut().ppu_mut().timing_mut().set_save_point(
         dto.ppu.scanline,
         dto.ppu.dot,
@@ -1019,9 +3001,150 @@ mod tests {
         assert_eq!(first, second, "re-save must be byte-identical");
     }
 
+    /// NROM-16K exercise ROM: reset code enables NMI + rendering, pokes
+    /// scroll/VRAM/OAM, pulses the controller strobe, programs all five
+    /// APU channels (DMC loops a zero byte, so DMA traffic never stops),
+    /// and spins on `INC $00`. NMI does `INC $02`; IRQ just returns. The
+    /// frame IRQ stays enabled, so interrupt detectors, the DMC DMA
+    /// engine, and the frame counter all see live traffic every frame.
+    fn rich_nrom_file() -> INesFile {
+        let mut prg = vec![0u8; 16 * 1024];
+        let mut code: Vec<u8> = Vec::new();
+        let mut sta = |addr: u16, body: &mut Vec<u8>| {
+            body.push(0x8D);
+            body.push((addr & 0xFF) as u8);
+            body.push((addr >> 8) as u8);
+        };
+        let mut lda_sta = |value: u8, addr: u16, body: &mut Vec<u8>| {
+            body.push(0xA9);
+            body.push(value);
+            sta(addr, body);
+        };
+        // SEI CLD LDX #$FF TXS.
+        code.extend_from_slice(&[0x78, 0xD8, 0xA2, 0xFF, 0x9A]);
+        lda_sta(0x88, 0x2000, &mut code);
+        lda_sta(0x1E, 0x2001, &mut code);
+        // Scroll + VRAM origin, then two nametable writes.
+        lda_sta(0x00, 0x2005, &mut code);
+        sta(0x2005, &mut code);
+        sta(0x2006, &mut code);
+        sta(0x2006, &mut code);
+        lda_sta(0x55, 0x2007, &mut code);
+        sta(0x2007, &mut code);
+        // OAM: index $10 = $AA.
+        lda_sta(0x10, 0x2003, &mut code);
+        lda_sta(0xAA, 0x2004, &mut code);
+        // Controller strobe pulse (falls back low).
+        lda_sta(0x01, 0x4016, &mut code);
+        lda_sta(0x00, 0x4016, &mut code);
+        // APU: pulse1, triangle, noise with loaded lengths; DMC loops.
+        lda_sta(0xBF, 0x4000, &mut code);
+        lda_sta(0x08, 0x4001, &mut code);
+        lda_sta(0x50, 0x4002, &mut code);
+        lda_sta(0x08, 0x4003, &mut code);
+        lda_sta(0x80, 0x4008, &mut code);
+        lda_sta(0x40, 0x400A, &mut code);
+        lda_sta(0x08, 0x400B, &mut code);
+        lda_sta(0xBF, 0x400C, &mut code);
+        lda_sta(0x05, 0x400E, &mut code);
+        lda_sta(0x08, 0x400F, &mut code);
+        lda_sta(0x80, 0x4010, &mut code);
+        lda_sta(0x00, 0x4012, &mut code);
+        sta(0x4013, &mut code);
+        lda_sta(0x1F, 0x4015, &mut code);
+        // 4-step frame sequencer, frame IRQ enabled.
+        lda_sta(0x00, 0x4017, &mut code);
+        // Main loop: INC $00; JMP loop.
+        let loop_addr = 0x8000 + code.len() as u16;
+        code.push(0xE6);
+        code.push(0x00);
+        code.push(0x4C);
+        code.push((loop_addr & 0xFF) as u8);
+        code.push((loop_addr >> 8) as u8);
+        // NMI handler: INC $02; RTI. IRQ handler: RTI.
+        let nmi_addr = 0x8000 + code.len() as u16;
+        code.extend_from_slice(&[0xE6, 0x02, 0x40]);
+        let irq_addr = 0x8000 + code.len() as u16;
+        code.push(0x40);
+        prg[..code.len()].copy_from_slice(&code);
+        // Vectors at $FFFA/$FFFC/$FFFE (mirror of PRG tail).
+        let put = |prg: &mut Vec<u8>, cpu_addr: u16, value: u16| {
+            // 16 KiB NROM mirrors $C000-$FFFF onto $8000-$BFFF.
+            let off = ((cpu_addr - 0x8000) as usize) % prg.len();
+            prg[off] = (value & 0xFF) as u8;
+            prg[off + 1] = (value >> 8) as u8;
+        };
+        put(&mut prg, 0xFFFA, nmi_addr);
+        put(&mut prg, 0xFFFC, 0x8000);
+        put(&mut prg, 0xFFFE, irq_addr);
+        let mut rom = Vec::new();
+        rom.extend_from_slice(&[0x4e, 0x45, 0x53, 0x1a, 0x01, 0x01, 0x00, 0x00]);
+        rom.extend_from_slice(&[0; 8]);
+        rom.extend_from_slice(&prg);
+        rom.extend_from_slice(&[0u8; 8 * 1024]);
+        INesFile::new(rom).unwrap()
+    }
+
+    /// Run `frames` frames, collecting each frame's pixels and audio.
+    fn run_frames<P>(machine: &mut NesMachine<P>, frames: usize) -> (Vec<Vec<u8>>, Vec<Vec<f32>>)
+    where
+        P: Plugin<NesMcu>,
+    {
+        let mut pixels = Vec::with_capacity(frames);
+        let mut audio = Vec::with_capacity(frames);
+        for _ in 0..frames {
+            let out = machine.process_frame();
+            pixels.push(out.frame.to_vec());
+            audio.push(out.audio.to_vec());
+        }
+        (pixels, audio)
+    }
+
+    #[test]
+    fn resumed_run_is_bit_exact_with_continuous_run() {
+        let file = rich_nrom_file();
+        let mut continuous = machine_for(&file);
+        let (head_pixels, head_audio) = run_frames(&mut continuous, 5);
+        let save = save_state_json(&continuous).unwrap();
+        let saved_frame = continuous.frame_no();
+        let saved_clock = continuous.clock_cycles();
+        let (tail_pixels, tail_audio) = run_frames(&mut continuous, 8);
+
+        let mut resumed = machine_for(&file);
+        load_state_json(&mut resumed, &save).unwrap();
+        assert_eq!(resumed.frame_no(), saved_frame, "resume at same frame");
+        assert_eq!(resumed.clock_cycles(), saved_clock, "resume at same clock");
+        let (re_pixels, re_audio) = run_frames(&mut resumed, 8);
+
+        assert_eq!(head_pixels.len(), 5);
+        assert_eq!(head_audio.len(), 5);
+        assert_eq!(re_pixels, tail_pixels, "framebuffer bit-exact after resume");
+        assert_eq!(re_audio, tail_audio, "audio bit-exact after resume");
+        assert_eq!(resumed.frame_no(), continuous.frame_no());
+        assert_eq!(resumed.clock_cycles(), continuous.clock_cycles());
+    }
+
+    #[test]
+    fn resume_lands_on_the_same_frame_and_clock() {
+        let file = rich_nrom_file();
+        let mut machine = machine_for(&file);
+        run_frames(&mut machine, 3);
+        let save = save_state_json(&machine).unwrap();
+        let saved_frame = machine.frame_no();
+        let saved_clock = machine.clock_cycles();
+
+        let mut resumed = machine_for(&file);
+        assert_ne!(resumed.frame_no(), saved_frame);
+        load_state_json(&mut resumed, &save).unwrap();
+        assert_eq!(resumed.frame_no(), saved_frame);
+        assert_eq!(resumed.clock_cycles(), saved_clock);
+        assert_eq!(resumed.mcu().ppu().timing().scanline(), SAVE_SCANLINE);
+        assert!(resumed.mcu().ppu().timing().dot() <= MAX_SAVE_DOT);
+    }
+
     #[test]
     fn format_version_is_a_single_shared_constant() {
-        assert_eq!(SAVE_FORMAT_VERSION, 1);
+        assert_eq!(SAVE_FORMAT_VERSION, 2);
         let file = nrom_file();
         let machine = machine_for(&file);
         let save = save_state_json(&machine).unwrap();
@@ -1069,7 +3192,7 @@ mod tests {
         let error = load_state_json(&mut machine, &tampered).unwrap_err();
         assert_eq!(
             error.to_string(),
-            "save state format version 7 is not supported; this build reads version 1"
+            "save state format version 7 is not supported; this build reads version 2"
         );
         assert_eq!(fingerprint(&machine), before);
     }

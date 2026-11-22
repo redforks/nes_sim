@@ -133,6 +133,94 @@ pub struct Dmc {
     dac_writes: u64,
 }
 
+/// Full [`Dmc`] channel state for save-states (ticket #184).
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct DmcDmaRequestState {
+    /// `true` = `Load`, `false` = `Reload`.
+    pub is_load: bool,
+    pub addr: u16,
+}
+
+/// Full [`Dmc`] channel state for save-states (ticket #184).
+#[derive(Debug, Clone)]
+pub(crate) struct DmcState {
+    pub sample_address: u8,
+    pub sample_length: u8,
+    pub enable_loop: bool,
+    pub irq_enabled: bool,
+    pub current_address: u16,
+    pub bytes_remaining: u16,
+    pub request_interrupt: bool,
+    pub dma_pending: bool,
+    pub dma_request: Option<DmcDmaRequestState>,
+    pub shift_register: u8,
+    pub remain_bits: u8,
+    pub silence_flag: bool,
+    pub output: u8,
+    pub sample_buffer: Option<u8>,
+    pub timer_period: u16,
+    pub timer_counter: u16,
+    pub dac_writes: u64,
+}
+
+impl Dmc {
+    /// Capture the full channel state.
+    pub(crate) fn capture_dmc_state(&self) -> DmcState {
+        DmcState {
+            sample_address: self.dma_reader.sample_address,
+            sample_length: self.dma_reader.sample_length,
+            enable_loop: self.dma_reader.enable_loop,
+            irq_enabled: self.dma_reader.irq_enabled,
+            current_address: self.dma_reader.current_address,
+            bytes_remaining: self.dma_reader.bytes_remaining,
+            request_interrupt: self.dma_reader.request_interrupt,
+            dma_pending: self.dma_reader.dma_pending,
+            dma_request: self
+                .dma_reader
+                .dma_request
+                .map(|(kind, addr)| DmcDmaRequestState {
+                    is_load: matches!(kind, DmcDmaType::Load),
+                    addr,
+                }),
+            shift_register: self.output.shift_register,
+            remain_bits: self.output.remain_bits,
+            silence_flag: self.output.silence_flag,
+            output: self.output.output,
+            sample_buffer: self.output.sample_buffer,
+            timer_period: self.timer.period(),
+            timer_counter: self.timer.counter(),
+            dac_writes: self.dac_writes,
+        }
+    }
+
+    /// Restore a state previously produced by [`Self::capture_dmc_state`].
+    pub(crate) fn restore_dmc_state(&mut self, s: &DmcState) {
+        self.dma_reader.sample_address = s.sample_address;
+        self.dma_reader.sample_length = s.sample_length;
+        self.dma_reader.enable_loop = s.enable_loop;
+        self.dma_reader.irq_enabled = s.irq_enabled;
+        self.dma_reader.current_address = s.current_address;
+        self.dma_reader.bytes_remaining = s.bytes_remaining;
+        self.dma_reader.request_interrupt = s.request_interrupt;
+        self.dma_reader.dma_pending = s.dma_pending;
+        self.dma_reader.dma_request = s.dma_request.map(|r| {
+            let kind = if r.is_load {
+                DmcDmaType::Load
+            } else {
+                DmcDmaType::Reload
+            };
+            (kind, r.addr)
+        });
+        self.output.shift_register = s.shift_register;
+        self.output.remain_bits = s.remain_bits;
+        self.output.silence_flag = s.silence_flag;
+        self.output.output = s.output;
+        self.output.sample_buffer = s.sample_buffer;
+        self.timer.restore(s.timer_period, s.timer_counter);
+        self.dac_writes = s.dac_writes;
+    }
+}
+
 impl Default for Dmc {
     fn default() -> Self {
         Self {

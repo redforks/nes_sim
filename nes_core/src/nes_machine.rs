@@ -332,6 +332,21 @@ where
         &self.cpu
     }
 
+    /// Mutable CPU access for the save-state restore path (ticket #193).
+    pub(crate) fn cpu_mut(&mut self) -> &mut Cpu {
+        &mut self.cpu
+    }
+
+    /// DMA arbitration state for the save-state DTO (ticket #193).
+    pub(crate) fn dma_bus(&self) -> &DmaBus {
+        &self.dma_bus
+    }
+
+    /// Mutable DMA arbitration state for the save-state restore path.
+    pub(crate) fn dma_bus_mut(&mut self) -> &mut DmaBus {
+        &mut self.dma_bus
+    }
+
     pub fn mcu(&self) -> &NesMcu {
         self.bus.mcu()
     }
