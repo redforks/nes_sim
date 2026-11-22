@@ -1,4 +1,4 @@
-use super::{Mapper, Mirroring, memory::CartridgeMemory};
+use super::{Mapper, MapperState, Mirroring, SnapshotError, memory::CartridgeMemory};
 use crate::SystemClock;
 
 /// Register-file indices behind the `$5000` select / `$8000-$FFFF` value
@@ -101,6 +101,27 @@ impl Action53 {
 }
 
 impl Mapper for Action53 {
+    fn snapshot(&self) -> Result<MapperState, SnapshotError> {
+        Ok(MapperState::Action53(Action53State {
+            regs: self.regs,
+            selected: self.selected,
+            mirroring_bit: self.mirroring_bit,
+        }))
+    }
+
+    fn restore(&mut self, state: &MapperState) -> Result<(), SnapshotError> {
+        let MapperState::Action53(saved) = state else {
+            return Err(SnapshotError::Mismatch);
+        };
+        self.regs = saved.regs;
+        self.selected = saved.selected;
+        self.mirroring_bit = saved.mirroring_bit;
+        // Bank windows and mirroring live in `CartridgeMemory` and are
+        // restored from its own snapshot; only the register file (which
+        // steers future writes) is restored here.
+        Ok(())
+    }
+
     fn cpu_write(
         &mut self,
         address: u16,
@@ -132,11 +153,14 @@ impl Mapper for Action53 {
     }
 }
 
-/// Saved mutable state for [`Action53`] (ticket #186 expand step).
-/// Placeholder: migration ticket #188 fills in the fields and implements
-/// `snapshot`/`restore`.
+/// Saved mutable state for [`Action53`] (ticket #188): the full register
+/// file, the select latch, and the single-screen mirroring latch.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub struct Action53State;
+pub struct Action53State {
+    pub regs: [u8; 4],
+    pub selected: usize,
+    pub mirroring_bit: u8,
+}
 
 #[cfg(test)]
 mod tests {
@@ -527,6 +551,58 @@ mod tests {
 
         assert_eq!(memory.read_prg(0x8000), 0x30);
         assert_eq!(memory.read_prg(0xc000), 0x40);
+    }
+
+    #[test]
+    fn snapshot_roundtrip_preserves_continued_behavior() {
+        use crate::nes::mapper::{MapperState, NRomState, SnapshotError};
+
+        fn observe(memory: &CartridgeMemory) -> (u8, u8, Mirroring) {
+            (
+                memory.read_prg(0x8000),
+                memory.read_prg(0xc000),
+                memory.mirroring(),
+            )
+        }
+
+        let prg = sixteen_bank_prg();
+        let mut mem_a = CartridgeMemory::test(&prg, &[]);
+        let mut a = Action53::new(&mut mem_a);
+        // Non-default state: fixed-top mode, outer/inner selection, CHR
+        // register (whose D4 also feeds the single-screen latch).
+        select(&mut a, &mut mem_a, 0x80);
+        store(&mut a, &mut mem_a, 0x3c);
+        select(&mut a, &mut mem_a, 0x81);
+        store(&mut a, &mut mem_a, 0x07);
+        select(&mut a, &mut mem_a, 0x01);
+        store(&mut a, &mut mem_a, 0x00);
+        select(&mut a, &mut mem_a, 0x00);
+        store(&mut a, &mut mem_a, 0x05);
+
+        let snap = a.snapshot().expect("Action53 snapshot");
+        assert!(matches!(snap, MapperState::Action53(_)));
+
+        let mut mem_b = CartridgeMemory::test(&prg, &[]);
+        let mut b = Action53::new(&mut mem_b);
+        assert_eq!(
+            b.restore(&MapperState::NRom(NRomState::default())),
+            Err(SnapshotError::Mismatch)
+        );
+        b.restore(&snap).expect("Action53 restore");
+        assert_eq!(b.snapshot().expect("re-snapshot"), snap);
+
+        // Continued behavior matches: identical subsequent register
+        // writes produce identical windows and mirroring.
+        for (mapper, memory) in [(&mut a, &mut mem_a), (&mut b, &mut mem_b)] {
+            select(mapper, memory, 0x80);
+            store(mapper, memory, 0x28);
+            select(mapper, memory, 0x81);
+            store(mapper, memory, 0x01);
+            select(mapper, memory, 0x01);
+            store(mapper, memory, 0x05);
+        }
+        assert_eq!(observe(&mem_a), observe(&mem_b));
+        assert_eq!(a.snapshot().unwrap(), b.snapshot().unwrap());
     }
 
     #[test]
