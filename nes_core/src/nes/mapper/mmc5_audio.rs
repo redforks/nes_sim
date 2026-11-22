@@ -113,6 +113,54 @@ impl Mmc5Pulse {
     pub fn length_active(&self) -> bool {
         !self.length.is_zero()
     }
+
+    /// Captures the full pulse voice for a save file (ticket #190).
+    pub fn capture_state(&self) -> Mmc5PulseState {
+        let duty = PULSE_DUTY_TABLE
+            .iter()
+            .position(|row| core::ptr::eq(row.as_slice(), self.sequencer.items()))
+            .unwrap_or(0) as u8;
+        Mmc5PulseState {
+            timer_period: self.timer.period(),
+            timer_counter: self.timer.counter(),
+            divider_period: self.divider_2.period(),
+            divider_counter: self.divider_2.counter(),
+            length_counter: self.length.counter_value(),
+            length_halt: self.length.is_halt(),
+            length_enabled: self.length.is_enabled(),
+            envelope_period: self.envelope.divider_period(),
+            envelope_divider_counter: self.envelope.divider_counter(),
+            envelope_counter: self.envelope.counter_value(),
+            envelope_loop: self.envelope.loop_enabled(),
+            envelope_disabled: self.envelope.is_disabled(),
+            envelope_reset_pending: self.envelope.reset_pending(),
+            duty,
+            sequencer_position: self.sequencer.position().min(u8::MAX as usize) as u8,
+        }
+    }
+
+    /// Restores a captured pulse voice verbatim (ticket #190).
+    pub fn restore_state(&mut self, state: &Mmc5PulseState) {
+        self.timer.restore(state.timer_period, state.timer_counter);
+        self.divider_2
+            .restore(state.divider_period, state.divider_counter);
+        self.length.restore(
+            state.length_counter,
+            state.length_halt,
+            state.length_enabled,
+        );
+        self.envelope.restore(
+            state.envelope_period,
+            state.envelope_divider_counter,
+            state.envelope_counter,
+            state.envelope_loop,
+            state.envelope_disabled,
+            state.envelope_reset_pending,
+        );
+        let duty = (state.duty as usize).min(PULSE_DUTY_TABLE.len() - 1);
+        self.sequencer
+            .restore(&PULSE_DUTY_TABLE[duty], state.sequencer_position as usize);
+    }
 }
 
 impl Default for Mmc5Pulse {
@@ -311,6 +359,86 @@ impl Mmc5Audio {
     /// PCM cart IRQ line: `trip AND enable`.
     pub fn irq_pending(&self) -> bool {
         self.pcm.irq_pending()
+    }
+
+    /// Captures the full audio unit for a save file (ticket #190).
+    pub fn capture_state(&self) -> Mmc5AudioState {
+        Mmc5AudioState {
+            pulse1: self.pulse1.capture_state(),
+            pulse2: self.pulse2.capture_state(),
+            pcm: self.pcm.capture_state(),
+            frame_acc: self.frame_acc,
+        }
+    }
+
+    /// Restores a captured audio unit verbatim (ticket #190).
+    pub fn restore_state(&mut self, state: &Mmc5AudioState) {
+        self.pulse1.restore_state(&state.pulse1);
+        self.pulse2.restore_state(&state.pulse2);
+        self.pcm.restore_state(&state.pcm);
+        self.frame_acc = state.frame_acc;
+    }
+}
+
+/// Saved MMC5 pulse voice (ticket #190): plain-data mirror of
+/// [`Mmc5Pulse`]'s divider, envelope, length, duty-table and sequencer
+/// progress. Lives under the cartridge section of the save file.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct Mmc5PulseState {
+    pub timer_period: u16,
+    pub timer_counter: u16,
+    pub divider_period: u8,
+    pub divider_counter: u8,
+    pub length_counter: u8,
+    pub length_halt: bool,
+    pub length_enabled: bool,
+    pub envelope_period: u8,
+    pub envelope_divider_counter: u8,
+    pub envelope_counter: u8,
+    pub envelope_loop: bool,
+    pub envelope_disabled: bool,
+    pub envelope_reset_pending: bool,
+    pub duty: u8,
+    pub sequencer_position: u8,
+}
+
+/// Saved MMC5 PCM channel (ticket #190): plain-data mirror of [`Mmc5Pcm`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct Mmc5PcmState {
+    pub read_mode: bool,
+    pub irq_enabled: bool,
+    pub irq_trip: bool,
+    pub dac: u8,
+}
+
+/// Saved MMC5 audio unit (ticket #190): both pulses, PCM, and the 240 Hz
+/// frame accumulator. Stored under the cartridge section; the APU keeps
+/// only its latched expansion-mix copy.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct Mmc5AudioState {
+    pub pulse1: Mmc5PulseState,
+    pub pulse2: Mmc5PulseState,
+    pub pcm: Mmc5PcmState,
+    pub frame_acc: u32,
+}
+
+impl Mmc5Pcm {
+    /// Captures the PCM channel for a save file (ticket #190).
+    pub fn capture_state(&self) -> Mmc5PcmState {
+        Mmc5PcmState {
+            read_mode: self.read_mode,
+            irq_enabled: self.irq_enabled,
+            irq_trip: self.irq_trip,
+            dac: self.dac,
+        }
+    }
+
+    /// Restores a captured PCM channel verbatim (ticket #190).
+    pub fn restore_state(&mut self, state: &Mmc5PcmState) {
+        self.read_mode = state.read_mode;
+        self.irq_enabled = state.irq_enabled;
+        self.irq_trip = state.irq_trip;
+        self.dac = state.dac;
     }
 }
 
