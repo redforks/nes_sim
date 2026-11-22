@@ -9,7 +9,8 @@
 //! while playback only honors the OS `Event::Quit` (no Esc/F2/F4, controller
 //! keys ignored). Reset precedence is movie-driven reset first
 //! (`hard_reset` > `soft_reset`) with `ShouldReset -> soft_reset` shared by
-//! both modes; the sources are mutually exclusive per mode. End of movie
+//! both modes; the sources are mutually exclusive per mode. One movie entry
+//! plays one frame and consumes one index, reset entries included. End of movie
 //! keeps today's `--extra-frames` countdown verbatim, including the
 //! `trim_after` early exit and the auto-fast-forward idle handling (which
 //! also covers past-the-end frames).
@@ -28,6 +29,39 @@ use std::{
     time::{Duration, Instant},
 };
 
+/// Reset a movie entry asks for, applied before its frame is emulated.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MovieReset {
+    Hard,
+    Soft,
+}
+
+/// One movie entry decoded for the frame that plays it: the reset to apply
+/// first, then both ports' inputs for that same frame.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct MovieFrame {
+    pub reset: Option<MovieReset>,
+    pub port0: GamepadInput,
+    pub port1: GamepadInput,
+}
+
+/// Decode the movie entry at `index` into the frame that plays it. Hard reset
+/// wins over soft reset. `None` past the end of the movie. Pure: needs no SDL
+/// and no machine.
+pub fn movie_frame_at(logs: &[InputLog], index: usize) -> Option<MovieFrame> {
+    logs.get(index).map(|log| MovieFrame {
+        reset: if log.command.hard_reset() {
+            Some(MovieReset::Hard)
+        } else if log.command.soft_reset() {
+            Some(MovieReset::Soft)
+        } else {
+            None
+        },
+        port0: log.port0,
+        port1: log.port1,
+    })
+}
+
 /// Which input feeds the unified loop: live keyboard or a recorded movie.
 pub enum InputSource {
     Interactive,
@@ -40,20 +74,12 @@ impl InputSource {
         matches!(self, InputSource::Movie { .. })
     }
 
-    /// The current movie frame's reset flags and port inputs, or `None` for
-    /// interactive mode and past-the-end playback. Returned by value so the
-    /// reset path can advance the index without aliasing the logs.
-    pub fn current_frame(&self) -> Option<(bool, bool, GamepadInput, GamepadInput)> {
+    /// The movie frame at the current index, or `None` for interactive mode
+    /// and past-the-end playback.
+    pub fn movie_frame(&self) -> Option<MovieFrame> {
         match self {
             InputSource::Interactive => None,
-            InputSource::Movie { logs, index } => logs.get(*index).map(|log| {
-                (
-                    log.command.hard_reset(),
-                    log.command.soft_reset(),
-                    log.port0,
-                    log.port1,
-                )
-            }),
+            InputSource::Movie { logs, index } => movie_frame_at(logs, *index),
         }
     }
 
@@ -136,6 +162,16 @@ where
         } else {
             machine.release_controller_a(button);
         }
+    }
+}
+
+fn apply_movie_reset<P>(machine: &mut NesMachine<P>, reset: MovieReset)
+where
+    P: Plugin<NesMcu>,
+{
+    match reset {
+        MovieReset::Hard => machine.hard_reset(),
+        MovieReset::Soft => machine.soft_reset(),
     }
 }
 
@@ -237,24 +273,16 @@ pub fn run_event_loop<P>(
             }
         }
 
-        // Snapshot the current movie frame into owned copies so the reset
-        // path below can advance the shared index without aliasing the logs.
-        let movie_frame: Option<(bool, bool, GamepadInput, GamepadInput)> = source.current_frame();
-        if let Some((hard_reset, soft_reset, port0, port1)) = movie_frame {
-            // Movie-driven reset wins over any other reset source; the two
-            // sources are mutually exclusive per mode. A reset frame advances
-            // the index once here and once at the end of the loop, verbatim
-            // from the playback loop this unifies.
-            if hard_reset {
-                source.advance();
-                machine.hard_reset();
-            } else if soft_reset {
-                source.advance();
-                machine.soft_reset();
+        // Movie-driven reset wins over any other reset source; the two
+        // sources are mutually exclusive per mode. The index advances once per
+        // iteration at the end of the loop, reset entries included.
+        if let Some(frame) = source.movie_frame() {
+            if let Some(reset) = frame.reset {
+                apply_movie_reset(machine, reset);
             }
-            set_controller_a_from_gamepad(machine, &port0);
-            set_controller_b_from_gamepad(machine, &port1);
-            render.set_input(&port0, &port1);
+            set_controller_a_from_gamepad(machine, &frame.port0);
+            set_controller_b_from_gamepad(machine, &frame.port1);
+            render.set_input(&frame.port0, &frame.port1);
         }
 
         // Auto fast-forward: idle stretches (plus past-the-end frames) set
@@ -380,6 +408,143 @@ mod tests {
         assert!(!should_throttle(&source, &movie_opts(false, true, false)));
         assert!(!should_throttle(&source, &movie_opts(false, false, true)));
         assert!(!should_throttle(&source, &movie_opts(true, true, true)));
+    }
+
+    fn entry(command: Command, port0: GamepadInput) -> InputLog {
+        InputLog::new(command, port0, GamepadInput::default())
+    }
+
+    fn a_pressed() -> GamepadInput {
+        GamepadInput::new().with_a(true)
+    }
+
+    fn b_pressed() -> GamepadInput {
+        GamepadInput::new().with_b(true)
+    }
+
+    fn movie_of(logs: Vec<InputLog>) -> InputSource {
+        InputSource::Movie {
+            logs: logs.into_boxed_slice(),
+            index: 0,
+        }
+    }
+
+    fn frame(reset: Option<MovieReset>, port0: GamepadInput) -> Option<MovieFrame> {
+        Some(MovieFrame {
+            reset,
+            port0,
+            port1: GamepadInput::default(),
+        })
+    }
+
+    fn index_of(source: &InputSource) -> usize {
+        match source {
+            InputSource::Movie { index, .. } => *index,
+            InputSource::Interactive => panic!("expected a movie source"),
+        }
+    }
+
+    /// Mirrors the loop's per-iteration bookkeeping without emulating a frame:
+    /// read the frame the iteration plays, then consume exactly one index.
+    fn play(source: &mut InputSource, frames: usize) -> Vec<Option<MovieFrame>> {
+        (0..frames)
+            .map(|_| {
+                let frame = source.movie_frame();
+                source.advance();
+                frame
+            })
+            .collect()
+    }
+
+    #[test]
+    fn soft_reset_entry_then_normal_entry_plays_both_in_order() {
+        let mut source = movie_of(vec![
+            entry(Command::new().with_soft_reset(true), a_pressed()),
+            entry(Command::default(), b_pressed()),
+        ]);
+        assert_eq!(
+            play(&mut source, 2),
+            vec![
+                frame(Some(MovieReset::Soft), a_pressed()),
+                frame(None, b_pressed()),
+            ],
+        );
+        assert_eq!(index_of(&source), 2);
+    }
+
+    #[test]
+    fn hard_reset_entry_then_normal_entry_plays_both_in_order() {
+        let mut source = movie_of(vec![
+            entry(Command::new().with_hard_reset(true), a_pressed()),
+            entry(Command::default(), b_pressed()),
+        ]);
+        assert_eq!(
+            play(&mut source, 2),
+            vec![
+                frame(Some(MovieReset::Hard), a_pressed()),
+                frame(None, b_pressed()),
+            ],
+        );
+        assert_eq!(index_of(&source), 2);
+    }
+
+    #[test]
+    fn consecutive_reset_entries_each_play_once_in_order() {
+        let mut source = movie_of(vec![
+            entry(Command::new().with_soft_reset(true), a_pressed()),
+            entry(Command::new().with_hard_reset(true), b_pressed()),
+            entry(Command::default(), a_pressed().with_b(true)),
+        ]);
+        assert_eq!(
+            play(&mut source, 3),
+            vec![
+                frame(Some(MovieReset::Soft), a_pressed()),
+                frame(Some(MovieReset::Hard), b_pressed()),
+                frame(None, a_pressed().with_b(true)),
+            ],
+        );
+        assert_eq!(index_of(&source), 3);
+    }
+
+    #[test]
+    fn reset_entry_as_last_entry_ends_movie_after_one_step() {
+        let mut source = movie_of(vec![entry(
+            Command::new().with_hard_reset(true),
+            a_pressed(),
+        )]);
+        assert_eq!(
+            play(&mut source, 1),
+            vec![frame(Some(MovieReset::Hard), a_pressed())],
+        );
+        assert_eq!(index_of(&source), 1);
+        assert_eq!(source.movie_frame(), None);
+    }
+
+    #[test]
+    fn movie_without_reset_entries_plays_each_entry_once() {
+        let mut source = movie_of(vec![
+            entry(Command::default(), a_pressed()),
+            entry(Command::default(), b_pressed()),
+            entry(Command::default(), GamepadInput::default()),
+        ]);
+        assert_eq!(
+            play(&mut source, 3),
+            vec![
+                frame(None, a_pressed()),
+                frame(None, b_pressed()),
+                frame(None, GamepadInput::default()),
+            ],
+        );
+        assert_eq!(index_of(&source), 3);
+    }
+
+    #[test]
+    fn interactive_source_has_no_movie_frame_and_advance_is_noop() {
+        let mut source = InputSource::Interactive;
+        assert!(!source.is_movie());
+        assert_eq!(source.movie_frame(), None);
+        source.advance();
+        assert_eq!(source.movie_frame(), None);
     }
 
     #[test]
