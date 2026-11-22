@@ -16,7 +16,7 @@
 //! also covers past-the-end frames).
 
 use super::{NesAudioDriver, map_keycode_to_button, render::NesRender};
-use crate::save_state::save_machine_to_path;
+use crate::save_state::{load_machine_from_path, save_machine_to_path};
 use nes_core::{
     Plugin,
     movie::{GamepadInput, InputLog},
@@ -198,12 +198,18 @@ fn f5_arms_save(source: &InputSource, repeat: bool) -> bool {
     !repeat && !source.is_movie()
 }
 
+/// F7 arms a load under the same conditions as F5: interactive mode, no
+/// key repeat, so movie playback stays deterministic.
+fn f7_arms_load(source: &InputSource, repeat: bool) -> bool {
+    !repeat && !source.is_movie()
+}
+
 /// Drive `machine` until an exit event, `Stop`/`Halt`, the `trim_after` limit
 /// or the end-of-movie countdown runs out. `event_pump` is `None` for
 /// headless playback; `fast_forward` is `Some` for playback (idle ranges may
-/// still be empty when `--auto-fast-forward` is off). `save_path` is `Some`
-/// for interactive runs (F5 saves there); it is `None` for movie playback,
-/// where F5 is ignored.
+/// still be empty when `--auto-fast-forward` is off). `state_path` is `Some`
+/// for interactive runs (F5 saves and F7 loads there); it is `None` for movie
+/// playback, where F5/F7 are ignored.
 #[allow(clippy::too_many_arguments)]
 pub fn run_event_loop<P>(
     machine: &mut NesMachine<P>,
@@ -213,7 +219,7 @@ pub fn run_event_loop<P>(
     source: &mut InputSource,
     opts: &LoopOptions,
     fast_forward: Option<&FastForwardState>,
-    save_path: Option<&std::path::Path>,
+    state_path: Option<&std::path::Path>,
 ) where
     P: Plugin<NesMcu>,
 {
@@ -255,6 +261,26 @@ pub fn run_event_loop<P>(
                         // after the next `process_frame()` returns.
                         if f5_arms_save(source, repeat) {
                             save_requested = true;
+                        }
+                    }
+                    Event::KeyDown {
+                        keycode: Some(Keycode::F7),
+                        repeat,
+                        ..
+                    } => {
+                        // Load the state file in place at the top of the
+                        // event loop: the restored state is emulated by the
+                        // very next `process_frame()` below. A failed load
+                        // leaves the machine untouched (validation runs
+                        // before any mutation in nes_core) and the game
+                        // keeps running.
+                        if f7_arms_load(source, repeat) {
+                            if let Some(path) = state_path {
+                                let message = match load_machine_from_path(machine, path) {
+                                    Ok(message) | Err(message) => message,
+                                };
+                                eprintln!("{message}");
+                            }
                         }
                     }
                     Event::KeyDown {
@@ -350,7 +376,7 @@ pub fn run_event_loop<P>(
             // output borrow ends (above) before reborrowing `machine`.
             if save_requested {
                 save_requested = false;
-                if let Some(path) = save_path {
+                if let Some(path) = state_path {
                     let message = match save_machine_to_path(machine, path) {
                         Ok(message) | Err(message) => message,
                     };
@@ -439,6 +465,17 @@ mod tests {
         assert!(!f5_arms_save(&interactive, true));
         assert!(!f5_arms_save(&movie_source(), false));
         assert!(!f5_arms_save(&movie_source(), true));
+    }
+
+    #[test]
+    fn f7_arms_load_only_for_interactive_without_repeat() {
+        // Movie-mode no-op (#196): F7 never fires during playback, so a
+        // recorded run stays deterministic.
+        let interactive = InputSource::Interactive;
+        assert!(f7_arms_load(&interactive, false));
+        assert!(!f7_arms_load(&interactive, true));
+        assert!(!f7_arms_load(&movie_source(), false));
+        assert!(!f7_arms_load(&movie_source(), true));
     }
 
     #[test]
