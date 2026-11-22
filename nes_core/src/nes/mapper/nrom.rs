@@ -1,4 +1,4 @@
-use super::{Mapper, memory::CartridgeMemory};
+use super::{Mapper, MapperState, SnapshotError, memory::CartridgeMemory};
 use crate::SystemClock;
 
 /// NROM: no banking at all. Both 16 KB PRG slots are fixed, 16 KB images
@@ -19,6 +19,15 @@ impl NRom {
 }
 
 impl Mapper for NRom {
+    fn snapshot(&self) -> Result<MapperState, SnapshotError> {
+        Ok(MapperState::NRom(NRomState))
+    }
+    fn restore(&mut self, state: &MapperState) -> Result<(), SnapshotError> {
+        match state {
+            MapperState::NRom(_) => Ok(()),
+            _ => Err(SnapshotError::Mismatch),
+        }
+    }
     fn cpu_write(
         &mut self,
         address: u16,
@@ -38,9 +47,9 @@ impl Default for NRom {
     }
 }
 
-/// Saved mutable state for [`NRom`] (ticket #186 expand step).
-/// Placeholder: NROM holds no mutable state; migration ticket #187 wires
-/// up `snapshot`/`restore`.
+/// Saved mutable state for [`NRom`] (ticket #187). NROM holds no mutable
+/// state, so the tag check carries the mapper save; PRG-RAM, nametables,
+/// and windows ride in the shared `CartridgeMemory` capture (#186).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct NRomState;
 
@@ -76,6 +85,64 @@ mod tests {
 
         assert_eq!(memory.read_prg(0xfffc), 0x00);
         assert_eq!(memory.read_prg(0xfffd), 0x80);
+    }
+
+    /// Ticket #187: snapshot/restore round-trip. The mapper holds no
+    /// mutable state, so the tag check plus the shared `CartridgeMemory`
+    /// capture carry the whole save; bus output must match afterwards.
+    #[test]
+    fn snapshot_round_trip_preserves_bus_output() {
+        let mut prg = vec![0u8; 0x8000];
+        for (i, b) in prg.iter_mut().enumerate() {
+            *b = (i >> 8) as u8;
+        }
+        let chr: Vec<u8> = (0..0x2000).map(|i| (i & 0xff) as u8).collect();
+        let mut memory = CartridgeMemory::test(&prg, &chr);
+        let mut mapper = NRom::new(&mut memory);
+        mapper.cpu_write(0x6000, 0x11, SystemClock::default(), &mut memory);
+        mapper.cpu_write(0x7fff, 0x22, SystemClock::default(), &mut memory);
+        memory.write_vram(0x2005, 0x5a);
+        memory.write_vram(0x2405, 0xa5);
+
+        let mapper_state = mapper.snapshot().expect("NRom snapshot");
+        let mem_state = memory.capture_snapshot();
+
+        let mut memory2 = CartridgeMemory::test(&prg, &chr);
+        let mut mapper2 = NRom::new(&mut memory2);
+        memory2.write_vram(0x2005, 0x00);
+        mapper2.restore(&mapper_state).expect("NRom restore");
+        memory2.restore_snapshot(&mem_state);
+
+        assert_eq!(memory.mirroring(), memory2.mirroring());
+        for addr in 0x6000u16..=0x7fff {
+            assert_eq!(
+                memory.read_prg_ram(addr),
+                memory2.read_prg_ram(addr),
+                "prg-ram {addr:#06x}"
+            );
+        }
+        for addr in 0x8000u16..=0xffff {
+            assert_eq!(
+                memory.read_prg(addr),
+                memory2.read_prg(addr),
+                "prg {addr:#06x}"
+            );
+        }
+        for addr in 0x0000u16..0x3000 {
+            assert_eq!(
+                memory.read_vram(addr),
+                memory2.read_vram(addr),
+                "vram {addr:#06x}"
+            );
+        }
+    }
+
+    #[test]
+    fn restore_rejects_foreign_mapper_tag() {
+        let mut memory = CartridgeMemory::test(&[], &[]);
+        let mut mapper = NRom::new(&mut memory);
+        let foreign = MapperState::UxRom(crate::nes::mapper::UxRomState::default());
+        assert_eq!(mapper.restore(&foreign), Err(SnapshotError::Mismatch));
     }
 
     #[test]

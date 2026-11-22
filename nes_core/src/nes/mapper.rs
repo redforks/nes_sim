@@ -310,8 +310,9 @@ pub enum SnapshotError {
     /// to compile instead.
     Unsupported,
     /// The saved state is for a different mapper type than the mapper
-    /// being restored into. The DTO layer compares mapper tags before
-    /// calling restore, so this is defense in depth.
+    /// being restored into. Each migrated mapper's `restore` produces
+    /// this; the cartridge-level load also compares mapper tags before
+    /// applying a save, so this is defense in depth.
     Mismatch,
 }
 
