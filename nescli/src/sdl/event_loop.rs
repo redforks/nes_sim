@@ -275,10 +275,14 @@ pub fn run_event_loop<P>(
 
         // Movie-driven reset wins over any other reset source; the two
         // sources are mutually exclusive per mode. The index advances once per
-        // iteration at the end of the loop, reset entries included.
+        // iteration at the end of the loop, reset entries included. A reset
+        // entry consumes its index but emulates no frame (FCEUX movie
+        // semantics): the next entry plays on the first emulated frame.
+        let mut reset_only = false;
         if let Some(frame) = source.movie_frame() {
             if let Some(reset) = frame.reset {
                 apply_movie_reset(machine, reset);
+                reset_only = true;
             }
             set_controller_a_from_gamepad(machine, &frame.port0);
             set_controller_b_from_gamepad(machine, &frame.port1);
@@ -306,24 +310,27 @@ pub fn run_event_loop<P>(
         }
 
         // One frame: present owned PPU framebuffer, queue owned APU audio,
-        // then match the frame status for both modes.
-        let output = machine.process_frame();
-        render.present_frame_bytes(output.frame);
-        audio.push_samples(output.audio);
-        audio.flush_frame();
-        match output.status {
-            nes_core::ExecuteResult::Continue => {}
-            nes_core::ExecuteResult::ShouldReset => {
-                eprintln!("CPU reset requested");
-                machine.soft_reset();
-            }
-            nes_core::ExecuteResult::Stop(code) => {
-                eprintln!("Execution stopped with code {}", code);
-                break 'running;
-            }
-            nes_core::ExecuteResult::Halt => {
-                eprintln!("Cpu halt, possible because of an invalid instruction");
-                break 'running;
+        // then match the frame status for both modes. Skipped for a movie
+        // reset-only entry; trim, countdown and index advance still run.
+        if !reset_only {
+            let output = machine.process_frame();
+            render.present_frame_bytes(output.frame);
+            audio.push_samples(output.audio);
+            audio.flush_frame();
+            match output.status {
+                nes_core::ExecuteResult::Continue => {}
+                nes_core::ExecuteResult::ShouldReset => {
+                    eprintln!("CPU reset requested");
+                    machine.soft_reset();
+                }
+                nes_core::ExecuteResult::Stop(code) => {
+                    eprintln!("Execution stopped with code {}", code);
+                    break 'running;
+                }
+                nes_core::ExecuteResult::Halt => {
+                    eprintln!("Cpu halt, possible because of an invalid instruction");
+                    break 'running;
+                }
             }
         }
 
