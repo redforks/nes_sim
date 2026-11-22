@@ -36,6 +36,19 @@ cargo run -p nescli --release -- read-chr <file.nes> | feh -Z --force-aliasing -
 
 Extracts the CHR ROM (pattern tables) and renders as a PNG image showing all 512 tiles (2 pattern tables × 256 tiles).
 
+### `convert` - Convert an FM2 Movie to a Mesen Movie
+
+```bash
+cargo run -p nescli --release -- convert movie.fm2
+cargo run -p nescli --release -- convert movie.fm2 -o movie.mmo --rom game.nes
+```
+
+Converts an FCEUX `.fm2` movie into a Mesen 2 `.mmo` movie (a zip holding
+`GameSettings.txt` and `Input.txt`). Output defaults to the input path with a
+`.mmo` extension. `--rom` is optional: it supplies the `GameFile` and `SHA1`
+metadata and warns when the ROM does not match the FM2 checksum. Four-score,
+FDS, and VS movies are rejected because a Mesen movie cannot represent them.
+
 ### `run` - Run with SDL2 Display
 
 ```bash

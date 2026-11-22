@@ -1,3 +1,4 @@
+use crate::actions::{load_palette, read_ines_file};
 use crate::sdl::{
     FastForwardState, INTERACTIVE_WINDOW, InputSource, LoopOptions, NesAudioDriver, NesRender,
     PLAYBACK_WINDOW, WindowSpec, create_sdl_drivers, run_event_loop, sdl2::Sdl,
@@ -14,6 +15,11 @@ use std::{cell::Cell, fs, io::Write, path::PathBuf, rc::Rc, sync::mpsc, thread};
 
 #[derive(clap::Args)]
 pub struct RunAction {
+    /// Path to the .nes file
+    nes_file: PathBuf,
+    /// Path to a .pal palette file (64 RGB entries, 192 bytes)
+    #[arg(long)]
+    palette: Option<PathBuf>,
     #[arg(long)]
     movie: Option<PathBuf>,
     #[arg(short, long, requires = "movie")]
@@ -126,11 +132,13 @@ fn init_sdl_drivers(
 }
 
 impl RunAction {
-    pub fn run(&self, f: &INesFile, palette: Option<ColorTheme>) -> Result<()> {
+    pub fn run(&self) -> Result<()> {
+        let f = read_ines_file(&self.nes_file)?;
+        let palette = load_palette(self.palette.as_deref())?;
         if self.movie.is_none() {
-            return self.run_interactive(f, palette);
+            return self.run_interactive(&f, palette);
         }
-        self.run_movie(f, palette)
+        self.run_movie(&f, palette)
     }
 
     fn run_interactive(&self, f: &INesFile, palette: Option<ColorTheme>) -> Result<()> {

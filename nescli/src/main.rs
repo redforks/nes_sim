@@ -1,9 +1,5 @@
-use crate::actions::{InfoAction, RunAction};
+use crate::actions::{ConvertAction, InfoAction, RunAction};
 use clap::Parser;
-use nes_core::{ines::INesFile, nes::ppu::palette::ColorTheme};
-use std::fs::File;
-use std::io::Read;
-use std::path::PathBuf;
 
 mod actions;
 mod recording_send;
@@ -14,32 +10,9 @@ mod sdl;
 struct Args {
     #[command(subcommand)]
     action: Action,
-    nes_file: PathBuf,
-    /// Path to a .pal palette file (64 RGB entries, 192 bytes)
-    #[arg(long)]
-    palette: Option<PathBuf>,
 }
 
 type AppResult<T> = Result<T, anyhow::Error>;
-
-impl Args {
-    pub fn read_file(&self) -> AppResult<INesFile> {
-        let mut file = File::open(&self.nes_file)?;
-        let mut buffer = Vec::new();
-        file.read_to_end(&mut buffer)?;
-        Ok(INesFile::new(buffer)?)
-    }
-
-    pub fn load_palette(&self) -> AppResult<Option<ColorTheme>> {
-        let Some(path) = &self.palette else {
-            return Ok(None);
-        };
-        let mut buf = [0u8; 192];
-        let mut file = File::open(path)?;
-        file.read_exact(&mut buf)?;
-        Ok(Some(ColorTheme::load_from_pal_buf(&buf)))
-    }
-}
 
 #[derive(clap::Subcommand)]
 enum Action {
@@ -47,13 +20,16 @@ enum Action {
     Info(InfoAction),
     /// Run the NES simulator with SDL2 display
     Run(RunAction),
+    /// Convert an FCEUX .fm2 movie to a Mesen .mmo movie
+    Convert(ConvertAction),
 }
 
 impl Action {
-    fn run(&self, nes_file: INesFile, palette: Option<ColorTheme>) -> AppResult<()> {
+    fn run(&self) -> AppResult<()> {
         match self {
-            Action::Info(action) => action.run(&nes_file),
-            Action::Run(action) => action.run(&nes_file, palette),
+            Action::Info(action) => action.run(),
+            Action::Run(action) => action.run(),
+            Action::Convert(action) => action.run(),
         }
     }
 }
@@ -61,7 +37,5 @@ impl Action {
 #[hotpath::main]
 fn main() -> AppResult<()> {
     env_logger::init();
-    let args = Args::parse();
-    let palette = args.load_palette()?;
-    args.action.run(args.read_file()?, palette)
+    Args::parse().action.run()
 }

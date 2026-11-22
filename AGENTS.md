@@ -41,6 +41,9 @@ cargo run -p nescli --release -- info <file.nes>
 
 # Extract and view CHR ROM patterns
 cargo run -p nescli --release -- read-chr <file.nes> | feh -Z --force-aliasing -
+
+# Convert an FCEUX .fm2 movie to a Mesen .mmo movie
+cargo run -p nescli --release -- convert <movie.fm2> --rom <file.nes>
 ```
 
 ## Architecture

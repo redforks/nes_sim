@@ -1,10 +1,16 @@
-use nes_core::ines::{FileVersion, Header, INesFile};
+use crate::actions::read_ines_file;
+use nes_core::ines::{FileVersion, Header};
+use std::path::PathBuf;
 
 #[derive(clap::Args)]
-pub struct InfoAction {}
+pub struct InfoAction {
+    /// Path to the .nes file
+    nes_file: PathBuf,
+}
 
 impl InfoAction {
-    pub fn run(&self, f: &INesFile) -> Result<(), anyhow::Error> {
+    pub fn run(&self) -> Result<(), anyhow::Error> {
+        let f = read_ines_file(&self.nes_file)?;
         print_key_values(&header_to_key_values(f.header(), f.file_version()));
         Ok(())
     }

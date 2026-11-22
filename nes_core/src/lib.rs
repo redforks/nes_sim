@@ -9,6 +9,7 @@ pub mod ines;
 
 pub mod machine;
 pub mod mcu;
+pub mod mesen;
 pub mod movie;
 pub mod nes;
 pub mod nes_machine;
