@@ -606,6 +606,16 @@ struct PpuHookMapper {
 impl Mapper for PpuHookMapper {
     fn cpu_write(&mut self, _: u16, _: u8, _: SystemClock, _: &mut CartridgeMemory) {}
 
+    /// Test seam only, no mapper state to capture: spells out the
+    /// refusal explicitly (ticket #191 removed the trait default bodies).
+    fn snapshot(&self) -> Result<MapperState, SnapshotError> {
+        Err(SnapshotError::Unsupported)
+    }
+
+    fn restore(&mut self, _state: &MapperState) -> Result<(), SnapshotError> {
+        Err(SnapshotError::Unsupported)
+    }
+
     fn ppu_read(&self, _addr: u16, render: PpuRenderState) -> Option<u8> {
         self.seen.set(Some(render));
         self.hook_byte
@@ -665,13 +675,21 @@ fn ppu_read_hook_overrides_when_flag_on() {
     assert_eq!(Some(render), seen.get());
 }
 
-/// Ticket #186 (expand step): the snapshot API exists with `Unsupported`
-/// defaults; ticket #191 removes those defaults. All twelve mappers
-/// migrated in #187-#190, so no real mapper exercises the default body
-/// anymore — a stub mapper pins it instead.
+/// Ticket #191 (contract step): the snapshot API has no default bodies;
+/// all twelve mappers migrated in #187-#190 implement it. A test-only
+/// stub with no state spells out the [`SnapshotError::Unsupported`]
+/// refusal explicitly instead of inheriting a default.
 struct UnmigratedStubMapper;
 
 impl Mapper for UnmigratedStubMapper {
+    fn snapshot(&self) -> Result<MapperState, SnapshotError> {
+        Err(SnapshotError::Unsupported)
+    }
+
+    fn restore(&mut self, _state: &MapperState) -> Result<(), SnapshotError> {
+        Err(SnapshotError::Unsupported)
+    }
+
     fn cpu_write(
         &mut self,
         _address: u16,
