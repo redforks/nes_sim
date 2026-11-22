@@ -172,6 +172,7 @@ impl RunAction {
         // input source keeps today's keys, window, throttle and exit path.
         let mut source = InputSource::Interactive;
         let opts = LoopOptions::interactive();
+        let state_path = crate::save_state::state_path_for_rom(&self.nes_file);
         run_event_loop(
             &mut machine,
             &mut render,
@@ -180,6 +181,7 @@ impl RunAction {
             &mut source,
             &opts,
             None,
+            Some(&state_path),
         );
 
         Ok(())
@@ -367,6 +369,7 @@ impl RunAction {
             &mut source,
             &opts,
             Some(&fast_forward),
+            None,
         );
 
         // Drop machine first to close channel senders, which lets pipe-writing
