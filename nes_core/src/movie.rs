@@ -176,8 +176,6 @@ impl Fm2File {
         md5context.consume(file.read_prg_rom());
         md5context.consume(file.read_chr_rom());
         let act = md5context.finalize();
-        eprintln!("{:x}", act);
-        eprintln!("{:?}", checksum.as_slice());
         Ok(act.0.as_slice() == checksum.as_slice())
     }
 }
