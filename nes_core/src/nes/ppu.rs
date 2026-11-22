@@ -190,6 +190,15 @@ impl Timing {
         self.frame_no
     }
 
+    /// Restores the save-point timing (ticket #192 load path): scanline
+    /// 261, dot 0..=2, and the saved frame number. Callers validate the
+    /// scanline/dot before calling.
+    pub(crate) fn set_save_point(&mut self, scanline: u16, dot: u16, frame_no: usize) {
+        self.scanline = scanline;
+        self.dot = dot;
+        self.frame_no = frame_no;
+    }
+
     pub fn scanline(&self) -> u16 {
         self.scanline
     }
@@ -387,6 +396,22 @@ impl Ppu {
 
     pub fn timing(&self) -> &Timing {
         &self.timing
+    }
+
+    /// Mutable timing for the save-state load path (ticket #192).
+    pub(crate) fn timing_mut(&mut self) -> &mut Timing {
+        &mut self.timing
+    }
+
+    /// Cumulative system cycle counter (ticket #192: saved as `clock`,
+    /// restored into both the bus clock and this counter).
+    pub fn cycle(&self) -> u64 {
+        self.cycle
+    }
+
+    /// Restores a saved cycle count (ticket #192 load path).
+    pub(crate) fn set_cycle(&mut self, cycle: u64) {
+        self.cycle = cycle;
     }
 
     /// Output width in pixels (`256`).

@@ -77,6 +77,22 @@ where
         self.bus.mcu().ppu().timing().frame_no()
     }
 
+    /// The ROM this machine was built from (ticket #192: ROM-identity
+    /// check on save/load; [`Self::hard_reset`] rebuilds from it too).
+    pub fn rom(&self) -> &INesFile {
+        &self.file
+    }
+
+    /// Current bus-clock cycle count (ticket #192: saved as `clock`).
+    pub fn clock_cycles(&self) -> u64 {
+        self.bus.clock().cycles()
+    }
+
+    /// Restores a saved bus-clock count (ticket #192 load path).
+    pub(crate) fn set_clock_cycles(&mut self, cycles: u64) {
+        self.bus.set_clock(SystemClock::from_cycles(cycles));
+    }
+
     /// Run the machine for a single frame.
     ///
     /// Returns at the save point (ADR 0022): the end of the first CPU

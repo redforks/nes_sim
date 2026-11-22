@@ -332,20 +332,20 @@ impl Mapper for MMC3 {
 /// callers must resync or restore the memory windows alongside it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct Mmc3State {
-    bank_select: u8,
-    chr_bank_registers: [u8; 8],
-    reg_6: u8,
-    reg_7: u8,
-    prg_ram_enabled: bool,
-    prg_ram_write_protect: bool,
-    irq_latch: u8,
-    irq_counter: u8,
-    irq_reload: bool,
-    irq_enabled: bool,
-    irq_pending: bool,
-    prev_a12: bool,
-    a12_low_ticks: u8,
-    a12_transition_this_scanline: bool,
+    pub(crate) bank_select: u8,
+    pub(crate) chr_bank_registers: [u8; 8],
+    pub(crate) reg_6: u8,
+    pub(crate) reg_7: u8,
+    pub(crate) prg_ram_enabled: bool,
+    pub(crate) prg_ram_write_protect: bool,
+    pub(crate) irq_latch: u8,
+    pub(crate) irq_counter: u8,
+    pub(crate) irq_reload: bool,
+    pub(crate) irq_enabled: bool,
+    pub(crate) irq_pending: bool,
+    pub(crate) prev_a12: bool,
+    pub(crate) a12_low_ticks: u8,
+    pub(crate) a12_transition_this_scanline: bool,
 }
 
 #[cfg(test)]

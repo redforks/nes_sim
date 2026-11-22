@@ -7,9 +7,12 @@ use axrom::AxRom;
 use bxrom::BxRom;
 use cnrom::CnRom;
 use memory::CartridgeMemory;
+
+pub use memory::CartridgeMemorySnapshot;
 use mmc1::MMC1;
 use mmc3::MMC3;
 use mmc5::{MMC5, wram_config};
+pub use mmc5_audio::{Mmc5AudioState, Mmc5PcmState, Mmc5PulseState};
 use nina001::Nina001;
 use nrom::NRom;
 use uxrom::UxRom;
@@ -347,6 +350,29 @@ pub enum MapperState {
     J87(J87State),
 }
 
+impl MapperState {
+    /// Mapper tag saved in the state file (ticket #192, ADR-0021): the
+    /// variant name. Load compares it with the rebuilt mapper's tag and
+    /// refuses on mismatch (covers header changes: `rom_sha256` covers
+    /// PRG and CHR only).
+    pub(crate) fn tag(&self) -> &'static str {
+        match self {
+            MapperState::NRom(_) => "NRom",
+            MapperState::MMC1(_) => "MMC1",
+            MapperState::UxRom(_) => "UxRom",
+            MapperState::CnRom(_) => "CnRom",
+            MapperState::MMC3(_) => "MMC3",
+            MapperState::MMC5(_) => "MMC5",
+            MapperState::AxRom(_) => "AxRom",
+            MapperState::Action53(_) => "Action53",
+            MapperState::Nina001(_) => "Nina001",
+            MapperState::BxRom(_) => "BxRom",
+            MapperState::Vrc24(_) => "Vrc24",
+            MapperState::J87(_) => "J87",
+        }
+    }
+}
+
 pub trait Mapper {
     /// Captures the mapper's mutable state for a save file (ticket #186).
     /// Default body reports [`SnapshotError::Unsupported`] until the
@@ -465,6 +491,36 @@ impl Cartridge {
             #[cfg(test)]
             vram_read_log: None,
         }
+    }
+
+    /// Captures the mapper state plus the shared cartridge-memory
+    /// contents for a save file (ticket #192). The tag check on load
+    /// happens before any mutation; each mapper's `restore` also
+    /// rejects a foreign variant before touching its own state.
+    pub(crate) fn capture_snapshot(
+        &self,
+    ) -> Result<(MapperState, CartridgeMemorySnapshot), SnapshotError> {
+        Ok((self.mapper.snapshot()?, self.memory.capture_snapshot()))
+    }
+
+    /// Mapper tag of the currently installed mapper (ticket #192: the
+    /// "ROM mapper" side of the mapper-mismatch check).
+    pub(crate) fn mapper_tag(&self) -> Result<&'static str, SnapshotError> {
+        Ok(self.mapper.snapshot()?.tag())
+    }
+
+    /// Restores a save captured by [`Self::capture_snapshot`] into a
+    /// cartridge rebuilt from the same ROM (ticket #192). The mapper
+    /// restore runs first and rejects a foreign tag before mutating, so
+    /// a failed restore leaves the cartridge untouched.
+    pub(crate) fn restore_snapshot(
+        &mut self,
+        mapper: &MapperState,
+        memory: &CartridgeMemorySnapshot,
+    ) -> Result<(), SnapshotError> {
+        self.mapper.restore(mapper)?;
+        self.memory.restore_snapshot(memory);
+        Ok(())
     }
 
     /// PRG-ROM read for `$8000-$FFFF` via the mapper-banked window.

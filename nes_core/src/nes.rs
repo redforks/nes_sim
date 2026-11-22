@@ -12,7 +12,7 @@ pub mod apu;
 pub mod controller;
 pub(crate) mod dmc_dma;
 mod lower_ram;
-mod mapper;
+pub(crate) mod mapper;
 pub use mapper::Mmc3IrqOverride;
 pub mod ppu;
 
@@ -238,6 +238,17 @@ impl NesMcu {
 
     pub fn ppu_mut(&mut self) -> &mut Ppu {
         &mut self.ppu
+    }
+
+    /// Cartridge access for the save-state DTO (ticket #192): snapshot
+    /// capture on save, mapper/memory restore on load.
+    pub(crate) fn cartridge(&self) -> &mapper::Cartridge {
+        &self.cartridge
+    }
+
+    /// Cartridge access for the save-state DTO (ticket #192).
+    pub(crate) fn cartridge_mut(&mut self) -> &mut mapper::Cartridge {
+        &mut self.cartridge
     }
 
     pub fn apu(&self) -> &Apu {
