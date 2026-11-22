@@ -265,6 +265,13 @@ impl Mapper for MMC1 {
     }
 }
 
+/// Saved mutable state for [`MMC1`] (ticket #186 expand step).
+/// Placeholder: migration ticket #188 fills in the fields (control, CHR/PRG
+/// banks, shift register, `last_write_cycle`) and implements
+/// `snapshot`/`restore`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct Mmc1State;
+
 #[cfg(test)]
 mod tests {
     use super::*;

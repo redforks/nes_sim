@@ -63,6 +63,12 @@ impl Mapper for Nina001 {
     }
 }
 
+/// Saved mutable state for [`Nina001`] (ticket #186 expand step).
+/// Placeholder: migration ticket #187 fills in the fields and implements
+/// `snapshot`/`restore`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct Nina001State;
+
 #[cfg(test)]
 mod tests {
     use super::*;

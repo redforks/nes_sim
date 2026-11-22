@@ -32,6 +32,13 @@ impl Mapper for J87 {
     }
 }
 
+/// Saved mutable state for [`J87`] (ticket #186 expand step).
+/// Placeholder: J87 holds no mutable state beyond the CHR band, which the
+/// shared `CartridgeMemory` window snapshot covers; migration ticket #187
+/// wires up `snapshot`/`restore`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct J87State;
+
 #[cfg(test)]
 mod tests {
     use super::*;

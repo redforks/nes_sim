@@ -132,6 +132,12 @@ impl Mapper for Action53 {
     }
 }
 
+/// Saved mutable state for [`Action53`] (ticket #186 expand step).
+/// Placeholder: migration ticket #188 fills in the fields and implements
+/// `snapshot`/`restore`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct Action53State;
+
 #[cfg(test)]
 mod tests {
     use super::*;

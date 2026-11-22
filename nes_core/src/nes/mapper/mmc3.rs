@@ -282,6 +282,13 @@ impl Mapper for MMC3 {
     }
 }
 
+/// Saved mutable state for [`MMC3`] (ticket #186 expand step).
+/// Placeholder: migration ticket #189 fills in the fields (bank registers,
+/// IRQ latch/counter/state; IRQ revision stays config) and implements
+/// `snapshot`/`restore`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct Mmc3State;
+
 #[cfg(test)]
 mod tests {
     use super::*;
