@@ -28,6 +28,11 @@ impl SystemClock {
         SystemClock(self.0.wrapping_add(1))
     }
 
+    /// Rebuilds a clock from a saved cycle count (mapper snapshot restore).
+    pub fn from_cycles(cycles: u64) -> SystemClock {
+        SystemClock(cycles)
+    }
+
     pub fn is_apu_clock(self) -> bool {
         self.is_cpu_clock()
         // self.cpu_clock_phase() == CpuClockPhase::Last

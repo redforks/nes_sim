@@ -309,12 +309,17 @@ pub enum SnapshotError {
     /// ticket #191 removes those defaults so an unmigrated mapper fails
     /// to compile instead.
     Unsupported,
+    /// The saved state is for a different mapper type than the mapper
+    /// being restored into. The DTO layer compares mapper tags before
+    /// calling restore, so this is defense in depth.
+    Mismatch,
 }
 
 impl core::fmt::Display for SnapshotError {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         match self {
             SnapshotError::Unsupported => write!(f, "mapper snapshot not supported"),
+            SnapshotError::Mismatch => write!(f, "mapper state does not match mapper type"),
         }
     }
 }

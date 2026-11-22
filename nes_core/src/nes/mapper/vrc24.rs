@@ -1,4 +1,4 @@
-use super::{CartridgeCaps, Mapper, memory::CartridgeMemory};
+use super::{CartridgeCaps, Mapper, MapperState, SnapshotError, memory::CartridgeMemory};
 use crate::SystemClock;
 use crate::nes::mapper::Mirroring;
 
@@ -155,6 +155,48 @@ impl Vrc24 {
 }
 
 impl Mapper for Vrc24 {
+    fn snapshot(&self) -> Result<MapperState, SnapshotError> {
+        Ok(MapperState::Vrc24(Vrc24State {
+            prg_ram_enabled: self.prg_ram_enabled,
+            prg_select_0: self.prg_select_0,
+            prg_select_1: self.prg_select_1,
+            prg_swap_mode: self.prg_swap_mode,
+            irq_latch: self.irq_latch,
+            irq_counter: self.irq_counter,
+            irq_prescaler: self.irq_prescaler,
+            irq_mode: self.irq_mode,
+            irq_enable: self.irq_enable,
+            irq_enable_after_ack: self.irq_enable_after_ack,
+            irq_pending: self.irq_pending,
+            microwire_latch: self.microwire_latch,
+            chr_nibbles: self.chr_nibbles,
+        }))
+    }
+
+    fn restore(&mut self, state: &MapperState) -> Result<(), SnapshotError> {
+        let MapperState::Vrc24(saved) = state else {
+            return Err(SnapshotError::Mismatch);
+        };
+        self.prg_ram_enabled = saved.prg_ram_enabled;
+        self.prg_select_0 = saved.prg_select_0;
+        self.prg_select_1 = saved.prg_select_1;
+        self.prg_swap_mode = saved.prg_swap_mode;
+        self.irq_latch = saved.irq_latch;
+        self.irq_counter = saved.irq_counter;
+        self.irq_prescaler = saved.irq_prescaler;
+        self.irq_mode = saved.irq_mode;
+        self.irq_enable = saved.irq_enable;
+        self.irq_enable_after_ack = saved.irq_enable_after_ack;
+        self.irq_pending = saved.irq_pending;
+        self.microwire_latch = saved.microwire_latch;
+        self.chr_nibbles = saved.chr_nibbles;
+        // Bank windows, mirroring, and the PRG-RAM flag live in
+        // `CartridgeMemory` and are restored from its own snapshot; only
+        // the registers (which steer future writes and IRQ ticks) are
+        // restored here. The variant stays as the factory built it.
+        Ok(())
+    }
+
     fn cpu_write(
         &mut self,
         address: u16,
@@ -312,11 +354,25 @@ impl Mapper for Vrc24 {
     }
 }
 
-/// Saved mutable state for [`Vrc24`] (ticket #186 expand step).
-/// Placeholder: migration ticket #188 fills in the fields (variant stays
-/// config) and implements `snapshot`/`restore`.
+/// Saved mutable state for [`Vrc24`] (ticket #188). The variant selector
+/// (`variant`, `s0`, `s1`) is config rebuilt by the factory and never
+/// stored, as are the ROM-derived bank counts.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub struct Vrc24State;
+pub struct Vrc24State {
+    pub prg_ram_enabled: bool,
+    pub prg_select_0: u8,
+    pub prg_select_1: u8,
+    pub prg_swap_mode: bool,
+    pub irq_latch: u8,
+    pub irq_counter: u8,
+    pub irq_prescaler: u16,
+    pub irq_mode: bool,
+    pub irq_enable: bool,
+    pub irq_enable_after_ack: bool,
+    pub irq_pending: bool,
+    pub microwire_latch: u8,
+    pub chr_nibbles: [u8; 16],
+}
 
 #[cfg(test)]
 mod tests {
@@ -418,6 +474,102 @@ mod tests {
             }
         }
         edges
+    }
+
+    #[test]
+    fn snapshot_roundtrip_preserves_continued_behavior() {
+        use crate::nes::mapper::{MapperState, NRomState, SnapshotError};
+
+        fn fixture() -> (Vec<u8>, Vec<u8>) {
+            let mut prg = vec![0u8; PRG_BANK_SIZE * 8];
+            for (i, slot) in prg.chunks_mut(PRG_BANK_SIZE).enumerate() {
+                slot[0] = i as u8;
+            }
+            let mut chr = vec![0u8; 32 * 0x0400];
+            for (i, slot) in chr.chunks_mut(0x0400).enumerate() {
+                slot[0] = i as u8;
+            }
+            (prg, chr)
+        }
+
+        fn observe(mapper: &Vrc24, memory: &CartridgeMemory) -> (u8, u8, u8, u8, bool) {
+            (
+                memory.read_prg(0x8000),
+                memory.read_prg(0xa000),
+                memory.read_vram(0x0000),
+                memory.read_vram(0x0400),
+                mapper.irq_pending(),
+            )
+        }
+
+        let (prg, chr) = fixture();
+        let mut mem_a = CartridgeMemory::from_rom(&prg, &chr, None, Mirroring::Horizontal);
+        let mut a = Vrc24::new(&mut mem_a, VrcVariant::Vrc4f);
+        // Non-default state: PRG selects, CHR nibbles, mirroring, and a
+        // mid-interval IRQ (latch loaded, enabled, partially ticked).
+        a.cpu_write(0x8000, 0x03, SystemClock::default(), &mut mem_a);
+        a.cpu_write(0xa000, 0x05, SystemClock::default(), &mut mem_a);
+        a.cpu_write(0xb000, 0x02, SystemClock::default(), &mut mem_a);
+        a.cpu_write(0xb001, 0x01, SystemClock::default(), &mut mem_a);
+        a.cpu_write(0x9000, 0x01, SystemClock::default(), &mut mem_a);
+        write_irq_latch(&mut a, &mut mem_a, 0xfe);
+        write_irq_control(&mut a, &mut mem_a, 0x07);
+        for _ in 0..3 {
+            a.on_ppu_tick(0);
+        }
+
+        let snap = a.snapshot().expect("Vrc24 snapshot");
+        assert!(matches!(snap, MapperState::Vrc24(_)));
+
+        let mut mem_b = CartridgeMemory::from_rom(&prg, &chr, None, Mirroring::Horizontal);
+        let mut b = Vrc24::new(&mut mem_b, VrcVariant::Vrc4f);
+        assert_eq!(
+            b.restore(&MapperState::NRom(NRomState::default())),
+            Err(SnapshotError::Mismatch)
+        );
+        b.restore(&snap).expect("Vrc24 restore");
+        assert_eq!(b.snapshot().expect("re-snapshot"), snap);
+
+        // Continued behavior matches: the pending IRQ fires on the same
+        // tick and later writes land identically.
+        for _ in 0..3 {
+            a.on_ppu_tick(0);
+            b.on_ppu_tick(0);
+        }
+        assert_eq!(a.irq_pending(), b.irq_pending());
+        assert!(b.irq_pending());
+        for (mapper, memory) in [(&mut a, &mut mem_a), (&mut b, &mut mem_b)] {
+            acknowledge_irq(mapper, memory);
+            mapper.cpu_write(0x8000, 0x01, SystemClock::default(), memory);
+            mapper.cpu_write(0xb002, 0x04, SystemClock::default(), memory);
+        }
+        assert_eq!(observe(&a, &mem_a), observe(&b, &mem_b));
+        assert_eq!(a.snapshot().unwrap(), b.snapshot().unwrap());
+    }
+
+    #[test]
+    fn snapshot_does_not_capture_variant() {
+        // The VRC variant selector is config, rebuilt by the factory: a
+        // snapshot taken from a VRC4 board restores into a VRC2 board
+        // without disturbing the target's variant-derived decoding.
+        let (prg, chr) = (vec![0u8; PRG_BANK_SIZE * 2], vec![0u8; 0x0400]);
+        let mut mem_a = CartridgeMemory::from_rom(&prg, &chr, None, Mirroring::Horizontal);
+        let mut a = Vrc24::new(&mut mem_a, VrcVariant::Vrc4f);
+        a.cpu_write(0x8000, 0x01, SystemClock::default(), &mut mem_a);
+        a.cpu_write(0x6000, 0x55, SystemClock::default(), &mut mem_a);
+        let snap = a.snapshot().expect("Vrc24 snapshot");
+
+        let mut mem_b = CartridgeMemory::from_rom(&prg, &chr, None, Mirroring::Horizontal);
+        let mut b = Vrc24::new(&mut mem_b, VrcVariant::Vrc2b);
+        b.restore(&snap).expect("Vrc24 restore");
+        // Shared mutable fields applied ...
+        assert_eq!(b.snapshot().expect("re-snapshot"), snap);
+        // ... while the target keeps its own variant config.
+        assert!(!b.variant.is_vrc4());
+        assert_eq!(b.variant.bit_positions(), VrcVariant::Vrc2b.bit_positions());
+        // VRC2 boards answer `$6000-$6FFF` with the bus byte plus the
+        // microwire latch, which proves the VRC2 decoding survived.
+        assert_eq!(b.read_prg(0x6123), Some(0x23 | b.microwire_latch));
     }
 
     #[test]
