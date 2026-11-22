@@ -951,6 +951,14 @@ impl Mapper for MMC5 {
     }
 }
 
+/// Saved mutable state for [`MMC5`] (ticket #186 expand step).
+/// Placeholder: migration ticket #190 fills in the fields (PRG/CHR regs,
+/// ExRAM, split/multiplier regs, the 12 `Cell` values, `Mmc5Audio` state;
+/// WRAM size and battery mask stay config) and implements
+/// `snapshot`/`restore`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct Mmc5State;
+
 #[cfg(test)]
 mod tests {
     use super::*;

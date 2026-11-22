@@ -665,6 +665,55 @@ fn ppu_read_hook_overrides_when_flag_on() {
     assert_eq!(Some(render), seen.get());
 }
 
+/// Ticket #186 (expand step): the snapshot API exists with `Unsupported`
+/// defaults, so no unmigrated mapper changes behavior. RED phase: this
+/// references `SnapshotError`, `MapperState`, the per-mapper state structs,
+/// and the `CartridgeMemory` capture/restore functions before they exist.
+#[test]
+fn unmigrated_mapper_snapshot_reports_unsupported() {
+    let mut memory = CartridgeMemory::test(&[], &[]);
+    let mapper = NRom::new(&mut memory);
+    assert_eq!(mapper.snapshot(), Err(SnapshotError::Unsupported));
+    let state = MapperState::NRom(NRomState::default());
+    let mut mapper = mapper;
+    assert_eq!(mapper.restore(&state), Err(SnapshotError::Unsupported));
+}
+
+/// Ticket #186: one `MapperState` variant per concrete mapper type (12).
+#[test]
+fn mapper_state_covers_all_twelve_mapper_types() {
+    let states = [
+        MapperState::NRom(NRomState::default()),
+        MapperState::MMC1(Mmc1State::default()),
+        MapperState::UxRom(UxRomState::default()),
+        MapperState::CnRom(CnRomState::default()),
+        MapperState::MMC3(Mmc3State::default()),
+        MapperState::MMC5(Mmc5State::default()),
+        MapperState::AxRom(AxRomState::default()),
+        MapperState::Action53(Action53State::default()),
+        MapperState::Nina001(Nina001State::default()),
+        MapperState::BxRom(BxRomState::default()),
+        MapperState::Vrc24(Vrc24State::default()),
+        MapperState::J87(J87State::default()),
+    ];
+    assert_eq!(states.len(), 12);
+}
+
+/// Ticket #186: the shared `CartridgeMemory` snapshot round-trips mutable
+/// contents (nametables, PRG-RAM) without being called anywhere yet.
+#[test]
+fn cartridge_memory_snapshot_roundtrips_mutable_contents() {
+    let mut memory = CartridgeMemory::test(&[], &[]);
+    memory.write_vram(0x2000, 0xab);
+    memory.write_prg_ram(0x6000, 0xcd);
+    let snap: super::memory::CartridgeMemorySnapshot = memory.capture_snapshot();
+    memory.write_vram(0x2000, 0x00);
+    memory.write_prg_ram(0x6000, 0x00);
+    memory.restore_snapshot(&snap);
+    assert_eq!(memory.read_vram(0x2000), 0xab);
+    assert_eq!(memory.read_prg_ram(0x6000), 0xcd);
+}
+
 /// Flag on but the hook declines (`None`): falls through to the window.
 #[test]
 fn ppu_read_hook_fallthrough_when_flag_on() {

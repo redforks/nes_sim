@@ -41,6 +41,12 @@ impl Mapper for BxRom {
     }
 }
 
+/// Saved mutable state for [`BxRom`] (ticket #186 expand step).
+/// Placeholder: migration ticket #187 fills in the fields and implements
+/// `snapshot`/`restore`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct BxRomState;
+
 #[cfg(test)]
 mod tests {
     use super::*;

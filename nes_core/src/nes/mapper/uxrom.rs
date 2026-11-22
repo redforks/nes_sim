@@ -44,6 +44,12 @@ impl Mapper for UxRom {
     }
 }
 
+/// Saved mutable state for [`UxRom`] (ticket #186 expand step).
+/// Placeholder: migration ticket #187 fills in the fields and implements
+/// `snapshot`/`restore`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct UxRomState;
+
 #[cfg(test)]
 mod tests {
     use super::*;

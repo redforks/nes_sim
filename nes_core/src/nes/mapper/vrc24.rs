@@ -312,6 +312,12 @@ impl Mapper for Vrc24 {
     }
 }
 
+/// Saved mutable state for [`Vrc24`] (ticket #186 expand step).
+/// Placeholder: migration ticket #188 fills in the fields (variant stays
+/// config) and implements `snapshot`/`restore`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct Vrc24State;
+
 #[cfg(test)]
 mod tests {
     use super::*;

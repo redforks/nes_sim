@@ -41,6 +41,12 @@ impl Mapper for CnRom {
     }
 }
 
+/// Saved mutable state for [`CnRom`] (ticket #186 expand step).
+/// Placeholder: migration ticket #187 fills in the fields and implements
+/// `snapshot`/`restore`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct CnRomState;
+
 #[cfg(test)]
 mod tests {
     use super::*;

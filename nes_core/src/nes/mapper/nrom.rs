@@ -38,6 +38,12 @@ impl Default for NRom {
     }
 }
 
+/// Saved mutable state for [`NRom`] (ticket #186 expand step).
+/// Placeholder: NROM holds no mutable state; migration ticket #187 wires
+/// up `snapshot`/`restore`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct NRomState;
+
 #[cfg(test)]
 mod tests {
     use super::*;
