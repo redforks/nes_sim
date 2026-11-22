@@ -33,6 +33,7 @@ sha1 = { workspace = true }
 sha2 = { workspace = true }
 crc32fast = { workspace = true }
 serde_json = { workspace = true }
+serde = { version = "1", features = ["derive"] }
 hotpath = "0.30"
 
 [dev-dependencies]
