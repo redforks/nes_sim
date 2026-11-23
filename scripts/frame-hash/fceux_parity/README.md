@@ -12,6 +12,10 @@ Defaults: ROM `Super Mario Bros. (World).nes`, movie
 `ROM=`, `MOVIE=`, `PALETTE=`, `NFRAMES=`, `FCEUX=`, `NESCLI_BIN=`
 (unset = cargo-built release binary).
 
+The `ROM`/`MOVIE` defaults are machine-specific
+(`/home/forks/nes/...`); on any other machine `ROM=` and `MOVIE=`
+env overrides are required.
+
 Expected: `identical: 158 / 600`. Outputs in `<outdir>`: `env.txt`
 (versions, hashes, commands), `per_frame.tsv` (MATCH|DIFF per frame),
 `offsets.txt` (exact-match offset runs + `intermission` 50-196 and
@@ -27,8 +31,9 @@ removes the 0/2 `$077F` artifact but not the intermission gap
 
 Files: `baseline.sh` (this ticket); `fceux_dump.lua`
 (`gui.gdscreenshot(true)` per-frame GD dump); `bin/ffmpeg` (fake
-ffmpeg: `DUMP_DIR` RGB dump, not the `FP_OUT` hasher in
-`scripts/frame-hash/bin/`); `convert_gd.py` (GD strip 11-byte header to
+ffmpeg shim: `DUMP_DIR` RGB dump, not the `FP_OUT` hasher in
+`scripts/frame-hash/bin/` — the `PATH` override in `baseline.sh`
+means `ffmpeg` on this script's `PATH` is the shim, not real ffmpeg); `convert_gd.py` (GD strip 11-byte header to
 RGB); `compare.py` (byte compare + first-5 diff PNGs); `align.py`
 (offset search, default dirs, `N` from argv); `fceux-default.pal`
 (192 bytes, md5 `68479d93aef7cf31c2927f436b10a54a`).

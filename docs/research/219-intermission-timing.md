@@ -19,6 +19,11 @@ probes stay temporary/reverted; this ticket added none.
   below; all PASS). Prior results: #203 (sl 261), #211 (sl 240),
   #212 (`00`-state end artifact), #206 (zero-NMI frames).
 
+Key trace numbers (probes reverted; this section keeps the report
+standalone): load nescli 50 vs fceux 51; first tick frame 70 (+20,
+sl 261) / 71 (+21, sl 240) vs fceux 52 (+1); 21-frame tick period;
+end 197 vs 178; length 147 vs 127.
+
 Inputs throughout: `Super Mario Bros. (World).nes`, movie
 `happylee-supermariobros,warped.fm2`, `fceux-default.pal`, 600 frames.
 

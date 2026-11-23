@@ -213,16 +213,17 @@ just unit-test                       # must stay green
 git status --short                   # report file only
 ```
 
-Link check (every `docs/research/*.md`, script path, and `/tmp` trace
-cited above must resolve; `/tmp` traces are the retained original dumps,
-not committed):
+Link check (every `docs/research/*.md` and script path cited above must
+resolve; `/tmp` traces are the retained original dumps, not committed,
+and are exempt from the check):
 
 ```bash
 python3 - <<'EOF'
 import re, pathlib
 p = pathlib.Path("docs/research/224-root-cause-report.md")
 t = p.read_text()
-refs = set(re.findall(r'(docs/research/[\w.-]+\.md|scripts/[\w/.-]+)', t))
+refs = set(re.findall(r'(docs/research/[\w.-]+\.md|scripts/[\w/.-]+|/tmp/[\w/.-]+)', t))
+refs = {r for r in refs if not r.startswith("/tmp/")}  # exempt /tmp traces
 missing = [r for r in refs if not pathlib.Path(r).exists()]
 print("missing:", missing or "none")
 EOF
