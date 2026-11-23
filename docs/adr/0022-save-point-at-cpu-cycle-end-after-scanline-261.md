@@ -40,5 +40,5 @@ stop after one tick and return no frame.
   at 241.1.
 - `tick_frames` and `take_vblank_entered` keep the VBL-entry break. They are
   not the save point.
-- `nes_core/CLAUDE.md` and `nescli/CLAUDE.md` describe the VBL boundary and
+- `nes_core/AGENTS.md` and `nescli/AGENTS.md` describe the VBL boundary and
   need updating when the refactor lands.

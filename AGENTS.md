@@ -4,59 +4,51 @@ An NES (Nintendo Entertainment System) emulator implemented in Rust with a modul
 
 ## Workspace Structure
 
-| Crate | Purpose | CLAUDE.md |
-|-------|---------|-----------|
-| `nes_core/` | Core emulation library (no std dependency except image/log) | [nes_core/CLAUDE.md](nes_core/CLAUDE.md) |
-| `nes_cpu_test/` | CLI tool for running CPU test ROMs with exit code detection | [nes_cpu_test/CLAUDE.md](nes_cpu_test/CLAUDE.md) |
-| `nes_web/` | WebAssembly build for browser-based emulation | [nes_web/CLAUDE.md](nes_web/CLAUDE.md) |
-| `nescli/` | CLI tools with SDL2 display and CHR ROM inspection (SDL driver, render, and event loop live under `nescli/src/sdl/`) | [nescli/CLAUDE.md](nescli/CLAUDE.md) |
+| Crate | Purpose | Doc |
+|---|---|---|
+| `nes_core/` | Core emulation library (no std dependency except image/log) | [nes_core/AGENTS.md](nes_core/AGENTS.md) |
+| `nes_cpu_test/` | CLI tool for running CPU test ROMs with exit code detection | [nes_cpu_test/AGENTS.md](nes_cpu_test/AGENTS.md) |
+| `nes_web/` | WebAssembly build for browser-based emulation | - (no dedicated doc; see `nes_web/src/` and `www/`) |
+| `nescli/` | CLI tools with SDL2 display (SDL driver, render, and event loop live under `nescli/src/sdl/`) | [nescli/AGENTS.md](nescli/AGENTS.md) |
 | `www/` | Frontend for WASM build | - |
+
+Read the crate doc when touching that crate:
+
+- `nes_core/AGENTS.md` for CPU/PPU/APU, mapper, timing, audio, and the per-frame `FrameOutput` / drain contract.
+- `nescli/AGENTS.md` for `run` / `info` / `convert`, SDL controls, and presentation.
+- `nes_cpu_test/AGENTS.md` for the test ROM harness, plugins, and blessing captures (`--dump-frame`, `--dump-audio`, `--press`).
 
 ## Quick Start
 
 ### Building
+
 ```bash
 cargo build --release              # Build all crates in release mode
 ```
 
 ### Testing
+
 ```bash
-just unit-test                     # Run unit tests
-just passed                        # Run unit tests and passed rom tests
+just unit-test                     # lib unit tests
+just passed                        # unit tests + full ROM gate (unit-test + passed_rom_tests)
 ```
 
+`just --list` and the `justfile` are canonical for all recipes.
+
 ### Web Development
+
 ```bash
 just wasm-debug-build              # Build WASM
 just web-start                     # Start dev server
 ```
 
 ### CLI Tools
-```bash
-# Run ROM with SDL2 display
-cargo run -p nescli --release -- run <file.nes>
 
-# Show ROM information
-cargo run -p nescli --release -- info <file.nes>
-
-# Extract and view CHR ROM patterns
-cargo run -p nescli --release -- read-chr <file.nes> | feh -Z --force-aliasing -
-
-# Convert an FCEUX .fm2 movie to a Mesen .mmo movie
-cargo run -p nescli --release -- convert <movie.fm2> --rom <file.nes>
-```
+See [nescli/AGENTS.md](nescli/AGENTS.md) for `run` (interactive + `--movie` playback), `info`, and `convert`.
 
 ## Architecture
 
-See [nes_core/CLAUDE.md](nes_core/CLAUDE.md) for detailed architecture documentation including:
-- CPU Layer (6502 microcode-based emulation)
-- MCU Abstraction (memory-mapped I/O)
-- NES Hardware (RAM, PPU, APU, cartridge, controller)
-- Machine & Frame Execution
-- Cartridge System (mappers: NROM, UxROM, CNROM, MMC1, MMC3, MMC5)
-- PPU (scanline-accurate rendering)
-- APU (audio with 5 channels: 2 pulse, triangle, noise, DMC)
-- ROM Loading (iNES format)
+See [nes_core/AGENTS.md](nes_core/AGENTS.md) for the emulation architecture (CPU, MCU, NES hardware, machine/frame execution, cartridge, PPU, APU, iNES). Domain language lives in `GLOSSARY.md`; decisions live in `docs/adr/`.
 
 ## Build System
 
