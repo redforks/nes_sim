@@ -398,3 +398,38 @@ fn zapper_aim_clamps_to_screen_edges() {
     zapper.aim(255, 239);
     assert_eq!(zapper.read(250, 340, bright), 0x00); // clamps at x 255 / y 239
 }
+
+/// Ticket #221 (a), latch half: the strobe falling edge freezes the row.
+/// Buttons pressed or released after the fall stay invisible to the
+/// in-progress poll; only the next fall picks them up. Which row a poll
+/// reads is decided at strobe-off, not at the first read.
+#[test]
+fn strobe_fall_freezes_row_for_in_progress_poll() {
+    let mut c = Controller::new();
+    c.a.press(Button::A);
+
+    // Real path: strobe $01 then $00, the fall freezes {A}.
+    c.write(0x01);
+    c.write(0x00);
+
+    // Input changes mid-poll must not leak into this poll.
+    c.a.release(Button::A);
+    c.a.press(Button::B);
+
+    let mut row = [0u8; 8];
+    for slot in row.iter_mut() {
+        *slot = read_a_advancing(&mut c);
+    }
+    assert_eq!(row[0], 0x41, "A frozen at the fall still reads pressed");
+    assert_eq!(row[1], 0x40, "B pressed after the fall stays invisible");
+
+    // Next poll (next fall) sees the new row.
+    c.write(0x01);
+    c.write(0x00);
+    let mut row = [0u8; 8];
+    for slot in row.iter_mut() {
+        *slot = read_a_advancing(&mut c);
+    }
+    assert_eq!(row[0], 0x40);
+    assert_eq!(row[1], 0x41, "B visible after the next strobe fall");
+}
