@@ -836,7 +836,7 @@ profile frames="500" flamegraph="true":
     echo ">> Building profiling binary (profile.profiling, force-frame-pointers)..."
     RUSTFLAGS="-C force-frame-pointers=yes" cargo build --profile profiling -p nescli
     echo ">> Sampling {{frames}} frames headless/no-throttle via perf record -F 997 -g..."
-    perf record -o /tmp/perf.data -F 997 -g -- /tmp/nes-sim-target/profiling/nescli "$NES_ROM" run --movie "$NES_MOVIE" --no-throttle --headless --trim-after {{frames}}
+    perf record -o /tmp/perf.data -F 997 -g -- /tmp/nes-sim-target/profiling/nescli run "$NES_ROM" --movie "$NES_MOVIE" --no-throttle --headless --trim-after {{frames}}
     echo ">> perf report (children) -> /tmp/perf-report.txt"
     perf report -i /tmp/perf.data --stdio --percent-limit 1 > /tmp/perf-report.txt 2>&1 || true
     echo ">> perf report (self) -> /tmp/perf-report-self.txt"
@@ -849,7 +849,7 @@ profile frames="500" flamegraph="true":
     if [ "{{flamegraph}}" = "true" ]; then \
         if command -v cargo-flamegraph >/dev/null 2>&1; then \
             echo ">> Generating flamegraph via cargo flamegraph -> /tmp/flamegraph.svg..."; \
-            RUSTFLAGS="-C force-frame-pointers=yes" cargo flamegraph --profile profiling -p nescli --output /tmp/flamegraph.svg -- "$NES_ROM" run --movie "$NES_MOVIE" --no-throttle --headless --trim-after {{frames}} || echo "warning: cargo flamegraph failed (check perf permissions)" >&2; \
+            RUSTFLAGS="-C force-frame-pointers=yes" cargo flamegraph --profile profiling -p nescli --output /tmp/flamegraph.svg -- run "$NES_ROM" --movie "$NES_MOVIE" --no-throttle --headless --trim-after {{frames}} || echo "warning: cargo flamegraph failed (check perf permissions)" >&2; \
             ls -lh /tmp/flamegraph.svg 2>&1 | head -n 5; \
         else \
             echo "note: cargo-flamegraph not installed; skipping flamegraph (cargo install flamegraph)" >&2; \
@@ -874,7 +874,7 @@ profile-cachegrind frames="200":
     NES_ROM="../Super Mario Bros. (Japan, USA).nes"
     NES_MOVIE="../happylee-supermariobros,warped.fm2"
     RUSTFLAGS="-C force-frame-pointers=yes" cargo build --profile profiling -p nescli
-    valgrind --tool=cachegrind --cachegrind-out-file=/tmp/cachegrind.out -- /tmp/nes-sim-target/profiling/nescli "$NES_ROM" run --movie "$NES_MOVIE" --no-throttle --headless --trim-after {{frames}}
+    valgrind --tool=cachegrind --cachegrind-out-file=/tmp/cachegrind.out -- /tmp/nes-sim-target/profiling/nescli run "$NES_ROM" --movie "$NES_MOVIE" --no-throttle --headless --trim-after {{frames}}
     if command -v cg_annotate >/dev/null 2>&1; then cg_annotate /tmp/cachegrind.out | head -n 80; else echo "cg_annotate not found; raw output at /tmp/cachegrind.out"; fi
 
 # Instrumented timing + instruction counts (hotpath crate): builds nescli once
@@ -931,7 +931,7 @@ hotpath frames="100" rate="0.01":
     echo ">> Building instrumented binary (hotpath-callgrind, profile.profiling)..."
     RUSTFLAGS="-C target-cpu=x86-64-v2 -C link-arg=-fuse-ld=mold" \
         cargo build -p nescli -F hotpath-callgrind --profile profiling
-    ARGS=("$NES_ROM" run --movie "$NES_MOVIE" --headless --no-throttle --trim-after {{frames}})
+    ARGS=(run "$NES_ROM" --movie "$NES_MOVIE" --headless --no-throttle --trim-after {{frames}})
     echo ">> Timing {{frames}} frames natively..."
     HOTPATH_FUNCTIONS_TIME_SAMPLING_RATE={{rate}} HOTPATH_DRAIN_INTERVAL_MS=1 "$BIN" "${ARGS[@]}"
     echo ">> Counting {{frames}} frames under callgrind (tens of × slower)..."
@@ -985,7 +985,7 @@ profile-cpu frames="100" rate="0.01":
     echo ">> Building CPU-profiling binary (hotpath-cpu, profile.profiling)..."
     cargo build -p nescli -F hotpath-cpu --profile profiling
     echo ">> Sampling {{frames}} frames headless/no-throttle..."
-    HOTPATH_FUNCTIONS_TIME_SAMPLING_RATE={{rate}} HOTPATH_DRAIN_INTERVAL_MS=1 "${RUNNER[@]}" /tmp/nes-sim-target/profiling/nescli "$NES_ROM" run --movie "$NES_MOVIE" --no-throttle --headless --trim-after {{frames}}
+    HOTPATH_FUNCTIONS_TIME_SAMPLING_RATE={{rate}} HOTPATH_DRAIN_INTERVAL_MS=1 "${RUNNER[@]}" /tmp/nes-sim-target/profiling/nescli run "$NES_ROM" --movie "$NES_MOVIE" --no-throttle --headless --trim-after {{frames}}
     profile=$(ls -t /tmp/hotpath/*/hp.json.gz 2>/dev/null | head -n 1 || true)
     if [ -n "$profile" ]; then
         echo ""
