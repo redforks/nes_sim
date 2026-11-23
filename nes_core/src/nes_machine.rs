@@ -835,4 +835,138 @@ mod tests {
             "theme control: a different theme must render different pixels"
         );
     }
+
+    /// NROM test ROM for ticket #221: the NMI handler burns ~3800 cycles
+    /// (past the scanline-261 frame cut), then strobes $4016, stores the 8
+    /// raw poll reads to $10-$17, raises $1F = $AA, and returns. Reset
+    /// enables NMI ($2000 bit 7) and spins. Vectors: NMI $8100, RST/IRQ
+    /// $8000. First poll read (LDA $4016) sits at `POLL_READ_ADDR`.
+    const POLL_READ_SL_LIMIT: u16 = 40;
+    fn nmi_poll_nes_file() -> INesFile {
+        let mut rom = Vec::new();
+        rom.extend_from_slice(&[0x4e, 0x45, 0x53, 0x1a, 1, 1, 0x00, 0x00]);
+        rom.extend_from_slice(&[0; 8]);
+
+        let mut prg = vec![0_u8; 16 * 1024];
+        // Reset: LDA #$80; STA $2000; LDA #$00; STA $1F; JMP $800C.
+        // Main loop at $800C: JMP $800C (self loop).
+        let reset: [u8; 15] = [
+            0xA9, 0x80, 0x8D, 0x00, 0x20, 0xA9, 0x00, 0x85, 0x1F, 0x4C, 0x0C, 0x80, 0x4C, 0x0C,
+            0x80,
+        ];
+        prg[..reset.len()].copy_from_slice(&reset);
+        // NMI handler at $8100: delay, strobe, 8 reads to $10-$17, flag, RTI.
+        let mut handler = vec![
+            0xA2, 0x03, // LDX #$03
+            0xA0, 0xFF, // LDY #$FF
+            0x88, // DEY
+            0xD0, 0xFD, // BNE -> DEY
+            0xCA, // DEX
+            0xD0, 0xF8, // BNE -> LDY
+            0xA9, 0x01, 0x8D, 0x16, 0x40, // LDA #$01; STA $4016
+            0xA9, 0x00, 0x8D, 0x16, 0x40, // LDA #$00; STA $4016
+        ];
+        for i in 0..8u8 {
+            handler.extend_from_slice(&[0xAD, 0x16, 0x40, 0x85, 0x10 + i]);
+        }
+        handler.extend_from_slice(&[0xA9, 0xAA, 0x85, 0x1F, 0x40]); // flag; RTI
+        prg[0x100..0x100 + handler.len()].copy_from_slice(&handler);
+        // Vectors $FFFA: NMI $8100, RST $8000, IRQ $8000.
+        prg[0x3FFA..=0x3FFF].copy_from_slice(&[0x00, 0x81, 0x00, 0x80, 0x00, 0x80]);
+        rom.extend_from_slice(&prg);
+        rom.extend(std::iter::repeat_n(0, 8 * 1024));
+        INesFile::new(rom).unwrap()
+    }
+
+    /// Steps ticks until the handler raises $1F, switching the held row at
+    /// the first scanline-261 wrap (where `process_frame` returns and the
+    /// event loop applies the next movie row). Returns the scanline where
+    /// $10 (first poll read) first landed.
+    fn run_until_poll_stored(
+        machine: &mut NesMachine<EmptyPlugin<NesMcu>>,
+        switch_to_b: bool,
+    ) -> u16 {
+        use crate::mcu::Mcu;
+
+        let mut seen_261 = false;
+        let mut switched = !switch_to_b;
+        let mut poll_sl = None;
+        for _ in 0..500_000 {
+            let sl = machine.mcu().ppu().timing().scanline();
+            if sl == 261 {
+                seen_261 = true;
+            }
+            if seen_261 && sl != 261 && !switched {
+                switched = true;
+                machine.release_controller_a(Button::A);
+                machine.press_controller_a(Button::B);
+            }
+            if poll_sl.is_none() && machine.mcu().peek(0x0010) != 0x00 {
+                poll_sl = Some(sl);
+            }
+            if machine.mcu().peek(0x001F) == 0xAA {
+                assert!(switched, "poll stored before the first frame cut");
+                return poll_sl.unwrap_or(999);
+            }
+            machine.tick();
+        }
+        panic!("NMI poll handler never stored (500k tick budget)");
+    }
+
+    /// Ticket #221 (a), cut half: a poll whose strobe fall lands after the
+    /// scanline-261 frame cut reads the row applied at the cut (the next
+    /// frame's row), not the row live when the NMI fired.
+    #[test]
+    fn nmi_poll_after_frame_cut_reads_next_frame_row() {
+        use crate::mcu::Mcu;
+
+        let file = nmi_poll_nes_file();
+        let mut machine = NesMachine::new(&file, EmptyPlugin::new());
+        machine.press_controller_a(Button::A);
+
+        let poll_sl = run_until_poll_stored(&mut machine, true);
+
+        assert!(
+            poll_sl < POLL_READ_SL_LIMIT,
+            "poll at sl {poll_sl} did not cross just past the cut (< {POLL_READ_SL_LIMIT})"
+        );
+        assert_eq!(
+            machine.mcu().peek(0x0010),
+            0x40,
+            "first read (A) must see the cut: A released at the wrap"
+        );
+        assert_eq!(
+            machine.mcu().peek(0x0011),
+            0x41,
+            "second read (B) must see the cut: B pressed at the wrap"
+        );
+    }
+
+    /// Control for the crossing test: with no input change at the cut, the
+    /// same delayed poll reads the pre-cut row.
+    #[test]
+    fn nmi_poll_after_frame_cut_control_reads_held_row() {
+        use crate::mcu::Mcu;
+
+        let file = nmi_poll_nes_file();
+        let mut machine = NesMachine::new(&file, EmptyPlugin::new());
+        machine.press_controller_a(Button::A);
+
+        let poll_sl = run_until_poll_stored(&mut machine, false);
+
+        assert!(
+            poll_sl < POLL_READ_SL_LIMIT,
+            "control poll at sl {poll_sl} did not land just past the cut"
+        );
+        assert_eq!(
+            machine.mcu().peek(0x0010),
+            0x41,
+            "control: held A must still read pressed"
+        );
+        assert_eq!(
+            machine.mcu().peek(0x0011),
+            0x40,
+            "control: untouched B must read released"
+        );
+    }
 }
