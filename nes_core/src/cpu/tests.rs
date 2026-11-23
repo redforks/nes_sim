@@ -1486,6 +1486,34 @@ fn test_sta_absolute() {
     assert_eq!(cpu.read_byte(0x1234), 0x42);
 }
 
+/// Ticket #226 (F2/O1): STA absolute must reach the generic `Mcu::write`
+/// path, not a side channel. Guards the #220 blind spot where a tap on
+/// `write_mem` alone missed every STA (only RMW logged).
+#[test]
+fn sta_absolute_records_generic_mcu_write() {
+    use crate::test_utils::{McuCall, RecordingMcu};
+
+    let mcu = RecordingMcu::filled(0xEA).with_program(0, &[0xA9, 0x42, 0x8D, 0x34, 0x12]);
+    let mut cpu = create_cpu_with_mcu(mcu);
+    cpu.set_pc(0);
+    cpu.mcu_mut().clear_calls();
+
+    execute_next(&mut cpu); // LDA #$42
+    execute_next(&mut cpu); // STA $1234
+
+    let hit = cpu.mcu().calls().iter().any(|c| {
+        matches!(
+            c,
+            McuCall::Write {
+                addr: 0x1234,
+                value: 0x42
+            }
+        )
+    });
+    assert!(hit, "STA absolute must emit McuCall::Write to $1234");
+    assert_eq!(cpu.mcu().peek(0x1234), 0x42);
+}
+
 #[test]
 fn test_sta_absolute_x() {
     let mut cpu = create_cpu_with_program(&[0xA9, 0x42, 0xA2, 0x10, 0x9D, 0x34, 0x12, 0xEA]);

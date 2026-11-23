@@ -291,8 +291,10 @@ impl ValueTargetTrait for ZeroPage {
 
 impl ValueTargetTrait for Mem {
     fn write<M: Mcu>(cpu: &mut Cpu, bus: &mut Bus<M>, value: u8) {
-        let clock = bus.clock();
-        bus.mcu_mut().write(cpu.ab.get(), value, clock);
+        // Single funnel with `write_byte`/`write_mem`: every generic-Mem
+        // store (incl. STA absolute) lands in `Mcu::write`, so future
+        // write taps on one path cannot miss STA (#220 blind spot).
+        cpu.write_byte(bus, value);
     }
 }
 
