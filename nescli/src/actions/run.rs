@@ -474,8 +474,11 @@ impl RunAction {
             },
         );
 
-        // Drop machine first to close channel senders, which lets pipe-writing
+        // Drop drivers first to close channel senders (owned by
+        // render/audio, not the machine), which lets pipe-writing
         // threads exit and close FIFOs so ffmpeg sees EOF and finishes.
+        drop(render);
+        drop(audio_driver);
         drop(machine);
         drop(cleanup);
         Ok(())
