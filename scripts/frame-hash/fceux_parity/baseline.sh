@@ -66,6 +66,8 @@ FCEUX_VERSION=$("$FCEUX" --version 2>&1 | grep -m1 -o "2\.[0-9.]*" || echo unkno
 } > "$OUT/env.txt"
 
 echo "== nescli ($NFRAMES frames) =="
+# WARNING: $HERE/bin/ffmpeg is a FAKE ffmpeg shim (RGB dump via DUMP_DIR),
+# not real ffmpeg. It shadows the real ffmpeg on PATH for this call only.
 DUMP_DIR="$OUT/nes_rgb" PATH="$HERE/bin:$PATH" \
   "$NESCLI_BIN" run "$ROM" --movie "$MOVIE" --no-throttle \
   --trim-after "$NFRAMES" --headless --palette "$PALETTE" \
