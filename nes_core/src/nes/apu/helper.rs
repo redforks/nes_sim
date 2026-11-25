@@ -64,12 +64,13 @@ impl LengthControl {
     /// Decrement counter if it's > 0, returning whether it did. A same-tick
     /// reload write must be suppressed when this returns true.
     pub fn tick(&mut self) -> bool {
-        if !self.is_halt && self.counter > 0 {
-            self.counter -= 1;
-            true
-        } else {
-            false
+        if self.is_halt {
+            return false;
         }
+
+        let r = self.counter != 0;
+        self.counter = self.counter.saturating_sub(1);
+        r
     }
 }
 
@@ -132,7 +133,10 @@ impl Envelope {
             self.request_reset = false;
             self.counter = 15;
             self.divider.reset();
-        } else if self.divider.tick() {
+            return;
+        }
+
+        if self.divider.tick() {
             if self.counter == 0 {
                 if self.enable_loop {
                     self.counter = 15;
@@ -209,7 +213,7 @@ impl CounterPub for u16 {
     const ZERO: Self = 0;
 
     fn dec(self) -> Self {
-        self.wrapping_sub(1)
+        self - 1
     }
 }
 
@@ -217,7 +221,7 @@ impl CounterPub for u8 {
     const ZERO: Self = 0;
 
     fn dec(self) -> Self {
-        self.wrapping_sub(1)
+        self - 1
     }
 }
 
@@ -236,13 +240,13 @@ impl<C: CounterPub> Divider<C> {
     }
 
     pub fn tick(&mut self) -> bool {
-        if self.counter == C::ZERO {
+        let r = self.counter == C::ZERO;
+        if r {
             self.reset();
-            true
         } else {
             self.counter = self.counter.dec();
-            false
         }
+        r
     }
 
     pub fn reset(&mut self) {
