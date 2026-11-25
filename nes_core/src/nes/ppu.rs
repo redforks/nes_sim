@@ -887,9 +887,8 @@ impl Ppu {
         // in `write_ppureg` and applied per segment by the flush below;
         // enable bits, by contrast, take effect here immediately.
         if self.timing.is_visible_dots() {
-            let x = (self.timing.dot - 1) as u8;
             let pixel_idx = self.render_pixel(cartridge);
-            let index = self.timing.scanline * VISIBLE_WIDTH + x as u16;
+            let index = self.timing.scanline * VISIBLE_WIDTH + (self.timing.dot - 1) as u16;
             unsafe {
                 *self.palette_index_buffer.get_unchecked_mut(index as usize) = pixel_idx;
             }
