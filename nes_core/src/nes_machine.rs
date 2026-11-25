@@ -137,10 +137,6 @@ where
         // Reborrow as shared: both slices derive from `&self`.
         let frame: &[u8] = mcu.ppu().frame_bytes();
         let audio: &[f32] = mcu.apu().audio_samples();
-        // Extend the borrows to the `&mut self` lifetime: `frame`/`audio`
-        // point into `self` and outlive this call.
-        let frame: &[u8] = unsafe { &*(frame as *const [u8]) };
-        let audio: &[f32] = unsafe { &*(audio as *const [f32]) };
         FrameOutput {
             status,
             frame,
