@@ -16,7 +16,7 @@ use crate::nes::{
 };
 pub(crate) use oam::{Attribute, Oam, Sprite};
 use palette::{Palette, Pixel};
-use registers::{ColorConfig, PpuCtrl, PpuMask, PpuStatus, Registers};
+use registers::{PpuCtrl, PpuMask, PpuStatus, Registers};
 pub(crate) use sprite::{
     SpriteEvalModeTag, SpriteManagerState, SpriteOverflowEvalState, SpriteRowState,
 };
@@ -251,7 +251,7 @@ impl TileCache {
 #[derive(Copy, Clone)]
 struct ColorSplit {
     index: u16,
-    prior: ColorConfig,
+    prior: PpuMask,
 }
 
 #[derive(Copy, Clone)]
@@ -886,7 +886,7 @@ impl Ppu {
         // enable bits, by contrast, take effect here immediately.
         if self.timing.is_visible_dots() {
             let pixel_idx = self.render_pixel(cartridge);
-            let index = self.timing.scanline * VISIBLE_WIDTH + (self.timing.dot - 1) as u16;
+            let index = self.timing.scanline * VISIBLE_WIDTH + (self.timing.dot - 1);
             unsafe {
                 *self.palette_index_buffer.get_unchecked_mut(index as usize) = pixel_idx;
             }
@@ -1064,10 +1064,7 @@ impl Ppu {
             .color_splits
             .drain(..)
             .map(|split| (split.index, split.prior))
-            .chain(once((
-                TOTAL_PIXELS,
-                ColorConfig::from_mask(self.registers.mask),
-            )))
+            .chain(once((TOTAL_PIXELS, self.registers.mask)))
         {
             // Every flush segment goes through the per-segment 64-entry
             // LUT + batched gather (scalar or SSSE3, identical output).
@@ -1087,12 +1084,12 @@ impl Ppu {
     /// given stored color config. Hardware grayscale ANDs the 6-bit entry
     /// with $30 before the color lookup ($3F black renders as $30 white);
     /// emphasis tints are analog effects on the looked-up RGB. The flush
-    /// passes each segment's stored [`ColorConfig`] and the live
+    /// passes each segment's stored [`PpuMask`] and the live
     /// brightness path ([`Self::pixel_brightness`]) passes the current
-    /// mask's projection, so the two share one resolution point and stay
-    /// segment-compatible (ticket #67: no `ColorConfig` -> mask round
+    /// mask, so the two share one resolution point and stay
+    /// segment-compatible (ticket #67: no projection -> mask round
     /// trip).
-    fn resolve_pixel(&self, palette_index: u8, config: ColorConfig) -> Pixel {
+    fn resolve_pixel(&self, palette_index: u8, config: PpuMask) -> Pixel {
         config.apply_effects(
             self.color_theme
                 .color(config.grayscale_index(palette_index)),
@@ -1117,7 +1114,7 @@ impl Ppu {
         }
         let pixel = self.resolve_pixel(
             self.palette_index_buffer[index as usize],
-            ColorConfig::from_mask(self.registers.mask),
+            self.registers.mask,
         );
         let (r, g, b) = pixel.to_rgb();
         u32::from(r) + u32::from(g) + u32::from(b)
@@ -1206,7 +1203,7 @@ impl Ppu {
                 self.schedule_background_activation_if_visible();
             }
             0x2001 => {
-                let prior = ColorConfig::from_mask(self.registers.mask);
+                let prior = self.registers.mask;
                 let mask = PpuMask::from_bytes([value]);
                 self.registers.mask = mask;
                 // Only the color bits are deferred: a write that changes
@@ -1223,7 +1220,7 @@ impl Ppu {
                 // at dots 2 and 258, and hblank/vblank writes have
                 // nothing pending (blargg nmi_sync / dpcmletterbox draw
                 // their lines with exactly this landing).
-                if ColorConfig::from_mask(mask) != prior {
+                if mask != prior {
                     let next = self.next_beam_index();
                     let pending = if self.timing.scanline >= 240 {
                         0

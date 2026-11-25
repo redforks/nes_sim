@@ -36,7 +36,7 @@
 use super::palette::ColorTheme;
 #[cfg(target_arch = "x86_64")]
 use super::palette::Pixel;
-use super::registers::ColorConfig;
+use super::registers::PpuMask;
 
 /// Per-segment final-color table: `[u32; 64]` LE words (RGBA byte
 /// order, as [`super::palette::Pixel::to_u32`]) for the scalar gather,
@@ -55,7 +55,7 @@ pub(crate) struct FinalColorLut {
 /// three stages as the per-pixel path:
 /// `config.apply_effects(theme.color(config.grayscale_index(idx)))`
 /// for `idx in 0..64`.
-pub(crate) fn build_final_color_lut(theme: &ColorTheme, config: ColorConfig) -> FinalColorLut {
+pub(crate) fn build_final_color_lut(theme: &ColorTheme, config: PpuMask) -> FinalColorLut {
     let mut words = [0u32; 64];
     #[cfg(target_arch = "x86_64")]
     let mut planes = [[0u8; 64]; 3];
@@ -179,18 +179,15 @@ mod tests {
         ColorTheme::load_from_pal_buf(&buf)
     }
 
-    fn configs() -> [ColorConfig; 4] {
-        use super::super::registers::PpuMask;
+    fn configs() -> [PpuMask; 4] {
         [
-            ColorConfig::from_mask(PpuMask::new()),
-            ColorConfig::from_mask(PpuMask::new().with_grayscale(true)),
-            ColorConfig::from_mask(PpuMask::new().with_red_tint(true)),
-            ColorConfig::from_mask(
-                PpuMask::new()
-                    .with_grayscale(true)
-                    .with_green_tint(true)
-                    .with_blue_tint(true),
-            ),
+            PpuMask::new(),
+            PpuMask::new().with_grayscale(true),
+            PpuMask::new().with_red_tint(true),
+            PpuMask::new()
+                .with_grayscale(true)
+                .with_green_tint(true)
+                .with_blue_tint(true),
         ]
     }
 
