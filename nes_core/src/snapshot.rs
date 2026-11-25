@@ -16,7 +16,7 @@
 //! via the mapper state API; every other component section exists with
 //! its final name but is left defaulted (ticket #193 fills them). The
 //! `ppu` section carries the live scanline/dot so load can validate the
-//! save-point boundary (scanline 261, dot 0..=2).
+//! save-point boundary (scanline 241, dot 2..=4).
 //!
 //! Load validates everything before mutating anything: format version,
 //! ROM hash, mapper tag, enum names, JSON syntax, hex, scanline/dot. A
@@ -63,17 +63,23 @@ use serde_json::Value;
 /// field's meaning (emulation-behavior changes do not bump it). Old
 /// versions are refused, never migrated: there is exactly one constant.
 ///
+/// Version 3: the save point is the end of the CPU cycle containing the
+/// VBlank set dot (scanline 241, dot 2..=4), matching `process_frame()`.
 /// Version 2 (ticket #193): every component section is filled from live
 /// state (version 1 left `cpu`/`bus`/`dma`/`apu`/`controller` empty and
 /// `ppu` with only the save-point dot).
-pub const SAVE_FORMAT_VERSION: u32 = 2;
+pub const SAVE_FORMAT_VERSION: u32 = 3;
 
-/// Scanline the save point sits at (ADR 0022): end of the first CPU cycle
-/// at or after scanline 261, so the boundary PPU dot is 0, 1, or 2.
-const SAVE_SCANLINE: u16 = 261;
+/// Scanline of the VBlank-entry save point (ADR 0024).
+const SAVE_SCANLINE: u16 = 241;
 
-/// Largest boundary dot (one CPU cycle is three PPU dots).
-const MAX_SAVE_DOT: u16 = 2;
+/// Smallest returned dot when the VBlank set dot falls in the last PPU
+/// sub-dot of a CPU cycle.
+const MIN_SAVE_DOT: u16 = 2;
+
+/// Largest returned dot when the VBlank set dot falls in the first PPU
+/// sub-dot of a CPU cycle.
+const MAX_SAVE_DOT: u16 = 4;
 
 /// Mapper tags in a fixed order (the `MapperState` variant names).
 const KNOWN_MAPPER_TAGS: [&str; 12] = [
@@ -1817,8 +1823,8 @@ fn decode_controller(dto: &ControllerSection) -> ControllerState {
 // PPU section (ticket #193): timing, raw register bits, latches, memory,
 // and evaluation state. The framebuffer, palette-index buffer,
 // color-split log, and theme stay excluded per the spec (rebuilt by
-// rendering). The save-point boundary (scanline 261, dot 0..=2) is
-// validated on load as before.
+// rendering). The VBlank-entry save-point boundary (scanline 241, dot 2..=4)
+// is validated on load.
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 struct SpriteDto {
@@ -2003,9 +2009,9 @@ fn decode_background_activation(dto: &BackgroundActivationDto) -> BackgroundActi
 }
 
 fn encode_ppu(state: &PpuState) -> PpuSection {
-    // Spec #184: neither flag is stored. The save-point boundary
-    // (`NesMachine::process_frame`) clears `vblank_entered`, and
-    // `suppress_vblank_pending` must already be unset there.
+    // Spec #184: neither flag is stored. `process_frame()` consumes
+    // `vblank_entered` before returning, and the VBlank set dot clears
+    // `suppress_vblank_pending`.
     assert!(
         !state.vblank_entered,
         "save point must observe vblank_entered unset"
@@ -2130,8 +2136,8 @@ fn decode_ppu(dto: &PpuSection) -> Result<PpuState, SaveError> {
         odd_frame: dto.odd_frame,
         frame_no: dto.frame_no as usize,
         cycle: dto.cycle,
-        // Spec #184: neither flag is stored; a restored machine always
-        // starts with both unset (the boundary clears `vblank_entered`).
+        // Spec #184: neither flag is stored; a restored machine starts
+        // with both unset, matching the post-`process_frame()` boundary.
         vblank_entered: false,
         suppress_vblank_pending: false,
         ren_latched_at_338: dto.ren_latched_at_338,
@@ -2786,7 +2792,7 @@ fn decode_memory(dto: &MemorySectionDto) -> Result<CartridgeMemorySnapshot, Save
 // ---------------------------------------------------------------------------
 
 /// Serializes `machine` state to the versioned JSON save format. The
-/// machine must sit at the save-point boundary (scanline 261, dot 0..=2),
+/// machine must sit at the save-point boundary (scanline 241, dot 2..=4),
 /// which is where [`NesMachine::process_frame`] returns.
 pub fn save_state_json<P>(machine: &NesMachine<P>) -> Result<String, SaveError>
 where
@@ -2887,9 +2893,9 @@ where
             dto.ppu.scanline
         )));
     }
-    if dto.ppu.dot > MAX_SAVE_DOT {
+    if !(MIN_SAVE_DOT..=MAX_SAVE_DOT).contains(&dto.ppu.dot) {
         return Err(SaveError::Corrupt(format!(
-            "stored dot {} is outside 0..={MAX_SAVE_DOT}",
+            "stored dot {} is outside {MIN_SAVE_DOT}..={MAX_SAVE_DOT}",
             dto.ppu.dot
         )));
     }
@@ -2992,7 +2998,7 @@ mod tests {
             machine.process_frame();
         }
         assert_eq!(machine.mcu().ppu().timing().scanline(), SAVE_SCANLINE);
-        assert!(machine.mcu().ppu().timing().dot() <= MAX_SAVE_DOT);
+        assert!((MIN_SAVE_DOT..=MAX_SAVE_DOT).contains(&machine.mcu().ppu().timing().dot()));
         let frame_before = machine.frame_no();
         let clock_before = machine.clock_cycles();
 
@@ -3004,6 +3010,7 @@ mod tests {
         assert_eq!(loaded.frame_no(), frame_before);
         assert_eq!(loaded.clock_cycles(), clock_before);
         assert_eq!(loaded.mcu().ppu().timing().scanline(), SAVE_SCANLINE);
+        assert!((MIN_SAVE_DOT..=MAX_SAVE_DOT).contains(&loaded.mcu().ppu().timing().dot()));
         assert_eq!(loaded.mcu().ppu().cycle(), clock_before);
 
         let second = save_state_json(&loaded).unwrap();
@@ -3148,12 +3155,12 @@ mod tests {
         assert_eq!(resumed.frame_no(), saved_frame);
         assert_eq!(resumed.clock_cycles(), saved_clock);
         assert_eq!(resumed.mcu().ppu().timing().scanline(), SAVE_SCANLINE);
-        assert!(resumed.mcu().ppu().timing().dot() <= MAX_SAVE_DOT);
+        assert!((MIN_SAVE_DOT..=MAX_SAVE_DOT).contains(&resumed.mcu().ppu().timing().dot()));
     }
 
     #[test]
     fn format_version_is_a_single_shared_constant() {
-        assert_eq!(SAVE_FORMAT_VERSION, 2);
+        assert_eq!(SAVE_FORMAT_VERSION, 3);
         let file = nrom_file();
         let machine = machine_for(&file);
         let save = save_state_json(&machine).unwrap();
@@ -3201,7 +3208,7 @@ mod tests {
         let error = load_state_json(&mut machine, &tampered).unwrap_err();
         assert_eq!(
             error.to_string(),
-            "save state format version 7 is not supported; this build reads version 2"
+            "save state format version 7 is not supported; this build reads version 3"
         );
         assert_eq!(fingerprint(&machine), before);
     }
@@ -3333,13 +3340,13 @@ mod tests {
         let error = load_state_json(&mut machine, &tampered).unwrap_err();
         assert_eq!(
             error.to_string(),
-            "save state is corrupt: stored scanline 240 is not the save-point scanline 261"
+            "save state is corrupt: stored scanline 240 is not the save-point scanline 241"
         );
         assert_eq!(fingerprint(&machine), before);
     }
 
     #[test]
-    fn stored_dot_outside_zero_to_two_is_refused() {
+    fn stored_dot_outside_the_save_point_range_is_refused() {
         let file = nrom_file();
         let mut machine = machine_for(&file);
         machine.process_frame();
@@ -3350,7 +3357,7 @@ mod tests {
         let error = load_state_json(&mut machine, &tampered).unwrap_err();
         assert_eq!(
             error.to_string(),
-            "save state is corrupt: stored dot 5 is outside 0..=2"
+            "save state is corrupt: stored dot 5 is outside 2..=4"
         );
         assert_eq!(fingerprint(&machine), before);
     }
@@ -3359,6 +3366,7 @@ mod tests {
     fn cartridge_mapper_registers_and_memory_bytes_round_trip() {
         let file = mmc1_file();
         let mut machine = machine_for(&file);
+        machine.process_frame();
         let custom_mapper = MapperState::MMC1(Mmc1State {
             control: 0x1c,
             chr_bank0: 3,
@@ -3401,7 +3409,8 @@ mod tests {
     #[test]
     fn mmc1_absent_write_cycle_round_trips_as_null() {
         let file = mmc1_file();
-        let machine = machine_for(&file);
+        let mut machine = machine_for(&file);
+        machine.process_frame();
         let save = save_state_json(&machine).unwrap();
         assert!(save.contains("\"last_write_cycle\": null"));
 

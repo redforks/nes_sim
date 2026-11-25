@@ -12,10 +12,10 @@
 //! Each test: run HEAD frames, save, load into a fresh machine built from
 //! the same ROM, continue TAIL frames. Frame bytes and audio must equal the
 //! continuous run. Save-point note: the only loadable save point is
-//! scanline 261, dot 0..=2 (ADR 0022; load refuses anything else), i.e.
-//! immediately after the vblank phase (scanlines 241-260) — so a save can
-//! never land *inside* vblank. Every ROM here keeps NMI + rendering live,
-//! which is the closest the fixed save-point contract allows.
+//! scanline 241, dot 2..=4 (ADR 0024; load refuses anything else), at
+//! the end of the CPU cycle containing the VBlank set dot. A save therefore
+//! lands just inside vblank. Every ROM here keeps NMI + rendering live, which
+//! is the closest the fixed save-point contract allows.
 //!
 //! External behavior only: no DTO field-order assertions. The premise
 //! checks below assert *values* in the public save JSON to prove the test

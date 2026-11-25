@@ -1,5 +1,9 @@
 # Save point: end of the first CPU cycle at or after scanline 261
 
+## Status
+
+Superseded by [ADR 0024](0024-save-point-at-vblank-entry.md). The VBlank-entry boundary is restored. The text below records the superseded decision.
+
 ## Decision
 
 `process_frame()` returns at the end of the first CPU cycle at or after the

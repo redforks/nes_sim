@@ -352,8 +352,8 @@ impl Timing {
         self.frame_no
     }
 
-    /// Restores the save-point timing (ticket #192 load path): scanline
-    /// 261, dot 0..=2, and the saved frame number. Callers validate the
+    /// Restores the VBlank-entry save-point timing (ADR 0024): scanline
+    /// 241, dot 2..=4, and the saved frame number. Callers validate the
     /// scanline/dot before calling.
     pub(crate) fn set_save_point(&mut self, scanline: u16, dot: u16, frame_no: usize) {
         self.scanline = scanline;

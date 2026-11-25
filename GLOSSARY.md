@@ -379,12 +379,12 @@ _Avoid_: flame chart (different), perf report (text)
 ## Language — Save state
 
 **Save point**:
-The frame boundary at which a save is taken: the moment `process_frame()` returns, at the end of the first CPU cycle at or after scanline 261. The PPU dot there is 0, 1, or 2. Mid-instruction CPU state at this point is part of the saved frame.
-_Avoid_: VBL-entry break, end of frame (ambiguous with scanline 241), exact dot 0
+The frame boundary at which a save is taken: the moment `process_frame()` returns, at the end of the CPU cycle containing the VBlank set dot (241.1). The PPU timing there is scanline 241, dot 2–4. Mid-instruction CPU state at this point is part of the saved frame.
+_Avoid_: scanline 261 save point, exact dot 0, exact VBlank set dot 241.1 as the returned timing
 
 **Frame boundary**:
-The end of the first CPU cycle at or after scanline 261 (PPU dot 0, 1, or 2). The frame counter advances at the 261→0 wrap, which happens inside the next `process_frame()` call, so a frame number read at the boundary is the count of completed wraps.
-_Avoid_: frame end at VBL entry
+The end of the CPU cycle containing the VBlank set dot (PPU timing 241.2–241.4). The frame counter advances at the next 261→0 wrap, which happens inside the next `process_frame()` call, so a frame number read at the boundary is the count of completed wraps.
+_Avoid_: frame end after scanline 261
 
 **Snapshot DTO**:
 The versioned, serde-serialized mirror of emulator state that is written to a save file. Separate from core types, which carry no serde derives, and distinct from `CpuSnapshot`, which is the read-model for register inspection.

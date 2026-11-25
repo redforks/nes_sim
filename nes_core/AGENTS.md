@@ -36,7 +36,8 @@ Core emulation library for the NES emulator. This crate has no std dependency ex
 ### Machine & Frame Execution (`src/machine.rs`, `nes_machine.rs`)
 
 - `Machine<P, M>` is the generic CPU + address-space harness (used with test MCUs); `NesMachine<P>` is the concrete NES machine with a single plugin generic over `NesMcu`
-- `process_frame()` ticks until the PPU reports entering VBlank (scanline 241, dot 1) via its dedicated vblank-entry event — not the `$2002` flag, so emulated-program reads cannot interfere — and returns `FrameOutput { status, frame, audio }`
+- `process_frame()` ticks until the PPU reports entering VBlank (scanline 241, dot 1) via its dedicated vblank-entry event — not the `$2002` flag, so emulated-program reads cannot interfere — consumes that event, and returns at the end of the containing CPU cycle (PPU timing scanline 241, dot 2..=4) with `FrameOutput { status, frame, audio }`
+- Snapshot save/load uses that boundary: `load_state_json()` accepts only scanline 241 and dot 2..=4, and refuses other format versions (ADR 0024)
 - `FrameOutput` is the per-frame read: `frame` is the PPU RGBA bytes (`256*240*4`, row-major), `audio` is the mixed mono `f32` samples for exactly that frame, and `audio_bytes()` is the zero-copy little-endian `f32` byte view of `audio` for encoders. Consumers that step with `process_frame()` take pixels and samples from here and never re-borrow the machine:
 
 ```rust
