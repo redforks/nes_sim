@@ -596,7 +596,7 @@ mod tests {
         let mut mem_b = CartridgeMemory::test(&prg, &chr);
         let mut b = MMC1::new(&mut mem_b);
         assert_eq!(
-            b.restore(&MapperState::NRom(NRomState::default())),
+            b.restore(&MapperState::NRom(NRomState)),
             Err(SnapshotError::Mismatch)
         );
         b.restore(&snap).expect("MMC1 restore");

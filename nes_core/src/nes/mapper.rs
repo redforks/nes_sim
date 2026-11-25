@@ -334,14 +334,14 @@ impl std::error::Error for SnapshotError {}
 /// mapper type. The variant name is the mapper tag compared on load; each
 /// payload struct is defined in its mapper's file and filled in by the
 /// migration tickets (#187-#190).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, PartialEq, Eq)]
 pub enum MapperState {
     NRom(NRomState),
     MMC1(Mmc1State),
     UxRom(UxRomState),
     CnRom(CnRomState),
     MMC3(Mmc3State),
-    MMC5(Mmc5State),
+    MMC5(Box<Mmc5State>),
     AxRom(AxRomState),
     Action53(Action53State),
     Nina001(Nina001State),

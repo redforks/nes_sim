@@ -524,7 +524,7 @@ mod tests {
         let mut mem_b = CartridgeMemory::from_rom(&prg, &chr, None, Mirroring::Horizontal);
         let mut b = Vrc24::new(&mut mem_b, VrcVariant::Vrc4f);
         assert_eq!(
-            b.restore(&MapperState::NRom(NRomState::default())),
+            b.restore(&MapperState::NRom(NRomState)),
             Err(SnapshotError::Mismatch)
         );
         b.restore(&snap).expect("Vrc24 restore");

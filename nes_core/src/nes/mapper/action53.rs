@@ -585,7 +585,7 @@ mod tests {
         let mut mem_b = CartridgeMemory::test(&prg, &[]);
         let mut b = Action53::new(&mut mem_b);
         assert_eq!(
-            b.restore(&MapperState::NRom(NRomState::default())),
+            b.restore(&MapperState::NRom(NRomState)),
             Err(SnapshotError::Mismatch)
         );
         b.restore(&snap).expect("Action53 restore");

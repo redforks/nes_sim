@@ -282,13 +282,13 @@ pub fn run_event_loop<P>(
                         // leaves the machine untouched (validation runs
                         // before any mutation in nes_core) and the game
                         // keeps running.
-                        if state_hotkey_arms_action(source, repeat) {
-                            if let Some(path) = state_path {
-                                let message = match load_machine_from_path(machine, path) {
-                                    Ok(message) | Err(message) => message,
-                                };
-                                eprintln!("{message}");
-                            }
+                        if state_hotkey_arms_action(source, repeat)
+                            && let Some(path) = state_path
+                        {
+                            let message = match load_machine_from_path(machine, path) {
+                                Ok(message) | Err(message) => message,
+                            };
+                            eprintln!("{message}");
                         }
                     }
                     Event::KeyDown {

@@ -704,7 +704,7 @@ impl Mapper for UnmigratedStubMapper {
 fn unmigrated_mapper_snapshot_reports_unsupported() {
     let mapper = UnmigratedStubMapper;
     assert_eq!(mapper.snapshot(), Err(SnapshotError::Unsupported));
-    let state = MapperState::NRom(NRomState::default());
+    let state = MapperState::NRom(NRomState);
     let mut mapper = mapper;
     assert_eq!(mapper.restore(&state), Err(SnapshotError::Unsupported));
 }
@@ -713,18 +713,18 @@ fn unmigrated_mapper_snapshot_reports_unsupported() {
 #[test]
 fn mapper_state_covers_all_twelve_mapper_types() {
     let states = [
-        MapperState::NRom(NRomState::default()),
+        MapperState::NRom(NRomState),
         MapperState::MMC1(Mmc1State::default()),
         MapperState::UxRom(UxRomState::default()),
-        MapperState::CnRom(CnRomState::default()),
+        MapperState::CnRom(CnRomState),
         MapperState::MMC3(Mmc3State::default()),
-        MapperState::MMC5(Mmc5State::default()),
+        MapperState::MMC5(Box::default()),
         MapperState::AxRom(AxRomState::default()),
         MapperState::Action53(Action53State::default()),
         MapperState::Nina001(Nina001State::default()),
         MapperState::BxRom(BxRomState::default()),
         MapperState::Vrc24(Vrc24State::default()),
-        MapperState::J87(J87State::default()),
+        MapperState::J87(J87State),
     ];
     assert_eq!(states.len(), 12);
 }

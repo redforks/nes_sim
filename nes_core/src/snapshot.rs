@@ -1174,9 +1174,11 @@ fn encode_bus(state: &crate::nes::McuState) -> BusSection {
     }
 }
 
-fn decode_bus(
-    dto: &BusSection,
-) -> Result<([u8; 0x800], Option<u8>, u8, Vec<(u64, u16, u8)>), SaveError> {
+/// Decoded bus section: reachable RAM, OAM DMA pending latch, open-bus
+/// byte, and deferred APU writes.
+type DecodedBus = ([u8; 0x800], Option<u8>, u8, Vec<(u64, u16, u8)>);
+
+fn decode_bus(dto: &BusSection) -> Result<DecodedBus, SaveError> {
     let raw = hex_decode("bus.ram", &dto.ram)?;
     if raw.len() != 0x800 {
         return Err(SaveError::Corrupt(format!(
@@ -2657,7 +2659,7 @@ fn decode_mapper(tag: &str, payload: Value) -> Result<MapperState, SaveError> {
         }
         "MMC5" => {
             let dto: Mmc5Dto = from_payload(tag, payload)?;
-            Ok(MapperState::MMC5(Mmc5State {
+            Ok(MapperState::MMC5(Box::new(Mmc5State {
                 prg_mode: dto.prg_mode,
                 prg_banks: hex_decode_fixed("cartridge.state.prg_banks", &dto.prg_banks)?,
                 protect1: dto.protect1,
@@ -2691,7 +2693,7 @@ fn decode_mapper(tag: &str, payload: Value) -> Result<MapperState, SaveError> {
                 mult_a: dto.mult_a,
                 mult_b: dto.mult_b,
                 mult_result: dto.mult_result,
-            }))
+            })))
         }
         "AxRom" => {
             let dto: AxRomDto = from_payload(tag, payload)?;
@@ -3463,7 +3465,7 @@ mod tests {
                 a12_low_ticks: 11,
                 a12_transition_this_scanline: true,
             }),
-            MapperState::MMC5(Mmc5State {
+            MapperState::MMC5(Box::new(Mmc5State {
                 prg_mode: 3,
                 prg_banks: [1, 2, 3, 4, 5],
                 protect1: 0x51,
@@ -3523,7 +3525,7 @@ mod tests {
                 mult_a: 6,
                 mult_b: 7,
                 mult_result: 42,
-            }),
+            })),
             MapperState::AxRom(AxRomState {
                 selected_prg_bank: 9,
             }),

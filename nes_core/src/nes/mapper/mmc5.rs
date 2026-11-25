@@ -842,7 +842,7 @@ impl Mapper for MMC5 {
     /// its own snapshot under the cartridge section); WRAM size and
     /// battery config are factory-supplied and never saved.
     fn snapshot(&self) -> Result<MapperState, SnapshotError> {
-        Ok(MapperState::MMC5(Mmc5State {
+        Ok(MapperState::MMC5(Box::new(Mmc5State {
             prg_mode: self.prg_mode,
             prg_banks: self.prg_banks,
             protect1: self.protect1,
@@ -876,7 +876,7 @@ impl Mapper for MMC5 {
             mult_a: self.mult_a,
             mult_b: self.mult_b,
             mult_result: self.mult_result,
-        }))
+        })))
     }
 
     /// Restores state captured by [`Self::snapshot`] into a mapper rebuilt
@@ -1052,7 +1052,7 @@ impl Mapper for MMC5 {
 /// snapshot, same cartridge section); WRAM size, battery mask, and bank
 /// counts are factory config and never saved (`last_chr_set` persists as
 /// one bool).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, PartialEq, Eq)]
 pub struct Mmc5State {
     pub prg_mode: u8,
     pub prg_banks: [u8; 5],
@@ -1203,7 +1203,7 @@ mod tests {
         write_reg(&mut mapper, &mut memory, 0x5015, 0x03);
         write_reg(&mut mapper, &mut memory, 0x5000, 0xbf);
         write_reg(&mut mapper, &mut memory, 0x5002, 0x05);
-        write_reg(&mut mapper, &mut memory, 0x5003, (5 << 3) | 0x00);
+        write_reg(&mut mapper, &mut memory, 0x5003, 5 << 3);
         write_reg(&mut mapper, &mut memory, 0x5004, 0x7f);
         write_reg(&mut mapper, &mut memory, 0x5006, 0x09);
         write_reg(&mut mapper, &mut memory, 0x5007, (9 << 3) | 0x01);
