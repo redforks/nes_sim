@@ -8,7 +8,7 @@
 //! (`FramePresenter`) owns the reused frame texture and performs the upload and
 //! the scaled copy.
 
-use nes_core::nes::ppu::{NES_HEIGHT, NES_WIDTH};
+use nes_core::nes::ppu::{VISIBLE_HEIGHT, VISIBLE_WIDTH};
 
 /// A destination rectangle `(x, y, width, height)` in destination pixels.
 pub type DstRect = (i32, i32, u32, u32);
@@ -60,8 +60,8 @@ pub fn plan<'a>(
     overlays: &'a [OverlayPlacement],
     dst_size: (u32, u32),
 ) -> FramePresentation<'a> {
-    let scale_x = dst_size.0 as f64 / NES_WIDTH as f64;
-    let scale_y = dst_size.1 as f64 / NES_HEIGHT as f64;
+    let scale_x = dst_size.0 as f64 / VISIBLE_WIDTH as f64;
+    let scale_y = dst_size.1 as f64 / VISIBLE_HEIGHT as f64;
     let scaled_overlays = overlays
         .iter()
         .map(|p| OverlayPlacement {
@@ -76,8 +76,8 @@ pub fn plan<'a>(
         .collect();
     FramePresentation {
         bytes: frame_bytes,
-        width: NES_WIDTH as u32,
-        height: NES_HEIGHT as u32,
+        width: VISIBLE_WIDTH as u32,
+        height: VISIBLE_HEIGHT as u32,
         dst: (0, 0, dst_size.0, dst_size.1),
         overlays: scaled_overlays,
     }
@@ -85,14 +85,18 @@ pub fn plan<'a>(
 
 /// Shared blank-frame fixture for the presentation tests: one
 /// transparent-black 256x240 RGBA frame, so dimension changes touch one
-/// line. (Distinct from the PPU power-up `[0, 0, 0, 255]` fill.)
+/// line. (Matches the PPU reset fill: transparent black, all zero bytes.)
 #[cfg(test)]
 pub(crate) fn blank_frame() -> Vec<u8> {
-    vec![0u8; NES_WIDTH * NES_HEIGHT * 4]
+    use nes_core::nes::ppu::TOTAL_PIXELS;
+
+    vec![0u8; TOTAL_PIXELS as usize * 4]
 }
 
 #[cfg(test)]
 mod tests {
+    use nes_core::nes::ppu::TOTAL_PIXELS;
+
     use super::*;
 
     /// The shared fixture: one transparent-black frame, so dimension
@@ -100,7 +104,7 @@ mod tests {
     #[test]
     fn blank_frame_is_a_transparent_black_frame() {
         let frame = blank_frame();
-        assert_eq!(frame.len(), NES_WIDTH * NES_HEIGHT * 4);
+        assert_eq!(frame.len(), TOTAL_PIXELS as usize * 4);
         assert!(frame.iter().all(|&b| b == 0));
     }
 

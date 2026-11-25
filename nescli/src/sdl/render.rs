@@ -12,7 +12,7 @@ use super::presentation::{OverlayIcon, OverlayPlacement};
 use super::presenter::{FramePresenter, present_frame};
 use image::{imageops, load_from_memory};
 use nes_core::movie::GamepadInput;
-use nes_core::nes::ppu::{NES_HEIGHT, NES_WIDTH};
+use nes_core::nes::ppu::{TOTAL_PIXELS, VISIBLE_HEIGHT, VISIBLE_WIDTH};
 use sdl2::{render::Canvas, video::Window};
 use std::{rc::Rc, sync::mpsc};
 
@@ -208,12 +208,12 @@ pub(crate) const RECORD_HEIGHT: usize = 960;
 /// recording built from the 1x frame is byte-identical to one built from a
 /// 4x frame.
 pub(crate) fn upscale_into(src: &[u8], dst: &mut [u8]) {
-    debug_assert_eq!(src.len(), NES_WIDTH * NES_HEIGHT * 4);
+    debug_assert_eq!(src.len(), TOTAL_PIXELS as usize * 4);
     debug_assert_eq!(dst.len(), RECORD_WIDTH * RECORD_HEIGHT * 4);
-    let src_stride = NES_WIDTH * 4;
+    let src_stride = VISIBLE_WIDTH as usize * 4;
     let dst_stride = RECORD_WIDTH * 4;
-    for y in 0..NES_HEIGHT {
-        for x in 0..NES_WIDTH {
+    for y in 0..VISIBLE_HEIGHT as usize {
+        for x in 0..VISIBLE_WIDTH as usize {
             let pixel = &src[y * src_stride + x * 4..][..4];
             for dy in 0..4 {
                 let row = (y * 4 + dy) * dst_stride;
@@ -235,7 +235,7 @@ pub(crate) fn composite_overlay_icons(
 ) {
     let stride = RECORD_WIDTH as i64;
     let height = RECORD_HEIGHT as i64;
-    let scale = stride / NES_WIDTH as i64;
+    let scale = stride / VISIBLE_WIDTH as i64;
     for placement in placements {
         let Some(icon) = icons.get(placement.icon) else {
             continue;

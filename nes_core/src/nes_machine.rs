@@ -354,7 +354,7 @@ where
 
 #[cfg(test)]
 mod tests {
-    use crate::EmptyPlugin;
+    use crate::{EmptyPlugin, nes::ppu::TOTAL_PIXELS};
 
     use super::*;
 
@@ -392,14 +392,12 @@ mod tests {
 
     #[test]
     fn process_frame_output_carries_audio_byte_view() {
-        use crate::nes::ppu::{NES_HEIGHT, NES_WIDTH};
-
         let file = test_nes_file();
         let mut machine = NesMachine::new(&file, EmptyPlugin::new());
         let output = machine.process_frame();
 
         // Per-frame read: frame bytes plus both audio views of one frame.
-        assert_eq!(output.frame.len(), NES_WIDTH * NES_HEIGHT * 4);
+        assert_eq!(output.frame.len(), TOTAL_PIXELS as usize * 4);
         assert_eq!(output.audio_bytes().len(), output.audio.len() * 4);
         let expected: &[u8] = bytemuck::cast_slice(output.audio);
         assert_eq!(
@@ -719,13 +717,11 @@ mod tests {
     /// untouched, so post-reset pixels equal pre-reset pixels.
     #[test]
     fn soft_reset_preserves_framebuffer_bytes() {
-        use crate::nes::ppu::{NES_HEIGHT, NES_WIDTH};
-
         let file = test_nes_file();
         let mut machine = NesMachine::new(&file, EmptyPlugin::new());
         machine.process_frame();
         let before = machine.mcu().ppu().frame_bytes().to_vec();
-        assert_eq!(before.len(), NES_WIDTH * NES_HEIGHT * 4);
+        assert_eq!(before.len(), TOTAL_PIXELS as usize * 4);
         assert!(
             before.iter().any(|&b| b != 0),
             "test ROM must render a flushed (opaque) frame so the test is sensitive"
@@ -766,8 +762,8 @@ mod tests {
                 .as_chunks::<4>()
                 .0
                 .iter()
-                .all(|px| *px == [0, 0, 0, 255]),
-            "hard reset must fill the framebuffer with opaque black"
+                .all(|px| *px == [0, 0, 0, 0]),
+            "hard reset must fill the framebuffer with black"
         );
     }
 

@@ -152,7 +152,7 @@ mod tests {
     use crate::sdl::render::{
         RECORD_HEIGHT, RECORD_WIDTH, composite_overlay_icons, load_overlay_icons, upscale_into,
     };
-    use nes_core::nes::ppu::{NES_HEIGHT, NES_WIDTH};
+    use nes_core::nes::ppu::{TOTAL_PIXELS, VISIBLE_WIDTH};
     use std::rc::Rc;
 
     /// Serializes the SDL tests. The sdl2 crate allows `init` on only one
@@ -189,7 +189,7 @@ mod tests {
 
         // A frame with a distinct colour per logical pixel, so any blend or
         // upscale mistake changes the comparison.
-        let mut frame = vec![0u8; NES_WIDTH * NES_HEIGHT * 4];
+        let mut frame = vec![0u8; TOTAL_PIXELS as usize * 4];
         for y in 0..240u32 {
             for x in 0..256u32 {
                 let idx = ((y * 256 + x) * 4) as usize;
@@ -237,7 +237,7 @@ mod tests {
         upscale_into(&frame, &mut plain);
         assert_ne!(plain, expected, "the icon composite must change the frame");
 
-        let scale = (RECORD_WIDTH / NES_WIDTH) as u32;
+        let scale = (RECORD_WIDTH / VISIBLE_WIDTH as usize) as u32;
         let inside = |px: u32, py: u32| {
             placements.iter().any(|p| {
                 let x0 = p.dst.0 as u32 * scale;

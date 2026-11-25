@@ -501,7 +501,7 @@ fn pixel_frame_hardware(ppu: Ppu) -> (Ppu, Cartridge) {
 /// line dot by dot so its pixels reach the (deferred) buffer. Starts at
 /// dot 1: the dot-0 swap belongs to the line boundary and must not discard
 /// the freshly evaluated Sprites. Afterwards the timing fast-forwards to
-/// the VBL set dot, which flushs the frame through the Render seam.
+/// the VBL set dot, which flushes the frame through the Render seam.
 fn run_visible_scanline(ppu: &mut Ppu, cart: &mut Cartridge, scanline: u16) {
     populate_sprite_secondary_oam(ppu, scanline);
     ppu.timing.scanline = scanline;
@@ -513,7 +513,7 @@ fn run_visible_scanline(ppu: &mut Ppu, cart: &mut Cartridge, scanline: u16) {
 }
 
 /// Fast-forward timing to the VBL set dot (scanline 241, dots 0-1) so the
-/// buffered frame flushs through the Render seam. Tests asserting one
+/// buffered frame flushes through the Render seam. Tests asserting one
 /// scanline use this instead of ticking the intervening lines.
 fn flush_frame_at_vblank(ppu: &mut Ppu, cart: &mut Cartridge) {
     ppu.timing.scanline = 241;
@@ -611,7 +611,7 @@ fn test_tick_renders_palette_color_when_rendering_disabled_and_vram_points_to_pa
     ppu.tick(&mut cart);
     ppu.tick(&mut cart);
     ppu.tick(&mut cart);
-    // Visible dots only buffer palette indices now; the frame flushs at
+    // Visible dots only buffer palette indices now; the frame flushes at
     // the VBL set dot.
     flush_frame_at_vblank(&mut ppu, &mut cart);
     // $3F10 mirrors $3F00, whose power-up entry is $09.
@@ -630,7 +630,7 @@ fn test_tick_renders_background_color_when_rendering_disabled_and_vram_not_palet
     ppu.tick(&mut cart);
     ppu.tick(&mut cart);
     ppu.tick(&mut cart);
-    // The pixel is buffered on its dot and flushs at the VBL set dot.
+    // The pixel is buffered on its dot and flushes at the VBL set dot.
     flush_frame_at_vblank(&mut ppu, &mut cart);
     assert_eq!(ppu.get_pixel(0, 0), ppu.color_theme.color(0x16).0);
 }
@@ -651,7 +651,7 @@ fn test_tick_grayscale_masks_palette_index_before_lookup(entry: u8, expected: u8
     ppu.tick(&mut cart);
     ppu.tick(&mut cart);
     ppu.tick(&mut cart);
-    // The pixel is buffered on its dot and flushs at the VBL set dot, where
+    // The pixel is buffered on its dot and flushes at the VBL set dot, where
     // the grayscale mask applies to the indexed entry.
     flush_frame_at_vblank(&mut ppu, &mut cart);
     assert_eq!(ppu.get_pixel(0, 0), ppu.color_theme.color(expected).0);
@@ -1049,7 +1049,7 @@ fn sprite_row_cache_reads_each_evaluated_sprite_once_per_scanline() {
             } else {
                 ppu.color_theme.color(0x20 + color_idx).0
             };
-            let x = i as u32 * 8 + dx as u32;
+            let x = i as u16 * 8 + dx as u16;
             assert_eq!(
                 expected,
                 ppu.get_pixel(x, 1),
@@ -1078,7 +1078,7 @@ fn scanline_renders_plain_sprite_from_cached_row() {
 
     let sprite_color = ppu.color_theme.color(0x22).0;
     let backdrop = ppu.color_theme.color(0x0f).0;
-    for x in 4..12u32 {
+    for x in 4..12u16 {
         assert_eq!(sprite_color, ppu.get_pixel(x, 1), "x={x}");
     }
     assert_eq!(backdrop, ppu.get_pixel(3, 1));
@@ -1176,7 +1176,7 @@ fn scanline_renders_8x16_sprite_second_tile() {
     run_visible_scanline(&mut ppu, &mut cart, 9);
 
     let sprite_color = ppu.color_theme.color(0x2b).0;
-    for x in 4..12u32 {
+    for x in 4..12u16 {
         assert_eq!(sprite_color, ppu.get_pixel(x, 9), "x={x}");
     }
 }
@@ -1202,7 +1202,7 @@ fn scanline_renders_sprite_behind_background() {
     run_visible_scanline(&mut ppu, &mut cart, 1);
 
     let bg_color = ppu.color_theme.color(0x14).0;
-    for x in 4..12u32 {
+    for x in 4..12u16 {
         assert_eq!(bg_color, ppu.get_pixel(x, 1), "x={x}");
     }
 }
@@ -1224,10 +1224,10 @@ fn scanline_clips_sprite_left_columns() {
     let sprite_color = ppu.color_theme.color(0x30).0;
     let backdrop = ppu.color_theme.color(0x0f).0;
     // Sprite covers x=4..11; without sprite_left_enabled columns 0..7 clip.
-    for x in 4..8u32 {
+    for x in 4..8u16 {
         assert_eq!(backdrop, ppu.get_pixel(x, 1), "clipped x={x}");
     }
-    for x in 8..12u32 {
+    for x in 8..12u16 {
         assert_eq!(sprite_color, ppu.get_pixel(x, 1), "drawn x={x}");
     }
 }
@@ -2112,7 +2112,7 @@ fn frame_snapshot(ppu: &Ppu) -> Vec<u8> {
 /// been emitted and `finish` has not fired. Exactly once per frame, at the
 /// VBL set dot, the whole frame is emitted linearly in raster order
 /// (x fastest, then y), each pixel resolved through the backdrop entry —
-/// and a second identical frame flushs byte-identically.
+/// and a second identical frame flushes byte-identically.
 #[test]
 fn flush_emits_full_frame_once_at_vblank_in_raster_order() {
     let (mut ppu, mut cart) = pixel_frame_hardware(Ppu::new());
@@ -2141,7 +2141,7 @@ fn flush_emits_full_frame_once_at_vblank_in_raster_order() {
         assert_eq!(*color, expected_color, "backdrop color at {i}");
     }
 
-    // A second static frame flushs byte-identically.
+    // A second static frame flushes byte-identically.
     let first = frame_snapshot(&ppu);
     tick_until_vblank(&mut ppu, &mut cart);
     assert_eq!(frame_snapshot(&ppu), first);
@@ -2362,14 +2362,14 @@ fn palette_write_mid_frame_takes_effect_from_beam_position() {
     let old_color = ppu.color_theme.color(0x21).0;
     let new_color = ppu.color_theme.color(0x16).0;
     assert_ne!(old_color, new_color, "entries must be distinguishable");
-    for x in 0..10u32 {
+    for x in 0..10u16 {
         assert_eq!(
             ppu.get_pixel(x, 0),
             old_color,
             "x={x} buffered before the write keeps the old entry"
         );
     }
-    for x in 10..256u32 {
+    for x in 10..256u16 {
         assert_eq!(
             ppu.get_pixel(x, 0),
             new_color,
@@ -2657,8 +2657,8 @@ fn flush_applies_grayscale_with_rendering_disabled() {
     assert_ne!(grayscale, color, "segments must be distinguishable");
     // The write lands before the first pixel, so every buffered pixel
     // flushes under grayscale.
-    for y in 0..2u32 {
-        for x in 0..256u32 {
+    for y in 0..2u16 {
+        for x in 0..256u16 {
             assert_eq!(
                 ppu.get_pixel(x, y),
                 grayscale,
@@ -2698,8 +2698,8 @@ fn flush_applies_emphasis_with_rendering_disabled() {
         color[3],
     ];
     assert_ne!(color, emphasized, "emphasis must change the color");
-    for y in 0..2u32 {
-        for x in 0..256u32 {
+    for y in 0..2u16 {
+        for x in 0..256u16 {
             assert_eq!(
                 ppu.get_pixel(x, y),
                 emphasized,

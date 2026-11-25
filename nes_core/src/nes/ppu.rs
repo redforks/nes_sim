@@ -25,10 +25,9 @@ pub(crate) use sprite::{
 
 /// Visible frame dimensions: the flat palette-index buffer holds exactly
 /// one entry per visible beam position (`y * 256 + x`).
-pub const NES_WIDTH: usize = 256;
-pub const NES_HEIGHT: usize = 240;
-const VISIBLE_WIDTH: u16 = NES_WIDTH as u16;
-const VISIBLE_HEIGHT: u16 = NES_HEIGHT as u16;
+pub const VISIBLE_WIDTH: u16 = 256;
+pub const VISIBLE_HEIGHT: u16 = 240;
+pub const TOTAL_PIXELS: u16 = VISIBLE_HEIGHT * VISIBLE_WIDTH;
 
 // PPU Timing Constants
 /// PPU open-bus latch decay, in PPU dots at the NTSC dot clock
@@ -405,7 +404,7 @@ pub struct Ppu {
     /// Owned RGBA framebuffer (`256*240` pixels, row-major). Written once
     /// per frame by `flush_palette_index_buffer`; served zero-copy via
     /// `frame_bytes` / `frame_pixels`.
-    framebuffer: Box<[[u8; 4]; NES_WIDTH * NES_HEIGHT]>,
+    framebuffer: Box<[u32; TOTAL_PIXELS as usize]>,
 
     timing: Timing,
 
@@ -490,7 +489,7 @@ impl Ppu {
             oam: Oam::default(),
             oam_addr: 0,
             color_theme: ColorTheme::default(),
-            framebuffer: Box::new([[0; 4]; NES_WIDTH * NES_HEIGHT]),
+            framebuffer: Box::new([0; TOTAL_PIXELS as usize]),
             timing: Timing::new(),
             background_anchor: None,
             pending_background_activation: None,
@@ -551,7 +550,7 @@ impl Ppu {
         self.cycle = 0;
         self.ppudata_last_read = None;
         self.palette_index_buffer.fill(0);
-        self.framebuffer.fill([0, 0, 0, 255]);
+        self.framebuffer.fill(0);
         self.color_splits.clear();
         self.vblank_entered = false;
     }
@@ -579,13 +578,13 @@ impl Ppu {
     /// Output width in pixels (`256`).
     #[inline]
     pub const fn width() -> u32 {
-        NES_WIDTH as u32
+        VISIBLE_WIDTH as u32
     }
 
     /// Output height in pixels (`240`).
     #[inline]
     pub const fn height() -> u32 {
-        NES_HEIGHT as u32
+        VISIBLE_HEIGHT as u32
     }
 
     /// Raw byte view (`W*H*4` bytes, row-major RGBA) for SDL `texture.update`.
@@ -597,14 +596,13 @@ impl Ppu {
     /// Typed pixel view (`W*H` entries of `[R,G,B,A]`).
     #[inline]
     pub fn frame_pixels(&self) -> &[[u8; 4]] {
-        &*self.framebuffer
+        bytemuck::cast_slice(&*self.framebuffer)
     }
 
     /// Read a single output pixel (for tests). Caller must guarantee bounds.
-    #[inline]
-    pub fn get_pixel(&self, x: u32, y: u32) -> [u8; 4] {
-        let idx = y as usize * NES_WIDTH + x as usize;
-        self.framebuffer[idx]
+    pub fn get_pixel(&self, x: u16, y: u16) -> [u8; 4] {
+        let idx = (y * VISIBLE_WIDTH + x) as usize;
+        bytemuck::cast(self.framebuffer[idx])
     }
 
     fn schedule_background_activation_if_visible(&mut self) {
@@ -1047,7 +1045,7 @@ impl Ppu {
     /// use its `prior` configuration, and the segment starting at `index`
     /// uses the next split's `prior` — or the live mask at flush time for
     /// the final segment. Applying only the final mask to the whole frame
-    /// would mis-color every pixel before a mid-frame write. Splits are
+    /// would miss-color every pixel before a mid-frame write. Splits are
     /// consumed here and cleared, so they never leak into the next frame.
     ///
     /// Positions scanned this frame (up to the current beam position)
@@ -1058,18 +1056,16 @@ impl Ppu {
     ///
     #[inline(never)]
     fn flush_palette_index_buffer(&mut self) {
-        let frame_len = self.palette_index_buffer.len() as u16;
         // `flush_palette_index_buffer` runs at the VBL set dot, after the
         // frame is complete, so every buffer slot holds a scanned index
         // (a mid-frame soft reset leaves pre-reset slots as stale indices).
-        let mut start = 0u16;
-        let mut pixel_idx = 0;
+        let mut start = 0usize;
         for (end, config) in self
             .color_splits
             .drain(..)
-            .map(|split| (split.index.min(frame_len), split.prior))
+            .map(|split| (split.index, split.prior))
             .chain(once((
-                frame_len,
+                TOTAL_PIXELS,
                 ColorConfig::from_mask(self.registers.mask),
             )))
         {
@@ -1077,26 +1073,13 @@ impl Ppu {
             // LUT + batched gather (scalar or SSSE3, identical output).
             // Ticket #67 removed the small-segment bypass: one path, no
             // extra branch, and `perf` shows the flush is not the Hot Path.
-            let mut index = start;
             let lut = batch_convert::build_final_color_lut(&self.color_theme, config);
-            let mut chunk = [0u32; 16];
-            while index < end {
-                let chunk_len = (end - index).min(chunk.len() as u16);
-                batch_convert::convert(
-                    &self.palette_index_buffer[(index as usize)..((index + chunk_len) as usize)],
-                    &lut,
-                    &mut chunk[..(chunk_len as usize)],
-                );
-                for &word in chunk[..(chunk_len as usize)].iter() {
-                    self.framebuffer[pixel_idx as usize] = Pixel::from_u32(word).0;
-                    pixel_idx += 1;
-                }
-                index += chunk_len;
-            }
-
-            // Monotonic start: duplicate or out-of-order split indices
-            // close empty segments without re-emitting earlier pixels.
-            start = start.max(end);
+            batch_convert::convert(
+                &self.palette_index_buffer[start..((end) as usize)],
+                &lut,
+                &mut self.framebuffer[start..((end) as usize)],
+            );
+            start = end as usize;
         }
     }
 

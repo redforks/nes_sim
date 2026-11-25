@@ -86,12 +86,12 @@ impl<'a> MachineView<'a, crate::nes::NesMcu> {
 
     /// Output width (256).
     pub fn image_width(&self) -> u32 {
-        crate::nes::ppu::NES_WIDTH as u32
+        crate::nes::ppu::VISIBLE_WIDTH as u32
     }
 
     /// Output height (240).
     pub fn image_height(&self) -> u32 {
-        crate::nes::ppu::NES_HEIGHT as u32
+        crate::nes::ppu::VISIBLE_HEIGHT as u32
     }
 
     /// Compatibility alias for [`Self::borrow_pixels`], retained because
