@@ -36,7 +36,7 @@ Core emulation library for the NES emulator. This crate has no std dependency ex
 ### Machine & Frame Execution (`src/machine.rs`, `nes_machine.rs`)
 
 - `Machine<P, M>` is the generic CPU + address-space harness (used with test MCUs); `NesMachine<P>` is the concrete NES machine with a single plugin generic over `NesMcu`
-- `process_frame()` ticks until the PPU scanline returns to 261 — the save point (ADR 0022): the end of the first CPU cycle at or after scanline 261 (PPU dot 0, 1, or 2) — via the existing `Timing` scanline accessor in two phases (leave 261, then return to it), with no new PPU flag, and returns `FrameOutput { status, frame, audio }`. The mid-frame vblank-entry event is cleared at the boundary instead of breaking the loop
+- `process_frame()` ticks until the PPU reports entering VBlank (scanline 241, dot 1) via its dedicated vblank-entry event — not the `$2002` flag, so emulated-program reads cannot interfere — and returns `FrameOutput { status, frame, audio }`
 - `FrameOutput` is the per-frame read: `frame` is the PPU RGBA bytes (`256*240*4`, row-major), `audio` is the mixed mono `f32` samples for exactly that frame, and `audio_bytes()` is the zero-copy little-endian `f32` byte view of `audio` for encoders. Consumers that step with `process_frame()` take pixels and samples from here and never re-borrow the machine:
 
 ```rust
@@ -51,7 +51,7 @@ audio.flush_frame();
 - Reset semantics: soft reset (front-panel RESET) preserves the screen — the PPU keeps running mid-frame and the owned framebuffer is untouched. Hard reset (power cycle) returns the framebuffer to its power-up contents, opaque black `[0, 0, 0, 255]`, while the host color theme is preserved.
 - PPU:CPU ratio of 3:1 (one CPU instruction = 3 PPU ticks)
 - NMI generation from PPU VBlank
-- No tick-count guard on `process_frame()`: PPU timing always advances in `tick`, so the scanline-261 boundary is reached within one frame (~89k dots)
+- No tick-count guard on `process_frame()`: PPU timing always advances in `tick`, so the vblank-entry event fires within one frame (~89k dots)
 - Fixed audio rate at `Apu::SAMPLE_RATE` (`44_100`, no setter); SDL and WAV-header rates derive from it. The PPU owns its framebuffer (`Box<[[u8; 4]; 256 * 240]>`, row-major), written once per frame at the VBL set dot and served zero-copy via `frame_bytes()` / `frame_pixels()`. The APU owns its mono mix buffer (`Vec<f32>` at `Apu::SAMPLE_RATE`), filled by `tick`, cleared at each `process_frame` start, served via `audio_samples()` / `audio_bytes()`.
 
 ### Cartridge System (`src/nes/mapper.rs`, `mapper/`)
