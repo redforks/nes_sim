@@ -22,7 +22,7 @@ pub(crate) use triangle::TriangleState;
 use crate::{SystemClock, nes::dmc_dma::DmcDmaType};
 use dmc::Dmc;
 use frame_sequencer::FrameSequencer;
-use helper::{Divider, Envelope, LengthControl, Sequencer};
+use helper::{Divider, Envelope, LengthControl};
 use mixer::Mixer;
 use noise::Noise;
 use pulse::Pulse;

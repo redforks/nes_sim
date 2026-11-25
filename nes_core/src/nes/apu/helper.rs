@@ -284,19 +284,19 @@ impl Divider<u16> {
 }
 
 #[derive(Debug)]
-pub struct Sequencer<I: 'static> {
-    items: &'static [I],
+pub struct SequencerN<I: 'static, const N: usize> {
+    items: &'static [I; N],
     cur_idx: usize,
 }
 
-impl<I: Copy> Sequencer<I> {
-    pub fn new(items: &'static [I]) -> Self {
+impl<I: Copy, const N: usize> SequencerN<I, N> {
+    pub fn new(items: &'static [I; N]) -> Self {
         Self { items, cur_idx: 0 }
     }
 
-    pub fn replace_items(&mut self, items: &'static [I]) {
+    pub fn replace_items(&mut self, items: &'static [I; N]) {
         self.items = items;
-        self.cur_idx = self.cur_idx.min(items.len() - 1);
+        self.cur_idx = self.cur_idx.min(N - 1);
     }
 
     pub fn reset(&mut self) {
@@ -305,7 +305,7 @@ impl<I: Copy> Sequencer<I> {
 
     pub fn tick(&mut self) -> I {
         let item = unsafe { *self.items.get_unchecked(self.cur_idx) };
-        self.cur_idx = (self.cur_idx + 1) % self.items.len();
+        self.cur_idx = (self.cur_idx + 1) % N;
         item
     }
 
@@ -325,8 +325,8 @@ impl<I: Copy> Sequencer<I> {
     }
 
     /// Restores a captured table + step position verbatim.
-    pub fn restore(&mut self, items: &'static [I], position: usize) {
+    pub fn restore(&mut self, items: &'static [I; N], position: usize) {
         self.items = items;
-        self.cur_idx = position.min(items.len().saturating_sub(1));
+        self.cur_idx = position.min(N.saturating_sub(1));
     }
 }

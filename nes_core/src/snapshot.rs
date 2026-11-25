@@ -3026,12 +3026,12 @@ mod tests {
     fn rich_nrom_file() -> INesFile {
         let mut prg = vec![0u8; 16 * 1024];
         let mut code: Vec<u8> = Vec::new();
-        let mut sta = |addr: u16, body: &mut Vec<u8>| {
+        let sta = |addr: u16, body: &mut Vec<u8>| {
             body.push(0x8D);
             body.push((addr & 0xFF) as u8);
             body.push((addr >> 8) as u8);
         };
-        let mut lda_sta = |value: u8, addr: u16, body: &mut Vec<u8>| {
+        let lda_sta = |value: u8, addr: u16, body: &mut Vec<u8>| {
             body.push(0xA9);
             body.push(value);
             sta(addr, body);

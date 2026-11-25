@@ -20,7 +20,7 @@
 //! Out of scope (spec #74): MMC5A extras and the `$5800-$5BFF` debug meter.
 
 use crate::nes::apu::ExpansionMix;
-use crate::nes::apu::helper::{Divider, Envelope, LengthControl, Sequencer};
+use crate::nes::apu::helper::{Divider, Envelope, LengthControl, SequencerN};
 use crate::nes::apu::registers::{LengthTimerHigh3Bits, PulseControlBits};
 
 /// NTSC CPU clock in Hz: the audio unit ticks once per CPU cycle.
@@ -46,7 +46,7 @@ pub struct Mmc5Pulse {
     divider_2: Divider<u8>,
     length: LengthControl,
     envelope: Envelope,
-    sequencer: Sequencer<u8>,
+    sequencer: SequencerN<u8, 8>,
 }
 
 impl Mmc5Pulse {
@@ -56,7 +56,7 @@ impl Mmc5Pulse {
             divider_2: Divider::new(1),
             length: LengthControl::default(),
             envelope: Envelope::default(),
-            sequencer: Sequencer::new(&PULSE_DUTY_TABLE[0]),
+            sequencer: SequencerN::new(&PULSE_DUTY_TABLE[0]),
         }
     }
 

@@ -1,3 +1,5 @@
+use crate::nes::apu::helper::SequencerN;
+
 use super::*;
 #[derive(Debug)]
 struct Shifter {
@@ -98,7 +100,7 @@ pub struct Pulse {
     length: LengthControl,
     envelope: Envelope,
     sweep: Sweep,
-    sequencer: Sequencer<u8>,
+    sequencer: SequencerN<u8, 8>,
 }
 
 /// Full [`Pulse`] channel state for save-states (ticket #184) in core types.
@@ -200,7 +202,7 @@ impl Pulse {
             length: LengthControl::default(),
             envelope: Envelope::default(),
             sweep: Sweep::new(is_second_pulse_channel, SweepBits::from_bytes([0])),
-            sequencer: Sequencer::new(&PULSE_DUTY_TABLE[0]),
+            sequencer: SequencerN::new(&PULSE_DUTY_TABLE[0]),
         }
     }
 

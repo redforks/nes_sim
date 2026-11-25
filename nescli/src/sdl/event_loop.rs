@@ -467,7 +467,6 @@ mod tests {
     }
 
     #[test]
-    #[test]
     fn state_hotkeys_arm_only_for_interactive_without_repeat() {
         // Movie-mode no-op (#196): F5/F7 never fire during playback, so a
         // recorded run stays deterministic.

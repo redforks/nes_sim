@@ -1,3 +1,5 @@
+use crate::nes::apu::helper::SequencerN;
+
 use super::*;
 
 const TRIANGLE_SEQUENCE: [u8; 32] = [
@@ -37,7 +39,7 @@ impl Linear {
 pub struct Triangle {
     timer: Divider<u16>,
     length: LengthControl,
-    sequencer: Sequencer<u8>,
+    sequencer: SequencerN<u8, 32>,
     linear: Linear,
 }
 
@@ -46,7 +48,7 @@ impl Default for Triangle {
         Self {
             timer: Divider::new(u16::MAX),
             length: Default::default(),
-            sequencer: Sequencer::new(&TRIANGLE_SEQUENCE),
+            sequencer: SequencerN::new(&TRIANGLE_SEQUENCE),
             linear: Default::default(),
         }
     }
