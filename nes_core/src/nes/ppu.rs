@@ -9,6 +9,7 @@ mod registers;
 mod sprite;
 
 use std::iter::once;
+use std::num::NonZeroU64;
 
 use crate::nes::{
     mapper::{Cartridge, PpuFetchKind, PpuRenderState},
@@ -119,7 +120,7 @@ pub(crate) struct PpuState {
     pub tile_cache: TileCacheState,
     pub background_anchor: Option<BackgroundActivationState>,
     pub pending_background_activation: Option<BackgroundActivationState>,
-    pub ppudata_last_read: Option<(u64, u8)>,
+    pub ppudata_last_read: Option<(NonZeroU64, u8)>,
 }
 
 fn background_activation_state(a: &BackgroundActivation) -> BackgroundActivationState {
@@ -432,7 +433,11 @@ pub struct Ppu {
     /// dummy+real reads of page-crossing `lda abs,X`) is fully ignored on
     /// hardware (Mesen2) and re-returns this value. Ignored reads do not
     /// stamp the cycle.
-    ppudata_last_read: Option<(u64, u8)>,
+    ///
+    /// The stamped cycle is never zero: `$2007` reads are serviced inside
+    /// the machine tick, which clocks the PPU before the CPU runs, so the
+    /// power-up cycle 0 (before the first tick) cannot reach the stamp.
+    ppudata_last_read: Option<(NonZeroU64, u8)>,
     /// Flat palette-index buffer for the current frame (ticket #62, batch
     /// color): one 6-bit palette entry per visible beam position, indexed
     /// by `y * 256 + x`. Allocated once in [`Self::new`] and reused every
@@ -1338,7 +1343,7 @@ impl Ppu {
         // no read-buffer refill and no mapper notification. Ignored reads
         // do not re-arm the window — only a completing read does.
         if let Some((at, value)) = self.ppudata_last_read
-            && self.cycle <= at + PPUDATA_IGNORE_WINDOW_DOTS
+            && self.cycle <= at.get() + PPUDATA_IGNORE_WINDOW_DOTS
         {
             return value;
         }
@@ -1370,7 +1375,12 @@ impl Ppu {
             self.refresh_bus_latch(buffered);
             buffered
         };
-        self.ppudata_last_read = Some((self.cycle, result));
+        // A $2007 read is serviced inside the machine tick, after the PPU
+        // has been clocked, so the power-up cycle 0 can never be stamped.
+        let Some(at) = NonZeroU64::new(self.cycle) else {
+            unreachable!("PPU cycle is zero at $2007 read");
+        };
+        self.ppudata_last_read = Some((at, result));
         result
     }
 

@@ -229,22 +229,25 @@ fn vram_read_ignore_window_is_six_dots() {
         ppu.write_ppureg(0x2007, v, &mut cart);
     }
 
-    // Rewind to $0000; prime the buffer at cycle 0 (returns the initial
-    // buffer, loads VRAM[0], increments to $0001).
+    // Rewind to $0000; prime the buffer at a non-zero cycle (returns the
+    // initial buffer, loads VRAM[0], increments to $0001). A $2007 read is
+    // only serviced after at least one PPU tick, so cycle 0 is never a
+    // valid stamp.
     ppu.write_ppureg(0x2006, 0x00, &mut cart);
     ppu.write_ppureg(0x2006, 0x00, &mut cart);
+    ppu.cycle = 100;
     assert_eq!(ppu.read_ppureg(0x2007, &mut cart), 0x00);
     assert_eq!(ppu.registers.vram_addr, 0x0001);
 
     // At window edge (5 dots later): still ignored — stale return, no
     // increment, and the buffer still holds VRAM[0] (a refill would have
     // replaced it with VRAM[1]).
-    ppu.cycle = PPUDATA_IGNORE_WINDOW_DOTS;
+    ppu.cycle = 100 + PPUDATA_IGNORE_WINDOW_DOTS;
     assert_eq!(ppu.read_ppureg(0x2007, &mut cart), 0x00);
     assert_eq!(ppu.registers.vram_addr, 0x0001);
 
     // 6 dots later: outside the window, so the normal read path runs.
-    ppu.cycle = PPUDATA_IGNORE_WINDOW_DOTS + 1;
+    ppu.cycle = 100 + PPUDATA_IGNORE_WINDOW_DOTS + 1;
     assert_eq!(ppu.read_ppureg(0x2007, &mut cart), 0x11);
     assert_eq!(ppu.registers.vram_addr, 0x0002);
 }
@@ -262,6 +265,7 @@ fn vram_read_ignored_within_window_does_not_notify_mapper() {
     let after_setup = notified.borrow().len();
 
     // Completing read: increments to $0001 and notifies the mapper.
+    ppu.cycle = 100;
     assert_eq!(ppu.read_ppureg(0x2007, &mut cart), 0x00);
     assert_eq!(notified.borrow().len(), after_setup + 1);
     assert_eq!(notified.borrow().last().copied(), Some(0x0001));
@@ -271,7 +275,7 @@ fn vram_read_ignored_within_window_does_not_notify_mapper() {
     assert_eq!(notified.borrow().len(), after_setup + 1);
 
     // Once outside the window the mapper is notified again ($0002).
-    ppu.cycle = PPUDATA_IGNORE_WINDOW_DOTS + 1;
+    ppu.cycle = 100 + PPUDATA_IGNORE_WINDOW_DOTS + 1;
     assert_eq!(ppu.read_ppureg(0x2007, &mut cart), 0x00);
     assert_eq!(notified.borrow().len(), after_setup + 2);
     assert_eq!(notified.borrow().last().copied(), Some(0x0002));
@@ -291,6 +295,7 @@ fn vram_read_ignored_palette_read_returns_stale_value() {
     let after_setup = notified.borrow().len();
 
     // Completing palette read: returns $2C, increments to $3F02, notifies.
+    ppu.cycle = 100;
     assert_eq!(ppu.read_ppureg(0x2007, &mut cart), 0x2C);
     assert_eq!(ppu.registers.vram_addr, 0x3F02);
     assert_eq!(notified.borrow().len(), after_setup + 1);
@@ -319,10 +324,11 @@ fn vram_read_palette_applies_grayscale_mask(grayscale: bool, expected: u8) {
     ppu.write_ppureg(0x2006, 0x01, &mut cart);
     // $2C AND $30 = $20 with grayscale, plus the open-bus bits 6-7
     // (latch cleared by the $2006 writes above).
+    ppu.cycle = 100;
     assert_eq!(ppu.read_ppureg(0x2007, &mut cart), expected);
 
     // The buffer was filled from the nametable underneath, not masked.
-    ppu.cycle = PPUDATA_IGNORE_WINDOW_DOTS + 1;
+    ppu.cycle = 100 + PPUDATA_IGNORE_WINDOW_DOTS + 1;
     ppu.write_ppureg(0x2006, 0x2F, &mut cart);
     ppu.write_ppureg(0x2006, 0x01, &mut cart);
     assert_eq!(ppu.read_ppureg(0x2007, &mut cart), 0x81);

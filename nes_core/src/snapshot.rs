@@ -58,6 +58,7 @@ use crate::{
 };
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use std::num::NonZeroU64;
 
 /// Save-file layout version. Bumped on any layout change or change to a
 /// field's meaning (emulation-behavior changes do not bump it). Old
@@ -1886,7 +1887,7 @@ struct BackgroundActivationDto {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 struct PpudataLastReadDto {
-    cycle: u64,
+    cycle: NonZeroU64,
     value: u8,
 }
 

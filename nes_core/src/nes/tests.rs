@@ -233,6 +233,9 @@ fn ppudata_second_read_fully_ignored_within_window() {
     // Rewind to $0000 and prime the buffer with a well-separated read.
     mcu.write(0x2006, 0x00, SystemClock::default());
     mcu.write(0x2006, 0x00, SystemClock::default());
+    // A $2007 read is only serviced after at least one PPU tick, so the
+    // cycle 0 power-up dot can never be a read stamp.
+    mcu.tick_ppu();
     assert_eq!(mcu.read(0x2007), 0x00); // initial buffer, loads VRAM[0]
     // 9 dots (3 CPU cycles) clear the 6-dot ignore window: the next read
     // is normal-paced.
