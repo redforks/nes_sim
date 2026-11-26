@@ -847,7 +847,7 @@ impl Ppu {
             // compute background anchor at start of visible scanline
             self.background_anchor = Some(BackgroundActivation::snapshot(self, 0));
             self.pending_background_activation = None;
-            self.fill_tile_cache(0, cartridge, self.ppu_render_state());
+            self.fill_tile_cache(0, cartridge);
         }
 
         if self.rendering_enabled() {
@@ -1293,12 +1293,7 @@ impl Ppu {
         }
     }
 
-    fn get_background_pixel(
-        &mut self,
-        screen_x: u8,
-        cartridge: &Cartridge,
-        render: PpuRenderState,
-    ) -> (u8, u8) {
+    fn get_background_pixel(&mut self, screen_x: u8, cartridge: &Cartridge) -> (u8, u8) {
         self.apply_pending_background_activation(screen_x);
 
         if !self.registers.mask.background_left_enabled() && screen_x < 8 {
@@ -1307,26 +1302,19 @@ impl Ppu {
 
         // Refill cache when empty or exhausted
         if self.tile_cache.remaining == 0 {
-            self.fill_tile_cache(screen_x, cartridge, render);
+            self.fill_tile_cache(screen_x, cartridge);
         }
 
         self.tile_cache.consume()
     }
 
-    fn fill_tile_cache(&mut self, screen_x: u8, cartridge: &Cartridge, render: PpuRenderState) {
+    fn fill_tile_cache(&mut self, screen_x: u8, cartridge: &Cartridge) {
         let background = self
             .background_anchor
             .unwrap_or_else(|| BackgroundActivation::snapshot(self, 0));
 
-        let (palette_idx, tile_fine_x, bitplane_low, bitplane_high) =
-            fetch_tile_data(&background, screen_x, cartridge, render);
-
-        self.tile_cache = TileCache {
-            bitplane_low,
-            bitplane_high,
-            palette_idx,
-            remaining: 8 - tile_fine_x,
-        };
+        self.tile_cache =
+            fetch_tile_data(&background, screen_x, cartridge, self.ppu_render_state());
     }
 
     fn read_vram_and_inc(&mut self, cartridge: &mut Cartridge) -> u8 {
@@ -1459,7 +1447,7 @@ impl Ppu {
 
         let x = (self.timing.dot - 1) as u8;
         let (bg_palette_idx, bg_color_idx) = if self.registers.mask.background_enabled() {
-            self.get_background_pixel(x, cartridge, self.ppu_render_state())
+            self.get_background_pixel(x, cartridge)
         } else {
             (0, 0)
         };
@@ -1521,8 +1509,8 @@ impl Default for Ppu {
 
 /// Fetch all four tile bytes for background rendering at a given screen pixel position.
 ///
-/// Returns the tile's palette index, the pixel's horizontal offset within the
-/// tile, and the two pattern bitplanes.
+/// Returns the populated [`TileCache`]: the tile's palette index, its two
+/// pattern bitplanes, and the number of pixels left in the 8-pixel column.
 ///
 /// The divisions are written as shifts, masks and one range fold: `world_x`
 /// stays below 512 so `/ 256` is the top bit and `% 256` the low byte, and
@@ -1533,7 +1521,7 @@ fn fetch_tile_data(
     screen_x: u8,
     cartridge: &Cartridge,
     mut render: PpuRenderState,
-) -> (u8, u8, u8, u8) {
+) -> TileCache {
     // Ticket #78: background fetches carry the Background kind so MMC5 picks
     // the background CHR bank set in 8x16 mode (nametable addresses are
     // unaffected — the bank hook declines `$2000+`).
@@ -1573,12 +1561,12 @@ fn fetch_tile_data(
     let low_addr = tile_position.resolve_pixel_addr(tile_fine_y);
     let (bitplane_low, bitplane_high) = cartridge.read_tile_low_high(low_addr.0, render);
 
-    (
-        palette_idx,
-        (world_x & 7) as u8,
+    TileCache {
         bitplane_low,
         bitplane_high,
-    )
+        palette_idx,
+        remaining: 8 - (world_x & 7) as u8,
+    }
 }
 
 #[cfg(test)]
