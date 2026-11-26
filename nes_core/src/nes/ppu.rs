@@ -193,6 +193,8 @@ impl Ppu {
         self.registers.ctrl = PpuCtrl::from_bytes([s.registers_ctrl]);
         self.registers.mask = PpuMask::from_bytes([s.registers_mask]);
         self.registers.status = PpuStatus::from_bytes([s.registers_status]);
+        // Derived, never serialized: rebuild from the restored registers.
+        self.refresh_nmi_level();
         self.registers.vram_addr = s.vram_addr;
         self.registers.temp_vram_addr = s.temp_vram_addr;
         self.registers.fine_x = s.fine_x;
@@ -466,6 +468,14 @@ pub struct Ppu {
     /// `NesMachine::process_frame` consumes it via
     /// [`Self::take_vblank_entered`].
     vblank_entered: bool,
+    /// Cached `/NMI` level: `status.v_blank() & ctrl.nmi_enable()`.
+    ///
+    /// `NesMachine` samples the line once per PPU dot, ~89k times per frame,
+    /// and each sample re-read both bitfields through `get_bit`. Every site
+    /// that can change either bit refreshes this field through
+    /// [`Self::refresh_nmi_level`]; `nmi_line_cache_matches_registers_across_a_frame`
+    /// checks the cache against the registers at every dot of a frame.
+    nmi_level: bool,
 }
 
 /// PPU registers are mirrored every 8 bytes in range $2000-$3FFF;
@@ -508,6 +518,7 @@ impl Ppu {
             palette_index_buffer: Box::new([0; VISIBLE_WIDTH as usize * VISIBLE_HEIGHT as usize]),
             color_splits: Vec::new(),
             vblank_entered: false,
+            nmi_level: false,
         }
     }
 
@@ -529,6 +540,7 @@ impl Ppu {
         self.registers.write_scroll(0);
         self.ren_latched_at_338 = false;
         self.vblank_entered = false;
+        self.refresh_nmi_level();
         // A mid-frame reset leaves pre-reset palette indices in the
         // buffer; they flush as stale values (and report stale to live
         // brightness queries) because the beam keeps advancing past them.
@@ -931,6 +943,7 @@ impl Ppu {
                 // 4.vbl_clear_timing pins that boundary: clearing on the dot-0 tick
                 // is a "Cleared 1 PPU clock too early" failure.
                 self.registers.status = PpuStatus::EMPTY;
+                self.refresh_nmi_level();
                 self.sprite.clear_pending();
             }
             304 => {
@@ -964,6 +977,7 @@ impl Ppu {
         } else {
             self.suppress_vblank_pending = false;
         }
+        self.refresh_nmi_level();
     }
 
     #[hotpath::measure(impl_type = "Ppu")]
@@ -1139,8 +1153,17 @@ impl Ppu {
     /// `$2000` write that disables NMI drops the level on the next dot;
     /// same-dot suppression falls out of the CPU sampler's phase (a 1-dot
     /// assertion at the set dot is never sampled — see `NmiDetector`).
+    ///
+    /// Reads the cached level: the two bits change only at the vblank set
+    /// and clear, on `$2000` writes, and on restore, each of which calls
+    /// [`Self::refresh_nmi_level`].
     pub fn nmi_line(&self) -> bool {
-        self.registers.status.v_blank() & self.registers.ctrl.nmi_enable()
+        self.nmi_level
+    }
+
+    #[inline]
+    fn refresh_nmi_level(&mut self) {
+        self.nmi_level = self.registers.status.v_blank() & self.registers.ctrl.nmi_enable();
     }
 
     pub(crate) fn read_ppureg(&mut self, address: u16, cartridge: &mut Cartridge) -> u8 {
@@ -1439,6 +1462,7 @@ impl Ppu {
         // The sprite pattern table / sprite size selection lives in ctrl, so
         // the cached Sprite rows no longer match.
         self.sprite.invalidate_rows();
+        self.refresh_nmi_level();
     }
 
     /// Read status register (for testing) - behaves like reading from 0x2002
@@ -1458,6 +1482,7 @@ impl Ppu {
         // Clear v_blank flag on read; that drops the /NMI line from the
         // next dot's `nmi_line` sample.
         self.registers.status.set_v_blank(false);
+        self.refresh_nmi_level();
         self.registers.write_toggle = false; // Also reset write toggle on status read
         r
     }

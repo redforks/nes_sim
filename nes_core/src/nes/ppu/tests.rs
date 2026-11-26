@@ -2760,3 +2760,52 @@ fn flush_applies_emphasis_with_rendering_disabled() {
         }
     }
 }
+
+/// The cached `/NMI` level is derived state: it must equal the registers at
+/// every dot, including across `$2000` writes and `$2002` reads that land
+/// mid-frame.
+#[test]
+fn nmi_line_cache_matches_registers_across_a_frame() {
+    let mut ppu = create_test_ppu_with_mask(PpuMask::new());
+    let mut cart = Cartridge::test();
+    ppu.write_ppureg(0x2000, 0x80, &mut cart);
+
+    for dot in 0..89_342u32 {
+        match dot {
+            10_000 => ppu.write_ppureg(0x2000, 0x00, &mut cart),
+            20_000 => ppu.write_ppureg(0x2000, 0x80, &mut cart),
+            70_000 => {
+                let _ = ppu.read_ppureg(0x2002, &mut cart);
+            }
+            _ => {}
+        }
+        ppu.tick(&mut cart);
+        assert_eq!(
+            ppu.nmi_line(),
+            ppu.registers.status.v_blank() & ppu.registers.ctrl.nmi_enable(),
+            "cached NMI level diverged from the registers at dot {dot}"
+        );
+    }
+}
+
+#[test]
+fn nmi_line_cache_follows_ctrl_write_and_status_read() {
+    let mut ppu = create_test_ppu_with_mask(PpuMask::new());
+    let mut cart = Cartridge::test();
+
+    ppu.write_ppureg(0x2000, 0x80, &mut cart);
+    assert!(!ppu.nmi_line(), "not in vblank yet");
+
+    ppu.registers.status.set_v_blank(true);
+    ppu.refresh_nmi_level();
+    assert!(ppu.nmi_line());
+
+    ppu.write_ppureg(0x2000, 0x00, &mut cart);
+    assert!(!ppu.nmi_line(), "ctrl write cleared nmi_enable");
+
+    ppu.write_ppureg(0x2000, 0x80, &mut cart);
+    assert!(ppu.nmi_line(), "still in vblank with nmi_enable back on");
+
+    let _ = ppu.read_ppureg(0x2002, &mut cart);
+    assert!(!ppu.nmi_line(), "$2002 read cleared vblank");
+}
