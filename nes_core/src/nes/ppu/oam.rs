@@ -90,13 +90,6 @@ impl TilePosition {
 #[derive(Debug, Copy, Clone)]
 pub struct TileVRamAddr(pub u16);
 
-impl TileVRamAddr {
-    /// Return vram/pattern/chr address for second plane
-    pub fn second_plane_addr(self) -> u16 {
-        self.0 + 8
-    }
-}
-
 pub struct Oam {
     pub sprites: Box<[Sprite; 64]>,
 }

@@ -273,6 +273,22 @@ impl CartridgeMemory {
         }
     }
 
+    /// Pool read of one tile row's low and high bitplanes: `base_addr` and
+    /// `base_addr + 8`.
+    ///
+    /// Both bytes share one 1 KB window slot, because a tile's two planes are
+    /// 8 bytes apart and never straddle a slot boundary. Mirrors
+    /// [`Self::read_vram`]'s masked slot lookup, without the per-byte dispatch.
+    pub fn read_tile_low_high(&self, base_addr: u16) -> (u8, u8) {
+        let slot = ((base_addr & 0x3fff) >> 10) as usize;
+        let bank = self.ppu_window[slot] as usize;
+        debug_assert!(bank < self.pool.len(), "PPU slot {slot} escapes the pool");
+        // SAFETY: as in `read_vram` — `ppu_window` entries always index a
+        // pool bank, and `base_addr + 8` stays inside the same 1 KB bank.
+        let bank = unsafe { self.pool.get_unchecked(bank) };
+        (bank.read(base_addr), bank.read(base_addr + 8))
+    }
+
     /// Cartridge PPU space for `$0000-$3EFF`. The slot index is masked, not
     /// bounds-checked: `& 0x3fff` drops the $4000 wrap and lands inside the
     /// 16-slot window, so the window lookup needs no `unsafe` at all.

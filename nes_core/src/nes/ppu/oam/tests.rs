@@ -74,29 +74,21 @@ fn oam_default_is_zeroed() {
     }
 }
 
-#[test_case(TilePosition::Size8(PatternBank::First, 0), 0, 0, 8 ; "size8 first bank tile0 y0")]
-#[test_case(TilePosition::Size8(PatternBank::First, 0), 7, 7, 15 ; "size8 first bank tile0 y7")]
-#[test_case(TilePosition::Size8(PatternBank::First, 1), 3, 19, 27 ; "size8 first bank tile1 y3")]
-#[test_case(TilePosition::Size8(PatternBank::Second, 0), 0, 0x1000, 0x1008 ; "size8 second bank tile0 y0")]
-#[test_case(TilePosition::Size8(PatternBank::Second, 3), 5, 0x1035, 0x103D ; "size8 second bank tile3 y5")]
-#[test_case(TilePosition::Size16(PatternBank::First, 0), 0, 0, 8 ; "size16 first bank tile0 y0")]
-#[test_case(TilePosition::Size16(PatternBank::First, 0), 7, 7, 15 ; "size16 first bank tile0 y7")]
-#[test_case(TilePosition::Size16(PatternBank::First, 0), 8, 16, 24 ; "size16 first bank tile0 y8 wraps to tile1")]
-#[test_case(TilePosition::Size16(PatternBank::First, 0), 15, 23, 31 ; "size16 first bank tile0 y15 wraps to tile1")]
-#[test_case(TilePosition::Size16(PatternBank::First, 2), 9, 49, 57 ; "size16 first bank tile2 y9 uses tile3")]
-#[test_case(TilePosition::Size16(PatternBank::Second, 4), 10, 0x1052, 0x105A ; "size16 second bank tile4 y10 uses tile5")]
-#[test_case(TilePosition::Size16(PatternBank::Second, 1), 0, 0x1010, 0x1018 ; "size16 second bank tile1 y0")]
-fn test_resolve_pixel_addr(
-    tile_position: TilePosition,
-    tile_y: u8,
-    expected_plane0: u16,
-    expected_plane1: u16,
-) {
+#[test_case(TilePosition::Size8(PatternBank::First, 0), 0, 0 ; "size8 first bank tile0 y0")]
+#[test_case(TilePosition::Size8(PatternBank::First, 0), 7, 7 ; "size8 first bank tile0 y7")]
+#[test_case(TilePosition::Size8(PatternBank::First, 1), 3, 19 ; "size8 first bank tile1 y3")]
+#[test_case(TilePosition::Size8(PatternBank::Second, 0), 0, 0x1000 ; "size8 second bank tile0 y0")]
+#[test_case(TilePosition::Size8(PatternBank::Second, 3), 5, 0x1035 ; "size8 second bank tile3 y5")]
+#[test_case(TilePosition::Size16(PatternBank::First, 0), 0, 0 ; "size16 first bank tile0 y0")]
+#[test_case(TilePosition::Size16(PatternBank::First, 0), 7, 7 ; "size16 first bank tile0 y7")]
+#[test_case(TilePosition::Size16(PatternBank::First, 0), 8, 16 ; "size16 first bank tile0 y8 wraps to tile1")]
+#[test_case(TilePosition::Size16(PatternBank::First, 0), 15, 23 ; "size16 first bank tile0 y15 wraps to tile1")]
+#[test_case(TilePosition::Size16(PatternBank::First, 2), 9, 49 ; "size16 first bank tile2 y9 uses tile3")]
+#[test_case(TilePosition::Size16(PatternBank::Second, 4), 10, 0x1052 ; "size16 second bank tile4 y10 uses tile5")]
+#[test_case(TilePosition::Size16(PatternBank::Second, 1), 0, 0x1010 ; "size16 second bank tile1 y0")]
+fn test_resolve_pixel_addr(tile_position: TilePosition, tile_y: u8, expected_plane0: u16) {
     let addr = tile_position.resolve_pixel_addr(tile_y);
-    assert_eq!(
-        (addr.0, addr.second_plane_addr()),
-        (expected_plane0, expected_plane1)
-    );
+    assert_eq!(addr.0, expected_plane0);
 }
 
 #[test_case(false, PatternBank::First, 5 ; "first bank")]

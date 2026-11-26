@@ -673,6 +673,33 @@ impl Cartridge {
         self.caps.ppu_read
     }
 
+    /// Reads both bitplanes of one tile row in a single call: the low plane at
+    /// `base_addr` and the high plane at `base_addr + 8`.
+    ///
+    /// Saves the render path a second [`Self::read_vram`] round-trip and keeps
+    /// the pair under one [`Mapper::ppu_chr_bank`] lookup when the mapper
+    /// redirects CHR banks.
+    ///
+    /// `base_addr` is the low-plane address and must leave room for the high
+    /// plane below `$2000`, i.e. it comes from
+    /// [`TilePosition::resolve_pixel_addr`].
+    pub fn read_tile_low_high(&self, base_addr: u16, render: PpuRenderState) -> (u8, u8) {
+        debug_assert!(base_addr < (0x2000 - 8));
+        #[cfg(test)]
+        if let Some(log) = &self.vram_read_log {
+            log.record(base_addr);
+            log.record(base_addr + 8);
+        }
+        if self.caps.ppu_read
+            && let Some(bank) = self.mapper.ppu_chr_bank(base_addr, render)
+        {
+            let low = self.memory.read_chr_bank(bank, base_addr);
+            let high = self.memory.read_chr_bank(bank, base_addr + 8);
+            return (low, high);
+        }
+        self.memory.read_tile_low_high(base_addr)
+    }
+
     /// Cartridge PPU space: pattern tables in `$0000-$1FFF` (CHR ROM or CHR
     /// RAM), nametables in `$2000-$2EFF`.
     ///

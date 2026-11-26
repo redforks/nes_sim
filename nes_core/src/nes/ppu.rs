@@ -1570,8 +1570,7 @@ fn fetch_tile_data(
     let tile_position = background.ctrl.background_tile_position(nt_byte);
     let tile_fine_y = (world_y & 7) as u8;
     let low_addr = tile_position.resolve_pixel_addr(tile_fine_y);
-    let bitplane_low = cartridge.read_vram(low_addr.0, render);
-    let bitplane_high = cartridge.read_vram(low_addr.second_plane_addr(), render);
+    let (bitplane_low, bitplane_high) = cartridge.read_tile_low_high(low_addr.0, render);
 
     (
         palette_idx,

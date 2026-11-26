@@ -418,8 +418,7 @@ impl SpriteManager {
             let src_y = sprite_src_y(&sprite, sprite_height, screen_y);
             let tile_position = sprite.tile_position(ctrl);
             let addr = tile_position.resolve_pixel_addr(src_y);
-            let low = cartridge.read_vram(addr.0, render);
-            let high = cartridge.read_vram(addr.second_plane_addr(), render);
+            let (low, high) = cartridge.read_tile_low_high(addr.0, render);
 
             self.rows.push(SpriteRow {
                 x: sprite.x,
