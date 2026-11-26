@@ -53,7 +53,7 @@ audio.flush_frame();
 - PPU:CPU ratio of 3:1 (one CPU instruction = 3 PPU ticks)
 - NMI generation from PPU VBlank
 - No tick-count guard on `process_frame()`: PPU timing always advances in `tick`, so the vblank-entry event fires within one frame (~89k dots)
-- Fixed audio rate at `Apu::SAMPLE_RATE` (`44_100`, no setter); SDL and WAV-header rates derive from it. The PPU owns its framebuffer (`Box<[[u8; 4]; 256 * 240]>`, row-major), written once per frame at the VBL set dot and served zero-copy via `frame_bytes()` / `frame_pixels()`. The APU owns its mono mix buffer (`Vec<f32>` at `Apu::SAMPLE_RATE`), filled by `tick`, cleared at each `process_frame` start, served via `audio_samples()` / `audio_bytes()`.
+- Fixed audio rate at `Apu::SAMPLE_RATE` (`44_100`, no setter); SDL and WAV-header rates derive from it. The PPU owns its framebuffer (`Box<[Pixel; 256 * 240]>`, row-major; `Pixel` is a `#[repr(transparent)]` RGBA `[u8; 4]`), written once per frame at the VBL set dot and served zero-copy via `frame_bytes()` / `frame_pixels()`. The APU owns its mono mix buffer (`Vec<f32>` at `Apu::SAMPLE_RATE`), filled by `tick`, cleared at each `process_frame` start, served via `audio_samples()` / `audio_bytes()`.
 
 ### Cartridge System (`src/nes/mapper.rs`, `mapper/`)
 

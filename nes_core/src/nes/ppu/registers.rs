@@ -48,6 +48,15 @@ pub struct PpuMask {
 }
 
 impl PpuMask {
+    /// Whether this mask changes colors at all: grayscale (index domain)
+    /// or any emphasis tint (RGB domain). `false` means the per-pixel
+    /// resolution is a plain palette lookup, which lets the batch LUT
+    /// fill skip the index mask and the tint pass.
+    #[inline]
+    pub fn has_color_effects(&self) -> bool {
+        self.grayscale() || self.red_tint() || self.green_tint() || self.blue_tint()
+    }
+
     /// Mask a palette entry for grayscale rendering: hardware ANDs the
     /// 6-bit entry with $30 before the color lookup, so dark entries like
     /// $3F (black) render as their $3x row ($30, white). Single

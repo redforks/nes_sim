@@ -23,6 +23,11 @@ the (b)->(c) comparison isolates the SSSE3 gather alone. The old
 numbers are superseded by the re-measurement below (the original table
 is kept at the end of the file for provenance).
 
+Note (current code): the `NES_SIM_NO_SSSE3` switch was a measurement-only
+escape hatch and has since been removed; `batch_convert::convert` now
+dispatches on CPU-feature detection alone. Reproducing state (b)
+requires the measured commit `907a93e`, where the switch still exists.
+
 Build hazard found and avoided: all worktrees share
 `CARGO_TARGET_DIR=/tmp/nes-sim-target` via `.cargo/config.toml`, and
 cargo then silently reuses the previously built `nes_core` rlib when

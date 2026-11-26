@@ -180,6 +180,7 @@ impl Ppu {
     /// Restore a state previously produced by [`Self::capture_ppu_state`].
     /// The framebuffer, palette index buffer, color splits, and color theme
     /// are intentionally left untouched (excluded from the save format).
+    #[inline(never)]
     pub(crate) fn restore_ppu_state(&mut self, s: &PpuState) {
         self.timing.scanline = s.scanline;
         self.timing.dot = s.dot;
@@ -405,7 +406,7 @@ pub struct Ppu {
     /// Owned RGBA framebuffer (`256*240` pixels, row-major). Written once
     /// per frame by `flush_palette_index_buffer`; served zero-copy via
     /// `frame_bytes` / `frame_pixels`.
-    framebuffer: Box<[u32; TOTAL_PIXELS as usize]>,
+    framebuffer: Box<[Pixel; TOTAL_PIXELS as usize]>,
 
     timing: Timing,
 
@@ -494,7 +495,7 @@ impl Ppu {
             oam: Oam::default(),
             oam_addr: 0,
             color_theme: ColorTheme::default(),
-            framebuffer: Box::new([0; TOTAL_PIXELS as usize]),
+            framebuffer: Box::new([Pixel::default(); TOTAL_PIXELS as usize]),
             timing: Timing::new(),
             background_anchor: None,
             pending_background_activation: None,
@@ -555,7 +556,7 @@ impl Ppu {
         self.cycle = 0;
         self.ppudata_last_read = None;
         self.palette_index_buffer.fill(0);
-        self.framebuffer.fill(0);
+        self.framebuffer.fill(Pixel::default());
         self.color_splits.clear();
         self.vblank_entered = false;
     }
@@ -846,36 +847,28 @@ impl Ppu {
             // compute background anchor at start of visible scanline
             self.background_anchor = Some(BackgroundActivation::snapshot(self, 0));
             self.pending_background_activation = None;
-            self.fill_tile_cache(0, cartridge, self.ppu_render_state());
         }
 
         if self.rendering_enabled() {
             self.tick_fetch_notify(cartridge);
 
             if self.timing.in_sprite_eval_dots() {
-                match self.timing.dot {
-                    65 => {
-                        self.sprite.begin_sprite_overflow_eval(self.oam_addr);
-                        self.sprite.step_sprite_overflow_eval(
-                            self.timing.scanline,
-                            self.registers.ctrl,
-                            &self.oam,
-                        );
-                    }
-                    _ if (self.timing.dot & 1) == 1 => {
-                        self.sprite.step_sprite_overflow_eval(
-                            self.timing.scanline,
-                            self.registers.ctrl,
-                            &self.oam,
-                        );
-                    }
-                    256 => {
-                        // --- vram_addr management (rendering-enabled only) ---
-                        // These model the real NES PPU's internal v-register updates:
-                        // Fine Y increment at dot 256 of each visible scanline
-                        self.increment_vram_y();
-                    }
-                    _ => {}
+                if self.timing.dot == 65 {
+                    self.sprite.begin_sprite_overflow_eval(self.oam_addr);
+                }
+
+                if (self.timing.dot & 1) == 1 {
+                    self.sprite.step_sprite_overflow_eval(
+                        self.timing.scanline,
+                        self.registers.ctrl,
+                        &self.oam,
+                    );
+                }
+                if self.timing.dot == 256 {
+                    // --- vram_addr management (rendering-enabled only) ---
+                    // These model the real NES PPU's internal v-register updates:
+                    // Fine Y increment at dot 256 of each visible scanline
+                    self.increment_vram_y();
                 }
             }
         }
@@ -885,7 +878,8 @@ impl Ppu {
         // geometry (TileCache background fetch, sprite evaluation, sprite-0
         // hit) into a palette index only and stores it in the flat buffer
         // at the beam position — no RGB work here. Color (grayscale and
-        // emphasis) is applied once, at the flush in `tick_vertical_blank` below.
+        // emphasis) is applied once, at the flush in
+        // `tick_vertical_blank_dot_1` below.
         // Mid-frame `$2001` color changes are recorded as split points
         // in `write_ppureg` and applied per segment by the flush below;
         // enable bits, by contrast, take effect here immediately.
@@ -942,20 +936,19 @@ impl Ppu {
         }
     }
 
-    /// Vertical-blanking entry line (241, ADR-0019): the VBL set dot
-    /// flushes the buffered frame. Moved verbatim out of `tick()`.
-    fn tick_vertical_blank(&mut self) {
-        if self.timing.dot == 1 {
-            // Flush the whole frame's buffered palette indices into the
-            // owned framebuffer (raster order), exactly once per frame,
-            // at the VBL set dot.
-            self.flush_palette_index_buffer();
-            self.vblank_entered = true;
-            if !self.suppress_vblank_pending {
-                self.registers.status.set_v_blank(true);
-            } else {
-                self.suppress_vblank_pending = false;
-            }
+    /// VBL set dot of the vblank-entry line (241, ADR-0019): flush the
+    /// buffered frame, then raise the vblank flag unless suppressed.
+    #[inline(never)]
+    fn tick_vertical_blank_dot_1(&mut self) {
+        // Flush the whole frame's buffered palette indices into the
+        // owned framebuffer (raster order), exactly once per frame,
+        // at the VBL set dot.
+        self.flush_palette_index_buffer();
+        self.vblank_entered = true;
+        if !self.suppress_vblank_pending {
+            self.registers.status.set_v_blank(true);
+        } else {
+            self.suppress_vblank_pending = false;
         }
     }
 
@@ -987,7 +980,9 @@ impl Ppu {
                     .advance(RenderingStatus::PostRender, self.ren_latched_at_338);
             }
             RenderingStatus::EnterVerticalBlank => {
-                self.tick_vertical_blank();
+                if self.timing.dot == 1 {
+                    self.tick_vertical_blank_dot_1();
+                }
                 self.timing
                     .advance(RenderingStatus::EnterVerticalBlank, self.ren_latched_at_338);
             }
@@ -1059,7 +1054,6 @@ impl Ppu {
     /// retained in the buffer) flush as the buffer's default or stale
     /// values respectively.
     ///
-    #[inline(never)]
     fn flush_palette_index_buffer(&mut self) {
         // `flush_palette_index_buffer` runs at the VBL set dot, after the
         // frame is complete, so every buffer slot holds a scanned index

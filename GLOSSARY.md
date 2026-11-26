@@ -321,7 +321,7 @@ _Avoid_: trigger timeout, debounce
 Core domain for PPU pixel output and host-side presentation. The PPU owns its buffers; there is no `Render`/`ImageRender` trait layer and no zoom-factor generic.
 
 **Framebuffer**:
-Owned RGBA pixel store `Box<[[u8; 4]; 256 * 240]>` on the PPU, row-major at 256 by 240 output pixels, one `[u8; 4]` per pixel. Written once per frame by the VBL-set-dot flush in raster order; served zero-copy via `frame_bytes()` (byte view) and `frame_pixels()` (typed pixels).
+Owned RGBA pixel store `Box<[Pixel; 256 * 240]>` on the PPU, row-major at 256 by 240 output pixels, one `Pixel` (`#[repr(transparent)]` RGBA `[u8; 4]`) per pixel. Written once per frame by the VBL-set-dot flush in raster order; served zero-copy via `frame_bytes()` (byte view) and `frame_pixels()` (typed pixels).
 _Avoid_: RgbaImage, image buffer (ambiguous), raw bytes (when meaning typed pixels)
 
 **FrameOutput**:

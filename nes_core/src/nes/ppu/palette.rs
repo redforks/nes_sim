@@ -1,4 +1,5 @@
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, bytemuck::Pod, bytemuck::Zeroable, Default)]
+#[repr(transparent)]
 pub struct Pixel(pub [u8; 4]);
 
 impl Pixel {
@@ -10,8 +11,8 @@ impl Pixel {
         u32::from_le_bytes(self.0)
     }
 
-    /// Inverse of [`Self::to_u32`]: rebuild a pixel from its encoded
-    /// word (used by the batch palette-index flush, ticket #67).
+    /// Inverse of [`Self::to_u32`]: rebuild a pixel from its
+    /// little-endian encoded word.
     pub fn from_u32(word: u32) -> Self {
         Self(word.to_le_bytes())
     }
@@ -21,10 +22,10 @@ impl Pixel {
     }
 }
 
-/// Memory layout of .pal file, contains 64 pixels, each pixes has three bytes (r, g, b)
+/// Memory layout of .pal file, contains 64 pixels, each pixel has three bytes (r, g, b)
 pub type PalBuf = [u8; 192];
 
-pub struct ColorTheme(Box<[Pixel; 64]>);
+pub struct ColorTheme(pub Box<[Pixel; 64]>);
 
 impl Default for ColorTheme {
     fn default() -> Self {
