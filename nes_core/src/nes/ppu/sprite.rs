@@ -58,6 +58,14 @@ pub struct SpriteManager {
     /// Index of the evaluated OAM entry 0 within rows, when it survived
     /// evaluation; the sprite-0 hit reads that cached row.
     zero_row_idx: Option<usize>,
+    /// Per-column bitmask of the rows whose 8-pixel span covers that column:
+    /// bit `i` set means `rows[i]` reaches column `x`. Rebuilt whenever the
+    /// rows are (one scanline at a time), so `find_sprite_pixel` loads one
+    /// byte and visits only the rows that can draw at `screen_x` instead of
+    /// range-checking all eight. Geometric only: transparency is still
+    /// decided by [`SpriteRow::pixel`], the single place that also applies
+    /// the horizontal flip.
+    column_mask: [u8; 256],
     /// Internal OAM bus latch exposed by $2004 reads mid-render (Mesen
     /// `_oamCopybuffer`): $FF during the 1-64 clear phase, the last primary
     /// OAM byte read on odd eval dots during 65-256. Written only by the
@@ -192,6 +200,8 @@ impl SpriteManager {
             low: r.low,
             high: r.high,
         }));
+        // Derived, never serialized: rebuild from the restored rows.
+        self.rebuild_column_mask();
         self.rows_scanline = s.rows_scanline;
         self.zero_row_idx = s.zero_row_idx;
         self.oam_copybuffer = s.oam_copybuffer;
@@ -210,6 +220,7 @@ impl SpriteManager {
             rows: ArrayVec::new(),
             rows_scanline: None,
             zero_row_idx: None,
+            column_mask: [0; 256],
             oam_copybuffer: 0xFF,
         }
     }
@@ -233,6 +244,7 @@ impl SpriteManager {
         self.rows.clear();
         self.rows_scanline = None;
         self.zero_row_idx = None;
+        self.column_mask.fill(0);
     }
 
     /// Update sprite status to ppu status register
@@ -431,6 +443,24 @@ impl SpriteManager {
                 self.zero_row_idx = Some(i);
             }
         }
+
+        self.rebuild_column_mask();
+    }
+
+    /// Rebuild [`Self::column_mask`] from the current `rows`. Called after
+    /// `ensure_rows` fills them and after a save-state restore puts them back.
+    fn rebuild_column_mask(&mut self) {
+        self.column_mask.fill(0);
+        for (i, row) in self.rows.iter().enumerate() {
+            // A row at x=250 spans columns 250..=257; the last two fall off
+            // the screen and get no bits.
+            for dx in 0..8u16 {
+                let x = row.x as u16 + dx;
+                if x < 256 {
+                    self.column_mask[x as usize] |= 1 << i;
+                }
+            }
+        }
     }
 
     pub fn find_sprite_pixel(
@@ -442,7 +472,17 @@ impl SpriteManager {
         render: PpuRenderState,
     ) -> Option<SpritePixel> {
         self.ensure_rows(ctrl, cartridge, screen_y, render);
-        self.rows.iter().find_map(|row| row.pixel(screen_x))
+        let mut candidates = self.column_mask[screen_x as usize];
+        while candidates != 0 {
+            let idx = candidates.trailing_zeros() as usize;
+            if let Some(pixel) = self.rows[idx].pixel(screen_x) {
+                return Some(pixel);
+            }
+            // Geometric coverage only: this row spans the column but its
+            // pixel is transparent, so try the next covering row in OAM order.
+            candidates &= candidates - 1;
+        }
+        None
     }
 
     /// Whether the cached rows carry sprite 0 for `screen_y` at all: the
@@ -527,4 +567,30 @@ pub struct SpritePixel {
     pub palette_idx: u8,
     pub color_idx: u8,
     pub behind_bg: bool,
+}
+
+#[cfg(test)]
+impl SpriteManager {
+    /// Install pattern rows directly, as if `ensure_rows` had just filled them
+    /// for `scanline`. Test-only: the mask-equivalence test drives rows that
+    /// would be awkward to reach through OAM and CHR.
+    pub(crate) fn set_test_rows(&mut self, scanline: u8, rows: &[(u8, u8, u8, u8)]) {
+        self.rows.clear();
+        for &(x, attributes, low, high) in rows {
+            self.rows.push(SpriteRow {
+                x,
+                attributes: Attribute::from_bytes([attributes]),
+                low,
+                high,
+            });
+        }
+        self.rows_scanline = Some(scanline);
+        self.zero_row_idx = None;
+        self.rebuild_column_mask();
+    }
+
+    /// The pre-mask lookup: linear scan over every cached row.
+    pub(crate) fn scan_rows_pixel(&self, screen_x: u8) -> Option<SpritePixel> {
+        self.rows.iter().find_map(|row| row.pixel(screen_x))
+    }
 }

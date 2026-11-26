@@ -2809,3 +2809,32 @@ fn nmi_line_cache_follows_ctrl_write_and_status_read() {
     let _ = ppu.read_ppureg(0x2002, &mut cart);
     assert!(!ppu.nmi_line(), "$2002 read cleared vblank");
 }
+
+/// The column mask must pick the same pixel as the plain row scan for every
+/// column, including overlapping, flipped, transparent and screen-edge rows.
+#[test]
+fn column_mask_matches_the_row_scan_for_every_column() {
+    let mut ppu = Ppu::new();
+    let cart = Cartridge::test();
+    // (x, attributes, low, high): row 1 overlaps row 0, row 1 is flipped
+    // (0x08), row 2 is transparent everywhere, row 3 hangs off the right edge.
+    let rows = [
+        (10, 0x00, 0b1000_0001, 0b0000_0000),
+        (12, 0x08, 0b1111_0000, 0b0000_1111),
+        (13, 0x00, 0b0000_0000, 0b0000_0000),
+        (250, 0x00, 0b1010_1010, 0b0101_0101),
+    ];
+    ppu.sprite.set_test_rows(1, &rows);
+
+    for x in 0..=255u8 {
+        let via_mask = ppu
+            .sprite
+            .find_sprite_pixel(ppu.registers.ctrl, &cart, x, 1, PpuRenderState::disabled())
+            .map(|p| (p.palette_idx, p.color_idx, p.behind_bg));
+        let via_scan = ppu
+            .sprite
+            .scan_rows_pixel(x)
+            .map(|p| (p.palette_idx, p.color_idx, p.behind_bg));
+        assert_eq!(via_mask, via_scan, "column {x} disagrees");
+    }
+}
