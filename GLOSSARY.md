@@ -56,6 +56,10 @@ _Avoid_: background latch, scroll anchor
 Four-byte cached render state for the current background tile, stored as a field on `Ppu`. Holds the nametable byte (tile index), attribute byte (2-bit palette select), and both bitplane rows (low, high) at the current fine_y. Filled once per tile from cartridge VRAM reads — matching the real PPU's tile-fetch cadence — then consumed for up to 8 horizontal pixels before unconditional refill. The first batch is shorter by `fine_x` to handle sub-tile scroll offsets. Invalidated at dot 0 and on `$2000`/`$2006` register writes.
 _Avoid_: tile cache (lowercase c), pattern cache
 
+**Render-state change**:
+An event that alters how a visible pixel of the current scanline resolves, and that lands before that pixel is drawn: a mid-scanline `$2000`, `$2001`, or `$2006` write, a `$2007` write to palette, pattern, or nametable memory, or a cartridge bank or mirroring switch. Events after the scanline's last visible dot change no pixel of that scanline.
+_Avoid_: config change, PPU config (**Config** is a different term: values fixed at load), state change (too broad)
+
 ## Language — PPU Frame Phases
 
 Core domain for the four scanline bands of one NTSC frame (nesdev `PPU_rendering` line-by-line timing).
