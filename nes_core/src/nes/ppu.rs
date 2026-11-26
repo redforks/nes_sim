@@ -847,6 +847,7 @@ impl Ppu {
             // compute background anchor at start of visible scanline
             self.background_anchor = Some(BackgroundActivation::snapshot(self, 0));
             self.pending_background_activation = None;
+            self.fill_tile_cache(0, cartridge, self.ppu_render_state());
         }
 
         if self.rendering_enabled() {
