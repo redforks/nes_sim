@@ -466,7 +466,14 @@ fn render_pixel(ppu: &mut Ppu, pattern: &[u8], x: u8, y: u8) -> u8 {
     }
     ppu.timing.scanline = y as u16;
     ppu.timing.dot = x as u16 + 1;
-    ppu.render_pixel(&cart)
+    render_pixel_now(ppu, &cart)
+}
+
+/// Call `render_pixel` the way `tick_visible` does: read the mask byte once,
+/// as the per-dot hoist does in production.
+fn render_pixel_now(ppu: &mut Ppu, cart: &Cartridge) -> u8 {
+    let mask_bits = ppu.registers.mask.bits();
+    ppu.render_pixel(cart, mask_bits)
 }
 
 fn run_scanline(ppu: &mut Ppu, pattern: &[u8], scanline: u16) {
@@ -542,7 +549,7 @@ where
     }
     ppu.timing.scanline = y as u16;
     ppu.timing.dot = x as u16 + 1;
-    ppu.render_pixel(&cart)
+    render_pixel_now(ppu, &cart)
 }
 
 #[test]
@@ -586,7 +593,7 @@ fn ppu_background_fetch_logs_cartridge_vram_reads_in_order() {
 
     ppu.timing.scanline = 0;
     ppu.timing.dot = 1;
-    ppu.render_pixel(&cart);
+    render_pixel_now(&mut ppu, &cart);
 
     assert_eq!(
         vec![0x2000, 0x23c0, 0x0000, 0x0008],
@@ -1313,14 +1320,14 @@ fn ctrl_write_invalidates_sprite_row_cache() {
 
     // First pixel fills the row cache from sprite pattern table 0.
     ppu.timing.dot = 1;
-    assert_eq!(0x2a, ppu.render_pixel(&cart));
+    assert_eq!(0x2a, render_pixel_now(&mut ppu, &cart));
     // A $2000 write must drop the cache so the same scanline reads the new
     // sprite pattern table.
     ppu.write_ppureg(0x2000, 0x08, &mut cart);
     ppu.timing.dot = 2;
     assert_eq!(
         0x2b,
-        ppu.render_pixel(&cart),
+        render_pixel_now(&mut ppu, &cart),
         "a $2000 write must invalidate the cached Sprite row"
     );
 }
@@ -1342,7 +1349,7 @@ fn ppudata_pattern_write_invalidates_sprite_row_cache() {
     ppu.timing.scanline = 1;
 
     ppu.timing.dot = 1;
-    assert_eq!(0x2a, ppu.render_pixel(&cart));
+    assert_eq!(0x2a, render_pixel_now(&mut ppu, &cart));
     // Rewrite tile 1 row 0 through PPUDATA: both planes all ones => color 3.
     for (addr, value) in [(0x0010u16, 0xffu8), (0x0018, 0xff)] {
         ppu.write_ppureg(0x2006, (addr >> 8) as u8, &mut cart);
@@ -1352,7 +1359,7 @@ fn ppudata_pattern_write_invalidates_sprite_row_cache() {
     ppu.timing.dot = 2;
     assert_eq!(
         0x2c,
-        ppu.render_pixel(&cart),
+        render_pixel_now(&mut ppu, &cart),
         "a PPUDATA pattern write must invalidate the cached Sprite row"
     );
 }
@@ -1500,6 +1507,45 @@ fn test_render_pixel_sprite_zero_hit() {
     // No latch step: the hit raises PPUSTATUS on the dot that outputs the
     // hit pixel (blargg ppu_sprite_hit 09-timing sub-tests 3/4).
     assert!(ppu.registers.status.sprite_zero_hit());
+}
+
+#[test]
+fn sprite_zero_gate_opens_only_for_the_filled_scanline() {
+    // `render_pixel` asks `zero_row_on_scanline` before the rest of the hit
+    // conjunction. The rows are filled lazily by the sprite fetch of a line's
+    // first pixel, so the gate is closed before it and closed for any other
+    // line — that is why the predicate cannot be hoisted to the line start.
+    let mut ppu = create_test_ppu_with_mask(
+        PpuMask::new()
+            .with_background_enabled(true)
+            .with_sprite_enabled(true)
+            .with_background_left_enabled(true)
+            .with_sprite_left_enabled(true),
+    );
+    let mut pattern = create_pattern();
+    set_tile_solid(&mut pattern, 0, 0, 1);
+    set_tile_solid(&mut pattern, 0, 1, 2);
+    setup_sprite(&mut ppu, 0, 0, 1, 0, 8);
+
+    let mut cart = Cartridge::test();
+    fill_chr(&mut ppu, &pattern, &mut cart);
+    populate_sprite_secondary_oam(&mut ppu, 1);
+    ppu.timing.scanline = 1;
+    ppu.timing.dot = 9;
+
+    assert!(
+        !ppu.sprite.zero_row_on_scanline(1),
+        "the row cache is filled lazily, so the gate is closed before the first pixel"
+    );
+
+    render_pixel_now(&mut ppu, &cart);
+
+    assert!(ppu.sprite.zero_row_on_scanline(1));
+    assert!(ppu.registers.status.sprite_zero_hit());
+    assert!(
+        !ppu.sprite.zero_row_on_scanline(2),
+        "the row cache belongs to one scanline"
+    );
 }
 
 #[test]

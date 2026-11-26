@@ -445,6 +445,18 @@ impl SpriteManager {
         self.rows.iter().find_map(|row| row.pixel(screen_x))
     }
 
+    /// Whether the cached rows carry sprite 0 for `screen_y` at all: the
+    /// cheap prefix of [`Self::sprite_zero_pixel_opaque`]. The hit test in
+    /// `render_pixel` asks this first, so a scanline without sprite 0 skips
+    /// the other six terms of its conjunction. `ensure_rows` sets
+    /// `rows_scanline` on the first pixel request of a line whether or not
+    /// sprite 0 is in range, so this is false for a whole line exactly when
+    /// the row lookup would be.
+    #[inline]
+    pub fn zero_row_on_scanline(&self, screen_y: u8) -> bool {
+        self.rows_scanline == Some(screen_y) && self.zero_row_idx.is_some()
+    }
+
     /// Sprite-0 hit source pixel: opaque only when OAM entry 0 survived
     /// this scanline's evaluation and its pixel overlaps the beam. Reads the
     /// already-filled cached row of the evaluated zero Sprite and never
@@ -452,7 +464,7 @@ impl SpriteManager {
     /// filled for this scanline, no pixel request reached the Sprite path,
     /// and the hit cannot fire in that window, so this reports transparent.
     pub fn sprite_zero_pixel_opaque(&self, screen_x: u8, screen_y: u8) -> bool {
-        if self.rows_scanline != Some(screen_y) {
+        if !self.zero_row_on_scanline(screen_y) {
             return false;
         }
         self.zero_row_idx

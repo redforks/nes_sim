@@ -31,6 +31,62 @@ fn test_apply_effects(mask_bits: u8, r: u8, g: u8, b: u8) {
     assert_eq!(mask.apply_effects(INPUT), Pixel::new(r, g, b));
 }
 #[test]
+fn mask_bit_constants_match_the_accessors() {
+    // `bits()` and the constants are what the per-pixel render path tests; the
+    // accessors stay the reference. A field reorder in the bitfield must break
+    // this test rather than silently move a bit in the hot loop.
+    assert_eq!(PpuMask::new().bits(), 0x00);
+    assert_eq!(
+        PpuMask::new().with_grayscale(true).bits(),
+        PpuMask::GRAYSCALE
+    );
+    assert_eq!(
+        PpuMask::new().with_background_left_enabled(true).bits(),
+        PpuMask::BACKGROUND_LEFT_ENABLED
+    );
+    assert_eq!(
+        PpuMask::new().with_sprite_left_enabled(true).bits(),
+        PpuMask::SPRITE_LEFT_ENABLED
+    );
+    assert_eq!(
+        PpuMask::new().with_background_enabled(true).bits(),
+        PpuMask::BACKGROUND_ENABLED
+    );
+    assert_eq!(
+        PpuMask::new().with_sprite_enabled(true).bits(),
+        PpuMask::SPRITE_ENABLED
+    );
+    assert_eq!(PpuMask::new().with_red_tint(true).bits(), PpuMask::RED_TINT);
+    assert_eq!(
+        PpuMask::new().with_green_tint(true).bits(),
+        PpuMask::GREEN_TINT
+    );
+    assert_eq!(
+        PpuMask::new().with_blue_tint(true).bits(),
+        PpuMask::BLUE_TINT
+    );
+    assert_eq!(
+        PpuMask::RENDERING_ENABLED,
+        PpuMask::BACKGROUND_ENABLED | PpuMask::SPRITE_ENABLED
+    );
+
+    let all = PpuMask::new()
+        .with_grayscale(true)
+        .with_background_left_enabled(true)
+        .with_sprite_left_enabled(true)
+        .with_background_enabled(true)
+        .with_sprite_enabled(true)
+        .with_red_tint(true)
+        .with_green_tint(true)
+        .with_blue_tint(true);
+    assert_eq!(all.bits(), 0xFF);
+    assert_eq!(
+        all.bits() & PpuMask::RENDERING_ENABLED,
+        PpuMask::RENDERING_ENABLED
+    );
+}
+
+#[test]
 fn partial_refresh_preserves_unmasked_bit_deadlines() {
     // Mirrors ppu_open_bus test 7 ("Reading $2002 shouldn't refresh low 5
     // bits"): refreshing the high bits must not re-arm the low bits' decay.

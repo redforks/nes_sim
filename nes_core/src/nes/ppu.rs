@@ -678,8 +678,16 @@ impl Ppu {
     /// defaults to [`PpuFetchKind::Cpu`]: render-path call sites re-tag it
     /// (background in `fetch_tile_data`, sprite in `ensure_rows`).
     fn ppu_render_state(&self) -> PpuRenderState {
+        self.render_state_from(self.registers.mask.bits())
+    }
+
+    /// Render state built from an already-read mask byte: the pixel path
+    /// reads `PPUMASK` once per dot and must not re-enter the accessors that
+    /// read exists to avoid.
+    #[inline]
+    fn render_state_from(&self, mask_bits: u8) -> PpuRenderState {
         PpuRenderState {
-            rendering_enabled: self.rendering_enabled(),
+            rendering_enabled: mask_bits & PpuMask::RENDERING_ENABLED != 0,
             sprite_8x16: self.registers.ctrl.sprite_size_16(),
             fetch_phase: (self.timing.dot % 8) as u8,
             fetch: PpuFetchKind::Cpu,
@@ -832,6 +840,11 @@ impl Ppu {
     /// shared fetches, sprite-overflow evaluation, fine-Y increment, and
     /// pixel output. Moved verbatim out of `tick()`.
     fn tick_visible(&mut self, cartridge: &mut Cartridge) {
+        // PPUMASK is read once per dot: the pixel path below runs on 256 of
+        // the 341 dots of every visible line, and each accessor re-loads the
+        // register byte.
+        let mask_bits = self.registers.mask.bits();
+
         if self.timing.dot == 0 {
             self.sprite.swap_secondary_oam();
             if self.timing.scanline == 0 {
@@ -847,10 +860,10 @@ impl Ppu {
             // compute background anchor at start of visible scanline
             self.background_anchor = Some(BackgroundActivation::snapshot(self, 0));
             self.pending_background_activation = None;
-            self.fill_tile_cache(0, cartridge);
+            self.fill_tile_cache(0, cartridge, mask_bits);
         }
 
-        if self.rendering_enabled() {
+        if mask_bits & PpuMask::RENDERING_ENABLED != 0 {
             self.tick_fetch_notify(cartridge);
 
             if self.timing.in_sprite_eval_dots() {
@@ -885,7 +898,7 @@ impl Ppu {
         // in `write_ppureg` and applied per segment by the flush below;
         // enable bits, by contrast, take effect here immediately.
         if self.timing.is_visible_dots() {
-            let pixel_idx = self.render_pixel(cartridge);
+            let pixel_idx = self.render_pixel(cartridge, mask_bits);
             let index = self.timing.scanline * VISIBLE_WIDTH + (self.timing.dot - 1);
             unsafe {
                 *self.palette_index_buffer.get_unchecked_mut(index as usize) = pixel_idx;
@@ -1293,28 +1306,37 @@ impl Ppu {
         }
     }
 
-    fn get_background_pixel(&mut self, screen_x: u8, cartridge: &Cartridge) -> (u8, u8) {
+    fn get_background_pixel(
+        &mut self,
+        screen_x: u8,
+        cartridge: &Cartridge,
+        mask_bits: u8,
+    ) -> (u8, u8) {
         self.apply_pending_background_activation(screen_x);
 
-        if !self.registers.mask.background_left_enabled() && screen_x < 8 {
+        if mask_bits & PpuMask::BACKGROUND_LEFT_ENABLED == 0 && screen_x < 8 {
             return (0, 0);
         }
 
         // Refill cache when empty or exhausted
         if self.tile_cache.remaining == 0 {
-            self.fill_tile_cache(screen_x, cartridge);
+            self.fill_tile_cache(screen_x, cartridge, mask_bits);
         }
 
         self.tile_cache.consume()
     }
 
-    fn fill_tile_cache(&mut self, screen_x: u8, cartridge: &Cartridge) {
+    fn fill_tile_cache(&mut self, screen_x: u8, cartridge: &Cartridge, mask_bits: u8) {
         let background = self
             .background_anchor
             .unwrap_or_else(|| BackgroundActivation::snapshot(self, 0));
 
-        self.tile_cache =
-            fetch_tile_data(&background, screen_x, cartridge, self.ppu_render_state());
+        self.tile_cache = fetch_tile_data(
+            &background,
+            screen_x,
+            cartridge,
+            self.render_state_from(mask_bits),
+        );
     }
 
     fn read_vram_and_inc(&mut self, cartridge: &mut Cartridge) -> u8 {
@@ -1440,49 +1462,58 @@ impl Ppu {
         r
     }
 
-    fn render_pixel(&mut self, cartridge: &Cartridge) -> u8 {
-        if !self.rendering_enabled() {
+    fn render_pixel(&mut self, cartridge: &Cartridge, mask_bits: u8) -> u8 {
+        if mask_bits & PpuMask::RENDERING_ENABLED == 0 {
             return self.palette.disabled_color_index(self.registers.vram_addr);
         }
 
         let x = (self.timing.dot - 1) as u8;
-        let (bg_palette_idx, bg_color_idx) = if self.registers.mask.background_enabled() {
-            self.get_background_pixel(x, cartridge)
+        let (bg_palette_idx, bg_color_idx) = if mask_bits & PpuMask::BACKGROUND_ENABLED != 0 {
+            self.get_background_pixel(x, cartridge, mask_bits)
         } else {
             (0, 0)
         };
 
-        let sprite_pixel = if self.registers.mask.sprite_enabled()
-            && (x >= 8 || self.registers.mask.sprite_left_enabled())
+        let sprite_pixel = if mask_bits & PpuMask::SPRITE_ENABLED != 0
+            && (x >= 8 || mask_bits & PpuMask::SPRITE_LEFT_ENABLED != 0)
         {
             self.sprite.find_sprite_pixel(
                 self.registers.ctrl,
                 cartridge,
                 x,
                 self.timing.scanline as u8,
-                self.ppu_render_state(),
+                self.render_state_from(mask_bits),
             )
         } else {
             None
         };
 
         // All pure reads, so the cheapest discriminators go first: a
-        // transparent background pixel or the rightmost column can never
-        // set the hit, and the row-cache lookup is skipped for them.
+        // scanline whose cached rows carry no sprite 0 skips the rest of the
+        // conjunction, and a transparent background pixel or the rightmost
+        // column can never set the hit.
+        //
+        // The row-cache predicate cannot be hoisted to the line start: the
+        // rows are filled lazily by the sprite fetch above, so before the
+        // first pixel of a line `rows_scanline` is still `None`. It is
+        // therefore evaluated here, after that fetch, in front of the other
+        // terms — the same truth value, one load cheaper for the lines that
+        // never had sprite 0 in range.
         //
         // The flag is written on the dot that outputs the hit pixel, not
         // queued: a $2002 read on the following dot must already observe it
         // (blargg's ppu_sprite_hit 09-timing pins the boundary to one PPU
         // clock). Queuing it for the next dot's latch made the hit one dot
         // late, which is exactly what sub-test 4 caught.
-        if !self.registers.status.sprite_zero_hit()
+        if self.sprite.zero_row_on_scanline(self.timing.scanline as u8)
+            && !self.registers.status.sprite_zero_hit()
             && bg_color_idx != 0
             && x != 255
-            && self.registers.mask.background_enabled()
-            && self.registers.mask.sprite_enabled()
+            && mask_bits & PpuMask::BACKGROUND_ENABLED != 0
+            && mask_bits & PpuMask::SPRITE_ENABLED != 0
             && (x >= 8
-                || (self.registers.mask.background_left_enabled()
-                    && self.registers.mask.sprite_left_enabled()))
+                || (mask_bits & PpuMask::BACKGROUND_LEFT_ENABLED != 0
+                    && mask_bits & PpuMask::SPRITE_LEFT_ENABLED != 0))
             && self
                 .sprite
                 .sprite_zero_pixel_opaque(x, self.timing.scanline as u8)

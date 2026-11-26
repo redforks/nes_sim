@@ -48,6 +48,29 @@ pub struct PpuMask {
 }
 
 impl PpuMask {
+    /// The raw mask byte, for the per-pixel render path. `render_pixel` runs
+    /// on 256 dots of every visible scanline and each accessor re-reads the
+    /// byte through `get_bit`; reading it once per dot and testing the
+    /// constants below keeps that loop on a register operand (callgrind put
+    /// the inlined bitfield getters at 4.5% of `Ppu::tick`). The constants are
+    /// asserted against the accessors in the tests, so a field reorder fails
+    /// loudly instead of silently moving a bit.
+    #[inline]
+    pub fn bits(&self) -> u8 {
+        self.into_bytes()[0]
+    }
+
+    pub const GRAYSCALE: u8 = 1 << 0;
+    pub const BACKGROUND_LEFT_ENABLED: u8 = 1 << 1;
+    pub const SPRITE_LEFT_ENABLED: u8 = 1 << 2;
+    pub const BACKGROUND_ENABLED: u8 = 1 << 3;
+    pub const SPRITE_ENABLED: u8 = 1 << 4;
+    pub const RED_TINT: u8 = 1 << 5;
+    pub const GREEN_TINT: u8 = 1 << 6;
+    pub const BLUE_TINT: u8 = 1 << 7;
+    /// Either enable bit: the PPU renders when background or sprites are on.
+    pub const RENDERING_ENABLED: u8 = Self::BACKGROUND_ENABLED | Self::SPRITE_ENABLED;
+
     /// Whether this mask changes colors at all: grayscale (index domain)
     /// or any emphasis tint (RGB domain). `false` means the per-pixel
     /// resolution is a plain palette lookup, which lets the batch LUT
