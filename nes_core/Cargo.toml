@@ -36,7 +36,12 @@ serde_json = { workspace = true }
 serde = { version = "1", features = ["derive"] }
 hotpath = "0.30"
 
+[[bench]]
+name = "frame"
+harness = false
+
 [dev-dependencies]
+criterion = { workspace = true }
 env_logger = { workspace = true }
 mockall = "0.14.0"
 test-case = "3.3.1"

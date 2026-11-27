@@ -368,6 +368,10 @@ _Avoid_: unlimited fps, uncapped
 Wall-clock budget per emulated frame at 60fps: `16.6ms` (`target_frame_duration = 1_000_000_000/60` ns). Headless+no-throttle measures headroom against this budget.
 _Avoid_: frame limit, fps target
 
+**Busy-Frame Fixture**:
+Fixed save-state start point each frame-bench sample restores: a sprite-heavy gameplay frame per game, reached from power-on by a pinned input script and captured via `snapshot::save_state_json`. Every sample times the identical frame.
+_Avoid_: complexed frame, saved state (ambiguous), test ROM
+
 **Hot Path**:
 Instruction sampling Self overhead >3% in `perf report --no-children`. Leaf cost after inlining; Children is call-graph roll-up. Baseline 2000-frame windowed `warped.fm2` sample (`--no-throttle`, profiling profile, frame pointers, `perf record -F 997 -g`): `Ppu::tick` 47.7%, `NesMachine::tick` 6.5%, `Microcode::exec` 6.2%, `Cartridge::read` 3.6%, `Cpu::tick` 3.4%, `SpriteManager::update_ctrl_status` 3.4%, `NesMcu::tick_apu` 3.3%, `Cartridge::on_ppu_tick` 3.0%. The shares are relative: spec #38 removed work around these leaves, so the survivors rank higher over a smaller total (instructions per frame 59.0 M to 51.0 M). A small per-Dot leaf can sample above its true cost — `update_ctrl_status` shows 3.4% Self, while removing the per-Dot status merge measured 0.4% of instructions in the spec #38 ablations; confirm a candidate with an ablation instead of acting on one symbol.
 _Avoid_: hot spot (ambiguous), bottleneck (use only after budget miss)

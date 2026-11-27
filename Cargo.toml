@@ -39,6 +39,7 @@ test-log = "0.2"
 
 # Testing
 rstest = { version = "0.23", default-features = false }
+criterion = { version = "0.5" }
 
 # WebAssembly (WASM)
 wasm-bindgen = "0.2"
