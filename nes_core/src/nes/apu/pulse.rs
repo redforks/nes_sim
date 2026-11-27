@@ -46,6 +46,12 @@ struct Sweep {
     shifter: Shifter,
     enabled: bool,
     reload: bool,
+    /// Cached [`Self::is_muted`]: the mute flag only changes when the timer
+    /// period or the sweep configuration changes (register writes, sweep
+    /// ticks, construction, snapshot restore), while `Pulse::output` runs
+    /// per emitted sample — so the sample path reads the cache and the
+    /// mutation points refresh it. Never serialized: restore recomputes it.
+    muted: bool,
 }
 
 impl Sweep {
@@ -56,6 +62,10 @@ impl Sweep {
             shifter: Shifter::new(is_second_pulse_channel, bits),
             enabled: bits.enabled(),
             reload: false,
+            // The owning `Pulse` refreshes this against its timer period
+            // right after construction (the sweep never observes the period
+            // except through `tick`/refresh).
+            muted: false,
         }
     }
 
@@ -79,10 +89,21 @@ impl Sweep {
         if self.divider.tick() && self.enabled && !self.shifter.disabled() && !muted {
             *period = target;
         }
+        self.muted = Self::muted_for(&self.shifter, *period);
     }
 
-    fn is_muted(&self, period: u16) -> bool {
-        let target = self.shifter.update_period(period);
+    fn is_muted(&self) -> bool {
+        self.muted
+    }
+
+    /// Recompute the cached mute flag after the timer period or sweep
+    /// configuration changed outside [`Self::tick`].
+    fn refresh_muted(&mut self, period: u16) {
+        self.muted = Self::muted_for(&self.shifter, period);
+    }
+
+    fn muted_for(shifter: &Shifter, period: u16) -> bool {
+        let target = shifter.update_period(period);
         period < 8 || target > 0x7ff
     }
 }
@@ -95,10 +116,15 @@ const PULSE_DUTY_TABLE: [[u8; 8]; 4] = [
 ];
 
 pub struct Pulse {
-    timer: Divider<u16>,
+    timer: DeadlineTimer,
     divider_2: Divider<u8>,
     length: LengthControl,
     envelope: Envelope,
+    /// Cached [`Envelope::output`]: refreshed whenever the envelope ticks
+    /// or is (re)configured, so per-sample mixing pays one load instead of
+    /// the disabled/counter branch. Derived, never serialized (recomputed
+    /// on restore like [`Sweep::muted`]).
+    envelope_output: u8,
     sweep: Sweep,
     sequencer: SequencerN<u8, 8>,
 }
@@ -134,14 +160,14 @@ pub(crate) struct PulseState {
 impl Pulse {
     /// Capture the full channel state. The duty index resolves by pointer
     /// equality against the `PULSE_DUTY_TABLE` rows.
-    pub(crate) fn capture_pulse_state(&self) -> PulseState {
+    pub(crate) fn capture_pulse_state(&self, now: u64) -> PulseState {
         let duty = PULSE_DUTY_TABLE
             .iter()
             .position(|row| std::ptr::eq(self.sequencer.items().as_ptr(), row.as_ptr()))
             .unwrap_or(0) as u8;
         PulseState {
             timer_period: self.timer.period(),
-            timer_counter: self.timer.counter(),
+            timer_counter: self.timer.counter(now),
             divider2_period: self.divider_2.period(),
             divider2_counter: self.divider_2.counter(),
             length_counter: self.length.counter_value(),
@@ -180,6 +206,7 @@ impl Pulse {
             s.envelope_disabled,
             s.envelope_reset_pending,
         );
+        self.envelope_output = self.envelope.output();
         self.sweep
             .divider
             .restore(s.sweep_divider_period, s.sweep_divider_counter);
@@ -188,6 +215,9 @@ impl Pulse {
         self.sweep.shifter.negate = s.sweep_negate;
         self.sweep.shifter.is_second_pulse_channel = s.sweep_is_second;
         self.sweep.shifter.shift_bits = s.sweep_shift;
+        // Recomputed, never serialized: must run after every sweep field
+        // above lands or the cache reflects the pre-restore configuration.
+        self.sweep.refresh_muted(self.timer.period());
         let duty = (s.duty as usize).min(PULSE_DUTY_TABLE.len() - 1);
         self.sequencer
             .restore(&PULSE_DUTY_TABLE[duty], s.sequencer_position);
@@ -196,14 +226,17 @@ impl Pulse {
 
 impl Pulse {
     pub fn new(is_second_pulse_channel: bool) -> Self {
-        Self {
-            timer: Divider::new(u16::MAX),
+        let mut channel = Self {
+            timer: DeadlineTimer::new(u16::MAX),
             divider_2: Divider::new(1),
             length: LengthControl::default(),
             envelope: Envelope::default(),
+            envelope_output: Envelope::default().output(),
             sweep: Sweep::new(is_second_pulse_channel, SweepBits::from_bytes([0])),
             sequencer: SequencerN::new(&PULSE_DUTY_TABLE[0]),
-        }
+        };
+        channel.sweep.refresh_muted(channel.timer.period());
+        channel
     }
 
     pub fn set_enabled(&mut self, enabled: bool) {
@@ -212,6 +245,7 @@ impl Pulse {
 
     pub fn write_control(&mut self, value: PulseControlBits) {
         self.envelope.config(value.into_bytes()[0]);
+        self.envelope_output = self.envelope.output();
         self.length.set_halt(value.loop_and_is_halt());
         self.sequencer
             .replace_items(&PULSE_DUTY_TABLE[value.duty() as usize]);
@@ -219,14 +253,17 @@ impl Pulse {
 
     pub fn write_sweep(&mut self, value: SweepBits) {
         self.sweep.config(value);
+        self.sweep.refresh_muted(self.timer.period());
     }
 
     pub fn write_timer_low(&mut self, value: u8) {
         self.timer.set_period_low(value);
+        self.sweep.refresh_muted(self.timer.period());
     }
 
     pub fn write_timer_high(&mut self, load: LengthTimerHigh3Bits, suppress_length: bool) {
         self.timer.set_period_high(load.high3());
+        self.sweep.refresh_muted(self.timer.period());
         if !suppress_length {
             self.length.load(load.length_idx());
         }
@@ -236,8 +273,8 @@ impl Pulse {
     }
 
     #[inline(always)]
-    pub fn tick_timer(&mut self) {
-        if self.timer.tick() && self.divider_2.tick() {
+    pub fn tick_timer(&mut self, now: u64) {
+        if self.timer.tick(now) && self.divider_2.tick() {
             self.sequencer.tick();
         }
     }
@@ -245,6 +282,7 @@ impl Pulse {
     #[inline(always)]
     pub fn tick_envelope(&mut self) {
         self.envelope.tick();
+        self.envelope_output = self.envelope.output();
     }
 
     #[inline(always)]
@@ -257,10 +295,8 @@ impl Pulse {
     pub fn output(&self) -> u8 {
         // Branchless gate: the duty sequencer and length counter both change
         // often enough that short-circuit branches mispredict.
-        let gate = (self.sequencer.output() != 0)
-            & !self.length.is_zero()
-            & !self.sweep.is_muted(self.timer.period());
-        self.envelope.output() * gate as u8
+        let gate = (self.sequencer.output() != 0) & !self.length.is_zero() & !self.sweep.is_muted();
+        self.envelope_output * gate as u8
     }
 
     pub fn status_bit(&self) -> bool {

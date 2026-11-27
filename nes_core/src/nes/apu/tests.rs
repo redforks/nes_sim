@@ -409,7 +409,7 @@ fn noise_shift_rate_matches_documented_intervals() {
             } else {
                 counter -= 1;
             }
-            noise.tick_timer();
+            noise.tick_timer(tick as u64);
             // Bit 0 set means the DAC receives 0; constant volume otherwise.
             let expected = if lfsr & 1 == 0 { CONSTANT_VOLUME } else { 0 };
             assert_eq!(

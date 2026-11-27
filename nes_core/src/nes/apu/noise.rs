@@ -29,9 +29,12 @@ impl Default for Shifter {
 
 #[derive(Debug)]
 pub struct Noise {
-    timer: Divider<u16>,
+    timer: DeadlineTimer,
     length: LengthControl,
     envelope: Envelope,
+    /// Cached [`Envelope::output`], refreshed on tick/configure/restore
+    /// (same contract as [`super::pulse::Pulse`]'s cache).
+    envelope_output: u8,
     shifter: Shifter,
 }
 
@@ -40,9 +43,10 @@ impl Default for Noise {
         Self {
             // $400E powers up cleared: rate index 0, so load entry 0 - 1 to
             // match what writing that index produces (see write_period).
-            timer: Divider::new(NOISE_PERIOD_TABLE[0] - 1),
+            timer: DeadlineTimer::new(NOISE_PERIOD_TABLE[0] - 1),
             length: LengthControl::default(),
             envelope: Envelope::default(),
+            envelope_output: Envelope::default().output(),
             shifter: Shifter::default(),
         }
     }
@@ -68,10 +72,10 @@ pub(crate) struct NoiseState {
 
 impl Noise {
     /// Capture the full channel state.
-    pub(crate) fn capture_noise_state(&self) -> NoiseState {
+    pub(crate) fn capture_noise_state(&self, now: u64) -> NoiseState {
         NoiseState {
             timer_period: self.timer.period(),
-            timer_counter: self.timer.counter(),
+            timer_counter: self.timer.counter(now),
             length_counter: self.length.counter_value(),
             length_halt: self.length.is_halt(),
             length_enabled: self.length.is_enabled(),
@@ -99,6 +103,7 @@ impl Noise {
             s.envelope_disabled,
             s.envelope_reset_pending,
         );
+        self.envelope_output = self.envelope.output();
         self.shifter.short_mode = s.shifter_short_mode;
         self.shifter.val = s.shifter_val;
     }
@@ -111,6 +116,7 @@ impl Noise {
 
     pub fn write_envelope(&mut self, value: NoiseControlBits) {
         self.envelope.config(value.into_bytes()[0]);
+        self.envelope_output = self.envelope.output();
         self.length.set_halt(value.loop_and_is_halt());
     }
 
@@ -133,8 +139,8 @@ impl Noise {
     }
 
     #[inline(always)]
-    pub fn tick_timer(&mut self) {
-        if self.timer.tick() {
+    pub fn tick_timer(&mut self, now: u64) {
+        if self.timer.tick(now) {
             self.shifter.tick();
         }
     }
@@ -142,6 +148,7 @@ impl Noise {
     #[inline(always)]
     pub fn tick_envelope(&mut self) {
         self.envelope.tick();
+        self.envelope_output = self.envelope.output();
     }
 
     pub fn tick_length(&mut self) -> bool {
@@ -153,7 +160,7 @@ impl Noise {
         // counter closes the channel gate. Keep this branchless: the LFSR bit
         // changes often enough that a branch here mispredicts constantly.
         let gate = ((self.shifter.val & 1 == 0) & !self.length.is_zero()) as u8;
-        self.envelope.output() * gate
+        self.envelope_output * gate
     }
 
     pub fn status_bit(&self) -> bool {

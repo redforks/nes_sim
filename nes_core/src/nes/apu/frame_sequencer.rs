@@ -227,6 +227,7 @@ impl FrameSequencer {
     /// table entry above it, else `u32::MAX` so a past-the-end divider —
     /// unreachable via the wraps, possible only in a hand-built state —
     /// matches the old fall-through arm and never fires).
+    #[cold]
     fn schedule_after(mode: FrameSequencerMode, cpu_cycles: u32) -> (u32, u8) {
         let table: &[u32] = match mode {
             FrameSequencerMode::FourStep => &FOUR_SCHEDULE,
@@ -242,6 +243,7 @@ impl FrameSequencer {
 
     /// Recompute the cached next-trigger from `(mode, cpu_cycles)` after
     /// any assignment outside [`Self::tick_timer`] (landing, wrap, restore).
+    #[cold]
     fn resync_schedule(&mut self) {
         let (at, idx) = Self::schedule_after(self.mode, self.cpu_cycles);
         self.next_trigger = at;
@@ -253,6 +255,7 @@ impl FrameSequencer {
     /// raise the IRQ flag (step 5 clears it again under inhibit), the
     /// period wrap resets the divider, and the five-step 29829 no-op slot
     /// is skipped by the table.
+    #[cold]
     fn fire_scheduled(&mut self) {
         match self.mode {
             FrameSequencerMode::FourStep => match self.next_idx {
@@ -301,6 +304,7 @@ impl FrameSequencer {
     /// Applies a scheduled step: raises the IRQ flag, then clocks the units
     /// unless a blocking tick (scheduled or mode-set landing) covers this
     /// CPU cycle. A blocked step is dropped, never deferred.
+    #[cold]
     fn apply_step(&mut self, state: FrameSequenceState) {
         if state.irq {
             self.set_interrupt();
