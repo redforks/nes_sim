@@ -473,7 +473,14 @@ fn render_pixel(ppu: &mut Ppu, pattern: &[u8], x: u8, y: u8) -> u8 {
 /// as the per-dot hoist does in production.
 fn render_pixel_now(ppu: &mut Ppu, cart: &Cartridge) -> u8 {
     let mask_bits = ppu.registers.mask.bits();
-    ppu.render_pixel(cart, mask_bits)
+    let dot = ppu.timing.dot;
+    ppu.render_pixel(
+        cart,
+        mask_bits,
+        (dot - 1) as u8,
+        ppu.timing.scanline as u8,
+        ppu.registers.ctrl,
+    )
 }
 
 fn run_scanline(ppu: &mut Ppu, pattern: &[u8], scanline: u16) {
