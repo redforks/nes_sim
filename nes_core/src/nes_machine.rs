@@ -199,7 +199,16 @@ where
         self.cpu.set_irq(irq_level);
 
         self.bus.mcu_mut().tick_apu(clock);
-        let owner = self.dma_bus.tick(&mut self.cpu, &mut self.bus);
+        // Fast path: DMA is idle on almost every CPU cycle, and an idle
+        // `DmaBus::tick` only performs two `take_*` calls that both miss.
+        // Skip it when no DMA is in flight and neither OAM nor DMC has a
+        // queued request (bit-exact: the skipped tick mutates nothing).
+        let owner =
+            if !self.dma_bus.is_busy(self.bus.mcu()) && !self.bus.mcu().apu_has_dmc_request() {
+                BusOwner::Idle
+            } else {
+                self.dma_bus.tick(&mut self.cpu, &mut self.bus)
+            };
         if !matches!(owner, BusOwner::Idle) {
             return ExecuteResult::Continue;
         }

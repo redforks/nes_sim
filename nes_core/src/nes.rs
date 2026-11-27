@@ -63,7 +63,9 @@ impl NesMcu {
     #[inline]
     pub(crate) fn latch(&mut self, value: u8, read_controller: bool) -> u8 {
         self.open_bus = value;
-        if !read_controller {
+        // The /OE lines are already deasserted on almost every access;
+        // skip the two stores unless a controller read left one asserted.
+        if !read_controller && (self.controller.a.oe || self.controller.b.oe) {
             self.controller.a.oe = false;
             self.controller.b.oe = false;
         }
@@ -137,6 +139,13 @@ impl NesMcu {
     /// `DmaBus::is_busy(mcu)` for the full quiescence predicate.
     pub fn has_oam_dma_pending(&self) -> bool {
         self.oam_dma_pending.is_some()
+    }
+
+    /// Peek without taking: true while a DMC sample-fetch request is queued
+    /// in the APU. Combined with `DmaBus::is_busy`, lets the machine loop
+    /// skip the DMA tick entirely when the bus is quiescent (bit-exact).
+    pub(crate) fn apu_has_dmc_request(&self) -> bool {
+        self.apu.has_dmc_dma_request()
     }
 
     pub(crate) fn take_oam_dma_pending(&mut self) -> Option<u8> {

@@ -62,6 +62,10 @@ impl DmaReader {
         }
     }
 
+    fn has_request(&self) -> bool {
+        self.dma_request.is_some()
+    }
+
     fn take_dma_request(&mut self) -> Option<(DmcDmaType, u16)> {
         self.dma_request.take()
     }
@@ -289,6 +293,13 @@ impl Dmc {
 
     pub fn take_dma_request(&mut self) -> Option<(DmcDmaType, u16)> {
         self.dma_reader.take_dma_request()
+    }
+
+    /// Peek without taking: true while a DMC sample-fetch request is queued.
+    /// Lets the machine loop skip the whole DMA tick when idle (bit-exact:
+    /// an idle tick only performs two `take_*` calls that both miss).
+    pub(crate) fn has_dma_request(&self) -> bool {
+        self.dma_reader.has_request()
     }
 
     pub fn interrupt_flag(&self) -> bool {

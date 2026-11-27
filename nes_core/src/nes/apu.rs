@@ -235,6 +235,11 @@ impl Apu {
         self.dmc.take_dma_request()
     }
 
+    /// Peek without taking: true while a DMC sample-fetch request is queued.
+    pub(crate) fn has_dmc_dma_request(&self) -> bool {
+        self.dmc.has_dma_request()
+    }
+
     /// Supply a byte fetched by DMC DMA. May set the DMC interrupt flag.
     pub fn supply_dmc_byte(&mut self, byte: u8) {
         self.dmc.supply_dma_byte(byte);

@@ -886,7 +886,7 @@ impl Ppu {
                     self.sprite.begin_sprite_overflow_eval(self.oam_addr);
                 }
 
-                if (self.timing.dot & 1) == 1 {
+                if (self.timing.dot & 1) == 1 && !self.sprite.is_eval_done() {
                     self.sprite.step_sprite_overflow_eval(
                         self.timing.scanline,
                         self.registers.ctrl,

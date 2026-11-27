@@ -270,6 +270,11 @@ impl SpriteManager {
         self.oam_copybuffer = 0xFF;
     }
 
+    #[inline]
+    pub fn is_eval_done(&self) -> bool {
+        matches!(self.sprite_overflow_eval.mode, SpriteOverflowEvalMode::Done)
+    }
+
     pub fn begin_sprite_overflow_eval(&mut self, start_index: u8) {
         self.sprite_overflow_eval = SpriteOverflowEval {
             oam_index: 0,
