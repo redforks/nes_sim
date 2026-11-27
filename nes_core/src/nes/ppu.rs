@@ -387,21 +387,21 @@ impl Timing {
 
     #[inline]
     fn advance(&mut self, status: RenderingStatus, ren_latched_at_338: bool) {
-        match self.dot {
-            ..339 => self.dot += 1,
-            339 if status != RenderingStatus::PreRender
-                || (!self.odd_frame || !ren_latched_at_338) =>
-            {
-                self.dot += 1
-            }
-            _ => {
-                self.dot = 0;
-                self.scanline += 1;
-                if status == RenderingStatus::PreRender {
-                    self.scanline = 0;
-                    self.odd_frame = !self.odd_frame;
-                    self.frame_no += 1;
-                }
+        // Straight-line form of the old dot match: every dot below 339
+        // just ticks on. Bit-identical wrap/odd-frame-skip below.
+        if self.dot < 339
+            || (self.dot == 339
+                && (status != RenderingStatus::PreRender
+                    || (!self.odd_frame || !ren_latched_at_338)))
+        {
+            self.dot += 1;
+        } else {
+            self.dot = 0;
+            self.scanline += 1;
+            if status == RenderingStatus::PreRender {
+                self.scanline = 0;
+                self.odd_frame = !self.odd_frame;
+                self.frame_no += 1;
             }
         }
     }
@@ -1059,6 +1059,31 @@ impl Ppu {
         ),
         hotpath::measure(impl_type = "Ppu")
     )]
+    /// Folded advance of three quiet dots (no fetch, pixel, eval, or flag
+    /// work): cycle/dot clocking, the sticky overflow latch, and the
+    /// hblank dot-257 reloads. The caller (`NesMachine` quiet path)
+    /// guarantees all three dots avoid dot-0, scanline wrap, vblank
+    /// events, and mapper dot-hooks, and replays the /NMI samples and bus
+    /// advances itself — end state matches three `tick()` calls dot for dot.
+    pub(crate) fn tick_quiet_3(&mut self, hblank_257: bool) {
+        self.cycle += 3;
+        // The overflow latch only moves one way here (sprite eval never
+        // runs on quiet dots, so nothing re-arms it): one update covers
+        // all three dots with the same end state.
+        self.sprite.update_ctrl_status(&mut self.registers.status);
+        if hblank_257 {
+            // Dot-257 effects of the hblank fetch path (quiet boards have
+            // no A12 notify by construction): OAMADDR drive plus the
+            // horizontal scroll reload. Other hblank dots touch nothing
+            // CPU-observable.
+            self.oam_addr = 0;
+            self.reload_horizontal_from_temp();
+        }
+        // No wrap by construction (first dot <= 337): plain increment.
+        self.timing.dot += 3;
+        debug_assert!(self.timing.dot <= 340);
+    }
+
     pub fn tick(&mut self, cartridge: &mut Cartridge) {
         crate::hotpath_cpu::hotpath_cpu_alias!(
             Self,
@@ -1069,41 +1094,48 @@ impl Ppu {
 
         self.sprite.update_ctrl_status(&mut self.registers.status);
 
-        // State dispatch (ADR-0019): the scanline-band helpers own all
-        // rendering, pixel, and flag work; the dot-0 swap and status pump
-        // above stay shared across all five states.
-        match self.timing.status() {
-            RenderingStatus::Visible => {
-                self.tick_visible(cartridge);
-                self.timing
-                    .advance(RenderingStatus::Visible, self.ren_latched_at_338);
-            }
-            // Scanline 240: idle; the shared dot-0 swap and status pump
-            // in `tick()` still run, but this line has no fetch, pixel,
-            // or flag work.
-            RenderingStatus::PostRender => {
-                self.timing
-                    .advance(RenderingStatus::PostRender, self.ren_latched_at_338);
-            }
-            RenderingStatus::EnterVerticalBlank => {
-                if self.timing.dot == 1 {
-                    self.tick_vertical_blank_dot_1();
+        // Fast-path dispatch: visible lines are 240 of 262 scanlines, so
+        // one compare skips the band computation + five-arm match below
+        // for ~92% of dots. Other bands keep the exact helpers (ADR-0019).
+        let scanline = self.timing.scanline;
+        if scanline < 240 {
+            self.tick_visible(cartridge);
+            self.timing
+                .advance(RenderingStatus::Visible, self.ren_latched_at_338);
+        } else {
+            match self.timing.status() {
+                RenderingStatus::Visible => {
+                    self.tick_visible(cartridge);
+                    self.timing
+                        .advance(RenderingStatus::Visible, self.ren_latched_at_338);
                 }
-                self.timing
-                    .advance(RenderingStatus::EnterVerticalBlank, self.ren_latched_at_338);
-            }
-            RenderingStatus::PreRender => {
-                self.tick_pre_render(cartridge);
-                self.timing
-                    .advance(RenderingStatus::PreRender, self.ren_latched_at_338);
-            }
-            // Scanlines 242–260: fully idle; the frame flush already ran
-            // on the entry line.
-            RenderingStatus::RemainVerticalBlank => {
-                self.timing.advance(
-                    RenderingStatus::RemainVerticalBlank,
-                    self.ren_latched_at_338,
-                );
+                // Scanline 240: idle; the shared dot-0 swap and status pump
+                // in `tick()` still run, but this line has no fetch, pixel,
+                // or flag work.
+                RenderingStatus::PostRender => {
+                    self.timing
+                        .advance(RenderingStatus::PostRender, self.ren_latched_at_338);
+                }
+                RenderingStatus::EnterVerticalBlank => {
+                    if self.timing.dot == 1 {
+                        self.tick_vertical_blank_dot_1();
+                    }
+                    self.timing
+                        .advance(RenderingStatus::EnterVerticalBlank, self.ren_latched_at_338);
+                }
+                RenderingStatus::PreRender => {
+                    self.tick_pre_render(cartridge);
+                    self.timing
+                        .advance(RenderingStatus::PreRender, self.ren_latched_at_338);
+                }
+                // Scanlines 242–260: fully idle; the frame flush already ran
+                // on the entry line.
+                RenderingStatus::RemainVerticalBlank => {
+                    self.timing.advance(
+                        RenderingStatus::RemainVerticalBlank,
+                        self.ren_latched_at_338,
+                    );
+                }
             }
         }
 

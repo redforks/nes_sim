@@ -584,6 +584,14 @@ impl Cartridge {
         mapper.cpu_write(address, value, cycle, memory);
     }
 
+    /// True when the mapper chip implements `on_ppu_tick` (scanline-IRQ
+    /// A12 bookkeeping). Gates the per-cycle quiet-dot fold: boards with
+    /// the hook keep the slow path. Mirrors [`Self::wants_vram_notify`].
+    #[inline]
+    pub fn wants_ppu_tick(&self) -> bool {
+        self.caps.on_ppu_tick
+    }
+
     /// Forwarded only when the mapper declares [`CartridgeCaps::on_ppu_tick`].
     #[inline]
     pub fn on_ppu_tick(&mut self, scanline: u16) {

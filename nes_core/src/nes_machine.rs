@@ -151,11 +151,79 @@ where
     /// dot completes (ADR-0018). Cartridge writes timestamp themselves via
     /// `Mcu::write` — see GLOSSARY "Per-dot contract".
     pub fn tick(&mut self) -> ExecuteResult {
+        // Quiet path: three PPU dots with no per-dot work (idle lines,
+        // visible hblank on hook-free boards) fold into one PPU call; the
+        // tail below is shared with the slow path.
+        if self.tick_quiet_cycle() {
+            return self.tick_quiet_tail();
+        }
         self.tick_dot(true); // dot 0 — the /NMI sampling phase
         self.bus.advance();
         self.tick_dot(false); // dot 1
         self.bus.advance();
         let control = self.tick_dot_2();
+        self.bus.advance();
+        control
+    }
+
+    /// Folded 3-dot PPU advance for stretches with no per-dot work.
+    /// Returns false when the current dots need the slow path.
+    ///
+    /// Exactness: the gate admits only dots whose PPU effects are the
+    /// clock/dot counters plus the sticky overflow latch (all folded in
+    /// `Ppu::tick_quiet_3`) — no pixels, eval steps, vblank transitions,
+    /// dot-0 swaps, scanline wraps, or mapper dot-hooks. /NMI is constant
+    /// across the group, so the three `update_nmi_input` calls replay with
+    /// the same values; `cpu.tick` still interleaves every third dot.
+    #[inline]
+    fn tick_quiet_cycle(&mut self) -> bool {
+        let (scanline, dot) = {
+            let timing = self.bus.mcu().ppu_timing();
+            (timing.scanline(), timing.dot())
+        };
+        // No dot-0 work and no scanline wrap inside the 3-dot group.
+        if dot == 0 || dot > 337 {
+            return false;
+        }
+        // Idle lines (240, 242–260) anywhere; visible lines only in hblank
+        // (257–340). Pre-render stays slow (304/338 reloads + odd skip);
+        // lines 241/261 carry the vblank transitions.
+        let idle_line = scanline == 240 || (242..=260).contains(&scanline);
+        if !idle_line && !(scanline < 240 && dot >= 257) {
+            return false;
+        }
+        // Mapper dot-hooks (A12 filtering, scanline bookkeeping) make
+        // every dot observable: only fold for boards without them. All
+        // bench ROMs (NROM/UxROM) qualify.
+        {
+            let cartridge = self.bus.mcu().cartridge();
+            if cartridge.wants_vram_notify() || cartridge.wants_ppu_tick() {
+                return false;
+            }
+        }
+        // Hblank dot-257 side effects (OAMADDR clear + horizontal reload)
+        // only exist when rendering is on (`tick_fetch_notify` is gated
+        // on it); idle lines never run the fetch path. Rendering-off
+        // hblank dots advance only.
+        let hblank_257 = scanline < 240 && dot == 257 && self.bus.mcu().ppu().rendering_enabled();
+        let nmi = {
+            let mcu = self.bus.mcu_mut();
+            mcu.ppu_mut().tick_quiet_3(hblank_257);
+            mcu.ppu().nmi_line()
+        };
+        self.cpu.update_nmi_line(nmi, self.bus.clock(), true);
+        self.bus.advance();
+        self.cpu.update_nmi_line(nmi, self.bus.clock(), false);
+        self.bus.advance();
+        true
+    }
+
+    /// Tail shared by the quiet path: third-dot clock, zapper/IRQ/APU/
+    /// DMA/CPU, final advance. Mirrors `tick_dot_2` after its dot-C lines.
+    #[inline]
+    fn tick_quiet_tail(&mut self) -> ExecuteResult {
+        let clock = self.bus.clock();
+        let control = self.tick_tail(clock);
         self.bus.advance();
         control
     }
@@ -175,6 +243,14 @@ where
         let nmi = self.bus.mcu_mut().tick_ppu();
         self.cpu.update_nmi_line(nmi, clock, false);
 
+        self.tick_tail(clock)
+    }
+
+    /// Post-dot work of the third CPU dot (zapper sample, IRQ sample,
+    /// APU tick, DMA service, CPU tick). Shared by the slow path and the
+    /// quiet-folded path; `clock` is the pre-dot-C bus clock in both.
+    #[inline]
+    fn tick_tail(&mut self, clock: SystemClock) -> ExecuteResult {
         self.bus.mcu_mut().tick_zapper();
 
         // No reset-drain freeze gate is needed on this path. The only
