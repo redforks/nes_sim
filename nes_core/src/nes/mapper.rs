@@ -604,10 +604,12 @@ impl Cartridge {
     /// (MMC3/VRC scanline-IRQ A12 filtering). The PPU consults this before
     /// computing per-dot pattern-table fetch phases, so boards without
     /// scanline IRQs pay no per-dot cost for that math.
+    #[inline]
     pub fn wants_vram_notify(&self) -> bool {
         self.caps.notify_vram_address
     }
 
+    #[inline]
     pub fn want_tick_audio(&self) -> bool {
         self.caps.tick_audio
     }

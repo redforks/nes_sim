@@ -162,6 +162,7 @@ impl NesMcu {
         self.ppu.nmi_line()
     }
 
+    #[inline]
     #[hotpath::measure(impl_type = "NesMcu")]
     pub fn tick_apu(&mut self, clock: SystemClock) {
         // Expansion audio (MMC5 `$5000-$5015`) advances on the same CPU
@@ -180,10 +181,12 @@ impl NesMcu {
         }
     }
 
+    #[inline]
     pub fn apu_irq_pending(&self) -> bool {
         self.apu.request_irq()
     }
 
+    #[inline]
     pub fn cartridge_irq_pending(&self) -> bool {
         self.cartridge.irq_pending()
     }
@@ -221,6 +224,7 @@ impl NesMcu {
     }
 
     /// Advance the Zapper by one CPU cycle.
+    #[inline]
     pub fn tick_zapper(&mut self) {
         self.controller.zapper.clock();
     }

@@ -60,12 +60,14 @@ struct IrqDetector {
 }
 
 impl IrqDetector {
+    #[inline]
     fn update_irq_input(&mut self, v: bool) {
         self.irq_input = v;
     }
 
     /// The IRQ line is edge-latched into the instruction-end poll, but its
     /// pending state is purely a function of the line and the I flag.
+    #[inline]
     fn detect_irq(&self, interrupt_disabled: bool) -> bool {
         !interrupt_disabled && self.irq_input
     }
@@ -109,6 +111,7 @@ impl NmiDetector {
     /// `v` is the line level at system cycle `cycles`; `sample` marks the
     /// first dot of a CPU cycle — the /NMI sampling phase, owned by the
     /// caller so this per-dot path computes no modulo.
+    #[inline]
     fn update_nmi_input(&mut self, v: bool, cycles: u64, sample: bool) {
         // The line is high exactly while a current assertion is stamped.
         if (self.asserted_since != 0) != v {
@@ -119,6 +122,7 @@ impl NmiDetector {
         }
     }
 
+    #[inline]
     fn detect_nmi(&mut self) -> bool {
         // Sample even while a previous edge is still pending: freezing the
         // sampler would hide newer edges (and leave a stale last sample
@@ -869,6 +873,7 @@ impl Cpu {
         self.reset();
     }
 
+    #[inline]
     pub(crate) fn set_irq(&mut self, enabled: bool) {
         self.irq_detector.update_irq_input(enabled);
     }
@@ -1420,6 +1425,7 @@ impl Cpu {
     }
 
     /// Update cpu nmi signal line, may trigger nmi
+    #[inline]
     pub(crate) fn update_nmi_line(&mut self, nmi: bool, clock: SystemClock, sample: bool) {
         self.nmi_detecteor
             .update_nmi_input(nmi, clock.cycles(), sample);

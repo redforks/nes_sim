@@ -1161,6 +1161,7 @@ impl Ppu {
     /// Reads the cached level: the two bits change only at the vblank set
     /// and clear, on `$2000` writes, and on restore, each of which calls
     /// [`Self::refresh_nmi_level`].
+    #[inline]
     pub fn nmi_line(&self) -> bool {
         self.nmi_level
     }

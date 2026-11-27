@@ -30,16 +30,19 @@ impl<M: Mcu> Bus<M> {
     }
 
     /// The memory map wired into this bus.
+    #[inline]
     pub fn mcu(&self) -> &M {
         &self.mcu
     }
 
     /// Mutable access to the memory map (writes translate reads).
+    #[inline]
     pub fn mcu_mut(&mut self) -> &mut M {
         &mut self.mcu
     }
 
     /// The master clock value for the current dot.
+    #[inline]
     pub fn clock(&self) -> SystemClock {
         self.clock
     }
@@ -49,6 +52,7 @@ impl<M: Mcu> Bus<M> {
     /// Returns the *pre-increment* value so every device tick driven
     /// from a dot sees the same clock value. The machine loop is the
     /// only caller per dot.
+    #[inline]
     pub fn advance(&mut self) -> SystemClock {
         let clock = self.clock;
         self.clock = clock.inc();

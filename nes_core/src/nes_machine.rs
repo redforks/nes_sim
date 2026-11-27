@@ -163,11 +163,13 @@ where
     /// Dots 0 and 1 of a CPU cycle: tick the PPU and publish its /NMI
     /// line. Only dot 0 is the CPU's sampling phase, so only it passes
     /// `sample = true` to the detector.
+    #[inline(always)]
     fn tick_dot(&mut self, sample: bool) {
         let nmi = self.bus.mcu_mut().tick_ppu();
         self.cpu.update_nmi_line(nmi, self.bus.clock(), sample);
     }
 
+    #[inline]
     fn tick_dot_2(&mut self) -> ExecuteResult {
         let clock = self.bus.clock();
         let nmi = self.bus.mcu_mut().tick_ppu();

@@ -25,25 +25,30 @@ pub use cpu::*;
 pub struct SystemClock(u64);
 
 impl SystemClock {
+    #[inline]
     pub fn inc(self) -> SystemClock {
         SystemClock(self.0.wrapping_add(1))
     }
 
     /// Rebuilds a clock from a saved cycle count (mapper state restore).
+    #[inline]
     pub fn from_cycles(cycles: u64) -> SystemClock {
         SystemClock(cycles)
     }
 
+    #[inline]
     pub fn is_apu_clock(self) -> bool {
         self.is_cpu_clock()
         // self.cpu_clock_phase() == CpuClockPhase::Last
     }
 
+    #[inline]
     pub fn is_cpu_clock(self) -> bool {
         // self.0.is_multiple_of(SYSTEM_CYCLES_PER_CPU_CYCLE)
         (self.0 % SYSTEM_CYCLES_PER_CPU_CYCLE) == 2
     }
 
+    #[inline]
     pub fn is_even_cpu_cycle(self) -> bool {
         (self.0 / SYSTEM_CYCLES_PER_CPU_CYCLE).is_multiple_of(2)
     }
@@ -52,10 +57,12 @@ impl SystemClock {
     /// power-on coin flip on hardware; this emulator pins get to odd CPU
     /// cycles — the alignment blargg's test ROM tables encode
     /// (cpu_interrupts_v2 4-irq_and_dma, sprdma_and_dmc_dma).
+    #[inline]
     pub fn is_apu_get_clock(self) -> bool {
         !self.is_even_cpu_cycle()
     }
 
+    #[inline]
     pub fn cycles(self) -> u64 {
         self.0
     }
