@@ -37,7 +37,7 @@ impl Linear {
 
 #[derive(Debug)]
 pub struct Triangle {
-    timer: Divider<u16>,
+    timer: DeadlineTimer,
     length: LengthControl,
     sequencer: SequencerN<u8, 32>,
     linear: Linear,
@@ -46,7 +46,7 @@ pub struct Triangle {
 impl Default for Triangle {
     fn default() -> Self {
         Self {
-            timer: Divider::new(u16::MAX),
+            timer: DeadlineTimer::new(u16::MAX),
             length: Default::default(),
             sequencer: SequencerN::new(&TRIANGLE_SEQUENCE),
             linear: Default::default(),
@@ -70,10 +70,10 @@ pub(crate) struct TriangleState {
 
 impl Triangle {
     /// Capture the full channel state (the step table is fixed).
-    pub(crate) fn capture_triangle_state(&self) -> TriangleState {
+    pub(crate) fn capture_triangle_state(&self, now: u64) -> TriangleState {
         TriangleState {
             timer_period: self.timer.period(),
-            timer_counter: self.timer.counter(),
+            timer_counter: self.timer.counter(now),
             length_counter: self.length.counter_value(),
             length_halt: self.length.is_halt(),
             length_enabled: self.length.is_enabled(),
@@ -130,8 +130,8 @@ impl Triangle {
     }
 
     #[inline(always)]
-    pub fn tick_timer(&mut self) {
-        if self.timer.tick() && !self.length.is_zero() && self.linear.counter > 0 {
+    pub fn tick_timer(&mut self, now: u64) {
+        if self.timer.tick(now) && !self.length.is_zero() && self.linear.counter > 0 {
             self.sequencer.tick();
         }
     }

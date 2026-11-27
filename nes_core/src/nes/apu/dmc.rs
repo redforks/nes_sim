@@ -131,7 +131,7 @@ impl OutputUnit {
 pub struct Dmc {
     dma_reader: DmaReader,
     output: OutputUnit,
-    timer: Divider<u16>,
+    timer: DeadlineTimer,
     /// Total $4011 writes. The Zapper test ROMs signal per-frame progress
     /// with DAC-register "clicks"; the harness counts them.
     dac_writes: u64,
@@ -169,7 +169,7 @@ pub(crate) struct DmcState {
 
 impl Dmc {
     /// Capture the full channel state.
-    pub(crate) fn capture_dmc_state(&self) -> DmcState {
+    pub(crate) fn capture_dmc_state(&self, now: u64) -> DmcState {
         DmcState {
             sample_address: self.dma_reader.sample_address,
             sample_length: self.dma_reader.sample_length,
@@ -192,7 +192,7 @@ impl Dmc {
             output: self.output.output,
             sample_buffer: self.output.sample_buffer,
             timer_period: self.timer.period(),
-            timer_counter: self.timer.counter(),
+            timer_counter: self.timer.counter(now),
             dac_writes: self.dac_writes,
         }
     }
@@ -233,7 +233,7 @@ impl Default for Dmc {
             // $4010 powers up with rate 0; mirror the write path's
             // minus-one convention so pre-write playback runs at the
             // documented 428-CPU-cycle rate.
-            timer: Divider::new(DMC_RATE_TABLE[0] - 1),
+            timer: DeadlineTimer::new(DMC_RATE_TABLE[0] - 1),
             dac_writes: 0,
         }
     }
@@ -256,8 +256,8 @@ impl Dmc {
     }
 
     #[inline(always)]
-    pub fn tick_timer(&mut self) {
-        if self.timer.tick() {
+    pub fn tick_timer(&mut self, now: u64) {
+        if self.timer.tick(now) {
             self.output.tick();
             if self.output.is_buffer_empty() {
                 self.dma_reader.request_dma(DmcDmaType::Reload);

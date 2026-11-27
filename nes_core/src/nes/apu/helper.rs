@@ -273,7 +273,51 @@ impl<C: CounterPub> Divider<C> {
     }
 }
 
-impl Divider<u16> {
+/// Audio-rate countdown as a firing deadline over the APU's monotonic tick
+/// counter. A [`Divider`] pays a counter write-back every tick; the five
+/// audio timers (both pulse timers, triangle, noise, DMC) tick once per
+/// CPU cycle (~30k/frame), so eliding the write-back on the common
+/// non-firing tick removes ~150k counter stores per frame — `tick` only
+/// stores on the rare firing tick.
+///
+/// Fire cadence is identical to [`Divider`]: from a `new(period)` state the
+/// first fire lands `period + 1` ticks out, then every `period + 1` ticks.
+/// `now` is the owning [`super::Apu`]'s tick counter (see
+/// [`super::Apu::restore_apu_state`], which re-anchors the epoch on load),
+/// so the persisted countdown values are unchanged and the snapshot format
+/// is untouched.
+#[derive(Debug, Clone, Copy)]
+pub struct DeadlineTimer {
+    period: u16,
+    deadline: u64,
+}
+
+impl DeadlineTimer {
+    pub fn new(period: u16) -> Self {
+        // Matches Divider::new(period): the countdown starts at `period`,
+        // i.e. the first fire lands period + 1 ticks after the epoch.
+        Self {
+            period,
+            deadline: period as u64 + 1,
+        }
+    }
+
+    /// Advance one tick against the APU tick counter. Non-firing ticks are
+    /// a load-compare-branch with no store; only the firing tick stores
+    /// the next deadline.
+    pub fn tick(&mut self, now: u64) -> bool {
+        if now == self.deadline {
+            self.deadline = now + self.period as u64 + 1;
+            true
+        } else {
+            false
+        }
+    }
+
+    pub fn set_period(&mut self, period: u16) {
+        self.period = period;
+    }
+
     pub fn set_period_high(&mut self, high: u8) {
         self.period = (self.period & 0x00FF) | ((high as u16) << 8);
     }
@@ -284,6 +328,37 @@ impl Divider<u16> {
 
     pub fn period_mut(&mut self) -> &mut u16 {
         &mut self.period
+    }
+
+    pub fn period(self) -> u16 {
+        self.period
+    }
+
+    /// Ticks remaining until the firing tick, mirroring
+    /// [`Divider::counter`]: the firing tick itself reports 0. The caller
+    /// passes the same `now` the ticks advance against, so the result is
+    /// always in `0..=period` (the deadline is at least one tick out).
+    pub fn counter(&self, now: u64) -> u16 {
+        debug_assert!(self.deadline > now);
+        (self.deadline - now - 1) as u16
+    }
+
+    /// Restore a captured `(period, counter)` pair against a zeroed epoch
+    /// (the owner zeroes its tick counter first): the next fire lands
+    /// `counter + 1` ticks out, exactly like [`Divider::restore`].
+    pub fn restore(&mut self, period: u16, counter: u16) {
+        self.period = period;
+        self.deadline = counter as u64 + 1;
+    }
+}
+
+impl Divider<u16> {
+    pub fn set_period_high(&mut self, high: u8) {
+        self.period = (self.period & 0x00FF) | ((high as u16) << 8);
+    }
+
+    pub fn set_period_low(&mut self, low: u8) {
+        self.period = (self.period & 0xFF00) | (low as u16);
     }
 }
 

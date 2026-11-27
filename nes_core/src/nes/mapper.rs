@@ -610,7 +610,7 @@ impl Cartridge {
         self.caps.notify_vram_address
     }
 
-    #[inline]
+    #[inline(always)]
     pub fn want_tick_audio(&self) -> bool {
         self.caps.tick_audio
     }
@@ -625,7 +625,7 @@ impl Cartridge {
     /// Report a `$8000-$FFFF` read to the mapper chip (MMC5 PCM stream read
     /// mode). Gated by capability, so instruction fetches on other boards
     /// pay one branch and nothing more.
-    #[inline]
+    #[inline(always)]
     pub fn notify_prg_read(&mut self, address: u16, value: u8) {
         if self.caps.notify_prg_read {
             self.mapper.notify_prg_read(address, value);
@@ -664,7 +664,7 @@ impl Cartridge {
 
     /// The mapper's IRQ line, held low for a board that declares no IRQ
     /// hardware, so the per-CPU-cycle poll never enters the vtable.
-    #[inline]
+    #[inline(always)]
     pub fn irq_pending(&self) -> bool {
         self.caps.irq_pending && self.mapper.irq_pending()
     }

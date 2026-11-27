@@ -21,8 +21,8 @@ pub(crate) use triangle::TriangleState;
 
 use crate::{SystemClock, nes::dmc_dma::DmcDmaType};
 use dmc::Dmc;
-use frame_sequencer::FrameSequencer;
-use helper::{Divider, Envelope, LengthControl};
+use frame_sequencer::{FrameSequenceState, FrameSequencer};
+use helper::{DeadlineTimer, Divider, Envelope, LengthControl};
 use mixer::Mixer;
 use noise::Noise;
 use pulse::Pulse;
@@ -68,6 +68,12 @@ pub struct Apu {
     /// of `tick` so the mixer sees them without changing `tick`'s shape.
     expansion: ExpansionMix,
     frame_sequencer: FrameSequencer,
+    /// Monotonic APU tick counter: the epoch for the audio-rate
+    /// [`DeadlineTimer`]s. Bumped once per [`Self::tick`]; deliberately
+    /// outside [`ApuState`] (like the audio buffer, it is not part of the
+    /// save format) — [`Self::restore_apu_state`] zeroes it and the timer
+    /// restores re-anchor their deadlines against that epoch.
+    tick_count: u64,
     /// Per-channel latch recording length clocks that decremented a nonzero
     /// counter (pulse1, pulse2, triangle, noise) on this very APU tick. A
     /// reload-register write landing on the same tick loses the
@@ -102,11 +108,11 @@ impl Apu {
     /// Capture the full APU state.
     pub(crate) fn capture_apu_state(&self) -> ApuState {
         ApuState {
-            pulse1: self.pulse1.capture_pulse_state(),
-            pulse2: self.pulse2.capture_pulse_state(),
-            triangle: self.triangle.capture_triangle_state(),
-            noise: self.noise.capture_noise_state(),
-            dmc: self.dmc.capture_dmc_state(),
+            pulse1: self.pulse1.capture_pulse_state(self.tick_count),
+            pulse2: self.pulse2.capture_pulse_state(self.tick_count),
+            triangle: self.triangle.capture_triangle_state(self.tick_count),
+            noise: self.noise.capture_noise_state(self.tick_count),
+            dmc: self.dmc.capture_dmc_state(self.tick_count),
             frame_counter: self.frame_sequencer.capture_frame_counter_state(),
             mixer: self.mixer.capture_mixer_state(),
             expansion: self.expansion,
@@ -117,6 +123,9 @@ impl Apu {
     /// Restore a state previously produced by [`Self::capture_apu_state`].
     /// The audio buffer is left untouched (excluded from the save format).
     pub(crate) fn restore_apu_state(&mut self, s: &ApuState) {
+        // The persisted countdowns are epoch-relative; zero the epoch
+        // before the timer restores re-anchor their deadlines against it.
+        self.tick_count = 0;
         self.pulse1.restore_pulse_state(&s.pulse1);
         self.pulse2.restore_pulse_state(&s.pulse2);
         self.triangle.restore_triangle_state(&s.triangle);
@@ -147,6 +156,7 @@ impl Apu {
             audio_buffer: Vec::new(),
             expansion: ExpansionMix::default(),
             frame_sequencer: FrameSequencer::default(),
+            tick_count: 0,
             length_race_clobber: [false; 4],
         }
     }
@@ -192,31 +202,26 @@ impl Apu {
         self.audio_buffer.clear();
         self.expansion = ExpansionMix::default();
         self.frame_sequencer = FrameSequencer::default();
+        // Fresh power-up channels anchor their timer deadlines at epoch 0.
+        self.tick_count = 0;
         self.length_race_clobber = [false; 4];
     }
 
     #[inline(always)]
     pub fn tick(&mut self) {
         self.length_race_clobber = [false; 4];
+        self.tick_count = self.tick_count.wrapping_add(1);
+        let now = self.tick_count;
         self.frame_sequencer.tick_timer();
         self.frame_sequencer.tick();
-        self.triangle.tick_timer();
-        self.pulse1.tick_timer();
-        self.pulse2.tick_timer();
-        self.noise.tick_timer();
-        self.dmc.tick_timer();
+        self.triangle.tick_timer(now);
+        self.pulse1.tick_timer(now);
+        self.pulse2.tick_timer(now);
+        self.noise.tick_timer(now);
+        self.dmc.tick_timer(now);
 
-        if let Some(frame_sequencer) = self.frame_sequencer.output_latch {
-            self.frame_sequencer.output_latch = None;
-            if frame_sequencer.irq {
-                self.frame_sequencer.set_interrupt();
-            }
-            if frame_sequencer.envelop_and_linear {
-                self.tick_envelop_and_linear();
-            }
-            if frame_sequencer.length_and_sweep {
-                self.tick_length_and_sweep();
-            }
+        if let Some(step) = self.frame_sequencer.output_latch {
+            self.service_latched_step(step);
         }
         self.emit_samples();
     }
@@ -353,6 +358,23 @@ impl Apu {
         self.dmc.set_enabled(flags.dmc_enabled());
     }
 
+    /// Latched frame-sequencer step service (fires ~4x per frame): outlined
+    /// and `#[cold]` so the per-CPU-cycle `tick()` hot path stays lean.
+    #[cold]
+    fn service_latched_step(&mut self, step: FrameSequenceState) {
+        self.frame_sequencer.output_latch = None;
+        if step.irq {
+            self.frame_sequencer.set_interrupt();
+        }
+        if step.envelop_and_linear {
+            self.tick_envelop_and_linear();
+        }
+        if step.length_and_sweep {
+            self.tick_length_and_sweep();
+        }
+    }
+
+    #[cold]
     fn tick_envelop_and_linear(&mut self) {
         self.pulse1.tick_envelope();
         self.pulse2.tick_envelope();
@@ -360,6 +382,7 @@ impl Apu {
         self.noise.tick_envelope();
     }
 
+    #[cold]
     fn tick_length_and_sweep(&mut self) {
         self.length_race_clobber = [
             self.pulse1.tick_length_and_sweep(),
