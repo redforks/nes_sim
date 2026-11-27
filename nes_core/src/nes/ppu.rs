@@ -211,6 +211,8 @@ impl Ppu {
         self.tile_cache.bitplane_high = s.tile_cache.bitplane_high;
         self.tile_cache.palette_idx = s.tile_cache.palette_idx;
         self.tile_cache.remaining = s.tile_cache.remaining;
+        // Derived, never serialized: re-expand from the restored planes.
+        self.tile_cache.pat = expand_pat(s.tile_cache.bitplane_low, s.tile_cache.bitplane_high);
         self.background_anchor = s.background_anchor.map(|a| BackgroundActivation {
             screen_x: a.screen_x,
             vram_addr: a.vram_addr,
@@ -229,20 +231,59 @@ impl Ppu {
     }
 }
 
+/// Expands one pattern plane byte into eight byte slots: slot `k` holds
+/// bit `7 - k` (i.e. the pixel column `k` selects the slot directly, no
+/// per-pixel variable shift). Built once at compile time; 2 KiB, L1-hot.
+const fn expand_plane_word(b: u8) -> u64 {
+    let mut w = 0u64;
+    let mut k = 0u32;
+    while k < 8 {
+        w |= (((b >> (7 - k)) & 1) as u64) << (8 * k);
+        k += 1;
+    }
+    w
+}
+
+const EXPAND_PLANE: [u64; 256] = {
+    let mut t = [0u64; 256];
+    let mut b = 0usize;
+    while b < 256 {
+        t[b] = expand_plane_word(b as u8);
+        b += 1;
+    }
+    t
+};
+
+/// Expand both pattern planes into sixteen byte slots (low in `[0..8]`,
+/// high in `[8..16]`). Fill-time cost is two table loads plus two 8-byte
+/// stores; the per-pixel path becomes two loads and an OR.
+fn expand_pat(low: u8, high: u8) -> [u8; 16] {
+    let mut pat = [0u8; 16];
+    pat[..8].copy_from_slice(&EXPAND_PLANE[low as usize].to_le_bytes());
+    pat[8..].copy_from_slice(&EXPAND_PLANE[high as usize].to_le_bytes());
+    pat
+}
+
 #[derive(Copy, Clone, Default)]
 struct TileCache {
     bitplane_low: u8,
     bitplane_high: u8,
     palette_idx: u8,
     remaining: u8,
+    /// Per-column color bits, expanded at fill time (see `expand_pat`).
+    /// Derived, never serialized: rebuilt from the planes on restore.
+    pat: [u8; 16],
 }
 
 impl TileCache {
     fn consume(&mut self) -> (u8, u8) {
         let sub_tile_x = 8 - self.remaining;
         self.remaining -= 1;
-        let bit = 7 - sub_tile_x;
-        let color_idx = ((self.bitplane_low >> bit) & 1) | (((self.bitplane_high >> bit) & 1) << 1);
+        // `sub_tile_x` is `0..=7` by construction (`consume` only runs
+        // with `remaining in 1..=8`); masking keeps the index in range
+        // without a panic branch on the per-pixel path.
+        let s = (sub_tile_x & 7) as usize;
+        let color_idx = self.pat[s] | (self.pat[s + 8] << 1);
         (self.palette_idx, color_idx)
     }
 }
@@ -277,6 +318,19 @@ impl BackgroundActivation {
     }
 }
 
+impl RenderingStatus {
+    /// Band for one scanline number. Pure function of `scanline`, shared
+    /// by `Timing::status` so the mapping lives in exactly one place.
+    const fn for_scanline(scanline: u16) -> RenderingStatus {
+        match scanline {
+            0..=239 => RenderingStatus::Visible,
+            240 => RenderingStatus::PostRender,
+            241 => RenderingStatus::EnterVerticalBlank,
+            261 => RenderingStatus::PreRender,
+            _ => RenderingStatus::RemainVerticalBlank,
+        }
+    }
+}
 /// Scanline band of one NTSC frame (nesdev `PPU_rendering` line-by-line
 /// timing). `Ppu::tick` dispatches on this; it is derived from
 /// `Timing::scanline`, never stored (ADR-0019).
@@ -376,13 +430,7 @@ impl Timing {
     /// Scanline band for state dispatch (ADR-0019): derived from
     /// `scanline` alone (261 / <240 / ==240 / 241 / 242–260).
     const fn status(&self) -> RenderingStatus {
-        match self.scanline {
-            0..=239 => RenderingStatus::Visible,
-            240 => RenderingStatus::PostRender,
-            241 => RenderingStatus::EnterVerticalBlank,
-            261 => RenderingStatus::PreRender,
-            _ => RenderingStatus::RemainVerticalBlank,
-        }
+        RenderingStatus::for_scanline(self.scanline)
     }
 
     const fn in_visible_scanline(&self) -> bool {
@@ -807,6 +855,13 @@ impl Ppu {
             self.reload_horizontal_from_temp();
         }
 
+        // Pattern-table notifications only happen on odd dots (the match
+        // arms below all require odd dots), so gate on the dot phase first:
+        // even dots skip the capability load and the phase match entirely.
+        // `wants_vram_notify` first: the caps flag is constant per cartridge
+        // (always false for boards without scanline-IRQ A12 filtering), so
+        // the common path is a single never-taken branch; the alternating
+        // dot test only executes for notifying mappers.
         if cartridge.wants_vram_notify() && (dot & 1) == 1 {
             match dot {
                 3..=256 | 323..=336 => {
@@ -859,10 +914,17 @@ impl Ppu {
         // the 341 dots of every visible line, and each accessor re-loads the
         // register byte.
         let mask_bits = self.registers.mask.bits();
+        // The beam position is fixed for the whole dot: only `advance`
+        // (which runs after this in `tick`) mutates it, so every `&mut`
+        // call below would force a reload of the same two half-words.
+        // Hoist them into locals once; the mid-line `$2000`/`$2001` writes
+        // that must stay live (`ctrl`, `mask`) are still read per use.
+        let dot = self.timing.dot;
+        let scanline = self.timing.scanline;
 
-        if self.timing.dot == 0 {
+        if dot == 0 {
             self.sprite.swap_secondary_oam();
-            if self.timing.scanline == 0 {
+            if scanline == 0 {
                 // New frame: discard splits recorded after the previous
                 // flush (vblank/pre-render writes). The live mask already
                 // carries those color changes into this frame, and any
@@ -882,18 +944,15 @@ impl Ppu {
             self.tick_fetch_notify(cartridge);
 
             if self.timing.in_sprite_eval_dots() {
-                if self.timing.dot == 65 {
+                if dot == 65 {
                     self.sprite.begin_sprite_overflow_eval(self.oam_addr);
                 }
 
-                if (self.timing.dot & 1) == 1 && !self.sprite.is_eval_done() {
-                    self.sprite.step_sprite_overflow_eval(
-                        self.timing.scanline,
-                        self.registers.ctrl,
-                        &self.oam,
-                    );
+                if (dot & 1) == 1 && !self.sprite.is_eval_done() {
+                    self.sprite
+                        .step_sprite_overflow_eval(scanline, self.registers.ctrl, &self.oam);
                 }
-                if self.timing.dot == 256 {
+                if dot == 256 {
                     // --- vram_addr management (rendering-enabled only) ---
                     // These model the real NES PPU's internal v-register updates:
                     // Fine Y increment at dot 256 of each visible scanline
@@ -912,9 +971,16 @@ impl Ppu {
         // Mid-frame `$2001` color changes are recorded as split points
         // in `write_ppureg` and applied per segment by the flush below;
         // enable bits, by contrast, take effect here immediately.
-        if self.timing.is_visible_dots() {
-            let pixel_idx = self.render_pixel(cartridge, mask_bits);
-            let index = self.timing.scanline * VISIBLE_WIDTH + (self.timing.dot - 1);
+        if (1..=256).contains(&dot) {
+            let scanline_u8 = scanline as u8;
+            let pixel_idx = self.render_pixel(
+                cartridge,
+                mask_bits,
+                (dot - 1) as u8,
+                scanline_u8,
+                self.registers.ctrl,
+            );
+            let index = scanline * VISIBLE_WIDTH + (dot - 1);
             unsafe {
                 *self.palette_index_buffer.get_unchecked_mut(index as usize) = pixel_idx;
             }
@@ -1503,26 +1569,42 @@ impl Ppu {
     }
 
     #[inline]
-    fn render_pixel(&mut self, cartridge: &Cartridge, mask_bits: u8) -> u8 {
+    /// Beam position is passed in: `dot - 1` for dots 1-256 (the only
+    /// caller), so the pixel path does not reload the dot half-word.
+    /// `scanline`/`ctrl` are likewise line-stable for the rows/prefetch
+    /// below (`ensure_rows` fills once per line, so later per-pixel `ctrl`
+    /// loads are ignored anyway); `$2001` enable bits and `$2002` status
+    /// stay live via `mask_bits`/`self.registers`.
+    fn render_pixel(
+        &mut self,
+        cartridge: &Cartridge,
+        mask_bits: u8,
+        x: u8,
+        scanline: u8,
+        ctrl: PpuCtrl,
+    ) -> u8 {
         if mask_bits & PpuMask::RENDERING_ENABLED == 0 {
             return self.palette.disabled_color_index(self.registers.vram_addr);
         }
 
-        let x = (self.timing.dot - 1) as u8;
         let (bg_palette_idx, bg_color_idx) = if mask_bits & PpuMask::BACKGROUND_ENABLED != 0 {
             self.get_background_pixel(x, cartridge, mask_bits)
         } else {
             (0, 0)
         };
 
+        // The scanline's sprite list is frozen after the dot-0 swap while
+        // rendering is on; `find_sprite_pixel` on an empty list returns
+        // `None` via a zero-trip loop, which profiles cheaper than a
+        // per-pixel emptiness gate on sprite-dense lines.
         let sprite_pixel = if mask_bits & PpuMask::SPRITE_ENABLED != 0
             && (x >= 8 || mask_bits & PpuMask::SPRITE_LEFT_ENABLED != 0)
         {
             self.sprite.find_sprite_pixel(
-                self.registers.ctrl,
+                ctrl,
                 cartridge,
                 x,
-                self.timing.scanline as u8,
+                scanline,
                 self.render_state_from(mask_bits),
             )
         } else {
@@ -1546,7 +1628,7 @@ impl Ppu {
         // (blargg's ppu_sprite_hit 09-timing pins the boundary to one PPU
         // clock). Queuing it for the next dot's latch made the hit one dot
         // late, which is exactly what sub-test 4 caught.
-        if self.sprite.zero_row_on_scanline(self.timing.scanline as u8)
+        if self.sprite.zero_row_on_scanline(scanline)
             && !self.registers.status.sprite_zero_hit()
             && bg_color_idx != 0
             && x != 255
@@ -1555,9 +1637,7 @@ impl Ppu {
             && (x >= 8
                 || (mask_bits & PpuMask::BACKGROUND_LEFT_ENABLED != 0
                     && mask_bits & PpuMask::SPRITE_LEFT_ENABLED != 0))
-            && self
-                .sprite
-                .sprite_zero_pixel_opaque(x, self.timing.scanline as u8)
+            && self.sprite.sprite_zero_pixel_opaque(x, scanline)
         {
             self.registers.status.set_sprite_zero_hit(true);
         }
@@ -1639,6 +1719,7 @@ fn fetch_tile_data(
         bitplane_high,
         palette_idx,
         remaining: 8 - (world_x & 7) as u8,
+        pat: expand_pat(bitplane_low, bitplane_high),
     }
 }
 
