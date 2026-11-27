@@ -52,6 +52,12 @@ const FIVE_STEP_TRIGGERS: [FrameSequenceState; 5] = [
     /* 37281 */ step(false, true, true),
 ];
 
+/// Divider values that fire a scheduled step, in order. The five-step
+/// 29829 slot applies `step(false, false, false)` (a no-op: no IRQ, no unit
+/// clock), so it is omitted here and the divider jumps straight past it.
+const FOUR_SCHEDULE: [u32; 6] = [7457, 14913, 22371, 29828, 29829, 29830];
+const FIVE_SCHEDULE: [u32; 5] = [7457, 14913, 22371, 37281, 37282];
+
 #[derive(Debug)]
 pub(super) struct FrameSequencer {
     pub output_latch: Option<FrameSequenceState>,
@@ -69,6 +75,12 @@ pub(super) struct FrameSequencer {
     /// Frame-counter divider, in CPU cycles. Advanced once per APU clock by
     /// [`Self::tick_timer`].
     cpu_cycles: u32,
+    /// Next divider value that fires a scheduled step, and its index into
+    /// the mode's schedule table. Lets [`Self::tick_timer`] pay one compare
+    /// per cycle instead of two nested matches; derived from `(mode,
+    /// cpu_cycles)`, never serialized (recomputed on restore/mode change).
+    next_trigger: u32,
+    next_idx: u8,
     frame_interrupt_inhibit: bool,
     /// A buffered `$4017` write and the CPU cycles left before it lands.
     pending_mode: Option<(FrameSequencerBits, u8)>,
@@ -162,6 +174,7 @@ impl FrameSequencer {
         self.frame_interrupt = s.frame_interrupt;
         self.block = s.block;
         self.cpu_cycles = s.cpu_cycles;
+        self.resync_schedule();
         self.frame_interrupt_inhibit = s.frame_interrupt_inhibit;
         self.pending_mode = s.pending_mode.map(|p| {
             (
@@ -180,6 +193,8 @@ impl Default for FrameSequencer {
             frame_interrupt: false,
             block: 0,
             cpu_cycles: 0,
+            next_trigger: FOUR_SCHEDULE[0],
+            next_idx: 0,
             output_latch: Default::default(),
             frame_interrupt_inhibit: false,
             pending_mode: None,
@@ -208,60 +223,78 @@ impl FrameSequencer {
         self.frame_interrupt_inhibit = false;
     }
 
-    /// Advance the frame-counter divider by one CPU cycle. Called once per
-    /// APU clock ([`crate::SystemClock::is_apu_clock`]); the thresholds below
-    /// are CPU-cycle counts.
-    #[inline(always)]
-    pub fn tick_timer(&mut self) {
-        self.cpu_cycles += 1;
+    /// Next scheduled divider value for `mode` after `cpu_cycles` (first
+    /// table entry above it, else `u32::MAX` so a past-the-end divider —
+    /// unreachable via the wraps, possible only in a hand-built state —
+    /// matches the old fall-through arm and never fires).
+    fn schedule_after(mode: FrameSequencerMode, cpu_cycles: u32) -> (u32, u8) {
+        let table: &[u32] = match mode {
+            FrameSequencerMode::FourStep => &FOUR_SCHEDULE,
+            FrameSequencerMode::FiveStep => &FIVE_SCHEDULE,
+        };
+        for (i, &at) in table.iter().enumerate() {
+            if at > cpu_cycles {
+                return (at, i as u8);
+            }
+        }
+        (u32::MAX, table.len() as u8)
+    }
+
+    /// Recompute the cached next-trigger from `(mode, cpu_cycles)` after
+    /// any assignment outside [`Self::tick_timer`] (landing, wrap, restore).
+    fn resync_schedule(&mut self) {
+        let (at, idx) = Self::schedule_after(self.mode, self.cpu_cycles);
+        self.next_trigger = at;
+        self.next_idx = idx;
+    }
+
+    /// Fire the scheduled step the divider just reached. Table order matches
+    /// the old nested matches arm-for-arm: four-step steps 3 and 5 only
+    /// raise the IRQ flag (step 5 clears it again under inhibit), the
+    /// period wrap resets the divider, and the five-step 29829 no-op slot
+    /// is skipped by the table.
+    fn fire_scheduled(&mut self) {
         match self.mode {
-            FrameSequencerMode::FourStep => match self.cpu_cycles {
-                7457 => {
-                    self.apply_step(FOUR_STEP_TRIGGERS[0]);
-                }
-                14913 => {
-                    self.apply_step(FOUR_STEP_TRIGGERS[1]);
-                }
-                22371 => {
-                    self.apply_step(FOUR_STEP_TRIGGERS[2]);
-                }
-                // Steps 3 and 5 of the four-step sequence only raise the IRQ
-                // flag; step 5 clears it again when interrupts are inhibited.
-                29828 => self.set_interrupt(),
-                29829 => {
-                    self.apply_step(FOUR_STEP_TRIGGERS[3]);
-                }
-                // Period wrap: last IRQ set of the period lands on the reset.
-                29830 => {
+            FrameSequencerMode::FourStep => match self.next_idx {
+                0..=2 => self.apply_step(FOUR_STEP_TRIGGERS[self.next_idx as usize]),
+                3 => self.set_interrupt(),
+                4 => self.apply_step(FOUR_STEP_TRIGGERS[3]),
+                _ => {
                     self.set_interrupt();
                     if self.frame_interrupt_inhibit {
                         self.frame_interrupt = false;
                     }
                     self.cpu_cycles = 0;
+                    self.resync_schedule();
+                    return;
                 }
-                _ => {}
             },
-            FrameSequencerMode::FiveStep => match self.cpu_cycles {
-                7457 => {
-                    self.apply_step(FIVE_STEP_TRIGGERS[0]);
-                }
-                14913 => {
-                    self.apply_step(FIVE_STEP_TRIGGERS[1]);
-                }
-                22371 => {
-                    self.apply_step(FIVE_STEP_TRIGGERS[2]);
-                }
-                29829 => {
-                    self.apply_step(FIVE_STEP_TRIGGERS[3]);
-                }
-                37281 => {
-                    self.apply_step(FIVE_STEP_TRIGGERS[4]);
-                }
-                37282 => {
+            FrameSequencerMode::FiveStep => match self.next_idx {
+                0..=2 => self.apply_step(FIVE_STEP_TRIGGERS[self.next_idx as usize]),
+                3 => self.apply_step(FIVE_STEP_TRIGGERS[4]),
+                _ => {
                     self.cpu_cycles = 0;
+                    self.resync_schedule();
+                    return;
                 }
-                _ => {}
             },
+        }
+        self.next_idx += 1;
+        let table: &[u32] = match self.mode {
+            FrameSequencerMode::FourStep => &FOUR_SCHEDULE,
+            FrameSequencerMode::FiveStep => &FIVE_SCHEDULE,
+        };
+        self.next_trigger = table[self.next_idx as usize];
+    }
+
+    /// Advance the frame-counter divider by one CPU cycle. Called once per
+    /// APU clock ([`crate::SystemClock::is_apu_clock`]); the thresholds are
+    /// CPU-cycle counts (see [`FOUR_SCHEDULE`]/[`FIVE_SCHEDULE`]).
+    #[inline(always)]
+    pub fn tick_timer(&mut self) {
+        self.cpu_cycles += 1;
+        if self.cpu_cycles == self.next_trigger {
+            self.fire_scheduled();
         }
     }
 
@@ -292,6 +325,7 @@ impl FrameSequencer {
                 self.pending_mode = None;
                 self.cpu_cycles = 0;
                 self.mode = counter.mode();
+                self.resync_schedule();
                 if counter.mode() == FrameSequencerMode::FiveStep && self.block == 0 {
                     // OR-merged: a same-dot IRQ pulse keeps its flag.
                     let mut latch = self.output_latch.unwrap_or_default();
