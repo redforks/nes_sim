@@ -331,6 +331,7 @@ impl Timing {
         self.dot >= 65 && self.dot <= 256
     }
 
+    #[inline]
     fn advance(&mut self, status: RenderingStatus, ren_latched_at_338: bool) {
         match self.dot {
             ..339 => self.dot += 1,
@@ -773,6 +774,7 @@ impl Ppu {
     /// on visible scanlines and the pre-render line when rendering is
     /// enabled — the `in_ppu_active_line()` half of the old `tick()` body,
     /// moved verbatim.
+    #[inline]
     fn tick_fetch_notify(&mut self, cartridge: &mut Cartridge) {
         // MMC3 scanline IRQs are driven by filtered PPU A12 rises.
         //
@@ -851,6 +853,7 @@ impl Ppu {
     /// Visible scanlines (0-239, ADR-0019): background anchor at dot 0,
     /// shared fetches, sprite-overflow evaluation, fine-Y increment, and
     /// pixel output. Moved verbatim out of `tick()`.
+    #[inline]
     fn tick_visible(&mut self, cartridge: &mut Cartridge) {
         // PPUMASK is read once per dot: the pixel path below runs on 256 of
         // the 341 dots of every visible line, and each accessor re-loads the
@@ -921,6 +924,7 @@ impl Ppu {
     /// Pre-render scanline (261, ADR-0019): sprite-status clear at dot 0,
     /// shared fetches, vertical scroll reload at dot 304, and the vblank
     /// flag clear at dot 1. Moved verbatim out of `tick()`.
+    #[inline]
     fn tick_pre_render(&mut self, cartridge: &mut Cartridge) {
         match self.timing.dot {
             0 => {
@@ -1329,6 +1333,7 @@ impl Ppu {
         }
     }
 
+    #[inline]
     fn get_background_pixel(
         &mut self,
         screen_x: u8,
@@ -1349,6 +1354,7 @@ impl Ppu {
         self.tile_cache.consume()
     }
 
+    #[inline]
     fn fill_tile_cache(&mut self, screen_x: u8, cartridge: &Cartridge, mask_bits: u8) {
         let background = self
             .background_anchor
@@ -1487,6 +1493,7 @@ impl Ppu {
         r
     }
 
+    #[inline]
     fn render_pixel(&mut self, cartridge: &Cartridge, mask_bits: u8) -> u8 {
         if mask_bits & PpuMask::RENDERING_ENABLED == 0 {
             return self.palette.disabled_color_index(self.registers.vram_addr);
@@ -1572,6 +1579,7 @@ impl Default for Ppu {
 /// stays below 512 so `/ 256` is the top bit and `% 256` the low byte, and
 /// `world_y` folds at 240 (a multiple of 8, so the fine-Y low bits survive
 /// the fold untouched). All values match the naive arithmetic exactly.
+#[inline]
 fn fetch_tile_data(
     background: &BackgroundActivation,
     screen_x: u8,

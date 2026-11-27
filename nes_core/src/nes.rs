@@ -154,8 +154,12 @@ impl NesMcu {
         self.oam_dma_pending = Some(address);
     }
 
-    pub fn tick_ppu(&mut self) {
+    /// Tick the PPU one dot, returning the /NMI line level after the tick.
+    /// Fused seam: the machine loop samples NMI on the same borrow.
+    #[inline]
+    pub fn tick_ppu(&mut self) -> bool {
         self.ppu.tick(&mut self.cartridge);
+        self.ppu.nmi_line()
     }
 
     #[hotpath::measure(impl_type = "NesMcu")]

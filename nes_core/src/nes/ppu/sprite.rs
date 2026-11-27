@@ -407,6 +407,7 @@ impl SpriteManager {
     /// request. One fill per evaluated Sprite resolves its vertical position
     /// (vertical flip and 8x16 height applied here) and reads the two pattern
     /// planes; afterwards the per-pixel path decodes from the cached planes.
+    #[inline]
     fn ensure_rows(
         &mut self,
         ctrl: PpuCtrl,
@@ -463,6 +464,7 @@ impl SpriteManager {
         }
     }
 
+    #[inline]
     pub fn find_sprite_pixel(
         &mut self,
         ctrl: PpuCtrl,

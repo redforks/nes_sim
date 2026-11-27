@@ -164,15 +164,13 @@ where
     /// line. Only dot 0 is the CPU's sampling phase, so only it passes
     /// `sample = true` to the detector.
     fn tick_dot(&mut self, sample: bool) {
-        self.bus.mcu_mut().tick_ppu();
-        let nmi = self.bus.mcu_mut().ppu_mut().nmi_line();
+        let nmi = self.bus.mcu_mut().tick_ppu();
         self.cpu.update_nmi_line(nmi, self.bus.clock(), sample);
     }
 
     fn tick_dot_2(&mut self) -> ExecuteResult {
         let clock = self.bus.clock();
-        self.bus.mcu_mut().tick_ppu();
-        let nmi = self.bus.mcu_mut().ppu_mut().nmi_line();
+        let nmi = self.bus.mcu_mut().tick_ppu();
         self.cpu.update_nmi_line(nmi, clock, false);
 
         self.bus.mcu_mut().tick_zapper();

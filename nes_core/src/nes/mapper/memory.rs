@@ -47,10 +47,12 @@ impl Bank {
         self.0[..len].copy_from_slice(&data[..len]);
     }
 
+    #[inline]
     fn read(&self, address: u16) -> u8 {
         self.0[(address & 0x03ff) as usize]
     }
 
+    #[inline]
     fn write(&mut self, address: u16, value: u8) {
         self.0[(address & 0x03ff) as usize] = value;
     }
@@ -279,6 +281,7 @@ impl CartridgeMemory {
     /// Both bytes share one 1 KB window slot, because a tile's two planes are
     /// 8 bytes apart and never straddle a slot boundary. Mirrors
     /// [`Self::read_vram`]'s masked slot lookup, without the per-byte dispatch.
+    #[inline]
     pub fn read_tile_low_high(&self, base_addr: u16) -> (u8, u8) {
         let slot = ((base_addr & 0x3fff) >> 10) as usize;
         let bank = self.ppu_window[slot] as usize;
@@ -292,6 +295,7 @@ impl CartridgeMemory {
     /// Cartridge PPU space for `$0000-$3EFF`. The slot index is masked, not
     /// bounds-checked: `& 0x3fff` drops the $4000 wrap and lands inside the
     /// 16-slot window, so the window lookup needs no `unsafe` at all.
+    #[inline]
     pub fn read_vram(&self, address: u16) -> u8 {
         let slot = ((address & 0x3fff) >> 10) as usize;
         let bank = self.ppu_window[slot] as usize;
@@ -307,6 +311,7 @@ impl CartridgeMemory {
     /// (modulo the CHR bank count, mirroring `map_chr_run`) at `address`.
     /// The low 10 bits select the byte, so this shares pool banks with the
     /// window reads/writes — CHR-RAM writes via windows stay visible here.
+    #[inline]
     pub fn read_chr_bank(&self, bank_1k: u16, address: u16) -> u8 {
         let bank = bank_1k as usize % self.chr_bank_count;
         // SAFETY: as in `read_vram` — the modulo keeps the pool index inside

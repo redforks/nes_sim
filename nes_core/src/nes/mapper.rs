@@ -683,6 +683,7 @@ impl Cartridge {
     /// `base_addr` is the low-plane address and must leave room for the high
     /// plane below `$2000`, i.e. it comes from
     /// [`TilePosition::resolve_pixel_addr`].
+    #[inline]
     pub fn read_tile_low_high(&self, base_addr: u16, render: PpuRenderState) -> (u8, u8) {
         debug_assert!(base_addr < (0x2000 - 8));
         #[cfg(test)]
@@ -709,6 +710,7 @@ impl Cartridge {
     /// [`Mapper::ppu_read`] gets first refusal with the PPU-built
     /// [`PpuRenderState`]; `None` at each step falls through to the 1 KB
     /// bank-window lookup below. `$2000+` consults `ppu_read` only.
+    #[inline]
     pub fn read_vram(&self, address: u16, render: PpuRenderState) -> u8 {
         #[cfg(test)]
         if let Some(log) = &self.vram_read_log {
