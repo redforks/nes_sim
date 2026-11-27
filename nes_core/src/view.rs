@@ -13,6 +13,7 @@ pub struct MachineView<'a, M: Mcu> {
 }
 
 impl<'a, M: Mcu> MachineView<'a, M> {
+    #[inline]
     pub fn new(cpu_snapshot: CpuSnapshot, mcu: &'a M, clock: SystemClock) -> Self {
         Self {
             cpu: cpu_snapshot,

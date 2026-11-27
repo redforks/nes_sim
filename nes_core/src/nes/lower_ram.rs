@@ -45,32 +45,52 @@ impl LowerRam {
 }
 
 impl Mcu for LowerRam {
+    #[inline]
     fn read(&mut self, address: u16) -> u8 {
-        self.ram[address as usize & 0x7ff]
+        // SAFETY: `address & 0x7ff` is below the 0xf00 box length.
+        unsafe { *self.ram.get_unchecked((address as usize) & 0x7ff) }
     }
 
+    #[inline]
     fn peek(&self, address: u16) -> u8 {
-        self.ram[address as usize & 0x7ff]
+        // SAFETY: `address & 0x7ff` is below the 0xf00 box length.
+        unsafe { *self.ram.get_unchecked((address as usize) & 0x7ff) }
     }
 
+    #[inline]
     fn write(&mut self, address: u16, value: u8, _clock: SystemClock) {
-        self.ram[address as usize & 0x7ff] = value;
+        // SAFETY: `address & 0x7ff` is below the 0xf00 box length.
+        unsafe {
+            *self.ram.get_unchecked_mut((address as usize) & 0x7ff) = value;
+        }
     }
 
+    #[inline]
     fn read_zero_page(&mut self, address: u8) -> u8 {
-        self.ram[address as usize]
+        // SAFETY: `u8` is below the 0xf00 box length.
+        unsafe { *self.ram.get_unchecked(address as usize) }
     }
 
+    #[inline]
     fn read_stack_page(&mut self, address: u8) -> u8 {
-        self.ram[0x100 + address as usize]
+        // SAFETY: `0x100 + u8` is below the 0xf00 box length.
+        unsafe { *self.ram.get_unchecked(0x100 + address as usize) }
     }
 
+    #[inline]
     fn write_zero_page(&mut self, address: u8, value: u8, _clock: SystemClock) {
-        self.ram[address as usize] = value;
+        // SAFETY: `u8` is below the 0xf00 box length.
+        unsafe {
+            *self.ram.get_unchecked_mut(address as usize) = value;
+        }
     }
 
+    #[inline]
     fn write_stack_page(&mut self, address: u8, value: u8, _clock: SystemClock) {
-        self.ram[0x100 + address as usize] = value;
+        // SAFETY: `0x100 + u8` is below the 0xf00 box length.
+        unsafe {
+            *self.ram.get_unchecked_mut(0x100 + address as usize) = value;
+        }
     }
 }
 

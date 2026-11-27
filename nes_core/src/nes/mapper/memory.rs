@@ -49,12 +49,16 @@ impl Bank {
 
     #[inline]
     fn read(&self, address: u16) -> u8 {
-        self.0[(address & 0x03ff) as usize]
+        // SAFETY: `address & 0x03ff` is always below `BANK_SIZE` (0x400).
+        unsafe { *self.0.get_unchecked((address & 0x03ff) as usize) }
     }
 
     #[inline]
     fn write(&mut self, address: u16, value: u8) {
-        self.0[(address & 0x03ff) as usize] = value;
+        // SAFETY: `address & 0x03ff` is always below `BANK_SIZE` (0x400).
+        unsafe {
+            *self.0.get_unchecked_mut((address & 0x03ff) as usize) = value;
+        }
     }
 }
 
@@ -162,6 +166,7 @@ impl CartridgeMemory {
     /// than bounds-checked: the subtraction wraps for addresses below `$8000`
     /// (which `Cartridge::read` never passes) and the mask maps the result
     /// into the window.
+    #[inline]
     pub fn read_prg(&self, address: u16) -> u8 {
         let slot = (address.wrapping_sub(0x8000) >> 10) as usize & (PRG_WINDOW_SLOTS - 1);
         let bank = self.prg_window[slot] as usize;

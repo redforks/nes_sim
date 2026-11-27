@@ -60,6 +60,7 @@ impl NesMcu {
     /// paths: update the open-bus latch (and deassert both joypad /OE lines
     /// unless a controller read keeps them asserted). `pub(crate)` so the
     /// seam stays narrow (ADR-0010).
+    #[inline]
     pub(crate) fn latch(&mut self, value: u8, read_controller: bool) -> u8 {
         self.open_bus = value;
         if !read_controller {
@@ -162,8 +163,16 @@ impl NesMcu {
         self.ppu.nmi_line()
     }
 
-    #[inline]
-    #[hotpath::measure(impl_type = "NesMcu")]
+    #[inline(always)]
+    // Marker costs one call per CPU cycle; pay it only when profiling.
+    #[cfg_attr(
+        any(
+            feature = "hotpath",
+            feature = "hotpath-cpu",
+            feature = "hotpath-callgrind"
+        ),
+        hotpath::measure(impl_type = "NesMcu")
+    )]
     pub fn tick_apu(&mut self, clock: SystemClock) {
         // Expansion audio (MMC5 `$5000-$5015`) advances on the same CPU
         // cycle and its levels reach the APU mixer before the tick emits:
@@ -314,20 +323,13 @@ impl NesMcu {
     pub fn read_vram(&self, addr: u16) -> u8 {
         self.ppu().read_vram(addr, &self.cartridge)
     }
-}
 
-impl Mcu for NesMcu {
-    fn read(&mut self, address: u16) -> u8 {
+    /// Cold address ranges for [`Mcu::read`]: PPU regs, PRG-RAM, controllers,
+    /// APU status, expansion area, open bus. Outlined so the hot fast path
+    /// inlines lean; behavior matches the original match arm-for-arm.
+    #[inline(never)]
+    fn read_slow(&mut self, address: u16) -> u8 {
         let value = match address {
-            // PRG-ROM / PRG-RAM from cartridge; unmapped and disabled RAM is open bus
-            0x8000..=0xffff => {
-                let value = self.cartridge.read(address);
-                // PCM stream read mode: a `$8000-$BFFF` read feeds the MMC5
-                // DAC (caps-gated, so other boards pay one branch).
-                self.cartridge.notify_prg_read(address, value);
-                value
-            }
-            0x0000..=0x1fff => self.lower_ram.read(address),
             0x2000..=0x3fff => self.ppu.read_ppureg(address, &mut self.cartridge),
             0x6000..=0x7fff => {
                 if !self.cartridge.prg_ram_enabled() {
@@ -370,6 +372,62 @@ impl Mcu for NesMcu {
         self.latch(value, false)
     }
 
+    /// Cold address ranges for [`Mcu::write`]: PPU/APU regs, PRG-RAM,
+    /// expansion area, mapper registers. Outlined; see `read_slow`.
+    #[inline(never)]
+    fn write_slow(&mut self, address: u16, value: u8, clock: SystemClock) {
+        match address {
+            0x2000..=0x3fff => self.ppu.write_ppureg(address, value, &mut self.cartridge),
+            0x4000..=0x401f => match address {
+                0x4014 => self.ppu_dma(value),
+                0x4016 => self.controller.write(value),
+                0x4000 | 0x4003 | 0x4004 | 0x4007 | 0x400B | 0x400F | 0x4013 => {
+                    // Production bound is 1 (tick_apu drains on the same
+                    // dots cpu.tick runs, one write per cycle max); the
+                    // tightest direct-API sequence queues 2. Louder than a
+                    // silent `.ok()` drop if that ever stops holding.
+                    debug_assert!(self.deferred_apu_writes.len() < 2);
+                    self.deferred_apu_writes
+                        .push_back((clock.cycles() + 3, address, value))
+                        .ok();
+                }
+                _ => self.apu.write(address, value, clock),
+            },
+            0x6000..=0x7fff => {
+                if self.cartridge.prg_ram_enabled() {
+                    self.cartridge.write_prg_ram(address, value, clock);
+                }
+            }
+            // Cartridge expansion area (MMC5 registers, Action 53 register
+            // select): forwards to the mapper chip; chips without expansion
+            // registers ignore it.
+            0x5000..=0x5fff => self.cartridge.write_expansion(address, value, clock),
+            0x8000..=0xffff => self.cartridge.write(address, value, clock),
+            _ => {}
+        }
+    }
+}
+
+impl Mcu for NesMcu {
+    /// Hot ranges (PRG fetch, RAM) inline; the rest funnels to `read_slow`.
+    /// Arm order matches the original match: `$8000+` first, then `$0000`.
+    #[inline(always)]
+    fn read(&mut self, address: u16) -> u8 {
+        if address >= 0x8000 {
+            // PRG-ROM from cartridge.
+            let value = self.cartridge.read(address);
+            // PCM stream read mode: a `$8000-$BFFF` read feeds the MMC5
+            // DAC (caps-gated, so other boards pay one branch).
+            self.cartridge.notify_prg_read(address, value);
+            return self.latch(value, false);
+        }
+        if address < 0x2000 {
+            let value = self.lower_ram.read(address);
+            return self.latch(value, false);
+        }
+        self.read_slow(address)
+    }
+
     fn peek(&self, address: u16) -> u8 {
         match address {
             0x0000..=0x1fff => self.lower_ram.peek(address),
@@ -401,38 +459,15 @@ impl Mcu for NesMcu {
         }
     }
 
+    /// Hot range (RAM) inlines; the rest funnels to `write_slow`.
+    #[inline(always)]
     fn write(&mut self, address: u16, value: u8, clock: SystemClock) {
         self.latch(value, false);
-        match address {
-            0x0000..=0x1fff => self.lower_ram.write(address, value, clock),
-            0x2000..=0x3fff => self.ppu.write_ppureg(address, value, &mut self.cartridge),
-            0x4000..=0x401f => match address {
-                0x4014 => self.ppu_dma(value),
-                0x4016 => self.controller.write(value),
-                0x4000 | 0x4003 | 0x4004 | 0x4007 | 0x400B | 0x400F | 0x4013 => {
-                    // Production bound is 1 (tick_apu drains on the same
-                    // dots cpu.tick runs, one write per cycle max); the
-                    // tightest direct-API sequence queues 2. Louder than a
-                    // silent `.ok()` drop if that ever stops holding.
-                    debug_assert!(self.deferred_apu_writes.len() < 2);
-                    self.deferred_apu_writes
-                        .push_back((clock.cycles() + 3, address, value))
-                        .ok();
-                }
-                _ => self.apu.write(address, value, clock),
-            },
-            0x6000..=0x7fff => {
-                if self.cartridge.prg_ram_enabled() {
-                    self.cartridge.write_prg_ram(address, value, clock);
-                }
-            }
-            // Cartridge expansion area (MMC5 registers, Action 53 register
-            // select): forwards to the mapper chip; chips without expansion
-            // registers ignore it.
-            0x5000..=0x5fff => self.cartridge.write_expansion(address, value, clock),
-            0x8000..=0xffff => self.cartridge.write(address, value, clock),
-            _ => {}
+        if address < 0x2000 {
+            self.lower_ram.write(address, value, clock);
+            return;
         }
+        self.write_slow(address, value, clock)
     }
 
     fn read_zero_page(&mut self, address: u8) -> u8 {

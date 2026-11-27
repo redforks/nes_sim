@@ -386,17 +386,17 @@ impl Timing {
     }
 
     const fn in_visible_scanline(&self) -> bool {
-        matches!(self.status(), RenderingStatus::Visible)
+        // Same ranges as `status()`: Visible is scanlines 0..=239.
+        // A direct compare keeps the per-pixel callers lean.
+        self.scanline < 240
     }
 
     /// Return true if ppu should active for current scanline.
     /// Note, if ppu rendering is disabled (both front and background), ppu is also disactivated
     fn in_ppu_active_line(&self) -> bool {
         // although line 261 is not visible, but ppu need to prepare for next frame first line
-        matches!(
-            self.status(),
-            RenderingStatus::Visible | RenderingStatus::PreRender
-        )
+        // Same ranges as `status()`: Visible (0..=239) or PreRender (261).
+        self.scanline < 240 || self.scanline == 261
     }
 }
 
@@ -984,7 +984,15 @@ impl Ppu {
         self.refresh_nmi_level();
     }
 
-    #[hotpath::measure(impl_type = "Ppu")]
+    // Marker costs one call per dot; pay it only when profiling.
+    #[cfg_attr(
+        any(
+            feature = "hotpath",
+            feature = "hotpath-cpu",
+            feature = "hotpath-callgrind"
+        ),
+        hotpath::measure(impl_type = "Ppu")
+    )]
     pub fn tick(&mut self, cartridge: &mut Cartridge) {
         crate::hotpath_cpu::hotpath_cpu_alias!(
             Self,

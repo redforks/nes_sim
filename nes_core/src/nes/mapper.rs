@@ -524,6 +524,7 @@ impl Cartridge {
     /// raw cartridge data with no open-bus substitution: a disabled PRG-RAM
     /// window still answers with its bank contents, and `NesMcu` is what
     /// turns that into open bus.
+    #[inline]
     pub(crate) fn read(&self, address: u16) -> u8 {
         debug_assert!(
             address >= 0x8000,

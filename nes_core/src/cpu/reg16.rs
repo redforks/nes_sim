@@ -6,10 +6,12 @@ pub struct Register16 {
 }
 
 impl Register16 {
+    #[inline(always)]
     pub fn get(self) -> u16 {
         u16::from_ne_bytes(self.bytes)
     }
 
+    #[inline(always)]
     pub fn set(&mut self, v: u16) {
         self.bytes = v.to_ne_bytes();
     }
@@ -18,33 +20,32 @@ impl Register16 {
     const LOW: usize = if cfg!(target_endian = "little") { 0 } else { 1 };
     const HIGH: usize = 1 - Self::LOW;
 
-    /// Return low byte
+    #[inline(always)]
     pub fn low(&self) -> u8 {
         self.bytes[Self::LOW]
     }
 
-    /// set low byte
+    #[inline(always)]
     pub fn set_low(&mut self, v: u8) {
         self.bytes[Self::LOW] = v;
     }
 
-    /// Return high byte
+    #[inline(always)]
     pub fn high(&self) -> u8 {
         self.bytes[Self::HIGH]
     }
 
-    /// set high byte
+    #[inline(always)]
     pub fn set_high(&mut self, v: u8) {
         self.bytes[Self::HIGH] = v;
     }
 
-    /// Wrapping addition — delegates to u16::wrapping_add
+    #[inline(always)]
     pub fn wrapping_add(&mut self, v: u16) {
         self.set(self.get().wrapping_add(v));
     }
 
-    /// Increment the low byte by 1 with wrapping (0xFF → 0x00).
-    /// High byte is unchanged.
+    #[inline(always)]
     pub fn wrapping_inc_low(&mut self) {
         self.bytes[Self::LOW] = self.bytes[Self::LOW].wrapping_add(1);
     }

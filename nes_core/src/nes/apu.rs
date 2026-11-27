@@ -195,6 +195,7 @@ impl Apu {
         self.length_race_clobber = [false; 4];
     }
 
+    #[inline(always)]
     pub fn tick(&mut self) {
         self.length_race_clobber = [false; 4];
         self.frame_sequencer.tick_timer();

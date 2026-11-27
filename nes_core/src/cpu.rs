@@ -259,24 +259,28 @@ struct ZeroPage;
 struct Mem;
 
 impl ValueSourceTrait for Immediate {
+    #[inline]
     fn value<M: Mcu>(cpu: &mut Cpu, bus: &mut Bus<M>) -> u8 {
         cpu.inc_read_byte(bus)
     }
 }
 
 impl ValueSourceTrait for Alu {
+    #[inline]
     fn value<M: Mcu>(cpu: &mut Cpu, _bus: &mut Bus<M>) -> u8 {
         cpu.alu
     }
 }
 
 impl ValueSourceTrait for ZeroPage {
+    #[inline]
     fn value<M: Mcu>(cpu: &mut Cpu, bus: &mut Bus<M>) -> u8 {
         bus.mcu_mut().read_zero_page(cpu.ab.low())
     }
 }
 
 impl ValueSourceTrait for Mem {
+    #[inline]
     fn value<M: Mcu>(cpu: &mut Cpu, bus: &mut Bus<M>) -> u8 {
         bus.mcu_mut().read(cpu.ab.get())
     }
@@ -287,6 +291,7 @@ trait ValueTargetTrait {
 }
 
 impl ValueTargetTrait for ZeroPage {
+    #[inline]
     fn write<M: Mcu>(cpu: &mut Cpu, bus: &mut Bus<M>, value: u8) {
         let clock = bus.clock();
         bus.mcu_mut().write_zero_page(cpu.ab.low(), value, clock);
@@ -294,6 +299,7 @@ impl ValueTargetTrait for ZeroPage {
 }
 
 impl ValueTargetTrait for Mem {
+    #[inline]
     fn write<M: Mcu>(cpu: &mut Cpu, bus: &mut Bus<M>, value: u8) {
         let clock = bus.clock();
         bus.mcu_mut().write(cpu.ab.get(), value, clock);
@@ -510,6 +516,7 @@ impl Cpu {
         self.status
     }
     /// Owned snapshot of the register file for plugins/tools.
+    #[inline]
     pub fn snapshot(&self) -> CpuSnapshot {
         CpuSnapshot {
             a: self.a,
@@ -878,12 +885,21 @@ impl Cpu {
         self.irq_detector.update_irq_input(enabled);
     }
 
+    #[inline]
     pub fn is_halted(&self) -> bool {
         self.frozen_reason.is_some_and(|r| r.halt)
     }
 
     /// Return true if just execute current instruction
-    #[hotpath::measure(impl_type = "Cpu")]
+    // Marker costs one call per tick; pay it only when profiling.
+    #[cfg_attr(
+        any(
+            feature = "hotpath",
+            feature = "hotpath-cpu",
+            feature = "hotpath-callgrind"
+        ),
+        hotpath::measure(impl_type = "Cpu")
+    )]
     pub fn tick<P: Plugin<M>, M: Mcu>(
         &mut self,
         bus: &mut Bus<M>,
@@ -903,24 +919,28 @@ impl Cpu {
             };
         }
 
+        // `Bus::clock` is fixed for the whole dot (advanced by the machine
+        // loop after the dot), so load once and reuse for the window
+        // stamp, interrupt dispatch, poll, and plugin views.
+        let clock = bus.clock();
         if let Some(active) = self.active_interrupt_window.as_mut()
             && active.started_at.is_none()
         {
-            active.started_at = Some(bus.clock());
+            active.started_at = Some(clock);
         }
         let code = match self.pop_microcode() {
             Some(v) => Some(v),
             None => {
-                let view = MachineView::new(self.snapshot(), bus.mcu(), bus.clock());
+                let view = MachineView::new(self.snapshot(), bus.mcu(), clock);
                 plugin.start(&view);
                 match self.interrupt_detected {
                     InterruptType::Nmi => {
                         self.interrupt_detected = InterruptType::None;
-                        Some(self.push_enter_interrupt_microcodes(true, bus.clock()))
+                        Some(self.push_enter_interrupt_microcodes(true, clock))
                     }
                     InterruptType::Irq => {
                         self.interrupt_detected = InterruptType::None;
-                        Some(self.push_enter_interrupt_microcodes(false, bus.clock()))
+                        Some(self.push_enter_interrupt_microcodes(false, clock))
                     }
                     InterruptType::None => None,
                 }
@@ -944,10 +964,10 @@ impl Cpu {
         if instruction_complete {
             self.active_interrupt_window = None;
         }
-        self.detect_interrupt(bus.clock(), is_last_op, last_status, code);
+        self.detect_interrupt(clock, is_last_op, last_status, code);
 
         if instruction_complete {
-            let view = MachineView::new(self.snapshot(), bus.mcu(), bus.clock());
+            let view = MachineView::new(self.snapshot(), bus.mcu(), clock);
             plugin.end(&view);
             plugin.should_stop()
         } else {
@@ -955,6 +975,7 @@ impl Cpu {
         }
     }
 
+    #[inline]
     fn do_detect_interrupt(&mut self, clock: SystemClock, irq_pending: bool) {
         let pending_since = self.nmi_detecteor.pending_asserted_since;
         if pending_since != 0 && (clock.0 - pending_since) > 1 {
@@ -967,6 +988,7 @@ impl Cpu {
         }
     }
 
+    #[inline]
     fn detect_interrupt(
         &mut self,
         clock: SystemClock,
@@ -975,6 +997,20 @@ impl Cpu {
         last_op: Microcode,
     ) {
         self.nmi_detecteor.detect_nmi();
+        // Fast path: mid-instruction dots (the common case) only advance
+        // the NMI sampler above. The IRQ line + I-flag poll runs on the
+        // instruction's final cycle (or a forced `request_detect_interrupt`
+        // dot), so skip the `Microcode` discriminant match and flag loads
+        // here where IPC matters most.
+        let need_detect = if let Some(v) = self.request_detect_interrupt {
+            self.request_detect_interrupt = None;
+            v
+        } else {
+            is_last_op
+        };
+        if !need_detect {
+            return;
+        }
         // CLI/SEI/PLP are polled against the pre-cycle status: their own
         // write to the I flag must not enable or disable the IRQ taken at
         // their final cycle (blargg cpu_interrupts_v2 1-cli_latency).
@@ -990,34 +1026,29 @@ impl Cpu {
             self.flag(Flag::InterruptDisabled)
         };
         let irq_pending = self.irq_detector.detect_irq(disabled);
-
-        let need_detect = if let Some(v) = self.request_detect_interrupt {
-            self.request_detect_interrupt = None;
-            v
-        } else {
-            is_last_op
-        };
         // The standard poll fires on the instruction's final cycle —
         // suppressed on the final cycle of an interrupt sequence, whose
         // recognition belongs to its declared hijack sites.
-        if need_detect {
-            self.do_detect_interrupt(clock, irq_pending)
-        }
+        self.do_detect_interrupt(clock, irq_pending)
     }
 
+    #[inline]
     pub fn flag(&self, flag: Flag) -> bool {
         (self.status & flag as u8) != 0
     }
 
+    #[inline(always)]
     fn set_flag(&mut self, flag: Flag, v: bool) {
         let mask = flag as u8;
         self.status = (self.status & !mask) | (if v { mask } else { 0 });
     }
 
+    #[inline(always)]
     fn update_negative_flag(&mut self, value: u8) {
         self.set_flag(Flag::Negative, value & 0x80 != 0);
     }
 
+    #[inline(always)]
     fn update_zero_flag(&mut self, value: u8) {
         self.set_flag(Flag::Zero, value == 0);
     }
@@ -1110,6 +1141,7 @@ impl Cpu {
         self.alu = S::value(self, bus);
     }
 
+    #[inline(always)]
     fn do_adc(&mut self, val: u8) {
         let carry = self.flag(Flag::Carry) as u16;
         let sum = (self.a as u16) + (val as u16) + carry;
@@ -1142,6 +1174,7 @@ impl Cpu {
         self.set_register(Register::A, self.a ^ val);
     }
 
+    #[inline(always)]
     fn compare(&mut self, lhs: u8, rhs: u8) {
         let t = lhs.wrapping_sub(rhs);
         self.update_zero_negative_flags(t);
@@ -1329,6 +1362,7 @@ impl Cpu {
         self.update_zero_flag(self.a & v);
     }
 
+    #[inline]
     fn push_microcodes(&mut self, microcodes: &[Microcode]) {
         self.microcode_queue.extend_back(microcodes.iter().copied())
     }
@@ -1408,6 +1442,7 @@ impl Cpu {
         sequence[0]
     }
 
+    #[inline]
     fn pop_microcode(&mut self) -> Option<Microcode> {
         self.microcode_queue.pop_front()
     }
@@ -1469,6 +1504,7 @@ impl Cpu {
         self.load_vector_high(bus, 0xFFFF);
     }
 
+    #[inline(always)]
     fn set_register(&mut self, register: Register, val: u8) {
         match register {
             Register::A => self.a = val,
@@ -1478,6 +1514,7 @@ impl Cpu {
         self.update_zero_negative_flags(val);
     }
 
+    #[inline(always)]
     fn update_zero_negative_flags(&mut self, val: u8) {
         self.update_zero_flag(val);
         self.update_negative_flag(val);

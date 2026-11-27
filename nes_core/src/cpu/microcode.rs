@@ -1475,6 +1475,7 @@ pub enum PushTarget {
     Pch,
 }
 
+#[inline]
 pub(super) fn fetch_and_decode<M: Mcu>(cpu: &mut Cpu, bus: &mut Bus<M>) {
     const OPCODE_TABLE: [ArrayVec<[Microcode; 7]>; 256] = build_opcode_table();
 
@@ -1487,6 +1488,8 @@ pub(super) fn fetch_and_decode<M: Mcu>(cpu: &mut Cpu, bus: &mut Bus<M>) {
 
 impl Microcode {
     /// perform second phase of this Microcode
+    /// Inlined: the single hottest call in the frame loop (one per CPU tick).
+    #[inline(always)]
     pub fn exec<M: Mcu>(self, cpu: &mut Cpu, bus: &mut Bus<M>) {
         match self {
             Self::FetchAndDecode => {
