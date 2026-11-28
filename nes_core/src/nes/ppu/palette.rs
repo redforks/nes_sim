@@ -49,6 +49,12 @@ impl ColorTheme {
 
 pub struct Palette {
     pub data: [u8; 0x20],
+    /// Per-pixel LUTs derived from `data`: `bg_lut[(p << 2) | idx]` and
+    /// `spr_lut[(p << 2) | idx]` replay `get_color_index` bit-exactly
+    /// (idx 0 maps to `data[0]` for every palette). Refreshed on every
+    /// write/restore so the render path pays two loads and no branch.
+    bg_lut: [u8; 16],
+    spr_lut: [u8; 16],
 }
 
 impl Default for Palette {
@@ -59,14 +65,18 @@ impl Default for Palette {
     /// through addr_to_index, so only the 28 reachable cells matter; the
     /// table is mirror-consistent, so filling all 32 verbatim is equivalent.
     fn default() -> Self {
-        Self {
+        let mut pal = Self {
             data: [
                 0x09, 0x01, 0x00, 0x01, 0x00, 0x02, 0x02, 0x0D, //
                 0x08, 0x10, 0x08, 0x24, 0x00, 0x00, 0x04, 0x2C, //
                 0x09, 0x01, 0x34, 0x03, 0x00, 0x04, 0x00, 0x14, //
                 0x08, 0x3A, 0x00, 0x02, 0x00, 0x20, 0x2C, 0x08,
             ],
-        }
+            bg_lut: [0; 16],
+            spr_lut: [0; 16],
+        };
+        pal.refresh_lut();
+        pal
     }
 }
 
@@ -84,8 +94,35 @@ impl Palette {
         self.data[addr_to_index(address) as usize]
     }
 
+    pub(crate) fn refresh_lut(&mut self) {
+        let mut bg = [0u8; 16];
+        let mut spr = [0u8; 16];
+        let mut p = 0usize;
+        while p < 4 {
+            let mut idx = 0usize;
+            while idx < 4 {
+                let slot = (p << 2) | idx;
+                bg[slot] = if idx == 0 {
+                    self.data[0]
+                } else {
+                    self.data[idx | (p << 2)]
+                };
+                spr[slot] = if idx == 0 {
+                    self.data[0]
+                } else {
+                    self.data[0x10 | idx | (p << 2)]
+                };
+                idx += 1;
+            }
+            p += 1;
+        }
+        self.bg_lut = bg;
+        self.spr_lut = spr;
+    }
+
     pub fn write(&mut self, address: u16, value: u8) {
         self.data[addr_to_index(address) as usize] = value;
+        self.refresh_lut();
     }
 
     pub fn disabled_color_index(&self, address: u16) -> u8 {
@@ -96,21 +133,26 @@ impl Palette {
         }
     }
 
-    fn get_color_index(&self, start: u8, palette_idx: u8, idx: u8) -> u8 {
-        let offset = if idx == 0 {
-            0
-        } else {
-            (start | idx | (palette_idx << 2)) as usize
-        };
-        self.data[offset & 0x1f]
-    }
-
+    #[inline(always)]
     pub fn get_background_color_index(&self, palette_idx: u8, idx: u8) -> u8 {
-        self.get_color_index(0, palette_idx, idx)
+        // SAFETY: both inputs are 2-bit by construction (attribute bits and
+        // expanded pattern bits), so the OR-index lands in range with no
+        // mask and no panic branch on the per-pixel path.
+        unsafe {
+            *self
+                .bg_lut
+                .get_unchecked(((palette_idx << 2) | idx) as usize)
+        }
     }
 
+    #[inline(always)]
     pub fn get_sprite_color_index(&self, palette_idx: u8, idx: u8) -> u8 {
-        self.get_color_index(0x10, palette_idx, idx)
+        // SAFETY: as above.
+        unsafe {
+            *self
+                .spr_lut
+                .get_unchecked(((palette_idx << 2) | idx) as usize)
+        }
     }
 }
 

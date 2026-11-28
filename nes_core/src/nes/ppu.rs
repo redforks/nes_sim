@@ -204,6 +204,7 @@ impl Ppu {
         self.registers.bus_latch_decay_deadlines = s.bus_latch_decay_deadlines;
         self.registers.bus_latch_earliest_decay = s.bus_latch_earliest_decay;
         self.palette.data = s.palette_data;
+        self.palette.refresh_lut();
         *self.oam.as_bytes_mut() = s.oam_data;
         self.oam_addr = s.oam_addr;
         self.sprite.restore_sprite_state(&s.sprite);
@@ -382,7 +383,9 @@ impl Timing {
     /// Return true if dot is in sprite-evaluation dots (65-256), after the
     /// secondary-OAM clear phase
     const fn in_sprite_eval_dots(&self) -> bool {
-        self.dot >= 65 && self.dot <= 256
+        // Single compare: dots are 0..=340, so `dot - 65` wraps for
+        // dots below 65 and stays below 192 exactly for 65..=256.
+        self.dot.wrapping_sub(65) < 192
     }
 
     #[inline]
@@ -525,6 +528,16 @@ pub struct Ppu {
     /// [`Self::refresh_nmi_level`]; `nmi_line_cache_matches_registers_across_a_frame`
     /// checks the cache against the registers at every dot of a frame.
     nmi_level: bool,
+    /// Whether the `/NMI` line may have changed since the machine loop last
+    /// published it to the CPU detector. Set by every
+    /// [`Self::refresh_nmi_level`] call site (all cold: vblank set/clear,
+    /// `$2000`/`$2002`, restore, reset) and taken by the per-dot path: with
+    /// ~89k dots per frame and a line that moves a handful of times, the
+    /// detector update is skipped while clear — bit-exact, since a skipped
+    /// update would have republished identical values (`asserted_since` only
+    /// moves when the level does, and the dot-0 lagged sample then equals
+    /// the already-stored one).
+    nmi_dirty: bool,
 }
 
 /// PPU registers are mirrored every 8 bytes in range $2000-$3FFF;
@@ -568,6 +581,7 @@ impl Ppu {
             color_splits: Vec::new(),
             vblank_entered: false,
             nmi_level: false,
+            nmi_dirty: false,
         }
     }
 
@@ -620,6 +634,9 @@ impl Ppu {
         self.framebuffer.fill(Pixel::default());
         self.color_splits.clear();
         self.vblank_entered = false;
+        // Level may have moved without a refresh (see `nmi_dirty`): force
+        // the next dots to republish so reset matches the slow path.
+        self.nmi_dirty = true;
     }
 
     pub fn timing(&self) -> &Timing {
@@ -971,7 +988,7 @@ impl Ppu {
         // Mid-frame `$2001` color changes are recorded as split points
         // in `write_ppureg` and applied per segment by the flush below;
         // enable bits, by contrast, take effect here immediately.
-        if (1..=256).contains(&dot) {
+        if dot.wrapping_sub(1) < 256 {
             let scanline_u8 = scanline as u8;
             let pixel_idx = self.render_pixel(
                 cartridge,
@@ -1275,6 +1292,14 @@ impl Ppu {
     #[inline]
     fn refresh_nmi_level(&mut self) {
         self.nmi_level = self.registers.status.v_blank() & self.registers.ctrl.nmi_enable();
+        self.nmi_dirty = true;
+    }
+
+    /// Take the publish-pending flag (see `nmi_dirty`): true when the line
+    /// may have moved since the last detector update.
+    #[inline]
+    pub fn take_nmi_dirty(&mut self) -> bool {
+        std::mem::replace(&mut self.nmi_dirty, false)
     }
 
     pub(crate) fn read_ppureg(&mut self, address: u16, cartridge: &mut Cartridge) -> u8 {
@@ -1630,7 +1655,9 @@ impl Ppu {
         // `None` via a zero-trip loop, which profiles cheaper than a
         // per-pixel emptiness gate on sprite-dense lines.
         let sprite_pixel = if mask_bits & PpuMask::SPRITE_ENABLED != 0
-            && (x >= 8 || mask_bits & PpuMask::SPRITE_LEFT_ENABLED != 0)
+            // Left-clip flag first: games almost always show the left
+            // column, so the `x` compare short-circuits away per pixel.
+            && (mask_bits & PpuMask::SPRITE_LEFT_ENABLED != 0 || x >= 8)
         {
             self.sprite.find_sprite_pixel(
                 ctrl,
@@ -1666,9 +1693,10 @@ impl Ppu {
             && x != 255
             && mask_bits & PpuMask::BACKGROUND_ENABLED != 0
             && mask_bits & PpuMask::SPRITE_ENABLED != 0
-            && (x >= 8
-                || (mask_bits & PpuMask::BACKGROUND_LEFT_ENABLED != 0
-                    && mask_bits & PpuMask::SPRITE_LEFT_ENABLED != 0))
+            // Clip flags before the `x` compare (see the fetch gate above).
+            && ((mask_bits & PpuMask::BACKGROUND_LEFT_ENABLED != 0
+                && mask_bits & PpuMask::SPRITE_LEFT_ENABLED != 0)
+                || x >= 8)
             && self.sprite.sprite_zero_pixel_opaque(x, scanline)
         {
             self.registers.status.set_sprite_zero_hit(true);

@@ -157,11 +157,30 @@ where
         if self.tick_quiet_cycle() {
             return self.tick_quiet_tail();
         }
-        self.tick_dot(true); // dot 0 — the /NMI sampling phase
+        // Slow cycle: batch all three PPU dots into one cross-object
+        // call (`tick_ppu_3` returns the /NMI level after each tick), so
+        // the per-dot publishes below see the same values in the same
+        // order as three single-dot ticks — at one third of the call cost.
+        let base = self.bus.clock();
+        let ([nmi0, nmi1, nmi2], nmi_moved) = self.bus.mcu_mut().tick_ppu_3();
+        let clock1 = base.inc();
+        let clock2 = clock1.inc();
+        // Dot 0 is the sampling phase: always publish (refreshes the
+        // detector's lagged sample and the cycle-0 stamp quirk).
+        self.cpu.update_nmi_line(nmi0, base, true);
         self.bus.advance();
-        self.tick_dot(false); // dot 1
+        // Dots 1–2 only maintain the assertion stamp: skip while the line
+        // is unchanged (see `Ppu::nmi_dirty`). The batch returns the OR of
+        // the three per-tick flags — a refresh on a later tick only adds
+        // a value-identical republish.
+        if nmi_moved {
+            self.cpu.update_nmi_line(nmi1, clock1, false);
+        }
         self.bus.advance();
-        let control = self.tick_dot_2();
+        if nmi_moved {
+            self.cpu.update_nmi_line(nmi2, clock2, false);
+        }
+        let control = self.tick_tail(clock2);
         self.bus.advance();
         control
     }
@@ -206,44 +225,30 @@ where
         // on it); idle lines never run the fetch path. Rendering-off
         // hblank dots advance only.
         let hblank_257 = scanline < 240 && dot == 257 && self.bus.mcu().ppu().rendering_enabled();
-        let nmi = {
+        let (nmi, nmi_moved) = {
             let mcu = self.bus.mcu_mut();
             mcu.ppu_mut().tick_quiet_3(hblank_257);
-            mcu.ppu().nmi_line()
+            (mcu.ppu().nmi_line(), mcu.ppu_mut().take_nmi_dirty())
         };
+        // Same split as the slow path: the sample-phase publish always
+        // runs (lagged sample + stamp quirk); the second is gated.
         self.cpu.update_nmi_line(nmi, self.bus.clock(), true);
         self.bus.advance();
-        self.cpu.update_nmi_line(nmi, self.bus.clock(), false);
+        if nmi_moved {
+            self.cpu.update_nmi_line(nmi, self.bus.clock(), false);
+        }
         self.bus.advance();
         true
     }
 
     /// Tail shared by the quiet path: third-dot clock, zapper/IRQ/APU/
-    /// DMA/CPU, final advance. Mirrors `tick_dot_2` after its dot-C lines.
+    /// DMA/CPU, final advance. Mirrors the slow path after its dot-C lines.
     #[inline]
     fn tick_quiet_tail(&mut self) -> ExecuteResult {
         let clock = self.bus.clock();
         let control = self.tick_tail(clock);
         self.bus.advance();
         control
-    }
-
-    /// Dots 0 and 1 of a CPU cycle: tick the PPU and publish its /NMI
-    /// line. Only dot 0 is the CPU's sampling phase, so only it passes
-    /// `sample = true` to the detector.
-    #[inline(always)]
-    fn tick_dot(&mut self, sample: bool) {
-        let nmi = self.bus.mcu_mut().tick_ppu();
-        self.cpu.update_nmi_line(nmi, self.bus.clock(), sample);
-    }
-
-    #[inline]
-    fn tick_dot_2(&mut self) -> ExecuteResult {
-        let clock = self.bus.clock();
-        let nmi = self.bus.mcu_mut().tick_ppu();
-        self.cpu.update_nmi_line(nmi, clock, false);
-
-        self.tick_tail(clock)
     }
 
     /// Post-dot work of the third CPU dot (zapper sample, IRQ sample,
@@ -304,7 +309,7 @@ where
     /// Drain first: any DMA work already accepted by the bus completes
     /// while PPU/APU keep interleaving, before the device resets apply.
     /// The CPU needs no explicit freeze gate for the drain (see
-    /// `tick_dot_2`): in-flight DMA already stalls it, any pre-freeze
+    /// `tick_tail`): in-flight DMA already stalls it, any pre-freeze
     /// microcodes are discarded by the resets below, and the `is_busy`
     /// check precedes each `tick` so the CPU cannot re-arm DMA once the
     /// bus is quiet. Fresh DMC fetch requests are suppressed during the

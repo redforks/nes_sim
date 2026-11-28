@@ -314,6 +314,13 @@ impl DeadlineTimer {
         }
     }
 
+    /// Next firing tick. The machine loop skips all five channel timers
+    /// while the APU counter runs below the minimum of these (see
+    /// [`super::Apu::timer_min_deadline`]).
+    pub fn deadline(&self) -> u64 {
+        self.deadline
+    }
+
     pub fn set_period(&mut self, period: u16) {
         self.period = period;
     }

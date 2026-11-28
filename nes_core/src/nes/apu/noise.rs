@@ -138,6 +138,11 @@ impl Noise {
         self.envelope.request_reset();
     }
 
+    /// Next firing tick of the rate timer (see `DeadlineTimer::deadline`).
+    pub(crate) fn timer_deadline(&self) -> u64 {
+        self.timer.deadline()
+    }
+
     #[inline(always)]
     pub fn tick_timer(&mut self, now: u64) {
         if self.timer.tick(now) {

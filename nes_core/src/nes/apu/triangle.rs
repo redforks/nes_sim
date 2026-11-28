@@ -129,6 +129,11 @@ impl Triangle {
         self.linear.set_halt();
     }
 
+    /// Next firing tick of the rate timer (see `DeadlineTimer::deadline`).
+    pub(crate) fn timer_deadline(&self) -> u64 {
+        self.timer.deadline()
+    }
+
     #[inline(always)]
     pub fn tick_timer(&mut self, now: u64) {
         if self.timer.tick(now) && !self.length.is_zero() && self.linear.counter > 0 {

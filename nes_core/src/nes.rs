@@ -172,6 +172,30 @@ impl NesMcu {
         self.ppu.nmi_line()
     }
 
+    /// Tick the PPU three dots (one CPU cycle), returning the /NMI line
+    /// level after each tick plus whether the line may have moved at any
+    /// point in the group (the OR of the three per-tick publish flags).
+    ///
+    /// Batching seam for the slow machine-loop cycle: three dots that must
+    /// stay individually observable (pixels, eval, transitions) still need
+    /// three ticks, but one cross-object call instead of three. The call
+    /// overhead dominates on this path (indirect branch + GOT load per
+    /// call vs. a few stores of dot work), so batching cuts two thirds of
+    /// it. Deliberately not `#[inline]`: inlining would re-expose the
+    /// three inner calls at every downstream instantiation.
+    ///
+    /// Order- and value-exact: levels are captured after each tick, so the
+    /// loop's per-dot NMI publishes see the same values in the same order
+    /// as three `tick_ppu` calls; folding the flag take into the same call
+    /// only merges three identical reads.
+    pub fn tick_ppu_3(&mut self) -> ([bool; 3], bool) {
+        let nmi0 = self.tick_ppu();
+        let nmi1 = self.tick_ppu();
+        let nmi2 = self.tick_ppu();
+        let moved = self.ppu.take_nmi_dirty();
+        ([nmi0, nmi1, nmi2], moved)
+    }
+
     #[inline(always)]
     // Marker costs one call per CPU cycle; pay it only when profiling.
     #[cfg_attr(

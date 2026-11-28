@@ -80,6 +80,13 @@ pub struct Apu {
     /// read-modify-write race on hardware and must not reload — blargg's
     /// 11.len_reload_timing test 5. Cleared at the start of every APU tick.
     length_race_clobber: [bool; 4],
+    /// Minimum of the five channel rate-timer deadlines. The hot `tick`
+    /// skips all five `tick_timer` compares while `tick_count` runs below
+    /// it: deadlines only move on firing ticks (which recompute the min
+    /// below) or on restore/reset/new (which recompute there), so
+    /// `now < min` proves every compare false. `set_period*` writes need
+    /// no hook — they change the period, never the deadline.
+    timer_min_deadline: u64,
 }
 
 impl Default for Apu {
@@ -136,6 +143,21 @@ impl Apu {
         self.mixer.restore_mixer_state(&s.mixer);
         self.expansion = s.expansion;
         self.length_race_clobber = s.length_race_clobber;
+        self.refresh_timer_min();
+    }
+
+    /// Recompute [`Self::timer_min_deadline`] from the channel timers.
+    /// Called wherever deadlines move without a firing tick: construction,
+    /// restore, and reset. (Period writes leave deadlines alone; firing
+    /// ticks recompute inline in [`Self::tick`].)
+    fn refresh_timer_min(&mut self) {
+        self.timer_min_deadline = self
+            .pulse1
+            .timer_deadline()
+            .min(self.pulse2.timer_deadline())
+            .min(self.triangle.timer_deadline())
+            .min(self.noise.timer_deadline())
+            .min(self.dmc.timer_deadline());
     }
 }
 
@@ -146,7 +168,7 @@ impl Apu {
     pub const SAMPLE_RATE: u32 = 44_100;
 
     pub fn new() -> Self {
-        Self {
+        let mut apu = Self {
             pulse1: Pulse::new(false),
             pulse2: Pulse::new(true),
             triangle: Triangle::default(),
@@ -158,7 +180,10 @@ impl Apu {
             frame_sequencer: FrameSequencer::default(),
             tick_count: 0,
             length_race_clobber: [false; 4],
-        }
+            timer_min_deadline: 0,
+        };
+        apu.refresh_timer_min();
+        apu
     }
 
     /// Soft reset (front-panel RESET button): channels fall silent while
@@ -186,6 +211,7 @@ impl Apu {
         // The test ROMs rely on reset preserving the previous frame counter mode
         // and IRQ inhibit bit rather than synthesizing a new value here.
         self.frame_sequencer.reset();
+        self.refresh_timer_min();
     }
 
     /// Hard reset (power cycle): every channel returns to its power-up
@@ -205,6 +231,7 @@ impl Apu {
         // Fresh power-up channels anchor their timer deadlines at epoch 0.
         self.tick_count = 0;
         self.length_race_clobber = [false; 4];
+        self.refresh_timer_min();
     }
 
     #[inline(always)]
@@ -214,11 +241,17 @@ impl Apu {
         let now = self.tick_count;
         self.frame_sequencer.tick_timer();
         self.frame_sequencer.tick();
-        self.triangle.tick_timer(now);
-        self.pulse1.tick_timer(now);
-        self.pulse2.tick_timer(now);
-        self.noise.tick_timer(now);
-        self.dmc.tick_timer(now);
+        // Channel rate timers: skip all five compares while the earliest
+        // deadline lies ahead (see `timer_min_deadline`). Firing ticks
+        // recompute the min inline, so the gate stays exact.
+        if now >= self.timer_min_deadline {
+            self.triangle.tick_timer(now);
+            self.pulse1.tick_timer(now);
+            self.pulse2.tick_timer(now);
+            self.noise.tick_timer(now);
+            self.dmc.tick_timer(now);
+            self.refresh_timer_min();
+        }
 
         if let Some(step) = self.frame_sequencer.output_latch {
             self.service_latched_step(step);
