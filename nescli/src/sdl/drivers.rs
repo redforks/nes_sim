@@ -48,20 +48,26 @@ pub fn create_sdl_drivers(
     sdl_context: &Sdl,
     window: &WindowSpec,
     headless: bool,
+    want_audio: bool,
     audio_tx: Option<mpsc::Sender<Vec<u8>>>,
     ff_skip: Rc<Cell<bool>>,
     trim_frames: u32,
 ) -> Result<(Option<Canvas<Window>>, NesAudioDriver)> {
-    let audio_subsystem = sdl_context.audio().map_err(|e| anyhow::anyhow!(e))?;
-    let audio_spec = AudioSpecDesired {
-        freq: Some(AUDIO_SAMPLE_RATE),
-        channels: Some(1),
-        samples: Some(AUDIO_CHUNK_SAMPLES as u16),
+    let audio_queue = if want_audio {
+        let audio_subsystem = sdl_context.audio().map_err(|e| anyhow::anyhow!(e))?;
+        let audio_spec = AudioSpecDesired {
+            freq: Some(AUDIO_SAMPLE_RATE),
+            channels: Some(1),
+            samples: Some(AUDIO_CHUNK_SAMPLES as u16),
+        };
+        let audio_queue = audio_subsystem
+            .open_queue::<f32, _>(None, &audio_spec)
+            .map_err(|e| anyhow::anyhow!(e))?;
+        audio_queue.resume();
+        Some(audio_queue)
+    } else {
+        None
     };
-    let audio_queue = audio_subsystem
-        .open_queue::<f32, _>(None, &audio_spec)
-        .map_err(|e| anyhow::anyhow!(e))?;
-    audio_queue.resume();
     let audio_driver = NesAudioDriver::new(audio_queue, audio_tx, ff_skip, trim_frames);
 
     let canvas = if !headless {

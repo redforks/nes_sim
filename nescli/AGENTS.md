@@ -43,6 +43,8 @@ cargo run -p nescli --release -- run <file.nes> --movie <movie.fm2|movie.bk2> [-
 - Interactive mode (no `--movie`): opens an SDL2 window with the logical 1x 256x240 frame scaled to a 2x 512x480 window via one SDL nearest-neighbour scale-copy, 60 FPS frame limiting, keyboard input, and audio output. `--load-state <path>` loads a save file before the window opens (same code as F7); a missing/corrupt file fails pre-window, non-zero. F5/F7 save/load target stays `<rom-dir>/<rom-stem>.state`.
 - Movie mode (`--movie`): plays `.fm2` or `.bk2` (parser selected by extension) in a 4x 1024x960 window. Movie-only flags: `--headless`, `--no-throttle`, `--output` (ffmpeg recording), `--auto-fast-forward`, `--gamepad-overlay`, `--trim-frames`, `--trim-after`, `--extra-frames`, `--idle-frames`, `--crf`, `--play-from-power-on` (BK2 only), `--load-state` (resume at the state's frame; savestate-anchored BK2 is refused). `--output` recording upscales the 1x frame host-side into a reused 1024x960 scratch frame.
 - `--palette <file.pal>` overrides the color theme in both modes.
+- `--video-out <sdl|sixel|kitty>` (default `sdl`) selects the video sink in both modes: `sdl` opens the SDL2 window, `sixel`/`kitty` write escape sequences to stdout on the alternate screen (cursor-home per frame, logs stay on stderr). Terminal video bakes the 4x overlay frame then downsamples to 1x 256x240, keeps 60 FPS throttle, has no keyboard input (interactive warns on stderr, Ctrl-C stops).
+- `--audio-out <sdl|none>` (default `sdl`) selects live audio in both modes: `none` skips SDL audio init and mutes live sound while `--output` recording keeps its track.
 
 ## Controls (SDL2 Runner)
 

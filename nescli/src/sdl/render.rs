@@ -10,6 +10,7 @@
 
 use super::presentation::{OverlayIcon, OverlayPlacement};
 use super::presenter::{FramePresenter, present_frame};
+use super::terminal::{FRAME_H as TERM_H, FRAME_W as TERM_W, TerminalPresenter, TerminalVideo};
 use image::{imageops, load_from_memory};
 use nes_core::movie::GamepadInput;
 use nes_core::nes::ppu::{TOTAL_PIXELS, VISIBLE_HEIGHT, VISIBLE_WIDTH};
@@ -293,10 +294,13 @@ pub(crate) struct NesRender {
     /// 1024x960 recording frame: raw RGBA pixels in the format fed to ffmpeg
     /// (`RECORD_WIDTH * RECORD_HEIGHT * 4` bytes). The allocation is reused
     /// across frames; each frame actually sent is cloned into a fresh buffer
-    /// for the encoder thread.
+    /// for the encoder thread. Terminal video reuses the same scratch for its
+    /// overlay bake, then downsamples to a cached 1x buffer.
     record_scratch: Vec<u8>,
     canvas: Option<Canvas<Window>>,
     presenter: FramePresenter,
+    terminal: Option<TerminalPresenter>,
+    term_scratch_1x: Vec<u8>,
     video_tx: Option<mpsc::Sender<Vec<u8>>>,
     icons: Rc<[OverlayIcon]>,
     dual_player: bool,
@@ -334,6 +338,8 @@ impl NesRender {
             record_scratch: vec![0u8; RECORD_WIDTH * RECORD_HEIGHT * 4],
             canvas,
             presenter,
+            terminal: None,
+            term_scratch_1x: vec![0u8; TERM_W * TERM_H * 4],
             video_tx,
             icons,
             dual_player: false,
@@ -361,6 +367,10 @@ impl NesRender {
         self.p1.set_input(port0);
         self.p2.set_input(port1);
     }
+
+    pub(crate) fn set_terminal(&mut self, mode: TerminalVideo) {
+        self.terminal = Some(TerminalPresenter::new(mode));
+    }
 }
 
 impl NesRender {
@@ -383,14 +393,52 @@ impl NesRender {
             present_frame(canvas, &mut self.presenter, frame_bytes, &overlays);
         }
 
-        if let Some(ref tx) = self.video_tx
-            && send_video
-        {
+        if self.terminal.is_some() {
+            // Bake once into the reused 4x scratch (same upscale + overlay
+            // as recording), then nearest-downsample to a cached 1x frame.
             upscale_into(frame_bytes, &mut self.record_scratch);
             if self.enabled {
                 composite_overlay_icons(&mut self.record_scratch, &overlays, &self.icons);
             }
+            downsample_4x_to_1x(&self.record_scratch, &mut self.term_scratch_1x);
+            if let Some(ref mut term) = self.terminal {
+                term.present(&self.term_scratch_1x);
+            }
+        }
+
+        if let Some(ref tx) = self.video_tx
+            && send_video
+        {
+            // Reuse the terminal bake when it already ran this frame.
+            if self.terminal.is_none() {
+                upscale_into(frame_bytes, &mut self.record_scratch);
+                if self.enabled {
+                    composite_overlay_icons(&mut self.record_scratch, &overlays, &self.icons);
+                }
+            }
             let _ = tx.send(self.record_scratch.clone());
+        }
+    }
+}
+
+/// Nearest-downsample the reused 4x scratch to a cached 1x frame for the
+/// terminal sinks. The 4x upscale replicates each logical pixel into a 4x4
+/// block, so the top-left sample of each block is the exact source pixel
+/// (overlay included). Pure and unit-testable.
+pub(crate) fn downsample_4x_to_1x(src_4x: &[u8], dst_1x: &mut [u8]) {
+    use nes_core::nes::ppu::{VISIBLE_HEIGHT, VISIBLE_WIDTH};
+    debug_assert_eq!(src_4x.len(), RECORD_WIDTH * RECORD_HEIGHT * 4);
+    debug_assert_eq!(
+        dst_1x.len(),
+        VISIBLE_WIDTH as usize * VISIBLE_HEIGHT as usize * 4
+    );
+    let src_stride = RECORD_WIDTH * 4;
+    let dst_stride = VISIBLE_WIDTH as usize * 4;
+    for y in 0..VISIBLE_HEIGHT as usize {
+        for x in 0..VISIBLE_WIDTH as usize {
+            let s0 = y * 4 * src_stride + x * 4 * 4;
+            let d0 = y * dst_stride + x * 4;
+            dst_1x[d0..d0 + 4].copy_from_slice(&src_4x[s0..s0 + 4]);
         }
     }
 }

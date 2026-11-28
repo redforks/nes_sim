@@ -1,7 +1,8 @@
 use crate::actions::{load_palette, read_ines_file};
 use crate::sdl::{
-    FastForwardState, INTERACTIVE_WINDOW, InputSource, LoopInputs, LoopOptions, NesAudioDriver,
-    NesRender, PLAYBACK_WINDOW, WindowSpec, create_sdl_drivers, run_event_loop, sdl2::Sdl,
+    AudioOut, FastForwardState, INTERACTIVE_WINDOW, InputSource, LoopInputs, LoopOptions,
+    NesAudioDriver, NesRender, PLAYBACK_WINDOW, VideoOut, WindowSpec, create_sdl_drivers,
+    run_event_loop, sdl2::Sdl,
 };
 use anyhow::{Context as _, Result};
 use nes_core::{
@@ -48,6 +49,12 @@ pub struct RunAction {
     /// instead of refusing them.
     #[arg(long, requires = "movie")]
     play_from_power_on: bool,
+    /// Video sink: sdl window, sixel escapes, or kitty graphics on stdout.
+    #[arg(long, value_enum, default_value_t = VideoOut::Sdl)]
+    video_out: VideoOut,
+    /// Audio sink: sdl queue or none (recording keeps its track).
+    #[arg(long, value_enum, default_value_t = AudioOut::Sdl)]
+    audio_out: AudioOut,
     /// Start the interactive run from a saved state file. The file loads
     /// before the loop through the same code as F7; a missing or corrupt
     /// file fails before the window opens. Never changes the F5/F7 target
@@ -161,24 +168,37 @@ fn compute_fast_forward_ranges(
 /// senders and the overlay disabled, `NesRender` presents exactly what the old
 /// interactive renderer presented.
 fn init_sdl_drivers(
-    sdl_context: &Sdl,
+    sdl_context: Option<&Sdl>,
     window: &WindowSpec,
     headless: bool,
+    video_out: VideoOut,
+    audio_out: AudioOut,
     video_tx: Option<mpsc::Sender<Vec<u8>>>,
     audio_tx: Option<mpsc::Sender<Vec<u8>>>,
     ff_skip: Rc<Cell<bool>>,
     trim_frames: u32,
 ) -> Result<(NesRender, NesAudioDriver)> {
-    let (canvas, audio_driver) = create_sdl_drivers(
-        sdl_context,
-        window,
-        headless,
-        audio_tx,
-        ff_skip,
-        trim_frames,
-    )?;
+    let no_window = headless || video_out.is_terminal();
+    let (canvas, audio_driver) = match sdl_context {
+        Some(ctx) => create_sdl_drivers(
+            ctx,
+            window,
+            no_window,
+            matches!(audio_out, AudioOut::Sdl),
+            audio_tx,
+            ff_skip,
+            trim_frames,
+        )?,
+        None => (
+            None,
+            NesAudioDriver::new(None, audio_tx, ff_skip, trim_frames),
+        ),
+    };
 
-    let render = NesRender::new(canvas, video_tx, trim_frames);
+    let mut render = NesRender::new(canvas, video_tx, trim_frames);
+    if let Some(term) = video_out.terminal() {
+        render.set_terminal(term);
+    }
 
     Ok((render, audio_driver))
 }
@@ -211,14 +231,27 @@ impl RunAction {
                 anyhow::bail!("{message}");
             }
         }
-        // Initialize SDL2
-        let sdl_context = crate::sdl::sdl2::init().map_err(|e| anyhow::anyhow!(e))?;
+        // Initialize SDL2 (skipped when terminal video meets null audio).
+        let needs_sdl =
+            matches!(self.video_out, VideoOut::Sdl) || matches!(self.audio_out, AudioOut::Sdl);
+        let sdl_context = if needs_sdl {
+            Some(crate::sdl::sdl2::init().map_err(|e| anyhow::anyhow!(e))?)
+        } else {
+            None
+        };
+        if self.video_out.is_terminal() {
+            eprintln!(
+                "Warning: terminal video has no keyboard input; running unattended, Ctrl-C stops"
+            );
+        }
         // Interactive mode never records, so the unified driver setup gets
         // no channels, a dummy never-set skip flag and zero trim frames.
         let (render, audio_driver) = init_sdl_drivers(
-            &sdl_context,
+            sdl_context.as_ref(),
             &INTERACTIVE_WINDOW,
             false,
+            self.video_out,
+            self.audio_out,
             None,
             None,
             Rc::new(Cell::new(false)),
@@ -229,21 +262,32 @@ impl RunAction {
         // framebuffer/audio buffers each frame.
         let (mut render, mut audio_driver) = (render, audio_driver);
 
-        // Initialize event pump
-        let mut event_pump = sdl_context.event_pump().map_err(|e| anyhow::anyhow!(e))?;
+        // Terminal video has no SDL window, so no event pump.
+        let mut event_pump_holder;
+        let event_pump_opt = if matches!(self.video_out, VideoOut::Sdl) {
+            let Some(ref ctx) = sdl_context else {
+                anyhow::bail!("SDL video needs an SDL context");
+            };
+            event_pump_holder = ctx.event_pump().map_err(|e| anyhow::anyhow!(e))?;
+            Some(&mut event_pump_holder)
+        } else {
+            None
+        };
 
         // One loop body serves both modes: with no movie, the recording and
         // overlay slots of `NesRender` stay inactive and the interactive
         // input source keeps today's keys, window, throttle and exit path.
+        // Terminal video has no game input; the loop still throttles at 60 FPS.
         let mut source = InputSource::Interactive;
-        let opts = LoopOptions::interactive();
+        let mut opts = LoopOptions::interactive();
+        opts.terminal_video = self.video_out.is_terminal();
         let state_path = crate::save_state::state_path_for_rom(&self.nes_file);
         run_event_loop(
             &mut machine,
             &mut render,
             &mut audio_driver,
             LoopInputs {
-                event_pump: Some(&mut event_pump),
+                event_pump: event_pump_opt,
                 source: &mut source,
                 opts: &opts,
                 fast_forward: None,
@@ -386,11 +430,19 @@ impl RunAction {
 
         let ff_skip = Rc::new(Cell::new(false));
 
-        let sdl_context = crate::sdl::sdl2::init().map_err(|e| anyhow::anyhow!(e))?;
+        let needs_sdl = (matches!(self.video_out, VideoOut::Sdl) && !self.headless)
+            || matches!(self.audio_out, AudioOut::Sdl);
+        let sdl_context = if needs_sdl {
+            Some(crate::sdl::sdl2::init().map_err(|e| anyhow::anyhow!(e))?)
+        } else {
+            None
+        };
         let (render, audio_driver) = init_sdl_drivers(
-            &sdl_context,
+            sdl_context.as_ref(),
             &PLAYBACK_WINDOW,
             self.headless,
+            self.video_out,
+            self.audio_out,
             video_tx,
             audio_tx,
             ff_skip.clone(),
@@ -429,8 +481,11 @@ impl RunAction {
         render.set_dual_player(dual_player);
         render.set_overlay_enabled(self.gamepad_overlay);
 
-        let mut event_pump = if !self.headless {
-            Some(sdl_context.event_pump().map_err(|e| anyhow::anyhow!(e))?)
+        let mut event_pump = if !self.headless && matches!(self.video_out, VideoOut::Sdl) {
+            let Some(ref ctx) = sdl_context else {
+                anyhow::bail!("SDL video needs an SDL context");
+            };
+            Some(ctx.event_pump().map_err(|e| anyhow::anyhow!(e))?)
         } else {
             None
         };
@@ -456,6 +511,7 @@ impl RunAction {
             auto_fast_forward: self.auto_fast_forward,
             trim_after: self.trim_after,
             extra_frames: self.extra_frames,
+            terminal_video: self.video_out.is_terminal(),
         };
         let fast_forward = FastForwardState {
             ranges: fast_forward_ranges,
@@ -749,6 +805,44 @@ mod tests {
                 TestCli::try_parse_from(["test", "game.nes", "--load-state", "/saves/game.state"])
                     .unwrap();
             assert_eq!(cli.run.load_state, Some(PathBuf::from("/saves/game.state")));
+        }
+
+        #[test]
+        fn video_audio_out_default_to_sdl_and_parse_all_values() {
+            use crate::sdl::{AudioOut, VideoOut};
+            let cli = TestCli::try_parse_from(["test", "game.nes"]).unwrap();
+            assert!(matches!(cli.run.video_out, VideoOut::Sdl));
+            assert!(matches!(cli.run.audio_out, AudioOut::Sdl));
+            let cli = TestCli::try_parse_from([
+                "test",
+                "game.nes",
+                "--video-out",
+                "sixel",
+                "--audio-out",
+                "none",
+            ])
+            .unwrap();
+            assert!(matches!(cli.run.video_out, VideoOut::Sixel));
+            assert!(matches!(cli.run.audio_out, AudioOut::None));
+            let cli =
+                TestCli::try_parse_from(["test", "game.nes", "--video-out", "kitty"]).unwrap();
+            assert!(matches!(cli.run.video_out, VideoOut::Kitty));
+        }
+
+        #[test]
+        fn video_audio_out_flags_appear_in_help() {
+            let mut help = Vec::new();
+            use clap::CommandFactory;
+            TestCli::command().write_long_help(&mut help).unwrap();
+            let help = String::from_utf8(help).unwrap();
+            assert!(
+                help.contains("--video-out"),
+                "run --help must show the flag: {help}"
+            );
+            assert!(
+                help.contains("--audio-out"),
+                "run --help must show the flag: {help}"
+            );
         }
 
         #[test]

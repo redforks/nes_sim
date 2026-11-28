@@ -102,6 +102,8 @@ pub struct LoopOptions {
     pub auto_fast_forward: bool,
     pub trim_after: u32,
     pub extra_frames: u32,
+    /// Terminal video (sixel/kitty) still paces at 60 FPS like a window.
+    pub terminal_video: bool,
 }
 
 impl LoopOptions {
@@ -115,6 +117,7 @@ impl LoopOptions {
             auto_fast_forward: false,
             trim_after: 0,
             extra_frames: 0,
+            terminal_video: false,
         }
     }
 }
@@ -127,11 +130,11 @@ pub struct FastForwardState {
 }
 
 /// One pacing decision for both modes: interactive always sleeps the
-/// remaining frame budget; playback only when windowed, throttled and not
-/// recording.
+/// remaining frame budget; playback only when shown (windowed or terminal),
+/// throttled and not recording.
 pub fn should_throttle(source: &InputSource, opts: &LoopOptions) -> bool {
     matches!(source, InputSource::Interactive)
-        || (!opts.headless && !opts.no_throttle && !opts.has_output)
+        || ((!opts.headless || opts.terminal_video) && !opts.no_throttle && !opts.has_output)
 }
 
 fn set_controller_from_gamepad<P>(machine: &mut NesMachine<P>, input: &GamepadInput, port_b: bool)
@@ -463,6 +466,7 @@ mod tests {
             auto_fast_forward: false,
             trim_after: 0,
             extra_frames: 0,
+            terminal_video: false,
         }
     }
 

@@ -3,8 +3,46 @@ pub mod event_loop;
 pub mod presentation;
 pub mod presenter;
 pub mod render;
+pub mod terminal;
 
 pub use drivers::{INTERACTIVE_WINDOW, PLAYBACK_WINDOW, WindowSpec, create_sdl_drivers};
+pub use terminal::TerminalVideo;
+
+/// CLI video sink. Single source for `--video-out`.
+#[derive(clap::ValueEnum, Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum VideoOut {
+    /// SDL2 window (current behavior).
+    #[default]
+    Sdl,
+    /// Sixel escape sequences on stdout.
+    Sixel,
+    /// Kitty graphics protocol on stdout.
+    Kitty,
+}
+
+/// CLI audio sink. Single source for `--audio-out`.
+#[derive(clap::ValueEnum, Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum AudioOut {
+    /// SDL2 audio queue (current behavior).
+    #[default]
+    Sdl,
+    /// No live audio. `--output` recording keeps its track.
+    None,
+}
+
+impl VideoOut {
+    pub fn is_terminal(self) -> bool {
+        !matches!(self, VideoOut::Sdl)
+    }
+
+    pub fn terminal(self) -> Option<TerminalVideo> {
+        match self {
+            VideoOut::Sdl => None,
+            VideoOut::Sixel => Some(TerminalVideo::Sixel),
+            VideoOut::Kitty => Some(TerminalVideo::Kitty),
+        }
+    }
+}
 pub(crate) use event_loop::{
     FastForwardState, InputSource, LoopInputs, LoopOptions, run_event_loop,
 };
@@ -38,13 +76,16 @@ pub fn map_keycode_to_button(keycode: Keycode) -> Option<Button> {
     }
 }
 
-/// Unified audio driver: SDL playback always runs; recording into
-/// `audio_tx` is gated by `Option` exactly like `NesRender::video_tx`.
+/// Unified audio driver: SDL playback runs unless built without a queue
+/// (`--audio-out none`); recording into `audio_tx` is gated by `Option`
+/// exactly like `NesRender::video_tx`. A `None` queue skips the SDL audio
+/// subsystem entirely so audio-less servers never fail on open, while the
+/// `--output` ffmpeg track keeps flowing through `sample_buf`/`send_policy`.
 /// Interactive mode passes `audio_tx = None`, movie mode passes its channel.
 /// The fast-forward skip flag is shared with `FastForwardState` via `Rc`
 /// because `NesMachine` exposes `render_mut()` but no `audio_mut()`.
 pub struct NesAudioDriver {
-    queue: AudioQueue<f32>,
+    queue: Option<AudioQueue<f32>>,
     chunker: ChunkedAudioPush,
     audio_tx: Option<mpsc::Sender<Vec<u8>>>,
     sample_buf: Vec<f32>,
@@ -54,7 +95,7 @@ pub struct NesAudioDriver {
 
 impl NesAudioDriver {
     pub fn new(
-        queue: AudioQueue<f32>,
+        queue: Option<AudioQueue<f32>>,
         audio_tx: Option<mpsc::Sender<Vec<u8>>>,
         ff_skip: Rc<Cell<bool>>,
         trim_frames: u32,
@@ -84,16 +125,21 @@ fn emit_chunk(queue: &AudioQueue<f32>, chunk: &[f32]) {
 
 impl NesAudioDriver {
     pub fn push_samples(&mut self, samples: &[f32]) {
-        let Self { chunker, queue, .. } = self;
-        chunker.push(samples, |chunk| emit_chunk(queue, chunk));
+        if self.queue.is_some() {
+            // Borrow once: queue outlives the closure call.
+            let queue = self.queue.as_ref().expect("checked above");
+            self.chunker.push(samples, |chunk| emit_chunk(queue, chunk));
+        }
         if self.audio_tx.is_some() {
             self.sample_buf.extend_from_slice(samples);
         }
     }
 
     pub fn flush_frame(&mut self) {
-        let Self { chunker, queue, .. } = self;
-        chunker.flush(|chunk| emit_chunk(queue, chunk));
+        if self.queue.is_some() {
+            let queue = self.queue.as_ref().expect("checked above");
+            self.chunker.flush(|chunk| emit_chunk(queue, chunk));
+        }
         let send_audio = self.send_policy.should_send(self.ff_skip.get());
         if let Some(ref tx) = self.audio_tx {
             if !self.sample_buf.is_empty() && send_audio {
