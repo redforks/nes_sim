@@ -147,7 +147,11 @@ impl Zapper {
 
     /// Advance one CPU cycle.
     pub fn clock(&mut self) {
-        self.trigger_cycles = self.trigger_cycles.saturating_sub(1);
+        // Idle almost every cycle (no trigger in flight); skip the store
+        // when already zero (idempotent, saves ~30k stores/frame).
+        if self.trigger_cycles != 0 {
+            self.trigger_cycles -= 1;
+        }
     }
 
     /// Port-2 bits at the given beam position. `brightness(x, y)` reports
