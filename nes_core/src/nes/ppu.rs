@@ -767,7 +767,12 @@ impl Ppu {
         PpuRenderState {
             rendering_enabled: mask_bits & PpuMask::RENDERING_ENABLED != 0,
             sprite_8x16: self.registers.ctrl.sprite_size_16(),
-            fetch_phase: (self.timing.dot % 8) as u8,
+            // `fetch_phase` (`dot % 8`) is informational only (see the
+            // struct docs): no mapper or core path reads it, so constant
+            // 0 saves a modulo per build (~69k/frame) with no observable
+            // change. The fetch kind below is always re-tagged by the
+            // render-path caller before any mapper sees it.
+            fetch_phase: 0,
             fetch: PpuFetchKind::Cpu,
         }
     }
@@ -1652,20 +1657,20 @@ impl Ppu {
 
         // The scanline's sprite list is frozen after the dot-0 swap while
         // rendering is on; `find_sprite_pixel` on an empty list returns
-        // `None` via a zero-trip loop, which profiles cheaper than a
-        // per-pixel emptiness gate on sprite-dense lines.
+        // `None` via the column pre-check below: empty columns (most of
+        // every line — coverage caps at 8 sprites x 8 columns by
+        // hardware) skip the render-state build, the row-ensure check,
+        // and the candidate loop. A line-emptiness gate would lose on
+        // sprite-dense lines; the column test wins on every line.
         let sprite_pixel = if mask_bits & PpuMask::SPRITE_ENABLED != 0
             // Left-clip flag first: games almost always show the left
             // column, so the `x` compare short-circuits away per pixel.
             && (mask_bits & PpuMask::SPRITE_LEFT_ENABLED != 0 || x >= 8)
+            && self.sprite.column_may_hit(x, scanline)
         {
-            self.sprite.find_sprite_pixel(
-                ctrl,
-                cartridge,
-                x,
-                scanline,
-                self.render_state_from(mask_bits),
-            )
+            let render = self.render_state_from(mask_bits);
+            self.sprite
+                .find_sprite_pixel(ctrl, cartridge, x, scanline, render)
         } else {
             None
         };

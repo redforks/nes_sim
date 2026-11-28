@@ -4506,7 +4506,7 @@ fn classification_cpu() -> Harness<MockMcu> {
 }
 
 fn pending(cpu: &mut Harness<MockMcu>, mc: Microcode) {
-    cpu.microcode_queue.clear();
+    cpu.clear_queue();
     cpu.push_microcode(mc);
 }
 

@@ -469,6 +469,21 @@ impl SpriteManager {
         }
     }
 
+    /// Column pre-check for the pixel path: false only when the rows are
+    /// already resolved for `scanline` and no row reaches `screen_x`.
+    /// `rows_scanline` is the key: rows and mask are rebuilt and cleared
+    /// together, so a stale mask (previous line, post-restore rows) can
+    /// never pass — this falls through to the fetch, which rebuilds both.
+    /// Pattern writes do not touch X-coverage, so no generation counter
+    /// is needed. Unlike a line-emptiness gate (which loses on
+    /// sprite-dense lines), this also skips the render-state build on
+    /// covered lines' empty majority: coverage caps at 8 sprites x 8
+    /// columns by hardware, so most pixels of every line are empty.
+    #[inline]
+    pub fn column_may_hit(&self, screen_x: u8, scanline: u8) -> bool {
+        self.rows_scanline != Some(scanline) || self.column_mask[screen_x as usize] != 0
+    }
+
     #[inline]
     pub fn find_sprite_pixel(
         &mut self,

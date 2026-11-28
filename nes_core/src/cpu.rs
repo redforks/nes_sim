@@ -1,7 +1,6 @@
 use crate::microcode::fetch_and_decode;
 use crate::view::MachineView;
 use crate::{SystemClock, bus::Bus, mcu::Mcu};
-use arraydeque::ArrayDeque;
 use microcode::{
     AOrMemory, CrossPageBehavior, IncDecTarget, InterruptSequences, InterruptWindow, Microcode,
     OpAfterAddressing,
@@ -341,7 +340,15 @@ pub struct Cpu {
     /// `None` = normal; `Some` = frozen and/or halted (see [`FrozenReason`]).
     frozen_reason: Option<FrozenReason>,
 
-    microcode_queue: ArrayDeque<Microcode, 8>,
+    /// Pending micro-ops, front (next to execute) first: the live window
+    /// is `microcode_buf[microcode_pos..microcode_len]` (capacity 8, same
+    /// as the old `ArrayDeque`). Pushes only extend an empty queue or
+    /// front-push a single op (page-cross fixups, DMC retain); pops bump
+    /// `microcode_pos`, so the hot path moves no elements. `clear_queue`
+    /// parks `pos` at `len`; the next extend resets both to zero.
+    microcode_buf: [Microcode; 8],
+    microcode_len: u8,
+    microcode_pos: u8,
 }
 
 /// Which interrupt window an armed [`ActiveInterruptWindow`] points at.
@@ -404,7 +411,9 @@ impl Cpu {
             ab: self.ab.get(),
             db: self.db,
             alu: self.alu,
-            microcode_queue: self.microcode_queue.iter().copied().collect(),
+            microcode_queue: self.microcode_buf
+                [self.microcode_pos as usize..self.microcode_len as usize]
+                .to_vec(),
             active_interrupt_window,
             nmi_last_lagged_sample: self.nmi_detecteor.last_lagged_sample,
             nmi_lagged_sample: self.nmi_detecteor.lagged_sample,
@@ -429,10 +438,12 @@ impl Cpu {
         self.ab.set(s.ab);
         self.db = s.db;
         self.alu = s.alu;
-        self.microcode_queue.clear();
-        for mc in &s.microcode_queue {
-            let _ = self.microcode_queue.push_back(*mc);
-        }
+        self.clear_queue();
+        let n = s.microcode_queue.len().min(8);
+        debug_assert!(s.microcode_queue.len() <= 8);
+        self.microcode_buf[..n].copy_from_slice(&s.microcode_queue[..n]);
+        self.microcode_pos = 0;
+        self.microcode_len = n as u8;
         self.active_interrupt_window = s.active_interrupt_window.map(|(tag, started_at)| {
             let window = match tag {
                 InterruptWindowTag::Reset => &InterruptSequences::RESET_WINDOW,
@@ -477,7 +488,9 @@ impl Cpu {
             ab: Register16::default(),
             db: 0,
             alu: 0,
-            microcode_queue: ArrayDeque::new(),
+            microcode_buf: [Microcode::Nop; 8],
+            microcode_len: 0,
+            microcode_pos: 0,
             frozen_reason: None,
         };
         r.reset();
@@ -552,7 +565,7 @@ impl Cpu {
     }
 
     pub fn microcodes_empty(&self) -> bool {
-        self.microcode_queue.is_empty()
+        self.microcode_pos == self.microcode_len
     }
 
     /// Drain microcodes to the next instruction boundary (queue empty).
@@ -575,10 +588,11 @@ impl Cpu {
     }
 
     pub(crate) fn next_microcode(&self) -> Microcode {
-        self.microcode_queue
-            .front()
-            .copied()
-            .unwrap_or(Microcode::FetchAndDecode)
+        if self.microcode_pos < self.microcode_len {
+            self.microcode_buf[self.microcode_pos as usize]
+        } else {
+            Microcode::FetchAndDecode
+        }
     }
 
     /// True if the CPU can be paused for DMA: the pending cycle is not a
@@ -631,7 +645,7 @@ impl Cpu {
     #[cfg(test)]
     pub(crate) fn stage_pending_cycle_for_test(&mut self, mc: Microcode, latch: Option<u16>) {
         self.set_frozen(false);
-        self.microcode_queue.clear();
+        self.clear_queue();
         self.push_microcode(mc);
         if let Some(addr) = latch {
             self.ab.set(addr);
@@ -852,7 +866,7 @@ impl Cpu {
     pub fn reset(&mut self) {
         self.set_flag(Flag::InterruptDisabled, true);
         self.set_flag(Flag::NotUsed, true);
-        self.microcode_queue.clear();
+        self.clear_queue();
         self.interrupt_detected = InterruptType::None;
         self.frozen_reason = None;
         self.sp = self.sp.wrapping_sub(3);
@@ -955,7 +969,7 @@ impl Cpu {
             fetch_and_decode(self, bus);
             Microcode::FetchAndDecode
         };
-        let instruction_complete = self.microcode_queue.is_empty();
+        let instruction_complete = self.microcodes_empty();
         // Suppression applies while an interrupt window is armed:
         // owns the final-cycle poll. The queue drains exactly on the final
         // op of the armed sequence (or a hijack continuation's tail), so
@@ -1364,7 +1378,18 @@ impl Cpu {
 
     #[inline]
     fn push_microcodes(&mut self, microcodes: &[Microcode]) {
-        self.microcode_queue.extend_back(microcodes.iter().copied())
+        // Pushes only extend an empty queue (fetch on an empty pop,
+        // interrupt entry on an empty pop, hijack tails after
+        // `clear_queue`): park first so a drained `pos` cannot strand
+        // capacity. Truncation matches the old `extend_back` overflow
+        // path (unreachable: sequences fit the capacity-8 window).
+        debug_assert!(self.microcode_pos == self.microcode_len);
+        self.microcode_pos = 0;
+        self.microcode_len = 0;
+        let n = microcodes.len().min(8);
+        debug_assert!(microcodes.len() <= 8);
+        self.microcode_buf[..n].copy_from_slice(microcodes);
+        self.microcode_len = n as u8;
     }
 
     /// Arm the recognition window of an interrupt sequence about to run.
@@ -1416,7 +1441,7 @@ impl Cpu {
             InterruptWindowTag::Nmi,
             None,
         );
-        self.microcode_queue.clear();
+        self.clear_queue();
         self.push_microcodes(tail);
     }
 
@@ -1444,15 +1469,42 @@ impl Cpu {
 
     #[inline]
     fn pop_microcode(&mut self) -> Option<Microcode> {
-        self.microcode_queue.pop_front()
+        if self.microcode_pos < self.microcode_len {
+            let code = self.microcode_buf[self.microcode_pos as usize];
+            self.microcode_pos += 1;
+            Some(code)
+        } else {
+            None
+        }
     }
     fn push_microcode(&mut self, microcode: Microcode) {
-        if self.microcode_queue.push_front(microcode).is_err() {
+        // Front-pushes (page-cross fixups, DMC retain) land while a
+        // sequence is in flight (`pos > 0`): the consumed slot is free,
+        // so reuse it with no moves. From a fresh head (`pos == 0`)
+        // shift the live window right; a full queue drops, matching the
+        // old `push_front` error path (release keeps running, debug
+        // asserts).
+        if self.microcode_pos > 0 {
+            self.microcode_pos -= 1;
+            self.microcode_buf[self.microcode_pos as usize] = microcode;
+        } else if self.microcode_len < 8 {
+            self.microcode_buf
+                .copy_within(..self.microcode_len as usize, 1);
+            self.microcode_buf[0] = microcode;
+            self.microcode_len += 1;
+        } else {
             debug_assert!(
                 false,
                 "Microcode queue overflow, maybe some microcode is too long?"
             );
         }
+    }
+
+    /// Empty the live window. The next extend resets the cursor (see
+    /// `push_microcodes`), so this is one store on the hot path.
+    #[inline]
+    fn clear_queue(&mut self) {
+        self.microcode_pos = self.microcode_len;
     }
 
     fn retain_cycle(&mut self) {
