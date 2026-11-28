@@ -47,16 +47,16 @@ impl<M: Mcu> Bus<M> {
         self.clock
     }
 
-    /// Capture the current dot and advance the master clock by one.
+    /// Advance the master clock by one and return the new dot.
     ///
-    /// Returns the *pre-increment* value so every device tick driven
-    /// from a dot sees the same clock value. The machine loop is the
+    /// Returns the *post-increment* value so the machine loop can chain
+    /// the dot directly (`let clock = bus.advance()`) without a separate
+    /// `bus.clock()` read or manual `inc()`. The machine loop is the
     /// only caller per dot.
     #[inline]
     pub fn advance(&mut self) -> SystemClock {
-        let clock = self.clock;
-        self.clock = clock.inc();
-        clock
+        self.clock = self.clock.inc();
+        self.clock
     }
 
     /// Stage an arbitrary clock value (test/harness hatch: e.g. DMC

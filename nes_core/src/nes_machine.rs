@@ -163,12 +163,10 @@ where
         // order as three single-dot ticks — at one third of the call cost.
         let base = self.bus.clock();
         let ([nmi0, nmi1, nmi2], nmi_moved) = self.bus.mcu_mut().tick_ppu_3();
-        let clock1 = base.inc();
-        let clock2 = clock1.inc();
         // Dot 0 is the sampling phase: always publish (refreshes the
         // detector's lagged sample and the cycle-0 stamp quirk).
         self.cpu.update_nmi_line(nmi0, base, true);
-        self.bus.advance();
+        let clock1 = self.bus.advance();
         // Dots 1–2 only maintain the assertion stamp: skip while the line
         // is unchanged (see `Ppu::nmi_dirty`). The batch returns the OR of
         // the three per-tick flags — a refresh on a later tick only adds
@@ -176,7 +174,7 @@ where
         if nmi_moved {
             self.cpu.update_nmi_line(nmi1, clock1, false);
         }
-        self.bus.advance();
+        let clock2 = self.bus.advance();
         if nmi_moved {
             self.cpu.update_nmi_line(nmi2, clock2, false);
         }
@@ -232,10 +230,11 @@ where
         };
         // Same split as the slow path: the sample-phase publish always
         // runs (lagged sample + stamp quirk); the second is gated.
-        self.cpu.update_nmi_line(nmi, self.bus.clock(), true);
-        self.bus.advance();
+        let base = self.bus.clock();
+        self.cpu.update_nmi_line(nmi, base, true);
+        let clock1 = self.bus.advance();
         if nmi_moved {
-            self.cpu.update_nmi_line(nmi, self.bus.clock(), false);
+            self.cpu.update_nmi_line(nmi, clock1, false);
         }
         self.bus.advance();
         true
