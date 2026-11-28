@@ -130,6 +130,9 @@ fn kitty_present(frame_1x: &[u8], out: &mut impl Write) {
     let png = png_bytes_1x(frame_1x);
     let b64 = base64_encode(&png);
     // Kitty chunked transfer: 4096-byte payloads, m=1 while more follows.
+    // Stable image id + placement id so each 60 FPS frame replaces the
+    // previous placement instead of stacking a new one per frame.
+    // q=2 keeps the terminal quiet: we never read its responses.
     let mut first = true;
     let mut i = 0;
     while i < b64.len() {
@@ -138,7 +141,7 @@ fn kitty_present(frame_1x: &[u8], out: &mut impl Write) {
         if first {
             let _ = out.write_all(
                 format!(
-                    "\x1b_Ga=T,f=100,s={},v={},m={};",
+                    "\x1b_Ga=T,f=100,i=1,p=1,q=2,s={},v={},m={};",
                     FRAME_W,
                     FRAME_H,
                     if last { 0 } else { 1 }
@@ -321,5 +324,81 @@ mod tests {
         let f = solid_frame(1, 2, 3);
         let png = png_bytes_1x(&f);
         assert_eq!(&png[0..8], b"\x89PNG\r\n\x1a\n");
+    }
+
+    fn kitty_chunks(out: &[u8]) -> Vec<(Vec<u8>, Vec<u8>)> {
+        // Split `ESC_G<header>;<payload>ESC\` sequences into parts.
+        let mut chunks = Vec::new();
+        let mut rest = out;
+        while let Some(start) = rest.windows(3).position(|w| w == b"\x1b_G") {
+            let body = &rest[start + 3..];
+            let semi = body.iter().position(|&b| b == b';').expect("header end");
+            let (header, payload_st) = (&body[..semi], &body[semi + 1..]);
+            let end = payload_st
+                .windows(2)
+                .position(|w| w == b"\x1b\\")
+                .expect("terminator");
+            chunks.push((header.to_vec(), payload_st[..end].to_vec()));
+            rest = &payload_st[end + 2..];
+        }
+        chunks
+    }
+
+    #[test]
+    fn kitty_first_chunk_replaces_one_placement_quietly() {
+        let f = solid_frame(1, 2, 3);
+        let mut out = Vec::new();
+        kitty_present(&f, &mut out);
+        let chunks = kitty_chunks(&out);
+        assert!(!chunks.is_empty(), "no kitty sequence emitted");
+        let first = &chunks[0].0;
+        for key in [&b"a=T"[..], b"f=100", b"i=1", b"p=1", b"q=2"] {
+            assert!(
+                first.split(|&b| b == b',').any(|k| k == key),
+                "first header missing {key:?}: {first:?}"
+            );
+        }
+        assert!(out.ends_with(b"\x1b\\"), "missing ST terminator");
+        assert!(
+            chunks.last().unwrap().0.ends_with(b"m=0"),
+            "last chunk must close"
+        );
+    }
+
+    #[test]
+    fn kitty_multipart_chunks_stay_within_4096_and_aligned() {
+        // Incompressible pixels force a PNG bigger than one chunk.
+        let mut f = vec![0u8; FRAME_W * FRAME_H * 4];
+        for (i, px) in f.chunks_exact_mut(4).enumerate() {
+            let x = i % FRAME_W;
+            let y = i / FRAME_W;
+            px[0] = ((x * 31 + y * 57 + i) % 251) as u8;
+            px[1] = ((x * 13 + y * 91) % 241) as u8;
+            px[2] = ((x + y * 7 + i * 3) % 233) as u8;
+            px[3] = 255;
+        }
+        let mut out = Vec::new();
+        kitty_present(&f, &mut out);
+        let chunks = kitty_chunks(&out);
+        assert!(
+            chunks.len() > 1,
+            "fixture must span chunks, got {}",
+            chunks.len()
+        );
+        for (n, (header, payload)) in chunks.iter().enumerate() {
+            let last = n + 1 == chunks.len();
+            assert!(
+                header.ends_with(if last { &b"m=0"[..] } else { &b"m=1"[..] }),
+                "chunk {n} bad more-flag: {header:?}"
+            );
+            assert!(
+                payload.len() <= 4096,
+                "chunk {n} too big: {}",
+                payload.len()
+            );
+            if !last {
+                assert_eq!(payload.len() % 4, 0, "chunk {n} breaks base64 quartet");
+            }
+        }
     }
 }
